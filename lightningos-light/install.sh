@@ -299,11 +299,15 @@ install_manager() {
     return
   fi
 
+  local go_env
+  go_env="GOPATH=/opt/lightningos/go GOCACHE=/opt/lightningos/go-cache GOMODCACHE=/opt/lightningos/go/pkg/mod"
+  mkdir -p /opt/lightningos/go /opt/lightningos/go-cache /opt/lightningos/go/pkg/mod
+
   print_step "Downloading Go modules"
-  (cd "$REPO_ROOT" && GOFLAGS=-mod=mod go mod tidy)
+  (cd "$REPO_ROOT" && env $go_env GOFLAGS=-mod=mod go mod tidy)
   print_ok "Go modules ready"
 
-  (cd "$REPO_ROOT" && GOFLAGS=-mod=mod go build -o /opt/lightningos/manager/lightningos-manager ./cmd/lightningos-manager)
+  (cd "$REPO_ROOT" && env $go_env GOFLAGS=-mod=mod go build -o /opt/lightningos/manager/lightningos-manager ./cmd/lightningos-manager)
   print_ok "Manager built and installed"
 }
 

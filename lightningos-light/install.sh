@@ -265,14 +265,17 @@ install_lnd() {
   tmp=$(mktemp -d)
   curl -L "$LND_URL" -o "$tmp/lnd.tar.gz"
   tar -xzf "$tmp/lnd.tar.gz" -C "$tmp"
-  local bin_dir
-  bin_dir=$(find "$tmp" -maxdepth 2 -type d -name "lnd-*-linux-amd64" | head -n1)
-  if [[ -z "$bin_dir" ]]; then
+  local lnd_bin lncli_bin
+  lnd_bin=$(find "$tmp" -type f -name "lnd" | head -n1)
+  lncli_bin=$(find "$tmp" -type f -name "lncli" | head -n1)
+  if [[ -z "$lnd_bin" || -z "$lncli_bin" ]]; then
     echo "LND tarball structure unexpected" >&2
+    echo "Contents:" >&2
+    find "$tmp" -maxdepth 3 -type f >&2
     exit 1
   fi
-  install -m 0755 "$bin_dir/lnd" /usr/local/bin/lnd
-  install -m 0755 "$bin_dir/lncli" /usr/local/bin/lncli
+  install -m 0755 "$lnd_bin" /usr/local/bin/lnd
+  install -m 0755 "$lncli_bin" /usr/local/bin/lncli
   rm -rf "$tmp"
   print_ok "LND installed"
 }

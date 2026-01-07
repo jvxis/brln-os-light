@@ -303,6 +303,10 @@ install_manager() {
   go_env="GOPATH=/opt/lightningos/go GOCACHE=/opt/lightningos/go-cache GOMODCACHE=/opt/lightningos/go/pkg/mod"
   mkdir -p /opt/lightningos/go /opt/lightningos/go-cache /opt/lightningos/go/pkg/mod
 
+  print_step "Ensuring protobuf version"
+  (cd "$REPO_ROOT" && env $go_env GOFLAGS=-mod=mod go mod edit -require=google.golang.org/protobuf@v1.34.2)
+  print_ok "Protobuf version ensured"
+
   print_step "Downloading Go modules"
   if [[ -f "$REPO_ROOT/go.sum" ]]; then
     (cd "$REPO_ROOT" && env $go_env GOFLAGS=-mod=readonly go mod download)

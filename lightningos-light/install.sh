@@ -200,7 +200,10 @@ postgres_setup() {
 
   if [[ "$role_exists" != "1" ]]; then
     local pw
-    pw=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 24)
+    pw=$( (set +o pipefail; tr -dc A-Za-z0-9 </dev/urandom | head -c 24) )
+    if [[ -z "$pw" ]]; then
+      pw=$( (set +o pipefail; tr -dc A-Za-z0-9 </dev/urandom | head -c 32) )
+    fi
     psql_exec "Create role" -c "create role ${db_user} with login password '${pw}'"
     update_dsn "$db_user" "$pw" "$db_name"
     print_ok "Role created"
@@ -242,7 +245,10 @@ ensure_dsn() {
   current=$(grep '^LND_PG_DSN=' /etc/lightningos/secrets.env | cut -d= -f2- || true)
   if [[ -z "$current" || "$current" == *"CHANGE_ME"* ]]; then
     local pw
-    pw=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 24)
+    pw=$( (set +o pipefail; tr -dc A-Za-z0-9 </dev/urandom | head -c 24) )
+    if [[ -z "$pw" ]]; then
+      pw=$( (set +o pipefail; tr -dc A-Za-z0-9 </dev/urandom | head -c 32) )
+    fi
     psql_exec "Alter role password" -c "alter role ${db_user} with password '${pw}'"
     update_dsn "$db_user" "$pw" "$db_name"
   fi

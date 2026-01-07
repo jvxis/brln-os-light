@@ -120,15 +120,16 @@ copy_templates() {
 
 postgres_setup() {
   print_step "Configuring PostgreSQL"
+  systemctl enable --now postgresql >/dev/null 2>&1 || true
   local db_user="lndpg"
   local db_name="lnd"
   local existing
-  existing=$(sudo -u postgres psql -tAc "select 1 from pg_roles where rolname='${db_user}'")
+  existing=$(runuser -u postgres -- psql -tAc "select 1 from pg_roles where rolname='${db_user}'")
   if [[ "$existing" != "1" ]]; then
     local pw
     pw=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 24)
-    sudo -u postgres psql -c "create role ${db_user} with login password '${pw}'"
-    sudo -u postgres psql -c "create database ${db_name} owner ${db_user}"
+    runuser -u postgres -- psql -c "create role ${db_user} with login password '${pw}'"
+    runuser -u postgres -- psql -c "create database ${db_name} owner ${db_user}"
     update_dsn "$db_user" "$pw" "$db_name"
   else
     ensure_dsn "$db_user" "$db_name"
@@ -164,7 +165,7 @@ ensure_dsn() {
   if [[ -z "$current" || "$current" == *"CHANGE_ME"* ]]; then
     local pw
     pw=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 24)
-    sudo -u postgres psql -c "alter role ${db_user} with password '${pw}'"
+    runuser -u postgres -- psql -c "alter role ${db_user} with password '${pw}'"
     update_dsn "$db_user" "$pw" "$db_name"
   fi
 }

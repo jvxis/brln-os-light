@@ -12,6 +12,10 @@ GO_VERSION="${GO_VERSION:-1.21.13}"
 GO_TARBALL_URL="https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
 
 CURRENT_STEP=""
+LOG_FILE="/var/log/lightningos-install.log"
+
+mkdir -p /var/log
+exec > >(tee -a "$LOG_FILE") 2>&1
 
 print_step() {
   CURRENT_STEP="$1"
@@ -31,9 +35,9 @@ trap 'echo ""; echo "Installation failed during: ${CURRENT_STEP:-unknown}"; echo
 
 psql_as_postgres() {
   if command -v runuser >/dev/null 2>&1; then
-    runuser -u postgres -- psql "$@"
+    PGCONNECT_TIMEOUT=5 runuser -u postgres -- psql "$@"
   else
-    sudo -u postgres psql "$@"
+    PGCONNECT_TIMEOUT=5 sudo -u postgres psql "$@"
   fi
 }
 
@@ -151,6 +155,14 @@ copy_templates() {
 postgres_setup() {
   print_step "Configuring PostgreSQL"
   systemctl enable --now postgresql >/dev/null 2>&1 || true
+  print_ok "PostgreSQL service: $(systemctl is-active postgresql 2>/dev/null || echo unknown)"
+  if command -v pg_isready >/dev/null 2>&1; then
+    if pg_isready -q; then
+      print_ok "pg_isready OK"
+    else
+      print_warn "pg_isready not ready: $(pg_isready 2>&1 || true)"
+    fi
+  fi
   if ! wait_for_postgres; then
     print_warn "PostgreSQL did not become ready"
     print_warn "Try: systemctl status postgresql --no-pager"
@@ -171,6 +183,9 @@ postgres_setup() {
     exit 1
   fi
   db_exists=$(echo "$db_exists" | tr -d '[:space:]')
+
+  print_ok "Role exists: ${role_exists:-0}"
+  print_ok "Database exists: ${db_exists:-0}"
 
   if [[ "$role_exists" != "1" ]]; then
     local pw

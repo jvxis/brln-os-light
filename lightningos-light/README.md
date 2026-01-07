@@ -30,15 +30,13 @@ Usage:
 ```bash
 git clone <REPO_URL>
 cd brln-os-light/lightningos-light
-chmod +x ./scripts/install.sh
-sudo ./scripts/install.sh
+sudo ./install.sh
 ```
 
 If you already cloned and are in `brln-os-light`, use:
 ```bash
 cd lightningos-light
-chmod +x ./scripts/install.sh
-sudo ./scripts/install.sh
+sudo ./install.sh
 ```
 
 Access the UI from another machine on the same LAN:

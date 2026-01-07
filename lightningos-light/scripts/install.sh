@@ -11,6 +11,25 @@ LND_URL="${LND_URL:-$LND_URL_DEFAULT}"
 GO_VERSION="${GO_VERSION:-1.21.13}"
 GO_TARBALL_URL="https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
 
+print_step() {
+  echo ""
+  echo "==> $1"
+}
+
+print_ok() {
+  echo "✔ $1"
+}
+
+print_warn() {
+  echo "⚠ $1"
+}
+
+get_lan_ip() {
+  local ip
+  ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+  echo "$ip"
+}
+
 require_root() {
   if [[ "$(id -u)" -ne 0 ]]; then
     echo "This script must run as root. Use sudo." >&2
@@ -27,11 +46,14 @@ ensure_user() {
 }
 
 install_packages() {
+  print_step "Installing base packages"
   apt-get update
   apt-get install -y postgresql smartmontools curl jq ca-certificates openssl build-essential git
+  print_ok "Base packages installed"
 }
 
 install_go() {
+  print_step "Installing Go ${GO_VERSION}"
   if command -v go >/dev/null 2>&1; then
     local current major minor
     current=$(go version | awk '{print $3}' | sed 's/go//')
@@ -39,6 +61,7 @@ install_go() {
     minor=$(echo "$current" | cut -d. -f2)
     if [[ "$major" -gt 1 || ( "$major" -eq 1 && "$minor" -ge 21 ) ]]; then
       export PATH="/usr/local/go/bin:$PATH"
+      print_ok "Go already installed ($current)"
       return
     fi
   fi
@@ -48,28 +71,35 @@ install_go() {
   tar -C /usr/local -xzf /tmp/go.tgz
   rm -f /tmp/go.tgz
   export PATH="/usr/local/go/bin:$PATH"
+  print_ok "Go installed"
 }
 
 install_node() {
+  print_step "Installing Node.js 18.x"
   if command -v node >/dev/null 2>&1; then
     local major
     major=$(node -v | sed 's/v//' | cut -d. -f1)
     if [[ "$major" -ge 18 ]]; then
+      print_ok "Node.js already installed ($(node -v))"
       return
     fi
   fi
 
   curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-  apt-get install -y nodejs
+  apt-get install -y nodejs >/dev/null
+  print_ok "Node.js installed"
 }
 
 ensure_dirs() {
+  print_step "Preparing directories"
   mkdir -p /etc/lightningos /etc/lightningos/tls /etc/lnd /opt/lightningos/manager /opt/lightningos/ui /var/lib/lightningos /var/log/lightningos
   chmod 750 /etc/lightningos
   chmod 750 /var/lib/lightningos
+  print_ok "Directories ready"
 }
 
 copy_templates() {
+  print_step "Copying config templates"
   if [[ ! -f /etc/lightningos/config.yaml ]]; then
     cp "$REPO_ROOT/templates/lightningos.config.yaml" /etc/lightningos/config.yaml
   fi
@@ -85,9 +115,11 @@ copy_templates() {
     cp "$REPO_ROOT/templates/lnd.user.conf" /etc/lnd/lnd.user.conf
     chmod 640 /etc/lnd/lnd.user.conf
   fi
+  print_ok "Templates copied"
 }
 
 postgres_setup() {
+  print_step "Configuring PostgreSQL"
   local db_user="lndpg"
   local db_name="lnd"
   local existing
@@ -101,6 +133,7 @@ postgres_setup() {
   else
     ensure_dsn "$db_user" "$db_name"
   fi
+  print_ok "PostgreSQL ready"
 }
 
 update_dsn() {
@@ -137,7 +170,9 @@ ensure_dsn() {
 }
 
 install_lnd() {
+  print_step "Installing LND ${LND_VERSION}"
   if [[ -x /usr/local/bin/lnd && -x /usr/local/bin/lncli ]]; then
+    print_ok "LND already installed"
     return
   fi
 
@@ -154,26 +189,34 @@ install_lnd() {
   install -m 0755 "$bin_dir/lnd" /usr/local/bin/lnd
   install -m 0755 "$bin_dir/lncli" /usr/local/bin/lncli
   rm -rf "$tmp"
+  print_ok "LND installed"
 }
 
 build_ui() {
+  print_step "Building UI"
   (cd "$REPO_ROOT/ui" && npm install && npm run build)
+  print_ok "UI build complete"
 }
 
 install_manager() {
+  print_step "Building LightningOS Manager"
   if [[ -x /opt/lightningos/manager/lightningos-manager ]]; then
+    print_ok "Manager already installed"
     return
   fi
 
   if [[ -x "$REPO_ROOT/dist/lightningos-manager" ]]; then
     install -m 0755 "$REPO_ROOT/dist/lightningos-manager" /opt/lightningos/manager/lightningos-manager
+    print_ok "Manager installed from dist/"
     return
   fi
 
   (cd "$REPO_ROOT" && go build -o /opt/lightningos/manager/lightningos-manager ./cmd/lightningos-manager)
+  print_ok "Manager built and installed"
 }
 
 install_ui() {
+  print_step "Installing UI"
   if [[ -d "$REPO_ROOT/ui/dist" ]]; then
     rm -rf /opt/lightningos/ui/*
     cp -a "$REPO_ROOT/ui/dist/." /opt/lightningos/ui/
@@ -182,29 +225,47 @@ install_ui() {
     rm -rf /opt/lightningos/ui/*
     cp -a "$REPO_ROOT/ui/dist/." /opt/lightningos/ui/
   fi
+  print_ok "UI installed"
 }
 
 generate_tls() {
+  print_step "Generating TLS certificate"
   if [[ -f /etc/lightningos/tls/server.crt && -f /etc/lightningos/tls/server.key ]]; then
+    print_ok "TLS already exists"
     return
   fi
   openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 -nodes \
     -subj "/CN=localhost" \
     -keyout /etc/lightningos/tls/server.key \
     -out /etc/lightningos/tls/server.crt
+  print_ok "TLS generated"
 }
 
 install_systemd() {
+  print_step "Installing systemd services"
   cp "$REPO_ROOT/templates/systemd/lnd.service" /etc/systemd/system/lnd.service
   cp "$REPO_ROOT/templates/systemd/lightningos-manager.service" /etc/systemd/system/lightningos-manager.service
   systemctl daemon-reload
   systemctl enable --now postgresql
   systemctl enable --now lnd
   systemctl enable --now lightningos-manager
+  print_ok "Services enabled and started"
+}
+
+service_status_summary() {
+  print_step "Service status summary"
+  for svc in postgresql lnd lightningos-manager; do
+    if systemctl is-active --quiet "$svc"; then
+      print_ok "$svc is active"
+    else
+      print_warn "$svc is not active"
+    fi
+  done
 }
 
 main() {
   require_root
+  print_step "LightningOS Light installation starting"
   ensure_user lnd /var/lib/lnd
   ensure_user lightningos /var/lib/lightningos
   install_packages
@@ -218,7 +279,21 @@ main() {
   install_ui
   generate_tls
   install_systemd
-  echo "Installation complete. Open https://127.0.0.1:8443"
+  service_status_summary
+  local_ip=$(get_lan_ip)
+  echo ""
+  echo "Installation complete."
+  echo "Open the UI from another machine on the same LAN:"
+  if [[ -n "$local_ip" ]]; then
+    echo "  https://$local_ip:8443"
+  else
+    echo "  https://<SERVER_LAN_IP>:8443"
+  fi
+  echo ""
+  echo "Next steps:"
+  echo "  1) Open the URL above"
+  echo "  2) Complete the wizard (Bitcoin RPC + wallet)"
+  echo "  3) Go to the dashboard"
 }
 
 main "$@"

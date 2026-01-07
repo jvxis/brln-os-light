@@ -304,7 +304,11 @@ install_manager() {
   mkdir -p /opt/lightningos/go /opt/lightningos/go-cache /opt/lightningos/go/pkg/mod
 
   print_step "Downloading Go modules"
-  (cd "$REPO_ROOT" && env $go_env GOFLAGS=-mod=mod go mod tidy)
+  if [[ -f "$REPO_ROOT/go.sum" ]]; then
+    (cd "$REPO_ROOT" && env $go_env GOFLAGS=-mod=readonly go mod download)
+  else
+    (cd "$REPO_ROOT" && env $go_env GOFLAGS=-mod=mod go mod download)
+  fi
   print_ok "Go modules ready"
 
   (cd "$REPO_ROOT" && env $go_env GOFLAGS=-mod=mod go build -o /opt/lightningos/manager/lightningos-manager ./cmd/lightningos-manager)

@@ -9,4 +9,5 @@ require (
   github.com/lightningnetwork/lnd v0.20.0-beta
   gopkg.in/yaml.v3 v3.0.1
   google.golang.org/grpc v1.64.0
+  google.golang.org/protobuf v1.34.2
 )

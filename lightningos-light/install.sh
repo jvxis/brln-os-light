@@ -20,14 +20,39 @@ print_step() {
 }
 
 print_ok() {
-  echo "✔ $1"
+  echo "[OK] $1"
 }
 
 print_warn() {
-  echo "⚠ $1"
+  echo "[WARN] $1"
 }
 
-trap 'echo ""; echo "Installation failed during: ${CURRENT_STEP:-unknown}"; echo "Last command: $BASH_COMMAND"; echo "Check: systemctl status postgresql --no-pager"; exit 1' ERR
+trap 'echo ""; echo "Installation failed during: ${CURRENT_STEP:-unknown}"; echo "Last command: $BASH_COMMAND"; echo "Check: systemctl status postgresql --no-pager"; echo "Also: journalctl -u postgresql -n 50 --no-pager"; exit 1' ERR
+
+psql_as_postgres() {
+  if command -v runuser >/dev/null 2>&1; then
+    runuser -u postgres -- psql "$@"
+  else
+    sudo -u postgres psql "$@"
+  fi
+}
+
+wait_for_postgres() {
+  if ! command -v pg_isready >/dev/null 2>&1; then
+    sleep 2
+    return 0
+  fi
+
+  local retries=20
+  local i
+  for i in $(seq 1 "$retries"); do
+    if pg_isready -q; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
 
 get_lan_ip() {
   local ip
@@ -126,10 +151,15 @@ copy_templates() {
 postgres_setup() {
   print_step "Configuring PostgreSQL"
   systemctl enable --now postgresql >/dev/null 2>&1 || true
+  if ! wait_for_postgres; then
+    print_warn "PostgreSQL did not become ready"
+    print_warn "Try: systemctl status postgresql --no-pager"
+    exit 1
+  fi
   local db_user="lndpg"
   local db_name="lnd"
   local existing
-  if ! existing=$(runuser -u postgres -- psql -tAc "select 1 from pg_roles where rolname='${db_user}'" 2>&1); then
+  if ! existing=$(psql_as_postgres -tAc "select 1 from pg_roles where rolname='${db_user}'" 2>&1); then
     print_warn "PostgreSQL access failed: $existing"
     print_warn "Try: systemctl status postgresql --no-pager"
     exit 1
@@ -137,8 +167,8 @@ postgres_setup() {
   if [[ "$existing" != "1" ]]; then
     local pw
     pw=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 24)
-    runuser -u postgres -- psql -c "create role ${db_user} with login password '${pw}'"
-    runuser -u postgres -- psql -c "create database ${db_name} owner ${db_user}"
+    psql_as_postgres -c "create role ${db_user} with login password '${pw}'"
+    psql_as_postgres -c "create database ${db_name} owner ${db_user}"
     update_dsn "$db_user" "$pw" "$db_name"
   else
     ensure_dsn "$db_user" "$db_name"
@@ -174,7 +204,7 @@ ensure_dsn() {
   if [[ -z "$current" || "$current" == *"CHANGE_ME"* ]]; then
     local pw
     pw=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 24)
-    runuser -u postgres -- psql -c "alter role ${db_user} with password '${pw}'"
+    psql_as_postgres -c "alter role ${db_user} with password '${pw}'"
     update_dsn "$db_user" "$pw" "$db_name"
   fi
 }

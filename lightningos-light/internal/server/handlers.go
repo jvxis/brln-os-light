@@ -293,7 +293,8 @@ func (s *Server) handleWizardBitcoinRemote(w http.ResponseWriter, r *http.Reques
   }
 
   if err := storeBitcoinSecrets(req.RPCUser, req.RPCPass); err != nil {
-    writeError(w, http.StatusInternalServerError, "failed to store secrets")
+    s.logger.Printf("failed to store secrets: %v", err)
+    writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to store secrets: %v", err))
     return
   }
 
@@ -604,7 +605,7 @@ func writeUserConf(content string) error {
   if err := os.MkdirAll(filepath.Dir(lndUserConfPath), 0750); err != nil {
     return err
   }
-  return os.WriteFile(lndUserConfPath, []byte(content), 0640)
+  return os.WriteFile(lndUserConfPath, []byte(content), 0664)
 }
 
 func (s *Server) handleWalletSummary(w http.ResponseWriter, r *http.Request) {
@@ -801,7 +802,7 @@ func storeBitcoinSecrets(user, pass string) error {
   if err := os.MkdirAll(filepath.Dir(secretsPath), 0750); err != nil {
     return err
   }
-  return os.WriteFile(secretsPath, []byte(strings.Join(lines, "\n")), 0600)
+  return os.WriteFile(secretsPath, []byte(strings.Join(lines, "\n")), 0660)
 }
 
 func updateLNDConfRPC(user, pass string) error {
@@ -824,5 +825,5 @@ func updateLNDConfRPC(user, pass string) error {
     }
   }
 
-  return os.WriteFile(lndConfPath, []byte(strings.Join(lines, "\n")), 0640)
+  return os.WriteFile(lndConfPath, []byte(strings.Join(lines, "\n")), 0664)
 }

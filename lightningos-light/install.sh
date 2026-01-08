@@ -160,8 +160,8 @@ fix_permissions() {
     chmod 640 /etc/lightningos/tls/server.key
   fi
   if [[ -f /etc/lightningos/secrets.env ]]; then
-    chown root:root /etc/lightningos/secrets.env
-    chmod 600 /etc/lightningos/secrets.env
+    chown root:lightningos /etc/lightningos/secrets.env
+    chmod 660 /etc/lightningos/secrets.env
   fi
   if [[ -f /etc/lnd/lnd.conf ]]; then
     chown root:lightningos /etc/lnd/lnd.conf
@@ -182,15 +182,16 @@ copy_templates() {
   fi
   if [[ ! -f /etc/lightningos/secrets.env ]]; then
     cp "$REPO_ROOT/templates/secrets.env" /etc/lightningos/secrets.env
-    chmod 600 /etc/lightningos/secrets.env
+    chown root:lightningos /etc/lightningos/secrets.env
+    chmod 660 /etc/lightningos/secrets.env
   fi
   if [[ ! -f /etc/lnd/lnd.conf ]]; then
     cp "$REPO_ROOT/templates/lnd.conf" /etc/lnd/lnd.conf
-    chmod 640 /etc/lnd/lnd.conf
+    chmod 664 /etc/lnd/lnd.conf
   fi
   if [[ ! -f /etc/lnd/lnd.user.conf ]]; then
     cp "$REPO_ROOT/templates/lnd.user.conf" /etc/lnd/lnd.user.conf
-    chmod 640 /etc/lnd/lnd.user.conf
+    chmod 664 /etc/lnd/lnd.user.conf
   fi
   print_ok "Templates copied"
 }
@@ -318,15 +319,45 @@ build_ui() {
   print_ok "UI build complete"
 }
 
+manager_build_stamp() {
+  if command -v git >/dev/null 2>&1 && git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    local rev dirty
+    rev=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "nogit")
+    dirty=$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null | sha256sum | awk '{print $1}')
+    echo "${rev}-${dirty}"
+    return
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then
+    find "$REPO_ROOT" -type f \( -name '*.go' -o -name 'go.mod' -o -name 'go.sum' \) -print0 \
+      | sort -z \
+      | xargs -0 sha256sum \
+      | sha256sum \
+      | awk '{print $1}'
+    return
+  fi
+  date +%s
+}
+
 install_manager() {
   print_step "Building LightningOS Manager"
-  if [[ -x /opt/lightningos/manager/lightningos-manager ]]; then
-    print_ok "Manager already installed"
-    return
+  local stamp_file="/opt/lightningos/manager/.build_stamp"
+  local current_stamp
+  current_stamp=$(manager_build_stamp)
+  if [[ -x /opt/lightningos/manager/lightningos-manager && -f "$stamp_file" ]]; then
+    local existing_stamp
+    existing_stamp=$(cat "$stamp_file" 2>/dev/null || true)
+    if [[ -n "$current_stamp" && "$existing_stamp" == "$current_stamp" ]]; then
+      print_ok "Manager already installed (up-to-date)"
+      return
+    fi
   fi
 
   if [[ -x "$REPO_ROOT/dist/lightningos-manager" ]]; then
     install -m 0755 "$REPO_ROOT/dist/lightningos-manager" /opt/lightningos/manager/lightningos-manager
+    if [[ -n "$current_stamp" ]]; then
+      echo "$current_stamp" > "$stamp_file"
+      chmod 0644 "$stamp_file"
+    fi
     print_ok "Manager installed from dist/"
     return
   fi
@@ -341,6 +372,10 @@ install_manager() {
 
   print_step "Compiling LightningOS Manager"
   (cd "$REPO_ROOT" && env $go_env GOFLAGS=-mod=mod go build -o /opt/lightningos/manager/lightningos-manager ./cmd/lightningos-manager)
+  if [[ -n "$current_stamp" ]]; then
+    echo "$current_stamp" > "$stamp_file"
+    chmod 0644 "$stamp_file"
+  fi
   print_ok "Manager built and installed"
 }
 

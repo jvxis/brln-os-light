@@ -8,7 +8,7 @@
 - Nada de reverse proxy ou WAN no MVP.
 
 ## Segredos
-- rpcuser/rpcpass armazenados somente em /etc/lightningos/secrets.env (root-only, 600).
+- rpcuser/rpcpass armazenados somente em /etc/lightningos/secrets.env (root:lightningos, 660) para permitir escrita pelo manager.
 - DSN Postgres idem.
 - UI nunca re-exibe segredos após salvar.
 

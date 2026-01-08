@@ -64,7 +64,7 @@ See `DEVELOPMENT.md` for local dev setup and build instructions.
 
 ## Security notes
 - The seed phrase is never stored. It is displayed once in the wizard.
-- RPC credentials are stored only in `/etc/lightningos/secrets.env` (root-only).
+- RPC credentials are stored only in `/etc/lightningos/secrets.env` (root:lightningos, `chmod 660`).
 - API/UI bind to `0.0.0.0` by default for LAN access. If you want localhost-only, set `server.host: "127.0.0.1"` in `/etc/lightningos/config.yaml`.
 
 ## API

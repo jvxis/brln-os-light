@@ -32,7 +32,7 @@ features:
   enable_bitcoin_local_placeholder: true
   enable_app_store_placeholder: true
 
-## /etc/lightningos/secrets.env (chmod 600 root:root)
+## /etc/lightningos/secrets.env (chmod 660 root:lightningos)
 # Postgres DSN for LND backend
 LND_PG_DSN=postgres://lndpg:CHANGE_ME@127.0.0.1:5432/lnd?sslmode=disable
 

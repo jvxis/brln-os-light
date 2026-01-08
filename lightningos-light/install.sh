@@ -268,6 +268,11 @@ validate_lnd_conf() {
   if ! grep -q '^bitcoin.node=bitcoind' "$LND_CONF"; then
     print_warn "lnd.conf missing bitcoin.node=bitcoind"
   fi
+  if ! grep -q '^db.postgres.dsn=' "$LND_CONF"; then
+    print_warn "lnd.conf missing db.postgres.dsn"
+  elif grep -q '^db.postgres.dsn=.*CHANGE_ME' "$LND_CONF"; then
+    print_warn "lnd.conf has placeholder db.postgres.dsn"
+  fi
 }
 
 postgres_setup() {
@@ -345,6 +350,20 @@ update_dsn() {
   chmod 660 "$LND_CONF"
 }
 
+sync_lnd_dsn_from_secrets() {
+  local dsn
+  dsn=$(grep '^LND_PG_DSN=' /etc/lightningos/secrets.env | cut -d= -f2- || true)
+  if [[ -z "$dsn" ]]; then
+    return
+  fi
+  if ! grep -q '^db.postgres.dsn=' "$LND_CONF"; then
+    echo "db.postgres.dsn=${dsn}" >> "$LND_CONF"
+  else
+    sed -i "s|^db.postgres.dsn=.*|db.postgres.dsn=${dsn}|" "$LND_CONF"
+  fi
+  chmod 660 "$LND_CONF"
+}
+
 ensure_dsn() {
   local db_user="$1"
   local db_name="$2"
@@ -359,6 +378,7 @@ ensure_dsn() {
     psql_exec "Alter role password" -c "alter role ${db_user} with password '${pw}'"
     update_dsn "$db_user" "$pw" "$db_name"
   fi
+  sync_lnd_dsn_from_secrets
 }
 
 install_lnd() {

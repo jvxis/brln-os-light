@@ -14,7 +14,6 @@ GO_TARBALL_URL="https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
 
 LND_DIR="/data/lnd"
 LND_CONF="${LND_DIR}/lnd.conf"
-LND_USER_CONF="${LND_DIR}/lnd.user.conf"
 
 CURRENT_STEP=""
 LOG_FILE="/var/log/lightningos-install.log"
@@ -218,10 +217,6 @@ fix_permissions() {
     chown lnd:lnd "$LND_CONF"
     chmod 660 "$LND_CONF"
   fi
-  if [[ -f "$LND_USER_CONF" ]]; then
-    chown lnd:lnd "$LND_USER_CONF"
-    chmod 660 "$LND_USER_CONF"
-  fi
   if [[ -f "$LND_DIR/tls.cert" ]]; then
     chown lnd:lnd "$LND_DIR/tls.cert"
     chmod 640 "$LND_DIR/tls.cert"
@@ -253,14 +248,8 @@ copy_templates() {
     chown lnd:lnd "$LND_CONF"
     chmod 660 "$LND_CONF"
   fi
-  if [[ ! -f "$LND_USER_CONF" ]]; then
-    cp "$REPO_ROOT/templates/lnd.user.conf" "$LND_USER_CONF"
-    chown lnd:lnd "$LND_USER_CONF"
-    chmod 660 "$LND_USER_CONF"
-  fi
   strip_crlf /etc/lightningos/config.yaml
   strip_crlf "$LND_CONF"
-  strip_crlf "$LND_USER_CONF"
   print_ok "Templates copied"
 }
 
@@ -538,6 +527,8 @@ install_systemd() {
   print_step "Installing systemd services"
   cp "$REPO_ROOT/templates/systemd/lnd.service" /etc/systemd/system/lnd.service
   cp "$REPO_ROOT/templates/systemd/lightningos-manager.service" /etc/systemd/system/lightningos-manager.service
+  strip_crlf /etc/systemd/system/lnd.service
+  strip_crlf /etc/systemd/system/lightningos-manager.service
   systemctl daemon-reload
   systemctl enable --now postgresql
   systemctl enable --now lnd

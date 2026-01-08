@@ -157,6 +157,7 @@ Response:
 
 ### GET /api/lnd/config
 Retorna os campos suportados e valores atuais.
+Obs: `raw_user_conf` contém o conteúdo do /data/lnd/lnd.conf.
 Response:
 {
   "supported": {
@@ -173,7 +174,7 @@ Response:
 }
 
 ### POST /api/lnd/config
-Atualiza lnd.user.conf com valores validados e opcionalmente reinicia o LND.
+Atualiza lnd.conf com valores validados e opcionalmente reinicia o LND.
 Body:
 {
   "alias": "string",
@@ -185,7 +186,7 @@ Response:
 { "ok": true }
 
 ### POST /api/lnd/config/raw
-Modo avançado: substitui o conteúdo do lnd.user.conf.
+Modo avançado: substitui o conteúdo do lnd.conf.
 Body:
 {
   "raw_user_conf": "string",

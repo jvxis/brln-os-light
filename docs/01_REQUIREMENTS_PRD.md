@@ -84,7 +84,7 @@ Quer UI bonita mas também quer acessar logs e aprender com o sistema.
   - Node alias
   - tamanho mínimo de canal
   - tamanho máximo de canal
-- A UI não deve editar o lnd.conf base.
-- O sistema deve persistir as alterações no arquivo /data/lnd/lnd.user.conf.
+- A UI deve editar o arquivo /data/lnd/lnd.conf apenas nas chaves suportadas.
+- O sistema deve persistir as alterações no arquivo /data/lnd/lnd.conf.
 - Ao salvar, o sistema deve validar os valores e reiniciar o LND (apply_now=true por padrão).
-- Deve existir modo avançado opcional para editar apenas o lnd.user.conf com rollback em caso de falha.
+- Deve existir modo avançado opcional para editar o lnd.conf com rollback em caso de falha.

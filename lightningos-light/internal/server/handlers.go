@@ -23,7 +23,6 @@ import (
 const (
   secretsPath = "/etc/lightningos/secrets.env"
   lndConfPath = "/data/lnd/lnd.conf"
-  lndUserConfPath = "/data/lnd/lnd.user.conf"
   lndPasswordPath = "/data/lnd/password.txt"
 )
 
@@ -505,7 +504,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLNDConfigGet(w http.ResponseWriter, r *http.Request) {
-  raw, _ := os.ReadFile(lndUserConfPath)
+  raw, _ := os.ReadFile(lndConfPath)
 
   current := parseLNDUserConf(string(raw))
 
@@ -590,9 +589,17 @@ func (s *Server) handleLNDConfigPost(w http.ResponseWriter, r *http.Request) {
     return
   }
 
-  content := buildLNDUserConf(req.Alias, req.MinChannelSizeSat, req.MaxChannelSizeSat)
-  if err := writeUserConf(content); err != nil {
-    writeError(w, http.StatusInternalServerError, "failed to write user conf")
+  raw, err := os.ReadFile(lndConfPath)
+  if err != nil {
+    writeError(w, http.StatusInternalServerError, "failed to read lnd.conf")
+    return
+  }
+  updated := updateLNDConfOptions(string(raw), req.Alias, req.MinChannelSizeSat, req.MaxChannelSizeSat)
+  if walletPasswordAvailable() {
+    updated = ensureUnlockLines(updated)
+  }
+  if err := os.WriteFile(lndConfPath, []byte(updated), 0660); err != nil {
+    writeError(w, http.StatusInternalServerError, "failed to write lnd.conf")
     return
   }
 
@@ -615,9 +622,13 @@ func (s *Server) handleLNDConfigRaw(w http.ResponseWriter, r *http.Request) {
     return
   }
 
-  prev, _ := os.ReadFile(lndUserConfPath)
-  if err := writeUserConf(req.RawUserConf); err != nil {
-    writeError(w, http.StatusInternalServerError, "failed to write user conf")
+  prev, _ := os.ReadFile(lndConfPath)
+  updated := req.RawUserConf
+  if walletPasswordAvailable() {
+    updated = ensureUnlockLines(updated)
+  }
+  if err := os.WriteFile(lndConfPath, []byte(updated), 0660); err != nil {
+    writeError(w, http.StatusInternalServerError, "failed to write lnd.conf")
     return
   }
 
@@ -625,7 +636,7 @@ func (s *Server) handleLNDConfigRaw(w http.ResponseWriter, r *http.Request) {
     ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
     defer cancel()
     if err := system.SystemctlRestart(ctx, "lnd"); err != nil {
-      _ = writeUserConf(string(prev))
+      _ = os.WriteFile(lndConfPath, prev, 0660)
       writeError(w, http.StatusInternalServerError, "lnd restart failed, rollback applied")
       return
     }
@@ -634,38 +645,76 @@ func (s *Server) handleLNDConfigRaw(w http.ResponseWriter, r *http.Request) {
   writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-func buildLNDUserConf(alias string, minChanSize int64, maxChanSize int64) string {
-  var buf strings.Builder
-  buf.WriteString("[Application Options]\n")
-  if alias != "" {
-    buf.WriteString("alias=")
-    buf.WriteString(alias)
-    buf.WriteString("\n")
-  }
-  if minChanSize > 0 {
-    buf.WriteString("minchansize=")
-    buf.WriteString(strconv.FormatInt(minChanSize, 10))
-    buf.WriteString("\n")
-  }
-  if maxChanSize > 0 {
-    buf.WriteString("maxchansize=")
-    buf.WriteString(strconv.FormatInt(maxChanSize, 10))
-    buf.WriteString("\n")
-  }
-  if walletPasswordAvailable() {
-    buf.WriteString("wallet-unlock-password-file=")
-    buf.WriteString(lndPasswordPath)
-    buf.WriteString("\n")
-    buf.WriteString("wallet-unlock-allow-create=true\n")
-  }
-  return buf.String()
+type lndOptionUpdate struct {
+  value string
+  remove bool
+  seen bool
 }
 
-func writeUserConf(content string) error {
-  if err := os.MkdirAll(filepath.Dir(lndUserConfPath), 0750); err != nil {
-    return err
+func updateLNDConfOptions(raw string, alias string, minChanSize int64, maxChanSize int64) string {
+  updates := map[string]*lndOptionUpdate{
+    "alias": {value: alias, remove: strings.TrimSpace(alias) == ""},
+    "minchansize": {value: strconv.FormatInt(minChanSize, 10), remove: minChanSize <= 0},
+    "maxchansize": {value: strconv.FormatInt(maxChanSize, 10), remove: maxChanSize <= 0},
   }
-  return os.WriteFile(lndUserConfPath, []byte(content), 0660)
+
+  lines := strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n")
+  start := -1
+  end := len(lines)
+  for i, line := range lines {
+    trimmed := strings.TrimSpace(line)
+    if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+      if strings.EqualFold(trimmed, "[Application Options]") {
+        start = i
+        continue
+      }
+      if start != -1 && i > start {
+        end = i
+        break
+      }
+    }
+  }
+
+  if start == -1 {
+    lines = append(lines, "[Application Options]")
+    start = len(lines) - 1
+    end = len(lines)
+  }
+
+  for i := start + 1; i < end; i++ {
+    trimmed := strings.TrimSpace(lines[i])
+    if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+      continue
+    }
+    parts := strings.SplitN(trimmed, "=", 2)
+    if len(parts) != 2 {
+      continue
+    }
+    key := strings.TrimSpace(parts[0])
+    upd, ok := updates[key]
+    if !ok {
+      continue
+    }
+    upd.seen = true
+    if upd.remove {
+      lines[i] = ""
+      continue
+    }
+    lines[i] = fmt.Sprintf("%s=%s", key, upd.value)
+  }
+
+  extra := []string{}
+  for key, upd := range updates {
+    if upd.seen || upd.remove {
+      continue
+    }
+    extra = append(extra, fmt.Sprintf("%s=%s", key, upd.value))
+  }
+  if len(extra) > 0 {
+    lines = append(lines[:end], append(extra, lines[end:]...)...)
+  }
+
+  return strings.Join(lines, "\n")
 }
 
 func (s *Server) handleWalletSummary(w http.ResponseWriter, r *http.Request) {
@@ -961,12 +1010,12 @@ func walletPasswordAvailable() bool {
 }
 
 func ensureWalletUnlockConfig() error {
-  if err := os.MkdirAll(filepath.Dir(lndUserConfPath), 0750); err != nil {
+  if err := os.MkdirAll(filepath.Dir(lndConfPath), 0750); err != nil {
     return err
   }
-  raw, _ := os.ReadFile(lndUserConfPath)
+  raw, _ := os.ReadFile(lndConfPath)
   updated := ensureUnlockLines(string(raw))
-  return os.WriteFile(lndUserConfPath, []byte(updated), 0660)
+  return os.WriteFile(lndConfPath, []byte(updated), 0660)
 }
 
 func ensureUnlockLines(raw string) string {

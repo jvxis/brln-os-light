@@ -49,7 +49,8 @@ export default function LndConfig() {
     <section className="space-y-6">
       <div className="section-card">
         <h2 className="text-2xl font-semibold">LND configuration</h2>
-        <p className="text-fog/60">Edit supported values in /data/lnd/lnd.user.conf.</p>
+        <p className="text-fog/60">Edit supported values in /data/lnd/lnd.conf.</p>
+        <p className="text-fog/50 text-sm">Advanced editor rewrites the full lnd.conf.</p>
         {status && <p className="text-sm text-brass mt-4">{status}</p>}
       </div>
 

@@ -12,7 +12,7 @@ Wants=network-online.target
 User=lnd
 Group=lnd
 Type=simple
-ExecStart=/usr/local/bin/lnd --lnddir=/data/lnd --configfile=/data/lnd/lnd.conf --configfile=/data/lnd/lnd.user.conf
+ExecStart=/usr/local/bin/lnd
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=65536
@@ -21,7 +21,7 @@ LimitNOFILE=65536
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ProtectHome=true
+ProtectHome=false
 ReadWritePaths=/data/lnd /var/log/lnd
 # Se precisar acessar /home/lnd/.lnd, ajustar paths.
 

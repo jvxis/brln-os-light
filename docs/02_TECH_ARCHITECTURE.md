@@ -67,13 +67,8 @@
 
 # FILE: docs/02_TECH_ARCHITECTURE.md  (APPEND)
 
-## Configuração do LND (base + overrides)
-Para permitir personalizações sem risco, o LND usará dois arquivos de config:
+## Configura????o do LND
+- Arquivo ?nico: /data/lnd/lnd.conf
+- A UI altera apenas chaves suportadas (alias, minchansize, maxchansize) na se??o [Application Options].
+- O servi?o inicia com lnd, usando /home/lnd/.lnd (symlink para /data/lnd).
 
-- Base (gerenciado pelo instalador): /data/lnd/lnd.conf
-- Overrides do usuário (gerenciado pela UI): /data/lnd/lnd.user.conf
-
-O serviço inicia com:
-lnd --configfile=/data/lnd/lnd.conf --configfile=/data/lnd/lnd.user.conf
-
-O arquivo lnd.user.conf contém apenas opções selecionadas via UI, como alias e limites de canais.

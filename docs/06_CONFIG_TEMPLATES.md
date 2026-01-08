@@ -40,12 +40,3 @@ LND_PG_DSN=postgres://lndpg:CHANGE_ME@127.0.0.1:5432/lnd?sslmode=disable
 BITCOIN_RPC_USER=
 BITCOIN_RPC_PASS=
 
-# FILE: docs/06_CONFIG_TEMPLATES.md  (APPEND)
-
-## /data/lnd/lnd.user.conf (gerenciado pela UI)
-[Application Options]
-# alias=LightningOS-Node
-# minchansize=20000
-# maxchansize=5000000
-
-Obs: o manager deve escrever apenas as chaves suportadas pela versão do LND instalada.

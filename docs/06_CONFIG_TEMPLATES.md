@@ -40,3 +40,6 @@ LND_PG_DSN=postgres://lndpg:CHANGE_ME@127.0.0.1:5432/lnd?sslmode=disable
 BITCOIN_RPC_USER=
 BITCOIN_RPC_PASS=
 
+## /data/lnd/lnd.conf (gerenciado pelo instalador + UI)
+Ver `docs/07_LND_CONF_TEMPLATE.md` para o template completo.
+

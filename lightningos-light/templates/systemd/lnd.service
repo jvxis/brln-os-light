@@ -4,19 +4,28 @@ After=network-online.target postgresql.service
 Wants=network-online.target
 
 [Service]
+ExecStart=/usr/local/bin/lnd
+ExecStop=/usr/local/bin/lncli stop
+
+# Process management
+Restart=on-failure
+RestartSec=60
+Type=notify
+TimeoutStartSec=1200
+TimeoutStopSec=3600
+
+# Runtime directory
+RuntimeDirectory=lightningd
+RuntimeDirectoryMode=0710
 User=lnd
 Group=lnd
-Type=simple
-ExecStart=/usr/local/bin/lnd
-Restart=on-failure
-RestartSec=5
-LimitNOFILE=65536
 
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
+MemoryDenyWriteExecute=true
 ProtectSystem=full
-ProtectHome=false
-ReadWritePaths=/data/lnd /var/log/lnd
+
 
 [Install]
 WantedBy=multi-user.target

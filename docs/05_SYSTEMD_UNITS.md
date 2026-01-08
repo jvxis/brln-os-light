@@ -9,21 +9,28 @@ After=network-online.target postgresql.service
 Wants=network-online.target
 
 [Service]
+ExecStart=/usr/local/bin/lnd
+ExecStop=/usr/local/bin/lncli stop
+
+# Gerenciamento de processo
+Restart=on-failure
+RestartSec=60
+Type=notify
+TimeoutStartSec=1200
+TimeoutStopSec=3600
+
+# Criacao e permissoes de diretorio
+RuntimeDirectory=lightningd
+RuntimeDirectoryMode=0710
 User=lnd
 Group=lnd
-Type=simple
-ExecStart=/usr/local/bin/lnd
-Restart=on-failure
-RestartSec=5
-LimitNOFILE=65536
 
-# Hardening (ajustar conforme necessário)
+# Hardening (ajustar conforme necessario)
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
+MemoryDenyWriteExecute=true
 ProtectSystem=full
-ProtectHome=false
-ReadWritePaths=/data/lnd /var/log/lnd
-# Se precisar acessar /home/lnd/.lnd, ajustar paths.
 
 [Install]
 WantedBy=multi-user.target
@@ -52,4 +59,3 @@ ReadWritePaths=/var/lib/lightningos /var/log/lightningos /etc/lightningos /data/
 
 [Install]
 WantedBy=multi-user.target
-

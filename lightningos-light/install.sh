@@ -173,12 +173,6 @@ ensure_dirs() {
 prepare_lnd_data_dir() {
   print_step "Preparing LND data directory"
   mkdir -p /data "$LND_DIR" /var/log/lnd
-  if [[ -d /var/lib/lnd && -n "$(ls -A /var/lib/lnd 2>/dev/null)" ]]; then
-    if [[ -d "$LND_DIR" && -z "$(ls -A "$LND_DIR" 2>/dev/null)" ]]; then
-      print_warn "Existing /var/lib/lnd detected; copying data to /data/lnd"
-      cp -a /var/lib/lnd/. "$LND_DIR"/
-    fi
-  fi
   chown -R lnd:lnd "$LND_DIR" /var/log/lnd
   chmod 750 "$LND_DIR" /var/log/lnd
   if [[ ! -e /home/lnd/.lnd ]]; then
@@ -251,15 +245,6 @@ copy_templates() {
   strip_crlf /etc/lightningos/config.yaml
   strip_crlf "$LND_CONF"
   print_ok "Templates copied"
-}
-
-migrate_lnd_paths() {
-  if [[ -f /etc/lightningos/config.yaml ]]; then
-    if grep -q "/var/lib/lnd" /etc/lightningos/config.yaml; then
-      sed -i 's#/var/lib/lnd#/data/lnd#g' /etc/lightningos/config.yaml
-      print_ok "Updated LND paths in /etc/lightningos/config.yaml"
-    fi
-  fi
 }
 
 validate_lnd_conf() {
@@ -601,7 +586,6 @@ main() {
   ensure_dirs
   prepare_lnd_data_dir
   copy_templates
-  migrate_lnd_paths
   validate_lnd_conf
   fix_permissions
   postgres_setup

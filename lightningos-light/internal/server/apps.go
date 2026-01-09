@@ -373,9 +373,12 @@ func ensureCompose(ctx context.Context) error {
 
 func runApt(ctx context.Context, args ...string) error {
   for attempt := 0; attempt < 10; attempt++ {
-    out, err := system.RunCommandWithSudo(ctx, "apt-get", args...)
+    out, err := runAptOnce(ctx, args...)
     if err == nil {
       return nil
+    }
+    if strings.Contains(out, "password is required") {
+      return errors.New("docker install needs passwordless sudo for lightningos (re-run install.sh or add /etc/sudoers.d/lightningos)")
     }
     if strings.Contains(out, "Could not get lock") || strings.Contains(out, "dpkg frontend lock") || strings.Contains(out, "dpkg/lock") {
       time.Sleep(3 * time.Second)
@@ -384,6 +387,25 @@ func runApt(ctx context.Context, args ...string) error {
     return fmt.Errorf("apt-get failed: %s", strings.TrimSpace(out))
   }
   return errors.New("apt-get blocked by dpkg lock")
+}
+
+func runAptOnce(ctx context.Context, args ...string) (string, error) {
+  aptPath := "/usr/bin/apt-get"
+  out, err := system.RunCommandWithSudo(ctx, "systemd-run", "--wait", "--pipe", "--collect", aptPath, args...)
+  if err == nil {
+    return out, nil
+  }
+  if strings.Contains(out, "password is required") {
+    return out, err
+  }
+  fallbackOut, fallbackErr := system.RunCommandWithSudo(ctx, "apt-get", args...)
+  if fallbackErr == nil {
+    return fallbackOut, nil
+  }
+  if strings.TrimSpace(fallbackOut) == "" {
+    return out, err
+  }
+  return fallbackOut, fallbackErr
 }
 
 func runCompose(ctx context.Context, appRoot string, composePath string, args ...string) error {

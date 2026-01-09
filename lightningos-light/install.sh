@@ -263,14 +263,37 @@ ensure_group_member() {
 
 configure_sudoers() {
   print_step "Configuring sudoers"
-  local systemctl_path
+  local systemctl_path apt_get_path apt_path dpkg_path docker_path docker_compose_path systemd_run_path
   systemctl_path=$(command -v systemctl || true)
+  apt_get_path=$(command -v apt-get || true)
+  apt_path=$(command -v apt || true)
+  dpkg_path=$(command -v dpkg || true)
+  docker_path=$(command -v docker || true)
+  docker_compose_path=$(command -v docker-compose || true)
+  systemd_run_path=$(command -v systemd-run || true)
   if [[ -z "$systemctl_path" ]]; then
     print_warn "systemctl not found; skipping sudoers setup"
     return
   fi
+  local system_cmds
+  system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql"
+  local app_cmds=()
+  [[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")
+  [[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")
+  [[ -n "$dpkg_path" ]] && app_cmds+=("${dpkg_path} *")
+  [[ -n "$docker_path" ]] && app_cmds+=("${docker_path} *")
+  [[ -n "$docker_compose_path" ]] && app_cmds+=("${docker_compose_path} *")
+  [[ -n "$systemd_run_path" ]] && app_cmds+=("${systemd_run_path} *")
+  local app_cmds_line
+  app_cmds_line=$(IFS=", "; echo "${app_cmds[*]}")
+  if [[ -z "$app_cmds_line" ]]; then
+    app_cmds_line="/bin/true"
+  fi
   cat > /etc/sudoers.d/lightningos <<EOF
-lightningos ALL=NOPASSWD: ${systemctl_path} restart lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql
+Defaults:lightningos !requiretty
+Cmnd_Alias LIGHTNINGOS_SYSTEM = ${system_cmds}
+Cmnd_Alias LIGHTNINGOS_APPS = ${app_cmds_line}
+lightningos ALL=NOPASSWD: LIGHTNINGOS_SYSTEM, LIGHTNINGOS_APPS
 EOF
   chmod 440 /etc/sudoers.d/lightningos
   print_ok "Sudoers configured"

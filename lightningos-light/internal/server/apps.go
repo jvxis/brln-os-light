@@ -390,8 +390,10 @@ func ensureCompose(ctx context.Context) error {
   if err != nil && strings.Contains(err.Error(), "passwordless sudo") {
     return err
   }
-  if err := installComposePluginBinary(ctx); err != nil && strings.Contains(err.Error(), "passwordless sudo") {
-    return err
+  if err := installComposePluginBinary(ctx); err != nil {
+    if strings.Contains(err.Error(), "passwordless sudo") {
+      return err
+    }
   }
   if _, _, err := resolveCompose(ctx); err != nil {
     return err
@@ -536,7 +538,7 @@ type composeRelease struct {
 }
 
 func installComposePluginBinary(ctx context.Context) error {
-  if fileExists("/usr/local/lib/docker/cli-plugins/docker-compose") {
+  if fileExists("/usr/lib/docker/cli-plugins/docker-compose") || fileExists("/usr/local/lib/docker/cli-plugins/docker-compose") {
     return nil
   }
   tag := fetchLatestComposeTag(ctx)
@@ -548,18 +550,22 @@ func installComposePluginBinary(ctx context.Context) error {
     return fmt.Errorf("unsupported architecture for docker compose: %s", runtime.GOARCH)
   }
   url := fmt.Sprintf("https://github.com/docker/compose/releases/download/%s/docker-compose-linux-%s", tag, arch)
-  targetDir := "/usr/local/lib/docker/cli-plugins"
-  targetPath := filepath.Join(targetDir, "docker-compose")
-  if _, err := system.RunCommandWithSudo(ctx, "mkdir", "-p", targetDir); err != nil {
-    return err
+  if _, err := exec.LookPath("curl"); err != nil {
+    if _, err := runApt(ctx, "install", "-y", "curl"); err != nil {
+      return err
+    }
   }
-  if _, err := system.RunCommandWithSudo(ctx, "curl", "-fsSL", "-o", targetPath, url); err != nil {
-    return err
+  targetPath := "/usr/local/lib/docker/cli-plugins/docker-compose"
+  script := fmt.Sprintf("mkdir -p /usr/local/lib/docker/cli-plugins && curl -fsSL -o %s %s && chmod 0755 %s", targetPath, url, targetPath)
+  if _, err := system.RunCommandWithSudo(ctx, "systemd-run", "--wait", "--pipe", "--collect", "/bin/sh", "-c", script); err == nil {
+    return nil
   }
-  if _, err := system.RunCommandWithSudo(ctx, "chmod", "0755", targetPath); err != nil {
-    return err
+  targetPath = "/usr/lib/docker/cli-plugins/docker-compose"
+  script = fmt.Sprintf("mkdir -p /usr/lib/docker/cli-plugins && curl -fsSL -o %s %s && chmod 0755 %s", targetPath, url, targetPath)
+  if _, err := system.RunCommandWithSudo(ctx, "systemd-run", "--wait", "--pipe", "--collect", "/bin/sh", "-c", script); err == nil {
+    return nil
   }
-  return nil
+  return errors.New("failed to install docker compose plugin binary")
 }
 
 func fetchLatestComposeTag(ctx context.Context) string {

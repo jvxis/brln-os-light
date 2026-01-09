@@ -382,11 +382,11 @@ func ensureCompose(ctx context.Context) error {
   if _, _, err := resolveCompose(ctx); err == nil {
     return nil
   }
-  out, err := runApt(ctx, "install", "-y", "docker-compose-plugin")
+  _, err := runApt(ctx, "install", "-y", "docker-compose-plugin")
   if err != nil && strings.Contains(err.Error(), "passwordless sudo") {
     return err
   }
-  out, err = runApt(ctx, "install", "-y", "docker-compose")
+  _, err = runApt(ctx, "install", "-y", "docker-compose")
   if err != nil && strings.Contains(err.Error(), "passwordless sudo") {
     return err
   }

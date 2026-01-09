@@ -12,6 +12,8 @@ LND_URL="${LND_URL:-$LND_URL_DEFAULT}"
 GO_VERSION="${GO_VERSION:-1.22.7}"
 GO_TARBALL_URL="https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
 
+NODE_VERSION="${NODE_VERSION:-20}"
+
 POSTGRES_VERSION="${POSTGRES_VERSION:-17}"
 
 LND_DIR="/data/lnd"
@@ -289,9 +291,7 @@ configure_tor() {
     return
   fi
   ensure_tor_setting "ControlPort" "9051"
-  ensure_tor_setting "CookieAuthentication" "1"
-  ensure_tor_setting "CookieAuthFileGroupReadable" "1"
-  ensure_tor_setting "SocksPort" "9050"
+
   strip_crlf "$torrc"
   start_tor_service
   if systemctl list-unit-files | grep -q '^tor@default\.service'; then
@@ -301,6 +301,13 @@ configure_tor() {
   fi
   if ! wait_for_tor_control; then
     print_warn "Tor control port 9051 not ready yet"
+    if systemctl list-unit-files | grep -q '^tor@default\.service'; then
+      systemctl status tor@default --no-pager || true
+      journalctl -u tor@default -n 50 --no-pager || true
+    else
+      systemctl status tor --no-pager || true
+      journalctl -u tor -n 50 --no-pager || true
+    fi
   fi
   print_ok "Tor configured"
 }
@@ -339,17 +346,17 @@ install_go() {
 }
 
 install_node() {
-  print_step "Installing Node.js 18.x"
+  print_step "Installing Node.js ${NODE_VERSION}.x"
   if command -v node >/dev/null 2>&1; then
     local major
     major=$(node -v | sed 's/v//' | cut -d. -f1)
-    if [[ "$major" -ge 18 ]]; then
+    if [[ "$major" -ge "$NODE_VERSION" ]]; then
       print_ok "Node.js already installed ($(node -v))"
       return
     fi
   fi
 
-  curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+  curl -fsSL "https://deb.nodesource.com/setup_${NODE_VERSION}.x" | bash -
   apt-get install -y nodejs >/dev/null
   print_ok "Node.js installed"
 }

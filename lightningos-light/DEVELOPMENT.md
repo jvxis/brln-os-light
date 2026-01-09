@@ -2,7 +2,7 @@
 
 ## Prerequisites
 - Go 1.22+
-- Node.js 18+
+- Node.js 20+
 
 ## Quick start
 1) Build the UI

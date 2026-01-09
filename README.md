@@ -21,7 +21,7 @@ LightningOS Light is a Full Lightning Node Daemon Installer, Lightning node mana
 The installer provisions everything needed on a clean Ubuntu box:
 - Postgres, smartmontools, curl, jq, ca-certificates, openssl, build tools
 - Tor (ControlPort enabled) + i2pd enabled by default
-- Go 1.22.x and Node.js 18.x (if missing or too old)
+- Go 1.22.x and Node.js 20.x (if missing or too old)
 - LND binaries (default `v0.20.0-beta`)
 - LightningOS Manager binary (compiled locally)
 - UI build (compiled locally)
@@ -107,4 +107,3 @@ cd ..
 sudo rm -rf /opt/lightningos/ui/*
 sudo cp -a ui/dist/. /opt/lightningos/ui/
 ```
-

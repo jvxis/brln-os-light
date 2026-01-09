@@ -315,22 +315,18 @@ configure_tor() {
   fi
   ensure_tor_setting "ControlPort" "127.0.0.1:9051"
   ensure_tor_setting "SocksPort" "127.0.0.1:9050"
+  ensure_tor_setting "CookieAuthentication" "1"
+  ensure_tor_setting "CookieAuthFileGroupReadable" "1"
 
   strip_crlf "$torrc"
   start_tor_service
-  if systemctl list-unit-files | grep -q '^tor@default\.service'; then
-    systemctl restart tor@default >/dev/null 2>&1 || true
-  else
-    systemctl restart tor >/dev/null 2>&1 || true
-  fi
+  systemctl restart tor >/dev/null 2>&1 || true
   if ! wait_for_tor_control; then
     print_warn "Tor control port 9051 not ready yet"
-    if systemctl list-unit-files | grep -q '^tor@default\.service'; then
-      systemctl status tor@default --no-pager || true
-      journalctl -u tor@default -n 50 --no-pager || true
-    else
-      systemctl status tor --no-pager || true
-      journalctl -u tor -n 50 --no-pager || true
+    systemctl status tor --no-pager || true
+    journalctl -u tor -n 50 --no-pager || true
+    if command -v ss >/dev/null 2>&1; then
+      ss -ltnp | grep -E '9050|9051' || true
     fi
   fi
   print_ok "Tor configured"
@@ -788,10 +784,13 @@ install_systemd() {
 
 start_tor_service() {
   if systemctl list-unit-files | grep -q '^tor@default\.service'; then
-    systemctl enable --now tor@default >/dev/null 2>&1 || true
-  else
-    systemctl enable --now tor >/dev/null 2>&1 || true
+    if systemctl is-active --quiet tor@default; then
+      print_warn "Stopping tor@default to avoid port conflicts with tor.service"
+      systemctl stop tor@default >/dev/null 2>&1 || true
+    fi
+    systemctl disable tor@default >/dev/null 2>&1 || true
   fi
+  systemctl enable --now tor >/dev/null 2>&1 || true
 }
 
 wait_for_tor_control() {

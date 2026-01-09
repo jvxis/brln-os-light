@@ -295,11 +295,14 @@ ensure_tor_setting() {
   local key="$1"
   local value="$2"
   local torrc="/etc/tor/torrc"
-  if grep -Eq "^[[:space:]]*#?[[:space:]]*${key}[[:space:]]+" "$torrc"; then
-    sed -i -E "s|^[[:space:]]*#?[[:space:]]*${key}[[:space:]]+.*|${key} ${value}|" "$torrc"
-  else
-    echo "${key} ${value}" >> "$torrc"
+  if [[ ! -f "$torrc" ]]; then
+    return
   fi
+  local tmp
+  tmp=$(mktemp)
+  grep -Ev "^[[:space:]]*#?[[:space:]]*${key}[[:space:]]+" "$torrc" > "$tmp"
+  echo "${key} ${value}" >> "$tmp"
+  mv "$tmp" "$torrc"
 }
 
 configure_tor() {
@@ -320,11 +323,20 @@ configure_tor() {
 
   strip_crlf "$torrc"
   start_tor_service
-  systemctl restart tor >/dev/null 2>&1 || true
+  if systemctl list-unit-files | grep -q '^tor@default\.service'; then
+    systemctl restart tor@default >/dev/null 2>&1 || true
+  else
+    systemctl restart tor >/dev/null 2>&1 || true
+  fi
   if ! wait_for_tor_control; then
     print_warn "Tor control port 9051 not ready yet"
-    systemctl status tor --no-pager || true
-    journalctl -u tor -n 50 --no-pager || true
+    if systemctl list-unit-files | grep -q '^tor@default\.service'; then
+      systemctl status tor@default --no-pager || true
+      journalctl -u tor@default -n 50 --no-pager || true
+    else
+      systemctl status tor --no-pager || true
+      journalctl -u tor -n 50 --no-pager || true
+    fi
     if command -v ss >/dev/null 2>&1; then
       ss -ltnp | grep -E '9050|9051' || true
     fi
@@ -783,14 +795,17 @@ install_systemd() {
 }
 
 start_tor_service() {
+  local unit="tor"
   if systemctl list-unit-files | grep -q '^tor@default\.service'; then
-    if systemctl is-active --quiet tor@default; then
-      print_warn "Stopping tor@default to avoid port conflicts with tor.service"
-      systemctl stop tor@default >/dev/null 2>&1 || true
-    fi
-    systemctl disable tor@default >/dev/null 2>&1 || true
+    unit="tor@default"
   fi
-  systemctl enable --now tor >/dev/null 2>&1 || true
+  systemctl stop tor@default >/dev/null 2>&1 || true
+  systemctl stop tor >/dev/null 2>&1 || true
+  if [[ "$unit" == "tor@default" ]]; then
+    systemctl enable --now tor@default >/dev/null 2>&1 || true
+  else
+    systemctl enable --now tor >/dev/null 2>&1 || true
+  fi
 }
 
 wait_for_tor_control() {

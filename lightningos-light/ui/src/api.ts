@@ -73,7 +73,7 @@ export const payInvoice = (payload: { payment_request: string }) =>
 
 export const getLnChannels = () => request('/api/lnops/channels')
 export const getLnPeers = () => request('/api/lnops/peers')
-export const connectPeer = (payload: { address?: string; pubkey?: string; host?: string }) =>
+export const connectPeer = (payload: { address?: string; pubkey?: string; host?: string; perm?: boolean }) =>
   request('/api/lnops/peer', { method: 'POST', body: JSON.stringify(payload) })
 export const disconnectPeer = (payload: { pubkey: string }) =>
   request('/api/lnops/peer/disconnect', { method: 'POST', body: JSON.stringify(payload) })

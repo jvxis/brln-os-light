@@ -40,6 +40,7 @@ export default function LightningOps() {
   const [showPrivate, setShowPrivate] = useState(true)
 
   const [peerAddress, setPeerAddress] = useState('')
+  const [peerTemporary, setPeerTemporary] = useState(false)
   const [peerStatus, setPeerStatus] = useState('')
   const [peers, setPeers] = useState<Peer[]>([])
   const [peerListStatus, setPeerListStatus] = useState('')
@@ -145,9 +146,10 @@ export default function LightningOps() {
   const handleConnectPeer = async () => {
     setPeerStatus('Connecting...')
     try {
-      await connectPeer({ address: peerAddress })
+      await connectPeer({ address: peerAddress, perm: !peerTemporary })
       setPeerStatus('Peer connected.')
       setPeerAddress('')
+      setPeerTemporary(false)
       load()
     } catch (err: any) {
       setPeerStatus(err?.message || 'Peer connection failed.')
@@ -277,6 +279,14 @@ export default function LightningOps() {
             value={peerAddress}
             onChange={(e) => setPeerAddress(e.target.value)}
           />
+          <label className="flex items-center gap-2 text-sm text-fog/70">
+            <input
+              type="checkbox"
+              checked={peerTemporary}
+              onChange={(e) => setPeerTemporary(e.target.checked)}
+            />
+            Temporary peer (no auto-reconnect)
+          </label>
           <button className="btn-primary" onClick={handleConnectPeer}>Connect peer</button>
           {peerStatus && <p className="text-sm text-brass">{peerStatus}</p>}
         </div>

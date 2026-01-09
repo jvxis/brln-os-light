@@ -352,7 +352,7 @@ func (c *Client) ListPeers(ctx context.Context) ([]PeerInfo, error) {
   return peers, nil
 }
 
-func (c *Client) ConnectPeer(ctx context.Context, pubkey string, host string) error {
+func (c *Client) ConnectPeer(ctx context.Context, pubkey string, host string, perm bool) error {
   conn, err := c.dial(ctx, true)
   if err != nil {
     return err
@@ -365,6 +365,7 @@ func (c *Client) ConnectPeer(ctx context.Context, pubkey string, host string) er
       Pubkey: pubkey,
       Host: host,
     },
+    Perm: perm,
     Timeout: 8,
   })
   return err

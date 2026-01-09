@@ -664,6 +664,7 @@ func (s *Server) handleLNConnectPeer(w http.ResponseWriter, r *http.Request) {
     Address string `json:"address"`
     Pubkey string `json:"pubkey"`
     Host string `json:"host"`
+    Perm *bool `json:"perm"`
   }
   if err := readJSON(r, &req); err != nil {
     writeError(w, http.StatusBadRequest, "invalid json")
@@ -686,10 +687,15 @@ func (s *Server) handleLNConnectPeer(w http.ResponseWriter, r *http.Request) {
     return
   }
 
+  perm := true
+  if req.Perm != nil {
+    perm = *req.Perm
+  }
+
   ctx, cancel := context.WithTimeout(r.Context(), lndRPCTimeout)
   defer cancel()
 
-  if err := s.lnd.ConnectPeer(ctx, pubkey, host); err != nil {
+  if err := s.lnd.ConnectPeer(ctx, pubkey, host, perm); err != nil {
     writeError(w, http.StatusInternalServerError, lndStatusMessage(err))
     return
   }

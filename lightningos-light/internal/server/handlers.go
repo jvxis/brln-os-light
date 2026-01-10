@@ -1769,6 +1769,9 @@ func storeBitcoinSecrets(user, pass string) error {
 }
 
 func readBitcoinSource() string {
+  if detected := detectBitcoinSourceFromLNDConf(); detected != "" {
+    return detected
+  }
   if value := strings.TrimSpace(os.Getenv("BITCOIN_SOURCE")); value != "" {
     return strings.ToLower(value)
   }
@@ -1785,6 +1788,39 @@ func readBitcoinSource() string {
     }
   }
   return "remote"
+}
+
+func detectBitcoinSourceFromLNDConf() string {
+  raw, err := os.ReadFile(lndConfPath)
+  if err != nil {
+    return ""
+  }
+  lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
+  inBitcoind := false
+  for _, line := range lines {
+    trimmed := strings.TrimSpace(line)
+    if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+      inBitcoind = strings.EqualFold(trimmed, "[Bitcoind]")
+      continue
+    }
+    if !inBitcoind {
+      continue
+    }
+    if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+      continue
+    }
+    if strings.HasPrefix(trimmed, "bitcoind.rpchost=") {
+      host := strings.TrimSpace(strings.TrimPrefix(trimmed, "bitcoind.rpchost="))
+      if host == "" {
+        continue
+      }
+      if strings.HasPrefix(host, "127.0.0.1") || strings.HasPrefix(host, "localhost") {
+        return "local"
+      }
+      return "remote"
+    }
+  }
+  return ""
 }
 
 func storeBitcoinSource(source string) error {

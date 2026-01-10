@@ -42,6 +42,7 @@ body {
   background: linear-gradient(135deg, rgba(15, 23, 42, 0.6), rgba(15, 23, 42, 0.2));
   border: 1px solid rgba(255, 255, 255, 0.08);
   overflow: hidden;
+  --sync-progress: 0;
 }
 
 .chain-sweep {
@@ -50,10 +51,57 @@ body {
   width: 40%;
   background: linear-gradient(90deg, transparent, rgba(245, 158, 11, 0.35), transparent);
   animation: chain-sweep 6s linear infinite;
+  opacity: calc(0.2 + var(--sync-progress) * 0.8);
 }
 
-.block-pulse {
-  animation: block-pulse 1.8s ease-in-out infinite;
+.block-cell {
+  height: 14px;
+  width: 26px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.08);
+  transition: background 0.6s ease, border-color 0.6s ease, transform 0.6s ease;
+}
+
+.block-cell--active {
+  background: linear-gradient(120deg, rgba(20, 184, 166, 0.6), rgba(45, 212, 191, 0.25));
+  border-color: rgba(45, 212, 191, 0.6);
+}
+
+.block-cell--pulse {
+  animation: block-pulse 1.6s ease-in-out infinite;
+}
+
+.block-cell--flash {
+  animation: block-flash 1.2s ease-out;
+}
+
+.peer-chart {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  align-items: end;
+  gap: 6px;
+  height: 120px;
+  padding: 8px 2px;
+}
+
+.peer-bar {
+  height: 100%;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.peer-bar-fill {
+  width: 100%;
+  border-radius: 999px;
+  background: linear-gradient(160deg, rgba(20, 184, 166, 0.7), rgba(245, 158, 11, 0.35));
+  transition: height 0.6s ease;
+}
+
+.peer-bar-fill--sync {
+  animation: peer-glow 2.4s ease-in-out infinite;
 }
 
 @keyframes chain-sweep {
@@ -79,5 +127,30 @@ body {
   50% {
     opacity: 1;
     transform: translateY(-6px);
+  }
+}
+
+@keyframes block-flash {
+  0% {
+    opacity: 0.4;
+    transform: scale(0.95);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes peer-glow {
+  0%,
+  100% {
+    filter: brightness(0.8);
+  }
+  50% {
+    filter: brightness(1.25);
   }
 }

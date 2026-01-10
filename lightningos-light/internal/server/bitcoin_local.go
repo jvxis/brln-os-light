@@ -26,6 +26,7 @@ type bitcoinLocalStatus struct {
   Status string `json:"status"`
   DataDir string `json:"data_dir"`
   RPCOk bool `json:"rpc_ok"`
+  Connections int `json:"connections,omitempty"`
   Chain string `json:"chain,omitempty"`
   Blocks int64 `json:"blocks,omitempty"`
   Headers int64 `json:"headers,omitempty"`
@@ -67,6 +68,7 @@ type bitcoinCLIChainInfo struct {
 type bitcoinCLINetworkInfo struct {
   Version int `json:"version"`
   Subversion string `json:"subversion"`
+  Connections int `json:"connections"`
 }
 
 func (s *Server) handleBitcoinLocalStatus(w http.ResponseWriter, r *http.Request) {
@@ -116,6 +118,7 @@ func (s *Server) handleBitcoinLocalStatus(w http.ResponseWriter, r *http.Request
   resp.SizeOnDisk = chainInfo.SizeOnDisk
   resp.Version = netInfo.Version
   resp.Subversion = netInfo.Subversion
+  resp.Connections = netInfo.Connections
 
   writeJSON(w, http.StatusOK, resp)
 }

@@ -231,6 +231,7 @@ func (s *Server) installLndg(ctx context.Context) error {
   if err := ensureLndgEnv(ctx, paths); err != nil {
     return err
   }
+  buildKey := lndgBuildKey(paths, currentHash)
 
   if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d", "lndg-db"); err != nil {
     return err
@@ -241,7 +242,7 @@ func (s *Server) installLndg(ctx context.Context) error {
   if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d", "--build", "lndg"); err != nil {
     return err
   }
-  _ = writeFile(paths.BuildHashPath, currentHash+"\n", 0640)
+  _ = writeFile(paths.BuildHashPath, buildKey+"\n", 0640)
   return nil
 }
 
@@ -272,9 +273,6 @@ func (s *Server) startLndg(ctx context.Context) error {
   }
   needsBuild := false
   currentHash := lndgBuildHash()
-  if readSecretFile(paths.BuildHashPath) != currentHash {
-    needsBuild = true
-  }
   if changed, err := ensureFileWithChange(paths.DockerfilePath, lndgDockerfile); err != nil {
     return err
   } else if changed {
@@ -291,6 +289,10 @@ func (s *Server) startLndg(ctx context.Context) error {
   if err := ensureLndgEnv(ctx, paths); err != nil {
     return err
   }
+  buildKey := lndgBuildKey(paths, currentHash)
+  if readSecretFile(paths.BuildHashPath) != buildKey {
+    needsBuild = true
+  }
   if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d", "lndg-db"); err != nil {
     return err
   }
@@ -301,7 +303,7 @@ func (s *Server) startLndg(ctx context.Context) error {
     if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d", "--build", "lndg"); err != nil {
       return err
     }
-    _ = writeFile(paths.BuildHashPath, currentHash+"\n", 0640)
+    _ = writeFile(paths.BuildHashPath, buildKey+"\n", 0640)
     return nil
   }
   return runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d", "lndg")
@@ -328,7 +330,11 @@ func lndgComposeContents(paths lndgPaths) string {
       - %s:/var/lib/postgresql/data
 
   lndg:
-    build: .
+    build:
+      context: .
+      args:
+        LNDG_GIT_REF: ${LNDG_GIT_REF}
+        LNDG_GIT_SHA: ${LNDG_GIT_SHA}
     restart: unless-stopped
     depends_on:
       - lndg-db
@@ -359,6 +365,19 @@ func ensureLndgEnv(ctx context.Context, paths lndgPaths) error {
   allowedHostsValue := strings.Join(allowedHosts, ",")
   csrfOriginsValue := strings.Join(csrfOrigins, ",")
   if fileExists(paths.EnvPath) {
+    existingRef := readEnvValue(paths.EnvPath, "LNDG_GIT_REF")
+    existingSha := readEnvValue(paths.EnvPath, "LNDG_GIT_SHA")
+    gitRef, gitSha := resolveLndgGit(ctx, existingRef, existingSha)
+    if existingRef == "" || gitRef != existingRef {
+      if err := setEnvValue(paths.EnvPath, "LNDG_GIT_REF", gitRef); err != nil {
+        return err
+      }
+    }
+    if gitSha != "" && gitSha != existingSha {
+      if err := setEnvValue(paths.EnvPath, "LNDG_GIT_SHA", gitSha); err != nil {
+        return err
+      }
+    }
     if !fileExists(paths.AdminPasswordPath) {
       adminPassword := readEnvValue(paths.EnvPath, "LNDG_ADMIN_PASSWORD")
       if adminPassword == "" {
@@ -431,6 +450,7 @@ func ensureLndgEnv(ctx context.Context, paths lndgPaths) error {
       return err
     }
   }
+  gitRef, gitSha := resolveLndgGit(ctx, "", "")
   env := strings.Join([]string{
     "LNDG_ADMIN_USER=lndg-admin",
     "LNDG_ADMIN_PASSWORD=" + adminPassword,
@@ -438,6 +458,8 @@ func ensureLndgEnv(ctx context.Context, paths lndgPaths) error {
     "LNDG_NETWORK=mainnet",
     "LNDG_RPC_SERVER=host.docker.internal:10009",
     "LNDG_LND_DIR=/root/.lnd",
+    "LNDG_GIT_REF=" + gitRef,
+    "LNDG_GIT_SHA=" + gitSha,
     "LNDG_ALLOWED_HOSTS=" + allowedHostsValue,
     "LNDG_CSRF_TRUSTED_ORIGINS=" + csrfOriginsValue,
     "",
@@ -842,6 +864,14 @@ func lndgBuildHash() string {
   return hex.EncodeToString(sum[:])
 }
 
+func lndgBuildKey(paths lndgPaths, base string) string {
+  gitSha := readEnvValue(paths.EnvPath, "LNDG_GIT_SHA")
+  if gitSha == "" {
+    gitSha = "unknown"
+  }
+  return base + ":" + gitSha
+}
+
 func writeFile(path string, content string, mode os.FileMode) error {
   if err := os.WriteFile(path, []byte(content), mode); err != nil {
     return fmt.Errorf("failed to write %s: %w", path, err)
@@ -957,6 +987,40 @@ func detectHostIPs(ctx context.Context) []string {
     }
   }
   return ips
+}
+
+func resolveLndgGit(ctx context.Context, existingRef string, existingSha string) (string, string) {
+  ref := existingRef
+  if ref == "" {
+    ref = "master"
+  }
+  sha := lndgRemoteHead(ctx, ref)
+  if sha == "" {
+    sha = existingSha
+  }
+  if sha == "" {
+    sha = "unknown"
+  }
+  return ref, sha
+}
+
+func lndgRemoteHead(ctx context.Context, ref string) string {
+  if ref == "" {
+    return ""
+  }
+  remoteRef := ref
+  if !strings.HasPrefix(ref, "refs/") {
+    remoteRef = "refs/heads/" + ref
+  }
+  out, err := system.RunCommand(ctx, "git", "ls-remote", "https://github.com/cryptosharks131/lndg", remoteRef)
+  if err != nil {
+    return ""
+  }
+  fields := strings.Fields(out)
+  if len(fields) == 0 {
+    return ""
+  }
+  return fields[0]
 }
 
 func stringInSlice(value string, items []string) bool {
@@ -1085,9 +1149,14 @@ func mapComposeArch(goarch string) string {
 const lndgDockerfile = `FROM python:3.11-slim
 ENV PYTHONUNBUFFERED=1
 RUN apt-get update && apt-get install -y git gcc libpq-dev postgresql-client && rm -rf /var/lib/apt/lists/*
-RUN git clone https://github.com/cryptosharks131/lndg /app
+ARG LNDG_GIT_REF=master
+ARG LNDG_GIT_SHA=unknown
+RUN echo "LNDG_GIT_REF=$LNDG_GIT_REF LNDG_GIT_SHA=$LNDG_GIT_SHA"
+RUN git clone --depth 1 --branch "$LNDG_GIT_REF" https://github.com/cryptosharks131/lndg /app
 WORKDIR /app
-RUN git checkout "master"
+RUN if [ -n "$LNDG_GIT_SHA" ] && [ "$LNDG_GIT_SHA" != "unknown" ]; then \
+      git fetch --depth 1 origin "$LNDG_GIT_SHA" && git checkout "$LNDG_GIT_SHA"; \
+    fi
 RUN pip install -r requirements.txt
 RUN pip install supervisor whitenoise psycopg2-binary
 COPY entrypoint.sh /entrypoint.sh
@@ -1161,6 +1230,9 @@ if csrf_trusted:
   raw += ["CSRF_TRUSTED_ORIGINS = " + repr(csrf_trusted)]
   if any(origin.startswith("http://") for origin in csrf_trusted):
     raw += ["CSRF_COOKIE_SECURE = False", "SESSION_COOKIE_SECURE = False"]
+  raw += ["CSRF_COOKIE_DOMAIN = None", "SESSION_COOKIE_DOMAIN = None"]
+  raw += ["CSRF_COOKIE_SAMESITE = 'Lax'", "SESSION_COOKIE_SAMESITE = 'Lax'"]
+raw += ["CSRF_COOKIE_NAME = 'lndg_csrftoken'", "SESSION_COOKIE_NAME = 'lndg_sessionid'"]
 with open(path, "w", encoding="utf-8") as f:
   f.write("\n".join(raw))
 PY

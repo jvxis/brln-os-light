@@ -34,3 +34,50 @@ body {
 .input-field {
   @apply w-full bg-ink/60 border border-white/10 rounded-2xl px-4 py-3 text-fog focus:outline-none focus:ring-2 focus:ring-glow/60;
 }
+
+.chain-track {
+  position: relative;
+  height: 64px;
+  border-radius: 24px;
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.6), rgba(15, 23, 42, 0.2));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.chain-sweep {
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, rgba(245, 158, 11, 0.35), transparent);
+  animation: chain-sweep 6s linear infinite;
+}
+
+.block-pulse {
+  animation: block-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes chain-sweep {
+  0% {
+    transform: translateX(-60%);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(160%);
+    opacity: 0;
+  }
+}
+
+@keyframes block-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-6px);
+  }
+}

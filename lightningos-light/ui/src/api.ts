@@ -32,6 +32,13 @@ export const getSystem = () => request('/api/system')
 export const getDisk = () => request('/api/disk')
 export const getPostgres = () => request('/api/postgres')
 export const getBitcoin = () => request('/api/bitcoin')
+export const getBitcoinLocalStatus = () => request('/api/bitcoin-local/status')
+export const getBitcoinLocalConfig = () => request('/api/bitcoin-local/config')
+export const updateBitcoinLocalConfig = (payload: {
+  mode: 'full' | 'pruned'
+  prune_size_gb?: number
+  apply_now?: boolean
+}) => request('/api/bitcoin-local/config', { method: 'POST', body: JSON.stringify(payload) })
 export const getLndStatus = () => request('/api/lnd/status')
 export const getLndConfig = () => request('/api/lnd/config')
 

@@ -845,9 +845,17 @@ done
 python manage.py migrate
 python manage.py collectstatic --noinput
 
-python manage.py shell - <<'PY'
+python - <<'PY'
 import os
-from django.contrib.auth import get_user_model
+import sys
+
+sys.path.insert(0, "/app")
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "lndg.settings")
+
+import django  # noqa: E402
+django.setup()
+
+from django.contrib.auth import get_user_model  # noqa: E402
 
 username = os.environ.get("LNDG_ADMIN_USER", "lndg-admin")
 password = os.environ.get("LNDG_ADMIN_PASSWORD", "")

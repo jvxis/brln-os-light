@@ -741,6 +741,21 @@ if csrf_trusted:
   raw += ["CSRF_COOKIE_DOMAIN = None", "SESSION_COOKIE_DOMAIN = None"]
   raw += ["CSRF_COOKIE_SAMESITE = 'Lax'", "SESSION_COOKIE_SAMESITE = 'Lax'"]
 raw += ["CSRF_COOKIE_NAME = 'lndg_csrftoken'", "SESSION_COOKIE_NAME = 'lndg_sessionid'"]
+
+debug_path = "/app/lndg/csrf_debug.py"
+debug_contents = """from django.views.csrf import csrf_failure as default_csrf_failure
+
+def csrf_failure(request, reason=""):
+    origin = request.META.get("HTTP_ORIGIN")
+    referer = request.META.get("HTTP_REFERER")
+    host = request.get_host()
+    cookies = ",".join(request.COOKIES.keys())
+    print(f"CSRF failure: reason={reason} origin={origin} referer={referer} host={host} cookies={cookies}", flush=True)
+    return default_csrf_failure(request, reason)
+"""
+with open(debug_path, "w", encoding="utf-8") as f:
+  f.write(debug_contents)
+raw += ["CSRF_FAILURE_VIEW = 'lndg.csrf_debug.csrf_failure'"]
 with open(path, "w", encoding="utf-8") as f:
   f.write("\n".join(raw))
 PY

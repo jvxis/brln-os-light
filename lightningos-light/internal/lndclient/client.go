@@ -11,6 +11,7 @@ import (
   "os"
   "strconv"
   "strings"
+  "sync"
   "time"
 
   "lightningos-light/internal/config"
@@ -23,11 +24,22 @@ import (
 type Client struct {
   cfg *config.Config
   logger *log.Logger
+  statusMu sync.Mutex
+  statusCached bool
+  statusCache Status
+  statusErr error
+  statusNextFetch time.Time
 }
 
 func New(cfg *config.Config, logger *log.Logger) *Client {
   return &Client{cfg: cfg, logger: logger}
 }
+
+const (
+  statusCacheOK = 30 * time.Second
+  statusCacheErr = 45 * time.Second
+  statusCacheTimeout = 60 * time.Second
+)
 
 type macaroonCredential struct {
   macaroon string
@@ -67,6 +79,37 @@ func (c *Client) dial(ctx context.Context, withMacaroon bool) (*grpc.ClientConn,
 }
 
 func (c *Client) GetStatus(ctx context.Context) (Status, error) {
+  now := time.Now()
+  c.statusMu.Lock()
+  if c.statusCached && now.Before(c.statusNextFetch) {
+    status := c.statusCache
+    err := c.statusErr
+    c.statusMu.Unlock()
+    return status, err
+  }
+  c.statusMu.Unlock()
+
+  status, err := c.getStatusUncached(ctx)
+
+  ttl := statusCacheOK
+  if err != nil {
+    ttl = statusCacheErr
+    if isTimeoutError(err) {
+      ttl = statusCacheTimeout
+    }
+  }
+
+  c.statusMu.Lock()
+  c.statusCache = status
+  c.statusErr = err
+  c.statusCached = true
+  c.statusNextFetch = time.Now().Add(ttl)
+  c.statusMu.Unlock()
+
+  return status, err
+}
+
+func (c *Client) getStatusUncached(ctx context.Context) (Status, error) {
   conn, err := c.dial(ctx, true)
   if err != nil {
     return Status{WalletState: "unknown"}, err
@@ -476,6 +519,14 @@ func (c *Client) UpdateChannelFees(ctx context.Context, channelPoint string, app
 func isWalletLocked(err error) bool {
   msg := strings.ToLower(err.Error())
   return strings.Contains(msg, "wallet locked") || strings.Contains(msg, "unlock")
+}
+
+func isTimeoutError(err error) bool {
+  if err == nil {
+    return false
+  }
+  msg := strings.ToLower(err.Error())
+  return strings.Contains(msg, "deadline exceeded") || strings.Contains(msg, "context deadline exceeded")
 }
 
 func channelPointString(cp *lnrpc.ChannelPoint) string {

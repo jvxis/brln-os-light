@@ -27,7 +27,7 @@ export default function Topbar() {
     }
 
     load()
-    const timer = setInterval(load, 10000)
+    const timer = setInterval(load, 30000)
     return () => {
       mounted = false
       clearInterval(timer)

@@ -4,6 +4,7 @@ import (
   "bufio"
   "bytes"
   "context"
+  "os/exec"
   "strconv"
   "strings"
 )
@@ -26,9 +27,18 @@ func ReadDiskSmart(ctx context.Context) ([]DiskSmart, error) {
 
   out := make([]DiskSmart, 0, len(devices))
   for _, dev := range devices {
-    smart, err := smartctlDevice(ctx, "/dev/"+dev)
+    devicePath := "/dev/" + dev
+    smart, err := smartctlDevice(ctx, devicePath)
     if err != nil {
+      out = append(out, DiskSmart{
+        Device: devicePath,
+        Type: guessDiskType(devicePath),
+        SmartStatus: "UNAVAILABLE",
+      })
       continue
+    }
+    if smart.Type == "" {
+      smart.Type = guessDiskType(devicePath)
     }
     out = append(out, smart)
   }
@@ -55,18 +65,27 @@ func listBlockDevices(ctx context.Context) ([]string, error) {
 }
 
 func smartctlDevice(ctx context.Context, device string) (DiskSmart, error) {
-  out, err := RunCommand(ctx, "smartctl", "-a", device)
-  if err != nil {
+  out, err := RunCommandWithSudo(ctx, smartctlPath(), "-a", device)
+  if err != nil && strings.TrimSpace(out) == "" {
     return DiskSmart{}, err
   }
 
   smart := DiskSmart{
     Device: device,
     SmartStatus: "UNKNOWN",
+    Type: guessDiskType(device),
   }
 
   lines := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n")
   for _, line := range lines {
+    lower := strings.ToLower(strings.TrimSpace(line))
+    if strings.Contains(lower, "smart support is:") {
+      if strings.Contains(lower, "unavailable") {
+        smart.SmartStatus = "UNAVAILABLE"
+      } else if strings.Contains(lower, "disabled") {
+        smart.SmartStatus = "DISABLED"
+      }
+    }
     if strings.Contains(line, "SMART overall-health self-assessment test result") {
       if strings.Contains(line, "PASSED") {
         smart.SmartStatus = "PASSED"
@@ -96,6 +115,24 @@ func smartctlDevice(ctx context.Context, device string) (DiskSmart, error) {
 
   smart = addSmartAlerts(smart)
   return smart, nil
+}
+
+func smartctlPath() string {
+  if path, err := exec.LookPath("smartctl"); err == nil {
+    return path
+  }
+  return "smartctl"
+}
+
+func guessDiskType(device string) string {
+  name := strings.TrimPrefix(device, "/dev/")
+  if strings.HasPrefix(name, "nvme") {
+    return "NVMe"
+  }
+  if strings.HasPrefix(name, "mmcblk") {
+    return "MMC"
+  }
+  return "Disk"
 }
 
 func parseSmartInt(line string) int {

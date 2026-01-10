@@ -264,7 +264,7 @@ ensure_group_member() {
 
 configure_sudoers() {
   print_step "Configuring sudoers"
-  local systemctl_path apt_get_path apt_path dpkg_path docker_path docker_compose_path systemd_run_path
+  local systemctl_path apt_get_path apt_path dpkg_path docker_path docker_compose_path systemd_run_path smartctl_path
   systemctl_path=$(command -v systemctl || true)
   apt_get_path=$(command -v apt-get || true)
   apt_path=$(command -v apt || true)
@@ -272,6 +272,7 @@ configure_sudoers() {
   docker_path=$(command -v docker || true)
   docker_compose_path=$(command -v docker-compose || true)
   systemd_run_path=$(command -v systemd-run || true)
+  smartctl_path=$(command -v smartctl || true)
   if [[ -z "$docker_path" ]]; then
     docker_path="/usr/bin/docker"
   fi
@@ -281,12 +282,15 @@ configure_sudoers() {
   if [[ -z "$systemd_run_path" ]]; then
     systemd_run_path="/usr/bin/systemd-run"
   fi
+  if [[ -z "$smartctl_path" ]]; then
+    smartctl_path="/usr/sbin/smartctl"
+  fi
   if [[ -z "$systemctl_path" ]]; then
     print_warn "systemctl not found; skipping sudoers setup"
     return
   fi
   local system_cmds
-  system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${LND_FIX_PERMS_SCRIPT}"
+  system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${LND_FIX_PERMS_SCRIPT}, ${smartctl_path} *"
   local app_cmds=()
   [[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")
   [[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")

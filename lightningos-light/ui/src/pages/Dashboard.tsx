@@ -16,6 +16,21 @@ export default function Dashboard() {
     return `${(info.verification_progress * 100).toFixed(2)}%`
   }
 
+  const compactValue = (value: string, head = 10, tail = 10) => {
+    if (!value) return ''
+    if (value.length <= head + tail + 3) return value
+    return `${value.slice(0, head)}...${value.slice(-tail)}`
+  }
+
+  const copyToClipboard = async (value: string) => {
+    if (!value) return
+    try {
+      await navigator.clipboard.writeText(value)
+    } catch {
+      // ignore copy failures
+    }
+  }
+
   useEffect(() => {
     let mounted = true
     const load = async () => {
@@ -130,7 +145,57 @@ export default function Dashboard() {
         <div className="section-card">
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-semibold">LND</h3>
-            <span className="text-xs text-fog/60">{lnd?.version ? `v${lnd.version}` : ''}</span>
+            <div className="text-right">
+              <span className="text-xs text-fog/60">{lnd?.version ? `v${lnd.version}` : ''}</span>
+              {(lnd?.pubkey || lnd?.uri) && (
+                <div className="mt-2 space-y-1 text-xs text-fog/60">
+                  {lnd?.pubkey && (
+                    <div className="flex items-center justify-end gap-2">
+                      <span className="text-fog/50">Pubkey</span>
+                      <span
+                        className="font-mono text-fog/70 max-w-[220px] truncate"
+                        title={lnd.pubkey}
+                      >
+                        {compactValue(lnd.pubkey)}
+                      </span>
+                      <button
+                        className="text-fog/50 hover:text-fog"
+                        onClick={() => copyToClipboard(lnd.pubkey)}
+                        title="Copy pubkey"
+                        aria-label="Copy pubkey"
+                      >
+                        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
+                          <rect x="9" y="9" width="11" height="11" rx="2" />
+                          <rect x="4" y="4" width="11" height="11" rx="2" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                  {lnd?.uri && (
+                    <div className="flex items-center justify-end gap-2">
+                      <span className="text-fog/50">URI</span>
+                      <span
+                        className="font-mono text-fog/70 max-w-[220px] truncate"
+                        title={lnd.uri}
+                      >
+                        {compactValue(lnd.uri)}
+                      </span>
+                      <button
+                        className="text-fog/50 hover:text-fog"
+                        onClick={() => copyToClipboard(lnd.uri)}
+                        title="Copy URI"
+                        aria-label="Copy URI"
+                      >
+                        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
+                          <rect x="9" y="9" width="11" height="11" rx="2" />
+                          <rect x="4" y="4" width="11" height="11" rx="2" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
           {lnd ? (
             <div className="mt-4 text-sm space-y-2">

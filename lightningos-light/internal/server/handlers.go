@@ -375,6 +375,8 @@ type lndStatusResponse struct {
   SyncedToGraph bool `json:"synced_to_graph"`
   BlockHeight int64 `json:"block_height"`
   Version string `json:"version"`
+  Pubkey string `json:"pubkey"`
+  URI string `json:"uri"`
   Channels struct {
     Active int `json:"active"`
     Inactive int `json:"inactive"`
@@ -399,6 +401,8 @@ func (s *Server) handleLNDStatus(w http.ResponseWriter, r *http.Request) {
     resp.SyncedToGraph = status.SyncedToGraph
     resp.BlockHeight = status.BlockHeight
     resp.Version = status.Version
+    resp.Pubkey = status.Pubkey
+    resp.URI = status.URI
     resp.Channels.Active = status.ChannelsActive
     resp.Channels.Inactive = status.ChannelsInactive
     resp.Balances.OnchainSat = status.OnchainSat

@@ -716,6 +716,7 @@ strip_keys = (
   "SESSION_COOKIE_SAMESITE =",
   "CSRF_COOKIE_NAME =",
   "SESSION_COOKIE_NAME =",
+  "CSRF_USE_SESSIONS =",
   "CSRF_FAILURE_VIEW =",
 )
 raw = [line for line in raw if not any(line.strip().startswith(key) for key in strip_keys)]
@@ -765,6 +766,7 @@ if os.environ.get("LNDG_CUSTOM_COOKIES") == "0":
   raw += ["CSRF_COOKIE_NAME = 'csrftoken'", "SESSION_COOKIE_NAME = 'sessionid'"]
 else:
   raw += ["CSRF_COOKIE_NAME = 'lndg_csrftoken'", "SESSION_COOKIE_NAME = 'lndg_sessionid'"]
+raw += ["CSRF_USE_SESSIONS = True"]
 
 debug_path = "/app/lndg/csrf_debug.py"
 debug_contents = """from django.views.csrf import csrf_failure as default_csrf_failure

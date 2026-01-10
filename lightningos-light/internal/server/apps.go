@@ -3,7 +3,9 @@ package server
 import (
   "context"
   "crypto/rand"
+  "crypto/sha256"
   "encoding/base64"
+  "encoding/hex"
   "encoding/json"
   "errors"
   "fmt"
@@ -53,6 +55,7 @@ type lndgPaths struct {
   EntrypointPath string
   AdminPasswordPath string
   DbPasswordPath string
+  BuildHashPath string
 }
 
 func lndgDefinition() appDefinition {
@@ -78,6 +81,7 @@ func lndgAppPaths() lndgPaths {
     EntrypointPath: filepath.Join(root, "entrypoint.sh"),
     AdminPasswordPath: filepath.Join(dataDir, "lndg-admin.txt"),
     DbPasswordPath: filepath.Join(dataDir, "lndg-db-password.txt"),
+    BuildHashPath: filepath.Join(root, ".build_hash"),
   }
 }
 
@@ -213,6 +217,7 @@ func (s *Server) installLndg(ctx context.Context) error {
     return fmt.Errorf("failed to create app db directory: %w", err)
   }
 
+  currentHash := lndgBuildHash()
   if _, err := ensureFileWithChange(paths.DockerfilePath, lndgDockerfile); err != nil {
     return err
   }
@@ -236,6 +241,7 @@ func (s *Server) installLndg(ctx context.Context) error {
   if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d", "--build", "lndg"); err != nil {
     return err
   }
+  _ = writeFile(paths.BuildHashPath, currentHash+"\n", 0640)
   return nil
 }
 
@@ -265,6 +271,10 @@ func (s *Server) startLndg(ctx context.Context) error {
     return fmt.Errorf("failed to create app db directory: %w", err)
   }
   needsBuild := false
+  currentHash := lndgBuildHash()
+  if readSecretFile(paths.BuildHashPath) != currentHash {
+    needsBuild = true
+  }
   if changed, err := ensureFileWithChange(paths.DockerfilePath, lndgDockerfile); err != nil {
     return err
   } else if changed {
@@ -288,7 +298,11 @@ func (s *Server) startLndg(ctx context.Context) error {
     return err
   }
   if needsBuild {
-    return runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d", "--build", "lndg")
+    if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d", "--build", "lndg"); err != nil {
+      return err
+    }
+    _ = writeFile(paths.BuildHashPath, currentHash+"\n", 0640)
+    return nil
   }
   return runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d", "lndg")
 }
@@ -821,6 +835,11 @@ func ensureFileWithChange(path string, content string) (bool, error) {
     return false, err
   }
   return true, nil
+}
+
+func lndgBuildHash() string {
+  sum := sha256.Sum256([]byte(lndgDockerfile + "\n" + lndgEntrypoint))
+  return hex.EncodeToString(sum[:])
 }
 
 func writeFile(path string, content string, mode os.FileMode) error {

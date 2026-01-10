@@ -23,6 +23,8 @@ type bitcoinCoreApp struct {
   server *Server
 }
 
+const bitcoinCoreImage = "bitcoin/bitcoin:30.2"
+
 func newBitcoinCoreApp(s *Server) appHandler {
   return bitcoinCoreApp{server: s}
 }
@@ -144,7 +146,7 @@ func (s *Server) stopBitcoinCore(ctx context.Context) error {
 func bitcoinCoreComposeContents(paths bitcoinCorePaths) string {
   return fmt.Sprintf(`services:
   bitcoind:
-    image: bitcoin/bitcoin:latest
+    image: %s
     user: "0:0"
     restart: unless-stopped
     ports:
@@ -154,7 +156,7 @@ func bitcoinCoreComposeContents(paths bitcoinCorePaths) string {
       - "127.0.0.1:28333:28333"
     volumes:
       - %s:/home/bitcoin/.bitcoin
-`, paths.DataDir)
+`, bitcoinCoreImage, paths.DataDir)
 }
 
 func ensureBitcoinCoreSeedConfig(paths bitcoinCorePaths) error {
@@ -205,14 +207,15 @@ func syncBitcoinCoreConfig(ctx context.Context, paths bitcoinCorePaths) error {
     "docker",
     "run",
     "--rm",
+    "--entrypoint",
+    "sh",
     "--user",
     "0:0",
     "-v",
     fmt.Sprintf("%s:/home/bitcoin/.bitcoin", paths.DataDir),
     "-v",
     fmt.Sprintf("%s:/tmp/bitcoin.conf:ro", paths.SeedConfigPath),
-    "bitcoin/bitcoin:latest",
-    "sh",
+    bitcoinCoreImage,
     "-c",
     cmd,
   )

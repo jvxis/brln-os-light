@@ -260,31 +260,41 @@ func readBitcoinCoreConfig(ctx context.Context, paths bitcoinCorePaths) (string,
   if fileExists(paths.ConfigPath) {
     raw, err := os.ReadFile(paths.ConfigPath)
     if err == nil {
-      return string(raw), nil
+      return sanitizeBitcoinCoreConfig(string(raw)), nil
     }
   }
+
+  containerID, err := composeContainerID(ctx, paths.Root, paths.ComposePath, "bitcoind")
+  if err == nil && containerID != "" {
+    out, execErr := system.RunCommandWithSudo(ctx, "docker", "exec", "-i", containerID, "sh", "-c", "cat "+bitcoinCoreConfigPathInContainer)
+    if execErr == nil {
+      return sanitizeBitcoinCoreConfig(out), nil
+    }
+  }
+
   out, err := system.RunCommandWithSudo(
     ctx,
     "docker",
     "run",
     "--rm",
+    "--entrypoint",
+    "sh",
     "--user",
     "0:0",
     "-v",
     fmt.Sprintf("%s:/home/bitcoin/.bitcoin", paths.DataDir),
-    "bitcoin/bitcoin:latest",
-    "sh",
+    bitcoinCoreImage,
     "-c",
     "cat "+bitcoinCoreConfigPathInContainer,
   )
   if err == nil {
-    return strings.TrimRight(out, "\r\n"), nil
+    return sanitizeBitcoinCoreConfig(out), nil
   }
   if strings.Contains(strings.ToLower(out), "no such file") {
     if fileExists(paths.SeedConfigPath) {
       raw, readErr := os.ReadFile(paths.SeedConfigPath)
       if readErr == nil {
-        return string(raw), nil
+        return sanitizeBitcoinCoreConfig(string(raw)), nil
       }
     }
   }
@@ -310,14 +320,15 @@ func writeBitcoinCoreConfig(ctx context.Context, paths bitcoinCorePaths, content
     "docker",
     "run",
     "--rm",
+    "--entrypoint",
+    "sh",
     "--user",
     "0:0",
     "-v",
     fmt.Sprintf("%s:/home/bitcoin/.bitcoin", paths.DataDir),
     "-v",
     fmt.Sprintf("%s:/tmp/bitcoin.conf:ro", tmpPath),
-    "bitcoin/bitcoin:latest",
-    "sh",
+    bitcoinCoreImage,
     "-c",
     cmd,
   ); err != nil {
@@ -356,7 +367,7 @@ func parseBitcoinCorePrune(raw string) (bool, int) {
 }
 
 func updateBitcoinCoreConfig(raw string, mode string, pruneMiB int) string {
-  trimmed := strings.TrimRight(raw, "\n")
+  trimmed := strings.TrimRight(sanitizeBitcoinCoreConfig(raw), "\n")
   lines := []string{}
   if trimmed != "" {
     lines = strings.Split(trimmed, "\n")
@@ -365,6 +376,9 @@ func updateBitcoinCoreConfig(raw string, mode string, pruneMiB int) string {
   for _, line := range lines {
     check := strings.TrimSpace(line)
     if check != "" && !strings.HasPrefix(check, "#") && !strings.HasPrefix(check, ";") {
+      if looksLikeEntrypointLog(check) {
+        continue
+      }
       if strings.HasPrefix(check, "prune=") {
         continue
       }
@@ -387,6 +401,33 @@ func ensureTrailingNewline(value string) string {
     return value
   }
   return value + "\n"
+}
+
+func sanitizeBitcoinCoreConfig(raw string) string {
+  lines := []string{}
+  for _, line := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
+    if looksLikeEntrypointLog(strings.TrimSpace(line)) {
+      continue
+    }
+    lines = append(lines, line)
+  }
+  return strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"
+}
+
+func looksLikeEntrypointLog(line string) bool {
+  if line == "" {
+    return false
+  }
+  if strings.Contains(line, "/entrypoint.sh:") {
+    return true
+  }
+  if strings.Contains(line, "assuming uid:gid") {
+    return true
+  }
+  if strings.Contains(line, "setting data directory") {
+    return true
+  }
+  return false
 }
 
 func roundGB(value float64) float64 {

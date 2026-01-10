@@ -223,7 +223,7 @@ func (s *Server) installLndg(ctx context.Context) error {
     return err
   }
 
-  if err := ensureLndgEnv(paths); err != nil {
+  if err := ensureLndgEnv(ctx, paths); err != nil {
     return err
   }
 
@@ -273,7 +273,7 @@ func (s *Server) startLndg(ctx context.Context) error {
   if err := ensureFile(paths.ComposePath, lndgComposeContents(paths)); err != nil {
     return err
   }
-  if err := ensureLndgEnv(paths); err != nil {
+  if err := ensureLndgEnv(ctx, paths); err != nil {
     return err
   }
   if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d", "lndg-db"); err != nil {
@@ -319,6 +319,8 @@ func lndgComposeContents(paths lndgPaths) string {
       LNDG_NETWORK: ${LNDG_NETWORK}
       LNDG_RPC_SERVER: ${LNDG_RPC_SERVER}
       LNDG_LND_DIR: ${LNDG_LND_DIR}
+      LNDG_ALLOWED_HOSTS: ${LNDG_ALLOWED_HOSTS}
+      LNDG_CSRF_TRUSTED_ORIGINS: ${LNDG_CSRF_TRUSTED_ORIGINS}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -330,7 +332,10 @@ func lndgComposeContents(paths lndgPaths) string {
 `, paths.PgDir, paths.DataDir, filepath.Join(paths.DataDir, "lndg-controller.log"))
 }
 
-func ensureLndgEnv(paths lndgPaths) error {
+func ensureLndgEnv(ctx context.Context, paths lndgPaths) error {
+  allowedHosts, csrfOrigins := defaultLndgHosts(ctx)
+  allowedHostsValue := strings.Join(allowedHosts, ",")
+  csrfOriginsValue := strings.Join(csrfOrigins, ",")
   if fileExists(paths.EnvPath) {
     if !fileExists(paths.AdminPasswordPath) {
       adminPassword := readEnvValue(paths.EnvPath, "LNDG_ADMIN_PASSWORD")
@@ -366,6 +371,16 @@ func ensureLndgEnv(paths lndgPaths) error {
         return err
       }
     }
+    if readEnvValue(paths.EnvPath, "LNDG_ALLOWED_HOSTS") == "" && allowedHostsValue != "" {
+      if err := appendEnvLine(paths.EnvPath, "LNDG_ALLOWED_HOSTS", allowedHostsValue); err != nil {
+        return err
+      }
+    }
+    if readEnvValue(paths.EnvPath, "LNDG_CSRF_TRUSTED_ORIGINS") == "" && csrfOriginsValue != "" {
+      if err := appendEnvLine(paths.EnvPath, "LNDG_CSRF_TRUSTED_ORIGINS", csrfOriginsValue); err != nil {
+        return err
+      }
+    }
     return nil
   }
   adminPassword := readSecretFile(paths.AdminPasswordPath)
@@ -391,6 +406,8 @@ func ensureLndgEnv(paths lndgPaths) error {
     "LNDG_NETWORK=mainnet",
     "LNDG_RPC_SERVER=host.docker.internal:10009",
     "LNDG_LND_DIR=/root/.lnd",
+    "LNDG_ALLOWED_HOSTS=" + allowedHostsValue,
+    "LNDG_CSRF_TRUSTED_ORIGINS=" + csrfOriginsValue,
     "",
   }, "\n")
   if err := writeFile(paths.EnvPath, env, 0600); err != nil {
@@ -831,6 +848,72 @@ func appendEnvLine(path string, key string, value string) error {
   return nil
 }
 
+func defaultLndgHosts(ctx context.Context) ([]string, []string) {
+  hosts := []string{"localhost", "127.0.0.1", "host.docker.internal"}
+  for _, ip := range detectHostIPs(ctx) {
+    if !stringInSlice(ip, hosts) {
+      hosts = append(hosts, ip)
+    }
+  }
+  origins := []string{}
+  for _, host := range hosts {
+    for _, scheme := range []string{"http", "https"} {
+      origin := fmt.Sprintf("%s://%s:8889", scheme, host)
+      if !stringInSlice(origin, origins) {
+        origins = append(origins, origin)
+      }
+    }
+  }
+  return hosts, origins
+}
+
+func detectHostIPs(ctx context.Context) []string {
+  out, err := system.RunCommand(ctx, "ip", "-4", "-o", "addr", "show", "scope", "global")
+  if err != nil {
+    out, _ = system.RunCommand(ctx, "hostname", "-I")
+  }
+  ips := []string{}
+  for _, line := range strings.Split(out, "\n") {
+    if line == "" {
+      continue
+    }
+    tokens := strings.Fields(line)
+    for i, token := range tokens {
+      if token == "inet" && i+1 < len(tokens) {
+        ip := strings.Split(tokens[i+1], "/")[0]
+        if ip != "" && !stringInSlice(ip, ips) {
+          ips = append(ips, ip)
+        }
+      }
+    }
+    if strings.Contains(line, ".") && strings.Contains(line, "/") && strings.Count(line, ":") == 0 && strings.Count(line, " ") > 0 {
+      for _, token := range tokens {
+        if strings.Count(token, ".") == 3 && strings.Contains(token, "/") {
+          ip := strings.Split(token, "/")[0]
+          if ip != "" && !stringInSlice(ip, ips) {
+            ips = append(ips, ip)
+          }
+        }
+      }
+    }
+    if !strings.Contains(line, "inet") && strings.Count(line, ".") == 3 && !strings.Contains(line, "/") {
+      if !stringInSlice(line, ips) {
+        ips = append(ips, line)
+      }
+    }
+  }
+  return ips
+}
+
+func stringInSlice(value string, items []string) bool {
+  for _, item := range items {
+    if item == value {
+      return true
+    }
+  }
+  return false
+}
+
 type composeRelease struct {
   TagName string `json:"tag_name"`
 }
@@ -957,6 +1040,9 @@ db_password = os.environ.get("LNDG_DB_PASSWORD", "")
 if not db_password:
   raise SystemExit("LNDG_DB_PASSWORD is required")
 
+allowed_hosts = [h.strip() for h in os.environ.get("LNDG_ALLOWED_HOSTS", "").split(",") if h.strip()]
+csrf_trusted = [o.strip() for o in os.environ.get("LNDG_CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]
+
 replacement = [
   "DATABASES = {",
   "    'default': {",
@@ -971,6 +1057,10 @@ replacement = [
 ]
 
 raw = raw[:start] + replacement + raw[end+1:]
+if allowed_hosts:
+  raw += ["", "ALLOWED_HOSTS = " + repr(allowed_hosts)]
+if csrf_trusted:
+  raw += ["CSRF_TRUSTED_ORIGINS = " + repr(csrf_trusted)]
 with open(path, "w", encoding="utf-8") as f:
   f.write("\n".join(raw))
 PY

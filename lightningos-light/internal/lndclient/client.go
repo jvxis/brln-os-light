@@ -246,22 +246,13 @@ func (c *Client) GetChannelPolicy(ctx context.Context, channelPoint string) (Cha
     return ChannelPolicy{}, errors.New("channel policy unavailable")
   }
 
-  feeRatePpm := int64(0)
-  if policy.FeeRateMilliMsat != 0 {
-    feeRatePpm = policy.FeeRateMilliMsat / 1000
-  }
-  inboundRatePpm := int64(0)
-  if policy.InboundFeeRateMilliMsat != 0 {
-    inboundRatePpm = int64(policy.InboundFeeRateMilliMsat) / 1000
-  }
-
   return ChannelPolicy{
     ChannelPoint: channelPoint,
     BaseFeeMsat: policy.FeeBaseMsat,
-    FeeRatePpm: feeRatePpm,
+    FeeRatePpm: policy.FeeRateMilliMsat,
     TimeLockDelta: int64(policy.TimeLockDelta),
     InboundBaseMsat: int64(policy.InboundFeeBaseMsat),
-    InboundFeeRatePpm: inboundRatePpm,
+    InboundFeeRatePpm: int64(policy.InboundFeeRateMilliMsat),
   }, nil
 }
 

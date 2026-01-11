@@ -480,27 +480,34 @@ func looksLikeEntrypointLog(line string) bool {
   return false
 }
 
-func ensureBitcoinCoreRPCAllow(raw string, gateway string) (string, bool) {
-  trimmedGateway := strings.TrimSpace(gateway)
-  if trimmedGateway == "" {
-    return raw, false
-  }
+func ensureBitcoinCoreRPCAllowList(raw string, allow []string) (string, bool) {
   normalized := sanitizeBitcoinCoreConfig(raw)
   lines := strings.Split(strings.TrimRight(normalized, "\n"), "\n")
   if len(lines) == 1 && lines[0] == "" {
     lines = []string{}
   }
 
-  if rpcAllowListHasGateway(lines, trimmedGateway) {
-    return normalized, false
+  changed := false
+  for _, entry := range allow {
+    trimmed := strings.TrimSpace(entry)
+    if trimmed == "" {
+      continue
+    }
+    if rpcAllowListContains(lines, trimmed) {
+      continue
+    }
+    lines = append(lines, "rpcallowip="+trimmed)
+    changed = true
   }
 
-  updated := append(lines, "rpcallowip="+trimmedGateway)
-  return ensureTrailingNewline(strings.Join(updated, "\n")), true
+  if !changed {
+    return normalized, false
+  }
+  return ensureTrailingNewline(strings.Join(lines, "\n")), true
 }
 
-func rpcAllowListHasGateway(lines []string, gateway string) bool {
-  ip := net.ParseIP(gateway)
+func rpcAllowListContains(lines []string, value string) bool {
+  ip := net.ParseIP(value)
   if ip == nil {
     return false
   }
@@ -512,17 +519,17 @@ func rpcAllowListHasGateway(lines []string, gateway string) bool {
     if !strings.HasPrefix(trimmed, "rpcallowip=") {
       continue
     }
-    value := strings.TrimSpace(strings.TrimPrefix(trimmed, "rpcallowip="))
-    if value == "" {
+    candidate := strings.TrimSpace(strings.TrimPrefix(trimmed, "rpcallowip="))
+    if candidate == "" {
       continue
     }
-    if strings.Contains(value, "/") {
-      if _, cidr, err := net.ParseCIDR(value); err == nil && cidr.Contains(ip) {
+    if strings.Contains(candidate, "/") {
+      if _, cidr, err := net.ParseCIDR(candidate); err == nil && cidr.Contains(ip) {
         return true
       }
       continue
     }
-    if net.ParseIP(value) != nil && value == gateway {
+    if net.ParseIP(candidate) != nil && candidate == value {
       return true
     }
   }

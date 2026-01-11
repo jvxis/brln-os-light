@@ -457,12 +457,19 @@ func readBitcoinLocalRPCConfig(ctx context.Context) (bitcoinRPCConfig, error) {
   if err != nil {
     return bitcoinRPCConfig{}, fmt.Errorf("failed to read local bitcoin.conf: %w", err)
   }
+  allowList := []string{"127.0.0.1"}
   if gateway, gwErr := dockerGatewayIP(ctx); gwErr == nil && gateway != "" {
-    if updated, changed := ensureBitcoinCoreRPCAllow(raw, gateway); changed {
-      if err := writeBitcoinCoreConfig(ctx, paths, updated); err == nil {
-        raw = updated
-        _ = writeFile(paths.SeedConfigPath, updated, 0640)
-      }
+    allowList = append(allowList, gateway)
+  }
+  if containerID, idErr := composeContainerID(ctx, paths.Root, paths.ComposePath, "bitcoind"); idErr == nil && containerID != "" {
+    for _, gateway := range dockerContainerGateways(ctx, containerID) {
+      allowList = append(allowList, gateway)
+    }
+  }
+  if updated, changed := ensureBitcoinCoreRPCAllowList(raw, allowList); changed {
+    if err := writeBitcoinCoreConfig(ctx, paths, updated); err == nil {
+      raw = updated
+      _ = writeFile(paths.SeedConfigPath, updated, 0640)
     }
   }
   user, pass, zmqBlock, zmqTx := parseBitcoinCoreRPCConfig(raw)
@@ -1868,6 +1875,34 @@ func normalizeLocalZMQ(value string, fallback string) string {
     return trimmed
   }
   return "tcp://" + trimmed
+}
+
+func dockerContainerGateways(ctx context.Context, containerID string) []string {
+  if containerID == "" {
+    return []string{}
+  }
+  out, err := system.RunCommandWithSudo(
+    ctx,
+    "docker",
+    "inspect",
+    "-f",
+    "{{range $k,$v := .NetworkSettings.Networks}}{{println $v.Gateway}}{{end}}",
+    containerID,
+  )
+  if err != nil {
+    return []string{}
+  }
+  gateways := []string{}
+  seen := map[string]bool{}
+  for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+    trimmed := strings.TrimSpace(line)
+    if trimmed == "" || seen[trimmed] {
+      continue
+    }
+    seen[trimmed] = true
+    gateways = append(gateways, trimmed)
+  }
+  return gateways
 }
 
 func updateLNDConfRPC(ctx context.Context, user, pass, host, zmqBlock, zmqTx string) error {

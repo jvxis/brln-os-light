@@ -1242,6 +1242,9 @@ func (s *Server) handleLNUpdateFees(w http.ResponseWriter, r *http.Request) {
     BaseFeeMsat int64 `json:"base_fee_msat"`
     FeeRatePpm int64 `json:"fee_rate_ppm"`
     TimeLockDelta int64 `json:"time_lock_delta"`
+    InboundEnabled bool `json:"inbound_enabled"`
+    InboundBaseMsat int64 `json:"inbound_base_msat"`
+    InboundFeeRatePpm int64 `json:"inbound_fee_rate_ppm"`
   }
   if err := readJSON(r, &req); err != nil {
     writeError(w, http.StatusBadRequest, "invalid json")
@@ -1259,7 +1262,7 @@ func (s *Server) handleLNUpdateFees(w http.ResponseWriter, r *http.Request) {
     writeError(w, http.StatusBadRequest, "channel_point required unless apply_all=true")
     return
   }
-  if req.BaseFeeMsat == 0 && req.FeeRatePpm == 0 && req.TimeLockDelta == 0 {
+  if req.BaseFeeMsat == 0 && req.FeeRatePpm == 0 && req.TimeLockDelta == 0 && !req.InboundEnabled {
     writeError(w, http.StatusBadRequest, "at least one fee field is required")
     return
   }
@@ -1267,12 +1270,45 @@ func (s *Server) handleLNUpdateFees(w http.ResponseWriter, r *http.Request) {
   ctx, cancel := context.WithTimeout(r.Context(), lndRPCTimeout)
   defer cancel()
 
-  if err := s.lnd.UpdateChannelFees(ctx, req.ChannelPoint, req.ApplyAll, req.BaseFeeMsat, req.FeeRatePpm, req.TimeLockDelta); err != nil {
+  if err := s.lnd.UpdateChannelFees(ctx, req.ChannelPoint, req.ApplyAll, req.BaseFeeMsat, req.FeeRatePpm, req.TimeLockDelta, req.InboundEnabled, req.InboundBaseMsat, req.InboundFeeRatePpm); err != nil {
+    if isTimeoutError(err) {
+      writeJSON(w, http.StatusOK, map[string]any{
+        "ok": true,
+        "warning": "Update sent. LND is syncing; policy may already be updated.",
+      })
+      return
+    }
     writeError(w, http.StatusInternalServerError, lndStatusMessage(err))
     return
   }
 
-  writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+  writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleLNChannelFees(w http.ResponseWriter, r *http.Request) {
+  channelPoint := strings.TrimSpace(r.URL.Query().Get("channel_point"))
+  if channelPoint == "" {
+    writeError(w, http.StatusBadRequest, "channel_point required")
+    return
+  }
+
+  ctx, cancel := context.WithTimeout(r.Context(), lndRPCTimeout)
+  defer cancel()
+
+  policy, err := s.lnd.GetChannelPolicy(ctx, channelPoint)
+  if err != nil {
+    writeError(w, http.StatusInternalServerError, lndStatusMessage(err))
+    return
+  }
+
+  writeJSON(w, http.StatusOK, map[string]any{
+    "channel_point": policy.ChannelPoint,
+    "base_fee_msat": policy.BaseFeeMsat,
+    "fee_rate_ppm": policy.FeeRatePpm,
+    "time_lock_delta": policy.TimeLockDelta,
+    "inbound_base_msat": policy.InboundBaseMsat,
+    "inbound_fee_rate_ppm": policy.InboundFeeRatePpm,
+  })
 }
 
 type lndUserConf struct {

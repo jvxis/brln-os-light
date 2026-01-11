@@ -8,6 +8,7 @@ import (
   "fmt"
   "io"
   "log"
+  "math"
   "os"
   "strconv"
   "strings"
@@ -49,6 +50,15 @@ type BalanceSummary struct {
   OnchainSat int64
   LightningSat int64
   Warnings []string
+}
+
+type ChannelPolicy struct {
+  ChannelPoint string
+  BaseFeeMsat int64
+  FeeRatePpm int64
+  TimeLockDelta int64
+  InboundBaseMsat int64
+  InboundFeeRatePpm int64
 }
 
 type DecodedInvoice struct {
@@ -191,6 +201,67 @@ func (c *Client) DecodeInvoice(ctx context.Context, payReq string) (DecodedInvoi
     Destination: resp.Destination,
     Expiry: resp.Expiry,
     Timestamp: resp.Timestamp,
+  }, nil
+}
+
+func (c *Client) GetChannelPolicy(ctx context.Context, channelPoint string) (ChannelPolicy, error) {
+  conn, err := c.dial(ctx, true)
+  if err != nil {
+    return ChannelPolicy{}, err
+  }
+  defer conn.Close()
+
+  client := lnrpc.NewLightningClient(conn)
+
+  channels, err := client.ListChannels(ctx, &lnrpc.ListChannelsRequest{})
+  if err != nil {
+    return ChannelPolicy{}, err
+  }
+
+  var selected *lnrpc.Channel
+  for _, ch := range channels.Channels {
+    if ch.ChannelPoint == channelPoint {
+      selected = ch
+      break
+    }
+  }
+  if selected == nil {
+    return ChannelPolicy{}, errors.New("channel not found")
+  }
+
+  edge, err := client.GetChanInfo(ctx, &lnrpc.ChanInfoRequest{ChanId: selected.ChanId})
+  if err != nil {
+    return ChannelPolicy{}, err
+  }
+
+  policy := edge.Node1Policy
+  if selected.RemotePubkey != "" {
+    if edge.Node1Pub == selected.RemotePubkey {
+      policy = edge.Node2Policy
+    } else if edge.Node2Pub == selected.RemotePubkey {
+      policy = edge.Node1Policy
+    }
+  }
+  if policy == nil {
+    return ChannelPolicy{}, errors.New("channel policy unavailable")
+  }
+
+  feeRatePpm := int64(0)
+  if policy.FeeRateMilliMsat != 0 {
+    feeRatePpm = policy.FeeRateMilliMsat / 1000
+  }
+  inboundRatePpm := int64(0)
+  if policy.InboundFeeRateMilliMsat != 0 {
+    inboundRatePpm = int64(policy.InboundFeeRateMilliMsat) / 1000
+  }
+
+  return ChannelPolicy{
+    ChannelPoint: channelPoint,
+    BaseFeeMsat: policy.FeeBaseMsat,
+    FeeRatePpm: feeRatePpm,
+    TimeLockDelta: int64(policy.TimeLockDelta),
+    InboundBaseMsat: int64(policy.InboundFeeBaseMsat),
+    InboundFeeRatePpm: inboundRatePpm,
   }, nil
 }
 
@@ -574,7 +645,7 @@ func (c *Client) CloseChannel(ctx context.Context, channelPoint string, force bo
   return nil
 }
 
-func (c *Client) UpdateChannelFees(ctx context.Context, channelPoint string, applyAll bool, baseFeeMsat int64, feeRatePpm int64, timeLockDelta int64) error {
+func (c *Client) UpdateChannelFees(ctx context.Context, channelPoint string, applyAll bool, baseFeeMsat int64, feeRatePpm int64, timeLockDelta int64, inboundEnabled bool, inboundBaseMsat int64, inboundFeeRatePpm int64) error {
   conn, err := c.dial(ctx, true)
   if err != nil {
     return err
@@ -585,6 +656,18 @@ func (c *Client) UpdateChannelFees(ctx context.Context, channelPoint string, app
     BaseFeeMsat: baseFeeMsat,
     FeeRatePpm: uint32(feeRatePpm),
     TimeLockDelta: uint32(timeLockDelta),
+  }
+  if inboundEnabled {
+    if inboundBaseMsat < math.MinInt32 || inboundBaseMsat > math.MaxInt32 {
+      return fmt.Errorf("inbound base fee out of range")
+    }
+    if inboundFeeRatePpm < math.MinInt32 || inboundFeeRatePpm > math.MaxInt32 {
+      return fmt.Errorf("inbound fee rate out of range")
+    }
+    req.InboundFee = &lnrpc.InboundFee{
+      BaseFeeMsat: int32(inboundBaseMsat),
+      FeeRatePpm: int32(inboundFeeRatePpm),
+    }
   }
   if applyAll {
     req.Scope = &lnrpc.PolicyUpdateRequest_Global{Global: true}

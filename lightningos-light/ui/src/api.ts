@@ -86,6 +86,8 @@ export const payInvoice = (payload: { payment_request: string }) =>
 
 export const getLnChannels = () => request('/api/lnops/channels')
 export const getLnPeers = () => request('/api/lnops/peers')
+export const getLnChannelFees = (channelPoint: string) =>
+  request(`/api/lnops/channel/fees?channel_point=${encodeURIComponent(channelPoint)}`)
 export const connectPeer = (payload: { address?: string; pubkey?: string; host?: string; perm?: boolean }) =>
   request('/api/lnops/peer', { method: 'POST', body: JSON.stringify(payload) })
 export const disconnectPeer = (payload: { pubkey: string }) =>
@@ -106,6 +108,9 @@ export const updateChannelFees = (payload: {
   base_fee_msat?: number
   fee_rate_ppm?: number
   time_lock_delta?: number
+  inbound_enabled?: boolean
+  inbound_base_msat?: number
+  inbound_fee_rate_ppm?: number
 }) => request('/api/lnops/channel/fees', { method: 'POST', body: JSON.stringify(payload) })
 
 export const getApps = () => request('/api/apps')

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { boostPeers, closeChannel, connectPeer, disconnectPeer, getLnChannels, getLnPeers, openChannel, updateChannelFees } from '../api'
+import { boostPeers, closeChannel, connectPeer, disconnectPeer, getLnChannelFees, getLnChannels, getLnPeers, openChannel, updateChannelFees } from '../api'
 
 type Channel = {
   channel_point: string
@@ -70,6 +70,11 @@ export default function LightningOps() {
   const [baseFeeMsat, setBaseFeeMsat] = useState('')
   const [feeRatePpm, setFeeRatePpm] = useState('')
   const [timeLockDelta, setTimeLockDelta] = useState('')
+  const [inboundEnabled, setInboundEnabled] = useState(false)
+  const [inboundBaseMsat, setInboundBaseMsat] = useState('')
+  const [inboundFeeRatePpm, setInboundFeeRatePpm] = useState('')
+  const [feeLoadStatus, setFeeLoadStatus] = useState('')
+  const [feeLoading, setFeeLoading] = useState(false)
   const [feeStatus, setFeeStatus] = useState('')
 
   const load = async () => {
@@ -103,6 +108,48 @@ export default function LightningOps() {
   useEffect(() => {
     load()
   }, [])
+
+  useEffect(() => {
+    if (feeScopeAll) {
+      setFeeLoadStatus('')
+      setFeeLoading(false)
+      return
+    }
+    if (!feeChannelPoint) {
+      setFeeLoadStatus('')
+      setFeeLoading(false)
+      return
+    }
+
+    let mounted = true
+    setFeeLoading(true)
+    setFeeLoadStatus('Loading current fees...')
+    getLnChannelFees(feeChannelPoint)
+      .then((res) => {
+        if (!mounted) return
+        setBaseFeeMsat(String(res?.base_fee_msat ?? ''))
+        setFeeRatePpm(String(res?.fee_rate_ppm ?? ''))
+        setTimeLockDelta(String(res?.time_lock_delta ?? ''))
+        setInboundBaseMsat(String(res?.inbound_base_msat ?? ''))
+        setInboundFeeRatePpm(String(res?.inbound_fee_rate_ppm ?? ''))
+        const inboundBase = Number(res?.inbound_base_msat || 0)
+        const inboundRate = Number(res?.inbound_fee_rate_ppm || 0)
+        setInboundEnabled(inboundBase !== 0 || inboundRate !== 0)
+        setFeeLoadStatus('Current fees loaded.')
+      })
+      .catch((err: any) => {
+        if (!mounted) return
+        setFeeLoadStatus(err?.message || 'Failed to load fees.')
+      })
+      .finally(() => {
+        if (!mounted) return
+        setFeeLoading(false)
+      })
+
+    return () => {
+      mounted = false
+    }
+  }, [feeChannelPoint, feeScopeAll])
 
   const filteredChannels = useMemo(() => {
     let list = channels
@@ -243,23 +290,30 @@ export default function LightningOps() {
     const base = Number(baseFeeMsat || 0)
     const ppm = Number(feeRatePpm || 0)
     const delta = Number(timeLockDelta || 0)
+    const inboundBase = Number(inboundBaseMsat || 0)
+    const inboundRate = Number(inboundFeeRatePpm || 0)
     if (!feeScopeAll && !feeChannelPoint) {
       setFeeStatus('Select a channel or apply to all.')
       return
     }
-    if (base === 0 && ppm === 0 && delta === 0) {
+    const hasOutbound = base !== 0 || ppm !== 0 || delta !== 0
+    const hasInbound = inboundEnabled && (inboundBase !== 0 || inboundRate !== 0)
+    if (!hasOutbound && !hasInbound) {
       setFeeStatus('Set at least one fee value.')
       return
     }
     try {
-      await updateChannelFees({
+      const res = await updateChannelFees({
         apply_all: feeScopeAll,
         channel_point: feeScopeAll ? undefined : feeChannelPoint,
         base_fee_msat: base,
         fee_rate_ppm: ppm,
-        time_lock_delta: delta
+        time_lock_delta: delta,
+        inbound_enabled: inboundEnabled,
+        inbound_base_msat: inboundBase,
+        inbound_fee_rate_ppm: inboundRate
       })
-      setFeeStatus('Fees updated.')
+      setFeeStatus(res?.warning || 'Fees updated.')
       load()
     } catch (err: any) {
       setFeeStatus(err?.message || 'Fee update failed.')
@@ -405,6 +459,9 @@ export default function LightningOps() {
               ))}
             </select>
           )}
+          {feeLoadStatus && (
+            <p className="text-xs text-fog/60">{feeLoadStatus}</p>
+          )}
           <div className="grid gap-4 lg:grid-cols-3">
             <input
               className="input-field"
@@ -431,6 +488,33 @@ export default function LightningOps() {
               onChange={(e) => setTimeLockDelta(e.target.value)}
             />
           </div>
+          <label className="flex items-center gap-2 text-sm text-fog/70">
+            <input
+              type="checkbox"
+              checked={inboundEnabled}
+              onChange={(e) => setInboundEnabled(e.target.checked)}
+            />
+            Include inbound fees (advanced)
+          </label>
+          {inboundEnabled && (
+            <div className="grid gap-4 lg:grid-cols-2">
+              <input
+                className="input-field"
+                placeholder="Inbound base (msat)"
+                type="number"
+                value={inboundBaseMsat}
+                onChange={(e) => setInboundBaseMsat(e.target.value)}
+              />
+              <input
+                className="input-field"
+                placeholder="Inbound fee rate (ppm)"
+                type="number"
+                value={inboundFeeRatePpm}
+                onChange={(e) => setInboundFeeRatePpm(e.target.value)}
+              />
+            </div>
+          )}
+          <p className="text-xs text-fog/50">Inbound fees are usually negative to attract inbound flow.</p>
           <button className="btn-secondary" onClick={handleUpdateFees}>Update fees</button>
           {feeStatus && <p className="text-sm text-brass">{feeStatus}</p>}
         </div>

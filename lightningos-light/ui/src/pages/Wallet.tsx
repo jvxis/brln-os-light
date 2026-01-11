@@ -139,7 +139,7 @@ export default function Wallet() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-fog/60">On-chain</p>
-                <p className="text-xl">{onchainBalance} sat</p>
+                <p className="text-xl">{onchainBalance} sats</p>
               </div>
               <button className="btn-secondary text-xs px-3 py-1.5" onClick={handleAddFunds}>
                 Add funds
@@ -174,7 +174,7 @@ export default function Wallet() {
           </div>
           <div>
             <p className="text-fog/60">Lightning</p>
-            <p className="text-xl">{lightningBalance} sat</p>
+            <p className="text-xl">{lightningBalance} sats</p>
           </div>
         </div>
         {summaryLoading && !summaryError && (
@@ -192,7 +192,7 @@ export default function Wallet() {
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="section-card space-y-4">
           <h3 className="text-lg font-semibold">Create invoice</h3>
-          <input className="input-field" placeholder="Amount (sat)" value={amount} onChange={(e) => setAmount(e.target.value)} />
+          <input className="input-field" placeholder="Amount (sats)" value={amount} onChange={(e) => setAmount(e.target.value)} />
           <input className="input-field" placeholder="Memo" value={memo} onChange={(e) => setMemo(e.target.value)} />
           <button className="btn-primary" onClick={handleInvoice}>Generate invoice</button>
           {invoice && (
@@ -231,7 +231,7 @@ export default function Wallet() {
           ) : activity.length ? activity.map((item: any, idx: number) => (
             <div key={`${item.type}-${idx}`} className="flex items-center justify-between border-b border-white/10 pb-2">
               <span className="text-fog/70">{item.type} - {item.status}</span>
-              <span>{item.amount_sat} sat</span>
+              <span>{item.amount_sat} sats</span>
             </div>
           )) : (
             <p className="text-fog/60">No recent activity yet.</p>

@@ -12,9 +12,9 @@ LND_URL="${LND_URL:-$LND_URL_DEFAULT}"
 GO_VERSION="${GO_VERSION:-1.22.7}"
 GO_TARBALL_URL="https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
 
-NODE_VERSION="${NODE_VERSION:-20}"
+NODE_VERSION="${NODE_VERSION:-current}"
 
-POSTGRES_VERSION="${POSTGRES_VERSION:-17}"
+POSTGRES_VERSION="${POSTGRES_VERSION:-latest}"
 
 ALLOW_STOP_UNATTENDED_UPGRADES="${ALLOW_STOP_UNATTENDED_UPGRADES:-1}"
 UNATTENDED_NOTICE_SHOWN=0
@@ -111,6 +111,43 @@ get_os_codename() {
     codename=$(lsb_release -cs 2>/dev/null || true)
   fi
   echo "$codename"
+}
+
+resolve_postgres_version() {
+  if [[ "$POSTGRES_VERSION" =~ ^[0-9]+$ ]]; then
+    return 0
+  fi
+  local versions
+  versions=$(apt-cache search --names-only '^postgresql-[0-9]+$' 2>/dev/null | awk '{print $1}' | sed 's/postgresql-//' | sort -nr)
+  if [[ -z "$versions" ]]; then
+    print_warn "Could not detect PostgreSQL versions; falling back to 17"
+    POSTGRES_VERSION="17"
+    return 0
+  fi
+  POSTGRES_VERSION=$(echo "$versions" | head -n1)
+  print_ok "Using PostgreSQL ${POSTGRES_VERSION}"
+}
+
+resolve_node_version() {
+  if [[ "$NODE_VERSION" =~ ^[0-9]+$ ]]; then
+    return 0
+  fi
+  if command -v jq >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
+    local major
+    major=$(curl -fsSL https://nodejs.org/dist/index.json \
+      | jq -r '.[].version' \
+      | sed 's/^v//' \
+      | cut -d. -f1 \
+      | sort -nr \
+      | head -n1)
+    if [[ -n "$major" ]]; then
+      NODE_VERSION="$major"
+      print_ok "Using Node.js ${NODE_VERSION}.x"
+      return 0
+    fi
+  fi
+  print_warn "Could not resolve latest Node.js version; falling back to 20"
+  NODE_VERSION="20"
 }
 
 wait_for_apt_locks() {
@@ -319,6 +356,7 @@ install_packages() {
   setup_postgres_repo
   setup_tor_repo
   apt_get update
+  resolve_postgres_version
   apt_get install -y \
     postgresql-common \
     postgresql-client-common \
@@ -415,6 +453,7 @@ install_go() {
 }
 
 install_node() {
+  resolve_node_version
   print_step "Installing Node.js ${NODE_VERSION}.x"
   if command -v node >/dev/null 2>&1; then
     local major

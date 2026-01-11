@@ -77,6 +77,8 @@ export default function LightningOps() {
   const [feeLoading, setFeeLoading] = useState(false)
   const [feeStatus, setFeeStatus] = useState('')
 
+  const ambossURL = (pubkey: string) => `https://amboss.space/node/${pubkey}`
+
   const load = async () => {
     setStatus('Loading channels...')
     setPeerListStatus('Loading peers...')
@@ -566,7 +568,18 @@ export default function LightningOps() {
               <div key={ch.channel_point} className="rounded-2xl border border-white/10 bg-ink/60 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm text-fog/60">{ch.peer_alias || ch.remote_pubkey}</p>
+                    {ch.remote_pubkey ? (
+                      <a
+                        className="text-sm text-fog/60 hover:text-fog"
+                        href={ambossURL(ch.remote_pubkey)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {ch.peer_alias || ch.remote_pubkey}
+                      </a>
+                    ) : (
+                      <p className="text-sm text-fog/60">{ch.peer_alias || 'Unknown peer'}</p>
+                    )}
                     <p className="text-xs text-fog/50">Point: {ch.channel_point}</p>
                   </div>
                   <span className={`rounded-full px-3 py-1 text-xs ${ch.active ? 'bg-glow/20 text-glow' : 'bg-ember/20 text-ember'}`}>
@@ -602,7 +615,18 @@ export default function LightningOps() {
               <div key={peer.pub_key} className="rounded-2xl border border-white/10 bg-ink/60 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm text-fog/60">{peer.alias || peer.pub_key}</p>
+                    {peer.pub_key ? (
+                      <a
+                        className="text-sm text-fog/60 hover:text-fog"
+                        href={ambossURL(peer.pub_key)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {peer.alias || peer.pub_key}
+                      </a>
+                    ) : (
+                      <p className="text-sm text-fog/60">{peer.alias || 'Unknown peer'}</p>
+                    )}
                     <p className="text-xs text-fog/50">{peer.address || 'address unknown'}</p>
                   </div>
                   <div className="flex items-center gap-2">

@@ -214,6 +214,7 @@ type postgresResponse struct {
   DBName string `json:"db_name"`
   DBSizeMB int64 `json:"db_size_mb"`
   Connections int64 `json:"connections"`
+  Version string `json:"version"`
 }
 
 func (s *Server) handlePostgres(w http.ResponseWriter, r *http.Request) {
@@ -237,6 +238,10 @@ func (s *Server) handlePostgres(w http.ResponseWriter, r *http.Request) {
       var connections int64
       _ = pool.QueryRow(ctx, "select count(*) from pg_stat_activity where datname=$1", s.cfg.Postgres.DBName).Scan(&connections)
       resp.Connections = connections
+
+      var version string
+      _ = pool.QueryRow(ctx, "show server_version").Scan(&version)
+      resp.Version = version
     }
   }
 

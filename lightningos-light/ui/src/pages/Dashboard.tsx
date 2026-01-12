@@ -134,6 +134,7 @@ export default function Dashboard() {
           {postgres ? (
             <div className="mt-4 text-sm space-y-2">
               <div className="flex justify-between"><span>Service</span><span>{postgres.service_active ? 'active' : 'inactive'}</span></div>
+              <div className="flex justify-between"><span>Version</span><span>{postgres.version || 'n/a'}</span></div>
               <div className="flex justify-between"><span>DB size</span><span>{postgres.db_size_mb} MB</span></div>
               <div className="flex justify-between"><span>Connections</span><span>{postgres.connections}</span></div>
             </div>

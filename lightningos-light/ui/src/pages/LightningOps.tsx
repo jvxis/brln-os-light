@@ -475,7 +475,7 @@ export default function LightningOps() {
                           <div>
                             {ch.remote_pubkey ? (
                               <a
-                                className="text-xs text-fog/70 hover:text-fog"
+                                className="text-xs text-fog/70 hover:text-fog break-all"
                                 href={ambossURL(ch.remote_pubkey)}
                                 target="_blank"
                                 rel="noopener noreferrer"
@@ -485,9 +485,9 @@ export default function LightningOps() {
                             ) : (
                               <p className="text-xs text-fog/70">{ch.peer_alias || 'Unknown peer'}</p>
                             )}
-                            <p className="text-[11px] text-fog/50">Point: {ch.channel_point}</p>
+                            <p className="text-[11px] text-fog/50 break-all">Point: {ch.channel_point}</p>
                           </div>
-                          <span className="rounded-full px-2 py-1 text-[11px] bg-ember/20 text-ember">
+                          <span className="rounded-full px-2 py-1 text-[11px] bg-glow/20 text-glow">
                             {pendingStatusLabel(ch.status)}
                           </span>
                         </div>

@@ -491,6 +491,117 @@ func (c *Client) ListChannels(ctx context.Context) ([]ChannelInfo, error) {
   return channels, nil
 }
 
+func (c *Client) ListPendingChannels(ctx context.Context) ([]PendingChannelInfo, error) {
+  conn, err := c.dial(ctx, true)
+  if err != nil {
+    return nil, err
+  }
+  defer conn.Close()
+
+  client := lnrpc.NewLightningClient(conn)
+  resp, err := client.PendingChannels(ctx, &lnrpc.PendingChannelsRequest{})
+  if err != nil {
+    return nil, err
+  }
+
+  aliasMap := map[string]string{}
+  if channels, err := client.ListChannels(ctx, &lnrpc.ListChannelsRequest{PeerAliasLookup: true}); err == nil {
+    for _, ch := range channels.Channels {
+      if ch.RemotePubkey != "" && ch.PeerAlias != "" {
+        aliasMap[ch.RemotePubkey] = ch.PeerAlias
+      }
+    }
+  }
+
+  resolveAlias := func(pubkey string) string {
+    if pubkey == "" {
+      return ""
+    }
+    if alias := aliasMap[pubkey]; alias != "" {
+      return alias
+    }
+    return ""
+  }
+
+  pending := []PendingChannelInfo{}
+  for _, item := range resp.PendingOpenChannels {
+    if item == nil || item.Channel == nil {
+      continue
+    }
+    ch := item.Channel
+    pending = append(pending, PendingChannelInfo{
+      ChannelPoint: ch.ChannelPoint,
+      RemotePubkey: ch.RemoteNodePub,
+      PeerAlias: resolveAlias(ch.RemoteNodePub),
+      CapacitySat: ch.Capacity,
+      LocalBalanceSat: ch.LocalBalance,
+      RemoteBalanceSat: ch.RemoteBalance,
+      Status: "opening",
+      ConfirmationsUntilActive: item.ConfirmationsUntilActive,
+      Private: ch.Private,
+    })
+  }
+
+  for _, item := range resp.PendingClosingChannels {
+    if item == nil || item.Channel == nil {
+      continue
+    }
+    ch := item.Channel
+    pending = append(pending, PendingChannelInfo{
+      ChannelPoint: ch.ChannelPoint,
+      RemotePubkey: ch.RemoteNodePub,
+      PeerAlias: resolveAlias(ch.RemoteNodePub),
+      CapacitySat: ch.Capacity,
+      LocalBalanceSat: ch.LocalBalance,
+      RemoteBalanceSat: ch.RemoteBalance,
+      Status: "closing",
+      ClosingTxid: item.ClosingTxid,
+      Private: ch.Private,
+    })
+  }
+
+  for _, item := range resp.PendingForceClosingChannels {
+    if item == nil || item.Channel == nil {
+      continue
+    }
+    ch := item.Channel
+    pending = append(pending, PendingChannelInfo{
+      ChannelPoint: ch.ChannelPoint,
+      RemotePubkey: ch.RemoteNodePub,
+      PeerAlias: resolveAlias(ch.RemoteNodePub),
+      CapacitySat: ch.Capacity,
+      LocalBalanceSat: ch.LocalBalance,
+      RemoteBalanceSat: ch.RemoteBalance,
+      Status: "force_closing",
+      ClosingTxid: item.ClosingTxid,
+      BlocksTilMaturity: item.BlocksTilMaturity,
+      LimboBalance: item.LimboBalance,
+      Private: ch.Private,
+    })
+  }
+
+  for _, item := range resp.WaitingCloseChannels {
+    if item == nil || item.Channel == nil {
+      continue
+    }
+    ch := item.Channel
+    pending = append(pending, PendingChannelInfo{
+      ChannelPoint: ch.ChannelPoint,
+      RemotePubkey: ch.RemoteNodePub,
+      PeerAlias: resolveAlias(ch.RemoteNodePub),
+      CapacitySat: ch.Capacity,
+      LocalBalanceSat: ch.LocalBalance,
+      RemoteBalanceSat: ch.RemoteBalance,
+      Status: "waiting_close",
+      ClosingTxid: item.ClosingTxid,
+      LimboBalance: item.LimboBalance,
+      Private: ch.Private,
+    })
+  }
+
+  return pending, nil
+}
+
 func (c *Client) ListPeers(ctx context.Context) ([]PeerInfo, error) {
   conn, err := c.dial(ctx, true)
   if err != nil {
@@ -781,6 +892,21 @@ type PeerInfo struct {
   SyncType string `json:"sync_type"`
   LastError string `json:"last_error"`
   LastErrorTime int64 `json:"last_error_time,omitempty"`
+}
+
+type PendingChannelInfo struct {
+  ChannelPoint string `json:"channel_point"`
+  RemotePubkey string `json:"remote_pubkey"`
+  PeerAlias string `json:"peer_alias,omitempty"`
+  CapacitySat int64 `json:"capacity_sat"`
+  LocalBalanceSat int64 `json:"local_balance_sat"`
+  RemoteBalanceSat int64 `json:"remote_balance_sat"`
+  Status string `json:"status"`
+  ClosingTxid string `json:"closing_txid,omitempty"`
+  BlocksTilMaturity int32 `json:"blocks_til_maturity,omitempty"`
+  LimboBalance int64 `json:"limbo_balance,omitempty"`
+  ConfirmationsUntilActive uint32 `json:"confirmations_until_active,omitempty"`
+  Private bool `json:"private"`
 }
 
 type RecentActivity struct {

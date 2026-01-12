@@ -13,6 +13,21 @@ type Channel = {
   remote_balance_sat: number
 }
 
+type PendingChannel = {
+  channel_point: string
+  remote_pubkey: string
+  peer_alias?: string
+  capacity_sat: number
+  local_balance_sat: number
+  remote_balance_sat: number
+  status: string
+  closing_txid?: string
+  blocks_til_maturity?: number
+  limbo_balance?: number
+  confirmations_until_active?: number
+  private?: boolean
+}
+
 type Peer = {
   pub_key: string
   alias: string
@@ -53,6 +68,9 @@ export default function LightningOps() {
   const [channels, setChannels] = useState<Channel[]>([])
   const [activeCount, setActiveCount] = useState(0)
   const [inactiveCount, setInactiveCount] = useState(0)
+  const [pendingOpenCount, setPendingOpenCount] = useState(0)
+  const [pendingCloseCount, setPendingCloseCount] = useState(0)
+  const [pendingChannels, setPendingChannels] = useState<PendingChannel[]>([])
   const [status, setStatus] = useState('')
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all')
   const [search, setSearch] = useState('')
@@ -111,6 +129,9 @@ export default function LightningOps() {
       setChannels(list)
       setActiveCount(res?.active_count ?? 0)
       setInactiveCount(res?.inactive_count ?? 0)
+      setPendingOpenCount(res?.pending_open_count ?? 0)
+      setPendingCloseCount(res?.pending_close_count ?? 0)
+      setPendingChannels(Array.isArray(res?.pending_channels) ? res.pending_channels : [])
       setStatus('')
     } else {
       const message = (channelsResult.reason as any)?.message || 'Failed to load channels.'
@@ -239,6 +260,24 @@ export default function LightningOps() {
     })
     return sorted
   }, [channels, filter, minCapacity, search, showPrivate, sortBy, sortDir])
+
+  const pendingOpen = useMemo(() => pendingChannels.filter((ch) => ch.status === 'opening'), [pendingChannels])
+  const pendingClose = useMemo(() => pendingChannels.filter((ch) => ch.status !== 'opening'), [pendingChannels])
+
+  const pendingStatusLabel = (status: string) => {
+    switch (status) {
+      case 'opening':
+        return 'Opening'
+      case 'closing':
+        return 'Closing'
+      case 'force_closing':
+        return 'Force closing'
+      case 'waiting_close':
+        return 'Waiting close'
+      default:
+        return status
+    }
+  }
 
   const handleConnectPeer = async () => {
     setPeerStatus('Connecting...')
@@ -392,12 +431,202 @@ export default function LightningOps() {
             <div className="rounded-full border border-white/10 bg-ink/60 px-4 py-2 text-xs text-fog/70">
               Inactive: <span className="text-fog">{inactiveCount}</span>
             </div>
+            <div className="rounded-full border border-ember/30 bg-ember/10 px-4 py-2 text-xs text-ember">
+              Opening: <span className="text-fog">{pendingOpenCount}</span>
+            </div>
+            <div className="rounded-full border border-ember/30 bg-ember/10 px-4 py-2 text-xs text-ember">
+              Closing: <span className="text-fog">{pendingCloseCount}</span>
+            </div>
             <button className="btn-secondary text-xs px-3 py-2" onClick={load}>
               Refresh
             </button>
           </div>
         </div>
         {status && <p className="mt-4 text-sm text-brass">{status}</p>}
+      </div>
+
+      <div className="section-card space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="text-lg font-semibold">Channels</h3>
+          <div className="flex flex-wrap gap-2 text-xs">
+            <button className={filter === 'all' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('all')}>All</button>
+            <button className={filter === 'active' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('active')}>Active</button>
+            <button className={filter === 'inactive' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('inactive')}>Inactive</button>
+          </div>
+        </div>
+
+        {(pendingOpen.length > 0 || pendingClose.length > 0) && (
+          <div className="rounded-2xl border border-ember/20 bg-ember/5 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h4 className="text-sm font-semibold text-ember">Pending channels</h4>
+              <p className="text-xs text-ember">Opening: {pendingOpen.length} | Closing: {pendingClose.length}</p>
+            </div>
+            <div className="mt-3 grid gap-3 lg:grid-cols-2">
+              <div className="rounded-2xl border border-white/10 bg-ink/60 p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <h5 className="text-xs font-semibold text-fog/70 uppercase tracking-wide">Opening</h5>
+                  <span className="rounded-full px-2 py-1 text-[11px] bg-ember/20 text-ember">{pendingOpen.length}</span>
+                </div>
+                {pendingOpen.length ? (
+                  <div className="mt-3 space-y-3">
+                    {pendingOpen.map((ch) => (
+                      <div key={ch.channel_point} className="rounded-xl border border-white/10 bg-ink/70 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            {ch.remote_pubkey ? (
+                              <a
+                                className="text-xs text-fog/70 hover:text-fog"
+                                href={ambossURL(ch.remote_pubkey)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                {ch.peer_alias || ch.remote_pubkey}
+                              </a>
+                            ) : (
+                              <p className="text-xs text-fog/70">{ch.peer_alias || 'Unknown peer'}</p>
+                            )}
+                            <p className="text-[11px] text-fog/50">Point: {ch.channel_point}</p>
+                          </div>
+                          <span className="rounded-full px-2 py-1 text-[11px] bg-ember/20 text-ember">
+                            {pendingStatusLabel(ch.status)}
+                          </span>
+                        </div>
+                        <div className="mt-2 grid gap-2 lg:grid-cols-2 text-[11px] text-fog/60">
+                          <div>Capacity: <span className="text-fog">{ch.capacity_sat} sat</span></div>
+                          {typeof ch.confirmations_until_active === 'number' && (
+                            <div>Confirmations: <span className="text-fog">{ch.confirmations_until_active}</span></div>
+                          )}
+                        </div>
+                        {ch.private !== undefined && (
+                          <p className="mt-2 text-[11px] text-fog/50">
+                            {ch.private ? 'Private channel' : 'Public channel'}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-3 text-xs text-fog/60">No channels opening.</p>
+                )}
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-ink/60 p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <h5 className="text-xs font-semibold text-fog/70 uppercase tracking-wide">Closing</h5>
+                  <span className="rounded-full px-2 py-1 text-[11px] bg-ember/20 text-ember">{pendingClose.length}</span>
+                </div>
+                {pendingClose.length ? (
+                  <div className="mt-3 space-y-3">
+                    {pendingClose.map((ch) => (
+                      <div key={ch.channel_point} className="rounded-xl border border-white/10 bg-ink/70 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            {ch.remote_pubkey ? (
+                              <a
+                                className="text-xs text-fog/70 hover:text-fog"
+                                href={ambossURL(ch.remote_pubkey)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                {ch.peer_alias || ch.remote_pubkey}
+                              </a>
+                            ) : (
+                              <p className="text-xs text-fog/70">{ch.peer_alias || 'Unknown peer'}</p>
+                            )}
+                            <p className="text-[11px] text-fog/50">Point: {ch.channel_point}</p>
+                          </div>
+                          <span className="rounded-full px-2 py-1 text-[11px] bg-ember/20 text-ember">
+                            {pendingStatusLabel(ch.status)}
+                          </span>
+                        </div>
+                        <div className="mt-2 grid gap-2 lg:grid-cols-2 text-[11px] text-fog/60">
+                          <div>Capacity: <span className="text-fog">{ch.capacity_sat} sat</span></div>
+                          {typeof ch.blocks_til_maturity === 'number' && (
+                            <div>Blocks to maturity: <span className="text-fog">{ch.blocks_til_maturity}</span></div>
+                          )}
+                        </div>
+                        {ch.closing_txid && (
+                          <p className="mt-2 text-[11px] text-fog/50 break-all">Closing tx: {ch.closing_txid}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-3 text-xs text-fog/60">No channels closing.</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="grid gap-3 lg:grid-cols-4">
+          <input
+            className="input-field"
+            placeholder="Search alias, pubkey, or channel point"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <input
+            className="input-field"
+            placeholder="Min capacity (sat)"
+            type="number"
+            min={0}
+            value={minCapacity}
+            onChange={(e) => setMinCapacity(e.target.value)}
+          />
+          <select className="input-field" value={sortBy} onChange={(e) => setSortBy(e.target.value as any)}>
+            <option value="capacity">Sort by capacity</option>
+            <option value="local">Sort by local balance</option>
+            <option value="remote">Sort by remote balance</option>
+            <option value="alias">Sort by peer</option>
+          </select>
+          <div className="flex items-center gap-2">
+            <button className="btn-secondary text-xs px-3 py-2" onClick={() => setSortDir(sortDir === 'desc' ? 'asc' : 'desc')}>
+              {sortDir === 'desc' ? 'Desc' : 'Asc'}
+            </button>
+            <label className="flex items-center gap-2 text-xs text-fog/70">
+              <input type="checkbox" checked={showPrivate} onChange={(e) => setShowPrivate(e.target.checked)} />
+              Show private
+            </label>
+          </div>
+        </div>
+        {filteredChannels.length ? (
+          <div className="grid gap-3">
+            {filteredChannels.map((ch) => (
+              <div key={ch.channel_point} className="rounded-2xl border border-white/10 bg-ink/60 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    {ch.remote_pubkey ? (
+                      <a
+                        className="text-sm text-fog/60 hover:text-fog"
+                        href={ambossURL(ch.remote_pubkey)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {ch.peer_alias || ch.remote_pubkey}
+                      </a>
+                    ) : (
+                      <p className="text-sm text-fog/60">{ch.peer_alias || 'Unknown peer'}</p>
+                    )}
+                    <p className="text-xs text-fog/50">Point: {ch.channel_point}</p>
+                  </div>
+                  <span className={`rounded-full px-3 py-1 text-xs ${ch.active ? 'bg-glow/20 text-glow' : 'bg-ember/20 text-ember'}`}>
+                    {ch.active ? 'Active' : 'Inactive'}
+                  </span>
+                </div>
+                <div className="mt-3 grid gap-3 lg:grid-cols-3 text-xs text-fog/70">
+                  <div>Capacity: <span className="text-fog">{ch.capacity_sat} sat</span></div>
+                  <div>Local: <span className="text-fog">{ch.local_balance_sat} sat</span></div>
+                  <div>Remote: <span className="text-fog">{ch.remote_balance_sat} sat</span></div>
+                </div>
+                <div className="mt-2 text-xs text-fog/50">
+                  {ch.private ? 'Private channel' : 'Public channel'}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-fog/60">No channels found.</p>
+        )}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -610,86 +839,6 @@ export default function LightningOps() {
           <button className="btn-secondary" onClick={handleUpdateFees}>Update fees</button>
           {feeStatus && <p className="text-sm text-brass">{feeStatus}</p>}
         </div>
-      </div>
-
-      <div className="section-card space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 className="text-lg font-semibold">Channels</h3>
-          <div className="flex flex-wrap gap-2 text-xs">
-            <button className={filter === 'all' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('all')}>All</button>
-            <button className={filter === 'active' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('active')}>Active</button>
-            <button className={filter === 'inactive' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('inactive')}>Inactive</button>
-          </div>
-        </div>
-        <div className="grid gap-3 lg:grid-cols-4">
-          <input
-            className="input-field"
-            placeholder="Search alias, pubkey, or channel point"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-          <input
-            className="input-field"
-            placeholder="Min capacity (sat)"
-            type="number"
-            min={0}
-            value={minCapacity}
-            onChange={(e) => setMinCapacity(e.target.value)}
-          />
-          <select className="input-field" value={sortBy} onChange={(e) => setSortBy(e.target.value as any)}>
-            <option value="capacity">Sort by capacity</option>
-            <option value="local">Sort by local balance</option>
-            <option value="remote">Sort by remote balance</option>
-            <option value="alias">Sort by peer</option>
-          </select>
-          <div className="flex items-center gap-2">
-            <button className="btn-secondary text-xs px-3 py-2" onClick={() => setSortDir(sortDir === 'desc' ? 'asc' : 'desc')}>
-              {sortDir === 'desc' ? 'Desc' : 'Asc'}
-            </button>
-            <label className="flex items-center gap-2 text-xs text-fog/70">
-              <input type="checkbox" checked={showPrivate} onChange={(e) => setShowPrivate(e.target.checked)} />
-              Show private
-            </label>
-          </div>
-        </div>
-        {filteredChannels.length ? (
-          <div className="grid gap-3">
-            {filteredChannels.map((ch) => (
-              <div key={ch.channel_point} className="rounded-2xl border border-white/10 bg-ink/60 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    {ch.remote_pubkey ? (
-                      <a
-                        className="text-sm text-fog/60 hover:text-fog"
-                        href={ambossURL(ch.remote_pubkey)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        {ch.peer_alias || ch.remote_pubkey}
-                      </a>
-                    ) : (
-                      <p className="text-sm text-fog/60">{ch.peer_alias || 'Unknown peer'}</p>
-                    )}
-                    <p className="text-xs text-fog/50">Point: {ch.channel_point}</p>
-                  </div>
-                  <span className={`rounded-full px-3 py-1 text-xs ${ch.active ? 'bg-glow/20 text-glow' : 'bg-ember/20 text-ember'}`}>
-                    {ch.active ? 'Active' : 'Inactive'}
-                  </span>
-                </div>
-                <div className="mt-3 grid gap-3 lg:grid-cols-3 text-xs text-fog/70">
-                  <div>Capacity: <span className="text-fog">{ch.capacity_sat} sat</span></div>
-                  <div>Local: <span className="text-fog">{ch.local_balance_sat} sat</span></div>
-                  <div>Remote: <span className="text-fog">{ch.remote_balance_sat} sat</span></div>
-                </div>
-                <div className="mt-2 text-xs text-fog/50">
-                  {ch.private ? 'Private channel' : 'Public channel'}
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-fog/60">No channels found.</p>
-        )}
       </div>
 
       <div className="section-card space-y-4">

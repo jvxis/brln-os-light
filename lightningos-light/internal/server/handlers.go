@@ -894,6 +894,11 @@ func (s *Server) handleLNChannels(w http.ResponseWriter, r *http.Request) {
     return
   }
 
+  pending, pendingErr := s.lnd.ListPendingChannels(ctx)
+  if pendingErr != nil {
+    pending = nil
+  }
+
   active := 0
   inactive := 0
   for _, ch := range channels {
@@ -904,10 +909,23 @@ func (s *Server) handleLNChannels(w http.ResponseWriter, r *http.Request) {
     }
   }
 
+  pendingOpen := 0
+  pendingClose := 0
+  for _, ch := range pending {
+    if ch.Status == "opening" {
+      pendingOpen++
+      continue
+    }
+    pendingClose++
+  }
+
   writeJSON(w, http.StatusOK, map[string]any{
     "active_count": active,
     "inactive_count": inactive,
+    "pending_open_count": pendingOpen,
+    "pending_close_count": pendingClose,
     "channels": channels,
+    "pending_channels": pending,
   })
 }
 

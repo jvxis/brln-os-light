@@ -578,6 +578,9 @@ type lndStatusResponse struct {
   Version string `json:"version"`
   Pubkey string `json:"pubkey"`
   URI string `json:"uri"`
+  InfoKnown bool `json:"info_known"`
+  InfoStale bool `json:"info_stale"`
+  InfoAgeSeconds int64 `json:"info_age_seconds"`
   Channels struct {
     Active int `json:"active"`
     Inactive int `json:"inactive"`
@@ -604,6 +607,9 @@ func (s *Server) handleLNDStatus(w http.ResponseWriter, r *http.Request) {
   resp.Version = status.Version
   resp.Pubkey = status.Pubkey
   resp.URI = status.URI
+  resp.InfoKnown = status.InfoKnown
+  resp.InfoStale = status.InfoStale
+  resp.InfoAgeSeconds = status.InfoAgeSeconds
   resp.Channels.Active = status.ChannelsActive
   resp.Channels.Inactive = status.ChannelsInactive
   resp.Balances.OnchainSat = status.OnchainSat

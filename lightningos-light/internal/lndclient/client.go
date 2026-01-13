@@ -30,6 +30,9 @@ type Client struct {
   statusCache Status
   statusErr error
   statusNextFetch time.Time
+  infoCache infoSnapshot
+  infoCacheAt time.Time
+  infoCacheValid bool
 }
 
 func New(cfg *config.Config, logger *log.Logger) *Client {
@@ -59,6 +62,15 @@ type ChannelPolicy struct {
   TimeLockDelta int64
   InboundBaseMsat int64
   InboundFeeRatePpm int64
+}
+
+type infoSnapshot struct {
+  SyncedToChain bool
+  SyncedToGraph bool
+  BlockHeight int64
+  Version string
+  Pubkey string
+  URI string
 }
 
 type DecodedInvoice struct {
@@ -257,6 +269,7 @@ func (c *Client) GetChannelPolicy(ctx context.Context, channelPoint string) (Cha
 }
 
 func (c *Client) getStatusUncached(ctx context.Context) (Status, error) {
+  now := time.Now()
   conn, err := c.dial(ctx, true)
   if err != nil {
     return Status{WalletState: "unknown"}, err
@@ -267,15 +280,24 @@ func (c *Client) getStatusUncached(ctx context.Context) (Status, error) {
 
   status := Status{WalletState: "unknown"}
   var primaryErr error
+  var cachedInfo infoSnapshot
+  var cachedAt time.Time
+  var cachedValid bool
+
+  c.statusMu.Lock()
+  cachedInfo = c.infoCache
+  cachedAt = c.infoCacheAt
+  cachedValid = c.infoCacheValid
+  c.statusMu.Unlock()
 
   infoCtx, infoCancel := context.WithTimeout(ctx, 5*time.Second)
   info, err := client.GetInfo(infoCtx, &lnrpc.GetInfoRequest{})
   infoCancel()
   if err != nil {
-    if isWalletLocked(err) {
-      return Status{WalletState: "locked"}, nil
-    }
     primaryErr = err
+    if isWalletLocked(err) {
+      status.WalletState = "locked"
+    }
   } else {
     status.ServiceActive = true
     status.WalletState = "unlocked"
@@ -284,9 +306,37 @@ func (c *Client) getStatusUncached(ctx context.Context) (Status, error) {
     status.BlockHeight = int64(info.BlockHeight)
     status.Version = info.Version
     status.Pubkey = info.IdentityPubkey
+    status.InfoKnown = true
+    status.InfoStale = false
+    status.InfoAgeSeconds = 0
     if len(info.Uris) > 0 {
       status.URI = info.Uris[0]
     }
+
+    c.statusMu.Lock()
+    c.infoCache = infoSnapshot{
+      SyncedToChain: status.SyncedToChain,
+      SyncedToGraph: status.SyncedToGraph,
+      BlockHeight: status.BlockHeight,
+      Version: status.Version,
+      Pubkey: status.Pubkey,
+      URI: status.URI,
+    }
+    c.infoCacheAt = now
+    c.infoCacheValid = true
+    c.statusMu.Unlock()
+  }
+
+  if !status.InfoKnown && cachedValid {
+    status.SyncedToChain = cachedInfo.SyncedToChain
+    status.SyncedToGraph = cachedInfo.SyncedToGraph
+    status.BlockHeight = cachedInfo.BlockHeight
+    status.Version = cachedInfo.Version
+    status.Pubkey = cachedInfo.Pubkey
+    status.URI = cachedInfo.URI
+    status.InfoKnown = true
+    status.InfoStale = true
+    status.InfoAgeSeconds = int64(now.Sub(cachedAt).Seconds())
   }
 
   channelsCtx, channelsCancel := context.WithTimeout(ctx, 5*time.Second)
@@ -912,6 +962,9 @@ type Status struct {
   Version string
   Pubkey string
   URI string
+  InfoKnown bool
+  InfoStale bool
+  InfoAgeSeconds int64
   ChannelsActive int
   ChannelsInactive int
   OnchainSat int64

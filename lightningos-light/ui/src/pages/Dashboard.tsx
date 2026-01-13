@@ -48,6 +48,9 @@ export default function Dashboard() {
   )
 
   const overallTone = status === 'OK' ? 'ok' : status === 'Unavailable' ? 'warn' : 'muted'
+  const lndInfoStale = Boolean(lnd?.info_stale && lnd?.info_known)
+  const lndInfoAge = Number(lnd?.info_age_seconds || 0)
+  const lndInfoStaleTooLong = lndInfoStale && lndInfoAge > 900
 
   useEffect(() => {
     let mounted = true
@@ -107,7 +110,12 @@ export default function Dashboard() {
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-semibold">LND</h3>
             <div className="text-right">
-              <span className="text-xs text-fog/60">{lnd?.version ? `v${lnd.version}` : ''}</span>
+              <div className="flex items-center justify-end gap-2 text-xs text-fog/60">
+                <span>{lnd?.version ? `v${lnd.version}` : ''}</span>
+                {lndInfoStale && (
+                  <span className="uppercase text-[10px] text-fog/40">cached</span>
+                )}
+              </div>
               {(lnd?.pubkey || lnd?.uri) && (
                 <div className="mt-2 space-y-1 text-xs text-fog/60">
                   {lnd?.pubkey && (
@@ -167,8 +175,30 @@ export default function Dashboard() {
               <div className="flex justify-between items-center">
                 <span>Synced</span>
                 <div className="flex items-center gap-2">
-                  <Badge label={lnd.synced_to_chain ? 'chain' : 'chain pending'} tone={lnd.synced_to_chain ? 'ok' : 'warn'} />
-                  <Badge label={lnd.synced_to_graph ? 'graph' : 'graph pending'} tone={lnd.synced_to_graph ? 'ok' : 'warn'} />
+                  <Badge
+                    label={
+                      lnd.synced_to_chain
+                        ? (lndInfoStale && !lndInfoStaleTooLong ? 'chain cached' : 'chain')
+                        : 'chain pending'
+                    }
+                    tone={
+                      lnd.synced_to_chain
+                        ? (lndInfoStale && !lndInfoStaleTooLong ? 'muted' : 'ok')
+                        : 'warn'
+                    }
+                  />
+                  <Badge
+                    label={
+                      lnd.synced_to_graph
+                        ? (lndInfoStale && !lndInfoStaleTooLong ? 'graph cached' : 'graph')
+                        : 'graph pending'
+                    }
+                    tone={
+                      lnd.synced_to_graph
+                        ? (lndInfoStale && !lndInfoStaleTooLong ? 'muted' : 'ok')
+                        : 'warn'
+                    }
+                  />
                 </div>
               </div>
               <div className="flex justify-between items-center">

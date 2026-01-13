@@ -137,11 +137,11 @@ func bootstrapNotificationsDSN(logger *log.Logger) (string, error) {
   }
 
   if !roleExists {
-    if _, err := pool.Exec(ctx, fmt.Sprintf("create role %s with login password $1", notificationsDBUser), password); err != nil {
+    if _, err := pool.Exec(ctx, fmt.Sprintf("create role %s with login password '%s'", notificationsDBUser, password)); err != nil {
       return "", err
     }
   } else {
-    if _, err := pool.Exec(ctx, fmt.Sprintf("alter role %s with password $1", notificationsDBUser), password); err != nil {
+    if _, err := pool.Exec(ctx, fmt.Sprintf("alter role %s with password '%s'", notificationsDBUser, password)); err != nil {
       return "", err
     }
   }

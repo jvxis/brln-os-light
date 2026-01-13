@@ -349,45 +349,49 @@ export default function Notifications() {
         {!status && !filtered.length && (
           <p className="mt-4 text-sm text-fog/60">No notifications yet.</p>
         )}
-        <div className="mt-4 space-y-2 text-sm">
-          {filtered.map((item) => {
-            const arrow = arrowForDirection(item.direction)
-            const title = `${labelForType(item.type)} ${labelForAction(item.action)}`
-            const statusLabel = normalizeStatus(item.status)
-            const peer = item.peer_alias || (item.peer_pubkey ? item.peer_pubkey.slice(0, 16) : '')
-            const feeRate = formatFeeRate(item.amount_sat, item.fee_sat)
-            let feeDetail = ''
-            if (feeRate) {
-              if (item.type === 'forward') {
-                feeDetail = `Earned ${item.fee_sat} sats (${feeRate})`
-              } else if (item.type === 'rebalance') {
-                feeDetail = `Fee ${item.fee_sat} sats (${feeRate})`
-              }
-            }
-            const detail = [
-              peer ? `Peer ${peer}` : '',
-              item.channel_point ? `Channel ${item.channel_point.slice(0, 16)}...` : '',
-              item.txid ? `Tx ${item.txid.slice(0, 16)}...` : '',
-              feeDetail,
-            ].filter(Boolean).join(' - ')
-            return (
-              <div key={item.id} className="grid items-center gap-3 border-b border-white/10 pb-3 sm:grid-cols-[160px_1fr_auto_auto]">
-                <span className="text-xs text-fog/50">{formatTimestamp(item.occurred_at)}</span>
-                <div className="min-w-0">
-                  <div className="text-sm text-fog">{title}</div>
-                  <div className="text-xs text-fog/50">{statusLabel}{detail ? ` - ${detail}` : ''}</div>
-                </div>
-                <span className={`text-xs font-mono ${arrow.tone}`}>{arrow.label}</span>
-                <div className="text-right">
-                  <div>{item.amount_sat} sats</div>
-                  {item.fee_sat > 0 && (
-                    <div className="text-xs text-fog/50">Fee {item.fee_sat} sats</div>
-                  )}
-                </div>
-              </div>
-            )
-          })}
-        </div>
+        {filtered.length > 0 && (
+          <div className="mt-4 max-h-[520px] overflow-y-auto pr-2">
+            <div className="space-y-2 text-sm">
+              {filtered.map((item) => {
+                const arrow = arrowForDirection(item.direction)
+                const title = `${labelForType(item.type)} ${labelForAction(item.action)}`
+                const statusLabel = normalizeStatus(item.status)
+                const peer = item.peer_alias || (item.peer_pubkey ? item.peer_pubkey.slice(0, 16) : '')
+                const feeRate = formatFeeRate(item.amount_sat, item.fee_sat)
+                let feeDetail = ''
+                if (feeRate) {
+                  if (item.type === 'forward') {
+                    feeDetail = `Earned ${item.fee_sat} sats (${feeRate})`
+                  } else if (item.type === 'rebalance') {
+                    feeDetail = `Fee ${item.fee_sat} sats (${feeRate})`
+                  }
+                }
+                const detail = [
+                  peer ? `Peer ${peer}` : '',
+                  item.channel_point ? `Channel ${item.channel_point.slice(0, 16)}...` : '',
+                  item.txid ? `Tx ${item.txid.slice(0, 16)}...` : '',
+                  feeDetail,
+                ].filter(Boolean).join(' - ')
+                return (
+                  <div key={item.id} className="grid items-center gap-3 border-b border-white/10 pb-3 sm:grid-cols-[160px_1fr_auto_auto]">
+                    <span className="text-xs text-fog/50">{formatTimestamp(item.occurred_at)}</span>
+                    <div className="min-w-0">
+                      <div className="text-sm text-fog">{title}</div>
+                      <div className="text-xs text-fog/50">{statusLabel}{detail ? ` - ${detail}` : ''}</div>
+                    </div>
+                    <span className={`text-xs font-mono ${arrow.tone}`}>{arrow.label}</span>
+                    <div className="text-right">
+                      <div>{item.amount_sat} sats</div>
+                      {item.fee_sat > 0 && (
+                        <div className="text-xs text-fog/50">Fee {item.fee_sat} sats</div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
       </div>
     </section>
   )

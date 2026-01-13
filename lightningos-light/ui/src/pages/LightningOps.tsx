@@ -596,58 +596,60 @@ export default function LightningOps() {
           </div>
         </div>
         {filteredChannels.length ? (
-          <div className="grid gap-3">
-            {filteredChannels.map((ch) => (
-              <div key={ch.channel_point} className="rounded-2xl border border-white/10 bg-ink/60 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    {ch.remote_pubkey ? (
-                      <a
-                        className="text-sm text-fog/60 hover:text-fog"
-                        href={ambossURL(ch.remote_pubkey)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        {ch.peer_alias || ch.remote_pubkey}
-                      </a>
-                    ) : (
-                      <p className="text-sm text-fog/60">{ch.peer_alias || 'Unknown peer'}</p>
-                    )}
-                    <p className="text-xs text-fog/50 break-all">
-                      Point: {ch.channel_point} | Capacity: {ch.capacity_sat} sats
-                    </p>
-                  </div>
-                  <span className={`rounded-full px-3 py-1 text-xs ${ch.active ? 'bg-glow/20 text-glow' : 'bg-ember/20 text-ember'}`}>
-                    {ch.active ? 'Active' : 'Inactive'}
-                  </span>
-                </div>
-                <div className="mt-3 grid gap-3 lg:grid-cols-5 text-xs text-fog/70">
-                  <div>Local: <span className="text-fog">{ch.local_balance_sat} sats</span></div>
-                  <div>Remote: <span className="text-fog">{ch.remote_balance_sat} sats</span></div>
-                  <div>
-                    Out base:{' '}
-                    <span className="text-fog">
-                      {typeof ch.base_fee_msat === 'number' ? `${ch.base_fee_msat} msats` : '-'}
+          <div className="max-h-[520px] overflow-y-auto pr-2">
+            <div className="grid gap-3">
+              {filteredChannels.map((ch) => (
+                <div key={ch.channel_point} className="rounded-2xl border border-white/10 bg-ink/60 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      {ch.remote_pubkey ? (
+                        <a
+                          className="text-sm text-fog/60 hover:text-fog"
+                          href={ambossURL(ch.remote_pubkey)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {ch.peer_alias || ch.remote_pubkey}
+                        </a>
+                      ) : (
+                        <p className="text-sm text-fog/60">{ch.peer_alias || 'Unknown peer'}</p>
+                      )}
+                      <p className="text-xs text-fog/50 break-all">
+                        Point: {ch.channel_point} | Capacity: {ch.capacity_sat} sats
+                      </p>
+                    </div>
+                    <span className={`rounded-full px-3 py-1 text-xs ${ch.active ? 'bg-glow/20 text-glow' : 'bg-ember/20 text-ember'}`}>
+                      {ch.active ? 'Active' : 'Inactive'}
                     </span>
                   </div>
-                  <div>
-                    Out rate:{' '}
-                    <span className="text-fog">
-                      {typeof ch.fee_rate_ppm === 'number' ? `${ch.fee_rate_ppm} ppm` : '-'}
-                    </span>
+                  <div className="mt-3 grid gap-3 lg:grid-cols-5 text-xs text-fog/70">
+                    <div>Local: <span className="text-fog">{ch.local_balance_sat} sats</span></div>
+                    <div>Remote: <span className="text-fog">{ch.remote_balance_sat} sats</span></div>
+                    <div>
+                      Out base:{' '}
+                      <span className="text-fog">
+                        {typeof ch.base_fee_msat === 'number' ? `${ch.base_fee_msat} msats` : '-'}
+                      </span>
+                    </div>
+                    <div>
+                      Out rate:{' '}
+                      <span className="text-fog">
+                        {typeof ch.fee_rate_ppm === 'number' ? `${ch.fee_rate_ppm} ppm` : '-'}
+                      </span>
+                    </div>
+                    <div>
+                      In rate:{' '}
+                      <span className="text-fog">
+                        {typeof ch.inbound_fee_rate_ppm === 'number' ? `${ch.inbound_fee_rate_ppm} ppm` : '-'}
+                      </span>
+                    </div>
                   </div>
-                  <div>
-                    In rate:{' '}
-                    <span className="text-fog">
-                      {typeof ch.inbound_fee_rate_ppm === 'number' ? `${ch.inbound_fee_rate_ppm} ppm` : '-'}
-                    </span>
+                  <div className="mt-2 text-xs text-fog/50">
+                    {ch.private ? 'Private channel' : 'Public channel'}
                   </div>
                 </div>
-                <div className="mt-2 text-xs text-fog/50">
-                  {ch.private ? 'Private channel' : 'Public channel'}
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         ) : (
           <p className="text-sm text-fog/60">No channels found.</p>
@@ -874,56 +876,58 @@ export default function LightningOps() {
         {peerActionStatus && <p className="text-sm text-brass">{peerActionStatus}</p>}
         {peerListStatus && <p className="text-sm text-brass">{peerListStatus}</p>}
         {peers.length ? (
-          <div className="grid gap-3">
-            {peers.map((peer) => (
-              <div key={peer.pub_key} className="rounded-2xl border border-white/10 bg-ink/60 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    {peer.pub_key ? (
-                      <a
-                        className="text-sm text-fog/60 hover:text-fog"
-                        href={ambossURL(peer.pub_key)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        {peer.alias || peer.pub_key}
-                      </a>
-                    ) : (
-                      <p className="text-sm text-fog/60">{peer.alias || 'Unknown peer'}</p>
-                    )}
-                    <p className="text-xs text-fog/50">{peer.address || 'address unknown'}</p>
+          <div className="max-h-[520px] overflow-y-auto pr-2">
+            <div className="grid gap-3">
+              {peers.map((peer) => (
+                <div key={peer.pub_key} className="rounded-2xl border border-white/10 bg-ink/60 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      {peer.pub_key ? (
+                        <a
+                          className="text-sm text-fog/60 hover:text-fog"
+                          href={ambossURL(peer.pub_key)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {peer.alias || peer.pub_key}
+                        </a>
+                      ) : (
+                        <p className="text-sm text-fog/60">{peer.alias || 'Unknown peer'}</p>
+                      )}
+                      <p className="text-xs text-fog/50">{peer.address || 'address unknown'}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full px-3 py-1 text-xs bg-white/10 text-fog/70">
+                        {peer.inbound ? 'Inbound' : 'Outbound'}
+                      </span>
+                      <button className="btn-secondary text-xs px-3 py-1.5" onClick={() => handleDisconnect(peer.pub_key)}>
+                        Disconnect
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="rounded-full px-3 py-1 text-xs bg-white/10 text-fog/70">
-                      {peer.inbound ? 'Inbound' : 'Outbound'}
-                    </span>
-                    <button className="btn-secondary text-xs px-3 py-1.5" onClick={() => handleDisconnect(peer.pub_key)}>
-                      Disconnect
-                    </button>
+                  {peer.alias && (
+                    <p className="mt-2 text-xs text-fog/50">Pubkey: {peer.pub_key}</p>
+                  )}
+                  <div className="mt-3 grid gap-3 lg:grid-cols-3 text-xs text-fog/70">
+                    <div>Sat sent: <span className="text-fog">{peer.sat_sent}</span></div>
+                    <div>Sat recv: <span className="text-fog">{peer.sat_recv}</span></div>
+                    <div>Ping: <span className="text-fog">{formatPing(peer.ping_time)}</span></div>
                   </div>
+                  <div className="mt-2 grid gap-3 lg:grid-cols-2 text-xs text-fog/60">
+                    <div>Bytes sent: <span className="text-fog">{peer.bytes_sent}</span></div>
+                    <div>Bytes recv: <span className="text-fog">{peer.bytes_recv}</span></div>
+                  </div>
+                  {peer.sync_type && (
+                    <p className="mt-2 text-xs text-fog/50">Sync: {peer.sync_type}</p>
+                  )}
+                  {peer.last_error && (
+                    <p className="mt-2 text-xs text-ember">
+                      Last error{peer.last_error_time ? ` (${formatAge(peer.last_error_time)})` : ''}: {peer.last_error}
+                    </p>
+                  )}
                 </div>
-                {peer.alias && (
-                  <p className="mt-2 text-xs text-fog/50">Pubkey: {peer.pub_key}</p>
-                )}
-                <div className="mt-3 grid gap-3 lg:grid-cols-3 text-xs text-fog/70">
-                  <div>Sat sent: <span className="text-fog">{peer.sat_sent}</span></div>
-                  <div>Sat recv: <span className="text-fog">{peer.sat_recv}</span></div>
-                  <div>Ping: <span className="text-fog">{formatPing(peer.ping_time)}</span></div>
-                </div>
-                <div className="mt-2 grid gap-3 lg:grid-cols-2 text-xs text-fog/60">
-                  <div>Bytes sent: <span className="text-fog">{peer.bytes_sent}</span></div>
-                  <div>Bytes recv: <span className="text-fog">{peer.bytes_recv}</span></div>
-                </div>
-                {peer.sync_type && (
-                  <p className="mt-2 text-xs text-fog/50">Sync: {peer.sync_type}</p>
-                )}
-                {peer.last_error && (
-                  <p className="mt-2 text-xs text-ember">
-                    Last error{peer.last_error_time ? ` (${formatAge(peer.last_error_time)})` : ''}: {peer.last_error}
-                  </p>
-                )}
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         ) : (
           <p className="text-sm text-fog/60">No connected peers found.</p>
@@ -932,5 +936,4 @@ export default function LightningOps() {
     </section>
   )
 }
-
 

@@ -1058,7 +1058,8 @@ func (s *Server) handleNotificationsList(w http.ResponseWriter, r *http.Request)
 
   items, err := s.notifier.list(ctx, limit)
   if err != nil {
-    writeError(w, http.StatusInternalServerError, "failed to load notifications")
+    s.logger.Printf("notifications: list failed: %v", err)
+    writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to load notifications: %v", err))
     return
   }
 

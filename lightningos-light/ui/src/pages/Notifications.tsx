@@ -90,7 +90,7 @@ const arrowForDirection = (value: string) => {
 export default function Notifications() {
   const [items, setItems] = useState<Notification[]>([])
   const [status, setStatus] = useState('Loading notifications...')
-  const [streamStatus, setStreamStatus] = useState('')
+  const [streamState, setStreamState] = useState<'idle' | 'waiting' | 'error'>('idle')
   const [filter, setFilter] = useState<'all' | 'onchain' | 'lightning' | 'channel' | 'forward' | 'rebalance'>('all')
 
   useEffect(() => {
@@ -115,11 +115,14 @@ export default function Notifications() {
 
   useEffect(() => {
     const stream = new EventSource('/api/notifications/stream')
+    const markWaiting = () => setStreamState('waiting')
+    stream.onopen = markWaiting
+    stream.addEventListener('ready', markWaiting)
     stream.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data)
         if (!payload || !payload.id) return
-        setStreamStatus('')
+        setStreamState('idle')
         setItems((prev) => {
           const next = [payload, ...prev.filter((item) => item.id !== payload.id)]
           next.sort((a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime())
@@ -130,7 +133,7 @@ export default function Notifications() {
       }
     }
     stream.onerror = () => {
-      setStreamStatus('Live updates unavailable.')
+      setStreamState('error')
     }
     return () => {
       stream.close()
@@ -172,7 +175,12 @@ export default function Notifications() {
       <div className="section-card">
         <h3 className="text-lg font-semibold">Recent activity</h3>
         {status && <p className="mt-4 text-sm text-fog/60">{status}</p>}
-        {!status && streamStatus && <p className="mt-2 text-sm text-brass">{streamStatus}</p>}
+        {!status && streamState === 'error' && (
+          <p className="mt-2 text-sm text-brass">Live updates unavailable.</p>
+        )}
+        {!status && streamState === 'waiting' && filtered.length === 0 && (
+          <p className="mt-2 text-sm text-fog/60">Waiting for events...</p>
+        )}
         {!status && !filtered.length && (
           <p className="mt-4 text-sm text-fog/60">No notifications yet.</p>
         )}

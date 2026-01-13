@@ -116,6 +116,9 @@ export const updateChannelFees = (payload: {
   inbound_fee_rate_ppm?: number
 }) => request('/api/lnops/channel/fees', { method: 'POST', body: JSON.stringify(payload) })
 
+export const getNotifications = (limit = 200) =>
+  request(`/api/notifications?limit=${limit}`)
+
 export const getApps = () => request('/api/apps')
 export const installApp = (id: string) => request(`/api/apps/${id}/install`, { method: 'POST' })
 export const uninstallApp = (id: string) => request(`/api/apps/${id}/uninstall`, { method: 'POST' })

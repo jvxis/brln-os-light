@@ -41,6 +41,8 @@ func (s *Server) routes() http.Handler {
   r.Post("/api/apps/{id}/uninstall", s.handleAppUninstall)
   r.Post("/api/apps/{id}/start", s.handleAppStart)
   r.Post("/api/apps/{id}/stop", s.handleAppStop)
+  r.Get("/api/notifications", s.handleNotificationsList)
+  r.Get("/api/notifications/stream", s.handleNotificationsStream)
 
   r.Route("/api/wallet", func(r chi.Router) {
     r.Get("/summary", s.handleWalletSummary)

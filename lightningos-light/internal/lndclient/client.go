@@ -115,6 +115,10 @@ func (c *Client) dial(ctx context.Context, withMacaroon bool) (*grpc.ClientConn,
   return grpc.DialContext(ctx, c.cfg.LND.GRPCHost, opts...)
 }
 
+func (c *Client) DialLightning(ctx context.Context) (*grpc.ClientConn, error) {
+  return c.dial(ctx, true)
+}
+
 func (c *Client) GetStatus(ctx context.Context) (Status, error) {
   now := time.Now()
   c.statusMu.Lock()

@@ -50,6 +50,22 @@ strip_crlf() {
   fi
 }
 
+ensure_secrets_env_defaults() {
+  local file="/etc/lightningos/secrets.env"
+  mkdir -p /etc/lightningos
+  if [[ ! -f "$file" ]]; then
+    cp "$REPO_ROOT/templates/secrets.env" "$file"
+  fi
+  if ! grep -q '^NOTIFICATIONS_PG_DSN=' "$file"; then
+    echo "NOTIFICATIONS_PG_DSN=postgres://losapp:CHANGE_ME@127.0.0.1:5432/lightningos?sslmode=disable" >> "$file"
+  fi
+  if ! grep -q '^NOTIFICATIONS_PG_ADMIN_DSN=' "$file"; then
+    echo "NOTIFICATIONS_PG_ADMIN_DSN=postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable" >> "$file"
+  fi
+  chown root:lightningos "$file"
+  chmod 660 "$file"
+}
+
 trap 'echo ""; echo "Installation failed during: ${CURRENT_STEP:-unknown}"; echo "Last command: $BASH_COMMAND"; echo "Check: systemctl status postgresql --no-pager"; echo "Also: journalctl -u postgresql -n 50 --no-pager"; exit 1' ERR
 
 psql_as_postgres() {
@@ -554,20 +570,16 @@ fix_permissions() {
   print_ok "Permissions updated"
 }
 
-copy_templates() {
-  print_step "Copying config templates"
-  if [[ ! -f /etc/lightningos/config.yaml ]]; then
-    cp "$REPO_ROOT/templates/lightningos.config.yaml" /etc/lightningos/config.yaml
-  fi
-  if [[ ! -f /etc/lightningos/secrets.env ]]; then
-    cp "$REPO_ROOT/templates/secrets.env" /etc/lightningos/secrets.env
-    chown root:lightningos /etc/lightningos/secrets.env
-    chmod 660 /etc/lightningos/secrets.env
-  fi
-  if [[ ! -s "$LND_CONF" ]]; then
-    cp "$REPO_ROOT/templates/lnd.conf" "$LND_CONF"
-    chown lnd:lnd "$LND_CONF"
-    chmod 660 "$LND_CONF"
+  copy_templates() {
+    print_step "Copying config templates"
+    if [[ ! -f /etc/lightningos/config.yaml ]]; then
+      cp "$REPO_ROOT/templates/lightningos.config.yaml" /etc/lightningos/config.yaml
+    fi
+    ensure_secrets_env_defaults
+    if [[ ! -s "$LND_CONF" ]]; then
+      cp "$REPO_ROOT/templates/lnd.conf" "$LND_CONF"
+      chown lnd:lnd "$LND_CONF"
+      chmod 660 "$LND_CONF"
   fi
   strip_crlf /etc/lightningos/config.yaml
   strip_crlf "$LND_CONF"

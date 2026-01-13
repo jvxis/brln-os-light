@@ -9,6 +9,7 @@ import Disks from './pages/Disks'
 import Logs from './pages/Logs'
 import BitcoinRemote from './pages/BitcoinRemote'
 import BitcoinLocal from './pages/BitcoinLocal'
+import Notifications from './pages/Notifications'
 import LndConfig from './pages/LndConfig'
 import AppStore from './pages/AppStore'
 
@@ -22,7 +23,8 @@ const routes = [
   { key: 'disks', label: 'Disks', element: <Disks /> },
   { key: 'logs', label: 'Logs', element: <Logs /> },
   { key: 'apps', label: 'Apps', element: <AppStore /> },
-  { key: 'bitcoin-local', label: 'Bitcoin Local', element: <BitcoinLocal /> }
+  { key: 'bitcoin-local', label: 'Bitcoin Local', element: <BitcoinLocal /> },
+  { key: 'notifications', label: 'Notifications', element: <Notifications /> }
 ]
 
 function useHashRoute() {

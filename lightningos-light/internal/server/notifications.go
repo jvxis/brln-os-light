@@ -1,0 +1,1051 @@
+package server
+
+import (
+  "context"
+  "crypto/rand"
+  "encoding/hex"
+  "encoding/json"
+  "errors"
+  "fmt"
+  "log"
+  "net/http"
+  "os"
+  "strconv"
+  "strings"
+  "sync"
+  "time"
+
+  "lightningos-light/internal/lndclient"
+  "lightningos-light/lnrpc"
+
+  "github.com/jackc/pgx/v5"
+  "github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+  notificationRetentionDays = 365
+  notificationCleanupInterval = 6 * time.Hour
+  paymentsPollInterval = 15 * time.Second
+  forwardsPollInterval = 30 * time.Second
+)
+
+const (
+  notificationsSecretsPath = "/etc/lightningos/secrets.env"
+  notificationsSecretsDir = "/etc/lightningos"
+  notificationsDBName = "lightningos"
+  notificationsDBUser = "losapp"
+)
+
+type Notification struct {
+  ID int64 `json:"id"`
+  OccurredAt time.Time `json:"occurred_at"`
+  Type string `json:"type"`
+  Action string `json:"action"`
+  Direction string `json:"direction"`
+  Status string `json:"status"`
+  AmountSat int64 `json:"amount_sat"`
+  FeeSat int64 `json:"fee_sat"`
+  PeerPubkey string `json:"peer_pubkey,omitempty"`
+  PeerAlias string `json:"peer_alias,omitempty"`
+  ChannelID int64 `json:"channel_id,omitempty"`
+  ChannelPoint string `json:"channel_point,omitempty"`
+  Txid string `json:"txid,omitempty"`
+  PaymentHash string `json:"payment_hash,omitempty"`
+  Memo string `json:"memo,omitempty"`
+}
+
+type Notifier struct {
+  db *pgxpool.Pool
+  lnd *lndclient.Client
+  logger *log.Logger
+
+  mu sync.Mutex
+  subscribers map[chan Notification]struct{}
+  started bool
+  stop chan struct{}
+  lastCleanup time.Time
+}
+
+func NewNotifier(db *pgxpool.Pool, lnd *lndclient.Client, logger *log.Logger) *Notifier {
+  return &Notifier{
+    db: db,
+    lnd: lnd,
+    logger: logger,
+    subscribers: map[chan Notification]struct{}{},
+  }
+}
+
+func (n *Notifier) Start() {
+  n.mu.Lock()
+  if n.started {
+    n.mu.Unlock()
+    return
+  }
+  n.started = true
+  n.stop = make(chan struct{})
+  n.mu.Unlock()
+
+  ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+  if err := n.ensureSchema(ctx); err != nil {
+    n.logger.Printf("notifications disabled: failed to init schema: %v", err)
+    cancel()
+    return
+  }
+  cancel()
+
+  go n.runInvoices()
+  go n.runPayments()
+  go n.runTransactions()
+  go n.runChannels()
+  go n.runForwards()
+}
+
+func bootstrapNotificationsDSN(logger *log.Logger) (string, error) {
+  if existing, err := readEnvFileValue(notificationsSecretsPath, "NOTIFICATIONS_PG_DSN"); err == nil && strings.TrimSpace(existing) != "" && !isPlaceholderDSN(existing) {
+    _ = os.Setenv("NOTIFICATIONS_PG_DSN", existing)
+    return existing, nil
+  }
+
+  adminDSN, err := ensureNotificationsAdminDSN(logger)
+  if err != nil {
+    return "", err
+  }
+  if strings.TrimSpace(adminDSN) == "" {
+    return "", errors.New("NOTIFICATIONS_PG_ADMIN_DSN not set")
+  }
+
+  password, err := randomPassword(32)
+  if err != nil {
+    return "", err
+  }
+
+  ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+  defer cancel()
+
+  pool, err := pgxpool.New(ctx, adminDSN)
+  if err != nil {
+    return "", err
+  }
+  defer pool.Close()
+
+  roleExists := false
+  var roleCheck int
+  err = pool.QueryRow(ctx, "select 1 from pg_roles where rolname=$1", notificationsDBUser).Scan(&roleCheck)
+  if err == nil && roleCheck == 1 {
+    roleExists = true
+  }
+
+  if !roleExists {
+    if _, err := pool.Exec(ctx, fmt.Sprintf("create role %s with login password $1", notificationsDBUser), password); err != nil {
+      return "", err
+    }
+  } else {
+    if _, err := pool.Exec(ctx, fmt.Sprintf("alter role %s with password $1", notificationsDBUser), password); err != nil {
+      return "", err
+    }
+  }
+
+  dbExists := false
+  var dbCheck int
+  err = pool.QueryRow(ctx, "select 1 from pg_database where datname=$1", notificationsDBName).Scan(&dbCheck)
+  if err == nil && dbCheck == 1 {
+    dbExists = true
+  }
+
+  if !dbExists {
+    if _, err := pool.Exec(ctx, fmt.Sprintf("create database %s owner %s", notificationsDBName, notificationsDBUser)); err != nil {
+      return "", err
+    }
+  } else {
+    _, _ = pool.Exec(ctx, fmt.Sprintf("alter database %s owner to %s", notificationsDBName, notificationsDBUser))
+  }
+
+  dsn := fmt.Sprintf("postgres://%s:%s@127.0.0.1:5432/%s?sslmode=disable", notificationsDBUser, password, notificationsDBName)
+  if err := ensureSecretsDir(); err != nil {
+    logger.Printf("notifications warning: failed to prepare secrets dir: %v", err)
+  }
+  if err := writeEnvFileValue(notificationsSecretsPath, "NOTIFICATIONS_PG_DSN", dsn); err != nil {
+    logger.Printf("notifications warning: failed to persist NOTIFICATIONS_PG_DSN: %v", err)
+  }
+
+  _ = os.Setenv("NOTIFICATIONS_PG_DSN", dsn)
+  logger.Printf("notifications: provisioned database %s with user %s", notificationsDBName, notificationsDBUser)
+  return dsn, nil
+}
+
+func (n *Notifier) Subscribe() chan Notification {
+  ch := make(chan Notification, 50)
+  n.mu.Lock()
+  n.subscribers[ch] = struct{}{}
+  n.mu.Unlock()
+  return ch
+}
+
+func (n *Notifier) Unsubscribe(ch chan Notification) {
+  n.mu.Lock()
+  if _, ok := n.subscribers[ch]; ok {
+    delete(n.subscribers, ch)
+    close(ch)
+  }
+  n.mu.Unlock()
+}
+
+func readEnvFileValue(path, key string) (string, error) {
+  data, err := os.ReadFile(path)
+  if err != nil {
+    return "", err
+  }
+  lines := strings.Split(string(data), "\n")
+  prefix := key + "="
+  for _, line := range lines {
+    trimmed := strings.TrimSpace(line)
+    if strings.HasPrefix(trimmed, prefix) {
+      return strings.TrimSpace(strings.TrimPrefix(trimmed, prefix)), nil
+    }
+  }
+  return "", nil
+}
+
+func writeEnvFileValue(path, key, value string) error {
+  data, err := os.ReadFile(path)
+  if err != nil && !errors.Is(err, os.ErrNotExist) {
+    return err
+  }
+  lines := []string{}
+  if len(data) > 0 {
+    lines = strings.Split(string(data), "\n")
+  }
+  prefix := key + "="
+  updated := false
+  for i, line := range lines {
+    if strings.HasPrefix(strings.TrimSpace(line), prefix) {
+      lines[i] = fmt.Sprintf("%s=%s", key, value)
+      updated = true
+    }
+  }
+  if !updated {
+    lines = append(lines, fmt.Sprintf("%s=%s", key, value))
+  }
+  output := strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"
+  return os.WriteFile(path, []byte(output), 0o660)
+}
+
+func randomPassword(length int) (string, error) {
+  if length < 16 {
+    length = 16
+  }
+  const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+  b := make([]byte, length)
+  if _, err := rand.Read(b); err != nil {
+    return "", err
+  }
+  for i := range b {
+    b[i] = chars[int(b[i])%len(chars)]
+  }
+  return string(b), nil
+}
+
+func ensureSecretsDir() error {
+  return os.MkdirAll(notificationsSecretsDir, 0o750)
+}
+
+func ensureNotificationsAdminDSN(logger *log.Logger) (string, error) {
+  adminDSN := os.Getenv("NOTIFICATIONS_PG_ADMIN_DSN")
+  if strings.TrimSpace(adminDSN) != "" {
+    return adminDSN, nil
+  }
+
+  if existing, err := readEnvFileValue(notificationsSecretsPath, "NOTIFICATIONS_PG_ADMIN_DSN"); err == nil && strings.TrimSpace(existing) != "" {
+    _ = os.Setenv("NOTIFICATIONS_PG_ADMIN_DSN", existing)
+    return existing, nil
+  }
+
+  defaultDSN := "postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable"
+  if err := ensureSecretsDir(); err != nil {
+    logger.Printf("notifications warning: failed to prepare secrets dir: %v", err)
+  }
+  if err := writeEnvFileValue(notificationsSecretsPath, "NOTIFICATIONS_PG_ADMIN_DSN", defaultDSN); err != nil {
+    logger.Printf("notifications warning: failed to persist NOTIFICATIONS_PG_ADMIN_DSN: %v", err)
+  }
+  _ = os.Setenv("NOTIFICATIONS_PG_ADMIN_DSN", defaultDSN)
+  return defaultDSN, nil
+}
+
+func isPlaceholderDSN(dsn string) bool {
+  return strings.Contains(dsn, "CHANGE_ME")
+}
+
+func (n *Notifier) broadcast(evt Notification) {
+  n.mu.Lock()
+  defer n.mu.Unlock()
+  for ch := range n.subscribers {
+    select {
+    case ch <- evt:
+    default:
+    }
+  }
+}
+
+func (n *Notifier) ensureSchema(ctx context.Context) error {
+  if n.db == nil {
+    return errors.New("db not configured")
+  }
+
+  _, err := n.db.Exec(ctx, `
+create table if not exists notifications (
+  id bigserial primary key,
+  event_key text unique not null,
+  occurred_at timestamptz not null,
+  type text not null,
+  action text not null,
+  direction text not null,
+  status text not null,
+  amount_sat bigint not null default 0,
+  fee_sat bigint not null default 0,
+  peer_pubkey text,
+  peer_alias text,
+  channel_id bigint,
+  channel_point text,
+  txid text,
+  payment_hash text,
+  memo text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists notifications_occurred_at_idx on notifications (occurred_at desc);
+create index if not exists notifications_type_idx on notifications (type);
+create index if not exists notifications_payment_hash_idx on notifications (payment_hash);
+
+create table if not exists notification_cursors (
+  key text primary key,
+  value text not null,
+  updated_at timestamptz not null default now()
+);
+`)
+  return err
+}
+
+func (n *Notifier) upsertNotification(ctx context.Context, eventKey string, evt Notification) (Notification, error) {
+  if eventKey == "" {
+    return Notification{}, errors.New("event key required")
+  }
+
+  row := n.db.QueryRow(ctx, `
+insert into notifications (
+  event_key, occurred_at, type, action, direction, status, amount_sat, fee_sat,
+  peer_pubkey, peer_alias, channel_id, channel_point, txid, payment_hash, memo
+) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+on conflict (event_key) do update set
+  occurred_at = excluded.occurred_at,
+  type = excluded.type,
+  action = excluded.action,
+  direction = excluded.direction,
+  status = excluded.status,
+  amount_sat = excluded.amount_sat,
+  fee_sat = excluded.fee_sat,
+  peer_pubkey = excluded.peer_pubkey,
+  peer_alias = excluded.peer_alias,
+  channel_id = excluded.channel_id,
+  channel_point = excluded.channel_point,
+  txid = excluded.txid,
+  payment_hash = excluded.payment_hash,
+  memo = excluded.memo
+returning id, occurred_at, type, action, direction, status, amount_sat, fee_sat,
+  peer_pubkey, peer_alias, channel_id, channel_point, txid, payment_hash, memo
+`, eventKey, evt.OccurredAt, evt.Type, evt.Action, evt.Direction, evt.Status,
+    evt.AmountSat, evt.FeeSat, nullableString(evt.PeerPubkey), nullableString(evt.PeerAlias),
+    nullableInt(evt.ChannelID), nullableString(evt.ChannelPoint), nullableString(evt.Txid),
+    nullableString(evt.PaymentHash), nullableString(evt.Memo),
+  )
+
+  var stored Notification
+  err := row.Scan(
+    &stored.ID,
+    &stored.OccurredAt,
+    &stored.Type,
+    &stored.Action,
+    &stored.Direction,
+    &stored.Status,
+    &stored.AmountSat,
+    &stored.FeeSat,
+    &stored.PeerPubkey,
+    &stored.PeerAlias,
+    &stored.ChannelID,
+    &stored.ChannelPoint,
+    &stored.Txid,
+    &stored.PaymentHash,
+    &stored.Memo,
+  )
+  if err != nil {
+    return Notification{}, err
+  }
+
+  n.cleanupIfNeeded()
+  n.broadcast(stored)
+  return stored, nil
+}
+
+func (n *Notifier) list(ctx context.Context, limit int) ([]Notification, error) {
+  if n.db == nil {
+    return nil, errors.New("notifications disabled")
+  }
+  if limit <= 0 {
+    limit = 200
+  }
+  if limit > 1000 {
+    limit = 1000
+  }
+
+  rows, err := n.db.Query(ctx, `
+select id, occurred_at, type, action, direction, status, amount_sat, fee_sat,
+  peer_pubkey, peer_alias, channel_id, channel_point, txid, payment_hash, memo
+from notifications
+order by occurred_at desc, id desc
+limit $1`, limit)
+  if err != nil {
+    return nil, err
+  }
+  defer rows.Close()
+
+  var items []Notification
+  for rows.Next() {
+    var evt Notification
+    if err := rows.Scan(
+      &evt.ID,
+      &evt.OccurredAt,
+      &evt.Type,
+      &evt.Action,
+      &evt.Direction,
+      &evt.Status,
+      &evt.AmountSat,
+      &evt.FeeSat,
+      &evt.PeerPubkey,
+      &evt.PeerAlias,
+      &evt.ChannelID,
+      &evt.ChannelPoint,
+      &evt.Txid,
+      &evt.PaymentHash,
+      &evt.Memo,
+    ); err != nil {
+      return nil, err
+    }
+    items = append(items, evt)
+  }
+  return items, rows.Err()
+}
+
+func (n *Notifier) getCursor(ctx context.Context, key string) (string, error) {
+  var val string
+  err := n.db.QueryRow(ctx, "select value from notification_cursors where key=$1", key).Scan(&val)
+  if err == pgx.ErrNoRows {
+    return "", nil
+  }
+  return val, err
+}
+
+func (n *Notifier) setCursor(ctx context.Context, key, val string) error {
+  _, err := n.db.Exec(ctx, `
+insert into notification_cursors (key, value, updated_at)
+values ($1, $2, now())
+on conflict (key) do update set value=excluded.value, updated_at=excluded.updated_at
+`, key, val)
+  return err
+}
+
+func (n *Notifier) reconcileRebalance(ctx context.Context, paymentHash string) {
+  if paymentHash == "" {
+    return
+  }
+
+  tx, err := n.db.Begin(ctx)
+  if err != nil {
+    return
+  }
+  defer tx.Rollback(ctx)
+
+  var payID int64
+  var payFee int64
+  err = tx.QueryRow(ctx, `
+select id, fee_sat from notifications
+where payment_hash=$1 and type='lightning' and action='sent' and status='SUCCEEDED'
+order by occurred_at desc limit 1`, paymentHash).Scan(&payID, &payFee)
+  if err != nil {
+    return
+  }
+
+  var invID int64
+  var invAmount int64
+  var invMemo string
+  var invAt time.Time
+  err = tx.QueryRow(ctx, `
+select id, amount_sat, memo, occurred_at from notifications
+where payment_hash=$1 and type='lightning' and action='received' and status='SETTLED'
+order by occurred_at desc limit 1`, paymentHash).Scan(&invID, &invAmount, &invMemo, &invAt)
+  if err != nil {
+    return
+  }
+
+  var updated Notification
+  err = tx.QueryRow(ctx, `
+update notifications
+set type='rebalance',
+  action='rebalanced',
+  direction='neutral',
+  status='SETTLED',
+  amount_sat=$2,
+  fee_sat=$3,
+  memo=$4,
+  occurred_at=$5
+where id=$1
+returning id, occurred_at, type, action, direction, status, amount_sat, fee_sat,
+  peer_pubkey, peer_alias, channel_id, channel_point, txid, payment_hash, memo
+`, payID, invAmount, payFee, invMemo, invAt).Scan(
+    &updated.ID,
+    &updated.OccurredAt,
+    &updated.Type,
+    &updated.Action,
+    &updated.Direction,
+    &updated.Status,
+    &updated.AmountSat,
+    &updated.FeeSat,
+    &updated.PeerPubkey,
+    &updated.PeerAlias,
+    &updated.ChannelID,
+    &updated.ChannelPoint,
+    &updated.Txid,
+    &updated.PaymentHash,
+    &updated.Memo,
+  )
+  if err != nil {
+    return
+  }
+
+  _, err = tx.Exec(ctx, `delete from notifications where id=$1`, invID)
+  if err != nil {
+    return
+  }
+
+  if err := tx.Commit(ctx); err != nil {
+    return
+  }
+
+  n.broadcast(updated)
+}
+
+func (n *Notifier) cleanupIfNeeded() {
+  n.mu.Lock()
+  next := n.lastCleanup.Add(notificationCleanupInterval)
+  if time.Now().Before(next) {
+    n.mu.Unlock()
+    return
+  }
+  n.lastCleanup = time.Now()
+  n.mu.Unlock()
+
+  ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+  defer cancel()
+  cutoff := time.Now().AddDate(0, 0, -notificationRetentionDays)
+  _, _ = n.db.Exec(ctx, "delete from notifications where occurred_at < $1", cutoff)
+}
+
+func (n *Notifier) runInvoices() {
+  for {
+    select {
+    case <-n.stop:
+      return
+    default:
+    }
+
+    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    cursorVal, _ := n.getCursor(ctx, "invoice_settle_index")
+    cancel()
+
+    var settleIndex uint64
+    if cursorVal != "" {
+      if parsed, err := strconv.ParseUint(cursorVal, 10, 64); err == nil {
+        settleIndex = parsed
+      }
+    }
+
+    conn, err := n.lnd.DialLightning(context.Background())
+    if err != nil {
+      n.logger.Printf("notifications: invoice stream dial failed: %v", err)
+      time.Sleep(5 * time.Second)
+      continue
+    }
+
+    client := lnrpc.NewLightningClient(conn)
+    stream, err := client.SubscribeInvoices(context.Background(), &lnrpc.InvoiceSubscription{
+      SettleIndex: settleIndex,
+    })
+    if err != nil {
+      n.logger.Printf("notifications: invoice stream subscribe failed: %v", err)
+      conn.Close()
+      time.Sleep(5 * time.Second)
+      continue
+    }
+
+    for {
+      invoice, err := stream.Recv()
+      if err != nil {
+        n.logger.Printf("notifications: invoice stream ended: %v", err)
+        _ = conn.Close()
+        break
+      }
+
+      if invoice.State != lnrpc.Invoice_SETTLED {
+        continue
+      }
+      if invoice.SettleIndex <= settleIndex {
+        continue
+      }
+
+      settleIndex = invoice.SettleIndex
+      hash := hex.EncodeToString(invoice.RHash)
+      if hash == "" {
+        continue
+      }
+      amount := invoice.AmtPaidSat
+      if amount == 0 {
+        amount = invoice.Value
+      }
+      occurredAt := time.Unix(invoice.SettleDate, 0).UTC()
+      evt := Notification{
+        OccurredAt: occurredAt,
+        Type: "lightning",
+        Action: "received",
+        Direction: "in",
+        Status: "SETTLED",
+        AmountSat: amount,
+        PaymentHash: hash,
+        Memo: invoice.Memo,
+      }
+
+      ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+      if _, err := n.upsertNotification(ctx, fmt.Sprintf("invoice:%s", hash), evt); err == nil {
+        _ = n.setCursor(ctx, "invoice_settle_index", strconv.FormatUint(settleIndex, 10))
+        n.reconcileRebalance(ctx, hash)
+      }
+      cancel()
+    }
+
+    time.Sleep(2 * time.Second)
+  }
+}
+
+func (n *Notifier) runPayments() {
+  for {
+    select {
+    case <-n.stop:
+      return
+    case <-time.After(paymentsPollInterval):
+    }
+
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    cursorVal, _ := n.getCursor(ctx, "payments_index")
+    cancel()
+
+    var indexOffset uint64
+    if cursorVal != "" {
+      if parsed, err := strconv.ParseUint(cursorVal, 10, 64); err == nil {
+        indexOffset = parsed
+      }
+    }
+
+    conn, err := n.lnd.DialLightning(context.Background())
+    if err != nil {
+      n.logger.Printf("notifications: payments poll dial failed: %v", err)
+      continue
+    }
+
+    client := lnrpc.NewLightningClient(conn)
+    res, err := client.ListPayments(context.Background(), &lnrpc.ListPaymentsRequest{
+      IncludeIncomplete: true,
+      IndexOffset: indexOffset,
+      MaxPayments: 200,
+      Reversed: false,
+    })
+    _ = conn.Close()
+    if err != nil {
+      n.logger.Printf("notifications: payments poll failed: %v", err)
+      continue
+    }
+
+    maxIndex := indexOffset
+    for _, pay := range res.Payments {
+      if pay.PaymentIndex <= indexOffset {
+        continue
+      }
+      if pay.PaymentIndex > maxIndex {
+        maxIndex = pay.PaymentIndex
+      }
+      if strings.TrimSpace(pay.PaymentHash) == "" {
+        continue
+      }
+      status := pay.Status.String()
+      if status == "IN_FLIGHT" {
+        continue
+      }
+
+      amount := pay.ValueSat
+      fee := pay.FeeSat
+      occurredAt := time.Unix(0, pay.CreationTimeNs).UTC()
+      if pay.CreationTimeNs == 0 {
+        occurredAt = time.Now().UTC()
+      }
+      evt := Notification{
+        OccurredAt: occurredAt,
+        Type: "lightning",
+        Action: "sent",
+        Direction: "out",
+        Status: status,
+        AmountSat: amount,
+        FeeSat: fee,
+        PaymentHash: pay.PaymentHash,
+      }
+
+      ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+      if _, err := n.upsertNotification(ctx, fmt.Sprintf("payment:%s", pay.PaymentHash), evt); err == nil {
+        n.reconcileRebalance(ctx, pay.PaymentHash)
+      }
+      cancel()
+    }
+
+    if maxIndex > indexOffset {
+      ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+      _ = n.setCursor(ctx, "payments_index", strconv.FormatUint(maxIndex, 10))
+      cancel()
+    }
+  }
+}
+
+func (n *Notifier) runTransactions() {
+  for {
+    select {
+    case <-n.stop:
+      return
+    default:
+    }
+
+    conn, err := n.lnd.DialLightning(context.Background())
+    if err != nil {
+      n.logger.Printf("notifications: transaction stream dial failed: %v", err)
+      time.Sleep(5 * time.Second)
+      continue
+    }
+
+    client := lnrpc.NewLightningClient(conn)
+    stream, err := client.SubscribeTransactions(context.Background(), &lnrpc.GetTransactionsRequest{})
+    if err != nil {
+      n.logger.Printf("notifications: transaction stream subscribe failed: %v", err)
+      conn.Close()
+      time.Sleep(5 * time.Second)
+      continue
+    }
+
+    for {
+      tx, err := stream.Recv()
+      if err != nil {
+        n.logger.Printf("notifications: transaction stream ended: %v", err)
+        _ = conn.Close()
+        break
+      }
+
+      amount := tx.Amount
+      direction := "in"
+      action := "receive"
+      if amount < 0 {
+        direction = "out"
+        action = "send"
+        amount = amount * -1
+      }
+      status := "PENDING"
+      if tx.NumConfirmations > 0 {
+        status = "CONFIRMED"
+      }
+      occurredAt := time.Unix(tx.TimeStamp, 0).UTC()
+      evt := Notification{
+        OccurredAt: occurredAt,
+        Type: "onchain",
+        Action: action,
+        Direction: direction,
+        Status: status,
+        AmountSat: amount,
+        FeeSat: tx.TotalFees,
+        Txid: tx.TxHash,
+      }
+
+      ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+      _, _ = n.upsertNotification(ctx, fmt.Sprintf("onchain:%s", tx.TxHash), evt)
+      cancel()
+    }
+
+    time.Sleep(2 * time.Second)
+  }
+}
+
+func (n *Notifier) runChannels() {
+  for {
+    select {
+    case <-n.stop:
+      return
+    default:
+    }
+
+    conn, err := n.lnd.DialLightning(context.Background())
+    if err != nil {
+      n.logger.Printf("notifications: channel stream dial failed: %v", err)
+      time.Sleep(5 * time.Second)
+      continue
+    }
+
+    client := lnrpc.NewLightningClient(conn)
+    stream, err := client.SubscribeChannelEvents(context.Background(), &lnrpc.ChannelEventSubscription{})
+    if err != nil {
+      n.logger.Printf("notifications: channel stream subscribe failed: %v", err)
+      conn.Close()
+      time.Sleep(5 * time.Second)
+      continue
+    }
+
+    for {
+      update, err := stream.Recv()
+      if err != nil {
+        n.logger.Printf("notifications: channel stream ended: %v", err)
+        _ = conn.Close()
+        break
+      }
+
+      evt, eventKey := n.channelEventToNotification(update)
+      if eventKey == "" {
+        continue
+      }
+
+      ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+      _, _ = n.upsertNotification(ctx, eventKey, evt)
+      cancel()
+    }
+
+    time.Sleep(2 * time.Second)
+  }
+}
+
+func (n *Notifier) channelEventToNotification(update *lnrpc.ChannelEventUpdate) (Notification, string) {
+  if update == nil {
+    return Notification{}, ""
+  }
+
+  now := time.Now().UTC()
+  switch update.Type {
+  case lnrpc.ChannelEventUpdate_OPEN_CHANNEL:
+    ch := update.GetOpenChannel()
+    if ch == nil {
+      return Notification{}, ""
+    }
+    evt := Notification{
+      OccurredAt: now,
+      Type: "channel",
+      Action: "open",
+      Direction: "neutral",
+      Status: "OPENED",
+      AmountSat: ch.Capacity,
+      PeerPubkey: ch.RemotePubkey,
+      PeerAlias: ch.PeerAlias,
+      ChannelID: int64(ch.ChanId),
+      ChannelPoint: ch.ChannelPoint,
+    }
+    return evt, fmt.Sprintf("channel:open:%s", ch.ChannelPoint)
+  case lnrpc.ChannelEventUpdate_CLOSED_CHANNEL:
+    ch := update.GetClosedChannel()
+    if ch == nil {
+      return Notification{}, ""
+    }
+    evt := Notification{
+      OccurredAt: now,
+      Type: "channel",
+      Action: "close",
+      Direction: "neutral",
+      Status: "CLOSED",
+      AmountSat: ch.SettledBalance,
+      PeerPubkey: ch.RemotePubkey,
+      ChannelID: int64(ch.ChanId),
+      ChannelPoint: ch.ChannelPoint,
+      Txid: ch.ClosingTxHash,
+    }
+    return evt, fmt.Sprintf("channel:close:%s", ch.ChannelPoint)
+  case lnrpc.ChannelEventUpdate_PENDING_OPEN_CHANNEL:
+    ch := update.GetPendingOpenChannel()
+    if ch == nil {
+      return Notification{}, ""
+    }
+    evt := Notification{
+      OccurredAt: now,
+      Type: "channel",
+      Action: "opening",
+      Direction: "neutral",
+      Status: "PENDING",
+      AmountSat: ch.Capacity,
+      PeerPubkey: ch.RemotePubkey,
+      ChannelPoint: ch.ChannelPoint,
+    }
+    return evt, fmt.Sprintf("channel:opening:%s", ch.ChannelPoint)
+  default:
+    return Notification{}, ""
+  }
+}
+
+func (n *Notifier) runForwards() {
+  for {
+    select {
+    case <-n.stop:
+      return
+    case <-time.After(forwardsPollInterval):
+    }
+
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    cursorVal, _ := n.getCursor(ctx, "forwards_offset")
+    cancel()
+
+    var offset uint32
+    if cursorVal != "" {
+      if parsed, err := strconv.ParseUint(cursorVal, 10, 32); err == nil {
+        offset = uint32(parsed)
+      }
+    }
+
+    conn, err := n.lnd.DialLightning(context.Background())
+    if err != nil {
+      n.logger.Printf("notifications: forwards poll dial failed: %v", err)
+      continue
+    }
+
+    client := lnrpc.NewLightningClient(conn)
+    res, err := client.ForwardingHistory(context.Background(), &lnrpc.ForwardingHistoryRequest{
+      IndexOffset: offset,
+      NumMaxEvents: 200,
+      PeerAliasLookup: true,
+    })
+    _ = conn.Close()
+    if err != nil {
+      n.logger.Printf("notifications: forwards poll failed: %v", err)
+      continue
+    }
+
+    for _, fwd := range res.ForwardingEvents {
+      ts := int64(fwd.TimestampNs)
+      tsKey := fwd.TimestampNs
+      if ts == 0 && fwd.Timestamp > 0 {
+        ts = int64(fwd.Timestamp) * int64(time.Second)
+        tsKey = fwd.Timestamp * uint64(time.Second)
+      }
+      occurredAt := time.Unix(0, ts).UTC()
+      amount := int64(fwd.AmtOut)
+      fee := int64(fwd.Fee)
+      evt := Notification{
+        OccurredAt: occurredAt,
+        Type: "forward",
+        Action: "forwarded",
+        Direction: "neutral",
+        Status: "SETTLED",
+        AmountSat: amount,
+        FeeSat: fee,
+        PeerAlias: strings.TrimSpace(fmt.Sprintf("%s -> %s", fwd.PeerAliasIn, fwd.PeerAliasOut)),
+        ChannelID: int64(fwd.ChanIdOut),
+      }
+      eventKey := fmt.Sprintf("forward:%d:%d:%d", fwd.IncomingHtlcId, fwd.OutgoingHtlcId, tsKey)
+      ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+      _, _ = n.upsertNotification(ctx, eventKey, evt)
+      cancel()
+    }
+
+    if res.LastOffsetIndex > offset {
+      ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+      _ = n.setCursor(ctx, "forwards_offset", strconv.FormatUint(uint64(res.LastOffsetIndex), 10))
+      cancel()
+    }
+  }
+}
+
+func nullableString(value string) any {
+  if strings.TrimSpace(value) == "" {
+    return nil
+  }
+  return value
+}
+
+func nullableInt(value int64) any {
+  if value == 0 {
+    return nil
+  }
+  return value
+}
+
+func (s *Server) handleNotificationsList(w http.ResponseWriter, r *http.Request) {
+  if s.notifier == nil {
+    msg := strings.TrimSpace(s.notifierErr)
+    if msg == "" {
+      msg = "notifications disabled"
+    }
+    writeError(w, http.StatusServiceUnavailable, msg)
+    return
+  }
+
+  limit := 200
+  if raw := r.URL.Query().Get("limit"); raw != "" {
+    if parsed, err := strconv.Atoi(raw); err == nil {
+      limit = parsed
+    }
+  }
+
+  ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+  defer cancel()
+
+  items, err := s.notifier.list(ctx, limit)
+  if err != nil {
+    writeError(w, http.StatusInternalServerError, "failed to load notifications")
+    return
+  }
+
+  writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) handleNotificationsStream(w http.ResponseWriter, r *http.Request) {
+  if s.notifier == nil {
+    msg := strings.TrimSpace(s.notifierErr)
+    if msg == "" {
+      msg = "notifications disabled"
+    }
+    writeError(w, http.StatusServiceUnavailable, msg)
+    return
+  }
+
+  flusher, ok := w.(http.Flusher)
+  if !ok {
+    writeError(w, http.StatusInternalServerError, "stream not supported")
+    return
+  }
+
+  w.Header().Set("Content-Type", "text/event-stream")
+  w.Header().Set("Cache-Control", "no-cache")
+  w.Header().Set("Connection", "keep-alive")
+
+  ch := s.notifier.Subscribe()
+  defer s.notifier.Unsubscribe(ch)
+
+  _, _ = w.Write([]byte("event: ready\ndata: {}\n\n"))
+  flusher.Flush()
+
+  for {
+    select {
+    case <-r.Context().Done():
+      return
+    case evt := <-ch:
+      payload, err := json.Marshal(evt)
+      if err != nil {
+        continue
+      }
+      _, _ = fmt.Fprintf(w, "data: %s\n\n", payload)
+      flusher.Flush()
+    }
+  }
+}

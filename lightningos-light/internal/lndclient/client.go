@@ -475,6 +475,31 @@ func (c *Client) ListChannels(ctx context.Context) ([]ChannelInfo, error) {
 
   channels := make([]ChannelInfo, 0, len(resp.Channels))
   for _, ch := range resp.Channels {
+    var baseFeeMsat *int64
+    var feeRatePpm *int64
+    var inboundFeeRatePpm *int64
+
+    if !ch.Private {
+      if edge, err := client.GetChanInfo(ctx, &lnrpc.ChanInfoRequest{ChanId: ch.ChanId}); err == nil {
+        policy := edge.Node1Policy
+        if ch.RemotePubkey != "" {
+          if edge.Node1Pub == ch.RemotePubkey {
+            policy = edge.Node2Policy
+          } else if edge.Node2Pub == ch.RemotePubkey {
+            policy = edge.Node1Policy
+          }
+        }
+        if policy != nil {
+          base := int64(policy.FeeBaseMsat)
+          rate := int64(policy.FeeRateMilliMsat)
+          inbound := int64(policy.InboundFeeRateMilliMsat)
+          baseFeeMsat = &base
+          feeRatePpm = &rate
+          inboundFeeRatePpm = &inbound
+        }
+      }
+    }
+
     channels = append(channels, ChannelInfo{
       ChannelPoint: ch.ChannelPoint,
       ChannelID: ch.ChanId,
@@ -485,6 +510,9 @@ func (c *Client) ListChannels(ctx context.Context) ([]ChannelInfo, error) {
       CapacitySat: ch.Capacity,
       LocalBalanceSat: ch.LocalBalance,
       RemoteBalanceSat: ch.RemoteBalance,
+      BaseFeeMsat: baseFeeMsat,
+      FeeRatePpm: feeRatePpm,
+      InboundFeeRatePpm: inboundFeeRatePpm,
     })
   }
 
@@ -877,6 +905,9 @@ type ChannelInfo struct {
   CapacitySat int64 `json:"capacity_sat"`
   LocalBalanceSat int64 `json:"local_balance_sat"`
   RemoteBalanceSat int64 `json:"remote_balance_sat"`
+  BaseFeeMsat *int64 `json:"base_fee_msat,omitempty"`
+  FeeRatePpm *int64 `json:"fee_rate_ppm,omitempty"`
+  InboundFeeRatePpm *int64 `json:"inbound_fee_rate_ppm,omitempty"`
 }
 
 type PeerInfo struct {

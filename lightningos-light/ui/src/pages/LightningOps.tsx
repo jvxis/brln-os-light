@@ -11,6 +11,9 @@ type Channel = {
   capacity_sat: number
   local_balance_sat: number
   remote_balance_sat: number
+  base_fee_msat?: number
+  fee_rate_ppm?: number
+  inbound_fee_rate_ppm?: number
 }
 
 type PendingChannel = {
@@ -610,16 +613,35 @@ export default function LightningOps() {
                     ) : (
                       <p className="text-sm text-fog/60">{ch.peer_alias || 'Unknown peer'}</p>
                     )}
-                    <p className="text-xs text-fog/50">Point: {ch.channel_point}</p>
+                    <p className="text-xs text-fog/50 break-all">
+                      Point: {ch.channel_point} | Capacity: {ch.capacity_sat} sat
+                    </p>
                   </div>
                   <span className={`rounded-full px-3 py-1 text-xs ${ch.active ? 'bg-glow/20 text-glow' : 'bg-ember/20 text-ember'}`}>
                     {ch.active ? 'Active' : 'Inactive'}
                   </span>
                 </div>
-                <div className="mt-3 grid gap-3 lg:grid-cols-3 text-xs text-fog/70">
-                  <div>Capacity: <span className="text-fog">{ch.capacity_sat} sat</span></div>
+                <div className="mt-3 grid gap-3 lg:grid-cols-5 text-xs text-fog/70">
                   <div>Local: <span className="text-fog">{ch.local_balance_sat} sat</span></div>
                   <div>Remote: <span className="text-fog">{ch.remote_balance_sat} sat</span></div>
+                  <div>
+                    Out base:{' '}
+                    <span className="text-fog">
+                      {typeof ch.base_fee_msat === 'number' ? `${ch.base_fee_msat} msat` : '-'}
+                    </span>
+                  </div>
+                  <div>
+                    Out rate:{' '}
+                    <span className="text-fog">
+                      {typeof ch.fee_rate_ppm === 'number' ? `${ch.fee_rate_ppm} ppm` : '-'}
+                    </span>
+                  </div>
+                  <div>
+                    In rate:{' '}
+                    <span className="text-fog">
+                      {typeof ch.inbound_fee_rate_ppm === 'number' ? `${ch.inbound_fee_rate_ppm} ppm` : '-'}
+                    </span>
+                  </div>
                 </div>
                 <div className="mt-2 text-xs text-fog/50">
                   {ch.private ? 'Private channel' : 'Public channel'}

@@ -743,7 +743,18 @@ ensure_notifications_admin() {
   local admin_user="losadmin"
   local current
   current=$(grep '^NOTIFICATIONS_PG_ADMIN_DSN=' /etc/lightningos/secrets.env | cut -d= -f2- || true)
-  if [[ -n "$current" && "$current" != *"CHANGE_ME"* ]]; then
+  local needs_update="false"
+  if [[ -z "$current" || "$current" == *"CHANGE_ME"* ]]; then
+    needs_update="true"
+  else
+    local userinfo
+    userinfo="${current#postgres://}"
+    userinfo="${userinfo%%@*}"
+    if [[ "$userinfo" != *":"* ]]; then
+      needs_update="true"
+    fi
+  fi
+  if [[ "$needs_update" == "false" ]]; then
     return 0
   fi
 

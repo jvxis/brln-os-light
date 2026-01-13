@@ -129,6 +129,8 @@ func bootstrapNotificationsDSN(logger *log.Logger) (string, error) {
   }
   defer pool.Close()
 
+  adminUser := adminUserFromDSN(adminDSN)
+
   roleExists := false
   var roleCheck int
   err = pool.QueryRow(ctx, "select 1 from pg_roles where rolname=$1", notificationsDBUser).Scan(&roleCheck)
@@ -143,6 +145,12 @@ func bootstrapNotificationsDSN(logger *log.Logger) (string, error) {
   } else {
     if _, err := pool.Exec(ctx, fmt.Sprintf("alter role %s with password '%s'", notificationsDBUser, password)); err != nil {
       return "", err
+    }
+  }
+
+  if adminUser != "" && adminUser != notificationsDBUser {
+    if _, err := pool.Exec(ctx, fmt.Sprintf("grant %s to %s", notificationsDBUser, adminUser)); err != nil {
+      logger.Printf("notifications warning: failed to grant %s to %s: %v", notificationsDBUser, adminUser, err)
     }
   }
 
@@ -298,6 +306,17 @@ func dsnHasPassword(raw string) bool {
   }
   _, ok := parsed.User.Password()
   return ok
+}
+
+func adminUserFromDSN(raw string) string {
+  parsed, err := url.Parse(raw)
+  if err != nil {
+    return ""
+  }
+  if parsed.User == nil {
+    return ""
+  }
+  return parsed.User.Username()
 }
 
 func isPlaceholderDSN(dsn string) bool {

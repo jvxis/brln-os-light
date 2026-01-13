@@ -90,6 +90,33 @@ export default function Wallet() {
     ? 'text-brass'
     : 'text-ember'
 
+  const formatTimestamp = (value: any) => {
+    if (!value) return 'Unknown time'
+    const parsed = new Date(value)
+    if (Number.isNaN(parsed.getTime())) return 'Unknown time'
+    return parsed.toLocaleString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    })
+  }
+
+  const formatActivityType = (value: string) => {
+    if (!value) return 'Activity'
+    if (value.toLowerCase() === 'invoice') return 'Invoice'
+    if (value.toLowerCase() === 'payment') return 'Payment'
+    return value
+  }
+
+  const orderedActivity = [...activity].sort((a: any, b: any) => {
+    const timeA = new Date(a?.timestamp || 0).getTime()
+    const timeB = new Date(b?.timestamp || 0).getTime()
+    return timeB - timeA
+  })
+
   const handleAddFunds = async () => {
     setShowAddress(true)
     setAddress('')
@@ -284,12 +311,24 @@ export default function Wallet() {
         <div className="mt-4 space-y-2 text-sm">
           {summaryError ? (
             <p className="text-fog/60">Activity unavailable until LND is reachable.</p>
-          ) : activity.length ? activity.map((item: any, idx: number) => (
-            <div key={`${item.type}-${idx}`} className="flex items-center justify-between border-b border-white/10 pb-2">
-              <span className="text-fog/70">{item.type} - {item.status}</span>
-              <span>{item.amount_sat} sats</span>
-            </div>
-          )) : (
+          ) : orderedActivity.length ? orderedActivity.map((item: any, idx: number) => {
+            const typeLabel = formatActivityType(item.type)
+            const statusLabel = String(item.status || 'unknown').replace(/_/g, ' ').toUpperCase()
+            const isInbound = String(item.type || '').toLowerCase() === 'invoice'
+            const arrow = isInbound ? '<-' : '->'
+            const arrowTone = isInbound ? 'text-glow' : 'text-ember'
+            return (
+              <div key={`${item.type}-${idx}`} className="grid items-center gap-3 border-b border-white/10 pb-2 sm:grid-cols-[160px_1fr_auto_auto]">
+                <span className="text-xs text-fog/50">{formatTimestamp(item.timestamp)}</span>
+                <div className="min-w-0">
+                  <span className="text-fog/70">{typeLabel}</span>
+                  <span className="text-fog/50"> - {statusLabel}</span>
+                </div>
+                <span className={`text-xs font-mono ${arrowTone}`}>{arrow}</span>
+                <span className="text-right">{item.amount_sat} sats</span>
+              </div>
+            )
+          }) : (
             <p className="text-fog/60">No recent activity yet.</p>
           )}
         </div>

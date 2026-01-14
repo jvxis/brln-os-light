@@ -11,6 +11,9 @@ LightningOS Light is a Full Lightning Node Daemon Installer, Lightning node mana
 - Seed phrase is never persisted or logged
 - Wizard for Bitcoin RPC credentials and wallet setup
 - Lightning Ops: peers, channels, and fee updates
+- Real-time notifications (on-chain, Lightning, channels, forwards, rebalances)
+- Optional Telegram SCB backup on channel open/close
+- Bitcoin Local management (status + config) and logs viewer
 
 ## Repository layout
 - `cmd/lightningos-manager`: Go backend (API + static UI)
@@ -72,6 +75,25 @@ Notes:
 - `/etc/lightningos/secrets.env` (chmod 660)
 - `/data/lnd/lnd.conf`
 - `/data/lnd` (LND data dir)
+
+## Notifications & backups
+LightningOS Light includes a real-time notifications system that tracks:
+- On-chain transactions (received/sent)
+- Lightning invoices (settled) and payments (sent)
+- Channel events (open, close, pending)
+- Forwards and rebalances
+
+Notifications are stored in a dedicated Postgres DB (see `NOTIFICATIONS_PG_DSN` in `/etc/lightningos/secrets.env`).
+
+Optional Telegram SCB backup:
+- When configured, every channel open/close triggers `ExportAllChannelBackups` and sends the SCB to Telegram.
+- Configure in the UI: Notifications -> Telegram SCB backup.
+- Bot token comes from @BotFather and chat id from @userinfobot.
+- Direct chat only; leaving both fields empty disables Telegram backup.
+
+Environment keys:
+- `NOTIFICATIONS_TG_BOT_TOKEN`
+- `NOTIFICATIONS_TG_CHAT_ID`
 
 ## Security notes
 - The seed phrase is never stored. It is displayed once in the wizard.

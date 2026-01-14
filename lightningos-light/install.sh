@@ -739,24 +739,33 @@ update_notifications_admin_dsn() {
   chmod 660 /etc/lightningos/secrets.env
 }
 
-ensure_notifications_admin() {
-  local admin_user="losadmin"
-  local current
-  current=$(grep '^NOTIFICATIONS_PG_ADMIN_DSN=' /etc/lightningos/secrets.env | cut -d= -f2- || true)
-  local needs_update="false"
-  if [[ -z "$current" || "$current" == *"CHANGE_ME"* ]]; then
-    needs_update="true"
-  else
-    local userinfo
-    userinfo="${current#postgres://}"
-    userinfo="${userinfo%%@*}"
-    if [[ "$userinfo" != *":"* ]]; then
+  ensure_notifications_admin() {
+    local admin_user="losadmin"
+    local current
+    current=$(grep '^NOTIFICATIONS_PG_ADMIN_DSN=' /etc/lightningos/secrets.env | cut -d= -f2- || true)
+    local needs_update="false"
+    if [[ -z "$current" || "$current" == *"CHANGE_ME"* ]]; then
       needs_update="true"
+    else
+      local userinfo
+      userinfo="${current#postgres://}"
+      userinfo="${userinfo%%@*}"
+      if [[ "$userinfo" != *":"* ]]; then
+        needs_update="true"
+      else
+        local current_user
+        current_user="${userinfo%%:*}"
+        local role_flags
+        role_flags=$(psql_as_postgres -tAc "select rolcreaterole, rolcreatedb from pg_roles where rolname='${current_user}'" 2>&1)
+        role_flags=$(echo "$role_flags" | tr -d '[:space:]')
+        if [[ "$role_flags" != "t|t" ]]; then
+          needs_update="true"
+        fi
+      fi
     fi
-  fi
-  if [[ "$needs_update" == "false" ]]; then
-    return 0
-  fi
+    if [[ "$needs_update" == "false" ]]; then
+      return 0
+    fi
 
   local role_exists
   role_exists=$(psql_as_postgres -tAc "select 1 from pg_roles where rolname='${admin_user}'" 2>&1)

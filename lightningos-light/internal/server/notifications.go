@@ -474,7 +474,8 @@ on conflict (key) do update set value=excluded.value, updated_at=excluded.update
 }
 
 func (n *Notifier) reconcileRebalance(ctx context.Context, paymentHash string) {
-  if paymentHash == "" {
+  normalized := normalizeHash(paymentHash)
+  if normalized == "" {
     return
   }
 
@@ -489,7 +490,7 @@ func (n *Notifier) reconcileRebalance(ctx context.Context, paymentHash string) {
   err = tx.QueryRow(ctx, `
 select id, fee_sat from notifications
 where payment_hash=$1 and type='lightning' and action='sent' and status='SUCCEEDED'
-order by occurred_at desc limit 1`, paymentHash).Scan(&payID, &payFee)
+order by occurred_at desc limit 1`, normalized).Scan(&payID, &payFee)
   if err != nil {
     return
   }
@@ -501,7 +502,7 @@ order by occurred_at desc limit 1`, paymentHash).Scan(&payID, &payFee)
   err = tx.QueryRow(ctx, `
 select id, amount_sat, memo, occurred_at from notifications
 where payment_hash=$1 and type='lightning' and action='received' and status='SETTLED'
-order by occurred_at desc limit 1`, paymentHash).Scan(&invID, &invAmount, &invMemo, &invAt)
+order by occurred_at desc limit 1`, normalized).Scan(&invID, &invAmount, &invMemo, &invAt)
   if err != nil {
     return
   }
@@ -611,7 +612,7 @@ func (n *Notifier) runInvoices() {
       }
 
       settleIndex = invoice.SettleIndex
-      hash := hex.EncodeToString(invoice.RHash)
+      hash := normalizeHash(hex.EncodeToString(invoice.RHash))
       if hash == "" {
         continue
       }
@@ -689,7 +690,8 @@ func (n *Notifier) runPayments() {
       if pay.PaymentIndex > maxIndex {
         maxIndex = pay.PaymentIndex
       }
-      if strings.TrimSpace(pay.PaymentHash) == "" {
+      paymentHash := normalizeHash(pay.PaymentHash)
+      if paymentHash == "" {
         continue
       }
       status := pay.Status.String()
@@ -703,6 +705,12 @@ func (n *Notifier) runPayments() {
       if pay.CreationTimeNs == 0 {
         occurredAt = time.Now().UTC()
       }
+      isRebalance := false
+      if status == "SUCCEEDED" && strings.TrimSpace(pay.PaymentRequest) != "" {
+        ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+        isRebalance = n.isSelfPayment(ctx, pay.PaymentRequest)
+        cancel()
+      }
       evt := Notification{
         OccurredAt: occurredAt,
         Type: "lightning",
@@ -711,12 +719,22 @@ func (n *Notifier) runPayments() {
         Status: status,
         AmountSat: amount,
         FeeSat: fee,
-        PaymentHash: pay.PaymentHash,
+        PaymentHash: paymentHash,
       }
 
       ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-      if _, err := n.upsertNotification(ctx, fmt.Sprintf("payment:%s", pay.PaymentHash), evt); err == nil {
-        n.reconcileRebalance(ctx, pay.PaymentHash)
+      if isRebalance {
+        evt.Type = "rebalance"
+        evt.Action = "rebalanced"
+        evt.Direction = "neutral"
+        evt.Status = "SETTLED"
+      }
+      if _, err := n.upsertNotification(ctx, fmt.Sprintf("payment:%s", paymentHash), evt); err == nil {
+        if isRebalance {
+          _ = n.removeRebalanceInvoice(ctx, paymentHash)
+        } else {
+          n.reconcileRebalance(ctx, paymentHash)
+        }
       }
       cancel()
     }
@@ -1091,6 +1109,38 @@ func nullableString(value string) any {
     return nil
   }
   return value
+}
+
+func normalizeHash(value string) string {
+  return strings.ToLower(strings.TrimSpace(value))
+}
+
+func (n *Notifier) removeRebalanceInvoice(ctx context.Context, paymentHash string) error {
+  normalized := normalizeHash(paymentHash)
+  if normalized == "" {
+    return nil
+  }
+  _, err := n.db.Exec(ctx, `
+delete from notifications
+where payment_hash=$1 and type='lightning' and action='received'
+`, normalized)
+  return err
+}
+
+func (n *Notifier) isSelfPayment(ctx context.Context, paymentRequest string) bool {
+  trimmed := strings.TrimSpace(paymentRequest)
+  if trimmed == "" {
+    return false
+  }
+  status, err := n.lnd.GetStatus(ctx)
+  if err != nil || status.Pubkey == "" {
+    return false
+  }
+  decoded, err := n.lnd.DecodeInvoice(ctx, trimmed)
+  if err != nil {
+    return false
+  }
+  return strings.EqualFold(decoded.Destination, status.Pubkey)
 }
 
 func nullableInt(value int64) any {

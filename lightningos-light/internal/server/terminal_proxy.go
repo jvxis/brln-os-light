@@ -57,7 +57,11 @@ func (s *Server) handleTerminalProxy(w http.ResponseWriter, r *http.Request) {
     if req.URL.Path == "" {
       req.URL.Path = "/"
     }
-    req.Host = target.Host
+    if r.Host != "" {
+      req.Host = r.Host
+    } else {
+      req.Host = target.Host
+    }
     if authHeader != "" {
       req.Header.Set("Authorization", authHeader)
     }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getApps, installApp, resetAppAdmin, startApp, stopApp, uninstallApp } from '../api'
+import { getAppAdminPassword, getApps, installApp, resetAppAdmin, startApp, stopApp, uninstallApp } from '../api'
 import lndgIcon from '../assets/apps/lndg.ico'
 import bitcoincoreIcon from '../assets/apps/bitcoincore.svg'
 
@@ -34,6 +34,7 @@ export default function AppStore() {
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState<Record<string, string>>({})
+  const [copying, setCopying] = useState<Record<string, boolean>>({})
 
   const loadApps = () => {
     setLoading(true)
@@ -88,6 +89,29 @@ export default function AppStore() {
     }
   }
 
+  const handleCopyAdminPassword = async (id: string) => {
+    setMessage('')
+    setCopying((prev) => ({ ...prev, [id]: true }))
+    try {
+      const res = await getAppAdminPassword(id)
+      const password = res?.password || ''
+      if (!password) {
+        setMessage('Admin password unavailable.')
+        return
+      }
+      await navigator.clipboard.writeText(password)
+      setMessage('LNDg admin password copied.')
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Copy failed.')
+    } finally {
+      setCopying((prev) => {
+        const next = { ...prev }
+        delete next[id]
+        return next
+      })
+    }
+  }
+
   const host = window.location.hostname
 
   return (
@@ -135,7 +159,23 @@ export default function AppStore() {
                   <p>Default access: Bitcoin Local</p>
                 ) : null}
                 {app.admin_password_path && (
-                  <p>Admin password saved at {app.admin_password_path}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span>Admin password saved at {app.admin_password_path}</span>
+                    {app.id === 'lndg' && (
+                      <button
+                        className="text-fog/50 hover:text-fog"
+                        onClick={() => handleCopyAdminPassword(app.id)}
+                        title="Copy LNDg admin password"
+                        aria-label="Copy LNDg admin password"
+                        disabled={Boolean(copying[app.id])}
+                      >
+                        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
+                          <rect x="9" y="9" width="11" height="11" rx="2" />
+                          <rect x="4" y="4" width="11" height="11" rx="2" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
 

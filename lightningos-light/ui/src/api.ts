@@ -132,6 +132,7 @@ export const testTelegramBackup = () =>
   request('/api/notifications/backup/telegram/test', { method: 'POST' })
 
 export const getApps = () => request('/api/apps')
+export const getAppAdminPassword = (id: string) => request(`/api/apps/${id}/admin-password`)
 export const installApp = (id: string) => request(`/api/apps/${id}/install`, { method: 'POST' })
 export const uninstallApp = (id: string) => request(`/api/apps/${id}/uninstall`, { method: 'POST' })
 export const startApp = (id: string) => request(`/api/apps/${id}/start`, { method: 'POST' })

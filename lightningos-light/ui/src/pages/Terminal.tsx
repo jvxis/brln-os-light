@@ -57,9 +57,6 @@ export default function Terminal() {
           <div>
             <p className="text-sm uppercase tracking-[0.2em] text-fog/60">Terminal</p>
             <h2 className="text-2xl font-semibold text-white">LightningOS Terminal</h2>
-            <p className="mt-2 text-sm text-fog/70">
-              Acesso protegido por credenciais. Copie o login abaixo para entrar.
-            </p>
             {statusMessage && (
               <p className="mt-2 text-sm text-brass">{statusMessage}</p>
             )}
@@ -79,27 +76,29 @@ export default function Terminal() {
                     Terminal disabled. Set `TERMINAL_ENABLED=1` in `/etc/lightningos/secrets.env`.
                   </p>
                 )}
-                {status.credential && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-fog/50">User</span>
-                    <span className="font-mono text-fog/80">{credential.user || 'terminal'}</span>
-                  </div>
-                )}
-                {credential.pass && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-fog/50">Password</span>
-                    <span className="font-mono text-fog/80">{credential.pass}</span>
-                    <button
-                      className="text-fog/50 hover:text-fog"
-                      onClick={() => copyToClipboard(credential.pass)}
-                      title="Copy password"
-                      aria-label="Copy password"
-                    >
-                      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
-                        <rect x="9" y="9" width="11" height="11" rx="2" />
-                        <rect x="4" y="4" width="11" height="11" rx="2" />
-                      </svg>
-                    </button>
+                {(status.credential || credential.pass) && (
+                  <div className="flex flex-wrap items-center gap-4">
+                    <div className="flex items-center gap-2">
+                      <span className="text-fog/50">User</span>
+                      <span className="font-mono text-fog/80">{credential.user || 'terminal'}</span>
+                    </div>
+                    {credential.pass && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-fog/50">Password</span>
+                        <span className="font-mono text-fog/80">{credential.pass}</span>
+                        <button
+                          className="text-fog/50 hover:text-fog"
+                          onClick={() => copyToClipboard(credential.pass)}
+                          title="Copy password"
+                          aria-label="Copy password"
+                        >
+                          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
+                            <rect x="9" y="9" width="11" height="11" rx="2" />
+                            <rect x="4" y="4" width="11" height="11" rx="2" />
+                          </svg>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

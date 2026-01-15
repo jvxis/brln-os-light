@@ -42,6 +42,11 @@ func (s *Server) handleTerminalProxy(w http.ResponseWriter, r *http.Request) {
     return
   }
 
+  if r.URL.Path == terminalProxyPrefix {
+    http.Redirect(w, r, terminalProxyPrefix+"/", http.StatusTemporaryRedirect)
+    return
+  }
+
   target := terminalProxyTarget()
   authHeader := basicAuthHeader(terminalCredential())
   proxy := httputil.NewSingleHostReverseProxy(target)
@@ -53,7 +58,7 @@ func (s *Server) handleTerminalProxy(w http.ResponseWriter, r *http.Request) {
       req.URL.Path = "/"
     }
     req.Host = target.Host
-    if authHeader != "" && req.Header.Get("Authorization") == "" {
+    if authHeader != "" {
       req.Header.Set("Authorization", authHeader)
     }
     if req.Header.Get("X-Forwarded-Host") == "" && r.Host != "" {

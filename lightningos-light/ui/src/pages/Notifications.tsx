@@ -102,10 +102,17 @@ const arrowForDirection = (value: string) => {
   return `${percent}% ${ppm}ppm`
   }
 
-  const mempoolTxLink = (txid?: string) => {
-    if (!txid) return ''
-    return `https://mempool.space/tx/${txid}`
-  }
+const mempoolLinkFromChannelPoint = (channelPoint?: string) => {
+  if (!channelPoint) return ''
+  const parts = channelPoint.split(':')
+  if (parts.length !== 2) return ''
+  return `https://mempool.space/pt/tx/${parts[0]}#vout=${parts[1]}`
+}
+
+const mempoolTxLink = (txid?: string) => {
+  if (!txid) return ''
+  return `https://mempool.space/tx/${txid}`
+}
 
   export default function Notifications() {
   const [items, setItems] = useState<Notification[]>([])
@@ -373,10 +380,27 @@ const arrowForDirection = (value: string) => {
                 }
                 const detailParts: Array<string | JSX.Element> = [
                   peer ? `Peer ${peer}` : '',
-                  item.channel_point ? `Channel ${item.channel_point.slice(0, 16)}...` : '',
                 ].filter(Boolean)
-                if (item.txid) {
+                if (item.channel_point) {
                   if (item.type === 'channel') {
+                    const link = mempoolLinkFromChannelPoint(item.channel_point)
+                    detailParts.push(
+                      <a
+                        key={`${item.id}-channel`}
+                        className="text-emerald-200 hover:text-emerald-100"
+                        href={link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Channel {item.channel_point.slice(0, 16)}...
+                      </a>
+                    )
+                  } else {
+                    detailParts.push(`Channel ${item.channel_point.slice(0, 16)}...`)
+                  }
+                }
+                if (item.txid) {
+                  if (item.type === 'channel' && !item.channel_point) {
                     const link = mempoolTxLink(item.txid)
                     detailParts.push(
                       <a

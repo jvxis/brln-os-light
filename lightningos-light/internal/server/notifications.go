@@ -866,6 +866,9 @@ func (n *Notifier) channelEventToNotification(update *lnrpc.ChannelEventUpdate) 
       ChannelID: int64(ch.ChanId),
       ChannelPoint: ch.ChannelPoint,
     }
+    if evt.Txid == "" {
+      evt.Txid = channelPointTxid(evt.ChannelPoint)
+    }
     if evt.PeerAlias == "" && evt.PeerPubkey != "" {
       evt.PeerAlias = n.lookupNodeAlias(evt.PeerPubkey)
     }
@@ -974,6 +977,18 @@ func txidFromBytes(raw []byte) string {
     rev[len(raw)-1-i] = raw[i]
   }
   return hex.EncodeToString(rev)
+}
+
+func channelPointTxid(channelPoint string) string {
+  trimmed := strings.TrimSpace(channelPoint)
+  if trimmed == "" {
+    return ""
+  }
+  parts := strings.SplitN(trimmed, ":", 2)
+  if len(parts) != 2 {
+    return ""
+  }
+  return strings.TrimSpace(parts[0])
 }
 
 func (n *Notifier) lookupNodeAlias(pubkey string) string {

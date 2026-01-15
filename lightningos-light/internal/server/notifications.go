@@ -48,6 +48,7 @@ type Notification struct {
   Status string `json:"status"`
   AmountSat int64 `json:"amount_sat"`
   FeeSat int64 `json:"fee_sat"`
+  FeeMsat int64 `json:"fee_msat"`
   PeerPubkey string `json:"peer_pubkey,omitempty"`
   PeerAlias string `json:"peer_alias,omitempty"`
   ChannelID int64 `json:"channel_id,omitempty"`
@@ -365,6 +366,7 @@ create table if not exists notifications (
   status text not null,
   amount_sat bigint not null default 0,
   fee_sat bigint not null default 0,
+  fee_msat bigint not null default 0,
   peer_pubkey text,
   peer_alias text,
   channel_id bigint,
@@ -374,6 +376,8 @@ create table if not exists notifications (
   memo text,
   created_at timestamptz not null default now()
 );
+
+alter table notifications add column if not exists fee_msat bigint not null default 0;
 
 create index if not exists notifications_occurred_at_idx on notifications (occurred_at desc);
 create index if not exists notifications_type_idx on notifications (type);
@@ -395,9 +399,9 @@ func (n *Notifier) upsertNotification(ctx context.Context, eventKey string, evt 
 
   row := n.db.QueryRow(ctx, `
 insert into notifications (
-  event_key, occurred_at, type, action, direction, status, amount_sat, fee_sat,
+  event_key, occurred_at, type, action, direction, status, amount_sat, fee_sat, fee_msat,
   peer_pubkey, peer_alias, channel_id, channel_point, txid, payment_hash, memo
-) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 on conflict (event_key) do update set
   occurred_at = excluded.occurred_at,
   type = excluded.type,
@@ -406,6 +410,7 @@ on conflict (event_key) do update set
   status = excluded.status,
   amount_sat = excluded.amount_sat,
   fee_sat = excluded.fee_sat,
+  fee_msat = excluded.fee_msat,
   peer_pubkey = excluded.peer_pubkey,
   peer_alias = excluded.peer_alias,
   channel_id = excluded.channel_id,
@@ -414,9 +419,9 @@ on conflict (event_key) do update set
   payment_hash = excluded.payment_hash,
   memo = excluded.memo
 returning id, occurred_at, type, action, direction, status, amount_sat, fee_sat,
-  peer_pubkey, peer_alias, channel_id, channel_point, txid, payment_hash, memo
+  fee_msat, peer_pubkey, peer_alias, channel_id, channel_point, txid, payment_hash, memo
 `, eventKey, evt.OccurredAt, evt.Type, evt.Action, evt.Direction, evt.Status,
-    evt.AmountSat, evt.FeeSat, nullableString(evt.PeerPubkey), nullableString(evt.PeerAlias),
+    evt.AmountSat, evt.FeeSat, evt.FeeMsat, nullableString(evt.PeerPubkey), nullableString(evt.PeerAlias),
     nullableInt(evt.ChannelID), nullableString(evt.ChannelPoint), nullableString(evt.Txid),
     nullableString(evt.PaymentHash), nullableString(evt.Memo),
   )
@@ -444,7 +449,7 @@ func (n *Notifier) list(ctx context.Context, limit int) ([]Notification, error) 
   }
 
   rows, err := n.db.Query(ctx, `
-select id, occurred_at, type, action, direction, status, amount_sat, fee_sat,
+select id, occurred_at, type, action, direction, status, amount_sat, fee_sat, fee_msat,
   peer_pubkey, peer_alias, channel_id, channel_point, txid, payment_hash, memo
 from notifications
 order by occurred_at desc, id desc
@@ -497,10 +502,11 @@ func (n *Notifier) reconcileRebalance(ctx context.Context, paymentHash string) {
 
   var payID int64
   var payFee int64
+  var payFeeMsat int64
   err = tx.QueryRow(ctx, `
-select id, fee_sat from notifications
+select id, fee_sat, fee_msat from notifications
 where payment_hash=$1 and type='lightning' and action='sent' and status='SUCCEEDED'
-order by occurred_at desc limit 1`, normalized).Scan(&payID, &payFee)
+order by occurred_at desc limit 1`, normalized).Scan(&payID, &payFee, &payFeeMsat)
   if err != nil {
     return
   }
@@ -530,12 +536,13 @@ set type='rebalance',
   status='SETTLED',
   amount_sat=$2,
   fee_sat=$3,
-  memo=$4,
-  occurred_at=$5
+  fee_msat=$4,
+  memo=$5,
+  occurred_at=$6
 where id=$1
 returning id, occurred_at, type, action, direction, status, amount_sat, fee_sat,
-  peer_pubkey, peer_alias, channel_id, channel_point, txid, payment_hash, memo
-`, payID, invAmount, payFee, memoValue, invAt)
+  fee_msat, peer_pubkey, peer_alias, channel_id, channel_point, txid, payment_hash, memo
+`, payID, invAmount, payFee, payFeeMsat, memoValue, invAt)
   updated, err := scanNotification(row)
   if err != nil {
     return
@@ -648,6 +655,18 @@ func (n *Notifier) runInvoices() {
         cancel()
         continue
       }
+
+      if pay, err := n.lookupPaymentByHash(ctx, hash); err == nil && pay != nil {
+        if n.isSelfPayment(ctx, pay.PaymentRequest, pay) {
+          rebalanceEvt := n.rebalanceEvent(ctx, pay, occurredAt)
+          if _, err := n.upsertNotification(ctx, fmt.Sprintf("payment:%s", hash), rebalanceEvt); err == nil {
+            _ = n.setCursor(ctx, "invoice_settle_index", strconv.FormatUint(settleIndex, 10))
+          }
+          cancel()
+          continue
+        }
+      }
+
       if _, err := n.upsertNotification(ctx, fmt.Sprintf("invoice:%s", hash), evt); err == nil {
         _ = n.setCursor(ctx, "invoice_settle_index", strconv.FormatUint(settleIndex, 10))
         n.reconcileRebalance(ctx, hash)
@@ -721,12 +740,11 @@ func (n *Notifier) runPayments() {
         occurredAt = time.Now().UTC()
       }
       isRebalance := false
-      var rebalanceInfo *rebalanceRouteInfo
       if status == "SUCCEEDED" {
         ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
         isRebalance = n.isSelfPayment(ctx, pay.PaymentRequest, pay)
-        if isRebalance {
-          rebalanceInfo = n.rebalanceRouteInfo(ctx, pay)
+        if !isRebalance && n.hasInvoiceHash(ctx, paymentHash) {
+          isRebalance = true
         }
         cancel()
       }
@@ -738,23 +756,13 @@ func (n *Notifier) runPayments() {
         Status: status,
         AmountSat: amount,
         FeeSat: fee,
+        FeeMsat: pay.FeeMsat,
         PaymentHash: paymentHash,
       }
 
       ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
       if isRebalance {
-        evt.Type = "rebalance"
-        evt.Action = "rebalanced"
-        evt.Direction = "neutral"
-        evt.Status = "SETTLED"
-        if rebalanceInfo != nil {
-          if rebalanceInfo.PeerLabel != "" {
-            evt.PeerAlias = rebalanceInfo.PeerLabel
-          }
-          if rebalanceInfo.ChannelLabel != "" {
-            evt.Memo = rebalanceInfo.ChannelLabel
-          }
-        }
+        evt = n.rebalanceEvent(ctx, pay, occurredAt)
       }
       if _, err := n.upsertNotification(ctx, fmt.Sprintf("payment:%s", paymentHash), evt); err == nil {
         if isRebalance {
@@ -1142,6 +1150,7 @@ func (n *Notifier) runForwards() {
       occurredAt := time.Unix(0, ts).UTC()
       amount := int64(fwd.AmtOut)
       fee := int64(fwd.Fee)
+      feeMsat := int64(fwd.FeeMsat)
       evt := Notification{
         OccurredAt: occurredAt,
         Type: "forward",
@@ -1150,6 +1159,7 @@ func (n *Notifier) runForwards() {
         Status: "SETTLED",
         AmountSat: amount,
         FeeSat: fee,
+        FeeMsat: feeMsat,
         PeerAlias: strings.TrimSpace(fmt.Sprintf("%s -> %s", fwd.PeerAliasIn, fwd.PeerAliasOut)),
         ChannelID: int64(fwd.ChanIdOut),
       }
@@ -1176,6 +1186,39 @@ func nullableString(value string) any {
 
 func normalizeHash(value string) string {
   return strings.ToLower(strings.TrimSpace(value))
+}
+
+func (n *Notifier) lookupPaymentByHash(ctx context.Context, paymentHash string) (*lnrpc.Payment, error) {
+  normalized := normalizeHash(paymentHash)
+  if normalized == "" {
+    return nil, nil
+  }
+
+  conn, err := n.lnd.DialLightning(ctx)
+  if err != nil {
+    return nil, err
+  }
+  defer conn.Close()
+
+  client := lnrpc.NewLightningClient(conn)
+  res, err := client.ListPayments(ctx, &lnrpc.ListPaymentsRequest{
+    IncludeIncomplete: true,
+    MaxPayments: 400,
+    Reversed: true,
+  })
+  if err != nil {
+    return nil, err
+  }
+
+  for _, pay := range res.Payments {
+    if pay == nil {
+      continue
+    }
+    if normalizeHash(pay.PaymentHash) == normalized {
+      return pay, nil
+    }
+  }
+  return nil, nil
 }
 
 func (n *Notifier) rebalanceRouteInfo(ctx context.Context, pay *lnrpc.Payment) *rebalanceRouteInfo {
@@ -1219,6 +1262,38 @@ func (n *Notifier) rebalanceRouteInfo(ctx context.Context, pay *lnrpc.Payment) *
     PeerLabel: peerLabel,
     ChannelLabel: channelLabel,
   }
+}
+
+func (n *Notifier) rebalanceEvent(ctx context.Context, pay *lnrpc.Payment, occurredAt time.Time) Notification {
+  paymentHash := ""
+  if pay != nil {
+    paymentHash = normalizeHash(pay.PaymentHash)
+  }
+  evt := Notification{
+    OccurredAt: occurredAt,
+    Type: "rebalance",
+    Action: "rebalanced",
+    Direction: "neutral",
+    Status: "SETTLED",
+    AmountSat: 0,
+    FeeSat: 0,
+    FeeMsat: 0,
+    PaymentHash: paymentHash,
+  }
+  if pay != nil {
+    evt.AmountSat = pay.ValueSat
+    evt.FeeSat = pay.FeeSat
+    evt.FeeMsat = pay.FeeMsat
+  }
+  if info := n.rebalanceRouteInfo(ctx, pay); info != nil {
+    if info.PeerLabel != "" {
+      evt.PeerAlias = info.PeerLabel
+    }
+    if info.ChannelLabel != "" {
+      evt.Memo = info.ChannelLabel
+    }
+  }
+  return evt
 }
 
 func rebalanceRouteFromPayment(pay *lnrpc.Payment) *lnrpc.Route {
@@ -1346,16 +1421,33 @@ select id from notifications where payment_hash=$1 and type='rebalance' limit 1
   return err == nil
 }
 
+func (n *Notifier) hasInvoiceHash(ctx context.Context, paymentHash string) bool {
+  if n == nil || n.db == nil {
+    return false
+  }
+  normalized := normalizeHash(paymentHash)
+  if normalized == "" {
+    return false
+  }
+  var id int64
+  err := n.db.QueryRow(ctx, `
+select id from notifications
+where payment_hash=$1 and type='lightning' and action='received' and status='SETTLED'
+limit 1
+`, normalized).Scan(&id)
+  return err == nil
+}
+
 func (n *Notifier) isSelfPayment(ctx context.Context, paymentRequest string, pay *lnrpc.Payment) bool {
   trimmed := strings.TrimSpace(paymentRequest)
-  status, err := n.lnd.GetStatus(ctx)
-  if err != nil || status.Pubkey == "" {
+  pubkey := n.lnd.CachedPubkey()
+  if pubkey == "" {
     return false
   }
 
   if trimmed != "" {
     decoded, err := n.lnd.DecodeInvoice(ctx, trimmed)
-    if err == nil && strings.EqualFold(decoded.Destination, status.Pubkey) {
+    if err == nil && strings.EqualFold(decoded.Destination, pubkey) {
       return true
     }
   }
@@ -1372,7 +1464,7 @@ func (n *Notifier) isSelfPayment(ctx context.Context, paymentRequest string, pay
   if lastHop == "" {
     return false
   }
-  return strings.EqualFold(lastHop, status.Pubkey)
+  return strings.EqualFold(lastHop, pubkey)
 }
 
 func nullableInt(value int64) any {
@@ -1400,6 +1492,7 @@ func scanNotification(scanner notificationRowScanner) (Notification, error) {
     &evt.Status,
     &evt.AmountSat,
     &evt.FeeSat,
+    &evt.FeeMsat,
     &peerPubkey,
     &peerAlias,
     &channelID,

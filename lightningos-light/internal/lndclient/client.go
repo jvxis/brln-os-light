@@ -156,6 +156,18 @@ func (c *Client) GetStatus(ctx context.Context) (Status, error) {
   return status, err
 }
 
+func (c *Client) CachedPubkey() string {
+  c.statusMu.Lock()
+  cached := c.infoCache
+  valid := c.infoCacheValid
+  c.statusMu.Unlock()
+
+  if !valid {
+    return ""
+  }
+  return cached.Pubkey
+}
+
 func (c *Client) GetBalances(ctx context.Context) (BalanceSummary, error) {
   conn, err := c.dial(ctx, true)
   if err != nil {

@@ -10,6 +10,7 @@ type Notification = {
   status: string
   amount_sat: number
   fee_sat: number
+  fee_msat?: number
   peer_pubkey?: string
   peer_alias?: string
   channel_id?: number
@@ -92,15 +93,33 @@ const arrowForDirection = (value: string) => {
   return { label: '.', tone: 'text-fog/50' }
 }
 
-  const formatFeeRate = (amount: number, fee: number) => {
+const feeMsatTotal = (feeSat: number, feeMsat?: number) => {
+  if (feeMsat && feeMsat > 0) {
+    return feeMsat
+  }
+  return Math.max(0, feeSat) * 1000
+}
+
+const formatFeeDisplay = (feeSat: number, feeMsat?: number) => {
+  const msat = feeMsatTotal(feeSat, feeMsat)
+  if (msat <= 0) return ''
+  const sats = msat / 1000
+  if (sats >= 1) return `${Math.round(sats)} sats`
+  const trimmed = sats.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')
+  return `${trimmed} sats`
+}
+
+const formatFeeRate = (amount: number, feeSat: number, feeMsat?: number) => {
   if (!amount || amount <= 0) return ''
-  const safeFee = fee > 0 ? fee : 0
-  const ratio = safeFee / amount
+  const msat = feeMsatTotal(feeSat, feeMsat)
+  if (msat <= 0) return ''
+  const feeSatTotal = msat / 1000
+  const ratio = feeSatTotal / amount
   const percentRaw = ratio * 100
   const percent = percentRaw.toFixed(3).replace(/\.?0+$/, '')
   const ppm = Math.round(ratio * 1_000_000)
   return `${percent}% ${ppm}ppm`
-  }
+}
 
 const mempoolLinkFromChannelPoint = (channelPoint?: string) => {
   if (!channelPoint) return ''
@@ -374,13 +393,13 @@ const mempoolTxLink = (txid?: string) => {
                     ? `Route ${peer}`
                     : `Peer ${peer}`
                   : ''
-                const feeRate = formatFeeRate(item.amount_sat, item.fee_sat)
+                const feeRate = formatFeeRate(item.amount_sat, item.fee_sat, item.fee_msat)
                 let feeDetail = ''
                 if (feeRate) {
                   if (item.type === 'forward') {
-                    feeDetail = `Earned ${item.fee_sat} sats (${feeRate})`
+                    feeDetail = `Earned ${formatFeeDisplay(item.fee_sat, item.fee_msat)} (${feeRate})`
                   } else if (item.type === 'rebalance') {
-                    feeDetail = `Fee ${item.fee_sat} sats (${feeRate})`
+                    feeDetail = `Fee ${formatFeeDisplay(item.fee_sat, item.fee_msat)} (${feeRate})`
                   }
                 }
                 const detailParts: Array<string | JSX.Element> = [
@@ -451,8 +470,8 @@ const mempoolTxLink = (txid?: string) => {
                     <span className={`text-xs font-mono ${arrow.tone}`}>{arrow.label}</span>
                     <div className="text-right">
                       <div>{item.amount_sat} sats</div>
-                      {item.fee_sat > 0 && (
-                        <div className="text-xs text-fog/50">Fee {item.fee_sat} sats</div>
+                      {formatFeeDisplay(item.fee_sat, item.fee_msat) && (
+                        <div className="text-xs text-fog/50">Fee {formatFeeDisplay(item.fee_sat, item.fee_msat)}</div>
                       )}
                     </div>
                   </div>

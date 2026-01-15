@@ -643,6 +643,11 @@ func (n *Notifier) runInvoices() {
       }
 
       ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+      if n.isRebalanceHash(ctx, hash) {
+        _ = n.setCursor(ctx, "invoice_settle_index", strconv.FormatUint(settleIndex, 10))
+        cancel()
+        continue
+      }
       if _, err := n.upsertNotification(ctx, fmt.Sprintf("invoice:%s", hash), evt); err == nil {
         _ = n.setCursor(ctx, "invoice_settle_index", strconv.FormatUint(settleIndex, 10))
         n.reconcileRebalance(ctx, hash)
@@ -717,9 +722,9 @@ func (n *Notifier) runPayments() {
       }
       isRebalance := false
       var rebalanceInfo *rebalanceRouteInfo
-      if status == "SUCCEEDED" && strings.TrimSpace(pay.PaymentRequest) != "" {
+      if status == "SUCCEEDED" {
         ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
-        isRebalance = n.isSelfPayment(ctx, pay.PaymentRequest)
+        isRebalance = n.isSelfPayment(ctx, pay.PaymentRequest, pay)
         if isRebalance {
           rebalanceInfo = n.rebalanceRouteInfo(ctx, pay)
         }
@@ -1326,20 +1331,48 @@ where payment_hash=$1 and type='lightning' and action='received'
   return err
 }
 
-func (n *Notifier) isSelfPayment(ctx context.Context, paymentRequest string) bool {
-  trimmed := strings.TrimSpace(paymentRequest)
-  if trimmed == "" {
+func (n *Notifier) isRebalanceHash(ctx context.Context, paymentHash string) bool {
+  if n == nil || n.db == nil {
     return false
   }
+  normalized := normalizeHash(paymentHash)
+  if normalized == "" {
+    return false
+  }
+  var id int64
+  err := n.db.QueryRow(ctx, `
+select id from notifications where payment_hash=$1 and type='rebalance' limit 1
+`, normalized).Scan(&id)
+  return err == nil
+}
+
+func (n *Notifier) isSelfPayment(ctx context.Context, paymentRequest string, pay *lnrpc.Payment) bool {
+  trimmed := strings.TrimSpace(paymentRequest)
   status, err := n.lnd.GetStatus(ctx)
   if err != nil || status.Pubkey == "" {
     return false
   }
-  decoded, err := n.lnd.DecodeInvoice(ctx, trimmed)
-  if err != nil {
+
+  if trimmed != "" {
+    decoded, err := n.lnd.DecodeInvoice(ctx, trimmed)
+    if err == nil && strings.EqualFold(decoded.Destination, status.Pubkey) {
+      return true
+    }
+  }
+
+  route := rebalanceRouteFromPayment(pay)
+  if route == nil {
     return false
   }
-  return strings.EqualFold(decoded.Destination, status.Pubkey)
+  hops := route.GetHops()
+  if len(hops) == 0 {
+    return false
+  }
+  lastHop := strings.TrimSpace(hops[len(hops)-1].PubKey)
+  if lastHop == "" {
+    return false
+  }
+  return strings.EqualFold(lastHop, status.Pubkey)
 }
 
 func nullableInt(value int64) any {

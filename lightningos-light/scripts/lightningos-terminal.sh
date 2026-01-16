@@ -18,11 +18,18 @@ fi
 
 port="${TERMINAL_PORT:-7681}"
 ws_origin="${TERMINAL_WS_ORIGIN:-.*}"
+term_name="${TERMINAL_TERM:-xterm}"
+
+export TERM="$term_name"
 
 args=(/usr/local/bin/gotty --address 127.0.0.1 --port "$port" --credential "$TERMINAL_CREDENTIAL" --reconnect)
 
 if [[ "${TERMINAL_ALLOW_WRITE:-0}" == "1" ]]; then
   args+=(--permit-write)
+fi
+
+if /usr/local/bin/gotty --help 2>&1 | grep -q -- '--term'; then
+  args+=(--term "$term_name")
 fi
 
 if /usr/local/bin/gotty --help 2>&1 | grep -q -- '--ws-origin'; then

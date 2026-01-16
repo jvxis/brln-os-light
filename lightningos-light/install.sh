@@ -79,6 +79,9 @@ ensure_secrets_env_defaults() {
   if ! grep -q '^TERMINAL_PORT=' "$file"; then
     echo "TERMINAL_PORT=7681" >> "$file"
   fi
+  if ! grep -q '^TERMINAL_TERM=' "$file"; then
+    echo "TERMINAL_TERM=xterm" >> "$file"
+  fi
   if ! grep -q '^TERMINAL_WS_ORIGIN=' "$file"; then
     echo "TERMINAL_WS_ORIGIN=" >> "$file"
   fi

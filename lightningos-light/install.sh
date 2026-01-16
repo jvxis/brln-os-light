@@ -82,6 +82,9 @@ ensure_secrets_env_defaults() {
   if ! grep -q '^TERMINAL_TERM=' "$file"; then
     echo "TERMINAL_TERM=xterm" >> "$file"
   fi
+  if ! grep -q '^TERMINAL_SHELL=' "$file"; then
+    echo "TERMINAL_SHELL=/bin/bash" >> "$file"
+  fi
   if ! grep -q '^TERMINAL_WS_ORIGIN=' "$file"; then
     echo "TERMINAL_WS_ORIGIN=" >> "$file"
   fi

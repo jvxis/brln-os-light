@@ -19,8 +19,10 @@ fi
 port="${TERMINAL_PORT:-7681}"
 ws_origin="${TERMINAL_WS_ORIGIN:-.*}"
 term_name="${TERMINAL_TERM:-xterm}"
+terminal_shell="${TERMINAL_SHELL:-/bin/bash}"
 
 export TERM="$term_name"
+export SHELL="$terminal_shell"
 
 args=(/usr/local/bin/gotty --address 127.0.0.1 --port "$port" --credential "$TERMINAL_CREDENTIAL" --reconnect)
 
@@ -36,6 +38,6 @@ if /usr/local/bin/gotty --help 2>&1 | grep -q -- '--ws-origin'; then
   args+=(--ws-origin "$ws_origin")
 fi
 
-args+=(tmux new -A -s lightningos)
+args+=(tmux new -A -s lightningos "$terminal_shell")
 
 exec "${args[@]}"

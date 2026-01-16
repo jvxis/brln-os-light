@@ -1078,11 +1078,12 @@ install_systemd() {
     # shellcheck disable=SC1091
     source /etc/lightningos/secrets.env
   fi
-  if [[ "${TERMINAL_ENABLED:-0}" == "1" && -n "${TERMINAL_CREDENTIAL:-}" ]]; then
-    systemctl enable --now lightningos-terminal >/dev/null 2>&1 || true
-  else
-    systemctl disable --now lightningos-terminal >/dev/null 2>&1 || true
-  fi
+    if [[ "${TERMINAL_ENABLED:-0}" == "1" && -n "${TERMINAL_CREDENTIAL:-}" ]]; then
+      systemctl enable --now lightningos-terminal >/dev/null 2>&1 || true
+      systemctl restart lightningos-terminal >/dev/null 2>&1 || true
+    else
+      systemctl disable --now lightningos-terminal >/dev/null 2>&1 || true
+    fi
   print_ok "Services enabled and started"
 }
 

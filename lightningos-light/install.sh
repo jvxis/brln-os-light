@@ -319,8 +319,11 @@ EOF
 ensure_user() {
   local user="$1"
   local home="$2"
+  if ! getent group "$user" >/dev/null 2>&1; then
+    groupadd --system "$user"
+  fi
   if ! id "$user" >/dev/null 2>&1; then
-    useradd --system --home "$home" --shell /usr/sbin/nologin "$user"
+    useradd --system --home "$home" --shell /usr/sbin/nologin -g "$user" "$user"
   fi
   if [[ -n "$home" && ! -d "$home" ]]; then
     mkdir -p "$home"

@@ -5,8 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=lightningos
-Group=lightningos
+User=losop
+Group=losop
+SupplementaryGroups=lightningos
 EnvironmentFile=-/etc/lightningos/secrets.env
 ExecCondition=/bin/bash -lc '[ "${TERMINAL_ENABLED}" = "1" ] && [ -n "${TERMINAL_CREDENTIAL}" ]'
 ExecStart=/usr/local/sbin/lightningos-terminal

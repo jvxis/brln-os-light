@@ -27,6 +27,7 @@ LND_DIR="/data/lnd"
 LND_CONF="${LND_DIR}/lnd.conf"
 LND_FIX_PERMS_SCRIPT="/usr/local/sbin/lightningos-fix-lnd-perms"
 TERMINAL_SCRIPT="/usr/local/sbin/lightningos-terminal"
+TERMINAL_OPERATOR_USER="${TERMINAL_OPERATOR_USER:-losop}"
 
 CURRENT_STEP=""
 LOG_FILE="/var/log/lightningos-install.log"
@@ -79,6 +80,14 @@ ensure_secrets_env_defaults() {
   if ! grep -q '^TERMINAL_PORT=' "$file"; then
     echo "TERMINAL_PORT=7681" >> "$file"
   fi
+  if ! grep -q '^TERMINAL_OPERATOR_USER=' "$file"; then
+    echo "TERMINAL_OPERATOR_USER=${TERMINAL_OPERATOR_USER}" >> "$file"
+  else
+    sed -i "s|^TERMINAL_OPERATOR_USER=.*|TERMINAL_OPERATOR_USER=${TERMINAL_OPERATOR_USER}|" "$file"
+  fi
+  if ! grep -q '^TERMINAL_OPERATOR_PASSWORD=' "$file"; then
+    echo "TERMINAL_OPERATOR_PASSWORD=" >> "$file"
+  fi
   if ! grep -q '^TERMINAL_TERM=' "$file"; then
     echo "TERMINAL_TERM=xterm" >> "$file"
   fi
@@ -93,7 +102,7 @@ ensure_secrets_env_defaults() {
   if [[ -z "$current_credential" ]]; then
     local terminal_pass
     terminal_pass=$(openssl rand -hex 12)
-    sed -i "s|^TERMINAL_CREDENTIAL=.*|TERMINAL_CREDENTIAL=terminal:${terminal_pass}|" "$file"
+    sed -i "s|^TERMINAL_CREDENTIAL=.*|TERMINAL_CREDENTIAL=${TERMINAL_OPERATOR_USER}:${terminal_pass}|" "$file"
     sed -i 's|^TERMINAL_ENABLED=.*|TERMINAL_ENABLED=1|' "$file"
   fi
   chown root:lightningos "$file"
@@ -312,6 +321,57 @@ ensure_user() {
     chown "$user:$user" "$home"
     chmod 750 "$home"
   fi
+}
+
+ensure_operator_user() {
+  local user="$TERMINAL_OPERATOR_USER"
+  print_step "Ensuring operator user ${user}"
+
+  local pw="${TERMINAL_OPERATOR_PASSWORD:-}"
+  if [[ -z "$pw" ]]; then
+    local file="/etc/lightningos/secrets.env"
+    mkdir -p /etc/lightningos
+    if [[ ! -f "$file" ]]; then
+      cp "$REPO_ROOT/templates/secrets.env" "$file"
+    fi
+    if ! grep -q '^TERMINAL_OPERATOR_USER=' "$file"; then
+      echo "TERMINAL_OPERATOR_USER=${user}" >> "$file"
+    fi
+    if ! grep -q '^TERMINAL_OPERATOR_PASSWORD=' "$file"; then
+      echo "TERMINAL_OPERATOR_PASSWORD=" >> "$file"
+    fi
+    pw=$(grep '^TERMINAL_OPERATOR_PASSWORD=' "$file" | cut -d= -f2- || true)
+    if [[ -z "$pw" ]]; then
+      pw=$(openssl rand -hex 12)
+      sed -i "s|^TERMINAL_OPERATOR_PASSWORD=.*|TERMINAL_OPERATOR_PASSWORD=${pw}|" "$file"
+    fi
+    TERMINAL_OPERATOR_PASSWORD="$pw"
+    export TERMINAL_OPERATOR_PASSWORD
+    if id lightningos >/dev/null 2>&1; then
+      chown root:lightningos "$file"
+      chmod 660 "$file"
+    fi
+  fi
+
+  if id "$user" >/dev/null 2>&1; then
+    ensure_group_member "$user" lightningos
+    ensure_group_member "$user" sudo
+    ensure_group_member "$user" systemd-journal
+    print_ok "Operator user ${user} already exists"
+    return
+  fi
+
+  if command -v adduser >/dev/null 2>&1; then
+    adduser --disabled-password --gecos "" "$user"
+  else
+    useradd -m -d "/home/${user}" -s /bin/bash "$user"
+  fi
+
+  echo "${user}:${pw}" | chpasswd
+  ensure_group_member "$user" lightningos
+  ensure_group_member "$user" sudo
+  ensure_group_member "$user" systemd-journal
+  print_ok "Operator user ${user} ready"
 }
 
 create_lnd_user() {
@@ -1112,6 +1172,7 @@ verify_manager_listener() {
 main() {
   require_root
   print_step "LightningOS Light installation starting"
+  ensure_operator_user
   configure_sudoers
   install_packages
   configure_tor

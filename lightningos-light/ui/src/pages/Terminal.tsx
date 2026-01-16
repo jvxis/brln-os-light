@@ -6,6 +6,8 @@ type TerminalStatus = {
   credential?: string
   allow_write?: boolean
   port?: number
+  operator_user?: string
+  operator_password?: string
 }
 
 export default function Terminal() {
@@ -65,11 +67,6 @@ export default function Terminal() {
                 <div className="flex items-center gap-2">
                   <span className="text-fog/50">Status</span>
                   <span>{status.enabled ? 'Enabled' : 'Disabled'}</span>
-                  {status.allow_write && (
-                    <span className="rounded-full border border-amber-400/30 bg-amber-500/15 px-2 py-0.5 text-[11px] uppercase text-amber-200">
-                      write
-                    </span>
-                  )}
                 </div>
                 {!status.enabled && (
                   <p className="text-brass">
@@ -87,6 +84,25 @@ export default function Terminal() {
                       onClick={() => copyToClipboard(credential.pass)}
                       title="Copy password"
                       aria-label="Copy password"
+                    >
+                      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
+                        <rect x="9" y="9" width="11" height="11" rx="2" />
+                        <rect x="4" y="4" width="11" height="11" rx="2" />
+                      </svg>
+                    </button>
+                  </div>
+                )}
+                {status?.operator_password && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-fog/50">Operator</span>
+                    <span className="font-mono text-fog/80">{status.operator_user || 'losop'}</span>
+                    <span className="text-fog/40">/</span>
+                    <span className="font-mono text-fog/80">{status.operator_password}</span>
+                    <button
+                      className="text-fog/50 hover:text-fog"
+                      onClick={() => copyToClipboard(status.operator_password || '')}
+                      title="Copy operator password"
+                      aria-label="Copy operator password"
                     >
                       <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
                         <rect x="9" y="9" width="11" height="11" rx="2" />

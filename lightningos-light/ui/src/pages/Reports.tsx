@@ -77,8 +77,8 @@ const rangeOptions: RangeOption[] = [
   { key: 'all', label: 'All time' }
 ]
 
-const formatter = new Intl.NumberFormat('en-US')
-const compactFormatter = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
+const formatter = new Intl.NumberFormat('en-US', { maximumFractionDigits: 3 })
+const compactFormatter = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 })
 
 const COLORS = {
   net: '#34d399',

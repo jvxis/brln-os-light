@@ -175,12 +175,12 @@ type reportSeriesResponse struct {
 
 type reportSeriesItem struct {
   Date string `json:"date"`
-  ForwardFeeRevenueSat int64 `json:"forward_fee_revenue_sats"`
-  RebalanceFeeCostSat int64 `json:"rebalance_fee_cost_sats"`
-  NetRoutingProfitSat int64 `json:"net_routing_profit_sats"`
+  ForwardFeeRevenueSat float64 `json:"forward_fee_revenue_sats"`
+  RebalanceFeeCostSat float64 `json:"rebalance_fee_cost_sats"`
+  NetRoutingProfitSat float64 `json:"net_routing_profit_sats"`
   ForwardCount int64 `json:"forward_count"`
   RebalanceCount int64 `json:"rebalance_count"`
-  RoutedVolumeSat int64 `json:"routed_volume_sats"`
+  RoutedVolumeSat float64 `json:"routed_volume_sats"`
   OnchainBalanceSat *int64 `json:"onchain_balance_sats"`
   LightningBalanceSat *int64 `json:"lightning_balance_sats"`
   TotalBalanceSat *int64 `json:"total_balance_sats"`
@@ -198,12 +198,12 @@ type reportMetricsPayload struct {
   Start string `json:"start,omitempty"`
   End string `json:"end,omitempty"`
   Timezone string `json:"timezone,omitempty"`
-  ForwardFeeRevenueSat int64 `json:"forward_fee_revenue_sats"`
-  RebalanceFeeCostSat int64 `json:"rebalance_fee_cost_sats"`
-  NetRoutingProfitSat int64 `json:"net_routing_profit_sats"`
+  ForwardFeeRevenueSat float64 `json:"forward_fee_revenue_sats"`
+  RebalanceFeeCostSat float64 `json:"rebalance_fee_cost_sats"`
+  NetRoutingProfitSat float64 `json:"net_routing_profit_sats"`
   ForwardCount int64 `json:"forward_count"`
   RebalanceCount int64 `json:"rebalance_count"`
-  RoutedVolumeSat int64 `json:"routed_volume_sats"`
+  RoutedVolumeSat float64 `json:"routed_volume_sats"`
   OnchainBalanceSat *int64 `json:"onchain_balance_sats,omitempty"`
   LightningBalanceSat *int64 `json:"lightning_balance_sats,omitempty"`
   TotalBalanceSat *int64 `json:"total_balance_sats,omitempty"`
@@ -217,12 +217,12 @@ func mapSeries(items []reports.Row) []reportSeriesItem {
   for _, item := range items {
     series = append(series, reportSeriesItem{
       Date: item.ReportDate.Format("2006-01-02"),
-      ForwardFeeRevenueSat: item.Metrics.ForwardFeeRevenueSat,
-      RebalanceFeeCostSat: item.Metrics.RebalanceFeeCostSat,
-      NetRoutingProfitSat: item.Metrics.NetRoutingProfitSat,
+      ForwardFeeRevenueSat: metricSats(item.Metrics.ForwardFeeRevenueMsat, item.Metrics.ForwardFeeRevenueSat),
+      RebalanceFeeCostSat: metricSats(item.Metrics.RebalanceFeeCostMsat, item.Metrics.RebalanceFeeCostSat),
+      NetRoutingProfitSat: metricSats(item.Metrics.NetRoutingProfitMsat, item.Metrics.NetRoutingProfitSat),
       ForwardCount: item.Metrics.ForwardCount,
       RebalanceCount: item.Metrics.RebalanceCount,
-      RoutedVolumeSat: item.Metrics.RoutedVolumeSat,
+      RoutedVolumeSat: metricSats(item.Metrics.RoutedVolumeMsat, item.Metrics.RoutedVolumeSat),
       OnchainBalanceSat: item.Metrics.OnchainBalanceSat,
       LightningBalanceSat: item.Metrics.LightningBalanceSat,
       TotalBalanceSat: item.Metrics.TotalBalanceSat,
@@ -233,14 +233,21 @@ func mapSeries(items []reports.Row) []reportSeriesItem {
 
 func metricsPayload(metrics reports.Metrics) reportMetricsPayload {
   return reportMetricsPayload{
-    ForwardFeeRevenueSat: metrics.ForwardFeeRevenueSat,
-    RebalanceFeeCostSat: metrics.RebalanceFeeCostSat,
-    NetRoutingProfitSat: metrics.NetRoutingProfitSat,
+    ForwardFeeRevenueSat: metricSats(metrics.ForwardFeeRevenueMsat, metrics.ForwardFeeRevenueSat),
+    RebalanceFeeCostSat: metricSats(metrics.RebalanceFeeCostMsat, metrics.RebalanceFeeCostSat),
+    NetRoutingProfitSat: metricSats(metrics.NetRoutingProfitMsat, metrics.NetRoutingProfitSat),
     ForwardCount: metrics.ForwardCount,
     RebalanceCount: metrics.RebalanceCount,
-    RoutedVolumeSat: metrics.RoutedVolumeSat,
+    RoutedVolumeSat: metricSats(metrics.RoutedVolumeMsat, metrics.RoutedVolumeSat),
     OnchainBalanceSat: metrics.OnchainBalanceSat,
     LightningBalanceSat: metrics.LightningBalanceSat,
     TotalBalanceSat: metrics.TotalBalanceSat,
   }
+}
+
+func metricSats(msat int64, sat int64) float64 {
+  if msat != 0 {
+    return float64(msat) / 1000
+  }
+  return float64(sat)
 }

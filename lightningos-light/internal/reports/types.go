@@ -4,11 +4,15 @@ import "time"
 
 type Metrics struct {
   ForwardFeeRevenueSat int64
+  ForwardFeeRevenueMsat int64
   RebalanceFeeCostSat int64
+  RebalanceFeeCostMsat int64
   NetRoutingProfitSat int64
+  NetRoutingProfitMsat int64
   ForwardCount int64
   RebalanceCount int64
   RoutedVolumeSat int64
+  RoutedVolumeMsat int64
   OnchainBalanceSat *int64
   LightningBalanceSat *int64
   TotalBalanceSat *int64

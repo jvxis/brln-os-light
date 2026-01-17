@@ -18,7 +18,7 @@ func ComputeMetrics(ctx context.Context, lnd *lndclient.Client, tr TimeRange, me
   if lnd == nil {
     return Metrics{}, fmt.Errorf("lnd client unavailable")
   }
-  forwardRevenue, forwardCount, routedVolume, err := fetchForwardingMetrics(ctx, lnd, tr.StartUnix(), tr.EndUnixInclusive())
+  forwardRevenueMsat, forwardCount, routedVolumeMsat, err := fetchForwardingMetrics(ctx, lnd, tr.StartUnix(), tr.EndUnixInclusive())
   if err != nil {
     return Metrics{}, err
   }
@@ -28,18 +28,23 @@ func ComputeMetrics(ctx context.Context, lnd *lndclient.Client, tr TimeRange, me
     return Metrics{}, err
   }
 
-  rebalanceCost, rebalanceCount, err := fetchRebalanceMetrics(ctx, lnd, tr.StartUnix(), tr.EndUnixInclusive(), pubkey, memoMatch)
+  rebalanceCostMsat, rebalanceCount, err := fetchRebalanceMetrics(ctx, lnd, tr.StartUnix(), tr.EndUnixInclusive(), pubkey, memoMatch)
   if err != nil {
     return Metrics{}, err
   }
 
+  netMsat := forwardRevenueMsat - rebalanceCostMsat
   metrics := Metrics{
-    ForwardFeeRevenueSat: forwardRevenue,
-    RebalanceFeeCostSat: rebalanceCost,
-    NetRoutingProfitSat: forwardRevenue - rebalanceCost,
+    ForwardFeeRevenueSat: forwardRevenueMsat / 1000,
+    ForwardFeeRevenueMsat: forwardRevenueMsat,
+    RebalanceFeeCostSat: rebalanceCostMsat / 1000,
+    RebalanceFeeCostMsat: rebalanceCostMsat,
+    NetRoutingProfitSat: netMsat / 1000,
+    NetRoutingProfitMsat: netMsat,
     ForwardCount: forwardCount,
     RebalanceCount: rebalanceCount,
-    RoutedVolumeSat: routedVolume,
+    RoutedVolumeSat: routedVolumeMsat / 1000,
+    RoutedVolumeMsat: routedVolumeMsat,
   }
   return metrics, nil
 }
@@ -54,8 +59,8 @@ func fetchForwardingMetrics(ctx context.Context, lnd *lndclient.Client, startUni
   client := lnrpc.NewLightningClient(conn)
 
   var offset uint32
-  var revenue int64
-  var routedVolume int64
+  var revenueMsat int64
+  var routedVolumeMsat int64
   var count int64
 
   for {
@@ -76,8 +81,8 @@ func fetchForwardingMetrics(ctx context.Context, lnd *lndclient.Client, startUni
       if evt == nil {
         continue
       }
-      revenue += extractForwardFeeSat(evt)
-      routedVolume += extractForwardAmountSat(evt)
+      revenueMsat += extractForwardFeeMsat(evt)
+      routedVolumeMsat += extractForwardAmountMsat(evt)
       count++
     }
 
@@ -90,7 +95,7 @@ func fetchForwardingMetrics(ctx context.Context, lnd *lndclient.Client, startUni
     }
   }
 
-  return revenue, count, routedVolume, nil
+  return revenueMsat, count, routedVolumeMsat, nil
 }
 
 func fetchRebalanceMetrics(ctx context.Context, lnd *lndclient.Client, startUnix uint64, endUnix uint64, ourPubkey string, memoMatch bool) (int64, int64, error) {
@@ -154,7 +159,7 @@ func fetchRebalanceMetrics(ctx context.Context, lnd *lndclient.Client, startUnix
     }
   }
 
-  return totalFeeMsat / 1000, rebalanceCount, nil
+  return totalFeeMsat, rebalanceCount, nil
 }
 
 func fetchNodePubkey(ctx context.Context, lnd *lndclient.Client) (string, error) {
@@ -228,28 +233,28 @@ func extractDestinationAndDescription(ctx context.Context, lnd *lndclient.Client
   return dest, description
 }
 
-func extractForwardFeeSat(evt *lnrpc.ForwardingEvent) int64 {
+func extractForwardFeeMsat(evt *lnrpc.ForwardingEvent) int64 {
   if evt == nil {
     return 0
   }
-  if evt.Fee != 0 {
-    return int64(evt.Fee)
-  }
   if evt.FeeMsat != 0 {
-    return int64(evt.FeeMsat / 1000)
+    return int64(evt.FeeMsat)
+  }
+  if evt.Fee != 0 {
+    return int64(evt.Fee) * 1000
   }
   return 0
 }
 
-func extractForwardAmountSat(evt *lnrpc.ForwardingEvent) int64 {
+func extractForwardAmountMsat(evt *lnrpc.ForwardingEvent) int64 {
   if evt == nil {
     return 0
   }
-  if evt.AmtOut != 0 {
-    return int64(evt.AmtOut)
-  }
   if evt.AmtOutMsat != 0 {
-    return int64(evt.AmtOutMsat / 1000)
+    return int64(evt.AmtOutMsat)
+  }
+  if evt.AmtOut != 0 {
+    return int64(evt.AmtOut) * 1000
   }
   return 0
 }

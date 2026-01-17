@@ -106,11 +106,15 @@ Schedule:
 Stored table: `reports_daily`
 - `report_date` (DATE, local day)
 - `forward_fee_revenue_sats`
+- `forward_fee_revenue_msat`
 - `rebalance_fee_cost_sats`
+- `rebalance_fee_cost_msat`
 - `net_routing_profit_sats`
+- `net_routing_profit_msat`
 - `forward_count`
 - `rebalance_count`
 - `routed_volume_sats`
+- `routed_volume_msat`
 - `onchain_balance_sats`
 - `lightning_balance_sats`
 - `total_balance_sats`

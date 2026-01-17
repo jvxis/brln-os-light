@@ -12,11 +12,15 @@ func TestBuildUpsertDaily(t *testing.T) {
     ReportDate: reportDate,
     Metrics: Metrics{
       ForwardFeeRevenueSat: 1200,
+      ForwardFeeRevenueMsat: 1200000,
       RebalanceFeeCostSat: 300,
+      RebalanceFeeCostMsat: 300000,
       NetRoutingProfitSat: 900,
+      NetRoutingProfitMsat: 900000,
       ForwardCount: 4,
       RebalanceCount: 2,
       RoutedVolumeSat: 18000,
+      RoutedVolumeMsat: 18000000,
     },
   }
 
@@ -27,8 +31,8 @@ func TestBuildUpsertDaily(t *testing.T) {
   if !strings.Contains(query, "updated_at = now()") {
     t.Fatalf("expected updated_at update")
   }
-  if len(args) != 10 {
-    t.Fatalf("expected 10 args, got %d", len(args))
+  if len(args) != 14 {
+    t.Fatalf("expected 14 args, got %d", len(args))
   }
 
   argDate, ok := args[0].(time.Time)

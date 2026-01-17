@@ -12,6 +12,7 @@ import (
   "path/filepath"
   "strconv"
   "strings"
+  "sync"
   "time"
 
   "lightningos-light/internal/system"
@@ -20,6 +21,10 @@ import (
 const (
   bitcoinCoreMinPruneMiB = 550
   bitcoinCoreConfigPathInContainer = "/home/bitcoin/.bitcoin/bitcoin.conf"
+  blockCadenceWindowSec = 600
+  blockCadenceBucketCount = 12
+  blockCadenceCacheTTL = 60 * time.Second
+  blockCadenceMaxSteps = 144
 )
 
 type bitcoinLocalStatus struct {
@@ -31,6 +36,9 @@ type bitcoinLocalStatus struct {
   Chain string `json:"chain,omitempty"`
   Blocks int64 `json:"blocks,omitempty"`
   Headers int64 `json:"headers,omitempty"`
+  BestBlockTime int64 `json:"best_block_time,omitempty"`
+  BlockCadenceWindowSec int64 `json:"block_cadence_window_sec,omitempty"`
+  BlockCadence []blockCadenceBucket `json:"block_cadence,omitempty"`
   VerificationProgress float64 `json:"verification_progress,omitempty"`
   InitialBlockDownload bool `json:"initial_block_download,omitempty"`
   Version int `json:"version,omitempty"`
@@ -72,6 +80,27 @@ type bitcoinCLINetworkInfo struct {
   Subversion string `json:"subversion"`
   Connections int `json:"connections"`
 }
+
+type blockCadenceBucket struct {
+  StartTime int64 `json:"start_time"`
+  EndTime int64 `json:"end_time"`
+  Count int `json:"count"`
+}
+
+type bitcoinCLIBlockHeader struct {
+  Time int64 `json:"time"`
+  PreviousBlockHash string `json:"previousblockhash"`
+}
+
+type blockCadenceCache struct {
+  BestHash string
+  BestTime int64
+  Buckets []blockCadenceBucket
+  ExpiresAt time.Time
+}
+
+var blockCadenceMu sync.Mutex
+var blockCadenceState blockCadenceCache
 
 func (s *Server) handleBitcoinLocalStatus(w http.ResponseWriter, r *http.Request) {
   paths := bitcoinCoreAppPaths()
@@ -121,6 +150,13 @@ func (s *Server) handleBitcoinLocalStatus(w http.ResponseWriter, r *http.Request
   resp.Version = netInfo.Version
   resp.Subversion = netInfo.Subversion
   resp.Connections = netInfo.Connections
+
+  bestTime, buckets, cadenceErr := getBitcoinLocalCadence(ctx, paths, chainInfo.BestBlockHash)
+  if cadenceErr == nil && bestTime > 0 {
+    resp.BestBlockTime = bestTime
+    resp.BlockCadenceWindowSec = blockCadenceWindowSec
+    resp.BlockCadence = buckets
+  }
 
   writeJSON(w, http.StatusOK, resp)
 }
@@ -237,6 +273,99 @@ func fetchBitcoinLocalInfo(ctx context.Context, paths bitcoinCorePaths) (bitcoin
   }
 
   return chainInfo, netInfo, nil
+}
+
+func getBitcoinLocalCadence(ctx context.Context, paths bitcoinCorePaths, bestHash string) (int64, []blockCadenceBucket, error) {
+  trimmed := strings.TrimSpace(bestHash)
+  if trimmed == "" {
+    return 0, nil, errors.New("best block hash missing")
+  }
+
+  blockCadenceMu.Lock()
+  cached := blockCadenceState
+  if cached.BestHash == trimmed && time.Now().Before(cached.ExpiresAt) {
+    buckets := make([]blockCadenceBucket, len(cached.Buckets))
+    copy(buckets, cached.Buckets)
+    blockCadenceMu.Unlock()
+    return cached.BestTime, buckets, nil
+  }
+  blockCadenceMu.Unlock()
+
+  bestTime, buckets, err := computeBitcoinLocalCadence(ctx, paths, trimmed)
+  if err != nil {
+    return 0, nil, err
+  }
+
+  blockCadenceMu.Lock()
+  blockCadenceState = blockCadenceCache{
+    BestHash: trimmed,
+    BestTime: bestTime,
+    Buckets: buckets,
+    ExpiresAt: time.Now().Add(blockCadenceCacheTTL),
+  }
+  blockCadenceMu.Unlock()
+
+  return bestTime, buckets, nil
+}
+
+func computeBitcoinLocalCadence(ctx context.Context, paths bitcoinCorePaths, bestHash string) (int64, []blockCadenceBucket, error) {
+  header, err := fetchBitcoinLocalBlockHeader(ctx, paths, bestHash)
+  if err != nil {
+    return 0, nil, err
+  }
+
+  bestTime := header.Time
+  if bestTime == 0 {
+    return 0, nil, errors.New("best block time missing")
+  }
+
+  windowSec := int64(blockCadenceWindowSec)
+  startTime := bestTime - (windowSec * int64(blockCadenceBucketCount))
+  buckets := make([]blockCadenceBucket, blockCadenceBucketCount)
+  for i := 0; i < blockCadenceBucketCount; i++ {
+    start := startTime + (int64(i) * windowSec)
+    buckets[i] = blockCadenceBucket{
+      StartTime: start,
+      EndTime: start + windowSec,
+      Count: 0,
+    }
+  }
+
+  current := header
+  for steps := 0; steps < blockCadenceMaxSteps; steps++ {
+    if current.Time < startTime {
+      break
+    }
+    idx := int((current.Time - startTime) / windowSec)
+    if idx >= 0 && idx < len(buckets) {
+      buckets[idx].Count++
+    }
+
+    nextHash := strings.TrimSpace(current.PreviousBlockHash)
+    if nextHash == "" {
+      break
+    }
+
+    nextHeader, err := fetchBitcoinLocalBlockHeader(ctx, paths, nextHash)
+    if err != nil {
+      break
+    }
+    current = nextHeader
+  }
+
+  return bestTime, buckets, nil
+}
+
+func fetchBitcoinLocalBlockHeader(ctx context.Context, paths bitcoinCorePaths, hash string) (bitcoinCLIBlockHeader, error) {
+  out, err := execBitcoinCLI(ctx, paths, "getblockheader", hash, "true")
+  if err != nil {
+    return bitcoinCLIBlockHeader{}, err
+  }
+  header := bitcoinCLIBlockHeader{}
+  if err := json.Unmarshal([]byte(out), &header); err != nil {
+    return bitcoinCLIBlockHeader{}, err
+  }
+  return header, nil
 }
 
 func execBitcoinCLI(ctx context.Context, paths bitcoinCorePaths, args ...string) (string, error) {

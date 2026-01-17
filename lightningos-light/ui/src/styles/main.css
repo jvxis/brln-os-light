@@ -104,6 +104,42 @@ body {
   animation: peer-glow 2.4s ease-in-out infinite;
 }
 
+.block-cadence-chart {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  align-items: end;
+  gap: 6px;
+  height: 140px;
+  padding: 10px 2px 6px;
+}
+
+.block-cadence-bar {
+  height: 100%;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  position: relative;
+}
+
+.block-cadence-fill {
+  width: 100%;
+  border-radius: 999px;
+  background: linear-gradient(160deg, rgba(20, 184, 166, 0.85), rgba(245, 158, 11, 0.45));
+  transition: height 0.6s ease;
+  box-shadow: 0 10px 18px rgba(20, 184, 166, 0.2);
+}
+
+.block-cadence-baseline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 1px dashed rgba(148, 163, 184, 0.5);
+  pointer-events: none;
+}
+
 @keyframes chain-sweep {
   0% {
     transform: translateX(-60%);

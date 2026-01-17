@@ -10,6 +10,9 @@ type BitcoinLocalStatus = {
   chain?: string
   blocks?: number
   headers?: number
+  best_block_time?: number
+  block_cadence_window_sec?: number
+  block_cadence?: Array<{ start_time: number; end_time: number; count: number }>
   verification_progress?: number
   initial_block_download?: boolean
   version?: number
@@ -53,7 +56,6 @@ export default function BitcoinLocal() {
   const [applyNow, setApplyNow] = useState(true)
   const [message, setMessage] = useState('')
   const [saving, setSaving] = useState(false)
-  const [peerHistory, setPeerHistory] = useState<number[]>([])
   const [blockFlash, setBlockFlash] = useState(false)
   const lastBlockRef = useRef<number | null>(null)
   const flashTimerRef = useRef<number | null>(null)
@@ -180,14 +182,6 @@ export default function BitcoinLocal() {
   }, [])
 
   useEffect(() => {
-    if (typeof status?.connections !== 'number') return
-    setPeerHistory((prev) => {
-      const next = [...prev, status.connections ?? 0]
-      return next.slice(-16)
-    })
-  }, [status?.connections])
-
-  useEffect(() => {
     if (typeof status?.blocks !== 'number') return
     if (lastBlockRef.current === null) {
       lastBlockRef.current = status.blocks
@@ -219,12 +213,6 @@ export default function BitcoinLocal() {
   const activeBlocks = syncing ? Math.max(1, Math.round((progressValue / 100) * blockCount)) : blockCount
   const sweepDuration = syncing ? Math.max(2.5, 7.5 - progressValue / 15) : 12
   const currentPeers = status?.connections ?? 0
-  const peerValues = peerHistory.length > 0 ? peerHistory : Array(blockCount).fill(currentPeers)
-  const recentPeers = peerValues.slice(-blockCount)
-  const peerBars = recentPeers.length < blockCount
-    ? Array(blockCount - recentPeers.length).fill(recentPeers[0] ?? currentPeers).concat(recentPeers)
-    : recentPeers
-  const maxPeers = Math.max(1, ...peerBars)
   const rpcStatusLabel = ready
     ? 'OK'
     : status?.status !== 'running'
@@ -247,6 +235,48 @@ export default function BitcoinLocal() {
     const hours = Math.floor(minutes / 60)
     return `${hours}h`
   }
+
+  const formatDuration = (seconds?: number | null) => {
+    if (seconds === null || seconds === undefined) return '-'
+    if (seconds < 60) return `${Math.floor(seconds)}s`
+    const minutes = Math.floor(seconds / 60)
+    if (minutes < 60) return `${minutes}m`
+    const hours = Math.floor(minutes / 60)
+    const remMinutes = minutes % 60
+    if (hours < 24) return remMinutes ? `${hours}h ${remMinutes}m` : `${hours}h`
+    const days = Math.floor(hours / 24)
+    return `${days}d ${hours % 24}h`
+  }
+
+  const cadenceBuckets = status?.block_cadence || []
+  const cadenceWindowSec = status?.block_cadence_window_sec || 600
+  const cadenceHours = cadenceBuckets.length > 0 ? (cadenceBuckets.length * cadenceWindowSec) / 3600 : 2
+  const cadenceCounts = cadenceBuckets.length > 0 ? cadenceBuckets.map((bucket) => bucket.count) : []
+  const baselineCount = Math.max(1, Math.round(cadenceWindowSec / 600))
+  const maxCadence = Math.max(1, baselineCount, ...cadenceCounts)
+  const baselinePercent = (baselineCount / maxCadence) * 100
+  const cadenceTotal = cadenceCounts.reduce((sum, count) => sum + count, 0)
+  const cadenceAvg = cadenceHours > 0 ? cadenceTotal / cadenceHours : 0
+  const lastBlockTime = typeof status?.best_block_time === 'number' ? status.best_block_time * 1000 : null
+  const lastBlockAgeSec = lastBlockTime ? Math.max(0, (Date.now() - lastBlockTime) / 1000) : null
+  const lastBlockLabel = lastBlockTime
+    ? new Date(lastBlockTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+    : '-'
+  const cadenceTone = lastBlockAgeSec === null
+    ? 'muted'
+    : lastBlockAgeSec <= 1200
+      ? 'ok'
+      : lastBlockAgeSec <= 3600
+        ? 'warn'
+        : 'stale'
+  const cadenceBadgeClass = cadenceTone === 'ok'
+    ? 'bg-emerald-500/15 text-emerald-200 border border-emerald-400/30'
+    : cadenceTone === 'warn'
+      ? 'bg-amber-500/15 text-amber-200 border border-amber-400/30'
+      : cadenceTone === 'stale'
+        ? 'bg-rose-500/15 text-rose-200 border border-rose-400/30'
+        : 'bg-white/10 text-fog/60 border border-white/10'
+  const cadenceLabel = cadenceTone === 'ok' ? 'OK' : cadenceTone === 'warn' ? 'Warn' : cadenceTone === 'stale' ? 'Stale' : 'Unknown'
 
   const handleSave = async () => {
     setMessage('')
@@ -458,26 +488,48 @@ export default function BitcoinLocal() {
             </div>
 
             <div className="section-card space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold">Peer connections</h3>
-                <span className="text-xs text-fog/60">{currentPeers} peers</span>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-lg font-semibold">Block cadence</h3>
+                  <p className="text-xs text-fog/60">Last {cadenceHours.toFixed(1)} hours</p>
+                </div>
+                <span className={`text-xs uppercase tracking-wide px-3 py-1 rounded-full ${cadenceBadgeClass}`}>
+                  {cadenceLabel}
+                </span>
               </div>
-              <div className="peer-chart">
-                {peerBars.map((value, idx) => {
-                  const height = Math.max(6, Math.round((value / maxPeers) * 100))
+              <div className="grid gap-2 text-sm text-fog/70">
+                <div className="flex items-center justify-between">
+                  <span>Last block seen</span>
+                  <span className="text-fog">{formatDuration(lastBlockAgeSec)} ago</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Network block time</span>
+                  <span className="text-fog">{lastBlockLabel}</span>
+                </div>
+              </div>
+              <div className="block-cadence-chart">
+                <div className="block-cadence-baseline" style={{ bottom: `${baselinePercent}%` }} />
+                {(cadenceBuckets.length > 0 ? cadenceBuckets : Array.from({ length: 12 }).map(() => ({ start_time: 0, end_time: 0, count: 0 }))).map((bucket, idx) => {
+                  const height = Math.max(8, Math.round((bucket.count / maxCadence) * 100))
+                  const startLabel = bucket.start_time
+                    ? new Date(bucket.start_time * 1000).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+                    : ''
+                  const endLabel = bucket.end_time
+                    ? new Date(bucket.end_time * 1000).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+                    : ''
+                  const title = startLabel && endLabel
+                    ? `${startLabel}–${endLabel}: ${bucket.count} blocks`
+                    : `${bucket.count} blocks`
                   return (
-                    <div className="peer-bar" key={`peer-${idx}`}>
-                      <div
-                        className={`peer-bar-fill ${syncing ? 'peer-bar-fill--sync' : ''}`}
-                        style={{ height: `${height}%` }}
-                      />
+                    <div className="block-cadence-bar" key={`cadence-${idx}`} title={title}>
+                      <div className="block-cadence-fill" style={{ height: `${height}%` }} />
                     </div>
                   )
                 })}
               </div>
               <div className="flex items-center justify-between text-xs text-fog/50">
-                <span>Recent connections</span>
-                <span>Peak {maxPeers}</span>
+                <span>{cadenceTotal} blocks / {cadenceHours.toFixed(1)}h</span>
+                <span>avg {cadenceAvg.toFixed(1)} blocks/h</span>
               </div>
             </div>
           </div>

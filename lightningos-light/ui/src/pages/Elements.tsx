@@ -74,7 +74,7 @@ export default function Elements() {
           <div>
             <h2 className="text-2xl font-semibold">Elements</h2>
             <p className="text-fog/60">Liquid mainnet sync and node health.</p>
-            <p className="text-xs text-fog/50 mt-2">CLI: use o usuario losop para manipular o Elements.</p>
+            <p className="text-xs text-fog/50 mt-2">CLI: use the losop user to manage Elements.</p>
           </div>
           <span className={`text-xs uppercase tracking-wide px-3 py-1 rounded-full ${statusClass}`}>
             {status?.status?.replace('_', ' ') || 'unknown'}

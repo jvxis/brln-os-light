@@ -270,7 +270,7 @@ func ensureElementsConfig(ctx context.Context, paths elementsPaths, cfg *config.
   if err != nil {
     return err
   }
-  mainchain, err := elementsMainchainConfig(ctx, cfg, paths)
+  mainchain, err := resolveElementsMainchainConfig(ctx, cfg, paths)
   if err != nil {
     return err
   }
@@ -585,7 +585,7 @@ type elementsMainchainConfig struct {
   Pass string
 }
 
-func elementsMainchainConfig(ctx context.Context, cfg *config.Config, paths elementsPaths) (elementsMainchainConfig, error) {
+func resolveElementsMainchainConfig(ctx context.Context, cfg *config.Config, paths elementsPaths) (elementsMainchainConfig, error) {
   source := readElementsMainchainSource(paths)
   if source == "local" {
     localCfg, err := readLocalBitcoinRPCConfigFromFile()

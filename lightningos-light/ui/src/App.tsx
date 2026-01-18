@@ -10,6 +10,7 @@ import Disks from './pages/Disks'
 import Logs from './pages/Logs'
 import BitcoinRemote from './pages/BitcoinRemote'
 import BitcoinLocal from './pages/BitcoinLocal'
+import Elements from './pages/Elements'
 import Notifications from './pages/Notifications'
 import LndConfig from './pages/LndConfig'
 import AppStore from './pages/AppStore'
@@ -85,6 +86,7 @@ export default function App() {
       { key: 'apps', label: 'Apps', element: <AppStore /> },
       { key: 'bitcoin', label: 'Bitcoin Remote', element: <BitcoinRemote /> },
       { key: 'bitcoin-local', label: 'Bitcoin Local', element: <BitcoinLocal /> },
+      { key: 'elements', label: 'Elements', element: <Elements /> },
       { key: 'notifications', label: 'Notifications', element: <Notifications /> },
       { key: 'disks', label: 'Disks', element: <Disks /> },
       { key: 'terminal', label: 'Terminal', element: <Terminal /> },

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { getAppAdminPassword, getApps, installApp, resetAppAdmin, startApp, stopApp, uninstallApp } from '../api'
 import lndgIcon from '../assets/apps/lndg.ico'
 import bitcoincoreIcon from '../assets/apps/bitcoincore.svg'
+import elementsIcon from '../assets/apps/elements.svg'
 
 type AppInfo = {
   id: string
@@ -15,11 +16,18 @@ type AppInfo = {
 
 const iconMap: Record<string, string> = {
   lndg: lndgIcon,
-  bitcoincore: bitcoincoreIcon
+  bitcoincore: bitcoincoreIcon,
+  elements: elementsIcon
 }
 
 const internalRoutes: Record<string, string> = {
-  bitcoincore: 'bitcoin-local'
+  bitcoincore: 'bitcoin-local',
+  elements: 'elements'
+}
+
+const internalRouteLabels: Record<string, string> = {
+  bitcoincore: 'Bitcoin Local',
+  elements: 'Elements'
 }
 
 const statusStyles: Record<string, string> = {
@@ -156,7 +164,7 @@ export default function AppStore() {
                 {app.port ? (
                   <p>Default port: {app.port}</p>
                 ) : internalRoute ? (
-                  <p>Default access: Bitcoin Local</p>
+                  <p>Default access: {internalRouteLabels[app.id] || 'Internal'}</p>
                 ) : null}
                 {app.admin_password_path && (
                   <div className="flex flex-wrap items-center gap-2">

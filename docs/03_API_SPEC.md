@@ -54,6 +54,11 @@ Body:
   "apply_now": true
 }
 
+## Elements
+
+GET /api/elements/status
+- Status and chain info for the Elements (Liquid) node (if installed).
+
 GET /api/mempool/fees
 - Recommended fee rates from mempool.space.
 

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Elements logo">
+  <polygon points="50,2 93,25 93,75 50,98 7,75 7,25" fill="#0b0b0b" />
+  <g fill="#ffffff">
+    <polygon points="50,24 71,35 50,46 29,35" />
+    <polygon points="71,35 71,60 50,71 50,46" />
+    <polygon points="29,35 29,60 50,71 50,46" />
+  </g>
+</svg>

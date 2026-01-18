@@ -43,6 +43,7 @@ export const updateBitcoinLocalConfig = (payload: {
   prune_size_gb?: number
   apply_now?: boolean
 }) => request('/api/bitcoin-local/config', { method: 'POST', body: JSON.stringify(payload) })
+export const getElementsStatus = () => request('/api/elements/status')
 export const getLndStatus = () => request('/api/lnd/status')
 export const getLndConfig = () => request('/api/lnd/config')
 export const getWizardStatus = () => request('/api/wizard/status')

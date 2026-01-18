@@ -1,11 +1,12 @@
 # App Store Specification (v0.2)
 
 ## Overview
-The App Store is a built-in catalog of optional services. Apps are defined in code (Go) and managed by the manager using docker compose. The core system (LND and the manager) remains native and does not depend on Docker.
+The App Store is a built-in catalog of optional services. Apps are defined in code (Go) and managed by the manager. Some apps use docker compose, while others are native binaries managed by systemd. The core system (LND and the manager) remains native and does not depend on Docker.
 
 ## Current apps
-- bitcoincore: Local Bitcoin Core node
-- lndg: LNDg analytics dashboard
+- bitcoincore: Local Bitcoin Core node (Docker)
+- lndg: LNDg analytics dashboard (Docker)
+- elements: Elements/Liquid node (native binary)
 
 ## App model
 Apps are defined in Go via the appHandler interface:
@@ -34,12 +35,21 @@ The core types live in:
 
 Some apps use fixed paths (example: Bitcoin Core uses /data/bitcoin).
 
+Native apps may use an additional fixed data directory under /data (example: Elements uses /data/elements).
+
 ## App lifecycle
+Docker apps:
 - Installed: compose file exists
 - Status: derived from docker compose ps
 - Start: docker compose up -d
 - Stop: docker compose stop
 - Uninstall: docker compose down and remove app files
+
+Native apps:
+- Installed: binary + systemd unit exist
+- Status: derived from systemctl is-active
+- Start/Stop: systemctl start/stop
+- Uninstall: disable systemd unit and remove app files (data dir policy varies per app; Elements keeps /data/elements)
 
 ## Helpers you should reuse
 - ensureDocker(ctx): installs docker and compose when needed

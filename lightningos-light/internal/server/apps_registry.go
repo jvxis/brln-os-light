@@ -9,6 +9,7 @@ func (s *Server) appRegistry() ([]appHandler, error) {
   apps := []appHandler{
     newBitcoinCoreApp(s),
     newLndgApp(s),
+    newElementsApp(s),
   }
   if err := validateAppRegistry(apps); err != nil {
     return nil, err

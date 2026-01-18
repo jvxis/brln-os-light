@@ -4,6 +4,7 @@ import { getLogs } from '../api'
 const services = [
   { label: 'LND', value: 'lnd' },
   { label: 'Manager', value: 'lightningos-manager' },
+  { label: 'Elements', value: 'lightningos-elements' },
   { label: 'Postgres', value: 'postgresql' }
 ]
 

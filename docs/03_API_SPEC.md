@@ -58,6 +58,18 @@ Body:
 
 GET /api/elements/status
 - Status and chain info for the Elements (Liquid) node (if installed).
+  - Includes mainchain source and RPC host/port.
+
+GET /api/elements/mainchain
+- Returns Elements mainchain source, RPC host/port, and local readiness.
+  - local_ready: true when Bitcoin Core is installed, running, and fully synced.
+
+POST /api/elements/mainchain
+Body:
+{
+  "source": "remote"|"local"
+}
+- Updates elements.conf and restarts the Elements service.
 
 GET /api/mempool/fees
 - Recommended fee rates from mempool.space.

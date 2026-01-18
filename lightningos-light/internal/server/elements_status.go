@@ -13,6 +13,9 @@ type elementsStatus struct {
   Installed bool `json:"installed"`
   Status string `json:"status"`
   DataDir string `json:"data_dir"`
+  MainchainSource string `json:"mainchain_source,omitempty"`
+  MainchainRPCHost string `json:"mainchain_rpchost,omitempty"`
+  MainchainRPCPort int `json:"mainchain_rpcport,omitempty"`
   RPCOk bool `json:"rpc_ok"`
   Chain string `json:"chain,omitempty"`
   Blocks int64 `json:"blocks,omitempty"`
@@ -47,6 +50,7 @@ func (s *Server) handleElementsStatus(w http.ResponseWriter, r *http.Request) {
     Status: "not_installed",
     DataDir: paths.DataDir,
   }
+  resp.MainchainSource = readElementsMainchainSource(paths)
   if !fileExists(paths.ElementsdPath) {
     writeJSON(w, http.StatusOK, resp)
     return
@@ -55,6 +59,21 @@ func (s *Server) handleElementsStatus(w http.ResponseWriter, r *http.Request) {
 
   ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
   defer cancel()
+
+  if raw, err := readElementsConfig(ctx, paths); err == nil {
+    host, port := parseElementsMainchainConfig(raw)
+    if host == "" {
+      host = defaultElementsMainchainHost(resp.MainchainSource, s.cfg)
+    }
+    if port == 0 {
+      port = defaultElementsMainchainPort(resp.MainchainSource, s.cfg)
+    }
+    resp.MainchainRPCHost = host
+    resp.MainchainRPCPort = port
+  } else {
+    resp.MainchainRPCHost = defaultElementsMainchainHost(resp.MainchainSource, s.cfg)
+    resp.MainchainRPCPort = defaultElementsMainchainPort(resp.MainchainSource, s.cfg)
+  }
 
   status, err := elementsServiceStatus(ctx)
   if err != nil {

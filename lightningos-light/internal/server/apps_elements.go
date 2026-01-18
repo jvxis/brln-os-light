@@ -39,6 +39,7 @@ type elementsPaths struct {
   ServicePath string
   VersionPath string
   RPCCredsPath string
+  MainchainSourcePath string
 }
 
 type elementsApp struct {
@@ -120,6 +121,7 @@ func elementsAppPaths() elementsPaths {
     ServicePath: filepath.Join("/etc/systemd/system", elementsServiceName+".service"),
     VersionPath: filepath.Join(root, "VERSION"),
     RPCCredsPath: filepath.Join(appDataDir, "rpc.env"),
+    MainchainSourcePath: filepath.Join(appDataDir, "mainchain_source"),
   }
 }
 
@@ -268,18 +270,17 @@ func ensureElementsConfig(ctx context.Context, paths elementsPaths, cfg *config.
   if err != nil {
     return err
   }
-  host, port := parseMainchainRPC(cfg.BitcoinRemote.RPCHost)
-  mainUser, mainPass := readBitcoinSecrets()
-  if mainUser == "" || mainPass == "" {
-    return errors.New("bitcoin remote RPC credentials missing")
+  mainchain, err := elementsMainchainConfig(ctx, cfg, paths)
+  if err != nil {
+    return err
   }
   values := elementsConfigValues{
     RPCUser: rpcUser,
     RPCPass: rpcPass,
-    MainchainHost: host,
-    MainchainPort: port,
-    MainchainUser: mainUser,
-    MainchainPass: mainPass,
+    MainchainHost: mainchain.Host,
+    MainchainPort: mainchain.Port,
+    MainchainUser: mainchain.User,
+    MainchainPass: mainchain.Pass,
   }
   raw, err := readElementsConfig(ctx, paths)
   if err != nil {
@@ -574,6 +575,146 @@ func parseMainchainRPC(host string) (string, int) {
     return hostPart, port
   }
   return trimmed, 8332
+}
+
+type elementsMainchainConfig struct {
+  Source string
+  Host string
+  Port int
+  User string
+  Pass string
+}
+
+func elementsMainchainConfig(ctx context.Context, cfg *config.Config, paths elementsPaths) (elementsMainchainConfig, error) {
+  source := readElementsMainchainSource(paths)
+  if source == "local" {
+    localCfg, err := readLocalBitcoinRPCConfigFromFile()
+    if err != nil {
+      return elementsMainchainConfig{}, err
+    }
+    host, port := parseMainchainRPC(localCfg.Host)
+    return elementsMainchainConfig{
+      Source: "local",
+      Host: host,
+      Port: port,
+      User: localCfg.User,
+      Pass: localCfg.Pass,
+    }, nil
+  }
+  host, port := parseMainchainRPC(cfg.BitcoinRemote.RPCHost)
+  mainUser, mainPass := readBitcoinSecrets()
+  if mainUser == "" || mainPass == "" {
+    return elementsMainchainConfig{}, errors.New("bitcoin remote RPC credentials missing")
+  }
+  return elementsMainchainConfig{
+    Source: "remote",
+    Host: host,
+    Port: port,
+    User: mainUser,
+    Pass: mainPass,
+  }, nil
+}
+
+func readElementsMainchainSource(paths elementsPaths) string {
+  raw, err := os.ReadFile(paths.MainchainSourcePath)
+  if err != nil {
+    return "remote"
+  }
+  source := strings.ToLower(strings.TrimSpace(string(raw)))
+  if source != "local" && source != "remote" {
+    return "remote"
+  }
+  return source
+}
+
+func writeElementsMainchainSource(paths elementsPaths, source string) error {
+  normalized := strings.ToLower(strings.TrimSpace(source))
+  if normalized != "local" && normalized != "remote" {
+    return errors.New("invalid mainchain source")
+  }
+  return writeFile(paths.MainchainSourcePath, normalized+"\n", 0640)
+}
+
+func readLocalBitcoinRPCConfigFromFile() (bitcoinRPCConfig, error) {
+  paths := bitcoinCoreAppPaths()
+  raw, err := os.ReadFile(paths.ConfigPath)
+  if err != nil {
+    return bitcoinRPCConfig{}, fmt.Errorf("failed to read local bitcoin.conf: %w", err)
+  }
+  user, pass, _, _ := parseBitcoinCoreRPCConfig(string(raw))
+  if user == "" || pass == "" {
+    return bitcoinRPCConfig{}, errors.New("local RPC credentials missing")
+  }
+  port := parseBitcoinRPCPort(string(raw))
+  host := fmt.Sprintf("127.0.0.1:%d", port)
+  return bitcoinRPCConfig{
+    Host: host,
+    User: user,
+    Pass: pass,
+  }, nil
+}
+
+func parseBitcoinRPCPort(raw string) int {
+  port := 8332
+  normalized := strings.ReplaceAll(raw, "\r\n", "\n")
+  for _, line := range strings.Split(normalized, "\n") {
+    trimmed := strings.TrimSpace(line)
+    if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+      continue
+    }
+    parts := strings.SplitN(trimmed, "=", 2)
+    if len(parts) != 2 {
+      continue
+    }
+    key := strings.TrimSpace(parts[0])
+    value := strings.TrimSpace(parts[1])
+    if key == "rpcport" {
+      parsed, err := strconv.Atoi(value)
+      if err == nil && parsed > 0 && parsed < 65536 {
+        return parsed
+      }
+    }
+    if key == "rpcbind" {
+      if strings.Contains(value, ":") {
+        hostPart, portPart, err := net.SplitHostPort(value)
+        if err == nil && hostPart != "" {
+          parsed, err := strconv.Atoi(portPart)
+          if err == nil && parsed > 0 && parsed < 65536 {
+            port = parsed
+          }
+        }
+      }
+    }
+  }
+  return port
+}
+
+func parseElementsMainchainConfig(raw string) (string, int) {
+  host := ""
+  port := 0
+  normalized := strings.ReplaceAll(raw, "\r\n", "\n")
+  for _, line := range strings.Split(normalized, "\n") {
+    trimmed := strings.TrimSpace(line)
+    if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+      continue
+    }
+    parts := strings.SplitN(trimmed, "=", 2)
+    if len(parts) != 2 {
+      continue
+    }
+    key := strings.TrimSpace(parts[0])
+    value := strings.TrimSpace(parts[1])
+    switch key {
+    case "mainchainrpchost":
+      host = value
+    case "mainchainrpcport":
+      parsed, err := strconv.Atoi(value)
+      if err == nil && parsed > 0 && parsed < 65536 {
+        port = parsed
+      }
+    }
+  }
+  return host, port
 }
 
 func elementsServiceStatus(ctx context.Context) (string, error) {

@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
-import { getElementsStatus } from '../api'
+import { getElementsMainchain, getElementsStatus, setElementsMainchain } from '../api'
 
 type ElementsStatus = {
   installed: boolean
   status: string
   data_dir: string
+  mainchain_source?: string
+  mainchain_rpchost?: string
+  mainchain_rpcport?: number
   rpc_ok?: boolean
   peers?: number
   chain?: string
@@ -15,6 +18,14 @@ type ElementsStatus = {
   version?: number
   subversion?: string
   size_on_disk?: number
+}
+
+type ElementsMainchain = {
+  source: 'remote' | 'local'
+  rpchost?: string
+  rpcport?: number
+  local_ready?: boolean
+  local_status?: string
 }
 
 const statusStyles: Record<string, string> = {
@@ -38,6 +49,9 @@ const formatPercent = (value?: number) => {
 export default function Elements() {
   const [status, setStatus] = useState<ElementsStatus | null>(null)
   const [message, setMessage] = useState('')
+  const [mainchain, setMainchain] = useState<ElementsMainchain | null>(null)
+  const [mainchainMessage, setMainchainMessage] = useState('')
+  const [mainchainBusy, setMainchainBusy] = useState(false)
 
   const loadStatus = () => {
     getElementsStatus()
@@ -47,6 +61,14 @@ export default function Elements() {
       })
       .catch((err) => {
         setMessage(err instanceof Error ? err.message : 'Failed to load Elements status.')
+      })
+    getElementsMainchain()
+      .then((data: ElementsMainchain) => {
+        setMainchain(data)
+        setMainchainMessage('')
+      })
+      .catch((err) => {
+        setMainchainMessage(err instanceof Error ? err.message : 'Failed to load Elements mainchain.')
       })
   }
 
@@ -66,6 +88,30 @@ export default function Elements() {
   const installed = Boolean(status?.installed)
   const rpcReady = Boolean(status?.status === 'running' && status?.rpc_ok)
   const statusClass = statusStyles[status?.status || 'unknown'] || statusStyles.unknown
+  const mainchainSource = mainchain?.source || status?.mainchain_source || 'remote'
+  const mainchainSourceLabel = mainchainSource === 'local' ? 'Local' : 'Remote'
+  const mainchainHost = mainchain?.rpchost || status?.mainchain_rpchost || ''
+  const mainchainPort = mainchain?.rpcport || status?.mainchain_rpcport || 0
+  const mainchainRPC = mainchainHost ? `${mainchainHost}${mainchainPort ? `:${mainchainPort}` : ''}` : '-'
+  const localReady = Boolean(mainchain?.local_ready)
+  const canToggleMainchain = mainchainSource === 'local' || localReady
+
+  const handleToggleMainchain = async () => {
+    if (!mainchain || mainchainBusy || !canToggleMainchain) return
+    const next = mainchain.source === 'remote' ? 'local' : 'remote'
+    setMainchainBusy(true)
+    setMainchainMessage(`Switching to ${next} Bitcoin...`)
+    try {
+      await setElementsMainchain({ source: next })
+      setMainchainMessage(`Elements is now using ${next} Bitcoin. Restarting service...`)
+      const updated = await getElementsMainchain()
+      setMainchain(updated)
+    } catch (err) {
+      setMainchainMessage(err instanceof Error ? err.message : 'Failed to switch mainchain source.')
+    } finally {
+      setMainchainBusy(false)
+    }
+  }
 
   return (
     <section className="space-y-6">
@@ -145,14 +191,43 @@ export default function Elements() {
                 <span className="text-fog">{status?.subversion || status?.version || '-'}</span>
               </div>
               <div className="flex items-center justify-between">
+                <span>Mainchain source</span>
+                <span className="text-fog">{mainchainSourceLabel}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Mainchain RPC</span>
+                <span className="text-fog">{mainchainRPC}</span>
+              </div>
+              <div className="flex items-center justify-between">
                 <span>Data dir</span>
                 <span className="text-fog">{status?.data_dir || '-'}</span>
               </div>
             </div>
             <div className="glow-divider" />
-            <p className="text-xs text-fog/60">
-              {syncing ? 'Syncing Liquid blocks. This may take hours or days.' : 'Node is ready for Liquid services.'}
-            </p>
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-xs text-fog/60">
+                  {syncing ? 'Syncing Liquid blocks. This may take hours or days.' : 'Node is ready for Liquid services.'}
+                </p>
+                {!localReady && mainchainSource === 'remote' && (
+                  <p className="text-xs text-fog/50 mt-2">Local Bitcoin must be fully synced to switch.</p>
+                )}
+              </div>
+              <button
+                className={`relative flex h-9 w-32 items-center rounded-full border border-white/10 bg-ink/60 px-2 transition ${mainchainBusy || !canToggleMainchain ? 'opacity-70' : 'hover:border-white/30'}`}
+                onClick={handleToggleMainchain}
+                type="button"
+                disabled={mainchainBusy || !canToggleMainchain}
+                aria-label="Toggle mainchain source"
+              >
+                <span
+                  className={`absolute top-1 h-7 w-14 rounded-full bg-glow shadow transition-all ${mainchainSource === 'local' ? 'left-[68px]' : 'left-[6px]'}`}
+                />
+                <span className={`relative z-10 flex-1 text-center text-xs ${mainchainSource === 'remote' ? 'text-ink' : 'text-fog/60'}`}>Remote</span>
+                <span className={`relative z-10 flex-1 text-center text-xs ${mainchainSource === 'local' ? 'text-ink' : 'text-fog/60'}`}>Local</span>
+              </button>
+            </div>
+            {mainchainMessage && <p className="text-sm text-brass">{mainchainMessage}</p>}
           </div>
         </div>
       )}

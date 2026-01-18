@@ -44,6 +44,9 @@ export const updateBitcoinLocalConfig = (payload: {
   apply_now?: boolean
 }) => request('/api/bitcoin-local/config', { method: 'POST', body: JSON.stringify(payload) })
 export const getElementsStatus = () => request('/api/elements/status')
+export const getElementsMainchain = () => request('/api/elements/mainchain')
+export const setElementsMainchain = (payload: { source: 'local' | 'remote' }) =>
+  request('/api/elements/mainchain', { method: 'POST', body: JSON.stringify(payload) })
 export const getLndStatus = () => request('/api/lnd/status')
 export const getLndConfig = () => request('/api/lnd/config')
 export const getWizardStatus = () => request('/api/wizard/status')

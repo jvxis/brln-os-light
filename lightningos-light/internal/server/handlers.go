@@ -1473,6 +1473,19 @@ func (s *Server) handleChatMessages(w http.ResponseWriter, r *http.Request) {
   writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
+func (s *Server) handleChatInbox(w http.ResponseWriter, r *http.Request) {
+  if s.chat == nil {
+    writeError(w, http.StatusServiceUnavailable, "chat unavailable")
+    return
+  }
+  items, err := s.chat.Inbox()
+  if err != nil {
+    writeError(w, http.StatusInternalServerError, "failed to load chat inbox")
+    return
+  }
+  writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
 func (s *Server) handleChatSend(w http.ResponseWriter, r *http.Request) {
   if s.chat == nil {
     writeError(w, http.StatusServiceUnavailable, "chat unavailable")

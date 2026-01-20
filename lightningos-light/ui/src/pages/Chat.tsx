@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { getChatMessages, getLnPeers, sendChatMessage } from '../api'
+import { getChatInbox, getChatMessages, getLnPeers, sendChatMessage } from '../api'
 
 type Peer = {
   pub_key: string
@@ -17,7 +17,13 @@ type ChatMessage = {
   payment_hash?: string
 }
 
+type ChatInboxItem = {
+  peer_pubkey: string
+  last_inbound_at: string
+}
+
 const messageLimit = 500
+const lastReadKey = 'chat:lastRead'
 
 const formatTimestamp = (value: string) => {
   if (!value) return ''
@@ -37,6 +43,20 @@ export default function Chat() {
   const [peerStatus, setPeerStatus] = useState('')
   const [selectedPeer, setSelectedPeer] = useState<Peer | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [inboxItems, setInboxItems] = useState<ChatInboxItem[]>([])
+  const [lastReadMap, setLastReadMap] = useState<Record<string, number>>(() => {
+    try {
+      const raw = localStorage.getItem(lastReadKey)
+      if (!raw) return {}
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === 'object') {
+        return parsed
+      }
+      return {}
+    } catch {
+      return {}
+    }
+  })
   const [messageStatus, setMessageStatus] = useState('')
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
@@ -62,6 +82,26 @@ export default function Chat() {
     }
     load()
     const timer = window.setInterval(loadPeers, 20000)
+    return () => {
+      mounted = false
+      window.clearInterval(timer)
+    }
+  }, [])
+
+  useEffect(() => {
+    let mounted = true
+    const loadInbox = async () => {
+      try {
+        const res = await getChatInbox()
+        if (!mounted) return
+        setInboxItems(Array.isArray(res?.items) ? res.items : [])
+      } catch {
+        if (!mounted) return
+        setInboxItems([])
+      }
+    }
+    loadInbox()
+    const timer = window.setInterval(loadInbox, 12000)
     return () => {
       mounted = false
       window.clearInterval(timer)
@@ -100,6 +140,27 @@ export default function Chat() {
   }, [selectedPeer?.pub_key])
 
   useEffect(() => {
+    if (!selectedPeer) return
+    let latest = 0
+    for (const msg of messages) {
+      if (msg.direction !== 'in') continue
+      const time = new Date(msg.timestamp).getTime()
+      if (!Number.isNaN(time)) {
+        latest = Math.max(latest, time)
+      }
+    }
+    if (!latest) return
+    if ((lastReadMap[selectedPeer.pub_key] || 0) >= latest) return
+    const next = { ...lastReadMap, [selectedPeer.pub_key]: latest }
+    setLastReadMap(next)
+    try {
+      localStorage.setItem(lastReadKey, JSON.stringify(next))
+    } catch {
+      // ignore storage errors
+    }
+  }, [messages, selectedPeer?.pub_key, lastReadMap])
+
+  useEffect(() => {
     if (!bottomRef.current) return
     bottomRef.current.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
@@ -116,6 +177,26 @@ export default function Chat() {
     if (!selectedPeer) return false
     return peers.some((peer) => peer.pub_key === selectedPeer.pub_key)
   }, [peers, selectedPeer])
+
+  const onlinePeerSet = useMemo(() => new Set(peers.map((peer) => peer.pub_key)), [peers])
+
+  const unreadPeers = useMemo(() => {
+    const unread = new Set<string>()
+    for (const item of inboxItems) {
+      if (!onlinePeerSet.has(item.peer_pubkey)) {
+        continue
+      }
+      const ts = new Date(item.last_inbound_at).getTime()
+      if (!ts || Number.isNaN(ts)) continue
+      const lastRead = lastReadMap[item.peer_pubkey] || 0
+      if (ts > lastRead) {
+        unread.add(item.peer_pubkey)
+      }
+    }
+    return unread
+  }, [inboxItems, lastReadMap, onlinePeerSet])
+
+  const unreadCount = unreadPeers.size
 
   const sortedPeers = useMemo(() => {
     const list = [...peers]
@@ -178,10 +259,19 @@ export default function Chat() {
                   className={`w-full text-left rounded-2xl border px-4 py-3 transition ${
                     selectedPeer?.pub_key === peer.pub_key
                       ? 'border-glow/40 bg-glow/10'
-                      : 'border-white/10 bg-ink/60 hover:border-white/30'
+                      : unreadPeers.has(peer.pub_key)
+                        ? 'border-brass/40 bg-brass/10'
+                        : 'border-white/10 bg-ink/60 hover:border-white/30'
                   }`}
                 >
-                  <div className="text-sm text-fog break-all">{peer.alias || peer.pub_key}</div>
+                  <div className="flex items-center justify-between gap-2 text-sm text-fog break-all">
+                    <span>{peer.alias || peer.pub_key}</span>
+                    {unreadPeers.has(peer.pub_key) && (
+                      <span className="rounded-full bg-brass/20 px-2 py-0.5 text-[10px] uppercase tracking-wide text-brass">
+                        New
+                      </span>
+                    )}
+                  </div>
                   <div className="text-xs text-fog/50 break-all">{peer.pub_key}</div>
                 </button>
               ))}
@@ -205,6 +295,12 @@ export default function Chat() {
               <span className="text-xs text-fog/60 break-all">{selectedPeer.pub_key}</span>
             )}
           </div>
+
+          {unreadCount > 0 && (
+            <div className="rounded-2xl border border-brass/30 bg-brass/10 px-4 py-2 text-xs text-brass">
+              {unreadCount === 1 ? '1 unread chat' : `${unreadCount} unread chats`} waiting. Open a highlighted peer to mark as read.
+            </div>
+          )}
 
           <div className="rounded-2xl border border-white/10 bg-ink/60 p-3 text-xs text-fog/70">
             Keysend chat costs 1 sat per message + routing fees. Messages expire after 30 days.

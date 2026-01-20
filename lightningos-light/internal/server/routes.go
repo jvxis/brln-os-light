@@ -80,6 +80,7 @@ func (s *Server) routes() http.Handler {
   })
 
   r.Route("/api/chat", func(r chi.Router) {
+    r.Get("/inbox", s.handleChatInbox)
     r.Get("/messages", s.handleChatMessages)
     r.Post("/send", s.handleChatSend)
   })

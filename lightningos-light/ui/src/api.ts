@@ -126,6 +126,9 @@ export const updateChannelFees = (payload: {
 export const getChatMessages = (peerPubkey: string, limit = 200) =>
   request(`/api/chat/messages?peer_pubkey=${encodeURIComponent(peerPubkey)}&limit=${limit}`)
 
+export const getChatInbox = () =>
+  request('/api/chat/inbox')
+
 export const sendChatMessage = (payload: { peer_pubkey: string; message: string }) =>
   request('/api/chat/send', { method: 'POST', body: JSON.stringify(payload) })
 

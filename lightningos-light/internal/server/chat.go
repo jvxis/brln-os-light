@@ -75,6 +75,26 @@ func (c *ChatService) Messages(peerPubkey string, limit int) ([]ChatMessage, err
   return c.store.list(peerPubkey, limit)
 }
 
+type ChatInboxItem struct {
+  PeerPubkey string `json:"peer_pubkey"`
+  LastInboundAt time.Time `json:"last_inbound_at"`
+}
+
+func (c *ChatService) Inbox() ([]ChatInboxItem, error) {
+  latest, err := c.store.latestInbound()
+  if err != nil {
+    return nil, err
+  }
+  items := make([]ChatInboxItem, 0, len(latest))
+  for peer, ts := range latest {
+    items = append(items, ChatInboxItem{
+      PeerPubkey: peer,
+      LastInboundAt: ts,
+    })
+  }
+  return items, nil
+}
+
 func (c *ChatService) SendMessage(ctx context.Context, peerPubkey string, message string) (ChatMessage, error) {
   paymentHash, err := c.lnd.SendKeysendMessage(ctx, peerPubkey, 1, message)
   if err != nil {
@@ -321,6 +341,56 @@ func (s *chatStore) list(peerPubkey string, limit int) ([]ChatMessage, error) {
     messages = messages[len(messages)-limit:]
   }
   return messages, nil
+}
+
+func (s *chatStore) latestInbound() (map[string]time.Time, error) {
+  s.mu.Lock()
+  defer s.mu.Unlock()
+
+  s.cleanupLocked()
+
+  f, err := os.Open(s.path)
+  if err != nil {
+    if errors.Is(err, os.ErrNotExist) {
+      return map[string]time.Time{}, nil
+    }
+    return nil, err
+  }
+  defer f.Close()
+
+  scanner := bufio.NewScanner(f)
+  buf := make([]byte, 0, 64*1024)
+  scanner.Buffer(buf, 256*1024)
+
+  cutoff := time.Now().AddDate(0, 0, -chatRetentionDays)
+  latest := map[string]time.Time{}
+  for scanner.Scan() {
+    line := strings.TrimSpace(scanner.Text())
+    if line == "" {
+      continue
+    }
+    var msg ChatMessage
+    if err := json.Unmarshal([]byte(line), &msg); err != nil {
+      continue
+    }
+    if msg.Direction != "in" {
+      continue
+    }
+    if msg.Timestamp.Before(cutoff) {
+      continue
+    }
+    peer := strings.TrimSpace(msg.PeerPubkey)
+    if peer == "" {
+      continue
+    }
+    if prev, ok := latest[peer]; !ok || msg.Timestamp.After(prev) {
+      latest[peer] = msg.Timestamp
+    }
+  }
+  if err := scanner.Err(); err != nil {
+    return nil, err
+  }
+  return latest, nil
 }
 
 func (s *chatStore) loadCursor() uint64 {

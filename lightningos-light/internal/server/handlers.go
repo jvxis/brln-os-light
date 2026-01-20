@@ -1832,6 +1832,7 @@ func (s *Server) handleWalletDecode(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
   var req struct {
     PaymentRequest string `json:"payment_request"`
+    ChannelPoint string `json:"channel_point"`
   }
   if err := readJSON(r, &req); err != nil {
     writeError(w, http.StatusBadRequest, "invalid json")
@@ -1846,12 +1847,32 @@ func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
   ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
   defer cancel()
 
+  outgoingChanID := uint64(0)
+  selectedPoint := strings.ToLower(strings.TrimSpace(req.ChannelPoint))
+  if selectedPoint != "" {
+    channels, err := s.lnd.ListChannels(ctx)
+    if err != nil {
+      writeError(w, http.StatusInternalServerError, lndDetailedErrorMessage(err))
+      return
+    }
+    for _, ch := range channels {
+      if strings.ToLower(strings.TrimSpace(ch.ChannelPoint)) == selectedPoint {
+        outgoingChanID = ch.ChannelID
+        break
+      }
+    }
+    if outgoingChanID == 0 {
+      writeError(w, http.StatusBadRequest, "selected channel not found")
+      return
+    }
+  }
+
   paymentHash := ""
   if decoded, err := s.lnd.DecodeInvoice(ctx, paymentRequest); err == nil {
     paymentHash = decoded.PaymentHash
   }
 
-  if err := s.lnd.PayInvoice(ctx, paymentRequest); err != nil {
+  if err := s.lnd.PayInvoice(ctx, paymentRequest, outgoingChanID); err != nil {
     if paymentHash != "" {
       s.recordWalletActivity(paymentHash)
     }

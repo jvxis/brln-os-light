@@ -134,7 +134,9 @@ export default function AppStore() {
 
       <div className="grid gap-6 lg:grid-cols-2">
         {apps.map((app) => {
-          const isBusy = Boolean(busy[app.id])
+          const busyAction = busy[app.id]
+          const isBusy = Boolean(busyAction)
+          const isResetting = busyAction === 'reset-admin'
           const canResetAdmin = app.id === 'lndg' && app.status === 'running'
           const resetTitle = canResetAdmin ? 'Reset to stored admin password' : 'Start LNDg to reset password'
           const statusStyle = statusStyles[app.status] || statusStyles.unknown
@@ -214,7 +216,7 @@ export default function AppStore() {
                         title={resetTitle}
                         onClick={() => handleResetAdmin(app.id)}
                       >
-                        {isBusy ? 'Resetting...' : 'Reset admin password'}
+                        {isResetting ? 'Resetting...' : 'Reset admin password'}
                       </button>
                     )}
                     <button className="btn-secondary" disabled={isBusy} onClick={() => handleAction(app.id, 'stop')}>
@@ -237,7 +239,7 @@ export default function AppStore() {
                         title={resetTitle}
                         onClick={() => handleResetAdmin(app.id)}
                       >
-                        {isBusy ? 'Resetting...' : 'Reset admin password'}
+                        {isResetting ? 'Resetting...' : 'Reset admin password'}
                       </button>
                     )}
                     <button className="btn-secondary" disabled={isBusy} onClick={() => handleAction(app.id, 'uninstall')}>

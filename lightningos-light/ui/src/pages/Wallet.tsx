@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { createInvoice, decodeInvoice, getMempoolFees, getWalletAddress, getWalletSummary, payInvoice, sendOnchain } from '../api'
+import { createInvoice, decodeInvoice, getLnChannels, getMempoolFees, getWalletAddress, getWalletSummary, payInvoice, sendOnchain } from '../api'
 
 const emptySummary = {
   balances: {
@@ -37,6 +37,10 @@ export default function Wallet() {
   const [decodeError, setDecodeError] = useState('')
   const [decodeLoading, setDecodeLoading] = useState(false)
   const [status, setStatus] = useState('')
+  const [channels, setChannels] = useState<any[]>([])
+  const [channelsError, setChannelsError] = useState('')
+  const [channelsLoading, setChannelsLoading] = useState(true)
+  const [outgoingChannelPoint, setOutgoingChannelPoint] = useState('')
 
   useEffect(() => {
     let mounted = true
@@ -82,6 +86,33 @@ export default function Wallet() {
       })
     return () => {
       mounted = false
+    }
+  }, [])
+
+  useEffect(() => {
+    let mounted = true
+    const load = async (initial: boolean) => {
+      if (initial) {
+        setChannelsLoading(true)
+      }
+      setChannelsError('')
+      try {
+        const res: any = await getLnChannels()
+        if (!mounted) return
+        setChannels(Array.isArray(res?.channels) ? res.channels : [])
+      } catch (err: any) {
+        if (!mounted) return
+        setChannelsError(err?.message || 'Channels unavailable.')
+      } finally {
+        if (!mounted) return
+        setChannelsLoading(false)
+      }
+    }
+    load(true)
+    const timer = setInterval(() => load(false), 30000)
+    return () => {
+      mounted = false
+      clearInterval(timer)
     }
   }, [])
 
@@ -168,6 +199,45 @@ export default function Wallet() {
     const timeB = new Date(b?.timestamp || 0).getTime()
     return timeB - timeA
   })
+
+  const trimMemo = (value: string, max = 30) => {
+    const trimmed = value.trim()
+    if (trimmed.length <= max) return trimmed
+    return `${trimmed.slice(0, max - 3)}...`
+  }
+
+  const decodedAmountSat = () => {
+    if (!decode) return 0
+    const amountSat = Number(decode.amount_sat || 0)
+    const amountMsat = Number(decode.amount_msat || 0)
+    if (amountSat > 0) return amountSat
+    if (amountMsat > 0) return Math.ceil(amountMsat / 1000)
+    return 0
+  }
+
+  const amountForFilter = decodedAmountSat()
+  const availableChannels = channels
+    .filter((ch) => ch && ch.active && ch.channel_point)
+    .filter((ch) => amountForFilter <= 0 || Number(ch.local_balance_sat || 0) >= amountForFilter)
+    .sort((a, b) => Number(b.local_balance_sat || 0) - Number(a.local_balance_sat || 0))
+
+  const formatChannelLabel = (ch: any) => {
+    const alias = String(ch.peer_alias || '').trim()
+    const pubkey = String(ch.remote_pubkey || '').trim()
+    const peerLabel = alias || (pubkey ? `${pubkey.slice(0, 10)}...` : 'Unknown peer')
+    const point = String(ch.channel_point || '').trim()
+    const shortPoint = point && point.length > 16 ? `${point.slice(0, 8)}...${point.slice(-4)}` : point
+    const localBalance = Number(ch.local_balance_sat || 0)
+    return `${peerLabel} | ${shortPoint} | ${localBalance} sats`
+  }
+
+  useEffect(() => {
+    if (!outgoingChannelPoint) return
+    const exists = availableChannels.some((ch) => ch.channel_point === outgoingChannelPoint)
+    if (!exists) {
+      setOutgoingChannelPoint('')
+    }
+  }, [availableChannels, outgoingChannelPoint])
 
   const handleAddFunds = async () => {
     setShowAddress(true)
@@ -266,7 +336,7 @@ export default function Wallet() {
   const handlePay = async () => {
     setStatus('Paying invoice...')
     try {
-      await payInvoice({ payment_request: paymentRequest })
+      await payInvoice({ payment_request: paymentRequest, channel_point: outgoingChannelPoint || undefined })
       setStatus('Payment sent.')
     } catch (err: any) {
       setStatus(err?.message || 'Payment failed.')
@@ -461,6 +531,28 @@ export default function Wallet() {
               </div>
             </div>
           )}
+          <div className="space-y-2">
+            <label className="text-xs text-fog/60">Outgoing channel (optional)</label>
+            <select
+              className="input-field"
+              value={outgoingChannelPoint}
+              onChange={(e) => setOutgoingChannelPoint(e.target.value)}
+            >
+              <option value="">Automatic (LND)</option>
+              {availableChannels.map((ch) => (
+                <option key={ch.channel_point} value={ch.channel_point}>
+                  {formatChannelLabel(ch)}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-fog/50">
+              Selecting an outgoing channel forces LND to use it. If it fails, remove the selection and try again.
+            </p>
+            {!channelsLoading && amountForFilter > 0 && availableChannels.length === 0 && (
+              <p className="text-xs text-brass">No channels with enough local balance for this amount.</p>
+            )}
+            {channelsError && <p className="text-xs text-fog/50">{channelsError}</p>}
+          </div>
           <button className="btn-primary" onClick={handlePay}>Pay invoice</button>
         </div>
       </div>
@@ -476,12 +568,16 @@ export default function Wallet() {
             const direction = activityDirection(item)
             const arrow = direction === 'in' ? '<-' : direction === 'out' ? '->' : '.'
             const arrowTone = direction === 'in' ? 'text-glow' : direction === 'out' ? 'text-ember' : 'text-fog/50'
+            const memo = typeof item.memo === 'string' ? item.memo.trim() : ''
+            const memoLabel = String(item?.type || '').toLowerCase() === 'invoice' && memo
+              ? ` - ${trimMemo(memo, 30)}`
+              : ''
             return (
               <div key={`${item.type}-${idx}`} className="grid items-center gap-3 border-b border-white/10 pb-2 sm:grid-cols-[160px_1fr_auto_auto]">
                 <span className="text-xs text-fog/50">{formatTimestamp(item.timestamp)}</span>
                 <div className="min-w-0">
                   <span className="text-fog/70">{typeLabel}</span>
-                  <span className="text-fog/50"> - {statusLabel}</span>
+                  <span className="text-fog/50"> - {statusLabel}{memoLabel}</span>
                 </div>
                 <span className={`text-xs font-mono ${arrowTone}`}>{arrow}</span>
                 <span className="text-right">{item.amount_sat} sats</span>

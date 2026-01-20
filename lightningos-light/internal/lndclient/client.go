@@ -524,7 +524,7 @@ func (c *Client) NewAddress(ctx context.Context) (string, error) {
   return resp.Address, nil
 }
 
-func (c *Client) PayInvoice(ctx context.Context, paymentRequest string) error {
+func (c *Client) PayInvoice(ctx context.Context, paymentRequest string, outgoingChanID uint64) error {
   conn, err := c.dial(ctx, true)
   if err != nil {
     return err
@@ -533,7 +533,11 @@ func (c *Client) PayInvoice(ctx context.Context, paymentRequest string) error {
 
   client := lnrpc.NewLightningClient(conn)
 
-  _, err = client.SendPaymentSync(ctx, &lnrpc.SendRequest{PaymentRequest: paymentRequest})
+  req := &lnrpc.SendRequest{PaymentRequest: paymentRequest}
+  if outgoingChanID > 0 {
+    req.OutgoingChanId = outgoingChanID
+  }
+  _, err = client.SendPaymentSync(ctx, req)
   return err
 }
 

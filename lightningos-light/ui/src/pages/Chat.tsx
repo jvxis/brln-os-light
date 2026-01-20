@@ -169,7 +169,7 @@ export default function Chat() {
             <span className="text-xs text-fog/60">{peers.length}</span>
           </div>
           {sortedPeers.length ? (
-            <div className="space-y-2">
+            <div className="space-y-2 max-h-[520px] overflow-y-auto pr-2">
               {sortedPeers.map((peer) => (
                 <button
                   key={peer.pub_key}
@@ -181,7 +181,7 @@ export default function Chat() {
                       : 'border-white/10 bg-ink/60 hover:border-white/30'
                   }`}
                 >
-                  <div className="text-sm text-fog">{peer.alias || peer.pub_key}</div>
+                  <div className="text-sm text-fog break-all">{peer.alias || peer.pub_key}</div>
                   <div className="text-xs text-fog/50 break-all">{peer.pub_key}</div>
                 </button>
               ))}
@@ -191,7 +191,7 @@ export default function Chat() {
           )}
         </div>
 
-        <div className="section-card flex flex-col gap-4">
+        <div className="section-card flex flex-col gap-4 max-h-[720px]">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <h3 className="text-lg font-semibold">
@@ -210,7 +210,7 @@ export default function Chat() {
             Keysend chat costs 1 sat per message + routing fees. Messages expire after 30 days.
           </div>
 
-          <div className="flex-1 min-h-[280px] max-h-[520px] overflow-y-auto space-y-3 pr-2">
+          <div className="flex-1 min-h-[280px] overflow-y-auto space-y-3 pr-2">
             {loadingMessages && <p className="text-sm text-fog/60">Loading messages...</p>}
             {!loadingMessages && !messages.length && (
               <p className="text-sm text-fog/60">No messages yet.</p>

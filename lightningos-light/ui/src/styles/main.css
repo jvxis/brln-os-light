@@ -21,19 +21,19 @@
 
 html[data-theme="light"] {
   color-scheme: light;
-  --color-ink: 248 250 252;
-  --color-slate: 226 232 240;
-  --color-fog: 15 23 42;
-  --color-ember: 220 38 38;
-  --color-glow: 20 184 166;
-  --color-midnight: 148 163 184;
-  --color-brass: 217 119 6;
-  --shadow-panel: 0 18px 36px rgba(15, 23, 42, 0.12);
-  --page-bg: radial-gradient(circle at 85% -10%, rgba(14, 165, 233, 0.18), transparent 45%),
-    radial-gradient(circle at 10% 10%, rgba(245, 158, 11, 0.16), transparent 40%),
-    linear-gradient(160deg, #f8fafc 0%, #f1f5f9 50%, #e2e8f0 100%);
-  --toggle-track: linear-gradient(120deg, rgba(248, 250, 252, 0.9), rgba(148, 163, 184, 0.25));
-  --toggle-thumb: linear-gradient(135deg, rgba(245, 158, 11, 0.95), rgba(250, 204, 21, 0.95));
+  --color-ink: 236 241 247;
+  --color-slate: 214 222 232;
+  --color-fog: 18 28 44;
+  --color-ember: 200 38 38;
+  --color-glow: 8 112 100;
+  --color-midnight: 110 126 146;
+  --color-brass: 184 94 6;
+  --shadow-panel: 0 18px 36px rgba(15, 23, 42, 0.16);
+  --page-bg: radial-gradient(circle at 85% -10%, rgba(14, 165, 233, 0.12), transparent 50%),
+    radial-gradient(circle at 12% 12%, rgba(245, 158, 11, 0.12), transparent 45%),
+    linear-gradient(160deg, #eef2f7 0%, #e6edf5 50%, #dde6f0 100%);
+  --toggle-track: linear-gradient(120deg, rgba(236, 241, 247, 0.95), rgba(110, 126, 146, 0.25));
+  --toggle-thumb: linear-gradient(135deg, rgba(217, 119, 6, 0.95), rgba(250, 204, 21, 0.95));
 }
 
 body {

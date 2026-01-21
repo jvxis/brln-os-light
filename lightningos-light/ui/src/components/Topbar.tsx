@@ -138,15 +138,15 @@ export default function Topbar({ onMenuToggle, menuOpen, theme, onThemeToggle }:
             aria-pressed={theme === 'light'}
             title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
           >
+            <span className="theme-toggle__icon theme-toggle__icon--moon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 14.5A8.5 8.5 0 1 1 9.5 3a7 7 0 0 0 11.5 11.5Z" />
+              </svg>
+            </span>
             <span className="theme-toggle__icon theme-toggle__icon--sun">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="4" />
                 <path d="M12 2v3M12 19v3M4.5 4.5l2.1 2.1M17.4 17.4l2.1 2.1M2 12h3M19 12h3M4.5 19.5l2.1-2.1M17.4 6.6l2.1-2.1" />
-              </svg>
-            </span>
-            <span className="theme-toggle__icon theme-toggle__icon--moon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 14.5A8.5 8.5 0 1 1 9.5 3a7 7 0 0 0 11.5 11.5Z" />
               </svg>
             </span>
             <span className="theme-toggle__thumb" />

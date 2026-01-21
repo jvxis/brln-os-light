@@ -1926,6 +1926,8 @@ func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
   var req struct {
     PaymentRequest string `json:"payment_request"`
     ChannelPoint string `json:"channel_point"`
+    AmountSat int64 `json:"amount_sat"`
+    Comment string `json:"comment"`
   }
   if err := readJSON(r, &req); err != nil {
     writeError(w, http.StatusBadRequest, "invalid json")
@@ -1935,6 +1937,24 @@ func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
   if paymentRequest == "" {
     writeError(w, http.StatusBadRequest, "payment_request required")
     return
+  }
+  cleaned := strings.TrimSpace(paymentRequest)
+  if strings.HasPrefix(strings.ToLower(cleaned), "lightning:") {
+    cleaned = cleaned[len("lightning:"):]
+  }
+  if isLightningAddress(cleaned) {
+    if req.AmountSat <= 0 {
+      writeError(w, http.StatusBadRequest, "amount_sat must be positive for lightning address")
+      return
+    }
+    resolved, err := resolveLightningAddress(r.Context(), cleaned, req.AmountSat, req.Comment)
+    if err != nil {
+      writeError(w, http.StatusBadRequest, fmt.Sprintf("lightning address error: %v", err))
+      return
+    }
+    paymentRequest = resolved
+  } else {
+    paymentRequest = cleaned
   }
 
   ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)

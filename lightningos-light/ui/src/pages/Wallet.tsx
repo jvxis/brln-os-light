@@ -34,6 +34,7 @@ export default function Wallet() {
   const [invoiceCopied, setInvoiceCopied] = useState(false)
   const [invoiceNotice, setInvoiceNotice] = useState('')
   const [paymentRequest, setPaymentRequest] = useState('')
+  const [payAmount, setPayAmount] = useState('')
   const [decode, setDecode] = useState<any>(null)
   const [decodeError, setDecodeError] = useState('')
   const [decodeLoading, setDecodeLoading] = useState(false)
@@ -42,6 +43,22 @@ export default function Wallet() {
   const [channelsError, setChannelsError] = useState('')
   const [channelsLoading, setChannelsLoading] = useState(true)
   const [outgoingChannelPoint, setOutgoingChannelPoint] = useState('')
+
+  const normalizePaymentInput = (value: string) => (value ? value.replace(/\s+/g, '') : '')
+
+  const stripLightningPrefix = (value: string) => {
+    const cleaned = normalizePaymentInput(value)
+    if (cleaned.toLowerCase().startsWith('lightning:')) {
+      return cleaned.slice('lightning:'.length)
+    }
+    return cleaned
+  }
+
+  const isLightningAddressInput = (value: string) => {
+    const cleaned = stripLightningPrefix(value)
+    const parts = cleaned.split('@')
+    return parts.length === 2 && parts[0] && parts[1]
+  }
 
   useEffect(() => {
     let mounted = true
@@ -118,8 +135,14 @@ export default function Wallet() {
   }, [])
 
   useEffect(() => {
-    const trimmed = paymentRequest.trim()
-    if (!trimmed) {
+    const cleaned = stripLightningPrefix(paymentRequest)
+    if (!cleaned) {
+      setDecode(null)
+      setDecodeError('')
+      setDecodeLoading(false)
+      return
+    }
+    if (isLightningAddressInput(cleaned)) {
       setDecode(null)
       setDecodeError('')
       setDecodeLoading(false)
@@ -129,7 +152,7 @@ export default function Wallet() {
     setDecodeLoading(true)
     const timer = setTimeout(async () => {
       try {
-        const res = await decodeInvoice({ payment_request: trimmed })
+        const res = await decodeInvoice({ payment_request: cleaned })
         setDecode(res)
         setDecodeError('')
       } catch (err: any) {
@@ -143,6 +166,9 @@ export default function Wallet() {
     return () => clearTimeout(timer)
   }, [paymentRequest])
 
+  const cleanedPaymentRequest = stripLightningPrefix(paymentRequest)
+  const isLnAddress = isLightningAddressInput(cleanedPaymentRequest)
+  const payAmountSat = Number(payAmount || 0)
   const onchainBalance = summary?.balances?.onchain_sat ?? 0
   const lightningBalance = summary?.balances?.lightning_sat ?? 0
   const activity = summary?.activity ?? []
@@ -208,6 +234,9 @@ export default function Wallet() {
   }
 
   const decodedAmountSat = () => {
+    if (isLnAddress) {
+      return payAmountSat > 0 ? payAmountSat : 0
+    }
     if (!decode) return 0
     const amountSat = Number(decode.amount_sat || 0)
     const amountMsat = Number(decode.amount_msat || 0)
@@ -337,9 +366,21 @@ export default function Wallet() {
   }
 
   const handlePay = async () => {
+    if (!cleanedPaymentRequest) {
+      setStatus('Payment request required.')
+      return
+    }
+    if (isLnAddress && payAmountSat <= 0) {
+      setStatus('Amount must be positive for Lightning Address.')
+      return
+    }
     setStatus('Paying invoice...')
     try {
-      await payInvoice({ payment_request: paymentRequest, channel_point: outgoingChannelPoint || undefined })
+      await payInvoice({
+        payment_request: cleanedPaymentRequest,
+        channel_point: outgoingChannelPoint || undefined,
+        amount_sat: isLnAddress ? payAmountSat : undefined
+      })
       setStatus('Payment sent.')
     } catch (err: any) {
       setStatus(err?.message || 'Payment failed.')
@@ -539,6 +580,20 @@ export default function Wallet() {
         <div className="section-card space-y-4">
           <h3 className="text-lg font-semibold">Pay invoice</h3>
           <textarea className="input-field min-h-[140px]" placeholder="Paste payment request" value={paymentRequest} onChange={(e) => setPaymentRequest(e.target.value)} />
+          {isLnAddress && (
+            <div className="space-y-2">
+              <label className="text-xs text-fog/60">Amount (sats)</label>
+              <input
+                className="input-field"
+                placeholder="Amount (sats)"
+                type="number"
+                min={1}
+                value={payAmount}
+                onChange={(e) => setPayAmount(e.target.value)}
+              />
+              <p className="text-xs text-fog/50">Lightning address detected. Enter the amount to pay.</p>
+            </div>
+          )}
           {decodeLoading && (
             <p className="text-xs text-fog/60">Decoding invoice...</p>
           )}

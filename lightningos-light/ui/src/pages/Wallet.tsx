@@ -416,8 +416,9 @@ export default function Wallet() {
                   value={sendAddress}
                   onChange={(e) => setSendAddress(e.target.value)}
                 />
-                <div className="grid gap-3 lg:grid-cols-2">
-                  <div className="space-y-2">
+                <div className="grid gap-3 lg:grid-cols-2 lg:items-start">
+                  <div className="space-y-2 lg:max-w-[360px]">
+                    <label className="text-xs text-fog/60">Amount (sats)</label>
                     <input
                       className="input-field"
                       placeholder="Amount (sats)"
@@ -447,7 +448,7 @@ export default function Wallet() {
                       </p>
                     )}
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-2 lg:max-w-[360px]">
                     <label className="text-xs text-fog/60">
                       Fee rate (sat/vB)
                       <span className="ml-2 text-fog/50">

@@ -43,6 +43,21 @@ export default function AppStore() {
   const [busy, setBusy] = useState<Record<string, string>>({})
   const [copying, setCopying] = useState<Record<string, boolean>>({})
 
+  const resolveStatusLabel = (value: string) => {
+    switch (value) {
+      case 'running':
+        return t('common.running')
+      case 'stopped':
+        return t('common.stopped')
+      case 'not_installed':
+        return t('common.notInstalled')
+      case 'unknown':
+        return t('common.unknown')
+      default:
+        return value ? value.replace('_', ' ') : t('common.unknown')
+    }
+  }
+
   const loadApps = () => {
     setLoading(true)
     getApps().then((data: AppInfo[]) => {
@@ -162,7 +177,7 @@ export default function AppStore() {
                   </div>
                 </div>
                 <span className={`text-xs uppercase tracking-wide px-3 py-1 rounded-full ${statusStyle}`}>
-                  {app.status.replace('_', ' ')}
+                  {resolveStatusLabel(app.status)}
                 </span>
               </div>
 

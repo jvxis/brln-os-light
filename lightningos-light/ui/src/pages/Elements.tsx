@@ -92,6 +92,20 @@ export default function Elements() {
   const installed = Boolean(status?.installed)
   const rpcReady = Boolean(status?.status === 'running' && status?.rpc_ok)
   const statusClass = statusStyles[status?.status || 'unknown'] || statusStyles.unknown
+  const statusLabel = (value?: string) => {
+    switch (value) {
+      case 'running':
+        return t('common.running')
+      case 'stopped':
+        return t('common.stopped')
+      case 'not_installed':
+        return t('common.notInstalled')
+      case 'unknown':
+        return t('common.unknown')
+      default:
+        return value ? value.replace('_', ' ') : t('common.unknown')
+    }
+  }
   const mainchainSource = mainchain?.source || status?.mainchain_source || 'remote'
   const mainchainSourceLabel = mainchainSource === 'local' ? t('common.local') : t('common.remote')
   const mainchainHost = mainchain?.rpchost || status?.mainchain_rpchost || ''
@@ -128,7 +142,7 @@ export default function Elements() {
             <p className="text-xs text-fog/50 mt-2">{t('elements.cliHint')}</p>
           </div>
           <span className={`text-xs uppercase tracking-wide px-3 py-1 rounded-full ${statusClass}`}>
-            {status?.status?.replace('_', ' ') || t('common.unknown')}
+            {statusLabel(status?.status)}
           </span>
         </div>
         {message && <p className="text-sm text-brass">{message}</p>}

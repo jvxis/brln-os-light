@@ -210,6 +210,20 @@ export default function BitcoinLocal() {
 
   const progress = useMemo(() => formatPercent(status?.verification_progress), [status?.verification_progress])
   const statusClass = statusStyles[status?.status || 'unknown'] || statusStyles.unknown
+  const statusLabel = (value?: string) => {
+    switch (value) {
+      case 'running':
+        return t('common.running')
+      case 'stopped':
+        return t('common.stopped')
+      case 'not_installed':
+        return t('common.notInstalled')
+      case 'unknown':
+        return t('common.unknown')
+      default:
+        return value ? value.replace('_', ' ') : t('common.unknown')
+    }
+  }
   const syncing = Boolean(status?.initial_block_download)
   const ready = Boolean(status?.status === 'running' && status?.rpc_ok)
   const installed = Boolean(status?.installed)
@@ -320,7 +334,7 @@ export default function BitcoinLocal() {
             <p className="text-fog/60">{t('bitcoinLocal.subtitle')}</p>
           </div>
           <span className={`text-xs uppercase tracking-wide px-3 py-1 rounded-full ${statusClass}`}>
-            {status?.status?.replace('_', ' ') || t('common.unknown')}
+            {statusLabel(status?.status)}
           </span>
         </div>
         {message && <p className="text-sm text-brass">{message}</p>}

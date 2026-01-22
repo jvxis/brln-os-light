@@ -1,12 +1,28 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getHealth, getLndConfig, getLndStatus } from '../api'
+import { getChatInbox, getHealth, getLndConfig, getLndStatus, getLnPeers } from '../api'
 import { setLanguage } from '../i18n'
 
 const statusColors: Record<string, string> = {
   OK: 'bg-glow/20 text-glow border-glow/40',
   WARN: 'bg-brass/20 text-brass border-brass/40',
   ERR: 'bg-ember/20 text-ember border-ember/40'
+}
+
+const lastReadKey = 'chat:lastRead'
+
+const readLastReadMap = () => {
+  try {
+    const raw = localStorage.getItem(lastReadKey)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object') {
+      return parsed as Record<string, number>
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return {}
 }
 
 type TopbarProps = {
@@ -22,6 +38,7 @@ export default function Topbar({ onMenuToggle, menuOpen, theme, onThemeToggle }:
   const [issues, setIssues] = useState<Array<{ component?: string; level?: string; message?: string }>>([])
   const [nodeAlias, setNodeAlias] = useState('')
   const [nodePubkey, setNodePubkey] = useState('')
+  const [unreadChats, setUnreadChats] = useState(0)
   const isPortuguese = i18n.language === 'pt-BR'
 
   useEffect(() => {
@@ -70,11 +87,59 @@ export default function Topbar({ onMenuToggle, menuOpen, theme, onThemeToggle }:
     }
   }, [])
 
+  useEffect(() => {
+    let mounted = true
+    const loadUnread = async () => {
+      try {
+        const [inboxRes, peersRes] = await Promise.allSettled([getChatInbox(), getLnPeers()])
+        if (!mounted) return
+        const items = inboxRes.status === 'fulfilled' && Array.isArray(inboxRes.value?.items)
+          ? inboxRes.value.items
+          : []
+        const peers = peersRes.status === 'fulfilled' && Array.isArray(peersRes.value?.peers)
+          ? peersRes.value.peers
+          : []
+        const onlineSet = peersRes.status === 'fulfilled'
+          ? new Set(peers.map((peer: any) => peer?.pub_key).filter(Boolean))
+          : null
+        const lastReadMap = readLastReadMap()
+        const unread = new Set<string>()
+        for (const item of items) {
+          const peerKey = typeof item?.peer_pubkey === 'string' ? item.peer_pubkey : ''
+          if (!peerKey) continue
+          if (onlineSet && !onlineSet.has(peerKey)) {
+            continue
+          }
+          const ts = new Date(item.last_inbound_at).getTime()
+          if (!ts || Number.isNaN(ts)) continue
+          const lastRead = lastReadMap[peerKey] || 0
+          if (ts > lastRead) {
+            unread.add(peerKey)
+          }
+        }
+        setUnreadChats(unread.size)
+      } catch {
+        if (!mounted) return
+        setUnreadChats(0)
+      }
+    }
+
+    loadUnread()
+    const timer = window.setInterval(loadUnread, 12000)
+    return () => {
+      mounted = false
+      window.clearInterval(timer)
+    }
+  }, [])
+
   const resolvedNodeLabel = nodeAlias || nodePubkey
   const compactPubkey = nodePubkey.length > 20
     ? `${nodePubkey.slice(0, 12)}...${nodePubkey.slice(-6)}`
     : nodePubkey
   const displayNodeLabel = nodeAlias || compactPubkey
+  const unreadLabel = unreadChats === 1
+    ? t('chat.unreadSingle')
+    : t('chat.unreadMultiple', { count: unreadChats })
 
   return (
     <header className="px-6 lg:px-12 pt-8">
@@ -145,27 +210,47 @@ export default function Topbar({ onMenuToggle, menuOpen, theme, onThemeToggle }:
             <span className="text-fog/40">|</span>
             <span className={isPortuguese ? 'text-white' : 'text-fog/50'}>PT</span>
           </button>
-          <button
-            type="button"
-            className="theme-toggle"
-            onClick={onThemeToggle}
-            aria-label={theme === 'dark' ? t('topbar.switchToLight') : t('topbar.switchToDark')}
-            aria-pressed={theme === 'light'}
-            title={theme === 'dark' ? t('topbar.switchToLight') : t('topbar.switchToDark')}
-          >
-            <span className="theme-toggle__icon theme-toggle__icon--moon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 14.5A8.5 8.5 0 1 1 9.5 3a7 7 0 0 0 11.5 11.5Z" />
+          <div className="flex flex-col items-center gap-2">
+            <button
+              type="button"
+              className="relative inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-ink/60 text-fog/70 hover:text-white hover:border-white/40 transition"
+              onClick={() => {
+                window.location.hash = 'chat'
+              }}
+              aria-label={unreadLabel}
+              title={unreadLabel}
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 12a7 7 0 0 1-7 7H7l-4 3V5a3 3 0 0 1 3-3h8a7 7 0 0 1 7 7Z" />
               </svg>
-            </span>
-            <span className="theme-toggle__icon theme-toggle__icon--sun">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="4" />
-                <path d="M12 2v3M12 19v3M4.5 4.5l2.1 2.1M17.4 17.4l2.1 2.1M2 12h3M19 12h3M4.5 19.5l2.1-2.1M17.4 6.6l2.1-2.1" />
-              </svg>
-            </span>
-            <span className="theme-toggle__thumb" />
-          </button>
+              {unreadChats > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[18px] rounded-full bg-ember px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                  {unreadChats}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              className="theme-toggle"
+              onClick={onThemeToggle}
+              aria-label={theme === 'dark' ? t('topbar.switchToLight') : t('topbar.switchToDark')}
+              aria-pressed={theme === 'light'}
+              title={theme === 'dark' ? t('topbar.switchToLight') : t('topbar.switchToDark')}
+            >
+              <span className="theme-toggle__icon theme-toggle__icon--moon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 14.5A8.5 8.5 0 1 1 9.5 3a7 7 0 0 0 11.5 11.5Z" />
+                </svg>
+              </span>
+              <span className="theme-toggle__icon theme-toggle__icon--sun">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="4" />
+                  <path d="M12 2v3M12 19v3M4.5 4.5l2.1 2.1M17.4 17.4l2.1 2.1M2 12h3M19 12h3M4.5 19.5l2.1-2.1M17.4 6.6l2.1-2.1" />
+                </svg>
+              </span>
+              <span className="theme-toggle__thumb" />
+            </button>
+          </div>
         </div>
       </div>
       <div className="glow-divider mt-6" />

@@ -141,6 +141,7 @@ func readDiskUsageEntries(ctx context.Context) ([]diskUsageEntry, error) {
 
 type blockDeviceEntry struct {
   Name string
+  KernelName string
   Type string
   Parent string
   Path string
@@ -148,7 +149,7 @@ type blockDeviceEntry struct {
 }
 
 func readBlockDeviceEntries(ctx context.Context) ([]blockDeviceEntry, error) {
-  out, err := RunCommand(ctx, "lsblk", "-P", "-b", "-o", "NAME,TYPE,PKNAME,PATH,SIZE")
+  out, err := RunCommand(ctx, "lsblk", "-P", "-b", "-o", "NAME,KNAME,TYPE,PKNAME,PATH,SIZE")
   if err != nil {
     return nil, err
   }
@@ -159,6 +160,7 @@ func readBlockDeviceEntries(ctx context.Context) ([]blockDeviceEntry, error) {
     sizeBytes, _ := strconv.ParseInt(values["SIZE"], 10, 64)
     entries = append(entries, blockDeviceEntry{
       Name: values["NAME"],
+      KernelName: values["KNAME"],
       Type: values["TYPE"],
       Parent: values["PKNAME"],
       Path: values["PATH"],
@@ -192,22 +194,27 @@ func diskSizeByPath(entries []blockDeviceEntry) map[string]float64 {
 }
 
 func groupDiskUsage(usage []diskUsageEntry, entries []blockDeviceEntry) map[string][]DiskPartition {
-  byName := make(map[string]blockDeviceEntry)
+  byKernel := make(map[string]blockDeviceEntry)
   byPath := make(map[string]blockDeviceEntry)
   for _, entry := range entries {
-    if entry.Name != "" {
-      byName[entry.Name] = entry
+    if entry.KernelName != "" {
+      byKernel[entry.KernelName] = entry
+    } else if entry.Name != "" {
+      byKernel[entry.Name] = entry
     }
     if entry.Path != "" {
       byPath[entry.Path] = entry
+    }
+    if entry.KernelName != "" {
+      byPath["/dev/"+entry.KernelName] = entry
     }
   }
   grouped := make(map[string][]DiskPartition)
   for _, item := range usage {
     resolvedDevice := resolveDevicePath(item.Device)
-    diskPath := rootDiskPath(resolvedDevice, byName, byPath)
+    diskPath := rootDiskPath(resolvedDevice, byKernel, byPath)
     if diskPath == "" && resolvedDevice != item.Device {
-      diskPath = rootDiskPath(item.Device, byName, byPath)
+      diskPath = rootDiskPath(item.Device, byKernel, byPath)
     }
     if diskPath == "" {
       continue
@@ -234,12 +241,12 @@ func resolveDevicePath(devicePath string) string {
   return resolved
 }
 
-func rootDiskPath(devicePath string, byName map[string]blockDeviceEntry, byPath map[string]blockDeviceEntry) string {
+func rootDiskPath(devicePath string, byKernel map[string]blockDeviceEntry, byPath map[string]blockDeviceEntry) string {
   if devicePath == "" {
     return ""
   }
   if entry, ok := byPath[devicePath]; ok {
-    if root, ok := resolveRootDisk(entry, byName); ok {
+    if root, ok := resolveRootDisk(entry, byKernel); ok {
       if root.Path != "" {
         return root.Path
       }
@@ -249,8 +256,8 @@ func rootDiskPath(devicePath string, byName map[string]blockDeviceEntry, byPath 
     }
   }
   name := strings.TrimPrefix(devicePath, "/dev/")
-  if entry, ok := byName[name]; ok {
-    if root, ok := resolveRootDisk(entry, byName); ok {
+  if entry, ok := byKernel[name]; ok {
+    if root, ok := resolveRootDisk(entry, byKernel); ok {
       if root.Path != "" {
         return root.Path
       }
@@ -265,16 +272,16 @@ func rootDiskPath(devicePath string, byName map[string]blockDeviceEntry, byPath 
   return ""
 }
 
-func resolveRootDisk(entry blockDeviceEntry, byName map[string]blockDeviceEntry) (blockDeviceEntry, bool) {
+func resolveRootDisk(entry blockDeviceEntry, byKernel map[string]blockDeviceEntry) (blockDeviceEntry, bool) {
   current := entry
-  for i := 0; i < 8; i++ {
+  for i := 0; i < 12; i++ {
     if current.Type == "disk" {
       return current, true
     }
     if current.Parent == "" {
       break
     }
-    parent, ok := byName[current.Parent]
+    parent, ok := byKernel[current.Parent]
     if !ok {
       break
     }

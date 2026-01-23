@@ -143,7 +143,7 @@ export default function Notifications() {
   const [status, setStatus] = useState(t('notifications.loading'))
   const [streamState, setStreamState] = useState<'idle' | 'waiting' | 'reconnecting' | 'error'>('idle')
   const streamErrors = useRef(0)
-  const [filter, setFilter] = useState<'all' | 'onchain' | 'lightning' | 'channel' | 'forward' | 'rebalance'>('all')
+  const [filter, setFilter] = useState<'all' | 'onchain' | 'lightning' | 'keysend' | 'channel' | 'forward' | 'rebalance'>('all')
   const [telegramConfig, setTelegramConfig] = useState<TelegramBackupConfig | null>(null)
   const [telegramToken, setTelegramToken] = useState('')
   const [telegramChatId, setTelegramChatId] = useState('')
@@ -233,12 +233,7 @@ export default function Notifications() {
   const filtered = useMemo(() => {
     const base = filter === 'all'
       ? items
-      : items.filter((item) => {
-        if (filter === 'lightning') {
-          return item.type === 'lightning' || item.type === 'keysend'
-        }
-        return item.type === filter
-      })
+      : items.filter((item) => item.type === filter)
     return base.filter((item) => {
       if (item.type === 'rebalance') return true
       if (!item.payment_hash) return true
@@ -312,6 +307,7 @@ export default function Notifications() {
             <button className={filter === 'all' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('all')}>{t('common.all')}</button>
             <button className={filter === 'onchain' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('onchain')}>{t('notifications.filter.onchain')}</button>
             <button className={filter === 'lightning' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('lightning')}>{t('notifications.filter.lightning')}</button>
+            <button className={filter === 'keysend' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('keysend')}>{t('notifications.filter.keysend')}</button>
             <button className={filter === 'channel' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('channel')}>{t('notifications.filter.channels')}</button>
             <button className={filter === 'forward' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('forward')}>{t('notifications.filter.forwards')}</button>
             <button className={filter === 'rebalance' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('rebalance')}>{t('notifications.filter.rebalance')}</button>

@@ -754,20 +754,22 @@ func (n *Notifier) runPayments() {
       if pay.CreationTimeNs == 0 {
         occurredAt = time.Now().UTC()
       }
+      isKeysend := isKeysendPayment(pay)
+      keysendDestPubkey := ""
+      if isKeysend {
+        keysendDestPubkey = keysendDestinationFromPayment(pay)
+      }
       isRebalance := false
-      if status == "SUCCEEDED" {
+      if !isKeysend {
         ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
         isRebalance = n.isSelfPayment(ctx, pay.PaymentRequest, pay)
         if !isRebalance && n.hasInvoiceHash(ctx, paymentHash) {
           isRebalance = true
         }
         cancel()
-      }
-      isKeysend := false
-      keysendDestPubkey := ""
-      if !isRebalance && isKeysendPayment(pay) {
-        isKeysend = true
-        keysendDestPubkey = keysendDestinationFromPayment(pay)
+        if status != "SUCCEEDED" && isRebalance {
+          continue
+        }
       }
       evtType := "lightning"
       if isKeysend {

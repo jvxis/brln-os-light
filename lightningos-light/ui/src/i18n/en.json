@@ -361,6 +361,7 @@
     "filter": {
       "channels": "Channels",
       "forwards": "Forwards",
+      "keysend": "Keysend",
       "lightning": "Lightning",
       "onchain": "On-chain",
       "rebalance": "Rebalance"

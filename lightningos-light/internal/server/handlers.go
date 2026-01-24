@@ -501,6 +501,34 @@ func (s *Server) bitcoinLocalStatusActive(ctx context.Context) (bitcoinStatus, e
     ZMQRawTx: "tcp://127.0.0.1:28333",
   }
   if !fileExists(paths.ComposePath) {
+    // Fallback: support Bitcoin Core running on the host (e.g. systemd) by
+    // reading the active [Bitcoind] config from lnd.conf (bitcoind.* keys).
+    cfg, _, err := readBitcoinLocalRPCConfig(ctx)
+    if err == nil && strings.TrimSpace(cfg.Host) != "" {
+      status.RPCHost = cfg.Host
+      if strings.TrimSpace(cfg.ZMQBlock) != "" {
+        status.ZMQRawBlock = cfg.ZMQBlock
+      }
+      if strings.TrimSpace(cfg.ZMQTx) != "" {
+        status.ZMQRawTx = cfg.ZMQTx
+      }
+      if strings.TrimSpace(cfg.User) != "" && strings.TrimSpace(cfg.Pass) != "" {
+        info, rpcErr := fetchBitcoinInfo(ctx, cfg.Host, cfg.User, cfg.Pass)
+        if rpcErr == nil {
+          status.RPCOk = true
+          status.Chain = info.Chain
+          status.Blocks = info.Blocks
+          status.Headers = info.Headers
+          status.VerificationProgress = info.VerificationProgress
+          status.InitialBlockDownload = info.InitialBlockDownload
+          status.BestBlockHash = info.BestBlockHash
+        } else {
+          status.RPCOk = false
+        }
+      }
+    }
+    status.ZMQRawBlockOk = testTCP(status.ZMQRawBlock)
+    status.ZMQRawTxOk = testTCP(status.ZMQRawTx)
     return status, nil
   }
   info, _, err := fetchBitcoinLocalInfo(ctx, paths)
@@ -521,6 +549,11 @@ func (s *Server) bitcoinLocalStatusActive(ctx context.Context) (bitcoinStatus, e
 func readBitcoinLocalRPCConfig(ctx context.Context) (bitcoinRPCConfig, bool, error) {
   paths := bitcoinCoreAppPaths()
   if !fileExists(paths.ComposePath) {
+    // Fallback: read bitcoind RPC settings from lnd.conf when the Docker-based
+    // Bitcoin Core app is not installed. This supports a host-managed bitcoind.
+    if cfg, ok := readBitcoindRPCConfigFromLNDConf(); ok {
+      return cfg, false, nil
+    }
     return bitcoinRPCConfig{}, false, errors.New("bitcoin core is not installed")
   }
   raw, updated, err := syncBitcoinCoreRPCAllowList(ctx, paths)
@@ -540,6 +573,68 @@ func readBitcoinLocalRPCConfig(ctx context.Context) (bitcoinRPCConfig, bool, err
     ZMQBlock: zmqBlock,
     ZMQTx: zmqTx,
   }, updated, nil
+}
+
+// readBitcoindRPCConfigFromLNDConf parses the active (non-commented) Bitcoind
+// section in /data/lnd/lnd.conf and returns the bitcoind.* RPC + ZMQ settings.
+// This is used to support a host-managed bitcoind (systemd) without requiring
+// the LightningOS Docker-based Bitcoin Core app.
+func readBitcoindRPCConfigFromLNDConf() (bitcoinRPCConfig, bool) {
+  raw, err := os.ReadFile(lndConfPath)
+  if err != nil {
+    return bitcoinRPCConfig{}, false
+  }
+  lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
+
+  inBitcoind := false
+  cfg := bitcoinRPCConfig{
+    Host: "127.0.0.1:8332",
+    ZMQBlock: "tcp://127.0.0.1:28332",
+    ZMQTx: "tcp://127.0.0.1:28333",
+  }
+
+  for _, line := range lines {
+    trimmed := strings.TrimSpace(line)
+    if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+      inBitcoind = strings.EqualFold(trimmed, "[Bitcoind]")
+      continue
+    }
+    if !inBitcoind {
+      continue
+    }
+    if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+      continue
+    }
+    parts := strings.SplitN(trimmed, "=", 2)
+    if len(parts) != 2 {
+      continue
+    }
+    key := strings.TrimSpace(parts[0])
+    val := strings.TrimSpace(parts[1])
+
+    switch key {
+    case "bitcoind.rpchost":
+      if val != "" {
+        cfg.Host = strings.TrimPrefix(val, "tcp://")
+      }
+    case "bitcoind.rpcuser":
+      cfg.User = val
+    case "bitcoind.rpcpass":
+      cfg.Pass = val
+    case "bitcoind.zmqpubrawblock":
+      cfg.ZMQBlock = normalizeLocalZMQ(val, cfg.ZMQBlock)
+    case "bitcoind.zmqpubrawtx":
+      cfg.ZMQTx = normalizeLocalZMQ(val, cfg.ZMQTx)
+    }
+  }
+
+  if strings.TrimSpace(cfg.Host) == "" {
+    return bitcoinRPCConfig{}, false
+  }
+  if strings.TrimSpace(cfg.User) == "" || strings.TrimSpace(cfg.Pass) == "" {
+    return bitcoinRPCConfig{}, false
+  }
+  return cfg, true
 }
 
 func readBitcoinSecrets() (string, string) {

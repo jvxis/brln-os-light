@@ -2424,25 +2424,27 @@ func storeBitcoinSecrets(user, pass string) error {
 }
 
 func readBitcoinSource() string {
-  if detected := detectBitcoinSourceFromLNDConf(); detected != "" {
-    return detected
-  }
-  if value := strings.TrimSpace(os.Getenv("BITCOIN_SOURCE")); value != "" {
-    return strings.ToLower(value)
-  }
-  content, err := os.ReadFile(secretsPath)
-  if err != nil {
-    return "remote"
-  }
-  for _, line := range strings.Split(string(content), "\n") {
-    if strings.HasPrefix(line, "BITCOIN_SOURCE=") {
-      value := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(line, "BITCOIN_SOURCE=")))
-      if value == "local" || value == "remote" {
-        return value
-      }
-    }
-  }
-  return "remote"
+	if value := strings.TrimSpace(os.Getenv("BITCOIN_SOURCE")); value != "" {
+		value = strings.ToLower(value)
+		if value == "local" || value == "remote" {
+			return value
+		}
+	}
+	content, err := os.ReadFile(secretsPath)
+	if err == nil {
+		for _, line := range strings.Split(string(content), "\n") {
+			if strings.HasPrefix(line, "BITCOIN_SOURCE=") {
+				value := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(line, "BITCOIN_SOURCE=")))
+				if value == "local" || value == "remote" {
+					return value
+				}
+			}
+		}
+	}
+	if detected := detectBitcoinSourceFromLNDConf(); detected != "" {
+		return detected
+	}
+	return "remote"
 }
 
 func detectBitcoinSourceFromLNDConf() string {
@@ -2469,13 +2471,90 @@ func detectBitcoinSourceFromLNDConf() string {
       if host == "" {
         continue
       }
-      if strings.HasPrefix(host, "127.0.0.1") || strings.HasPrefix(host, "localhost") {
+      if isLocalRPCHost(host) {
         return "local"
       }
       return "remote"
     }
   }
   return ""
+}
+
+func isLocalRPCHost(value string) bool {
+  host := extractHost(value)
+  if host == "" {
+    return false
+  }
+  lower := strings.ToLower(host)
+  if lower == "localhost" {
+    return true
+  }
+  ip := net.ParseIP(lower)
+  if ip == nil {
+    return false
+  }
+  if ip.IsLoopback() || ip.IsUnspecified() {
+    return true
+  }
+  return isHostIP(ip)
+}
+
+func extractHost(value string) string {
+  trimmed := strings.TrimSpace(value)
+  if trimmed == "" {
+    return ""
+  }
+  if strings.Contains(trimmed, "://") {
+    if parsed, err := url.Parse(trimmed); err == nil && parsed.Host != "" {
+      trimmed = parsed.Host
+    }
+  }
+  if at := strings.LastIndex(trimmed, "@"); at != -1 {
+    trimmed = trimmed[at+1:]
+  }
+  if host, _, err := net.SplitHostPort(trimmed); err == nil {
+    return host
+  }
+  if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+    return strings.TrimSuffix(strings.TrimPrefix(trimmed, "["), "]")
+  }
+  return trimmed
+}
+
+func isHostIP(ip net.IP) bool {
+  for _, addr := range localInterfaceIPs() {
+    if ip.Equal(addr) {
+      return true
+    }
+  }
+  return false
+}
+
+func localInterfaceIPs() []net.IP {
+  ifaces, err := net.Interfaces()
+  if err != nil {
+    return nil
+  }
+  ips := []net.IP{}
+  for _, iface := range ifaces {
+    addrs, err := iface.Addrs()
+    if err != nil {
+      continue
+    }
+    for _, addr := range addrs {
+      switch v := addr.(type) {
+      case *net.IPNet:
+        if v.IP != nil {
+          ips = append(ips, v.IP)
+        }
+      case *net.IPAddr:
+        if v.IP != nil {
+          ips = append(ips, v.IP)
+        }
+      }
+    }
+  }
+  return ips
 }
 
 func storeBitcoinSource(source string) error {

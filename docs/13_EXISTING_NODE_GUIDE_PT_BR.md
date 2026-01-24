@@ -25,6 +25,7 @@ Se voce ja tem LND e Bitcoin Core rodando, pode usar o instalador guiado:
 sudo ./install_existing.sh
 ```
 Ele pergunta sobre Go/npm (necessarios para build), Postgres, terminal e ajustes basicos.
+Quando voce optar por Postgres, o script cria os usuarios e o banco do LightningOS e preenche o secrets.env automaticamente.
 
 Se o script nao estiver executavel:
 ```bash

@@ -15,6 +15,9 @@ DEFAULT_LND_DIR="/data/lnd"
 DEFAULT_BITCOIN_DIR="/data/bitcoin"
 CONFIG_PATH="/etc/lightningos/config.yaml"
 SECRETS_PATH="/etc/lightningos/secrets.env"
+NOTIFICATIONS_DB_NAME="lightningos"
+NOTIFICATIONS_APP_USER="losapp"
+NOTIFICATIONS_ADMIN_USER="losadmin"
 
 print_step() {
   echo ""
@@ -523,6 +526,76 @@ ensure_postgres_service() {
   fi
 }
 
+psql_as_postgres() {
+  if command -v runuser >/dev/null 2>&1; then
+    runuser -u postgres -- psql -X "$@"
+  else
+    sudo -u postgres psql -X "$@"
+  fi
+}
+
+escape_pg_password() {
+  printf '%s' "$1" | sed "s/'/''/g"
+}
+
+ensure_pg_role() {
+  local role="$1"
+  local options="$2"
+  local password="$3"
+  local exists
+  exists=$(psql_as_postgres -tAc "select 1 from pg_roles where rolname='${role}'" 2>/dev/null | tr -d '[:space:]')
+  if [[ "$exists" == "1" ]]; then
+    psql_as_postgres -v ON_ERROR_STOP=1 -c "alter role ${role} with ${options} password '${password}'"
+  else
+    psql_as_postgres -v ON_ERROR_STOP=1 -c "create role ${role} with login ${options} password '${password}'"
+  fi
+}
+
+ensure_pg_database() {
+  local db="$1"
+  local owner="$2"
+  local exists
+  exists=$(psql_as_postgres -tAc "select 1 from pg_database where datname='${db}'" 2>/dev/null | tr -d '[:space:]')
+  if [[ "$exists" == "1" ]]; then
+    psql_as_postgres -v ON_ERROR_STOP=1 -c "alter database ${db} owner to ${owner}"
+  else
+    psql_as_postgres -v ON_ERROR_STOP=1 -c "create database ${db} owner ${owner}"
+  fi
+}
+
+provision_notifications_db() {
+  if ! command -v psql >/dev/null 2>&1; then
+    print_warn "psql not found; cannot provision database"
+    return 1
+  fi
+  if ! systemctl is-active --quiet postgresql; then
+    print_warn "PostgreSQL is not active; cannot provision database"
+    return 1
+  fi
+
+  local admin_pass app_pass
+  admin_pass=$(prompt_value "Password for ${NOTIFICATIONS_ADMIN_USER} (blank to auto-generate)")
+  if [[ -z "$admin_pass" ]]; then
+    admin_pass=$(openssl rand -hex 12)
+  fi
+  app_pass=$(prompt_value "Password for ${NOTIFICATIONS_APP_USER} (blank to auto-generate)")
+  if [[ -z "$app_pass" ]]; then
+    app_pass=$(openssl rand -hex 12)
+  fi
+
+  local admin_pass_esc app_pass_esc
+  admin_pass_esc=$(escape_pg_password "$admin_pass")
+  app_pass_esc=$(escape_pg_password "$app_pass")
+
+  ensure_pg_role "$NOTIFICATIONS_ADMIN_USER" "createrole createdb" "$admin_pass_esc"
+  ensure_pg_role "$NOTIFICATIONS_APP_USER" "" "$app_pass_esc"
+  ensure_pg_database "$NOTIFICATIONS_DB_NAME" "$NOTIFICATIONS_APP_USER"
+
+  set_env_value "NOTIFICATIONS_PG_DSN" "postgres://${NOTIFICATIONS_APP_USER}:${app_pass}@127.0.0.1:5432/${NOTIFICATIONS_DB_NAME}?sslmode=disable"
+  set_env_value "NOTIFICATIONS_PG_ADMIN_DSN" "postgres://${NOTIFICATIONS_ADMIN_USER}:${admin_pass}@127.0.0.1:5432/postgres?sslmode=disable"
+  print_ok "Notifications database ready (${NOTIFICATIONS_DB_NAME})"
+}
+
 main() {
   require_root
   print_step "LightningOS existing node setup"
@@ -578,6 +651,10 @@ main() {
     fi
   else
     ensure_postgres_service
+  fi
+
+  if prompt_yes_no "Create/ensure LightningOS database and users now?" "y"; then
+    provision_notifications_db || print_warn "Database provisioning skipped"
   fi
 
   local notifications_dsn

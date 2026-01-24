@@ -230,6 +230,37 @@ resolve_data_dir() {
     echo "$default"
     return
   fi
+
+  local admin_link=""
+  if [[ "$label" == "LND" && -e /home/admin/.lnd ]]; then
+    admin_link="/home/admin/.lnd"
+  elif [[ "$label" == "Bitcoin" && -e /home/admin/.bitcoin ]]; then
+    admin_link="/home/admin/.bitcoin"
+  fi
+
+  if [[ -n "$admin_link" ]]; then
+    local admin_target=""
+    if command -v readlink >/dev/null 2>&1; then
+      admin_target=$(readlink -f "$admin_link" || true)
+    fi
+    if [[ -z "$admin_target" && -d "$admin_link" ]]; then
+      admin_target="$admin_link"
+    fi
+    if [[ -n "$admin_target" && -d "$admin_target" ]]; then
+      if prompt_yes_no "Found ${admin_link} -> ${admin_target}. Create symlink ${default} -> ${admin_target}?" "y"; then
+        if [[ -e "$default" ]]; then
+          print_warn "Path ${default} already exists; skipping symlink"
+        else
+          mkdir -p "$(dirname "$default")"
+          ln -s "$admin_target" "$default"
+          print_ok "Symlink created: ${default} -> ${admin_target}"
+          echo "$default"
+          return
+        fi
+      fi
+    fi
+  fi
+
   print_warn "${label} directory not found at ${default}"
   if prompt_yes_no "Use a different ${label} directory?" "y"; then
     dir=$(prompt_value "Enter ${label} directory")

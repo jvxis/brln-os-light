@@ -9,6 +9,7 @@
 ## Assumptions
 - Data lives in /data/lnd and /data/bitcoin.
 - If your Bitcoin Core data lives elsewhere (e.g. /mnt/bitcoin-data), create a bind mount or symlink to /data/bitcoin (LightningOS only reads /data/bitcoin/bitcoin.conf).
+- If you already use /home/admin/.lnd and /home/admin/.bitcoin, the guided installer can create /data/lnd and /data/bitcoin pointing to those paths.
 - admin user has symlinks /home/admin/.lnd -> /data/lnd and /home/admin/.bitcoin -> /data/bitcoin.
 - Alternative: dedicated lnd and bitcoin users with data in /data, and admin in lnd and bitcoin groups.
 

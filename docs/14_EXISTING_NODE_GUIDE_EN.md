@@ -25,6 +25,13 @@ sudo ./install_existing.sh
 ```
 It asks about Go/npm (required for build), Postgres, terminal, and basic setup.
 
+If the script is not executable:
+```bash
+chmod +x install_existing.sh
+# or:
+sudo bash install_existing.sh
+```
+
 ## Important about /data/lnd
 - LightningOS uses fixed paths for lnd.conf and wallet.db in /data/lnd.
 - If LND is not in /data/lnd, the lnd.conf editor and auto-unlock will not work.

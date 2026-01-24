@@ -99,6 +99,33 @@ ensure_dirs() {
   print_ok "Directories ready"
 }
 
+fix_lightningos_permissions() {
+  local group="$1"
+  if ! getent group "$group" >/dev/null 2>&1; then
+    print_warn "Group ${group} not found; skipping /etc/lightningos ownership"
+    return
+  fi
+  chown root:"$group" /etc/lightningos /etc/lightningos/tls
+  chmod 750 /etc/lightningos /etc/lightningos/tls
+  if [[ -f "$CONFIG_PATH" ]]; then
+    chown root:"$group" "$CONFIG_PATH"
+    chmod 640 "$CONFIG_PATH"
+  fi
+  if [[ -f "$SECRETS_PATH" ]]; then
+    chown root:"$group" "$SECRETS_PATH"
+    chmod 660 "$SECRETS_PATH"
+  fi
+  if [[ -f /etc/lightningos/tls/server.crt ]]; then
+    chown root:"$group" /etc/lightningos/tls/server.crt
+    chmod 640 /etc/lightningos/tls/server.crt
+  fi
+  if [[ -f /etc/lightningos/tls/server.key ]]; then
+    chown root:"$group" /etc/lightningos/tls/server.key
+    chmod 640 /etc/lightningos/tls/server.key
+  fi
+  print_ok "Permissions updated for /etc/lightningos"
+}
+
 install_go() {
   print_step "Installing Go ${GO_VERSION}"
   rm -rf /usr/local/go
@@ -207,7 +234,7 @@ ensure_tools() {
 
 build_manager() {
   print_step "Building manager"
-  (cd "$REPO_ROOT" && go build -o dist/lightningos-manager ./cmd/lightningos-manager)
+  (cd "$REPO_ROOT" && go mod download && go build -o dist/lightningos-manager ./cmd/lightningos-manager)
   install -m 0755 "$REPO_ROOT/dist/lightningos-manager" /opt/lightningos/manager/lightningos-manager
   print_ok "Manager built and installed"
 }
@@ -340,6 +367,64 @@ check_service() {
   fi
 }
 
+ensure_user_exists() {
+  local user="$1"
+  if id "$user" >/dev/null 2>&1; then
+    return 0
+  fi
+  if prompt_yes_no "User ${user} does not exist. Create it?" "y"; then
+    if command -v adduser >/dev/null 2>&1; then
+      adduser --disabled-password --gecos "" "$user"
+    else
+      useradd -m -d "/home/${user}" -s /bin/bash "$user"
+    fi
+    return 0
+  fi
+  return 1
+}
+
+ensure_group_exists() {
+  local group="$1"
+  if getent group "$group" >/dev/null 2>&1; then
+    return 0
+  fi
+  if prompt_yes_no "Group ${group} does not exist. Create it?" "y"; then
+    groupadd --system "$group"
+    return 0
+  fi
+  return 1
+}
+
+service_exists() {
+  systemctl list-unit-files --type=service --no-pager 2>/dev/null | awk '{print $1}' | grep -qx "${1}.service"
+}
+
+ensure_postgres_service() {
+  if ! service_exists "postgresql"; then
+    print_warn "PostgreSQL service not found"
+    if prompt_yes_no "Install PostgreSQL now (required for reports/notifications)?" "y"; then
+      if command -v apt-get >/dev/null 2>&1; then
+        print_step "Installing PostgreSQL"
+        apt-get update
+        apt-get install -y postgresql postgresql-client
+      else
+        print_warn "apt-get not found; install PostgreSQL manually"
+        return
+      fi
+    else
+      return
+    fi
+  fi
+  if ! systemctl is-active --quiet postgresql; then
+    if prompt_yes_no "PostgreSQL is inactive. Enable and start it now?" "y"; then
+      systemctl enable --now postgresql
+      print_ok "PostgreSQL started"
+    else
+      print_warn "PostgreSQL is required for reports/notifications"
+    fi
+  fi
+}
+
 main() {
   require_root
   print_step "LightningOS existing node setup"
@@ -390,16 +475,11 @@ main() {
   fi
 
   if [[ "$lnd_backend" != "postgres" ]]; then
-    if prompt_yes_no "Install Postgres for reports/notifications?" "y"; then
-      if command -v apt-get >/dev/null 2>&1; then
-        print_step "Installing Postgres"
-        apt-get update
-        apt-get install -y postgresql postgresql-client
-        systemctl enable --now postgresql
-      else
-        print_warn "apt-get not found; install Postgres manually"
-      fi
+    if prompt_yes_no "Install/enable Postgres for reports/notifications?" "y"; then
+      ensure_postgres_service
     fi
+  else
+    ensure_postgres_service
   fi
 
   local notifications_dsn
@@ -453,17 +533,25 @@ main() {
     ensure_terminal_service "$terminal_user" "$terminal_user"
   fi
 
-  local manager_user
-  manager_user=$(prompt_value "Manager service user" "admin")
-  local manager_group
-  manager_group=$(prompt_value "Manager service group" "$manager_user")
-  if ! id "$manager_user" >/dev/null 2>&1; then
-    print_warn "User ${manager_user} does not exist; edit systemd unit manually later"
-  fi
+  local manager_user manager_group manager_group_default
+  while true; do
+    manager_user=$(prompt_value "Manager service user" "admin")
+    if ensure_user_exists "$manager_user"; then
+      break
+    fi
+  done
+  manager_group_default=$(id -gn "$manager_user" 2>/dev/null || echo "$manager_user")
+  while true; do
+    manager_group=$(prompt_value "Manager service group" "$manager_group_default")
+    if ensure_group_exists "$manager_group"; then
+      break
+    fi
+  done
   if prompt_yes_no "Add ${manager_user} to lnd/bitcoin/docker groups when available?" "y"; then
     ensure_group_membership "$manager_user" lnd bitcoin docker systemd-journal
   fi
   ensure_manager_service "$manager_user" "$manager_group"
+  fix_lightningos_permissions "$manager_group"
 
   if prompt_yes_no "Install reports timer (requires Postgres)?" "y"; then
     ensure_reports_services

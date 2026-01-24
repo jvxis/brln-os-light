@@ -18,6 +18,13 @@ git clone https://github.com/jvxis/brln-os-light
 cd brln-os-light/lightningos-light
 ```
 
+## Guided install (optional)
+If you already have LND and Bitcoin Core running, you can use the guided installer:
+```bash
+sudo ./install_existing.sh
+```
+It asks about Go/npm (required for build), Postgres, terminal, and basic setup.
+
 ## Important about /data/lnd
 - LightningOS uses fixed paths for lnd.conf and wallet.db in /data/lnd.
 - If LND is not in /data/lnd, the lnd.conf editor and auto-unlock will not work.

@@ -1208,6 +1208,9 @@ func (n *Notifier) lookupNodeAlias(pubkey string) string {
 }
 
 func (n *Notifier) runForwards() {
+  debug := strings.EqualFold(strings.TrimSpace(os.Getenv("NOTIFICATIONS_DEBUG_FORWARDS")), "1") ||
+    strings.EqualFold(strings.TrimSpace(os.Getenv("NOTIFICATIONS_DEBUG_FORWARDS")), "true")
+
   for {
     select {
     case <-n.stop:
@@ -1224,6 +1227,9 @@ func (n *Notifier) runForwards() {
       if parsed, err := strconv.ParseUint(cursorVal, 10, 64); err == nil {
         after = parsed
       }
+    }
+    if debug {
+      n.logger.Printf("notifications: forwards poll start (after=%d)", after)
     }
 
     conn, err := n.lnd.DialLightning(context.Background())
@@ -1248,16 +1254,25 @@ func (n *Notifier) runForwards() {
     var indexOffset uint32
     processed := false
     for {
-      res, err := client.ForwardingHistory(context.Background(), &lnrpc.ForwardingHistoryRequest{
+      reqCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+      res, err := client.ForwardingHistory(reqCtx, &lnrpc.ForwardingHistoryRequest{
         StartTime: after,
         EndTime: endTime,
         IndexOffset: indexOffset,
         NumMaxEvents: 200,
         PeerAliasLookup: true,
       })
+      cancel()
       if err != nil {
         n.logger.Printf("notifications: forwards poll failed: %v", err)
         break
+      }
+      if debug {
+        count := 0
+        if res != nil {
+          count = len(res.ForwardingEvents)
+        }
+        n.logger.Printf("notifications: forwards poll batch (count=%d offset=%d last_offset=%d after=%d end=%d)", count, indexOffset, res.LastOffsetIndex, after, endTime)
       }
       if res == nil || len(res.ForwardingEvents) == 0 {
         break

@@ -112,7 +112,7 @@ Daily routing reports are computed at midnight local time and stored in Postgres
 Schedule:
 - `lightningos-reports.timer` runs `lightningos-reports.service` at `00:00` local time.
 - Manual run: `lightningos-manager reports-run --date YYYY-MM-DD` (defaults to yesterday).
-- Backfill: `lightningos-manager reports-backfill --from YYYY-MM-DD --to YYYY-MM-DD`.
+- Backfill: `lightningos-manager reports-backfill --from YYYY-MM-DD --to YYYY-MM-DD` (default max 730 days; use `--max-days N` to override).
 
 Stored table: `reports_daily`
 - `report_date` (DATE, local day)

@@ -109,6 +109,7 @@ func runReportsBackfill(args []string) {
   configPath := fs.String("config", "/etc/lightningos/config.yaml", "Path to config.yaml")
   fromStr := fs.String("from", "", "Start date (YYYY-MM-DD)")
   toStr := fs.String("to", "", "End date (YYYY-MM-DD)")
+  maxDays := fs.Int("max-days", 0, "Override max range in days (0 uses default limit)")
   _ = fs.Parse(args)
 
   if strings.TrimSpace(*fromStr) == "" || strings.TrimSpace(*toStr) == "" {
@@ -149,8 +150,16 @@ func runReportsBackfill(args []string) {
   if err != nil {
     logger.Fatalf("reports-backfill failed: invalid --to date")
   }
-  if err := reports.ValidateCustomRange(startDate, endDate); err != nil {
-    logger.Fatalf("reports-backfill failed: %v", err)
+  if endDate.Before(startDate) {
+    logger.Fatalf("reports-backfill failed: invalid range")
+  }
+  limit := *maxDays
+  if limit <= 0 {
+    limit = reports.CustomRangeDaysLimit()
+  }
+  days := int(endDate.Sub(startDate).Hours()/24) + 1
+  if days > limit {
+    logger.Fatalf("reports-backfill failed: range too large (max %d days)", limit)
   }
 
   logger.Printf("reports: backfill %s -> %s", startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))

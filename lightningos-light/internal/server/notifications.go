@@ -1220,17 +1220,42 @@ func (n *Notifier) runForwards() {
 
     client := lnrpc.NewLightningClient(conn)
     endTime := uint64(time.Now().Unix())
-    res, err := client.ForwardingHistory(context.Background(), &lnrpc.ForwardingHistoryRequest{
-      StartTime: 0,
-      EndTime: endTime,
-      IndexOffset: offset,
-      NumMaxEvents: 200,
-      PeerAliasLookup: true,
-    })
+    fetchForwards := func(index uint32) (*lnrpc.ForwardingHistoryResponse, error) {
+      return client.ForwardingHistory(context.Background(), &lnrpc.ForwardingHistoryRequest{
+        StartTime: 0,
+        EndTime: endTime,
+        IndexOffset: index,
+        NumMaxEvents: 200,
+        PeerAliasLookup: true,
+      })
+    }
+
+    res, err := fetchForwards(offset)
     _ = conn.Close()
     if err != nil {
       n.logger.Printf("notifications: forwards poll failed: %v", err)
       continue
+    }
+    if res != nil && res.LastOffsetIndex < offset {
+      offset = 0
+      ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+      _ = n.setCursor(ctx, "forwards_offset", "0")
+      cancel()
+      res, err = fetchForwards(offset)
+      if err != nil {
+        n.logger.Printf("notifications: forwards poll failed after reset: %v", err)
+        continue
+      }
+    } else if res != nil && len(res.ForwardingEvents) == 0 && offset > 0 {
+      offset = 0
+      ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+      _ = n.setCursor(ctx, "forwards_offset", "0")
+      cancel()
+      res, err = fetchForwards(offset)
+      if err != nil {
+        n.logger.Printf("notifications: forwards poll failed after empty reset: %v", err)
+        continue
+      }
     }
 
     for _, fwd := range res.ForwardingEvents {

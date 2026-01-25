@@ -90,6 +90,23 @@ func BuildTimeRangeForToday(now time.Time, loc *time.Location) TimeRange {
   }
 }
 
+func BuildTimeRangeForLookback(now time.Time, loc *time.Location, hours int) TimeRange {
+  if loc == nil {
+    loc = time.Local
+  }
+  if hours <= 0 {
+    return BuildTimeRangeForToday(now, loc)
+  }
+  localNow := now.In(loc)
+  startLocal := localNow.Add(-time.Duration(hours) * time.Hour)
+  return TimeRange{
+    StartLocal: startLocal,
+    EndLocal: localNow,
+    StartUTC: startLocal.UTC(),
+    EndUTC: localNow.UTC(),
+  }
+}
+
 func dateOnly(value time.Time, loc *time.Location) time.Time {
   if loc == nil {
     loc = time.Local

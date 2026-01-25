@@ -153,6 +153,12 @@ export const getReportsCustom = (from: string, to: string) =>
 export const getReportsSummary = (range: string) =>
   request(`/api/reports/summary?range=${encodeURIComponent(range)}`)
 export const getReportsLive = () => request('/api/reports/live')
+export const getReportsConfig = () => request('/api/reports/config')
+export const updateReportsConfig = (payload: {
+  live_timeout_sec?: number | null
+  live_lookback_hours?: number | null
+  run_timeout_sec?: number | null
+}) => request('/api/reports/config', { method: 'POST', body: JSON.stringify(payload) })
 
 export const getApps = () => request('/api/apps')
 export const getAppAdminPassword = (id: string) => request(`/api/apps/${id}/admin-password`)

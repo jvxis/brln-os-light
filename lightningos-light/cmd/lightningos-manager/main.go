@@ -66,7 +66,7 @@ func runReports(args []string) {
     logger.Fatalf("reports-run failed: %v", err)
   }
 
-  ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+  ctx, cancel := context.WithTimeout(context.Background(), reportsRunTimeout())
   defer cancel()
 
   pool, err := pgxpool.New(ctx, dsn)
@@ -155,7 +155,7 @@ func runReportsBackfill(args []string) {
 
   logger.Printf("reports: backfill %s -> %s", startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
   for day := startDate; !day.After(endDate); day = day.AddDate(0, 0, 1) {
-    dayCtx, dayCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+    dayCtx, dayCancel := context.WithTimeout(context.Background(), reportsRunTimeout())
     row, err := svc.RunDaily(dayCtx, day, loc)
     dayCancel()
     if err != nil {
@@ -169,4 +169,15 @@ func runReportsBackfill(args []string) {
       row.Metrics.NetRoutingProfitSat,
     )
   }
+}
+
+func reportsRunTimeout() time.Duration {
+  raw := strings.TrimSpace(os.Getenv("REPORTS_RUN_TIMEOUT_SEC"))
+  if raw == "" {
+    return 2 * time.Minute
+  }
+  if parsed, err := time.ParseDuration(raw + "s"); err == nil && parsed > 0 {
+    return parsed
+  }
+  return 2 * time.Minute
 }

@@ -154,6 +154,8 @@ sudo chmod 640 /etc/lightningos/secrets.env
 - NOTIFICATIONS_PG_DSN e NOTIFICATIONS_PG_ADMIN_DSN
 - LND_PG_DSN somente se o LND usa Postgres
 - Opcional: BITCOIN_SOURCE=local ou BITCOIN_SOURCE=remote para forcar o modo
+- Opcional: NOTIFICATIONS_FORWARDS_BACKFILL=1 para backfill completo de forwards (ver secao abaixo)
+- Opcional: REPORTS_LIVE_TIMEOUT_SEC e REPORTS_LIVE_LOOKBACK_HOURS para ajustar o relatorio ao vivo (ver secao abaixo)
 
 Exemplo de DSNs:
 ```
@@ -161,6 +163,53 @@ NOTIFICATIONS_PG_DSN=postgres://losapp:SENHA@127.0.0.1:5432/lightningos?sslmode=
 NOTIFICATIONS_PG_ADMIN_DSN=postgres://losadmin:SENHA@127.0.0.1:5432/postgres?sslmode=disable
 LND_PG_DSN=postgres://lndpg:SENHA@127.0.0.1:5432/lnd?sslmode=disable
 ```
+
+## Relatorios ao vivo (timeout/volume alto)
+Em nodes com volume muito alto, o relatorio ao vivo (hoje 00:00 -> agora) pode estourar timeout.
+Voce pode aumentar o timeout e/ou reduzir a janela:
+```
+REPORTS_LIVE_TIMEOUT_SEC=60
+REPORTS_LIVE_LOOKBACK_HOURS=6
+```
+
+Depois disso, reinicie o manager:
+```bash
+sudo systemctl restart lightningos-manager
+```
+
+## Relatorio diario (reports-run) - timeout
+Se o relatorio diario estiver falhando em nodes com alto volume, aumente o timeout:
+```
+REPORTS_RUN_TIMEOUT_SEC=300
+```
+Depois reinicie o timer/servico ou rode manualmente:
+```bash
+sudo systemctl restart lightningos-reports.timer
+# ou manual:
+/opt/lightningos/manager/lightningos-manager reports-run
+```
+
+## Notificacoes - Backfill de forwards (opcional)
+Por padrao o LightningOS evita backfill completo de forwards (nodes com historico grande podem levar horas).
+Se voce quiser trazer todo o historico de forwards:
+1) Edite o secrets.env:
+```bash
+sudo ${EDITOR:-nano} /etc/lightningos/secrets.env
+```
+2) Adicione:
+```
+NOTIFICATIONS_FORWARDS_BACKFILL=1
+```
+3) Zere o cursor (opcional, recomendado para forcar backfill):
+```bash
+psql "$NOTIFICATIONS_PG_DSN" -c "delete from notification_cursors where key in ('forwards_after','forwards_offset');"
+```
+4) Reinicie o manager:
+```bash
+sudo systemctl restart lightningos-manager
+```
+
+Para voltar ao modo rapido, remova a variavel NOTIFICATIONS_FORWARDS_BACKFILL do secrets.env e reinicie o manager.
 
 ## Postgres - Trilha A (LND em Postgres)
 1) Verifique o backend do LND:

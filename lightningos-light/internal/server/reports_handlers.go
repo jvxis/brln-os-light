@@ -4,6 +4,8 @@ import (
   "context"
   "fmt"
   "net/http"
+  "os"
+  "strconv"
   "strings"
   "time"
 
@@ -150,10 +152,10 @@ func (s *Server) handleReportsLive(w http.ResponseWriter, r *http.Request) {
     return
   }
 
-  ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+  ctx, cancel := context.WithTimeout(r.Context(), reportsLiveTimeout())
   defer cancel()
 
-  tr, metrics, err := svc.Live(ctx, time.Now(), time.Local)
+  tr, metrics, err := svc.Live(ctx, time.Now(), time.Local, reportsLiveLookbackHours())
   if err != nil {
     writeError(w, http.StatusServiceUnavailable, "live report unavailable")
     return
@@ -165,6 +167,28 @@ func (s *Server) handleReportsLive(w http.ResponseWriter, r *http.Request) {
   payload.Timezone = reportsTimezoneLabel
 
   writeJSON(w, http.StatusOK, payload)
+}
+
+func reportsLiveTimeout() time.Duration {
+  raw := strings.TrimSpace(os.Getenv("REPORTS_LIVE_TIMEOUT_SEC"))
+  if raw == "" {
+    return 20 * time.Second
+  }
+  if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+    return time.Duration(parsed) * time.Second
+  }
+  return 20 * time.Second
+}
+
+func reportsLiveLookbackHours() int {
+  raw := strings.TrimSpace(os.Getenv("REPORTS_LIVE_LOOKBACK_HOURS"))
+  if raw == "" {
+    return 0
+  }
+  if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+    return parsed
+  }
+  return 0
 }
 
 type reportSeriesResponse struct {

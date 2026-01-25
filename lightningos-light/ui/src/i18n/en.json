@@ -440,6 +440,7 @@
     "lastUpdated": "Last updated {{time}}.",
     "lightning": "Lightning",
     "liveRange": "Today 00:00 - now",
+    "liveWindow": "Live window",
     "liveResults": "Live results",
     "liveUnavailable": "Live report unavailable",
     "loadingLive": "Loading live metrics...",

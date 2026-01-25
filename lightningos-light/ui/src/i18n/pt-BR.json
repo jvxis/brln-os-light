@@ -440,6 +440,7 @@
     "lastUpdated": "Última atualização {{time}}.",
     "lightning": "Lightning",
     "liveRange": "Hoje 00:00 - agora",
+    "liveWindow": "Janela ao vivo",
     "liveResults": "Resultados ao vivo",
     "liveUnavailable": "Relatório ao vivo indisponível",
     "loadingLive": "Carregando métricas ao vivo...",

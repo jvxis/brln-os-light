@@ -127,6 +127,32 @@ export default function Reports() {
     })
   }
 
+  const formatTimeOnly = (value: string) => {
+    const parsed = new Date(value)
+    if (Number.isNaN(parsed.getTime())) {
+      return value
+    }
+    return parsed.toLocaleTimeString(locale, {
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  }
+
+  const formatLiveWindow = (start: string, end: string) => {
+    const startDate = new Date(start)
+    const endDate = new Date(end)
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+      return t('reports.liveRange')
+    }
+    const sameDay = startDate.toDateString() === endDate.toDateString()
+    if (sameDay) {
+      return `${formatTimeOnly(start)} - ${formatTimeOnly(end)}`
+    }
+    const startLabel = formatDateLong(start)
+    const endLabel = formatDateLong(end)
+    return `${startLabel} - ${endLabel}`
+  }
+
   useEffect(() => {
     let active = true
     setSeriesLoading(true)
@@ -263,7 +289,9 @@ export default function Reports() {
         <div className="section-card lg:col-span-3 space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-semibold">{t('reports.liveResults')}</h3>
-            <span className="text-xs text-fog/60">{t('reports.liveRange')}</span>
+            <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-fog">
+              {live ? `${t('reports.liveWindow')}: ${formatLiveWindow(live.start, live.end)}` : t('reports.liveRange')}
+            </span>
           </div>
           {liveLoading && !live && <p className="text-sm text-fog/60">{t('reports.loadingLive')}</p>}
           {liveError && <p className="text-sm text-brass">{liveError}</p>}

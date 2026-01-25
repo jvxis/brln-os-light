@@ -1241,20 +1241,17 @@ func (n *Notifier) runForwards() {
       _ = n.setCursor(ctx, "forwards_after", "0")
       cancel()
     }
-    startTime := after
-    if startTime > 1 {
-      startTime = startTime - 1
-    }
-    if endTime <= startTime {
-      endTime = startTime + 1
+    if endTime <= after {
+      endTime = after + 1
     }
 
-    maxSeen := after
+    var indexOffset uint32
     processed := false
     for {
       res, err := client.ForwardingHistory(context.Background(), &lnrpc.ForwardingHistoryRequest{
-        StartTime: startTime,
+        StartTime: after,
         EndTime: endTime,
+        IndexOffset: indexOffset,
         NumMaxEvents: 200,
         PeerAliasLookup: true,
       })
@@ -1267,7 +1264,7 @@ func (n *Notifier) runForwards() {
       }
 
       for _, fwd := range res.ForwardingEvents {
-        occurredAt, tsSec, tsKey := normalizeForwardTimestamp(fwd)
+        occurredAt, _, tsKey := normalizeForwardTimestamp(fwd)
         amount := int64(fwd.AmtOut)
         fee := int64(fwd.Fee)
         feeMsat := int64(fwd.FeeMsat)
@@ -1287,38 +1284,22 @@ func (n *Notifier) runForwards() {
         ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
         _, _ = n.upsertNotification(ctx, eventKey, evt)
         cancel()
-
-        if tsSec > maxSeen {
-          maxSeen = tsSec
-        }
       }
 
       processed = true
+      if res.LastOffsetIndex <= indexOffset {
+        break
+      }
+      indexOffset = res.LastOffsetIndex
       if len(res.ForwardingEvents) < 200 {
-        break
-      }
-      if maxSeen <= startTime {
-        break
-      }
-      startTime = maxSeen
-      if startTime > 1 {
-        startTime = startTime - 1
-      }
-      if startTime >= endTime {
         break
       }
     }
     _ = conn.Close()
 
-    nextAfter := after
-    if processed && maxSeen > 0 {
-      nextAfter = maxSeen
-    } else if after == 0 {
-      nextAfter = endTime
-    }
-    if nextAfter != after {
+    if processed || after == 0 {
       ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-      _ = n.setCursor(ctx, "forwards_after", strconv.FormatUint(nextAfter, 10))
+      _ = n.setCursor(ctx, "forwards_after", strconv.FormatUint(endTime, 10))
       cancel()
     }
   }

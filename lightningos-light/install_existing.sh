@@ -130,6 +130,22 @@ fix_lightningos_permissions() {
   print_ok "Permissions updated for /etc/lightningos"
 }
 
+fix_lightningos_storage_permissions() {
+  local user="$1"
+  local group="$2"
+  if ! id "$user" >/dev/null 2>&1; then
+    print_warn "User ${user} not found; skipping /var/lib/lightningos ownership"
+    return
+  fi
+  if ! getent group "$group" >/dev/null 2>&1; then
+    print_warn "Group ${group} not found; skipping /var/lib/lightningos ownership"
+    return
+  fi
+  chown -R "$user:$group" /var/lib/lightningos /var/log/lightningos
+  chmod 750 /var/lib/lightningos /var/log/lightningos
+  print_ok "Permissions updated for /var/lib/lightningos"
+}
+
 install_go() {
   print_step "Installing Go ${GO_VERSION}"
   local go_bin
@@ -863,6 +879,7 @@ main() {
   fi
   ensure_manager_service "$manager_user" "$manager_group"
   fix_lightningos_permissions "$manager_group"
+  fix_lightningos_storage_permissions "$manager_user" "$manager_group"
 
   if prompt_yes_no "Install reports timer (requires Postgres)?" "y"; then
     ensure_reports_services

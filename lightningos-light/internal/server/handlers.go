@@ -2022,9 +2022,7 @@ func (s *Server) handleWalletSummary(w http.ResponseWriter, r *http.Request) {
 
   lightningActivity, _ := s.lnd.ListRecent(ctx, walletActivityFetchLimit)
   hashes := s.walletActivitySet()
-  if len(hashes) == 0 {
-    lightningActivity = lightningActivity[:0]
-  } else {
+  if len(hashes) > 0 {
     filtered := lightningActivity[:0]
     for _, item := range lightningActivity {
       if item.PaymentHash == "" {

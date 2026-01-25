@@ -749,7 +749,8 @@ func (n *Notifier) runPayments() {
       }
 
       amount := pay.ValueSat
-      fee := pay.FeeSat
+      feeMsat := paymentFeeMsat(pay)
+      fee := feeMsat / 1000
       occurredAt := time.Unix(0, pay.CreationTimeNs).UTC()
       if pay.CreationTimeNs == 0 {
         occurredAt = time.Now().UTC()
@@ -783,7 +784,7 @@ func (n *Notifier) runPayments() {
         Status: status,
         AmountSat: amount,
         FeeSat: fee,
-        FeeMsat: pay.FeeMsat,
+        FeeMsat: feeMsat,
         PeerPubkey: keysendDestPubkey,
         PaymentHash: paymentHash,
       }
@@ -1202,13 +1203,13 @@ func (n *Notifier) runForwards() {
     }
 
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    cursorVal, _ := n.getCursor(ctx, "forwards_offset")
+    cursorVal, _ := n.getCursor(ctx, "forwards_after")
     cancel()
 
-    var offset uint32
+    var after uint64
     if cursorVal != "" {
-      if parsed, err := strconv.ParseUint(cursorVal, 10, 32); err == nil {
-        offset = uint32(parsed)
+      if parsed, err := strconv.ParseUint(cursorVal, 10, 64); err == nil {
+        after = parsed
       }
     }
 
@@ -1220,76 +1221,96 @@ func (n *Notifier) runForwards() {
 
     client := lnrpc.NewLightningClient(conn)
     endTime := uint64(time.Now().Unix())
-    fetchForwards := func(index uint32) (*lnrpc.ForwardingHistoryResponse, error) {
-      return client.ForwardingHistory(context.Background(), &lnrpc.ForwardingHistoryRequest{
-        StartTime: 0,
+    startTime := after
+    if startTime > 1 {
+      startTime = startTime - 1
+    }
+    if endTime <= startTime {
+      endTime = startTime + 1
+    }
+
+    maxSeen := after
+    processed := false
+    for {
+      res, err := client.ForwardingHistory(context.Background(), &lnrpc.ForwardingHistoryRequest{
+        StartTime: startTime,
         EndTime: endTime,
-        IndexOffset: index,
         NumMaxEvents: 200,
         PeerAliasLookup: true,
       })
-    }
+      if err != nil {
+        n.logger.Printf("notifications: forwards poll failed: %v", err)
+        break
+      }
+      if res == nil || len(res.ForwardingEvents) == 0 {
+        break
+      }
 
-    res, err := fetchForwards(offset)
+      for _, fwd := range res.ForwardingEvents {
+        ts := int64(fwd.TimestampNs)
+        tsKey := fwd.TimestampNs
+        if ts == 0 && fwd.Timestamp > 0 {
+          ts = int64(fwd.Timestamp) * int64(time.Second)
+          tsKey = fwd.Timestamp * uint64(time.Second)
+        }
+        occurredAt := time.Unix(0, ts).UTC()
+        amount := int64(fwd.AmtOut)
+        fee := int64(fwd.Fee)
+        feeMsat := int64(fwd.FeeMsat)
+        evt := Notification{
+          OccurredAt: occurredAt,
+          Type: "forward",
+          Action: "forwarded",
+          Direction: "neutral",
+          Status: "SETTLED",
+          AmountSat: amount,
+          FeeSat: fee,
+          FeeMsat: feeMsat,
+          PeerAlias: strings.TrimSpace(fmt.Sprintf("%s -> %s", fwd.PeerAliasIn, fwd.PeerAliasOut)),
+          ChannelID: int64(fwd.ChanIdOut),
+        }
+        eventKey := fmt.Sprintf("forward:%d:%d:%d", fwd.IncomingHtlcId, fwd.OutgoingHtlcId, tsKey)
+        ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+        _, _ = n.upsertNotification(ctx, eventKey, evt)
+        cancel()
+
+        if fwd.Timestamp > maxSeen {
+          maxSeen = fwd.Timestamp
+        }
+        if fwd.TimestampNs > 0 {
+          tsSec := uint64(fwd.TimestampNs / uint64(time.Second))
+          if tsSec > maxSeen {
+            maxSeen = tsSec
+          }
+        }
+      }
+
+      processed = true
+      if len(res.ForwardingEvents) < 200 {
+        break
+      }
+      if maxSeen <= startTime {
+        break
+      }
+      startTime = maxSeen
+      if startTime > 1 {
+        startTime = startTime - 1
+      }
+      if startTime >= endTime {
+        break
+      }
+    }
     _ = conn.Close()
-    if err != nil {
-      n.logger.Printf("notifications: forwards poll failed: %v", err)
-      continue
-    }
-    if res != nil && res.LastOffsetIndex < offset {
-      offset = 0
-      ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-      _ = n.setCursor(ctx, "forwards_offset", "0")
-      cancel()
-      res, err = fetchForwards(offset)
-      if err != nil {
-        n.logger.Printf("notifications: forwards poll failed after reset: %v", err)
-        continue
-      }
-    } else if res != nil && len(res.ForwardingEvents) == 0 && offset > 0 {
-      offset = 0
-      ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-      _ = n.setCursor(ctx, "forwards_offset", "0")
-      cancel()
-      res, err = fetchForwards(offset)
-      if err != nil {
-        n.logger.Printf("notifications: forwards poll failed after empty reset: %v", err)
-        continue
-      }
-    }
 
-    for _, fwd := range res.ForwardingEvents {
-      ts := int64(fwd.TimestampNs)
-      tsKey := fwd.TimestampNs
-      if ts == 0 && fwd.Timestamp > 0 {
-        ts = int64(fwd.Timestamp) * int64(time.Second)
-        tsKey = fwd.Timestamp * uint64(time.Second)
-      }
-      occurredAt := time.Unix(0, ts).UTC()
-      amount := int64(fwd.AmtOut)
-      fee := int64(fwd.Fee)
-      feeMsat := int64(fwd.FeeMsat)
-      evt := Notification{
-        OccurredAt: occurredAt,
-        Type: "forward",
-        Action: "forwarded",
-        Direction: "neutral",
-        Status: "SETTLED",
-        AmountSat: amount,
-        FeeSat: fee,
-        FeeMsat: feeMsat,
-        PeerAlias: strings.TrimSpace(fmt.Sprintf("%s -> %s", fwd.PeerAliasIn, fwd.PeerAliasOut)),
-        ChannelID: int64(fwd.ChanIdOut),
-      }
-      eventKey := fmt.Sprintf("forward:%d:%d:%d", fwd.IncomingHtlcId, fwd.OutgoingHtlcId, tsKey)
-      ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-      _, _ = n.upsertNotification(ctx, eventKey, evt)
-      cancel()
+    nextAfter := after
+    if processed && maxSeen > 0 {
+      nextAfter = maxSeen
+    } else if after == 0 {
+      nextAfter = endTime
     }
-
-    if res.LastOffsetIndex > offset {
+    if nextAfter != after {
       ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-      _ = n.setCursor(ctx, "forwards_offset", strconv.FormatUint(uint64(res.LastOffsetIndex), 10))
+      _ = n.setCursor(ctx, "forwards_after", strconv.FormatUint(nextAfter, 10))
       cancel()
     }
   }
@@ -1400,8 +1421,9 @@ func (n *Notifier) rebalanceEvent(ctx context.Context, pay *lnrpc.Payment, occur
   }
   if pay != nil {
     evt.AmountSat = pay.ValueSat
-    evt.FeeSat = pay.FeeSat
-    evt.FeeMsat = pay.FeeMsat
+    feeMsat := paymentFeeMsat(pay)
+    evt.FeeMsat = feeMsat
+    evt.FeeSat = feeMsat / 1000
   }
   if info := n.rebalanceRouteInfo(ctx, pay); info != nil {
     if info.PeerLabel != "" {
@@ -1432,6 +1454,32 @@ func rebalanceRouteFromPayment(pay *lnrpc.Payment) *lnrpc.Route {
     }
   }
   return nil
+}
+
+func paymentFeeMsat(pay *lnrpc.Payment) int64 {
+  if pay == nil {
+    return 0
+  }
+  if pay.FeeMsat != 0 {
+    return pay.FeeMsat
+  }
+  if pay.FeeSat != 0 {
+    return pay.FeeSat * 1000
+  }
+  if pay.Fee != 0 {
+    return pay.Fee * 1000
+  }
+  route := rebalanceRouteFromPayment(pay)
+  if route == nil {
+    return 0
+  }
+  if route.TotalFeesMsat != 0 {
+    return route.TotalFeesMsat
+  }
+  if route.TotalFees != 0 {
+    return route.TotalFees * 1000
+  }
+  return 0
 }
 
 func hasKeysendRecord(records map[uint64][]byte) bool {

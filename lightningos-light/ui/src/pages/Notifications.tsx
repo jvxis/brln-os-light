@@ -33,6 +33,11 @@ const arrowForDirection = (value: string) => {
   return { label: '.', tone: 'text-fog/50' }
 }
 
+const trimMemo = (value: string, max = 48) => {
+  if (value.length <= max) return value
+  return `${value.slice(0, max)}...`
+}
+
 const feeMsatTotal = (feeSat: number, feeMsat?: number) => {
   if (feeMsat && feeMsat > 0) {
     return feeMsat
@@ -436,8 +441,13 @@ export default function Notifications() {
                     })
                   }
                 }
+                const memo = typeof item.memo === 'string' ? item.memo.trim() : ''
+                const memoLabel = memo && item.type === 'lightning'
+                  ? t('notifications.memoLabel', { memo: trimMemo(memo) })
+                  : ''
                 const detailParts: Array<string | JSX.Element> = [
                   peerLabel,
+                  memoLabel,
                 ].filter(Boolean)
                 if (item.channel_point) {
                   if (item.type === 'channel') {

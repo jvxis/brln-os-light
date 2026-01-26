@@ -373,6 +373,7 @@
     "feeDetail": "Fee {{fee}} ({{rate}})",
     "feeEarned": "Ganho {{fee}} ({{rate}})",
     "feeLabel": "Fee {{fee}}",
+    "memoLabel": "Memo {{memo}}",
     "linesOption": "{{count}} linhas",
     "filter": {
       "channels": "Canais",

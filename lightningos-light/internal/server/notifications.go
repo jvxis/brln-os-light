@@ -656,13 +656,16 @@ func (n *Notifier) runInvoices() {
       occurredAt := time.Unix(invoice.SettleDate, 0).UTC()
       isKeysend := invoice.IsKeysend
       evtType := "lightning"
-      var keysendPeerPubkey string
-      var keysendPeerAlias string
+      peerPubkey := ""
+      peerAlias := ""
+      ctxPeer, cancelPeer := context.WithTimeout(context.Background(), 4*time.Second)
+      peerPubkey, peerAlias = n.keysendPeerFromInvoice(ctxPeer, invoice)
+      cancelPeer()
+      if peerAlias == "" && peerPubkey != "" {
+        peerAlias = n.lookupNodeAlias(peerPubkey)
+      }
       if isKeysend {
         evtType = "keysend"
-        ctxPeer, cancelPeer := context.WithTimeout(context.Background(), 4*time.Second)
-        keysendPeerPubkey, keysendPeerAlias = n.keysendPeerFromInvoice(ctxPeer, invoice)
-        cancelPeer()
       }
       evt := Notification{
         OccurredAt: occurredAt,
@@ -671,8 +674,8 @@ func (n *Notifier) runInvoices() {
         Direction: "in",
         Status: "SETTLED",
         AmountSat: amount,
-        PeerPubkey: keysendPeerPubkey,
-        PeerAlias: keysendPeerAlias,
+        PeerPubkey: peerPubkey,
+        PeerAlias: peerAlias,
         PaymentHash: hash,
         Memo: invoice.Memo,
       }
@@ -785,6 +788,33 @@ func (n *Notifier) runPayments() {
           continue
         }
       }
+      peerPubkey := ""
+      peerAlias := ""
+      memo := ""
+      if isKeysend {
+        peerPubkey = keysendDestPubkey
+      } else {
+        trimmed := strings.TrimSpace(pay.PaymentRequest)
+        if trimmed != "" {
+          ctxDecode, cancelDecode := context.WithTimeout(context.Background(), 4*time.Second)
+          if decoded, err := n.lnd.DecodeInvoice(ctxDecode, trimmed); err == nil {
+            peerPubkey = strings.TrimSpace(decoded.Destination)
+            memo = strings.TrimSpace(decoded.Memo)
+          }
+          cancelDecode()
+        }
+        if peerPubkey == "" {
+          if route := rebalanceRouteFromPayment(pay); route != nil {
+            hops := route.GetHops()
+            if len(hops) > 0 {
+              peerPubkey = strings.TrimSpace(hops[len(hops)-1].PubKey)
+            }
+          }
+        }
+      }
+      if peerAlias == "" && peerPubkey != "" {
+        peerAlias = n.lookupNodeAlias(peerPubkey)
+      }
       evtType := "lightning"
       if isKeysend {
         evtType = "keysend"
@@ -798,8 +828,10 @@ func (n *Notifier) runPayments() {
         AmountSat: amount,
         FeeSat: fee,
         FeeMsat: feeMsat,
-        PeerPubkey: keysendDestPubkey,
+        PeerPubkey: peerPubkey,
+        PeerAlias: peerAlias,
         PaymentHash: paymentHash,
+        Memo: memo,
       }
 
       ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

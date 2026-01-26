@@ -40,11 +40,15 @@ const feeMsatTotal = (feeSat: number, feeMsat?: number) => {
   return Math.max(0, feeSat) * 1000
 }
 
-const formatFeeDisplay = (feeSat: number, feeMsat?: number) => {
+const formatFeeDisplay = (locale: string, feeSat: number, feeMsat?: number) => {
   const msat = feeMsatTotal(feeSat, feeMsat)
   if (msat <= 0) return ''
   const sats = msat / 1000
-  return `${sats.toFixed(3)} sats`
+  const formatter = new Intl.NumberFormat(locale, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+  return `${formatter.format(sats)} sats`
 }
 
 const formatFeeRate = (amount: number, feeSat: number, feeMsat?: number) => {
@@ -410,12 +414,12 @@ export default function Notifications() {
                 if (feeRate) {
                   if (item.type === 'forward') {
                     feeDetail = t('notifications.feeEarned', {
-                      fee: formatFeeDisplay(item.fee_sat, item.fee_msat),
+                      fee: formatFeeDisplay(locale, item.fee_sat, item.fee_msat),
                       rate: feeRate
                     })
                   } else if (item.type === 'rebalance') {
                     feeDetail = t('notifications.feeDetail', {
-                      fee: formatFeeDisplay(item.fee_sat, item.fee_msat),
+                      fee: formatFeeDisplay(locale, item.fee_sat, item.fee_msat),
                       rate: feeRate
                     })
                   }
@@ -501,8 +505,8 @@ export default function Notifications() {
                     <span className={`text-xs font-mono ${arrow.tone}`}>{arrow.label}</span>
                     <div className="text-right">
                       <div>{item.amount_sat} sats</div>
-                      {formatFeeDisplay(item.fee_sat, item.fee_msat) && (
-                        <div className="text-xs text-fog/50">{t('notifications.feeLabel', { fee: formatFeeDisplay(item.fee_sat, item.fee_msat) })}</div>
+                      {formatFeeDisplay(locale, item.fee_sat, item.fee_msat) && (
+                        <div className="text-xs text-fog/50">{t('notifications.feeLabel', { fee: formatFeeDisplay(locale, item.fee_sat, item.fee_msat) })}</div>
                       )}
                     </div>
                   </div>

@@ -51,6 +51,11 @@ cd lightningos-light
 sudo ./install.sh
 ```
 
+**Attention (existing nodes):** If you already have a Lightning node with LND/Bitcoin running, do not use `install.sh`.  
+Follow the Existing Node Guide instead:
+- PT-BR: `docs/13_EXISTING_NODE_GUIDE_PT_BR.md`
+- EN: `docs/14_EXISTING_NODE_GUIDE_EN.md`
+
 Access the UI from another machine on the same LAN:
 `https://<SERVER_LAN_IP>:8443`
 

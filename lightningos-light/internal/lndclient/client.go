@@ -861,6 +861,14 @@ func (c *Client) ListPendingChannels(ctx context.Context) ([]PendingChannelInfo,
     if alias := aliasMap[pubkey]; alias != "" {
       return alias
     }
+    info, err := client.GetNodeInfo(ctx, &lnrpc.NodeInfoRequest{PubKey: pubkey, IncludeChannels: false})
+    if err == nil && info.GetNode() != nil {
+      alias := info.GetNode().Alias
+      if alias != "" {
+        aliasMap[pubkey] = alias
+        return alias
+      }
+    }
     return ""
   }
 

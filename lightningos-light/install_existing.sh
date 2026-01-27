@@ -171,7 +171,17 @@ install_go() {
   fi
 
   rm -rf /usr/local/go
-  local tmp="/tmp/go.tgz"
+  local tmp=""
+  if tmp=$(mktemp /tmp/go.tgz.XXXXXX 2>/dev/null); then
+    :
+  elif tmp=$(mktemp /var/tmp/go.tgz.XXXXXX 2>/dev/null); then
+    :
+  elif tmp=$(mktemp /root/go.tgz.XXXXXX 2>/dev/null); then
+    :
+  else
+    print_warn "No writable temp directory for Go download"
+    exit 1
+  fi
   local primary_url="$GO_TARBALL_URL"
   local fallback_url="https://dl.google.com/go/go${GO_VERSION}.linux-amd64.tar.gz"
   if [[ "$primary_url" == "$fallback_url" ]]; then

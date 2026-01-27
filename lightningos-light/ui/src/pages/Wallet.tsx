@@ -6,7 +6,11 @@ import { getLocale } from '../i18n'
 const emptySummary = {
   balances: {
     onchain_sat: 0,
-    lightning_sat: 0
+    lightning_sat: 0,
+    onchain_confirmed_sat: 0,
+    onchain_unconfirmed_sat: 0,
+    lightning_local_sat: 0,
+    lightning_unsettled_local_sat: 0
   },
   activity: []
 }
@@ -176,7 +180,12 @@ export default function Wallet() {
   const isLnAddress = isLightningAddressInput(cleanedPaymentRequest)
   const payAmountSat = Number(payAmount || 0)
   const onchainBalance = summary?.balances?.onchain_sat ?? 0
+  const onchainConfirmedBalance = Number(summary?.balances?.onchain_confirmed_sat ?? onchainBalance)
+  const onchainUnconfirmedBalance = Number(summary?.balances?.onchain_unconfirmed_sat ?? 0)
   const lightningBalance = summary?.balances?.lightning_sat ?? 0
+  const lightningLocalBalance = Number(summary?.balances?.lightning_local_sat ?? lightningBalance)
+  const lightningUnsettledLocalBalance = Number(summary?.balances?.lightning_unsettled_local_sat ?? 0)
+  const lightningTotalBalance = lightningLocalBalance + lightningUnsettledLocalBalance
   const activity = summary?.activity ?? []
   const summaryTone = summaryError && summaryError.toLowerCase().includes('timeout')
     ? 'text-brass'
@@ -422,7 +431,12 @@ export default function Wallet() {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-fog/60">{t('wallet.onchain')}</p>
-                <p className="text-xl">{formatSats(onchainBalance)} sats</p>
+                <p className="text-xl">{formatSats(onchainConfirmedBalance)} sats</p>
+                {onchainUnconfirmedBalance > 0 && (
+                  <p className="mt-1 text-xs text-fog/50">
+                    {t('wallet.onchainUnconfirmed', { amount: formatSats(onchainUnconfirmedBalance) })}
+                  </p>
+                )}
               </div>
               <div className="flex flex-wrap gap-2">
                 <button className="btn-secondary text-xs px-3 py-1.5" onClick={handleAddFunds}>
@@ -550,7 +564,17 @@ export default function Wallet() {
           </div>
           <div className="rounded-2xl border border-white/10 bg-ink/60 p-4">
             <p className="text-fog/60">{t('wallet.lightning')}</p>
-            <p className="text-xl">{formatSats(lightningBalance)} sats</p>
+            <p className="text-xl">{formatSats(lightningLocalBalance)} sats</p>
+            {lightningUnsettledLocalBalance > 0 && (
+              <p className="mt-1 text-xs text-fog/50">
+                {t('wallet.lightningUnsettled', { amount: formatSats(lightningUnsettledLocalBalance) })}
+              </p>
+            )}
+            {lightningUnsettledLocalBalance > 0 && (
+              <p className="mt-1 text-xs text-fog/50">
+                {t('wallet.lightningTotal', { amount: formatSats(lightningTotalBalance) })}
+              </p>
+            )}
             <p className="mt-2 text-xs text-fog/50">{t('wallet.lightningHint')}</p>
           </div>
         </div>

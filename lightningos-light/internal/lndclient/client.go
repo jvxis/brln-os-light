@@ -53,6 +53,10 @@ type macaroonCredential struct {
 type BalanceSummary struct {
   OnchainSat int64
   LightningSat int64
+  OnchainConfirmedSat int64
+  OnchainUnconfirmedSat int64
+  LightningLocalSat int64
+  LightningUnsettledLocalSat int64
   Warnings []string
 }
 
@@ -196,6 +200,8 @@ func (c *Client) GetBalances(ctx context.Context) (BalanceSummary, error) {
     summary.Warnings = append(summary.Warnings, "On-chain balance unavailable")
   } else {
     summary.OnchainSat = wallet.TotalBalance
+    summary.OnchainConfirmedSat = wallet.ConfirmedBalance
+    summary.OnchainUnconfirmedSat = wallet.UnconfirmedBalance
     walletOK = true
   }
 
@@ -210,6 +216,13 @@ func (c *Client) GetBalances(ctx context.Context) (BalanceSummary, error) {
     summary.Warnings = append(summary.Warnings, "Lightning balance unavailable")
   } else {
     summary.LightningSat = channelBal.Balance
+    summary.LightningLocalSat = channelBal.Balance
+    if local := channelBal.GetLocalBalance(); local != nil {
+      summary.LightningLocalSat = int64(local.GetSat())
+    }
+    if unsettled := channelBal.GetUnsettledLocalBalance(); unsettled != nil {
+      summary.LightningUnsettledLocalSat = int64(unsettled.GetSat())
+    }
     channelOK = true
   }
 

@@ -2010,6 +2010,10 @@ func (s *Server) handleWalletSummary(w http.ResponseWriter, r *http.Request) {
         "balances": map[string]int64{
           "onchain_sat": 0,
           "lightning_sat": 0,
+          "onchain_confirmed_sat": 0,
+          "onchain_unconfirmed_sat": 0,
+          "lightning_local_sat": 0,
+          "lightning_unsettled_local_sat": 0,
         },
         "activity": []any{},
         "warning": "LND warming up after restart",
@@ -2043,6 +2047,10 @@ func (s *Server) handleWalletSummary(w http.ResponseWriter, r *http.Request) {
     "balances": map[string]int64{
       "onchain_sat": balances.OnchainSat,
       "lightning_sat": balances.LightningSat,
+      "onchain_confirmed_sat": balances.OnchainConfirmedSat,
+      "onchain_unconfirmed_sat": balances.OnchainUnconfirmedSat,
+      "lightning_local_sat": balances.LightningLocalSat,
+      "lightning_unsettled_local_sat": balances.LightningUnsettledLocalSat,
     },
     "activity": activity,
   }

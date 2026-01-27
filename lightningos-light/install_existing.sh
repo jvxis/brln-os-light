@@ -601,6 +601,68 @@ ensure_group_membership() {
   done
 }
 
+configure_sudoers_for_user() {
+  local user="$1"
+  if [[ -z "$user" ]]; then
+    print_warn "Missing user for sudoers setup"
+    return
+  fi
+  if [[ "$user" == "root" ]]; then
+    print_ok "Manager user is root; sudoers not needed"
+    return
+  fi
+  if ! command -v systemctl >/dev/null 2>&1; then
+    print_warn "systemctl not found; skipping sudoers setup"
+    return
+  fi
+
+  print_step "Configuring sudoers for ${user}"
+  local systemctl_path apt_get_path apt_path dpkg_path docker_path docker_compose_path systemd_run_path smartctl_path
+  systemctl_path=$(command -v systemctl || true)
+  apt_get_path=$(command -v apt-get || true)
+  apt_path=$(command -v apt || true)
+  dpkg_path=$(command -v dpkg || true)
+  docker_path=$(command -v docker || true)
+  docker_compose_path=$(command -v docker-compose || true)
+  systemd_run_path=$(command -v systemd-run || true)
+  smartctl_path=$(command -v smartctl || true)
+  if [[ -z "$docker_path" ]]; then
+    docker_path="/usr/bin/docker"
+  fi
+  if [[ -z "$docker_compose_path" ]]; then
+    docker_compose_path="/usr/bin/docker-compose"
+  fi
+  if [[ -z "$systemd_run_path" ]]; then
+    systemd_run_path="/usr/bin/systemd-run"
+  fi
+  if [[ -z "$smartctl_path" ]]; then
+    smartctl_path="/usr/sbin/smartctl"
+  fi
+  local system_cmds
+  system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${smartctl_path} *"
+  local app_cmds=()
+  [[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")
+  [[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")
+  [[ -n "$dpkg_path" ]] && app_cmds+=("${dpkg_path} *")
+  [[ -n "$docker_path" ]] && app_cmds+=("${docker_path} *")
+  [[ -n "$docker_compose_path" ]] && app_cmds+=("${docker_compose_path} *")
+  [[ -n "$systemd_run_path" ]] && app_cmds+=("${systemd_run_path} *")
+  local app_cmds_line
+  app_cmds_line=$(IFS=", "; echo "${app_cmds[*]}")
+  if [[ -z "$app_cmds_line" ]]; then
+    app_cmds_line="/bin/true"
+  fi
+  local sudoers="/etc/sudoers.d/lightningos"
+  cat > "$sudoers" <<EOF
+Defaults:${user} !requiretty
+Cmnd_Alias LIGHTNINGOS_SYSTEM = ${system_cmds}
+Cmnd_Alias LIGHTNINGOS_APPS = ${app_cmds_line}
+${user} ALL=NOPASSWD: LIGHTNINGOS_SYSTEM, LIGHTNINGOS_APPS
+EOF
+  chmod 440 "$sudoers"
+  print_ok "Sudoers configured for ${user}"
+}
+
 check_service() {
   local svc="$1"
   if systemctl is-active --quiet "$svc"; then
@@ -1078,6 +1140,9 @@ main() {
   fi
   if prompt_yes_no "Allow ${manager_user} to run smartctl via sudo (no password)?" "y"; then
     configure_smartctl_sudoers "$manager_user" || print_warn "SMART data may be unavailable"
+  fi
+  if prompt_yes_no "Enable App Store (requires passwordless sudo for ${manager_user})?" "y"; then
+    configure_sudoers_for_user "$manager_user"
   fi
   ensure_manager_service "$manager_user" "$manager_group"
   if [[ -n "$LND_USER" && -n "$LND_GROUP" ]]; then

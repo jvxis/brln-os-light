@@ -11,6 +11,7 @@ import (
   "net/http"
   "net/url"
   "os"
+  "sort"
   "strconv"
   "strings"
   "sync"
@@ -30,6 +31,7 @@ const (
   paymentsPollInterval = 15 * time.Second
   forwardsPollInterval = 30 * time.Second
   pendingChannelsPollInterval = 30 * time.Second
+  paymentsPendingMaxAge = 48 * time.Hour
 )
 
 const (
@@ -37,6 +39,8 @@ const (
   notificationsSecretsDir = "/etc/lightningos"
   notificationsDBName = "lightningos"
   notificationsDBUser = "losapp"
+  paymentsPendingCursorKey = "payments_inflight"
+  paymentsPendingMax = 200
 )
 
 type Notification struct {
@@ -65,6 +69,11 @@ type rebalanceRouteInfo struct {
 
 type notificationRowScanner interface {
   Scan(dest ...any) error
+}
+
+type pendingPaymentEntry struct {
+  Hash string `json:"hash"`
+  LastSeen int64 `json:"last_seen"`
 }
 
 type Notifier struct {
@@ -491,6 +500,83 @@ on conflict (key) do update set value=excluded.value, updated_at=excluded.update
   return err
 }
 
+func (n *Notifier) loadPendingPayments(ctx context.Context) map[string]int64 {
+  pending := map[string]int64{}
+  if n == nil || n.db == nil {
+    return pending
+  }
+  raw, err := n.getCursor(ctx, paymentsPendingCursorKey)
+  if err != nil || strings.TrimSpace(raw) == "" {
+    return pending
+  }
+
+  var entries []pendingPaymentEntry
+  if err := json.Unmarshal([]byte(raw), &entries); err == nil {
+    now := time.Now().Unix()
+    for _, entry := range entries {
+      hash := normalizeHash(entry.Hash)
+      if hash == "" {
+        continue
+      }
+      lastSeen := entry.LastSeen
+      if lastSeen <= 0 {
+        lastSeen = now
+      }
+      pending[hash] = lastSeen
+    }
+    return pending
+  }
+
+  var legacy map[string]int64
+  if err := json.Unmarshal([]byte(raw), &legacy); err == nil {
+    now := time.Now().Unix()
+    for hash, lastSeen := range legacy {
+      normalized := normalizeHash(hash)
+      if normalized == "" {
+        continue
+      }
+      if lastSeen <= 0 {
+        lastSeen = now
+      }
+      pending[normalized] = lastSeen
+    }
+  }
+  return pending
+}
+
+func (n *Notifier) storePendingPayments(ctx context.Context, pending map[string]int64) {
+  if n == nil || n.db == nil {
+    return
+  }
+  cutoff := time.Now().Add(-paymentsPendingMaxAge).Unix()
+  entries := make([]pendingPaymentEntry, 0, len(pending))
+  now := time.Now().Unix()
+  for hash, lastSeen := range pending {
+    normalized := normalizeHash(hash)
+    if normalized == "" {
+      continue
+    }
+    if lastSeen <= 0 {
+      lastSeen = now
+    }
+    if lastSeen < cutoff {
+      continue
+    }
+    entries = append(entries, pendingPaymentEntry{Hash: normalized, LastSeen: lastSeen})
+  }
+  sort.Slice(entries, func(i, j int) bool {
+    return entries[i].LastSeen > entries[j].LastSeen
+  })
+  if len(entries) > paymentsPendingMax {
+    entries = entries[:paymentsPendingMax]
+  }
+  payload, err := json.Marshal(entries)
+  if err != nil {
+    return
+  }
+  _ = n.setCursor(ctx, paymentsPendingCursorKey, string(payload))
+}
+
 func (n *Notifier) reconcileRebalance(ctx context.Context, paymentHash string) {
   normalized := normalizeHash(paymentHash)
   if normalized == "" {
@@ -710,6 +796,114 @@ func (n *Notifier) runInvoices() {
 }
 
 func (n *Notifier) runPayments() {
+  pending := map[string]int64{}
+  if n != nil {
+    ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+    pending = n.loadPendingPayments(ctx)
+    cancel()
+  }
+
+  processPayment := func(pay *lnrpc.Payment) {
+    if pay == nil {
+      return
+    }
+    paymentHash := normalizeHash(pay.PaymentHash)
+    if paymentHash == "" {
+      return
+    }
+    status := pay.Status.String()
+    if status == "IN_FLIGHT" {
+      return
+    }
+    if status != "SUCCEEDED" && isProbePayment(pay) {
+      return
+    }
+
+    amount := pay.ValueSat
+    feeMsat := paymentFeeMsat(pay)
+    fee := feeMsat / 1000
+    occurredAt := time.Unix(0, pay.CreationTimeNs).UTC()
+    if pay.CreationTimeNs == 0 {
+      occurredAt = time.Now().UTC()
+    }
+    isKeysend := isKeysendPayment(pay)
+    keysendDestPubkey := ""
+    if isKeysend {
+      keysendDestPubkey = keysendDestinationFromPayment(pay)
+    }
+    isRebalance := false
+    if !isKeysend {
+      ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+      isRebalance = n.isSelfPayment(ctx, pay.PaymentRequest, pay)
+      if !isRebalance && n.hasInvoiceHash(ctx, paymentHash) {
+        isRebalance = true
+      }
+      cancel()
+      if status != "SUCCEEDED" && isRebalance {
+        return
+      }
+    }
+    peerPubkey := ""
+    peerAlias := ""
+    memo := ""
+    if isKeysend {
+      peerPubkey = keysendDestPubkey
+    } else {
+      trimmed := strings.TrimSpace(pay.PaymentRequest)
+      if trimmed != "" {
+        ctxDecode, cancelDecode := context.WithTimeout(context.Background(), 4*time.Second)
+        if decoded, err := n.lnd.DecodeInvoice(ctxDecode, trimmed); err == nil {
+          peerPubkey = strings.TrimSpace(decoded.Destination)
+          memo = strings.TrimSpace(decoded.Memo)
+        }
+        cancelDecode()
+      }
+      if peerPubkey == "" {
+        if route := rebalanceRouteFromPayment(pay); route != nil {
+          hops := route.GetHops()
+          if len(hops) > 0 {
+            peerPubkey = strings.TrimSpace(hops[len(hops)-1].PubKey)
+          }
+        }
+      }
+    }
+    if peerAlias == "" && peerPubkey != "" {
+      peerAlias = n.lookupNodeAlias(peerPubkey)
+    }
+
+    evtType := "lightning"
+    if isKeysend {
+      evtType = "keysend"
+    }
+    evt := Notification{
+      OccurredAt: occurredAt,
+      Type: evtType,
+      Action: "sent",
+      Direction: "out",
+      Status: status,
+      AmountSat: amount,
+      FeeSat: fee,
+      FeeMsat: feeMsat,
+      PeerPubkey: peerPubkey,
+      PeerAlias: peerAlias,
+      PaymentHash: paymentHash,
+      Memo: memo,
+    }
+
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    if isRebalance {
+      evt = n.rebalanceEvent(ctx, pay, occurredAt)
+    }
+    if _, err := n.upsertNotification(ctx, fmt.Sprintf("payment:%s", paymentHash), evt); err == nil {
+      if isRebalance {
+        _ = n.removeRebalanceInvoice(ctx, paymentHash)
+      } else {
+        n.reconcileRebalance(ctx, paymentHash)
+      }
+    }
+    cancel()
+  }
+
   for {
     select {
     case <-n.stop:
@@ -748,6 +942,8 @@ func (n *Notifier) runPayments() {
     }
 
     maxIndex := indexOffset
+    pendingDirty := false
+    now := time.Now().Unix()
     for _, pay := range res.Payments {
       if pay.PaymentIndex <= indexOffset {
         continue
@@ -761,99 +957,67 @@ func (n *Notifier) runPayments() {
       }
       status := pay.Status.String()
       if status == "IN_FLIGHT" {
+        if pending[paymentHash] != now {
+          pending[paymentHash] = now
+          pendingDirty = true
+        }
         continue
       }
       if status != "SUCCEEDED" && isProbePayment(pay) {
+        if _, ok := pending[paymentHash]; ok {
+          delete(pending, paymentHash)
+          pendingDirty = true
+        }
         continue
       }
+      processPayment(pay)
+      if _, ok := pending[paymentHash]; ok {
+        delete(pending, paymentHash)
+        pendingDirty = true
+      }
+    }
 
-      amount := pay.ValueSat
-      feeMsat := paymentFeeMsat(pay)
-      fee := feeMsat / 1000
-      occurredAt := time.Unix(0, pay.CreationTimeNs).UTC()
-      if pay.CreationTimeNs == 0 {
-        occurredAt = time.Now().UTC()
-      }
-      isKeysend := isKeysendPayment(pay)
-      keysendDestPubkey := ""
-      if isKeysend {
-        keysendDestPubkey = keysendDestinationFromPayment(pay)
-      }
-      isRebalance := false
-      if !isKeysend {
-        ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
-        isRebalance = n.isSelfPayment(ctx, pay.PaymentRequest, pay)
-        if !isRebalance && n.hasInvoiceHash(ctx, paymentHash) {
-          isRebalance = true
-        }
-        cancel()
-        if status != "SUCCEEDED" && isRebalance {
+    if len(pending) > 0 {
+      cutoff := time.Now().Add(-paymentsPendingMaxAge).Unix()
+      for hash, lastSeen := range pending {
+        if lastSeen < cutoff {
+          delete(pending, hash)
+          pendingDirty = true
           continue
         }
-      }
-      peerPubkey := ""
-      peerAlias := ""
-      memo := ""
-      if isKeysend {
-        peerPubkey = keysendDestPubkey
-      } else {
-        trimmed := strings.TrimSpace(pay.PaymentRequest)
-        if trimmed != "" {
-          ctxDecode, cancelDecode := context.WithTimeout(context.Background(), 4*time.Second)
-          if decoded, err := n.lnd.DecodeInvoice(ctxDecode, trimmed); err == nil {
-            peerPubkey = strings.TrimSpace(decoded.Destination)
-            memo = strings.TrimSpace(decoded.Memo)
+        ctxLookup, cancelLookup := context.WithTimeout(context.Background(), 6*time.Second)
+        pay, err := n.lookupPaymentByHash(ctxLookup, hash)
+        cancelLookup()
+        if err != nil || pay == nil {
+          continue
+        }
+        status := pay.Status.String()
+        if status == "IN_FLIGHT" {
+          if pending[hash] != now {
+            pending[hash] = now
+            pendingDirty = true
           }
-          cancelDecode()
+          continue
         }
-        if peerPubkey == "" {
-          if route := rebalanceRouteFromPayment(pay); route != nil {
-            hops := route.GetHops()
-            if len(hops) > 0 {
-              peerPubkey = strings.TrimSpace(hops[len(hops)-1].PubKey)
-            }
-          }
+        if status != "SUCCEEDED" && isProbePayment(pay) {
+          delete(pending, hash)
+          pendingDirty = true
+          continue
         }
+        processPayment(pay)
+        delete(pending, hash)
+        pendingDirty = true
       }
-      if peerAlias == "" && peerPubkey != "" {
-        peerAlias = n.lookupNodeAlias(peerPubkey)
-      }
-      evtType := "lightning"
-      if isKeysend {
-        evtType = "keysend"
-      }
-      evt := Notification{
-        OccurredAt: occurredAt,
-        Type: evtType,
-        Action: "sent",
-        Direction: "out",
-        Status: status,
-        AmountSat: amount,
-        FeeSat: fee,
-        FeeMsat: feeMsat,
-        PeerPubkey: peerPubkey,
-        PeerAlias: peerAlias,
-        PaymentHash: paymentHash,
-        Memo: memo,
-      }
-
-      ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-      if isRebalance {
-        evt = n.rebalanceEvent(ctx, pay, occurredAt)
-      }
-      if _, err := n.upsertNotification(ctx, fmt.Sprintf("payment:%s", paymentHash), evt); err == nil {
-        if isRebalance {
-          _ = n.removeRebalanceInvoice(ctx, paymentHash)
-        } else {
-          n.reconcileRebalance(ctx, paymentHash)
-        }
-      }
-      cancel()
     }
 
     if maxIndex > indexOffset {
       ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
       _ = n.setCursor(ctx, "payments_index", strconv.FormatUint(maxIndex, 10))
+      cancel()
+    }
+    if pendingDirty {
+      ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+      n.storePendingPayments(ctx, pending)
       cancel()
     }
   }

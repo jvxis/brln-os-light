@@ -114,6 +114,27 @@ sudo rm -f /data/lnd/tls.cert /data/lnd/tls.key
 sudo systemctl restart lnd
 ```
 
+Manual alternative (no script):
+1) Find the docker0 gateway IP:
+```bash
+ip -4 addr show docker0 | awk '/inet / {print $2}' | cut -d/ -f1
+```
+
+2) In `lnd.conf`, add these lines **outside any section** (or inside `[Application Options]`):
+```
+[Application Options]
+rpclisten=127.0.0.1:10009
+rpclisten=YOUR_GATEWAY:10009
+tlsextraip=YOUR_GATEWAY
+tlsextradomain=host.docker.internal
+```
+
+3) Restart LND to regenerate TLS:
+```bash
+sudo rm -f /data/lnd/tls.cert /data/lnd/tls.key
+sudo systemctl restart lnd
+```
+
 After that, install LNDg from the App Store.
 
 ## Important about /data/lnd

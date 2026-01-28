@@ -15,6 +15,8 @@ func (s *Server) routes() http.Handler {
   r.Use(s.requestLogger())
 
   r.Get("/api/health", s.handleHealth)
+  r.Get("/api/amboss/health", s.handleAmbossHealthGet)
+  r.Post("/api/amboss/health", s.handleAmbossHealthPost)
   r.Get("/api/system", s.handleSystem)
   r.Get("/api/disk", s.handleDisk)
   r.Get("/api/postgres", s.handlePostgres)

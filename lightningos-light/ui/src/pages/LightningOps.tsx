@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { boostPeers, closeChannel, connectPeer, disconnectPeer, getLnChannelFees, getLnChannels, getLnPeers, getMempoolFees, openChannel, updateChannelFees } from '../api'
+import { boostPeers, closeChannel, connectPeer, disconnectPeer, getAmbossHealth, getLnChannelFees, getLnChannels, getLnPeers, getMempoolFees, openChannel, updateAmbossHealth, updateChannelFees } from '../api'
 
 type Channel = {
   channel_point: string
@@ -47,6 +47,17 @@ type Peer = {
   last_error_time?: number
 }
 
+type AmbossHealthStatus = {
+  enabled: boolean
+  status: string
+  last_ok_at?: string
+  last_error?: string
+  last_error_at?: string
+  last_attempt_at?: string
+  interval_sec?: number
+  consecutive_failures?: number
+}
+
 export default function LightningOps() {
   const { t } = useTranslation()
   const [channels, setChannels] = useState<Channel[]>([])
@@ -71,6 +82,10 @@ export default function LightningOps() {
   const [peers, setPeers] = useState<Peer[]>([])
   const [peerListStatus, setPeerListStatus] = useState('')
   const [peerActionStatus, setPeerActionStatus] = useState('')
+
+  const [amboss, setAmboss] = useState<AmbossHealthStatus | null>(null)
+  const [ambossStatus, setAmbossStatus] = useState('')
+  const [ambossBusy, setAmbossBusy] = useState(false)
 
   const [openPeer, setOpenPeer] = useState('')
   const [openAmount, setOpenAmount] = useState('')
@@ -122,14 +137,47 @@ export default function LightningOps() {
     return t('lightningOps.ageDays', { count: days })
   }
 
+  const formatAmbossTime = (value?: string) => {
+    if (!value) return t('common.na')
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return t('common.unknownTime')
+    return date.toLocaleString()
+  }
+
+  const ambossTone = (): 'ok' | 'warn' | 'muted' => {
+    if (!amboss?.enabled) return 'muted'
+    if (amboss?.status === 'ok') return 'ok'
+    if (amboss?.status === 'checking') return 'muted'
+    return 'warn'
+  }
+
+  const badgeClass = (tone: 'ok' | 'warn' | 'muted') => {
+    if (tone === 'ok') {
+      return 'bg-emerald-500/15 text-emerald-200 border border-emerald-400/30'
+    }
+    if (tone === 'warn') {
+      return 'bg-amber-500/15 text-amber-200 border border-amber-400/30'
+    }
+    return 'bg-white/10 text-fog/60 border border-white/10'
+  }
+
+  const ambossBadgeLabel = () => {
+    if (!amboss?.enabled) return t('common.disabled')
+    if (amboss?.status === 'ok') return t('common.ok')
+    if (amboss?.status === 'checking') return t('common.check')
+    return t('common.check')
+  }
+
   const ambossURL = (pubkey: string) => `https://amboss.space/node/${pubkey}`
 
   const load = async () => {
     setStatus(t('lightningOps.loadingChannels'))
     setPeerListStatus(t('lightningOps.loadingPeers'))
-    const [channelsResult, peersResult] = await Promise.allSettled([
+    setAmbossStatus(t('lightningOps.ambossHealthLoading'))
+    const [channelsResult, peersResult, ambossResult] = await Promise.allSettled([
       getLnChannels(),
-      getLnPeers()
+      getLnPeers(),
+      getAmbossHealth()
     ])
     if (channelsResult.status === 'fulfilled') {
       const res = channelsResult.value
@@ -153,10 +201,38 @@ export default function LightningOps() {
       const message = (peersResult.reason as any)?.message || t('lightningOps.loadPeersFailed')
       setPeerListStatus(message)
     }
+    if (ambossResult.status === 'fulfilled') {
+      setAmboss(ambossResult.value as AmbossHealthStatus)
+      setAmbossStatus('')
+    } else {
+      const message = (ambossResult.reason as any)?.message || t('lightningOps.ambossHealthStatusUnavailable')
+      setAmbossStatus(message)
+    }
   }
 
   useEffect(() => {
     load()
+  }, [])
+
+  useEffect(() => {
+    let mounted = true
+    const fetchAmboss = () => {
+      getAmbossHealth()
+        .then((data) => {
+          if (!mounted) return
+          setAmboss(data as AmbossHealthStatus)
+          setAmbossStatus('')
+        })
+        .catch((err: any) => {
+          if (!mounted) return
+          setAmbossStatus(err?.message || t('lightningOps.ambossHealthStatusUnavailable'))
+        })
+    }
+    const timer = window.setInterval(fetchAmboss, 30000)
+    return () => {
+      mounted = false
+      window.clearInterval(timer)
+    }
   }, [])
 
   useEffect(() => {
@@ -331,6 +407,22 @@ export default function LightningOps() {
       setBoostStatus(err?.message || t('lightningOps.boostFailed'))
     } finally {
       setBoostRunning(false)
+    }
+  }
+
+  const handleToggleAmboss = async () => {
+    if (ambossBusy) return
+    const nextEnabled = !amboss?.enabled
+    setAmbossBusy(true)
+    setAmbossStatus(t('lightningOps.ambossHealthSaving'))
+    try {
+      const res = await updateAmbossHealth({ enabled: nextEnabled })
+      setAmboss(res as AmbossHealthStatus)
+      setAmbossStatus(nextEnabled ? t('lightningOps.ambossHealthEnabled') : t('lightningOps.ambossHealthDisabled'))
+    } catch (err: any) {
+      setAmbossStatus(err?.message || t('lightningOps.ambossHealthSaveFailed'))
+    } finally {
+      setAmbossBusy(false)
     }
   }
 
@@ -905,6 +997,50 @@ export default function LightningOps() {
           <button className="btn-secondary" onClick={handleUpdateFees}>{t('lightningOps.updateFees')}</button>
           {feeStatus && <p className="text-sm text-brass">{feeStatus}</p>}
         </div>
+      </div>
+
+      <div className="section-card space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-semibold">{t('lightningOps.ambossHealthTitle')}</h3>
+            <p className="text-sm text-fog/60">{t('lightningOps.ambossHealthSubtitle')}</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className={`text-[11px] uppercase tracking-wide px-2 py-0.5 rounded-full ${badgeClass(ambossTone())}`}>
+              {ambossBadgeLabel()}
+            </span>
+            <button
+              className={`relative flex h-9 w-36 items-center rounded-full border border-white/10 bg-ink/60 px-2 transition ${ambossBusy ? 'opacity-70' : 'hover:border-white/30'}`}
+              onClick={handleToggleAmboss}
+              type="button"
+              disabled={ambossBusy}
+              aria-label={t('lightningOps.toggleAmbossHealth')}
+            >
+              <span
+                className={`absolute top-1 h-7 w-16 rounded-full bg-glow shadow transition-all ${amboss?.enabled ? 'left-[70px]' : 'left-[6px]'}`}
+              />
+              <span className={`relative z-10 flex-1 text-center text-xs ${!amboss?.enabled ? 'text-ink' : 'text-fog/60'}`}>{t('common.disabled')}</span>
+              <span className={`relative z-10 flex-1 text-center text-xs ${amboss?.enabled ? 'text-ink' : 'text-fog/60'}`}>{t('common.enabled')}</span>
+            </button>
+          </div>
+        </div>
+        {ambossStatus && <p className="text-sm text-brass">{ambossStatus}</p>}
+        <div className="grid gap-3 text-xs text-fog/70 lg:grid-cols-3">
+          <div>
+            {t('lightningOps.ambossHealthLastPing')}: <span className="text-fog">{formatAmbossTime(amboss?.last_ok_at)}</span>
+          </div>
+          <div>
+            {t('lightningOps.ambossHealthLastAttempt')}: <span className="text-fog">{formatAmbossTime(amboss?.last_attempt_at)}</span>
+          </div>
+          <div>
+            {t('lightningOps.ambossHealthInterval')}: <span className="text-fog">{amboss?.interval_sec ? `${amboss.interval_sec}s` : '-'}</span>
+          </div>
+        </div>
+        {amboss?.last_error && (
+          <p className="text-xs text-amber-200">
+            {t('lightningOps.ambossHealthLastError')}: {amboss.last_error}
+          </p>
+        )}
       </div>
 
       <div className="section-card space-y-4">

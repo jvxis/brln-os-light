@@ -37,6 +37,9 @@ const buildQuery = (params?: Record<string, string | number | boolean | undefine
 }
 
 export const getHealth = () => request('/api/health')
+export const getAmbossHealth = () => request('/api/amboss/health')
+export const updateAmbossHealth = (payload: { enabled: boolean }) =>
+  request('/api/amboss/health', { method: 'POST', body: JSON.stringify(payload) })
 export const getSystem = () => request('/api/system')
 export const getDisk = () => request('/api/disk')
 export const getPostgres = () => request('/api/postgres')

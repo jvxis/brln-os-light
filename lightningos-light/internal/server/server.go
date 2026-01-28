@@ -24,6 +24,7 @@ type Server struct {
   notifier *Notifier
   notifierErr string
   chat *ChatService
+  amboss *AmbossHealthChecker
   reports *reports.Service
   reportsErr string
   reportsOnce sync.Once
@@ -39,6 +40,7 @@ func New(cfg *config.Config, logger *log.Logger) *Server {
     lnd:    lndclient.New(cfg, logger),
   }
   srv.chat = NewChatService(srv.lnd, logger)
+  srv.amboss = NewAmbossHealthChecker(srv.lnd, logger)
   return srv
 }
 
@@ -47,6 +49,9 @@ func (s *Server) Run() error {
   s.initReports()
   if s.chat != nil {
     s.chat.Start()
+  }
+  if s.amboss != nil {
+    s.amboss.Start()
   }
 
   addr := fmt.Sprintf("%s:%d", s.cfg.Server.Host, s.cfg.Server.Port)

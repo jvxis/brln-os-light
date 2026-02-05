@@ -65,6 +65,34 @@ func TestTimeRangeInclusiveEnd(t *testing.T) {
   }
 }
 
+func TestResolveLocation(t *testing.T) {
+  fallback := time.FixedZone("Fallback", -3*60*60)
+
+  loc, err := ResolveLocation("", fallback)
+  if err != nil {
+    t.Fatalf("expected no error for empty location: %v", err)
+  }
+  if loc.String() != fallback.String() {
+    t.Fatalf("expected fallback location, got %s", loc.String())
+  }
+
+  loc, err = ResolveLocation("UTC", fallback)
+  if err != nil {
+    t.Fatalf("expected valid timezone: %v", err)
+  }
+  if loc.String() != "UTC" {
+    t.Fatalf("expected UTC, got %s", loc.String())
+  }
+
+  loc, err = ResolveLocation("invalid/zone", fallback)
+  if err == nil {
+    t.Fatalf("expected error for invalid timezone")
+  }
+  if loc.String() != fallback.String() {
+    t.Fatalf("expected fallback on invalid timezone, got %s", loc.String())
+  }
+}
+
 func sameDate(a, b time.Time) bool {
   return a.Year() == b.Year() && a.Month() == b.Month() && a.Day() == b.Day()
 }

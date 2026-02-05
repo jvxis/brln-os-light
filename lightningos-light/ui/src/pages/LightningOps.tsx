@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { boostPeers, closeChannel, connectPeer, disconnectPeer, getAmbossHealth, getLnChannelFees, getLnChannels, getLnPeers, getMempoolFees, openChannel, updateAmbossHealth, updateChannelFees } from '../api'
+import { boostPeers, closeChannel, connectPeer, disconnectPeer, getAmbossHealth, getLnChanHeal, getLnChannelFees, getLnChannels, getLnPeers, getMempoolFees, openChannel, updateAmbossHealth, updateChannelFees, updateLnChanHeal, updateLnChannelStatus } from '../api'
 
 type Channel = {
   channel_point: string
@@ -8,6 +8,8 @@ type Channel = {
   remote_pubkey: string
   peer_alias: string
   active: boolean
+  chan_status_flags?: string
+  local_disabled?: boolean
   private: boolean
   capacity_sat: number
   local_balance_sat: number
@@ -58,6 +60,17 @@ type AmbossHealthStatus = {
   consecutive_failures?: number
 }
 
+type ChanHealStatus = {
+  enabled: boolean
+  status: string
+  last_ok_at?: string
+  last_error?: string
+  last_error_at?: string
+  last_attempt_at?: string
+  interval_sec?: number
+  last_updated?: number
+}
+
 export default function LightningOps() {
   const { t } = useTranslation()
   const [channels, setChannels] = useState<Channel[]>([])
@@ -86,6 +99,13 @@ export default function LightningOps() {
   const [amboss, setAmboss] = useState<AmbossHealthStatus | null>(null)
   const [ambossStatus, setAmbossStatus] = useState('')
   const [ambossBusy, setAmbossBusy] = useState(false)
+  const [chanHeal, setChanHeal] = useState<ChanHealStatus | null>(null)
+  const [chanHealStatus, setChanHealStatus] = useState('')
+  const [chanHealBusy, setChanHealBusy] = useState(false)
+  const [chanHealInterval, setChanHealInterval] = useState('300')
+
+  const [chanStatusBusy, setChanStatusBusy] = useState<string | null>(null)
+  const [chanStatusMessage, setChanStatusMessage] = useState('')
 
   const [openPeer, setOpenPeer] = useState('')
   const [openAmount, setOpenAmount] = useState('')
@@ -144,10 +164,25 @@ export default function LightningOps() {
     return date.toLocaleString()
   }
 
+  const isLocalChanDisabled = (flags?: string) => {
+    if (!flags) return false
+    const normalized = flags.toLowerCase()
+    return (normalized.includes('local') && normalized.includes('disabled')) ||
+      normalized.includes('localchandisabled') ||
+      normalized.includes('local_chan_disabled')
+  }
+
   const ambossTone = (): 'ok' | 'warn' | 'muted' => {
     if (!amboss?.enabled) return 'muted'
     if (amboss?.status === 'ok') return 'ok'
     if (amboss?.status === 'checking') return 'muted'
+    return 'warn'
+  }
+
+  const chanHealTone = (): 'ok' | 'warn' | 'muted' => {
+    if (!chanHeal?.enabled) return 'muted'
+    if (chanHeal?.status === 'ok') return 'ok'
+    if (chanHeal?.status === 'checking') return 'muted'
     return 'warn'
   }
 
@@ -168,16 +203,25 @@ export default function LightningOps() {
     return t('common.check')
   }
 
+  const chanHealBadgeLabel = () => {
+    if (!chanHeal?.enabled) return t('common.disabled')
+    if (chanHeal?.status === 'ok') return t('common.ok')
+    if (chanHeal?.status === 'checking') return t('common.check')
+    return t('common.check')
+  }
+
   const ambossURL = (pubkey: string) => `https://amboss.space/node/${pubkey}`
 
   const load = async () => {
     setStatus(t('lightningOps.loadingChannels'))
     setPeerListStatus(t('lightningOps.loadingPeers'))
     setAmbossStatus(t('lightningOps.ambossHealthLoading'))
-    const [channelsResult, peersResult, ambossResult] = await Promise.allSettled([
+    setChanHealStatus(t('lightningOps.chanHealLoading'))
+    const [channelsResult, peersResult, ambossResult, chanHealResult] = await Promise.allSettled([
       getLnChannels(),
       getLnPeers(),
-      getAmbossHealth()
+      getAmbossHealth(),
+      getLnChanHeal()
     ])
     if (channelsResult.status === 'fulfilled') {
       const res = channelsResult.value
@@ -208,6 +252,17 @@ export default function LightningOps() {
       const message = (ambossResult.reason as any)?.message || t('lightningOps.ambossHealthStatusUnavailable')
       setAmbossStatus(message)
     }
+    if (chanHealResult.status === 'fulfilled') {
+      const payload = chanHealResult.value as ChanHealStatus
+      setChanHeal(payload)
+      if (payload?.interval_sec) {
+        setChanHealInterval(String(payload.interval_sec))
+      }
+      setChanHealStatus('')
+    } else {
+      const message = (chanHealResult.reason as any)?.message || t('lightningOps.chanHealStatusUnavailable')
+      setChanHealStatus(message)
+    }
   }
 
   useEffect(() => {
@@ -228,7 +283,25 @@ export default function LightningOps() {
           setAmbossStatus(err?.message || t('lightningOps.ambossHealthStatusUnavailable'))
         })
     }
-    const timer = window.setInterval(fetchAmboss, 30000)
+    const fetchChanHeal = () => {
+      getLnChanHeal()
+        .then((data) => {
+          if (!mounted) return
+          setChanHeal(data as ChanHealStatus)
+          if ((data as ChanHealStatus)?.interval_sec) {
+            setChanHealInterval(String((data as ChanHealStatus).interval_sec))
+          }
+          setChanHealStatus('')
+        })
+        .catch((err: any) => {
+          if (!mounted) return
+          setChanHealStatus(err?.message || t('lightningOps.chanHealStatusUnavailable'))
+        })
+    }
+    const timer = window.setInterval(() => {
+      fetchAmboss()
+      fetchChanHeal()
+    }, 30000)
     return () => {
       mounted = false
       window.clearInterval(timer)
@@ -426,6 +499,64 @@ export default function LightningOps() {
     }
   }
 
+  const handleToggleChanHeal = async () => {
+    if (chanHealBusy) return
+    const nextEnabled = !chanHeal?.enabled
+    setChanHealBusy(true)
+    setChanHealStatus(t('lightningOps.chanHealSaving'))
+    const interval = Number(chanHealInterval || 0)
+    const payload: { enabled?: boolean; interval_sec?: number } = { enabled: nextEnabled }
+    if (interval > 0) {
+      payload.interval_sec = interval
+    }
+    try {
+      const res = await updateLnChanHeal(payload)
+      setChanHeal(res as ChanHealStatus)
+      setChanHealStatus(nextEnabled ? t('lightningOps.chanHealEnabled') : t('lightningOps.chanHealDisabled'))
+    } catch (err: any) {
+      setChanHealStatus(err?.message || t('lightningOps.chanHealSaveFailed'))
+    } finally {
+      setChanHealBusy(false)
+    }
+  }
+
+  const handleSaveChanHealInterval = async () => {
+    if (chanHealBusy) return
+    const interval = Number(chanHealInterval || 0)
+    if (!interval || interval <= 0) {
+      setChanHealStatus(t('lightningOps.chanHealIntervalInvalid'))
+      return
+    }
+    setChanHealBusy(true)
+    setChanHealStatus(t('lightningOps.chanHealSaving'))
+    try {
+      const res = await updateLnChanHeal({ interval_sec: interval })
+      setChanHeal(res as ChanHealStatus)
+      setChanHealStatus(t('lightningOps.chanHealSaved'))
+    } catch (err: any) {
+      setChanHealStatus(err?.message || t('lightningOps.chanHealSaveFailed'))
+    } finally {
+      setChanHealBusy(false)
+    }
+  }
+
+  const handleToggleChanStatus = async (channel: Channel) => {
+    if (!channel.channel_point || chanStatusBusy) return
+    if (!channel.active) return
+    const enable = channel.local_disabled ?? isLocalChanDisabled(channel.chan_status_flags)
+    setChanStatusBusy(channel.channel_point)
+    setChanStatusMessage(enable ? t('lightningOps.channelEnabling') : t('lightningOps.channelDisabling'))
+    try {
+      await updateLnChannelStatus({ channel_point: channel.channel_point, enabled: enable })
+      setChanStatusMessage(enable ? t('lightningOps.channelEnabled') : t('lightningOps.channelDisabled'))
+      load()
+    } catch (err: any) {
+      setChanStatusMessage(err?.message || t('lightningOps.channelStatusFailed'))
+    } finally {
+      setChanStatusBusy(null)
+    }
+  }
+
   const handleOpenChannel = async () => {
     setOpenStatus(t('lightningOps.openingChannel'))
     setOpenChannelPoint('')
@@ -529,25 +660,26 @@ export default function LightningOps() {
             <h2 className="text-2xl font-semibold">{t('lightningOps.title')}</h2>
             <p className="text-fog/60">{t('lightningOps.subtitle')}</p>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="rounded-full border border-white/10 bg-ink/60 px-4 py-2 text-xs text-fog/70">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="rounded-full border border-white/10 bg-ink/60 px-3 py-1.5 text-[11px] text-fog/70 sm:text-xs sm:px-4 sm:py-2">
               {t('lightningOps.active')}: <span className="text-fog">{activeCount}</span>
             </div>
-            <div className="rounded-full border border-white/10 bg-ink/60 px-4 py-2 text-xs text-fog/70">
+            <div className="rounded-full border border-white/10 bg-ink/60 px-3 py-1.5 text-[11px] text-fog/70 sm:text-xs sm:px-4 sm:py-2">
               {t('lightningOps.inactive')}: <span className="text-fog">{inactiveCount}</span>
             </div>
-            <div className="rounded-full border border-glow/30 bg-glow/10 px-4 py-2 text-xs text-glow">
+            <div className="rounded-full border border-glow/30 bg-glow/10 px-3 py-1.5 text-[11px] text-glow sm:text-xs sm:px-4 sm:py-2">
               {t('lightningOps.opening')}: <span className="text-fog">{pendingOpenCount}</span>
             </div>
-            <div className="rounded-full border border-ember/30 bg-ember/10 px-4 py-2 text-xs text-ember">
+            <div className="rounded-full border border-ember/30 bg-ember/10 px-3 py-1.5 text-[11px] text-ember sm:text-xs sm:px-4 sm:py-2">
               {t('lightningOps.closing')}: <span className="text-fog">{pendingCloseCount}</span>
             </div>
-            <button className="btn-secondary text-xs px-3 py-2" onClick={load}>
+            <button className="btn-secondary text-[11px] px-3 py-2 sm:text-xs" onClick={load}>
               {t('common.refresh')}
             </button>
           </div>
         </div>
         {status && <p className="mt-4 text-sm text-brass">{status}</p>}
+        {chanStatusMessage && <p className="mt-2 text-sm text-brass">{chanStatusMessage}</p>}
       </div>
 
       <div className="section-card space-y-4">
@@ -577,41 +709,57 @@ export default function LightningOps() {
                 </div>
                 {pendingOpen.length ? (
                   <div className="mt-3 space-y-3">
-                    {pendingOpen.map((ch) => (
-                      <div key={ch.channel_point} className="rounded-xl border border-white/10 bg-ink/70 p-3">
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                          <div>
-                            {ch.remote_pubkey ? (
-                              <a
-                                className="text-xs text-fog/70 hover:text-fog break-all"
-                                href={ambossURL(ch.remote_pubkey)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              >
-                                {ch.peer_alias || ch.remote_pubkey}
-                              </a>
-                            ) : (
-                              <p className="text-xs text-fog/70">{ch.peer_alias || t('lightningOps.unknownPeer')}</p>
-                            )}
-                            <p className="text-[11px] text-fog/50 break-all">{t('lightningOps.pointLabel', { point: ch.channel_point })}</p>
+                    {pendingOpen.map((ch) => {
+                      const pointLink = mempoolLink(ch.channel_point)
+                      return (
+                        <div key={ch.channel_point} className="rounded-xl border border-white/10 bg-ink/70 p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              {ch.remote_pubkey ? (
+                                <a
+                                  className="text-xs text-fog/70 hover:text-fog break-all"
+                                  href={ambossURL(ch.remote_pubkey)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  {ch.peer_alias || ch.remote_pubkey}
+                                </a>
+                              ) : (
+                                <p className="text-xs text-fog/70">{ch.peer_alias || t('lightningOps.unknownPeer')}</p>
+                              )}
+                              {pointLink ? (
+                                <a
+                                  className="mt-1 block text-[11px] text-emerald-200 hover:text-emerald-100 break-all"
+                                  href={pointLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  {t('lightningOps.pointLabel', { point: ch.channel_point })}
+                                </a>
+                              ) : (
+                                <p className="mt-1 text-[11px] text-fog/50 break-all">
+                                  {t('lightningOps.pointLabel', { point: ch.channel_point })}
+                                </p>
+                              )}
+                            </div>
+                            <span className="rounded-full px-2 py-1 text-[11px] bg-glow/20 text-glow">
+                              {pendingStatusLabel(ch.status)}
+                            </span>
                           </div>
-                          <span className="rounded-full px-2 py-1 text-[11px] bg-glow/20 text-glow">
-                            {pendingStatusLabel(ch.status)}
-                          </span>
-                        </div>
-                        <div className="mt-2 grid gap-2 lg:grid-cols-2 text-[11px] text-fog/60">
-                          <div>{t('lightningOps.capacityLabel', { value: ch.capacity_sat })}</div>
-                          {typeof ch.confirmations_until_active === 'number' && (
-                            <div>{t('lightningOps.confirmationsLabel', { count: ch.confirmations_until_active })}</div>
+                          <div className="mt-2 grid gap-2 lg:grid-cols-2 text-[11px] text-fog/60">
+                            <div>{t('lightningOps.capacityLabel', { value: ch.capacity_sat })}</div>
+                            {typeof ch.confirmations_until_active === 'number' && (
+                              <div>{t('lightningOps.confirmationsLabel', { count: ch.confirmations_until_active })}</div>
+                            )}
+                          </div>
+                          {ch.private !== undefined && (
+                            <p className="mt-2 text-[11px] text-fog/50">
+                              {ch.private ? t('lightningOps.privateChannel') : t('lightningOps.publicChannel')}
+                            </p>
                           )}
                         </div>
-                        {ch.private !== undefined && (
-                          <p className="mt-2 text-[11px] text-fog/50">
-                            {ch.private ? t('lightningOps.privateChannel') : t('lightningOps.publicChannel')}
-                          </p>
-                        )}
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 ) : (
                   <p className="mt-3 text-xs text-fog/60">{t('lightningOps.noChannelsOpening')}</p>
@@ -624,39 +772,55 @@ export default function LightningOps() {
                 </div>
                 {pendingClose.length ? (
                   <div className="mt-3 space-y-3">
-                    {pendingClose.map((ch) => (
-                      <div key={ch.channel_point} className="rounded-xl border border-white/10 bg-ink/70 p-3">
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                          <div>
-                            {ch.remote_pubkey ? (
-                              <a
-                                className="text-xs text-fog/70 hover:text-fog break-all"
-                                href={ambossURL(ch.remote_pubkey)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              >
-                                {ch.peer_alias || ch.remote_pubkey}
-                              </a>
-                            ) : (
-                              <p className="text-xs text-fog/70">{ch.peer_alias || t('lightningOps.unknownPeer')}</p>
-                            )}
-                            <p className="text-[11px] text-fog/50 break-all">{t('lightningOps.pointLabel', { point: ch.channel_point })}</p>
+                    {pendingClose.map((ch) => {
+                      const pointLink = mempoolLink(ch.channel_point)
+                      return (
+                        <div key={ch.channel_point} className="rounded-xl border border-white/10 bg-ink/70 p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              {ch.remote_pubkey ? (
+                                <a
+                                  className="text-xs text-fog/70 hover:text-fog break-all"
+                                  href={ambossURL(ch.remote_pubkey)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  {ch.peer_alias || ch.remote_pubkey}
+                                </a>
+                              ) : (
+                                <p className="text-xs text-fog/70">{ch.peer_alias || t('lightningOps.unknownPeer')}</p>
+                              )}
+                              {pointLink ? (
+                                <a
+                                  className="mt-1 block text-[11px] text-emerald-200 hover:text-emerald-100 break-all"
+                                  href={pointLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  {t('lightningOps.pointLabel', { point: ch.channel_point })}
+                                </a>
+                              ) : (
+                                <p className="mt-1 text-[11px] text-fog/50 break-all">
+                                  {t('lightningOps.pointLabel', { point: ch.channel_point })}
+                                </p>
+                              )}
+                            </div>
+                            <span className="rounded-full px-2 py-1 text-[11px] bg-ember/20 text-ember">
+                              {pendingStatusLabel(ch.status)}
+                            </span>
                           </div>
-                          <span className="rounded-full px-2 py-1 text-[11px] bg-ember/20 text-ember">
-                            {pendingStatusLabel(ch.status)}
-                          </span>
-                        </div>
-                        <div className="mt-2 grid gap-2 lg:grid-cols-2 text-[11px] text-fog/60">
-                          <div>{t('lightningOps.capacityLabel', { value: ch.capacity_sat })}</div>
-                          {typeof ch.blocks_til_maturity === 'number' && (
-                            <div>{t('lightningOps.blocksToMaturity', { count: ch.blocks_til_maturity })}</div>
+                          <div className="mt-2 grid gap-2 lg:grid-cols-2 text-[11px] text-fog/60">
+                            <div>{t('lightningOps.capacityLabel', { value: ch.capacity_sat })}</div>
+                            {typeof ch.blocks_til_maturity === 'number' && (
+                              <div>{t('lightningOps.blocksToMaturity', { count: ch.blocks_til_maturity })}</div>
+                            )}
+                          </div>
+                          {ch.closing_txid && (
+                            <p className="mt-2 text-[11px] text-fog/50 break-all">{t('lightningOps.closingTx', { txid: ch.closing_txid })}</p>
                           )}
                         </div>
-                        {ch.closing_txid && (
-                          <p className="mt-2 text-[11px] text-fog/50 break-all">{t('lightningOps.closingTx', { txid: ch.closing_txid })}</p>
-                        )}
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 ) : (
                   <p className="mt-3 text-xs text-fog/60">{t('lightningOps.noChannelsClosing')}</p>
@@ -687,11 +851,11 @@ export default function LightningOps() {
             <option value="remote">{t('lightningOps.sortByRemote')}</option>
             <option value="alias">{t('lightningOps.sortByPeer')}</option>
             </select>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button className="btn-secondary text-xs px-3 py-2" onClick={() => setSortDir(sortDir === 'desc' ? 'asc' : 'desc')}>
               {sortDir === 'desc' ? t('lightningOps.sortDesc') : t('lightningOps.sortAsc')}
               </button>
-              <label className="flex items-center gap-2 text-xs text-fog/70">
+              <label className="flex items-center gap-2 text-[11px] text-fog/70 sm:text-xs">
                 <input type="checkbox" checked={showPrivate} onChange={(e) => setShowPrivate(e.target.checked)} />
               {t('lightningOps.showPrivate')}
               </label>
@@ -700,57 +864,80 @@ export default function LightningOps() {
         {filteredChannels.length ? (
           <div className="max-h-[520px] overflow-y-auto pr-2">
             <div className="grid gap-3">
-              {filteredChannels.map((ch) => (
-                <div key={ch.channel_point} className="rounded-2xl border border-white/10 bg-ink/60 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      {ch.remote_pubkey ? (
-                        <a
-                          className="text-sm text-fog/60 hover:text-fog"
-                          href={ambossURL(ch.remote_pubkey)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          {ch.peer_alias || ch.remote_pubkey}
-                        </a>
-                      ) : (
-                        <p className="text-sm text-fog/60">{ch.peer_alias || t('lightningOps.unknownPeer')}</p>
-                      )}
-                      <p className="text-xs text-fog/50 break-all">
-                        {t('lightningOps.pointCapacity', { point: ch.channel_point, capacity: ch.capacity_sat })}
-                      </p>
+              {filteredChannels.map((ch) => {
+                const localDisabled = ch.local_disabled ?? isLocalChanDisabled(ch.chan_status_flags)
+                const statusBusy = chanStatusBusy === ch.channel_point
+                const showToggle = ch.active
+                const cardClass = localDisabled && ch.active
+                  ? 'rounded-2xl border border-ember/40 bg-ember/10 p-4'
+                  : 'rounded-2xl border border-white/10 bg-ink/60 p-4'
+                return (
+                  <div key={ch.channel_point} className={cardClass}>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        {ch.remote_pubkey ? (
+                          <a
+                            className="text-sm text-fog/60 hover:text-fog"
+                            href={ambossURL(ch.remote_pubkey)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {ch.peer_alias || ch.remote_pubkey}
+                          </a>
+                        ) : (
+                          <p className="text-sm text-fog/60">{ch.peer_alias || t('lightningOps.unknownPeer')}</p>
+                        )}
+                        <p className="text-xs text-fog/50 break-all">
+                          {t('lightningOps.pointCapacity', { point: ch.channel_point, capacity: ch.capacity_sat })}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`rounded-full px-3 py-1 text-xs ${ch.active ? 'bg-glow/20 text-glow' : 'bg-ember/20 text-ember'}`}>
+                          {ch.active ? t('common.active') : t('common.inactive')}
+                        </span>
+                        {showToggle && (
+                          <button
+                            className={`btn-secondary text-xs px-3 py-1 ${statusBusy ? 'opacity-60 pointer-events-none' : ''}`}
+                            type="button"
+                            onClick={() => handleToggleChanStatus(ch)}
+                            disabled={statusBusy}
+                          >
+                            {localDisabled ? t('lightningOps.enableChannel') : t('lightningOps.disableChannel')}
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    <span className={`rounded-full px-3 py-1 text-xs ${ch.active ? 'bg-glow/20 text-glow' : 'bg-ember/20 text-ember'}`}>
-                      {ch.active ? t('common.active') : t('common.inactive')}
-                    </span>
-                </div>
-                <div className="mt-3 grid gap-3 lg:grid-cols-5 text-xs text-fog/70">
-                  <div>{t('lightningOps.localLabel', { value: ch.local_balance_sat })}</div>
-                  <div>{t('lightningOps.remoteLabel', { value: ch.remote_balance_sat })}</div>
-                  <div>
-                    {t('lightningOps.outRate')}:{' '}
-                    <span className="text-fog">
-                      {typeof ch.fee_rate_ppm === 'number' ? `${ch.fee_rate_ppm} ppm` : '-'}
-                    </span>
-                  </div>
-                  <div>
-                    {t('lightningOps.outBase')}:{' '}
-                    <span className="text-fog">
-                      {typeof ch.base_fee_msat === 'number' ? `${ch.base_fee_msat} msats` : '-'}
-                    </span>
-                  </div>
-                  <div>
-                    {t('lightningOps.inRate')}:{' '}
-                    <span className="text-fog">
-                      {typeof ch.inbound_fee_rate_ppm === 'number' ? `${ch.inbound_fee_rate_ppm} ppm` : '-'}
-                    </span>
+                    <div className="mt-3 grid gap-3 lg:grid-cols-5 text-xs text-fog/70">
+                      <div>{t('lightningOps.localLabel', { value: ch.local_balance_sat })}</div>
+                      <div>{t('lightningOps.remoteLabel', { value: ch.remote_balance_sat })}</div>
+                      <div>
+                        {t('lightningOps.outRate')}:{' '}
+                        <span className="text-fog">
+                          {typeof ch.fee_rate_ppm === 'number' ? `${ch.fee_rate_ppm} ppm` : '-'}
+                        </span>
+                      </div>
+                      <div>
+                        {t('lightningOps.outBase')}:{' '}
+                        <span className="text-fog">
+                          {typeof ch.base_fee_msat === 'number' ? `${ch.base_fee_msat} msats` : '-'}
+                        </span>
+                      </div>
+                      <div>
+                        {t('lightningOps.inRate')}:{' '}
+                        <span className="text-fog">
+                          {typeof ch.inbound_fee_rate_ppm === 'number' ? `${ch.inbound_fee_rate_ppm} ppm` : '-'}
+                        </span>
+                      </div>
                     </div>
+                    <div className="mt-2 text-xs text-fog/50">
+                      {ch.private ? t('lightningOps.privateChannel') : t('lightningOps.publicChannel')}
+                    </div>
+                    {localDisabled && ch.active && (
+                      <div className="mt-2 text-xs text-amber-200">{t('lightningOps.localDisabled')}</div>
+                    )}
                   </div>
-                  <div className="mt-2 text-xs text-fog/50">
-                    {ch.private ? t('lightningOps.privateChannel') : t('lightningOps.publicChannel')}
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
         ) : (
@@ -1036,9 +1223,80 @@ export default function LightningOps() {
             {t('lightningOps.ambossHealthInterval')}: <span className="text-fog">{amboss?.interval_sec ? `${amboss.interval_sec}s` : '-'}</span>
           </div>
         </div>
-        {amboss?.last_error && (
+      {amboss?.last_error && (
+        <p className="text-xs text-amber-200">
+          {t('lightningOps.ambossHealthLastError')}: {amboss.last_error}
+        </p>
+      )}
+    </div>
+
+      <div className="section-card space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-semibold">{t('lightningOps.chanHealTitle')}</h3>
+            <p className="text-sm text-fog/60">{t('lightningOps.chanHealSubtitle')}</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className={`text-[11px] uppercase tracking-wide px-2 py-0.5 rounded-full ${badgeClass(chanHealTone())}`}>
+              {chanHealBadgeLabel()}
+            </span>
+            <button
+              className={`relative flex h-9 w-36 items-center rounded-full border border-white/10 bg-ink/60 px-2 transition ${chanHealBusy ? 'opacity-70' : 'hover:border-white/30'}`}
+              onClick={handleToggleChanHeal}
+              type="button"
+              disabled={chanHealBusy}
+              aria-label={t('lightningOps.toggleChanHeal')}
+            >
+              <span
+                className={`absolute top-1 h-7 w-16 rounded-full bg-glow shadow transition-all ${chanHeal?.enabled ? 'left-[70px]' : 'left-[6px]'}`}
+              />
+              <span className={`relative z-10 flex-1 text-center text-xs ${!chanHeal?.enabled ? 'text-ink' : 'text-fog/60'}`}>{t('common.disabled')}</span>
+              <span className={`relative z-10 flex-1 text-center text-xs ${chanHeal?.enabled ? 'text-ink' : 'text-fog/60'}`}>{t('common.enabled')}</span>
+            </button>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="text-sm text-fog/70">
+            {t('lightningOps.chanHealInterval')}
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              className="input-field w-32"
+              type="number"
+              min={30}
+              value={chanHealInterval}
+              onChange={(e) => setChanHealInterval(e.target.value)}
+            />
+            <button
+              className="btn-secondary text-xs px-3 py-2"
+              type="button"
+              onClick={handleSaveChanHealInterval}
+              disabled={chanHealBusy}
+            >
+              {t('common.save')}
+            </button>
+          </div>
+        </div>
+        {chanHealStatus && <p className="text-sm text-brass">{chanHealStatus}</p>}
+        <div className="grid gap-3 text-xs text-fog/70 lg:grid-cols-3">
+          <div>
+            {t('lightningOps.chanHealLastRun')}: <span className="text-fog">{formatAmbossTime(chanHeal?.last_ok_at)}</span>
+          </div>
+          <div>
+            {t('lightningOps.chanHealLastAttempt')}: <span className="text-fog">{formatAmbossTime(chanHeal?.last_attempt_at)}</span>
+          </div>
+          <div>
+            {t('lightningOps.chanHealInterval')}: <span className="text-fog">{chanHeal?.interval_sec ? `${chanHeal.interval_sec}s` : '-'}</span>
+          </div>
+        </div>
+        {chanHeal?.last_ok_at && typeof chanHeal?.last_updated === 'number' && (
+          <p className="text-xs text-fog/60">
+            {t('lightningOps.chanHealLastUpdated', { count: chanHeal.last_updated })}
+          </p>
+        )}
+        {chanHeal?.last_error && (
           <p className="text-xs text-amber-200">
-            {t('lightningOps.ambossHealthLastError')}: {amboss.last_error}
+            {t('lightningOps.chanHealLastError')}: {chanHeal.last_error}
           </p>
         )}
       </div>

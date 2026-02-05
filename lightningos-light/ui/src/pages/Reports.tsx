@@ -75,6 +75,7 @@ const rangeOptions: RangeKey[] = ['d-1', 'month', '3m', '6m', '12m', 'all']
 
 const COLORS = {
   net: '#34d399',
+  netNegative: '#f87171',
   revenue: '#38bdf8',
   cost: '#f59e0b',
   onchain: '#22c55e',
@@ -105,6 +106,22 @@ export default function Reports() {
 
   const formatSats = (value: number) => `${formatter.format(value)} sats`
   const formatCompact = (value: number) => compactFormatter.format(value)
+  const parseChartNumber = (value: number | string) => {
+    if (typeof value === 'number') return value
+    const raw = String(value).trim()
+    if (!raw) return 0
+    const inParens = raw.startsWith('(') && raw.endsWith(')')
+    const cleaned = raw
+      .replace(/^\(/, '')
+      .replace(/\)$/, '')
+      .replace(/\u2212/g, '-')
+      .replace(/,/g, '')
+      .replace(/\s/g, '')
+      .replace(/[^\d.-]/g, '')
+    const parsed = Number(cleaned)
+    if (Number.isNaN(parsed)) return 0
+    return inParens ? -parsed : parsed
+  }
 
   const formatDateLabel = (value: string) => {
     const parsed = new Date(`${value}T00:00:00`)
@@ -266,10 +283,17 @@ export default function Reports() {
 
   const liveChartData = useMemo(() => {
     if (!live) return []
+    const revenueValue = parseChartNumber(live.forward_fee_revenue_sats)
+    const costValue = parseChartNumber(live.rebalance_fee_cost_sats)
+    const netValue = parseChartNumber(live.net_routing_profit_sats)
     return [
-      { name: t('reports.revenue'), value: live.forward_fee_revenue_sats, color: COLORS.revenue },
-      { name: t('reports.cost'), value: live.rebalance_fee_cost_sats, color: COLORS.cost },
-      { name: t('reports.net'), value: live.net_routing_profit_sats, color: COLORS.net }
+      { name: t('reports.revenue'), value: revenueValue, color: COLORS.revenue },
+      { name: t('reports.cost'), value: costValue, color: COLORS.cost },
+      {
+        name: t('reports.net'),
+        value: netValue,
+        color: netValue < 0 ? COLORS.netNegative : COLORS.net
+      }
     ]
   }, [live, t])
 

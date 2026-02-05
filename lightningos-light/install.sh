@@ -26,6 +26,7 @@ UNATTENDED_NOTICE_SHOWN=0
 LND_DIR="/data/lnd"
 LND_CONF="${LND_DIR}/lnd.conf"
 LND_FIX_PERMS_SCRIPT="/usr/local/sbin/lightningos-fix-lnd-perms"
+LND_UPGRADE_SCRIPT="/usr/local/sbin/lightningos-upgrade-lnd"
 TERMINAL_SCRIPT="/usr/local/sbin/lightningos-terminal"
 TERMINAL_OPERATOR_USER="${TERMINAL_OPERATOR_USER:-losop}"
 
@@ -47,6 +48,187 @@ print_ok() {
 
 print_warn() {
   echo "[WARN] $1"
+}
+
+get_lightningos_version() {
+  local version_file="$REPO_ROOT/ui/public/version.txt"
+  local version="unknown"
+  if [[ -f "$version_file" ]]; then
+    version=$(head -n1 "$version_file" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+  fi
+  if [[ -z "$version" ]]; then
+    version="unknown"
+  fi
+  echo "$version"
+}
+
+print_lightningos_banner() {
+  cat <<'EOF'
+■     ■■■■■ ■■■■■ ■   ■ ■■■■■ ■   ■ ■■■■■ ■   ■ ■■■■■ □□□□□ □□□□□
+■       ■   ■     ■   ■   ■   ■■  ■   ■   ■■  ■ ■     □   □ □
+■       ■   ■     ■   ■   ■   ■ ■ ■   ■   ■ ■ ■ ■     □   □ □
+■       ■   ■ ■■■ ■■■■■   ■   ■  ■■   ■   ■  ■■ ■ ■■■ □   □ □□□□□
+■       ■   ■   ■ ■   ■   ■   ■   ■   ■   ■   ■ ■   ■ □   □     □
+■       ■   ■   ■ ■   ■   ■   ■   ■   ■   ■   ■ ■   ■ □   □     □
+■■■■■ ■■■■■ ■■■■■ ■   ■   ■   ■   ■ ■■■■■ ■   ■ ■■■■■ □□□□□ □□□□□
+EOF
+}
+
+get_mit_terms() {
+  local license_file="$REPO_ROOT/../LICENSE"
+  if [[ -f "$license_file" ]]; then
+    awk 'BEGIN{p=0} /^MIT License \\(English\\)/{p=1} /^MIT License \\(Portuguese\\)/{p=0} p{print}' "$license_file"
+    return
+  fi
+  cat <<'EOF'
+MIT License (English)
+
+Copyright (c) 2026 BR⚡LN
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+EOF
+}
+
+confirm_mit_license() {
+  local accepted="${ACCEPT_MIT_LICENSE:-}"
+  if [[ -n "$accepted" ]]; then
+    case "$accepted" in
+      1|y|Y|yes|YES|true|TRUE) return 0 ;;
+      0|n|N|no|NO|false|FALSE) echo "MIT License not accepted."; exit 1 ;;
+    esac
+  fi
+  if [[ ! -t 0 ]]; then
+    echo "Non-interactive mode detected."
+    echo "Set ACCEPT_MIT_LICENSE=1 to proceed."
+    exit 1
+  fi
+  while true; do
+    read -r -p "Do you want to continue with the installation? [y/N]: " reply
+    reply="${reply:-N}"
+    case "$reply" in
+      [Yy]*) return 0 ;;
+      [Nn]*) echo "Installation cancelled."; exit 1 ;;
+    esac
+  done
+}
+
+show_welcome_and_license() {
+  local version
+  version=$(get_lightningos_version)
+  print_lightningos_banner
+  echo "Version: ${version}"
+  echo "Created by BR⚡LN - https://br-ln.com"
+  echo ""
+  get_mit_terms
+  echo ""
+  confirm_mit_license
+}
+
+extract_lnd_version() {
+  local output="$1"
+  local version commit
+  version=$(echo "$output" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+([\-\.][0-9A-Za-z\.-]+)?' | head -n1 || true)
+  commit=$(echo "$output" | grep -Eo 'commit=[^ ]+' | head -n1 | cut -d= -f2- || true)
+  commit="${commit#v}"
+  if [[ -z "$version" && -n "$commit" ]]; then
+    echo "$commit"
+    return
+  fi
+  if [[ -n "$commit" && "$commit" == *-* && "$version" != *-* ]]; then
+    echo "$commit"
+    return
+  fi
+  echo "$version"
+}
+
+compare_versions() {
+  local a="$1"
+  local b="$2"
+  a="${a#v}"
+  b="${b#v}"
+  a="${a%%+*}"
+  b="${b%%+*}"
+
+  local a_main="${a%%-*}"
+  local b_main="${b%%-*}"
+  local a_pre=""
+  local b_pre=""
+  if [[ "$a" == *-* ]]; then
+    a_pre="${a#*-}"
+  fi
+  if [[ "$b" == *-* ]]; then
+    b_pre="${b#*-}"
+  fi
+
+  local a_major=0 a_minor=0 a_patch=0
+  local b_major=0 b_minor=0 b_patch=0
+  IFS='.' read -r a_major a_minor a_patch <<< "$a_main"
+  IFS='.' read -r b_major b_minor b_patch <<< "$b_main"
+
+  if [[ "$a_major" -lt "$b_major" ]]; then echo -1; return 0; fi
+  if [[ "$a_major" -gt "$b_major" ]]; then echo 1; return 0; fi
+  if [[ "$a_minor" -lt "$b_minor" ]]; then echo -1; return 0; fi
+  if [[ "$a_minor" -gt "$b_minor" ]]; then echo 1; return 0; fi
+  if [[ "$a_patch" -lt "$b_patch" ]]; then echo -1; return 0; fi
+  if [[ "$a_patch" -gt "$b_patch" ]]; then echo 1; return 0; fi
+
+  if [[ -z "$a_pre" && -z "$b_pre" ]]; then echo 0; return 0; fi
+  if [[ -z "$a_pre" && -n "$b_pre" ]]; then echo 1; return 0; fi
+  if [[ -n "$a_pre" && -z "$b_pre" ]]; then echo -1; return 0; fi
+
+  IFS='.' read -r -a a_parts <<< "$a_pre"
+  IFS='.' read -r -a b_parts <<< "$b_pre"
+  local i max
+  max=${#a_parts[@]}
+  if [[ ${#b_parts[@]} -gt $max ]]; then
+    max=${#b_parts[@]}
+  fi
+  for i in $(seq 0 $((max - 1))); do
+    if [[ $i -ge ${#a_parts[@]} ]]; then echo -1; return 0; fi
+    if [[ $i -ge ${#b_parts[@]} ]]; then echo 1; return 0; fi
+    local a_id="${a_parts[$i]}"
+    local b_id="${b_parts[$i]}"
+    if [[ "$a_id" =~ ^[0-9]+$ && "$b_id" =~ ^[0-9]+$ ]]; then
+      if [[ "$a_id" -lt "$b_id" ]]; then echo -1; return 0; fi
+      if [[ "$a_id" -gt "$b_id" ]]; then echo 1; return 0; fi
+    elif [[ "$a_id" =~ ^[0-9]+$ && ! "$b_id" =~ ^[0-9]+$ ]]; then
+      echo -1; return 0
+    elif [[ ! "$a_id" =~ ^[0-9]+$ && "$b_id" =~ ^[0-9]+$ ]]; then
+      echo 1; return 0
+    else
+      if [[ "$a_id" < "$b_id" ]]; then echo -1; return 0; fi
+      if [[ "$a_id" > "$b_id" ]]; then echo 1; return 0; fi
+    fi
+  done
+  echo 0
+}
+
+is_rc_version() {
+  local version="$1"
+  version="${version#v}"
+  if [[ -z "$version" ]]; then
+    return 1
+  fi
+  if [[ "$version" =~ (^|[.-])rc[0-9]+ ]]; then
+    return 0
+  fi
+  return 1
 }
 
 strip_crlf() {
@@ -248,6 +430,7 @@ wait_for_apt_locks() {
 apt_get() {
   local attempt
   local log
+  local repaired=0
   log=$(mktemp)
   for attempt in $(seq 1 5); do
     if ! wait_for_apt_locks; then
@@ -256,6 +439,15 @@ apt_get() {
     if apt-get "$@" 2>&1 | tee "$log"; then
       rm -f "$log"
       return 0
+    fi
+    if grep -q "dpkg was interrupted" "$log"; then
+      if [[ "$repaired" -eq 0 ]]; then
+        print_warn "dpkg was interrupted; running dpkg --configure -a"
+        dpkg --configure -a || true
+        repaired=1
+        sleep 2
+        continue
+      fi
     fi
     if grep -q "Could not get lock" "$log"; then
       print_warn "apt lock busy; waiting before retry"
@@ -447,7 +639,7 @@ configure_sudoers() {
     return
   fi
   local system_cmds
-  system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${smartctl_path} *"
+  system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${smartctl_path} *"
   local app_cmds=()
   [[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")
   [[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")
@@ -634,14 +826,21 @@ install_helper_scripts() {
     print_warn "Missing helper script: $terminal_src"
   fi
 
+  local upgrade_src="$REPO_ROOT/scripts/upgrade-lnd.sh"
+  if [[ -f "$upgrade_src" ]]; then
+    mkdir -p "$(dirname "$LND_UPGRADE_SCRIPT")"
+    install -m 0755 "$upgrade_src" "$LND_UPGRADE_SCRIPT"
+  else
+    print_warn "Missing helper script: $upgrade_src"
+  fi
+
   print_ok "Helper scripts installed"
 }
 
 prepare_lnd_data_dir() {
   print_step "Preparing LND data directory"
   mkdir -p /data "$LND_DIR" /var/log/lnd
-  chown -R lnd:lnd /data
-  chmod 750 /data
+  chmod 755 /data
   chown -R lnd:lnd "$LND_DIR" /var/log/lnd
   chmod 750 "$LND_DIR" /var/log/lnd
   if [[ ! -e /home/lnd/.lnd ]]; then
@@ -921,8 +1120,47 @@ update_notifications_admin_dsn() {
 install_lnd() {
   print_step "Installing LND ${LND_VERSION}"
   if [[ -x /usr/local/bin/lnd && -x /usr/local/bin/lncli ]]; then
-    print_ok "LND already installed"
-    return
+    local current
+    current=$(extract_lnd_version "$(/usr/local/bin/lnd --version 2>/dev/null || true)")
+    if [[ -n "$current" && "$current" == "$LND_VERSION" ]]; then
+      print_ok "LND already installed (v${current})"
+      return
+    fi
+    if [[ -n "$current" ]]; then
+      local cmp
+      cmp=$(compare_versions "$current" "$LND_VERSION")
+      if [[ "$cmp" == "1" ]]; then
+        print_warn "Installed LND v${current} is newer than target v${LND_VERSION}; skipping downgrade."
+        return
+      fi
+      if [[ "$cmp" == "-1" ]]; then
+        if [[ -t 0 ]]; then
+          read -r -p "Upgrade LND from v${current} to v${LND_VERSION}? [y/N]: " reply
+          if [[ ! "$reply" =~ ^[Yy]$ ]]; then
+            print_warn "Skipping LND upgrade."
+            return
+          fi
+          if is_rc_version "$LND_VERSION"; then
+            print_warn "Target LND version v${LND_VERSION} is a release candidate (RC)."
+            read -r -p "Proceed with RC upgrade? [y/N]: " reply
+            if [[ ! "$reply" =~ ^[Yy]$ ]]; then
+              print_warn "Skipping LND upgrade."
+              return
+            fi
+          fi
+        else
+          print_warn "Non-interactive mode; proceeding with LND upgrade to v${LND_VERSION}."
+          if is_rc_version "$LND_VERSION"; then
+            print_warn "Target LND version v${LND_VERSION} is a release candidate (RC). Proceeding without extra confirmation."
+          fi
+        fi
+      else
+        print_ok "LND already installed (v${current})"
+        return
+      fi
+    else
+      print_warn "LND version mismatch (installed v${current:-unknown}, target v${LND_VERSION}); upgrading"
+    fi
   fi
 
   local tmp
@@ -1195,6 +1433,7 @@ verify_manager_listener() {
 }
 
 main() {
+  show_welcome_and_license
   require_root
   print_step "LightningOS Light installation starting"
   ensure_operator_user

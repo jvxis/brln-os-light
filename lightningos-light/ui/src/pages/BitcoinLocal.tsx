@@ -6,6 +6,7 @@ import { getLocale } from '../i18n'
 type BitcoinLocalStatus = {
   installed: boolean
   status: string
+  source?: 'app' | 'external' | 'none'
   data_dir: string
   rpc_ok?: boolean
   connections?: number
@@ -36,6 +37,7 @@ const statusStyles: Record<string, string> = {
   running: 'bg-emerald-500/15 text-emerald-200 border border-emerald-400/30',
   stopped: 'bg-amber-500/15 text-amber-200 border border-amber-400/30',
   unknown: 'bg-rose-500/15 text-rose-200 border border-rose-400/30',
+  external: 'bg-cyan-500/15 text-cyan-200 border border-cyan-400/30',
   not_installed: 'bg-white/10 text-fog/60 border border-white/10'
 }
 
@@ -70,7 +72,9 @@ export default function BitcoinLocal() {
 
   const mergeStatus = (prev: BitcoinLocalStatus | null, next: BitcoinLocalStatus) => {
     if (!prev) return next
-    if (!next.installed || next.status !== 'running') return next
+    const source = next.source || (next.installed ? 'app' : 'none')
+    const mergeAllowed = source === 'external' || (next.installed && next.status === 'running')
+    if (!mergeAllowed) return next
     const hasRpcPayload =
       typeof next.connections === 'number' ||
       typeof next.blocks === 'number' ||
@@ -128,6 +132,10 @@ export default function BitcoinLocal() {
   const loadStatus = () => {
     getBitcoinLocalStatus()
       .then((data: BitcoinLocalStatus) => {
+        const source = data.source || (data.installed ? 'app' : 'none')
+        const serviceActive = source === 'app'
+          ? data.status === 'running'
+          : source === 'external'
         const hasRpcPayload =
           typeof data.connections === 'number' ||
           typeof data.blocks === 'number' ||
@@ -140,7 +148,7 @@ export default function BitcoinLocal() {
           typeof data.size_on_disk === 'number' ||
           Boolean(data.chain) ||
           Boolean(data.subversion)
-        if (data.installed && data.status === 'running') {
+        if (serviceActive) {
           if (data.rpc_ok === false && !hasRpcPayload) {
             recordRpcFailure()
           } else {
@@ -152,7 +160,7 @@ export default function BitcoinLocal() {
         setStatus((prev) => mergeStatus(prev, data))
       })
       .catch(() => {
-        if (status?.status === 'running') {
+        if (status?.status === 'running' || status?.source === 'external') {
           recordRpcFailure()
         }
       })
@@ -208,6 +216,11 @@ export default function BitcoinLocal() {
     return Math.max(0, Math.min(100, raw * 100))
   }, [status?.verification_progress])
 
+  const source = status?.source || (status?.installed ? 'app' : 'none')
+  const managedByApp = source === 'app'
+  const externalDetected = source === 'external'
+  const showDetails = managedByApp || externalDetected
+  const showNotInstalled = !managedByApp && !externalDetected
   const progress = useMemo(() => formatPercent(status?.verification_progress), [status?.verification_progress])
   const statusClass = statusStyles[status?.status || 'unknown'] || statusStyles.unknown
   const statusLabel = (value?: string) => {
@@ -216,6 +229,8 @@ export default function BitcoinLocal() {
         return t('common.running')
       case 'stopped':
         return t('common.stopped')
+      case 'external':
+        return t('bitcoinLocal.externalStatus')
       case 'not_installed':
         return t('common.notInstalled')
       case 'unknown':
@@ -225,15 +240,16 @@ export default function BitcoinLocal() {
     }
   }
   const syncing = Boolean(status?.initial_block_download)
-  const ready = Boolean(status?.status === 'running' && status?.rpc_ok)
-  const installed = Boolean(status?.installed)
+  const ready = managedByApp
+    ? Boolean(status?.status === 'running' && status?.rpc_ok)
+    : Boolean(status?.rpc_ok)
   const blockCount = 12
   const activeBlocks = syncing ? Math.max(1, Math.round((progressValue / 100) * blockCount)) : blockCount
   const sweepDuration = syncing ? Math.max(2.5, 7.5 - progressValue / 15) : 12
   const currentPeers = status?.connections ?? 0
   const rpcStatusLabel = ready
     ? t('common.ok')
-    : status?.status !== 'running'
+    : managedByApp && status?.status !== 'running'
       ? t('common.offline')
       : rpcStale
         ? t('bitcoinLocal.rpcStale', { count: rpcFailCount })
@@ -275,6 +291,7 @@ export default function BitcoinLocal() {
   const baselinePercent = (baselineCount / maxCadence) * 100
   const cadenceTotal = cadenceCounts.reduce((sum, count) => sum + count, 0)
   const cadenceAvg = cadenceHours > 0 ? cadenceTotal / cadenceHours : 0
+  const cadenceGridClass = managedByApp ? 'grid gap-6 lg:grid-cols-2' : 'grid gap-6'
   const lastBlockTime = typeof status?.best_block_time === 'number' ? status.best_block_time * 1000 : null
   const lastBlockAgeSec = lastBlockTime ? Math.max(0, (Date.now() - lastBlockTime) / 1000) : null
   const lastBlockLabel = lastBlockTime
@@ -340,7 +357,14 @@ export default function BitcoinLocal() {
         {message && <p className="text-sm text-brass">{message}</p>}
       </div>
 
-      {!installed && (
+      {externalDetected && (
+        <div className="section-card space-y-2">
+          <h3 className="text-lg font-semibold">{t('bitcoinLocal.externalTitle')}</h3>
+          <p className="text-fog/60">{t('bitcoinLocal.externalBody')}</p>
+        </div>
+      )}
+
+      {showNotInstalled && (
         <div className="section-card space-y-3">
           <h3 className="text-lg font-semibold">{t('bitcoinLocal.notInstalledTitle')}</h3>
           <p className="text-fog/60">{t('bitcoinLocal.notInstalledBody')}</p>
@@ -348,10 +372,10 @@ export default function BitcoinLocal() {
         </div>
       )}
 
-      {installed && (
+      {showDetails && (
         <>
           <div className="grid gap-6 lg:grid-cols-2">
-            <div className="section-card space-y-4">
+              <div className="section-card space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold">{t('bitcoinLocal.sync')}</h3>
                 <span className="text-xs text-fog/60">{syncing ? t('bitcoinLocal.syncing') : t('common.status')}</span>
@@ -398,9 +422,9 @@ export default function BitcoinLocal() {
                   <span className="text-fog">{formatGB(status?.size_on_disk)}</span>
                 </div>
               </div>
-            </div>
+              </div>
 
-            <div className="section-card space-y-4">
+              <div className="section-card space-y-4">
               <h3 className="text-lg font-semibold">{t('bitcoinLocal.nodeStatus')}</h3>
               <div className="grid gap-3 text-sm text-fog/70">
                 <div className="flex items-center justify-between">
@@ -447,8 +471,10 @@ export default function BitcoinLocal() {
             </div>
           </div>
 
-          <div className="grid gap-6 lg:grid-cols-2">
-            <div className="section-card space-y-4">
+          {(managedByApp || externalDetected) && (
+            <div className={cadenceGridClass}>
+            {managedByApp && (
+              <div className="section-card space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div>
                   <h3 className="text-lg font-semibold">{t('bitcoinLocal.storageConfig')}</h3>
@@ -514,7 +540,8 @@ export default function BitcoinLocal() {
                   {t('bitcoinLocal.pruneRestartNote')}
                 </span>
               </div>
-            </div>
+              </div>
+            )}
 
             <div className="section-card space-y-4">
               <div className="flex items-start justify-between gap-4">
@@ -560,8 +587,9 @@ export default function BitcoinLocal() {
                 <span>{t('bitcoinLocal.blocksPerHour', { total: cadenceTotal, hours: cadenceHours.toFixed(1) })}</span>
                 <span>{t('bitcoinLocal.avgBlocksPerHour', { avg: cadenceAvg.toFixed(1) })}</span>
               </div>
+              </div>
             </div>
-          </div>
+          )}
         </>
       )}
     </section>

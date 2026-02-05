@@ -33,6 +33,8 @@ const (
   boostPeersDefaultLimit = 25
   boostPeersMaxLimit = 100
   lndRPCTimeout = 15 * time.Second
+  lndConnectTimeout = 30 * time.Second
+  lndOpenChannelTimeout = 60 * time.Second
   lndWarmupPeriod = 90 * time.Second
 )
 
@@ -437,6 +439,15 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
     writeError(w, http.StatusBadRequest, "source must be local or remote")
     return
   }
+  if source == "local" {
+    readyCtx, readyCancel := context.WithTimeout(r.Context(), 6*time.Second)
+    defer readyCancel()
+    ready, _ := s.bitcoinLocalReady(readyCtx)
+    if !ready {
+      writeError(w, http.StatusBadRequest, "local bitcoin is not fully synced")
+      return
+    }
+  }
 
   remoteUser, remotePass := readBitcoinSecrets()
   if remoteUser == "" || remotePass == "" {
@@ -619,11 +630,25 @@ func (s *Server) bitcoinLocalStatusActive(ctx context.Context) (bitcoinStatus, e
 func readBitcoinLocalRPCConfig(ctx context.Context) (bitcoinRPCConfig, bool, error) {
   paths := bitcoinCoreAppPaths()
   if !fileExists(paths.ComposePath) {
-    if cfg, ok := readBitcoinConfRPCConfig(paths.ConfigPath); ok {
+    configCandidates := []string{
+      paths.ConfigPath,
+      "/etc/bitcoin/bitcoin.conf",
+      "/var/lib/bitcoind/bitcoin.conf",
+      "/home/bitcoin/.bitcoin/bitcoin.conf",
+      "/root/.bitcoin/bitcoin.conf",
+    }
+    for _, candidate := range configCandidates {
+      if cfg, ok := readBitcoinConfRPCConfig(candidate); ok {
+        return cfg, false, nil
+      }
+    }
+    if cfg, ok := readBitcoinTaggedRPCConfigFromLNDConf("local"); ok {
       return cfg, false, nil
     }
     if cfg, ok := readBitcoindRPCConfigFromLNDConf(); ok {
-      return cfg, false, nil
+      if isLocalRPCHost(cfg.Host) {
+        return cfg, false, nil
+      }
     }
     return bitcoinRPCConfig{}, false, errors.New("bitcoin core is not installed")
   }
@@ -732,6 +757,82 @@ func readBitcoindRPCConfigFromLNDConf() (bitcoinRPCConfig, bool) {
     key := strings.TrimSpace(parts[0])
     val := strings.TrimSpace(parts[1])
 
+    switch key {
+    case "bitcoind.rpchost":
+      if val != "" {
+        host := strings.TrimPrefix(val, "tcp://")
+        if !strings.Contains(host, ":") {
+          host = host + ":8332"
+        }
+        cfg.Host = host
+      }
+    case "bitcoind.rpcuser":
+      cfg.User = val
+    case "bitcoind.rpcpass":
+      cfg.Pass = val
+    case "bitcoind.zmqpubrawblock":
+      cfg.ZMQBlock = normalizeLocalZMQ(val, cfg.ZMQBlock)
+    case "bitcoind.zmqpubrawtx":
+      cfg.ZMQTx = normalizeLocalZMQ(val, cfg.ZMQTx)
+    }
+  }
+
+  if strings.TrimSpace(cfg.Host) == "" {
+    return bitcoinRPCConfig{}, false
+  }
+  if strings.TrimSpace(cfg.User) == "" || strings.TrimSpace(cfg.Pass) == "" {
+    return bitcoinRPCConfig{}, false
+  }
+  return cfg, true
+}
+
+func readBitcoinTaggedRPCConfigFromLNDConf(tag string) (bitcoinRPCConfig, bool) {
+  raw, err := os.ReadFile(lndConfPath)
+  if err != nil {
+    return bitcoinRPCConfig{}, false
+  }
+  lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
+
+  inBitcoind := false
+  inTarget := false
+  cfg := bitcoinRPCConfig{
+    Host: "127.0.0.1:8332",
+    ZMQBlock: "tcp://127.0.0.1:28332",
+    ZMQTx: "tcp://127.0.0.1:28333",
+  }
+
+  for _, line := range lines {
+    trimmed := strings.TrimSpace(line)
+    if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+      inBitcoind = strings.EqualFold(trimmed, "[Bitcoind]")
+      inTarget = false
+      continue
+    }
+    if !inBitcoind {
+      continue
+    }
+    if trimmed == "" {
+      continue
+    }
+    marker := strings.TrimSpace(strings.TrimLeft(trimmed, "#;"))
+    if strings.EqualFold(marker, "LightningOS Bitcoin Remote") {
+      inTarget = strings.EqualFold(tag, "remote")
+      continue
+    }
+    if strings.EqualFold(marker, "LightningOS Bitcoin Local") {
+      inTarget = strings.EqualFold(tag, "local")
+      continue
+    }
+    if !inTarget {
+      continue
+    }
+    clean := strings.TrimSpace(strings.TrimLeft(trimmed, "#;"))
+    parts := strings.SplitN(clean, "=", 2)
+    if len(parts) != 2 {
+      continue
+    }
+    key := strings.TrimSpace(parts[0])
+    val := strings.TrimSpace(parts[1])
     switch key {
     case "bitcoind.rpchost":
       if val != "" {
@@ -1092,6 +1193,8 @@ func mapService(name string) string {
     return peerswapServiceName
   case "lightningos-psweb", "psweb":
     return pswebServiceName
+  case "lnd-upgrade", "lightningos-lnd-upgrade":
+    return lndUpgradeUnitName
   case "postgresql":
     return "postgresql"
   default:
@@ -1260,10 +1363,10 @@ func (s *Server) handleLNConnectPeer(w http.ResponseWriter, r *http.Request) {
     perm = *req.Perm
   }
 
-  ctx, cancel := context.WithTimeout(r.Context(), lndRPCTimeout)
+  ctx, cancel := context.WithTimeout(r.Context(), lndConnectTimeout)
   defer cancel()
 
-  if err := s.lnd.ConnectPeer(ctx, pubkey, host, perm); err != nil {
+  if err := s.lnd.ConnectPeerWithTimeout(ctx, pubkey, host, perm, uint64(lndConnectTimeout/time.Second)); err != nil {
     writeError(w, http.StatusInternalServerError, peerConnectErrorMessage(err))
     return
   }
@@ -1565,15 +1668,18 @@ func (s *Server) handleLNOpenChannel(w http.ResponseWriter, r *http.Request) {
     return
   }
 
-  ctx, cancel := context.WithTimeout(r.Context(), lndRPCTimeout)
-  defer cancel()
-
-  if err := s.lnd.ConnectPeer(ctx, pubkey, host, false); err != nil && !isAlreadyConnected(err) {
+  connectCtx, connectCancel := context.WithTimeout(r.Context(), lndConnectTimeout)
+  if err := s.lnd.ConnectPeerWithTimeout(connectCtx, pubkey, host, false, uint64(lndConnectTimeout/time.Second)); err != nil && !isAlreadyConnected(err) {
+    connectCancel()
     writeError(w, http.StatusInternalServerError, lndRPCErrorMessage(err))
     return
   }
+  connectCancel()
 
-  channelPoint, err := s.lnd.OpenChannel(ctx, pubkey, req.LocalFundingSat, req.CloseAddress, req.Private, req.SatPerVbyte)
+  openCtx, openCancel := context.WithTimeout(r.Context(), lndOpenChannelTimeout)
+  defer openCancel()
+
+  channelPoint, err := s.lnd.OpenChannel(openCtx, pubkey, req.LocalFundingSat, req.CloseAddress, req.Private, req.SatPerVbyte)
   if err != nil {
     writeError(w, http.StatusInternalServerError, lndDetailedErrorMessage(err))
     return
@@ -1674,6 +1780,35 @@ func (s *Server) handleLNUpdateFees(w http.ResponseWriter, r *http.Request) {
   }
 
   writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleLNUpdateChanStatus(w http.ResponseWriter, r *http.Request) {
+  var req struct {
+    ChannelPoint string `json:"channel_point"`
+    Enabled *bool `json:"enabled"`
+  }
+  if err := readJSON(r, &req); err != nil {
+    writeError(w, http.StatusBadRequest, "invalid json")
+    return
+  }
+  if strings.TrimSpace(req.ChannelPoint) == "" {
+    writeError(w, http.StatusBadRequest, "channel_point required")
+    return
+  }
+  if req.Enabled == nil {
+    writeError(w, http.StatusBadRequest, "enabled required")
+    return
+  }
+
+  ctx, cancel := context.WithTimeout(r.Context(), lndRPCTimeout)
+  defer cancel()
+
+  if err := s.lnd.UpdateChanStatus(ctx, req.ChannelPoint, *req.Enabled); err != nil {
+    writeError(w, http.StatusInternalServerError, lndDetailedErrorMessage(err))
+    return
+  }
+
+  writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleLNChannelFees(w http.ResponseWriter, r *http.Request) {
@@ -2436,11 +2571,16 @@ type bitcoinInfo struct {
   VerificationProgress float64 `json:"verificationprogress"`
   InitialBlockDownload bool `json:"initialblockdownload"`
   BestBlockHash string `json:"bestblockhash"`
+  Pruned bool `json:"pruned"`
+  PruneHeight int64 `json:"pruneheight"`
+  PruneTargetSize int64 `json:"prune_target_size"`
+  SizeOnDisk int64 `json:"size_on_disk"`
 }
 
 type bitcoinNetworkInfo struct {
   Version int `json:"version"`
   Subversion string `json:"subversion"`
+  Connections int `json:"connections"`
 }
 
 type bitcoinRPCResponse struct {

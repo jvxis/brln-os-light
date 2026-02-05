@@ -25,9 +25,11 @@ type Server struct {
   notifierErr string
   chat *ChatService
   amboss *AmbossHealthChecker
+  chanHealer *ChanStatusHealer
   reports *reports.Service
   reportsErr string
-  reportsOnce sync.Once
+  reportsMu sync.Mutex
+  reportsInitAt time.Time
   lndRestartMu sync.RWMutex
   lastLNDRestart time.Time
   walletActivityMu sync.Mutex
@@ -41,6 +43,7 @@ func New(cfg *config.Config, logger *log.Logger) *Server {
   }
   srv.chat = NewChatService(srv.lnd, logger)
   srv.amboss = NewAmbossHealthChecker(srv.lnd, logger)
+  srv.chanHealer = NewChanStatusHealer(srv.lnd, logger)
   return srv
 }
 
@@ -52,6 +55,9 @@ func (s *Server) Run() error {
   }
   if s.amboss != nil {
     s.amboss.Start()
+  }
+  if s.chanHealer != nil {
+    s.chanHealer.Start()
   }
 
   addr := fmt.Sprintf("%s:%d", s.cfg.Server.Host, s.cfg.Server.Port)

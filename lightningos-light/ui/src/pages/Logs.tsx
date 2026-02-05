@@ -4,6 +4,7 @@ import { getLogs } from '../api'
 
 const services = [
   { labelKey: 'logs.services.lnd', value: 'lnd' },
+  { labelKey: 'logs.services.lndUpgrade', value: 'lnd-upgrade' },
   { labelKey: 'logs.services.manager', value: 'lightningos-manager' },
   { labelKey: 'logs.services.elements', value: 'lightningos-elements' },
   { labelKey: 'logs.services.peerswapd', value: 'lightningos-peerswapd' },

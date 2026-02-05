@@ -471,40 +471,52 @@ html[data-theme="light"] .hover\\:text-rose-200:hover {
 
 .onchain-table-head {
   display: grid;
-  grid-template-columns: 1.1fr 0.6fr 1.4fr 1.4fr;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.6fr) minmax(0, 1.4fr) minmax(0, 1.4fr);
   gap: 12px;
   font-size: 11px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: rgba(229, 231, 235, 0.55);
-  min-width: 680px;
 }
 
 .onchain-table-head--tx {
-  grid-template-columns: 1.3fr 0.8fr 0.7fr 0.6fr 1.3fr 1.5fr;
-  min-width: 980px;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.8fr) minmax(0, 0.7fr) minmax(0, 0.6fr) minmax(0, 1.3fr) minmax(0, 1.5fr);
 }
 
 .onchain-table-body {
   display: grid;
   gap: 10px;
   max-height: 520px;
-  overflow: auto;
+  overflow-y: auto;
   padding-right: 4px;
 }
 
 .onchain-row {
   @apply px-3 rounded-2xl border border-white/10 bg-white/5;
   display: grid;
-  grid-template-columns: 1.1fr 0.6fr 1.4fr 1.4fr;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.6fr) minmax(0, 1.4fr) minmax(0, 1.4fr);
   gap: 12px;
   align-items: center;
-  min-width: 680px;
+  min-width: 0;
 }
 
 .onchain-row--tx {
-  grid-template-columns: 1.3fr 0.8fr 0.7fr 0.6fr 1.3fr 1.5fr;
-  min-width: 980px;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.8fr) minmax(0, 0.7fr) minmax(0, 0.6fr) minmax(0, 1.3fr) minmax(0, 1.5fr);
+}
+
+.onchain-cell {
+  min-width: 0;
+}
+
+.onchain-cell::before {
+  content: "";
+  display: none;
+}
+
+.onchain-cell-inline {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
 }
 
 .onchain-badge {
@@ -546,4 +558,52 @@ html[data-theme="light"] .hover\\:text-rose-200:hover {
 
 .onchain-dot--out {
   background: rgb(var(--color-ember) / 0.7);
+}
+
+@media (max-width: 640px) {
+  .section-card {
+    padding: 1.25rem;
+  }
+
+  .onchain-kpi p {
+    font-size: 0.6rem;
+  }
+
+  .onchain-kpi h3 {
+    font-size: 1rem;
+  }
+
+  .onchain-pill {
+    padding: 0.4rem 0.6rem;
+  }
+
+  .onchain-table-head {
+    display: none;
+  }
+
+  .onchain-row,
+  .onchain-row--tx {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .onchain-cell {
+    display: grid;
+    gap: 4px;
+  }
+
+  .onchain-cell::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: rgba(229, 231, 235, 0.5);
+  }
+
+  .onchain-badge {
+    font-size: 9px;
+    padding: 2px 6px;
+  }
 }

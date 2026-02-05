@@ -1082,6 +1082,13 @@ func (n *Notifier) runTransactions() {
         Txid: tx.TxHash,
       }
 
+      if direction == "in" && status == "CONFIRMED" {
+        txid := strings.TrimSpace(tx.TxHash)
+        if txid != "" {
+          n.triggerTelegramBackup("onchain_receive_confirmed", txid)
+        }
+      }
+
       ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
       _, _ = n.upsertNotification(ctx, fmt.Sprintf("onchain:%s", tx.TxHash), evt)
       cancel()

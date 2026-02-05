@@ -12,7 +12,7 @@ import (
   "lightningos-light/internal/reports"
 )
 
-const reportsTimezoneLabel = "system_local"
+const reportsTimezoneEnv = "REPORTS_TIMEZONE"
 
 func (s *Server) handleReportsRange(w http.ResponseWriter, r *http.Request) {
   svc, errMsg := s.reportsService()
@@ -33,7 +33,8 @@ func (s *Server) handleReportsRange(w http.ResponseWriter, r *http.Request) {
   ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
   defer cancel()
 
-  items, _, err := svc.Range(ctx, key, time.Now(), time.Local)
+  loc := s.reportsLocation()
+  items, _, err := svc.Range(ctx, key, time.Now(), loc)
   if err != nil {
     if strings.Contains(err.Error(), "invalid range") {
       writeError(w, http.StatusBadRequest, err.Error())
@@ -45,7 +46,7 @@ func (s *Server) handleReportsRange(w http.ResponseWriter, r *http.Request) {
 
   writeJSON(w, http.StatusOK, reportSeriesResponse{
     Range: key,
-    Timezone: reportsTimezoneLabel,
+    Timezone: reportsTimezoneLabel(loc),
     Series: mapSeries(items),
   })
 }
@@ -68,12 +69,13 @@ func (s *Server) handleReportsCustom(w http.ResponseWriter, r *http.Request) {
     return
   }
 
-  startDate, err := reports.ParseDate(fromStr, time.Local)
+  loc := s.reportsLocation()
+  startDate, err := reports.ParseDate(fromStr, loc)
   if err != nil {
     writeError(w, http.StatusBadRequest, "from must be YYYY-MM-DD")
     return
   }
-  endDate, err := reports.ParseDate(toStr, time.Local)
+  endDate, err := reports.ParseDate(toStr, loc)
   if err != nil {
     writeError(w, http.StatusBadRequest, "to must be YYYY-MM-DD")
     return
@@ -98,7 +100,7 @@ func (s *Server) handleReportsCustom(w http.ResponseWriter, r *http.Request) {
 
   writeJSON(w, http.StatusOK, reportSeriesResponse{
     Range: "custom",
-    Timezone: reportsTimezoneLabel,
+    Timezone: reportsTimezoneLabel(loc),
     Series: mapSeries(items),
   })
 }
@@ -122,7 +124,8 @@ func (s *Server) handleReportsSummary(w http.ResponseWriter, r *http.Request) {
   ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
   defer cancel()
 
-  summary, _, err := svc.Summary(ctx, key, time.Now(), time.Local)
+  loc := s.reportsLocation()
+  summary, _, err := svc.Summary(ctx, key, time.Now(), loc)
   if err != nil {
     if strings.Contains(err.Error(), "invalid range") {
       writeError(w, http.StatusBadRequest, err.Error())
@@ -134,7 +137,7 @@ func (s *Server) handleReportsSummary(w http.ResponseWriter, r *http.Request) {
 
   writeJSON(w, http.StatusOK, reportSummaryResponse{
     Range: key,
-    Timezone: reportsTimezoneLabel,
+    Timezone: reportsTimezoneLabel(loc),
     Days: summary.Days,
     Totals: metricsPayload(summary.Totals),
     Averages: metricsPayload(summary.Averages),
@@ -155,7 +158,8 @@ func (s *Server) handleReportsLive(w http.ResponseWriter, r *http.Request) {
   ctx, cancel := context.WithTimeout(r.Context(), reportsLiveTimeout())
   defer cancel()
 
-  tr, metrics, err := svc.Live(ctx, time.Now(), time.Local, reportsLiveLookbackHours())
+  loc := s.reportsLocation()
+  tr, metrics, err := svc.Live(ctx, time.Now(), loc, reportsLiveLookbackHours())
   if err != nil {
     writeError(w, http.StatusServiceUnavailable, "live report unavailable")
     return
@@ -164,7 +168,7 @@ func (s *Server) handleReportsLive(w http.ResponseWriter, r *http.Request) {
   payload := metricsPayload(metrics)
   payload.Start = tr.StartLocal.Format(time.RFC3339)
   payload.End = tr.EndLocal.Format(time.RFC3339)
-  payload.Timezone = reportsTimezoneLabel
+  payload.Timezone = reportsTimezoneLabel(loc)
 
   writeJSON(w, http.StatusOK, payload)
 }
@@ -189,6 +193,22 @@ func reportsLiveLookbackHours() int {
     return parsed
   }
   return 0
+}
+
+func (s *Server) reportsLocation() *time.Location {
+  raw := strings.TrimSpace(os.Getenv(reportsTimezoneEnv))
+  loc, err := reports.ResolveLocation(raw, time.Local)
+  if err != nil && s != nil && s.logger != nil {
+    s.logger.Printf("reports: invalid %s %q, using %s: %v", reportsTimezoneEnv, raw, loc.String(), err)
+  }
+  return loc
+}
+
+func reportsTimezoneLabel(loc *time.Location) string {
+  if loc == nil {
+    return "Local"
+  }
+  return loc.String()
 }
 
 type reportSeriesResponse struct {

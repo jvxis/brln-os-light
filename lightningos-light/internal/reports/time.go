@@ -2,6 +2,7 @@ package reports
 
 import (
   "fmt"
+  "strings"
   "time"
 )
 
@@ -128,4 +129,19 @@ func ValidateCustomRange(start, end time.Time) error {
 
 func CustomRangeDaysLimit() int {
   return maxCustomRangeDays
+}
+
+func ResolveLocation(name string, fallback *time.Location) (*time.Location, error) {
+  if fallback == nil {
+    fallback = time.Local
+  }
+  raw := strings.TrimSpace(name)
+  if raw == "" || strings.EqualFold(raw, "local") || strings.EqualFold(raw, "system_local") {
+    return fallback, nil
+  }
+  loc, err := time.LoadLocation(raw)
+  if err != nil {
+    return fallback, err
+  }
+  return loc, nil
 }

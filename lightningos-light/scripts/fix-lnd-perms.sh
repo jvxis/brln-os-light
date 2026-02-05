@@ -3,10 +3,16 @@ set -Eeuo pipefail
 
 LND_DIR="/data/lnd"
 CHAIN_DIR="${LND_DIR}/data/chain/bitcoin/mainnet"
+LND_CONF="${LND_DIR}/lnd.conf"
 
 if [[ -d "$LND_DIR" ]]; then
   chown lnd:lnd "$LND_DIR"
   chmod 750 "$LND_DIR"
+fi
+
+if [[ -f "$LND_CONF" ]]; then
+  chown lnd:lnd "$LND_CONF"
+  chmod 660 "$LND_CONF"
 fi
 
 for dir in "$LND_DIR/data" "$LND_DIR/data/chain" "$LND_DIR/data/chain/bitcoin" "$CHAIN_DIR"; do

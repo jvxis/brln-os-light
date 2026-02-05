@@ -1,10 +1,12 @@
 package server
 
 import (
+  "bytes"
   "context"
   "encoding/json"
   "errors"
   "fmt"
+  "io"
   "math"
   "net"
   "net/http"
@@ -30,6 +32,7 @@ const (
 type bitcoinLocalStatus struct {
   Installed bool `json:"installed"`
   Status string `json:"status"`
+  Source string `json:"source"`
   DataDir string `json:"data_dir"`
   RPCOk bool `json:"rpc_ok"`
   Connections int `json:"connections,omitempty"`
@@ -92,6 +95,11 @@ type bitcoinCLIBlockHeader struct {
   PreviousBlockHash string `json:"previousblockhash"`
 }
 
+type bitcoinBlockHeaderRPCResponse struct {
+  Result bitcoinCLIBlockHeader `json:"result"`
+  Error *rpcErrorDetail `json:"error"`
+}
+
 type blockCadenceCache struct {
   BestHash string
   BestTime int64
@@ -107,13 +115,51 @@ func (s *Server) handleBitcoinLocalStatus(w http.ResponseWriter, r *http.Request
   resp := bitcoinLocalStatus{
     Installed: false,
     Status: "not_installed",
+    Source: "none",
     DataDir: paths.DataDir,
   }
   if !fileExists(paths.ComposePath) {
+    ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
+    defer cancel()
+    cfg, _, err := readBitcoinLocalRPCConfig(ctx)
+    if err != nil {
+      writeJSON(w, http.StatusOK, resp)
+      return
+    }
+    resp.Source = "external"
+    resp.Status = "external"
+    info, rpcErr := fetchBitcoinInfo(ctx, cfg.Host, cfg.User, cfg.Pass)
+    if rpcErr != nil {
+      resp.RPCOk = false
+      writeJSON(w, http.StatusOK, resp)
+      return
+    }
+    resp.RPCOk = true
+    resp.Chain = info.Chain
+    resp.Blocks = info.Blocks
+    resp.Headers = info.Headers
+    resp.VerificationProgress = info.VerificationProgress
+    resp.InitialBlockDownload = info.InitialBlockDownload
+    resp.Pruned = info.Pruned
+    resp.PruneHeight = info.PruneHeight
+    resp.PruneTargetSize = info.PruneTargetSize
+    resp.SizeOnDisk = info.SizeOnDisk
+    if netInfo, netErr := fetchBitcoinNetworkInfo(ctx, cfg.Host, cfg.User, cfg.Pass); netErr == nil {
+      resp.Version = netInfo.Version
+      resp.Subversion = netInfo.Subversion
+      resp.Connections = netInfo.Connections
+    }
+    bestTime, buckets, cadenceErr := getBitcoinLocalCadence(ctx, paths, info.BestBlockHash)
+    if cadenceErr == nil && bestTime > 0 {
+      resp.BestBlockTime = bestTime
+      resp.BlockCadenceWindowSec = blockCadenceWindowSec
+      resp.BlockCadence = buckets
+    }
     writeJSON(w, http.StatusOK, resp)
     return
   }
   resp.Installed = true
+  resp.Source = "app"
 
   ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
   defer cancel()
@@ -291,7 +337,18 @@ func getBitcoinLocalCadence(ctx context.Context, paths bitcoinCorePaths, bestHas
   }
   blockCadenceMu.Unlock()
 
-  bestTime, buckets, err := computeBitcoinLocalCadence(ctx, paths, trimmed)
+  var bestTime int64
+  var buckets []blockCadenceBucket
+  var err error
+  if fileExists(paths.ComposePath) {
+    bestTime, buckets, err = computeBitcoinLocalCadence(ctx, paths, trimmed)
+  } else {
+    cfg, _, cfgErr := readBitcoinLocalRPCConfig(ctx)
+    if cfgErr != nil {
+      return 0, nil, cfgErr
+    }
+    bestTime, buckets, err = computeBitcoinLocalCadenceRPC(ctx, cfg, trimmed)
+  }
   if err != nil {
     return 0, nil, err
   }
@@ -356,6 +413,54 @@ func computeBitcoinLocalCadence(ctx context.Context, paths bitcoinCorePaths, bes
   return bestTime, buckets, nil
 }
 
+func computeBitcoinLocalCadenceRPC(ctx context.Context, cfg bitcoinRPCConfig, bestHash string) (int64, []blockCadenceBucket, error) {
+  header, err := fetchBitcoinBlockHeaderRPC(ctx, cfg.Host, cfg.User, cfg.Pass, bestHash)
+  if err != nil {
+    return 0, nil, err
+  }
+
+  bestTime := header.Time
+  if bestTime == 0 {
+    return 0, nil, errors.New("best block time missing")
+  }
+
+  windowSec := int64(blockCadenceWindowSec)
+  startTime := bestTime - (windowSec * int64(blockCadenceBucketCount))
+  buckets := make([]blockCadenceBucket, blockCadenceBucketCount)
+  for i := 0; i < blockCadenceBucketCount; i++ {
+    start := startTime + (int64(i) * windowSec)
+    buckets[i] = blockCadenceBucket{
+      StartTime: start,
+      EndTime: start + windowSec,
+      Count: 0,
+    }
+  }
+
+  current := header
+  for steps := 0; steps < blockCadenceMaxSteps; steps++ {
+    if current.Time < startTime {
+      break
+    }
+    idx := int((current.Time - startTime) / windowSec)
+    if idx >= 0 && idx < len(buckets) {
+      buckets[idx].Count++
+    }
+
+    nextHash := strings.TrimSpace(current.PreviousBlockHash)
+    if nextHash == "" {
+      break
+    }
+
+    nextHeader, err := fetchBitcoinBlockHeaderRPC(ctx, cfg.Host, cfg.User, cfg.Pass, nextHash)
+    if err != nil {
+      break
+    }
+    current = nextHeader
+  }
+
+  return bestTime, buckets, nil
+}
+
 func fetchBitcoinLocalBlockHeader(ctx context.Context, paths bitcoinCorePaths, hash string) (bitcoinCLIBlockHeader, error) {
   out, err := execBitcoinCLI(ctx, paths, "getblockheader", hash, "true")
   if err != nil {
@@ -366,6 +471,85 @@ func fetchBitcoinLocalBlockHeader(ctx context.Context, paths bitcoinCorePaths, h
     return bitcoinCLIBlockHeader{}, err
   }
   return header, nil
+}
+
+func parseBitcoinBlockHeaderRPC(body []byte) (bitcoinCLIBlockHeader, error) {
+  var payload bitcoinBlockHeaderRPCResponse
+  if err := json.Unmarshal(body, &payload); err != nil {
+    return bitcoinCLIBlockHeader{}, err
+  }
+  if payload.Error != nil {
+    return bitcoinCLIBlockHeader{}, fmt.Errorf(payload.Error.Message)
+  }
+  return payload.Result, nil
+}
+
+func doBitcoinRPCParams(ctx context.Context, url, user, pass, method string, params []any) ([]byte, error) {
+  payload := map[string]any{
+    "jsonrpc": "1.0",
+    "id": "lightningos",
+    "method": method,
+    "params": params,
+  }
+  buf, _ := json.Marshal(payload)
+
+  req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(buf))
+  if err != nil {
+    return nil, err
+  }
+  req.SetBasicAuth(user, pass)
+  req.Header.Set("Content-Type", "application/json")
+
+  resp, err := http.DefaultClient.Do(req)
+  if err != nil {
+    return nil, err
+  }
+  defer resp.Body.Close()
+
+  body, _ := io.ReadAll(resp.Body)
+  if resp.StatusCode != http.StatusOK {
+    msg := parseRPCError(body)
+    return nil, rpcStatusError{statusCode: resp.StatusCode, message: msg}
+  }
+  if msg := parseRPCError(body); msg != "" {
+    return nil, rpcStatusError{statusCode: resp.StatusCode, message: msg}
+  }
+  return body, nil
+}
+
+func fetchBitcoinRPCParams(ctx context.Context, host, user, pass, method string, params []any) ([]byte, error) {
+  if strings.HasPrefix(host, "http://") || strings.HasPrefix(host, "https://") {
+    return doBitcoinRPCParams(ctx, host, user, pass, method, params)
+  }
+
+  body, err := doBitcoinRPCParams(ctx, "http://"+host, user, pass, method, params)
+  if err == nil {
+    return body, nil
+  }
+  var statusErr rpcStatusError
+  if err != nil && errors.As(err, &statusErr) {
+    return nil, err
+  }
+
+  body, httpsErr := doBitcoinRPCParams(ctx, "https://"+host, user, pass, method, params)
+  if httpsErr == nil {
+    return body, nil
+  }
+  if err != nil && httpsErr != nil {
+    return nil, fmt.Errorf("rpc http failed: %v; https failed: %v", err, httpsErr)
+  }
+  if err != nil {
+    return nil, err
+  }
+  return nil, httpsErr
+}
+
+func fetchBitcoinBlockHeaderRPC(ctx context.Context, host, user, pass, hash string) (bitcoinCLIBlockHeader, error) {
+  body, err := fetchBitcoinRPCParams(ctx, host, user, pass, "getblockheader", []any{hash, true})
+  if err != nil {
+    return bitcoinCLIBlockHeader{}, err
+  }
+  return parseBitcoinBlockHeaderRPC(body)
 }
 
 func execBitcoinCLI(ctx context.Context, paths bitcoinCorePaths, args ...string) (string, error) {
@@ -694,4 +878,29 @@ func rpcAllowListContains(lines []string, value string) bool {
 
 func roundGB(value float64) float64 {
   return math.Round(value*100) / 100
+}
+
+func (s *Server) bitcoinLocalReady(ctx context.Context) (bool, string) {
+  cfg, _, err := readBitcoinLocalRPCConfig(ctx)
+  if err != nil {
+    msg := strings.ToLower(err.Error())
+    if strings.Contains(msg, "not installed") {
+      return false, "not_installed"
+    }
+    return false, "rpc_unavailable"
+  }
+  info, err := fetchBitcoinInfo(ctx, cfg.Host, cfg.User, cfg.Pass)
+  if err != nil {
+    return false, "rpc_unavailable"
+  }
+  if info.InitialBlockDownload {
+    return false, "syncing"
+  }
+  if info.VerificationProgress < 0.9999 {
+    return false, "syncing"
+  }
+  if info.Headers > 0 && info.Blocks < info.Headers {
+    return false, "syncing"
+  }
+  return true, "ready"
 }

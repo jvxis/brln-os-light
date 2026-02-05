@@ -61,6 +61,10 @@ export const setElementsMainchain = (payload: { source: 'local' | 'remote' }) =>
   request('/api/elements/mainchain', { method: 'POST', body: JSON.stringify(payload) })
 export const getLndStatus = () => request('/api/lnd/status')
 export const getLndConfig = () => request('/api/lnd/config')
+export const getLndUpgradeStatus = (force?: boolean) =>
+  request(`/api/lnd/upgrade/status${buildQuery({ force: force ? 1 : undefined })}`)
+export const startLndUpgrade = (payload: { target_version: string; download_url?: string }) =>
+  request('/api/lnd/upgrade', { method: 'POST', body: JSON.stringify(payload) })
 export const getWizardStatus = () => request('/api/wizard/status')
 
 export const postBitcoinRemote = (payload: { rpcuser: string; rpcpass: string }) =>
@@ -110,8 +114,13 @@ export const payInvoice = (payload: { payment_request: string; channel_point?: s
 
 export const getLnChannels = () => request('/api/lnops/channels')
 export const getLnPeers = () => request('/api/lnops/peers')
+export const getLnChanHeal = () => request('/api/lnops/channel/auto-heal')
+export const updateLnChanHeal = (payload: { enabled?: boolean; interval_sec?: number }) =>
+  request('/api/lnops/channel/auto-heal', { method: 'POST', body: JSON.stringify(payload) })
 export const getLnChannelFees = (channelPoint: string) =>
   request(`/api/lnops/channel/fees?channel_point=${encodeURIComponent(channelPoint)}`)
+export const updateLnChannelStatus = (payload: { channel_point: string; enabled: boolean }) =>
+  request('/api/lnops/channel/status', { method: 'POST', body: JSON.stringify(payload) })
 export const connectPeer = (payload: { address?: string; pubkey?: string; host?: string; perm?: boolean }) =>
   request('/api/lnops/peer', { method: 'POST', body: JSON.stringify(payload) })
 export const disconnectPeer = (payload: { pubkey: string }) =>

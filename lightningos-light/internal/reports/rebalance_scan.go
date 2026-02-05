@@ -12,6 +12,18 @@ import (
 const rebalanceScanPageSize = 5000
 const rebalanceScanMaxPages = 200000
 
+func FetchRebalanceMetrics(ctx context.Context, lnd *lndclient.Client, startUnix uint64, endUnix uint64, memoMatch bool) (RebalanceOverride, error) {
+  totals := RebalanceOverride{}
+  err := scanRebalancePayments(ctx, lnd, startUnix, endUnix, memoMatch, func(ts int64, feeMsat int64) {
+    totals.FeeMsat += feeMsat
+    totals.Count++
+  })
+  if err != nil {
+    return RebalanceOverride{}, err
+  }
+  return totals, nil
+}
+
 func FetchRebalanceFeesByDay(ctx context.Context, lnd *lndclient.Client, startUnix uint64, endUnix uint64, loc *time.Location) (map[time.Time]RebalanceOverride, error) {
   if lnd == nil {
     return nil, fmt.Errorf("lnd client unavailable")
@@ -20,26 +32,46 @@ func FetchRebalanceFeesByDay(ctx context.Context, lnd *lndclient.Client, startUn
     loc = time.Local
   }
 
-  pubkey, err := fetchNodePubkey(ctx, lnd)
+  results := make(map[time.Time]RebalanceOverride)
+  err := scanRebalancePayments(ctx, lnd, startUnix, endUnix, false, func(ts int64, feeMsat int64) {
+    local := time.Unix(ts, 0).In(loc)
+    dayKey := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc)
+    current := results[dayKey]
+    current.FeeMsat += feeMsat
+    current.Count++
+    results[dayKey] = current
+  })
   if err != nil {
     return nil, err
+  }
+  return results, nil
+}
+
+func scanRebalancePayments(ctx context.Context, lnd *lndclient.Client, startUnix uint64, endUnix uint64, memoMatch bool, onMatch func(ts int64, feeMsat int64)) error {
+  if lnd == nil {
+    return fmt.Errorf("lnd client unavailable")
+  }
+
+  pubkey, err := fetchNodePubkey(ctx, lnd)
+  if err != nil {
+    return err
   }
 
   conn, err := lnd.DialLightning(ctx)
   if err != nil {
-    return nil, err
+    return err
   }
   defer conn.Close()
 
   client := lnrpc.NewLightningClient(conn)
-  results := make(map[time.Time]RebalanceOverride)
+  decodeCache := map[string]decodedPayReq{}
 
   var indexOffset uint64
   var pages int
   var lastOffset uint64
 
   for {
-    if pages > rebalanceScanMaxPages {
+    if pages >= rebalanceScanMaxPages {
       break
     }
     pages++
@@ -52,7 +84,7 @@ func FetchRebalanceFeesByDay(ctx context.Context, lnd *lndclient.Client, startUn
     }
     resp, err := client.ListPayments(ctx, req)
     if err != nil {
-      return nil, err
+      return err
     }
     if resp == nil || len(resp.Payments) == 0 {
       break
@@ -87,17 +119,19 @@ func FetchRebalanceFeesByDay(ctx context.Context, lnd *lndclient.Client, startUn
       if !PaymentSucceeded(pay) {
         continue
       }
-      if !IsRebalancePayment(pay, pubkey, "", "", false) {
+      dest := ""
+      description := ""
+      if memoMatch {
+        dest, description = extractDestinationAndDescription(ctx, lnd, pay, decodeCache)
+      }
+      if !IsRebalancePayment(pay, pubkey, dest, description, memoMatch) {
         continue
       }
 
       feeMsat := extractPaymentFeeMsat(pay)
-      local := time.Unix(ts, 0).In(loc)
-      dayKey := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc)
-      current := results[dayKey]
-      current.FeeMsat += feeMsat
-      current.Count++
-      results[dayKey] = current
+      if onMatch != nil {
+        onMatch(ts, feeMsat)
+      }
     }
 
     if maxTs < int64(startUnix) {
@@ -122,5 +156,5 @@ func FetchRebalanceFeesByDay(ctx context.Context, lnd *lndclient.Client, startUn
     }
   }
 
-  return results, nil
+  return nil
 }

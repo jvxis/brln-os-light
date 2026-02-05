@@ -130,29 +130,5 @@ func defaultElementsMainchainPort(source string, cfg *config.Config) int {
 }
 
 func (s *Server) elementsLocalBitcoinReady(ctx context.Context) (bool, string) {
-  paths := bitcoinCoreAppPaths()
-  if !fileExists(paths.ComposePath) {
-    return false, "not_installed"
-  }
-  status, err := getComposeStatus(ctx, paths.Root, paths.ComposePath, "bitcoind")
-  if err != nil {
-    return false, "unknown"
-  }
-  if status != "running" {
-    return false, status
-  }
-  chainInfo, _, err := fetchBitcoinLocalInfo(ctx, paths)
-  if err != nil {
-    return false, "rpc_unavailable"
-  }
-  if chainInfo.InitialBlockDownload {
-    return false, "syncing"
-  }
-  if chainInfo.VerificationProgress < 0.9999 {
-    return false, "syncing"
-  }
-  if chainInfo.Headers > 0 && chainInfo.Blocks < chainInfo.Headers {
-    return false, "syncing"
-  }
-  return true, "ready"
+  return s.bitcoinLocalReady(ctx)
 }

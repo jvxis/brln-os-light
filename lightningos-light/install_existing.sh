@@ -12,6 +12,7 @@ GOTTY_VERSION="${GOTTY_VERSION:-1.0.1}"
 GOTTY_URL="https://github.com/yudai/gotty/releases/download/v${GOTTY_VERSION}/gotty_linux_amd64.tar.gz"
 POSTGRES_VERSION="${POSTGRES_VERSION:-latest}"
 LND_FIX_PERMS_SCRIPT="/usr/local/sbin/lightningos-fix-lnd-perms"
+LND_UPGRADE_SCRIPT="/usr/local/sbin/lightningos-upgrade-lnd"
 
 CURRENT_STEP=""
 LOG_FILE="/var/log/lightningos-install-existing.log"
@@ -46,6 +47,96 @@ print_ok() {
 
 print_warn() {
   echo "[WARN] $1"
+}
+
+get_lightningos_version() {
+  local version_file="$REPO_ROOT/ui/public/version.txt"
+  local version="unknown"
+  if [[ -f "$version_file" ]]; then
+    version=$(head -n1 "$version_file" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+  fi
+  if [[ -z "$version" ]]; then
+    version="unknown"
+  fi
+  echo "$version"
+}
+
+print_lightningos_banner() {
+  cat <<'EOF'
+■     ■■■■■ ■■■■■ ■   ■ ■■■■■ ■   ■ ■■■■■ ■   ■ ■■■■■ □□□□□ □□□□□
+■       ■   ■     ■   ■   ■   ■■  ■   ■   ■■  ■ ■     □   □ □
+■       ■   ■     ■   ■   ■   ■ ■ ■   ■   ■ ■ ■ ■     □   □ □
+■       ■   ■ ■■■ ■■■■■   ■   ■  ■■   ■   ■  ■■ ■ ■■■ □   □ □□□□□
+■       ■   ■   ■ ■   ■   ■   ■   ■   ■   ■   ■ ■   ■ □   □     □
+■       ■   ■   ■ ■   ■   ■   ■   ■   ■   ■   ■ ■   ■ □   □     □
+■■■■■ ■■■■■ ■■■■■ ■   ■   ■   ■   ■ ■■■■■ ■   ■ ■■■■■ □□□□□ □□□□□
+EOF
+}
+
+get_mit_terms() {
+  local license_file="$REPO_ROOT/../LICENSE"
+  if [[ -f "$license_file" ]]; then
+    awk 'BEGIN{p=0} /^MIT License \\(English\\)/{p=1} /^MIT License \\(Portuguese\\)/{p=0} p{print}' "$license_file"
+    return
+  fi
+  cat <<'EOF'
+MIT License (English)
+
+Copyright (c) 2026 BR⚡LN
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+EOF
+}
+
+confirm_mit_license() {
+  local accepted="${ACCEPT_MIT_LICENSE:-}"
+  if [[ -n "$accepted" ]]; then
+    case "$accepted" in
+      1|y|Y|yes|YES|true|TRUE) return 0 ;;
+      0|n|N|no|NO|false|FALSE) echo "MIT License not accepted."; exit 1 ;;
+    esac
+  fi
+  if [[ ! -t 0 ]]; then
+    echo "Non-interactive mode detected."
+    echo "Set ACCEPT_MIT_LICENSE=1 to proceed."
+    exit 1
+  fi
+  while true; do
+    read -r -p "Do you want to continue with the installation? [y/N]: " reply
+    reply="${reply:-N}"
+    case "$reply" in
+      [Yy]*) return 0 ;;
+      [Nn]*) echo "Installation cancelled."; exit 1 ;;
+    esac
+  done
+}
+
+show_welcome_and_license() {
+  local version
+  version=$(get_lightningos_version)
+  print_lightningos_banner
+  echo "Version: ${version}"
+  echo "Created by BR⚡LN - https://br-ln.com"
+  echo ""
+  get_mit_terms
+  echo ""
+  confirm_mit_license
 }
 
 get_lan_ip() {
@@ -336,6 +427,17 @@ install_lnd_fix_perms_script() {
   fi
 }
 
+install_lnd_upgrade_script() {
+  local src="$REPO_ROOT/scripts/upgrade-lnd.sh"
+  if [[ -f "$src" ]]; then
+    mkdir -p "$(dirname "$LND_UPGRADE_SCRIPT")"
+    install -m 0755 "$src" "$LND_UPGRADE_SCRIPT"
+    print_ok "LND upgrade helper installed"
+  else
+    print_warn "Missing helper script: $src"
+  fi
+}
+
 configure_sudoers() {
   print_step "Configuring sudoers"
   local systemctl_path apt_get_path apt_path dpkg_path docker_path docker_compose_path systemd_run_path smartctl_path ufw_path
@@ -365,7 +467,7 @@ configure_sudoers() {
     return
   fi
   local system_cmds
-  system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${smartctl_path} *"
+  system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${LND_UPGRADE_SCRIPT}, ${smartctl_path} *"
   local app_cmds=()
   [[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")
   [[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")
@@ -805,9 +907,14 @@ fix_lnd_permissions() {
   fi
 
   local chain_dir="${lnd_dir}/data/chain/bitcoin/mainnet"
+  local lnd_conf="${lnd_dir}/lnd.conf"
   if [[ -d "$lnd_dir" ]]; then
     chown "$lnd_user:$lnd_group" "$lnd_dir"
     chmod 750 "$lnd_dir"
+  fi
+  if [[ -f "$lnd_conf" ]]; then
+    chown "$lnd_user:$lnd_group" "$lnd_conf"
+    chmod 660 "$lnd_conf"
   fi
   for dir in "$lnd_dir/data" "$lnd_dir/data/chain" "$lnd_dir/data/chain/bitcoin" "$chain_dir"; do
     if [[ -d "$dir" ]]; then
@@ -1002,6 +1109,7 @@ run_reports_backfill() {
 }
 
 main() {
+  show_welcome_and_license
   require_root
   print_step "LightningOS existing node setup"
 
@@ -1141,6 +1249,7 @@ main() {
     fi
   fi
   install_lnd_fix_perms_script
+  install_lnd_upgrade_script
   configure_sudoers
   ensure_manager_service "$manager_user" "$manager_group"
   if [[ -n "$LND_USER" && -n "$LND_GROUP" ]]; then

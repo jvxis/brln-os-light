@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getAppAdminPassword, getApps, installApp, resetAppAdmin, startApp, stopApp, uninstallApp } from '../api'
+import { getAppAdminPassword, getApps, getBitcoinLocalStatus, installApp, resetAppAdmin, startApp, stopApp, uninstallApp } from '../api'
 import lndgIcon from '../assets/apps/lndg.ico'
 import bitcoincoreIcon from '../assets/apps/bitcoincore.svg'
 import elementsIcon from '../assets/apps/elements.svg'
@@ -15,6 +15,10 @@ type AppInfo = {
   status: string
   port?: number
   admin_password_path?: string
+}
+
+type BitcoinLocalStatus = {
+  source?: 'app' | 'external' | 'none'
 }
 
 const iconMap: Record<string, string> = {
@@ -44,6 +48,7 @@ export default function AppStore() {
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState<Record<string, string>>({})
   const [copying, setCopying] = useState<Record<string, boolean>>({})
+  const [hideBitcoinCore, setHideBitcoinCore] = useState(false)
 
   const resolveStatusLabel = (value: string) => {
     switch (value) {
@@ -73,6 +78,13 @@ export default function AppStore() {
 
   useEffect(() => {
     loadApps()
+    getBitcoinLocalStatus()
+      .then((data: BitcoinLocalStatus) => {
+        setHideBitcoinCore(data?.source === 'external')
+      })
+      .catch(() => {
+        setHideBitcoinCore(false)
+      })
   }, [])
 
   const handleAction = async (id: string, action: 'install' | 'start' | 'stop' | 'uninstall') => {
@@ -137,6 +149,9 @@ export default function AppStore() {
   }
 
   const host = window.location.hostname
+  const visibleApps = hideBitcoinCore
+    ? apps.filter((app) => app.id !== 'bitcoincore')
+    : apps
 
   return (
     <section className="space-y-6">
@@ -147,7 +162,7 @@ export default function AppStore() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        {apps.map((app) => {
+        {visibleApps.map((app) => {
           const busyAction = busy[app.id]
           const isBusy = Boolean(busyAction)
           const isResetting = busyAction === 'reset-admin'

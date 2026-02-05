@@ -12,6 +12,7 @@ import (
   "strings"
   "time"
 
+  "lightningos-light/internal/lndclient"
   "lightningos-light/lnrpc"
 )
 
@@ -140,7 +141,8 @@ func (s *Server) handleTelegramBackupTest(w http.ResponseWriter, r *http.Request
     return
   }
 
-  filename, caption := telegramBackupPayload("test", "", time.Now().UTC())
+  alias := getNodeAlias(ctx, s.lnd)
+  filename, caption := telegramBackupPayload("test", "", alias, time.Now().UTC())
   if err := sendTelegramDocument(ctx, cfg.BotToken, cfg.ChatID, filename, data, caption); err != nil {
     writeError(w, http.StatusInternalServerError, err.Error())
     return
@@ -229,20 +231,74 @@ func (n *Notifier) sendTelegramBackup(ctx context.Context, cfg telegramBackupCon
     return errors.New("empty channel backup")
   }
 
-  filename, caption := telegramBackupPayload(reason, channelPoint, time.Now().UTC())
+  alias := getNodeAlias(ctx, n.lnd)
+  filename, caption := telegramBackupPayload(reason, channelPoint, alias, time.Now().UTC())
 
   return sendTelegramDocument(ctx, cfg.BotToken, cfg.ChatID, filename, data, caption)
 }
 
-func telegramBackupPayload(reason, channelPoint string, when time.Time) (string, string) {
+func getNodeAlias(ctx context.Context, lnd *lndclient.Client) string {
+  if lnd == nil {
+    return ""
+  }
+  infoCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+  defer cancel()
+  conn, err := lnd.DialLightning(infoCtx)
+  if err != nil {
+    return ""
+  }
+  defer conn.Close()
+  client := lnrpc.NewLightningClient(conn)
+  info, err := client.GetInfo(infoCtx, &lnrpc.GetInfoRequest{})
+  if err != nil || info == nil {
+    return ""
+  }
+  return strings.TrimSpace(info.Alias)
+}
+
+func telegramReasonEmoji(tag string) string {
+  switch tag {
+  case "opening":
+    return "🟡"
+  case "open":
+    return "🟢"
+  case "closing":
+    return "🟠"
+  case "close":
+    return "🔴"
+  case "onchain_receive_confirmed":
+    return "✅"
+  case "test":
+    return "🧪"
+  default:
+    return ""
+  }
+}
+
+func telegramBackupSubjectLabel(tag string) string {
+  if strings.HasPrefix(tag, "onchain_") {
+    return "tx"
+  }
+  return "channel"
+}
+
+func telegramBackupPayload(reason, channelPoint, alias string, when time.Time) (string, string) {
   tag := strings.TrimSpace(reason)
   if tag == "" {
     tag = "update"
   }
   filename := fmt.Sprintf("scb-%s-%s.scb", tag, when.Format("20060102-150405"))
-  caption := fmt.Sprintf("LightningOS SCB backup (%s) %s", tag, when.Format("2006-01-02 15:04:05 UTC"))
+  displayTag := tag
+  if emoji := telegramReasonEmoji(tag); emoji != "" {
+    displayTag = fmt.Sprintf("%s %s", emoji, tag)
+  }
+  caption := fmt.Sprintf("LightningOS SCB All Channels Backup - %s", when.Format("2006-01-02 15:04:05 UTC"))
+  if strings.TrimSpace(alias) != "" {
+    caption = fmt.Sprintf("%s - %s", caption, strings.TrimSpace(alias))
+  }
+  caption = fmt.Sprintf("%s - (%s)", caption, displayTag)
   if strings.TrimSpace(channelPoint) != "" {
-    caption = fmt.Sprintf("%s channel %s", caption, strings.TrimSpace(channelPoint))
+    caption = fmt.Sprintf("%s %s %s", caption, telegramBackupSubjectLabel(tag), strings.TrimSpace(channelPoint))
   }
   return filename, caption
 }

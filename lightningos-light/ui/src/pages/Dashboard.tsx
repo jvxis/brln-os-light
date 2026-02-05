@@ -165,7 +165,7 @@ export default function Dashboard() {
   return (
     <section className="space-y-6">
       <div className="section-card">
-        <div className="flex items-start justify-between">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <p className="text-sm text-fog/60">{t('dashboard.systemPulse')}</p>
             <div className="flex items-center gap-3">
@@ -173,24 +173,24 @@ export default function Dashboard() {
               <Badge label={statusLabel} tone={overallTone} />
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button className="btn-secondary" onClick={() => restart('lnd')} type="button">
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+            <button className="btn-secondary text-xs px-3 py-2 sm:text-sm sm:px-4" onClick={() => restart('lnd')} type="button">
               {t('dashboard.restartLnd')}
             </button>
-            <button className="btn-secondary" onClick={() => restart('lightningos-manager')} type="button">
+            <button className="btn-secondary text-xs px-3 py-2 sm:text-sm sm:px-4" onClick={() => restart('lightningos-manager')} type="button">
               {t('dashboard.restartManager')}
             </button>
-            <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-2 py-1">
+            <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-2 py-1 w-full sm:w-auto">
               <span className="text-[10px] uppercase tracking-[0.2em] text-fog/50">{t('dashboard.systemActions')}</span>
               <button
-                className="btn-secondary text-xs px-3 py-1.5 text-amber-200 border-amber-400/30"
+                className="btn-secondary text-[11px] px-2 py-1 sm:text-xs sm:px-3 sm:py-1.5 text-amber-200 border-amber-400/30"
                 onClick={() => openSystemAction('restart')}
                 type="button"
               >
                 {t('dashboard.safeRestart')}
               </button>
               <button
-                className="btn-secondary text-xs px-3 py-1.5 text-rose-200 border-rose-400/30"
+                className="btn-secondary text-[11px] px-2 py-1 sm:text-xs sm:px-3 sm:py-1.5 text-rose-200 border-rose-400/30"
                 onClick={() => openSystemAction('shutdown')}
                 type="button"
               >

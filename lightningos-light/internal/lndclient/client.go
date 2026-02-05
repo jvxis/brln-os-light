@@ -14,10 +14,11 @@ import (
   "strconv"
   "strings"
   "sync"
-  "time"
+	"time"
 
-  "lightningos-light/internal/config"
-  "lightningos-light/lnrpc"
+	"lightningos-light/internal/config"
+	"lightningos-light/lnrpc"
+	"lightningos-light/lnrpc/routerrpc"
 
   "google.golang.org/grpc"
   "google.golang.org/grpc/credentials"
@@ -47,6 +48,7 @@ const (
   statusCacheErr = 45 * time.Second
   statusCacheTimeout = 60 * time.Second
   maxGRPCMsgSize = 32 * 1024 * 1024
+  defaultConnectPeerTimeoutSec = uint64(8)
 )
 
 type macaroonCredential struct {
@@ -978,6 +980,7 @@ func (c *Client) ListChannels(ctx context.Context) ([]ChannelInfo, error) {
     var baseFeeMsat *int64
     var feeRatePpm *int64
     var inboundFeeRatePpm *int64
+    localDisabled := isLocalChanDisabledFlags(ch.ChanStatusFlags)
 
     if !ch.Private {
       if edge, err := client.GetChanInfo(ctx, &lnrpc.ChanInfoRequest{ChanId: ch.ChanId}); err == nil {
@@ -996,6 +999,9 @@ func (c *Client) ListChannels(ctx context.Context) ([]ChannelInfo, error) {
           baseFeeMsat = &base
           feeRatePpm = &rate
           inboundFeeRatePpm = &inbound
+          if policy.Disabled {
+            localDisabled = true
+          }
         }
       }
     }
@@ -1006,6 +1012,8 @@ func (c *Client) ListChannels(ctx context.Context) ([]ChannelInfo, error) {
       RemotePubkey: ch.RemotePubkey,
       PeerAlias: ch.PeerAlias,
       Active: ch.Active,
+      ChanStatusFlags: ch.ChanStatusFlags,
+      LocalDisabled: localDisabled,
       Private: ch.Private,
       CapacitySat: ch.Capacity,
       LocalBalanceSat: ch.LocalBalance,
@@ -1198,6 +1206,10 @@ func (c *Client) ListPeers(ctx context.Context) ([]PeerInfo, error) {
 }
 
 func (c *Client) ConnectPeer(ctx context.Context, pubkey string, host string, perm bool) error {
+  return c.ConnectPeerWithTimeout(ctx, pubkey, host, perm, defaultConnectPeerTimeoutSec)
+}
+
+func (c *Client) ConnectPeerWithTimeout(ctx context.Context, pubkey string, host string, perm bool, timeoutSec uint64) error {
   conn, err := c.dial(ctx, true)
   if err != nil {
     return err
@@ -1205,13 +1217,16 @@ func (c *Client) ConnectPeer(ctx context.Context, pubkey string, host string, pe
   defer conn.Close()
 
   client := lnrpc.NewLightningClient(conn)
+  if timeoutSec == 0 {
+    timeoutSec = defaultConnectPeerTimeoutSec
+  }
   _, err = client.ConnectPeer(ctx, &lnrpc.ConnectPeerRequest{
     Addr: &lnrpc.LightningAddress{
       Pubkey: pubkey,
       Host: host,
     },
     Perm: perm,
-    Timeout: 8,
+    Timeout: timeoutSec,
   })
   return err
 }
@@ -1335,6 +1350,31 @@ func (c *Client) UpdateChannelFees(ctx context.Context, channelPoint string, app
   return err
 }
 
+func (c *Client) UpdateChanStatus(ctx context.Context, channelPoint string, enable bool) error {
+  conn, err := c.dial(ctx, true)
+  if err != nil {
+    return err
+  }
+  defer conn.Close()
+
+  cp, err := parseChannelPoint(channelPoint)
+  if err != nil {
+    return err
+  }
+
+  action := routerrpc.ChanStatusAction_ENABLE
+  if !enable {
+    action = routerrpc.ChanStatusAction_DISABLE
+  }
+
+  client := routerrpc.NewRouterClient(conn)
+  _, err = client.UpdateChanStatus(ctx, &routerrpc.UpdateChanStatusRequest{
+    ChanPoint: cp,
+    Action: action,
+  })
+  return err
+}
+
 func isWalletLocked(err error) bool {
   msg := strings.ToLower(err.Error())
   return strings.Contains(msg, "wallet locked") || strings.Contains(msg, "unlock")
@@ -1346,6 +1386,17 @@ func isTimeoutError(err error) bool {
   }
   msg := strings.ToLower(err.Error())
   return strings.Contains(msg, "deadline exceeded") || strings.Contains(msg, "context deadline exceeded")
+}
+
+func isLocalChanDisabledFlags(flags string) bool {
+  trimmed := strings.TrimSpace(flags)
+  if trimmed == "" {
+    return false
+  }
+  normalized := strings.ToLower(trimmed)
+  return (strings.Contains(normalized, "local") && strings.Contains(normalized, "disabled")) ||
+    strings.Contains(normalized, "localchandisabled") ||
+    strings.Contains(normalized, "local_chan_disabled")
 }
 
 func channelPointString(cp *lnrpc.ChannelPoint) string {
@@ -1452,6 +1503,8 @@ type ChannelInfo struct {
   RemotePubkey string `json:"remote_pubkey"`
   PeerAlias string `json:"peer_alias"`
   Active bool `json:"active"`
+  ChanStatusFlags string `json:"chan_status_flags,omitempty"`
+  LocalDisabled bool `json:"local_disabled,omitempty"`
   Private bool `json:"private"`
   CapacitySat int64 `json:"capacity_sat"`
   LocalBalanceSat int64 `json:"local_balance_sat"`

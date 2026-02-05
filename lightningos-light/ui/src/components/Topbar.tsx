@@ -115,7 +115,7 @@ export default function Topbar({ onMenuToggle, menuOpen, theme, palette, onTheme
           <p className="text-sm uppercase tracking-[0.3em] text-fog/50">{t('topbar.statusOverview')}</p>
           <h1 className="text-3xl lg:text-4xl font-semibold">{t('topbar.controlCenter')}</h1>
           {displayNodeLabel && (
-            <p className="mt-2 text-sm text-fog/60" title={resolvedNodeLabel}>
+            <p className="mt-2 text-base lg:text-lg font-semibold text-fog/80" title={resolvedNodeLabel}>
               {t('topbar.nodeLabel', { node: displayNodeLabel })}
             </p>
           )}

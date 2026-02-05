@@ -435,17 +435,19 @@ export default function OnchainHub() {
             <div className="onchain-table-body">
               {utxoFiltered.map((item) => (
                 <div key={`${item.txid}-${item.vout}`} className={clsx('onchain-row', 'py-3')}>
-                  <div>
+                  <div className="onchain-cell" data-label={t('onchainHub.amount')}>
                     <p className="text-sm text-fog">{formatSats(item.amount_sat)} sats</p>
                     <p className="text-xs text-fog/50">{item.address_type || '-'}</p>
                   </div>
-                  <div>
+                  <div className="onchain-cell" data-label={t('onchainHub.confirmations')}>
                     <span className={clsx('onchain-badge', item.confirmations > 0 ? 'onchain-badge--ok' : 'onchain-badge--warn')}>
                       {item.confirmations > 0 ? item.confirmations.toLocaleString(locale) : t('onchainHub.pending')}
                     </span>
                   </div>
-                  <div className="text-xs text-fog/70 break-all">{item.address || '-'}</div>
-                  <div className="flex items-center gap-2 text-xs text-fog/70 break-all">
+                  <div className="onchain-cell text-xs text-fog/70 break-all" data-label={t('onchainHub.address')}>
+                    {item.address || '-'}
+                  </div>
+                  <div className="onchain-cell text-xs text-fog/70 break-all" data-label={t('onchainHub.outpoint')}>
                     {item.txid ? (
                       <a
                         className="onchain-link"
@@ -558,21 +560,27 @@ export default function OnchainHub() {
             <div className="onchain-table-body">
               {txFiltered.map((item) => (
                 <div key={item.txid} className={clsx('onchain-row onchain-row--tx', 'py-3')}>
-                  <div className="flex items-center gap-2">
-                    <span className={clsx('onchain-dot', item.direction === 'in' ? 'onchain-dot--in' : 'onchain-dot--out')} />
-                    <div>
-                      <p className="text-sm text-fog">{item.direction === 'in' ? t('onchainHub.inbound') : t('onchainHub.outbound')}</p>
-                      <p className="text-xs text-fog/50">{formatTimestamp(item.timestamp)}</p>
+                  <div className="onchain-cell" data-label={t('onchainHub.type')}>
+                    <div className="onchain-cell-inline">
+                      <span className={clsx('onchain-dot', item.direction === 'in' ? 'onchain-dot--in' : 'onchain-dot--out')} />
+                      <div>
+                        <p className="text-sm text-fog">{item.direction === 'in' ? t('onchainHub.inbound') : t('onchainHub.outbound')}</p>
+                        <p className="text-xs text-fog/50">{formatTimestamp(item.timestamp)}</p>
+                      </div>
                     </div>
                   </div>
-                  <div className="text-sm text-fog">{formatSats(item.amount_sat)} sats</div>
-                  <div className="text-xs text-fog/60">{item.fee_sat ? `${formatSats(item.fee_sat)} sats` : '-'}</div>
-                  <div>
+                  <div className="onchain-cell text-sm text-fog" data-label={t('onchainHub.amount')}>
+                    {formatSats(item.amount_sat)} sats
+                  </div>
+                  <div className="onchain-cell text-xs text-fog/60" data-label={t('onchainHub.fee')}>
+                    {item.fee_sat ? `${formatSats(item.fee_sat)} sats` : '-'}
+                  </div>
+                  <div className="onchain-cell" data-label={t('onchainHub.confirmations')}>
                     <span className={clsx('onchain-badge', item.confirmations > 0 ? 'onchain-badge--ok' : 'onchain-badge--warn')}>
                       {item.confirmations > 0 ? item.confirmations.toLocaleString(locale) : t('onchainHub.pending')}
                     </span>
                   </div>
-                  <div className="onchain-addresses text-xs text-fog/70">
+                  <div className="onchain-cell onchain-addresses text-xs text-fog/70" data-label={t('onchainHub.address')}>
                     {item.addresses && item.addresses.length ? (
                       <>
                         {item.addresses.slice(0, 3).map((addr) => (
@@ -586,7 +594,7 @@ export default function OnchainHub() {
                       <span>-</span>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 text-xs text-fog/70 break-all">
+                  <div className="onchain-cell text-xs text-fog/70 break-all" data-label={t('onchainHub.txid')}>
                     <a
                       className="onchain-link"
                       href={`${explorerBase}/tx/${item.txid}`}

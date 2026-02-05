@@ -11,7 +11,6 @@ import (
 
 const (
   forwardingPageSize = 50000
-  paymentsPageSize = 500
 )
 
 type RebalanceOverride struct {
@@ -28,21 +27,18 @@ func ComputeMetrics(ctx context.Context, lnd *lndclient.Client, tr TimeRange, me
     return Metrics{}, err
   }
 
-  pubkey, err := fetchNodePubkey(ctx, lnd)
-  if err != nil {
-    return Metrics{}, err
-  }
-
   rebalanceCostMsat := int64(0)
   rebalanceCount := int64(0)
   if override != nil {
     rebalanceCostMsat = override.FeeMsat
     rebalanceCount = override.Count
   } else {
-    rebalanceCostMsat, rebalanceCount, err = fetchRebalanceMetrics(ctx, lnd, tr.StartUnix(), tr.EndUnixInclusive(), pubkey, memoMatch)
+    rebalance, err := FetchRebalanceMetrics(ctx, lnd, tr.StartUnix(), tr.EndUnixInclusive(), memoMatch)
     if err != nil {
       return Metrics{}, err
     }
+    rebalanceCostMsat = rebalance.FeeMsat
+    rebalanceCount = rebalance.Count
   }
 
   netMsat := forwardRevenueMsat - rebalanceCostMsat
@@ -108,70 +104,6 @@ func fetchForwardingMetrics(ctx context.Context, lnd *lndclient.Client, startUni
   }
 
   return revenueMsat, count, routedVolumeMsat, nil
-}
-
-func fetchRebalanceMetrics(ctx context.Context, lnd *lndclient.Client, startUnix uint64, endUnix uint64, ourPubkey string, memoMatch bool) (int64, int64, error) {
-  conn, err := lnd.DialLightning(ctx)
-  if err != nil {
-    return 0, 0, err
-  }
-  defer conn.Close()
-
-  client := lnrpc.NewLightningClient(conn)
-  decodeCache := map[string]decodedPayReq{}
-
-  var offset uint64
-  var totalFeeMsat int64
-  var rebalanceCount int64
-
-  for {
-    req := &lnrpc.ListPaymentsRequest{
-      IncludeIncomplete: false,
-      IndexOffset: offset,
-      MaxPayments: paymentsPageSize,
-      CreationDateStart: startUnix,
-      CreationDateEnd: endUnix,
-    }
-
-    resp, err := client.ListPayments(ctx, req)
-    if err != nil {
-      return 0, 0, err
-    }
-    if resp == nil || len(resp.Payments) == 0 {
-      break
-    }
-
-    for _, pay := range resp.Payments {
-      if pay == nil {
-        continue
-      }
-      timestamp := extractPaymentTimestamp(pay)
-      if timestamp < int64(startUnix) || timestamp > int64(endUnix) {
-        continue
-      }
-      if !PaymentSucceeded(pay) {
-        continue
-      }
-
-      dest, description := extractDestinationAndDescription(ctx, lnd, pay, decodeCache)
-      if IsRebalancePayment(pay, ourPubkey, dest, description, memoMatch) {
-        feeMsat := extractPaymentFeeMsat(pay)
-        totalFeeMsat += feeMsat
-        rebalanceCount++
-      }
-    }
-
-    nextOffset := resp.LastIndexOffset
-    if nextOffset <= offset {
-      break
-    }
-    offset = nextOffset
-    if len(resp.Payments) < paymentsPageSize {
-      break
-    }
-  }
-
-  return totalFeeMsat, rebalanceCount, nil
 }
 
 func fetchNodePubkey(ctx context.Context, lnd *lndclient.Client) (string, error) {

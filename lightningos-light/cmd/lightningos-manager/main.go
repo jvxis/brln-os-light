@@ -81,7 +81,7 @@ func runReports(args []string) {
     logger.Fatalf("reports-run failed: %v", err)
   }
 
-  loc := time.Local
+  loc := resolveReportsLocation(logger)
   reportDate := time.Now().In(loc).AddDate(0, 0, -1)
   if strings.TrimSpace(*dateStr) != "" {
     parsed, err := reports.ParseDate(*dateStr, loc)
@@ -143,7 +143,7 @@ func runReportsBackfill(args []string) {
   }
   schemaCancel()
 
-  loc := time.Local
+  loc := resolveReportsLocation(logger)
   startDate, err := reports.ParseDate(*fromStr, loc)
   if err != nil {
     logger.Fatalf("reports-backfill failed: invalid --from date")
@@ -200,4 +200,16 @@ func reportsRunTimeout() time.Duration {
     return parsed
   }
   return 2 * time.Minute
+}
+
+func resolveReportsLocation(logger *log.Logger) *time.Location {
+  raw := strings.TrimSpace(os.Getenv("REPORTS_TIMEZONE"))
+  loc, err := reports.ResolveLocation(raw, time.Local)
+  if err != nil {
+    if logger != nil {
+      logger.Printf("reports: invalid REPORTS_TIMEZONE %q, using %s: %v", raw, loc.String(), err)
+    }
+    return loc
+  }
+  return loc
 }

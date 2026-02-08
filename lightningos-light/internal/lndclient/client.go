@@ -1512,6 +1512,7 @@ type ChannelInfo struct {
   BaseFeeMsat *int64 `json:"base_fee_msat,omitempty"`
   FeeRatePpm *int64 `json:"fee_rate_ppm,omitempty"`
   InboundFeeRatePpm *int64 `json:"inbound_fee_rate_ppm,omitempty"`
+  ClassLabel string `json:"class_label,omitempty"`
 }
 
 type PeerInfo struct {

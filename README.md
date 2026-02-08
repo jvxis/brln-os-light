@@ -20,6 +20,7 @@ LightningOS Light is a Full Lightning Node Daemon Installer, Lightning node mana
 - App Store: LNDg, Peerswap (psweb), Elements, Bitcoin Core
 - Bitcoin Local management (status + config) and logs viewer
 
+
 ## Repository layout
 - `cmd/lightningos-manager`: Go backend (API + static UI)
 - `ui`: React + Tailwind UI
@@ -175,6 +176,135 @@ API endpoints:
 - `GET /api/reports/custom?from=YYYY-MM-DD&to=YYYY-MM-DD` (max 730 days)
 - `GET /api/reports/summary?range=...`
 - `GET /api/reports/live` (today 00:00 local → now, cached ~60s)
+
+## Rebalance Center
+Rebalance Center is an inbound (local/outbound) liquidity optimizer for LND. It can run manual rebalances per channel or fully automated scans that enqueue rebalances based on fee spread, ROI, and budget constraints. A rebalance only proceeds when **outgoing fee > peer fee** so you never pay more than the peer charge without a positive spread. Costs are tracked from notifications (fee msat) and aggregated into live cost + daily auto/manual spending.
+
+Key behavior:
+- Manual rebalances ignore the daily budget and can be started per channel.
+- Auto rebalances respect the daily budget and only target channels explicitly marked as `Auto`.
+- Source channels are selected from those with enough local liquidity and not excluded; a channel filled by rebalance becomes **protected** and cannot be used as a source until payback rules release it.
+- Targets are chosen when outbound liquidity deficit exceeds the deadband and fee spread is positive; ROI estimate uses last 7 days of routing revenue vs estimated rebalance cost.
+- Auto targets are ranked by **economic score** = (expected gain − estimated cost), so higher-margin channels are prioritized.
+- A **profit guardrail** prevents auto enqueues when expected gain is lower than estimated cost (when both are known). If ROI is indeterminate (cost = 0 with positive spread), auto is still allowed.
+- Source selection is weighted by pair history: recent successful pairs with lower fees are prioritized, while recent failures are de‑prioritized.
+- The overview shows **Last scan** in local time and a scan status (e.g., no sources, no candidates, budget exhausted) plus economic telemetry (top score, profit guardrail skips).
+
+Channel Workbench:
+- Set per-channel target outbound percentage.
+- Toggle `Auto` to allow auto mode to rebalance that channel.
+- Toggle `Exclude source` to block a channel from ever being used as a source.
+- Sort toggle: **Economic** (score-based) or **Emptiest** (lowest local % first).
+
+Color coding (channel rows):
+- Green background = eligible source (can fund rebalances).
+- Red background = eligible target (auto-enabled and needs outbound).
+- Amber background = potential target (needs outbound but not auto-enabled).
+
+Configuration parameters:
+- Auto-only settings: `Enable auto rebalance`, `Scan interval (sec)`, `Daily budget (% of revenue)`.
+- `Enable auto rebalance`: turns auto scanning on/off.
+- `Scan interval (sec)`: how often auto scan runs.
+- `Daily budget (% of revenue)`: percent of the last 24h routing revenue allocated to auto rebalances.
+- `Deadband (%)`: minimum outbound deficit before a channel becomes a target.
+- `Minimum local for source (%)`: minimum local liquidity required for a channel to be a source.
+- `Economic ratio`: fraction of outgoing fee used as the maximum fee cap (bounded by fee spread).
+- `ROI minimum`: minimum estimated ROI (7d revenue / estimated cost) to enqueue auto jobs.
+- `Max concurrent`: maximum number of rebalances running at the same time.
+- `Minimum (sats)`: smallest rebalance amount allowed per attempt.
+- `Maximum (sats)`: upper bound for rebalance size (0 = unlimited).
+- `Fee ladder steps`: number of fee caps to try from low to high before giving up.
+- `Amount probe steps`: number of amount probes from large to small per fee step.
+- `Adaptive amount probing`: caps the next attempt based on the last successful amount.
+- `Attempt timeout (sec)`: maximum time per attempt before moving to the next fee/amount.
+- `Rebalance timeout (sec)`: maximum runtime per rebalance job (auto or manual).
+- `Payback policy`: three modes can be enabled together.
+- `Release by payback`: unlocks protected liquidity once routing revenue repays the rebalance cost.
+- `Release by time`: unlocks after `Unlock days` since the last rebalance.
+- `Critical mode`: unlocks a fraction when sources are scarce for repeated scans.
+- `Unlock days`: number of days before time-based unlock.
+- `Critical release (%)`: percent of protected liquidity released per critical cycle.
+- `Critical cycles`: consecutive scans with low sources before critical release triggers.
+- `Critical min sources`: minimum eligible source channels required to avoid critical mode.
+- `Critical min available sats`: minimum total source liquidity required to avoid critical mode.
+
+## Lightning Ops: Autofee
+Autofee automatically adjusts **outbound fees** to maximize **profit first** and **movement second**. It uses your local routing and rebalance history (Postgres notifications) plus optional Amboss metrics to seed prices, then applies guardrails, cooldowns, and caps so updates are safe and explainable.
+
+UI parameters:
+- `Enable autofee`: global on/off.
+- `Profile`: Conservative / Moderate / Aggressive (sets internal thresholds).
+- `Lookback window (days)`: 5 to 21 days for stats.
+- `Run interval (hours)`: minimum 1 hour.
+- `Cooldown up / down (hours)`: minimum time between fee increases / decreases.
+- `Min fee (ppm)` and `Max fee (ppm)`: hard clamps.
+- `Amboss fee reference`: optional seed source; requires API token.
+- `Inbound passive rebalance`: uses inbound discount for sink channels.
+- `Discovery mode`: faster lowering for idle/high-outbound channels.
+- `Explorer mode`: temporary exploration cycles; may skip cooldown on down moves.
+- `Revenue floor`: keeps a minimum floor for high-performing channels.
+- `Circuit breaker`: reduces steps if demand drops after recent increases.
+- `Extreme drain`: accelerates fee increases when a channel is chronically drained.
+- `Super source` + base fee: raises base fee when a channel is classified as super source.
+
+Automatic calibration:
+- Each run computes a node classification and liquidity status to auto-scale thresholds.
+- Node size classes (based on total capacity and channel count):
+  - `small`: < 50M sats or < 20 channels
+  - `medium`: < 200M sats or < 60 channels
+  - `large`: < 1.5B sats or < 150 channels
+  - `extra large`: everything above
+- Liquidity classes (based on local ratio):
+  - `drained`: local ratio < 25%
+  - `balanced`: 25% to 75%
+  - `full`: local ratio > 75%
+- The calibration line in Autofee Results shows these classes plus calibrated `revfloor` thresholds.
+
+Autofee Results lines:
+- Header: run type and timestamp.
+- Summary: counts for up/down/flat and skip reasons.
+- Seed: Amboss and fallback usage.
+- Calibration: node size, liquidity, and calibrated thresholds.
+- Per-channel lines: decision, target, floors, margins, and tags.
+
+Tag glossary (Autofee Results):
+- `🧭discovery`: channel in discovery mode.
+- `🧨harddrop`: discovery harddrop triggered (no baseline + idle).
+- `🧭explorer`: explorer mode active.
+- `🧭skip-cooldown`: cooldown skipped on down move due to explorer.
+- `📈surge+X%`: surge bump applied.
+- `💎top-rev`: top revenue share bump applied.
+- `⚠️neg-margin`: negative margin protection bump.
+- `🧱revfloor`: revenue floor applied.
+- `📊outrate-floor`: outrate floor applied.
+- `📌peg`: peg to observed outrate.
+- `📌peg-grace`: peg applied inside grace window.
+- `📌peg-demand`: peg applied due to strong demand vs seed.
+- `🧯cb`: circuit breaker reduced the step.
+- `⚡extreme`: extreme drain step cap/min-step boost applied.
+- `⚡turbo`: extreme drain turbo boost applied.
+- `⏳cooldown`: cooldown blocked an update.
+- `⏳profit-hold`: cooldown held a profitable down move.
+- `🧊hold-small`: change below min delta/percent.
+- `🟰same-ppm`: target equals current ppm.
+- `🚫down-low`: no down-move while deeply drained.
+- `🔥super-source`: channel classified as super source.
+- `🔥super-source-like`: router-like super source.
+- `↘️inb-<n>`: inbound discount (passive rebalance).
+- `🌐seed-amboss`: Amboss seed used.
+- `seed:amboss-missing`: Amboss token missing.
+- `seed:amboss-empty`: Amboss returned no data.
+- `seed:amboss-error`: Amboss fetch error.
+- `📐seed-med`: Amboss median blended in.
+- `📉seed-vol-<n>%`: volatility penalty applied.
+- `🔁seed-ratio×<f>`: out/in ratio adjustment applied.
+- `📊seed-outrate`: seed from recent outrate.
+- `💾seed-mem`: seed from memory.
+- `⚙️seed-default`: default seed fallback.
+- `🛡️seed-guard`: seed jump cap applied.
+- `🧢seed-p95`: seed capped at Amboss p95.
+- `🧱seed-cap`: absolute seed cap applied.
+
 
 ## Web terminal (optional)
 LightningOS Light can expose a protected web terminal using GoTTY.

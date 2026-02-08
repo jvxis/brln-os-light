@@ -57,6 +57,20 @@ type Notification struct {
   PeerAlias string `json:"peer_alias,omitempty"`
   ChannelID int64 `json:"channel_id,omitempty"`
   ChannelPoint string `json:"channel_point,omitempty"`
+  ChanIDIn int64 `json:"chan_id_in,omitempty"`
+  ChanIDOut int64 `json:"chan_id_out,omitempty"`
+  AmountInMsat int64 `json:"amount_in_msat,omitempty"`
+  AmountOutMsat int64 `json:"amount_out_msat,omitempty"`
+  PeerPubkeyIn string `json:"peer_pubkey_in,omitempty"`
+  PeerPubkeyOut string `json:"peer_pubkey_out,omitempty"`
+  ChannelPointIn string `json:"channel_point_in,omitempty"`
+  ChannelPointOut string `json:"channel_point_out,omitempty"`
+  RebalSourceChanID int64 `json:"rebal_source_chan_id,omitempty"`
+  RebalTargetChanID int64 `json:"rebal_target_chan_id,omitempty"`
+  RebalSourcePoint string `json:"rebal_source_point,omitempty"`
+  RebalTargetPoint string `json:"rebal_target_point,omitempty"`
+  RebalSourcePubkey string `json:"rebal_source_pubkey,omitempty"`
+  RebalTargetPubkey string `json:"rebal_target_pubkey,omitempty"`
   Txid string `json:"txid,omitempty"`
   PaymentHash string `json:"payment_hash,omitempty"`
   Memo string `json:"memo,omitempty"`
@@ -383,6 +397,20 @@ create table if not exists notifications (
   peer_alias text,
   channel_id bigint,
   channel_point text,
+  chan_id_in bigint,
+  chan_id_out bigint,
+  amount_in_msat bigint,
+  amount_out_msat bigint,
+  peer_pubkey_in text,
+  peer_pubkey_out text,
+  channel_point_in text,
+  channel_point_out text,
+  rebal_source_chan_id bigint,
+  rebal_target_chan_id bigint,
+  rebal_source_point text,
+  rebal_target_point text,
+  rebal_source_pubkey text,
+  rebal_target_pubkey text,
   txid text,
   payment_hash text,
   memo text,
@@ -390,10 +418,28 @@ create table if not exists notifications (
 );
 
 alter table notifications add column if not exists fee_msat bigint not null default 0;
+alter table notifications add column if not exists chan_id_in bigint;
+alter table notifications add column if not exists chan_id_out bigint;
+alter table notifications add column if not exists amount_in_msat bigint;
+alter table notifications add column if not exists amount_out_msat bigint;
+alter table notifications add column if not exists peer_pubkey_in text;
+alter table notifications add column if not exists peer_pubkey_out text;
+alter table notifications add column if not exists channel_point_in text;
+alter table notifications add column if not exists channel_point_out text;
+alter table notifications add column if not exists rebal_source_chan_id bigint;
+alter table notifications add column if not exists rebal_target_chan_id bigint;
+alter table notifications add column if not exists rebal_source_point text;
+alter table notifications add column if not exists rebal_target_point text;
+alter table notifications add column if not exists rebal_source_pubkey text;
+alter table notifications add column if not exists rebal_target_pubkey text;
 
 create index if not exists notifications_occurred_at_idx on notifications (occurred_at desc);
 create index if not exists notifications_type_idx on notifications (type);
 create index if not exists notifications_payment_hash_idx on notifications (payment_hash);
+create index if not exists notifications_chan_out_idx on notifications (chan_id_out, occurred_at desc);
+create index if not exists notifications_chan_in_idx on notifications (chan_id_in, occurred_at desc);
+create index if not exists notifications_rebal_target_idx on notifications (rebal_target_chan_id, occurred_at desc);
+create index if not exists notifications_rebal_source_idx on notifications (rebal_source_chan_id, occurred_at desc);
 
 create table if not exists notification_cursors (
   key text primary key,
@@ -412,8 +458,19 @@ func (n *Notifier) upsertNotification(ctx context.Context, eventKey string, evt 
   row := n.db.QueryRow(ctx, `
 insert into notifications (
   event_key, occurred_at, type, action, direction, status, amount_sat, fee_sat, fee_msat,
-  peer_pubkey, peer_alias, channel_id, channel_point, txid, payment_hash, memo
-) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+  peer_pubkey, peer_alias, channel_id, channel_point,
+  chan_id_in, chan_id_out, amount_in_msat, amount_out_msat,
+  peer_pubkey_in, peer_pubkey_out, channel_point_in, channel_point_out,
+  rebal_source_chan_id, rebal_target_chan_id, rebal_source_point, rebal_target_point,
+  rebal_source_pubkey, rebal_target_pubkey,
+  txid, payment_hash, memo
+) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
+  $14,$15,$16,$17,
+  $18,$19,$20,$21,
+  $22,$23,$24,$25,
+  $26,$27,$28,
+  $29,$30
+)
 on conflict (event_key) do update set
   occurred_at = excluded.occurred_at,
   type = excluded.type,
@@ -427,6 +484,20 @@ on conflict (event_key) do update set
   peer_alias = excluded.peer_alias,
   channel_id = excluded.channel_id,
   channel_point = excluded.channel_point,
+  chan_id_in = excluded.chan_id_in,
+  chan_id_out = excluded.chan_id_out,
+  amount_in_msat = excluded.amount_in_msat,
+  amount_out_msat = excluded.amount_out_msat,
+  peer_pubkey_in = excluded.peer_pubkey_in,
+  peer_pubkey_out = excluded.peer_pubkey_out,
+  channel_point_in = excluded.channel_point_in,
+  channel_point_out = excluded.channel_point_out,
+  rebal_source_chan_id = excluded.rebal_source_chan_id,
+  rebal_target_chan_id = excluded.rebal_target_chan_id,
+  rebal_source_point = excluded.rebal_source_point,
+  rebal_target_point = excluded.rebal_target_point,
+  rebal_source_pubkey = excluded.rebal_source_pubkey,
+  rebal_target_pubkey = excluded.rebal_target_pubkey,
   txid = excluded.txid,
   payment_hash = excluded.payment_hash,
   memo = excluded.memo
@@ -434,8 +505,15 @@ returning id, occurred_at, type, action, direction, status, amount_sat, fee_sat,
   fee_msat, peer_pubkey, peer_alias, channel_id, channel_point, txid, payment_hash, memo
 `, eventKey, evt.OccurredAt, evt.Type, evt.Action, evt.Direction, evt.Status,
     evt.AmountSat, evt.FeeSat, evt.FeeMsat, nullableString(evt.PeerPubkey), nullableString(evt.PeerAlias),
-    nullableInt(evt.ChannelID), nullableString(evt.ChannelPoint), nullableString(evt.Txid),
-    nullableString(evt.PaymentHash), nullableString(evt.Memo),
+    nullableInt(evt.ChannelID), nullableString(evt.ChannelPoint),
+    nullableInt(evt.ChanIDIn), nullableInt(evt.ChanIDOut),
+    nullableInt(evt.AmountInMsat), nullableInt(evt.AmountOutMsat),
+    nullableString(evt.PeerPubkeyIn), nullableString(evt.PeerPubkeyOut),
+    nullableString(evt.ChannelPointIn), nullableString(evt.ChannelPointOut),
+    nullableInt(evt.RebalSourceChanID), nullableInt(evt.RebalTargetChanID),
+    nullableString(evt.RebalSourcePoint), nullableString(evt.RebalTargetPoint),
+    nullableString(evt.RebalSourcePubkey), nullableString(evt.RebalTargetPubkey),
+    nullableString(evt.Txid), nullableString(evt.PaymentHash), nullableString(evt.Memo),
   )
 
   var stored Notification
@@ -1470,6 +1548,8 @@ func (n *Notifier) runForwards() {
       n.logger.Printf("notifications: forwards poll start (after=%d backfill=%t)", after, backfill)
     }
 
+    channelMap := n.channelMap(context.Background())
+
     conn, err := n.lnd.DialLightning(context.Background())
     if err != nil {
       n.logger.Printf("notifications: forwards poll dial failed: %v", err)
@@ -1521,6 +1601,22 @@ func (n *Notifier) runForwards() {
         amount := int64(fwd.AmtOut)
         fee := int64(fwd.Fee)
         feeMsat := int64(fwd.FeeMsat)
+        if feeMsat == 0 && fee != 0 {
+          feeMsat = fee * 1000
+        }
+        amtInMsat := int64(fwd.AmtInMsat)
+        amtOutMsat := int64(fwd.AmtOutMsat)
+        if amtInMsat == 0 && fwd.AmtIn != 0 {
+          amtInMsat = int64(fwd.AmtIn) * 1000
+        }
+        if amtOutMsat == 0 && fwd.AmtOut != 0 {
+          amtOutMsat = int64(fwd.AmtOut) * 1000
+        }
+        if feeMsat == 0 && amtInMsat > 0 && amtOutMsat > 0 && amtInMsat > amtOutMsat {
+          feeMsat = amtInMsat - amtOutMsat
+        }
+        inInfo, _ := channelMap[uint64(fwd.ChanIdIn)]
+        outInfo, _ := channelMap[uint64(fwd.ChanIdOut)]
         evt := Notification{
           OccurredAt: occurredAt,
           Type: "forward",
@@ -1532,6 +1628,14 @@ func (n *Notifier) runForwards() {
           FeeMsat: feeMsat,
           PeerAlias: strings.TrimSpace(fmt.Sprintf("%s -> %s", fwd.PeerAliasIn, fwd.PeerAliasOut)),
           ChannelID: int64(fwd.ChanIdOut),
+          ChanIDIn: int64(fwd.ChanIdIn),
+          ChanIDOut: int64(fwd.ChanIdOut),
+          AmountInMsat: amtInMsat,
+          AmountOutMsat: amtOutMsat,
+          PeerPubkeyIn: inInfo.RemotePubkey,
+          PeerPubkeyOut: outInfo.RemotePubkey,
+          ChannelPointIn: inInfo.ChannelPoint,
+          ChannelPointOut: outInfo.ChannelPoint,
         }
         eventKey := fmt.Sprintf("forward:%d:%d:%d", fwd.IncomingHtlcId, fwd.OutgoingHtlcId, tsKey)
         ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1711,6 +1815,24 @@ func (n *Notifier) rebalanceEvent(ctx context.Context, pay *lnrpc.Payment, occur
     feeMsat := paymentFeeMsat(pay)
     evt.FeeMsat = feeMsat
     evt.FeeSat = feeMsat / 1000
+  }
+  if pay != nil {
+    route := rebalanceRouteFromPayment(pay)
+    if route != nil && len(route.Hops) > 0 {
+      channelMap := n.channelMap(ctx)
+      outHop := route.Hops[0]
+      inHop := route.Hops[len(route.Hops)-1]
+      evt.RebalSourceChanID = int64(outHop.ChanId)
+      evt.RebalTargetChanID = int64(inHop.ChanId)
+      if info, ok := channelMap[outHop.ChanId]; ok {
+        evt.RebalSourcePoint = info.ChannelPoint
+        evt.RebalSourcePubkey = info.RemotePubkey
+      }
+      if info, ok := channelMap[inHop.ChanId]; ok {
+        evt.RebalTargetPoint = info.ChannelPoint
+        evt.RebalTargetPubkey = info.RemotePubkey
+      }
+    }
   }
   if info := n.rebalanceRouteInfo(ctx, pay); info != nil {
     if info.PeerLabel != "" {

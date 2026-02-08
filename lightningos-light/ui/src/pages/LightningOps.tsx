@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { boostPeers, closeChannel, connectPeer, disconnectPeer, getAmbossHealth, getLnChanHeal, getLnChannelFees, getLnChannels, getLnPeers, getMempoolFees, openChannel, updateAmbossHealth, updateChannelFees, updateLnChanHeal, updateLnChannelStatus } from '../api'
+import { boostPeers, closeChannel, connectPeer, disconnectPeer, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBitcoinLocalStatus, getLnChanHeal, getLnChannelFees, getLnChannels, getLnPeers, getMempoolFees, openChannel, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus } from '../api'
 
 type Channel = {
   channel_point: string
@@ -17,6 +17,7 @@ type Channel = {
   base_fee_msat?: number
   fee_rate_ppm?: number
   inbound_fee_rate_ppm?: number
+  class_label?: string
 }
 
 type PendingChannel = {
@@ -71,6 +72,104 @@ type ChanHealStatus = {
   last_updated?: number
 }
 
+type BitcoinLocalCadenceBucket = {
+  count: number
+}
+
+type BitcoinLocalStatus = {
+  block_cadence_window_sec?: number
+  block_cadence?: BitcoinLocalCadenceBucket[]
+}
+
+type AutofeeConfig = {
+  enabled: boolean
+  profile: string
+  lookback_days: number
+  run_interval_sec: number
+  cooldown_up_sec: number
+  cooldown_down_sec: number
+  amboss_enabled: boolean
+  amboss_token_set: boolean
+  inbound_passive_enabled: boolean
+  discovery_enabled: boolean
+  explorer_enabled: boolean
+  super_source_enabled: boolean
+  super_source_base_fee_msat: number
+  revfloor_enabled: boolean
+  circuit_breaker_enabled: boolean
+  extreme_drain_enabled: boolean
+  min_ppm: number
+  max_ppm: number
+}
+
+type AutofeeStatus = {
+  running: boolean
+  last_run_at?: string
+  next_run_at?: string
+  last_error?: string
+}
+
+type AutofeeChannelSetting = {
+  channel_id: number
+  enabled: boolean
+}
+
+type AutofeeResultItem = {
+  kind: string
+  category?: string
+  reason?: string
+  dry_run?: boolean
+  timestamp?: string
+  up?: number
+  down?: number
+  flat?: number
+  cooldown?: number
+  small?: number
+  same?: number
+  disabled?: number
+  inactive?: number
+  inbound_disc?: number
+  super_source?: number
+  amboss?: number
+  missing?: number
+  err?: number
+  empty?: number
+  outrate?: number
+  mem?: number
+  default?: number
+  cooldown_ignored?: boolean
+  node_class?: string
+  liquidity_class?: string
+  channel_count?: number
+  total_capacity_sat?: number
+  avg_capacity_sat?: number
+  local_capacity_sat?: number
+  local_ratio?: number
+  revfloor_baseline?: number
+  revfloor_min_abs?: number
+  alias?: string
+  channel_id?: number
+  channel_point?: string
+  local_ppm?: number
+  new_ppm?: number
+  target?: number
+  out_ratio?: number
+  out_ppm7d?: number
+  rebal_ppm7d?: number
+  seed?: number
+  floor?: number
+  floor_src?: string
+  margin?: number
+  rev_share?: number
+  tags?: string[]
+  inbound_discount?: number
+  class_label?: string
+  skip_reason?: string
+  error?: string
+  delta?: number
+  delta_pct?: number
+}
+
 export default function LightningOps() {
   const { t } = useTranslation()
   const [channels, setChannels] = useState<Channel[]>([])
@@ -103,6 +202,41 @@ export default function LightningOps() {
   const [chanHealStatus, setChanHealStatus] = useState('')
   const [chanHealBusy, setChanHealBusy] = useState(false)
   const [chanHealInterval, setChanHealInterval] = useState('300')
+  const [signMessage, setSignMessage] = useState('')
+  const [signSignature, setSignSignature] = useState('')
+  const [signStatus, setSignStatus] = useState('')
+  const [signBusy, setSignBusy] = useState(false)
+  const [signCopied, setSignCopied] = useState(false)
+  const [bitcoinLocal, setBitcoinLocal] = useState<BitcoinLocalStatus | null>(null)
+
+  const [autofeeConfig, setAutofeeConfig] = useState<AutofeeConfig | null>(null)
+  const [autofeeStatus, setAutofeeStatus] = useState<AutofeeStatus | null>(null)
+  const [autofeeSettings, setAutofeeSettings] = useState<Record<number, boolean>>({})
+  const [autofeeBusy, setAutofeeBusy] = useState(false)
+  const [autofeeMessage, setAutofeeMessage] = useState('')
+  const [autofeeEnabled, setAutofeeEnabled] = useState(false)
+  const [autofeeProfile, setAutofeeProfile] = useState('moderate')
+  const [autofeeLookback, setAutofeeLookback] = useState('7')
+  const [autofeeIntervalHours, setAutofeeIntervalHours] = useState('4')
+  const [autofeeCooldownUp, setAutofeeCooldownUp] = useState('3')
+  const [autofeeCooldownDown, setAutofeeCooldownDown] = useState('4')
+  const [autofeeMinPpm, setAutofeeMinPpm] = useState('10')
+  const [autofeeMaxPpm, setAutofeeMaxPpm] = useState('2000')
+  const [autofeeAmbossEnabled, setAutofeeAmbossEnabled] = useState(false)
+  const [autofeeAmbossToken, setAutofeeAmbossToken] = useState('')
+  const [autofeeInboundPassive, setAutofeeInboundPassive] = useState(false)
+  const [autofeeDiscovery, setAutofeeDiscovery] = useState(true)
+  const [autofeeExplorer, setAutofeeExplorer] = useState(true)
+  const [autofeeSuperSource, setAutofeeSuperSource] = useState(false)
+  const [autofeeSuperSourceBaseFee, setAutofeeSuperSourceBaseFee] = useState('1000')
+  const [autofeeRevfloor, setAutofeeRevfloor] = useState(true)
+  const [autofeeCircuitBreaker, setAutofeeCircuitBreaker] = useState(true)
+  const [autofeeExtremeDrain, setAutofeeExtremeDrain] = useState(true)
+  const [autofeeOpen, setAutofeeOpen] = useState(false)
+  const [autofeeResultsOpen, setAutofeeResultsOpen] = useState(false)
+  const [autofeeResults, setAutofeeResults] = useState<string[]>([])
+  const [autofeeResultItems, setAutofeeResultItems] = useState<AutofeeResultItem[]>([])
+  const [autofeeResultsStatus, setAutofeeResultsStatus] = useState('')
 
   const [chanStatusBusy, setChanStatusBusy] = useState<string | null>(null)
   const [chanStatusMessage, setChanStatusMessage] = useState('')
@@ -164,6 +298,422 @@ export default function LightningOps() {
     return date.toLocaleString()
   }
 
+  const autofeeProfileDefaults: Record<string, { interval: number; cooldownUp: number; cooldownDown: number }> = {
+    conservative: { interval: 8, cooldownUp: 6, cooldownDown: 8 },
+    moderate: { interval: 4, cooldownUp: 3, cooldownDown: 4 },
+    aggressive: { interval: 2, cooldownUp: 1, cooldownDown: 2 }
+  }
+
+  const autofeeAllChecked = useMemo(() => {
+    if (!channels.length) return true
+    return channels.every((ch) => (autofeeSettings[ch.channel_id] ?? true))
+  }, [channels, autofeeSettings])
+
+  const formattedAutofeeResults = useMemo(() => {
+    return autofeeResults.map((line) => {
+      if (!line.startsWith('\u26a1')) {
+        return line
+      }
+      const idx = line.lastIndexOf('|')
+      if (idx <= 0) {
+        return line
+      }
+      const raw = line.slice(idx + 1).trim()
+      const parsed = new Date(raw)
+      if (Number.isNaN(parsed.getTime())) {
+        return line
+      }
+      return `${line.slice(0, idx + 1)} ${parsed.toLocaleString()}`
+    })
+  }, [autofeeResults])
+
+  const formatAutofeeReasonLabel = (reason?: string) => {
+    const normalized = (reason || '').toLowerCase()
+    if (normalized === 'manual') return t('lightningOps.autofeeResultsReasonManual')
+    if (normalized === 'scheduled') return t('lightningOps.autofeeResultsReasonScheduled')
+    if (reason) return reason.toUpperCase()
+    return t('lightningOps.autofeeResultsReasonUnknown')
+  }
+
+  const formatSatsCompact = (value?: number) => {
+    const sats = Number(value || 0)
+    if (!sats) return `0 ${t('lightningOps.autofeeResultsSats')}`
+    if (sats >= 100_000_000) {
+      return `${(sats / 100_000_000).toFixed(2)} BTC`
+    }
+    if (sats >= 1_000_000) {
+      return `${(sats / 1_000_000).toFixed(1)}M ${t('lightningOps.autofeeResultsSats')}`
+    }
+    if (sats >= 1_000) {
+      return `${(sats / 1_000).toFixed(1)}k ${t('lightningOps.autofeeResultsSats')}`
+    }
+    return `${sats} ${t('lightningOps.autofeeResultsSats')}`
+  }
+
+  const formatAutofeeNodeClass = (value?: string) => {
+    const normalized = (value || '').toLowerCase()
+    switch (normalized) {
+      case 'small':
+        return t('lightningOps.autofeeResultsNodeSmall')
+      case 'medium':
+        return t('lightningOps.autofeeResultsNodeMedium')
+      case 'large':
+        return t('lightningOps.autofeeResultsNodeLarge')
+      case 'xl':
+        return t('lightningOps.autofeeResultsNodeXL')
+      default:
+        return t('common.unknown')
+    }
+  }
+
+  const formatAutofeeLiquidityClass = (value?: string) => {
+    const normalized = (value || '').toLowerCase()
+    switch (normalized) {
+      case 'drained':
+        return t('lightningOps.autofeeResultsLiquidityDrained')
+      case 'full':
+        return t('lightningOps.autofeeResultsLiquidityFull')
+      case 'balanced':
+        return t('lightningOps.autofeeResultsLiquidityBalanced')
+      default:
+        return t('common.unknown')
+    }
+  }
+
+  const formatAutofeeCalib = (item: AutofeeResultItem) => {
+    const channels = item.channel_count ?? 0
+    const cap = formatSatsCompact(item.total_capacity_sat)
+    const avg = formatSatsCompact(item.avg_capacity_sat)
+    const local = formatSatsCompact(item.local_capacity_sat)
+    const ratio = typeof item.local_ratio === 'number' ? Math.round(item.local_ratio * 100) : 0
+    const nodeClass = formatAutofeeNodeClass(item.node_class)
+    const liqClass = formatAutofeeLiquidityClass(item.liquidity_class)
+    const revfloorThr = item.revfloor_baseline ?? 0
+    const revfloorMin = item.revfloor_min_abs ?? 0
+    return t('lightningOps.autofeeResultsCalib', {
+      node: nodeClass,
+      channels,
+      cap,
+      avg,
+      local,
+      ratio,
+      liq: liqClass,
+      revfloorThr,
+      revfloorMin
+    })
+  }
+
+  const formatAutofeeHeader = (item: AutofeeResultItem) => {
+    const reasonLabel = formatAutofeeReasonLabel(item.reason)
+    const dryLabel = item.dry_run ? t('lightningOps.autofeeResultsDryRunTag') : ''
+    const ts = item.timestamp ? new Date(item.timestamp) : null
+    const timeLabel = ts && !Number.isNaN(ts.getTime()) ? ts.toLocaleString() : t('common.na')
+    return t('lightningOps.autofeeResultsHeader', { reason: reasonLabel, dry: dryLabel, time: timeLabel })
+  }
+
+  const formatAutofeeSummary = (item: AutofeeResultItem) => {
+    const parts = [
+      `${t('lightningOps.autofeeResultsUp')} ${item.up ?? 0}`,
+      `${t('lightningOps.autofeeResultsDown')} ${item.down ?? 0}`,
+      `${t('lightningOps.autofeeResultsFlat')} ${item.flat ?? 0}`,
+      `${t('lightningOps.autofeeResultsCooldown')} ${item.cooldown ?? 0}`,
+      `${t('lightningOps.autofeeResultsSmall')} ${item.small ?? 0}`,
+      `${t('lightningOps.autofeeResultsSame')} ${item.same ?? 0}`,
+      `${t('lightningOps.autofeeResultsDisabled')} ${item.disabled ?? 0}`,
+      `${t('lightningOps.autofeeResultsInactive')} ${item.inactive ?? 0}`,
+      `${t('lightningOps.autofeeResultsInboundDisc')} ${item.inbound_disc ?? 0}`,
+      `${t('lightningOps.autofeeResultsSuperSource')} ${item.super_source ?? 0}`
+    ]
+    return `📊 ${parts.join(' | ')}`
+  }
+
+  const formatAutofeeSeed = (item: AutofeeResultItem) => {
+    const parts = [
+      `${t('lightningOps.autofeeResultsSeedAmboss')}=${item.amboss ?? 0}`,
+      `${t('lightningOps.autofeeResultsSeedMissing')}=${item.missing ?? 0}`,
+      `${t('lightningOps.autofeeResultsSeedErr')}=${item.err ?? 0}`,
+      `${t('lightningOps.autofeeResultsSeedEmpty')}=${item.empty ?? 0}`,
+      `${t('lightningOps.autofeeResultsSeedOutrate')}=${item.outrate ?? 0}`,
+      `${t('lightningOps.autofeeResultsSeedMem')}=${item.mem ?? 0}`,
+      `${t('lightningOps.autofeeResultsSeedDefault')}=${item.default ?? 0}`
+    ]
+    let line = `🌱 ${t('lightningOps.autofeeResultsSeedLabel')} ${parts.join(' ')}`
+    if (item.cooldown_ignored) {
+      line += ` | ${t('lightningOps.autofeeResultsCooldownIgnored')}=1`
+    }
+    return line
+  }
+
+  const formatAutofeeTags = (tags: string[] = [], inboundDiscount?: number, classLabel?: string) => {
+    const output: string[] = []
+    const seen = new Set<string>()
+    const add = (tag: string) => {
+      if (!tag) return
+      if (seen.has(tag)) return
+      seen.add(tag)
+      output.push(tag)
+    }
+
+    switch ((classLabel || '').toLowerCase().trim()) {
+      case 'sink':
+        add('🏷️sink')
+        break
+      case 'source':
+        add('🏷️source')
+        break
+      case 'router':
+        add('🏷️router')
+        break
+      case 'unknown':
+        add('🏷️unknown')
+        break
+      default:
+        break
+    }
+
+    tags.forEach((tag) => {
+      if (!tag) return
+      if (tag === 'discovery') {
+        add('🧭discovery')
+      } else if (tag === 'discovery-hard') {
+        add('🧨harddrop')
+      } else if (tag === 'explorer') {
+        add('🧭explorer')
+      } else if (tag.startsWith('surge')) {
+        add(`📈${tag}`)
+      } else if (tag === 'top-rev') {
+        add('💎top-rev')
+      } else if (tag === 'neg-margin') {
+        add('⚠️neg-margin')
+      } else if (tag === 'outrate-floor') {
+        add('📊outrate-floor')
+      } else if (tag === 'circuit-breaker') {
+        add('🧯cb')
+      } else if (tag === 'extreme-drain') {
+        add('⚡extreme')
+      } else if (tag === 'extreme-drain-turbo') {
+        add('⚡turbo')
+      } else if (tag === 'revfloor') {
+        add('🧱revfloor')
+      } else if (tag === 'peg') {
+        add('📌peg')
+      } else if (tag === 'peg-grace') {
+        add('📌peg-grace')
+      } else if (tag === 'peg-demand') {
+        add('📌peg-demand')
+      } else if (tag === 'cooldown') {
+        add('⏳cooldown')
+      } else if (tag === 'cooldown-profit') {
+        add('⏳profit-hold')
+      } else if (tag === 'cooldown-skip') {
+        add('🧭skip-cooldown')
+      } else if (tag === 'hold-small') {
+        add('🧊hold-small')
+      } else if (tag === 'same-ppm') {
+        add('🟰same-ppm')
+      } else if (tag === 'no-down-low') {
+        add('🚫down-low')
+      } else if (tag === 'super-source') {
+        add('🔥super-source')
+      } else if (tag === 'super-source-like') {
+        add('🔥super-source-like')
+      } else if (tag.startsWith('seed:amboss')) {
+        add(`🌐${tag.replace('seed:', 'seed-')}`)
+      } else if (tag.startsWith('seed:med')) {
+        add('📐seed-med')
+      } else if (tag.startsWith('seed:vol')) {
+        add(`📉${tag.replace('seed:', 'seed-')}`)
+      } else if (tag.startsWith('seed:ratio')) {
+        add(`🔁${tag.replace('seed:', 'seed-')}`)
+      } else if (tag.startsWith('seed:outrate')) {
+        add('📊seed-outrate')
+      } else if (tag.startsWith('seed:mem')) {
+        add('💾seed-mem')
+      } else if (tag.startsWith('seed:default')) {
+        add('⚙️seed-default')
+      } else if (tag.startsWith('seed:guard')) {
+        add('🛡️seed-guard')
+      } else if (tag.startsWith('seed:p95cap')) {
+        add('🧢seed-p95')
+      } else if (tag.startsWith('seed:absmax')) {
+        add('🧱seed-cap')
+      } else {
+        add(tag)
+      }
+    })
+
+    if (inboundDiscount && inboundDiscount > 0) {
+      add(`↘️inb-${inboundDiscount}`)
+    }
+    return output.join(' ')
+  }
+
+  const formatChannelClassLabel = (label?: string) => {
+    const normalized = (label || '').toLowerCase().trim()
+    switch (normalized) {
+      case 'sink':
+        return '🏷️ sink'
+      case 'source':
+        return '🏷️ source'
+      case 'router':
+        return '🏷️ router'
+      default:
+        return ''
+    }
+  }
+
+  const formatAutofeeChannelLine = (item: AutofeeResultItem) => {
+    const alias = (item.alias || '').trim() || (item.channel_id ? `chan-${item.channel_id}` : t('common.unknown'))
+    const localPpm = item.local_ppm ?? 0
+    const newPpm = item.new_ppm ?? localPpm
+    const delta = item.delta ?? (newPpm - localPpm)
+    const deltaPct = item.delta_pct ?? (localPpm > 0 && newPpm !== localPpm ? Math.abs(delta) / localPpm * 100 : 0)
+    const deltaStr = localPpm > 0 && newPpm !== localPpm ? ` (${delta >= 0 ? '+' : ''}${delta}, ${deltaPct.toFixed(1)}%)` : ''
+
+    let dir = '➡️'
+    if (newPpm > localPpm) {
+      dir = '🔺'
+    } else if (newPpm < localPpm) {
+      dir = '🔻'
+    }
+
+    const tags = item.tags ?? []
+    const isCooldown = tags.includes('cooldown')
+    const isHoldSmall = tags.includes('hold-small')
+    const isSame = tags.includes('same-ppm')
+
+    let prefix = '🫤'
+    if (item.category === 'changed') {
+      prefix = `✅${dir}`
+    } else if (item.category === 'skipped') {
+      if (isCooldown) {
+        prefix = '⏭️⏳'
+      } else if (isHoldSmall) {
+        prefix = '⏭️🧊'
+      } else {
+        prefix = '⏭️'
+      }
+    } else if (item.category === 'error') {
+      prefix = '❌'
+    } else if (isSame) {
+      prefix = '🫤⏸️'
+    }
+
+    let action = ''
+    if (item.category === 'error') {
+      action = t('lightningOps.autofeeResultsActionError', { error: item.error || item.skip_reason || t('common.unknown') })
+    } else if (item.category === 'changed') {
+      action = item.dry_run
+        ? t('lightningOps.autofeeResultsActionDrySet', { from: localPpm, to: newPpm })
+        : t('lightningOps.autofeeResultsActionSet', { from: localPpm, to: newPpm })
+    } else {
+      action = t('lightningOps.autofeeResultsActionKeep', { value: localPpm })
+    }
+
+    const outRatio = typeof item.out_ratio === 'number' ? item.out_ratio : 0
+    const outPpm7d = item.out_ppm7d ?? 0
+    const rebalPpm7d = item.rebal_ppm7d ?? 0
+    const seed = item.seed ?? 0
+    const floor = item.floor ?? 0
+    const floorSrc = item.floor_src ? `(${item.floor_src})` : ''
+    const margin = item.margin ?? 0
+    const revShare = typeof item.rev_share === 'number' ? item.rev_share : 0
+    const tagLine = formatAutofeeTags(tags, item.inbound_discount, item.class_label) || '-'
+
+    return `${prefix} ${alias}: ${action}${deltaStr} | ${t('lightningOps.autofeeResultsLabelTarget')} ${item.target ?? 0} | ${t('lightningOps.autofeeResultsLabelOutRatio')} ${outRatio.toFixed(2)} | ${t('lightningOps.autofeeResultsLabelOutPpm7d')}≈${outPpm7d} | ${t('lightningOps.autofeeResultsLabelRebalPpm7d')}≈${rebalPpm7d} | ${t('lightningOps.autofeeResultsLabelSeed')}≈${seed} | ${t('lightningOps.autofeeResultsLabelFloor')}≥${floor}${floorSrc} | ${t('lightningOps.autofeeResultsLabelMargin')}≈${margin} | ${t('lightningOps.autofeeResultsLabelRevShare')}≈${revShare.toFixed(2)} | ${tagLine}`
+  }
+
+  const formatAutofeeSectionLine = (category?: string) => {
+    switch ((category || '').toLowerCase()) {
+      case 'changed':
+        return `✅ ${t('lightningOps.autofeeResultsSectionChanged')}`
+      case 'kept':
+        return `🟰 ${t('lightningOps.autofeeResultsSectionNoChange')}`
+      case 'skipped':
+        return `🟰 ${t('lightningOps.autofeeResultsSectionNoChange')}`
+      default:
+        return ''
+    }
+  }
+
+  const formatAutofeeExplorerLine = (item: AutofeeResultItem) => {
+    const alias = (item.alias || '').trim() || (item.channel_id ? `chan-${item.channel_id}` : t('common.unknown'))
+    return `🧭 ${alias} ${t('lightningOps.autofeeResultsExplorerOn')}`
+  }
+
+  const localizedAutofeeResults = useMemo(() => {
+    if (!autofeeResultItems.length) {
+      return formattedAutofeeResults
+    }
+    const lines: string[] = []
+    const max = Math.max(autofeeResults.length, autofeeResultItems.length)
+    for (let i = 0; i < max; i += 1) {
+      const item = autofeeResultItems[i]
+      let line = ''
+      if (item && item.kind) {
+        switch (item.kind) {
+          case 'header':
+            line = formatAutofeeHeader(item)
+            break
+          case 'summary':
+            line = formatAutofeeSummary(item)
+            break
+          case 'seed':
+            line = formatAutofeeSeed(item)
+            break
+          case 'calib':
+            line = formatAutofeeCalib(item)
+            break
+          case 'section':
+            line = formatAutofeeSectionLine(item.category)
+            break
+          case 'explorer':
+            line = formatAutofeeExplorerLine(item)
+            break
+          case 'channel':
+            line = formatAutofeeChannelLine(item)
+            break
+          default:
+            line = ''
+            break
+        }
+      }
+      if (!line && formattedAutofeeResults[i]) {
+        line = formattedAutofeeResults[i]
+      }
+      if (line) {
+        lines.push(line)
+      }
+    }
+    return lines.length ? lines : formattedAutofeeResults
+  }, [autofeeResultItems, autofeeResults.length, formattedAutofeeResults, t])
+
+  const blockCadenceAvg = useMemo(() => {
+    const buckets = bitcoinLocal?.block_cadence || []
+    if (!buckets.length) return 0
+    const windowSec = bitcoinLocal?.block_cadence_window_sec || 600
+    const cadenceHours = (buckets.length * windowSec) / 3600
+    if (cadenceHours <= 0) return 0
+    const total = buckets.reduce((sum, bucket) => sum + (bucket?.count || 0), 0)
+    return cadenceHours > 0 ? total / cadenceHours : 0
+  }, [bitcoinLocal])
+
+  const estimateMaturitySeconds = (blocks?: number) => {
+    if (typeof blocks !== 'number') return null
+    const secondsPerBlock = blockCadenceAvg > 0 ? 3600 / blockCadenceAvg : 600
+    return Math.max(0, Math.round(blocks * secondsPerBlock))
+  }
+
+  const formatMaturityDuration = (totalSeconds?: number | null) => {
+    if (totalSeconds === null || totalSeconds === undefined) return ''
+    const seconds = Math.max(0, Math.floor(totalSeconds))
+    const days = Math.floor(seconds / 86400)
+    const hours = Math.floor((seconds % 86400) / 3600)
+    const minutes = Math.floor((seconds % 3600) / 60)
+    const remSeconds = seconds % 60
+    return `${days}d ${hours}h ${minutes}m ${remSeconds}s`
+  }
+
   const isLocalChanDisabled = (flags?: string) => {
     if (!flags) return false
     const normalized = flags.toLowerCase()
@@ -217,11 +767,17 @@ export default function LightningOps() {
     setPeerListStatus(t('lightningOps.loadingPeers'))
     setAmbossStatus(t('lightningOps.ambossHealthLoading'))
     setChanHealStatus(t('lightningOps.chanHealLoading'))
-    const [channelsResult, peersResult, ambossResult, chanHealResult] = await Promise.allSettled([
+    setAutofeeMessage(t('lightningOps.autofeeLoading'))
+    const [channelsResult, peersResult, ambossResult, chanHealResult, bitcoinLocalResult, autofeeConfigResult, autofeeStatusResult, autofeeChannelsResult, autofeeResultsResult] = await Promise.allSettled([
       getLnChannels(),
       getLnPeers(),
       getAmbossHealth(),
-      getLnChanHeal()
+      getLnChanHeal(),
+      getBitcoinLocalStatus(),
+      getAutofeeConfig(),
+      getAutofeeStatus(),
+      getAutofeeChannels(),
+      getAutofeeResults(50)
     ])
     if (channelsResult.status === 'fulfilled') {
       const res = channelsResult.value
@@ -262,6 +818,60 @@ export default function LightningOps() {
     } else {
       const message = (chanHealResult.reason as any)?.message || t('lightningOps.chanHealStatusUnavailable')
       setChanHealStatus(message)
+    }
+    if (bitcoinLocalResult.status === 'fulfilled') {
+      setBitcoinLocal(bitcoinLocalResult.value as BitcoinLocalStatus)
+    }
+    if (autofeeConfigResult.status === 'fulfilled') {
+      const cfg = autofeeConfigResult.value as AutofeeConfig
+      setAutofeeConfig(cfg)
+      setAutofeeEnabled(cfg.enabled)
+      setAutofeeProfile(cfg.profile || 'moderate')
+      setAutofeeLookback(String(cfg.lookback_days ?? 7))
+      setAutofeeIntervalHours(String(Math.max(1, Math.round((cfg.run_interval_sec || 14400) / 3600))))
+      setAutofeeCooldownUp(String(Math.max(1, Math.round((cfg.cooldown_up_sec || 10800) / 3600))))
+      setAutofeeCooldownDown(String(Math.max(2, Math.round((cfg.cooldown_down_sec || 14400) / 3600))))
+      setAutofeeMinPpm(String(cfg.min_ppm ?? 10))
+      setAutofeeMaxPpm(String(cfg.max_ppm ?? 2000))
+      setAutofeeAmbossEnabled(Boolean(cfg.amboss_enabled))
+      setAutofeeInboundPassive(Boolean(cfg.inbound_passive_enabled))
+      setAutofeeDiscovery(Boolean(cfg.discovery_enabled))
+      setAutofeeExplorer(Boolean(cfg.explorer_enabled))
+      setAutofeeSuperSource(Boolean(cfg.super_source_enabled))
+      setAutofeeSuperSourceBaseFee(String(cfg.super_source_base_fee_msat ?? 1000))
+      setAutofeeRevfloor(cfg.revfloor_enabled !== false)
+      setAutofeeCircuitBreaker(cfg.circuit_breaker_enabled !== false)
+      setAutofeeExtremeDrain(cfg.extreme_drain_enabled !== false)
+      setAutofeeMessage('')
+    } else {
+      const message = (autofeeConfigResult.reason as any)?.message || t('lightningOps.autofeeConfigUnavailable')
+      setAutofeeMessage(message)
+    }
+    if (autofeeStatusResult.status === 'fulfilled') {
+      setAutofeeStatus(autofeeStatusResult.value as AutofeeStatus)
+    }
+    if (autofeeChannelsResult.status === 'fulfilled') {
+      const settingsPayload = (autofeeChannelsResult.value as any)?.settings as AutofeeChannelSetting[] | undefined
+      const map: Record<number, boolean> = {}
+      if (Array.isArray(settingsPayload)) {
+        settingsPayload.forEach((entry) => {
+          if (typeof entry?.channel_id === 'number') {
+            map[entry.channel_id] = Boolean(entry.enabled)
+          }
+        })
+      }
+      setAutofeeSettings(map)
+    }
+    if (autofeeResultsResult.status === 'fulfilled') {
+      const payload = autofeeResultsResult.value as any
+      const lines = payload?.lines
+      const items = payload?.items
+      setAutofeeResults(Array.isArray(lines) ? lines : [])
+      setAutofeeResultItems(Array.isArray(items) ? items : [])
+      setAutofeeResultsStatus('')
+    } else {
+      const message = (autofeeResultsResult.reason as any)?.message || t('lightningOps.autofeeResultsUnavailable')
+      setAutofeeResultsStatus(message)
     }
   }
 
@@ -499,6 +1109,118 @@ export default function LightningOps() {
     }
   }
 
+  const handleAutofeeSave = async () => {
+    if (autofeeBusy) return
+    setAutofeeBusy(true)
+    setAutofeeMessage(t('lightningOps.autofeeSaving'))
+    try {
+      const lookbackDays = Math.max(5, Math.min(21, Number(autofeeLookback || 7)))
+      const intervalSec = Math.max(1, Number(autofeeIntervalHours || 4)) * 3600
+      const cooldownUpSec = Math.max(1, Number(autofeeCooldownUp || 3)) * 3600
+      const cooldownDownSec = Math.max(2, Number(autofeeCooldownDown || 4)) * 3600
+      const minPpmRaw = Math.max(1, Number(autofeeMinPpm || 10))
+      let maxPpmRaw = Math.max(1, Number(autofeeMaxPpm || 2000))
+      if (maxPpmRaw < minPpmRaw) {
+        maxPpmRaw = minPpmRaw
+      }
+      const superSourceBaseFee = Math.max(0, Number(autofeeSuperSourceBaseFee || 1000))
+      const payload: any = {
+        enabled: autofeeEnabled,
+        profile: autofeeProfile,
+        lookback_days: lookbackDays,
+        run_interval_sec: intervalSec,
+        cooldown_up_sec: cooldownUpSec,
+        cooldown_down_sec: cooldownDownSec,
+        min_ppm: minPpmRaw,
+        max_ppm: maxPpmRaw,
+        amboss_enabled: autofeeAmbossEnabled,
+        inbound_passive_enabled: autofeeInboundPassive,
+        discovery_enabled: autofeeDiscovery,
+        explorer_enabled: autofeeExplorer,
+        super_source_enabled: autofeeSuperSource,
+        super_source_base_fee_msat: superSourceBaseFee,
+        revfloor_enabled: autofeeRevfloor,
+        circuit_breaker_enabled: autofeeCircuitBreaker,
+        extreme_drain_enabled: autofeeExtremeDrain
+      }
+      if (autofeeAmbossToken.trim()) {
+        payload.amboss_token = autofeeAmbossToken.trim()
+      }
+      const res = await updateAutofeeConfig(payload)
+      setAutofeeConfig(res as AutofeeConfig)
+      setAutofeeMessage(t('lightningOps.autofeeSaved'))
+      setAutofeeAmbossToken('')
+      const status = await getAutofeeStatus()
+      setAutofeeStatus(status as AutofeeStatus)
+    } catch (err: any) {
+      setAutofeeMessage(err?.message || t('lightningOps.autofeeSaveFailed'))
+    } finally {
+      setAutofeeBusy(false)
+    }
+  }
+
+  const handleAutofeeRun = async (dryRun: boolean) => {
+    if (autofeeBusy) return
+    setAutofeeBusy(true)
+    setAutofeeMessage(dryRun ? t('lightningOps.autofeeDryRunning') : t('lightningOps.autofeeRunning'))
+    try {
+      await runAutofee({ dry_run: dryRun })
+      setAutofeeMessage(dryRun ? t('lightningOps.autofeeDryRunDone') : t('lightningOps.autofeeRunDone'))
+      const status = await getAutofeeStatus()
+      setAutofeeStatus(status as AutofeeStatus)
+      const results = await getAutofeeResults(50)
+      const payload = results as any
+      setAutofeeResults(Array.isArray(payload?.lines) ? payload.lines : [])
+      setAutofeeResultItems(Array.isArray(payload?.items) ? payload.items : [])
+      setAutofeeResultsStatus('')
+    } catch (err: any) {
+      setAutofeeMessage(err?.message || t('lightningOps.autofeeRunFailed'))
+    } finally {
+      setAutofeeBusy(false)
+    }
+  }
+
+  const handleAutofeeResultsRefresh = async () => {
+    setAutofeeResultsStatus(t('lightningOps.autofeeResultsLoading'))
+    try {
+      const results = await getAutofeeResults(50)
+      const payload = results as any
+      setAutofeeResults(Array.isArray(payload?.lines) ? payload.lines : [])
+      setAutofeeResultItems(Array.isArray(payload?.items) ? payload.items : [])
+      setAutofeeResultsStatus('')
+    } catch (err: any) {
+      setAutofeeResultsStatus(err?.message || t('lightningOps.autofeeResultsUnavailable'))
+    }
+  }
+
+  const handleAutofeeChannelToggle = async (channel: Channel, enabled: boolean) => {
+    try {
+      await updateAutofeeChannels({ channel_id: channel.channel_id, channel_point: channel.channel_point, enabled })
+      setAutofeeSettings((prev) => ({ ...prev, [channel.channel_id]: enabled }))
+    } catch (err: any) {
+      setAutofeeMessage(err?.message || t('lightningOps.autofeeChannelUpdateFailed'))
+    }
+  }
+
+  const handleAutofeeBulk = async (enabled: boolean) => {
+    if (autofeeBusy) return
+    setAutofeeBusy(true)
+    setAutofeeMessage(enabled ? t('lightningOps.autofeeIncludingAll') : t('lightningOps.autofeeExcludingAll'))
+    try {
+      await updateAutofeeChannels({ apply_all: true, enabled })
+      const map: Record<number, boolean> = {}
+      channels.forEach((ch) => {
+        map[ch.channel_id] = enabled
+      })
+      setAutofeeSettings(map)
+      setAutofeeMessage(t('lightningOps.autofeeBulkDone'))
+    } catch (err: any) {
+      setAutofeeMessage(err?.message || t('lightningOps.autofeeBulkFailed'))
+    } finally {
+      setAutofeeBusy(false)
+    }
+  }
+
   const handleToggleChanHeal = async () => {
     if (chanHealBusy) return
     const nextEnabled = !chanHeal?.enabled
@@ -537,6 +1259,43 @@ export default function LightningOps() {
       setChanHealStatus(err?.message || t('lightningOps.chanHealSaveFailed'))
     } finally {
       setChanHealBusy(false)
+    }
+  }
+
+  const handleSignMessage = async () => {
+    if (signBusy) return
+    const message = signMessage.trim()
+    if (!message) {
+      setSignStatus(t('lightningOps.signMessageRequired'))
+      return
+    }
+    setSignBusy(true)
+    setSignStatus(t('lightningOps.signMessageSigning'))
+    setSignSignature('')
+    setSignCopied(false)
+    try {
+      const res = await signLnMessage({ message })
+      const signature = String(res?.signature || '').trim()
+      if (!signature) {
+        setSignStatus(t('lightningOps.signMessageFailed'))
+        return
+      }
+      setSignSignature(signature)
+      setSignStatus(t('lightningOps.signMessageReady'))
+    } catch (err: any) {
+      setSignStatus(err?.message || t('lightningOps.signMessageFailed'))
+    } finally {
+      setSignBusy(false)
+    }
+  }
+
+  const handleCopySignature = async () => {
+    if (!signSignature) return
+    try {
+      await navigator.clipboard.writeText(signSignature)
+      setSignCopied(true)
+    } catch {
+      setSignStatus(t('common.copyFailedManual'))
     }
   }
 
@@ -684,6 +1443,180 @@ export default function LightningOps() {
 
       <div className="section-card space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-semibold">{t('lightningOps.autofeeTitle')}</h3>
+            <p className="text-sm text-fog/60">{t('lightningOps.autofeeSubtitle')}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`rounded-full px-3 py-1 text-xs ${autofeeEnabled ? 'bg-glow/20 text-glow' : 'bg-ember/20 text-ember'}`}>
+              {autofeeEnabled ? t('common.enabled') : t('common.disabled')}
+            </span>
+            {autofeeStatus?.running && (
+              <span className="rounded-full px-3 py-1 text-xs bg-brass/20 text-brass">{t('lightningOps.autofeeRunning')}</span>
+            )}
+            <button
+              className="btn-secondary text-xs px-3 py-2"
+              onClick={() => setAutofeeOpen((open) => !open)}
+            >
+              {autofeeOpen ? t('common.hide') : t('lightningOps.autofeeConfigure')}
+            </button>
+          </div>
+        </div>
+
+        {autofeeOpen && (
+          <>
+            <div className="grid gap-4 lg:grid-cols-3">
+              <label className="flex items-center gap-2 text-sm text-fog/70">
+                <input type="checkbox" checked={autofeeEnabled} onChange={(e) => setAutofeeEnabled(e.target.checked)} />
+                {t('lightningOps.autofeeEnabled')}
+              </label>
+              <label className="text-sm text-fog/70">
+                {t('lightningOps.autofeeProfile')}
+                <select
+                  className="input-field mt-2"
+                  value={autofeeProfile}
+                  onChange={(e) => {
+                    const value = e.target.value
+                    setAutofeeProfile(value)
+                    const defaults = autofeeProfileDefaults[value]
+                    if (defaults) {
+                      setAutofeeIntervalHours(String(defaults.interval))
+                      setAutofeeCooldownUp(String(defaults.cooldownUp))
+                      setAutofeeCooldownDown(String(defaults.cooldownDown))
+                    }
+                  }}
+                >
+                  <option value="conservative">{t('lightningOps.autofeeProfileConservative')}</option>
+                  <option value="moderate">{t('lightningOps.autofeeProfileModerate')}</option>
+                  <option value="aggressive">{t('lightningOps.autofeeProfileAggressive')}</option>
+                </select>
+              </label>
+              <label className="text-sm text-fog/70">
+                {t('lightningOps.autofeeLookback')}
+                <input className="input-field mt-2" type="number" min={5} max={21} value={autofeeLookback} onChange={(e) => setAutofeeLookback(e.target.value)} />
+              </label>
+              <label className="text-sm text-fog/70">
+                {t('lightningOps.autofeeInterval')}
+                <input className="input-field mt-2" type="number" min={1} max={24} value={autofeeIntervalHours} onChange={(e) => setAutofeeIntervalHours(e.target.value)} />
+              </label>
+              <label className="text-sm text-fog/70">
+                {t('lightningOps.autofeeCooldownUp')}
+                <input className="input-field mt-2" type="number" min={1} max={12} value={autofeeCooldownUp} onChange={(e) => setAutofeeCooldownUp(e.target.value)} />
+              </label>
+              <label className="text-sm text-fog/70">
+                {t('lightningOps.autofeeCooldownDown')}
+                <input className="input-field mt-2" type="number" min={2} max={24} value={autofeeCooldownDown} onChange={(e) => setAutofeeCooldownDown(e.target.value)} />
+              </label>
+              <label className="text-sm text-fog/70">
+                {t('lightningOps.autofeeMinPpm')}
+                <input className="input-field mt-2" type="number" min={1} value={autofeeMinPpm} onChange={(e) => setAutofeeMinPpm(e.target.value)} />
+              </label>
+              <label className="text-sm text-fog/70">
+                {t('lightningOps.autofeeMaxPpm')}
+                <input className="input-field mt-2" type="number" min={1} value={autofeeMaxPpm} onChange={(e) => setAutofeeMaxPpm(e.target.value)} />
+              </label>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-3">
+              <label className="flex items-center gap-2 text-sm text-fog/70">
+                <input type="checkbox" checked={autofeeInboundPassive} onChange={(e) => setAutofeeInboundPassive(e.target.checked)} />
+                {t('lightningOps.autofeeInboundPassive')}
+              </label>
+              <label className="flex items-center gap-2 text-sm text-fog/70">
+                <input type="checkbox" checked={autofeeDiscovery} onChange={(e) => setAutofeeDiscovery(e.target.checked)} />
+                {t('lightningOps.autofeeDiscovery')}
+              </label>
+              <label className="flex items-center gap-2 text-sm text-fog/70">
+                <input type="checkbox" checked={autofeeExplorer} onChange={(e) => setAutofeeExplorer(e.target.checked)} />
+                {t('lightningOps.autofeeExplorer')}
+              </label>
+              <label className="flex items-center gap-2 text-sm text-fog/70">
+                <input type="checkbox" checked={autofeeRevfloor} onChange={(e) => setAutofeeRevfloor(e.target.checked)} />
+                {t('lightningOps.autofeeRevfloor')}
+              </label>
+              <label className="flex items-center gap-2 text-sm text-fog/70">
+                <input type="checkbox" checked={autofeeCircuitBreaker} onChange={(e) => setAutofeeCircuitBreaker(e.target.checked)} />
+                {t('lightningOps.autofeeCircuitBreaker')}
+              </label>
+              <label className="flex items-center gap-2 text-sm text-fog/70">
+                <input type="checkbox" checked={autofeeExtremeDrain} onChange={(e) => setAutofeeExtremeDrain(e.target.checked)} />
+                {t('lightningOps.autofeeExtremeDrain')}
+              </label>
+              <label className="flex items-center gap-2 text-sm text-fog/70">
+                <input type="checkbox" checked={autofeeSuperSource} onChange={(e) => setAutofeeSuperSource(e.target.checked)} />
+                {t('lightningOps.autofeeSuperSource')}
+              </label>
+              {autofeeSuperSource && (
+                <label className="text-sm text-fog/70">
+                  {t('lightningOps.autofeeSuperSourceBaseFee')}
+                  <input className="input-field mt-2" type="number" min={0} value={autofeeSuperSourceBaseFee} onChange={(e) => setAutofeeSuperSourceBaseFee(e.target.value)} />
+                </label>
+              )}
+              <label className="flex items-center gap-2 text-sm text-fog/70">
+                <input type="checkbox" checked={autofeeAmbossEnabled} onChange={(e) => setAutofeeAmbossEnabled(e.target.checked)} />
+                {t('lightningOps.autofeeAmboss')}
+              </label>
+              {autofeeAmbossEnabled && (
+                <label className="text-sm text-fog/70 lg:col-span-2">
+                  {t('lightningOps.autofeeAmbossToken')}
+                  <input className="input-field mt-2" type="password" value={autofeeAmbossToken} onChange={(e) => setAutofeeAmbossToken(e.target.value)} placeholder={autofeeConfig?.amboss_token_set ? t('lightningOps.autofeeAmbossTokenSet') : ''} />
+                </label>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <button className="btn-primary" onClick={handleAutofeeSave} disabled={autofeeBusy}>{t('common.save')}</button>
+              <button className="btn-secondary" onClick={() => handleAutofeeRun(true)} disabled={autofeeBusy}>{t('lightningOps.autofeeDryRun')}</button>
+              <button className="btn-secondary" onClick={() => handleAutofeeRun(false)} disabled={autofeeBusy}>{t('lightningOps.autofeeRunNow')}</button>
+            </div>
+
+            {autofeeMessage && <p className="text-sm text-brass">{autofeeMessage}</p>}
+            <div className="text-xs text-fog/60">
+              {autofeeStatus?.last_run_at && (
+                <div>{t('lightningOps.autofeeLastRun')}: <span className="text-fog">{new Date(autofeeStatus.last_run_at).toLocaleString()}</span></div>
+              )}
+              {autofeeEnabled && autofeeStatus?.next_run_at && (
+                <div>{t('lightningOps.autofeeNextRun')}: <span className="text-fog">{new Date(autofeeStatus.next_run_at).toLocaleString()}</span></div>
+              )}
+              {autofeeStatus?.last_error && (
+                <div>{t('lightningOps.autofeeLastError')}: <span className="text-ember">{autofeeStatus.last_error}</span></div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="section-card space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-semibold">{t('lightningOps.autofeeResultsTitle')}</h3>
+            <p className="text-sm text-fog/60">{t('lightningOps.autofeeResultsSubtitle')}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              className="btn-secondary text-xs px-3 py-2"
+              onClick={() => setAutofeeResultsOpen((open) => !open)}
+            >
+              {autofeeResultsOpen ? t('common.hide') : t('lightningOps.autofeeResultsShow')}
+            </button>
+            <button className="btn-secondary text-xs px-3 py-2" onClick={handleAutofeeResultsRefresh}>
+              {t('lightningOps.autofeeResultsRefresh')}
+            </button>
+          </div>
+        </div>
+
+        {autofeeResultsOpen && (
+          <>
+            {autofeeResultsStatus && <p className="text-sm text-brass">{autofeeResultsStatus}</p>}
+            <div className="bg-ink/70 border border-white/10 rounded-2xl p-4 text-xs font-mono whitespace-pre-wrap max-h-[420px] overflow-y-auto">
+              {localizedAutofeeResults.length ? localizedAutofeeResults.join('\n') : t('lightningOps.autofeeResultsEmpty')}
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="section-card space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 className="text-lg font-semibold">{t('lightningOps.channels')}</h3>
           <div className="flex flex-wrap gap-2 text-xs">
             <button className={filter === 'all' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('all')}>{t('common.all')}</button>
@@ -774,6 +1707,7 @@ export default function LightningOps() {
                   <div className="mt-3 space-y-3">
                     {pendingClose.map((ch) => {
                       const pointLink = mempoolLink(ch.channel_point)
+                      const maturitySeconds = estimateMaturitySeconds(ch.blocks_til_maturity)
                       return (
                         <div key={ch.channel_point} className="rounded-xl border border-white/10 bg-ink/70 p-3">
                           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -812,7 +1746,14 @@ export default function LightningOps() {
                           <div className="mt-2 grid gap-2 lg:grid-cols-2 text-[11px] text-fog/60">
                             <div>{t('lightningOps.capacityLabel', { value: ch.capacity_sat })}</div>
                             {typeof ch.blocks_til_maturity === 'number' && (
-                              <div>{t('lightningOps.blocksToMaturity', { count: ch.blocks_til_maturity })}</div>
+                              <div className="space-y-1">
+                                <div>{t('lightningOps.blocksToMaturity', { count: ch.blocks_til_maturity })}</div>
+                                {maturitySeconds !== null && (
+                                  <div className="text-fog/50">
+                                    {t('lightningOps.maturityEta', { time: formatMaturityDuration(maturitySeconds) })}
+                                  </div>
+                                )}
+                              </div>
                             )}
                           </div>
                           {ch.closing_txid && (
@@ -859,6 +1800,15 @@ export default function LightningOps() {
                 <input type="checkbox" checked={showPrivate} onChange={(e) => setShowPrivate(e.target.checked)} />
               {t('lightningOps.showPrivate')}
               </label>
+              <label className="flex items-center gap-2 text-[11px] text-fog/70 sm:text-xs">
+                <input
+                  type="checkbox"
+                  checked={autofeeAllChecked}
+                  onChange={(e) => handleAutofeeBulk(e.target.checked)}
+                  disabled={autofeeBusy}
+                />
+                {t('lightningOps.autofeeAll')}
+              </label>
             </div>
           </div>
         {filteredChannels.length ? (
@@ -868,6 +1818,8 @@ export default function LightningOps() {
                 const localDisabled = ch.local_disabled ?? isLocalChanDisabled(ch.chan_status_flags)
                 const statusBusy = chanStatusBusy === ch.channel_point
                 const showToggle = ch.active
+                const autofeeChecked = autofeeSettings[ch.channel_id] ?? true
+                const classLabel = formatChannelClassLabel(ch.class_label)
                 const cardClass = localDisabled && ch.active
                   ? 'rounded-2xl border border-ember/40 bg-ember/10 p-4'
                   : 'rounded-2xl border border-white/10 bg-ink/60 p-4'
@@ -905,6 +1857,14 @@ export default function LightningOps() {
                             {localDisabled ? t('lightningOps.enableChannel') : t('lightningOps.disableChannel')}
                           </button>
                         )}
+                        <label className="flex items-center gap-2 text-[11px] text-fog/70">
+                          <input
+                            type="checkbox"
+                            checked={autofeeChecked}
+                            onChange={(e) => handleAutofeeChannelToggle(ch, e.target.checked)}
+                          />
+                          {t('lightningOps.autofeeLabel')}
+                        </label>
                       </div>
                     </div>
                     <div className="mt-3 grid gap-3 lg:grid-cols-5 text-xs text-fog/70">
@@ -927,6 +1887,9 @@ export default function LightningOps() {
                         <span className="text-fog">
                           {typeof ch.inbound_fee_rate_ppm === 'number' ? `${ch.inbound_fee_rate_ppm} ppm` : '-'}
                         </span>
+                        {classLabel && (
+                          <span className="ml-2 text-fog/60">{classLabel}</span>
+                        )}
                       </div>
                     </div>
                     <div className="mt-2 text-xs text-fog/50">
@@ -1298,6 +2261,57 @@ export default function LightningOps() {
           <p className="text-xs text-amber-200">
             {t('lightningOps.chanHealLastError')}: {chanHeal.last_error}
           </p>
+        )}
+      </div>
+
+      <div className="section-card space-y-4">
+        <div>
+          <h3 className="text-lg font-semibold">{t('lightningOps.signMessageTitle')}</h3>
+          <p className="text-sm text-fog/60">{t('lightningOps.signMessageSubtitle')}</p>
+        </div>
+        <textarea
+          className="input-field min-h-[120px]"
+          placeholder={t('lightningOps.signMessagePlaceholder')}
+          value={signMessage}
+          onChange={(e) => {
+            const value = e.target.value
+            setSignMessage(value)
+            if (signSignature) setSignSignature('')
+            if (signCopied) setSignCopied(false)
+            if (signStatus) setSignStatus('')
+          }}
+        />
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            className="btn-primary disabled:opacity-60 disabled:cursor-not-allowed"
+            onClick={handleSignMessage}
+            disabled={signBusy || !signMessage.trim()}
+            type="button"
+          >
+            {signBusy ? t('lightningOps.signMessageSigning') : t('lightningOps.signMessageAction')}
+          </button>
+          {signStatus && <p className="text-sm text-brass">{signStatus}</p>}
+        </div>
+        {signSignature && (
+          <div className="rounded-2xl border border-white/10 bg-ink/60 p-3">
+            <div className="flex items-center justify-between text-xs text-fog/60">
+              <span>{t('lightningOps.signatureLabel')}</span>
+              <button
+                className="text-fog/50 hover:text-fog"
+                onClick={handleCopySignature}
+                title={t('lightningOps.copySignature')}
+                aria-label={t('lightningOps.copySignature')}
+                type="button"
+              >
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
+                  <rect x="9" y="9" width="11" height="11" rx="2" />
+                  <rect x="4" y="4" width="11" height="11" rx="2" />
+                </svg>
+              </button>
+            </div>
+            <p className="mt-2 text-xs font-mono break-all">{signSignature}</p>
+            {signCopied && <p className="mt-2 text-xs text-fog/60">{t('common.copied')}</p>}
+          </div>
         )}
       </div>
 

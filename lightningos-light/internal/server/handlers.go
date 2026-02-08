@@ -1185,6 +1185,8 @@ func mapService(name string) string {
   switch name {
   case "lnd":
     return "lnd"
+  case "autofee":
+    return "autofee"
   case "lightningos-manager":
     return "lightningos-manager"
   case "lightningos-elements", "elementsd":
@@ -1239,6 +1241,17 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
   ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
   defer cancel()
 
+  if service == "autofee" {
+    lines := parseAutofeeLimit(linesRaw)
+    out, err := s.readAutofeeLogLines(ctx, lines)
+    if err != nil {
+      writeError(w, http.StatusInternalServerError, fmt.Sprintf("log read failed: %v", err))
+      return
+    }
+    writeJSON(w, http.StatusOK, map[string]any{"service": service, "lines": out})
+    return
+  }
+
   out, err := system.JournalTail(ctx, service, lines)
   if err != nil {
     writeError(w, http.StatusInternalServerError, fmt.Sprintf("log read failed: %v", err))
@@ -1287,6 +1300,43 @@ func (s *Server) handleLNChannels(w http.ResponseWriter, r *http.Request) {
     pending = nil
   }
 
+  if s.db != nil {
+    dbCtx, dbCancel := context.WithTimeout(r.Context(), 2*time.Second)
+    defer dbCancel()
+    rows, err := s.db.Query(dbCtx, `
+      select channel_id, class_label
+      from autofee_state
+      where class_label is not null and class_label <> ''
+    `)
+    if err != nil {
+      s.logger.Printf("autofee channel class lookup failed: %v", err)
+    } else {
+      labels := make(map[uint64]string)
+      for rows.Next() {
+        var channelID uint64
+        var label string
+        if err := rows.Scan(&channelID, &label); err != nil {
+          s.logger.Printf("autofee channel class scan failed: %v", err)
+          continue
+        }
+        if label != "" {
+          labels[channelID] = label
+        }
+      }
+      if err := rows.Err(); err != nil {
+        s.logger.Printf("autofee channel class rows failed: %v", err)
+      }
+      rows.Close()
+      if len(labels) > 0 {
+        for i := range channels {
+          if label, ok := labels[channels[i].ChannelID]; ok {
+            channels[i].ClassLabel = label
+          }
+        }
+      }
+    }
+  }
+
   active := 0
   inactive := 0
   for _, ch := range channels {
@@ -1328,6 +1378,33 @@ func (s *Server) handleLNPeers(w http.ResponseWriter, r *http.Request) {
   }
 
   writeJSON(w, http.StatusOK, map[string]any{"peers": peers})
+}
+
+func (s *Server) handleLNSignMessage(w http.ResponseWriter, r *http.Request) {
+  var req struct {
+    Message string `json:"message"`
+  }
+  if err := readJSON(r, &req); err != nil {
+    writeError(w, http.StatusBadRequest, "invalid json")
+    return
+  }
+
+  message := strings.TrimSpace(req.Message)
+  if message == "" {
+    writeError(w, http.StatusBadRequest, "message required")
+    return
+  }
+
+  ctx, cancel := context.WithTimeout(r.Context(), lndRPCTimeout)
+  defer cancel()
+
+  signature, err := s.lnd.SignMessage(ctx, message)
+  if err != nil {
+    writeError(w, http.StatusInternalServerError, lndDetailedErrorMessage(err))
+    return
+  }
+
+  writeJSON(w, http.StatusOK, map[string]string{"signature": signature})
 }
 
 func (s *Server) handleLNConnectPeer(w http.ResponseWriter, r *http.Request) {

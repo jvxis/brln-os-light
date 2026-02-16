@@ -727,7 +727,7 @@ configure_tor() {
     return
   fi
   ensure_tor_setting "ControlPort" "127.0.0.1:9051"
-  ensure_tor_setting "SocksPort" "127.0.0.1:9050"
+  ensure_tor_setting "SocksPort" "0.0.0.0:9050"
   ensure_tor_setting "CookieAuthentication" "1"
   ensure_tor_setting "CookieAuthFileGroupReadable" "1"
 

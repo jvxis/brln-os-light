@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { getAppAdminPassword, getApps, getBitcoinLocalStatus, installApp, resetAppAdmin, startApp, stopApp, uninstallApp } from '../api'
 import lndgIcon from '../assets/apps/lndg.ico'
-import bitcoincoreIcon from '../assets/apps/bitcoincore.svg'
-import elementsIcon from '../assets/apps/elements.svg'
-import peerswapIcon from '../assets/apps/peerswap.svg'
+import bitcoincoreIcon from '../assets/apps/bitcoincore.png'
+import elementsIcon from '../assets/apps/elements.png'
+import peerswapIcon from '../assets/apps/peerswap.png'
 import robosatsIcon from '../assets/apps/robosats.svg'
 
 type AppInfo = {

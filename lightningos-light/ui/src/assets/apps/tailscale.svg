@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <rect width="128" height="128" rx="24" fill="#242424"/>
+  <circle cx="64" cy="64" r="14" fill="#4A9EFF"/>
+  <circle cx="64" cy="20" r="10" fill="#4A9EFF" opacity="0.85"/>
+  <circle cx="64" cy="108" r="10" fill="#4A9EFF" opacity="0.85"/>
+  <circle cx="20" cy="64" r="10" fill="#4A9EFF" opacity="0.85"/>
+  <circle cx="108" cy="64" r="10" fill="#4A9EFF" opacity="0.85"/>
+  <circle cx="29" cy="29" r="8" fill="#4A9EFF" opacity="0.6"/>
+  <circle cx="99" cy="29" r="8" fill="#4A9EFF" opacity="0.6"/>
+  <circle cx="29" cy="99" r="8" fill="#4A9EFF" opacity="0.6"/>
+  <circle cx="99" cy="99" r="8" fill="#4A9EFF" opacity="0.6"/>
+  <line x1="64" y1="50" x2="64" y2="30" stroke="#4A9EFF" stroke-width="3" opacity="0.5"/>
+  <line x1="64" y1="78" x2="64" y2="98" stroke="#4A9EFF" stroke-width="3" opacity="0.5"/>
+  <line x1="50" y1="64" x2="30" y2="64" stroke="#4A9EFF" stroke-width="3" opacity="0.5"/>
+  <line x1="78" y1="64" x2="98" y2="64" stroke="#4A9EFF" stroke-width="3" opacity="0.5"/>
+  <line x1="54" y1="54" x2="36" y2="36" stroke="#4A9EFF" stroke-width="3" opacity="0.4"/>
+  <line x1="74" y1="54" x2="92" y2="36" stroke="#4A9EFF" stroke-width="3" opacity="0.4"/>
+  <line x1="54" y1="74" x2="36" y2="92" stroke="#4A9EFF" stroke-width="3" opacity="0.4"/>
+  <line x1="74" y1="74" x2="92" y2="92" stroke="#4A9EFF" stroke-width="3" opacity="0.4"/>
+</svg>

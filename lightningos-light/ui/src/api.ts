@@ -343,3 +343,7 @@ export const uninstallApp = (id: string) => request(`/api/apps/${id}/uninstall`,
 export const startApp = (id: string) => request(`/api/apps/${id}/start`, { method: 'POST' })
 export const stopApp = (id: string) => request(`/api/apps/${id}/stop`, { method: 'POST' })
 export const resetAppAdmin = (id: string) => request(`/api/apps/${id}/reset-admin`, { method: 'POST' })
+
+export const getTailscaleAuthURL = () => request('/api/apps/tailscale/auth-url')
+export const getTailscaleStatus = () => request('/api/apps/tailscale/status')
+export const tailscaleLogout = () => request('/api/apps/tailscale/logout', { method: 'POST' })

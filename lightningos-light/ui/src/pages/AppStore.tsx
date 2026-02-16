@@ -6,6 +6,7 @@ import bitcoincoreIcon from '../assets/apps/bitcoincore.png'
 import elementsIcon from '../assets/apps/elements.png'
 import peerswapIcon from '../assets/apps/peerswap.png'
 import robosatsIcon from '../assets/apps/robosats.svg'
+import tailscaleIcon from '../assets/apps/tailscale.svg'
 
 type AppInfo = {
   id: string
@@ -26,12 +27,14 @@ const iconMap: Record<string, string> = {
   bitcoincore: bitcoincoreIcon,
   elements: elementsIcon,
   peerswap: peerswapIcon,
-  robosats: robosatsIcon
+  robosats: robosatsIcon,
+  tailscale: tailscaleIcon
 }
 
 const internalRoutes: Record<string, string> = {
   bitcoincore: 'bitcoin-local',
-  elements: 'elements'
+  elements: 'elements',
+  tailscale: 'tailscale'
 }
 
 const statusStyles: Record<string, string> = {

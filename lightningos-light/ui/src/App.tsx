@@ -19,6 +19,7 @@ import Notifications from './pages/Notifications'
 import LndConfig from './pages/LndConfig'
 import AppStore from './pages/AppStore'
 import Terminal from './pages/Terminal'
+import Tailscale from './pages/Tailscale'
 import { getLndStatus, getWizardStatus } from './api'
 import { defaultPalette, paletteOrder, resolvePalette, resolveTheme, type PaletteKey, type ThemeMode } from './theme'
 
@@ -136,6 +137,7 @@ export default function App() {
       { key: 'bitcoin', label: t('nav.bitcoinRemote'), element: <BitcoinRemote /> },
       { key: 'bitcoin-local', label: t('nav.bitcoinLocal'), element: <BitcoinLocal /> },
       { key: 'elements', label: t('nav.elements'), element: <Elements /> },
+      { key: 'tailscale', label: t('nav.tailscale'), element: <Tailscale /> },
       { key: 'notifications', label: t('nav.notifications'), element: <Notifications /> },
       { key: 'disks', label: t('nav.disks'), element: <Disks /> },
       { key: 'terminal', label: t('nav.terminal'), element: <Terminal /> },

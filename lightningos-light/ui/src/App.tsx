@@ -19,7 +19,7 @@ import Notifications from './pages/Notifications'
 import LndConfig from './pages/LndConfig'
 import AppStore from './pages/AppStore'
 import Terminal from './pages/Terminal'
-import { getLndStatus, getWizardStatus } from './api'
+import { getApps, getLndStatus, getWizardStatus } from './api'
 import { defaultPalette, paletteOrder, resolvePalette, resolveTheme, type PaletteKey, type ThemeMode } from './theme'
 
 function useHashRoute() {
@@ -38,6 +38,7 @@ type RouteItem = {
   key: string
   label: string
   element: JSX.Element
+  appId?: string
 }
 
 type MenuConfig = {
@@ -122,6 +123,30 @@ export default function App() {
   const [walletUnlocked, setWalletUnlocked] = useState<boolean | null>(null)
   const [walletExists, setWalletExists] = useState<boolean | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [installedApps, setInstalledApps] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    let active = true
+    const load = async () => {
+      try {
+        const apps: any[] = await getApps()
+        if (!active) return
+        const installed = new Set(
+          apps.filter((a) => a.installed).map((a: any) => a.id as string)
+        )
+        setInstalledApps(installed)
+      } catch {
+        // keep previous state on error
+      }
+    }
+    load()
+    const timer = window.setInterval(load, 30000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [])
+
   const baseRoutes = useMemo(() => {
     return [
       { key: 'dashboard', label: t('nav.dashboard'), element: <Dashboard /> },
@@ -134,14 +159,14 @@ export default function App() {
       { key: 'lnd', label: t('nav.lndConfig'), element: <LndConfig /> },
       { key: 'apps', label: t('nav.apps'), element: <AppStore /> },
       { key: 'bitcoin', label: t('nav.bitcoinRemote'), element: <BitcoinRemote /> },
-      { key: 'bitcoin-local', label: t('nav.bitcoinLocal'), element: <BitcoinLocal /> },
-      { key: 'elements', label: t('nav.elements'), element: <Elements /> },
+      { key: 'bitcoin-local', label: t('nav.bitcoinLocal'), element: <BitcoinLocal />, appId: 'bitcoincore' },
+      { key: 'elements', label: t('nav.elements'), element: <Elements />, appId: 'elements' },
       { key: 'notifications', label: t('nav.notifications'), element: <Notifications /> },
       { key: 'disks', label: t('nav.disks'), element: <Disks /> },
       { key: 'terminal', label: t('nav.terminal'), element: <Terminal /> },
       { key: 'logs', label: t('nav.logs'), element: <Logs /> }
-    ]
-  }, [i18n.language, t])
+    ].filter((route) => !route.appId || installedApps.has(route.appId))
+  }, [i18n.language, t, installedApps])
   const baseRouteKeys = useMemo(() => baseRoutes.map((item) => item.key), [baseRoutes])
   const [menuConfig, setMenuConfig] = useState<MenuConfig>(() => normalizeMenuConfig(readMenuConfig(), baseRouteKeys))
 

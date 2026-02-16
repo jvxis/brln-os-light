@@ -160,7 +160,7 @@ func robosatsComposeContents(paths robosatsPaths) string {
     user: "0:0"
     restart: unless-stopped
     ports:
-      - "127.0.0.1:12596:12596"
+      - "12596:12596"
     environment:
       TOR_PROXY_IP: host.docker.internal
       TOR_PROXY_PORT: 9050

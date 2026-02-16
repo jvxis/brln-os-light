@@ -363,18 +363,19 @@ get_os_codename() {
 detect_installed_postgres_major() {
   local version=""
   if command -v pg_lsclusters >/dev/null 2>&1; then
-    version=$(pg_lsclusters 2>/dev/null | awk 'NR>1 && $4=="online" {print $1}' | sort -nr | head -n1)
+    version=$(pg_lsclusters 2>/dev/null | awk 'NR>1 && $4=="online" {print $1}' | sort -nr | head -n1) || true
     if [[ -z "$version" ]]; then
-      version=$(pg_lsclusters 2>/dev/null | awk 'NR>1 {print $1}' | sort -nr | head -n1)
+      version=$(pg_lsclusters 2>/dev/null | awk 'NR>1 {print $1}' | sort -nr | head -n1) || true
     fi
   fi
   if [[ -z "$version" ]]; then
-    version=$(dpkg-query -W -f='${Package}\n' 'postgresql-[0-9]*' 2>/dev/null | sed 's/postgresql-//' | sort -nr | head -n1)
+    version=$(dpkg-query -W -f='${Package}\n' 'postgresql-[0-9]*' 2>/dev/null | sed 's/postgresql-//' | sort -nr | head -n1) || true
   fi
   echo "$version"
 }
 
 resolve_postgres_version() {
+  print_step "Resolving PostgreSQL version"
   if [[ "$POSTGRES_VERSION" =~ ^[0-9]+$ ]]; then
     return 0
   fi

@@ -37,6 +37,26 @@ export default function LndConfig() {
   const [upgradeComplete, setUpgradeComplete] = useState(false)
   const [upgradeLocked, setUpgradeLocked] = useState(false)
   const [upgradeRcConfirm, setUpgradeRcConfirm] = useState(false)
+  const [upgradeStartedVersion, setUpgradeStartedVersion] = useState('')
+  const [upgradeLogSince, setUpgradeLogSince] = useState('')
+
+  const findLastMatchIndex = (lines: string[], pattern: string) => {
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      if (lines[i].includes(pattern)) {
+        return i
+      }
+    }
+    return -1
+  }
+
+  const findLastPredicateIndex = (lines: string[], predicate: (line: string) => boolean) => {
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      if (predicate(lines[i])) {
+        return i
+      }
+    }
+    return -1
+  }
 
   const loadLocalStatus = () => {
     getBitcoinLocalStatus()
@@ -81,21 +101,60 @@ export default function LndConfig() {
     const loadLogs = async () => {
       setUpgradeLogsStatus(t('lndUpgrade.loadingLogs'))
       try {
-        const res = await getLogs('lnd-upgrade', 200)
+        if (!upgradeStartedVersion && !upgrade?.running && !upgradeLocked) {
+          setUpgradeLogs([])
+          setUpgradeLogsStatus('')
+          return
+        }
+        const res = await getLogs('lnd-upgrade', 200, upgradeLogSince || undefined)
         if (!mounted) return
         const lines: string[] = Array.isArray(res?.lines) ? res.lines : []
-        setUpgradeLogs(lines)
-        const completed = lines.some((line: string) => line.includes('Upgrade complete.'))
-        const errorLine = [...lines].reverse().find((line: string) =>
-          line.includes('[ERROR]') || line.includes('Upgrade failed')
-        )
-        if (completed) {
-          setUpgradeComplete(true)
-          setUpgradeLocked(false)
+        const startMarker = '==> Starting LND upgrade to v'
+        const systemdStartMarker = 'Started lightningos-lnd-upgrade.service'
+        const expectedStartMarker = upgradeStartedVersion
+          ? `${startMarker}${upgradeStartedVersion}`
+          : ''
+
+        let runLines = lines
+        let hasRunSegment = false
+        if (expectedStartMarker) {
+          const expectedScriptIndex = findLastMatchIndex(lines, expectedStartMarker)
+          const expectedSystemdIndex = findLastPredicateIndex(
+            lines,
+            (line: string) =>
+              line.includes(systemdStartMarker) &&
+              line.includes(`--version ${upgradeStartedVersion}`)
+          )
+          const expectedIndex = Math.max(expectedScriptIndex, expectedSystemdIndex)
+          if (expectedIndex !== -1) {
+            runLines = lines.slice(expectedIndex)
+            hasRunSegment = true
+          }
+        } else if (upgrade?.running || upgradeLocked) {
+          const genericScriptIndex = findLastMatchIndex(lines, startMarker)
+          const genericSystemdIndex = findLastMatchIndex(lines, systemdStartMarker)
+          const genericIndex = Math.max(genericScriptIndex, genericSystemdIndex)
+          if (genericIndex !== -1) {
+            runLines = lines.slice(genericIndex)
+            hasRunSegment = true
+          }
         }
-        if (errorLine) {
-          setUpgradeError(errorLine)
-          setUpgradeLocked(false)
+
+        setUpgradeLogs(expectedStartMarker && !hasRunSegment ? [] : runLines)
+
+        if (hasRunSegment) {
+          const completed = runLines.some((line: string) => line.includes('Upgrade complete.'))
+          const errorLine = [...runLines].reverse().find((line: string) =>
+            line.includes('[ERROR]') || line.includes('Upgrade failed')
+          )
+          if (completed) {
+            setUpgradeComplete(true)
+            setUpgradeLocked(false)
+          }
+          if (errorLine) {
+            setUpgradeError(errorLine)
+            setUpgradeLocked(false)
+          }
         }
         setUpgradeLogsStatus('')
       } catch (err) {
@@ -113,6 +172,9 @@ export default function LndConfig() {
           } else if (upgradeLocked) {
             setUpgradeLocked(false)
           }
+          if (upgradeStartedVersion && !data?.running && !upgradeError && !data?.update_available) {
+            setUpgradeComplete(true)
+          }
         }
       } catch {
         // ignore status refresh errors during modal
@@ -128,7 +190,7 @@ export default function LndConfig() {
       mounted = false
       clearInterval(timer)
     }
-  }, [upgradeModalOpen, t, upgradeLocked])
+  }, [upgradeModalOpen, t, upgrade?.running, upgradeLocked, upgradeStartedVersion, upgradeLogSince, upgradeError])
 
   const isHexColor = (value: string) => /^#[0-9a-fA-F]{6}$/.test(value.trim())
 
@@ -192,13 +254,17 @@ export default function LndConfig() {
   }
 
   const openUpgradeModal = () => {
+    const nowSince = new Date().toISOString()
     setUpgradeModalOpen(true)
     setUpgradeLogs([])
     setUpgradeLogsStatus('')
+    setUpgradeMessage('')
     setUpgradeError(null)
     setUpgradeComplete(false)
     setUpgradeLocked(Boolean(upgrade?.running))
     setUpgradeRcConfirm(false)
+    setUpgradeStartedVersion('')
+    setUpgradeLogSince(nowSince)
   }
 
   const closeUpgradeModal = () => {
@@ -207,12 +273,18 @@ export default function LndConfig() {
     setUpgradeRcConfirm(false)
   }
 
+  const showConfirmUpgrade = Boolean(upgrade?.update_available) && !upgradeComplete
+
   const startUpgrade = async () => {
     if (!upgrade?.latest_version || upgradeBusy) return
     if (isRcVersion(upgrade.latest_version) && !upgradeRcConfirm) {
       setUpgradeRcConfirm(true)
       return
     }
+    // Small safety window avoids missing early log lines emitted in the same second.
+    const sinceNow = new Date(Date.now() - 15000).toISOString()
+    setUpgradeStartedVersion(upgrade.latest_version)
+    setUpgradeLogSince(sinceNow)
     setUpgradeBusy(true)
     setUpgradeError(null)
     setUpgradeComplete(false)
@@ -536,18 +608,20 @@ export default function LndConfig() {
               >
                 {upgradeComplete || upgradeError ? t('common.close') : t('common.cancel')}
               </button>
-              <button
-                className={`btn-secondary text-amber-200 border-amber-400/30 ${upgradeBusy ? 'opacity-60 pointer-events-none' : ''}`}
-                onClick={startUpgrade}
-                type="button"
-                disabled={!upgrade?.update_available || upgrade?.running}
-              >
-                {upgradeBusy
-                  ? t('lndUpgrade.upgrading')
-                  : (isRcVersion(upgrade?.latest_version) && upgradeRcConfirm
-                    ? t('lndUpgrade.rcConfirmUpgrade')
-                    : t('lndUpgrade.confirmUpgrade'))}
-              </button>
+              {showConfirmUpgrade && (
+                <button
+                  className={`btn-secondary text-amber-200 border-amber-400/30 ${upgradeBusy ? 'opacity-60 pointer-events-none' : ''}`}
+                  onClick={startUpgrade}
+                  type="button"
+                  disabled={!upgrade?.update_available || upgrade?.running}
+                >
+                  {upgradeBusy
+                    ? t('lndUpgrade.upgrading')
+                    : (isRcVersion(upgrade?.latest_version) && upgradeRcConfirm
+                      ? t('lndUpgrade.rcConfirmUpgrade')
+                      : t('lndUpgrade.confirmUpgrade'))}
+                </button>
+              )}
             </div>
           </div>
         </div>

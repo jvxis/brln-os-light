@@ -973,6 +973,20 @@ get_os_codename() {
   echo "$codename"
 }
 
+detect_installed_postgres_major() {
+  local version=""
+  if command -v pg_lsclusters >/dev/null 2>&1; then
+    version=$(pg_lsclusters 2>/dev/null | awk 'NR>1 && $4=="online" {print $1}' | sort -nr | head -n1)
+    if [[ -z "$version" ]]; then
+      version=$(pg_lsclusters 2>/dev/null | awk 'NR>1 {print $1}' | sort -nr | head -n1)
+    fi
+  fi
+  if [[ -z "$version" ]]; then
+    version=$(dpkg-query -W -f='${Package}\n' 'postgresql-[0-9]*' 2>/dev/null | sed 's/postgresql-//' | sort -nr | head -n1)
+  fi
+  echo "$version"
+}
+
 setup_postgres_repo() {
   print_step "Configuring PostgreSQL repository"
   local codename
@@ -990,6 +1004,13 @@ setup_postgres_repo() {
 
 resolve_postgres_version() {
   if [[ "$POSTGRES_VERSION" =~ ^[0-9]+$ ]]; then
+    return 0
+  fi
+  local installed
+  installed=$(detect_installed_postgres_major)
+  if [[ -n "$installed" ]]; then
+    POSTGRES_VERSION="$installed"
+    print_ok "Using installed PostgreSQL ${POSTGRES_VERSION} (no major upgrade)"
     return 0
   fi
   local versions

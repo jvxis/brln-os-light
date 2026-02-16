@@ -33,6 +33,14 @@ type Server struct {
   rebalanceInitAt time.Time
   rebalance *RebalanceService
   rebalanceErr string
+  htlcManagerInitAt time.Time
+  htlcManagerMu sync.Mutex
+  htlcManager *HtlcManager
+  htlcManagerErr string
+  torPeerCheckerInitAt time.Time
+  torPeerCheckerMu sync.Mutex
+  torPeerChecker *TorPeerChecker
+  torPeerCheckerErr string
   autofeeInitAt time.Time
   autofeeMu sync.Mutex
   autofee *AutofeeService
@@ -57,7 +65,10 @@ func New(cfg *config.Config, logger *log.Logger) *Server {
 func (s *Server) Run() error {
   s.initNotifications()
   s.initReports()
+  s.startTelegramNotifications()
   s.initRebalance()
+  s.initHTLCManager()
+  s.initTorPeerChecker()
   s.initAutofee()
   if s.chat != nil {
     s.chat.Start()
@@ -70,6 +81,12 @@ func (s *Server) Run() error {
   }
   if s.rebalance != nil {
     s.rebalance.Start()
+  }
+  if s.htlcManager != nil {
+    s.htlcManager.Start()
+  }
+  if s.torPeerChecker != nil {
+    s.torPeerChecker.Start()
   }
   if s.autofee != nil {
     s.autofee.Start()

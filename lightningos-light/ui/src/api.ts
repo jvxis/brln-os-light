@@ -85,8 +85,8 @@ export const restartService = (payload: { service: string }) =>
 export const runSystemAction = (payload: { action: 'reboot' | 'shutdown' }) =>
   request('/api/actions/system', { method: 'POST', body: JSON.stringify(payload) })
 
-export const getLogs = (service: string, lines: number) =>
-  request(`/api/logs?service=${service}&lines=${lines}`)
+export const getLogs = (service: string, lines: number, since?: string) =>
+  request(`/api/logs${buildQuery({ service, lines, since })}`)
 
 export const updateLndConfig = (payload: {
   alias: string
@@ -119,6 +119,27 @@ export const signLnMessage = (payload: { message: string }) =>
 export const getLnChanHeal = () => request('/api/lnops/channel/auto-heal')
 export const updateLnChanHeal = (payload: { enabled?: boolean; interval_sec?: number }) =>
   request('/api/lnops/channel/auto-heal', { method: 'POST', body: JSON.stringify(payload) })
+export const getLnHtlcManager = () => request('/api/lnops/channel/htlc-manager')
+export const updateLnHtlcManager = (payload: {
+  enabled?: boolean
+  interval_minutes?: number
+  interval_hours?: number
+  min_htlc_sat?: number
+  max_local_pct?: number
+  run_now?: boolean
+}) => request('/api/lnops/channel/htlc-manager', { method: 'POST', body: JSON.stringify(payload) })
+export const getLnHtlcManagerLogs = (limit = 100) =>
+  request(`/api/lnops/channel/htlc-manager/logs?limit=${encodeURIComponent(String(limit))}`)
+export const getLnHtlcManagerFailed = (limit = 100) =>
+  request(`/api/lnops/channel/htlc-manager/failed?limit=${encodeURIComponent(String(limit))}`)
+export const getLnTorPeerChecker = () => request('/api/lnops/channel/tor-peers')
+export const updateLnTorPeerChecker = (payload: {
+  enabled?: boolean
+  interval_hours?: number
+  run_now?: boolean
+}) => request('/api/lnops/channel/tor-peers', { method: 'POST', body: JSON.stringify(payload) })
+export const getLnTorPeerCheckerLogs = (limit = 100) =>
+  request(`/api/lnops/channel/tor-peers/logs?limit=${encodeURIComponent(String(limit))}`)
 export const getAutofeeConfig = () => request('/api/lnops/autofee/config')
 export const updateAutofeeConfig = (payload: {
   enabled?: boolean
@@ -127,6 +148,7 @@ export const updateAutofeeConfig = (payload: {
   run_interval_sec?: number
   cooldown_up_sec?: number
   cooldown_down_sec?: number
+  rebal_cost_mode?: string
   amboss_enabled?: boolean
   amboss_token?: string
   inbound_passive_enabled?: boolean
@@ -134,6 +156,11 @@ export const updateAutofeeConfig = (payload: {
   explorer_enabled?: boolean
   super_source_enabled?: boolean
   super_source_base_fee_msat?: number
+  revfloor_enabled?: boolean
+  circuit_breaker_enabled?: boolean
+  extreme_drain_enabled?: boolean
+  htlc_signal_enabled?: boolean
+  htlc_mode?: string
   min_ppm?: number
   max_ppm?: number
 }) => request('/api/lnops/autofee/config', { method: 'POST', body: JSON.stringify(payload) })
@@ -147,7 +174,17 @@ export const updateAutofeeChannels = (payload: {
 export const runAutofee = (payload: { dry_run: boolean }) =>
   request('/api/lnops/autofee/run', { method: 'POST', body: JSON.stringify(payload) })
 export const getAutofeeStatus = () => request('/api/lnops/autofee/status')
-export const getAutofeeResults = (lines = 50) => request(`/api/lnops/autofee/results?lines=${lines}`)
+export const getAutofeeResults = (params: number | {
+  lines?: number
+  runs?: number
+  from?: string
+  to?: string
+} = 50) => {
+  if (typeof params === 'number') {
+    return request(`/api/lnops/autofee/results?lines=${params}`)
+  }
+  return request(`/api/lnops/autofee/results${buildQuery(params)}`)
+}
 export const getLnChannelFees = (channelPoint: string) =>
   request(`/api/lnops/channel/fees?channel_point=${encodeURIComponent(channelPoint)}`)
 export const updateLnChannelStatus = (payload: { channel_point: string; enabled: boolean }) =>
@@ -189,6 +226,19 @@ export const sendChatMessage = (payload: { peer_pubkey: string; message: string 
 
 export const getNotifications = (limit = 200) =>
   request(`/api/notifications?limit=${limit}`)
+
+export const getTelegramNotifications = () =>
+  request('/api/notifications/telegram')
+
+export const updateTelegramNotifications = (payload: {
+  bot_token?: string
+  chat_id?: string
+  scb_backup_enabled?: boolean
+  summary_enabled?: boolean
+  summary_interval_min?: number
+  system_summary_enabled?: boolean
+  system_summary_interval_min?: number
+}) => request('/api/notifications/telegram', { method: 'POST', body: JSON.stringify(payload) })
 
 export const getTelegramBackupConfig = () =>
   request('/api/notifications/backup/telegram')
@@ -236,6 +286,10 @@ export const updateRebalanceConfig = (payload: {
   deadband_pct?: number
   source_min_local_pct?: number
   econ_ratio?: number
+  econ_ratio_max_ppm?: number
+  fee_limit_ppm?: number
+  lost_profit?: boolean
+  fail_tolerance_ppm?: number
   roi_min?: number
   daily_budget_pct?: number
   max_concurrent?: number
@@ -246,6 +300,8 @@ export const updateRebalanceConfig = (payload: {
   amount_probe_adaptive?: boolean
   attempt_timeout_sec?: number
   rebalance_timeout_sec?: number
+  manual_restart_watch?: boolean
+  mc_half_life_sec?: number
   payback_mode_flags?: number
   unlock_days?: number
   critical_release_pct?: number
@@ -258,7 +314,12 @@ export const getRebalanceChannels = () => request('/api/rebalance/channels')
 export const getRebalanceQueue = () => request('/api/rebalance/queue')
 export const getRebalanceHistory = (limit = 0) =>
   limit > 0 ? request(`/api/rebalance/history?limit=${limit}`) : request('/api/rebalance/history')
-export const runRebalance = (payload: { channel_id: number; channel_point?: string; target_outbound_pct?: number }) =>
+export const runRebalance = (payload: {
+  channel_id: number
+  channel_point?: string
+  target_outbound_pct?: number
+  auto_restart?: boolean
+}) =>
   request('/api/rebalance/run', { method: 'POST', body: JSON.stringify(payload) })
 export const stopRebalance = (payload: { job_id: number }) =>
   request('/api/rebalance/stop', { method: 'POST', body: JSON.stringify(payload) })
@@ -266,6 +327,8 @@ export const updateRebalanceChannelTarget = (payload: { channel_id: number; chan
   request('/api/rebalance/channel/target', { method: 'POST', body: JSON.stringify(payload) })
 export const updateRebalanceChannelAuto = (payload: { channel_id: number; channel_point?: string; auto_enabled: boolean }) =>
   request('/api/rebalance/channel/auto', { method: 'POST', body: JSON.stringify(payload) })
+export const updateRebalanceChannelManualRestart = (payload: { channel_id: number; channel_point?: string; enabled: boolean }) =>
+  request('/api/rebalance/channel/manual-restart', { method: 'POST', body: JSON.stringify(payload) })
 export const updateRebalanceExclude = (payload: { channel_id: number; channel_point: string; excluded: boolean }) =>
   request('/api/rebalance/channel/exclude', { method: 'POST', body: JSON.stringify(payload) })
 

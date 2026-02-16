@@ -51,6 +51,89 @@ const (
   defaultConnectPeerTimeoutSec = uint64(8)
 )
 
+func (c *Client) ResetMissionControl(ctx context.Context) error {
+  conn, err := c.dial(ctx, true)
+  if err != nil {
+    return err
+  }
+  defer conn.Close()
+
+  client := routerrpc.NewRouterClient(conn)
+  _, err = client.ResetMissionControl(ctx, &routerrpc.ResetMissionControlRequest{})
+  return err
+}
+
+func (c *Client) UpdateMissionControlHalfLife(ctx context.Context, halfLifeSec int64) error {
+  conn, err := c.dial(ctx, true)
+  if err != nil {
+    return err
+  }
+  defer conn.Close()
+
+  if halfLifeSec < 0 {
+    halfLifeSec = 0
+  }
+  client := routerrpc.NewRouterClient(conn)
+  resp, err := client.GetMissionControlConfig(ctx, &routerrpc.GetMissionControlConfigRequest{})
+  if err != nil {
+    return err
+  }
+  cfg := resp.GetConfig()
+  if cfg == nil {
+    cfg = &routerrpc.MissionControlConfig{}
+  }
+  next := uint64(halfLifeSec)
+  cfg.HalfLifeSeconds = next
+  if apriori := cfg.GetApriori(); apriori != nil {
+    apriori.HalfLifeSeconds = next
+  }
+  if bimodal := cfg.GetBimodal(); bimodal != nil {
+    bimodal.DecayTime = next
+  }
+  _, err = client.SetMissionControlConfig(ctx, &routerrpc.SetMissionControlConfigRequest{Config: cfg})
+  return err
+}
+
+func (c *Client) LookupPayment(ctx context.Context, paymentHash string, lookback time.Duration) (*lnrpc.Payment, error) {
+  trimmed := strings.ToLower(strings.TrimSpace(paymentHash))
+  if trimmed == "" {
+    return nil, nil
+  }
+
+  conn, err := c.dial(ctx, true)
+  if err != nil {
+    return nil, err
+  }
+  defer conn.Close()
+
+  client := lnrpc.NewLightningClient(conn)
+  req := &lnrpc.ListPaymentsRequest{
+    IncludeIncomplete: true,
+    Reversed: true,
+    MaxPayments: 200,
+  }
+  if lookback > 0 {
+    start := time.Now().Add(-lookback).Unix()
+    if start > 0 {
+      req.CreationDateStart = uint64(start)
+    }
+  }
+  resp, err := client.ListPayments(ctx, req)
+  if err != nil {
+    return nil, err
+  }
+  for _, pay := range resp.Payments {
+    if pay == nil {
+      continue
+    }
+    hash := strings.ToLower(strings.TrimSpace(pay.PaymentHash))
+    if hash != "" && hash == trimmed {
+      return pay, nil
+    }
+  }
+  return nil, nil
+}
+
 type macaroonCredential struct {
   macaroon string
 }
@@ -70,8 +153,24 @@ type ChannelPolicy struct {
   BaseFeeMsat int64
   FeeRatePpm int64
   TimeLockDelta int64
+  MinHtlcMsat uint64
+  MaxHtlcMsat uint64
   InboundBaseMsat int64
   InboundFeeRatePpm int64
+}
+
+type UpdateChannelPolicyParams struct {
+  ChannelPoint string
+  ApplyAll bool
+  BaseFeeMsat int64
+  FeeRatePpm int64
+  TimeLockDelta int64
+  InboundEnabled bool
+  InboundBaseMsat int64
+  InboundFeeRatePpm int64
+  MaxHtlcMsat *uint64
+  MinHtlcMsat *uint64
+  MinHtlcMsatSpecified bool
 }
 
 type infoSnapshot struct {
@@ -96,6 +195,7 @@ type DecodedInvoice struct {
 type CreatedInvoice struct {
   PaymentRequest string
   PaymentHash string
+  PaymentAddr []byte
 }
 
 func (m macaroonCredential) GetRequestMetadata(ctx context.Context, uri ...string) (map[string]string, error) {
@@ -330,6 +430,8 @@ func (c *Client) GetChannelPolicy(ctx context.Context, channelPoint string) (Cha
     BaseFeeMsat: policy.FeeBaseMsat,
     FeeRatePpm: policy.FeeRateMilliMsat,
     TimeLockDelta: int64(policy.TimeLockDelta),
+    MinHtlcMsat: maxInt64ToUint64(policy.MinHtlc),
+    MaxHtlcMsat: policy.MaxHtlcMsat,
     InboundBaseMsat: int64(policy.InboundFeeBaseMsat),
     InboundFeeRatePpm: int64(policy.InboundFeeRateMilliMsat),
   }, nil
@@ -524,6 +626,7 @@ func (c *Client) CreateInvoice(ctx context.Context, amountSat int64, memo string
   return CreatedInvoice{
     PaymentRequest: resp.PaymentRequest,
     PaymentHash: strings.ToLower(hex.EncodeToString(resp.RHash)),
+    PaymentAddr: resp.PaymentAddr,
   }, nil
 }
 
@@ -640,6 +743,9 @@ func (c *Client) ListRecent(ctx context.Context, limit int) ([]RecentActivity, e
       if inv.State != lnrpc.Invoice_SETTLED {
         continue
       }
+      if isRebalanceMemo(inv.Memo) {
+        continue
+      }
       hash := ""
       if len(inv.RHash) > 0 {
         hash = hex.EncodeToString(inv.RHash)
@@ -686,6 +792,14 @@ func (c *Client) ListRecent(ctx context.Context, limit int) ([]RecentActivity, e
   }
 
   return items, nil
+}
+
+func isRebalanceMemo(memo string) bool {
+  normalized := strings.ToLower(strings.TrimSpace(memo))
+  if normalized == "" {
+    return false
+  }
+  return strings.HasPrefix(normalized, "rebalance:") || strings.HasPrefix(normalized, "rebalance attempt")
 }
 
 func isSelfPayment(ctx context.Context, pubkey string, client lnrpc.LightningClient, pay *lnrpc.Payment) bool {
@@ -980,29 +1094,44 @@ func (c *Client) ListChannels(ctx context.Context) ([]ChannelInfo, error) {
     var baseFeeMsat *int64
     var feeRatePpm *int64
     var inboundFeeRatePpm *int64
+    var peerFeeRatePpm *int64
+    var peerBaseMsat *int64
     localDisabled := isLocalChanDisabledFlags(ch.ChanStatusFlags)
+    localReserveSat := ch.LocalChanReserveSat
+    if localReserveSat <= 0 && ch.LocalConstraints != nil {
+      if reserve := int64(ch.LocalConstraints.GetChanReserveSat()); reserve > 0 {
+        localReserveSat = reserve
+      }
+    }
 
-    if !ch.Private {
-      if edge, err := client.GetChanInfo(ctx, &lnrpc.ChanInfoRequest{ChanId: ch.ChanId}); err == nil {
-        policy := edge.Node1Policy
-        if ch.RemotePubkey != "" {
-          if edge.Node1Pub == ch.RemotePubkey {
-            policy = edge.Node2Policy
-          } else if edge.Node2Pub == ch.RemotePubkey {
-            policy = edge.Node1Policy
-          }
+    if edge, err := client.GetChanInfo(ctx, &lnrpc.ChanInfoRequest{ChanId: ch.ChanId}); err == nil && edge != nil {
+      localPolicy := edge.Node1Policy
+      remotePolicy := edge.Node2Policy
+      if ch.RemotePubkey != "" {
+        if edge.Node1Pub == ch.RemotePubkey {
+          localPolicy = edge.Node2Policy
+          remotePolicy = edge.Node1Policy
+        } else if edge.Node2Pub == ch.RemotePubkey {
+          localPolicy = edge.Node1Policy
+          remotePolicy = edge.Node2Policy
         }
-        if policy != nil {
-          base := int64(policy.FeeBaseMsat)
-          rate := int64(policy.FeeRateMilliMsat)
-          inbound := int64(policy.InboundFeeRateMilliMsat)
-          baseFeeMsat = &base
-          feeRatePpm = &rate
-          inboundFeeRatePpm = &inbound
-          if policy.Disabled {
-            localDisabled = true
-          }
+      }
+      if localPolicy != nil {
+        base := int64(localPolicy.FeeBaseMsat)
+        rate := int64(localPolicy.FeeRateMilliMsat)
+        inbound := int64(localPolicy.InboundFeeRateMilliMsat)
+        baseFeeMsat = &base
+        feeRatePpm = &rate
+        inboundFeeRatePpm = &inbound
+        if localPolicy.Disabled {
+          localDisabled = true
         }
+      }
+      if remotePolicy != nil {
+        peerRate := int64(remotePolicy.FeeRateMilliMsat)
+        peerBase := int64(remotePolicy.FeeBaseMsat)
+        peerFeeRatePpm = &peerRate
+        peerBaseMsat = &peerBase
       }
     }
 
@@ -1018,9 +1147,14 @@ func (c *Client) ListChannels(ctx context.Context) ([]ChannelInfo, error) {
       CapacitySat: ch.Capacity,
       LocalBalanceSat: ch.LocalBalance,
       RemoteBalanceSat: ch.RemoteBalance,
+      LocalChanReserveSat: localReserveSat,
+      UnsettledBalanceSat: ch.UnsettledBalance,
+      PendingHtlcCount: len(ch.PendingHtlcs),
       BaseFeeMsat: baseFeeMsat,
       FeeRatePpm: feeRatePpm,
       InboundFeeRatePpm: inboundFeeRatePpm,
+      PeerFeeRatePpm: peerFeeRatePpm,
+      PeerBaseMsat: peerBaseMsat,
     })
   }
 
@@ -1243,6 +1377,46 @@ func (c *Client) DisconnectPeer(ctx context.Context, pubkey string) error {
   return err
 }
 
+func (c *Client) GetNodeDetails(ctx context.Context, pubkey string) (NodeDetails, error) {
+  trimmed := strings.TrimSpace(pubkey)
+  if trimmed == "" {
+    return NodeDetails{}, errors.New("pubkey required")
+  }
+
+  conn, err := c.dial(ctx, true)
+  if err != nil {
+    return NodeDetails{}, err
+  }
+  defer conn.Close()
+
+  client := lnrpc.NewLightningClient(conn)
+  info, err := client.GetNodeInfo(ctx, &lnrpc.NodeInfoRequest{PubKey: trimmed, IncludeChannels: false})
+  if err != nil {
+    return NodeDetails{}, err
+  }
+  node := info.GetNode()
+  if node == nil {
+    return NodeDetails{}, errors.New("node not found")
+  }
+
+  addresses := make([]NodeAddress, 0, len(node.Addresses))
+  for _, item := range node.Addresses {
+    if item == nil {
+      continue
+    }
+    addresses = append(addresses, NodeAddress{
+      Network: item.Network,
+      Addr: item.Addr,
+    })
+  }
+
+  return NodeDetails{
+    PubKey: trimmed,
+    Alias: node.Alias,
+    Addresses: addresses,
+  }, nil
+}
+
 func (c *Client) OpenChannel(ctx context.Context, pubkeyHex string, localFundingSat int64, closeAddress string, private bool, satPerVbyte int64) (string, error) {
   pubkeyHex = strings.TrimSpace(pubkeyHex)
   if pubkeyHex == "" {
@@ -1312,6 +1486,19 @@ func (c *Client) CloseChannel(ctx context.Context, channelPoint string, force bo
 }
 
 func (c *Client) UpdateChannelFees(ctx context.Context, channelPoint string, applyAll bool, baseFeeMsat int64, feeRatePpm int64, timeLockDelta int64, inboundEnabled bool, inboundBaseMsat int64, inboundFeeRatePpm int64) error {
+  return c.UpdateChannelPolicy(ctx, UpdateChannelPolicyParams{
+    ChannelPoint: channelPoint,
+    ApplyAll: applyAll,
+    BaseFeeMsat: baseFeeMsat,
+    FeeRatePpm: feeRatePpm,
+    TimeLockDelta: timeLockDelta,
+    InboundEnabled: inboundEnabled,
+    InboundBaseMsat: inboundBaseMsat,
+    InboundFeeRatePpm: inboundFeeRatePpm,
+  })
+}
+
+func (c *Client) UpdateChannelPolicy(ctx context.Context, params UpdateChannelPolicyParams) error {
   conn, err := c.dial(ctx, true)
   if err != nil {
     return err
@@ -1319,26 +1506,34 @@ func (c *Client) UpdateChannelFees(ctx context.Context, channelPoint string, app
   defer conn.Close()
 
   req := &lnrpc.PolicyUpdateRequest{
-    BaseFeeMsat: baseFeeMsat,
-    FeeRatePpm: uint32(feeRatePpm),
-    TimeLockDelta: uint32(timeLockDelta),
+    BaseFeeMsat: params.BaseFeeMsat,
+    FeeRatePpm: uint32(params.FeeRatePpm),
+    TimeLockDelta: uint32(params.TimeLockDelta),
   }
-  if inboundEnabled {
-    if inboundBaseMsat < math.MinInt32 || inboundBaseMsat > math.MaxInt32 {
+  if params.InboundEnabled {
+    if params.InboundBaseMsat < math.MinInt32 || params.InboundBaseMsat > math.MaxInt32 {
       return fmt.Errorf("inbound base fee out of range")
     }
-    if inboundFeeRatePpm < math.MinInt32 || inboundFeeRatePpm > math.MaxInt32 {
+    if params.InboundFeeRatePpm < math.MinInt32 || params.InboundFeeRatePpm > math.MaxInt32 {
       return fmt.Errorf("inbound fee rate out of range")
     }
     req.InboundFee = &lnrpc.InboundFee{
-      BaseFeeMsat: int32(inboundBaseMsat),
-      FeeRatePpm: int32(inboundFeeRatePpm),
+      BaseFeeMsat: int32(params.InboundBaseMsat),
+      FeeRatePpm: int32(params.InboundFeeRatePpm),
     }
   }
-  if applyAll {
+  if params.MaxHtlcMsat != nil {
+    req.MaxHtlcMsat = *params.MaxHtlcMsat
+  }
+  if params.MinHtlcMsat != nil {
+    req.MinHtlcMsat = *params.MinHtlcMsat
+  }
+  req.MinHtlcMsatSpecified = params.MinHtlcMsatSpecified
+
+  if params.ApplyAll {
     req.Scope = &lnrpc.PolicyUpdateRequest_Global{Global: true}
   } else {
-    cp, err := parseChannelPoint(channelPoint)
+    cp, err := parseChannelPoint(params.ChannelPoint)
     if err != nil {
       return err
     }
@@ -1394,9 +1589,33 @@ func isLocalChanDisabledFlags(flags string) bool {
     return false
   }
   normalized := strings.ToLower(trimmed)
-  return (strings.Contains(normalized, "local") && strings.Contains(normalized, "disabled")) ||
-    strings.Contains(normalized, "localchandisabled") ||
-    strings.Contains(normalized, "local_chan_disabled")
+  split := func(r rune) bool {
+    switch r {
+    case '|', ',', ';', ' ':
+      return true
+    default:
+      return false
+    }
+  }
+  tokens := strings.FieldsFunc(normalized, split)
+  if len(tokens) == 0 {
+    tokens = []string{normalized}
+  }
+  for _, token := range tokens {
+    tok := strings.TrimSpace(token)
+    if tok == "" {
+      continue
+    }
+    if strings.Contains(tok, "localchandisabled") || strings.Contains(tok, "local_chan_disabled") {
+      return true
+    }
+    if strings.Contains(tok, "disabled") && !strings.Contains(tok, "remote") {
+      if strings.Contains(tok, "local") || strings.Contains(tok, "chanstatusdisabled") || tok == "disabled" {
+        return true
+      }
+    }
+  }
+  return false
 }
 
 func channelPointString(cp *lnrpc.ChannelPoint) string {
@@ -1463,6 +1682,13 @@ func uniqueStrings(items []string) []string {
   return out
 }
 
+func maxInt64ToUint64(v int64) uint64 {
+  if v <= 0 {
+    return 0
+  }
+  return uint64(v)
+}
+
 func addressTypeLabel(addrType lnrpc.AddressType) string {
   switch addrType {
   case lnrpc.AddressType_WITNESS_PUBKEY_HASH:
@@ -1509,9 +1735,14 @@ type ChannelInfo struct {
   CapacitySat int64 `json:"capacity_sat"`
   LocalBalanceSat int64 `json:"local_balance_sat"`
   RemoteBalanceSat int64 `json:"remote_balance_sat"`
+  LocalChanReserveSat int64 `json:"local_chan_reserve_sat,omitempty"`
+  UnsettledBalanceSat int64 `json:"unsettled_balance_sat,omitempty"`
+  PendingHtlcCount int `json:"pending_htlc_count,omitempty"`
   BaseFeeMsat *int64 `json:"base_fee_msat,omitempty"`
   FeeRatePpm *int64 `json:"fee_rate_ppm,omitempty"`
   InboundFeeRatePpm *int64 `json:"inbound_fee_rate_ppm,omitempty"`
+  PeerFeeRatePpm *int64 `json:"peer_fee_rate_ppm,omitempty"`
+  PeerBaseMsat *int64 `json:"peer_base_msat,omitempty"`
   ClassLabel string `json:"class_label,omitempty"`
 }
 
@@ -1528,6 +1759,17 @@ type PeerInfo struct {
   SyncType string `json:"sync_type"`
   LastError string `json:"last_error"`
   LastErrorTime int64 `json:"last_error_time,omitempty"`
+}
+
+type NodeAddress struct {
+  Network string `json:"network"`
+  Addr string `json:"addr"`
+}
+
+type NodeDetails struct {
+  PubKey string `json:"pub_key"`
+  Alias string `json:"alias"`
+  Addresses []NodeAddress `json:"addresses,omitempty"`
 }
 
 type PendingChannelInfo struct {

@@ -141,8 +141,8 @@ func (s *Server) handleTelegramBackupTest(w http.ResponseWriter, r *http.Request
     return
   }
 
-  alias := getNodeAlias(ctx, s.lnd)
-  filename, caption := telegramBackupPayload("test", "", alias, time.Now().UTC())
+  nodeAlias := getNodeAlias(ctx, s.lnd)
+  filename, caption := telegramBackupPayload("test", "", nodeAlias, "", time.Now().UTC())
   if err := sendTelegramDocument(ctx, cfg.BotToken, cfg.ChatID, filename, data, caption); err != nil {
     writeError(w, http.StatusInternalServerError, err.Error())
     return
@@ -158,16 +158,24 @@ func (n *Notifier) maybeSendTelegramBackup(update *lnrpc.ChannelEventUpdate) {
 
   reason := ""
   channelPoint := ""
+  peerAlias := ""
   switch update.Type {
   case lnrpc.ChannelEventUpdate_OPEN_CHANNEL:
     reason = "open"
     if ch := update.GetOpenChannel(); ch != nil {
       channelPoint = ch.ChannelPoint
+      peerAlias = strings.TrimSpace(ch.PeerAlias)
+      if peerAlias == "" && strings.TrimSpace(ch.RemotePubkey) != "" {
+        peerAlias = n.lookupNodeAlias(ch.RemotePubkey)
+      }
     }
   case lnrpc.ChannelEventUpdate_CLOSED_CHANNEL:
     reason = "close"
     if ch := update.GetClosedChannel(); ch != nil {
       channelPoint = ch.ChannelPoint
+      if strings.TrimSpace(ch.RemotePubkey) != "" {
+        peerAlias = n.lookupNodeAlias(ch.RemotePubkey)
+      }
     }
   case lnrpc.ChannelEventUpdate_PENDING_OPEN_CHANNEL:
     reason = "opening"
@@ -176,15 +184,24 @@ func (n *Notifier) maybeSendTelegramBackup(update *lnrpc.ChannelEventUpdate) {
       if txid != "" {
         channelPoint = fmt.Sprintf("%s:%d", txid, ch.OutputIndex)
       }
+      if info := n.lookupPendingChannel(channelPoint, txid); info != nil {
+        peerAlias = strings.TrimSpace(info.PeerAlias)
+        if peerAlias == "" && strings.TrimSpace(info.RemotePubkey) != "" {
+          peerAlias = n.lookupNodeAlias(info.RemotePubkey)
+        }
+      }
     }
   default:
     return
   }
 
-  n.triggerTelegramBackup(reason, channelPoint)
+  n.triggerTelegramBackup(reason, channelPoint, peerAlias)
 }
 
-func (n *Notifier) triggerTelegramBackup(reason, channelPoint string) {
+func (n *Notifier) triggerTelegramBackup(reason, channelPoint, peerAlias string) {
+  if !n.telegramScbBackupEnabled() {
+    return
+  }
   if !n.shouldSendTelegramBackup(reason, channelPoint) {
     return
   }
@@ -196,10 +213,26 @@ func (n *Notifier) triggerTelegramBackup(reason, channelPoint string) {
   go func() {
     ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
     defer cancel()
-    if err := n.sendTelegramBackup(ctx, cfg, reason, channelPoint); err != nil {
+    if err := n.sendTelegramBackup(ctx, cfg, reason, channelPoint, peerAlias); err != nil {
       n.logger.Printf("notifications: telegram backup failed: %v", err)
     }
   }()
+}
+
+func (n *Notifier) telegramScbBackupEnabled() bool {
+  if n == nil || n.db == nil {
+    return true
+  }
+  ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+  defer cancel()
+  settings, err := loadTelegramNotificationSettings(ctx, n.db)
+  if err != nil {
+    if n.logger != nil {
+      n.logger.Printf("notifications: failed to load telegram settings: %v", err)
+    }
+    return true
+  }
+  return settings.ScbBackupEnabled
 }
 
 func (n *Notifier) shouldSendTelegramBackup(reason, channelPoint string) bool {
@@ -219,7 +252,7 @@ func (n *Notifier) shouldSendTelegramBackup(reason, channelPoint string) bool {
   return true
 }
 
-func (n *Notifier) sendTelegramBackup(ctx context.Context, cfg telegramBackupConfig, reason, channelPoint string) error {
+func (n *Notifier) sendTelegramBackup(ctx context.Context, cfg telegramBackupConfig, reason, channelPoint, peerAlias string) error {
   if !cfg.configured() {
     return errors.New("telegram config missing")
   }
@@ -231,8 +264,8 @@ func (n *Notifier) sendTelegramBackup(ctx context.Context, cfg telegramBackupCon
     return errors.New("empty channel backup")
   }
 
-  alias := getNodeAlias(ctx, n.lnd)
-  filename, caption := telegramBackupPayload(reason, channelPoint, alias, time.Now().UTC())
+  nodeAlias := getNodeAlias(ctx, n.lnd)
+  filename, caption := telegramBackupPayload(reason, channelPoint, nodeAlias, peerAlias, time.Now().UTC())
 
   return sendTelegramDocument(ctx, cfg.BotToken, cfg.ChatID, filename, data, caption)
 }
@@ -282,7 +315,7 @@ func telegramBackupSubjectLabel(tag string) string {
   return "channel"
 }
 
-func telegramBackupPayload(reason, channelPoint, alias string, when time.Time) (string, string) {
+func telegramBackupPayload(reason, channelPoint, nodeAlias, peerAlias string, when time.Time) (string, string) {
   tag := strings.TrimSpace(reason)
   if tag == "" {
     tag = "update"
@@ -293,8 +326,11 @@ func telegramBackupPayload(reason, channelPoint, alias string, when time.Time) (
     displayTag = fmt.Sprintf("%s %s", emoji, tag)
   }
   caption := fmt.Sprintf("LightningOS SCB All Channels Backup - %s", when.Format("2006-01-02 15:04:05 UTC"))
-  if strings.TrimSpace(alias) != "" {
-    caption = fmt.Sprintf("%s - %s", caption, strings.TrimSpace(alias))
+  if strings.TrimSpace(nodeAlias) != "" {
+    caption = fmt.Sprintf("%s - %s", caption, strings.TrimSpace(nodeAlias))
+  }
+  if strings.TrimSpace(peerAlias) != "" {
+    caption = fmt.Sprintf("%s - peer %s", caption, strings.TrimSpace(peerAlias))
   }
   caption = fmt.Sprintf("%s - (%s)", caption, displayTag)
   if strings.TrimSpace(channelPoint) != "" {

@@ -15,6 +15,7 @@ import (
 const (
   KeysendPreimageRecord uint64 = 5482373484
   KeysendMessageRecord  uint64 = 34349334
+  KeysendSenderRecord   uint64 = 34349339
 )
 
 func (c *Client) SendKeysendMessage(ctx context.Context, pubkeyHex string, amountSat int64, message string) (string, error) {
@@ -33,6 +34,16 @@ func (c *Client) SendKeysendMessage(ctx context.Context, pubkeyHex string, amoun
     return "", fmt.Errorf("invalid pubkey length")
   }
 
+  senderRecord := []byte(nil)
+  if senderPubkey, err := c.SelfPubkey(ctx); err == nil {
+    senderPubkey = strings.TrimSpace(senderPubkey)
+    if senderPubkey != "" {
+      if senderBytes, err := hex.DecodeString(senderPubkey); err == nil && len(senderBytes) == 33 {
+        senderRecord = senderBytes
+      }
+    }
+  }
+
   preimage := make([]byte, 32)
   if _, err := rand.Read(preimage); err != nil {
     return "", err
@@ -46,14 +57,19 @@ func (c *Client) SendKeysendMessage(ctx context.Context, pubkeyHex string, amoun
   defer conn.Close()
 
   client := lnrpc.NewLightningClient(conn)
+  records := map[uint64][]byte{
+    KeysendPreimageRecord: preimage,
+    KeysendMessageRecord:  []byte(message),
+  }
+  if len(senderRecord) == 33 {
+    records[KeysendSenderRecord] = senderRecord
+  }
+
   res, err := client.SendPaymentSync(ctx, &lnrpc.SendRequest{
     Dest: pubkey,
     Amt: amountSat,
     PaymentHash: hash[:],
-    DestCustomRecords: map[uint64][]byte{
-      KeysendPreimageRecord: preimage,
-      KeysendMessageRecord:  []byte(message),
-    },
+    DestCustomRecords: records,
   })
   if err != nil {
     return "", err

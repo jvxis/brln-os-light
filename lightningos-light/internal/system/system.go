@@ -297,10 +297,18 @@ func SystemctlPower(ctx context.Context, action string) error {
 }
 
 func JournalTail(ctx context.Context, service string, lines int) ([]string, error) {
+  return JournalTailSince(ctx, service, lines, "")
+}
+
+func JournalTailSince(ctx context.Context, service string, lines int, since string) ([]string, error) {
   if lines <= 0 {
     lines = 200
   }
-  out, err := RunCommand(ctx, "journalctl", "-u", service, "-n", strconv.Itoa(lines), "--no-pager")
+  args := []string{"-u", service, "-n", strconv.Itoa(lines), "--no-pager"}
+  if strings.TrimSpace(since) != "" {
+    args = append(args, "--since", since)
+  }
+  out, err := RunCommand(ctx, "journalctl", args...)
   if err != nil {
     return nil, err
   }

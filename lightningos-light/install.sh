@@ -5,7 +5,7 @@ set -o errtrace
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR"
 
-LND_VERSION="${LND_VERSION:-0.20.0-beta}"
+LND_VERSION="${LND_VERSION:-0.20.1-beta}"
 LND_URL_DEFAULT="https://github.com/lightningnetwork/lnd/releases/download/v${LND_VERSION}/lnd-linux-amd64-v${LND_VERSION}.tar.gz"
 LND_URL="${LND_URL:-$LND_URL_DEFAULT}"
 
@@ -360,8 +360,29 @@ get_os_codename() {
   echo "$codename"
 }
 
+detect_installed_postgres_major() {
+  local version=""
+  if command -v pg_lsclusters >/dev/null 2>&1; then
+    version=$(pg_lsclusters 2>/dev/null | awk 'NR>1 && $4=="online" {print $1}' | sort -nr | head -n1)
+    if [[ -z "$version" ]]; then
+      version=$(pg_lsclusters 2>/dev/null | awk 'NR>1 {print $1}' | sort -nr | head -n1)
+    fi
+  fi
+  if [[ -z "$version" ]]; then
+    version=$(dpkg-query -W -f='${Package}\n' 'postgresql-[0-9]*' 2>/dev/null | sed 's/postgresql-//' | sort -nr | head -n1)
+  fi
+  echo "$version"
+}
+
 resolve_postgres_version() {
   if [[ "$POSTGRES_VERSION" =~ ^[0-9]+$ ]]; then
+    return 0
+  fi
+  local installed
+  installed=$(detect_installed_postgres_major)
+  if [[ -n "$installed" ]]; then
+    POSTGRES_VERSION="$installed"
+    print_ok "Using installed PostgreSQL ${POSTGRES_VERSION} (no major upgrade)"
     return 0
   fi
   local versions
@@ -639,7 +660,7 @@ configure_sudoers() {
     return
   fi
   local system_cmds
-  system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${smartctl_path} *"
+  system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${LND_UPGRADE_SCRIPT}, ${smartctl_path} *"
   local app_cmds=()
   [[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")
   [[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")

@@ -17,6 +17,10 @@ type rebalanceConfigPayload struct {
   DeadbandPct *float64 `json:"deadband_pct,omitempty"`
   SourceMinLocalPct *float64 `json:"source_min_local_pct,omitempty"`
   EconRatio *float64 `json:"econ_ratio,omitempty"`
+  EconRatioMaxPpm *int64 `json:"econ_ratio_max_ppm,omitempty"`
+  FeeLimitPpm *int64 `json:"fee_limit_ppm,omitempty"`
+  LostProfit *bool `json:"lost_profit,omitempty"`
+  FailTolerancePpm *int64 `json:"fail_tolerance_ppm,omitempty"`
   ROIMin *float64 `json:"roi_min,omitempty"`
   DailyBudgetPct *float64 `json:"daily_budget_pct,omitempty"`
   MaxConcurrent *int `json:"max_concurrent,omitempty"`
@@ -27,6 +31,8 @@ type rebalanceConfigPayload struct {
   AmountProbeAdaptive *bool `json:"amount_probe_adaptive,omitempty"`
   AttemptTimeoutSec *int `json:"attempt_timeout_sec,omitempty"`
   RebalanceTimeoutSec *int `json:"rebalance_timeout_sec,omitempty"`
+  ManualRestartWatch *bool `json:"manual_restart_watch,omitempty"`
+  MissionControlHalfLifeSec *int64 `json:"mc_half_life_sec,omitempty"`
   PaybackModeFlags *int `json:"payback_mode_flags,omitempty"`
   UnlockDays *int `json:"unlock_days,omitempty"`
   CriticalReleasePct *float64 `json:"critical_release_pct,omitempty"`
@@ -39,6 +45,7 @@ type rebalanceRunPayload struct {
   ChannelID uint64 `json:"channel_id"`
   ChannelPoint string `json:"channel_point"`
   TargetOutboundPct *float64 `json:"target_outbound_pct,omitempty"`
+  AutoRestart *bool `json:"auto_restart,omitempty"`
 }
 
 type rebalanceChannelTargetPayload struct {
@@ -51,6 +58,12 @@ type rebalanceChannelAutoPayload struct {
   ChannelID uint64 `json:"channel_id"`
   ChannelPoint string `json:"channel_point"`
   AutoEnabled bool `json:"auto_enabled"`
+}
+
+type rebalanceChannelManualRestartPayload struct {
+  ChannelID uint64 `json:"channel_id"`
+  ChannelPoint string `json:"channel_point"`
+  Enabled bool `json:"enabled"`
 }
 
 type rebalanceExcludePayload struct {
@@ -110,6 +123,18 @@ func (s *Server) handleRebalanceConfigPost(w http.ResponseWriter, r *http.Reques
   if payload.EconRatio != nil {
     cfg.EconRatio = *payload.EconRatio
   }
+  if payload.EconRatioMaxPpm != nil {
+    cfg.EconRatioMaxPpm = *payload.EconRatioMaxPpm
+  }
+  if payload.FeeLimitPpm != nil {
+    cfg.FeeLimitPpm = *payload.FeeLimitPpm
+  }
+  if payload.LostProfit != nil {
+    cfg.LostProfit = *payload.LostProfit
+  }
+  if payload.FailTolerancePpm != nil {
+    cfg.FailTolerancePpm = *payload.FailTolerancePpm
+  }
   if payload.ROIMin != nil {
     cfg.ROIMin = *payload.ROIMin
   }
@@ -139,6 +164,12 @@ func (s *Server) handleRebalanceConfigPost(w http.ResponseWriter, r *http.Reques
   }
   if payload.RebalanceTimeoutSec != nil {
     cfg.RebalanceTimeoutSec = *payload.RebalanceTimeoutSec
+  }
+  if payload.ManualRestartWatch != nil {
+    cfg.ManualRestartWatch = *payload.ManualRestartWatch
+  }
+  if payload.MissionControlHalfLifeSec != nil {
+    cfg.MissionControlHalfLifeSec = *payload.MissionControlHalfLifeSec
   }
   if payload.PaybackModeFlags != nil {
     cfg.PaybackModeFlags = *payload.PaybackModeFlags
@@ -262,7 +293,8 @@ func (s *Server) handleRebalanceRun(w http.ResponseWriter, r *http.Request) {
     }
     _ = s.rebalance.SetChannelTarget(ctx, resolvedID, resolvedPoint, *targetPct)
   }
-  jobID, err := s.rebalance.startJob(resolvedID, "manual", "", 0)
+  autoRestart := payload.AutoRestart != nil && *payload.AutoRestart
+  jobID, err := s.rebalance.startJob(resolvedID, "manual", "", 0, autoRestart)
   if err != nil {
     writeError(w, http.StatusInternalServerError, err.Error())
     return
@@ -339,6 +371,34 @@ func (s *Server) handleRebalanceChannelAuto(w http.ResponseWriter, r *http.Reque
     return
   }
   if err := s.rebalance.SetChannelAuto(ctx, resolvedID, resolvedPoint, payload.AutoEnabled); err != nil {
+    writeError(w, http.StatusInternalServerError, err.Error())
+    return
+  }
+  writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleRebalanceChannelManualRestart(w http.ResponseWriter, r *http.Request) {
+  if s.rebalance == nil {
+    writeError(w, http.StatusServiceUnavailable, "rebalance unavailable")
+    return
+  }
+  var payload rebalanceChannelManualRestartPayload
+  if err := readJSON(r, &payload); err != nil {
+    writeError(w, http.StatusBadRequest, "invalid json")
+    return
+  }
+  if payload.ChannelID == 0 && strings.TrimSpace(payload.ChannelPoint) == "" {
+    writeError(w, http.StatusBadRequest, "channel_id or channel_point required")
+    return
+  }
+  ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+  defer cancel()
+  resolvedID, resolvedPoint, err := s.rebalance.ResolveChannel(ctx, payload.ChannelID, payload.ChannelPoint)
+  if err != nil {
+    writeError(w, http.StatusBadRequest, err.Error())
+    return
+  }
+  if err := s.rebalance.SetChannelManualRestart(ctx, resolvedID, resolvedPoint, payload.Enabled); err != nil {
     writeError(w, http.StatusInternalServerError, err.Error())
     return
   }

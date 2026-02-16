@@ -84,11 +84,23 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
   btcCtx, btcCancel := context.WithTimeout(r.Context(), 3*time.Second)
   defer btcCancel()
-  bitcoin, err := s.bitcoinStatus(btcCtx)
-  if err != nil {
-    issues = append(issues, healthIssue{Component: "bitcoin", Level: "WARN", Message: "Bitcoin remote check failed"})
-    status = elevate(status, "WARN")
+  bitcoinSource := readBitcoinSource()
+  bitcoin := bitcoinStatus{}
+  err = nil
+  if bitcoinSource == "local" {
+    bitcoin, err = s.bitcoinLocalStatusActive(btcCtx)
+    if err != nil {
+      issues = append(issues, healthIssue{Component: "bitcoin", Level: "WARN", Message: "Bitcoin local check failed"})
+      status = elevate(status, "WARN")
+    }
   } else {
+    bitcoin, err = s.bitcoinStatus(btcCtx)
+    if err != nil {
+      issues = append(issues, healthIssue{Component: "bitcoin", Level: "WARN", Message: "Bitcoin remote check failed"})
+      status = elevate(status, "WARN")
+    }
+  }
+  if err == nil {
     if !bitcoin.RPCOk {
       issues = append(issues, healthIssue{Component: "bitcoin", Level: "ERR", Message: "Bitcoin RPC unreachable"})
       status = elevate(status, "ERR")
@@ -1224,6 +1236,7 @@ func parsePeerAddress(address string) (string, string, error) {
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
   service := r.URL.Query().Get("service")
   linesRaw := r.URL.Query().Get("lines")
+  sinceRaw := strings.TrimSpace(r.URL.Query().Get("since"))
 
   lines := 200
   if linesRaw != "" {
@@ -1252,7 +1265,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
     return
   }
 
-  out, err := system.JournalTail(ctx, service, lines)
+  out, err := system.JournalTailSince(ctx, service, lines, sinceRaw)
   if err != nil {
     writeError(w, http.StatusInternalServerError, fmt.Sprintf("log read failed: %v", err))
     return
@@ -1909,6 +1922,8 @@ func (s *Server) handleLNChannelFees(w http.ResponseWriter, r *http.Request) {
     "base_fee_msat": policy.BaseFeeMsat,
     "fee_rate_ppm": policy.FeeRatePpm,
     "time_lock_delta": policy.TimeLockDelta,
+    "min_htlc_msat": policy.MinHtlcMsat,
+    "max_htlc_msat": policy.MaxHtlcMsat,
     "inbound_base_msat": policy.InboundBaseMsat,
     "inbound_fee_rate_ppm": policy.InboundFeeRatePpm,
   })

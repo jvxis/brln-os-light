@@ -336,9 +336,33 @@ func isLocalChanDisabled(flags string) bool {
     return false
   }
   normalized := strings.ToLower(trimmed)
-  return (strings.Contains(normalized, "local") && strings.Contains(normalized, "disabled")) ||
-    strings.Contains(normalized, "localchandisabled") ||
-    strings.Contains(normalized, "local_chan_disabled")
+  split := func(r rune) bool {
+    switch r {
+    case '|', ',', ';', ' ':
+      return true
+    default:
+      return false
+    }
+  }
+  tokens := strings.FieldsFunc(normalized, split)
+  if len(tokens) == 0 {
+    tokens = []string{normalized}
+  }
+  for _, token := range tokens {
+    tok := strings.TrimSpace(token)
+    if tok == "" {
+      continue
+    }
+    if strings.Contains(tok, "localchandisabled") || strings.Contains(tok, "local_chan_disabled") {
+      return true
+    }
+    if strings.Contains(tok, "disabled") && !strings.Contains(tok, "remote") {
+      if strings.Contains(tok, "local") || strings.Contains(tok, "chanstatusdisabled") || tok == "disabled" {
+        return true
+      }
+    }
+  }
+  return false
 }
 
 func readChanHealEnabled() bool {

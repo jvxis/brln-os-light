@@ -29,6 +29,7 @@ const (
 
 var lndVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z\.-]*)?$`)
 var lndVersionExtract = regexp.MustCompile(`[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z\.-]*)?`)
+var lndVersionRCTokenPattern = regexp.MustCompile(`^rc([0-9]+)$`)
 
 //go:embed assets/upgrade-lnd.sh
 var embeddedUpgradeScript string
@@ -156,6 +157,7 @@ func (s *Server) handleLNDUpgradeStart(w http.ResponseWriter, r *http.Request) {
     "--unit", lndUpgradeUnitName,
     "--collect",
     "--quiet",
+    "--",
     lndUpgradeScriptPath,
     "--version", version,
     "--url", downloadURL,
@@ -269,6 +271,20 @@ func compareSemver(a parsedSemver, b parsedSemver) int {
   if aHasPre && !bHasPre {
     return -1
   }
+  aPrefix, aRCNum, aIsRC := splitRCPreRelease(a.Pre)
+  bPrefix, bRCNum, bIsRC := splitRCPreRelease(b.Pre)
+  if comparePreIdentifiers(aPrefix, bPrefix) == 0 && (aIsRC || bIsRC) {
+    if aIsRC && !bIsRC {
+      return -1
+    }
+    if !aIsRC && bIsRC {
+      return 1
+    }
+    if aRCNum != bRCNum {
+      return compareInts(aRCNum, bRCNum)
+    }
+    return 0
+  }
   max := len(a.Pre)
   if len(b.Pre) > max {
     max = len(b.Pre)
@@ -281,6 +297,49 @@ func compareSemver(a parsedSemver, b parsedSemver) int {
       return 1
     }
     cmp := compareIdentifier(a.Pre[i], b.Pre[i])
+    if cmp != 0 {
+      return cmp
+    }
+  }
+  return 0
+}
+
+func splitRCPreRelease(pre []string) ([]string, int, bool) {
+  if len(pre) == 0 {
+    return nil, 0, false
+  }
+  last := strings.ToLower(strings.TrimSpace(pre[len(pre)-1]))
+  if match := lndVersionRCTokenPattern.FindStringSubmatch(last); len(match) == 2 {
+    number, err := atoi(match[1])
+    if err == nil {
+      return pre[:len(pre)-1], number, true
+    }
+  }
+  if len(pre) >= 2 {
+    previous := strings.ToLower(strings.TrimSpace(pre[len(pre)-2]))
+    if previous == "rc" {
+      number, err := atoi(strings.TrimSpace(pre[len(pre)-1]))
+      if err == nil {
+        return pre[:len(pre)-2], number, true
+      }
+    }
+  }
+  return pre, 0, false
+}
+
+func comparePreIdentifiers(a []string, b []string) int {
+  max := len(a)
+  if len(b) > max {
+    max = len(b)
+  }
+  for i := 0; i < max; i++ {
+    if i >= len(a) {
+      return -1
+    }
+    if i >= len(b) {
+      return 1
+    }
+    cmp := compareIdentifier(a[i], b[i])
     if cmp != 0 {
       return cmp
     }

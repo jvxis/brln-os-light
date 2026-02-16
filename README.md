@@ -16,10 +16,28 @@ LightningOS Light is a Full Lightning Node Daemon Installer, Lightning node mana
 - Lightning Ops: peers, channels, and fee updates
 - Keysend Chat: 1 sat per message + routing fees, unread indicators, 30-day retention
 - Real-time notifications (on-chain, Lightning, channels, forwards, rebalances)
-- Optional Telegram SCB backup on channel open/close
+- Telegram notifications: SCB backups, financial summaries, on-demand `/scb` and `/balances`
 - App Store: LNDg, Peerswap (psweb), Elements, Bitcoin Core
 - Bitcoin Local management (status + config) and logs viewer
 
+
+## Release notes
+### 0.2.3 Beta
+- Telegram notifications refactor: general rules card, SCB backup toggle, scheduled financial summaries, and on-demand `/scb` + `/balances` commands (auto-registered in the bot menu).
+- SCB backups include peer alias context in the Telegram caption.
+- Lightning Ops UI improvements: channel card refinements and channel balance bar.
+- Autofee HTLC Insights steps and calibration by node size/liquidity, plus scheduler/manual-run and ceiling fee/seed fixes.
+- Rebalance Center score fixes and improvements.
+- LND config upgrade fixes and PostgreSQL install fix.
+- Localization updates (UI Portuguese refinements).
+
+### 0.2.2 Beta
+- New HTLC Manager with hysteresis and minute-based runs, plus multiple improvements.
+- Rebalance Center enhancements: manual restart flows, pre-probe routing, watchdogs, ROI logic improvements, and details view.
+- Integrated Autofee: mirror brln-autofee, per-channel enablement, 0-fee support, rebalance cost fallback, results search, last-run persistence, tag trend, step-cap per channel, relax mode, and dry-run filtering.
+- Channel Auto Heal update and Tor peers checker.
+- Wallet activity cleanup fix (remove balances from wallet history).
+- LND upgrade fixes and health check follow-bitcoin toggle.
 
 ## Repository layout
 - `cmd/lightningos-manager`: Go backend (API + static UI)
@@ -135,11 +153,13 @@ Keysend chat is available in the UI and targets only online peers.
 - Messages are stored locally in `/var/lib/lightningos/chat/messages.jsonl` and retained for 30 days.
 - Unread peers are highlighted until their chat is opened.
 
-Optional Telegram SCB backup:
-- When configured, every channel open/close triggers `ExportAllChannelBackups` and sends the SCB to Telegram.
-- Configure in the UI: Notifications -> Telegram SCB backup.
+Telegram notifications:
+- Configure in the UI: Notifications -> Telegram.
+- SCB backup on channel open/close (toggle).
+- Scheduled financial summary (hourly to 12-hour intervals).
+- On-demand commands: `/scb` (backup) and `/balances` (summary).
 - Bot token comes from @BotFather and chat id from @userinfobot.
-- Direct chat only; leaving both fields empty disables Telegram backup.
+- Direct chat only; leaving both fields empty disables Telegram.
 
 Environment keys:
 - `NOTIFICATIONS_TG_BOT_TOKEN`
@@ -178,7 +198,7 @@ API endpoints:
 - `GET /api/reports/live` (today 00:00 local → now, cached ~60s)
 
 ## Rebalance Center
-Rebalance Center is an inbound (local/outbound) liquidity optimizer for LND. It can run manual rebalances per channel or fully automated scans that enqueue rebalances based on fee spread, ROI, and budget constraints. A rebalance only proceeds when **outgoing fee > peer fee** so you never pay more than the peer charge without a positive spread. Costs are tracked from notifications (fee msat) and aggregated into live cost + daily auto/manual spending.
+Rebalance Center is an inbound (local/outbound) liquidity optimizer for LND. It can run manual rebalances per channel or fully automated scans that enqueue rebalances based on ROI and budget constraints. A rebalance only proceeds when **outgoing fee > peer fee** so you never pay more than the peer charge without a positive spread. Costs are tracked from notifications (fee msat) and aggregated into live cost + daily auto/manual spending.
 
 Key behavior:
 - Manual rebalances ignore the daily budget and can be started per channel.
@@ -188,11 +208,14 @@ Key behavior:
 - Auto targets are ranked by **economic score** = (expected gain − estimated cost), so higher-margin channels are prioritized.
 - A **profit guardrail** prevents auto enqueues when expected gain is lower than estimated cost (when both are known). If ROI is indeterminate (cost = 0 with positive spread), auto is still allowed.
 - Source selection is weighted by pair history: recent successful pairs with lower fees are prioritized, while recent failures are de‑prioritized.
-- The overview shows **Last scan** in local time and a scan status (e.g., no sources, no candidates, budget exhausted) plus economic telemetry (top score, profit guardrail skips).
+- The overview shows **Last scan** in local time and a scan status (e.g., no sources, no candidates, budget exhausted) plus economic telemetry (top score, profit guardrail skips) and optional skip details.
+- Manual rebalances can optionally **auto-restart** (per-channel toggle) with a 60s cooldown until the target is reached.
+- Route **pre-probing** runs before sending, searching for the largest feasible amount on the route.
 
 Channel Workbench:
 - Set per-channel target outbound percentage.
 - Toggle `Auto` to allow auto mode to rebalance that channel.
+- Toggle the restart icon to auto-restart manual rebalances for that channel.
 - Toggle `Exclude source` to block a channel from ever being used as a source.
 - Sort toggle: **Economic** (score-based) or **Emptiest** (lowest local % first).
 
@@ -208,16 +231,21 @@ Configuration parameters:
 - `Daily budget (% of revenue)`: percent of the last 24h routing revenue allocated to auto rebalances.
 - `Deadband (%)`: minimum outbound deficit before a channel becomes a target.
 - `Minimum local for source (%)`: minimum local liquidity required for a channel to be a source.
-- `Economic ratio`: fraction of outgoing fee used as the maximum fee cap (bounded by fee spread).
+- `Economic ratio`: fraction of the target channel outbound fee (base+ppm) used as the maximum fee cap.
+- `Econ ratio max (ppm)`: optional cap for the fee limit when using economic ratio (0 = no cap).
+- `Fee limit (ppm)`: overrides economic ratio with a fixed max fee ppm (0 = disabled).
+- `Subtract source fees`: reduces the fee budget by estimated source fees (more conservative).
 - `ROI minimum`: minimum estimated ROI (7d revenue / estimated cost) to enqueue auto jobs.
 - `Max concurrent`: maximum number of rebalances running at the same time.
-- `Minimum (sats)`: smallest rebalance amount allowed per attempt.
+- `Minimum (sats)`: smallest rebalance amount for standard attempts (probing may go below to capture a valid route).
 - `Maximum (sats)`: upper bound for rebalance size (0 = unlimited).
 - `Fee ladder steps`: number of fee caps to try from low to high before giving up.
-- `Amount probe steps`: number of amount probes from large to small per fee step.
+- `Amount probe steps`: number of amount probes from large to small when a last-hop temporary failure occurs.
+- `Fail tolerance (ppm)`: probing stops when the delta between amounts is below this threshold.
 - `Adaptive amount probing`: caps the next attempt based on the last successful amount.
 - `Attempt timeout (sec)`: maximum time per attempt before moving to the next fee/amount.
 - `Rebalance timeout (sec)`: maximum runtime per rebalance job (auto or manual).
+- `Mission control half-life (sec)`: decay time for mission control failures (lower = forget faster, 0 = LND default).
 - `Payback policy`: three modes can be enabled together.
 - `Release by payback`: unlocks protected liquidity once routing revenue repays the rebalance cost.
 - `Release by time`: unlocks after `Unlock days` since the last rebalance.
@@ -237,7 +265,8 @@ UI parameters:
 - `Lookback window (days)`: 5 to 21 days for stats.
 - `Run interval (hours)`: minimum 1 hour.
 - `Cooldown up / down (hours)`: minimum time between fee increases / decreases.
-- `Min fee (ppm)` and `Max fee (ppm)`: hard clamps.
+- `Min fee (ppm)` and `Max fee (ppm)`: hard clamps (min can be `0`).
+- `Rebalance cost mode`: `Per-channel`, `Global`, or `Blend` (controls the cost anchor used in floors/margins).
 - `Amboss fee reference`: optional seed source; requires API token.
 - `Inbound passive rebalance`: uses inbound discount for sink channels.
 - `Discovery mode`: faster lowering for idle/high-outbound channels.
@@ -246,6 +275,14 @@ UI parameters:
 - `Circuit breaker`: reduces steps if demand drops after recent increases.
 - `Extreme drain`: accelerates fee increases when a channel is chronically drained.
 - `Super source` + base fee: raises base fee when a channel is classified as super source.
+- `HTLC signal integration`: enables failed-HTLC feedback from HTLC Manager.
+- `HTLC mode`: `observe_only` (telemetry/tags only), `policy_only` (policy-side effects only), `full` (policy + liquidity effects, default).
+
+HTLC signal behavior:
+- Signal window is aligned to Autofee cadence: `max(run_interval, 60m)`.
+- Minimum sample/fail thresholds are scaled by the active HTLC window and calibrated by node size + liquidity class.
+- Summary line includes: `htlc_liq_hot`, `htlc_policy_hot`, `htlc_low_sample`, `htlc_window`.
+- Per-channel line includes counters when present: `htlc<window>m a=<attempts> p=<policy_fails> l=<liquidity_fails>`.
 
 Automatic calibration:
 - Each run computes a node classification and liquidity status to auto-scale thresholds.
@@ -266,45 +303,68 @@ Autofee Results lines:
 - Seed: Amboss and fallback usage.
 - Calibration: node size, liquidity, and calibrated thresholds.
 - Per-channel lines: decision, target, floors, margins, and tags.
+- Results filters: you can show the last N runs and optionally filter by a local time range.
 
 Tag glossary (Autofee Results):
-- `🧭discovery`: channel in discovery mode.
-- `🧨harddrop`: discovery harddrop triggered (no baseline + idle).
-- `🧭explorer`: explorer mode active.
-- `🧭skip-cooldown`: cooldown skipped on down move due to explorer.
-- `📈surge+X%`: surge bump applied.
-- `💎top-rev`: top revenue share bump applied.
-- `⚠️neg-margin`: negative margin protection bump.
-- `🧱revfloor`: revenue floor applied.
-- `📊outrate-floor`: outrate floor applied.
-- `📌peg`: peg to observed outrate.
-- `📌peg-grace`: peg applied inside grace window.
-- `📌peg-demand`: peg applied due to strong demand vs seed.
-- `🧯cb`: circuit breaker reduced the step.
-- `⚡extreme`: extreme drain step cap/min-step boost applied.
-- `⚡turbo`: extreme drain turbo boost applied.
-- `⏳cooldown`: cooldown blocked an update.
-- `⏳profit-hold`: cooldown held a profitable down move.
-- `🧊hold-small`: change below min delta/percent.
-- `🟰same-ppm`: target equals current ppm.
-- `🚫down-low`: no down-move while deeply drained.
-- `🔥super-source`: channel classified as super source.
-- `🔥super-source-like`: router-like super source.
-- `↘️inb-<n>`: inbound discount (passive rebalance).
-- `🌐seed-amboss`: Amboss seed used.
+- `sink`, `source`, `router`, `unknown`: class labels.
+- `discovery`: channel in discovery mode.
+- `discovery-hard`: discovery harddrop triggered (no baseline + idle).
+- `explorer`: explorer mode active.
+- `cooldown-skip`: cooldown skipped on a down move due to explorer.
+- `surge+X%`: surge bump applied.
+- `top-rev`: top-revenue-share bump applied.
+- `neg-margin`: negative-margin protection bump.
+- `negm+X%`: additional negative-margin uplift.
+- `revfloor`: revenue floor applied.
+- `outrate-floor`: outrate floor applied.
+- `peg`: peg to observed outrate.
+- `peg-grace`: peg applied inside grace window.
+- `peg-demand`: peg applied due to strong demand vs seed.
+- `circuit-breaker`: circuit breaker reduced the step.
+- `extreme-drain`: extreme-drain step boost path used.
+- `extreme-drain-turbo`: extra extreme-drain turbo uplift.
+- `cooldown`: cooldown blocked an update.
+- `cooldown-profit`: cooldown held a profitable down move.
+- `hold-small`: change below minimum delta/percent.
+- `same-ppm`: target equals current ppm.
+- `no-down-low`: down move blocked while deeply drained.
+- `no-down-neg-margin`: down move blocked while margin is negative.
+- `sink-floor`: extra floor margin applied to sink channels.
+- `trend-up`, `trend-down`, `trend-flat`: next-move directional hint.
+- `stepcap`: step cap applied.
+- `stepcap-lock`: step cap lock applied.
+- `floor-lock`: floor lock applied.
+- `global-neg-lock`: global negative-margin lock applied.
+- `lock-skip-no-chan-rebal`: lock skipped because there is no channel rebalance history.
+- `lock-skip-sink-profit`: lock skipped in sink profitability path.
+- `profit-protect-lock`: profit-protection lock applied.
+- `profit-protect-relax`: profit-protection relaxed.
+- `super-source`: channel classified as super source.
+- `super-source-like`: router-like super-source classification.
+- `inb-<n>`: inbound discount applied.
+- `htlc-policy-hot`: high policy-failure HTLC signal.
+- `htlc-liquidity-hot`: high liquidity-failure HTLC signal.
+- `htlc-sample-low`: HTLC sample too small for hot classification.
+- `htlc-neutral-lock`: both HTLC hot signals present and neutral lock path used.
+- `htlc-liq+X%`: liquidity-hot bump applied.
+- `htlc-policy+X%`: policy-hot bump applied.
+- `htlc-liq-nodown`: down move blocked by liquidity-hot signal.
+- `htlc-policy-nodown`: down move blocked by policy-hot signal.
+- `htlc-neutral-nodown`: down move blocked by combined HTLC lock.
+- `htlc-step-boost`: HTLC hot-signal step-cap boost.
+- `seed:amboss`: Amboss seed used.
 - `seed:amboss-missing`: Amboss token missing.
 - `seed:amboss-empty`: Amboss returned no data.
 - `seed:amboss-error`: Amboss fetch error.
-- `📐seed-med`: Amboss median blended in.
-- `📉seed-vol-<n>%`: volatility penalty applied.
-- `🔁seed-ratio×<f>`: out/in ratio adjustment applied.
-- `📊seed-outrate`: seed from recent outrate.
-- `💾seed-mem`: seed from memory.
-- `⚙️seed-default`: default seed fallback.
-- `🛡️seed-guard`: seed jump cap applied.
-- `🧢seed-p95`: seed capped at Amboss p95.
-- `🧱seed-cap`: absolute seed cap applied.
-
+- `seed:med`: Amboss median blended in.
+- `seed:vol-<n>%`: volatility penalty applied.
+- `seed:ratio<factor>`: out/in ratio adjustment applied.
+- `seed:outrate`: seed from recent outrate.
+- `seed:mem`: seed from memory.
+- `seed:default`: default seed fallback.
+- `seed:guard`: seed jump guard applied.
+- `seed:p95cap`: seed capped at Amboss p95.
+- `seed:absmax`: absolute seed cap applied.
 
 ## Web terminal (optional)
 LightningOS Light can expose a protected web terminal using GoTTY.

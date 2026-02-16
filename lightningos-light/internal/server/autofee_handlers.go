@@ -4,10 +4,13 @@ import (
   "context"
   "encoding/json"
   "errors"
+  "fmt"
   "net/http"
   "strconv"
   "strings"
   "time"
+
+  "github.com/jackc/pgx/v5"
 )
 
 func (s *Server) handleAutofeeConfigGet(w http.ResponseWriter, r *http.Request) {
@@ -157,7 +160,9 @@ func (s *Server) handleAutofeeRun(w http.ResponseWriter, r *http.Request) {
     return
   }
 
-  ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+  // Manual non-dry runs can touch many channels and exceed short HTTP deadlines.
+  // Keep request cancellation semantics, but allow enough time for the full batch.
+  ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
   defer cancel()
 
   if err := svc.Run(ctx, req.DryRun, "manual"); err != nil {
@@ -231,18 +236,63 @@ func (s *Server) handleAutofeeResults(w http.ResponseWriter, r *http.Request) {
     writeError(w, http.StatusServiceUnavailable, errMsg)
     return
   }
-  limit := parseAutofeeLimit(r.URL.Query().Get("lines"))
-  if limit <= 0 {
-    limit = 50
+  query := r.URL.Query()
+  runs := parseAutofeeRuns(query.Get("runs"))
+  fromTime, fromOk := parseAutofeeTime(query.Get("from"))
+  toTime, toOk := parseAutofeeTime(query.Get("to"))
+  useRuns := runs > 0 || query.Get("runs") != "" || query.Get("from") != "" || query.Get("to") != ""
+  if useRuns && runs <= 0 {
+    runs = 4
+  }
+  limit := 0
+  if !useRuns {
+    limit = parseAutofeeLimit(query.Get("lines"))
+    if limit <= 0 {
+      limit = 50
+    }
   }
   ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
   defer cancel()
-  rows, err := s.db.Query(ctx, `
+
+  var rows pgx.Rows
+  var err error
+  if useRuns {
+    conditions := []string{"run_id is not null"}
+    args := []any{}
+    if fromOk {
+      conditions = append(conditions, fmt.Sprintf("occurred_at >= $%d", len(args)+1))
+      args = append(args, fromTime)
+    }
+    if toOk {
+      conditions = append(conditions, fmt.Sprintf("occurred_at <= $%d", len(args)+1))
+      args = append(args, toTime)
+    }
+    whereClause := strings.Join(conditions, " and ")
+    limitArg := len(args) + 1
+    args = append(args, runs)
+    sql := fmt.Sprintf(`
+with selected_runs as (
+  select run_id, max(occurred_at) as last_at
+  from autofee_logs
+  where %s
+  group by run_id
+  order by max(occurred_at) desc
+  limit $%d
+)
+select l.line, l.payload
+from autofee_logs l
+join selected_runs r on l.run_id = r.run_id
+order by r.last_at desc, l.seq asc
+`, whereClause, limitArg)
+    rows, err = s.db.Query(ctx, sql, args...)
+  } else {
+    rows, err = s.db.Query(ctx, `
 select line, payload
 from autofee_logs
 order by coalesce(run_id, '0')::bigint desc, seq asc
 limit $1
 `, limit)
+  }
   if err != nil {
     writeError(w, http.StatusInternalServerError, err.Error())
     return
@@ -278,4 +328,37 @@ func parseAutofeeLimit(raw string) int {
     return 200
   }
   return v
+}
+
+func parseAutofeeRuns(raw string) int {
+  if raw == "" {
+    return 0
+  }
+  v, err := strconv.Atoi(raw)
+  if err != nil {
+    return 0
+  }
+  if v < 1 {
+    return 0
+  }
+  if v > 50 {
+    return 50
+  }
+  return v
+}
+
+func parseAutofeeTime(raw string) (time.Time, bool) {
+  if strings.TrimSpace(raw) == "" {
+    return time.Time{}, false
+  }
+  if ts, err := time.Parse(time.RFC3339, raw); err == nil {
+    return ts, true
+  }
+  if ts, err := time.ParseInLocation("2006-01-02T15:04", raw, time.Local); err == nil {
+    return ts, true
+  }
+  if ts, err := time.ParseInLocation("2006-01-02 15:04", raw, time.Local); err == nil {
+    return ts, true
+  }
+  return time.Time{}, false
 }

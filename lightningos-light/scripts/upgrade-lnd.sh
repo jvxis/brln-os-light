@@ -78,7 +78,18 @@ done
 
 require_root
 
+if [[ -z "$VERSION" && -n "${LND_UPGRADE_VERSION:-}" ]]; then
+  VERSION="${LND_UPGRADE_VERSION}"
+fi
+if [[ -z "$URL" && -n "${LND_UPGRADE_URL:-}" ]]; then
+  URL="${LND_UPGRADE_URL}"
+fi
+
 VERSION="${VERSION#v}"
+if [[ -z "$VERSION" && -n "$URL" ]]; then
+  VERSION=$(echo "$URL" | grep -Eo 'v[0-9]+\.[0-9]+\.[0-9]+([\-\.][0-9A-Za-z\.-]+)?' | head -n1 || true)
+  VERSION="${VERSION#v}"
+fi
 if [[ -z "$VERSION" ]]; then
   die "Missing --version. Example: --version 0.20.1-beta.rc1"
 fi

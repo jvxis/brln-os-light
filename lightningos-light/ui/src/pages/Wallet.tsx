@@ -191,6 +191,13 @@ export default function Wallet() {
     ? 'text-brass'
     : 'text-ember'
 
+  const isRebalanceActivity = (item: any) => {
+    const type = String(item?.type || '').toLowerCase()
+    if (type === 'rebalance') return true
+    const memo = typeof item?.memo === 'string' ? item.memo.trim().toLowerCase() : ''
+    return memo.startsWith('rebalance:') || memo.startsWith('rebalance attempt')
+  }
+
   const formatSats = (value?: number) => {
     if (typeof value !== 'number' || Number.isNaN(value)) return '-'
     return satFormatter.format(value)
@@ -248,11 +255,13 @@ export default function Wallet() {
     return label
   }
 
-  const orderedActivity = [...activity].sort((a: any, b: any) => {
-    const timeA = new Date(a?.timestamp || 0).getTime()
-    const timeB = new Date(b?.timestamp || 0).getTime()
-    return timeB - timeA
-  })
+  const orderedActivity = [...activity]
+    .filter((item: any) => !isRebalanceActivity(item))
+    .sort((a: any, b: any) => {
+      const timeA = new Date(a?.timestamp || 0).getTime()
+      const timeB = new Date(b?.timestamp || 0).getTime()
+      return timeB - timeA
+    })
 
   const trimMemo = (value: string, max = 30) => {
     const trimmed = value.trim()

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { boostPeers, closeChannel, connectPeer, disconnectPeer, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBitcoinLocalStatus, getLnChanHeal, getLnChannelFees, getLnChannels, getLnPeers, getMempoolFees, openChannel, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus } from '../api'
+import { boostPeers, closeChannel, connectPeer, disconnectPeer, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBitcoinLocalStatus, getLnChanHeal, getLnChannelFees, getLnChannels, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getMempoolFees, openChannel, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnHtlcManager, updateLnTorPeerChecker } from '../api'
 
 type Channel = {
   channel_point: string
@@ -17,6 +17,8 @@ type Channel = {
   base_fee_msat?: number
   fee_rate_ppm?: number
   inbound_fee_rate_ppm?: number
+  peer_fee_rate_ppm?: number
+  peer_base_msat?: number
   class_label?: string
 }
 
@@ -72,6 +74,71 @@ type ChanHealStatus = {
   last_updated?: number
 }
 
+type HtlcManagerStatus = {
+  enabled: boolean
+  status: string
+  interval_minutes?: number
+  interval_hours?: number
+  min_htlc_sat: number
+  max_local_pct: number
+  last_attempt_at?: string
+  last_ok_at?: string
+  last_error?: string
+  last_error_at?: string
+  last_changed_count?: number
+}
+
+type HtlcManagerLogEntry = {
+  ts: string
+  alias: string
+  channel_id: number
+  channel_point: string
+  old_min_msat: number
+  new_min_msat: number
+  old_max_msat: number
+  new_max_msat: number
+  result: string
+}
+
+type HtlcManagerFailedEntry = {
+  ts: string
+  incoming_channel_id?: string
+  incoming_alias?: string
+  outgoing_channel_id?: string
+  outgoing_alias?: string
+  incoming_amt_msat?: number
+  outgoing_amt_msat?: number
+  potential_fee_msat?: number
+  failure_code?: string
+  failure_detail?: string
+  failure_reason?: string
+  event?: string
+}
+
+type TorPeerCheckerStatus = {
+  enabled: boolean
+  status: string
+  interval_hours: number
+  last_attempt_at?: string
+  last_ok_at?: string
+  last_error?: string
+  last_error_at?: string
+  last_checked_count?: number
+  last_hybrid_on_tor_count?: number
+  last_attempted_count?: number
+  last_switched_count?: number
+}
+
+type TorPeerCheckerLogEntry = {
+  ts: string
+  alias: string
+  pub_key?: string
+  from_address?: string
+  to_address?: string
+  result: string
+  detail?: string
+}
+
 type BitcoinLocalCadenceBucket = {
   count: number
 }
@@ -81,16 +148,17 @@ type BitcoinLocalStatus = {
   block_cadence?: BitcoinLocalCadenceBucket[]
 }
 
-type AutofeeConfig = {
-  enabled: boolean
-  profile: string
-  lookback_days: number
-  run_interval_sec: number
-  cooldown_up_sec: number
-  cooldown_down_sec: number
-  amboss_enabled: boolean
-  amboss_token_set: boolean
-  inbound_passive_enabled: boolean
+  type AutofeeConfig = {
+    enabled: boolean
+    profile: string
+    lookback_days: number
+    run_interval_sec: number
+    cooldown_up_sec: number
+    cooldown_down_sec: number
+    rebal_cost_mode?: string
+    amboss_enabled: boolean
+    amboss_token_set: boolean
+    inbound_passive_enabled: boolean
   discovery_enabled: boolean
   explorer_enabled: boolean
   super_source_enabled: boolean
@@ -98,6 +166,8 @@ type AutofeeConfig = {
   revfloor_enabled: boolean
   circuit_breaker_enabled: boolean
   extreme_drain_enabled: boolean
+  htlc_signal_enabled: boolean
+  htlc_mode: string
   min_ppm: number
   max_ppm: number
 }
@@ -130,6 +200,16 @@ type AutofeeResultItem = {
   inactive?: number
   inbound_disc?: number
   super_source?: number
+  htlc_liq_hot?: number
+  htlc_policy_hot?: number
+  htlc_sample_low?: number
+  htlc_window_min?: number
+  htlc_min_attempts?: number
+  htlc_min_policy_fails?: number
+  htlc_min_liquidity_fails?: number
+  htlc_node_factor?: number
+  htlc_liquidity_factor?: number
+  htlc_threshold_factor?: number
   amboss?: number
   missing?: number
   err?: number
@@ -168,6 +248,12 @@ type AutofeeResultItem = {
   error?: string
   delta?: number
   delta_pct?: number
+  prediction_code?: string
+  prediction_cooldown_hours?: number
+  htlc_attempts?: number
+  htlc_policy_fails?: number
+  htlc_liquidity_fails?: number
+  htlc_window_min_channel?: number
 }
 
 export default function LightningOps() {
@@ -182,8 +268,8 @@ export default function LightningOps() {
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all')
   const [search, setSearch] = useState('')
   const [minCapacity, setMinCapacity] = useState('')
-  const [sortBy, setSortBy] = useState<'capacity' | 'local' | 'remote' | 'alias'>('capacity')
-  const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
+  const [sortBy, setSortBy] = useState<'capacity' | 'local' | 'remote' | 'alias'>('local')
+  const [sortDir, setSortDir] = useState<'desc' | 'asc'>('asc')
   const [showPrivate, setShowPrivate] = useState(true)
 
   const [peerAddress, setPeerAddress] = useState('')
@@ -202,6 +288,22 @@ export default function LightningOps() {
   const [chanHealStatus, setChanHealStatus] = useState('')
   const [chanHealBusy, setChanHealBusy] = useState(false)
   const [chanHealInterval, setChanHealInterval] = useState('300')
+  const [htlcManager, setHtlcManager] = useState<HtlcManagerStatus | null>(null)
+  const [htlcManagerStatus, setHtlcManagerStatus] = useState('')
+  const [htlcManagerBusy, setHtlcManagerBusy] = useState(false)
+  const [htlcManagerIntervalMinutes, setHtlcManagerIntervalMinutes] = useState('240')
+  const [htlcManagerMinSat, setHtlcManagerMinSat] = useState('1')
+  const [htlcManagerMaxPct, setHtlcManagerMaxPct] = useState('0')
+  const [htlcManagerLogs, setHtlcManagerLogs] = useState<HtlcManagerLogEntry[]>([])
+  const [htlcManagerLogsOpen, setHtlcManagerLogsOpen] = useState(false)
+  const [htlcManagerFailed, setHtlcManagerFailed] = useState<HtlcManagerFailedEntry[]>([])
+  const [htlcManagerFailedOpen, setHtlcManagerFailedOpen] = useState(false)
+  const [torPeerChecker, setTorPeerChecker] = useState<TorPeerCheckerStatus | null>(null)
+  const [torPeerCheckerStatus, setTorPeerCheckerStatus] = useState('')
+  const [torPeerCheckerBusy, setTorPeerCheckerBusy] = useState(false)
+  const [torPeerCheckerIntervalHours, setTorPeerCheckerIntervalHours] = useState('2')
+  const [torPeerCheckerLogs, setTorPeerCheckerLogs] = useState<TorPeerCheckerLogEntry[]>([])
+  const [torPeerCheckerLogsOpen, setTorPeerCheckerLogsOpen] = useState(false)
   const [signMessage, setSignMessage] = useState('')
   const [signSignature, setSignSignature] = useState('')
   const [signStatus, setSignStatus] = useState('')
@@ -220,6 +322,7 @@ export default function LightningOps() {
   const [autofeeIntervalHours, setAutofeeIntervalHours] = useState('4')
   const [autofeeCooldownUp, setAutofeeCooldownUp] = useState('3')
   const [autofeeCooldownDown, setAutofeeCooldownDown] = useState('4')
+  const [autofeeRebalMode, setAutofeeRebalMode] = useState('blend')
   const [autofeeMinPpm, setAutofeeMinPpm] = useState('10')
   const [autofeeMaxPpm, setAutofeeMaxPpm] = useState('2000')
   const [autofeeAmbossEnabled, setAutofeeAmbossEnabled] = useState(false)
@@ -232,11 +335,16 @@ export default function LightningOps() {
   const [autofeeRevfloor, setAutofeeRevfloor] = useState(true)
   const [autofeeCircuitBreaker, setAutofeeCircuitBreaker] = useState(true)
   const [autofeeExtremeDrain, setAutofeeExtremeDrain] = useState(true)
+  const [autofeeHtlcSignalEnabled, setAutofeeHtlcSignalEnabled] = useState(true)
+  const [autofeeHtlcMode, setAutofeeHtlcMode] = useState('full')
   const [autofeeOpen, setAutofeeOpen] = useState(false)
   const [autofeeResultsOpen, setAutofeeResultsOpen] = useState(false)
   const [autofeeResults, setAutofeeResults] = useState<string[]>([])
   const [autofeeResultItems, setAutofeeResultItems] = useState<AutofeeResultItem[]>([])
   const [autofeeResultsStatus, setAutofeeResultsStatus] = useState('')
+  const [autofeeResultsRuns, setAutofeeResultsRuns] = useState('4')
+  const [autofeeResultsFrom, setAutofeeResultsFrom] = useState('')
+  const [autofeeResultsTo, setAutofeeResultsTo] = useState('')
 
   const [chanStatusBusy, setChanStatusBusy] = useState<string | null>(null)
   const [chanStatusMessage, setChanStatusMessage] = useState('')
@@ -268,6 +376,19 @@ export default function LightningOps() {
   const [inboundFeeRatePpm, setInboundFeeRatePpm] = useState('')
   const [feeLoadStatus, setFeeLoadStatus] = useState('')
   const [feeLoading, setFeeLoading] = useState(false)
+  const [inlineFeeChannelPoint, setInlineFeeChannelPoint] = useState('')
+  const [inlineFeeRatePpm, setInlineFeeRatePpm] = useState('')
+  const [inlineBaseFeeMsat, setInlineBaseFeeMsat] = useState('')
+  const [inlineInboundFeeRatePpm, setInlineInboundFeeRatePpm] = useState('')
+  const [inlineInboundBaseMsat, setInlineInboundBaseMsat] = useState('0')
+  const [inlineTimeLockDelta, setInlineTimeLockDelta] = useState('0')
+  const [inlineFeeStatus, setInlineFeeStatus] = useState('')
+  const [inlineFeeLoading, setInlineFeeLoading] = useState(false)
+  const [inlineFeeSaving, setInlineFeeSaving] = useState(false)
+  const chanHealLastAttemptRef = useRef('')
+  const chanHealIntervalDirtyRef = useRef(false)
+  const htlcManagerFormDirtyRef = useRef(false)
+  const torPeerCheckerIntervalDirtyRef = useRef(false)
   const [feeStatus, setFeeStatus] = useState('')
 
   const formatPing = (value: number) => {
@@ -298,6 +419,16 @@ export default function LightningOps() {
     return date.toLocaleString()
   }
 
+  const formatSatFromMsat = (value?: number) => {
+    if (!value || value <= 0) return '-'
+    return Math.round(value / 1000).toLocaleString()
+  }
+
+  const formatFeeMsat = (value?: number) => {
+    if (typeof value !== 'number' || value < 0) return '-'
+    return value.toLocaleString()
+  }
+
   const autofeeProfileDefaults: Record<string, { interval: number; cooldownUp: number; cooldownDown: number }> = {
     conservative: { interval: 8, cooldownUp: 6, cooldownDown: 8 },
     moderate: { interval: 4, cooldownUp: 3, cooldownDown: 4 },
@@ -326,6 +457,17 @@ export default function LightningOps() {
       return `${line.slice(0, idx + 1)} ${parsed.toLocaleString()}`
     })
   }, [autofeeResults])
+
+  const visibleHtlcManagerFailed = useMemo(() => {
+    return htlcManagerFailed.filter((entry) => {
+      if ((entry.event || '').toLowerCase() !== 'forward_fail') {
+        return true
+      }
+      const detail = (entry.failure_detail || '').trim()
+      const reason = (entry.failure_reason || '').trim()
+      return detail !== '' || reason !== ''
+    })
+  }, [htlcManagerFailed])
 
   const formatAutofeeReasonLabel = (reason?: string) => {
     const normalized = (reason || '').toLowerCase()
@@ -390,7 +532,7 @@ export default function LightningOps() {
     const liqClass = formatAutofeeLiquidityClass(item.liquidity_class)
     const revfloorThr = item.revfloor_baseline ?? 0
     const revfloorMin = item.revfloor_min_abs ?? 0
-    return t('lightningOps.autofeeResultsCalib', {
+    let line = t('lightningOps.autofeeResultsCalib', {
       node: nodeClass,
       channels,
       cap,
@@ -401,6 +543,14 @@ export default function LightningOps() {
       revfloorThr,
       revfloorMin
     })
+    if (
+      typeof item.htlc_node_factor === 'number' &&
+      typeof item.htlc_liquidity_factor === 'number' &&
+      typeof item.htlc_threshold_factor === 'number'
+    ) {
+      line += ` | htlc_k node=${item.htlc_node_factor.toFixed(2)} liq=${item.htlc_liquidity_factor.toFixed(2)} total=${item.htlc_threshold_factor.toFixed(2)}`
+    }
+    return line
   }
 
   const formatAutofeeHeader = (item: AutofeeResultItem) => {
@@ -422,8 +572,21 @@ export default function LightningOps() {
       `${t('lightningOps.autofeeResultsDisabled')} ${item.disabled ?? 0}`,
       `${t('lightningOps.autofeeResultsInactive')} ${item.inactive ?? 0}`,
       `${t('lightningOps.autofeeResultsInboundDisc')} ${item.inbound_disc ?? 0}`,
-      `${t('lightningOps.autofeeResultsSuperSource')} ${item.super_source ?? 0}`
+      `${t('lightningOps.autofeeResultsSuperSource')} ${item.super_source ?? 0}`,
+      `htlc_liq_hot ${item.htlc_liq_hot ?? 0}`,
+      `htlc_policy_hot ${item.htlc_policy_hot ?? 0}`,
+      `htlc_low_sample ${item.htlc_sample_low ?? 0}`,
+      `htlc_window ${(item.htlc_window_min ?? 0)}m`
     ]
+    if (
+      typeof item.htlc_min_attempts === 'number' &&
+      typeof item.htlc_min_policy_fails === 'number' &&
+      typeof item.htlc_min_liquidity_fails === 'number'
+    ) {
+      parts.push(
+        `htlc_min a>=${item.htlc_min_attempts} p>=${item.htlc_min_policy_fails} l>=${item.htlc_min_liquidity_fails}`
+      )
+    }
     return `📊 ${parts.join(' | ')}`
   }
 
@@ -485,6 +648,28 @@ export default function LightningOps() {
         add('💎top-rev')
       } else if (tag === 'neg-margin') {
         add('⚠️neg-margin')
+      } else if (tag === 'htlc-policy-hot') {
+        add('🧾policy-hot')
+      } else if (tag === 'htlc-liquidity-hot') {
+        add('💧liq-hot')
+      } else if (tag === 'htlc-sample-low') {
+        add('📉htlc-low-sample')
+      } else if (tag === 'htlc-neutral-lock') {
+        add('🧯htlc-neutral')
+      } else if (tag.startsWith('htlc-liq+')) {
+        add('💧' + tag)
+      } else if (tag.startsWith('htlc-policy+')) {
+        add('🧾' + tag)
+      } else if (tag === 'htlc-liq-nodown') {
+        add('🛑liq-nodown')
+      } else if (tag === 'htlc-policy-nodown') {
+        add('🛑policy-nodown')
+      } else if (tag === 'htlc-neutral-nodown') {
+        add('🧯neutral-nodown')
+      } else if (tag === 'htlc-step-boost') {
+        add('⚡htlc-step')
+      } else if (tag.startsWith('negm+')) {
+        add(`💹${tag}`)
       } else if (tag === 'outrate-floor') {
         add('📊outrate-floor')
       } else if (tag === 'circuit-breaker') {
@@ -513,10 +698,20 @@ export default function LightningOps() {
         add('🟰same-ppm')
       } else if (tag === 'no-down-low') {
         add('🚫down-low')
+      } else if (tag === 'no-down-neg-margin') {
+        add('🚫down-neg')
       } else if (tag === 'super-source') {
         add('🔥super-source')
       } else if (tag === 'super-source-like') {
         add('🔥super-source-like')
+      } else if (tag === 'sink-floor') {
+        add('🧱sink-floor')
+      } else if (tag === 'trend-up') {
+        add('📈trend-up')
+      } else if (tag === 'trend-down') {
+        add('📉trend-down')
+      } else if (tag === 'trend-flat') {
+        add('➡️trend-flat')
       } else if (tag.startsWith('seed:amboss')) {
         add(`🌐${tag.replace('seed:', 'seed-')}`)
       } else if (tag.startsWith('seed:med')) {
@@ -557,6 +752,33 @@ export default function LightningOps() {
         return '🏷️ source'
       case 'router':
         return '🏷️ router'
+      default:
+        return ''
+    }
+  }
+
+  const formatAutofeePrediction = (item: AutofeeResultItem) => {
+    const code = (item.prediction_code || '').trim()
+    if (!code) return ''
+    const hours = typeof item.prediction_cooldown_hours === 'number' ? item.prediction_cooldown_hours : 0
+    switch (code) {
+      case 'hold_or_up':
+        return t('lightningOps.autofeeResultsPredictionHoldOrUp')
+      case 'reduce':
+        return t('lightningOps.autofeeResultsPredictionReduce')
+      case 'discovery_fast':
+        return t('lightningOps.autofeeResultsPredictionDiscoveryFast')
+      case 'idle_reduce':
+        return t('lightningOps.autofeeResultsPredictionIdleReduce')
+      case 'bias_up':
+        if (hours > 0) {
+          return t('lightningOps.autofeeResultsPredictionBiasUpCooldown', { hours })
+        }
+        return t('lightningOps.autofeeResultsPredictionBiasUp')
+      case 'bias_down':
+        return t('lightningOps.autofeeResultsPredictionBiasDown')
+      case 'stable':
+        return t('lightningOps.autofeeResultsPredictionStable')
       default:
         return ''
     }
@@ -619,8 +841,17 @@ export default function LightningOps() {
     const margin = item.margin ?? 0
     const revShare = typeof item.rev_share === 'number' ? item.rev_share : 0
     const tagLine = formatAutofeeTags(tags, item.inbound_discount, item.class_label) || '-'
+    const htlcAttempts = item.htlc_attempts ?? 0
+    const htlcPolicyFails = item.htlc_policy_fails ?? 0
+    const htlcLiquidityFails = item.htlc_liquidity_fails ?? 0
+    const htlcWindow = item.htlc_window_min_channel ?? item.htlc_window_min ?? 0
 
-    return `${prefix} ${alias}: ${action}${deltaStr} | ${t('lightningOps.autofeeResultsLabelTarget')} ${item.target ?? 0} | ${t('lightningOps.autofeeResultsLabelOutRatio')} ${outRatio.toFixed(2)} | ${t('lightningOps.autofeeResultsLabelOutPpm7d')}≈${outPpm7d} | ${t('lightningOps.autofeeResultsLabelRebalPpm7d')}≈${rebalPpm7d} | ${t('lightningOps.autofeeResultsLabelSeed')}≈${seed} | ${t('lightningOps.autofeeResultsLabelFloor')}≥${floor}${floorSrc} | ${t('lightningOps.autofeeResultsLabelMargin')}≈${margin} | ${t('lightningOps.autofeeResultsLabelRevShare')}≈${revShare.toFixed(2)} | ${tagLine}`
+    const prediction = formatAutofeePrediction(item)
+    let baseLine = `${prefix} ${alias}: ${action}${deltaStr} | ${t('lightningOps.autofeeResultsLabelTarget')} ${item.target ?? 0} | ${t('lightningOps.autofeeResultsLabelOutRatio')} ${outRatio.toFixed(2)} | ${t('lightningOps.autofeeResultsLabelOutPpm7d')}≈${outPpm7d} | ${t('lightningOps.autofeeResultsLabelRebalPpm7d')}≈${rebalPpm7d} | ${t('lightningOps.autofeeResultsLabelSeed')}≈${seed} | ${t('lightningOps.autofeeResultsLabelFloor')}≥${floor}${floorSrc} | ${t('lightningOps.autofeeResultsLabelMargin')}≈${margin} | ${t('lightningOps.autofeeResultsLabelRevShare')}≈${revShare.toFixed(2)} | ${tagLine}`
+    if (item.dry_run && htlcAttempts > 0) {
+      baseLine += ` | htlc${Math.max(1, htlcWindow)}m a=${htlcAttempts} p=${htlcPolicyFails} l=${htlcLiquidityFails}`
+    }
+    return prediction ? `${baseLine} | ${prediction}` : baseLine
   }
 
   const formatAutofeeSectionLine = (category?: string) => {
@@ -639,6 +870,18 @@ export default function LightningOps() {
   const formatAutofeeExplorerLine = (item: AutofeeResultItem) => {
     const alias = (item.alias || '').trim() || (item.channel_id ? `chan-${item.channel_id}` : t('common.unknown'))
     return `🧭 ${alias} ${t('lightningOps.autofeeResultsExplorerOn')}`
+  }
+
+  const buildAutofeeResultsQuery = () => {
+    const runsValue = Math.max(1, Number(autofeeResultsRuns || 4))
+    const payload: { runs: number; from?: string; to?: string } = { runs: runsValue }
+    if (autofeeResultsFrom) {
+      payload.from = autofeeResultsFrom
+    }
+    if (autofeeResultsTo) {
+      payload.to = autofeeResultsTo
+    }
+    return payload
   }
 
   const localizedAutofeeResults = useMemo(() => {
@@ -717,9 +960,13 @@ export default function LightningOps() {
   const isLocalChanDisabled = (flags?: string) => {
     if (!flags) return false
     const normalized = flags.toLowerCase()
-    return (normalized.includes('local') && normalized.includes('disabled')) ||
-      normalized.includes('localchandisabled') ||
-      normalized.includes('local_chan_disabled')
+    const tokens = normalized.split(/[|,;\s]+/).filter(Boolean)
+    const scan = tokens.length ? tokens : [normalized]
+    return scan.some((token) => {
+      if (token.includes('localchandisabled') || token.includes('local_chan_disabled')) return true
+      if (!token.includes('disabled') || token.includes('remote')) return false
+      return token.includes('local') || token.includes('chanstatusdisabled') || token === 'disabled'
+    })
   }
 
   const ambossTone = (): 'ok' | 'warn' | 'muted' => {
@@ -733,6 +980,20 @@ export default function LightningOps() {
     if (!chanHeal?.enabled) return 'muted'
     if (chanHeal?.status === 'ok') return 'ok'
     if (chanHeal?.status === 'checking') return 'muted'
+    return 'warn'
+  }
+
+  const htlcManagerTone = (): 'ok' | 'warn' | 'muted' => {
+    if (!htlcManager?.enabled) return 'muted'
+    if (htlcManager?.status === 'ok') return 'ok'
+    if (htlcManager?.status === 'checking') return 'muted'
+    return 'warn'
+  }
+
+  const torPeerCheckerTone = (): 'ok' | 'warn' | 'muted' => {
+    if (!torPeerChecker?.enabled) return 'muted'
+    if (torPeerChecker?.status === 'ok') return 'ok'
+    if (torPeerChecker?.status === 'checking') return 'muted'
     return 'warn'
   }
 
@@ -760,34 +1021,59 @@ export default function LightningOps() {
     return t('common.check')
   }
 
+  const htlcManagerBadgeLabel = () => {
+    if (!htlcManager?.enabled) return t('common.disabled')
+    if (htlcManager?.status === 'ok') return t('common.ok')
+    if (htlcManager?.status === 'checking') return t('common.check')
+    return t('common.check')
+  }
+
+  const torPeerCheckerBadgeLabel = () => {
+    if (!torPeerChecker?.enabled) return t('common.disabled')
+    if (torPeerChecker?.status === 'ok') return t('common.ok')
+    if (torPeerChecker?.status === 'checking') return t('common.check')
+    return t('common.check')
+  }
+
   const ambossURL = (pubkey: string) => `https://amboss.space/node/${pubkey}`
+
+  const applyChannelsPayload = (res: any) => {
+    const list = Array.isArray(res?.channels) ? res.channels : []
+    setChannels(list)
+    setActiveCount(res?.active_count ?? 0)
+    setInactiveCount(res?.inactive_count ?? 0)
+    setPendingOpenCount(res?.pending_open_count ?? 0)
+    setPendingCloseCount(res?.pending_close_count ?? 0)
+    setPendingChannels(Array.isArray(res?.pending_channels) ? res.pending_channels : [])
+  }
 
   const load = async () => {
     setStatus(t('lightningOps.loadingChannels'))
     setPeerListStatus(t('lightningOps.loadingPeers'))
     setAmbossStatus(t('lightningOps.ambossHealthLoading'))
     setChanHealStatus(t('lightningOps.chanHealLoading'))
+    setHtlcManagerStatus(t('lightningOps.htlcManagerLoading'))
+    setTorPeerCheckerStatus(t('lightningOps.torPeerLoading'))
     setAutofeeMessage(t('lightningOps.autofeeLoading'))
-    const [channelsResult, peersResult, ambossResult, chanHealResult, bitcoinLocalResult, autofeeConfigResult, autofeeStatusResult, autofeeChannelsResult, autofeeResultsResult] = await Promise.allSettled([
+    const [channelsResult, peersResult, ambossResult, chanHealResult, htlcManagerResult, htlcManagerLogsResult, htlcManagerFailedResult, torPeerCheckerResult, torPeerCheckerLogsResult, bitcoinLocalResult, autofeeConfigResult, autofeeStatusResult, autofeeChannelsResult, autofeeResultsResult] = await Promise.allSettled([
       getLnChannels(),
       getLnPeers(),
       getAmbossHealth(),
       getLnChanHeal(),
+      getLnHtlcManager(),
+      getLnHtlcManagerLogs(),
+      getLnHtlcManagerFailed(),
+      getLnTorPeerChecker(),
+      getLnTorPeerCheckerLogs(),
       getBitcoinLocalStatus(),
       getAutofeeConfig(),
       getAutofeeStatus(),
       getAutofeeChannels(),
-      getAutofeeResults(50)
+      getAutofeeResults(buildAutofeeResultsQuery())
     ])
     if (channelsResult.status === 'fulfilled') {
       const res = channelsResult.value
-      const list = Array.isArray(res?.channels) ? res.channels : []
-      setChannels(list)
-      setActiveCount(res?.active_count ?? 0)
-      setInactiveCount(res?.inactive_count ?? 0)
-      setPendingOpenCount(res?.pending_open_count ?? 0)
-      setPendingCloseCount(res?.pending_close_count ?? 0)
-      setPendingChannels(Array.isArray(res?.pending_channels) ? res.pending_channels : [])
+      applyChannelsPayload(res)
       setStatus('')
     } else {
       const message = (channelsResult.reason as any)?.message || t('lightningOps.loadChannelsFailed')
@@ -811,13 +1097,60 @@ export default function LightningOps() {
     if (chanHealResult.status === 'fulfilled') {
       const payload = chanHealResult.value as ChanHealStatus
       setChanHeal(payload)
+      chanHealLastAttemptRef.current = payload?.last_attempt_at || ''
       if (payload?.interval_sec) {
         setChanHealInterval(String(payload.interval_sec))
+        chanHealIntervalDirtyRef.current = false
       }
       setChanHealStatus('')
     } else {
       const message = (chanHealResult.reason as any)?.message || t('lightningOps.chanHealStatusUnavailable')
       setChanHealStatus(message)
+    }
+    if (htlcManagerResult.status === 'fulfilled') {
+      const payload = htlcManagerResult.value as HtlcManagerStatus
+      setHtlcManager(payload)
+      const intervalMinutes = payload?.interval_minutes ?? ((payload?.interval_hours ?? 0) * 60)
+      if (intervalMinutes > 0) {
+        setHtlcManagerIntervalMinutes(String(intervalMinutes))
+      }
+      if (payload?.min_htlc_sat) {
+        setHtlcManagerMinSat(String(payload.min_htlc_sat))
+      }
+      setHtlcManagerMaxPct(String(payload?.max_local_pct ?? 0))
+      htlcManagerFormDirtyRef.current = false
+      setHtlcManagerStatus('')
+    } else {
+      const message = (htlcManagerResult.reason as any)?.message || t('lightningOps.htlcManagerStatusUnavailable')
+      setHtlcManagerStatus(message)
+    }
+    if (htlcManagerLogsResult.status === 'fulfilled') {
+      const entries = (htlcManagerLogsResult.value as any)?.entries
+      setHtlcManagerLogs(Array.isArray(entries) ? entries : [])
+    } else if (htlcManagerResult.status === 'fulfilled') {
+      setHtlcManagerLogs([])
+    }
+    if (htlcManagerFailedResult.status === 'fulfilled') {
+      const entries = (htlcManagerFailedResult.value as any)?.entries
+      setHtlcManagerFailed(Array.isArray(entries) ? entries : [])
+    } else if (htlcManagerResult.status === 'fulfilled') {
+      setHtlcManagerFailed([])
+    }
+    if (torPeerCheckerResult.status === 'fulfilled') {
+      const payload = torPeerCheckerResult.value as TorPeerCheckerStatus
+      setTorPeerChecker(payload)
+      setTorPeerCheckerIntervalHours(String(payload?.interval_hours ?? 2))
+      torPeerCheckerIntervalDirtyRef.current = false
+      setTorPeerCheckerStatus('')
+    } else {
+      const message = (torPeerCheckerResult.reason as any)?.message || t('lightningOps.torPeerStatusUnavailable')
+      setTorPeerCheckerStatus(message)
+    }
+    if (torPeerCheckerLogsResult.status === 'fulfilled') {
+      const entries = (torPeerCheckerLogsResult.value as any)?.entries
+      setTorPeerCheckerLogs(Array.isArray(entries) ? entries : [])
+    } else if (torPeerCheckerResult.status === 'fulfilled') {
+      setTorPeerCheckerLogs([])
     }
     if (bitcoinLocalResult.status === 'fulfilled') {
       setBitcoinLocal(bitcoinLocalResult.value as BitcoinLocalStatus)
@@ -831,6 +1164,7 @@ export default function LightningOps() {
       setAutofeeIntervalHours(String(Math.max(1, Math.round((cfg.run_interval_sec || 14400) / 3600))))
       setAutofeeCooldownUp(String(Math.max(1, Math.round((cfg.cooldown_up_sec || 10800) / 3600))))
       setAutofeeCooldownDown(String(Math.max(2, Math.round((cfg.cooldown_down_sec || 14400) / 3600))))
+      setAutofeeRebalMode(cfg.rebal_cost_mode || 'blend')
       setAutofeeMinPpm(String(cfg.min_ppm ?? 10))
       setAutofeeMaxPpm(String(cfg.max_ppm ?? 2000))
       setAutofeeAmbossEnabled(Boolean(cfg.amboss_enabled))
@@ -842,6 +1176,12 @@ export default function LightningOps() {
       setAutofeeRevfloor(cfg.revfloor_enabled !== false)
       setAutofeeCircuitBreaker(cfg.circuit_breaker_enabled !== false)
       setAutofeeExtremeDrain(cfg.extreme_drain_enabled !== false)
+      setAutofeeHtlcSignalEnabled(cfg.htlc_signal_enabled !== false)
+      {
+        const mode = (cfg.htlc_mode || 'full').toLowerCase().trim()
+        const normalizedMode = mode === 'observe_only' || mode === 'policy_only' || mode === 'full' ? mode : 'full'
+        setAutofeeHtlcMode(normalizedMode)
+      }
       setAutofeeMessage('')
     } else {
       const message = (autofeeConfigResult.reason as any)?.message || t('lightningOps.autofeeConfigUnavailable')
@@ -881,6 +1221,18 @@ export default function LightningOps() {
 
   useEffect(() => {
     let mounted = true
+    const refreshChannels = () => {
+      getLnChannels()
+        .then((res) => {
+          if (!mounted) return
+          applyChannelsPayload(res)
+          setStatus('')
+        })
+        .catch((err: any) => {
+          if (!mounted) return
+          setStatus(err?.message || t('lightningOps.loadChannelsFailed'))
+        })
+    }
     const fetchAmboss = () => {
       getAmbossHealth()
         .then((data) => {
@@ -897,9 +1249,16 @@ export default function LightningOps() {
       getLnChanHeal()
         .then((data) => {
           if (!mounted) return
-          setChanHeal(data as ChanHealStatus)
-          if ((data as ChanHealStatus)?.interval_sec) {
-            setChanHealInterval(String((data as ChanHealStatus).interval_sec))
+          const payload = data as ChanHealStatus
+          const prevAttemptAt = chanHealLastAttemptRef.current
+          const nextAttemptAt = payload?.last_attempt_at || ''
+          setChanHeal(payload)
+          if (!chanHealIntervalDirtyRef.current && payload?.interval_sec) {
+            setChanHealInterval(String(payload.interval_sec))
+          }
+          chanHealLastAttemptRef.current = nextAttemptAt
+          if (nextAttemptAt && nextAttemptAt !== prevAttemptAt) {
+            refreshChannels()
           }
           setChanHealStatus('')
         })
@@ -908,9 +1267,80 @@ export default function LightningOps() {
           setChanHealStatus(err?.message || t('lightningOps.chanHealStatusUnavailable'))
         })
     }
+    const fetchHtlcManager = () => {
+      getLnHtlcManager()
+        .then((data) => {
+          if (!mounted) return
+          const payload = data as HtlcManagerStatus
+          setHtlcManager(payload)
+          const intervalMinutes = payload?.interval_minutes ?? ((payload?.interval_hours ?? 0) * 60)
+          if (!htlcManagerFormDirtyRef.current && intervalMinutes > 0) {
+            setHtlcManagerIntervalMinutes(String(intervalMinutes))
+          }
+          if (!htlcManagerFormDirtyRef.current && payload?.min_htlc_sat) {
+            setHtlcManagerMinSat(String(payload.min_htlc_sat))
+          }
+          if (!htlcManagerFormDirtyRef.current) {
+            setHtlcManagerMaxPct(String(payload?.max_local_pct ?? 0))
+          }
+          setHtlcManagerStatus('')
+        })
+        .catch((err: any) => {
+          if (!mounted) return
+          setHtlcManagerStatus(err?.message || t('lightningOps.htlcManagerStatusUnavailable'))
+        })
+      getLnHtlcManagerLogs()
+        .then((data: any) => {
+          if (!mounted) return
+          const entries = data?.entries
+          setHtlcManagerLogs(Array.isArray(entries) ? entries : [])
+        })
+        .catch(() => {
+          if (!mounted) return
+          setHtlcManagerLogs([])
+        })
+      getLnHtlcManagerFailed()
+        .then((data: any) => {
+          if (!mounted) return
+          const entries = data?.entries
+          setHtlcManagerFailed(Array.isArray(entries) ? entries : [])
+        })
+        .catch(() => {
+          if (!mounted) return
+          setHtlcManagerFailed([])
+        })
+    }
+    const fetchTorPeerChecker = () => {
+      getLnTorPeerChecker()
+        .then((data) => {
+          if (!mounted) return
+          const payload = data as TorPeerCheckerStatus
+          setTorPeerChecker(payload)
+          if (!torPeerCheckerIntervalDirtyRef.current) {
+            setTorPeerCheckerIntervalHours(String(payload?.interval_hours ?? 2))
+          }
+          setTorPeerCheckerStatus('')
+        })
+        .catch((err: any) => {
+          if (!mounted) return
+          setTorPeerCheckerStatus(err?.message || t('lightningOps.torPeerStatusUnavailable'))
+        })
+      getLnTorPeerCheckerLogs()
+        .then((data: any) => {
+          if (!mounted) return
+          const entries = data?.entries
+          setTorPeerCheckerLogs(Array.isArray(entries) ? entries : [])
+        })
+        .catch(() => {
+          if (!mounted) return
+          setTorPeerCheckerLogs([])
+        })
+    }
     const timer = window.setInterval(() => {
       fetchAmboss()
       fetchChanHeal()
+      fetchHtlcManager()
+      fetchTorPeerChecker()
     }, 30000)
     return () => {
       mounted = false
@@ -1118,8 +1548,8 @@ export default function LightningOps() {
       const intervalSec = Math.max(1, Number(autofeeIntervalHours || 4)) * 3600
       const cooldownUpSec = Math.max(1, Number(autofeeCooldownUp || 3)) * 3600
       const cooldownDownSec = Math.max(2, Number(autofeeCooldownDown || 4)) * 3600
-      const minPpmRaw = Math.max(1, Number(autofeeMinPpm || 10))
-      let maxPpmRaw = Math.max(1, Number(autofeeMaxPpm || 2000))
+      const minPpmRaw = Math.max(0, Number(autofeeMinPpm || 0))
+      let maxPpmRaw = Math.max(0, Number(autofeeMaxPpm || 2000))
       if (maxPpmRaw < minPpmRaw) {
         maxPpmRaw = minPpmRaw
       }
@@ -1131,6 +1561,7 @@ export default function LightningOps() {
         run_interval_sec: intervalSec,
         cooldown_up_sec: cooldownUpSec,
         cooldown_down_sec: cooldownDownSec,
+        rebal_cost_mode: autofeeRebalMode,
         min_ppm: minPpmRaw,
         max_ppm: maxPpmRaw,
         amboss_enabled: autofeeAmbossEnabled,
@@ -1141,7 +1572,9 @@ export default function LightningOps() {
         super_source_base_fee_msat: superSourceBaseFee,
         revfloor_enabled: autofeeRevfloor,
         circuit_breaker_enabled: autofeeCircuitBreaker,
-        extreme_drain_enabled: autofeeExtremeDrain
+        extreme_drain_enabled: autofeeExtremeDrain,
+        htlc_signal_enabled: autofeeHtlcSignalEnabled,
+        htlc_mode: autofeeHtlcMode
       }
       if (autofeeAmbossToken.trim()) {
         payload.amboss_token = autofeeAmbossToken.trim()
@@ -1168,7 +1601,7 @@ export default function LightningOps() {
       setAutofeeMessage(dryRun ? t('lightningOps.autofeeDryRunDone') : t('lightningOps.autofeeRunDone'))
       const status = await getAutofeeStatus()
       setAutofeeStatus(status as AutofeeStatus)
-      const results = await getAutofeeResults(50)
+      const results = await getAutofeeResults(buildAutofeeResultsQuery())
       const payload = results as any
       setAutofeeResults(Array.isArray(payload?.lines) ? payload.lines : [])
       setAutofeeResultItems(Array.isArray(payload?.items) ? payload.items : [])
@@ -1183,7 +1616,7 @@ export default function LightningOps() {
   const handleAutofeeResultsRefresh = async () => {
     setAutofeeResultsStatus(t('lightningOps.autofeeResultsLoading'))
     try {
-      const results = await getAutofeeResults(50)
+      const results = await getAutofeeResults(buildAutofeeResultsQuery())
       const payload = results as any
       setAutofeeResults(Array.isArray(payload?.lines) ? payload.lines : [])
       setAutofeeResultItems(Array.isArray(payload?.items) ? payload.items : [])
@@ -1254,11 +1687,141 @@ export default function LightningOps() {
     try {
       const res = await updateLnChanHeal({ interval_sec: interval })
       setChanHeal(res as ChanHealStatus)
+      chanHealIntervalDirtyRef.current = false
       setChanHealStatus(t('lightningOps.chanHealSaved'))
     } catch (err: any) {
       setChanHealStatus(err?.message || t('lightningOps.chanHealSaveFailed'))
     } finally {
       setChanHealBusy(false)
+    }
+  }
+
+  const handleToggleHtlcManager = async () => {
+    if (htlcManagerBusy) return
+    const nextEnabled = !htlcManager?.enabled
+    setHtlcManagerBusy(true)
+    setHtlcManagerStatus(t('lightningOps.htlcManagerSaving'))
+    try {
+      const res = await updateLnHtlcManager({ enabled: nextEnabled })
+      setHtlcManager(res as HtlcManagerStatus)
+      setHtlcManagerStatus(nextEnabled ? t('lightningOps.htlcManagerEnabled') : t('lightningOps.htlcManagerDisabled'))
+    } catch (err: any) {
+      setHtlcManagerStatus(err?.message || t('lightningOps.htlcManagerSaveFailed'))
+    } finally {
+      setHtlcManagerBusy(false)
+    }
+  }
+
+  const handleSaveHtlcManager = async () => {
+    if (htlcManagerBusy) return
+    const intervalMinutes = Number(htlcManagerIntervalMinutes || 0)
+    const minSat = Number(htlcManagerMinSat || 0)
+    const maxPct = Number(htlcManagerMaxPct || 0)
+    if (!intervalMinutes || intervalMinutes < 1 || intervalMinutes > 2880) {
+      setHtlcManagerStatus(t('lightningOps.htlcManagerIntervalInvalid'))
+      return
+    }
+    if (!minSat || minSat < 1) {
+      setHtlcManagerStatus(t('lightningOps.htlcManagerMinInvalid'))
+      return
+    }
+    if (maxPct < 0) {
+      setHtlcManagerStatus(t('lightningOps.htlcManagerMaxPctInvalid'))
+      return
+    }
+    setHtlcManagerBusy(true)
+    setHtlcManagerStatus(t('lightningOps.htlcManagerSaving'))
+    try {
+      const res = await updateLnHtlcManager({
+        interval_minutes: intervalMinutes,
+        min_htlc_sat: minSat,
+        max_local_pct: maxPct
+      })
+      setHtlcManager(res as HtlcManagerStatus)
+      htlcManagerFormDirtyRef.current = false
+      setHtlcManagerStatus(t('lightningOps.htlcManagerSaved'))
+    } catch (err: any) {
+      setHtlcManagerStatus(err?.message || t('lightningOps.htlcManagerSaveFailed'))
+    } finally {
+      setHtlcManagerBusy(false)
+    }
+  }
+
+  const handleRunHtlcManagerNow = async () => {
+    if (htlcManagerBusy) return
+    setHtlcManagerBusy(true)
+    setHtlcManagerStatus(t('lightningOps.htlcManagerRunning'))
+    try {
+      const res = await updateLnHtlcManager({ run_now: true })
+      setHtlcManager(res as HtlcManagerStatus)
+      const [logsRes, failedRes] = await Promise.all([
+        getLnHtlcManagerLogs(),
+        getLnHtlcManagerFailed()
+      ])
+      const logEntries = (logsRes as any)?.entries
+      const failedEntries = (failedRes as any)?.entries
+      setHtlcManagerLogs(Array.isArray(logEntries) ? logEntries : [])
+      setHtlcManagerFailed(Array.isArray(failedEntries) ? failedEntries : [])
+      setHtlcManagerStatus(t('lightningOps.htlcManagerRunDone'))
+    } catch (err: any) {
+      setHtlcManagerStatus(err?.message || t('lightningOps.htlcManagerRunFailed'))
+    } finally {
+      setHtlcManagerBusy(false)
+    }
+  }
+
+  const handleToggleTorPeerChecker = async () => {
+    if (torPeerCheckerBusy) return
+    const nextEnabled = !torPeerChecker?.enabled
+    setTorPeerCheckerBusy(true)
+    setTorPeerCheckerStatus(t('lightningOps.torPeerSaving'))
+    try {
+      const res = await updateLnTorPeerChecker({ enabled: nextEnabled })
+      setTorPeerChecker(res as TorPeerCheckerStatus)
+      setTorPeerCheckerStatus(nextEnabled ? t('lightningOps.torPeerEnabled') : t('lightningOps.torPeerDisabled'))
+    } catch (err: any) {
+      setTorPeerCheckerStatus(err?.message || t('lightningOps.torPeerSaveFailed'))
+    } finally {
+      setTorPeerCheckerBusy(false)
+    }
+  }
+
+  const handleSaveTorPeerChecker = async () => {
+    if (torPeerCheckerBusy) return
+    const intervalHours = Number(torPeerCheckerIntervalHours || 0)
+    if (!intervalHours || intervalHours < 2 || intervalHours > 168) {
+      setTorPeerCheckerStatus(t('lightningOps.torPeerIntervalInvalid'))
+      return
+    }
+    setTorPeerCheckerBusy(true)
+    setTorPeerCheckerStatus(t('lightningOps.torPeerSaving'))
+    try {
+      const res = await updateLnTorPeerChecker({ interval_hours: intervalHours })
+      setTorPeerChecker(res as TorPeerCheckerStatus)
+      torPeerCheckerIntervalDirtyRef.current = false
+      setTorPeerCheckerStatus(t('lightningOps.torPeerSaved'))
+    } catch (err: any) {
+      setTorPeerCheckerStatus(err?.message || t('lightningOps.torPeerSaveFailed'))
+    } finally {
+      setTorPeerCheckerBusy(false)
+    }
+  }
+
+  const handleRunTorPeerCheckerNow = async () => {
+    if (torPeerCheckerBusy) return
+    setTorPeerCheckerBusy(true)
+    setTorPeerCheckerStatus(t('lightningOps.torPeerRunning'))
+    try {
+      const res = await updateLnTorPeerChecker({ run_now: true })
+      setTorPeerChecker(res as TorPeerCheckerStatus)
+      const logsRes = await getLnTorPeerCheckerLogs()
+      const entries = (logsRes as any)?.entries
+      setTorPeerCheckerLogs(Array.isArray(entries) ? entries : [])
+      setTorPeerCheckerStatus(t('lightningOps.torPeerRunDone'))
+    } catch (err: any) {
+      setTorPeerCheckerStatus(err?.message || t('lightningOps.torPeerRunFailed'))
+    } finally {
+      setTorPeerCheckerBusy(false)
     }
   }
 
@@ -1369,39 +1932,134 @@ export default function LightningOps() {
     }
   }
 
+  const runFeeUpdate = async (payload: {
+    applyAll: boolean
+    channelPoint?: string
+    baseFeeMsat: number
+    feeRatePpm: number
+    timeLockDelta: number
+    inboundEnabled: boolean
+    inboundBaseMsat: number
+    inboundFeeRatePpm: number
+    setStatus: (value: string) => void
+  }) => {
+    payload.setStatus(t('lightningOps.updatingFees'))
+    if (!payload.applyAll && !payload.channelPoint) {
+      payload.setStatus(t('lightningOps.selectChannelOrAll'))
+      return false
+    }
+    const hasOutbound = payload.baseFeeMsat !== 0 || payload.feeRatePpm !== 0 || payload.timeLockDelta !== 0
+    const hasInbound = payload.inboundEnabled && (payload.inboundBaseMsat !== 0 || payload.inboundFeeRatePpm !== 0)
+    if (!hasOutbound && !hasInbound) {
+      payload.setStatus(t('lightningOps.setAtLeastOneFee'))
+      return false
+    }
+    try {
+      const res = await updateChannelFees({
+        apply_all: payload.applyAll,
+        channel_point: payload.applyAll ? undefined : payload.channelPoint,
+        base_fee_msat: payload.baseFeeMsat,
+        fee_rate_ppm: payload.feeRatePpm,
+        time_lock_delta: payload.timeLockDelta,
+        inbound_enabled: payload.inboundEnabled,
+        inbound_base_msat: payload.inboundBaseMsat,
+        inbound_fee_rate_ppm: payload.inboundFeeRatePpm
+      })
+      payload.setStatus(res?.warning || t('lightningOps.feesUpdated'))
+      load()
+      return true
+    } catch (err: any) {
+      payload.setStatus(err?.message || t('lightningOps.feeUpdateFailed'))
+      return false
+    }
+  }
+
+  const startInlineFeeEdit = async (ch: Channel) => {
+    setInlineFeeChannelPoint(ch.channel_point)
+    setInlineFeeRatePpm(String(ch.fee_rate_ppm ?? 0))
+    setInlineBaseFeeMsat(String(ch.base_fee_msat ?? 0))
+    setInlineInboundFeeRatePpm(String(ch.inbound_fee_rate_ppm ?? 0))
+    setInlineInboundBaseMsat('0')
+    setInlineTimeLockDelta('0')
+    setInlineFeeStatus('')
+    setInlineFeeLoading(true)
+    try {
+      const res = await getLnChannelFees(ch.channel_point)
+      setInlineFeeRatePpm(String(res?.fee_rate_ppm ?? ch.fee_rate_ppm ?? 0))
+      setInlineBaseFeeMsat(String(res?.base_fee_msat ?? ch.base_fee_msat ?? 0))
+      setInlineInboundFeeRatePpm(String(res?.inbound_fee_rate_ppm ?? ch.inbound_fee_rate_ppm ?? 0))
+      setInlineInboundBaseMsat(String(res?.inbound_base_msat ?? 0))
+      setInlineTimeLockDelta(String(res?.time_lock_delta ?? 0))
+    } catch (err: any) {
+      setInlineFeeStatus(err?.message || t('lightningOps.loadFeesFailed'))
+    } finally {
+      setInlineFeeLoading(false)
+    }
+  }
+
+  const cancelInlineFeeEdit = () => {
+    setInlineFeeChannelPoint('')
+    setInlineFeeStatus('')
+    setInlineFeeLoading(false)
+    setInlineFeeSaving(false)
+  }
+
+  const handleInlineFeeSave = async () => {
+    if (!inlineFeeChannelPoint || inlineFeeLoading || inlineFeeSaving) return
+    const outRate = Number(inlineFeeRatePpm)
+    const outBase = Number(inlineBaseFeeMsat)
+    const inRate = Number(inlineInboundFeeRatePpm)
+    const inBase = Number(inlineInboundBaseMsat || 0)
+    const delta = Number(inlineTimeLockDelta || 0)
+
+    if (!Number.isFinite(outRate) || !Number.isFinite(outBase) || !Number.isFinite(inRate) || !Number.isFinite(inBase) || !Number.isFinite(delta)) {
+      setInlineFeeStatus(t('lightningOps.setAtLeastOneFee'))
+      return
+    }
+    if (outRate < 0 || outBase < 0 || delta < 0 || inBase < 0) {
+      setInlineFeeStatus(t('lightningOps.setAtLeastOneFee'))
+      return
+    }
+    if (inRate > 0) {
+      setInlineFeeStatus(t('lightningOps.inboundMustBeNegative'))
+      return
+    }
+
+    setInlineFeeSaving(true)
+    const ok = await runFeeUpdate({
+      applyAll: false,
+      channelPoint: inlineFeeChannelPoint,
+      baseFeeMsat: outBase,
+      feeRatePpm: outRate,
+      timeLockDelta: delta,
+      inboundEnabled: true,
+      inboundBaseMsat: inBase,
+      inboundFeeRatePpm: inRate,
+      setStatus: setInlineFeeStatus
+    })
+    setInlineFeeSaving(false)
+    if (ok) {
+      setInlineFeeChannelPoint('')
+    }
+  }
+
   const handleUpdateFees = async () => {
-    setFeeStatus(t('lightningOps.updatingFees'))
     const base = Number(baseFeeMsat || 0)
     const ppm = Number(feeRatePpm || 0)
     const delta = Number(timeLockDelta || 0)
     const inboundBase = Number(inboundBaseMsat || 0)
     const inboundRate = Number(inboundFeeRatePpm || 0)
-    if (!feeScopeAll && !feeChannelPoint) {
-      setFeeStatus(t('lightningOps.selectChannelOrAll'))
-      return
-    }
-    const hasOutbound = base !== 0 || ppm !== 0 || delta !== 0
-    const hasInbound = inboundEnabled && (inboundBase !== 0 || inboundRate !== 0)
-    if (!hasOutbound && !hasInbound) {
-      setFeeStatus(t('lightningOps.setAtLeastOneFee'))
-      return
-    }
-    try {
-      const res = await updateChannelFees({
-        apply_all: feeScopeAll,
-        channel_point: feeScopeAll ? undefined : feeChannelPoint,
-        base_fee_msat: base,
-        fee_rate_ppm: ppm,
-        time_lock_delta: delta,
-        inbound_enabled: inboundEnabled,
-        inbound_base_msat: inboundBase,
-        inbound_fee_rate_ppm: inboundRate
-      })
-      setFeeStatus(res?.warning || t('lightningOps.feesUpdated'))
-      load()
-    } catch (err: any) {
-      setFeeStatus(err?.message || t('lightningOps.feeUpdateFailed'))
-    }
+    await runFeeUpdate({
+      applyAll: feeScopeAll,
+      channelPoint: feeScopeAll ? undefined : feeChannelPoint,
+      baseFeeMsat: base,
+      feeRatePpm: ppm,
+      timeLockDelta: delta,
+      inboundEnabled: inboundEnabled,
+      inboundBaseMsat: inboundBase,
+      inboundFeeRatePpm: inboundRate,
+      setStatus: setFeeStatus
+    })
   }
 
   const channelOptions = useMemo(() => {
@@ -1508,8 +2166,16 @@ export default function LightningOps() {
                 <input className="input-field mt-2" type="number" min={2} max={24} value={autofeeCooldownDown} onChange={(e) => setAutofeeCooldownDown(e.target.value)} />
               </label>
               <label className="text-sm text-fog/70">
+                {t('lightningOps.autofeeRebalCostMode')}
+                <select className="input-field mt-2" value={autofeeRebalMode} onChange={(e) => setAutofeeRebalMode(e.target.value)}>
+                  <option value="blend">{t('lightningOps.autofeeRebalCostModeBlend')}</option>
+                  <option value="channel">{t('lightningOps.autofeeRebalCostModeChannel')}</option>
+                  <option value="global">{t('lightningOps.autofeeRebalCostModeGlobal')}</option>
+                </select>
+              </label>
+              <label className="text-sm text-fog/70">
                 {t('lightningOps.autofeeMinPpm')}
-                <input className="input-field mt-2" type="number" min={1} value={autofeeMinPpm} onChange={(e) => setAutofeeMinPpm(e.target.value)} />
+                <input className="input-field mt-2" type="number" min={0} value={autofeeMinPpm} onChange={(e) => setAutofeeMinPpm(e.target.value)} />
               </label>
               <label className="text-sm text-fog/70">
                 {t('lightningOps.autofeeMaxPpm')}
@@ -1541,6 +2207,18 @@ export default function LightningOps() {
               <label className="flex items-center gap-2 text-sm text-fog/70">
                 <input type="checkbox" checked={autofeeExtremeDrain} onChange={(e) => setAutofeeExtremeDrain(e.target.checked)} />
                 {t('lightningOps.autofeeExtremeDrain')}
+              </label>
+              <label className="flex items-center gap-2 text-sm text-fog/70">
+                <input type="checkbox" checked={autofeeHtlcSignalEnabled} onChange={(e) => setAutofeeHtlcSignalEnabled(e.target.checked)} />
+                {t('lightningOps.autofeeHtlcSignalEnabled')}
+              </label>
+              <label className="text-sm text-fog/70">
+                {t('lightningOps.autofeeHtlcMode')}
+                <select className="input-field mt-2" value={autofeeHtlcMode} onChange={(e) => setAutofeeHtlcMode(e.target.value)} disabled={!autofeeHtlcSignalEnabled}>
+                  <option value="observe_only">{t('lightningOps.autofeeHtlcModeObserveOnly')}</option>
+                  <option value="policy_only">{t('lightningOps.autofeeHtlcModePolicyOnly')}</option>
+                  <option value="full">{t('lightningOps.autofeeHtlcModeFull')}</option>
+                </select>
               </label>
               <label className="flex items-center gap-2 text-sm text-fog/70">
                 <input type="checkbox" checked={autofeeSuperSource} onChange={(e) => setAutofeeSuperSource(e.target.checked)} />
@@ -1607,6 +2285,37 @@ export default function LightningOps() {
 
         {autofeeResultsOpen && (
           <>
+            <div className="grid gap-3 lg:grid-cols-3">
+              <label className="text-sm text-fog/70">
+                {t('lightningOps.autofeeResultsRuns')}
+                <input
+                  className="input-field mt-2"
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={autofeeResultsRuns}
+                  onChange={(e) => setAutofeeResultsRuns(e.target.value)}
+                />
+              </label>
+              <label className="text-sm text-fog/70">
+                {t('lightningOps.autofeeResultsFrom')}
+                <input
+                  className="input-field mt-2"
+                  type="datetime-local"
+                  value={autofeeResultsFrom}
+                  onChange={(e) => setAutofeeResultsFrom(e.target.value)}
+                />
+              </label>
+              <label className="text-sm text-fog/70">
+                {t('lightningOps.autofeeResultsTo')}
+                <input
+                  className="input-field mt-2"
+                  type="datetime-local"
+                  value={autofeeResultsTo}
+                  onChange={(e) => setAutofeeResultsTo(e.target.value)}
+                />
+              </label>
+            </div>
             {autofeeResultsStatus && <p className="text-sm text-brass">{autofeeResultsStatus}</p>}
             <div className="bg-ink/70 border border-white/10 rounded-2xl p-4 text-xs font-mono whitespace-pre-wrap max-h-[420px] overflow-y-auto">
               {localizedAutofeeResults.length ? localizedAutofeeResults.join('\n') : t('lightningOps.autofeeResultsEmpty')}
@@ -1820,6 +2529,17 @@ export default function LightningOps() {
                 const showToggle = ch.active
                 const autofeeChecked = autofeeSettings[ch.channel_id] ?? true
                 const classLabel = formatChannelClassLabel(ch.class_label)
+                const isInlineFeeEditing = inlineFeeChannelPoint === ch.channel_point
+                const inlineBusy = inlineFeeLoading || inlineFeeSaving
+                const visualTotal = (ch.local_balance_sat + ch.remote_balance_sat) > 0
+                  ? (ch.local_balance_sat + ch.remote_balance_sat)
+                  : (ch.capacity_sat > 0 ? ch.capacity_sat : 0)
+                const localPctRaw = visualTotal > 0 ? (ch.local_balance_sat / visualTotal) * 100 : 0
+                const remotePctRaw = visualTotal > 0 ? (ch.remote_balance_sat / visualTotal) * 100 : 0
+                const localPct = Math.max(0, Math.min(100, localPctRaw))
+                const remotePct = Math.max(0, Math.min(100, remotePctRaw))
+                const localPctLabel = `${localPct.toFixed(0)}%`
+                const remotePctLabel = `${remotePct.toFixed(0)}%`
                 const cardClass = localDisabled && ch.active
                   ? 'rounded-2xl border border-ember/40 bg-ember/10 p-4'
                   : 'rounded-2xl border border-white/10 bg-ink/60 p-4'
@@ -1867,31 +2587,156 @@ export default function LightningOps() {
                         </label>
                       </div>
                     </div>
-                    <div className="mt-3 grid gap-3 lg:grid-cols-5 text-xs text-fog/70">
-                      <div>{t('lightningOps.localLabel', { value: ch.local_balance_sat })}</div>
-                      <div>{t('lightningOps.remoteLabel', { value: ch.remote_balance_sat })}</div>
+                    <div className="mt-3 space-y-2">
+                      <div className="flex items-center justify-between gap-3 text-xs text-fog/70">
+                        <span>{t('lightningOps.localLabel', { value: ch.local_balance_sat })}</span>
+                        <span>{t('lightningOps.remoteLabel', { value: ch.remote_balance_sat })}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-[11px]">
+                        <span className="w-12 text-right text-glow">{localPctLabel}</span>
+                        <div className="relative h-2 flex-1 overflow-hidden rounded-full bg-white/10">
+                          <div
+                            className="absolute inset-y-0 left-0 bg-glow/70"
+                            style={{ width: `${localPct}%` }}
+                          />
+                          <div
+                            className="absolute inset-y-0 right-0 bg-white/35"
+                            style={{ width: `${remotePct}%` }}
+                          />
+                        </div>
+                        <span className="w-12 text-left text-fog/70">{remotePctLabel}</span>
+                      </div>
+                    </div>
+                    <div className="mt-3 grid gap-3 lg:grid-cols-6 text-xs text-fog/70">
                       <div>
                         {t('lightningOps.outRate')}:{' '}
-                        <span className="text-fog">
+                        <button
+                          type="button"
+                          className="text-fog hover:text-white hover:underline underline-offset-2"
+                          onClick={() => { void startInlineFeeEdit(ch) }}
+                        >
                           {typeof ch.fee_rate_ppm === 'number' ? `${ch.fee_rate_ppm} ppm` : '-'}
-                        </span>
+                        </button>
                       </div>
                       <div>
                         {t('lightningOps.outBase')}:{' '}
-                        <span className="text-fog">
+                        <button
+                          type="button"
+                          className="text-fog hover:text-white hover:underline underline-offset-2"
+                          onClick={() => { void startInlineFeeEdit(ch) }}
+                        >
                           {typeof ch.base_fee_msat === 'number' ? `${ch.base_fee_msat} msats` : '-'}
-                        </span>
+                        </button>
                       </div>
                       <div>
                         {t('lightningOps.inRate')}:{' '}
-                        <span className="text-fog">
+                        <button
+                          type="button"
+                          className="text-fog hover:text-white hover:underline underline-offset-2"
+                          onClick={() => { void startInlineFeeEdit(ch) }}
+                        >
                           {typeof ch.inbound_fee_rate_ppm === 'number' ? `${ch.inbound_fee_rate_ppm} ppm` : '-'}
+                        </button>
+                      </div>
+                      <div>
+                        {t('lightningOps.peerRate')}:{' '}
+                        <span className="text-fog">
+                          {typeof ch.peer_fee_rate_ppm === 'number' ? `${ch.peer_fee_rate_ppm} ppm` : '-'}
                         </span>
+                      </div>
+                      <div>
+                        {t('lightningOps.peerBase')}:{' '}
+                        <span className="text-fog">
+                          {typeof ch.peer_base_msat === 'number' ? `${ch.peer_base_msat} msats` : '-'}
+                        </span>
+                      </div>
+                      <div className="text-right">
                         {classLabel && (
-                          <span className="ml-2 text-fog/60">{classLabel}</span>
+                          <span className="text-fog/60">{classLabel}</span>
                         )}
                       </div>
                     </div>
+                    {isInlineFeeEditing && (
+                      <div className="mt-3 rounded-xl border border-white/10 bg-ink/70 p-3">
+                        <div className="grid gap-2 lg:grid-cols-3">
+                          <input
+                            className="input-field"
+                            type="number"
+                            min={0}
+                            placeholder={t('lightningOps.feeRatePpm')}
+                            value={inlineFeeRatePpm}
+                            onChange={(e) => setInlineFeeRatePpm(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault()
+                                void handleInlineFeeSave()
+                              }
+                              if (e.key === 'Escape') {
+                                e.preventDefault()
+                                cancelInlineFeeEdit()
+                              }
+                            }}
+                          />
+                          <input
+                            className="input-field"
+                            type="number"
+                            min={0}
+                            placeholder={t('lightningOps.baseFeeMsats')}
+                            value={inlineBaseFeeMsat}
+                            onChange={(e) => setInlineBaseFeeMsat(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault()
+                                void handleInlineFeeSave()
+                              }
+                              if (e.key === 'Escape') {
+                                e.preventDefault()
+                                cancelInlineFeeEdit()
+                              }
+                            }}
+                          />
+                          <input
+                            className="input-field"
+                            type="number"
+                            max={0}
+                            placeholder={t('lightningOps.inboundFeeRate')}
+                            value={inlineInboundFeeRatePpm}
+                            onChange={(e) => setInlineInboundFeeRatePpm(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault()
+                                void handleInlineFeeSave()
+                              }
+                              if (e.key === 'Escape') {
+                                e.preventDefault()
+                                cancelInlineFeeEdit()
+                              }
+                            }}
+                          />
+                        </div>
+                        <p className="mt-2 text-[11px] text-fog/60">{t('lightningOps.inlineFeeEditHint')}</p>
+                        {inlineFeeLoading && <p className="mt-2 text-xs text-fog/60">{t('lightningOps.loadingFees')}</p>}
+                        {inlineFeeStatus && <p className="mt-2 text-xs text-brass">{inlineFeeStatus}</p>}
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            className="btn-secondary text-xs px-3 py-2"
+                            type="button"
+                            onClick={() => { void handleInlineFeeSave() }}
+                            disabled={inlineBusy}
+                          >
+                            {inlineBusy ? t('lightningOps.updatingFees') : t('lightningOps.updateFees')}
+                          </button>
+                          <button
+                            className="btn-secondary text-xs px-3 py-2"
+                            type="button"
+                            onClick={cancelInlineFeeEdit}
+                            disabled={inlineBusy}
+                          >
+                            {t('common.cancel')}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     <div className="mt-2 text-xs text-fog/50">
                       {ch.private ? t('lightningOps.privateChannel') : t('lightningOps.publicChannel')}
                     </div>
@@ -2152,6 +2997,185 @@ export default function LightningOps() {
       <div className="section-card space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
+            <h3 className="text-lg font-semibold">{t('lightningOps.htlcManagerTitle')}</h3>
+            <p className="text-sm text-fog/60">{t('lightningOps.htlcManagerSubtitle')}</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className={`text-[11px] uppercase tracking-wide px-2 py-0.5 rounded-full ${badgeClass(htlcManagerTone())}`}>
+              {htlcManagerBadgeLabel()}
+            </span>
+            <button
+              className={`relative flex h-9 w-36 items-center rounded-full border border-white/10 bg-ink/60 px-2 transition ${htlcManagerBusy ? 'opacity-70' : 'hover:border-white/30'}`}
+              onClick={handleToggleHtlcManager}
+              type="button"
+              disabled={htlcManagerBusy}
+              aria-label={t('lightningOps.toggleHtlcManager')}
+            >
+              <span
+                className={`absolute top-1 h-7 w-16 rounded-full bg-glow shadow transition-all ${htlcManager?.enabled ? 'left-[70px]' : 'left-[6px]'}`}
+              />
+              <span className={`relative z-10 flex-1 text-center text-xs ${!htlcManager?.enabled ? 'text-ink' : 'text-fog/60'}`}>{t('common.disabled')}</span>
+              <span className={`relative z-10 flex-1 text-center text-xs ${htlcManager?.enabled ? 'text-ink' : 'text-fog/60'}`}>{t('common.enabled')}</span>
+            </button>
+          </div>
+        </div>
+        <div className="grid gap-4 lg:grid-cols-3">
+          <label className="text-sm text-fog/70">
+            {t('lightningOps.htlcManagerMinSat')}
+            <input
+              className="input-field mt-2"
+              type="number"
+              min={1}
+              value={htlcManagerMinSat}
+              onChange={(e) => {
+                setHtlcManagerMinSat(e.target.value)
+                htlcManagerFormDirtyRef.current = true
+              }}
+            />
+          </label>
+          <label className="text-sm text-fog/70">
+            {t('lightningOps.htlcManagerMaxPct')}
+            <input
+              className="input-field mt-2"
+              type="number"
+              min={0}
+              value={htlcManagerMaxPct}
+              onChange={(e) => {
+                setHtlcManagerMaxPct(e.target.value)
+                htlcManagerFormDirtyRef.current = true
+              }}
+            />
+          </label>
+          <label className="text-sm text-fog/70">
+            {t('lightningOps.htlcManagerInterval')}
+            <input
+              className="input-field mt-2"
+              type="number"
+              min={1}
+              max={2880}
+              value={htlcManagerIntervalMinutes}
+              onChange={(e) => {
+                setHtlcManagerIntervalMinutes(e.target.value)
+                htlcManagerFormDirtyRef.current = true
+              }}
+            />
+          </label>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <button className="btn-secondary text-xs px-3 py-2" type="button" onClick={handleSaveHtlcManager} disabled={htlcManagerBusy}>
+            {t('common.save')}
+          </button>
+          <button className="btn-secondary text-xs px-3 py-2" type="button" onClick={handleRunHtlcManagerNow} disabled={htlcManagerBusy}>
+            {t('lightningOps.htlcManagerRunNow')}
+          </button>
+          <button
+            className="btn-secondary text-xs px-3 py-2"
+            type="button"
+            onClick={() => setHtlcManagerLogsOpen((open) => !open)}
+          >
+            {htlcManagerLogsOpen ? t('common.hide') : t('lightningOps.htlcManagerLogsShow', { count: htlcManagerLogs.length })}
+          </button>
+          <button
+            className="btn-secondary text-xs px-3 py-2"
+            type="button"
+            onClick={() => setHtlcManagerFailedOpen((open) => !open)}
+          >
+            {htlcManagerFailedOpen ? t('common.hide') : t('lightningOps.htlcManagerFailedShow', { count: visibleHtlcManagerFailed.length })}
+          </button>
+        </div>
+        {htlcManagerStatus && <p className="text-sm text-brass">{htlcManagerStatus}</p>}
+        <div className="grid gap-3 text-xs text-fog/70 lg:grid-cols-3">
+          <div>
+            {t('lightningOps.htlcManagerLastRun')}: <span className="text-fog">{formatAmbossTime(htlcManager?.last_ok_at)}</span>
+          </div>
+          <div>
+            {t('lightningOps.htlcManagerLastAttempt')}: <span className="text-fog">{formatAmbossTime(htlcManager?.last_attempt_at)}</span>
+          </div>
+          <div>
+            {t('lightningOps.htlcManagerLastChanged')}: <span className="text-fog">{htlcManager?.last_changed_count ?? 0}</span>
+          </div>
+        </div>
+        {htlcManager?.last_error && (
+          <p className="text-xs text-amber-200">
+            {t('lightningOps.htlcManagerLastError')}: {htlcManager.last_error}
+          </p>
+        )}
+        {htlcManagerLogsOpen && (
+          <div className="rounded-2xl border border-white/10 bg-ink/60 p-3 max-h-[260px] overflow-y-auto">
+            {htlcManagerLogs.length ? (
+              <div className="space-y-2 text-xs text-fog/70">
+                {htlcManagerLogs.map((entry, idx) => (
+                  <p key={`${entry.ts}-${entry.channel_point}-${idx}`}>
+                    {t('lightningOps.htlcManagerLogLine', {
+                      ts: formatAmbossTime(entry.ts),
+                      alias: entry.alias || entry.channel_point,
+                      oldMinSat: Math.round((entry.old_min_msat || 0) / 1000),
+                      newMinSat: Math.round((entry.new_min_msat || 0) / 1000),
+                      oldMaxSat: Math.round((entry.old_max_msat || 0) / 1000),
+                      newMaxSat: Math.round((entry.new_max_msat || 0) / 1000)
+                    })}
+                  </p>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-fog/50">{t('lightningOps.htlcManagerLogsEmpty')}</p>
+            )}
+          </div>
+        )}
+        {htlcManagerFailedOpen && (
+          <div className="rounded-2xl border border-white/10 bg-ink/60 p-3">
+            {visibleHtlcManagerFailed.length ? (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[940px] text-xs text-fog/80">
+                  <thead>
+                    <tr className="text-left text-fog/60">
+                      <th className="py-2 pr-3">{t('lightningOps.htlcManagerFailedTs')}</th>
+                      <th className="py-2 pr-3">{t('lightningOps.htlcManagerFailedChanIn')}</th>
+                      <th className="py-2 pr-3">{t('lightningOps.htlcManagerFailedChanOut')}</th>
+                      <th className="py-2 pr-3">{t('lightningOps.htlcManagerFailedInAmt')}</th>
+                      <th className="py-2 pr-3">{t('lightningOps.htlcManagerFailedOutAmt')}</th>
+                      <th className="py-2 pr-3">{t('lightningOps.htlcManagerFailedPotentialFee')}</th>
+                      <th className="py-2 pr-3">{t('lightningOps.htlcManagerFailedCode')}</th>
+                      <th className="py-2">{t('lightningOps.htlcManagerFailedDetail')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleHtlcManagerFailed.map((entry, idx) => (
+                      <tr key={`${entry.ts}-${entry.incoming_channel_id}-${entry.outgoing_channel_id}-${idx}`} className="border-t border-white/5">
+                        <td className="py-2 pr-3 whitespace-nowrap">{formatAmbossTime(entry.ts)}</td>
+                        <td className="py-2 pr-3 whitespace-nowrap">
+                          <div className="text-fog">{entry.incoming_alias || '-'}</div>
+                          <div className="text-[11px] text-fog/50">{entry.incoming_channel_id || '-'}</div>
+                        </td>
+                        <td className="py-2 pr-3 whitespace-nowrap">
+                          <div className="text-fog">{entry.outgoing_alias || '-'}</div>
+                          <div className="text-[11px] text-fog/50">{entry.outgoing_channel_id || '-'}</div>
+                        </td>
+                        <td className="py-2 pr-3 whitespace-nowrap">{formatSatFromMsat(entry.incoming_amt_msat)}</td>
+                        <td className="py-2 pr-3 whitespace-nowrap">{formatSatFromMsat(entry.outgoing_amt_msat)}</td>
+                        <td className="py-2 pr-3 whitespace-nowrap">{formatFeeMsat(entry.potential_fee_msat)}</td>
+                        <td className="py-2 pr-3 whitespace-nowrap">
+                          {(entry.failure_code || '-')}
+                          {entry.event ? <span className="ml-1 text-fog/50">({entry.event})</span> : null}
+                        </td>
+                        <td className="py-2">
+                          {entry.failure_detail || entry.failure_reason || '-'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-xs text-fog/50">{t('lightningOps.htlcManagerFailedEmpty')}</p>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="section-card space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
             <h3 className="text-lg font-semibold">{t('lightningOps.ambossHealthTitle')}</h3>
             <p className="text-sm text-fog/60">{t('lightningOps.ambossHealthSubtitle')}</p>
           </div>
@@ -2228,7 +3252,10 @@ export default function LightningOps() {
               type="number"
               min={30}
               value={chanHealInterval}
-              onChange={(e) => setChanHealInterval(e.target.value)}
+              onChange={(e) => {
+                setChanHealInterval(e.target.value)
+                chanHealIntervalDirtyRef.current = true
+              }}
             />
             <button
               className="btn-secondary text-xs px-3 py-2"
@@ -2261,6 +3288,111 @@ export default function LightningOps() {
           <p className="text-xs text-amber-200">
             {t('lightningOps.chanHealLastError')}: {chanHeal.last_error}
           </p>
+        )}
+      </div>
+
+      <div className="section-card space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-semibold">{t('lightningOps.torPeerTitle')}</h3>
+            <p className="text-sm text-fog/60">{t('lightningOps.torPeerSubtitle')}</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className={`text-[11px] uppercase tracking-wide px-2 py-0.5 rounded-full ${badgeClass(torPeerCheckerTone())}`}>
+              {torPeerCheckerBadgeLabel()}
+            </span>
+            <button
+              className={`relative flex h-9 w-36 items-center rounded-full border border-white/10 bg-ink/60 px-2 transition ${torPeerCheckerBusy ? 'opacity-70' : 'hover:border-white/30'}`}
+              onClick={handleToggleTorPeerChecker}
+              type="button"
+              disabled={torPeerCheckerBusy}
+              aria-label={t('lightningOps.toggleTorPeerChecker')}
+            >
+              <span
+                className={`absolute top-1 h-7 w-16 rounded-full bg-glow shadow transition-all ${torPeerChecker?.enabled ? 'left-[70px]' : 'left-[6px]'}`}
+              />
+              <span className={`relative z-10 flex-1 text-center text-xs ${!torPeerChecker?.enabled ? 'text-ink' : 'text-fog/60'}`}>{t('common.disabled')}</span>
+              <span className={`relative z-10 flex-1 text-center text-xs ${torPeerChecker?.enabled ? 'text-ink' : 'text-fog/60'}`}>{t('common.enabled')}</span>
+            </button>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="text-sm text-fog/70">
+            {t('lightningOps.torPeerInterval')}
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              className="input-field w-32"
+              type="number"
+              min={2}
+              max={168}
+              value={torPeerCheckerIntervalHours}
+              onChange={(e) => {
+                setTorPeerCheckerIntervalHours(e.target.value)
+                torPeerCheckerIntervalDirtyRef.current = true
+              }}
+            />
+            <button
+              className="btn-secondary text-xs px-3 py-2"
+              type="button"
+              onClick={handleSaveTorPeerChecker}
+              disabled={torPeerCheckerBusy}
+            >
+              {t('common.save')}
+            </button>
+          </div>
+          <button className="btn-secondary text-xs px-3 py-2" type="button" onClick={handleRunTorPeerCheckerNow} disabled={torPeerCheckerBusy}>
+            {t('lightningOps.torPeerRunNow')}
+          </button>
+          <button
+            className="btn-secondary text-xs px-3 py-2"
+            type="button"
+            onClick={() => setTorPeerCheckerLogsOpen((open) => !open)}
+          >
+            {torPeerCheckerLogsOpen ? t('common.hide') : t('lightningOps.torPeerLogsShow', { count: torPeerCheckerLogs.length })}
+          </button>
+        </div>
+        {torPeerCheckerStatus && <p className="text-sm text-brass">{torPeerCheckerStatus}</p>}
+        <div className="grid gap-3 text-xs text-fog/70 lg:grid-cols-4">
+          <div>
+            {t('lightningOps.torPeerLastRun')}: <span className="text-fog">{formatAmbossTime(torPeerChecker?.last_ok_at)}</span>
+          </div>
+          <div>
+            {t('lightningOps.torPeerLastAttempt')}: <span className="text-fog">{formatAmbossTime(torPeerChecker?.last_attempt_at)}</span>
+          </div>
+          <div>
+            {t('lightningOps.torPeerLastChecked')}: <span className="text-fog">{torPeerChecker?.last_checked_count ?? 0}</span>
+          </div>
+          <div>
+            {t('lightningOps.torPeerLastSwitched')}: <span className="text-fog">{torPeerChecker?.last_switched_count ?? 0}</span>
+          </div>
+        </div>
+        {torPeerChecker?.last_error && (
+          <p className="text-xs text-amber-200">
+            {t('lightningOps.torPeerLastError')}: {torPeerChecker.last_error}
+          </p>
+        )}
+        {torPeerCheckerLogsOpen && (
+          <div className="rounded-2xl border border-white/10 bg-ink/60 p-3 max-h-[260px] overflow-y-auto">
+            {torPeerCheckerLogs.length ? (
+              <div className="space-y-2 text-xs text-fog/70">
+                {torPeerCheckerLogs.map((entry, idx) => (
+                  <p key={`${entry.ts}-${entry.pub_key || entry.alias}-${idx}`}>
+                    {t('lightningOps.torPeerLogLine', {
+                      ts: formatAmbossTime(entry.ts),
+                      alias: entry.alias || entry.pub_key || '-',
+                      result: entry.result || '-',
+                      detail: entry.detail || '-',
+                      from: entry.from_address || '-',
+                      to: entry.to_address || '-'
+                    })}
+                  </p>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-fog/50">{t('lightningOps.torPeerLogsEmpty')}</p>
+            )}
+          </div>
         )}
       </div>
 

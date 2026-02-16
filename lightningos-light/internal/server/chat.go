@@ -207,13 +207,16 @@ func (c *ChatService) runInvoices() {
         continue
       }
 
-      message, chanID := extractKeysendMessage(invoice)
+      message, chanID, senderPubkey := extractKeysendMessage(invoice)
       if message == "" {
         continue
       }
 
       peerPubkey := ""
-      if chanID != 0 {
+      if senderPubkey != "" && isValidPubkeyHex(senderPubkey) {
+        peerPubkey = senderPubkey
+      }
+      if peerPubkey == "" && chanID != 0 {
         peerPubkey, _ = c.lookupPeerByChanID(chanID)
       }
       if peerPubkey == "" {
@@ -253,9 +256,9 @@ func (c *ChatService) lookupPeerByChanID(chanID uint64) (string, string) {
   return "", ""
 }
 
-func extractKeysendMessage(invoice *lnrpc.Invoice) (string, uint64) {
+func extractKeysendMessage(invoice *lnrpc.Invoice) (string, uint64, string) {
   if invoice == nil {
-    return "", 0
+    return "", 0, ""
   }
   for _, htlc := range invoice.Htlcs {
     if htlc == nil {
@@ -268,9 +271,27 @@ func extractKeysendMessage(invoice *lnrpc.Invoice) (string, uint64) {
     if !utf8.Valid(payload) {
       continue
     }
-    return string(payload), htlc.ChanId
+    sender := keysendSenderFromRecords(htlc.CustomRecords)
+    return string(payload), htlc.ChanId, sender
   }
-  return "", 0
+  return "", 0, ""
+}
+
+func keysendSenderFromRecords(records map[uint64][]byte) string {
+  if len(records) == 0 {
+    return ""
+  }
+  raw, ok := records[lndclient.KeysendSenderRecord]
+  if !ok || len(raw) == 0 {
+    return ""
+  }
+  if len(raw) == 33 {
+    return strings.ToLower(hex.EncodeToString(raw))
+  }
+  if len(raw) == 66 && isValidPubkeyHex(string(raw)) {
+    return strings.ToLower(string(raw))
+  }
+  return ""
 }
 
 func validateChatMessage(message string) error {

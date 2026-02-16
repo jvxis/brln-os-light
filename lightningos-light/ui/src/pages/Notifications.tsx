@@ -670,7 +670,7 @@ export default function Notifications() {
                   }
                 }
                 if (item.txid) {
-                  if (item.type === 'channel' && !item.channel_point) {
+                  if (item.type === 'channel') {
                     const link = mempoolTxLink(item.txid)
                     detailParts.push(
                       <a

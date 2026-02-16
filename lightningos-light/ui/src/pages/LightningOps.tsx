@@ -1916,6 +1916,11 @@ export default function LightningOps() {
     return `https://mempool.space/pt/tx/${parts[0]}#vout=${parts[1]}`
   }
 
+  const mempoolTxLink = (txid?: string) => {
+    if (!txid) return ''
+    return `https://mempool.space/tx/${txid}`
+  }
+
   const handleCloseChannel = async () => {
     setCloseStatus(t('lightningOps.closingChannel'))
     if (!closePoint) {
@@ -2417,6 +2422,7 @@ export default function LightningOps() {
                     {pendingClose.map((ch) => {
                       const pointLink = mempoolLink(ch.channel_point)
                       const maturitySeconds = estimateMaturitySeconds(ch.blocks_til_maturity)
+                      const closingTxLink = mempoolTxLink(ch.closing_txid)
                       return (
                         <div key={ch.channel_point} className="rounded-xl border border-white/10 bg-ink/70 p-3">
                           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2466,7 +2472,18 @@ export default function LightningOps() {
                             )}
                           </div>
                           {ch.closing_txid && (
-                            <p className="mt-2 text-[11px] text-fog/50 break-all">{t('lightningOps.closingTx', { txid: ch.closing_txid })}</p>
+                            closingTxLink ? (
+                              <a
+                                className="mt-2 block text-[11px] text-emerald-200 hover:text-emerald-100 break-all"
+                                href={closingTxLink}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                {t('lightningOps.closingTx', { txid: ch.closing_txid })}
+                              </a>
+                            ) : (
+                              <p className="mt-2 text-[11px] text-fog/50 break-all">{t('lightningOps.closingTx', { txid: ch.closing_txid })}</p>
+                            )
                           )}
                         </div>
                       )

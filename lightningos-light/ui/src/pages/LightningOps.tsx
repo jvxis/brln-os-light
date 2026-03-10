@@ -2557,6 +2557,17 @@ export default function LightningOps() {
     return NaN
   }
 
+  const balancedOpenMetadataBoolean = (session: BalancedOpenSession, key: string): boolean | null => {
+    const raw = session?.metadata?.[key]
+    if (typeof raw === 'boolean') return raw
+    if (typeof raw === 'string') {
+      const normalized = raw.trim().toLowerCase()
+      if (normalized === 'true') return true
+      if (normalized === 'false') return false
+    }
+    return null
+  }
+
   const balancedOpenCanonicalPoint = (txid: string, vout: number) => {
     const id = (txid || '').trim().toLowerCase()
     if (!/^[0-9a-f]{64}$/.test(id)) return ''
@@ -2643,6 +2654,39 @@ export default function LightningOps() {
     return true
   }
 
+  const balancedOpenRoleLabel = (role: string) => {
+    if (role === 'initiator') return t('lightningOps.balancedOpenHealthRoleInitiator')
+    if (role === 'accepter') return t('lightningOps.balancedOpenHealthRoleAccepter')
+    return role || t('common.unknown')
+  }
+
+  const balancedOpenMempoolHealth = (session: BalancedOpenSession): { tone: 'ok' | 'warn' | 'muted'; label: string } => {
+    if (session.state === 'active') {
+      return { tone: 'ok', label: t('lightningOps.balancedOpenHealthMempoolActive') }
+    }
+
+    const checked = balancedOpenMetadataBoolean(session, 'pending_stuck_external_mempool_checked')
+    const seen = balancedOpenMetadataBoolean(session, 'pending_stuck_external_mempool_seen')
+    if (checked === null) {
+      return { tone: 'muted', label: t('lightningOps.balancedOpenHealthMempoolUnknown') }
+    }
+    if (!checked) {
+      return { tone: 'muted', label: t('lightningOps.balancedOpenHealthMempoolUnknown') }
+    }
+    if (seen) {
+      return { tone: 'ok', label: t('lightningOps.balancedOpenHealthMempoolSeen') }
+    }
+    return { tone: 'warn', label: t('lightningOps.balancedOpenHealthMempoolNotSeen') }
+  }
+
+  const balancedOpenLastAutoRetryLabel = (session: BalancedOpenSession) => {
+    const retryUnix = balancedOpenMetadataNumber(session, 'pending_stuck_autoretry_unix')
+    if (!Number.isFinite(retryUnix) || retryUnix <= 0) {
+      return t('lightningOps.balancedOpenHealthAutoRetryNone')
+    }
+    return formatBalancedDate(new Date(retryUnix * 1000).toISOString())
+  }
+
   const formatBalancedDate = (value?: string) => {
     if (!value) return t('common.na')
     const parsed = new Date(value)
@@ -2673,6 +2717,7 @@ export default function LightningOps() {
       case 'funding_broadcast_observed_after_retry_error':
         return t('lightningOps.balancedOpenEventFundingObservedAfterRetryError')
       case 'funding_broadcast_retry_failed':
+      case 'funding_broadcast_failed_retrying':
         return t('lightningOps.balancedOpenEventFundingBroadcastRetryFailed')
       case 'proposal_preflight_failed':
         return t('lightningOps.balancedOpenEventProposalPreflightFailed')
@@ -5321,6 +5366,9 @@ export default function LightningOps() {
               const oneSideSat = Math.floor(Number(session.capacity_sat || 0) / 2)
               const sessionBusy = Boolean(balancedOpenActionBusyID && balancedOpenActionBusyID.endsWith(`:${session.session_id}`))
               const detailsOpen = balancedOpenDetailsSessionID === session.session_id
+              const mempoolHealth = balancedOpenMempoolHealth(session)
+              const lastAutoRetry = balancedOpenLastAutoRetryLabel(session)
+              const retryTone: 'ok' | 'warn' | 'muted' = lastAutoRetry === t('lightningOps.balancedOpenHealthAutoRetryNone') ? 'muted' : 'ok'
               return (
                 <div key={session.session_id} className="flex flex-wrap items-start justify-between gap-3 border-b border-white/5 pb-2 last:border-b-0 last:pb-0">
                   <div className="space-y-1 text-xs text-fog/75">
@@ -5335,6 +5383,17 @@ export default function LightningOps() {
                       })}
                     </p>
                     <p>{t('lightningOps.balancedOpenStateLabel', { state: balancedOpenStateLabel(session.state) })}</p>
+                    <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                      <span className={`text-[11px] px-2 py-0.5 rounded-full ${badgeClass('muted')}`}>
+                        {t('lightningOps.balancedOpenHealthRole', { role: balancedOpenRoleLabel(session.role) })}
+                      </span>
+                      <span className={`text-[11px] px-2 py-0.5 rounded-full ${badgeClass(mempoolHealth.tone)}`}>
+                        {mempoolHealth.label}
+                      </span>
+                      <span className={`text-[11px] px-2 py-0.5 rounded-full ${badgeClass(retryTone)}`}>
+                        {t('lightningOps.balancedOpenHealthAutoRetry', { time: lastAutoRetry })}
+                      </span>
+                    </div>
                     <p className="text-fog/60">{t('lightningOps.balancedOpenUpdatedAt', { time: formatBalancedDate(session.state_updated_at) })}</p>
                     {session.last_error ? <p className="text-amber-200">{session.last_error}</p> : null}
                   </div>

@@ -705,7 +705,7 @@ func (s *BalancedOpenService) executeSessionDual(ctx context.Context, session Ba
 		channelPointHint := balancedOpenCanonicalChannelPointFromString(channelPoint)
 		observed := s.isBalancedOpenFundingObserved(ctx, submitted, channelPointHint, plan.FundingTxID, meta.InitiatorTransit, meta.AccepterTransit)
 		if !observed {
-			_, _ = s.transitionSessionWithMetadata(ctx, submitted.SessionID, balancedOpenStateRecoveryRequired, err.Error(), "funding_broadcast_failed", map[string]any{
+			_, _ = s.transitionSessionWithMetadata(ctx, submitted.SessionID, balancedOpenStateChannelProposed, err.Error(), "funding_broadcast_failed_retrying", map[string]any{
 				"execution_mode": balancedOpenExecutionModeDual,
 				"funding_tx_id":  plan.FundingTxID,
 			}, map[string]any{
@@ -839,7 +839,7 @@ func (s *BalancedOpenService) tryPromoteSessionByChannelState(ctx context.Contex
 
 	if pendingCh, ok := matchBalancedOpenPendingChannel(session, channelPointHint, pending); ok {
 		if !s.canPromoteBalancedPending(ctx, session, metaReady, meta) {
-			if session.State == balancedOpenStatePendingOpenDetected {
+			if session.State == balancedOpenStatePendingOpenDetected || session.State == balancedOpenStateFundingBroadcasted || session.State == balancedOpenStateChannelProposed {
 				s.maybeMarkPendingOpenStuck(ctx, session, pendingCh)
 			}
 			return nil
@@ -865,7 +865,9 @@ func (s *BalancedOpenService) tryPromoteSessionByChannelState(ctx context.Contex
 }
 
 func (s *BalancedOpenService) maybeMarkPendingOpenStuck(ctx context.Context, session BalancedOpenSession, pendingCh lndclient.PendingChannelInfo) {
-	if session.State != balancedOpenStatePendingOpenDetected {
+	if session.State != balancedOpenStatePendingOpenDetected &&
+		session.State != balancedOpenStateFundingBroadcasted &&
+		session.State != balancedOpenStateChannelProposed {
 		return
 	}
 	if pendingCh.ConfirmationHeight > 0 || pendingCh.ConfirmationsUntilActive == 0 {
@@ -919,8 +921,10 @@ func (s *BalancedOpenService) maybeMarkPendingOpenStuck(ctx context.Context, ses
 			"external_mempool_seen":      externalSeen,
 			"funding_tx_id":              fundingTxID,
 		}, map[string]any{
-			"pending_stuck_channel_point": currentPoint,
-			"pending_stuck_notified_unix": now.Unix(),
+			"pending_stuck_channel_point":            currentPoint,
+			"pending_stuck_notified_unix":            now.Unix(),
+			"pending_stuck_external_mempool_checked": externalChecked,
+			"pending_stuck_external_mempool_seen":    externalSeen,
 		})
 	}
 
@@ -966,8 +970,10 @@ func (s *BalancedOpenService) maybeMarkPendingOpenStuck(ctx context.Context, ses
 
 	retryErr := s.publishBalancedTxWithRetry(ctx, txHex, fmt.Sprintf("balanced-open-stuck-retry-%s", session.SessionID), balancedOpenPublishMaxAttempts)
 	patch := map[string]any{
-		"pending_stuck_autoretry_channel_point": currentPoint,
-		"pending_stuck_autoretry_unix":          now.Unix(),
+		"pending_stuck_autoretry_channel_point":  currentPoint,
+		"pending_stuck_autoretry_unix":           now.Unix(),
+		"pending_stuck_external_mempool_checked": externalChecked,
+		"pending_stuck_external_mempool_seen":    externalSeen,
 	}
 	if retryErr != nil {
 		_, _ = s.transitionSessionWithMetadata(ctx, session.SessionID, session.State, "", "pending_open_stuck_autoretry_failed", map[string]any{
@@ -1029,8 +1035,13 @@ func (s *BalancedOpenService) isBalancedOpenFundingObserved(
 	if point != "" {
 		pending, err := s.lnd.ListPendingChannels(ctx)
 		if err == nil {
-			if _, found := matchBalancedOpenPendingChannel(session, point, pending); found {
-				return true
+			if pendingCh, found := matchBalancedOpenPendingChannel(session, point, pending); found {
+				// Pending-only can be a false-positive when funding shim exists but tx
+				// was never propagated. Only trust pending as observed when it already
+				// has a confirmation height.
+				if pendingCh.ConfirmationHeight > 0 {
+					return true
+				}
 			}
 		}
 		active, err := s.lnd.ListChannels(ctx)
@@ -1045,21 +1056,11 @@ func (s *BalancedOpenService) isBalancedOpenFundingObserved(
 	if expectedFundingTxID == "" {
 		return false
 	}
-	if hasBalancedTransit(localTransit, false) {
-		if spendingTxid, found, err := s.lnd.FindSpendingTransactionByOutpoint(ctx, localTransit.TxID, localTransit.Vout); err == nil && found {
-			if strings.EqualFold(strings.TrimSpace(spendingTxid), expectedFundingTxID) {
-				return true
-			}
-		}
+	if seen, checked := balancedOpenTxSeenOnExternalMempool(ctx, expectedFundingTxID); checked && seen {
+		return true
 	}
-	if hasBalancedTransit(peerTransit, false) {
-		if spendingTxid, found, err := s.lnd.FindSpendingTransactionByOutpoint(ctx, peerTransit.TxID, peerTransit.Vout); err == nil && found {
-			if strings.EqualFold(strings.TrimSpace(spendingTxid), expectedFundingTxID) {
-				return true
-			}
-		}
-	}
-
+	_ = localTransit
+	_ = peerTransit
 	return false
 }
 
@@ -1083,7 +1084,11 @@ func (s *BalancedOpenService) ensureInitiatorDualBroadcastFromMetadata(ctx conte
 	if publishErr != nil {
 		observed := s.isBalancedOpenFundingObserved(ctx, session, strings.TrimSpace(meta.ChannelPoint), meta.FundingTxID, meta.InitiatorTransit, meta.AccepterTransit)
 		if !observed {
-			updated, txErr := s.transitionSessionWithMetadata(ctx, session.SessionID, balancedOpenStateRecoveryRequired, publishErr.Error(), "funding_broadcast_retry_failed", map[string]any{
+			targetState := balancedOpenStateChannelProposed
+			if session.State == balancedOpenStatePendingOpenDetected || session.State == balancedOpenStateFundingBroadcasted {
+				targetState = session.State
+			}
+			updated, txErr := s.transitionSessionWithMetadata(ctx, session.SessionID, targetState, publishErr.Error(), "funding_broadcast_retry_failed", map[string]any{
 				"execution_mode": balancedOpenExecutionModeDual,
 				"funding_tx_id":  strings.ToLower(strings.TrimSpace(meta.FundingTxID)),
 			}, map[string]any{
@@ -3622,24 +3627,41 @@ func balancedOpenTxSeenOnExternalMempool(ctx context.Context, txid string) (seen
 	if !isBalancedOpenTxID(clean) {
 		return false, false
 	}
-
-	checkCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(checkCtx, http.MethodGet, "https://mempool.space/api/tx/"+clean, nil)
-	if err != nil {
-		return false, false
+	endpoints := []string{
+		"https://mempool.space/api/tx/" + clean,
+		"https://blockstream.info/api/tx/" + clean,
 	}
-	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
-	if err != nil {
-		return false, false
-	}
-	defer resp.Body.Close()
+	client := &http.Client{Timeout: 5 * time.Second}
+	observedCheck := false
 
-	if resp.StatusCode == http.StatusOK {
-		return true, true
+	for _, endpoint := range endpoints {
+		checkCtx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		if ctx != nil {
+			if deadline, ok := ctx.Deadline(); ok {
+				checkCtx, cancel = context.WithDeadline(context.Background(), deadline)
+			}
+		}
+		req, err := http.NewRequestWithContext(checkCtx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			cancel()
+			continue
+		}
+		resp, err := client.Do(req)
+		cancel()
+		if err != nil {
+			continue
+		}
+		observedCheck = true
+		resp.Body.Close()
+
+		if resp.StatusCode == http.StatusOK {
+			return true, true
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			return false, true
+		}
 	}
-	if resp.StatusCode == http.StatusNotFound {
+	if observedCheck {
 		return false, true
 	}
 	return false, false

@@ -201,6 +201,14 @@ export const updateAutofeeConfig = (payload: {
   run_interval_sec?: number
   cooldown_up_sec?: number
   cooldown_down_sec?: number
+  step_cap_override?: number
+  discovery_step_cap_down_override?: number
+  outrate_floor_factor_low_override?: number
+  soften_min_out_ratio_override?: number
+  soften_max_drop_to_peg_frac_override?: number
+  htlc_min_attempts_60m_override?: number
+  htlc_policy_fail_rate_override?: number
+  htlc_liquidity_fail_rate_override?: number
   rebal_cost_mode?: string
   amboss_enabled?: boolean
   amboss_token?: string

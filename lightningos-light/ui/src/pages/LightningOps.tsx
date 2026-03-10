@@ -240,6 +240,14 @@ type BitcoinLocalStatus = {
     run_interval_sec: number
     cooldown_up_sec: number
     cooldown_down_sec: number
+    step_cap_override?: number
+    discovery_step_cap_down_override?: number
+    outrate_floor_factor_low_override?: number
+    soften_min_out_ratio_override?: number
+    soften_max_drop_to_peg_frac_override?: number
+    htlc_min_attempts_60m_override?: number
+    htlc_policy_fail_rate_override?: number
+    htlc_liquidity_fail_rate_override?: number
     rebal_cost_mode?: string
     amboss_enabled: boolean
     amboss_token_set: boolean
@@ -661,6 +669,15 @@ export default function LightningOps() {
   const [autofeeIntervalHours, setAutofeeIntervalHours] = useState('4')
   const [autofeeCooldownUp, setAutofeeCooldownUp] = useState('3')
   const [autofeeCooldownDown, setAutofeeCooldownDown] = useState('4')
+  const [autofeeMovementOpen, setAutofeeMovementOpen] = useState(false)
+  const [autofeeStepCapOverride, setAutofeeStepCapOverride] = useState('')
+  const [autofeeDiscoveryStepCapDownOverride, setAutofeeDiscoveryStepCapDownOverride] = useState('')
+  const [autofeeOutrateFloorFactorLowOverride, setAutofeeOutrateFloorFactorLowOverride] = useState('')
+  const [autofeeSoftenMinOutRatioOverride, setAutofeeSoftenMinOutRatioOverride] = useState('')
+  const [autofeeSoftenMaxDropToPegFracOverride, setAutofeeSoftenMaxDropToPegFracOverride] = useState('')
+  const [autofeeHtlcMinAttemptsOverride, setAutofeeHtlcMinAttemptsOverride] = useState('')
+  const [autofeeHtlcPolicyFailRateOverride, setAutofeeHtlcPolicyFailRateOverride] = useState('')
+  const [autofeeHtlcLiquidityFailRateOverride, setAutofeeHtlcLiquidityFailRateOverride] = useState('')
   const [autofeeRebalMode, setAutofeeRebalMode] = useState('blend')
   const [autofeeMinPpm, setAutofeeMinPpm] = useState('10')
   const [autofeeMaxPpm, setAutofeeMaxPpm] = useState('2000')
@@ -834,6 +851,49 @@ export default function LightningOps() {
     moderate: { interval: 4, cooldownUp: 3, cooldownDown: 4 },
     aggressive: { interval: 2, cooldownUp: 1, cooldownDown: 2 }
   }
+  const autofeeMovementDefaults: Record<string, {
+    stepCap: number
+    discoveryStepCapDown: number
+    outrateFloorFactorLow: number
+    softenMinOutRatio: number
+    softenMaxDropToPegFrac: number
+    htlcMinAttempts60m: number
+    htlcPolicyFailRate: number
+    htlcLiquidityFailRate: number
+  }> = {
+    conservative: {
+      stepCap: 0.03,
+      discoveryStepCapDown: 0.10,
+      outrateFloorFactorLow: 0.90,
+      softenMinOutRatio: 0.55,
+      softenMaxDropToPegFrac: 0.98,
+      htlcMinAttempts60m: 20,
+      htlcPolicyFailRate: 0.20,
+      htlcLiquidityFailRate: 0.25
+    },
+    moderate: {
+      stepCap: 0.05,
+      discoveryStepCapDown: 0.15,
+      outrateFloorFactorLow: 0.85,
+      softenMinOutRatio: 0.30,
+      softenMaxDropToPegFrac: 0.90,
+      htlcMinAttempts60m: 12,
+      htlcPolicyFailRate: 0.15,
+      htlcLiquidityFailRate: 0.16
+    },
+    aggressive: {
+      stepCap: 0.08,
+      discoveryStepCapDown: 0.20,
+      outrateFloorFactorLow: 0.80,
+      softenMinOutRatio: 0.40,
+      softenMaxDropToPegFrac: 0.90,
+      htlcMinAttempts60m: 8,
+      htlcPolicyFailRate: 0.10,
+      htlcLiquidityFailRate: 0.15
+    }
+  }
+  const activeAutofeeMovementDefaults = autofeeMovementDefaults[autofeeProfile] || autofeeMovementDefaults.moderate
+  const pctText = (ratio: number, decimals = 0) => `${(ratio * 100).toFixed(decimals)}%`
 
   const autofeeAllChecked = useMemo(() => {
     if (!channels.length) return true
@@ -1946,6 +2006,14 @@ export default function LightningOps() {
       setAutofeeIntervalHours(String(Math.max(1, Math.round((cfg.run_interval_sec || 14400) / 3600))))
       setAutofeeCooldownUp(String(Math.max(1, Math.round((cfg.cooldown_up_sec || 10800) / 3600))))
       setAutofeeCooldownDown(String(Math.max(2, Math.round((cfg.cooldown_down_sec || 14400) / 3600))))
+      setAutofeeStepCapOverride((cfg.step_cap_override ?? 0) > 0 ? String(Math.round((cfg.step_cap_override ?? 0) * 1000) / 10) : '')
+      setAutofeeDiscoveryStepCapDownOverride((cfg.discovery_step_cap_down_override ?? 0) > 0 ? String(Math.round((cfg.discovery_step_cap_down_override ?? 0) * 1000) / 10) : '')
+      setAutofeeOutrateFloorFactorLowOverride((cfg.outrate_floor_factor_low_override ?? 0) > 0 ? String(Math.round((cfg.outrate_floor_factor_low_override ?? 0) * 100)) : '')
+      setAutofeeSoftenMinOutRatioOverride((cfg.soften_min_out_ratio_override ?? 0) > 0 ? String(Math.round((cfg.soften_min_out_ratio_override ?? 0) * 100)) : '')
+      setAutofeeSoftenMaxDropToPegFracOverride((cfg.soften_max_drop_to_peg_frac_override ?? 0) > 0 ? String(Math.round((cfg.soften_max_drop_to_peg_frac_override ?? 0) * 100)) : '')
+      setAutofeeHtlcMinAttemptsOverride((cfg.htlc_min_attempts_60m_override ?? 0) > 0 ? String(cfg.htlc_min_attempts_60m_override) : '')
+      setAutofeeHtlcPolicyFailRateOverride((cfg.htlc_policy_fail_rate_override ?? 0) > 0 ? String(Math.round((cfg.htlc_policy_fail_rate_override ?? 0) * 1000) / 10) : '')
+      setAutofeeHtlcLiquidityFailRateOverride((cfg.htlc_liquidity_fail_rate_override ?? 0) > 0 ? String(Math.round((cfg.htlc_liquidity_fail_rate_override ?? 0) * 1000) / 10) : '')
       setAutofeeRebalMode(cfg.rebal_cost_mode || 'blend')
       setAutofeeMinPpm(String(cfg.min_ppm ?? 10))
       setAutofeeMaxPpm(String(cfg.max_ppm ?? 2000))
@@ -2927,6 +2995,22 @@ export default function LightningOps() {
       const intervalSec = Math.max(1, Number(autofeeIntervalHours || 4)) * 3600
       const cooldownUpSec = Math.max(1, Number(autofeeCooldownUp || 3)) * 3600
       const cooldownDownSec = Math.max(2, Number(autofeeCooldownDown || 4)) * 3600
+      const parsePercentOverride = (raw: string, min: number, max: number) => {
+        const value = Number(raw)
+        if (!Number.isFinite(value) || value <= 0) return 0
+        return Math.max(min, Math.min(max, value)) / 100
+      }
+      const stepCapOverride = parsePercentOverride(autofeeStepCapOverride, 1, 30)
+      const discoveryStepCapDownOverride = parsePercentOverride(autofeeDiscoveryStepCapDownOverride, 1, 40)
+      const outrateFloorFactorLowOverride = parsePercentOverride(autofeeOutrateFloorFactorLowOverride, 50, 100)
+      const softenMinOutRatioOverride = parsePercentOverride(autofeeSoftenMinOutRatioOverride, 5, 95)
+      const softenMaxDropToPegFracOverride = parsePercentOverride(autofeeSoftenMaxDropToPegFracOverride, 50, 100)
+      const htlcMinAttemptsOverrideRaw = Number(autofeeHtlcMinAttemptsOverride || 0)
+      const htlcMinAttemptsOverride = Number.isFinite(htlcMinAttemptsOverrideRaw) && htlcMinAttemptsOverrideRaw > 0
+        ? Math.max(1, Math.min(100, Math.round(htlcMinAttemptsOverrideRaw)))
+        : 0
+      const htlcPolicyFailRateOverride = parsePercentOverride(autofeeHtlcPolicyFailRateOverride, 5, 90)
+      const htlcLiquidityFailRateOverride = parsePercentOverride(autofeeHtlcLiquidityFailRateOverride, 5, 90)
       const minPpmRaw = Math.max(0, Number(autofeeMinPpm || 0))
       let maxPpmRaw = Math.max(0, Number(autofeeMaxPpm || 2000))
       if (maxPpmRaw < minPpmRaw) {
@@ -2940,6 +3024,14 @@ export default function LightningOps() {
         run_interval_sec: intervalSec,
         cooldown_up_sec: cooldownUpSec,
         cooldown_down_sec: cooldownDownSec,
+        step_cap_override: stepCapOverride,
+        discovery_step_cap_down_override: discoveryStepCapDownOverride,
+        outrate_floor_factor_low_override: outrateFloorFactorLowOverride,
+        soften_min_out_ratio_override: softenMinOutRatioOverride,
+        soften_max_drop_to_peg_frac_override: softenMaxDropToPegFracOverride,
+        htlc_min_attempts_60m_override: htlcMinAttemptsOverride,
+        htlc_policy_fail_rate_override: htlcPolicyFailRateOverride,
+        htlc_liquidity_fail_rate_override: htlcLiquidityFailRateOverride,
         rebal_cost_mode: autofeeRebalMode,
         min_ppm: minPpmRaw,
         max_ppm: maxPpmRaw,
@@ -3952,14 +4044,6 @@ export default function LightningOps() {
                 <input className="input-field mt-2" type="number" min={1} max={24} value={autofeeIntervalHours} onChange={(e) => setAutofeeIntervalHours(e.target.value)} />
               </label>
               <label className="text-sm text-fog/70">
-                {t('lightningOps.autofeeCooldownUp')}
-                <input className="input-field mt-2" type="number" min={1} max={12} value={autofeeCooldownUp} onChange={(e) => setAutofeeCooldownUp(e.target.value)} />
-              </label>
-              <label className="text-sm text-fog/70">
-                {t('lightningOps.autofeeCooldownDown')}
-                <input className="input-field mt-2" type="number" min={2} max={24} value={autofeeCooldownDown} onChange={(e) => setAutofeeCooldownDown(e.target.value)} />
-              </label>
-              <label className="text-sm text-fog/70">
                 {t('lightningOps.autofeeRebalCostMode')}
                 <select className="input-field mt-2" value={autofeeRebalMode} onChange={(e) => setAutofeeRebalMode(e.target.value)}>
                   <option value="blend">{t('lightningOps.autofeeRebalCostModeBlend')}</option>
@@ -3975,6 +4059,98 @@ export default function LightningOps() {
                 {t('lightningOps.autofeeMaxPpm')}
                 <input className="input-field mt-2" type="number" min={1} value={autofeeMaxPpm} onChange={(e) => setAutofeeMaxPpm(e.target.value)} />
               </label>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-ink/40 p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-fog">{t('lightningOps.autofeeMovementSettingsTitle')}</p>
+                  <p className="text-xs text-fog/60">{t('lightningOps.autofeeMovementSettingsSubtitle')}</p>
+                </div>
+                <button
+                  className="btn-secondary text-xs px-3 py-2"
+                  onClick={() => setAutofeeMovementOpen((open) => !open)}
+                >
+                  {autofeeMovementOpen ? t('common.hide') : t('lightningOps.autofeeMovementSettingsButton')}
+                </button>
+              </div>
+              {autofeeMovementOpen && (
+                <>
+                  <p className="text-xs text-fog/60">{t('lightningOps.autofeeMovementSettingsHint')}</p>
+                  <div className="grid gap-4 lg:grid-cols-4">
+                    <label className="text-sm text-fog/70">
+                      {t('lightningOps.autofeeCooldownUp')}
+                      <input className="input-field mt-2" type="number" min={1} max={12} value={autofeeCooldownUp} onChange={(e) => setAutofeeCooldownUp(e.target.value)} />
+                      <p className="mt-1 text-[11px] text-fog/55">
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: `${(autofeeProfileDefaults[autofeeProfile]?.cooldownUp ?? 3)}h` })}
+                      </p>
+                    </label>
+                    <label className="text-sm text-fog/70">
+                      {t('lightningOps.autofeeCooldownDown')}
+                      <input className="input-field mt-2" type="number" min={2} max={24} value={autofeeCooldownDown} onChange={(e) => setAutofeeCooldownDown(e.target.value)} />
+                      <p className="mt-1 text-[11px] text-fog/55">
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: `${(autofeeProfileDefaults[autofeeProfile]?.cooldownDown ?? 4)}h` })}
+                      </p>
+                    </label>
+                    <label className="text-sm text-fog/70">
+                      {t('lightningOps.autofeeStepCapOverride')}
+                      <input className="input-field mt-2" type="number" min={0} max={30} step="0.1" value={autofeeStepCapOverride} onChange={(e) => setAutofeeStepCapOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
+                      <p className="mt-1 text-[11px] text-fog/55">
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: pctText(activeAutofeeMovementDefaults.stepCap, 1) })}
+                      </p>
+                    </label>
+                    <label className="text-sm text-fog/70">
+                      {t('lightningOps.autofeeDiscoveryStepCapDownOverride')}
+                      <input className="input-field mt-2" type="number" min={0} max={40} step="0.1" value={autofeeDiscoveryStepCapDownOverride} onChange={(e) => setAutofeeDiscoveryStepCapDownOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
+                      <p className="mt-1 text-[11px] text-fog/55">
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: pctText(activeAutofeeMovementDefaults.discoveryStepCapDown, 1) })}
+                      </p>
+                    </label>
+                    <label className="text-sm text-fog/70">
+                      {t('lightningOps.autofeeOutrateFloorFactorLowOverride')}
+                      <input className="input-field mt-2" type="number" min={0} max={100} step="1" value={autofeeOutrateFloorFactorLowOverride} onChange={(e) => setAutofeeOutrateFloorFactorLowOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
+                      <p className="mt-1 text-[11px] text-fog/55">
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: pctText(activeAutofeeMovementDefaults.outrateFloorFactorLow, 0) })}
+                      </p>
+                    </label>
+                    <label className="text-sm text-fog/70">
+                      {t('lightningOps.autofeeSoftenMinOutRatioOverride')}
+                      <input className="input-field mt-2" type="number" min={0} max={95} step="1" value={autofeeSoftenMinOutRatioOverride} onChange={(e) => setAutofeeSoftenMinOutRatioOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
+                      <p className="mt-1 text-[11px] text-fog/55">
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: pctText(activeAutofeeMovementDefaults.softenMinOutRatio, 0) })}
+                      </p>
+                    </label>
+                    <label className="text-sm text-fog/70">
+                      {t('lightningOps.autofeeSoftenMaxDropToPegFracOverride')}
+                      <input className="input-field mt-2" type="number" min={0} max={100} step="1" value={autofeeSoftenMaxDropToPegFracOverride} onChange={(e) => setAutofeeSoftenMaxDropToPegFracOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
+                      <p className="mt-1 text-[11px] text-fog/55">
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: pctText(activeAutofeeMovementDefaults.softenMaxDropToPegFrac, 0) })}
+                      </p>
+                    </label>
+                    <label className="text-sm text-fog/70">
+                      {t('lightningOps.autofeeHtlcMinAttemptsOverride')}
+                      <input className="input-field mt-2" type="number" min={0} max={100} step="1" value={autofeeHtlcMinAttemptsOverride} onChange={(e) => setAutofeeHtlcMinAttemptsOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
+                      <p className="mt-1 text-[11px] text-fog/55">
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: String(activeAutofeeMovementDefaults.htlcMinAttempts60m) })}
+                      </p>
+                    </label>
+                    <label className="text-sm text-fog/70">
+                      {t('lightningOps.autofeeHtlcPolicyFailRateOverride')}
+                      <input className="input-field mt-2" type="number" min={0} max={90} step="0.1" value={autofeeHtlcPolicyFailRateOverride} onChange={(e) => setAutofeeHtlcPolicyFailRateOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
+                      <p className="mt-1 text-[11px] text-fog/55">
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: pctText(activeAutofeeMovementDefaults.htlcPolicyFailRate, 1) })}
+                      </p>
+                    </label>
+                    <label className="text-sm text-fog/70">
+                      {t('lightningOps.autofeeHtlcLiquidityFailRateOverride')}
+                      <input className="input-field mt-2" type="number" min={0} max={90} step="0.1" value={autofeeHtlcLiquidityFailRateOverride} onChange={(e) => setAutofeeHtlcLiquidityFailRateOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
+                      <p className="mt-1 text-[11px] text-fog/55">
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: pctText(activeAutofeeMovementDefaults.htlcLiquidityFailRate, 1) })}
+                      </p>
+                    </label>
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="grid gap-4 lg:grid-cols-3">

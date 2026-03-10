@@ -151,51 +151,67 @@ func normalizeHTLCMode(value string) string {
 }
 
 type AutofeeConfig struct {
-	Enabled                bool   `json:"enabled"`
-	Profile                string `json:"profile"`
-	LookbackDays           int    `json:"lookback_days"`
-	RunIntervalSec         int    `json:"run_interval_sec"`
-	CooldownUpSec          int    `json:"cooldown_up_sec"`
-	CooldownDownSec        int    `json:"cooldown_down_sec"`
-	RebalCostMode          string `json:"rebal_cost_mode"`
-	AmbossEnabled          bool   `json:"amboss_enabled"`
-	AmbossTokenSet         bool   `json:"amboss_token_set"`
-	InboundPassiveEnabled  bool   `json:"inbound_passive_enabled"`
-	DiscoveryEnabled       bool   `json:"discovery_enabled"`
-	ExplorerEnabled        bool   `json:"explorer_enabled"`
-	SuperSourceEnabled     bool   `json:"super_source_enabled"`
-	SuperSourceBaseFeeMsat int    `json:"super_source_base_fee_msat"`
-	RevfloorEnabled        bool   `json:"revfloor_enabled"`
-	CircuitBreakerEnabled  bool   `json:"circuit_breaker_enabled"`
-	ExtremeDrainEnabled    bool   `json:"extreme_drain_enabled"`
-	HTLCSignalEnabled      bool   `json:"htlc_signal_enabled"`
-	HTLCMode               string `json:"htlc_mode"`
-	MinPpm                 int    `json:"min_ppm"`
-	MaxPpm                 int    `json:"max_ppm"`
+	Enabled                        bool    `json:"enabled"`
+	Profile                        string  `json:"profile"`
+	LookbackDays                   int     `json:"lookback_days"`
+	RunIntervalSec                 int     `json:"run_interval_sec"`
+	CooldownUpSec                  int     `json:"cooldown_up_sec"`
+	CooldownDownSec                int     `json:"cooldown_down_sec"`
+	StepCapOverride                float64 `json:"step_cap_override"`
+	DiscoveryStepCapDownOverride   float64 `json:"discovery_step_cap_down_override"`
+	OutrateFloorFactorLowOverride  float64 `json:"outrate_floor_factor_low_override"`
+	SoftenMinOutRatioOverride      float64 `json:"soften_min_out_ratio_override"`
+	SoftenMaxDropToPegFracOverride float64 `json:"soften_max_drop_to_peg_frac_override"`
+	HTLCMinAttempts60mOverride     int     `json:"htlc_min_attempts_60m_override"`
+	HTLCPolicyFailRateOverride     float64 `json:"htlc_policy_fail_rate_override"`
+	HTLCLiquidityFailRateOverride  float64 `json:"htlc_liquidity_fail_rate_override"`
+	RebalCostMode                  string  `json:"rebal_cost_mode"`
+	AmbossEnabled                  bool    `json:"amboss_enabled"`
+	AmbossTokenSet                 bool    `json:"amboss_token_set"`
+	InboundPassiveEnabled          bool    `json:"inbound_passive_enabled"`
+	DiscoveryEnabled               bool    `json:"discovery_enabled"`
+	ExplorerEnabled                bool    `json:"explorer_enabled"`
+	SuperSourceEnabled             bool    `json:"super_source_enabled"`
+	SuperSourceBaseFeeMsat         int     `json:"super_source_base_fee_msat"`
+	RevfloorEnabled                bool    `json:"revfloor_enabled"`
+	CircuitBreakerEnabled          bool    `json:"circuit_breaker_enabled"`
+	ExtremeDrainEnabled            bool    `json:"extreme_drain_enabled"`
+	HTLCSignalEnabled              bool    `json:"htlc_signal_enabled"`
+	HTLCMode                       string  `json:"htlc_mode"`
+	MinPpm                         int     `json:"min_ppm"`
+	MaxPpm                         int     `json:"max_ppm"`
 }
 
 type AutofeeConfigUpdate struct {
-	Enabled                *bool   `json:"enabled,omitempty"`
-	Profile                *string `json:"profile,omitempty"`
-	LookbackDays           *int    `json:"lookback_days,omitempty"`
-	RunIntervalSec         *int    `json:"run_interval_sec,omitempty"`
-	CooldownUpSec          *int    `json:"cooldown_up_sec,omitempty"`
-	CooldownDownSec        *int    `json:"cooldown_down_sec,omitempty"`
-	RebalCostMode          *string `json:"rebal_cost_mode,omitempty"`
-	AmbossEnabled          *bool   `json:"amboss_enabled,omitempty"`
-	AmbossToken            *string `json:"amboss_token,omitempty"`
-	InboundPassiveEnabled  *bool   `json:"inbound_passive_enabled,omitempty"`
-	DiscoveryEnabled       *bool   `json:"discovery_enabled,omitempty"`
-	ExplorerEnabled        *bool   `json:"explorer_enabled,omitempty"`
-	SuperSourceEnabled     *bool   `json:"super_source_enabled,omitempty"`
-	SuperSourceBaseFeeMsat *int    `json:"super_source_base_fee_msat,omitempty"`
-	RevfloorEnabled        *bool   `json:"revfloor_enabled,omitempty"`
-	CircuitBreakerEnabled  *bool   `json:"circuit_breaker_enabled,omitempty"`
-	ExtremeDrainEnabled    *bool   `json:"extreme_drain_enabled,omitempty"`
-	HTLCSignalEnabled      *bool   `json:"htlc_signal_enabled,omitempty"`
-	HTLCMode               *string `json:"htlc_mode,omitempty"`
-	MinPpm                 *int    `json:"min_ppm,omitempty"`
-	MaxPpm                 *int    `json:"max_ppm,omitempty"`
+	Enabled                        *bool    `json:"enabled,omitempty"`
+	Profile                        *string  `json:"profile,omitempty"`
+	LookbackDays                   *int     `json:"lookback_days,omitempty"`
+	RunIntervalSec                 *int     `json:"run_interval_sec,omitempty"`
+	CooldownUpSec                  *int     `json:"cooldown_up_sec,omitempty"`
+	CooldownDownSec                *int     `json:"cooldown_down_sec,omitempty"`
+	StepCapOverride                *float64 `json:"step_cap_override,omitempty"`
+	DiscoveryStepCapDownOverride   *float64 `json:"discovery_step_cap_down_override,omitempty"`
+	OutrateFloorFactorLowOverride  *float64 `json:"outrate_floor_factor_low_override,omitempty"`
+	SoftenMinOutRatioOverride      *float64 `json:"soften_min_out_ratio_override,omitempty"`
+	SoftenMaxDropToPegFracOverride *float64 `json:"soften_max_drop_to_peg_frac_override,omitempty"`
+	HTLCMinAttempts60mOverride     *int     `json:"htlc_min_attempts_60m_override,omitempty"`
+	HTLCPolicyFailRateOverride     *float64 `json:"htlc_policy_fail_rate_override,omitempty"`
+	HTLCLiquidityFailRateOverride  *float64 `json:"htlc_liquidity_fail_rate_override,omitempty"`
+	RebalCostMode                  *string  `json:"rebal_cost_mode,omitempty"`
+	AmbossEnabled                  *bool    `json:"amboss_enabled,omitempty"`
+	AmbossToken                    *string  `json:"amboss_token,omitempty"`
+	InboundPassiveEnabled          *bool    `json:"inbound_passive_enabled,omitempty"`
+	DiscoveryEnabled               *bool    `json:"discovery_enabled,omitempty"`
+	ExplorerEnabled                *bool    `json:"explorer_enabled,omitempty"`
+	SuperSourceEnabled             *bool    `json:"super_source_enabled,omitempty"`
+	SuperSourceBaseFeeMsat         *int     `json:"super_source_base_fee_msat,omitempty"`
+	RevfloorEnabled                *bool    `json:"revfloor_enabled,omitempty"`
+	CircuitBreakerEnabled          *bool    `json:"circuit_breaker_enabled,omitempty"`
+	ExtremeDrainEnabled            *bool    `json:"extreme_drain_enabled,omitempty"`
+	HTLCSignalEnabled              *bool    `json:"htlc_signal_enabled,omitempty"`
+	HTLCMode                       *string  `json:"htlc_mode,omitempty"`
+	MinPpm                         *int     `json:"min_ppm,omitempty"`
+	MaxPpm                         *int     `json:"max_ppm,omitempty"`
 }
 
 type AutofeeStatus struct {
@@ -788,6 +804,14 @@ create table if not exists autofee_config (
   run_interval_sec integer not null default 14400,
   cooldown_up_sec integer not null default 10800,
   cooldown_down_sec integer not null default 14400,
+  step_cap_override double precision not null default 0,
+  discovery_step_cap_down_override double precision not null default 0,
+  outrate_floor_factor_low_override double precision not null default 0,
+  soften_min_out_ratio_override double precision not null default 0,
+  soften_max_drop_to_peg_frac_override double precision not null default 0,
+  htlc_min_attempts_60m_override integer not null default 0,
+  htlc_policy_fail_rate_override double precision not null default 0,
+  htlc_liquidity_fail_rate_override double precision not null default 0,
   rebal_cost_mode text not null default 'blend',
   amboss_enabled boolean not null default false,
   amboss_token text,
@@ -859,6 +883,14 @@ alter table autofee_config add column if not exists extreme_drain_enabled boolea
 alter table autofee_config add column if not exists htlc_signal_enabled boolean not null default true;
 alter table autofee_config add column if not exists htlc_mode text not null default 'full';
 alter table autofee_config add column if not exists rebal_cost_mode text not null default 'blend';
+alter table autofee_config add column if not exists step_cap_override double precision not null default 0;
+alter table autofee_config add column if not exists discovery_step_cap_down_override double precision not null default 0;
+alter table autofee_config add column if not exists outrate_floor_factor_low_override double precision not null default 0;
+alter table autofee_config add column if not exists soften_min_out_ratio_override double precision not null default 0;
+alter table autofee_config add column if not exists soften_max_drop_to_peg_frac_override double precision not null default 0;
+alter table autofee_config add column if not exists htlc_min_attempts_60m_override integer not null default 0;
+alter table autofee_config add column if not exists htlc_policy_fail_rate_override double precision not null default 0;
+alter table autofee_config add column if not exists htlc_liquidity_fail_rate_override double precision not null default 0;
 alter table autofee_state add column if not exists ss_active boolean;
 alter table autofee_state add column if not exists ss_ok_since timestamptz;
 alter table autofee_state add column if not exists ss_bad_since timestamptz;
@@ -914,6 +946,9 @@ func (s *AutofeeService) GetConfig(ctx context.Context) (AutofeeConfig, error) {
 	var ambossToken pgtype.Text
 	err := s.db.QueryRow(ctx, `
 select enabled, profile, lookback_days, run_interval_sec, cooldown_up_sec, cooldown_down_sec,
+  step_cap_override, discovery_step_cap_down_override, outrate_floor_factor_low_override,
+  soften_min_out_ratio_override, soften_max_drop_to_peg_frac_override, htlc_min_attempts_60m_override,
+  htlc_policy_fail_rate_override, htlc_liquidity_fail_rate_override,
   rebal_cost_mode, amboss_enabled, amboss_token, inbound_passive_enabled, discovery_enabled, explorer_enabled,
   super_source_enabled, super_source_base_fee_msat, revfloor_enabled, circuit_breaker_enabled, extreme_drain_enabled,
   htlc_signal_enabled, htlc_mode, min_ppm, max_ppm
@@ -925,6 +960,14 @@ from autofee_config where id=$1
 		&cfg.RunIntervalSec,
 		&cfg.CooldownUpSec,
 		&cfg.CooldownDownSec,
+		&cfg.StepCapOverride,
+		&cfg.DiscoveryStepCapDownOverride,
+		&cfg.OutrateFloorFactorLowOverride,
+		&cfg.SoftenMinOutRatioOverride,
+		&cfg.SoftenMaxDropToPegFracOverride,
+		&cfg.HTLCMinAttempts60mOverride,
+		&cfg.HTLCPolicyFailRateOverride,
+		&cfg.HTLCLiquidityFailRateOverride,
 		&cfg.RebalCostMode,
 		&cfg.AmbossEnabled,
 		&ambossToken,
@@ -995,6 +1038,30 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 	}
 	if req.CooldownDownSec != nil {
 		current.CooldownDownSec = *req.CooldownDownSec
+	}
+	if req.StepCapOverride != nil {
+		current.StepCapOverride = *req.StepCapOverride
+	}
+	if req.DiscoveryStepCapDownOverride != nil {
+		current.DiscoveryStepCapDownOverride = *req.DiscoveryStepCapDownOverride
+	}
+	if req.OutrateFloorFactorLowOverride != nil {
+		current.OutrateFloorFactorLowOverride = *req.OutrateFloorFactorLowOverride
+	}
+	if req.SoftenMinOutRatioOverride != nil {
+		current.SoftenMinOutRatioOverride = *req.SoftenMinOutRatioOverride
+	}
+	if req.SoftenMaxDropToPegFracOverride != nil {
+		current.SoftenMaxDropToPegFracOverride = *req.SoftenMaxDropToPegFracOverride
+	}
+	if req.HTLCMinAttempts60mOverride != nil {
+		current.HTLCMinAttempts60mOverride = *req.HTLCMinAttempts60mOverride
+	}
+	if req.HTLCPolicyFailRateOverride != nil {
+		current.HTLCPolicyFailRateOverride = *req.HTLCPolicyFailRateOverride
+	}
+	if req.HTLCLiquidityFailRateOverride != nil {
+		current.HTLCLiquidityFailRateOverride = *req.HTLCLiquidityFailRateOverride
 	}
 	if req.RebalCostMode != nil {
 		current.RebalCostMode = normalizeRebalCostMode(*req.RebalCostMode)
@@ -1069,6 +1136,46 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 	if current.CooldownDownSec < 7200 {
 		current.CooldownDownSec = 7200
 	}
+	if current.StepCapOverride < 0 {
+		current.StepCapOverride = 0
+	} else if current.StepCapOverride > 0 {
+		current.StepCapOverride = clampFloat(current.StepCapOverride, 0.01, 0.30)
+	}
+	if current.DiscoveryStepCapDownOverride < 0 {
+		current.DiscoveryStepCapDownOverride = 0
+	} else if current.DiscoveryStepCapDownOverride > 0 {
+		current.DiscoveryStepCapDownOverride = clampFloat(current.DiscoveryStepCapDownOverride, 0.01, 0.40)
+	}
+	if current.OutrateFloorFactorLowOverride < 0 {
+		current.OutrateFloorFactorLowOverride = 0
+	} else if current.OutrateFloorFactorLowOverride > 0 {
+		current.OutrateFloorFactorLowOverride = clampFloat(current.OutrateFloorFactorLowOverride, 0.50, 1.00)
+	}
+	if current.SoftenMinOutRatioOverride < 0 {
+		current.SoftenMinOutRatioOverride = 0
+	} else if current.SoftenMinOutRatioOverride > 0 {
+		current.SoftenMinOutRatioOverride = clampFloat(current.SoftenMinOutRatioOverride, 0.05, 0.95)
+	}
+	if current.SoftenMaxDropToPegFracOverride < 0 {
+		current.SoftenMaxDropToPegFracOverride = 0
+	} else if current.SoftenMaxDropToPegFracOverride > 0 {
+		current.SoftenMaxDropToPegFracOverride = clampFloat(current.SoftenMaxDropToPegFracOverride, 0.50, 1.00)
+	}
+	if current.HTLCMinAttempts60mOverride < 0 {
+		current.HTLCMinAttempts60mOverride = 0
+	} else if current.HTLCMinAttempts60mOverride > 0 {
+		current.HTLCMinAttempts60mOverride = clampInt(current.HTLCMinAttempts60mOverride, 1, 100)
+	}
+	if current.HTLCPolicyFailRateOverride < 0 {
+		current.HTLCPolicyFailRateOverride = 0
+	} else if current.HTLCPolicyFailRateOverride > 0 {
+		current.HTLCPolicyFailRateOverride = clampFloat(current.HTLCPolicyFailRateOverride, 0.05, 0.90)
+	}
+	if current.HTLCLiquidityFailRateOverride < 0 {
+		current.HTLCLiquidityFailRateOverride = 0
+	} else if current.HTLCLiquidityFailRateOverride > 0 {
+		current.HTLCLiquidityFailRateOverride = clampFloat(current.HTLCLiquidityFailRateOverride, 0.05, 0.90)
+	}
 
 	var ambossToken string
 	if req.AmbossToken != nil {
@@ -1089,21 +1196,29 @@ set enabled=$2,
   run_interval_sec=$5,
   cooldown_up_sec=$6,
   cooldown_down_sec=$7,
-  rebal_cost_mode=$8,
-  amboss_enabled=$9,
-  amboss_token=$10,
-  inbound_passive_enabled=$11,
-  discovery_enabled=$12,
-  explorer_enabled=$13,
-  super_source_enabled=$14,
-  super_source_base_fee_msat=$15,
-  revfloor_enabled=$16,
-  circuit_breaker_enabled=$17,
-  extreme_drain_enabled=$18,
-  htlc_signal_enabled=$19,
-  htlc_mode=$20,
-  min_ppm=$21,
-  max_ppm=$22,
+  step_cap_override=$8,
+  discovery_step_cap_down_override=$9,
+  outrate_floor_factor_low_override=$10,
+  soften_min_out_ratio_override=$11,
+  soften_max_drop_to_peg_frac_override=$12,
+  htlc_min_attempts_60m_override=$13,
+  htlc_policy_fail_rate_override=$14,
+  htlc_liquidity_fail_rate_override=$15,
+  rebal_cost_mode=$16,
+  amboss_enabled=$17,
+  amboss_token=$18,
+  inbound_passive_enabled=$19,
+  discovery_enabled=$20,
+  explorer_enabled=$21,
+  super_source_enabled=$22,
+  super_source_base_fee_msat=$23,
+  revfloor_enabled=$24,
+  circuit_breaker_enabled=$25,
+  extreme_drain_enabled=$26,
+  htlc_signal_enabled=$27,
+  htlc_mode=$28,
+  min_ppm=$29,
+  max_ppm=$30,
   updated_at=now()
 where id=$1
 `, autofeeConfigID,
@@ -1113,6 +1228,14 @@ where id=$1
 		current.RunIntervalSec,
 		current.CooldownUpSec,
 		current.CooldownDownSec,
+		current.StepCapOverride,
+		current.DiscoveryStepCapDownOverride,
+		current.OutrateFloorFactorLowOverride,
+		current.SoftenMinOutRatioOverride,
+		current.SoftenMaxDropToPegFracOverride,
+		current.HTLCMinAttempts60mOverride,
+		current.HTLCPolicyFailRateOverride,
+		current.HTLCLiquidityFailRateOverride,
 		current.RebalCostMode,
 		current.AmbossEnabled,
 		ambossToken,
@@ -1614,6 +1737,30 @@ func newAutofeeEngine(svc *AutofeeService, cfg AutofeeConfig) *autofeeEngine {
 	p := autofeeProfiles[cfg.Profile]
 	if p.Name == "" {
 		p = autofeeProfiles["moderate"]
+	}
+	if cfg.StepCapOverride > 0 {
+		p.StepCap = clampFloat(cfg.StepCapOverride, 0.01, 0.30)
+	}
+	if cfg.DiscoveryStepCapDownOverride > 0 {
+		p.DiscoveryStepCapDown = clampFloat(cfg.DiscoveryStepCapDownOverride, 0.01, 0.40)
+	}
+	if cfg.OutrateFloorFactorLowOverride > 0 {
+		p.OutrateFloorFactorLow = clampFloat(cfg.OutrateFloorFactorLowOverride, 0.50, 1.00)
+	}
+	if cfg.SoftenMinOutRatioOverride > 0 {
+		p.SoftenMinOutRatio = clampFloat(cfg.SoftenMinOutRatioOverride, 0.05, 0.95)
+	}
+	if cfg.SoftenMaxDropToPegFracOverride > 0 {
+		p.SoftenMaxDropToPegFrac = clampFloat(cfg.SoftenMaxDropToPegFracOverride, 0.50, 1.00)
+	}
+	if cfg.HTLCMinAttempts60mOverride > 0 {
+		p.HTLCMinAttempts60m = clampInt(cfg.HTLCMinAttempts60mOverride, 1, 100)
+	}
+	if cfg.HTLCPolicyFailRateOverride > 0 {
+		p.HTLCPolicyFailRate = clampFloat(cfg.HTLCPolicyFailRateOverride, 0.05, 0.90)
+	}
+	if cfg.HTLCLiquidityFailRateOverride > 0 {
+		p.HTLCLiquidityFailRate = clampFloat(cfg.HTLCLiquidityFailRateOverride, 0.05, 0.90)
 	}
 	ss := superSourceThresholdsByProfile[p.Name]
 	if ss.OutRatioMin == 0 {

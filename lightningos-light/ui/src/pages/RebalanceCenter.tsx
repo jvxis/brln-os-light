@@ -103,6 +103,7 @@ type RebalanceOverview = {
   mpp_shadow_success_jobs_24h?: number
   mpp_shadow_failed_jobs_24h?: number
   mpp_shadow_partial_jobs_24h?: number
+  mpp_shadow_floor_blocked_sources_24h?: number
   mpp_shadow_avg_planned_shards_24h?: number
   mpp_shadow_avg_actual_attempts_24h?: number
 }
@@ -1224,6 +1225,9 @@ export default function RebalanceCenter() {
                   </p>
                   <p className="text-xs text-fog/50">
                     {t('rebalanceCenter.overview.mppPartialJobs24h', { value: formatter.format(overview.mpp_shadow_partial_jobs_24h ?? 0) })}
+                  </p>
+                  <p className="text-xs text-fog/50">
+                    {t('rebalanceCenter.overview.mppFloorBlockedSources24h', { value: formatter.format(overview.mpp_shadow_floor_blocked_sources_24h ?? 0) })}
                   </p>
                   <p className="text-xs text-fog/50">
                     {t('rebalanceCenter.overview.mppPlannedSat24h', { value: formatSats(overview.mpp_shadow_planned_sat_24h ?? 0) })}

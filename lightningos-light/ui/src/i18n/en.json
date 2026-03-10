@@ -1848,6 +1848,7 @@
         "mppSuccessJobs24h": "Jobs with success: {{value}}",
         "mppFailedJobs24h": "Failed jobs: {{value}}",
         "mppPartialJobs24h": "Partial jobs: {{value}}",
+        "mppFloorBlockedSources24h": "Sources blocked by dynamic floor: {{value}}",
         "mppPlannedSat24h": "Planned: {{value}}",
         "mppActualSentSat24h": "Executed: {{value}}"
     },

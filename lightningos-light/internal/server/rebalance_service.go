@@ -135,6 +135,7 @@ type RebalanceOverview struct {
 	MppShadowSuccessJobs24h       int64                 `json:"mpp_shadow_success_jobs_24h"`
 	MppShadowFailedJobs24h        int64                 `json:"mpp_shadow_failed_jobs_24h"`
 	MppShadowPartialJobs24h       int64                 `json:"mpp_shadow_partial_jobs_24h"`
+	MppShadowFloorBlocked24h      int64                 `json:"mpp_shadow_floor_blocked_sources_24h"`
 	MppShadowAvgPlannedShards24h  float64               `json:"mpp_shadow_avg_planned_shards_24h"`
 	MppShadowAvgActualAttempts24h float64               `json:"mpp_shadow_avg_actual_attempts_24h"`
 }
@@ -294,6 +295,7 @@ type mppShadowTelemetry24h struct {
 	SuccessJobs       int64
 	FailedJobs        int64
 	PartialJobs       int64
+	FloorBlocked      int64
 	AvgPlannedShards  float64
 	AvgActualAttempts float64
 }
@@ -1427,12 +1429,16 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 		s.mu.Unlock()
 	}()
 	shadowRecorded := false
+	floorBlockedSources := map[uint64]struct{}{}
 	defer func() {
 		if !shadowRecorded {
 			return
 		}
 		shadowCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		if err := s.updateMppShadowFloorBlockedSources(shadowCtx, jobID, int64(len(floorBlockedSources))); err != nil && s.logger != nil {
+			s.logger.Printf("rebalance mpp shadow floor telemetry update failed: job=%d err=%v", jobID, err)
+		}
 		if err := s.finalizeMppShadowPlan(shadowCtx, jobID); err != nil && s.logger != nil {
 			s.logger.Printf("rebalance mpp shadow finalize failed: job=%d err=%v", jobID, err)
 		}
@@ -1561,6 +1567,69 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 		return
 	}
 
+	sourceFloorPct := feeCfg.SourceMinLocalPct
+	if sourceFloorPct <= 0 || sourceFloorPct > 100 {
+		sourceFloorPct = rebalanceDefaultTargetOutboundPct
+	}
+	sourceBaseCap := make(map[uint64]int64, len(sources))
+	sourceAvailable := make(map[uint64]int64, len(sources))
+	for _, source := range sources {
+		baseCap := source.MaxSourceSat
+		if baseCap < 0 {
+			baseCap = 0
+		}
+		sourceBaseCap[source.ChannelID] = baseCap
+		sourceAvailable[source.ChannelID] = baseCap
+	}
+	lastSourceRefreshAt := time.Time{}
+	refreshSourceAvailability := func(force bool) {
+		if s.lnd == nil {
+			return
+		}
+		if !force && !lastSourceRefreshAt.IsZero() && time.Since(lastSourceRefreshAt) < 5*time.Second {
+			return
+		}
+		refreshCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		defer cancel()
+		channelsNow, err := s.lnd.ListChannels(refreshCtx)
+		if err != nil {
+			return
+		}
+		byID := make(map[uint64]lndclient.ChannelInfo, len(channelsNow))
+		for _, ch := range channelsNow {
+			byID[ch.ChannelID] = ch
+		}
+		for _, source := range sources {
+			prevCap := sourceAvailable[source.ChannelID]
+			baseCap := sourceBaseCap[source.ChannelID]
+			availableCap := baseCap
+			blockedByDynamicFloor := false
+			ch, ok := byID[source.ChannelID]
+			if !ok || !ch.Active {
+				availableCap = 0
+			} else {
+				dynamicCap := int64(float64(ch.LocalBalanceSat) - (float64(ch.CapacitySat) * (sourceFloorPct / 100)))
+				if dynamicCap < 0 {
+					dynamicCap = 0
+				}
+				if baseCap > 0 && dynamicCap <= 0 {
+					blockedByDynamicFloor = true
+				}
+				if dynamicCap < availableCap {
+					availableCap = dynamicCap
+				}
+			}
+			if availableCap < 0 {
+				availableCap = 0
+			}
+			sourceAvailable[source.ChannelID] = availableCap
+			if blockedByDynamicFloor && prevCap > 0 {
+				floorBlockedSources[source.ChannelID] = struct{}{}
+			}
+		}
+		lastSourceRefreshAt = time.Now()
+	}
+
 	pairStats := s.loadPairStatsForTarget(ctx, targetChannelID)
 
 	sort.Slice(sources, func(i, j int) bool {
@@ -1610,6 +1679,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 		}
 		return sources[i].MaxSourceSat > sources[j].MaxSourceSat
 	})
+	refreshSourceAvailability(true)
 
 	targetPolicy := lndclient.ChannelPolicySnapshot{
 		FeeRatePpm:  targetSnapshot.OutgoingFeePpm,
@@ -1633,6 +1703,9 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 	warmFeePpm := int64(0)
 	warmAt := time.Time{}
 	for _, source := range sources {
+		if sourceAvailable[source.ChannelID] <= 0 {
+			continue
+		}
 		stat, ok := pairStats[source.ChannelID]
 		if !ok {
 			continue
@@ -2176,6 +2249,9 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			return false, true, 0, false, nil, 0
 		}
 		if amountTry <= 0 {
+			return false, false, 0, false, nil, 0
+		}
+		if feeCfg.MinSplitEnabled && minExecuteSat > 0 && amountTry < minExecuteSat {
 			return false, false, 0, false, nil, 0
 		}
 		if baseRoute == nil {
@@ -2745,11 +2821,13 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 		if remaining <= 0 {
 			return true, false
 		}
+		refreshSourceAvailability(false)
 
 		allowedSources := make([]RebalanceChannel, 0, len(sources))
 		sourceByID := make(map[uint64]RebalanceChannel, len(sources))
 		for _, source := range sources {
-			if source.MaxSourceSat <= 0 {
+			availableCap := sourceAvailable[source.ChannelID]
+			if availableCap <= 0 {
 				continue
 			}
 			if jobSource == "auto" {
@@ -2759,8 +2837,10 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 					}
 				}
 			}
-			allowedSources = append(allowedSources, source)
-			sourceByID[source.ChannelID] = source
+			cappedSource := source
+			cappedSource.MaxSourceSat = availableCap
+			allowedSources = append(allowedSources, cappedSource)
+			sourceByID[source.ChannelID] = cappedSource
 		}
 		if len(allowedSources) == 0 {
 			return false, false
@@ -2897,12 +2977,14 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 				sourceCap := sourceSuccessRemaining[res.Source.ChannelID]
 				if applySuccess(attemptAmount, res.RouteMaxSat, &routeCap, &sourceCap) {
 					sourceSuccessRemaining[res.Source.ChannelID] = sourceCap
+					sourceAvailable[res.Source.ChannelID] = sourceCap
 					if s.logger != nil {
 						s.logger.Printf("rebalance mpp execute: job=%d completed via parallel prepass shards=%d/%d", jobID, succeededShards, attemptedShards)
 					}
 					return true, false
 				}
 				sourceSuccessRemaining[res.Source.ChannelID] = sourceCap
+				sourceAvailable[res.Source.ChannelID] = sourceCap
 				continue
 			}
 
@@ -2948,6 +3030,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			return
 		}
 
+		refreshSourceAvailability(false)
 		remainingBefore := remaining
 
 		for _, source := range sources {
@@ -2969,7 +3052,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 				}
 			}
 
-			maxFromSource := source.MaxSourceSat
+			maxFromSource := sourceAvailable[source.ChannelID]
 			if maxFromSource <= 0 {
 				continue
 			}
@@ -3019,10 +3102,12 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 					if success {
 						routeCap := int64(0)
 						if applySuccess(amountSent, routeMax, &routeCap, &sourceRemaining) {
+							sourceAvailable[source.ChannelID] = sourceRemaining
 							return
 						}
 						if usedRoute != nil {
 							finished, fatal := rapidRebalance(source, usedRoute, amountSent, routeCap, &sourceRemaining)
+							sourceAvailable[source.ChannelID] = sourceRemaining
 							if fatal {
 								return
 							}
@@ -3030,6 +3115,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 								return
 							}
 						}
+						sourceAvailable[source.ChannelID] = sourceRemaining
 						continue
 					}
 				}
@@ -3085,10 +3171,12 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 				}
 				routeCap := int64(0)
 				if applySuccess(amountSent, routeMax, &routeCap, &sourceRemaining) {
+					sourceAvailable[source.ChannelID] = sourceRemaining
 					return
 				}
 				if usedRoute != nil {
 					finished, fatal := rapidRebalance(source, usedRoute, amountSent, routeCap, &sourceRemaining)
+					sourceAvailable[source.ChannelID] = sourceRemaining
 					if fatal {
 						return
 					}
@@ -3096,11 +3184,14 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 						return
 					}
 				}
+				sourceAvailable[source.ChannelID] = sourceRemaining
 				break
 			}
 			if sourceTimedOut {
+				sourceAvailable[source.ChannelID] = sourceRemaining
 				continue
 			}
+			sourceAvailable[source.ChannelID] = sourceRemaining
 		}
 
 		if remaining <= 0 {
@@ -4328,8 +4419,12 @@ create table if not exists rebalance_mpp_shadow (
   actual_success_attempts integer not null default 0,
   actual_sent_sat bigint not null default 0,
   actual_fee_sat bigint not null default 0,
-  actual_any_success boolean not null default false
+  actual_any_success boolean not null default false,
+  actual_floor_blocked_sources integer not null default 0
 );
+
+alter table if exists rebalance_mpp_shadow
+  add column if not exists actual_floor_blocked_sources integer not null default 0;
 
 create table if not exists rebalance_pair_stats (
   source_channel_id bigint not null,
@@ -4998,6 +5093,22 @@ on conflict (job_id) do update set
 	return err
 }
 
+func (s *RebalanceService) updateMppShadowFloorBlockedSources(ctx context.Context, jobID int64, blockedSources int64) error {
+	if s.db == nil || jobID <= 0 {
+		return nil
+	}
+	if blockedSources < 0 {
+		blockedSources = 0
+	}
+	_, err := s.db.Exec(ctx, `
+update rebalance_mpp_shadow
+set actual_floor_blocked_sources=$2,
+  updated_at=now()
+where job_id=$1
+`, jobID, blockedSources)
+	return err
+}
+
 func (s *RebalanceService) finalizeMppShadowPlan(ctx context.Context, jobID int64) error {
 	if s.db == nil || jobID <= 0 {
 		return nil
@@ -5056,6 +5167,7 @@ select
   coalesce(sum(case when actual_any_success then 1 else 0 end), 0) as success_jobs,
   coalesce(sum(case when actual_status='failed' then 1 else 0 end), 0) as failed_jobs,
   coalesce(sum(case when actual_status='partial' then 1 else 0 end), 0) as partial_jobs,
+  coalesce(sum(actual_floor_blocked_sources), 0) as floor_blocked_sources,
   coalesce(avg(case when planned_shards > 0 then planned_shards::double precision else null end), 0) as avg_planned_shards,
   coalesce(avg(case when actual_attempts > 0 then actual_attempts::double precision else null end), 0) as avg_actual_attempts
 from rebalance_mpp_shadow
@@ -5069,6 +5181,7 @@ where created_at >= now() - interval '24 hours'
 		&metrics.SuccessJobs,
 		&metrics.FailedJobs,
 		&metrics.PartialJobs,
+		&metrics.FloorBlocked,
 		&metrics.AvgPlannedShards,
 		&metrics.AvgActualAttempts,
 	)
@@ -5357,6 +5470,7 @@ where report_date >= current_date - interval '6 days'
 		MppShadowSuccessJobs24h:       mppShadowTelemetry.SuccessJobs,
 		MppShadowFailedJobs24h:        mppShadowTelemetry.FailedJobs,
 		MppShadowPartialJobs24h:       mppShadowTelemetry.PartialJobs,
+		MppShadowFloorBlocked24h:      mppShadowTelemetry.FloorBlocked,
 		MppShadowAvgPlannedShards24h:  mppShadowTelemetry.AvgPlannedShards,
 		MppShadowAvgActualAttempts24h: mppShadowTelemetry.AvgActualAttempts,
 	}

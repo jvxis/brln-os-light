@@ -159,6 +159,7 @@ type AutofeeConfig struct {
 	CooldownDownSec                int     `json:"cooldown_down_sec"`
 	StepCapOverride                float64 `json:"step_cap_override"`
 	DiscoveryStepCapDownOverride   float64 `json:"discovery_step_cap_down_override"`
+	StallFloorRelaxGapFracOverride float64 `json:"stall_floor_relax_gap_frac_override"`
 	OutrateFloorFactorLowOverride  float64 `json:"outrate_floor_factor_low_override"`
 	SoftenMinOutRatioOverride      float64 `json:"soften_min_out_ratio_override"`
 	SoftenMaxDropToPegFracOverride float64 `json:"soften_max_drop_to_peg_frac_override"`
@@ -191,6 +192,7 @@ type AutofeeConfigUpdate struct {
 	CooldownDownSec                *int     `json:"cooldown_down_sec,omitempty"`
 	StepCapOverride                *float64 `json:"step_cap_override,omitempty"`
 	DiscoveryStepCapDownOverride   *float64 `json:"discovery_step_cap_down_override,omitempty"`
+	StallFloorRelaxGapFracOverride *float64 `json:"stall_floor_relax_gap_frac_override,omitempty"`
 	OutrateFloorFactorLowOverride  *float64 `json:"outrate_floor_factor_low_override,omitempty"`
 	SoftenMinOutRatioOverride      *float64 `json:"soften_min_out_ratio_override,omitempty"`
 	SoftenMaxDropToPegFracOverride *float64 `json:"soften_max_drop_to_peg_frac_override,omitempty"`
@@ -346,6 +348,7 @@ type autofeeProfile struct {
 	CooldownUpSec                  int
 	CooldownDownSec                int
 	DiscoveryStepCapDown           float64
+	StallFloorRelaxGapFrac         float64
 	SeedGuardMaxJump               float64
 	OutratePegGraceHours           int
 	ProfitDownMarginMin            int
@@ -435,6 +438,7 @@ var autofeeProfiles = map[string]autofeeProfile{
 		CooldownUpSec:                  6 * 3600,
 		CooldownDownSec:                8 * 3600,
 		DiscoveryStepCapDown:           0.10,
+		StallFloorRelaxGapFrac:         stallFloorRelaxGapFrac,
 		SeedGuardMaxJump:               0.30,
 		OutratePegGraceHours:           24,
 		ProfitDownMarginMin:            20,
@@ -513,6 +517,7 @@ var autofeeProfiles = map[string]autofeeProfile{
 		CooldownUpSec:                  3 * 3600,
 		CooldownDownSec:                4 * 3600,
 		DiscoveryStepCapDown:           0.15,
+		StallFloorRelaxGapFrac:         stallFloorRelaxGapFrac,
 		SeedGuardMaxJump:               0.50,
 		OutratePegGraceHours:           16,
 		ProfitDownMarginMin:            10,
@@ -591,6 +596,7 @@ var autofeeProfiles = map[string]autofeeProfile{
 		CooldownUpSec:                  1 * 3600,
 		CooldownDownSec:                2 * 3600,
 		DiscoveryStepCapDown:           0.20,
+		StallFloorRelaxGapFrac:         stallFloorRelaxGapFrac,
 		SeedGuardMaxJump:               0.70,
 		OutratePegGraceHours:           8,
 		ProfitDownMarginMin:            5,
@@ -806,6 +812,7 @@ create table if not exists autofee_config (
   cooldown_down_sec integer not null default 14400,
   step_cap_override double precision not null default 0,
   discovery_step_cap_down_override double precision not null default 0,
+  stall_floor_relax_gap_frac_override double precision not null default 0,
   outrate_floor_factor_low_override double precision not null default 0,
   soften_min_out_ratio_override double precision not null default 0,
   soften_max_drop_to_peg_frac_override double precision not null default 0,
@@ -885,6 +892,7 @@ alter table autofee_config add column if not exists htlc_mode text not null defa
 alter table autofee_config add column if not exists rebal_cost_mode text not null default 'blend';
 alter table autofee_config add column if not exists step_cap_override double precision not null default 0;
 alter table autofee_config add column if not exists discovery_step_cap_down_override double precision not null default 0;
+alter table autofee_config add column if not exists stall_floor_relax_gap_frac_override double precision not null default 0;
 alter table autofee_config add column if not exists outrate_floor_factor_low_override double precision not null default 0;
 alter table autofee_config add column if not exists soften_min_out_ratio_override double precision not null default 0;
 alter table autofee_config add column if not exists soften_max_drop_to_peg_frac_override double precision not null default 0;
@@ -946,7 +954,7 @@ func (s *AutofeeService) GetConfig(ctx context.Context) (AutofeeConfig, error) {
 	var ambossToken pgtype.Text
 	err := s.db.QueryRow(ctx, `
 select enabled, profile, lookback_days, run_interval_sec, cooldown_up_sec, cooldown_down_sec,
-  step_cap_override, discovery_step_cap_down_override, outrate_floor_factor_low_override,
+  step_cap_override, discovery_step_cap_down_override, stall_floor_relax_gap_frac_override, outrate_floor_factor_low_override,
   soften_min_out_ratio_override, soften_max_drop_to_peg_frac_override, htlc_min_attempts_60m_override,
   htlc_policy_fail_rate_override, htlc_liquidity_fail_rate_override,
   rebal_cost_mode, amboss_enabled, amboss_token, inbound_passive_enabled, discovery_enabled, explorer_enabled,
@@ -962,6 +970,7 @@ from autofee_config where id=$1
 		&cfg.CooldownDownSec,
 		&cfg.StepCapOverride,
 		&cfg.DiscoveryStepCapDownOverride,
+		&cfg.StallFloorRelaxGapFracOverride,
 		&cfg.OutrateFloorFactorLowOverride,
 		&cfg.SoftenMinOutRatioOverride,
 		&cfg.SoftenMaxDropToPegFracOverride,
@@ -1044,6 +1053,9 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 	}
 	if req.DiscoveryStepCapDownOverride != nil {
 		current.DiscoveryStepCapDownOverride = *req.DiscoveryStepCapDownOverride
+	}
+	if req.StallFloorRelaxGapFracOverride != nil {
+		current.StallFloorRelaxGapFracOverride = *req.StallFloorRelaxGapFracOverride
 	}
 	if req.OutrateFloorFactorLowOverride != nil {
 		current.OutrateFloorFactorLowOverride = *req.OutrateFloorFactorLowOverride
@@ -1146,6 +1158,11 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 	} else if current.DiscoveryStepCapDownOverride > 0 {
 		current.DiscoveryStepCapDownOverride = clampFloat(current.DiscoveryStepCapDownOverride, 0.01, 0.40)
 	}
+	if current.StallFloorRelaxGapFracOverride < 0 {
+		current.StallFloorRelaxGapFracOverride = 0
+	} else if current.StallFloorRelaxGapFracOverride > 0 {
+		current.StallFloorRelaxGapFracOverride = clampFloat(current.StallFloorRelaxGapFracOverride, 0.01, 0.80)
+	}
 	if current.OutrateFloorFactorLowOverride < 0 {
 		current.OutrateFloorFactorLowOverride = 0
 	} else if current.OutrateFloorFactorLowOverride > 0 {
@@ -1198,27 +1215,28 @@ set enabled=$2,
   cooldown_down_sec=$7,
   step_cap_override=$8,
   discovery_step_cap_down_override=$9,
-  outrate_floor_factor_low_override=$10,
-  soften_min_out_ratio_override=$11,
-  soften_max_drop_to_peg_frac_override=$12,
-  htlc_min_attempts_60m_override=$13,
-  htlc_policy_fail_rate_override=$14,
-  htlc_liquidity_fail_rate_override=$15,
-  rebal_cost_mode=$16,
-  amboss_enabled=$17,
-  amboss_token=$18,
-  inbound_passive_enabled=$19,
-  discovery_enabled=$20,
-  explorer_enabled=$21,
-  super_source_enabled=$22,
-  super_source_base_fee_msat=$23,
-  revfloor_enabled=$24,
-  circuit_breaker_enabled=$25,
-  extreme_drain_enabled=$26,
-  htlc_signal_enabled=$27,
-  htlc_mode=$28,
-  min_ppm=$29,
-  max_ppm=$30,
+  stall_floor_relax_gap_frac_override=$10,
+  outrate_floor_factor_low_override=$11,
+  soften_min_out_ratio_override=$12,
+  soften_max_drop_to_peg_frac_override=$13,
+  htlc_min_attempts_60m_override=$14,
+  htlc_policy_fail_rate_override=$15,
+  htlc_liquidity_fail_rate_override=$16,
+  rebal_cost_mode=$17,
+  amboss_enabled=$18,
+  amboss_token=$19,
+  inbound_passive_enabled=$20,
+  discovery_enabled=$21,
+  explorer_enabled=$22,
+  super_source_enabled=$23,
+  super_source_base_fee_msat=$24,
+  revfloor_enabled=$25,
+  circuit_breaker_enabled=$26,
+  extreme_drain_enabled=$27,
+  htlc_signal_enabled=$28,
+  htlc_mode=$29,
+  min_ppm=$30,
+  max_ppm=$31,
   updated_at=now()
 where id=$1
 `, autofeeConfigID,
@@ -1230,6 +1248,7 @@ where id=$1
 		current.CooldownDownSec,
 		current.StepCapOverride,
 		current.DiscoveryStepCapDownOverride,
+		current.StallFloorRelaxGapFracOverride,
 		current.OutrateFloorFactorLowOverride,
 		current.SoftenMinOutRatioOverride,
 		current.SoftenMaxDropToPegFracOverride,
@@ -4744,7 +4763,14 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		tags = append(tags, "no-signal-floor-relax")
 	}
 	if target < localPpm && floor >= localPpm {
-		bigGap := (localPpm - target) >= maxInt(100, int(math.Round(float64(localPpm)*stallFloorRelaxGapFrac)))
+		stallRelaxGapFrac := e.profile.StallFloorRelaxGapFrac
+		if e.cfg.StallFloorRelaxGapFracOverride > 0 {
+			stallRelaxGapFrac = e.cfg.StallFloorRelaxGapFracOverride
+		}
+		if stallRelaxGapFrac <= 0 {
+			stallRelaxGapFrac = stallFloorRelaxGapFrac
+		}
+		bigGap := (localPpm - target) >= maxInt(100, int(math.Round(float64(localPpm)*stallRelaxGapFrac)))
 		canRelaxFloor := st.StalledRounds >= stallFloorRelaxMinRounds &&
 			bigGap &&
 			outRatio >= stallFloorRelaxMinOutRatio &&

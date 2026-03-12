@@ -242,6 +242,7 @@ type BitcoinLocalStatus = {
     cooldown_down_sec: number
     step_cap_override?: number
     discovery_step_cap_down_override?: number
+    stall_floor_relax_gap_frac_override?: number
     outrate_floor_factor_low_override?: number
     soften_min_out_ratio_override?: number
     soften_max_drop_to_peg_frac_override?: number
@@ -672,6 +673,7 @@ export default function LightningOps() {
   const [autofeeMovementOpen, setAutofeeMovementOpen] = useState(false)
   const [autofeeStepCapOverride, setAutofeeStepCapOverride] = useState('')
   const [autofeeDiscoveryStepCapDownOverride, setAutofeeDiscoveryStepCapDownOverride] = useState('')
+  const [autofeeStallFloorRelaxGapFracOverride, setAutofeeStallFloorRelaxGapFracOverride] = useState('')
   const [autofeeOutrateFloorFactorLowOverride, setAutofeeOutrateFloorFactorLowOverride] = useState('')
   const [autofeeSoftenMinOutRatioOverride, setAutofeeSoftenMinOutRatioOverride] = useState('')
   const [autofeeSoftenMaxDropToPegFracOverride, setAutofeeSoftenMaxDropToPegFracOverride] = useState('')
@@ -854,6 +856,7 @@ export default function LightningOps() {
   const autofeeMovementDefaults: Record<string, {
     stepCap: number
     discoveryStepCapDown: number
+    stallFloorRelaxGapFrac: number
     outrateFloorFactorLow: number
     softenMinOutRatio: number
     softenMaxDropToPegFrac: number
@@ -864,6 +867,7 @@ export default function LightningOps() {
     conservative: {
       stepCap: 0.03,
       discoveryStepCapDown: 0.10,
+      stallFloorRelaxGapFrac: 0.20,
       outrateFloorFactorLow: 0.90,
       softenMinOutRatio: 0.55,
       softenMaxDropToPegFrac: 0.98,
@@ -874,6 +878,7 @@ export default function LightningOps() {
     moderate: {
       stepCap: 0.05,
       discoveryStepCapDown: 0.15,
+      stallFloorRelaxGapFrac: 0.20,
       outrateFloorFactorLow: 0.85,
       softenMinOutRatio: 0.30,
       softenMaxDropToPegFrac: 0.90,
@@ -884,6 +889,7 @@ export default function LightningOps() {
     aggressive: {
       stepCap: 0.08,
       discoveryStepCapDown: 0.20,
+      stallFloorRelaxGapFrac: 0.20,
       outrateFloorFactorLow: 0.80,
       softenMinOutRatio: 0.40,
       softenMaxDropToPegFrac: 0.90,
@@ -2019,6 +2025,7 @@ export default function LightningOps() {
       setAutofeeCooldownDown(String(Math.max(2, Math.round((cfg.cooldown_down_sec || 14400) / 3600))))
       setAutofeeStepCapOverride((cfg.step_cap_override ?? 0) > 0 ? String(Math.round((cfg.step_cap_override ?? 0) * 1000) / 10) : '')
       setAutofeeDiscoveryStepCapDownOverride((cfg.discovery_step_cap_down_override ?? 0) > 0 ? String(Math.round((cfg.discovery_step_cap_down_override ?? 0) * 1000) / 10) : '')
+      setAutofeeStallFloorRelaxGapFracOverride((cfg.stall_floor_relax_gap_frac_override ?? 0) > 0 ? String(Math.round((cfg.stall_floor_relax_gap_frac_override ?? 0) * 100)) : '')
       setAutofeeOutrateFloorFactorLowOverride((cfg.outrate_floor_factor_low_override ?? 0) > 0 ? String(Math.round((cfg.outrate_floor_factor_low_override ?? 0) * 100)) : '')
       setAutofeeSoftenMinOutRatioOverride((cfg.soften_min_out_ratio_override ?? 0) > 0 ? String(Math.round((cfg.soften_min_out_ratio_override ?? 0) * 100)) : '')
       setAutofeeSoftenMaxDropToPegFracOverride((cfg.soften_max_drop_to_peg_frac_override ?? 0) > 0 ? String(Math.round((cfg.soften_max_drop_to_peg_frac_override ?? 0) * 100)) : '')
@@ -3013,6 +3020,7 @@ export default function LightningOps() {
       }
       const stepCapOverride = parsePercentOverride(autofeeStepCapOverride, 1, 30)
       const discoveryStepCapDownOverride = parsePercentOverride(autofeeDiscoveryStepCapDownOverride, 1, 40)
+      const stallFloorRelaxGapFracOverride = parsePercentOverride(autofeeStallFloorRelaxGapFracOverride, 1, 80)
       const outrateFloorFactorLowOverride = parsePercentOverride(autofeeOutrateFloorFactorLowOverride, 50, 100)
       const softenMinOutRatioOverride = parsePercentOverride(autofeeSoftenMinOutRatioOverride, 5, 95)
       const softenMaxDropToPegFracOverride = parsePercentOverride(autofeeSoftenMaxDropToPegFracOverride, 50, 100)
@@ -3037,6 +3045,7 @@ export default function LightningOps() {
         cooldown_down_sec: cooldownDownSec,
         step_cap_override: stepCapOverride,
         discovery_step_cap_down_override: discoveryStepCapDownOverride,
+        stall_floor_relax_gap_frac_override: stallFloorRelaxGapFracOverride,
         outrate_floor_factor_low_override: outrateFloorFactorLowOverride,
         soften_min_out_ratio_override: softenMinOutRatioOverride,
         soften_max_drop_to_peg_frac_override: softenMaxDropToPegFracOverride,
@@ -4115,6 +4124,13 @@ export default function LightningOps() {
                       <input className="input-field mt-2" type="number" min={0} max={40} step="0.1" value={autofeeDiscoveryStepCapDownOverride} onChange={(e) => setAutofeeDiscoveryStepCapDownOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
                       <p className="mt-1 text-[11px] text-fog/55">
                         {t('lightningOps.autofeeMovementDefaultLabel', { value: pctText(activeAutofeeMovementDefaults.discoveryStepCapDown, 1) })}
+                      </p>
+                    </label>
+                    <label className="text-sm text-fog/70">
+                      {withHint(t('lightningOps.autofeeStallFloorRelaxGapFracOverride'), t('lightningOps.autofeeMovementHintStallRelaxGap'))}
+                      <input className="input-field mt-2" type="number" min={0} max={80} step="1" value={autofeeStallFloorRelaxGapFracOverride} onChange={(e) => setAutofeeStallFloorRelaxGapFracOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
+                      <p className="mt-1 text-[11px] text-fog/55">
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: pctText(activeAutofeeMovementDefaults.stallFloorRelaxGapFrac, 0) })}
                       </p>
                     </label>
                     <label className="text-sm text-fog/70">

@@ -243,6 +243,7 @@ type BitcoinLocalStatus = {
     step_cap_override?: number
     discovery_step_cap_down_override?: number
     stall_floor_relax_gap_frac_override?: number
+    inbound_discount_max_ratio_override?: number
     outrate_floor_factor_low_override?: number
     soften_min_out_ratio_override?: number
     soften_max_drop_to_peg_frac_override?: number
@@ -674,6 +675,7 @@ export default function LightningOps() {
   const [autofeeStepCapOverride, setAutofeeStepCapOverride] = useState('')
   const [autofeeDiscoveryStepCapDownOverride, setAutofeeDiscoveryStepCapDownOverride] = useState('')
   const [autofeeStallFloorRelaxGapFracOverride, setAutofeeStallFloorRelaxGapFracOverride] = useState('')
+  const [autofeeInboundDiscountMaxRatioOverride, setAutofeeInboundDiscountMaxRatioOverride] = useState('')
   const [autofeeOutrateFloorFactorLowOverride, setAutofeeOutrateFloorFactorLowOverride] = useState('')
   const [autofeeSoftenMinOutRatioOverride, setAutofeeSoftenMinOutRatioOverride] = useState('')
   const [autofeeSoftenMaxDropToPegFracOverride, setAutofeeSoftenMaxDropToPegFracOverride] = useState('')
@@ -857,6 +859,7 @@ export default function LightningOps() {
     stepCap: number
     discoveryStepCapDown: number
     stallFloorRelaxGapFrac: number
+    inboundDiscountMaxRatio: number
     outrateFloorFactorLow: number
     softenMinOutRatio: number
     softenMaxDropToPegFrac: number
@@ -868,6 +871,7 @@ export default function LightningOps() {
       stepCap: 0.03,
       discoveryStepCapDown: 0.10,
       stallFloorRelaxGapFrac: 0.20,
+      inboundDiscountMaxRatio: 0.90,
       outrateFloorFactorLow: 0.90,
       softenMinOutRatio: 0.55,
       softenMaxDropToPegFrac: 0.98,
@@ -879,6 +883,7 @@ export default function LightningOps() {
       stepCap: 0.05,
       discoveryStepCapDown: 0.15,
       stallFloorRelaxGapFrac: 0.20,
+      inboundDiscountMaxRatio: 0.90,
       outrateFloorFactorLow: 0.85,
       softenMinOutRatio: 0.30,
       softenMaxDropToPegFrac: 0.90,
@@ -890,6 +895,7 @@ export default function LightningOps() {
       stepCap: 0.08,
       discoveryStepCapDown: 0.20,
       stallFloorRelaxGapFrac: 0.20,
+      inboundDiscountMaxRatio: 0.90,
       outrateFloorFactorLow: 0.80,
       softenMinOutRatio: 0.40,
       softenMaxDropToPegFrac: 0.90,
@@ -2026,6 +2032,7 @@ export default function LightningOps() {
       setAutofeeStepCapOverride((cfg.step_cap_override ?? 0) > 0 ? String(Math.round((cfg.step_cap_override ?? 0) * 1000) / 10) : '')
       setAutofeeDiscoveryStepCapDownOverride((cfg.discovery_step_cap_down_override ?? 0) > 0 ? String(Math.round((cfg.discovery_step_cap_down_override ?? 0) * 1000) / 10) : '')
       setAutofeeStallFloorRelaxGapFracOverride((cfg.stall_floor_relax_gap_frac_override ?? 0) > 0 ? String(Math.round((cfg.stall_floor_relax_gap_frac_override ?? 0) * 100)) : '')
+      setAutofeeInboundDiscountMaxRatioOverride((cfg.inbound_discount_max_ratio_override ?? 0) > 0 ? String(Math.round((cfg.inbound_discount_max_ratio_override ?? 0) * 100)) : '')
       setAutofeeOutrateFloorFactorLowOverride((cfg.outrate_floor_factor_low_override ?? 0) > 0 ? String(Math.round((cfg.outrate_floor_factor_low_override ?? 0) * 100)) : '')
       setAutofeeSoftenMinOutRatioOverride((cfg.soften_min_out_ratio_override ?? 0) > 0 ? String(Math.round((cfg.soften_min_out_ratio_override ?? 0) * 100)) : '')
       setAutofeeSoftenMaxDropToPegFracOverride((cfg.soften_max_drop_to_peg_frac_override ?? 0) > 0 ? String(Math.round((cfg.soften_max_drop_to_peg_frac_override ?? 0) * 100)) : '')
@@ -3021,6 +3028,7 @@ export default function LightningOps() {
       const stepCapOverride = parsePercentOverride(autofeeStepCapOverride, 1, 30)
       const discoveryStepCapDownOverride = parsePercentOverride(autofeeDiscoveryStepCapDownOverride, 1, 40)
       const stallFloorRelaxGapFracOverride = parsePercentOverride(autofeeStallFloorRelaxGapFracOverride, 1, 80)
+      const inboundDiscountMaxRatioOverride = parsePercentOverride(autofeeInboundDiscountMaxRatioOverride, 50, 100)
       const outrateFloorFactorLowOverride = parsePercentOverride(autofeeOutrateFloorFactorLowOverride, 50, 100)
       const softenMinOutRatioOverride = parsePercentOverride(autofeeSoftenMinOutRatioOverride, 5, 95)
       const softenMaxDropToPegFracOverride = parsePercentOverride(autofeeSoftenMaxDropToPegFracOverride, 50, 100)
@@ -3046,6 +3054,7 @@ export default function LightningOps() {
         step_cap_override: stepCapOverride,
         discovery_step_cap_down_override: discoveryStepCapDownOverride,
         stall_floor_relax_gap_frac_override: stallFloorRelaxGapFracOverride,
+        inbound_discount_max_ratio_override: inboundDiscountMaxRatioOverride,
         outrate_floor_factor_low_override: outrateFloorFactorLowOverride,
         soften_min_out_ratio_override: softenMinOutRatioOverride,
         soften_max_drop_to_peg_frac_override: softenMaxDropToPegFracOverride,
@@ -4131,6 +4140,13 @@ export default function LightningOps() {
                       <input className="input-field mt-2" type="number" min={0} max={80} step="1" value={autofeeStallFloorRelaxGapFracOverride} onChange={(e) => setAutofeeStallFloorRelaxGapFracOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
                       <p className="mt-1 text-[11px] text-fog/55">
                         {t('lightningOps.autofeeMovementDefaultLabel', { value: pctText(activeAutofeeMovementDefaults.stallFloorRelaxGapFrac, 0) })}
+                      </p>
+                    </label>
+                    <label className="text-sm text-fog/70">
+                      {withHint(t('lightningOps.autofeeInboundDiscountMaxRatioOverride'), t('lightningOps.autofeeMovementHintInboundDiscountMaxRatio'))}
+                      <input className="input-field mt-2" type="number" min={0} max={100} step="1" value={autofeeInboundDiscountMaxRatioOverride} onChange={(e) => setAutofeeInboundDiscountMaxRatioOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
+                      <p className="mt-1 text-[11px] text-fog/55">
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: pctText(activeAutofeeMovementDefaults.inboundDiscountMaxRatio, 0) })}
                       </p>
                     </label>
                     <label className="text-sm text-fog/70">

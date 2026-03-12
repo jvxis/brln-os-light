@@ -115,6 +115,20 @@ func TestEffectiveLowOutThresholdsFallbackAndClamp(t *testing.T) {
 	}
 }
 
+func TestComputeInboundDiscountUsesAppliedOutboundCap(t *testing.T) {
+	got := computeInboundDiscount(true, "sink", 0.05, 6, 300, 10, 1000, 0.95)
+	if got != 950 {
+		t.Fatalf("expected inbound discount capped by applied outbound fee ratio: got %d want 950", got)
+	}
+}
+
+func TestComputeInboundDiscountRejectsIneligibleChannel(t *testing.T) {
+	got := computeInboundDiscount(true, "router", 0.05, 6, 300, 100, 1000, 0.90)
+	if got != 0 {
+		t.Fatalf("expected no inbound discount for non-sink channel, got %d", got)
+	}
+}
+
 func TestMinStagnationRecoveryOutSat(t *testing.T) {
 	smallCap := int64(1_000_000)
 	if got := minStagnationRecoveryOutSat(smallCap); got != stagnationExitMinOutSat1d {

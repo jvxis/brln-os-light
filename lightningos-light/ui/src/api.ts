@@ -204,6 +204,7 @@ export const updateAutofeeConfig = (payload: {
   step_cap_override?: number
   discovery_step_cap_down_override?: number
   stall_floor_relax_gap_frac_override?: number
+  inbound_discount_max_ratio_override?: number
   outrate_floor_factor_low_override?: number
   soften_min_out_ratio_override?: number
   soften_max_drop_to_peg_frac_override?: number

@@ -133,6 +133,7 @@ const (
 	classificationSourceBiasMax         = -0.35
 	classificationRouterBiasAbsMax      = 0.25
 	classificationLabelSwitchMinDelta   = 0.07
+	defaultInboundDiscountMaxRatio      = 0.90
 )
 
 func normalizeRebalCostMode(value string) string {
@@ -156,69 +157,71 @@ func normalizeHTLCMode(value string) string {
 }
 
 type AutofeeConfig struct {
-	Enabled                        bool    `json:"enabled"`
-	Profile                        string  `json:"profile"`
-	LookbackDays                   int     `json:"lookback_days"`
-	RunIntervalSec                 int     `json:"run_interval_sec"`
-	CooldownUpSec                  int     `json:"cooldown_up_sec"`
-	CooldownDownSec                int     `json:"cooldown_down_sec"`
-	StepCapOverride                float64 `json:"step_cap_override"`
-	DiscoveryStepCapDownOverride   float64 `json:"discovery_step_cap_down_override"`
-	StallFloorRelaxGapFracOverride float64 `json:"stall_floor_relax_gap_frac_override"`
-	OutrateFloorFactorLowOverride  float64 `json:"outrate_floor_factor_low_override"`
-	SoftenMinOutRatioOverride      float64 `json:"soften_min_out_ratio_override"`
-	SoftenMaxDropToPegFracOverride float64 `json:"soften_max_drop_to_peg_frac_override"`
-	HTLCMinAttempts60mOverride     int     `json:"htlc_min_attempts_60m_override"`
-	HTLCPolicyFailRateOverride     float64 `json:"htlc_policy_fail_rate_override"`
-	HTLCLiquidityFailRateOverride  float64 `json:"htlc_liquidity_fail_rate_override"`
-	RebalCostMode                  string  `json:"rebal_cost_mode"`
-	AmbossEnabled                  bool    `json:"amboss_enabled"`
-	AmbossTokenSet                 bool    `json:"amboss_token_set"`
-	InboundPassiveEnabled          bool    `json:"inbound_passive_enabled"`
-	DiscoveryEnabled               bool    `json:"discovery_enabled"`
-	ExplorerEnabled                bool    `json:"explorer_enabled"`
-	SuperSourceEnabled             bool    `json:"super_source_enabled"`
-	SuperSourceBaseFeeMsat         int     `json:"super_source_base_fee_msat"`
-	RevfloorEnabled                bool    `json:"revfloor_enabled"`
-	CircuitBreakerEnabled          bool    `json:"circuit_breaker_enabled"`
-	ExtremeDrainEnabled            bool    `json:"extreme_drain_enabled"`
-	HTLCSignalEnabled              bool    `json:"htlc_signal_enabled"`
-	HTLCMode                       string  `json:"htlc_mode"`
-	MinPpm                         int     `json:"min_ppm"`
-	MaxPpm                         int     `json:"max_ppm"`
+	Enabled                         bool    `json:"enabled"`
+	Profile                         string  `json:"profile"`
+	LookbackDays                    int     `json:"lookback_days"`
+	RunIntervalSec                  int     `json:"run_interval_sec"`
+	CooldownUpSec                   int     `json:"cooldown_up_sec"`
+	CooldownDownSec                 int     `json:"cooldown_down_sec"`
+	StepCapOverride                 float64 `json:"step_cap_override"`
+	DiscoveryStepCapDownOverride    float64 `json:"discovery_step_cap_down_override"`
+	StallFloorRelaxGapFracOverride  float64 `json:"stall_floor_relax_gap_frac_override"`
+	InboundDiscountMaxRatioOverride float64 `json:"inbound_discount_max_ratio_override"`
+	OutrateFloorFactorLowOverride   float64 `json:"outrate_floor_factor_low_override"`
+	SoftenMinOutRatioOverride       float64 `json:"soften_min_out_ratio_override"`
+	SoftenMaxDropToPegFracOverride  float64 `json:"soften_max_drop_to_peg_frac_override"`
+	HTLCMinAttempts60mOverride      int     `json:"htlc_min_attempts_60m_override"`
+	HTLCPolicyFailRateOverride      float64 `json:"htlc_policy_fail_rate_override"`
+	HTLCLiquidityFailRateOverride   float64 `json:"htlc_liquidity_fail_rate_override"`
+	RebalCostMode                   string  `json:"rebal_cost_mode"`
+	AmbossEnabled                   bool    `json:"amboss_enabled"`
+	AmbossTokenSet                  bool    `json:"amboss_token_set"`
+	InboundPassiveEnabled           bool    `json:"inbound_passive_enabled"`
+	DiscoveryEnabled                bool    `json:"discovery_enabled"`
+	ExplorerEnabled                 bool    `json:"explorer_enabled"`
+	SuperSourceEnabled              bool    `json:"super_source_enabled"`
+	SuperSourceBaseFeeMsat          int     `json:"super_source_base_fee_msat"`
+	RevfloorEnabled                 bool    `json:"revfloor_enabled"`
+	CircuitBreakerEnabled           bool    `json:"circuit_breaker_enabled"`
+	ExtremeDrainEnabled             bool    `json:"extreme_drain_enabled"`
+	HTLCSignalEnabled               bool    `json:"htlc_signal_enabled"`
+	HTLCMode                        string  `json:"htlc_mode"`
+	MinPpm                          int     `json:"min_ppm"`
+	MaxPpm                          int     `json:"max_ppm"`
 }
 
 type AutofeeConfigUpdate struct {
-	Enabled                        *bool    `json:"enabled,omitempty"`
-	Profile                        *string  `json:"profile,omitempty"`
-	LookbackDays                   *int     `json:"lookback_days,omitempty"`
-	RunIntervalSec                 *int     `json:"run_interval_sec,omitempty"`
-	CooldownUpSec                  *int     `json:"cooldown_up_sec,omitempty"`
-	CooldownDownSec                *int     `json:"cooldown_down_sec,omitempty"`
-	StepCapOverride                *float64 `json:"step_cap_override,omitempty"`
-	DiscoveryStepCapDownOverride   *float64 `json:"discovery_step_cap_down_override,omitempty"`
-	StallFloorRelaxGapFracOverride *float64 `json:"stall_floor_relax_gap_frac_override,omitempty"`
-	OutrateFloorFactorLowOverride  *float64 `json:"outrate_floor_factor_low_override,omitempty"`
-	SoftenMinOutRatioOverride      *float64 `json:"soften_min_out_ratio_override,omitempty"`
-	SoftenMaxDropToPegFracOverride *float64 `json:"soften_max_drop_to_peg_frac_override,omitempty"`
-	HTLCMinAttempts60mOverride     *int     `json:"htlc_min_attempts_60m_override,omitempty"`
-	HTLCPolicyFailRateOverride     *float64 `json:"htlc_policy_fail_rate_override,omitempty"`
-	HTLCLiquidityFailRateOverride  *float64 `json:"htlc_liquidity_fail_rate_override,omitempty"`
-	RebalCostMode                  *string  `json:"rebal_cost_mode,omitempty"`
-	AmbossEnabled                  *bool    `json:"amboss_enabled,omitempty"`
-	AmbossToken                    *string  `json:"amboss_token,omitempty"`
-	InboundPassiveEnabled          *bool    `json:"inbound_passive_enabled,omitempty"`
-	DiscoveryEnabled               *bool    `json:"discovery_enabled,omitempty"`
-	ExplorerEnabled                *bool    `json:"explorer_enabled,omitempty"`
-	SuperSourceEnabled             *bool    `json:"super_source_enabled,omitempty"`
-	SuperSourceBaseFeeMsat         *int     `json:"super_source_base_fee_msat,omitempty"`
-	RevfloorEnabled                *bool    `json:"revfloor_enabled,omitempty"`
-	CircuitBreakerEnabled          *bool    `json:"circuit_breaker_enabled,omitempty"`
-	ExtremeDrainEnabled            *bool    `json:"extreme_drain_enabled,omitempty"`
-	HTLCSignalEnabled              *bool    `json:"htlc_signal_enabled,omitempty"`
-	HTLCMode                       *string  `json:"htlc_mode,omitempty"`
-	MinPpm                         *int     `json:"min_ppm,omitempty"`
-	MaxPpm                         *int     `json:"max_ppm,omitempty"`
+	Enabled                         *bool    `json:"enabled,omitempty"`
+	Profile                         *string  `json:"profile,omitempty"`
+	LookbackDays                    *int     `json:"lookback_days,omitempty"`
+	RunIntervalSec                  *int     `json:"run_interval_sec,omitempty"`
+	CooldownUpSec                   *int     `json:"cooldown_up_sec,omitempty"`
+	CooldownDownSec                 *int     `json:"cooldown_down_sec,omitempty"`
+	StepCapOverride                 *float64 `json:"step_cap_override,omitempty"`
+	DiscoveryStepCapDownOverride    *float64 `json:"discovery_step_cap_down_override,omitempty"`
+	StallFloorRelaxGapFracOverride  *float64 `json:"stall_floor_relax_gap_frac_override,omitempty"`
+	InboundDiscountMaxRatioOverride *float64 `json:"inbound_discount_max_ratio_override,omitempty"`
+	OutrateFloorFactorLowOverride   *float64 `json:"outrate_floor_factor_low_override,omitempty"`
+	SoftenMinOutRatioOverride       *float64 `json:"soften_min_out_ratio_override,omitempty"`
+	SoftenMaxDropToPegFracOverride  *float64 `json:"soften_max_drop_to_peg_frac_override,omitempty"`
+	HTLCMinAttempts60mOverride      *int     `json:"htlc_min_attempts_60m_override,omitempty"`
+	HTLCPolicyFailRateOverride      *float64 `json:"htlc_policy_fail_rate_override,omitempty"`
+	HTLCLiquidityFailRateOverride   *float64 `json:"htlc_liquidity_fail_rate_override,omitempty"`
+	RebalCostMode                   *string  `json:"rebal_cost_mode,omitempty"`
+	AmbossEnabled                   *bool    `json:"amboss_enabled,omitempty"`
+	AmbossToken                     *string  `json:"amboss_token,omitempty"`
+	InboundPassiveEnabled           *bool    `json:"inbound_passive_enabled,omitempty"`
+	DiscoveryEnabled                *bool    `json:"discovery_enabled,omitempty"`
+	ExplorerEnabled                 *bool    `json:"explorer_enabled,omitempty"`
+	SuperSourceEnabled              *bool    `json:"super_source_enabled,omitempty"`
+	SuperSourceBaseFeeMsat          *int     `json:"super_source_base_fee_msat,omitempty"`
+	RevfloorEnabled                 *bool    `json:"revfloor_enabled,omitempty"`
+	CircuitBreakerEnabled           *bool    `json:"circuit_breaker_enabled,omitempty"`
+	ExtremeDrainEnabled             *bool    `json:"extreme_drain_enabled,omitempty"`
+	HTLCSignalEnabled               *bool    `json:"htlc_signal_enabled,omitempty"`
+	HTLCMode                        *string  `json:"htlc_mode,omitempty"`
+	MinPpm                          *int     `json:"min_ppm,omitempty"`
+	MaxPpm                          *int     `json:"max_ppm,omitempty"`
 }
 
 type AutofeeStatus struct {
@@ -818,6 +821,7 @@ create table if not exists autofee_config (
   step_cap_override double precision not null default 0,
   discovery_step_cap_down_override double precision not null default 0,
   stall_floor_relax_gap_frac_override double precision not null default 0,
+  inbound_discount_max_ratio_override double precision not null default 0,
   outrate_floor_factor_low_override double precision not null default 0,
   soften_min_out_ratio_override double precision not null default 0,
   soften_max_drop_to_peg_frac_override double precision not null default 0,
@@ -898,6 +902,7 @@ alter table autofee_config add column if not exists rebal_cost_mode text not nul
 alter table autofee_config add column if not exists step_cap_override double precision not null default 0;
 alter table autofee_config add column if not exists discovery_step_cap_down_override double precision not null default 0;
 alter table autofee_config add column if not exists stall_floor_relax_gap_frac_override double precision not null default 0;
+alter table autofee_config add column if not exists inbound_discount_max_ratio_override double precision not null default 0;
 alter table autofee_config add column if not exists outrate_floor_factor_low_override double precision not null default 0;
 alter table autofee_config add column if not exists soften_min_out_ratio_override double precision not null default 0;
 alter table autofee_config add column if not exists soften_max_drop_to_peg_frac_override double precision not null default 0;
@@ -926,27 +931,28 @@ on conflict (id) do nothing
 func (s *AutofeeService) defaultConfig() AutofeeConfig {
 	p := autofeeProfiles["moderate"]
 	return AutofeeConfig{
-		Enabled:                false,
-		Profile:                p.Name,
-		LookbackDays:           7,
-		RunIntervalSec:         p.RunIntervalSec,
-		CooldownUpSec:          p.CooldownUpSec,
-		CooldownDownSec:        p.CooldownDownSec,
-		RebalCostMode:          rebalCostModeDefault,
-		AmbossEnabled:          false,
-		AmbossTokenSet:         false,
-		InboundPassiveEnabled:  false,
-		DiscoveryEnabled:       true,
-		ExplorerEnabled:        true,
-		SuperSourceEnabled:     false,
-		SuperSourceBaseFeeMsat: superSourceBaseFeeMsatDefault,
-		RevfloorEnabled:        true,
-		CircuitBreakerEnabled:  true,
-		ExtremeDrainEnabled:    true,
-		HTLCSignalEnabled:      true,
-		HTLCMode:               htlcModeDefault,
-		MinPpm:                 10,
-		MaxPpm:                 2000,
+		Enabled:                         false,
+		Profile:                         p.Name,
+		LookbackDays:                    7,
+		RunIntervalSec:                  p.RunIntervalSec,
+		CooldownUpSec:                   p.CooldownUpSec,
+		CooldownDownSec:                 p.CooldownDownSec,
+		InboundDiscountMaxRatioOverride: 0,
+		RebalCostMode:                   rebalCostModeDefault,
+		AmbossEnabled:                   false,
+		AmbossTokenSet:                  false,
+		InboundPassiveEnabled:           false,
+		DiscoveryEnabled:                true,
+		ExplorerEnabled:                 true,
+		SuperSourceEnabled:              false,
+		SuperSourceBaseFeeMsat:          superSourceBaseFeeMsatDefault,
+		RevfloorEnabled:                 true,
+		CircuitBreakerEnabled:           true,
+		ExtremeDrainEnabled:             true,
+		HTLCSignalEnabled:               true,
+		HTLCMode:                        htlcModeDefault,
+		MinPpm:                          10,
+		MaxPpm:                          2000,
 	}
 }
 
@@ -959,7 +965,7 @@ func (s *AutofeeService) GetConfig(ctx context.Context) (AutofeeConfig, error) {
 	var ambossToken pgtype.Text
 	err := s.db.QueryRow(ctx, `
 select enabled, profile, lookback_days, run_interval_sec, cooldown_up_sec, cooldown_down_sec,
-  step_cap_override, discovery_step_cap_down_override, stall_floor_relax_gap_frac_override, outrate_floor_factor_low_override,
+  step_cap_override, discovery_step_cap_down_override, stall_floor_relax_gap_frac_override, inbound_discount_max_ratio_override, outrate_floor_factor_low_override,
   soften_min_out_ratio_override, soften_max_drop_to_peg_frac_override, htlc_min_attempts_60m_override,
   htlc_policy_fail_rate_override, htlc_liquidity_fail_rate_override,
   rebal_cost_mode, amboss_enabled, amboss_token, inbound_passive_enabled, discovery_enabled, explorer_enabled,
@@ -976,6 +982,7 @@ from autofee_config where id=$1
 		&cfg.StepCapOverride,
 		&cfg.DiscoveryStepCapDownOverride,
 		&cfg.StallFloorRelaxGapFracOverride,
+		&cfg.InboundDiscountMaxRatioOverride,
 		&cfg.OutrateFloorFactorLowOverride,
 		&cfg.SoftenMinOutRatioOverride,
 		&cfg.SoftenMaxDropToPegFracOverride,
@@ -1061,6 +1068,9 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 	}
 	if req.StallFloorRelaxGapFracOverride != nil {
 		current.StallFloorRelaxGapFracOverride = *req.StallFloorRelaxGapFracOverride
+	}
+	if req.InboundDiscountMaxRatioOverride != nil {
+		current.InboundDiscountMaxRatioOverride = *req.InboundDiscountMaxRatioOverride
 	}
 	if req.OutrateFloorFactorLowOverride != nil {
 		current.OutrateFloorFactorLowOverride = *req.OutrateFloorFactorLowOverride
@@ -1168,6 +1178,11 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 	} else if current.StallFloorRelaxGapFracOverride > 0 {
 		current.StallFloorRelaxGapFracOverride = clampFloat(current.StallFloorRelaxGapFracOverride, 0.01, 0.80)
 	}
+	if current.InboundDiscountMaxRatioOverride < 0 {
+		current.InboundDiscountMaxRatioOverride = 0
+	} else if current.InboundDiscountMaxRatioOverride > 0 {
+		current.InboundDiscountMaxRatioOverride = clampFloat(current.InboundDiscountMaxRatioOverride, 0.50, 1.00)
+	}
 	if current.OutrateFloorFactorLowOverride < 0 {
 		current.OutrateFloorFactorLowOverride = 0
 	} else if current.OutrateFloorFactorLowOverride > 0 {
@@ -1221,27 +1236,28 @@ set enabled=$2,
   step_cap_override=$8,
   discovery_step_cap_down_override=$9,
   stall_floor_relax_gap_frac_override=$10,
-  outrate_floor_factor_low_override=$11,
-  soften_min_out_ratio_override=$12,
-  soften_max_drop_to_peg_frac_override=$13,
-  htlc_min_attempts_60m_override=$14,
-  htlc_policy_fail_rate_override=$15,
-  htlc_liquidity_fail_rate_override=$16,
-  rebal_cost_mode=$17,
-  amboss_enabled=$18,
-  amboss_token=$19,
-  inbound_passive_enabled=$20,
-  discovery_enabled=$21,
-  explorer_enabled=$22,
-  super_source_enabled=$23,
-  super_source_base_fee_msat=$24,
-  revfloor_enabled=$25,
-  circuit_breaker_enabled=$26,
-  extreme_drain_enabled=$27,
-  htlc_signal_enabled=$28,
-  htlc_mode=$29,
-  min_ppm=$30,
-  max_ppm=$31,
+  inbound_discount_max_ratio_override=$11,
+  outrate_floor_factor_low_override=$12,
+  soften_min_out_ratio_override=$13,
+  soften_max_drop_to_peg_frac_override=$14,
+  htlc_min_attempts_60m_override=$15,
+  htlc_policy_fail_rate_override=$16,
+  htlc_liquidity_fail_rate_override=$17,
+  rebal_cost_mode=$18,
+  amboss_enabled=$19,
+  amboss_token=$20,
+  inbound_passive_enabled=$21,
+  discovery_enabled=$22,
+  explorer_enabled=$23,
+  super_source_enabled=$24,
+  super_source_base_fee_msat=$25,
+  revfloor_enabled=$26,
+  circuit_breaker_enabled=$27,
+  extreme_drain_enabled=$28,
+  htlc_signal_enabled=$29,
+  htlc_mode=$30,
+  min_ppm=$31,
+  max_ppm=$32,
   updated_at=now()
 where id=$1
 `, autofeeConfigID,
@@ -1254,6 +1270,7 @@ where id=$1
 		current.StepCapOverride,
 		current.DiscoveryStepCapDownOverride,
 		current.StallFloorRelaxGapFracOverride,
+		current.InboundDiscountMaxRatioOverride,
 		current.OutrateFloorFactorLowOverride,
 		current.SoftenMinOutRatioOverride,
 		current.SoftenMaxDropToPegFracOverride,
@@ -4919,16 +4936,6 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		}
 	}
 
-	inboundDiscount := 0
-	if e.cfg.InboundPassiveEnabled && classLabel == "sink" && outRatio <= 0.10 && fwdCount >= 5 && marginPpm7d >= 200 {
-		anchor := int(math.Ceil(float64(baseCostPpm) * 1.002))
-		maxDiscount := int(math.Ceil(float64(finalPpm) * 0.90))
-		gap := finalPpm - anchor
-		if gap > 0 {
-			inboundDiscount = minInt(gap, maxDiscount)
-		}
-	}
-
 	apply := true
 	delta := int(math.Abs(float64(finalPpm - localPpm)))
 	rel := float64(delta) / float64(maxInt(1, localPpm))
@@ -4990,10 +4997,19 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			st.BaselineFwd7d = fwdCount
 		}
 	}
-	st.LastPpm = finalPpm
-	if inboundDiscount > 0 {
-		st.LastInboundDiscount = inboundDiscount
+	applyOutbound := apply && finalPpm != localPpm
+	appliedPpm := localPpm
+	if applyOutbound {
+		appliedPpm = finalPpm
 	}
+	inboundDiscountMaxRatio := defaultInboundDiscountMaxRatio
+	if e.cfg.InboundDiscountMaxRatioOverride > 0 {
+		inboundDiscountMaxRatio = e.cfg.InboundDiscountMaxRatioOverride
+	}
+	inboundDiscount := computeInboundDiscount(e.cfg.InboundPassiveEnabled, classLabel, outRatio, fwdCount, marginPpm7d, baseCostPpm, appliedPpm, inboundDiscountMaxRatio)
+	inboundChanged := inboundDiscount != st.LastInboundDiscount
+	st.LastPpm = finalPpm
+	st.LastInboundDiscount = inboundDiscount
 	if outPpm7d > 0 {
 		st.LastOutrate = outPpm7d
 		st.LastOutrateTs = e.now
@@ -5012,7 +5028,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if finalPpm == localPpm && target != localPpm && shouldEmitStallAlert(st.StalledRounds, targetGapPct) {
 		tags = append(tags, "stall-alert")
 	}
-	if apply && finalPpm != localPpm {
+	if applyOutbound {
 		st.LastTs = e.now
 		if finalPpm > localPpm {
 			st.LastDir = "up"
@@ -5044,9 +5060,9 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			cooldownRemaining = remaining
 		}
 	}
-	effectiveApply := apply && finalPpm != localPpm
+	effectiveApply := applyOutbound || inboundChanged
 	effectiveNewPpm := finalPpm
-	if !effectiveApply {
+	if !applyOutbound {
 		effectiveNewPpm = localPpm
 	}
 	predictionTarget := target
@@ -5576,6 +5592,22 @@ func classifyChannel(biasEma float64, outRatio float64, inCount int64, outCount 
 		return prevLabel, prevConf
 	}
 	return label, math.Min(1.0, 0.5*prevConf+0.5*conf)
+}
+
+func computeInboundDiscount(enabled bool, classLabel string, outRatio float64, fwdCount int, marginPpm7d int, baseCostPpm int, appliedPpm int, maxRatio float64) int {
+	if !enabled || !strings.EqualFold(classLabel, "sink") || outRatio > 0.10 || fwdCount < 5 || marginPpm7d < 200 || appliedPpm <= 0 {
+		return 0
+	}
+	if maxRatio <= 0 {
+		maxRatio = defaultInboundDiscountMaxRatio
+	}
+	anchor := int(math.Ceil(float64(baseCostPpm) * 1.002))
+	maxDiscount := int(math.Ceil(float64(appliedPpm) * maxRatio))
+	gap := appliedPpm - anchor
+	if gap <= 0 {
+		return 0
+	}
+	return minInt(gap, maxDiscount)
 }
 
 func containsTag(tags []string, want string) bool {

@@ -128,6 +128,11 @@ const (
 	channelOutlierLargeCapRelMin        = 2.00
 	channelOutlierSmallCapRelMax        = 0.50
 	channelOutNormTagDiffMin            = 0.04
+	classificationBiasEMAAlpha          = 0.60
+	classificationSinkBiasMin           = 0.45
+	classificationSourceBiasMax         = -0.35
+	classificationRouterBiasAbsMax      = 0.25
+	classificationLabelSwitchMinDelta   = 0.07
 )
 
 func normalizeRebalCostMode(value string) string {
@@ -3856,7 +3861,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 
 	biasEma := biasRaw
 	if st.BiasEma != 0 {
-		biasEma = (1.0-0.45)*st.BiasEma + 0.45*biasRaw
+		biasEma = (1.0-classificationBiasEMAAlpha)*st.BiasEma + classificationBiasEMAAlpha*biasRaw
 	}
 	st.BiasEma = biasEma
 
@@ -5547,15 +5552,15 @@ func classifyChannel(biasEma float64, outRatio float64, inCount int64, outCount 
 	label := "unknown"
 	conf := 0.0
 	if (inCount + outCount) >= 4 {
-		if biasEma >= 0.50 && outRatio < 0.15 {
+		if biasEma >= classificationSinkBiasMin && outRatio < 0.15 {
 			label = "sink"
-			conf = math.Min(1.0, (biasEma-0.50)/(1.0-0.50)+0.3)
-		} else if biasEma <= -0.35 && outRatio > 0.55 {
+			conf = math.Min(1.0, (biasEma-classificationSinkBiasMin)/(1.0-classificationSinkBiasMin)+0.3)
+		} else if biasEma <= classificationSourceBiasMax && outRatio > 0.55 {
 			label = "source"
-			conf = math.Min(1.0, ((-biasEma)-0.35)/(1.0-0.35)+0.3)
-		} else if math.Abs(biasEma) <= 0.30 && inCount > 0 && outCount > 0 {
+			conf = math.Min(1.0, ((-biasEma)-math.Abs(classificationSourceBiasMax))/(1.0-math.Abs(classificationSourceBiasMax))+0.3)
+		} else if math.Abs(biasEma) <= classificationRouterBiasAbsMax && inCount > 0 && outCount > 0 {
 			label = "router"
-			conf = math.Min(1.0, (0.30-math.Abs(biasEma))/0.30+0.3)
+			conf = math.Min(1.0, (classificationRouterBiasAbsMax-math.Abs(biasEma))/classificationRouterBiasAbsMax+0.3)
 		}
 	}
 	if label == "unknown" {
@@ -5565,7 +5570,7 @@ func classifyChannel(biasEma float64, outRatio float64, inCount int64, outCount 
 		return label, conf
 	}
 	if label != prevLabel {
-		if conf >= prevConf+0.10 {
+		if conf >= prevConf+classificationLabelSwitchMinDelta {
 			return label, conf
 		}
 		return prevLabel, prevConf

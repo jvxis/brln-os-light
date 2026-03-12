@@ -319,6 +319,48 @@ func TestApplyDirectionReversalGuard(t *testing.T) {
 	}
 }
 
+func TestClassificationBiasEMAUsesFasterWeight(t *testing.T) {
+	prevBias := 0.10
+	biasRaw := 0.60
+	got := (1.0-classificationBiasEMAAlpha)*prevBias + classificationBiasEMAAlpha*biasRaw
+	want := 0.40
+	if math.Abs(got-want) > 0.000001 {
+		t.Fatalf("unexpected EMA weight result: got %.6f want %.6f", got, want)
+	}
+}
+
+func TestClassifyChannelPromotesSinkSooner(t *testing.T) {
+	label, conf := classifyChannel(0.47, 0.14, 2, 3, "router", 0.20)
+	if label != "sink" {
+		t.Fatalf("expected sink classification, got %q", label)
+	}
+	if conf <= 0.20 {
+		t.Fatalf("expected sink confidence above previous router confidence, got %.4f", conf)
+	}
+}
+
+func TestClassifyChannelKeepsRouterBandTighter(t *testing.T) {
+	label, _ := classifyChannel(0.27, 0.20, 2, 3, "router", 0.55)
+	if label != "router" {
+		t.Fatalf("expected previous router label to be retained outside tighter router band, got %q", label)
+	}
+
+	label, _ = classifyChannel(0.24, 0.20, 2, 3, "", 0)
+	if label != "router" {
+		t.Fatalf("expected router classification inside tighter router band, got %q", label)
+	}
+}
+
+func TestClassifyChannelUsesSofterSwitchHysteresis(t *testing.T) {
+	label, conf := classifyChannel(0.47, 0.14, 2, 3, "router", 0.25)
+	if label != "sink" {
+		t.Fatalf("expected sink classification to beat previous router label with softer hysteresis, got %q", label)
+	}
+	if conf < 0.33 {
+		t.Fatalf("expected meaningful sink confidence, got %.4f", conf)
+	}
+}
+
 func TestApplyDirectionReversalGuardFastTrack(t *testing.T) {
 	st := &autofeeChannelState{LastDir: "up"}
 	localPpm := 1000

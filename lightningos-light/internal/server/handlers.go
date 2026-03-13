@@ -1675,6 +1675,7 @@ func (s *Server) handleLNClosedChannels(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, lndDetailedErrorMessage(err))
 		return
 	}
+	enrichClosedChannelTimes(ctx, channels)
 
 	writeJSON(w, http.StatusOK, map[string]any{"channels": channels})
 }

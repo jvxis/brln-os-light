@@ -909,7 +909,7 @@ export default function LightningOps() {
       case 'force':
         return 'bg-amber-500/15 text-amber-200 border border-amber-400/30'
       case 'breach':
-        return 'bg-rose-500/15 text-rose-200 border border-rose-400/30'
+        return 'bg-fuchsia-500/25 text-fuchsia-100 border border-fuchsia-300/70'
       default:
         return 'bg-white/10 text-fog/70 border border-white/10'
     }
@@ -6486,7 +6486,9 @@ export default function LightningOps() {
                         ) : (
                           <p className="mt-1 text-xs text-fog/50">{formatCloseHeight(item.close_height)}</p>
                         )}
-                        <p className="mt-1 text-[11px] text-fog/40">{formatCloseHeight(item.close_height)}</p>
+                        {closedAtLabel && (
+                          <p className="mt-1 text-[11px] text-fog/40">{formatCloseHeight(item.close_height)}</p>
+                        )}
                       </div>
                       <span className={`rounded-full px-2 py-1 text-[11px] ${closedChannelBadgeClass(item)}`}>
                         {normalizeClosedChannelType(item.close_type_label)}
@@ -6606,8 +6608,8 @@ export default function LightningOps() {
                           )}
                         </td>
                         <td className="py-3 pr-4 text-xs">
-                          <div>{closedAtLabel || t('common.na')}</div>
-                          <div className="mt-1 text-fog/50">{formatCloseHeight(item.close_height)}</div>
+                          <div>{closedAtLabel || formatCloseHeight(item.close_height)}</div>
+                          {closedAtLabel && <div className="mt-1 text-fog/50">{formatCloseHeight(item.close_height)}</div>}
                           <div className="mt-1 text-fog/50">chan #{Number(item.chan_id || 0).toLocaleString()}</div>
                           <div className="mt-1 text-fog/50">{t('lightningOps.capacityLabel', { value: item.capacity_sat })}</div>
                         </td>

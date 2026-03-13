@@ -751,22 +751,29 @@ func (s *CloseManagerService) deriveClosedSession(now time.Time, item lndclient.
 	state := closeManagerStateClosedTerminal
 	actionRecommended := ""
 	riskLevel := "info"
-	if item.TimeLockedBalanceSat > 0 {
+	blocksTilMaturity, maturityETA := closeManagerCarryForwardMaturity(now, prev)
+	hasActiveMaturity := blocksTilMaturity != nil && *blocksTilMaturity > 0
+	if !hasActiveMaturity && maturityETA != nil && maturityETA.After(now) {
+		hasActiveMaturity = true
+	}
+	hadRecoveringState := prev.State == closeManagerStateOutputsTimelocked || prev.State == closeManagerStateForceCloseActive || prev.State == closeManagerStateSweepPending || prev.State == closeManagerStateSweepStuck
+
+	if hasActiveMaturity {
 		state = closeManagerStateOutputsTimelocked
 		actionRecommended = "wait_maturity"
 		riskLevel = "warn"
 	}
-	if item.TimeLockedBalanceSat == 0 && (prev.State == closeManagerStateOutputsTimelocked || prev.State == closeManagerStateForceCloseActive || prev.State == closeManagerStateSweepPending || prev.State == closeManagerStateSweepStuck) {
+	if !hasActiveMaturity && sweep.PendingCount == 0 && !sweep.Stuck && hadRecoveringState {
 		state = closeManagerStateFundsRecovered
 	}
 
 	sweepTxid := deriveClosedSessionSweepTxid(item)
-	if item.TimeLockedBalanceSat > 0 && sweep.PendingCount > 0 {
+	if sweep.PendingCount > 0 {
 		state = closeManagerStateSweepPending
 		actionRecommended = "monitor"
 		riskLevel = "warn"
 	}
-	if item.TimeLockedBalanceSat > 0 && sweep.Stuck {
+	if sweep.Stuck {
 		state = closeManagerStateSweepStuck
 		actionRecommended = "review_sweep"
 		riskLevel = "error"
@@ -775,7 +782,10 @@ func (s *CloseManagerService) deriveClosedSession(now time.Time, item lndclient.
 	if sweep.Stuck {
 		lastError = deriveCloseManagerSweepReason(sweep)
 	}
-	blocksTilMaturity, maturityETA := closeManagerCarryForwardMaturity(now, prev)
+	limboBalance := int64(0)
+	if hasActiveMaturity || sweep.PendingCount > 0 || sweep.Stuck {
+		limboBalance = item.TimeLockedBalanceSat
+	}
 
 	session := CloseManagerSession{
 		ID:                         prev.ID,
@@ -794,7 +804,7 @@ func (s *CloseManagerService) deriveClosedSession(now time.Time, item lndclient.
 		CloseTxid:                  firstNonEmpty(item.ClosingTxHash, prev.CloseTxid),
 		CloseTxHexAvailable:        false,
 		SweepTxid:                  firstNonEmpty(sweepTxid, prev.SweepTxid),
-		LimboBalanceSat:            item.TimeLockedBalanceSat,
+		LimboBalanceSat:            limboBalance,
 		PendingHtlcCount:           0,
 		PendingHtlcAgeSec:          0,
 		BlocksTilMaturity:          blocksTilMaturity,

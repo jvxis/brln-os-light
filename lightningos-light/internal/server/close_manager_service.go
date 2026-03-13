@@ -77,6 +77,12 @@ type CloseManagerSession struct {
 	WaitingCloseLastError         string     `json:"waiting_close_last_error,omitempty"`
 	WaitingCloseLastRecoveredTxid string     `json:"waiting_close_last_recovered_txid,omitempty"`
 	WaitingCloseSuggestForceClose bool       `json:"waiting_close_suggest_force_close"`
+	CloseTxExternalSeen           *bool      `json:"close_tx_external_seen,omitempty"`
+	CloseTxExternalConfirmed      *bool      `json:"close_tx_external_confirmed,omitempty"`
+	CloseTxExternalBlockTime      *time.Time `json:"close_tx_external_block_time,omitempty"`
+	SweepTxExternalSeen           *bool      `json:"sweep_tx_external_seen,omitempty"`
+	SweepTxExternalConfirmed      *bool      `json:"sweep_tx_external_confirmed,omitempty"`
+	SweepTxExternalBlockTime      *time.Time `json:"sweep_tx_external_block_time,omitempty"`
 	LastProgressAt                *time.Time `json:"last_progress_at,omitempty"`
 	CreatedAt                     time.Time  `json:"created_at"`
 	UpdatedAt                     time.Time  `json:"updated_at"`

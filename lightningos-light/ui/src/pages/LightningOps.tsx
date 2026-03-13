@@ -102,6 +102,12 @@ type CloseRecoverySession = {
   waiting_close_last_error?: string
   waiting_close_last_recovered_txid?: string
   waiting_close_suggest_force_close?: boolean
+  close_tx_external_seen?: boolean
+  close_tx_external_confirmed?: boolean
+  close_tx_external_block_time?: string
+  sweep_tx_external_seen?: boolean
+  sweep_tx_external_confirmed?: boolean
+  sweep_tx_external_block_time?: string
   last_progress_at?: string
   updated_at?: string
   closed_at?: string
@@ -4238,7 +4244,8 @@ export default function LightningOps() {
   const mempoolLink = (channelPoint: string) => {
     const parts = channelPoint.split(':')
     if (parts.length !== 2) return ''
-    return `https://mempool.space/pt/tx/${parts[0]}#vout=${parts[1]}`
+    const base = locale === 'pt-BR' ? 'https://mempool.space/pt' : 'https://mempool.space'
+    return `${base}/tx/${parts[0]}#vout=${parts[1]}`
   }
 
   const channelPointTxid = (channelPoint?: string) => {
@@ -4250,7 +4257,8 @@ export default function LightningOps() {
 
   const mempoolTxLink = (txid?: string) => {
     if (!txid) return ''
-    return `https://mempool.space/tx/${txid}`
+    const base = locale === 'pt-BR' ? 'https://mempool.space/pt' : 'https://mempool.space'
+    return `${base}/tx/${txid}`
   }
 
   const handleCloseChannel = async () => {

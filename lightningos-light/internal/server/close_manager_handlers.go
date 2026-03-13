@@ -15,6 +15,19 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+type closeManagerMempoolTxStatus struct {
+	Status struct {
+		Confirmed bool  `json:"confirmed"`
+		BlockTime int64 `json:"block_time"`
+	} `json:"status"`
+}
+
+type closeManagerExternalTxCheck struct {
+	Seen      bool
+	Confirmed bool
+	BlockTime *time.Time
+}
+
 func (s *Server) handleCloseManagerStatusGet(w http.ResponseWriter, r *http.Request) {
 	svc, svcErr := s.closeManagerService()
 	if svc == nil {
@@ -56,6 +69,7 @@ func (s *Server) handleCloseManagerSessionsGet(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.enrichCloseManagerSessionsWithMempool(ctx, items)
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
@@ -84,6 +98,7 @@ func (s *Server) handleCloseManagerSessionGet(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.enrichCloseManagerSessionWithMempool(ctx, item, map[string]*closeManagerExternalTxCheck{})
 	writeJSON(w, http.StatusOK, map[string]any{"item": item})
 }
 
@@ -517,4 +532,75 @@ func closeManagerMaxInt64(values ...int64) int64 {
 		}
 	}
 	return best
+}
+
+func (s *Server) enrichCloseManagerSessionsWithMempool(ctx context.Context, items []CloseManagerSession) {
+	if len(items) == 0 {
+		return
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
+	defer cancel()
+	cache := map[string]*closeManagerExternalTxCheck{}
+	for i := range items {
+		s.enrichCloseManagerSessionWithMempool(checkCtx, &items[i], cache)
+	}
+}
+
+func (s *Server) enrichCloseManagerSessionWithMempool(ctx context.Context, item *CloseManagerSession, cache map[string]*closeManagerExternalTxCheck) {
+	if item == nil {
+		return
+	}
+	if check := loadCloseManagerExternalTxCheck(ctx, item.CloseTxid, cache); check != nil {
+		seen := check.Seen
+		confirmed := check.Confirmed
+		item.CloseTxExternalSeen = &seen
+		item.CloseTxExternalConfirmed = &confirmed
+		if check.BlockTime != nil {
+			blockTime := check.BlockTime.UTC()
+			item.CloseTxExternalBlockTime = &blockTime
+		}
+	}
+	if check := loadCloseManagerExternalTxCheck(ctx, item.SweepTxid, cache); check != nil {
+		seen := check.Seen
+		confirmed := check.Confirmed
+		item.SweepTxExternalSeen = &seen
+		item.SweepTxExternalConfirmed = &confirmed
+		if check.BlockTime != nil {
+			blockTime := check.BlockTime.UTC()
+			item.SweepTxExternalBlockTime = &blockTime
+		}
+	}
+}
+
+func loadCloseManagerExternalTxCheck(ctx context.Context, txid string, cache map[string]*closeManagerExternalTxCheck) *closeManagerExternalTxCheck {
+	clean := strings.ToLower(strings.TrimSpace(txid))
+	if clean == "" {
+		return nil
+	}
+	if cache != nil {
+		if cached, ok := cache[clean]; ok {
+			return cached
+		}
+	}
+
+	var parsed closeManagerMempoolTxStatus
+	if err := fetchMempoolJSON(ctx, "https://mempool.space/api/tx/"+clean, &parsed); err != nil {
+		if cache != nil {
+			cache[clean] = nil
+		}
+		return nil
+	}
+
+	check := &closeManagerExternalTxCheck{
+		Seen:      true,
+		Confirmed: parsed.Status.Confirmed,
+	}
+	if parsed.Status.BlockTime > 0 {
+		blockTime := time.Unix(parsed.Status.BlockTime, 0).UTC()
+		check.BlockTime = &blockTime
+	}
+	if cache != nil {
+		cache[clean] = check
+	}
+	return check
 }

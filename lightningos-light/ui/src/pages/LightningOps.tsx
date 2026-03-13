@@ -5242,141 +5242,192 @@ export default function LightningOps() {
                     <span className="rounded-full bg-white/5 px-2 py-1 text-[11px] text-fog/60">{group.items.length}</span>
                   </div>
                   <div className="grid gap-3 xl:grid-cols-2">
-                    {group.items.map((item) => (
-                      <div key={item.id} className="rounded-xl border border-white/10 bg-ink/70 p-3 space-y-2">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            {item.peer_pubkey ? (
-                              <a
-                                className="text-xs text-fog/70 hover:text-fog break-all"
-                                href={ambossURL(item.peer_pubkey)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              >
-                                {item.peer_alias || item.peer_pubkey}
-                              </a>
-                            ) : (
-                              <p className="text-xs text-fog/70">{item.peer_alias || t('lightningOps.unknownPeer')}</p>
-                            )}
-                            <p className="mt-1 text-[11px] text-fog/50 break-all">{t('lightningOps.pointLabel', { point: item.channel_point })}</p>
-                          </div>
-                          <div className="flex flex-wrap items-center justify-end gap-2">
-                            {item.source === 'node_retirement' && (
-                              <span className="rounded-full bg-sky-500/20 px-2 py-1 text-[11px] text-sky-100">
-                                {t('lightningOps.closeRecoverySourceNodeRetirement')}
+                    {group.items.map((item) => {
+                      const pointLink = mempoolLink(item.channel_point)
+                      const closeTxLink = mempoolTxLink(item.close_txid)
+                      const sweepTxLink = mempoolTxLink(item.sweep_txid)
+
+                      return (
+                        <div key={item.id} className="rounded-xl border border-white/10 bg-ink/70 p-3 space-y-2">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              {item.peer_pubkey ? (
+                                <a
+                                  className="text-xs text-fog/70 hover:text-fog break-all"
+                                  href={ambossURL(item.peer_pubkey)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  {item.peer_alias || item.peer_pubkey}
+                                </a>
+                              ) : (
+                                <p className="text-xs text-fog/70">{item.peer_alias || t('lightningOps.unknownPeer')}</p>
+                              )}
+                              {pointLink ? (
+                                <a
+                                  className="mt-1 block text-[11px] text-emerald-200 hover:text-emerald-100 break-all"
+                                  href={pointLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  {t('lightningOps.pointLabel', { point: item.channel_point })}
+                                </a>
+                              ) : (
+                                <p className="mt-1 text-[11px] text-fog/50 break-all">{t('lightningOps.pointLabel', { point: item.channel_point })}</p>
+                              )}
+                            </div>
+                            <div className="flex flex-wrap items-center justify-end gap-2">
+                              {item.source === 'node_retirement' && (
+                                <span className="rounded-full bg-sky-500/20 px-2 py-1 text-[11px] text-sky-100">
+                                  {t('lightningOps.closeRecoverySourceNodeRetirement')}
+                                </span>
+                              )}
+                              <span className={`rounded-full px-2 py-1 text-[11px] ${closeRecoveryBadgeClass(item.risk_level)}`}>
+                                {closeRecoveryStateLabel(item.state)}
                               </span>
-                            )}
-                            <span className={`rounded-full px-2 py-1 text-[11px] ${closeRecoveryBadgeClass(item.risk_level)}`}>
-                              {closeRecoveryStateLabel(item.state)}
-                            </span>
+                            </div>
                           </div>
-                        </div>
-                        <div className="grid gap-2 text-[11px] text-fog/65 md:grid-cols-2">
-                          <div>{t('lightningOps.closeRecoveryDiagnostic')}: <span className="text-fog">{closeRecoveryStateLabel(item.state)}</span></div>
-                          <div>{t('lightningOps.closeRecoveryNextAction')}: <span className="text-fog">{closeRecoveryActionLabel(item.action_recommended)}</span></div>
-                          {typeof item.pending_htlc_count === 'number' && item.pending_htlc_count > 0 && (
-                            <div>{t('lightningOps.closeRecoveryPendingHtlcCount', { count: item.pending_htlc_count })}</div>
+                          <div className="grid gap-2 text-[11px] text-fog/65 md:grid-cols-2">
+                            <div>{t('lightningOps.closeRecoveryDiagnostic')}: <span className="text-fog">{closeRecoveryStateLabel(item.state)}</span></div>
+                            <div>{t('lightningOps.closeRecoveryNextAction')}: <span className="text-fog">{closeRecoveryActionLabel(item.action_recommended)}</span></div>
+                            {typeof item.pending_htlc_count === 'number' && item.pending_htlc_count > 0 && (
+                              <div>{t('lightningOps.closeRecoveryPendingHtlcCount', { count: item.pending_htlc_count })}</div>
+                            )}
+                            {typeof item.pending_htlc_age_sec === 'number' && item.pending_htlc_age_sec > 0 && (
+                              <div>{t('lightningOps.closeRecoveryPendingHtlcAge', { value: formatCloseRecoveryAge(item.pending_htlc_age_sec) })}</div>
+                            )}
+                            {item.close_txid && (
+                              closeTxLink ? (
+                                <a
+                                  className="md:col-span-2 text-emerald-200 hover:text-emerald-100 break-all"
+                                  href={closeTxLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  {t('lightningOps.closingTx', { txid: item.close_txid })}
+                                </a>
+                              ) : (
+                                <div className="md:col-span-2">{t('lightningOps.closingTx', { txid: item.close_txid })}</div>
+                              )
+                            )}
+                            {item.close_tx_external_confirmed && item.close_tx_external_block_time && (
+                              <div>{t('lightningOps.closeRecoveryCloseTxConfirmedAt', { value: formatCloseRecoveryTime(item.close_tx_external_block_time) })}</div>
+                            )}
+                            {item.close_tx_external_seen && !item.close_tx_external_confirmed && (
+                              <div>{t('lightningOps.closeRecoveryCloseTxSeen')}</div>
+                            )}
+                            {typeof item.limbo_balance_sat === 'number' && item.limbo_balance_sat > 0 && (
+                              <div>{t('lightningOps.closeRecoveryRecoverableValue', { value: formatSatsValue(item.limbo_balance_sat) })}</div>
+                            )}
+                            {typeof item.blocks_til_maturity === 'number' && item.blocks_til_maturity > 0 && (
+                              <div>{t('lightningOps.blocksToMaturity', { count: item.blocks_til_maturity })}</div>
+                            )}
+                            {typeof item.blocks_til_maturity === 'number' && item.blocks_til_maturity > 0 && (
+                              <div>{t('lightningOps.closeRecoveryMaturityEta', { value: formatMaturityDuration(estimateMaturitySeconds(item.blocks_til_maturity)) })}</div>
+                            )}
+                            {(!item.blocks_til_maturity || item.blocks_til_maturity <= 0) && item.maturity_eta_at && (
+                              <div>{t('lightningOps.closeRecoveryMaturityEta', { value: formatCloseRecoveryTime(item.maturity_eta_at) })}</div>
+                            )}
+                            {item.state === 'outputs_timelocked' && (!item.blocks_til_maturity || item.blocks_til_maturity <= 0) && !item.maturity_eta_at && (
+                              <div>{t('lightningOps.closeRecoveryMaturityEtaUnavailable')}</div>
+                            )}
+                            {typeof item.sweep_pending_count === 'number' && item.sweep_pending_count > 0 && (
+                              <div>{t('lightningOps.closeRecoverySweepCount', { count: item.sweep_pending_count })}</div>
+                            )}
+                            {typeof item.sweep_broadcast_attempts === 'number' && item.sweep_broadcast_attempts > 0 && (
+                              <div>{t('lightningOps.closeRecoverySweepAttempts', { count: item.sweep_broadcast_attempts })}</div>
+                            )}
+                            {typeof item.sweep_fee_rate_sat_vb === 'number' && item.sweep_fee_rate_sat_vb > 0 && (
+                              <div>{t('lightningOps.closeRecoverySweepFeeRate', { current: item.sweep_fee_rate_sat_vb.toLocaleString(), target: Math.max(0, Number(item.mempool_target_sat_vb || 0)).toLocaleString() })}</div>
+                            )}
+                            {!item.sweep_fee_rate_sat_vb && typeof item.sweep_requested_fee_rate_sat_vb === 'number' && item.sweep_requested_fee_rate_sat_vb > 0 && (
+                              <div>{t('lightningOps.closeRecoverySweepRequestedFeeRate', { value: item.sweep_requested_fee_rate_sat_vb.toLocaleString() })}</div>
+                            )}
+                            {item.sweep_txid && (
+                              sweepTxLink ? (
+                                <a
+                                  className="md:col-span-2 text-emerald-200 hover:text-emerald-100 break-all"
+                                  href={sweepTxLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  {t('lightningOps.closeRecoverySweepTx', { txid: item.sweep_txid })}
+                                </a>
+                              ) : (
+                                <div className="md:col-span-2">{t('lightningOps.closeRecoverySweepTx', { txid: item.sweep_txid })}</div>
+                              )
+                            )}
+                            {item.sweep_tx_external_confirmed && item.sweep_tx_external_block_time && (
+                              <div>{t('lightningOps.closeRecoverySweepTxConfirmedAt', { value: formatCloseRecoveryTime(item.sweep_tx_external_block_time) })}</div>
+                            )}
+                            {item.sweep_tx_external_seen && !item.sweep_tx_external_confirmed && (
+                              <div>{t('lightningOps.closeRecoverySweepTxSeen')}</div>
+                            )}
+                            {item.waiting_close_last_attempt_at && (
+                              <div>{t('lightningOps.closeRecoveryLastAttempt', { value: formatCloseRecoveryTime(item.waiting_close_last_attempt_at) })}</div>
+                            )}
+                          </div>
+                          {item.last_error && (
+                            <p className="text-[11px] text-rose-200 break-words">
+                              {t('lightningOps.closeRecoveryReason')}: {item.last_error}
+                            </p>
                           )}
-                          {typeof item.pending_htlc_age_sec === 'number' && item.pending_htlc_age_sec > 0 && (
-                            <div>{t('lightningOps.closeRecoveryPendingHtlcAge', { value: formatCloseRecoveryAge(item.pending_htlc_age_sec) })}</div>
-                          )}
-                          {item.close_txid && (
-                            <div className="md:col-span-2">{t('lightningOps.closingTx', { txid: item.close_txid })}</div>
-                          )}
-                          {typeof item.limbo_balance_sat === 'number' && item.limbo_balance_sat > 0 && (
-                            <div>{t('lightningOps.closeRecoveryRecoverableValue', { value: formatSatsValue(item.limbo_balance_sat) })}</div>
-                          )}
-                          {typeof item.blocks_til_maturity === 'number' && item.blocks_til_maturity > 0 && (
-                            <div>{t('lightningOps.blocksToMaturity', { count: item.blocks_til_maturity })}</div>
-                          )}
-                          {typeof item.blocks_til_maturity === 'number' && item.blocks_til_maturity > 0 && (
-                            <div>{t('lightningOps.closeRecoveryMaturityEta', { value: formatMaturityDuration(estimateMaturitySeconds(item.blocks_til_maturity)) })}</div>
-                          )}
-                          {(!item.blocks_til_maturity || item.blocks_til_maturity <= 0) && item.maturity_eta_at && (
-                            <div>{t('lightningOps.closeRecoveryMaturityEta', { value: formatCloseRecoveryTime(item.maturity_eta_at) })}</div>
-                          )}
-                          {item.state === 'outputs_timelocked' && (!item.blocks_til_maturity || item.blocks_til_maturity <= 0) && !item.maturity_eta_at && (
-                            <div>{t('lightningOps.closeRecoveryMaturityEtaUnavailable')}</div>
-                          )}
-                          {typeof item.sweep_pending_count === 'number' && item.sweep_pending_count > 0 && (
-                            <div>{t('lightningOps.closeRecoverySweepCount', { count: item.sweep_pending_count })}</div>
-                          )}
-                          {typeof item.sweep_broadcast_attempts === 'number' && item.sweep_broadcast_attempts > 0 && (
-                            <div>{t('lightningOps.closeRecoverySweepAttempts', { count: item.sweep_broadcast_attempts })}</div>
-                          )}
-                          {typeof item.sweep_fee_rate_sat_vb === 'number' && item.sweep_fee_rate_sat_vb > 0 && (
-                            <div>{t('lightningOps.closeRecoverySweepFeeRate', { current: item.sweep_fee_rate_sat_vb.toLocaleString(), target: Math.max(0, Number(item.mempool_target_sat_vb || 0)).toLocaleString() })}</div>
-                          )}
-                          {!item.sweep_fee_rate_sat_vb && typeof item.sweep_requested_fee_rate_sat_vb === 'number' && item.sweep_requested_fee_rate_sat_vb > 0 && (
-                            <div>{t('lightningOps.closeRecoverySweepRequestedFeeRate', { value: item.sweep_requested_fee_rate_sat_vb.toLocaleString() })}</div>
-                          )}
-                          {item.sweep_txid && (
-                            <div className="md:col-span-2">{t('lightningOps.closeRecoverySweepTx', { txid: item.sweep_txid })}</div>
-                          )}
-                          {item.waiting_close_last_attempt_at && (
-                            <div>{t('lightningOps.closeRecoveryLastAttempt', { value: formatCloseRecoveryTime(item.waiting_close_last_attempt_at) })}</div>
-                          )}
-                        </div>
-                        {item.last_error && (
-                          <p className="text-[11px] text-rose-200 break-words">
-                            {t('lightningOps.closeRecoveryReason')}: {item.last_error}
-                          </p>
-                        )}
-                        <div className="flex flex-wrap items-center gap-2">
-                          {(item.state === 'waiting_close_no_txid' || item.action_recommended === 'recover_or_monitor') && (
-                            <button
-                              type="button"
-                              className="btn-secondary text-xs px-3 py-1.5"
-                              onClick={() => handleCloseRecoveryRecover(item.id)}
-                              disabled={closeRecoveryBusyByID[item.id] === true}
-                            >
-                              {closeRecoveryBusyByID[item.id] ? t('lightningOps.closeRecoveryRecoverRunning') : t('lightningOps.closeRecoveryRecoverAction')}
-                            </button>
-                          )}
-                          {(item.action_required === 'force_close' || item.action_recommended === 'force_close') && (
-                            <button
-                              type="button"
-                              className="btn-secondary text-xs px-3 py-1.5"
-                              onClick={() => handleCloseRecoveryForceClose(item.id)}
-                              disabled={closeRecoveryBusyByID[item.id] === true}
-                            >
-                              {closeRecoveryBusyByID[item.id] ? t('lightningOps.closeRecoveryForceRunning') : t('lightningOps.closeRecoveryForceAction')}
-                            </button>
-                          )}
-                          {typeof item.sweep_pending_count === 'number' && item.sweep_pending_count > 0 && (item.state === 'sweep_pending' || item.state === 'sweep_stuck') && (
-                            <>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {(item.state === 'waiting_close_no_txid' || item.action_recommended === 'recover_or_monitor') && (
                               <button
                                 type="button"
                                 className="btn-secondary text-xs px-3 py-1.5"
-                                onClick={() => handleCloseRecoveryBumpFee(item.id, 'economic')}
+                                onClick={() => handleCloseRecoveryRecover(item.id)}
                                 disabled={closeRecoveryBusyByID[item.id] === true}
                               >
-                                {closeRecoveryBusyByID[item.id] ? t('lightningOps.closeRecoveryBumpRunning') : t('lightningOps.closeRecoveryBumpEconomic')}
+                                {closeRecoveryBusyByID[item.id] ? t('lightningOps.closeRecoveryRecoverRunning') : t('lightningOps.closeRecoveryRecoverAction')}
                               </button>
+                            )}
+                            {(item.action_required === 'force_close' || item.action_recommended === 'force_close') && (
                               <button
                                 type="button"
                                 className="btn-secondary text-xs px-3 py-1.5"
-                                onClick={() => handleCloseRecoveryBumpFee(item.id, 'normal')}
+                                onClick={() => handleCloseRecoveryForceClose(item.id)}
                                 disabled={closeRecoveryBusyByID[item.id] === true}
                               >
-                                {closeRecoveryBusyByID[item.id] ? t('lightningOps.closeRecoveryBumpRunning') : t('lightningOps.closeRecoveryBumpNormal')}
+                                {closeRecoveryBusyByID[item.id] ? t('lightningOps.closeRecoveryForceRunning') : t('lightningOps.closeRecoveryForceAction')}
                               </button>
-                              <button
-                                type="button"
-                                className="btn-secondary text-xs px-3 py-1.5"
-                                onClick={() => handleCloseRecoveryBumpFee(item.id, 'urgent')}
-                                disabled={closeRecoveryBusyByID[item.id] === true}
-                              >
-                                {closeRecoveryBusyByID[item.id] ? t('lightningOps.closeRecoveryBumpRunning') : t('lightningOps.closeRecoveryBumpUrgent')}
-                              </button>
-                            </>
+                            )}
+                            {typeof item.sweep_pending_count === 'number' && item.sweep_pending_count > 0 && (item.state === 'sweep_pending' || item.state === 'sweep_stuck') && (
+                              <>
+                                <button
+                                  type="button"
+                                  className="btn-secondary text-xs px-3 py-1.5"
+                                  onClick={() => handleCloseRecoveryBumpFee(item.id, 'economic')}
+                                  disabled={closeRecoveryBusyByID[item.id] === true}
+                                >
+                                  {closeRecoveryBusyByID[item.id] ? t('lightningOps.closeRecoveryBumpRunning') : t('lightningOps.closeRecoveryBumpEconomic')}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-secondary text-xs px-3 py-1.5"
+                                  onClick={() => handleCloseRecoveryBumpFee(item.id, 'normal')}
+                                  disabled={closeRecoveryBusyByID[item.id] === true}
+                                >
+                                  {closeRecoveryBusyByID[item.id] ? t('lightningOps.closeRecoveryBumpRunning') : t('lightningOps.closeRecoveryBumpNormal')}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-secondary text-xs px-3 py-1.5"
+                                  onClick={() => handleCloseRecoveryBumpFee(item.id, 'urgent')}
+                                  disabled={closeRecoveryBusyByID[item.id] === true}
+                                >
+                                  {closeRecoveryBusyByID[item.id] ? t('lightningOps.closeRecoveryBumpRunning') : t('lightningOps.closeRecoveryBumpUrgent')}
+                                </button>
+                              </>
+                            )}
+                          </div>
+                          {closeRecoveryActionStatusByID[item.id] && (
+                            <p className="text-[11px] text-brass break-words">{closeRecoveryActionStatusByID[item.id]}</p>
                           )}
                         </div>
-                        {closeRecoveryActionStatusByID[item.id] && (
-                          <p className="text-[11px] text-brass break-words">{closeRecoveryActionStatusByID[item.id]}</p>
-                        )}
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 </div>
               ))}

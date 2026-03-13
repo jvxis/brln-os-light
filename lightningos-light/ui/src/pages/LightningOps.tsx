@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { acceptBalancedOpenSession, addLnWatchtower, boostPeers, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getLnChanHeal, getLnChannelFees, getLnChannels, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnHtlcManager, updateLnTorPeerChecker } from '../api'
+import { acceptBalancedOpenSession, addLnWatchtower, boostPeers, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getLnChanHeal, getLnChannelFees, getLnChannels, getLnClosedChannels, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnHtlcManager, updateLnTorPeerChecker } from '../api'
+import { getLocale } from '../i18n'
 
 type Channel = {
   channel_point: string
@@ -80,6 +81,31 @@ type Peer = {
   sync_type: string
   last_error: string
   last_error_time?: number
+}
+
+type ClosedChannelResolution = {
+  resolution_type: number
+  sweep_txid?: string
+}
+
+type ClosedChannel = {
+  channel_point?: string
+  chan_id: number
+  closed_at?: string
+  closing_tx_hash?: string
+  remote_pubkey?: string
+  peer_alias?: string
+  capacity_sat: number
+  settled_balance_sat: number
+  time_locked_balance_sat: number
+  close_type: number
+  close_type_label?: string
+  open_initiator: number
+  open_initiator_label?: string
+  close_initiator: number
+  close_initiator_label?: string
+  close_height: number
+  resolutions?: ClosedChannelResolution[]
 }
 
 type Watchtower = {
@@ -590,7 +616,8 @@ const isFCRiskChannel = (ch: Channel) =>
   !ch.active && Number(ch.unsettled_balance_sat || 0) > 0
 
 export default function LightningOps() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = getLocale(i18n.language)
   const [channels, setChannels] = useState<Channel[]>([])
   const [activeCount, setActiveCount] = useState(0)
   const [inactiveCount, setInactiveCount] = useState(0)
@@ -616,6 +643,10 @@ export default function LightningOps() {
   const [boostStatus, setBoostStatus] = useState('')
   const [boostRunning, setBoostRunning] = useState(false)
   const [peers, setPeers] = useState<Peer[]>([])
+  const [closedChannels, setClosedChannels] = useState<ClosedChannel[]>([])
+  const [closedChannelStatus, setClosedChannelStatus] = useState('')
+  const [closedChannelSearch, setClosedChannelSearch] = useState('')
+  const [closedChannelFilter, setClosedChannelFilter] = useState<'all' | 'cooperative' | 'force' | 'breach' | 'other'>('all')
   const [peerListStatus, setPeerListStatus] = useState('')
   const [peerActionStatus, setPeerActionStatus] = useState('')
   const [watchtowers, setWatchtowers] = useState<Watchtower[]>([])
@@ -824,6 +855,92 @@ export default function LightningOps() {
   const formatFeeMsat = (value?: number) => {
     if (typeof value !== 'number' || value < 0) return '-'
     return value.toLocaleString()
+  }
+
+  const formatSatsValue = (value?: number) => {
+    const sats = Math.max(0, Math.trunc(Number(value || 0)))
+    return `${sats.toLocaleString()} ${t('lightningOps.autofeeResultsSats')}`
+  }
+
+  const normalizeClosedChannelType = (value?: string) => {
+    switch (String(value || '').trim().toUpperCase()) {
+      case 'COOPERATIVE_CLOSE':
+        return t('lightningOps.closedChannelTypeCooperative')
+      case 'LOCAL_FORCE_CLOSE':
+        return t('lightningOps.closedChannelTypeLocalForce')
+      case 'REMOTE_FORCE_CLOSE':
+        return t('lightningOps.closedChannelTypeRemoteForce')
+      case 'BREACH_CLOSE':
+        return t('lightningOps.closedChannelTypeBreach')
+      case 'FUNDING_CANCELED':
+        return t('lightningOps.closedChannelTypeFundingCanceled')
+      case 'ABANDONED':
+        return t('lightningOps.closedChannelTypeAbandoned')
+      default:
+        return value || t('common.unknown')
+    }
+  }
+
+  const normalizeInitiatorLabel = (value?: string) => {
+    switch (String(value || '').trim().toUpperCase()) {
+      case 'INITIATOR_LOCAL':
+        return t('lightningOps.closedChannelInitiatorLocal')
+      case 'INITIATOR_REMOTE':
+        return t('lightningOps.closedChannelInitiatorRemote')
+      case 'INITIATOR_BOTH':
+        return t('lightningOps.closedChannelInitiatorBoth')
+      default:
+        return t('lightningOps.closedChannelInitiatorUnknown')
+    }
+  }
+
+  const closedChannelTypeCategory = (item: ClosedChannel) => {
+    const label = String(item.close_type_label || '').trim().toUpperCase()
+    if (label === 'COOPERATIVE_CLOSE') return 'cooperative'
+    if (label.includes('FORCE_CLOSE')) return 'force'
+    if (label === 'BREACH_CLOSE') return 'breach'
+    return 'other'
+  }
+
+  const closedChannelBadgeClass = (item: ClosedChannel) => {
+    switch (closedChannelTypeCategory(item)) {
+      case 'cooperative':
+        return 'bg-emerald-500/15 text-emerald-200 border border-emerald-400/30'
+      case 'force':
+        return 'bg-amber-500/15 text-amber-200 border border-amber-400/30'
+      case 'breach':
+        return 'bg-rose-500/15 text-rose-200 border border-rose-400/30'
+      default:
+        return 'bg-white/10 text-fog/70 border border-white/10'
+    }
+  }
+
+  const formatCloseHeight = (value?: number) => {
+    const height = Number(value || 0)
+    if (height <= 0) return t('common.na')
+    const currentHeight = Number(channelBlockHeight || 0)
+    if (currentHeight > 0 && currentHeight >= height) {
+      return t('lightningOps.closedChannelHeightWithAge', {
+        height: height.toLocaleString(),
+        blocks: (currentHeight - height).toLocaleString(),
+      })
+    }
+    return t('lightningOps.closedChannelHeightOnly', { height: height.toLocaleString() })
+  }
+
+  const formatClosedAt = (value?: string) => {
+    const raw = String(value || '').trim()
+    if (!raw) return ''
+    const parsed = new Date(raw)
+    if (Number.isNaN(parsed.getTime())) return ''
+    return parsed.toLocaleString(locale, {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    })
   }
 
   const balancedCapacitySat = Math.trunc(Number(balancedCapacity || 0))
@@ -1903,15 +2020,17 @@ export default function LightningOps() {
   const load = async () => {
     setStatus(t('lightningOps.loadingChannels'))
     setPeerListStatus(t('lightningOps.loadingPeers'))
+    setClosedChannelStatus(t('lightningOps.loadingClosedChannels'))
     setWatchtowerStatus(t('lightningOps.watchtowerLoading'))
     setAmbossStatus(t('lightningOps.ambossHealthLoading'))
     setChanHealStatus(t('lightningOps.chanHealLoading'))
     setHtlcManagerStatus(t('lightningOps.htlcManagerLoading'))
     setTorPeerCheckerStatus(t('lightningOps.torPeerLoading'))
     setAutofeeMessage(t('lightningOps.autofeeLoading'))
-    const [channelsResult, peersResult, watchtowerResult, ambossResult, chanHealResult, htlcManagerResult, htlcManagerLogsResult, htlcManagerFailedResult, torPeerCheckerResult, torPeerCheckerLogsResult, bitcoinLocalResult, autofeeConfigResult, autofeeStatusResult, autofeeChannelsResult, autofeeResultsResult, balancedOpenStatusResult, balancedOpenSessionsResult] = await Promise.allSettled([
+    const [channelsResult, peersResult, closedChannelsResult, watchtowerResult, ambossResult, chanHealResult, htlcManagerResult, htlcManagerLogsResult, htlcManagerFailedResult, torPeerCheckerResult, torPeerCheckerLogsResult, bitcoinLocalResult, autofeeConfigResult, autofeeStatusResult, autofeeChannelsResult, autofeeResultsResult, balancedOpenStatusResult, balancedOpenSessionsResult] = await Promise.allSettled([
       getLnChannels(),
       getLnPeers(),
+      getLnClosedChannels(),
       getLnWatchtowers(),
       getAmbossHealth(),
       getLnChanHeal(),
@@ -1943,6 +2062,14 @@ export default function LightningOps() {
     } else {
       const message = (peersResult.reason as any)?.message || t('lightningOps.loadPeersFailed')
       setPeerListStatus(message)
+    }
+    if (closedChannelsResult.status === 'fulfilled') {
+      const res = closedChannelsResult.value as any
+      setClosedChannels(Array.isArray(res?.channels) ? res.channels : [])
+      setClosedChannelStatus('')
+    } else {
+      const message = (closedChannelsResult.reason as any)?.message || t('lightningOps.loadClosedChannelsFailed')
+      setClosedChannelStatus(message)
     }
     if (watchtowerResult.status === 'fulfilled') {
       const res = watchtowerResult.value as any
@@ -2154,6 +2281,18 @@ export default function LightningOps() {
           setStatus(err?.message || t('lightningOps.loadChannelsFailed'))
         })
     }
+    const refreshClosedChannels = () => {
+      getLnClosedChannels()
+        .then((res: any) => {
+          if (!mounted) return
+          setClosedChannels(Array.isArray(res?.channels) ? res.channels : [])
+          setClosedChannelStatus('')
+        })
+        .catch((err: any) => {
+          if (!mounted) return
+          setClosedChannelStatus(err?.message || t('lightningOps.loadClosedChannelsFailed'))
+        })
+    }
     const fetchWatchtowers = () => {
       getLnWatchtowers()
         .then((res: any) => {
@@ -2305,6 +2444,7 @@ export default function LightningOps() {
     }, 30000)
     const channelsTimer = window.setInterval(() => {
       refreshChannels()
+      refreshClosedChannels()
     }, 10 * 60 * 1000)
     return () => {
       mounted = false
@@ -2492,6 +2632,31 @@ export default function LightningOps() {
 
   const pendingOpen = useMemo(() => pendingChannels.filter((ch) => ch.status === 'opening'), [pendingChannels])
   const pendingClose = useMemo(() => pendingChannels.filter((ch) => ch.status !== 'opening'), [pendingChannels])
+  const filteredClosedChannels = useMemo(() => {
+    let list = closedChannels
+    if (closedChannelFilter !== 'all') {
+      list = list.filter((item) => closedChannelTypeCategory(item) === closedChannelFilter)
+    }
+    if (closedChannelSearch.trim()) {
+      const query = closedChannelSearch.trim().toLowerCase()
+      list = list.filter((item) => {
+        const sweepMatch = Array.isArray(item.resolutions) && item.resolutions.some((resolution) =>
+          String(resolution?.sweep_txid || '').toLowerCase().includes(query))
+        return (
+          String(item.peer_alias || '').toLowerCase().includes(query) ||
+          String(item.remote_pubkey || '').toLowerCase().includes(query) ||
+          String(item.channel_point || '').toLowerCase().includes(query) ||
+          String(item.closing_tx_hash || '').toLowerCase().includes(query) ||
+          sweepMatch
+        )
+      })
+    }
+    return [...list].sort((a, b) => {
+      const heightDelta = Number(b.close_height || 0) - Number(a.close_height || 0)
+      if (heightDelta !== 0) return heightDelta
+      return Number(b.chan_id || 0) - Number(a.chan_id || 0)
+    })
+  }, [closedChannelFilter, closedChannelSearch, closedChannels])
   const balancedOpenSelectedSession = useMemo(
     () => balancedOpenSessions.find((item) => item.session_id === balancedOpenDetailsSessionID) || null,
     [balancedOpenSessions, balancedOpenDetailsSessionID]
@@ -6258,6 +6423,255 @@ export default function LightningOps() {
           </div>
         ) : (
           <p className="text-sm text-fog/60">{t('lightningOps.noConnectedPeers')}</p>
+        )}
+      </div>
+
+      <div className="section-card space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-semibold">{t('lightningOps.closedChannelsTitle')}</h3>
+            <p className="text-sm text-fog/60">{t('lightningOps.closedChannelsSubtitle')}</p>
+          </div>
+          <span className="text-xs text-fog/60">{t('lightningOps.closedChannelsCount', { count: closedChannels.length })}</span>
+        </div>
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+          <input
+            className="input-field lg:flex-1"
+            placeholder={t('lightningOps.closedChannelsSearchPlaceholder')}
+            value={closedChannelSearch}
+            onChange={(e) => setClosedChannelSearch(e.target.value)}
+          />
+          <select
+            className="input-field lg:w-56"
+            value={closedChannelFilter}
+            onChange={(e) => setClosedChannelFilter(e.target.value as 'all' | 'cooperative' | 'force' | 'breach' | 'other')}
+          >
+            <option value="all">{t('common.all')}</option>
+            <option value="cooperative">{t('lightningOps.closedChannelsFilterCooperative')}</option>
+            <option value="force">{t('lightningOps.closedChannelsFilterForce')}</option>
+            <option value="breach">{t('lightningOps.closedChannelsFilterBreach')}</option>
+            <option value="other">{t('lightningOps.closedChannelsFilterOther')}</option>
+          </select>
+        </div>
+        {closedChannelStatus && <p className="text-sm text-brass">{closedChannelStatus}</p>}
+        {filteredClosedChannels.length ? (
+          <>
+            <div className="space-y-3 md:hidden">
+              {filteredClosedChannels.map((item) => {
+                const peerLabel = item.peer_alias || item.remote_pubkey || t('lightningOps.unknownPeer')
+                const pointLink = mempoolLink(item.channel_point || '')
+                const closingTxLink = mempoolTxLink(item.closing_tx_hash)
+                const closedAtLabel = formatClosedAt(item.closed_at)
+                const sweepTxs = Array.isArray(item.resolutions)
+                  ? item.resolutions.map((resolution) => String(resolution?.sweep_txid || '').trim()).filter(Boolean)
+                  : []
+                return (
+                  <div key={`${item.chan_id}-${item.channel_point || item.closing_tx_hash || peerLabel}`} className="rounded-2xl border border-white/10 bg-ink/60 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        {item.remote_pubkey ? (
+                          <a
+                            className="text-sm text-fog hover:text-white break-all"
+                            href={ambossURL(item.remote_pubkey)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {peerLabel}
+                          </a>
+                        ) : (
+                          <p className="text-sm text-fog break-all">{peerLabel}</p>
+                        )}
+                        {closedAtLabel ? (
+                          <p className="mt-1 text-xs text-fog/50">{closedAtLabel}</p>
+                        ) : (
+                          <p className="mt-1 text-xs text-fog/50">{formatCloseHeight(item.close_height)}</p>
+                        )}
+                        <p className="mt-1 text-[11px] text-fog/40">{formatCloseHeight(item.close_height)}</p>
+                      </div>
+                      <span className={`rounded-full px-2 py-1 text-[11px] ${closedChannelBadgeClass(item)}`}>
+                        {normalizeClosedChannelType(item.close_type_label)}
+                      </span>
+                    </div>
+                    <div className="mt-3 grid gap-2 text-xs text-fog/70">
+                      <div>{t('lightningOps.capacityLabel', { value: item.capacity_sat })}</div>
+                      <div>{t('lightningOps.closedChannelSettledBalance', { value: formatSatsValue(item.settled_balance_sat) })}</div>
+                      <div>{t('lightningOps.closedChannelTimelockedBalance', { value: formatSatsValue(item.time_locked_balance_sat) })}</div>
+                      <div>{t('lightningOps.closedChannelCloseInitiator', { value: normalizeInitiatorLabel(item.close_initiator_label) })}</div>
+                      <div>{t('lightningOps.closedChannelOpenInitiator', { value: normalizeInitiatorLabel(item.open_initiator_label) })}</div>
+                    </div>
+                    {item.channel_point && (
+                      pointLink ? (
+                        <a
+                          className="mt-3 block text-[11px] text-emerald-200 hover:text-emerald-100 break-all"
+                          href={pointLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {t('lightningOps.pointLabel', { point: item.channel_point })}
+                        </a>
+                      ) : (
+                        <p className="mt-3 text-[11px] text-fog/50 break-all">{t('lightningOps.pointLabel', { point: item.channel_point })}</p>
+                      )
+                    )}
+                    {item.closing_tx_hash && (
+                      closingTxLink ? (
+                        <a
+                          className="mt-2 block text-[11px] text-emerald-200 hover:text-emerald-100 break-all"
+                          href={closingTxLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          {t('lightningOps.closingTx', { txid: item.closing_tx_hash })}
+                        </a>
+                      ) : (
+                        <p className="mt-2 text-[11px] text-fog/50 break-all">{t('lightningOps.closingTx', { txid: item.closing_tx_hash })}</p>
+                      )
+                    )}
+                    {sweepTxs.length > 0 && (
+                      <div className="mt-3 space-y-1">
+                        <p className="text-[11px] uppercase tracking-wide text-fog/50">{t('lightningOps.closedChannelResolutions')}</p>
+                        {sweepTxs.map((txid) => {
+                          const txLink = mempoolTxLink(txid)
+                          return txLink ? (
+                            <a
+                              key={txid}
+                              className="block text-[11px] text-emerald-200 hover:text-emerald-100 break-all"
+                              href={txLink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              {txid}
+                            </a>
+                          ) : (
+                            <p key={txid} className="text-[11px] text-fog/50 break-all">{txid}</p>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            <div className="hidden max-h-[520px] overflow-x-auto overflow-y-auto pr-1 md:block">
+              <table className="w-full min-w-[1080px] text-sm text-fog/75">
+                <thead className="sticky top-0 bg-ink/95 backdrop-blur">
+                  <tr className="text-left">
+                    <th className="pb-3 pr-4">{t('lightningOps.closedChannelPeer')}</th>
+                    <th className="pb-3 pr-4">{t('lightningOps.closedChannelClosedAt')}</th>
+                    <th className="pb-3 pr-4">{t('lightningOps.closedChannelBalances')}</th>
+                    <th className="pb-3 pr-4">{t('lightningOps.closedChannelType')}</th>
+                    <th className="pb-3 pr-4">{t('lightningOps.closedChannelInitiators')}</th>
+                    <th className="pb-3">{t('lightningOps.closedChannelLinks')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredClosedChannels.map((item) => {
+                    const peerLabel = item.peer_alias || item.remote_pubkey || t('lightningOps.unknownPeer')
+                    const pointLink = mempoolLink(item.channel_point || '')
+                    const closingTxLink = mempoolTxLink(item.closing_tx_hash)
+                    const closedAtLabel = formatClosedAt(item.closed_at)
+                    const sweepTxs = Array.isArray(item.resolutions)
+                      ? item.resolutions.map((resolution) => String(resolution?.sweep_txid || '').trim()).filter(Boolean)
+                      : []
+                    return (
+                      <tr key={`${item.chan_id}-${item.channel_point || item.closing_tx_hash || peerLabel}`} className="border-t border-white/5 align-top">
+                        <td className="py-3 pr-4">
+                          {item.remote_pubkey ? (
+                            <a
+                              className="text-fog hover:text-white hover:underline underline-offset-2"
+                              href={ambossURL(item.remote_pubkey)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              {peerLabel}
+                            </a>
+                          ) : (
+                            <span className="text-fog">{peerLabel}</span>
+                          )}
+                          <div className="mt-1 text-xs text-fog/50">{item.remote_pubkey || t('common.na')}</div>
+                          {item.channel_point && (
+                            pointLink ? (
+                              <a
+                                className="mt-1 block text-xs text-emerald-200 hover:text-emerald-100 break-all"
+                                href={pointLink}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                {item.channel_point}
+                              </a>
+                            ) : (
+                              <div className="mt-1 text-xs text-fog/50 break-all">{item.channel_point}</div>
+                            )
+                          )}
+                        </td>
+                        <td className="py-3 pr-4 text-xs">
+                          <div>{closedAtLabel || t('common.na')}</div>
+                          <div className="mt-1 text-fog/50">{formatCloseHeight(item.close_height)}</div>
+                          <div className="mt-1 text-fog/50">chan #{Number(item.chan_id || 0).toLocaleString()}</div>
+                          <div className="mt-1 text-fog/50">{t('lightningOps.capacityLabel', { value: item.capacity_sat })}</div>
+                        </td>
+                        <td className="py-3 pr-4 text-xs">
+                          <div>{t('lightningOps.closedChannelSettledBalance', { value: formatSatsValue(item.settled_balance_sat) })}</div>
+                          <div className="mt-1">{t('lightningOps.closedChannelTimelockedBalance', { value: formatSatsValue(item.time_locked_balance_sat) })}</div>
+                        </td>
+                        <td className="py-3 pr-4">
+                          <span className={`inline-flex rounded-full px-2 py-1 text-[11px] ${closedChannelBadgeClass(item)}`}>
+                            {normalizeClosedChannelType(item.close_type_label)}
+                          </span>
+                        </td>
+                        <td className="py-3 pr-4 text-xs">
+                          <div>{t('lightningOps.closedChannelCloseInitiator', { value: normalizeInitiatorLabel(item.close_initiator_label) })}</div>
+                          <div className="mt-1 text-fog/55">{t('lightningOps.closedChannelOpenInitiator', { value: normalizeInitiatorLabel(item.open_initiator_label) })}</div>
+                        </td>
+                        <td className="py-3 text-xs">
+                          {item.closing_tx_hash && (
+                            closingTxLink ? (
+                              <a
+                                className="block text-emerald-200 hover:text-emerald-100 break-all"
+                                href={closingTxLink}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                {item.closing_tx_hash}
+                              </a>
+                            ) : (
+                              <div className="break-all text-fog/50">{item.closing_tx_hash}</div>
+                            )
+                          )}
+                          {sweepTxs.length > 0 && (
+                            <div className="mt-2 space-y-1">
+                              <div className="text-fog/50">{t('lightningOps.closedChannelResolutions')}</div>
+                              {sweepTxs.map((txid) => {
+                                const txLink = mempoolTxLink(txid)
+                                return txLink ? (
+                                  <a
+                                    key={txid}
+                                    className="block text-emerald-200 hover:text-emerald-100 break-all"
+                                    href={txLink}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    {txid}
+                                  </a>
+                                ) : (
+                                  <div key={txid} className="break-all text-fog/50">{txid}</div>
+                                )
+                              })}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : (
+          <p className="text-sm text-fog/60">
+            {closedChannels.length ? t('lightningOps.closedChannelsNoMatch') : t('lightningOps.closedChannelsEmpty')}
+          </p>
         )}
       </div>
 

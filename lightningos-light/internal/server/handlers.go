@@ -1666,6 +1666,19 @@ func (s *Server) handleLNPeers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"peers": peers})
 }
 
+func (s *Server) handleLNClosedChannels(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), lndRPCTimeout)
+	defer cancel()
+
+	channels, err := s.lnd.ListClosedChannels(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, lndDetailedErrorMessage(err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"channels": channels})
+}
+
 func (s *Server) handleLNWatchtowers(w http.ResponseWriter, r *http.Request) {
 	includeSessions := false
 	excludeExhaustedSessions := false

@@ -1813,10 +1813,37 @@ func (c *Client) ListClosedChannels(ctx context.Context) ([]ClosedChannelInfo, e
 		return nil, err
 	}
 
+	txTimeByID := make(map[string]string)
+	if txResp, txErr := client.GetTransactions(ctx, &lnrpc.GetTransactionsRequest{
+		MaxTransactions: 0,
+		StartHeight:     0,
+		EndHeight:       -1,
+	}); txErr == nil && txResp != nil {
+		for _, tx := range txResp.GetTransactions() {
+			if tx == nil {
+				continue
+			}
+			txid := strings.ToLower(strings.TrimSpace(tx.GetTxHash()))
+			if txid == "" || tx.GetTimeStamp() <= 0 {
+				continue
+			}
+			txTimeByID[txid] = time.Unix(tx.GetTimeStamp(), 0).UTC().Format(time.RFC3339)
+		}
+	}
+
+	aliasMap := map[string]string{}
 	items := make([]ClosedChannelInfo, 0, len(resp.GetChannels()))
 	for _, ch := range resp.GetChannels() {
 		if ch == nil {
 			continue
+		}
+		remotePubkey := strings.TrimSpace(ch.GetRemotePubkey())
+		peerAlias := aliasMap[remotePubkey]
+		if peerAlias == "" && remotePubkey != "" {
+			peerAlias = c.lookupNodeAliasWithClient(ctx, client, remotePubkey)
+			if peerAlias != "" {
+				aliasMap[remotePubkey] = peerAlias
+			}
 		}
 		resolutions := make([]ClosedChannelResolutionInfo, 0, len(ch.GetResolutions()))
 		for _, res := range ch.GetResolutions() {
@@ -1829,15 +1856,31 @@ func (c *Client) ListClosedChannels(ctx context.Context) ([]ClosedChannelInfo, e
 			})
 		}
 		items = append(items, ClosedChannelInfo{
-			ChanID:         ch.GetChanId(),
-			ClosingTxHash:  strings.ToLower(strings.TrimSpace(ch.GetClosingTxHash())),
-			CloseType:      int32(ch.GetCloseType()),
-			OpenInitiator:  int32(ch.GetOpenInitiator()),
-			CloseInitiator: int32(ch.GetCloseInitiator()),
-			CloseHeight:    ch.GetCloseHeight(),
-			Resolutions:    resolutions,
+			ChannelPoint:         strings.TrimSpace(ch.GetChannelPoint()),
+			ChanID:               ch.GetChanId(),
+			ClosedAt:             txTimeByID[strings.ToLower(strings.TrimSpace(ch.GetClosingTxHash()))],
+			ClosingTxHash:        strings.ToLower(strings.TrimSpace(ch.GetClosingTxHash())),
+			RemotePubkey:         remotePubkey,
+			PeerAlias:            peerAlias,
+			CapacitySat:          ch.GetCapacity(),
+			SettledBalanceSat:    ch.GetSettledBalance(),
+			TimeLockedBalanceSat: ch.GetTimeLockedBalance(),
+			CloseType:            int32(ch.GetCloseType()),
+			CloseTypeLabel:       ch.GetCloseType().String(),
+			OpenInitiator:        int32(ch.GetOpenInitiator()),
+			OpenInitiatorLabel:   ch.GetOpenInitiator().String(),
+			CloseInitiator:       int32(ch.GetCloseInitiator()),
+			CloseInitiatorLabel:  ch.GetCloseInitiator().String(),
+			CloseHeight:          ch.GetCloseHeight(),
+			Resolutions:          resolutions,
 		})
 	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].CloseHeight == items[j].CloseHeight {
+			return items[i].ChanID > items[j].ChanID
+		}
+		return items[i].CloseHeight > items[j].CloseHeight
+	})
 
 	return items, nil
 }
@@ -3396,13 +3439,23 @@ type ClosedChannelResolutionInfo struct {
 }
 
 type ClosedChannelInfo struct {
-	ChanID         uint64                        `json:"chan_id"`
-	ClosingTxHash  string                        `json:"closing_tx_hash,omitempty"`
-	CloseType      int32                         `json:"close_type"`
-	OpenInitiator  int32                         `json:"open_initiator"`
-	CloseInitiator int32                         `json:"close_initiator"`
-	CloseHeight    uint32                        `json:"close_height"`
-	Resolutions    []ClosedChannelResolutionInfo `json:"resolutions,omitempty"`
+	ChannelPoint         string                        `json:"channel_point,omitempty"`
+	ChanID               uint64                        `json:"chan_id"`
+	ClosedAt             string                        `json:"closed_at,omitempty"`
+	ClosingTxHash        string                        `json:"closing_tx_hash,omitempty"`
+	RemotePubkey         string                        `json:"remote_pubkey,omitempty"`
+	PeerAlias            string                        `json:"peer_alias,omitempty"`
+	CapacitySat          int64                         `json:"capacity_sat"`
+	SettledBalanceSat    int64                         `json:"settled_balance_sat"`
+	TimeLockedBalanceSat int64                         `json:"time_locked_balance_sat"`
+	CloseType            int32                         `json:"close_type"`
+	CloseTypeLabel       string                        `json:"close_type_label,omitempty"`
+	OpenInitiator        int32                         `json:"open_initiator"`
+	OpenInitiatorLabel   string                        `json:"open_initiator_label,omitempty"`
+	CloseInitiator       int32                         `json:"close_initiator"`
+	CloseInitiatorLabel  string                        `json:"close_initiator_label,omitempty"`
+	CloseHeight          uint32                        `json:"close_height"`
+	Resolutions          []ClosedChannelResolutionInfo `json:"resolutions,omitempty"`
 }
 
 type RecentActivity struct {

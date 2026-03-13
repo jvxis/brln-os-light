@@ -100,6 +100,7 @@ func (s *Server) routes() http.Handler {
 	r.Route("/api/lnops", func(r chi.Router) {
 		r.Get("/channels", s.handleLNChannels)
 		r.Get("/peers", s.handleLNPeers)
+		r.Get("/closed-channels", s.handleLNClosedChannels)
 		r.Get("/watchtower", s.handleLNWatchtowers)
 		r.Post("/sign-message", s.handleLNSignMessage)
 		r.Post("/peer", s.handleLNConnectPeer)

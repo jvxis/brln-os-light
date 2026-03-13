@@ -467,7 +467,11 @@ where closed_at is null
    or closed_at >= now() - ($2::text)::interval
 order by
   case when closed_at is null then 0 else 1 end,
-  updated_at desc
+  case when closed_at is null then updated_at end desc,
+  case when closed_at is not null then close_height end desc,
+  case when closed_at is not null then closed_at end desc nulls last,
+  updated_at desc,
+  id desc
 limit $1
 `, limit, fmt.Sprintf("%d day", closeManagerTerminalRecentDays))
 	if err != nil {

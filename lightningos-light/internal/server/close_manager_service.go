@@ -463,8 +463,6 @@ select
   waiting_close_last_recovered_txid, waiting_close_suggest_force_close, last_progress_at,
   created_at, updated_at, closed_at
 from close_sessions
-where closed_at is null
-   or closed_at >= now() - ($2::text)::interval
 order by
   case when closed_at is null then 0 else 1 end,
   case when closed_at is null then updated_at end desc,
@@ -473,7 +471,7 @@ order by
   updated_at desc,
   id desc
 limit $1
-`, limit, fmt.Sprintf("%d day", closeManagerTerminalRecentDays))
+`, limit)
 	if err != nil {
 		return nil, err
 	}

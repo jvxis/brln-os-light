@@ -121,6 +121,8 @@ func (s *Server) routes() http.Handler {
 		r.Post("/channel/htlc-manager", s.handleLNHTLCManagerPost)
 		r.Get("/channel/htlc-manager/logs", s.handleLNHTLCManagerLogs)
 		r.Get("/channel/htlc-manager/failed", s.handleLNHTLCManagerFailed)
+		r.Get("/payments/clean-failed", s.handleLNFailedPaymentsCleanerGet)
+		r.Post("/payments/clean-failed", s.handleLNFailedPaymentsCleanerPost)
 		r.Get("/channel/tor-peers", s.handleLNTorPeerCheckerGet)
 		r.Post("/channel/tor-peers", s.handleLNTorPeerCheckerPost)
 		r.Get("/channel/tor-peers/logs", s.handleLNTorPeerCheckerLogs)

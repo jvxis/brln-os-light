@@ -17,58 +17,62 @@ import (
 )
 
 type Server struct {
-	cfg                  *config.Config
-	logger               *log.Logger
-	lnd                  *lndclient.Client
-	db                   *pgxpool.Pool
-	notifier             *Notifier
-	notifierErr          string
-	chat                 *ChatService
-	amboss               *AmbossHealthChecker
-	chanHealer           *ChanStatusHealer
-	reports              *reports.Service
-	reportsErr           string
-	reportsMu            sync.Mutex
-	reportsInitAt        time.Time
-	rebalanceInitAt      time.Time
-	rebalance            *RebalanceService
-	rebalanceErr         string
-	htlcManagerInitAt    time.Time
-	htlcManagerMu        sync.Mutex
-	htlcManager          *HtlcManager
-	htlcManagerErr       string
-	torPeerCheckerInitAt time.Time
-	torPeerCheckerMu     sync.Mutex
-	torPeerChecker       *TorPeerChecker
-	torPeerCheckerErr    string
-	depixInitAt          time.Time
-	depixMu              sync.Mutex
-	depix                *DepixService
-	depixErr             string
-	autofeeInitAt        time.Time
-	autofeeMu            sync.Mutex
-	autofee              *AutofeeService
-	autofeeErr           string
-	shortcutsInitAt      time.Time
-	shortcutsMu          sync.Mutex
-	shortcuts            *ShortcutsService
-	shortcutsErr         string
-	balancedOpenInitAt   time.Time
-	balancedOpenMu       sync.Mutex
-	balancedOpen         *BalancedOpenService
-	balancedOpenErr      string
-	nodeRetirementInitAt time.Time
-	nodeRetirementMu     sync.Mutex
-	nodeRetirement       *NodeRetirementService
-	nodeRetirementErr    string
-	successionInitAt     time.Time
-	successionMu         sync.Mutex
-	succession           *SuccessionService
-	successionErr        string
-	scbRestoreMu         sync.Mutex
-	lndRestartMu         sync.RWMutex
-	lastLNDRestart       time.Time
-	walletActivityMu     sync.Mutex
+	cfg                         *config.Config
+	logger                      *log.Logger
+	lnd                         *lndclient.Client
+	db                          *pgxpool.Pool
+	notifier                    *Notifier
+	notifierErr                 string
+	chat                        *ChatService
+	amboss                      *AmbossHealthChecker
+	chanHealer                  *ChanStatusHealer
+	reports                     *reports.Service
+	reportsErr                  string
+	reportsMu                   sync.Mutex
+	reportsInitAt               time.Time
+	rebalanceInitAt             time.Time
+	rebalance                   *RebalanceService
+	rebalanceErr                string
+	htlcManagerInitAt           time.Time
+	htlcManagerMu               sync.Mutex
+	htlcManager                 *HtlcManager
+	htlcManagerErr              string
+	failedPaymentsCleanerInitAt time.Time
+	failedPaymentsCleanerMu     sync.Mutex
+	failedPaymentsCleaner       *FailedPaymentsCleaner
+	failedPaymentsCleanerErr    string
+	torPeerCheckerInitAt        time.Time
+	torPeerCheckerMu            sync.Mutex
+	torPeerChecker              *TorPeerChecker
+	torPeerCheckerErr           string
+	depixInitAt                 time.Time
+	depixMu                     sync.Mutex
+	depix                       *DepixService
+	depixErr                    string
+	autofeeInitAt               time.Time
+	autofeeMu                   sync.Mutex
+	autofee                     *AutofeeService
+	autofeeErr                  string
+	shortcutsInitAt             time.Time
+	shortcutsMu                 sync.Mutex
+	shortcuts                   *ShortcutsService
+	shortcutsErr                string
+	balancedOpenInitAt          time.Time
+	balancedOpenMu              sync.Mutex
+	balancedOpen                *BalancedOpenService
+	balancedOpenErr             string
+	nodeRetirementInitAt        time.Time
+	nodeRetirementMu            sync.Mutex
+	nodeRetirement              *NodeRetirementService
+	nodeRetirementErr           string
+	successionInitAt            time.Time
+	successionMu                sync.Mutex
+	succession                  *SuccessionService
+	successionErr               string
+	scbRestoreMu                sync.Mutex
+	lndRestartMu                sync.RWMutex
+	lastLNDRestart              time.Time
+	walletActivityMu            sync.Mutex
 }
 
 func New(cfg *config.Config, logger *log.Logger) *Server {
@@ -90,6 +94,7 @@ func (s *Server) Run() error {
 	s.startTelegramNotifications()
 	s.initRebalance()
 	s.initHTLCManager()
+	s.initFailedPaymentsCleaner()
 	s.initTorPeerChecker()
 	s.initDepix()
 	s.initAutofee()
@@ -111,6 +116,9 @@ func (s *Server) Run() error {
 	}
 	if s.htlcManager != nil {
 		s.htlcManager.Start()
+	}
+	if s.failedPaymentsCleaner != nil {
+		s.failedPaymentsCleaner.Start()
 	}
 	if s.torPeerChecker != nil {
 		s.torPeerChecker.Start()

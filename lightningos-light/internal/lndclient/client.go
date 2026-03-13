@@ -326,6 +326,108 @@ func (c *Client) LookupPayment(ctx context.Context, paymentHash string, lookback
 	return nil, nil
 }
 
+const failedPaymentsPageSize = 5000
+const failedPaymentsMaxPages = 200000
+
+func (c *Client) CountFailedPayments(ctx context.Context) (int, error) {
+	conn, err := c.dial(ctx, true)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+
+	client := lnrpc.NewLightningClient(conn)
+
+	var count int
+	var indexOffset uint64
+	var lastOffset uint64
+	var pages int
+
+	for {
+		if pages >= failedPaymentsMaxPages {
+			break
+		}
+		pages++
+
+		req := &lnrpc.ListPaymentsRequest{
+			IncludeIncomplete: true,
+			Reversed:          true,
+			IndexOffset:       indexOffset,
+			MaxPayments:       failedPaymentsPageSize,
+		}
+		resp, err := client.ListPayments(ctx, req)
+		if err != nil {
+			return 0, err
+		}
+		if resp == nil || len(resp.Payments) == 0 {
+			break
+		}
+
+		minIndex := uint64(0)
+		for _, pay := range resp.Payments {
+			if pay == nil {
+				continue
+			}
+			if pay.Status == lnrpc.Payment_FAILED {
+				count++
+			}
+			if pay.PaymentIndex > 0 && (minIndex == 0 || pay.PaymentIndex < minIndex) {
+				minIndex = pay.PaymentIndex
+			}
+		}
+
+		if len(resp.Payments) < failedPaymentsPageSize {
+			break
+		}
+
+		nextOffset := uint64(0)
+		if resp.FirstIndexOffset != 0 {
+			nextOffset = resp.FirstIndexOffset
+		} else if minIndex != 0 {
+			nextOffset = minIndex
+		}
+		if nextOffset == 0 || nextOffset == indexOffset || nextOffset == lastOffset {
+			break
+		}
+		lastOffset = nextOffset
+		indexOffset = nextOffset
+	}
+
+	return count, nil
+}
+
+func (c *Client) CleanFailedPayments(ctx context.Context) (int, error) {
+	failedCount, err := c.CountFailedPayments(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if failedCount == 0 {
+		return 0, nil
+	}
+
+	conn, err := c.dial(ctx, true)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+
+	client := lnrpc.NewLightningClient(conn)
+	_, err = client.DeleteAllPayments(ctx, &lnrpc.DeleteAllPaymentsRequest{
+		FailedPaymentsOnly: true,
+	})
+	if err != nil {
+		if st, ok := status.FromError(err); ok {
+			msg := strings.ToLower(strings.TrimSpace(st.Message()))
+			if st.Code() == codes.Unimplemented || strings.Contains(msg, "unimplemented") {
+				return 0, ErrFailedPaymentsCleanupUnsupported
+			}
+		}
+		return 0, err
+	}
+
+	return failedCount, nil
+}
+
 type macaroonCredential struct {
 	macaroon string
 }
@@ -399,6 +501,8 @@ type CreatedInvoice struct {
 	PaymentHash    string
 	PaymentAddr    []byte
 }
+
+var ErrFailedPaymentsCleanupUnsupported = errors.New("lnd does not support deleting failed payments")
 
 func (m macaroonCredential) GetRequestMetadata(ctx context.Context, uri ...string) (map[string]string, error) {
 	return map[string]string{"macaroon": m.macaroon}, nil

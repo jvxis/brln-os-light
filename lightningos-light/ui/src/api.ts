@@ -145,6 +145,12 @@ export const getLnHtlcManagerLogs = (limit = 100) =>
   request(`/api/lnops/channel/htlc-manager/logs?limit=${encodeURIComponent(String(limit))}`)
 export const getLnHtlcManagerFailed = (limit = 100) =>
   request(`/api/lnops/channel/htlc-manager/failed?limit=${encodeURIComponent(String(limit))}`)
+export const getLnFailedPaymentsCleaner = () => request('/api/lnops/payments/clean-failed')
+export const updateLnFailedPaymentsCleaner = (payload: {
+  enabled?: boolean
+  interval_hours?: number
+  run_now?: boolean
+}) => request('/api/lnops/payments/clean-failed', { method: 'POST', body: JSON.stringify(payload) })
 export const getLnTorPeerChecker = () => request('/api/lnops/channel/tor-peers')
 export const updateLnTorPeerChecker = (payload: {
   enabled?: boolean

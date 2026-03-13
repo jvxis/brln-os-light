@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { acceptBalancedOpenSession, addLnWatchtower, boostPeers, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getLnChanHeal, getLnChannelFees, getLnChannels, getLnClosedChannels, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnHtlcManager, updateLnTorPeerChecker } from '../api'
+import { acceptBalancedOpenSession, addLnWatchtower, boostPeers, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getLnChanHeal, getLnChannelFees, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker } from '../api'
 import { getLocale } from '../i18n'
 
 type Channel = {
@@ -224,6 +224,17 @@ type HtlcManagerFailedEntry = {
   failure_detail?: string
   failure_reason?: string
   event?: string
+}
+
+type FailedPaymentsCleanerStatus = {
+  enabled: boolean
+  status: string
+  interval_hours: number
+  last_attempt_at?: string
+  last_ok_at?: string
+  last_error?: string
+  last_error_at?: string
+  last_deleted_count?: number
 }
 
 type TorPeerCheckerStatus = {
@@ -671,6 +682,10 @@ export default function LightningOps() {
   const [htlcManagerLogsOpen, setHtlcManagerLogsOpen] = useState(false)
   const [htlcManagerFailed, setHtlcManagerFailed] = useState<HtlcManagerFailedEntry[]>([])
   const [htlcManagerFailedOpen, setHtlcManagerFailedOpen] = useState(false)
+  const [failedPaymentsCleaner, setFailedPaymentsCleaner] = useState<FailedPaymentsCleanerStatus | null>(null)
+  const [failedPaymentsCleanerStatus, setFailedPaymentsCleanerStatus] = useState('')
+  const [failedPaymentsCleanerBusy, setFailedPaymentsCleanerBusy] = useState(false)
+  const [failedPaymentsCleanerIntervalHours, setFailedPaymentsCleanerIntervalHours] = useState('24')
   const [torPeerChecker, setTorPeerChecker] = useState<TorPeerCheckerStatus | null>(null)
   const [torPeerCheckerStatus, setTorPeerCheckerStatus] = useState('')
   const [torPeerCheckerBusy, setTorPeerCheckerBusy] = useState(false)
@@ -813,6 +828,7 @@ export default function LightningOps() {
   const chanHealLastAttemptRef = useRef('')
   const chanHealIntervalDirtyRef = useRef(false)
   const htlcManagerFormDirtyRef = useRef(false)
+  const failedPaymentsCleanerIntervalDirtyRef = useRef(false)
   const torPeerCheckerIntervalDirtyRef = useRef(false)
   const batchItemIdRef = useRef(1)
   const pendingScrollChannelRef = useRef('')
@@ -1907,6 +1923,13 @@ export default function LightningOps() {
     return 'warn'
   }
 
+  const failedPaymentsCleanerTone = (): 'ok' | 'warn' | 'muted' => {
+    if (!failedPaymentsCleaner?.enabled) return 'muted'
+    if (failedPaymentsCleaner?.status === 'ok') return 'ok'
+    if (failedPaymentsCleaner?.status === 'checking') return 'muted'
+    return 'warn'
+  }
+
   const torPeerCheckerTone = (): 'ok' | 'warn' | 'muted' => {
     if (!torPeerChecker?.enabled) return 'muted'
     if (torPeerChecker?.status === 'ok') return 'ok'
@@ -1942,6 +1965,13 @@ export default function LightningOps() {
     if (!htlcManager?.enabled) return t('common.disabled')
     if (htlcManager?.status === 'ok') return t('common.ok')
     if (htlcManager?.status === 'checking') return t('common.check')
+    return t('common.check')
+  }
+
+  const failedPaymentsCleanerBadgeLabel = () => {
+    if (!failedPaymentsCleaner?.enabled) return t('common.disabled')
+    if (failedPaymentsCleaner?.status === 'ok') return t('common.ok')
+    if (failedPaymentsCleaner?.status === 'checking') return t('common.check')
     return t('common.check')
   }
 
@@ -2025,9 +2055,10 @@ export default function LightningOps() {
     setAmbossStatus(t('lightningOps.ambossHealthLoading'))
     setChanHealStatus(t('lightningOps.chanHealLoading'))
     setHtlcManagerStatus(t('lightningOps.htlcManagerLoading'))
+    setFailedPaymentsCleanerStatus(t('lightningOps.failedPaymentsCleanerLoading'))
     setTorPeerCheckerStatus(t('lightningOps.torPeerLoading'))
     setAutofeeMessage(t('lightningOps.autofeeLoading'))
-    const [channelsResult, peersResult, closedChannelsResult, watchtowerResult, ambossResult, chanHealResult, htlcManagerResult, htlcManagerLogsResult, htlcManagerFailedResult, torPeerCheckerResult, torPeerCheckerLogsResult, bitcoinLocalResult, autofeeConfigResult, autofeeStatusResult, autofeeChannelsResult, autofeeResultsResult, balancedOpenStatusResult, balancedOpenSessionsResult] = await Promise.allSettled([
+    const [channelsResult, peersResult, closedChannelsResult, watchtowerResult, ambossResult, chanHealResult, htlcManagerResult, htlcManagerLogsResult, htlcManagerFailedResult, failedPaymentsCleanerResult, torPeerCheckerResult, torPeerCheckerLogsResult, bitcoinLocalResult, autofeeConfigResult, autofeeStatusResult, autofeeChannelsResult, autofeeResultsResult, balancedOpenStatusResult, balancedOpenSessionsResult] = await Promise.allSettled([
       getLnChannels(),
       getLnPeers(),
       getLnClosedChannels(),
@@ -2037,6 +2068,7 @@ export default function LightningOps() {
       getLnHtlcManager(),
       getLnHtlcManagerLogs(),
       getLnHtlcManagerFailed(),
+      getLnFailedPaymentsCleaner(),
       getLnTorPeerChecker(),
       getLnTorPeerCheckerLogs(),
       getBitcoinLocalStatus(),
@@ -2127,6 +2159,16 @@ export default function LightningOps() {
       setHtlcManagerFailed(Array.isArray(entries) ? entries : [])
     } else if (htlcManagerResult.status === 'fulfilled') {
       setHtlcManagerFailed([])
+    }
+    if (failedPaymentsCleanerResult.status === 'fulfilled') {
+      const payload = failedPaymentsCleanerResult.value as FailedPaymentsCleanerStatus
+      setFailedPaymentsCleaner(payload)
+      setFailedPaymentsCleanerIntervalHours(String(payload?.interval_hours ?? 24))
+      failedPaymentsCleanerIntervalDirtyRef.current = false
+      setFailedPaymentsCleanerStatus('')
+    } else {
+      const message = (failedPaymentsCleanerResult.reason as any)?.message || t('lightningOps.failedPaymentsCleanerStatusUnavailable')
+      setFailedPaymentsCleanerStatus(message)
     }
     if (torPeerCheckerResult.status === 'fulfilled') {
       const payload = torPeerCheckerResult.value as TorPeerCheckerStatus
@@ -2382,6 +2424,22 @@ export default function LightningOps() {
           setHtlcManagerFailed([])
         })
     }
+    const fetchFailedPaymentsCleaner = () => {
+      getLnFailedPaymentsCleaner()
+        .then((data) => {
+          if (!mounted) return
+          const payload = data as FailedPaymentsCleanerStatus
+          setFailedPaymentsCleaner(payload)
+          if (!failedPaymentsCleanerIntervalDirtyRef.current) {
+            setFailedPaymentsCleanerIntervalHours(String(payload?.interval_hours ?? 24))
+          }
+          setFailedPaymentsCleanerStatus('')
+        })
+        .catch((err: any) => {
+          if (!mounted) return
+          setFailedPaymentsCleanerStatus(err?.message || t('lightningOps.failedPaymentsCleanerStatusUnavailable'))
+        })
+    }
     const fetchTorPeerChecker = () => {
       getLnTorPeerChecker()
         .then((data) => {
@@ -2439,6 +2497,7 @@ export default function LightningOps() {
       fetchAmboss()
       fetchChanHeal()
       fetchHtlcManager()
+      fetchFailedPaymentsCleaner()
       fetchTorPeerChecker()
       fetchBalancedOpen()
     }, 30000)
@@ -3435,6 +3494,58 @@ export default function LightningOps() {
       setHtlcManagerStatus(err?.message || t('lightningOps.htlcManagerRunFailed'))
     } finally {
       setHtlcManagerBusy(false)
+    }
+  }
+
+  const handleToggleFailedPaymentsCleaner = async () => {
+    if (failedPaymentsCleanerBusy) return
+    const nextEnabled = !failedPaymentsCleaner?.enabled
+    setFailedPaymentsCleanerBusy(true)
+    setFailedPaymentsCleanerStatus(t('lightningOps.failedPaymentsCleanerSaving'))
+    try {
+      const res = await updateLnFailedPaymentsCleaner({ enabled: nextEnabled })
+      setFailedPaymentsCleaner(res as FailedPaymentsCleanerStatus)
+      setFailedPaymentsCleanerStatus(nextEnabled ? t('lightningOps.failedPaymentsCleanerEnabled') : t('lightningOps.failedPaymentsCleanerDisabled'))
+    } catch (err: any) {
+      setFailedPaymentsCleanerStatus(err?.message || t('lightningOps.failedPaymentsCleanerSaveFailed'))
+    } finally {
+      setFailedPaymentsCleanerBusy(false)
+    }
+  }
+
+  const handleSaveFailedPaymentsCleaner = async () => {
+    if (failedPaymentsCleanerBusy) return
+    const intervalHours = Number(failedPaymentsCleanerIntervalHours || 0)
+    if (!intervalHours || intervalHours < 1 || intervalHours > 168) {
+      setFailedPaymentsCleanerStatus(t('lightningOps.failedPaymentsCleanerIntervalInvalid'))
+      return
+    }
+    setFailedPaymentsCleanerBusy(true)
+    setFailedPaymentsCleanerStatus(t('lightningOps.failedPaymentsCleanerSaving'))
+    try {
+      const res = await updateLnFailedPaymentsCleaner({ interval_hours: intervalHours })
+      setFailedPaymentsCleaner(res as FailedPaymentsCleanerStatus)
+      failedPaymentsCleanerIntervalDirtyRef.current = false
+      setFailedPaymentsCleanerStatus(t('lightningOps.failedPaymentsCleanerSaved'))
+    } catch (err: any) {
+      setFailedPaymentsCleanerStatus(err?.message || t('lightningOps.failedPaymentsCleanerSaveFailed'))
+    } finally {
+      setFailedPaymentsCleanerBusy(false)
+    }
+  }
+
+  const handleRunFailedPaymentsCleanerNow = async () => {
+    if (failedPaymentsCleanerBusy) return
+    setFailedPaymentsCleanerBusy(true)
+    setFailedPaymentsCleanerStatus(t('lightningOps.failedPaymentsCleanerRunning'))
+    try {
+      const res = await updateLnFailedPaymentsCleaner({ run_now: true })
+      setFailedPaymentsCleaner(res as FailedPaymentsCleanerStatus)
+      setFailedPaymentsCleanerStatus(t('lightningOps.failedPaymentsCleanerRunDone'))
+    } catch (err: any) {
+      setFailedPaymentsCleanerStatus(err?.message || t('lightningOps.failedPaymentsCleanerRunFailed'))
+    } finally {
+      setFailedPaymentsCleanerBusy(false)
     }
   }
 
@@ -6303,6 +6414,82 @@ export default function LightningOps() {
               <p className="text-xs text-fog/50">{t('lightningOps.torPeerLogsEmpty')}</p>
             )}
           </div>
+        )}
+      </div>
+
+      <div className="section-card space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-semibold">{t('lightningOps.failedPaymentsCleanerTitle')}</h3>
+            <p className="text-sm text-fog/60">{t('lightningOps.failedPaymentsCleanerSubtitle')}</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className={`text-[11px] uppercase tracking-wide px-2 py-0.5 rounded-full ${badgeClass(failedPaymentsCleanerTone())}`}>
+              {failedPaymentsCleanerBadgeLabel()}
+            </span>
+            <button
+              className={`relative flex h-9 w-36 items-center rounded-full border border-white/10 bg-ink/60 px-2 transition ${failedPaymentsCleanerBusy ? 'opacity-70' : 'hover:border-white/30'}`}
+              onClick={handleToggleFailedPaymentsCleaner}
+              type="button"
+              disabled={failedPaymentsCleanerBusy}
+              aria-label={t('lightningOps.toggleFailedPaymentsCleaner')}
+            >
+              <span
+                className={`absolute top-1 h-7 w-16 rounded-full bg-glow shadow transition-all ${failedPaymentsCleaner?.enabled ? 'left-[70px]' : 'left-[6px]'}`}
+              />
+              <span className={`relative z-10 flex-1 text-center text-xs ${!failedPaymentsCleaner?.enabled ? 'text-ink' : 'text-fog/60'}`}>{t('common.disabled')}</span>
+              <span className={`relative z-10 flex-1 text-center text-xs ${failedPaymentsCleaner?.enabled ? 'text-ink' : 'text-fog/60'}`}>{t('common.enabled')}</span>
+            </button>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="text-sm text-fog/70">
+            {t('lightningOps.failedPaymentsCleanerInterval')}
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              className="input-field w-32"
+              type="number"
+              min={1}
+              max={168}
+              value={failedPaymentsCleanerIntervalHours}
+              onChange={(e) => {
+                setFailedPaymentsCleanerIntervalHours(e.target.value)
+                failedPaymentsCleanerIntervalDirtyRef.current = true
+              }}
+            />
+            <button
+              className="btn-secondary text-xs px-3 py-2"
+              type="button"
+              onClick={handleSaveFailedPaymentsCleaner}
+              disabled={failedPaymentsCleanerBusy}
+            >
+              {t('common.save')}
+            </button>
+          </div>
+          <button className="btn-secondary text-xs px-3 py-2" type="button" onClick={handleRunFailedPaymentsCleanerNow} disabled={failedPaymentsCleanerBusy}>
+            {t('lightningOps.failedPaymentsCleanerRunNow')}
+          </button>
+        </div>
+        {failedPaymentsCleanerStatus && <p className="text-sm text-brass">{failedPaymentsCleanerStatus}</p>}
+        <div className="grid gap-3 text-xs text-fog/70 lg:grid-cols-4">
+          <div>
+            {t('lightningOps.failedPaymentsCleanerLastRun')}: <span className="text-fog">{formatAmbossTime(failedPaymentsCleaner?.last_ok_at)}</span>
+          </div>
+          <div>
+            {t('lightningOps.failedPaymentsCleanerLastAttempt')}: <span className="text-fog">{formatAmbossTime(failedPaymentsCleaner?.last_attempt_at)}</span>
+          </div>
+          <div>
+            {t('lightningOps.failedPaymentsCleanerLastDeleted')}: <span className="text-fog">{failedPaymentsCleaner?.last_deleted_count ?? 0}</span>
+          </div>
+          <div>
+            {t('lightningOps.failedPaymentsCleanerInterval')}: <span className="text-fog">{failedPaymentsCleaner?.interval_hours ? `${failedPaymentsCleaner.interval_hours}h` : '-'}</span>
+          </div>
+        </div>
+        {failedPaymentsCleaner?.last_error && (
+          <p className="text-xs text-amber-200">
+            {t('lightningOps.failedPaymentsCleanerLastError')}: {failedPaymentsCleaner.last_error}
+          </p>
         )}
       </div>
 

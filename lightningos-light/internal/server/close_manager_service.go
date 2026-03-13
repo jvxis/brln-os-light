@@ -365,9 +365,6 @@ func (s *CloseManagerService) RefreshNow(ctx context.Context) error {
 
 	for point, closed := range closedByPoint {
 		prev := existingByPoint[point]
-		if prev.ID == 0 && closed.TimeLockedBalanceSat <= 0 {
-			continue
-		}
 		src := nodeRetirementRefs[point]
 		baseSweepTxid := deriveClosedSessionSweepTxid(closed)
 		sweepStatus := deriveCloseManagerSweepStatus(strings.TrimSpace(closed.ClosingTxHash), firstNonEmpty(baseSweepTxid, prev.SweepTxid), pendingSweepsBySourceTxid, sweepTxids, mempoolTargetSatVB)
@@ -407,7 +404,7 @@ func (s *CloseManagerService) GetStatus(ctx context.Context) (CloseManagerStatus
 select state, source, action_required
 from close_sessions
 where closed_at is null
-   or updated_at >= now() - ($1::text)::interval
+   or closed_at >= now() - ($1::text)::interval
 `, fmt.Sprintf("%d day", closeManagerTerminalRecentDays))
 	if err != nil {
 		return CloseManagerStatus{}, err
@@ -467,7 +464,7 @@ select
   created_at, updated_at, closed_at
 from close_sessions
 where closed_at is null
-   or updated_at >= now() - ($2::text)::interval
+   or closed_at >= now() - ($2::text)::interval
 order by
   case when closed_at is null then 0 else 1 end,
   updated_at desc

@@ -658,7 +658,7 @@ func (s *CloseManagerService) derivePendingSession(now time.Time, item lndclient
 		riskLevel = "warn"
 	}
 	if state == closeManagerStateForceCloseActive || state == closeManagerStateOutputsTimelocked {
-		if sweep.PendingCount > 0 || sweep.SweepTxSeen {
+		if sweep.PendingCount > 0 {
 			state = closeManagerStateSweepPending
 			actionRecommended = "monitor"
 			riskLevel = "warn"
@@ -754,7 +754,7 @@ func (s *CloseManagerService) deriveClosedSession(now time.Time, item lndclient.
 	}
 
 	sweepTxid := deriveClosedSessionSweepTxid(item)
-	if item.TimeLockedBalanceSat > 0 && (sweep.PendingCount > 0 || sweep.SweepTxSeen) {
+	if item.TimeLockedBalanceSat > 0 && sweep.PendingCount > 0 {
 		state = closeManagerStateSweepPending
 		actionRecommended = "monitor"
 		riskLevel = "warn"

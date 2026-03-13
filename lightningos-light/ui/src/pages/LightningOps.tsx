@@ -712,6 +712,7 @@ export default function LightningOps() {
   const [closeRecoveryStatus, setCloseRecoveryStatus] = useState('')
   const [closeRecoveryBusyByID, setCloseRecoveryBusyByID] = useState<Record<number, boolean>>({})
   const [closeRecoveryActionStatusByID, setCloseRecoveryActionStatusByID] = useState<Record<number, string>>({})
+  const [channelsSubview, setChannelsSubview] = useState<'channels' | 'close_recovery'>('channels')
   const [closedChannelSearch, setClosedChannelSearch] = useState('')
   const [closedChannelFilter, setClosedChannelFilter] = useState<'all' | 'cooperative' | 'force' | 'breach' | 'other'>('all')
   const [peerListStatus, setPeerListStatus] = useState('')
@@ -4464,9 +4465,13 @@ export default function LightningOps() {
   }
 
   const scrollToCloseRecovery = () => {
-    const target = document.getElementById(CLOSE_RECOVERY_SECTION_ID)
-    if (!target) return
-    target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    setChannelsSubview('close_recovery')
+    if (typeof window === 'undefined') return
+    window.setTimeout(() => {
+      const target = document.getElementById(CLOSE_RECOVERY_SECTION_ID)
+      if (!target) return
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 0)
   }
 
   const handleCloseRecoveryRecover = async (sessionID: number) => {
@@ -4912,37 +4917,67 @@ export default function LightningOps() {
 
       <div className="section-card space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 className="text-lg font-semibold">{t('lightningOps.channels')}</h3>
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <button className={filter === 'all' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setFilter('all'); setFcRiskOnly(false) }}>{t('common.all')}</button>
-            <button className={filter === 'active' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setFilter('active'); setFcRiskOnly(false) }}>{t('common.active')}</button>
-            <button className={filter === 'inactive' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setFilter('inactive'); setFcRiskOnly(false) }}>{t('common.inactive')}</button>
-            <button className={profitFilter === 'profitable' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setProfitFilter((prev) => (prev === 'profitable' ? 'all' : 'profitable')); setFcRiskOnly(false) }}>
-              {t('lightningOps.profitPositive')}: {profitCounts.profitable}
-            </button>
-            <button className={profitFilter === 'neutral' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setProfitFilter((prev) => (prev === 'neutral' ? 'all' : 'neutral')); setFcRiskOnly(false) }}>
-              {t('lightningOps.profitNeutral')}: {profitCounts.neutral}
-            </button>
-            <button className={profitFilter === 'deficit' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setProfitFilter((prev) => (prev === 'deficit' ? 'all' : 'deficit')); setFcRiskOnly(false) }}>
-              {t('lightningOps.profitNegative')}: {profitCounts.deficit}
-            </button>
-            <button
-              className={`px-3 py-2 rounded-full border text-xs transition ${
-                fcRiskOnly
-                  ? 'border-rose-300/70 bg-rose-500/25 text-rose-100'
-                  : 'border-rose-500/45 bg-rose-500/10 text-rose-300 hover:border-rose-300/70'
-              } ${!fcRiskCount && !fcRiskOnly ? 'opacity-60 cursor-not-allowed' : ''}`}
-              onClick={handleToggleFCRiskFilter}
-              disabled={!fcRiskCount && !fcRiskOnly}
-              title={t('lightningOps.fcRiskFilterHint')}
-              aria-label={t('lightningOps.fcRiskFilterHint')}
-            >
-              {t('lightningOps.fcRiskBadge', { count: fcRiskCount })}
-            </button>
+          <div className="space-y-3">
+            <h3 className="text-lg font-semibold">{t('lightningOps.channels')}</h3>
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <button
+                className={channelsSubview === 'channels' ? 'btn-primary' : 'btn-secondary'}
+                onClick={() => setChannelsSubview('channels')}
+                type="button"
+              >
+                {t('lightningOps.channelsSubviewChannels')}
+              </button>
+              <button
+                className={channelsSubview === 'close_recovery' ? 'btn-primary' : 'btn-secondary'}
+                onClick={() => setChannelsSubview('close_recovery')}
+                type="button"
+              >
+                {t('lightningOps.channelsSubviewCloseRecovery')}
+                {closeRecoveryActiveSessions.length > 0 ? `: ${closeRecoveryActiveSessions.length}` : ''}
+              </button>
+            </div>
           </div>
+          {channelsSubview === 'channels' ? (
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <button className={filter === 'all' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setFilter('all'); setFcRiskOnly(false) }}>{t('common.all')}</button>
+              <button className={filter === 'active' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setFilter('active'); setFcRiskOnly(false) }}>{t('common.active')}</button>
+              <button className={filter === 'inactive' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setFilter('inactive'); setFcRiskOnly(false) }}>{t('common.inactive')}</button>
+              <button className={profitFilter === 'profitable' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setProfitFilter((prev) => (prev === 'profitable' ? 'all' : 'profitable')); setFcRiskOnly(false) }}>
+                {t('lightningOps.profitPositive')}: {profitCounts.profitable}
+              </button>
+              <button className={profitFilter === 'neutral' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setProfitFilter((prev) => (prev === 'neutral' ? 'all' : 'neutral')); setFcRiskOnly(false) }}>
+                {t('lightningOps.profitNeutral')}: {profitCounts.neutral}
+              </button>
+              <button className={profitFilter === 'deficit' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setProfitFilter((prev) => (prev === 'deficit' ? 'all' : 'deficit')); setFcRiskOnly(false) }}>
+                {t('lightningOps.profitNegative')}: {profitCounts.deficit}
+              </button>
+              <button
+                className={`px-3 py-2 rounded-full border text-xs transition ${
+                  fcRiskOnly
+                    ? 'border-rose-300/70 bg-rose-500/25 text-rose-100'
+                    : 'border-rose-500/45 bg-rose-500/10 text-rose-300 hover:border-rose-300/70'
+                } ${!fcRiskCount && !fcRiskOnly ? 'opacity-60 cursor-not-allowed' : ''}`}
+                onClick={handleToggleFCRiskFilter}
+                disabled={!fcRiskCount && !fcRiskOnly}
+                title={t('lightningOps.fcRiskFilterHint')}
+                aria-label={t('lightningOps.fcRiskFilterHint')}
+              >
+                {t('lightningOps.fcRiskBadge', { count: fcRiskCount })}
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-fog/70">
+              <span className="rounded-full border border-white/10 px-3 py-2">
+                {t('lightningOps.closeRecoveryActiveCount', { count: closeRecoveryStatusData?.active_count ?? closeRecoveryActiveSessions.length })}
+              </span>
+              <span className="rounded-full border border-white/10 px-3 py-2">
+                {t('lightningOps.closeRecoveryActionRequiredCount', { count: closeRecoveryStatusData?.action_required_count ?? 0 })}
+              </span>
+            </div>
+          )}
         </div>
 
-        {(pendingOpen.length > 0 || pendingClose.length > 0) && (
+        {channelsSubview === 'channels' && (pendingOpen.length > 0 || pendingClose.length > 0) && (
           <div className="rounded-2xl border border-brass/30 bg-brass/10 p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h4 className="text-sm font-semibold text-brass">{t('lightningOps.pendingChannels')}</h4>
@@ -5165,6 +5200,7 @@ export default function LightningOps() {
           </div>
         )}
 
+        {channelsSubview === 'close_recovery' && (
         <div id={CLOSE_RECOVERY_SECTION_ID} className="rounded-2xl border border-white/10 bg-ink/40 p-4 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -5330,7 +5366,10 @@ export default function LightningOps() {
             </div>
           )}
         </div>
+        )}
 
+        {channelsSubview === 'channels' && (
+        <>
         <div className="grid gap-3 lg:grid-cols-4">
             <input
               className="input-field"
@@ -5818,6 +5857,8 @@ export default function LightningOps() {
           </div>
         ) : (
           <p className="text-sm text-fog/60">{t('lightningOps.noChannelsFound')}</p>
+        )}
+        </>
         )}
       </div>
 

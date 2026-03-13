@@ -1612,6 +1612,8 @@
     "waitingCloseResultTxidDetected": "closing txid detected",
     "waitingCloseResultRebroadcastNoTxid": "recovery sent, waiting for txid",
     "subtitle": "Manage peers, channels, and routing fees.",
+    "channelsSubviewChannels": "Channels",
+    "channelsSubviewCloseRecovery": "Close Recovery",
     "syncLabel": "Sync",
     "temporaryPeer": "Temporary peer (no auto-reconnect)",
     "timeLockDelta": "Timelock delta",

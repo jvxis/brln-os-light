@@ -1612,6 +1612,8 @@
     "waitingCloseResultTxidDetected": "closing_txid detectado",
     "waitingCloseResultRebroadcastNoTxid": "recuperacao enviada, aguardando txid",
     "subtitle": "Gerencie peers, canais e fees de roteamento.",
+    "channelsSubviewChannels": "Canais",
+    "channelsSubviewCloseRecovery": "Close Recovery",
     "syncLabel": "Sync",
     "temporaryPeer": "Peer temporário (sem auto-reconnect)",
     "timeLockDelta": "Timelock delta",

@@ -311,6 +311,21 @@ Parametros da UI:
 - `Inbound passive rebalance`, `Discovery mode`, `Explorer mode`, `Revenue floor`, `Circuit breaker`, `Extreme drain`, `Super source`.
 - `HTLC signal integration` e `HTLC mode` (`observe_only`, `policy_only`, `full`).
 
+Configuracoes de movimento (gaveta no card do Autofee):
+- Use `0` ou deixe vazio para manter o padrao do perfil selecionado.
+- `Cooldown up (hours)`: espera minima antes de nova alta de fee. Maior = sobe mais devagar; menor = reage mais rapido.
+- `Cooldown down (hours)`: espera minima antes de nova queda de fee. Maior = cai mais devagar; menor = reduz taxas mais rapido.
+- `Step cap override (%)`: mudanca maxima permitida por rodada. Maior = mais movimento por execucao; menor = comportamento mais suave.
+- `Discovery down cap override (%)`: cap extra de queda em cenarios de discovery. Maior = destrava e abaixa mais rapido.
+- `Stall relax gap trigger (%)`: gap minimo entre fee atual e alvo antes do stall-relax suavizar o piso. Menor = relaxa antes; maior = preserva o piso por mais tempo.
+- `Inbound discount max ratio (%)`: desconto inbound maximo como fracao da fee outbound aplicada. Maior = pricing inbound mais agressivo em canais tipo sink.
+- `Low-flow floor factor override (%)`: multiplicador aplicado ao piso quando o fluxo de saida esta baixo. Maior = mantem fees mais altas; menor = permite pisos mais baixos.
+- `Global lock soften min out ratio (%)`: out ratio minimo para o lock global por margem negativa poder suavizar. Menor = mais canais ficam elegiveis.
+- `Global lock soften max drop to peg (%)`: queda maxima permitida em direcao ao peg quando o lock global e suavizado. Menor = permite cortes mais profundos.
+- `HTLC min attempts 60m override`: minimo de tentativas HTLC para o canal ser classificado por comportamento HTLC. Menor = mais reacoes guiadas por HTLC.
+- `HTLC policy fail rate override (%)`: limite da taxa de falha policy para sinais HTLC. Menor = dispara `policy-hot` com mais facilidade.
+- `HTLC liquidity fail rate override (%)`: limite da taxa de falha de liquidez para sinais HTLC. Menor = dispara `liquidity-hot` com mais facilidade.
+
 Pipeline de decisao (por canal):
 1. Monta referencias:
 - `out_ppm7d` da janela principal.

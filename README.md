@@ -325,6 +325,21 @@ UI parameters:
 - `Inbound passive rebalance`, `Discovery mode`, `Explorer mode`, `Revenue floor`, `Circuit breaker`, `Extreme drain`, `Super source`.
 - `HTLC signal integration` and `HTLC mode` (`observe_only`, `policy_only`, `full`).
 
+Movement settings (drawer in the Autofee card):
+- Use `0` or leave the field empty to keep the selected profile default.
+- `Cooldown up (hours)`: minimum wait before another upward fee move. Higher = slower raises; lower = faster reactions.
+- `Cooldown down (hours)`: minimum wait before another downward fee move. Higher = slower drops; lower = faster fee reductions.
+- `Step cap override (%)`: maximum fee change allowed per run. Higher = more movement per round; lower = smoother behavior.
+- `Discovery down cap override (%)`: extra down-step cap used in discovery-like scenarios. Higher = faster unlock/down moves.
+- `Stall relax gap trigger (%)`: minimum gap between current fee and target before stall-relax softens the floor. Lower = relaxes earlier; higher = protects floors longer.
+- `Inbound discount max ratio (%)`: maximum inbound discount as a share of the applied outbound fee. Higher = more aggressive inbound pricing for sink-like channels.
+- `Low-flow floor factor override (%)`: multiplier applied to the floor when outbound flow is low. Higher = keeps fees higher; lower = allows lower floors.
+- `Global lock soften min out ratio (%)`: minimum out ratio needed before the global negative-margin lock can soften. Lower = more channels become eligible.
+- `Global lock soften max drop to peg (%)`: deepest allowed drop toward peg when the global lock is softened. Lower = allows deeper cuts.
+- `HTLC min attempts 60m override`: minimum HTLC attempts required before the channel is classified by HTLC behavior. Lower = more HTLC-driven reactions.
+- `HTLC policy fail rate override (%)`: policy-failure threshold for HTLC signals. Lower = easier to trigger `policy-hot`.
+- `HTLC liquidity fail rate override (%)`: liquidity-failure threshold for HTLC signals. Lower = easier to trigger `liquidity-hot`.
+
 Decision pipeline (per channel):
 1. Build references:
 - `out_ppm7d` from main lookback.

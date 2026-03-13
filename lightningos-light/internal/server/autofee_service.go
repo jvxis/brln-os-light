@@ -26,6 +26,7 @@ const (
 	autofeeConfigID        = 1
 	autofeeMinLookbackDays = 5
 	autofeeMaxLookbackDays = 21
+	autofeeMinCooldownSec  = 3600
 )
 
 const superSourceBaseFeeMsatDefault = 1000
@@ -1157,11 +1158,11 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 	if current.RunIntervalSec > 86400 {
 		current.RunIntervalSec = 86400
 	}
-	if current.CooldownUpSec < 3600 {
-		current.CooldownUpSec = 3600
+	if current.CooldownUpSec < autofeeMinCooldownSec {
+		current.CooldownUpSec = autofeeMinCooldownSec
 	}
-	if current.CooldownDownSec < 7200 {
-		current.CooldownDownSec = 7200
+	if current.CooldownDownSec < autofeeMinCooldownSec {
+		current.CooldownDownSec = autofeeMinCooldownSec
 	}
 	if current.StepCapOverride < 0 {
 		current.StepCapOverride = 0

@@ -1044,6 +1044,17 @@ export default function LightningOps() {
     return `${sats.toLocaleString()} ${t('lightningOps.autofeeResultsSats')}`
   }
 
+  const closeRecoveryRecentSortValue = (item: CloseRecoverySession) => {
+    const candidates = [item.closed_at, item.updated_at, item.last_progress_at]
+    for (const candidate of candidates) {
+      const raw = String(candidate || '').trim()
+      if (!raw) continue
+      const parsed = Date.parse(raw)
+      if (!Number.isNaN(parsed)) return parsed
+    }
+    return 0
+  }
+
   const normalizeClosedChannelType = (value?: string) => {
     switch (String(value || '').trim().toUpperCase()) {
       case 'COOPERATIVE_CLOSE':
@@ -2409,7 +2420,7 @@ export default function LightningOps() {
       setAutofeeLookback(String(cfg.lookback_days ?? 7))
       setAutofeeIntervalHours(String(Math.max(1, Math.round((cfg.run_interval_sec || 14400) / 3600))))
       setAutofeeCooldownUp(String(Math.max(1, Math.round((cfg.cooldown_up_sec || 10800) / 3600))))
-      setAutofeeCooldownDown(String(Math.max(2, Math.round((cfg.cooldown_down_sec || 14400) / 3600))))
+      setAutofeeCooldownDown(String(Math.max(1, Math.round((cfg.cooldown_down_sec || 14400) / 3600))))
       setAutofeeStepCapOverride((cfg.step_cap_override ?? 0) > 0 ? String(Math.round((cfg.step_cap_override ?? 0) * 1000) / 10) : '')
       setAutofeeDiscoveryStepCapDownOverride((cfg.discovery_step_cap_down_override ?? 0) > 0 ? String(Math.round((cfg.discovery_step_cap_down_override ?? 0) * 1000) / 10) : '')
       setAutofeeStallFloorRelaxGapFracOverride((cfg.stall_floor_relax_gap_frac_override ?? 0) > 0 ? String(Math.round((cfg.stall_floor_relax_gap_frac_override ?? 0) * 100)) : '')
@@ -2919,7 +2930,14 @@ export default function LightningOps() {
     return groups
       .map((group) => ({
         ...group,
-        items: closeRecoverySessions.filter((item) => group.states.includes(item.state))
+        items: (() => {
+          const items = closeRecoverySessions.filter((item) => group.states.includes(item.state))
+          if (group.key !== 'recent') return items
+          return items
+            .slice()
+            .sort((a, b) => closeRecoveryRecentSortValue(b) - closeRecoveryRecentSortValue(a))
+            .slice(0, 3)
+        })()
       }))
       .filter((group) => group.items.length > 0)
   }, [closeRecoverySessions, t])
@@ -3475,7 +3493,7 @@ export default function LightningOps() {
       const lookbackDays = Math.max(5, Math.min(21, Number(autofeeLookback || 7)))
       const intervalSec = Math.max(1, Number(autofeeIntervalHours || 4)) * 3600
       const cooldownUpSec = Math.max(1, Number(autofeeCooldownUp || 3)) * 3600
-      const cooldownDownSec = Math.max(2, Number(autofeeCooldownDown || 4)) * 3600
+      const cooldownDownSec = Math.max(1, Number(autofeeCooldownDown || 4)) * 3600
       const parsePercentOverride = (raw: string, min: number, max: number) => {
         const value = Number(raw)
         if (!Number.isFinite(value) || value <= 0) return 0
@@ -4724,7 +4742,7 @@ export default function LightningOps() {
                     </label>
                     <label className="text-sm text-fog/70">
                       {withHint(t('lightningOps.autofeeCooldownDown'), t('lightningOps.autofeeMovementHintCooldownDown'))}
-                      <input className="input-field mt-2" type="number" min={2} max={24} value={autofeeCooldownDown} onChange={(e) => setAutofeeCooldownDown(e.target.value)} />
+                      <input className="input-field mt-2" type="number" min={1} max={24} value={autofeeCooldownDown} onChange={(e) => setAutofeeCooldownDown(e.target.value)} />
                       <p className="mt-1 text-[11px] text-fog/55">
                         {t('lightningOps.autofeeMovementDefaultLabel', { value: `${(autofeeProfileDefaults[autofeeProfile]?.cooldownDown ?? 4)}h` })}
                       </p>

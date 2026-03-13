@@ -18,6 +18,7 @@ type Notification = {
   peer_alias?: string
   channel_id?: number
   channel_point?: string
+  channel_alias?: string
   txid?: string
   payment_hash?: string
   memo?: string
@@ -676,6 +677,9 @@ export default function Notifications() {
                   peerLabel,
                   memoLabel,
                 ].filter(Boolean)
+                if ((item.type === 'lightning' || item.type === 'keysend') && item.channel_alias) {
+                  detailParts.push(t('notifications.viaChannel', { channel: item.channel_alias }))
+                }
                 if (item.channel_point) {
                   if (item.type === 'channel') {
                     const link = mempoolLinkFromChannelPoint(item.channel_point)

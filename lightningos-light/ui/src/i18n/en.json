@@ -580,6 +580,7 @@
     "reconnecting": "Reconnecting live updates...",
     "routeLabel": "Route {{peer}}",
     "subtitle": "Real-time LND activity and history.",
+    "viaChannel": "Via {{channel}}",
     "telegram": {
       "botToken": "Bot token",
       "botTokenHint": "Get the bot token from @BotFather.",
@@ -796,6 +797,7 @@
     "sweepAllWarning": "Warning: This will send all available on-chain funds (minus fees) to the destination address.",
     "title": "Wallet",
     "unknownPeer": "Unknown peer",
+    "viaChannel": "Via {{channel}}",
     "useFastest": "Use fastest"
   },
   "wizard": {

@@ -1224,6 +1224,13 @@ func telegramActivityMirrorMessage(evt Notification) string {
 }
 
 func telegramNotificationChannelDetail(evt Notification) string {
+	if evt.Type == "lightning" || evt.Type == "keysend" {
+		alias := strings.TrimSpace(evt.ChannelAlias)
+		if alias == "" {
+			return ""
+		}
+		return "Via " + telegramShortValue(alias, 48)
+	}
 	if evt.Type != "channel" {
 		return ""
 	}

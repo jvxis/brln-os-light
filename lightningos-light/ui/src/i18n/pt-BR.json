@@ -580,6 +580,7 @@
     "reconnecting": "Reconectando atualizações ao vivo...",
     "routeLabel": "Route {{peer}}",
     "subtitle": "Atividade LND em tempo real e histórico.",
+    "viaChannel": "Via {{channel}}",
     "telegram": {
       "botToken": "Bot token",
       "botTokenHint": "Pegue o bot token em @BotFather.",
@@ -796,6 +797,7 @@
     "sweepAllWarning": "Aviso: Isso enviará todos os fundos on-chain disponíveis (menos taxas) para o endereço de destino.",
     "title": "Carteira",
     "unknownPeer": "Peer desconhecido",
+    "viaChannel": "Via {{channel}}",
     "useFastest": "Usar mais rápido"
   },
   "wizard": {
@@ -1386,10 +1388,10 @@
     "lastError": "Último erro{{age}}: {{error}}",
     "loadChannelsFailed": "Falha ao carregar canais.",
     "loadFeesFailed": "Falha ao carregar fees.",
-    "loadClosedChannelsFailed": "Falha ao carregar historico de fechamentos.",
+    "loadClosedChannelsFailed": "Falha ao carregar histórico de fechamentos.",
     "loadPeersFailed": "Falha ao carregar peers.",
     "loadingChannels": "Carregando canais...",
-    "loadingClosedChannels": "Carregando historico de fechamentos...",
+    "loadingClosedChannels": "Carregando histórico de fechamentos...",
     "loadingFees": "Carregando fees atuais...",
     "loadingPeers": "Carregando peers...",
     "localDisabled": "Roteamento local desabilitado",
@@ -1420,7 +1422,7 @@
     "noChannelsClosing": "Nenhum canal fechando.",
     "noChannelsFound": "Nenhum canal encontrado.",
     "noChannelsOpening": "Nenhum canal abrindo.",
-    "closedChannelsTitle": "Historico de Fechamentos",
+    "closedChannelsTitle": "Histórico de Fechamentos",
     "closedChannelsSubtitle": "Consulte todos os canais ja fechados pelo node.",
     "closedChannelsCount": "Fechados: {{count}}",
     "closedChannelsSearchPlaceholder": "Buscar alias, pubkey, channel point, closing tx ou sweep tx",

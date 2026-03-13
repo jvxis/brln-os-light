@@ -61,6 +61,7 @@ type Notification struct {
 	PeerAlias         string    `json:"peer_alias,omitempty"`
 	ChannelID         int64     `json:"channel_id,omitempty"`
 	ChannelPoint      string    `json:"channel_point,omitempty"`
+	ChannelAlias      string    `json:"channel_alias,omitempty"`
 	ChanIDIn          int64     `json:"chan_id_in,omitempty"`
 	ChanIDOut         int64     `json:"chan_id_out,omitempty"`
 	AmountInMsat      int64     `json:"amount_in_msat,omitempty"`
@@ -419,6 +420,7 @@ create table if not exists notifications (
   peer_alias text,
   channel_id bigint,
   channel_point text,
+  channel_alias text,
   chan_id_in bigint,
   chan_id_out bigint,
   amount_in_msat bigint,
@@ -440,6 +442,7 @@ create table if not exists notifications (
 );
 
 alter table notifications add column if not exists fee_msat bigint not null default 0;
+alter table notifications add column if not exists channel_alias text;
 alter table notifications add column if not exists chan_id_in bigint;
 alter table notifications add column if not exists chan_id_out bigint;
 alter table notifications add column if not exists amount_in_msat bigint;
@@ -519,22 +522,22 @@ where event_key=$1
 with ins as (
 insert into notifications (
   event_key, occurred_at, type, action, direction, status, amount_sat, fee_sat, fee_msat,
-  peer_pubkey, peer_alias, channel_id, channel_point,
+  peer_pubkey, peer_alias, channel_id, channel_point, channel_alias,
   chan_id_in, chan_id_out, amount_in_msat, amount_out_msat,
   peer_pubkey_in, peer_pubkey_out, channel_point_in, channel_point_out,
   rebal_source_chan_id, rebal_target_chan_id, rebal_source_point, rebal_target_point,
   rebal_source_pubkey, rebal_target_pubkey,
   txid, payment_hash, memo
-) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
-  $14,$15,$16,$17,
-  $18,$19,$20,$21,
-  $22,$23,$24,$25,
-  $26,$27,$28,
-  $29,$30
+) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+  $15,$16,$17,$18,
+  $19,$20,$21,$22,
+  $23,$24,$25,$26,
+  $27,$28,$29,
+  $30,$31
 )
 on conflict (event_key) do nothing
 returning id, occurred_at, type, action, direction, status, amount_sat, fee_sat,
-  fee_msat, peer_pubkey, peer_alias, channel_id, channel_point, txid, payment_hash, memo,
+  fee_msat, peer_pubkey, peer_alias, channel_id, channel_point, channel_alias, txid, payment_hash, memo,
   true as inserted
 ),
 upd as (
@@ -551,42 +554,43 @@ update notifications set
   peer_alias = $11,
   channel_id = $12,
   channel_point = $13,
-  chan_id_in = $14,
-  chan_id_out = $15,
-  amount_in_msat = $16,
-  amount_out_msat = $17,
-  peer_pubkey_in = $18,
-  peer_pubkey_out = $19,
-  channel_point_in = $20,
-  channel_point_out = $21,
-  rebal_source_chan_id = $22,
-  rebal_target_chan_id = $23,
-  rebal_source_point = $24,
-  rebal_target_point = $25,
-  rebal_source_pubkey = $26,
-  rebal_target_pubkey = $27,
-  txid = $28,
-  payment_hash = $29,
-  memo = $30
+  channel_alias = $14,
+  chan_id_in = $15,
+  chan_id_out = $16,
+  amount_in_msat = $17,
+  amount_out_msat = $18,
+  peer_pubkey_in = $19,
+  peer_pubkey_out = $20,
+  channel_point_in = $21,
+  channel_point_out = $22,
+  rebal_source_chan_id = $23,
+  rebal_target_chan_id = $24,
+  rebal_source_point = $25,
+  rebal_target_point = $26,
+  rebal_source_pubkey = $27,
+  rebal_target_pubkey = $28,
+  txid = $29,
+  payment_hash = $30,
+  memo = $31
 where event_key = $1
   and not exists (select 1 from ins)
 returning id, occurred_at, type, action, direction, status, amount_sat, fee_sat,
-  fee_msat, peer_pubkey, peer_alias, channel_id, channel_point, txid, payment_hash, memo,
+  fee_msat, peer_pubkey, peer_alias, channel_id, channel_point, channel_alias, txid, payment_hash, memo,
   false as inserted
 )
 select id, occurred_at, type, action, direction, status, amount_sat, fee_sat,
-  fee_msat, peer_pubkey, peer_alias, channel_id, channel_point, txid, payment_hash, memo,
+  fee_msat, peer_pubkey, peer_alias, channel_id, channel_point, channel_alias, txid, payment_hash, memo,
   inserted
 from ins
 union all
 select id, occurred_at, type, action, direction, status, amount_sat, fee_sat,
-  fee_msat, peer_pubkey, peer_alias, channel_id, channel_point, txid, payment_hash, memo,
+  fee_msat, peer_pubkey, peer_alias, channel_id, channel_point, channel_alias, txid, payment_hash, memo,
   inserted
 from upd
 limit 1
 `, eventKey, evt.OccurredAt, evt.Type, evt.Action, evt.Direction, evt.Status,
 		evt.AmountSat, evt.FeeSat, evt.FeeMsat, nullableString(evt.PeerPubkey), nullableString(evt.PeerAlias),
-		nullableInt(evt.ChannelID), nullableString(evt.ChannelPoint),
+		nullableInt(evt.ChannelID), nullableString(evt.ChannelPoint), nullableString(evt.ChannelAlias),
 		nullableInt(evt.ChanIDIn), nullableInt(evt.ChanIDOut),
 		nullableInt(evt.AmountInMsat), nullableInt(evt.AmountOutMsat),
 		nullableString(evt.PeerPubkeyIn), nullableString(evt.PeerPubkeyOut),
@@ -699,7 +703,7 @@ func (n *Notifier) list(ctx context.Context, limit int) ([]Notification, error) 
 
 	rows, err := n.db.Query(ctx, `
 select id, occurred_at, type, action, direction, status, amount_sat, fee_sat, fee_msat,
-  peer_pubkey, peer_alias, channel_id, channel_point, txid, payment_hash, memo
+  peer_pubkey, peer_alias, channel_id, channel_point, channel_alias, txid, payment_hash, memo
 from notifications
 order by occurred_at desc, id desc
 limit $1`, limit)
@@ -897,14 +901,20 @@ set type='rebalance',
   rebal_source_point=$9,
   rebal_target_point=$10,
   rebal_source_pubkey=$11,
-  rebal_target_pubkey=$12
+  rebal_target_pubkey=$12,
+  peer_pubkey=null,
+  peer_alias=$13,
+  channel_id=null,
+  channel_point=null,
+  channel_alias=null
 where id=$1
 returning id, occurred_at, type, action, direction, status, amount_sat, fee_sat,
-  fee_msat, peer_pubkey, peer_alias, channel_id, channel_point, txid, payment_hash, memo
+  fee_msat, peer_pubkey, peer_alias, channel_id, channel_point, channel_alias, txid, payment_hash, memo
 `, payID, invAmount, payFee, payFeeMsat, memoValue, invAt,
 		nullableInt(rebalanceMeta.RebalSourceChanID), nullableInt(rebalanceMeta.RebalTargetChanID),
 		nullableString(rebalanceMeta.RebalSourcePoint), nullableString(rebalanceMeta.RebalTargetPoint),
-		nullableString(rebalanceMeta.RebalSourcePubkey), nullableString(rebalanceMeta.RebalTargetPubkey))
+		nullableString(rebalanceMeta.RebalSourcePubkey), nullableString(rebalanceMeta.RebalTargetPubkey),
+		nullableString(rebalanceMeta.PeerAlias))
 	updated, err := scanNotification(row)
 	if err != nil {
 		return
@@ -1027,6 +1037,13 @@ func (n *Notifier) runInvoices() {
 				PaymentHash: hash,
 				Memo:        memo,
 			}
+			ctxChannel, cancelChannel := context.WithTimeout(context.Background(), 4*time.Second)
+			if chanID, channelPoint, channelAlias := n.invoiceReceiveChannel(ctxChannel, invoice); chanID != 0 || channelPoint != "" || channelAlias != "" {
+				evt.ChannelID = chanID
+				evt.ChannelPoint = channelPoint
+				evt.ChannelAlias = channelAlias
+			}
+			cancelChannel()
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			if n.isRebalanceHash(ctx, hash) {
@@ -1163,6 +1180,13 @@ func (n *Notifier) runPayments() {
 			PaymentHash: paymentHash,
 			Memo:        memo,
 		}
+		ctxChannel, cancelChannel := context.WithTimeout(context.Background(), 4*time.Second)
+		if chanID, channelPoint, channelAlias := n.paymentSendChannel(ctxChannel, pay); chanID != 0 || channelPoint != "" || channelAlias != "" {
+			evt.ChannelID = chanID
+			evt.ChannelPoint = channelPoint
+			evt.ChannelAlias = channelAlias
+		}
+		cancelChannel()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if isRebalance {
@@ -2290,11 +2314,21 @@ func keysendMessageFromRecords(records map[uint64][]byte) string {
 }
 
 func (n *Notifier) keysendPeerFromInvoice(ctx context.Context, invoice *lnrpc.Invoice) (string, string) {
+	_, _, _, peerPubkey, peerAlias := n.invoiceReceiveChannelInfo(ctx, invoice)
+	return peerPubkey, peerAlias
+}
+
+func (n *Notifier) invoiceReceiveChannel(ctx context.Context, invoice *lnrpc.Invoice) (int64, string, string) {
+	chanID, channelPoint, channelAlias, _, _ := n.invoiceReceiveChannelInfo(ctx, invoice)
+	return chanID, channelPoint, channelAlias
+}
+
+func (n *Notifier) invoiceReceiveChannelInfo(ctx context.Context, invoice *lnrpc.Invoice) (int64, string, string, string, string) {
 	if n == nil || invoice == nil {
-		return "", ""
+		return 0, "", "", "", ""
 	}
 	if len(invoice.Htlcs) == 0 {
-		return "", ""
+		return 0, "", "", "", ""
 	}
 	channelMap := n.channelMap(ctx)
 	for _, htlc := range invoice.Htlcs {
@@ -2305,9 +2339,30 @@ func (n *Notifier) keysendPeerFromInvoice(ctx context.Context, invoice *lnrpc.In
 		if !ok {
 			continue
 		}
-		return info.RemotePubkey, strings.TrimSpace(info.PeerAlias)
+		peerAlias := strings.TrimSpace(info.PeerAlias)
+		return int64(htlc.ChanId), info.ChannelPoint, pickAlias(peerAlias, info.RemotePubkey, ""), info.RemotePubkey, peerAlias
 	}
-	return "", ""
+	return 0, "", "", "", ""
+}
+
+func (n *Notifier) paymentSendChannel(ctx context.Context, pay *lnrpc.Payment) (int64, string, string) {
+	if n == nil || pay == nil {
+		return 0, "", ""
+	}
+	route := rebalanceRouteFromPayment(pay)
+	if route == nil || len(route.Hops) == 0 {
+		return 0, "", ""
+	}
+	firstHop := route.Hops[0]
+	if firstHop.ChanId == 0 {
+		return 0, "", pickAlias("", "", firstHop.PubKey)
+	}
+	channelMap := n.channelMap(ctx)
+	info, ok := channelMap[firstHop.ChanId]
+	if !ok {
+		return int64(firstHop.ChanId), "", pickAlias("", "", firstHop.PubKey)
+	}
+	return int64(firstHop.ChanId), info.ChannelPoint, pickAlias(info.PeerAlias, info.RemotePubkey, firstHop.PubKey)
 }
 
 func (n *Notifier) channelMap(ctx context.Context) map[uint64]lndclient.ChannelInfo {
@@ -2501,6 +2556,7 @@ func scanNotification(scanner notificationRowScanner) (Notification, error) {
 	var peerPubkey pgtype.Text
 	var peerAlias pgtype.Text
 	var channelPoint pgtype.Text
+	var channelAlias pgtype.Text
 	var txid pgtype.Text
 	var paymentHash pgtype.Text
 	var memo pgtype.Text
@@ -2519,6 +2575,7 @@ func scanNotification(scanner notificationRowScanner) (Notification, error) {
 		&peerAlias,
 		&channelID,
 		&channelPoint,
+		&channelAlias,
 		&txid,
 		&paymentHash,
 		&memo,
@@ -2538,6 +2595,9 @@ func scanNotification(scanner notificationRowScanner) (Notification, error) {
 	if channelPoint.Valid {
 		evt.ChannelPoint = channelPoint.String
 	}
+	if channelAlias.Valid {
+		evt.ChannelAlias = channelAlias.String
+	}
 	if txid.Valid {
 		evt.Txid = txid.String
 	}
@@ -2556,6 +2616,7 @@ func scanNotificationWithInserted(scanner notificationRowScanner) (Notification,
 	var peerPubkey pgtype.Text
 	var peerAlias pgtype.Text
 	var channelPoint pgtype.Text
+	var channelAlias pgtype.Text
 	var txid pgtype.Text
 	var paymentHash pgtype.Text
 	var memo pgtype.Text
@@ -2574,6 +2635,7 @@ func scanNotificationWithInserted(scanner notificationRowScanner) (Notification,
 		&peerAlias,
 		&channelID,
 		&channelPoint,
+		&channelAlias,
 		&txid,
 		&paymentHash,
 		&memo,
@@ -2593,6 +2655,9 @@ func scanNotificationWithInserted(scanner notificationRowScanner) (Notification,
 	}
 	if channelPoint.Valid {
 		evt.ChannelPoint = channelPoint.String
+	}
+	if channelAlias.Valid {
+		evt.ChannelAlias = channelAlias.String
 	}
 	if txid.Valid {
 		evt.Txid = txid.String

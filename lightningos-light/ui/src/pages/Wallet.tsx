@@ -783,12 +783,14 @@ export default function Wallet() {
             const memoLabel = String(item?.type || '').toLowerCase() === 'invoice' && memo
               ? ` - ${trimMemo(memo, 30)}`
               : ''
+            const channelAlias = typeof item?.channel_alias === 'string' ? item.channel_alias.trim() : ''
+            const channelLabel = channelAlias ? ` - ${t('wallet.viaChannel', { channel: channelAlias })}` : ''
             return (
               <div key={`${item.type}-${idx}`} className="grid items-center gap-3 border-b border-white/10 pb-2 sm:grid-cols-[160px_1fr_auto_auto]">
                 <span className="text-xs text-fog/50">{formatTimestamp(item.timestamp)}</span>
                 <div className="min-w-0">
                   <span className="text-fog/70">{typeLabel}</span>
-                  <span className="text-fog/50"> - {statusLabel}{memoLabel}</span>
+                  <span className="text-fog/50"> - {statusLabel}{memoLabel}{channelLabel}</span>
                 </div>
                 <span className={`text-xs font-mono ${arrowTone}`}>{arrow}</span>
                 <span className="text-right">{formatSats(Number(item.amount_sat || 0))} sats</span>

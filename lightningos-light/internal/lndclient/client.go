@@ -1073,6 +1073,39 @@ func (c *Client) ListRecent(ctx context.Context, limit int) ([]RecentActivity, e
 		}
 	}
 
+	channelByID := map[uint64]ChannelInfo{}
+	if channels, err := client.ListChannels(ctx, &lnrpc.ListChannelsRequest{PeerAliasLookup: true}); err == nil && channels != nil {
+		channelByID = make(map[uint64]ChannelInfo, len(channels.Channels))
+		for _, ch := range channels.Channels {
+			if ch == nil || ch.ChanId == 0 {
+				continue
+			}
+			channelByID[ch.ChanId] = ChannelInfo{
+				ChannelID:    ch.ChanId,
+				ChannelPoint: strings.TrimSpace(ch.ChannelPoint),
+				RemotePubkey: strings.TrimSpace(ch.RemotePubkey),
+				PeerAlias:    strings.TrimSpace(ch.PeerAlias),
+			}
+		}
+	}
+
+	applyRecentChannel := func(item *RecentActivity, chanID uint64, hopPubkey string) {
+		if item == nil || chanID == 0 {
+			return
+		}
+		item.ChannelID = chanID
+		if info, ok := channelByID[chanID]; ok {
+			item.ChannelPoint = info.ChannelPoint
+			item.ChannelAlias = strings.TrimSpace(info.PeerAlias)
+			if item.ChannelAlias == "" {
+				item.ChannelAlias = shortRecentPubKey(info.RemotePubkey)
+			}
+		}
+		if item.ChannelAlias == "" {
+			item.ChannelAlias = shortRecentPubKey(hopPubkey)
+		}
+	}
+
 	rebalanceHashes := map[string]struct{}{}
 	if payErr == nil {
 		for _, pay := range payments.Payments {
@@ -1106,7 +1139,7 @@ func (c *Client) ListRecent(ctx context.Context, limit int) ([]RecentActivity, e
 					continue
 				}
 			}
-			items = append(items, RecentActivity{
+			item := RecentActivity{
 				Type:        "invoice",
 				Network:     "lightning",
 				Direction:   "in",
@@ -1116,7 +1149,15 @@ func (c *Client) ListRecent(ctx context.Context, limit int) ([]RecentActivity, e
 				Status:      inv.State.String(),
 				Keysend:     inv.IsKeysend,
 				PaymentHash: hash,
-			})
+			}
+			for _, htlc := range inv.Htlcs {
+				if htlc == nil || htlc.ChanId == 0 {
+					continue
+				}
+				applyRecentChannel(&item, htlc.ChanId, "")
+				break
+			}
+			items = append(items, item)
 		}
 	}
 	if payErr == nil {
@@ -1128,7 +1169,7 @@ func (c *Client) ListRecent(ctx context.Context, limit int) ([]RecentActivity, e
 				continue
 			}
 			isKeysend := isKeysendPayment(pay)
-			items = append(items, RecentActivity{
+			item := RecentActivity{
 				Type:        "payment",
 				Network:     "lightning",
 				Direction:   "out",
@@ -1138,11 +1179,47 @@ func (c *Client) ListRecent(ctx context.Context, limit int) ([]RecentActivity, e
 				Status:      pay.Status.String(),
 				Keysend:     isKeysend,
 				PaymentHash: strings.ToLower(pay.PaymentHash),
-			})
+			}
+			if route := recentRouteFromPayment(pay); route != nil && len(route.Hops) > 0 {
+				firstHop := route.Hops[0]
+				applyRecentChannel(&item, firstHop.ChanId, firstHop.PubKey)
+			}
+			items = append(items, item)
 		}
 	}
 
 	return items, nil
+}
+
+func recentRouteFromPayment(pay *lnrpc.Payment) *lnrpc.Route {
+	if pay == nil {
+		return nil
+	}
+	for _, attempt := range pay.Htlcs {
+		if attempt == nil || attempt.Route == nil {
+			continue
+		}
+		if attempt.Status == lnrpc.HTLCAttempt_SUCCEEDED {
+			return attempt.Route
+		}
+	}
+	for _, attempt := range pay.Htlcs {
+		if attempt != nil && attempt.Route != nil {
+			return attempt.Route
+		}
+	}
+	return nil
+}
+
+func shortRecentPubKey(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	if len(trimmed) <= 12 {
+		return trimmed
+	}
+	return trimmed[:12]
 }
 
 func isRebalanceMemo(memo string) bool {
@@ -3459,16 +3536,19 @@ type ClosedChannelInfo struct {
 }
 
 type RecentActivity struct {
-	Type        string    `json:"type"`
-	Network     string    `json:"network,omitempty"`
-	Direction   string    `json:"direction,omitempty"`
-	AmountSat   int64     `json:"amount_sat"`
-	Memo        string    `json:"memo"`
-	Timestamp   time.Time `json:"timestamp"`
-	Status      string    `json:"status"`
-	Txid        string    `json:"txid,omitempty"`
-	Keysend     bool      `json:"keysend,omitempty"`
-	PaymentHash string    `json:"-"`
+	Type         string    `json:"type"`
+	Network      string    `json:"network,omitempty"`
+	Direction    string    `json:"direction,omitempty"`
+	AmountSat    int64     `json:"amount_sat"`
+	Memo         string    `json:"memo"`
+	Timestamp    time.Time `json:"timestamp"`
+	Status       string    `json:"status"`
+	Txid         string    `json:"txid,omitempty"`
+	Keysend      bool      `json:"keysend,omitempty"`
+	ChannelID    uint64    `json:"channel_id,omitempty"`
+	ChannelPoint string    `json:"channel_point,omitempty"`
+	ChannelAlias string    `json:"channel_alias,omitempty"`
+	PaymentHash  string    `json:"-"`
 }
 
 type OnchainTransaction struct {

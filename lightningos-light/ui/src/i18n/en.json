@@ -1463,6 +1463,8 @@
     "closeRecoveryPendingHtlcCount": "Pending HTLCs: {{count}}",
     "closeRecoveryPendingHtlcAge": "HTLC age: {{value}}",
     "closeRecoveryLimbo": "In limbo: {{value}}",
+    "closeRecoveryRecoverableValue": "Funds still recovering: {{value}}",
+    "closeRecoveryMaturityEta": "Estimated release time: {{value}}",
     "closeRecoverySweepCount": "Pending sweeps: {{count}}",
     "closeRecoverySweepAttempts": "Broadcast attempts: {{count}}",
     "closeRecoverySweepFeeRate": "Sweep fee: {{current}} sat/vB (target: {{target}} sat/vB)",

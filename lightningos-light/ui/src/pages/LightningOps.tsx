@@ -5276,10 +5276,16 @@ export default function LightningOps() {
                             <div className="md:col-span-2">{t('lightningOps.closingTx', { txid: item.close_txid })}</div>
                           )}
                           {typeof item.limbo_balance_sat === 'number' && item.limbo_balance_sat > 0 && (
-                            <div>{t('lightningOps.closeRecoveryLimbo', { value: formatSatsValue(item.limbo_balance_sat) })}</div>
+                            <div>{t('lightningOps.closeRecoveryRecoverableValue', { value: formatSatsValue(item.limbo_balance_sat) })}</div>
                           )}
                           {typeof item.blocks_til_maturity === 'number' && item.blocks_til_maturity > 0 && (
                             <div>{t('lightningOps.blocksToMaturity', { count: item.blocks_til_maturity })}</div>
+                          )}
+                          {typeof item.blocks_til_maturity === 'number' && item.blocks_til_maturity > 0 && (
+                            <div>{t('lightningOps.closeRecoveryMaturityEta', { value: formatMaturityDuration(estimateMaturitySeconds(item.blocks_til_maturity)) })}</div>
+                          )}
+                          {(!item.blocks_til_maturity || item.blocks_til_maturity <= 0) && item.maturity_eta_at && (
+                            <div>{t('lightningOps.closeRecoveryMaturityEta', { value: formatCloseRecoveryTime(item.maturity_eta_at) })}</div>
                           )}
                           {typeof item.sweep_pending_count === 'number' && item.sweep_pending_count > 0 && (
                             <div>{t('lightningOps.closeRecoverySweepCount', { count: item.sweep_pending_count })}</div>

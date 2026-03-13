@@ -5287,6 +5287,9 @@ export default function LightningOps() {
                           {(!item.blocks_til_maturity || item.blocks_til_maturity <= 0) && item.maturity_eta_at && (
                             <div>{t('lightningOps.closeRecoveryMaturityEta', { value: formatCloseRecoveryTime(item.maturity_eta_at) })}</div>
                           )}
+                          {item.state === 'outputs_timelocked' && (!item.blocks_til_maturity || item.blocks_til_maturity <= 0) && !item.maturity_eta_at && (
+                            <div>{t('lightningOps.closeRecoveryMaturityEtaUnavailable')}</div>
+                          )}
                           {typeof item.sweep_pending_count === 'number' && item.sweep_pending_count > 0 && (
                             <div>{t('lightningOps.closeRecoverySweepCount', { count: item.sweep_pending_count })}</div>
                           )}

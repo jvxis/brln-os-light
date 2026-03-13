@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -768,6 +769,7 @@ func (s *CloseManagerService) deriveClosedSession(now time.Time, item lndclient.
 	if sweep.Stuck {
 		lastError = deriveCloseManagerSweepReason(sweep)
 	}
+	blocksTilMaturity, maturityETA := closeManagerCarryForwardMaturity(now, prev)
 
 	session := CloseManagerSession{
 		ID:                         prev.ID,
@@ -789,6 +791,8 @@ func (s *CloseManagerService) deriveClosedSession(now time.Time, item lndclient.
 		LimboBalanceSat:            item.TimeLockedBalanceSat,
 		PendingHtlcCount:           0,
 		PendingHtlcAgeSec:          0,
+		BlocksTilMaturity:          blocksTilMaturity,
+		MaturityETAAt:              maturityETA,
 		SweepPendingCount:          sweep.PendingCount,
 		SweepBroadcastAttempts:     sweep.BroadcastAttempts,
 		SweepRequestedFeeRateSatVB: sweep.RequestedFeeRateSatVB,
@@ -1096,6 +1100,28 @@ func scanCloseManagerSessions(rows pgxRows) ([]CloseManagerSession, error) {
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func closeManagerCarryForwardMaturity(now time.Time, prev CloseManagerSession) (*int32, *time.Time) {
+	if prev.MaturityETAAt == nil {
+		if prev.BlocksTilMaturity == nil || *prev.BlocksTilMaturity <= 0 {
+			return nil, nil
+		}
+		value := *prev.BlocksTilMaturity
+		return &value, nil
+	}
+
+	eta := prev.MaturityETAAt.UTC()
+	if !eta.After(now) {
+		return nil, nil
+	}
+
+	remaining := eta.Sub(now)
+	blocks := int32(math.Ceil(remaining.Seconds() / 600.0))
+	if blocks < 1 {
+		blocks = 1
+	}
+	return &blocks, &eta
 }
 
 func deriveClosedSessionSweepTxid(item lndclient.ClosedChannelInfo) string {

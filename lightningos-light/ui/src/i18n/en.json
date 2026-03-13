@@ -1465,6 +1465,7 @@
     "closeRecoveryLimbo": "In limbo: {{value}}",
     "closeRecoveryRecoverableValue": "Funds still recovering: {{value}}",
     "closeRecoveryMaturityEta": "Estimated release time: {{value}}",
+    "closeRecoveryMaturityEtaUnavailable": "Estimated release time: unavailable",
     "closeRecoverySweepCount": "Pending sweeps: {{count}}",
     "closeRecoverySweepAttempts": "Broadcast attempts: {{count}}",
     "closeRecoverySweepFeeRate": "Sweep fee: {{current}} sat/vB (target: {{target}} sat/vB)",

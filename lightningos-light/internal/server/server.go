@@ -61,6 +61,10 @@ type Server struct {
 	balancedOpenMu              sync.Mutex
 	balancedOpen                *BalancedOpenService
 	balancedOpenErr             string
+	closeManagerInitAt          time.Time
+	closeManagerMu              sync.Mutex
+	closeManager                *CloseManagerService
+	closeManagerErr             string
 	nodeRetirementInitAt        time.Time
 	nodeRetirementMu            sync.Mutex
 	nodeRetirement              *NodeRetirementService
@@ -100,6 +104,7 @@ func (s *Server) Run() error {
 	s.initAutofee()
 	s.initShortcuts()
 	s.initBalancedOpen()
+	s.initCloseManager()
 	s.initNodeRetirement()
 	s.initSuccession()
 	if s.chat != nil {
@@ -128,6 +133,9 @@ func (s *Server) Run() error {
 	}
 	if s.balancedOpen != nil {
 		s.balancedOpen.Start()
+	}
+	if s.closeManager != nil {
+		s.closeManager.Start()
 	}
 	if s.nodeRetirement != nil {
 		s.nodeRetirement.Start()

@@ -122,6 +122,19 @@ export const payInvoice = (payload: { payment_request: string; channel_point?: s
 export const getLnChannels = () => request('/api/lnops/channels')
 export const getLnPeers = () => request('/api/lnops/peers')
 export const getLnClosedChannels = () => request('/api/lnops/closed-channels')
+export const getCloseManagerStatus = () => request('/api/lnops/close-manager/status')
+export const getCloseManagerSessions = (limit = 100) =>
+  request(`/api/lnops/close-manager/sessions?limit=${encodeURIComponent(String(limit))}`)
+export const getCloseManagerSession = (id: number) =>
+  request(`/api/lnops/close-manager/sessions/${encodeURIComponent(String(id))}`)
+export const getCloseManagerSessionEvents = (id: number, limit = 100) =>
+  request(`/api/lnops/close-manager/sessions/${encodeURIComponent(String(id))}/events?limit=${encodeURIComponent(String(limit))}`)
+export const recoverCloseManagerSession = (id: number) =>
+  request(`/api/lnops/close-manager/sessions/${encodeURIComponent(String(id))}/recover`, { method: 'POST' })
+export const forceCloseManagerSession = (id: number) =>
+  request(`/api/lnops/close-manager/sessions/${encodeURIComponent(String(id))}/force-close`, { method: 'POST' })
+export const bumpFeeCloseManagerSession = (id: number, payload: { preset?: 'economic' | 'normal' | 'urgent'; sat_per_vbyte?: number }) =>
+  request(`/api/lnops/close-manager/sessions/${encodeURIComponent(String(id))}/bump-fee`, { method: 'POST', body: JSON.stringify(payload) })
 export const getLnWatchtowers = () => request('/api/lnops/watchtower')
 export const addLnWatchtower = (payload: { address: string }) =>
   request('/api/lnops/watchtower/add', { method: 'POST', body: JSON.stringify(payload) })

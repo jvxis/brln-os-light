@@ -2651,6 +2651,104 @@ func (c *Client) PublishTransaction(ctx context.Context, txHex string, label str
 	return nil
 }
 
+func (c *Client) ListPendingSweeps(ctx context.Context) ([]PendingSweepInfo, error) {
+	conn, err := c.dial(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	client := walletrpc.NewWalletKitClient(conn)
+	resp, err := client.PendingSweeps(ctx, &walletrpc.PendingSweepsRequest{})
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]PendingSweepInfo, 0, len(resp.GetPendingSweeps()))
+	for _, pending := range resp.GetPendingSweeps() {
+		if pending == nil {
+			continue
+		}
+		txid, vout, outpoint := walletKitOutpointInfo(pending.GetOutpoint())
+		items = append(items, PendingSweepInfo{
+			Outpoint:             outpoint,
+			Txid:                 txid,
+			Vout:                 vout,
+			WitnessType:          strings.TrimSpace(pending.GetWitnessType().String()),
+			AmountSat:            int64(pending.GetAmountSat()),
+			BroadcastAttempts:    pending.GetBroadcastAttempts(),
+			NextBroadcastHeight:  pending.GetNextBroadcastHeight(),
+			SatPerVbyte:          int64(pending.GetSatPerVbyte()),
+			RequestedSatPerVbyte: int64(pending.GetRequestedSatPerVbyte()),
+			Immediate:            pending.GetImmediate(),
+			BudgetSat:            int64(pending.GetBudget()),
+			DeadlineHeight:       pending.GetDeadlineHeight(),
+		})
+	}
+
+	return items, nil
+}
+
+func (c *Client) ListSweeps(ctx context.Context) ([]SweepHistoryInfo, error) {
+	conn, err := c.dial(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	client := walletrpc.NewWalletKitClient(conn)
+	resp, err := client.ListSweeps(ctx, &walletrpc.ListSweepsRequest{})
+	if err != nil {
+		return nil, err
+	}
+
+	txids := resp.GetTransactionIds()
+	if txids == nil {
+		return nil, nil
+	}
+
+	items := make([]SweepHistoryInfo, 0, len(txids.GetTransactionIds()))
+	for _, txid := range txids.GetTransactionIds() {
+		trimmed := strings.ToLower(strings.TrimSpace(txid))
+		if trimmed == "" {
+			continue
+		}
+		items = append(items, SweepHistoryInfo{Txid: trimmed})
+	}
+	return items, nil
+}
+
+func (c *Client) BumpFee(ctx context.Context, params BumpFeeParams) error {
+	outpoint, err := parseOutPoint(params.Outpoint)
+	if err != nil {
+		return err
+	}
+
+	conn, err := c.dial(ctx, true)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	req := &walletrpc.BumpFeeRequest{
+		Outpoint:  outpoint,
+		Immediate: params.Immediate,
+	}
+	if params.TargetConf > 0 {
+		req.TargetConf = params.TargetConf
+	}
+	if params.SatPerVbyte > 0 {
+		req.SatPerVbyte = uint64(params.SatPerVbyte)
+	}
+	if params.BudgetSat > 0 {
+		req.Budget = uint64(params.BudgetSat)
+	}
+
+	client := walletrpc.NewWalletKitClient(conn)
+	_, err = client.BumpFee(ctx, req)
+	return err
+}
+
 func (c *Client) RegisterChanPointShim(ctx context.Context, params ChanPointShimParams) error {
 	if params.CapacitySat <= 0 {
 		return errors.New("capacity must be positive")
@@ -3342,6 +3440,20 @@ func txidFromBytes(raw []byte) string {
 	return hex.EncodeToString(rev)
 }
 
+func walletKitOutpointInfo(out *lnrpc.OutPoint) (string, uint32, string) {
+	if out == nil {
+		return "", 0, ""
+	}
+	txid := strings.ToLower(strings.TrimSpace(out.GetTxidStr()))
+	if txid == "" {
+		txid = txidFromBytes(out.GetTxidBytes())
+	}
+	if txid == "" {
+		return "", out.GetOutputIndex(), ""
+	}
+	return txid, out.GetOutputIndex(), fmt.Sprintf("%s:%d", txid, out.GetOutputIndex())
+}
+
 func txidFromRawTxHex(txHex string) string {
 	trimmed := strings.TrimSpace(txHex)
 	if trimmed == "" {
@@ -3400,6 +3512,29 @@ func parseChannelPoint(point string) (*lnrpc.ChannelPoint, error) {
 	}
 	return &lnrpc.ChannelPoint{
 		FundingTxid: &lnrpc.ChannelPoint_FundingTxidStr{FundingTxidStr: parts[0]},
+		OutputIndex: uint32(idx),
+	}, nil
+}
+
+func parseOutPoint(point string) (*lnrpc.OutPoint, error) {
+	trimmed := strings.TrimSpace(point)
+	if trimmed == "" {
+		return nil, errors.New("outpoint required")
+	}
+	parts := strings.Split(trimmed, ":")
+	if len(parts) != 2 {
+		return nil, errors.New("outpoint must be txid:index")
+	}
+	txid, err := normalizeTxidHex(parts[0])
+	if err != nil {
+		return nil, err
+	}
+	idx, err := strconv.ParseUint(parts[1], 10, 32)
+	if err != nil {
+		return nil, errors.New("invalid outpoint index")
+	}
+	return &lnrpc.OutPoint{
+		TxidStr:     txid,
 		OutputIndex: uint32(idx),
 	}, nil
 }
@@ -3637,6 +3772,33 @@ type ClosedChannelInfo struct {
 	CloseInitiatorLabel  string                        `json:"close_initiator_label,omitempty"`
 	CloseHeight          uint32                        `json:"close_height"`
 	Resolutions          []ClosedChannelResolutionInfo `json:"resolutions,omitempty"`
+}
+
+type PendingSweepInfo struct {
+	Outpoint             string `json:"outpoint"`
+	Txid                 string `json:"txid"`
+	Vout                 uint32 `json:"vout"`
+	WitnessType          string `json:"witness_type,omitempty"`
+	AmountSat            int64  `json:"amount_sat"`
+	BroadcastAttempts    uint32 `json:"broadcast_attempts"`
+	NextBroadcastHeight  uint32 `json:"next_broadcast_height,omitempty"`
+	SatPerVbyte          int64  `json:"sat_per_vbyte"`
+	RequestedSatPerVbyte int64  `json:"requested_sat_per_vbyte"`
+	Immediate            bool   `json:"immediate"`
+	BudgetSat            int64  `json:"budget_sat"`
+	DeadlineHeight       uint32 `json:"deadline_height,omitempty"`
+}
+
+type SweepHistoryInfo struct {
+	Txid string `json:"txid"`
+}
+
+type BumpFeeParams struct {
+	Outpoint    string
+	SatPerVbyte int64
+	TargetConf  uint32
+	Immediate   bool
+	BudgetSat   int64
 }
 
 type RecentActivity struct {

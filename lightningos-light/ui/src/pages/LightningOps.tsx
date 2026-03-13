@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { acceptBalancedOpenSession, addLnWatchtower, boostPeers, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getLnChanHeal, getLnChannelFees, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker } from '../api'
+import { acceptBalancedOpenSession, addLnWatchtower, boostPeers, bumpFeeCloseManagerSession, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelFees, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, recoverCloseManagerSession, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker } from '../api'
 import { getLocale } from '../i18n'
 
 type Channel = {
@@ -66,6 +66,56 @@ type PendingChannel = {
     last_recovered_txid?: string
     suggest_force_close?: boolean
   }
+}
+
+type CloseRecoverySession = {
+  id: number
+  channel_point: string
+  channel_id: number
+  peer_pubkey?: string
+  peer_alias?: string
+  source: string
+  source_ref?: string
+  state: string
+  action_required?: string
+  action_recommended?: string
+  decision?: string
+  risk_level?: string
+  close_mode?: string
+  close_txid?: string
+  sweep_txid?: string
+  limbo_balance_sat?: number
+  pending_htlc_count?: number
+  pending_htlc_first_seen_at?: string
+  pending_htlc_age_sec?: number
+  blocks_til_maturity?: number
+  maturity_eta_at?: string
+  sweep_pending_count?: number
+  sweep_broadcast_attempts?: number
+  sweep_requested_fee_rate_sat_vb?: number
+  sweep_fee_rate_sat_vb?: number
+  mempool_target_sat_vb?: number
+  last_error?: string
+  waiting_close_attempts?: number
+  waiting_close_last_attempt_at?: string
+  waiting_close_last_result?: string
+  waiting_close_last_error?: string
+  waiting_close_last_recovered_txid?: string
+  waiting_close_suggest_force_close?: boolean
+  last_progress_at?: string
+  updated_at?: string
+  closed_at?: string
+}
+
+type CloseRecoveryStatus = {
+  available: boolean
+  last_sync_at?: string
+  active_count: number
+  action_required_count: number
+  waiting_close_count: number
+  htlc_blocked_count: number
+  node_retirement_count: number
+  state_counts?: Record<string, number>
 }
 
 type Peer = {
@@ -588,6 +638,7 @@ const formatAutofeeHistoryTag = (tag: string) => {
 const LIGHTNING_OPS_ROUTE_KEY = 'lightning-ops'
 const REBALANCE_ROUTE_KEY = 'rebalance-center'
 const CHANNEL_HASH_PARAM = 'channel_point'
+const CLOSE_RECOVERY_SECTION_ID = 'close-recovery-section'
 const SCB_RECOVERY_CONFIRM_PHRASE = 'I UNDERSTAND FORCE CLOSE'
 const BALANCED_OPEN_FUNDING_VBYTES = 190
 const BALANCED_OPEN_REQUIRED_REMAINING_SAT = 10000
@@ -656,6 +707,11 @@ export default function LightningOps() {
   const [peers, setPeers] = useState<Peer[]>([])
   const [closedChannels, setClosedChannels] = useState<ClosedChannel[]>([])
   const [closedChannelStatus, setClosedChannelStatus] = useState('')
+  const [closeRecoveryStatusData, setCloseRecoveryStatusData] = useState<CloseRecoveryStatus | null>(null)
+  const [closeRecoverySessions, setCloseRecoverySessions] = useState<CloseRecoverySession[]>([])
+  const [closeRecoveryStatus, setCloseRecoveryStatus] = useState('')
+  const [closeRecoveryBusyByID, setCloseRecoveryBusyByID] = useState<Record<number, boolean>>({})
+  const [closeRecoveryActionStatusByID, setCloseRecoveryActionStatusByID] = useState<Record<number, string>>({})
   const [closedChannelSearch, setClosedChannelSearch] = useState('')
   const [closedChannelFilter, setClosedChannelFilter] = useState<'all' | 'cooperative' | 'force' | 'breach' | 'other'>('all')
   const [peerListStatus, setPeerListStatus] = useState('')
@@ -861,6 +917,87 @@ export default function LightningOps() {
     const date = new Date(value)
     if (Number.isNaN(date.getTime())) return t('common.unknownTime')
     return date.toLocaleString()
+  }
+
+  const formatCloseRecoveryTime = (value?: string) => {
+    if (!value) return t('common.unknownTime')
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return t('common.unknownTime')
+    return date.toLocaleString()
+  }
+
+  const formatCloseRecoveryAge = (seconds?: number) => {
+    const total = Math.max(0, Math.trunc(Number(seconds || 0)))
+    if (!total) return t('common.justNow')
+    if (total < 60) return t('lightningOps.ageSeconds', { count: total })
+    const minutes = Math.floor(total / 60)
+    if (minutes < 60) return t('lightningOps.ageMinutes', { count: minutes })
+    const hours = Math.floor(minutes / 60)
+    if (hours < 24) return t('lightningOps.ageHours', { count: hours })
+    const days = Math.floor(hours / 24)
+    return t('lightningOps.ageDays', { count: days })
+  }
+
+  const closeRecoveryStateLabel = (value: string) => {
+    switch (value) {
+      case 'coop_requested':
+        return t('lightningOps.closeRecoveryStateCoopRequested')
+      case 'coop_blocked_by_htlcs':
+        return t('lightningOps.closeRecoveryStateHtlcBlocked')
+      case 'waiting_close_no_txid':
+        return t('lightningOps.closeRecoveryStateWaitingClose')
+      case 'closing_tx_seen_unconfirmed':
+        return t('lightningOps.closeRecoveryStateClosingSeen')
+      case 'force_close_requested':
+        return t('lightningOps.closeRecoveryStateForceRequested')
+      case 'force_close_active':
+        return t('lightningOps.closeRecoveryStateForceActive')
+      case 'outputs_timelocked':
+        return t('lightningOps.closeRecoveryStateOutputsTimelocked')
+      case 'sweep_pending':
+        return t('lightningOps.closeRecoveryStateSweepPending')
+      case 'sweep_stuck':
+        return t('lightningOps.closeRecoveryStateSweepStuck')
+      case 'funds_recovered':
+        return t('lightningOps.closeRecoveryStateFundsRecovered')
+      case 'closed_terminal':
+        return t('lightningOps.closeRecoveryStateClosed')
+      case 'failed_manual_attention':
+        return t('lightningOps.closeRecoveryStateManualAttention')
+      default:
+        return value || t('common.unknown')
+    }
+  }
+
+  const closeRecoveryBadgeClass = (value?: string) => {
+    switch (value) {
+      case 'warn':
+        return 'bg-amber-500/20 text-amber-100'
+      case 'error':
+      case 'err':
+        return 'bg-rose-500/20 text-rose-100'
+      default:
+        return 'bg-emerald-500/20 text-emerald-100'
+    }
+  }
+
+  const closeRecoveryActionLabel = (value?: string) => {
+    switch (value) {
+      case 'wait':
+        return t('lightningOps.closeRecoveryActionWait')
+      case 'recover_or_monitor':
+        return t('lightningOps.closeRecoveryActionRecover')
+      case 'force_close':
+        return t('lightningOps.closeRecoveryActionForceClose')
+      case 'wait_maturity':
+        return t('lightningOps.closeRecoveryActionWaitMaturity')
+      case 'review_sweep':
+        return t('lightningOps.closeRecoveryActionReviewSweep')
+      case 'monitor':
+        return t('lightningOps.closeRecoveryActionMonitor')
+      default:
+        return t('common.na')
+    }
   }
 
   const formatSatFromMsat = (value?: number) => {
@@ -2047,10 +2184,33 @@ export default function LightningOps() {
     }
   }
 
+  const refreshCloseRecovery = async (opts?: { quiet?: boolean }) => {
+    const quiet = Boolean(opts?.quiet)
+    if (!quiet) {
+      setCloseRecoveryStatus(t('lightningOps.closeRecoveryLoading'))
+    }
+    try {
+      const [statusRes, sessionsRes] = await Promise.all([
+        getCloseManagerStatus(),
+        getCloseManagerSessions(80)
+      ])
+      setCloseRecoveryStatusData(statusRes as CloseRecoveryStatus)
+      setCloseRecoverySessions(Array.isArray((sessionsRes as any)?.items) ? (sessionsRes as any).items : [])
+      if (!quiet) {
+        setCloseRecoveryStatus('')
+      }
+    } catch (err: any) {
+      if (!quiet) {
+        setCloseRecoveryStatus(err?.message || t('lightningOps.closeRecoveryLoadFailed'))
+      }
+    }
+  }
+
   const load = async () => {
     setStatus(t('lightningOps.loadingChannels'))
     setPeerListStatus(t('lightningOps.loadingPeers'))
     setClosedChannelStatus(t('lightningOps.loadingClosedChannels'))
+    setCloseRecoveryStatus(t('lightningOps.closeRecoveryLoading'))
     setWatchtowerStatus(t('lightningOps.watchtowerLoading'))
     setAmbossStatus(t('lightningOps.ambossHealthLoading'))
     setChanHealStatus(t('lightningOps.chanHealLoading'))
@@ -2058,10 +2218,12 @@ export default function LightningOps() {
     setFailedPaymentsCleanerStatus(t('lightningOps.failedPaymentsCleanerLoading'))
     setTorPeerCheckerStatus(t('lightningOps.torPeerLoading'))
     setAutofeeMessage(t('lightningOps.autofeeLoading'))
-    const [channelsResult, peersResult, closedChannelsResult, watchtowerResult, ambossResult, chanHealResult, htlcManagerResult, htlcManagerLogsResult, htlcManagerFailedResult, failedPaymentsCleanerResult, torPeerCheckerResult, torPeerCheckerLogsResult, bitcoinLocalResult, autofeeConfigResult, autofeeStatusResult, autofeeChannelsResult, autofeeResultsResult, balancedOpenStatusResult, balancedOpenSessionsResult] = await Promise.allSettled([
+    const [channelsResult, peersResult, closedChannelsResult, closeManagerStatusResult, closeManagerSessionsResult, watchtowerResult, ambossResult, chanHealResult, htlcManagerResult, htlcManagerLogsResult, htlcManagerFailedResult, failedPaymentsCleanerResult, torPeerCheckerResult, torPeerCheckerLogsResult, bitcoinLocalResult, autofeeConfigResult, autofeeStatusResult, autofeeChannelsResult, autofeeResultsResult, balancedOpenStatusResult, balancedOpenSessionsResult] = await Promise.allSettled([
       getLnChannels(),
       getLnPeers(),
       getLnClosedChannels(),
+      getCloseManagerStatus(),
+      getCloseManagerSessions(80),
       getLnWatchtowers(),
       getAmbossHealth(),
       getLnChanHeal(),
@@ -2102,6 +2264,27 @@ export default function LightningOps() {
     } else {
       const message = (closedChannelsResult.reason as any)?.message || t('lightningOps.loadClosedChannelsFailed')
       setClosedChannelStatus(message)
+    }
+    if (closeManagerStatusResult.status === 'fulfilled') {
+      setCloseRecoveryStatusData(closeManagerStatusResult.value as CloseRecoveryStatus)
+      setCloseRecoveryStatus('')
+    } else {
+      setCloseRecoveryStatusData(null)
+      const message = (closeManagerStatusResult.reason as any)?.message || t('lightningOps.closeRecoveryLoadFailed')
+      setCloseRecoveryStatus(message)
+    }
+    if (closeManagerSessionsResult.status === 'fulfilled') {
+      const res = closeManagerSessionsResult.value as any
+      setCloseRecoverySessions(Array.isArray(res?.items) ? res.items : [])
+      if (closeManagerStatusResult.status === 'fulfilled') {
+        setCloseRecoveryStatus('')
+      }
+    } else {
+      setCloseRecoverySessions([])
+      if (closeManagerStatusResult.status !== 'rejected') {
+        const message = (closeManagerSessionsResult.reason as any)?.message || t('lightningOps.closeRecoveryLoadFailed')
+        setCloseRecoveryStatus(message)
+      }
     }
     if (watchtowerResult.status === 'fulfilled') {
       const res = watchtowerResult.value as any
@@ -2691,6 +2874,26 @@ export default function LightningOps() {
 
   const pendingOpen = useMemo(() => pendingChannels.filter((ch) => ch.status === 'opening'), [pendingChannels])
   const pendingClose = useMemo(() => pendingChannels.filter((ch) => ch.status !== 'opening'), [pendingChannels])
+  const closeRecoveryActiveSessions = useMemo(
+    () => closeRecoverySessions.filter((item) => item.state !== 'closed_terminal' && item.state !== 'funds_recovered'),
+    [closeRecoverySessions]
+  )
+  const closeRecoveryGroups = useMemo(() => {
+    const groups = [
+      { key: 'coop', title: t('lightningOps.closeRecoveryGroupCoop'), states: ['coop_requested'] },
+      { key: 'htlc', title: t('lightningOps.closeRecoveryGroupHtlc'), states: ['coop_blocked_by_htlcs'] },
+      { key: 'waiting', title: t('lightningOps.closeRecoveryGroupWaiting'), states: ['waiting_close_no_txid', 'closing_tx_seen_unconfirmed'] },
+      { key: 'force', title: t('lightningOps.closeRecoveryGroupForce'), states: ['force_close_requested', 'force_close_active', 'outputs_timelocked'] },
+      { key: 'sweep', title: t('lightningOps.closeRecoveryGroupSweep'), states: ['sweep_pending', 'sweep_stuck'] },
+      { key: 'recent', title: t('lightningOps.closeRecoveryGroupRecent'), states: ['funds_recovered', 'closed_terminal'] }
+    ]
+    return groups
+      .map((group) => ({
+        ...group,
+        items: closeRecoverySessions.filter((item) => group.states.includes(item.state))
+      }))
+      .filter((group) => group.items.length > 0)
+  }, [closeRecoverySessions, t])
   const filteredClosedChannels = useMemo(() => {
     let list = closedChannels
     if (closedChannelFilter !== 'all') {
@@ -4260,6 +4463,100 @@ export default function LightningOps() {
     }
   }
 
+  const scrollToCloseRecovery = () => {
+    const target = document.getElementById(CLOSE_RECOVERY_SECTION_ID)
+    if (!target) return
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  const handleCloseRecoveryRecover = async (sessionID: number) => {
+    if (closeRecoveryBusyByID[sessionID]) return
+    setCloseRecoveryBusyByID((prev) => ({ ...prev, [sessionID]: true }))
+    setCloseRecoveryActionStatusByID((prev) => ({ ...prev, [sessionID]: t('lightningOps.closeRecoveryRecoverRunning') }))
+    try {
+      const res: any = await recoverCloseManagerSession(sessionID)
+      const result = String(res?.result || '').trim()
+      const txid = String(res?.closing_txid || '').trim()
+      setCloseRecoveryActionStatusByID((prev) => ({
+        ...prev,
+        [sessionID]: txid
+          ? t('lightningOps.closeRecoveryRecoverDoneTx', { txid })
+          : result
+            ? t('lightningOps.closeRecoveryRecoverDoneResult', { value: result })
+            : t('lightningOps.closeRecoveryRecoverDone')
+      }))
+      await refreshCloseRecovery({ quiet: true })
+      const channelsPayload = await getLnChannels()
+      applyChannelsPayload(channelsPayload)
+    } catch (err: any) {
+      setCloseRecoveryActionStatusByID((prev) => ({ ...prev, [sessionID]: err?.message || t('lightningOps.closeRecoveryRecoverFailed') }))
+    } finally {
+      setCloseRecoveryBusyByID((prev) => ({ ...prev, [sessionID]: false }))
+    }
+  }
+
+  const handleCloseRecoveryForceClose = async (sessionID: number) => {
+    if (closeRecoveryBusyByID[sessionID]) return
+    const confirmed = window.confirm(t('lightningOps.closeRecoveryForceConfirm'))
+    if (!confirmed) return
+    setCloseRecoveryBusyByID((prev) => ({ ...prev, [sessionID]: true }))
+    setCloseRecoveryActionStatusByID((prev) => ({ ...prev, [sessionID]: t('lightningOps.closeRecoveryForceRunning') }))
+    try {
+      const res: any = await forceCloseManagerSession(sessionID)
+      const delegated = Boolean(res?.delegated)
+      const txid = String(res?.closing_txid || '').trim()
+      setCloseRecoveryActionStatusByID((prev) => ({
+        ...prev,
+        [sessionID]: delegated
+          ? t('lightningOps.closeRecoveryForceDelegated')
+          : txid
+            ? t('lightningOps.closeRecoveryForceDoneTx', { txid })
+            : t('lightningOps.closeRecoveryForceDone')
+      }))
+      await refreshCloseRecovery({ quiet: true })
+      const channelsPayload = await getLnChannels()
+      applyChannelsPayload(channelsPayload)
+    } catch (err: any) {
+      setCloseRecoveryActionStatusByID((prev) => ({ ...prev, [sessionID]: err?.message || t('lightningOps.closeRecoveryForceFailed') }))
+    } finally {
+      setCloseRecoveryBusyByID((prev) => ({ ...prev, [sessionID]: false }))
+    }
+  }
+
+  const handleCloseRecoveryBumpFee = async (sessionID: number, preset: 'economic' | 'normal' | 'urgent') => {
+    if (closeRecoveryBusyByID[sessionID]) return
+    const presetLabelKey =
+      preset === 'economic'
+        ? 'lightningOps.closeRecoveryBumpEconomic'
+        : preset === 'urgent'
+          ? 'lightningOps.closeRecoveryBumpUrgent'
+          : 'lightningOps.closeRecoveryBumpNormal'
+    const confirmed = window.confirm(t('lightningOps.closeRecoveryBumpConfirm', { preset: t(presetLabelKey) }))
+    if (!confirmed) return
+    setCloseRecoveryBusyByID((prev) => ({ ...prev, [sessionID]: true }))
+    setCloseRecoveryActionStatusByID((prev) => ({ ...prev, [sessionID]: t('lightningOps.closeRecoveryBumpRunning') }))
+    try {
+      const res: any = await bumpFeeCloseManagerSession(sessionID, { preset })
+      const satPerVbyte = Number(res?.sat_per_vbyte || 0)
+      const outpointsBumped = Number(res?.outpoints_bumped || 0)
+      setCloseRecoveryActionStatusByID((prev) => ({
+        ...prev,
+        [sessionID]: t('lightningOps.closeRecoveryBumpDone', {
+          preset: t(presetLabelKey),
+          fee: satPerVbyte > 0 ? satPerVbyte.toLocaleString() : '?',
+          count: outpointsBumped
+        })
+      }))
+      await refreshCloseRecovery({ quiet: true })
+      const channelsPayload = await getLnChannels()
+      applyChannelsPayload(channelsPayload)
+    } catch (err: any) {
+      setCloseRecoveryActionStatusByID((prev) => ({ ...prev, [sessionID]: err?.message || t('lightningOps.closeRecoveryBumpFailed') }))
+    } finally {
+      setCloseRecoveryBusyByID((prev) => ({ ...prev, [sessionID]: false }))
+    }
+  }
+
   return (
     <section className="space-y-6">
       <div className="section-card">
@@ -4649,10 +4946,17 @@ export default function LightningOps() {
           <div className="rounded-2xl border border-brass/30 bg-brass/10 p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h4 className="text-sm font-semibold text-brass">{t('lightningOps.pendingChannels')}</h4>
-              <p className="text-xs text-brass">
-                {t('lightningOps.opening')}: <span className="text-glow">{pendingOpen.length}</span> | {t('lightningOps.closing')}{' '}
-                <span className="text-ember">{pendingClose.length}</span>
-              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-xs text-brass">
+                  {t('lightningOps.opening')}: <span className="text-glow">{pendingOpen.length}</span> | {t('lightningOps.closing')}{' '}
+                  <span className="text-ember">{pendingClose.length}</span>
+                </p>
+                {closeRecoveryActiveSessions.length > 0 && (
+                  <button className="btn-secondary text-xs px-3 py-1.5" type="button" onClick={scrollToCloseRecovery}>
+                    {t('lightningOps.closeRecoveryOpen')}
+                  </button>
+                )}
+              </div>
             </div>
             <div className="mt-3 grid gap-3 lg:grid-cols-2">
               <div className="rounded-2xl border border-white/10 bg-ink/60 p-4">
@@ -4860,6 +5164,172 @@ export default function LightningOps() {
             </div>
           </div>
         )}
+
+        <div id={CLOSE_RECOVERY_SECTION_ID} className="rounded-2xl border border-white/10 bg-ink/40 p-4 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h4 className="text-sm font-semibold">{t('lightningOps.closeRecoveryTitle')}</h4>
+              <p className="text-xs text-fog/60">{t('lightningOps.closeRecoverySubtitle')}</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-[11px] text-fog/70">
+              <span className="rounded-full border border-white/10 px-3 py-1.5">
+                {t('lightningOps.closeRecoveryActiveCount', { count: closeRecoveryStatusData?.active_count ?? closeRecoveryActiveSessions.length })}
+              </span>
+              <span className="rounded-full border border-white/10 px-3 py-1.5">
+                {t('lightningOps.closeRecoveryActionRequiredCount', { count: closeRecoveryStatusData?.action_required_count ?? 0 })}
+              </span>
+              {closeRecoveryStatusData?.node_retirement_count ? (
+                <span className="rounded-full border border-white/10 px-3 py-1.5">
+                  {t('lightningOps.closeRecoveryNodeRetirementCount', { count: closeRecoveryStatusData.node_retirement_count })}
+                </span>
+              ) : null}
+            </div>
+          </div>
+          {closeRecoveryStatus && <p className="text-sm text-brass">{closeRecoveryStatus}</p>}
+          {!closeRecoveryStatus && closeRecoveryGroups.length === 0 && (
+            <p className="text-sm text-fog/60">{t('lightningOps.closeRecoveryEmpty')}</p>
+          )}
+          {closeRecoveryGroups.length > 0 && (
+            <div className="space-y-4">
+              {closeRecoveryGroups.map((group) => (
+                <div key={group.key} className="space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <h5 className="text-xs font-semibold uppercase tracking-wide text-fog/70">{group.title}</h5>
+                    <span className="rounded-full bg-white/5 px-2 py-1 text-[11px] text-fog/60">{group.items.length}</span>
+                  </div>
+                  <div className="grid gap-3 xl:grid-cols-2">
+                    {group.items.map((item) => (
+                      <div key={item.id} className="rounded-xl border border-white/10 bg-ink/70 p-3 space-y-2">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            {item.peer_pubkey ? (
+                              <a
+                                className="text-xs text-fog/70 hover:text-fog break-all"
+                                href={ambossURL(item.peer_pubkey)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                {item.peer_alias || item.peer_pubkey}
+                              </a>
+                            ) : (
+                              <p className="text-xs text-fog/70">{item.peer_alias || t('lightningOps.unknownPeer')}</p>
+                            )}
+                            <p className="mt-1 text-[11px] text-fog/50 break-all">{t('lightningOps.pointLabel', { point: item.channel_point })}</p>
+                          </div>
+                          <div className="flex flex-wrap items-center justify-end gap-2">
+                            {item.source === 'node_retirement' && (
+                              <span className="rounded-full bg-sky-500/20 px-2 py-1 text-[11px] text-sky-100">
+                                {t('lightningOps.closeRecoverySourceNodeRetirement')}
+                              </span>
+                            )}
+                            <span className={`rounded-full px-2 py-1 text-[11px] ${closeRecoveryBadgeClass(item.risk_level)}`}>
+                              {closeRecoveryStateLabel(item.state)}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="grid gap-2 text-[11px] text-fog/65 md:grid-cols-2">
+                          <div>{t('lightningOps.closeRecoveryDiagnostic')}: <span className="text-fog">{closeRecoveryStateLabel(item.state)}</span></div>
+                          <div>{t('lightningOps.closeRecoveryNextAction')}: <span className="text-fog">{closeRecoveryActionLabel(item.action_recommended)}</span></div>
+                          {typeof item.pending_htlc_count === 'number' && item.pending_htlc_count > 0 && (
+                            <div>{t('lightningOps.closeRecoveryPendingHtlcCount', { count: item.pending_htlc_count })}</div>
+                          )}
+                          {typeof item.pending_htlc_age_sec === 'number' && item.pending_htlc_age_sec > 0 && (
+                            <div>{t('lightningOps.closeRecoveryPendingHtlcAge', { value: formatCloseRecoveryAge(item.pending_htlc_age_sec) })}</div>
+                          )}
+                          {item.close_txid && (
+                            <div className="md:col-span-2">{t('lightningOps.closingTx', { txid: item.close_txid })}</div>
+                          )}
+                          {typeof item.limbo_balance_sat === 'number' && item.limbo_balance_sat > 0 && (
+                            <div>{t('lightningOps.closeRecoveryLimbo', { value: formatSatsValue(item.limbo_balance_sat) })}</div>
+                          )}
+                          {typeof item.blocks_til_maturity === 'number' && item.blocks_til_maturity > 0 && (
+                            <div>{t('lightningOps.blocksToMaturity', { count: item.blocks_til_maturity })}</div>
+                          )}
+                          {typeof item.sweep_pending_count === 'number' && item.sweep_pending_count > 0 && (
+                            <div>{t('lightningOps.closeRecoverySweepCount', { count: item.sweep_pending_count })}</div>
+                          )}
+                          {typeof item.sweep_broadcast_attempts === 'number' && item.sweep_broadcast_attempts > 0 && (
+                            <div>{t('lightningOps.closeRecoverySweepAttempts', { count: item.sweep_broadcast_attempts })}</div>
+                          )}
+                          {typeof item.sweep_fee_rate_sat_vb === 'number' && item.sweep_fee_rate_sat_vb > 0 && (
+                            <div>{t('lightningOps.closeRecoverySweepFeeRate', { current: item.sweep_fee_rate_sat_vb.toLocaleString(), target: Math.max(0, Number(item.mempool_target_sat_vb || 0)).toLocaleString() })}</div>
+                          )}
+                          {!item.sweep_fee_rate_sat_vb && typeof item.sweep_requested_fee_rate_sat_vb === 'number' && item.sweep_requested_fee_rate_sat_vb > 0 && (
+                            <div>{t('lightningOps.closeRecoverySweepRequestedFeeRate', { value: item.sweep_requested_fee_rate_sat_vb.toLocaleString() })}</div>
+                          )}
+                          {item.sweep_txid && (
+                            <div className="md:col-span-2">{t('lightningOps.closeRecoverySweepTx', { txid: item.sweep_txid })}</div>
+                          )}
+                          {item.waiting_close_last_attempt_at && (
+                            <div>{t('lightningOps.closeRecoveryLastAttempt', { value: formatCloseRecoveryTime(item.waiting_close_last_attempt_at) })}</div>
+                          )}
+                        </div>
+                        {item.last_error && (
+                          <p className="text-[11px] text-rose-200 break-words">
+                            {t('lightningOps.closeRecoveryReason')}: {item.last_error}
+                          </p>
+                        )}
+                        <div className="flex flex-wrap items-center gap-2">
+                          {(item.state === 'waiting_close_no_txid' || item.action_recommended === 'recover_or_monitor') && (
+                            <button
+                              type="button"
+                              className="btn-secondary text-xs px-3 py-1.5"
+                              onClick={() => handleCloseRecoveryRecover(item.id)}
+                              disabled={closeRecoveryBusyByID[item.id] === true}
+                            >
+                              {closeRecoveryBusyByID[item.id] ? t('lightningOps.closeRecoveryRecoverRunning') : t('lightningOps.closeRecoveryRecoverAction')}
+                            </button>
+                          )}
+                          {(item.action_required === 'force_close' || item.action_recommended === 'force_close') && (
+                            <button
+                              type="button"
+                              className="btn-secondary text-xs px-3 py-1.5"
+                              onClick={() => handleCloseRecoveryForceClose(item.id)}
+                              disabled={closeRecoveryBusyByID[item.id] === true}
+                            >
+                              {closeRecoveryBusyByID[item.id] ? t('lightningOps.closeRecoveryForceRunning') : t('lightningOps.closeRecoveryForceAction')}
+                            </button>
+                          )}
+                          {typeof item.sweep_pending_count === 'number' && item.sweep_pending_count > 0 && (item.state === 'sweep_pending' || item.state === 'sweep_stuck') && (
+                            <>
+                              <button
+                                type="button"
+                                className="btn-secondary text-xs px-3 py-1.5"
+                                onClick={() => handleCloseRecoveryBumpFee(item.id, 'economic')}
+                                disabled={closeRecoveryBusyByID[item.id] === true}
+                              >
+                                {closeRecoveryBusyByID[item.id] ? t('lightningOps.closeRecoveryBumpRunning') : t('lightningOps.closeRecoveryBumpEconomic')}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-secondary text-xs px-3 py-1.5"
+                                onClick={() => handleCloseRecoveryBumpFee(item.id, 'normal')}
+                                disabled={closeRecoveryBusyByID[item.id] === true}
+                              >
+                                {closeRecoveryBusyByID[item.id] ? t('lightningOps.closeRecoveryBumpRunning') : t('lightningOps.closeRecoveryBumpNormal')}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-secondary text-xs px-3 py-1.5"
+                                onClick={() => handleCloseRecoveryBumpFee(item.id, 'urgent')}
+                                disabled={closeRecoveryBusyByID[item.id] === true}
+                              >
+                                {closeRecoveryBusyByID[item.id] ? t('lightningOps.closeRecoveryBumpRunning') : t('lightningOps.closeRecoveryBumpUrgent')}
+                              </button>
+                            </>
+                          )}
+                        </div>
+                        {closeRecoveryActionStatusByID[item.id] && (
+                          <p className="text-[11px] text-brass break-words">{closeRecoveryActionStatusByID[item.id]}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         <div className="grid gap-3 lg:grid-cols-4">
             <input

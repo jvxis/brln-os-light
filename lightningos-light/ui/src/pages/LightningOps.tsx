@@ -82,6 +82,7 @@ type CloseRecoverySession = {
   decision?: string
   risk_level?: string
   close_mode?: string
+  close_height?: number
   close_txid?: string
   sweep_txid?: string
   limbo_balance_sat?: number
@@ -1042,17 +1043,6 @@ export default function LightningOps() {
   const formatSatsValue = (value?: number) => {
     const sats = Math.max(0, Math.trunc(Number(value || 0)))
     return `${sats.toLocaleString()} ${t('lightningOps.autofeeResultsSats')}`
-  }
-
-  const closeRecoveryRecentSortValue = (item: CloseRecoverySession) => {
-    const candidates = [item.closed_at, item.updated_at, item.last_progress_at]
-    for (const candidate of candidates) {
-      const raw = String(candidate || '').trim()
-      if (!raw) continue
-      const parsed = Date.parse(raw)
-      if (!Number.isNaN(parsed)) return parsed
-    }
-    return 0
   }
 
   const normalizeClosedChannelType = (value?: string) => {
@@ -2912,12 +2902,61 @@ export default function LightningOps() {
     }, 3200)
   }, [filteredChannels])
 
+  const sortClosedChannelsList = (items: ClosedChannel[]) => (
+    [...items].sort((a, b) => {
+      const heightDelta = Number(b.close_height || 0) - Number(a.close_height || 0)
+      if (heightDelta !== 0) return heightDelta
+      return Number(b.chan_id || 0) - Number(a.chan_id || 0)
+    })
+  )
   const pendingOpen = useMemo(() => pendingChannels.filter((ch) => ch.status === 'opening'), [pendingChannels])
   const pendingClose = useMemo(() => pendingChannels.filter((ch) => ch.status !== 'opening'), [pendingChannels])
+  const closedChannelsSorted = useMemo(() => sortClosedChannelsList(closedChannels), [closedChannels])
   const closeRecoveryActiveSessions = useMemo(
     () => closeRecoverySessions.filter((item) => item.state !== 'closed_terminal' && item.state !== 'funds_recovered'),
     [closeRecoverySessions]
   )
+  const closeRecoveryRecentSessions = useMemo(() => {
+    const terminal = closeRecoverySessions.filter((item) => item.state === 'closed_terminal' || item.state === 'funds_recovered')
+    if (terminal.length === 0) return []
+
+    const normalize = (value?: string) => String(value || '').trim().toLowerCase()
+    const byChanID = new Map<number, CloseRecoverySession>()
+    const byChannelPoint = new Map<string, CloseRecoverySession>()
+    const byCloseTxid = new Map<string, CloseRecoverySession>()
+
+    for (const item of terminal) {
+      const chanID = Math.trunc(Number(item.channel_id || 0))
+      if (chanID > 0 && !byChanID.has(chanID)) {
+        byChanID.set(chanID, item)
+      }
+      const point = normalize(item.channel_point)
+      if (point && !byChannelPoint.has(point)) {
+        byChannelPoint.set(point, item)
+      }
+      const closeTxid = normalize(item.close_txid)
+      if (closeTxid && !byCloseTxid.has(closeTxid)) {
+        byCloseTxid.set(closeTxid, item)
+      }
+    }
+
+    const selected: CloseRecoverySession[] = []
+    const seenIDs = new Set<number>()
+    for (const item of closedChannelsSorted) {
+      const chanID = Math.trunc(Number(item.chan_id || 0))
+      const point = normalize(item.channel_point)
+      const closeTxid = normalize(item.closing_tx_hash)
+      const matched = (chanID > 0 ? byChanID.get(chanID) : undefined)
+        || (point ? byChannelPoint.get(point) : undefined)
+        || (closeTxid ? byCloseTxid.get(closeTxid) : undefined)
+      if (!matched || seenIDs.has(matched.id)) continue
+      seenIDs.add(matched.id)
+      selected.push(matched)
+      if (selected.length >= 3) break
+    }
+
+    return selected
+  }, [closeRecoverySessions, closedChannelsSorted])
   const closeRecoveryGroups = useMemo(() => {
     const groups = [
       { key: 'coop', title: t('lightningOps.closeRecoveryGroupCoop'), states: ['coop_requested'] },
@@ -2931,16 +2970,12 @@ export default function LightningOps() {
       .map((group) => ({
         ...group,
         items: (() => {
-          const items = closeRecoverySessions.filter((item) => group.states.includes(item.state))
-          if (group.key !== 'recent') return items
-          return items
-            .slice()
-            .sort((a, b) => closeRecoveryRecentSortValue(b) - closeRecoveryRecentSortValue(a))
-            .slice(0, 3)
+          if (group.key === 'recent') return closeRecoveryRecentSessions
+          return closeRecoverySessions.filter((item) => group.states.includes(item.state))
         })()
       }))
       .filter((group) => group.items.length > 0)
-  }, [closeRecoverySessions, t])
+  }, [closeRecoveryRecentSessions, closeRecoverySessions, t])
   const filteredClosedChannels = useMemo(() => {
     let list = closedChannels
     if (closedChannelFilter !== 'all') {
@@ -2960,11 +2995,7 @@ export default function LightningOps() {
         )
       })
     }
-    return [...list].sort((a, b) => {
-      const heightDelta = Number(b.close_height || 0) - Number(a.close_height || 0)
-      if (heightDelta !== 0) return heightDelta
-      return Number(b.chan_id || 0) - Number(a.chan_id || 0)
-    })
+    return sortClosedChannelsList(list)
   }, [closedChannelFilter, closedChannelSearch, closedChannels])
   const balancedOpenSelectedSession = useMemo(
     () => balancedOpenSessions.find((item) => item.session_id === balancedOpenDetailsSessionID) || null,

@@ -56,6 +56,7 @@ type CloseManagerSession struct {
 	Decision                      string     `json:"decision,omitempty"`
 	RiskLevel                     string     `json:"risk_level,omitempty"`
 	CloseMode                     string     `json:"close_mode,omitempty"`
+	CloseHeight                   int64      `json:"close_height,omitempty"`
 	CloseTxid                     string     `json:"close_txid,omitempty"`
 	CloseTxHexAvailable           bool       `json:"close_tx_hex_available"`
 	SweepTxid                     string     `json:"sweep_txid,omitempty"`
@@ -191,6 +192,7 @@ create table if not exists close_sessions (
   decision text not null default '',
   risk_level text not null default 'info',
   close_mode text not null default '',
+  close_height bigint not null default 0,
   close_txid text not null default '',
   close_tx_hex_available boolean not null default false,
   sweep_txid text not null default '',
@@ -235,6 +237,7 @@ create index if not exists close_events_session_created_idx on close_events (ses
 alter table close_sessions add column if not exists sweep_pending_count integer not null default 0;
 alter table close_sessions add column if not exists sweep_broadcast_attempts integer not null default 0;
 alter table close_sessions add column if not exists sweep_requested_fee_rate_sat_vb bigint not null default 0;
+alter table close_sessions add column if not exists close_height bigint not null default 0;
 `)
 	return err
 }
@@ -454,7 +457,7 @@ func (s *CloseManagerService) ListSessions(ctx context.Context, limit int) ([]Cl
 	rows, err := s.db.Query(ctx, `
 select
   id, channel_point, channel_id, peer_pubkey, peer_alias, source, source_ref, state,
-  action_required, action_recommended, decision, risk_level, close_mode, close_txid,
+  action_required, action_recommended, decision, risk_level, close_mode, close_height, close_txid,
   close_tx_hex_available, sweep_txid, limbo_balance_sat, pending_htlc_count,
   pending_htlc_first_seen_at, pending_htlc_age_sec, blocks_til_maturity, maturity_eta_at,
   sweep_pending_count, sweep_broadcast_attempts, sweep_requested_fee_rate_sat_vb,
@@ -484,7 +487,7 @@ func (s *CloseManagerService) GetSession(ctx context.Context, id int64) (*CloseM
 	rows, err := s.db.Query(ctx, `
 select
   id, channel_point, channel_id, peer_pubkey, peer_alias, source, source_ref, state,
-  action_required, action_recommended, decision, risk_level, close_mode, close_txid,
+  action_required, action_recommended, decision, risk_level, close_mode, close_height, close_txid,
   close_tx_hex_available, sweep_txid, limbo_balance_sat, pending_htlc_count,
   pending_htlc_first_seen_at, pending_htlc_age_sec, blocks_til_maturity, maturity_eta_at,
   sweep_pending_count, sweep_broadcast_attempts, sweep_requested_fee_rate_sat_vb,
@@ -555,7 +558,7 @@ func (s *CloseManagerService) loadSessionsByPoint(ctx context.Context) (map[stri
 	rows, err := s.db.Query(ctx, `
 select
   id, channel_point, channel_id, peer_pubkey, peer_alias, source, source_ref, state,
-  action_required, action_recommended, decision, risk_level, close_mode, close_txid,
+  action_required, action_recommended, decision, risk_level, close_mode, close_height, close_txid,
   close_tx_hex_available, sweep_txid, limbo_balance_sat, pending_htlc_count,
   pending_htlc_first_seen_at, pending_htlc_age_sec, blocks_til_maturity, maturity_eta_at,
   sweep_pending_count, sweep_broadcast_attempts, sweep_requested_fee_rate_sat_vb,
@@ -694,6 +697,7 @@ func (s *CloseManagerService) derivePendingSession(now time.Time, item lndclient
 		Decision:                      prev.Decision,
 		RiskLevel:                     riskLevel,
 		CloseMode:                     closeManagerModeFromPendingStatus(item.Status),
+		CloseHeight:                   prev.CloseHeight,
 		CloseTxid:                     closeTxid,
 		CloseTxHexAvailable:           false,
 		SweepTxid:                     prev.SweepTxid,
@@ -801,6 +805,7 @@ func (s *CloseManagerService) deriveClosedSession(now time.Time, item lndclient.
 		Decision:                   prev.Decision,
 		RiskLevel:                  riskLevel,
 		CloseMode:                  firstNonEmpty(prev.CloseMode, closeManagerModeFromClosedChannel(item)),
+		CloseHeight:                closeManagerMaxInt64(prev.CloseHeight, int64(item.CloseHeight)),
 		CloseTxid:                  firstNonEmpty(item.ClosingTxHash, prev.CloseTxid),
 		CloseTxHexAvailable:        false,
 		SweepTxid:                  firstNonEmpty(sweepTxid, prev.SweepTxid),
@@ -877,7 +882,7 @@ func (s *CloseManagerService) upsertSession(ctx context.Context, prev CloseManag
 		err := s.db.QueryRow(ctx, `
 insert into close_sessions (
   channel_point, channel_id, peer_pubkey, peer_alias, source, source_ref, state,
-  action_required, action_recommended, decision, risk_level, close_mode, close_txid,
+  action_required, action_recommended, decision, risk_level, close_mode, close_height, close_txid,
   close_tx_hex_available, sweep_txid, limbo_balance_sat, pending_htlc_count,
   pending_htlc_first_seen_at, pending_htlc_age_sec, blocks_til_maturity, maturity_eta_at,
   sweep_pending_count, sweep_broadcast_attempts, sweep_requested_fee_rate_sat_vb,
@@ -887,18 +892,18 @@ insert into close_sessions (
   created_at, updated_at, closed_at
 ) values (
   $1,$2,$3,$4,$5,$6,$7,
-  $8,$9,$10,$11,$12,$13,
-  $14,$15,$16,$17,
-  $18,$19,$20,$21,
-  $22,$23,$24,$25,
-  $26,$27,$28,$29,
-  $30,$31,$32,
-  $33,$34,$35,
-  $36,$37
+  $8,$9,$10,$11,$12,$13,$14,
+  $15,$16,$17,$18,
+  $19,$20,$21,$22,
+  $23,$24,$25,$26,
+  $27,$28,$29,$30,
+  $31,$32,$33,
+  $34,$35,$36,
+  $37,$38
 )
 returning id
 `, next.ChannelPoint, next.ChannelID, next.PeerPubkey, next.PeerAlias, next.Source, next.SourceRef, next.State,
-			next.ActionRequired, next.ActionRecommended, next.Decision, next.RiskLevel, next.CloseMode, next.CloseTxid,
+			next.ActionRequired, next.ActionRecommended, next.Decision, next.RiskLevel, next.CloseMode, next.CloseHeight, next.CloseTxid,
 			next.CloseTxHexAvailable, next.SweepTxid, next.LimboBalanceSat, next.PendingHtlcCount,
 			next.PendingHtlcFirstSeenAt, next.PendingHtlcAgeSec, next.BlocksTilMaturity, next.MaturityETAAt,
 			next.SweepPendingCount, next.SweepBroadcastAttempts, next.SweepRequestedFeeRateSatVB,
@@ -931,33 +936,34 @@ set channel_id = $2,
     decision = $10,
     risk_level = $11,
     close_mode = $12,
-    close_txid = $13,
-    close_tx_hex_available = $14,
-    sweep_txid = $15,
-    limbo_balance_sat = $16,
-    pending_htlc_count = $17,
-    pending_htlc_first_seen_at = $18,
-    pending_htlc_age_sec = $19,
-    blocks_til_maturity = $20,
-    maturity_eta_at = $21,
-    sweep_pending_count = $22,
-    sweep_broadcast_attempts = $23,
-    sweep_requested_fee_rate_sat_vb = $24,
-    sweep_fee_rate_sat_vb = $25,
-    mempool_target_sat_vb = $26,
-    last_error = $27,
-    waiting_close_attempts = $28,
-    waiting_close_last_attempt_at = $29,
-    waiting_close_last_result = $30,
-    waiting_close_last_error = $31,
-    waiting_close_last_recovered_txid = $32,
-    waiting_close_suggest_force_close = $33,
-    last_progress_at = $34,
-    updated_at = $35,
-    closed_at = $36
+    close_height = $13,
+    close_txid = $14,
+    close_tx_hex_available = $15,
+    sweep_txid = $16,
+    limbo_balance_sat = $17,
+    pending_htlc_count = $18,
+    pending_htlc_first_seen_at = $19,
+    pending_htlc_age_sec = $20,
+    blocks_til_maturity = $21,
+    maturity_eta_at = $22,
+    sweep_pending_count = $23,
+    sweep_broadcast_attempts = $24,
+    sweep_requested_fee_rate_sat_vb = $25,
+    sweep_fee_rate_sat_vb = $26,
+    mempool_target_sat_vb = $27,
+    last_error = $28,
+    waiting_close_attempts = $29,
+    waiting_close_last_attempt_at = $30,
+    waiting_close_last_result = $31,
+    waiting_close_last_error = $32,
+    waiting_close_last_recovered_txid = $33,
+    waiting_close_suggest_force_close = $34,
+    last_progress_at = $35,
+    updated_at = $36,
+    closed_at = $37
 where id = $1
 `, next.ID, next.ChannelID, next.PeerPubkey, next.PeerAlias, next.Source, next.SourceRef, next.State,
-		next.ActionRequired, next.ActionRecommended, next.Decision, next.RiskLevel, next.CloseMode, next.CloseTxid,
+		next.ActionRequired, next.ActionRecommended, next.Decision, next.RiskLevel, next.CloseMode, next.CloseHeight, next.CloseTxid,
 		next.CloseTxHexAvailable, next.SweepTxid, next.LimboBalanceSat, next.PendingHtlcCount,
 		next.PendingHtlcFirstSeenAt, next.PendingHtlcAgeSec, next.BlocksTilMaturity, next.MaturityETAAt,
 		next.SweepPendingCount, next.SweepBroadcastAttempts, next.SweepRequestedFeeRateSatVB,
@@ -1060,7 +1066,7 @@ func scanCloseManagerSessions(rows pgxRows) ([]CloseManagerSession, error) {
 		var closedAt sql.NullTime
 		if err := rows.Scan(
 			&item.ID, &item.ChannelPoint, &item.ChannelID, &peerPubkey, &peerAlias, &source, &sourceRef, &item.State,
-			&actionRequired, &actionRecommended, &decision, &riskLevel, &closeMode, &closeTxid,
+			&actionRequired, &actionRecommended, &decision, &riskLevel, &closeMode, &item.CloseHeight, &closeTxid,
 			&item.CloseTxHexAvailable, &sweepTxid, &item.LimboBalanceSat, &item.PendingHtlcCount,
 			&pendingFirstSeen, &item.PendingHtlcAgeSec, &blocksTilMaturity, &maturityETA,
 			&item.SweepPendingCount, &item.SweepBroadcastAttempts, &item.SweepRequestedFeeRateSatVB,

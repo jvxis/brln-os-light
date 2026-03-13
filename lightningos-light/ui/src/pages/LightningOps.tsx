@@ -6091,6 +6091,9 @@ export default function LightningOps() {
 	          {!closeForce && Number(closeFeeRate || 0) > 0 && Number(closeFeeRate || 0) <= 1 && (
 	            <p className="text-xs text-brass">{t('lightningOps.closeLowFeeWarning')}</p>
 	          )}
+	          {!closeForce && (
+	            <p className="text-xs text-fog/55">{t('lightningOps.closeFeeManualHint')}</p>
+	          )}
 	          <label className="flex items-center gap-2 text-sm text-fog/70">
 	            <input type="checkbox" checked={closeForce} onChange={(e) => setCloseForce(e.target.checked)} />
 	            {t('lightningOps.forceClose')}

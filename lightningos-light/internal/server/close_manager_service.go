@@ -589,7 +589,7 @@ func (s *CloseManagerService) loadNodeRetirementRefs(ctx context.Context) (map[s
 select c.channel_point, c.session_id
 from node_retirement_channels c
 join node_retirement_sessions sess on sess.session_id = c.session_id
-where sess.state not in ('completed', 'failed', 'canceled', 'dry_run_completed')
+where sess.state in ('closing_coop', 'awaiting_user_decision', 'force_closing', 'monitoring_onchain')
 `)
 	if err != nil {
 		return map[string]closeManagerSourceRef{}, err

@@ -1007,6 +1007,28 @@ export default function LightningOps() {
     }
   }
 
+  const closeRecoveryModeLabel = (value?: string) => {
+    switch (String(value || '').trim()) {
+      case 'force':
+        return t('lightningOps.closeRecoveryModeForce')
+      case 'coop':
+        return t('lightningOps.closeRecoveryModeCoop')
+      default:
+        return ''
+    }
+  }
+
+  const closeRecoveryModeBadgeClass = (value?: string) => {
+    switch (String(value || '').trim()) {
+      case 'force':
+        return 'bg-rose-500/20 text-rose-100'
+      case 'coop':
+        return 'bg-sky-500/20 text-sky-100'
+      default:
+        return 'bg-white/5 text-fog/60'
+    }
+  }
+
   const formatSatFromMsat = (value?: number) => {
     if (!value || value <= 0) return '-'
     return Math.round(value / 1000).toLocaleString()
@@ -5282,6 +5304,11 @@ export default function LightningOps() {
                                   {t('lightningOps.closeRecoverySourceNodeRetirement')}
                                 </span>
                               )}
+                              {group.key === 'recent' && item.close_mode && (
+                                <span className={`rounded-full px-2 py-1 text-[11px] ${closeRecoveryModeBadgeClass(item.close_mode)}`}>
+                                  {closeRecoveryModeLabel(item.close_mode)}
+                                </span>
+                              )}
                               <span className={`rounded-full px-2 py-1 text-[11px] ${closeRecoveryBadgeClass(item.risk_level)}`}>
                                 {closeRecoveryStateLabel(item.state)}
                               </span>
@@ -5290,6 +5317,9 @@ export default function LightningOps() {
                           <div className="grid gap-2 text-[11px] text-fog/65 md:grid-cols-2">
                             <div>{t('lightningOps.closeRecoveryDiagnostic')}: <span className="text-fog">{closeRecoveryStateLabel(item.state)}</span></div>
                             <div>{t('lightningOps.closeRecoveryNextAction')}: <span className="text-fog">{closeRecoveryActionLabel(item.action_recommended)}</span></div>
+                            {group.key === 'recent' && item.close_mode && (
+                              <div>{t('lightningOps.closeRecoveryCloseType', { value: closeRecoveryModeLabel(item.close_mode) })}</div>
+                            )}
                             {typeof item.pending_htlc_count === 'number' && item.pending_htlc_count > 0 && (
                               <div>{t('lightningOps.closeRecoveryPendingHtlcCount', { count: item.pending_htlc_count })}</div>
                             )}

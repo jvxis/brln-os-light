@@ -609,6 +609,8 @@
       "scbBackupHint": "Envie um backup de canal estático a cada abertura ou fechamento de canal.",
       "activityMirrorLabel": "Espelhar atividade",
       "activityMirrorHint": "Espelhe cada nova entrada do card de notificações no Telegram.",
+      "autofeeSummaryLabel": "Resumo do Autofee",
+      "autofeeSummaryHint": "Envie um resumo em inglês no Telegram após cada rodada do Autofee, somente quando houver mudança real de fees.",
       "summaryLabel": "Resumo de saúde financeira",
       "summaryHint": "Envie saldos e resultados de roteamento em uma agenda.",
       "summaryInterval": "Intervalo do resumo (minutos)",

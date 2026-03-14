@@ -380,6 +380,7 @@ export const updateTelegramNotifications = (payload: {
   chat_id?: string
   scb_backup_enabled?: boolean
   activity_mirror_enabled?: boolean
+  autofee_summary_enabled?: boolean
   summary_enabled?: boolean
   summary_interval_min?: number
   system_summary_enabled?: boolean

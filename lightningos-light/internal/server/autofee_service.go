@@ -2085,6 +2085,7 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 	summary.htlcNodeFactor = htlcMeta.NodeFactor
 	summary.htlcLiquidityFactor = htlcMeta.LiquidityFactor
 	summary.htlcThresholdFactor = htlcMeta.ThresholdFactor
+	changedDecisions := []*decision{}
 	changedLines := []autofeeLogEntry{}
 	keptLines := []autofeeLogEntry{}
 	skippedLines := []autofeeLogEntry{}
@@ -2141,6 +2142,7 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 				errorLines = append(errorLines, buildAutofeeChannelLogEntry(decision.withError(err), "error", dryRun, err))
 				continue
 			}
+			changedDecisions = append(changedDecisions, decision)
 			changedLines = append(changedLines, buildAutofeeChannelLogEntry(decision, "changed", dryRun, nil))
 		} else {
 			if decision.NewPpm == decision.LocalPpm {
@@ -2341,6 +2343,9 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 	defer logCancel()
 	if err := e.svc.appendAutofeeLines(logCtx, runID, entries); err != nil {
 		e.svc.logger.Printf("autofee: log insert failed: %v", err)
+	}
+	if !dryRun && len(changedDecisions) > 0 {
+		e.svc.sendTelegramAutofeeRunSummary(e.cfg, reason, e.now, summary, e.calib, changedDecisions)
 	}
 	return nil
 }
@@ -3774,6 +3779,254 @@ func buildAutofeeChannelLogEntry(d *decision, category string, dryRun bool, err 
 		payload.Error = err.Error()
 	}
 	return autofeeLogEntry{Line: line, Payload: payload}
+}
+
+func (s *AutofeeService) sendTelegramAutofeeRunSummary(cfg AutofeeConfig, reason string, runAt time.Time, summary autofeeRunSummary, calib autofeeCalibration, changed []*decision) {
+	if s.db == nil || len(changed) == 0 {
+		return
+	}
+	tgCfg := readTelegramBackupConfig()
+	if strings.TrimSpace(tgCfg.BotToken) == "" || strings.TrimSpace(tgCfg.ChatID) == "" {
+		return
+	}
+
+	loadCtx, loadCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	settings, err := loadTelegramNotificationSettings(loadCtx, s.db)
+	loadCancel()
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("autofee: telegram settings unavailable: %v", err)
+		}
+		return
+	}
+	if !settings.AutofeeSummaryEnabled {
+		return
+	}
+
+	messages := buildTelegramAutofeeRunMessages(cfg, reason, runAt, summary, calib, changed)
+	if len(messages) == 0 {
+		return
+	}
+
+	sendCtx, sendCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer sendCancel()
+	for _, msg := range messages {
+		if err := sendTelegramMessages(sendCtx, tgCfg.BotToken, tgCfg.ChatID, msg); err != nil {
+			if s.logger != nil {
+				s.logger.Printf("autofee: telegram autofee summary send failed: %v", err)
+			}
+			return
+		}
+	}
+}
+
+func buildTelegramAutofeeRunMessages(cfg AutofeeConfig, reason string, runAt time.Time, summary autofeeRunSummary, calib autofeeCalibration, changed []*decision) []string {
+	if len(changed) == 0 {
+		return nil
+	}
+	ordered := append([]*decision(nil), changed...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		left := absInt(ordered[i].NewPpm - ordered[i].LocalPpm)
+		right := absInt(ordered[j].NewPpm - ordered[j].LocalPpm)
+		if left != right {
+			return left > right
+		}
+		return strings.ToLower(strings.TrimSpace(ordered[i].Alias)) < strings.ToLower(strings.TrimSpace(ordered[j].Alias))
+	})
+
+	sameFeeChanges := 0
+	for _, d := range ordered {
+		if d.NewPpm == d.LocalPpm {
+			sameFeeChanges++
+		}
+	}
+
+	profile := strings.TrimSpace(cfg.Profile)
+	if profile == "" {
+		profile = "moderate"
+	}
+	summaryLines := []string{
+		fmt.Sprintf("⚡ Autofee %s | %s", strings.ToUpper(strings.TrimSpace(reason)), runAt.UTC().Format(time.RFC3339)),
+		fmt.Sprintf("Profile: %s", strings.ToLower(profile)),
+		fmt.Sprintf("✅ changed %d | 🔺 up %d | 🔻 down %d | ➡️ same-fee %d", len(ordered), summary.changedUp, summary.changedDown, sameFeeChanges),
+		fmt.Sprintf("⏳ cooldown %d | 🧊 hold-small %d | 🟰 same-ppm %d", summary.skippedCooldown, summary.skippedSmall, summary.skippedSame),
+		fmt.Sprintf("🧯 floor-relax %d | 🚨 stall-alert %d | 🧵 forward-hot %d", summary.floorRelaxApplied, summary.stallAlert, summary.htlcForwardHot),
+		fmt.Sprintf("↘️ inbound-discount %d | 🔥 super-source %d", summary.inboundDiscount, summary.superSource),
+		fmt.Sprintf("⚙️ node %s | liquidity %s | local %.1f%%", strings.ToLower(calib.NodeClass), strings.ToLower(calib.LiquidityClass), calib.LocalRatio*100),
+	}
+	messages := []string{strings.Join(summaryLines, "\n")}
+
+	channelLines := make([]string, 0, len(ordered))
+	for _, d := range ordered {
+		channelLines = append(channelLines, buildTelegramAutofeeChangedChannelLine(d))
+	}
+	messages = append(messages, chunkTelegramAutofeeSection("✅ Changed channels", channelLines, telegramMessageMaxChars)...)
+	return messages
+}
+
+func chunkTelegramAutofeeSection(header string, lines []string, maxChars int) []string {
+	if len(lines) == 0 {
+		return nil
+	}
+	if maxChars <= 0 {
+		maxChars = telegramMessageMaxChars
+	}
+	chunks := make([]string, 0, 1)
+	index := 0
+	for index < len(lines) {
+		chunkNo := len(chunks) + 1
+		title := header
+		if chunkNo > 1 {
+			title = fmt.Sprintf("%s (cont. %d)", header, chunkNo)
+		}
+		builder := strings.Builder{}
+		builder.WriteString(title)
+		for index < len(lines) {
+			line := lines[index]
+			candidate := builder.String() + "\n" + line
+			if telegramTextLen(candidate) > maxChars {
+				if builder.String() == title {
+					runes := []rune(line)
+					available := maxChars - telegramTextLen(title) - 1
+					if available < 32 {
+						available = maxChars
+						builder.Reset()
+					}
+					if len(runes) > available {
+						line = string(runes[:available])
+						lines[index] = string(runes[available:])
+					} else {
+						index++
+					}
+					if builder.Len() > 0 {
+						builder.WriteString("\n")
+					}
+					builder.WriteString(line)
+				}
+				break
+			}
+			builder.WriteString("\n")
+			builder.WriteString(line)
+			index++
+		}
+		chunks = append(chunks, builder.String())
+	}
+	return chunks
+}
+
+func buildTelegramAutofeeChangedChannelLine(d *decision) string {
+	if d == nil {
+		return ""
+	}
+	alias := telegramShortValue(strings.TrimSpace(d.Alias), 48)
+	if alias == "" {
+		alias = fmt.Sprintf("chan-%d", d.ChannelID)
+	}
+	prefix := "✅➡️"
+	if d.NewPpm > d.LocalPpm {
+		prefix = "✅🔺"
+	} else if d.NewPpm < d.LocalPpm {
+		prefix = "✅🔻"
+	}
+	classLabel := strings.TrimSpace(d.ClassLabel)
+	if classLabel == "" {
+		classLabel = "unknown"
+	}
+	targetRaw := d.TargetRaw
+	if targetRaw <= 0 {
+		targetRaw = d.Target
+	}
+	targetFinal := d.TargetFinal
+	if targetFinal <= 0 {
+		targetFinal = d.NewPpm
+	}
+	targetDisplay := fmt.Sprintf("%d", targetRaw)
+	if targetFinal != targetRaw {
+		targetDisplay = fmt.Sprintf("%d→%d", targetRaw, targetFinal)
+	}
+	parts := []string{
+		fmt.Sprintf("%s %s", prefix, alias),
+		strings.ToLower(classLabel),
+		fmt.Sprintf("%d→%d ppm", d.LocalPpm, d.NewPpm),
+		fmt.Sprintf("target %s", targetDisplay),
+		fmt.Sprintf("out %.1f%%", d.OutRatio*100),
+		fmt.Sprintf("margin %d", d.Margin),
+	}
+	if strings.TrimSpace(d.FloorSrc) != "" {
+		parts = append(parts, "floor "+d.FloorSrc)
+	}
+	if d.InboundDiscount > 0 {
+		parts = append(parts, fmt.Sprintf("↘️ inb %d", d.InboundDiscount))
+	}
+	reasons := formatAutofeeTags(&decision{Tags: selectTelegramAutofeeReasonTags(d.Tags)})
+	if reasons != "" {
+		parts = append(parts, reasons)
+	}
+	return strings.Join(parts, " | ")
+}
+
+func selectTelegramAutofeeReasonTags(tags []string) []string {
+	if len(tags) == 0 {
+		return nil
+	}
+	priority := []string{
+		"floor-relax-stall",
+		"floor-lock",
+		"stepcap-lock",
+		"stepcap",
+		"stall-alert",
+		"peg",
+		"peg-grace",
+		"peg-demand",
+		"stagnation",
+		"stagnation-floor",
+		"reversal-confirmed",
+		"reversal-guard",
+		"htlc-forward-hot",
+		"htlc-liquidity-hot",
+		"htlc-policy-hot",
+		"global-neg-lock",
+		"lock-skip-sink-profit",
+		"profit-protect-lock",
+		"extreme-drain",
+		"extreme-drain-unlock",
+		"low-out-slow-up",
+		"outrate-floor",
+		"sink-floor",
+		"discovery",
+		"explorer",
+		"hold-small",
+		"same-ppm",
+		"cooldown",
+	}
+	selected := make([]string, 0, 3)
+	seen := map[string]struct{}{}
+	for _, want := range priority {
+		if containsTag(tags, want) {
+			selected = append(selected, want)
+			seen[want] = struct{}{}
+			if len(selected) == 3 {
+				return selected
+			}
+		}
+	}
+	for _, tag := range tags {
+		if _, ok := seen[tag]; ok {
+			continue
+		}
+		if strings.HasPrefix(tag, "seed:") || strings.HasPrefix(tag, "outnorm:") {
+			continue
+		}
+		switch tag {
+		case "trend-up", "trend-down", "trend-flat", "outnorm", "new-inbound", "bootstrap":
+			continue
+		}
+		selected = append(selected, tag)
+		if len(selected) == 3 {
+			break
+		}
+	}
+	return selected
 }
 
 // ===== evaluation =====

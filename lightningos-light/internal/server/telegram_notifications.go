@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"lightningos-light/internal/reports"
 	sysinfo "lightningos-light/internal/system"
@@ -27,6 +28,7 @@ const (
 	telegramSummaryIntervalMax     = 720
 	telegramSummaryIntervalDefault = 720
 	telegramGoalBarSegments        = 14
+	telegramMessageMaxChars        = 4000
 )
 
 func telegramBalanceSummaryTimeout() time.Duration {
@@ -45,6 +47,7 @@ func telegramBalanceSummaryTimeout() time.Duration {
 type telegramNotificationSettings struct {
 	ScbBackupEnabled         bool
 	ActivityMirrorEnabled    bool
+	AutofeeSummaryEnabled    bool
 	SummaryEnabled           bool
 	SummaryIntervalMin       int
 	SummaryLastSentAt        *time.Time
@@ -57,6 +60,7 @@ type telegramNotificationSettings struct {
 type telegramNotificationUpdate struct {
 	ScbBackupEnabled         *bool
 	ActivityMirrorEnabled    *bool
+	AutofeeSummaryEnabled    *bool
 	SummaryEnabled           *bool
 	SummaryIntervalMin       *int
 	SystemSummaryEnabled     *bool
@@ -97,6 +101,7 @@ func loadTelegramNotificationSettings(ctx context.Context, db *pgxpool.Pool) (te
 	err := db.QueryRow(ctx, `
 select scb_backup_enabled,
   activity_mirror_enabled,
+  autofee_summary_enabled,
   summary_enabled,
   summary_interval_min,
   summary_last_sent_at,
@@ -109,6 +114,7 @@ where id=$1
 `, telegramSettingsID).Scan(
 		&settings.ScbBackupEnabled,
 		&settings.ActivityMirrorEnabled,
+		&settings.AutofeeSummaryEnabled,
 		&settings.SummaryEnabled,
 		&settings.SummaryIntervalMin,
 		&lastSent,
@@ -143,6 +149,7 @@ insert into telegram_notification_settings (
   id,
   scb_backup_enabled,
   activity_mirror_enabled,
+  autofee_summary_enabled,
   summary_enabled,
   summary_interval_min,
   summary_last_sent_at,
@@ -151,10 +158,11 @@ insert into telegram_notification_settings (
   system_summary_last_sent_at,
   last_update_id,
   updated_at
-) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now())
+ ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now())
 on conflict (id) do update set
   scb_backup_enabled=excluded.scb_backup_enabled,
   activity_mirror_enabled=excluded.activity_mirror_enabled,
+  autofee_summary_enabled=excluded.autofee_summary_enabled,
   summary_enabled=excluded.summary_enabled,
   summary_interval_min=excluded.summary_interval_min,
   summary_last_sent_at=excluded.summary_last_sent_at,
@@ -163,9 +171,10 @@ on conflict (id) do update set
   system_summary_last_sent_at=excluded.system_summary_last_sent_at,
   last_update_id=excluded.last_update_id,
   updated_at=now()
-`, telegramSettingsID,
+	`, telegramSettingsID,
 		settings.ScbBackupEnabled,
 		settings.ActivityMirrorEnabled,
+		settings.AutofeeSummaryEnabled,
 		settings.SummaryEnabled,
 		settings.SummaryIntervalMin,
 		settings.SummaryLastSentAt,
@@ -187,6 +196,9 @@ func updateTelegramNotificationSettings(ctx context.Context, db *pgxpool.Pool, u
 	}
 	if update.ActivityMirrorEnabled != nil {
 		settings.ActivityMirrorEnabled = *update.ActivityMirrorEnabled
+	}
+	if update.AutofeeSummaryEnabled != nil {
+		settings.AutofeeSummaryEnabled = *update.AutofeeSummaryEnabled
 	}
 	if update.SummaryEnabled != nil {
 		settings.SummaryEnabled = *update.SummaryEnabled
@@ -277,6 +289,7 @@ func (s *Server) handleTelegramNotificationsGet(w http.ResponseWriter, r *http.R
 		"bot_token_set":               cfg.BotToken != "",
 		"scb_backup_enabled":          settings.ScbBackupEnabled,
 		"activity_mirror_enabled":     settings.ActivityMirrorEnabled,
+		"autofee_summary_enabled":     settings.AutofeeSummaryEnabled,
 		"summary_enabled":             settings.SummaryEnabled,
 		"summary_interval_min":        settings.SummaryIntervalMin,
 		"system_summary_enabled":      settings.SystemSummaryEnabled,
@@ -299,6 +312,7 @@ func (s *Server) handleTelegramNotificationsPost(w http.ResponseWriter, r *http.
 		ChatID                   *string `json:"chat_id"`
 		ScbBackupEnabled         *bool   `json:"scb_backup_enabled"`
 		ActivityMirrorEnabled    *bool   `json:"activity_mirror_enabled"`
+		AutofeeSummaryEnabled    *bool   `json:"autofee_summary_enabled"`
 		SummaryEnabled           *bool   `json:"summary_enabled"`
 		SummaryIntervalMin       *int    `json:"summary_interval_min"`
 		SystemSummaryEnabled     *bool   `json:"system_summary_enabled"`
@@ -349,12 +363,13 @@ func (s *Server) handleTelegramNotificationsPost(w http.ResponseWriter, r *http.
 		}
 	}
 
-	if req.ScbBackupEnabled != nil || req.ActivityMirrorEnabled != nil || req.SummaryEnabled != nil || req.SummaryIntervalMin != nil || req.SystemSummaryEnabled != nil || req.SystemSummaryIntervalMin != nil {
+	if req.ScbBackupEnabled != nil || req.ActivityMirrorEnabled != nil || req.AutofeeSummaryEnabled != nil || req.SummaryEnabled != nil || req.SummaryIntervalMin != nil || req.SystemSummaryEnabled != nil || req.SystemSummaryIntervalMin != nil {
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()
 		settings, err := updateTelegramNotificationSettings(ctx, s.db, telegramNotificationUpdate{
 			ScbBackupEnabled:         req.ScbBackupEnabled,
 			ActivityMirrorEnabled:    req.ActivityMirrorEnabled,
+			AutofeeSummaryEnabled:    req.AutofeeSummaryEnabled,
 			SummaryEnabled:           req.SummaryEnabled,
 			SummaryIntervalMin:       req.SummaryIntervalMin,
 			SystemSummaryEnabled:     req.SystemSummaryEnabled,
@@ -1473,6 +1488,85 @@ func sendTelegramMessage(ctx context.Context, token, chatID, text string) error 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return fmt.Errorf("telegram api status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
+func splitTelegramMessage(text string, maxChars int) []string {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	if maxChars <= 0 {
+		maxChars = telegramMessageMaxChars
+	}
+	lines := strings.Split(text, "\n")
+	chunks := make([]string, 0, 1)
+	current := strings.Builder{}
+	flush := func() {
+		if current.Len() == 0 {
+			return
+		}
+		chunks = append(chunks, current.String())
+		current.Reset()
+	}
+	appendPiece := func(piece string) {
+		if piece == "" {
+			return
+		}
+		if current.Len() == 0 {
+			current.WriteString(piece)
+			return
+		}
+		if telegramTextLen(current.String())+1+telegramTextLen(piece) <= maxChars {
+			current.WriteString("\n")
+			current.WriteString(piece)
+			return
+		}
+		flush()
+		current.WriteString(piece)
+	}
+	splitLongLine := func(line string) []string {
+		if telegramTextLen(line) <= maxChars {
+			return []string{line}
+		}
+		runes := []rune(line)
+		parts := make([]string, 0, (len(runes)/maxChars)+1)
+		for len(runes) > 0 {
+			take := maxChars
+			if len(runes) < take {
+				take = len(runes)
+			}
+			parts = append(parts, string(runes[:take]))
+			runes = runes[take:]
+		}
+		return parts
+	}
+	for _, line := range lines {
+		if line == "" {
+			appendPiece("")
+			continue
+		}
+		for _, part := range splitLongLine(line) {
+			appendPiece(part)
+		}
+	}
+	flush()
+	return chunks
+}
+
+func telegramTextLen(value string) int {
+	return utf8.RuneCountInString(value)
+}
+
+func sendTelegramMessages(ctx context.Context, token, chatID, text string) error {
+	chunks := splitTelegramMessage(text, telegramMessageMaxChars)
+	if len(chunks) == 0 {
+		return nil
+	}
+	for _, chunk := range chunks {
+		if err := sendTelegramMessage(ctx, token, chatID, chunk); err != nil {
+			return err
+		}
 	}
 	return nil
 }

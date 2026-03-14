@@ -609,6 +609,8 @@
       "scbBackupHint": "Send a static channel backup on every channel open or close.",
       "activityMirrorLabel": "Activity mirror",
       "activityMirrorHint": "Mirror each new notifications card entry to Telegram.",
+      "autofeeSummaryLabel": "Autofee summary",
+      "autofeeSummaryHint": "Send an English Telegram summary after each Autofee run, only when fees changed.",
       "summaryLabel": "Financial health summary",
       "summaryHint": "Send balances and routing results on a schedule.",
       "summaryInterval": "Summary interval (minutes)",

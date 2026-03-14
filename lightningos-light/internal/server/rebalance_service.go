@@ -710,6 +710,15 @@ func shouldRunMppShadow(cfg RebalanceConfig, jobSource string) bool {
 	return shouldRunMppExecute(cfg, jobSource)
 }
 
+func shouldUseRecentFailureCache(jobSource string, jobReason string) bool {
+	jobSource = strings.TrimSpace(strings.ToLower(jobSource))
+	if jobSource == "auto" {
+		return true
+	}
+	jobReason = strings.TrimSpace(strings.ToLower(jobReason))
+	return jobSource == "manual" && jobReason == "auto-restart"
+}
+
 func buildMppShadowPlan(targetAmountSat int64, sources []RebalanceChannel, cfg RebalanceConfig) mppShadowPlan {
 	plan := mppShadowPlan{}
 	if targetAmountSat <= 0 {
@@ -1406,14 +1415,15 @@ func (s *RebalanceService) startJob(targetChannelID uint64, source string, reaso
 		s.mu.Unlock()
 	}
 
-	go s.runJob(jobID, targetChannelID, amount, targetPct, source)
+	go s.runJob(jobID, targetChannelID, amount, targetPct, source, reason)
 	return jobID, nil
 }
 
-func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount int64, targetPct float64, jobSource string) {
+func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount int64, targetPct float64, jobSource string, jobReason string) {
 	cfg, _ := s.loadConfig(context.Background())
 	minExecuteSat := effectiveMinExecuteSat(cfg)
 	minProbeSat := effectiveMinProbeSat(cfg)
+	useRecentFailureCache := shouldUseRecentFailureCache(jobSource, jobReason)
 	timeoutSec := cfg.RebalanceTimeoutSec
 	if timeoutSec <= 0 {
 		timeoutSec = 600
@@ -2830,7 +2840,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			if availableCap <= 0 {
 				continue
 			}
-			if jobSource == "auto" {
+			if useRecentFailureCache {
 				if stat, ok := pairStats[source.ChannelID]; ok {
 					if !stat.LastFailAt.IsZero() && time.Since(stat.LastFailAt) <= pairFailTTL && (stat.LastSuccessAt.IsZero() || stat.LastSuccessAt.Before(stat.LastFailAt)) {
 						continue
@@ -3043,7 +3053,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 				return
 			}
 
-			if jobSource == "auto" {
+			if useRecentFailureCache {
 				if stat, ok := pairStats[source.ChannelID]; ok {
 					if !stat.LastFailAt.IsZero() && time.Since(stat.LastFailAt) <= pairFailTTL && (stat.LastSuccessAt.IsZero() || stat.LastSuccessAt.Before(stat.LastFailAt)) {
 						skippedByCache++

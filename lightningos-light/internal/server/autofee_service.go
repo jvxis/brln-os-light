@@ -3845,8 +3845,9 @@ func buildTelegramAutofeeRunMessages(cfg AutofeeConfig, reason string, runAt tim
 	if profile == "" {
 		profile = "moderate"
 	}
+	localRunAt := runAt.In(time.Local)
 	summaryLines := []string{
-		fmt.Sprintf("⚡ Autofee %s | %s", strings.ToUpper(strings.TrimSpace(reason)), runAt.UTC().Format(time.RFC3339)),
+		fmt.Sprintf("⚡ Autofee %s | %s", strings.ToUpper(strings.TrimSpace(reason)), localRunAt.Format("2006-01-02 15:04:05")),
 		fmt.Sprintf("Profile: %s", strings.ToLower(profile)),
 		fmt.Sprintf("✅ changed %d | 🔺 up %d | 🔻 down %d | ➡️ same-fee %d", len(ordered), summary.changedUp, summary.changedDown, sameFeeChanges),
 		fmt.Sprintf("⏳ cooldown %d | 🧊 hold-small %d | 🟰 same-ppm %d", summary.skippedCooldown, summary.skippedSmall, summary.skippedSame),
@@ -3858,7 +3859,7 @@ func buildTelegramAutofeeRunMessages(cfg AutofeeConfig, reason string, runAt tim
 
 	channelLines := make([]string, 0, len(ordered))
 	for _, d := range ordered {
-		channelLines = append(channelLines, buildTelegramAutofeeChangedChannelLine(d))
+		channelLines = append(channelLines, buildTelegramAutofeeChangedChannelLineFull(d))
 	}
 	messages = append(messages, chunkTelegramAutofeeSection("✅ Changed channels", channelLines, telegramMessageMaxChars)...)
 	return messages
@@ -3914,7 +3915,7 @@ func chunkTelegramAutofeeSection(header string, lines []string, maxChars int) []
 	return chunks
 }
 
-func buildTelegramAutofeeChangedChannelLine(d *decision) string {
+func buildTelegramAutofeeChangedChannelLineFull(d *decision) string {
 	if d == nil {
 		return ""
 	}
@@ -3944,89 +3945,90 @@ func buildTelegramAutofeeChangedChannelLine(d *decision) string {
 	if targetFinal != targetRaw {
 		targetDisplay = fmt.Sprintf("%d→%d", targetRaw, targetFinal)
 	}
-	parts := []string{
-		fmt.Sprintf("%s %s", prefix, alias),
-		strings.ToLower(classLabel),
-		fmt.Sprintf("%d→%d ppm", d.LocalPpm, d.NewPpm),
-		fmt.Sprintf("target %s", targetDisplay),
-		fmt.Sprintf("out %.1f%%", d.OutRatio*100),
-		fmt.Sprintf("margin %d", d.Margin),
+	delta := d.NewPpm - d.LocalPpm
+	deltaPct := 0.0
+	if d.LocalPpm > 0 && d.NewPpm != d.LocalPpm {
+		deltaPct = math.Abs(float64(delta)) / float64(d.LocalPpm) * 100.0
 	}
-	if strings.TrimSpace(d.FloorSrc) != "" {
-		parts = append(parts, "floor "+d.FloorSrc)
+	deltaStr := ""
+	if d.LocalPpm > 0 && d.NewPpm != d.LocalPpm {
+		deltaStr = fmt.Sprintf(" (%+d, %.1f%%)", delta, deltaPct)
 	}
-	if d.InboundDiscount > 0 {
-		parts = append(parts, fmt.Sprintf("↘️ inb %d", d.InboundDiscount))
+	floorSrc := ""
+	if d.FloorSrc != "" {
+		floorSrc = fmt.Sprintf("(%s)", d.FloorSrc)
 	}
-	reasons := formatAutofeeTags(&decision{Tags: selectTelegramAutofeeReasonTags(d.Tags)})
-	if reasons != "" {
-		parts = append(parts, reasons)
+	action := fmt.Sprintf("set %d→%d ppm", d.LocalPpm, d.NewPpm)
+	tagLine := formatAutofeeTags(d)
+	if tagLine == "" {
+		tagLine = "-"
 	}
-	return strings.Join(parts, " | ")
+	line := fmt.Sprintf("%s %s: %s%s | target %s | out_ratio %.2f | out_ppm7d≈%d | rebal_ppm7d≈%d | seed≈%d | floor≥%d%s | margin≈%d | rev_share≈%.2f | %s",
+		prefix,
+		alias,
+		action,
+		deltaStr,
+		targetDisplay,
+		d.OutRatio,
+		d.OutPpm7d,
+		d.RebalPpm,
+		d.Seed,
+		d.Floor,
+		floorSrc,
+		d.Margin,
+		d.RevShare,
+		tagLine,
+	)
+	if d.NewInbound {
+		line += fmt.Sprintf(" | NEW inbound %.1fh", d.ChannelAgeHours)
+	}
+	if d.NewPpm == d.LocalPpm && (d.StalledRounds > 0 || d.TargetGapPpm != 0) {
+		line += fmt.Sprintf(" | stall r=%d h=%.1f gap=%+d(%.1f%%)",
+			d.StalledRounds,
+			d.HoursSinceLastChange,
+			d.TargetGapPpm,
+			d.TargetGapPct,
+		)
+	}
+	if d.HTLCAttempts > 0 {
+		line += fmt.Sprintf(" | htlc%dm a=%d p=%d l=%d f=%d u=%d",
+			maxInt(1, d.HTLCWindowMin),
+			d.HTLCAttempts,
+			d.HTLCPolicyFails,
+			d.HTLCLiquidityFails,
+			d.HTLCForwardFails,
+			d.HTLCUnclassifiedFails,
+		)
+	}
+	if prediction := formatTelegramAutofeePrediction(d.PredictionCode, d.PredictionCooldownHours); prediction != "" {
+		line += " | " + prediction
+	}
+	_ = classLabel
+	return line
 }
 
-func selectTelegramAutofeeReasonTags(tags []string) []string {
-	if len(tags) == 0 {
-		return nil
+func formatTelegramAutofeePrediction(code string, cooldownHours int) string {
+	switch strings.TrimSpace(code) {
+	case "hold_or_up":
+		return "🔮 forecast: hold or up."
+	case "reduce":
+		return "🔮 forecast: reduction pressure."
+	case "discovery_fast":
+		return "🔮 forecast: fast discovery move."
+	case "idle_reduce":
+		return "🔮 forecast: idle reduction."
+	case "bias_up":
+		if cooldownHours > 0 {
+			return fmt.Sprintf("🔮 forecast: upward bias after cooldown (%dh).", cooldownHours)
+		}
+		return "🔮 forecast: upward bias."
+	case "bias_down":
+		return "🔮 forecast: downward bias."
+	case "stable":
+		return "🔮 forecast: stable."
+	default:
+		return ""
 	}
-	priority := []string{
-		"floor-relax-stall",
-		"floor-lock",
-		"stepcap-lock",
-		"stepcap",
-		"stall-alert",
-		"peg",
-		"peg-grace",
-		"peg-demand",
-		"stagnation",
-		"stagnation-floor",
-		"reversal-confirmed",
-		"reversal-guard",
-		"htlc-forward-hot",
-		"htlc-liquidity-hot",
-		"htlc-policy-hot",
-		"global-neg-lock",
-		"lock-skip-sink-profit",
-		"profit-protect-lock",
-		"extreme-drain",
-		"extreme-drain-unlock",
-		"low-out-slow-up",
-		"outrate-floor",
-		"sink-floor",
-		"discovery",
-		"explorer",
-		"hold-small",
-		"same-ppm",
-		"cooldown",
-	}
-	selected := make([]string, 0, 3)
-	seen := map[string]struct{}{}
-	for _, want := range priority {
-		if containsTag(tags, want) {
-			selected = append(selected, want)
-			seen[want] = struct{}{}
-			if len(selected) == 3 {
-				return selected
-			}
-		}
-	}
-	for _, tag := range tags {
-		if _, ok := seen[tag]; ok {
-			continue
-		}
-		if strings.HasPrefix(tag, "seed:") || strings.HasPrefix(tag, "outnorm:") {
-			continue
-		}
-		switch tag {
-		case "trend-up", "trend-down", "trend-flat", "outnorm", "new-inbound", "bootstrap":
-			continue
-		}
-		selected = append(selected, tag)
-		if len(selected) == 3 {
-			break
-		}
-	}
-	return selected
 }
 
 // ===== evaluation =====

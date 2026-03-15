@@ -632,7 +632,7 @@ export default function ChannelRanking() {
         </div>
       </section>
 
-      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
+      <div className="space-y-6">
         <section className="rounded-3xl border border-white/10 bg-ink/60 p-4 sm:p-5">
           <div className="mb-4 flex items-center justify-between gap-3">
             <h3 className="text-lg font-semibold">{t('channelRanking.listTitle')}</h3>
@@ -643,7 +643,7 @@ export default function ChannelRanking() {
           ) : sortedItems.length === 0 ? (
             <p className="text-sm text-fog/70">{t('channelRanking.empty')}</p>
           ) : (
-            <div className="space-y-3 lg:max-h-[calc(100vh-12rem)] lg:overflow-y-auto lg:pr-2">
+            <div className="space-y-3 lg:max-h-[46rem] lg:overflow-y-auto lg:pr-2">
               {sortedItems.map((item) => {
                 const isSelected = selectedItem?.channel_point === item.channel_point
                 const isFocused = focusedChannelPoint === item.channel_point
@@ -711,7 +711,7 @@ export default function ChannelRanking() {
           {!selectedDetail ? (
             <p className="text-sm text-fog/70">{t('channelRanking.selectChannel')}</p>
           ) : (
-            <div className="space-y-5">
+            <div className="space-y-5 lg:max-h-[46rem] lg:overflow-y-auto lg:pr-2">
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className={`rounded-full px-3 py-1 text-xs ${stateBadgeClass(selectedDetail.state)}`}>

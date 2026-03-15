@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ComposableMap, Geographies, Geography, Marker, Sphere, useMapContext } from 'react-simple-maps'
+import { ComposableMap, Geographies, Geography, Marker, Sphere, ZoomableGroup, useMapContext } from 'react-simple-maps'
 import worldGeo from 'world-atlas/countries-110m.json'
 import { getNetworkAtlasConfig, getNetworkAtlasMap, updateNetworkAtlasConfig } from '../api'
 
@@ -64,6 +64,7 @@ const shortPubkey = (value: string) => {
 }
 
 const formatSats = (value: number) => `${Math.max(0, Math.trunc(value || 0)).toLocaleString()} sat`
+const clampZoom = (value: number) => Math.min(6, Math.max(1, value))
 
 const AtlasConnections = ({
   localNode,
@@ -96,6 +97,7 @@ const AtlasConnections = ({
         const arcHeight = Math.max(22, Math.abs(x2 - x1) * 0.14 + Math.abs(y2 - y1) * 0.08)
         const d = `M ${x1} ${y1} C ${mx} ${my - arcHeight}, ${mx} ${my - arcHeight}, ${x2} ${y2}`
         const selected = selectedKey === link.pubkey
+        const pathId = `atlas-arc-${link.pubkey}`
 
         return (
           <g
@@ -105,10 +107,25 @@ const AtlasConnections = ({
             onFocus={() => onSelect(link.pubkey)}
           >
             <path
+              id={pathId}
               d={d}
               className={link.connection_kind === 'channel' ? 'atlas-arc atlas-arc--channel' : 'atlas-arc atlas-arc--peer'}
               strokeWidth={selected ? 2.6 : link.connection_kind === 'channel' ? 1.8 : 1.2}
             />
+            {link.connection_kind === 'channel' && (
+              <>
+                <circle r={selected ? 3.4 : 2.6} className="atlas-pulse-dot">
+                  <animateMotion dur={selected ? '1.4s' : '1.9s'} repeatCount="indefinite" rotate="auto">
+                    <mpath href={`#${pathId}`} />
+                  </animateMotion>
+                </circle>
+                <circle r={selected ? 2.6 : 2.1} className="atlas-pulse-dot atlas-pulse-dot--secondary">
+                  <animateMotion begin="0.7s" dur={selected ? '1.8s' : '2.4s'} repeatCount="indefinite" rotate="auto">
+                    <mpath href={`#${pathId}`} />
+                  </animateMotion>
+                </circle>
+              </>
+            )}
             <circle
               cx={x2}
               cy={y2}
@@ -140,6 +157,8 @@ export default function NetworkAtlas() {
   const [labelInput, setLabelInput] = useState('')
   const [latInput, setLatInput] = useState('')
   const [lonInput, setLonInput] = useState('')
+  const [mapCenter, setMapCenter] = useState<[number, number]>([0, 0])
+  const [mapZoom, setMapZoom] = useState(1)
 
   useEffect(() => {
     let active = true
@@ -212,6 +231,15 @@ export default function NetworkAtlas() {
     } catch (err) {
       setStatus((err as Error)?.message || t('networkAtlas.loadFailed'))
     }
+  }
+
+  const handleZoom = (direction: 'in' | 'out' | 'reset') => {
+    if (direction === 'reset') {
+      setMapCenter([0, 0])
+      setMapZoom(1)
+      return
+    }
+    setMapZoom((current) => clampZoom(current + (direction === 'in' ? 0.55 : -0.55)))
   }
 
   const handleSaveConfig = async () => {
@@ -330,6 +358,11 @@ export default function NetworkAtlas() {
           </div>
 
           <div className="atlas-world-stage">
+            <div className="atlas-map-controls">
+              <button type="button" className="atlas-map-control" onClick={() => handleZoom('in')} aria-label={t('networkAtlas.zoomIn')} title={t('networkAtlas.zoomIn')}>+</button>
+              <button type="button" className="atlas-map-control" onClick={() => handleZoom('out')} aria-label={t('networkAtlas.zoomOut')} title={t('networkAtlas.zoomOut')}>-</button>
+              <button type="button" className="atlas-map-control atlas-map-control--wide" onClick={() => handleZoom('reset')} aria-label={t('networkAtlas.resetView')} title={t('networkAtlas.resetView')}>{t('networkAtlas.resetViewShort')}</button>
+            </div>
             <ComposableMap
               projection="geoEqualEarth"
               projectionConfig={{ scale: 220 }}
@@ -337,51 +370,63 @@ export default function NetworkAtlas() {
               height={560}
               className="atlas-world-map"
             >
-              <Sphere id="atlasSphere" stroke="rgba(110,128,168,0.22)" strokeWidth={0.8} fill="transparent" />
-              <Geographies geography={worldGeo as any}>
-                {({ geographies }: { geographies: any[] }) =>
-                  geographies.map((geo) => (
-                    <Geography
-                      key={geo.rsmKey}
-                      geography={geo}
-                      className="atlas-country-shape"
-                      style={{
-                        default: { outline: 'none' },
-                        hover: { outline: 'none' },
-                        pressed: { outline: 'none' }
-                      }}
-                    />
-                  ))
-                }
-              </Geographies>
+              <ZoomableGroup
+                center={mapCenter}
+                zoom={mapZoom}
+                minZoom={1}
+                maxZoom={6}
+                onMoveEnd={(position: any) => {
+                  const coords = Array.isArray(position?.coordinates) ? position.coordinates : [0, 0]
+                  setMapCenter([Number(coords[0]) || 0, Number(coords[1]) || 0])
+                  setMapZoom(clampZoom(Number(position?.zoom) || 1))
+                }}
+              >
+                <Sphere id="atlasSphere" stroke="rgba(110,128,168,0.22)" strokeWidth={0.8} fill="transparent" />
+                <Geographies geography={worldGeo as any}>
+                  {({ geographies }: { geographies: any[] }) =>
+                    geographies.map((geo) => (
+                      <Geography
+                        key={geo.rsmKey}
+                        geography={geo}
+                        className="atlas-country-shape"
+                        style={{
+                          default: { outline: 'none' },
+                          hover: { outline: 'none' },
+                          pressed: { outline: 'none' }
+                        }}
+                      />
+                    ))
+                  }
+                </Geographies>
 
-              <AtlasConnections
-                localNode={localNode}
-                links={filteredLinks}
-                selectedKey={selectedLink?.pubkey || ''}
-                onSelect={setSelectedKey}
-              />
+                <AtlasConnections
+                  localNode={localNode}
+                  links={filteredLinks}
+                  selectedKey={selectedLink?.pubkey || ''}
+                  onSelect={setSelectedKey}
+                />
 
-              {filteredLinks.map((link) => {
-                if (typeof link.lon !== 'number' || typeof link.lat !== 'number') return null
-                return (
-                  <Marker key={`marker-${link.pubkey}`} coordinates={[link.lon, link.lat]}>
-                    <circle
-                      r={selectedLink?.pubkey === link.pubkey ? 3.8 : link.connection_kind === 'channel' ? 2.9 : 2.3}
-                      className={link.connection_kind === 'channel' ? 'atlas-dot atlas-dot--channel' : 'atlas-dot atlas-dot--peer'}
-                    />
+                {filteredLinks.map((link) => {
+                  if (typeof link.lon !== 'number' || typeof link.lat !== 'number') return null
+                  return (
+                    <Marker key={`marker-${link.pubkey}`} coordinates={[link.lon, link.lat]}>
+                      <circle
+                        r={selectedLink?.pubkey === link.pubkey ? 3.8 : link.connection_kind === 'channel' ? 2.9 : 2.3}
+                        className={link.connection_kind === 'channel' ? 'atlas-dot atlas-dot--channel' : 'atlas-dot atlas-dot--peer'}
+                      />
+                    </Marker>
+                  )
+                })}
+
+                {localNode?.location_set && (
+                  <Marker coordinates={[localNode.lon, localNode.lat]}>
+                    <g className="atlas-node-anchor-marker">
+                      <circle r="11" />
+                      <circle r="4.5" className="atlas-node-anchor-marker__core" />
+                    </g>
                   </Marker>
-                )
-              })}
-
-              {localNode?.location_set && (
-                <Marker coordinates={[localNode.lon, localNode.lat]}>
-                  <g className="atlas-node-anchor-marker">
-                    <circle r="11" />
-                    <circle r="4.5" className="atlas-node-anchor-marker__core" />
-                  </g>
-                </Marker>
-              )}
+                )}
+              </ZoomableGroup>
             </ComposableMap>
 
             {!localNode?.location_set && (

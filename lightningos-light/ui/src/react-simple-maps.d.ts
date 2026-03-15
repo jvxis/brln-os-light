@@ -6,6 +6,7 @@ declare module 'react-simple-maps' {
   export const Geography: ComponentType<any>
   export const Marker: ComponentType<any>
   export const Sphere: ComponentType<any>
+  export const ZoomableGroup: ComponentType<any>
   export function useMapContext(): {
     projection: (coordinates: [number, number]) => [number, number] | null
   }

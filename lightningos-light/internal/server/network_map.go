@@ -429,6 +429,22 @@ func (s *Server) resolveLocalNode(ctx context.Context, status lndclient.Status) 
 		return node, nil
 	}
 
+	if socket, reason := localNodeClearnetSocket(status); socket != "" {
+		host, _ := splitHostPortLoose(socket)
+		host = strings.Trim(strings.TrimSpace(host), "[]")
+		if host != "" {
+			location, geoErr := s.resolveAtlasGeo(ctx, host)
+			if geoErr == nil {
+				node.Latitude = location.Latitude
+				node.Longitude = location.Longitude
+				node.LocationSet = true
+				node.Source = "uri"
+				return node, nil
+			}
+			node.Warnings = append(node.Warnings, fmt.Sprintf("Failed to geolocate the node URI host (%s).", reason))
+		}
+	}
+
 	location, geoErr := s.fetchAtlasGeo(ctx, "")
 	if geoErr == nil {
 		node.Latitude = location.Latitude
@@ -440,8 +456,60 @@ func (s *Server) resolveLocalNode(ctx context.Context, status lndclient.Status) 
 	}
 
 	node.Source = "unavailable"
-	node.Warnings = append(node.Warnings, "Local node location unavailable. Add manual coordinates to render the atlas.")
+	if hasOnlyTorURI(status) {
+		node.Warnings = append(node.Warnings, "Only Tor URIs were detected for this node. Manual coordinates are optional if you still want a geographic anchor.")
+	} else {
+		node.Warnings = append(node.Warnings, "Local node location unavailable. The atlas could not derive a public clearnet position.")
+	}
 	return node, nil
+}
+
+func localNodeClearnetSocket(status lndclient.Status) (string, string) {
+	candidates := append([]string{}, status.URIs...)
+	if strings.TrimSpace(status.URI) != "" {
+		candidates = append(candidates, status.URI)
+	}
+
+	for _, raw := range candidates {
+		socket := normalizeSocket(raw)
+		if socket == "" || isOnionSocket(socket) || !socketHasPort(socket) {
+			continue
+		}
+		host, _ := splitHostPortLoose(socket)
+		host = strings.Trim(strings.TrimSpace(host), "[]")
+		if host == "" || isLocalAtlasHost(host) {
+			continue
+		}
+		return socket, raw
+	}
+	return "", ""
+}
+
+func hasOnlyTorURI(status lndclient.Status) bool {
+	candidates := append([]string{}, status.URIs...)
+	if strings.TrimSpace(status.URI) != "" {
+		candidates = append(candidates, status.URI)
+	}
+	if len(candidates) == 0 {
+		return false
+	}
+	foundTor := false
+	for _, raw := range candidates {
+		socket := normalizeSocket(raw)
+		if socket == "" {
+			continue
+		}
+		if isOnionSocket(socket) {
+			foundTor = true
+			continue
+		}
+		host, _ := splitHostPortLoose(socket)
+		host = strings.Trim(strings.TrimSpace(host), "[]")
+		if host != "" && !isLocalAtlasHost(host) {
+			return false
+		}
+	}
+	return foundTor
 }
 
 func fallbackAtlasAlias(alias, pubkey string) string {

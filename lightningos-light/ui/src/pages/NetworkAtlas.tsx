@@ -110,12 +110,13 @@ const ArcLayer = ({
   selectedKey,
   onSelect
 }: {
-  localNode: AtlasNode
+  localNode?: AtlasNode | null
   links: AtlasLink[]
   selectedKey: string
   onSelect: (key: string) => void
 }) => {
-  const origin = projectPoint(localNode.lon, localNode.lat)
+  const hasOrigin = Boolean(localNode?.location_set && typeof localNode?.lon === 'number' && typeof localNode?.lat === 'number')
+  const origin = hasOrigin ? projectPoint(localNode!.lon, localNode!.lat) : null
 
   return (
     <svg viewBox="0 0 1600 760" className="atlas-map-svg" role="img" aria-label="Network atlas map">
@@ -164,42 +165,53 @@ const ArcLayer = ({
         ))}
       </g>
 
-      <circle cx={origin.x} cy={origin.y} r="76" fill="url(#atlasCoreGlow)" />
+      {origin && <circle cx={origin.x} cy={origin.y} r="76" fill="url(#atlasCoreGlow)" />}
 
-      <g>
-        {links.map((link, index) => {
-          if (typeof link.lon !== 'number' || typeof link.lat !== 'number') return null
-          const point = projectPoint(link.lon, link.lat)
-          const distance = Math.abs(point.x - origin.x)
-          const curveLift = clamp(distance * 0.16 + Math.abs(point.y - origin.y) * 0.22, 34, 190)
-          const controlX = (origin.x + point.x) / 2
-          const controlY = Math.min(origin.y, point.y) - curveLift
-          const path = `M ${origin.x} ${origin.y} Q ${controlX} ${controlY} ${point.x} ${point.y}`
-          const emphasized = selectedKey === link.pubkey
-          const lineClass = link.connection_kind === 'channel' ? 'atlas-line atlas-line--channel' : 'atlas-line atlas-line--peer'
-          return (
-            <g
-              key={`${link.pubkey}-${index}`}
-              onMouseEnter={() => onSelect(link.pubkey)}
-              onFocus={() => onSelect(link.pubkey)}
-              className="cursor-pointer"
-            >
-              <path
-                d={path}
-                className={lineClass}
-                strokeWidth={emphasized ? 4 : link.connection_kind === 'channel' ? 2.3 : 1.5}
-                filter={link.connection_kind === 'channel' ? 'url(#atlasNeonBlur)' : undefined}
-              />
-              <circle cx={point.x} cy={point.y} r={emphasized ? 5.8 : link.connection_kind === 'channel' ? 4.6 : 3.6} className={link.connection_kind === 'channel' ? 'atlas-point atlas-point--channel' : 'atlas-point atlas-point--peer'} />
-            </g>
-          )
-        })}
-      </g>
+      {origin && (
+        <g>
+          {links.map((link, index) => {
+            if (typeof link.lon !== 'number' || typeof link.lat !== 'number') return null
+            const point = projectPoint(link.lon, link.lat)
+            const distance = Math.abs(point.x - origin.x)
+            const curveLift = clamp(distance * 0.16 + Math.abs(point.y - origin.y) * 0.22, 34, 190)
+            const controlX = (origin.x + point.x) / 2
+            const controlY = Math.min(origin.y, point.y) - curveLift
+            const path = `M ${origin.x} ${origin.y} Q ${controlX} ${controlY} ${point.x} ${point.y}`
+            const emphasized = selectedKey === link.pubkey
+            const lineClass = link.connection_kind === 'channel' ? 'atlas-line atlas-line--channel' : 'atlas-line atlas-line--peer'
+            return (
+              <g
+                key={`${link.pubkey}-${index}`}
+                onMouseEnter={() => onSelect(link.pubkey)}
+                onFocus={() => onSelect(link.pubkey)}
+                className="cursor-pointer"
+              >
+                <path
+                  d={path}
+                  className={lineClass}
+                  strokeWidth={emphasized ? 4 : link.connection_kind === 'channel' ? 2.3 : 1.5}
+                  filter={link.connection_kind === 'channel' ? 'url(#atlasNeonBlur)' : undefined}
+                />
+                <circle cx={point.x} cy={point.y} r={emphasized ? 5.8 : link.connection_kind === 'channel' ? 4.6 : 3.6} className={link.connection_kind === 'channel' ? 'atlas-point atlas-point--channel' : 'atlas-point atlas-point--peer'} />
+              </g>
+            )
+          })}
+        </g>
+      )}
 
-      <g className="atlas-node-marker">
-        <circle cx={origin.x} cy={origin.y} r="10" />
-        <circle cx={origin.x} cy={origin.y} r="18" className="atlas-node-pulse" />
-      </g>
+      {!origin && (
+        <g className="atlas-unanchored-copy">
+          <text x="800" y="352" textAnchor="middle">World map ready</text>
+          <text x="800" y="388" textAnchor="middle">Waiting for a public clearnet anchor from your node URI</text>
+        </g>
+      )}
+
+      {origin && (
+        <g className="atlas-node-marker">
+          <circle cx={origin.x} cy={origin.y} r="10" />
+          <circle cx={origin.x} cy={origin.y} r="18" className="atlas-node-pulse" />
+        </g>
+      )}
     </svg>
   )
 }
@@ -271,6 +283,16 @@ export default function NetworkAtlas() {
   const topLinks = useMemo(() => filteredLinks.slice(0, 10), [filteredLinks])
   const unmappedLinks = payload?.unmapped ?? []
   const localNode = payload?.local_node
+  const localNodeLabel = localNode ? (localNode.label || localNode.alias || shortPubkey(localNode.pubkey)) : ''
+  const localNodeSourceLabel = localNode
+    ? localNode.source === 'configured'
+      ? t('networkAtlas.locationConfigured')
+      : localNode.source === 'uri'
+        ? t('networkAtlas.locationFromUri')
+        : localNode.source === 'detected'
+          ? t('networkAtlas.locationDetected')
+          : t('networkAtlas.locationUnavailable')
+    : t('networkAtlas.locationUnavailable')
 
   const handleRefresh = async () => {
     setStatus(t('networkAtlas.refreshing'))
@@ -392,24 +414,22 @@ export default function NetworkAtlas() {
 
         <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.65fr)_380px]">
           <div className="atlas-map-frame">
-            {payload && localNode?.location_set ? (
+            {payload ? (
               <>
                 <ArcLayer localNode={localNode} links={filteredLinks} selectedKey={selectedLink?.pubkey || ''} onSelect={setSelectedKey} />
                 <div className="atlas-map-overlay atlas-map-overlay--top">
                   <div>
                     <p className="text-[11px] uppercase tracking-[0.28em] text-fog/45">{t('networkAtlas.localNode')}</p>
-                    <h3 className="mt-2 text-xl font-semibold">{localNode.label || localNode.alias || shortPubkey(localNode.pubkey)}</h3>
-                    <p className="mt-1 text-sm text-fog/65">
-                      {localNode.source === 'configured' ? t('networkAtlas.locationConfigured') : t('networkAtlas.locationDetected')}
-                    </p>
+                    <h3 className="mt-2 text-xl font-semibold">{localNodeLabel}</h3>
+                    <p className="mt-1 text-sm text-fog/65">{localNodeSourceLabel}</p>
                   </div>
                   <div className="atlas-map-pill">
                     <span>{t('networkAtlas.renderedLinks')}</span>
-                    <strong>{filteredLinks.length.toLocaleString()}</strong>
+                    <strong>{localNode?.location_set ? filteredLinks.length.toLocaleString() : '--'}</strong>
                   </div>
                 </div>
                 <div className="atlas-map-overlay atlas-map-overlay--bottom">
-                  {localNode.warnings?.map((warning) => (
+                  {localNode?.warnings?.map((warning) => (
                     <p key={warning} className="text-xs text-fog/68">{warning}</p>
                   ))}
                 </div>

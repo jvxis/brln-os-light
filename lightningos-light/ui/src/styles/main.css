@@ -667,6 +667,18 @@ html[data-theme="light"] .hover\\:text-rose-200:hover {
   animation: atlas-core 2.8s ease-out infinite;
 }
 
+.atlas-unanchored-copy text:first-child {
+  fill: rgba(229, 231, 235, 0.9);
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.atlas-unanchored-copy text:last-child {
+  fill: rgba(229, 231, 235, 0.54);
+  font-size: 16px;
+}
+
 .atlas-map-overlay {
   position: absolute;
   left: 22px;

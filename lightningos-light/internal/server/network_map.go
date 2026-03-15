@@ -53,6 +53,7 @@ type networkMapNode struct {
 type networkMapLink struct {
 	PubKey         string  `json:"pubkey"`
 	Alias          string  `json:"alias"`
+	ChannelPoint   string  `json:"channel_point,omitempty"`
 	Socket         string  `json:"socket,omitempty"`
 	Host           string  `json:"host,omitempty"`
 	Country        string  `json:"country,omitempty"`
@@ -107,6 +108,7 @@ type ipWhoisResponse struct {
 type networkMapPeerState struct {
 	PubKey         string
 	Alias          string
+	ChannelPoint   string
 	Socket         string
 	ConnectionKind string
 	ChannelCount   int
@@ -227,6 +229,9 @@ func (s *Server) buildNetworkMapPayload(ctx context.Context) (networkMapResponse
 		state.ChannelCount++
 		state.CapacitySat += ch.CapacitySat
 		state.Active = state.Active || ch.Active
+		if state.ChannelPoint == "" {
+			state.ChannelPoint = strings.TrimSpace(ch.ChannelPoint)
+		}
 		if strings.TrimSpace(ch.PeerAlias) != "" {
 			state.Alias = strings.TrimSpace(ch.PeerAlias)
 		}
@@ -266,6 +271,7 @@ func (s *Server) buildNetworkMapPayload(ctx context.Context) (networkMapResponse
 		link := networkMapLink{
 			PubKey:         state.PubKey,
 			Alias:          fallbackAtlasAlias(state.Alias, state.PubKey),
+			ChannelPoint:   strings.TrimSpace(state.ChannelPoint),
 			ConnectionKind: state.ConnectionKind,
 			ChannelCount:   state.ChannelCount,
 			CapacitySat:    state.CapacitySat,
@@ -411,6 +417,9 @@ func (s *Server) resolveLocalNode(ctx context.Context, status lndclient.Status) 
 	label := strings.TrimSpace(cfg.Label)
 	pubkey := strings.TrimSpace(status.Pubkey)
 	alias := label
+	if alias == "" {
+		alias = strings.TrimSpace(getNodeAlias(ctx, s.lnd))
+	}
 	if alias == "" {
 		alias = shortAtlasPubkey(pubkey)
 	}

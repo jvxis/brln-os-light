@@ -18,6 +18,7 @@ type AtlasNode = {
 type AtlasLink = {
   pubkey: string
   alias: string
+  channel_point?: string
   socket?: string
   host?: string
   country?: string
@@ -65,17 +66,26 @@ const shortPubkey = (value: string) => {
 
 const formatSats = (value: number) => `${Math.max(0, Math.trunc(value || 0)).toLocaleString()} sat`
 const clampZoom = (value: number) => Math.min(6, Math.max(1, value))
+const LIGHTNING_OPS_ROUTE_KEY = 'lightning-ops'
+const buildLightningOpsHash = (channelPoint: string) =>
+  `#${LIGHTNING_OPS_ROUTE_KEY}?channel_point=${encodeURIComponent(channelPoint)}`
 
 const AtlasConnections = ({
   localNode,
   links,
+  mapZoom,
   selectedKey,
-  onSelect
+  onSelect,
+  onActivate,
+  onOpenChannel
 }: {
   localNode: AtlasNode | null
   links: AtlasLink[]
+  mapZoom: number
   selectedKey: string
   onSelect: (key: string) => void
+  onActivate: (link: AtlasLink) => void
+  onOpenChannel: (link: AtlasLink) => void
 }) => {
   const { projection } = useMapContext()
   if (!localNode?.location_set) return null
@@ -97,15 +107,23 @@ const AtlasConnections = ({
         const arcHeight = Math.max(22, Math.abs(x2 - x1) * 0.14 + Math.abs(y2 - y1) * 0.08)
         const d = `M ${x1} ${y1} C ${mx} ${my - arcHeight}, ${mx} ${my - arcHeight}, ${x2} ${y2}`
         const selected = selectedKey === link.pubkey
+        const dimmed = Boolean(selectedKey) && !selected
         const pathId = `atlas-arc-${link.pubkey}`
 
         return (
           <g
             key={link.pubkey}
-            className="cursor-pointer"
-            onMouseEnter={() => onSelect(link.pubkey)}
+            className={`cursor-pointer ${selected ? 'atlas-link-state atlas-link-state--selected' : dimmed ? 'atlas-link-state atlas-link-state--dimmed' : 'atlas-link-state'}`}
+            onPointerEnter={() => onSelect(link.pubkey)}
             onFocus={() => onSelect(link.pubkey)}
           >
+            <path
+              d={d}
+              className="atlas-arc-hit"
+              strokeWidth={selected ? 18 : 14}
+              onClick={() => onActivate(link)}
+              onDoubleClick={() => onOpenChannel(link)}
+            />
             <path
               id={pathId}
               d={d}
@@ -126,19 +144,12 @@ const AtlasConnections = ({
                 </circle>
               </>
             )}
-            <circle
-              cx={x2}
-              cy={y2}
-              r={selected ? 4.2 : link.connection_kind === 'channel' ? 3.2 : 2.6}
-              className={link.connection_kind === 'channel' ? 'atlas-dot atlas-dot--channel' : 'atlas-dot atlas-dot--peer'}
-            />
           </g>
         )
       })}
-
-      <g className="atlas-node-anchor">
-        <circle cx={origin[0]} cy={origin[1]} r="22" />
-        <circle cx={origin[0]} cy={origin[1]} r="7.5" className="atlas-node-anchor__core" />
+      <g transform={`translate(${origin[0]} ${origin[1]}) scale(${1 / mapZoom})`} className="atlas-node-anchor">
+        <circle r="22" />
+        <circle r="7.5" className="atlas-node-anchor__core" />
       </g>
     </g>
   )
@@ -159,6 +170,7 @@ export default function NetworkAtlas() {
   const [lonInput, setLonInput] = useState('')
   const [mapCenter, setMapCenter] = useState<[number, number]>([0, 0])
   const [mapZoom, setMapZoom] = useState(1)
+  const [focusPulseKey, setFocusPulseKey] = useState('')
 
   useEffect(() => {
     let active = true
@@ -240,6 +252,24 @@ export default function NetworkAtlas() {
       return
     }
     setMapZoom((current) => clampZoom(current + (direction === 'in' ? 0.55 : -0.55)))
+  }
+
+  const handlePeerActivate = (link: AtlasLink) => {
+    setSelectedKey(link.pubkey)
+    if (typeof link.lon === 'number' && typeof link.lat === 'number') {
+      setMapCenter([link.lon, link.lat])
+      setMapZoom((current) => clampZoom(current < 2.4 ? 2.4 : current))
+      setFocusPulseKey(link.pubkey)
+      window.setTimeout(() => {
+        setFocusPulseKey((current) => (current === link.pubkey ? '' : current))
+      }, 1100)
+    }
+  }
+
+  const handleOpenChannel = (link: AtlasLink) => {
+    const channelPoint = String(link.channel_point || '').trim()
+    if (!channelPoint) return
+    window.location.hash = buildLightningOpsHash(channelPoint)
   }
 
   const handleSaveConfig = async () => {
@@ -402,30 +432,37 @@ export default function NetworkAtlas() {
                 <AtlasConnections
                   localNode={localNode}
                   links={filteredLinks}
+                  mapZoom={mapZoom}
                   selectedKey={selectedLink?.pubkey || ''}
                   onSelect={setSelectedKey}
+                  onActivate={handlePeerActivate}
+                  onOpenChannel={handleOpenChannel}
                 />
 
-                {filteredLinks.map((link) => {
+                        {filteredLinks.map((link) => {
                   if (typeof link.lon !== 'number' || typeof link.lat !== 'number') return null
+                  const selected = selectedLink?.pubkey === link.pubkey
+                  const dimmed = Boolean(selectedKey) && !selected
                   return (
                     <Marker key={`marker-${link.pubkey}`} coordinates={[link.lon, link.lat]}>
-                      <circle
-                        r={selectedLink?.pubkey === link.pubkey ? 3.8 : link.connection_kind === 'channel' ? 2.9 : 2.3}
-                        className={link.connection_kind === 'channel' ? 'atlas-dot atlas-dot--channel' : 'atlas-dot atlas-dot--peer'}
-                      />
+                      <g
+                        transform={`scale(${1 / mapZoom})`}
+                        className={`cursor-pointer ${selected ? 'atlas-link-state atlas-link-state--selected' : dimmed ? 'atlas-link-state atlas-link-state--dimmed' : 'atlas-link-state'}`}
+                        onPointerEnter={() => setSelectedKey(link.pubkey)}
+                        onFocus={() => setSelectedKey(link.pubkey)}
+                        onClick={() => handlePeerActivate(link)}
+                        onDoubleClick={() => handleOpenChannel(link)}
+                      >
+                        <circle r="13" className="atlas-dot-hit" />
+                        {focusPulseKey === link.pubkey && <circle r="9" className="atlas-focus-ring" />}
+                        <circle
+                          r={selected ? 5.2 : link.connection_kind === 'channel' ? 3.9 : 3.1}
+                          className={link.connection_kind === 'channel' ? 'atlas-dot atlas-dot--channel' : 'atlas-dot atlas-dot--peer'}
+                        />
+                      </g>
                     </Marker>
                   )
                 })}
-
-                {localNode?.location_set && (
-                  <Marker coordinates={[localNode.lon, localNode.lat]}>
-                    <g className="atlas-node-anchor-marker">
-                      <circle r="11" />
-                      <circle r="4.5" className="atlas-node-anchor-marker__core" />
-                    </g>
-                  </Marker>
-                )}
               </ZoomableGroup>
             </ComposableMap>
 

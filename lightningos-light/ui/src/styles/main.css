@@ -696,10 +696,29 @@ html[data-theme="light"] .hover\\:text-rose-200:hover {
   stroke-width: 0.45;
 }
 
+.atlas-link-state {
+  transition: opacity 180ms ease;
+}
+
+.atlas-link-state--dimmed {
+  opacity: 0.18;
+}
+
+.atlas-link-state--selected {
+  opacity: 1;
+}
+
 .atlas-arc {
   fill: none;
   stroke-linecap: round;
   pointer-events: none;
+}
+
+.atlas-arc-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-linecap: round;
+  pointer-events: stroke;
 }
 
 .atlas-arc--channel {
@@ -714,6 +733,7 @@ html[data-theme="light"] .hover\\:text-rose-200:hover {
 .atlas-dot {
   stroke: rgba(255, 255, 255, 0.78);
   stroke-width: 0.9;
+  pointer-events: none;
 }
 
 .atlas-dot--channel {
@@ -727,11 +747,17 @@ html[data-theme="light"] .hover\\:text-rose-200:hover {
 .atlas-pulse-dot {
   fill: rgba(178, 255, 213, 0.98);
   filter: drop-shadow(0 0 8px rgba(82, 255, 152, 0.72));
+  pointer-events: none;
 }
 
 .atlas-pulse-dot--secondary {
   fill: rgba(122, 255, 179, 0.72);
   filter: drop-shadow(0 0 6px rgba(82, 255, 152, 0.52));
+}
+
+.atlas-dot-hit {
+  fill: transparent;
+  pointer-events: all;
 }
 
 .atlas-node-anchor circle:first-child,
@@ -746,6 +772,14 @@ html[data-theme="light"] .hover\\:text-rose-200:hover {
   fill: rgba(245, 255, 249, 0.98);
   stroke: rgba(82, 255, 152, 0.9);
   stroke-width: 1.6;
+}
+
+.atlas-focus-ring {
+  fill: none;
+  stroke: rgba(178, 255, 213, 0.92);
+  stroke-width: 1.2;
+  animation: atlas-focus-ring 0.95s ease-out forwards;
+  pointer-events: none;
 }
 
 .atlas-map-empty {
@@ -802,6 +836,17 @@ html[data-theme="light"] .hover\\:text-rose-200:hover {
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.03);
   padding: 18px 20px;
+}
+
+@keyframes atlas-focus-ring {
+  0% {
+    opacity: 0.9;
+    transform: scale(0.7);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.2);
+  }
 }
 
 @media (max-width: 1279px) {

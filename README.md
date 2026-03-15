@@ -19,7 +19,7 @@ LightningOS Light is a Full Lightning Node Daemon Installer, Lightning node mana
 - LND managed via systemd, gRPC on localhost
 - Seed phrase is never persisted or logged
 - Wizard for Bitcoin RPC credentials and wallet setup
-- Lightning Ops suite: peers/channels, Rebalance Center, Autofee, Node Retirement, HTLC signals, and Channel Auto Heal
+- Lightning Ops suite: peers/channels, Rebalance Center, Autofee, Channel Ranking, Node Retirement, HTLC signals, and Channel Auto Heal
 - Keysend Chat: 1 sat per message + routing fees, unread indicators, 30-day retention
 - Real-time notifications (on-chain, Lightning, channels, forwards, rebalances)
 - Telegram notifications: SCB backups, financial summaries, on-demand `/scb` and `/balances`
@@ -203,12 +203,96 @@ API endpoints:
 
 ## Lightning Ops (feature map)
 - Channel management: peer/channel controls, policy updates, and channel card/balance refinements.
+- Channel Ranking: per-channel score, recommended state, 7d vs 30d comparison, actionable recommendations, and links into Autofee, Rebalance, HTLC Manager, and Close Manager.
 - Rebalance Center: manual + auto rebalances with score-based targeting, watchdogs, pre-probing, ROI guardrails, and optional manual auto-restart.
 - Autofee: per-channel fee automation with cost anchors, Amboss seeding, HTLC signal integration, calibration by node size/liquidity, scheduler/manual runs, and detailed run history.
 - Node Retirement: guided safe node decommission workflow with session timeline, cooperative close controls, exception handling, and on-chain reconciliation.
 - HTLC Manager: hysteresis-based HTLC telemetry used by Autofee and liquidity decisions.
 - Channel Auto Heal + Tor peers checker: operational guardrails for peer/channel reliability.
 - Health checks: optional follow-bitcoin checks for LND/node health workflows.
+
+## Channel Ranking
+Channel Ranking is the analysis layer for open channels. It is designed to answer four practical questions quickly:
+- Is this channel producing net value?
+- Is this peer worth more capital?
+- Is this channel becoming expensive to maintain?
+- Should I expand, maintain, monitor, or prepare a close?
+
+Where it lives:
+- Main page: `Channel Ranking`
+- Lightweight indicator: each channel card in `Lightning Ops > Channels` shows only the short badge and score
+- Deep links: recommendations can open the relevant area in `Lightning Ops`, `Autofee`, `Rebalance Center`, `HTLC Manager`, or `Close Manager`
+
+What the score means:
+- The score is a `0-100` operating score used for ranking, not a blind automation trigger.
+- Higher score means the channel is showing healthier economics and lower operational friction.
+- Lower score means the channel is showing weaker net return, worse channel health, or higher maintenance burden.
+- The score is best used comparatively across your own channels, not as a universal grade across all nodes.
+
+Quick reading of score bands:
+- `70-100`: usually healthy and competitive inside your node
+- `45-69`: usually acceptable, but worth checking the detail before adding capital
+- `25-44`: usually a channel to monitor closely
+- `0-24`: usually a weak channel economically or operationally, often close-worthy if the condition persists
+
+How the score is calculated:
+- Profitability: forwarding fees minus rebalance costs
+- Capital efficiency: how much net result the channel generates relative to its capacity
+- Utilization: how much forwarding volume the channel carries and whether liquidity is balanced enough to be useful
+- Maintenance burden: how expensive rebalancing is relative to the routing income it supports
+- Operational health: channel activity, pending HTLC pressure, peer stability over 30 days, and HTLC failure pressure
+- Confidence: whether the channel already has enough recent routing/rebalance data to judge it with more confidence
+
+Additional advanced signals shown in the module:
+- `Peer stability 30d`: derived from repeated peer connectivity samples, recent errors, and ping quality
+- `HTLC failures 30d`: aggregated failed HTLC pressure for the channel, split into policy, liquidity, and forward failures
+- `Rebalance dependence`: how much the channel seems to rely on rebalances to stay useful
+- `Feedback`: recent score and net-result change versus historical snapshots, to help validate whether the current recommendation is helping
+
+What a high score usually means:
+- Positive net routing result
+- Good utilization relative to channel size
+- Rebalance costs under control
+- Stable peer/channel behavior
+- Lower HTLC failure pressure
+
+What a low score usually means:
+- Weak or negative net result
+- Capital tied up with little throughput
+- Rebalance cost eating the economics
+- Unstable peer behavior or low peer stability
+- Elevated HTLC failure pressure
+
+Recommended states:
+- `Expand`: strong economics, good usage, healthy peer, and signs that more capacity may pay off
+- `Maintain`: healthy enough to keep current policy and observe normally
+- `Monitor`: something is inefficient or unstable, but there is not enough evidence yet for immediate close
+- `Close`: persistent weakness, risk, or opportunity cost is high enough that preparing an exit is reasonable
+
+How to read the page:
+- Ranking list: compare channels by score or sort by net result, capital efficiency, rebalance cost, peer stability, HTLC failures, rebalance dependence, or operational risk
+- Detail panel: inspect the selected channel with:
+  - metrics
+  - `7D / 30D Economics`
+  - trend and score history
+  - operational signals
+  - reasons behind the state
+  - actionable recommendations
+  - other channels from the same peer
+
+How to use it in practice:
+- Start by sorting by `Net result 30d` or `Operational risk`
+- Open the worst and best channels to compare why they differ
+- Use `Monitor` channels to review Autofee, rebalance policy, HTLC pressure, and peer stability before deciding to close
+- Use `Expand` channels as candidates for additional capital or liquidity support
+- Use `Close` channels to prepare an orderly cooperative close rather than reacting only when the channel becomes a problem
+
+Important note:
+- `Score` ranks channels
+- `State` expresses the operational recommendation
+- `Recommendations` suggest the next review path
+
+These three are related, but not identical. A medium-score channel can still be classified as `Monitor` or `Close` if the risk and maintenance signals are bad enough.
 
 ## Rebalance Center
 Rebalance Center is an inbound (local/outbound) liquidity optimizer for LND. It can run manual rebalances per channel or fully automated scans that enqueue rebalances based on ROI and budget constraints. A rebalance only proceeds when **outgoing fee > peer fee** so you never pay more than the peer charge without a positive spread. Costs are tracked from notifications (fee msat) and aggregated into live cost + daily auto/manual spending.

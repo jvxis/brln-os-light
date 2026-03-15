@@ -18,7 +18,7 @@ LightningOS Light é um instalador completo de daemon de nó Lightning, com gere
 - LND gerenciado via systemd, gRPC em localhost
 - A seed phrase nunca é persistida nem registrada em logs
 - Assistente para credenciais RPC do Bitcoin e setup de carteira
-- Suite Lightning Ops: peers/canais, Rebalance Center, Autofee, Aposentar Node, sinais HTLC e Channel Auto Heal
+- Suite Lightning Ops: peers/canais, Rebalance Center, Autofee, Ranking de Canais, Aposentar Node, sinais HTLC e Channel Auto Heal
 - Chat Keysend: 1 sat por mensagem + taxas de roteamento, indicadores de não lidas, retenção de 30 dias
 - Notificações em tempo real (on-chain, Lightning, canais, forwards, rebalances)
 - Notificações Telegram: backups SCB, resumos financeiros, comandos sob demanda `/scb` e `/balances`
@@ -189,12 +189,96 @@ Endpoints de API:
 
 ## Lightning Ops (mapa de funcionalidades)
 - Gestão de canais: controles de peer/canal, atualizações de policy e refinamentos de card/saldo de canal.
+- Ranking de Canais: score por canal, estado recomendado, comparação 7d vs 30d, recomendações acionáveis e links para Autofee, Rebalance, HTLC Manager e Gestão de Fechamentos.
 - Rebalance Center: rebalances manuais + automáticos com targeting por score, watchdogs, pre-probing, guardrails de ROI e auto-restart opcional no modo manual.
 - Autofee: automação de taxas por canal com âncoras de custo, seed Amboss, integração de sinais HTLC, calibração por tamanho/liquidez do nó, scheduler/manual run e histórico detalhado.
 - Aposentar Node (Node Retirement): fluxo guiado de descomissionamento seguro com linha do tempo de sessão, controle de fechamento cooperativo, tratamento de exceções e reconciliação on-chain.
 - HTLC Manager: telemetria HTLC com histerese usada pelo Autofee e por decisões de liquidez.
 - Channel Auto Heal + Tor peers checker: guardrails operacionais para confiabilidade de peer/canal.
 - Health checks: opção de follow-bitcoin para fluxos de saúde de LND/nó.
+
+## Ranking de Canais
+O Ranking de Canais é a camada de análise dos canais abertos. Ele foi feito para responder rapidamente quatro perguntas práticas:
+- este canal gera valor líquido?
+- este peer merece mais capital?
+- este canal está custando caro demais para manter?
+- devo expandir, manter, monitorar ou preparar fechamento?
+
+Onde ele aparece:
+- Página principal: `Ranking de Canais`
+- Indicador leve: cada card em `Lightning Ops > Canais` mostra apenas o badge curto e o score
+- Links diretos: as recomendações podem abrir o módulo relevante em `Lightning Ops`, `Autofee`, `Rebalance Center`, `HTLC Manager` ou `Gestão de Fechamentos`
+
+O que o score significa:
+- O score é uma nota operacional de `0-100` usada para ordenar os canais, e não um gatilho cego de automação.
+- Score alto significa, em geral, melhor economia e menor atrito operacional.
+- Score baixo significa, em geral, retorno líquido mais fraco, pior saúde operacional ou custo de manutenção mais alto.
+- O score deve ser usado principalmente de forma comparativa entre os seus próprios canais.
+
+Leitura rápida por faixa:
+- `70-100`: normalmente canal saudável e competitivo dentro do seu node
+- `45-69`: normalmente canal aceitável, mas que merece leitura do detalhe antes de receber mais capital
+- `25-44`: normalmente canal para monitorar de perto
+- `0-24`: normalmente canal fraco em economia ou operação, muitas vezes candidato a fechamento se a condição persistir
+
+Como o score é calculado:
+- Rentabilidade: fees de forward menos custo de rebalance
+- Eficiência de capital: quanto resultado líquido o canal gera em relação à capacidade
+- Utilização: quanto volume o canal encaminha e se a liquidez está equilibrada o suficiente para ser útil
+- Custo de manutenção: quanto o rebalance está consumindo em relação à receita que sustenta
+- Saúde operacional: atividade do canal, pressão de HTLCs pendentes, estabilidade do peer em 30 dias e pressão de falhas HTLC
+- Confiança da amostra: se já existe histórico recente suficiente para julgar o canal com mais segurança
+
+Sinais avançados mostrados no módulo:
+- `Estabilidade do peer 30d`: calculada a partir de amostras repetidas de conectividade, erros recentes e qualidade de ping
+- `Falhas HTLC 30d`: agregado de falhas HTLC do canal, separado em falhas de policy, liquidez e forward
+- `Dependência de rebalance`: mede o quanto o canal parece depender de rebalance para continuar útil
+- `Feedback`: compara score e resultado líquido recentes contra snapshots históricos para validar se a recomendação atual está ajudando
+
+O que um score alto costuma indicar:
+- Resultado líquido positivo
+- Boa utilização em relação ao tamanho do canal
+- Custos de rebalance sob controle
+- Comportamento saudável de peer/canal
+- Menor pressão de falhas HTLC
+
+O que um score baixo costuma indicar:
+- Resultado líquido fraco ou negativo
+- Capital parado com pouco throughput
+- Custo de rebalance consumindo a economia
+- Peer instável ou baixa estabilidade do peer
+- Pressão elevada de falhas HTLC
+
+Estados recomendados:
+- `Expandir`: boa economia, boa utilização, peer saudável e sinais de que mais capacidade pode valer a pena
+- `Manter`: canal saudável o suficiente para seguir com a política atual
+- `Monitorar`: existe ineficiência ou instabilidade, mas ainda não há evidência suficiente para fechamento imediato
+- `Fechar`: fraqueza persistente, risco ou custo de oportunidade alto o suficiente para preparar uma saída ordenada
+
+Como ler a página:
+- Lista de ranking: compare os canais por score ou ordene por resultado líquido, eficiência de capital, custo de rebalance, estabilidade do peer, falhas HTLC, dependência de rebalance ou risco operacional
+- Painel de detalhe: inspecione o canal selecionado com:
+  - métricas
+  - `Economia 7D / 30D`
+  - tendência e histórico de score
+  - sinais operacionais
+  - motivos que explicam o estado
+  - recomendações acionáveis
+  - outros canais do mesmo peer
+
+Como usar no dia a dia:
+- Comece ordenando por `Resultado líquido 30d` ou `Risco operacional`
+- Abra os melhores e os piores canais para comparar por que eles estão diferentes
+- Use os canais em `Monitorar` para revisar Autofee, política de rebalance, pressão HTLC e estabilidade do peer antes de decidir fechar
+- Use os canais em `Expandir` como candidatos a receber mais capital ou mais suporte de liquidez
+- Use os canais em `Fechar` para preparar um coop close organizado, em vez de reagir apenas quando o canal já virou problema
+
+Nota importante:
+- `Score` serve para ranquear
+- `Estado` expressa a recomendação operacional
+- `Recomendações` apontam o próximo caminho de revisão
+
+Esses três elementos são relacionados, mas não idênticos. Um canal com score mediano ainda pode cair em `Monitorar` ou `Fechar` se os sinais de risco e manutenção estiverem ruins o suficiente.
 
 ## Rebalance Center
 Rebalance Center é um otimizador de liquidez de entrada (local/outbound) para LND. Ele pode rodar rebalances manuais por canal ou varreduras totalmente automáticas que enfileiram rebalances com base em ROI e restrições de orçamento. Um rebalance só avança quando **outgoing fee > peer fee**, para que você nunca pague mais do que a cobrança do peer sem spread positivo. Custos são rastreados por notificações (fee msat) e agregados em custo live + gasto diário auto/manual.

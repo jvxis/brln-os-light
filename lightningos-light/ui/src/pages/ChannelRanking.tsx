@@ -643,54 +643,56 @@ export default function ChannelRanking() {
           ) : sortedItems.length === 0 ? (
             <p className="text-sm text-fog/70">{t('channelRanking.empty')}</p>
           ) : (
-            <div className="space-y-3 lg:max-h-[46rem] lg:overflow-y-auto lg:pr-2">
-              {sortedItems.map((item) => {
-                const isSelected = selectedItem?.channel_point === item.channel_point
-                const isFocused = focusedChannelPoint === item.channel_point
-                return (
-                  <button
-                    key={item.channel_point}
-                    id={rankingRowID(item.channel_point)}
-                    type="button"
-                    onClick={() => {
-                      setSelectedChannelPoint(item.channel_point)
-                      window.history.replaceState(null, '', buildHashWithChannelPoint(CHANNEL_RANKING_ROUTE_KEY, item.channel_point))
-                    }}
-                    className={`w-full rounded-2xl border p-4 text-left transition ${
-                      isSelected
-                        ? 'border-sky-300/60 bg-sky-500/10'
-                        : 'border-white/10 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.05]'
-                    } ${isFocused ? 'ring-1 ring-sky-300/70' : ''}`}
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0 space-y-1">
-                        <div className="truncate text-sm font-medium text-fog">{item.peer_alias || item.peer_pubkey || item.channel_point}</div>
-                        <div className="break-all text-[11px] text-fog/55">{item.channel_point}</div>
+            <div className="lg:h-[46rem] lg:min-h-[24rem] lg:max-h-[80vh] lg:resize-y lg:overflow-y-auto lg:pr-2">
+              <div className="space-y-3">
+                {sortedItems.map((item) => {
+                  const isSelected = selectedItem?.channel_point === item.channel_point
+                  const isFocused = focusedChannelPoint === item.channel_point
+                  return (
+                    <button
+                      key={item.channel_point}
+                      id={rankingRowID(item.channel_point)}
+                      type="button"
+                      onClick={() => {
+                        setSelectedChannelPoint(item.channel_point)
+                        window.history.replaceState(null, '', buildHashWithChannelPoint(CHANNEL_RANKING_ROUTE_KEY, item.channel_point))
+                      }}
+                      className={`w-full rounded-2xl border p-4 text-left transition ${
+                        isSelected
+                          ? 'border-sky-300/60 bg-sky-500/10'
+                          : 'border-white/10 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.05]'
+                      } ${isFocused ? 'ring-1 ring-sky-300/70' : ''}`}
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0 space-y-1">
+                          <div className="truncate text-sm font-medium text-fog">{item.peer_alias || item.peer_pubkey || item.channel_point}</div>
+                          <div className="break-all text-[11px] text-fog/55">{item.channel_point}</div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={`rounded-full px-2.5 py-1 text-[11px] ${stateBadgeClass(item.state)}`}>
+                            {stateLabel(item.state)}
+                          </span>
+                          <span className={`rounded-full border px-2.5 py-1 text-[11px] ${trendBadgeClass(item.trend_direction)}`}>
+                            {trendLabel(item.trend_direction)}
+                          </span>
+                          <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-fog/75">
+                            {t('channelRanking.scoreShort', { value: numberFormatter.format(item.score) })}
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className={`rounded-full px-2.5 py-1 text-[11px] ${stateBadgeClass(item.state)}`}>
-                          {stateLabel(item.state)}
-                        </span>
-                        <span className={`rounded-full border px-2.5 py-1 text-[11px] ${trendBadgeClass(item.trend_direction)}`}>
-                          {trendLabel(item.trend_direction)}
-                        </span>
-                        <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-fog/75">
-                          {t('channelRanking.scoreShort', { value: numberFormatter.format(item.score) })}
-                        </span>
+                      <div className="mt-3 grid gap-2 text-xs text-fog/70 sm:grid-cols-2 xl:grid-cols-6">
+                        <div>{t('channelRanking.netFees7d', { value: formatSats(item.profit_fee_7d_sat) })}</div>
+                        <div>{t('channelRanking.netFees30d', { value: formatSats(item.profit_fee_30d_sat) })}</div>
+                        <div>{t('channelRanking.capacity', { value: formatSats(item.capacity_sat) })}</div>
+                        <div>{t('channelRanking.localBalancePct', { value: formatPct(item.local_balance_pct) })}</div>
+                        <div>{t('channelRanking.peerStabilityScore30d', { value: numberFormatter.format(item.peer_stability_score_30d || 0) })}</div>
+                        <div>{t('channelRanking.htlcFailures30dLabel', { value: numberFormatter.format(item.htlc_failures_30d || 0) })}</div>
+                        <div>{t('channelRanking.trendDelta', { value: numberFormatter.format(item.trend_delta || 0) })}</div>
                       </div>
-                    </div>
-                    <div className="mt-3 grid gap-2 text-xs text-fog/70 sm:grid-cols-2 xl:grid-cols-6">
-                      <div>{t('channelRanking.netFees7d', { value: formatSats(item.profit_fee_7d_sat) })}</div>
-                      <div>{t('channelRanking.netFees30d', { value: formatSats(item.profit_fee_30d_sat) })}</div>
-                      <div>{t('channelRanking.capacity', { value: formatSats(item.capacity_sat) })}</div>
-                      <div>{t('channelRanking.localBalancePct', { value: formatPct(item.local_balance_pct) })}</div>
-                      <div>{t('channelRanking.peerStabilityScore30d', { value: numberFormatter.format(item.peer_stability_score_30d || 0) })}</div>
-                      <div>{t('channelRanking.htlcFailures30dLabel', { value: numberFormatter.format(item.htlc_failures_30d || 0) })}</div>
-                      <div>{t('channelRanking.trendDelta', { value: numberFormatter.format(item.trend_delta || 0) })}</div>
-                    </div>
-                  </button>
-                )
-              })}
+                    </button>
+                  )
+                })}
+              </div>
             </div>
           )}
         </section>

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log"
@@ -818,9 +819,9 @@ func scanChannelRankingItems(rows channelRankingRows) ([]ChannelRankingItem, err
 	items := make([]ChannelRankingItem, 0)
 	for rows.Next() {
 		var item ChannelRankingItem
-		var peerPubkey string
-		var peerAlias string
-		var classLabel string
+		var peerPubkey sql.NullString
+		var peerAlias sql.NullString
+		var classLabel sql.NullString
 		var reasonsRaw []byte
 		var recommendationsRaw []byte
 		if err := rows.Scan(
@@ -833,9 +834,15 @@ func scanChannelRankingItems(rows channelRankingRows) ([]ChannelRankingItem, err
 		); err != nil {
 			return nil, err
 		}
-		item.PeerPubkey = strings.TrimSpace(peerPubkey)
-		item.PeerAlias = strings.TrimSpace(peerAlias)
-		item.ClassLabel = strings.TrimSpace(classLabel)
+		if peerPubkey.Valid {
+			item.PeerPubkey = strings.TrimSpace(peerPubkey.String)
+		}
+		if peerAlias.Valid {
+			item.PeerAlias = strings.TrimSpace(peerAlias.String)
+		}
+		if classLabel.Valid {
+			item.ClassLabel = strings.TrimSpace(classLabel.String)
+		}
 		if len(reasonsRaw) > 0 {
 			_ = json.Unmarshal(reasonsRaw, &item.Reasons)
 		}

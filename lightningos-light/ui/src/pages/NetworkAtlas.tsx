@@ -31,6 +31,8 @@ type AtlasLink = {
   capacity_sat: number
   active: boolean
   mapped: boolean
+  render_lat?: number
+  render_lon?: number
 }
 
 type AtlasSummary = {
@@ -66,6 +68,50 @@ const shortPubkey = (value: string) => {
 
 const formatSats = (value: number) => `${Math.max(0, Math.trunc(value || 0)).toLocaleString()} sat`
 const clampZoom = (value: number) => Math.min(6, Math.max(1, value))
+const clampLatitude = (value: number) => Math.min(85, Math.max(-85, value))
+const normalizeLongitude = (value: number) => {
+  let next = value
+  while (next > 180) next -= 360
+  while (next < -180) next += 360
+  return next
+}
+const atlasCoordinateKey = (lat: number, lon: number) => `${lat.toFixed(3)}:${lon.toFixed(3)}`
+const spreadAtlasLinks = (links: AtlasLink[]) => {
+  const groups = new Map<string, AtlasLink[]>()
+  links.forEach((link) => {
+    if (typeof link.lat !== 'number' || typeof link.lon !== 'number') return
+    const key = atlasCoordinateKey(link.lat, link.lon)
+    const group = groups.get(key)
+    if (group) {
+      group.push(link)
+      return
+    }
+    groups.set(key, [link])
+  })
+
+  return links.map((link) => {
+    if (typeof link.lat !== 'number' || typeof link.lon !== 'number') return link
+    const group = groups.get(atlasCoordinateKey(link.lat, link.lon))
+    if (!group || group.length <= 1) {
+      return {
+        ...link,
+        render_lat: link.lat,
+        render_lon: link.lon
+      }
+    }
+
+    const index = group.findIndex((item) => item.pubkey === link.pubkey)
+    const angle = ((Math.PI * 2) / group.length) * Math.max(0, index)
+    const radiusLon = 0.8 + Math.min(group.length - 2, 4) * 0.14
+    const radiusLat = 0.45 + Math.min(group.length - 2, 4) * 0.08
+
+    return {
+      ...link,
+      render_lat: clampLatitude(link.lat + Math.sin(angle) * radiusLat),
+      render_lon: normalizeLongitude(link.lon + Math.cos(angle) * radiusLon)
+    }
+  })
+}
 const LIGHTNING_OPS_ROUTE_KEY = 'lightning-ops'
 const buildLightningOpsChannelHash = (channelPoint: string) =>
   `#${LIGHTNING_OPS_ROUTE_KEY}?channel_point=${encodeURIComponent(channelPoint)}`
@@ -101,8 +147,10 @@ const AtlasConnections = ({
   return (
     <g>
       {links.map((link) => {
-        if (typeof link.lon !== 'number' || typeof link.lat !== 'number') return null
-        const destination = projection([link.lon, link.lat])
+        const linkLon = typeof link.render_lon === 'number' ? link.render_lon : link.lon
+        const linkLat = typeof link.render_lat === 'number' ? link.render_lat : link.lat
+        if (typeof linkLon !== 'number' || typeof linkLat !== 'number') return null
+        const destination = projection([linkLon, linkLat])
         if (!destination) return null
 
         const [x1, y1] = origin
@@ -224,8 +272,10 @@ export default function NetworkAtlas() {
 
   const filteredLinks = useMemo(() => {
     const base = (payload?.links ?? []).filter((item) => typeof item.lat === 'number' && typeof item.lon === 'number')
-    if (filterMode === 'all') return base
-    return base.filter((item) => item.connection_kind === filterMode)
+    const visible = filterMode === 'all'
+      ? base
+      : base.filter((item) => item.connection_kind === filterMode)
+    return spreadAtlasLinks(visible)
   }, [filterMode, payload?.links])
 
   const selectedLink = useMemo(
@@ -268,8 +318,10 @@ export default function NetworkAtlas() {
 
   const handlePeerActivate = (link: AtlasLink) => {
     setSelectedKey(link.pubkey)
-    if (typeof link.lon === 'number' && typeof link.lat === 'number') {
-      setMapCenter([link.lon, link.lat])
+    const linkLon = typeof link.render_lon === 'number' ? link.render_lon : link.lon
+    const linkLat = typeof link.render_lat === 'number' ? link.render_lat : link.lat
+    if (typeof linkLon === 'number' && typeof linkLat === 'number') {
+      setMapCenter([linkLon, linkLat])
       setMapZoom((current) => clampZoom(current < 2.4 ? 2.4 : current))
       setFocusPulseKey(link.pubkey)
       window.setTimeout(() => {
@@ -343,7 +395,7 @@ export default function NetworkAtlas() {
             <p className="mt-3 text-sm text-fog/70 sm:text-base">{t('networkAtlas.subtitle')}</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            {localNode && !localNode.location_set && (
+            {localNode && (
               <button className="atlas-control-pill" type="button" onClick={() => setSettingsOpen((current) => !current)}>
                 {settingsOpen ? t('networkAtlas.hideSettings') : t('networkAtlas.showSettings')}
               </button>
@@ -457,12 +509,14 @@ export default function NetworkAtlas() {
                   onOpenChannel={handleOpenChannel}
                 />
 
-                        {filteredLinks.map((link) => {
-                  if (typeof link.lon !== 'number' || typeof link.lat !== 'number') return null
+                {filteredLinks.map((link) => {
+                  const linkLon = typeof link.render_lon === 'number' ? link.render_lon : link.lon
+                  const linkLat = typeof link.render_lat === 'number' ? link.render_lat : link.lat
+                  if (typeof linkLon !== 'number' || typeof linkLat !== 'number') return null
                   const selected = selectedLink?.pubkey === link.pubkey
                   const dimmed = Boolean(selectedKey) && !selected
                   return (
-                    <Marker key={`marker-${link.pubkey}`} coordinates={[link.lon, link.lat]}>
+                    <Marker key={`marker-${link.pubkey}`} coordinates={[linkLon, linkLat]}>
                       <g
                         transform={`scale(${1 / mapZoom})`}
                         className={`cursor-pointer ${selected ? 'atlas-link-state atlas-link-state--selected' : dimmed ? 'atlas-link-state atlas-link-state--dimmed' : 'atlas-link-state'}`}

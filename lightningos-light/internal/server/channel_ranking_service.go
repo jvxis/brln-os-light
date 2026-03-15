@@ -44,6 +44,14 @@ type ChannelRankingHistoryPoint struct {
 	ProfitFee30dSat int64     `json:"profit_fee_30d_sat"`
 }
 
+type ChannelRankingFeedback struct {
+	Direction   string    `json:"direction,omitempty"`
+	ScoreDelta  int       `json:"score_delta,omitempty"`
+	NetDeltaSat int64     `json:"net_delta_sat,omitempty"`
+	BaselineAt  time.Time `json:"baseline_at,omitempty"`
+	WindowHours int       `json:"window_hours,omitempty"`
+}
+
 type ChannelRankingPeerComparison struct {
 	ChannelPoint    string `json:"channel_point"`
 	ChannelID       int64  `json:"channel_id"`
@@ -62,46 +70,54 @@ type ChannelRankingDetail struct {
 	Item         ChannelRankingItem             `json:"item"`
 	History      []ChannelRankingHistoryPoint   `json:"history,omitempty"`
 	PeerChannels []ChannelRankingPeerComparison `json:"peer_channels,omitempty"`
+	Feedback     *ChannelRankingFeedback        `json:"feedback,omitempty"`
 }
 
 type ChannelRankingItem struct {
-	ChannelPoint        string                         `json:"channel_point"`
-	ChannelID           int64                          `json:"channel_id"`
-	PeerPubkey          string                         `json:"peer_pubkey,omitempty"`
-	PeerAlias           string                         `json:"peer_alias,omitempty"`
-	Active              bool                           `json:"active"`
-	Private             bool                           `json:"private"`
-	CapacitySat         int64                          `json:"capacity_sat"`
-	LocalBalanceSat     int64                          `json:"local_balance_sat"`
-	RemoteBalanceSat    int64                          `json:"remote_balance_sat"`
-	LocalBalancePct     float64                        `json:"local_balance_pct"`
-	RemoteBalancePct    float64                        `json:"remote_balance_pct"`
-	InactiveDurationSec int64                          `json:"inactive_duration_sec,omitempty"`
-	PendingHtlcCount    int                            `json:"pending_htlc_count,omitempty"`
-	ClassLabel          string                         `json:"class_label,omitempty"`
-	ForwardFee7dSat     int64                          `json:"forward_fee_7d_sat"`
-	ForwardAmt7dSat     int64                          `json:"forward_amt_7d_sat"`
-	OutPpm7d            int                            `json:"out_ppm_7d"`
-	ForwardFee30dSat    int64                          `json:"forward_fee_30d_sat"`
-	ForwardAmt30dSat    int64                          `json:"forward_amt_30d_sat"`
-	OutPpm30d           int                            `json:"out_ppm_30d"`
-	RebalFee7dSat       int64                          `json:"rebal_fee_7d_sat"`
-	RebalAmt7dSat       int64                          `json:"rebal_amt_7d_sat"`
-	RebalPpm7d          int                            `json:"rebal_ppm_7d"`
-	RebalFee30dSat      int64                          `json:"rebal_fee_30d_sat"`
-	RebalAmt30dSat      int64                          `json:"rebal_amt_30d_sat"`
-	RebalPpm30d         int                            `json:"rebal_ppm_30d"`
-	ProfitFee7dSat      int64                          `json:"profit_fee_7d_sat"`
-	ProfitFee30dSat     int64                          `json:"profit_fee_30d_sat"`
-	Score               int                            `json:"score"`
-	Score7d             int                            `json:"score_7d"`
-	Score30d            int                            `json:"score_30d"`
-	TrendDirection      string                         `json:"trend_direction,omitempty"`
-	TrendDelta          int                            `json:"trend_delta,omitempty"`
-	State               string                         `json:"state"`
-	Reasons             []ChannelRankingReason         `json:"reasons,omitempty"`
-	Recommendations     []ChannelRankingRecommendation `json:"recommendations,omitempty"`
-	ComputedAt          time.Time                      `json:"computed_at"`
+	ChannelPoint             string                         `json:"channel_point"`
+	ChannelID                int64                          `json:"channel_id"`
+	PeerPubkey               string                         `json:"peer_pubkey,omitempty"`
+	PeerAlias                string                         `json:"peer_alias,omitempty"`
+	Active                   bool                           `json:"active"`
+	Private                  bool                           `json:"private"`
+	CapacitySat              int64                          `json:"capacity_sat"`
+	LocalBalanceSat          int64                          `json:"local_balance_sat"`
+	RemoteBalanceSat         int64                          `json:"remote_balance_sat"`
+	LocalBalancePct          float64                        `json:"local_balance_pct"`
+	RemoteBalancePct         float64                        `json:"remote_balance_pct"`
+	InactiveDurationSec      int64                          `json:"inactive_duration_sec,omitempty"`
+	PendingHtlcCount         int                            `json:"pending_htlc_count,omitempty"`
+	ClassLabel               string                         `json:"class_label,omitempty"`
+	ForwardFee7dSat          int64                          `json:"forward_fee_7d_sat"`
+	ForwardAmt7dSat          int64                          `json:"forward_amt_7d_sat"`
+	OutPpm7d                 int                            `json:"out_ppm_7d"`
+	ForwardFee30dSat         int64                          `json:"forward_fee_30d_sat"`
+	ForwardAmt30dSat         int64                          `json:"forward_amt_30d_sat"`
+	OutPpm30d                int                            `json:"out_ppm_30d"`
+	RebalFee7dSat            int64                          `json:"rebal_fee_7d_sat"`
+	RebalAmt7dSat            int64                          `json:"rebal_amt_7d_sat"`
+	RebalPpm7d               int                            `json:"rebal_ppm_7d"`
+	RebalFee30dSat           int64                          `json:"rebal_fee_30d_sat"`
+	RebalAmt30dSat           int64                          `json:"rebal_amt_30d_sat"`
+	RebalPpm30d              int                            `json:"rebal_ppm_30d"`
+	ProfitFee7dSat           int64                          `json:"profit_fee_7d_sat"`
+	ProfitFee30dSat          int64                          `json:"profit_fee_30d_sat"`
+	PeerStabilityScore30d    int                            `json:"peer_stability_score_30d"`
+	PeerSampleCount30d       int                            `json:"peer_sample_count_30d,omitempty"`
+	HTLCFailures30d          int                            `json:"htlc_failures_30d,omitempty"`
+	HTLCPolicyFails30d       int                            `json:"htlc_policy_fails_30d,omitempty"`
+	HTLCLiquidityFails30d    int                            `json:"htlc_liquidity_fails_30d,omitempty"`
+	HTLCForwardFails30d      int                            `json:"htlc_forward_fails_30d,omitempty"`
+	RebalanceDependenceScore int                            `json:"rebalance_dependence_score"`
+	Score                    int                            `json:"score"`
+	Score7d                  int                            `json:"score_7d"`
+	Score30d                 int                            `json:"score_30d"`
+	TrendDirection           string                         `json:"trend_direction,omitempty"`
+	TrendDelta               int                            `json:"trend_delta,omitempty"`
+	State                    string                         `json:"state"`
+	Reasons                  []ChannelRankingReason         `json:"reasons,omitempty"`
+	Recommendations          []ChannelRankingRecommendation `json:"recommendations,omitempty"`
+	ComputedAt               time.Time                      `json:"computed_at"`
 }
 
 type ChannelRankingStatus struct {
@@ -116,21 +132,41 @@ type channelTrafficStat struct {
 	Ppm       int
 }
 
-type ChannelRankingService struct {
-	db         *pgxpool.Pool
-	logger     *log.Logger
-	lnd        *lndclient.Client
-	mu         sync.Mutex
-	lastSyncAt time.Time
-	stopCh     chan struct{}
-	doneCh     chan struct{}
+type channelPeerSample struct {
+	Connected bool
+	PingTime  int64
+	HasError  bool
 }
 
-func NewChannelRankingService(db *pgxpool.Pool, logger *log.Logger, lnd *lndclient.Client) *ChannelRankingService {
+type channelPeerAggregate struct {
+	Score30d    int
+	SampleCount int
+}
+
+type channelHTLCAggregate struct {
+	Total     int
+	Policy    int
+	Liquidity int
+	Forward   int
+}
+
+type ChannelRankingService struct {
+	db                 *pgxpool.Pool
+	logger             *log.Logger
+	lnd                *lndclient.Client
+	htlcFailedProvider htlcFailedProvider
+	mu                 sync.Mutex
+	lastSyncAt         time.Time
+	stopCh             chan struct{}
+	doneCh             chan struct{}
+}
+
+func NewChannelRankingService(db *pgxpool.Pool, logger *log.Logger, lnd *lndclient.Client, htlcFailedProvider htlcFailedProvider) *ChannelRankingService {
 	return &ChannelRankingService{
-		db:     db,
-		logger: logger,
-		lnd:    lnd,
+		db:                 db,
+		logger:             logger,
+		lnd:                lnd,
+		htlcFailedProvider: htlcFailedProvider,
 	}
 }
 
@@ -168,6 +204,13 @@ create table if not exists channel_rankings (
   rebal_ppm_30d integer not null default 0,
   profit_fee_7d_sat bigint not null default 0,
   profit_fee_30d_sat bigint not null default 0,
+  peer_stability_score_30d integer not null default 0,
+  peer_sample_count_30d integer not null default 0,
+  htlc_failures_30d integer not null default 0,
+  htlc_policy_fails_30d integer not null default 0,
+  htlc_liquidity_fails_30d integer not null default 0,
+  htlc_forward_fails_30d integer not null default 0,
+  rebalance_dependence_score integer not null default 0,
   score integer not null default 0,
   score_7d integer not null default 0,
   score_30d integer not null default 0,
@@ -196,6 +239,27 @@ create table if not exists channel_ranking_history (
   unique(channel_point, computed_bucket)
 );
 create index if not exists channel_ranking_history_point_idx on channel_ranking_history (channel_point, computed_bucket desc);
+create table if not exists channel_ranking_peer_samples (
+  peer_pubkey text not null,
+  sampled_bucket timestamptz not null,
+  connected boolean not null default false,
+  ping_time bigint not null default 0,
+  has_error boolean not null default false,
+  created_at timestamptz not null default now(),
+  primary key (peer_pubkey, sampled_bucket)
+);
+create index if not exists channel_ranking_peer_samples_time_idx on channel_ranking_peer_samples (sampled_bucket desc);
+create table if not exists channel_ranking_htlc_failures (
+  channel_id bigint not null,
+  sampled_bucket timestamptz not null,
+  total_count integer not null default 0,
+  policy_count integer not null default 0,
+  liquidity_count integer not null default 0,
+  forward_count integer not null default 0,
+  created_at timestamptz not null default now(),
+  primary key (channel_id, sampled_bucket)
+);
+create index if not exists channel_ranking_htlc_failures_time_idx on channel_ranking_htlc_failures (sampled_bucket desc);
 `)
 	if err != nil {
 		return err
@@ -208,6 +272,13 @@ alter table channel_rankings add column if not exists rebal_fee_30d_sat bigint n
 alter table channel_rankings add column if not exists rebal_amt_30d_sat bigint not null default 0;
 alter table channel_rankings add column if not exists rebal_ppm_30d integer not null default 0;
 alter table channel_rankings add column if not exists profit_fee_30d_sat bigint not null default 0;
+alter table channel_rankings add column if not exists peer_stability_score_30d integer not null default 0;
+alter table channel_rankings add column if not exists peer_sample_count_30d integer not null default 0;
+alter table channel_rankings add column if not exists htlc_failures_30d integer not null default 0;
+alter table channel_rankings add column if not exists htlc_policy_fails_30d integer not null default 0;
+alter table channel_rankings add column if not exists htlc_liquidity_fails_30d integer not null default 0;
+alter table channel_rankings add column if not exists htlc_forward_fails_30d integer not null default 0;
+alter table channel_rankings add column if not exists rebalance_dependence_score integer not null default 0;
 alter table channel_rankings add column if not exists score_7d integer not null default 0;
 alter table channel_rankings add column if not exists score_30d integer not null default 0;
 alter table channel_rankings add column if not exists trend_direction text not null default 'stable';
@@ -321,8 +392,27 @@ func (s *ChannelRankingService) Refresh(ctx context.Context) error {
 	if err != nil && s.logger != nil {
 		s.logger.Printf("channel ranking 30d rebalance stats lookup failed: %v", err)
 	}
+	peers, err := s.lnd.ListPeers(ctx)
+	if err != nil && s.logger != nil {
+		s.logger.Printf("channel ranking peer stability lookup failed: %v", err)
+	}
 
 	now := time.Now().UTC()
+	if err := s.capturePeerSamples(ctx, now, channels, peers); err != nil && s.logger != nil {
+		s.logger.Printf("channel ranking peer samples capture failed: %v", err)
+	}
+	if err := s.captureHTLCFailureSamples(ctx, now); err != nil && s.logger != nil {
+		s.logger.Printf("channel ranking htlc failure capture failed: %v", err)
+	}
+	peerAggregates, err := s.loadPeerStability30d(ctx)
+	if err != nil && s.logger != nil {
+		s.logger.Printf("channel ranking peer stability aggregate failed: %v", err)
+	}
+	htlcAggregates, err := s.loadHTLCFailureAggregates30d(ctx)
+	if err != nil && s.logger != nil {
+		s.logger.Printf("channel ranking htlc failure aggregate failed: %v", err)
+	}
+
 	points := make([]string, 0, len(channels))
 	for _, ch := range channels {
 		point := strings.TrimSpace(ch.ChannelPoint)
@@ -338,6 +428,8 @@ func (s *ChannelRankingService) Refresh(ctx context.Context) error {
 			forwardStats30d[ch.ChannelID],
 			rebalStats[ch.ChannelID],
 			rebalStats30d[ch.ChannelID],
+			peerAggregates[strings.TrimSpace(ch.RemotePubkey)],
+			htlcAggregates[ch.ChannelID],
 		)
 		if err := s.upsertItem(ctx, item); err != nil {
 			return err
@@ -488,6 +580,206 @@ group by coalesce(rebal_target_chan_id, rebal_source_chan_id, channel_id)
 	return stats, rows.Err()
 }
 
+func (s *ChannelRankingService) capturePeerSamples(ctx context.Context, now time.Time, channels []lndclient.ChannelInfo, peers []lndclient.PeerInfo) error {
+	if s == nil || s.db == nil {
+		return ErrChannelRankingDBUnavailable
+	}
+	bucket := now.UTC().Truncate(time.Hour)
+	samples := make(map[string]channelPeerSample)
+	for _, peer := range peers {
+		pubkey := strings.TrimSpace(peer.PubKey)
+		if pubkey == "" {
+			continue
+		}
+		samples[pubkey] = channelPeerSample{
+			Connected: true,
+			PingTime:  rankingMaxInt64(0, peer.PingTime),
+			HasError:  strings.TrimSpace(peer.LastError) != "",
+		}
+	}
+	for _, ch := range channels {
+		pubkey := strings.TrimSpace(ch.RemotePubkey)
+		if pubkey == "" {
+			continue
+		}
+		if _, ok := samples[pubkey]; ok {
+			continue
+		}
+		samples[pubkey] = channelPeerSample{
+			Connected: false,
+			PingTime:  0,
+			HasError:  rankingMaxInt64(0, ch.InactiveDurationSec) >= 3600,
+		}
+	}
+	for pubkey, sample := range samples {
+		if _, err := s.db.Exec(ctx, `
+insert into channel_ranking_peer_samples (
+  peer_pubkey, sampled_bucket, connected, ping_time, has_error, created_at
+) values (
+  $1, $2, $3, $4, $5, $6
+)
+on conflict (peer_pubkey, sampled_bucket) do update set
+  connected = excluded.connected,
+  ping_time = excluded.ping_time,
+  has_error = excluded.has_error,
+  created_at = excluded.created_at
+`, pubkey, bucket, sample.Connected, sample.PingTime, sample.HasError, now); err != nil {
+			return err
+		}
+	}
+	_, err := s.db.Exec(ctx, `delete from channel_ranking_peer_samples where sampled_bucket < now() - interval '30 day'`)
+	return err
+}
+
+func (s *ChannelRankingService) loadPeerStability30d(ctx context.Context) (map[string]channelPeerAggregate, error) {
+	out := make(map[string]channelPeerAggregate)
+	rows, err := s.db.Query(ctx, `
+select
+  peer_pubkey,
+  count(*) as sample_count,
+  coalesce(avg(case when connected then 1.0 else 0.0 end), 0) as connected_ratio,
+  coalesce(avg(case when has_error then 1.0 else 0.0 end), 0) as error_ratio,
+  coalesce(avg(case when connected and ping_time > 0 then ping_time::double precision end), 0) as avg_ping
+from channel_ranking_peer_samples
+where sampled_bucket >= now() - interval '30 day'
+group by peer_pubkey
+`)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var pubkey string
+		var sampleCount int
+		var connectedRatio float64
+		var errorRatio float64
+		var avgPing float64
+		if err := rows.Scan(&pubkey, &sampleCount, &connectedRatio, &errorRatio, &avgPing); err != nil {
+			return out, err
+		}
+		pubkey = strings.TrimSpace(pubkey)
+		if pubkey == "" {
+			continue
+		}
+		out[pubkey] = channelPeerAggregate{
+			Score30d:    scorePeerStability30d(connectedRatio, errorRatio, avgPing),
+			SampleCount: sampleCount,
+		}
+	}
+	return out, rows.Err()
+}
+
+func scorePeerStability30d(connectedRatio float64, errorRatio float64, avgPing float64) int {
+	connectedScore := clampInt(int(math.Round(clampFloat64(connectedRatio, 0, 1)*70)), 0, 70)
+	errorPenalty := clampInt(int(math.Round(clampFloat64(errorRatio, 0, 1)*20)), 0, 20)
+	pingScore := 10
+	switch {
+	case avgPing <= 0:
+		pingScore = 5
+	case avgPing <= 100:
+		pingScore = 10
+	case avgPing <= 250:
+		pingScore = 8
+	case avgPing <= 500:
+		pingScore = 6
+	case avgPing <= 1000:
+		pingScore = 3
+	default:
+		pingScore = 1
+	}
+	return clampInt(connectedScore-errorPenalty+pingScore, 0, 100)
+}
+
+func (s *ChannelRankingService) captureHTLCFailureSamples(ctx context.Context, now time.Time) error {
+	if s == nil || s.db == nil || s.htlcFailedProvider == nil {
+		return nil
+	}
+	type bucketKey struct {
+		ChannelID uint64
+		Bucket    time.Time
+	}
+	type counts struct {
+		Total     int
+		Policy    int
+		Liquidity int
+		Forward   int
+	}
+	cutoff := now.Add(-30 * 24 * time.Hour)
+	aggregates := make(map[bucketKey]counts)
+	entries := s.htlcFailedProvider.Failed(htlcManagerMaxLogLimit)
+	for _, entry := range entries {
+		ts, err := time.Parse(time.RFC3339, strings.TrimSpace(entry.Timestamp))
+		if err != nil || ts.IsZero() || ts.Before(cutoff) {
+			continue
+		}
+		channelID, ok := parseShortChannelID(entry.OutgoingChannelID)
+		if !ok || channelID == 0 {
+			continue
+		}
+		key := bucketKey{ChannelID: channelID, Bucket: ts.UTC().Truncate(time.Hour)}
+		current := aggregates[key]
+		current.Total++
+		switch normalizeHTLCFailureEvent(entry) {
+		case "forward_fail":
+			current.Forward++
+		default:
+			policy, liquidity := classifyHTLCFailure(entry)
+			if policy {
+				current.Policy++
+			}
+			if liquidity {
+				current.Liquidity++
+			}
+		}
+		aggregates[key] = current
+	}
+	for key, sample := range aggregates {
+		if _, err := s.db.Exec(ctx, `
+insert into channel_ranking_htlc_failures (
+  channel_id, sampled_bucket, total_count, policy_count, liquidity_count, forward_count, created_at
+) values (
+  $1, $2, $3, $4, $5, $6, $7
+)
+on conflict (channel_id, sampled_bucket) do update set
+  total_count = excluded.total_count,
+  policy_count = excluded.policy_count,
+  liquidity_count = excluded.liquidity_count,
+  forward_count = excluded.forward_count,
+  created_at = excluded.created_at
+`, int64(key.ChannelID), key.Bucket, sample.Total, sample.Policy, sample.Liquidity, sample.Forward, now); err != nil {
+			return err
+		}
+	}
+	_, err := s.db.Exec(ctx, `delete from channel_ranking_htlc_failures where sampled_bucket < now() - interval '30 day'`)
+	return err
+}
+
+func (s *ChannelRankingService) loadHTLCFailureAggregates30d(ctx context.Context) (map[uint64]channelHTLCAggregate, error) {
+	out := make(map[uint64]channelHTLCAggregate)
+	rows, err := s.db.Query(ctx, `
+select channel_id, sum(total_count), sum(policy_count), sum(liquidity_count), sum(forward_count)
+from channel_ranking_htlc_failures
+where sampled_bucket >= now() - interval '30 day'
+group by channel_id
+`)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var channelID int64
+		var aggregate channelHTLCAggregate
+		if err := rows.Scan(&channelID, &aggregate.Total, &aggregate.Policy, &aggregate.Liquidity, &aggregate.Forward); err != nil {
+			return out, err
+		}
+		if channelID <= 0 {
+			continue
+		}
+		out[uint64(channelID)] = aggregate
+	}
+	return out, rows.Err()
+}
+
 func buildChannelRankingItem(
 	now time.Time,
 	ch lndclient.ChannelInfo,
@@ -496,6 +788,8 @@ func buildChannelRankingItem(
 	forward30d channelTrafficStat,
 	rebal7d channelTrafficStat,
 	rebal30d channelTrafficStat,
+	peerAggregate channelPeerAggregate,
+	htlcAggregate channelHTLCAggregate,
 ) ChannelRankingItem {
 	capacity := rankingMaxInt64(0, ch.CapacitySat)
 	localBalance := rankingMaxInt64(0, ch.LocalBalanceSat)
@@ -512,58 +806,66 @@ func buildChannelRankingItem(
 	}
 	profitSat7d := forward7d.FeeSat - rebal7d.FeeSat
 	profitSat30d := forward30d.FeeSat - rebal30d.FeeSat
-	score7d := computeChannelRankingScore(ch, capacity, localPct, forward7d, rebal7d, profitSat7d)
-	score30d := computeChannelRankingScore(ch, capacity, localPct, forward30d, rebal30d, profitSat30d)
+	rebalanceDependenceScore := computeRebalanceDependenceScore(forward30d, rebal30d)
+	score7d := computeChannelRankingScore(ch, capacity, localPct, forward7d, rebal7d, profitSat7d, peerAggregate.Score30d, htlcAggregate, rebalanceDependenceScore)
+	score30d := computeChannelRankingScore(ch, capacity, localPct, forward30d, rebal30d, profitSat30d, peerAggregate.Score30d, htlcAggregate, rebalanceDependenceScore)
 	trendDirection, trendDelta := computeChannelRankingTrend(score7d, score30d)
-	state, reasons, recommendations := classifyChannelRanking(ch, capacity, localPct, forward7d, rebal7d, profitSat7d, score7d)
+	state, reasons, recommendations := classifyChannelRanking(ch, capacity, localPct, forward7d, rebal7d, profitSat7d, score7d, peerAggregate.Score30d, htlcAggregate, rebalanceDependenceScore)
 
 	return ChannelRankingItem{
-		ChannelPoint:        strings.TrimSpace(ch.ChannelPoint),
-		ChannelID:           int64(ch.ChannelID),
-		PeerPubkey:          strings.TrimSpace(ch.RemotePubkey),
-		PeerAlias:           strings.TrimSpace(ch.PeerAlias),
-		Active:              ch.Active,
-		Private:             ch.Private,
-		CapacitySat:         capacity,
-		LocalBalanceSat:     localBalance,
-		RemoteBalanceSat:    remoteBalance,
-		LocalBalancePct:     localPct,
-		RemoteBalancePct:    remotePct,
-		InactiveDurationSec: rankingMaxInt64(0, ch.InactiveDurationSec),
-		PendingHtlcCount:    rankingMaxInt(0, ch.PendingHtlcCount),
-		ClassLabel:          strings.TrimSpace(classLabel),
-		ForwardFee7dSat:     forward7d.FeeSat,
-		ForwardAmt7dSat:     forward7d.AmountSat,
-		OutPpm7d:            forward7d.Ppm,
-		ForwardFee30dSat:    forward30d.FeeSat,
-		ForwardAmt30dSat:    forward30d.AmountSat,
-		OutPpm30d:           forward30d.Ppm,
-		RebalFee7dSat:       rebal7d.FeeSat,
-		RebalAmt7dSat:       rebal7d.AmountSat,
-		RebalPpm7d:          rebal7d.Ppm,
-		RebalFee30dSat:      rebal30d.FeeSat,
-		RebalAmt30dSat:      rebal30d.AmountSat,
-		RebalPpm30d:         rebal30d.Ppm,
-		ProfitFee7dSat:      profitSat7d,
-		ProfitFee30dSat:     profitSat30d,
-		Score:               score7d,
-		Score7d:             score7d,
-		Score30d:            score30d,
-		TrendDirection:      trendDirection,
-		TrendDelta:          trendDelta,
-		State:               state,
-		Reasons:             reasons,
-		Recommendations:     recommendations,
-		ComputedAt:          now,
+		ChannelPoint:             strings.TrimSpace(ch.ChannelPoint),
+		ChannelID:                int64(ch.ChannelID),
+		PeerPubkey:               strings.TrimSpace(ch.RemotePubkey),
+		PeerAlias:                strings.TrimSpace(ch.PeerAlias),
+		Active:                   ch.Active,
+		Private:                  ch.Private,
+		CapacitySat:              capacity,
+		LocalBalanceSat:          localBalance,
+		RemoteBalanceSat:         remoteBalance,
+		LocalBalancePct:          localPct,
+		RemoteBalancePct:         remotePct,
+		InactiveDurationSec:      rankingMaxInt64(0, ch.InactiveDurationSec),
+		PendingHtlcCount:         rankingMaxInt(0, ch.PendingHtlcCount),
+		ClassLabel:               strings.TrimSpace(classLabel),
+		ForwardFee7dSat:          forward7d.FeeSat,
+		ForwardAmt7dSat:          forward7d.AmountSat,
+		OutPpm7d:                 forward7d.Ppm,
+		ForwardFee30dSat:         forward30d.FeeSat,
+		ForwardAmt30dSat:         forward30d.AmountSat,
+		OutPpm30d:                forward30d.Ppm,
+		RebalFee7dSat:            rebal7d.FeeSat,
+		RebalAmt7dSat:            rebal7d.AmountSat,
+		RebalPpm7d:               rebal7d.Ppm,
+		RebalFee30dSat:           rebal30d.FeeSat,
+		RebalAmt30dSat:           rebal30d.AmountSat,
+		RebalPpm30d:              rebal30d.Ppm,
+		ProfitFee7dSat:           profitSat7d,
+		ProfitFee30dSat:          profitSat30d,
+		PeerStabilityScore30d:    peerAggregate.Score30d,
+		PeerSampleCount30d:       peerAggregate.SampleCount,
+		HTLCFailures30d:          htlcAggregate.Total,
+		HTLCPolicyFails30d:       htlcAggregate.Policy,
+		HTLCLiquidityFails30d:    htlcAggregate.Liquidity,
+		HTLCForwardFails30d:      htlcAggregate.Forward,
+		RebalanceDependenceScore: rebalanceDependenceScore,
+		Score:                    score7d,
+		Score7d:                  score7d,
+		Score30d:                 score30d,
+		TrendDirection:           trendDirection,
+		TrendDelta:               trendDelta,
+		State:                    state,
+		Reasons:                  reasons,
+		Recommendations:          recommendations,
+		ComputedAt:               now,
 	}
 }
 
-func computeChannelRankingScore(ch lndclient.ChannelInfo, capacity int64, localPct float64, forward channelTrafficStat, rebal channelTrafficStat, profitSat int64) int {
+func computeChannelRankingScore(ch lndclient.ChannelInfo, capacity int64, localPct float64, forward channelTrafficStat, rebal channelTrafficStat, profitSat int64, peerStabilityScore30d int, htlcAggregate channelHTLCAggregate, rebalanceDependenceScore int) int {
 	profitScore := scoreProfitability(profitSat)
 	efficiencyScore := scoreCapitalEfficiency(profitSat, capacity)
 	utilizationScore := scoreUtilization(capacity, localPct, forward.AmountSat)
-	maintenanceScore := scoreMaintenance(forward, rebal)
-	healthScore := scoreOperationalHealth(ch)
+	maintenanceScore := scoreMaintenance(forward, rebal, rebalanceDependenceScore)
+	healthScore := scoreOperationalHealth(ch, peerStabilityScore30d, htlcAggregate)
 	confidenceScore := scoreConfidence(ch, forward, rebal)
 
 	total := profitScore + efficiencyScore + utilizationScore + maintenanceScore + healthScore + confidenceScore
@@ -596,7 +898,7 @@ func appendUniqueRecommendation(list []ChannelRankingRecommendation, candidate C
 	return append(list, candidate)
 }
 
-func classifyChannelRanking(ch lndclient.ChannelInfo, capacity int64, localPct float64, forward channelTrafficStat, rebal channelTrafficStat, profitSat int64, score int) (string, []ChannelRankingReason, []ChannelRankingRecommendation) {
+func classifyChannelRanking(ch lndclient.ChannelInfo, capacity int64, localPct float64, forward channelTrafficStat, rebal channelTrafficStat, profitSat int64, score int, peerStabilityScore30d int, htlcAggregate channelHTLCAggregate, rebalanceDependenceScore int) (string, []ChannelRankingReason, []ChannelRankingRecommendation) {
 	reasons := make([]ChannelRankingReason, 0, 6)
 	recommendations := make([]ChannelRankingRecommendation, 0, 4)
 
@@ -624,6 +926,15 @@ func classifyChannelRanking(ch lndclient.ChannelInfo, capacity int64, localPct f
 	if ch.PendingHtlcCount >= 5 {
 		reasons = append(reasons, ChannelRankingReason{Code: "pending_htlc_pressure"})
 	}
+	if peerStabilityScore30d > 0 && peerStabilityScore30d < 45 {
+		reasons = append(reasons, ChannelRankingReason{Code: "peer_stability_low"})
+	}
+	if htlcAggregate.Total >= 5 {
+		reasons = append(reasons, ChannelRankingReason{Code: "htlc_failures_elevated"})
+	}
+	if rebalanceDependenceScore >= 65 {
+		reasons = append(reasons, ChannelRankingReason{Code: "rebalance_dependence_high"})
+	}
 	if capacity > 0 {
 		netPpm := (float64(profitSat) / float64(capacity)) * 1_000_000
 		if netPpm >= 75 {
@@ -638,13 +949,15 @@ func classifyChannelRanking(ch lndclient.ChannelInfo, capacity int64, localPct f
 	strongVolume := capacity > 0 && forward.AmountSat >= rankingMaxInt64(100000, capacity/5)
 	rebalanceHeavy := rebal.FeeSat > 0 && rebal.FeeSat >= rankingMaxInt64(50, forward.FeeSat)
 	longInactive := !ch.Active && rankingMaxInt64(0, ch.InactiveDurationSec) >= 7*24*3600
+	unstablePeer := peerStabilityScore30d > 0 && peerStabilityScore30d < 45
+	htlcFailuresHigh := htlcAggregate.Total >= 8 || htlcAggregate.Liquidity >= 4 || htlcAggregate.Policy >= 4
 
 	switch {
-	case ch.Active && score >= 72 && profitSat > 0 && strongVolume:
+	case ch.Active && score >= 72 && profitSat > 0 && strongVolume && !unstablePeer:
 		state = "expand"
-	case score < 24 && (profitSat <= -150 || longInactive || (rebalanceHeavy && forward.FeeSat > 0)):
+	case score < 24 && (profitSat <= -150 || longInactive || unstablePeer || htlcFailuresHigh || rebalanceDependenceScore >= 80 || (rebalanceHeavy && forward.FeeSat > 0)):
 		state = "close"
-	case ch.Active && score >= 48 && profitSat >= -50 && !rebalanceHeavy:
+	case ch.Active && score >= 48 && profitSat >= -50 && !rebalanceHeavy && rebalanceDependenceScore < 65 && !htlcFailuresHigh && !unstablePeer:
 		state = "maintain"
 	default:
 		state = "monitor"
@@ -666,6 +979,9 @@ func classifyChannelRanking(ch lndclient.ChannelInfo, capacity int64, localPct f
 		if rebalanceHeavy {
 			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "reduce_rebalance_priority", TargetModule: "rebalance"})
 		}
+		if rebalanceDependenceScore >= 65 {
+			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "reduce_rebalance_dependence", TargetModule: "rebalance"})
+		}
 		if profitSat <= 0 {
 			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "review_autofee_bounds", TargetModule: "autofee"})
 		}
@@ -674,6 +990,9 @@ func classifyChannelRanking(ch lndclient.ChannelInfo, capacity int64, localPct f
 		}
 		if !ch.Active || rankingMaxInt64(0, ch.InactiveDurationSec) >= 3600 {
 			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "check_peer_stability", TargetModule: "lightning-ops"})
+		}
+		if htlcAggregate.Total >= 5 {
+			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "review_htlc_failures", TargetModule: "htlc-manager"})
 		}
 		if capacity > 0 && forward.AmountSat < rankingMaxInt64(25000, capacity/50) {
 			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "observe_7d_before_close", TargetModule: "lightning-ops"})
@@ -769,10 +1088,53 @@ func scoreUtilization(capacity int64, localPct float64, forwardAmtSat int64) int
 	return clampInt(ratioScore+balanceScore, 0, 15)
 }
 
-func scoreMaintenance(forward channelTrafficStat, rebal channelTrafficStat) int {
+func computeRebalanceDependenceScore(forward channelTrafficStat, rebal channelTrafficStat) int {
+	if rebal.AmountSat <= 0 && rebal.FeeSat <= 0 {
+		return 0
+	}
+	if forward.AmountSat <= 0 && rebal.AmountSat > 0 {
+		return 90
+	}
+	amountRatio := 0.0
+	if forward.AmountSat > 0 {
+		amountRatio = float64(rebal.AmountSat) / float64(forward.AmountSat)
+	}
+	feeRatio := 0.0
+	if forward.FeeSat > 0 {
+		feeRatio = float64(rebal.FeeSat) / float64(forward.FeeSat)
+	} else if rebal.FeeSat > 0 {
+		feeRatio = 2.0
+	}
+	score := 0
+	switch {
+	case amountRatio >= 1.5:
+		score += 50
+	case amountRatio >= 1.0:
+		score += 38
+	case amountRatio >= 0.5:
+		score += 26
+	case amountRatio >= 0.2:
+		score += 14
+	default:
+		score += 6
+	}
+	switch {
+	case feeRatio >= 1.5:
+		score += 40
+	case feeRatio >= 1.0:
+		score += 32
+	case feeRatio >= 0.5:
+		score += 22
+	case feeRatio > 0:
+		score += 10
+	}
+	return clampInt(score, 0, 100)
+}
+
+func scoreMaintenance(forward channelTrafficStat, rebal channelTrafficStat, rebalanceDependenceScore int) int {
 	score := 15
 	if rebal.FeeSat <= 0 {
-		return score
+		return clampInt(score-(rebalanceDependenceScore/20), 0, 15)
 	}
 	if forward.FeeSat <= 0 {
 		score = 2
@@ -794,10 +1156,38 @@ func scoreMaintenance(forward channelTrafficStat, rebal channelTrafficStat) int 
 	if rebal.Ppm > 0 && forward.Ppm > 0 && rebal.Ppm > forward.Ppm {
 		score -= 2
 	}
+	score -= rebalanceDependenceScore / 18
 	return clampInt(score, 0, 15)
 }
 
-func scoreOperationalHealth(ch lndclient.ChannelInfo) int {
+func scoreOperationalHealth(ch lndclient.ChannelInfo, peerStabilityScore30d int, htlcAggregate channelHTLCAggregate) int {
+	if peerStabilityScore30d > 0 {
+		base := 0
+		switch {
+		case peerStabilityScore30d >= 85:
+			base = 10
+		case peerStabilityScore30d >= 70:
+			base = 8
+		case peerStabilityScore30d >= 55:
+			base = 6
+		case peerStabilityScore30d >= 40:
+			base = 4
+		default:
+			base = 2
+		}
+		switch {
+		case htlcAggregate.Total >= 12 || htlcAggregate.Liquidity >= 6 || htlcAggregate.Policy >= 6:
+			base -= 4
+		case htlcAggregate.Total >= 6:
+			base -= 2
+		case htlcAggregate.Total >= 3:
+			base -= 1
+		}
+		if !ch.Active && rankingMaxInt64(0, ch.InactiveDurationSec) >= 24*3600 {
+			base -= 2
+		}
+		return clampInt(base, 0, 10)
+	}
 	switch {
 	case ch.Active && ch.PendingHtlcCount < 3:
 		return 10
@@ -839,6 +1229,9 @@ insert into channel_rankings (
   rebal_fee_7d_sat, rebal_amt_7d_sat, rebal_ppm_7d,
   rebal_fee_30d_sat, rebal_amt_30d_sat, rebal_ppm_30d,
   profit_fee_7d_sat, profit_fee_30d_sat,
+  peer_stability_score_30d, peer_sample_count_30d,
+  htlc_failures_30d, htlc_policy_fails_30d, htlc_liquidity_fails_30d, htlc_forward_fails_30d,
+  rebalance_dependence_score,
   score, score_7d, score_30d, trend_direction, trend_delta, state, reasons_json, recommendations_json, computed_at
 ) values (
   $1, $2, $3, $4, $5, $6, $7,
@@ -849,7 +1242,10 @@ insert into channel_rankings (
   $21, $22, $23,
   $24, $25, $26,
   $27, $28,
-  $29, $30, $31, $32, $33, $34, $35, $36, $37
+  $29, $30,
+  $31, $32, $33, $34,
+  $35,
+  $36, $37, $38, $39, $40, $41, $42, $43, $44
 )
 on conflict (channel_point) do update set
   channel_id = excluded.channel_id,
@@ -879,6 +1275,13 @@ on conflict (channel_point) do update set
   rebal_ppm_30d = excluded.rebal_ppm_30d,
   profit_fee_7d_sat = excluded.profit_fee_7d_sat,
   profit_fee_30d_sat = excluded.profit_fee_30d_sat,
+  peer_stability_score_30d = excluded.peer_stability_score_30d,
+  peer_sample_count_30d = excluded.peer_sample_count_30d,
+  htlc_failures_30d = excluded.htlc_failures_30d,
+  htlc_policy_fails_30d = excluded.htlc_policy_fails_30d,
+  htlc_liquidity_fails_30d = excluded.htlc_liquidity_fails_30d,
+  htlc_forward_fails_30d = excluded.htlc_forward_fails_30d,
+  rebalance_dependence_score = excluded.rebalance_dependence_score,
   score = excluded.score,
   score_7d = excluded.score_7d,
   score_30d = excluded.score_30d,
@@ -896,6 +1299,9 @@ on conflict (channel_point) do update set
 		item.RebalFee7dSat, item.RebalAmt7dSat, item.RebalPpm7d,
 		item.RebalFee30dSat, item.RebalAmt30dSat, item.RebalPpm30d,
 		item.ProfitFee7dSat, item.ProfitFee30dSat,
+		item.PeerStabilityScore30d, item.PeerSampleCount30d,
+		item.HTLCFailures30d, item.HTLCPolicyFails30d, item.HTLCLiquidityFails30d, item.HTLCForwardFails30d,
+		item.RebalanceDependenceScore,
 		item.Score, item.Score7d, item.Score30d, item.TrendDirection, item.TrendDelta, item.State, reasonsRaw, recommendationsRaw, item.ComputedAt)
 	return err
 }
@@ -939,7 +1345,8 @@ select
   forward_fee_30d_sat, forward_amt_30d_sat, out_ppm_30d,
   rebal_fee_7d_sat, rebal_amt_7d_sat, rebal_ppm_7d,
   rebal_fee_30d_sat, rebal_amt_30d_sat, rebal_ppm_30d,
-  profit_fee_7d_sat, profit_fee_30d_sat,
+  profit_fee_7d_sat, profit_fee_30d_sat, peer_stability_score_30d, peer_sample_count_30d,
+  htlc_failures_30d, htlc_policy_fails_30d, htlc_liquidity_fails_30d, htlc_forward_fails_30d, rebalance_dependence_score,
   score, score_7d, score_30d, trend_direction, trend_delta, state, reasons_json, recommendations_json, computed_at
 from channel_rankings
 `
@@ -980,7 +1387,8 @@ select
   forward_fee_30d_sat, forward_amt_30d_sat, out_ppm_30d,
   rebal_fee_7d_sat, rebal_amt_7d_sat, rebal_ppm_7d,
   rebal_fee_30d_sat, rebal_amt_30d_sat, rebal_ppm_30d,
-  profit_fee_7d_sat, profit_fee_30d_sat,
+  profit_fee_7d_sat, profit_fee_30d_sat, peer_stability_score_30d, peer_sample_count_30d,
+  htlc_failures_30d, htlc_policy_fails_30d, htlc_liquidity_fails_30d, htlc_forward_fails_30d, rebalance_dependence_score,
   score, score_7d, score_30d, trend_direction, trend_delta, state, reasons_json, recommendations_json, computed_at
 from channel_rankings
 where channel_point = $1
@@ -1005,7 +1413,7 @@ func (s *ChannelRankingService) GetDetail(ctx context.Context, channelPoint stri
 	if err != nil {
 		return nil, err
 	}
-	history, err := s.getHistory(ctx, item.ChannelPoint, 24)
+	history, err := s.getHistory(ctx, item.ChannelPoint, 168)
 	if err != nil {
 		return nil, err
 	}
@@ -1017,6 +1425,7 @@ func (s *ChannelRankingService) GetDetail(ctx context.Context, channelPoint stri
 		Item:         *item,
 		History:      history,
 		PeerChannels: peerChannels,
+		Feedback:     buildChannelRankingFeedback(*item, history),
 	}, nil
 }
 
@@ -1135,6 +1544,33 @@ order by score desc, profit_fee_7d_sat desc, capacity_sat desc, channel_point as
 	return items, rows.Err()
 }
 
+func buildChannelRankingFeedback(item ChannelRankingItem, history []ChannelRankingHistoryPoint) *ChannelRankingFeedback {
+	if len(history) == 0 {
+		return nil
+	}
+	oldest := history[len(history)-1]
+	scoreDelta := item.Score - oldest.Score
+	netDeltaSat := item.ProfitFee7dSat - oldest.ProfitFee7dSat
+	direction := "stable"
+	switch {
+	case scoreDelta >= 6 || netDeltaSat >= 100:
+		direction = "improving"
+	case scoreDelta <= -6 || netDeltaSat <= -100:
+		direction = "worsening"
+	}
+	windowHours := int(item.ComputedAt.Sub(oldest.ComputedAt).Hours())
+	if windowHours < 1 {
+		windowHours = 1
+	}
+	return &ChannelRankingFeedback{
+		Direction:   direction,
+		ScoreDelta:  scoreDelta,
+		NetDeltaSat: netDeltaSat,
+		BaselineAt:  oldest.ComputedAt,
+		WindowHours: windowHours,
+	}
+}
+
 type channelRankingRows interface {
 	Next() bool
 	Scan(dest ...any) error
@@ -1159,7 +1595,8 @@ func scanChannelRankingItems(rows channelRankingRows) ([]ChannelRankingItem, err
 			&item.ForwardFee30dSat, &item.ForwardAmt30dSat, &item.OutPpm30d,
 			&item.RebalFee7dSat, &item.RebalAmt7dSat, &item.RebalPpm7d,
 			&item.RebalFee30dSat, &item.RebalAmt30dSat, &item.RebalPpm30d,
-			&item.ProfitFee7dSat, &item.ProfitFee30dSat,
+			&item.ProfitFee7dSat, &item.ProfitFee30dSat, &item.PeerStabilityScore30d, &item.PeerSampleCount30d,
+			&item.HTLCFailures30d, &item.HTLCPolicyFails30d, &item.HTLCLiquidityFails30d, &item.HTLCForwardFails30d, &item.RebalanceDependenceScore,
 			&item.Score, &item.Score7d, &item.Score30d, &trendDirection, &item.TrendDelta, &item.State, &reasonsRaw, &recommendationsRaw, &item.ComputedAt,
 		); err != nil {
 			return nil, err

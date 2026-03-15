@@ -42,7 +42,7 @@ func (s *Server) initChannelRanking() {
 		s.db = pool
 	}
 
-	svc := NewChannelRankingService(pool, s.logger, s.lnd)
+	svc := NewChannelRankingService(pool, s.logger, s.lnd, s.htlcManager)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := svc.EnsureSchema(ctx); err != nil {

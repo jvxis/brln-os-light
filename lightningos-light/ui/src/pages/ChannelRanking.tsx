@@ -41,6 +41,13 @@ type ChannelRankingItem = {
   rebal_ppm_30d: number
   profit_fee_7d_sat: number
   profit_fee_30d_sat: number
+  peer_stability_score_30d: number
+  peer_sample_count_30d?: number
+  htlc_failures_30d?: number
+  htlc_policy_fails_30d?: number
+  htlc_liquidity_fails_30d?: number
+  htlc_forward_fails_30d?: number
+  rebalance_dependence_score: number
   score: number
   score_7d: number
   score_30d: number
@@ -89,6 +96,15 @@ type ChannelRankingDetailPayload = {
   item?: ChannelRankingItem
   history?: ChannelRankingHistoryPoint[]
   peer_channels?: ChannelRankingPeerComparison[]
+  feedback?: ChannelRankingFeedback
+}
+
+type ChannelRankingFeedback = {
+  direction?: 'improving' | 'stable' | 'worsening'
+  score_delta?: number
+  net_delta_sat?: number
+  baseline_at?: string
+  window_hours?: number
 }
 
 const CHANNEL_RANKING_ROUTE_KEY = 'channel-ranking'
@@ -152,12 +168,13 @@ export default function ChannelRanking() {
   const [activityFilter, setActivityFilter] = useState<'all' | 'active' | 'inactive'>('all')
   const [visibilityFilter, setVisibilityFilter] = useState<'all' | 'public' | 'private'>('all')
   const [recommendationFilter, setRecommendationFilter] = useState('all')
-  const [sortBy, setSortBy] = useState<'score' | 'net_7d' | 'net_30d' | 'capital_efficiency' | 'rebalance_cost' | 'risk'>('score')
+  const [sortBy, setSortBy] = useState<'score' | 'net_7d' | 'net_30d' | 'capital_efficiency' | 'rebalance_cost' | 'risk' | 'peer_stability' | 'htlc_failures' | 'rebalance_dependence'>('score')
   const [selectedChannelPoint, setSelectedChannelPoint] = useState('')
   const [focusedChannelPoint, setFocusedChannelPoint] = useState('')
   const [detailItem, setDetailItem] = useState<ChannelRankingItem | null>(null)
   const [detailHistory, setDetailHistory] = useState<ChannelRankingHistoryPoint[]>([])
   const [detailPeerChannels, setDetailPeerChannels] = useState<ChannelRankingPeerComparison[]>([])
+  const [detailFeedback, setDetailFeedback] = useState<ChannelRankingFeedback | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const pendingScrollChannelRef = useRef('')
   const focusClearTimerRef = useRef<number | null>(null)
@@ -196,7 +213,7 @@ export default function ChannelRanking() {
     }
   }
 
-  const formatSats = (value?: number) => `${numberFormatter.format(Math.max(0, Math.round(Number(value || 0))))} sats`
+  const formatSats = (value?: number) => `${numberFormatter.format(Math.round(Number(value || 0)))} sats`
   const formatPct = (value?: number) => `${pctFormatter.format(clamp(Number(value || 0), 0, 100))}%`
   const formatTimestamp = (value?: string) => {
     if (!value) return t('common.na')
@@ -235,6 +252,8 @@ export default function ChannelRanking() {
         return buildLightningOpsHash(item.channel_point, 'autofee')
       case 'close-manager':
         return buildLightningOpsHash(item.channel_point, 'close_recovery')
+      case 'htlc-manager':
+        return buildLightningOpsHash(item.channel_point, 'htlc_manager')
       default:
         return buildLightningOpsHash(item.channel_point)
     }
@@ -272,6 +291,7 @@ export default function ChannelRanking() {
       setDetailItem(null)
       setDetailHistory([])
       setDetailPeerChannels([])
+      setDetailFeedback(null)
     } finally {
       setLoading(false)
       setRefreshing(false)
@@ -343,6 +363,12 @@ export default function ChannelRanking() {
         }
         case 'rebalance_cost':
           return right.rebal_fee_7d_sat - left.rebal_fee_7d_sat || right.score - left.score
+        case 'peer_stability':
+          return right.peer_stability_score_30d - left.peer_stability_score_30d || right.score - left.score
+        case 'htlc_failures':
+          return (right.htlc_failures_30d || 0) - (left.htlc_failures_30d || 0) || right.score - left.score
+        case 'rebalance_dependence':
+          return right.rebalance_dependence_score - left.rebalance_dependence_score || right.score - left.score
         case 'risk':
           return riskScore(right) - riskScore(left) || right.score - left.score
         default:
@@ -402,6 +428,7 @@ export default function ChannelRanking() {
       setDetailItem(null)
       setDetailHistory([])
       setDetailPeerChannels([])
+      setDetailFeedback(null)
       return
     }
     let active = true
@@ -410,9 +437,10 @@ export default function ChannelRanking() {
       .then((payload: any) => {
         if (!active) return
         const detail = payload as ChannelRankingDetailPayload
-        setDetailItem((detail?.item as ChannelRankingItem) || null)
-        setDetailHistory(Array.isArray(detail?.history) ? detail.history : [])
-        setDetailPeerChannels(Array.isArray(detail?.peer_channels) ? detail.peer_channels : [])
+      setDetailItem((detail?.item as ChannelRankingItem) || null)
+      setDetailHistory(Array.isArray(detail?.history) ? detail.history : [])
+      setDetailPeerChannels(Array.isArray(detail?.peer_channels) ? detail.peer_channels : [])
+      setDetailFeedback((detail?.feedback as ChannelRankingFeedback) || null)
       })
       .catch(() => {
         if (!active) return
@@ -420,6 +448,7 @@ export default function ChannelRanking() {
         setDetailItem(fallback)
         setDetailHistory([])
         setDetailPeerChannels([])
+        setDetailFeedback(null)
       })
       .finally(() => {
         if (!active) return
@@ -559,6 +588,9 @@ export default function ChannelRanking() {
               <option value="net_30d">{t('channelRanking.sorts.net30d')}</option>
               <option value="capital_efficiency">{t('channelRanking.sorts.capitalEfficiency')}</option>
               <option value="rebalance_cost">{t('channelRanking.sorts.rebalanceCost')}</option>
+              <option value="peer_stability">{t('channelRanking.sorts.peerStability')}</option>
+              <option value="htlc_failures">{t('channelRanking.sorts.htlcFailures')}</option>
+              <option value="rebalance_dependence">{t('channelRanking.sorts.rebalanceDependence')}</option>
               <option value="risk">{t('channelRanking.sorts.risk')}</option>
             </select>
           </label>
@@ -643,11 +675,13 @@ export default function ChannelRanking() {
                         </span>
                       </div>
                     </div>
-                    <div className="mt-3 grid gap-2 text-xs text-fog/70 sm:grid-cols-2 lg:grid-cols-4">
+                    <div className="mt-3 grid gap-2 text-xs text-fog/70 sm:grid-cols-2 xl:grid-cols-6">
                       <div>{t('channelRanking.netFees7d', { value: formatSats(item.profit_fee_7d_sat) })}</div>
                       <div>{t('channelRanking.netFees30d', { value: formatSats(item.profit_fee_30d_sat) })}</div>
                       <div>{t('channelRanking.capacity', { value: formatSats(item.capacity_sat) })}</div>
                       <div>{t('channelRanking.localBalancePct', { value: formatPct(item.local_balance_pct) })}</div>
+                      <div>{t('channelRanking.peerStabilityScore30d', { value: numberFormatter.format(item.peer_stability_score_30d || 0) })}</div>
+                      <div>{t('channelRanking.htlcFailures30dLabel', { value: numberFormatter.format(item.htlc_failures_30d || 0) })}</div>
                       <div>{t('channelRanking.trendDelta', { value: numberFormatter.format(item.trend_delta || 0) })}</div>
                     </div>
                   </button>
@@ -714,6 +748,7 @@ export default function ChannelRanking() {
                     <div>{t('channelRanking.remoteBalancePct', { value: formatPct(selectedDetail.remote_balance_pct) })}</div>
                     <div>{t('channelRanking.pendingHtlcCount', { value: numberFormatter.format(selectedDetail.pending_htlc_count || 0) })}</div>
                     <div>{t('channelRanking.inactiveDuration', { value: formatDuration(selectedDetail.inactive_duration_sec) })}</div>
+                    <div>{t('channelRanking.peerStabilityScore30d', { value: numberFormatter.format(selectedDetail.peer_stability_score_30d || 0) })}</div>
                   </div>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
@@ -752,6 +787,18 @@ export default function ChannelRanking() {
 
               <div className="grid gap-3 lg:grid-cols-2">
                 <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+                  <div className="mb-2 text-sm font-medium text-fog">{t('channelRanking.operationalSignalsTitle')}</div>
+                  <div className="space-y-1 text-sm text-fog/80">
+                    <div>{t('channelRanking.peerStabilityScore30d', { value: numberFormatter.format(selectedDetail.peer_stability_score_30d || 0) })}</div>
+                    <div>{t('channelRanking.peerSampleCount30d', { value: numberFormatter.format(selectedDetail.peer_sample_count_30d || 0) })}</div>
+                    <div>{t('channelRanking.htlcFailures30dLabel', { value: numberFormatter.format(selectedDetail.htlc_failures_30d || 0) })}</div>
+                    <div>{t('channelRanking.htlcPolicyFails30d', { value: numberFormatter.format(selectedDetail.htlc_policy_fails_30d || 0) })}</div>
+                    <div>{t('channelRanking.htlcLiquidityFails30d', { value: numberFormatter.format(selectedDetail.htlc_liquidity_fails_30d || 0) })}</div>
+                    <div>{t('channelRanking.htlcForwardFails30d', { value: numberFormatter.format(selectedDetail.htlc_forward_fails_30d || 0) })}</div>
+                    <div>{t('channelRanking.rebalanceDependenceScore', { value: numberFormatter.format(selectedDetail.rebalance_dependence_score || 0) })}</div>
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
                   <div className="mb-2 text-sm font-medium text-fog">{t('channelRanking.trendSectionTitle')}</div>
                   <div className="space-y-1 text-sm text-fog/80">
                     <div>{t('channelRanking.score7dLabel', { value: numberFormatter.format(selectedDetail.score_7d || selectedDetail.score) })}</div>
@@ -759,6 +806,22 @@ export default function ChannelRanking() {
                     <div>{t('channelRanking.trendDirectionLabel', { value: trendLabel(selectedDetail.trend_direction) })}</div>
                     <div>{t('channelRanking.trendDelta', { value: numberFormatter.format(selectedDetail.trend_delta || 0) })}</div>
                   </div>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+                  <div className="mb-2 text-sm font-medium text-fog">{t('channelRanking.feedbackTitle')}</div>
+                  {detailFeedback ? (
+                    <div className="space-y-1 text-sm text-fog/80">
+                      <div>{t('channelRanking.feedbackDirectionLabel', { value: trendLabel(detailFeedback.direction) })}</div>
+                      <div>{t('channelRanking.feedbackScoreDeltaLabel', { value: numberFormatter.format(detailFeedback.score_delta || 0) })}</div>
+                      <div>{t('channelRanking.feedbackNetDeltaLabel', { value: formatSats(detailFeedback.net_delta_sat) })}</div>
+                      <div>{t('channelRanking.feedbackWindowLabel', { value: numberFormatter.format(detailFeedback.window_hours || 0) })}</div>
+                      {detailFeedback.baseline_at && (
+                        <div>{t('channelRanking.feedbackBaselineAtLabel', { value: formatTimestamp(detailFeedback.baseline_at) })}</div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-fog/60">{t('channelRanking.feedbackEmpty')}</div>
+                  )}
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
                   <div className="mb-2 text-sm font-medium text-fog">{t('channelRanking.historyTitle')}</div>

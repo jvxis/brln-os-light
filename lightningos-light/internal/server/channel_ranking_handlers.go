@@ -78,6 +78,7 @@ func (s *Server) handleChannelRankingItemGet(w http.ResponseWriter, r *http.Requ
 		"item":          detail.Item,
 		"history":       detail.History,
 		"peer_channels": detail.PeerChannels,
+		"feedback":      detail.Feedback,
 	})
 }
 

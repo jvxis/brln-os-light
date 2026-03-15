@@ -655,6 +655,7 @@ const CHANNEL_HASH_PARAM = 'channel_point'
 const SECTION_HASH_PARAM = 'section'
 const CLOSE_RECOVERY_SECTION_ID = 'close-recovery-section'
 const AUTOFEE_SECTION_ID = 'autofee-section'
+const HTLC_MANAGER_SECTION_ID = 'htlc-manager-section'
 const SCB_RECOVERY_CONFIRM_PHRASE = 'I UNDERSTAND FORCE CLOSE'
 const BALANCED_OPEN_FUNDING_VBYTES = 190
 const BALANCED_OPEN_REQUIRED_REMAINING_SAT = 10000
@@ -2894,6 +2895,15 @@ export default function LightningOps() {
     if (targetSection === 'autofee') {
       window.setTimeout(() => {
         const target = document.getElementById(AUTOFEE_SECTION_ID)
+        if (!target) return
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        pendingScrollSectionRef.current = ''
+      }, 50)
+      return
+    }
+    if (targetSection === 'htlc_manager') {
+      window.setTimeout(() => {
+        const target = document.getElementById(HTLC_MANAGER_SECTION_ID)
         if (!target) return
         target.scrollIntoView({ behavior: 'smooth', block: 'start' })
         pendingScrollSectionRef.current = ''
@@ -7193,7 +7203,7 @@ export default function LightningOps() {
         )}
       </div>
 
-      <div className="section-card space-y-4">
+      <div id={HTLC_MANAGER_SECTION_ID} className="section-card space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-lg font-semibold">{t('lightningOps.failedPaymentsCleanerTitle')}</h3>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { acceptBalancedOpenSession, addLnWatchtower, boostPeers, bumpFeeCloseManagerSession, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelFees, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, recoverCloseManagerSession, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker } from '../api'
+import { acceptBalancedOpenSession, addLnWatchtower, boostPeers, bumpFeeCloseManagerSession, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getChannelRankings, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelFees, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, recoverCloseManagerSession, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker } from '../api'
 import { getLocale } from '../i18n'
 
 type Channel = {
@@ -123,6 +123,12 @@ type CloseRecoveryStatus = {
   htlc_blocked_count: number
   node_retirement_count: number
   state_counts?: Record<string, number>
+}
+
+type ChannelRankingItem = {
+  channel_point: string
+  score: number
+  state: 'expand' | 'maintain' | 'monitor' | 'close'
 }
 
 type Peer = {
@@ -643,6 +649,7 @@ const formatAutofeeHistoryTag = (tag: string) => {
 }
 
 const LIGHTNING_OPS_ROUTE_KEY = 'lightning-ops'
+const CHANNEL_RANKING_ROUTE_KEY = 'channel-ranking'
 const REBALANCE_ROUTE_KEY = 'rebalance-center'
 const CHANNEL_HASH_PARAM = 'channel_point'
 const CLOSE_RECOVERY_SECTION_ID = 'close-recovery-section'
@@ -719,6 +726,7 @@ export default function LightningOps() {
   const [closeRecoveryStatus, setCloseRecoveryStatus] = useState('')
   const [closeRecoveryBusyByID, setCloseRecoveryBusyByID] = useState<Record<number, boolean>>({})
   const [closeRecoveryActionStatusByID, setCloseRecoveryActionStatusByID] = useState<Record<number, string>>({})
+  const [channelRankingMap, setChannelRankingMap] = useState<Record<string, ChannelRankingItem>>({})
   const [channelsSubview, setChannelsSubview] = useState<'channels' | 'close_recovery'>('channels')
   const [closedChannelSearch, setClosedChannelSearch] = useState('')
   const [closedChannelFilter, setClosedChannelFilter] = useState<'all' | 'cooperative' | 'force' | 'breach' | 'other'>('all')
@@ -1027,6 +1035,32 @@ export default function LightningOps() {
         return 'bg-sky-500/20 text-sky-100'
       default:
         return 'bg-white/5 text-fog/60'
+    }
+  }
+
+  const channelRankingStateLabel = (value?: string) => {
+    switch (String(value || '').trim()) {
+      case 'expand':
+        return t('channelRanking.states.expand')
+      case 'maintain':
+        return t('channelRanking.states.maintain')
+      case 'close':
+        return t('channelRanking.states.close')
+      default:
+        return t('channelRanking.states.monitor')
+    }
+  }
+
+  const channelRankingBadgeClass = (value?: string) => {
+    switch (String(value || '').trim()) {
+      case 'expand':
+        return 'border-emerald-400/30 bg-emerald-500/15 text-emerald-200'
+      case 'maintain':
+        return 'border-sky-300/30 bg-sky-500/15 text-sky-100'
+      case 'close':
+        return 'border-rose-400/30 bg-rose-500/15 text-rose-100'
+      default:
+        return 'border-amber-300/30 bg-amber-500/15 text-amber-100'
     }
   }
 
@@ -2248,10 +2282,11 @@ export default function LightningOps() {
     setFailedPaymentsCleanerStatus(t('lightningOps.failedPaymentsCleanerLoading'))
     setTorPeerCheckerStatus(t('lightningOps.torPeerLoading'))
     setAutofeeMessage(t('lightningOps.autofeeLoading'))
-    const [channelsResult, peersResult, closedChannelsResult, closeManagerStatusResult, closeManagerSessionsResult, watchtowerResult, ambossResult, chanHealResult, htlcManagerResult, htlcManagerLogsResult, htlcManagerFailedResult, failedPaymentsCleanerResult, torPeerCheckerResult, torPeerCheckerLogsResult, bitcoinLocalResult, autofeeConfigResult, autofeeStatusResult, autofeeChannelsResult, autofeeResultsResult, balancedOpenStatusResult, balancedOpenSessionsResult] = await Promise.allSettled([
+    const [channelsResult, peersResult, closedChannelsResult, channelRankingResult, closeManagerStatusResult, closeManagerSessionsResult, watchtowerResult, ambossResult, chanHealResult, htlcManagerResult, htlcManagerLogsResult, htlcManagerFailedResult, failedPaymentsCleanerResult, torPeerCheckerResult, torPeerCheckerLogsResult, bitcoinLocalResult, autofeeConfigResult, autofeeStatusResult, autofeeChannelsResult, autofeeResultsResult, balancedOpenStatusResult, balancedOpenSessionsResult] = await Promise.allSettled([
       getLnChannels(),
       getLnPeers(),
       getLnClosedChannels(),
+      getChannelRankings({ limit: 500 }),
       getCloseManagerStatus(),
       getCloseManagerSessions(80),
       getLnWatchtowers(),
@@ -2294,6 +2329,13 @@ export default function LightningOps() {
     } else {
       const message = (closedChannelsResult.reason as any)?.message || t('lightningOps.loadClosedChannelsFailed')
       setClosedChannelStatus(message)
+    }
+    if (channelRankingResult.status === 'fulfilled') {
+      const payload = channelRankingResult.value as any
+      const nextItems = Array.isArray(payload?.items) ? payload.items as ChannelRankingItem[] : []
+      setChannelRankingMap(Object.fromEntries(nextItems.map((item) => [item.channel_point, item])))
+    } else {
+      setChannelRankingMap({})
     }
     if (closeManagerStatusResult.status === 'fulfilled') {
       setCloseRecoveryStatusData(closeManagerStatusResult.value as CloseRecoveryStatus)
@@ -2548,6 +2590,18 @@ export default function LightningOps() {
           setClosedChannelStatus(err?.message || t('lightningOps.loadClosedChannelsFailed'))
         })
     }
+    const refreshChannelRankings = () => {
+      getChannelRankings({ limit: 500 })
+        .then((res: any) => {
+          if (!mounted) return
+          const nextItems = Array.isArray(res?.items) ? res.items as ChannelRankingItem[] : []
+          setChannelRankingMap(Object.fromEntries(nextItems.map((item) => [item.channel_point, item])))
+        })
+        .catch(() => {
+          if (!mounted) return
+          setChannelRankingMap({})
+        })
+    }
     const fetchWatchtowers = () => {
       getLnWatchtowers()
         .then((res: any) => {
@@ -2717,6 +2771,7 @@ export default function LightningOps() {
     const channelsTimer = window.setInterval(() => {
       refreshChannels()
       refreshClosedChannels()
+      refreshChannelRankings()
     }, 10 * 60 * 1000)
     return () => {
       mounted = false
@@ -5607,6 +5662,10 @@ export default function LightningOps() {
                   ? t('lightningOps.inactiveFor', { time: formatChannelDowntime(inactiveDurationSec) })
                   : ''
                 const isFocused = focusedChannelPoint === ch.channel_point
+                const rankingItem = channelRankingMap[ch.channel_point]
+                const rankingLink = ch.channel_point
+                  ? buildHashWithChannelPoint(CHANNEL_RANKING_ROUTE_KEY, ch.channel_point)
+                  : `#${CHANNEL_RANKING_ROUTE_KEY}`
                 const rebalanceLink = ch.channel_point
                   ? buildHashWithChannelPoint(REBALANCE_ROUTE_KEY, ch.channel_point)
                   : `#${REBALANCE_ROUTE_KEY}`
@@ -5632,9 +5691,24 @@ export default function LightningOps() {
                         ) : (
                           <p className="text-sm text-fog/60">{ch.peer_alias || t('lightningOps.unknownPeer')}</p>
                         )}
-                        <p className="text-xs text-fog/50 break-all">
-                          {t('lightningOps.pointCapacityWithOpener', { point: ch.channel_point, capacity: ch.capacity_sat, opener })}
-                        </p>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-2">
+                          <p className="min-w-0 break-all text-xs text-fog/50">
+                            {t('lightningOps.pointCapacityWithOpener', { point: ch.channel_point, capacity: ch.capacity_sat, opener })}
+                          </p>
+                          {rankingItem && (
+                            <a
+                              href={rankingLink}
+                              className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] transition hover:border-white/25 hover:text-fog ${channelRankingBadgeClass(rankingItem.state)}`}
+                              title={t('lightningOps.openInChannelRanking')}
+                              aria-label={t('lightningOps.openInChannelRanking')}
+                            >
+                              {t('lightningOps.channelRankingBadge', {
+                                state: channelRankingStateLabel(rankingItem.state),
+                                score: rankingItem.score,
+                              })}
+                            </a>
+                          )}
+                        </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
                         <span className={`rounded-full px-3 py-1 text-xs ${ch.active ? 'bg-glow/20 text-glow' : isFCRisk ? 'bg-rose-500/25 text-rose-100' : 'bg-ember/20 text-ember'}`}>

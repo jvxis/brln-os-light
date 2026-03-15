@@ -7,6 +7,7 @@ import Reports from './pages/Reports'
 import Wizard from './pages/Wizard'
 import Wallet from './pages/Wallet'
 import LightningOps from './pages/LightningOps'
+import ChannelRanking from './pages/ChannelRanking'
 import RebalanceCenter from './pages/RebalanceCenter'
 import OnchainHub from './pages/OnchainHub'
 import Chat from './pages/Chat'
@@ -175,6 +176,7 @@ export default function App() {
       { key: 'reports', label: t('nav.reports'), element: <Reports /> },
       { key: 'wallet', label: t('nav.wallet'), element: <Wallet /> },
       { key: 'lightning-ops', label: t('nav.lightningOps'), element: <LightningOps /> },
+      { key: 'channel-ranking', label: t('nav.channelRanking'), element: <ChannelRanking /> },
       { key: 'rebalance-center', label: t('nav.rebalanceCenter'), element: <RebalanceCenter /> },
       { key: 'onchain-hub', label: t('nav.onchainHub'), element: <OnchainHub /> },
       { key: 'chat', label: t('nav.chat'), element: <Chat /> },

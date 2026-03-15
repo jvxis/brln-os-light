@@ -122,6 +122,12 @@ export const payInvoice = (payload: { payment_request: string; channel_point?: s
 export const getLnChannels = () => request('/api/lnops/channels')
 export const getLnPeers = () => request('/api/lnops/peers')
 export const getLnClosedChannels = () => request('/api/lnops/closed-channels')
+export const getChannelRankings = (params?: { limit?: number; state?: string }) =>
+  request(`/api/lnops/channel-ranking${buildQuery(params)}`)
+export const getChannelRanking = (channelPoint: string) =>
+  request(`/api/lnops/channel-ranking/${encodeURIComponent(channelPoint)}`)
+export const recomputeChannelRankings = () =>
+  request('/api/lnops/channel-ranking/recompute', { method: 'POST' })
 export const getCloseManagerStatus = () => request('/api/lnops/close-manager/status')
 export const getCloseManagerSessions = (limit = 100) =>
   request(`/api/lnops/close-manager/sessions?limit=${encodeURIComponent(String(limit))}`)

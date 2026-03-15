@@ -57,6 +57,10 @@ type Server struct {
 	shortcutsMu                 sync.Mutex
 	shortcuts                   *ShortcutsService
 	shortcutsErr                string
+	channelRankingInitAt        time.Time
+	channelRankingMu            sync.Mutex
+	channelRanking              *ChannelRankingService
+	channelRankingErr           string
 	balancedOpenInitAt          time.Time
 	balancedOpenMu              sync.Mutex
 	balancedOpen                *BalancedOpenService
@@ -103,6 +107,7 @@ func (s *Server) Run() error {
 	s.initDepix()
 	s.initAutofee()
 	s.initShortcuts()
+	s.initChannelRanking()
 	s.initBalancedOpen()
 	s.initCloseManager()
 	s.initNodeRetirement()
@@ -130,6 +135,9 @@ func (s *Server) Run() error {
 	}
 	if s.autofee != nil {
 		s.autofee.Start()
+	}
+	if s.channelRanking != nil {
+		s.channelRanking.Start()
 	}
 	if s.balancedOpen != nil {
 		s.balancedOpen.Start()

@@ -121,6 +121,10 @@ export const payInvoice = (payload: { payment_request: string; channel_point?: s
 
 export const getLnChannels = () => request('/api/lnops/channels')
 export const getLnPeers = () => request('/api/lnops/peers')
+export const getNetworkAtlasMap = () => request('/api/lnops/network-map')
+export const getNetworkAtlasConfig = () => request('/api/lnops/network-map/config')
+export const updateNetworkAtlasConfig = (payload: { label?: string; lat?: string | null; lon?: string | null }) =>
+  request('/api/lnops/network-map/config', { method: 'POST', body: JSON.stringify(payload) })
 export const getLnClosedChannels = () => request('/api/lnops/closed-channels')
 export const getChannelRankings = (params?: { limit?: number; state?: string }) =>
   request(`/api/lnops/channel-ranking${buildQuery(params)}`)

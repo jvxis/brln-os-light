@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard'
 import Reports from './pages/Reports'
 import Wizard from './pages/Wizard'
 import Wallet from './pages/Wallet'
+import NetworkAtlas from './pages/NetworkAtlas'
 import LightningOps from './pages/LightningOps'
 import ChannelRanking from './pages/ChannelRanking'
 import RebalanceCenter from './pages/RebalanceCenter'
@@ -175,6 +176,7 @@ export default function App() {
       { key: 'dashboard', label: t('nav.dashboard'), element: <Dashboard /> },
       { key: 'reports', label: t('nav.reports'), element: <Reports /> },
       { key: 'wallet', label: t('nav.wallet'), element: <Wallet /> },
+      { key: 'network-atlas', label: t('nav.networkAtlas'), element: <NetworkAtlas /> },
       { key: 'lightning-ops', label: t('nav.lightningOps'), element: <LightningOps /> },
       { key: 'channel-ranking', label: t('nav.channelRanking'), element: <ChannelRanking /> },
       { key: 'rebalance-center', label: t('nav.rebalanceCenter'), element: <RebalanceCenter /> },

@@ -20,6 +20,8 @@ type Server struct {
 	cfg                         *config.Config
 	logger                      *log.Logger
 	lnd                         *lndclient.Client
+	networkMapMu                sync.Mutex
+	networkMapGeoCache          map[string]networkMapGeoCacheEntry
 	db                          *pgxpool.Pool
 	notifier                    *Notifier
 	notifierErr                 string
@@ -85,9 +87,10 @@ type Server struct {
 
 func New(cfg *config.Config, logger *log.Logger) *Server {
 	srv := &Server{
-		cfg:    cfg,
-		logger: logger,
-		lnd:    lndclient.New(cfg, logger),
+		cfg:                cfg,
+		logger:             logger,
+		lnd:                lndclient.New(cfg, logger),
+		networkMapGeoCache: make(map[string]networkMapGeoCacheEntry),
 	}
 	srv.chat = NewChatService(srv.lnd, logger)
 	srv.amboss = NewAmbossHealthChecker(srv.lnd, logger)

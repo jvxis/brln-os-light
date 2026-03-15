@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getChannelRankings, recomputeChannelRankings } from '../api'
+import { getChannelRanking, getChannelRankings, recomputeChannelRankings } from '../api'
 import { getLocale } from '../i18n'
 
 type ChannelRankingReason = {
@@ -30,11 +30,22 @@ type ChannelRankingItem = {
   forward_fee_7d_sat: number
   forward_amt_7d_sat: number
   out_ppm_7d: number
+  forward_fee_30d_sat: number
+  forward_amt_30d_sat: number
+  out_ppm_30d: number
   rebal_fee_7d_sat: number
   rebal_amt_7d_sat: number
   rebal_ppm_7d: number
+  rebal_fee_30d_sat: number
+  rebal_amt_30d_sat: number
+  rebal_ppm_30d: number
   profit_fee_7d_sat: number
+  profit_fee_30d_sat: number
   score: number
+  score_7d: number
+  score_30d: number
+  trend_direction?: 'improving' | 'stable' | 'worsening'
+  trend_delta?: number
   state: 'expand' | 'maintain' | 'monitor' | 'close'
   reasons?: ChannelRankingReason[]
   recommendations?: ChannelRankingRecommendation[]
@@ -46,6 +57,38 @@ type ChannelRankingPayload = {
   last_sync_at?: string
   state_counts?: Record<string, number>
   items?: ChannelRankingItem[]
+}
+
+type ChannelRankingHistoryPoint = {
+  computed_at: string
+  score: number
+  score_7d: number
+  score_30d: number
+  trend_direction?: 'improving' | 'stable' | 'worsening'
+  trend_delta?: number
+  state: 'expand' | 'maintain' | 'monitor' | 'close'
+  profit_fee_7d_sat: number
+  profit_fee_30d_sat: number
+}
+
+type ChannelRankingPeerComparison = {
+  channel_point: string
+  channel_id: number
+  peer_alias?: string
+  score: number
+  score_30d: number
+  trend_direction?: 'improving' | 'stable' | 'worsening'
+  trend_delta?: number
+  state: 'expand' | 'maintain' | 'monitor' | 'close'
+  capacity_sat: number
+  profit_fee_7d_sat: number
+  profit_fee_30d_sat: number
+}
+
+type ChannelRankingDetailPayload = {
+  item?: ChannelRankingItem
+  history?: ChannelRankingHistoryPoint[]
+  peer_channels?: ChannelRankingPeerComparison[]
 }
 
 const CHANNEL_RANKING_ROUTE_KEY = 'channel-ranking'
@@ -94,6 +137,10 @@ export default function ChannelRanking() {
   const [filter, setFilter] = useState<'all' | 'expand' | 'maintain' | 'monitor' | 'close'>('all')
   const [selectedChannelPoint, setSelectedChannelPoint] = useState('')
   const [focusedChannelPoint, setFocusedChannelPoint] = useState('')
+  const [detailItem, setDetailItem] = useState<ChannelRankingItem | null>(null)
+  const [detailHistory, setDetailHistory] = useState<ChannelRankingHistoryPoint[]>([])
+  const [detailPeerChannels, setDetailPeerChannels] = useState<ChannelRankingPeerComparison[]>([])
+  const [detailLoading, setDetailLoading] = useState(false)
   const pendingScrollChannelRef = useRef('')
   const focusClearTimerRef = useRef<number | null>(null)
 
@@ -112,6 +159,22 @@ export default function ChannelRanking() {
         return 'bg-rose-500/15 text-rose-100 border border-rose-400/30'
       default:
         return 'bg-amber-500/15 text-amber-100 border border-amber-300/30'
+    }
+  }
+
+  const trendLabel = (value?: string) =>
+    t(`channelRanking.trends.${String(value || '').trim() || 'stable'}` as any, {
+      defaultValue: t('channelRanking.trends.stable')
+    })
+
+  const trendBadgeClass = (value?: string) => {
+    switch (String(value || '').trim()) {
+      case 'improving':
+        return 'border-emerald-400/30 bg-emerald-500/15 text-emerald-200'
+      case 'worsening':
+        return 'border-rose-400/30 bg-rose-500/15 text-rose-100'
+      default:
+        return 'border-white/10 bg-white/[0.03] text-fog/70'
     }
   }
 
@@ -184,6 +247,9 @@ export default function ChannelRanking() {
       setItems([])
       setStateCounts({})
       setAvailable(false)
+      setDetailItem(null)
+      setDetailHistory([])
+      setDetailPeerChannels([])
     } finally {
       setLoading(false)
       setRefreshing(false)
@@ -222,11 +288,61 @@ export default function ChannelRanking() {
     return filteredItems[0] || items[0] || null
   }, [filteredItems, items, selectedChannelPoint])
 
+  const selectedDetail = detailItem && detailItem.channel_point === selectedChannelPoint ? detailItem : selectedItem
+
+  const stateCapacity = useMemo(() => {
+    return items.reduce<Record<string, number>>((acc, item) => {
+      acc[item.state] = (acc[item.state] || 0) + Number(item.capacity_sat || 0)
+      return acc
+    }, {})
+  }, [items])
+
+  const trendCounts = useMemo(() => {
+    return items.reduce<Record<string, number>>((acc, item) => {
+      const key = item.trend_direction || 'stable'
+      acc[key] = (acc[key] || 0) + 1
+      return acc
+    }, {})
+  }, [items])
+
   useEffect(() => {
     if (!selectedItem) return
     if (selectedChannelPoint === selectedItem.channel_point) return
     setSelectedChannelPoint(selectedItem.channel_point)
   }, [selectedChannelPoint, selectedItem])
+
+  useEffect(() => {
+    if (!selectedChannelPoint) {
+      setDetailItem(null)
+      setDetailHistory([])
+      setDetailPeerChannels([])
+      return
+    }
+    let active = true
+    setDetailLoading(true)
+    getChannelRanking(selectedChannelPoint)
+      .then((payload: any) => {
+        if (!active) return
+        const detail = payload as ChannelRankingDetailPayload
+        setDetailItem((detail?.item as ChannelRankingItem) || null)
+        setDetailHistory(Array.isArray(detail?.history) ? detail.history : [])
+        setDetailPeerChannels(Array.isArray(detail?.peer_channels) ? detail.peer_channels : [])
+      })
+      .catch(() => {
+        if (!active) return
+        const fallback = items.find((item) => item.channel_point === selectedChannelPoint) || null
+        setDetailItem(fallback)
+        setDetailHistory([])
+        setDetailPeerChannels([])
+      })
+      .finally(() => {
+        if (!active) return
+        setDetailLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [items, selectedChannelPoint])
 
   useEffect(() => {
     const targetChannelPoint = pendingScrollChannelRef.current || selectedChannelPoint
@@ -313,6 +429,36 @@ export default function ChannelRanking() {
         </div>
       </section>
 
+      <section className="grid gap-3 lg:grid-cols-3">
+        <div className="rounded-3xl border border-white/10 bg-ink/60 p-4">
+          <div className="text-[11px] uppercase tracking-wide text-fog/45">{t('channelRanking.summaryCapitalTitle')}</div>
+          <div className="mt-2 space-y-1 text-sm text-fog/80">
+            <div>{t('channelRanking.summaryCapitalExpand', { value: formatSats(stateCapacity.expand) })}</div>
+            <div>{t('channelRanking.summaryCapitalMonitor', { value: formatSats(stateCapacity.monitor) })}</div>
+            <div>{t('channelRanking.summaryCapitalClose', { value: formatSats(stateCapacity.close) })}</div>
+          </div>
+        </div>
+        <div className="rounded-3xl border border-white/10 bg-ink/60 p-4">
+          <div className="text-[11px] uppercase tracking-wide text-fog/45">{t('channelRanking.summaryTrendTitle')}</div>
+          <div className="mt-2 space-y-1 text-sm text-fog/80">
+            <div>{t('channelRanking.summaryTrendImproving', { count: trendCounts.improving || 0 })}</div>
+            <div>{t('channelRanking.summaryTrendStable', { count: trendCounts.stable || 0 })}</div>
+            <div>{t('channelRanking.summaryTrendWorsening', { count: trendCounts.worsening || 0 })}</div>
+          </div>
+        </div>
+        <div className="rounded-3xl border border-white/10 bg-ink/60 p-4">
+          <div className="text-[11px] uppercase tracking-wide text-fog/45">{t('channelRanking.summaryOpportunityTitle')}</div>
+          <div className="mt-2 space-y-1 text-sm text-fog/80">
+            {(items.slice(0, 3)).map((item) => (
+              <div key={item.channel_point} className="truncate">
+                {(item.peer_alias || item.channel_point)} · {t('channelRanking.scoreShort', { value: numberFormatter.format(item.score) })}
+              </div>
+            ))}
+            {items.length === 0 && <div>{t('common.na')}</div>}
+          </div>
+        </div>
+      </section>
+
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
         <section className="rounded-3xl border border-white/10 bg-ink/60 p-4 sm:p-5">
           <div className="mb-4 flex items-center justify-between gap-3">
@@ -352,6 +498,9 @@ export default function ChannelRanking() {
                         <span className={`rounded-full px-2.5 py-1 text-[11px] ${stateBadgeClass(item.state)}`}>
                           {stateLabel(item.state)}
                         </span>
+                        <span className={`rounded-full border px-2.5 py-1 text-[11px] ${trendBadgeClass(item.trend_direction)}`}>
+                          {trendLabel(item.trend_direction)}
+                        </span>
                         <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-fog/75">
                           {t('channelRanking.scoreShort', { value: numberFormatter.format(item.score) })}
                         </span>
@@ -359,9 +508,10 @@ export default function ChannelRanking() {
                     </div>
                     <div className="mt-3 grid gap-2 text-xs text-fog/70 sm:grid-cols-2 lg:grid-cols-4">
                       <div>{t('channelRanking.netFees7d', { value: formatSats(item.profit_fee_7d_sat) })}</div>
+                      <div>{t('channelRanking.netFees30d', { value: formatSats(item.profit_fee_30d_sat) })}</div>
                       <div>{t('channelRanking.capacity', { value: formatSats(item.capacity_sat) })}</div>
                       <div>{t('channelRanking.localBalancePct', { value: formatPct(item.local_balance_pct) })}</div>
-                      <div>{t('channelRanking.pendingHtlcCount', { value: numberFormatter.format(item.pending_htlc_count || 0) })}</div>
+                      <div>{t('channelRanking.trendDelta', { value: numberFormatter.format(item.trend_delta || 0) })}</div>
                     </div>
                   </button>
                 )
@@ -373,9 +523,9 @@ export default function ChannelRanking() {
         <aside className="rounded-3xl border border-white/10 bg-ink/60 p-4 sm:p-5">
           <div className="mb-4 flex items-center justify-between gap-3">
             <h3 className="text-lg font-semibold">{t('channelRanking.detailTitle')}</h3>
-            {selectedItem && (
+            {selectedDetail && (
               <a
-                href={buildHashWithChannelPoint(LIGHTNING_OPS_ROUTE_KEY, selectedItem.channel_point)}
+                href={buildHashWithChannelPoint(LIGHTNING_OPS_ROUTE_KEY, selectedDetail.channel_point)}
                 className="text-xs text-sky-200 hover:text-sky-100"
               >
                 {t('channelRanking.openInLightningOps')}
@@ -383,54 +533,103 @@ export default function ChannelRanking() {
             )}
           </div>
 
-          {!selectedItem ? (
+          {!selectedDetail ? (
             <p className="text-sm text-fog/70">{t('channelRanking.selectChannel')}</p>
           ) : (
             <div className="space-y-5">
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className={`rounded-full px-3 py-1 text-xs ${stateBadgeClass(selectedItem.state)}`}>
-                    {stateLabel(selectedItem.state)}
+                  <span className={`rounded-full px-3 py-1 text-xs ${stateBadgeClass(selectedDetail.state)}`}>
+                    {stateLabel(selectedDetail.state)}
+                  </span>
+                  <span className={`rounded-full border px-3 py-1 text-xs ${trendBadgeClass(selectedDetail.trend_direction)}`}>
+                    {trendLabel(selectedDetail.trend_direction)}
                   </span>
                   <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-fog/75">
-                    {t('channelRanking.score', { value: numberFormatter.format(selectedItem.score) })}
+                    {t('channelRanking.score', { value: numberFormatter.format(selectedDetail.score) })}
                   </span>
-                  {selectedItem.class_label && (
+                  <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-fog/75">
+                    {t('channelRanking.score7dVs30d', {
+                      score7d: numberFormatter.format(selectedDetail.score_7d || selectedDetail.score),
+                      score30d: numberFormatter.format(selectedDetail.score_30d || 0)
+                    })}
+                  </span>
+                  {selectedDetail.class_label && (
                     <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-fog/75">
-                      {selectedItem.class_label}
+                      {selectedDetail.class_label}
                     </span>
                   )}
                 </div>
                 <div className="text-base font-medium text-fog">
-                  {selectedItem.peer_alias || selectedItem.peer_pubkey || selectedItem.channel_point}
+                  {selectedDetail.peer_alias || selectedDetail.peer_pubkey || selectedDetail.channel_point}
                 </div>
-                <div className="break-all text-xs text-fog/55">{selectedItem.channel_point}</div>
+                <div className="break-all text-xs text-fog/55">{selectedDetail.channel_point}</div>
               </div>
 
               <div className="grid gap-3 text-sm sm:grid-cols-2">
                 <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
                   <div className="text-[11px] uppercase tracking-wide text-fog/45">{t('channelRanking.metricsTitle')}</div>
                   <div className="mt-2 space-y-1 text-fog/80">
-                    <div>{t('channelRanking.capacity', { value: formatSats(selectedItem.capacity_sat) })}</div>
-                    <div>{t('channelRanking.localBalance', { value: formatSats(selectedItem.local_balance_sat) })}</div>
-                    <div>{t('channelRanking.remoteBalance', { value: formatSats(selectedItem.remote_balance_sat) })}</div>
-                    <div>{t('channelRanking.localBalancePct', { value: formatPct(selectedItem.local_balance_pct) })}</div>
-                    <div>{t('channelRanking.remoteBalancePct', { value: formatPct(selectedItem.remote_balance_pct) })}</div>
-                    <div>{t('channelRanking.pendingHtlcCount', { value: numberFormatter.format(selectedItem.pending_htlc_count || 0) })}</div>
-                    <div>{t('channelRanking.inactiveDuration', { value: formatDuration(selectedItem.inactive_duration_sec) })}</div>
+                    <div>{t('channelRanking.capacity', { value: formatSats(selectedDetail.capacity_sat) })}</div>
+                    <div>{t('channelRanking.localBalance', { value: formatSats(selectedDetail.local_balance_sat) })}</div>
+                    <div>{t('channelRanking.remoteBalance', { value: formatSats(selectedDetail.remote_balance_sat) })}</div>
+                    <div>{t('channelRanking.localBalancePct', { value: formatPct(selectedDetail.local_balance_pct) })}</div>
+                    <div>{t('channelRanking.remoteBalancePct', { value: formatPct(selectedDetail.remote_balance_pct) })}</div>
+                    <div>{t('channelRanking.pendingHtlcCount', { value: numberFormatter.format(selectedDetail.pending_htlc_count || 0) })}</div>
+                    <div>{t('channelRanking.inactiveDuration', { value: formatDuration(selectedDetail.inactive_duration_sec) })}</div>
                   </div>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
                   <div className="text-[11px] uppercase tracking-wide text-fog/45">{t('channelRanking.economicsTitle')}</div>
                   <div className="mt-2 space-y-1 text-fog/80">
-                    <div>{t('channelRanking.forwardFees7d', { value: formatSats(selectedItem.forward_fee_7d_sat) })}</div>
-                    <div>{t('channelRanking.forwardAmount7d', { value: formatSats(selectedItem.forward_amt_7d_sat) })}</div>
-                    <div>{t('channelRanking.outPpm7d', { value: numberFormatter.format(selectedItem.out_ppm_7d || 0) })}</div>
-                    <div>{t('channelRanking.rebalanceFees7d', { value: formatSats(selectedItem.rebal_fee_7d_sat) })}</div>
-                    <div>{t('channelRanking.rebalanceAmount7d', { value: formatSats(selectedItem.rebal_amt_7d_sat) })}</div>
-                    <div>{t('channelRanking.rebalancePpm7d', { value: numberFormatter.format(selectedItem.rebal_ppm_7d || 0) })}</div>
-                    <div>{t('channelRanking.netFees7d', { value: formatSats(selectedItem.profit_fee_7d_sat) })}</div>
-                    <div>{t('channelRanking.computedAt', { value: formatTimestamp(selectedItem.computed_at) })}</div>
+                    <div>{t('channelRanking.forwardFees7d', { value: formatSats(selectedDetail.forward_fee_7d_sat) })}</div>
+                    <div>{t('channelRanking.forwardAmount7d', { value: formatSats(selectedDetail.forward_amt_7d_sat) })}</div>
+                    <div>{t('channelRanking.outPpm7d', { value: numberFormatter.format(selectedDetail.out_ppm_7d || 0) })}</div>
+                    <div>{t('channelRanking.rebalanceFees7d', { value: formatSats(selectedDetail.rebal_fee_7d_sat) })}</div>
+                    <div>{t('channelRanking.rebalanceAmount7d', { value: formatSats(selectedDetail.rebal_amt_7d_sat) })}</div>
+                    <div>{t('channelRanking.rebalancePpm7d', { value: numberFormatter.format(selectedDetail.rebal_ppm_7d || 0) })}</div>
+                    <div>{t('channelRanking.netFees7d', { value: formatSats(selectedDetail.profit_fee_7d_sat) })}</div>
+                    <div>{t('channelRanking.forwardFees30d', { value: formatSats(selectedDetail.forward_fee_30d_sat) })}</div>
+                    <div>{t('channelRanking.rebalanceFees30d', { value: formatSats(selectedDetail.rebal_fee_30d_sat) })}</div>
+                    <div>{t('channelRanking.netFees30d', { value: formatSats(selectedDetail.profit_fee_30d_sat) })}</div>
+                    <div>{t('channelRanking.computedAt', { value: formatTimestamp(selectedDetail.computed_at) })}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-3 lg:grid-cols-2">
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+                  <div className="mb-2 text-sm font-medium text-fog">{t('channelRanking.trendSectionTitle')}</div>
+                  <div className="space-y-1 text-sm text-fog/80">
+                    <div>{t('channelRanking.score7dLabel', { value: numberFormatter.format(selectedDetail.score_7d || selectedDetail.score) })}</div>
+                    <div>{t('channelRanking.score30dLabel', { value: numberFormatter.format(selectedDetail.score_30d || 0) })}</div>
+                    <div>{t('channelRanking.trendDirectionLabel', { value: trendLabel(selectedDetail.trend_direction) })}</div>
+                    <div>{t('channelRanking.trendDelta', { value: numberFormatter.format(selectedDetail.trend_delta || 0) })}</div>
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+                  <div className="mb-2 text-sm font-medium text-fog">{t('channelRanking.historyTitle')}</div>
+                  <div className="space-y-2">
+                    {detailLoading ? (
+                      <div className="text-sm text-fog/60">{t('channelRanking.loading')}</div>
+                    ) : detailHistory.length > 0 ? (
+                      detailHistory.slice(0, 8).map((point) => (
+                        <div key={`${selectedDetail.channel_point}-${point.computed_at}`} className="rounded-xl border border-white/10 px-3 py-2 text-xs text-fog/75">
+                          <div className="flex items-center justify-between gap-3">
+                            <span>{formatTimestamp(point.computed_at)}</span>
+                            <span className={`rounded-full border px-2 py-0.5 ${trendBadgeClass(point.trend_direction)}`}>
+                              {trendLabel(point.trend_direction)}
+                            </span>
+                          </div>
+                          <div className="mt-1 flex flex-wrap gap-3">
+                            <span>{t('channelRanking.scoreShort', { value: numberFormatter.format(point.score) })}</span>
+                            <span>{t('channelRanking.netFees7d', { value: formatSats(point.profit_fee_7d_sat) })}</span>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-sm text-fog/60">{t('channelRanking.historyEmpty')}</div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -439,8 +638,8 @@ export default function ChannelRanking() {
                 <div>
                   <div className="mb-2 text-sm font-medium text-fog">{t('channelRanking.reasonsTitle')}</div>
                   <div className="flex flex-wrap gap-2">
-                    {(selectedItem.reasons || []).length > 0 ? (
-                      selectedItem.reasons!.map((reason) => (
+                    {(selectedDetail.reasons || []).length > 0 ? (
+                      selectedDetail.reasons!.map((reason) => (
                         <span
                           key={reason.code}
                           className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-xs text-fog/75"
@@ -457,11 +656,11 @@ export default function ChannelRanking() {
                 <div>
                   <div className="mb-2 text-sm font-medium text-fog">{t('channelRanking.recommendationsTitle')}</div>
                   <div className="space-y-2">
-                    {(selectedItem.recommendations || []).length > 0 ? (
-                      selectedItem.recommendations!.map((item) => (
+                    {(selectedDetail.recommendations || []).length > 0 ? (
+                      selectedDetail.recommendations!.map((item) => (
                         <a
                           key={`${item.code}-${item.target_module || ''}`}
-                          href={buildModuleLink(selectedItem, item.target_module)}
+                          href={buildModuleLink(selectedDetail, item.target_module)}
                           className="flex items-start justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-fog/80 transition hover:border-white/20 hover:bg-white/[0.05]"
                         >
                           <span>{recommendationLabel(item.code)}</span>
@@ -470,6 +669,50 @@ export default function ChannelRanking() {
                       ))
                     ) : (
                       <span className="text-sm text-fog/60">{t('common.na')}</span>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="mb-2 text-sm font-medium text-fog">{t('channelRanking.peerComparisonTitle')}</div>
+                  <div className="space-y-2">
+                    {detailLoading ? (
+                      <div className="text-sm text-fog/60">{t('channelRanking.loading')}</div>
+                    ) : detailPeerChannels.length > 1 ? (
+                      detailPeerChannels
+                        .filter((item) => item.channel_point !== selectedDetail.channel_point)
+                        .map((item) => (
+                          <button
+                            key={item.channel_point}
+                            type="button"
+                            onClick={() => {
+                              setSelectedChannelPoint(item.channel_point)
+                              window.history.replaceState(null, '', buildHashWithChannelPoint(CHANNEL_RANKING_ROUTE_KEY, item.channel_point))
+                            }}
+                            className="flex w-full items-start justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-left text-sm text-fog/80 transition hover:border-white/20 hover:bg-white/[0.05]"
+                          >
+                            <div className="min-w-0">
+                              <div className="truncate">{item.peer_alias || item.channel_point}</div>
+                              <div className="mt-1 text-xs text-fog/60">
+                                {t('channelRanking.peerComparisonSummary', {
+                                  score: numberFormatter.format(item.score),
+                                  net7d: formatSats(item.profit_fee_7d_sat),
+                                  capacity: formatSats(item.capacity_sat)
+                                })}
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap items-center justify-end gap-2">
+                              <span className={`rounded-full px-2 py-0.5 text-[11px] ${stateBadgeClass(item.state)}`}>
+                                {stateLabel(item.state)}
+                              </span>
+                              <span className={`rounded-full border px-2 py-0.5 text-[11px] ${trendBadgeClass(item.trend_direction)}`}>
+                                {trendLabel(item.trend_direction)}
+                              </span>
+                            </div>
+                          </button>
+                        ))
+                    ) : (
+                      <div className="text-sm text-fog/60">{t('channelRanking.peerComparisonEmpty')}</div>
                     )}
                   </div>
                 </div>

@@ -32,6 +32,38 @@ type ChannelRankingRecommendation struct {
 	TargetModule string `json:"target_module,omitempty"`
 }
 
+type ChannelRankingHistoryPoint struct {
+	ComputedAt      time.Time `json:"computed_at"`
+	Score           int       `json:"score"`
+	Score7d         int       `json:"score_7d"`
+	Score30d        int       `json:"score_30d"`
+	TrendDirection  string    `json:"trend_direction,omitempty"`
+	TrendDelta      int       `json:"trend_delta,omitempty"`
+	State           string    `json:"state"`
+	ProfitFee7dSat  int64     `json:"profit_fee_7d_sat"`
+	ProfitFee30dSat int64     `json:"profit_fee_30d_sat"`
+}
+
+type ChannelRankingPeerComparison struct {
+	ChannelPoint    string `json:"channel_point"`
+	ChannelID       int64  `json:"channel_id"`
+	PeerAlias       string `json:"peer_alias,omitempty"`
+	Score           int    `json:"score"`
+	Score30d        int    `json:"score_30d"`
+	TrendDirection  string `json:"trend_direction,omitempty"`
+	TrendDelta      int    `json:"trend_delta,omitempty"`
+	State           string `json:"state"`
+	CapacitySat     int64  `json:"capacity_sat"`
+	ProfitFee7dSat  int64  `json:"profit_fee_7d_sat"`
+	ProfitFee30dSat int64  `json:"profit_fee_30d_sat"`
+}
+
+type ChannelRankingDetail struct {
+	Item         ChannelRankingItem             `json:"item"`
+	History      []ChannelRankingHistoryPoint   `json:"history,omitempty"`
+	PeerChannels []ChannelRankingPeerComparison `json:"peer_channels,omitempty"`
+}
+
 type ChannelRankingItem struct {
 	ChannelPoint        string                         `json:"channel_point"`
 	ChannelID           int64                          `json:"channel_id"`
@@ -50,11 +82,22 @@ type ChannelRankingItem struct {
 	ForwardFee7dSat     int64                          `json:"forward_fee_7d_sat"`
 	ForwardAmt7dSat     int64                          `json:"forward_amt_7d_sat"`
 	OutPpm7d            int                            `json:"out_ppm_7d"`
+	ForwardFee30dSat    int64                          `json:"forward_fee_30d_sat"`
+	ForwardAmt30dSat    int64                          `json:"forward_amt_30d_sat"`
+	OutPpm30d           int                            `json:"out_ppm_30d"`
 	RebalFee7dSat       int64                          `json:"rebal_fee_7d_sat"`
 	RebalAmt7dSat       int64                          `json:"rebal_amt_7d_sat"`
 	RebalPpm7d          int                            `json:"rebal_ppm_7d"`
+	RebalFee30dSat      int64                          `json:"rebal_fee_30d_sat"`
+	RebalAmt30dSat      int64                          `json:"rebal_amt_30d_sat"`
+	RebalPpm30d         int                            `json:"rebal_ppm_30d"`
 	ProfitFee7dSat      int64                          `json:"profit_fee_7d_sat"`
+	ProfitFee30dSat     int64                          `json:"profit_fee_30d_sat"`
 	Score               int                            `json:"score"`
+	Score7d             int                            `json:"score_7d"`
+	Score30d            int                            `json:"score_30d"`
+	TrendDirection      string                         `json:"trend_direction,omitempty"`
+	TrendDelta          int                            `json:"trend_delta,omitempty"`
 	State               string                         `json:"state"`
 	Reasons             []ChannelRankingReason         `json:"reasons,omitempty"`
 	Recommendations     []ChannelRankingRecommendation `json:"recommendations,omitempty"`
@@ -114,11 +157,22 @@ create table if not exists channel_rankings (
   forward_fee_7d_sat bigint not null default 0,
   forward_amt_7d_sat bigint not null default 0,
   out_ppm_7d integer not null default 0,
+  forward_fee_30d_sat bigint not null default 0,
+  forward_amt_30d_sat bigint not null default 0,
+  out_ppm_30d integer not null default 0,
   rebal_fee_7d_sat bigint not null default 0,
   rebal_amt_7d_sat bigint not null default 0,
   rebal_ppm_7d integer not null default 0,
+  rebal_fee_30d_sat bigint not null default 0,
+  rebal_amt_30d_sat bigint not null default 0,
+  rebal_ppm_30d integer not null default 0,
   profit_fee_7d_sat bigint not null default 0,
+  profit_fee_30d_sat bigint not null default 0,
   score integer not null default 0,
+  score_7d integer not null default 0,
+  score_30d integer not null default 0,
+  trend_direction text not null default 'stable',
+  trend_delta integer not null default 0,
   state text not null default 'monitor',
   reasons_json jsonb not null default '[]'::jsonb,
   recommendations_json jsonb not null default '[]'::jsonb,
@@ -126,6 +180,38 @@ create table if not exists channel_rankings (
 );
 create index if not exists channel_rankings_state_score_idx on channel_rankings (state, score desc, profit_fee_7d_sat desc);
 create index if not exists channel_rankings_score_idx on channel_rankings (score desc, profit_fee_7d_sat desc);
+create table if not exists channel_ranking_history (
+  id bigserial primary key,
+  channel_point text not null,
+  computed_bucket timestamptz not null,
+  score integer not null default 0,
+  score_7d integer not null default 0,
+  score_30d integer not null default 0,
+  trend_direction text not null default 'stable',
+  trend_delta integer not null default 0,
+  state text not null default 'monitor',
+  profit_fee_7d_sat bigint not null default 0,
+  profit_fee_30d_sat bigint not null default 0,
+  created_at timestamptz not null default now(),
+  unique(channel_point, computed_bucket)
+);
+create index if not exists channel_ranking_history_point_idx on channel_ranking_history (channel_point, computed_bucket desc);
+`)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(ctx, `
+alter table channel_rankings add column if not exists forward_fee_30d_sat bigint not null default 0;
+alter table channel_rankings add column if not exists forward_amt_30d_sat bigint not null default 0;
+alter table channel_rankings add column if not exists out_ppm_30d integer not null default 0;
+alter table channel_rankings add column if not exists rebal_fee_30d_sat bigint not null default 0;
+alter table channel_rankings add column if not exists rebal_amt_30d_sat bigint not null default 0;
+alter table channel_rankings add column if not exists rebal_ppm_30d integer not null default 0;
+alter table channel_rankings add column if not exists profit_fee_30d_sat bigint not null default 0;
+alter table channel_rankings add column if not exists score_7d integer not null default 0;
+alter table channel_rankings add column if not exists score_30d integer not null default 0;
+alter table channel_rankings add column if not exists trend_direction text not null default 'stable';
+alter table channel_rankings add column if not exists trend_delta integer not null default 0;
 `)
 	return err
 }
@@ -223,9 +309,17 @@ func (s *ChannelRankingService) Refresh(ctx context.Context) error {
 	if err != nil && s.logger != nil {
 		s.logger.Printf("channel ranking forward stats lookup failed: %v", err)
 	}
+	forwardStats30d, err := s.fetchForwardStats30d(ctx)
+	if err != nil && s.logger != nil {
+		s.logger.Printf("channel ranking 30d forward stats lookup failed: %v", err)
+	}
 	rebalStats, err := s.fetchRebalanceStats7d(ctx)
 	if err != nil && s.logger != nil {
 		s.logger.Printf("channel ranking rebalance stats lookup failed: %v", err)
+	}
+	rebalStats30d, err := s.fetchRebalanceStats30d(ctx)
+	if err != nil && s.logger != nil {
+		s.logger.Printf("channel ranking 30d rebalance stats lookup failed: %v", err)
 	}
 
 	now := time.Now().UTC()
@@ -236,8 +330,19 @@ func (s *ChannelRankingService) Refresh(ctx context.Context) error {
 			continue
 		}
 		points = append(points, point)
-		item := buildChannelRankingItem(now, ch, labels[ch.ChannelID], forwardStats[ch.ChannelID], rebalStats[ch.ChannelID])
+		item := buildChannelRankingItem(
+			now,
+			ch,
+			labels[ch.ChannelID],
+			forwardStats[ch.ChannelID],
+			forwardStats30d[ch.ChannelID],
+			rebalStats[ch.ChannelID],
+			rebalStats30d[ch.ChannelID],
+		)
 		if err := s.upsertItem(ctx, item); err != nil {
+			return err
+		}
+		if err := s.upsertHistoryPoint(ctx, item); err != nil {
 			return err
 		}
 	}
@@ -282,6 +387,14 @@ where class_label is not null and class_label <> ''
 }
 
 func (s *ChannelRankingService) fetchForwardStats7d(ctx context.Context) (map[uint64]channelTrafficStat, error) {
+	return s.fetchForwardStats(ctx, 7)
+}
+
+func (s *ChannelRankingService) fetchForwardStats30d(ctx context.Context) (map[uint64]channelTrafficStat, error) {
+	return s.fetchForwardStats(ctx, 30)
+}
+
+func (s *ChannelRankingService) fetchForwardStats(ctx context.Context, days int) (map[uint64]channelTrafficStat, error) {
 	stats := map[uint64]channelTrafficStat{}
 	rows, err := s.db.Query(ctx, `
 select
@@ -297,10 +410,10 @@ select
   coalesce(sum(case when amount_out_msat > 0 then amount_out_msat else amount_sat * 1000 end), 0) as amount_msat
 from notifications
 where type='forward'
-  and occurred_at >= now() - interval '7 day'
+  and occurred_at >= now() - ($1::int * interval '1 day')
   and coalesce(chan_id_out, channel_id) is not null
 group by coalesce(chan_id_out, channel_id)
-`)
+`, days)
 	if err != nil {
 		return stats, err
 	}
@@ -325,6 +438,14 @@ group by coalesce(chan_id_out, channel_id)
 }
 
 func (s *ChannelRankingService) fetchRebalanceStats7d(ctx context.Context) (map[uint64]channelTrafficStat, error) {
+	return s.fetchRebalanceStats(ctx, 7)
+}
+
+func (s *ChannelRankingService) fetchRebalanceStats30d(ctx context.Context) (map[uint64]channelTrafficStat, error) {
+	return s.fetchRebalanceStats(ctx, 30)
+}
+
+func (s *ChannelRankingService) fetchRebalanceStats(ctx context.Context, days int) (map[uint64]channelTrafficStat, error) {
 	stats := map[uint64]channelTrafficStat{}
 	rows, err := s.db.Query(ctx, `
 select
@@ -340,10 +461,10 @@ select
 from notifications
 where type='rebalance'
   and status in ('SETTLED', 'SUCCEEDED')
-  and occurred_at >= now() - interval '7 day'
+  and occurred_at >= now() - ($1::int * interval '1 day')
   and coalesce(rebal_target_chan_id, rebal_source_chan_id, channel_id) is not null
 group by coalesce(rebal_target_chan_id, rebal_source_chan_id, channel_id)
-`)
+`, days)
 	if err != nil {
 		return stats, err
 	}
@@ -367,7 +488,15 @@ group by coalesce(rebal_target_chan_id, rebal_source_chan_id, channel_id)
 	return stats, rows.Err()
 }
 
-func buildChannelRankingItem(now time.Time, ch lndclient.ChannelInfo, classLabel string, forward channelTrafficStat, rebal channelTrafficStat) ChannelRankingItem {
+func buildChannelRankingItem(
+	now time.Time,
+	ch lndclient.ChannelInfo,
+	classLabel string,
+	forward7d channelTrafficStat,
+	forward30d channelTrafficStat,
+	rebal7d channelTrafficStat,
+	rebal30d channelTrafficStat,
+) ChannelRankingItem {
 	capacity := rankingMaxInt64(0, ch.CapacitySat)
 	localBalance := rankingMaxInt64(0, ch.LocalBalanceSat)
 	remoteBalance := rankingMaxInt64(0, ch.RemoteBalanceSat)
@@ -381,9 +510,12 @@ func buildChannelRankingItem(now time.Time, ch lndclient.ChannelInfo, classLabel
 		localPct = clampFloat64((float64(localBalance)/float64(totalBalance))*100, 0, 100)
 		remotePct = clampFloat64((float64(remoteBalance)/float64(totalBalance))*100, 0, 100)
 	}
-	profitSat := forward.FeeSat - rebal.FeeSat
-	score := computeChannelRankingScore(ch, capacity, localPct, forward, rebal, profitSat)
-	state, reasons, recommendations := classifyChannelRanking(ch, capacity, localPct, forward, rebal, profitSat, score)
+	profitSat7d := forward7d.FeeSat - rebal7d.FeeSat
+	profitSat30d := forward30d.FeeSat - rebal30d.FeeSat
+	score7d := computeChannelRankingScore(ch, capacity, localPct, forward7d, rebal7d, profitSat7d)
+	score30d := computeChannelRankingScore(ch, capacity, localPct, forward30d, rebal30d, profitSat30d)
+	trendDirection, trendDelta := computeChannelRankingTrend(score7d, score30d)
+	state, reasons, recommendations := classifyChannelRanking(ch, capacity, localPct, forward7d, rebal7d, profitSat7d, score7d)
 
 	return ChannelRankingItem{
 		ChannelPoint:        strings.TrimSpace(ch.ChannelPoint),
@@ -400,14 +532,25 @@ func buildChannelRankingItem(now time.Time, ch lndclient.ChannelInfo, classLabel
 		InactiveDurationSec: rankingMaxInt64(0, ch.InactiveDurationSec),
 		PendingHtlcCount:    rankingMaxInt(0, ch.PendingHtlcCount),
 		ClassLabel:          strings.TrimSpace(classLabel),
-		ForwardFee7dSat:     forward.FeeSat,
-		ForwardAmt7dSat:     forward.AmountSat,
-		OutPpm7d:            forward.Ppm,
-		RebalFee7dSat:       rebal.FeeSat,
-		RebalAmt7dSat:       rebal.AmountSat,
-		RebalPpm7d:          rebal.Ppm,
-		ProfitFee7dSat:      profitSat,
-		Score:               score,
+		ForwardFee7dSat:     forward7d.FeeSat,
+		ForwardAmt7dSat:     forward7d.AmountSat,
+		OutPpm7d:            forward7d.Ppm,
+		ForwardFee30dSat:    forward30d.FeeSat,
+		ForwardAmt30dSat:    forward30d.AmountSat,
+		OutPpm30d:           forward30d.Ppm,
+		RebalFee7dSat:       rebal7d.FeeSat,
+		RebalAmt7dSat:       rebal7d.AmountSat,
+		RebalPpm7d:          rebal7d.Ppm,
+		RebalFee30dSat:      rebal30d.FeeSat,
+		RebalAmt30dSat:      rebal30d.AmountSat,
+		RebalPpm30d:         rebal30d.Ppm,
+		ProfitFee7dSat:      profitSat7d,
+		ProfitFee30dSat:     profitSat30d,
+		Score:               score7d,
+		Score7d:             score7d,
+		Score30d:            score30d,
+		TrendDirection:      trendDirection,
+		TrendDelta:          trendDelta,
 		State:               state,
 		Reasons:             reasons,
 		Recommendations:     recommendations,
@@ -425,6 +568,18 @@ func computeChannelRankingScore(ch lndclient.ChannelInfo, capacity int64, localP
 
 	total := profitScore + efficiencyScore + utilizationScore + maintenanceScore + healthScore + confidenceScore
 	return clampInt(total, 0, 100)
+}
+
+func computeChannelRankingTrend(score7d int, score30d int) (string, int) {
+	delta := score7d - score30d
+	switch {
+	case delta >= 8:
+		return "improving", delta
+	case delta <= -8:
+		return "worsening", delta
+	default:
+		return "stable", delta
+	}
 }
 
 func classifyChannelRanking(ch lndclient.ChannelInfo, capacity int64, localPct float64, forward channelTrafficStat, rebal channelTrafficStat, profitSat int64, score int) (string, []ChannelRankingReason, []ChannelRankingRecommendation) {
@@ -663,15 +818,21 @@ insert into channel_rankings (
   local_balance_sat, remote_balance_sat, local_balance_pct, remote_balance_pct,
   inactive_duration_sec, pending_htlc_count, class_label,
   forward_fee_7d_sat, forward_amt_7d_sat, out_ppm_7d,
-  rebal_fee_7d_sat, rebal_amt_7d_sat, rebal_ppm_7d, profit_fee_7d_sat,
-  score, state, reasons_json, recommendations_json, computed_at
+  forward_fee_30d_sat, forward_amt_30d_sat, out_ppm_30d,
+  rebal_fee_7d_sat, rebal_amt_7d_sat, rebal_ppm_7d,
+  rebal_fee_30d_sat, rebal_amt_30d_sat, rebal_ppm_30d,
+  profit_fee_7d_sat, profit_fee_30d_sat,
+  score, score_7d, score_30d, trend_direction, trend_delta, state, reasons_json, recommendations_json, computed_at
 ) values (
   $1, $2, $3, $4, $5, $6, $7,
   $8, $9, $10, $11,
   $12, $13, $14,
   $15, $16, $17,
-  $18, $19, $20, $21,
-  $22, $23, $24, $25, $26
+  $18, $19, $20,
+  $21, $22, $23,
+  $24, $25, $26,
+  $27, $28,
+  $29, $30, $31, $32, $33, $34, $35, $36, $37
 )
 on conflict (channel_point) do update set
   channel_id = excluded.channel_id,
@@ -690,11 +851,22 @@ on conflict (channel_point) do update set
   forward_fee_7d_sat = excluded.forward_fee_7d_sat,
   forward_amt_7d_sat = excluded.forward_amt_7d_sat,
   out_ppm_7d = excluded.out_ppm_7d,
+  forward_fee_30d_sat = excluded.forward_fee_30d_sat,
+  forward_amt_30d_sat = excluded.forward_amt_30d_sat,
+  out_ppm_30d = excluded.out_ppm_30d,
   rebal_fee_7d_sat = excluded.rebal_fee_7d_sat,
   rebal_amt_7d_sat = excluded.rebal_amt_7d_sat,
   rebal_ppm_7d = excluded.rebal_ppm_7d,
+  rebal_fee_30d_sat = excluded.rebal_fee_30d_sat,
+  rebal_amt_30d_sat = excluded.rebal_amt_30d_sat,
+  rebal_ppm_30d = excluded.rebal_ppm_30d,
   profit_fee_7d_sat = excluded.profit_fee_7d_sat,
+  profit_fee_30d_sat = excluded.profit_fee_30d_sat,
   score = excluded.score,
+  score_7d = excluded.score_7d,
+  score_30d = excluded.score_30d,
+  trend_direction = excluded.trend_direction,
+  trend_delta = excluded.trend_delta,
   state = excluded.state,
   reasons_json = excluded.reasons_json,
   recommendations_json = excluded.recommendations_json,
@@ -703,8 +875,33 @@ on conflict (channel_point) do update set
 		item.LocalBalanceSat, item.RemoteBalanceSat, item.LocalBalancePct, item.RemoteBalancePct,
 		item.InactiveDurationSec, item.PendingHtlcCount, nullableString(item.ClassLabel),
 		item.ForwardFee7dSat, item.ForwardAmt7dSat, item.OutPpm7d,
-		item.RebalFee7dSat, item.RebalAmt7dSat, item.RebalPpm7d, item.ProfitFee7dSat,
-		item.Score, item.State, reasonsRaw, recommendationsRaw, item.ComputedAt)
+		item.ForwardFee30dSat, item.ForwardAmt30dSat, item.OutPpm30d,
+		item.RebalFee7dSat, item.RebalAmt7dSat, item.RebalPpm7d,
+		item.RebalFee30dSat, item.RebalAmt30dSat, item.RebalPpm30d,
+		item.ProfitFee7dSat, item.ProfitFee30dSat,
+		item.Score, item.Score7d, item.Score30d, item.TrendDirection, item.TrendDelta, item.State, reasonsRaw, recommendationsRaw, item.ComputedAt)
+	return err
+}
+
+func (s *ChannelRankingService) upsertHistoryPoint(ctx context.Context, item ChannelRankingItem) error {
+	computedBucket := item.ComputedAt.UTC().Truncate(time.Hour)
+	_, err := s.db.Exec(ctx, `
+insert into channel_ranking_history (
+  channel_point, computed_bucket, score, score_7d, score_30d, trend_direction, trend_delta, state, profit_fee_7d_sat, profit_fee_30d_sat, created_at
+) values (
+  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+)
+on conflict (channel_point, computed_bucket) do update set
+  score = excluded.score,
+  score_7d = excluded.score_7d,
+  score_30d = excluded.score_30d,
+  trend_direction = excluded.trend_direction,
+  trend_delta = excluded.trend_delta,
+  state = excluded.state,
+  profit_fee_7d_sat = excluded.profit_fee_7d_sat,
+  profit_fee_30d_sat = excluded.profit_fee_30d_sat,
+  created_at = excluded.created_at
+`, item.ChannelPoint, computedBucket, item.Score, item.Score7d, item.Score30d, item.TrendDirection, item.TrendDelta, item.State, item.ProfitFee7dSat, item.ProfitFee30dSat, item.ComputedAt)
 	return err
 }
 
@@ -722,8 +919,11 @@ select
   local_balance_sat, remote_balance_sat, local_balance_pct, remote_balance_pct,
   inactive_duration_sec, pending_htlc_count, class_label,
   forward_fee_7d_sat, forward_amt_7d_sat, out_ppm_7d,
-  rebal_fee_7d_sat, rebal_amt_7d_sat, rebal_ppm_7d, profit_fee_7d_sat,
-  score, state, reasons_json, recommendations_json, computed_at
+  forward_fee_30d_sat, forward_amt_30d_sat, out_ppm_30d,
+  rebal_fee_7d_sat, rebal_amt_7d_sat, rebal_ppm_7d,
+  rebal_fee_30d_sat, rebal_amt_30d_sat, rebal_ppm_30d,
+  profit_fee_7d_sat, profit_fee_30d_sat,
+  score, score_7d, score_30d, trend_direction, trend_delta, state, reasons_json, recommendations_json, computed_at
 from channel_rankings
 `
 	if stateFilter != "" && stateFilter != "all" {
@@ -760,8 +960,11 @@ select
   local_balance_sat, remote_balance_sat, local_balance_pct, remote_balance_pct,
   inactive_duration_sec, pending_htlc_count, class_label,
   forward_fee_7d_sat, forward_amt_7d_sat, out_ppm_7d,
-  rebal_fee_7d_sat, rebal_amt_7d_sat, rebal_ppm_7d, profit_fee_7d_sat,
-  score, state, reasons_json, recommendations_json, computed_at
+  forward_fee_30d_sat, forward_amt_30d_sat, out_ppm_30d,
+  rebal_fee_7d_sat, rebal_amt_7d_sat, rebal_ppm_7d,
+  rebal_fee_30d_sat, rebal_amt_30d_sat, rebal_ppm_30d,
+  profit_fee_7d_sat, profit_fee_30d_sat,
+  score, score_7d, score_30d, trend_direction, trend_delta, state, reasons_json, recommendations_json, computed_at
 from channel_rankings
 where channel_point = $1
 limit 1
@@ -778,6 +981,26 @@ limit 1
 		return nil, errors.New("channel ranking not found")
 	}
 	return &items[0], nil
+}
+
+func (s *ChannelRankingService) GetDetail(ctx context.Context, channelPoint string) (*ChannelRankingDetail, error) {
+	item, err := s.Get(ctx, channelPoint)
+	if err != nil {
+		return nil, err
+	}
+	history, err := s.getHistory(ctx, item.ChannelPoint, 24)
+	if err != nil {
+		return nil, err
+	}
+	peerChannels, err := s.getPeerChannels(ctx, *item)
+	if err != nil {
+		return nil, err
+	}
+	return &ChannelRankingDetail{
+		Item:         *item,
+		History:      history,
+		PeerChannels: peerChannels,
+	}, nil
 }
 
 func (s *ChannelRankingService) Status(ctx context.Context) (ChannelRankingStatus, error) {
@@ -809,6 +1032,92 @@ group by state
 	return status, rows.Err()
 }
 
+func (s *ChannelRankingService) getHistory(ctx context.Context, channelPoint string, limit int) ([]ChannelRankingHistoryPoint, error) {
+	if limit <= 0 {
+		limit = 24
+	}
+	rows, err := s.db.Query(ctx, `
+select computed_bucket, score, score_7d, score_30d, trend_direction, trend_delta, state, profit_fee_7d_sat, profit_fee_30d_sat
+from channel_ranking_history
+where channel_point = $1
+order by computed_bucket desc
+limit $2
+`, strings.TrimSpace(channelPoint), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]ChannelRankingHistoryPoint, 0)
+	for rows.Next() {
+		var item ChannelRankingHistoryPoint
+		var trendDirection sql.NullString
+		if err := rows.Scan(
+			&item.ComputedAt,
+			&item.Score,
+			&item.Score7d,
+			&item.Score30d,
+			&trendDirection,
+			&item.TrendDelta,
+			&item.State,
+			&item.ProfitFee7dSat,
+			&item.ProfitFee30dSat,
+		); err != nil {
+			return nil, err
+		}
+		if trendDirection.Valid {
+			item.TrendDirection = strings.TrimSpace(trendDirection.String)
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *ChannelRankingService) getPeerChannels(ctx context.Context, item ChannelRankingItem) ([]ChannelRankingPeerComparison, error) {
+	peerPubkey := strings.TrimSpace(item.PeerPubkey)
+	if peerPubkey == "" {
+		return nil, nil
+	}
+	rows, err := s.db.Query(ctx, `
+select channel_point, channel_id, peer_alias, score, score_30d, trend_direction, trend_delta, state, capacity_sat, profit_fee_7d_sat, profit_fee_30d_sat
+from channel_rankings
+where peer_pubkey = $1
+order by score desc, profit_fee_7d_sat desc, capacity_sat desc, channel_point asc
+`, peerPubkey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]ChannelRankingPeerComparison, 0)
+	for rows.Next() {
+		var comparison ChannelRankingPeerComparison
+		var peerAlias sql.NullString
+		var trendDirection sql.NullString
+		if err := rows.Scan(
+			&comparison.ChannelPoint,
+			&comparison.ChannelID,
+			&peerAlias,
+			&comparison.Score,
+			&comparison.Score30d,
+			&trendDirection,
+			&comparison.TrendDelta,
+			&comparison.State,
+			&comparison.CapacitySat,
+			&comparison.ProfitFee7dSat,
+			&comparison.ProfitFee30dSat,
+		); err != nil {
+			return nil, err
+		}
+		if peerAlias.Valid {
+			comparison.PeerAlias = strings.TrimSpace(peerAlias.String)
+		}
+		if trendDirection.Valid {
+			comparison.TrendDirection = strings.TrimSpace(trendDirection.String)
+		}
+		items = append(items, comparison)
+	}
+	return items, rows.Err()
+}
+
 type channelRankingRows interface {
 	Next() bool
 	Scan(dest ...any) error
@@ -822,6 +1131,7 @@ func scanChannelRankingItems(rows channelRankingRows) ([]ChannelRankingItem, err
 		var peerPubkey sql.NullString
 		var peerAlias sql.NullString
 		var classLabel sql.NullString
+		var trendDirection sql.NullString
 		var reasonsRaw []byte
 		var recommendationsRaw []byte
 		if err := rows.Scan(
@@ -829,8 +1139,11 @@ func scanChannelRankingItems(rows channelRankingRows) ([]ChannelRankingItem, err
 			&item.LocalBalanceSat, &item.RemoteBalanceSat, &item.LocalBalancePct, &item.RemoteBalancePct,
 			&item.InactiveDurationSec, &item.PendingHtlcCount, &classLabel,
 			&item.ForwardFee7dSat, &item.ForwardAmt7dSat, &item.OutPpm7d,
-			&item.RebalFee7dSat, &item.RebalAmt7dSat, &item.RebalPpm7d, &item.ProfitFee7dSat,
-			&item.Score, &item.State, &reasonsRaw, &recommendationsRaw, &item.ComputedAt,
+			&item.ForwardFee30dSat, &item.ForwardAmt30dSat, &item.OutPpm30d,
+			&item.RebalFee7dSat, &item.RebalAmt7dSat, &item.RebalPpm7d,
+			&item.RebalFee30dSat, &item.RebalAmt30dSat, &item.RebalPpm30d,
+			&item.ProfitFee7dSat, &item.ProfitFee30dSat,
+			&item.Score, &item.Score7d, &item.Score30d, &trendDirection, &item.TrendDelta, &item.State, &reasonsRaw, &recommendationsRaw, &item.ComputedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -842,6 +1155,9 @@ func scanChannelRankingItems(rows channelRankingRows) ([]ChannelRankingItem, err
 		}
 		if classLabel.Valid {
 			item.ClassLabel = strings.TrimSpace(classLabel.String)
+		}
+		if trendDirection.Valid {
+			item.TrendDirection = strings.TrimSpace(trendDirection.String)
 		}
 		if len(reasonsRaw) > 0 {
 			_ = json.Unmarshal(reasonsRaw, &item.Reasons)

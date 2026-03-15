@@ -69,12 +69,16 @@ func (s *Server) handleChannelRankingItemGet(w http.ResponseWriter, r *http.Requ
 	if err := svc.refreshIfStale(ctx); err != nil && s.logger != nil {
 		s.logger.Printf("channel ranking refresh on detail read failed: %v", err)
 	}
-	item, err := svc.Get(ctx, channelPoint)
+	detail, err := svc.GetDetail(ctx, channelPoint)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "channel ranking not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"item": item})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"item":          detail.Item,
+		"history":       detail.History,
+		"peer_channels": detail.PeerChannels,
+	})
 }
 
 func (s *Server) handleChannelRankingRecomputePost(w http.ResponseWriter, r *http.Request) {

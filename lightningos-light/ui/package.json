@@ -16,7 +16,9 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-i18next": "^14.1.2",
-    "recharts": "^2.12.4"
+    "react-simple-maps": "^3.0.0",
+    "recharts": "^2.12.4",
+    "world-atlas": "^2.0.2"
   },
   "devDependencies": {
     "@types/react": "^18.2.55",

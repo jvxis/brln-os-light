@@ -68,7 +68,7 @@
   "networkAtlas": {
     "eyebrow": "Global Lightning Presence",
     "title": "Network Atlas",
-    "subtitle": "A cinematic view of your node's live reach. Neon channels show capital relationships, gray paths show peers connected without open channels.",
+    "subtitle": "World map of your node connections. Green for channels, gray for peer-only connections.",
     "loading": "Loading network atlas...",
     "loadFailed": "Failed to load network atlas.",
     "refreshing": "Refreshing atlas...",

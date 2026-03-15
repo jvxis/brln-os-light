@@ -68,7 +68,7 @@
   "networkAtlas": {
     "eyebrow": "Presença Global Lightning",
     "title": "Atlas da Rede",
-    "subtitle": "Uma visão cinematográfica do alcance do seu node. Canais aparecem em neon e peers sem canal ficam em cinza frio.",
+    "subtitle": "Mapa mundial das conexões do seu node. Verde para canais, cinza para peers sem canal.",
     "loading": "Carregando atlas da rede...",
     "loadFailed": "Falha ao carregar o atlas da rede.",
     "refreshing": "Atualizando atlas...",

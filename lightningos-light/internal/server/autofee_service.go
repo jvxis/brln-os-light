@@ -424,6 +424,14 @@ type autofeeProfile struct {
 	BootstrapCooldownDownSec       int
 	BootstrapMinStepUpPpm          int
 	BootstrapSurgeHoldMaxRounds    int
+	HoldSmallMinDeltaPpm           int
+	HoldSmallMinRelFrac            float64
+	HoldSmallGapBypassPpm          int
+	HoldSmallGapBypassFrac         float64
+	HoldSmallStallBypassRounds     int
+	ReversalConfirmMinRounds       int
+	ReversalFastTrackStallRounds   int
+	ReversalFastTrackGapFrac       float64
 }
 
 type superSourceThresholds struct {
@@ -514,6 +522,14 @@ var autofeeProfiles = map[string]autofeeProfile{
 		BootstrapCooldownDownSec:       7200,
 		BootstrapMinStepUpPpm:          15,
 		BootstrapSurgeHoldMaxRounds:    2,
+		HoldSmallMinDeltaPpm:           15,
+		HoldSmallMinRelFrac:            0.04,
+		HoldSmallGapBypassPpm:          180,
+		HoldSmallGapBypassFrac:         0.18,
+		HoldSmallStallBypassRounds:     2,
+		ReversalConfirmMinRounds:       2,
+		ReversalFastTrackStallRounds:   3,
+		ReversalFastTrackGapFrac:       0.50,
 	},
 	"moderate": {
 		Name:                           "moderate",
@@ -593,6 +609,14 @@ var autofeeProfiles = map[string]autofeeProfile{
 		BootstrapCooldownDownSec:       5400,
 		BootstrapMinStepUpPpm:          15,
 		BootstrapSurgeHoldMaxRounds:    2,
+		HoldSmallMinDeltaPpm:           15,
+		HoldSmallMinRelFrac:            0.04,
+		HoldSmallGapBypassPpm:          120,
+		HoldSmallGapBypassFrac:         0.12,
+		HoldSmallStallBypassRounds:     1,
+		ReversalConfirmMinRounds:       2,
+		ReversalFastTrackStallRounds:   2,
+		ReversalFastTrackGapFrac:       0.35,
 	},
 	"aggressive": {
 		Name:                           "aggressive",
@@ -672,6 +696,14 @@ var autofeeProfiles = map[string]autofeeProfile{
 		BootstrapCooldownDownSec:       3600,
 		BootstrapMinStepUpPpm:          20,
 		BootstrapSurgeHoldMaxRounds:    1,
+		HoldSmallMinDeltaPpm:           12,
+		HoldSmallMinRelFrac:            0.03,
+		HoldSmallGapBypassPpm:          80,
+		HoldSmallGapBypassFrac:         0.08,
+		HoldSmallStallBypassRounds:     1,
+		ReversalConfirmMinRounds:       2,
+		ReversalFastTrackStallRounds:   1,
+		ReversalFastTrackGapFrac:       0.20,
 	},
 }
 
@@ -2932,17 +2964,71 @@ func shouldEmitStallAlert(stalledRounds int, targetGapPct float64) bool {
 	return stalledRounds >= stallAlertMinRounds && targetGapPct >= (stallAlertGapFrac*100.0)
 }
 
-func reversalConfirmRoundsForChannel(st *autofeeChannelState, targetGapPct float64) int {
-	confirmRounds := reversalConfirmMinRounds
+func reversalConfirmRoundsForChannel(profile autofeeProfile, st *autofeeChannelState, targetGapPct float64) int {
+	confirmRounds := profile.ReversalConfirmMinRounds
+	if confirmRounds < 1 {
+		confirmRounds = reversalConfirmMinRounds
+	}
+	fastTrackStallRounds := profile.ReversalFastTrackStallRounds
+	if fastTrackStallRounds < 1 {
+		fastTrackStallRounds = reversalFastTrackStallMinRounds
+	}
+	fastTrackGapPct := profile.ReversalFastTrackGapFrac * 100.0
+	if fastTrackGapPct <= 0 {
+		fastTrackGapPct = stallAlertGapFrac * 100.0
+	}
 	if st != nil &&
-		st.StalledRounds >= reversalFastTrackStallMinRounds &&
-		targetGapPct >= (stallAlertGapFrac*100.0) {
+		st.StalledRounds >= fastTrackStallRounds &&
+		targetGapPct >= fastTrackGapPct {
 		confirmRounds--
 	}
 	if confirmRounds < 1 {
 		confirmRounds = 1
 	}
 	return confirmRounds
+}
+
+func isMoveTowardTarget(localPpm int, nextPpm int, targetPpm int) bool {
+	return math.Abs(float64(targetPpm-nextPpm)) < math.Abs(float64(targetPpm-localPpm))
+}
+
+func shouldHoldSmallStep(profile autofeeProfile, st *autofeeChannelState, localPpm int, nextPpm int, targetPpm int, allowSmallStep bool) bool {
+	if allowSmallStep || localPpm <= 0 || nextPpm == localPpm {
+		return false
+	}
+	delta := int(math.Abs(float64(nextPpm - localPpm)))
+	minDelta := profile.HoldSmallMinDeltaPpm
+	if minDelta <= 0 {
+		minDelta = 15
+	}
+	minRel := profile.HoldSmallMinRelFrac
+	if minRel <= 0 {
+		minRel = 0.04
+	}
+	rel := float64(delta) / float64(maxInt(1, localPpm))
+	if delta >= minDelta || rel >= minRel {
+		return false
+	}
+	if !isMoveTowardTarget(localPpm, nextPpm, targetPpm) {
+		return true
+	}
+	gapPpm := int(math.Abs(float64(targetPpm - localPpm)))
+	gapBypassPpm := profile.HoldSmallGapBypassPpm
+	if gapBypassPpm <= 0 {
+		gapBypassPpm = minDelta * 8
+	}
+	if gapPpm >= gapBypassPpm {
+		return false
+	}
+	gapBypassFrac := profile.HoldSmallGapBypassFrac
+	if gapBypassFrac > 0 && calcTargetGapPct(localPpm, targetPpm) >= gapBypassFrac*100.0 {
+		return false
+	}
+	stallBypassRounds := profile.HoldSmallStallBypassRounds
+	if stallBypassRounds > 0 && st != nil && st.StalledRounds >= stallBypassRounds && gapPpm > 0 {
+		return false
+	}
+	return true
 }
 
 func applyDirectionReversalGuard(st *autofeeChannelState, localPpm int, nextPpm int, confirmMinRounds int) (int, []string) {
@@ -5184,7 +5270,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 	targetGapPpm := target - localPpm
 	targetGapPct := calcTargetGapPct(localPpm, target)
-	reversalConfirmRounds := reversalConfirmRoundsForChannel(st, targetGapPct)
+	reversalConfirmRounds := reversalConfirmRoundsForChannel(e.profile, st, targetGapPct)
 	if guardedPpm, reversalTags := applyDirectionReversalGuard(st, localPpm, finalPpm, reversalConfirmRounds); true {
 		finalPpm = guardedPpm
 		if len(reversalTags) > 0 {
@@ -5194,7 +5280,6 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 
 	apply := true
 	delta := int(math.Abs(float64(finalPpm - localPpm)))
-	rel := float64(delta) / float64(maxInt(1, localPpm))
 	floorDrivenStepUp := finalPpm > localPpm && floor > localPpm
 	surgeDrivenStepUp := containsTag(tags, "surge+20%") ||
 		containsTag(tags, "surge-hold-flow") ||
@@ -5206,7 +5291,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			allowSmallStep = true
 		}
 	}
-	if delta > 0 && delta < 15 && rel < 0.04 && !allowSmallStep {
+	if shouldHoldSmallStep(e.profile, st, localPpm, finalPpm, target, allowSmallStep) {
 		apply = false
 		tags = append(tags, "hold-small")
 	}

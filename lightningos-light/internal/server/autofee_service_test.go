@@ -389,21 +389,46 @@ func TestApplyDirectionReversalGuardFastTrack(t *testing.T) {
 }
 
 func TestReversalConfirmRoundsForChannel(t *testing.T) {
-	if got := reversalConfirmRoundsForChannel(nil, 80.0); got != reversalConfirmMinRounds {
+	profile := autofeeProfiles["moderate"]
+	if got := reversalConfirmRoundsForChannel(profile, nil, 80.0); got != profile.ReversalConfirmMinRounds {
 		t.Fatalf("unexpected rounds for nil state: got %d want %d", got, reversalConfirmMinRounds)
 	}
 
-	st := &autofeeChannelState{StalledRounds: reversalFastTrackStallMinRounds - 1}
-	if got := reversalConfirmRoundsForChannel(st, 80.0); got != reversalConfirmMinRounds {
-		t.Fatalf("unexpected rounds below stall threshold: got %d want %d", got, reversalConfirmMinRounds)
+	st := &autofeeChannelState{StalledRounds: profile.ReversalFastTrackStallRounds - 1}
+	if got := reversalConfirmRoundsForChannel(profile, st, 80.0); got != profile.ReversalConfirmMinRounds {
+		t.Fatalf("unexpected rounds below stall threshold: got %d want %d", got, profile.ReversalConfirmMinRounds)
 	}
 
-	st.StalledRounds = reversalFastTrackStallMinRounds
-	if got := reversalConfirmRoundsForChannel(st, stallAlertGapFrac*100.0-0.1); got != reversalConfirmMinRounds {
-		t.Fatalf("unexpected rounds below gap threshold: got %d want %d", got, reversalConfirmMinRounds)
+	st.StalledRounds = profile.ReversalFastTrackStallRounds
+	if got := reversalConfirmRoundsForChannel(profile, st, profile.ReversalFastTrackGapFrac*100.0-0.1); got != profile.ReversalConfirmMinRounds {
+		t.Fatalf("unexpected rounds below gap threshold: got %d want %d", got, profile.ReversalConfirmMinRounds)
 	}
-	if got := reversalConfirmRoundsForChannel(st, stallAlertGapFrac*100.0); got != reversalConfirmMinRounds-1 {
-		t.Fatalf("unexpected rounds at fast-track threshold: got %d want %d", got, reversalConfirmMinRounds-1)
+	if got := reversalConfirmRoundsForChannel(profile, st, profile.ReversalFastTrackGapFrac*100.0); got != profile.ReversalConfirmMinRounds-1 {
+		t.Fatalf("unexpected rounds at fast-track threshold: got %d want %d", got, profile.ReversalConfirmMinRounds-1)
+	}
+}
+
+func TestShouldHoldSmallStepBypassesTowardTargetWhenGapIsLarge(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	st := &autofeeChannelState{}
+	if shouldHoldSmallStep(profile, st, 1000, 988, 700, false) {
+		t.Fatalf("expected small downward step toward a distant target to be applied")
+	}
+}
+
+func TestShouldHoldSmallStepKeepsNoiseWhenGapIsSmall(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	st := &autofeeChannelState{}
+	if !shouldHoldSmallStep(profile, st, 1000, 988, 970, false) {
+		t.Fatalf("expected small move near target to be held")
+	}
+}
+
+func TestShouldHoldSmallStepBypassesWhenChannelIsStalled(t *testing.T) {
+	profile := autofeeProfiles["conservative"]
+	st := &autofeeChannelState{StalledRounds: profile.HoldSmallStallBypassRounds}
+	if shouldHoldSmallStep(profile, st, 1000, 988, 930, false) {
+		t.Fatalf("expected stalled channel to bypass hold-small when moving toward target")
 	}
 }
 

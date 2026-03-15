@@ -810,7 +810,7 @@ func buildChannelRankingItem(
 	score7d := computeChannelRankingScore(ch, capacity, localPct, forward7d, rebal7d, profitSat7d, peerAggregate.Score30d, htlcAggregate, rebalanceDependenceScore)
 	score30d := computeChannelRankingScore(ch, capacity, localPct, forward30d, rebal30d, profitSat30d, peerAggregate.Score30d, htlcAggregate, rebalanceDependenceScore)
 	trendDirection, trendDelta := computeChannelRankingTrend(score7d, score30d)
-	state, reasons, recommendations := classifyChannelRanking(ch, capacity, localPct, forward7d, rebal7d, profitSat7d, score7d, peerAggregate.Score30d, htlcAggregate, rebalanceDependenceScore)
+	state, reasons, recommendations := classifyChannelRanking(ch, capacity, localPct, forward7d, forward30d, rebal7d, rebal30d, profitSat7d, profitSat30d, score7d, score30d, peerAggregate.Score30d, htlcAggregate, rebalanceDependenceScore)
 
 	return ChannelRankingItem{
 		ChannelPoint:             strings.TrimSpace(ch.ChannelPoint),
@@ -898,23 +898,38 @@ func appendUniqueRecommendation(list []ChannelRankingRecommendation, candidate C
 	return append(list, candidate)
 }
 
-func classifyChannelRanking(ch lndclient.ChannelInfo, capacity int64, localPct float64, forward channelTrafficStat, rebal channelTrafficStat, profitSat int64, score int, peerStabilityScore30d int, htlcAggregate channelHTLCAggregate, rebalanceDependenceScore int) (string, []ChannelRankingReason, []ChannelRankingRecommendation) {
+func classifyChannelRanking(
+	ch lndclient.ChannelInfo,
+	capacity int64,
+	localPct float64,
+	forward7d channelTrafficStat,
+	forward30d channelTrafficStat,
+	rebal7d channelTrafficStat,
+	rebal30d channelTrafficStat,
+	profitSat7d int64,
+	profitSat30d int64,
+	score7d int,
+	score30d int,
+	peerStabilityScore30d int,
+	htlcAggregate channelHTLCAggregate,
+	rebalanceDependenceScore int,
+) (string, []ChannelRankingReason, []ChannelRankingRecommendation) {
 	reasons := make([]ChannelRankingReason, 0, 6)
 	recommendations := make([]ChannelRankingRecommendation, 0, 4)
 
-	if profitSat > 0 {
+	if profitSat7d > 0 {
 		reasons = append(reasons, ChannelRankingReason{Code: "positive_net_fees"})
 	}
-	if profitSat < 0 {
+	if profitSat7d < 0 {
 		reasons = append(reasons, ChannelRankingReason{Code: "negative_net_fees"})
 	}
-	if capacity > 0 && forward.AmountSat >= rankingMaxInt64(50000, capacity/2) {
+	if capacity > 0 && forward7d.AmountSat >= rankingMaxInt64(50000, capacity/2) {
 		reasons = append(reasons, ChannelRankingReason{Code: "strong_volume"})
 	}
-	if capacity > 0 && forward.AmountSat < rankingMaxInt64(25000, capacity/50) {
+	if capacity > 0 && forward7d.AmountSat < rankingMaxInt64(25000, capacity/50) {
 		reasons = append(reasons, ChannelRankingReason{Code: "low_usage"})
 	}
-	if rebal.FeeSat > 0 && rebal.FeeSat >= rankingMaxInt64(50, forward.FeeSat) {
+	if rebal7d.FeeSat > 0 && rebal7d.FeeSat >= rankingMaxInt64(50, forward7d.FeeSat) {
 		reasons = append(reasons, ChannelRankingReason{Code: "rebalance_cost_high"})
 	}
 	if localPct < 10 || localPct > 90 {
@@ -936,7 +951,7 @@ func classifyChannelRanking(ch lndclient.ChannelInfo, capacity int64, localPct f
 		reasons = append(reasons, ChannelRankingReason{Code: "rebalance_dependence_high"})
 	}
 	if capacity > 0 {
-		netPpm := (float64(profitSat) / float64(capacity)) * 1_000_000
+		netPpm := (float64(profitSat7d) / float64(capacity)) * 1_000_000
 		if netPpm >= 75 {
 			reasons = append(reasons, ChannelRankingReason{Code: "capital_efficiency_high"})
 		}
@@ -946,18 +961,21 @@ func classifyChannelRanking(ch lndclient.ChannelInfo, capacity int64, localPct f
 	}
 
 	state := "monitor"
-	strongVolume := capacity > 0 && forward.AmountSat >= rankingMaxInt64(100000, capacity/5)
-	rebalanceHeavy := rebal.FeeSat > 0 && rebal.FeeSat >= rankingMaxInt64(50, forward.FeeSat)
+	strongVolume := capacity > 0 && forward7d.AmountSat >= rankingMaxInt64(100000, capacity/5)
+	rebalanceHeavy7d := rebal7d.FeeSat > 0 && rebal7d.FeeSat >= rankingMaxInt64(50, forward7d.FeeSat)
+	rebalanceHeavy30d := rebal30d.FeeSat > 0 && rebal30d.FeeSat >= rankingMaxInt64(150, forward30d.FeeSat)
 	longInactive := !ch.Active && rankingMaxInt64(0, ch.InactiveDurationSec) >= 7*24*3600
 	unstablePeer := peerStabilityScore30d > 0 && peerStabilityScore30d < 45
 	htlcFailuresHigh := htlcAggregate.Total >= 8 || htlcAggregate.Liquidity >= 4 || htlcAggregate.Policy >= 4
+	persistentWeakEconomics := profitSat30d <= 0 || score30d < 36 || rebalanceHeavy30d
+	severeOperationalRisk := longInactive || unstablePeer || htlcFailuresHigh || rebalanceDependenceScore >= 85
 
 	switch {
-	case ch.Active && score >= 72 && profitSat > 0 && strongVolume && !unstablePeer:
+	case ch.Active && score7d >= 72 && profitSat7d > 0 && strongVolume && !unstablePeer:
 		state = "expand"
-	case score < 24 && (profitSat <= -150 || longInactive || unstablePeer || htlcFailuresHigh || rebalanceDependenceScore >= 80 || (rebalanceHeavy && forward.FeeSat > 0)):
+	case score7d < 24 && (severeOperationalRisk || (persistentWeakEconomics && (profitSat7d <= -150 || rebalanceHeavy7d || rebalanceDependenceScore >= 65))):
 		state = "close"
-	case ch.Active && score >= 48 && profitSat >= -50 && !rebalanceHeavy && rebalanceDependenceScore < 65 && !htlcFailuresHigh && !unstablePeer:
+	case ch.Active && score7d >= 48 && profitSat7d >= -50 && !rebalanceHeavy7d && rebalanceDependenceScore < 65 && !htlcFailuresHigh && !unstablePeer:
 		state = "maintain"
 	default:
 		state = "monitor"
@@ -976,13 +994,13 @@ func classifyChannelRanking(ch lndclient.ChannelInfo, capacity int64, localPct f
 		recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "prepare_coop_close", TargetModule: "lightning-ops"})
 		recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "review_with_close_manager", TargetModule: "close-manager"})
 	default:
-		if rebalanceHeavy {
+		if rebalanceHeavy7d {
 			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "reduce_rebalance_priority", TargetModule: "rebalance"})
 		}
 		if rebalanceDependenceScore >= 65 {
 			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "reduce_rebalance_dependence", TargetModule: "rebalance"})
 		}
-		if profitSat <= 0 {
+		if profitSat7d <= 0 {
 			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "review_autofee_bounds", TargetModule: "autofee"})
 		}
 		if localPct < 10 || localPct > 90 {
@@ -994,7 +1012,7 @@ func classifyChannelRanking(ch lndclient.ChannelInfo, capacity int64, localPct f
 		if htlcAggregate.Total >= 5 {
 			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "review_htlc_failures", TargetModule: "htlc-manager"})
 		}
-		if capacity > 0 && forward.AmountSat < rankingMaxInt64(25000, capacity/50) {
+		if capacity > 0 && forward7d.AmountSat < rankingMaxInt64(25000, capacity/50) {
 			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "observe_7d_before_close", TargetModule: "lightning-ops"})
 		}
 		if ch.PendingHtlcCount >= 5 {

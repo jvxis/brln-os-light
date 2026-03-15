@@ -67,8 +67,10 @@ const shortPubkey = (value: string) => {
 const formatSats = (value: number) => `${Math.max(0, Math.trunc(value || 0)).toLocaleString()} sat`
 const clampZoom = (value: number) => Math.min(6, Math.max(1, value))
 const LIGHTNING_OPS_ROUTE_KEY = 'lightning-ops'
-const buildLightningOpsHash = (channelPoint: string) =>
+const buildLightningOpsChannelHash = (channelPoint: string) =>
   `#${LIGHTNING_OPS_ROUTE_KEY}?channel_point=${encodeURIComponent(channelPoint)}`
+const buildLightningOpsPeerHash = (pubkey: string) =>
+  `#${LIGHTNING_OPS_ROUTE_KEY}?peer_pubkey=${encodeURIComponent(pubkey)}`
 
 const AtlasConnections = ({
   localNode,
@@ -121,8 +123,15 @@ const AtlasConnections = ({
               d={d}
               className="atlas-arc-hit"
               strokeWidth={selected ? 18 : 14}
-              onClick={() => onActivate(link)}
-              onDoubleClick={() => onOpenChannel(link)}
+              onClick={(event) => {
+                event.stopPropagation()
+                onActivate(link)
+              }}
+              onDoubleClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                onOpenChannel(link)
+              }}
             />
             <path
               id={pathId}
@@ -268,8 +277,13 @@ export default function NetworkAtlas() {
 
   const handleOpenChannel = (link: AtlasLink) => {
     const channelPoint = String(link.channel_point || '').trim()
-    if (!channelPoint) return
-    window.location.hash = buildLightningOpsHash(channelPoint)
+    if (channelPoint) {
+      window.location.hash = buildLightningOpsChannelHash(channelPoint)
+      return
+    }
+    const peerPubkey = String(link.pubkey || '').trim()
+    if (!peerPubkey) return
+    window.location.hash = buildLightningOpsPeerHash(peerPubkey)
   }
 
   const handleSaveConfig = async () => {
@@ -405,6 +419,7 @@ export default function NetworkAtlas() {
                 zoom={mapZoom}
                 minZoom={1}
                 maxZoom={6}
+                filterZoomEvent={(event: any) => event?.type !== 'dblclick'}
                 onMoveEnd={(position: any) => {
                   const coords = Array.isArray(position?.coordinates) ? position.coordinates : [0, 0]
                   setMapCenter([Number(coords[0]) || 0, Number(coords[1]) || 0])
@@ -450,8 +465,15 @@ export default function NetworkAtlas() {
                         className={`cursor-pointer ${selected ? 'atlas-link-state atlas-link-state--selected' : dimmed ? 'atlas-link-state atlas-link-state--dimmed' : 'atlas-link-state'}`}
                         onPointerEnter={() => setSelectedKey(link.pubkey)}
                         onFocus={() => setSelectedKey(link.pubkey)}
-                        onClick={() => handlePeerActivate(link)}
-                        onDoubleClick={() => handleOpenChannel(link)}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          handlePeerActivate(link)
+                        }}
+                        onDoubleClick={(event) => {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          handleOpenChannel(link)
+                        }}
                       >
                         <circle r="13" className="atlas-dot-hit" />
                         {focusPulseKey === link.pubkey && <circle r="9" className="atlas-focus-ring" />}

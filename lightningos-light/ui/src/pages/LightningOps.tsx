@@ -652,7 +652,9 @@ const LIGHTNING_OPS_ROUTE_KEY = 'lightning-ops'
 const CHANNEL_RANKING_ROUTE_KEY = 'channel-ranking'
 const REBALANCE_ROUTE_KEY = 'rebalance-center'
 const CHANNEL_HASH_PARAM = 'channel_point'
+const PEER_HASH_PARAM = 'peer_pubkey'
 const SECTION_HASH_PARAM = 'section'
+const PEERS_SECTION_ID = 'peers-section'
 const CLOSE_RECOVERY_SECTION_ID = 'close-recovery-section'
 const AUTOFEE_SECTION_ID = 'autofee-section'
 const HTLC_MANAGER_SECTION_ID = 'htlc-manager-section'
@@ -673,6 +675,19 @@ const readHashChannelPoint = (routeKey: string) => {
   return (params.get(CHANNEL_HASH_PARAM) || '').trim()
 }
 
+const readHashPeerPubKey = (routeKey: string) => {
+  if (typeof window === 'undefined') return ''
+  const rawHash = window.location.hash.startsWith('#')
+    ? window.location.hash.slice(1)
+    : window.location.hash
+  if (!rawHash) return ''
+  const queryIndex = rawHash.indexOf('?')
+  if (queryIndex < 0) return ''
+  if (rawHash.slice(0, queryIndex) !== routeKey) return ''
+  const params = new URLSearchParams(rawHash.slice(queryIndex + 1))
+  return (params.get(PEER_HASH_PARAM) || '').trim()
+}
+
 const readHashSection = (routeKey: string) => {
   if (typeof window === 'undefined') return ''
   const rawHash = window.location.hash.startsWith('#')
@@ -691,6 +706,9 @@ const buildHashWithChannelPoint = (routeKey: string, channelPoint: string) =>
 
 const channelCardID = (channelPoint: string) =>
   `lightning-channel-${channelPoint.replace(/[^a-zA-Z0-9_-]/g, '_')}`
+
+const peerCardID = (pubkey: string) =>
+  `lightning-peer-${pubkey.replace(/[^a-zA-Z0-9_-]/g, '_')}`
 
 const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
   const bytes = new Uint8Array(buffer)
@@ -727,6 +745,7 @@ export default function LightningOps() {
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('asc')
   const [showPrivate, setShowPrivate] = useState(true)
   const [focusedChannelPoint, setFocusedChannelPoint] = useState('')
+  const [focusedPeerPubKey, setFocusedPeerPubKey] = useState('')
   const [pendingHtlcOpenChannelPoint, setPendingHtlcOpenChannelPoint] = useState('')
 
   const [peerAddress, setPeerAddress] = useState('')
@@ -920,8 +939,10 @@ export default function LightningOps() {
   const torPeerCheckerIntervalDirtyRef = useRef(false)
   const batchItemIdRef = useRef(1)
   const pendingScrollChannelRef = useRef('')
+  const pendingScrollPeerRef = useRef('')
   const pendingScrollSectionRef = useRef('')
   const focusClearTimerRef = useRef<number | null>(null)
+  const peerFocusClearTimerRef = useRef<number | null>(null)
   const [feeStatus, setFeeStatus] = useState('')
 
   const formatPing = (value: number) => {
@@ -2857,10 +2878,14 @@ export default function LightningOps() {
   }, [feeChannelPoint, feeScopeAll])
   useEffect(() => {
     pendingScrollChannelRef.current = readHashChannelPoint(LIGHTNING_OPS_ROUTE_KEY)
+    pendingScrollPeerRef.current = readHashPeerPubKey(LIGHTNING_OPS_ROUTE_KEY)
     pendingScrollSectionRef.current = readHashSection(LIGHTNING_OPS_ROUTE_KEY)
     return () => {
       if (focusClearTimerRef.current !== null) {
         window.clearTimeout(focusClearTimerRef.current)
+      }
+      if (peerFocusClearTimerRef.current !== null) {
+        window.clearTimeout(peerFocusClearTimerRef.current)
       }
     }
   }, [])
@@ -2994,6 +3019,28 @@ export default function LightningOps() {
       focusClearTimerRef.current = null
     }, 3200)
   }, [filteredChannels])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const targetPeerPubKey = pendingScrollPeerRef.current
+    if (!targetPeerPubKey) return
+    const normalizedTarget = targetPeerPubKey.toLowerCase()
+    const targetPeer = peers.find((peer) => String(peer.pub_key || '').trim().toLowerCase() === normalizedTarget)
+    if (!targetPeer) return
+    const targetElement = document.getElementById(peerCardID(targetPeer.pub_key))
+    if (!targetElement) return
+    targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    setFocusedPeerPubKey(targetPeer.pub_key)
+    pendingScrollPeerRef.current = ''
+    window.history.replaceState(null, '', `#${LIGHTNING_OPS_ROUTE_KEY}`)
+    if (peerFocusClearTimerRef.current !== null) {
+      window.clearTimeout(peerFocusClearTimerRef.current)
+    }
+    peerFocusClearTimerRef.current = window.setTimeout(() => {
+      setFocusedPeerPubKey((current) => (current === targetPeer.pub_key ? '' : current))
+      peerFocusClearTimerRef.current = null
+    }, 3200)
+  }, [peers])
 
   const sortClosedChannelsList = (items: ClosedChannel[]) => (
     [...items].sort((a, b) => {
@@ -7317,7 +7364,7 @@ export default function LightningOps() {
         )}
       </div>
 
-      <div className="section-card space-y-4">
+      <div id={PEERS_SECTION_ID} className="section-card space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 className="text-lg font-semibold">{t('lightningOps.peers')}</h3>
           <span className="text-xs text-fog/60">{t('lightningOps.connectedPeers', { count: peers.length })}</span>
@@ -7327,58 +7374,64 @@ export default function LightningOps() {
         {peers.length ? (
           <div className="max-h-[520px] overflow-y-auto pr-2">
             <div className="grid gap-3">
-              {peers.map((peer) => (
-                <div key={peer.pub_key} className="rounded-2xl border border-white/10 bg-ink/60 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      {peer.pub_key ? (
-                        <a
-                          className="text-sm text-fog/60 hover:text-fog"
-                          href={ambossURL(peer.pub_key)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          {peer.alias || peer.pub_key}
-                        </a>
-                      ) : (
-                        <p className="text-sm text-fog/60">{peer.alias || t('lightningOps.unknownPeer')}</p>
-                      )}
-                      <p className="text-xs text-fog/50">{peer.address || t('lightningOps.addressUnknown')}</p>
+              {peers.map((peer) => {
+                const isFocusedPeer = focusedPeerPubKey === peer.pub_key
+                const peerCardClass = isFocusedPeer
+                  ? 'rounded-2xl border border-sky-300/70 bg-sky-500/10 p-4 ring-1 ring-sky-300/70'
+                  : 'rounded-2xl border border-white/10 bg-ink/60 p-4'
+                return (
+                  <div key={peer.pub_key} id={peerCardID(peer.pub_key)} className={peerCardClass}>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        {peer.pub_key ? (
+                          <a
+                            className="text-sm text-fog/60 hover:text-fog"
+                            href={ambossURL(peer.pub_key)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {peer.alias || peer.pub_key}
+                          </a>
+                        ) : (
+                          <p className="text-sm text-fog/60">{peer.alias || t('lightningOps.unknownPeer')}</p>
+                        )}
+                        <p className="text-xs text-fog/50">{peer.address || t('lightningOps.addressUnknown')}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-full px-3 py-1 text-xs bg-white/10 text-fog/70">
+                          {peer.inbound ? t('lightningOps.inbound') : t('lightningOps.outbound')}
+                        </span>
+                        <button className="btn-secondary text-xs px-3 py-1.5" onClick={() => handleDisconnect(peer.pub_key)}>
+                          {t('lightningOps.disconnect')}
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className="rounded-full px-3 py-1 text-xs bg-white/10 text-fog/70">
-                        {peer.inbound ? t('lightningOps.inbound') : t('lightningOps.outbound')}
-                      </span>
-                      <button className="btn-secondary text-xs px-3 py-1.5" onClick={() => handleDisconnect(peer.pub_key)}>
-                        {t('lightningOps.disconnect')}
-                      </button>
+                    {peer.alias && (
+                      <p className="mt-2 text-xs text-fog/50">{t('lightningOps.pubkeyLabel', { pubkey: peer.pub_key })}</p>
+                    )}
+                    <div className="mt-3 grid gap-3 lg:grid-cols-3 text-xs text-fog/70">
+                      <div>{t('lightningOps.satSent', { value: peer.sat_sent })}</div>
+                      <div>{t('lightningOps.satRecv', { value: peer.sat_recv })}</div>
+                      <div>{t('lightningOps.pingLabel', { value: formatPing(peer.ping_time) })}</div>
                     </div>
+                    <div className="mt-2 grid gap-3 lg:grid-cols-2 text-xs text-fog/60">
+                      <div>{t('lightningOps.bytesSent', { value: peer.bytes_sent })}</div>
+                      <div>{t('lightningOps.bytesRecv', { value: peer.bytes_recv })}</div>
+                    </div>
+                    {peer.sync_type && (
+                      <p className="mt-2 text-xs text-fog/50">{t('lightningOps.syncLabel', { value: peer.sync_type })}</p>
+                    )}
+                    {peer.last_error && (
+                      <p className="mt-2 text-xs text-ember">
+                        {t('lightningOps.lastError', {
+                          age: peer.last_error_time ? ` (${formatAge(peer.last_error_time)})` : '',
+                          error: peer.last_error
+                        })}
+                      </p>
+                    )}
                   </div>
-                  {peer.alias && (
-                    <p className="mt-2 text-xs text-fog/50">{t('lightningOps.pubkeyLabel', { pubkey: peer.pub_key })}</p>
-                  )}
-                  <div className="mt-3 grid gap-3 lg:grid-cols-3 text-xs text-fog/70">
-                    <div>{t('lightningOps.satSent', { value: peer.sat_sent })}</div>
-                    <div>{t('lightningOps.satRecv', { value: peer.sat_recv })}</div>
-                    <div>{t('lightningOps.pingLabel', { value: formatPing(peer.ping_time) })}</div>
-                  </div>
-                  <div className="mt-2 grid gap-3 lg:grid-cols-2 text-xs text-fog/60">
-                    <div>{t('lightningOps.bytesSent', { value: peer.bytes_sent })}</div>
-                    <div>{t('lightningOps.bytesRecv', { value: peer.bytes_recv })}</div>
-                  </div>
-                  {peer.sync_type && (
-                    <p className="mt-2 text-xs text-fog/50">{t('lightningOps.syncLabel', { value: peer.sync_type })}</p>
-                  )}
-                  {peer.last_error && (
-                    <p className="mt-2 text-xs text-ember">
-                      {t('lightningOps.lastError', {
-                        age: peer.last_error_time ? ` (${formatAge(peer.last_error_time)})` : '',
-                        error: peer.last_error
-                      })}
-                    </p>
-                  )}
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
         ) : (

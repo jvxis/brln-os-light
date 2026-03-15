@@ -687,7 +687,7 @@ html[data-theme="light"] .hover\\:text-rose-200:hover {
 }
 
 .atlas-legend-dot--node {
-  background: rgba(255, 255, 255, 0.95);
+  background: rgba(96, 190, 255, 0.95);
 }
 
 .atlas-country-shape {
@@ -762,15 +762,15 @@ html[data-theme="light"] .hover\\:text-rose-200:hover {
 
 .atlas-node-anchor circle:first-child,
 .atlas-node-anchor-marker circle:first-child {
-  fill: rgba(82, 255, 152, 0.14);
-  stroke: rgba(82, 255, 152, 0.58);
+  fill: rgba(56, 189, 248, 0.16);
+  stroke: rgba(56, 189, 248, 0.58);
   stroke-width: 1.2;
 }
 
 .atlas-node-anchor__core,
 .atlas-node-anchor-marker__core {
-  fill: rgba(245, 255, 249, 0.98);
-  stroke: rgba(82, 255, 152, 0.9);
+  fill: rgba(239, 246, 255, 0.96);
+  stroke: rgba(56, 189, 248, 0.92);
   stroke-width: 1.6;
 }
 

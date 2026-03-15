@@ -652,7 +652,9 @@ const LIGHTNING_OPS_ROUTE_KEY = 'lightning-ops'
 const CHANNEL_RANKING_ROUTE_KEY = 'channel-ranking'
 const REBALANCE_ROUTE_KEY = 'rebalance-center'
 const CHANNEL_HASH_PARAM = 'channel_point'
+const SECTION_HASH_PARAM = 'section'
 const CLOSE_RECOVERY_SECTION_ID = 'close-recovery-section'
+const AUTOFEE_SECTION_ID = 'autofee-section'
 const SCB_RECOVERY_CONFIRM_PHRASE = 'I UNDERSTAND FORCE CLOSE'
 const BALANCED_OPEN_FUNDING_VBYTES = 190
 const BALANCED_OPEN_REQUIRED_REMAINING_SAT = 10000
@@ -668,6 +670,19 @@ const readHashChannelPoint = (routeKey: string) => {
   if (rawHash.slice(0, queryIndex) !== routeKey) return ''
   const params = new URLSearchParams(rawHash.slice(queryIndex + 1))
   return (params.get(CHANNEL_HASH_PARAM) || '').trim()
+}
+
+const readHashSection = (routeKey: string) => {
+  if (typeof window === 'undefined') return ''
+  const rawHash = window.location.hash.startsWith('#')
+    ? window.location.hash.slice(1)
+    : window.location.hash
+  if (!rawHash) return ''
+  const queryIndex = rawHash.indexOf('?')
+  if (queryIndex < 0) return ''
+  if (rawHash.slice(0, queryIndex) !== routeKey) return ''
+  const params = new URLSearchParams(rawHash.slice(queryIndex + 1))
+  return (params.get(SECTION_HASH_PARAM) || '').trim()
 }
 
 const buildHashWithChannelPoint = (routeKey: string, channelPoint: string) =>
@@ -904,6 +919,7 @@ export default function LightningOps() {
   const torPeerCheckerIntervalDirtyRef = useRef(false)
   const batchItemIdRef = useRef(1)
   const pendingScrollChannelRef = useRef('')
+  const pendingScrollSectionRef = useRef('')
   const focusClearTimerRef = useRef<number | null>(null)
   const [feeStatus, setFeeStatus] = useState('')
 
@@ -2853,12 +2869,37 @@ export default function LightningOps() {
   }, [feeChannelPoint, feeScopeAll])
   useEffect(() => {
     pendingScrollChannelRef.current = readHashChannelPoint(LIGHTNING_OPS_ROUTE_KEY)
+    pendingScrollSectionRef.current = readHashSection(LIGHTNING_OPS_ROUTE_KEY)
     return () => {
       if (focusClearTimerRef.current !== null) {
         window.clearTimeout(focusClearTimerRef.current)
       }
     }
   }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const targetSection = pendingScrollSectionRef.current
+    if (!targetSection) return
+    if (targetSection === 'close_recovery') {
+      setChannelsSubview('close_recovery')
+      window.setTimeout(() => {
+        const target = document.getElementById(CLOSE_RECOVERY_SECTION_ID)
+        if (!target) return
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        pendingScrollSectionRef.current = ''
+      }, 50)
+      return
+    }
+    if (targetSection === 'autofee') {
+      window.setTimeout(() => {
+        const target = document.getElementById(AUTOFEE_SECTION_ID)
+        if (!target) return
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        pendingScrollSectionRef.current = ''
+      }, 50)
+    }
+  }, [channelsSubview, autofeeOpen])
 
   const baseFilteredChannels = useMemo(() => {
     let list = channels
@@ -5049,7 +5090,7 @@ export default function LightningOps() {
         )}
       </div>
 
-      <div className="section-card space-y-4">
+      <div id={AUTOFEE_SECTION_ID} className="section-card space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-3">
             <h3 className="text-lg font-semibold">{t('lightningOps.channels')}</h3>

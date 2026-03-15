@@ -582,6 +582,20 @@ func computeChannelRankingTrend(score7d int, score30d int) (string, int) {
 	}
 }
 
+func appendUniqueRecommendation(list []ChannelRankingRecommendation, candidate ChannelRankingRecommendation) []ChannelRankingRecommendation {
+	code := strings.TrimSpace(candidate.Code)
+	target := strings.TrimSpace(candidate.TargetModule)
+	if code == "" {
+		return list
+	}
+	for _, existing := range list {
+		if strings.TrimSpace(existing.Code) == code && strings.TrimSpace(existing.TargetModule) == target {
+			return list
+		}
+	}
+	return append(list, candidate)
+}
+
 func classifyChannelRanking(ch lndclient.ChannelInfo, capacity int64, localPct float64, forward channelTrafficStat, rebal channelTrafficStat, profitSat int64, score int) (string, []ChannelRankingReason, []ChannelRankingRecommendation) {
 	reasons := make([]ChannelRankingReason, 0, 6)
 	recommendations := make([]ChannelRankingRecommendation, 0, 4)
@@ -638,34 +652,37 @@ func classifyChannelRanking(ch lndclient.ChannelInfo, capacity int64, localPct f
 
 	switch state {
 	case "expand":
-		recommendations = append(recommendations,
-			ChannelRankingRecommendation{Code: "consider_more_capacity", TargetModule: "lightning-ops"},
-			ChannelRankingRecommendation{Code: "preserve_rebalance_priority", TargetModule: "rebalance"},
-			ChannelRankingRecommendation{Code: "keep_autofee_active", TargetModule: "autofee"},
-		)
+		recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "consider_more_capacity", TargetModule: "lightning-ops"})
+		recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "preserve_rebalance_priority", TargetModule: "rebalance"})
+		recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "keep_autofee_active", TargetModule: "autofee"})
 	case "maintain":
-		recommendations = append(recommendations,
-			ChannelRankingRecommendation{Code: "keep_current_policy", TargetModule: "lightning-ops"},
-			ChannelRankingRecommendation{Code: "keep_autofee_active", TargetModule: "autofee"},
-		)
+		recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "keep_current_policy", TargetModule: "lightning-ops"})
+		recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "keep_autofee_active", TargetModule: "autofee"})
 	case "close":
-		recommendations = append(recommendations,
-			ChannelRankingRecommendation{Code: "stop_nonessential_rebalances", TargetModule: "rebalance"},
-			ChannelRankingRecommendation{Code: "prepare_close_candidate", TargetModule: "lightning-ops"},
-			ChannelRankingRecommendation{Code: "review_with_close_manager", TargetModule: "close-manager"},
-		)
+		recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "stop_nonessential_rebalances", TargetModule: "rebalance"})
+		recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "prepare_coop_close", TargetModule: "lightning-ops"})
+		recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "review_with_close_manager", TargetModule: "close-manager"})
 	default:
 		if rebalanceHeavy {
-			recommendations = append(recommendations, ChannelRankingRecommendation{Code: "reduce_rebalance_priority", TargetModule: "rebalance"})
+			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "reduce_rebalance_priority", TargetModule: "rebalance"})
 		}
-		if profitSat <= 0 || localPct < 10 || localPct > 90 {
-			recommendations = append(recommendations, ChannelRankingRecommendation{Code: "review_autofee_bounds", TargetModule: "autofee"})
+		if profitSat <= 0 {
+			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "review_autofee_bounds", TargetModule: "autofee"})
+		}
+		if localPct < 10 || localPct > 90 {
+			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "review_fee_positioning", TargetModule: "autofee"})
 		}
 		if !ch.Active || rankingMaxInt64(0, ch.InactiveDurationSec) >= 3600 {
-			recommendations = append(recommendations, ChannelRankingRecommendation{Code: "check_peer_stability", TargetModule: "lightning-ops"})
+			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "check_peer_stability", TargetModule: "lightning-ops"})
+		}
+		if capacity > 0 && forward.AmountSat < rankingMaxInt64(25000, capacity/50) {
+			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "observe_7d_before_close", TargetModule: "lightning-ops"})
+		}
+		if ch.PendingHtlcCount >= 5 {
+			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "review_with_close_manager", TargetModule: "close-manager"})
 		}
 		if len(recommendations) == 0 {
-			recommendations = append(recommendations, ChannelRankingRecommendation{Code: "observe_before_close", TargetModule: "lightning-ops"})
+			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "keep_channel_under_observation", TargetModule: "lightning-ops"})
 		}
 	}
 

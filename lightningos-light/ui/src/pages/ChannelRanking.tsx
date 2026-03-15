@@ -95,6 +95,7 @@ const CHANNEL_RANKING_ROUTE_KEY = 'channel-ranking'
 const LIGHTNING_OPS_ROUTE_KEY = 'lightning-ops'
 const REBALANCE_ROUTE_KEY = 'rebalance-center'
 const CHANNEL_HASH_PARAM = 'channel_point'
+const SECTION_HASH_PARAM = 'section'
 
 const readHashChannelPoint = (routeKey: string) => {
   if (typeof window === 'undefined') return ''
@@ -111,6 +112,18 @@ const readHashChannelPoint = (routeKey: string) => {
 
 const buildHashWithChannelPoint = (routeKey: string, channelPoint: string) =>
   `#${routeKey}?${CHANNEL_HASH_PARAM}=${encodeURIComponent(channelPoint)}`
+
+const buildLightningOpsHash = (channelPoint: string, section?: string) => {
+  const params = new URLSearchParams()
+  if (channelPoint) {
+    params.set(CHANNEL_HASH_PARAM, channelPoint)
+  }
+  if (section) {
+    params.set(SECTION_HASH_PARAM, section)
+  }
+  const suffix = params.toString()
+  return suffix ? `#${LIGHTNING_OPS_ROUTE_KEY}?${suffix}` : `#${LIGHTNING_OPS_ROUTE_KEY}`
+}
 
 const rankingRowID = (channelPoint: string) =>
   `channel-ranking-${channelPoint.replace(/[^a-zA-Z0-9_-]/g, '_')}`
@@ -135,6 +148,11 @@ export default function ChannelRanking() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [filter, setFilter] = useState<'all' | 'expand' | 'maintain' | 'monitor' | 'close'>('all')
+  const [search, setSearch] = useState('')
+  const [activityFilter, setActivityFilter] = useState<'all' | 'active' | 'inactive'>('all')
+  const [visibilityFilter, setVisibilityFilter] = useState<'all' | 'public' | 'private'>('all')
+  const [recommendationFilter, setRecommendationFilter] = useState('all')
+  const [sortBy, setSortBy] = useState<'score' | 'net_7d' | 'net_30d' | 'capital_efficiency' | 'rebalance_cost' | 'risk'>('score')
   const [selectedChannelPoint, setSelectedChannelPoint] = useState('')
   const [focusedChannelPoint, setFocusedChannelPoint] = useState('')
   const [detailItem, setDetailItem] = useState<ChannelRankingItem | null>(null)
@@ -213,8 +231,12 @@ export default function ChannelRanking() {
     switch (String(targetModule || '').trim()) {
       case 'rebalance':
         return buildHashWithChannelPoint(REBALANCE_ROUTE_KEY, item.channel_point)
+      case 'autofee':
+        return buildLightningOpsHash(item.channel_point, 'autofee')
+      case 'close-manager':
+        return buildLightningOpsHash(item.channel_point, 'close_recovery')
       default:
-        return buildHashWithChannelPoint(LIGHTNING_OPS_ROUTE_KEY, item.channel_point)
+        return buildLightningOpsHash(item.channel_point)
     }
   }
 
@@ -276,17 +298,81 @@ export default function ChannelRanking() {
   }, [])
 
   const filteredItems = useMemo(() => {
-    if (filter === 'all') return items
-    return items.filter((item) => item.state === filter)
-  }, [filter, items])
+    const query = search.trim().toLowerCase()
+    return items.filter((item) => {
+      if (filter !== 'all' && item.state !== filter) return false
+      if (activityFilter === 'active' && !item.active) return false
+      if (activityFilter === 'inactive' && item.active) return false
+      if (visibilityFilter === 'public' && item.private) return false
+      if (visibilityFilter === 'private' && !item.private) return false
+      if (recommendationFilter !== 'all') {
+        const matchesRecommendation = (item.recommendations || []).some((rec) => rec.code === recommendationFilter)
+        if (!matchesRecommendation) return false
+      }
+      if (!query) return true
+      return (
+        String(item.peer_alias || '').toLowerCase().includes(query) ||
+        String(item.peer_pubkey || '').toLowerCase().includes(query) ||
+        String(item.channel_point || '').toLowerCase().includes(query)
+      )
+    })
+  }, [activityFilter, filter, items, recommendationFilter, search, visibilityFilter])
+
+  const sortedItems = useMemo(() => {
+    const list = [...filteredItems]
+    const riskScore = (item: ChannelRankingItem) => {
+      let total = 0
+      if (!item.active) total += 30
+      if ((item.pending_htlc_count || 0) > 0) total += Math.min(20, (item.pending_htlc_count || 0) * 4)
+      if (item.profit_fee_7d_sat < 0) total += 25
+      if (item.rebal_fee_7d_sat > item.forward_fee_7d_sat) total += 15
+      if (item.local_balance_pct < 10 || item.local_balance_pct > 90) total += 10
+      if (item.trend_direction === 'worsening') total += 10
+      return total
+    }
+    list.sort((left, right) => {
+      switch (sortBy) {
+        case 'net_7d':
+          return right.profit_fee_7d_sat - left.profit_fee_7d_sat || right.score - left.score
+        case 'net_30d':
+          return right.profit_fee_30d_sat - left.profit_fee_30d_sat || right.score - left.score
+        case 'capital_efficiency': {
+          const leftEfficiency = left.capacity_sat > 0 ? left.profit_fee_7d_sat / left.capacity_sat : 0
+          const rightEfficiency = right.capacity_sat > 0 ? right.profit_fee_7d_sat / right.capacity_sat : 0
+          return rightEfficiency - leftEfficiency || right.score - left.score
+        }
+        case 'rebalance_cost':
+          return right.rebal_fee_7d_sat - left.rebal_fee_7d_sat || right.score - left.score
+        case 'risk':
+          return riskScore(right) - riskScore(left) || right.score - left.score
+        default:
+          return right.score - left.score || right.profit_fee_7d_sat - left.profit_fee_7d_sat
+      }
+    })
+    return list
+  }, [filteredItems, sortBy])
+
+  const recommendationOptions = useMemo(() => {
+    const seen = new Set<string>()
+    const options: string[] = []
+    items.forEach((item) => {
+      ;(item.recommendations || []).forEach((rec) => {
+        const code = String(rec.code || '').trim()
+        if (!code || seen.has(code)) return
+        seen.add(code)
+        options.push(code)
+      })
+    })
+    return options
+  }, [items])
 
   const selectedItem = useMemo(() => {
     if (selectedChannelPoint) {
-      const selected = items.find((item) => item.channel_point === selectedChannelPoint)
+      const selected = sortedItems.find((item) => item.channel_point === selectedChannelPoint) || items.find((item) => item.channel_point === selectedChannelPoint)
       if (selected) return selected
     }
-    return filteredItems[0] || items[0] || null
-  }, [filteredItems, items, selectedChannelPoint])
+    return sortedItems[0] || items[0] || null
+  }, [items, selectedChannelPoint, sortedItems])
 
   const selectedDetail = detailItem && detailItem.channel_point === selectedChannelPoint ? detailItem : selectedItem
 
@@ -427,6 +513,56 @@ export default function ChannelRanking() {
             )
           })}
         </div>
+        <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_repeat(4,minmax(0,1fr))]">
+          <label className="text-sm text-fog/70">
+            {t('channelRanking.searchLabel')}
+            <input
+              className="input-field mt-2"
+              type="text"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={t('channelRanking.searchPlaceholder')}
+            />
+          </label>
+          <label className="text-sm text-fog/70">
+            {t('channelRanking.activityFilterLabel')}
+            <select className="input-field mt-2" value={activityFilter} onChange={(event) => setActivityFilter(event.target.value as any)}>
+              <option value="all">{t('common.all')}</option>
+              <option value="active">{t('common.active')}</option>
+              <option value="inactive">{t('common.inactive')}</option>
+            </select>
+          </label>
+          <label className="text-sm text-fog/70">
+            {t('channelRanking.visibilityFilterLabel')}
+            <select className="input-field mt-2" value={visibilityFilter} onChange={(event) => setVisibilityFilter(event.target.value as any)}>
+              <option value="all">{t('common.all')}</option>
+              <option value="public">{t('channelRanking.publicOnly')}</option>
+              <option value="private">{t('channelRanking.privateOnly')}</option>
+            </select>
+          </label>
+          <label className="text-sm text-fog/70">
+            {t('channelRanking.recommendationFilterLabel')}
+            <select className="input-field mt-2" value={recommendationFilter} onChange={(event) => setRecommendationFilter(event.target.value)}>
+              <option value="all">{t('common.all')}</option>
+              {recommendationOptions.map((code) => (
+                <option key={code} value={code}>
+                  {recommendationLabel(code)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-sm text-fog/70">
+            {t('channelRanking.sortLabel')}
+            <select className="input-field mt-2" value={sortBy} onChange={(event) => setSortBy(event.target.value as any)}>
+              <option value="score">{t('channelRanking.sorts.score')}</option>
+              <option value="net_7d">{t('channelRanking.sorts.net7d')}</option>
+              <option value="net_30d">{t('channelRanking.sorts.net30d')}</option>
+              <option value="capital_efficiency">{t('channelRanking.sorts.capitalEfficiency')}</option>
+              <option value="rebalance_cost">{t('channelRanking.sorts.rebalanceCost')}</option>
+              <option value="risk">{t('channelRanking.sorts.risk')}</option>
+            </select>
+          </label>
+        </div>
       </section>
 
       <section className="grid gap-3 lg:grid-cols-3">
@@ -434,6 +570,7 @@ export default function ChannelRanking() {
           <div className="text-[11px] uppercase tracking-wide text-fog/45">{t('channelRanking.summaryCapitalTitle')}</div>
           <div className="mt-2 space-y-1 text-sm text-fog/80">
             <div>{t('channelRanking.summaryCapitalExpand', { value: formatSats(stateCapacity.expand) })}</div>
+            <div>{t('channelRanking.summaryCapitalMaintain', { value: formatSats(stateCapacity.maintain) })}</div>
             <div>{t('channelRanking.summaryCapitalMonitor', { value: formatSats(stateCapacity.monitor) })}</div>
             <div>{t('channelRanking.summaryCapitalClose', { value: formatSats(stateCapacity.close) })}</div>
           </div>
@@ -449,12 +586,12 @@ export default function ChannelRanking() {
         <div className="rounded-3xl border border-white/10 bg-ink/60 p-4">
           <div className="text-[11px] uppercase tracking-wide text-fog/45">{t('channelRanking.summaryOpportunityTitle')}</div>
           <div className="mt-2 space-y-1 text-sm text-fog/80">
-            {(items.slice(0, 3)).map((item) => (
+            {sortedItems.slice(0, 3).map((item) => (
               <div key={item.channel_point} className="truncate">
                 {(item.peer_alias || item.channel_point)} · {t('channelRanking.scoreShort', { value: numberFormatter.format(item.score) })}
               </div>
             ))}
-            {items.length === 0 && <div>{t('common.na')}</div>}
+            {sortedItems.length === 0 && <div>{t('common.na')}</div>}
           </div>
         </div>
       </section>
@@ -463,15 +600,15 @@ export default function ChannelRanking() {
         <section className="rounded-3xl border border-white/10 bg-ink/60 p-4 sm:p-5">
           <div className="mb-4 flex items-center justify-between gap-3">
             <h3 className="text-lg font-semibold">{t('channelRanking.listTitle')}</h3>
-            <div className="text-xs text-fog/60">{t('channelRanking.listCount', { count: filteredItems.length })}</div>
+            <div className="text-xs text-fog/60">{t('channelRanking.listCount', { count: sortedItems.length })}</div>
           </div>
           {loading ? (
             <p className="text-sm text-fog/70">{t('channelRanking.loading')}</p>
-          ) : filteredItems.length === 0 ? (
+          ) : sortedItems.length === 0 ? (
             <p className="text-sm text-fog/70">{t('channelRanking.empty')}</p>
           ) : (
             <div className="space-y-3">
-              {filteredItems.map((item) => {
+              {sortedItems.map((item) => {
                 const isSelected = selectedItem?.channel_point === item.channel_point
                 const isFocused = focusedChannelPoint === item.channel_point
                 return (
@@ -581,18 +718,34 @@ export default function ChannelRanking() {
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
                   <div className="text-[11px] uppercase tracking-wide text-fog/45">{t('channelRanking.economicsTitle')}</div>
-                  <div className="mt-2 space-y-1 text-fog/80">
-                    <div>{t('channelRanking.forwardFees7d', { value: formatSats(selectedDetail.forward_fee_7d_sat) })}</div>
-                    <div>{t('channelRanking.forwardAmount7d', { value: formatSats(selectedDetail.forward_amt_7d_sat) })}</div>
-                    <div>{t('channelRanking.outPpm7d', { value: numberFormatter.format(selectedDetail.out_ppm_7d || 0) })}</div>
-                    <div>{t('channelRanking.rebalanceFees7d', { value: formatSats(selectedDetail.rebal_fee_7d_sat) })}</div>
-                    <div>{t('channelRanking.rebalanceAmount7d', { value: formatSats(selectedDetail.rebal_amt_7d_sat) })}</div>
-                    <div>{t('channelRanking.rebalancePpm7d', { value: numberFormatter.format(selectedDetail.rebal_ppm_7d || 0) })}</div>
-                    <div>{t('channelRanking.netFees7d', { value: formatSats(selectedDetail.profit_fee_7d_sat) })}</div>
-                    <div>{t('channelRanking.forwardFees30d', { value: formatSats(selectedDetail.forward_fee_30d_sat) })}</div>
-                    <div>{t('channelRanking.rebalanceFees30d', { value: formatSats(selectedDetail.rebal_fee_30d_sat) })}</div>
-                    <div>{t('channelRanking.netFees30d', { value: formatSats(selectedDetail.profit_fee_30d_sat) })}</div>
-                    <div>{t('channelRanking.computedAt', { value: formatTimestamp(selectedDetail.computed_at) })}</div>
+                  <div className="mt-2 grid gap-3 lg:grid-cols-2">
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+                      <div className="text-[11px] uppercase tracking-wide text-fog/45">{t('channelRanking.window7dTitle')}</div>
+                      <div className="mt-2 space-y-1 text-fog/80">
+                        <div>{t('channelRanking.forwardFees7d', { value: formatSats(selectedDetail.forward_fee_7d_sat) })}</div>
+                        <div>{t('channelRanking.forwardAmount7d', { value: formatSats(selectedDetail.forward_amt_7d_sat) })}</div>
+                        <div>{t('channelRanking.outPpm7d', { value: numberFormatter.format(selectedDetail.out_ppm_7d || 0) })}</div>
+                        <div>{t('channelRanking.rebalanceFees7d', { value: formatSats(selectedDetail.rebal_fee_7d_sat) })}</div>
+                        <div>{t('channelRanking.rebalanceAmount7d', { value: formatSats(selectedDetail.rebal_amt_7d_sat) })}</div>
+                        <div>{t('channelRanking.rebalancePpm7d', { value: numberFormatter.format(selectedDetail.rebal_ppm_7d || 0) })}</div>
+                        <div>{t('channelRanking.netFees7d', { value: formatSats(selectedDetail.profit_fee_7d_sat) })}</div>
+                      </div>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+                      <div className="text-[11px] uppercase tracking-wide text-fog/45">{t('channelRanking.window30dTitle')}</div>
+                      <div className="mt-2 space-y-1 text-fog/80">
+                        <div>{t('channelRanking.forwardFees30d', { value: formatSats(selectedDetail.forward_fee_30d_sat) })}</div>
+                        <div>{t('channelRanking.forwardAmount30d', { value: formatSats(selectedDetail.forward_amt_30d_sat) })}</div>
+                        <div>{t('channelRanking.outPpm30d', { value: numberFormatter.format(selectedDetail.out_ppm_30d || 0) })}</div>
+                        <div>{t('channelRanking.rebalanceFees30d', { value: formatSats(selectedDetail.rebal_fee_30d_sat) })}</div>
+                        <div>{t('channelRanking.rebalanceAmount30d', { value: formatSats(selectedDetail.rebal_amt_30d_sat) })}</div>
+                        <div>{t('channelRanking.rebalancePpm30d', { value: numberFormatter.format(selectedDetail.rebal_ppm_30d || 0) })}</div>
+                        <div>{t('channelRanking.netFees30d', { value: formatSats(selectedDetail.profit_fee_30d_sat) })}</div>
+                      </div>
+                    </div>
+                    <div className="lg:col-span-2 text-fog/80">
+                      <div>{t('channelRanking.computedAt', { value: formatTimestamp(selectedDetail.computed_at) })}</div>
+                    </div>
                   </div>
                 </div>
               </div>

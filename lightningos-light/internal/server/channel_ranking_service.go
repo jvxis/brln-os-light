@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	channelRankingPollInterval  = 3 * time.Minute
-	channelRankingRefreshMinAge = 30 * time.Second
+	channelRankingPollInterval          = 3 * time.Minute
+	channelRankingRefreshMinAge         = 30 * time.Second
+	channelRankingAssistedRevenueWeight = 0.5
 )
 
 var ErrChannelRankingDBUnavailable = errors.New("channel ranking db unavailable")
@@ -91,9 +92,13 @@ type ChannelRankingItem struct {
 	ForwardFee7dSat          int64                          `json:"forward_fee_7d_sat"`
 	ForwardAmt7dSat          int64                          `json:"forward_amt_7d_sat"`
 	OutPpm7d                 int                            `json:"out_ppm_7d"`
+	AssistedForwardFee7dSat  int64                          `json:"assisted_forward_fee_7d_sat"`
+	AssistedForwardAmt7dSat  int64                          `json:"assisted_forward_amt_7d_sat"`
 	ForwardFee30dSat         int64                          `json:"forward_fee_30d_sat"`
 	ForwardAmt30dSat         int64                          `json:"forward_amt_30d_sat"`
 	OutPpm30d                int                            `json:"out_ppm_30d"`
+	AssistedForwardFee30dSat int64                          `json:"assisted_forward_fee_30d_sat"`
+	AssistedForwardAmt30dSat int64                          `json:"assisted_forward_amt_30d_sat"`
 	RebalFee7dSat            int64                          `json:"rebal_fee_7d_sat"`
 	RebalAmt7dSat            int64                          `json:"rebal_amt_7d_sat"`
 	RebalPpm7d               int                            `json:"rebal_ppm_7d"`
@@ -192,9 +197,13 @@ create table if not exists channel_rankings (
   class_label text,
   forward_fee_7d_sat bigint not null default 0,
   forward_amt_7d_sat bigint not null default 0,
+  assisted_forward_fee_7d_sat bigint not null default 0,
+  assisted_forward_amt_7d_sat bigint not null default 0,
   out_ppm_7d integer not null default 0,
   forward_fee_30d_sat bigint not null default 0,
   forward_amt_30d_sat bigint not null default 0,
+  assisted_forward_fee_30d_sat bigint not null default 0,
+  assisted_forward_amt_30d_sat bigint not null default 0,
   out_ppm_30d integer not null default 0,
   rebal_fee_7d_sat bigint not null default 0,
   rebal_amt_7d_sat bigint not null default 0,
@@ -267,6 +276,10 @@ create index if not exists channel_ranking_htlc_failures_time_idx on channel_ran
 	_, err = s.db.Exec(ctx, `
 alter table channel_rankings add column if not exists forward_fee_30d_sat bigint not null default 0;
 alter table channel_rankings add column if not exists forward_amt_30d_sat bigint not null default 0;
+alter table channel_rankings add column if not exists assisted_forward_fee_7d_sat bigint not null default 0;
+alter table channel_rankings add column if not exists assisted_forward_amt_7d_sat bigint not null default 0;
+alter table channel_rankings add column if not exists assisted_forward_fee_30d_sat bigint not null default 0;
+alter table channel_rankings add column if not exists assisted_forward_amt_30d_sat bigint not null default 0;
 alter table channel_rankings add column if not exists out_ppm_30d integer not null default 0;
 alter table channel_rankings add column if not exists rebal_fee_30d_sat bigint not null default 0;
 alter table channel_rankings add column if not exists rebal_amt_30d_sat bigint not null default 0;
@@ -384,6 +397,14 @@ func (s *ChannelRankingService) Refresh(ctx context.Context) error {
 	if err != nil && s.logger != nil {
 		s.logger.Printf("channel ranking 30d forward stats lookup failed: %v", err)
 	}
+	assistedForwardStats, err := s.fetchAssistedForwardStats7d(ctx)
+	if err != nil && s.logger != nil {
+		s.logger.Printf("channel ranking assisted forward stats lookup failed: %v", err)
+	}
+	assistedForwardStats30d, err := s.fetchAssistedForwardStats30d(ctx)
+	if err != nil && s.logger != nil {
+		s.logger.Printf("channel ranking 30d assisted forward stats lookup failed: %v", err)
+	}
 	rebalStats, err := s.fetchRebalanceStats7d(ctx)
 	if err != nil && s.logger != nil {
 		s.logger.Printf("channel ranking rebalance stats lookup failed: %v", err)
@@ -426,6 +447,8 @@ func (s *ChannelRankingService) Refresh(ctx context.Context) error {
 			labels[ch.ChannelID],
 			forwardStats[ch.ChannelID],
 			forwardStats30d[ch.ChannelID],
+			assistedForwardStats[ch.ChannelID],
+			assistedForwardStats30d[ch.ChannelID],
 			rebalStats[ch.ChannelID],
 			rebalStats30d[ch.ChannelID],
 			peerAggregates[strings.TrimSpace(ch.RemotePubkey)],
@@ -486,6 +509,14 @@ func (s *ChannelRankingService) fetchForwardStats30d(ctx context.Context) (map[u
 	return s.fetchForwardStats(ctx, 30)
 }
 
+func (s *ChannelRankingService) fetchAssistedForwardStats7d(ctx context.Context) (map[uint64]channelTrafficStat, error) {
+	return s.fetchAssistedForwardStats(ctx, 7)
+}
+
+func (s *ChannelRankingService) fetchAssistedForwardStats30d(ctx context.Context) (map[uint64]channelTrafficStat, error) {
+	return s.fetchAssistedForwardStats(ctx, 30)
+}
+
 func (s *ChannelRankingService) fetchForwardStats(ctx context.Context, days int) (map[uint64]channelTrafficStat, error) {
 	stats := map[uint64]channelTrafficStat{}
 	rows, err := s.db.Query(ctx, `
@@ -505,6 +536,49 @@ where type='forward'
   and occurred_at >= now() - ($1::int * interval '1 day')
   and coalesce(chan_id_out, channel_id) is not null
 group by coalesce(chan_id_out, channel_id)
+`, days)
+	if err != nil {
+		return stats, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var channelID int64
+		var feeMsat int64
+		var amountMsat int64
+		if err := rows.Scan(&channelID, &feeMsat, &amountMsat); err != nil {
+			return stats, err
+		}
+		if channelID == 0 {
+			continue
+		}
+		stats[uint64(channelID)] = channelTrafficStat{
+			FeeSat:    msatToSatCeil(feeMsat),
+			AmountSat: amountMsat / 1000,
+			Ppm:       ppmMsat(feeMsat, amountMsat),
+		}
+	}
+	return stats, rows.Err()
+}
+
+func (s *ChannelRankingService) fetchAssistedForwardStats(ctx context.Context, days int) (map[uint64]channelTrafficStat, error) {
+	stats := map[uint64]channelTrafficStat{}
+	rows, err := s.db.Query(ctx, `
+select
+  chan_id_in as chan_id,
+  coalesce(sum(
+    case
+      when fee_msat > 0 then fee_msat
+      when fee_sat > 0 then fee_sat * 1000
+      when amount_in_msat > 0 and amount_out_msat > 0 and amount_in_msat > amount_out_msat then amount_in_msat - amount_out_msat
+      else 0
+    end
+  ), 0) as fee_msat,
+  coalesce(sum(case when amount_in_msat > 0 then amount_in_msat else amount_sat * 1000 end), 0) as amount_msat
+from notifications
+where type='forward'
+  and occurred_at >= now() - ($1::int * interval '1 day')
+  and chan_id_in is not null
+group by chan_id_in
 `, days)
 	if err != nil {
 		return stats, err
@@ -786,6 +860,8 @@ func buildChannelRankingItem(
 	classLabel string,
 	forward7d channelTrafficStat,
 	forward30d channelTrafficStat,
+	assisted7d channelTrafficStat,
+	assisted30d channelTrafficStat,
 	rebal7d channelTrafficStat,
 	rebal30d channelTrafficStat,
 	peerAggregate channelPeerAggregate,
@@ -806,11 +882,46 @@ func buildChannelRankingItem(
 	}
 	profitSat7d := forward7d.FeeSat - rebal7d.FeeSat
 	profitSat30d := forward30d.FeeSat - rebal30d.FeeSat
+	assistedCredit7d := int64(math.Round(float64(assisted7d.FeeSat) * channelRankingAssistedRevenueWeight))
+	assistedCredit30d := int64(math.Round(float64(assisted30d.FeeSat) * channelRankingAssistedRevenueWeight))
+	effectiveProfitSat7d := profitSat7d + assistedCredit7d
+	effectiveProfitSat30d := profitSat30d + assistedCredit30d
+	effectiveForward7d := channelTrafficStat{
+		FeeSat:    forward7d.FeeSat + assistedCredit7d,
+		AmountSat: forward7d.AmountSat + int64(math.Round(float64(assisted7d.AmountSat)*channelRankingAssistedRevenueWeight)),
+		Ppm:       forward7d.Ppm,
+	}
+	effectiveForward30d := channelTrafficStat{
+		FeeSat:    forward30d.FeeSat + assistedCredit30d,
+		AmountSat: forward30d.AmountSat + int64(math.Round(float64(assisted30d.AmountSat)*channelRankingAssistedRevenueWeight)),
+		Ppm:       forward30d.Ppm,
+	}
 	rebalanceDependenceScore := computeRebalanceDependenceScore(forward30d, rebal30d)
-	score7d := computeChannelRankingScore(ch, capacity, localPct, forward7d, rebal7d, profitSat7d, peerAggregate.Score30d, htlcAggregate, rebalanceDependenceScore)
-	score30d := computeChannelRankingScore(ch, capacity, localPct, forward30d, rebal30d, profitSat30d, peerAggregate.Score30d, htlcAggregate, rebalanceDependenceScore)
+	score7d := computeChannelRankingScore(ch, capacity, localPct, effectiveForward7d, rebal7d, effectiveProfitSat7d, peerAggregate.Score30d, htlcAggregate, rebalanceDependenceScore)
+	score30d := computeChannelRankingScore(ch, capacity, localPct, effectiveForward30d, rebal30d, effectiveProfitSat30d, peerAggregate.Score30d, htlcAggregate, rebalanceDependenceScore)
 	trendDirection, trendDelta := computeChannelRankingTrend(score7d, score30d)
-	state, reasons, recommendations := classifyChannelRanking(ch, capacity, localPct, forward7d, forward30d, rebal7d, rebal30d, profitSat7d, profitSat30d, score7d, score30d, peerAggregate.Score30d, htlcAggregate, rebalanceDependenceScore)
+	state, reasons, recommendations := classifyChannelRanking(
+		ch,
+		capacity,
+		localPct,
+		forward7d,
+		forward30d,
+		effectiveForward7d,
+		effectiveForward30d,
+		assisted7d,
+		assisted30d,
+		rebal7d,
+		rebal30d,
+		profitSat7d,
+		profitSat30d,
+		effectiveProfitSat7d,
+		effectiveProfitSat30d,
+		score7d,
+		score30d,
+		peerAggregate.Score30d,
+		htlcAggregate,
+		rebalanceDependenceScore,
+	)
 
 	return ChannelRankingItem{
 		ChannelPoint:             strings.TrimSpace(ch.ChannelPoint),
@@ -829,9 +940,13 @@ func buildChannelRankingItem(
 		ClassLabel:               strings.TrimSpace(classLabel),
 		ForwardFee7dSat:          forward7d.FeeSat,
 		ForwardAmt7dSat:          forward7d.AmountSat,
+		AssistedForwardFee7dSat:  assisted7d.FeeSat,
+		AssistedForwardAmt7dSat:  assisted7d.AmountSat,
 		OutPpm7d:                 forward7d.Ppm,
 		ForwardFee30dSat:         forward30d.FeeSat,
 		ForwardAmt30dSat:         forward30d.AmountSat,
+		AssistedForwardFee30dSat: assisted30d.FeeSat,
+		AssistedForwardAmt30dSat: assisted30d.AmountSat,
 		OutPpm30d:                forward30d.Ppm,
 		RebalFee7dSat:            rebal7d.FeeSat,
 		RebalAmt7dSat:            rebal7d.AmountSat,
@@ -904,10 +1019,16 @@ func classifyChannelRanking(
 	localPct float64,
 	forward7d channelTrafficStat,
 	forward30d channelTrafficStat,
+	effectiveForward7d channelTrafficStat,
+	effectiveForward30d channelTrafficStat,
+	assisted7d channelTrafficStat,
+	assisted30d channelTrafficStat,
 	rebal7d channelTrafficStat,
 	rebal30d channelTrafficStat,
 	profitSat7d int64,
 	profitSat30d int64,
+	effectiveProfitSat7d int64,
+	effectiveProfitSat30d int64,
 	score7d int,
 	score30d int,
 	peerStabilityScore30d int,
@@ -923,10 +1044,13 @@ func classifyChannelRanking(
 	if profitSat7d < 0 {
 		reasons = append(reasons, ChannelRankingReason{Code: "negative_net_fees"})
 	}
+	if assisted7d.FeeSat > 0 || assisted30d.FeeSat > 0 {
+		reasons = append(reasons, ChannelRankingReason{Code: "assisted_revenue_support"})
+	}
 	if capacity > 0 && forward7d.AmountSat >= rankingMaxInt64(50000, capacity/2) {
 		reasons = append(reasons, ChannelRankingReason{Code: "strong_volume"})
 	}
-	if capacity > 0 && forward7d.AmountSat < rankingMaxInt64(25000, capacity/50) {
+	if capacity > 0 && effectiveForward7d.AmountSat < rankingMaxInt64(25000, capacity/50) {
 		reasons = append(reasons, ChannelRankingReason{Code: "low_usage"})
 	}
 	if rebal7d.FeeSat > 0 && rebal7d.FeeSat >= rankingMaxInt64(50, forward7d.FeeSat) {
@@ -951,7 +1075,7 @@ func classifyChannelRanking(
 		reasons = append(reasons, ChannelRankingReason{Code: "rebalance_dependence_high"})
 	}
 	if capacity > 0 {
-		netPpm := (float64(profitSat7d) / float64(capacity)) * 1_000_000
+		netPpm := (float64(effectiveProfitSat7d) / float64(capacity)) * 1_000_000
 		if netPpm >= 75 {
 			reasons = append(reasons, ChannelRankingReason{Code: "capital_efficiency_high"})
 		}
@@ -961,21 +1085,21 @@ func classifyChannelRanking(
 	}
 
 	state := "monitor"
-	strongVolume := capacity > 0 && forward7d.AmountSat >= rankingMaxInt64(100000, capacity/5)
+	strongVolume := capacity > 0 && effectiveForward7d.AmountSat >= rankingMaxInt64(100000, capacity/5)
 	rebalanceHeavy7d := rebal7d.FeeSat > 0 && rebal7d.FeeSat >= rankingMaxInt64(50, forward7d.FeeSat)
-	rebalanceHeavy30d := rebal30d.FeeSat > 0 && rebal30d.FeeSat >= rankingMaxInt64(150, forward30d.FeeSat)
+	rebalanceHeavy30d := rebal30d.FeeSat > 0 && rebal30d.FeeSat >= rankingMaxInt64(150, rankingMaxInt64(1, forward30d.FeeSat))
 	longInactive := !ch.Active && rankingMaxInt64(0, ch.InactiveDurationSec) >= 7*24*3600
 	unstablePeer := peerStabilityScore30d > 0 && peerStabilityScore30d < 45
 	htlcFailuresHigh := htlcAggregate.Total >= 8 || htlcAggregate.Liquidity >= 4 || htlcAggregate.Policy >= 4
-	persistentWeakEconomics := profitSat30d <= 0 || score30d < 36 || rebalanceHeavy30d
+	persistentWeakEconomics := effectiveProfitSat30d <= 0 || score30d < 36 || rebalanceHeavy30d
 	severeOperationalRisk := longInactive || unstablePeer || htlcFailuresHigh || rebalanceDependenceScore >= 85
 
 	switch {
-	case ch.Active && score7d >= 72 && profitSat7d > 0 && strongVolume && !unstablePeer:
+	case ch.Active && score7d >= 72 && effectiveProfitSat7d > 0 && strongVolume && !unstablePeer:
 		state = "expand"
-	case score7d < 24 && (severeOperationalRisk || (persistentWeakEconomics && (profitSat7d <= -150 || rebalanceHeavy7d || rebalanceDependenceScore >= 65))):
+	case score7d < 24 && (severeOperationalRisk || (persistentWeakEconomics && (effectiveProfitSat7d <= -150 || rebalanceHeavy7d || rebalanceDependenceScore >= 65))):
 		state = "close"
-	case ch.Active && score7d >= 48 && profitSat7d >= -50 && !rebalanceHeavy7d && rebalanceDependenceScore < 65 && !htlcFailuresHigh && !unstablePeer:
+	case ch.Active && score7d >= 48 && effectiveProfitSat7d >= -50 && !rebalanceHeavy7d && rebalanceDependenceScore < 65 && !htlcFailuresHigh && !unstablePeer:
 		state = "maintain"
 	default:
 		state = "monitor"
@@ -1000,7 +1124,7 @@ func classifyChannelRanking(
 		if rebalanceDependenceScore >= 65 {
 			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "reduce_rebalance_dependence", TargetModule: "rebalance"})
 		}
-		if profitSat7d <= 0 {
+		if effectiveProfitSat7d <= 0 {
 			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "review_autofee_bounds", TargetModule: "autofee"})
 		}
 		if localPct < 10 || localPct > 90 {
@@ -1012,8 +1136,11 @@ func classifyChannelRanking(
 		if htlcAggregate.Total >= 5 {
 			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "review_htlc_failures", TargetModule: "htlc-manager"})
 		}
-		if capacity > 0 && forward7d.AmountSat < rankingMaxInt64(25000, capacity/50) {
+		if capacity > 0 && effectiveForward7d.AmountSat < rankingMaxInt64(25000, capacity/50) {
 			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "observe_7d_before_close", TargetModule: "lightning-ops"})
+		}
+		if profitSat7d < 0 && effectiveProfitSat7d > profitSat7d {
+			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "review_inbound_assist_role", TargetModule: "lightning-ops"})
 		}
 		if ch.PendingHtlcCount >= 5 {
 			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "review_with_close_manager", TargetModule: "close-manager"})
@@ -1242,8 +1369,8 @@ insert into channel_rankings (
   channel_point, channel_id, peer_pubkey, peer_alias, active, private, capacity_sat,
   local_balance_sat, remote_balance_sat, local_balance_pct, remote_balance_pct,
   inactive_duration_sec, pending_htlc_count, class_label,
-  forward_fee_7d_sat, forward_amt_7d_sat, out_ppm_7d,
-  forward_fee_30d_sat, forward_amt_30d_sat, out_ppm_30d,
+  forward_fee_7d_sat, forward_amt_7d_sat, assisted_forward_fee_7d_sat, assisted_forward_amt_7d_sat, out_ppm_7d,
+  forward_fee_30d_sat, forward_amt_30d_sat, assisted_forward_fee_30d_sat, assisted_forward_amt_30d_sat, out_ppm_30d,
   rebal_fee_7d_sat, rebal_amt_7d_sat, rebal_ppm_7d,
   rebal_fee_30d_sat, rebal_amt_30d_sat, rebal_ppm_30d,
   profit_fee_7d_sat, profit_fee_30d_sat,
@@ -1255,15 +1382,15 @@ insert into channel_rankings (
   $1, $2, $3, $4, $5, $6, $7,
   $8, $9, $10, $11,
   $12, $13, $14,
-  $15, $16, $17,
-  $18, $19, $20,
-  $21, $22, $23,
-  $24, $25, $26,
-  $27, $28,
-  $29, $30,
-  $31, $32, $33, $34,
-  $35,
-  $36, $37, $38, $39, $40, $41, $42, $43, $44
+  $15, $16, $17, $18, $19,
+  $20, $21, $22, $23, $24,
+  $25, $26, $27,
+  $28, $29, $30,
+  $31, $32,
+  $33, $34,
+  $35, $36, $37, $38,
+  $39,
+  $40, $41, $42, $43, $44, $45, $46, $47, $48
 )
 on conflict (channel_point) do update set
   channel_id = excluded.channel_id,
@@ -1281,9 +1408,13 @@ on conflict (channel_point) do update set
   class_label = excluded.class_label,
   forward_fee_7d_sat = excluded.forward_fee_7d_sat,
   forward_amt_7d_sat = excluded.forward_amt_7d_sat,
+  assisted_forward_fee_7d_sat = excluded.assisted_forward_fee_7d_sat,
+  assisted_forward_amt_7d_sat = excluded.assisted_forward_amt_7d_sat,
   out_ppm_7d = excluded.out_ppm_7d,
   forward_fee_30d_sat = excluded.forward_fee_30d_sat,
   forward_amt_30d_sat = excluded.forward_amt_30d_sat,
+  assisted_forward_fee_30d_sat = excluded.assisted_forward_fee_30d_sat,
+  assisted_forward_amt_30d_sat = excluded.assisted_forward_amt_30d_sat,
   out_ppm_30d = excluded.out_ppm_30d,
   rebal_fee_7d_sat = excluded.rebal_fee_7d_sat,
   rebal_amt_7d_sat = excluded.rebal_amt_7d_sat,
@@ -1312,8 +1443,8 @@ on conflict (channel_point) do update set
 `, item.ChannelPoint, item.ChannelID, nullableString(item.PeerPubkey), nullableString(item.PeerAlias), item.Active, item.Private, item.CapacitySat,
 		item.LocalBalanceSat, item.RemoteBalanceSat, item.LocalBalancePct, item.RemoteBalancePct,
 		item.InactiveDurationSec, item.PendingHtlcCount, nullableString(item.ClassLabel),
-		item.ForwardFee7dSat, item.ForwardAmt7dSat, item.OutPpm7d,
-		item.ForwardFee30dSat, item.ForwardAmt30dSat, item.OutPpm30d,
+		item.ForwardFee7dSat, item.ForwardAmt7dSat, item.AssistedForwardFee7dSat, item.AssistedForwardAmt7dSat, item.OutPpm7d,
+		item.ForwardFee30dSat, item.ForwardAmt30dSat, item.AssistedForwardFee30dSat, item.AssistedForwardAmt30dSat, item.OutPpm30d,
 		item.RebalFee7dSat, item.RebalAmt7dSat, item.RebalPpm7d,
 		item.RebalFee30dSat, item.RebalAmt30dSat, item.RebalPpm30d,
 		item.ProfitFee7dSat, item.ProfitFee30dSat,
@@ -1359,8 +1490,8 @@ select
   channel_point, channel_id, peer_pubkey, peer_alias, active, private, capacity_sat,
   local_balance_sat, remote_balance_sat, local_balance_pct, remote_balance_pct,
   inactive_duration_sec, pending_htlc_count, class_label,
-  forward_fee_7d_sat, forward_amt_7d_sat, out_ppm_7d,
-  forward_fee_30d_sat, forward_amt_30d_sat, out_ppm_30d,
+  forward_fee_7d_sat, forward_amt_7d_sat, assisted_forward_fee_7d_sat, assisted_forward_amt_7d_sat, out_ppm_7d,
+  forward_fee_30d_sat, forward_amt_30d_sat, assisted_forward_fee_30d_sat, assisted_forward_amt_30d_sat, out_ppm_30d,
   rebal_fee_7d_sat, rebal_amt_7d_sat, rebal_ppm_7d,
   rebal_fee_30d_sat, rebal_amt_30d_sat, rebal_ppm_30d,
   profit_fee_7d_sat, profit_fee_30d_sat, peer_stability_score_30d, peer_sample_count_30d,
@@ -1401,8 +1532,8 @@ select
   channel_point, channel_id, peer_pubkey, peer_alias, active, private, capacity_sat,
   local_balance_sat, remote_balance_sat, local_balance_pct, remote_balance_pct,
   inactive_duration_sec, pending_htlc_count, class_label,
-  forward_fee_7d_sat, forward_amt_7d_sat, out_ppm_7d,
-  forward_fee_30d_sat, forward_amt_30d_sat, out_ppm_30d,
+  forward_fee_7d_sat, forward_amt_7d_sat, assisted_forward_fee_7d_sat, assisted_forward_amt_7d_sat, out_ppm_7d,
+  forward_fee_30d_sat, forward_amt_30d_sat, assisted_forward_fee_30d_sat, assisted_forward_amt_30d_sat, out_ppm_30d,
   rebal_fee_7d_sat, rebal_amt_7d_sat, rebal_ppm_7d,
   rebal_fee_30d_sat, rebal_amt_30d_sat, rebal_ppm_30d,
   profit_fee_7d_sat, profit_fee_30d_sat, peer_stability_score_30d, peer_sample_count_30d,
@@ -1609,8 +1740,8 @@ func scanChannelRankingItems(rows channelRankingRows) ([]ChannelRankingItem, err
 			&item.ChannelPoint, &item.ChannelID, &peerPubkey, &peerAlias, &item.Active, &item.Private, &item.CapacitySat,
 			&item.LocalBalanceSat, &item.RemoteBalanceSat, &item.LocalBalancePct, &item.RemoteBalancePct,
 			&item.InactiveDurationSec, &item.PendingHtlcCount, &classLabel,
-			&item.ForwardFee7dSat, &item.ForwardAmt7dSat, &item.OutPpm7d,
-			&item.ForwardFee30dSat, &item.ForwardAmt30dSat, &item.OutPpm30d,
+			&item.ForwardFee7dSat, &item.ForwardAmt7dSat, &item.AssistedForwardFee7dSat, &item.AssistedForwardAmt7dSat, &item.OutPpm7d,
+			&item.ForwardFee30dSat, &item.ForwardAmt30dSat, &item.AssistedForwardFee30dSat, &item.AssistedForwardAmt30dSat, &item.OutPpm30d,
 			&item.RebalFee7dSat, &item.RebalAmt7dSat, &item.RebalPpm7d,
 			&item.RebalFee30dSat, &item.RebalAmt30dSat, &item.RebalPpm30d,
 			&item.ProfitFee7dSat, &item.ProfitFee30dSat, &item.PeerStabilityScore30d, &item.PeerSampleCount30d,

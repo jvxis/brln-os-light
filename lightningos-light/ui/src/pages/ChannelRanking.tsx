@@ -29,9 +29,13 @@ type ChannelRankingItem = {
   class_label?: string
   forward_fee_7d_sat: number
   forward_amt_7d_sat: number
+  assisted_forward_fee_7d_sat: number
+  assisted_forward_amt_7d_sat: number
   out_ppm_7d: number
   forward_fee_30d_sat: number
   forward_amt_30d_sat: number
+  assisted_forward_fee_30d_sat: number
+  assisted_forward_amt_30d_sat: number
   out_ppm_30d: number
   rebal_fee_7d_sat: number
   rebal_amt_7d_sat: number
@@ -759,6 +763,8 @@ export default function ChannelRanking() {
                       <div className="mt-2 space-y-1 text-fog/80">
                         <div>{t('channelRanking.forwardFees7d', { value: formatSats(selectedDetail.forward_fee_7d_sat) })}</div>
                         <div>{t('channelRanking.forwardAmount7d', { value: formatSats(selectedDetail.forward_amt_7d_sat) })}</div>
+                        <div>{t('channelRanking.assistedForwardFees7d', { value: formatSats(selectedDetail.assisted_forward_fee_7d_sat) })}</div>
+                        <div>{t('channelRanking.assistedForwardAmount7d', { value: formatSats(selectedDetail.assisted_forward_amt_7d_sat) })}</div>
                         <div>{t('channelRanking.outPpm7d', { value: numberFormatter.format(selectedDetail.out_ppm_7d || 0) })}</div>
                         <div>{t('channelRanking.rebalanceFees7d', { value: formatSats(selectedDetail.rebal_fee_7d_sat) })}</div>
                         <div>{t('channelRanking.rebalanceAmount7d', { value: formatSats(selectedDetail.rebal_amt_7d_sat) })}</div>
@@ -771,6 +777,8 @@ export default function ChannelRanking() {
                       <div className="mt-2 space-y-1 text-fog/80">
                         <div>{t('channelRanking.forwardFees30d', { value: formatSats(selectedDetail.forward_fee_30d_sat) })}</div>
                         <div>{t('channelRanking.forwardAmount30d', { value: formatSats(selectedDetail.forward_amt_30d_sat) })}</div>
+                        <div>{t('channelRanking.assistedForwardFees30d', { value: formatSats(selectedDetail.assisted_forward_fee_30d_sat) })}</div>
+                        <div>{t('channelRanking.assistedForwardAmount30d', { value: formatSats(selectedDetail.assisted_forward_amt_30d_sat) })}</div>
                         <div>{t('channelRanking.outPpm30d', { value: numberFormatter.format(selectedDetail.out_ppm_30d || 0) })}</div>
                         <div>{t('channelRanking.rebalanceFees30d', { value: formatSats(selectedDetail.rebal_fee_30d_sat) })}</div>
                         <div>{t('channelRanking.rebalanceAmount30d', { value: formatSats(selectedDetail.rebal_amt_30d_sat) })}</div>

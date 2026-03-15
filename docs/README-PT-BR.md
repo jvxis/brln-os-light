@@ -204,6 +204,8 @@ O Ranking de Canais é a camada de análise dos canais abertos. Ele foi feito pa
 - este canal está custando caro demais para manter?
 - devo expandir, manter, monitorar ou preparar fechamento?
 
+Além da economia direta de roteamento, o score também considera `receita assistida` de forwards. Isso credita parte da fee e do volume ao canal de entrada, porque alguns canais são estratégicos como porta de entrada de fluxo, mesmo quando o resultado direto de saída é fraco.
+
 Onde ele aparece:
 - Página principal: `Ranking de Canais`
 - Indicador leve: cada card em `Lightning Ops > Canais` mostra apenas o badge curto e o score
@@ -223,6 +225,7 @@ Leitura rápida por faixa:
 
 Como o score é calculado:
 - Rentabilidade: fees de forward menos custo de rebalance
+- Receita assistida: crédito ponderado vindo do papel do canal como entrada de forwards, para não subavaliar canais que ajudam outros canais a monetizar
 - Eficiência de capital: quanto resultado líquido o canal gera em relação à capacidade
 - Utilização: quanto volume o canal encaminha e se a liquidez está equilibrada o suficiente para ser útil
 - Custo de manutenção: quanto o rebalance está consumindo em relação à receita que sustenta
@@ -248,6 +251,7 @@ O que um score baixo costuma indicar:
 - Custo de rebalance consumindo a economia
 - Peer instável ou baixa estabilidade do peer
 - Pressão elevada de falhas HTLC
+- Pouca contribuição direta ou assistida para o resultado de roteamento do node
 
 Estados recomendados:
 - `Expandir`: boa economia, boa utilização, peer saudável e sinais de que mais capacidade pode valer a pena

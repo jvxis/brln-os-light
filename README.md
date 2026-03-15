@@ -218,6 +218,8 @@ Channel Ranking is the analysis layer for open channels. It is designed to answe
 - Is this channel becoming expensive to maintain?
 - Should I expand, maintain, monitor, or prepare a close?
 
+Besides direct routing economics, the score also considers `assisted revenue` from forwards. This gives partial credit to the incoming channel, because some channels are strategically valuable as entry paths even when their direct outbound net result is weak.
+
 Where it lives:
 - Main page: `Channel Ranking`
 - Lightweight indicator: each channel card in `Lightning Ops > Channels` shows only the short badge and score
@@ -237,6 +239,7 @@ Quick reading of score bands:
 
 How the score is calculated:
 - Profitability: forwarding fees minus rebalance costs
+- Assisted revenue: a weighted credit from forward entry traffic, used to avoid undervaluing channels that help other channels earn routing fees
 - Capital efficiency: how much net result the channel generates relative to its capacity
 - Utilization: how much forwarding volume the channel carries and whether liquidity is balanced enough to be useful
 - Maintenance burden: how expensive rebalancing is relative to the routing income it supports
@@ -262,6 +265,7 @@ What a low score usually means:
 - Rebalance cost eating the economics
 - Unstable peer behavior or low peer stability
 - Elevated HTLC failure pressure
+- Little direct or assisted contribution to the node's routing result
 
 Recommended states:
 - `Expand`: strong economics, good usage, healthy peer, and signs that more capacity may pay off

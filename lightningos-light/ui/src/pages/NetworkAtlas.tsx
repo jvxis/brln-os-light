@@ -95,6 +95,9 @@ const AtlasConnections = ({
   const origin = projection([localNode.lon, localNode.lat])
   if (!origin) return null
 
+  const nodeHaloRadius = Math.max(7.5, 14 / Math.sqrt(Math.max(1, mapZoom)))
+  const nodeCoreRadius = Math.max(3.6, 4.8 / Math.pow(Math.max(1, mapZoom), 0.22))
+
   return (
     <g>
       {links.map((link) => {
@@ -157,8 +160,8 @@ const AtlasConnections = ({
         )
       })}
       <g transform={`translate(${origin[0]} ${origin[1]}) scale(${1 / mapZoom})`} className="atlas-node-anchor">
-        <circle r="22" />
-        <circle r="7.5" className="atlas-node-anchor__core" />
+        <circle r={nodeHaloRadius} />
+        <circle r={nodeCoreRadius} className="atlas-node-anchor__core" />
       </g>
     </g>
   )

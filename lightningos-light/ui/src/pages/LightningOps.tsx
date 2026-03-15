@@ -2281,9 +2281,21 @@ export default function LightningOps() {
         setCloseRecoveryStatus('')
       }
     } catch (err: any) {
+      setCloseRecoveryStatusData(null)
+      setCloseRecoverySessions([])
       if (!quiet) {
         setCloseRecoveryStatus(err?.message || t('lightningOps.closeRecoveryLoadFailed'))
       }
+    }
+  }
+
+  const refreshChannelRankings = async () => {
+    try {
+      const res = await getChannelRankings({ limit: 500 }) as any
+      const nextItems = Array.isArray(res?.items) ? res.items as ChannelRankingItem[] : []
+      setChannelRankingMap(Object.fromEntries(nextItems.map((item) => [item.channel_point, item])))
+    } catch {
+      setChannelRankingMap({})
     }
   }
 
@@ -2299,13 +2311,21 @@ export default function LightningOps() {
     setFailedPaymentsCleanerStatus(t('lightningOps.failedPaymentsCleanerLoading'))
     setTorPeerCheckerStatus(t('lightningOps.torPeerLoading'))
     setAutofeeMessage(t('lightningOps.autofeeLoading'))
-    const [channelsResult, peersResult, closedChannelsResult, channelRankingResult, closeManagerStatusResult, closeManagerSessionsResult, watchtowerResult, ambossResult, chanHealResult, htlcManagerResult, htlcManagerLogsResult, htlcManagerFailedResult, failedPaymentsCleanerResult, torPeerCheckerResult, torPeerCheckerLogsResult, bitcoinLocalResult, autofeeConfigResult, autofeeStatusResult, autofeeChannelsResult, autofeeResultsResult, balancedOpenStatusResult, balancedOpenSessionsResult] = await Promise.allSettled([
-      getLnChannels(),
+    const channelsRequest = getLnChannels()
+    channelsRequest
+      .then((res) => {
+        applyChannelsPayload(res)
+        setStatus('')
+      })
+      .catch((err: any) => {
+        setStatus(err?.message || t('lightningOps.loadChannelsFailed'))
+      })
+    void refreshChannelRankings()
+    void refreshCloseRecovery()
+
+    const [peersResult, closedChannelsResult, watchtowerResult, ambossResult, chanHealResult, htlcManagerResult, htlcManagerLogsResult, htlcManagerFailedResult, failedPaymentsCleanerResult, torPeerCheckerResult, torPeerCheckerLogsResult, bitcoinLocalResult, autofeeConfigResult, autofeeStatusResult, autofeeChannelsResult, autofeeResultsResult, balancedOpenStatusResult, balancedOpenSessionsResult] = await Promise.allSettled([
       getLnPeers(),
       getLnClosedChannels(),
-      getChannelRankings({ limit: 500 }),
-      getCloseManagerStatus(),
-      getCloseManagerSessions(80),
       getLnWatchtowers(),
       getAmbossHealth(),
       getLnChanHeal(),
@@ -2323,14 +2343,6 @@ export default function LightningOps() {
       getBalancedOpenStatus(),
       getBalancedOpenSessions({ limit: 40 })
     ])
-    if (channelsResult.status === 'fulfilled') {
-      const res = channelsResult.value
-      applyChannelsPayload(res)
-      setStatus('')
-    } else {
-      const message = (channelsResult.reason as any)?.message || t('lightningOps.loadChannelsFailed')
-      setStatus(message)
-    }
     if (peersResult.status === 'fulfilled') {
       const res = peersResult.value
       setPeers(Array.isArray(res?.peers) ? res.peers : [])
@@ -2346,34 +2358,6 @@ export default function LightningOps() {
     } else {
       const message = (closedChannelsResult.reason as any)?.message || t('lightningOps.loadClosedChannelsFailed')
       setClosedChannelStatus(message)
-    }
-    if (channelRankingResult.status === 'fulfilled') {
-      const payload = channelRankingResult.value as any
-      const nextItems = Array.isArray(payload?.items) ? payload.items as ChannelRankingItem[] : []
-      setChannelRankingMap(Object.fromEntries(nextItems.map((item) => [item.channel_point, item])))
-    } else {
-      setChannelRankingMap({})
-    }
-    if (closeManagerStatusResult.status === 'fulfilled') {
-      setCloseRecoveryStatusData(closeManagerStatusResult.value as CloseRecoveryStatus)
-      setCloseRecoveryStatus('')
-    } else {
-      setCloseRecoveryStatusData(null)
-      const message = (closeManagerStatusResult.reason as any)?.message || t('lightningOps.closeRecoveryLoadFailed')
-      setCloseRecoveryStatus(message)
-    }
-    if (closeManagerSessionsResult.status === 'fulfilled') {
-      const res = closeManagerSessionsResult.value as any
-      setCloseRecoverySessions(Array.isArray(res?.items) ? res.items : [])
-      if (closeManagerStatusResult.status === 'fulfilled') {
-        setCloseRecoveryStatus('')
-      }
-    } else {
-      setCloseRecoverySessions([])
-      if (closeManagerStatusResult.status !== 'rejected') {
-        const message = (closeManagerSessionsResult.reason as any)?.message || t('lightningOps.closeRecoveryLoadFailed')
-        setCloseRecoveryStatus(message)
-      }
     }
     if (watchtowerResult.status === 'fulfilled') {
       const res = watchtowerResult.value as any
@@ -2510,8 +2494,9 @@ export default function LightningOps() {
       const settingsPayload = (autofeeChannelsResult.value as any)?.settings as AutofeeChannelSetting[] | undefined
       const map: Record<string, boolean> = {}
       const keyByChannelID: Record<string, string> = {}
-      if (channelsResult.status === 'fulfilled') {
-        const channelsPayload = (channelsResult.value as any)?.channels
+      try {
+        const channelsRes = await channelsRequest as any
+        const channelsPayload = channelsRes?.channels
         if (Array.isArray(channelsPayload)) {
           channelsPayload.forEach((raw: any) => {
             const key = autofeeChannelKey(raw?.channel_point, raw?.channel_id)
@@ -2519,6 +2504,8 @@ export default function LightningOps() {
             if (key && id) keyByChannelID[id] = key
           })
         }
+      } catch {
+        // Leave channel-id mapping empty when the channels payload is unavailable.
       }
       if (Array.isArray(settingsPayload)) {
         settingsPayload.forEach((entry) => {
@@ -2607,7 +2594,7 @@ export default function LightningOps() {
           setClosedChannelStatus(err?.message || t('lightningOps.loadClosedChannelsFailed'))
         })
     }
-    const refreshChannelRankings = () => {
+    const pollChannelRankings = () => {
       getChannelRankings({ limit: 500 })
         .then((res: any) => {
           if (!mounted) return
@@ -2788,7 +2775,7 @@ export default function LightningOps() {
     const channelsTimer = window.setInterval(() => {
       refreshChannels()
       refreshClosedChannels()
-      refreshChannelRankings()
+      pollChannelRankings()
     }, 10 * 60 * 1000)
     return () => {
       mounted = false

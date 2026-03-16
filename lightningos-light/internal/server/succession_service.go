@@ -75,6 +75,12 @@ type SuccessionStatus struct {
 	Config    *SuccessionConfig `json:"config,omitempty"`
 }
 
+func successionScheduleFrom(lastAlive time.Time, checkDays int, reminderDays int) (time.Time, time.Time) {
+	next := lastAlive.AddDate(0, 0, checkDays)
+	deadline := next.AddDate(0, 0, reminderDays)
+	return next, deadline
+}
+
 func NewSuccessionService(db *pgxpool.Pool, logger *log.Logger) *SuccessionService {
 	return &SuccessionService{db: db, logger: logger}
 }
@@ -580,16 +586,28 @@ func (s *SuccessionService) UpdateConfig(ctx context.Context, update SuccessionC
 	}
 
 	now := time.Now().UTC()
-	if cfg.LastAliveAt == nil {
-		cfg.LastAliveAt = &now
-	}
-	if cfg.NextCheckAt == nil || update.CheckPeriodDays != nil {
-		next := cfg.LastAliveAt.AddDate(0, 0, cfg.CheckPeriodDays)
+	if cfg.Enabled {
+		// Treat config saves from the UI/API as an operator proof-of-life and re-arm the full schedule.
+		lastAlive := now
+		next, deadline := successionScheduleFrom(lastAlive, cfg.CheckPeriodDays, cfg.ReminderPeriodDays)
+		cfg.LastAliveAt = &lastAlive
 		cfg.NextCheckAt = &next
-	}
-	if cfg.DeadlineAt == nil || update.CheckPeriodDays != nil || update.ReminderPeriodDays != nil {
-		deadline := cfg.NextCheckAt.AddDate(0, 0, cfg.ReminderPeriodDays)
 		cfg.DeadlineAt = &deadline
+	} else {
+		if cfg.LastAliveAt == nil {
+			cfg.LastAliveAt = &now
+		}
+		if cfg.NextCheckAt == nil {
+			next, deadline := successionScheduleFrom(*cfg.LastAliveAt, cfg.CheckPeriodDays, cfg.ReminderPeriodDays)
+			cfg.NextCheckAt = &next
+			if cfg.DeadlineAt == nil {
+				cfg.DeadlineAt = &deadline
+			}
+		}
+		if cfg.DeadlineAt == nil {
+			_, deadline := successionScheduleFrom(*cfg.NextCheckAt, 0, cfg.ReminderPeriodDays)
+			cfg.DeadlineAt = &deadline
+		}
 	}
 
 	_, err = s.db.Exec(ctx, `
@@ -622,6 +640,9 @@ where id = $1
 		"dry_run":             cfg.DryRun,
 		"sweep_min_confs":     cfg.SweepMinConfs,
 		"sweep_sat_per_vbyte": cfg.SweepSatPerVbyte,
+		"last_alive_at":       cfg.LastAliveAt,
+		"next_check_at":       cfg.NextCheckAt,
+		"deadline_at":         cfg.DeadlineAt,
 	})
 
 	return s.GetConfig(ctx)
@@ -634,8 +655,7 @@ func (s *SuccessionService) MarkAlive(ctx context.Context, source string) (Succe
 	}
 
 	now := time.Now().UTC()
-	next := now.AddDate(0, 0, cfg.CheckPeriodDays)
-	deadline := next.AddDate(0, 0, cfg.ReminderPeriodDays)
+	next, deadline := successionScheduleFrom(now, cfg.CheckPeriodDays, cfg.ReminderPeriodDays)
 
 	status := cfg.Status
 	if cfg.Enabled {

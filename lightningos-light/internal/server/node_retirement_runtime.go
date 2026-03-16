@@ -525,6 +525,7 @@ func (s *NodeRetirementService) stepMonitor(ctx context.Context, session NodeRet
 	if err != nil {
 		return err
 	}
+	now := time.Now().UTC()
 	points := make(map[string]struct{}, len(rows))
 	for _, item := range rows {
 		point := strings.TrimSpace(item.ChannelPoint)
@@ -538,12 +539,12 @@ func (s *NodeRetirementService) stepMonitor(ctx context.Context, session NodeRet
 		return err
 	}
 	openCount := 0
-	openByPoint := make(map[string]struct{}, len(openChannels))
+	openByPoint := make(map[string]lndclient.ChannelInfo, len(openChannels))
 	for _, ch := range openChannels {
 		point := strings.TrimSpace(ch.ChannelPoint)
 		if _, ok := points[point]; ok {
 			openCount++
-			openByPoint[point] = struct{}{}
+			openByPoint[point] = ch
 		}
 	}
 
@@ -552,10 +553,61 @@ func (s *NodeRetirementService) stepMonitor(ctx context.Context, session NodeRet
 		return err
 	}
 	pendingCount := 0
+	pendingByPoint := make(map[string]lndclient.PendingChannelInfo, len(pendingChannels))
 	for _, ch := range pendingChannels {
-		if _, ok := points[strings.TrimSpace(ch.ChannelPoint)]; ok {
+		point := strings.TrimSpace(ch.ChannelPoint)
+		if _, ok := points[point]; ok {
 			pendingCount++
+			pendingByPoint[point] = ch
 		}
+	}
+
+	for _, item := range rows {
+		point := strings.TrimSpace(item.ChannelPoint)
+		if point == "" {
+			continue
+		}
+		initial := parseNodeRetirementJSONMap(item.InitialState)
+		current := parseNodeRetirementJSONMap(item.CurrentState)
+
+		state := map[string]any{
+			"active":             false,
+			"pending_htlc_count": 0,
+			"updated_at":         now.Format(time.RFC3339),
+		}
+		if alias := strings.TrimSpace(stringValueFromMaps("peer_alias", current, initial)); alias != "" {
+			state["peer_alias"] = alias
+		}
+		if pubkey := strings.TrimSpace(stringValueFromMaps("remote_pubkey", current, initial)); pubkey != "" {
+			state["remote_pubkey"] = pubkey
+		}
+
+		if live, ok := openByPoint[point]; ok {
+			state["active"] = live.Active
+			state["peer_alias"] = live.PeerAlias
+			state["remote_pubkey"] = live.RemotePubkey
+			state["local_balance_sat"] = live.LocalBalanceSat
+			state["remote_balance_sat"] = live.RemoteBalanceSat
+			state["pending_htlc_count"] = live.PendingHtlcCount
+			state["close_status"] = "open"
+		} else if pending, ok := pendingByPoint[point]; ok {
+			state["peer_alias"] = fallbackString(strings.TrimSpace(pending.PeerAlias), stringValueFromMaps("peer_alias", current, initial))
+			state["remote_pubkey"] = fallbackString(strings.TrimSpace(pending.RemotePubkey), stringValueFromMaps("remote_pubkey", current, initial))
+			state["local_balance_sat"] = pending.LocalBalanceSat
+			state["remote_balance_sat"] = pending.RemoteBalanceSat
+			state["limbo_balance_sat"] = pending.LimboBalance
+			state["close_status"] = pending.Status
+			if txid := strings.TrimSpace(pending.ClosingTxid); txid != "" {
+				state["closing_txid"] = txid
+			}
+		} else {
+			state["close_status"] = "closed"
+			state["closed"] = true
+			if txid := fallbackString(strings.TrimSpace(item.CloseTxid), stringValueFromMaps("closing_txid", current, initial)); txid != "" {
+				state["closing_txid"] = txid
+			}
+		}
+		_ = s.upsertSessionChannel(ctx, session.SessionID, point, item.ChannelID, nil, state)
 	}
 
 	if openCount > 0 || pendingCount > 0 {
@@ -969,6 +1021,27 @@ func parseNodeRetirementJSONMap(raw json.RawMessage) map[string]any {
 		return map[string]any{}
 	}
 	return parsed
+}
+
+func stringValueFromMaps(key string, maps ...map[string]any) string {
+	for _, item := range maps {
+		if item == nil {
+			continue
+		}
+		if value, ok := item[key]; ok {
+			if text := strings.TrimSpace(fmt.Sprintf("%v", value)); text != "" && text != "<nil>" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+func fallbackString(primary string, fallback string) string {
+	if strings.TrimSpace(primary) != "" {
+		return strings.TrimSpace(primary)
+	}
+	return strings.TrimSpace(fallback)
 }
 
 func parseNodeRetirementTime(value any) (time.Time, bool) {

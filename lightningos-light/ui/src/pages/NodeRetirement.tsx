@@ -736,6 +736,8 @@ export default function NodeRetirement() {
     return translated === key ? normalized : translated
   }
 
+  const createSessionDisabled = sessionBusy || !status?.available || Boolean(status?.active)
+
   return (
     <section className="space-y-6">
       <div className="section-card space-y-2 border border-amber-400/30">
@@ -768,7 +770,7 @@ export default function NodeRetirement() {
             className="btn-primary disabled:opacity-60 disabled:cursor-not-allowed"
             type="button"
             onClick={handleCreateSession}
-            disabled={sessionBusy || !status?.available}
+            disabled={createSessionDisabled}
           >
             {sessionBusy ? t('nodeRetirement.creating') : t('nodeRetirement.createSession')}
           </button>
@@ -778,6 +780,11 @@ export default function NodeRetirement() {
           {t('nodeRetirement.moduleStatus')}: {status?.available ? t('common.enabled') : t('common.disabled')}
           {status?.error ? ` - ${status.error}` : ''}
         </div>
+        {status?.active && (
+          <div className="text-xs text-amber-200">
+            {t('nodeRetirement.activeSessionLock', { sessionId: status.active_session_id || '-' })}
+          </div>
+        )}
       </div>
 
       <div className="section-card space-y-4">

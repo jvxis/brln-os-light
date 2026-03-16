@@ -1851,6 +1851,7 @@
     "sessionCreated": "Sessão criada.",
     "createFailed": "Falha ao criar sessão.",
     "moduleStatus": "Status do módulo",
+    "activeSessionLock": "Não é possível criar outra sessão enquanto a sessão ativa {{sessionId}} não for concluída.",
     "stepsTitle": "Etapas da Aposentadoria",
     "steps": {
       "snapshot": "Snapshot inicial",

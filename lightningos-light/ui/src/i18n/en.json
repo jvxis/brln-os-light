@@ -1878,6 +1878,8 @@
     "channelTimelineEmpty": "No channel timeline data yet.",
     "channelInitial": "Initial",
     "channelCurrent": "Current",
+    "channelStatusLabel": "Status",
+    "channelStatusUnknown": "Unknown",
     "channelActive": "Active",
     "channelInactive": "Inactive",
     "channelUnknown": "Unknown",
@@ -1893,8 +1895,22 @@
     "channelCloseTxid": "Close txid",
     "channelDecisionLabel": "Decision",
     "channelDelta": "Delta",
+    "channelStatuses": {
+      "open": "Open",
+      "closing": "Closing",
+      "force_closing": "Force closing",
+      "waiting_close": "Waiting close",
+      "closed": "Closed"
+    },
+    "channelCloseModes": {
+      "coop": "Cooperative",
+      "force": "Force close",
+      "coop_dry_run": "Cooperative dry-run"
+    },
     "metricsTitle": "Runtime metrics",
     "metricsTrackedChannels": "Tracked channels",
+    "metricsClosedChannels": "Channels closed successfully",
+    "metricsPendingCloseChannels": "Channels still pending",
     "metricsPendingChannels": "Channels with pending HTLC",
     "metricsPendingHtlcs": "Total pending HTLCs",
     "metricsMaxPendingAge": "Max pending HTLC age",

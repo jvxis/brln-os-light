@@ -1878,6 +1878,8 @@
     "channelTimelineEmpty": "Sem dados da linha do tempo de canais ainda.",
     "channelInitial": "Inicial",
     "channelCurrent": "Atual",
+    "channelStatusLabel": "Status",
+    "channelStatusUnknown": "Desconhecido",
     "channelActive": "Ativo",
     "channelInactive": "Inativo",
     "channelUnknown": "Desconhecido",
@@ -1893,8 +1895,22 @@
     "channelCloseTxid": "Txid de fechamento",
     "channelDecisionLabel": "Decisão",
     "channelDelta": "Delta",
+    "channelStatuses": {
+      "open": "Aberto",
+      "closing": "Em fechamento",
+      "force_closing": "Force close em andamento",
+      "waiting_close": "Aguardando fechamento",
+      "closed": "Fechado"
+    },
+    "channelCloseModes": {
+      "coop": "Cooperativo",
+      "force": "Force close",
+      "coop_dry_run": "Cooperativo dry-run"
+    },
     "metricsTitle": "Métricas de execução",
     "metricsTrackedChannels": "Canais rastreados",
+    "metricsClosedChannels": "Canais fechados com sucesso",
+    "metricsPendingCloseChannels": "Canais ainda pendentes",
     "metricsPendingChannels": "Canais com HTLC pendente",
     "metricsPendingHtlcs": "HTLCs pendentes totais",
     "metricsMaxPendingAge": "Maior idade de HTLC pendente",

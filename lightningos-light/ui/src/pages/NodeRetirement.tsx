@@ -162,6 +162,35 @@ const transferBadgeClass = (status?: string) => {
   }
 }
 
+const closeStatusBadgeClass = (status?: string) => {
+  const normalized = String(status || '').trim().toLowerCase()
+  switch (normalized) {
+    case 'closed':
+      return 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/40'
+    case 'closing':
+    case 'force_closing':
+    case 'waiting_close':
+      return 'bg-amber-500/20 text-amber-100 border border-amber-300/40'
+    case 'open':
+      return 'bg-sky-500/20 text-sky-100 border border-sky-300/40'
+    default:
+      return 'bg-white/10 text-fog/70 border border-white/20'
+  }
+}
+
+const closeModeBadgeClass = (mode?: string) => {
+  const normalized = String(mode || '').trim().toLowerCase()
+  switch (normalized) {
+    case 'force':
+      return 'bg-rose-500/20 text-rose-100 border border-rose-300/40'
+    case 'coop':
+    case 'coop_dry_run':
+      return 'bg-sky-500/20 text-sky-100 border border-sky-300/40'
+    default:
+      return 'bg-white/10 text-fog/70 border border-white/20'
+  }
+}
+
 const asRecord = (value: unknown): Record<string, unknown> => {
   if (!value) return {}
   if (typeof value === 'string') {
@@ -444,6 +473,7 @@ export default function NodeRetirement() {
         pendingAgeSec: pickNumber(current, ['pending_htlc_age_sec']),
         stuckHTLC: stuckFlag === true,
         decision: item.decision || '',
+        closeStatus: pickString(current, ['close_status', 'closeStatus']) || (asBool(current.closed) === true ? 'closed' : ''),
         closeMode: item.close_mode || '',
         closeTxid: item.close_txid || '',
         lastError: item.last_error || '',
@@ -463,6 +493,8 @@ export default function NodeRetirement() {
     let stuckChannels = 0
     let forceCloseDecisions = 0
     let forceClosePendingRetry = 0
+    let closedChannels = 0
+    let pendingCloseChannels = 0
 
     for (const item of channelTimeline) {
       const pending = item.currentPendingHTLCs ?? 0
@@ -474,6 +506,8 @@ export default function NodeRetirement() {
         maxPendingAgeSec = maxPendingAgeSec === null ? item.pendingAgeSec : Math.max(maxPendingAgeSec, item.pendingAgeSec)
       }
       if (item.stuckHTLC) stuckChannels++
+      if (item.closeStatus === 'closed') closedChannels++
+      else pendingCloseChannels++
       if (item.decision === 'force_close') {
         forceCloseDecisions++
         if (!item.closeMode) forceClosePendingRetry++
@@ -494,6 +528,8 @@ export default function NodeRetirement() {
 
     return {
       trackedChannels: channelTimeline.length,
+      closedChannels,
+      pendingCloseChannels,
       pendingChannels,
       pendingHtlcsTotal,
       maxPendingAgeSec,
@@ -684,6 +720,22 @@ export default function NodeRetirement() {
     return t('nodeRetirement.channelUnknown')
   }
 
+  const closeStatusLabel = (value?: string) => {
+    const normalized = String(value || '').trim().toLowerCase()
+    if (!normalized) return t('nodeRetirement.channelStatusUnknown')
+    const key = `nodeRetirement.channelStatuses.${normalized}`
+    const translated = t(key)
+    return translated === key ? normalized : translated
+  }
+
+  const closeModeLabel = (value?: string) => {
+    const normalized = String(value || '').trim().toLowerCase()
+    if (!normalized) return '-'
+    const key = `nodeRetirement.channelCloseModes.${normalized}`
+    const translated = t(key)
+    return translated === key ? normalized : translated
+  }
+
   return (
     <section className="space-y-6">
       <div className="section-card space-y-2 border border-amber-400/30">
@@ -818,6 +870,8 @@ export default function NodeRetirement() {
           <p className="text-sm text-fog mb-2">{t('nodeRetirement.metricsTitle')}</p>
           <div className="grid gap-1 text-xs text-fog/70 lg:grid-cols-3">
             <p>{t('nodeRetirement.metricsTrackedChannels')}: <span className="text-fog">{retirementMetrics.trackedChannels}</span></p>
+            <p>{t('nodeRetirement.metricsClosedChannels')}: <span className="text-fog">{retirementMetrics.closedChannels}</span></p>
+            <p>{t('nodeRetirement.metricsPendingCloseChannels')}: <span className="text-fog">{retirementMetrics.pendingCloseChannels}</span></p>
             <p>{t('nodeRetirement.metricsPendingChannels')}: <span className="text-fog">{retirementMetrics.pendingChannels}</span></p>
             <p>{t('nodeRetirement.metricsPendingHtlcs')}: <span className="text-fog">{retirementMetrics.pendingHtlcsTotal}</span></p>
             <p>{t('nodeRetirement.metricsMaxPendingAge')}: <span className="text-fog">{formatDurationSeconds(retirementMetrics.maxPendingAgeSec)}</span></p>
@@ -847,8 +901,11 @@ export default function NodeRetirement() {
                       <span className={`rounded-full px-2 py-0.5 uppercase ${item.initialActive ? 'bg-sky-500/20 text-sky-100 border border-sky-300/40' : 'bg-white/10 text-fog/70 border border-white/20'}`}>
                         {t('nodeRetirement.channelInitial')}: {channelActivityLabel(item.initialActive)}
                       </span>
-                      <span className={`rounded-full px-2 py-0.5 uppercase ${item.currentActive ? 'bg-emerald-500/20 text-emerald-100 border border-emerald-300/40' : 'bg-amber-500/20 text-amber-100 border border-amber-300/40'}`}>
-                        {t('nodeRetirement.channelCurrent')}: {channelActivityLabel(item.currentActive)}
+                      <span className={`rounded-full px-2 py-0.5 uppercase ${closeStatusBadgeClass(item.closeStatus)}`}>
+                        {t('nodeRetirement.channelStatusLabel')}: {closeStatusLabel(item.closeStatus)}
+                      </span>
+                      <span className={`rounded-full px-2 py-0.5 uppercase ${closeModeBadgeClass(item.closeMode)}`}>
+                        {t('nodeRetirement.channelCloseMode')}: {closeModeLabel(item.closeMode)}
                       </span>
                     </div>
                   </div>
@@ -875,7 +932,7 @@ export default function NodeRetirement() {
                         {item.stuckHTLC ? t('nodeRetirement.channelStuck') : t('nodeRetirement.channelNotStuck')}
                       </span>
                     </p>
-                    <p>{t('nodeRetirement.channelCloseMode')}: <span className="text-fog">{item.closeMode || '-'}</span></p>
+                    <p>{t('nodeRetirement.channelCurrent')}: <span className="text-fog">{channelActivityLabel(item.currentActive)}</span></p>
                     <p className="break-all">{t('nodeRetirement.channelCloseTxid')}: <span className="text-fog">{item.closeTxid || '-'}</span></p>
                     <p>{t('nodeRetirement.channelDecisionLabel')}: <span className="text-fog">{item.decision || '-'}</span></p>
                     <p>{t('nodeRetirement.snapshotTakenAt')}: <span className="text-fog">{formatTs(item.capturedAt)}</span></p>

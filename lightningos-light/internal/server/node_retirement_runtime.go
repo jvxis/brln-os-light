@@ -20,6 +20,7 @@ const (
 	nodeRetirementCoopCloseAttemptTimeout            = 12 * time.Minute
 	nodeRetirementTransferRetry                      = 2 * time.Minute
 	nodeRetirementDefaultStuckHTLCThresholdSec int64 = 86400
+	nodeRetirementTransferSkippedNoWalletFunds       = "skipped_no_wallet_funds"
 )
 
 type nodeRetirementRuntimeConfig struct {
@@ -654,6 +655,10 @@ func (s *NodeRetirementService) stepMonitor(ctx context.Context, session NodeRet
 	}
 	if transferInfo != nil {
 		reconciliation["transfer"] = transferInfo
+		if strings.TrimSpace(transferInfo.Status) == nodeRetirementTransferSkippedNoWalletFunds {
+			reconciliation["wallet_funds_absent"] = true
+			reconciliation["note"] = "succession transfer skipped because no on-chain wallet funds were available"
+		}
 	}
 	if err := s.storeSessionReconciliation(ctx, session.SessionID, reconciliation); err != nil {
 		return err
@@ -802,7 +807,7 @@ func (s *NodeRetirementService) processSuccessionTransfer(ctx context.Context, s
 		return false, nil, err
 	}
 	if found {
-		if transfer.Status == "confirmed" || transfer.Status == "completed" {
+		if transfer.Status == "confirmed" || transfer.Status == "completed" || transfer.Status == nodeRetirementTransferSkippedNoWalletFunds {
 			return true, &transfer, nil
 		}
 		if transfer.Status == "submitted" {
@@ -840,7 +845,25 @@ func (s *NodeRetirementService) processSuccessionTransfer(ctx context.Context, s
 		confirmedAmount += item.AmountSat
 	}
 	if confirmedAmount <= 0 {
-		_ = s.updateTransferStatus(ctx, session.SessionID, "waiting_funds", "", 0, transfer.Attempts, "no confirmed UTXOs available")
+		allUtxos, allErr := s.lnd.ListOnchainUtxos(ctx, 0, 9999999)
+		if allErr != nil {
+			return false, &transfer, allErr
+		}
+		totalWalletAmount := sumOnchainUtxoAmount(allUtxos)
+		done, status, lastError := classifySuccessionTransferWalletFunds(confirmedAmount, totalWalletAmount)
+		if done {
+			_ = s.updateTransferStatus(ctx, session.SessionID, status, "", 0, transfer.Attempts, lastError)
+			_ = s.insertEvent(ctx, session.SessionID, "succession_transfer_skipped", "info", map[string]any{
+				"reason": "no_wallet_funds",
+				"note":   lastError,
+			})
+			transfer.Status = status
+			transfer.LastError = lastError
+			return true, &transfer, nil
+		}
+		_ = s.updateTransferStatus(ctx, session.SessionID, status, "", 0, transfer.Attempts, lastError)
+		transfer.Status = status
+		transfer.LastError = lastError
 		return false, &transfer, nil
 	}
 
@@ -871,6 +894,24 @@ func (s *NodeRetirementService) processSuccessionTransfer(ctx context.Context, s
 	transfer.AmountSat = confirmedAmount
 	transfer.Attempts = attempts
 	return false, &transfer, nil
+}
+
+func sumOnchainUtxoAmount(utxos []lndclient.OnchainUtxo) int64 {
+	total := int64(0)
+	for _, item := range utxos {
+		total += item.AmountSat
+	}
+	return total
+}
+
+func classifySuccessionTransferWalletFunds(confirmedAmount int64, totalWalletAmount int64) (bool, string, string) {
+	if confirmedAmount > 0 {
+		return false, "", ""
+	}
+	if totalWalletAmount > 0 {
+		return false, "waiting_funds", "no confirmed UTXOs available"
+	}
+	return true, nodeRetirementTransferSkippedNoWalletFunds, "no wallet funds available for succession transfer"
 }
 
 func (s *NodeRetirementService) isTransferConfirmed(ctx context.Context, txid string) (bool, error) {

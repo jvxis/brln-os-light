@@ -1968,6 +1968,7 @@
     "transferStates": {
       "waiting": "Waiting",
       "waiting_funds": "Waiting funds",
+      "skipped_no_wallet_funds": "No funds in node wallet",
       "submitted": "Submitted",
       "confirmed": "Confirmed",
       "completed": "Completed",

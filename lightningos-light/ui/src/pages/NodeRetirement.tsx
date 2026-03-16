@@ -151,6 +151,8 @@ const transferBadgeClass = (status?: string) => {
     case 'confirmed':
     case 'completed':
       return 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/40'
+    case 'skipped_no_wallet_funds':
+      return 'bg-slate-500/20 text-slate-100 border border-slate-300/40'
     case 'submitted':
       return 'bg-sky-500/20 text-sky-100 border border-sky-300/40'
     case 'failed':

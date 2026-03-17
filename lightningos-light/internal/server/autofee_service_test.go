@@ -75,6 +75,36 @@ func TestBlendTargetWithSeed(t *testing.T) {
 	}
 }
 
+func TestApplySeedSoftEnvelopeCapsTargetToCeiling(t *testing.T) {
+	got, tags := applySeedSoftEnvelope(900, 400, 1.10, 1.50, true)
+	if got != 600 {
+		t.Fatalf("expected target capped to seed ceiling: got %d want 600", got)
+	}
+	if len(tags) != 1 || tags[0] != "seed:soft-ceil" {
+		t.Fatalf("expected seed:soft-ceil tag, got %#v", tags)
+	}
+}
+
+func TestApplySeedSoftEnvelopeRaisesTargetToFloorWhenAllowed(t *testing.T) {
+	got, tags := applySeedSoftEnvelope(300, 400, 1.10, 1.50, true)
+	if got != 440 {
+		t.Fatalf("expected target raised to seed floor: got %d want 440", got)
+	}
+	if len(tags) != 1 || tags[0] != "seed:soft-floor" {
+		t.Fatalf("expected seed:soft-floor tag, got %#v", tags)
+	}
+}
+
+func TestApplySeedSoftEnvelopeDoesNotRaiseFloorWhenNotAllowed(t *testing.T) {
+	got, tags := applySeedSoftEnvelope(300, 400, 1.10, 1.50, false)
+	if got != 300 {
+		t.Fatalf("expected target unchanged when floor raise is not allowed: got %d want 300", got)
+	}
+	if len(tags) != 0 {
+		t.Fatalf("expected no tags when no envelope adjustment happens, got %#v", tags)
+	}
+}
+
 func TestEffectiveLowOutThresholdsDrainedVsFull(t *testing.T) {
 	lowDrained, protectDrained, factorDrained := effectiveLowOutThresholds(0.10, 0.10, "drained", 0.20)
 	lowFull, protectFull, factorFull := effectiveLowOutThresholds(0.10, 0.10, "full", 0.80)

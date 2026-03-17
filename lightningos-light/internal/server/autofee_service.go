@@ -3164,6 +3164,41 @@ func blendTargetWithSeed(base int, seed float64, weight float64) int {
 	return int(math.Round((1.0-w)*float64(base) + w*seed))
 }
 
+func applySeedSoftEnvelope(target int, seed float64, floorMult float64, ceilingMult float64, allowFloor bool) (int, []string) {
+	if target <= 0 || seed <= 0 {
+		return target, nil
+	}
+	if floorMult <= 0 {
+		floorMult = defaultSeedFloorMult
+	}
+	if ceilingMult <= 0 {
+		ceilingMult = defaultSeedCeilingMult
+	}
+	if ceilingMult < floorMult {
+		ceilingMult = floorMult
+	}
+
+	seedFloor := int(math.Round(seed * floorMult))
+	seedCeil := int(math.Round(seed * ceilingMult))
+	if seedFloor <= 0 {
+		seedFloor = int(math.Round(seed))
+	}
+	if seedCeil < seedFloor {
+		seedCeil = seedFloor
+	}
+
+	tags := []string{}
+	if target > seedCeil {
+		target = seedCeil
+		tags = append(tags, "seed:soft-ceil")
+	}
+	if allowFloor && target < seedFloor {
+		target = seedFloor
+		tags = append(tags, "seed:soft-floor")
+	}
+	return target, tags
+}
+
 func shouldHoldUpOnRecentRebalance(classLabel string, outRatio float64, lowOutProtectThresh float64, recentRebalanceCount int) bool {
 	if recentRebalanceCount <= 0 {
 		return false
@@ -4658,6 +4693,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 	hasOutSignal := outPpm7dRaw > 0 || outFrom21dFallback || (st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 21*24*time.Hour)
 	hasRebalSignal := perCost > 0 || rebalFrom21dFallback || (st.LastRebalCost > 0 && !st.LastRebalCostTs.IsZero() && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour)
+	strongOutSignal := outPpm7dRaw > 0 || (st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 7*24*time.Hour)
+	strongRebalSignal := perCost > 0 || (st.LastRebalCost > 0 && !st.LastRebalCostTs.IsZero() && e.now.Sub(st.LastRebalCostTs) <= 7*24*time.Hour)
 	noSignalNoUpActive := false
 	if noFlow1d &&
 		outRatio >= lowOutNoFlowUpperRatio &&
@@ -4863,6 +4900,22 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 
 	if superSourceActive {
 		target = e.cfg.MinPpm
+	}
+	seedEnvelopeActive := seed > 0 &&
+		noFlow1d &&
+		recentRebalanceCount == 0 &&
+		!htlcPressureSignal &&
+		!strongOutSignal &&
+		!strongRebalSignal &&
+		!discoveryHit &&
+		!explorerActive &&
+		!stagnationActive &&
+		!superSourceActive
+	if seedEnvelopeActive {
+		allowSeedFloor := outRatio >= lowOutNoFlowUpperRatio
+		var seedEnvelopeTags []string
+		target, seedEnvelopeTags = applySeedSoftEnvelope(target, seed, e.profile.SeedFloorMult, e.profile.SeedCeilingMult, allowSeedFloor)
+		tags = append(tags, seedEnvelopeTags...)
 	}
 
 	target = clampInt(target, e.cfg.MinPpm, e.cfg.MaxPpm)
@@ -6169,6 +6222,10 @@ func formatAutofeeTags(d *decision) string {
 			add("🧢seed-p95")
 		case strings.HasPrefix(t, "seed:absmax"):
 			add("🧱seed-cap")
+		case strings.HasPrefix(t, "seed:soft-ceil"):
+			add("🧭seed-soft-ceil")
+		case strings.HasPrefix(t, "seed:soft-floor"):
+			add("🧭seed-soft-floor")
 		default:
 			add(t)
 		}

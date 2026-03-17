@@ -1,5 +1,11 @@
 # Channel Ranking Plan
 
+## Status
+
+Implemented.
+
+This document remains as the original design record for the feature.
+
 Este documento define a proposta para um novo modulo de analise chamado `Channel Ranking` / `Ranking de Canais`.
 
 O objetivo e transformar sinais operacionais dispersos em uma recomendacao clara por canal:

@@ -973,7 +973,7 @@ export default function NodeRetirement() {
             </div>
           )}
         </div>
-        {activeSession?.state === 'ready_for_coop_confirmation' && (
+        {activeSession?.state === 'ready_for_coop_confirmation' && !activeSession?.dry_run && (
           <div className="rounded-2xl border border-amber-400/30 bg-amber-500/10 p-3 space-y-2">
             <p className="text-sm text-amber-100">{t('nodeRetirement.coopConfirmWarning')}</p>
             <button

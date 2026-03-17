@@ -5179,6 +5179,25 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		floorSrc = "no-signal"
 		tags = append(tags, "no-signal-floor-relax")
 	}
+	seedSoftCeilActive := seed > 0 &&
+		noFlow1d &&
+		outRatio >= lowOutNoFlowUpperRatio &&
+		recentRebalanceCount == 0 &&
+		!htlcPressureSignal &&
+		!strongOutSignal &&
+		!strongRebalSignal &&
+		!discoveryHit &&
+		!explorerActive &&
+		!stagnationActive &&
+		!superSourceActive
+	if seedSoftCeilActive && (floorSrc == "rebal" || floorSrc == "rebal-sink" || floorSrc == "no-signal") {
+		softFloor, softTags := applySeedSoftEnvelope(floor, seed, e.profile.SeedFloorMult, e.profile.SeedCeilingMult, false)
+		if softFloor < floor {
+			floor = softFloor
+			floorSrc = "seed-soft"
+			tags = append(tags, softTags...)
+		}
+	}
 	if target < localPpm && floor >= localPpm {
 		stallRelaxGapFrac := e.profile.StallFloorRelaxGapFrac
 		if e.cfg.StallFloorRelaxGapFracOverride > 0 {

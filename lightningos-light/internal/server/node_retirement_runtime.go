@@ -331,21 +331,36 @@ func (s *NodeRetirementService) stepDrainHTLCs(ctx context.Context, session Node
 		return nil
 	}
 	_ = s.updateSessionLastError(ctx, session.SessionID, "")
-	if err := s.updateSessionState(ctx, session.SessionID, nodeRetirementStateReadyForConfirm, ""); err != nil {
+	if err := s.insertEvent(ctx, session.SessionID, "htlcs_drained", "info", map[string]any{"pending_htlcs": 0}); err != nil {
 		return err
 	}
-	return s.insertEvent(ctx, session.SessionID, "htlcs_drained", "info", map[string]any{"pending_htlcs": 0})
+	if shouldAutoConfirmNodeRetirementCoopClose(session) {
+		_ = s.insertEvent(ctx, session.SessionID, "coop_close_auto_confirmed", "info", map[string]any{
+			"source":  session.Source,
+			"dry_run": session.DryRun,
+		})
+		return s.updateSessionState(ctx, session.SessionID, nodeRetirementStateClosingCoop, "")
+	}
+	return s.updateSessionState(ctx, session.SessionID, nodeRetirementStateReadyForConfirm, "")
 }
 
 func (s *NodeRetirementService) stepAwaitCoopConfirm(ctx context.Context, session NodeRetirementSession) error {
-	cfg := parseNodeRetirementRuntimeConfig(session.Config)
-	if session.Source == nodeRetirementSourceSuccession || cfg.AutoConfirmCoopClose {
+	if shouldAutoConfirmNodeRetirementCoopClose(session) {
 		_ = s.insertEvent(ctx, session.SessionID, "coop_close_auto_confirmed", "info", map[string]any{
-			"source": session.Source,
+			"source":  session.Source,
+			"dry_run": session.DryRun,
 		})
 		return s.updateSessionState(ctx, session.SessionID, nodeRetirementStateClosingCoop, "")
 	}
 	return nil
+}
+
+func shouldAutoConfirmNodeRetirementCoopClose(session NodeRetirementSession) bool {
+	if session.DryRun {
+		return true
+	}
+	cfg := parseNodeRetirementRuntimeConfig(session.Config)
+	return session.Source == nodeRetirementSourceSuccession || cfg.AutoConfirmCoopClose
 }
 
 func (s *NodeRetirementService) stepCloseCoop(ctx context.Context, session NodeRetirementSession) error {

@@ -1,6 +1,8 @@
 package server
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestClassifySuccessionTransferWalletFunds(t *testing.T) {
 	tests := []struct {
@@ -48,6 +50,57 @@ func TestClassifySuccessionTransferWalletFunds(t *testing.T) {
 			}
 			if lastError != tc.wantError {
 				t.Fatalf("lastError mismatch: got %q want %q", lastError, tc.wantError)
+			}
+		})
+	}
+}
+
+func TestShouldAutoConfirmNodeRetirementCoopClose(t *testing.T) {
+	tests := []struct {
+		name    string
+		session NodeRetirementSession
+		want    bool
+	}{
+		{
+			name: "manual dry run auto confirms",
+			session: NodeRetirementSession{
+				Source: nodeRetirementSourceManual,
+				DryRun: true,
+			},
+			want: true,
+		},
+		{
+			name: "succession live auto confirms",
+			session: NodeRetirementSession{
+				Source: nodeRetirementSourceSuccession,
+				DryRun: false,
+			},
+			want: true,
+		},
+		{
+			name: "manual live honors auto confirm config",
+			session: NodeRetirementSession{
+				Source: nodeRetirementSourceManual,
+				Config: []byte(`{"auto_confirm_coop_close":true}`),
+			},
+			want: true,
+		},
+		{
+			name: "manual live without config waits for confirmation",
+			session: NodeRetirementSession{
+				Source: nodeRetirementSourceManual,
+				DryRun: false,
+				Config: []byte(`{}`),
+			},
+			want: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := shouldAutoConfirmNodeRetirementCoopClose(tc.session)
+			if got != tc.want {
+				t.Fatalf("auto confirm mismatch: got %v want %v", got, tc.want)
 			}
 		})
 	}

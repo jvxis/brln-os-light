@@ -577,6 +577,7 @@ UI components:
 
 Dry-run behavior:
 - Simulates the full orchestration path without submitting real cooperative/force closes.
+- Skips the manual cooperative-close confirmation gate and advances automatically to the simulated close stage.
 - Produces snapshot, channel timeline updates, session events, and final reconciliation as `dry_run_completed`.
 - Intended to validate policy + operator understanding before live retirement.
 

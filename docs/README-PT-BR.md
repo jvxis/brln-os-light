@@ -561,6 +561,7 @@ Componentes de UI:
 
 Comportamento do dry-run:
 - Simula o fluxo completo sem enviar fechamentos cooperativos/forçados reais.
+- Pula a confirmação manual do fechamento colaborativo e avança automaticamente para a etapa simulada de fechamento.
 - Gera snapshot, atualiza linha do tempo dos canais, registra eventos e conclui como `dry_run_completed`.
 - Serve para validar política e entendimento operacional antes da execução real.
 

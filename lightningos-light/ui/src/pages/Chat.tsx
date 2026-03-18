@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getChatInbox, getChatMessages, getLnPeers, sendChatMessage } from '../api'
+import { connectPeer, getChatInbox, getChatMessages, getLnPeers, sendChatMessage } from '../api'
 import { getLocale } from '../i18n'
 
 type Peer = {
@@ -10,9 +10,17 @@ type Peer = {
   inbound: boolean
 }
 
+type ChatPeer = Peer & {
+  last_inbound_at?: number
+  last_message_at?: number
+  last_message?: string
+  last_message_direction?: 'in' | 'out'
+}
+
 type ChatMessage = {
   timestamp: string
   peer_pubkey: string
+  peer_alias?: string
   direction: 'in' | 'out'
   message: string
   status: string
@@ -21,13 +29,26 @@ type ChatMessage = {
 
 type ChatInboxItem = {
   peer_pubkey: string
+  peer_alias?: string
   last_inbound_at: string
+  last_message_at?: string
+  last_message?: string
+  last_message_direction?: 'in' | 'out'
+}
+
+type ParsedInboxItem = {
+  peer_pubkey: string
+  peer_alias: string
+  last_inbound_at: number
+  last_message_at: number
+  last_message: string
+  last_message_direction?: 'in' | 'out'
 }
 
 const messageLimit = 500
 const lastReadKey = 'chat:lastRead'
 
-const formatTimestamp = (value: string, locale: string) => {
+const formatTimestamp = (value: string | number | undefined, locale: string) => {
   if (!value) return ''
   const parsed = new Date(value)
   if (Number.isNaN(parsed.getTime())) return ''
@@ -45,10 +66,14 @@ export default function Chat() {
   const locale = getLocale(i18n.language)
   const [peers, setPeers] = useState<Peer[]>([])
   const [peerStatus, setPeerStatus] = useState('')
-  const [selectedPeer, setSelectedPeer] = useState<Peer | null>(null)
+  const [selectedPeer, setSelectedPeer] = useState<ChatPeer | null>(null)
   const [peerQuery, setPeerQuery] = useState('')
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [inboxItems, setInboxItems] = useState<ChatInboxItem[]>([])
+  const [connectAddress, setConnectAddress] = useState('')
+  const [connectTemporary, setConnectTemporary] = useState(false)
+  const [connectStatus, setConnectStatus] = useState('')
+  const [connectingPeer, setConnectingPeer] = useState(false)
   const [lastReadMap, setLastReadMap] = useState<Record<string, number>>(() => {
     try {
       const raw = localStorage.getItem(lastReadKey)
@@ -72,10 +97,13 @@ export default function Chat() {
     setPeerStatus(t('chat.loadingPeers'))
     try {
       const res = await getLnPeers()
-      setPeers(Array.isArray(res?.peers) ? res.peers : [])
+      const items = Array.isArray(res?.peers) ? res.peers : []
+      setPeers(items)
       setPeerStatus('')
+      return items as Peer[]
     } catch (err: any) {
       setPeerStatus(err?.message || t('chat.loadPeersFailed'))
+      return [] as Peer[]
     }
   }
 
@@ -142,7 +170,7 @@ export default function Chat() {
       mounted = false
       window.clearInterval(timer)
     }
-  }, [selectedPeer?.pub_key])
+  }, [selectedPeer?.pub_key, t])
 
   useEffect(() => {
     if (!selectedPeer) return
@@ -170,63 +198,157 @@ export default function Chat() {
     bottomRef.current.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  const onlinePeerSet = useMemo(() => new Set(peers.map((peer) => peer.pub_key)), [peers])
+
+  const parsedInboxItems = useMemo(() => {
+    return inboxItems
+      .map((item) => {
+        const peerPubkey = item.peer_pubkey.trim()
+        const lastInboundAt = new Date(item.last_inbound_at).getTime()
+        const rawLastMessageAt = item.last_message_at ? new Date(item.last_message_at).getTime() : lastInboundAt
+        if (!peerPubkey || Number.isNaN(lastInboundAt) || !lastInboundAt) {
+          return null
+        }
+        return {
+          peer_pubkey: peerPubkey,
+          peer_alias: (item.peer_alias || '').trim(),
+          last_inbound_at: lastInboundAt,
+          last_message_at: !Number.isNaN(rawLastMessageAt) && rawLastMessageAt ? rawLastMessageAt : lastInboundAt,
+          last_message: (item.last_message || '').trim(),
+          last_message_direction: item.last_message_direction,
+        } as ParsedInboxItem
+      })
+      .filter((item): item is ParsedInboxItem => item !== null)
+  }, [inboxItems])
+
+  const inboxByPeer = useMemo(() => {
+    const map = new Map<string, (typeof parsedInboxItems)[number]>()
+    for (const item of parsedInboxItems) {
+      map.set(item.peer_pubkey, item)
+    }
+    return map
+  }, [parsedInboxItems])
+
   useEffect(() => {
     if (!selectedPeer) return
-    const match = peers.find((peer) => peer.pub_key === selectedPeer.pub_key)
-    if (match) {
-      setSelectedPeer(match)
+    const onlineMatch = peers.find((peer) => peer.pub_key === selectedPeer.pub_key)
+    const inboxMatch = inboxByPeer.get(selectedPeer.pub_key)
+    if (onlineMatch) {
+      setSelectedPeer({
+        ...onlineMatch,
+        last_inbound_at: inboxMatch?.last_inbound_at,
+        last_message_at: inboxMatch?.last_message_at,
+        last_message: inboxMatch?.last_message,
+        last_message_direction: inboxMatch?.last_message_direction,
+      })
+      return
     }
-  }, [peers, selectedPeer?.pub_key])
+    if (inboxMatch) {
+      setSelectedPeer((current) => current ? {
+        ...current,
+        alias: current.alias || inboxMatch.peer_alias,
+        last_inbound_at: inboxMatch.last_inbound_at,
+        last_message_at: inboxMatch.last_message_at,
+        last_message: inboxMatch.last_message,
+        last_message_direction: inboxMatch.last_message_direction,
+      } : current)
+    }
+  }, [inboxByPeer, peers, selectedPeer?.pub_key])
 
   const selectedOnline = useMemo(() => {
     if (!selectedPeer) return false
-    return peers.some((peer) => peer.pub_key === selectedPeer.pub_key)
-  }, [peers, selectedPeer])
-
-  const onlinePeerSet = useMemo(() => new Set(peers.map((peer) => peer.pub_key)), [peers])
+    return onlinePeerSet.has(selectedPeer.pub_key)
+  }, [onlinePeerSet, selectedPeer])
 
   const unreadPeers = useMemo(() => {
     const unread = new Set<string>()
-    for (const item of inboxItems) {
-      if (!onlinePeerSet.has(item.peer_pubkey)) {
-        continue
-      }
-      const ts = new Date(item.last_inbound_at).getTime()
-      if (!ts || Number.isNaN(ts)) continue
+    for (const item of parsedInboxItems) {
       const lastRead = lastReadMap[item.peer_pubkey] || 0
-      if (ts > lastRead) {
+      if (item.last_inbound_at > lastRead) {
         unread.add(item.peer_pubkey)
       }
     }
     return unread
-  }, [inboxItems, lastReadMap, onlinePeerSet])
+  }, [parsedInboxItems, lastReadMap])
 
   const unreadCount = unreadPeers.size
 
   const sortedPeers = useMemo(() => {
-    const list = [...peers]
+    const list = peers.map((peer) => {
+      const inbox = inboxByPeer.get(peer.pub_key)
+      return {
+        ...peer,
+        last_inbound_at: inbox?.last_inbound_at,
+        last_message_at: inbox?.last_message_at,
+        last_message: inbox?.last_message,
+        last_message_direction: inbox?.last_message_direction,
+      } as ChatPeer
+    })
     list.sort((a, b) => {
       const aUnread = unreadPeers.has(a.pub_key)
       const bUnread = unreadPeers.has(b.pub_key)
       if (aUnread !== bUnread) {
         return aUnread ? -1 : 1
       }
+      if ((a.last_message_at || 0) !== (b.last_message_at || 0)) {
+        return (b.last_message_at || 0) - (a.last_message_at || 0)
+      }
       const aVal = (a.alias || a.pub_key).toLowerCase()
       const bVal = (b.alias || b.pub_key).toLowerCase()
       return aVal.localeCompare(bVal)
     })
     return list
-  }, [peers, unreadPeers])
+  }, [inboxByPeer, peers, unreadPeers])
 
-  const filteredPeers = useMemo(() => {
+  const recentPeers = useMemo(() => {
+    return parsedInboxItems
+      .filter((item) => !onlinePeerSet.has(item.peer_pubkey))
+      .map((item) => ({
+        pub_key: item.peer_pubkey,
+        alias: item.peer_alias,
+        address: '',
+        inbound: false,
+        last_inbound_at: item.last_inbound_at,
+        last_message_at: item.last_message_at,
+        last_message: item.last_message,
+        last_message_direction: item.last_message_direction,
+      } satisfies ChatPeer))
+      .sort((a, b) => {
+        const aUnread = unreadPeers.has(a.pub_key)
+        const bUnread = unreadPeers.has(b.pub_key)
+        if (aUnread !== bUnread) {
+          return aUnread ? -1 : 1
+        }
+        if ((a.last_message_at || 0) !== (b.last_message_at || 0)) {
+          return (b.last_message_at || 0) - (a.last_message_at || 0)
+        }
+        const aVal = (a.alias || a.pub_key).toLowerCase()
+        const bVal = (b.alias || b.pub_key).toLowerCase()
+        return aVal.localeCompare(bVal)
+      })
+  }, [onlinePeerSet, parsedInboxItems, unreadPeers])
+
+  const filteredOnlinePeers = useMemo(() => {
     const query = peerQuery.trim().toLowerCase()
     if (!query) return sortedPeers
     return sortedPeers.filter((peer) => {
       const alias = (peer.alias || '').toLowerCase()
       const key = peer.pub_key.toLowerCase()
-      return alias.includes(query) || key.includes(query)
+      const preview = (peer.last_message || '').toLowerCase()
+      return alias.includes(query) || key.includes(query) || preview.includes(query)
     })
   }, [peerQuery, sortedPeers])
+
+  const filteredRecentPeers = useMemo(() => {
+    const query = peerQuery.trim().toLowerCase()
+    if (!query) return recentPeers
+    return recentPeers.filter((peer) => {
+      const alias = (peer.alias || '').toLowerCase()
+      const key = peer.pub_key.toLowerCase()
+      const preview = (peer.last_message || '').toLowerCase()
+      return alias.includes(query) || key.includes(query) || preview.includes(query)
+    })
+  }, [peerQuery, recentPeers])
 
   const overLimit = draft.trim().length > messageLimit
   const canSend = Boolean(selectedPeer && selectedOnline && draft.trim() && !overLimit && !sending)
@@ -240,11 +362,57 @@ export default function Chat() {
       const res = await sendChatMessage({ peer_pubkey: selectedPeer.pub_key, message: trimmed })
       setDraft('')
       setMessages((prev) => [...prev, res])
+      setInboxItems((prev) => {
+        const existing = prev.find((item) => item.peer_pubkey === selectedPeer.pub_key)
+        const nextItem: ChatInboxItem = {
+          peer_pubkey: selectedPeer.pub_key,
+          peer_alias: selectedPeer.alias,
+          last_inbound_at: existing?.last_inbound_at || res.timestamp,
+          last_message_at: res.timestamp,
+          last_message: trimmed,
+          last_message_direction: 'out',
+        }
+        const rest = prev.filter((item) => item.peer_pubkey !== selectedPeer.pub_key)
+        return [nextItem, ...rest]
+      })
       setMessageStatus('')
     } catch (err: any) {
       setMessageStatus(err?.message || t('chat.sendFailed'))
     } finally {
       setSending(false)
+    }
+  }
+
+  const handleConnectPeer = async () => {
+    const address = connectAddress.trim()
+    if (!address || connectingPeer) return
+    const pubkey = address.includes('@') ? address.split('@')[0].trim().toLowerCase() : ''
+
+    setConnectingPeer(true)
+    setConnectStatus(t('lightningOps.connectingPeer'))
+    try {
+      await connectPeer({ address, perm: !connectTemporary })
+      const nextPeers = await loadPeers()
+      if (pubkey) {
+        const match = nextPeers.find((peer) => peer.pub_key.toLowerCase() === pubkey)
+        const inbox = inboxByPeer.get(pubkey)
+        if (match) {
+          setSelectedPeer({
+            ...match,
+            last_inbound_at: inbox?.last_inbound_at,
+            last_message_at: inbox?.last_message_at,
+            last_message: inbox?.last_message,
+            last_message_direction: inbox?.last_message_direction,
+          })
+        }
+      }
+      setConnectAddress('')
+      setConnectTemporary(false)
+      setConnectStatus(t('lightningOps.peerConnected'))
+    } catch (err: any) {
+      setConnectStatus(err?.message || t('lightningOps.peerConnectFailed'))
+    } finally {
+      setConnectingPeer(false)
     }
   }
 
@@ -265,11 +433,40 @@ export default function Chat() {
 
       <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
         <div className="section-card space-y-4">
+          <div className="rounded-2xl border border-white/10 bg-ink/60 p-4 space-y-3">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-fog/80">
+              {t('lightningOps.addPeer')}
+            </h3>
+            <input
+              className="input-field text-sm"
+              placeholder={t('lightningOps.peerAddressPlaceholder')}
+              value={connectAddress}
+              onChange={(e) => setConnectAddress(e.target.value)}
+            />
+            <label className="flex items-center gap-2 text-xs text-fog/70">
+              <input
+                type="checkbox"
+                checked={connectTemporary}
+                onChange={(e) => setConnectTemporary(e.target.checked)}
+              />
+              {t('lightningOps.temporaryPeer')}
+            </label>
+            <button
+              className="btn-secondary w-full disabled:cursor-not-allowed disabled:opacity-60"
+              type="button"
+              onClick={handleConnectPeer}
+              disabled={!connectAddress.trim() || connectingPeer}
+            >
+              {connectingPeer ? t('lightningOps.connectingPeer') : t('lightningOps.connectPeer')}
+            </button>
+            {connectStatus && <p className="text-xs text-brass">{connectStatus}</p>}
+          </div>
+
           <div className="flex items-center justify-between">
-            <h3 className="text-lg font-semibold">{t('chat.onlinePeers')}</h3>
+            <h3 className="text-lg font-semibold">{t('chat.title')}</h3>
             <span className="text-xs text-fog/60">{peers.length}</span>
           </div>
-          {sortedPeers.length ? (
+          {(sortedPeers.length || recentPeers.length) ? (
             <>
               <input
                 className="input-field text-sm"
@@ -277,35 +474,86 @@ export default function Chat() {
                 value={peerQuery}
                 onChange={(e) => setPeerQuery(e.target.value)}
               />
-            <div className="space-y-2 max-h-[520px] overflow-y-auto pr-2">
-              {filteredPeers.map((peer) => (
-                <button
-                  key={peer.pub_key}
-                  type="button"
-                  onClick={() => setSelectedPeer(peer)}
-                  className={`w-full text-left rounded-2xl border px-4 py-3 transition ${
-                    selectedPeer?.pub_key === peer.pub_key
-                      ? 'border-glow/40 bg-glow/10'
-                      : unreadPeers.has(peer.pub_key)
-                        ? 'border-brass/40 bg-brass/10'
-                        : 'border-white/10 bg-ink/60 hover:border-white/30'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2 text-sm text-fog break-all">
-                    <span>{peer.alias || peer.pub_key}</span>
-                    {unreadPeers.has(peer.pub_key) && (
-                      <span className="rounded-full bg-brass/20 px-2 py-0.5 text-[10px] uppercase tracking-wide text-brass">
-                        New
-                      </span>
-                    )}
+              <div className="space-y-4 max-h-[520px] overflow-y-auto pr-2">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-[11px] uppercase tracking-wide text-fog/50">
+                    <span>{t('chat.onlinePeers')}</span>
+                    <span>{peers.length}</span>
                   </div>
-                  <div className="text-xs text-fog/50 break-all">{peer.pub_key}</div>
-                </button>
-              ))}
-            </div>
-            {!filteredPeers.length && (
-              <p className="text-sm text-fog/60">{t('chat.noPeersMatch')}</p>
-            )}
+                  {filteredOnlinePeers.map((peer) => (
+                    <button
+                      key={peer.pub_key}
+                      type="button"
+                      onClick={() => setSelectedPeer(peer)}
+                      className={`w-full text-left rounded-2xl border px-4 py-3 transition ${
+                        selectedPeer?.pub_key === peer.pub_key
+                          ? 'border-glow/40 bg-glow/10'
+                          : unreadPeers.has(peer.pub_key)
+                            ? 'border-brass/40 bg-brass/10'
+                            : 'border-white/10 bg-ink/60 hover:border-white/30'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2 text-sm text-fog break-all">
+                        <span>{peer.alias || peer.pub_key}</span>
+                        {unreadPeers.has(peer.pub_key) && (
+                          <span className="rounded-full bg-brass/20 px-2 py-0.5 text-[10px] uppercase tracking-wide text-brass">
+                            New
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-fog/50">
+                        <span className="truncate">{peer.last_message || peer.pub_key}</span>
+                        <span>{formatTimestamp(peer.last_message_at, locale)}</span>
+                      </div>
+                      {peer.last_message && (
+                        <div className="text-xs text-fog/45 break-all mt-1">{peer.pub_key}</div>
+                      )}
+                    </button>
+                  ))}
+                  {!sortedPeers.length && (
+                    <p className="text-sm text-fog/60">{t('chat.noOnlinePeers')}</p>
+                  )}
+                </div>
+
+                {recentPeers.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-[11px] uppercase tracking-wide text-fog/50">
+                      <span>{t('chat.recentMessages')}</span>
+                      <span>{recentPeers.length}</span>
+                    </div>
+                    {filteredRecentPeers.map((peer) => (
+                      <button
+                        key={peer.pub_key}
+                        type="button"
+                        onClick={() => setSelectedPeer(peer)}
+                        className={`w-full text-left rounded-2xl border px-4 py-3 transition ${
+                          selectedPeer?.pub_key === peer.pub_key
+                            ? 'border-glow/40 bg-glow/10'
+                            : unreadPeers.has(peer.pub_key)
+                              ? 'border-brass/40 bg-brass/10'
+                              : 'border-white/10 bg-ink/40 hover:border-white/30'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2 text-sm text-fog break-all">
+                          <span>{peer.alias || peer.pub_key}</span>
+                          <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-fog/70">
+                            {unreadPeers.has(peer.pub_key) ? 'New' : t('chat.peerOffline')}
+                          </span>
+                        </div>
+                        <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-fog/50">
+                          <span className="truncate">{peer.last_message || peer.pub_key}</span>
+                          <span>{formatTimestamp(peer.last_message_at, locale)}</span>
+                        </div>
+                        <div className="text-xs text-fog/45 break-all mt-1">{peer.pub_key}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {!filteredOnlinePeers.length && !filteredRecentPeers.length && (
+                  <p className="text-sm text-fog/60">{t('chat.noPeersMatch')}</p>
+                )}
+              </div>
             </>
           ) : (
             <p className="text-sm text-fog/60">{t('chat.noOnlinePeers')}</p>

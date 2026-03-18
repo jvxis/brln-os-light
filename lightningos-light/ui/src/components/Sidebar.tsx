@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getChatInbox, getLnPeers } from '../api'
+import { getChatInbox } from '../api'
 import clsx from '../utils/clsx'
 
 type RouteItem = {
@@ -68,25 +68,16 @@ export default function Sidebar({ routes, allRoutes, menuConfig, onMenuConfigCha
     let mounted = true
     const loadUnread = async () => {
       try {
-        const [inboxRes, peersRes] = await Promise.allSettled([getChatInbox(), getLnPeers()])
+        const inboxRes = await getChatInbox()
         if (!mounted) return
-        const items = inboxRes.status === 'fulfilled' && Array.isArray(inboxRes.value?.items)
-          ? inboxRes.value.items
+        const items = Array.isArray(inboxRes?.items)
+          ? inboxRes.items
           : []
-        const peers = peersRes.status === 'fulfilled' && Array.isArray(peersRes.value?.peers)
-          ? peersRes.value.peers
-          : []
-        const onlineSet = peersRes.status === 'fulfilled'
-          ? new Set(peers.map((peer: any) => peer?.pub_key).filter(Boolean))
-          : null
         const lastReadMap = readLastReadMap()
         const unread = new Set<string>()
         for (const item of items) {
           const peerKey = typeof item?.peer_pubkey === 'string' ? item.peer_pubkey : ''
           if (!peerKey) continue
-          if (onlineSet && !onlineSet.has(peerKey)) {
-            continue
-          }
           const ts = new Date(item.last_inbound_at).getTime()
           if (!ts || Number.isNaN(ts)) continue
           const lastRead = lastReadMap[peerKey] || 0

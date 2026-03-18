@@ -432,6 +432,9 @@ type autofeeProfile struct {
 	ReversalConfirmMinRounds       int
 	ReversalFastTrackStallRounds   int
 	ReversalFastTrackGapFrac       float64
+	AntiFlipWindowHours            int
+	AntiFlipExtraConfirmRounds     int
+	AntiFlipStrongGapFrac          float64
 }
 
 type superSourceThresholds struct {
@@ -530,6 +533,9 @@ var autofeeProfiles = map[string]autofeeProfile{
 		ReversalConfirmMinRounds:       2,
 		ReversalFastTrackStallRounds:   3,
 		ReversalFastTrackGapFrac:       0.50,
+		AntiFlipWindowHours:            6,
+		AntiFlipExtraConfirmRounds:     2,
+		AntiFlipStrongGapFrac:          0.60,
 	},
 	"moderate": {
 		Name:                           "moderate",
@@ -617,6 +623,9 @@ var autofeeProfiles = map[string]autofeeProfile{
 		ReversalConfirmMinRounds:       2,
 		ReversalFastTrackStallRounds:   2,
 		ReversalFastTrackGapFrac:       0.35,
+		AntiFlipWindowHours:            4,
+		AntiFlipExtraConfirmRounds:     1,
+		AntiFlipStrongGapFrac:          0.45,
 	},
 	"aggressive": {
 		Name:                           "aggressive",
@@ -704,6 +713,9 @@ var autofeeProfiles = map[string]autofeeProfile{
 		ReversalConfirmMinRounds:       2,
 		ReversalFastTrackStallRounds:   1,
 		ReversalFastTrackGapFrac:       0.20,
+		AntiFlipWindowHours:            3,
+		AntiFlipExtraConfirmRounds:     1,
+		AntiFlipStrongGapFrac:          0.30,
 	},
 }
 
@@ -1993,6 +2005,8 @@ type explorerState struct {
 	SurgeGatePpm          int    `json:"surge_gate_ppm,omitempty"`
 	ReversalPendingDir    string `json:"reversal_pending_dir,omitempty"`
 	ReversalPendingRounds int    `json:"reversal_pending_rounds,omitempty"`
+	LastReversalDir       string `json:"last_reversal_dir,omitempty"`
+	LastReversalTs        int64  `json:"last_reversal_ts,omitempty"`
 }
 
 func (s *AutofeeService) LoadChannelSettingsDetailed(ctx context.Context) ([]AutofeeChannelSettingEntry, error) {
@@ -2986,6 +3000,51 @@ func reversalConfirmRoundsForChannel(profile autofeeProfile, st *autofeeChannelS
 		confirmRounds = 1
 	}
 	return confirmRounds
+}
+
+func hasAntiFlipStrongSignal(tags []string) bool {
+	for _, tag := range tags {
+		switch tag {
+		case "htlc-liquidity-hot", "surge+20%", "surge-timeout-release", "surge-confirmed-rounds", "extreme", "extreme-turbo":
+			return true
+		}
+	}
+	return false
+}
+
+func antiFlipExtraConfirmRoundsForChannel(profile autofeeProfile, st *autofeeChannelState, now time.Time, localPpm int, nextPpm int, targetGapPct float64, tags []string) (int, []string) {
+	if st == nil || now.IsZero() {
+		return 0, nil
+	}
+	extraRounds := profile.AntiFlipExtraConfirmRounds
+	if extraRounds <= 0 {
+		return 0, nil
+	}
+	windowHours := profile.AntiFlipWindowHours
+	if windowHours <= 0 {
+		return 0, nil
+	}
+	proposedDir := directionFromMove(localPpm, nextPpm)
+	if proposedDir == "" || st.LastDir == "" || proposedDir == st.LastDir {
+		return 0, nil
+	}
+	lastReversalDir := strings.TrimSpace(st.ExplorerState.LastReversalDir)
+	lastReversalTs := st.ExplorerState.LastReversalTs
+	if lastReversalDir == "" || lastReversalTs <= 0 || proposedDir == lastReversalDir {
+		return 0, nil
+	}
+	age := now.Sub(time.Unix(lastReversalTs, 0))
+	if age < 0 || age > time.Duration(windowHours)*time.Hour {
+		return 0, nil
+	}
+	strongGapPct := profile.AntiFlipStrongGapFrac * 100.0
+	if strongGapPct > 0 && targetGapPct >= strongGapPct {
+		return 0, nil
+	}
+	if hasAntiFlipStrongSignal(tags) {
+		return 0, nil
+	}
+	return extraRounds, []string{"anti-flip-window"}
 }
 
 func isMoveTowardTarget(localPpm int, nextPpm int, targetPpm int) bool {
@@ -5386,6 +5445,10 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	targetGapPpm := target - localPpm
 	targetGapPct := calcTargetGapPct(localPpm, target)
 	reversalConfirmRounds := reversalConfirmRoundsForChannel(e.profile, st, targetGapPct)
+	if antiFlipExtraRounds, antiFlipTags := antiFlipExtraConfirmRoundsForChannel(e.profile, st, e.now, localPpm, finalPpm, targetGapPct, tags); antiFlipExtraRounds > 0 {
+		reversalConfirmRounds += antiFlipExtraRounds
+		tags = append(tags, antiFlipTags...)
+	}
 	if guardedPpm, reversalTags := applyDirectionReversalGuard(st, localPpm, finalPpm, reversalConfirmRounds); true {
 		finalPpm = guardedPpm
 		if len(reversalTags) > 0 {
@@ -5485,11 +5548,16 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		tags = append(tags, "stall-alert")
 	}
 	if applyOutbound {
+		prevDir := st.LastDir
 		st.LastTs = e.now
 		if finalPpm > localPpm {
 			st.LastDir = "up"
 		} else if finalPpm < localPpm {
 			st.LastDir = "down"
+		}
+		if prevDir != "" && st.LastDir != "" && prevDir != st.LastDir {
+			st.ExplorerState.LastReversalDir = st.LastDir
+			st.ExplorerState.LastReversalTs = e.now.Unix()
 		}
 	}
 
@@ -6248,6 +6316,8 @@ func formatAutofeeTags(d *decision) string {
 			add("↩️reversal-confirmed")
 		case t == "reversal-fasttrack":
 			add("↩️reversal-fasttrack")
+		case t == "anti-flip-window":
+			add("🪀anti-flip")
 		case t == "downcap-general":
 			add("📉downcap-general")
 		case t == "htlc-low-sample-downcap":

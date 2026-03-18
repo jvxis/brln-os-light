@@ -3,6 +3,7 @@ package server
 import (
 	"math"
 	"testing"
+	"time"
 )
 
 func TestClassifyHTLCFailurePolicy(t *testing.T) {
@@ -465,6 +466,48 @@ func TestReversalConfirmRoundsForChannel(t *testing.T) {
 	}
 	if got := reversalConfirmRoundsForChannel(profile, st, profile.ReversalFastTrackGapFrac*100.0); got != profile.ReversalConfirmMinRounds-1 {
 		t.Fatalf("unexpected rounds at fast-track threshold: got %d want %d", got, profile.ReversalConfirmMinRounds-1)
+	}
+}
+
+func TestAntiFlipExtraConfirmRoundsForChannel(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	now := time.Date(2026, 3, 18, 12, 0, 0, 0, time.UTC)
+	st := &autofeeChannelState{
+		LastDir: "up",
+		ExplorerState: explorerState{
+			LastReversalDir: "up",
+			LastReversalTs:  now.Add(-2 * time.Hour).Unix(),
+		},
+	}
+
+	extra, tags := antiFlipExtraConfirmRoundsForChannel(profile, st, now, 1000, 930, 22.0, []string{"trend-down", "peg"})
+	if extra != profile.AntiFlipExtraConfirmRounds {
+		t.Fatalf("unexpected anti-flip extra rounds: got %d want %d", extra, profile.AntiFlipExtraConfirmRounds)
+	}
+	if len(tags) == 0 || tags[0] != "anti-flip-window" {
+		t.Fatalf("expected anti-flip tag, got %+v", tags)
+	}
+}
+
+func TestAntiFlipExtraConfirmRoundsBypassesStrongSignal(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	now := time.Date(2026, 3, 18, 12, 0, 0, 0, time.UTC)
+	st := &autofeeChannelState{
+		LastDir: "up",
+		ExplorerState: explorerState{
+			LastReversalDir: "up",
+			LastReversalTs:  now.Add(-2 * time.Hour).Unix(),
+		},
+	}
+
+	extra, tags := antiFlipExtraConfirmRoundsForChannel(profile, st, now, 1000, 930, profile.AntiFlipStrongGapFrac*100.0+5.0, []string{"trend-down"})
+	if extra != 0 || len(tags) != 0 {
+		t.Fatalf("expected strong gap to bypass anti-flip guard, got rounds=%d tags=%+v", extra, tags)
+	}
+
+	extra, tags = antiFlipExtraConfirmRoundsForChannel(profile, st, now, 1000, 930, 20.0, []string{"htlc-liquidity-hot"})
+	if extra != 0 || len(tags) != 0 {
+		t.Fatalf("expected strong signal tag to bypass anti-flip guard, got rounds=%d tags=%+v", extra, tags)
 	}
 }
 

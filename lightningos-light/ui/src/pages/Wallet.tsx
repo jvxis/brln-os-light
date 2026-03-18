@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import QRCode from 'qrcode'
-import { createInvoice, decodeInvoice, getLnChannels, getMempoolFees, getWalletAddress, getWalletSummary, payInvoice, sendOnchain } from '../api'
+import { createInvoice, decodeInvoice, getLnChannels, getMempoolFees, getWalletAddress, getWalletSummary, payInvoice, previewOnchainSend, sendOnchain } from '../api'
 import { getLocale } from '../i18n'
 
 const emptySummary = {
@@ -14,6 +14,25 @@ const emptySummary = {
     lightning_unsettled_local_sat: 0
   },
   activity: []
+}
+
+type OnchainSendPreview = {
+  address: string
+  sweep_all: boolean
+  requested_amount_sat: number
+  recipient_amount_sat: number
+  fee_sat: number
+  change_sat: number
+  total_debit_sat: number
+  spendable_sat: number
+  spendable_utxo_count: number
+  selected_input_count: number
+  selected_input_sat: number
+  estimated_vbytes: number
+  sat_per_vbyte: number
+  enough_funds: boolean
+  exact: boolean
+  message?: string
 }
 
 export default function Wallet() {
@@ -38,6 +57,9 @@ export default function Wallet() {
   const [sendFeeRate, setSendFeeRate] = useState('')
   const [sendFeeHint, setSendFeeHint] = useState<{ fastest?: number; hour?: number } | null>(null)
   const [sendFeeStatus, setSendFeeStatus] = useState('')
+  const [sendPreview, setSendPreview] = useState<OnchainSendPreview | null>(null)
+  const [sendPreviewLoading, setSendPreviewLoading] = useState(false)
+  const [sendPreviewStatus, setSendPreviewStatus] = useState('')
   const [sendStatus, setSendStatus] = useState('')
   const [sendTxid, setSendTxid] = useState('')
   const [sendRunning, setSendRunning] = useState(false)
@@ -363,7 +385,67 @@ export default function Wallet() {
     setSendOpen((prev) => !prev)
     setSendStatus('')
     setSendTxid('')
+    setSendPreview(null)
+    setSendPreviewStatus('')
   }
+
+  useEffect(() => {
+    if (!sendOpen || sendRunning) {
+      setSendPreview(null)
+      setSendPreviewLoading(false)
+      setSendPreviewStatus('')
+      return
+    }
+
+    const target = sendAddress.trim()
+    const amountSat = Number(sendAmount || 0)
+    const feeRate = Number(sendFeeRate || 0)
+    if (!target) {
+      setSendPreview(null)
+      setSendPreviewLoading(false)
+      setSendPreviewStatus('')
+      return
+    }
+    if (feeRate <= 0) {
+      setSendPreview(null)
+      setSendPreviewLoading(false)
+      setSendPreviewStatus(t('wallet.sendPreviewFeeRequired'))
+      return
+    }
+    if (!sendSweepAll && amountSat <= 0) {
+      setSendPreview(null)
+      setSendPreviewLoading(false)
+      setSendPreviewStatus('')
+      return
+    }
+
+    let cancelled = false
+    setSendPreviewLoading(true)
+    const timer = setTimeout(async () => {
+      try {
+        const res = await previewOnchainSend({
+          address: target,
+          sat_per_vbyte: feeRate,
+          ...(sendSweepAll ? { sweep_all: true } : { amount_sat: amountSat })
+        }) as OnchainSendPreview
+        if (cancelled) return
+        setSendPreview(res)
+        setSendPreviewStatus(res?.message || '')
+      } catch (err: any) {
+        if (cancelled) return
+        setSendPreview(null)
+        setSendPreviewStatus(err?.message || t('wallet.sendPreviewUnavailable'))
+      } finally {
+        if (cancelled) return
+        setSendPreviewLoading(false)
+      }
+    }, 350)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [sendOpen, sendAddress, sendAmount, sendFeeRate, sendSweepAll, sendRunning, t])
 
   const handleSendOnchain = async () => {
     const target = sendAddress.trim()
@@ -392,6 +474,8 @@ export default function Wallet() {
       setSendAddress('')
       setSendAmount('')
       setSendSweepAll(false)
+      setSendPreview(null)
+      setSendPreviewStatus('')
     } catch (err: any) {
       setSendTxid('')
       setSendStatus(err?.message || t('wallet.onchainSendFailed'))
@@ -605,6 +689,35 @@ export default function Wallet() {
                     {sendFeeStatus && <p className="text-xs text-fog/50">{sendFeeStatus}</p>}
                   </div>
                 </div>
+                {(sendPreviewLoading || sendPreview || sendPreviewStatus) && (
+                  <div className={`rounded-2xl border p-3 space-y-2 ${sendPreview?.enough_funds === false || sendPreviewStatus ? 'border-ember/40 bg-ember/10' : 'border-white/10 bg-ink/70'}`}>
+                    <div className="flex items-center justify-between gap-3 text-xs">
+                      <span className="text-fog/60">{t('wallet.sendPreviewTitle')}</span>
+                      {sendPreview && (
+                        <span className={sendPreview.exact ? 'text-emerald-300' : 'text-fog/50'}>
+                          {sendPreview.exact ? t('wallet.sendPreviewExact') : t('wallet.sendPreviewEstimated')}
+                        </span>
+                      )}
+                    </div>
+                    {sendPreviewLoading && (
+                      <p className="text-xs text-fog/60">{t('wallet.sendPreviewCalculating')}</p>
+                    )}
+                    {!sendPreviewLoading && sendPreview && (
+                      <div className="grid gap-2 text-xs text-fog/80 sm:grid-cols-2">
+                        <p>{t('wallet.sendPreviewFee', { amount: formatSats(sendPreview.fee_sat) })}</p>
+                        <p>{t('wallet.sendPreviewVbytes', { amount: formatSats(sendPreview.estimated_vbytes), fee: formatSats(sendPreview.sat_per_vbyte) })}</p>
+                        <p>{t('wallet.sendPreviewRecipient', { amount: formatSats(sendPreview.recipient_amount_sat) })}</p>
+                        <p>{t('wallet.sendPreviewTotalDebit', { amount: formatSats(sendPreview.total_debit_sat) })}</p>
+                        <p>{t('wallet.sendPreviewChange', { amount: formatSats(sendPreview.change_sat) })}</p>
+                        <p>{t('wallet.sendPreviewInputs', { selected: formatSats(sendPreview.selected_input_count), available: formatSats(sendPreview.spendable_utxo_count) })}</p>
+                        <p className="sm:col-span-2">{t('wallet.sendPreviewSpendable', { amount: formatSats(sendPreview.spendable_sat), selected: formatSats(sendPreview.selected_input_sat) })}</p>
+                      </div>
+                    )}
+                    {!sendPreviewLoading && sendPreviewStatus && (
+                      <p className={`text-xs ${sendPreview?.enough_funds === false ? 'text-ember' : 'text-fog/60'}`}>{sendPreviewStatus}</p>
+                    )}
+                  </div>
+                )}
                 <button
                   className="btn-primary disabled:opacity-60 disabled:cursor-not-allowed"
                   onClick={handleSendOnchain}

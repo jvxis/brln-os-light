@@ -3209,6 +3209,37 @@ func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"txid": txid})
 }
 
+func (s *Server) handleWalletSendPreview(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Address     string `json:"address"`
+		AmountSat   int64  `json:"amount_sat"`
+		SatPerVbyte int64  `json:"sat_per_vbyte"`
+		SweepAll    bool   `json:"sweep_all"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+
+	preview, err := s.lnd.PreviewOnchainSend(ctx, req.Address, req.AmountSat, req.SatPerVbyte, req.SweepAll)
+	if err != nil {
+		msg := lndRPCErrorMessage(err)
+		if isTimeoutError(err) {
+			msg = lndStatusMessage(err)
+		}
+		if msg == "" || msg == "LND error" {
+			msg = "On-chain preview unavailable"
+		}
+		writeError(w, http.StatusInternalServerError, msg)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, preview)
+}
+
 type rpcStatusError struct {
 	statusCode int
 	message    string

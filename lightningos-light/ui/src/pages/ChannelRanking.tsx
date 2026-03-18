@@ -406,6 +406,19 @@ export default function ChannelRanking() {
 
   const selectedDetail = detailItem && detailItem.channel_point === selectedChannelPoint ? detailItem : selectedItem
 
+  const displayedDetailHistory = useMemo(() => {
+    if (!Array.isArray(detailHistory) || detailHistory.length === 0) return []
+    const compressed: ChannelRankingHistoryPoint[] = []
+    for (const point of detailHistory) {
+      const previous = compressed[compressed.length - 1]
+      if (previous && previous.score === point.score) {
+        continue
+      }
+      compressed.push(point)
+    }
+    return compressed
+  }, [detailHistory])
+
   const stateCapacity = useMemo(() => {
     return items.reduce<Record<string, number>>((acc, item) => {
       acc[item.state] = (acc[item.state] || 0) + Number(item.capacity_sat || 0)
@@ -835,11 +848,11 @@ export default function ChannelRanking() {
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
                   <div className="mb-2 text-sm font-medium text-fog">{t('channelRanking.historyTitle')}</div>
-                  <div className="space-y-2">
+                  <div className="space-y-2 max-h-[17rem] overflow-y-auto pr-1">
                     {detailLoading ? (
                       <div className="text-sm text-fog/60">{t('channelRanking.loading')}</div>
-                    ) : detailHistory.length > 0 ? (
-                      detailHistory.slice(0, 8).map((point) => (
+                    ) : displayedDetailHistory.length > 0 ? (
+                      displayedDetailHistory.slice(0, 8).map((point) => (
                         <div key={`${selectedDetail.channel_point}-${point.computed_at}`} className="rounded-xl border border-white/10 px-3 py-2 text-xs text-fog/75">
                           <div className="flex items-center justify-between gap-3">
                             <span>{formatTimestamp(point.computed_at)}</span>

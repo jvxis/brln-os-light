@@ -3199,8 +3199,22 @@ func applySeedSoftEnvelope(target int, seed float64, floorMult float64, ceilingM
 	return target, tags
 }
 
-func shouldRelaxNegMarginForSeedSoftEnvelope(seedEnvelopeActive bool, tags []string) bool {
-	return seedEnvelopeActive && containsTag(tags, "seed:soft-ceil")
+func shouldRelaxNegMarginForSeedSoftEnvelope(seedEnvelopeActive bool, tags []string, localPpm int, target int, seed float64, ceilingMult float64) bool {
+	if !seedEnvelopeActive || localPpm <= 0 || target >= localPpm || seed <= 0 {
+		return false
+	}
+	if containsTag(tags, "seed:soft-ceil") {
+		return true
+	}
+	if ceilingMult <= 0 {
+		ceilingMult = defaultSeedCeilingMult
+	}
+	seedCeil := int(math.Round(seed * ceilingMult))
+	if seedCeil <= 0 {
+		return false
+	}
+	minGap := maxInt(100, int(math.Round(float64(localPpm)*0.05)))
+	return localPpm > seedCeil && (localPpm-seedCeil) >= minGap
 }
 
 func shouldHoldUpOnRecentRebalance(classLabel string, outRatio float64, lowOutProtectThresh float64, recentRebalanceCount int) bool {
@@ -4921,7 +4935,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		target, seedEnvelopeTags = applySeedSoftEnvelope(target, seed, e.profile.SeedFloorMult, e.profile.SeedCeilingMult, allowSeedFloor)
 		tags = append(tags, seedEnvelopeTags...)
 	}
-	seedSoftNegMarginRelax := shouldRelaxNegMarginForSeedSoftEnvelope(seedEnvelopeActive, tags)
+	seedSoftNegMarginRelax := shouldRelaxNegMarginForSeedSoftEnvelope(seedEnvelopeActive, tags, localPpm, target, seed, e.profile.SeedCeilingMult)
 
 	target = clampInt(target, e.cfg.MinPpm, e.cfg.MaxPpm)
 	if marginPpm7d < 0 && target < localPpm {

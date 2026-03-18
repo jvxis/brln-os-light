@@ -1198,6 +1198,9 @@ func telegramActivityMirrorMessage(evt Notification) string {
 	typeLabel := telegramNotificationTypeLabel(evt.Type)
 	header := typeLabel
 	actionLabel := telegramNotificationActionLabel(evt.Action)
+	if override := telegramNotificationStatusActionLabel(evt); override != "" {
+		actionLabel = override
+	}
 	if evt.Type != "forward" && evt.Type != "rebalance" && actionLabel != "" {
 		header = strings.TrimSpace(typeLabel + " " + actionLabel)
 	}
@@ -1236,6 +1239,19 @@ func telegramActivityMirrorMessage(evt Notification) string {
 		return strings.TrimSpace(msg[:3897]) + "..."
 	}
 	return msg
+}
+
+func telegramNotificationStatusActionLabel(evt Notification) string {
+	switch strings.TrimSpace(evt.Type) {
+	case "lightning", "keysend":
+		switch strings.ToUpper(strings.TrimSpace(evt.Status)) {
+		case "FAILED":
+			return "failed"
+		case "IN_FLIGHT":
+			return "pending"
+		}
+	}
+	return ""
 }
 
 func telegramNotificationChannelDetail(evt Notification) string {

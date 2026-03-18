@@ -106,14 +106,17 @@ func TestApplySeedSoftEnvelopeDoesNotRaiseFloorWhenNotAllowed(t *testing.T) {
 }
 
 func TestShouldRelaxNegMarginForSeedSoftEnvelope(t *testing.T) {
-	if !shouldRelaxNegMarginForSeedSoftEnvelope(true, []string{"seed:soft-ceil"}) {
+	if !shouldRelaxNegMarginForSeedSoftEnvelope(true, []string{"seed:soft-ceil"}, 1300, 1100, 760, 1.50) {
 		t.Fatalf("expected neg-margin relaxation when soft ceiling is active")
 	}
-	if shouldRelaxNegMarginForSeedSoftEnvelope(false, []string{"seed:soft-ceil"}) {
+	if shouldRelaxNegMarginForSeedSoftEnvelope(false, []string{"seed:soft-ceil"}, 1300, 1100, 760, 1.50) {
 		t.Fatalf("did not expect neg-margin relaxation without active seed envelope")
 	}
-	if shouldRelaxNegMarginForSeedSoftEnvelope(true, []string{"seed:soft-floor"}) {
-		t.Fatalf("did not expect neg-margin relaxation without soft ceiling tag")
+	if !shouldRelaxNegMarginForSeedSoftEnvelope(true, []string{"seed:soft-floor"}, 1304, 836, 760, 1.50) {
+		t.Fatalf("expected neg-margin relaxation when local fee is well above the seed ceiling")
+	}
+	if shouldRelaxNegMarginForSeedSoftEnvelope(true, []string{"seed:soft-floor"}, 900, 836, 760, 1.50) {
+		t.Fatalf("did not expect neg-margin relaxation when local fee is near the seed ceiling")
 	}
 }
 

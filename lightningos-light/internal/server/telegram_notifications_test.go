@@ -44,3 +44,34 @@ func TestChunkTelegramAutofeeSectionRepeatsHeader(t *testing.T) {
 		}
 	}
 }
+
+func TestTelegramActivityMirrorMessageMarksFailedLightning(t *testing.T) {
+	msg := telegramActivityMirrorMessage(Notification{
+		Type:      "lightning",
+		Action:    "sent",
+		Status:    "FAILED",
+		AmountSat: 771471,
+		PeerAlias: "WalletOfSatoshi.com",
+	})
+
+	if !strings.Contains(msg, "Lightning failed") {
+		t.Fatalf("expected failed lightning message, got %q", msg)
+	}
+	if strings.Contains(msg, "Lightning sent") {
+		t.Fatalf("did not expect success wording in %q", msg)
+	}
+}
+
+func TestTelegramActivityMirrorMessageKeepsSucceededLightningSent(t *testing.T) {
+	msg := telegramActivityMirrorMessage(Notification{
+		Type:      "lightning",
+		Action:    "sent",
+		Status:    "SUCCEEDED",
+		AmountSat: 771471,
+		PeerAlias: "WalletOfSatoshi.com",
+	})
+
+	if !strings.Contains(msg, "Lightning sent") {
+		t.Fatalf("expected success wording, got %q", msg)
+	}
+}

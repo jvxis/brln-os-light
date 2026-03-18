@@ -1060,8 +1060,20 @@ func (c *Client) PayInvoice(ctx context.Context, paymentRequest string, outgoing
 	if outgoingChanID > 0 {
 		req.OutgoingChanId = outgoingChanID
 	}
-	_, err = client.SendPaymentSync(ctx, req)
-	return err
+	res, err := client.SendPaymentSync(ctx, req)
+	return sendPaymentSyncError(res, err)
+}
+
+func sendPaymentSyncError(res *lnrpc.SendResponse, err error) error {
+	if err != nil {
+		return err
+	}
+	if res != nil {
+		if msg := strings.TrimSpace(res.PaymentError); msg != "" {
+			return errors.New(msg)
+		}
+	}
+	return nil
 }
 
 func (c *Client) SendCoins(ctx context.Context, address string, amountSat int64, satPerVbyte int64, sendAll bool) (string, error) {

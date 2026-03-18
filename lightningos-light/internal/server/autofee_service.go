@@ -3199,6 +3199,16 @@ func applySeedSoftEnvelope(target int, seed float64, floorMult float64, ceilingM
 	return target, tags
 }
 
+func shouldEnableSeedEnvelope(seed float64, noFlow1d bool, weakRecentFlow bool, recentForwards1d int, recentRebalanceCount int, htlcPressureSignal bool, strongOutSignal bool, strongRebalSignal bool, discoveryHit bool, explorerActive bool, stagnationActive bool, superSourceActive bool) bool {
+	if seed <= 0 || recentRebalanceCount != 0 || htlcPressureSignal || strongOutSignal || strongRebalSignal || discoveryHit || explorerActive || stagnationActive || superSourceActive {
+		return false
+	}
+	if noFlow1d {
+		return true
+	}
+	return weakRecentFlow && recentForwards1d <= 1
+}
+
 func shouldRelaxNegMarginForSeedSoftEnvelope(seedEnvelopeActive bool, tags []string, localPpm int, target int, seed float64, ceilingMult float64) bool {
 	if !seedEnvelopeActive || localPpm <= 0 || target >= localPpm || seed <= 0 {
 		return false
@@ -4919,16 +4929,20 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if superSourceActive {
 		target = e.cfg.MinPpm
 	}
-	seedEnvelopeActive := seed > 0 &&
-		noFlow1d &&
-		recentRebalanceCount == 0 &&
-		!htlcPressureSignal &&
-		!strongOutSignal &&
-		!strongRebalSignal &&
-		!discoveryHit &&
-		!explorerActive &&
-		!stagnationActive &&
-		!superSourceActive
+	seedEnvelopeActive := shouldEnableSeedEnvelope(
+		seed,
+		noFlow1d,
+		weakRecentFlow,
+		recentForwards1d,
+		recentRebalanceCount,
+		htlcPressureSignal,
+		strongOutSignal,
+		strongRebalSignal,
+		discoveryHit,
+		explorerActive,
+		stagnationActive,
+		superSourceActive,
+	)
 	if seedEnvelopeActive {
 		allowSeedFloor := outRatio >= lowOutNoFlowUpperRatio
 		var seedEnvelopeTags []string
@@ -5003,6 +5017,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 							target = pegFloor
 						}
 					}
+				} else if seedSoftNegMarginRelax {
+					lockSkipTag = "seed:soft-global-relax"
 				} else {
 					target = localPpm
 					globalNegLockApplied = true
@@ -6274,6 +6290,8 @@ func formatAutofeeTags(d *decision) string {
 			add("🧭seed-soft-floor")
 		case strings.HasPrefix(t, "seed:soft-neg-relax"):
 			add("🧭seed-soft-neg")
+		case strings.HasPrefix(t, "seed:soft-global-relax"):
+			add("🧭seed-soft-global")
 		default:
 			add(t)
 		}

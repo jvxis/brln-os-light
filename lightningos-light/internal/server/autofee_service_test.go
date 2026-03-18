@@ -105,6 +105,21 @@ func TestApplySeedSoftEnvelopeDoesNotRaiseFloorWhenNotAllowed(t *testing.T) {
 	}
 }
 
+func TestShouldEnableSeedEnvelope(t *testing.T) {
+	if !shouldEnableSeedEnvelope(500, true, true, 0, 0, false, false, false, false, false, false, false) {
+		t.Fatalf("expected seed envelope when channel has no recent flow and no strong signals")
+	}
+	if !shouldEnableSeedEnvelope(500, false, true, 1, 0, false, false, false, false, false, false, false) {
+		t.Fatalf("expected seed envelope for weak recent flow with minimal 1d forwards")
+	}
+	if shouldEnableSeedEnvelope(500, false, true, 3, 0, false, false, false, false, false, false, false) {
+		t.Fatalf("did not expect seed envelope with meaningful recent forwards")
+	}
+	if shouldEnableSeedEnvelope(500, true, true, 0, 0, false, true, false, false, false, false, false) {
+		t.Fatalf("did not expect seed envelope with strong recent signal")
+	}
+}
+
 func TestShouldRelaxNegMarginForSeedSoftEnvelope(t *testing.T) {
 	if !shouldRelaxNegMarginForSeedSoftEnvelope(true, []string{"seed:soft-ceil"}, 1300, 1100, 760, 1.50) {
 		t.Fatalf("expected neg-margin relaxation when soft ceiling is active")

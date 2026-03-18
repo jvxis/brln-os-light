@@ -105,6 +105,18 @@ func TestApplySeedSoftEnvelopeDoesNotRaiseFloorWhenNotAllowed(t *testing.T) {
 	}
 }
 
+func TestShouldRelaxNegMarginForSeedSoftEnvelope(t *testing.T) {
+	if !shouldRelaxNegMarginForSeedSoftEnvelope(true, []string{"seed:soft-ceil"}) {
+		t.Fatalf("expected neg-margin relaxation when soft ceiling is active")
+	}
+	if shouldRelaxNegMarginForSeedSoftEnvelope(false, []string{"seed:soft-ceil"}) {
+		t.Fatalf("did not expect neg-margin relaxation without active seed envelope")
+	}
+	if shouldRelaxNegMarginForSeedSoftEnvelope(true, []string{"seed:soft-floor"}) {
+		t.Fatalf("did not expect neg-margin relaxation without soft ceiling tag")
+	}
+}
+
 func TestEffectiveLowOutThresholdsDrainedVsFull(t *testing.T) {
 	lowDrained, protectDrained, factorDrained := effectiveLowOutThresholds(0.10, 0.10, "drained", 0.20)
 	lowFull, protectFull, factorFull := effectiveLowOutThresholds(0.10, 0.10, "full", 0.80)

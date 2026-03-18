@@ -3199,6 +3199,10 @@ func applySeedSoftEnvelope(target int, seed float64, floorMult float64, ceilingM
 	return target, tags
 }
 
+func shouldRelaxNegMarginForSeedSoftEnvelope(seedEnvelopeActive bool, tags []string) bool {
+	return seedEnvelopeActive && containsTag(tags, "seed:soft-ceil")
+}
+
 func shouldHoldUpOnRecentRebalance(classLabel string, outRatio float64, lowOutProtectThresh float64, recentRebalanceCount int) bool {
 	if recentRebalanceCount <= 0 {
 		return false
@@ -4917,11 +4921,14 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		target, seedEnvelopeTags = applySeedSoftEnvelope(target, seed, e.profile.SeedFloorMult, e.profile.SeedCeilingMult, allowSeedFloor)
 		tags = append(tags, seedEnvelopeTags...)
 	}
+	seedSoftNegMarginRelax := shouldRelaxNegMarginForSeedSoftEnvelope(seedEnvelopeActive, tags)
 
 	target = clampInt(target, e.cfg.MinPpm, e.cfg.MaxPpm)
 	if marginPpm7d < 0 && target < localPpm {
 		if stagnationActive || highOutStagnationPressure {
 			tags = append(tags, "stagnation-neg-override")
+		} else if seedSoftNegMarginRelax {
+			tags = append(tags, "seed:soft-neg-relax")
 		} else {
 			target = localPpm
 			tags = append(tags, "no-down-neg-margin")
@@ -5315,9 +5322,15 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	// Final safety lock: never reduce below current ppm while margin is negative.
 	// This runs after all ceilings/floors/step caps to avoid late-stage overrides.
 	if marginPpm7d < 0 && finalPpm < localPpm && !stagnationActive && !highOutStagnationPressure {
-		finalPpm = localPpm
-		if !containsTag(tags, "no-down-neg-margin") {
-			tags = append(tags, "no-down-neg-margin")
+		if seedSoftNegMarginRelax {
+			if !containsTag(tags, "seed:soft-neg-relax") {
+				tags = append(tags, "seed:soft-neg-relax")
+			}
+		} else {
+			finalPpm = localPpm
+			if !containsTag(tags, "no-down-neg-margin") {
+				tags = append(tags, "no-down-neg-margin")
+			}
 		}
 	}
 	if holdUpOnRecentRebalance && finalPpm > localPpm {
@@ -6245,6 +6258,8 @@ func formatAutofeeTags(d *decision) string {
 			add("🧭seed-soft-ceil")
 		case strings.HasPrefix(t, "seed:soft-floor"):
 			add("🧭seed-soft-floor")
+		case strings.HasPrefix(t, "seed:soft-neg-relax"):
+			add("🧭seed-soft-neg")
 		default:
 			add(t)
 		}

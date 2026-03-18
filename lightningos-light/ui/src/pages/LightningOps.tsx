@@ -38,8 +38,16 @@ type Channel = {
 type ChannelMovement7d = {
   forward_count: number
   forward_amount_sat: number
+  forward_in_count: number
+  forward_in_amount_sat: number
+  forward_out_count: number
+  forward_out_amount_sat: number
   rebalance_count: number
   rebalance_amount_sat: number
+  rebalance_in_count: number
+  rebalance_in_amount_sat: number
+  rebalance_out_count: number
+  rebalance_out_amount_sat: number
   lightning_out_count: number
   lightning_out_amount_sat: number
   lightning_in_count: number
@@ -1861,10 +1869,14 @@ export default function LightningOps() {
   const hasChannelMovementActivity = (movement?: ChannelMovement7d) => {
     if (!movement) return false
     return (
-      Number(movement.forward_count || 0) > 0 ||
-      Number(movement.forward_amount_sat || 0) > 0 ||
-      Number(movement.rebalance_count || 0) > 0 ||
-      Number(movement.rebalance_amount_sat || 0) > 0 ||
+      Number(movement.forward_in_count || 0) > 0 ||
+      Number(movement.forward_in_amount_sat || 0) > 0 ||
+      Number(movement.forward_out_count || 0) > 0 ||
+      Number(movement.forward_out_amount_sat || 0) > 0 ||
+      Number(movement.rebalance_in_count || 0) > 0 ||
+      Number(movement.rebalance_in_amount_sat || 0) > 0 ||
+      Number(movement.rebalance_out_count || 0) > 0 ||
+      Number(movement.rebalance_out_amount_sat || 0) > 0 ||
       Number(movement.lightning_out_count || 0) > 0 ||
       Number(movement.lightning_out_amount_sat || 0) > 0 ||
       Number(movement.lightning_in_count || 0) > 0 ||
@@ -6013,19 +6025,31 @@ export default function LightningOps() {
                             <span className="text-[10px] text-fog/50">{t('lightningOps.last7dMovEmpty')}</span>
                           )}
                         </div>
-                        <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                        <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                           {[
                             {
-                              key: 'forward',
-                              label: t('lightningOps.last7dMovForwards'),
-                              count: movement7d.forward_count,
-                              amount: movement7d.forward_amount_sat,
+                              key: 'forward_in',
+                              label: t('lightningOps.last7dMovForwardIn'),
+                              count: movement7d.forward_in_count,
+                              amount: movement7d.forward_in_amount_sat,
                             },
                             {
-                              key: 'rebalance',
-                              label: t('lightningOps.last7dMovRebalances'),
-                              count: movement7d.rebalance_count,
-                              amount: movement7d.rebalance_amount_sat,
+                              key: 'forward_out',
+                              label: t('lightningOps.last7dMovForwardOut'),
+                              count: movement7d.forward_out_count,
+                              amount: movement7d.forward_out_amount_sat,
+                            },
+                            {
+                              key: 'rebalance_in',
+                              label: t('lightningOps.last7dMovRebalanceIn'),
+                              count: movement7d.rebalance_in_count,
+                              amount: movement7d.rebalance_in_amount_sat,
+                            },
+                            {
+                              key: 'rebalance_out',
+                              label: t('lightningOps.last7dMovRebalanceOut'),
+                              count: movement7d.rebalance_out_count,
+                              amount: movement7d.rebalance_out_amount_sat,
                             },
                             {
                               key: 'lightning_out',

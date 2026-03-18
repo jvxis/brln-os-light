@@ -1488,8 +1488,16 @@ func (s *Server) handleLNChannels(w http.ResponseWriter, r *http.Request) {
 				channels[i].Movement7d = &lndclient.ChannelMovement7d{
 					ForwardCount:          movement.ForwardCount,
 					ForwardAmountSat:      movement.ForwardAmountSat,
+					ForwardInCount:        movement.ForwardInCount,
+					ForwardInAmountSat:    movement.ForwardInAmountSat,
+					ForwardOutCount:       movement.ForwardOutCount,
+					ForwardOutAmountSat:   movement.ForwardOutAmountSat,
 					RebalanceCount:        movement.RebalanceCount,
 					RebalanceAmountSat:    movement.RebalanceAmountSat,
+					RebalanceInCount:      movement.RebalanceInCount,
+					RebalanceInAmountSat:  movement.RebalanceInAmountSat,
+					RebalanceOutCount:     movement.RebalanceOutCount,
+					RebalanceOutAmountSat: movement.RebalanceOutAmountSat,
 					LightningOutCount:     movement.LightningOutCount,
 					LightningOutAmountSat: movement.LightningOutAmountSat,
 					LightningInCount:      movement.LightningInCount,
@@ -1653,19 +1661,8 @@ func (s *Server) loadChannelMovement7d(ctx context.Context) (map[uint64]lndclien
 	rows, err := s.db.Query(ctx, `
 with movement as (
   select
-    chan_id_out as channel_id,
-    'forward'::text as metric,
-    coalesce(case when amount_out_msat > 0 then amount_out_msat / 1000 else amount_sat end, 0) as amount_sat
-  from notifications
-  where type='forward'
-    and occurred_at >= now() - interval '7 day'
-    and chan_id_out is not null
-
-  union all
-
-  select
     chan_id_in as channel_id,
-    'forward'::text as metric,
+    'forward_in'::text as metric,
     coalesce(case when amount_in_msat > 0 then amount_in_msat / 1000 else amount_sat end, 0) as amount_sat
   from notifications
   where type='forward'
@@ -1675,26 +1672,37 @@ with movement as (
   union all
 
   select
-    rebal_source_chan_id as channel_id,
-    'rebalance'::text as metric,
-    coalesce(case when amount_sat > 0 then amount_sat when amount_out_msat > 0 then amount_out_msat / 1000 else 0 end, 0) as amount_sat
+    chan_id_out as channel_id,
+    'forward_out'::text as metric,
+    coalesce(case when amount_out_msat > 0 then amount_out_msat / 1000 else amount_sat end, 0) as amount_sat
   from notifications
-  where type='rebalance'
-    and status in ('SETTLED', 'SUCCEEDED')
+  where type='forward'
     and occurred_at >= now() - interval '7 day'
-    and rebal_source_chan_id is not null
+    and chan_id_out is not null
 
   union all
 
   select
     rebal_target_chan_id as channel_id,
-    'rebalance'::text as metric,
+    'rebalance_in'::text as metric,
     coalesce(case when amount_sat > 0 then amount_sat when amount_out_msat > 0 then amount_out_msat / 1000 else 0 end, 0) as amount_sat
   from notifications
   where type='rebalance'
     and status in ('SETTLED', 'SUCCEEDED')
     and occurred_at >= now() - interval '7 day'
     and rebal_target_chan_id is not null
+
+  union all
+
+  select
+    rebal_source_chan_id as channel_id,
+    'rebalance_out'::text as metric,
+    coalesce(case when amount_sat > 0 then amount_sat when amount_out_msat > 0 then amount_out_msat / 1000 else 0 end, 0) as amount_sat
+  from notifications
+  where type='rebalance'
+    and status in ('SETTLED', 'SUCCEEDED')
+    and occurred_at >= now() - interval '7 day'
+    and rebal_source_chan_id is not null
 
   union all
 
@@ -1746,12 +1754,26 @@ group by channel_id, metric
 		cid := uint64(channelID)
 		entry := stats[cid]
 		switch metric {
-		case "forward":
-			entry.ForwardCount = count
-			entry.ForwardAmountSat = amountSat
-		case "rebalance":
-			entry.RebalanceCount = count
-			entry.RebalanceAmountSat = amountSat
+		case "forward_in":
+			entry.ForwardInCount = count
+			entry.ForwardInAmountSat = amountSat
+			entry.ForwardCount += count
+			entry.ForwardAmountSat += amountSat
+		case "forward_out":
+			entry.ForwardOutCount = count
+			entry.ForwardOutAmountSat = amountSat
+			entry.ForwardCount += count
+			entry.ForwardAmountSat += amountSat
+		case "rebalance_in":
+			entry.RebalanceInCount = count
+			entry.RebalanceInAmountSat = amountSat
+			entry.RebalanceCount += count
+			entry.RebalanceAmountSat += amountSat
+		case "rebalance_out":
+			entry.RebalanceOutCount = count
+			entry.RebalanceOutAmountSat = amountSat
+			entry.RebalanceCount += count
+			entry.RebalanceAmountSat += amountSat
 		case "lightning_out":
 			entry.LightningOutCount = count
 			entry.LightningOutAmountSat = amountSat

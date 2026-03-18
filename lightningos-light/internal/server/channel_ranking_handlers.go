@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -59,6 +60,9 @@ func (s *Server) handleChannelRankingItemGet(w http.ResponseWriter, r *http.Requ
 	}
 
 	channelPoint := strings.TrimSpace(chi.URLParam(r, "channel_point"))
+	if decoded, err := url.PathUnescape(channelPoint); err == nil {
+		channelPoint = strings.TrimSpace(decoded)
+	}
 	if channelPoint == "" {
 		writeError(w, http.StatusBadRequest, "channel_point required")
 		return

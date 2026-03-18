@@ -32,6 +32,18 @@ type Channel = {
   forward_fee_7d_sat?: number
   rebal_fee_7d_sat?: number
   profit_fee_7d_sat?: number
+  movement_7d?: ChannelMovement7d
+}
+
+type ChannelMovement7d = {
+  forward_count: number
+  forward_amount_sat: number
+  rebalance_count: number
+  rebalance_amount_sat: number
+  lightning_out_count: number
+  lightning_out_amount_sat: number
+  lightning_in_count: number
+  lightning_in_amount_sat: number
 }
 
 type ChannelPendingHtlc = {
@@ -747,6 +759,7 @@ export default function LightningOps() {
   const [focusedChannelPoint, setFocusedChannelPoint] = useState('')
   const [focusedPeerPubKey, setFocusedPeerPubKey] = useState('')
   const [pendingHtlcOpenChannelPoint, setPendingHtlcOpenChannelPoint] = useState('')
+  const [movementOpenChannelPoint, setMovementOpenChannelPoint] = useState('')
 
   const [peerAddress, setPeerAddress] = useState('')
   const [peerTemporary, setPeerTemporary] = useState(false)
@@ -1838,6 +1851,25 @@ export default function LightningOps() {
     const rounded = Math.round(value)
     const prefix = rounded > 0 ? '+' : ''
     return `${prefix}${rounded} sats`
+  }
+
+  const formatMovementAmount = (value?: number) => {
+    const sats = Math.max(0, Math.round(Number(value || 0)))
+    return `${sats.toLocaleString(locale)} sats`
+  }
+
+  const hasChannelMovementActivity = (movement?: ChannelMovement7d) => {
+    if (!movement) return false
+    return (
+      Number(movement.forward_count || 0) > 0 ||
+      Number(movement.forward_amount_sat || 0) > 0 ||
+      Number(movement.rebalance_count || 0) > 0 ||
+      Number(movement.rebalance_amount_sat || 0) > 0 ||
+      Number(movement.lightning_out_count || 0) > 0 ||
+      Number(movement.lightning_out_amount_sat || 0) > 0 ||
+      Number(movement.lightning_in_count || 0) > 0 ||
+      Number(movement.lightning_in_amount_sat || 0) > 0
+    )
   }
 
   const profitBadge = (profitSat?: number) => {
@@ -5731,6 +5763,9 @@ export default function LightningOps() {
                 const pendingHtlcs = Array.isArray(ch.pending_htlcs) ? ch.pending_htlcs : []
                 const hasPendingHtlcs = pendingHtlcs.length > 0
                 const pendingHtlcOpen = pendingHtlcOpenChannelPoint === ch.channel_point
+                const movement7d = ch.movement_7d
+                const movementOpen = movementOpenChannelPoint === ch.channel_point
+                const hasMovementActivity = hasChannelMovementActivity(movement7d)
                 const isFCRisk = !ch.active && unsettledBalanceSat > 0
                 const marginPpm7d = typeof ch.out_ppm7d === 'number' && typeof ch.rebal_ppm7d === 'number'
                   ? ch.out_ppm7d - ch.rebal_ppm7d
@@ -5970,6 +6005,52 @@ export default function LightningOps() {
                         </div>
                       </div>
                     </div>
+                    {movementOpen && movement7d && (
+                      <div className="mt-2 rounded-xl border border-white/10 bg-ink/70 p-2.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-[10px] uppercase tracking-wide text-fog/60">{t('lightningOps.last7dMov')}</p>
+                          {!hasMovementActivity && (
+                            <span className="text-[10px] text-fog/50">{t('lightningOps.last7dMovEmpty')}</span>
+                          )}
+                        </div>
+                        <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                          {[
+                            {
+                              key: 'forward',
+                              label: t('lightningOps.last7dMovForwards'),
+                              count: movement7d.forward_count,
+                              amount: movement7d.forward_amount_sat,
+                            },
+                            {
+                              key: 'rebalance',
+                              label: t('lightningOps.last7dMovRebalances'),
+                              count: movement7d.rebalance_count,
+                              amount: movement7d.rebalance_amount_sat,
+                            },
+                            {
+                              key: 'lightning_out',
+                              label: t('lightningOps.last7dMovLightningOut'),
+                              count: movement7d.lightning_out_count,
+                              amount: movement7d.lightning_out_amount_sat,
+                            },
+                            {
+                              key: 'lightning_in',
+                              label: t('lightningOps.last7dMovLightningIn'),
+                              count: movement7d.lightning_in_count,
+                              amount: movement7d.lightning_in_amount_sat,
+                            },
+                          ].map((item) => (
+                            <div key={item.key} className="rounded-lg border border-white/10 bg-black/10 px-2.5 py-2">
+                              <div className="flex items-center justify-between gap-2 text-[10px] uppercase tracking-wide text-fog/60">
+                                <span>{item.label}</span>
+                                <span>{Math.max(0, Math.round(Number(item.count || 0))).toLocaleString(locale)}x</span>
+                              </div>
+                              <div className="mt-1 text-sm text-fog">{formatMovementAmount(item.amount)}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     {pendingHtlcOpen && hasPendingHtlcs && (
                       <div className={`mt-2 rounded-xl p-2.5 ${isFCRisk ? 'border border-rose-400/45 bg-rose-500/10' : 'border border-white/10 bg-ink/70'}`}>
                         <p className={`text-[10px] uppercase tracking-wide ${isFCRisk ? 'text-rose-200' : 'text-fog/60'}`}>{t('lightningOps.pendingHtlcDetailsTitle')}</p>
@@ -6064,9 +6145,34 @@ export default function LightningOps() {
                         </span>
                       </div>
                       <div className="text-right">
-                        {classLabel && (
-                          <span className="text-fog/60">{classLabel}</span>
-                        )}
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          {movement7d && (
+                            <button
+                              type="button"
+                              className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] transition ${
+                                movementOpen
+                                  ? 'border-sky-300/70 bg-sky-500/10 text-sky-100'
+                                  : hasMovementActivity
+                                    ? 'border-white/15 bg-white/5 text-fog/75 hover:border-white/30 hover:text-fog'
+                                    : 'border-white/10 bg-white/5 text-fog/55 hover:border-white/20 hover:text-fog/75'
+                              }`}
+                              onClick={() => {
+                                setMovementOpenChannelPoint((current) => current === ch.channel_point ? '' : ch.channel_point)
+                              }}
+                              aria-expanded={movementOpen}
+                              aria-label={t('lightningOps.last7dMov')}
+                            >
+                              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                                <path d="M4 16l4-4 3 3 5-6 4 4" />
+                                <path d="M4 20h16" />
+                              </svg>
+                              <span>{t('lightningOps.last7dMov')}</span>
+                            </button>
+                          )}
+                          {classLabel && (
+                            <span className="text-fog/60">{classLabel}</span>
+                          )}
+                        </div>
                       </div>
                     </div>
                     {isInlineFeeEditing && (

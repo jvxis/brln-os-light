@@ -1479,6 +1479,25 @@ func (s *Server) handleLNChannels(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		movementByChannel, err := s.loadChannelMovement7d(dbCtx)
+		if err != nil {
+			s.logger.Printf("channel movement lookup failed: %v", err)
+		} else {
+			for i := range channels {
+				movement := movementByChannel[channels[i].ChannelID]
+				channels[i].Movement7d = &lndclient.ChannelMovement7d{
+					ForwardCount:          movement.ForwardCount,
+					ForwardAmountSat:      movement.ForwardAmountSat,
+					RebalanceCount:        movement.RebalanceCount,
+					RebalanceAmountSat:    movement.RebalanceAmountSat,
+					LightningOutCount:     movement.LightningOutCount,
+					LightningOutAmountSat: movement.LightningOutAmountSat,
+					LightningInCount:      movement.LightningInCount,
+					LightningInAmountSat:  movement.LightningInAmountSat,
+				}
+			}
+		}
+
 		forwardFeeMsat := make(map[uint64]int64)
 		forwardAmtMsat := make(map[uint64]int64)
 		forwardRows, err := s.db.Query(dbCtx, `
@@ -1623,6 +1642,127 @@ func (s *Server) handleLNChannels(w http.ResponseWriter, r *http.Request) {
 		"channels":             channels,
 		"pending_channels":     pendingResp,
 	})
+}
+
+func (s *Server) loadChannelMovement7d(ctx context.Context) (map[uint64]lndclient.ChannelMovement7d, error) {
+	stats := make(map[uint64]lndclient.ChannelMovement7d)
+	if s == nil || s.db == nil {
+		return stats, nil
+	}
+
+	rows, err := s.db.Query(ctx, `
+with movement as (
+  select
+    chan_id_out as channel_id,
+    'forward'::text as metric,
+    coalesce(case when amount_out_msat > 0 then amount_out_msat / 1000 else amount_sat end, 0) as amount_sat
+  from notifications
+  where type='forward'
+    and occurred_at >= now() - interval '7 day'
+    and chan_id_out is not null
+
+  union all
+
+  select
+    chan_id_in as channel_id,
+    'forward'::text as metric,
+    coalesce(case when amount_in_msat > 0 then amount_in_msat / 1000 else amount_sat end, 0) as amount_sat
+  from notifications
+  where type='forward'
+    and occurred_at >= now() - interval '7 day'
+    and chan_id_in is not null
+
+  union all
+
+  select
+    rebal_source_chan_id as channel_id,
+    'rebalance'::text as metric,
+    coalesce(case when amount_sat > 0 then amount_sat when amount_out_msat > 0 then amount_out_msat / 1000 else 0 end, 0) as amount_sat
+  from notifications
+  where type='rebalance'
+    and status in ('SETTLED', 'SUCCEEDED')
+    and occurred_at >= now() - interval '7 day'
+    and rebal_source_chan_id is not null
+
+  union all
+
+  select
+    rebal_target_chan_id as channel_id,
+    'rebalance'::text as metric,
+    coalesce(case when amount_sat > 0 then amount_sat when amount_out_msat > 0 then amount_out_msat / 1000 else 0 end, 0) as amount_sat
+  from notifications
+  where type='rebalance'
+    and status in ('SETTLED', 'SUCCEEDED')
+    and occurred_at >= now() - interval '7 day'
+    and rebal_target_chan_id is not null
+
+  union all
+
+  select
+    channel_id,
+    'lightning_out'::text as metric,
+    coalesce(amount_sat, 0) as amount_sat
+  from notifications
+  where type in ('lightning', 'keysend')
+    and action='sent'
+    and status='SUCCEEDED'
+    and occurred_at >= now() - interval '7 day'
+    and channel_id is not null
+
+  union all
+
+  select
+    channel_id,
+    'lightning_in'::text as metric,
+    coalesce(amount_sat, 0) as amount_sat
+  from notifications
+  where type in ('lightning', 'keysend')
+    and action='received'
+    and status='SETTLED'
+    and occurred_at >= now() - interval '7 day'
+    and channel_id is not null
+)
+select channel_id, metric, count(*)::int, coalesce(sum(amount_sat), 0)
+from movement
+where channel_id > 0
+group by channel_id, metric
+`)
+	if err != nil {
+		return stats, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var channelID int64
+		var metric string
+		var count int
+		var amountSat int64
+		if err := rows.Scan(&channelID, &metric, &count, &amountSat); err != nil {
+			return stats, err
+		}
+		if channelID <= 0 {
+			continue
+		}
+		cid := uint64(channelID)
+		entry := stats[cid]
+		switch metric {
+		case "forward":
+			entry.ForwardCount = count
+			entry.ForwardAmountSat = amountSat
+		case "rebalance":
+			entry.RebalanceCount = count
+			entry.RebalanceAmountSat = amountSat
+		case "lightning_out":
+			entry.LightningOutCount = count
+			entry.LightningOutAmountSat = amountSat
+		case "lightning_in":
+			entry.LightningInCount = count
+			entry.LightningInAmountSat = amountSat
+		}
+		stats[cid] = entry
+	}
+
+	return stats, rows.Err()
 }
 
 func buildWaitingCloseRecoveryResponse(info waitingCloseRecoveryInfo) *waitingCloseRecoveryResponse {

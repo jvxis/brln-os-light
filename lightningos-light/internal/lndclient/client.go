@@ -3586,6 +3586,17 @@ type ChannelPendingHtlcInfo struct {
 	LockedIn            bool   `json:"locked_in,omitempty"`
 }
 
+type ChannelMovement7d struct {
+	ForwardCount          int   `json:"forward_count"`
+	ForwardAmountSat      int64 `json:"forward_amount_sat"`
+	RebalanceCount        int   `json:"rebalance_count"`
+	RebalanceAmountSat    int64 `json:"rebalance_amount_sat"`
+	LightningOutCount     int   `json:"lightning_out_count"`
+	LightningOutAmountSat int64 `json:"lightning_out_amount_sat"`
+	LightningInCount      int   `json:"lightning_in_count"`
+	LightningInAmountSat  int64 `json:"lightning_in_amount_sat"`
+}
+
 type ChannelInfo struct {
 	ChannelPoint        string                   `json:"channel_point"`
 	ChannelID           uint64                   `json:"channel_id"`
@@ -3616,6 +3627,7 @@ type ChannelInfo struct {
 	ForwardFee7dSat     *int64                   `json:"forward_fee_7d_sat,omitempty"`
 	RebalFee7dSat       *int64                   `json:"rebal_fee_7d_sat,omitempty"`
 	ProfitFee7dSat      *int64                   `json:"profit_fee_7d_sat,omitempty"`
+	Movement7d          *ChannelMovement7d       `json:"movement_7d,omitempty"`
 }
 
 func normalizeChannelPointKey(point string) string {

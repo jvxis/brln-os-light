@@ -74,6 +74,7 @@ export default function Chat() {
   const [connectTemporary, setConnectTemporary] = useState(false)
   const [connectStatus, setConnectStatus] = useState('')
   const [connectingPeer, setConnectingPeer] = useState(false)
+  const [showConnectForm, setShowConnectForm] = useState(false)
   const [lastReadMap, setLastReadMap] = useState<Record<string, number>>(() => {
     try {
       const raw = localStorage.getItem(lastReadKey)
@@ -408,8 +409,10 @@ export default function Chat() {
       }
       setConnectAddress('')
       setConnectTemporary(false)
+      setShowConnectForm(false)
       setConnectStatus(t('lightningOps.peerConnected'))
     } catch (err: any) {
+      setShowConnectForm(true)
       setConnectStatus(err?.message || t('lightningOps.peerConnectFailed'))
     } finally {
       setConnectingPeer(false)
@@ -431,34 +434,47 @@ export default function Chat() {
         {peerStatus && <p className="mt-3 text-sm text-brass">{peerStatus}</p>}
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
-        <div className="section-card space-y-4">
-          <div className="rounded-2xl border border-white/10 bg-ink/60 p-4 space-y-3">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-fog/80">
-              {t('lightningOps.addPeer')}
-            </h3>
-            <input
-              className="input-field text-sm"
-              placeholder={t('lightningOps.peerAddressPlaceholder')}
-              value={connectAddress}
-              onChange={(e) => setConnectAddress(e.target.value)}
-            />
-            <label className="flex items-center gap-2 text-xs text-fog/70">
-              <input
-                type="checkbox"
-                checked={connectTemporary}
-                onChange={(e) => setConnectTemporary(e.target.checked)}
-              />
-              {t('lightningOps.temporaryPeer')}
-            </label>
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(320px,350px)_minmax(0,1fr)] xl:grid-cols-[minmax(340px,370px)_minmax(0,1fr)]">
+        <div className="section-card space-y-4 lg:self-start">
+          <div className="space-y-3">
             <button
-              className="btn-secondary w-full disabled:cursor-not-allowed disabled:opacity-60"
               type="button"
-              onClick={handleConnectPeer}
-              disabled={!connectAddress.trim() || connectingPeer}
+              onClick={() => setShowConnectForm((current) => !current)}
+              className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-ink/40 px-4 py-3 text-left transition hover:border-white/20"
             >
-              {connectingPeer ? t('lightningOps.connectingPeer') : t('lightningOps.connectPeer')}
+              <span className="text-sm font-semibold uppercase tracking-wide text-fog/80">
+                {t('lightningOps.addPeer')}
+              </span>
+              <span className="text-[11px] uppercase tracking-wide text-fog/50">
+                {showConnectForm ? t('common.hide') : t('common.open')}
+              </span>
             </button>
+            {showConnectForm && (
+              <div className="rounded-2xl border border-white/10 bg-ink/60 p-4 space-y-3">
+                <input
+                  className="input-field text-sm"
+                  placeholder={t('lightningOps.peerAddressPlaceholder')}
+                  value={connectAddress}
+                  onChange={(e) => setConnectAddress(e.target.value)}
+                />
+                <label className="flex items-center gap-2 text-xs text-fog/70">
+                  <input
+                    type="checkbox"
+                    checked={connectTemporary}
+                    onChange={(e) => setConnectTemporary(e.target.checked)}
+                  />
+                  {t('lightningOps.temporaryPeer')}
+                </label>
+                <button
+                  className="btn-secondary w-full disabled:cursor-not-allowed disabled:opacity-60"
+                  type="button"
+                  onClick={handleConnectPeer}
+                  disabled={!connectAddress.trim() || connectingPeer}
+                >
+                  {connectingPeer ? t('lightningOps.connectingPeer') : t('lightningOps.connectPeer')}
+                </button>
+              </div>
+            )}
             {connectStatus && <p className="text-xs text-brass">{connectStatus}</p>}
           </div>
 
@@ -501,13 +517,13 @@ export default function Chat() {
                           </span>
                         )}
                       </div>
-                      <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-fog/50">
-                        <span className="truncate">{peer.last_message || peer.pub_key}</span>
-                        <span>{formatTimestamp(peer.last_message_at, locale)}</span>
+                      <div className="mt-2 text-[11px] text-fog/55 break-words">
+                        {peer.last_message || peer.pub_key}
                       </div>
-                      {peer.last_message && (
-                        <div className="text-xs text-fog/45 break-all mt-1">{peer.pub_key}</div>
-                      )}
+                      <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-fog/45">
+                        <span className="truncate">{peer.pub_key}</span>
+                        <span className="shrink-0">{formatTimestamp(peer.last_message_at, locale)}</span>
+                      </div>
                     </button>
                   ))}
                   {!sortedPeers.length && (
@@ -540,11 +556,13 @@ export default function Chat() {
                             {unreadPeers.has(peer.pub_key) ? 'New' : t('chat.peerOffline')}
                           </span>
                         </div>
-                        <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-fog/50">
-                          <span className="truncate">{peer.last_message || peer.pub_key}</span>
-                          <span>{formatTimestamp(peer.last_message_at, locale)}</span>
+                        <div className="mt-2 text-[11px] text-fog/55 break-words">
+                          {peer.last_message || peer.pub_key}
                         </div>
-                        <div className="text-xs text-fog/45 break-all mt-1">{peer.pub_key}</div>
+                        <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-fog/45">
+                          <span className="truncate">{peer.pub_key}</span>
+                          <span className="shrink-0">{formatTimestamp(peer.last_message_at, locale)}</span>
+                        </div>
                       </button>
                     ))}
                   </div>
@@ -560,7 +578,7 @@ export default function Chat() {
           )}
         </div>
 
-        <div className="section-card flex flex-col gap-4 max-h-[720px]">
+        <div className="section-card min-w-0 min-h-[720px] flex flex-col gap-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <h3 className="text-lg font-semibold">

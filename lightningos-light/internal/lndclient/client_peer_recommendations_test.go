@@ -6,121 +6,67 @@ import (
 	"lightningos-light/lnrpc"
 )
 
-func TestBuildPeerNeighborRecommendationsRanksByInboundAndCapacity(t *testing.T) {
-	source := "source"
-	edges := []*lnrpc.ChannelEdge{
-		{
-			Node1Pub: "source",
-			Node2Pub: "peer-a",
-			Capacity: 900000,
+func addNeighborEdges(edges []*lnrpc.ChannelEdge, source, peer string, count int, capacity int64, inboundRate int32, outboundRate int64) []*lnrpc.ChannelEdge {
+	for i := 0; i < count; i++ {
+		edges = append(edges, &lnrpc.ChannelEdge{
+			Node1Pub: source,
+			Node2Pub: peer,
+			Capacity: capacity,
 			Node2Policy: &lnrpc.RoutingPolicy{
-				InboundFeeRateMilliMsat: -40,
-				InboundFeeBaseMsat:      0,
-				FeeRateMilliMsat:        15,
-				FeeBaseMsat:             100,
+				InboundFeeRateMilliMsat: inboundRate,
+				FeeRateMilliMsat:        outboundRate,
 			},
-		},
-		{
-			Node1Pub: "source",
-			Node2Pub: "peer-a",
-			Capacity: 600000,
-			Node2Policy: &lnrpc.RoutingPolicy{
-				InboundFeeRateMilliMsat: -20,
-				InboundFeeBaseMsat:      10,
-				FeeRateMilliMsat:        10,
-				FeeBaseMsat:             50,
-			},
-		},
-		{
-			Node1Pub: "peer-b",
-			Node2Pub: "source",
-			Capacity: 1500000,
-			Node1Policy: &lnrpc.RoutingPolicy{
-				InboundFeeRateMilliMsat: -10,
-				InboundFeeBaseMsat:      0,
-				FeeRateMilliMsat:        5,
-				FeeBaseMsat:             0,
-			},
-		},
-		{
-			Node1Pub: "source",
-			Node2Pub: "peer-c",
-			Capacity: 1500000,
-			Node2Policy: &lnrpc.RoutingPolicy{
-				InboundFeeRateMilliMsat: -10,
-				InboundFeeBaseMsat:      0,
-				FeeRateMilliMsat:        25,
-				FeeBaseMsat:             0,
-			},
-		},
+		})
 	}
+	return edges
+}
+
+func TestBuildPeerNeighborRecommendationsAppliesMinimumThresholdsAndSorts(t *testing.T) {
+	source := "source"
+	var edges []*lnrpc.ChannelEdge
+
+	edges = addNeighborEdges(edges, source, "peer-a", 12, 10_000_000, -40, 50)
+	edges = addNeighborEdges(edges, source, "peer-b", 11, 12_000_000, -10, 10)
+	edges = addNeighborEdges(edges, source, "peer-c", 15, 9_000_000, -10, 25)
+	edges = addNeighborEdges(edges, source, "too-small", 12, 5_000_000, -200, 1)
+	edges = addNeighborEdges(edges, source, "too-few", 10, 20_000_000, -200, 1)
 
 	list := buildPeerNeighborRecommendations(source, edges, nil)
 	if len(list) != 3 {
-		t.Fatalf("expected 3 recommendations, got %d", len(list))
+		t.Fatalf("expected 3 recommendations after thresholds, got %d", len(list))
 	}
 
 	if list[0].PubKey != "peer-a" {
-		t.Fatalf("expected peer-a first due to lower inbound fee, got %s", list[0].PubKey)
+		t.Fatalf("expected peer-a first due to lowest inbound fee, got %s", list[0].PubKey)
 	}
-	if list[0].InboundFeeRatePpm != -40 {
-		t.Fatalf("expected peer-a inbound fee -40, got %d", list[0].InboundFeeRatePpm)
+	if list[0].TotalCapacitySat != 120_000_000 {
+		t.Fatalf("expected peer-a total capacity 120000000, got %d", list[0].TotalCapacitySat)
 	}
-	if list[0].OutboundFeeRatePpm != 10 {
-		t.Fatalf("expected peer-a outbound fee min 10, got %d", list[0].OutboundFeeRatePpm)
+	if list[1].PubKey != "peer-c" {
+		t.Fatalf("expected peer-c second due to higher capacity among equal inbound, got %s", list[1].PubKey)
 	}
-	if list[0].TotalCapacitySat != 1500000 {
-		t.Fatalf("expected peer-a total capacity 1500000, got %d", list[0].TotalCapacitySat)
-	}
-
-	if list[1].PubKey != "peer-b" {
-		t.Fatalf("expected peer-b second due to same inbound fee but lower outbound than peer-c, got %s", list[1].PubKey)
-	}
-	if list[2].PubKey != "peer-c" {
-		t.Fatalf("expected peer-c third, got %s", list[2].PubKey)
+	if list[2].PubKey != "peer-b" {
+		t.Fatalf("expected peer-b third, got %s", list[2].PubKey)
 	}
 }
 
 func TestBuildPeerNeighborRecommendationsSkipsExcludedAndDisabled(t *testing.T) {
 	source := "source"
-	edges := []*lnrpc.ChannelEdge{
-		{
-			Node1Pub: "source",
-			Node2Pub: "keep",
-			Capacity: 500000,
-			Node2Policy: &lnrpc.RoutingPolicy{
-				InboundFeeRateMilliMsat: 5,
-				FeeRateMilliMsat:        10,
-			},
-		},
-		{
-			Node1Pub: "source",
-			Node2Pub: "excluded",
-			Capacity: 700000,
-			Node2Policy: &lnrpc.RoutingPolicy{
-				InboundFeeRateMilliMsat: -10,
-				FeeRateMilliMsat:        10,
-			},
-		},
-		{
-			Node1Pub: "source",
+	var edges []*lnrpc.ChannelEdge
+
+	edges = addNeighborEdges(edges, source, "keep", 12, 10_000_000, 5, 10)
+	edges = addNeighborEdges(edges, source, "excluded", 12, 10_000_000, -10, 10)
+	for i := 0; i < 12; i++ {
+		edges = append(edges, &lnrpc.ChannelEdge{
+			Node1Pub: source,
 			Node2Pub: "disabled",
-			Capacity: 900000,
+			Capacity: 10_000_000,
 			Node2Policy: &lnrpc.RoutingPolicy{
 				InboundFeeRateMilliMsat: -100,
 				FeeRateMilliMsat:        1,
 				Disabled:                true,
 			},
-		},
-		{
-			Node1Pub: "other-a",
-			Node2Pub: "other-b",
-			Capacity: 900000,
-			Node1Policy: &lnrpc.RoutingPolicy{
-				InboundFeeRateMilliMsat: -100,
-				FeeRateMilliMsat:        1,
-			},
-		},
+		})
 	}
 
 	excluded := map[string]struct{}{
@@ -133,5 +79,28 @@ func TestBuildPeerNeighborRecommendationsSkipsExcludedAndDisabled(t *testing.T) 
 	}
 	if list[0].PubKey != "keep" {
 		t.Fatalf("expected remaining recommendation to be keep, got %s", list[0].PubKey)
+	}
+}
+
+func TestSelectPreferredNodeAddressPrefersClearnet(t *testing.T) {
+	host, hasClearnet := selectPreferredNodeAddress([]*lnrpc.NodeAddress{
+		{Addr: "abcdef.onion:9735"},
+		{Addr: "203.0.113.10:9735"},
+	})
+	if !hasClearnet {
+		t.Fatal("expected clearnet to be detected")
+	}
+	if host != "203.0.113.10:9735" {
+		t.Fatalf("expected clearnet host, got %s", host)
+	}
+
+	host, hasClearnet = selectPreferredNodeAddress([]*lnrpc.NodeAddress{
+		{Addr: "onlytor.onion:9735"},
+	})
+	if hasClearnet {
+		t.Fatal("did not expect clearnet on onion-only addresses")
+	}
+	if host != "onlytor.onion:9735" {
+		t.Fatalf("expected onion fallback, got %s", host)
 	}
 }

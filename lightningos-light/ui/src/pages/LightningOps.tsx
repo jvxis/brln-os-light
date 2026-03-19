@@ -171,6 +171,7 @@ type PeerRecommendation = {
   alias?: string
   host?: string
   peer_address?: string
+  has_clearnet?: boolean
   channel_count: number
   total_capacity_sat: number
   largest_capacity_sat: number
@@ -6212,11 +6213,17 @@ export default function LightningOps() {
                               const canUseRecommendation = peerAddress.length > 0
                               const copyKey = recommendationCopyKey(ch.channel_point, item.pub_key)
                               const copied = peerRecommendationCopiedKey === copyKey
+                              const hasClearnet = item.has_clearnet === true
                               return (
                                 <div key={item.pub_key} className="rounded-lg border border-white/10 bg-ink/70 p-3">
                                   <div className="flex flex-wrap items-start justify-between gap-2">
                                     <div>
-                                      <div className="text-sm text-fog">{item.alias || item.pub_key}</div>
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <div className="text-sm text-fog">{item.alias || item.pub_key}</div>
+                                        <span className={`rounded-full px-2 py-0.5 text-[10px] ${hasClearnet ? 'bg-emerald-500/15 text-emerald-100' : 'bg-amber-500/15 text-amber-100'}`}>
+                                          {hasClearnet ? t('lightningOps.peerRecommendationsClearnet') : t('lightningOps.peerRecommendationsTor')}
+                                        </span>
+                                      </div>
                                       <div className="text-[11px] text-fog/50 break-all">{item.pub_key}</div>
                                     </div>
                                     <a

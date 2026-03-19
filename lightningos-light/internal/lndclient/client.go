@@ -144,6 +144,8 @@ const (
 	defaultConnectPeerTimeoutSec = uint64(8)
 	nodeAliasCacheTTL            = 30 * time.Minute
 	nodeAliasNotFoundCacheTTL    = 5 * time.Minute
+	peerNeighborMinTotalCapacity = int64(100_000_000)
+	peerNeighborMinChannelCount  = 11
 )
 
 func normalizePubkeyCacheKey(pubkey string) string {
@@ -2345,10 +2347,6 @@ func (c *Client) GetPeerNeighborRecommendations(ctx context.Context, sourcePubke
 	}
 
 	recommendations := buildPeerNeighborRecommendations(trimmed, info.GetChannels(), excludePubkeys)
-	if len(recommendations) > limit {
-		recommendations = recommendations[:limit]
-	}
-
 	for i := range recommendations {
 		nodeInfo, err := client.GetNodeInfo(ctx, &lnrpc.NodeInfoRequest{PubKey: recommendations[i].PubKey, IncludeChannels: false})
 		if err != nil || nodeInfo == nil || nodeInfo.GetNode() == nil {
@@ -2358,11 +2356,38 @@ func (c *Client) GetPeerNeighborRecommendations(ctx context.Context, sourcePubke
 		if alias := strings.TrimSpace(node.GetAlias()); alias != "" {
 			recommendations[i].Alias = alias
 		}
-		host := selectPreferredNodeAddress(node.GetAddresses())
+		host, hasClearnet := selectPreferredNodeAddress(node.GetAddresses())
+		recommendations[i].HasClearnet = hasClearnet
 		if host != "" {
 			recommendations[i].Host = host
 			recommendations[i].PeerAddress = recommendations[i].PubKey + "@" + host
 		}
+	}
+
+	sort.Slice(recommendations, func(i, j int) bool {
+		if recommendations[i].HasClearnet != recommendations[j].HasClearnet {
+			return recommendations[i].HasClearnet
+		}
+		if recommendations[i].InboundFeeRatePpm != recommendations[j].InboundFeeRatePpm {
+			return recommendations[i].InboundFeeRatePpm < recommendations[j].InboundFeeRatePpm
+		}
+		if recommendations[i].TotalCapacitySat != recommendations[j].TotalCapacitySat {
+			return recommendations[i].TotalCapacitySat > recommendations[j].TotalCapacitySat
+		}
+		if recommendations[i].ChannelCount != recommendations[j].ChannelCount {
+			return recommendations[i].ChannelCount > recommendations[j].ChannelCount
+		}
+		if recommendations[i].LargestCapacitySat != recommendations[j].LargestCapacitySat {
+			return recommendations[i].LargestCapacitySat > recommendations[j].LargestCapacitySat
+		}
+		if recommendations[i].OutboundFeeRatePpm != recommendations[j].OutboundFeeRatePpm {
+			return recommendations[i].OutboundFeeRatePpm < recommendations[j].OutboundFeeRatePpm
+		}
+		return recommendations[i].PubKey < recommendations[j].PubKey
+	})
+
+	if len(recommendations) > limit {
+		recommendations = recommendations[:limit]
 	}
 
 	return recommendations, nil
@@ -2463,6 +2488,12 @@ func buildPeerNeighborRecommendations(sourcePubkey string, edges []*lnrpc.Channe
 		if item == nil || item.ChannelCount <= 0 {
 			continue
 		}
+		if item.TotalCapacitySat < peerNeighborMinTotalCapacity {
+			continue
+		}
+		if item.ChannelCount < peerNeighborMinChannelCount {
+			continue
+		}
 		list = append(list, PeerNeighborRecommendation{
 			PubKey:             item.PubKey,
 			ChannelCount:       item.ChannelCount,
@@ -2497,7 +2528,7 @@ func buildPeerNeighborRecommendations(sourcePubkey string, edges []*lnrpc.Channe
 	return list
 }
 
-func selectPreferredNodeAddress(addresses []*lnrpc.NodeAddress) string {
+func selectPreferredNodeAddress(addresses []*lnrpc.NodeAddress) (string, bool) {
 	fallback := ""
 	for _, item := range addresses {
 		if item == nil {
@@ -2511,10 +2542,10 @@ func selectPreferredNodeAddress(addresses []*lnrpc.NodeAddress) string {
 			fallback = addr
 		}
 		if !strings.Contains(strings.ToLower(addr), ".onion") {
-			return addr
+			return addr, true
 		}
 	}
-	return fallback
+	return fallback, false
 }
 
 func (c *Client) OpenChannel(ctx context.Context, pubkeyHex string, localFundingSat int64, closeAddress string, private bool, satPerVbyte int64) (string, error) {
@@ -3918,6 +3949,7 @@ type PeerNeighborRecommendation struct {
 	Alias              string `json:"alias,omitempty"`
 	Host               string `json:"host,omitempty"`
 	PeerAddress        string `json:"peer_address,omitempty"`
+	HasClearnet        bool   `json:"has_clearnet"`
 	ChannelCount       int    `json:"channel_count"`
 	TotalCapacitySat   int64  `json:"total_capacity_sat"`
 	LargestCapacitySat int64  `json:"largest_capacity_sat"`

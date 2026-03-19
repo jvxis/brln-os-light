@@ -174,6 +174,8 @@ type PeerRecommendation = {
   has_clearnet?: boolean
   channel_count: number
   total_capacity_sat: number
+  shared_channel_count?: number
+  shared_capacity_sat?: number
   largest_capacity_sat: number
   inbound_base_msat?: number
   inbound_fee_rate_ppm?: number
@@ -6288,6 +6290,14 @@ export default function LightningOps() {
                                     <div>{t('lightningOps.peerRecommendationsInbound', { value: typeof item.inbound_fee_rate_ppm === 'number' ? item.inbound_fee_rate_ppm : 0 })}</div>
                                     <div>{t('lightningOps.peerRecommendationsOutbound', { value: typeof item.outbound_fee_rate_ppm === 'number' ? item.outbound_fee_rate_ppm : 0 })}</div>
                                   </div>
+                                  {((Number(item.shared_channel_count || 0) > 0) || (Number(item.shared_capacity_sat || 0) > 0)) && (
+                                    <div className="mt-1 text-[11px] text-fog/55">
+                                      {t('lightningOps.peerRecommendationsShared', {
+                                        count: Math.max(0, Math.round(Number(item.shared_channel_count || 0))),
+                                        value: Math.round(Number(item.shared_capacity_sat || 0)).toLocaleString(locale),
+                                      })}
+                                    </div>
+                                  )}
                                   <div className="mt-2 rounded-md bg-black/10 px-2 py-1 text-[11px] text-fog/60 break-all">
                                     {peerAddress || t('lightningOps.peerRecommendationsAddressUnavailable')}
                                   </div>

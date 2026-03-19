@@ -2362,6 +2362,12 @@ func (c *Client) GetPeerNeighborRecommendations(ctx context.Context, sourcePubke
 		if alias := strings.TrimSpace(node.GetAlias()); alias != "" {
 			recommendations[i].Alias = alias
 		}
+		if count := int(nodeInfo.GetNumChannels()); count > 0 {
+			recommendations[i].ChannelCount = count
+		}
+		if capacity := nodeInfo.GetTotalCapacity(); capacity > 0 {
+			recommendations[i].TotalCapacitySat = capacity
+		}
 		host, hasClearnet := selectPreferredNodeAddress(node.GetAddresses())
 		recommendations[i].HasClearnet = hasClearnet
 		if host != "" {
@@ -2501,6 +2507,8 @@ func buildPeerNeighborRecommendations(sourcePubkey string, edges []*lnrpc.Channe
 			PubKey:             item.PubKey,
 			ChannelCount:       item.ChannelCount,
 			TotalCapacitySat:   item.TotalCapacitySat,
+			SharedChannelCount: item.ChannelCount,
+			SharedCapacitySat:  item.TotalCapacitySat,
 			LargestCapacitySat: item.LargestCapacitySat,
 			InboundBaseMsat:    item.InboundBaseMsat,
 			InboundFeeRatePpm:  item.InboundFeeRatePpm,
@@ -3995,6 +4003,8 @@ type PeerNeighborRecommendation struct {
 	HasClearnet        bool   `json:"has_clearnet"`
 	ChannelCount       int    `json:"channel_count"`
 	TotalCapacitySat   int64  `json:"total_capacity_sat"`
+	SharedChannelCount int    `json:"shared_channel_count"`
+	SharedCapacitySat  int64  `json:"shared_capacity_sat"`
 	LargestCapacitySat int64  `json:"largest_capacity_sat"`
 	InboundBaseMsat    int64  `json:"inbound_base_msat"`
 	InboundFeeRatePpm  int64  `json:"inbound_fee_rate_ppm"`

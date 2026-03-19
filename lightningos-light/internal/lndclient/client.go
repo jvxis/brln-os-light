@@ -2319,6 +2319,204 @@ func (c *Client) GetNodeDetails(ctx context.Context, pubkey string) (NodeDetails
 	}, nil
 }
 
+func (c *Client) GetPeerNeighborRecommendations(ctx context.Context, sourcePubkey string, excludePubkeys map[string]struct{}, limit int) ([]PeerNeighborRecommendation, error) {
+	trimmed := strings.TrimSpace(sourcePubkey)
+	if trimmed == "" {
+		return nil, errors.New("source pubkey required")
+	}
+
+	if limit <= 0 {
+		limit = 5
+	}
+	if limit > 20 {
+		limit = 20
+	}
+
+	conn, err := c.dial(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	client := lnrpc.NewLightningClient(conn)
+	info, err := client.GetNodeInfo(ctx, &lnrpc.NodeInfoRequest{PubKey: trimmed, IncludeChannels: true})
+	if err != nil {
+		return nil, err
+	}
+
+	recommendations := buildPeerNeighborRecommendations(trimmed, info.GetChannels(), excludePubkeys)
+	if len(recommendations) > limit {
+		recommendations = recommendations[:limit]
+	}
+
+	for i := range recommendations {
+		nodeInfo, err := client.GetNodeInfo(ctx, &lnrpc.NodeInfoRequest{PubKey: recommendations[i].PubKey, IncludeChannels: false})
+		if err != nil || nodeInfo == nil || nodeInfo.GetNode() == nil {
+			continue
+		}
+		node := nodeInfo.GetNode()
+		if alias := strings.TrimSpace(node.GetAlias()); alias != "" {
+			recommendations[i].Alias = alias
+		}
+		host := selectPreferredNodeAddress(node.GetAddresses())
+		if host != "" {
+			recommendations[i].Host = host
+			recommendations[i].PeerAddress = recommendations[i].PubKey + "@" + host
+		}
+	}
+
+	return recommendations, nil
+}
+
+type peerNeighborAggregate struct {
+	PubKey             string
+	ChannelCount       int
+	TotalCapacitySat   int64
+	LargestCapacitySat int64
+	InboundBaseMsat    int64
+	InboundFeeRatePpm  int64
+	OutboundBaseMsat   int64
+	OutboundFeeRatePpm int64
+	HasInboundPolicy   bool
+	HasOutboundPolicy  bool
+}
+
+func buildPeerNeighborRecommendations(sourcePubkey string, edges []*lnrpc.ChannelEdge, excludePubkeys map[string]struct{}) []PeerNeighborRecommendation {
+	normalizedSource := normalizePubkeyCacheKey(sourcePubkey)
+	if normalizedSource == "" {
+		return nil
+	}
+
+	excluded := make(map[string]struct{}, len(excludePubkeys)+1)
+	for pubkey := range excludePubkeys {
+		key := normalizePubkeyCacheKey(pubkey)
+		if key == "" {
+			continue
+		}
+		excluded[key] = struct{}{}
+	}
+	excluded[normalizedSource] = struct{}{}
+
+	aggregates := make(map[string]*peerNeighborAggregate)
+	for _, edge := range edges {
+		if edge == nil || edge.GetCapacity() <= 0 {
+			continue
+		}
+
+		node1 := normalizePubkeyCacheKey(edge.GetNode1Pub())
+		node2 := normalizePubkeyCacheKey(edge.GetNode2Pub())
+
+		var (
+			otherPubkey string
+			otherPolicy *lnrpc.RoutingPolicy
+		)
+		switch normalizedSource {
+		case node1:
+			otherPubkey = node2
+			otherPolicy = edge.GetNode2Policy()
+		case node2:
+			otherPubkey = node1
+			otherPolicy = edge.GetNode1Policy()
+		default:
+			continue
+		}
+
+		if otherPubkey == "" {
+			continue
+		}
+		if _, skip := excluded[otherPubkey]; skip {
+			continue
+		}
+		if otherPolicy == nil || otherPolicy.GetDisabled() {
+			continue
+		}
+
+		item := aggregates[otherPubkey]
+		if item == nil {
+			item = &peerNeighborAggregate{PubKey: otherPubkey}
+			aggregates[otherPubkey] = item
+		}
+
+		item.ChannelCount++
+		item.TotalCapacitySat += edge.GetCapacity()
+		if edge.GetCapacity() > item.LargestCapacitySat {
+			item.LargestCapacitySat = edge.GetCapacity()
+		}
+
+		inboundRate := int64(otherPolicy.GetInboundFeeRateMilliMsat())
+		if !item.HasInboundPolicy || inboundRate < item.InboundFeeRatePpm {
+			item.InboundFeeRatePpm = inboundRate
+			item.InboundBaseMsat = int64(otherPolicy.GetInboundFeeBaseMsat())
+			item.HasInboundPolicy = true
+		}
+
+		outboundRate := int64(otherPolicy.GetFeeRateMilliMsat())
+		if !item.HasOutboundPolicy || outboundRate < item.OutboundFeeRatePpm {
+			item.OutboundFeeRatePpm = outboundRate
+			item.OutboundBaseMsat = otherPolicy.GetFeeBaseMsat()
+			item.HasOutboundPolicy = true
+		}
+	}
+
+	list := make([]PeerNeighborRecommendation, 0, len(aggregates))
+	for _, item := range aggregates {
+		if item == nil || item.ChannelCount <= 0 {
+			continue
+		}
+		list = append(list, PeerNeighborRecommendation{
+			PubKey:             item.PubKey,
+			ChannelCount:       item.ChannelCount,
+			TotalCapacitySat:   item.TotalCapacitySat,
+			LargestCapacitySat: item.LargestCapacitySat,
+			InboundBaseMsat:    item.InboundBaseMsat,
+			InboundFeeRatePpm:  item.InboundFeeRatePpm,
+			OutboundBaseMsat:   item.OutboundBaseMsat,
+			OutboundFeeRatePpm: item.OutboundFeeRatePpm,
+		})
+	}
+
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].InboundFeeRatePpm != list[j].InboundFeeRatePpm {
+			return list[i].InboundFeeRatePpm < list[j].InboundFeeRatePpm
+		}
+		if list[i].TotalCapacitySat != list[j].TotalCapacitySat {
+			return list[i].TotalCapacitySat > list[j].TotalCapacitySat
+		}
+		if list[i].LargestCapacitySat != list[j].LargestCapacitySat {
+			return list[i].LargestCapacitySat > list[j].LargestCapacitySat
+		}
+		if list[i].ChannelCount != list[j].ChannelCount {
+			return list[i].ChannelCount > list[j].ChannelCount
+		}
+		if list[i].OutboundFeeRatePpm != list[j].OutboundFeeRatePpm {
+			return list[i].OutboundFeeRatePpm < list[j].OutboundFeeRatePpm
+		}
+		return list[i].PubKey < list[j].PubKey
+	})
+
+	return list
+}
+
+func selectPreferredNodeAddress(addresses []*lnrpc.NodeAddress) string {
+	fallback := ""
+	for _, item := range addresses {
+		if item == nil {
+			continue
+		}
+		addr := strings.TrimSpace(item.GetAddr())
+		if addr == "" {
+			continue
+		}
+		if fallback == "" {
+			fallback = addr
+		}
+		if !strings.Contains(strings.ToLower(addr), ".onion") {
+			return addr
+		}
+	}
+	return fallback
+}
+
 func (c *Client) OpenChannel(ctx context.Context, pubkeyHex string, localFundingSat int64, closeAddress string, private bool, satPerVbyte int64) (string, error) {
 	return c.OpenChannelWithPush(ctx, pubkeyHex, localFundingSat, 0, closeAddress, private, satPerVbyte)
 }
@@ -3713,6 +3911,20 @@ type NodeDetails struct {
 	PubKey    string        `json:"pub_key"`
 	Alias     string        `json:"alias"`
 	Addresses []NodeAddress `json:"addresses,omitempty"`
+}
+
+type PeerNeighborRecommendation struct {
+	PubKey             string `json:"pub_key"`
+	Alias              string `json:"alias,omitempty"`
+	Host               string `json:"host,omitempty"`
+	PeerAddress        string `json:"peer_address,omitempty"`
+	ChannelCount       int    `json:"channel_count"`
+	TotalCapacitySat   int64  `json:"total_capacity_sat"`
+	LargestCapacitySat int64  `json:"largest_capacity_sat"`
+	InboundBaseMsat    int64  `json:"inbound_base_msat"`
+	InboundFeeRatePpm  int64  `json:"inbound_fee_rate_ppm"`
+	OutboundBaseMsat   int64  `json:"outbound_base_msat"`
+	OutboundFeeRatePpm int64  `json:"outbound_fee_rate_ppm"`
 }
 
 type BatchOpenChannelParams struct {

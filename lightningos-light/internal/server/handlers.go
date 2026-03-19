@@ -1828,6 +1828,76 @@ func (s *Server) handleLNPeers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"peers": peers})
 }
 
+func (s *Server) handleLNChannelPeerRecommendations(w http.ResponseWriter, r *http.Request) {
+	channelPoint := strings.TrimSpace(r.URL.Query().Get("channel_point"))
+	if channelPoint == "" {
+		writeError(w, http.StatusBadRequest, "channel_point required")
+		return
+	}
+
+	limit := 5
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid limit")
+			return
+		}
+		if parsed > 20 {
+			parsed = 20
+		}
+		limit = parsed
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+	defer cancel()
+
+	channels, err := s.lnd.ListChannels(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, lndDetailedErrorMessage(err))
+		return
+	}
+
+	var selected *lndclient.ChannelInfo
+	excludePubkeys := make(map[string]struct{}, len(channels)+2)
+	for i := range channels {
+		pubkey := strings.TrimSpace(channels[i].RemotePubkey)
+		if pubkey != "" {
+			excludePubkeys[strings.ToLower(pubkey)] = struct{}{}
+		}
+		if channels[i].ChannelPoint == channelPoint {
+			selected = &channels[i]
+		}
+	}
+	if selected == nil {
+		writeError(w, http.StatusNotFound, "channel not found")
+		return
+	}
+
+	if pubkey := strings.TrimSpace(selected.RemotePubkey); pubkey != "" {
+		excludePubkeys[strings.ToLower(pubkey)] = struct{}{}
+	}
+
+	if status, err := s.lnd.GetStatus(ctx); err == nil {
+		if pubkey := strings.TrimSpace(status.Pubkey); pubkey != "" {
+			excludePubkeys[strings.ToLower(pubkey)] = struct{}{}
+		}
+	}
+
+	recommendations, err := s.lnd.GetPeerNeighborRecommendations(ctx, selected.RemotePubkey, excludePubkeys, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, lndDetailedErrorMessage(err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"channel_point":         selected.ChannelPoint,
+		"peer_pubkey":           selected.RemotePubkey,
+		"peer_alias":            selected.PeerAlias,
+		"recommendations":       recommendations,
+		"recommendations_count": len(recommendations),
+	})
+}
+
 func (s *Server) handleLNClosedChannels(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), lndRPCTimeout)
 	defer cancel()

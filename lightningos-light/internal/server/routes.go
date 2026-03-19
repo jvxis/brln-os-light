@@ -101,6 +101,7 @@ func (s *Server) routes() http.Handler {
 	r.Route("/api/lnops", func(r chi.Router) {
 		r.Get("/channels", s.handleLNChannels)
 		r.Get("/peers", s.handleLNPeers)
+		r.Get("/channel/peer-recommendations", s.handleLNChannelPeerRecommendations)
 		r.Get("/network-map", s.handleLNNetworkMapGet)
 		r.Get("/network-map/config", s.handleLNNetworkMapConfigGet)
 		r.Post("/network-map/config", s.handleLNNetworkMapConfigPost)

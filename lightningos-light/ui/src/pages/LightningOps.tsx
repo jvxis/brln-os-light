@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { acceptBalancedOpenSession, addLnWatchtower, boostPeers, bumpFeeCloseManagerSession, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getChannelRankings, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelFees, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, recoverCloseManagerSession, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker } from '../api'
+import { acceptBalancedOpenSession, addLnWatchtower, boostPeers, bumpFeeCloseManagerSession, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getChannelRankings, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelFees, getLnChannelPeerRecommendations, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, recoverCloseManagerSession, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker } from '../api'
 import { getLocale } from '../i18n'
 
 type Channel = {
@@ -164,6 +164,20 @@ type Peer = {
   sync_type: string
   last_error: string
   last_error_time?: number
+}
+
+type PeerRecommendation = {
+  pub_key: string
+  alias?: string
+  host?: string
+  peer_address?: string
+  channel_count: number
+  total_capacity_sat: number
+  largest_capacity_sat: number
+  inbound_base_msat?: number
+  inbound_fee_rate_ppm?: number
+  outbound_base_msat?: number
+  outbound_fee_rate_ppm?: number
 }
 
 type ClosedChannelResolution = {
@@ -678,6 +692,7 @@ const PEERS_SECTION_ID = 'peers-section'
 const CLOSE_RECOVERY_SECTION_ID = 'close-recovery-section'
 const AUTOFEE_SECTION_ID = 'autofee-section'
 const HTLC_MANAGER_SECTION_ID = 'htlc-manager-section'
+const OPEN_CHANNEL_SECTION_ID = 'open-channel-section'
 const SCB_RECOVERY_CONFIRM_PHRASE = 'I UNDERSTAND FORCE CLOSE'
 const BALANCED_OPEN_FUNDING_VBYTES = 190
 const BALANCED_OPEN_REQUIRED_REMAINING_SAT = 10000
@@ -768,6 +783,11 @@ export default function LightningOps() {
   const [focusedPeerPubKey, setFocusedPeerPubKey] = useState('')
   const [pendingHtlcOpenChannelPoint, setPendingHtlcOpenChannelPoint] = useState('')
   const [movementOpenChannelPoint, setMovementOpenChannelPoint] = useState('')
+  const [peerRecommendationOpenChannelPoint, setPeerRecommendationOpenChannelPoint] = useState('')
+  const [peerRecommendationsByChannel, setPeerRecommendationsByChannel] = useState<Record<string, PeerRecommendation[]>>({})
+  const [peerRecommendationLoadingByChannel, setPeerRecommendationLoadingByChannel] = useState<Record<string, boolean>>({})
+  const [peerRecommendationErrorByChannel, setPeerRecommendationErrorByChannel] = useState<Record<string, string>>({})
+  const [peerRecommendationCopiedKey, setPeerRecommendationCopiedKey] = useState('')
 
   const [peerAddress, setPeerAddress] = useState('')
   const [peerTemporary, setPeerTemporary] = useState(false)
@@ -1883,6 +1903,31 @@ export default function LightningOps() {
       Number(movement.lightning_in_amount_sat || 0) > 0
     )
   }
+
+  const isLowMovementChannel = (channel: Channel) => {
+    const movement = channel.movement_7d
+    if (!movement) return false
+    const trafficCount = Math.max(0, Number(movement.forward_count || 0)) +
+      Math.max(0, Number(movement.lightning_in_count || 0)) +
+      Math.max(0, Number(movement.lightning_out_count || 0))
+    const trafficAmount = Math.max(0, Number(movement.forward_amount_sat || 0)) +
+      Math.max(0, Number(movement.lightning_in_amount_sat || 0)) +
+      Math.max(0, Number(movement.lightning_out_amount_sat || 0))
+    const amountThreshold = Math.max(100000, Math.round(Math.max(0, Number(channel.capacity_sat || 0)) * 0.05))
+    return trafficCount === 0 || (trafficCount <= 2 && trafficAmount <= amountThreshold)
+  }
+
+  const recommendationPeerAddress = (item?: PeerRecommendation) => {
+    const explicit = String(item?.peer_address || '').trim()
+    if (explicit) return explicit
+    const pubkey = String(item?.pub_key || '').trim()
+    const host = String(item?.host || '').trim()
+    if (pubkey && host) return `${pubkey}@${host}`
+    return ''
+  }
+
+  const recommendationCopyKey = (channelPoint: string, pubkey: string) =>
+    `${channelPoint}:${pubkey}`
 
   const profitBadge = (profitSat?: number) => {
     if (typeof profitSat !== 'number' || Number.isNaN(profitSat)) {
@@ -4186,6 +4231,71 @@ export default function LightningOps() {
     }
   }
 
+  const handleTogglePeerRecommendations = async (channel: Channel) => {
+    if (!channel.channel_point) return
+    const channelPoint = channel.channel_point
+    setPeerRecommendationCopiedKey('')
+    if (peerRecommendationOpenChannelPoint === channelPoint) {
+      setPeerRecommendationOpenChannelPoint('')
+      return
+    }
+
+    setPeerRecommendationOpenChannelPoint(channelPoint)
+    if (peerRecommendationsByChannel[channelPoint]) return
+
+    setPeerRecommendationLoadingByChannel((prev) => ({ ...prev, [channelPoint]: true }))
+    setPeerRecommendationErrorByChannel((prev) => ({ ...prev, [channelPoint]: '' }))
+    try {
+      const res = await getLnChannelPeerRecommendations(channelPoint)
+      setPeerRecommendationsByChannel((prev) => ({
+        ...prev,
+        [channelPoint]: Array.isArray(res?.recommendations) ? res.recommendations : []
+      }))
+    } catch (err: any) {
+      setPeerRecommendationErrorByChannel((prev) => ({
+        ...prev,
+        [channelPoint]: err?.message || t('lightningOps.peerRecommendationsLoadFailed')
+      }))
+    } finally {
+      setPeerRecommendationLoadingByChannel((prev) => ({ ...prev, [channelPoint]: false }))
+    }
+  }
+
+  const handleCopyPeerRecommendation = async (channelPoint: string, item: PeerRecommendation) => {
+    const value = recommendationPeerAddress(item)
+    if (!value) {
+      setOpenStatus(t('lightningOps.peerRecommendationsAddressUnavailable'))
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(value)
+      const copyKey = recommendationCopyKey(channelPoint, item.pub_key)
+      setPeerRecommendationCopiedKey(copyKey)
+      window.setTimeout(() => {
+        setPeerRecommendationCopiedKey((current) => current === copyKey ? '' : current)
+      }, 1800)
+    } catch {
+      setOpenStatus(t('common.copyFailedManual'))
+    }
+  }
+
+  const handleUsePeerRecommendation = (item: PeerRecommendation) => {
+    const value = recommendationPeerAddress(item)
+    if (!value) {
+      setOpenStatus(t('lightningOps.peerRecommendationsAddressUnavailable'))
+      return
+    }
+    setOpenPeer(value)
+    setOpenStatus(t('lightningOps.peerRecommendationsLoaded'))
+    if (typeof window !== 'undefined') {
+      window.setTimeout(() => {
+        const target = document.getElementById(OPEN_CHANNEL_SECTION_ID)
+        if (!target) return
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 50)
+    }
+  }
+
   const handleOpenChannel = async () => {
     setOpenStatus(t('lightningOps.openingChannel'))
     setOpenChannelPoint('')
@@ -5778,6 +5888,11 @@ export default function LightningOps() {
                 const movement7d = ch.movement_7d
                 const movementOpen = movementOpenChannelPoint === ch.channel_point
                 const hasMovementActivity = hasChannelMovementActivity(movement7d)
+                const lowMovementChannel = isLowMovementChannel(ch)
+                const peerRecommendationsOpen = peerRecommendationOpenChannelPoint === ch.channel_point
+                const peerRecommendations = peerRecommendationsByChannel[ch.channel_point] || []
+                const peerRecommendationsLoading = Boolean(peerRecommendationLoadingByChannel[ch.channel_point])
+                const peerRecommendationsError = peerRecommendationErrorByChannel[ch.channel_point] || ''
                 const isFCRisk = !ch.active && unsettledBalanceSat > 0
                 const marginPpm7d = typeof ch.out_ppm7d === 'number' && typeof ch.rebal_ppm7d === 'number'
                   ? ch.out_ppm7d - ch.rebal_ppm7d
@@ -6075,6 +6190,80 @@ export default function LightningOps() {
                         </div>
                       </div>
                     )}
+                    {peerRecommendationsOpen && (
+                      <div className="mt-2 rounded-xl border border-emerald-400/20 bg-emerald-500/5 p-2.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wide text-emerald-100/80">{t('lightningOps.peerRecommendationsTitle')}</p>
+                            <p className="text-[11px] text-fog/60">{t('lightningOps.peerRecommendationsHint')}</p>
+                          </div>
+                          <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-fog/60">
+                            {t('lightningOps.peerRecommendationsLowMovement')}
+                          </span>
+                        </div>
+                        {peerRecommendationsLoading ? (
+                          <p className="mt-2 text-sm text-fog/70">{t('lightningOps.peerRecommendationsLoading')}</p>
+                        ) : peerRecommendationsError ? (
+                          <p className="mt-2 text-sm text-ember">{peerRecommendationsError}</p>
+                        ) : peerRecommendations.length ? (
+                          <div className="mt-2 grid gap-2 xl:grid-cols-2">
+                            {peerRecommendations.map((item) => {
+                              const peerAddress = recommendationPeerAddress(item)
+                              const canUseRecommendation = peerAddress.length > 0
+                              const copyKey = recommendationCopyKey(ch.channel_point, item.pub_key)
+                              const copied = peerRecommendationCopiedKey === copyKey
+                              return (
+                                <div key={item.pub_key} className="rounded-lg border border-white/10 bg-ink/70 p-3">
+                                  <div className="flex flex-wrap items-start justify-between gap-2">
+                                    <div>
+                                      <div className="text-sm text-fog">{item.alias || item.pub_key}</div>
+                                      <div className="text-[11px] text-fog/50 break-all">{item.pub_key}</div>
+                                    </div>
+                                    <a
+                                      className="text-[11px] text-emerald-100/80 hover:text-emerald-100"
+                                      href={ambossURL(item.pub_key)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                    >
+                                      Amboss
+                                    </a>
+                                  </div>
+                                  <div className="mt-2 grid gap-1 text-[11px] text-fog/70 sm:grid-cols-2">
+                                    <div>{t('lightningOps.peerRecommendationsCapacity', { value: Math.round(Number(item.total_capacity_sat || 0)).toLocaleString(locale) })}</div>
+                                    <div>{t('lightningOps.peerRecommendationsChannels', { count: Math.max(0, Math.round(Number(item.channel_count || 0))) })}</div>
+                                    <div>{t('lightningOps.peerRecommendationsInbound', { value: typeof item.inbound_fee_rate_ppm === 'number' ? item.inbound_fee_rate_ppm : 0 })}</div>
+                                    <div>{t('lightningOps.peerRecommendationsOutbound', { value: typeof item.outbound_fee_rate_ppm === 'number' ? item.outbound_fee_rate_ppm : 0 })}</div>
+                                  </div>
+                                  <div className="mt-2 rounded-md bg-black/10 px-2 py-1 text-[11px] text-fog/60 break-all">
+                                    {peerAddress || t('lightningOps.peerRecommendationsAddressUnavailable')}
+                                  </div>
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    <button
+                                      type="button"
+                                      className="btn-secondary px-3 py-1 text-[11px] disabled:opacity-50 disabled:cursor-not-allowed"
+                                      onClick={() => { void handleCopyPeerRecommendation(ch.channel_point, item) }}
+                                      disabled={!canUseRecommendation}
+                                    >
+                                      {copied ? t('common.copied') : t('lightningOps.peerRecommendationsCopy')}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn-primary px-3 py-1 text-[11px] disabled:opacity-50 disabled:cursor-not-allowed"
+                                      onClick={() => handleUsePeerRecommendation(item)}
+                                      disabled={!canUseRecommendation}
+                                    >
+                                      {t('lightningOps.peerRecommendationsUse')}
+                                    </button>
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        ) : (
+                          <p className="mt-2 text-sm text-fog/70">{t('lightningOps.peerRecommendationsEmpty')}</p>
+                        )}
+                      </div>
+                    )}
                     {pendingHtlcOpen && hasPendingHtlcs && (
                       <div className={`mt-2 rounded-xl p-2.5 ${isFCRisk ? 'border border-rose-400/45 bg-rose-500/10' : 'border border-white/10 bg-ink/70'}`}>
                         <p className={`text-[10px] uppercase tracking-wide ${isFCRisk ? 'text-rose-200' : 'text-fog/60'}`}>{t('lightningOps.pendingHtlcDetailsTitle')}</p>
@@ -6170,6 +6359,27 @@ export default function LightningOps() {
                       </div>
                       <div className="text-right">
                         <div className="flex flex-wrap items-center justify-end gap-2">
+                          {lowMovementChannel && (
+                            <button
+                              type="button"
+                              className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] transition ${
+                                peerRecommendationsOpen
+                                  ? 'border-emerald-300/70 bg-emerald-500/10 text-emerald-100'
+                                  : 'border-white/15 bg-white/5 text-fog/75 hover:border-white/30 hover:text-fog'
+                              }`}
+                              onClick={() => { void handleTogglePeerRecommendations(ch) }}
+                              aria-expanded={peerRecommendationsOpen}
+                              aria-label={t('lightningOps.peerRecommendations')}
+                            >
+                              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                                <path d="M12 5a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z" />
+                                <path d="M5 19a7 7 0 0 1 14 0" />
+                                <path d="M18 7h3" />
+                                <path d="M19.5 5.5v3" />
+                              </svg>
+                              <span>{t('lightningOps.peerRecommendations')}</span>
+                            </button>
+                          )}
                           {movement7d && (
                             <button
                               type="button"
@@ -6330,7 +6540,7 @@ export default function LightningOps() {
           {boostStatus && <p className="text-sm text-brass">{boostStatus}</p>}
         </div>
 
-        <div className="section-card space-y-4">
+        <div id={OPEN_CHANNEL_SECTION_ID} className="section-card space-y-4">
           <h3 className="text-lg font-semibold">{t('lightningOps.openChannel')}</h3>
           <input
             className="input-field"

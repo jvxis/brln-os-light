@@ -785,6 +785,8 @@ export default function LightningOps() {
   const [fcRiskOnly, setFcRiskOnly] = useState(false)
   const [search, setSearch] = useState('')
   const [minCapacity, setMinCapacity] = useState('')
+  const [rankingFilter, setRankingFilter] = useState<'all' | 'expand' | 'maintain' | 'monitor' | 'close'>('all')
+  const [movementFilter, setMovementFilter] = useState<'all' | 'low' | 'active' | 'none'>('all')
   const [sortBy, setSortBy] = useState<'capacity' | 'local' | 'remote' | 'alias'>('local')
   const [sortDir, setSortDir] = useState<'desc' | 'asc'>('asc')
   const [showPrivate, setShowPrivate] = useState(true)
@@ -3103,6 +3105,16 @@ export default function LightningOps() {
     } else if (profitFilter === 'deficit') {
       list = list.filter((ch) => typeof ch.profit_fee_7d_sat === 'number' && ch.profit_fee_7d_sat < 0)
     }
+    if (rankingFilter !== 'all') {
+      list = list.filter((ch) => String(channelRankingMap[ch.channel_point]?.state || 'monitor').trim() === rankingFilter)
+    }
+    if (movementFilter === 'low') {
+      list = list.filter((ch) => isLowMovementChannel(ch))
+    } else if (movementFilter === 'active') {
+      list = list.filter((ch) => hasChannelMovementActivity(ch.movement_7d) && !isLowMovementChannel(ch))
+    } else if (movementFilter === 'none') {
+      list = list.filter((ch) => !hasChannelMovementActivity(ch.movement_7d))
+    }
     if (fcRiskOnly) {
       list = list.filter((ch) => isFCRiskChannel(ch))
     }
@@ -3127,7 +3139,7 @@ export default function LightningOps() {
       return (aVal - bVal) * direction
     })
     return sorted
-  }, [baseFilteredChannels, fcRiskOnly, profitFilter, sortBy, sortDir])
+  }, [baseFilteredChannels, channelRankingMap, fcRiskOnly, movementFilter, profitFilter, rankingFilter, sortBy, sortDir])
   useEffect(() => {
     if (typeof window === 'undefined') return
     const targetChannelPoint = pendingScrollChannelRef.current
@@ -5855,7 +5867,7 @@ export default function LightningOps() {
 
         {channelsSubview === 'channels' && (
         <>
-        <div className="grid gap-3 lg:grid-cols-4">
+        <div className="grid gap-3 lg:grid-cols-6">
             <input
               className="input-field"
               placeholder={t('lightningOps.searchPlaceholder')}
@@ -5875,6 +5887,19 @@ export default function LightningOps() {
             <option value="local">{t('lightningOps.sortByLocal')}</option>
             <option value="remote">{t('lightningOps.sortByRemote')}</option>
             <option value="alias">{t('lightningOps.sortByPeer')}</option>
+            </select>
+            <select className="input-field" value={rankingFilter} onChange={(e) => setRankingFilter(e.target.value as any)}>
+            <option value="all">{t('lightningOps.rankingFilterAll')}</option>
+            <option value="expand">{t('lightningOps.rankingFilterExpand')}</option>
+            <option value="maintain">{t('lightningOps.rankingFilterMaintain')}</option>
+            <option value="monitor">{t('lightningOps.rankingFilterMonitor')}</option>
+            <option value="close">{t('lightningOps.rankingFilterClose')}</option>
+            </select>
+            <select className="input-field" value={movementFilter} onChange={(e) => setMovementFilter(e.target.value as any)}>
+            <option value="all">{t('lightningOps.movementFilterAll')}</option>
+            <option value="low">{t('lightningOps.movementFilterLow')}</option>
+            <option value="active">{t('lightningOps.movementFilterActive')}</option>
+            <option value="none">{t('lightningOps.movementFilterNone')}</option>
             </select>
             <div className="flex flex-wrap items-center gap-2">
               <button className="btn-secondary text-xs px-3 py-2" onClick={() => setSortDir(sortDir === 'desc' ? 'asc' : 'desc')}>

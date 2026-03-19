@@ -144,9 +144,13 @@ const (
 	defaultConnectPeerTimeoutSec = uint64(8)
 	nodeAliasCacheTTL            = 30 * time.Minute
 	nodeAliasNotFoundCacheTTL    = 5 * time.Minute
-	peerNeighborMinTotalCapacity = int64(100_000_000)
-	peerNeighborMinChannelCount  = 11
 )
+
+var peerNeighborCriteriaTiers = []peerNeighborCriteria{
+	{Name: "strict", MinTotalCapacitySat: 100_000_000, MinChannelCount: 11},
+	{Name: "fallback_balanced", MinTotalCapacitySat: 50_000_000, MinChannelCount: 6},
+	{Name: "fallback_relaxed", MinTotalCapacitySat: 20_000_000, MinChannelCount: 3},
+}
 
 func normalizePubkeyCacheKey(pubkey string) string {
 	return strings.ToLower(strings.TrimSpace(pubkey))
@@ -2321,10 +2325,10 @@ func (c *Client) GetNodeDetails(ctx context.Context, pubkey string) (NodeDetails
 	}, nil
 }
 
-func (c *Client) GetPeerNeighborRecommendations(ctx context.Context, sourcePubkey string, excludePubkeys map[string]struct{}, limit int) ([]PeerNeighborRecommendation, error) {
+func (c *Client) GetPeerNeighborRecommendations(ctx context.Context, sourcePubkey string, excludePubkeys map[string]struct{}, limit int) ([]PeerNeighborRecommendation, string, error) {
 	trimmed := strings.TrimSpace(sourcePubkey)
 	if trimmed == "" {
-		return nil, errors.New("source pubkey required")
+		return nil, "", errors.New("source pubkey required")
 	}
 
 	if limit <= 0 {
@@ -2336,14 +2340,14 @@ func (c *Client) GetPeerNeighborRecommendations(ctx context.Context, sourcePubke
 
 	conn, err := c.dial(ctx, true)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer conn.Close()
 
 	client := lnrpc.NewLightningClient(conn)
 	info, err := client.GetNodeInfo(ctx, &lnrpc.NodeInfoRequest{PubKey: trimmed, IncludeChannels: true})
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	recommendations := buildPeerNeighborRecommendations(trimmed, info.GetChannels(), excludePubkeys)
@@ -2386,11 +2390,8 @@ func (c *Client) GetPeerNeighborRecommendations(ctx context.Context, sourcePubke
 		return recommendations[i].PubKey < recommendations[j].PubKey
 	})
 
-	if len(recommendations) > limit {
-		recommendations = recommendations[:limit]
-	}
-
-	return recommendations, nil
+	selected, tier := selectPeerNeighborRecommendations(recommendations, limit)
+	return selected, tier, nil
 }
 
 type peerNeighborAggregate struct {
@@ -2404,6 +2405,12 @@ type peerNeighborAggregate struct {
 	OutboundFeeRatePpm int64
 	HasInboundPolicy   bool
 	HasOutboundPolicy  bool
+}
+
+type peerNeighborCriteria struct {
+	Name                string
+	MinTotalCapacitySat int64
+	MinChannelCount     int
 }
 
 func buildPeerNeighborRecommendations(sourcePubkey string, edges []*lnrpc.ChannelEdge, excludePubkeys map[string]struct{}) []PeerNeighborRecommendation {
@@ -2488,12 +2495,6 @@ func buildPeerNeighborRecommendations(sourcePubkey string, edges []*lnrpc.Channe
 		if item == nil || item.ChannelCount <= 0 {
 			continue
 		}
-		if item.TotalCapacitySat < peerNeighborMinTotalCapacity {
-			continue
-		}
-		if item.ChannelCount < peerNeighborMinChannelCount {
-			continue
-		}
 		list = append(list, PeerNeighborRecommendation{
 			PubKey:             item.PubKey,
 			ChannelCount:       item.ChannelCount,
@@ -2526,6 +2527,46 @@ func buildPeerNeighborRecommendations(sourcePubkey string, edges []*lnrpc.Channe
 	})
 
 	return list
+}
+
+func selectPeerNeighborRecommendations(recommendations []PeerNeighborRecommendation, limit int) ([]PeerNeighborRecommendation, string) {
+	if limit <= 0 {
+		limit = 5
+	}
+	if limit > 20 {
+		limit = 20
+	}
+
+	if len(recommendations) == 0 {
+		return nil, "strict"
+	}
+
+	for _, criteria := range peerNeighborCriteriaTiers {
+		filtered := filterPeerNeighborRecommendationsByCriteria(recommendations, criteria)
+		if len(filtered) == 0 {
+			continue
+		}
+		if len(filtered) > limit {
+			filtered = filtered[:limit]
+		}
+		return filtered, criteria.Name
+	}
+
+	return nil, "strict"
+}
+
+func filterPeerNeighborRecommendationsByCriteria(recommendations []PeerNeighborRecommendation, criteria peerNeighborCriteria) []PeerNeighborRecommendation {
+	filtered := make([]PeerNeighborRecommendation, 0, len(recommendations))
+	for _, item := range recommendations {
+		if item.TotalCapacitySat < criteria.MinTotalCapacitySat {
+			continue
+		}
+		if item.ChannelCount < criteria.MinChannelCount {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
 }
 
 func selectPreferredNodeAddress(addresses []*lnrpc.NodeAddress) (string, bool) {

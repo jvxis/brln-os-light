@@ -181,6 +181,12 @@ type PeerRecommendation = {
   outbound_fee_rate_ppm?: number
 }
 
+type PeerRecommendationResponse = {
+  recommendations?: PeerRecommendation[]
+  recommendations_count?: number
+  selection_tier?: string
+}
+
 type ClosedChannelResolution = {
   resolution_type: number
   sweep_txid?: string
@@ -786,6 +792,7 @@ export default function LightningOps() {
   const [movementOpenChannelPoint, setMovementOpenChannelPoint] = useState('')
   const [peerRecommendationOpenChannelPoint, setPeerRecommendationOpenChannelPoint] = useState('')
   const [peerRecommendationsByChannel, setPeerRecommendationsByChannel] = useState<Record<string, PeerRecommendation[]>>({})
+  const [peerRecommendationTierByChannel, setPeerRecommendationTierByChannel] = useState<Record<string, string>>({})
   const [peerRecommendationLoadingByChannel, setPeerRecommendationLoadingByChannel] = useState<Record<string, boolean>>({})
   const [peerRecommendationErrorByChannel, setPeerRecommendationErrorByChannel] = useState<Record<string, string>>({})
   const [peerRecommendationCopiedKey, setPeerRecommendationCopiedKey] = useState('')
@@ -1929,6 +1936,28 @@ export default function LightningOps() {
 
   const recommendationCopyKey = (channelPoint: string, pubkey: string) =>
     `${channelPoint}:${pubkey}`
+
+  const peerRecommendationTierLabel = (value?: string) => {
+    switch (String(value || '').trim()) {
+      case 'fallback_balanced':
+        return t('lightningOps.peerRecommendationsTierBalanced')
+      case 'fallback_relaxed':
+        return t('lightningOps.peerRecommendationsTierRelaxed')
+      default:
+        return t('lightningOps.peerRecommendationsTierStrict')
+    }
+  }
+
+  const peerRecommendationTierHint = (value?: string) => {
+    switch (String(value || '').trim()) {
+      case 'fallback_balanced':
+        return t('lightningOps.peerRecommendationsHintBalanced')
+      case 'fallback_relaxed':
+        return t('lightningOps.peerRecommendationsHintRelaxed')
+      default:
+        return t('lightningOps.peerRecommendationsHintStrict')
+    }
+  }
 
   const profitBadge = (profitSat?: number) => {
     if (typeof profitSat !== 'number' || Number.isNaN(profitSat)) {
@@ -4247,10 +4276,14 @@ export default function LightningOps() {
     setPeerRecommendationLoadingByChannel((prev) => ({ ...prev, [channelPoint]: true }))
     setPeerRecommendationErrorByChannel((prev) => ({ ...prev, [channelPoint]: '' }))
     try {
-      const res = await getLnChannelPeerRecommendations(channelPoint)
+      const res = await getLnChannelPeerRecommendations(channelPoint) as PeerRecommendationResponse
       setPeerRecommendationsByChannel((prev) => ({
         ...prev,
         [channelPoint]: Array.isArray(res?.recommendations) ? res.recommendations : []
+      }))
+      setPeerRecommendationTierByChannel((prev) => ({
+        ...prev,
+        [channelPoint]: String(res?.selection_tier || 'strict')
       }))
     } catch (err: any) {
       setPeerRecommendationErrorByChannel((prev) => ({
@@ -5892,6 +5925,7 @@ export default function LightningOps() {
                 const lowMovementChannel = isLowMovementChannel(ch)
                 const peerRecommendationsOpen = peerRecommendationOpenChannelPoint === ch.channel_point
                 const peerRecommendations = peerRecommendationsByChannel[ch.channel_point] || []
+                const peerRecommendationTier = peerRecommendationTierByChannel[ch.channel_point] || 'strict'
                 const peerRecommendationsLoading = Boolean(peerRecommendationLoadingByChannel[ch.channel_point])
                 const peerRecommendationsError = peerRecommendationErrorByChannel[ch.channel_point] || ''
                 const isFCRisk = !ch.active && unsettledBalanceSat > 0
@@ -6196,11 +6230,16 @@ export default function LightningOps() {
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div>
                             <p className="text-[10px] uppercase tracking-wide text-emerald-100/80">{t('lightningOps.peerRecommendationsTitle')}</p>
-                            <p className="text-[11px] text-fog/60">{t('lightningOps.peerRecommendationsHint')}</p>
+                            <p className="text-[11px] text-fog/60">{peerRecommendationTierHint(peerRecommendationTier)}</p>
                           </div>
-                          <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-fog/60">
-                            {t('lightningOps.peerRecommendationsLowMovement')}
-                          </span>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-fog/60">
+                              {t('lightningOps.peerRecommendationsLowMovement')}
+                            </span>
+                            <span className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-100/80">
+                              {peerRecommendationTierLabel(peerRecommendationTier)}
+                            </span>
+                          </div>
                         </div>
                         {peerRecommendationsLoading ? (
                           <p className="mt-2 text-sm text-fog/70">{t('lightningOps.peerRecommendationsLoading')}</p>

@@ -1883,7 +1883,7 @@ func (s *Server) handleLNChannelPeerRecommendations(w http.ResponseWriter, r *ht
 		}
 	}
 
-	recommendations, err := s.lnd.GetPeerNeighborRecommendations(ctx, selected.RemotePubkey, excludePubkeys, limit)
+	recommendations, selectionTier, err := s.lnd.GetPeerNeighborRecommendations(ctx, selected.RemotePubkey, excludePubkeys, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, lndDetailedErrorMessage(err))
 		return
@@ -1893,6 +1893,7 @@ func (s *Server) handleLNChannelPeerRecommendations(w http.ResponseWriter, r *ht
 		"channel_point":         selected.ChannelPoint,
 		"peer_pubkey":           selected.RemotePubkey,
 		"peer_alias":            selected.PeerAlias,
+		"selection_tier":        selectionTier,
 		"recommendations":       recommendations,
 		"recommendations_count": len(recommendations),
 	})

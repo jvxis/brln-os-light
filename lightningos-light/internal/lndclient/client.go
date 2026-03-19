@@ -150,6 +150,8 @@ var peerNeighborCriteriaTiers = []peerNeighborCriteria{
 	{Name: "strict", MinTotalCapacitySat: 100_000_000, MinChannelCount: 11},
 	{Name: "fallback_balanced", MinTotalCapacitySat: 50_000_000, MinChannelCount: 6},
 	{Name: "fallback_relaxed", MinTotalCapacitySat: 20_000_000, MinChannelCount: 3},
+	{Name: "fallback_loose", MinTotalCapacitySat: 10_000_000, MinChannelCount: 2},
+	{Name: "fallback_exhaustive", MinTotalCapacitySat: 1, MinChannelCount: 1},
 }
 
 func normalizePubkeyCacheKey(pubkey string) string {

@@ -101,6 +101,24 @@ func TestSelectPeerNeighborRecommendationsUsesStrictWhenAvailable(t *testing.T) 
 	}
 }
 
+func TestSelectPeerNeighborRecommendationsFallsBackToExhaustive(t *testing.T) {
+	recommendations := []PeerNeighborRecommendation{
+		{PubKey: "small-a", TotalCapacitySat: 8_000_000, ChannelCount: 1, HasClearnet: true},
+		{PubKey: "small-b", TotalCapacitySat: 4_000_000, ChannelCount: 1, HasClearnet: false},
+	}
+
+	selected, tier := selectPeerNeighborRecommendations(recommendations, 5)
+	if tier != "fallback_exhaustive" {
+		t.Fatalf("expected fallback_exhaustive tier, got %s", tier)
+	}
+	if len(selected) != 2 {
+		t.Fatalf("expected 2 exhaustive recommendations, got %d", len(selected))
+	}
+	if selected[0].PubKey != "small-a" {
+		t.Fatalf("expected small-a first, got %s", selected[0].PubKey)
+	}
+}
+
 func TestBuildPeerNeighborRecommendationsSkipsExcludedAndDisabled(t *testing.T) {
 	source := "source"
 	var edges []*lnrpc.ChannelEdge

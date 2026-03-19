@@ -1943,6 +1943,10 @@ export default function LightningOps() {
         return t('lightningOps.peerRecommendationsTierBalanced')
       case 'fallback_relaxed':
         return t('lightningOps.peerRecommendationsTierRelaxed')
+      case 'fallback_loose':
+        return t('lightningOps.peerRecommendationsTierLoose')
+      case 'fallback_exhaustive':
+        return t('lightningOps.peerRecommendationsTierExhaustive')
       default:
         return t('lightningOps.peerRecommendationsTierStrict')
     }
@@ -1954,6 +1958,10 @@ export default function LightningOps() {
         return t('lightningOps.peerRecommendationsHintBalanced')
       case 'fallback_relaxed':
         return t('lightningOps.peerRecommendationsHintRelaxed')
+      case 'fallback_loose':
+        return t('lightningOps.peerRecommendationsHintLoose')
+      case 'fallback_exhaustive':
+        return t('lightningOps.peerRecommendationsHintExhaustive')
       default:
         return t('lightningOps.peerRecommendationsHintStrict')
     }

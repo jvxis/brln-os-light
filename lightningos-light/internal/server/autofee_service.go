@@ -435,6 +435,8 @@ type autofeeProfile struct {
 	AntiFlipWindowHours            int
 	AntiFlipExtraConfirmRounds     int
 	AntiFlipStrongGapFrac          float64
+	BalancedUpOutRatioMin          float64
+	BalancedFloorUpCap             float64
 }
 
 type superSourceThresholds struct {
@@ -536,6 +538,8 @@ var autofeeProfiles = map[string]autofeeProfile{
 		AntiFlipWindowHours:            6,
 		AntiFlipExtraConfirmRounds:     2,
 		AntiFlipStrongGapFrac:          0.60,
+		BalancedUpOutRatioMin:          0.25,
+		BalancedFloorUpCap:             0.04,
 	},
 	"moderate": {
 		Name:                           "moderate",
@@ -626,6 +630,8 @@ var autofeeProfiles = map[string]autofeeProfile{
 		AntiFlipWindowHours:            4,
 		AntiFlipExtraConfirmRounds:     1,
 		AntiFlipStrongGapFrac:          0.45,
+		BalancedUpOutRatioMin:          0.20,
+		BalancedFloorUpCap:             0.05,
 	},
 	"aggressive": {
 		Name:                           "aggressive",
@@ -716,6 +722,8 @@ var autofeeProfiles = map[string]autofeeProfile{
 		AntiFlipWindowHours:            3,
 		AntiFlipExtraConfirmRounds:     1,
 		AntiFlipStrongGapFrac:          0.30,
+		BalancedUpOutRatioMin:          0.18,
+		BalancedFloorUpCap:             0.06,
 	},
 }
 
@@ -3047,6 +3055,31 @@ func antiFlipExtraConfirmRoundsForChannel(profile autofeeProfile, st *autofeeCha
 	return extraRounds, []string{"anti-flip-window"}
 }
 
+func capBalancedFloorDrivenUp(profile autofeeProfile, classLabel string, outRatio float64, localPpm int, targetPpm int, finalPpm int) (int, []string) {
+	if finalPpm <= localPpm || targetPpm > localPpm || localPpm <= 0 {
+		return finalPpm, nil
+	}
+	minOutRatio := profile.BalancedUpOutRatioMin
+	if minOutRatio <= 0 {
+		minOutRatio = 0.20
+	}
+	if outRatio < minOutRatio {
+		return finalPpm, nil
+	}
+	capFrac := profile.BalancedFloorUpCap
+	if capFrac <= 0 {
+		capFrac = 0.05
+	}
+	if strings.EqualFold(classLabel, "sink") && outRatio < minOutRatio+0.05 {
+		return finalPpm, nil
+	}
+	capped := applyStepCap(localPpm, finalPpm, capFrac, 5, localPpm)
+	if capped < finalPpm {
+		return capped, []string{"balanced-floor-up-cap"}
+	}
+	return finalPpm, nil
+}
+
 func isMoveTowardTarget(localPpm int, nextPpm int, targetPpm int) bool {
 	return math.Abs(float64(targetPpm-nextPpm)) < math.Abs(float64(targetPpm-localPpm))
 }
@@ -5374,6 +5407,13 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 
 	floorDrivenUp := finalPpm > localPpm && floor > localPpm && floor > target
+	if floorDrivenUp {
+		if cappedPpm, capTags := capBalancedFloorDrivenUp(e.profile, classLabel, outRatio, localPpm, target, finalPpm); cappedPpm != finalPpm {
+			finalPpm = cappedPpm
+			tags = append(tags, capTags...)
+			floorDrivenUp = finalPpm > localPpm && floor > localPpm && floor > target
+		}
+	}
 	weakDemandSignal := !surgeConfirmSignal &&
 		!(htlcForwardHot && htlcAttempts >= surgeConfirmAttemptsMin) &&
 		!htlcHotSignal &&
@@ -6282,6 +6322,8 @@ func formatAutofeeTags(d *decision) string {
 			add("🧪rebal-low-volume")
 		case t == "floor-up-blocked-low-signal":
 			add("🛑floor-up-low-signal")
+		case t == "balanced-floor-up-cap":
+			add("⚖️balanced-up-cap")
 		case t == "no-down-low":
 			add("🚫down-low")
 		case t == "no-down-neg-margin":

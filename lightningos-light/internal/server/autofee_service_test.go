@@ -511,6 +511,31 @@ func TestAntiFlipExtraConfirmRoundsBypassesStrongSignal(t *testing.T) {
 	}
 }
 
+func TestCapBalancedFloorDrivenUpForRouter(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	capped, tags := capBalancedFloorDrivenUp(profile, "router", 0.32, 1710, 1533, 2012)
+	if capped >= 2012 {
+		t.Fatalf("expected balanced floor-driven rise to be capped below floor, got %d", capped)
+	}
+	if capped != 1795 {
+		t.Fatalf("unexpected capped ppm: got %d want 1795", capped)
+	}
+	if len(tags) == 0 || tags[0] != "balanced-floor-up-cap" {
+		t.Fatalf("expected balanced floor cap tag, got %+v", tags)
+	}
+}
+
+func TestCapBalancedFloorDrivenUpBypassesDrainedSink(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	capped, tags := capBalancedFloorDrivenUp(profile, "sink", 0.08, 1000, 950, 1180)
+	if capped != 1180 {
+		t.Fatalf("expected drained sink to keep stronger upward floor, got %d", capped)
+	}
+	if len(tags) != 0 {
+		t.Fatalf("did not expect cap tag for drained sink, got %+v", tags)
+	}
+}
+
 func TestShouldHoldSmallStepBypassesTowardTargetWhenGapIsLarge(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
 	st := &autofeeChannelState{}

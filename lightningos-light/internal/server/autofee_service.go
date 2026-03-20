@@ -437,6 +437,11 @@ type autofeeProfile struct {
 	AntiFlipStrongGapFrac          float64
 	BalancedUpOutRatioMin          float64
 	BalancedFloorUpCap             float64
+	RebalFailOutRatioMax           float64
+	RebalFailNoDownMinAttempts     int
+	RebalFailUpMinAttempts         int
+	RebalFailUpStepFrac            float64
+	RebalFailUpMinStepPpm          int
 }
 
 type superSourceThresholds struct {
@@ -540,6 +545,11 @@ var autofeeProfiles = map[string]autofeeProfile{
 		AntiFlipStrongGapFrac:          0.60,
 		BalancedUpOutRatioMin:          0.25,
 		BalancedFloorUpCap:             0.04,
+		RebalFailOutRatioMax:           0.08,
+		RebalFailNoDownMinAttempts:     4,
+		RebalFailUpMinAttempts:         6,
+		RebalFailUpStepFrac:            0.02,
+		RebalFailUpMinStepPpm:          10,
 	},
 	"moderate": {
 		Name:                           "moderate",
@@ -632,6 +642,11 @@ var autofeeProfiles = map[string]autofeeProfile{
 		AntiFlipStrongGapFrac:          0.45,
 		BalancedUpOutRatioMin:          0.20,
 		BalancedFloorUpCap:             0.05,
+		RebalFailOutRatioMax:           0.10,
+		RebalFailNoDownMinAttempts:     3,
+		RebalFailUpMinAttempts:         5,
+		RebalFailUpStepFrac:            0.03,
+		RebalFailUpMinStepPpm:          12,
 	},
 	"aggressive": {
 		Name:                           "aggressive",
@@ -724,6 +739,11 @@ var autofeeProfiles = map[string]autofeeProfile{
 		AntiFlipStrongGapFrac:          0.30,
 		BalancedUpOutRatioMin:          0.18,
 		BalancedFloorUpCap:             0.06,
+		RebalFailOutRatioMax:           0.12,
+		RebalFailNoDownMinAttempts:     2,
+		RebalFailUpMinAttempts:         4,
+		RebalFailUpStepFrac:            0.04,
+		RebalFailUpMinStepPpm:          15,
 	},
 }
 
@@ -3080,6 +3100,62 @@ func capBalancedFloorDrivenUp(profile autofeeProfile, classLabel string, outRati
 	return finalPpm, nil
 }
 
+func shouldApplyFailedRebalancePressure(profile autofeeProfile, outRatio float64, lowOutProtectThresh float64, recentSuccessCount int, recentFailCount int) bool {
+	if recentSuccessCount > 0 || recentFailCount <= 0 {
+		return false
+	}
+	minAttempts := profile.RebalFailNoDownMinAttempts
+	if minAttempts <= 0 {
+		minAttempts = 3
+	}
+	if recentFailCount < minAttempts {
+		return false
+	}
+	maxOutRatio := profile.RebalFailOutRatioMax
+	if maxOutRatio <= 0 {
+		maxOutRatio = lowOutProtectThresh
+	}
+	if lowOutProtectThresh > 0 && maxOutRatio < lowOutProtectThresh {
+		maxOutRatio = lowOutProtectThresh
+	}
+	return outRatio <= maxOutRatio
+}
+
+func applyFailedRebalancePressure(profile autofeeProfile, localPpm int, targetPpm int, recentFailCount int, noFlow1d bool, htlcPressureSignal bool) (int, []string) {
+	if localPpm <= 0 || recentFailCount <= 0 {
+		return targetPpm, nil
+	}
+	tags := []string{}
+	if targetPpm < localPpm {
+		targetPpm = localPpm
+		tags = append(tags, "rebal-fail-nodown")
+	}
+	minUpAttempts := profile.RebalFailUpMinAttempts
+	if minUpAttempts <= 0 {
+		minUpAttempts = maxInt(1, profile.RebalFailNoDownMinAttempts+2)
+	}
+	if recentFailCount < minUpAttempts || !(noFlow1d || htlcPressureSignal) {
+		return targetPpm, tags
+	}
+	stepFrac := profile.RebalFailUpStepFrac
+	if stepFrac <= 0 {
+		stepFrac = 0.03
+	}
+	minStep := profile.RebalFailUpMinStepPpm
+	if minStep <= 0 {
+		minStep = 10
+	}
+	bumped := int(math.Ceil(float64(localPpm) * (1.0 + stepFrac)))
+	if bumped < localPpm+minStep {
+		bumped = localPpm + minStep
+	}
+	if bumped > targetPpm {
+		targetPpm = bumped
+		tags = append(tags, "rebal-fail-pressure")
+	}
+	return targetPpm, tags
+}
+
 func isMoveTowardTarget(localPpm int, nextPpm int, targetPpm int) bool {
 	return math.Abs(float64(targetPpm-nextPpm)) < math.Abs(float64(targetPpm-localPpm))
 }
@@ -4705,6 +4781,12 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		target = localPpm
 		tags = append(tags, "rebal-recent-noup")
 	}
+	if shouldApplyFailedRebalancePressure(e.profile, outRatio, lowOutProtectThresh, recentRebalanceCount, recentRebalanceWeakCount) {
+		if pressuredTarget, pressureTags := applyFailedRebalancePressure(e.profile, localPpm, target, recentRebalanceWeakCount, noFlow1d, htlcPressureSignal); pressuredTarget != target || len(pressureTags) > 0 {
+			target = pressuredTarget
+			tags = append(tags, pressureTags...)
+		}
+	}
 	revShare := 0.0
 	if totalOutFeeMsat > 0 {
 		revShare = float64(fwd.FeeMsat) / float64(totalOutFeeMsat)
@@ -6234,6 +6316,10 @@ func formatAutofeeTags(d *decision) string {
 			add("🔁rebal-attempt")
 		case t == "rebal-recent-noup":
 			add("🛑rebal-noup")
+		case t == "rebal-fail-nodown":
+			add("🛑rebal-fail")
+		case t == "rebal-fail-pressure":
+			add("🔁rebal-fail-pressure")
 		case t == "new-inbound":
 			add("🆕NEW-inbound")
 		case t == "bootstrap":

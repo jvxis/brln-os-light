@@ -536,6 +536,38 @@ func TestCapBalancedFloorDrivenUpBypassesDrainedSink(t *testing.T) {
 	}
 }
 
+func TestShouldApplyFailedRebalancePressure(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	if !shouldApplyFailedRebalancePressure(profile, 0.08, profile.LowOutProtectThresh, 0, profile.RebalFailNoDownMinAttempts) {
+		t.Fatalf("expected failed rebalance pressure on drained channel without recent success")
+	}
+	if shouldApplyFailedRebalancePressure(profile, 0.25, profile.LowOutProtectThresh, 0, profile.RebalFailNoDownMinAttempts) {
+		t.Fatalf("did not expect failed rebalance pressure on balanced channel")
+	}
+	if shouldApplyFailedRebalancePressure(profile, 0.08, profile.LowOutProtectThresh, 1, profile.RebalFailNoDownMinAttempts+2) {
+		t.Fatalf("did not expect failed rebalance pressure when recent success exists")
+	}
+}
+
+func TestApplyFailedRebalancePressure(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	target, tags := applyFailedRebalancePressure(profile, 1000, 940, profile.RebalFailUpMinAttempts, true, false)
+	if target <= 1000 {
+		t.Fatalf("expected failed rebalance pressure to lift target above current ppm, got %d", target)
+	}
+	if len(tags) < 2 || tags[0] != "rebal-fail-nodown" || tags[1] != "rebal-fail-pressure" {
+		t.Fatalf("unexpected rebalance failure tags: %+v", tags)
+	}
+
+	target, tags = applyFailedRebalancePressure(profile, 1000, 980, profile.RebalFailNoDownMinAttempts, false, false)
+	if target != 1000 {
+		t.Fatalf("expected no-down protection without strong pressure signal, got %d", target)
+	}
+	if len(tags) != 1 || tags[0] != "rebal-fail-nodown" {
+		t.Fatalf("unexpected rebalance no-down tags: %+v", tags)
+	}
+}
+
 func TestShouldHoldSmallStepBypassesTowardTargetWhenGapIsLarge(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
 	st := &autofeeChannelState{}

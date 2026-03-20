@@ -442,6 +442,7 @@ type autofeeProfile struct {
 	RebalFailUpMinAttempts         int
 	RebalFailUpStepFrac            float64
 	RebalFailUpMinStepPpm          int
+	RebalFailWindowHours           int
 }
 
 type superSourceThresholds struct {
@@ -550,6 +551,7 @@ var autofeeProfiles = map[string]autofeeProfile{
 		RebalFailUpMinAttempts:         6,
 		RebalFailUpStepFrac:            0.02,
 		RebalFailUpMinStepPpm:          10,
+		RebalFailWindowHours:           8,
 	},
 	"moderate": {
 		Name:                           "moderate",
@@ -647,6 +649,7 @@ var autofeeProfiles = map[string]autofeeProfile{
 		RebalFailUpMinAttempts:         5,
 		RebalFailUpStepFrac:            0.03,
 		RebalFailUpMinStepPpm:          12,
+		RebalFailWindowHours:           6,
 	},
 	"aggressive": {
 		Name:                           "aggressive",
@@ -744,6 +747,7 @@ var autofeeProfiles = map[string]autofeeProfile{
 		RebalFailUpMinAttempts:         4,
 		RebalFailUpStepFrac:            0.04,
 		RebalFailUpMinStepPpm:          15,
+		RebalFailWindowHours:           4,
 	},
 }
 
@@ -2114,7 +2118,7 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 		e.svc.logger.Printf("autofee: rebalStats21d unavailable: %v", err)
 	}
 	recentRebalanceTouches := map[uint64]recentRebalanceSignal{}
-	if touches, err := e.fetchRecentRebalanceTouches(ctx, e.htlcSignalWindow()); err == nil {
+	if touches, err := e.fetchRecentRebalanceTouches(ctx, e.htlcSignalWindow(), e.rebalanceFailureSignalWindow()); err == nil {
 		recentRebalanceTouches = touches
 	} else if e.svc.logger != nil {
 		e.svc.logger.Printf("autofee: recent rebalance touches unavailable: %v", err)
@@ -2705,6 +2709,19 @@ func (e *autofeeEngine) htlcSignalWindow() time.Duration {
 		secs = 3600
 	}
 	return time.Duration(secs) * time.Second
+}
+
+func (e *autofeeEngine) rebalanceFailureSignalWindow() time.Duration {
+	hours := e.profile.RebalFailWindowHours
+	if hours <= 0 {
+		hours = 6
+	}
+	window := time.Duration(hours) * time.Hour
+	successWindow := e.htlcSignalWindow()
+	if window < successWindow {
+		window = successWindow
+	}
+	return window
 }
 
 func (e *autofeeEngine) htlcThresholdFactors() (float64, float64, float64) {
@@ -3653,42 +3670,59 @@ where type='rebalance' and occurred_at >= now() - ($1 * interval '1 day')
 	return stats, nil
 }
 
-func (e *autofeeEngine) fetchRecentRebalanceTouches(ctx context.Context, window time.Duration) (map[uint64]recentRebalanceSignal, error) {
+func (e *autofeeEngine) fetchRecentRebalanceTouches(ctx context.Context, successWindow time.Duration, weakWindow time.Duration) (map[uint64]recentRebalanceSignal, error) {
 	touches := map[uint64]recentRebalanceSignal{}
-	if window <= 0 {
-		window = time.Hour
+	if successWindow <= 0 {
+		successWindow = time.Hour
 	}
-	seconds := int(math.Ceil(window.Seconds()))
-	if seconds < 60 {
-		seconds = 60
+	if weakWindow <= 0 {
+		weakWindow = successWindow
+	}
+	if weakWindow < successWindow {
+		weakWindow = successWindow
+	}
+	successSeconds := int(math.Ceil(successWindow.Seconds()))
+	weakSeconds := int(math.Ceil(weakWindow.Seconds()))
+	if successSeconds < 60 {
+		successSeconds = 60
+	}
+	if weakSeconds < successSeconds {
+		weakSeconds = successSeconds
 	}
 
 	rows, err := e.svc.db.Query(ctx, `
 with recent_rebalances as (
-  select rebal_target_chan_id as chan_id, upper(coalesce(status, '')) as status, coalesce(amount_sat, 0)::bigint as amount_sat
+  select rebal_target_chan_id as chan_id, upper(coalesce(status, '')) as status, coalesce(amount_sat, 0)::bigint as amount_sat, occurred_at
   from notifications
   where type='rebalance'
-    and occurred_at >= now() - ($1 * interval '1 second')
+    and occurred_at >= now() - ($2 * interval '1 second')
     and rebal_target_chan_id is not null
   union all
-  select rebal_source_chan_id as chan_id, upper(coalesce(status, '')) as status, coalesce(amount_sat, 0)::bigint as amount_sat
+  select rebal_source_chan_id as chan_id, upper(coalesce(status, '')) as status, coalesce(amount_sat, 0)::bigint as amount_sat, occurred_at
   from notifications
   where type='rebalance'
-    and occurred_at >= now() - ($1 * interval '1 second')
+    and occurred_at >= now() - ($2 * interval '1 second')
     and rebal_source_chan_id is not null
   union all
-  select channel_id as chan_id, upper(coalesce(status, '')) as status, coalesce(amount_sat, 0)::bigint as amount_sat
+  select channel_id as chan_id, upper(coalesce(status, '')) as status, coalesce(amount_sat, 0)::bigint as amount_sat, occurred_at
   from notifications
   where type='rebalance'
-    and occurred_at >= now() - ($1 * interval '1 second')
+    and occurred_at >= now() - ($2 * interval '1 second')
     and rebal_target_chan_id is null
     and rebal_source_chan_id is null
     and channel_id is not null
 )
 select chan_id, status, count(*), coalesce(sum(amount_sat), 0)::bigint
 from recent_rebalances
+where (
+    status in ('SETTLED', 'SUCCEEDED')
+    and occurred_at >= now() - ($1 * interval '1 second')
+  ) or (
+    status not in ('SETTLED', 'SUCCEEDED')
+    and occurred_at >= now() - ($2 * interval '1 second')
+  )
 group by chan_id, status
-`, seconds)
+`, successSeconds, weakSeconds)
 	if err != nil {
 		return touches, err
 	}

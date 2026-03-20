@@ -958,6 +958,7 @@ export default function LightningOps() {
 
   const [closePoint, setClosePoint] = useState('')
   const [closeForce, setCloseForce] = useState(false)
+  const [closeFeeMode, setCloseFeeMode] = useState<'auto' | 'manual'>('auto')
   const [closeFeeRate, setCloseFeeRate] = useState('')
   const [closeFeeHint, setCloseFeeHint] = useState<{ fastest?: number; hour?: number } | null>(null)
   const [closeFeeStatus, setCloseFeeStatus] = useState('')
@@ -2946,7 +2947,6 @@ export default function LightningOps() {
         setOpenFeeHint({ fastest, hour })
         setOpenFeeRate((prev) => (prev ? prev : fastest > 0 ? String(fastest) : prev))
         setCloseFeeHint({ fastest, hour })
-        setCloseFeeRate((prev) => (prev ? prev : fastest > 0 ? String(fastest) : prev))
         setBatchFeeRate((prev) => (prev ? prev : fastest > 0 ? String(fastest) : prev))
         setBalancedFeeRate((prev) => (prev ? prev : fastest > 0 ? String(fastest) : prev))
         setOpenFeeStatus('')
@@ -4690,10 +4690,14 @@ export default function LightningOps() {
     }
     try {
       const feeRate = Number(closeFeeRate || 0)
+      if (!closeForce && closeFeeMode === 'manual' && feeRate <= 0) {
+        setCloseStatus(t('lightningOps.closeManualFeeRequired'))
+        return
+      }
       const res: any = await closeChannel({
         channel_point: closePoint,
         force: closeForce,
-        sat_per_vbyte: closeForce ? undefined : (feeRate > 0 ? feeRate : undefined)
+        sat_per_vbyte: closeForce || closeFeeMode === 'auto' ? undefined : feeRate
       })
       const closingTxid = String(res?.closing_txid || '').trim()
       if (closingTxid) {
@@ -6731,40 +6735,62 @@ export default function LightningOps() {
               {t('lightningOps.feeHint', { fastest: closeFeeHint?.fastest ?? '-', hour: closeFeeHint?.hour ?? '-' })}
             </span>
           </label>
-          <div className="flex flex-wrap items-center gap-3">
-            <input
-              className="input-field flex-1 min-w-[140px]"
-              placeholder={t('common.auto')}
-              type="number"
-              min={1}
-              value={closeFeeRate}
-              onChange={(e) => setCloseFeeRate(e.target.value)}
-              disabled={closeForce}
-            />
-            <button
-              className="btn-secondary text-xs px-3 py-2"
-              type="button"
-              onClick={() => {
-                if (closeFeeHint?.fastest) {
-                  setCloseFeeRate(String(closeFeeHint.fastest))
-                }
-              }}
-              disabled={!closeFeeHint?.fastest || closeForce}
-	            >
-	              {t('lightningOps.useFastest')}
-	            </button>
-	            {closeFeeStatus && <p className="text-xs text-fog/50">{closeFeeStatus}</p>}
-	          </div>
-	          {!closeForce && Number(closeFeeRate || 0) > 0 && Number(closeFeeRate || 0) <= 1 && (
-	            <p className="text-xs text-brass">{t('lightningOps.closeLowFeeWarning')}</p>
-	          )}
-	          {!closeForce && (
-	            <p className="text-xs text-fog/55">{t('lightningOps.closeFeeManualHint')}</p>
-	          )}
-	          <label className="flex items-center gap-2 text-sm text-fog/70">
-	            <input type="checkbox" checked={closeForce} onChange={(e) => setCloseForce(e.target.checked)} />
-	            {t('lightningOps.forceClose')}
-	          </label>
+          {!closeForce && (
+            <div className="flex flex-wrap gap-3 text-sm">
+              <button
+                className={closeFeeMode === 'auto' ? 'btn-primary' : 'btn-secondary'}
+                type="button"
+                onClick={() => setCloseFeeMode('auto')}
+              >
+                {t('lightningOps.closeFeeModeAuto')}
+              </button>
+              <button
+                className={closeFeeMode === 'manual' ? 'btn-primary' : 'btn-secondary'}
+                type="button"
+                onClick={() => setCloseFeeMode('manual')}
+              >
+                {t('lightningOps.closeFeeModeManual')}
+              </button>
+            </div>
+          )}
+          {!closeForce && closeFeeMode === 'auto' && (
+            <p className="text-xs text-fog/55">{t('lightningOps.closeFeeAutoHint')}</p>
+          )}
+          {!closeForce && closeFeeMode === 'manual' && (
+            <>
+              <div className="flex flex-wrap items-center gap-3">
+                <input
+                  className="input-field flex-1 min-w-[140px]"
+                  placeholder={t('lightningOps.closeFeeModeManual')}
+                  type="number"
+                  min={1}
+                  value={closeFeeRate}
+                  onChange={(e) => setCloseFeeRate(e.target.value)}
+                />
+                <button
+                  className="btn-secondary text-xs px-3 py-2"
+                  type="button"
+                  onClick={() => {
+                    if (closeFeeHint?.fastest) {
+                      setCloseFeeRate(String(closeFeeHint.fastest))
+                    }
+                  }}
+                  disabled={!closeFeeHint?.fastest}
+                >
+                  {t('lightningOps.useFastest')}
+                </button>
+              </div>
+              {Number(closeFeeRate || 0) > 0 && Number(closeFeeRate || 0) <= 1 && (
+                <p className="text-xs text-brass">{t('lightningOps.closeLowFeeWarning')}</p>
+              )}
+              <p className="text-xs text-fog/55">{t('lightningOps.closeFeeManualHint')}</p>
+            </>
+          )}
+          {closeFeeStatus && <p className="text-xs text-fog/50">{closeFeeStatus}</p>}
+          <label className="flex items-center gap-2 text-sm text-fog/70">
+            <input type="checkbox" checked={closeForce} onChange={(e) => setCloseForce(e.target.checked)} />
+            {t('lightningOps.forceClose')}
+          </label>
           <button className="btn-secondary" onClick={handleCloseChannel}>{t('lightningOps.closeChannel')}</button>
           {closeStatus && <p className="text-sm text-brass">{closeStatus}</p>}
         </div>

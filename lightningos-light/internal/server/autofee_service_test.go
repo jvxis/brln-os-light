@@ -568,6 +568,24 @@ func TestApplyFailedRebalancePressure(t *testing.T) {
 	}
 }
 
+func TestRebalanceFailureSignalWindow(t *testing.T) {
+	e := &autofeeEngine{
+		cfg:     AutofeeConfig{RunIntervalSec: 3600},
+		profile: autofeeProfiles["moderate"],
+	}
+	if got := e.rebalanceFailureSignalWindow(); got != 6*time.Hour {
+		t.Fatalf("unexpected moderate rebalance failure window: got %s want 6h", got)
+	}
+
+	e = &autofeeEngine{
+		cfg:     AutofeeConfig{RunIntervalSec: 4 * 3600},
+		profile: autofeeProfiles["aggressive"],
+	}
+	if got := e.rebalanceFailureSignalWindow(); got != 4*time.Hour {
+		t.Fatalf("expected failure window not shorter than success window: got %s want 4h", got)
+	}
+}
+
 func TestShouldHoldSmallStepBypassesTowardTargetWhenGapIsLarge(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
 	st := &autofeeChannelState{}

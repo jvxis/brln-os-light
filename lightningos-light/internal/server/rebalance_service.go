@@ -4466,8 +4466,10 @@ alter table rebalance_budget_daily
 
 create index if not exists rebalance_jobs_status_idx on rebalance_jobs (status);
 create index if not exists rebalance_jobs_created_idx on rebalance_jobs (created_at desc);
+create index if not exists rebalance_jobs_target_completed_idx on rebalance_jobs (target_channel_id, completed_at desc);
 create index if not exists rebalance_attempts_job_idx on rebalance_attempts (job_id);
 create index if not exists rebalance_attempts_status_idx on rebalance_attempts (status);
+create index if not exists rebalance_attempts_finished_status_idx on rebalance_attempts (finished_at desc, status);
 create index if not exists rebalance_mpp_shadow_created_idx on rebalance_mpp_shadow (created_at desc);
 create index if not exists rebalance_mpp_shadow_success_idx on rebalance_mpp_shadow (actual_any_success, created_at desc);
 create index if not exists rebalance_pair_stats_fail_idx on rebalance_pair_stats (last_fail_at desc);

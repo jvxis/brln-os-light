@@ -3691,37 +3691,45 @@ func (e *autofeeEngine) fetchRecentRebalanceTouches(ctx context.Context, success
 	}
 
 	rows, err := e.svc.db.Query(ctx, `
-with recent_rebalances as (
-  select rebal_target_chan_id as chan_id, upper(coalesce(status, '')) as status, coalesce(amount_sat, 0)::bigint as amount_sat, occurred_at
-  from notifications
-  where type='rebalance'
-    and occurred_at >= now() - ($2 * interval '1 second')
-    and rebal_target_chan_id is not null
-  union all
-  select rebal_source_chan_id as chan_id, upper(coalesce(status, '')) as status, coalesce(amount_sat, 0)::bigint as amount_sat, occurred_at
-  from notifications
-  where type='rebalance'
-    and occurred_at >= now() - ($2 * interval '1 second')
-    and rebal_source_chan_id is not null
-  union all
-  select channel_id as chan_id, upper(coalesce(status, '')) as status, coalesce(amount_sat, 0)::bigint as amount_sat, occurred_at
-  from notifications
-  where type='rebalance'
-    and occurred_at >= now() - ($2 * interval '1 second')
-    and rebal_target_chan_id is null
-    and rebal_source_chan_id is null
-    and channel_id is not null
+with recent_attempts as (
+  select
+    j.target_channel_id as chan_id,
+    lower(coalesce(a.status, '')) as status,
+    coalesce(a.amount_sat, 0)::bigint as amount_sat
+  from rebalance_attempts a
+  join rebalance_jobs j on j.id = a.job_id
+  where j.target_channel_id is not null
+    and (
+      (lower(coalesce(a.status, '')) = 'succeeded' and coalesce(a.finished_at, a.started_at) >= now() - ($1 * interval '1 second'))
+      or
+      (lower(coalesce(a.status, '')) <> 'succeeded' and coalesce(a.finished_at, a.started_at) >= now() - ($2 * interval '1 second'))
+    )
+),
+recent_failed_jobs_without_attempts as (
+  select
+    j.target_channel_id as chan_id,
+    count(*)::bigint as weak_count,
+    coalesce(sum(j.target_amount_sat), 0)::bigint as weak_amt_sat
+  from rebalance_jobs j
+  where j.target_channel_id is not null
+    and lower(coalesce(j.status, '')) in ('failed', 'cancelled')
+    and coalesce(j.completed_at, j.created_at) >= now() - ($2 * interval '1 second')
+    and not exists (
+      select 1 from rebalance_attempts a where a.job_id = j.id
+    )
+  group by j.target_channel_id
 )
-select chan_id, status, count(*), coalesce(sum(amount_sat), 0)::bigint
-from recent_rebalances
-where (
-    status in ('SETTLED', 'SUCCEEDED')
-    and occurred_at >= now() - ($1 * interval '1 second')
-  ) or (
-    status not in ('SETTLED', 'SUCCEEDED')
-    and occurred_at >= now() - ($2 * interval '1 second')
-  )
-group by chan_id, status
+select
+  chan_id,
+  coalesce(sum(case when status = 'succeeded' then 1 else 0 end), 0)::bigint as success_count,
+  coalesce(sum(case when status = 'succeeded' then amount_sat else 0 end), 0)::bigint as success_amt_sat,
+  coalesce(sum(case when status <> 'succeeded' then 1 else 0 end), 0)::bigint as weak_count,
+  coalesce(sum(case when status <> 'succeeded' then amount_sat else 0 end), 0)::bigint as weak_amt_sat
+from recent_attempts
+group by chan_id
+union all
+select chan_id, 0::bigint, 0::bigint, weak_count, weak_amt_sat
+from recent_failed_jobs_without_attempts
 `, successSeconds, weakSeconds)
 	if err != nil {
 		return touches, err
@@ -3730,22 +3738,24 @@ group by chan_id, status
 
 	for rows.Next() {
 		var chanID int64
-		var status string
-		var count int64
-		var amtSat int64
-		if err := rows.Scan(&chanID, &status, &count, &amtSat); err != nil {
+		var successCount int64
+		var successAmtSat int64
+		var weakCount int64
+		var weakAmtSat int64
+		if err := rows.Scan(&chanID, &successCount, &successAmtSat, &weakCount, &weakAmtSat); err != nil {
 			return touches, err
 		}
-		if chanID <= 0 || count <= 0 || amtSat < 0 {
+		if chanID <= 0 {
 			continue
 		}
 		sig := touches[uint64(chanID)]
-		if status == "SETTLED" || status == "SUCCEEDED" {
-			sig.Count += int(count)
-			sig.AmtSat += amtSat
-		} else {
-			sig.WeakCount += int(count)
-			sig.WeakAmtSat += amtSat
+		if successCount > 0 {
+			sig.Count += int(successCount)
+			sig.AmtSat += successAmtSat
+		}
+		if weakCount > 0 {
+			sig.WeakCount += int(weakCount)
+			sig.WeakAmtSat += weakAmtSat
 		}
 		touches[uint64(chanID)] = sig
 	}

@@ -3123,9 +3123,6 @@ func capBalancedFloorDrivenUp(profile autofeeProfile, classLabel string, outRati
 	if capFrac <= 0 {
 		capFrac = 0.05
 	}
-	if strings.EqualFold(classLabel, "sink") && outRatio < minOutRatio+0.05 {
-		return finalPpm, nil
-	}
 	capped := applyStepCap(localPpm, finalPpm, capFrac, 5, localPpm)
 	if capped < finalPpm {
 		return capped, []string{"balanced-floor-up-cap"}

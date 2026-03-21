@@ -536,6 +536,20 @@ func TestCapBalancedFloorDrivenUpBypassesDrainedSink(t *testing.T) {
 	}
 }
 
+func TestCapBalancedFloorDrivenUpForMidLiquiditySink(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	capped, tags := capBalancedFloorDrivenUp(profile, "sink", 0.24, 1784, 1592, 2369)
+	if capped >= 2369 {
+		t.Fatalf("expected mid-liquidity sink rise to be capped below floor, got %d", capped)
+	}
+	if capped != 1873 {
+		t.Fatalf("unexpected capped ppm for mid-liquidity sink: got %d want 1873", capped)
+	}
+	if len(tags) == 0 || tags[0] != "balanced-floor-up-cap" {
+		t.Fatalf("expected balanced floor cap tag for mid-liquidity sink, got %+v", tags)
+	}
+}
+
 func TestApplyOutrateTargetAnchorModerate(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
 	anchored, tags := applyOutrateTargetAnchor(profile, 512, 1086, 0.32, 9)

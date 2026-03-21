@@ -705,6 +705,9 @@ const OPEN_CHANNEL_SECTION_ID = 'open-channel-section'
 const SCB_RECOVERY_CONFIRM_PHRASE = 'I UNDERSTAND FORCE CLOSE'
 const BALANCED_OPEN_FUNDING_VBYTES = 190
 const BALANCED_OPEN_REQUIRED_REMAINING_SAT = 10000
+const COOP_CLOSE_ESTIMATED_ONE_OUTPUT_VBYTES = 140
+const COOP_CLOSE_ESTIMATED_TWO_OUTPUT_VBYTES = 170
+const CLOSE_PREVIEW_DUST_LIMIT_SAT = 546
 
 const readHashChannelPoint = (routeKey: string) => {
   if (typeof window === 'undefined') return ''
@@ -966,6 +969,8 @@ export default function LightningOps() {
   const [closingTxHints, setClosingTxHints] = useState<Record<string, string>>({})
   const [pendingForceBusyByPoint, setPendingForceBusyByPoint] = useState<Record<string, boolean>>({})
   const [pendingForceStatusByPoint, setPendingForceStatusByPoint] = useState<Record<string, string>>({})
+  const closeCardRef = useRef<HTMLDivElement | null>(null)
+  const closeSelectRef = useRef<HTMLSelectElement | null>(null)
 
   const [feeScopeAll, setFeeScopeAll] = useState(true)
   const [feeChannelPoint, setFeeChannelPoint] = useState('')
@@ -4879,6 +4884,51 @@ export default function LightningOps() {
     }))
   }, [channels])
 
+  const selectedCloseChannel = useMemo(
+    () => channels.find((ch) => ch.channel_point === closePoint) || null,
+    [channels, closePoint],
+  )
+
+  const closePreview = useMemo(() => {
+    if (!selectedCloseChannel || closeForce) return null
+
+    const manualRate = Math.max(0, Math.trunc(Number(closeFeeRate || 0)))
+    const autoRate = Math.max(
+      0,
+      Math.trunc(Number(closeFeeHint?.fastest || closeFeeHint?.hour || 0)),
+    )
+    const satPerVbyte = closeFeeMode === 'manual' ? manualRate : autoRate
+    if (satPerVbyte <= 0) return null
+
+    const localHasOutput = selectedCloseChannel.local_balance_sat > CLOSE_PREVIEW_DUST_LIMIT_SAT
+    const remoteHasOutput = selectedCloseChannel.remote_balance_sat > CLOSE_PREVIEW_DUST_LIMIT_SAT
+    const estimatedVbytes = localHasOutput && remoteHasOutput
+      ? COOP_CLOSE_ESTIMATED_TWO_OUTPUT_VBYTES
+      : COOP_CLOSE_ESTIMATED_ONE_OUTPUT_VBYTES
+    const feeSat = estimatedVbytes * satPerVbyte
+    const estimatedLocalAfterFeeSat = Math.max(0, selectedCloseChannel.local_balance_sat - feeSat)
+
+    return {
+      feeSat,
+      satPerVbyte,
+      estimatedVbytes,
+      estimatedLocalAfterFeeSat,
+      reference: closeFeeMode === 'manual' ? 'manual' : 'auto',
+    }
+  }, [selectedCloseChannel, closeForce, closeFeeRate, closeFeeHint, closeFeeMode])
+
+  const handlePrepareCloseChannel = (channelPoint: string) => {
+    const point = String(channelPoint || '').trim()
+    if (!point) return
+    setClosePoint(point)
+    setCloseStatus('')
+    if (typeof window === 'undefined') return
+    window.setTimeout(() => {
+      closeCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      closeSelectRef.current?.focus()
+    }, 0)
+  }
+
   const handleToggleFCRiskFilter = () => {
     if (fcRiskOnly) {
       setFcRiskOnly(false)
@@ -6029,6 +6079,19 @@ export default function LightningOps() {
                               })}
                             </a>
                           )}
+                          <button
+                            type="button"
+                            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/15 text-fog/60 transition hover:border-rose-300/70 hover:text-rose-100"
+                            title={t('lightningOps.prepareCloseChannel')}
+                            aria-label={t('lightningOps.prepareCloseChannel')}
+                            onClick={() => handlePrepareCloseChannel(ch.channel_point)}
+                          >
+                            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                              <path d="M6 6l12 12" />
+                              <path d="M18 6L6 18" />
+                              <circle cx="12" cy="12" r="9" />
+                            </svg>
+                          </button>
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
@@ -6721,9 +6784,14 @@ export default function LightningOps() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <div className="section-card space-y-4">
+        <div ref={closeCardRef} className="section-card space-y-4">
           <h3 className="text-lg font-semibold">{t('lightningOps.closeChannel')}</h3>
-          <select className="input-field" value={closePoint} onChange={(e) => setClosePoint(e.target.value)}>
+          <select
+            ref={closeSelectRef}
+            className="input-field"
+            value={closePoint}
+            onChange={(e) => setClosePoint(e.target.value)}
+          >
             <option value="">{t('lightningOps.selectChannel')}</option>
             {channelOptions.map((opt) => (
               <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -6785,6 +6853,25 @@ export default function LightningOps() {
               )}
               <p className="text-xs text-fog/55">{t('lightningOps.closeFeeManualHint')}</p>
             </>
+          )}
+          {!closeForce && selectedCloseChannel && closePreview && (
+            <div className="rounded-2xl border border-white/10 bg-ink/70 p-3 space-y-2">
+              <div className="flex items-center justify-between gap-3 text-xs">
+                <span className="text-fog/60">{t('lightningOps.closePreviewTitle')}</span>
+                <span className="text-fog/50">{t('lightningOps.closePreviewEstimated')}</span>
+              </div>
+              <div className="grid gap-2 text-xs text-fog/80 sm:grid-cols-2">
+                <p>{t('lightningOps.closePreviewFee', { amount: formatSatsValue(closePreview.feeSat) })}</p>
+                <p>{t('lightningOps.closePreviewVbytes', { amount: closePreview.estimatedVbytes, fee: closePreview.satPerVbyte })}</p>
+                <p>{t('lightningOps.closePreviewLocalBalance', { amount: formatSatsValue(selectedCloseChannel.local_balance_sat) })}</p>
+                <p>{t('lightningOps.closePreviewLocalAfterFee', { amount: formatSatsValue(closePreview.estimatedLocalAfterFeeSat) })}</p>
+              </div>
+              <p className="text-xs text-fog/55">
+                {closePreview.reference === 'manual'
+                  ? t('lightningOps.closePreviewReferenceManual', { fee: closePreview.satPerVbyte })
+                  : t('lightningOps.closePreviewReferenceAuto', { fee: closePreview.satPerVbyte })}
+              </p>
+            </div>
           )}
           {closeFeeStatus && <p className="text-xs text-fog/50">{closeFeeStatus}</p>}
           <label className="flex items-center gap-2 text-sm text-fog/70">

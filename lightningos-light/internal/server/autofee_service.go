@@ -447,6 +447,7 @@ type autofeeProfile struct {
 	RebalFailUpStepFrac            float64
 	RebalFailUpMinStepPpm          int
 	RebalFailWindowHours           int
+	RebalFailCampaignGapMin        int
 }
 
 type superSourceThresholds struct {
@@ -560,6 +561,7 @@ var autofeeProfiles = map[string]autofeeProfile{
 		RebalFailUpStepFrac:            0.02,
 		RebalFailUpMinStepPpm:          10,
 		RebalFailWindowHours:           8,
+		RebalFailCampaignGapMin:        120,
 	},
 	"moderate": {
 		Name:                           "moderate",
@@ -662,6 +664,7 @@ var autofeeProfiles = map[string]autofeeProfile{
 		RebalFailUpStepFrac:            0.03,
 		RebalFailUpMinStepPpm:          12,
 		RebalFailWindowHours:           6,
+		RebalFailCampaignGapMin:        90,
 	},
 	"aggressive": {
 		Name:                           "aggressive",
@@ -764,6 +767,7 @@ var autofeeProfiles = map[string]autofeeProfile{
 		RebalFailUpStepFrac:            0.04,
 		RebalFailUpMinStepPpm:          15,
 		RebalFailWindowHours:           4,
+		RebalFailCampaignGapMin:        60,
 	},
 }
 
@@ -2472,10 +2476,62 @@ type recentRebalanceSignal struct {
 	WeakAmtSat int64
 }
 
+type recentWeakRebalanceJob struct {
+	ChannelID uint64
+	Ts        time.Time
+	AmtSat    int64
+}
+
 func (s recentRebalanceSignal) surgeConfirmInputs() (int, int64) {
 	weightedCount := float64(s.Count) + float64(s.WeakCount)*weakRebalanceAttemptCountWeight
 	weightedAmt := float64(s.AmtSat) + float64(s.WeakAmtSat)*weakRebalanceAttemptAmtWeight
 	return int(math.Round(weightedCount)), int64(math.Round(weightedAmt))
+}
+
+func collapseWeakRebalanceCampaigns(jobs []recentWeakRebalanceJob, campaignGap time.Duration) map[uint64]recentRebalanceSignal {
+	out := map[uint64]recentRebalanceSignal{}
+	if len(jobs) == 0 {
+		return out
+	}
+	if campaignGap <= 0 {
+		campaignGap = 90 * time.Minute
+	}
+	sort.Slice(jobs, func(i, j int) bool {
+		if jobs[i].ChannelID != jobs[j].ChannelID {
+			return jobs[i].ChannelID < jobs[j].ChannelID
+		}
+		return jobs[i].Ts.Before(jobs[j].Ts)
+	})
+	var currentChan uint64
+	var lastTs time.Time
+	var campaignAmt int64
+	flush := func() {
+		if currentChan == 0 {
+			return
+		}
+		sig := out[currentChan]
+		sig.WeakCount++
+		sig.WeakAmtSat += campaignAmt
+		out[currentChan] = sig
+	}
+	for _, job := range jobs {
+		if job.ChannelID == 0 || job.Ts.IsZero() {
+			continue
+		}
+		if currentChan == 0 || job.ChannelID != currentChan || job.Ts.Sub(lastTs) > campaignGap {
+			flush()
+			currentChan = job.ChannelID
+			lastTs = job.Ts
+			campaignAmt = job.AmtSat
+			continue
+		}
+		lastTs = job.Ts
+		if job.AmtSat > campaignAmt {
+			campaignAmt = job.AmtSat
+		}
+	}
+	flush()
+	return out
 }
 
 type htlcFailureSignal struct {
@@ -2738,6 +2794,18 @@ func (e *autofeeEngine) rebalanceFailureSignalWindow() time.Duration {
 		window = successWindow
 	}
 	return window
+}
+
+func (e *autofeeEngine) rebalanceFailureCampaignGap() time.Duration {
+	mins := e.profile.RebalFailCampaignGapMin
+	if mins <= 0 {
+		mins = 90
+	}
+	gap := time.Duration(mins) * time.Minute
+	if gap > e.rebalanceFailureSignalWindow() {
+		gap = e.rebalanceFailureSignalWindow()
+	}
+	return gap
 }
 
 func (e *autofeeEngine) htlcThresholdFactors() (float64, float64, float64) {
@@ -3742,77 +3810,86 @@ func (e *autofeeEngine) fetchRecentRebalanceTouches(ctx context.Context, success
 	if weakSeconds < successSeconds {
 		weakSeconds = successSeconds
 	}
-
-	rows, err := e.svc.db.Query(ctx, `
-with recent_attempts as (
-  select
-    j.target_channel_id as chan_id,
-    lower(coalesce(a.status, '')) as status,
-    coalesce(a.amount_sat, 0)::bigint as amount_sat
-  from rebalance_attempts a
-  join rebalance_jobs j on j.id = a.job_id
-  where j.target_channel_id is not null
-    and (
-      (lower(coalesce(a.status, '')) = 'succeeded' and coalesce(a.finished_at, a.started_at) >= now() - ($1 * interval '1 second'))
-      or
-      (lower(coalesce(a.status, '')) <> 'succeeded' and coalesce(a.finished_at, a.started_at) >= now() - ($2 * interval '1 second'))
-    )
-),
-recent_failed_jobs_without_attempts as (
-  select
-    j.target_channel_id as chan_id,
-    count(*)::bigint as weak_count,
-    coalesce(sum(j.target_amount_sat), 0)::bigint as weak_amt_sat
-  from rebalance_jobs j
-  where j.target_channel_id is not null
-    and lower(coalesce(j.status, '')) in ('failed', 'cancelled')
-    and coalesce(j.completed_at, j.created_at) >= now() - ($2 * interval '1 second')
-    and not exists (
-      select 1 from rebalance_attempts a where a.job_id = j.id
-    )
-  group by j.target_channel_id
-)
+	successRows, err := e.svc.db.Query(ctx, `
 select
-  chan_id,
-  coalesce(sum(case when status = 'succeeded' then 1 else 0 end), 0)::bigint as success_count,
-  coalesce(sum(case when status = 'succeeded' then amount_sat else 0 end), 0)::bigint as success_amt_sat,
-  coalesce(sum(case when status <> 'succeeded' then 1 else 0 end), 0)::bigint as weak_count,
-  coalesce(sum(case when status <> 'succeeded' then amount_sat else 0 end), 0)::bigint as weak_amt_sat
-from recent_attempts
-group by chan_id
-union all
-select chan_id, 0::bigint, 0::bigint, weak_count, weak_amt_sat
-from recent_failed_jobs_without_attempts
-`, successSeconds, weakSeconds)
+  j.target_channel_id as chan_id,
+  count(*)::bigint as success_count,
+  coalesce(sum(coalesce(a.amount_sat, 0)), 0)::bigint as success_amt_sat
+from rebalance_attempts a
+join rebalance_jobs j on j.id = a.job_id
+where j.target_channel_id is not null
+  and lower(coalesce(a.status, '')) = 'succeeded'
+  and coalesce(a.finished_at, a.started_at) >= now() - ($1 * interval '1 second')
+group by j.target_channel_id
+`, successSeconds)
 	if err != nil {
 		return touches, err
 	}
-	defer rows.Close()
+	defer successRows.Close()
 
-	for rows.Next() {
+	for successRows.Next() {
 		var chanID int64
 		var successCount int64
 		var successAmtSat int64
-		var weakCount int64
-		var weakAmtSat int64
-		if err := rows.Scan(&chanID, &successCount, &successAmtSat, &weakCount, &weakAmtSat); err != nil {
+		if err := successRows.Scan(&chanID, &successCount, &successAmtSat); err != nil {
 			return touches, err
 		}
 		if chanID <= 0 {
 			continue
 		}
 		sig := touches[uint64(chanID)]
-		if successCount > 0 {
-			sig.Count += int(successCount)
-			sig.AmtSat += successAmtSat
-		}
-		if weakCount > 0 {
-			sig.WeakCount += int(weakCount)
-			sig.WeakAmtSat += weakAmtSat
-		}
+		sig.Count += int(successCount)
+		sig.AmtSat += successAmtSat
 		touches[uint64(chanID)] = sig
 	}
-	return touches, rows.Err()
+	if err := successRows.Err(); err != nil {
+		return touches, err
+	}
+
+	weakRows, err := e.svc.db.Query(ctx, `
+select
+  j.target_channel_id as chan_id,
+  coalesce(j.completed_at, j.created_at) as event_ts,
+  coalesce(j.target_amount_sat, 0)::bigint as amount_sat
+from rebalance_jobs j
+where j.target_channel_id is not null
+  and lower(coalesce(j.status, '')) in ('failed', 'cancelled')
+  and coalesce(j.completed_at, j.created_at) >= now() - ($1 * interval '1 second')
+order by j.target_channel_id, coalesce(j.completed_at, j.created_at)
+`, weakSeconds)
+	if err != nil {
+		return touches, err
+	}
+	defer weakRows.Close()
+
+	weakJobs := []recentWeakRebalanceJob{}
+	for weakRows.Next() {
+		var chanID int64
+		var eventTs time.Time
+		var amountSat int64
+		if err := weakRows.Scan(&chanID, &eventTs, &amountSat); err != nil {
+			return touches, err
+		}
+		if chanID <= 0 || eventTs.IsZero() {
+			continue
+		}
+		weakJobs = append(weakJobs, recentWeakRebalanceJob{
+			ChannelID: uint64(chanID),
+			Ts:        eventTs,
+			AmtSat:    amountSat,
+		})
+	}
+	if err := weakRows.Err(); err != nil {
+		return touches, err
+	}
+
+	for chanID, weakSig := range collapseWeakRebalanceCampaigns(weakJobs, e.rebalanceFailureCampaignGap()) {
+		sig := touches[chanID]
+		sig.WeakCount += weakSig.WeakCount
+		sig.WeakAmtSat += weakSig.WeakAmtSat
+		touches[chanID] = sig
+	}
+	return touches, nil
 }
 
 func (e *autofeeEngine) loadState(ctx context.Context) (map[uint64]*autofeeChannelState, error) {

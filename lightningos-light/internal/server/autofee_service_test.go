@@ -622,6 +622,44 @@ func TestRebalanceFailureSignalWindow(t *testing.T) {
 	}
 }
 
+func TestRebalanceFailureCampaignGap(t *testing.T) {
+	e := &autofeeEngine{
+		cfg:     AutofeeConfig{RunIntervalSec: 3600},
+		profile: autofeeProfiles["moderate"],
+	}
+	if got := e.rebalanceFailureCampaignGap(); got != 90*time.Minute {
+		t.Fatalf("unexpected moderate rebalance campaign gap: got %s want 90m", got)
+	}
+
+	e = &autofeeEngine{
+		cfg:     AutofeeConfig{RunIntervalSec: 3600},
+		profile: autofeeProfiles["aggressive"],
+	}
+	if got := e.rebalanceFailureCampaignGap(); got != 60*time.Minute {
+		t.Fatalf("unexpected aggressive rebalance campaign gap: got %s want 60m", got)
+	}
+}
+
+func TestCollapseWeakRebalanceCampaigns(t *testing.T) {
+	base := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)
+	jobs := []recentWeakRebalanceJob{
+		{ChannelID: 1, Ts: base.Add(-80 * time.Minute), AmtSat: 100000},
+		{ChannelID: 1, Ts: base.Add(-50 * time.Minute), AmtSat: 120000},
+		{ChannelID: 1, Ts: base.Add(-1 * time.Minute), AmtSat: 90000},
+		{ChannelID: 2, Ts: base.Add(-15 * time.Minute), AmtSat: 50000},
+	}
+	got := collapseWeakRebalanceCampaigns(jobs, 45*time.Minute)
+	if got[1].WeakCount != 2 {
+		t.Fatalf("unexpected campaign count for chan 1: got %d want 2", got[1].WeakCount)
+	}
+	if got[1].WeakAmtSat != 210000 {
+		t.Fatalf("unexpected campaign amt for chan 1: got %d want 210000", got[1].WeakAmtSat)
+	}
+	if got[2].WeakCount != 1 || got[2].WeakAmtSat != 50000 {
+		t.Fatalf("unexpected campaign aggregation for chan 2: %+v", got[2])
+	}
+}
+
 func TestShouldHoldSmallStepBypassesTowardTargetWhenGapIsLarge(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
 	st := &autofeeChannelState{}

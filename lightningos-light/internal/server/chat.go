@@ -180,21 +180,30 @@ func (c *ChatService) recordKeysendNotification(msg ChatMessage) {
 		return
 	}
 
-	evt := Notification{
+	evt := buildSentKeysendNotification(msg, hash, notifier.lookupNodeAlias)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	_, _ = notifier.upsertNotification(ctx, fmt.Sprintf("payment:%s", hash), evt)
+	cancel()
+}
+
+func buildSentKeysendNotification(msg ChatMessage, hash string, aliasLookup func(string) string) Notification {
+	alias := strings.TrimSpace(msg.PeerAlias)
+	if alias == "" && aliasLookup != nil {
+		alias = strings.TrimSpace(aliasLookup(msg.PeerPubkey))
+	}
+	return Notification{
 		OccurredAt:  msg.Timestamp,
 		Type:        "keysend",
 		Action:      "sent",
 		Direction:   "out",
 		Status:      "SUCCEEDED",
 		AmountSat:   1,
-		PeerPubkey:  msg.PeerPubkey,
-		PeerAlias:   chatFirstNonEmpty(strings.TrimSpace(msg.PeerAlias), notifier.lookupNodeAlias(msg.PeerPubkey)),
+		PeerPubkey:  strings.TrimSpace(msg.PeerPubkey),
+		PeerAlias:   alias,
 		PaymentHash: hash,
+		Memo:        strings.TrimSpace(msg.Message),
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-	_, _ = notifier.upsertNotification(ctx, fmt.Sprintf("payment:%s", hash), evt)
-	cancel()
 }
 
 func (c *ChatService) runInvoices() {

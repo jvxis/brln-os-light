@@ -1226,8 +1226,8 @@ func telegramActivityMirrorMessage(evt Notification) string {
 		main += " | " + detail
 	}
 	if evt.Type == "keysend" {
-		if memoDetail := telegramNotificationMemoDetail(evt); memoDetail != "" {
-			main += " | " + memoDetail
+		if messageDetail := telegramNotificationKeysendMessageDetail(evt); messageDetail != "" {
+			main += " | " + messageDetail
 		}
 	}
 	if feeDetail := telegramNotificationFeeDetail(evt); feeDetail != "" {
@@ -1376,6 +1376,17 @@ func telegramNotificationMemoDetail(evt Notification) string {
 	return "Memo " + telegramTrimMemo(memo, 48)
 }
 
+func telegramNotificationKeysendMessageDetail(evt Notification) string {
+	if evt.Type != "keysend" {
+		return ""
+	}
+	message := telegramSingleLineValue(evt.Memo)
+	if message == "" {
+		return ""
+	}
+	return fmt.Sprintf("Msg \"%s\"", telegramTrimMemo(message, 96))
+}
+
 func telegramFeeMsatTotal(feeSat, feeMsat int64) int64 {
 	if feeMsat > 0 {
 		return feeMsat
@@ -1460,11 +1471,15 @@ func telegramTrimMemo(value string, max int) string {
 	if max <= 0 {
 		max = 48
 	}
-	trimmed := strings.TrimSpace(value)
+	trimmed := telegramSingleLineValue(value)
 	if len(trimmed) <= max {
 		return trimmed
 	}
 	return strings.TrimSpace(trimmed[:max]) + "..."
+}
+
+func telegramSingleLineValue(value string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
 }
 
 func telegramShortValue(value string, max int) string {

@@ -75,3 +75,22 @@ func TestTelegramActivityMirrorMessageKeepsSucceededLightningSent(t *testing.T) 
 		t.Fatalf("expected success wording, got %q", msg)
 	}
 }
+
+func TestTelegramActivityMirrorMessageIncludesKeysendMessage(t *testing.T) {
+	msg := telegramActivityMirrorMessage(Notification{
+		Type:         "keysend",
+		Action:       "received",
+		Status:       "SETTLED",
+		AmountSat:    21,
+		PeerAlias:    "peer-alias",
+		ChannelAlias: "peer-channel",
+		Memo:         "  ola   mundo \n no telegram  ",
+	})
+
+	if !strings.Contains(msg, "Keysend received") {
+		t.Fatalf("expected keysend wording, got %q", msg)
+	}
+	if !strings.Contains(msg, "Msg \"ola mundo no telegram\"") {
+		t.Fatalf("expected keysend message content, got %q", msg)
+	}
+}

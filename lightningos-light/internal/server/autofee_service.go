@@ -437,6 +437,10 @@ type autofeeProfile struct {
 	AntiFlipStrongGapFrac          float64
 	BalancedUpOutRatioMin          float64
 	BalancedFloorUpCap             float64
+	OutrateTargetOutRatioMin       float64
+	OutrateTargetMinFwds           int
+	OutrateTargetFloorFrac         float64
+	OutrateTargetBlendFrac         float64
 	RebalFailOutRatioMax           float64
 	RebalFailNoDownMinAttempts     int
 	RebalFailUpMinAttempts         int
@@ -546,6 +550,10 @@ var autofeeProfiles = map[string]autofeeProfile{
 		AntiFlipStrongGapFrac:          0.60,
 		BalancedUpOutRatioMin:          0.25,
 		BalancedFloorUpCap:             0.04,
+		OutrateTargetOutRatioMin:       0.25,
+		OutrateTargetMinFwds:           8,
+		OutrateTargetFloorFrac:         0.70,
+		OutrateTargetBlendFrac:         0.35,
 		RebalFailOutRatioMax:           0.08,
 		RebalFailNoDownMinAttempts:     4,
 		RebalFailUpMinAttempts:         6,
@@ -644,6 +652,10 @@ var autofeeProfiles = map[string]autofeeProfile{
 		AntiFlipStrongGapFrac:          0.45,
 		BalancedUpOutRatioMin:          0.20,
 		BalancedFloorUpCap:             0.05,
+		OutrateTargetOutRatioMin:       0.20,
+		OutrateTargetMinFwds:           6,
+		OutrateTargetFloorFrac:         0.80,
+		OutrateTargetBlendFrac:         0.55,
 		RebalFailOutRatioMax:           0.10,
 		RebalFailNoDownMinAttempts:     3,
 		RebalFailUpMinAttempts:         5,
@@ -742,6 +754,10 @@ var autofeeProfiles = map[string]autofeeProfile{
 		AntiFlipStrongGapFrac:          0.30,
 		BalancedUpOutRatioMin:          0.18,
 		BalancedFloorUpCap:             0.06,
+		OutrateTargetOutRatioMin:       0.18,
+		OutrateTargetMinFwds:           4,
+		OutrateTargetFloorFrac:         0.90,
+		OutrateTargetBlendFrac:         0.70,
 		RebalFailOutRatioMax:           0.12,
 		RebalFailNoDownMinAttempts:     2,
 		RebalFailUpMinAttempts:         4,
@@ -3117,6 +3133,46 @@ func capBalancedFloorDrivenUp(profile autofeeProfile, classLabel string, outRati
 	return finalPpm, nil
 }
 
+func applyOutrateTargetAnchor(profile autofeeProfile, targetPpm int, outPpm7d int, outRatio float64, fwdCount int) (int, []string) {
+	if targetPpm <= 0 || outPpm7d <= 0 {
+		return targetPpm, nil
+	}
+	minOutRatio := profile.OutrateTargetOutRatioMin
+	if minOutRatio <= 0 {
+		minOutRatio = 0.20
+	}
+	if outRatio < minOutRatio {
+		return targetPpm, nil
+	}
+	minFwds := profile.OutrateTargetMinFwds
+	if minFwds <= 0 {
+		minFwds = 6
+	}
+	if fwdCount < minFwds {
+		return targetPpm, nil
+	}
+	floorFrac := profile.OutrateTargetFloorFrac
+	if floorFrac <= 0 {
+		floorFrac = 0.80
+	}
+	blendFrac := profile.OutrateTargetBlendFrac
+	if blendFrac <= 0 {
+		blendFrac = 0.50
+	}
+	floorTarget := int(math.Round(float64(outPpm7d) * floorFrac))
+	anchored := int(math.Round((1.0-blendFrac)*float64(targetPpm) + blendFrac*float64(outPpm7d)))
+	if anchored < floorTarget {
+		anchored = floorTarget
+	}
+	if anchored > outPpm7d {
+		anchored = outPpm7d
+	}
+	if anchored > targetPpm {
+		return anchored, []string{"outrate-target-anchor"}
+	}
+	return targetPpm, nil
+}
+
 func shouldApplyFailedRebalancePressure(profile autofeeProfile, outRatio float64, lowOutProtectThresh float64, recentSuccessCount int, recentFailCount int) bool {
 	if recentSuccessCount > 0 || recentFailCount <= 0 {
 		return false
@@ -5146,6 +5202,23 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 
 	if superSourceActive {
 		target = e.cfg.MinPpm
+	}
+	allowOutrateTargetAnchor := outPpm7d > 0 &&
+		recentRebalanceCount == 0 &&
+		!htlcPressureSignal &&
+		!strongOutSignal &&
+		!strongRebalSignal &&
+		!discoveryHit &&
+		!explorerActive &&
+		!stagnationActive &&
+		!superSourceActive &&
+		!highOutStagnationPressure
+	if allowOutrateTargetAnchor {
+		anchoredTarget, anchorTags := applyOutrateTargetAnchor(e.profile, target, outPpm7d, outRatio, fwdCount)
+		if anchoredTarget > target {
+			target = anchoredTarget
+			tags = append(tags, anchorTags...)
+		}
 	}
 	seedEnvelopeActive := shouldEnableSeedEnvelope(
 		seed,

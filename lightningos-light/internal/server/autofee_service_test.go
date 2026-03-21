@@ -536,6 +536,28 @@ func TestCapBalancedFloorDrivenUpBypassesDrainedSink(t *testing.T) {
 	}
 }
 
+func TestApplyOutrateTargetAnchorModerate(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	anchored, tags := applyOutrateTargetAnchor(profile, 512, 1086, 0.32, 9)
+	if anchored != 869 {
+		t.Fatalf("unexpected anchored target: got %d want 869", anchored)
+	}
+	if len(tags) != 1 || tags[0] != "outrate-target-anchor" {
+		t.Fatalf("unexpected outrate anchor tags: %+v", tags)
+	}
+}
+
+func TestApplyOutrateTargetAnchorBypassesLowLiquidity(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	anchored, tags := applyOutrateTargetAnchor(profile, 512, 1086, 0.12, 9)
+	if anchored != 512 {
+		t.Fatalf("expected low-liquidity channel to keep original target, got %d", anchored)
+	}
+	if len(tags) != 0 {
+		t.Fatalf("did not expect outrate anchor tags, got %+v", tags)
+	}
+}
+
 func TestShouldApplyFailedRebalancePressure(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
 	if !shouldApplyFailedRebalancePressure(profile, 0.08, profile.LowOutProtectThresh, 0, profile.RebalFailNoDownMinAttempts) {

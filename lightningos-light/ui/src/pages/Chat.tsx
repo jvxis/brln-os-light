@@ -435,7 +435,7 @@ export default function Chat() {
       </div>
 
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(320px,350px)_minmax(0,1fr)] xl:grid-cols-[minmax(340px,370px)_minmax(0,1fr)]">
-        <div className="section-card space-y-4 lg:self-start">
+        <div className="section-card flex min-h-0 flex-col gap-4 lg:h-[720px]">
           <div className="space-y-3">
             <button
               type="button"
@@ -490,7 +490,7 @@ export default function Chat() {
                 value={peerQuery}
                 onChange={(e) => setPeerQuery(e.target.value)}
               />
-              <div className="space-y-4 max-h-[520px] overflow-y-auto pr-2">
+              <div className="flex-1 min-h-0 space-y-4 overflow-y-auto pr-2">
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-[11px] uppercase tracking-wide text-fog/50">
                     <span>{t('chat.onlinePeers')}</span>
@@ -578,7 +578,7 @@ export default function Chat() {
           )}
         </div>
 
-        <div className="section-card min-w-0 min-h-[720px] flex flex-col gap-4">
+        <div className="section-card min-w-0 flex min-h-0 flex-col gap-4 lg:h-[720px]">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <h3 className="text-lg font-semibold">
@@ -608,7 +608,7 @@ export default function Chat() {
 
           <p className="text-xs text-fog/60">{t('chat.keysendCost')}</p>
 
-          <div className="flex-1 min-h-[280px] overflow-y-auto space-y-3 pr-2">
+          <div className="flex-1 min-h-0 overflow-y-auto space-y-3 pr-2">
             {loadingMessages && <p className="text-sm text-fog/60">{t('chat.loadingMessages')}</p>}
             {!loadingMessages && !messages.length && (
               <p className="text-sm text-fog/60">{t('chat.noMessages')}</p>

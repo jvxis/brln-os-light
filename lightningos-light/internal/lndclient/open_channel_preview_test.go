@@ -115,3 +115,42 @@ func TestBuildOpenChannelPreviewKeepsReferenceEstimateWithNoUtxos(t *testing.T) 
 		t.Fatalf("expected preview without utxos to be insufficient")
 	}
 }
+
+func TestBuildBatchOpenChannelPreviewAggregatesFundingAndFee(t *testing.T) {
+	preview := buildBatchOpenChannelPreview(BatchOpenChannelPreview{
+		ChannelCount:    2,
+		TotalFundingSat: 250_000,
+		SatPerVbyte:     2,
+	}, []OnchainUtxo{
+		{AmountSat: 300_000, AddressType: "p2wkh"},
+		{AmountSat: 100_000, AddressType: "p2wkh"},
+	})
+
+	if !preview.EnoughFunds {
+		t.Fatalf("expected batch preview to have enough funds, got %#v", preview)
+	}
+	if preview.EstimatedVbytes <= 0 || preview.FeeSat <= 0 {
+		t.Fatalf("expected positive estimate, got %#v", preview)
+	}
+	if preview.TotalDebitSat != preview.TotalFundingSat+preview.FeeSat {
+		t.Fatalf("expected total debit to match total funding + fee, got %d", preview.TotalDebitSat)
+	}
+}
+
+func TestBuildBatchOpenChannelPreviewUsesReferenceWithoutUtxos(t *testing.T) {
+	preview := buildBatchOpenChannelPreview(BatchOpenChannelPreview{
+		ChannelCount:    3,
+		TotalFundingSat: 900_000,
+		SatPerVbyte:     3,
+	}, nil)
+
+	if preview.EstimatedVbytes <= 0 || preview.FeeSat <= 0 {
+		t.Fatalf("expected reference estimate for batch preview, got %#v", preview)
+	}
+	if !preview.ReferenceOnly {
+		t.Fatalf("expected batch preview without utxos to be reference only")
+	}
+	if preview.EnoughFunds {
+		t.Fatalf("expected batch preview without utxos to be insufficient")
+	}
+}

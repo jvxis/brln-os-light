@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { acceptBalancedOpenSession, addLnWatchtower, boostPeers, bumpFeeCloseManagerSession, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getChannelRankings, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelFees, getLnChannelPeerRecommendations, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, previewOpenChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, recoverCloseManagerSession, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker } from '../api'
+import { acceptBalancedOpenSession, addLnWatchtower, boostPeers, bumpFeeCloseManagerSession, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getChannelRankings, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelFees, getLnChannelPeerRecommendations, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, previewBatchOpenChannels, previewOpenChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, recoverCloseManagerSession, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker } from '../api'
 import { getLocale } from '../i18n'
 
 type Channel = {
@@ -233,6 +233,25 @@ type BatchOpenItem = {
 type OpenChannelPreview = {
   local_funding_sat: number
   push_sat: number
+  fee_sat: number
+  total_debit_sat: number
+  spendable_sat: number
+  spendable_remaining_sat: number
+  selected_input_count: number
+  selected_input_sat: number
+  estimated_vbytes: number
+  sat_per_vbyte: number
+  enough_funds: boolean
+  exact: boolean
+  has_change: boolean
+  reference_only: boolean
+  message_code?: string
+  message?: string
+}
+
+type BatchOpenPreview = {
+  channel_count: number
+  total_funding_sat: number
   fee_sat: number
   total_debit_sat: number
   spendable_sat: number
@@ -977,8 +996,12 @@ export default function LightningOps() {
   const [batchCloseAddress, setBatchCloseAddress] = useState('')
   const [batchPrivate, setBatchPrivate] = useState(false)
   const [batchItems, setBatchItems] = useState<BatchOpenItem[]>([])
+  const [batchFeeMode, setBatchFeeMode] = useState<'auto' | 'manual'>('auto')
   const [batchFeeRate, setBatchFeeRate] = useState('')
   const [batchFeeStatus, setBatchFeeStatus] = useState('')
+  const [batchPreview, setBatchPreview] = useState<BatchOpenPreview | null>(null)
+  const [batchPreviewLoading, setBatchPreviewLoading] = useState(false)
+  const [batchPreviewStatus, setBatchPreviewStatus] = useState('')
   const [batchStatus, setBatchStatus] = useState('')
   const [batchBusy, setBatchBusy] = useState(false)
   const [batchChannelPoints, setBatchChannelPoints] = useState<string[]>([])
@@ -3028,6 +3051,62 @@ export default function LightningOps() {
   }, [openAmount, openPushSat, openFeeHint, openFeeMode, openFeeRate, openFeeStatus, t])
 
   useEffect(() => {
+    const manualRate = Math.max(0, Math.trunc(Number(batchFeeRate || 0)))
+    const autoRate = Math.max(0, Math.trunc(Number(openFeeHint?.fastest || openFeeHint?.hour || 0)))
+    const previewRate = batchFeeMode === 'manual' ? manualRate : autoRate
+
+    if (!batchItems.length) {
+      setBatchPreview(null)
+      setBatchPreviewLoading(false)
+      setBatchPreviewStatus('')
+      return
+    }
+    if (batchFeeMode === 'manual' && previewRate <= 0) {
+      setBatchPreview(null)
+      setBatchPreviewLoading(false)
+      setBatchPreviewStatus(t('lightningOps.batchOpenPreviewFeeRequired'))
+      return
+    }
+    if (previewRate <= 0) {
+      setBatchPreview(null)
+      setBatchPreviewLoading(false)
+      setBatchPreviewStatus(batchFeeStatus || t('lightningOps.batchOpenPreviewUnavailable'))
+      return
+    }
+
+    let mounted = true
+    const timer = window.setTimeout(() => {
+      setBatchPreviewLoading(true)
+      previewBatchOpenChannels({
+        channels: batchItems.map((item) => ({
+          local_funding_sat: item.local_funding_sat,
+        })),
+        sat_per_vbyte: previewRate,
+      })
+        .then((res: any) => {
+          if (!mounted) return
+          const next = res as BatchOpenPreview
+          setBatchPreview(next)
+          setBatchPreviewStatus(batchPreviewMessage(next))
+        })
+        .catch((err: any) => {
+          if (!mounted) return
+          setBatchPreview(null)
+          setBatchPreviewStatus(err?.message || t('lightningOps.batchOpenPreviewUnavailable'))
+        })
+        .finally(() => {
+          if (!mounted) return
+          setBatchPreviewLoading(false)
+        })
+    }, 250)
+
+    return () => {
+      mounted = false
+      window.clearTimeout(timer)
+    }
+  }, [batchFeeMode, batchFeeRate, batchFeeStatus, batchItems, openFeeHint, t])
+
+  useEffect(() => {
     if (feeScopeAll) {
       setFeeLoadStatus('')
       setFeeLoading(false)
@@ -4428,6 +4507,23 @@ export default function LightningOps() {
     }
   }
 
+  function batchPreviewMessage(preview?: BatchOpenPreview | null) {
+    const code = String(preview?.message_code || '').trim()
+    switch (code) {
+      case 'dust_change_absorbed':
+        return t('lightningOps.openPreviewDustChange')
+      case 'insufficient_confirmed_balance':
+      case 'insufficient_balance_for_fees':
+        return t('lightningOps.batchOpenPreviewInsufficient')
+      case 'no_confirmed_utxos':
+        return t('lightningOps.batchOpenPreviewNoConfirmedUtxos')
+      case 'no_channels':
+        return t('lightningOps.batchOpenNoItems')
+      default:
+        return String(preview?.message || '').trim()
+    }
+  }
+
   const handleOpenChannel = async () => {
     setOpenStatus(t('lightningOps.openingChannel'))
     setOpenChannelPoint('')
@@ -4550,6 +4646,11 @@ export default function LightningOps() {
     setBatchChannelPoints([])
     try {
       const feeRate = Number(batchFeeRate || 0)
+      if (batchFeeMode === 'manual' && feeRate <= 0) {
+        setBatchStatus(t('lightningOps.batchOpenManualFeeRequired'))
+        setBatchBusy(false)
+        return
+      }
       const channelsPayload = batchItems.map((item) => {
         const hasHost = Boolean(item.host?.trim())
         const payload: any = {
@@ -4570,7 +4671,7 @@ export default function LightningOps() {
       })
       const res: any = await openBatchChannels({
         channels: channelsPayload,
-        sat_per_vbyte: feeRate > 0 ? feeRate : undefined,
+        sat_per_vbyte: batchFeeMode === 'manual' && feeRate > 0 ? feeRate : undefined,
       })
       const points = Array.isArray(res?.pending_channels)
         ? res.pending_channels
@@ -7181,29 +7282,95 @@ export default function LightningOps() {
             {t('lightningOps.feeHint', { fastest: openFeeHint?.fastest ?? '-', hour: openFeeHint?.hour ?? '-' })}
           </span>
         </label>
-        <div className="flex flex-wrap items-center gap-3">
-          <input
-            className="input-field flex-1 min-w-[140px]"
-            placeholder={t('common.auto')}
-            type="number"
-            min={1}
-            value={batchFeeRate}
-            onChange={(e) => setBatchFeeRate(e.target.value)}
-          />
+        <div className="flex flex-wrap gap-3 text-sm">
           <button
-            className="btn-secondary text-xs px-3 py-2"
+            className={batchFeeMode === 'auto' ? 'btn-primary' : 'btn-secondary'}
             type="button"
-            onClick={() => {
-              if (openFeeHint?.fastest) {
-                setBatchFeeRate(String(openFeeHint.fastest))
-              }
-            }}
-            disabled={!openFeeHint?.fastest}
+            onClick={() => setBatchFeeMode('auto')}
           >
-            {t('lightningOps.useFastest')}
+            {t('lightningOps.closeFeeModeAuto')}
           </button>
-          {batchFeeStatus && <p className="text-xs text-fog/50">{batchFeeStatus}</p>}
+          <button
+            className={batchFeeMode === 'manual' ? 'btn-primary' : 'btn-secondary'}
+            type="button"
+            onClick={() => setBatchFeeMode('manual')}
+          >
+            {t('lightningOps.closeFeeModeManual')}
+          </button>
         </div>
+        {batchFeeMode === 'auto' && (
+          <p className="text-xs text-fog/55">{t('lightningOps.batchOpenFeeAutoHint')}</p>
+        )}
+        {batchFeeMode === 'manual' && (
+          <>
+            <div className="flex flex-wrap items-center gap-3">
+              <input
+                className="input-field flex-1 min-w-[140px]"
+                placeholder={t('lightningOps.closeFeeModeManual')}
+                type="number"
+                min={1}
+                value={batchFeeRate}
+                onChange={(e) => setBatchFeeRate(e.target.value)}
+              />
+              <button
+                className="btn-secondary text-xs px-3 py-2"
+                type="button"
+                onClick={() => {
+                  if (openFeeHint?.fastest) {
+                    setBatchFeeRate(String(openFeeHint.fastest))
+                  }
+                }}
+                disabled={!openFeeHint?.fastest}
+              >
+                {t('lightningOps.useFastest')}
+              </button>
+            </div>
+            <p className="text-xs text-fog/55">{t('lightningOps.batchOpenFeeManualHint')}</p>
+          </>
+        )}
+        {batchFeeStatus && <p className="text-xs text-fog/50">{batchFeeStatus}</p>}
+        {(batchPreviewLoading || batchPreview || batchPreviewStatus) && (
+          <div className={`rounded-2xl border p-3 space-y-2 ${batchPreview?.enough_funds === false ? 'border-amber-400/30 bg-amber-500/10' : 'border-white/10 bg-ink/70'}`}>
+            <div className="flex items-center justify-between gap-3 text-xs">
+              <span className="text-fog/60">{t('lightningOps.batchOpenPreviewTitle')}</span>
+              {batchPreview && (
+                <span className="text-fog/50">{t('lightningOps.closePreviewEstimated')}</span>
+              )}
+            </div>
+            {batchPreviewLoading && (
+              <p className="text-xs text-fog/60">{t('lightningOps.batchOpenPreviewLoading')}</p>
+            )}
+            {!batchPreviewLoading && batchPreview && (
+              <>
+                <div className="grid gap-2 text-xs text-fog/80 sm:grid-cols-2">
+                  <p>{t('lightningOps.batchOpenPreviewChannels', { count: batchPreview.channel_count })}</p>
+                  <p>{t('lightningOps.batchOpenPreviewVbytes', { amount: batchPreview.estimated_vbytes, fee: batchPreview.sat_per_vbyte })}</p>
+                  <p>{t('lightningOps.batchOpenPreviewFunding', { amount: formatSatsValue(batchPreview.total_funding_sat) })}</p>
+                  <p>{t('lightningOps.batchOpenPreviewFee', { amount: formatSatsValue(batchPreview.fee_sat) })}</p>
+                  <p>{t('lightningOps.batchOpenPreviewTotalDebit', { amount: formatSatsValue(batchPreview.total_debit_sat) })}</p>
+                  <p>{t('lightningOps.batchOpenPreviewRemaining', { amount: formatSatsValue(batchPreview.spendable_remaining_sat) })}</p>
+                  {!batchPreview.reference_only && (
+                    <p>{t('lightningOps.batchOpenPreviewInputs', { selected: batchPreview.selected_input_count, amount: formatSatsValue(batchPreview.selected_input_sat) })}</p>
+                  )}
+                  <p>{t('lightningOps.batchOpenPreviewSpendable', { amount: formatSatsValue(batchPreview.spendable_sat) })}</p>
+                </div>
+                <p className="text-xs text-fog/55">
+                  {batchPreview.reference_only
+                    ? t('lightningOps.batchOpenPreviewReferenceFallback', { fee: batchPreview.sat_per_vbyte })
+                    : batchFeeMode === 'manual'
+                      ? t('lightningOps.batchOpenPreviewReferenceManual', { fee: batchPreview.sat_per_vbyte })
+                      : t('lightningOps.batchOpenPreviewReferenceAuto', { fee: batchPreview.sat_per_vbyte })}
+                </p>
+                <p className={batchPreview.enough_funds ? 'text-xs text-emerald-200' : 'text-xs text-amber-200'}>
+                  {batchPreview.enough_funds ? t('lightningOps.batchOpenPreviewEnough') : t('lightningOps.batchOpenPreviewInsufficient')}
+                </p>
+              </>
+            )}
+            {!batchPreviewLoading && batchPreviewStatus && (
+              <p className={`text-xs ${batchPreview?.enough_funds === false ? 'text-amber-200' : 'text-fog/60'}`}>{batchPreviewStatus}</p>
+            )}
+          </div>
+        )}
         <button className="btn-primary" onClick={handleBatchOpenChannels} disabled={batchBusy || !batchItems.length}>
           {batchBusy ? t('lightningOps.batchOpenRunning') : t('lightningOps.batchOpenAction')}
         </button>

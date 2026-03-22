@@ -297,6 +297,12 @@ export const previewOpenChannel = (payload: {
   push_sat?: number
   sat_per_vbyte: number
 }) => request('/api/lnops/channel/open-preview', { method: 'POST', body: JSON.stringify(payload) })
+export const previewBatchOpenChannels = (payload: {
+  channels: Array<{
+    local_funding_sat: number
+  }>
+  sat_per_vbyte: number
+}) => request('/api/lnops/channel/open-batch-preview', { method: 'POST', body: JSON.stringify(payload) })
 export const openChannel = (payload: {
   peer_address: string
   local_funding_sat: number

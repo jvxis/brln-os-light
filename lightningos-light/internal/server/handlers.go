@@ -2584,6 +2584,49 @@ func (s *Server) handleLNBatchOpenChannel(w http.ResponseWriter, r *http.Request
 	})
 }
 
+func (s *Server) handleLNBatchOpenChannelPreview(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Channels []struct {
+			LocalFundingSat int64 `json:"local_funding_sat"`
+		} `json:"channels"`
+		SatPerVbyte int64 `json:"sat_per_vbyte"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if len(req.Channels) == 0 {
+		writeError(w, http.StatusBadRequest, "channels required")
+		return
+	}
+	if req.SatPerVbyte < 0 {
+		writeError(w, http.StatusBadRequest, "sat_per_vbyte must be zero or positive")
+		return
+	}
+
+	batch := make([]lndclient.BatchOpenChannelParams, 0, len(req.Channels))
+	for idx, item := range req.Channels {
+		if item.LocalFundingSat <= 0 {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("channels[%d].local_funding_sat must be positive", idx))
+			return
+		}
+		batch = append(batch, lndclient.BatchOpenChannelParams{
+			LocalFundingSat: item.LocalFundingSat,
+		})
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+
+	preview, err := s.lnd.PreviewBatchOpenChannel(ctx, batch, req.SatPerVbyte)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, lndDetailedErrorMessage(err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, preview)
+}
+
 func (s *Server) handleMempoolFees(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()

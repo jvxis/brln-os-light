@@ -34,6 +34,25 @@ type OpenChannelPreview struct {
 	Message               string `json:"message,omitempty"`
 }
 
+type BatchOpenChannelPreview struct {
+	ChannelCount          int    `json:"channel_count"`
+	TotalFundingSat       int64  `json:"total_funding_sat"`
+	FeeSat                int64  `json:"fee_sat"`
+	TotalDebitSat         int64  `json:"total_debit_sat"`
+	SpendableSat          int64  `json:"spendable_sat"`
+	SpendableRemainingSat int64  `json:"spendable_remaining_sat"`
+	SelectedInputCount    int    `json:"selected_input_count"`
+	SelectedInputSat      int64  `json:"selected_input_sat"`
+	EstimatedVbytes       int64  `json:"estimated_vbytes"`
+	SatPerVbyte           int64  `json:"sat_per_vbyte"`
+	EnoughFunds           bool   `json:"enough_funds"`
+	Exact                 bool   `json:"exact"`
+	HasChange             bool   `json:"has_change"`
+	ReferenceOnly         bool   `json:"reference_only"`
+	MessageCode           string `json:"message_code,omitempty"`
+	Message               string `json:"message,omitempty"`
+}
+
 func (c *Client) PreviewOpenChannel(ctx context.Context, localFundingSat int64, pushSat int64, satPerVbyte int64) (OpenChannelPreview, error) {
 	preview := OpenChannelPreview{
 		LocalFundingSat: localFundingSat,
@@ -66,6 +85,35 @@ func (c *Client) PreviewOpenChannel(ctx context.Context, localFundingSat int64, 
 		return preview, err
 	}
 	return buildOpenChannelPreview(preview, utxos), nil
+}
+
+func (c *Client) PreviewBatchOpenChannel(ctx context.Context, channels []BatchOpenChannelParams, satPerVbyte int64) (BatchOpenChannelPreview, error) {
+	preview := BatchOpenChannelPreview{SatPerVbyte: satPerVbyte}
+	if len(channels) == 0 {
+		preview.MessageCode = "no_channels"
+		preview.Message = "channels required"
+		return preview, nil
+	}
+	if satPerVbyte <= 0 {
+		preview.MessageCode = "invalid_sat_per_vbyte"
+		preview.Message = "sat_per_vbyte must be positive"
+		return preview, nil
+	}
+	preview.ChannelCount = len(channels)
+	for _, item := range channels {
+		if item.LocalFundingSat <= 0 {
+			preview.MessageCode = "invalid_local_funding"
+			preview.Message = "local_funding_sat must be positive"
+			return preview, nil
+		}
+		preview.TotalFundingSat += item.LocalFundingSat
+	}
+
+	utxos, err := c.ListOnchainUtxos(ctx, 1, previewOnchainMaxConfs)
+	if err != nil {
+		return preview, err
+	}
+	return buildBatchOpenChannelPreview(preview, utxos), nil
 }
 
 func buildOpenChannelPreview(preview OpenChannelPreview, utxos []OnchainUtxo) OpenChannelPreview {
@@ -153,9 +201,108 @@ func buildOpenChannelPreview(preview OpenChannelPreview, utxos []OnchainUtxo) Op
 	return preview
 }
 
+func buildBatchOpenChannelPreview(preview BatchOpenChannelPreview, utxos []OnchainUtxo) BatchOpenChannelPreview {
+	sorted := append([]OnchainUtxo(nil), utxos...)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].AmountSat == sorted[j].AmountSat {
+			return strings.TrimSpace(sorted[i].Outpoint) < strings.TrimSpace(sorted[j].Outpoint)
+		}
+		return sorted[i].AmountSat > sorted[j].AmountSat
+	})
+
+	for _, utxo := range sorted {
+		preview.SpendableSat += utxo.AmountSat
+	}
+	preview.SpendableRemainingSat = preview.SpendableSat
+
+	if len(sorted) == 0 {
+		preview = applyBatchOpenReferenceEstimate(preview)
+		preview.MessageCode = "no_confirmed_utxos"
+		preview.Message = "no confirmed UTXOs available"
+		return preview
+	}
+	if preview.SpendableSat < preview.TotalFundingSat {
+		preview = applyBatchOpenReferenceEstimate(preview)
+		preview.MessageCode = "insufficient_confirmed_balance"
+		preview.Message = "insufficient confirmed balance"
+		return preview
+	}
+
+	changeDust := mempool.GetDustThreshold(wire.NewTxOut(1, openChannelPreviewChangeScript))
+	inputs := make([]previewInput, 0, len(sorted))
+	selectedSat := int64(0)
+
+	for _, utxo := range sorted {
+		selectedSat += utxo.AmountSat
+		inputs = append(inputs, previewInput{
+			pkScript:    decodeHexOrNil(utxo.PkScript),
+			addressType: utxo.AddressType,
+		})
+
+		withChangeVbytes := estimatePreviewVirtualSize(inputs, batchOpenPreviewOutputs(preview.ChannelCount, true))
+		withChangeFee := withChangeVbytes * preview.SatPerVbyte
+		changeSat := selectedSat - preview.TotalFundingSat - withChangeFee
+		if changeSat >= changeDust {
+			preview.SelectedInputCount = len(inputs)
+			preview.SelectedInputSat = selectedSat
+			preview.EstimatedVbytes = withChangeVbytes
+			preview.FeeSat = withChangeFee
+			preview.TotalDebitSat = preview.TotalFundingSat + preview.FeeSat
+			preview.SpendableRemainingSat = maxInt64(0, preview.SpendableSat-preview.TotalDebitSat)
+			preview.EnoughFunds = preview.TotalDebitSat <= preview.SpendableSat
+			preview.Exact = false
+			preview.HasChange = true
+			return preview
+		}
+
+		withoutChangeVbytes := estimatePreviewVirtualSize(inputs, batchOpenPreviewOutputs(preview.ChannelCount, false))
+		withoutChangeFeeFloor := withoutChangeVbytes * preview.SatPerVbyte
+		if selectedSat < preview.TotalFundingSat+withoutChangeFeeFloor {
+			continue
+		}
+
+		extraFeeSat := selectedSat - preview.TotalFundingSat - withoutChangeFeeFloor
+		if extraFeeSat <= changeDust {
+			preview.SelectedInputCount = len(inputs)
+			preview.SelectedInputSat = selectedSat
+			preview.EstimatedVbytes = withoutChangeVbytes
+			preview.FeeSat = selectedSat - preview.TotalFundingSat
+			preview.TotalDebitSat = preview.TotalFundingSat + preview.FeeSat
+			preview.SpendableRemainingSat = maxInt64(0, preview.SpendableSat-preview.TotalDebitSat)
+			preview.EnoughFunds = preview.TotalDebitSat <= preview.SpendableSat
+			preview.Exact = false
+			preview.HasChange = false
+			if extraFeeSat > 0 {
+				preview.MessageCode = "dust_change_absorbed"
+				preview.Message = "change would be dust and is absorbed into the fee estimate"
+			}
+			return preview
+		}
+	}
+
+	preview = applyBatchOpenReferenceEstimate(preview)
+	preview.MessageCode = "insufficient_balance_for_fees"
+	preview.Message = "insufficient confirmed balance for funding plus fees"
+	return preview
+}
+
 func openChannelPreviewOutputs(includeChange bool) []*wire.TxOut {
 	outputs := []*wire.TxOut{
 		wire.NewTxOut(1, openChannelPreviewFundingScript),
+	}
+	if includeChange {
+		outputs = append(outputs, wire.NewTxOut(1, openChannelPreviewChangeScript))
+	}
+	return outputs
+}
+
+func batchOpenPreviewOutputs(channelCount int, includeChange bool) []*wire.TxOut {
+	if channelCount <= 0 {
+		channelCount = 1
+	}
+	outputs := make([]*wire.TxOut, 0, channelCount+1)
+	for i := 0; i < channelCount; i++ {
+		outputs = append(outputs, wire.NewTxOut(1, openChannelPreviewFundingScript))
 	}
 	if includeChange {
 		outputs = append(outputs, wire.NewTxOut(1, openChannelPreviewChangeScript))
@@ -168,6 +315,19 @@ func applyOpenChannelReferenceEstimate(preview OpenChannelPreview) OpenChannelPr
 	preview.EstimatedVbytes = estimatePreviewVirtualSize(inputs, openChannelPreviewOutputs(true))
 	preview.FeeSat = preview.EstimatedVbytes * preview.SatPerVbyte
 	preview.TotalDebitSat = preview.LocalFundingSat + preview.FeeSat
+	preview.SpendableRemainingSat = maxInt64(0, preview.SpendableSat-preview.TotalDebitSat)
+	preview.HasChange = true
+	preview.ReferenceOnly = true
+	preview.Exact = false
+	preview.EnoughFunds = preview.TotalDebitSat > 0 && preview.SpendableSat >= preview.TotalDebitSat
+	return preview
+}
+
+func applyBatchOpenReferenceEstimate(preview BatchOpenChannelPreview) BatchOpenChannelPreview {
+	inputs := []previewInput{{addressType: "p2wkh"}}
+	preview.EstimatedVbytes = estimatePreviewVirtualSize(inputs, batchOpenPreviewOutputs(preview.ChannelCount, true))
+	preview.FeeSat = preview.EstimatedVbytes * preview.SatPerVbyte
+	preview.TotalDebitSat = preview.TotalFundingSat + preview.FeeSat
 	preview.SpendableRemainingSat = maxInt64(0, preview.SpendableSat-preview.TotalDebitSat)
 	preview.HasChange = true
 	preview.ReferenceOnly = true

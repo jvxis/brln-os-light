@@ -1716,6 +1716,8 @@
     "peerRecommendationsCopy": "Copiar endereço",
     "peerRecommendationsUse": "Usar na abertura",
     "peerRecommendationsLoaded": "Peer sugerido carregado no formulário de abertura.",
+    "peerRecommendationsBatch": "Add batch open",
+    "peerRecommendationsBatchLoaded": "Peer sugerido carregado no formulário de batch open.",
     "outRate": "Out rate",
     "peerBase": "Peer base",
     "peerRate": "Peer rate",

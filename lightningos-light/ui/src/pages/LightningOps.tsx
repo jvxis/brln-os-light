@@ -757,6 +757,7 @@ const CLOSE_RECOVERY_SECTION_ID = 'close-recovery-section'
 const AUTOFEE_SECTION_ID = 'autofee-section'
 const HTLC_MANAGER_SECTION_ID = 'htlc-manager-section'
 const OPEN_CHANNEL_SECTION_ID = 'open-channel-section'
+const BATCH_OPEN_SECTION_ID = 'batch-open-section'
 const SCB_RECOVERY_CONFIRM_PHRASE = 'I UNDERSTAND FORCE CLOSE'
 const BALANCED_OPEN_FUNDING_VBYTES = 190
 const BALANCED_OPEN_REQUIRED_REMAINING_SAT = 10000
@@ -1034,6 +1035,8 @@ export default function LightningOps() {
   const [pendingForceStatusByPoint, setPendingForceStatusByPoint] = useState<Record<string, string>>({})
   const closeCardRef = useRef<HTMLDivElement | null>(null)
   const closeSelectRef = useRef<HTMLSelectElement | null>(null)
+  const openPeerInputRef = useRef<HTMLInputElement | null>(null)
+  const batchPeerInputRef = useRef<HTMLInputElement | null>(null)
 
   const [feeScopeAll, setFeeScopeAll] = useState(true)
   const [feeChannelPoint, setFeeChannelPoint] = useState('')
@@ -4475,6 +4478,17 @@ export default function LightningOps() {
     }
   }
 
+  const scrollToSectionAndFocus = (sectionID: string, focusTarget?: HTMLInputElement | null) => {
+    if (typeof window === 'undefined') return
+    window.setTimeout(() => {
+      const target = document.getElementById(sectionID)
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+      focusTarget?.focus()
+    }, 50)
+  }
+
   const handleUsePeerRecommendation = (item: PeerRecommendation) => {
     const value = recommendationPeerAddress(item)
     if (!value) {
@@ -4483,13 +4497,18 @@ export default function LightningOps() {
     }
     setOpenPeer(value)
     setOpenStatus(t('lightningOps.peerRecommendationsLoaded'))
-    if (typeof window !== 'undefined') {
-      window.setTimeout(() => {
-        const target = document.getElementById(OPEN_CHANNEL_SECTION_ID)
-        if (!target) return
-        target.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }, 50)
+    scrollToSectionAndFocus(OPEN_CHANNEL_SECTION_ID, openPeerInputRef.current)
+  }
+
+  const handleUsePeerRecommendationBatch = (item: PeerRecommendation) => {
+    const value = recommendationPeerAddress(item)
+    if (!value) {
+      setBatchStatus(t('lightningOps.peerRecommendationsAddressUnavailable'))
+      return
     }
+    setBatchPeer(value)
+    setBatchStatus(t('lightningOps.peerRecommendationsBatchLoaded'))
+    scrollToSectionAndFocus(BATCH_OPEN_SECTION_ID, batchPeerInputRef.current)
   }
 
   function openPreviewMessage(preview?: OpenChannelPreview | null) {
@@ -6586,6 +6605,14 @@ export default function LightningOps() {
                                     >
                                       {t('lightningOps.peerRecommendationsUse')}
                                     </button>
+                                    <button
+                                      type="button"
+                                      className="btn-secondary px-3 py-1 text-[11px] disabled:opacity-50 disabled:cursor-not-allowed"
+                                      onClick={() => handleUsePeerRecommendationBatch(item)}
+                                      disabled={!canUseRecommendation}
+                                    >
+                                      {t('lightningOps.peerRecommendationsBatch')}
+                                    </button>
                                   </div>
                                 </div>
                               )
@@ -6875,6 +6902,7 @@ export default function LightningOps() {
         <div id={OPEN_CHANNEL_SECTION_ID} className="section-card space-y-4">
           <h3 className="text-lg font-semibold">{t('lightningOps.openChannel')}</h3>
           <input
+            ref={openPeerInputRef}
             className="input-field"
             placeholder={t('lightningOps.peerAddressPlaceholder')}
             value={openPeer}
@@ -7209,13 +7237,14 @@ export default function LightningOps() {
         </div>
       </div>
 
-      <div className="section-card space-y-4">
+      <div id={BATCH_OPEN_SECTION_ID} className="section-card space-y-4">
         <div>
           <h3 className="text-lg font-semibold">{t('lightningOps.batchOpenTitle')}</h3>
           <p className="text-sm text-fog/60">{t('lightningOps.batchOpenSubtitle')}</p>
         </div>
         <div className="grid gap-4 lg:grid-cols-2">
           <input
+            ref={batchPeerInputRef}
             className="input-field"
             placeholder={t('lightningOps.peerAddressPlaceholder')}
             value={batchPeer}

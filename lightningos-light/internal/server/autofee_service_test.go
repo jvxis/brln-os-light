@@ -695,6 +695,23 @@ func TestAutofeeProfileMovementDefaults(t *testing.T) {
 	}
 }
 
+func TestAutofeeConfigWithProfileDefaults(t *testing.T) {
+	cfg := autofeeConfigWithProfileDefaults(AutofeeConfig{Profile: "moderate"})
+	if len(cfg.ProfileDefaults) != len(autofeeProfiles) {
+		t.Fatalf("unexpected profile defaults count: got %d want %d", len(cfg.ProfileDefaults), len(autofeeProfiles))
+	}
+	moderate, ok := cfg.ProfileDefaults["moderate"]
+	if !ok {
+		t.Fatalf("expected moderate profile defaults to be present")
+	}
+	if moderate.CooldownUpSec != 6*3600 || moderate.CooldownDownSec != 1*3600 || moderate.StepCap != 0.08 {
+		t.Fatalf("unexpected moderate profile defaults payload: %+v", moderate)
+	}
+	if moderate.InboundDiscountMaxRatio != defaultInboundDiscountMaxRatio {
+		t.Fatalf("unexpected inbound discount default: got %.2f want %.2f", moderate.InboundDiscountMaxRatio, defaultInboundDiscountMaxRatio)
+	}
+}
+
 func TestShouldHoldSmallStepBypassesTowardTargetWhenGapIsLarge(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
 	st := &autofeeChannelState{}

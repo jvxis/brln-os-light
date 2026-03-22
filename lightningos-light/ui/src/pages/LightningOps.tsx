@@ -376,7 +376,23 @@ type BitcoinLocalStatus = {
   block_cadence?: BitcoinLocalCadenceBucket[]
 }
 
-  type AutofeeConfig = {
+type AutofeeProfileDefaults = {
+  run_interval_sec: number
+  cooldown_up_sec: number
+  cooldown_down_sec: number
+  step_cap: number
+  discovery_step_cap_down: number
+  stall_floor_relax_gap_frac: number
+  inbound_discount_max_ratio: number
+  outrate_floor_factor_low: number
+  soften_min_out_ratio: number
+  soften_max_drop_to_peg_frac: number
+  htlc_min_attempts_60m: number
+  htlc_policy_fail_rate: number
+  htlc_liquidity_fail_rate: number
+}
+
+type AutofeeConfig = {
     enabled: boolean
     profile: string
     lookback_days: number
@@ -408,6 +424,7 @@ type BitcoinLocalStatus = {
   htlc_mode: string
   min_ppm: number
   max_ppm: number
+  profile_defaults?: Record<string, AutofeeProfileDefaults>
 }
 
 type AutofeeStatus = {
@@ -1281,61 +1298,7 @@ export default function LightningOps() {
   const balancedSpendableEnough = balancedRequiredSpendableSat > 0 && balancedWalletSpendableSat >= balancedRequiredSpendableSat
   const balancedConfirmedEnough = balancedRequiredConfirmedSat > 0 && balancedWalletConfirmedSat >= balancedRequiredConfirmedSat
 
-  const autofeeProfileDefaults: Record<string, { interval: number; cooldownUp: number; cooldownDown: number }> = {
-    conservative: { interval: 8, cooldownUp: 6, cooldownDown: 8 },
-    moderate: { interval: 4, cooldownUp: 3, cooldownDown: 4 },
-    aggressive: { interval: 2, cooldownUp: 1, cooldownDown: 2 }
-  }
-  const autofeeMovementDefaults: Record<string, {
-    stepCap: number
-    discoveryStepCapDown: number
-    stallFloorRelaxGapFrac: number
-    inboundDiscountMaxRatio: number
-    outrateFloorFactorLow: number
-    softenMinOutRatio: number
-    softenMaxDropToPegFrac: number
-    htlcMinAttempts60m: number
-    htlcPolicyFailRate: number
-    htlcLiquidityFailRate: number
-  }> = {
-    conservative: {
-      stepCap: 0.03,
-      discoveryStepCapDown: 0.10,
-      stallFloorRelaxGapFrac: 0.20,
-      inboundDiscountMaxRatio: 0.90,
-      outrateFloorFactorLow: 0.90,
-      softenMinOutRatio: 0.55,
-      softenMaxDropToPegFrac: 0.98,
-      htlcMinAttempts60m: 20,
-      htlcPolicyFailRate: 0.20,
-      htlcLiquidityFailRate: 0.25
-    },
-    moderate: {
-      stepCap: 0.05,
-      discoveryStepCapDown: 0.15,
-      stallFloorRelaxGapFrac: 0.20,
-      inboundDiscountMaxRatio: 0.90,
-      outrateFloorFactorLow: 0.85,
-      softenMinOutRatio: 0.30,
-      softenMaxDropToPegFrac: 0.90,
-      htlcMinAttempts60m: 12,
-      htlcPolicyFailRate: 0.15,
-      htlcLiquidityFailRate: 0.16
-    },
-    aggressive: {
-      stepCap: 0.08,
-      discoveryStepCapDown: 0.20,
-      stallFloorRelaxGapFrac: 0.20,
-      inboundDiscountMaxRatio: 0.90,
-      outrateFloorFactorLow: 0.80,
-      softenMinOutRatio: 0.40,
-      softenMaxDropToPegFrac: 0.90,
-      htlcMinAttempts60m: 8,
-      htlcPolicyFailRate: 0.10,
-      htlcLiquidityFailRate: 0.15
-    }
-  }
-  const activeAutofeeMovementDefaults = autofeeMovementDefaults[autofeeProfile] || autofeeMovementDefaults.moderate
+  const activeAutofeeProfileDefaults = autofeeConfig?.profile_defaults?.[autofeeProfile]
   const pctText = (ratio: number, decimals = 0) => `${(ratio * 100).toFixed(decimals)}%`
   const withHint = (label: string, hint: string) => (
     <span className="inline-flex items-center gap-1">
@@ -5112,11 +5075,11 @@ export default function LightningOps() {
                   onChange={(e) => {
                     const value = e.target.value
                     setAutofeeProfile(value)
-                    const defaults = autofeeProfileDefaults[value]
+                    const defaults = autofeeConfig?.profile_defaults?.[value]
                     if (defaults) {
-                      setAutofeeIntervalHours(String(defaults.interval))
-                      setAutofeeCooldownUp(String(defaults.cooldownUp))
-                      setAutofeeCooldownDown(String(defaults.cooldownDown))
+                      setAutofeeIntervalHours(String(Math.max(1, Math.round((defaults.run_interval_sec || 14400) / 3600))))
+                      setAutofeeCooldownUp(String(Math.max(1, Math.round((defaults.cooldown_up_sec || 10800) / 3600))))
+                      setAutofeeCooldownDown(String(Math.max(1, Math.round((defaults.cooldown_down_sec || 14400) / 3600))))
                     }
                   }}
                 >
@@ -5172,84 +5135,84 @@ export default function LightningOps() {
                       {withHint(t('lightningOps.autofeeCooldownUp'), t('lightningOps.autofeeMovementHintCooldownUp'))}
                       <input className="input-field mt-2" type="number" min={1} max={12} value={autofeeCooldownUp} onChange={(e) => setAutofeeCooldownUp(e.target.value)} />
                       <p className="mt-1 text-[11px] text-fog/55">
-                        {t('lightningOps.autofeeMovementDefaultLabel', { value: `${(autofeeProfileDefaults[autofeeProfile]?.cooldownUp ?? 3)}h` })}
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: activeAutofeeProfileDefaults ? `${Math.max(1, Math.round((activeAutofeeProfileDefaults.cooldown_up_sec || 10800) / 3600))}h` : '-' })}
                       </p>
                     </label>
                     <label className="text-sm text-fog/70">
                       {withHint(t('lightningOps.autofeeCooldownDown'), t('lightningOps.autofeeMovementHintCooldownDown'))}
                       <input className="input-field mt-2" type="number" min={1} max={24} value={autofeeCooldownDown} onChange={(e) => setAutofeeCooldownDown(e.target.value)} />
                       <p className="mt-1 text-[11px] text-fog/55">
-                        {t('lightningOps.autofeeMovementDefaultLabel', { value: `${(autofeeProfileDefaults[autofeeProfile]?.cooldownDown ?? 4)}h` })}
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: activeAutofeeProfileDefaults ? `${Math.max(1, Math.round((activeAutofeeProfileDefaults.cooldown_down_sec || 14400) / 3600))}h` : '-' })}
                       </p>
                     </label>
                     <label className="text-sm text-fog/70">
                       {withHint(t('lightningOps.autofeeStepCapOverride'), t('lightningOps.autofeeMovementHintStepCap'))}
                       <input className="input-field mt-2" type="number" min={0} max={30} step="0.1" value={autofeeStepCapOverride} onChange={(e) => setAutofeeStepCapOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
                       <p className="mt-1 text-[11px] text-fog/55">
-                        {t('lightningOps.autofeeMovementDefaultLabel', { value: pctText(activeAutofeeMovementDefaults.stepCap, 1) })}
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: activeAutofeeProfileDefaults ? pctText(activeAutofeeProfileDefaults.step_cap, 1) : '-' })}
                       </p>
                     </label>
                     <label className="text-sm text-fog/70">
                       {withHint(t('lightningOps.autofeeDiscoveryStepCapDownOverride'), t('lightningOps.autofeeMovementHintDiscoveryDownCap'))}
                       <input className="input-field mt-2" type="number" min={0} max={40} step="0.1" value={autofeeDiscoveryStepCapDownOverride} onChange={(e) => setAutofeeDiscoveryStepCapDownOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
                       <p className="mt-1 text-[11px] text-fog/55">
-                        {t('lightningOps.autofeeMovementDefaultLabel', { value: pctText(activeAutofeeMovementDefaults.discoveryStepCapDown, 1) })}
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: activeAutofeeProfileDefaults ? pctText(activeAutofeeProfileDefaults.discovery_step_cap_down, 1) : '-' })}
                       </p>
                     </label>
                     <label className="text-sm text-fog/70">
                       {withHint(t('lightningOps.autofeeStallFloorRelaxGapFracOverride'), t('lightningOps.autofeeMovementHintStallRelaxGap'))}
                       <input className="input-field mt-2" type="number" min={0} max={80} step="1" value={autofeeStallFloorRelaxGapFracOverride} onChange={(e) => setAutofeeStallFloorRelaxGapFracOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
                       <p className="mt-1 text-[11px] text-fog/55">
-                        {t('lightningOps.autofeeMovementDefaultLabel', { value: pctText(activeAutofeeMovementDefaults.stallFloorRelaxGapFrac, 0) })}
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: activeAutofeeProfileDefaults ? pctText(activeAutofeeProfileDefaults.stall_floor_relax_gap_frac, 0) : '-' })}
                       </p>
                     </label>
                     <label className="text-sm text-fog/70">
                       {withHint(t('lightningOps.autofeeInboundDiscountMaxRatioOverride'), t('lightningOps.autofeeMovementHintInboundDiscountMaxRatio'))}
                       <input className="input-field mt-2" type="number" min={0} max={100} step="1" value={autofeeInboundDiscountMaxRatioOverride} onChange={(e) => setAutofeeInboundDiscountMaxRatioOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
                       <p className="mt-1 text-[11px] text-fog/55">
-                        {t('lightningOps.autofeeMovementDefaultLabel', { value: pctText(activeAutofeeMovementDefaults.inboundDiscountMaxRatio, 0) })}
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: activeAutofeeProfileDefaults ? pctText(activeAutofeeProfileDefaults.inbound_discount_max_ratio, 0) : '-' })}
                       </p>
                     </label>
                     <label className="text-sm text-fog/70">
                       {withHint(t('lightningOps.autofeeOutrateFloorFactorLowOverride'), t('lightningOps.autofeeMovementHintLowFlowFloor'))}
                       <input className="input-field mt-2" type="number" min={0} max={100} step="1" value={autofeeOutrateFloorFactorLowOverride} onChange={(e) => setAutofeeOutrateFloorFactorLowOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
                       <p className="mt-1 text-[11px] text-fog/55">
-                        {t('lightningOps.autofeeMovementDefaultLabel', { value: pctText(activeAutofeeMovementDefaults.outrateFloorFactorLow, 0) })}
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: activeAutofeeProfileDefaults ? pctText(activeAutofeeProfileDefaults.outrate_floor_factor_low, 0) : '-' })}
                       </p>
                     </label>
                     <label className="text-sm text-fog/70">
                       {withHint(t('lightningOps.autofeeSoftenMinOutRatioOverride'), t('lightningOps.autofeeMovementHintGlobalLockMinOut'))}
                       <input className="input-field mt-2" type="number" min={0} max={95} step="1" value={autofeeSoftenMinOutRatioOverride} onChange={(e) => setAutofeeSoftenMinOutRatioOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
                       <p className="mt-1 text-[11px] text-fog/55">
-                        {t('lightningOps.autofeeMovementDefaultLabel', { value: pctText(activeAutofeeMovementDefaults.softenMinOutRatio, 0) })}
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: activeAutofeeProfileDefaults ? pctText(activeAutofeeProfileDefaults.soften_min_out_ratio, 0) : '-' })}
                       </p>
                     </label>
                     <label className="text-sm text-fog/70">
                       {withHint(t('lightningOps.autofeeSoftenMaxDropToPegFracOverride'), t('lightningOps.autofeeMovementHintGlobalLockMaxDrop'))}
                       <input className="input-field mt-2" type="number" min={0} max={100} step="1" value={autofeeSoftenMaxDropToPegFracOverride} onChange={(e) => setAutofeeSoftenMaxDropToPegFracOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
                       <p className="mt-1 text-[11px] text-fog/55">
-                        {t('lightningOps.autofeeMovementDefaultLabel', { value: pctText(activeAutofeeMovementDefaults.softenMaxDropToPegFrac, 0) })}
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: activeAutofeeProfileDefaults ? pctText(activeAutofeeProfileDefaults.soften_max_drop_to_peg_frac, 0) : '-' })}
                       </p>
                     </label>
                     <label className="text-sm text-fog/70">
                       {withHint(t('lightningOps.autofeeHtlcMinAttemptsOverride'), t('lightningOps.autofeeMovementHintHtlcMinAttempts'))}
                       <input className="input-field mt-2" type="number" min={0} max={100} step="1" value={autofeeHtlcMinAttemptsOverride} onChange={(e) => setAutofeeHtlcMinAttemptsOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
                       <p className="mt-1 text-[11px] text-fog/55">
-                        {t('lightningOps.autofeeMovementDefaultLabel', { value: String(activeAutofeeMovementDefaults.htlcMinAttempts60m) })}
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: activeAutofeeProfileDefaults ? String(activeAutofeeProfileDefaults.htlc_min_attempts_60m) : '-' })}
                       </p>
                     </label>
                     <label className="text-sm text-fog/70">
                       {withHint(t('lightningOps.autofeeHtlcPolicyFailRateOverride'), t('lightningOps.autofeeMovementHintHtlcPolicyFailRate'))}
                       <input className="input-field mt-2" type="number" min={0} max={90} step="0.1" value={autofeeHtlcPolicyFailRateOverride} onChange={(e) => setAutofeeHtlcPolicyFailRateOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
                       <p className="mt-1 text-[11px] text-fog/55">
-                        {t('lightningOps.autofeeMovementDefaultLabel', { value: pctText(activeAutofeeMovementDefaults.htlcPolicyFailRate, 1) })}
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: activeAutofeeProfileDefaults ? pctText(activeAutofeeProfileDefaults.htlc_policy_fail_rate, 1) : '-' })}
                       </p>
                     </label>
                     <label className="text-sm text-fog/70">
                       {withHint(t('lightningOps.autofeeHtlcLiquidityFailRateOverride'), t('lightningOps.autofeeMovementHintHtlcLiquidityFailRate'))}
                       <input className="input-field mt-2" type="number" min={0} max={90} step="0.1" value={autofeeHtlcLiquidityFailRateOverride} onChange={(e) => setAutofeeHtlcLiquidityFailRateOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
                       <p className="mt-1 text-[11px] text-fog/55">
-                        {t('lightningOps.autofeeMovementDefaultLabel', { value: pctText(activeAutofeeMovementDefaults.htlcLiquidityFailRate, 1) })}
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: activeAutofeeProfileDefaults ? pctText(activeAutofeeProfileDefaults.htlc_liquidity_fail_rate, 1) : '-' })}
                       </p>
                     </label>
                   </div>

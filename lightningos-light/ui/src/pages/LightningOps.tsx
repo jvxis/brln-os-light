@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { acceptBalancedOpenSession, addLnWatchtower, boostPeers, bumpFeeCloseManagerSession, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getChannelRankings, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelFees, getLnChannelPeerRecommendations, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, previewBatchOpenChannels, previewOpenChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, recoverCloseManagerSession, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker } from '../api'
+import { acceptBalancedOpenSession, addLnWatchtower, boostPeers, bumpFeeCloseManagerSession, bumpPendingOpenChannel, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getChannelRankings, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelFees, getLnChannelPeerRecommendations, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, previewBatchOpenChannels, previewOpenChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, recoverCloseManagerSession, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker } from '../api'
 import { getLocale } from '../i18n'
 
 type Channel = {
@@ -79,6 +79,7 @@ type PendingChannel = {
   confirmation_height?: number
   opening_since_unix?: number
   opening_duration_sec?: number
+  funding_fee_rate_sat_vb?: number
   funding_bump_checked?: boolean
   funding_bump_eligible?: boolean
   funding_bump_outpoint?: string
@@ -93,6 +94,14 @@ type PendingChannel = {
     last_recovered_txid?: string
     suggest_force_close?: boolean
   }
+}
+
+type MempoolFeeHint = {
+  fastest?: number
+  halfHour?: number
+  hour?: number
+  economy?: number
+  minimum?: number
 }
 
 type CloseRecoverySession = {
@@ -772,6 +781,7 @@ const COOP_CLOSE_ESTIMATED_ONE_OUTPUT_VBYTES = 140
 const COOP_CLOSE_ESTIMATED_TWO_OUTPUT_VBYTES = 170
 const CLOSE_PREVIEW_DUST_LIMIT_SAT = 546
 const PENDING_OPEN_STUCK_THRESHOLD_SEC = 60 * 60
+const PENDING_OPEN_BUMP_REFERENCE_VBYTES = 110
 
 const readHashChannelPoint = (routeKey: string) => {
   if (typeof window === 'undefined') return ''
@@ -992,7 +1002,7 @@ export default function LightningOps() {
   const [openCloseAddress, setOpenCloseAddress] = useState('')
   const [openFeeMode, setOpenFeeMode] = useState<'auto' | 'manual'>('auto')
   const [openFeeRate, setOpenFeeRate] = useState('')
-  const [openFeeHint, setOpenFeeHint] = useState<{ fastest?: number; hour?: number } | null>(null)
+  const [openFeeHint, setOpenFeeHint] = useState<MempoolFeeHint | null>(null)
   const [openFeeStatus, setOpenFeeStatus] = useState('')
   const [openPreview, setOpenPreview] = useState<OpenChannelPreview | null>(null)
   const [openPreviewLoading, setOpenPreviewLoading] = useState(false)
@@ -1035,12 +1045,14 @@ export default function LightningOps() {
   const [closeForce, setCloseForce] = useState(false)
   const [closeFeeMode, setCloseFeeMode] = useState<'auto' | 'manual'>('auto')
   const [closeFeeRate, setCloseFeeRate] = useState('')
-  const [closeFeeHint, setCloseFeeHint] = useState<{ fastest?: number; hour?: number } | null>(null)
+  const [closeFeeHint, setCloseFeeHint] = useState<MempoolFeeHint | null>(null)
   const [closeFeeStatus, setCloseFeeStatus] = useState('')
   const [closeStatus, setCloseStatus] = useState('')
   const [closingTxHints, setClosingTxHints] = useState<Record<string, string>>({})
   const [pendingForceBusyByPoint, setPendingForceBusyByPoint] = useState<Record<string, boolean>>({})
   const [pendingForceStatusByPoint, setPendingForceStatusByPoint] = useState<Record<string, string>>({})
+  const [pendingOpenBumpBusyByPoint, setPendingOpenBumpBusyByPoint] = useState<Record<string, boolean>>({})
+  const [pendingOpenBumpStatusByPoint, setPendingOpenBumpStatusByPoint] = useState<Record<string, string>>({})
   const closeCardRef = useRef<HTMLDivElement | null>(null)
   const closeSelectRef = useRef<HTMLSelectElement | null>(null)
   const openPeerInputRef = useRef<HTMLInputElement | null>(null)
@@ -2968,10 +2980,13 @@ export default function LightningOps() {
       .then((res: any) => {
         if (!mounted) return
         const fastest = Number(res?.fastestFee || 0)
+        const halfHour = Number(res?.halfHourFee || 0)
         const hour = Number(res?.hourFee || 0)
-        setOpenFeeHint({ fastest, hour })
+        const economy = Number(res?.economyFee || 0)
+        const minimum = Number(res?.minimumFee || 0)
+        setOpenFeeHint({ fastest, halfHour, hour, economy, minimum })
         setOpenFeeRate((prev) => (prev ? prev : fastest > 0 ? String(fastest) : prev))
-        setCloseFeeHint({ fastest, hour })
+        setCloseFeeHint({ fastest, halfHour, hour, economy, minimum })
         setBatchFeeRate((prev) => (prev ? prev : fastest > 0 ? String(fastest) : prev))
         setBalancedFeeRate((prev) => (prev ? prev : fastest > 0 ? String(fastest) : prev))
         setOpenFeeStatus('')
@@ -3467,6 +3482,37 @@ export default function LightningOps() {
     if (typeof ch.opening_duration_sec !== 'number' || ch.opening_duration_sec < PENDING_OPEN_STUCK_THRESHOLD_SEC) return false
     if (typeof ch.confirmations_until_active === 'number' && ch.confirmations_until_active <= 0) return false
     return channelPointTxid(ch.channel_point).length > 0
+  }
+
+  const resolvePendingOpenBumpPreview = (ch: PendingChannel, preset: 'economic' | 'normal' | 'urgent') => {
+    const current = Math.max(0, Math.trunc(Number(ch.funding_fee_rate_sat_vb || 0)))
+    const economicTarget = Math.max(1, Math.trunc(Number(openFeeHint?.economy || openFeeHint?.minimum || 1)))
+    const normalTarget = Math.max(economicTarget + 1, Math.trunc(Number(openFeeHint?.hour || openFeeHint?.halfHour || 0)) || (economicTarget + 1))
+    const urgentTarget = Math.max(normalTarget + 3, Math.trunc(Number(openFeeHint?.fastest || 0)) || (normalTarget + 3))
+
+    let satPerVbyte = 0
+    let immediate = false
+    if (preset === 'economic') {
+      satPerVbyte = Math.max(current + 1, economicTarget)
+    } else if (preset === 'urgent') {
+      satPerVbyte = Math.max(current + 5, urgentTarget)
+      immediate = true
+    } else {
+      satPerVbyte = Math.max(current + 2, normalTarget)
+    }
+
+    return {
+      satPerVbyte,
+      immediate,
+      estimatedFeeSat: satPerVbyte * PENDING_OPEN_BUMP_REFERENCE_VBYTES,
+      referenceVbytes: PENDING_OPEN_BUMP_REFERENCE_VBYTES,
+    }
+  }
+
+  const pendingOpenBumpPresetLabel = (preset: 'economic' | 'normal' | 'urgent') => {
+    if (preset === 'economic') return t('lightningOps.pendingOpenBumpEconomic')
+    if (preset === 'urgent') return t('lightningOps.pendingOpenBumpUrgent')
+    return t('lightningOps.pendingOpenBumpNormal')
   }
 
   const pendingOpenBumpReasonLabel = (reason?: string) => {
@@ -4972,6 +5018,38 @@ export default function LightningOps() {
     }
   }
 
+  const handlePendingOpenBumpFee = async (channelPoint: string, preset: 'economic' | 'normal' | 'urgent', preview: { satPerVbyte: number; estimatedFeeSat: number }) => {
+    const point = (channelPoint || '').trim()
+    if (!point || pendingOpenBumpBusyByPoint[point]) return
+    const confirmed = window.confirm(t('lightningOps.pendingOpenBumpConfirm', {
+      preset: pendingOpenBumpPresetLabel(preset),
+      rate: preview.satPerVbyte,
+      fee: Math.max(0, Math.trunc(preview.estimatedFeeSat)).toLocaleString(),
+    }))
+    if (!confirmed) return
+
+    setPendingOpenBumpBusyByPoint((prev) => ({ ...prev, [point]: true }))
+    setPendingOpenBumpStatusByPoint((prev) => ({ ...prev, [point]: t('lightningOps.pendingOpenBumpRunning') }))
+    try {
+      const res: any = await bumpPendingOpenChannel({ channel_point: point, preset })
+      const satPerVbyte = Math.max(0, Math.trunc(Number(res?.sat_per_vbyte || preview.satPerVbyte)))
+      const estimatedFeeSat = Math.max(0, Math.trunc(Number(res?.estimated_fee_sat || preview.estimatedFeeSat)))
+      setPendingOpenBumpStatusByPoint((prev) => ({
+        ...prev,
+        [point]: t('lightningOps.pendingOpenBumpDone', {
+          preset: pendingOpenBumpPresetLabel(preset),
+          rate: satPerVbyte,
+          fee: estimatedFeeSat.toLocaleString(),
+        }),
+      }))
+      load()
+    } catch (err: any) {
+      setPendingOpenBumpStatusByPoint((prev) => ({ ...prev, [point]: err?.message || t('lightningOps.pendingOpenBumpFailed') }))
+    } finally {
+      setPendingOpenBumpBusyByPoint((prev) => ({ ...prev, [point]: false }))
+    }
+  }
+
   const runFeeUpdate = async (payload: {
     applyAll: boolean
     channelPoint?: string
@@ -5720,6 +5798,9 @@ export default function LightningOps() {
                       const bumpChecked = ch.funding_bump_checked === true
                       const bumpEligible = ch.funding_bump_eligible === true
                       const bumpAmountSat = Math.max(0, Number(ch.funding_bump_amount_sat || 0))
+                      const currentFundingFeeRate = Math.max(0, Math.trunc(Number(ch.funding_fee_rate_sat_vb || 0)))
+                      const bumpStatus = pendingOpenBumpStatusByPoint[ch.channel_point] || ''
+                      const bumpBusy = pendingOpenBumpBusyByPoint[ch.channel_point] === true
                       return (
                         <div key={ch.channel_point} className="rounded-xl border border-white/10 bg-ink/70 p-3">
                           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -5777,6 +5858,9 @@ export default function LightningOps() {
                                 <p className="text-[11px] text-fog/70">{t('lightningOps.pendingOpenObservedFor', { value: openingObserved })}</p>
                               )}
                               <p className="text-[11px] text-fog/70">{t('lightningOps.pendingOpenMonitorMempool')}</p>
+                              {currentFundingFeeRate > 0 && (
+                                <p className="text-[11px] text-fog/70">{t('lightningOps.pendingOpenBumpCurrentFee', { value: currentFundingFeeRate })}</p>
+                              )}
                               {bumpChecked ? (
                                 bumpEligible ? (
                                   <div className="rounded-lg border border-emerald-300/25 bg-emerald-500/10 p-2">
@@ -5787,12 +5871,33 @@ export default function LightningOps() {
                                         {t('lightningOps.pendingOpenBumpEligibleAmount', { value: formatSatsValue(bumpAmountSat) })}
                                       </p>
                                     )}
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                      {(['economic', 'normal', 'urgent'] as const).map((preset) => {
+                                        const preview = resolvePendingOpenBumpPreview(ch, preset)
+                                        return (
+                                          <button
+                                            key={preset}
+                                            type="button"
+                                            className="btn-secondary px-3 py-1.5 text-[11px]"
+                                            onClick={() => { void handlePendingOpenBumpFee(ch.channel_point, preset, preview) }}
+                                            disabled={bumpBusy}
+                                          >
+                                            {bumpBusy
+                                              ? t('lightningOps.pendingOpenBumpRunning')
+                                              : `${pendingOpenBumpPresetLabel(preset)} · ${preview.satPerVbyte} sat/vB · ~${Math.max(0, Math.trunc(preview.estimatedFeeSat)).toLocaleString()} sats`}
+                                          </button>
+                                        )
+                                      })}
+                                    </div>
                                   </div>
                                 ) : (
                                   <p className="text-[11px] text-fog/70">{pendingOpenBumpReasonLabel(ch.funding_bump_reason)}</p>
                                 )
                               ) : (
                                 <p className="text-[11px] text-fog/70">{t('lightningOps.pendingOpenBumpCheckUnavailable')}</p>
+                              )}
+                              {bumpStatus && (
+                                <p className="text-[11px] text-fog/70">{bumpStatus}</p>
                               )}
                             </div>
                           )}

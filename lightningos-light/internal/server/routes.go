@@ -147,6 +147,7 @@ func (s *Server) routes() http.Handler {
 		r.Post("/channel/open", s.handleLNOpenChannel)
 		r.Post("/channel/open-batch-preview", s.handleLNBatchOpenChannelPreview)
 		r.Post("/channel/open-batch", s.handleLNBatchOpenChannel)
+		r.Post("/channel/pending-open/bump-fee", s.handleLNPendingOpenBumpFee)
 		r.Post("/channel/close", s.handleLNCloseChannel)
 		r.Post("/channel/fees", s.handleLNUpdateFees)
 		r.Post("/channel/status", s.handleLNUpdateChanStatus)

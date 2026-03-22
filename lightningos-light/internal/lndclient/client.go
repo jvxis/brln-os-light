@@ -2038,6 +2038,7 @@ func (c *Client) ListPendingChannels(ctx context.Context) ([]PendingChannelInfo,
 			LocalBalanceSat:          ch.LocalBalance,
 			RemoteBalanceSat:         ch.RemoteBalance,
 			Status:                   "opening",
+			FundingFeeRateSatVbyte:   satPerVbyteFromSatPerKw(item.GetFeePerKw()),
 			ConfirmationsUntilActive: item.ConfirmationsUntilActive,
 			ConfirmationHeight:       item.ConfirmationHeight,
 			OpeningSinceUnix:         openingSinceUnix,
@@ -4206,6 +4207,13 @@ func channelPointOutpointInfo(point string) (string, uint32, error) {
 	return txid, uint32(index), nil
 }
 
+func satPerVbyteFromSatPerKw(value int64) int64 {
+	if value <= 0 {
+		return 0
+	}
+	return (value + 249) / 250
+}
+
 func (c *Client) snapshotInactiveSince(channels []*lnrpc.Channel, now time.Time) map[string]time.Time {
 	c.channelStateMu.Lock()
 	defer c.channelStateMu.Unlock()
@@ -4353,6 +4361,7 @@ type PendingChannelInfo struct {
 	ClosingTxid              string `json:"closing_txid,omitempty"`
 	BlocksTilMaturity        int32  `json:"blocks_til_maturity,omitempty"`
 	LimboBalance             int64  `json:"limbo_balance,omitempty"`
+	FundingFeeRateSatVbyte   int64  `json:"funding_fee_rate_sat_vb,omitempty"`
 	ConfirmationsUntilActive uint32 `json:"confirmations_until_active,omitempty"`
 	ConfirmationHeight       uint32 `json:"confirmation_height,omitempty"`
 	OpeningSinceUnix         int64  `json:"opening_since_unix,omitempty"`

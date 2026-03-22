@@ -24,22 +24,23 @@ import (
 )
 
 const (
-	secretsPath                = "/etc/lightningos/secrets.env"
-	lndConfPath                = "/data/lnd/lnd.conf"
-	lndPasswordPath            = "/data/lnd/password.txt"
-	lndWalletDBPath            = "/data/lnd/data/chain/bitcoin/mainnet/wallet.db"
-	lndChannelDBPath           = "/data/lnd/data/graph/mainnet/channel.db"
-	lndAdminMacaroonPath       = "/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon"
-	lndFixPermsScript          = "/usr/local/sbin/lightningos-fix-lnd-perms"
-	mempoolBaseURL             = "https://mempool.space/api/v1/lightning"
-	boostPeersDefaultLimit     = 25
-	boostPeersMaxLimit         = 100
-	lndRPCTimeout              = 15 * time.Second
-	lndConnectTimeout          = 30 * time.Second
-	lndOpenChannelTimeout      = 60 * time.Second
-	lndBatchOpenChannelTimeout = 90 * time.Second
-	batchOpenMaxChannels       = 50
-	lndWarmupPeriod            = 90 * time.Second
+	secretsPath                    = "/etc/lightningos/secrets.env"
+	lndConfPath                    = "/data/lnd/lnd.conf"
+	lndPasswordPath                = "/data/lnd/password.txt"
+	lndWalletDBPath                = "/data/lnd/data/chain/bitcoin/mainnet/wallet.db"
+	lndChannelDBPath               = "/data/lnd/data/graph/mainnet/channel.db"
+	lndAdminMacaroonPath           = "/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon"
+	lndFixPermsScript              = "/usr/local/sbin/lightningos-fix-lnd-perms"
+	mempoolBaseURL                 = "https://mempool.space/api/v1/lightning"
+	boostPeersDefaultLimit         = 25
+	boostPeersMaxLimit             = 100
+	lndRPCTimeout                  = 15 * time.Second
+	lndConnectTimeout              = 30 * time.Second
+	lndOpenChannelTimeout          = 60 * time.Second
+	lndBatchOpenChannelTimeout     = 90 * time.Second
+	batchOpenMaxChannels           = 50
+	pendingOpenBumpReferenceVbytes = int64(110)
+	lndWarmupPeriod                = 90 * time.Second
 )
 
 type healthIssue struct {
@@ -2625,6 +2626,176 @@ func (s *Server) handleLNBatchOpenChannelPreview(w http.ResponseWriter, r *http.
 	}
 
 	writeJSON(w, http.StatusOK, preview)
+}
+
+func (s *Server) handleLNPendingOpenBumpFee(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ChannelPoint string `json:"channel_point"`
+		Preset       string `json:"preset"`
+		SatPerVbyte  int64  `json:"sat_per_vbyte"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	channelPoint := strings.TrimSpace(req.ChannelPoint)
+	if channelPoint == "" {
+		writeError(w, http.StatusBadRequest, "channel_point required")
+		return
+	}
+	if req.SatPerVbyte < 0 {
+		writeError(w, http.StatusBadRequest, "sat_per_vbyte must be zero or positive")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+	defer cancel()
+
+	pending, err := s.lnd.ListPendingChannels(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, lndDetailedErrorMessage(err))
+		return
+	}
+
+	var item *lndclient.PendingChannelInfo
+	for idx := range pending {
+		if !strings.EqualFold(strings.TrimSpace(pending[idx].ChannelPoint), channelPoint) {
+			continue
+		}
+		item = &pending[idx]
+		break
+	}
+	if item == nil || !strings.EqualFold(strings.TrimSpace(item.Status), "opening") {
+		writeError(w, http.StatusNotFound, "pending open channel not found")
+		return
+	}
+	if !item.FundingBumpEligible || strings.TrimSpace(item.FundingBumpOutpoint) == "" {
+		writeError(w, http.StatusBadRequest, "pending open channel is not eligible for funding bump")
+		return
+	}
+
+	fees := closeManagerLoadBumpFeeRecommendation(ctx)
+	plan, err := resolvePendingOpenBumpPlan(*item, req.Preset, req.SatPerVbyte, fees)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := s.lnd.BumpFee(ctx, lndclient.BumpFeeParams{
+		Outpoint:    item.FundingBumpOutpoint,
+		SatPerVbyte: plan.SatPerVbyte,
+		Immediate:   plan.Immediate,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, lndDetailedErrorMessage(err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":                   true,
+		"preset":               plan.Preset,
+		"sat_per_vbyte":        plan.SatPerVbyte,
+		"immediate":            plan.Immediate,
+		"outpoint":             item.FundingBumpOutpoint,
+		"candidate_amount_sat": item.FundingBumpAmountSat,
+		"estimated_fee_sat":    plan.EstimatedFeeSat,
+		"reference_vbytes":     plan.ReferenceVbytes,
+	})
+}
+
+type pendingOpenBumpPlan struct {
+	Preset          string
+	SatPerVbyte     int64
+	Immediate       bool
+	EstimatedFeeSat int64
+	ReferenceVbytes int64
+}
+
+func resolvePendingOpenBumpPlan(item lndclient.PendingChannelInfo, preset string, explicitSatPerVbyte int64, fees *mempoolFeeRecommendation) (pendingOpenBumpPlan, error) {
+	current := item.FundingFeeRateSatVbyte
+	normalizedPreset := strings.ToLower(strings.TrimSpace(preset))
+	if explicitSatPerVbyte > 0 {
+		if explicitSatPerVbyte <= current {
+			explicitSatPerVbyte = current + 1
+		}
+		return pendingOpenBumpPlan{
+			Preset:          "custom",
+			SatPerVbyte:     explicitSatPerVbyte,
+			Immediate:       explicitSatPerVbyte >= pendingOpenBumpUrgentFeeTarget(fees),
+			EstimatedFeeSat: explicitSatPerVbyte * pendingOpenBumpReferenceVbytes,
+			ReferenceVbytes: pendingOpenBumpReferenceVbytes,
+		}, nil
+	}
+
+	if normalizedPreset == "" {
+		normalizedPreset = "normal"
+	}
+	economic := pendingOpenBumpEconomicFeeTarget(fees)
+	normal := pendingOpenBumpNormalFeeTarget(fees)
+	urgent := pendingOpenBumpUrgentFeeTarget(fees)
+
+	switch normalizedPreset {
+	case "economic":
+		satPerVbyte := closeManagerMaxInt64(current+1, economic)
+		return pendingOpenBumpPlan{
+			Preset:          normalizedPreset,
+			SatPerVbyte:     satPerVbyte,
+			Immediate:       false,
+			EstimatedFeeSat: satPerVbyte * pendingOpenBumpReferenceVbytes,
+			ReferenceVbytes: pendingOpenBumpReferenceVbytes,
+		}, nil
+	case "normal":
+		satPerVbyte := closeManagerMaxInt64(current+2, normal)
+		return pendingOpenBumpPlan{
+			Preset:          normalizedPreset,
+			SatPerVbyte:     satPerVbyte,
+			Immediate:       false,
+			EstimatedFeeSat: satPerVbyte * pendingOpenBumpReferenceVbytes,
+			ReferenceVbytes: pendingOpenBumpReferenceVbytes,
+		}, nil
+	case "urgent":
+		satPerVbyte := closeManagerMaxInt64(current+5, urgent)
+		return pendingOpenBumpPlan{
+			Preset:          normalizedPreset,
+			SatPerVbyte:     satPerVbyte,
+			Immediate:       true,
+			EstimatedFeeSat: satPerVbyte * pendingOpenBumpReferenceVbytes,
+			ReferenceVbytes: pendingOpenBumpReferenceVbytes,
+		}, nil
+	default:
+		return pendingOpenBumpPlan{}, fmt.Errorf("unsupported bump preset: %s", preset)
+	}
+}
+
+func pendingOpenBumpEconomicFeeTarget(fees *mempoolFeeRecommendation) int64 {
+	if fees != nil {
+		switch {
+		case fees.EconomyFee > 0:
+			return int64(fees.EconomyFee)
+		case fees.MinimumFee > 0:
+			return int64(fees.MinimumFee)
+		}
+	}
+	return 1
+}
+
+func pendingOpenBumpNormalFeeTarget(fees *mempoolFeeRecommendation) int64 {
+	if fees != nil {
+		switch {
+		case fees.HourFee > 0:
+			return int64(fees.HourFee)
+		case fees.HalfHourFee > 0:
+			return int64(fees.HalfHourFee)
+		}
+	}
+	return pendingOpenBumpEconomicFeeTarget(fees) + 1
+}
+
+func pendingOpenBumpUrgentFeeTarget(fees *mempoolFeeRecommendation) int64 {
+	if fees != nil && fees.FastestFee > 0 {
+		return int64(fees.FastestFee)
+	}
+	return pendingOpenBumpNormalFeeTarget(fees) + 3
 }
 
 func (s *Server) handleMempoolFees(w http.ResponseWriter, r *http.Request) {

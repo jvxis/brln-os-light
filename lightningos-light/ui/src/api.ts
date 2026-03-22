@@ -322,6 +322,8 @@ export const openBatchChannels = (payload: {
   }>
   sat_per_vbyte?: number
 }) => request('/api/lnops/channel/open-batch', { method: 'POST', body: JSON.stringify(payload) })
+export const bumpPendingOpenChannel = (payload: { channel_point: string; preset?: 'economic' | 'normal' | 'urgent'; sat_per_vbyte?: number }) =>
+  request('/api/lnops/channel/pending-open/bump-fee', { method: 'POST', body: JSON.stringify(payload) })
 export const closeChannel = (payload: { channel_point: string; force?: boolean; sat_per_vbyte?: number }) =>
   request('/api/lnops/channel/close', { method: 'POST', body: JSON.stringify(payload) })
 export const updateChannelFees = (payload: {

@@ -143,6 +143,7 @@ func (s *Server) routes() http.Handler {
 		r.Get("/channel/tor-peers/logs", s.handleLNTorPeerCheckerLogs)
 		r.Post("/channel/scb/restore", s.handleLNSCBRestore)
 		r.Get("/channel/fees", s.handleLNChannelFees)
+		r.Post("/channel/open-preview", s.handleLNOpenChannelPreview)
 		r.Post("/channel/open", s.handleLNOpenChannel)
 		r.Post("/channel/open-batch", s.handleLNBatchOpenChannel)
 		r.Post("/channel/close", s.handleLNCloseChannel)

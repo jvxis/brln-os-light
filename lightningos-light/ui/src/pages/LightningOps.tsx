@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { acceptBalancedOpenSession, addLnWatchtower, boostPeers, bumpFeeCloseManagerSession, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getChannelRankings, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelFees, getLnChannelPeerRecommendations, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, recoverCloseManagerSession, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker } from '../api'
+import { acceptBalancedOpenSession, addLnWatchtower, boostPeers, bumpFeeCloseManagerSession, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getChannelRankings, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelFees, getLnChannelPeerRecommendations, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, previewOpenChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, recoverCloseManagerSession, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker } from '../api'
 import { getLocale } from '../i18n'
 
 type Channel = {
@@ -228,6 +228,24 @@ type BatchOpenItem = {
   local_funding_sat: number
   private: boolean
   close_address?: string
+}
+
+type OpenChannelPreview = {
+  local_funding_sat: number
+  push_sat: number
+  fee_sat: number
+  total_debit_sat: number
+  spendable_sat: number
+  spendable_remaining_sat: number
+  selected_input_count: number
+  selected_input_sat: number
+  estimated_vbytes: number
+  sat_per_vbyte: number
+  enough_funds: boolean
+  exact: boolean
+  has_change: boolean
+  message_code?: string
+  message?: string
 }
 
 type BalancedOpenStatusPayload = {
@@ -943,9 +961,13 @@ export default function LightningOps() {
   const [openAmount, setOpenAmount] = useState('')
   const [openPushSat, setOpenPushSat] = useState('')
   const [openCloseAddress, setOpenCloseAddress] = useState('')
+  const [openFeeMode, setOpenFeeMode] = useState<'auto' | 'manual'>('auto')
   const [openFeeRate, setOpenFeeRate] = useState('')
   const [openFeeHint, setOpenFeeHint] = useState<{ fastest?: number; hour?: number } | null>(null)
   const [openFeeStatus, setOpenFeeStatus] = useState('')
+  const [openPreview, setOpenPreview] = useState<OpenChannelPreview | null>(null)
+  const [openPreviewLoading, setOpenPreviewLoading] = useState(false)
+  const [openPreviewStatus, setOpenPreviewStatus] = useState('')
   const [openPrivate, setOpenPrivate] = useState(false)
   const [openStatus, setOpenStatus] = useState('')
   const [openChannelPoint, setOpenChannelPoint] = useState('')
@@ -2935,6 +2957,76 @@ export default function LightningOps() {
   }, [])
 
   useEffect(() => {
+    const localFunding = Math.trunc(Number(openAmount || 0))
+    const pushRaw = openPushSat.trim()
+    const pushSat = pushRaw === '' ? 0 : Math.trunc(Number(openPushSat || 0))
+    const manualRate = Math.max(0, Math.trunc(Number(openFeeRate || 0)))
+    const autoRate = Math.max(0, Math.trunc(Number(openFeeHint?.fastest || openFeeHint?.hour || 0)))
+    const previewRate = openFeeMode === 'manual' ? manualRate : autoRate
+
+    if (!localFunding) {
+      setOpenPreview(null)
+      setOpenPreviewLoading(false)
+      setOpenPreviewStatus('')
+      return
+    }
+    if (!Number.isFinite(pushSat) || pushSat < 0) {
+      setOpenPreview(null)
+      setOpenPreviewLoading(false)
+      setOpenPreviewStatus(t('lightningOps.pushAmountInvalid'))
+      return
+    }
+    if (pushSat > localFunding) {
+      setOpenPreview(null)
+      setOpenPreviewLoading(false)
+      setOpenPreviewStatus(t('lightningOps.pushAmountExceedsFunding'))
+      return
+    }
+    if (openFeeMode === 'manual' && previewRate <= 0) {
+      setOpenPreview(null)
+      setOpenPreviewLoading(false)
+      setOpenPreviewStatus(t('lightningOps.openPreviewFeeRequired'))
+      return
+    }
+    if (previewRate <= 0) {
+      setOpenPreview(null)
+      setOpenPreviewLoading(false)
+      setOpenPreviewStatus(openFeeStatus || t('lightningOps.openPreviewUnavailable'))
+      return
+    }
+
+    let mounted = true
+    const timer = window.setTimeout(() => {
+      setOpenPreviewLoading(true)
+      previewOpenChannel({
+        local_funding_sat: localFunding,
+        push_sat: pushSat > 0 ? pushSat : undefined,
+        sat_per_vbyte: previewRate,
+      })
+        .then((res: any) => {
+          if (!mounted) return
+          const next = res as OpenChannelPreview
+          setOpenPreview(next)
+          setOpenPreviewStatus(openPreviewMessage(next))
+        })
+        .catch((err: any) => {
+          if (!mounted) return
+          setOpenPreview(null)
+          setOpenPreviewStatus(err?.message || t('lightningOps.openPreviewUnavailable'))
+        })
+        .finally(() => {
+          if (!mounted) return
+          setOpenPreviewLoading(false)
+        })
+    }, 250)
+
+    return () => {
+      mounted = false
+      window.clearTimeout(timer)
+    }
+  }, [openAmount, openPushSat, openFeeHint, openFeeMode, openFeeRate, openFeeStatus, t])
+
+  useEffect(() => {
     if (feeScopeAll) {
       setFeeLoadStatus('')
       setFeeLoading(false)
@@ -4320,6 +4412,21 @@ export default function LightningOps() {
     }
   }
 
+  function openPreviewMessage(preview?: OpenChannelPreview | null) {
+    const code = String(preview?.message_code || '').trim()
+    switch (code) {
+      case 'dust_change_absorbed':
+        return t('lightningOps.openPreviewDustChange')
+      case 'insufficient_confirmed_balance':
+      case 'insufficient_balance_for_fees':
+        return t('lightningOps.openPreviewInsufficient')
+      case 'no_confirmed_utxos':
+        return t('lightningOps.openPreviewNoConfirmedUtxos')
+      default:
+        return String(preview?.message || '').trim()
+    }
+  }
+
   const handleOpenChannel = async () => {
     setOpenStatus(t('lightningOps.openingChannel'))
     setOpenChannelPoint('')
@@ -4343,13 +4450,17 @@ export default function LightningOps() {
       setOpenStatus(t('lightningOps.pushAmountExceedsFunding'))
       return
     }
+    if (openFeeMode === 'manual' && feeRate <= 0) {
+      setOpenStatus(t('lightningOps.openManualFeeRequired'))
+      return
+    }
     try {
       const res = await openChannel({
         peer_address: openPeer.trim(),
         local_funding_sat: localFunding,
         push_sat: pushSat > 0 ? pushSat : undefined,
         close_address: openCloseAddress.trim() || undefined,
-        sat_per_vbyte: feeRate > 0 ? feeRate : undefined,
+        sat_per_vbyte: openFeeMode === 'manual' && feeRate > 0 ? feeRate : undefined,
         private: openPrivate
       })
       setOpenStatus(t('lightningOps.channelOpeningSubmitted'))
@@ -6699,29 +6810,91 @@ export default function LightningOps() {
               {t('lightningOps.feeHint', { fastest: openFeeHint?.fastest ?? '-', hour: openFeeHint?.hour ?? '-' })}
             </span>
           </label>
-	          <div className="flex flex-wrap items-center gap-3">
-	            <input
-	              className="input-field flex-1 min-w-[140px]"
-	              placeholder={t('common.auto')}
-              type="number"
-              min={1}
-              value={openFeeRate}
-              onChange={(e) => setOpenFeeRate(e.target.value)}
-            />
+          <div className="flex flex-wrap gap-3 text-sm">
             <button
-              className="btn-secondary text-xs px-3 py-2"
+              className={openFeeMode === 'auto' ? 'btn-primary' : 'btn-secondary'}
               type="button"
-              onClick={() => {
-                if (openFeeHint?.fastest) {
-                  setOpenFeeRate(String(openFeeHint.fastest))
-                }
-              }}
-              disabled={!openFeeHint?.fastest}
+              onClick={() => setOpenFeeMode('auto')}
             >
-              {t('lightningOps.useFastest')}
+              {t('lightningOps.closeFeeModeAuto')}
             </button>
-            {openFeeStatus && <p className="text-xs text-fog/50">{openFeeStatus}</p>}
+            <button
+              className={openFeeMode === 'manual' ? 'btn-primary' : 'btn-secondary'}
+              type="button"
+              onClick={() => setOpenFeeMode('manual')}
+            >
+              {t('lightningOps.closeFeeModeManual')}
+            </button>
           </div>
+          {openFeeMode === 'auto' && (
+            <p className="text-xs text-fog/55">{t('lightningOps.openFeeAutoHint')}</p>
+          )}
+          {openFeeMode === 'manual' && (
+            <>
+              <div className="flex flex-wrap items-center gap-3">
+                <input
+                  className="input-field flex-1 min-w-[140px]"
+                  placeholder={t('lightningOps.closeFeeModeManual')}
+                  type="number"
+                  min={1}
+                  value={openFeeRate}
+                  onChange={(e) => setOpenFeeRate(e.target.value)}
+                />
+                <button
+                  className="btn-secondary text-xs px-3 py-2"
+                  type="button"
+                  onClick={() => {
+                    if (openFeeHint?.fastest) {
+                      setOpenFeeRate(String(openFeeHint.fastest))
+                    }
+                  }}
+                  disabled={!openFeeHint?.fastest}
+                >
+                  {t('lightningOps.useFastest')}
+                </button>
+              </div>
+              <p className="text-xs text-fog/55">{t('lightningOps.openFeeManualHint')}</p>
+            </>
+          )}
+          {openFeeStatus && <p className="text-xs text-fog/50">{openFeeStatus}</p>}
+          {(openPreviewLoading || openPreview || openPreviewStatus) && (
+            <div className={`rounded-2xl border p-3 space-y-2 ${openPreview?.enough_funds === false ? 'border-amber-400/30 bg-amber-500/10' : 'border-white/10 bg-ink/70'}`}>
+              <div className="flex items-center justify-between gap-3 text-xs">
+                <span className="text-fog/60">{t('lightningOps.openPreviewTitle')}</span>
+                {openPreview && (
+                  <span className="text-fog/50">{t('lightningOps.closePreviewEstimated')}</span>
+                )}
+              </div>
+              {openPreviewLoading && (
+                <p className="text-xs text-fog/60">{t('lightningOps.openPreviewLoading')}</p>
+              )}
+              {!openPreviewLoading && openPreview && (
+                <>
+                  <div className="grid gap-2 text-xs text-fog/80 sm:grid-cols-2">
+                    <p>{t('lightningOps.openPreviewFee', { amount: formatSatsValue(openPreview.fee_sat) })}</p>
+                    <p>{t('lightningOps.openPreviewVbytes', { amount: openPreview.estimated_vbytes, fee: openPreview.sat_per_vbyte })}</p>
+                    <p>{t('lightningOps.openPreviewFunding', { amount: formatSatsValue(openPreview.local_funding_sat) })}</p>
+                    <p>{t('lightningOps.openPreviewPush', { amount: formatSatsValue(openPreview.push_sat) })}</p>
+                    <p>{t('lightningOps.openPreviewTotalDebit', { amount: formatSatsValue(openPreview.total_debit_sat) })}</p>
+                    <p>{t('lightningOps.openPreviewRemaining', { amount: formatSatsValue(openPreview.spendable_remaining_sat) })}</p>
+                    <p>{t('lightningOps.openPreviewInputs', { selected: openPreview.selected_input_count, amount: formatSatsValue(openPreview.selected_input_sat) })}</p>
+                    <p>{t('lightningOps.openPreviewSpendable', { amount: formatSatsValue(openPreview.spendable_sat) })}</p>
+                  </div>
+                  <p className="text-xs text-fog/55">
+                    {openFeeMode === 'manual'
+                      ? t('lightningOps.openPreviewReferenceManual', { fee: openPreview.sat_per_vbyte })
+                      : t('lightningOps.openPreviewReferenceAuto', { fee: openPreview.sat_per_vbyte })}
+                  </p>
+                  <p className={openPreview.enough_funds ? 'text-xs text-emerald-200' : 'text-xs text-amber-200'}>
+                    {openPreview.enough_funds ? t('lightningOps.openPreviewEnough') : t('lightningOps.openPreviewInsufficient')}
+                  </p>
+                </>
+              )}
+              {!openPreviewLoading && openPreviewStatus && (
+                <p className={`text-xs ${openPreview?.enough_funds === false ? 'text-amber-200' : 'text-fog/60'}`}>{openPreviewStatus}</p>
+              )}
+            </div>
+          )}
           <label className="flex items-center gap-2 text-sm text-fog/70">
             <input type="checkbox" checked={openPrivate} onChange={(e) => setOpenPrivate(e.target.checked)} />
             {t('lightningOps.privateChannel')}

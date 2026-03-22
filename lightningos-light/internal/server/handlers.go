@@ -2421,6 +2421,37 @@ func (s *Server) handleLNOpenChannel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"channel_point": channelPoint})
 }
 
+func (s *Server) handleLNOpenChannelPreview(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		LocalFundingSat int64 `json:"local_funding_sat"`
+		PushSat         int64 `json:"push_sat"`
+		SatPerVbyte     int64 `json:"sat_per_vbyte"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.PushSat < 0 {
+		writeError(w, http.StatusBadRequest, "push_sat must be zero or positive")
+		return
+	}
+	if req.SatPerVbyte < 0 {
+		writeError(w, http.StatusBadRequest, "sat_per_vbyte must be zero or positive")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+
+	preview, err := s.lnd.PreviewOpenChannel(ctx, req.LocalFundingSat, req.PushSat, req.SatPerVbyte)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, lndDetailedErrorMessage(err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, preview)
+}
+
 func (s *Server) handleLNBatchOpenChannel(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Channels []struct {

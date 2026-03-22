@@ -77,6 +77,13 @@ type PendingChannel = {
   limbo_balance?: number
   confirmations_until_active?: number
   confirmation_height?: number
+  opening_since_unix?: number
+  opening_duration_sec?: number
+  funding_bump_checked?: boolean
+  funding_bump_eligible?: boolean
+  funding_bump_outpoint?: string
+  funding_bump_amount_sat?: number
+  funding_bump_reason?: string
   private?: boolean
   waiting_close_recovery?: {
     attempts?: number
@@ -764,6 +771,7 @@ const BALANCED_OPEN_REQUIRED_REMAINING_SAT = 10000
 const COOP_CLOSE_ESTIMATED_ONE_OUTPUT_VBYTES = 140
 const COOP_CLOSE_ESTIMATED_TWO_OUTPUT_VBYTES = 170
 const CLOSE_PREVIEW_DUST_LIMIT_SAT = 546
+const PENDING_OPEN_STUCK_THRESHOLD_SEC = 60 * 60
 
 const readHashChannelPoint = (routeKey: string) => {
   if (typeof window === 'undefined') return ''
@@ -3454,6 +3462,28 @@ export default function LightningOps() {
     }
   }
 
+  const isPendingOpenStuck = (ch: PendingChannel) => {
+    if ((ch.status || '').trim().toLowerCase() !== 'opening') return false
+    if (typeof ch.opening_duration_sec !== 'number' || ch.opening_duration_sec < PENDING_OPEN_STUCK_THRESHOLD_SEC) return false
+    if (typeof ch.confirmations_until_active === 'number' && ch.confirmations_until_active <= 0) return false
+    return channelPointTxid(ch.channel_point).length > 0
+  }
+
+  const pendingOpenBumpReasonLabel = (reason?: string) => {
+    switch ((reason || '').trim()) {
+      case 'no_wallet_output':
+        return t('lightningOps.pendingOpenBumpUnavailableNoWalletOutput')
+      case 'wallet_output_unavailable':
+        return t('lightningOps.pendingOpenBumpUnavailableWalletOutput')
+      case 'funding_tx_unavailable':
+        return t('lightningOps.pendingOpenBumpUnavailableFundingTx')
+      case 'channel_point_invalid':
+      case 'diagnostic_unavailable':
+      default:
+        return t('lightningOps.pendingOpenBumpCheckUnavailable')
+    }
+  }
+
   const waitingCloseRecoveryResultLabel = (result?: string) => {
     const normalized = String(result || '').trim()
     switch (normalized) {
@@ -5683,6 +5713,13 @@ export default function LightningOps() {
                       const pointLink = mempoolLink(ch.channel_point)
                       const openingTxid = channelPointTxid(ch.channel_point)
                       const openingTxLink = mempoolTxLink(openingTxid)
+                      const stuckOpening = isPendingOpenStuck(ch)
+                      const openingObserved = typeof ch.opening_duration_sec === 'number' && ch.opening_duration_sec > 0
+                        ? formatCloseRecoveryAge(ch.opening_duration_sec)
+                        : ''
+                      const bumpChecked = ch.funding_bump_checked === true
+                      const bumpEligible = ch.funding_bump_eligible === true
+                      const bumpAmountSat = Math.max(0, Number(ch.funding_bump_amount_sat || 0))
                       return (
                         <div key={ch.channel_point} className="rounded-xl border border-white/10 bg-ink/70 p-3">
                           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -5723,7 +5760,42 @@ export default function LightningOps() {
                             {typeof ch.confirmations_until_active === 'number' && (
                               <div>{t('lightningOps.confirmationsLabel', { count: ch.confirmations_until_active })}</div>
                             )}
+                            {openingObserved && (
+                              <div>{t('lightningOps.pendingOpenObservedFor', { value: openingObserved })}</div>
+                            )}
                           </div>
+                          {stuckOpening && (
+                            <div className="mt-3 rounded-xl border border-amber-300/35 bg-amber-500/10 p-3 space-y-1">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-[11px] font-semibold text-amber-100">{t('lightningOps.pendingOpenStuckTitle')}</p>
+                                <span className="rounded-full border border-amber-300/35 px-2 py-0.5 text-[10px] text-amber-100">
+                                  {t('lightningOps.pendingOpenStuckBadge')}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-amber-200/90">{t('lightningOps.pendingOpenStuckBody')}</p>
+                              {openingObserved && (
+                                <p className="text-[11px] text-fog/70">{t('lightningOps.pendingOpenObservedFor', { value: openingObserved })}</p>
+                              )}
+                              <p className="text-[11px] text-fog/70">{t('lightningOps.pendingOpenMonitorMempool')}</p>
+                              {bumpChecked ? (
+                                bumpEligible ? (
+                                  <div className="rounded-lg border border-emerald-300/25 bg-emerald-500/10 p-2">
+                                    <p className="text-[11px] font-medium text-emerald-100">{t('lightningOps.pendingOpenBumpEligibleTitle')}</p>
+                                    <p className="mt-1 text-[11px] text-emerald-100/85">{t('lightningOps.pendingOpenBumpEligibleBody')}</p>
+                                    {bumpAmountSat > 0 && (
+                                      <p className="mt-1 text-[11px] text-fog/75">
+                                        {t('lightningOps.pendingOpenBumpEligibleAmount', { value: formatSatsValue(bumpAmountSat) })}
+                                      </p>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <p className="text-[11px] text-fog/70">{pendingOpenBumpReasonLabel(ch.funding_bump_reason)}</p>
+                                )
+                              ) : (
+                                <p className="text-[11px] text-fog/70">{t('lightningOps.pendingOpenBumpCheckUnavailable')}</p>
+                              )}
+                            </div>
+                          )}
                           {openingTxid && (
                             openingTxLink ? (
                               <a

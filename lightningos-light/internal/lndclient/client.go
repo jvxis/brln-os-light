@@ -34,21 +34,30 @@ import (
 
 const recentOnchainWindowBlocks int64 = 20160
 
+const (
+	pendingOpenBumpReasonUnavailable             = "diagnostic_unavailable"
+	pendingOpenBumpReasonFundingTxUnavailable    = "funding_tx_unavailable"
+	pendingOpenBumpReasonNoWalletOutput          = "no_wallet_output"
+	pendingOpenBumpReasonWalletOutputUnavailable = "wallet_output_unavailable"
+	pendingOpenBumpReasonChannelPointInvalid     = "channel_point_invalid"
+)
+
 type Client struct {
-	cfg             *config.Config
-	logger          *log.Logger
-	statusMu        sync.Mutex
-	statusCached    bool
-	statusCache     Status
-	statusErr       error
-	statusNextFetch time.Time
-	infoCache       infoSnapshot
-	infoCacheAt     time.Time
-	infoCacheValid  bool
-	channelStateMu  sync.Mutex
-	channelInactive map[string]time.Time
-	nodeAliasMu     sync.Mutex
-	nodeAliasCache  map[string]nodeAliasCacheEntry
+	cfg                *config.Config
+	logger             *log.Logger
+	statusMu           sync.Mutex
+	statusCached       bool
+	statusCache        Status
+	statusErr          error
+	statusNextFetch    time.Time
+	infoCache          infoSnapshot
+	infoCacheAt        time.Time
+	infoCacheValid     bool
+	channelStateMu     sync.Mutex
+	channelInactive    map[string]time.Time
+	channelPendingOpen map[string]time.Time
+	nodeAliasMu        sync.Mutex
+	nodeAliasCache     map[string]nodeAliasCacheEntry
 }
 
 type nodeAliasCacheEntry struct {
@@ -1970,12 +1979,57 @@ func (c *Client) ListPendingChannels(ctx context.Context) ([]PendingChannelInfo,
 		}
 		return ""
 	}
+	pendingOpenPoints := make([]string, 0, len(resp.PendingOpenChannels))
+	for _, item := range resp.PendingOpenChannels {
+		if item == nil || item.Channel == nil {
+			continue
+		}
+		pendingOpenPoints = append(pendingOpenPoints, item.Channel.ChannelPoint)
+	}
+	openingSinceByPoint := c.snapshotPendingOpenSince(pendingOpenPoints, time.Now().UTC())
+	var pendingOpenBumpByPoint map[string]pendingOpenBumpCandidate
+	txResp, txErr := client.GetTransactions(ctx, &lnrpc.GetTransactionsRequest{
+		MaxTransactions: 0,
+		StartHeight:     0,
+		EndHeight:       -1,
+	})
+	utxoResp, utxoErr := client.ListUnspent(ctx, &lnrpc.ListUnspentRequest{
+		MinConfs: 0,
+		MaxConfs: 2147483647,
+	})
+	pendingOpenBumpByPoint = detectPendingOpenBumpCandidates(
+		txErr == nil && txResp != nil,
+		func() []*lnrpc.Transaction {
+			if txErr != nil || txResp == nil {
+				return nil
+			}
+			return txResp.GetTransactions()
+		}(),
+		utxoErr == nil && utxoResp != nil,
+		func() []*lnrpc.Utxo {
+			if utxoErr != nil || utxoResp == nil {
+				return nil
+			}
+			return utxoResp.GetUtxos()
+		}(),
+		pendingOpenPoints,
+	)
+
 	pending := []PendingChannelInfo{}
 	for _, item := range resp.PendingOpenChannels {
 		if item == nil || item.Channel == nil {
 			continue
 		}
 		ch := item.Channel
+		openingSinceUnix := int64(0)
+		openingDurationSec := int64(0)
+		if since, ok := openingSinceByPoint[normalizeChannelPointKey(ch.ChannelPoint)]; ok && !since.IsZero() {
+			openingSinceUnix = since.Unix()
+			if now := time.Now().UTC(); now.After(since) {
+				openingDurationSec = int64(now.Sub(since).Seconds())
+			}
+		}
+		bumpCandidate := pendingOpenBumpByPoint[normalizeChannelPointKey(ch.ChannelPoint)]
 		pending = append(pending, PendingChannelInfo{
 			ChannelPoint:             ch.ChannelPoint,
 			RemotePubkey:             ch.RemoteNodePub,
@@ -1986,6 +2040,13 @@ func (c *Client) ListPendingChannels(ctx context.Context) ([]PendingChannelInfo,
 			Status:                   "opening",
 			ConfirmationsUntilActive: item.ConfirmationsUntilActive,
 			ConfirmationHeight:       item.ConfirmationHeight,
+			OpeningSinceUnix:         openingSinceUnix,
+			OpeningDurationSec:       openingDurationSec,
+			FundingBumpChecked:       bumpCandidate.Checked,
+			FundingBumpEligible:      bumpCandidate.Eligible,
+			FundingBumpOutpoint:      bumpCandidate.Outpoint,
+			FundingBumpAmountSat:     bumpCandidate.AmountSat,
+			FundingBumpReason:        bumpCandidate.Reason,
 			Private:                  ch.Private,
 		})
 	}
@@ -3744,6 +3805,15 @@ func txidFromBytes(raw []byte) string {
 	return hex.EncodeToString(rev)
 }
 
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 func walletKitOutpointInfo(out *lnrpc.OutPoint) (string, uint32, string) {
 	if out == nil {
 		return "", 0, ""
@@ -3971,6 +4041,171 @@ func normalizeChannelPointKey(point string) string {
 	return strings.ToLower(strings.TrimSpace(point))
 }
 
+type pendingOpenBumpCandidate struct {
+	Checked   bool
+	Eligible  bool
+	Outpoint  string
+	AmountSat int64
+	Reason    string
+}
+
+type pendingOpenWalletOutput struct {
+	Outpoint  string
+	AmountSat int64
+	Vout      uint32
+}
+
+func detectPendingOpenBumpCandidates(gotTransactions bool, transactions []*lnrpc.Transaction, gotUtxos bool, utxos []*lnrpc.Utxo, channelPoints []string) map[string]pendingOpenBumpCandidate {
+	results := make(map[string]pendingOpenBumpCandidate, len(channelPoints))
+	if len(channelPoints) == 0 {
+		return results
+	}
+
+	utxosByTxid := make(map[string][]pendingOpenWalletOutput)
+	for _, utxo := range utxos {
+		if utxo == nil {
+			continue
+		}
+		out := utxo.GetOutpoint()
+		if out == nil {
+			continue
+		}
+		txid, err := normalizeTxidHex(firstNonEmpty(out.GetTxidStr(), txidFromBytes(out.GetTxidBytes())))
+		if err != nil {
+			continue
+		}
+		utxosByTxid[txid] = append(utxosByTxid[txid], pendingOpenWalletOutput{
+			Outpoint:  fmt.Sprintf("%s:%d", txid, out.GetOutputIndex()),
+			AmountSat: utxo.GetAmountSat(),
+			Vout:      out.GetOutputIndex(),
+		})
+	}
+
+	txByID := make(map[string]*lnrpc.Transaction, len(transactions))
+	for _, tx := range transactions {
+		if tx == nil {
+			continue
+		}
+		txid := strings.TrimSpace(tx.GetTxHash())
+		if txid == "" {
+			txid = txidFromRawTxHex(tx.GetRawTxHex())
+		}
+		normalized, err := normalizeTxidHex(txid)
+		if err != nil {
+			continue
+		}
+		txByID[normalized] = tx
+	}
+
+	for _, point := range channelPoints {
+		key := normalizeChannelPointKey(point)
+		if key == "" {
+			continue
+		}
+		txid, fundingVout, err := channelPointOutpointInfo(point)
+		if err != nil {
+			results[key] = pendingOpenBumpCandidate{
+				Checked: gotTransactions && gotUtxos,
+				Reason:  pendingOpenBumpReasonChannelPointInvalid,
+			}
+			continue
+		}
+
+		if candidate, ok := selectPendingOpenBumpCandidate(utxosByTxid[txid], fundingVout); ok {
+			results[key] = pendingOpenBumpCandidate{
+				Checked:   true,
+				Eligible:  true,
+				Outpoint:  candidate.Outpoint,
+				AmountSat: candidate.AmountSat,
+			}
+			continue
+		}
+
+		if !gotUtxos {
+			results[key] = pendingOpenBumpCandidate{
+				Checked: false,
+				Reason:  pendingOpenBumpReasonUnavailable,
+			}
+			continue
+		}
+
+		tx, ok := txByID[txid]
+		if !ok {
+			results[key] = pendingOpenBumpCandidate{
+				Checked: gotTransactions,
+				Reason: func() string {
+					if gotTransactions {
+						return pendingOpenBumpReasonFundingTxUnavailable
+					}
+					return pendingOpenBumpReasonUnavailable
+				}(),
+			}
+			continue
+		}
+
+		hasWalletOutput := false
+		for _, out := range tx.GetOutputDetails() {
+			if out == nil || !out.GetIsOurAddress() {
+				continue
+			}
+			if uint32(out.GetOutputIndex()) == fundingVout {
+				continue
+			}
+			hasWalletOutput = true
+			break
+		}
+		if hasWalletOutput {
+			results[key] = pendingOpenBumpCandidate{
+				Checked: true,
+				Reason:  pendingOpenBumpReasonWalletOutputUnavailable,
+			}
+			continue
+		}
+
+		results[key] = pendingOpenBumpCandidate{
+			Checked: true,
+			Reason:  pendingOpenBumpReasonNoWalletOutput,
+		}
+	}
+
+	return results
+}
+
+func selectPendingOpenBumpCandidate(outputs []pendingOpenWalletOutput, fundingVout uint32) (pendingOpenWalletOutput, bool) {
+	var best pendingOpenWalletOutput
+	ok := false
+	for _, output := range outputs {
+		if output.Outpoint == "" || output.Vout == fundingVout {
+			continue
+		}
+		if !ok || output.AmountSat > best.AmountSat {
+			best = output
+			ok = true
+		}
+	}
+	return best, ok
+}
+
+func channelPointOutpointInfo(point string) (string, uint32, error) {
+	trimmed := strings.TrimSpace(point)
+	if trimmed == "" {
+		return "", 0, errors.New("channel_point required")
+	}
+	parts := strings.Split(trimmed, ":")
+	if len(parts) != 2 {
+		return "", 0, errors.New("channel_point must be txid:index")
+	}
+	txid, err := normalizeTxidHex(parts[0])
+	if err != nil {
+		return "", 0, err
+	}
+	index, err := strconv.ParseUint(parts[1], 10, 32)
+	if err != nil {
+		return "", 0, errors.New("invalid channel_point index")
+	}
+	return txid, uint32(index), nil
+}
+
 func (c *Client) snapshotInactiveSince(channels []*lnrpc.Channel, now time.Time) map[string]time.Time {
 	c.channelStateMu.Lock()
 	defer c.channelStateMu.Unlock()
@@ -4006,6 +4241,39 @@ func (c *Client) snapshotInactiveSince(channels []*lnrpc.Channel, now time.Time)
 
 	out := make(map[string]time.Time, len(c.channelInactive))
 	for key, ts := range c.channelInactive {
+		out[key] = ts
+	}
+	return out
+}
+
+func (c *Client) snapshotPendingOpenSince(points []string, now time.Time) map[string]time.Time {
+	c.channelStateMu.Lock()
+	defer c.channelStateMu.Unlock()
+
+	if c.channelPendingOpen == nil {
+		c.channelPendingOpen = make(map[string]time.Time)
+	}
+
+	seen := make(map[string]struct{}, len(points))
+	for _, point := range points {
+		key := normalizeChannelPointKey(point)
+		if key == "" {
+			continue
+		}
+		seen[key] = struct{}{}
+		if _, ok := c.channelPendingOpen[key]; !ok {
+			c.channelPendingOpen[key] = now
+		}
+	}
+
+	for key := range c.channelPendingOpen {
+		if _, ok := seen[key]; !ok {
+			delete(c.channelPendingOpen, key)
+		}
+	}
+
+	out := make(map[string]time.Time, len(c.channelPendingOpen))
+	for key, ts := range c.channelPendingOpen {
 		out[key] = ts
 	}
 	return out
@@ -4087,6 +4355,13 @@ type PendingChannelInfo struct {
 	LimboBalance             int64  `json:"limbo_balance,omitempty"`
 	ConfirmationsUntilActive uint32 `json:"confirmations_until_active,omitempty"`
 	ConfirmationHeight       uint32 `json:"confirmation_height,omitempty"`
+	OpeningSinceUnix         int64  `json:"opening_since_unix,omitempty"`
+	OpeningDurationSec       int64  `json:"opening_duration_sec,omitempty"`
+	FundingBumpChecked       bool   `json:"funding_bump_checked"`
+	FundingBumpEligible      bool   `json:"funding_bump_eligible"`
+	FundingBumpOutpoint      string `json:"funding_bump_outpoint,omitempty"`
+	FundingBumpAmountSat     int64  `json:"funding_bump_amount_sat,omitempty"`
+	FundingBumpReason        string `json:"funding_bump_reason,omitempty"`
 	Private                  bool   `json:"private"`
 }
 

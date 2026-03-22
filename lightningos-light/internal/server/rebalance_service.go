@@ -49,6 +49,8 @@ const (
 	paybackModeCritical = 1 << 2
 )
 
+var errManualRestartCooldown = errors.New("manual restart cooldown active")
+
 type RebalanceConfig struct {
 	AutoEnabled               bool    `json:"auto_enabled"`
 	ScanIntervalSec           int     `json:"scan_interval_sec"`
@@ -612,6 +614,10 @@ func manualRestartInterval(cfg RebalanceConfig) time.Duration {
 	return rebalanceScanInterval(cfg)
 }
 
+func shouldEnforceManualRestartCooldown(source string, reason string) bool {
+	return source == "manual" && reason == "auto-restart"
+}
+
 func normalizeChannelSetting(setting channelSetting) channelSetting {
 	if setting.TargetOutboundPct <= 0 || setting.TargetOutboundPct > 100 {
 		setting.TargetOutboundPct = rebalanceDefaultTargetOutboundPct
@@ -980,7 +986,7 @@ func (s *RebalanceService) runManualRestartWatch() {
 			continue
 		}
 		_, err := s.startJob(ch.ChannelID, "manual", "auto-restart", 0, true)
-		if err != nil && err.Error() == "channel busy" {
+		if err != nil && (err.Error() == "channel busy" || errors.Is(err, errManualRestartCooldown)) {
 			continue
 		}
 	}
@@ -1368,6 +1374,11 @@ func (s *RebalanceService) startJob(targetChannelID uint64, source string, reaso
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	cfg, err := s.loadConfig(ctx)
+	if err != nil {
+		cfg = defaultRebalanceConfig()
+	}
+
 	channels, err := s.lnd.ListChannels(ctx)
 	if err != nil {
 		return 0, err
@@ -1399,6 +1410,13 @@ func (s *RebalanceService) startJob(targetChannelID uint64, source string, reaso
 
 	if s.isChannelBusy(targetChannelID) {
 		return 0, errors.New("channel busy")
+	}
+	if shouldEnforceManualRestartCooldown(source, reason) {
+		if lastRestartAt, ok := s.lastManualAutoRestartAt(ctx, targetChannelID); ok {
+			if time.Since(lastRestartAt) < manualRestartInterval(cfg) {
+				return 0, errManualRestartCooldown
+			}
+		}
 	}
 
 	jobID, err := s.insertJob(ctx, &target, source, reason, targetPct, amount)
@@ -3486,6 +3504,24 @@ where status in ('running','queued') and target_channel_id=$1
 limit 1
 `, int64(channelID)).Scan(&running)
 	return running == 1
+}
+
+func (s *RebalanceService) lastManualAutoRestartAt(ctx context.Context, channelID uint64) (time.Time, bool) {
+	if s.db == nil || channelID == 0 {
+		return time.Time{}, false
+	}
+	var createdAt pgtype.Timestamptz
+	err := s.db.QueryRow(ctx, `
+select max(created_at)
+from rebalance_jobs
+where target_channel_id=$1
+  and source='manual'
+  and coalesce(reason, '')='auto-restart'
+`, int64(channelID)).Scan(&createdAt)
+	if err != nil || !createdAt.Valid {
+		return time.Time{}, false
+	}
+	return createdAt.Time.UTC(), true
 }
 
 func (s *RebalanceService) finishJob(jobID int64, status string, reason string) {

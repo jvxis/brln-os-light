@@ -660,6 +660,41 @@ func TestCollapseWeakRebalanceCampaigns(t *testing.T) {
 	}
 }
 
+func TestAutofeeProfileMovementDefaults(t *testing.T) {
+	conservative := autofeeProfiles["conservative"]
+	if conservative.StepCap != 0.05 || conservative.CooldownUpSec != 8*3600 || conservative.CooldownDownSec != 2*3600 {
+		t.Fatalf("unexpected conservative movement defaults: %+v", conservative)
+	}
+	if conservative.DiscoveryStepCapDown != 0.15 || conservative.StallFloorRelaxGapFrac != 0.15 {
+		t.Fatalf("unexpected conservative down movement tuning: %+v", conservative)
+	}
+	if conservative.SoftenMinOutRatio != 0.25 || conservative.SoftenMaxDropToPegFrac != 0.85 {
+		t.Fatalf("unexpected conservative soften tuning: %+v", conservative)
+	}
+
+	moderate := autofeeProfiles["moderate"]
+	if moderate.StepCap != 0.08 || moderate.CooldownUpSec != 6*3600 || moderate.CooldownDownSec != 1*3600 {
+		t.Fatalf("unexpected moderate movement defaults: %+v", moderate)
+	}
+	if moderate.DiscoveryStepCapDown != 0.20 || moderate.StallFloorRelaxGapFrac != 0.10 {
+		t.Fatalf("unexpected moderate down movement tuning: %+v", moderate)
+	}
+	if moderate.SoftenMinOutRatio != 0.20 || moderate.SoftenMaxDropToPegFrac != 0.75 {
+		t.Fatalf("unexpected moderate soften tuning: %+v", moderate)
+	}
+
+	aggressive := autofeeProfiles["aggressive"]
+	if aggressive.StepCap != 0.10 || aggressive.CooldownUpSec != 3*3600 || aggressive.CooldownDownSec != 1*3600 {
+		t.Fatalf("unexpected aggressive movement defaults: %+v", aggressive)
+	}
+	if aggressive.DiscoveryStepCapDown != 0.25 || aggressive.StallFloorRelaxGapFrac != 0.08 {
+		t.Fatalf("unexpected aggressive down movement tuning: %+v", aggressive)
+	}
+	if aggressive.SoftenMinOutRatio != 0.15 || aggressive.SoftenMaxDropToPegFrac != 0.70 {
+		t.Fatalf("unexpected aggressive soften tuning: %+v", aggressive)
+	}
+}
+
 func TestShouldHoldSmallStepBypassesTowardTargetWhenGapIsLarge(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
 	st := &autofeeChannelState{}

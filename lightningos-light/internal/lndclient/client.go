@@ -1299,7 +1299,7 @@ func (c *Client) ListRecent(ctx context.Context, limit int) ([]RecentActivity, e
 				Direction:   "out",
 				AmountSat:   pay.ValueSat,
 				Memo:        pay.PaymentRequest,
-				Timestamp:   time.Unix(pay.CreationDate, 0).UTC(),
+				Timestamp:   recentPaymentTimestamp(pay),
 				Status:      pay.Status.String(),
 				Keysend:     isKeysend,
 				PaymentHash: strings.ToLower(pay.PaymentHash),
@@ -1313,6 +1313,19 @@ func (c *Client) ListRecent(ctx context.Context, limit int) ([]RecentActivity, e
 	}
 
 	return items, nil
+}
+
+func recentPaymentTimestamp(pay *lnrpc.Payment) time.Time {
+	if pay == nil {
+		return time.Time{}
+	}
+	if pay.CreationDate != 0 {
+		return time.Unix(pay.CreationDate, 0).UTC()
+	}
+	if pay.CreationTimeNs != 0 {
+		return time.Unix(0, pay.CreationTimeNs).UTC()
+	}
+	return time.Now().UTC()
 }
 
 func recentRouteFromPayment(pay *lnrpc.Payment) *lnrpc.Route {

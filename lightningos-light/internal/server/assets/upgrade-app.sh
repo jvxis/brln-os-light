@@ -117,6 +117,7 @@ CP_BIN="$(resolve_bin cp /usr/bin/cp /bin/cp)" || die "Required command missing:
 RM_BIN="$(resolve_bin rm /usr/bin/rm /bin/rm)" || die "Required command missing: rm"
 FLOCK_BIN="$(resolve_bin flock /usr/bin/flock /bin/flock)" || die "Required command missing: flock"
 DATE_BIN="$(resolve_bin date /usr/bin/date /bin/date)" || die "Required command missing: date"
+STAT_BIN="$(resolve_bin stat /usr/bin/stat /bin/stat)" || die "Required command missing: stat"
 exec 9>"$LOCK_FILE"
 if ! "$FLOCK_BIN" -n 9; then
   die "Another app upgrade is already running."
@@ -126,6 +127,19 @@ mirror_root="/var/lib/lightningos/src/brln-os-light"
 worktree_root="/var/lib/lightningos/worktrees"
 worktree_dir=""
 project_dir=""
+
+owned_by_root() {
+  local path=""
+  local owner_uid=""
+  for path in "$@"; do
+    [[ -e "$path" ]] || continue
+    owner_uid="$("$STAT_BIN" -c '%u' "$path" 2>/dev/null || true)"
+    if [[ "$owner_uid" != "0" ]]; then
+      return 1
+    fi
+  done
+  return 0
+}
 
 cleanup() {
   if [[ -n "$worktree_dir" && -d "$worktree_dir" ]]; then
@@ -137,6 +151,14 @@ trap cleanup EXIT
 
 print_step "Preparing repository mirror"
 mkdir -p "$(dirname "$mirror_root")" "$worktree_root"
+if [[ -d "$mirror_root" && ! -d "$mirror_root/.git" ]]; then
+  print_warn "Repository mirror path is not a git repository. Recreating it."
+  "$RM_BIN" -rf "$mirror_root"
+fi
+if [[ -d "$mirror_root" ]] && ! owned_by_root "$mirror_root" "$mirror_root/.git"; then
+  print_warn "Repository mirror ownership is incompatible with root. Recreating it."
+  "$RM_BIN" -rf "$mirror_root"
+fi
 if [[ ! -d "$mirror_root/.git" ]]; then
   "$RM_BIN" -rf "$mirror_root"
   "$GIT_BIN" clone --no-checkout "$REPO_URL" "$mirror_root"

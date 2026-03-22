@@ -266,6 +266,7 @@ export default function RebalanceCenter() {
   const hasLoadedOnceRef = useRef(false)
   const loadInFlightRef = useRef(false)
   const queuedSilentRefreshRef = useRef(false)
+  const channelStateVersionRef = useRef(0)
 
   const formatSats = (value: number) => `${formatter.format(Math.round(value))} sats`
   const formatPct = (value: number) => `${pctFormatter.format(value)}%`
@@ -495,6 +496,10 @@ export default function RebalanceCenter() {
     left: Pick<RebalanceChannel, 'channel_id' | 'channel_point'>,
     right: Pick<RebalanceChannel, 'channel_id' | 'channel_point'>
   ) => left.channel_id === right.channel_id || (Boolean(left.channel_point) && left.channel_point === right.channel_point)
+  const bumpChannelStateVersion = () => {
+    channelStateVersionRef.current += 1
+    return channelStateVersionRef.current
+  }
 
   const loadAll = async (options: { silent?: boolean } = {}) => {
     const silent = options.silent ?? false
@@ -503,6 +508,7 @@ export default function RebalanceCenter() {
       return
     }
     loadInFlightRef.current = true
+    const channelStateVersionAtStart = channelStateVersionRef.current
     const isFirstLoad = !hasLoadedOnceRef.current
     try {
       if (isFirstLoad) {
@@ -544,12 +550,14 @@ export default function RebalanceCenter() {
         }
       setOverview(ovw as RebalanceOverview)
       const channelList = Array.isArray((ch as any)?.channels) ? (ch as any).channels : []
-      setChannels(channelList)
-      const restartState: Record<string, boolean> = {}
-      channelList.forEach((channel: RebalanceChannel) => {
-        restartState[channel.channel_point] = channel.manual_restart_enabled
-      })
-      setManualRestart(restartState)
+      if (channelStateVersionAtStart === channelStateVersionRef.current) {
+        setChannels(channelList)
+        const restartState: Record<string, boolean> = {}
+        channelList.forEach((channel: RebalanceChannel) => {
+          restartState[channel.channel_point] = channel.manual_restart_enabled
+        })
+        setManualRestart(restartState)
+      }
       setQueueJobs(Array.isArray((queue as any)?.jobs) ? (queue as any).jobs : [])
       setQueueAttempts(Array.isArray((queue as any)?.attempts) ? (queue as any).attempts : [])
       setHistoryJobs(Array.isArray((hist as any)?.jobs) ? (hist as any).jobs : [])
@@ -658,6 +666,7 @@ export default function RebalanceCenter() {
   }
 
   const handleToggleChannelAuto = async (channel: RebalanceChannel, enabled: boolean) => {
+    bumpChannelStateVersion()
     const previous = channel.auto_enabled
     const previousManual = manualRestart[channel.channel_point] === true
     setChannels((prev) =>
@@ -693,6 +702,7 @@ export default function RebalanceCenter() {
   const handleBulkAuto = async (enabled: boolean) => {
     if (sortedChannels.length === 0) return
     setStatus('')
+    bumpChannelStateVersion()
     try {
       await Promise.all(
         sortedChannels.map((channel) =>
@@ -712,6 +722,7 @@ export default function RebalanceCenter() {
   const handleBulkExclude = async (excluded: boolean) => {
     if (sortedChannels.length === 0) return
     setStatus('')
+    bumpChannelStateVersion()
     try {
       await Promise.all(
         sortedChannels.map((channel) =>
@@ -729,6 +740,7 @@ export default function RebalanceCenter() {
   }
 
   const handleExcludeSource = async (channel: RebalanceChannel, excluded: boolean) => {
+    bumpChannelStateVersion()
     const previous = channel.excluded_as_source
     setChannels((prev) => prev.map((ch) => (isSameChannel(ch, channel) ? { ...ch, excluded_as_source: excluded } : ch)))
     try {
@@ -741,6 +753,7 @@ export default function RebalanceCenter() {
   }
 
   const handleSaveChannelSettings = async (channel: RebalanceChannel) => {
+    bumpChannelStateVersion()
     const nextTargetValue = editTargets[channel.channel_id]
     const parsedTarget = nextTargetValue !== undefined ? Number(nextTargetValue) : channel.target_outbound_pct
     if (!Number.isFinite(parsedTarget) || parsedTarget <= 0 || parsedTarget >= 100) {
@@ -801,6 +814,7 @@ export default function RebalanceCenter() {
   }
 
   const handleManualRestartToggle = async (channel: RebalanceChannel, enabled: boolean) => {
+    bumpChannelStateVersion()
     const key = channel.channel_point
     const previous = manualRestart[key] === true
     const previousAuto = channel.auto_enabled

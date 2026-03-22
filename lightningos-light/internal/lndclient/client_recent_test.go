@@ -31,3 +31,29 @@ func TestRecentPaymentTimestampFallsBackToCreationTimeNs(t *testing.T) {
 		t.Fatalf("expected %v, got %v", want, got)
 	}
 }
+
+func TestRecentPaymentPageSizes(t *testing.T) {
+	got := recentPaymentPageSizes(1000)
+	want := []uint64{1000, 500, 200, 100, 50}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d sizes, got %d (%v)", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("expected size %d at position %d, got %d", want[i], i, got[i])
+		}
+	}
+}
+
+func TestRecentPaymentPageSizesDeduplicatesLimit(t *testing.T) {
+	got := recentPaymentPageSizes(200)
+	want := []uint64{200, 500, 100, 50}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d sizes, got %d (%v)", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("expected size %d at position %d, got %d", want[i], i, got[i])
+		}
+	}
+}

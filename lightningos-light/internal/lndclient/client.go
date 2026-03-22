@@ -1185,11 +1185,7 @@ func (c *Client) ListRecent(ctx context.Context, limit int) ([]RecentActivity, e
 	client := lnrpc.NewLightningClient(conn)
 
 	invoices, invErr := client.ListInvoices(ctx, &lnrpc.ListInvoiceRequest{Reversed: true, NumMaxInvoices: uint64(limit)})
-	payments, payErr := client.ListPayments(ctx, &lnrpc.ListPaymentsRequest{
-		IncludeIncomplete: true,
-		MaxPayments:       uint64(limit),
-		Reversed:          true,
-	})
+	paymentItems, payErr := listRecentPaymentsWithFallback(ctx, client, limit)
 	pubkey := strings.TrimSpace(c.CachedPubkey())
 	if pubkey == "" {
 		if info, infoErr := client.GetInfo(ctx, &lnrpc.GetInfoRequest{}); infoErr == nil && info != nil {
@@ -1232,7 +1228,7 @@ func (c *Client) ListRecent(ctx context.Context, limit int) ([]RecentActivity, e
 
 	rebalanceHashes := map[string]struct{}{}
 	if payErr == nil {
-		for _, pay := range payments.Payments {
+		for _, pay := range paymentItems {
 			if pay == nil || pay.Status != lnrpc.Payment_SUCCEEDED {
 				continue
 			}
@@ -1285,7 +1281,7 @@ func (c *Client) ListRecent(ctx context.Context, limit int) ([]RecentActivity, e
 		}
 	}
 	if payErr == nil {
-		for _, pay := range payments.Payments {
+		for _, pay := range paymentItems {
 			if pay.Status != lnrpc.Payment_SUCCEEDED {
 				continue
 			}
@@ -1313,6 +1309,46 @@ func (c *Client) ListRecent(ctx context.Context, limit int) ([]RecentActivity, e
 	}
 
 	return items, nil
+}
+
+func listRecentPaymentsWithFallback(ctx context.Context, client lnrpc.LightningClient, limit int) ([]*lnrpc.Payment, error) {
+	var lastErr error
+	for _, pageSize := range recentPaymentPageSizes(limit) {
+		resp, err := client.ListPayments(ctx, &lnrpc.ListPaymentsRequest{
+			IncludeIncomplete: true,
+			MaxPayments:       pageSize,
+			Reversed:          true,
+		})
+		if err == nil {
+			if resp == nil {
+				return nil, nil
+			}
+			return resp.Payments, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
+
+func recentPaymentPageSizes(limit int) []uint64 {
+	if limit <= 0 {
+		limit = 20
+	}
+	candidates := []int{limit, 500, 200, 100, 50}
+	seen := make(map[uint64]struct{}, len(candidates))
+	sizes := make([]uint64, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate <= 0 {
+			continue
+		}
+		size := uint64(candidate)
+		if _, ok := seen[size]; ok {
+			continue
+		}
+		seen[size] = struct{}{}
+		sizes = append(sizes, size)
+	}
+	return sizes
 }
 
 func recentPaymentTimestamp(pay *lnrpc.Payment) time.Time {

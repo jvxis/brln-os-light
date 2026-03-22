@@ -659,7 +659,17 @@ export default function RebalanceCenter() {
 
   const handleToggleChannelAuto = async (channel: RebalanceChannel, enabled: boolean) => {
     const previous = channel.auto_enabled
-    setChannels((prev) => prev.map((ch) => (isSameChannel(ch, channel) ? { ...ch, auto_enabled: enabled } : ch)))
+    const previousManual = manualRestart[channel.channel_point] === true
+    setChannels((prev) =>
+      prev.map((ch) =>
+        isSameChannel(ch, channel)
+          ? { ...ch, auto_enabled: enabled, manual_restart_enabled: enabled ? false : ch.manual_restart_enabled }
+          : ch
+      )
+    )
+    if (enabled) {
+      setManualRestart((prev) => ({ ...prev, [channel.channel_point]: false }))
+    }
     try {
       await updateRebalanceChannelAuto({
         channel_id: channel.channel_id,
@@ -668,7 +678,14 @@ export default function RebalanceCenter() {
       })
       void loadAll({ silent: true })
     } catch (err) {
-      setChannels((prev) => prev.map((ch) => (isSameChannel(ch, channel) ? { ...ch, auto_enabled: previous } : ch)))
+      setChannels((prev) =>
+        prev.map((ch) =>
+          isSameChannel(ch, channel)
+            ? { ...ch, auto_enabled: previous, manual_restart_enabled: previousManual }
+            : ch
+        )
+      )
+      setManualRestart((prev) => ({ ...prev, [channel.channel_point]: previousManual }))
       setStatus(err instanceof Error ? err.message : t('rebalanceCenter.saveFailed'))
     }
   }
@@ -786,9 +803,14 @@ export default function RebalanceCenter() {
   const handleManualRestartToggle = async (channel: RebalanceChannel, enabled: boolean) => {
     const key = channel.channel_point
     const previous = manualRestart[key] === true
+    const previousAuto = channel.auto_enabled
     setManualRestart((prev) => ({ ...prev, [key]: enabled }))
     setChannels((prev) =>
-      prev.map((ch) => (isSameChannel(ch, channel) ? { ...ch, manual_restart_enabled: enabled } : ch))
+      prev.map((ch) =>
+        isSameChannel(ch, channel)
+          ? { ...ch, manual_restart_enabled: enabled, auto_enabled: enabled ? false : ch.auto_enabled }
+          : ch
+      )
     )
     try {
       await updateRebalanceChannelManualRestart({
@@ -800,7 +822,11 @@ export default function RebalanceCenter() {
     } catch (err) {
       setManualRestart((prev) => ({ ...prev, [key]: previous }))
       setChannels((prev) =>
-        prev.map((ch) => (isSameChannel(ch, channel) ? { ...ch, manual_restart_enabled: previous } : ch))
+        prev.map((ch) =>
+          isSameChannel(ch, channel)
+            ? { ...ch, manual_restart_enabled: previous, auto_enabled: previousAuto }
+            : ch
+        )
       )
       setStatus(err instanceof Error ? err.message : t('rebalanceCenter.saveFailed'))
     }

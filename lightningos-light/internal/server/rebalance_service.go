@@ -36,10 +36,6 @@ const (
 )
 
 const (
-	manualRestartCooldownSec = 60
-)
-
-const (
 	scanSkipDetailLimit = 50
 )
 
@@ -308,7 +304,6 @@ type paybackTotals7d struct {
 
 type manualRestartInfo struct {
 	TargetChannelID uint64
-	CooldownSec     int
 }
 
 type manualRestartHandle struct {
@@ -586,10 +581,7 @@ func (s *RebalanceService) triggerScan() {
 func (s *RebalanceService) runAutoLoop() {
 	for {
 		cfg, _ := s.loadConfig(context.Background())
-		interval := time.Duration(cfg.ScanIntervalSec) * time.Second
-		if interval <= 0 {
-			interval = 10 * time.Minute
-		}
+		interval := rebalanceScanInterval(cfg)
 		timer := time.NewTimer(interval)
 		select {
 		case <-timer.C:
@@ -608,9 +600,24 @@ func (s *RebalanceService) runAutoLoop() {
 	}
 }
 
+func rebalanceScanInterval(cfg RebalanceConfig) time.Duration {
+	interval := time.Duration(cfg.ScanIntervalSec) * time.Second
+	if interval <= 0 {
+		interval = 10 * time.Minute
+	}
+	return interval
+}
+
+func manualRestartInterval(cfg RebalanceConfig) time.Duration {
+	return rebalanceScanInterval(cfg)
+}
+
 func normalizeChannelSetting(setting channelSetting) channelSetting {
 	if setting.TargetOutboundPct <= 0 || setting.TargetOutboundPct > 100 {
 		setting.TargetOutboundPct = rebalanceDefaultTargetOutboundPct
+	}
+	if setting.AutoEnabled && setting.ManualRestartEnabled {
+		setting.ManualRestartEnabled = false
 	}
 	if !setting.UseDefaultEconRatio && (!setting.EconRatioOverrideSet || setting.EconRatioOverride < 0.01 || setting.EconRatioOverride > 0.99) {
 		setting.UseDefaultEconRatio = true
@@ -912,17 +919,13 @@ values ($1,$2,$3)
 }
 
 func (s *RebalanceService) runManualRestartWatchLoop() {
-	interval := time.Duration(manualRestartCooldownSec) * time.Second
-	if interval <= 0 {
-		interval = time.Minute
-	}
-	timer := time.NewTimer(interval)
-	defer timer.Stop()
 	for {
+		cfg, _ := s.loadConfig(context.Background())
+		interval := manualRestartInterval(cfg)
+		timer := time.NewTimer(interval)
 		select {
 		case <-timer.C:
 			s.runManualRestartWatch()
-			timer.Reset(interval)
 		case <-s.stop:
 			if !timer.Stop() {
 				<-timer.C
@@ -1410,7 +1413,6 @@ func (s *RebalanceService) startJob(targetChannelID uint64, source string, reaso
 		}
 		s.manualRestart[jobID] = manualRestartInfo{
 			TargetChannelID: targetChannelID,
-			CooldownSec:     manualRestartCooldownSec,
 		}
 		s.mu.Unlock()
 	}
@@ -3587,14 +3589,12 @@ func (s *RebalanceService) shouldManualRestart(status string, reason string) boo
 }
 
 func (s *RebalanceService) scheduleManualRestart(info manualRestartInfo) {
-	cooldown := info.CooldownSec
-	if cooldown <= 0 {
-		cooldown = manualRestartCooldownSec
-	}
+	cfg, _ := s.loadConfig(context.Background())
+	cooldown := manualRestartInterval(cfg)
 	ctx, cancel := context.WithCancel(context.Background())
 	handle := s.setManualRestartCancel(info.TargetChannelID, cancel)
 	defer s.clearManualRestartCancel(info.TargetChannelID, handle)
-	timer := time.NewTimer(time.Duration(cooldown) * time.Second)
+	timer := time.NewTimer(cooldown)
 	select {
 	case <-timer.C:
 	case <-ctx.Done():
@@ -3616,7 +3616,7 @@ func (s *RebalanceService) scheduleManualRestart(info manualRestartInfo) {
 	restartCtx, restartCancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer restartCancel()
 
-	cfg, _ := s.loadConfig(restartCtx)
+	cfg, _ = s.loadConfig(restartCtx)
 	if !cfg.ManualRestartWatch {
 		return
 	}
@@ -5921,10 +5921,17 @@ func (s *RebalanceService) SetChannelAuto(ctx context.Context, channelID uint64,
 	if s.db == nil {
 		return errors.New("db unavailable")
 	}
+	if autoEnabled {
+		s.cancelManualRestart(channelID)
+	}
 	_, err := s.db.Exec(ctx, `
-  insert into rebalance_channel_settings (channel_id, channel_point, target_outbound_pct, auto_enabled, updated_at)
-  values ($1,$2, $3, $4, now())
-   on conflict (channel_id) do update set channel_point=excluded.channel_point, auto_enabled=excluded.auto_enabled, updated_at=now()
+  insert into rebalance_channel_settings (channel_id, channel_point, target_outbound_pct, auto_enabled, manual_restart_enabled, updated_at)
+  values ($1,$2,$3,$4,false,now())
+   on conflict (channel_id) do update set
+     channel_point=excluded.channel_point,
+     auto_enabled=excluded.auto_enabled,
+     manual_restart_enabled=case when excluded.auto_enabled then false else rebalance_channel_settings.manual_restart_enabled end,
+     updated_at=now()
   `, int64(channelID), channelPoint, rebalanceDefaultTargetOutboundPct, autoEnabled)
 	return err
 }
@@ -5939,7 +5946,11 @@ func (s *RebalanceService) SetChannelManualRestart(ctx context.Context, channelI
 	_, err := s.db.Exec(ctx, `
   insert into rebalance_channel_settings (channel_id, channel_point, target_outbound_pct, auto_enabled, manual_restart_enabled, updated_at)
   values ($1,$2,$3,false,$4,now())
-   on conflict (channel_id) do update set channel_point=excluded.channel_point, manual_restart_enabled=excluded.manual_restart_enabled, updated_at=now()
+   on conflict (channel_id) do update set
+     channel_point=excluded.channel_point,
+     auto_enabled=case when excluded.manual_restart_enabled then false else rebalance_channel_settings.auto_enabled end,
+     manual_restart_enabled=excluded.manual_restart_enabled,
+     updated_at=now()
   `, int64(channelID), channelPoint, rebalanceDefaultTargetOutboundPct, enabled)
 	return err
 }

@@ -29,6 +29,7 @@ type OpenChannelPreview struct {
 	EnoughFunds           bool   `json:"enough_funds"`
 	Exact                 bool   `json:"exact"`
 	HasChange             bool   `json:"has_change"`
+	ReferenceOnly         bool   `json:"reference_only"`
 	MessageCode           string `json:"message_code,omitempty"`
 	Message               string `json:"message,omitempty"`
 }
@@ -82,11 +83,13 @@ func buildOpenChannelPreview(preview OpenChannelPreview, utxos []OnchainUtxo) Op
 	preview.SpendableRemainingSat = preview.SpendableSat
 
 	if len(sorted) == 0 {
+		preview = applyOpenChannelReferenceEstimate(preview)
 		preview.MessageCode = "no_confirmed_utxos"
 		preview.Message = "no confirmed UTXOs available"
 		return preview
 	}
 	if preview.SpendableSat < preview.LocalFundingSat {
+		preview = applyOpenChannelReferenceEstimate(preview)
 		preview.MessageCode = "insufficient_confirmed_balance"
 		preview.Message = "insufficient confirmed balance"
 		return preview
@@ -144,6 +147,7 @@ func buildOpenChannelPreview(preview OpenChannelPreview, utxos []OnchainUtxo) Op
 		}
 	}
 
+	preview = applyOpenChannelReferenceEstimate(preview)
 	preview.MessageCode = "insufficient_balance_for_fees"
 	preview.Message = "insufficient confirmed balance for funding plus fees"
 	return preview
@@ -157,6 +161,19 @@ func openChannelPreviewOutputs(includeChange bool) []*wire.TxOut {
 		outputs = append(outputs, wire.NewTxOut(1, openChannelPreviewChangeScript))
 	}
 	return outputs
+}
+
+func applyOpenChannelReferenceEstimate(preview OpenChannelPreview) OpenChannelPreview {
+	inputs := []previewInput{{addressType: "p2wkh"}}
+	preview.EstimatedVbytes = estimatePreviewVirtualSize(inputs, openChannelPreviewOutputs(true))
+	preview.FeeSat = preview.EstimatedVbytes * preview.SatPerVbyte
+	preview.TotalDebitSat = preview.LocalFundingSat + preview.FeeSat
+	preview.SpendableRemainingSat = maxInt64(0, preview.SpendableSat-preview.TotalDebitSat)
+	preview.HasChange = true
+	preview.ReferenceOnly = true
+	preview.Exact = false
+	preview.EnoughFunds = preview.TotalDebitSat > 0 && preview.SpendableSat >= preview.TotalDebitSat
+	return preview
 }
 
 func maxInt64(a int64, b int64) int64 {

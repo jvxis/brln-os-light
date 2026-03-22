@@ -62,6 +62,12 @@ func TestBuildOpenChannelPreviewReportsInsufficientBalance(t *testing.T) {
 	if preview.Message == "" {
 		t.Fatalf("expected insufficiency message, got empty")
 	}
+	if preview.EstimatedVbytes <= 0 || preview.FeeSat <= 0 {
+		t.Fatalf("expected reference estimate even when insufficient, got %#v", preview)
+	}
+	if !preview.ReferenceOnly {
+		t.Fatalf("expected insufficient preview to be marked as reference only")
+	}
 }
 
 func TestBuildOpenChannelPreviewAbsorbsDustIntoFeeWhenNeeded(t *testing.T) {
@@ -87,5 +93,25 @@ func TestBuildOpenChannelPreviewAbsorbsDustIntoFeeWhenNeeded(t *testing.T) {
 	}
 	if preview.Message == "" {
 		t.Fatalf("expected dust absorption message, got empty")
+	}
+}
+
+func TestBuildOpenChannelPreviewKeepsReferenceEstimateWithNoUtxos(t *testing.T) {
+	preview := buildOpenChannelPreview(OpenChannelPreview{
+		LocalFundingSat: 500_000,
+		SatPerVbyte:     3,
+	}, nil)
+
+	if preview.EstimatedVbytes <= 0 {
+		t.Fatalf("expected reference vbytes estimate, got %#v", preview)
+	}
+	if preview.FeeSat <= 0 {
+		t.Fatalf("expected reference fee estimate, got %#v", preview)
+	}
+	if !preview.ReferenceOnly {
+		t.Fatalf("expected preview to be marked as reference only")
+	}
+	if preview.EnoughFunds {
+		t.Fatalf("expected preview without utxos to be insufficient")
 	}
 }

@@ -1508,6 +1508,7 @@
     "openPreviewInputs": "Estimated inputs: {{selected}} UTXO(s), {{amount}} selected",
     "openPreviewReferenceAuto": "Auto preview uses the current fee reference ({{fee}} sat/vB) for estimation only.",
     "openPreviewReferenceManual": "Manual preview uses the entered fee rate ({{fee}} sat/vB).",
+    "openPreviewReferenceFallback": "Reference preview uses a simple one-input segwit template at {{fee}} sat/vB until wallet coin selection is possible.",
     "openPreviewEnough": "Current confirmed UTXOs appear sufficient for this channel open.",
     "openPreviewInsufficient": "Confirmed wallet balance appears insufficient for this channel open.",
     "openPreviewNoConfirmedUtxos": "No confirmed UTXOs available to fund this channel.",

@@ -244,6 +244,7 @@ type OpenChannelPreview = {
   enough_funds: boolean
   exact: boolean
   has_change: boolean
+  reference_only: boolean
   message_code?: string
   message?: string
 }
@@ -6877,11 +6878,15 @@ export default function LightningOps() {
                     <p>{t('lightningOps.openPreviewPush', { amount: formatSatsValue(openPreview.push_sat) })}</p>
                     <p>{t('lightningOps.openPreviewTotalDebit', { amount: formatSatsValue(openPreview.total_debit_sat) })}</p>
                     <p>{t('lightningOps.openPreviewRemaining', { amount: formatSatsValue(openPreview.spendable_remaining_sat) })}</p>
-                    <p>{t('lightningOps.openPreviewInputs', { selected: openPreview.selected_input_count, amount: formatSatsValue(openPreview.selected_input_sat) })}</p>
+                    {!openPreview.reference_only && (
+                      <p>{t('lightningOps.openPreviewInputs', { selected: openPreview.selected_input_count, amount: formatSatsValue(openPreview.selected_input_sat) })}</p>
+                    )}
                     <p>{t('lightningOps.openPreviewSpendable', { amount: formatSatsValue(openPreview.spendable_sat) })}</p>
                   </div>
                   <p className="text-xs text-fog/55">
-                    {openFeeMode === 'manual'
+                    {openPreview.reference_only
+                      ? t('lightningOps.openPreviewReferenceFallback', { fee: openPreview.sat_per_vbyte })
+                      : openFeeMode === 'manual'
                       ? t('lightningOps.openPreviewReferenceManual', { fee: openPreview.sat_per_vbyte })
                       : t('lightningOps.openPreviewReferenceAuto', { fee: openPreview.sat_per_vbyte })}
                   </p>

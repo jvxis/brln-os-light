@@ -1508,6 +1508,7 @@
     "openPreviewInputs": "Inputs estimados: {{selected}} UTXO(s), {{amount}} selecionados",
     "openPreviewReferenceAuto": "A prévia automática usa a referência atual de fee ({{fee}} sat/vB) apenas para estimativa.",
     "openPreviewReferenceManual": "A prévia manual usa a fee informada ({{fee}} sat/vB).",
+    "openPreviewReferenceFallback": "A prévia de referência usa um modelo simples com uma entrada segwit a {{fee}} sat/vB até que a coin selection real da carteira seja possível.",
     "openPreviewEnough": "Os UTXOs confirmados atuais parecem suficientes para esta abertura de canal.",
     "openPreviewInsufficient": "O saldo confirmado da carteira parece insuficiente para esta abertura de canal.",
     "openPreviewNoConfirmedUtxos": "Não há UTXOs confirmados disponíveis para financiar este canal.",

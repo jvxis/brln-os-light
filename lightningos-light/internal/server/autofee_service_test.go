@@ -106,6 +106,20 @@ func TestApplySeedSoftEnvelopeDoesNotRaiseFloorWhenNotAllowed(t *testing.T) {
 	}
 }
 
+func TestComputeInboundDiscountWithRetainedSpread(t *testing.T) {
+	got := computeInboundDiscount(true, "sink", 0.12, 6, 300, 500, 1000, 0.95, 0.15, 0.12)
+	if got != 379 {
+		t.Fatalf("unexpected inbound discount: got %d want 379", got)
+	}
+}
+
+func TestComputeInboundDiscountRespectsReachOutRatio(t *testing.T) {
+	got := computeInboundDiscount(true, "sink", 0.16, 6, 300, 500, 1000, 0.95, 0.15, 0.12)
+	if got != 0 {
+		t.Fatalf("expected no inbound discount beyond reach ratio, got %d", got)
+	}
+}
+
 func TestShouldEnableSeedEnvelope(t *testing.T) {
 	if !shouldEnableSeedEnvelope(500, true, true, 0, 0, false, false, false, false, false, false, false) {
 		t.Fatalf("expected seed envelope when channel has no recent flow and no strong signals")
@@ -177,14 +191,14 @@ func TestEffectiveLowOutThresholdsFallbackAndClamp(t *testing.T) {
 }
 
 func TestComputeInboundDiscountUsesAppliedOutboundCap(t *testing.T) {
-	got := computeInboundDiscount(true, "sink", 0.05, 6, 300, 10, 1000, 0.95)
+	got := computeInboundDiscount(true, "sink", 0.05, 6, 300, 10, 1000, 0.95, 0.10, 0.01)
 	if got != 950 {
 		t.Fatalf("expected inbound discount capped by applied outbound fee ratio: got %d want 950", got)
 	}
 }
 
 func TestComputeInboundDiscountRejectsIneligibleChannel(t *testing.T) {
-	got := computeInboundDiscount(true, "router", 0.05, 6, 300, 100, 1000, 0.90)
+	got := computeInboundDiscount(true, "router", 0.05, 6, 300, 100, 1000, 0.90, 0.10, 0.12)
 	if got != 0 {
 		t.Fatalf("expected no inbound discount for non-sink channel, got %d", got)
 	}
@@ -706,6 +720,9 @@ func TestAutofeeConfigWithProfileDefaults(t *testing.T) {
 	}
 	if moderate.CooldownUpSec != 6*3600 || moderate.CooldownDownSec != 1*3600 || moderate.StepCap != 0.08 {
 		t.Fatalf("unexpected moderate profile defaults payload: %+v", moderate)
+	}
+	if moderate.InboundDiscountReachOutRatio != 0.15 || moderate.InboundDiscountMinRetainedSpreadFrac != 0.12 {
+		t.Fatalf("unexpected inbound discount defaults payload: %+v", moderate)
 	}
 	if moderate.InboundDiscountMaxRatio != defaultInboundDiscountMaxRatio {
 		t.Fatalf("unexpected inbound discount default: got %.2f want %.2f", moderate.InboundDiscountMaxRatio, defaultInboundDiscountMaxRatio)

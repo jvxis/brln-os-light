@@ -158,88 +158,94 @@ func normalizeHTLCMode(value string) string {
 }
 
 type AutofeeConfig struct {
-	Enabled                         bool                              `json:"enabled"`
-	Profile                         string                            `json:"profile"`
-	LookbackDays                    int                               `json:"lookback_days"`
-	RunIntervalSec                  int                               `json:"run_interval_sec"`
-	CooldownUpSec                   int                               `json:"cooldown_up_sec"`
-	CooldownDownSec                 int                               `json:"cooldown_down_sec"`
-	StepCapOverride                 float64                           `json:"step_cap_override"`
-	DiscoveryStepCapDownOverride    float64                           `json:"discovery_step_cap_down_override"`
-	StallFloorRelaxGapFracOverride  float64                           `json:"stall_floor_relax_gap_frac_override"`
-	InboundDiscountMaxRatioOverride float64                           `json:"inbound_discount_max_ratio_override"`
-	OutrateFloorFactorLowOverride   float64                           `json:"outrate_floor_factor_low_override"`
-	SoftenMinOutRatioOverride       float64                           `json:"soften_min_out_ratio_override"`
-	SoftenMaxDropToPegFracOverride  float64                           `json:"soften_max_drop_to_peg_frac_override"`
-	HTLCMinAttempts60mOverride      int                               `json:"htlc_min_attempts_60m_override"`
-	HTLCPolicyFailRateOverride      float64                           `json:"htlc_policy_fail_rate_override"`
-	HTLCLiquidityFailRateOverride   float64                           `json:"htlc_liquidity_fail_rate_override"`
-	RebalCostMode                   string                            `json:"rebal_cost_mode"`
-	AmbossEnabled                   bool                              `json:"amboss_enabled"`
-	AmbossTokenSet                  bool                              `json:"amboss_token_set"`
-	InboundPassiveEnabled           bool                              `json:"inbound_passive_enabled"`
-	DiscoveryEnabled                bool                              `json:"discovery_enabled"`
-	ExplorerEnabled                 bool                              `json:"explorer_enabled"`
-	SuperSourceEnabled              bool                              `json:"super_source_enabled"`
-	SuperSourceBaseFeeMsat          int                               `json:"super_source_base_fee_msat"`
-	RevfloorEnabled                 bool                              `json:"revfloor_enabled"`
-	CircuitBreakerEnabled           bool                              `json:"circuit_breaker_enabled"`
-	ExtremeDrainEnabled             bool                              `json:"extreme_drain_enabled"`
-	HTLCSignalEnabled               bool                              `json:"htlc_signal_enabled"`
-	HTLCMode                        string                            `json:"htlc_mode"`
-	MinPpm                          int                               `json:"min_ppm"`
-	MaxPpm                          int                               `json:"max_ppm"`
-	ProfileDefaults                 map[string]AutofeeProfileDefaults `json:"profile_defaults,omitempty"`
+	Enabled                                      bool                              `json:"enabled"`
+	Profile                                      string                            `json:"profile"`
+	LookbackDays                                 int                               `json:"lookback_days"`
+	RunIntervalSec                               int                               `json:"run_interval_sec"`
+	CooldownUpSec                                int                               `json:"cooldown_up_sec"`
+	CooldownDownSec                              int                               `json:"cooldown_down_sec"`
+	StepCapOverride                              float64                           `json:"step_cap_override"`
+	DiscoveryStepCapDownOverride                 float64                           `json:"discovery_step_cap_down_override"`
+	StallFloorRelaxGapFracOverride               float64                           `json:"stall_floor_relax_gap_frac_override"`
+	InboundDiscountMaxRatioOverride              float64                           `json:"inbound_discount_max_ratio_override"`
+	InboundDiscountReachOutRatioOverride         float64                           `json:"inbound_discount_reach_out_ratio_override"`
+	InboundDiscountMinRetainedSpreadFracOverride float64                           `json:"inbound_discount_min_retained_spread_frac_override"`
+	OutrateFloorFactorLowOverride                float64                           `json:"outrate_floor_factor_low_override"`
+	SoftenMinOutRatioOverride                    float64                           `json:"soften_min_out_ratio_override"`
+	SoftenMaxDropToPegFracOverride               float64                           `json:"soften_max_drop_to_peg_frac_override"`
+	HTLCMinAttempts60mOverride                   int                               `json:"htlc_min_attempts_60m_override"`
+	HTLCPolicyFailRateOverride                   float64                           `json:"htlc_policy_fail_rate_override"`
+	HTLCLiquidityFailRateOverride                float64                           `json:"htlc_liquidity_fail_rate_override"`
+	RebalCostMode                                string                            `json:"rebal_cost_mode"`
+	AmbossEnabled                                bool                              `json:"amboss_enabled"`
+	AmbossTokenSet                               bool                              `json:"amboss_token_set"`
+	InboundPassiveEnabled                        bool                              `json:"inbound_passive_enabled"`
+	DiscoveryEnabled                             bool                              `json:"discovery_enabled"`
+	ExplorerEnabled                              bool                              `json:"explorer_enabled"`
+	SuperSourceEnabled                           bool                              `json:"super_source_enabled"`
+	SuperSourceBaseFeeMsat                       int                               `json:"super_source_base_fee_msat"`
+	RevfloorEnabled                              bool                              `json:"revfloor_enabled"`
+	CircuitBreakerEnabled                        bool                              `json:"circuit_breaker_enabled"`
+	ExtremeDrainEnabled                          bool                              `json:"extreme_drain_enabled"`
+	HTLCSignalEnabled                            bool                              `json:"htlc_signal_enabled"`
+	HTLCMode                                     string                            `json:"htlc_mode"`
+	MinPpm                                       int                               `json:"min_ppm"`
+	MaxPpm                                       int                               `json:"max_ppm"`
+	ProfileDefaults                              map[string]AutofeeProfileDefaults `json:"profile_defaults,omitempty"`
 }
 
 type AutofeeProfileDefaults struct {
-	RunIntervalSec          int     `json:"run_interval_sec"`
-	CooldownUpSec           int     `json:"cooldown_up_sec"`
-	CooldownDownSec         int     `json:"cooldown_down_sec"`
-	StepCap                 float64 `json:"step_cap"`
-	DiscoveryStepCapDown    float64 `json:"discovery_step_cap_down"`
-	StallFloorRelaxGapFrac  float64 `json:"stall_floor_relax_gap_frac"`
-	InboundDiscountMaxRatio float64 `json:"inbound_discount_max_ratio"`
-	OutrateFloorFactorLow   float64 `json:"outrate_floor_factor_low"`
-	SoftenMinOutRatio       float64 `json:"soften_min_out_ratio"`
-	SoftenMaxDropToPegFrac  float64 `json:"soften_max_drop_to_peg_frac"`
-	HTLCMinAttempts60m      int     `json:"htlc_min_attempts_60m"`
-	HTLCPolicyFailRate      float64 `json:"htlc_policy_fail_rate"`
-	HTLCLiquidityFailRate   float64 `json:"htlc_liquidity_fail_rate"`
+	RunIntervalSec                       int     `json:"run_interval_sec"`
+	CooldownUpSec                        int     `json:"cooldown_up_sec"`
+	CooldownDownSec                      int     `json:"cooldown_down_sec"`
+	StepCap                              float64 `json:"step_cap"`
+	DiscoveryStepCapDown                 float64 `json:"discovery_step_cap_down"`
+	StallFloorRelaxGapFrac               float64 `json:"stall_floor_relax_gap_frac"`
+	InboundDiscountMaxRatio              float64 `json:"inbound_discount_max_ratio"`
+	InboundDiscountReachOutRatio         float64 `json:"inbound_discount_reach_out_ratio"`
+	InboundDiscountMinRetainedSpreadFrac float64 `json:"inbound_discount_min_retained_spread_frac"`
+	OutrateFloorFactorLow                float64 `json:"outrate_floor_factor_low"`
+	SoftenMinOutRatio                    float64 `json:"soften_min_out_ratio"`
+	SoftenMaxDropToPegFrac               float64 `json:"soften_max_drop_to_peg_frac"`
+	HTLCMinAttempts60m                   int     `json:"htlc_min_attempts_60m"`
+	HTLCPolicyFailRate                   float64 `json:"htlc_policy_fail_rate"`
+	HTLCLiquidityFailRate                float64 `json:"htlc_liquidity_fail_rate"`
 }
 
 type AutofeeConfigUpdate struct {
-	Enabled                         *bool    `json:"enabled,omitempty"`
-	Profile                         *string  `json:"profile,omitempty"`
-	LookbackDays                    *int     `json:"lookback_days,omitempty"`
-	RunIntervalSec                  *int     `json:"run_interval_sec,omitempty"`
-	CooldownUpSec                   *int     `json:"cooldown_up_sec,omitempty"`
-	CooldownDownSec                 *int     `json:"cooldown_down_sec,omitempty"`
-	StepCapOverride                 *float64 `json:"step_cap_override,omitempty"`
-	DiscoveryStepCapDownOverride    *float64 `json:"discovery_step_cap_down_override,omitempty"`
-	StallFloorRelaxGapFracOverride  *float64 `json:"stall_floor_relax_gap_frac_override,omitempty"`
-	InboundDiscountMaxRatioOverride *float64 `json:"inbound_discount_max_ratio_override,omitempty"`
-	OutrateFloorFactorLowOverride   *float64 `json:"outrate_floor_factor_low_override,omitempty"`
-	SoftenMinOutRatioOverride       *float64 `json:"soften_min_out_ratio_override,omitempty"`
-	SoftenMaxDropToPegFracOverride  *float64 `json:"soften_max_drop_to_peg_frac_override,omitempty"`
-	HTLCMinAttempts60mOverride      *int     `json:"htlc_min_attempts_60m_override,omitempty"`
-	HTLCPolicyFailRateOverride      *float64 `json:"htlc_policy_fail_rate_override,omitempty"`
-	HTLCLiquidityFailRateOverride   *float64 `json:"htlc_liquidity_fail_rate_override,omitempty"`
-	RebalCostMode                   *string  `json:"rebal_cost_mode,omitempty"`
-	AmbossEnabled                   *bool    `json:"amboss_enabled,omitempty"`
-	AmbossToken                     *string  `json:"amboss_token,omitempty"`
-	InboundPassiveEnabled           *bool    `json:"inbound_passive_enabled,omitempty"`
-	DiscoveryEnabled                *bool    `json:"discovery_enabled,omitempty"`
-	ExplorerEnabled                 *bool    `json:"explorer_enabled,omitempty"`
-	SuperSourceEnabled              *bool    `json:"super_source_enabled,omitempty"`
-	SuperSourceBaseFeeMsat          *int     `json:"super_source_base_fee_msat,omitempty"`
-	RevfloorEnabled                 *bool    `json:"revfloor_enabled,omitempty"`
-	CircuitBreakerEnabled           *bool    `json:"circuit_breaker_enabled,omitempty"`
-	ExtremeDrainEnabled             *bool    `json:"extreme_drain_enabled,omitempty"`
-	HTLCSignalEnabled               *bool    `json:"htlc_signal_enabled,omitempty"`
-	HTLCMode                        *string  `json:"htlc_mode,omitempty"`
-	MinPpm                          *int     `json:"min_ppm,omitempty"`
-	MaxPpm                          *int     `json:"max_ppm,omitempty"`
+	Enabled                                      *bool    `json:"enabled,omitempty"`
+	Profile                                      *string  `json:"profile,omitempty"`
+	LookbackDays                                 *int     `json:"lookback_days,omitempty"`
+	RunIntervalSec                               *int     `json:"run_interval_sec,omitempty"`
+	CooldownUpSec                                *int     `json:"cooldown_up_sec,omitempty"`
+	CooldownDownSec                              *int     `json:"cooldown_down_sec,omitempty"`
+	StepCapOverride                              *float64 `json:"step_cap_override,omitempty"`
+	DiscoveryStepCapDownOverride                 *float64 `json:"discovery_step_cap_down_override,omitempty"`
+	StallFloorRelaxGapFracOverride               *float64 `json:"stall_floor_relax_gap_frac_override,omitempty"`
+	InboundDiscountMaxRatioOverride              *float64 `json:"inbound_discount_max_ratio_override,omitempty"`
+	InboundDiscountReachOutRatioOverride         *float64 `json:"inbound_discount_reach_out_ratio_override,omitempty"`
+	InboundDiscountMinRetainedSpreadFracOverride *float64 `json:"inbound_discount_min_retained_spread_frac_override,omitempty"`
+	OutrateFloorFactorLowOverride                *float64 `json:"outrate_floor_factor_low_override,omitempty"`
+	SoftenMinOutRatioOverride                    *float64 `json:"soften_min_out_ratio_override,omitempty"`
+	SoftenMaxDropToPegFracOverride               *float64 `json:"soften_max_drop_to_peg_frac_override,omitempty"`
+	HTLCMinAttempts60mOverride                   *int     `json:"htlc_min_attempts_60m_override,omitempty"`
+	HTLCPolicyFailRateOverride                   *float64 `json:"htlc_policy_fail_rate_override,omitempty"`
+	HTLCLiquidityFailRateOverride                *float64 `json:"htlc_liquidity_fail_rate_override,omitempty"`
+	RebalCostMode                                *string  `json:"rebal_cost_mode,omitempty"`
+	AmbossEnabled                                *bool    `json:"amboss_enabled,omitempty"`
+	AmbossToken                                  *string  `json:"amboss_token,omitempty"`
+	InboundPassiveEnabled                        *bool    `json:"inbound_passive_enabled,omitempty"`
+	DiscoveryEnabled                             *bool    `json:"discovery_enabled,omitempty"`
+	ExplorerEnabled                              *bool    `json:"explorer_enabled,omitempty"`
+	SuperSourceEnabled                           *bool    `json:"super_source_enabled,omitempty"`
+	SuperSourceBaseFeeMsat                       *int     `json:"super_source_base_fee_msat,omitempty"`
+	RevfloorEnabled                              *bool    `json:"revfloor_enabled,omitempty"`
+	CircuitBreakerEnabled                        *bool    `json:"circuit_breaker_enabled,omitempty"`
+	ExtremeDrainEnabled                          *bool    `json:"extreme_drain_enabled,omitempty"`
+	HTLCSignalEnabled                            *bool    `json:"htlc_signal_enabled,omitempty"`
+	HTLCMode                                     *string  `json:"htlc_mode,omitempty"`
+	MinPpm                                       *int     `json:"min_ppm,omitempty"`
+	MaxPpm                                       *int     `json:"max_ppm,omitempty"`
 }
 
 type AutofeeStatus struct {
@@ -364,107 +370,109 @@ type autofeeLogItem struct {
 }
 
 type autofeeProfile struct {
-	Name                           string
-	StepCap                        float64
-	LowOutThresh                   float64
-	LowOutProtectThresh            float64
-	HighOutThresh                  float64
-	SurgeBumpMax                   float64
-	RunIntervalSec                 int
-	CooldownUpSec                  int
-	CooldownDownSec                int
-	DiscoveryStepCapDown           float64
-	StallFloorRelaxGapFrac         float64
-	SeedGuardMaxJump               float64
-	OutratePegGraceHours           int
-	ProfitDownMarginMin            int
-	ProfitDownFwdsMin              int
-	ProfitDownExtraHours           int
-	NegMarginSurgeBump             float64
-	NegMarginSurgeMinFwds          int
-	NegMarginSurgeFwdsRatio        float64
-	SinkExtraFloorMargin           float64
-	RevfloorBaselineThresh         int
-	RevfloorMinAbs                 int
-	RevfloorBaselineScale          float64
-	RevfloorMinAbsScale            float64
-	DiscHarddropDaysNoBase         int
-	DiscHarddropCapFrac            float64
-	DiscHarddropCushion            int
-	DiscRequireExplorer            bool
-	DiscAfterExplorerDays          int
-	OutrateFloorFactorLow          float64
-	ExplorerSkipCooldownDown       bool
-	CircuitBreakerDropRatio        float64
-	CircuitBreakerReduceStep       float64
-	CircuitBreakerGraceDays        int
-	ExtremeDrainStreak             int
-	ExtremeDrainOutMax             float64
-	ExtremeDrainStepCap            float64
-	ExtremeDrainMinStepPpm         int
-	ExtremeDrainTurboStreak        int
-	ExtremeDrainTurboOutMax        float64
-	ExtremeDrainTurboStepCap       float64
-	ExtremeDrainTurboMinStepPpm    int
-	SinkMinMargin                  int
-	MinSoftCeiling                 int
-	SeedCeilingMult                float64
-	SeedFloorMult                  float64
-	SeedP95Boost                   float64
-	SourceSeedTargetFrac           float64
-	ProfitProtectOutRatio          float64
-	ProfitProtectMarginPpm         int
-	ProfitProtectRelaxHours        int
-	ProfitProtectRelaxMaxFwds      int
-	ProfitProtectRelaxMarginPpm    int
-	ProfitProtectRelaxStepFrac     float64
-	ProfitProtectRelaxMinStepPpm   int
-	GlobalNegLockSoften            bool
-	SoftenMinOutRatio              float64
-	SoftenRequirePosChanMargin     bool
-	SoftenMaxDropToPegFrac         float64
-	HTLCMinAttempts60m             int
-	HTLCPolicyFailRate             float64
-	HTLCPolicyMinFails             int
-	HTLCLiquidityFailRate          float64
-	HTLCLiquidityMinFails          int
-	HTLCLiquidityHotBump           float64
-	HTLCLiquidityHotNoDownOutRatio float64
-	HTLCPolicyHotBump              float64
-	HTLCPolicyHotNoDownMarginPpm   int
-	HTLCHotStepCapBoost            float64
-	SurgeHoldMaxRounds             int
-	SurgeHoldUnlockStepPpm         int
-	BootstrapHours                 int
-	BootstrapOutRatioMax           float64
-	BootstrapCooldownUpSec         int
-	BootstrapCooldownDownSec       int
-	BootstrapMinStepUpPpm          int
-	BootstrapSurgeHoldMaxRounds    int
-	HoldSmallMinDeltaPpm           int
-	HoldSmallMinRelFrac            float64
-	HoldSmallGapBypassPpm          int
-	HoldSmallGapBypassFrac         float64
-	HoldSmallStallBypassRounds     int
-	ReversalConfirmMinRounds       int
-	ReversalFastTrackStallRounds   int
-	ReversalFastTrackGapFrac       float64
-	AntiFlipWindowHours            int
-	AntiFlipExtraConfirmRounds     int
-	AntiFlipStrongGapFrac          float64
-	BalancedUpOutRatioMin          float64
-	BalancedFloorUpCap             float64
-	OutrateTargetOutRatioMin       float64
-	OutrateTargetMinFwds           int
-	OutrateTargetFloorFrac         float64
-	OutrateTargetBlendFrac         float64
-	RebalFailOutRatioMax           float64
-	RebalFailNoDownMinAttempts     int
-	RebalFailUpMinAttempts         int
-	RebalFailUpStepFrac            float64
-	RebalFailUpMinStepPpm          int
-	RebalFailWindowHours           int
-	RebalFailCampaignGapMin        int
+	Name                                 string
+	StepCap                              float64
+	LowOutThresh                         float64
+	LowOutProtectThresh                  float64
+	HighOutThresh                        float64
+	SurgeBumpMax                         float64
+	RunIntervalSec                       int
+	CooldownUpSec                        int
+	CooldownDownSec                      int
+	DiscoveryStepCapDown                 float64
+	StallFloorRelaxGapFrac               float64
+	SeedGuardMaxJump                     float64
+	OutratePegGraceHours                 int
+	ProfitDownMarginMin                  int
+	ProfitDownFwdsMin                    int
+	ProfitDownExtraHours                 int
+	NegMarginSurgeBump                   float64
+	NegMarginSurgeMinFwds                int
+	NegMarginSurgeFwdsRatio              float64
+	SinkExtraFloorMargin                 float64
+	RevfloorBaselineThresh               int
+	RevfloorMinAbs                       int
+	RevfloorBaselineScale                float64
+	RevfloorMinAbsScale                  float64
+	DiscHarddropDaysNoBase               int
+	DiscHarddropCapFrac                  float64
+	DiscHarddropCushion                  int
+	DiscRequireExplorer                  bool
+	DiscAfterExplorerDays                int
+	OutrateFloorFactorLow                float64
+	ExplorerSkipCooldownDown             bool
+	CircuitBreakerDropRatio              float64
+	CircuitBreakerReduceStep             float64
+	CircuitBreakerGraceDays              int
+	ExtremeDrainStreak                   int
+	ExtremeDrainOutMax                   float64
+	ExtremeDrainStepCap                  float64
+	ExtremeDrainMinStepPpm               int
+	ExtremeDrainTurboStreak              int
+	ExtremeDrainTurboOutMax              float64
+	ExtremeDrainTurboStepCap             float64
+	ExtremeDrainTurboMinStepPpm          int
+	SinkMinMargin                        int
+	MinSoftCeiling                       int
+	SeedCeilingMult                      float64
+	SeedFloorMult                        float64
+	SeedP95Boost                         float64
+	SourceSeedTargetFrac                 float64
+	ProfitProtectOutRatio                float64
+	ProfitProtectMarginPpm               int
+	ProfitProtectRelaxHours              int
+	ProfitProtectRelaxMaxFwds            int
+	ProfitProtectRelaxMarginPpm          int
+	ProfitProtectRelaxStepFrac           float64
+	ProfitProtectRelaxMinStepPpm         int
+	InboundDiscountReachOutRatio         float64
+	InboundDiscountMinRetainedSpreadFrac float64
+	GlobalNegLockSoften                  bool
+	SoftenMinOutRatio                    float64
+	SoftenRequirePosChanMargin           bool
+	SoftenMaxDropToPegFrac               float64
+	HTLCMinAttempts60m                   int
+	HTLCPolicyFailRate                   float64
+	HTLCPolicyMinFails                   int
+	HTLCLiquidityFailRate                float64
+	HTLCLiquidityMinFails                int
+	HTLCLiquidityHotBump                 float64
+	HTLCLiquidityHotNoDownOutRatio       float64
+	HTLCPolicyHotBump                    float64
+	HTLCPolicyHotNoDownMarginPpm         int
+	HTLCHotStepCapBoost                  float64
+	SurgeHoldMaxRounds                   int
+	SurgeHoldUnlockStepPpm               int
+	BootstrapHours                       int
+	BootstrapOutRatioMax                 float64
+	BootstrapCooldownUpSec               int
+	BootstrapCooldownDownSec             int
+	BootstrapMinStepUpPpm                int
+	BootstrapSurgeHoldMaxRounds          int
+	HoldSmallMinDeltaPpm                 int
+	HoldSmallMinRelFrac                  float64
+	HoldSmallGapBypassPpm                int
+	HoldSmallGapBypassFrac               float64
+	HoldSmallStallBypassRounds           int
+	ReversalConfirmMinRounds             int
+	ReversalFastTrackStallRounds         int
+	ReversalFastTrackGapFrac             float64
+	AntiFlipWindowHours                  int
+	AntiFlipExtraConfirmRounds           int
+	AntiFlipStrongGapFrac                float64
+	BalancedUpOutRatioMin                float64
+	BalancedFloorUpCap                   float64
+	OutrateTargetOutRatioMin             float64
+	OutrateTargetMinFwds                 int
+	OutrateTargetFloorFrac               float64
+	OutrateTargetBlendFrac               float64
+	RebalFailOutRatioMax                 float64
+	RebalFailNoDownMinAttempts           int
+	RebalFailUpMinAttempts               int
+	RebalFailUpStepFrac                  float64
+	RebalFailUpMinStepPpm                int
+	RebalFailWindowHours                 int
+	RebalFailCampaignGapMin              int
 }
 
 type superSourceThresholds struct {
@@ -478,313 +486,319 @@ type superSourceThresholds struct {
 
 var autofeeProfiles = map[string]autofeeProfile{
 	"conservative": {
-		Name:                           "conservative",
-		StepCap:                        0.05,
-		LowOutThresh:                   0.08,
-		LowOutProtectThresh:            0.08,
-		HighOutThresh:                  0.25,
-		SurgeBumpMax:                   0.10,
-		RunIntervalSec:                 8 * 3600,
-		CooldownUpSec:                  8 * 3600,
-		CooldownDownSec:                2 * 3600,
-		DiscoveryStepCapDown:           0.15,
-		StallFloorRelaxGapFrac:         0.15,
-		SeedGuardMaxJump:               0.30,
-		OutratePegGraceHours:           24,
-		ProfitDownMarginMin:            20,
-		ProfitDownFwdsMin:              10,
-		ProfitDownExtraHours:           4,
-		NegMarginSurgeBump:             0.06,
-		NegMarginSurgeMinFwds:          6,
-		NegMarginSurgeFwdsRatio:        0.25,
-		SinkExtraFloorMargin:           0.06,
-		RevfloorBaselineThresh:         80,
-		RevfloorMinAbs:                 160,
-		RevfloorBaselineScale:          1.2,
-		RevfloorMinAbsScale:            1.1,
-		DiscHarddropDaysNoBase:         8,
-		DiscHarddropCapFrac:            0.10,
-		DiscHarddropCushion:            15,
-		DiscRequireExplorer:            true,
-		DiscAfterExplorerDays:          14,
-		OutrateFloorFactorLow:          0.90,
-		ExplorerSkipCooldownDown:       false,
-		CircuitBreakerDropRatio:        0.75,
-		CircuitBreakerReduceStep:       0.08,
-		CircuitBreakerGraceDays:        10,
-		ExtremeDrainStreak:             32,
-		ExtremeDrainOutMax:             0.03,
-		ExtremeDrainStepCap:            0.10,
-		ExtremeDrainMinStepPpm:         10,
-		ExtremeDrainTurboStreak:        400,
-		ExtremeDrainTurboOutMax:        0.01,
-		ExtremeDrainTurboStepCap:       0.15,
-		ExtremeDrainTurboMinStepPpm:    15,
-		SinkMinMargin:                  180,
-		MinSoftCeiling:                 150,
-		SeedCeilingMult:                1.40,
-		SeedFloorMult:                  1.10,
-		SeedP95Boost:                   1.10,
-		SourceSeedTargetFrac:           0.50,
-		ProfitProtectOutRatio:          0.08,
-		ProfitProtectMarginPpm:         0,
-		ProfitProtectRelaxHours:        96,
-		ProfitProtectRelaxMaxFwds:      0,
-		ProfitProtectRelaxMarginPpm:    -10,
-		ProfitProtectRelaxStepFrac:     0.010,
-		ProfitProtectRelaxMinStepPpm:   10,
-		GlobalNegLockSoften:            true,
-		SoftenMinOutRatio:              0.25,
-		SoftenRequirePosChanMargin:     true,
-		SoftenMaxDropToPegFrac:         0.85,
-		HTLCMinAttempts60m:             20,
-		HTLCPolicyFailRate:             0.20,
-		HTLCPolicyMinFails:             4,
-		HTLCLiquidityFailRate:          0.25,
-		HTLCLiquidityMinFails:          4,
-		HTLCLiquidityHotBump:           0.03,
-		HTLCLiquidityHotNoDownOutRatio: 0.08,
-		HTLCPolicyHotBump:              0.015,
-		HTLCPolicyHotNoDownMarginPpm:   0,
-		HTLCHotStepCapBoost:            0.01,
-		SurgeHoldMaxRounds:             7,
-		SurgeHoldUnlockStepPpm:         15,
-		BootstrapHours:                 48,
-		BootstrapOutRatioMax:           0.35,
-		BootstrapCooldownUpSec:         3600,
-		BootstrapCooldownDownSec:       7200,
-		BootstrapMinStepUpPpm:          15,
-		BootstrapSurgeHoldMaxRounds:    2,
-		HoldSmallMinDeltaPpm:           15,
-		HoldSmallMinRelFrac:            0.04,
-		HoldSmallGapBypassPpm:          180,
-		HoldSmallGapBypassFrac:         0.18,
-		HoldSmallStallBypassRounds:     2,
-		ReversalConfirmMinRounds:       2,
-		ReversalFastTrackStallRounds:   3,
-		ReversalFastTrackGapFrac:       0.50,
-		AntiFlipWindowHours:            6,
-		AntiFlipExtraConfirmRounds:     2,
-		AntiFlipStrongGapFrac:          0.60,
-		BalancedUpOutRatioMin:          0.25,
-		BalancedFloorUpCap:             0.04,
-		OutrateTargetOutRatioMin:       0.25,
-		OutrateTargetMinFwds:           8,
-		OutrateTargetFloorFrac:         0.70,
-		OutrateTargetBlendFrac:         0.35,
-		RebalFailOutRatioMax:           0.08,
-		RebalFailNoDownMinAttempts:     4,
-		RebalFailUpMinAttempts:         6,
-		RebalFailUpStepFrac:            0.02,
-		RebalFailUpMinStepPpm:          10,
-		RebalFailWindowHours:           8,
-		RebalFailCampaignGapMin:        120,
+		Name:                                 "conservative",
+		StepCap:                              0.05,
+		LowOutThresh:                         0.08,
+		LowOutProtectThresh:                  0.08,
+		HighOutThresh:                        0.25,
+		SurgeBumpMax:                         0.10,
+		RunIntervalSec:                       8 * 3600,
+		CooldownUpSec:                        8 * 3600,
+		CooldownDownSec:                      2 * 3600,
+		DiscoveryStepCapDown:                 0.15,
+		StallFloorRelaxGapFrac:               0.15,
+		SeedGuardMaxJump:                     0.30,
+		OutratePegGraceHours:                 24,
+		ProfitDownMarginMin:                  20,
+		ProfitDownFwdsMin:                    10,
+		ProfitDownExtraHours:                 4,
+		NegMarginSurgeBump:                   0.06,
+		NegMarginSurgeMinFwds:                6,
+		NegMarginSurgeFwdsRatio:              0.25,
+		SinkExtraFloorMargin:                 0.06,
+		RevfloorBaselineThresh:               80,
+		RevfloorMinAbs:                       160,
+		RevfloorBaselineScale:                1.2,
+		RevfloorMinAbsScale:                  1.1,
+		DiscHarddropDaysNoBase:               8,
+		DiscHarddropCapFrac:                  0.10,
+		DiscHarddropCushion:                  15,
+		DiscRequireExplorer:                  true,
+		DiscAfterExplorerDays:                14,
+		OutrateFloorFactorLow:                0.90,
+		ExplorerSkipCooldownDown:             false,
+		CircuitBreakerDropRatio:              0.75,
+		CircuitBreakerReduceStep:             0.08,
+		CircuitBreakerGraceDays:              10,
+		ExtremeDrainStreak:                   32,
+		ExtremeDrainOutMax:                   0.03,
+		ExtremeDrainStepCap:                  0.10,
+		ExtremeDrainMinStepPpm:               10,
+		ExtremeDrainTurboStreak:              400,
+		ExtremeDrainTurboOutMax:              0.01,
+		ExtremeDrainTurboStepCap:             0.15,
+		ExtremeDrainTurboMinStepPpm:          15,
+		SinkMinMargin:                        180,
+		MinSoftCeiling:                       150,
+		SeedCeilingMult:                      1.40,
+		SeedFloorMult:                        1.10,
+		SeedP95Boost:                         1.10,
+		SourceSeedTargetFrac:                 0.50,
+		ProfitProtectOutRatio:                0.08,
+		ProfitProtectMarginPpm:               0,
+		ProfitProtectRelaxHours:              96,
+		ProfitProtectRelaxMaxFwds:            0,
+		ProfitProtectRelaxMarginPpm:          -10,
+		ProfitProtectRelaxStepFrac:           0.010,
+		ProfitProtectRelaxMinStepPpm:         10,
+		InboundDiscountReachOutRatio:         0.10,
+		InboundDiscountMinRetainedSpreadFrac: 0.20,
+		GlobalNegLockSoften:                  true,
+		SoftenMinOutRatio:                    0.25,
+		SoftenRequirePosChanMargin:           true,
+		SoftenMaxDropToPegFrac:               0.85,
+		HTLCMinAttempts60m:                   20,
+		HTLCPolicyFailRate:                   0.20,
+		HTLCPolicyMinFails:                   4,
+		HTLCLiquidityFailRate:                0.25,
+		HTLCLiquidityMinFails:                4,
+		HTLCLiquidityHotBump:                 0.03,
+		HTLCLiquidityHotNoDownOutRatio:       0.08,
+		HTLCPolicyHotBump:                    0.015,
+		HTLCPolicyHotNoDownMarginPpm:         0,
+		HTLCHotStepCapBoost:                  0.01,
+		SurgeHoldMaxRounds:                   7,
+		SurgeHoldUnlockStepPpm:               15,
+		BootstrapHours:                       48,
+		BootstrapOutRatioMax:                 0.35,
+		BootstrapCooldownUpSec:               3600,
+		BootstrapCooldownDownSec:             7200,
+		BootstrapMinStepUpPpm:                15,
+		BootstrapSurgeHoldMaxRounds:          2,
+		HoldSmallMinDeltaPpm:                 15,
+		HoldSmallMinRelFrac:                  0.04,
+		HoldSmallGapBypassPpm:                180,
+		HoldSmallGapBypassFrac:               0.18,
+		HoldSmallStallBypassRounds:           2,
+		ReversalConfirmMinRounds:             2,
+		ReversalFastTrackStallRounds:         3,
+		ReversalFastTrackGapFrac:             0.50,
+		AntiFlipWindowHours:                  6,
+		AntiFlipExtraConfirmRounds:           2,
+		AntiFlipStrongGapFrac:                0.60,
+		BalancedUpOutRatioMin:                0.25,
+		BalancedFloorUpCap:                   0.04,
+		OutrateTargetOutRatioMin:             0.25,
+		OutrateTargetMinFwds:                 8,
+		OutrateTargetFloorFrac:               0.70,
+		OutrateTargetBlendFrac:               0.35,
+		RebalFailOutRatioMax:                 0.08,
+		RebalFailNoDownMinAttempts:           4,
+		RebalFailUpMinAttempts:               6,
+		RebalFailUpStepFrac:                  0.02,
+		RebalFailUpMinStepPpm:                10,
+		RebalFailWindowHours:                 8,
+		RebalFailCampaignGapMin:              120,
 	},
 	"moderate": {
-		Name:                           "moderate",
-		StepCap:                        0.08,
-		LowOutThresh:                   0.10,
-		LowOutProtectThresh:            0.10,
-		HighOutThresh:                  0.20,
-		SurgeBumpMax:                   0.20,
-		RunIntervalSec:                 4 * 3600,
-		CooldownUpSec:                  6 * 3600,
-		CooldownDownSec:                1 * 3600,
-		DiscoveryStepCapDown:           0.20,
-		StallFloorRelaxGapFrac:         0.10,
-		SeedGuardMaxJump:               0.50,
-		OutratePegGraceHours:           16,
-		ProfitDownMarginMin:            10,
-		ProfitDownFwdsMin:              8,
-		ProfitDownExtraHours:           2,
-		NegMarginSurgeBump:             0.08,
-		NegMarginSurgeMinFwds:          4,
-		NegMarginSurgeFwdsRatio:        0.20,
-		SinkExtraFloorMargin:           0.04,
-		RevfloorBaselineThresh:         60,
-		RevfloorMinAbs:                 140,
-		RevfloorBaselineScale:          1.0,
-		RevfloorMinAbsScale:            1.0,
-		DiscHarddropDaysNoBase:         6,
-		DiscHarddropCapFrac:            0.20,
-		DiscHarddropCushion:            10,
-		DiscRequireExplorer:            true,
-		DiscAfterExplorerDays:          10,
-		OutrateFloorFactorLow:          0.85,
-		ExplorerSkipCooldownDown:       true,
-		CircuitBreakerDropRatio:        0.70,
-		CircuitBreakerReduceStep:       0.10,
-		CircuitBreakerGraceDays:        7,
-		ExtremeDrainStreak:             24,
-		ExtremeDrainOutMax:             0.04,
-		ExtremeDrainStepCap:            0.12,
-		ExtremeDrainMinStepPpm:         12,
-		ExtremeDrainTurboStreak:        300,
-		ExtremeDrainTurboOutMax:        0.01,
-		ExtremeDrainTurboStepCap:       0.20,
-		ExtremeDrainTurboMinStepPpm:    20,
-		SinkMinMargin:                  150,
-		MinSoftCeiling:                 100,
-		SeedCeilingMult:                1.50,
-		SeedFloorMult:                  1.10,
-		SeedP95Boost:                   1.15,
-		SourceSeedTargetFrac:           0.55,
-		ProfitProtectOutRatio:          0.10,
-		ProfitProtectMarginPpm:         0,
-		ProfitProtectRelaxHours:        72,
-		ProfitProtectRelaxMaxFwds:      1,
-		ProfitProtectRelaxMarginPpm:    -30,
-		ProfitProtectRelaxStepFrac:     0.015,
-		ProfitProtectRelaxMinStepPpm:   15,
-		GlobalNegLockSoften:            true,
-		SoftenMinOutRatio:              0.20,
-		SoftenRequirePosChanMargin:     true,
-		SoftenMaxDropToPegFrac:         0.75,
-		HTLCMinAttempts60m:             12,
-		HTLCPolicyFailRate:             0.15,
-		HTLCPolicyMinFails:             3,
-		HTLCLiquidityFailRate:          0.16,
-		HTLCLiquidityMinFails:          2,
-		HTLCLiquidityHotBump:           0.05,
-		HTLCLiquidityHotNoDownOutRatio: 0.12,
-		HTLCPolicyHotBump:              0.025,
-		HTLCPolicyHotNoDownMarginPpm:   25,
-		HTLCHotStepCapBoost:            0.02,
-		SurgeHoldMaxRounds:             5,
-		SurgeHoldUnlockStepPpm:         15,
-		BootstrapHours:                 48,
-		BootstrapOutRatioMax:           0.40,
-		BootstrapCooldownUpSec:         3600,
-		BootstrapCooldownDownSec:       5400,
-		BootstrapMinStepUpPpm:          15,
-		BootstrapSurgeHoldMaxRounds:    2,
-		HoldSmallMinDeltaPpm:           15,
-		HoldSmallMinRelFrac:            0.04,
-		HoldSmallGapBypassPpm:          120,
-		HoldSmallGapBypassFrac:         0.12,
-		HoldSmallStallBypassRounds:     1,
-		ReversalConfirmMinRounds:       2,
-		ReversalFastTrackStallRounds:   2,
-		ReversalFastTrackGapFrac:       0.35,
-		AntiFlipWindowHours:            4,
-		AntiFlipExtraConfirmRounds:     1,
-		AntiFlipStrongGapFrac:          0.45,
-		BalancedUpOutRatioMin:          0.20,
-		BalancedFloorUpCap:             0.05,
-		OutrateTargetOutRatioMin:       0.20,
-		OutrateTargetMinFwds:           6,
-		OutrateTargetFloorFrac:         0.80,
-		OutrateTargetBlendFrac:         0.55,
-		RebalFailOutRatioMax:           0.10,
-		RebalFailNoDownMinAttempts:     3,
-		RebalFailUpMinAttempts:         5,
-		RebalFailUpStepFrac:            0.03,
-		RebalFailUpMinStepPpm:          12,
-		RebalFailWindowHours:           6,
-		RebalFailCampaignGapMin:        90,
+		Name:                                 "moderate",
+		StepCap:                              0.08,
+		LowOutThresh:                         0.10,
+		LowOutProtectThresh:                  0.10,
+		HighOutThresh:                        0.20,
+		SurgeBumpMax:                         0.20,
+		RunIntervalSec:                       4 * 3600,
+		CooldownUpSec:                        6 * 3600,
+		CooldownDownSec:                      1 * 3600,
+		DiscoveryStepCapDown:                 0.20,
+		StallFloorRelaxGapFrac:               0.10,
+		SeedGuardMaxJump:                     0.50,
+		OutratePegGraceHours:                 16,
+		ProfitDownMarginMin:                  10,
+		ProfitDownFwdsMin:                    8,
+		ProfitDownExtraHours:                 2,
+		NegMarginSurgeBump:                   0.08,
+		NegMarginSurgeMinFwds:                4,
+		NegMarginSurgeFwdsRatio:              0.20,
+		SinkExtraFloorMargin:                 0.04,
+		RevfloorBaselineThresh:               60,
+		RevfloorMinAbs:                       140,
+		RevfloorBaselineScale:                1.0,
+		RevfloorMinAbsScale:                  1.0,
+		DiscHarddropDaysNoBase:               6,
+		DiscHarddropCapFrac:                  0.20,
+		DiscHarddropCushion:                  10,
+		DiscRequireExplorer:                  true,
+		DiscAfterExplorerDays:                10,
+		OutrateFloorFactorLow:                0.85,
+		ExplorerSkipCooldownDown:             true,
+		CircuitBreakerDropRatio:              0.70,
+		CircuitBreakerReduceStep:             0.10,
+		CircuitBreakerGraceDays:              7,
+		ExtremeDrainStreak:                   24,
+		ExtremeDrainOutMax:                   0.04,
+		ExtremeDrainStepCap:                  0.12,
+		ExtremeDrainMinStepPpm:               12,
+		ExtremeDrainTurboStreak:              300,
+		ExtremeDrainTurboOutMax:              0.01,
+		ExtremeDrainTurboStepCap:             0.20,
+		ExtremeDrainTurboMinStepPpm:          20,
+		SinkMinMargin:                        150,
+		MinSoftCeiling:                       100,
+		SeedCeilingMult:                      1.50,
+		SeedFloorMult:                        1.10,
+		SeedP95Boost:                         1.15,
+		SourceSeedTargetFrac:                 0.55,
+		ProfitProtectOutRatio:                0.10,
+		ProfitProtectMarginPpm:               0,
+		ProfitProtectRelaxHours:              72,
+		ProfitProtectRelaxMaxFwds:            1,
+		ProfitProtectRelaxMarginPpm:          -30,
+		ProfitProtectRelaxStepFrac:           0.015,
+		ProfitProtectRelaxMinStepPpm:         15,
+		InboundDiscountReachOutRatio:         0.15,
+		InboundDiscountMinRetainedSpreadFrac: 0.12,
+		GlobalNegLockSoften:                  true,
+		SoftenMinOutRatio:                    0.20,
+		SoftenRequirePosChanMargin:           true,
+		SoftenMaxDropToPegFrac:               0.75,
+		HTLCMinAttempts60m:                   12,
+		HTLCPolicyFailRate:                   0.15,
+		HTLCPolicyMinFails:                   3,
+		HTLCLiquidityFailRate:                0.16,
+		HTLCLiquidityMinFails:                2,
+		HTLCLiquidityHotBump:                 0.05,
+		HTLCLiquidityHotNoDownOutRatio:       0.12,
+		HTLCPolicyHotBump:                    0.025,
+		HTLCPolicyHotNoDownMarginPpm:         25,
+		HTLCHotStepCapBoost:                  0.02,
+		SurgeHoldMaxRounds:                   5,
+		SurgeHoldUnlockStepPpm:               15,
+		BootstrapHours:                       48,
+		BootstrapOutRatioMax:                 0.40,
+		BootstrapCooldownUpSec:               3600,
+		BootstrapCooldownDownSec:             5400,
+		BootstrapMinStepUpPpm:                15,
+		BootstrapSurgeHoldMaxRounds:          2,
+		HoldSmallMinDeltaPpm:                 15,
+		HoldSmallMinRelFrac:                  0.04,
+		HoldSmallGapBypassPpm:                120,
+		HoldSmallGapBypassFrac:               0.12,
+		HoldSmallStallBypassRounds:           1,
+		ReversalConfirmMinRounds:             2,
+		ReversalFastTrackStallRounds:         2,
+		ReversalFastTrackGapFrac:             0.35,
+		AntiFlipWindowHours:                  4,
+		AntiFlipExtraConfirmRounds:           1,
+		AntiFlipStrongGapFrac:                0.45,
+		BalancedUpOutRatioMin:                0.20,
+		BalancedFloorUpCap:                   0.05,
+		OutrateTargetOutRatioMin:             0.20,
+		OutrateTargetMinFwds:                 6,
+		OutrateTargetFloorFrac:               0.80,
+		OutrateTargetBlendFrac:               0.55,
+		RebalFailOutRatioMax:                 0.10,
+		RebalFailNoDownMinAttempts:           3,
+		RebalFailUpMinAttempts:               5,
+		RebalFailUpStepFrac:                  0.03,
+		RebalFailUpMinStepPpm:                12,
+		RebalFailWindowHours:                 6,
+		RebalFailCampaignGapMin:              90,
 	},
 	"aggressive": {
-		Name:                           "aggressive",
-		StepCap:                        0.10,
-		LowOutThresh:                   0.12,
-		LowOutProtectThresh:            0.12,
-		HighOutThresh:                  0.18,
-		SurgeBumpMax:                   0.30,
-		RunIntervalSec:                 2 * 3600,
-		CooldownUpSec:                  3 * 3600,
-		CooldownDownSec:                1 * 3600,
-		DiscoveryStepCapDown:           0.25,
-		StallFloorRelaxGapFrac:         0.08,
-		SeedGuardMaxJump:               0.70,
-		OutratePegGraceHours:           8,
-		ProfitDownMarginMin:            5,
-		ProfitDownFwdsMin:              5,
-		ProfitDownExtraHours:           1,
-		NegMarginSurgeBump:             0.12,
-		NegMarginSurgeMinFwds:          3,
-		NegMarginSurgeFwdsRatio:        0.15,
-		SinkExtraFloorMargin:           0.03,
-		RevfloorBaselineThresh:         40,
-		RevfloorMinAbs:                 120,
-		RevfloorBaselineScale:          0.8,
-		RevfloorMinAbsScale:            0.9,
-		DiscHarddropDaysNoBase:         3,
-		DiscHarddropCapFrac:            0.25,
-		DiscHarddropCushion:            5,
-		DiscRequireExplorer:            false,
-		DiscAfterExplorerDays:          5,
-		OutrateFloorFactorLow:          0.80,
-		ExplorerSkipCooldownDown:       true,
-		CircuitBreakerDropRatio:        0.60,
-		CircuitBreakerReduceStep:       0.15,
-		CircuitBreakerGraceDays:        5,
-		ExtremeDrainStreak:             16,
-		ExtremeDrainOutMax:             0.05,
-		ExtremeDrainStepCap:            0.15,
-		ExtremeDrainMinStepPpm:         15,
-		ExtremeDrainTurboStreak:        300,
-		ExtremeDrainTurboOutMax:        0.01,
-		ExtremeDrainTurboStepCap:       0.20,
-		ExtremeDrainTurboMinStepPpm:    20,
-		SinkMinMargin:                  120,
-		MinSoftCeiling:                 80,
-		SeedCeilingMult:                1.60,
-		SeedFloorMult:                  1.10,
-		SeedP95Boost:                   1.20,
-		SourceSeedTargetFrac:           0.60,
-		ProfitProtectOutRatio:          0.12,
-		ProfitProtectMarginPpm:         -20,
-		ProfitProtectRelaxHours:        48,
-		ProfitProtectRelaxMaxFwds:      2,
-		ProfitProtectRelaxMarginPpm:    -50,
-		ProfitProtectRelaxStepFrac:     0.020,
-		ProfitProtectRelaxMinStepPpm:   20,
-		GlobalNegLockSoften:            true,
-		SoftenMinOutRatio:              0.15,
-		SoftenRequirePosChanMargin:     false,
-		SoftenMaxDropToPegFrac:         0.70,
-		HTLCMinAttempts60m:             8,
-		HTLCPolicyFailRate:             0.10,
-		HTLCPolicyMinFails:             2,
-		HTLCLiquidityFailRate:          0.15,
-		HTLCLiquidityMinFails:          2,
-		HTLCLiquidityHotBump:           0.07,
-		HTLCLiquidityHotNoDownOutRatio: 0.18,
-		HTLCPolicyHotBump:              0.035,
-		HTLCPolicyHotNoDownMarginPpm:   50,
-		HTLCHotStepCapBoost:            0.03,
-		SurgeHoldMaxRounds:             4,
-		SurgeHoldUnlockStepPpm:         20,
-		BootstrapHours:                 72,
-		BootstrapOutRatioMax:           0.45,
-		BootstrapCooldownUpSec:         1800,
-		BootstrapCooldownDownSec:       3600,
-		BootstrapMinStepUpPpm:          20,
-		BootstrapSurgeHoldMaxRounds:    1,
-		HoldSmallMinDeltaPpm:           12,
-		HoldSmallMinRelFrac:            0.03,
-		HoldSmallGapBypassPpm:          80,
-		HoldSmallGapBypassFrac:         0.08,
-		HoldSmallStallBypassRounds:     1,
-		ReversalConfirmMinRounds:       2,
-		ReversalFastTrackStallRounds:   1,
-		ReversalFastTrackGapFrac:       0.20,
-		AntiFlipWindowHours:            3,
-		AntiFlipExtraConfirmRounds:     1,
-		AntiFlipStrongGapFrac:          0.30,
-		BalancedUpOutRatioMin:          0.18,
-		BalancedFloorUpCap:             0.06,
-		OutrateTargetOutRatioMin:       0.18,
-		OutrateTargetMinFwds:           4,
-		OutrateTargetFloorFrac:         0.90,
-		OutrateTargetBlendFrac:         0.70,
-		RebalFailOutRatioMax:           0.12,
-		RebalFailNoDownMinAttempts:     2,
-		RebalFailUpMinAttempts:         4,
-		RebalFailUpStepFrac:            0.04,
-		RebalFailUpMinStepPpm:          15,
-		RebalFailWindowHours:           4,
-		RebalFailCampaignGapMin:        60,
+		Name:                                 "aggressive",
+		StepCap:                              0.10,
+		LowOutThresh:                         0.12,
+		LowOutProtectThresh:                  0.12,
+		HighOutThresh:                        0.18,
+		SurgeBumpMax:                         0.30,
+		RunIntervalSec:                       2 * 3600,
+		CooldownUpSec:                        3 * 3600,
+		CooldownDownSec:                      1 * 3600,
+		DiscoveryStepCapDown:                 0.25,
+		StallFloorRelaxGapFrac:               0.08,
+		SeedGuardMaxJump:                     0.70,
+		OutratePegGraceHours:                 8,
+		ProfitDownMarginMin:                  5,
+		ProfitDownFwdsMin:                    5,
+		ProfitDownExtraHours:                 1,
+		NegMarginSurgeBump:                   0.12,
+		NegMarginSurgeMinFwds:                3,
+		NegMarginSurgeFwdsRatio:              0.15,
+		SinkExtraFloorMargin:                 0.03,
+		RevfloorBaselineThresh:               40,
+		RevfloorMinAbs:                       120,
+		RevfloorBaselineScale:                0.8,
+		RevfloorMinAbsScale:                  0.9,
+		DiscHarddropDaysNoBase:               3,
+		DiscHarddropCapFrac:                  0.25,
+		DiscHarddropCushion:                  5,
+		DiscRequireExplorer:                  false,
+		DiscAfterExplorerDays:                5,
+		OutrateFloorFactorLow:                0.80,
+		ExplorerSkipCooldownDown:             true,
+		CircuitBreakerDropRatio:              0.60,
+		CircuitBreakerReduceStep:             0.15,
+		CircuitBreakerGraceDays:              5,
+		ExtremeDrainStreak:                   16,
+		ExtremeDrainOutMax:                   0.05,
+		ExtremeDrainStepCap:                  0.15,
+		ExtremeDrainMinStepPpm:               15,
+		ExtremeDrainTurboStreak:              300,
+		ExtremeDrainTurboOutMax:              0.01,
+		ExtremeDrainTurboStepCap:             0.20,
+		ExtremeDrainTurboMinStepPpm:          20,
+		SinkMinMargin:                        120,
+		MinSoftCeiling:                       80,
+		SeedCeilingMult:                      1.60,
+		SeedFloorMult:                        1.10,
+		SeedP95Boost:                         1.20,
+		SourceSeedTargetFrac:                 0.60,
+		ProfitProtectOutRatio:                0.12,
+		ProfitProtectMarginPpm:               -20,
+		ProfitProtectRelaxHours:              48,
+		ProfitProtectRelaxMaxFwds:            2,
+		ProfitProtectRelaxMarginPpm:          -50,
+		ProfitProtectRelaxStepFrac:           0.020,
+		ProfitProtectRelaxMinStepPpm:         20,
+		InboundDiscountReachOutRatio:         0.18,
+		InboundDiscountMinRetainedSpreadFrac: 0.08,
+		GlobalNegLockSoften:                  true,
+		SoftenMinOutRatio:                    0.15,
+		SoftenRequirePosChanMargin:           false,
+		SoftenMaxDropToPegFrac:               0.70,
+		HTLCMinAttempts60m:                   8,
+		HTLCPolicyFailRate:                   0.10,
+		HTLCPolicyMinFails:                   2,
+		HTLCLiquidityFailRate:                0.15,
+		HTLCLiquidityMinFails:                2,
+		HTLCLiquidityHotBump:                 0.07,
+		HTLCLiquidityHotNoDownOutRatio:       0.18,
+		HTLCPolicyHotBump:                    0.035,
+		HTLCPolicyHotNoDownMarginPpm:         50,
+		HTLCHotStepCapBoost:                  0.03,
+		SurgeHoldMaxRounds:                   4,
+		SurgeHoldUnlockStepPpm:               20,
+		BootstrapHours:                       72,
+		BootstrapOutRatioMax:                 0.45,
+		BootstrapCooldownUpSec:               1800,
+		BootstrapCooldownDownSec:             3600,
+		BootstrapMinStepUpPpm:                20,
+		BootstrapSurgeHoldMaxRounds:          1,
+		HoldSmallMinDeltaPpm:                 12,
+		HoldSmallMinRelFrac:                  0.03,
+		HoldSmallGapBypassPpm:                80,
+		HoldSmallGapBypassFrac:               0.08,
+		HoldSmallStallBypassRounds:           1,
+		ReversalConfirmMinRounds:             2,
+		ReversalFastTrackStallRounds:         1,
+		ReversalFastTrackGapFrac:             0.20,
+		AntiFlipWindowHours:                  3,
+		AntiFlipExtraConfirmRounds:           1,
+		AntiFlipStrongGapFrac:                0.30,
+		BalancedUpOutRatioMin:                0.18,
+		BalancedFloorUpCap:                   0.06,
+		OutrateTargetOutRatioMin:             0.18,
+		OutrateTargetMinFwds:                 4,
+		OutrateTargetFloorFrac:               0.90,
+		OutrateTargetBlendFrac:               0.70,
+		RebalFailOutRatioMax:                 0.12,
+		RebalFailNoDownMinAttempts:           2,
+		RebalFailUpMinAttempts:               4,
+		RebalFailUpStepFrac:                  0.04,
+		RebalFailUpMinStepPpm:                15,
+		RebalFailWindowHours:                 4,
+		RebalFailCampaignGapMin:              60,
 	},
 }
 
@@ -1017,6 +1031,8 @@ alter table autofee_config add column if not exists step_cap_override double pre
 alter table autofee_config add column if not exists discovery_step_cap_down_override double precision not null default 0;
 alter table autofee_config add column if not exists stall_floor_relax_gap_frac_override double precision not null default 0;
 alter table autofee_config add column if not exists inbound_discount_max_ratio_override double precision not null default 0;
+alter table autofee_config add column if not exists inbound_discount_reach_out_ratio_override double precision not null default 0;
+alter table autofee_config add column if not exists inbound_discount_min_retained_spread_frac_override double precision not null default 0;
 alter table autofee_config add column if not exists outrate_floor_factor_low_override double precision not null default 0;
 alter table autofee_config add column if not exists soften_min_out_ratio_override double precision not null default 0;
 alter table autofee_config add column if not exists soften_max_drop_to_peg_frac_override double precision not null default 0;
@@ -1074,19 +1090,21 @@ func autofeeProfileDefaultsPayload() map[string]AutofeeProfileDefaults {
 	defaults := make(map[string]AutofeeProfileDefaults, len(autofeeProfiles))
 	for name, p := range autofeeProfiles {
 		defaults[name] = AutofeeProfileDefaults{
-			RunIntervalSec:          p.RunIntervalSec,
-			CooldownUpSec:           p.CooldownUpSec,
-			CooldownDownSec:         p.CooldownDownSec,
-			StepCap:                 p.StepCap,
-			DiscoveryStepCapDown:    p.DiscoveryStepCapDown,
-			StallFloorRelaxGapFrac:  p.StallFloorRelaxGapFrac,
-			InboundDiscountMaxRatio: defaultInboundDiscountMaxRatio,
-			OutrateFloorFactorLow:   p.OutrateFloorFactorLow,
-			SoftenMinOutRatio:       p.SoftenMinOutRatio,
-			SoftenMaxDropToPegFrac:  p.SoftenMaxDropToPegFrac,
-			HTLCMinAttempts60m:      p.HTLCMinAttempts60m,
-			HTLCPolicyFailRate:      p.HTLCPolicyFailRate,
-			HTLCLiquidityFailRate:   p.HTLCLiquidityFailRate,
+			RunIntervalSec:                       p.RunIntervalSec,
+			CooldownUpSec:                        p.CooldownUpSec,
+			CooldownDownSec:                      p.CooldownDownSec,
+			StepCap:                              p.StepCap,
+			DiscoveryStepCapDown:                 p.DiscoveryStepCapDown,
+			StallFloorRelaxGapFrac:               p.StallFloorRelaxGapFrac,
+			InboundDiscountMaxRatio:              defaultInboundDiscountMaxRatio,
+			InboundDiscountReachOutRatio:         p.InboundDiscountReachOutRatio,
+			InboundDiscountMinRetainedSpreadFrac: p.InboundDiscountMinRetainedSpreadFrac,
+			OutrateFloorFactorLow:                p.OutrateFloorFactorLow,
+			SoftenMinOutRatio:                    p.SoftenMinOutRatio,
+			SoftenMaxDropToPegFrac:               p.SoftenMaxDropToPegFrac,
+			HTLCMinAttempts60m:                   p.HTLCMinAttempts60m,
+			HTLCPolicyFailRate:                   p.HTLCPolicyFailRate,
+			HTLCLiquidityFailRate:                p.HTLCLiquidityFailRate,
 		}
 	}
 	return defaults
@@ -1106,7 +1124,8 @@ func (s *AutofeeService) GetConfig(ctx context.Context) (AutofeeConfig, error) {
 	var ambossToken pgtype.Text
 	err := s.db.QueryRow(ctx, `
 select enabled, profile, lookback_days, run_interval_sec, cooldown_up_sec, cooldown_down_sec,
-  step_cap_override, discovery_step_cap_down_override, stall_floor_relax_gap_frac_override, inbound_discount_max_ratio_override, outrate_floor_factor_low_override,
+  step_cap_override, discovery_step_cap_down_override, stall_floor_relax_gap_frac_override, inbound_discount_max_ratio_override,
+  inbound_discount_reach_out_ratio_override, inbound_discount_min_retained_spread_frac_override, outrate_floor_factor_low_override,
   soften_min_out_ratio_override, soften_max_drop_to_peg_frac_override, htlc_min_attempts_60m_override,
   htlc_policy_fail_rate_override, htlc_liquidity_fail_rate_override,
   rebal_cost_mode, amboss_enabled, amboss_token, inbound_passive_enabled, discovery_enabled, explorer_enabled,
@@ -1124,6 +1143,8 @@ from autofee_config where id=$1
 		&cfg.DiscoveryStepCapDownOverride,
 		&cfg.StallFloorRelaxGapFracOverride,
 		&cfg.InboundDiscountMaxRatioOverride,
+		&cfg.InboundDiscountReachOutRatioOverride,
+		&cfg.InboundDiscountMinRetainedSpreadFracOverride,
 		&cfg.OutrateFloorFactorLowOverride,
 		&cfg.SoftenMinOutRatioOverride,
 		&cfg.SoftenMaxDropToPegFracOverride,
@@ -1212,6 +1233,12 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 	}
 	if req.InboundDiscountMaxRatioOverride != nil {
 		current.InboundDiscountMaxRatioOverride = *req.InboundDiscountMaxRatioOverride
+	}
+	if req.InboundDiscountReachOutRatioOverride != nil {
+		current.InboundDiscountReachOutRatioOverride = *req.InboundDiscountReachOutRatioOverride
+	}
+	if req.InboundDiscountMinRetainedSpreadFracOverride != nil {
+		current.InboundDiscountMinRetainedSpreadFracOverride = *req.InboundDiscountMinRetainedSpreadFracOverride
 	}
 	if req.OutrateFloorFactorLowOverride != nil {
 		current.OutrateFloorFactorLowOverride = *req.OutrateFloorFactorLowOverride
@@ -1324,6 +1351,16 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 	} else if current.InboundDiscountMaxRatioOverride > 0 {
 		current.InboundDiscountMaxRatioOverride = clampFloat(current.InboundDiscountMaxRatioOverride, 0.50, 1.00)
 	}
+	if current.InboundDiscountReachOutRatioOverride < 0 {
+		current.InboundDiscountReachOutRatioOverride = 0
+	} else if current.InboundDiscountReachOutRatioOverride > 0 {
+		current.InboundDiscountReachOutRatioOverride = clampFloat(current.InboundDiscountReachOutRatioOverride, 0.05, 0.50)
+	}
+	if current.InboundDiscountMinRetainedSpreadFracOverride < 0 {
+		current.InboundDiscountMinRetainedSpreadFracOverride = 0
+	} else if current.InboundDiscountMinRetainedSpreadFracOverride > 0 {
+		current.InboundDiscountMinRetainedSpreadFracOverride = clampFloat(current.InboundDiscountMinRetainedSpreadFracOverride, 0.01, 0.50)
+	}
 	if current.OutrateFloorFactorLowOverride < 0 {
 		current.OutrateFloorFactorLowOverride = 0
 	} else if current.OutrateFloorFactorLowOverride > 0 {
@@ -1378,27 +1415,29 @@ set enabled=$2,
   discovery_step_cap_down_override=$9,
   stall_floor_relax_gap_frac_override=$10,
   inbound_discount_max_ratio_override=$11,
-  outrate_floor_factor_low_override=$12,
-  soften_min_out_ratio_override=$13,
-  soften_max_drop_to_peg_frac_override=$14,
-  htlc_min_attempts_60m_override=$15,
-  htlc_policy_fail_rate_override=$16,
-  htlc_liquidity_fail_rate_override=$17,
-  rebal_cost_mode=$18,
-  amboss_enabled=$19,
-  amboss_token=$20,
-  inbound_passive_enabled=$21,
-  discovery_enabled=$22,
-  explorer_enabled=$23,
-  super_source_enabled=$24,
-  super_source_base_fee_msat=$25,
-  revfloor_enabled=$26,
-  circuit_breaker_enabled=$27,
-  extreme_drain_enabled=$28,
-  htlc_signal_enabled=$29,
-  htlc_mode=$30,
-  min_ppm=$31,
-  max_ppm=$32,
+  inbound_discount_reach_out_ratio_override=$12,
+  inbound_discount_min_retained_spread_frac_override=$13,
+  outrate_floor_factor_low_override=$14,
+  soften_min_out_ratio_override=$15,
+  soften_max_drop_to_peg_frac_override=$16,
+  htlc_min_attempts_60m_override=$17,
+  htlc_policy_fail_rate_override=$18,
+  htlc_liquidity_fail_rate_override=$19,
+  rebal_cost_mode=$20,
+  amboss_enabled=$21,
+  amboss_token=$22,
+  inbound_passive_enabled=$23,
+  discovery_enabled=$24,
+  explorer_enabled=$25,
+  super_source_enabled=$26,
+  super_source_base_fee_msat=$27,
+  revfloor_enabled=$28,
+  circuit_breaker_enabled=$29,
+  extreme_drain_enabled=$30,
+  htlc_signal_enabled=$31,
+  htlc_mode=$32,
+  min_ppm=$33,
+  max_ppm=$34,
   updated_at=now()
 where id=$1
 `, autofeeConfigID,
@@ -1412,6 +1451,8 @@ where id=$1
 		current.DiscoveryStepCapDownOverride,
 		current.StallFloorRelaxGapFracOverride,
 		current.InboundDiscountMaxRatioOverride,
+		current.InboundDiscountReachOutRatioOverride,
+		current.InboundDiscountMinRetainedSpreadFracOverride,
 		current.OutrateFloorFactorLowOverride,
 		current.SoftenMinOutRatioOverride,
 		current.SoftenMaxDropToPegFracOverride,
@@ -5882,7 +5923,32 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if e.cfg.InboundDiscountMaxRatioOverride > 0 {
 		inboundDiscountMaxRatio = e.cfg.InboundDiscountMaxRatioOverride
 	}
-	inboundDiscount := computeInboundDiscount(e.cfg.InboundPassiveEnabled, classLabel, outRatio, fwdCount, marginPpm7d, baseCostPpm, appliedPpm, inboundDiscountMaxRatio)
+	inboundDiscountReachOutRatio := e.profile.InboundDiscountReachOutRatio
+	if inboundDiscountReachOutRatio <= 0 {
+		inboundDiscountReachOutRatio = 0.10
+	}
+	if e.cfg.InboundDiscountReachOutRatioOverride > 0 {
+		inboundDiscountReachOutRatio = e.cfg.InboundDiscountReachOutRatioOverride
+	}
+	inboundDiscountMinRetainedSpreadFrac := e.profile.InboundDiscountMinRetainedSpreadFrac
+	if inboundDiscountMinRetainedSpreadFrac <= 0 {
+		inboundDiscountMinRetainedSpreadFrac = 0.12
+	}
+	if e.cfg.InboundDiscountMinRetainedSpreadFracOverride > 0 {
+		inboundDiscountMinRetainedSpreadFrac = e.cfg.InboundDiscountMinRetainedSpreadFracOverride
+	}
+	inboundDiscount := computeInboundDiscount(
+		e.cfg.InboundPassiveEnabled,
+		classLabel,
+		outRatio,
+		fwdCount,
+		marginPpm7d,
+		baseCostPpm,
+		appliedPpm,
+		inboundDiscountMaxRatio,
+		inboundDiscountReachOutRatio,
+		inboundDiscountMinRetainedSpreadFrac,
+	)
 	inboundChanged := inboundDiscount != st.LastInboundDiscount
 	st.LastPpm = finalPpm
 	st.LastInboundDiscount = inboundDiscount
@@ -6475,20 +6541,34 @@ func classifyChannel(biasEma float64, outRatio float64, inCount int64, outCount 
 	return label, math.Min(1.0, 0.5*prevConf+0.5*conf)
 }
 
-func computeInboundDiscount(enabled bool, classLabel string, outRatio float64, fwdCount int, marginPpm7d int, baseCostPpm int, appliedPpm int, maxRatio float64) int {
-	if !enabled || !strings.EqualFold(classLabel, "sink") || outRatio > 0.10 || fwdCount < 5 || marginPpm7d < 200 || appliedPpm <= 0 {
+func computeInboundDiscount(enabled bool, classLabel string, outRatio float64, fwdCount int, marginPpm7d int, baseCostPpm int, appliedPpm int, maxRatio float64, reachOutRatio float64, retainedSpreadFrac float64) int {
+	if !enabled || !strings.EqualFold(classLabel, "sink") || fwdCount < 5 || marginPpm7d < 200 || appliedPpm <= 0 {
+		return 0
+	}
+	if reachOutRatio <= 0 {
+		reachOutRatio = 0.10
+	}
+	if outRatio > reachOutRatio {
 		return 0
 	}
 	if maxRatio <= 0 {
 		maxRatio = defaultInboundDiscountMaxRatio
 	}
+	if retainedSpreadFrac <= 0 {
+		retainedSpreadFrac = 0.12
+	}
 	anchor := int(math.Ceil(float64(baseCostPpm) * 1.002))
 	maxDiscount := int(math.Ceil(float64(appliedPpm) * maxRatio))
+	minRetainedSpread := int(math.Ceil(float64(appliedPpm) * retainedSpreadFrac))
 	gap := appliedPpm - anchor
 	if gap <= 0 {
 		return 0
 	}
-	return minInt(gap, maxDiscount)
+	maxDiscountByRetainedSpread := appliedPpm - anchor - minRetainedSpread
+	if maxDiscountByRetainedSpread <= 0 {
+		return 0
+	}
+	return minInt(gap, minInt(maxDiscount, maxDiscountByRetainedSpread))
 }
 
 func containsTag(tags []string, want string) bool {

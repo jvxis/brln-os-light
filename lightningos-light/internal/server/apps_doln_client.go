@@ -37,7 +37,7 @@ func dolnClientDefinition() appDefinition {
 		ID:          "dolnclient",
 		Name:        "DDLNS Client",
 		Description: "Consume DNS over Lightning Network - alfa v0.1 beta. Provides a SOCKS5 proxy that resolves DNS via keysend to a DDLNS server.",
-		Port:        dolnClientPort,
+		Port:        dolnClientWebPort,
 	}
 }
 

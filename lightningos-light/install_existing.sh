@@ -78,11 +78,11 @@ EOF
 get_mit_terms() {
   local license_file="$REPO_ROOT/../LICENSE"
   if [[ -f "$license_file" ]]; then
-    awk 'BEGIN{p=0} /^MIT License \\(English\\)/{p=1} /^MIT License \\(Portuguese\\)/{p=0} p{print}' "$license_file"
+    cat "$license_file"
     return
   fi
   cat <<'EOF'
-MIT License (English)
+MIT License
 
 Copyright (c) 2026 BR⚡LN
 

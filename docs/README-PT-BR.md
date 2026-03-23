@@ -690,4 +690,7 @@ sudo rm -rf /opt/lightningos/ui/*
 sudo cp -a ui/dist/. /opt/lightningos/ui/
 ```
 
+## Licenca
+Licenciado sob a Licenca MIT. Veja `LICENSE` para o texto canonico e `LICENSE.pt-BR.md` para a traducao informativa em PT-BR.
+
 

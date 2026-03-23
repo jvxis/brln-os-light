@@ -685,6 +685,9 @@ Release-by-release notes are tracked in GitHub Releases:
 ## Development
 See `DEVELOPMENT.md` for local dev setup and build instructions.
 
+## License
+Licensed under the MIT License. See `LICENSE` for the canonical text and `LICENSE.pt-BR.md` for an informational PT-BR translation.
+
 ## Systemd
 Templates are in `templates/systemd/`.
 

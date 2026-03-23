@@ -10,6 +10,8 @@ import depixIcon from '../assets/apps/depix.svg'
 import lnbitsIcon from '../assets/apps/lnbits.svg'
 import fswapIcon from '../assets/apps/fswap.png'
 import publicPoolIcon from '../assets/apps/public-pool.svg'
+import dolnServerIcon from '../assets/apps/doln-server.png'
+import dolnClientIcon from '../assets/apps/doln-client.png'
 
 type AppInfo = {
   id: string
@@ -42,7 +44,9 @@ const iconMap: Record<string, string> = {
   depixbuy: depixIcon,
   lnbits: lnbitsIcon,
   fswap: fswapIcon,
-  publicpool: publicPoolIcon
+  publicpool: publicPoolIcon,
+  dolnserver: dolnServerIcon,
+  dolnclient: dolnClientIcon
 }
 
 const internalRoutes: Record<string, string> = {

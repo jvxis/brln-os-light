@@ -16,6 +16,8 @@ func (s *Server) appRegistry() ([]appHandler, error) {
 		newPublicPoolApp(s),
 		newDepixBuyApp(s),
 		newFswapApp(s),
+		newDolnServerApp(s),
+		newDolnClientApp(s),
 	}
 	if err := validateAppRegistry(apps); err != nil {
 		return nil, err

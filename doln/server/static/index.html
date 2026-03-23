@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DoLN Server</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1117; color: #e1e4ea; min-height: 100vh; }
+  .container { max-width: 800px; margin: 0 auto; padding: 24px 16px; }
+  h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 4px; }
+  .subtitle { color: #8b8fa3; font-size: 0.875rem; margin-bottom: 24px; }
+  .card { background: #1a1d27; border: 1px solid #2a2d3a; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  .card h2 { font-size: 1rem; font-weight: 600; margin-bottom: 12px; color: #c8ccd8; }
+  .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .status-item { display: flex; align-items: center; gap: 8px; font-size: 0.875rem; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .dot.ok { background: #34d399; }
+  .dot.err { background: #f87171; }
+  .stat { color: #8b8fa3; }
+  .stat span { color: #e1e4ea; font-weight: 500; }
+  .form-group { margin-bottom: 12px; }
+  .form-group label { display: block; font-size: 0.75rem; color: #8b8fa3; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .form-group input { width: 100%; padding: 8px 12px; background: #0f1117; border: 1px solid #2a2d3a; border-radius: 8px; color: #e1e4ea; font-size: 0.875rem; outline: none; }
+  .form-group input:focus { border-color: #6366f1; }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .btn { padding: 8px 20px; border: none; border-radius: 8px; font-size: 0.875rem; font-weight: 500; cursor: pointer; transition: background 0.15s; }
+  .btn-primary { background: #6366f1; color: #fff; }
+  .btn-primary:hover { background: #5558e6; }
+  .btn-primary:disabled { background: #3f4266; cursor: default; }
+  .msg { font-size: 0.75rem; margin-top: 8px; }
+  .msg.ok { color: #34d399; }
+  .msg.err { color: #f87171; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+  th { text-align: left; padding: 8px 6px; color: #8b8fa3; font-weight: 500; border-bottom: 1px solid #2a2d3a; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  td { padding: 6px; border-bottom: 1px solid #1e2130; color: #c8ccd8; }
+  .empty { text-align: center; padding: 24px; color: #555; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 500; }
+  .badge.resolved { background: #064e3b; color: #34d399; }
+  .badge.error { background: #450a0a; color: #f87171; }
+  .mono { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.75rem; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>&#9889; DoLN Server</h1>
+  <p class="subtitle">DNS over Lightning Network — Server Node</p>
+
+  <div class="card">
+    <h2>Status</h2>
+    <div class="status-grid">
+      <div class="status-item"><div class="dot" id="dot-lnd"></div> LND Connection</div>
+      <div class="status-item"><div class="dot" id="dot-dns"></div> AdGuard DNS</div>
+      <div class="status-item stat">Uptime: <span id="uptime">—</span></div>
+      <div class="status-item stat">Queries: <span id="queries">—</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Configuration</h2>
+    <div class="form-row">
+      <div class="form-group">
+        <label>AdGuard DNS Host</label>
+        <input type="text" id="cfg-host" placeholder="adguard">
+      </div>
+      <div class="form-group">
+        <label>AdGuard DNS Port</label>
+        <input type="text" id="cfg-port" placeholder="53">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Keysend Amount (sats)</label>
+      <input type="number" id="cfg-amt" min="1" placeholder="1">
+    </div>
+    <button class="btn btn-primary" id="btn-save" onclick="saveConfig()">Save</button>
+    <div class="msg" id="cfg-msg"></div>
+  </div>
+
+  <div class="card">
+    <h2>Recent Queries</h2>
+    <table>
+      <thead><tr><th>Time</th><th>Source</th><th>Domain</th><th>Status</th><th>Latency</th></tr></thead>
+      <tbody id="log-body"><tr><td colspan="5" class="empty">No queries yet</td></tr></tbody>
+    </table>
+  </div>
+</div>
+<script>
+async function loadStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    setDot('dot-lnd', d.lnd_connected);
+    setDot('dot-dns', d.adguard_connected);
+    document.getElementById('uptime').textContent = d.uptime || '—';
+    document.getElementById('queries').textContent = d.queries_handled ?? '—';
+  } catch(e) { console.error(e); }
+}
+function setDot(id, ok) {
+  const el = document.getElementById(id);
+  el.className = 'dot ' + (ok ? 'ok' : 'err');
+}
+async function loadConfig() {
+  try {
+    const r = await fetch('/api/config');
+    const d = await r.json();
+    document.getElementById('cfg-host').value = d.adguard_dns_host || '';
+    document.getElementById('cfg-port').value = d.adguard_dns_port || '';
+    document.getElementById('cfg-amt').value = d.keysend_amount_sat || 1;
+  } catch(e) { console.error(e); }
+}
+async function saveConfig() {
+  const btn = document.getElementById('btn-save');
+  const msg = document.getElementById('cfg-msg');
+  btn.disabled = true;
+  msg.textContent = '';
+  try {
+    const body = {
+      adguard_dns_host: document.getElementById('cfg-host').value,
+      adguard_dns_port: document.getElementById('cfg-port').value,
+      keysend_amount_sat: parseInt(document.getElementById('cfg-amt').value) || 1
+    };
+    const r = await fetch('/api/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    if (!r.ok) throw new Error(await r.text());
+    msg.textContent = 'Saved!';
+    msg.className = 'msg ok';
+  } catch(e) {
+    msg.textContent = e.message;
+    msg.className = 'msg err';
+  } finally { btn.disabled = false; }
+}
+async function loadLog() {
+  try {
+    const r = await fetch('/api/log');
+    const entries = await r.json();
+    const tbody = document.getElementById('log-body');
+    if (!entries || entries.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty">No queries yet</td></tr>';
+      return;
+    }
+    tbody.innerHTML = entries.map(e => `<tr>
+      <td class="mono">${e.timestamp ? e.timestamp.substring(11,19) : '—'}</td>
+      <td class="mono">${e.source_pubkey || '—'}</td>
+      <td>${e.domain || '—'}</td>
+      <td><span class="badge ${e.status === 'resolved' ? 'resolved' : 'error'}">${e.status}</span></td>
+      <td>${e.latency_ms}ms</td>
+    </tr>`).join('');
+  } catch(e) { console.error(e); }
+}
+loadStatus(); loadConfig(); loadLog();
+setInterval(loadStatus, 5000);
+setInterval(loadLog, 5000);
+</script>
+</body>
+</html>

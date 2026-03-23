@@ -35,8 +35,8 @@ func newDolnClientApp(s *Server) appHandler {
 func dolnClientDefinition() appDefinition {
 	return appDefinition{
 		ID:          "dolnclient",
-		Name:        "DoLN Client",
-		Description: "DNS over Lightning Network client. Provides a SOCKS5 proxy that resolves DNS via keysend to a DoLN server.",
+		Name:        "DDLNS Client",
+		Description: "Consume DNS over Lightning Network - alfa v0.1 beta. Provides a SOCKS5 proxy that resolves DNS via keysend to a DDLNS server.",
 		Port:        dolnClientPort,
 	}
 }
@@ -170,7 +170,7 @@ func (s *Server) startDolnClient(ctx context.Context) error {
 func (s *Server) stopDolnClient(ctx context.Context) error {
 	paths := dolnClientAppPaths()
 	if !fileExists(paths.ComposePath) {
-		return errors.New("DoLN Client is not installed")
+		return errors.New("DDLNS Client is not installed")
 	}
 	return runCompose(ctx, paths.Root, paths.ComposePath, "stop")
 }

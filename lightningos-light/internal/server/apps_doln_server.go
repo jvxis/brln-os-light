@@ -37,8 +37,8 @@ func newDolnServerApp(s *Server) appHandler {
 func dolnServerDefinition() appDefinition {
 	return appDefinition{
 		ID:          "dolnserver",
-		Name:        "DoLN Server",
-		Description: "DNS over Lightning Network server. Resolves DNS queries received via keysend using AdGuard Home.",
+		Name:        "DDLNS Server",
+		Description: "Sell DNS over Lightning Network - alfa v0.1 beta. Resolves DNS queries received via keysend using AdGuard Home.",
 		Port:        dolnServerPort,
 	}
 }
@@ -168,7 +168,7 @@ func (s *Server) startDolnServer(ctx context.Context) error {
 func (s *Server) stopDolnServer(ctx context.Context) error {
 	paths := dolnServerAppPaths()
 	if !fileExists(paths.ComposePath) {
-		return errors.New("DoLN Server is not installed")
+		return errors.New("DDLNS Server is not installed")
 	}
 	return runCompose(ctx, paths.Root, paths.ComposePath, "stop")
 }

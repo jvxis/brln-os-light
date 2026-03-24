@@ -379,6 +379,10 @@ type autofeeProfile struct {
 	RunIntervalSec                       int
 	CooldownUpSec                        int
 	CooldownDownSec                      int
+	CooldownUpDrainedSec                 int
+	CooldownUpExtremeSec                 int
+	CooldownUpDrainedOutRatioMax         float64
+	CooldownUpExtremeOutRatioMax         float64
 	DiscoveryStepCapDown                 float64
 	StallFloorRelaxGapFrac               float64
 	SeedGuardMaxJump                     float64
@@ -460,6 +464,12 @@ type autofeeProfile struct {
 	AntiFlipWindowHours                  int
 	AntiFlipExtraConfirmRounds           int
 	AntiFlipStrongGapFrac                float64
+	DrainedExplorerAfterDays             int
+	DrainedExplorerOutRatioMax           float64
+	DrainedExplorerRecentFwds1dMax       int
+	DrainedExplorerMaxHours              int
+	DrainedExplorerMaxRounds             int
+	DrainedExplorerStepPpm               int
 	BalancedUpOutRatioMin                float64
 	BalancedFloorUpCap                   float64
 	OutrateTargetOutRatioMin             float64
@@ -495,6 +505,10 @@ var autofeeProfiles = map[string]autofeeProfile{
 		RunIntervalSec:                       8 * 3600,
 		CooldownUpSec:                        8 * 3600,
 		CooldownDownSec:                      2 * 3600,
+		CooldownUpDrainedSec:                 4 * 3600,
+		CooldownUpExtremeSec:                 2 * 3600,
+		CooldownUpDrainedOutRatioMax:         0.05,
+		CooldownUpExtremeOutRatioMax:         0.01,
 		DiscoveryStepCapDown:                 0.15,
 		StallFloorRelaxGapFrac:               0.15,
 		SeedGuardMaxJump:                     0.30,
@@ -576,6 +590,12 @@ var autofeeProfiles = map[string]autofeeProfile{
 		AntiFlipWindowHours:                  6,
 		AntiFlipExtraConfirmRounds:           2,
 		AntiFlipStrongGapFrac:                0.60,
+		DrainedExplorerAfterDays:             10,
+		DrainedExplorerOutRatioMax:           0.03,
+		DrainedExplorerRecentFwds1dMax:       1,
+		DrainedExplorerMaxHours:              48,
+		DrainedExplorerMaxRounds:             3,
+		DrainedExplorerStepPpm:               5,
 		BalancedUpOutRatioMin:                0.25,
 		BalancedFloorUpCap:                   0.04,
 		OutrateTargetOutRatioMin:             0.25,
@@ -600,6 +620,10 @@ var autofeeProfiles = map[string]autofeeProfile{
 		RunIntervalSec:                       4 * 3600,
 		CooldownUpSec:                        6 * 3600,
 		CooldownDownSec:                      1 * 3600,
+		CooldownUpDrainedSec:                 3 * 3600,
+		CooldownUpExtremeSec:                 1 * 3600,
+		CooldownUpDrainedOutRatioMax:         0.05,
+		CooldownUpExtremeOutRatioMax:         0.01,
 		DiscoveryStepCapDown:                 0.20,
 		StallFloorRelaxGapFrac:               0.10,
 		SeedGuardMaxJump:                     0.50,
@@ -681,6 +705,12 @@ var autofeeProfiles = map[string]autofeeProfile{
 		AntiFlipWindowHours:                  4,
 		AntiFlipExtraConfirmRounds:           1,
 		AntiFlipStrongGapFrac:                0.45,
+		DrainedExplorerAfterDays:             7,
+		DrainedExplorerOutRatioMax:           0.04,
+		DrainedExplorerRecentFwds1dMax:       2,
+		DrainedExplorerMaxHours:              48,
+		DrainedExplorerMaxRounds:             4,
+		DrainedExplorerStepPpm:               10,
 		BalancedUpOutRatioMin:                0.20,
 		BalancedFloorUpCap:                   0.05,
 		OutrateTargetOutRatioMin:             0.20,
@@ -705,6 +735,10 @@ var autofeeProfiles = map[string]autofeeProfile{
 		RunIntervalSec:                       2 * 3600,
 		CooldownUpSec:                        3 * 3600,
 		CooldownDownSec:                      1 * 3600,
+		CooldownUpDrainedSec:                 90 * 60,
+		CooldownUpExtremeSec:                 60 * 60,
+		CooldownUpDrainedOutRatioMax:         0.05,
+		CooldownUpExtremeOutRatioMax:         0.01,
 		DiscoveryStepCapDown:                 0.25,
 		StallFloorRelaxGapFrac:               0.08,
 		SeedGuardMaxJump:                     0.70,
@@ -786,6 +820,12 @@ var autofeeProfiles = map[string]autofeeProfile{
 		AntiFlipWindowHours:                  3,
 		AntiFlipExtraConfirmRounds:           1,
 		AntiFlipStrongGapFrac:                0.30,
+		DrainedExplorerAfterDays:             5,
+		DrainedExplorerOutRatioMax:           0.05,
+		DrainedExplorerRecentFwds1dMax:       2,
+		DrainedExplorerMaxHours:              48,
+		DrainedExplorerMaxRounds:             5,
+		DrainedExplorerStepPpm:               15,
 		BalancedUpOutRatioMin:                0.18,
 		BalancedFloorUpCap:                   0.06,
 		OutrateTargetOutRatioMin:             0.18,
@@ -2136,6 +2176,12 @@ type explorerState struct {
 	FwdsAtStart           int    `json:"fwds_at_start"`
 	LastExitTs            int64  `json:"last_exit_ts"`
 	Seen                  bool   `json:"seen"`
+	DrainedActive         bool   `json:"drained_active,omitempty"`
+	DrainedStartedTs      int64  `json:"drained_started_ts,omitempty"`
+	DrainedRounds         int    `json:"drained_rounds,omitempty"`
+	DrainedFwdsAtStart    int    `json:"drained_fwds_at_start,omitempty"`
+	DrainedLastExitTs     int64  `json:"drained_last_exit_ts,omitempty"`
+	DrainedSeen           bool   `json:"drained_seen,omitempty"`
 	StagnationNoFwdRounds int    `json:"stagnation_no_fwd_rounds,omitempty"`
 	StagnationPhase       int    `json:"stagnation_phase,omitempty"`
 	SurgeGateRounds       int    `json:"surge_gate_rounds,omitempty"`
@@ -2341,9 +2387,13 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 			} else {
 				keptLines = append(keptLines, entry)
 			}
-			if containsTag(decision.Tags, "explorer") {
+			if containsTag(decision.Tags, "explorer") || containsTag(decision.Tags, "drained-explorer") {
+				label := "explorer"
+				if containsTag(decision.Tags, "drained-explorer") && !containsTag(decision.Tags, "explorer") {
+					label = "drained explorer"
+				}
 				explorerLines = append(explorerLines, autofeeLogEntry{
-					Line: fmt.Sprintf("🧭 %s explorer: ON", decision.Alias),
+					Line: fmt.Sprintf("🧭 %s %s: ON", decision.Alias, label),
 					Payload: &autofeeLogItem{
 						Kind:     "explorer",
 						Category: "explorer",
@@ -3377,6 +3427,33 @@ func applyFailedRebalancePressure(profile autofeeProfile, localPpm int, targetPp
 		tags = append(tags, "rebal-fail-pressure")
 	}
 	return targetPpm, tags
+}
+
+func effectiveCooldownUpSecForChannel(profile autofeeProfile, baseCooldownUpSec int, effectiveOutRatio float64, holdUpOnRecentRebalance bool) int {
+	cooldownSec := maxInt(autofeeMinCooldownSec, baseCooldownUpSec)
+	if holdUpOnRecentRebalance {
+		return cooldownSec
+	}
+	extremeOutMax := profile.CooldownUpExtremeOutRatioMax
+	if extremeOutMax <= 0 {
+		extremeOutMax = profile.ExtremeDrainTurboOutMax
+	}
+	if extremeOutMax > 0 && effectiveOutRatio <= extremeOutMax {
+		if profile.CooldownUpExtremeSec > 0 {
+			return minInt(cooldownSec, maxInt(autofeeMinCooldownSec, profile.CooldownUpExtremeSec))
+		}
+		return cooldownSec
+	}
+	drainedOutMax := profile.CooldownUpDrainedOutRatioMax
+	if drainedOutMax <= 0 {
+		drainedOutMax = profile.ExtremeDrainOutMax
+	}
+	if drainedOutMax > 0 && effectiveOutRatio <= drainedOutMax {
+		if profile.CooldownUpDrainedSec > 0 {
+			return minInt(cooldownSec, maxInt(autofeeMinCooldownSec, profile.CooldownUpDrainedSec))
+		}
+	}
+	return cooldownSec
 }
 
 func isMoveTowardTarget(localPpm int, nextPpm int, targetPpm int) bool {
@@ -5318,11 +5395,13 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	discoveryHit := false
 	discoveryHard := false
 	explorerActive := false
+	drainedExplorerActive := false
 	if e.cfg.ExplorerEnabled {
 		explorerActive = e.evalExplorer(st, outRatio, fwdCount, ch.LocalBalanceSat, ch.CapacitySat, localPpm)
 		if explorerActive {
 			tags = append(tags, "explorer")
 		}
+		drainedExplorerActive = e.evalDrainedExplorer(st, outRatio, recentForwards1d, recentRebalanceCount)
 	}
 	if e.cfg.DiscoveryEnabled && fwdCount == 0 && outRatio > 0.40 {
 		discoveryHit = true
@@ -5361,6 +5440,10 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 
 	if superSourceActive {
 		target = e.cfg.MinPpm
+	}
+	if adjustedTarget, explorerTags := applyDrainedExplorerTarget(e.profile, drainedExplorerActive, st.ExplorerState.DrainedRounds, localPpm, target, seed, baseCostPpm); len(explorerTags) > 0 {
+		target = adjustedTarget
+		tags = append(tags, explorerTags...)
 	}
 	allowOutrateTargetAnchor := outPpm7d > 0 &&
 		recentRebalanceCount == 0 &&
@@ -5777,8 +5860,13 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		!htlcHotSignal &&
 		fwdCount < 4
 	if floorDrivenUp && weakDemandSignal {
-		finalPpm = localPpm
-		tags = append(tags, "floor-up-blocked-low-signal")
+		if adjustedPpm, explorerTags := capWeakDemandFloorUpForDrainedExplorer(e.profile, drainedExplorerActive, localPpm, finalPpm); len(explorerTags) > 0 {
+			finalPpm = adjustedPpm
+			tags = append(tags, explorerTags...)
+		} else {
+			finalPpm = localPpm
+			tags = append(tags, "floor-up-blocked-low-signal")
+		}
 	}
 
 	if rawStep != target {
@@ -5879,7 +5967,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		fwdsSince := fwdCount - st.BaselineFwd7d
 		cooldownHours := float64(maxInt(1, cooldownDownSec)) / 3600.0
 		if finalPpm > localPpm {
-			cooldownHours = float64(maxInt(1, cooldownUpSec)) / 3600.0
+			cooldownHours = float64(maxInt(1, effectiveCooldownUpSecForChannel(e.profile, cooldownUpSec, outRatio, holdUpOnRecentRebalance))) / 3600.0
 		}
 		if !st.LastTs.IsZero() {
 			hoursSince := e.now.Sub(st.LastTs).Hours()
@@ -5987,6 +6075,9 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if explorerActive && finalPpm < localPpm {
 		st.ExplorerState.Rounds++
 	}
+	if drainedExplorerActive && finalPpm > localPpm {
+		st.ExplorerState.DrainedRounds++
+	}
 	hoursSinceLastChange := 0.0
 	if !st.LastTs.IsZero() {
 		hoursSinceLastChange = e.now.Sub(st.LastTs).Hours()
@@ -6000,7 +6091,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		hoursSince := e.now.Sub(st.LastTs).Hours()
 		cooldownHours := float64(maxInt(1, cooldownDownSec)) / 3600.0
 		if finalPpm > localPpm {
-			cooldownHours = float64(maxInt(1, cooldownUpSec)) / 3600.0
+			cooldownHours = float64(maxInt(1, effectiveCooldownUpSecForChannel(e.profile, cooldownUpSec, outRatio, holdUpOnRecentRebalance))) / 3600.0
 		}
 		remaining := cooldownHours - hoursSince
 		if remaining > 0 {
@@ -6097,12 +6188,24 @@ func (e *autofeeEngine) evalExplorer(st *autofeeChannelState, outRatio float64, 
 			stagnationPhase := st.ExplorerState.StagnationPhase
 			surgeGateRounds := st.ExplorerState.SurgeGateRounds
 			surgeGatePpm := st.ExplorerState.SurgeGatePpm
+			drainedActive := st.ExplorerState.DrainedActive
+			drainedStartedTs := st.ExplorerState.DrainedStartedTs
+			drainedRounds := st.ExplorerState.DrainedRounds
+			drainedFwdsAtStart := st.ExplorerState.DrainedFwdsAtStart
+			drainedLastExitTs := st.ExplorerState.DrainedLastExitTs
+			drainedSeen := st.ExplorerState.DrainedSeen
 			st.ExplorerState = explorerState{
 				Active:                true,
 				StartedTs:             nowTs,
 				Rounds:                0,
 				FwdsAtStart:           fwdCount,
 				Seen:                  true,
+				DrainedActive:         drainedActive,
+				DrainedStartedTs:      drainedStartedTs,
+				DrainedRounds:         drainedRounds,
+				DrainedFwdsAtStart:    drainedFwdsAtStart,
+				DrainedLastExitTs:     drainedLastExitTs,
+				DrainedSeen:           drainedSeen,
 				StagnationNoFwdRounds: stagnationNoFwdRounds,
 				StagnationPhase:       stagnationPhase,
 				SurgeGateRounds:       surgeGateRounds,
@@ -6122,6 +6225,89 @@ func (e *autofeeEngine) evalExplorer(st *autofeeChannelState, outRatio float64, 
 	}
 	return true
 }
+
+func (e *autofeeEngine) evalDrainedExplorer(st *autofeeChannelState, outRatio float64, recentForwards1d int, recentRebalanceCount int) bool {
+	nowTs := e.now.Unix()
+	active := st.ExplorerState.DrainedActive
+	if !active {
+		daysSince := 999.0
+		if !st.LastTs.IsZero() {
+			daysSince = e.now.Sub(st.LastTs).Hours() / 24.0
+		}
+		maxFwds := maxInt(0, e.profile.DrainedExplorerRecentFwds1dMax)
+		if recentRebalanceCount == 0 &&
+			daysSince >= float64(maxInt(1, e.profile.DrainedExplorerAfterDays)) &&
+			outRatio <= e.profile.DrainedExplorerOutRatioMax &&
+			recentForwards1d <= maxFwds {
+			st.ExplorerState.DrainedActive = true
+			st.ExplorerState.DrainedStartedTs = nowTs
+			st.ExplorerState.DrainedRounds = 0
+			st.ExplorerState.DrainedFwdsAtStart = recentForwards1d
+			st.ExplorerState.DrainedSeen = true
+			return true
+		}
+		return false
+	}
+
+	hoursSince := float64(nowTs-st.ExplorerState.DrainedStartedTs) / 3600.0
+	fwdsSince := recentForwards1d - st.ExplorerState.DrainedFwdsAtStart
+	maxFwds := maxInt(0, e.profile.DrainedExplorerRecentFwds1dMax)
+	maxHours := maxInt(1, e.profile.DrainedExplorerMaxHours)
+	maxRounds := maxInt(1, e.profile.DrainedExplorerMaxRounds)
+	exitOutRatio := e.profile.DrainedExplorerOutRatioMax * 1.5
+	if exitOutRatio <= 0 {
+		exitOutRatio = e.profile.DrainedExplorerOutRatioMax
+	}
+	if recentRebalanceCount > 0 ||
+		fwdsSince >= 1 ||
+		recentForwards1d > maxFwds ||
+		hoursSince >= float64(maxHours) ||
+		st.ExplorerState.DrainedRounds >= maxRounds ||
+		(exitOutRatio > 0 && outRatio > exitOutRatio) {
+		st.ExplorerState.DrainedActive = false
+		st.ExplorerState.DrainedLastExitTs = nowTs
+		return false
+	}
+	return true
+}
+
+func applyDrainedExplorerTarget(profile autofeeProfile, active bool, rounds int, localPpm int, targetPpm int, seed float64, baseCostPpm int) (int, []string) {
+	if !active || localPpm < 0 {
+		return targetPpm, nil
+	}
+	stepPpm := maxInt(1, profile.DrainedExplorerStepPpm)
+	tags := []string{"drained-explorer", fmt.Sprintf("drained-explorer-r%d", maxInt(1, rounds+1))}
+	minTarget := localPpm + stepPpm
+	if targetPpm < minTarget {
+		targetPpm = minTarget
+		tags = append(tags, "drained-explorer-step")
+	}
+	anchorPpm := maxInt(baseCostPpm, int(math.Round(seed)))
+	if anchorPpm > 0 {
+		ceiling := int(math.Ceil(float64(anchorPpm) * 1.10))
+		if ceiling < minTarget {
+			ceiling = minTarget
+		}
+		if targetPpm > ceiling {
+			targetPpm = ceiling
+			tags = append(tags, "drained-explorer-cap")
+		}
+	}
+	return targetPpm, tags
+}
+
+func capWeakDemandFloorUpForDrainedExplorer(profile autofeeProfile, active bool, localPpm int, finalPpm int) (int, []string) {
+	if !active || finalPpm <= localPpm {
+		return finalPpm, nil
+	}
+	stepPpm := maxInt(1, profile.DrainedExplorerStepPpm)
+	maxAllowed := localPpm + stepPpm
+	if finalPpm > maxAllowed {
+		return maxAllowed, []string{"drained-explorer-cap"}
+	}
+	return finalPpm, nil
+}
+
 func (e *autofeeEngine) seedForChannel(pubkey string, st *autofeeChannelState) (float64, float64, []string) {
 	tags := []string{}
 	if e.cfg.AmbossEnabled {
@@ -6619,6 +6805,14 @@ func formatAutofeeTags(d *decision) string {
 			add("🧨harddrop")
 		case t == "explorer":
 			add("🧭explorer")
+		case t == "drained-explorer":
+			add("🧭drained-explorer")
+		case strings.HasPrefix(t, "drained-explorer-r"):
+			add("🧭" + strings.TrimPrefix(t, "drained-explorer-"))
+		case t == "drained-explorer-step":
+			add("🧭step-up")
+		case t == "drained-explorer-cap":
+			add("🧭cap")
 		case strings.HasPrefix(t, "surge"):
 			add("📈" + t)
 		case t == "top-rev":

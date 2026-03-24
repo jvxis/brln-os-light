@@ -654,6 +654,75 @@ func TestRebalanceFailureCampaignGap(t *testing.T) {
 	}
 }
 
+func TestEffectiveCooldownUpSecForChannel(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+
+	if got := effectiveCooldownUpSecForChannel(profile, profile.CooldownUpSec, 0.20, false); got != 6*3600 {
+		t.Fatalf("unexpected normal moderate cooldown: got %d want %d", got, 6*3600)
+	}
+	if got := effectiveCooldownUpSecForChannel(profile, profile.CooldownUpSec, 0.04, false); got != 3*3600 {
+		t.Fatalf("unexpected drained moderate cooldown: got %d want %d", got, 3*3600)
+	}
+	if got := effectiveCooldownUpSecForChannel(profile, profile.CooldownUpSec, 0.009, false); got != 3600 {
+		t.Fatalf("unexpected extreme moderate cooldown: got %d want %d", got, 3600)
+	}
+}
+
+func TestEffectiveCooldownUpSecForChannelRespectsHoldAndBase(t *testing.T) {
+	profile := autofeeProfiles["aggressive"]
+
+	if got := effectiveCooldownUpSecForChannel(profile, profile.CooldownUpSec, 0.009, true); got != profile.CooldownUpSec {
+		t.Fatalf("expected recent rebalance hold to keep base cooldown, got %d want %d", got, profile.CooldownUpSec)
+	}
+
+	if got := effectiveCooldownUpSecForChannel(profile, 1800, 0.009, false); got != 3600 {
+		t.Fatalf("expected minimum cooldown floor to apply, got %d want %d", got, 3600)
+	}
+}
+
+func TestEvalDrainedExplorerStartsAndStops(t *testing.T) {
+	e := &autofeeEngine{
+		profile: autofeeProfiles["moderate"],
+		now:     time.Date(2026, 3, 24, 12, 0, 0, 0, time.UTC),
+	}
+	st := &autofeeChannelState{LastTs: e.now.Add(-8 * 24 * time.Hour)}
+
+	if !e.evalDrainedExplorer(st, 0.03, 0, 0) {
+		t.Fatalf("expected drained explorer to start on drained inactive channel")
+	}
+	if !st.ExplorerState.DrainedActive || !st.ExplorerState.DrainedSeen {
+		t.Fatalf("expected drained explorer state to be active: %+v", st.ExplorerState)
+	}
+
+	st.ExplorerState.DrainedRounds = e.profile.DrainedExplorerMaxRounds
+	if e.evalDrainedExplorer(st, 0.03, 0, 0) {
+		t.Fatalf("expected drained explorer to stop after max rounds")
+	}
+	if st.ExplorerState.DrainedActive {
+		t.Fatalf("expected drained explorer state to be cleared")
+	}
+}
+
+func TestApplyDrainedExplorerTargetAndCap(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+
+	target, tags := applyDrainedExplorerTarget(profile, true, 0, 0, 0, 113, 113)
+	if target != 10 {
+		t.Fatalf("unexpected drained explorer target: got %d want 10", target)
+	}
+	if len(tags) < 2 || tags[0] != "drained-explorer" || tags[1] != "drained-explorer-r1" {
+		t.Fatalf("unexpected drained explorer tags: %+v", tags)
+	}
+
+	capped, capTags := capWeakDemandFloorUpForDrainedExplorer(profile, true, 0, 125)
+	if capped != 10 {
+		t.Fatalf("expected weak-demand floor up to be capped to explorer step, got %d want 10", capped)
+	}
+	if len(capTags) != 1 || capTags[0] != "drained-explorer-cap" {
+		t.Fatalf("unexpected drained explorer cap tags: %+v", capTags)
+	}
+}
+
 func TestCollapseWeakRebalanceCampaigns(t *testing.T) {
 	base := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)
 	jobs := []recentWeakRebalanceJob{
@@ -679,6 +748,9 @@ func TestAutofeeProfileMovementDefaults(t *testing.T) {
 	if conservative.StepCap != 0.05 || conservative.CooldownUpSec != 8*3600 || conservative.CooldownDownSec != 2*3600 {
 		t.Fatalf("unexpected conservative movement defaults: %+v", conservative)
 	}
+	if conservative.CooldownUpDrainedSec != 4*3600 || conservative.CooldownUpExtremeSec != 2*3600 {
+		t.Fatalf("unexpected conservative drained cooldown defaults: %+v", conservative)
+	}
 	if conservative.DiscoveryStepCapDown != 0.15 || conservative.StallFloorRelaxGapFrac != 0.15 {
 		t.Fatalf("unexpected conservative down movement tuning: %+v", conservative)
 	}
@@ -690,6 +762,9 @@ func TestAutofeeProfileMovementDefaults(t *testing.T) {
 	if moderate.StepCap != 0.08 || moderate.CooldownUpSec != 6*3600 || moderate.CooldownDownSec != 1*3600 {
 		t.Fatalf("unexpected moderate movement defaults: %+v", moderate)
 	}
+	if moderate.CooldownUpDrainedSec != 3*3600 || moderate.CooldownUpExtremeSec != 1*3600 {
+		t.Fatalf("unexpected moderate drained cooldown defaults: %+v", moderate)
+	}
 	if moderate.DiscoveryStepCapDown != 0.20 || moderate.StallFloorRelaxGapFrac != 0.10 {
 		t.Fatalf("unexpected moderate down movement tuning: %+v", moderate)
 	}
@@ -700,6 +775,9 @@ func TestAutofeeProfileMovementDefaults(t *testing.T) {
 	aggressive := autofeeProfiles["aggressive"]
 	if aggressive.StepCap != 0.10 || aggressive.CooldownUpSec != 3*3600 || aggressive.CooldownDownSec != 1*3600 {
 		t.Fatalf("unexpected aggressive movement defaults: %+v", aggressive)
+	}
+	if aggressive.CooldownUpDrainedSec != 90*60 || aggressive.CooldownUpExtremeSec != 3600 {
+		t.Fatalf("unexpected aggressive drained cooldown defaults: %+v", aggressive)
 	}
 	if aggressive.DiscoveryStepCapDown != 0.25 || aggressive.StallFloorRelaxGapFrac != 0.08 {
 		t.Fatalf("unexpected aggressive down movement tuning: %+v", aggressive)

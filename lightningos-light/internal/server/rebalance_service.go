@@ -657,8 +657,8 @@ func normalizeRebalanceConfig(cfg RebalanceConfig) RebalanceConfig {
 	if cfg.MppMaxShards <= 0 {
 		cfg.MppMaxShards = def.MppMaxShards
 	}
-	if cfg.MppMaxShards > 8 {
-		cfg.MppMaxShards = 8
+	if cfg.MppMaxShards > 20 {
+		cfg.MppMaxShards = 20
 	}
 	if cfg.MppParallelism <= 0 {
 		cfg.MppParallelism = def.MppParallelism

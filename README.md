@@ -376,7 +376,7 @@ MSPR (`MSPR (Multi-Source Parallel)`):
 - Purpose: increase first-pass success chance by trying shards across multiple source channels in parallel before legacy sequential fallback.
 - `Enable MSPR` (`mpp_enabled`, default `false`): enables MSPR prepass execution.
 - `MSPR for auto jobs only` (`mpp_auto_only`, default `false`): when enabled, only auto jobs use MSPR; manual jobs stay legacy.
-- `Max shards` (`mpp_max_shards`, default `8`, range `1..8`): max number of shards planned for the MSPR round.
+- `Max shards` (`mpp_max_shards`, default `8`, range `1..20`): max number of shards planned for the MSPR round.
 - `Parallel workers` (`mpp_parallelism`, default `6`, range `1..max_shards`): max concurrent shard attempts in the round.
 - `Min shard amount (sats)` (`mpp_min_shard_sat`, default `1000`): minimum shard size planned by MSPR.
 - `Round timeout (sec)` (`mpp_round_timeout_sec`, default `30`): max duration for one MSPR round before fallback to legacy attempts.
@@ -387,7 +387,7 @@ Execution model:
 - Failed shard attempts appear in history with `mpp shard:` reason prefix.
 Practical recommendation:
 - Start with `max_shards=8`, `parallel_workers=6`, `min_shard=1000`, `round_timeout=30`.
-- If you see too many large first shards, increase shards (within limit) and keep workers lower or equal to shards.
+- If you see too many large first shards, increase shards (up to `20`) and keep workers lower or equal to shards.
 - If your node is resource-constrained, reduce parallel workers first (not shard count).
 
 When to use each mode:

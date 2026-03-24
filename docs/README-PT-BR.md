@@ -360,7 +360,7 @@ MSPR (`MSPR (Paralelo Multi-Source)`):
 - Objetivo: aumentar a chance de sucesso no primeiro passe tentando shards em múltiplas fontes em paralelo, antes do fallback legado sequencial.
 - `Enable MSPR` (`mpp_enabled`, padrão `false`): habilita o prepass MSPR com execução real.
 - `MSPR for auto jobs only` (`mpp_auto_only`, padrão `false`): quando ligado, só jobs auto usam MSPR; jobs manuais ficam no legado.
-- `Max shards` (`mpp_max_shards`, padrão `8`, faixa `1..8`): máximo de shards planejados na rodada MSPR.
+- `Max shards` (`mpp_max_shards`, padrão `8`, faixa `1..20`): máximo de shards planejados na rodada MSPR.
 - `Parallel workers` (`mpp_parallelism`, padrão `6`, faixa `1..max_shards`): número máximo de tentativas de shard concorrentes na rodada.
 - `Min shard amount (sats)` (`mpp_min_shard_sat`, padrão `1000`): tamanho mínimo de shard planejado pelo MSPR.
 - `Round timeout (sec)` (`mpp_round_timeout_sec`, padrão `30`): tempo máximo da rodada MSPR antes de cair para tentativas legadas.
@@ -371,7 +371,7 @@ Modelo de execução:
 - Falhas de shard aparecem no histórico com prefixo `mpp shard:` no motivo.
 Recomendação prática:
 - Comece com `max_shards=8`, `parallel_workers=6`, `min_shard=1000`, `round_timeout=30`.
-- Se os primeiros shards ainda estiverem grandes, aumente shards (até o limite) e mantenha workers menor ou igual a shards.
+- Se os primeiros shards ainda estiverem grandes, aumente shards (até `20`) e mantenha workers menor ou igual a shards.
 - Se o nó estiver sensível a carga, reduza primeiro os workers paralelos (não o número de shards).
 
 Quando usar cada modo:

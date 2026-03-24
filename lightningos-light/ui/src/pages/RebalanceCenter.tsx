@@ -17,6 +17,7 @@ import {
 import { getLocale } from '../i18n'
 
 const MSPR_DEFAULT_MAX_SHARDS = 8
+const MSPR_MAX_SHARDS_LIMIT = 20
 const MSPR_DEFAULT_PARALLELISM = 6
 const MSPR_DEFAULT_MIN_SHARD_SAT = 1000
 const MSPR_DEFAULT_ROUND_TIMEOUT_SEC = 30
@@ -595,7 +596,7 @@ export default function RebalanceCenter() {
     setSaving(true)
     setStatus('')
     try {
-        const safeMppMaxShards = Math.max(1, Math.min(8, Number(config.mpp_max_shards) || MSPR_DEFAULT_MAX_SHARDS))
+        const safeMppMaxShards = Math.max(1, Math.min(MSPR_MAX_SHARDS_LIMIT, Number(config.mpp_max_shards) || MSPR_DEFAULT_MAX_SHARDS))
         const safeMppParallelism = Math.max(1, Math.min(safeMppMaxShards, Number(config.mpp_parallelism) || MSPR_DEFAULT_PARALLELISM))
         const safeMppRoundTimeoutSec = Math.max(5, Number(config.mpp_round_timeout_sec) || MSPR_DEFAULT_ROUND_TIMEOUT_SEC)
         const saved = (await updateRebalanceConfig({
@@ -1750,11 +1751,11 @@ export default function RebalanceCenter() {
                     className="input-field"
                     type="number"
                     min={1}
-                    max={8}
+                    max={MSPR_MAX_SHARDS_LIMIT}
                     value={config.mpp_max_shards}
                     disabled={!config.mpp_enabled}
                     onChange={(e) => {
-                      const nextMaxShards = Math.max(1, Math.min(8, Number(e.target.value) || 1))
+                      const nextMaxShards = Math.max(1, Math.min(MSPR_MAX_SHARDS_LIMIT, Number(e.target.value) || 1))
                       const nextParallelism = Math.max(1, Math.min(config.mpp_parallelism || 1, nextMaxShards))
                       setConfig({ ...config, mpp_max_shards: nextMaxShards, mpp_parallelism: nextParallelism })
                     }}
@@ -1769,11 +1770,11 @@ export default function RebalanceCenter() {
                     className="input-field"
                     type="number"
                     min={1}
-                    max={Math.max(1, Math.min(8, config.mpp_max_shards || 1))}
+                    max={Math.max(1, Math.min(MSPR_MAX_SHARDS_LIMIT, config.mpp_max_shards || 1))}
                     value={config.mpp_parallelism}
                     disabled={!config.mpp_enabled}
                     onChange={(e) => {
-                      const maxAllowed = Math.max(1, Math.min(8, config.mpp_max_shards || 1))
+                      const maxAllowed = Math.max(1, Math.min(MSPR_MAX_SHARDS_LIMIT, config.mpp_max_shards || 1))
                       const nextParallelism = Math.max(1, Math.min(maxAllowed, Number(e.target.value) || 1))
                       setConfig({ ...config, mpp_parallelism: nextParallelism })
                     }}

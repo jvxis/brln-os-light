@@ -109,6 +109,8 @@ export const updateLndRawConfig = (payload: { raw_user_conf: string; apply_now: 
 export const getMempoolFees = () => request('/api/mempool/fees')
 
 export const getWalletSummary = () => request('/api/wallet/summary')
+export const getWalletActivity = (range: '7d' | '1m' | '1a', limit = 100, offset = 0) =>
+  request(`/api/wallet/activity?range=${encodeURIComponent(range)}&limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}`)
 export const getWalletAddress = () => request('/api/wallet/address', { method: 'POST' })
 export const previewOnchainSend = (payload: { address: string; amount_sat?: number; sat_per_vbyte: number; sweep_all?: boolean }) =>
   request('/api/wallet/send/preview', { method: 'POST', body: JSON.stringify(payload) })

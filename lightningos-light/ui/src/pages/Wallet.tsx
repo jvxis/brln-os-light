@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import QRCode from 'qrcode'
-import { createInvoice, decodeInvoice, getLnChannels, getMempoolFees, getWalletAddress, getWalletSummary, payInvoice, previewOnchainSend, sendOnchain } from '../api'
+import { createInvoice, decodeInvoice, getLnChannels, getMempoolFees, getWalletActivity, getWalletAddress, getWalletSummary, payInvoice, previewOnchainSend, sendOnchain } from '../api'
 import { getLocale } from '../i18n'
 
 const emptySummary = {
@@ -42,6 +42,10 @@ type WalletActivityItem = {
   network?: string
   direction?: string
   amount_sat?: number
+  fee_sat?: number
+  confirmations?: number
+  block_height?: number
+  addresses?: string[]
   memo?: string
   timestamp?: string
   created_at?: string
@@ -54,6 +58,8 @@ type WalletActivityItem = {
   channel_alias?: string
   payment_hash?: string
 }
+
+const walletActivityPageSize = 100
 
 export default function Wallet() {
   const { t, i18n } = useTranslation()
@@ -101,6 +107,11 @@ export default function Wallet() {
   const [channelsLoading, setChannelsLoading] = useState(true)
   const [outgoingChannelPoint, setOutgoingChannelPoint] = useState('')
   const [activityRange, setActivityRange] = useState<WalletActivityRange>('7d')
+  const [activityItems, setActivityItems] = useState<WalletActivityItem[]>([])
+  const [activityError, setActivityError] = useState('')
+  const [activityLoading, setActivityLoading] = useState(true)
+  const [activityLoadingMore, setActivityLoadingMore] = useState(false)
+  const [activityHasMore, setActivityHasMore] = useState(false)
   const [selectedActivity, setSelectedActivity] = useState<WalletActivityItem | null>(null)
 
   const normalizePaymentInput = (value: string) => (value ? value.replace(/\s+/g, '') : '')
@@ -145,6 +156,52 @@ export default function Wallet() {
       clearInterval(timer)
     }
   }, [])
+
+  const loadActivity = async (options?: { offset?: number; limit?: number; append?: boolean; silent?: boolean }) => {
+    const offset = options?.offset ?? 0
+    const limit = options?.limit ?? walletActivityPageSize
+    const append = Boolean(options?.append)
+    const silent = Boolean(options?.silent)
+
+    if (append) {
+      setActivityLoadingMore(true)
+    } else if (!silent) {
+      setActivityLoading(true)
+    }
+    if (!silent) {
+      setActivityError('')
+    }
+
+    try {
+      const res: any = await getWalletActivity(activityRange, limit, offset)
+      const nextItems = Array.isArray(res?.items) ? res.items : []
+      setActivityItems((prev) => append ? [...prev, ...nextItems] : nextItems)
+      setActivityHasMore(Boolean(res?.has_more))
+    } catch (err: any) {
+      if (!silent || activityItems.length === 0) {
+        setActivityError(err?.message || t('wallet.activityUnavailable'))
+      }
+    } finally {
+      if (append) {
+        setActivityLoadingMore(false)
+      } else {
+        setActivityLoading(false)
+      }
+    }
+  }
+
+  useEffect(() => {
+    setSelectedActivity(null)
+    void loadActivity({ offset: 0, limit: walletActivityPageSize })
+  }, [activityRange, t])
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const visibleCount = Math.max(activityItems.length, walletActivityPageSize)
+      void loadActivity({ offset: 0, limit: visibleCount, silent: true })
+    }, 30000)
+    return () => clearInterval(timer)
+  }, [activityRange, activityItems.length, t])
 
   useEffect(() => {
     let mounted = true
@@ -235,7 +292,7 @@ export default function Wallet() {
   const lightningLocalBalance = Number(summary?.balances?.lightning_local_sat ?? lightningBalance)
   const lightningUnsettledLocalBalance = Number(summary?.balances?.lightning_unsettled_local_sat ?? 0)
   const lightningTotalBalance = lightningLocalBalance + lightningUnsettledLocalBalance
-  const activity = Array.isArray(summary?.activity) ? (summary.activity as WalletActivityItem[]) : []
+  const activity = activityItems
   const summaryTone = summaryError && summaryError.toLowerCase().includes('timeout')
     ? 'text-brass'
     : 'text-ember'
@@ -321,7 +378,10 @@ export default function Wallet() {
     return t('common.unknown')
   }
 
-  const isLightningDetailActivity = (item: WalletActivityItem) => activityNetwork(item) === 'lightning'
+  const hasActivityDetail = (item: WalletActivityItem) => {
+    const network = activityNetwork(item)
+    return network === 'lightning' || network === 'onchain'
+  }
 
   const orderedActivity = [...activity]
     .filter((item) => !isRebalanceActivity(item))
@@ -421,6 +481,15 @@ export default function Wallet() {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [selectedActivity])
+
+  const handleLoadMoreActivity = () => {
+    if (activityLoadingMore || !activityHasMore) return
+    void loadActivity({
+      offset: activityItems.length,
+      limit: walletActivityPageSize,
+      append: true
+    })
+  }
 
   const handleAddFunds = async () => {
     setShowAddress(true)
@@ -971,7 +1040,9 @@ export default function Wallet() {
         </div>
         <div className="mt-4 max-h-[360px] overflow-y-auto pr-2">
           <div className="space-y-2 text-sm">
-          {summaryError ? (
+          {activityLoading && !activityError ? (
+            <p className="text-fog/60">{t('wallet.fetchingActivity')}</p>
+          ) : activityError ? (
             <p className="text-fog/60">{t('wallet.activityUnavailable')}</p>
           ) : filteredActivity.length ? filteredActivity.map((item, idx: number) => {
             const typeLabel = formatActivityType(item)
@@ -985,7 +1056,7 @@ export default function Wallet() {
               : ''
             const channelAlias = typeof item?.channel_alias === 'string' ? item.channel_alias.trim() : ''
             const channelLabel = channelAlias ? ` - ${t('wallet.viaChannel', { channel: channelAlias })}` : ''
-            const clickable = isLightningDetailActivity(item)
+            const clickable = hasActivityDetail(item)
             const itemKey = item.payment_hash || item.txid || `${item.type || 'activity'}-${item.timestamp || idx}-${idx}`
             return clickable ? (
               <button
@@ -1017,6 +1088,17 @@ export default function Wallet() {
             <p className="text-fog/60">{orderedActivity.length ? t('wallet.noActivityInRange') : t('wallet.noRecentActivity')}</p>
           )}
           </div>
+          {!activityLoading && !activityError && filteredActivity.length > 0 && activityHasMore && (
+            <div className="mt-4 flex justify-center">
+              <button
+                type="button"
+                className={`btn-secondary ${activityLoadingMore ? 'opacity-60 pointer-events-none' : ''}`}
+                onClick={handleLoadMoreActivity}
+              >
+                {activityLoadingMore ? t('wallet.activityLoadingMore') : t('wallet.activityLoadMore')}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1066,6 +1148,30 @@ export default function Wallet() {
                 <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailOccurredAt')}</div>
                 <div className="mt-1">{formatTimestamp(selectedActivity.timestamp)}</div>
               </div>
+              {selectedActivity.txid && (
+                <div className="rounded-2xl border border-white/10 bg-ink/50 p-4 sm:col-span-2">
+                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailTxid')}</div>
+                  <div className="mt-1 break-all font-mono text-xs text-fog/80">{selectedActivity.txid}</div>
+                </div>
+              )}
+              {typeof selectedActivity.confirmations === 'number' && (
+                <div className="rounded-2xl border border-white/10 bg-ink/50 p-4">
+                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailConfirmations')}</div>
+                  <div className="mt-1">{selectedActivity.confirmations}</div>
+                </div>
+              )}
+              {typeof selectedActivity.block_height === 'number' && selectedActivity.block_height > 0 && (
+                <div className="rounded-2xl border border-white/10 bg-ink/50 p-4">
+                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailBlockHeight')}</div>
+                  <div className="mt-1">{selectedActivity.block_height}</div>
+                </div>
+              )}
+              {typeof selectedActivity.fee_sat === 'number' && selectedActivity.fee_sat > 0 && (
+                <div className="rounded-2xl border border-white/10 bg-ink/50 p-4">
+                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailFee')}</div>
+                  <div className="mt-1">{formatSats(selectedActivity.fee_sat)} sats</div>
+                </div>
+              )}
               {selectedActivity.created_at && (
                 <div className="rounded-2xl border border-white/10 bg-ink/50 p-4">
                   <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailCreatedAt')}</div>
@@ -1082,6 +1188,22 @@ export default function Wallet() {
                 <div className="rounded-2xl border border-white/10 bg-ink/50 p-4 sm:col-span-2">
                   <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailMemo')}</div>
                   <div className="mt-1 whitespace-pre-wrap break-words">{selectedActivity.memo}</div>
+                </div>
+              )}
+              {selectedActivity.memo && String(selectedActivity.type || '').toLowerCase() === 'onchain' && (
+                <div className="rounded-2xl border border-white/10 bg-ink/50 p-4 sm:col-span-2">
+                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailLabel')}</div>
+                  <div className="mt-1 whitespace-pre-wrap break-words">{selectedActivity.memo}</div>
+                </div>
+              )}
+              {Array.isArray(selectedActivity.addresses) && selectedActivity.addresses.length > 0 && (
+                <div className="rounded-2xl border border-white/10 bg-ink/50 p-4 sm:col-span-2">
+                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailAddresses')}</div>
+                  <div className="mt-1 space-y-2">
+                    {selectedActivity.addresses.map((address, idx) => (
+                      <div key={`${address}-${idx}`} className="break-all font-mono text-xs text-fog/80">{address}</div>
+                    ))}
+                  </div>
                 </div>
               )}
               {selectedActivity.channel_alias && (

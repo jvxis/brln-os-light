@@ -65,7 +65,7 @@ func (s *Server) handleAutofeeConfigPost(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if prevCfg.OperationMode != cfg.OperationMode {
-		syncCtx, syncCancel := context.WithTimeout(r.Context(), 90*time.Second)
+		syncCtx, syncCancel := context.WithTimeout(r.Context(), 5*time.Minute)
 		defer syncCancel()
 		if err := s.syncAutofeeOperationMode(syncCtx, svc, prevCfg.OperationMode, cfg.OperationMode); err != nil {
 			prevMode := prevCfg.OperationMode

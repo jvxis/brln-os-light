@@ -6915,18 +6915,36 @@ func computeMarketRefillInboundDiscount(enabled bool, outRatio float64, recentFo
 		exploratoryReach = candidateReach
 	}
 	exploratoryFwdsMax := profile.MarketRefillExploratoryFwds1dMax
-	tags := []string{}
+	balancedTargetFrac := math.Min(0.75, math.Max(targetFrac+0.20, targetFrac*2.0))
+	fullTargetFrac := math.Min(0.85, math.Max(targetFrac+0.35, targetFrac*3.0))
+	fullishOutRatio := math.Max(exploratoryReach, 0.50)
+	fullOutRatio := math.Max(fullishOutRatio+0.20, 0.70)
+	tags := []string{"market-refill-inbound"}
 	switch {
 	case outRatio <= candidateReach:
-		tags = append(tags, "market-refill-inbound")
+		// Keep the strongest refill pricing on the most drained channels.
 	case outRatio <= exploratoryReach && weakRecentFlow && recentForwards1d <= exploratoryFwdsMax:
 		targetFrac = math.Max(0.03, targetFrac*0.70)
-		tags = append(tags, "market-refill-inbound", "market-refill-explore")
+		tags = append(tags, "market-refill-explore")
 	case outRatio <= exploratoryReach && noFlow1d:
 		targetFrac = math.Max(0.03, targetFrac*0.70)
-		tags = append(tags, "market-refill-inbound", "market-refill-explore")
+		tags = append(tags, "market-refill-explore")
+	case noFlow1d && recentForwards1d <= exploratoryFwdsMax:
+		// In market-refill mode the node should test even full/dead channels
+		// instead of leaving them untouched after disabling all rebalances.
+		targetFrac = math.Min(balancedTargetFrac, math.Max(targetFrac+0.10, targetFrac*1.40))
+		tags = append(tags, "market-refill-explore")
+	case weakRecentFlow && recentForwards1d <= exploratoryFwdsMax:
+		targetFrac = balancedTargetFrac
+	case outRatio >= fullOutRatio:
+		targetFrac = fullTargetFrac
+	case outRatio >= fullishOutRatio:
+		blend := (outRatio - fullishOutRatio) / math.Max(0.01, fullOutRatio-fullishOutRatio)
+		targetFrac = balancedTargetFrac + (fullTargetFrac-balancedTargetFrac)*math.Max(0.0, math.Min(1.0, blend))
 	default:
-		return 0, nil
+		midTop := math.Max(exploratoryReach+0.20, 0.50)
+		blend := (outRatio - exploratoryReach) / math.Max(0.01, midTop-exploratoryReach)
+		targetFrac = targetFrac + (balancedTargetFrac-targetFrac)*math.Max(0.0, math.Min(1.0, blend))
 	}
 	anchor := int(math.Ceil(float64(baseCostPpm) * 1.002))
 	maxDiscount := int(math.Ceil(float64(appliedPpm) * maxRatio))

@@ -825,9 +825,12 @@ func TestComputeMarketRefillInboundDiscount(t *testing.T) {
 		t.Fatalf("unexpected exploratory tags: %+v", exploratoryTags)
 	}
 
-	blocked, _ := computeMarketRefillInboundDiscount(true, 0.35, 0, true, true, 200, 1000, 0.95, 0.10, profile)
-	if blocked != 0 {
-		t.Fatalf("expected channel beyond market refill reach to be blocked, got %d", blocked)
+	fullSideDiscount, fullSideTags := computeMarketRefillInboundDiscount(true, 0.78, 0, false, false, 200, 1000, 0.95, 0.10, profile)
+	if fullSideDiscount <= 0 {
+		t.Fatalf("expected market refill mode to price full-side channels too")
+	}
+	if len(fullSideTags) == 0 || fullSideTags[0] != "market-refill-inbound" {
+		t.Fatalf("unexpected full-side tags: %+v", fullSideTags)
 	}
 }
 

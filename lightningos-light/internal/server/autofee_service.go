@@ -1132,6 +1132,19 @@ create table if not exists autofee_logs (
 create index if not exists autofee_logs_occurred_at_idx on autofee_logs (occurred_at desc);
 create index if not exists autofee_logs_run_idx on autofee_logs (run_id, seq);
 
+create table if not exists autofee_market_refill_fee_snapshot (
+  channel_id bigint primary key,
+  channel_point text not null,
+  base_fee_msat bigint not null default 0,
+  fee_rate_ppm bigint not null default 0,
+  time_lock_delta bigint not null default 0,
+  inbound_enabled boolean not null default false,
+  inbound_base_msat bigint not null default 0,
+  inbound_fee_rate_ppm bigint not null default 0,
+  captured_at timestamptz not null default now()
+);
+create index if not exists autofee_market_refill_fee_snapshot_captured_idx on autofee_market_refill_fee_snapshot (captured_at desc);
+
 alter table autofee_config add column if not exists super_source_enabled boolean not null default false;
 alter table autofee_config add column if not exists operation_mode text not null default 'balanced';
 alter table autofee_config add column if not exists market_refill_rebalance_prev_saved boolean not null default false;
@@ -1634,6 +1647,69 @@ where id=$1
 	return err
 }
 
+func (s *AutofeeService) SaveMarketRefillFeeSnapshot(ctx context.Context) error {
+	if s.db == nil {
+		return errors.New("db unavailable")
+	}
+	if s.lnd == nil {
+		return errors.New("lnd unavailable")
+	}
+	channels, err := s.lnd.ListChannels(ctx)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `delete from autofee_market_refill_fee_snapshot`); err != nil {
+		return err
+	}
+
+	batch := &pgx.Batch{}
+	queued := 0
+	for _, ch := range channels {
+		if ch.ChannelID == 0 || strings.TrimSpace(ch.ChannelPoint) == "" {
+			continue
+		}
+		policy, err := s.lnd.GetChannelPolicy(ctx, ch.ChannelPoint)
+		if err != nil {
+			return fmt.Errorf("snapshot policy %s: %w", ch.ChannelPoint, err)
+		}
+		inboundEnabled := policy.InboundBaseMsat != 0 || policy.InboundFeeRatePpm != 0
+		batch.Queue(`
+insert into autofee_market_refill_fee_snapshot (
+  channel_id, channel_point, base_fee_msat, fee_rate_ppm, time_lock_delta,
+  inbound_enabled, inbound_base_msat, inbound_fee_rate_ppm, captured_at
+)
+values ($1,$2,$3,$4,$5,$6,$7,$8,now())
+on conflict (channel_id) do update set
+  channel_point=excluded.channel_point,
+  base_fee_msat=excluded.base_fee_msat,
+  fee_rate_ppm=excluded.fee_rate_ppm,
+  time_lock_delta=excluded.time_lock_delta,
+  inbound_enabled=excluded.inbound_enabled,
+  inbound_base_msat=excluded.inbound_base_msat,
+  inbound_fee_rate_ppm=excluded.inbound_fee_rate_ppm,
+  captured_at=excluded.captured_at
+`, int64(ch.ChannelID), ch.ChannelPoint, policy.BaseFeeMsat, policy.FeeRatePpm, policy.TimeLockDelta, inboundEnabled, policy.InboundBaseMsat, policy.InboundFeeRatePpm)
+		queued++
+	}
+	br := tx.SendBatch(ctx, batch)
+	defer br.Close()
+	for i := 0; i < queued; i++ {
+		if _, err := br.Exec(); err != nil {
+			return err
+		}
+	}
+	if err := br.Close(); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 func (s *AutofeeService) LoadMarketRefillRebalanceBackup(ctx context.Context) (bool, bool, bool, error) {
 	if s.db == nil {
 		return false, false, false, errors.New("db unavailable")
@@ -1664,6 +1740,54 @@ set market_refill_rebalance_prev_saved=false,
   updated_at=now()
 where id=$1
 `, autofeeConfigID)
+	return err
+}
+
+func (s *AutofeeService) RestoreMarketRefillFeeSnapshot(ctx context.Context) error {
+	if s.db == nil {
+		return errors.New("db unavailable")
+	}
+	if s.lnd == nil {
+		return errors.New("lnd unavailable")
+	}
+	rows, err := s.db.Query(ctx, `
+select channel_point, base_fee_msat, fee_rate_ppm, time_lock_delta, inbound_enabled, inbound_base_msat, inbound_fee_rate_ppm
+from autofee_market_refill_fee_snapshot
+order by channel_id asc
+`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var channelPoint string
+		var baseFeeMsat int64
+		var feeRatePpm int64
+		var timeLockDelta int64
+		var inboundEnabled bool
+		var inboundBaseMsat int64
+		var inboundFeeRatePpm int64
+		if err := rows.Scan(&channelPoint, &baseFeeMsat, &feeRatePpm, &timeLockDelta, &inboundEnabled, &inboundBaseMsat, &inboundFeeRatePpm); err != nil {
+			return err
+		}
+		if strings.TrimSpace(channelPoint) == "" {
+			continue
+		}
+		if timeLockDelta <= 0 {
+			timeLockDelta = 144
+		}
+		if err := s.lnd.UpdateChannelFees(ctx, channelPoint, false, baseFeeMsat, feeRatePpm, timeLockDelta, inboundEnabled, inboundBaseMsat, inboundFeeRatePpm); err != nil {
+			return fmt.Errorf("restore policy %s: %w", channelPoint, err)
+		}
+	}
+	return rows.Err()
+}
+
+func (s *AutofeeService) ClearMarketRefillFeeSnapshot(ctx context.Context) error {
+	if s.db == nil {
+		return errors.New("db unavailable")
+	}
+	_, err := s.db.Exec(ctx, `delete from autofee_market_refill_fee_snapshot`)
 	return err
 }
 

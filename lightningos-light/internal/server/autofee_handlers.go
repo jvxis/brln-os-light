@@ -65,7 +65,9 @@ func (s *Server) handleAutofeeConfigPost(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if prevCfg.OperationMode != cfg.OperationMode {
-		if err := s.syncAutofeeOperationMode(ctx, svc, prevCfg.OperationMode, cfg.OperationMode); err != nil {
+		syncCtx, syncCancel := context.WithTimeout(r.Context(), 90*time.Second)
+		defer syncCancel()
+		if err := s.syncAutofeeOperationMode(syncCtx, svc, prevCfg.OperationMode, cfg.OperationMode); err != nil {
 			prevMode := prevCfg.OperationMode
 			_, _ = svc.UpdateConfig(ctx, AutofeeConfigUpdate{OperationMode: &prevMode})
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -97,24 +99,38 @@ func (s *Server) syncAutofeeOperationMode(ctx context.Context, svc *AutofeeServi
 		if err := svc.SaveMarketRefillRebalanceBackup(ctx, rebCfg.AutoEnabled, rebCfg.ManualRestartWatch); err != nil {
 			return err
 		}
+		if err := svc.SaveMarketRefillFeeSnapshot(ctx); err != nil {
+			_ = svc.ClearMarketRefillRebalanceBackup(ctx)
+			return err
+		}
 		rebCfg.AutoEnabled = false
 		rebCfg.ManualRestartWatch = false
-		_, err = s.rebalance.UpdateConfig(ctx, rebCfg)
-		return err
+		if _, err = s.rebalance.UpdateConfig(ctx, rebCfg); err != nil {
+			_ = svc.ClearMarketRefillFeeSnapshot(ctx)
+			_ = svc.ClearMarketRefillRebalanceBackup(ctx)
+			return err
+		}
+		return nil
 	case previousMode == autofeeOperationModeMarketRefill:
+		if err := svc.RestoreMarketRefillFeeSnapshot(ctx); err != nil {
+			return err
+		}
 		saved, autoEnabled, manualRestartWatch, err := svc.LoadMarketRefillRebalanceBackup(ctx)
 		if err != nil {
 			return err
 		}
 		if !saved {
-			return nil
+			return svc.ClearMarketRefillFeeSnapshot(ctx)
 		}
 		rebCfg.AutoEnabled = autoEnabled
 		rebCfg.ManualRestartWatch = manualRestartWatch
 		if _, err := s.rebalance.UpdateConfig(ctx, rebCfg); err != nil {
 			return err
 		}
-		return svc.ClearMarketRefillRebalanceBackup(ctx)
+		if err := svc.ClearMarketRefillRebalanceBackup(ctx); err != nil {
+			return err
+		}
+		return svc.ClearMarketRefillFeeSnapshot(ctx)
 	default:
 		return nil
 	}

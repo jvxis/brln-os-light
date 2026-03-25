@@ -846,19 +846,33 @@ func TestApplyMarketRefillOutboundBias(t *testing.T) {
 	}
 
 	exploreTarget, exploreTags := applyMarketRefillOutboundBias(profile, 100, 102, 0, 0.78, 0, true, true, 0, 3500)
-	if exploreTarget != 900 {
-		t.Fatalf("unexpected exploratory market refill target uplift: got %d want 900", exploreTarget)
+	if exploreTarget != 1225 {
+		t.Fatalf("unexpected exploratory market refill target uplift: got %d want 1225", exploreTarget)
 	}
 	if len(exploreTags) < 3 || exploreTags[1] != "market-refill-node" || exploreTags[2] != "market-refill-explore" {
 		t.Fatalf("unexpected exploratory outbound tags: %+v", exploreTags)
 	}
 
 	outrateTarget, outrateTags := applyMarketRefillOutboundBias(profile, 100, 220, 1200, 0.40, 4, false, false, 0, 3500)
-	if outrateTarget != 1200 {
-		t.Fatalf("expected market refill to respect local outrate floor, got %d want 1200", outrateTarget)
+	if outrateTarget != 1225 {
+		t.Fatalf("expected market refill floor to scale with max ppm, got %d want 1225", outrateTarget)
 	}
 	if len(outrateTags) < 2 || outrateTags[1] != "market-refill-node" {
 		t.Fatalf("unexpected market refill outrate tags: %+v", outrateTags)
+	}
+}
+
+func TestApplyMarketRefillOutboundBiasUsesHybridModeFloor(t *testing.T) {
+	profile := autofeeProfiles["aggressive"]
+
+	target, _ := applyMarketRefillOutboundBias(profile, 100, 200, 0, 0.70, 0, true, true, 0, 2000)
+	if target != 1500 {
+		t.Fatalf("expected aggressive floor to respect absolute minimum at low max ppm, got %d want 1500", target)
+	}
+
+	target, _ = applyMarketRefillOutboundBias(profile, 100, 200, 0, 0.70, 0, true, true, 0, 4000)
+	if target != 2000 {
+		t.Fatalf("expected aggressive floor to scale with max ppm, got %d want 2000", target)
 	}
 }
 

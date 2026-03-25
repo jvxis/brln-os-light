@@ -462,6 +462,7 @@ type autofeeProfile struct {
 	MarketRefillDrainedTargetMult        float64
 	MarketRefillDrainedTargetAddPpm      int
 	MarketRefillMinOutboundPpm           int
+	MarketRefillMinOutboundMaxPpmFrac    float64
 	MarketRefillOutrateFloorFrac         float64
 	GlobalNegLockSoften                  bool
 	SoftenMinOutRatio                    float64
@@ -600,6 +601,7 @@ var autofeeProfiles = map[string]autofeeProfile{
 		MarketRefillDrainedTargetMult:        2.50,
 		MarketRefillDrainedTargetAddPpm:      500,
 		MarketRefillMinOutboundPpm:           400,
+		MarketRefillMinOutboundMaxPpmFrac:    0.20,
 		MarketRefillOutrateFloorFrac:         1.00,
 		GlobalNegLockSoften:                  true,
 		SoftenMinOutRatio:                    0.25,
@@ -727,6 +729,7 @@ var autofeeProfiles = map[string]autofeeProfile{
 		MarketRefillDrainedTargetMult:        3.50,
 		MarketRefillDrainedTargetAddPpm:      1200,
 		MarketRefillMinOutboundPpm:           900,
+		MarketRefillMinOutboundMaxPpmFrac:    0.35,
 		MarketRefillOutrateFloorFrac:         1.00,
 		GlobalNegLockSoften:                  true,
 		SoftenMinOutRatio:                    0.20,
@@ -854,6 +857,7 @@ var autofeeProfiles = map[string]autofeeProfile{
 		MarketRefillDrainedTargetMult:        5.00,
 		MarketRefillDrainedTargetAddPpm:      2000,
 		MarketRefillMinOutboundPpm:           1500,
+		MarketRefillMinOutboundMaxPpmFrac:    0.50,
 		MarketRefillOutrateFloorFrac:         1.00,
 		GlobalNegLockSoften:                  true,
 		SoftenMinOutRatio:                    0.15,
@@ -7056,6 +7060,9 @@ func applyMarketRefillOutboundBias(profile autofeeProfile, localPpm int, targetP
 		targetAdd = 150
 	}
 	modeFloor := profile.MarketRefillMinOutboundPpm
+	if profile.MarketRefillMinOutboundMaxPpmFrac > 0 && maxPpm > 0 {
+		modeFloor = maxInt(modeFloor, int(math.Ceil(float64(maxPpm)*profile.MarketRefillMinOutboundMaxPpmFrac)))
+	}
 	if modeFloor < minPpm {
 		modeFloor = minPpm
 	}

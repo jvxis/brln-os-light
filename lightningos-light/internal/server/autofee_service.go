@@ -364,6 +364,7 @@ type autofeeLogItem struct {
 	RevShare                 float64  `json:"rev_share,omitempty"`
 	Tags                     []string `json:"tags,omitempty"`
 	InboundDiscount          int      `json:"inbound_discount,omitempty"`
+	PrevInboundDiscount      int      `json:"prev_inbound_discount,omitempty"`
 	ClassLabel               string   `json:"class_label,omitempty"`
 	SkipReason               string   `json:"skip_reason,omitempty"`
 	Error                    string   `json:"error,omitempty"`
@@ -4320,6 +4321,7 @@ type decision struct {
 	FloorSrc                string
 	Tags                    []string
 	InboundDiscount         int
+	PrevInboundDiscount     int
 	SuperSourceActive       bool
 	OutRatio                float64
 	OutPpm7d                int
@@ -4402,6 +4404,11 @@ func formatAutofeeDecisionLine(d *decision, dryRun bool, isError bool) (string, 
 		floorSrc = fmt.Sprintf("(%s)", d.FloorSrc)
 	}
 	tagLine := formatAutofeeTags(d)
+	if d.InboundDiscount > 0 {
+		tagLine = strings.ReplaceAll(tagLine, fmt.Sprintf(" ↘️inb-%d", d.InboundDiscount), "")
+		tagLine = strings.ReplaceAll(tagLine, fmt.Sprintf("↘️inb-%d ", d.InboundDiscount), "")
+		tagLine = strings.TrimSpace(tagLine)
+	}
 	if tagLine == "" {
 		tagLine = "-"
 	}
@@ -4515,6 +4522,7 @@ func buildAutofeeChannelLogEntry(d *decision, category string, dryRun bool, err 
 		RevShare:                d.RevShare,
 		Tags:                    append([]string{}, d.Tags...),
 		InboundDiscount:         d.InboundDiscount,
+		PrevInboundDiscount:     d.PrevInboundDiscount,
 		ClassLabel:              d.ClassLabel,
 		SkipReason:              skipReason,
 		Delta:                   delta,
@@ -4766,6 +4774,11 @@ func buildTelegramAutofeeChangedChannelLineFull(d *decision) string {
 	}
 	if prediction := formatTelegramAutofeePrediction(d.PredictionCode, d.PredictionCooldownHours); prediction != "" {
 		line += " | " + prediction
+	}
+	if d.PrevInboundDiscount != d.InboundDiscount {
+		line += fmt.Sprintf(" | ↘️ inb %d→%d", d.PrevInboundDiscount, d.InboundDiscount)
+	} else if d.InboundDiscount > 0 {
+		line += fmt.Sprintf(" | ↘️ inb %d", d.InboundDiscount)
 	}
 	_ = classLabel
 	return line
@@ -6172,7 +6185,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			inboundDiscountMinRetainedSpreadFrac,
 		)
 	}
-	inboundChanged := inboundDiscount != st.LastInboundDiscount
+	prevInboundDiscount := st.LastInboundDiscount
+	inboundChanged := inboundDiscount != prevInboundDiscount
 	st.LastPpm = finalPpm
 	st.LastInboundDiscount = inboundDiscount
 	if outPpm7d > 0 {
@@ -6278,6 +6292,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		FloorSrc:                floorSrc,
 		Tags:                    tags,
 		InboundDiscount:         inboundDiscount,
+		PrevInboundDiscount:     prevInboundDiscount,
 		SuperSourceActive:       superSourceActive,
 		OutRatio:                outRatio,
 		OutPpm7d:                outPpm7d,

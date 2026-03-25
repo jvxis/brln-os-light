@@ -7187,8 +7187,12 @@ func applyMarketRefillOutboundBias(profile autofeeProfile, localPpm int, targetP
 	if profile.MarketRefillMinOutboundMaxPpmFrac > 0 && maxPpm > 0 {
 		modeFloor = maxInt(modeFloor, int(math.Ceil(float64(maxPpm)*profile.MarketRefillMinOutboundMaxPpmFrac)))
 	}
-	if modeFloor < minPpm {
-		modeFloor = minPpm
+	// In market-refill, use a small bootstrap floor only. The main driver should be
+	// the balanced target plus premium, not a hard node-wide anchor that collapses
+	// all channels to the same target.
+	softFloor := minPpm
+	if modeFloor > 0 {
+		softFloor = maxInt(softFloor, int(math.Ceil(float64(modeFloor)*0.25)))
 	}
 	outrateFloorFrac := profile.MarketRefillOutrateFloorFrac
 	if outrateFloorFrac <= 0 {
@@ -7230,9 +7234,10 @@ func applyMarketRefillOutboundBias(profile autofeeProfile, localPpm int, targetP
 		}
 		tags = append(tags, "market-refill-explore")
 	}
+	effectiveBase := maxInt(targetPpm, localPpm)
 	premiumTarget := maxInt(
-		int(math.Ceil(float64(targetPpm)*targetMult)),
-		maxInt(targetPpm+targetAdd, maxInt(modeFloor, floorFromOutrate)),
+		int(math.Ceil(float64(effectiveBase)*targetMult)),
+		maxInt(effectiveBase+targetAdd, maxInt(softFloor, floorFromOutrate)),
 	)
 	if premiumTarget > maxPpm {
 		premiumTarget = maxPpm

@@ -5410,6 +5410,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	strongRebalSignal := !marketRefillMode && (perCost > 0 || (st.LastRebalCost > 0 && !st.LastRebalCostTs.IsZero() && e.now.Sub(st.LastRebalCostTs) <= 7*24*time.Hour))
 	noSignalNoUpActive := false
 	if noFlow1d &&
+		!marketRefillMode &&
 		outRatio >= lowOutNoFlowUpperRatio &&
 		target > localPpm &&
 		recentRebalanceCount == 0 &&
@@ -5697,6 +5698,12 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 	if explorerActive {
 		capFrac = math.Max(capFrac, e.profile.DiscoveryStepCapDown)
+	}
+	if marketRefillMode && target > localPpm {
+		if marketCapFrac, marketCapTags := marketRefillStepCapFrac(e.profile, outRatio); marketCapFrac > capFrac {
+			capFrac = marketCapFrac
+			tags = append(tags, marketCapTags...)
+		}
 	}
 
 	globalNegLockApplied := false
@@ -6115,7 +6122,9 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		reversalConfirmRounds += antiFlipExtraRounds
 		tags = append(tags, antiFlipTags...)
 	}
-	if guardedPpm, reversalTags := applyDirectionReversalGuard(st, localPpm, finalPpm, reversalConfirmRounds); true {
+	if marketRefillMode && shouldBypassMarketRefillReversalGuard(tags, targetGapPct, finalPpm, localPpm) {
+		tags = append(tags, "market-refill-reversal-bypass")
+	} else if guardedPpm, reversalTags := applyDirectionReversalGuard(st, localPpm, finalPpm, reversalConfirmRounds); true {
 		finalPpm = guardedPpm
 		if len(reversalTags) > 0 {
 			tags = append(tags, reversalTags...)
@@ -7103,6 +7112,35 @@ func applyMarketRefillOutboundBias(profile autofeeProfile, localPpm int, targetP
 	return targetPpm, nil
 }
 
+func marketRefillStepCapFrac(profile autofeeProfile, outRatio float64) (float64, []string) {
+	candidateReach := profile.MarketRefillCandidateOutRatioMax
+	if candidateReach <= 0 {
+		candidateReach = 0.15
+	}
+	exploratoryReach := profile.MarketRefillExploratoryOutRatioMax
+	if exploratoryReach < candidateReach {
+		exploratoryReach = candidateReach
+	}
+	baseCap := math.Max(profile.StepCap*2.0, 0.20)
+	lowCap := math.Max(profile.StepCap*3.0, 0.30)
+	drainedCap := math.Max(profile.StepCap*4.0, 0.40)
+	switch {
+	case outRatio <= candidateReach:
+		return drainedCap, []string{"market-refill-stepcap", "market-refill-stepcap-drained"}
+	case outRatio <= exploratoryReach:
+		return lowCap, []string{"market-refill-stepcap", "market-refill-stepcap-low"}
+	default:
+		return baseCap, []string{"market-refill-stepcap"}
+	}
+}
+
+func shouldBypassMarketRefillReversalGuard(tags []string, targetGapPct float64, nextPpm int, localPpm int) bool {
+	if nextPpm <= localPpm || targetGapPct < 50 {
+		return false
+	}
+	return containsTag(tags, "market-refill-up")
+}
+
 func containsTag(tags []string, want string) bool {
 	for _, tag := range tags {
 		if tag == want {
@@ -7169,6 +7207,14 @@ func formatAutofeeTags(d *decision) string {
 			add("🌊market-low")
 		case t == "market-refill-drained":
 			add("🌊market-drained")
+		case t == "market-refill-stepcap":
+			add("🌊market-cap")
+		case t == "market-refill-stepcap-low":
+			add("🌊market-cap-low")
+		case t == "market-refill-stepcap-drained":
+			add("🌊market-cap-drained")
+		case t == "market-refill-reversal-bypass":
+			add("🌊market-rev-bypass")
 		case t == "market-refill-explore":
 			add("🧪market-explore")
 		case strings.HasPrefix(t, "surge"):

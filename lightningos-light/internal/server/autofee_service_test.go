@@ -862,6 +862,32 @@ func TestApplyMarketRefillOutboundBias(t *testing.T) {
 	}
 }
 
+func TestMarketRefillStepCapFrac(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+
+	if got, tags := marketRefillStepCapFrac(profile, 0.08); got != 0.40 || len(tags) < 2 || tags[1] != "market-refill-stepcap-drained" {
+		t.Fatalf("unexpected drained market refill cap: got %.2f tags=%+v", got, tags)
+	}
+	if got, tags := marketRefillStepCapFrac(profile, 0.22); got != 0.30 || len(tags) < 2 || tags[1] != "market-refill-stepcap-low" {
+		t.Fatalf("unexpected low market refill cap: got %.2f tags=%+v", got, tags)
+	}
+	if got, tags := marketRefillStepCapFrac(profile, 0.70); got != 0.20 || len(tags) < 1 || tags[0] != "market-refill-stepcap" {
+		t.Fatalf("unexpected node-wide market refill cap: got %.2f tags=%+v", got, tags)
+	}
+}
+
+func TestShouldBypassMarketRefillReversalGuard(t *testing.T) {
+	if !shouldBypassMarketRefillReversalGuard([]string{"market-refill-up"}, 120, 900, 500) {
+		t.Fatalf("expected market refill reversal guard bypass on large upward regime switch")
+	}
+	if shouldBypassMarketRefillReversalGuard([]string{"market-refill-up"}, 20, 900, 500) {
+		t.Fatalf("did not expect bypass on small target gap")
+	}
+	if shouldBypassMarketRefillReversalGuard([]string{"trend-up"}, 120, 900, 500) {
+		t.Fatalf("did not expect bypass without market refill uplift tag")
+	}
+}
+
 func TestShouldHoldSmallStepBypassesTowardTargetWhenGapIsLarge(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
 	st := &autofeeChannelState{}

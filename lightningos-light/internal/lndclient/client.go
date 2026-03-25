@@ -1268,13 +1268,22 @@ func (c *Client) ListRecent(ctx context.Context, limit int) ([]RecentActivity, e
 					continue
 				}
 			}
+			createdAt := time.Unix(inv.CreationDate, 0).UTC()
+			settledAt := time.Time{}
+			eventTime := createdAt
+			if inv.SettleDate > 0 {
+				settledAt = time.Unix(inv.SettleDate, 0).UTC()
+				eventTime = settledAt
+			}
 			item := RecentActivity{
 				Type:        "invoice",
 				Network:     "lightning",
 				Direction:   "in",
 				AmountSat:   inv.Value,
 				Memo:        inv.Memo,
-				Timestamp:   time.Unix(inv.CreationDate, 0).UTC(),
+				Timestamp:   eventTime,
+				CreatedAt:   createdAt,
+				SettledAt:   settledAt,
 				Status:      inv.State.String(),
 				Keysend:     inv.IsKeysend,
 				PaymentHash: hash,
@@ -4433,13 +4442,15 @@ type RecentActivity struct {
 	AmountSat    int64     `json:"amount_sat"`
 	Memo         string    `json:"memo"`
 	Timestamp    time.Time `json:"timestamp"`
+	CreatedAt    time.Time `json:"created_at,omitempty"`
+	SettledAt    time.Time `json:"settled_at,omitempty"`
 	Status       string    `json:"status"`
 	Txid         string    `json:"txid,omitempty"`
 	Keysend      bool      `json:"keysend,omitempty"`
 	ChannelID    uint64    `json:"channel_id,omitempty"`
 	ChannelPoint string    `json:"channel_point,omitempty"`
 	ChannelAlias string    `json:"channel_alias,omitempty"`
-	PaymentHash  string    `json:"-"`
+	PaymentHash  string    `json:"payment_hash,omitempty"`
 }
 
 type OnchainTransaction struct {

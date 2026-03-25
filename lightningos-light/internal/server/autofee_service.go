@@ -461,6 +461,7 @@ type autofeeProfile struct {
 	MarketRefillLowTargetAddPpm          int
 	MarketRefillDrainedTargetMult        float64
 	MarketRefillDrainedTargetAddPpm      int
+	MarketRefillLocalHoldFrac            float64
 	MarketRefillMinOutboundPpm           int
 	MarketRefillMinOutboundMaxPpmFrac    float64
 	MarketRefillOutrateFloorFrac         float64
@@ -595,13 +596,14 @@ var autofeeProfiles = map[string]autofeeProfile{
 		MarketRefillExploratoryOutRatioMax:   0.18,
 		MarketRefillExploratoryFwds1dMax:     1,
 		MarketRefillBaseTargetMult:           1.25,
-		MarketRefillBaseTargetAddPpm:         100,
-		MarketRefillLowTargetMult:            1.75,
-		MarketRefillLowTargetAddPpm:          250,
-		MarketRefillDrainedTargetMult:        2.50,
-		MarketRefillDrainedTargetAddPpm:      500,
-		MarketRefillMinOutboundPpm:           400,
-		MarketRefillMinOutboundMaxPpmFrac:    0.20,
+		MarketRefillBaseTargetAddPpm:         60,
+		MarketRefillLowTargetMult:            1.35,
+		MarketRefillLowTargetAddPpm:          160,
+		MarketRefillDrainedTargetMult:        1.90,
+		MarketRefillDrainedTargetAddPpm:      350,
+		MarketRefillLocalHoldFrac:            0.70,
+		MarketRefillMinOutboundPpm:           300,
+		MarketRefillMinOutboundMaxPpmFrac:    0.10,
 		MarketRefillOutrateFloorFrac:         1.00,
 		GlobalNegLockSoften:                  true,
 		SoftenMinOutRatio:                    0.25,
@@ -722,14 +724,15 @@ var autofeeProfiles = map[string]autofeeProfile{
 		MarketRefillCandidateOutRatioMax:     0.15,
 		MarketRefillExploratoryOutRatioMax:   0.25,
 		MarketRefillExploratoryFwds1dMax:     2,
-		MarketRefillBaseTargetMult:           1.50,
-		MarketRefillBaseTargetAddPpm:         250,
-		MarketRefillLowTargetMult:            2.50,
-		MarketRefillLowTargetAddPpm:          700,
-		MarketRefillDrainedTargetMult:        3.50,
-		MarketRefillDrainedTargetAddPpm:      1200,
-		MarketRefillMinOutboundPpm:           900,
-		MarketRefillMinOutboundMaxPpmFrac:    0.35,
+		MarketRefillBaseTargetMult:           1.15,
+		MarketRefillBaseTargetAddPpm:         100,
+		MarketRefillLowTargetMult:            1.50,
+		MarketRefillLowTargetAddPpm:          250,
+		MarketRefillDrainedTargetMult:        2.20,
+		MarketRefillDrainedTargetAddPpm:      600,
+		MarketRefillLocalHoldFrac:            0.75,
+		MarketRefillMinOutboundPpm:           500,
+		MarketRefillMinOutboundMaxPpmFrac:    0.15,
 		MarketRefillOutrateFloorFrac:         1.00,
 		GlobalNegLockSoften:                  true,
 		SoftenMinOutRatio:                    0.20,
@@ -850,14 +853,15 @@ var autofeeProfiles = map[string]autofeeProfile{
 		MarketRefillCandidateOutRatioMax:     0.20,
 		MarketRefillExploratoryOutRatioMax:   0.30,
 		MarketRefillExploratoryFwds1dMax:     2,
-		MarketRefillBaseTargetMult:           2.00,
-		MarketRefillBaseTargetAddPpm:         500,
-		MarketRefillLowTargetMult:            3.50,
-		MarketRefillLowTargetAddPpm:          1200,
-		MarketRefillDrainedTargetMult:        5.00,
-		MarketRefillDrainedTargetAddPpm:      2000,
-		MarketRefillMinOutboundPpm:           1500,
-		MarketRefillMinOutboundMaxPpmFrac:    0.50,
+		MarketRefillBaseTargetMult:           1.20,
+		MarketRefillBaseTargetAddPpm:         150,
+		MarketRefillLowTargetMult:            1.75,
+		MarketRefillLowTargetAddPpm:          400,
+		MarketRefillDrainedTargetMult:        2.60,
+		MarketRefillDrainedTargetAddPpm:      900,
+		MarketRefillLocalHoldFrac:            0.85,
+		MarketRefillMinOutboundPpm:           800,
+		MarketRefillMinOutboundMaxPpmFrac:    0.20,
 		MarketRefillOutrateFloorFrac:         1.00,
 		GlobalNegLockSoften:                  true,
 		SoftenMinOutRatio:                    0.15,
@@ -7183,6 +7187,10 @@ func applyMarketRefillOutboundBias(profile autofeeProfile, localPpm int, targetP
 	if targetAdd <= 0 {
 		targetAdd = 150
 	}
+	localHoldFrac := profile.MarketRefillLocalHoldFrac
+	if localHoldFrac <= 0 || localHoldFrac > 1 {
+		localHoldFrac = 0.75
+	}
 	modeFloor := profile.MarketRefillMinOutboundPpm
 	if profile.MarketRefillMinOutboundMaxPpmFrac > 0 && maxPpm > 0 {
 		modeFloor = maxInt(modeFloor, int(math.Ceil(float64(maxPpm)*profile.MarketRefillMinOutboundMaxPpmFrac)))
@@ -7228,13 +7236,13 @@ func applyMarketRefillOutboundBias(profile autofeeProfile, localPpm int, targetP
 		tags = append(tags, "market-refill-node")
 	}
 	if (noFlow1d || weakRecentFlow) && recentForwards1d <= profile.MarketRefillExploratoryFwds1dMax {
-		if outRatio > candidateReach {
-			targetMult = math.Max(targetMult, profile.MarketRefillLowTargetMult)
-			targetAdd = maxInt(targetAdd, profile.MarketRefillLowTargetAddPpm)
-		}
 		tags = append(tags, "market-refill-explore")
 	}
-	effectiveBase := maxInt(targetPpm, localPpm)
+	localFloor := 0
+	if localPpm > 0 {
+		localFloor = int(math.Ceil(float64(localPpm) * localHoldFrac))
+	}
+	effectiveBase := maxInt(targetPpm, localFloor)
 	premiumTarget := maxInt(
 		int(math.Ceil(float64(effectiveBase)*targetMult)),
 		maxInt(effectiveBase+targetAdd, maxInt(softFloor, floorFromOutrate)),

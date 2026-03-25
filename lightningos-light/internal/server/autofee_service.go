@@ -32,6 +32,12 @@ const (
 const superSourceBaseFeeMsatDefault = 1000
 const rebalCostModeDefault = "blend"
 const htlcModeDefault = "full"
+const autofeeOperationModeDefault = "balanced"
+
+const (
+	autofeeOperationModeBalanced     = "balanced"
+	autofeeOperationModeMarketRefill = "market_refill"
+)
 
 const (
 	htlcModeObserveOnly = "observe_only"
@@ -157,8 +163,19 @@ func normalizeHTLCMode(value string) string {
 	}
 }
 
+func normalizeAutofeeOperationMode(value string) string {
+	mode := strings.ToLower(strings.TrimSpace(value))
+	switch mode {
+	case autofeeOperationModeBalanced, autofeeOperationModeMarketRefill:
+		return mode
+	default:
+		return autofeeOperationModeDefault
+	}
+}
+
 type AutofeeConfig struct {
 	Enabled                                      bool                              `json:"enabled"`
+	OperationMode                                string                            `json:"operation_mode"`
 	Profile                                      string                            `json:"profile"`
 	LookbackDays                                 int                               `json:"lookback_days"`
 	RunIntervalSec                               int                               `json:"run_interval_sec"`
@@ -214,6 +231,7 @@ type AutofeeProfileDefaults struct {
 
 type AutofeeConfigUpdate struct {
 	Enabled                                      *bool    `json:"enabled,omitempty"`
+	OperationMode                                *string  `json:"operation_mode,omitempty"`
 	Profile                                      *string  `json:"profile,omitempty"`
 	LookbackDays                                 *int     `json:"lookback_days,omitempty"`
 	RunIntervalSec                               *int     `json:"run_interval_sec,omitempty"`
@@ -265,6 +283,7 @@ type autofeeLogItem struct {
 	Kind                     string   `json:"kind"`
 	Category                 string   `json:"category,omitempty"`
 	Reason                   string   `json:"reason,omitempty"`
+	OperationMode            string   `json:"operation_mode,omitempty"`
 	DryRun                   bool     `json:"dry_run,omitempty"`
 	Timestamp                string   `json:"timestamp,omitempty"`
 	NodeClass                string   `json:"node_class,omitempty"`
@@ -431,6 +450,13 @@ type autofeeProfile struct {
 	ProfitProtectRelaxMinStepPpm         int
 	InboundDiscountReachOutRatio         float64
 	InboundDiscountMinRetainedSpreadFrac float64
+	MarketRefillNetInboundTargetFrac     float64
+	MarketRefillCandidateOutRatioMax     float64
+	MarketRefillExploratoryOutRatioMax   float64
+	MarketRefillExploratoryFwds1dMax     int
+	MarketRefillUpFrac                   float64
+	MarketRefillExploreUpFrac            float64
+	MarketRefillMinStepUpPpm             int
 	GlobalNegLockSoften                  bool
 	SoftenMinOutRatio                    float64
 	SoftenRequirePosChanMargin           bool
@@ -557,6 +583,13 @@ var autofeeProfiles = map[string]autofeeProfile{
 		ProfitProtectRelaxMinStepPpm:         10,
 		InboundDiscountReachOutRatio:         0.10,
 		InboundDiscountMinRetainedSpreadFrac: 0.20,
+		MarketRefillNetInboundTargetFrac:     0.35,
+		MarketRefillCandidateOutRatioMax:     0.10,
+		MarketRefillExploratoryOutRatioMax:   0.18,
+		MarketRefillExploratoryFwds1dMax:     1,
+		MarketRefillUpFrac:                   0.05,
+		MarketRefillExploreUpFrac:            0.02,
+		MarketRefillMinStepUpPpm:             15,
 		GlobalNegLockSoften:                  true,
 		SoftenMinOutRatio:                    0.25,
 		SoftenRequirePosChanMargin:           true,
@@ -672,6 +705,13 @@ var autofeeProfiles = map[string]autofeeProfile{
 		ProfitProtectRelaxMinStepPpm:         15,
 		InboundDiscountReachOutRatio:         0.15,
 		InboundDiscountMinRetainedSpreadFrac: 0.12,
+		MarketRefillNetInboundTargetFrac:     0.20,
+		MarketRefillCandidateOutRatioMax:     0.15,
+		MarketRefillExploratoryOutRatioMax:   0.25,
+		MarketRefillExploratoryFwds1dMax:     2,
+		MarketRefillUpFrac:                   0.08,
+		MarketRefillExploreUpFrac:            0.03,
+		MarketRefillMinStepUpPpm:             20,
 		GlobalNegLockSoften:                  true,
 		SoftenMinOutRatio:                    0.20,
 		SoftenRequirePosChanMargin:           true,
@@ -787,6 +827,13 @@ var autofeeProfiles = map[string]autofeeProfile{
 		ProfitProtectRelaxMinStepPpm:         20,
 		InboundDiscountReachOutRatio:         0.18,
 		InboundDiscountMinRetainedSpreadFrac: 0.08,
+		MarketRefillNetInboundTargetFrac:     0.10,
+		MarketRefillCandidateOutRatioMax:     0.20,
+		MarketRefillExploratoryOutRatioMax:   0.30,
+		MarketRefillExploratoryFwds1dMax:     2,
+		MarketRefillUpFrac:                   0.12,
+		MarketRefillExploreUpFrac:            0.05,
+		MarketRefillMinStepUpPpm:             25,
 		GlobalNegLockSoften:                  true,
 		SoftenMinOutRatio:                    0.15,
 		SoftenRequirePosChanMargin:           false,
@@ -981,6 +1028,7 @@ func (s *AutofeeService) EnsureSchema(ctx context.Context) error {
 create table if not exists autofee_config (
   id integer primary key,
   enabled boolean not null default false,
+  operation_mode text not null default 'balanced',
   profile text not null default 'moderate',
   lookback_days integer not null default 7,
   run_interval_sec integer not null default 14400,
@@ -1060,6 +1108,10 @@ create index if not exists autofee_logs_occurred_at_idx on autofee_logs (occurre
 create index if not exists autofee_logs_run_idx on autofee_logs (run_id, seq);
 
 alter table autofee_config add column if not exists super_source_enabled boolean not null default false;
+alter table autofee_config add column if not exists operation_mode text not null default 'balanced';
+alter table autofee_config add column if not exists market_refill_rebalance_prev_saved boolean not null default false;
+alter table autofee_config add column if not exists market_refill_rebalance_prev_auto boolean not null default false;
+alter table autofee_config add column if not exists market_refill_rebalance_prev_manual_restart boolean not null default false;
 alter table autofee_config add column if not exists super_source_base_fee_msat integer not null default 1000;
 alter table autofee_config add column if not exists revfloor_enabled boolean not null default true;
 alter table autofee_config add column if not exists circuit_breaker_enabled boolean not null default true;
@@ -1102,6 +1154,7 @@ func (s *AutofeeService) defaultConfig() AutofeeConfig {
 	p := autofeeProfiles["moderate"]
 	return AutofeeConfig{
 		Enabled:                         false,
+		OperationMode:                   autofeeOperationModeDefault,
 		Profile:                         p.Name,
 		LookbackDays:                    7,
 		RunIntervalSec:                  p.RunIntervalSec,
@@ -1163,7 +1216,7 @@ func (s *AutofeeService) GetConfig(ctx context.Context) (AutofeeConfig, error) {
 
 	var ambossToken pgtype.Text
 	err := s.db.QueryRow(ctx, `
-select enabled, profile, lookback_days, run_interval_sec, cooldown_up_sec, cooldown_down_sec,
+	select enabled, operation_mode, profile, lookback_days, run_interval_sec, cooldown_up_sec, cooldown_down_sec,
   step_cap_override, discovery_step_cap_down_override, stall_floor_relax_gap_frac_override, inbound_discount_max_ratio_override,
   inbound_discount_reach_out_ratio_override, inbound_discount_min_retained_spread_frac_override, outrate_floor_factor_low_override,
   soften_min_out_ratio_override, soften_max_drop_to_peg_frac_override, htlc_min_attempts_60m_override,
@@ -1174,6 +1227,7 @@ select enabled, profile, lookback_days, run_interval_sec, cooldown_up_sec, coold
 from autofee_config where id=$1
 `, autofeeConfigID).Scan(
 		&cfg.Enabled,
+		&cfg.OperationMode,
 		&cfg.Profile,
 		&cfg.LookbackDays,
 		&cfg.RunIntervalSec,
@@ -1217,6 +1271,7 @@ from autofee_config where id=$1
 	if cfg.Profile == "" {
 		cfg.Profile = "moderate"
 	}
+	cfg.OperationMode = normalizeAutofeeOperationMode(cfg.OperationMode)
 	cfg.RebalCostMode = normalizeRebalCostMode(cfg.RebalCostMode)
 	cfg.HTLCMode = normalizeHTLCMode(cfg.HTLCMode)
 	if cfg.LookbackDays < autofeeMinLookbackDays {
@@ -1243,6 +1298,9 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 
 	if req.Enabled != nil {
 		current.Enabled = *req.Enabled
+	}
+	if req.OperationMode != nil {
+		current.OperationMode = normalizeAutofeeOperationMode(*req.OperationMode)
 	}
 	if req.Profile != nil && strings.TrimSpace(*req.Profile) != "" {
 		current.Profile = strings.ToLower(strings.TrimSpace(*req.Profile))
@@ -1358,6 +1416,7 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 	}
 	current.RebalCostMode = normalizeRebalCostMode(current.RebalCostMode)
 	current.HTLCMode = normalizeHTLCMode(current.HTLCMode)
+	current.OperationMode = normalizeAutofeeOperationMode(current.OperationMode)
 
 	if current.RunIntervalSec < 3600 {
 		current.RunIntervalSec = 3600
@@ -1446,42 +1505,44 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 	_, err = s.db.Exec(ctx, `
 update autofee_config
 set enabled=$2,
-  profile=$3,
-  lookback_days=$4,
-  run_interval_sec=$5,
-  cooldown_up_sec=$6,
-  cooldown_down_sec=$7,
-  step_cap_override=$8,
-  discovery_step_cap_down_override=$9,
-  stall_floor_relax_gap_frac_override=$10,
-  inbound_discount_max_ratio_override=$11,
-  inbound_discount_reach_out_ratio_override=$12,
-  inbound_discount_min_retained_spread_frac_override=$13,
-  outrate_floor_factor_low_override=$14,
-  soften_min_out_ratio_override=$15,
-  soften_max_drop_to_peg_frac_override=$16,
-  htlc_min_attempts_60m_override=$17,
-  htlc_policy_fail_rate_override=$18,
-  htlc_liquidity_fail_rate_override=$19,
-  rebal_cost_mode=$20,
-  amboss_enabled=$21,
-  amboss_token=$22,
-  inbound_passive_enabled=$23,
-  discovery_enabled=$24,
-  explorer_enabled=$25,
-  super_source_enabled=$26,
-  super_source_base_fee_msat=$27,
-  revfloor_enabled=$28,
-  circuit_breaker_enabled=$29,
-  extreme_drain_enabled=$30,
-  htlc_signal_enabled=$31,
-  htlc_mode=$32,
-  min_ppm=$33,
-  max_ppm=$34,
+  operation_mode=$3,
+  profile=$4,
+  lookback_days=$5,
+  run_interval_sec=$6,
+  cooldown_up_sec=$7,
+  cooldown_down_sec=$8,
+  step_cap_override=$9,
+  discovery_step_cap_down_override=$10,
+  stall_floor_relax_gap_frac_override=$11,
+  inbound_discount_max_ratio_override=$12,
+  inbound_discount_reach_out_ratio_override=$13,
+  inbound_discount_min_retained_spread_frac_override=$14,
+  outrate_floor_factor_low_override=$15,
+  soften_min_out_ratio_override=$16,
+  soften_max_drop_to_peg_frac_override=$17,
+  htlc_min_attempts_60m_override=$18,
+  htlc_policy_fail_rate_override=$19,
+  htlc_liquidity_fail_rate_override=$20,
+  rebal_cost_mode=$21,
+  amboss_enabled=$22,
+  amboss_token=$23,
+  inbound_passive_enabled=$24,
+  discovery_enabled=$25,
+  explorer_enabled=$26,
+  super_source_enabled=$27,
+  super_source_base_fee_msat=$28,
+  revfloor_enabled=$29,
+  circuit_breaker_enabled=$30,
+  extreme_drain_enabled=$31,
+  htlc_signal_enabled=$32,
+  htlc_mode=$33,
+  min_ppm=$34,
+  max_ppm=$35,
   updated_at=now()
 where id=$1
 `, autofeeConfigID,
 		current.Enabled,
+		current.OperationMode,
 		current.Profile,
 		current.LookbackDays,
 		current.RunIntervalSec,
@@ -1531,6 +1592,54 @@ set last_rebal_cost_ppm = null,
 	current.AmbossTokenSet = strings.TrimSpace(ambossToken) != ""
 	s.nudgeScheduler()
 	return autofeeConfigWithProfileDefaults(current), nil
+}
+
+func (s *AutofeeService) SaveMarketRefillRebalanceBackup(ctx context.Context, autoEnabled bool, manualRestartWatch bool) error {
+	if s.db == nil {
+		return errors.New("db unavailable")
+	}
+	_, err := s.db.Exec(ctx, `
+update autofee_config
+set market_refill_rebalance_prev_saved=true,
+  market_refill_rebalance_prev_auto=$2,
+  market_refill_rebalance_prev_manual_restart=$3,
+  updated_at=now()
+where id=$1
+`, autofeeConfigID, autoEnabled, manualRestartWatch)
+	return err
+}
+
+func (s *AutofeeService) LoadMarketRefillRebalanceBackup(ctx context.Context) (bool, bool, bool, error) {
+	if s.db == nil {
+		return false, false, false, errors.New("db unavailable")
+	}
+	var saved bool
+	var autoEnabled bool
+	var manualRestartWatch bool
+	err := s.db.QueryRow(ctx, `
+select market_refill_rebalance_prev_saved, market_refill_rebalance_prev_auto, market_refill_rebalance_prev_manual_restart
+from autofee_config
+where id=$1
+`, autofeeConfigID).Scan(&saved, &autoEnabled, &manualRestartWatch)
+	if err != nil {
+		return false, false, false, err
+	}
+	return saved, autoEnabled, manualRestartWatch, nil
+}
+
+func (s *AutofeeService) ClearMarketRefillRebalanceBackup(ctx context.Context) error {
+	if s.db == nil {
+		return errors.New("db unavailable")
+	}
+	_, err := s.db.Exec(ctx, `
+update autofee_config
+set market_refill_rebalance_prev_saved=false,
+  market_refill_rebalance_prev_auto=false,
+  market_refill_rebalance_prev_manual_restart=false,
+  updated_at=now()
+where id=$1
+`, autofeeConfigID)
+	return err
 }
 
 func (s *AutofeeService) LoadChannelSettings(ctx context.Context) (map[uint64]bool, error) {
@@ -1809,12 +1918,12 @@ func (s *AutofeeService) Run(ctx context.Context, dryRun bool, reason string) er
 			if reason == "manual" {
 				runID := fmt.Sprintf("%d", time.Now().UnixNano())
 				now := time.Now().UTC()
-				header := fmt.Sprintf("⚡ Autofee %s | %s", strings.ToUpper(reason), now.Format(time.RFC3339))
+				header := fmt.Sprintf("⚡ Autofee %s [%s] | %s", strings.ToUpper(reason), strings.ToUpper(cfg.OperationMode), now.Format(time.RFC3339))
 				if dryRun {
 					header = header + " (dry-run)"
 				}
 				entries := []autofeeLogEntry{
-					{Line: header, Payload: &autofeeLogItem{Kind: "header", Reason: reason, DryRun: dryRun, Timestamp: now.Format(time.RFC3339)}},
+					{Line: header, Payload: &autofeeLogItem{Kind: "header", Reason: reason, OperationMode: cfg.OperationMode, DryRun: dryRun, Timestamp: now.Format(time.RFC3339)}},
 					{Line: "📊 up 0 | down 0 | flat 0 | cooldown 0 | small 0 | same 0 | disabled 0 | inactive 0 | inb_disc 0 | super_source 0", Payload: &autofeeLogItem{
 						Kind: "summary",
 						Up:   0, Down: 0, Flat: 0, Cooldown: 0, Small: 0, Same: 0, Disabled: 0, Inactive: 0, InboundDisc: 0, SuperSource: 0,
@@ -2289,7 +2398,7 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 	htlcSignals, htlcMeta := e.buildHTLCFailureSignals(channels)
 
 	runID := fmt.Sprintf("%d", time.Now().UnixNano())
-	header := fmt.Sprintf("⚡ Autofee %s | %s", strings.ToUpper(reason), e.now.UTC().Format(time.RFC3339))
+	header := fmt.Sprintf("⚡ Autofee %s [%s] | %s", strings.ToUpper(reason), strings.ToUpper(e.cfg.OperationMode), e.now.UTC().Format(time.RFC3339))
 	if dryRun {
 		header = header + " (dry-run)"
 	}
@@ -2429,7 +2538,7 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 	}
 
 	entries := []autofeeLogEntry{
-		{Line: header, Payload: &autofeeLogItem{Kind: "header", Reason: reason, DryRun: dryRun, Timestamp: e.now.UTC().Format(time.RFC3339)}},
+		{Line: header, Payload: &autofeeLogItem{Kind: "header", Reason: reason, OperationMode: e.cfg.OperationMode, DryRun: dryRun, Timestamp: e.now.UTC().Format(time.RFC3339)}},
 		{Line: summaryText, Payload: &autofeeLogItem{
 			Kind:                     "summary",
 			Up:                       summary.changedUp,
@@ -4498,10 +4607,12 @@ func buildTelegramAutofeeRunMessages(cfg AutofeeConfig, reason string, runAt tim
 	if profile == "" {
 		profile = "moderate"
 	}
+	operationMode := normalizeAutofeeOperationMode(cfg.OperationMode)
 	localRunAt := runAt.In(time.Local)
 	summaryLines := []string{
-		fmt.Sprintf("⚡ Autofee %s | %s", strings.ToUpper(strings.TrimSpace(reason)), localRunAt.Format("2006-01-02 15:04:05")),
+		fmt.Sprintf("⚡ Autofee %s [%s] | %s", strings.ToUpper(strings.TrimSpace(reason)), strings.ToUpper(operationMode), localRunAt.Format("2006-01-02 15:04:05")),
 		fmt.Sprintf("Profile: %s", strings.ToLower(profile)),
+		fmt.Sprintf("Mode: %s", strings.ToLower(strings.ReplaceAll(operationMode, "_", " "))),
 		fmt.Sprintf("✅ changed %d | 🔺 up %d | 🔻 down %d | ➡️ same-fee %d", len(ordered), summary.changedUp, summary.changedDown, sameFeeChanges),
 		fmt.Sprintf("⏳ cooldown %d | 🧊 hold-small %d | 🟰 same-ppm %d", summary.skippedCooldown, summary.skippedSmall, summary.skippedSame),
 		fmt.Sprintf("🧯 floor-relax %d | 🚨 stall-alert %d | 🧵 forward-hot %d", summary.floorRelaxApplied, summary.stallAlert, summary.htlcForwardHot),
@@ -5151,6 +5262,12 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 	if newInboundBootstrap && target > localPpm && target < localPpm+bootstrapMinStepUp {
 		target = localPpm + bootstrapMinStepUp
+	}
+	if e.cfg.OperationMode == autofeeOperationModeMarketRefill {
+		if refillTarget, refillTags := applyMarketRefillOutboundBias(e.profile, localPpm, target, outRatio, recentForwards1d, noFlow1d, weakRecentFlow, holdUpOnRecentRebalance); refillTarget != target || len(refillTags) > 0 {
+			target = refillTarget
+			tags = append(tags, refillTags...)
+		}
 	}
 
 	rebal := rebalStats.ByChannel[ch.ChannelID]
@@ -6025,18 +6142,36 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if e.cfg.InboundDiscountMinRetainedSpreadFracOverride > 0 {
 		inboundDiscountMinRetainedSpreadFrac = e.cfg.InboundDiscountMinRetainedSpreadFracOverride
 	}
-	inboundDiscount := computeInboundDiscount(
-		e.cfg.InboundPassiveEnabled,
-		classLabel,
-		outRatio,
-		fwdCount,
-		marginPpm7d,
-		baseCostPpm,
-		appliedPpm,
-		inboundDiscountMaxRatio,
-		inboundDiscountReachOutRatio,
-		inboundDiscountMinRetainedSpreadFrac,
-	)
+	inboundDiscount := 0
+	if e.cfg.OperationMode == autofeeOperationModeMarketRefill {
+		var inboundTags []string
+		inboundDiscount, inboundTags = computeMarketRefillInboundDiscount(
+			true,
+			outRatio,
+			recentForwards1d,
+			noFlow1d,
+			weakRecentFlow,
+			baseCostPpm,
+			appliedPpm,
+			inboundDiscountMaxRatio,
+			inboundDiscountMinRetainedSpreadFrac,
+			e.profile,
+		)
+		tags = append(tags, inboundTags...)
+	} else {
+		inboundDiscount = computeInboundDiscount(
+			e.cfg.InboundPassiveEnabled,
+			classLabel,
+			outRatio,
+			fwdCount,
+			marginPpm7d,
+			baseCostPpm,
+			appliedPpm,
+			inboundDiscountMaxRatio,
+			inboundDiscountReachOutRatio,
+			inboundDiscountMinRetainedSpreadFrac,
+		)
+	}
 	inboundChanged := inboundDiscount != st.LastInboundDiscount
 	st.LastPpm = finalPpm
 	st.LastInboundDiscount = inboundDiscount
@@ -6757,6 +6892,102 @@ func computeInboundDiscount(enabled bool, classLabel string, outRatio float64, f
 	return minInt(gap, minInt(maxDiscount, maxDiscountByRetainedSpread))
 }
 
+func computeMarketRefillInboundDiscount(enabled bool, outRatio float64, recentForwards1d int, noFlow1d bool, weakRecentFlow bool, baseCostPpm int, appliedPpm int, maxRatio float64, retainedSpreadFrac float64, profile autofeeProfile) (int, []string) {
+	if !enabled || appliedPpm <= 0 {
+		return 0, nil
+	}
+	if maxRatio <= 0 {
+		maxRatio = defaultInboundDiscountMaxRatio
+	}
+	if retainedSpreadFrac <= 0 {
+		retainedSpreadFrac = 0.12
+	}
+	targetFrac := profile.MarketRefillNetInboundTargetFrac
+	if targetFrac <= 0 {
+		targetFrac = 0.20
+	}
+	candidateReach := profile.MarketRefillCandidateOutRatioMax
+	if candidateReach <= 0 {
+		candidateReach = 0.15
+	}
+	exploratoryReach := profile.MarketRefillExploratoryOutRatioMax
+	if exploratoryReach < candidateReach {
+		exploratoryReach = candidateReach
+	}
+	exploratoryFwdsMax := profile.MarketRefillExploratoryFwds1dMax
+	tags := []string{}
+	switch {
+	case outRatio <= candidateReach:
+		tags = append(tags, "market-refill-inbound")
+	case outRatio <= exploratoryReach && weakRecentFlow && recentForwards1d <= exploratoryFwdsMax:
+		targetFrac = math.Max(0.03, targetFrac*0.70)
+		tags = append(tags, "market-refill-inbound", "market-refill-explore")
+	case outRatio <= exploratoryReach && noFlow1d:
+		targetFrac = math.Max(0.03, targetFrac*0.70)
+		tags = append(tags, "market-refill-inbound", "market-refill-explore")
+	default:
+		return 0, nil
+	}
+	anchor := int(math.Ceil(float64(baseCostPpm) * 1.002))
+	maxDiscount := int(math.Ceil(float64(appliedPpm) * maxRatio))
+	minRetainedSpread := int(math.Ceil(float64(appliedPpm) * retainedSpreadFrac))
+	targetNetInbound := int(math.Ceil(float64(appliedPpm) * targetFrac))
+	gapToTargetNet := appliedPpm - targetNetInbound
+	if gapToTargetNet <= 0 {
+		return 0, nil
+	}
+	maxDiscountByRetainedSpread := appliedPpm - anchor - minRetainedSpread
+	if maxDiscountByRetainedSpread <= 0 {
+		return 0, nil
+	}
+	return minInt(gapToTargetNet, minInt(maxDiscount, maxDiscountByRetainedSpread)), tags
+}
+
+func applyMarketRefillOutboundBias(profile autofeeProfile, localPpm int, targetPpm int, outRatio float64, recentForwards1d int, noFlow1d bool, weakRecentFlow bool, holdUpOnRecentRebalance bool) (int, []string) {
+	if holdUpOnRecentRebalance || outRatio < 0 || targetPpm <= 0 {
+		return targetPpm, nil
+	}
+	candidateReach := profile.MarketRefillCandidateOutRatioMax
+	if candidateReach <= 0 {
+		candidateReach = 0.15
+	}
+	exploratoryReach := profile.MarketRefillExploratoryOutRatioMax
+	if exploratoryReach < candidateReach {
+		exploratoryReach = candidateReach
+	}
+	upFrac := profile.MarketRefillUpFrac
+	if upFrac <= 0 {
+		upFrac = 0.08
+	}
+	exploreUpFrac := profile.MarketRefillExploreUpFrac
+	if exploreUpFrac <= 0 {
+		exploreUpFrac = 0.03
+	}
+	minStep := profile.MarketRefillMinStepUpPpm
+	if minStep <= 0 {
+		minStep = 20
+	}
+	switch {
+	case outRatio <= candidateReach:
+		minTarget := int(math.Ceil(float64(maxInt(0, localPpm)) * (1.0 + upFrac)))
+		if minTarget < localPpm+minStep {
+			minTarget = localPpm + minStep
+		}
+		if targetPpm < minTarget {
+			return minTarget, []string{"market-refill-up"}
+		}
+	case outRatio <= exploratoryReach && (noFlow1d || weakRecentFlow) && recentForwards1d <= profile.MarketRefillExploratoryFwds1dMax:
+		minTarget := int(math.Ceil(float64(maxInt(0, localPpm)) * (1.0 + exploreUpFrac)))
+		if minTarget < localPpm+maxInt(5, minStep/2) {
+			minTarget = localPpm + maxInt(5, minStep/2)
+		}
+		if targetPpm < minTarget {
+			return minTarget, []string{"market-refill-up", "market-refill-explore"}
+		}
+	}
+	return targetPpm, nil
+}
+
 func containsTag(tags []string, want string) bool {
 	for _, tag := range tags {
 		if tag == want {
@@ -6813,6 +7044,10 @@ func formatAutofeeTags(d *decision) string {
 			add("🧭step-up")
 		case t == "drained-explorer-cap":
 			add("🧭cap")
+		case t == "market-refill-inbound":
+			add("🌊market-refill")
+		case t == "market-refill-explore":
+			add("🧪market-explore")
 		case strings.HasPrefix(t, "surge"):
 			add("📈" + t)
 		case t == "top-rev":

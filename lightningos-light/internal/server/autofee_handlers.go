@@ -53,12 +53,71 @@ func (s *Server) handleAutofeeConfigPost(w http.ResponseWriter, r *http.Request)
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
+	prevCfg, err := svc.GetConfig(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	cfg, err := svc.UpdateConfig(ctx, req)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if prevCfg.OperationMode != cfg.OperationMode {
+		if err := s.syncAutofeeOperationMode(ctx, svc, prevCfg.OperationMode, cfg.OperationMode); err != nil {
+			prevMode := prevCfg.OperationMode
+			_, _ = svc.UpdateConfig(ctx, AutofeeConfigUpdate{OperationMode: &prevMode})
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, cfg)
+}
+
+func (s *Server) syncAutofeeOperationMode(ctx context.Context, svc *AutofeeService, previousMode string, nextMode string) error {
+	previousMode = normalizeAutofeeOperationMode(previousMode)
+	nextMode = normalizeAutofeeOperationMode(nextMode)
+	if previousMode == nextMode {
+		return nil
+	}
+	s.initRebalance()
+	if s.rebalance == nil {
+		if s.rebalanceErr != "" {
+			return errors.New(s.rebalanceErr)
+		}
+		return errors.New("rebalance unavailable")
+	}
+	rebCfg, err := s.rebalance.GetConfig(ctx)
+	if err != nil {
+		return err
+	}
+	switch {
+	case nextMode == autofeeOperationModeMarketRefill:
+		if err := svc.SaveMarketRefillRebalanceBackup(ctx, rebCfg.AutoEnabled, rebCfg.ManualRestartWatch); err != nil {
+			return err
+		}
+		rebCfg.AutoEnabled = false
+		rebCfg.ManualRestartWatch = false
+		_, err = s.rebalance.UpdateConfig(ctx, rebCfg)
+		return err
+	case previousMode == autofeeOperationModeMarketRefill:
+		saved, autoEnabled, manualRestartWatch, err := svc.LoadMarketRefillRebalanceBackup(ctx)
+		if err != nil {
+			return err
+		}
+		if !saved {
+			return nil
+		}
+		rebCfg.AutoEnabled = autoEnabled
+		rebCfg.ManualRestartWatch = manualRestartWatch
+		if _, err := s.rebalance.UpdateConfig(ctx, rebCfg); err != nil {
+			return err
+		}
+		return svc.ClearMarketRefillRebalanceBackup(ctx)
+	default:
+		return nil
+	}
 }
 
 func (s *Server) handleAutofeeChannelsGet(w http.ResponseWriter, r *http.Request) {

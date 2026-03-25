@@ -450,6 +450,7 @@ type AutofeeProfileDefaults = {
 
 type AutofeeConfig = {
     enabled: boolean
+    operation_mode: string
     profile: string
     lookback_days: number
     run_interval_sec: number
@@ -503,6 +504,7 @@ type AutofeeResultItem = {
   kind: string
   category?: string
   reason?: string
+  operation_mode?: string
   dry_run?: boolean
   timestamp?: string
   up?: number
@@ -953,6 +955,7 @@ export default function LightningOps() {
   const [autofeeBusy, setAutofeeBusy] = useState(false)
   const [autofeeMessage, setAutofeeMessage] = useState('')
   const [autofeeEnabled, setAutofeeEnabled] = useState(false)
+  const [autofeeOperationMode, setAutofeeOperationMode] = useState('balanced')
   const [autofeeProfile, setAutofeeProfile] = useState('moderate')
   const [autofeeLookback, setAutofeeLookback] = useState('7')
   const [autofeeIntervalHours, setAutofeeIntervalHours] = useState('4')
@@ -1629,9 +1632,13 @@ export default function LightningOps() {
   const formatAutofeeHeader = (item: AutofeeResultItem) => {
     const reasonLabel = formatAutofeeReasonLabel(item.reason)
     const dryLabel = item.dry_run ? t('lightningOps.autofeeResultsDryRunTag') : ''
+    const rawMode = String(item.operation_mode || '').trim().toLowerCase()
+    const modeLabel = rawMode === 'market_refill'
+      ? t('lightningOps.autofeeOperationModeMarketRefill')
+      : t('lightningOps.autofeeOperationModeBalanced')
     const ts = item.timestamp ? new Date(item.timestamp) : null
     const timeLabel = ts && !Number.isNaN(ts.getTime()) ? ts.toLocaleString() : t('common.na')
-    return t('lightningOps.autofeeResultsHeader', { reason: reasonLabel, dry: dryLabel, time: timeLabel })
+    return t('lightningOps.autofeeResultsHeader', { reason: reasonLabel, dry: dryLabel, time: timeLabel, mode: modeLabel })
   }
 
   const formatAutofeeSummary = (item: AutofeeResultItem) => {
@@ -2645,6 +2652,7 @@ export default function LightningOps() {
       const cfg = autofeeConfigResult.value as AutofeeConfig
       setAutofeeConfig(cfg)
       setAutofeeEnabled(cfg.enabled)
+      setAutofeeOperationMode((cfg.operation_mode || 'balanced').trim() || 'balanced')
       setAutofeeProfile(cfg.profile || 'moderate')
       setAutofeeLookback(String(cfg.lookback_days ?? 7))
       setAutofeeIntervalHours(String(Math.max(1, Math.round((cfg.run_interval_sec || 14400) / 3600))))
@@ -4061,6 +4069,7 @@ export default function LightningOps() {
       const superSourceBaseFee = Math.max(0, Number(autofeeSuperSourceBaseFee || 1000))
       const payload: any = {
         enabled: autofeeEnabled,
+        operation_mode: autofeeOperationMode,
         profile: autofeeProfile,
         lookback_days: lookbackDays,
         run_interval_sec: intervalSec,
@@ -5418,6 +5427,22 @@ export default function LightningOps() {
               <label className="flex items-center gap-2 text-sm text-fog/70">
                 <input type="checkbox" checked={autofeeEnabled} onChange={(e) => setAutofeeEnabled(e.target.checked)} />
                 {t('lightningOps.autofeeEnabled')}
+              </label>
+              <label className="text-sm text-fog/70">
+                {t('lightningOps.autofeeOperationMode')}
+                <select
+                  className="input-field mt-2"
+                  value={autofeeOperationMode}
+                  onChange={(e) => setAutofeeOperationMode(e.target.value)}
+                >
+                  <option value="balanced">{t('lightningOps.autofeeOperationModeBalanced')}</option>
+                  <option value="market_refill">{t('lightningOps.autofeeOperationModeMarketRefill')}</option>
+                </select>
+                <div className="mt-2 text-xs text-fog/55">
+                  {autofeeOperationMode === 'market_refill'
+                    ? t('lightningOps.autofeeOperationModeMarketRefillHint')
+                    : t('lightningOps.autofeeOperationModeBalancedHint')}
+                </div>
               </label>
               <label className="text-sm text-fog/70">
                 {t('lightningOps.autofeeProfile')}

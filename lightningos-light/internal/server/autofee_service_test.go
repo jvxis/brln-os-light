@@ -807,6 +807,55 @@ func TestAutofeeConfigWithProfileDefaults(t *testing.T) {
 	}
 }
 
+func TestComputeMarketRefillInboundDiscount(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	discount, tags := computeMarketRefillInboundDiscount(true, 0.08, 3, false, false, 200, 1000, 0.95, 0.10, profile)
+	if discount <= 0 {
+		t.Fatalf("expected strategic market refill inbound discount")
+	}
+	if len(tags) == 0 || tags[0] != "market-refill-inbound" {
+		t.Fatalf("unexpected strategic tags: %+v", tags)
+	}
+
+	exploratoryDiscount, exploratoryTags := computeMarketRefillInboundDiscount(true, 0.22, 0, true, true, 200, 1000, 0.95, 0.10, profile)
+	if exploratoryDiscount <= 0 {
+		t.Fatalf("expected exploratory market refill inbound discount")
+	}
+	if len(exploratoryTags) < 2 || exploratoryTags[1] != "market-refill-explore" {
+		t.Fatalf("unexpected exploratory tags: %+v", exploratoryTags)
+	}
+
+	blocked, _ := computeMarketRefillInboundDiscount(true, 0.35, 0, true, true, 200, 1000, 0.95, 0.10, profile)
+	if blocked != 0 {
+		t.Fatalf("expected channel beyond market refill reach to be blocked, got %d", blocked)
+	}
+}
+
+func TestApplyMarketRefillOutboundBias(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+
+	target, tags := applyMarketRefillOutboundBias(profile, 100, 105, 0.08, 2, false, false, false)
+	if target <= 105 {
+		t.Fatalf("expected strategic market refill target uplift, got %d", target)
+	}
+	if len(tags) == 0 || tags[0] != "market-refill-up" {
+		t.Fatalf("unexpected strategic outbound tags: %+v", tags)
+	}
+
+	exploreTarget, exploreTags := applyMarketRefillOutboundBias(profile, 100, 102, 0.22, 0, true, true, false)
+	if exploreTarget <= 102 {
+		t.Fatalf("expected exploratory market refill target uplift, got %d", exploreTarget)
+	}
+	if len(exploreTags) < 2 || exploreTags[1] != "market-refill-explore" {
+		t.Fatalf("unexpected exploratory outbound tags: %+v", exploreTags)
+	}
+
+	heldTarget, heldTags := applyMarketRefillOutboundBias(profile, 100, 102, 0.08, 0, true, true, true)
+	if heldTarget != 102 || len(heldTags) != 0 {
+		t.Fatalf("expected recent rebalance hold to block market refill bias, got target=%d tags=%+v", heldTarget, heldTags)
+	}
+}
+
 func TestShouldHoldSmallStepBypassesTowardTargetWhenGapIsLarge(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
 	st := &autofeeChannelState{}

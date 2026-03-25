@@ -230,6 +230,7 @@ export const successionSimulate = (payload: { action: 'alive' | 'not_alive'; sou
 export const getAutofeeConfig = () => request('/api/lnops/autofee/config')
 export const updateAutofeeConfig = (payload: {
   enabled?: boolean
+  operation_mode?: string
   profile?: string
   lookback_days?: number
   run_interval_sec?: number

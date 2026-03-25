@@ -4457,6 +4457,11 @@ func formatAutofeeDecisionLine(d *decision, dryRun bool, isError bool) (string, 
 		d.RevShare,
 		tagLine,
 	)
+	if d.PrevInboundDiscount != d.InboundDiscount {
+		line = line + fmt.Sprintf(" | ↘️ inb %d→%d", d.PrevInboundDiscount, d.InboundDiscount)
+	} else if d.InboundDiscount > 0 {
+		line = line + fmt.Sprintf(" | ↘️ inb %d", d.InboundDiscount)
+	}
 	if d.NewInbound {
 		line = line + fmt.Sprintf(" | NEW inbound %.1fh", d.ChannelAgeHours)
 	}

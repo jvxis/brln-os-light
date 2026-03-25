@@ -455,9 +455,14 @@ type autofeeProfile struct {
 	MarketRefillCandidateOutRatioMax     float64
 	MarketRefillExploratoryOutRatioMax   float64
 	MarketRefillExploratoryFwds1dMax     int
-	MarketRefillUpFrac                   float64
-	MarketRefillExploreUpFrac            float64
-	MarketRefillMinStepUpPpm             int
+	MarketRefillBaseTargetMult           float64
+	MarketRefillBaseTargetAddPpm         int
+	MarketRefillLowTargetMult            float64
+	MarketRefillLowTargetAddPpm          int
+	MarketRefillDrainedTargetMult        float64
+	MarketRefillDrainedTargetAddPpm      int
+	MarketRefillMinOutboundPpm           int
+	MarketRefillOutrateFloorFrac         float64
 	GlobalNegLockSoften                  bool
 	SoftenMinOutRatio                    float64
 	SoftenRequirePosChanMargin           bool
@@ -588,9 +593,14 @@ var autofeeProfiles = map[string]autofeeProfile{
 		MarketRefillCandidateOutRatioMax:     0.10,
 		MarketRefillExploratoryOutRatioMax:   0.18,
 		MarketRefillExploratoryFwds1dMax:     1,
-		MarketRefillUpFrac:                   0.05,
-		MarketRefillExploreUpFrac:            0.02,
-		MarketRefillMinStepUpPpm:             15,
+		MarketRefillBaseTargetMult:           1.25,
+		MarketRefillBaseTargetAddPpm:         100,
+		MarketRefillLowTargetMult:            1.75,
+		MarketRefillLowTargetAddPpm:          250,
+		MarketRefillDrainedTargetMult:        2.50,
+		MarketRefillDrainedTargetAddPpm:      500,
+		MarketRefillMinOutboundPpm:           400,
+		MarketRefillOutrateFloorFrac:         1.00,
 		GlobalNegLockSoften:                  true,
 		SoftenMinOutRatio:                    0.25,
 		SoftenRequirePosChanMargin:           true,
@@ -710,9 +720,14 @@ var autofeeProfiles = map[string]autofeeProfile{
 		MarketRefillCandidateOutRatioMax:     0.15,
 		MarketRefillExploratoryOutRatioMax:   0.25,
 		MarketRefillExploratoryFwds1dMax:     2,
-		MarketRefillUpFrac:                   0.08,
-		MarketRefillExploreUpFrac:            0.03,
-		MarketRefillMinStepUpPpm:             20,
+		MarketRefillBaseTargetMult:           1.50,
+		MarketRefillBaseTargetAddPpm:         250,
+		MarketRefillLowTargetMult:            2.50,
+		MarketRefillLowTargetAddPpm:          700,
+		MarketRefillDrainedTargetMult:        3.50,
+		MarketRefillDrainedTargetAddPpm:      1200,
+		MarketRefillMinOutboundPpm:           900,
+		MarketRefillOutrateFloorFrac:         1.00,
 		GlobalNegLockSoften:                  true,
 		SoftenMinOutRatio:                    0.20,
 		SoftenRequirePosChanMargin:           true,
@@ -832,9 +847,14 @@ var autofeeProfiles = map[string]autofeeProfile{
 		MarketRefillCandidateOutRatioMax:     0.20,
 		MarketRefillExploratoryOutRatioMax:   0.30,
 		MarketRefillExploratoryFwds1dMax:     2,
-		MarketRefillUpFrac:                   0.12,
-		MarketRefillExploreUpFrac:            0.05,
-		MarketRefillMinStepUpPpm:             25,
+		MarketRefillBaseTargetMult:           2.00,
+		MarketRefillBaseTargetAddPpm:         500,
+		MarketRefillLowTargetMult:            3.50,
+		MarketRefillLowTargetAddPpm:          1200,
+		MarketRefillDrainedTargetMult:        5.00,
+		MarketRefillDrainedTargetAddPpm:      2000,
+		MarketRefillMinOutboundPpm:           1500,
+		MarketRefillOutrateFloorFrac:         1.00,
 		GlobalNegLockSoften:                  true,
 		SoftenMinOutRatio:                    0.15,
 		SoftenRequirePosChanMargin:           false,
@@ -5130,6 +5150,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if highOutStagnationPressure {
 		tags = append(tags, "stagnation-pressure")
 	}
+	marketRefillMode := e.cfg.OperationMode == autofeeOperationModeMarketRefill
 	recentRebalanceCount := 0
 	recentRebalanceWeakCount := 0
 	surgeConfirmRebalanceCount := 0
@@ -5140,11 +5161,20 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		recentRebalanceWeakCount = sig.WeakCount
 		surgeConfirmRebalanceCount, surgeConfirmRebalanceAmtSat = sig.surgeConfirmInputs()
 	}
-	holdUpOnRecentRebalance := shouldHoldUpOnRecentRebalance(classLabel, outRatio, lowOutProtectThresh, recentRebalanceCount)
-	if recentRebalanceCount > 0 {
-		tags = append(tags, "rebal-recent")
-	} else if recentRebalanceWeakCount > 0 {
-		tags = append(tags, "rebal-attempt")
+	if marketRefillMode {
+		recentRebalanceCount = 0
+		recentRebalanceWeakCount = 0
+		surgeConfirmRebalanceCount = 0
+		surgeConfirmRebalanceAmtSat = 0
+	}
+	holdUpOnRecentRebalance := false
+	if !marketRefillMode {
+		holdUpOnRecentRebalance = shouldHoldUpOnRecentRebalance(classLabel, outRatio, lowOutProtectThresh, recentRebalanceCount)
+		if recentRebalanceCount > 0 {
+			tags = append(tags, "rebal-recent")
+		} else if recentRebalanceWeakCount > 0 {
+			tags = append(tags, "rebal-attempt")
+		}
 	}
 	htlcSampleLow := false
 	htlcPolicyHot := false
@@ -5246,7 +5276,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		target = localPpm
 		tags = append(tags, "rebal-recent-noup")
 	}
-	if shouldApplyFailedRebalancePressure(e.profile, outRatio, lowOutProtectThresh, recentRebalanceCount, recentRebalanceWeakCount) {
+	if !marketRefillMode && shouldApplyFailedRebalancePressure(e.profile, outRatio, lowOutProtectThresh, recentRebalanceCount, recentRebalanceWeakCount) {
 		if pressuredTarget, pressureTags := applyFailedRebalancePressure(e.profile, localPpm, target, recentRebalanceWeakCount, noFlow1d, htlcPressureSignal); pressuredTarget != target || len(pressureTags) > 0 {
 			target = pressuredTarget
 			tags = append(tags, pressureTags...)
@@ -5281,8 +5311,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if newInboundBootstrap && target > localPpm && target < localPpm+bootstrapMinStepUp {
 		target = localPpm + bootstrapMinStepUp
 	}
-	if e.cfg.OperationMode == autofeeOperationModeMarketRefill {
-		if refillTarget, refillTags := applyMarketRefillOutboundBias(e.profile, localPpm, target, outRatio, recentForwards1d, noFlow1d, weakRecentFlow, holdUpOnRecentRebalance); refillTarget != target || len(refillTags) > 0 {
+	if marketRefillMode {
+		if refillTarget, refillTags := applyMarketRefillOutboundBias(e.profile, localPpm, target, outPpm7d, outRatio, recentForwards1d, noFlow1d, weakRecentFlow, e.cfg.MinPpm, e.cfg.MaxPpm); refillTarget != target || len(refillTags) > 0 {
 			target = refillTarget
 			tags = append(tags, refillTags...)
 		}
@@ -5305,69 +5335,79 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		rebalFrom21dFallback = true
 	}
 
-	switch normalizeRebalCostMode(e.cfg.RebalCostMode) {
-	case "global":
-		baseCostPpm = rebalGlobalPpm
-	case "channel":
-		if perCost > 0 {
-			baseCostPpm = perCost
-			st.LastRebalCost = perCost
-			st.LastRebalCostTs = e.now
-		} else if perCost21d > 0 {
-			baseCostPpm = perCost21d
-		} else if st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour {
-			baseCostPpm = st.LastRebalCost
-		} else if outPpm7d > 0 && fwdCount >= 4 {
-			baseCostPpm = outPpm7d
-		} else if st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 21*24*time.Hour {
-			baseCostPpm = st.LastOutrate
-		} else if seed > 0 {
-			baseCostPpm = int(seed)
+	if marketRefillMode {
+		if seed > 0 {
+			baseCostPpm = int(math.Round(seed))
+		} else if st.LastSeed > 0 {
+			baseCostPpm = st.LastSeed
+		} else {
+			baseCostPpm = e.cfg.MinPpm
 		}
-	default:
-		baseCostPpm = rebalGlobalPpm
-		if perCost > 0 {
-			capSat := ch.CapacitySat
-			if capSat <= 0 {
-				capSat = 20000
+	} else {
+		switch normalizeRebalCostMode(e.cfg.RebalCostMode) {
+		case "global":
+			baseCostPpm = rebalGlobalPpm
+		case "channel":
+			if perCost > 0 {
+				baseCostPpm = perCost
+				st.LastRebalCost = perCost
+				st.LastRebalCostTs = e.now
+			} else if perCost21d > 0 {
+				baseCostPpm = perCost21d
+			} else if st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour {
+				baseCostPpm = st.LastRebalCost
+			} else if outPpm7d > 0 && fwdCount >= 4 {
+				baseCostPpm = outPpm7d
+			} else if st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 21*24*time.Hour {
+				baseCostPpm = st.LastOutrate
+			} else if seed > 0 {
+				baseCostPpm = int(seed)
 			}
-			capThresh := int64(math.Round(float64(capSat) * 0.05))
-			if capThresh < 20000 {
-				capThresh = 20000
+		default:
+			baseCostPpm = rebalGlobalPpm
+			if perCost > 0 {
+				capSat := ch.CapacitySat
+				if capSat <= 0 {
+					capSat = 20000
+				}
+				capThresh := int64(math.Round(float64(capSat) * 0.05))
+				if capThresh < 20000 {
+					capThresh = 20000
+				}
+				if capThresh > 500000 {
+					capThresh = 500000
+				}
+				rebalAmtSat := rebal.AmtMsat / 1000
+				weight := 0.0
+				if capThresh > 0 {
+					weight = float64(rebalAmtSat) / float64(capThresh)
+				}
+				if weight < 0 {
+					weight = 0
+				} else if weight > 1 {
+					weight = 1
+				}
+				blended := int(math.Round(weight*float64(perCost) + (1.0-weight)*float64(rebalGlobalPpm)))
+				baseCostPpm = blended
+				st.LastRebalCost = perCost
+				st.LastRebalCostTs = e.now
+			} else if perCost21d > 0 {
+				baseCostPpm = perCost21d
+			} else if st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour {
+				baseCostPpm = st.LastRebalCost
 			}
-			if capThresh > 500000 {
-				capThresh = 500000
-			}
-			rebalAmtSat := rebal.AmtMsat / 1000
-			weight := 0.0
-			if capThresh > 0 {
-				weight = float64(rebalAmtSat) / float64(capThresh)
-			}
-			if weight < 0 {
-				weight = 0
-			} else if weight > 1 {
-				weight = 1
-			}
-			blended := int(math.Round(weight*float64(perCost) + (1.0-weight)*float64(rebalGlobalPpm)))
-			baseCostPpm = blended
-			st.LastRebalCost = perCost
-			st.LastRebalCostTs = e.now
-		} else if perCost21d > 0 {
-			baseCostPpm = perCost21d
-		} else if st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour {
-			baseCostPpm = st.LastRebalCost
 		}
 	}
 	if baseCostPpm < e.cfg.MinPpm {
 		baseCostPpm = e.cfg.MinPpm
 	}
-	if rebalFrom21dFallback && perCost <= 0 {
+	if !marketRefillMode && rebalFrom21dFallback && perCost <= 0 {
 		tags = append(tags, "rebal-fallback-21d")
 	}
 	hasOutSignal := outPpm7dRaw > 0 || outFrom21dFallback || (st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 21*24*time.Hour)
-	hasRebalSignal := perCost > 0 || rebalFrom21dFallback || (st.LastRebalCost > 0 && !st.LastRebalCostTs.IsZero() && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour)
+	hasRebalSignal := !marketRefillMode && (perCost > 0 || rebalFrom21dFallback || (st.LastRebalCost > 0 && !st.LastRebalCostTs.IsZero() && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour))
 	strongOutSignal := outPpm7dRaw > 0 || (st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 7*24*time.Hour)
-	strongRebalSignal := perCost > 0 || (st.LastRebalCost > 0 && !st.LastRebalCostTs.IsZero() && e.now.Sub(st.LastRebalCostTs) <= 7*24*time.Hour)
+	strongRebalSignal := !marketRefillMode && (perCost > 0 || (st.LastRebalCost > 0 && !st.LastRebalCostTs.IsZero() && e.now.Sub(st.LastRebalCostTs) <= 7*24*time.Hour))
 	noSignalNoUpActive := false
 	if noFlow1d &&
 		outRatio >= lowOutNoFlowUpperRatio &&
@@ -5454,14 +5494,16 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			outRef = st.LastOutrate
 		}
 		rebalRef := 0
-		if perCost > 0 {
-			rebalRef = perCost
-		} else if perCost21d > 0 {
-			rebalRef = perCost21d
-		} else if st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour {
-			rebalRef = st.LastRebalCost
-		} else if rebalGlobalPpm > 0 {
-			rebalRef = rebalGlobalPpm
+		if !marketRefillMode {
+			if perCost > 0 {
+				rebalRef = perCost
+			} else if perCost21d > 0 {
+				rebalRef = perCost21d
+			} else if st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour {
+				rebalRef = st.LastRebalCost
+			} else if rebalGlobalPpm > 0 {
+				rebalRef = rebalGlobalPpm
+			}
 		}
 
 		if stagnationRounds >= stagnationNoForwardRoundsPhase1 && outRef > 0 {
@@ -5515,9 +5557,9 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 
 	capRefPpm := 0
-	if perCost > 0 {
+	if !marketRefillMode && perCost > 0 {
 		capRefPpm = perCost
-	} else if st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour {
+	} else if !marketRefillMode && st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour {
 		capRefPpm = st.LastRebalCost
 	} else if outPpm7d > 0 && fwdCount >= 4 {
 		capRefPpm = outPpm7d
@@ -5660,7 +5702,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	globalNegLockApplied := false
 	lockSkipTag := ""
 	if negMarginGlobal && !stagnationActive && !highOutStagnationPressure {
-		hasRecentRebal := perCost > 0 || (st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour)
+		hasRecentRebal := !marketRefillMode && (perCost > 0 || (st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour))
 		hasRecentOutrate := (outPpm7d > 0 && fwdCount >= 4) || (st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 21*24*time.Hour)
 		canLockGlobally := hasRecentRebal || hasRecentOutrate
 		if canLockGlobally {
@@ -5765,7 +5807,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 
 	floorBasePpm := baseCostPpm
-	if perCost > 0 && !rebalFloorSignal {
+	if !marketRefillMode && perCost > 0 && !rebalFloorSignal {
 		fallbackFloorBase := floorBasePpm
 		if rebalGlobalPpm > 0 {
 			fallbackFloorBase = rebalGlobalPpm
@@ -5784,6 +5826,9 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 	floor := int(math.Ceil(float64(floorBasePpm) * 1.10))
 	floorSrc := "rebal"
+	if marketRefillMode {
+		floorSrc = "market"
+	}
 	if strings.EqualFold(classLabel, "sink") && baseCostPpm > 0 && e.profile.SinkExtraFloorMargin > 0 && !highOutStagnationPressure {
 		sinkFloor := int(math.Ceil(float64(baseCostPpm) * (1.10 + e.profile.SinkExtraFloorMargin)))
 		if sinkFloor > floor {
@@ -5836,7 +5881,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		tags = append(tags, "peg-paused-stagnation")
 	}
 
-	if explorerActive {
+	if explorerActive && !marketRefillMode {
 		rebalFloorPpm := 0
 		if perCost > 0 {
 			rebalFloorPpm = int(math.Ceil(float64(perCost) * 1.10))
@@ -6571,9 +6616,9 @@ func (e *autofeeEngine) fetchAmbossSeed(pubkey string, token string) (float64, f
 		seed = p95
 		tags = append(tags, "seed:p95cap")
 	}
-	if seed > 1600 {
-		seed = 1600
-		tags = append(tags, "seed:absmax")
+	if e.cfg.MaxPpm > 0 && seed > float64(e.cfg.MaxPpm) {
+		seed = float64(e.cfg.MaxPpm)
+		tags = append(tags, "seed:maxppm")
 	}
 	tags = append(tags, "seed:amboss")
 	return seed, p95, tags, nil
@@ -6981,8 +7026,8 @@ func computeMarketRefillInboundDiscount(enabled bool, outRatio float64, recentFo
 	return minInt(gapToTargetNet, minInt(maxDiscount, maxDiscountByRetainedSpread)), tags
 }
 
-func applyMarketRefillOutboundBias(profile autofeeProfile, localPpm int, targetPpm int, outRatio float64, recentForwards1d int, noFlow1d bool, weakRecentFlow bool, holdUpOnRecentRebalance bool) (int, []string) {
-	if holdUpOnRecentRebalance || outRatio < 0 || targetPpm <= 0 {
+func applyMarketRefillOutboundBias(profile autofeeProfile, localPpm int, targetPpm int, outPpm7d int, outRatio float64, recentForwards1d int, noFlow1d bool, weakRecentFlow bool, minPpm int, maxPpm int) (int, []string) {
+	if outRatio < 0 || targetPpm <= 0 {
 		return targetPpm, nil
 	}
 	candidateReach := profile.MarketRefillCandidateOutRatioMax
@@ -6993,35 +7038,67 @@ func applyMarketRefillOutboundBias(profile autofeeProfile, localPpm int, targetP
 	if exploratoryReach < candidateReach {
 		exploratoryReach = candidateReach
 	}
-	upFrac := profile.MarketRefillUpFrac
-	if upFrac <= 0 {
-		upFrac = 0.08
+	targetMult := profile.MarketRefillBaseTargetMult
+	if targetMult <= 0 {
+		targetMult = 1.50
 	}
-	exploreUpFrac := profile.MarketRefillExploreUpFrac
-	if exploreUpFrac <= 0 {
-		exploreUpFrac = 0.03
+	targetAdd := profile.MarketRefillBaseTargetAddPpm
+	if targetAdd <= 0 {
+		targetAdd = 150
 	}
-	minStep := profile.MarketRefillMinStepUpPpm
-	if minStep <= 0 {
-		minStep = 20
+	modeFloor := profile.MarketRefillMinOutboundPpm
+	if modeFloor < minPpm {
+		modeFloor = minPpm
 	}
+	outrateFloorFrac := profile.MarketRefillOutrateFloorFrac
+	if outrateFloorFrac <= 0 {
+		outrateFloorFrac = 1.0
+	}
+	floorFromOutrate := 0
+	if outPpm7d > 0 {
+		floorFromOutrate = int(math.Ceil(float64(outPpm7d) * outrateFloorFrac))
+	}
+	tags := []string{"market-refill-up"}
 	switch {
 	case outRatio <= candidateReach:
-		minTarget := int(math.Ceil(float64(maxInt(0, localPpm)) * (1.0 + upFrac)))
-		if minTarget < localPpm+minStep {
-			minTarget = localPpm + minStep
+		targetMult = profile.MarketRefillDrainedTargetMult
+		if targetMult <= 0 {
+			targetMult = 3.50
 		}
-		if targetPpm < minTarget {
-			return minTarget, []string{"market-refill-up"}
+		targetAdd = profile.MarketRefillDrainedTargetAddPpm
+		if targetAdd <= 0 {
+			targetAdd = 1200
 		}
-	case outRatio <= exploratoryReach && (noFlow1d || weakRecentFlow) && recentForwards1d <= profile.MarketRefillExploratoryFwds1dMax:
-		minTarget := int(math.Ceil(float64(maxInt(0, localPpm)) * (1.0 + exploreUpFrac)))
-		if minTarget < localPpm+maxInt(5, minStep/2) {
-			minTarget = localPpm + maxInt(5, minStep/2)
+		tags = append(tags, "market-refill-drained")
+	case outRatio <= exploratoryReach:
+		targetMult = profile.MarketRefillLowTargetMult
+		if targetMult <= 0 {
+			targetMult = 2.50
 		}
-		if targetPpm < minTarget {
-			return minTarget, []string{"market-refill-up", "market-refill-explore"}
+		targetAdd = profile.MarketRefillLowTargetAddPpm
+		if targetAdd <= 0 {
+			targetAdd = 700
 		}
+		tags = append(tags, "market-refill-low")
+	default:
+		tags = append(tags, "market-refill-node")
+	}
+	if (noFlow1d || weakRecentFlow) && recentForwards1d <= profile.MarketRefillExploratoryFwds1dMax {
+		if outRatio > candidateReach {
+			targetMult = math.Max(targetMult, profile.MarketRefillLowTargetMult)
+			targetAdd = maxInt(targetAdd, profile.MarketRefillLowTargetAddPpm)
+		}
+		tags = append(tags, "market-refill-explore")
+	}
+	premiumTarget := maxInt(
+		int(math.Ceil(float64(targetPpm)*targetMult)),
+		maxInt(targetPpm+targetAdd, maxInt(modeFloor, floorFromOutrate)),
+	)
+	if premiumTarget > maxPpm {
+		premiumTarget = maxPpm
+	}
+	if premiumTarget > targetPpm {
+		return premiumTarget, tags
 	}
 	return targetPpm, nil
 }
@@ -7084,6 +7161,14 @@ func formatAutofeeTags(d *decision) string {
 			add("🧭cap")
 		case t == "market-refill-inbound":
 			add("🌊market-refill")
+		case t == "market-refill-up":
+			add("🌊market-up")
+		case t == "market-refill-node":
+			add("🌊market-node")
+		case t == "market-refill-low":
+			add("🌊market-low")
+		case t == "market-refill-drained":
+			add("🌊market-drained")
 		case t == "market-refill-explore":
 			add("🧪market-explore")
 		case strings.HasPrefix(t, "surge"):
@@ -7262,7 +7347,7 @@ func formatAutofeeTags(d *decision) string {
 			add("🛡️seed-guard")
 		case strings.HasPrefix(t, "seed:p95cap"):
 			add("🧢seed-p95")
-		case strings.HasPrefix(t, "seed:absmax"):
+		case strings.HasPrefix(t, "seed:absmax"), strings.HasPrefix(t, "seed:maxppm"):
 			add("🧱seed-cap")
 		case strings.HasPrefix(t, "seed:soft-ceil"):
 			add("🧭seed-soft-ceil")

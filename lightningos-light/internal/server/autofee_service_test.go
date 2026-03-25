@@ -837,25 +837,28 @@ func TestComputeMarketRefillInboundDiscount(t *testing.T) {
 func TestApplyMarketRefillOutboundBias(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
 
-	target, tags := applyMarketRefillOutboundBias(profile, 100, 105, 0.08, 2, false, false, false)
-	if target <= 105 {
-		t.Fatalf("expected strategic market refill target uplift, got %d", target)
+	target, tags := applyMarketRefillOutboundBias(profile, 100, 105, 150, 0.08, 2, false, false, 0, 3500)
+	if target != 1305 {
+		t.Fatalf("unexpected drained market refill target uplift: got %d want 1305", target)
 	}
-	if len(tags) == 0 || tags[0] != "market-refill-up" {
+	if len(tags) < 2 || tags[0] != "market-refill-up" || tags[1] != "market-refill-drained" {
 		t.Fatalf("unexpected strategic outbound tags: %+v", tags)
 	}
 
-	exploreTarget, exploreTags := applyMarketRefillOutboundBias(profile, 100, 102, 0.22, 0, true, true, false)
-	if exploreTarget <= 102 {
-		t.Fatalf("expected exploratory market refill target uplift, got %d", exploreTarget)
+	exploreTarget, exploreTags := applyMarketRefillOutboundBias(profile, 100, 102, 0, 0.78, 0, true, true, 0, 3500)
+	if exploreTarget != 900 {
+		t.Fatalf("unexpected exploratory market refill target uplift: got %d want 900", exploreTarget)
 	}
-	if len(exploreTags) < 2 || exploreTags[1] != "market-refill-explore" {
+	if len(exploreTags) < 3 || exploreTags[1] != "market-refill-node" || exploreTags[2] != "market-refill-explore" {
 		t.Fatalf("unexpected exploratory outbound tags: %+v", exploreTags)
 	}
 
-	heldTarget, heldTags := applyMarketRefillOutboundBias(profile, 100, 102, 0.08, 0, true, true, true)
-	if heldTarget != 102 || len(heldTags) != 0 {
-		t.Fatalf("expected recent rebalance hold to block market refill bias, got target=%d tags=%+v", heldTarget, heldTags)
+	outrateTarget, outrateTags := applyMarketRefillOutboundBias(profile, 100, 220, 1200, 0.40, 4, false, false, 0, 3500)
+	if outrateTarget != 1200 {
+		t.Fatalf("expected market refill to respect local outrate floor, got %d want 1200", outrateTarget)
+	}
+	if len(outrateTags) < 2 || outrateTags[1] != "market-refill-node" {
+		t.Fatalf("unexpected market refill outrate tags: %+v", outrateTags)
 	}
 }
 

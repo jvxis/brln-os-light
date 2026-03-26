@@ -725,68 +725,6 @@ limit $1`, limit)
 	return items, rows.Err()
 }
 
-func (n *Notifier) walletLightningActivity(ctx context.Context, start time.Time, end time.Time, limit int) ([]lndclient.RecentActivity, error) {
-	if n == nil || n.db == nil {
-		return nil, errors.New("notifications disabled")
-	}
-	if limit <= 0 {
-		limit = 200
-	}
-	if limit > walletActivityFetchLimit {
-		limit = walletActivityFetchLimit
-	}
-
-	rows, err := n.db.Query(ctx, `
-select id, occurred_at, type, action, direction, status, amount_sat, fee_sat, fee_msat,
-  peer_pubkey, peer_alias, channel_id, channel_point, channel_alias, txid, payment_hash, memo
-from notifications
-where occurred_at >= $1
-  and occurred_at <= $2
-  and type='lightning'
-  and action in ('sent', 'received')
-order by occurred_at desc, id desc
-limit $3`, start, end, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	items := make([]lndclient.RecentActivity, 0, limit)
-	for rows.Next() {
-		evt, err := scanNotification(rows)
-		if err != nil {
-			return nil, err
-		}
-
-		itemType := "payment"
-		if strings.EqualFold(evt.Action, "received") {
-			itemType = "invoice"
-		}
-
-		channelID := uint64(0)
-		if evt.ChannelID > 0 {
-			channelID = uint64(evt.ChannelID)
-		}
-
-		items = append(items, lndclient.RecentActivity{
-			Type:         itemType,
-			Network:      "lightning",
-			Direction:    evt.Direction,
-			AmountSat:    evt.AmountSat,
-			Memo:         strings.TrimSpace(evt.Memo),
-			Timestamp:    evt.OccurredAt.UTC(),
-			Status:       strings.TrimSpace(evt.Status),
-			FeeSat:       evt.FeeSat,
-			ChannelID:    channelID,
-			ChannelPoint: strings.TrimSpace(evt.ChannelPoint),
-			ChannelAlias: strings.TrimSpace(evt.ChannelAlias),
-			PaymentHash:  strings.TrimSpace(evt.PaymentHash),
-		})
-	}
-
-	return items, rows.Err()
-}
-
 func (n *Notifier) getCursor(ctx context.Context, key string) (string, error) {
 	var val string
 	err := n.db.QueryRow(ctx, "select value from notification_cursors where key=$1", key).Scan(&val)

@@ -1381,34 +1381,6 @@ func (c *Client) ListActivityRange(ctx context.Context, start time.Time, end tim
 	return items, nil
 }
 
-func (c *Client) ListOnchainRange(ctx context.Context, start time.Time, end time.Time, limit int) ([]RecentActivity, error) {
-	if end.IsZero() {
-		end = time.Now().UTC()
-	}
-	if start.IsZero() {
-		start = end.Add(-7 * 24 * time.Hour)
-	}
-	if end.Before(start) {
-		start, end = end, start
-	}
-
-	conn, err := c.dial(ctx, true)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close()
-
-	client := lnrpc.NewLightningClient(conn)
-	items, err := c.listOnchainRangeWithClient(ctx, client, start, end)
-	if err != nil {
-		return nil, err
-	}
-	if limit > 0 && len(items) > limit {
-		items = items[:limit]
-	}
-	return items, nil
-}
-
 func (c *Client) buildLightningActivity(ctx context.Context, client lnrpc.LightningClient, invoices []*lnrpc.Invoice, paymentItems []*lnrpc.Payment) ([]RecentActivity, error) {
 	pubkey := strings.TrimSpace(c.CachedPubkey())
 	if pubkey == "" {
@@ -1544,8 +1516,6 @@ func (c *Client) buildLightningActivity(ctx context.Context, client lnrpc.Lightn
 }
 
 func listInvoicesInRange(ctx context.Context, client lnrpc.LightningClient, start time.Time, end time.Time, limit int) ([]*lnrpc.Invoice, error) {
-	startUnix := uint64(walletActivityMaxInt64(0, start.Unix()))
-	endUnix := uint64(walletActivityMaxInt64(start.Unix(), end.Unix()))
 	pageSize := walletActivityPageRequestSize(limit)
 	items := make([]*lnrpc.Invoice, 0, int(pageSize))
 
@@ -1553,11 +1523,9 @@ func listInvoicesInRange(ctx context.Context, client lnrpc.LightningClient, star
 	var lastOffset uint64
 	for pages := 0; pages < walletActivityMaxPages; pages++ {
 		resp, err := client.ListInvoices(ctx, &lnrpc.ListInvoiceRequest{
-			Reversed:          true,
-			IndexOffset:       indexOffset,
-			NumMaxInvoices:    pageSize,
-			CreationDateStart: startUnix,
-			CreationDateEnd:   endUnix,
+			Reversed:       true,
+			IndexOffset:    indexOffset,
+			NumMaxInvoices: pageSize,
 		})
 		if err != nil {
 			return nil, err
@@ -1565,10 +1533,24 @@ func listInvoicesInRange(ctx context.Context, client lnrpc.LightningClient, star
 		if resp == nil || len(resp.Invoices) == 0 {
 			break
 		}
-		items = append(items, resp.Invoices...)
-		if limit > 0 && len(items) >= limit {
-			return items[:limit], nil
+
+		for _, inv := range resp.Invoices {
+			if inv == nil {
+				continue
+			}
+			eventTime := recentInvoiceTimestamp(inv)
+			if eventTime.Before(start) {
+				continue
+			}
+			if eventTime.After(end) {
+				continue
+			}
+			items = append(items, inv)
+			if limit > 0 && len(items) >= limit {
+				return items[:limit], nil
+			}
 		}
+
 		nextOffset := resp.FirstIndexOffset
 		if nextOffset == 0 {
 			for _, inv := range resp.Invoices {
@@ -1591,8 +1573,6 @@ func listInvoicesInRange(ctx context.Context, client lnrpc.LightningClient, star
 }
 
 func listPaymentsInRange(ctx context.Context, client lnrpc.LightningClient, start time.Time, end time.Time, limit int) ([]*lnrpc.Payment, error) {
-	startUnix := uint64(walletActivityMaxInt64(0, start.Unix()))
-	endUnix := uint64(walletActivityMaxInt64(start.Unix(), end.Unix()))
 	pageSize := walletActivityPageRequestSize(limit)
 	items := make([]*lnrpc.Payment, 0, int(pageSize))
 
@@ -1604,8 +1584,6 @@ func listPaymentsInRange(ctx context.Context, client lnrpc.LightningClient, star
 			Reversed:          true,
 			IndexOffset:       indexOffset,
 			MaxPayments:       pageSize,
-			CreationDateStart: startUnix,
-			CreationDateEnd:   endUnix,
 		})
 		if err != nil {
 			return nil, err
@@ -1613,10 +1591,28 @@ func listPaymentsInRange(ctx context.Context, client lnrpc.LightningClient, star
 		if resp == nil || len(resp.Payments) == 0 {
 			break
 		}
-		items = append(items, resp.Payments...)
-		if limit > 0 && len(items) >= limit {
-			return items[:limit], nil
+
+		pageHasInRange := false
+		oldestEventBeforeStart := false
+		for _, pay := range resp.Payments {
+			if pay == nil {
+				continue
+			}
+			eventTime := recentPaymentTimestamp(pay)
+			if eventTime.Before(start) {
+				oldestEventBeforeStart = true
+				continue
+			}
+			if eventTime.After(end) {
+				continue
+			}
+			pageHasInRange = true
+			items = append(items, pay)
+			if limit > 0 && len(items) >= limit {
+				return items[:limit], nil
+			}
 		}
+
 		nextOffset := resp.FirstIndexOffset
 		if nextOffset == 0 {
 			for _, pay := range resp.Payments {
@@ -1629,6 +1625,9 @@ func listPaymentsInRange(ctx context.Context, client lnrpc.LightningClient, star
 			}
 		}
 		if nextOffset == 0 || nextOffset == indexOffset || nextOffset == lastOffset || len(resp.Payments) < int(pageSize) {
+			break
+		}
+		if oldestEventBeforeStart && !pageHasInRange {
 			break
 		}
 		lastOffset = nextOffset
@@ -1779,6 +1778,19 @@ func recentPaymentTimestamp(pay *lnrpc.Payment) time.Time {
 	}
 	if pay.CreationTimeNs != 0 {
 		return time.Unix(0, pay.CreationTimeNs).UTC()
+	}
+	return time.Now().UTC()
+}
+
+func recentInvoiceTimestamp(inv *lnrpc.Invoice) time.Time {
+	if inv == nil {
+		return time.Time{}
+	}
+	if inv.SettleDate != 0 {
+		return time.Unix(inv.SettleDate, 0).UTC()
+	}
+	if inv.CreationDate != 0 {
+		return time.Unix(inv.CreationDate, 0).UTC()
 	}
 	return time.Now().UTC()
 }

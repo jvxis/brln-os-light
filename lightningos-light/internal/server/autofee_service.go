@@ -462,6 +462,7 @@ type autofeeProfile struct {
 	MarketRefillDrainedTargetMult        float64
 	MarketRefillDrainedTargetAddPpm      int
 	MarketRefillLocalHoldFrac            float64
+	MarketRefillLocalCapMult             float64
 	MarketRefillMinOutboundPpm           int
 	MarketRefillMinOutboundMaxPpmFrac    float64
 	MarketRefillOutrateFloorFrac         float64
@@ -601,7 +602,8 @@ var autofeeProfiles = map[string]autofeeProfile{
 		MarketRefillLowTargetAddPpm:          160,
 		MarketRefillDrainedTargetMult:        1.90,
 		MarketRefillDrainedTargetAddPpm:      350,
-		MarketRefillLocalHoldFrac:            0.70,
+		MarketRefillLocalHoldFrac:            0.40,
+		MarketRefillLocalCapMult:             1.25,
 		MarketRefillMinOutboundPpm:           300,
 		MarketRefillMinOutboundMaxPpmFrac:    0.10,
 		MarketRefillOutrateFloorFrac:         1.00,
@@ -730,7 +732,8 @@ var autofeeProfiles = map[string]autofeeProfile{
 		MarketRefillLowTargetAddPpm:          250,
 		MarketRefillDrainedTargetMult:        2.20,
 		MarketRefillDrainedTargetAddPpm:      600,
-		MarketRefillLocalHoldFrac:            0.75,
+		MarketRefillLocalHoldFrac:            0.35,
+		MarketRefillLocalCapMult:             1.40,
 		MarketRefillMinOutboundPpm:           500,
 		MarketRefillMinOutboundMaxPpmFrac:    0.15,
 		MarketRefillOutrateFloorFrac:         1.00,
@@ -859,7 +862,8 @@ var autofeeProfiles = map[string]autofeeProfile{
 		MarketRefillLowTargetAddPpm:          400,
 		MarketRefillDrainedTargetMult:        2.60,
 		MarketRefillDrainedTargetAddPpm:      900,
-		MarketRefillLocalHoldFrac:            0.85,
+		MarketRefillLocalHoldFrac:            0.30,
+		MarketRefillLocalCapMult:             1.60,
 		MarketRefillMinOutboundPpm:           800,
 		MarketRefillMinOutboundMaxPpmFrac:    0.20,
 		MarketRefillOutrateFloorFrac:         1.00,
@@ -7189,7 +7193,11 @@ func applyMarketRefillOutboundBias(profile autofeeProfile, localPpm int, targetP
 	}
 	localHoldFrac := profile.MarketRefillLocalHoldFrac
 	if localHoldFrac <= 0 || localHoldFrac > 1 {
-		localHoldFrac = 0.75
+		localHoldFrac = 0.35
+	}
+	localCapMult := profile.MarketRefillLocalCapMult
+	if localCapMult <= 1 {
+		localCapMult = 1.50
 	}
 	modeFloor := profile.MarketRefillMinOutboundPpm
 	if profile.MarketRefillMinOutboundMaxPpmFrac > 0 && maxPpm > 0 {
@@ -7241,6 +7249,10 @@ func applyMarketRefillOutboundBias(profile autofeeProfile, localPpm int, targetP
 	localFloor := 0
 	if localPpm > 0 {
 		localFloor = int(math.Ceil(float64(localPpm) * localHoldFrac))
+		if targetPpm > 0 {
+			localFloorCap := int(math.Ceil(float64(targetPpm) * localCapMult))
+			localFloor = minInt(localFloor, localFloorCap)
+		}
 	}
 	effectiveBase := maxInt(targetPpm, localFloor)
 	premiumTarget := maxInt(

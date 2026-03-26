@@ -888,6 +888,18 @@ func TestApplyMarketRefillOutboundBiasCanReachMaxPpmFromHighBalancedTarget(t *te
 	}
 }
 
+func TestApplyMarketRefillOutboundBiasCapsLocalMemoryAgainstBalancedTarget(t *testing.T) {
+	profile := autofeeProfiles["aggressive"]
+
+	target, tags := applyMarketRefillOutboundBias(profile, 2500, 300, 0, 0.70, 0, true, true, 0, 4000)
+	if target != 630 {
+		t.Fatalf("expected local memory to be capped by balanced target context, got %d want 630", target)
+	}
+	if len(tags) < 3 || tags[0] != "market-refill-up" || tags[1] != "market-refill-node" || tags[2] != "market-refill-explore" {
+		t.Fatalf("unexpected capped-local tags: %+v", tags)
+	}
+}
+
 func TestMarketRefillStepCapFrac(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
 

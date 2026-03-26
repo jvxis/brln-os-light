@@ -834,6 +834,18 @@ func TestComputeMarketRefillInboundDiscount(t *testing.T) {
 	}
 }
 
+func TestComputeMarketRefillInboundDiscountAggressiveFullExploreStaysCloseToOutbound(t *testing.T) {
+	profile := autofeeProfiles["aggressive"]
+
+	discount, tags := computeMarketRefillInboundDiscount(true, 0.78, 0, true, false, 110, 2490, 0.95, 0.08, profile)
+	if discount != 2179 {
+		t.Fatalf("expected aggressive full/explore inbound discount to stay close to outbound while respecting cost/spread guards, got %d want 2179", discount)
+	}
+	if len(tags) < 2 || tags[0] != "market-refill-inbound" || tags[1] != "market-refill-explore" {
+		t.Fatalf("unexpected aggressive full/explore tags: %+v", tags)
+	}
+}
+
 func TestApplyMarketRefillOutboundBias(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
 

@@ -7125,8 +7125,8 @@ func computeMarketRefillInboundDiscount(enabled bool, outRatio float64, recentFo
 		exploratoryReach = candidateReach
 	}
 	exploratoryFwdsMax := profile.MarketRefillExploratoryFwds1dMax
-	balancedTargetFrac := math.Min(0.75, math.Max(targetFrac+0.20, targetFrac*2.0))
-	fullTargetFrac := math.Min(0.85, math.Max(targetFrac+0.35, targetFrac*3.0))
+	balancedTargetFrac := math.Min(0.24, math.Max(targetFrac+0.04, targetFrac*1.20))
+	fullTargetFrac := math.Min(0.32, math.Max(targetFrac+0.08, targetFrac*1.40))
 	fullishOutRatio := math.Max(exploratoryReach, 0.50)
 	fullOutRatio := math.Max(fullishOutRatio+0.20, 0.70)
 	tags := []string{"market-refill-inbound"}
@@ -7142,10 +7142,10 @@ func computeMarketRefillInboundDiscount(enabled bool, outRatio float64, recentFo
 	case noFlow1d && recentForwards1d <= exploratoryFwdsMax:
 		// In market-refill mode the node should test even full/dead channels
 		// instead of leaving them untouched after disabling all rebalances.
-		targetFrac = math.Min(balancedTargetFrac, math.Max(targetFrac+0.10, targetFrac*1.40))
+		targetFrac = math.Min(balancedTargetFrac, math.Max(targetFrac+0.02, targetFrac*1.10))
 		tags = append(tags, "market-refill-explore")
 	case weakRecentFlow && recentForwards1d <= exploratoryFwdsMax:
-		targetFrac = balancedTargetFrac
+		targetFrac = math.Min(balancedTargetFrac, math.Max(targetFrac+0.03, targetFrac*1.15))
 	case outRatio >= fullOutRatio:
 		targetFrac = fullTargetFrac
 	case outRatio >= fullishOutRatio:

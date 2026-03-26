@@ -1381,6 +1381,34 @@ func (c *Client) ListActivityRange(ctx context.Context, start time.Time, end tim
 	return items, nil
 }
 
+func (c *Client) ListOnchainRange(ctx context.Context, start time.Time, end time.Time, limit int) ([]RecentActivity, error) {
+	if end.IsZero() {
+		end = time.Now().UTC()
+	}
+	if start.IsZero() {
+		start = end.Add(-7 * 24 * time.Hour)
+	}
+	if end.Before(start) {
+		start, end = end, start
+	}
+
+	conn, err := c.dial(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	client := lnrpc.NewLightningClient(conn)
+	items, err := c.listOnchainRangeWithClient(ctx, client, start, end)
+	if err != nil {
+		return nil, err
+	}
+	if limit > 0 && len(items) > limit {
+		items = items[:limit]
+	}
+	return items, nil
+}
+
 func (c *Client) buildLightningActivity(ctx context.Context, client lnrpc.LightningClient, invoices []*lnrpc.Invoice, paymentItems []*lnrpc.Payment) ([]RecentActivity, error) {
 	pubkey := strings.TrimSpace(c.CachedPubkey())
 	if pubkey == "" {

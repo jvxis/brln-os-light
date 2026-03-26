@@ -3520,10 +3520,36 @@ func (s *Server) handleWalletActivity(w http.ResponseWriter, r *http.Request) {
 		fetchLimit = walletActivityFetchLimit
 	}
 
-	items, err := s.lnd.ListActivityRange(ctx, start, now, fetchLimit)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, lndStatusMessage(err))
-		return
+	var (
+		items []lndclient.RecentActivity
+		err   error
+	)
+	if s.notifier != nil {
+		lightningItems, lightningErr := s.notifier.walletLightningActivity(ctx, start, now, fetchLimit)
+		if lightningErr != nil {
+			s.logger.Printf("wallet activity: notifications fallback to lnd: %v", lightningErr)
+		} else {
+			onchainItems, onchainErr := s.lnd.ListOnchainRange(ctx, start, now, fetchLimit)
+			if onchainErr != nil {
+				writeError(w, http.StatusInternalServerError, lndStatusMessage(onchainErr))
+				return
+			}
+
+			items = append(lightningItems, onchainItems...)
+			sort.Slice(items, func(i, j int) bool {
+				return items[i].Timestamp.After(items[j].Timestamp)
+			})
+			if len(items) > fetchLimit {
+				items = items[:fetchLimit]
+			}
+		}
+	}
+	if items == nil {
+		items, err = s.lnd.ListActivityRange(ctx, start, now, fetchLimit)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, lndStatusMessage(err))
+			return
+		}
 	}
 
 	if offset > len(items) {

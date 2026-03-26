@@ -441,6 +441,8 @@ type autofeeProfile struct {
 	SeedCeilingMult                      float64
 	SeedFloorMult                        float64
 	SeedP95Boost                         float64
+	SeedOutrateCapMult                   float64
+	SeedRebalCapMult                     float64
 	SourceSeedTargetFrac                 float64
 	ProfitProtectOutRatio                float64
 	ProfitProtectMarginPpm               int
@@ -582,6 +584,8 @@ var autofeeProfiles = map[string]autofeeProfile{
 		SeedCeilingMult:                      1.40,
 		SeedFloorMult:                        1.10,
 		SeedP95Boost:                         1.10,
+		SeedOutrateCapMult:                   1.45,
+		SeedRebalCapMult:                     1.35,
 		SourceSeedTargetFrac:                 0.50,
 		ProfitProtectOutRatio:                0.08,
 		ProfitProtectMarginPpm:               0,
@@ -712,6 +716,8 @@ var autofeeProfiles = map[string]autofeeProfile{
 		SeedCeilingMult:                      1.50,
 		SeedFloorMult:                        1.10,
 		SeedP95Boost:                         1.15,
+		SeedOutrateCapMult:                   1.35,
+		SeedRebalCapMult:                     1.25,
 		SourceSeedTargetFrac:                 0.55,
 		ProfitProtectOutRatio:                0.10,
 		ProfitProtectMarginPpm:               0,
@@ -842,6 +848,8 @@ var autofeeProfiles = map[string]autofeeProfile{
 		SeedCeilingMult:                      1.60,
 		SeedFloorMult:                        1.10,
 		SeedP95Boost:                         1.20,
+		SeedOutrateCapMult:                   1.25,
+		SeedRebalCapMult:                     1.20,
 		SourceSeedTargetFrac:                 0.60,
 		ProfitProtectOutRatio:                0.12,
 		ProfitProtectMarginPpm:               -20,
@@ -3639,6 +3647,38 @@ func applyOutrateTargetAnchor(profile autofeeProfile, targetPpm int, outPpm7d in
 	return targetPpm, nil
 }
 
+func applySeedSignalCaps(profile autofeeProfile, seed float64, outPpm7d int, rebalPpm7d int) (float64, []string) {
+	if seed <= 0 {
+		return seed, nil
+	}
+	maxAllowed := 0.0
+	tags := []string{}
+	if outPpm7d > 0 {
+		mult := profile.SeedOutrateCapMult
+		if mult <= 0 {
+			mult = 1.35
+		}
+		maxAllowed = math.Max(maxAllowed, float64(outPpm7d)*mult)
+	}
+	if rebalPpm7d > 0 {
+		mult := profile.SeedRebalCapMult
+		if mult <= 0 {
+			mult = 1.25
+		}
+		maxAllowed = math.Max(maxAllowed, float64(rebalPpm7d)*mult)
+	}
+	if maxAllowed > 0 && seed > maxAllowed {
+		if outPpm7d > 0 {
+			tags = append(tags, "seed:outcap")
+		}
+		if rebalPpm7d > 0 {
+			tags = append(tags, "seed:rebalcap")
+		}
+		seed = maxAllowed
+	}
+	return seed, tags
+}
+
 func shouldApplyFailedRebalancePressure(profile autofeeProfile, outRatio float64, lowOutProtectThresh float64, recentSuccessCount int, recentFailCount int) bool {
 	if recentSuccessCount > 0 || recentFailCount <= 0 {
 		return false
@@ -5015,6 +5055,21 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	inAmtSat := inb.AmtMsat / 1000
 	outAmt1dSat := fwd1d.AmtMsat / 1000
 	outAmt7dSat := fwd7d.AmtMsat / 1000
+	rebal := rebalStats.ByChannel[ch.ChannelID]
+	rebal21d := rebalStats21d.ByChannel[ch.ChannelID]
+	rebalAmtSat7d := rebal.AmtMsat / 1000
+	perCost := 0
+	perCost21d := 0
+	rebalFrom21dFallback := false
+	rebalFloorSignal := false
+	if rebal.AmtMsat > 0 {
+		perCost = ppmMsat(rebal.FeeMsat, rebal.AmtMsat)
+		rebalFloorSignal = hasFloorRebalSignal(rebalAmtSat7d, ch.CapacitySat)
+	}
+	if rebal21d.AmtMsat > 0 && hasRebalFallback21dSignal(rebal21d.AmtMsat/1000, ch.CapacitySat) {
+		perCost21d = ppmMsat(rebal21d.FeeMsat, rebal21d.AmtMsat)
+		rebalFrom21dFallback = true
+	}
 
 	totalVal := outAmtSat + inAmtSat
 	biasRaw := 0.0
@@ -5148,6 +5203,13 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	seed, _, seedTags := e.seedForChannel(ch.RemotePubkey, st)
 	if seed <= 0 {
 		seed = 200
+	}
+	if e.cfg.OperationMode == autofeeOperationModeBalanced {
+		var seedCapTags []string
+		seed, seedCapTags = applySeedSignalCaps(e.profile, seed, outPpm7d, perCost)
+		if len(seedCapTags) > 0 {
+			seedTags = append(seedTags, seedCapTags...)
+		}
 	}
 	st.LastSeed = int(seed)
 
@@ -5454,22 +5516,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		}
 	}
 
-	rebal := rebalStats.ByChannel[ch.ChannelID]
-	rebal21d := rebalStats21d.ByChannel[ch.ChannelID]
-	rebalAmtSat7d := rebal.AmtMsat / 1000
 	baseCostPpm := 0
-	perCost := 0
-	perCost21d := 0
-	rebalFrom21dFallback := false
-	rebalFloorSignal := false
-	if rebal.AmtMsat > 0 {
-		perCost = ppmMsat(rebal.FeeMsat, rebal.AmtMsat)
-		rebalFloorSignal = hasFloorRebalSignal(rebalAmtSat7d, ch.CapacitySat)
-	}
-	if rebal21d.AmtMsat > 0 && hasRebalFallback21dSignal(rebal21d.AmtMsat/1000, ch.CapacitySat) {
-		perCost21d = ppmMsat(rebal21d.FeeMsat, rebal21d.AmtMsat)
-		rebalFrom21dFallback = true
-	}
 
 	if marketRefillMode {
 		if seed > 0 {

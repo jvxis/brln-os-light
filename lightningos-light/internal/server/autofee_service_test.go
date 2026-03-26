@@ -912,6 +912,27 @@ func TestApplyMarketRefillOutboundBiasCapsLocalMemoryAgainstBalancedTarget(t *te
 	}
 }
 
+func TestApplySeedSignalCapsModerate(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+
+	seed, tags := applySeedSignalCaps(profile, 3482, 1782, 1638)
+	if math.Abs(seed-2405.7) > 0.001 {
+		t.Fatalf("expected moderate seed cap to follow the stronger local 7d signal cap, got %.1f want 2405.7", seed)
+	}
+	if len(tags) < 2 || tags[0] != "seed:outcap" || tags[1] != "seed:rebalcap" {
+		t.Fatalf("unexpected seed cap tags: %+v", tags)
+	}
+}
+
+func TestApplySeedSignalCapsAggressive(t *testing.T) {
+	profile := autofeeProfiles["aggressive"]
+
+	seed, _ := applySeedSignalCaps(profile, 3482, 1782, 1638)
+	if math.Abs(seed-2227.5) > 0.001 {
+		t.Fatalf("expected aggressive seed cap to be tighter, got %.1f want 2227.5", seed)
+	}
+}
+
 func TestMarketRefillStepCapFrac(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
 

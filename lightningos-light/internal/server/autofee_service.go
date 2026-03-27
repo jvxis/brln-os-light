@@ -716,8 +716,8 @@ var autofeeProfiles = map[string]autofeeProfile{
 		SeedCeilingMult:                      1.50,
 		SeedFloorMult:                        1.10,
 		SeedP95Boost:                         1.15,
-		SeedOutrateCapMult:                   1.35,
-		SeedRebalCapMult:                     1.25,
+		SeedOutrateCapMult:                   1.20,
+		SeedRebalCapMult:                     1.10,
 		SourceSeedTargetFrac:                 0.55,
 		ProfitProtectOutRatio:                0.10,
 		ProfitProtectMarginPpm:               0,
@@ -3647,7 +3647,7 @@ func applyOutrateTargetAnchor(profile autofeeProfile, targetPpm int, outPpm7d in
 	return targetPpm, nil
 }
 
-func applySeedSignalCaps(profile autofeeProfile, seed float64, outPpm7d int, rebalPpm7d int) (float64, []string) {
+func applySeedSignalCaps(profile autofeeProfile, seed float64, outPpm7d int, rebalPpm7d int, rebalFloorPpm int) (float64, []string) {
 	if seed <= 0 {
 		return seed, nil
 	}
@@ -3665,7 +3665,12 @@ func applySeedSignalCaps(profile autofeeProfile, seed float64, outPpm7d int, reb
 		if mult <= 0 {
 			mult = 1.25
 		}
-		maxAllowed = math.Max(maxAllowed, float64(rebalPpm7d)*mult)
+		rebalRef := rebalPpm7d
+		if rebalFloorPpm > rebalRef {
+			rebalRef = rebalFloorPpm
+			tags = append(tags, "seed:rebalfloor")
+		}
+		maxAllowed = math.Max(maxAllowed, float64(rebalRef)*mult)
 	}
 	if maxAllowed > 0 && seed > maxAllowed {
 		if outPpm7d > 0 {
@@ -5156,6 +5161,14 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 	highOutStagnationPressure := stagnationClassEligible && outRatio >= stagnationHighOutRatio && weakRecentFlow
 
+	rebalSeedFloorPpm := 0
+	if perCost > 0 {
+		rebalSeedFloorPpm = int(math.Ceil(float64(perCost) * 1.10))
+		if strings.EqualFold(classLabel, "sink") && e.profile.SinkExtraFloorMargin > 0 && !highOutStagnationPressure {
+			rebalSeedFloorPpm = maxInt(rebalSeedFloorPpm, int(math.Ceil(float64(perCost)*(1.10+e.profile.SinkExtraFloorMargin))))
+		}
+	}
+
 	superSourceActive := false
 	superSourceLike := false
 	if e.cfg.SuperSourceEnabled {
@@ -5206,7 +5219,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 	if e.cfg.OperationMode == autofeeOperationModeBalanced {
 		var seedCapTags []string
-		seed, seedCapTags = applySeedSignalCaps(e.profile, seed, outPpm7d, perCost)
+		seed, seedCapTags = applySeedSignalCaps(e.profile, seed, outPpm7d, perCost, rebalSeedFloorPpm)
 		if len(seedCapTags) > 0 {
 			seedTags = append(seedTags, seedCapTags...)
 		}

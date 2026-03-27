@@ -915,11 +915,11 @@ func TestApplyMarketRefillOutboundBiasCapsLocalMemoryAgainstBalancedTarget(t *te
 func TestApplySeedSignalCapsModerate(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
 
-	seed, tags := applySeedSignalCaps(profile, 3482, 1782, 1638)
-	if math.Abs(seed-2405.7) > 0.001 {
-		t.Fatalf("expected moderate seed cap to follow the stronger local 7d signal cap, got %.1f want 2405.7", seed)
+	seed, tags := applySeedSignalCaps(profile, 3482, 1782, 1638, 1868)
+	if math.Abs(seed-2138.4) > 0.001 {
+		t.Fatalf("expected moderate seed cap to stay close to outrate while considering rebal floor, got %.1f want 2138.4", seed)
 	}
-	if len(tags) < 2 || tags[0] != "seed:outcap" || tags[1] != "seed:rebalcap" {
+	if len(tags) < 3 || tags[0] != "seed:rebalfloor" || tags[1] != "seed:outcap" || tags[2] != "seed:rebalcap" {
 		t.Fatalf("unexpected seed cap tags: %+v", tags)
 	}
 }
@@ -927,9 +927,9 @@ func TestApplySeedSignalCapsModerate(t *testing.T) {
 func TestApplySeedSignalCapsAggressive(t *testing.T) {
 	profile := autofeeProfiles["aggressive"]
 
-	seed, _ := applySeedSignalCaps(profile, 3482, 1782, 1638)
-	if math.Abs(seed-2227.5) > 0.001 {
-		t.Fatalf("expected aggressive seed cap to be tighter, got %.1f want 2227.5", seed)
+	seed, _ := applySeedSignalCaps(profile, 3482, 1782, 1638, 1868)
+	if math.Abs(seed-2241.6) > 0.001 {
+		t.Fatalf("expected aggressive seed cap to consider rebal floor, got %.1f want 2241.6", seed)
 	}
 }
 

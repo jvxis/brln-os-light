@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -118,6 +119,17 @@ const (
 	floorDrivenSmallUpMinStepPpm        = 10
 	reversalConfirmMinRounds            = 2
 	reversalFastTrackStallMinRounds     = 2
+	rescueEnterGapFrac                  = 0.20
+	rescueExitGapFrac                   = 0.08
+	rescueOutrateEnterMult              = 1.10
+	rescueOutrateExitMult               = 1.05
+	rescueSoftRebalFloorMult            = 1.02
+	rescueScoreMax                      = 55
+	rescueRevShareMax                   = 0.02
+	rescueMinRounds                     = 3
+	rescueMinActiveHours                = 12
+	rescueMaxActiveHours                = 10 * 24
+	rescueReentryCooldownHours          = 24
 	htlcLowSampleMaxDownFrac            = 0.05
 	generalMaxDownFrac                  = 0.08
 	channelSizeRatioExponent            = 0.35
@@ -2137,6 +2149,7 @@ type autofeeEngine struct {
 	superSource    superSourceThresholds
 	ignoreCooldown bool
 	calib          autofeeCalibration
+	ranking        map[string]autofeeRankingSnapshot
 	now            time.Time
 }
 
@@ -2443,6 +2456,15 @@ type autofeeChannelState struct {
 	ExplorerState       explorerState
 }
 
+type autofeeRankingSnapshot struct {
+	Score           int
+	State           string
+	TrendDirection  string
+	TrendDelta      int
+	ProfitFee7dSat  int64
+	LocalBalancePct float64
+}
+
 type explorerState struct {
 	Active                bool   `json:"active"`
 	StartedTs             int64  `json:"started_ts"`
@@ -2464,6 +2486,10 @@ type explorerState struct {
 	ReversalPendingRounds int    `json:"reversal_pending_rounds,omitempty"`
 	LastReversalDir       string `json:"last_reversal_dir,omitempty"`
 	LastReversalTs        int64  `json:"last_reversal_ts,omitempty"`
+	RescueActive          bool   `json:"rescue_active,omitempty"`
+	RescueStartedTs       int64  `json:"rescue_started_ts,omitempty"`
+	RescueRounds          int    `json:"rescue_rounds,omitempty"`
+	RescueLastExitTs      int64  `json:"rescue_last_exit_ts,omitempty"`
 }
 
 func (s *AutofeeService) LoadChannelSettingsDetailed(ctx context.Context) ([]AutofeeChannelSettingEntry, error) {
@@ -2506,6 +2532,11 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 	state, err := e.loadState(ctx)
 	if err != nil {
 		return err
+	}
+	if snapshots, err := e.loadChannelRankingSnapshots(ctx); err == nil {
+		e.ranking = snapshots
+	} else if e.svc.logger != nil {
+		e.svc.logger.Printf("autofee: channel ranking snapshot unavailable: %v", err)
 	}
 
 	forwardStats, err := e.fetchForwardStats(ctx, e.cfg.LookbackDays)
@@ -4465,6 +4496,43 @@ from autofee_state
 	return items, rows.Err()
 }
 
+func (e *autofeeEngine) loadChannelRankingSnapshots(ctx context.Context) (map[string]autofeeRankingSnapshot, error) {
+	items := map[string]autofeeRankingSnapshot{}
+	if e == nil || e.svc == nil || e.svc.db == nil {
+		return items, nil
+	}
+	rows, err := e.svc.db.Query(ctx, `
+select channel_point, score, state, trend_direction, trend_delta, profit_fee_7d_sat, local_balance_pct
+from channel_rankings
+`)
+	if err != nil {
+		return items, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var point string
+		var snap autofeeRankingSnapshot
+		var state sql.NullString
+		var trend sql.NullString
+		if err := rows.Scan(&point, &snap.Score, &state, &trend, &snap.TrendDelta, &snap.ProfitFee7dSat, &snap.LocalBalancePct); err != nil {
+			return items, err
+		}
+		point = normalizeChannelPointKey(point)
+		if point == "" {
+			continue
+		}
+		if state.Valid {
+			snap.State = strings.TrimSpace(strings.ToLower(state.String))
+		}
+		if trend.Valid {
+			snap.TrendDirection = strings.TrimSpace(strings.ToLower(trend.String))
+		}
+		items[point] = snap
+	}
+	return items, rows.Err()
+}
+
 func (e *autofeeEngine) persistState(ctx context.Context, st *autofeeChannelState) {
 	if st == nil {
 		return
@@ -4553,6 +4621,122 @@ type decision struct {
 	Apply                   bool
 	Error                   error
 	State                   *autofeeChannelState
+}
+
+func rescueCandidate(r autofeeRankingSnapshot, localPpm int, target int, outPpm7d int, revShare float64, topRevenue bool) bool {
+	if topRevenue {
+		return false
+	}
+	stateWeak := r.State == "close" || (r.State == "monitor" && r.TrendDirection == "worsening")
+	if !stateWeak || r.ProfitFee7dSat > 0 || r.Score > rescueScoreMax || revShare > rescueRevShareMax {
+		return false
+	}
+	if localPpm < int(math.Ceil(float64(maxInt(target, 1))*(1.0+rescueEnterGapFrac))) {
+		return false
+	}
+	if outPpm7d > 0 && localPpm < int(math.Ceil(float64(outPpm7d)*rescueOutrateEnterMult)) {
+		return false
+	}
+	return true
+}
+
+func rescueExitReady(es explorerState, now time.Time) bool {
+	if !es.RescueActive || es.RescueStartedTs <= 0 {
+		return false
+	}
+	activeHours := now.Sub(time.Unix(es.RescueStartedTs, 0).UTC()).Hours()
+	return es.RescueRounds >= rescueMinRounds || activeHours >= rescueMinActiveHours
+}
+
+func rescueRecovered(r autofeeRankingSnapshot, localPpm int, target int, outPpm7d int, revShare float64, topRevenue bool) bool {
+	if topRevenue || revShare > rescueRevShareMax {
+		return true
+	}
+	if r.ProfitFee7dSat > 0 && (r.State == "expand" || r.Score > rescueScoreMax || r.TrendDirection != "worsening") {
+		return true
+	}
+	exitTarget := int(math.Ceil(float64(maxInt(target, 1)) * (1.0 + rescueExitGapFrac)))
+	exitFloor := exitTarget
+	if outPpm7d > 0 {
+		outExit := int(math.Ceil(float64(outPpm7d) * rescueOutrateExitMult))
+		if outExit > exitFloor {
+			exitFloor = outExit
+		}
+	}
+	return localPpm <= exitFloor
+}
+
+func manageRescueState(st *autofeeChannelState, now time.Time, balancedMode bool, ranking autofeeRankingSnapshot, hasRanking bool, localPpm int, target int, outPpm7d int, revShare float64, topRevenue bool) (bool, []string) {
+	if st == nil {
+		return false, nil
+	}
+	es := &st.ExplorerState
+	if !balancedMode {
+		if es.RescueActive {
+			es.RescueActive = false
+			es.RescueRounds = 0
+			es.RescueStartedTs = 0
+			es.RescueLastExitTs = now.Unix()
+		}
+		return false, nil
+	}
+	if !hasRanking {
+		if es.RescueActive {
+			es.RescueRounds++
+			return true, []string{"rescue", fmt.Sprintf("rescue-r%d", maxInt(1, es.RescueRounds))}
+		}
+		return false, nil
+	}
+	candidate := hasRanking && rescueCandidate(ranking, localPpm, target, outPpm7d, revShare, topRevenue)
+	if es.RescueActive {
+		es.RescueRounds++
+		activeHours := 0.0
+		if es.RescueStartedTs > 0 {
+			activeHours = now.Sub(time.Unix(es.RescueStartedTs, 0).UTC()).Hours()
+		}
+		if activeHours >= rescueMaxActiveHours {
+			es.RescueActive = false
+			es.RescueLastExitTs = now.Unix()
+			es.RescueStartedTs = 0
+			es.RescueRounds = 0
+			return false, []string{"rescue-expired"}
+		}
+		if rescueExitReady(*es, now) && (!candidate || rescueRecovered(ranking, localPpm, target, outPpm7d, revShare, topRevenue)) {
+			es.RescueActive = false
+			es.RescueLastExitTs = now.Unix()
+			es.RescueStartedTs = 0
+			es.RescueRounds = 0
+			return false, []string{"rescue-exit"}
+		}
+		return true, []string{"rescue", fmt.Sprintf("rescue-r%d", maxInt(1, es.RescueRounds))}
+	}
+	if !candidate {
+		return false, nil
+	}
+	if es.RescueLastExitTs > 0 && now.Sub(time.Unix(es.RescueLastExitTs, 0).UTC()).Hours() < rescueReentryCooldownHours {
+		return false, nil
+	}
+	es.RescueActive = true
+	es.RescueStartedTs = now.Unix()
+	es.RescueRounds = 1
+	return true, []string{"rescue", "rescue-enter", "rescue-r1"}
+}
+
+func applyRescueFloorRelax(active bool, localPpm int, target int, floor int, floorSrc string, outPpm7d int, baseCostPpm int) (int, string, []string) {
+	if !active || target >= localPpm || floor <= target {
+		return floor, floorSrc, nil
+	}
+	relaxed := target
+	if outPpm7d > 0 {
+		relaxed = maxInt(relaxed, outPpm7d)
+	}
+	if baseCostPpm > 0 {
+		relaxed = maxInt(relaxed, int(math.Ceil(float64(baseCostPpm)*rescueSoftRebalFloorMult)))
+	}
+	if relaxed >= floor {
+		return floor, floorSrc, nil
+	}
+	return relaxed, "rescue", []string{"rescue-floor-relax"}
 }
 
 func (d *decision) withError(err error) *decision {
@@ -5869,6 +6053,23 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			tags = append(tags, "no-down-neg-margin")
 		}
 	}
+	ranking, hasRanking := e.ranking[normalizeChannelPointKey(ch.ChannelPoint)]
+	topRevenue := revShare >= 0.20 && outRatio < 0.30
+	rescueActive, rescueTags := manageRescueState(
+		st,
+		e.now,
+		!marketRefillMode,
+		ranking,
+		hasRanking,
+		localPpm,
+		target,
+		outPpm7d,
+		revShare,
+		topRevenue,
+	)
+	if len(rescueTags) > 0 {
+		tags = append(tags, rescueTags...)
+	}
 	capFrac := e.profile.StepCap
 	minStep := 5
 	if newInboundBootstrap && bootstrapMinStepUp > minStep {
@@ -5923,7 +6124,12 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 				lockSkipTag = "lock-skip-sink-profit"
 				capFrac = math.Max(capFrac, e.profile.StepCap)
 			} else if target < localPpm && !discoveryHit {
-				if allowSoften {
+				if rescueActive {
+					lockSkipTag = "rescue-global-relax"
+					if outPpm7d > 0 && target < outPpm7d {
+						target = outPpm7d
+					}
+				} else if allowSoften {
 					if outPpm7d > 0 {
 						pegFloor := int(math.Round(float64(outPpm7d) * softenMaxDropToPegFrac))
 						if target < pegFloor {
@@ -6131,6 +6337,11 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		floor = localPpm
 		floorSrc = "no-signal"
 		tags = append(tags, "no-signal-floor-relax")
+	}
+	if relaxedFloor, relaxedSrc, rescueFloorTags := applyRescueFloorRelax(rescueActive, localPpm, target, floor, floorSrc, outPpm7d, baseCostPpm); len(rescueFloorTags) > 0 {
+		floor = relaxedFloor
+		floorSrc = relaxedSrc
+		tags = append(tags, rescueFloorTags...)
 	}
 	seedSoftCeilActive := seed > 0 &&
 		noFlow1d &&
@@ -7442,6 +7653,20 @@ func formatAutofeeTags(d *decision) string {
 			add("🧭step-up")
 		case t == "drained-explorer-cap":
 			add("🧭cap")
+		case t == "rescue":
+			add("🛟rescue")
+		case t == "rescue-enter":
+			add("🛟enter")
+		case t == "rescue-exit":
+			add("🛟exit")
+		case t == "rescue-expired":
+			add("🛟expired")
+		case strings.HasPrefix(t, "rescue-r"):
+			add("🛟" + strings.TrimPrefix(t, "rescue-"))
+		case t == "rescue-floor-relax":
+			add("🛟floor-relax")
+		case t == "rescue-global-relax":
+			add("🛟global-relax")
 		case t == "market-refill-inbound":
 			add("🌊market-refill")
 		case t == "market-refill-up":

@@ -945,6 +945,53 @@ func TestApplySeedSignalCapsAggressive(t *testing.T) {
 	}
 }
 
+func TestManageRescueStateEnterAndExit(t *testing.T) {
+	st := &autofeeChannelState{}
+	now := time.Unix(1_700_000_000, 0).UTC()
+	ranking := autofeeRankingSnapshot{
+		Score:          19,
+		State:          "close",
+		TrendDirection: "worsening",
+		ProfitFee7dSat: -229,
+	}
+
+	active, tags := manageRescueState(st, now, true, ranking, true, 1263, 640, 1100, 0.003, false)
+	if !active {
+		t.Fatalf("expected rescue to activate on weak close-state channel")
+	}
+	if !containsTag(tags, "rescue-enter") || !st.ExplorerState.RescueActive || st.ExplorerState.RescueRounds != 1 {
+		t.Fatalf("unexpected rescue entry state: tags=%+v state=%+v", tags, st.ExplorerState)
+	}
+
+	st.ExplorerState.RescueRounds = rescueMinRounds
+	recovered := autofeeRankingSnapshot{
+		Score:          72,
+		State:          "expand",
+		TrendDirection: "stable",
+		ProfitFee7dSat: 1500,
+	}
+	active, tags = manageRescueState(st, now.Add(13*time.Hour), true, recovered, true, 740, 700, 700, 0.001, false)
+	if active {
+		t.Fatalf("expected rescue to exit after recovery")
+	}
+	if !containsTag(tags, "rescue-exit") || st.ExplorerState.RescueActive {
+		t.Fatalf("unexpected rescue exit state: tags=%+v state=%+v", tags, st.ExplorerState)
+	}
+}
+
+func TestApplyRescueFloorRelax(t *testing.T) {
+	floor, src, tags := applyRescueFloorRelax(true, 1263, 640, 1263, "peg", 1202, 869)
+	if floor != 1202 {
+		t.Fatalf("expected rescue floor relax to move peg floor closer to outrate, got %d want 1202", floor)
+	}
+	if src != "rescue" {
+		t.Fatalf("expected rescue floor source, got %q", src)
+	}
+	if !containsTag(tags, "rescue-floor-relax") {
+		t.Fatalf("expected rescue floor relax tag, got %+v", tags)
+	}
+}
+
 func TestMarketRefillStepCapFrac(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
 

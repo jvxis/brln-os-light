@@ -5213,7 +5213,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		st.SuperSourceBadSince = badSince
 	}
 
-	seed, _, seedTags := e.seedForChannel(ch.RemotePubkey, st)
+	seed, _, peerMarketSkew, seedTags := e.seedForChannel(ch.RemotePubkey, st)
 	if seed <= 0 {
 		seed = 200
 	}
@@ -6419,6 +6419,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			recentForwards1d,
 			noFlow1d,
 			weakRecentFlow,
+			peerMarketSkew,
 			baseCostPpm,
 			appliedPpm,
 			inboundDiscountMaxRatio,
@@ -6713,7 +6714,7 @@ func capWeakDemandFloorUpForDrainedExplorer(profile autofeeProfile, active bool,
 	return finalPpm, nil
 }
 
-func (e *autofeeEngine) seedForChannel(pubkey string, st *autofeeChannelState) (float64, float64, []string) {
+func (e *autofeeEngine) seedForChannel(pubkey string, st *autofeeChannelState) (float64, float64, float64, []string) {
 	tags := []string{}
 	if e.cfg.AmbossEnabled {
 		token, err := e.fetchAmbossToken(context.Background())
@@ -6722,7 +6723,7 @@ func (e *autofeeEngine) seedForChannel(pubkey string, st *autofeeChannelState) (
 		} else if token == "" {
 			tags = append(tags, "seed:amboss-missing")
 		} else if pubkey != "" {
-			seed, seedP95, seedTags, err := e.fetchAmbossSeed(pubkey, token)
+			seed, seedP95, peerMarketSkew, seedTags, err := e.fetchAmbossSeed(pubkey, token)
 			if err != nil {
 				tags = append(tags, "seed:amboss-error")
 			} else if seed > 0 {
@@ -6735,7 +6736,7 @@ func (e *autofeeEngine) seedForChannel(pubkey string, st *autofeeChannelState) (
 						tags = append(tags, "seed:guard")
 					}
 				}
-				return seed, seedP95, tags
+				return seed, seedP95, peerMarketSkew, tags
 			} else {
 				tags = append(tags, "seed:amboss-empty")
 			}
@@ -6743,12 +6744,12 @@ func (e *autofeeEngine) seedForChannel(pubkey string, st *autofeeChannelState) (
 	}
 
 	if st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 21*24*time.Hour {
-		return float64(st.LastOutrate), 0, append(tags, "seed:outrate")
+		return float64(st.LastOutrate), 0, 0, append(tags, "seed:outrate")
 	}
 	if st.LastSeed > 0 {
-		return float64(st.LastSeed), 0, append(tags, "seed:mem")
+		return float64(st.LastSeed), 0, 0, append(tags, "seed:mem")
 	}
-	return 200.0, 0, append(tags, "seed:default")
+	return 200.0, 0, 0, append(tags, "seed:default")
 }
 
 func (e *autofeeEngine) fetchAmbossToken(ctx context.Context) (string, error) {
@@ -6771,17 +6772,18 @@ type ambossSeriesResp struct {
 	} `json:"data"`
 }
 
-func (e *autofeeEngine) fetchAmbossSeed(pubkey string, token string) (float64, float64, []string, error) {
+func (e *autofeeEngine) fetchAmbossSeed(pubkey string, token string) (float64, float64, float64, []string, error) {
 	vals, err := fetchAmbossSeries(pubkey, token, e.cfg.LookbackDays, "incoming_fee_rate_metrics", "weighted_corrected_mean")
 	if err != nil {
-		return 0, 0, nil, err
+		return 0, 0, 0, nil, err
 	}
 	if len(vals) == 0 {
-		return 0, 0, nil, nil
+		return 0, 0, 0, nil, nil
 	}
 	p65 := percentile(vals, 0.65)
 	p95 := percentile(vals, 0.95)
 	seed := p65
+	peerMarketSkew := 0.0
 	tags := []string{}
 
 	incMedian, _ := ambossAvgSeries(pubkey, token, e.cfg.LookbackDays, "incoming_fee_rate_metrics", "median")
@@ -6804,8 +6806,8 @@ func (e *autofeeEngine) fetchAmbossSeed(pubkey string, token string) (float64, f
 	incWcorr, _ := ambossAvgSeries(pubkey, token, e.cfg.LookbackDays, "incoming_fee_rate_metrics", "weighted_corrected_mean")
 	outWcorr, _ := ambossAvgSeries(pubkey, token, e.cfg.LookbackDays, "outgoing_fee_rate_metrics", "weighted_corrected_mean")
 	if incWcorr > 0 && outWcorr > 0 {
-		ratio := outWcorr / incWcorr
-		f := 1.0 + 0.20*(ratio-1.0)
+		peerMarketSkew = outWcorr / incWcorr
+		f := 1.0 + 0.20*(peerMarketSkew-1.0)
 		if f < 0.80 {
 			f = 0.80
 		} else if f > 1.50 {
@@ -6826,7 +6828,7 @@ func (e *autofeeEngine) fetchAmbossSeed(pubkey string, token string) (float64, f
 		tags = append(tags, "seed:maxppm")
 	}
 	tags = append(tags, "seed:amboss")
-	return seed, p95, tags, nil
+	return seed, p95, peerMarketSkew, tags, nil
 }
 
 func ambossAvgSeries(pubkey string, token string, lookbackDays int, metric string, submetric string) (float64, error) {
@@ -7162,7 +7164,30 @@ func computeInboundDiscount(enabled bool, classLabel string, outRatio float64, f
 	return minInt(gap, minInt(maxDiscount, maxDiscountByRetainedSpread))
 }
 
-func computeMarketRefillInboundDiscount(enabled bool, outRatio float64, recentForwards1d int, noFlow1d bool, weakRecentFlow bool, baseCostPpm int, appliedPpm int, maxRatio float64, retainedSpreadFrac float64, profile autofeeProfile) (int, []string) {
+func adjustMarketRefillInboundTargetFracByPeerSkew(targetFrac float64, peerMarketSkew float64) (float64, []string) {
+	if targetFrac <= 0 || peerMarketSkew < 3.0 {
+		return targetFrac, nil
+	}
+	shrink := 1.0 + 0.20*(math.Log(peerMarketSkew)/math.Log(2))
+	shrink = clampFloat(shrink, 1.0, 2.5)
+	adjusted := targetFrac / shrink
+	minTargetFrac := math.Max(0.03, targetFrac*0.35)
+	if adjusted < minTargetFrac {
+		adjusted = minTargetFrac
+	}
+	tags := []string{"market-refill-skew"}
+	switch {
+	case peerMarketSkew >= 20:
+		tags = append(tags, "market-refill-skew-high")
+	case peerMarketSkew >= 8:
+		tags = append(tags, "market-refill-skew-med")
+	default:
+		tags = append(tags, "market-refill-skew-low")
+	}
+	return adjusted, tags
+}
+
+func computeMarketRefillInboundDiscount(enabled bool, outRatio float64, recentForwards1d int, noFlow1d bool, weakRecentFlow bool, peerMarketSkew float64, baseCostPpm int, appliedPpm int, maxRatio float64, retainedSpreadFrac float64, profile autofeeProfile) (int, []string) {
 	if !enabled || appliedPpm <= 0 {
 		return 0, nil
 	}
@@ -7215,6 +7240,10 @@ func computeMarketRefillInboundDiscount(enabled bool, outRatio float64, recentFo
 		midTop := math.Max(exploratoryReach+0.20, 0.50)
 		blend := (outRatio - exploratoryReach) / math.Max(0.01, midTop-exploratoryReach)
 		targetFrac = targetFrac + (balancedTargetFrac-targetFrac)*math.Max(0.0, math.Min(1.0, blend))
+	}
+	if adjustedFrac, skewTags := adjustMarketRefillInboundTargetFracByPeerSkew(targetFrac, peerMarketSkew); len(skewTags) > 0 {
+		targetFrac = adjustedFrac
+		tags = append(tags, skewTags...)
 	}
 	anchor := int(math.Ceil(float64(baseCostPpm) * 1.002))
 	maxDiscount := int(math.Ceil(float64(appliedPpm) * maxRatio))

@@ -809,7 +809,7 @@ func TestAutofeeConfigWithProfileDefaults(t *testing.T) {
 
 func TestComputeMarketRefillInboundDiscount(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
-	discount, tags := computeMarketRefillInboundDiscount(true, 0.08, 3, false, false, 200, 1000, 0.95, 0.10, profile)
+	discount, tags := computeMarketRefillInboundDiscount(true, 0.08, 3, false, false, 0, 200, 1000, 0.95, 0.10, profile)
 	if discount <= 0 {
 		t.Fatalf("expected strategic market refill inbound discount")
 	}
@@ -817,7 +817,7 @@ func TestComputeMarketRefillInboundDiscount(t *testing.T) {
 		t.Fatalf("unexpected strategic tags: %+v", tags)
 	}
 
-	exploratoryDiscount, exploratoryTags := computeMarketRefillInboundDiscount(true, 0.22, 0, true, true, 200, 1000, 0.95, 0.10, profile)
+	exploratoryDiscount, exploratoryTags := computeMarketRefillInboundDiscount(true, 0.22, 0, true, true, 0, 200, 1000, 0.95, 0.10, profile)
 	if exploratoryDiscount <= 0 {
 		t.Fatalf("expected exploratory market refill inbound discount")
 	}
@@ -825,7 +825,7 @@ func TestComputeMarketRefillInboundDiscount(t *testing.T) {
 		t.Fatalf("unexpected exploratory tags: %+v", exploratoryTags)
 	}
 
-	fullSideDiscount, fullSideTags := computeMarketRefillInboundDiscount(true, 0.78, 0, false, false, 200, 1000, 0.95, 0.10, profile)
+	fullSideDiscount, fullSideTags := computeMarketRefillInboundDiscount(true, 0.78, 0, false, false, 0, 200, 1000, 0.95, 0.10, profile)
 	if fullSideDiscount <= 0 {
 		t.Fatalf("expected market refill mode to price full-side channels too")
 	}
@@ -837,12 +837,24 @@ func TestComputeMarketRefillInboundDiscount(t *testing.T) {
 func TestComputeMarketRefillInboundDiscountAggressiveFullExploreStaysCloseToOutbound(t *testing.T) {
 	profile := autofeeProfiles["aggressive"]
 
-	discount, tags := computeMarketRefillInboundDiscount(true, 0.78, 0, true, false, 110, 2490, 0.95, 0.08, profile)
+	discount, tags := computeMarketRefillInboundDiscount(true, 0.78, 0, true, false, 0, 110, 2490, 0.95, 0.08, profile)
 	if discount != 2179 {
 		t.Fatalf("expected aggressive full/explore inbound discount to stay close to outbound while respecting cost/spread guards, got %d want 2179", discount)
 	}
 	if len(tags) < 2 || tags[0] != "market-refill-inbound" || tags[1] != "market-refill-explore" {
 		t.Fatalf("unexpected aggressive full/explore tags: %+v", tags)
+	}
+}
+
+func TestAdjustMarketRefillInboundTargetFracByPeerSkew(t *testing.T) {
+	baseFrac := 0.20
+
+	adjusted, tags := adjustMarketRefillInboundTargetFracByPeerSkew(baseFrac, 15.0)
+	if adjusted >= baseFrac {
+		t.Fatalf("expected peer skew to reduce net inbound target fraction, got base=%.3f adjusted=%.3f", baseFrac, adjusted)
+	}
+	if len(tags) < 2 || tags[0] != "market-refill-skew" || tags[1] != "market-refill-skew-med" {
+		t.Fatalf("unexpected skew tags: %+v", tags)
 	}
 }
 

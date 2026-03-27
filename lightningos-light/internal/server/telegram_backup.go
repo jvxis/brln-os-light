@@ -1,389 +1,389 @@
 package server
 
 import (
-  "bytes"
-  "context"
-  "errors"
-  "fmt"
-  "io"
-  "mime/multipart"
-  "net/http"
-  "os"
-  "strings"
-  "time"
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"os"
+	"strings"
+	"time"
 
-  "lightningos-light/internal/lndclient"
-  "lightningos-light/lnrpc"
+	"lightningos-light/internal/lndclient"
+	"lightningos-light/lnrpc"
 )
 
 const (
-  telegramBotTokenKey = "NOTIFICATIONS_TG_BOT_TOKEN"
-  telegramChatIDKey = "NOTIFICATIONS_TG_CHAT_ID"
+	telegramBotTokenKey = "NOTIFICATIONS_TG_BOT_TOKEN"
+	telegramChatIDKey   = "NOTIFICATIONS_TG_CHAT_ID"
 )
 
 type telegramBackupConfig struct {
-  BotToken string
-  ChatID string
+	BotToken string
+	ChatID   string
 }
 
 func (cfg telegramBackupConfig) configured() bool {
-  return cfg.BotToken != "" && cfg.ChatID != ""
+	return cfg.BotToken != "" && cfg.ChatID != ""
 }
 
 func readTelegramBackupConfig() telegramBackupConfig {
-  token := strings.TrimSpace(os.Getenv(telegramBotTokenKey))
-  chatID := strings.TrimSpace(os.Getenv(telegramChatIDKey))
-  if token == "" {
-    if stored, err := readEnvFileValue(notificationsSecretsPath, telegramBotTokenKey); err == nil {
-      token = strings.TrimSpace(stored)
-      if token != "" {
-        _ = os.Setenv(telegramBotTokenKey, token)
-      }
-    }
-  }
-  if chatID == "" {
-    if stored, err := readEnvFileValue(notificationsSecretsPath, telegramChatIDKey); err == nil {
-      chatID = strings.TrimSpace(stored)
-      if chatID != "" {
-        _ = os.Setenv(telegramChatIDKey, chatID)
-      }
-    }
-  }
-  return telegramBackupConfig{BotToken: token, ChatID: chatID}
+	token := strings.TrimSpace(os.Getenv(telegramBotTokenKey))
+	chatID := strings.TrimSpace(os.Getenv(telegramChatIDKey))
+	if token == "" {
+		if stored, err := readEnvFileValue(notificationsSecretsPath, telegramBotTokenKey); err == nil {
+			token = strings.TrimSpace(stored)
+			if token != "" {
+				_ = os.Setenv(telegramBotTokenKey, token)
+			}
+		}
+	}
+	if chatID == "" {
+		if stored, err := readEnvFileValue(notificationsSecretsPath, telegramChatIDKey); err == nil {
+			chatID = strings.TrimSpace(stored)
+			if chatID != "" {
+				_ = os.Setenv(telegramChatIDKey, chatID)
+			}
+		}
+	}
+	return telegramBackupConfig{BotToken: token, ChatID: chatID}
 }
 
 func storeTelegramBackupConfig(token, chatID string) error {
-  if err := ensureSecretsDir(); err != nil {
-    return err
-  }
-  if err := writeEnvFileValue(notificationsSecretsPath, telegramBotTokenKey, token); err != nil {
-    return err
-  }
-  if err := writeEnvFileValue(notificationsSecretsPath, telegramChatIDKey, chatID); err != nil {
-    return err
-  }
-  _ = os.Setenv(telegramBotTokenKey, token)
-  _ = os.Setenv(telegramChatIDKey, chatID)
-  return nil
+	if err := ensureSecretsDir(); err != nil {
+		return err
+	}
+	if err := writeEnvFileValues(notificationsSecretsPath, map[string]string{
+		telegramBotTokenKey: token,
+		telegramChatIDKey:   chatID,
+	}); err != nil {
+		return err
+	}
+	_ = os.Setenv(telegramBotTokenKey, token)
+	_ = os.Setenv(telegramChatIDKey, chatID)
+	return nil
 }
 
 func (s *Server) handleTelegramBackupGet(w http.ResponseWriter, r *http.Request) {
-  cfg := readTelegramBackupConfig()
-  writeJSON(w, http.StatusOK, map[string]any{
-    "chat_id": cfg.ChatID,
-    "bot_token_set": cfg.BotToken != "",
-  })
+	cfg := readTelegramBackupConfig()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"chat_id":       cfg.ChatID,
+		"bot_token_set": cfg.BotToken != "",
+	})
 }
 
 func (s *Server) handleTelegramBackupPost(w http.ResponseWriter, r *http.Request) {
-  var req struct {
-    BotToken string `json:"bot_token"`
-    ChatID string `json:"chat_id"`
-  }
-  if err := readJSON(r, &req); err != nil {
-    writeError(w, http.StatusBadRequest, "invalid json")
-    return
-  }
+	var req struct {
+		BotToken string `json:"bot_token"`
+		ChatID   string `json:"chat_id"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
 
-  token := strings.TrimSpace(req.BotToken)
-  chatID := strings.TrimSpace(req.ChatID)
+	token := strings.TrimSpace(req.BotToken)
+	chatID := strings.TrimSpace(req.ChatID)
 
-  if token == "" && chatID == "" {
-    if err := storeTelegramBackupConfig("", ""); err != nil {
-      writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to store telegram config: %v", err))
-      return
-    }
-    writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-    return
-  }
+	if token == "" && chatID == "" {
+		if err := storeTelegramBackupConfig("", ""); err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to store telegram config: %v", err))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
 
-  existing := readTelegramBackupConfig()
-  if token == "" {
-    if existing.BotToken == "" {
-      writeError(w, http.StatusBadRequest, "bot_token required")
-      return
-    }
-    token = existing.BotToken
-  }
-  if chatID == "" {
-    if existing.ChatID == "" {
-      writeError(w, http.StatusBadRequest, "chat_id required")
-      return
-    }
-    chatID = existing.ChatID
-  }
+	existing := readTelegramBackupConfig()
+	if token == "" {
+		if existing.BotToken == "" {
+			writeError(w, http.StatusBadRequest, "bot_token required")
+			return
+		}
+		token = existing.BotToken
+	}
+	if chatID == "" {
+		if existing.ChatID == "" {
+			writeError(w, http.StatusBadRequest, "chat_id required")
+			return
+		}
+		chatID = existing.ChatID
+	}
 
-  if err := storeTelegramBackupConfig(token, chatID); err != nil {
-    writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to store telegram config: %v", err))
-    return
-  }
+	if err := storeTelegramBackupConfig(token, chatID); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to store telegram config: %v", err))
+		return
+	}
 
-  writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) handleTelegramBackupTest(w http.ResponseWriter, r *http.Request) {
-  cfg := readTelegramBackupConfig()
-  if !cfg.configured() {
-    writeError(w, http.StatusBadRequest, "telegram backup not configured")
-    return
-  }
+	cfg := readTelegramBackupConfig()
+	if !cfg.configured() {
+		writeError(w, http.StatusBadRequest, "telegram backup not configured")
+		return
+	}
 
-  ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
-  defer cancel()
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
 
-  data, err := s.lnd.ExportAllChannelBackups(ctx)
-  if err != nil {
-    msg := lndRPCErrorMessage(err)
-    if msg == "" {
-      msg = "failed to export channel backup"
-    }
-    writeError(w, http.StatusInternalServerError, msg)
-    return
-  }
+	data, err := s.lnd.ExportAllChannelBackups(ctx)
+	if err != nil {
+		msg := lndRPCErrorMessage(err)
+		if msg == "" {
+			msg = "failed to export channel backup"
+		}
+		writeError(w, http.StatusInternalServerError, msg)
+		return
+	}
 
-  nodeAlias := getNodeAlias(ctx, s.lnd)
-  filename, caption := telegramBackupPayload("test", "", nodeAlias, "", time.Now().UTC())
-  if err := sendTelegramDocument(ctx, cfg.BotToken, cfg.ChatID, filename, data, caption); err != nil {
-    writeError(w, http.StatusInternalServerError, err.Error())
-    return
-  }
+	nodeAlias := getNodeAlias(ctx, s.lnd)
+	filename, caption := telegramBackupPayload("test", "", nodeAlias, "", time.Now().UTC())
+	if err := sendTelegramDocument(ctx, cfg.BotToken, cfg.ChatID, filename, data, caption); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
-  writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (n *Notifier) maybeSendTelegramBackup(update *lnrpc.ChannelEventUpdate) {
-  if n == nil || n.lnd == nil || update == nil {
-    return
-  }
+	if n == nil || n.lnd == nil || update == nil {
+		return
+	}
 
-  reason := ""
-  channelPoint := ""
-  peerAlias := ""
-  switch update.Type {
-  case lnrpc.ChannelEventUpdate_OPEN_CHANNEL:
-    reason = "open"
-    if ch := update.GetOpenChannel(); ch != nil {
-      channelPoint = ch.ChannelPoint
-      peerAlias = strings.TrimSpace(ch.PeerAlias)
-      if peerAlias == "" && strings.TrimSpace(ch.RemotePubkey) != "" {
-        peerAlias = n.lookupNodeAlias(ch.RemotePubkey)
-      }
-    }
-  case lnrpc.ChannelEventUpdate_CLOSED_CHANNEL:
-    reason = "close"
-    if ch := update.GetClosedChannel(); ch != nil {
-      channelPoint = ch.ChannelPoint
-      if strings.TrimSpace(ch.RemotePubkey) != "" {
-        peerAlias = n.lookupNodeAlias(ch.RemotePubkey)
-      }
-    }
-  case lnrpc.ChannelEventUpdate_PENDING_OPEN_CHANNEL:
-    reason = "opening"
-    if ch := update.GetPendingOpenChannel(); ch != nil {
-      txid := txidFromBytes(ch.Txid)
-      if txid != "" {
-        channelPoint = fmt.Sprintf("%s:%d", txid, ch.OutputIndex)
-      }
-      if info := n.lookupPendingChannel(channelPoint, txid); info != nil {
-        peerAlias = strings.TrimSpace(info.PeerAlias)
-        if peerAlias == "" && strings.TrimSpace(info.RemotePubkey) != "" {
-          peerAlias = n.lookupNodeAlias(info.RemotePubkey)
-        }
-      }
-    }
-  default:
-    return
-  }
+	reason := ""
+	channelPoint := ""
+	peerAlias := ""
+	switch update.Type {
+	case lnrpc.ChannelEventUpdate_OPEN_CHANNEL:
+		reason = "open"
+		if ch := update.GetOpenChannel(); ch != nil {
+			channelPoint = ch.ChannelPoint
+			peerAlias = strings.TrimSpace(ch.PeerAlias)
+			if peerAlias == "" && strings.TrimSpace(ch.RemotePubkey) != "" {
+				peerAlias = n.lookupNodeAlias(ch.RemotePubkey)
+			}
+		}
+	case lnrpc.ChannelEventUpdate_CLOSED_CHANNEL:
+		reason = "close"
+		if ch := update.GetClosedChannel(); ch != nil {
+			channelPoint = ch.ChannelPoint
+			if strings.TrimSpace(ch.RemotePubkey) != "" {
+				peerAlias = n.lookupNodeAlias(ch.RemotePubkey)
+			}
+		}
+	case lnrpc.ChannelEventUpdate_PENDING_OPEN_CHANNEL:
+		reason = "opening"
+		if ch := update.GetPendingOpenChannel(); ch != nil {
+			txid := txidFromBytes(ch.Txid)
+			if txid != "" {
+				channelPoint = fmt.Sprintf("%s:%d", txid, ch.OutputIndex)
+			}
+			if info := n.lookupPendingChannel(channelPoint, txid); info != nil {
+				peerAlias = strings.TrimSpace(info.PeerAlias)
+				if peerAlias == "" && strings.TrimSpace(info.RemotePubkey) != "" {
+					peerAlias = n.lookupNodeAlias(info.RemotePubkey)
+				}
+			}
+		}
+	default:
+		return
+	}
 
-  n.triggerTelegramBackup(reason, channelPoint, peerAlias)
+	n.triggerTelegramBackup(reason, channelPoint, peerAlias)
 }
 
 func (n *Notifier) triggerTelegramBackup(reason, channelPoint, peerAlias string) {
-  if !n.telegramScbBackupEnabled() {
-    return
-  }
-  if !n.shouldSendTelegramBackup(reason, channelPoint) {
-    return
-  }
-  cfg := readTelegramBackupConfig()
-  if !cfg.configured() {
-    return
-  }
+	if !n.telegramScbBackupEnabled() {
+		return
+	}
+	if !n.shouldSendTelegramBackup(reason, channelPoint) {
+		return
+	}
+	cfg := readTelegramBackupConfig()
+	if !cfg.configured() {
+		return
+	}
 
-  go func() {
-    ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-    defer cancel()
-    if err := n.sendTelegramBackup(ctx, cfg, reason, channelPoint, peerAlias); err != nil {
-      n.logger.Printf("notifications: telegram backup failed: %v", err)
-    }
-  }()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := n.sendTelegramBackup(ctx, cfg, reason, channelPoint, peerAlias); err != nil {
+			n.logger.Printf("notifications: telegram backup failed: %v", err)
+		}
+	}()
 }
 
 func (n *Notifier) telegramScbBackupEnabled() bool {
-  if n == nil || n.db == nil {
-    return true
-  }
-  ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-  defer cancel()
-  settings, err := loadTelegramNotificationSettings(ctx, n.db)
-  if err != nil {
-    if n.logger != nil {
-      n.logger.Printf("notifications: failed to load telegram settings: %v", err)
-    }
-    return true
-  }
-  return settings.ScbBackupEnabled
+	if n == nil || n.db == nil {
+		return true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	settings, err := loadTelegramNotificationSettings(ctx, n.db)
+	if err != nil {
+		if n.logger != nil {
+			n.logger.Printf("notifications: failed to load telegram settings: %v", err)
+		}
+		return true
+	}
+	return settings.ScbBackupEnabled
 }
 
 func (n *Notifier) shouldSendTelegramBackup(reason, channelPoint string) bool {
-  if n == nil {
-    return false
-  }
-  if strings.TrimSpace(channelPoint) == "" {
-    return true
-  }
-  key := strings.TrimSpace(reason) + ":" + strings.TrimSpace(channelPoint)
-  n.backupMu.Lock()
-  defer n.backupMu.Unlock()
-  if _, ok := n.backupSent[key]; ok {
-    return false
-  }
-  n.backupSent[key] = time.Now().UTC()
-  return true
+	if n == nil {
+		return false
+	}
+	if strings.TrimSpace(channelPoint) == "" {
+		return true
+	}
+	key := strings.TrimSpace(reason) + ":" + strings.TrimSpace(channelPoint)
+	n.backupMu.Lock()
+	defer n.backupMu.Unlock()
+	if _, ok := n.backupSent[key]; ok {
+		return false
+	}
+	n.backupSent[key] = time.Now().UTC()
+	return true
 }
 
 func (n *Notifier) sendTelegramBackup(ctx context.Context, cfg telegramBackupConfig, reason, channelPoint, peerAlias string) error {
-  if !cfg.configured() {
-    return errors.New("telegram config missing")
-  }
-  data, err := n.lnd.ExportAllChannelBackups(ctx)
-  if err != nil {
-    return err
-  }
-  if len(data) == 0 {
-    return errors.New("empty channel backup")
-  }
+	if !cfg.configured() {
+		return errors.New("telegram config missing")
+	}
+	data, err := n.lnd.ExportAllChannelBackups(ctx)
+	if err != nil {
+		return err
+	}
+	if len(data) == 0 {
+		return errors.New("empty channel backup")
+	}
 
-  nodeAlias := getNodeAlias(ctx, n.lnd)
-  filename, caption := telegramBackupPayload(reason, channelPoint, nodeAlias, peerAlias, time.Now().UTC())
+	nodeAlias := getNodeAlias(ctx, n.lnd)
+	filename, caption := telegramBackupPayload(reason, channelPoint, nodeAlias, peerAlias, time.Now().UTC())
 
-  return sendTelegramDocument(ctx, cfg.BotToken, cfg.ChatID, filename, data, caption)
+	return sendTelegramDocument(ctx, cfg.BotToken, cfg.ChatID, filename, data, caption)
 }
 
 func getNodeAlias(ctx context.Context, lnd *lndclient.Client) string {
-  if lnd == nil {
-    return ""
-  }
-  infoCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-  defer cancel()
-  conn, err := lnd.DialLightning(infoCtx)
-  if err != nil {
-    return ""
-  }
-  defer conn.Close()
-  client := lnrpc.NewLightningClient(conn)
-  info, err := client.GetInfo(infoCtx, &lnrpc.GetInfoRequest{})
-  if err != nil || info == nil {
-    return ""
-  }
-  return strings.TrimSpace(info.Alias)
+	if lnd == nil {
+		return ""
+	}
+	infoCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	conn, err := lnd.DialLightning(infoCtx)
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	client := lnrpc.NewLightningClient(conn)
+	info, err := client.GetInfo(infoCtx, &lnrpc.GetInfoRequest{})
+	if err != nil || info == nil {
+		return ""
+	}
+	return strings.TrimSpace(info.Alias)
 }
 
 func telegramReasonEmoji(tag string) string {
-  switch tag {
-  case "opening":
-    return "🟡"
-  case "open":
-    return "🟢"
-  case "closing":
-    return "🟠"
-  case "close":
-    return "🔴"
-  case "onchain_receive_confirmed":
-    return "✅"
-  case "test":
-    return "🧪"
-  default:
-    return ""
-  }
+	switch tag {
+	case "opening":
+		return "🟡"
+	case "open":
+		return "🟢"
+	case "closing":
+		return "🟠"
+	case "close":
+		return "🔴"
+	case "onchain_receive_confirmed":
+		return "✅"
+	case "test":
+		return "🧪"
+	default:
+		return ""
+	}
 }
 
 func telegramBackupSubjectLabel(tag string) string {
-  if strings.HasPrefix(tag, "onchain_") {
-    return "tx"
-  }
-  return "channel"
+	if strings.HasPrefix(tag, "onchain_") {
+		return "tx"
+	}
+	return "channel"
 }
 
 func telegramBackupPayload(reason, channelPoint, nodeAlias, peerAlias string, when time.Time) (string, string) {
-  tag := strings.TrimSpace(reason)
-  if tag == "" {
-    tag = "update"
-  }
-  filename := fmt.Sprintf("scb-%s-%s.scb", tag, when.Format("20060102-150405"))
-  displayTag := tag
-  if emoji := telegramReasonEmoji(tag); emoji != "" {
-    displayTag = fmt.Sprintf("%s %s", emoji, tag)
-  }
-  caption := fmt.Sprintf("LightningOS SCB All Channels Backup - %s", when.Format("2006-01-02 15:04:05 UTC"))
-  if strings.TrimSpace(nodeAlias) != "" {
-    caption = fmt.Sprintf("%s - %s", caption, strings.TrimSpace(nodeAlias))
-  }
-  if strings.TrimSpace(peerAlias) != "" {
-    caption = fmt.Sprintf("%s - peer %s", caption, strings.TrimSpace(peerAlias))
-  }
-  caption = fmt.Sprintf("%s - (%s)", caption, displayTag)
-  if strings.TrimSpace(channelPoint) != "" {
-    caption = fmt.Sprintf("%s %s %s", caption, telegramBackupSubjectLabel(tag), strings.TrimSpace(channelPoint))
-  }
-  return filename, caption
+	tag := strings.TrimSpace(reason)
+	if tag == "" {
+		tag = "update"
+	}
+	filename := fmt.Sprintf("scb-%s-%s.scb", tag, when.Format("20060102-150405"))
+	displayTag := tag
+	if emoji := telegramReasonEmoji(tag); emoji != "" {
+		displayTag = fmt.Sprintf("%s %s", emoji, tag)
+	}
+	caption := fmt.Sprintf("LightningOS SCB All Channels Backup - %s", when.Format("2006-01-02 15:04:05 UTC"))
+	if strings.TrimSpace(nodeAlias) != "" {
+		caption = fmt.Sprintf("%s - %s", caption, strings.TrimSpace(nodeAlias))
+	}
+	if strings.TrimSpace(peerAlias) != "" {
+		caption = fmt.Sprintf("%s - peer %s", caption, strings.TrimSpace(peerAlias))
+	}
+	caption = fmt.Sprintf("%s - (%s)", caption, displayTag)
+	if strings.TrimSpace(channelPoint) != "" {
+		caption = fmt.Sprintf("%s %s %s", caption, telegramBackupSubjectLabel(tag), strings.TrimSpace(channelPoint))
+	}
+	return filename, caption
 }
 
 func sendTelegramDocument(ctx context.Context, token, chatID, filename string, data []byte, caption string) error {
-  if strings.TrimSpace(token) == "" || strings.TrimSpace(chatID) == "" {
-    return errors.New("telegram config missing")
-  }
-  if len(data) == 0 {
-    return errors.New("empty file")
-  }
+	if strings.TrimSpace(token) == "" || strings.TrimSpace(chatID) == "" {
+		return errors.New("telegram config missing")
+	}
+	if len(data) == 0 {
+		return errors.New("empty file")
+	}
 
-  var payload bytes.Buffer
-  writer := multipart.NewWriter(&payload)
-  if err := writer.WriteField("chat_id", chatID); err != nil {
-    return err
-  }
-  if strings.TrimSpace(caption) != "" {
-    if err := writer.WriteField("caption", caption); err != nil {
-      return err
-    }
-  }
+	var payload bytes.Buffer
+	writer := multipart.NewWriter(&payload)
+	if err := writer.WriteField("chat_id", chatID); err != nil {
+		return err
+	}
+	if strings.TrimSpace(caption) != "" {
+		if err := writer.WriteField("caption", caption); err != nil {
+			return err
+		}
+	}
 
-  part, err := writer.CreateFormFile("document", filename)
-  if err != nil {
-    return err
-  }
-  if _, err := part.Write(data); err != nil {
-    return err
-  }
-  if err := writer.Close(); err != nil {
-    return err
-  }
+	part, err := writer.CreateFormFile("document", filename)
+	if err != nil {
+		return err
+	}
+	if _, err := part.Write(data); err != nil {
+		return err
+	}
+	if err := writer.Close(); err != nil {
+		return err
+	}
 
-  endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/sendDocument", token)
-  req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &payload)
-  if err != nil {
-    return err
-  }
-  req.Header.Set("Content-Type", writer.FormDataContentType())
+	endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/sendDocument", token)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &payload)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-  resp, err := http.DefaultClient.Do(req)
-  if err != nil {
-    return err
-  }
-  defer resp.Body.Close()
-  if resp.StatusCode < 200 || resp.StatusCode > 299 {
-    body, _ := io.ReadAll(resp.Body)
-    return fmt.Errorf("telegram api status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-  }
-  return nil
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("telegram api status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
 }

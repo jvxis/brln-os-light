@@ -47,6 +47,8 @@ const (
 	paymentsPendingMax       = 200
 )
 
+var notificationsSecretsMu sync.RWMutex
+
 type Notification struct {
 	ID                int64     `json:"id"`
 	OccurredAt        time.Time `json:"occurred_at"`
@@ -265,6 +267,12 @@ func (n *Notifier) Unsubscribe(ch chan Notification) {
 }
 
 func readEnvFileValue(path, key string) (string, error) {
+	notificationsSecretsMu.RLock()
+	defer notificationsSecretsMu.RUnlock()
+	return readEnvFileValueLocked(path, key)
+}
+
+func readEnvFileValueLocked(path, key string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
@@ -281,6 +289,13 @@ func readEnvFileValue(path, key string) (string, error) {
 }
 
 func writeEnvFileValue(path, key, value string) error {
+	return writeEnvFileValues(path, map[string]string{key: value})
+}
+
+func writeEnvFileValues(path string, updates map[string]string) error {
+	notificationsSecretsMu.Lock()
+	defer notificationsSecretsMu.Unlock()
+
 	data, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -289,16 +304,29 @@ func writeEnvFileValue(path, key, value string) error {
 	if len(data) > 0 {
 		lines = strings.Split(string(data), "\n")
 	}
-	prefix := key + "="
-	updated := false
+
+	keys := make([]string, 0, len(updates))
+	for key := range updates {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	updated := make(map[string]bool, len(updates))
 	for i, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), prefix) {
-			lines[i] = fmt.Sprintf("%s=%s", key, value)
-			updated = true
+		trimmed := strings.TrimSpace(line)
+		for _, key := range keys {
+			prefix := key + "="
+			if strings.HasPrefix(trimmed, prefix) {
+				lines[i] = fmt.Sprintf("%s=%s", key, updates[key])
+				updated[key] = true
+				break
+			}
 		}
 	}
-	if !updated {
-		lines = append(lines, fmt.Sprintf("%s=%s", key, value))
+	for _, key := range keys {
+		if !updated[key] {
+			lines = append(lines, fmt.Sprintf("%s=%s", key, updates[key]))
+		}
 	}
 	output := strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"
 	return os.WriteFile(path, []byte(output), 0o660)

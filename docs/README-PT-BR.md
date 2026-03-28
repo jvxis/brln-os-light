@@ -385,10 +385,13 @@ O Autofee ajusta **outbound fees** por canal com esta prioridade:
 2. Manter movimento do node (evitar liquidez presa).
 3. Manter updates estaveis e explicaveis.
 
-Ele usa historico local de roteamento/rebalance (notificacoes no Postgres), seed opcional da Amboss, sinais HTLC e guardrails calibrados.
+Ele usa historico local de roteamento/rebalance (notificacoes no Postgres), seed opcional da Amboss, sinais HTLC, calibracao por tamanho/liquidez do node e guardrails explicaveis.
 
 Parametros da UI:
 - `Enable autofee`: liga/desliga global.
+- `Node operation mode`: `Balanced` ou `Market refill`.
+- `Balanced`: modo padrao. Mantem o pipeline normal do Autofee, continua respeitando sinais derivados de rebalance e preserva um snapshot da politica de fees do node quando voce sai desse modo.
+- `Market refill`: modo operacional do node. Desliga rebalance automatico e manual restart watch, usa pricing para atrair refill natural e restaura a politica anterior ao voltar para `Balanced`.
 - `Profile`: Conservative / Moderate / Aggressive.
 - `Lookback window (days)`: 5 a 21 dias (janela principal).
 - `Run interval (hours)`: minimo 1 hora.
@@ -407,12 +410,20 @@ Configuracoes de movimento (gaveta no card do Autofee):
 - `Discovery down cap override (%)`: cap extra de queda em cenarios de discovery. Maior = destrava e abaixa mais rapido.
 - `Stall relax gap trigger (%)`: gap minimo entre fee atual e alvo antes do stall-relax suavizar o piso. Menor = relaxa antes; maior = preserva o piso por mais tempo.
 - `Inbound discount max ratio (%)`: desconto inbound maximo como fracao da fee outbound aplicada. Maior = pricing inbound mais agressivo em canais tipo sink.
+- `Inbound discount reach out ratio (%)`: out ratio efetivo maximo ainda elegivel para discount inbound passivo. Maior = alcance maior.
+- `Inbound discount min retained spread (%)`: spread minimo que precisa sobrar acima da ancora de custo. Maior = mais protecao de lucro.
 - `Low-flow floor factor override (%)`: multiplicador aplicado ao piso quando o fluxo de saida esta baixo. Maior = mantem fees mais altas; menor = permite pisos mais baixos.
 - `Global lock soften min out ratio (%)`: out ratio minimo para o lock global por margem negativa poder suavizar. Menor = mais canais ficam elegiveis.
 - `Global lock soften max drop to peg (%)`: queda maxima permitida em direcao ao peg quando o lock global e suavizado. Menor = permite cortes mais profundos.
 - `HTLC min attempts 60m override`: minimo de tentativas HTLC para o canal ser classificado por comportamento HTLC. Menor = mais reacoes guiadas por HTLC.
 - `HTLC policy fail rate override (%)`: limite da taxa de falha policy para sinais HTLC. Menor = dispara `policy-hot` com mais facilidade.
 - `HTLC liquidity fail rate override (%)`: limite da taxa de falha de liquidez para sinais HTLC. Menor = dispara `liquidity-hot` com mais facilidade.
+
+Defaults de perfil e comportamento:
+- O frontend agora le os `profile_defaults` enviados pelo backend; os textos `Profile default` e o autofill ao trocar perfil nao dependem mais de tabela hardcoded.
+- `Conservative`: mais lento e mais protetor.
+- `Moderate`: baseline mais utilitario, com descidas mais rapidas, `step cap` maior e lock global mais flexivel.
+- `Aggressive`: janelas curtas, caps maiores e comportamento mais permissivo para `market_refill`.
 
 Pipeline de decisao (por canal):
 1. Monta referencias:
@@ -425,11 +436,27 @@ Pipeline de decisao (por canal):
 5. Monta pilha de floor (`rebal`, `rebal-sink`, `outrate`, `peg`, `revfloor`, `stagnation`, `no-signal`).
 6. Aplica step cap e cooldown, e decide `apply` ou `keep`.
 
+Diagrama do fluxo:
+- `docs/AUTOFEE_FLOW_DIAGRAM_PT_BR.md`
+
+Novidades importantes no modo `Balanced`:
+- `Cooldown up` dinamico por `outnorm`: canais efetivamente muito drenados conseguem reagir mais rapido sem remover o cooldown por completo.
+- `Drained explorer`: modo exploratorio dedicado a canais muito vazios e sem movimento, com pequenos passos de alta em vez de deixa-los presos em `0 ppm` ou micro-fees.
+- Guardrails do seed: quando existem sinais locais fortes de `out_ppm7d` e `rebal`, o seed da Amboss perde peso e passa a ser capado por perfil.
+- `Rescue`: estado temporario para canais estruturalmente fracos (`close` / `worsening`) que estao travados por `peg`, `floor-lock` ou `global-neg-lock` acima do que o sinal local justifica.
+
+Modo `Market refill`:
+- Usa o `target` do `Balanced` como referencia principal e aplica um premium controlado.
+- Desconsidera rebalance como driver principal de target/floor.
+- Mantem outbound mais alto e deriva o inbound discount a partir da outbound resultante.
+- Pode usar skew de mercado da Amboss (`outgoing / incoming`) apenas como refinamento para aproximar mais o inbound da outbound.
+
 Melhorias recentes de comportamento:
 - Bootstrap para canais inbound novos com subida gradual e controlada (`new-inbound`, `bootstrap`).
 - Relaxamento adaptativo de floor em canais travados (`floor-relax-stall`) para evitar lock prolongado em fee alta.
 - Bloqueio de micro-subidas por floor quando o sinal e fraco (exceto cenarios fortes como surge/new-inbound), reduzindo churn.
 - Forecast baseado na fee efetivamente aplicada (nao apenas candidata), deixando linhas `keep` mais coerentes.
+- Troca de modo agora salva e restaura a policy real do LND (`outbound ppm`, `outbound base`, `inbound ppm`, `inbound base`, `time_lock_delta`) quando voce volta de `Market refill` para `Balanced`.
 
 Janelas de dados e regras de fallback:
 - Janela principal: `lookback` configuravel (5-21d).
@@ -456,11 +483,11 @@ Calibracao automatica:
 - Isso ajusta dinamicamente os thresholds de low-out (menos agressivo em node balanced, mais protetor em node drained).
 
 Linhas de Autofee Results:
-- Header: tipo da execucao + timestamp.
+- Header: tipo da execucao + timestamp + modo operacional.
 - Summary: contadores de up/down/flat e skips.
 - Seed line: uso de Amboss/fallbacks.
 - Calibration line: classes do node, low_out, revfloor, fatores globais HTLC.
-- Linha por canal: `set/keep`, `target`, `out_ratio`, `out_ppm7d`, `rebal_ppm7d`, `seed`, `floor`, `margin`, `rev_share`, tags, contadores HTLC e forecast.
+- Linha por canal: `set/keep`, `target`, `out_ratio`, `out_ppm7d`, `rebal_ppm7d`, `seed`, `floor`, `margin`, `rev_share`, mudanca do inbound discount, tags, contadores HTLC e forecast.
 
 Glossario de tags (Autofee Results):
 - Referencia completa: `docs/AUTOFEE_TAG_GLOSSARIO_PT_BR.md` (PT-BR) e `docs/AUTOFEE_TAG_GLOSSARY_EN.md` (EN).
@@ -479,13 +506,15 @@ Glossario de tags (Autofee Results):
 - Low-out e falta de sinal:
 - `low-out-slow-up`, `low-out-noflow-cap`, `no-signal-noup`, `no-signal-floor-relax`.
 - Discovery/explorer:
-- `discovery`, `discovery-hard`, `explorer`, `surge*`.
+- `discovery`, `discovery-hard`, `explorer`, `drained-explorer*`, `surge*`.
 - Sinais HTLC:
 - `htlc-policy-hot`, `htlc-liquidity-hot`, `htlc-forward-hot`, `htlc-sample-low`, `htlc-neutral-lock`, `htlc-liq+X%`, `htlc-policy+X%`, `htlc-liq-nodown`, `htlc-policy-nodown`, `htlc-neutral-nodown`, `htlc-step-boost`.
 - Super-source e inbound:
-- `super-source`, `super-source-like`, `new-inbound`, `bootstrap`, `inb-<n>`.
+- `super-source`, `super-source-like`, `new-inbound`, `bootstrap`, `market-refill*`, `inb-<n>`.
+- Rescue / liberacao seletiva de piso:
+- `rescue`, `rescue-enter`, `rescue-exit`, `rescue-expired`, `rescue-floor-relax`, `rescue-global-relax`, `rescue-peg-paused`.
 - Seed e origem de fallback:
-- `seed:amboss`, `seed:amboss-missing`, `seed:amboss-empty`, `seed:amboss-error`, `seed:med`, `seed:vol-<n>%`, `seed:ratio<factor>`, `seed:outrate`, `seed:mem`, `seed:default`, `seed:guard`, `seed:p95cap`, `seed:absmax`, `out-fallback-21d`, `rebal-fallback-21d`.
+- `seed:amboss`, `seed:amboss-missing`, `seed:amboss-empty`, `seed:amboss-error`, `seed:med`, `seed:vol-<n>%`, `seed:ratio<factor>`, `seed:outrate`, `seed:mem`, `seed:default`, `seed:guard`, `seed:p95cap`, `seed:absmax`, `seed:outcap`, `seed:rebalcap`, `seed:rebalfloor`, `out-fallback-21d`, `rebal-fallback-21d`.
 
 Exemplos de leitura:
 - Exemplo A (sink saudavel e lucrativo):

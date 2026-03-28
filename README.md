@@ -401,10 +401,13 @@ Autofee adjusts **outbound fees** per channel with one goal hierarchy:
 2. Keep channels moving (avoid liquidity lock).
 3. Keep fee updates stable and explainable.
 
-It uses local routing/rebalance history (Postgres notifications), optional Amboss seed data, HTLC failure signals, and calibrated guardrails.
+It uses local routing/rebalance history (Postgres notifications), optional Amboss seed data, HTLC failure signals, node-size/liquidity calibration, and explainable guardrails.
 
 UI parameters:
 - `Enable autofee`: global on/off.
+- `Node operation mode`: `Balanced` or `Market refill`.
+- `Balanced`: standard mode. Keeps the normal Autofee pipeline, respects rebalance-derived signals, and preserves the latest balanced fee policy snapshot when switching away.
+- `Market refill`: node-wide operating mode. Disables automatic rebalance and manual restart watch, restores the previous fee policy when returning to `Balanced`, and uses a dedicated outbound/inbound policy to attract natural refill instead of buying liquidity with rebalance.
 - `Profile`: Conservative / Moderate / Aggressive (baseline behavior).
 - `Lookback window (days)`: 5 to 21 days (main stats window).
 - `Run interval (hours)`: minimum 1 hour.
@@ -423,12 +426,20 @@ Movement settings (drawer in the Autofee card):
 - `Discovery down cap override (%)`: extra down-step cap used in discovery-like scenarios. Higher = faster unlock/down moves.
 - `Stall relax gap trigger (%)`: minimum gap between current fee and target before stall-relax softens the floor. Lower = relaxes earlier; higher = protects floors longer.
 - `Inbound discount max ratio (%)`: maximum inbound discount as a share of the applied outbound fee. Higher = more aggressive inbound pricing for sink-like channels.
+- `Inbound discount reach out ratio (%)`: maximum effective out-ratio still eligible for passive inbound discount. Higher = broader reach.
+- `Inbound discount min retained spread (%)`: minimum retained spread above the cost anchor when applying inbound discount. Higher = stronger profit protection.
 - `Low-flow floor factor override (%)`: multiplier applied to the floor when outbound flow is low. Higher = keeps fees higher; lower = allows lower floors.
 - `Global lock soften min out ratio (%)`: minimum out ratio needed before the global negative-margin lock can soften. Lower = more channels become eligible.
 - `Global lock soften max drop to peg (%)`: deepest allowed drop toward peg when the global lock is softened. Lower = allows deeper cuts.
 - `HTLC min attempts 60m override`: minimum HTLC attempts required before the channel is classified by HTLC behavior. Lower = more HTLC-driven reactions.
 - `HTLC policy fail rate override (%)`: policy-failure threshold for HTLC signals. Lower = easier to trigger `policy-hot`.
 - `HTLC liquidity fail rate override (%)`: liquidity-failure threshold for HTLC signals. Lower = easier to trigger `liquidity-hot`.
+
+Profile defaults now ship with stronger movement baselines:
+- `Conservative`: slower and more protective.
+- `Moderate`: faster down moves, softer global lock, higher step cap, and broader movement defaults.
+- `Aggressive`: shortest reaction windows, highest movement caps, and the most permissive market-refill behavior.
+- The UI reads profile defaults from the backend (`profile_defaults`), so labels and autofill stay aligned with server-side behavior.
 
 Decision pipeline (per channel):
 1. Build references:
@@ -441,11 +452,27 @@ Decision pipeline (per channel):
 5. Build floor stack (`rebal`, `rebal-sink`, `outrate`, `peg`, `revfloor`, `stagnation`, `no-signal`).
 6. Apply step caps and cooldown, then decide `apply` vs `keep`.
 
+Flow diagram:
+- `docs/AUTOFEE_FLOW_DIAGRAM_EN.md`
+
+Balanced mode additions:
+- Dynamic upward cooldown by effective `outnorm`: very drained channels can raise faster without fully bypassing cooldown.
+- `Drained explorer`: a dedicated exploratory mode for very empty and idle channels, using small upward steps instead of leaving them stuck at `0` or micro-fees forever.
+- Seed guardrails: when strong local `7d` outrate/rebalance signals exist, Amboss seed influence is capped by profile so external references do not dominate recent local market data.
+- `Rescue`: temporary floor-relax state for structurally weak channels (`close` / `worsening`) that are stuck above local signal due to `peg`, `floor-lock`, or global negative-margin protection.
+
+Market refill mode:
+- Uses the `Balanced` target as the main reference, then applies a controlled mode premium.
+- Ignores rebalance-derived floors/pressure as primary drivers.
+- Keeps outbound intentionally higher and derives inbound discount from the resulting outbound fee.
+- Uses optional Amboss skew (`outgoing / incoming`) only as a refinement for how close inbound discount should stay to outbound.
+
 Recent behavior improvements:
 - New inbound bootstrap ramps fees in controlled steps for fresh inbound channels (`new-inbound`, `bootstrap`).
 - Stalled floor unlock now supports adaptive relaxation (`floor-relax-stall`) to avoid long lock-in at high floors.
 - Very small floor-driven increases are held unless signal quality is strong (for example surge/new-inbound), reducing churn.
 - Forecast uses effective applied fee (not only raw candidate), improving coherence in `keep` lines.
+- Mode switching now snapshots and restores real LND fee policies (`outbound ppm`, `outbound base`, `inbound ppm`, `inbound base`, `time_lock_delta`) when leaving/returning to `Market refill`.
 
 Data windows and fallback rules:
 - Main run window: configurable `lookback` (5-21d).
@@ -472,11 +499,11 @@ Automatic calibration:
 - This adjusts low-out thresholds dynamically (for example, less aggressive in balanced nodes, stronger protection when drained).
 
 Autofee Results lines:
-- Header: run type + timestamp.
+- Header: run type + timestamp + operation mode.
 - Summary: up/down/flat + skip counters.
 - Seed line: Amboss/fallback usage.
 - Calibration line: node class, liquidity class, low_out factors, revfloor thresholds, HTLC global factors.
-- Per-channel line: `set/keep`, `target`, `out_ratio`, `out_ppm7d`, `rebal_ppm7d`, `seed`, `floor`, `margin`, `rev_share`, tags, HTLC counters, forecast.
+- Per-channel line: `set/keep`, `target`, `out_ratio`, `out_ppm7d`, `rebal_ppm7d`, `seed`, `floor`, `margin`, `rev_share`, inbound discount change, tags, HTLC counters, forecast.
 
 Tag glossary (Autofee Results):
 - Full reference: `docs/AUTOFEE_TAG_GLOSSARY_EN.md` (EN) and `docs/AUTOFEE_TAG_GLOSSARIO_PT_BR.md` (PT-BR).
@@ -495,13 +522,15 @@ Tag glossary (Autofee Results):
 - Low-out/no-signal controls:
 - `low-out-slow-up`, `low-out-noflow-cap`, `no-signal-noup`, `no-signal-floor-relax`.
 - Discovery/explorer:
-- `discovery`, `discovery-hard`, `explorer`, `surge*`.
+- `discovery`, `discovery-hard`, `explorer`, `drained-explorer*`, `surge*`.
 - HTLC signals:
 - `htlc-policy-hot`, `htlc-liquidity-hot`, `htlc-forward-hot`, `htlc-sample-low`, `htlc-neutral-lock`, `htlc-liq+X%`, `htlc-policy+X%`, `htlc-liq-nodown`, `htlc-policy-nodown`, `htlc-neutral-nodown`, `htlc-step-boost`.
 - Super-source and inbound:
-- `super-source`, `super-source-like`, `new-inbound`, `bootstrap`, `inb-<n>`.
+- `super-source`, `super-source-like`, `new-inbound`, `bootstrap`, `market-refill*`, `inb-<n>`.
+- Rescue / targeted floor release:
+- `rescue`, `rescue-enter`, `rescue-exit`, `rescue-expired`, `rescue-floor-relax`, `rescue-global-relax`, `rescue-peg-paused`.
 - Seed and fallback provenance:
-- `seed:amboss`, `seed:amboss-missing`, `seed:amboss-empty`, `seed:amboss-error`, `seed:med`, `seed:vol-<n>%`, `seed:ratio<factor>`, `seed:outrate`, `seed:mem`, `seed:default`, `seed:guard`, `seed:p95cap`, `seed:absmax`, `out-fallback-21d`, `rebal-fallback-21d`.
+- `seed:amboss`, `seed:amboss-missing`, `seed:amboss-empty`, `seed:amboss-error`, `seed:med`, `seed:vol-<n>%`, `seed:ratio<factor>`, `seed:outrate`, `seed:mem`, `seed:default`, `seed:guard`, `seed:p95cap`, `seed:absmax`, `seed:outcap`, `seed:rebalcap`, `seed:rebalfloor`, `out-fallback-21d`, `rebal-fallback-21d`.
 
 Reading examples:
 - Example A (healthy profitable sink):

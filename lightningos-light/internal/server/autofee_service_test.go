@@ -846,6 +846,20 @@ func TestComputeMarketRefillInboundDiscountAggressiveFullExploreStaysCloseToOutb
 	}
 }
 
+func TestComputeMarketRefillInboundDiscountUsesEffectiveOutRatio(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+
+	drainedDiscount, _ := computeMarketRefillInboundDiscount(true, 0.08, 1, false, false, 0, 50, 1000, 0.95, 0.01, profile)
+	fullerDiscount, _ := computeMarketRefillInboundDiscount(true, 0.28, 1, false, false, 0, 50, 1000, 0.95, 0.01, profile)
+
+	if drainedDiscount <= 0 || fullerDiscount <= 0 {
+		t.Fatalf("expected positive inbound discount in both scenarios, got drained=%d fuller=%d", drainedDiscount, fullerDiscount)
+	}
+	if drainedDiscount <= fullerDiscount {
+		t.Fatalf("expected more aggressive inbound discount for lower effective out ratio, got drained=%d fuller=%d", drainedDiscount, fullerDiscount)
+	}
+}
+
 func TestAdjustMarketRefillInboundTargetFracByPeerSkew(t *testing.T) {
 	baseFrac := 0.20
 

@@ -6647,7 +6647,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		var inboundTags []string
 		inboundDiscount, inboundTags = computeMarketRefillInboundDiscount(
 			true,
-			outRatio,
+			outNormMeta.Effective,
 			recentForwards1d,
 			noFlow1d,
 			weakRecentFlow,
@@ -7419,7 +7419,7 @@ func adjustMarketRefillInboundTargetFracByPeerSkew(targetFrac float64, peerMarke
 	return adjusted, tags
 }
 
-func computeMarketRefillInboundDiscount(enabled bool, outRatio float64, recentForwards1d int, noFlow1d bool, weakRecentFlow bool, peerMarketSkew float64, baseCostPpm int, appliedPpm int, maxRatio float64, retainedSpreadFrac float64, profile autofeeProfile) (int, []string) {
+func computeMarketRefillInboundDiscount(enabled bool, effectiveOutRatio float64, recentForwards1d int, noFlow1d bool, weakRecentFlow bool, peerMarketSkew float64, baseCostPpm int, appliedPpm int, maxRatio float64, retainedSpreadFrac float64, profile autofeeProfile) (int, []string) {
 	if !enabled || appliedPpm <= 0 {
 		return 0, nil
 	}
@@ -7448,12 +7448,12 @@ func computeMarketRefillInboundDiscount(enabled bool, outRatio float64, recentFo
 	fullOutRatio := math.Max(fullishOutRatio+0.20, 0.70)
 	tags := []string{"market-refill-inbound"}
 	switch {
-	case outRatio <= candidateReach:
+	case effectiveOutRatio <= candidateReach:
 		// Keep the strongest refill pricing on the most drained channels.
-	case outRatio <= exploratoryReach && weakRecentFlow && recentForwards1d <= exploratoryFwdsMax:
+	case effectiveOutRatio <= exploratoryReach && weakRecentFlow && recentForwards1d <= exploratoryFwdsMax:
 		targetFrac = math.Max(0.03, targetFrac*0.70)
 		tags = append(tags, "market-refill-explore")
-	case outRatio <= exploratoryReach && noFlow1d:
+	case effectiveOutRatio <= exploratoryReach && noFlow1d:
 		targetFrac = math.Max(0.03, targetFrac*0.70)
 		tags = append(tags, "market-refill-explore")
 	case noFlow1d && recentForwards1d <= exploratoryFwdsMax:
@@ -7463,14 +7463,14 @@ func computeMarketRefillInboundDiscount(enabled bool, outRatio float64, recentFo
 		tags = append(tags, "market-refill-explore")
 	case weakRecentFlow && recentForwards1d <= exploratoryFwdsMax:
 		targetFrac = math.Min(balancedTargetFrac, math.Max(targetFrac+0.03, targetFrac*1.15))
-	case outRatio >= fullOutRatio:
+	case effectiveOutRatio >= fullOutRatio:
 		targetFrac = fullTargetFrac
-	case outRatio >= fullishOutRatio:
-		blend := (outRatio - fullishOutRatio) / math.Max(0.01, fullOutRatio-fullishOutRatio)
+	case effectiveOutRatio >= fullishOutRatio:
+		blend := (effectiveOutRatio - fullishOutRatio) / math.Max(0.01, fullOutRatio-fullishOutRatio)
 		targetFrac = balancedTargetFrac + (fullTargetFrac-balancedTargetFrac)*math.Max(0.0, math.Min(1.0, blend))
 	default:
 		midTop := math.Max(exploratoryReach+0.20, 0.50)
-		blend := (outRatio - exploratoryReach) / math.Max(0.01, midTop-exploratoryReach)
+		blend := (effectiveOutRatio - exploratoryReach) / math.Max(0.01, midTop-exploratoryReach)
 		targetFrac = targetFrac + (balancedTargetFrac-targetFrac)*math.Max(0.0, math.Min(1.0, blend))
 	}
 	if adjustedFrac, skewTags := adjustMarketRefillInboundTargetFracByPeerSkew(targetFrac, peerMarketSkew); len(skewTags) > 0 {

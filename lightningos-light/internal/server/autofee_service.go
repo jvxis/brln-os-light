@@ -121,8 +121,9 @@ const (
 	reversalFastTrackStallMinRounds     = 2
 	rescueEnterGapFrac                  = 0.20
 	rescueExitGapFrac                   = 0.08
-	rescueOutrateEnterMult              = 1.10
+	rescueOutrateEnterMult              = 1.03
 	rescueOutrateExitMult               = 1.05
+	rescueTargetOutrateDivergenceFrac   = 0.03
 	rescueSoftRebalFloorMult            = 1.02
 	rescueScoreMax                      = 55
 	rescueRevShareMax                   = 0.02
@@ -130,6 +131,7 @@ const (
 	rescueMinActiveHours                = 12
 	rescueMaxActiveHours                = 10 * 24
 	rescueReentryCooldownHours          = 24
+	rescueExitConfirmRounds             = 2
 	htlcLowSampleMaxDownFrac            = 0.05
 	generalMaxDownFrac                  = 0.08
 	channelSizeRatioExponent            = 0.35
@@ -2489,6 +2491,7 @@ type explorerState struct {
 	RescueActive          bool   `json:"rescue_active,omitempty"`
 	RescueStartedTs       int64  `json:"rescue_started_ts,omitempty"`
 	RescueRounds          int    `json:"rescue_rounds,omitempty"`
+	RescueRecoverRounds   int    `json:"rescue_recover_rounds,omitempty"`
 	RescueLastExitTs      int64  `json:"rescue_last_exit_ts,omitempty"`
 }
 
@@ -4634,10 +4637,15 @@ func rescueCandidate(r autofeeRankingSnapshot, localPpm int, target int, outPpm7
 	if localPpm < int(math.Ceil(float64(maxInt(target, 1))*(1.0+rescueEnterGapFrac))) {
 		return false
 	}
-	if outPpm7d > 0 && localPpm < int(math.Ceil(float64(outPpm7d)*rescueOutrateEnterMult)) {
-		return false
+	if outPpm7d > 0 {
+		if localPpm >= int(math.Ceil(float64(outPpm7d)*rescueOutrateEnterMult)) {
+			return true
+		}
+		if target <= int(math.Floor(float64(outPpm7d)*(1.0-rescueTargetOutrateDivergenceFrac))) {
+			return true
+		}
 	}
-	return true
+	return outPpm7d <= 0
 }
 
 func rescueExitReady(es explorerState, now time.Time) bool {
@@ -4675,6 +4683,7 @@ func manageRescueState(st *autofeeChannelState, now time.Time, balancedMode bool
 		if es.RescueActive {
 			es.RescueActive = false
 			es.RescueRounds = 0
+			es.RescueRecoverRounds = 0
 			es.RescueStartedTs = 0
 			es.RescueLastExitTs = now.Unix()
 		}
@@ -4699,13 +4708,20 @@ func manageRescueState(st *autofeeChannelState, now time.Time, balancedMode bool
 			es.RescueLastExitTs = now.Unix()
 			es.RescueStartedTs = 0
 			es.RescueRounds = 0
+			es.RescueRecoverRounds = 0
 			return false, []string{"rescue-expired"}
 		}
 		if rescueExitReady(*es, now) && (!candidate || rescueRecovered(ranking, localPpm, target, outPpm7d, revShare, topRevenue)) {
+			es.RescueRecoverRounds++
+		} else {
+			es.RescueRecoverRounds = 0
+		}
+		if es.RescueRecoverRounds >= rescueExitConfirmRounds {
 			es.RescueActive = false
 			es.RescueLastExitTs = now.Unix()
 			es.RescueStartedTs = 0
 			es.RescueRounds = 0
+			es.RescueRecoverRounds = 0
 			return false, []string{"rescue-exit"}
 		}
 		return true, []string{"rescue", fmt.Sprintf("rescue-r%d", maxInt(1, es.RescueRounds))}
@@ -4719,6 +4735,7 @@ func manageRescueState(st *autofeeChannelState, now time.Time, balancedMode bool
 	es.RescueActive = true
 	es.RescueStartedTs = now.Unix()
 	es.RescueRounds = 1
+	es.RescueRecoverRounds = 0
 	return true, []string{"rescue", "rescue-enter", "rescue-r1"}
 }
 
@@ -6275,7 +6292,9 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			withinGrace = hoursSince < float64(e.profile.OutratePegGraceHours)
 		}
 		demandPeg := seed > 0 && float64(outPpm7d) >= seed*outratePegSeedMult
-		if peg > floor && (withinGrace || demandPeg) {
+		if rescueActive && target < localPpm && peg > floor {
+			tags = append(tags, "rescue-peg-paused")
+		} else if peg > floor && (withinGrace || demandPeg) {
 			floor = peg
 			floorSrc = "peg"
 			tags = append(tags, "peg")
@@ -7667,6 +7686,8 @@ func formatAutofeeTags(d *decision) string {
 			add("🛟floor-relax")
 		case t == "rescue-global-relax":
 			add("🛟global-relax")
+		case t == "rescue-peg-paused":
+			add("🛟peg-paused")
 		case t == "market-refill-inbound":
 			add("🌊market-refill")
 		case t == "market-refill-up":

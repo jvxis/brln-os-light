@@ -955,7 +955,7 @@ func TestManageRescueStateEnterAndExit(t *testing.T) {
 		ProfitFee7dSat: -229,
 	}
 
-	active, tags := manageRescueState(st, now, true, ranking, true, 1263, 640, 1100, 0.003, false)
+	active, tags := manageRescueState(st, now, true, ranking, true, 1008, 637, 1202, 0.003, false)
 	if !active {
 		t.Fatalf("expected rescue to activate on weak close-state channel")
 	}
@@ -964,6 +964,7 @@ func TestManageRescueStateEnterAndExit(t *testing.T) {
 	}
 
 	st.ExplorerState.RescueRounds = rescueMinRounds
+	st.ExplorerState.RescueRecoverRounds = 0
 	recovered := autofeeRankingSnapshot{
 		Score:          72,
 		State:          "expand",
@@ -971,6 +972,10 @@ func TestManageRescueStateEnterAndExit(t *testing.T) {
 		ProfitFee7dSat: 1500,
 	}
 	active, tags = manageRescueState(st, now.Add(13*time.Hour), true, recovered, true, 740, 700, 700, 0.001, false)
+	if !active || st.ExplorerState.RescueRecoverRounds != 1 {
+		t.Fatalf("expected rescue exit to require confirmation, active=%v state=%+v tags=%+v", active, st.ExplorerState, tags)
+	}
+	active, tags = manageRescueState(st, now.Add(14*time.Hour), true, recovered, true, 740, 700, 700, 0.001, false)
 	if active {
 		t.Fatalf("expected rescue to exit after recovery")
 	}

@@ -120,6 +120,7 @@ const (
 	reversalConfirmMinRounds            = 2
 	reversalFastTrackStallMinRounds     = 2
 	rescueEnterGapFrac                  = 0.20
+	rescuePriorityEnterGapFrac          = 0.35
 	rescueExitGapFrac                   = 0.08
 	rescueOutrateEnterMult              = 1.03
 	rescueOutrateExitMult               = 1.05
@@ -4626,26 +4627,27 @@ type decision struct {
 	State                   *autofeeChannelState
 }
 
-func rescueCandidate(r autofeeRankingSnapshot, localPpm int, target int, outPpm7d int, revShare float64, topRevenue bool) bool {
+func rescueCandidate(r autofeeRankingSnapshot, localPpm int, target int, outPpm7d int, revShare float64, topRevenue bool) (bool, bool) {
 	if topRevenue {
-		return false
+		return false, false
 	}
 	stateWeak := r.State == "close" || (r.State == "monitor" && r.TrendDirection == "worsening")
 	if !stateWeak || r.ProfitFee7dSat > 0 || r.Score > rescueScoreMax || revShare > rescueRevShareMax {
-		return false
+		return false, false
 	}
 	if localPpm < int(math.Ceil(float64(maxInt(target, 1))*(1.0+rescueEnterGapFrac))) {
-		return false
+		return false, false
 	}
+	priority := r.State == "close" && localPpm >= int(math.Ceil(float64(maxInt(target, 1))*(1.0+rescuePriorityEnterGapFrac)))
 	if outPpm7d > 0 {
 		if localPpm >= int(math.Ceil(float64(outPpm7d)*rescueOutrateEnterMult)) {
-			return true
+			return true, priority
 		}
 		if target <= int(math.Floor(float64(outPpm7d)*(1.0-rescueTargetOutrateDivergenceFrac))) {
-			return true
+			return true, priority
 		}
 	}
-	return outPpm7d <= 0
+	return outPpm7d <= 0, priority
 }
 
 func rescueExitReady(es explorerState, now time.Time) bool {
@@ -4696,7 +4698,7 @@ func manageRescueState(st *autofeeChannelState, now time.Time, balancedMode bool
 		}
 		return false, nil
 	}
-	candidate := hasRanking && rescueCandidate(ranking, localPpm, target, outPpm7d, revShare, topRevenue)
+	candidate, priorityCandidate := rescueCandidate(ranking, localPpm, target, outPpm7d, revShare, topRevenue)
 	if es.RescueActive {
 		es.RescueRounds++
 		activeHours := 0.0
@@ -4729,7 +4731,7 @@ func manageRescueState(st *autofeeChannelState, now time.Time, balancedMode bool
 	if !candidate {
 		return false, nil
 	}
-	if es.RescueLastExitTs > 0 && now.Sub(time.Unix(es.RescueLastExitTs, 0).UTC()).Hours() < rescueReentryCooldownHours {
+	if !priorityCandidate && es.RescueLastExitTs > 0 && now.Sub(time.Unix(es.RescueLastExitTs, 0).UTC()).Hours() < rescueReentryCooldownHours {
 		return false, nil
 	}
 	es.RescueActive = true

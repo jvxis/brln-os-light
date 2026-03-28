@@ -984,6 +984,26 @@ func TestManageRescueStateEnterAndExit(t *testing.T) {
 	}
 }
 
+func TestManageRescueStatePriorityBypassesReentryCooldown(t *testing.T) {
+	st := &autofeeChannelState{}
+	now := time.Unix(1_700_000_000, 0).UTC()
+	st.ExplorerState.RescueLastExitTs = now.Add(-2 * time.Hour).Unix()
+	ranking := autofeeRankingSnapshot{
+		Score:          14,
+		State:          "close",
+		TrendDirection: "worsening",
+		ProfitFee7dSat: -1052,
+	}
+
+	active, tags := manageRescueState(st, now, true, ranking, true, 1263, 640, 1202, 0.003, false)
+	if !active {
+		t.Fatalf("expected high-priority rescue candidate to bypass reentry cooldown")
+	}
+	if !containsTag(tags, "rescue-enter") || !st.ExplorerState.RescueActive {
+		t.Fatalf("unexpected priority rescue entry state: tags=%+v state=%+v", tags, st.ExplorerState)
+	}
+}
+
 func TestApplyRescueFloorRelax(t *testing.T) {
 	floor, src, tags := applyRescueFloorRelax(true, 1263, 640, 1263, "peg", 1202, 869)
 	if floor != 1202 {

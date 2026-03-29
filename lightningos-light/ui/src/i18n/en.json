@@ -6,6 +6,7 @@
     "check": "CHECK",
     "cancel": "Cancel",
     "close": "Close",
+    "copy": "Copy",
     "connecting": "Connecting...",
     "copied": "Copied",
     "copyFailed": "Copy failed.",

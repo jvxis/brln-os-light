@@ -454,7 +454,6 @@ export default function Dashboard({ authState }: DashboardProps) {
               <p className="text-xs uppercase tracking-[0.3em] text-amber-200">{t('auth.legacyEnableKicker')}</p>
               <h3 className="mt-3 text-xl font-semibold">{t('auth.legacyEnableTitle')}</h3>
               <p className="mt-3 text-sm text-fog/75">{t('auth.legacyEnableBody')}</p>
-              <p className="mt-3 font-mono text-xs text-fog/65">{t('auth.setupCommand')}</p>
               <p className="mt-2 text-xs text-fog/55">{t('auth.legacyEnableHint')}</p>
             </div>
             <div className="flex shrink-0 items-center gap-3">
@@ -846,7 +845,6 @@ export default function Dashboard({ authState }: DashboardProps) {
             <h4 id="enable-login-title" className="text-lg font-semibold">{t('auth.legacyEnableConfirmTitle')}</h4>
             <p className="mt-2 text-sm text-fog/70">{t('auth.legacyEnableConfirmBody')}</p>
             <p className="mt-3 text-xs text-amber-200">{t('auth.legacyEnableConfirmHint')}</p>
-            <p className="mt-3 font-mono text-xs text-fog/65">{t('auth.setupCommand')}</p>
             {enableLoginMessage && <p className="mt-4 text-sm text-brass">{enableLoginMessage}</p>}
             {enableLoginError && <p className="mt-3 text-sm text-rose-200">{enableLoginError}</p>}
             <div className="mt-5 flex items-center justify-end gap-3">

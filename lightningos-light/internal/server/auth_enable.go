@@ -109,7 +109,15 @@ func enableLoginInConfigFile(path string) error {
 	if info, statErr := os.Stat(path); statErr == nil {
 		perm = info.Mode().Perm()
 	}
-	return os.WriteFile(path, out.Bytes(), perm)
+	if err := os.WriteFile(path, out.Bytes(), perm); err == nil {
+		return nil
+	} else if !os.IsPermission(err) {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return system.WriteFileWithSudo(ctx, path, out.Bytes())
 }
 
 func yamlEnsureMapValue(mapping *yaml.Node, key string) *yaml.Node {

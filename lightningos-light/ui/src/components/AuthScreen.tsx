@@ -20,6 +20,7 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
   const [confirmPassword, setConfirmPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [setupCommandCopied, setSetupCommandCopied] = useState(false)
 
   useEffect(() => {
     if (state.setup_required) {
@@ -32,6 +33,20 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
   useEffect(() => {
     setError('')
   }, [mode])
+
+  useEffect(() => {
+    setSetupCommandCopied(false)
+  }, [mode])
+
+  const copySetupCommand = async () => {
+    try {
+      await navigator.clipboard.writeText(t('auth.setupCommand'))
+      setSetupCommandCopied(true)
+      window.setTimeout(() => setSetupCommandCopied(false), 2000)
+    } catch {
+      setError(t('common.copyFailedManual'))
+    }
+  }
 
   const handleSetup = async () => {
     setBusy(true)
@@ -161,7 +176,12 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
             <div className="space-y-4">
               <div className="rounded-2xl border border-white/10 bg-ink/50 p-4 text-sm text-fog/75">
                 <p>{state.setup_token_issued ? t('auth.setupTokenIssued') : t('auth.setupTokenMissing')}</p>
-                <p className="mt-3 font-mono text-xs text-fog/65">{t('auth.setupCommand')}</p>
+                <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="font-mono text-xs text-fog/65 break-all">{t('auth.setupCommand')}</p>
+                  <button className="btn-secondary text-xs px-3 py-2" type="button" onClick={copySetupCommand}>
+                    {setupCommandCopied ? t('common.copied') : t('common.copy')}
+                  </button>
+                </div>
               </div>
               <div className="space-y-2">
                 <label className="text-xs uppercase tracking-[0.2em] text-fog/55">{t('auth.setupTokenLabel')}</label>

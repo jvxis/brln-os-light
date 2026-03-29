@@ -112,12 +112,22 @@ GIT_BIN="$(resolve_bin git /usr/bin/git /bin/git)" || die "Required command miss
 GO_BIN="$(resolve_bin go /usr/local/go/bin/go /usr/bin/go /bin/go)" || die "Required command missing: go"
 NPM_BIN="$(resolve_bin npm /usr/bin/npm /usr/local/bin/npm /bin/npm)" || die "Required command missing: npm"
 SYSTEMCTL_BIN="$(resolve_bin systemctl /usr/bin/systemctl /bin/systemctl)" || die "Required command missing: systemctl"
+SYSTEMD_RUN_BIN="$(resolve_bin systemd-run /usr/bin/systemd-run /bin/systemd-run)" || die "Required command missing: systemd-run"
 INSTALL_BIN="$(resolve_bin install /usr/bin/install /bin/install)" || die "Required command missing: install"
 CP_BIN="$(resolve_bin cp /usr/bin/cp /bin/cp)" || die "Required command missing: cp"
 RM_BIN="$(resolve_bin rm /usr/bin/rm /bin/rm)" || die "Required command missing: rm"
 FLOCK_BIN="$(resolve_bin flock /usr/bin/flock /bin/flock)" || die "Required command missing: flock"
 DATE_BIN="$(resolve_bin date /usr/bin/date /bin/date)" || die "Required command missing: date"
 STAT_BIN="$(resolve_bin stat /usr/bin/stat /bin/stat)" || die "Required command missing: stat"
+TEE_BIN="$(resolve_bin tee /usr/bin/tee /bin/tee)" || die "Required command missing: tee"
+VISUDO_BIN="$(resolve_bin visudo /usr/sbin/visudo /usr/bin/visudo /sbin/visudo)" || true
+APT_GET_BIN="$(resolve_bin apt-get /usr/bin/apt-get /bin/apt-get)" || true
+APT_BIN="$(resolve_bin apt /usr/bin/apt /bin/apt)" || true
+DPKG_BIN="$(resolve_bin dpkg /usr/bin/dpkg /bin/dpkg)" || true
+DOCKER_BIN="$(resolve_bin docker /usr/bin/docker /usr/local/bin/docker)" || true
+DOCKER_COMPOSE_BIN="$(resolve_bin docker-compose /usr/bin/docker-compose /usr/local/bin/docker-compose)" || true
+SMARTCTL_BIN="$(resolve_bin smartctl /usr/sbin/smartctl /usr/bin/smartctl /sbin/smartctl)" || SMARTCTL_BIN="/usr/sbin/smartctl"
+UFW_BIN="$(resolve_bin ufw /usr/sbin/ufw /usr/bin/ufw)" || true
 exec 9>"$LOCK_FILE"
 if ! "$FLOCK_BIN" -n 9; then
   die "Another app upgrade is already running."
@@ -148,6 +158,63 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+
+join_by_comma() {
+  local first=1
+  local item=""
+  for item in "$@"; do
+    [[ -n "$item" ]] || continue
+    if [[ $first -eq 1 ]]; then
+      printf '%s' "$item"
+      first=0
+      continue
+    fi
+    printf ', %s' "$item"
+  done
+}
+
+configure_manager_sudoers() {
+  local manager_user=""
+  manager_user="$("$SYSTEMCTL_BIN" show -p User --value lightningos-manager 2>/dev/null | tr -d '[:space:]')"
+  if [[ -z "$manager_user" ]]; then
+    manager_user="lightningos"
+  fi
+
+  local system_cmds=""
+  local app_cmds=()
+  local app_cmds_line=""
+  local sudoers_path="/etc/sudoers.d/lightningos"
+
+  if [[ "$manager_user" != "lightningos" ]]; then
+    sudoers_path="/etc/sudoers.d/lightningos-${manager_user}"
+  fi
+
+  system_cmds="${SYSTEMCTL_BIN} restart lnd, ${SYSTEMCTL_BIN} restart lightningos-manager, ${SYSTEMCTL_BIN} restart postgresql, ${SYSTEMCTL_BIN} is-active lightningos-lnd-upgrade, ${SYSTEMCTL_BIN} is-active lightningos-app-upgrade, ${SYSTEMCTL_BIN} reboot, ${SYSTEMCTL_BIN} poweroff, /usr/local/sbin/lightningos-fix-lnd-perms, /usr/local/sbin/lightningos-upgrade-lnd, /usr/local/sbin/lightningos-upgrade-app, ${TEE_BIN} /etc/lightningos/config.yaml, ${SMARTCTL_BIN} *"
+
+  [[ -n "${APT_GET_BIN:-}" ]] && app_cmds+=("${APT_GET_BIN} *")
+  [[ -n "${APT_BIN:-}" ]] && app_cmds+=("${APT_BIN} *")
+  [[ -n "${DPKG_BIN:-}" ]] && app_cmds+=("${DPKG_BIN} *")
+  [[ -n "${DOCKER_BIN:-}" ]] && app_cmds+=("${DOCKER_BIN} *")
+  [[ -n "${DOCKER_COMPOSE_BIN:-}" ]] && app_cmds+=("${DOCKER_COMPOSE_BIN} *")
+  [[ -n "${SYSTEMD_RUN_BIN:-}" ]] && app_cmds+=("${SYSTEMD_RUN_BIN} *")
+  [[ -n "${UFW_BIN:-}" ]] && app_cmds+=("${UFW_BIN} *")
+  app_cmds_line="$(join_by_comma "${app_cmds[@]}")"
+  if [[ -z "$app_cmds_line" ]]; then
+    app_cmds_line="/bin/true"
+  fi
+
+  cat > "$sudoers_path" <<EOF
+Defaults:${manager_user} !requiretty
+Cmnd_Alias LIGHTNINGOS_SYSTEM = ${system_cmds}
+Cmnd_Alias LIGHTNINGOS_APPS = ${app_cmds_line}
+${manager_user} ALL=NOPASSWD: LIGHTNINGOS_SYSTEM, LIGHTNINGOS_APPS
+EOF
+  chmod 440 "$sudoers_path"
+  if [[ -n "${VISUDO_BIN:-}" ]]; then
+    "$VISUDO_BIN" -cf "$sudoers_path" >/dev/null
+  fi
+  print_ok "Sudoers refreshed for manager user: ${manager_user}"
+}
 
 print_step "Preparing repository mirror"
 mkdir -p "$(dirname "$mirror_root")" "$worktree_root"
@@ -217,6 +284,9 @@ print_step "Building UI"
 "$RM_BIN" -rf /opt/lightningos/ui/*
 "$CP_BIN" -a "$project_dir/ui/dist/." /opt/lightningos/ui/
 print_ok "UI installed"
+
+print_step "Refreshing manager sudoers"
+configure_manager_sudoers
 
 print_step "Restarting lightningos-manager"
 "$SYSTEMCTL_BIN" restart lightningos-manager

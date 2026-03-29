@@ -111,17 +111,17 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
     <div className="min-h-screen px-6 py-10 lg:px-12">
       <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[1.15fr_0.85fr]">
         <section className="section-card flex flex-col justify-between gap-6">
-          <div className="grid gap-6 lg:grid-cols-[0.85fr_1.15fr] lg:items-center">
+          <div className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
             <div className="space-y-4">
               <p className="text-sm uppercase tracking-[0.3em] text-fog/50">{t('auth.kicker')}</p>
-              <h1 className="text-3xl font-semibold lg:text-4xl">{t('auth.heroTitle')}</h1>
+              <h1 className="max-w-xl text-[2.35rem] font-semibold leading-[1.02] lg:text-[3.05rem]">{t('auth.heroTitle')}</h1>
               <p className="max-w-2xl text-fog/70">{t('auth.heroBody')}</p>
             </div>
-            <div className="flex items-center justify-center rounded-[2rem] border border-white/10 bg-white/[0.03] px-6 py-8">
+            <div className="flex min-h-[240px] items-center justify-center rounded-[2rem] border border-white/10 bg-white/[0.03] px-6 py-8">
               <img
                 src={brlnLightningOsLogo}
                 alt="BRLN Lightning OS"
-                className="max-h-64 w-full max-w-lg object-contain drop-shadow-[0_24px_48px_rgba(255,207,32,0.18)]"
+                className="max-h-[19rem] w-full max-w-[26rem] object-contain drop-shadow-[0_24px_48px_rgba(255,207,32,0.18)]"
               />
             </div>
           </div>

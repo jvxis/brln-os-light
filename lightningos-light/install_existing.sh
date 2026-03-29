@@ -473,8 +473,9 @@ install_lnd_upgrade_script() {
 }
 
 configure_sudoers() {
+  local manager_user="${1:-lightningos}"
   print_step "Configuring sudoers"
-  local systemctl_path apt_get_path apt_path dpkg_path docker_path docker_compose_path systemd_run_path smartctl_path ufw_path
+  local systemctl_path apt_get_path apt_path dpkg_path docker_path docker_compose_path systemd_run_path smartctl_path ufw_path tee_path
   systemctl_path=$(command -v systemctl || true)
   apt_get_path=$(command -v apt-get || true)
   apt_path=$(command -v apt || true)
@@ -484,6 +485,7 @@ configure_sudoers() {
   systemd_run_path=$(command -v systemd-run || true)
   smartctl_path=$(command -v smartctl || true)
   ufw_path=$(command -v ufw || true)
+  tee_path=$(command -v tee || true)
   if [[ -z "$docker_path" ]]; then
     docker_path="/usr/bin/docker"
   fi
@@ -496,12 +498,15 @@ configure_sudoers() {
   if [[ -z "$smartctl_path" ]]; then
     smartctl_path="/usr/sbin/smartctl"
   fi
+  if [[ -z "$tee_path" ]]; then
+    tee_path="/usr/bin/tee"
+  fi
   if [[ -z "$systemctl_path" ]]; then
     print_warn "systemctl not found; skipping sudoers setup"
     return
   fi
   local system_cmds
-  system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} is-active lightningos-app-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${LND_UPGRADE_SCRIPT}, ${APP_UPGRADE_SCRIPT}, ${smartctl_path} *"
+  system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} is-active lightningos-app-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${LND_UPGRADE_SCRIPT}, ${APP_UPGRADE_SCRIPT}, ${smartctl_path} *, ${tee_path} /etc/lightningos/config.yaml"
   local app_cmds=()
   [[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")
   [[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")
@@ -516,10 +521,10 @@ configure_sudoers() {
     app_cmds_line="/bin/true"
   fi
   cat > /etc/sudoers.d/lightningos <<EOF
-Defaults:lightningos !requiretty
+Defaults:${manager_user} !requiretty
 Cmnd_Alias LIGHTNINGOS_SYSTEM = ${system_cmds}
 Cmnd_Alias LIGHTNINGOS_APPS = ${app_cmds_line}
-lightningos ALL=NOPASSWD: LIGHTNINGOS_SYSTEM, LIGHTNINGOS_APPS
+${manager_user} ALL=NOPASSWD: LIGHTNINGOS_SYSTEM, LIGHTNINGOS_APPS
 EOF
   chmod 440 /etc/sudoers.d/lightningos
   print_ok "Sudoers configured"
@@ -1314,7 +1319,7 @@ main() {
   fi
   install_lnd_fix_perms_script
   install_lnd_upgrade_script
-  configure_sudoers
+  configure_sudoers "$manager_user"
   ensure_manager_service "$manager_user" "$manager_group"
   if [[ -n "$LND_USER" && -n "$LND_GROUP" ]]; then
     fix_lnd_permissions "$lnd_dir" "$LND_USER" "$LND_GROUP"

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getAppUpgradeStatus, getBitcoinActive, getDisk, getLndStatus, getLogs, getPostgres, getSystem, restartService, runSystemAction, startAppUpgrade } from '../api'
+import { enableLoginAuth, getAppUpgradeStatus, getBitcoinActive, getDisk, getLndStatus, getLogs, getPostgres, getSystem, restartService, runSystemAction, startAppUpgrade, type AuthState } from '../api'
 import { getLocale } from '../i18n'
 
 type AppUpgradeStatus = {
@@ -14,7 +14,11 @@ type AppUpgradeStatus = {
   error?: string
 }
 
-export default function Dashboard() {
+type DashboardProps = {
+  authState?: AuthState | null
+}
+
+export default function Dashboard({ authState }: DashboardProps) {
   const { t, i18n } = useTranslation()
   const locale = getLocale(i18n.language)
   const gbFormatter = new Intl.NumberFormat(locale, { maximumFractionDigits: 1 })
@@ -43,6 +47,10 @@ export default function Dashboard() {
   const [appUpgradeLocked, setAppUpgradeLocked] = useState(false)
   const [appUpgradeStartedVersion, setAppUpgradeStartedVersion] = useState('')
   const [appUpgradeLogSince, setAppUpgradeLogSince] = useState('')
+  const [enableLoginModalOpen, setEnableLoginModalOpen] = useState(false)
+  const [enableLoginBusy, setEnableLoginBusy] = useState(false)
+  const [enableLoginMessage, setEnableLoginMessage] = useState('')
+  const [enableLoginError, setEnableLoginError] = useState<string | null>(null)
 
   const wearWarnThreshold = 75
   const tempWarnThreshold = 70
@@ -369,6 +377,37 @@ export default function Dashboard() {
 
   const showConfirmAppUpgrade = Boolean(appUpgrade?.update_available) && !appUpgradeComplete
 
+  const openEnableLoginModal = () => {
+    setEnableLoginModalOpen(true)
+    setEnableLoginMessage('')
+    setEnableLoginError(null)
+  }
+
+  const closeEnableLoginModal = () => {
+    if (enableLoginBusy) return
+    setEnableLoginModalOpen(false)
+    setEnableLoginError(null)
+  }
+
+  const confirmEnableLogin = async () => {
+    if (enableLoginBusy) return
+    setEnableLoginBusy(true)
+    setEnableLoginError(null)
+    setEnableLoginMessage(t('auth.legacyEnableStarting'))
+    try {
+      await enableLoginAuth()
+      setEnableLoginMessage(t('auth.legacyEnableRestarting'))
+      window.setTimeout(() => {
+        window.location.reload()
+      }, 2500)
+    } catch (err) {
+      setEnableLoginError(err instanceof Error ? err.message : t('auth.legacyEnableFailed'))
+      setEnableLoginMessage('')
+    } finally {
+      setEnableLoginBusy(false)
+    }
+  }
+
   return (
     <section className="space-y-6">
       <div className="section-card">
@@ -407,6 +446,25 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {authState?.enabled === false && (
+        <div className="section-card border-amber-400/30 bg-amber-500/10">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="max-w-3xl">
+              <p className="text-xs uppercase tracking-[0.3em] text-amber-200">{t('auth.legacyEnableKicker')}</p>
+              <h3 className="mt-3 text-xl font-semibold">{t('auth.legacyEnableTitle')}</h3>
+              <p className="mt-3 text-sm text-fog/75">{t('auth.legacyEnableBody')}</p>
+              <p className="mt-3 font-mono text-xs text-fog/65">{t('auth.setupCommand')}</p>
+              <p className="mt-2 text-xs text-fog/55">{t('auth.legacyEnableHint')}</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-3">
+              <button className="btn-secondary text-amber-200 border-amber-400/30" type="button" onClick={openEnableLoginModal}>
+                {t('auth.legacyEnableAction')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="section-card">
@@ -770,6 +828,41 @@ export default function Dashboard() {
                 type="button"
               >
                 {t('common.ok')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {enableLoginModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={closeEnableLoginModal} aria-hidden="true" />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="enable-login-title"
+            className="relative z-10 w-full max-w-xl rounded-3xl border border-white/10 bg-slate/95 p-6 shadow-panel"
+          >
+            <h4 id="enable-login-title" className="text-lg font-semibold">{t('auth.legacyEnableConfirmTitle')}</h4>
+            <p className="mt-2 text-sm text-fog/70">{t('auth.legacyEnableConfirmBody')}</p>
+            <p className="mt-3 text-xs text-amber-200">{t('auth.legacyEnableConfirmHint')}</p>
+            <p className="mt-3 font-mono text-xs text-fog/65">{t('auth.setupCommand')}</p>
+            {enableLoginMessage && <p className="mt-4 text-sm text-brass">{enableLoginMessage}</p>}
+            {enableLoginError && <p className="mt-3 text-sm text-rose-200">{enableLoginError}</p>}
+            <div className="mt-5 flex items-center justify-end gap-3">
+              <button
+                className={`btn-secondary ${enableLoginBusy ? 'opacity-60 pointer-events-none' : ''}`}
+                onClick={closeEnableLoginModal}
+                type="button"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                className={`btn-secondary text-amber-200 border-amber-400/30 ${enableLoginBusy ? 'opacity-60 pointer-events-none' : ''}`}
+                onClick={confirmEnableLogin}
+                type="button"
+              >
+                {enableLoginBusy ? t('auth.legacyEnableBusy') : t('auth.legacyEnableAction')}
               </button>
             </div>
           </div>

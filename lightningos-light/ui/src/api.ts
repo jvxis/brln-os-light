@@ -112,6 +112,8 @@ export const recoverAuth = async (payload: { recovery_token: string; password: s
   setCSRFToken(data?.csrf_token)
   return data
 }
+export const enableLoginAuth = () =>
+  request('/api/auth/enable-login', { method: 'POST', body: JSON.stringify({}) })
 export const changePasswordAuth = async (payload: { current_password: string; password: string; confirm_password: string }) => {
   const data = await request('/api/auth/change-password', { method: 'POST', body: JSON.stringify(payload) }) as AuthState
   setCSRFToken(data?.csrf_token)

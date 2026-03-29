@@ -188,7 +188,7 @@ export default function App() {
       ? [{ key: 'pay-boleto', label: t('nav.payBoleto'), element: <PayBoleto /> }]
       : []
     return [
-      { key: 'dashboard', label: t('nav.dashboard'), element: <Dashboard /> },
+      { key: 'dashboard', label: t('nav.dashboard'), element: <Dashboard authState={authState} /> },
       { key: 'reports', label: t('nav.reports'), element: <Reports /> },
       { key: 'wallet', label: t('nav.wallet'), element: <Wallet /> },
       { key: 'network-atlas', label: t('nav.networkAtlas'), element: <NetworkAtlas /> },
@@ -215,7 +215,7 @@ export default function App() {
       { key: 'logs', label: t('nav.logs'), element: <Logs /> },
       { key: 'node-retirement', label: t('nav.nodeRetirement'), element: <NodeRetirement /> }
     ]
-  }, [depixEnabled, boletoEnabled, externalBitcoinDetected, i18n.language, t])
+  }, [authState, depixEnabled, boletoEnabled, externalBitcoinDetected, i18n.language, t])
   const baseRouteKeys = useMemo(() => baseRoutes.map((item) => item.key), [baseRoutes])
   const [menuConfig, setMenuConfig] = useState<MenuConfig>(() => normalizeMenuConfig(readMenuConfig(), baseRouteKeys))
 

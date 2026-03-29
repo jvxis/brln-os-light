@@ -8,6 +8,7 @@ import (
 )
 
 type Config struct {
+	Path          string              `yaml:"-"`
 	Server        ServerConfig        `yaml:"server"`
 	LND           LNDConfig           `yaml:"lnd"`
 	BitcoinRemote BitcoinRemoteConfig `yaml:"bitcoin_remote"`
@@ -74,6 +75,7 @@ func Load(path string) (*Config, error) {
 	if err := yaml.Unmarshal(b, &cfg); err != nil {
 		return nil, err
 	}
+	cfg.Path = path
 
 	if cfg.Server.Host == "" {
 		cfg.Server.Host = "127.0.0.1"

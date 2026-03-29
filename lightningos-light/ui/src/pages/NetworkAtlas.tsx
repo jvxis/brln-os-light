@@ -481,7 +481,7 @@ export default function NetworkAtlas() {
                   setMapZoom(clampZoom(Number(position?.zoom) || 1))
                 }}
               >
-                <Sphere id="atlasSphere" stroke="rgba(110,128,168,0.22)" strokeWidth={0.8} fill="transparent" />
+                <Sphere id="atlasSphere" stroke="var(--atlas-sphere-stroke)" strokeWidth={0.8} fill="transparent" />
                 <Geographies geography={worldGeo as any}>
                   {({ geographies }: { geographies: any[] }) =>
                     geographies.map((geo) => (

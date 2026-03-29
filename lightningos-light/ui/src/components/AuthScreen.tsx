@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { type AuthState, loginAuth, recoverAuth, setupAuth } from '../api'
-import brlnLightningOsLogo from '../assets/brln-lightning-os.svg'
 
 type AuthScreenProps = {
   state: AuthState
@@ -9,6 +8,24 @@ type AuthScreenProps = {
 }
 
 type AuthMode = 'setup' | 'login' | 'recovery'
+
+function AuthBrand() {
+  return (
+    <div className="relative mx-auto flex w-full max-w-[31rem] flex-col items-center overflow-hidden rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top,rgba(255,214,51,0.14),transparent_42%),rgba(255,255,255,0.03)] px-6 py-8">
+      <div className="absolute left-5 top-5 h-4 w-4 rounded-full bg-[#f7931a] shadow-[0_0_0_6px_rgba(247,147,26,0.12)]" />
+      <div className="flex items-end justify-center gap-3 sm:gap-5">
+        <span className="text-[4.35rem] font-semibold leading-none tracking-[-0.08em] text-white sm:text-[5.8rem]">BR</span>
+        <div className="relative h-28 w-16 sm:h-36 sm:w-20">
+          <div className="absolute inset-0 rounded-[1.4rem] bg-gradient-to-b from-[#ffe45b] to-[#ffc400] [clip-path:polygon(58%_0%,100%_0%,71%_43%,100%_43%,38%_100%,52%_62%,18%_62%)] shadow-[0_18px_42px_rgba(255,207,32,0.32)]" />
+        </div>
+        <span className="text-[4.35rem] font-semibold leading-none tracking-[-0.08em] text-white sm:text-[5.8rem]">LN</span>
+      </div>
+      <div className="mt-5 rounded-full bg-gradient-to-r from-[#fff26b] via-[#ffdc1f] to-[#ffc400] px-8 py-3 shadow-[0_18px_40px_rgba(255,207,32,0.2)]">
+        <span className="text-sm font-semibold tracking-[0.18em] text-slate-950 sm:text-base">LIGHTNING OS</span>
+      </div>
+    </div>
+  )
+}
 
 export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) {
   const { t } = useTranslation()
@@ -109,21 +126,15 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
 
   return (
     <div className="min-h-screen px-6 py-10 lg:px-12">
-      <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+      <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-[1.18fr_0.82fr]">
         <section className="section-card flex flex-col justify-between gap-6">
-          <div className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
+          <div className="space-y-8">
             <div className="space-y-4">
               <p className="text-sm uppercase tracking-[0.3em] text-fog/50">{t('auth.kicker')}</p>
-              <h1 className="max-w-xl text-[2.35rem] font-semibold leading-[1.02] lg:text-[3.05rem]">{t('auth.heroTitle')}</h1>
-              <p className="max-w-2xl text-fog/70">{t('auth.heroBody')}</p>
+              <h1 className="max-w-3xl text-[2rem] font-semibold leading-[1.04] sm:text-[2.45rem] xl:text-[2.85rem]">{t('auth.heroTitle')}</h1>
+              <p className="max-w-3xl text-fog/70">{t('auth.heroBody')}</p>
             </div>
-            <div className="flex min-h-[240px] items-center justify-center rounded-[2rem] border border-white/10 bg-white/[0.03] px-6 py-8">
-              <img
-                src={brlnLightningOsLogo}
-                alt="BRLN Lightning OS"
-                className="max-h-[19rem] w-full max-w-[26rem] object-contain drop-shadow-[0_24px_48px_rgba(255,207,32,0.18)]"
-              />
-            </div>
+            <AuthBrand />
           </div>
           <div className="grid gap-4 sm:grid-cols-3">
             <div className="rounded-2xl border border-white/10 bg-ink/50 p-4">

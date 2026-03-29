@@ -98,6 +98,26 @@ Siga o guia de Nó Existente:
 Acesse a UI de outra máquina na mesma LAN:
 `https://<IP_LAN_DO_SERVIDOR>:8443`
 
+## Primeiro acesso com segurança
+- A proteção por login vem habilitada por padrão em instalações novas.
+- Ao final de `install.sh`, `install_existing.sh` e `install_existing_pi.sh`, o instalador imprime no console a URL da UI e um setup token de admin quando ainda não existe senha configurada.
+- No primeiro acesso, ou após atualizar uma instalação antiga que ainda não tenha senha de admin, a UI abre a tela de definição da senha antes de entrar no wizard ou no dashboard.
+- Se precisar gerar outro setup token depois:
+
+```bash
+sudo /opt/lightningos/manager/lightningos-manager auth setup-token new
+```
+
+- Se esquecer a senha de admin, gere um recovery token localmente no node:
+
+```bash
+sudo /opt/lightningos/manager/lightningos-manager auth recovery new
+```
+
+- O recovery altera apenas a senha de admin da UI/API. Ele não altera a senha da carteira do LND.
+- Serviços agendados como Autofee, Rebalance, relatórios, sucessão e outros timers do backend continuam funcionando sem login no navegador.
+- Envios manuais on-chain para endereço externo exigem uma nova confirmação de senha. As automações internas e os fluxos de sucessão não são bloqueados por essa confirmação extra.
+
 Notas:
 - Você pode sobrescrever a URL do LND com `LND_URL=...` ou a versão com `LND_VERSION=...`.
 - O instalador gera uma role no Postgres e atualiza `LND_PG_DSN` em `/etc/lightningos/secrets.env`.

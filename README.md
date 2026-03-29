@@ -114,6 +114,26 @@ sudo ./install_existing_pi.sh
 Access the UI from another machine on the same LAN:
 `https://<SERVER_LAN_IP>:8443`
 
+## First secure access
+- Login protection is enabled by default on new installs.
+- At the end of `install.sh`, `install_existing.sh`, and `install_existing_pi.sh`, the installer prints the UI URL and an admin setup token in the console when no admin password is configured yet.
+- On the first access, or after upgrading an older install that still has no admin password, the UI opens the admin password setup screen before entering the wizard or dashboard.
+- If you need another setup token later, generate it locally on the node:
+
+```bash
+sudo /opt/lightningos/manager/lightningos-manager auth setup-token new
+```
+
+- If you forget the admin password, generate a local recovery token:
+
+```bash
+sudo /opt/lightningos/manager/lightningos-manager auth recovery new
+```
+
+- Recovery changes only the UI/API admin password. It does not reset the LND wallet password.
+- Scheduled services such as Autofee, Rebalance, reports, succession, and other backend timers keep running without browser login.
+- Manual on-chain sends to an external address require a fresh password confirmation. Internal automations and succession flows are not blocked by this extra confirmation.
+
 Notes:
 - You can override LND URL with `LND_URL=...` or version with `LND_VERSION=...`.
 - The installer will generate a Postgres role and update `LND_PG_DSN` in `/etc/lightningos/secrets.env`.

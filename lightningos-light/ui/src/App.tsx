@@ -439,6 +439,9 @@ export default function App() {
             palette={palette}
             onThemeToggle={() => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
             onPaletteToggle={handlePaletteToggle}
+            authState={authState}
+            onAuthUpdated={setAuthState}
+            onAuthRefresh={refreshAuthState}
             onLogout={authState.enabled ? handleLogout : undefined}
           />
           <main className="px-6 pb-16 pt-6 lg:px-12">

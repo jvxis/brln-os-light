@@ -687,6 +687,13 @@ https://SEU_IP_AQUI:8443
 
 ---
 
+Se for o primeiro acesso, ou uma instalação atualizada que ainda não tenha senha de admin, gere um setup token no node:
+```bash
+sudo /opt/lightningos/manager/lightningos-manager auth setup-token new
+```
+
+Cole esse token na tela "Definir senha de admin" antes de entrar no wizard ou no painel.
+
 ### 6.3 Completar o Wizard e criar a carteira
 
 1. **Bitcoin Remote:** informe as credenciais RPC do seu Bitcoin Core

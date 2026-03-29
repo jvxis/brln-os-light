@@ -112,6 +112,11 @@ export const recoverAuth = async (payload: { recovery_token: string; password: s
   setCSRFToken(data?.csrf_token)
   return data
 }
+export const changePasswordAuth = async (payload: { current_password: string; password: string; confirm_password: string }) => {
+  const data = await request('/api/auth/change-password', { method: 'POST', body: JSON.stringify(payload) }) as AuthState
+  setCSRFToken(data?.csrf_token)
+  return data
+}
 export const reauthAuth = (payload: { password: string; scope: string }) =>
   request('/api/auth/reauth', { method: 'POST', body: JSON.stringify(payload) })
 export const getAmbossHealth = () => request('/api/amboss/health')

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { type AuthState, loginAuth, recoverAuth, setupAuth } from '../api'
+import brlnLightningOsLogo from '../assets/brln-lightning-os.svg'
 
 type AuthScreenProps = {
   state: AuthState
@@ -95,10 +96,19 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
     <div className="min-h-screen px-6 py-10 lg:px-12">
       <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[1.15fr_0.85fr]">
         <section className="section-card flex flex-col justify-between gap-6">
-          <div className="space-y-4">
-            <p className="text-sm uppercase tracking-[0.3em] text-fog/50">{t('auth.kicker')}</p>
-            <h1 className="text-3xl font-semibold lg:text-4xl">{t('auth.heroTitle')}</h1>
-            <p className="max-w-2xl text-fog/70">{t('auth.heroBody')}</p>
+          <div className="grid gap-6 lg:grid-cols-[0.85fr_1.15fr] lg:items-center">
+            <div className="space-y-4">
+              <p className="text-sm uppercase tracking-[0.3em] text-fog/50">{t('auth.kicker')}</p>
+              <h1 className="text-3xl font-semibold lg:text-4xl">{t('auth.heroTitle')}</h1>
+              <p className="max-w-2xl text-fog/70">{t('auth.heroBody')}</p>
+            </div>
+            <div className="flex items-center justify-center rounded-[2rem] border border-white/10 bg-white/[0.03] px-6 py-8">
+              <img
+                src={brlnLightningOsLogo}
+                alt="BRLN Lightning OS"
+                className="max-h-64 w-full max-w-lg object-contain drop-shadow-[0_24px_48px_rgba(255,207,32,0.18)]"
+              />
+            </div>
           </div>
           <div className="grid gap-4 sm:grid-cols-3">
             <div className="rounded-2xl border border-white/10 bg-ink/50 p-4">
@@ -151,7 +161,7 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
             <div className="space-y-4">
               <div className="rounded-2xl border border-white/10 bg-ink/50 p-4 text-sm text-fog/75">
                 <p>{state.setup_token_issued ? t('auth.setupTokenIssued') : t('auth.setupTokenMissing')}</p>
-                <p className="mt-3 font-mono text-xs text-fog/65">lightningos-manager auth setup-token new</p>
+                <p className="mt-3 font-mono text-xs text-fog/65">{t('auth.setupCommand')}</p>
               </div>
               <div className="space-y-2">
                 <label className="text-xs uppercase tracking-[0.2em] text-fog/55">{t('auth.setupTokenLabel')}</label>
@@ -216,7 +226,7 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
             <div className="space-y-4">
               <div className="rounded-2xl border border-white/10 bg-ink/50 p-4 text-sm text-fog/75">
                 <p>{state.recovery_token_issued ? t('auth.recoveryTokenIssued') : t('auth.recoveryTokenMissing')}</p>
-                <p className="mt-3 font-mono text-xs text-fog/65">lightningos-manager auth recovery new</p>
+                <p className="mt-3 font-mono text-xs text-fog/65">{t('auth.recoveryCommand')}</p>
               </div>
               <div className="space-y-2">
                 <label className="text-xs uppercase tracking-[0.2em] text-fog/55">{t('auth.recoveryTokenLabel')}</label>

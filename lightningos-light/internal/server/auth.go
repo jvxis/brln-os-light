@@ -248,6 +248,38 @@ func (a *AuthService) HandleRecovery(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, a.stateFromSnapshot(snapshot))
 }
 
+func (a *AuthService) HandleChangePassword(w http.ResponseWriter, r *http.Request) {
+	if a == nil || !a.Enabled() {
+		writeErrorCode(w, http.StatusBadRequest, "auth_disabled", "login protection is disabled")
+		return
+	}
+
+	session, ok := authSessionFromContext(r.Context())
+	if !ok {
+		writeErrorCode(w, http.StatusUnauthorized, "auth_required", "authentication required")
+		return
+	}
+
+	var req struct {
+		CurrentPassword string `json:"current_password"`
+		Password        string `json:"password"`
+		ConfirmPassword string `json:"confirm_password"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	snapshot, err := a.changePassword(session.ID, req.CurrentPassword, req.Password, req.ConfirmPassword)
+	if err != nil {
+		a.writeChangePasswordError(w, err)
+		return
+	}
+
+	a.writeSessionCookie(w, snapshot)
+	writeJSON(w, http.StatusOK, a.stateFromSnapshot(snapshot))
+}
+
 func (a *AuthService) HandleReauth(w http.ResponseWriter, r *http.Request) {
 	if a == nil || !a.Enabled() {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -354,18 +386,7 @@ func (a *AuthService) setup(setupToken string, password string, confirmPassword 
 		return authSessionSnapshot{}, err
 	}
 
-	passwordHash, pepper, err := authHashPassword(password)
-	if err != nil {
-		return authSessionSnapshot{}, err
-	}
-	if err := authPersistSecrets(map[string]string{
-		authSecretPasswordHashKey:        passwordHash,
-		authSecretPasswordPepperKey:      pepper,
-		authSecretSetupTokenHashKey:      "",
-		authSecretSetupTokenExpiryKey:    "",
-		authSecretRecoveryTokenHashKey:   "",
-		authSecretRecoveryTokenExpiryKey: "",
-	}); err != nil {
+	if err := authPersistPassword(password); err != nil {
 		return authSessionSnapshot{}, err
 	}
 
@@ -393,19 +414,29 @@ func (a *AuthService) recover(recoveryToken string, password string, confirmPass
 		return authSessionSnapshot{}, err
 	}
 
-	passwordHash, pepper, err := authHashPassword(password)
-	if err != nil {
-		return authSessionSnapshot{}, err
-	}
-	if err := authPersistSecrets(map[string]string{
-		authSecretPasswordHashKey:        passwordHash,
-		authSecretPasswordPepperKey:      pepper,
-		authSecretRecoveryTokenHashKey:   "",
-		authSecretRecoveryTokenExpiryKey: "",
-	}); err != nil {
+	if err := authPersistPassword(password); err != nil {
 		return authSessionSnapshot{}, err
 	}
 
+	return a.resetSessionsAndCreateNew()
+}
+
+func (a *AuthService) changePassword(sessionID string, currentPassword string, password string, confirmPassword string) (authSessionSnapshot, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return authSessionSnapshot{}, errInvalidSession
+	}
+	if !authPasswordConfigured() {
+		return authSessionSnapshot{}, errSetupRequired
+	}
+	if err := authVerifyPassword(currentPassword); err != nil {
+		return authSessionSnapshot{}, err
+	}
+	if err := validateAdminPassword(password, confirmPassword); err != nil {
+		return authSessionSnapshot{}, err
+	}
+	if err := authPersistPassword(password); err != nil {
+		return authSessionSnapshot{}, err
+	}
 	return a.resetSessionsAndCreateNew()
 }
 
@@ -713,6 +744,21 @@ func authPersistSecrets(updates map[string]string) error {
 	return writeEnvFileValues(secretsPath, updates)
 }
 
+func authPersistPassword(password string) error {
+	passwordHash, pepper, err := authHashPassword(password)
+	if err != nil {
+		return err
+	}
+	return authPersistSecrets(map[string]string{
+		authSecretPasswordHashKey:        passwordHash,
+		authSecretPasswordPepperKey:      pepper,
+		authSecretSetupTokenHashKey:      "",
+		authSecretSetupTokenExpiryKey:    "",
+		authSecretRecoveryTokenHashKey:   "",
+		authSecretRecoveryTokenExpiryKey: "",
+	})
+}
+
 func authReadSecret(key string) string {
 	value, err := readEnvFileValue(secretsPath, key)
 	if err != nil {
@@ -938,5 +984,22 @@ func (a *AuthService) writeRecoveryError(w http.ResponseWriter, err error) {
 			return
 		}
 		writeErrorCode(w, http.StatusInternalServerError, "auth_recovery_failed", "recovery failed")
+	}
+}
+
+func (a *AuthService) writeChangePasswordError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errSetupRequired):
+		writeErrorCode(w, http.StatusConflict, "auth_setup_required", "admin password is not configured")
+	case errors.Is(err, errInvalidSession):
+		writeErrorCode(w, http.StatusUnauthorized, "auth_required", "authentication required")
+	case errors.Is(err, errInvalidCredentials):
+		writeErrorCode(w, http.StatusUnauthorized, "auth_invalid_credentials", "invalid credentials")
+	default:
+		if strings.Contains(err.Error(), "password") {
+			writeErrorCode(w, http.StatusBadRequest, "auth_password_invalid", err.Error())
+			return
+		}
+		writeErrorCode(w, http.StatusInternalServerError, "auth_change_password_failed", "failed to change admin password")
 	}
 }

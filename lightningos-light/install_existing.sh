@@ -15,6 +15,7 @@ LND_FIX_PERMS_SCRIPT="/usr/local/sbin/lightningos-fix-lnd-perms"
 LND_UPGRADE_SCRIPT="/usr/local/sbin/lightningos-upgrade-lnd"
 APP_UPGRADE_SCRIPT="/usr/local/sbin/lightningos-upgrade-app"
 TERMINAL_OPERATOR_USER="${TERMINAL_OPERATOR_USER:-losop}"
+MANAGER_BIN="/opt/lightningos/manager/lightningos-manager"
 
 CURRENT_STEP=""
 LOG_FILE="/var/log/lightningos-install-existing.log"
@@ -49,6 +50,37 @@ print_ok() {
 
 print_warn() {
   echo "[WARN] $1"
+}
+
+print_auth_setup_token() {
+  if [[ ! -x "$MANAGER_BIN" ]]; then
+    print_warn "Manager binary not found at $MANAGER_BIN"
+    return
+  fi
+
+  local status token_output
+  if ! status=$("$MANAGER_BIN" auth status 2>/dev/null); then
+    print_warn "Could not read auth status"
+    echo "Generate a setup token manually with:"
+    echo "  sudo $MANAGER_BIN auth setup-token new"
+    return
+  fi
+
+  if grep -q '^password_configured=true$' <<<"$status"; then
+    echo "Admin password is already configured."
+    return
+  fi
+
+  echo "Admin setup token:"
+  if token_output=$("$MANAGER_BIN" auth setup-token new 2>/dev/null); then
+    while IFS= read -r line; do
+      echo "  $line"
+    done <<<"$token_output"
+  else
+    print_warn "Automatic setup token generation failed"
+  fi
+  echo "Generate another setup token later with:"
+  echo "  sudo $MANAGER_BIN auth setup-token new"
 }
 
 get_lightningos_version() {
@@ -1341,6 +1373,7 @@ main() {
   else
     echo "Open: https://IP_DA_MAQUINA:8443"
   fi
+  print_auth_setup_token
 }
 
 main "$@"

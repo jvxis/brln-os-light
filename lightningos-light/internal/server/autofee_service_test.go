@@ -969,7 +969,7 @@ func TestManageRescueStateEnterAndExit(t *testing.T) {
 		ProfitFee7dSat: -229,
 	}
 
-	active, tags := manageRescueState(st, now, true, ranking, true, 1008, 637, 1202, 0.003, false)
+	active, tags := manageRescueState(st, now, true, ranking, true, 1008, 637, 1202, 0.003, false, false)
 	if !active {
 		t.Fatalf("expected rescue to activate on weak close-state channel")
 	}
@@ -985,11 +985,11 @@ func TestManageRescueStateEnterAndExit(t *testing.T) {
 		TrendDirection: "stable",
 		ProfitFee7dSat: 1500,
 	}
-	active, tags = manageRescueState(st, now.Add(13*time.Hour), true, recovered, true, 740, 700, 700, 0.001, false)
+	active, tags = manageRescueState(st, now.Add(13*time.Hour), true, recovered, true, 740, 700, 700, 0.001, false, false)
 	if !active || st.ExplorerState.RescueRecoverRounds != 1 {
 		t.Fatalf("expected rescue exit to require confirmation, active=%v state=%+v tags=%+v", active, st.ExplorerState, tags)
 	}
-	active, tags = manageRescueState(st, now.Add(14*time.Hour), true, recovered, true, 740, 700, 700, 0.001, false)
+	active, tags = manageRescueState(st, now.Add(14*time.Hour), true, recovered, true, 740, 700, 700, 0.001, false, false)
 	if active {
 		t.Fatalf("expected rescue to exit after recovery")
 	}
@@ -1009,12 +1009,31 @@ func TestManageRescueStatePriorityBypassesReentryCooldown(t *testing.T) {
 		ProfitFee7dSat: -1052,
 	}
 
-	active, tags := manageRescueState(st, now, true, ranking, true, 1263, 640, 1202, 0.003, false)
+	active, tags := manageRescueState(st, now, true, ranking, true, 1263, 640, 1202, 0.003, false, false)
 	if !active {
 		t.Fatalf("expected high-priority rescue candidate to bypass reentry cooldown")
 	}
 	if !containsTag(tags, "rescue-enter") || !st.ExplorerState.RescueActive {
 		t.Fatalf("unexpected priority rescue entry state: tags=%+v state=%+v", tags, st.ExplorerState)
+	}
+}
+
+func TestManageRescueStateSkipsSlowCycleProtectedChannel(t *testing.T) {
+	st := &autofeeChannelState{}
+	now := time.Unix(1_700_000_000, 0).UTC()
+	ranking := autofeeRankingSnapshot{
+		Score:          5,
+		State:          "close",
+		TrendDirection: "worsening",
+		ProfitFee7dSat: -14091,
+	}
+
+	active, tags := manageRescueState(st, now, true, ranking, true, 1263, 640, 1202, 0.003, false, true)
+	if active {
+		t.Fatalf("expected rescue to stay disabled for slow-cycle protected channel")
+	}
+	if len(tags) != 0 || st.ExplorerState.RescueActive {
+		t.Fatalf("unexpected rescue activity for slow-cycle protected channel: tags=%+v state=%+v", tags, st.ExplorerState)
 	}
 }
 
@@ -1028,6 +1047,52 @@ func TestApplyRescueFloorRelax(t *testing.T) {
 	}
 	if !containsTag(tags, "rescue-floor-relax") {
 		t.Fatalf("expected rescue floor relax tag, got %+v", tags)
+	}
+}
+
+func TestApplySlowCycle30dReferencesModerateDrained(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	ranking := autofeeRankingSnapshot{
+		Score30d:           58,
+		ProfitFee7dSat:     -14091,
+		ProfitFee30dSat:    1722,
+		OutPpm30d:          2587,
+		RebalPpm30d:        2608,
+		PeerStabilityScore: 52,
+	}
+
+	outRef, rebalRef, active, tags := applySlowCycle30dReferences(profile, ranking, true, 0.03, 280, 2616)
+	if !active {
+		t.Fatalf("expected slow-cycle 30d protection to activate")
+	}
+	if outRef != 1203 {
+		t.Fatalf("unexpected slow-cycle 30d outrate ref: got %d want 1203", outRef)
+	}
+	if rebalRef != 2616 {
+		t.Fatalf("expected existing 7d rebal cost to remain the hard floor, got %d want 2616", rebalRef)
+	}
+	if !containsTag(tags, "slow-cycle-30d") || !containsTag(tags, "slow-cycle-30d-out") {
+		t.Fatalf("expected slow-cycle 30d tags, got %+v", tags)
+	}
+}
+
+func TestApplySlowCycle30dReferencesRejectsWeakThirtyDayCase(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	ranking := autofeeRankingSnapshot{
+		Score30d:           11,
+		ProfitFee7dSat:     -14948,
+		ProfitFee30dSat:    -3218,
+		OutPpm30d:          2134,
+		RebalPpm30d:        2531,
+		PeerStabilityScore: 51,
+	}
+
+	outRef, rebalRef, active, tags := applySlowCycle30dReferences(profile, ranking, true, 0.10, 235, 2609)
+	if active {
+		t.Fatalf("did not expect slow-cycle 30d protection for structurally weak 30d channel")
+	}
+	if outRef != 235 || rebalRef != 2609 || len(tags) != 0 {
+		t.Fatalf("unexpected slow-cycle fallback output: out=%d rebal=%d tags=%+v", outRef, rebalRef, tags)
 	}
 }
 

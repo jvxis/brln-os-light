@@ -2460,12 +2460,17 @@ type autofeeChannelState struct {
 }
 
 type autofeeRankingSnapshot struct {
-	Score           int
-	State           string
-	TrendDirection  string
-	TrendDelta      int
-	ProfitFee7dSat  int64
-	LocalBalancePct float64
+	Score              int
+	Score30d           int
+	State              string
+	TrendDirection     string
+	TrendDelta         int
+	ProfitFee7dSat     int64
+	ProfitFee30dSat    int64
+	OutPpm30d          int
+	RebalPpm30d        int
+	PeerStabilityScore int
+	LocalBalancePct    float64
 }
 
 type explorerState struct {
@@ -3457,6 +3462,153 @@ func minRebalFallback21dSat(capacitySat int64) int64 {
 
 func hasRebalFallback21dSignal(rebalAmt21dSat int64, capacitySat int64) bool {
 	return rebalAmt21dSat >= minRebalFallback21dSat(capacitySat)
+}
+
+func slowCycle30dMinScore(profile autofeeProfile) int {
+	switch profile.Name {
+	case "conservative":
+		return 65
+	case "aggressive":
+		return 45
+	default:
+		return 50
+	}
+}
+
+func slowCycle30dUnderrepFrac(profile autofeeProfile) float64 {
+	switch profile.Name {
+	case "conservative":
+		return 0.45
+	case "aggressive":
+		return 0.75
+	default:
+		return 0.60
+	}
+}
+
+func slowCycle30dRebalCostHeadroom(profile autofeeProfile) float64 {
+	switch profile.Name {
+	case "conservative":
+		return 1.00
+	case "aggressive":
+		return 1.10
+	default:
+		return 1.05
+	}
+}
+
+func slowCycle30dOutRatioMax(profile autofeeProfile) float64 {
+	switch profile.Name {
+	case "conservative":
+		return 0.25
+	case "aggressive":
+		return 0.55
+	default:
+		return 0.40
+	}
+}
+
+func slowCycle30dOutBlendFrac(profile autofeeProfile, effectiveOutRatio float64) float64 {
+	base := 0.30
+	switch profile.Name {
+	case "conservative":
+		base = 0.20
+	case "aggressive":
+		base = 0.40
+	}
+	switch {
+	case effectiveOutRatio <= 0.10:
+		base += 0.10
+	case effectiveOutRatio <= 0.20:
+		base += 0.05
+	case effectiveOutRatio >= 0.60:
+		base -= 0.10
+	case effectiveOutRatio >= 0.45:
+		base -= 0.05
+	}
+	return clampFloat(base, 0.15, 0.55)
+}
+
+func slowCycle30dFallbackFrac(profile autofeeProfile, effectiveOutRatio float64) float64 {
+	base := 0.60
+	switch profile.Name {
+	case "conservative":
+		base = 0.45
+	case "aggressive":
+		base = 0.75
+	}
+	switch {
+	case effectiveOutRatio <= 0.10:
+		base += 0.10
+	case effectiveOutRatio <= 0.20:
+		base += 0.05
+	case effectiveOutRatio >= 0.60:
+		base -= 0.10
+	case effectiveOutRatio >= 0.45:
+		base -= 0.05
+	}
+	return clampFloat(base, 0.35, 0.85)
+}
+
+func shouldUseSlowCycle30d(profile autofeeProfile, ranking autofeeRankingSnapshot, hasRanking bool, effectiveOutRatio float64, outPpm7d int, rebalPpm7d int) bool {
+	if !hasRanking {
+		return false
+	}
+	if ranking.ProfitFee30dSat <= 0 || ranking.Score30d < slowCycle30dMinScore(profile) {
+		return false
+	}
+	if ranking.PeerStabilityScore > 0 && ranking.PeerStabilityScore < 45 {
+		return false
+	}
+	if ranking.OutPpm30d <= 0 || ranking.RebalPpm30d <= 0 {
+		return false
+	}
+	if float64(ranking.RebalPpm30d) > float64(ranking.OutPpm30d)*slowCycle30dRebalCostHeadroom(profile) {
+		return false
+	}
+	if effectiveOutRatio > slowCycle30dOutRatioMax(profile) {
+		return false
+	}
+	if outPpm7d <= 0 {
+		return true
+	}
+	if float64(outPpm7d) <= float64(ranking.OutPpm30d)*slowCycle30dUnderrepFrac(profile) {
+		return true
+	}
+	return ranking.ProfitFee7dSat <= 0 && rebalPpm7d > 0 &&
+		float64(outPpm7d) <= float64(ranking.OutPpm30d)*(slowCycle30dUnderrepFrac(profile)+0.10)
+}
+
+func applySlowCycle30dReferences(profile autofeeProfile, ranking autofeeRankingSnapshot, hasRanking bool, effectiveOutRatio float64, outPpm7d int, rebalPpm7d int) (int, int, bool, []string) {
+	if !shouldUseSlowCycle30d(profile, ranking, hasRanking, effectiveOutRatio, outPpm7d, rebalPpm7d) {
+		return outPpm7d, rebalPpm7d, false, nil
+	}
+	tags := []string{"slow-cycle-30d"}
+	outBlendFrac := slowCycle30dOutBlendFrac(profile, effectiveOutRatio)
+	outFallbackFrac := slowCycle30dFallbackFrac(profile, effectiveOutRatio)
+
+	nextOut := outPpm7d
+	if outPpm7d > 0 {
+		nextOut = int(math.Round(float64(outPpm7d)*(1.0-outBlendFrac) + float64(ranking.OutPpm30d)*outBlendFrac))
+	} else {
+		nextOut = int(math.Round(float64(ranking.OutPpm30d) * outFallbackFrac))
+	}
+
+	nextRebal := rebalPpm7d
+	if rebalPpm7d > 0 {
+		blendedRebal := int(math.Round(float64(rebalPpm7d)*(1.0-outBlendFrac) + float64(ranking.RebalPpm30d)*outBlendFrac))
+		nextRebal = maxInt(rebalPpm7d, blendedRebal)
+	} else {
+		nextRebal = int(math.Round(float64(ranking.RebalPpm30d) * outFallbackFrac))
+	}
+
+	if nextOut > outPpm7d {
+		tags = append(tags, "slow-cycle-30d-out")
+	}
+	if nextRebal > rebalPpm7d {
+		tags = append(tags, "slow-cycle-30d-rebal")
+	}
+	return nextOut, nextRebal, true, tags
 }
 
 func minSurgeConfirmRebalSat(capacitySat int64) int64 {
@@ -4506,7 +4658,7 @@ func (e *autofeeEngine) loadChannelRankingSnapshots(ctx context.Context) (map[st
 		return items, nil
 	}
 	rows, err := e.svc.db.Query(ctx, `
-select channel_point, score, state, trend_direction, trend_delta, profit_fee_7d_sat, local_balance_pct
+select channel_point, score, score_30d, state, trend_direction, trend_delta, profit_fee_7d_sat, profit_fee_30d_sat, out_ppm_30d, rebal_ppm_30d, peer_stability_score_30d, local_balance_pct
 from channel_rankings
 `)
 	if err != nil {
@@ -4519,7 +4671,20 @@ from channel_rankings
 		var snap autofeeRankingSnapshot
 		var state sql.NullString
 		var trend sql.NullString
-		if err := rows.Scan(&point, &snap.Score, &state, &trend, &snap.TrendDelta, &snap.ProfitFee7dSat, &snap.LocalBalancePct); err != nil {
+		if err := rows.Scan(
+			&point,
+			&snap.Score,
+			&snap.Score30d,
+			&state,
+			&trend,
+			&snap.TrendDelta,
+			&snap.ProfitFee7dSat,
+			&snap.ProfitFee30dSat,
+			&snap.OutPpm30d,
+			&snap.RebalPpm30d,
+			&snap.PeerStabilityScore,
+			&snap.LocalBalancePct,
+		); err != nil {
 			return items, err
 		}
 		point = normalizeChannelPointKey(point)
@@ -4627,8 +4792,8 @@ type decision struct {
 	State                   *autofeeChannelState
 }
 
-func rescueCandidate(r autofeeRankingSnapshot, localPpm int, target int, outPpm7d int, revShare float64, topRevenue bool) (bool, bool) {
-	if topRevenue {
+func rescueCandidate(r autofeeRankingSnapshot, localPpm int, target int, outPpm7d int, revShare float64, topRevenue bool, slowCycleProtected bool) (bool, bool) {
+	if topRevenue || slowCycleProtected {
 		return false, false
 	}
 	stateWeak := r.State == "close" || (r.State == "monitor" && r.TrendDirection == "worsening")
@@ -4676,7 +4841,7 @@ func rescueRecovered(r autofeeRankingSnapshot, localPpm int, target int, outPpm7
 	return localPpm <= exitFloor
 }
 
-func manageRescueState(st *autofeeChannelState, now time.Time, balancedMode bool, ranking autofeeRankingSnapshot, hasRanking bool, localPpm int, target int, outPpm7d int, revShare float64, topRevenue bool) (bool, []string) {
+func manageRescueState(st *autofeeChannelState, now time.Time, balancedMode bool, ranking autofeeRankingSnapshot, hasRanking bool, localPpm int, target int, outPpm7d int, revShare float64, topRevenue bool, slowCycleProtected bool) (bool, []string) {
 	if st == nil {
 		return false, nil
 	}
@@ -4698,7 +4863,7 @@ func manageRescueState(st *autofeeChannelState, now time.Time, balancedMode bool
 		}
 		return false, nil
 	}
-	candidate, priorityCandidate := rescueCandidate(ranking, localPpm, target, outPpm7d, revShare, topRevenue)
+	candidate, priorityCandidate := rescueCandidate(ranking, localPpm, target, outPpm7d, revShare, topRevenue, slowCycleProtected)
 	if es.RescueActive {
 		es.RescueRounds++
 		activeHours := 0.0
@@ -5240,6 +5405,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		outRatio = float64(ch.LocalBalanceSat) / float64(ch.CapacitySat)
 	}
 	outRatio, outNormMeta := effectiveChannelOutRatio(outRatio, ch.LocalBalanceSat, ch.CapacitySat, e.calib.AvgCapacitySat, e.calib.LocalRatio)
+	ranking, hasRanking := e.ranking[normalizeChannelPointKey(ch.ChannelPoint)]
 
 	fwd := forwardStats[ch.ChannelID]
 	fwd1d := forwardStats1d[ch.ChannelID]
@@ -5565,6 +5731,18 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		tags = append(tags, "stagnation-pressure")
 	}
 	marketRefillMode := e.cfg.OperationMode == autofeeOperationModeMarketRefill
+	slowCycle30dActive := false
+	slowCycle30dOutApplied := false
+	slowCycle30dRebalApplied := false
+	if !marketRefillMode {
+		var slowCycleTags []string
+		outPpm7d, perCost, slowCycle30dActive, slowCycleTags = applySlowCycle30dReferences(e.profile, ranking, hasRanking, outNormMeta.Effective, outPpm7d, perCost)
+		if len(slowCycleTags) > 0 {
+			tags = append(tags, slowCycleTags...)
+			slowCycle30dOutApplied = containsTag(slowCycleTags, "slow-cycle-30d-out")
+			slowCycle30dRebalApplied = containsTag(slowCycleTags, "slow-cycle-30d-rebal")
+		}
+	}
 	recentRebalanceCount := 0
 	recentRebalanceWeakCount := 0
 	surgeConfirmRebalanceCount := 0
@@ -5803,8 +5981,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if !marketRefillMode && rebalFrom21dFallback && perCost <= 0 {
 		tags = append(tags, "rebal-fallback-21d")
 	}
-	hasOutSignal := outPpm7dRaw > 0 || outFrom21dFallback || (st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 21*24*time.Hour)
-	hasRebalSignal := !marketRefillMode && (perCost > 0 || rebalFrom21dFallback || (st.LastRebalCost > 0 && !st.LastRebalCostTs.IsZero() && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour))
+	hasOutSignal := outPpm7dRaw > 0 || outFrom21dFallback || slowCycle30dOutApplied || (st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 21*24*time.Hour)
+	hasRebalSignal := !marketRefillMode && (perCost > 0 || rebalFrom21dFallback || slowCycle30dRebalApplied || (st.LastRebalCost > 0 && !st.LastRebalCostTs.IsZero() && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour))
 	strongOutSignal := outPpm7dRaw > 0 || (st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 7*24*time.Hour)
 	strongRebalSignal := !marketRefillMode && (perCost > 0 || (st.LastRebalCost > 0 && !st.LastRebalCostTs.IsZero() && e.now.Sub(st.LastRebalCostTs) <= 7*24*time.Hour))
 	noSignalNoUpActive := false
@@ -6072,7 +6250,6 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			tags = append(tags, "no-down-neg-margin")
 		}
 	}
-	ranking, hasRanking := e.ranking[normalizeChannelPointKey(ch.ChannelPoint)]
 	topRevenue := revShare >= 0.20 && outRatio < 0.30
 	rescueActive, rescueTags := manageRescueState(
 		st,
@@ -6085,6 +6262,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		outPpm7d,
 		revShare,
 		topRevenue,
+		slowCycle30dActive,
 	)
 	if len(rescueTags) > 0 {
 		tags = append(tags, rescueTags...)
@@ -7806,6 +7984,12 @@ func formatAutofeeTags(d *decision) string {
 			add("🕰️out-21d")
 		case t == "rebal-fallback-21d":
 			add("🕰️rebal-21d")
+		case t == "slow-cycle-30d":
+			add("🕰️slow-30d")
+		case t == "slow-cycle-30d-out":
+			add("🕰️slow-out")
+		case t == "slow-cycle-30d-rebal":
+			add("🕰️slow-rebal")
 		case t == "no-signal-noup":
 			add("🧯no-signal-noup")
 		case t == "no-signal-floor-relax":

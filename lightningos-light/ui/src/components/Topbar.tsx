@@ -17,9 +17,10 @@ type TopbarProps = {
   palette: PaletteKey
   onThemeToggle: () => void
   onPaletteToggle: () => void
+  onLogout?: () => void
 }
 
-export default function Topbar({ onMenuToggle, menuOpen, theme, palette, onThemeToggle, onPaletteToggle }: TopbarProps) {
+export default function Topbar({ onMenuToggle, menuOpen, theme, palette, onThemeToggle, onPaletteToggle, onLogout }: TopbarProps) {
   const { t, i18n } = useTranslation()
   const [status, setStatus] = useState('...')
   const [issues, setIssues] = useState<Array<{ component?: string; level?: string; message?: string }>>([])
@@ -180,6 +181,15 @@ export default function Topbar({ onMenuToggle, menuOpen, theme, palette, onTheme
           >
             <span className="h-4 w-4 rounded-full bg-glow shadow" />
           </button>
+          {onLogout && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-ink/60 px-3 py-2 text-xs uppercase tracking-wide text-fog/70 hover:text-white hover:border-white/40 transition"
+              onClick={onLogout}
+            >
+              {t('common.logout')}
+            </button>
+          )}
         </div>
       </div>
       <div className="glow-divider mt-6" />

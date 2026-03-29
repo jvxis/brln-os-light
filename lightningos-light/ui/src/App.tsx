@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import AuthScreen from './components/AuthScreen'
 import Sidebar from './components/Sidebar'
 import Topbar from './components/Topbar'
 import Dashboard from './pages/Dashboard'
@@ -26,7 +27,7 @@ import BuyDepix from './pages/BuyDepix'
 import Shortcuts from './pages/Shortcuts'
 import PayBoleto from './pages/PayBoleto'
 import NodeRetirement from './pages/NodeRetirement'
-import { getBitcoinLocalStatus, getBoletoConfig, getDepixConfig, getLndStatus, getWizardStatus } from './api'
+import { getAuthState, getBitcoinLocalStatus, getBoletoConfig, getDepixConfig, getLndStatus, getWizardStatus, logoutAuth, type AuthState } from './api'
 import { defaultPalette, paletteOrder, resolvePalette, resolveTheme, type PaletteKey, type ThemeMode } from './theme'
 
 const readHashRoute = () => {
@@ -135,12 +136,26 @@ export default function App() {
   const route = useHashRoute()
   const [theme, setTheme] = useState<ThemeMode>(() => resolveTheme(window.localStorage.getItem('los-theme')))
   const [palette, setPalette] = useState<PaletteKey>(() => resolvePalette(window.localStorage.getItem('los-palette')))
+  const [authState, setAuthState] = useState<AuthState | null>(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  const [authError, setAuthError] = useState('')
   const [walletUnlocked, setWalletUnlocked] = useState<boolean | null>(null)
   const [walletExists, setWalletExists] = useState<boolean | null>(null)
   const [depixEnabled, setDepixEnabled] = useState(false)
   const [boletoEnabled, setBoletoEnabled] = useState(false)
   const [externalBitcoinDetected, setExternalBitcoinDetected] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const refreshAuthState = useCallback(async () => {
+    try {
+      const state = await getAuthState()
+      setAuthError('')
+      setAuthState(state)
+    } catch (err: any) {
+      setAuthError(err?.message || 'Failed to load admin access state')
+    } finally {
+      setAuthLoading(false)
+    }
+  }, [])
   const refreshDepixEnabled = useCallback(async () => {
     try {
       const data: any = await getDepixConfig()
@@ -215,6 +230,25 @@ export default function App() {
   }, [palette])
 
   useEffect(() => {
+    void refreshAuthState()
+    const handleAuthRequired = () => {
+      void refreshAuthState()
+    }
+    window.addEventListener('auth:required', handleAuthRequired as EventListener)
+    return () => {
+      window.removeEventListener('auth:required', handleAuthRequired as EventListener)
+    }
+  }, [refreshAuthState])
+
+  const authReady = !authLoading && (authState?.enabled !== true || authState?.authenticated === true)
+
+  useEffect(() => {
+    if (!authReady) {
+      setWalletUnlocked(null)
+      setWalletExists(null)
+      return
+    }
+
     let active = true
     const load = async () => {
       try {
@@ -240,9 +274,16 @@ export default function App() {
       active = false
       window.clearInterval(timer)
     }
-  }, [])
+  }, [authReady])
 
   useEffect(() => {
+    if (!authReady) {
+      setDepixEnabled(false)
+      setBoletoEnabled(false)
+      setExternalBitcoinDetected(false)
+      return
+    }
+
     const handleAppsChanged = (event: Event) => {
       void refreshExternalBitcoinDetected()
       const detail = (event as CustomEvent<{ id?: string }>).detail
@@ -267,7 +308,7 @@ export default function App() {
       window.clearInterval(externalBitcoinTimer)
       window.removeEventListener('apps:changed', handleAppsChanged as EventListener)
     }
-  }, [refreshDepixEnabled, refreshBoletoEnabled, refreshExternalBitcoinDetected])
+  }, [authReady, refreshDepixEnabled, refreshBoletoEnabled, refreshExternalBitcoinDetected])
 
   useEffect(() => {
     setMenuConfig((current) => {
@@ -343,6 +384,34 @@ export default function App() {
     })
   }
 
+  const handleLogout = useCallback(async () => {
+    try {
+      await logoutAuth()
+    } finally {
+      await refreshAuthState()
+    }
+    setMenuOpen(false)
+  }, [refreshAuthState])
+
+  if (authLoading || authState == null) {
+    return (
+      <div className="min-h-screen px-6 py-10 lg:px-12">
+        <div className="mx-auto max-w-3xl section-card">
+          <p className="text-sm uppercase tracking-[0.3em] text-fog/50">{t('auth.kicker')}</p>
+          <h1 className="mt-3 text-3xl font-semibold">{t('auth.loadingTitle')}</h1>
+          <p className="mt-3 text-fog/65">{t('auth.loadingBody')}</p>
+          {!authLoading && authError && (
+            <p className="mt-4 text-sm text-brass">{authError}</p>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  if (authState.enabled && !authState.authenticated) {
+    return <AuthScreen state={authState} onAuthenticated={setAuthState} />
+  }
+
   return (
     <>
       <div
@@ -370,6 +439,7 @@ export default function App() {
             palette={palette}
             onThemeToggle={() => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
             onPaletteToggle={handlePaletteToggle}
+            onLogout={authState.enabled ? handleLogout : undefined}
           />
           <main className="px-6 pb-16 pt-6 lg:px-12">
             {current.element}

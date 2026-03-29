@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import QRCode from 'qrcode'
-import { createInvoice, decodeInvoice, getLnChannels, getMempoolFees, getWalletActivity, getWalletAddress, getWalletSummary, payInvoice, previewOnchainSend, sendOnchain } from '../api'
+import { APIError, createInvoice, decodeInvoice, getLnChannels, getMempoolFees, getWalletActivity, getWalletAddress, getWalletSummary, payInvoice, previewOnchainSend, reauthAuth, sendOnchain } from '../api'
 import { getLocale } from '../i18n'
 
 const emptySummary = {
@@ -33,6 +33,8 @@ type OnchainSendPreview = {
   enough_funds: boolean
   exact: boolean
   message?: string
+  destination_classification?: string
+  requires_password_confirmation?: boolean
 }
 
 type WalletActivityRange = '7d' | '1m' | '1a'
@@ -89,6 +91,10 @@ export default function Wallet() {
   const [sendStatus, setSendStatus] = useState('')
   const [sendTxid, setSendTxid] = useState('')
   const [sendRunning, setSendRunning] = useState(false)
+  const [sendConfirmOpen, setSendConfirmOpen] = useState(false)
+  const [sendConfirmPassword, setSendConfirmPassword] = useState('')
+  const [sendConfirmStatus, setSendConfirmStatus] = useState('')
+  const [sendConfirmRunning, setSendConfirmRunning] = useState(false)
   const [amount, setAmount] = useState('')
   const [memo, setMemo] = useState('')
   const [invoiceExpiry, setInvoiceExpiry] = useState('3600')
@@ -526,6 +532,9 @@ export default function Wallet() {
     setSendTxid('')
     setSendPreview(null)
     setSendPreviewStatus('')
+    setSendConfirmOpen(false)
+    setSendConfirmPassword('')
+    setSendConfirmStatus('')
   }
 
   useEffect(() => {
@@ -586,7 +595,7 @@ export default function Wallet() {
     }
   }, [sendOpen, sendAddress, sendAmount, sendFeeRate, sendSweepAll, sendRunning, t])
 
-  const handleSendOnchain = async () => {
+  const executeOnchainSend = async () => {
     const target = sendAddress.trim()
     const amountSat = Number(sendAmount || 0)
     const feeRate = Number(sendFeeRate || 0)
@@ -615,11 +624,58 @@ export default function Wallet() {
       setSendSweepAll(false)
       setSendPreview(null)
       setSendPreviewStatus('')
+      setSendConfirmOpen(false)
+      setSendConfirmPassword('')
+      setSendConfirmStatus('')
     } catch (err: any) {
+      if (err instanceof APIError && err.code === 'wallet_send_external_reauth_required') {
+        setSendConfirmOpen(true)
+        setSendConfirmStatus(t('wallet.sendPasswordRequired'))
+        return
+      }
       setSendTxid('')
       setSendStatus(err?.message || t('wallet.onchainSendFailed'))
     } finally {
       setSendRunning(false)
+    }
+  }
+
+  const handleSendOnchain = async () => {
+    const target = sendAddress.trim()
+    const amountSat = Number(sendAmount || 0)
+    if (!target) {
+      setSendStatus(t('wallet.destinationRequired'))
+      return
+    }
+    if (!sendSweepAll && amountSat <= 0) {
+      setSendStatus(t('wallet.amountMustBePositive'))
+      return
+    }
+    if (sendPreview?.requires_password_confirmation) {
+      setSendConfirmOpen(true)
+      setSendConfirmStatus('')
+      return
+    }
+    await executeOnchainSend()
+  }
+
+  const handleConfirmOnchainSend = async () => {
+    if (!sendConfirmPassword) {
+      setSendConfirmStatus(t('wallet.sendPasswordEntryRequired'))
+      return
+    }
+    setSendConfirmRunning(true)
+    setSendConfirmStatus('')
+    try {
+      await reauthAuth({
+        password: sendConfirmPassword,
+        scope: 'wallet_send_external'
+      })
+      await executeOnchainSend()
+    } catch (err: any) {
+      setSendConfirmStatus(err?.message || t('wallet.sendPasswordConfirmFailed'))
+    } finally {
+      setSendConfirmRunning(false)
     }
   }
 
@@ -850,6 +906,13 @@ export default function Wallet() {
                         <p>{t('wallet.sendPreviewChange', { amount: formatSats(sendPreview.change_sat) })}</p>
                         <p>{t('wallet.sendPreviewInputs', { selected: formatSats(sendPreview.selected_input_count), available: formatSats(sendPreview.spendable_utxo_count) })}</p>
                         <p className="sm:col-span-2">{t('wallet.sendPreviewSpendable', { amount: formatSats(sendPreview.spendable_sat), selected: formatSats(sendPreview.selected_input_sat) })}</p>
+                        {sendPreview.requires_password_confirmation && (
+                          <p className="sm:col-span-2 text-brass">
+                            {t('wallet.sendPreviewPasswordConfirmation', {
+                              classification: sendPreview.destination_classification || t('wallet.destinationExternal')
+                            })}
+                          </p>
+                        )}
                       </div>
                     )}
                     {!sendPreviewLoading && sendPreviewStatus && (
@@ -1101,6 +1164,68 @@ export default function Wallet() {
           )}
         </div>
       </div>
+
+      {sendConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => {
+              if (sendConfirmRunning || sendRunning) return
+              setSendConfirmOpen(false)
+            }}
+            aria-hidden="true"
+          />
+          <div className="relative z-10 w-full max-w-md rounded-3xl border border-white/10 bg-slate/95 p-6 shadow-panel">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h4 className="text-lg font-semibold">{t('wallet.sendPasswordModalTitle')}</h4>
+                <p className="mt-1 text-sm text-fog/60">{t('wallet.sendPasswordModalBody')}</p>
+              </div>
+              <button
+                className="btn-secondary"
+                type="button"
+                onClick={() => setSendConfirmOpen(false)}
+                disabled={sendConfirmRunning || sendRunning}
+              >
+                {t('common.close')}
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-3">
+              <div className="rounded-2xl border border-white/10 bg-ink/50 p-4 text-sm text-fog/75">
+                <p>{t('wallet.destinationAddress')}</p>
+                <p className="mt-2 break-all font-mono text-xs text-fog/80">{sendAddress.trim()}</p>
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs uppercase tracking-[0.2em] text-fog/55">{t('wallet.passwordConfirmationLabel')}</label>
+                <input
+                  className="input-field"
+                  type="password"
+                  value={sendConfirmPassword}
+                  onChange={(event) => setSendConfirmPassword(event.target.value)}
+                  placeholder={t('wallet.passwordConfirmationPlaceholder')}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      void handleConfirmOnchainSend()
+                    }
+                  }}
+                />
+              </div>
+              {sendConfirmStatus && (
+                <p className="text-sm text-brass">{sendConfirmStatus}</p>
+              )}
+              <button
+                className="btn-primary w-full justify-center"
+                type="button"
+                onClick={handleConfirmOnchainSend}
+                disabled={sendConfirmRunning || sendRunning}
+              >
+                {sendConfirmRunning || sendRunning ? t('wallet.sendPasswordConfirmRunning') : t('wallet.sendPasswordConfirmAction')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {selectedActivity && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4">

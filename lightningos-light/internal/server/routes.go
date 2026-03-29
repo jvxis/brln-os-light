@@ -13,7 +13,16 @@ func (s *Server) routes() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(s.requestLogger())
+	if s.auth != nil {
+		r.Use(s.auth.Middleware())
+	}
 
+	r.Get("/api/auth/state", s.auth.HandleState)
+	r.Post("/api/auth/setup", s.auth.HandleSetup)
+	r.Post("/api/auth/login", s.auth.HandleLogin)
+	r.Post("/api/auth/logout", s.auth.HandleLogout)
+	r.Post("/api/auth/recovery", s.auth.HandleRecovery)
+	r.Post("/api/auth/reauth", s.auth.HandleReauth)
 	r.Get("/api/health", s.handleHealth)
 	r.Get("/api/amboss/health", s.handleAmbossHealthGet)
 	r.Post("/api/amboss/health", s.handleAmbossHealthPost)

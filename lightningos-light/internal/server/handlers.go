@@ -3749,12 +3749,41 @@ func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+func (s *Server) classifyOnchainDestination(ctx context.Context, address string) (string, error) {
+	trimmed := strings.TrimSpace(address)
+	if trimmed == "" {
+		return "unknown", nil
+	}
+
+	isWalletAddress, err := s.lnd.IsWalletAddress(ctx, trimmed)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("wallet destination classification failed: %v", err)
+		}
+		return "unknown", err
+	}
+	if isWalletAddress {
+		return "wallet_internal", nil
+	}
+	return "external", nil
+}
+
+func requiresWalletSendConfirmation(classification string) bool {
+	switch strings.TrimSpace(classification) {
+	case "wallet_internal":
+		return false
+	default:
+		return true
+	}
+}
+
 func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Address     string `json:"address"`
-		AmountSat   int64  `json:"amount_sat"`
-		SatPerVbyte int64  `json:"sat_per_vbyte"`
-		SweepAll    bool   `json:"sweep_all"`
+		Address         string `json:"address"`
+		AmountSat       int64  `json:"amount_sat"`
+		SatPerVbyte     int64  `json:"sat_per_vbyte"`
+		SweepAll        bool   `json:"sweep_all"`
+		ConfirmPassword string `json:"confirm_password"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -3775,6 +3804,32 @@ func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
+
+	destinationClassification, _ := s.classifyOnchainDestination(ctx, address)
+	if s.auth != nil && s.auth.Enabled() && requiresWalletSendConfirmation(destinationClassification) {
+		session, ok := authSessionFromContext(r.Context())
+		if !ok {
+			writeErrorCode(w, http.StatusUnauthorized, "auth_required", "authentication required")
+			return
+		}
+		if !s.auth.HasRecentReauth(session.ID, authScopeWalletSendExternal) {
+			confirmPassword := strings.TrimSpace(req.ConfirmPassword)
+			if confirmPassword != "" {
+				if _, err := s.auth.reauth(session.ID, confirmPassword, authScopeWalletSendExternal); err != nil {
+					writeErrorCode(w, http.StatusUnauthorized, "auth_invalid_credentials", "invalid credentials")
+					return
+				}
+			} else {
+				writeJSON(w, http.StatusPreconditionRequired, map[string]any{
+					"error":                          "password confirmation required for external on-chain sends",
+					"code":                           "wallet_send_external_reauth_required",
+					"destination_classification":     destinationClassification,
+					"requires_password_confirmation": true,
+				})
+				return
+			}
+		}
+	}
 
 	txid, err := s.lnd.SendCoins(ctx, address, req.AmountSat, req.SatPerVbyte, req.SweepAll)
 	if err != nil {
@@ -3820,7 +3875,27 @@ func (s *Server) handleWalletSendPreview(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, preview)
+	destinationClassification, _ := s.classifyOnchainDestination(ctx, req.Address)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"address":                        preview.Address,
+		"sweep_all":                      preview.SweepAll,
+		"requested_amount_sat":           preview.RequestedAmountSat,
+		"recipient_amount_sat":           preview.RecipientAmountSat,
+		"fee_sat":                        preview.FeeSat,
+		"change_sat":                     preview.ChangeSat,
+		"total_debit_sat":                preview.TotalDebitSat,
+		"spendable_sat":                  preview.SpendableSat,
+		"spendable_utxo_count":           preview.SpendableUtxoCount,
+		"selected_input_count":           preview.SelectedInputCount,
+		"selected_input_sat":             preview.SelectedInputSat,
+		"estimated_vbytes":               preview.EstimatedVbytes,
+		"sat_per_vbyte":                  preview.SatPerVbyte,
+		"enough_funds":                   preview.EnoughFunds,
+		"exact":                          preview.Exact,
+		"message":                        preview.Message,
+		"destination_classification":     destinationClassification,
+		"requires_password_confirmation": requiresWalletSendConfirmation(destinationClassification),
+	})
 }
 
 type rpcStatusError struct {

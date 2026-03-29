@@ -44,10 +44,17 @@ type UIConfig struct {
 }
 
 type FeaturesConfig struct {
-	EnableLogin                   bool  `yaml:"enable_login"`
+	EnableLogin                   *bool `yaml:"enable_login"`
 	EnableBitcoinLocalPlaceholder bool  `yaml:"enable_bitcoin_local_placeholder"`
 	EnableAppStorePlaceholder     bool  `yaml:"enable_app_store_placeholder"`
 	EnableBalancedOpen            *bool `yaml:"enable_balanced_open"`
+}
+
+func (f FeaturesConfig) LoginEnabled() bool {
+	if f.EnableLogin == nil {
+		return true
+	}
+	return *f.EnableLogin
 }
 
 func (f FeaturesConfig) BalancedOpenEnabled() bool {

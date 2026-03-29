@@ -1,17 +1,54 @@
 const base = ''
 
+let csrfToken = ''
+
+export class APIError extends Error {
+  status: number
+  code: string
+
+  constructor(message: string, status: number, code = '') {
+    super(message)
+    this.name = 'APIError'
+    this.status = status
+    this.code = code
+  }
+}
+
+export type AuthState = {
+  enabled: boolean
+  password_configured: boolean
+  setup_required: boolean
+  authenticated: boolean
+  csrf_token?: string
+  session_expires_at?: string
+  setup_token_issued?: boolean
+  recovery_token_issued?: boolean
+}
+
+const setCSRFToken = (value?: string) => {
+  csrfToken = typeof value === 'string' ? value.trim() : ''
+}
+
 async function request(path: string, options?: RequestInit) {
+  const method = String(options?.method || 'GET').toUpperCase()
+  const headers = new Headers({
+    'Content-Type': 'application/json',
+    ...(options?.headers || {})
+  })
+  if (csrfToken && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+    headers.set('X-CSRF-Token', csrfToken)
+  }
+
   const res = await fetch(`${base}${path}`, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options?.headers || {})
-    }
+    credentials: 'same-origin',
+    headers
   })
   if (!res.ok) {
     const text = await res.text()
+    let errorMsg = text || 'Request failed'
+    let errorCode = ''
     if (text) {
-      let errorMsg = text
       try {
         const payload = JSON.parse(text)
         if (payload && typeof payload.message === 'string') {
@@ -19,12 +56,18 @@ async function request(path: string, options?: RequestInit) {
         } else if (payload && typeof payload.error === 'string') {
           errorMsg = payload.error
         }
+        if (payload && typeof payload.code === 'string') {
+          errorCode = payload.code
+        }
       } catch {
         // not JSON, use raw text
       }
-      throw new Error(errorMsg)
     }
-    throw new Error('Request failed')
+    if (res.status === 401 && !path.startsWith('/api/auth/')) {
+      setCSRFToken('')
+      window.dispatchEvent(new CustomEvent('auth:required'))
+    }
+    throw new APIError(errorMsg, res.status, errorCode)
   }
   if (res.status === 204) return null
   return res.json()
@@ -40,6 +83,37 @@ const buildQuery = (params?: Record<string, string | number | boolean | undefine
 }
 
 export const getHealth = () => request('/api/health')
+export const getAuthState = async () => {
+  const data = await request('/api/auth/state') as AuthState
+  if (data?.authenticated && data?.csrf_token) {
+    setCSRFToken(data.csrf_token)
+  } else {
+    setCSRFToken('')
+  }
+  return data
+}
+export const setupAuth = async (payload: { setup_token: string; password: string; confirm_password: string }) => {
+  const data = await request('/api/auth/setup', { method: 'POST', body: JSON.stringify(payload) }) as AuthState
+  setCSRFToken(data?.csrf_token)
+  return data
+}
+export const loginAuth = async (payload: { password: string }) => {
+  const data = await request('/api/auth/login', { method: 'POST', body: JSON.stringify(payload) }) as AuthState
+  setCSRFToken(data?.csrf_token)
+  return data
+}
+export const logoutAuth = async () => {
+  const data = await request('/api/auth/logout', { method: 'POST', body: JSON.stringify({}) })
+  setCSRFToken('')
+  return data
+}
+export const recoverAuth = async (payload: { recovery_token: string; password: string; confirm_password: string }) => {
+  const data = await request('/api/auth/recovery', { method: 'POST', body: JSON.stringify(payload) }) as AuthState
+  setCSRFToken(data?.csrf_token)
+  return data
+}
+export const reauthAuth = (payload: { password: string; scope: string }) =>
+  request('/api/auth/reauth', { method: 'POST', body: JSON.stringify(payload) })
 export const getAmbossHealth = () => request('/api/amboss/health')
 export const updateAmbossHealth = (payload: { enabled: boolean }) =>
   request('/api/amboss/health', { method: 'POST', body: JSON.stringify(payload) })

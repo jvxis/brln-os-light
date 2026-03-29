@@ -32,6 +32,7 @@ type Server struct {
 	reportsErr                  string
 	reportsMu                   sync.Mutex
 	reportsInitAt               time.Time
+	auth                        *AuthService
 	rebalanceInitAt             time.Time
 	rebalance                   *RebalanceService
 	rebalanceErr                string
@@ -92,6 +93,7 @@ func New(cfg *config.Config, logger *log.Logger) *Server {
 		lnd:                lndclient.New(cfg, logger),
 		networkMapGeoCache: make(map[string]networkMapGeoCacheEntry),
 	}
+	srv.auth = NewAuthService(cfg, logger)
 	srv.chat = NewChatService(srv.lnd, logger)
 	srv.amboss = NewAmbossHealthChecker(srv.lnd, logger)
 	srv.chanHealer = NewChanStatusHealer(srv.lnd, logger)

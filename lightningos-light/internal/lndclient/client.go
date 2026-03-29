@@ -56,6 +56,9 @@ type Client struct {
 	infoCache          infoSnapshot
 	infoCacheAt        time.Time
 	infoCacheValid     bool
+	walletAddressesMu  sync.Mutex
+	walletAddresses    map[string]struct{}
+	walletAddressesAt  time.Time
 	channelStateMu     sync.Mutex
 	channelInactive    map[string]time.Time
 	channelPendingOpen map[string]time.Time

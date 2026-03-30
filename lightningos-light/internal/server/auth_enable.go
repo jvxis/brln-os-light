@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
+	osuser "os/user"
 	"strings"
 	"time"
 
@@ -28,11 +30,21 @@ func (s *Server) handleAuthEnableLogin(w http.ResponseWriter, r *http.Request) {
 
 	configPath := authConfigPath(s.cfg.Path)
 	if err := enableLoginInConfigFile(configPath); err != nil {
+		retryErr := err
+		compatCtx, compatCancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer compatCancel()
+		if compatFixErr := ensureAuthEnableCompat(compatCtx, configPath); compatFixErr == nil {
+			retryErr = enableLoginInConfigFile(configPath)
+		} else if s.logger != nil {
+			s.logger.Printf("auth enable compat fix failed: %v", compatFixErr)
+		}
+		if retryErr != nil {
 		if s.logger != nil {
-			s.logger.Printf("auth enable failed: %v", err)
+				s.logger.Printf("auth enable failed: %v", retryErr)
 		}
 		writeErrorCode(w, http.StatusInternalServerError, "auth_enable_failed", "failed to enable login protection")
 		return
+		}
 	}
 
 	enabled := true
@@ -118,6 +130,58 @@ func enableLoginInConfigFile(path string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return system.WriteFileWithSudo(ctx, path, out.Bytes())
+}
+
+func ensureAuthEnableCompat(ctx context.Context, configPath string) error {
+	managerUser := authEnableManagerUser()
+	teePath := authLookupPath("tee", "/usr/bin/tee")
+	systemctlPath := authLookupPath("systemctl", "/usr/bin/systemctl")
+	systemdRunPath := authLookupPath("systemd-run", "/usr/bin/systemd-run")
+	sudoersPath := "/etc/sudoers.d/lightningos-auth-enable"
+
+	content := strings.Join([]string{
+		fmt.Sprintf("Defaults:%s !requiretty", managerUser),
+		fmt.Sprintf("%s ALL=NOPASSWD: %s %s, %s restart lightningos-manager, %s *", managerUser, teePath, configPath, systemctlPath, systemdRunPath),
+		"",
+	}, "\n")
+
+	if err := system.WriteFileWithSudo(ctx, sudoersPath, []byte(content)); err != nil {
+		return err
+	}
+
+	script := fmt.Sprintf("chmod 440 %s", shSingleQuote(sudoersPath))
+	if visudoPath, err := exec.LookPath("visudo"); err == nil && strings.TrimSpace(visudoPath) != "" {
+		script += fmt.Sprintf(" && %s -cf %s >/dev/null", shSingleQuote(visudoPath), shSingleQuote(sudoersPath))
+	}
+	if _, err := runSystemd(ctx, "/bin/sh", "-c", script); err != nil {
+		return err
+	}
+	return nil
+}
+
+func authEnableManagerUser() string {
+	current, err := osuser.Current()
+	if err == nil {
+		username := strings.TrimSpace(current.Username)
+		if username != "" {
+			return username
+		}
+	}
+	return "lightningos"
+}
+
+func authLookupPath(name string, fallback string) string {
+	if path, err := exec.LookPath(name); err == nil && strings.TrimSpace(path) != "" {
+		return path
+	}
+	return fallback
+}
+
+func shSingleQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
 }
 
 func yamlEnsureMapValue(mapping *yaml.Node, key string) *yaml.Node {

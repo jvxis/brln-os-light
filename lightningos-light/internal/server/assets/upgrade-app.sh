@@ -184,6 +184,9 @@ configure_manager_sudoers() {
   local app_cmds=()
   local app_cmds_line=""
   local sudoers_path="/etc/sudoers.d/lightningos"
+  local alias_suffix=""
+  local system_alias=""
+  local app_alias=""
 
   if [[ "$manager_user" != "lightningos" ]]; then
     sudoers_path="/etc/sudoers.d/lightningos-${manager_user}"
@@ -202,12 +205,18 @@ configure_manager_sudoers() {
   if [[ -z "$app_cmds_line" ]]; then
     app_cmds_line="/bin/true"
   fi
+  alias_suffix="$(printf '%s' "$manager_user" | tr '[:lower:]-' '[:upper:]_' | tr -cd 'A-Z0-9_')"
+  if [[ -z "$alias_suffix" ]]; then
+    alias_suffix="LIGHTNINGOS"
+  fi
+  system_alias="LIGHTNINGOS_SYSTEM_${alias_suffix}"
+  app_alias="LIGHTNINGOS_APPS_${alias_suffix}"
 
   cat > "$sudoers_path" <<EOF
 Defaults:${manager_user} !requiretty
-Cmnd_Alias LIGHTNINGOS_SYSTEM = ${system_cmds}
-Cmnd_Alias LIGHTNINGOS_APPS = ${app_cmds_line}
-${manager_user} ALL=NOPASSWD: LIGHTNINGOS_SYSTEM, LIGHTNINGOS_APPS
+Cmnd_Alias ${system_alias} = ${system_cmds}
+Cmnd_Alias ${app_alias} = ${app_cmds_line}
+${manager_user} ALL=NOPASSWD: ${system_alias}, ${app_alias}
 EOF
   chmod 440 "$sudoers_path"
   if [[ -n "${VISUDO_BIN:-}" ]]; then

@@ -267,10 +267,47 @@ func WriteFileWithSudo(ctx context.Context, path string, data []byte) error {
 	cmd := exec.CommandContext(ctx, sudoPath, "-n", teePath, path)
 	cmd.Stdin = bytes.NewReader(data)
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("sudo tee failed: %w (%s)", err, strings.TrimSpace(string(out)))
+	if err == nil {
+		return nil
 	}
-	return nil
+	teeMsg := strings.TrimSpace(string(out))
+
+	systemdRunPath, systemdRunErr := exec.LookPath("systemd-run")
+	if systemdRunErr == nil {
+		fallback := exec.CommandContext(
+			ctx,
+			sudoPath,
+			"-n",
+			systemdRunPath,
+			"--quiet",
+			"--wait",
+			"--pipe",
+			"--collect",
+			teePath,
+			path,
+		)
+		fallback.Stdin = bytes.NewReader(data)
+		fallbackOut, fallbackErr := fallback.CombinedOutput()
+		if fallbackErr == nil {
+			return nil
+		}
+		fallbackMsg := strings.TrimSpace(string(fallbackOut))
+		if teeMsg != "" && fallbackMsg != "" {
+			return fmt.Errorf("sudo tee failed: %w (%s); sudo systemd-run tee failed: %w (%s)", err, teeMsg, fallbackErr, fallbackMsg)
+		}
+		if teeMsg != "" {
+			return fmt.Errorf("sudo tee failed: %w (%s); sudo systemd-run tee failed: %w", err, teeMsg, fallbackErr)
+		}
+		if fallbackMsg != "" {
+			return fmt.Errorf("sudo tee failed: %w; sudo systemd-run tee failed: %w (%s)", err, fallbackErr, fallbackMsg)
+		}
+		return fmt.Errorf("sudo tee failed: %w; sudo systemd-run tee failed: %w", err, fallbackErr)
+	}
+
+	if teeMsg != "" {
+		return fmt.Errorf("sudo tee failed: %w (%s)", err, teeMsg)
+	}
+	return fmt.Errorf("sudo tee failed: %w", err)
 }
 
 func systemctlPath() string {

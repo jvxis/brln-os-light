@@ -668,6 +668,7 @@ ensure_group_member() {
 
 configure_sudoers() {
   print_step "Configuring sudoers"
+  local manager_user="lightningos"
   local systemctl_path apt_get_path apt_path dpkg_path docker_path docker_compose_path systemd_run_path smartctl_path ufw_path tee_path
   systemctl_path=$(command -v systemctl || true)
   apt_get_path=$(command -v apt-get || true)
@@ -713,11 +714,18 @@ configure_sudoers() {
   if [[ -z "$app_cmds_line" ]]; then
     app_cmds_line="/bin/true"
   fi
+  local alias_suffix system_alias app_alias
+  alias_suffix=$(printf '%s' "$manager_user" | tr '[:lower:]-' '[:upper:]_' | tr -cd 'A-Z0-9_')
+  if [[ -z "$alias_suffix" ]]; then
+    alias_suffix="LIGHTNINGOS"
+  fi
+  system_alias="LIGHTNINGOS_SYSTEM_${alias_suffix}"
+  app_alias="LIGHTNINGOS_APPS_${alias_suffix}"
   cat > /etc/sudoers.d/lightningos <<EOF
-Defaults:lightningos !requiretty
-Cmnd_Alias LIGHTNINGOS_SYSTEM = ${system_cmds}
-Cmnd_Alias LIGHTNINGOS_APPS = ${app_cmds_line}
-lightningos ALL=NOPASSWD: LIGHTNINGOS_SYSTEM, LIGHTNINGOS_APPS
+Defaults:${manager_user} !requiretty
+Cmnd_Alias ${system_alias} = ${system_cmds}
+Cmnd_Alias ${app_alias} = ${app_cmds_line}
+${manager_user} ALL=NOPASSWD: ${system_alias}, ${app_alias}
 EOF
   chmod 440 /etc/sudoers.d/lightningos
   print_ok "Sudoers configured"

@@ -37,6 +37,7 @@ func TestClassifyChannelRankingKeepsStrong30dChannelUnderMonitor(t *testing.T) {
 		15,
 		80,
 		51,
+		368,
 		channelHTLCAggregate{Total: 2, Forward: 2},
 		48,
 	)
@@ -75,6 +76,7 @@ func TestClassifyChannelRankingClosesOnSevereOperationalRisk(t *testing.T) {
 		22,
 		62,
 		30,
+		400,
 		channelHTLCAggregate{Total: 10, Liquidity: 5},
 		82,
 	)
@@ -129,6 +131,7 @@ func TestClassifyChannelRankingCreditsAssistedRevenueBeforeClose(t *testing.T) {
 		46,
 		58,
 		70,
+		368,
 		channelHTLCAggregate{},
 		22,
 	)
@@ -155,5 +158,55 @@ func TestClassifyChannelRankingCreditsAssistedRevenueBeforeClose(t *testing.T) {
 	}
 	if !foundAssistRecommendation {
 		t.Fatalf("expected assisted revenue recommendation to be present")
+	}
+}
+
+func TestClassifyChannelRankingDefersCloseDuringWarmup(t *testing.T) {
+	ch := lndclient.ChannelInfo{
+		Active:              false,
+		InactiveDurationSec: 9 * 24 * 3600,
+	}
+
+	state, _, recommendations := classifyChannelRanking(
+		ch,
+		10_000_000,
+		45,
+		channelTrafficStat{FeeSat: 200, AmountSat: 50_000},
+		channelTrafficStat{FeeSat: 1_500, AmountSat: 1_000_000},
+		channelTrafficStat{FeeSat: 200, AmountSat: 50_000},
+		channelTrafficStat{FeeSat: 1_500, AmountSat: 1_000_000},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{FeeSat: 260, AmountSat: 60_000},
+		channelTrafficStat{FeeSat: 900, AmountSat: 700_000},
+		-60,
+		600,
+		-60,
+		600,
+		22,
+		62,
+		30,
+		48,
+		channelHTLCAggregate{Total: 10, Liquidity: 5},
+		82,
+	)
+
+	if state != "monitor" {
+		t.Fatalf("expected monitor during warmup, got %s", state)
+	}
+	for _, recommendation := range recommendations {
+		if recommendation.Code == "prepare_coop_close" {
+			t.Fatalf("did not expect close recommendation during warmup")
+		}
+	}
+	foundObserve := false
+	for _, recommendation := range recommendations {
+		if recommendation.Code == "observe_7d_before_close" {
+			foundObserve = true
+			break
+		}
+	}
+	if !foundObserve {
+		t.Fatalf("expected observe_7d_before_close recommendation during warmup")
 	}
 }

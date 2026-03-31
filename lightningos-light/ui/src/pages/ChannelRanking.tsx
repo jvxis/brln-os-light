@@ -114,6 +114,7 @@ type ChannelRankingFeedback = {
 const CHANNEL_RANKING_ROUTE_KEY = 'channel-ranking'
 const LIGHTNING_OPS_ROUTE_KEY = 'lightning-ops'
 const REBALANCE_ROUTE_KEY = 'rebalance-center'
+const GRAPH_EXPLORER_ROUTE_KEY = 'graph-explorer'
 const CHANNEL_HASH_PARAM = 'channel_point'
 const SECTION_HASH_PARAM = 'section'
 
@@ -132,6 +133,9 @@ const readHashChannelPoint = (routeKey: string) => {
 
 const buildHashWithChannelPoint = (routeKey: string, channelPoint: string) =>
   `#${routeKey}?${CHANNEL_HASH_PARAM}=${encodeURIComponent(channelPoint)}`
+
+const buildGraphExplorerHash = (pubkey: string) =>
+  `#${GRAPH_EXPLORER_ROUTE_KEY}?pubkey=${encodeURIComponent(pubkey)}`
 
 const buildLightningOpsHash = (channelPoint: string, section?: string) => {
   const params = new URLSearchParams()
@@ -714,12 +718,22 @@ export default function ChannelRanking() {
           <div className="mb-4 flex items-center justify-between gap-3">
             <h3 className="text-lg font-semibold">{t('channelRanking.detailTitle')}</h3>
             {selectedDetail && (
-              <a
-                href={buildHashWithChannelPoint(LIGHTNING_OPS_ROUTE_KEY, selectedDetail.channel_point)}
-                className="text-xs text-sky-200 hover:text-sky-100"
-              >
-                {t('channelRanking.openInLightningOps')}
-              </a>
+              <div className="flex flex-wrap items-center gap-3">
+                {selectedDetail.peer_pubkey && (
+                  <a
+                    href={buildGraphExplorerHash(selectedDetail.peer_pubkey)}
+                    className="text-xs text-sky-200 hover:text-sky-100"
+                  >
+                    {t('nav.graphExplorer')}
+                  </a>
+                )}
+                <a
+                  href={buildHashWithChannelPoint(LIGHTNING_OPS_ROUTE_KEY, selectedDetail.channel_point)}
+                  className="text-xs text-sky-200 hover:text-sky-100"
+                >
+                  {t('channelRanking.openInLightningOps')}
+                </a>
+              </div>
             )}
           </div>
 

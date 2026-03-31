@@ -771,6 +771,7 @@ const formatAutofeeHistoryTag = (tag: string) => {
 const LIGHTNING_OPS_ROUTE_KEY = 'lightning-ops'
 const CHANNEL_RANKING_ROUTE_KEY = 'channel-ranking'
 const REBALANCE_ROUTE_KEY = 'rebalance-center'
+const GRAPH_EXPLORER_ROUTE_KEY = 'graph-explorer'
 const CHANNEL_HASH_PARAM = 'channel_point'
 const PEER_HASH_PARAM = 'peer_pubkey'
 const SECTION_HASH_PARAM = 'section'
@@ -830,6 +831,9 @@ const readHashSection = (routeKey: string) => {
 
 const buildHashWithChannelPoint = (routeKey: string, channelPoint: string) =>
   `#${routeKey}?${CHANNEL_HASH_PARAM}=${encodeURIComponent(channelPoint)}`
+
+const buildGraphExplorerHash = (pubkey: string) =>
+  `#${GRAPH_EXPLORER_ROUTE_KEY}?pubkey=${encodeURIComponent(pubkey)}`
 
 const channelCardID = (channelPoint: string) =>
   `lightning-channel-${channelPoint.replace(/[^a-zA-Z0-9_-]/g, '_')}`
@@ -2404,6 +2408,28 @@ export default function LightningOps() {
   }
 
   const ambossURL = (pubkey: string) => `https://amboss.space/node/${pubkey}`
+  const peerProfileLinkGroup = (pubkey?: string, className = 'mt-1 flex flex-wrap items-center gap-2') => {
+    const normalized = String(pubkey || '').trim()
+    if (!normalized) return null
+    return (
+      <div className={className}>
+        <a
+          className="text-[11px] text-sky-200 hover:text-sky-100"
+          href={buildGraphExplorerHash(normalized)}
+        >
+          {t('nav.graphExplorer')}
+        </a>
+        <a
+          className="text-[11px] text-emerald-100/80 hover:text-emerald-100"
+          href={ambossURL(normalized)}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Amboss
+        </a>
+      </div>
+    )
+  }
 
   const applyChannelsPayload = (res: any) => {
     const list = Array.isArray(res?.channels) ? res.channels : []
@@ -5856,18 +5882,8 @@ export default function LightningOps() {
                         <div key={ch.channel_point} className="rounded-xl border border-white/10 bg-ink/70 p-3">
                           <div className="flex flex-wrap items-center justify-between gap-3">
                             <div>
-                              {ch.remote_pubkey ? (
-                                <a
-                                  className="text-xs text-fog/70 hover:text-fog break-all"
-                                  href={ambossURL(ch.remote_pubkey)}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  {ch.peer_alias || ch.remote_pubkey}
-                                </a>
-                              ) : (
-                                <p className="text-xs text-fog/70">{ch.peer_alias || t('lightningOps.unknownPeer')}</p>
-                              )}
+                              <p className="text-xs text-fog/70 break-all">{ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer')}</p>
+                              {peerProfileLinkGroup(ch.remote_pubkey)}
                               {pointLink ? (
                                 <a
                                   className="mt-1 block text-[11px] text-emerald-200 hover:text-emerald-100 break-all"
@@ -6005,18 +6021,8 @@ export default function LightningOps() {
                         <div key={ch.channel_point} className="rounded-xl border border-white/10 bg-ink/70 p-3">
                           <div className="flex flex-wrap items-center justify-between gap-3">
                             <div>
-                              {ch.remote_pubkey ? (
-                                <a
-                                  className="text-xs text-fog/70 hover:text-fog break-all"
-                                  href={ambossURL(ch.remote_pubkey)}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  {ch.peer_alias || ch.remote_pubkey}
-                                </a>
-                              ) : (
-                                <p className="text-xs text-fog/70">{ch.peer_alias || t('lightningOps.unknownPeer')}</p>
-                              )}
+                              <p className="text-xs text-fog/70 break-all">{ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer')}</p>
+                              {peerProfileLinkGroup(ch.remote_pubkey)}
                               {pointLink ? (
                                 <a
                                   className="mt-1 block text-[11px] text-emerald-200 hover:text-emerald-100 break-all"
@@ -6149,18 +6155,8 @@ export default function LightningOps() {
                         <div key={item.id} className="rounded-xl border border-white/10 bg-ink/70 p-3 space-y-2">
                           <div className="flex flex-wrap items-start justify-between gap-3">
                             <div>
-                              {item.peer_pubkey ? (
-                                <a
-                                  className="text-xs text-fog/70 hover:text-fog break-all"
-                                  href={ambossURL(item.peer_pubkey)}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  {item.peer_alias || item.peer_pubkey}
-                                </a>
-                              ) : (
-                                <p className="text-xs text-fog/70">{item.peer_alias || t('lightningOps.unknownPeer')}</p>
-                              )}
+                              <p className="text-xs text-fog/70 break-all">{item.peer_alias || item.peer_pubkey || t('lightningOps.unknownPeer')}</p>
+                              {peerProfileLinkGroup(item.peer_pubkey)}
                               {pointLink ? (
                                 <a
                                   className="mt-1 block text-[11px] text-emerald-200 hover:text-emerald-100 break-all"
@@ -6473,18 +6469,8 @@ export default function LightningOps() {
                   <div key={ch.channel_point} id={channelCardID(ch.channel_point)} className={cardClass}>
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        {ch.remote_pubkey ? (
-                          <a
-                            className="text-sm text-fog/60 hover:text-fog"
-                            href={ambossURL(ch.remote_pubkey)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            {ch.peer_alias || ch.remote_pubkey}
-                          </a>
-                        ) : (
-                          <p className="text-sm text-fog/60">{ch.peer_alias || t('lightningOps.unknownPeer')}</p>
-                        )}
+                        <p className="text-sm text-fog/60">{ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer')}</p>
+                        {peerProfileLinkGroup(ch.remote_pubkey)}
                         <div className="mt-0.5 flex flex-wrap items-center gap-2">
                           <p className="min-w-0 break-all text-xs text-fog/50">
                             {t('lightningOps.pointCapacityWithOpener', { point: ch.channel_point, capacity: ch.capacity_sat, opener })}
@@ -6790,14 +6776,7 @@ export default function LightningOps() {
                                       </div>
                                       <div className="text-[11px] text-fog/50 break-all">{item.pub_key}</div>
                                     </div>
-                                    <a
-                                      className="text-[11px] text-emerald-100/80 hover:text-emerald-100"
-                                      href={ambossURL(item.pub_key)}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                    >
-                                      Amboss
-                                    </a>
+                                    {peerProfileLinkGroup(item.pub_key, 'flex flex-wrap items-center justify-end gap-2')}
                                   </div>
                                   <div className="mt-2 grid gap-1 text-[11px] text-fog/70 sm:grid-cols-2">
                                     <div>{t('lightningOps.peerRecommendationsCapacity', { value: Math.round(Number(item.total_capacity_sat || 0)).toLocaleString(locale) })}</div>
@@ -8490,18 +8469,8 @@ export default function LightningOps() {
                   <div key={peer.pub_key} id={peerCardID(peer.pub_key)} className={peerCardClass}>
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        {peer.pub_key ? (
-                          <a
-                            className="text-sm text-fog/60 hover:text-fog"
-                            href={ambossURL(peer.pub_key)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            {peer.alias || peer.pub_key}
-                          </a>
-                        ) : (
-                          <p className="text-sm text-fog/60">{peer.alias || t('lightningOps.unknownPeer')}</p>
-                        )}
+                        <p className="text-sm text-fog/60">{peer.alias || peer.pub_key || t('lightningOps.unknownPeer')}</p>
+                        {peerProfileLinkGroup(peer.pub_key)}
                         <p className="text-xs text-fog/50">{peer.address || t('lightningOps.addressUnknown')}</p>
                       </div>
                       <div className="flex items-center gap-2">
@@ -8589,18 +8558,8 @@ export default function LightningOps() {
                   <div key={`${item.chan_id}-${item.channel_point || item.closing_tx_hash || peerLabel}`} className="rounded-2xl border border-white/10 bg-ink/60 p-4">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        {item.remote_pubkey ? (
-                          <a
-                            className="text-sm text-fog hover:text-white break-all"
-                            href={ambossURL(item.remote_pubkey)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            {peerLabel}
-                          </a>
-                        ) : (
-                          <p className="text-sm text-fog break-all">{peerLabel}</p>
-                        )}
+                        <p className="text-sm text-fog break-all">{peerLabel}</p>
+                        {peerProfileLinkGroup(item.remote_pubkey)}
                         {closedAtLabel ? (
                           <p className="mt-1 text-xs text-fog/50">{closedAtLabel}</p>
                         ) : (
@@ -8699,18 +8658,8 @@ export default function LightningOps() {
                     return (
                       <tr key={`${item.chan_id}-${item.channel_point || item.closing_tx_hash || peerLabel}`} className="border-t border-white/5 align-top">
                         <td className="py-3 pr-4">
-                          {item.remote_pubkey ? (
-                            <a
-                              className="text-fog hover:text-white hover:underline underline-offset-2"
-                              href={ambossURL(item.remote_pubkey)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            >
-                              {peerLabel}
-                            </a>
-                          ) : (
-                            <span className="text-fog">{peerLabel}</span>
-                          )}
+                          <div className="text-fog">{peerLabel}</div>
+                          {peerProfileLinkGroup(item.remote_pubkey, 'mt-1 flex flex-wrap items-center gap-2')}
                           <div className="mt-1 text-xs text-fog/50">{item.remote_pubkey || t('common.na')}</div>
                           {item.channel_point && (
                             pointLink ? (

@@ -21,12 +21,13 @@ type GraphExplorerSearchResponse struct {
 }
 
 type GraphExplorerSearchResult struct {
-	PubKey           string     `json:"pubkey"`
-	Alias            string     `json:"alias,omitempty"`
-	Color            string     `json:"color,omitempty"`
-	ChannelCount     int        `json:"channel_count"`
-	TotalCapacitySat int64      `json:"total_capacity_sat"`
-	LastSeenAt       *time.Time `json:"last_seen_at,omitempty"`
+	PubKey              string     `json:"pubkey"`
+	Alias               string     `json:"alias,omitempty"`
+	Color               string     `json:"color,omitempty"`
+	ChannelCount        int        `json:"channel_count"`
+	TotalCapacitySat    int64      `json:"total_capacity_sat"`
+	LastSeenAt          *time.Time `json:"last_seen_at,omitempty"`
+	HasLocalOpenChannel bool       `json:"has_local_open_channel"`
 }
 
 type GraphExplorerNodeGeneral struct {
@@ -82,6 +83,7 @@ func (s *GraphExplorerService) SearchNodes(ctx context.Context, query string, li
 	if err != nil {
 		return GraphExplorerSearchResponse{}, err
 	}
+	localOpenPeers := s.loadLocalOpenPeerSet(ctx)
 
 	rows, err := s.db.Query(ctx, `
 with input as (
@@ -139,6 +141,7 @@ limit $2
 		item.PubKey = strings.TrimSpace(item.PubKey)
 		item.Alias = strings.TrimSpace(item.Alias)
 		item.Color = strings.TrimSpace(item.Color)
+		item.HasLocalOpenChannel = graphExplorerHasLocalOpenChannel(localOpenPeers, item.PubKey)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {

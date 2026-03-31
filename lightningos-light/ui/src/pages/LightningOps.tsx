@@ -5641,72 +5641,114 @@ export default function LightningOps() {
               )}
             </div>
 
-            <div className="grid gap-4 lg:grid-cols-3">
-              <label className="flex items-center gap-2 text-sm text-fog/70">
-                <input type="checkbox" checked={autofeeInboundPassive} onChange={(e) => setAutofeeInboundPassive(e.target.checked)} />
-                {t('lightningOps.autofeeInboundPassive')}
-              </label>
-              <label className="flex items-center gap-2 text-sm text-fog/70">
-                <input type="checkbox" checked={autofeeDiscovery} onChange={(e) => setAutofeeDiscovery(e.target.checked)} />
-                {t('lightningOps.autofeeDiscovery')}
-              </label>
-              <label className="flex items-center gap-2 text-sm text-fog/70">
-                <input type="checkbox" checked={autofeeExplorer} onChange={(e) => setAutofeeExplorer(e.target.checked)} />
-                {t('lightningOps.autofeeExplorer')}
-              </label>
-              <label className="flex items-center gap-2 text-sm text-fog/70">
-                <input type="checkbox" checked={autofeeRevfloor} onChange={(e) => setAutofeeRevfloor(e.target.checked)} />
-                {t('lightningOps.autofeeRevfloor')}
-              </label>
-              <label className="flex items-center gap-2 text-sm text-fog/70">
-                <input type="checkbox" checked={autofeeCircuitBreaker} onChange={(e) => setAutofeeCircuitBreaker(e.target.checked)} />
-                {t('lightningOps.autofeeCircuitBreaker')}
-              </label>
-              <label className="flex items-center gap-2 text-sm text-fog/70">
-                <input type="checkbox" checked={autofeeExtremeDrain} onChange={(e) => setAutofeeExtremeDrain(e.target.checked)} />
-                {t('lightningOps.autofeeExtremeDrain')}
-              </label>
-              <label className="flex items-center gap-2 text-sm text-fog/70">
-                <input type="checkbox" checked={autofeeHtlcSignalEnabled} onChange={(e) => setAutofeeHtlcSignalEnabled(e.target.checked)} />
-                {t('lightningOps.autofeeHtlcSignalEnabled')}
-              </label>
-              <label className="text-sm text-fog/70">
-                {t('lightningOps.autofeeHtlcMode')}
-                <select className="input-field mt-2" value={autofeeHtlcMode} onChange={(e) => setAutofeeHtlcMode(e.target.value)} disabled={!autofeeHtlcSignalEnabled}>
-                  <option value="observe_only">{t('lightningOps.autofeeHtlcModeObserveOnly')}</option>
-                  <option value="policy_only">{t('lightningOps.autofeeHtlcModePolicyOnly')}</option>
-                  <option value="full">{t('lightningOps.autofeeHtlcModeFull')}</option>
-                </select>
-              </label>
-              <label className="flex items-center gap-2 text-sm text-fog/70">
-                <input type="checkbox" checked={autofeeSuperSource} onChange={(e) => setAutofeeSuperSource(e.target.checked)} />
-                {t('lightningOps.autofeeSuperSource')}
-              </label>
-              {autofeeSuperSource && (
-                <label className="text-sm text-fog/70">
-                  {t('lightningOps.autofeeSuperSourceBaseFee')}
-                  <input className="input-field mt-2" type="number" min={0} value={autofeeSuperSourceBaseFee} onChange={(e) => setAutofeeSuperSourceBaseFee(e.target.value)} />
-                </label>
-              )}
-              <label className="flex items-center gap-2 text-sm text-fog/70">
-                <input type="checkbox" checked={autofeeNativeSeedEnabled} onChange={(e) => setAutofeeNativeSeedEnabled(e.target.checked)} />
-                {t('lightningOps.autofeeNativeSeed')}
-              </label>
-              {autofeeNativeSeedEnabled && (
-                <p className="text-xs text-fog/55 lg:col-span-2">
-                  {t('lightningOps.autofeeNativeSeedHint')}
-                </p>
-              )}
-              <label className="flex items-center gap-2 text-sm text-fog/70">
-                <input type="checkbox" checked={autofeeAmbossEnabled} onChange={(e) => setAutofeeAmbossEnabled(e.target.checked)} />
-                {t('lightningOps.autofeeAmboss')}
-              </label>
-              {autofeeAmbossEnabled && (
-                <label className="text-sm text-fog/70 lg:col-span-2">
-                  {t('lightningOps.autofeeAmbossToken')}
-                  <input className="input-field mt-2" type="password" value={autofeeAmbossToken} onChange={(e) => setAutofeeAmbossToken(e.target.value)} placeholder={autofeeConfig?.amboss_token_set ? t('lightningOps.autofeeAmbossTokenSet') : ''} />
-                </label>
-              )}
+            <div className="grid gap-4 xl:grid-cols-3">
+              <div className="rounded-[1.35rem] border border-white/10 bg-black/10 p-4">
+                <div>
+                  <p className="text-sm font-medium text-fog">{t('lightningOps.autofeeControlsModesTitle')}</p>
+                  <p className="mt-1 text-xs text-fog/60">{t('lightningOps.autofeeControlsModesSubtitle')}</p>
+                </div>
+                <div className="mt-4 space-y-3">
+                  <label className="flex items-center gap-2 text-sm text-fog/70">
+                    <input type="checkbox" checked={autofeeInboundPassive} onChange={(e) => setAutofeeInboundPassive(e.target.checked)} />
+                    {t('lightningOps.autofeeInboundPassive')}
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-fog/70">
+                    <input type="checkbox" checked={autofeeDiscovery} onChange={(e) => setAutofeeDiscovery(e.target.checked)} />
+                    {t('lightningOps.autofeeDiscovery')}
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-fog/70">
+                    <input type="checkbox" checked={autofeeExplorer} onChange={(e) => setAutofeeExplorer(e.target.checked)} />
+                    {t('lightningOps.autofeeExplorer')}
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-fog/70">
+                    <input type="checkbox" checked={autofeeSuperSource} onChange={(e) => setAutofeeSuperSource(e.target.checked)} />
+                    {t('lightningOps.autofeeSuperSource')}
+                  </label>
+                  {autofeeSuperSource && (
+                    <label className="block text-sm text-fog/70">
+                      {t('lightningOps.autofeeSuperSourceBaseFee')}
+                      <input className="input-field mt-2" type="number" min={0} value={autofeeSuperSourceBaseFee} onChange={(e) => setAutofeeSuperSourceBaseFee(e.target.value)} />
+                    </label>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-[1.35rem] border border-white/10 bg-black/10 p-4">
+                <div>
+                  <p className="text-sm font-medium text-fog">{t('lightningOps.autofeeControlsProtectionTitle')}</p>
+                  <p className="mt-1 text-xs text-fog/60">{t('lightningOps.autofeeControlsProtectionSubtitle')}</p>
+                </div>
+                <div className="mt-4 space-y-3">
+                  <label className="flex items-center gap-2 text-sm text-fog/70">
+                    <input type="checkbox" checked={autofeeRevfloor} onChange={(e) => setAutofeeRevfloor(e.target.checked)} />
+                    {t('lightningOps.autofeeRevfloor')}
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-fog/70">
+                    <input type="checkbox" checked={autofeeCircuitBreaker} onChange={(e) => setAutofeeCircuitBreaker(e.target.checked)} />
+                    {t('lightningOps.autofeeCircuitBreaker')}
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-fog/70">
+                    <input type="checkbox" checked={autofeeExtremeDrain} onChange={(e) => setAutofeeExtremeDrain(e.target.checked)} />
+                    {t('lightningOps.autofeeExtremeDrain')}
+                  </label>
+                </div>
+              </div>
+
+              <div className="rounded-[1.35rem] border border-white/10 bg-black/10 p-4">
+                <div>
+                  <p className="text-sm font-medium text-fog">{t('lightningOps.autofeeControlsSignalsTitle')}</p>
+                  <p className="mt-1 text-xs text-fog/60">{t('lightningOps.autofeeControlsSignalsSubtitle')}</p>
+                </div>
+                <div className="mt-4 space-y-3">
+                  <label className="flex items-center gap-2 text-sm text-fog/70">
+                    <input type="checkbox" checked={autofeeHtlcSignalEnabled} onChange={(e) => setAutofeeHtlcSignalEnabled(e.target.checked)} />
+                    {t('lightningOps.autofeeHtlcSignalEnabled')}
+                  </label>
+                  <label className="block text-sm text-fog/70">
+                    {t('lightningOps.autofeeHtlcMode')}
+                    <select className="input-field mt-2" value={autofeeHtlcMode} onChange={(e) => setAutofeeHtlcMode(e.target.value)} disabled={!autofeeHtlcSignalEnabled}>
+                      <option value="observe_only">{t('lightningOps.autofeeHtlcModeObserveOnly')}</option>
+                      <option value="policy_only">{t('lightningOps.autofeeHtlcModePolicyOnly')}</option>
+                      <option value="full">{t('lightningOps.autofeeHtlcModeFull')}</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-[1.35rem] border border-white/10 bg-black/10 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-fog">{t('lightningOps.autofeeSeedSourcesTitle')}</p>
+                  <p className="mt-1 text-sm text-fog/60">{t('lightningOps.autofeeSeedSourcesSubtitle')}</p>
+                </div>
+              </div>
+              <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                  <label className="flex items-center gap-2 text-sm text-fog/70">
+                    <input type="checkbox" checked={autofeeNativeSeedEnabled} onChange={(e) => setAutofeeNativeSeedEnabled(e.target.checked)} />
+                    {t('lightningOps.autofeeNativeSeed')}
+                  </label>
+                  <p className="mt-3 text-xs leading-5 text-fog/55">
+                    {t('lightningOps.autofeeNativeSeedHint')}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                  <label className="flex items-center gap-2 text-sm text-fog/70">
+                    <input type="checkbox" checked={autofeeAmbossEnabled} onChange={(e) => setAutofeeAmbossEnabled(e.target.checked)} />
+                    {t('lightningOps.autofeeAmboss')}
+                  </label>
+                  <p className="mt-3 text-xs leading-5 text-fog/55">
+                    {t('lightningOps.autofeeAmbossHint')}
+                  </p>
+                  {autofeeAmbossEnabled && (
+                    <label className="mt-4 block text-sm text-fog/70">
+                      {t('lightningOps.autofeeAmbossToken')}
+                      <input className="input-field mt-2" type="password" value={autofeeAmbossToken} onChange={(e) => setAutofeeAmbossToken(e.target.value)} placeholder={autofeeConfig?.amboss_token_set ? t('lightningOps.autofeeAmbossTokenSet') : ''} />
+                    </label>
+                  )}
+                </div>
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-3">

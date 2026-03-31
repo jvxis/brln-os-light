@@ -22,15 +22,16 @@ type GraphExplorerNodeChannelsResponse struct {
 }
 
 type GraphExplorerNodeChannel struct {
-	ChannelID        uint64                     `json:"channel_id"`
-	ChanPoint        string                     `json:"chan_point,omitempty"`
-	PeerPubKey       string                     `json:"peer_pubkey"`
-	PeerAlias        string                     `json:"peer_alias,omitempty"`
-	CapacitySat      int64                      `json:"capacity_sat"`
-	OpenBlockHeight  int                        `json:"open_block_height"`
-	TargetPolicy     GraphExplorerChannelPolicy `json:"target_policy"`
-	PeerPolicy       GraphExplorerChannelPolicy `json:"peer_policy"`
-	LastPolicyUpdate *time.Time                 `json:"last_policy_update,omitempty"`
+	ChannelID           uint64                     `json:"channel_id"`
+	ChanPoint           string                     `json:"chan_point,omitempty"`
+	PeerPubKey          string                     `json:"peer_pubkey"`
+	PeerAlias           string                     `json:"peer_alias,omitempty"`
+	HasLocalOpenChannel bool                       `json:"has_local_open_channel"`
+	CapacitySat         int64                      `json:"capacity_sat"`
+	OpenBlockHeight     int                        `json:"open_block_height"`
+	TargetPolicy        GraphExplorerChannelPolicy `json:"target_policy"`
+	PeerPolicy          GraphExplorerChannelPolicy `json:"peer_policy"`
+	LastPolicyUpdate    *time.Time                 `json:"last_policy_update,omitempty"`
 }
 
 type GraphExplorerNodeClosedChannelsResponse struct {
@@ -131,6 +132,7 @@ func (s *GraphExplorerService) ListNodeChannels(ctx context.Context, pubkey stri
 	if err != nil {
 		return GraphExplorerNodeChannelsResponse{}, err
 	}
+	localOpenPeers := s.loadLocalOpenPeerSet(ctx)
 
 	rows, err := s.db.Query(ctx, `
 select
@@ -196,6 +198,7 @@ limit $2
 		item.ChanPoint = strings.TrimSpace(item.ChanPoint)
 		item.PeerPubKey = strings.TrimSpace(item.PeerPubKey)
 		item.PeerAlias = strings.TrimSpace(item.PeerAlias)
+		item.HasLocalOpenChannel = graphExplorerHasLocalOpenChannel(localOpenPeers, item.PeerPubKey)
 		item.LastPolicyUpdate = latestGraphExplorerTime(item.TargetPolicy.LastUpdateAt, item.PeerPolicy.LastUpdateAt)
 		items = append(items, item)
 	}

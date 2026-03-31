@@ -36,6 +36,7 @@ type GraphExplorerSearchResult = {
   channel_count: number
   total_capacity_sat: number
   last_seen_at?: string
+  has_local_open_channel: boolean
 }
 
 type GraphExplorerSearchResponse = {
@@ -92,6 +93,7 @@ type GraphExplorerNodeChannel = {
   chan_point?: string
   peer_pubkey: string
   peer_alias?: string
+  has_local_open_channel: boolean
   capacity_sat: number
   open_block_height: number
   target_policy: GraphExplorerPolicy
@@ -315,6 +317,27 @@ function PolicyCell({
         {policy.disabled ? t('common.disabled') : t('common.enabled')}
       </span>
     </div>
+  )
+}
+
+function LocalOpenChannelIndicator({
+  t
+}: {
+  t: (key: string, options?: any) => string
+}) {
+  const label = t('graphExplorer.localOpenChannelIndicator')
+  return (
+    <span
+      className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-emerald-400/30 bg-emerald-500/10 text-emerald-100"
+      title={label}
+      aria-label={label}
+    >
+      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+        <path d="M10.5 13.5 13.5 10.5" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M7 14a3.5 3.5 0 0 1 0-5l2-2a3.5 3.5 0 1 1 5 5l-.75.75" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M17 10a3.5 3.5 0 0 1 0 5l-2 2a3.5 3.5 0 1 1-5-5l.75-.75" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </span>
   )
 }
 
@@ -1188,7 +1211,10 @@ export default function GraphExplorer() {
                   <tr key={`${item.channel_id}-${item.chan_point || 'unknown'}`} className="border-t border-white/6 align-top">
                     <td className="px-4 py-4">
                       <div className="space-y-1">
-                        <div className="font-medium text-fog">{item.peer_alias || t('graphExplorer.aliasFallback')}</div>
+                        <div className="flex items-center gap-2">
+                          <div className="font-medium text-fog">{item.peer_alias || t('graphExplorer.aliasFallback')}</div>
+                          {item.has_local_open_channel && <LocalOpenChannelIndicator t={t} />}
+                        </div>
                         <div className="font-mono text-xs text-fog/55">{shortPubkey(item.peer_pubkey)}</div>
                       </div>
                     </td>
@@ -1577,6 +1603,7 @@ export default function GraphExplorer() {
                           <span className="truncate font-medium text-fog">
                             {item.alias || t('graphExplorer.aliasFallback')}
                           </span>
+                          {item.has_local_open_channel && <LocalOpenChannelIndicator t={t} />}
                         </div>
                         <p className="mt-1 truncate text-xs text-fog/55">{item.pubkey}</p>
                       </div>

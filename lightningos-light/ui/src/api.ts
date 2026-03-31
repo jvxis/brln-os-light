@@ -1,17 +1,54 @@
 const base = ''
 
+let csrfToken = ''
+
+export class APIError extends Error {
+  status: number
+  code: string
+
+  constructor(message: string, status: number, code = '') {
+    super(message)
+    this.name = 'APIError'
+    this.status = status
+    this.code = code
+  }
+}
+
+export type AuthState = {
+  enabled: boolean
+  password_configured: boolean
+  setup_required: boolean
+  authenticated: boolean
+  csrf_token?: string
+  session_expires_at?: string
+  setup_token_issued?: boolean
+  recovery_token_issued?: boolean
+}
+
+const setCSRFToken = (value?: string) => {
+  csrfToken = typeof value === 'string' ? value.trim() : ''
+}
+
 async function request(path: string, options?: RequestInit) {
+  const method = String(options?.method || 'GET').toUpperCase()
+  const headers = new Headers({
+    'Content-Type': 'application/json',
+    ...(options?.headers || {})
+  })
+  if (csrfToken && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+    headers.set('X-CSRF-Token', csrfToken)
+  }
+
   const res = await fetch(`${base}${path}`, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options?.headers || {})
-    }
+    credentials: 'same-origin',
+    headers
   })
   if (!res.ok) {
     const text = await res.text()
+    let errorMsg = text || 'Request failed'
+    let errorCode = ''
     if (text) {
-      let errorMsg = text
       try {
         const payload = JSON.parse(text)
         if (payload && typeof payload.message === 'string') {
@@ -19,12 +56,18 @@ async function request(path: string, options?: RequestInit) {
         } else if (payload && typeof payload.error === 'string') {
           errorMsg = payload.error
         }
+        if (payload && typeof payload.code === 'string') {
+          errorCode = payload.code
+        }
       } catch {
         // not JSON, use raw text
       }
-      throw new Error(errorMsg)
     }
-    throw new Error('Request failed')
+    if (res.status === 401 && !path.startsWith('/api/auth/')) {
+      setCSRFToken('')
+      window.dispatchEvent(new CustomEvent('auth:required'))
+    }
+    throw new APIError(errorMsg, res.status, errorCode)
   }
   if (res.status === 204) return null
   return res.json()
@@ -40,6 +83,44 @@ const buildQuery = (params?: Record<string, string | number | boolean | undefine
 }
 
 export const getHealth = () => request('/api/health')
+export const getAuthState = async () => {
+  const data = await request('/api/auth/state') as AuthState
+  if (data?.authenticated && data?.csrf_token) {
+    setCSRFToken(data.csrf_token)
+  } else {
+    setCSRFToken('')
+  }
+  return data
+}
+export const setupAuth = async (payload: { setup_token: string; password: string; confirm_password: string }) => {
+  const data = await request('/api/auth/setup', { method: 'POST', body: JSON.stringify(payload) }) as AuthState
+  setCSRFToken(data?.csrf_token)
+  return data
+}
+export const loginAuth = async (payload: { password: string }) => {
+  const data = await request('/api/auth/login', { method: 'POST', body: JSON.stringify(payload) }) as AuthState
+  setCSRFToken(data?.csrf_token)
+  return data
+}
+export const logoutAuth = async () => {
+  const data = await request('/api/auth/logout', { method: 'POST', body: JSON.stringify({}) })
+  setCSRFToken('')
+  return data
+}
+export const recoverAuth = async (payload: { recovery_token: string; password: string; confirm_password: string }) => {
+  const data = await request('/api/auth/recovery', { method: 'POST', body: JSON.stringify(payload) }) as AuthState
+  setCSRFToken(data?.csrf_token)
+  return data
+}
+export const enableLoginAuth = () =>
+  request('/api/auth/enable-login', { method: 'POST', body: JSON.stringify({}) })
+export const changePasswordAuth = async (payload: { current_password: string; password: string; confirm_password: string }) => {
+  const data = await request('/api/auth/change-password', { method: 'POST', body: JSON.stringify(payload) }) as AuthState
+  setCSRFToken(data?.csrf_token)
+  return data
+}
+export const reauthAuth = (payload: { password: string; scope: string }) =>
+  request('/api/auth/reauth', { method: 'POST', body: JSON.stringify(payload) })
 export const getAmbossHealth = () => request('/api/amboss/health')
 export const updateAmbossHealth = (payload: { enabled: boolean }) =>
   request('/api/amboss/health', { method: 'POST', body: JSON.stringify(payload) })
@@ -109,6 +190,8 @@ export const updateLndRawConfig = (payload: { raw_user_conf: string; apply_now: 
 export const getMempoolFees = () => request('/api/mempool/fees')
 
 export const getWalletSummary = () => request('/api/wallet/summary')
+export const getWalletActivity = (range: '7d' | '1m' | '1a', limit = 100, offset = 0) =>
+  request(`/api/wallet/activity?range=${encodeURIComponent(range)}&limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}`)
 export const getWalletAddress = () => request('/api/wallet/address', { method: 'POST' })
 export const previewOnchainSend = (payload: { address: string; amount_sat?: number; sat_per_vbyte: number; sweep_all?: boolean }) =>
   request('/api/wallet/send/preview', { method: 'POST', body: JSON.stringify(payload) })
@@ -129,6 +212,19 @@ export const getNetworkAtlasMap = () => request('/api/lnops/network-map')
 export const getNetworkAtlasConfig = () => request('/api/lnops/network-map/config')
 export const updateNetworkAtlasConfig = (payload: { label?: string; lat?: string | null; lon?: string | null }) =>
   request('/api/lnops/network-map/config', { method: 'POST', body: JSON.stringify(payload) })
+export const getGraphExplorerStatus = () => request('/api/lnops/graph-explorer/status')
+export const searchGraphExplorerNodes = (params?: { q?: string; limit?: number }) =>
+  request(`/api/lnops/graph-explorer/search${buildQuery(params)}`)
+export const getGraphExplorerNodeGeneral = (pubkey: string) =>
+  request(`/api/lnops/graph-explorer/nodes/${encodeURIComponent(pubkey)}/general`)
+export const getGraphExplorerNodeChannels = (pubkey: string, params?: { limit?: number }) =>
+  request(`/api/lnops/graph-explorer/nodes/${encodeURIComponent(pubkey)}/channels${buildQuery(params)}`)
+export const getGraphExplorerNodeClosed = (pubkey: string, params?: { range?: string; limit?: number }) =>
+  request(`/api/lnops/graph-explorer/nodes/${encodeURIComponent(pubkey)}/closed${buildQuery(params)}`)
+export const getGraphExplorerNodeFees = (pubkey: string, params?: { range?: string }) =>
+  request(`/api/lnops/graph-explorer/nodes/${encodeURIComponent(pubkey)}/fees${buildQuery(params)}`)
+export const recomputeGraphExplorer = () =>
+  request('/api/lnops/graph-explorer/recompute', { method: 'POST' })
 export const getLnClosedChannels = () => request('/api/lnops/closed-channels')
 export const getChannelRankings = (params?: { limit?: number; state?: string }) =>
   request(`/api/lnops/channel-ranking${buildQuery(params)}`)
@@ -230,6 +326,7 @@ export const successionSimulate = (payload: { action: 'alive' | 'not_alive'; sou
 export const getAutofeeConfig = () => request('/api/lnops/autofee/config')
 export const updateAutofeeConfig = (payload: {
   enabled?: boolean
+  operation_mode?: string
   profile?: string
   lookback_days?: number
   run_interval_sec?: number
@@ -239,6 +336,8 @@ export const updateAutofeeConfig = (payload: {
   discovery_step_cap_down_override?: number
   stall_floor_relax_gap_frac_override?: number
   inbound_discount_max_ratio_override?: number
+  inbound_discount_reach_out_ratio_override?: number
+  inbound_discount_min_retained_spread_frac_override?: number
   outrate_floor_factor_low_override?: number
   soften_min_out_ratio_override?: number
   soften_max_drop_to_peg_frac_override?: number

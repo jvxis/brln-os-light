@@ -438,6 +438,8 @@ type AutofeeProfileDefaults = {
   discovery_step_cap_down: number
   stall_floor_relax_gap_frac: number
   inbound_discount_max_ratio: number
+  inbound_discount_reach_out_ratio: number
+  inbound_discount_min_retained_spread_frac: number
   outrate_floor_factor_low: number
   soften_min_out_ratio: number
   soften_max_drop_to_peg_frac: number
@@ -448,6 +450,7 @@ type AutofeeProfileDefaults = {
 
 type AutofeeConfig = {
     enabled: boolean
+    operation_mode: string
     profile: string
     lookback_days: number
     run_interval_sec: number
@@ -457,6 +460,8 @@ type AutofeeConfig = {
     discovery_step_cap_down_override?: number
     stall_floor_relax_gap_frac_override?: number
     inbound_discount_max_ratio_override?: number
+    inbound_discount_reach_out_ratio_override?: number
+    inbound_discount_min_retained_spread_frac_override?: number
     outrate_floor_factor_low_override?: number
     soften_min_out_ratio_override?: number
     soften_max_drop_to_peg_frac_override?: number
@@ -464,6 +469,7 @@ type AutofeeConfig = {
     htlc_policy_fail_rate_override?: number
     htlc_liquidity_fail_rate_override?: number
     rebal_cost_mode?: string
+    native_seed_enabled: boolean
     amboss_enabled: boolean
     amboss_token_set: boolean
     inbound_passive_enabled: boolean
@@ -499,6 +505,7 @@ type AutofeeResultItem = {
   kind: string
   category?: string
   reason?: string
+  operation_mode?: string
   dry_run?: boolean
   timestamp?: string
   up?: number
@@ -765,6 +772,7 @@ const formatAutofeeHistoryTag = (tag: string) => {
 const LIGHTNING_OPS_ROUTE_KEY = 'lightning-ops'
 const CHANNEL_RANKING_ROUTE_KEY = 'channel-ranking'
 const REBALANCE_ROUTE_KEY = 'rebalance-center'
+const GRAPH_EXPLORER_ROUTE_KEY = 'graph-explorer'
 const CHANNEL_HASH_PARAM = 'channel_point'
 const PEER_HASH_PARAM = 'peer_pubkey'
 const SECTION_HASH_PARAM = 'section'
@@ -824,6 +832,9 @@ const readHashSection = (routeKey: string) => {
 
 const buildHashWithChannelPoint = (routeKey: string, channelPoint: string) =>
   `#${routeKey}?${CHANNEL_HASH_PARAM}=${encodeURIComponent(channelPoint)}`
+
+const buildGraphExplorerHash = (pubkey: string) =>
+  `#${GRAPH_EXPLORER_ROUTE_KEY}?pubkey=${encodeURIComponent(pubkey)}`
 
 const channelCardID = (channelPoint: string) =>
   `lightning-channel-${channelPoint.replace(/[^a-zA-Z0-9_-]/g, '_')}`
@@ -949,6 +960,7 @@ export default function LightningOps() {
   const [autofeeBusy, setAutofeeBusy] = useState(false)
   const [autofeeMessage, setAutofeeMessage] = useState('')
   const [autofeeEnabled, setAutofeeEnabled] = useState(false)
+  const [autofeeOperationMode, setAutofeeOperationMode] = useState('balanced')
   const [autofeeProfile, setAutofeeProfile] = useState('moderate')
   const [autofeeLookback, setAutofeeLookback] = useState('7')
   const [autofeeIntervalHours, setAutofeeIntervalHours] = useState('4')
@@ -959,6 +971,8 @@ export default function LightningOps() {
   const [autofeeDiscoveryStepCapDownOverride, setAutofeeDiscoveryStepCapDownOverride] = useState('')
   const [autofeeStallFloorRelaxGapFracOverride, setAutofeeStallFloorRelaxGapFracOverride] = useState('')
   const [autofeeInboundDiscountMaxRatioOverride, setAutofeeInboundDiscountMaxRatioOverride] = useState('')
+  const [autofeeInboundDiscountReachOutRatioOverride, setAutofeeInboundDiscountReachOutRatioOverride] = useState('')
+  const [autofeeInboundDiscountMinRetainedSpreadFracOverride, setAutofeeInboundDiscountMinRetainedSpreadFracOverride] = useState('')
   const [autofeeOutrateFloorFactorLowOverride, setAutofeeOutrateFloorFactorLowOverride] = useState('')
   const [autofeeSoftenMinOutRatioOverride, setAutofeeSoftenMinOutRatioOverride] = useState('')
   const [autofeeSoftenMaxDropToPegFracOverride, setAutofeeSoftenMaxDropToPegFracOverride] = useState('')
@@ -968,6 +982,7 @@ export default function LightningOps() {
   const [autofeeRebalMode, setAutofeeRebalMode] = useState('blend')
   const [autofeeMinPpm, setAutofeeMinPpm] = useState('10')
   const [autofeeMaxPpm, setAutofeeMaxPpm] = useState('2000')
+  const [autofeeNativeSeedEnabled, setAutofeeNativeSeedEnabled] = useState(false)
   const [autofeeAmbossEnabled, setAutofeeAmbossEnabled] = useState(false)
   const [autofeeAmbossToken, setAutofeeAmbossToken] = useState('')
   const [autofeeInboundPassive, setAutofeeInboundPassive] = useState(false)
@@ -1623,9 +1638,13 @@ export default function LightningOps() {
   const formatAutofeeHeader = (item: AutofeeResultItem) => {
     const reasonLabel = formatAutofeeReasonLabel(item.reason)
     const dryLabel = item.dry_run ? t('lightningOps.autofeeResultsDryRunTag') : ''
+    const rawMode = String(item.operation_mode || '').trim().toLowerCase()
+    const modeLabel = rawMode === 'market_refill'
+      ? t('lightningOps.autofeeOperationModeMarketRefill')
+      : t('lightningOps.autofeeOperationModeBalanced')
     const ts = item.timestamp ? new Date(item.timestamp) : null
     const timeLabel = ts && !Number.isNaN(ts.getTime()) ? ts.toLocaleString() : t('common.na')
-    return t('lightningOps.autofeeResultsHeader', { reason: reasonLabel, dry: dryLabel, time: timeLabel })
+    return t('lightningOps.autofeeResultsHeader', { reason: reasonLabel, dry: dryLabel, time: timeLabel, mode: modeLabel })
   }
 
   const formatAutofeeSummary = (item: AutofeeResultItem) => {
@@ -2391,6 +2410,28 @@ export default function LightningOps() {
   }
 
   const ambossURL = (pubkey: string) => `https://amboss.space/node/${pubkey}`
+  const peerProfileLinkGroup = (pubkey?: string, className = 'mt-1 flex flex-wrap items-center gap-2') => {
+    const normalized = String(pubkey || '').trim()
+    if (!normalized) return null
+    return (
+      <div className={className}>
+        <a
+          className="text-[11px] text-sky-200 hover:text-sky-100"
+          href={buildGraphExplorerHash(normalized)}
+        >
+          {t('nav.graphExplorer')}
+        </a>
+        <a
+          className="text-[11px] text-emerald-100/80 hover:text-emerald-100"
+          href={ambossURL(normalized)}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Amboss
+        </a>
+      </div>
+    )
+  }
 
   const applyChannelsPayload = (res: any) => {
     const list = Array.isArray(res?.channels) ? res.channels : []
@@ -2639,6 +2680,7 @@ export default function LightningOps() {
       const cfg = autofeeConfigResult.value as AutofeeConfig
       setAutofeeConfig(cfg)
       setAutofeeEnabled(cfg.enabled)
+      setAutofeeOperationMode((cfg.operation_mode || 'balanced').trim() || 'balanced')
       setAutofeeProfile(cfg.profile || 'moderate')
       setAutofeeLookback(String(cfg.lookback_days ?? 7))
       setAutofeeIntervalHours(String(Math.max(1, Math.round((cfg.run_interval_sec || 14400) / 3600))))
@@ -2648,6 +2690,8 @@ export default function LightningOps() {
       setAutofeeDiscoveryStepCapDownOverride((cfg.discovery_step_cap_down_override ?? 0) > 0 ? String(Math.round((cfg.discovery_step_cap_down_override ?? 0) * 1000) / 10) : '')
       setAutofeeStallFloorRelaxGapFracOverride((cfg.stall_floor_relax_gap_frac_override ?? 0) > 0 ? String(Math.round((cfg.stall_floor_relax_gap_frac_override ?? 0) * 100)) : '')
       setAutofeeInboundDiscountMaxRatioOverride((cfg.inbound_discount_max_ratio_override ?? 0) > 0 ? String(Math.round((cfg.inbound_discount_max_ratio_override ?? 0) * 100)) : '')
+      setAutofeeInboundDiscountReachOutRatioOverride((cfg.inbound_discount_reach_out_ratio_override ?? 0) > 0 ? String(Math.round((cfg.inbound_discount_reach_out_ratio_override ?? 0) * 100)) : '')
+      setAutofeeInboundDiscountMinRetainedSpreadFracOverride((cfg.inbound_discount_min_retained_spread_frac_override ?? 0) > 0 ? String(Math.round((cfg.inbound_discount_min_retained_spread_frac_override ?? 0) * 100)) : '')
       setAutofeeOutrateFloorFactorLowOverride((cfg.outrate_floor_factor_low_override ?? 0) > 0 ? String(Math.round((cfg.outrate_floor_factor_low_override ?? 0) * 100)) : '')
       setAutofeeSoftenMinOutRatioOverride((cfg.soften_min_out_ratio_override ?? 0) > 0 ? String(Math.round((cfg.soften_min_out_ratio_override ?? 0) * 100)) : '')
       setAutofeeSoftenMaxDropToPegFracOverride((cfg.soften_max_drop_to_peg_frac_override ?? 0) > 0 ? String(Math.round((cfg.soften_max_drop_to_peg_frac_override ?? 0) * 100)) : '')
@@ -2657,6 +2701,7 @@ export default function LightningOps() {
       setAutofeeRebalMode(cfg.rebal_cost_mode || 'blend')
       setAutofeeMinPpm(String(cfg.min_ppm ?? 10))
       setAutofeeMaxPpm(String(cfg.max_ppm ?? 2000))
+      setAutofeeNativeSeedEnabled(Boolean(cfg.native_seed_enabled))
       setAutofeeAmbossEnabled(Boolean(cfg.amboss_enabled))
       setAutofeeInboundPassive(Boolean(cfg.inbound_passive_enabled))
       setAutofeeDiscovery(Boolean(cfg.discovery_enabled))
@@ -4034,6 +4079,8 @@ export default function LightningOps() {
       const discoveryStepCapDownOverride = parsePercentOverride(autofeeDiscoveryStepCapDownOverride, 1, 40)
       const stallFloorRelaxGapFracOverride = parsePercentOverride(autofeeStallFloorRelaxGapFracOverride, 1, 80)
       const inboundDiscountMaxRatioOverride = parsePercentOverride(autofeeInboundDiscountMaxRatioOverride, 50, 100)
+      const inboundDiscountReachOutRatioOverride = parsePercentOverride(autofeeInboundDiscountReachOutRatioOverride, 5, 50)
+      const inboundDiscountMinRetainedSpreadFracOverride = parsePercentOverride(autofeeInboundDiscountMinRetainedSpreadFracOverride, 1, 50)
       const outrateFloorFactorLowOverride = parsePercentOverride(autofeeOutrateFloorFactorLowOverride, 50, 100)
       const softenMinOutRatioOverride = parsePercentOverride(autofeeSoftenMinOutRatioOverride, 5, 95)
       const softenMaxDropToPegFracOverride = parsePercentOverride(autofeeSoftenMaxDropToPegFracOverride, 50, 100)
@@ -4051,6 +4098,7 @@ export default function LightningOps() {
       const superSourceBaseFee = Math.max(0, Number(autofeeSuperSourceBaseFee || 1000))
       const payload: any = {
         enabled: autofeeEnabled,
+        operation_mode: autofeeOperationMode,
         profile: autofeeProfile,
         lookback_days: lookbackDays,
         run_interval_sec: intervalSec,
@@ -4060,6 +4108,8 @@ export default function LightningOps() {
         discovery_step_cap_down_override: discoveryStepCapDownOverride,
         stall_floor_relax_gap_frac_override: stallFloorRelaxGapFracOverride,
         inbound_discount_max_ratio_override: inboundDiscountMaxRatioOverride,
+        inbound_discount_reach_out_ratio_override: inboundDiscountReachOutRatioOverride,
+        inbound_discount_min_retained_spread_frac_override: inboundDiscountMinRetainedSpreadFracOverride,
         outrate_floor_factor_low_override: outrateFloorFactorLowOverride,
         soften_min_out_ratio_override: softenMinOutRatioOverride,
         soften_max_drop_to_peg_frac_override: softenMaxDropToPegFracOverride,
@@ -4069,6 +4119,7 @@ export default function LightningOps() {
         rebal_cost_mode: autofeeRebalMode,
         min_ppm: minPpmRaw,
         max_ppm: maxPpmRaw,
+        native_seed_enabled: autofeeNativeSeedEnabled,
         amboss_enabled: autofeeAmbossEnabled,
         inbound_passive_enabled: autofeeInboundPassive,
         discovery_enabled: autofeeDiscovery,
@@ -5408,6 +5459,22 @@ export default function LightningOps() {
                 {t('lightningOps.autofeeEnabled')}
               </label>
               <label className="text-sm text-fog/70">
+                {t('lightningOps.autofeeOperationMode')}
+                <select
+                  className="input-field mt-2"
+                  value={autofeeOperationMode}
+                  onChange={(e) => setAutofeeOperationMode(e.target.value)}
+                >
+                  <option value="balanced">{t('lightningOps.autofeeOperationModeBalanced')}</option>
+                  <option value="market_refill">{t('lightningOps.autofeeOperationModeMarketRefill')}</option>
+                </select>
+                <div className="mt-2 text-xs text-fog/55">
+                  {autofeeOperationMode === 'market_refill'
+                    ? t('lightningOps.autofeeOperationModeMarketRefillHint')
+                    : t('lightningOps.autofeeOperationModeBalancedHint')}
+                </div>
+              </label>
+              <label className="text-sm text-fog/70">
                 {t('lightningOps.autofeeProfile')}
                 <select
                   className="input-field mt-2"
@@ -5514,6 +5581,20 @@ export default function LightningOps() {
                       </p>
                     </label>
                     <label className="text-sm text-fog/70">
+                      {withHint(t('lightningOps.autofeeInboundDiscountReachOutRatioOverride'), t('lightningOps.autofeeMovementHintInboundDiscountReachOutRatio'))}
+                      <input className="input-field mt-2" type="number" min={0} max={50} step="1" value={autofeeInboundDiscountReachOutRatioOverride} onChange={(e) => setAutofeeInboundDiscountReachOutRatioOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
+                      <p className="mt-1 text-[11px] text-fog/55">
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: activeAutofeeProfileDefaults ? pctText(activeAutofeeProfileDefaults.inbound_discount_reach_out_ratio, 0) : '-' })}
+                      </p>
+                    </label>
+                    <label className="text-sm text-fog/70">
+                      {withHint(t('lightningOps.autofeeInboundDiscountMinRetainedSpreadFracOverride'), t('lightningOps.autofeeMovementHintInboundDiscountMinRetainedSpread'))}
+                      <input className="input-field mt-2" type="number" min={0} max={50} step="1" value={autofeeInboundDiscountMinRetainedSpreadFracOverride} onChange={(e) => setAutofeeInboundDiscountMinRetainedSpreadFracOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
+                      <p className="mt-1 text-[11px] text-fog/55">
+                        {t('lightningOps.autofeeMovementDefaultLabel', { value: activeAutofeeProfileDefaults ? pctText(activeAutofeeProfileDefaults.inbound_discount_min_retained_spread_frac, 0) : '-' })}
+                      </p>
+                    </label>
+                    <label className="text-sm text-fog/70">
                       {withHint(t('lightningOps.autofeeOutrateFloorFactorLowOverride'), t('lightningOps.autofeeMovementHintLowFlowFloor'))}
                       <input className="input-field mt-2" type="number" min={0} max={100} step="1" value={autofeeOutrateFloorFactorLowOverride} onChange={(e) => setAutofeeOutrateFloorFactorLowOverride(e.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} />
                       <p className="mt-1 text-[11px] text-fog/55">
@@ -5606,6 +5687,15 @@ export default function LightningOps() {
                   {t('lightningOps.autofeeSuperSourceBaseFee')}
                   <input className="input-field mt-2" type="number" min={0} value={autofeeSuperSourceBaseFee} onChange={(e) => setAutofeeSuperSourceBaseFee(e.target.value)} />
                 </label>
+              )}
+              <label className="flex items-center gap-2 text-sm text-fog/70">
+                <input type="checkbox" checked={autofeeNativeSeedEnabled} onChange={(e) => setAutofeeNativeSeedEnabled(e.target.checked)} />
+                {t('lightningOps.autofeeNativeSeed')}
+              </label>
+              {autofeeNativeSeedEnabled && (
+                <p className="text-xs text-fog/55 lg:col-span-2">
+                  {t('lightningOps.autofeeNativeSeedHint')}
+                </p>
               )}
               <label className="flex items-center gap-2 text-sm text-fog/70">
                 <input type="checkbox" checked={autofeeAmbossEnabled} onChange={(e) => setAutofeeAmbossEnabled(e.target.checked)} />
@@ -5805,18 +5895,8 @@ export default function LightningOps() {
                         <div key={ch.channel_point} className="rounded-xl border border-white/10 bg-ink/70 p-3">
                           <div className="flex flex-wrap items-center justify-between gap-3">
                             <div>
-                              {ch.remote_pubkey ? (
-                                <a
-                                  className="text-xs text-fog/70 hover:text-fog break-all"
-                                  href={ambossURL(ch.remote_pubkey)}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  {ch.peer_alias || ch.remote_pubkey}
-                                </a>
-                              ) : (
-                                <p className="text-xs text-fog/70">{ch.peer_alias || t('lightningOps.unknownPeer')}</p>
-                              )}
+                              <p className="text-xs text-fog/70 break-all">{ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer')}</p>
+                              {peerProfileLinkGroup(ch.remote_pubkey)}
                               {pointLink ? (
                                 <a
                                   className="mt-1 block text-[11px] text-emerald-200 hover:text-emerald-100 break-all"
@@ -5954,18 +6034,8 @@ export default function LightningOps() {
                         <div key={ch.channel_point} className="rounded-xl border border-white/10 bg-ink/70 p-3">
                           <div className="flex flex-wrap items-center justify-between gap-3">
                             <div>
-                              {ch.remote_pubkey ? (
-                                <a
-                                  className="text-xs text-fog/70 hover:text-fog break-all"
-                                  href={ambossURL(ch.remote_pubkey)}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  {ch.peer_alias || ch.remote_pubkey}
-                                </a>
-                              ) : (
-                                <p className="text-xs text-fog/70">{ch.peer_alias || t('lightningOps.unknownPeer')}</p>
-                              )}
+                              <p className="text-xs text-fog/70 break-all">{ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer')}</p>
+                              {peerProfileLinkGroup(ch.remote_pubkey)}
                               {pointLink ? (
                                 <a
                                   className="mt-1 block text-[11px] text-emerald-200 hover:text-emerald-100 break-all"
@@ -6098,18 +6168,8 @@ export default function LightningOps() {
                         <div key={item.id} className="rounded-xl border border-white/10 bg-ink/70 p-3 space-y-2">
                           <div className="flex flex-wrap items-start justify-between gap-3">
                             <div>
-                              {item.peer_pubkey ? (
-                                <a
-                                  className="text-xs text-fog/70 hover:text-fog break-all"
-                                  href={ambossURL(item.peer_pubkey)}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  {item.peer_alias || item.peer_pubkey}
-                                </a>
-                              ) : (
-                                <p className="text-xs text-fog/70">{item.peer_alias || t('lightningOps.unknownPeer')}</p>
-                              )}
+                              <p className="text-xs text-fog/70 break-all">{item.peer_alias || item.peer_pubkey || t('lightningOps.unknownPeer')}</p>
+                              {peerProfileLinkGroup(item.peer_pubkey)}
                               {pointLink ? (
                                 <a
                                   className="mt-1 block text-[11px] text-emerald-200 hover:text-emerald-100 break-all"
@@ -6422,18 +6482,8 @@ export default function LightningOps() {
                   <div key={ch.channel_point} id={channelCardID(ch.channel_point)} className={cardClass}>
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        {ch.remote_pubkey ? (
-                          <a
-                            className="text-sm text-fog/60 hover:text-fog"
-                            href={ambossURL(ch.remote_pubkey)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            {ch.peer_alias || ch.remote_pubkey}
-                          </a>
-                        ) : (
-                          <p className="text-sm text-fog/60">{ch.peer_alias || t('lightningOps.unknownPeer')}</p>
-                        )}
+                        <p className="text-sm text-fog/60">{ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer')}</p>
+                        {peerProfileLinkGroup(ch.remote_pubkey)}
                         <div className="mt-0.5 flex flex-wrap items-center gap-2">
                           <p className="min-w-0 break-all text-xs text-fog/50">
                             {t('lightningOps.pointCapacityWithOpener', { point: ch.channel_point, capacity: ch.capacity_sat, opener })}
@@ -6739,14 +6789,7 @@ export default function LightningOps() {
                                       </div>
                                       <div className="text-[11px] text-fog/50 break-all">{item.pub_key}</div>
                                     </div>
-                                    <a
-                                      className="text-[11px] text-emerald-100/80 hover:text-emerald-100"
-                                      href={ambossURL(item.pub_key)}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                    >
-                                      Amboss
-                                    </a>
+                                    {peerProfileLinkGroup(item.pub_key, 'flex flex-wrap items-center justify-end gap-2')}
                                   </div>
                                   <div className="mt-2 grid gap-1 text-[11px] text-fog/70 sm:grid-cols-2">
                                     <div>{t('lightningOps.peerRecommendationsCapacity', { value: Math.round(Number(item.total_capacity_sat || 0)).toLocaleString(locale) })}</div>
@@ -8439,18 +8482,8 @@ export default function LightningOps() {
                   <div key={peer.pub_key} id={peerCardID(peer.pub_key)} className={peerCardClass}>
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        {peer.pub_key ? (
-                          <a
-                            className="text-sm text-fog/60 hover:text-fog"
-                            href={ambossURL(peer.pub_key)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            {peer.alias || peer.pub_key}
-                          </a>
-                        ) : (
-                          <p className="text-sm text-fog/60">{peer.alias || t('lightningOps.unknownPeer')}</p>
-                        )}
+                        <p className="text-sm text-fog/60">{peer.alias || peer.pub_key || t('lightningOps.unknownPeer')}</p>
+                        {peerProfileLinkGroup(peer.pub_key)}
                         <p className="text-xs text-fog/50">{peer.address || t('lightningOps.addressUnknown')}</p>
                       </div>
                       <div className="flex items-center gap-2">
@@ -8538,18 +8571,8 @@ export default function LightningOps() {
                   <div key={`${item.chan_id}-${item.channel_point || item.closing_tx_hash || peerLabel}`} className="rounded-2xl border border-white/10 bg-ink/60 p-4">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        {item.remote_pubkey ? (
-                          <a
-                            className="text-sm text-fog hover:text-white break-all"
-                            href={ambossURL(item.remote_pubkey)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            {peerLabel}
-                          </a>
-                        ) : (
-                          <p className="text-sm text-fog break-all">{peerLabel}</p>
-                        )}
+                        <p className="text-sm text-fog break-all">{peerLabel}</p>
+                        {peerProfileLinkGroup(item.remote_pubkey)}
                         {closedAtLabel ? (
                           <p className="mt-1 text-xs text-fog/50">{closedAtLabel}</p>
                         ) : (
@@ -8648,18 +8671,8 @@ export default function LightningOps() {
                     return (
                       <tr key={`${item.chan_id}-${item.channel_point || item.closing_tx_hash || peerLabel}`} className="border-t border-white/5 align-top">
                         <td className="py-3 pr-4">
-                          {item.remote_pubkey ? (
-                            <a
-                              className="text-fog hover:text-white hover:underline underline-offset-2"
-                              href={ambossURL(item.remote_pubkey)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            >
-                              {peerLabel}
-                            </a>
-                          ) : (
-                            <span className="text-fog">{peerLabel}</span>
-                          )}
+                          <div className="text-fog">{peerLabel}</div>
+                          {peerProfileLinkGroup(item.remote_pubkey, 'mt-1 flex flex-wrap items-center gap-2')}
                           <div className="mt-1 text-xs text-fog/50">{item.remote_pubkey || t('common.na')}</div>
                           {item.channel_point && (
                             pointLink ? (

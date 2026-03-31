@@ -598,7 +598,7 @@ ui:
   static_dir: "/opt/lightningos/ui"
 
 features:
-  enable_login: false
+  enable_login: true
   enable_bitcoin_local_placeholder: true
   enable_app_store_placeholder: true
 EOF
@@ -686,6 +686,13 @@ https://SEU_IP_AQUI:8443
 > **"Avançado"** → **"Prosseguir mesmo assim"**. Isso é esperado e seguro na sua rede local.
 
 ---
+
+Se for o primeiro acesso, ou uma instalação atualizada que ainda não tenha senha de admin, gere um setup token no node:
+```bash
+sudo /opt/lightningos/manager/lightningos-manager auth setup-token new
+```
+
+Cole esse token na tela "Definir senha de admin" antes de entrar no wizard ou no painel.
 
 ### 6.3 Completar o Wizard e criar a carteira
 

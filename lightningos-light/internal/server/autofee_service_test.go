@@ -106,6 +106,20 @@ func TestApplySeedSoftEnvelopeDoesNotRaiseFloorWhenNotAllowed(t *testing.T) {
 	}
 }
 
+func TestComputeInboundDiscountWithRetainedSpread(t *testing.T) {
+	got := computeInboundDiscount(true, "sink", 0.12, 6, 300, 500, 1000, 0.95, 0.15, 0.12)
+	if got != 379 {
+		t.Fatalf("unexpected inbound discount: got %d want 379", got)
+	}
+}
+
+func TestComputeInboundDiscountRespectsReachOutRatio(t *testing.T) {
+	got := computeInboundDiscount(true, "sink", 0.16, 6, 300, 500, 1000, 0.95, 0.15, 0.12)
+	if got != 0 {
+		t.Fatalf("expected no inbound discount beyond reach ratio, got %d", got)
+	}
+}
+
 func TestShouldEnableSeedEnvelope(t *testing.T) {
 	if !shouldEnableSeedEnvelope(500, true, true, 0, 0, false, false, false, false, false, false, false) {
 		t.Fatalf("expected seed envelope when channel has no recent flow and no strong signals")
@@ -177,14 +191,14 @@ func TestEffectiveLowOutThresholdsFallbackAndClamp(t *testing.T) {
 }
 
 func TestComputeInboundDiscountUsesAppliedOutboundCap(t *testing.T) {
-	got := computeInboundDiscount(true, "sink", 0.05, 6, 300, 10, 1000, 0.95)
+	got := computeInboundDiscount(true, "sink", 0.05, 6, 300, 10, 1000, 0.95, 0.10, 0.01)
 	if got != 950 {
 		t.Fatalf("expected inbound discount capped by applied outbound fee ratio: got %d want 950", got)
 	}
 }
 
 func TestComputeInboundDiscountRejectsIneligibleChannel(t *testing.T) {
-	got := computeInboundDiscount(true, "router", 0.05, 6, 300, 100, 1000, 0.90)
+	got := computeInboundDiscount(true, "router", 0.05, 6, 300, 100, 1000, 0.90, 0.10, 0.12)
 	if got != 0 {
 		t.Fatalf("expected no inbound discount for non-sink channel, got %d", got)
 	}
@@ -640,6 +654,75 @@ func TestRebalanceFailureCampaignGap(t *testing.T) {
 	}
 }
 
+func TestEffectiveCooldownUpSecForChannel(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+
+	if got := effectiveCooldownUpSecForChannel(profile, profile.CooldownUpSec, 0.20, false); got != 6*3600 {
+		t.Fatalf("unexpected normal moderate cooldown: got %d want %d", got, 6*3600)
+	}
+	if got := effectiveCooldownUpSecForChannel(profile, profile.CooldownUpSec, 0.04, false); got != 3*3600 {
+		t.Fatalf("unexpected drained moderate cooldown: got %d want %d", got, 3*3600)
+	}
+	if got := effectiveCooldownUpSecForChannel(profile, profile.CooldownUpSec, 0.009, false); got != 3600 {
+		t.Fatalf("unexpected extreme moderate cooldown: got %d want %d", got, 3600)
+	}
+}
+
+func TestEffectiveCooldownUpSecForChannelRespectsHoldAndBase(t *testing.T) {
+	profile := autofeeProfiles["aggressive"]
+
+	if got := effectiveCooldownUpSecForChannel(profile, profile.CooldownUpSec, 0.009, true); got != profile.CooldownUpSec {
+		t.Fatalf("expected recent rebalance hold to keep base cooldown, got %d want %d", got, profile.CooldownUpSec)
+	}
+
+	if got := effectiveCooldownUpSecForChannel(profile, 1800, 0.009, false); got != 3600 {
+		t.Fatalf("expected minimum cooldown floor to apply, got %d want %d", got, 3600)
+	}
+}
+
+func TestEvalDrainedExplorerStartsAndStops(t *testing.T) {
+	e := &autofeeEngine{
+		profile: autofeeProfiles["moderate"],
+		now:     time.Date(2026, 3, 24, 12, 0, 0, 0, time.UTC),
+	}
+	st := &autofeeChannelState{LastTs: e.now.Add(-8 * 24 * time.Hour)}
+
+	if !e.evalDrainedExplorer(st, 0.03, 0, 0) {
+		t.Fatalf("expected drained explorer to start on drained inactive channel")
+	}
+	if !st.ExplorerState.DrainedActive || !st.ExplorerState.DrainedSeen {
+		t.Fatalf("expected drained explorer state to be active: %+v", st.ExplorerState)
+	}
+
+	st.ExplorerState.DrainedRounds = e.profile.DrainedExplorerMaxRounds
+	if e.evalDrainedExplorer(st, 0.03, 0, 0) {
+		t.Fatalf("expected drained explorer to stop after max rounds")
+	}
+	if st.ExplorerState.DrainedActive {
+		t.Fatalf("expected drained explorer state to be cleared")
+	}
+}
+
+func TestApplyDrainedExplorerTargetAndCap(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+
+	target, tags := applyDrainedExplorerTarget(profile, true, 0, 0, 0, 113, 113)
+	if target != 10 {
+		t.Fatalf("unexpected drained explorer target: got %d want 10", target)
+	}
+	if len(tags) < 2 || tags[0] != "drained-explorer" || tags[1] != "drained-explorer-r1" {
+		t.Fatalf("unexpected drained explorer tags: %+v", tags)
+	}
+
+	capped, capTags := capWeakDemandFloorUpForDrainedExplorer(profile, true, 0, 125)
+	if capped != 10 {
+		t.Fatalf("expected weak-demand floor up to be capped to explorer step, got %d want 10", capped)
+	}
+	if len(capTags) != 1 || capTags[0] != "drained-explorer-cap" {
+		t.Fatalf("unexpected drained explorer cap tags: %+v", capTags)
+	}
+}
+
 func TestCollapseWeakRebalanceCampaigns(t *testing.T) {
 	base := time.Date(2026, 3, 21, 12, 0, 0, 0, time.UTC)
 	jobs := []recentWeakRebalanceJob{
@@ -665,6 +748,9 @@ func TestAutofeeProfileMovementDefaults(t *testing.T) {
 	if conservative.StepCap != 0.05 || conservative.CooldownUpSec != 8*3600 || conservative.CooldownDownSec != 2*3600 {
 		t.Fatalf("unexpected conservative movement defaults: %+v", conservative)
 	}
+	if conservative.CooldownUpDrainedSec != 4*3600 || conservative.CooldownUpExtremeSec != 2*3600 {
+		t.Fatalf("unexpected conservative drained cooldown defaults: %+v", conservative)
+	}
 	if conservative.DiscoveryStepCapDown != 0.15 || conservative.StallFloorRelaxGapFrac != 0.15 {
 		t.Fatalf("unexpected conservative down movement tuning: %+v", conservative)
 	}
@@ -676,6 +762,9 @@ func TestAutofeeProfileMovementDefaults(t *testing.T) {
 	if moderate.StepCap != 0.08 || moderate.CooldownUpSec != 6*3600 || moderate.CooldownDownSec != 1*3600 {
 		t.Fatalf("unexpected moderate movement defaults: %+v", moderate)
 	}
+	if moderate.CooldownUpDrainedSec != 3*3600 || moderate.CooldownUpExtremeSec != 1*3600 {
+		t.Fatalf("unexpected moderate drained cooldown defaults: %+v", moderate)
+	}
 	if moderate.DiscoveryStepCapDown != 0.20 || moderate.StallFloorRelaxGapFrac != 0.10 {
 		t.Fatalf("unexpected moderate down movement tuning: %+v", moderate)
 	}
@@ -686,6 +775,9 @@ func TestAutofeeProfileMovementDefaults(t *testing.T) {
 	aggressive := autofeeProfiles["aggressive"]
 	if aggressive.StepCap != 0.10 || aggressive.CooldownUpSec != 3*3600 || aggressive.CooldownDownSec != 1*3600 {
 		t.Fatalf("unexpected aggressive movement defaults: %+v", aggressive)
+	}
+	if aggressive.CooldownUpDrainedSec != 90*60 || aggressive.CooldownUpExtremeSec != 3600 {
+		t.Fatalf("unexpected aggressive drained cooldown defaults: %+v", aggressive)
 	}
 	if aggressive.DiscoveryStepCapDown != 0.25 || aggressive.StallFloorRelaxGapFrac != 0.08 {
 		t.Fatalf("unexpected aggressive down movement tuning: %+v", aggressive)
@@ -707,8 +799,326 @@ func TestAutofeeConfigWithProfileDefaults(t *testing.T) {
 	if moderate.CooldownUpSec != 6*3600 || moderate.CooldownDownSec != 1*3600 || moderate.StepCap != 0.08 {
 		t.Fatalf("unexpected moderate profile defaults payload: %+v", moderate)
 	}
+	if moderate.InboundDiscountReachOutRatio != 0.15 || moderate.InboundDiscountMinRetainedSpreadFrac != 0.12 {
+		t.Fatalf("unexpected inbound discount defaults payload: %+v", moderate)
+	}
 	if moderate.InboundDiscountMaxRatio != defaultInboundDiscountMaxRatio {
 		t.Fatalf("unexpected inbound discount default: got %.2f want %.2f", moderate.InboundDiscountMaxRatio, defaultInboundDiscountMaxRatio)
+	}
+}
+
+func TestComputeMarketRefillInboundDiscount(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	discount, tags := computeMarketRefillInboundDiscount(true, 0.08, 3, false, false, 0, 200, 1000, 0.95, 0.10, profile)
+	if discount <= 0 {
+		t.Fatalf("expected strategic market refill inbound discount")
+	}
+	if len(tags) == 0 || tags[0] != "market-refill-inbound" {
+		t.Fatalf("unexpected strategic tags: %+v", tags)
+	}
+
+	exploratoryDiscount, exploratoryTags := computeMarketRefillInboundDiscount(true, 0.22, 0, true, true, 0, 200, 1000, 0.95, 0.10, profile)
+	if exploratoryDiscount <= 0 {
+		t.Fatalf("expected exploratory market refill inbound discount")
+	}
+	if len(exploratoryTags) < 2 || exploratoryTags[1] != "market-refill-explore" {
+		t.Fatalf("unexpected exploratory tags: %+v", exploratoryTags)
+	}
+
+	fullSideDiscount, fullSideTags := computeMarketRefillInboundDiscount(true, 0.78, 0, false, false, 0, 200, 1000, 0.95, 0.10, profile)
+	if fullSideDiscount <= 0 {
+		t.Fatalf("expected market refill mode to price full-side channels too")
+	}
+	if len(fullSideTags) == 0 || fullSideTags[0] != "market-refill-inbound" {
+		t.Fatalf("unexpected full-side tags: %+v", fullSideTags)
+	}
+}
+
+func TestComputeMarketRefillInboundDiscountAggressiveFullExploreStaysCloseToOutbound(t *testing.T) {
+	profile := autofeeProfiles["aggressive"]
+
+	discount, tags := computeMarketRefillInboundDiscount(true, 0.78, 0, true, false, 0, 110, 2490, 0.95, 0.08, profile)
+	if discount != 2179 {
+		t.Fatalf("expected aggressive full/explore inbound discount to stay close to outbound while respecting cost/spread guards, got %d want 2179", discount)
+	}
+	if len(tags) < 2 || tags[0] != "market-refill-inbound" || tags[1] != "market-refill-explore" {
+		t.Fatalf("unexpected aggressive full/explore tags: %+v", tags)
+	}
+}
+
+func TestComputeMarketRefillInboundDiscountUsesEffectiveOutRatio(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+
+	drainedDiscount, _ := computeMarketRefillInboundDiscount(true, 0.08, 1, false, false, 0, 50, 1000, 0.95, 0.01, profile)
+	fullerDiscount, _ := computeMarketRefillInboundDiscount(true, 0.28, 1, false, false, 0, 50, 1000, 0.95, 0.01, profile)
+
+	if drainedDiscount <= 0 || fullerDiscount <= 0 {
+		t.Fatalf("expected positive inbound discount in both scenarios, got drained=%d fuller=%d", drainedDiscount, fullerDiscount)
+	}
+	if drainedDiscount <= fullerDiscount {
+		t.Fatalf("expected more aggressive inbound discount for lower effective out ratio, got drained=%d fuller=%d", drainedDiscount, fullerDiscount)
+	}
+}
+
+func TestAdjustMarketRefillInboundTargetFracByPeerSkew(t *testing.T) {
+	baseFrac := 0.20
+
+	adjusted, tags := adjustMarketRefillInboundTargetFracByPeerSkew(baseFrac, 15.0)
+	if adjusted >= baseFrac {
+		t.Fatalf("expected peer skew to reduce net inbound target fraction, got base=%.3f adjusted=%.3f", baseFrac, adjusted)
+	}
+	if len(tags) < 2 || tags[0] != "market-refill-skew" || tags[1] != "market-refill-skew-med" {
+		t.Fatalf("unexpected skew tags: %+v", tags)
+	}
+}
+
+func TestApplyMarketRefillOutboundBias(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+
+	target, tags := applyMarketRefillOutboundBias(profile, 100, 105, 150, 0.08, 2, false, false, 0, 3500)
+	if target != 705 {
+		t.Fatalf("unexpected drained market refill target uplift: got %d want 705", target)
+	}
+	if len(tags) < 2 || tags[0] != "market-refill-up" || tags[1] != "market-refill-drained" {
+		t.Fatalf("unexpected strategic outbound tags: %+v", tags)
+	}
+
+	exploreTarget, exploreTags := applyMarketRefillOutboundBias(profile, 100, 102, 0, 0.78, 0, true, true, 0, 3500)
+	if exploreTarget != 202 {
+		t.Fatalf("unexpected exploratory market refill target uplift: got %d want 202", exploreTarget)
+	}
+	if len(exploreTags) < 3 || exploreTags[1] != "market-refill-node" || exploreTags[2] != "market-refill-explore" {
+		t.Fatalf("unexpected exploratory outbound tags: %+v", exploreTags)
+	}
+
+	outrateTarget, outrateTags := applyMarketRefillOutboundBias(profile, 100, 220, 1200, 0.40, 4, false, false, 0, 3500)
+	if outrateTarget != 1200 {
+		t.Fatalf("expected market refill outrate floor to win when stronger than premium, got %d want 1200", outrateTarget)
+	}
+	if len(outrateTags) < 2 || outrateTags[1] != "market-refill-node" {
+		t.Fatalf("unexpected market refill outrate tags: %+v", outrateTags)
+	}
+}
+
+func TestApplyMarketRefillOutboundBiasUsesSoftBootstrapFloor(t *testing.T) {
+	profile := autofeeProfiles["aggressive"]
+
+	target, _ := applyMarketRefillOutboundBias(profile, 100, 200, 0, 0.70, 0, true, true, 0, 2000)
+	if target != 350 {
+		t.Fatalf("expected aggressive market refill to stay dynamic at low target values, got %d want 350", target)
+	}
+
+	target, _ = applyMarketRefillOutboundBias(profile, 100, 200, 0, 0.70, 0, true, true, 0, 4000)
+	if target != 350 {
+		t.Fatalf("expected aggressive market refill to avoid collapsing to a fixed max-ppm floor, got %d want 350", target)
+	}
+}
+
+func TestApplyMarketRefillOutboundBiasCanReachMaxPpmFromHighBalancedTarget(t *testing.T) {
+	profile := autofeeProfiles["aggressive"]
+
+	target, tags := applyMarketRefillOutboundBias(profile, 200, 1800, 0, 0.08, 0, true, true, 0, 4000)
+	if target != 4000 {
+		t.Fatalf("expected aggressive market refill to climb to max_ppm from a high balanced target, got %d want 4000", target)
+	}
+	if len(tags) < 3 || tags[0] != "market-refill-up" || tags[1] != "market-refill-drained" || tags[2] != "market-refill-explore" {
+		t.Fatalf("unexpected dynamic max-ppm tags: %+v", tags)
+	}
+}
+
+func TestApplyMarketRefillOutboundBiasCapsLocalMemoryAgainstBalancedTarget(t *testing.T) {
+	profile := autofeeProfiles["aggressive"]
+
+	target, tags := applyMarketRefillOutboundBias(profile, 2500, 300, 0, 0.70, 0, true, true, 0, 4000)
+	if target != 630 {
+		t.Fatalf("expected local memory to be capped by balanced target context, got %d want 630", target)
+	}
+	if len(tags) < 3 || tags[0] != "market-refill-up" || tags[1] != "market-refill-node" || tags[2] != "market-refill-explore" {
+		t.Fatalf("unexpected capped-local tags: %+v", tags)
+	}
+}
+
+func TestApplySeedSignalCapsModerate(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+
+	seed, tags := applySeedSignalCaps(profile, 3482, 1782, 1638, 1868)
+	if math.Abs(seed-2138.4) > 0.001 {
+		t.Fatalf("expected moderate seed cap to stay close to outrate while considering rebal floor, got %.1f want 2138.4", seed)
+	}
+	if len(tags) < 3 || tags[0] != "seed:rebalfloor" || tags[1] != "seed:outcap" || tags[2] != "seed:rebalcap" {
+		t.Fatalf("unexpected seed cap tags: %+v", tags)
+	}
+}
+
+func TestApplySeedSignalCapsAggressive(t *testing.T) {
+	profile := autofeeProfiles["aggressive"]
+
+	seed, _ := applySeedSignalCaps(profile, 3482, 1782, 1638, 1868)
+	if math.Abs(seed-2241.6) > 0.001 {
+		t.Fatalf("expected aggressive seed cap to consider rebal floor, got %.1f want 2241.6", seed)
+	}
+}
+
+func TestManageRescueStateEnterAndExit(t *testing.T) {
+	st := &autofeeChannelState{}
+	now := time.Unix(1_700_000_000, 0).UTC()
+	ranking := autofeeRankingSnapshot{
+		Score:          19,
+		State:          "close",
+		TrendDirection: "worsening",
+		ProfitFee7dSat: -229,
+	}
+
+	active, tags := manageRescueState(st, now, true, ranking, true, 1008, 637, 1202, 0.003, false, false)
+	if !active {
+		t.Fatalf("expected rescue to activate on weak close-state channel")
+	}
+	if !containsTag(tags, "rescue-enter") || !st.ExplorerState.RescueActive || st.ExplorerState.RescueRounds != 1 {
+		t.Fatalf("unexpected rescue entry state: tags=%+v state=%+v", tags, st.ExplorerState)
+	}
+
+	st.ExplorerState.RescueRounds = rescueMinRounds
+	st.ExplorerState.RescueRecoverRounds = 0
+	recovered := autofeeRankingSnapshot{
+		Score:          72,
+		State:          "expand",
+		TrendDirection: "stable",
+		ProfitFee7dSat: 1500,
+	}
+	active, tags = manageRescueState(st, now.Add(13*time.Hour), true, recovered, true, 740, 700, 700, 0.001, false, false)
+	if !active || st.ExplorerState.RescueRecoverRounds != 1 {
+		t.Fatalf("expected rescue exit to require confirmation, active=%v state=%+v tags=%+v", active, st.ExplorerState, tags)
+	}
+	active, tags = manageRescueState(st, now.Add(14*time.Hour), true, recovered, true, 740, 700, 700, 0.001, false, false)
+	if active {
+		t.Fatalf("expected rescue to exit after recovery")
+	}
+	if !containsTag(tags, "rescue-exit") || st.ExplorerState.RescueActive {
+		t.Fatalf("unexpected rescue exit state: tags=%+v state=%+v", tags, st.ExplorerState)
+	}
+}
+
+func TestManageRescueStatePriorityBypassesReentryCooldown(t *testing.T) {
+	st := &autofeeChannelState{}
+	now := time.Unix(1_700_000_000, 0).UTC()
+	st.ExplorerState.RescueLastExitTs = now.Add(-2 * time.Hour).Unix()
+	ranking := autofeeRankingSnapshot{
+		Score:          14,
+		State:          "close",
+		TrendDirection: "worsening",
+		ProfitFee7dSat: -1052,
+	}
+
+	active, tags := manageRescueState(st, now, true, ranking, true, 1263, 640, 1202, 0.003, false, false)
+	if !active {
+		t.Fatalf("expected high-priority rescue candidate to bypass reentry cooldown")
+	}
+	if !containsTag(tags, "rescue-enter") || !st.ExplorerState.RescueActive {
+		t.Fatalf("unexpected priority rescue entry state: tags=%+v state=%+v", tags, st.ExplorerState)
+	}
+}
+
+func TestManageRescueStateSkipsSlowCycleProtectedChannel(t *testing.T) {
+	st := &autofeeChannelState{}
+	now := time.Unix(1_700_000_000, 0).UTC()
+	ranking := autofeeRankingSnapshot{
+		Score:          5,
+		State:          "close",
+		TrendDirection: "worsening",
+		ProfitFee7dSat: -14091,
+	}
+
+	active, tags := manageRescueState(st, now, true, ranking, true, 1263, 640, 1202, 0.003, false, true)
+	if active {
+		t.Fatalf("expected rescue to stay disabled for slow-cycle protected channel")
+	}
+	if len(tags) != 0 || st.ExplorerState.RescueActive {
+		t.Fatalf("unexpected rescue activity for slow-cycle protected channel: tags=%+v state=%+v", tags, st.ExplorerState)
+	}
+}
+
+func TestApplyRescueFloorRelax(t *testing.T) {
+	floor, src, tags := applyRescueFloorRelax(true, 1263, 640, 1263, "peg", 1202, 869)
+	if floor != 1202 {
+		t.Fatalf("expected rescue floor relax to move peg floor closer to outrate, got %d want 1202", floor)
+	}
+	if src != "rescue" {
+		t.Fatalf("expected rescue floor source, got %q", src)
+	}
+	if !containsTag(tags, "rescue-floor-relax") {
+		t.Fatalf("expected rescue floor relax tag, got %+v", tags)
+	}
+}
+
+func TestApplySlowCycle30dReferencesModerateDrained(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	ranking := autofeeRankingSnapshot{
+		Score30d:           58,
+		ProfitFee7dSat:     -14091,
+		ProfitFee30dSat:    1722,
+		OutPpm30d:          2587,
+		RebalPpm30d:        2608,
+		PeerStabilityScore: 52,
+	}
+
+	outRef, rebalRef, active, tags := applySlowCycle30dReferences(profile, ranking, true, 0.03, 280, 2616)
+	if !active {
+		t.Fatalf("expected slow-cycle 30d protection to activate")
+	}
+	if outRef != 1203 {
+		t.Fatalf("unexpected slow-cycle 30d outrate ref: got %d want 1203", outRef)
+	}
+	if rebalRef != 2616 {
+		t.Fatalf("expected existing 7d rebal cost to remain the hard floor, got %d want 2616", rebalRef)
+	}
+	if !containsTag(tags, "slow-cycle-30d") || !containsTag(tags, "slow-cycle-30d-out") {
+		t.Fatalf("expected slow-cycle 30d tags, got %+v", tags)
+	}
+}
+
+func TestApplySlowCycle30dReferencesRejectsWeakThirtyDayCase(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	ranking := autofeeRankingSnapshot{
+		Score30d:           11,
+		ProfitFee7dSat:     -14948,
+		ProfitFee30dSat:    -3218,
+		OutPpm30d:          2134,
+		RebalPpm30d:        2531,
+		PeerStabilityScore: 51,
+	}
+
+	outRef, rebalRef, active, tags := applySlowCycle30dReferences(profile, ranking, true, 0.10, 235, 2609)
+	if active {
+		t.Fatalf("did not expect slow-cycle 30d protection for structurally weak 30d channel")
+	}
+	if outRef != 235 || rebalRef != 2609 || len(tags) != 0 {
+		t.Fatalf("unexpected slow-cycle fallback output: out=%d rebal=%d tags=%+v", outRef, rebalRef, tags)
+	}
+}
+
+func TestMarketRefillStepCapFrac(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+
+	if got, tags := marketRefillStepCapFrac(profile, 0.08); got != 0.40 || len(tags) < 2 || tags[1] != "market-refill-stepcap-drained" {
+		t.Fatalf("unexpected drained market refill cap: got %.2f tags=%+v", got, tags)
+	}
+	if got, tags := marketRefillStepCapFrac(profile, 0.22); got != 0.30 || len(tags) < 2 || tags[1] != "market-refill-stepcap-low" {
+		t.Fatalf("unexpected low market refill cap: got %.2f tags=%+v", got, tags)
+	}
+	if got, tags := marketRefillStepCapFrac(profile, 0.70); got != 0.20 || len(tags) < 1 || tags[0] != "market-refill-stepcap" {
+		t.Fatalf("unexpected node-wide market refill cap: got %.2f tags=%+v", got, tags)
+	}
+}
+
+func TestShouldBypassMarketRefillReversalGuard(t *testing.T) {
+	if !shouldBypassMarketRefillReversalGuard([]string{"market-refill-up"}, 120, 900, 500) {
+		t.Fatalf("expected market refill reversal guard bypass on large upward regime switch")
+	}
+	if shouldBypassMarketRefillReversalGuard([]string{"market-refill-up"}, 20, 900, 500) {
+		t.Fatalf("did not expect bypass on small target gap")
+	}
+	if shouldBypassMarketRefillReversalGuard([]string{"trend-up"}, 120, 900, 500) {
+		t.Fatalf("did not expect bypass without market refill uplift tag")
 	}
 }
 

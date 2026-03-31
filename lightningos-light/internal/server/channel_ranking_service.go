@@ -919,6 +919,7 @@ func buildChannelRankingItem(
 		score7d,
 		score30d,
 		peerAggregate.Score30d,
+		peerAggregate.SampleCount,
 		htlcAggregate,
 		rebalanceDependenceScore,
 	)
@@ -1032,6 +1033,7 @@ func classifyChannelRanking(
 	score7d int,
 	score30d int,
 	peerStabilityScore30d int,
+	peerSampleCount30d int,
 	htlcAggregate channelHTLCAggregate,
 	rebalanceDependenceScore int,
 ) (string, []ChannelRankingReason, []ChannelRankingRecommendation) {
@@ -1093,12 +1095,19 @@ func classifyChannelRanking(
 	htlcFailuresHigh := htlcAggregate.Total >= 8 || htlcAggregate.Liquidity >= 4 || htlcAggregate.Policy >= 4
 	persistentWeakEconomics := effectiveProfitSat30d <= 0 || score30d < 36 || rebalanceHeavy30d
 	severeOperationalRisk := longInactive || unstablePeer || htlcFailuresHigh || rebalanceDependenceScore >= 85
+	closeWarmup := peerSampleCount30d > 0 && peerSampleCount30d < 336
+	closeDeferredForWarmup := false
 
 	switch {
 	case ch.Active && score7d >= 72 && effectiveProfitSat7d > 0 && strongVolume && !unstablePeer:
 		state = "expand"
 	case score7d < 24 && (severeOperationalRisk || (persistentWeakEconomics && (effectiveProfitSat7d <= -150 || rebalanceHeavy7d || rebalanceDependenceScore >= 65))):
-		state = "close"
+		if closeWarmup {
+			state = "monitor"
+			closeDeferredForWarmup = true
+		} else {
+			state = "close"
+		}
 	case ch.Active && score7d >= 48 && effectiveProfitSat7d >= -50 && !rebalanceHeavy7d && rebalanceDependenceScore < 65 && !htlcFailuresHigh && !unstablePeer:
 		state = "maintain"
 	default:
@@ -1118,6 +1127,9 @@ func classifyChannelRanking(
 		recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "prepare_coop_close", TargetModule: "lightning-ops"})
 		recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "review_with_close_manager", TargetModule: "close-manager"})
 	default:
+		if closeDeferredForWarmup {
+			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "observe_7d_before_close", TargetModule: "lightning-ops"})
+		}
 		if rebalanceHeavy7d {
 			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "reduce_rebalance_priority", TargetModule: "rebalance"})
 		}

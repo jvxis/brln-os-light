@@ -32,6 +32,7 @@ type Server struct {
 	reportsErr                  string
 	reportsMu                   sync.Mutex
 	reportsInitAt               time.Time
+	auth                        *AuthService
 	rebalanceInitAt             time.Time
 	rebalance                   *RebalanceService
 	rebalanceErr                string
@@ -63,6 +64,10 @@ type Server struct {
 	channelRankingMu            sync.Mutex
 	channelRanking              *ChannelRankingService
 	channelRankingErr           string
+	graphExplorerInitAt         time.Time
+	graphExplorerMu             sync.Mutex
+	graphExplorer               *GraphExplorerService
+	graphExplorerErr            string
 	balancedOpenInitAt          time.Time
 	balancedOpenMu              sync.Mutex
 	balancedOpen                *BalancedOpenService
@@ -92,6 +97,7 @@ func New(cfg *config.Config, logger *log.Logger) *Server {
 		lnd:                lndclient.New(cfg, logger),
 		networkMapGeoCache: make(map[string]networkMapGeoCacheEntry),
 	}
+	srv.auth = NewAuthService(cfg, logger)
 	srv.chat = NewChatService(srv.lnd, logger)
 	srv.amboss = NewAmbossHealthChecker(srv.lnd, logger)
 	srv.chanHealer = NewChanStatusHealer(srv.lnd, logger)
@@ -111,6 +117,7 @@ func (s *Server) Run() error {
 	s.initAutofee()
 	s.initShortcuts()
 	s.initChannelRanking()
+	s.initGraphExplorer()
 	s.initBalancedOpen()
 	s.initCloseManager()
 	s.initNodeRetirement()
@@ -141,6 +148,9 @@ func (s *Server) Run() error {
 	}
 	if s.channelRanking != nil {
 		s.channelRanking.Start()
+	}
+	if s.graphExplorer != nil {
+		s.graphExplorer.Start()
 	}
 	if s.balancedOpen != nil {
 		s.balancedOpen.Start()

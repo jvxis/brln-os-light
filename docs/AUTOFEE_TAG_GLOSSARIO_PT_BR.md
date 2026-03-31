@@ -77,6 +77,10 @@ Notas:
 - `discovery`: modo de descoberta ativo (testa convergencia de fee).
 - `discovery-hard`: descoberta mais agressiva.
 - `explorer`: estrategia exploratoria ativa para buscar ponto de equilibrio.
+- `drained-explorer`: exploracao especifica para canal muito drenado e parado.
+- `drained-explorer-rN`: contador de rounds no modo `drained-explorer`.
+- `drained-explorer-step`: alta pequena aplicada pelo explorador drenado.
+- `drained-explorer-cap`: alta limitada pelo cap proprio do `drained-explorer`.
 - `surge+...`: aumento temporario por surto de demanda/trafego.
 - `surge-hold...`: fase de sustentacao do surto.
 - `surge-timeout-release`: fim do hold de surto por timeout.
@@ -107,6 +111,28 @@ Notas:
 - `bootstrap`: fase de bootstrap de fee para canal novo.
 - `inb-<n>`: desconto inbound aplicado (`n` ppm).
 
+## Market refill
+- `market-refill`: canal sendo precificado no modo global `Market refill`.
+- `market-node`: tier base do `market_refill` para o node como um todo.
+- `market-low`: tier mais forte para canais com local ratio menor.
+- `market-drained`: tier mais forte para canais efetivamente drenados.
+- `market-explore`: branch exploratorio do `market_refill`, usado para canais sem fluxo util recente.
+- `market-refill-up`: vies explicito de alta no outbound do `market_refill`.
+- `market-refill-stepcap`: a alta foi parcelada pelo step cap especifico do modo.
+- `market-refill-reversal-bypass`: a alta ignorou o reversal guard padrao por troca clara de regime.
+- `market-refill-skew`: o inbound do `market_refill` foi refinado por skew externo da Amboss.
+- `market-refill-skew-low`, `market-refill-skew-med`, `market-refill-skew-high`: classificacao do skew externo usado para aproximar inbound e outbound.
+
+## Rescue
+- `rescue`: canal entrou em estado temporario de resgate dentro do modo `Balanced`.
+- `rescue-enter`: primeira rodada em `rescue`.
+- `rescue-exit`: saida normal do `rescue` apos convergencia ou melhora.
+- `rescue-expired`: saida do `rescue` por tempo maximo atingido.
+- `rescue-rN`: contador de rounds consecutivos em `rescue`.
+- `rescue-floor-relax`: o piso foi relaxado para uma banda mais proxima do sinal local.
+- `rescue-global-relax`: o lock global por margem negativa foi parcialmente suavizado no `rescue`.
+- `rescue-peg-paused`: o `peg` foi impedido de rearmar alta enquanto o canal ainda estava em resgate.
+
 ## Origem do seed e fallbacks
 - `seed:amboss*`: seed veio da Amboss (ou status de fallback da Amboss).
 - `seed:med`: seed calibrado para perfil medio do canal.
@@ -118,6 +144,9 @@ Notas:
 - `seed:guard`: seed protegido por guardrail.
 - `seed:p95cap`: seed capado por limite estatistico p95.
 - `seed:absmax`: seed limitado por teto absoluto.
+- `seed:outcap`: seed limitado pelo `out_ppm7d`.
+- `seed:rebalcap`: seed limitado pela referencia de rebalance.
+- `seed:rebalfloor`: seed limitado levando em conta o floor de rebalance efetivo.
 - `out-fallback-21d`: fallback de outbound usando janela de 21 dias.
 - `rebal-fallback-21d`: fallback de rebalance usando janela de 21 dias.
 

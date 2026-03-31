@@ -8,6 +8,7 @@ import (
 )
 
 type Config struct {
+	Path          string              `yaml:"-"`
 	Server        ServerConfig        `yaml:"server"`
 	LND           LNDConfig           `yaml:"lnd"`
 	BitcoinRemote BitcoinRemoteConfig `yaml:"bitcoin_remote"`
@@ -44,10 +45,17 @@ type UIConfig struct {
 }
 
 type FeaturesConfig struct {
-	EnableLogin                   bool  `yaml:"enable_login"`
+	EnableLogin                   *bool `yaml:"enable_login"`
 	EnableBitcoinLocalPlaceholder bool  `yaml:"enable_bitcoin_local_placeholder"`
 	EnableAppStorePlaceholder     bool  `yaml:"enable_app_store_placeholder"`
 	EnableBalancedOpen            *bool `yaml:"enable_balanced_open"`
+}
+
+func (f FeaturesConfig) LoginEnabled() bool {
+	if f.EnableLogin == nil {
+		return true
+	}
+	return *f.EnableLogin
 }
 
 func (f FeaturesConfig) BalancedOpenEnabled() bool {
@@ -67,6 +75,7 @@ func Load(path string) (*Config, error) {
 	if err := yaml.Unmarshal(b, &cfg); err != nil {
 		return nil, err
 	}
+	cfg.Path = path
 
 	if cfg.Server.Host == "" {
 		cfg.Server.Host = "127.0.0.1"

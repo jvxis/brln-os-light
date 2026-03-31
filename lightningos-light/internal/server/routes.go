@@ -13,7 +13,18 @@ func (s *Server) routes() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(s.requestLogger())
+	if s.auth != nil {
+		r.Use(s.auth.Middleware())
+	}
 
+	r.Get("/api/auth/state", s.auth.HandleState)
+	r.Post("/api/auth/setup", s.auth.HandleSetup)
+	r.Post("/api/auth/login", s.auth.HandleLogin)
+	r.Post("/api/auth/logout", s.auth.HandleLogout)
+	r.Post("/api/auth/recovery", s.auth.HandleRecovery)
+	r.Post("/api/auth/enable-login", s.handleAuthEnableLogin)
+	r.Post("/api/auth/change-password", s.auth.HandleChangePassword)
+	r.Post("/api/auth/reauth", s.auth.HandleReauth)
 	r.Get("/api/health", s.handleHealth)
 	r.Get("/api/amboss/health", s.handleAmbossHealthGet)
 	r.Post("/api/amboss/health", s.handleAmbossHealthPost)
@@ -90,6 +101,7 @@ func (s *Server) routes() http.Handler {
 
 	r.Route("/api/wallet", func(r chi.Router) {
 		r.Get("/summary", s.handleWalletSummary)
+		r.Get("/activity", s.handleWalletActivity)
 		r.Post("/address", s.handleWalletAddress)
 		r.Post("/invoice", s.handleWalletInvoice)
 		r.Post("/decode", s.handleWalletDecode)
@@ -105,6 +117,13 @@ func (s *Server) routes() http.Handler {
 		r.Get("/network-map", s.handleLNNetworkMapGet)
 		r.Get("/network-map/config", s.handleLNNetworkMapConfigGet)
 		r.Post("/network-map/config", s.handleLNNetworkMapConfigPost)
+		r.Get("/graph-explorer/status", s.handleGraphExplorerStatusGet)
+		r.Get("/graph-explorer/search", s.handleGraphExplorerSearchGet)
+		r.Get("/graph-explorer/nodes/{pubkey}/general", s.handleGraphExplorerGeneralGet)
+		r.Get("/graph-explorer/nodes/{pubkey}/channels", s.handleGraphExplorerChannelsGet)
+		r.Get("/graph-explorer/nodes/{pubkey}/closed", s.handleGraphExplorerClosedGet)
+		r.Get("/graph-explorer/nodes/{pubkey}/fees", s.handleGraphExplorerFeesGet)
+		r.Post("/graph-explorer/recompute", s.handleGraphExplorerRecomputePost)
 		r.Get("/closed-channels", s.handleLNClosedChannels)
 		r.Get("/watchtower", s.handleLNWatchtowers)
 		r.Post("/sign-message", s.handleLNSignMessage)

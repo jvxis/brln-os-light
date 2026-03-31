@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,15 +24,23 @@ import (
 )
 
 const (
-	autofeeConfigID        = 1
-	autofeeMinLookbackDays = 5
-	autofeeMaxLookbackDays = 21
-	autofeeMinCooldownSec  = 3600
+	autofeeConfigID             = 1
+	autofeeMinLookbackDays      = 5
+	autofeeMaxLookbackDays      = 21
+	autofeeMinCooldownSec       = 3600
+	autofeeNativeSeedMinDays    = 3
+	autofeeNativeSeedMinSamples = 6
 )
 
 const superSourceBaseFeeMsatDefault = 1000
 const rebalCostModeDefault = "blend"
 const htlcModeDefault = "full"
+const autofeeOperationModeDefault = "balanced"
+
+const (
+	autofeeOperationModeBalanced     = "balanced"
+	autofeeOperationModeMarketRefill = "market_refill"
+)
 
 const (
 	htlcModeObserveOnly = "observe_only"
@@ -112,6 +121,20 @@ const (
 	floorDrivenSmallUpMinStepPpm        = 10
 	reversalConfirmMinRounds            = 2
 	reversalFastTrackStallMinRounds     = 2
+	rescueEnterGapFrac                  = 0.20
+	rescuePriorityEnterGapFrac          = 0.35
+	rescueExitGapFrac                   = 0.08
+	rescueOutrateEnterMult              = 1.03
+	rescueOutrateExitMult               = 1.05
+	rescueTargetOutrateDivergenceFrac   = 0.03
+	rescueSoftRebalFloorMult            = 1.02
+	rescueScoreMax                      = 55
+	rescueRevShareMax                   = 0.02
+	rescueMinRounds                     = 3
+	rescueMinActiveHours                = 12
+	rescueMaxActiveHours                = 10 * 24
+	rescueReentryCooldownHours          = 24
+	rescueExitConfirmRounds             = 2
 	htlcLowSampleMaxDownFrac            = 0.05
 	generalMaxDownFrac                  = 0.08
 	channelSizeRatioExponent            = 0.35
@@ -157,89 +180,109 @@ func normalizeHTLCMode(value string) string {
 	}
 }
 
+func normalizeAutofeeOperationMode(value string) string {
+	mode := strings.ToLower(strings.TrimSpace(value))
+	switch mode {
+	case autofeeOperationModeBalanced, autofeeOperationModeMarketRefill:
+		return mode
+	default:
+		return autofeeOperationModeDefault
+	}
+}
+
 type AutofeeConfig struct {
-	Enabled                         bool                              `json:"enabled"`
-	Profile                         string                            `json:"profile"`
-	LookbackDays                    int                               `json:"lookback_days"`
-	RunIntervalSec                  int                               `json:"run_interval_sec"`
-	CooldownUpSec                   int                               `json:"cooldown_up_sec"`
-	CooldownDownSec                 int                               `json:"cooldown_down_sec"`
-	StepCapOverride                 float64                           `json:"step_cap_override"`
-	DiscoveryStepCapDownOverride    float64                           `json:"discovery_step_cap_down_override"`
-	StallFloorRelaxGapFracOverride  float64                           `json:"stall_floor_relax_gap_frac_override"`
-	InboundDiscountMaxRatioOverride float64                           `json:"inbound_discount_max_ratio_override"`
-	OutrateFloorFactorLowOverride   float64                           `json:"outrate_floor_factor_low_override"`
-	SoftenMinOutRatioOverride       float64                           `json:"soften_min_out_ratio_override"`
-	SoftenMaxDropToPegFracOverride  float64                           `json:"soften_max_drop_to_peg_frac_override"`
-	HTLCMinAttempts60mOverride      int                               `json:"htlc_min_attempts_60m_override"`
-	HTLCPolicyFailRateOverride      float64                           `json:"htlc_policy_fail_rate_override"`
-	HTLCLiquidityFailRateOverride   float64                           `json:"htlc_liquidity_fail_rate_override"`
-	RebalCostMode                   string                            `json:"rebal_cost_mode"`
-	AmbossEnabled                   bool                              `json:"amboss_enabled"`
-	AmbossTokenSet                  bool                              `json:"amboss_token_set"`
-	InboundPassiveEnabled           bool                              `json:"inbound_passive_enabled"`
-	DiscoveryEnabled                bool                              `json:"discovery_enabled"`
-	ExplorerEnabled                 bool                              `json:"explorer_enabled"`
-	SuperSourceEnabled              bool                              `json:"super_source_enabled"`
-	SuperSourceBaseFeeMsat          int                               `json:"super_source_base_fee_msat"`
-	RevfloorEnabled                 bool                              `json:"revfloor_enabled"`
-	CircuitBreakerEnabled           bool                              `json:"circuit_breaker_enabled"`
-	ExtremeDrainEnabled             bool                              `json:"extreme_drain_enabled"`
-	HTLCSignalEnabled               bool                              `json:"htlc_signal_enabled"`
-	HTLCMode                        string                            `json:"htlc_mode"`
-	MinPpm                          int                               `json:"min_ppm"`
-	MaxPpm                          int                               `json:"max_ppm"`
-	ProfileDefaults                 map[string]AutofeeProfileDefaults `json:"profile_defaults,omitempty"`
+	Enabled                                      bool                              `json:"enabled"`
+	OperationMode                                string                            `json:"operation_mode"`
+	Profile                                      string                            `json:"profile"`
+	LookbackDays                                 int                               `json:"lookback_days"`
+	RunIntervalSec                               int                               `json:"run_interval_sec"`
+	CooldownUpSec                                int                               `json:"cooldown_up_sec"`
+	CooldownDownSec                              int                               `json:"cooldown_down_sec"`
+	StepCapOverride                              float64                           `json:"step_cap_override"`
+	DiscoveryStepCapDownOverride                 float64                           `json:"discovery_step_cap_down_override"`
+	StallFloorRelaxGapFracOverride               float64                           `json:"stall_floor_relax_gap_frac_override"`
+	InboundDiscountMaxRatioOverride              float64                           `json:"inbound_discount_max_ratio_override"`
+	InboundDiscountReachOutRatioOverride         float64                           `json:"inbound_discount_reach_out_ratio_override"`
+	InboundDiscountMinRetainedSpreadFracOverride float64                           `json:"inbound_discount_min_retained_spread_frac_override"`
+	OutrateFloorFactorLowOverride                float64                           `json:"outrate_floor_factor_low_override"`
+	SoftenMinOutRatioOverride                    float64                           `json:"soften_min_out_ratio_override"`
+	SoftenMaxDropToPegFracOverride               float64                           `json:"soften_max_drop_to_peg_frac_override"`
+	HTLCMinAttempts60mOverride                   int                               `json:"htlc_min_attempts_60m_override"`
+	HTLCPolicyFailRateOverride                   float64                           `json:"htlc_policy_fail_rate_override"`
+	HTLCLiquidityFailRateOverride                float64                           `json:"htlc_liquidity_fail_rate_override"`
+	RebalCostMode                                string                            `json:"rebal_cost_mode"`
+	NativeSeedEnabled                            bool                              `json:"native_seed_enabled"`
+	AmbossEnabled                                bool                              `json:"amboss_enabled"`
+	AmbossTokenSet                               bool                              `json:"amboss_token_set"`
+	InboundPassiveEnabled                        bool                              `json:"inbound_passive_enabled"`
+	DiscoveryEnabled                             bool                              `json:"discovery_enabled"`
+	ExplorerEnabled                              bool                              `json:"explorer_enabled"`
+	SuperSourceEnabled                           bool                              `json:"super_source_enabled"`
+	SuperSourceBaseFeeMsat                       int                               `json:"super_source_base_fee_msat"`
+	RevfloorEnabled                              bool                              `json:"revfloor_enabled"`
+	CircuitBreakerEnabled                        bool                              `json:"circuit_breaker_enabled"`
+	ExtremeDrainEnabled                          bool                              `json:"extreme_drain_enabled"`
+	HTLCSignalEnabled                            bool                              `json:"htlc_signal_enabled"`
+	HTLCMode                                     string                            `json:"htlc_mode"`
+	MinPpm                                       int                               `json:"min_ppm"`
+	MaxPpm                                       int                               `json:"max_ppm"`
+	ProfileDefaults                              map[string]AutofeeProfileDefaults `json:"profile_defaults,omitempty"`
 }
 
 type AutofeeProfileDefaults struct {
-	RunIntervalSec          int     `json:"run_interval_sec"`
-	CooldownUpSec           int     `json:"cooldown_up_sec"`
-	CooldownDownSec         int     `json:"cooldown_down_sec"`
-	StepCap                 float64 `json:"step_cap"`
-	DiscoveryStepCapDown    float64 `json:"discovery_step_cap_down"`
-	StallFloorRelaxGapFrac  float64 `json:"stall_floor_relax_gap_frac"`
-	InboundDiscountMaxRatio float64 `json:"inbound_discount_max_ratio"`
-	OutrateFloorFactorLow   float64 `json:"outrate_floor_factor_low"`
-	SoftenMinOutRatio       float64 `json:"soften_min_out_ratio"`
-	SoftenMaxDropToPegFrac  float64 `json:"soften_max_drop_to_peg_frac"`
-	HTLCMinAttempts60m      int     `json:"htlc_min_attempts_60m"`
-	HTLCPolicyFailRate      float64 `json:"htlc_policy_fail_rate"`
-	HTLCLiquidityFailRate   float64 `json:"htlc_liquidity_fail_rate"`
+	RunIntervalSec                       int     `json:"run_interval_sec"`
+	CooldownUpSec                        int     `json:"cooldown_up_sec"`
+	CooldownDownSec                      int     `json:"cooldown_down_sec"`
+	StepCap                              float64 `json:"step_cap"`
+	DiscoveryStepCapDown                 float64 `json:"discovery_step_cap_down"`
+	StallFloorRelaxGapFrac               float64 `json:"stall_floor_relax_gap_frac"`
+	InboundDiscountMaxRatio              float64 `json:"inbound_discount_max_ratio"`
+	InboundDiscountReachOutRatio         float64 `json:"inbound_discount_reach_out_ratio"`
+	InboundDiscountMinRetainedSpreadFrac float64 `json:"inbound_discount_min_retained_spread_frac"`
+	OutrateFloorFactorLow                float64 `json:"outrate_floor_factor_low"`
+	SoftenMinOutRatio                    float64 `json:"soften_min_out_ratio"`
+	SoftenMaxDropToPegFrac               float64 `json:"soften_max_drop_to_peg_frac"`
+	HTLCMinAttempts60m                   int     `json:"htlc_min_attempts_60m"`
+	HTLCPolicyFailRate                   float64 `json:"htlc_policy_fail_rate"`
+	HTLCLiquidityFailRate                float64 `json:"htlc_liquidity_fail_rate"`
 }
 
 type AutofeeConfigUpdate struct {
-	Enabled                         *bool    `json:"enabled,omitempty"`
-	Profile                         *string  `json:"profile,omitempty"`
-	LookbackDays                    *int     `json:"lookback_days,omitempty"`
-	RunIntervalSec                  *int     `json:"run_interval_sec,omitempty"`
-	CooldownUpSec                   *int     `json:"cooldown_up_sec,omitempty"`
-	CooldownDownSec                 *int     `json:"cooldown_down_sec,omitempty"`
-	StepCapOverride                 *float64 `json:"step_cap_override,omitempty"`
-	DiscoveryStepCapDownOverride    *float64 `json:"discovery_step_cap_down_override,omitempty"`
-	StallFloorRelaxGapFracOverride  *float64 `json:"stall_floor_relax_gap_frac_override,omitempty"`
-	InboundDiscountMaxRatioOverride *float64 `json:"inbound_discount_max_ratio_override,omitempty"`
-	OutrateFloorFactorLowOverride   *float64 `json:"outrate_floor_factor_low_override,omitempty"`
-	SoftenMinOutRatioOverride       *float64 `json:"soften_min_out_ratio_override,omitempty"`
-	SoftenMaxDropToPegFracOverride  *float64 `json:"soften_max_drop_to_peg_frac_override,omitempty"`
-	HTLCMinAttempts60mOverride      *int     `json:"htlc_min_attempts_60m_override,omitempty"`
-	HTLCPolicyFailRateOverride      *float64 `json:"htlc_policy_fail_rate_override,omitempty"`
-	HTLCLiquidityFailRateOverride   *float64 `json:"htlc_liquidity_fail_rate_override,omitempty"`
-	RebalCostMode                   *string  `json:"rebal_cost_mode,omitempty"`
-	AmbossEnabled                   *bool    `json:"amboss_enabled,omitempty"`
-	AmbossToken                     *string  `json:"amboss_token,omitempty"`
-	InboundPassiveEnabled           *bool    `json:"inbound_passive_enabled,omitempty"`
-	DiscoveryEnabled                *bool    `json:"discovery_enabled,omitempty"`
-	ExplorerEnabled                 *bool    `json:"explorer_enabled,omitempty"`
-	SuperSourceEnabled              *bool    `json:"super_source_enabled,omitempty"`
-	SuperSourceBaseFeeMsat          *int     `json:"super_source_base_fee_msat,omitempty"`
-	RevfloorEnabled                 *bool    `json:"revfloor_enabled,omitempty"`
-	CircuitBreakerEnabled           *bool    `json:"circuit_breaker_enabled,omitempty"`
-	ExtremeDrainEnabled             *bool    `json:"extreme_drain_enabled,omitempty"`
-	HTLCSignalEnabled               *bool    `json:"htlc_signal_enabled,omitempty"`
-	HTLCMode                        *string  `json:"htlc_mode,omitempty"`
-	MinPpm                          *int     `json:"min_ppm,omitempty"`
-	MaxPpm                          *int     `json:"max_ppm,omitempty"`
+	Enabled                                      *bool    `json:"enabled,omitempty"`
+	OperationMode                                *string  `json:"operation_mode,omitempty"`
+	Profile                                      *string  `json:"profile,omitempty"`
+	LookbackDays                                 *int     `json:"lookback_days,omitempty"`
+	RunIntervalSec                               *int     `json:"run_interval_sec,omitempty"`
+	CooldownUpSec                                *int     `json:"cooldown_up_sec,omitempty"`
+	CooldownDownSec                              *int     `json:"cooldown_down_sec,omitempty"`
+	StepCapOverride                              *float64 `json:"step_cap_override,omitempty"`
+	DiscoveryStepCapDownOverride                 *float64 `json:"discovery_step_cap_down_override,omitempty"`
+	StallFloorRelaxGapFracOverride               *float64 `json:"stall_floor_relax_gap_frac_override,omitempty"`
+	InboundDiscountMaxRatioOverride              *float64 `json:"inbound_discount_max_ratio_override,omitempty"`
+	InboundDiscountReachOutRatioOverride         *float64 `json:"inbound_discount_reach_out_ratio_override,omitempty"`
+	InboundDiscountMinRetainedSpreadFracOverride *float64 `json:"inbound_discount_min_retained_spread_frac_override,omitempty"`
+	OutrateFloorFactorLowOverride                *float64 `json:"outrate_floor_factor_low_override,omitempty"`
+	SoftenMinOutRatioOverride                    *float64 `json:"soften_min_out_ratio_override,omitempty"`
+	SoftenMaxDropToPegFracOverride               *float64 `json:"soften_max_drop_to_peg_frac_override,omitempty"`
+	HTLCMinAttempts60mOverride                   *int     `json:"htlc_min_attempts_60m_override,omitempty"`
+	HTLCPolicyFailRateOverride                   *float64 `json:"htlc_policy_fail_rate_override,omitempty"`
+	HTLCLiquidityFailRateOverride                *float64 `json:"htlc_liquidity_fail_rate_override,omitempty"`
+	RebalCostMode                                *string  `json:"rebal_cost_mode,omitempty"`
+	NativeSeedEnabled                            *bool    `json:"native_seed_enabled,omitempty"`
+	AmbossEnabled                                *bool    `json:"amboss_enabled,omitempty"`
+	AmbossToken                                  *string  `json:"amboss_token,omitempty"`
+	InboundPassiveEnabled                        *bool    `json:"inbound_passive_enabled,omitempty"`
+	DiscoveryEnabled                             *bool    `json:"discovery_enabled,omitempty"`
+	ExplorerEnabled                              *bool    `json:"explorer_enabled,omitempty"`
+	SuperSourceEnabled                           *bool    `json:"super_source_enabled,omitempty"`
+	SuperSourceBaseFeeMsat                       *int     `json:"super_source_base_fee_msat,omitempty"`
+	RevfloorEnabled                              *bool    `json:"revfloor_enabled,omitempty"`
+	CircuitBreakerEnabled                        *bool    `json:"circuit_breaker_enabled,omitempty"`
+	ExtremeDrainEnabled                          *bool    `json:"extreme_drain_enabled,omitempty"`
+	HTLCSignalEnabled                            *bool    `json:"htlc_signal_enabled,omitempty"`
+	HTLCMode                                     *string  `json:"htlc_mode,omitempty"`
+	MinPpm                                       *int     `json:"min_ppm,omitempty"`
+	MaxPpm                                       *int     `json:"max_ppm,omitempty"`
 }
 
 type AutofeeStatus struct {
@@ -259,6 +302,7 @@ type autofeeLogItem struct {
 	Kind                     string   `json:"kind"`
 	Category                 string   `json:"category,omitempty"`
 	Reason                   string   `json:"reason,omitempty"`
+	OperationMode            string   `json:"operation_mode,omitempty"`
 	DryRun                   bool     `json:"dry_run,omitempty"`
 	Timestamp                string   `json:"timestamp,omitempty"`
 	NodeClass                string   `json:"node_class,omitempty"`
@@ -313,6 +357,9 @@ type autofeeLogItem struct {
 	LowOutThresh             float64  `json:"low_out_thresh,omitempty"`
 	LowOutProtectThresh      float64  `json:"low_out_protect_thresh,omitempty"`
 	LowOutFactor             float64  `json:"low_out_factor,omitempty"`
+	Native                   int      `json:"native,omitempty"`
+	NativeInsufficient       int      `json:"native_insufficient,omitempty"`
+	NativeErr                int      `json:"native_err,omitempty"`
 	Amboss                   int      `json:"amboss,omitempty"`
 	Missing                  int      `json:"missing,omitempty"`
 	Err                      int      `json:"err,omitempty"`
@@ -339,6 +386,7 @@ type autofeeLogItem struct {
 	RevShare                 float64  `json:"rev_share,omitempty"`
 	Tags                     []string `json:"tags,omitempty"`
 	InboundDiscount          int      `json:"inbound_discount,omitempty"`
+	PrevInboundDiscount      int      `json:"prev_inbound_discount,omitempty"`
 	ClassLabel               string   `json:"class_label,omitempty"`
 	SkipReason               string   `json:"skip_reason,omitempty"`
 	Error                    string   `json:"error,omitempty"`
@@ -364,107 +412,136 @@ type autofeeLogItem struct {
 }
 
 type autofeeProfile struct {
-	Name                           string
-	StepCap                        float64
-	LowOutThresh                   float64
-	LowOutProtectThresh            float64
-	HighOutThresh                  float64
-	SurgeBumpMax                   float64
-	RunIntervalSec                 int
-	CooldownUpSec                  int
-	CooldownDownSec                int
-	DiscoveryStepCapDown           float64
-	StallFloorRelaxGapFrac         float64
-	SeedGuardMaxJump               float64
-	OutratePegGraceHours           int
-	ProfitDownMarginMin            int
-	ProfitDownFwdsMin              int
-	ProfitDownExtraHours           int
-	NegMarginSurgeBump             float64
-	NegMarginSurgeMinFwds          int
-	NegMarginSurgeFwdsRatio        float64
-	SinkExtraFloorMargin           float64
-	RevfloorBaselineThresh         int
-	RevfloorMinAbs                 int
-	RevfloorBaselineScale          float64
-	RevfloorMinAbsScale            float64
-	DiscHarddropDaysNoBase         int
-	DiscHarddropCapFrac            float64
-	DiscHarddropCushion            int
-	DiscRequireExplorer            bool
-	DiscAfterExplorerDays          int
-	OutrateFloorFactorLow          float64
-	ExplorerSkipCooldownDown       bool
-	CircuitBreakerDropRatio        float64
-	CircuitBreakerReduceStep       float64
-	CircuitBreakerGraceDays        int
-	ExtremeDrainStreak             int
-	ExtremeDrainOutMax             float64
-	ExtremeDrainStepCap            float64
-	ExtremeDrainMinStepPpm         int
-	ExtremeDrainTurboStreak        int
-	ExtremeDrainTurboOutMax        float64
-	ExtremeDrainTurboStepCap       float64
-	ExtremeDrainTurboMinStepPpm    int
-	SinkMinMargin                  int
-	MinSoftCeiling                 int
-	SeedCeilingMult                float64
-	SeedFloorMult                  float64
-	SeedP95Boost                   float64
-	SourceSeedTargetFrac           float64
-	ProfitProtectOutRatio          float64
-	ProfitProtectMarginPpm         int
-	ProfitProtectRelaxHours        int
-	ProfitProtectRelaxMaxFwds      int
-	ProfitProtectRelaxMarginPpm    int
-	ProfitProtectRelaxStepFrac     float64
-	ProfitProtectRelaxMinStepPpm   int
-	GlobalNegLockSoften            bool
-	SoftenMinOutRatio              float64
-	SoftenRequirePosChanMargin     bool
-	SoftenMaxDropToPegFrac         float64
-	HTLCMinAttempts60m             int
-	HTLCPolicyFailRate             float64
-	HTLCPolicyMinFails             int
-	HTLCLiquidityFailRate          float64
-	HTLCLiquidityMinFails          int
-	HTLCLiquidityHotBump           float64
-	HTLCLiquidityHotNoDownOutRatio float64
-	HTLCPolicyHotBump              float64
-	HTLCPolicyHotNoDownMarginPpm   int
-	HTLCHotStepCapBoost            float64
-	SurgeHoldMaxRounds             int
-	SurgeHoldUnlockStepPpm         int
-	BootstrapHours                 int
-	BootstrapOutRatioMax           float64
-	BootstrapCooldownUpSec         int
-	BootstrapCooldownDownSec       int
-	BootstrapMinStepUpPpm          int
-	BootstrapSurgeHoldMaxRounds    int
-	HoldSmallMinDeltaPpm           int
-	HoldSmallMinRelFrac            float64
-	HoldSmallGapBypassPpm          int
-	HoldSmallGapBypassFrac         float64
-	HoldSmallStallBypassRounds     int
-	ReversalConfirmMinRounds       int
-	ReversalFastTrackStallRounds   int
-	ReversalFastTrackGapFrac       float64
-	AntiFlipWindowHours            int
-	AntiFlipExtraConfirmRounds     int
-	AntiFlipStrongGapFrac          float64
-	BalancedUpOutRatioMin          float64
-	BalancedFloorUpCap             float64
-	OutrateTargetOutRatioMin       float64
-	OutrateTargetMinFwds           int
-	OutrateTargetFloorFrac         float64
-	OutrateTargetBlendFrac         float64
-	RebalFailOutRatioMax           float64
-	RebalFailNoDownMinAttempts     int
-	RebalFailUpMinAttempts         int
-	RebalFailUpStepFrac            float64
-	RebalFailUpMinStepPpm          int
-	RebalFailWindowHours           int
-	RebalFailCampaignGapMin        int
+	Name                                 string
+	StepCap                              float64
+	LowOutThresh                         float64
+	LowOutProtectThresh                  float64
+	HighOutThresh                        float64
+	SurgeBumpMax                         float64
+	RunIntervalSec                       int
+	CooldownUpSec                        int
+	CooldownDownSec                      int
+	CooldownUpDrainedSec                 int
+	CooldownUpExtremeSec                 int
+	CooldownUpDrainedOutRatioMax         float64
+	CooldownUpExtremeOutRatioMax         float64
+	DiscoveryStepCapDown                 float64
+	StallFloorRelaxGapFrac               float64
+	SeedGuardMaxJump                     float64
+	OutratePegGraceHours                 int
+	ProfitDownMarginMin                  int
+	ProfitDownFwdsMin                    int
+	ProfitDownExtraHours                 int
+	NegMarginSurgeBump                   float64
+	NegMarginSurgeMinFwds                int
+	NegMarginSurgeFwdsRatio              float64
+	SinkExtraFloorMargin                 float64
+	RevfloorBaselineThresh               int
+	RevfloorMinAbs                       int
+	RevfloorBaselineScale                float64
+	RevfloorMinAbsScale                  float64
+	DiscHarddropDaysNoBase               int
+	DiscHarddropCapFrac                  float64
+	DiscHarddropCushion                  int
+	DiscRequireExplorer                  bool
+	DiscAfterExplorerDays                int
+	OutrateFloorFactorLow                float64
+	ExplorerSkipCooldownDown             bool
+	CircuitBreakerDropRatio              float64
+	CircuitBreakerReduceStep             float64
+	CircuitBreakerGraceDays              int
+	ExtremeDrainStreak                   int
+	ExtremeDrainOutMax                   float64
+	ExtremeDrainStepCap                  float64
+	ExtremeDrainMinStepPpm               int
+	ExtremeDrainTurboStreak              int
+	ExtremeDrainTurboOutMax              float64
+	ExtremeDrainTurboStepCap             float64
+	ExtremeDrainTurboMinStepPpm          int
+	SinkMinMargin                        int
+	MinSoftCeiling                       int
+	SeedCeilingMult                      float64
+	SeedFloorMult                        float64
+	SeedP95Boost                         float64
+	SeedOutrateCapMult                   float64
+	SeedRebalCapMult                     float64
+	SourceSeedTargetFrac                 float64
+	ProfitProtectOutRatio                float64
+	ProfitProtectMarginPpm               int
+	ProfitProtectRelaxHours              int
+	ProfitProtectRelaxMaxFwds            int
+	ProfitProtectRelaxMarginPpm          int
+	ProfitProtectRelaxStepFrac           float64
+	ProfitProtectRelaxMinStepPpm         int
+	InboundDiscountReachOutRatio         float64
+	InboundDiscountMinRetainedSpreadFrac float64
+	MarketRefillNetInboundTargetFrac     float64
+	MarketRefillCandidateOutRatioMax     float64
+	MarketRefillExploratoryOutRatioMax   float64
+	MarketRefillExploratoryFwds1dMax     int
+	MarketRefillBaseTargetMult           float64
+	MarketRefillBaseTargetAddPpm         int
+	MarketRefillLowTargetMult            float64
+	MarketRefillLowTargetAddPpm          int
+	MarketRefillDrainedTargetMult        float64
+	MarketRefillDrainedTargetAddPpm      int
+	MarketRefillLocalHoldFrac            float64
+	MarketRefillLocalCapMult             float64
+	MarketRefillMinOutboundPpm           int
+	MarketRefillMinOutboundMaxPpmFrac    float64
+	MarketRefillOutrateFloorFrac         float64
+	GlobalNegLockSoften                  bool
+	SoftenMinOutRatio                    float64
+	SoftenRequirePosChanMargin           bool
+	SoftenMaxDropToPegFrac               float64
+	HTLCMinAttempts60m                   int
+	HTLCPolicyFailRate                   float64
+	HTLCPolicyMinFails                   int
+	HTLCLiquidityFailRate                float64
+	HTLCLiquidityMinFails                int
+	HTLCLiquidityHotBump                 float64
+	HTLCLiquidityHotNoDownOutRatio       float64
+	HTLCPolicyHotBump                    float64
+	HTLCPolicyHotNoDownMarginPpm         int
+	HTLCHotStepCapBoost                  float64
+	SurgeHoldMaxRounds                   int
+	SurgeHoldUnlockStepPpm               int
+	BootstrapHours                       int
+	BootstrapOutRatioMax                 float64
+	BootstrapCooldownUpSec               int
+	BootstrapCooldownDownSec             int
+	BootstrapMinStepUpPpm                int
+	BootstrapSurgeHoldMaxRounds          int
+	HoldSmallMinDeltaPpm                 int
+	HoldSmallMinRelFrac                  float64
+	HoldSmallGapBypassPpm                int
+	HoldSmallGapBypassFrac               float64
+	HoldSmallStallBypassRounds           int
+	ReversalConfirmMinRounds             int
+	ReversalFastTrackStallRounds         int
+	ReversalFastTrackGapFrac             float64
+	AntiFlipWindowHours                  int
+	AntiFlipExtraConfirmRounds           int
+	AntiFlipStrongGapFrac                float64
+	DrainedExplorerAfterDays             int
+	DrainedExplorerOutRatioMax           float64
+	DrainedExplorerRecentFwds1dMax       int
+	DrainedExplorerMaxHours              int
+	DrainedExplorerMaxRounds             int
+	DrainedExplorerStepPpm               int
+	BalancedUpOutRatioMin                float64
+	BalancedFloorUpCap                   float64
+	OutrateTargetOutRatioMin             float64
+	OutrateTargetMinFwds                 int
+	OutrateTargetFloorFrac               float64
+	OutrateTargetBlendFrac               float64
+	RebalFailOutRatioMax                 float64
+	RebalFailNoDownMinAttempts           int
+	RebalFailUpMinAttempts               int
+	RebalFailUpStepFrac                  float64
+	RebalFailUpMinStepPpm                int
+	RebalFailWindowHours                 int
+	RebalFailCampaignGapMin              int
 }
 
 type superSourceThresholds struct {
@@ -478,313 +555,400 @@ type superSourceThresholds struct {
 
 var autofeeProfiles = map[string]autofeeProfile{
 	"conservative": {
-		Name:                           "conservative",
-		StepCap:                        0.05,
-		LowOutThresh:                   0.08,
-		LowOutProtectThresh:            0.08,
-		HighOutThresh:                  0.25,
-		SurgeBumpMax:                   0.10,
-		RunIntervalSec:                 8 * 3600,
-		CooldownUpSec:                  8 * 3600,
-		CooldownDownSec:                2 * 3600,
-		DiscoveryStepCapDown:           0.15,
-		StallFloorRelaxGapFrac:         0.15,
-		SeedGuardMaxJump:               0.30,
-		OutratePegGraceHours:           24,
-		ProfitDownMarginMin:            20,
-		ProfitDownFwdsMin:              10,
-		ProfitDownExtraHours:           4,
-		NegMarginSurgeBump:             0.06,
-		NegMarginSurgeMinFwds:          6,
-		NegMarginSurgeFwdsRatio:        0.25,
-		SinkExtraFloorMargin:           0.06,
-		RevfloorBaselineThresh:         80,
-		RevfloorMinAbs:                 160,
-		RevfloorBaselineScale:          1.2,
-		RevfloorMinAbsScale:            1.1,
-		DiscHarddropDaysNoBase:         8,
-		DiscHarddropCapFrac:            0.10,
-		DiscHarddropCushion:            15,
-		DiscRequireExplorer:            true,
-		DiscAfterExplorerDays:          14,
-		OutrateFloorFactorLow:          0.90,
-		ExplorerSkipCooldownDown:       false,
-		CircuitBreakerDropRatio:        0.75,
-		CircuitBreakerReduceStep:       0.08,
-		CircuitBreakerGraceDays:        10,
-		ExtremeDrainStreak:             32,
-		ExtremeDrainOutMax:             0.03,
-		ExtremeDrainStepCap:            0.10,
-		ExtremeDrainMinStepPpm:         10,
-		ExtremeDrainTurboStreak:        400,
-		ExtremeDrainTurboOutMax:        0.01,
-		ExtremeDrainTurboStepCap:       0.15,
-		ExtremeDrainTurboMinStepPpm:    15,
-		SinkMinMargin:                  180,
-		MinSoftCeiling:                 150,
-		SeedCeilingMult:                1.40,
-		SeedFloorMult:                  1.10,
-		SeedP95Boost:                   1.10,
-		SourceSeedTargetFrac:           0.50,
-		ProfitProtectOutRatio:          0.08,
-		ProfitProtectMarginPpm:         0,
-		ProfitProtectRelaxHours:        96,
-		ProfitProtectRelaxMaxFwds:      0,
-		ProfitProtectRelaxMarginPpm:    -10,
-		ProfitProtectRelaxStepFrac:     0.010,
-		ProfitProtectRelaxMinStepPpm:   10,
-		GlobalNegLockSoften:            true,
-		SoftenMinOutRatio:              0.25,
-		SoftenRequirePosChanMargin:     true,
-		SoftenMaxDropToPegFrac:         0.85,
-		HTLCMinAttempts60m:             20,
-		HTLCPolicyFailRate:             0.20,
-		HTLCPolicyMinFails:             4,
-		HTLCLiquidityFailRate:          0.25,
-		HTLCLiquidityMinFails:          4,
-		HTLCLiquidityHotBump:           0.03,
-		HTLCLiquidityHotNoDownOutRatio: 0.08,
-		HTLCPolicyHotBump:              0.015,
-		HTLCPolicyHotNoDownMarginPpm:   0,
-		HTLCHotStepCapBoost:            0.01,
-		SurgeHoldMaxRounds:             7,
-		SurgeHoldUnlockStepPpm:         15,
-		BootstrapHours:                 48,
-		BootstrapOutRatioMax:           0.35,
-		BootstrapCooldownUpSec:         3600,
-		BootstrapCooldownDownSec:       7200,
-		BootstrapMinStepUpPpm:          15,
-		BootstrapSurgeHoldMaxRounds:    2,
-		HoldSmallMinDeltaPpm:           15,
-		HoldSmallMinRelFrac:            0.04,
-		HoldSmallGapBypassPpm:          180,
-		HoldSmallGapBypassFrac:         0.18,
-		HoldSmallStallBypassRounds:     2,
-		ReversalConfirmMinRounds:       2,
-		ReversalFastTrackStallRounds:   3,
-		ReversalFastTrackGapFrac:       0.50,
-		AntiFlipWindowHours:            6,
-		AntiFlipExtraConfirmRounds:     2,
-		AntiFlipStrongGapFrac:          0.60,
-		BalancedUpOutRatioMin:          0.25,
-		BalancedFloorUpCap:             0.04,
-		OutrateTargetOutRatioMin:       0.25,
-		OutrateTargetMinFwds:           8,
-		OutrateTargetFloorFrac:         0.70,
-		OutrateTargetBlendFrac:         0.35,
-		RebalFailOutRatioMax:           0.08,
-		RebalFailNoDownMinAttempts:     4,
-		RebalFailUpMinAttempts:         6,
-		RebalFailUpStepFrac:            0.02,
-		RebalFailUpMinStepPpm:          10,
-		RebalFailWindowHours:           8,
-		RebalFailCampaignGapMin:        120,
+		Name:                                 "conservative",
+		StepCap:                              0.05,
+		LowOutThresh:                         0.08,
+		LowOutProtectThresh:                  0.08,
+		HighOutThresh:                        0.25,
+		SurgeBumpMax:                         0.10,
+		RunIntervalSec:                       8 * 3600,
+		CooldownUpSec:                        8 * 3600,
+		CooldownDownSec:                      2 * 3600,
+		CooldownUpDrainedSec:                 4 * 3600,
+		CooldownUpExtremeSec:                 2 * 3600,
+		CooldownUpDrainedOutRatioMax:         0.05,
+		CooldownUpExtremeOutRatioMax:         0.01,
+		DiscoveryStepCapDown:                 0.15,
+		StallFloorRelaxGapFrac:               0.15,
+		SeedGuardMaxJump:                     0.30,
+		OutratePegGraceHours:                 24,
+		ProfitDownMarginMin:                  20,
+		ProfitDownFwdsMin:                    10,
+		ProfitDownExtraHours:                 4,
+		NegMarginSurgeBump:                   0.06,
+		NegMarginSurgeMinFwds:                6,
+		NegMarginSurgeFwdsRatio:              0.25,
+		SinkExtraFloorMargin:                 0.06,
+		RevfloorBaselineThresh:               80,
+		RevfloorMinAbs:                       160,
+		RevfloorBaselineScale:                1.2,
+		RevfloorMinAbsScale:                  1.1,
+		DiscHarddropDaysNoBase:               8,
+		DiscHarddropCapFrac:                  0.10,
+		DiscHarddropCushion:                  15,
+		DiscRequireExplorer:                  true,
+		DiscAfterExplorerDays:                14,
+		OutrateFloorFactorLow:                0.90,
+		ExplorerSkipCooldownDown:             false,
+		CircuitBreakerDropRatio:              0.75,
+		CircuitBreakerReduceStep:             0.08,
+		CircuitBreakerGraceDays:              10,
+		ExtremeDrainStreak:                   32,
+		ExtremeDrainOutMax:                   0.03,
+		ExtremeDrainStepCap:                  0.10,
+		ExtremeDrainMinStepPpm:               10,
+		ExtremeDrainTurboStreak:              400,
+		ExtremeDrainTurboOutMax:              0.01,
+		ExtremeDrainTurboStepCap:             0.15,
+		ExtremeDrainTurboMinStepPpm:          15,
+		SinkMinMargin:                        180,
+		MinSoftCeiling:                       150,
+		SeedCeilingMult:                      1.40,
+		SeedFloorMult:                        1.10,
+		SeedP95Boost:                         1.10,
+		SeedOutrateCapMult:                   1.45,
+		SeedRebalCapMult:                     1.35,
+		SourceSeedTargetFrac:                 0.50,
+		ProfitProtectOutRatio:                0.08,
+		ProfitProtectMarginPpm:               0,
+		ProfitProtectRelaxHours:              96,
+		ProfitProtectRelaxMaxFwds:            0,
+		ProfitProtectRelaxMarginPpm:          -10,
+		ProfitProtectRelaxStepFrac:           0.010,
+		ProfitProtectRelaxMinStepPpm:         10,
+		InboundDiscountReachOutRatio:         0.10,
+		InboundDiscountMinRetainedSpreadFrac: 0.20,
+		MarketRefillNetInboundTargetFrac:     0.35,
+		MarketRefillCandidateOutRatioMax:     0.10,
+		MarketRefillExploratoryOutRatioMax:   0.18,
+		MarketRefillExploratoryFwds1dMax:     1,
+		MarketRefillBaseTargetMult:           1.25,
+		MarketRefillBaseTargetAddPpm:         60,
+		MarketRefillLowTargetMult:            1.35,
+		MarketRefillLowTargetAddPpm:          160,
+		MarketRefillDrainedTargetMult:        1.90,
+		MarketRefillDrainedTargetAddPpm:      350,
+		MarketRefillLocalHoldFrac:            0.40,
+		MarketRefillLocalCapMult:             1.25,
+		MarketRefillMinOutboundPpm:           300,
+		MarketRefillMinOutboundMaxPpmFrac:    0.10,
+		MarketRefillOutrateFloorFrac:         1.00,
+		GlobalNegLockSoften:                  true,
+		SoftenMinOutRatio:                    0.25,
+		SoftenRequirePosChanMargin:           true,
+		SoftenMaxDropToPegFrac:               0.85,
+		HTLCMinAttempts60m:                   20,
+		HTLCPolicyFailRate:                   0.20,
+		HTLCPolicyMinFails:                   4,
+		HTLCLiquidityFailRate:                0.25,
+		HTLCLiquidityMinFails:                4,
+		HTLCLiquidityHotBump:                 0.03,
+		HTLCLiquidityHotNoDownOutRatio:       0.08,
+		HTLCPolicyHotBump:                    0.015,
+		HTLCPolicyHotNoDownMarginPpm:         0,
+		HTLCHotStepCapBoost:                  0.01,
+		SurgeHoldMaxRounds:                   7,
+		SurgeHoldUnlockStepPpm:               15,
+		BootstrapHours:                       48,
+		BootstrapOutRatioMax:                 0.35,
+		BootstrapCooldownUpSec:               3600,
+		BootstrapCooldownDownSec:             7200,
+		BootstrapMinStepUpPpm:                15,
+		BootstrapSurgeHoldMaxRounds:          2,
+		HoldSmallMinDeltaPpm:                 15,
+		HoldSmallMinRelFrac:                  0.04,
+		HoldSmallGapBypassPpm:                180,
+		HoldSmallGapBypassFrac:               0.18,
+		HoldSmallStallBypassRounds:           2,
+		ReversalConfirmMinRounds:             2,
+		ReversalFastTrackStallRounds:         3,
+		ReversalFastTrackGapFrac:             0.50,
+		AntiFlipWindowHours:                  6,
+		AntiFlipExtraConfirmRounds:           2,
+		AntiFlipStrongGapFrac:                0.60,
+		DrainedExplorerAfterDays:             10,
+		DrainedExplorerOutRatioMax:           0.03,
+		DrainedExplorerRecentFwds1dMax:       1,
+		DrainedExplorerMaxHours:              48,
+		DrainedExplorerMaxRounds:             3,
+		DrainedExplorerStepPpm:               5,
+		BalancedUpOutRatioMin:                0.25,
+		BalancedFloorUpCap:                   0.04,
+		OutrateTargetOutRatioMin:             0.25,
+		OutrateTargetMinFwds:                 8,
+		OutrateTargetFloorFrac:               0.70,
+		OutrateTargetBlendFrac:               0.35,
+		RebalFailOutRatioMax:                 0.08,
+		RebalFailNoDownMinAttempts:           4,
+		RebalFailUpMinAttempts:               6,
+		RebalFailUpStepFrac:                  0.02,
+		RebalFailUpMinStepPpm:                10,
+		RebalFailWindowHours:                 8,
+		RebalFailCampaignGapMin:              120,
 	},
 	"moderate": {
-		Name:                           "moderate",
-		StepCap:                        0.08,
-		LowOutThresh:                   0.10,
-		LowOutProtectThresh:            0.10,
-		HighOutThresh:                  0.20,
-		SurgeBumpMax:                   0.20,
-		RunIntervalSec:                 4 * 3600,
-		CooldownUpSec:                  6 * 3600,
-		CooldownDownSec:                1 * 3600,
-		DiscoveryStepCapDown:           0.20,
-		StallFloorRelaxGapFrac:         0.10,
-		SeedGuardMaxJump:               0.50,
-		OutratePegGraceHours:           16,
-		ProfitDownMarginMin:            10,
-		ProfitDownFwdsMin:              8,
-		ProfitDownExtraHours:           2,
-		NegMarginSurgeBump:             0.08,
-		NegMarginSurgeMinFwds:          4,
-		NegMarginSurgeFwdsRatio:        0.20,
-		SinkExtraFloorMargin:           0.04,
-		RevfloorBaselineThresh:         60,
-		RevfloorMinAbs:                 140,
-		RevfloorBaselineScale:          1.0,
-		RevfloorMinAbsScale:            1.0,
-		DiscHarddropDaysNoBase:         6,
-		DiscHarddropCapFrac:            0.20,
-		DiscHarddropCushion:            10,
-		DiscRequireExplorer:            true,
-		DiscAfterExplorerDays:          10,
-		OutrateFloorFactorLow:          0.85,
-		ExplorerSkipCooldownDown:       true,
-		CircuitBreakerDropRatio:        0.70,
-		CircuitBreakerReduceStep:       0.10,
-		CircuitBreakerGraceDays:        7,
-		ExtremeDrainStreak:             24,
-		ExtremeDrainOutMax:             0.04,
-		ExtremeDrainStepCap:            0.12,
-		ExtremeDrainMinStepPpm:         12,
-		ExtremeDrainTurboStreak:        300,
-		ExtremeDrainTurboOutMax:        0.01,
-		ExtremeDrainTurboStepCap:       0.20,
-		ExtremeDrainTurboMinStepPpm:    20,
-		SinkMinMargin:                  150,
-		MinSoftCeiling:                 100,
-		SeedCeilingMult:                1.50,
-		SeedFloorMult:                  1.10,
-		SeedP95Boost:                   1.15,
-		SourceSeedTargetFrac:           0.55,
-		ProfitProtectOutRatio:          0.10,
-		ProfitProtectMarginPpm:         0,
-		ProfitProtectRelaxHours:        72,
-		ProfitProtectRelaxMaxFwds:      1,
-		ProfitProtectRelaxMarginPpm:    -30,
-		ProfitProtectRelaxStepFrac:     0.015,
-		ProfitProtectRelaxMinStepPpm:   15,
-		GlobalNegLockSoften:            true,
-		SoftenMinOutRatio:              0.20,
-		SoftenRequirePosChanMargin:     true,
-		SoftenMaxDropToPegFrac:         0.75,
-		HTLCMinAttempts60m:             12,
-		HTLCPolicyFailRate:             0.15,
-		HTLCPolicyMinFails:             3,
-		HTLCLiquidityFailRate:          0.16,
-		HTLCLiquidityMinFails:          2,
-		HTLCLiquidityHotBump:           0.05,
-		HTLCLiquidityHotNoDownOutRatio: 0.12,
-		HTLCPolicyHotBump:              0.025,
-		HTLCPolicyHotNoDownMarginPpm:   25,
-		HTLCHotStepCapBoost:            0.02,
-		SurgeHoldMaxRounds:             5,
-		SurgeHoldUnlockStepPpm:         15,
-		BootstrapHours:                 48,
-		BootstrapOutRatioMax:           0.40,
-		BootstrapCooldownUpSec:         3600,
-		BootstrapCooldownDownSec:       5400,
-		BootstrapMinStepUpPpm:          15,
-		BootstrapSurgeHoldMaxRounds:    2,
-		HoldSmallMinDeltaPpm:           15,
-		HoldSmallMinRelFrac:            0.04,
-		HoldSmallGapBypassPpm:          120,
-		HoldSmallGapBypassFrac:         0.12,
-		HoldSmallStallBypassRounds:     1,
-		ReversalConfirmMinRounds:       2,
-		ReversalFastTrackStallRounds:   2,
-		ReversalFastTrackGapFrac:       0.35,
-		AntiFlipWindowHours:            4,
-		AntiFlipExtraConfirmRounds:     1,
-		AntiFlipStrongGapFrac:          0.45,
-		BalancedUpOutRatioMin:          0.20,
-		BalancedFloorUpCap:             0.05,
-		OutrateTargetOutRatioMin:       0.20,
-		OutrateTargetMinFwds:           6,
-		OutrateTargetFloorFrac:         0.80,
-		OutrateTargetBlendFrac:         0.55,
-		RebalFailOutRatioMax:           0.10,
-		RebalFailNoDownMinAttempts:     3,
-		RebalFailUpMinAttempts:         5,
-		RebalFailUpStepFrac:            0.03,
-		RebalFailUpMinStepPpm:          12,
-		RebalFailWindowHours:           6,
-		RebalFailCampaignGapMin:        90,
+		Name:                                 "moderate",
+		StepCap:                              0.08,
+		LowOutThresh:                         0.10,
+		LowOutProtectThresh:                  0.10,
+		HighOutThresh:                        0.20,
+		SurgeBumpMax:                         0.20,
+		RunIntervalSec:                       4 * 3600,
+		CooldownUpSec:                        6 * 3600,
+		CooldownDownSec:                      1 * 3600,
+		CooldownUpDrainedSec:                 3 * 3600,
+		CooldownUpExtremeSec:                 1 * 3600,
+		CooldownUpDrainedOutRatioMax:         0.05,
+		CooldownUpExtremeOutRatioMax:         0.01,
+		DiscoveryStepCapDown:                 0.20,
+		StallFloorRelaxGapFrac:               0.10,
+		SeedGuardMaxJump:                     0.50,
+		OutratePegGraceHours:                 16,
+		ProfitDownMarginMin:                  10,
+		ProfitDownFwdsMin:                    8,
+		ProfitDownExtraHours:                 2,
+		NegMarginSurgeBump:                   0.08,
+		NegMarginSurgeMinFwds:                4,
+		NegMarginSurgeFwdsRatio:              0.20,
+		SinkExtraFloorMargin:                 0.04,
+		RevfloorBaselineThresh:               60,
+		RevfloorMinAbs:                       140,
+		RevfloorBaselineScale:                1.0,
+		RevfloorMinAbsScale:                  1.0,
+		DiscHarddropDaysNoBase:               6,
+		DiscHarddropCapFrac:                  0.20,
+		DiscHarddropCushion:                  10,
+		DiscRequireExplorer:                  true,
+		DiscAfterExplorerDays:                10,
+		OutrateFloorFactorLow:                0.85,
+		ExplorerSkipCooldownDown:             true,
+		CircuitBreakerDropRatio:              0.70,
+		CircuitBreakerReduceStep:             0.10,
+		CircuitBreakerGraceDays:              7,
+		ExtremeDrainStreak:                   24,
+		ExtremeDrainOutMax:                   0.04,
+		ExtremeDrainStepCap:                  0.12,
+		ExtremeDrainMinStepPpm:               12,
+		ExtremeDrainTurboStreak:              300,
+		ExtremeDrainTurboOutMax:              0.01,
+		ExtremeDrainTurboStepCap:             0.20,
+		ExtremeDrainTurboMinStepPpm:          20,
+		SinkMinMargin:                        150,
+		MinSoftCeiling:                       100,
+		SeedCeilingMult:                      1.50,
+		SeedFloorMult:                        1.10,
+		SeedP95Boost:                         1.15,
+		SeedOutrateCapMult:                   1.20,
+		SeedRebalCapMult:                     1.10,
+		SourceSeedTargetFrac:                 0.55,
+		ProfitProtectOutRatio:                0.10,
+		ProfitProtectMarginPpm:               0,
+		ProfitProtectRelaxHours:              72,
+		ProfitProtectRelaxMaxFwds:            1,
+		ProfitProtectRelaxMarginPpm:          -30,
+		ProfitProtectRelaxStepFrac:           0.015,
+		ProfitProtectRelaxMinStepPpm:         15,
+		InboundDiscountReachOutRatio:         0.15,
+		InboundDiscountMinRetainedSpreadFrac: 0.12,
+		MarketRefillNetInboundTargetFrac:     0.20,
+		MarketRefillCandidateOutRatioMax:     0.15,
+		MarketRefillExploratoryOutRatioMax:   0.25,
+		MarketRefillExploratoryFwds1dMax:     2,
+		MarketRefillBaseTargetMult:           1.15,
+		MarketRefillBaseTargetAddPpm:         100,
+		MarketRefillLowTargetMult:            1.50,
+		MarketRefillLowTargetAddPpm:          250,
+		MarketRefillDrainedTargetMult:        2.20,
+		MarketRefillDrainedTargetAddPpm:      600,
+		MarketRefillLocalHoldFrac:            0.35,
+		MarketRefillLocalCapMult:             1.40,
+		MarketRefillMinOutboundPpm:           500,
+		MarketRefillMinOutboundMaxPpmFrac:    0.15,
+		MarketRefillOutrateFloorFrac:         1.00,
+		GlobalNegLockSoften:                  true,
+		SoftenMinOutRatio:                    0.20,
+		SoftenRequirePosChanMargin:           true,
+		SoftenMaxDropToPegFrac:               0.75,
+		HTLCMinAttempts60m:                   12,
+		HTLCPolicyFailRate:                   0.15,
+		HTLCPolicyMinFails:                   3,
+		HTLCLiquidityFailRate:                0.16,
+		HTLCLiquidityMinFails:                2,
+		HTLCLiquidityHotBump:                 0.05,
+		HTLCLiquidityHotNoDownOutRatio:       0.12,
+		HTLCPolicyHotBump:                    0.025,
+		HTLCPolicyHotNoDownMarginPpm:         25,
+		HTLCHotStepCapBoost:                  0.02,
+		SurgeHoldMaxRounds:                   5,
+		SurgeHoldUnlockStepPpm:               15,
+		BootstrapHours:                       48,
+		BootstrapOutRatioMax:                 0.40,
+		BootstrapCooldownUpSec:               3600,
+		BootstrapCooldownDownSec:             5400,
+		BootstrapMinStepUpPpm:                15,
+		BootstrapSurgeHoldMaxRounds:          2,
+		HoldSmallMinDeltaPpm:                 15,
+		HoldSmallMinRelFrac:                  0.04,
+		HoldSmallGapBypassPpm:                120,
+		HoldSmallGapBypassFrac:               0.12,
+		HoldSmallStallBypassRounds:           1,
+		ReversalConfirmMinRounds:             2,
+		ReversalFastTrackStallRounds:         2,
+		ReversalFastTrackGapFrac:             0.35,
+		AntiFlipWindowHours:                  4,
+		AntiFlipExtraConfirmRounds:           1,
+		AntiFlipStrongGapFrac:                0.45,
+		DrainedExplorerAfterDays:             7,
+		DrainedExplorerOutRatioMax:           0.04,
+		DrainedExplorerRecentFwds1dMax:       2,
+		DrainedExplorerMaxHours:              48,
+		DrainedExplorerMaxRounds:             4,
+		DrainedExplorerStepPpm:               10,
+		BalancedUpOutRatioMin:                0.20,
+		BalancedFloorUpCap:                   0.05,
+		OutrateTargetOutRatioMin:             0.20,
+		OutrateTargetMinFwds:                 6,
+		OutrateTargetFloorFrac:               0.80,
+		OutrateTargetBlendFrac:               0.55,
+		RebalFailOutRatioMax:                 0.10,
+		RebalFailNoDownMinAttempts:           3,
+		RebalFailUpMinAttempts:               5,
+		RebalFailUpStepFrac:                  0.03,
+		RebalFailUpMinStepPpm:                12,
+		RebalFailWindowHours:                 6,
+		RebalFailCampaignGapMin:              90,
 	},
 	"aggressive": {
-		Name:                           "aggressive",
-		StepCap:                        0.10,
-		LowOutThresh:                   0.12,
-		LowOutProtectThresh:            0.12,
-		HighOutThresh:                  0.18,
-		SurgeBumpMax:                   0.30,
-		RunIntervalSec:                 2 * 3600,
-		CooldownUpSec:                  3 * 3600,
-		CooldownDownSec:                1 * 3600,
-		DiscoveryStepCapDown:           0.25,
-		StallFloorRelaxGapFrac:         0.08,
-		SeedGuardMaxJump:               0.70,
-		OutratePegGraceHours:           8,
-		ProfitDownMarginMin:            5,
-		ProfitDownFwdsMin:              5,
-		ProfitDownExtraHours:           1,
-		NegMarginSurgeBump:             0.12,
-		NegMarginSurgeMinFwds:          3,
-		NegMarginSurgeFwdsRatio:        0.15,
-		SinkExtraFloorMargin:           0.03,
-		RevfloorBaselineThresh:         40,
-		RevfloorMinAbs:                 120,
-		RevfloorBaselineScale:          0.8,
-		RevfloorMinAbsScale:            0.9,
-		DiscHarddropDaysNoBase:         3,
-		DiscHarddropCapFrac:            0.25,
-		DiscHarddropCushion:            5,
-		DiscRequireExplorer:            false,
-		DiscAfterExplorerDays:          5,
-		OutrateFloorFactorLow:          0.80,
-		ExplorerSkipCooldownDown:       true,
-		CircuitBreakerDropRatio:        0.60,
-		CircuitBreakerReduceStep:       0.15,
-		CircuitBreakerGraceDays:        5,
-		ExtremeDrainStreak:             16,
-		ExtremeDrainOutMax:             0.05,
-		ExtremeDrainStepCap:            0.15,
-		ExtremeDrainMinStepPpm:         15,
-		ExtremeDrainTurboStreak:        300,
-		ExtremeDrainTurboOutMax:        0.01,
-		ExtremeDrainTurboStepCap:       0.20,
-		ExtremeDrainTurboMinStepPpm:    20,
-		SinkMinMargin:                  120,
-		MinSoftCeiling:                 80,
-		SeedCeilingMult:                1.60,
-		SeedFloorMult:                  1.10,
-		SeedP95Boost:                   1.20,
-		SourceSeedTargetFrac:           0.60,
-		ProfitProtectOutRatio:          0.12,
-		ProfitProtectMarginPpm:         -20,
-		ProfitProtectRelaxHours:        48,
-		ProfitProtectRelaxMaxFwds:      2,
-		ProfitProtectRelaxMarginPpm:    -50,
-		ProfitProtectRelaxStepFrac:     0.020,
-		ProfitProtectRelaxMinStepPpm:   20,
-		GlobalNegLockSoften:            true,
-		SoftenMinOutRatio:              0.15,
-		SoftenRequirePosChanMargin:     false,
-		SoftenMaxDropToPegFrac:         0.70,
-		HTLCMinAttempts60m:             8,
-		HTLCPolicyFailRate:             0.10,
-		HTLCPolicyMinFails:             2,
-		HTLCLiquidityFailRate:          0.15,
-		HTLCLiquidityMinFails:          2,
-		HTLCLiquidityHotBump:           0.07,
-		HTLCLiquidityHotNoDownOutRatio: 0.18,
-		HTLCPolicyHotBump:              0.035,
-		HTLCPolicyHotNoDownMarginPpm:   50,
-		HTLCHotStepCapBoost:            0.03,
-		SurgeHoldMaxRounds:             4,
-		SurgeHoldUnlockStepPpm:         20,
-		BootstrapHours:                 72,
-		BootstrapOutRatioMax:           0.45,
-		BootstrapCooldownUpSec:         1800,
-		BootstrapCooldownDownSec:       3600,
-		BootstrapMinStepUpPpm:          20,
-		BootstrapSurgeHoldMaxRounds:    1,
-		HoldSmallMinDeltaPpm:           12,
-		HoldSmallMinRelFrac:            0.03,
-		HoldSmallGapBypassPpm:          80,
-		HoldSmallGapBypassFrac:         0.08,
-		HoldSmallStallBypassRounds:     1,
-		ReversalConfirmMinRounds:       2,
-		ReversalFastTrackStallRounds:   1,
-		ReversalFastTrackGapFrac:       0.20,
-		AntiFlipWindowHours:            3,
-		AntiFlipExtraConfirmRounds:     1,
-		AntiFlipStrongGapFrac:          0.30,
-		BalancedUpOutRatioMin:          0.18,
-		BalancedFloorUpCap:             0.06,
-		OutrateTargetOutRatioMin:       0.18,
-		OutrateTargetMinFwds:           4,
-		OutrateTargetFloorFrac:         0.90,
-		OutrateTargetBlendFrac:         0.70,
-		RebalFailOutRatioMax:           0.12,
-		RebalFailNoDownMinAttempts:     2,
-		RebalFailUpMinAttempts:         4,
-		RebalFailUpStepFrac:            0.04,
-		RebalFailUpMinStepPpm:          15,
-		RebalFailWindowHours:           4,
-		RebalFailCampaignGapMin:        60,
+		Name:                                 "aggressive",
+		StepCap:                              0.10,
+		LowOutThresh:                         0.12,
+		LowOutProtectThresh:                  0.12,
+		HighOutThresh:                        0.18,
+		SurgeBumpMax:                         0.30,
+		RunIntervalSec:                       2 * 3600,
+		CooldownUpSec:                        3 * 3600,
+		CooldownDownSec:                      1 * 3600,
+		CooldownUpDrainedSec:                 90 * 60,
+		CooldownUpExtremeSec:                 60 * 60,
+		CooldownUpDrainedOutRatioMax:         0.05,
+		CooldownUpExtremeOutRatioMax:         0.01,
+		DiscoveryStepCapDown:                 0.25,
+		StallFloorRelaxGapFrac:               0.08,
+		SeedGuardMaxJump:                     0.70,
+		OutratePegGraceHours:                 8,
+		ProfitDownMarginMin:                  5,
+		ProfitDownFwdsMin:                    5,
+		ProfitDownExtraHours:                 1,
+		NegMarginSurgeBump:                   0.12,
+		NegMarginSurgeMinFwds:                3,
+		NegMarginSurgeFwdsRatio:              0.15,
+		SinkExtraFloorMargin:                 0.03,
+		RevfloorBaselineThresh:               40,
+		RevfloorMinAbs:                       120,
+		RevfloorBaselineScale:                0.8,
+		RevfloorMinAbsScale:                  0.9,
+		DiscHarddropDaysNoBase:               3,
+		DiscHarddropCapFrac:                  0.25,
+		DiscHarddropCushion:                  5,
+		DiscRequireExplorer:                  false,
+		DiscAfterExplorerDays:                5,
+		OutrateFloorFactorLow:                0.80,
+		ExplorerSkipCooldownDown:             true,
+		CircuitBreakerDropRatio:              0.60,
+		CircuitBreakerReduceStep:             0.15,
+		CircuitBreakerGraceDays:              5,
+		ExtremeDrainStreak:                   16,
+		ExtremeDrainOutMax:                   0.05,
+		ExtremeDrainStepCap:                  0.15,
+		ExtremeDrainMinStepPpm:               15,
+		ExtremeDrainTurboStreak:              300,
+		ExtremeDrainTurboOutMax:              0.01,
+		ExtremeDrainTurboStepCap:             0.20,
+		ExtremeDrainTurboMinStepPpm:          20,
+		SinkMinMargin:                        120,
+		MinSoftCeiling:                       80,
+		SeedCeilingMult:                      1.60,
+		SeedFloorMult:                        1.10,
+		SeedP95Boost:                         1.20,
+		SeedOutrateCapMult:                   1.25,
+		SeedRebalCapMult:                     1.20,
+		SourceSeedTargetFrac:                 0.60,
+		ProfitProtectOutRatio:                0.12,
+		ProfitProtectMarginPpm:               -20,
+		ProfitProtectRelaxHours:              48,
+		ProfitProtectRelaxMaxFwds:            2,
+		ProfitProtectRelaxMarginPpm:          -50,
+		ProfitProtectRelaxStepFrac:           0.020,
+		ProfitProtectRelaxMinStepPpm:         20,
+		InboundDiscountReachOutRatio:         0.18,
+		InboundDiscountMinRetainedSpreadFrac: 0.08,
+		MarketRefillNetInboundTargetFrac:     0.10,
+		MarketRefillCandidateOutRatioMax:     0.20,
+		MarketRefillExploratoryOutRatioMax:   0.30,
+		MarketRefillExploratoryFwds1dMax:     2,
+		MarketRefillBaseTargetMult:           1.20,
+		MarketRefillBaseTargetAddPpm:         150,
+		MarketRefillLowTargetMult:            1.75,
+		MarketRefillLowTargetAddPpm:          400,
+		MarketRefillDrainedTargetMult:        2.60,
+		MarketRefillDrainedTargetAddPpm:      900,
+		MarketRefillLocalHoldFrac:            0.30,
+		MarketRefillLocalCapMult:             1.60,
+		MarketRefillMinOutboundPpm:           800,
+		MarketRefillMinOutboundMaxPpmFrac:    0.20,
+		MarketRefillOutrateFloorFrac:         1.00,
+		GlobalNegLockSoften:                  true,
+		SoftenMinOutRatio:                    0.15,
+		SoftenRequirePosChanMargin:           false,
+		SoftenMaxDropToPegFrac:               0.70,
+		HTLCMinAttempts60m:                   8,
+		HTLCPolicyFailRate:                   0.10,
+		HTLCPolicyMinFails:                   2,
+		HTLCLiquidityFailRate:                0.15,
+		HTLCLiquidityMinFails:                2,
+		HTLCLiquidityHotBump:                 0.07,
+		HTLCLiquidityHotNoDownOutRatio:       0.18,
+		HTLCPolicyHotBump:                    0.035,
+		HTLCPolicyHotNoDownMarginPpm:         50,
+		HTLCHotStepCapBoost:                  0.03,
+		SurgeHoldMaxRounds:                   4,
+		SurgeHoldUnlockStepPpm:               20,
+		BootstrapHours:                       72,
+		BootstrapOutRatioMax:                 0.45,
+		BootstrapCooldownUpSec:               1800,
+		BootstrapCooldownDownSec:             3600,
+		BootstrapMinStepUpPpm:                20,
+		BootstrapSurgeHoldMaxRounds:          1,
+		HoldSmallMinDeltaPpm:                 12,
+		HoldSmallMinRelFrac:                  0.03,
+		HoldSmallGapBypassPpm:                80,
+		HoldSmallGapBypassFrac:               0.08,
+		HoldSmallStallBypassRounds:           1,
+		ReversalConfirmMinRounds:             2,
+		ReversalFastTrackStallRounds:         1,
+		ReversalFastTrackGapFrac:             0.20,
+		AntiFlipWindowHours:                  3,
+		AntiFlipExtraConfirmRounds:           1,
+		AntiFlipStrongGapFrac:                0.30,
+		DrainedExplorerAfterDays:             5,
+		DrainedExplorerOutRatioMax:           0.05,
+		DrainedExplorerRecentFwds1dMax:       2,
+		DrainedExplorerMaxHours:              48,
+		DrainedExplorerMaxRounds:             5,
+		DrainedExplorerStepPpm:               15,
+		BalancedUpOutRatioMin:                0.18,
+		BalancedFloorUpCap:                   0.06,
+		OutrateTargetOutRatioMin:             0.18,
+		OutrateTargetMinFwds:                 4,
+		OutrateTargetFloorFrac:               0.90,
+		OutrateTargetBlendFrac:               0.70,
+		RebalFailOutRatioMax:                 0.12,
+		RebalFailNoDownMinAttempts:           2,
+		RebalFailUpMinAttempts:               4,
+		RebalFailUpStepFrac:                  0.04,
+		RebalFailUpMinStepPpm:                15,
+		RebalFailWindowHours:                 4,
+		RebalFailCampaignGapMin:              60,
 	},
 }
 
@@ -927,6 +1091,7 @@ func (s *AutofeeService) EnsureSchema(ctx context.Context) error {
 create table if not exists autofee_config (
   id integer primary key,
   enabled boolean not null default false,
+  operation_mode text not null default 'balanced',
   profile text not null default 'moderate',
   lookback_days integer not null default 7,
   run_interval_sec integer not null default 14400,
@@ -943,6 +1108,7 @@ create table if not exists autofee_config (
   htlc_policy_fail_rate_override double precision not null default 0,
   htlc_liquidity_fail_rate_override double precision not null default 0,
   rebal_cost_mode text not null default 'blend',
+  native_seed_enabled boolean not null default false,
   amboss_enabled boolean not null default false,
   amboss_token text,
   inbound_passive_enabled boolean not null default false,
@@ -1005,7 +1171,24 @@ create table if not exists autofee_logs (
 create index if not exists autofee_logs_occurred_at_idx on autofee_logs (occurred_at desc);
 create index if not exists autofee_logs_run_idx on autofee_logs (run_id, seq);
 
+create table if not exists autofee_market_refill_fee_snapshot (
+  channel_id bigint primary key,
+  channel_point text not null,
+  base_fee_msat bigint not null default 0,
+  fee_rate_ppm bigint not null default 0,
+  time_lock_delta bigint not null default 0,
+  inbound_enabled boolean not null default false,
+  inbound_base_msat bigint not null default 0,
+  inbound_fee_rate_ppm bigint not null default 0,
+  captured_at timestamptz not null default now()
+);
+create index if not exists autofee_market_refill_fee_snapshot_captured_idx on autofee_market_refill_fee_snapshot (captured_at desc);
+
 alter table autofee_config add column if not exists super_source_enabled boolean not null default false;
+alter table autofee_config add column if not exists operation_mode text not null default 'balanced';
+alter table autofee_config add column if not exists market_refill_rebalance_prev_saved boolean not null default false;
+alter table autofee_config add column if not exists market_refill_rebalance_prev_auto boolean not null default false;
+alter table autofee_config add column if not exists market_refill_rebalance_prev_manual_restart boolean not null default false;
 alter table autofee_config add column if not exists super_source_base_fee_msat integer not null default 1000;
 alter table autofee_config add column if not exists revfloor_enabled boolean not null default true;
 alter table autofee_config add column if not exists circuit_breaker_enabled boolean not null default true;
@@ -1017,12 +1200,15 @@ alter table autofee_config add column if not exists step_cap_override double pre
 alter table autofee_config add column if not exists discovery_step_cap_down_override double precision not null default 0;
 alter table autofee_config add column if not exists stall_floor_relax_gap_frac_override double precision not null default 0;
 alter table autofee_config add column if not exists inbound_discount_max_ratio_override double precision not null default 0;
+alter table autofee_config add column if not exists inbound_discount_reach_out_ratio_override double precision not null default 0;
+alter table autofee_config add column if not exists inbound_discount_min_retained_spread_frac_override double precision not null default 0;
 alter table autofee_config add column if not exists outrate_floor_factor_low_override double precision not null default 0;
 alter table autofee_config add column if not exists soften_min_out_ratio_override double precision not null default 0;
 alter table autofee_config add column if not exists soften_max_drop_to_peg_frac_override double precision not null default 0;
 alter table autofee_config add column if not exists htlc_min_attempts_60m_override integer not null default 0;
 alter table autofee_config add column if not exists htlc_policy_fail_rate_override double precision not null default 0;
 alter table autofee_config add column if not exists htlc_liquidity_fail_rate_override double precision not null default 0;
+alter table autofee_config add column if not exists native_seed_enabled boolean not null default false;
 alter table autofee_state add column if not exists ss_active boolean;
 alter table autofee_state add column if not exists ss_ok_since timestamptz;
 alter table autofee_state add column if not exists ss_bad_since timestamptz;
@@ -1046,6 +1232,7 @@ func (s *AutofeeService) defaultConfig() AutofeeConfig {
 	p := autofeeProfiles["moderate"]
 	return AutofeeConfig{
 		Enabled:                         false,
+		OperationMode:                   autofeeOperationModeDefault,
 		Profile:                         p.Name,
 		LookbackDays:                    7,
 		RunIntervalSec:                  p.RunIntervalSec,
@@ -1053,6 +1240,7 @@ func (s *AutofeeService) defaultConfig() AutofeeConfig {
 		CooldownDownSec:                 p.CooldownDownSec,
 		InboundDiscountMaxRatioOverride: 0,
 		RebalCostMode:                   rebalCostModeDefault,
+		NativeSeedEnabled:               false,
 		AmbossEnabled:                   false,
 		AmbossTokenSet:                  false,
 		InboundPassiveEnabled:           false,
@@ -1074,19 +1262,21 @@ func autofeeProfileDefaultsPayload() map[string]AutofeeProfileDefaults {
 	defaults := make(map[string]AutofeeProfileDefaults, len(autofeeProfiles))
 	for name, p := range autofeeProfiles {
 		defaults[name] = AutofeeProfileDefaults{
-			RunIntervalSec:          p.RunIntervalSec,
-			CooldownUpSec:           p.CooldownUpSec,
-			CooldownDownSec:         p.CooldownDownSec,
-			StepCap:                 p.StepCap,
-			DiscoveryStepCapDown:    p.DiscoveryStepCapDown,
-			StallFloorRelaxGapFrac:  p.StallFloorRelaxGapFrac,
-			InboundDiscountMaxRatio: defaultInboundDiscountMaxRatio,
-			OutrateFloorFactorLow:   p.OutrateFloorFactorLow,
-			SoftenMinOutRatio:       p.SoftenMinOutRatio,
-			SoftenMaxDropToPegFrac:  p.SoftenMaxDropToPegFrac,
-			HTLCMinAttempts60m:      p.HTLCMinAttempts60m,
-			HTLCPolicyFailRate:      p.HTLCPolicyFailRate,
-			HTLCLiquidityFailRate:   p.HTLCLiquidityFailRate,
+			RunIntervalSec:                       p.RunIntervalSec,
+			CooldownUpSec:                        p.CooldownUpSec,
+			CooldownDownSec:                      p.CooldownDownSec,
+			StepCap:                              p.StepCap,
+			DiscoveryStepCapDown:                 p.DiscoveryStepCapDown,
+			StallFloorRelaxGapFrac:               p.StallFloorRelaxGapFrac,
+			InboundDiscountMaxRatio:              defaultInboundDiscountMaxRatio,
+			InboundDiscountReachOutRatio:         p.InboundDiscountReachOutRatio,
+			InboundDiscountMinRetainedSpreadFrac: p.InboundDiscountMinRetainedSpreadFrac,
+			OutrateFloorFactorLow:                p.OutrateFloorFactorLow,
+			SoftenMinOutRatio:                    p.SoftenMinOutRatio,
+			SoftenMaxDropToPegFrac:               p.SoftenMaxDropToPegFrac,
+			HTLCMinAttempts60m:                   p.HTLCMinAttempts60m,
+			HTLCPolicyFailRate:                   p.HTLCPolicyFailRate,
+			HTLCLiquidityFailRate:                p.HTLCLiquidityFailRate,
 		}
 	}
 	return defaults
@@ -1105,16 +1295,18 @@ func (s *AutofeeService) GetConfig(ctx context.Context) (AutofeeConfig, error) {
 
 	var ambossToken pgtype.Text
 	err := s.db.QueryRow(ctx, `
-select enabled, profile, lookback_days, run_interval_sec, cooldown_up_sec, cooldown_down_sec,
-  step_cap_override, discovery_step_cap_down_override, stall_floor_relax_gap_frac_override, inbound_discount_max_ratio_override, outrate_floor_factor_low_override,
+	select enabled, operation_mode, profile, lookback_days, run_interval_sec, cooldown_up_sec, cooldown_down_sec,
+  step_cap_override, discovery_step_cap_down_override, stall_floor_relax_gap_frac_override, inbound_discount_max_ratio_override,
+  inbound_discount_reach_out_ratio_override, inbound_discount_min_retained_spread_frac_override, outrate_floor_factor_low_override,
   soften_min_out_ratio_override, soften_max_drop_to_peg_frac_override, htlc_min_attempts_60m_override,
   htlc_policy_fail_rate_override, htlc_liquidity_fail_rate_override,
-  rebal_cost_mode, amboss_enabled, amboss_token, inbound_passive_enabled, discovery_enabled, explorer_enabled,
+  rebal_cost_mode, native_seed_enabled, amboss_enabled, amboss_token, inbound_passive_enabled, discovery_enabled, explorer_enabled,
   super_source_enabled, super_source_base_fee_msat, revfloor_enabled, circuit_breaker_enabled, extreme_drain_enabled,
   htlc_signal_enabled, htlc_mode, min_ppm, max_ppm
 from autofee_config where id=$1
 `, autofeeConfigID).Scan(
 		&cfg.Enabled,
+		&cfg.OperationMode,
 		&cfg.Profile,
 		&cfg.LookbackDays,
 		&cfg.RunIntervalSec,
@@ -1124,6 +1316,8 @@ from autofee_config where id=$1
 		&cfg.DiscoveryStepCapDownOverride,
 		&cfg.StallFloorRelaxGapFracOverride,
 		&cfg.InboundDiscountMaxRatioOverride,
+		&cfg.InboundDiscountReachOutRatioOverride,
+		&cfg.InboundDiscountMinRetainedSpreadFracOverride,
 		&cfg.OutrateFloorFactorLowOverride,
 		&cfg.SoftenMinOutRatioOverride,
 		&cfg.SoftenMaxDropToPegFracOverride,
@@ -1131,6 +1325,7 @@ from autofee_config where id=$1
 		&cfg.HTLCPolicyFailRateOverride,
 		&cfg.HTLCLiquidityFailRateOverride,
 		&cfg.RebalCostMode,
+		&cfg.NativeSeedEnabled,
 		&cfg.AmbossEnabled,
 		&ambossToken,
 		&cfg.InboundPassiveEnabled,
@@ -1156,6 +1351,7 @@ from autofee_config where id=$1
 	if cfg.Profile == "" {
 		cfg.Profile = "moderate"
 	}
+	cfg.OperationMode = normalizeAutofeeOperationMode(cfg.OperationMode)
 	cfg.RebalCostMode = normalizeRebalCostMode(cfg.RebalCostMode)
 	cfg.HTLCMode = normalizeHTLCMode(cfg.HTLCMode)
 	if cfg.LookbackDays < autofeeMinLookbackDays {
@@ -1182,6 +1378,9 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 
 	if req.Enabled != nil {
 		current.Enabled = *req.Enabled
+	}
+	if req.OperationMode != nil {
+		current.OperationMode = normalizeAutofeeOperationMode(*req.OperationMode)
 	}
 	if req.Profile != nil && strings.TrimSpace(*req.Profile) != "" {
 		current.Profile = strings.ToLower(strings.TrimSpace(*req.Profile))
@@ -1213,6 +1412,12 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 	if req.InboundDiscountMaxRatioOverride != nil {
 		current.InboundDiscountMaxRatioOverride = *req.InboundDiscountMaxRatioOverride
 	}
+	if req.InboundDiscountReachOutRatioOverride != nil {
+		current.InboundDiscountReachOutRatioOverride = *req.InboundDiscountReachOutRatioOverride
+	}
+	if req.InboundDiscountMinRetainedSpreadFracOverride != nil {
+		current.InboundDiscountMinRetainedSpreadFracOverride = *req.InboundDiscountMinRetainedSpreadFracOverride
+	}
 	if req.OutrateFloorFactorLowOverride != nil {
 		current.OutrateFloorFactorLowOverride = *req.OutrateFloorFactorLowOverride
 	}
@@ -1233,6 +1438,9 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 	}
 	if req.RebalCostMode != nil {
 		current.RebalCostMode = normalizeRebalCostMode(*req.RebalCostMode)
+	}
+	if req.NativeSeedEnabled != nil {
+		current.NativeSeedEnabled = *req.NativeSeedEnabled
 	}
 	if req.AmbossEnabled != nil {
 		current.AmbossEnabled = *req.AmbossEnabled
@@ -1291,6 +1499,7 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 	}
 	current.RebalCostMode = normalizeRebalCostMode(current.RebalCostMode)
 	current.HTLCMode = normalizeHTLCMode(current.HTLCMode)
+	current.OperationMode = normalizeAutofeeOperationMode(current.OperationMode)
 
 	if current.RunIntervalSec < 3600 {
 		current.RunIntervalSec = 3600
@@ -1323,6 +1532,16 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 		current.InboundDiscountMaxRatioOverride = 0
 	} else if current.InboundDiscountMaxRatioOverride > 0 {
 		current.InboundDiscountMaxRatioOverride = clampFloat(current.InboundDiscountMaxRatioOverride, 0.50, 1.00)
+	}
+	if current.InboundDiscountReachOutRatioOverride < 0 {
+		current.InboundDiscountReachOutRatioOverride = 0
+	} else if current.InboundDiscountReachOutRatioOverride > 0 {
+		current.InboundDiscountReachOutRatioOverride = clampFloat(current.InboundDiscountReachOutRatioOverride, 0.05, 0.50)
+	}
+	if current.InboundDiscountMinRetainedSpreadFracOverride < 0 {
+		current.InboundDiscountMinRetainedSpreadFracOverride = 0
+	} else if current.InboundDiscountMinRetainedSpreadFracOverride > 0 {
+		current.InboundDiscountMinRetainedSpreadFracOverride = clampFloat(current.InboundDiscountMinRetainedSpreadFracOverride, 0.01, 0.50)
 	}
 	if current.OutrateFloorFactorLowOverride < 0 {
 		current.OutrateFloorFactorLowOverride = 0
@@ -1369,40 +1588,45 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 	_, err = s.db.Exec(ctx, `
 update autofee_config
 set enabled=$2,
-  profile=$3,
-  lookback_days=$4,
-  run_interval_sec=$5,
-  cooldown_up_sec=$6,
-  cooldown_down_sec=$7,
-  step_cap_override=$8,
-  discovery_step_cap_down_override=$9,
-  stall_floor_relax_gap_frac_override=$10,
-  inbound_discount_max_ratio_override=$11,
-  outrate_floor_factor_low_override=$12,
-  soften_min_out_ratio_override=$13,
-  soften_max_drop_to_peg_frac_override=$14,
-  htlc_min_attempts_60m_override=$15,
-  htlc_policy_fail_rate_override=$16,
-  htlc_liquidity_fail_rate_override=$17,
-  rebal_cost_mode=$18,
-  amboss_enabled=$19,
-  amboss_token=$20,
-  inbound_passive_enabled=$21,
-  discovery_enabled=$22,
-  explorer_enabled=$23,
-  super_source_enabled=$24,
-  super_source_base_fee_msat=$25,
-  revfloor_enabled=$26,
-  circuit_breaker_enabled=$27,
-  extreme_drain_enabled=$28,
-  htlc_signal_enabled=$29,
-  htlc_mode=$30,
-  min_ppm=$31,
-  max_ppm=$32,
+  operation_mode=$3,
+  profile=$4,
+  lookback_days=$5,
+  run_interval_sec=$6,
+  cooldown_up_sec=$7,
+  cooldown_down_sec=$8,
+  step_cap_override=$9,
+  discovery_step_cap_down_override=$10,
+  stall_floor_relax_gap_frac_override=$11,
+  inbound_discount_max_ratio_override=$12,
+  inbound_discount_reach_out_ratio_override=$13,
+  inbound_discount_min_retained_spread_frac_override=$14,
+  outrate_floor_factor_low_override=$15,
+  soften_min_out_ratio_override=$16,
+  soften_max_drop_to_peg_frac_override=$17,
+  htlc_min_attempts_60m_override=$18,
+  htlc_policy_fail_rate_override=$19,
+  htlc_liquidity_fail_rate_override=$20,
+  rebal_cost_mode=$21,
+  native_seed_enabled=$22,
+  amboss_enabled=$23,
+  amboss_token=$24,
+  inbound_passive_enabled=$25,
+  discovery_enabled=$26,
+  explorer_enabled=$27,
+  super_source_enabled=$28,
+  super_source_base_fee_msat=$29,
+  revfloor_enabled=$30,
+  circuit_breaker_enabled=$31,
+  extreme_drain_enabled=$32,
+  htlc_signal_enabled=$33,
+  htlc_mode=$34,
+  min_ppm=$35,
+  max_ppm=$36,
   updated_at=now()
 where id=$1
 `, autofeeConfigID,
 		current.Enabled,
+		current.OperationMode,
 		current.Profile,
 		current.LookbackDays,
 		current.RunIntervalSec,
@@ -1412,6 +1636,8 @@ where id=$1
 		current.DiscoveryStepCapDownOverride,
 		current.StallFloorRelaxGapFracOverride,
 		current.InboundDiscountMaxRatioOverride,
+		current.InboundDiscountReachOutRatioOverride,
+		current.InboundDiscountMinRetainedSpreadFracOverride,
 		current.OutrateFloorFactorLowOverride,
 		current.SoftenMinOutRatioOverride,
 		current.SoftenMaxDropToPegFracOverride,
@@ -1419,6 +1645,7 @@ where id=$1
 		current.HTLCPolicyFailRateOverride,
 		current.HTLCLiquidityFailRateOverride,
 		current.RebalCostMode,
+		current.NativeSeedEnabled,
 		current.AmbossEnabled,
 		ambossToken,
 		current.InboundPassiveEnabled,
@@ -1450,6 +1677,165 @@ set last_rebal_cost_ppm = null,
 	current.AmbossTokenSet = strings.TrimSpace(ambossToken) != ""
 	s.nudgeScheduler()
 	return autofeeConfigWithProfileDefaults(current), nil
+}
+
+func (s *AutofeeService) SaveMarketRefillRebalanceBackup(ctx context.Context, autoEnabled bool, manualRestartWatch bool) error {
+	if s.db == nil {
+		return errors.New("db unavailable")
+	}
+	_, err := s.db.Exec(ctx, `
+update autofee_config
+set market_refill_rebalance_prev_saved=true,
+  market_refill_rebalance_prev_auto=$2,
+  market_refill_rebalance_prev_manual_restart=$3,
+  updated_at=now()
+where id=$1
+`, autofeeConfigID, autoEnabled, manualRestartWatch)
+	return err
+}
+
+func (s *AutofeeService) SaveMarketRefillFeeSnapshot(ctx context.Context) error {
+	if s.db == nil {
+		return errors.New("db unavailable")
+	}
+	if s.lnd == nil {
+		return errors.New("lnd unavailable")
+	}
+	channels, err := s.lnd.ListChannels(ctx)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `delete from autofee_market_refill_fee_snapshot`); err != nil {
+		return err
+	}
+
+	batch := &pgx.Batch{}
+	queued := 0
+	for _, ch := range channels {
+		if ch.ChannelID == 0 || strings.TrimSpace(ch.ChannelPoint) == "" {
+			continue
+		}
+		policy, err := s.lnd.GetChannelPolicy(ctx, ch.ChannelPoint)
+		if err != nil {
+			return fmt.Errorf("snapshot policy %s: %w", ch.ChannelPoint, err)
+		}
+		inboundEnabled := policy.InboundBaseMsat != 0 || policy.InboundFeeRatePpm != 0
+		batch.Queue(`
+insert into autofee_market_refill_fee_snapshot (
+  channel_id, channel_point, base_fee_msat, fee_rate_ppm, time_lock_delta,
+  inbound_enabled, inbound_base_msat, inbound_fee_rate_ppm, captured_at
+)
+values ($1,$2,$3,$4,$5,$6,$7,$8,now())
+on conflict (channel_id) do update set
+  channel_point=excluded.channel_point,
+  base_fee_msat=excluded.base_fee_msat,
+  fee_rate_ppm=excluded.fee_rate_ppm,
+  time_lock_delta=excluded.time_lock_delta,
+  inbound_enabled=excluded.inbound_enabled,
+  inbound_base_msat=excluded.inbound_base_msat,
+  inbound_fee_rate_ppm=excluded.inbound_fee_rate_ppm,
+  captured_at=excluded.captured_at
+`, int64(ch.ChannelID), ch.ChannelPoint, policy.BaseFeeMsat, policy.FeeRatePpm, policy.TimeLockDelta, inboundEnabled, policy.InboundBaseMsat, policy.InboundFeeRatePpm)
+		queued++
+	}
+	br := tx.SendBatch(ctx, batch)
+	defer br.Close()
+	for i := 0; i < queued; i++ {
+		if _, err := br.Exec(); err != nil {
+			return err
+		}
+	}
+	if err := br.Close(); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *AutofeeService) LoadMarketRefillRebalanceBackup(ctx context.Context) (bool, bool, bool, error) {
+	if s.db == nil {
+		return false, false, false, errors.New("db unavailable")
+	}
+	var saved bool
+	var autoEnabled bool
+	var manualRestartWatch bool
+	err := s.db.QueryRow(ctx, `
+select market_refill_rebalance_prev_saved, market_refill_rebalance_prev_auto, market_refill_rebalance_prev_manual_restart
+from autofee_config
+where id=$1
+`, autofeeConfigID).Scan(&saved, &autoEnabled, &manualRestartWatch)
+	if err != nil {
+		return false, false, false, err
+	}
+	return saved, autoEnabled, manualRestartWatch, nil
+}
+
+func (s *AutofeeService) ClearMarketRefillRebalanceBackup(ctx context.Context) error {
+	if s.db == nil {
+		return errors.New("db unavailable")
+	}
+	_, err := s.db.Exec(ctx, `
+update autofee_config
+set market_refill_rebalance_prev_saved=false,
+  market_refill_rebalance_prev_auto=false,
+  market_refill_rebalance_prev_manual_restart=false,
+  updated_at=now()
+where id=$1
+`, autofeeConfigID)
+	return err
+}
+
+func (s *AutofeeService) RestoreMarketRefillFeeSnapshot(ctx context.Context) error {
+	if s.db == nil {
+		return errors.New("db unavailable")
+	}
+	if s.lnd == nil {
+		return errors.New("lnd unavailable")
+	}
+	rows, err := s.db.Query(ctx, `
+select channel_point, base_fee_msat, fee_rate_ppm, time_lock_delta, inbound_enabled, inbound_base_msat, inbound_fee_rate_ppm
+from autofee_market_refill_fee_snapshot
+order by channel_id asc
+`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var channelPoint string
+		var baseFeeMsat int64
+		var feeRatePpm int64
+		var timeLockDelta int64
+		var inboundEnabled bool
+		var inboundBaseMsat int64
+		var inboundFeeRatePpm int64
+		if err := rows.Scan(&channelPoint, &baseFeeMsat, &feeRatePpm, &timeLockDelta, &inboundEnabled, &inboundBaseMsat, &inboundFeeRatePpm); err != nil {
+			return err
+		}
+		if strings.TrimSpace(channelPoint) == "" {
+			continue
+		}
+		if timeLockDelta <= 0 {
+			timeLockDelta = 144
+		}
+		if err := s.lnd.UpdateChannelFees(ctx, channelPoint, false, baseFeeMsat, feeRatePpm, timeLockDelta, inboundEnabled, inboundBaseMsat, inboundFeeRatePpm); err != nil {
+			return fmt.Errorf("restore policy %s: %w", channelPoint, err)
+		}
+	}
+	return rows.Err()
+}
+
+func (s *AutofeeService) ClearMarketRefillFeeSnapshot(ctx context.Context) error {
+	if s.db == nil {
+		return errors.New("db unavailable")
+	}
+	_, err := s.db.Exec(ctx, `delete from autofee_market_refill_fee_snapshot`)
+	return err
 }
 
 func (s *AutofeeService) LoadChannelSettings(ctx context.Context) (map[uint64]bool, error) {
@@ -1728,12 +2114,12 @@ func (s *AutofeeService) Run(ctx context.Context, dryRun bool, reason string) er
 			if reason == "manual" {
 				runID := fmt.Sprintf("%d", time.Now().UnixNano())
 				now := time.Now().UTC()
-				header := fmt.Sprintf("⚡ Autofee %s | %s", strings.ToUpper(reason), now.Format(time.RFC3339))
+				header := fmt.Sprintf("⚡ Autofee %s [%s] | %s", strings.ToUpper(reason), strings.ToUpper(cfg.OperationMode), now.Format(time.RFC3339))
 				if dryRun {
 					header = header + " (dry-run)"
 				}
 				entries := []autofeeLogEntry{
-					{Line: header, Payload: &autofeeLogItem{Kind: "header", Reason: reason, DryRun: dryRun, Timestamp: now.Format(time.RFC3339)}},
+					{Line: header, Payload: &autofeeLogItem{Kind: "header", Reason: reason, OperationMode: cfg.OperationMode, DryRun: dryRun, Timestamp: now.Format(time.RFC3339)}},
 					{Line: "📊 up 0 | down 0 | flat 0 | cooldown 0 | small 0 | same 0 | disabled 0 | inactive 0 | inb_disc 0 | super_source 0", Payload: &autofeeLogItem{
 						Kind: "summary",
 						Up:   0, Down: 0, Flat: 0, Cooldown: 0, Small: 0, Same: 0, Disabled: 0, Inactive: 0, InboundDisc: 0, SuperSource: 0,
@@ -1776,13 +2162,27 @@ func (s *AutofeeService) setLastError(err error) {
 // ===== Engine =====
 
 type autofeeEngine struct {
-	svc            *AutofeeService
-	cfg            AutofeeConfig
-	profile        autofeeProfile
-	superSource    superSourceThresholds
-	ignoreCooldown bool
-	calib          autofeeCalibration
-	now            time.Time
+	svc             *AutofeeService
+	cfg             AutofeeConfig
+	profile         autofeeProfile
+	superSource     superSourceThresholds
+	ignoreCooldown  bool
+	calib           autofeeCalibration
+	ranking         map[string]autofeeRankingSnapshot
+	now             time.Time
+	nativeSeedCache map[string]autofeeSeedResult
+	ambossToken     string
+	ambossTokenErr  error
+	ambossTokenLoad bool
+}
+
+type autofeeSeedResult struct {
+	Seed           float64
+	SeedP95        float64
+	PeerMarketSkew float64
+	Tags           []string
+	Ok             bool
+	Err            error
 }
 
 type autofeeCalibration struct {
@@ -1814,63 +2214,72 @@ type autofeeCalibration struct {
 }
 
 type autofeeRunSummary struct {
-	total                 int
-	inactive              int
-	disabled              int
-	eligible              int
-	applied               int
-	applyErrors           int
-	changedUp             int
-	changedDown           int
-	kept                  int
-	skippedCooldown       int
-	skippedSmall          int
-	skippedSame           int
-	skippedOther          int
-	seedAmboss            int
-	seedAmbossMissing     int
-	seedAmbossError       int
-	seedAmbossEmpty       int
-	seedOutrate           int
-	seedMem               int
-	seedDefault           int
-	superSource           int
-	inboundDiscount       int
-	htlcLiqHot            int
-	htlcPolicyHot         int
-	htlcForwardHot        int
-	htlcSampleLow         int
-	reversalBlocked       int
-	reversalConfirmed     int
-	downcapGeneral        int
-	downcapLowSample      int
-	floorRelaxApplied     int
-	stallAlert            int
-	htlcAttemptsTotal     int
-	htlcLinkFailsTotal    int
-	htlcForwardFailsTotal int
-	htlcOtherFailsTotal   int
-	htlcClassifiedTotal   int
-	htlcUnclassifiedTotal int
-	htlcTopReasons        []string
-	htlcWindowMin         int
-	htlcMinAttempts       int
-	htlcMinPolicyFails    int
-	htlcMinLiquidityFails int
-	htlcMinForwardFails   int
-	htlcPolicyRateMin     float64
-	htlcLiquidityRateMin  float64
-	htlcForwardRateMin    float64
-	htlcGlobalCountFactor float64
-	htlcGlobalRateFactor  float64
-	htlcNodeFactor        float64
-	htlcLiquidityFactor   float64
-	htlcThresholdFactor   float64
+	total                  int
+	inactive               int
+	disabled               int
+	eligible               int
+	applied                int
+	applyErrors            int
+	changedUp              int
+	changedDown            int
+	kept                   int
+	skippedCooldown        int
+	skippedSmall           int
+	skippedSame            int
+	skippedOther           int
+	seedNative             int
+	seedNativeInsufficient int
+	seedNativeError        int
+	seedAmboss             int
+	seedAmbossMissing      int
+	seedAmbossError        int
+	seedAmbossEmpty        int
+	seedOutrate            int
+	seedMem                int
+	seedDefault            int
+	superSource            int
+	inboundDiscount        int
+	htlcLiqHot             int
+	htlcPolicyHot          int
+	htlcForwardHot         int
+	htlcSampleLow          int
+	reversalBlocked        int
+	reversalConfirmed      int
+	downcapGeneral         int
+	downcapLowSample       int
+	floorRelaxApplied      int
+	stallAlert             int
+	htlcAttemptsTotal      int
+	htlcLinkFailsTotal     int
+	htlcForwardFailsTotal  int
+	htlcOtherFailsTotal    int
+	htlcClassifiedTotal    int
+	htlcUnclassifiedTotal  int
+	htlcTopReasons         []string
+	htlcWindowMin          int
+	htlcMinAttempts        int
+	htlcMinPolicyFails     int
+	htlcMinLiquidityFails  int
+	htlcMinForwardFails    int
+	htlcPolicyRateMin      float64
+	htlcLiquidityRateMin   float64
+	htlcForwardRateMin     float64
+	htlcGlobalCountFactor  float64
+	htlcGlobalRateFactor   float64
+	htlcNodeFactor         float64
+	htlcLiquidityFactor    float64
+	htlcThresholdFactor    float64
 }
 
 func (s *autofeeRunSummary) addTags(tags []string) {
 	for _, tag := range tags {
 		switch tag {
+		case "seed:native":
+			s.seedNative++
+		case "seed:native-insufficient", "seed:native-empty":
+			s.seedNativeInsufficient++
+		case "seed:native-error":
+			s.seedNativeError++
 		case "seed:amboss":
 			s.seedAmboss++
 		case "seed:amboss-missing":
@@ -1949,11 +2358,12 @@ func newAutofeeEngine(svc *AutofeeService, cfg AutofeeConfig) *autofeeEngine {
 		ss = superSourceThresholdsByProfile["moderate"]
 	}
 	return &autofeeEngine{
-		svc:         svc,
-		cfg:         cfg,
-		profile:     p,
-		superSource: ss,
-		now:         time.Now().UTC(),
+		svc:             svc,
+		cfg:             cfg,
+		profile:         p,
+		superSource:     ss,
+		now:             time.Now().UTC(),
+		nativeSeedCache: make(map[string]autofeeSeedResult),
 	}
 }
 
@@ -2088,6 +2498,20 @@ type autofeeChannelState struct {
 	ExplorerState       explorerState
 }
 
+type autofeeRankingSnapshot struct {
+	Score              int
+	Score30d           int
+	State              string
+	TrendDirection     string
+	TrendDelta         int
+	ProfitFee7dSat     int64
+	ProfitFee30dSat    int64
+	OutPpm30d          int
+	RebalPpm30d        int
+	PeerStabilityScore int
+	LocalBalancePct    float64
+}
+
 type explorerState struct {
 	Active                bool   `json:"active"`
 	StartedTs             int64  `json:"started_ts"`
@@ -2095,6 +2519,12 @@ type explorerState struct {
 	FwdsAtStart           int    `json:"fwds_at_start"`
 	LastExitTs            int64  `json:"last_exit_ts"`
 	Seen                  bool   `json:"seen"`
+	DrainedActive         bool   `json:"drained_active,omitempty"`
+	DrainedStartedTs      int64  `json:"drained_started_ts,omitempty"`
+	DrainedRounds         int    `json:"drained_rounds,omitempty"`
+	DrainedFwdsAtStart    int    `json:"drained_fwds_at_start,omitempty"`
+	DrainedLastExitTs     int64  `json:"drained_last_exit_ts,omitempty"`
+	DrainedSeen           bool   `json:"drained_seen,omitempty"`
 	StagnationNoFwdRounds int    `json:"stagnation_no_fwd_rounds,omitempty"`
 	StagnationPhase       int    `json:"stagnation_phase,omitempty"`
 	SurgeGateRounds       int    `json:"surge_gate_rounds,omitempty"`
@@ -2103,6 +2533,11 @@ type explorerState struct {
 	ReversalPendingRounds int    `json:"reversal_pending_rounds,omitempty"`
 	LastReversalDir       string `json:"last_reversal_dir,omitempty"`
 	LastReversalTs        int64  `json:"last_reversal_ts,omitempty"`
+	RescueActive          bool   `json:"rescue_active,omitempty"`
+	RescueStartedTs       int64  `json:"rescue_started_ts,omitempty"`
+	RescueRounds          int    `json:"rescue_rounds,omitempty"`
+	RescueRecoverRounds   int    `json:"rescue_recover_rounds,omitempty"`
+	RescueLastExitTs      int64  `json:"rescue_last_exit_ts,omitempty"`
 }
 
 func (s *AutofeeService) LoadChannelSettingsDetailed(ctx context.Context) ([]AutofeeChannelSettingEntry, error) {
@@ -2145,6 +2580,11 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 	state, err := e.loadState(ctx)
 	if err != nil {
 		return err
+	}
+	if snapshots, err := e.loadChannelRankingSnapshots(ctx); err == nil {
+		e.ranking = snapshots
+	} else if e.svc.logger != nil {
+		e.svc.logger.Printf("autofee: channel ranking snapshot unavailable: %v", err)
 	}
 
 	forwardStats, err := e.fetchForwardStats(ctx, e.cfg.LookbackDays)
@@ -2202,7 +2642,7 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 	htlcSignals, htlcMeta := e.buildHTLCFailureSignals(channels)
 
 	runID := fmt.Sprintf("%d", time.Now().UnixNano())
-	header := fmt.Sprintf("⚡ Autofee %s | %s", strings.ToUpper(reason), e.now.UTC().Format(time.RFC3339))
+	header := fmt.Sprintf("⚡ Autofee %s [%s] | %s", strings.ToUpper(reason), strings.ToUpper(e.cfg.OperationMode), e.now.UTC().Format(time.RFC3339))
 	if dryRun {
 		header = header + " (dry-run)"
 	}
@@ -2300,9 +2740,13 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 			} else {
 				keptLines = append(keptLines, entry)
 			}
-			if containsTag(decision.Tags, "explorer") {
+			if containsTag(decision.Tags, "explorer") || containsTag(decision.Tags, "drained-explorer") {
+				label := "explorer"
+				if containsTag(decision.Tags, "drained-explorer") && !containsTag(decision.Tags, "explorer") {
+					label = "drained explorer"
+				}
 				explorerLines = append(explorerLines, autofeeLogEntry{
-					Line: fmt.Sprintf("🧭 %s explorer: ON", decision.Alias),
+					Line: fmt.Sprintf("🧭 %s %s: ON", decision.Alias, label),
 					Payload: &autofeeLogItem{
 						Kind:     "explorer",
 						Category: "explorer",
@@ -2330,7 +2774,7 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 	)
 	seedText := fmt.Sprintf(
 		"🌱 seed amboss=%d missing=%d err=%d empty=%d outrate=%d mem=%d default=%d",
-		summary.seedAmboss, summary.seedAmbossMissing, summary.seedAmbossError, summary.seedAmbossEmpty,
+		summary.seedAmboss+summary.seedNative, summary.seedAmbossMissing+summary.seedNativeInsufficient, summary.seedAmbossError+summary.seedNativeError, summary.seedAmbossEmpty,
 		summary.seedOutrate, summary.seedMem, summary.seedDefault,
 	)
 	if e.ignoreCooldown {
@@ -2338,7 +2782,7 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 	}
 
 	entries := []autofeeLogEntry{
-		{Line: header, Payload: &autofeeLogItem{Kind: "header", Reason: reason, DryRun: dryRun, Timestamp: e.now.UTC().Format(time.RFC3339)}},
+		{Line: header, Payload: &autofeeLogItem{Kind: "header", Reason: reason, OperationMode: e.cfg.OperationMode, DryRun: dryRun, Timestamp: e.now.UTC().Format(time.RFC3339)}},
 		{Line: summaryText, Payload: &autofeeLogItem{
 			Kind:                     "summary",
 			Up:                       summary.changedUp,
@@ -2383,15 +2827,18 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 			HTLCThresholdFactor:      summary.htlcThresholdFactor,
 		}},
 		{Line: seedText, Payload: &autofeeLogItem{
-			Kind:            "seed",
-			Amboss:          summary.seedAmboss,
-			Missing:         summary.seedAmbossMissing,
-			Err:             summary.seedAmbossError,
-			Empty:           summary.seedAmbossEmpty,
-			Outrate:         summary.seedOutrate,
-			Mem:             summary.seedMem,
-			Default:         summary.seedDefault,
-			CooldownIgnored: e.ignoreCooldown,
+			Kind:               "seed",
+			Native:             summary.seedNative,
+			NativeInsufficient: summary.seedNativeInsufficient,
+			NativeErr:          summary.seedNativeError,
+			Amboss:             summary.seedAmboss,
+			Missing:            summary.seedAmbossMissing,
+			Err:                summary.seedAmbossError,
+			Empty:              summary.seedAmbossEmpty,
+			Outrate:            summary.seedOutrate,
+			Mem:                summary.seedMem,
+			Default:            summary.seedDefault,
+			CooldownIgnored:    e.ignoreCooldown,
 		}},
 	}
 	calibLine := fmt.Sprintf("⚙️ calib node=%s channels=%d cap=%d avg=%d local=%d (%.0f%%) revfloor_thr=%d revfloor_min=%d liq=%s | low_out x%.2f t<%.1f%% p<%.1f%% | htlc_k node=%.2f liq=%.2f total=%.2f | htlc_rate p>=%.1f%% l>=%.1f%% f>=%.1f%% | htlc_global c×%.2f r×%.2f",
@@ -3059,6 +3506,153 @@ func hasRebalFallback21dSignal(rebalAmt21dSat int64, capacitySat int64) bool {
 	return rebalAmt21dSat >= minRebalFallback21dSat(capacitySat)
 }
 
+func slowCycle30dMinScore(profile autofeeProfile) int {
+	switch profile.Name {
+	case "conservative":
+		return 65
+	case "aggressive":
+		return 45
+	default:
+		return 50
+	}
+}
+
+func slowCycle30dUnderrepFrac(profile autofeeProfile) float64 {
+	switch profile.Name {
+	case "conservative":
+		return 0.45
+	case "aggressive":
+		return 0.75
+	default:
+		return 0.60
+	}
+}
+
+func slowCycle30dRebalCostHeadroom(profile autofeeProfile) float64 {
+	switch profile.Name {
+	case "conservative":
+		return 1.00
+	case "aggressive":
+		return 1.10
+	default:
+		return 1.05
+	}
+}
+
+func slowCycle30dOutRatioMax(profile autofeeProfile) float64 {
+	switch profile.Name {
+	case "conservative":
+		return 0.25
+	case "aggressive":
+		return 0.55
+	default:
+		return 0.40
+	}
+}
+
+func slowCycle30dOutBlendFrac(profile autofeeProfile, effectiveOutRatio float64) float64 {
+	base := 0.30
+	switch profile.Name {
+	case "conservative":
+		base = 0.20
+	case "aggressive":
+		base = 0.40
+	}
+	switch {
+	case effectiveOutRatio <= 0.10:
+		base += 0.10
+	case effectiveOutRatio <= 0.20:
+		base += 0.05
+	case effectiveOutRatio >= 0.60:
+		base -= 0.10
+	case effectiveOutRatio >= 0.45:
+		base -= 0.05
+	}
+	return clampFloat(base, 0.15, 0.55)
+}
+
+func slowCycle30dFallbackFrac(profile autofeeProfile, effectiveOutRatio float64) float64 {
+	base := 0.60
+	switch profile.Name {
+	case "conservative":
+		base = 0.45
+	case "aggressive":
+		base = 0.75
+	}
+	switch {
+	case effectiveOutRatio <= 0.10:
+		base += 0.10
+	case effectiveOutRatio <= 0.20:
+		base += 0.05
+	case effectiveOutRatio >= 0.60:
+		base -= 0.10
+	case effectiveOutRatio >= 0.45:
+		base -= 0.05
+	}
+	return clampFloat(base, 0.35, 0.85)
+}
+
+func shouldUseSlowCycle30d(profile autofeeProfile, ranking autofeeRankingSnapshot, hasRanking bool, effectiveOutRatio float64, outPpm7d int, rebalPpm7d int) bool {
+	if !hasRanking {
+		return false
+	}
+	if ranking.ProfitFee30dSat <= 0 || ranking.Score30d < slowCycle30dMinScore(profile) {
+		return false
+	}
+	if ranking.PeerStabilityScore > 0 && ranking.PeerStabilityScore < 45 {
+		return false
+	}
+	if ranking.OutPpm30d <= 0 || ranking.RebalPpm30d <= 0 {
+		return false
+	}
+	if float64(ranking.RebalPpm30d) > float64(ranking.OutPpm30d)*slowCycle30dRebalCostHeadroom(profile) {
+		return false
+	}
+	if effectiveOutRatio > slowCycle30dOutRatioMax(profile) {
+		return false
+	}
+	if outPpm7d <= 0 {
+		return true
+	}
+	if float64(outPpm7d) <= float64(ranking.OutPpm30d)*slowCycle30dUnderrepFrac(profile) {
+		return true
+	}
+	return ranking.ProfitFee7dSat <= 0 && rebalPpm7d > 0 &&
+		float64(outPpm7d) <= float64(ranking.OutPpm30d)*(slowCycle30dUnderrepFrac(profile)+0.10)
+}
+
+func applySlowCycle30dReferences(profile autofeeProfile, ranking autofeeRankingSnapshot, hasRanking bool, effectiveOutRatio float64, outPpm7d int, rebalPpm7d int) (int, int, bool, []string) {
+	if !shouldUseSlowCycle30d(profile, ranking, hasRanking, effectiveOutRatio, outPpm7d, rebalPpm7d) {
+		return outPpm7d, rebalPpm7d, false, nil
+	}
+	tags := []string{"slow-cycle-30d"}
+	outBlendFrac := slowCycle30dOutBlendFrac(profile, effectiveOutRatio)
+	outFallbackFrac := slowCycle30dFallbackFrac(profile, effectiveOutRatio)
+
+	nextOut := outPpm7d
+	if outPpm7d > 0 {
+		nextOut = int(math.Round(float64(outPpm7d)*(1.0-outBlendFrac) + float64(ranking.OutPpm30d)*outBlendFrac))
+	} else {
+		nextOut = int(math.Round(float64(ranking.OutPpm30d) * outFallbackFrac))
+	}
+
+	nextRebal := rebalPpm7d
+	if rebalPpm7d > 0 {
+		blendedRebal := int(math.Round(float64(rebalPpm7d)*(1.0-outBlendFrac) + float64(ranking.RebalPpm30d)*outBlendFrac))
+		nextRebal = maxInt(rebalPpm7d, blendedRebal)
+	} else {
+		nextRebal = int(math.Round(float64(ranking.RebalPpm30d) * outFallbackFrac))
+	}
+
+	if nextOut > outPpm7d {
+		tags = append(tags, "slow-cycle-30d-out")
+	}
+	if nextRebal > rebalPpm7d {
+		tags = append(tags, "slow-cycle-30d-rebal")
+	}
+	return nextOut, nextRebal, true, tags
+}
+
 func minSurgeConfirmRebalSat(capacitySat int64) int64 {
 	if capacitySat <= 0 {
 		return 0
@@ -3282,6 +3876,43 @@ func applyOutrateTargetAnchor(profile autofeeProfile, targetPpm int, outPpm7d in
 	return targetPpm, nil
 }
 
+func applySeedSignalCaps(profile autofeeProfile, seed float64, outPpm7d int, rebalPpm7d int, rebalFloorPpm int) (float64, []string) {
+	if seed <= 0 {
+		return seed, nil
+	}
+	maxAllowed := 0.0
+	tags := []string{}
+	if outPpm7d > 0 {
+		mult := profile.SeedOutrateCapMult
+		if mult <= 0 {
+			mult = 1.35
+		}
+		maxAllowed = math.Max(maxAllowed, float64(outPpm7d)*mult)
+	}
+	if rebalPpm7d > 0 {
+		mult := profile.SeedRebalCapMult
+		if mult <= 0 {
+			mult = 1.25
+		}
+		rebalRef := rebalPpm7d
+		if rebalFloorPpm > rebalRef {
+			rebalRef = rebalFloorPpm
+			tags = append(tags, "seed:rebalfloor")
+		}
+		maxAllowed = math.Max(maxAllowed, float64(rebalRef)*mult)
+	}
+	if maxAllowed > 0 && seed > maxAllowed {
+		if outPpm7d > 0 {
+			tags = append(tags, "seed:outcap")
+		}
+		if rebalPpm7d > 0 {
+			tags = append(tags, "seed:rebalcap")
+		}
+		seed = maxAllowed
+	}
+	return seed, tags
+}
+
 func shouldApplyFailedRebalancePressure(profile autofeeProfile, outRatio float64, lowOutProtectThresh float64, recentSuccessCount int, recentFailCount int) bool {
 	if recentSuccessCount > 0 || recentFailCount <= 0 {
 		return false
@@ -3336,6 +3967,33 @@ func applyFailedRebalancePressure(profile autofeeProfile, localPpm int, targetPp
 		tags = append(tags, "rebal-fail-pressure")
 	}
 	return targetPpm, tags
+}
+
+func effectiveCooldownUpSecForChannel(profile autofeeProfile, baseCooldownUpSec int, effectiveOutRatio float64, holdUpOnRecentRebalance bool) int {
+	cooldownSec := maxInt(autofeeMinCooldownSec, baseCooldownUpSec)
+	if holdUpOnRecentRebalance {
+		return cooldownSec
+	}
+	extremeOutMax := profile.CooldownUpExtremeOutRatioMax
+	if extremeOutMax <= 0 {
+		extremeOutMax = profile.ExtremeDrainTurboOutMax
+	}
+	if extremeOutMax > 0 && effectiveOutRatio <= extremeOutMax {
+		if profile.CooldownUpExtremeSec > 0 {
+			return minInt(cooldownSec, maxInt(autofeeMinCooldownSec, profile.CooldownUpExtremeSec))
+		}
+		return cooldownSec
+	}
+	drainedOutMax := profile.CooldownUpDrainedOutRatioMax
+	if drainedOutMax <= 0 {
+		drainedOutMax = profile.ExtremeDrainOutMax
+	}
+	if drainedOutMax > 0 && effectiveOutRatio <= drainedOutMax {
+		if profile.CooldownUpDrainedSec > 0 {
+			return minInt(cooldownSec, maxInt(autofeeMinCooldownSec, profile.CooldownUpDrainedSec))
+		}
+	}
+	return cooldownSec
 }
 
 func isMoveTowardTarget(localPpm int, nextPpm int, targetPpm int) bool {
@@ -4036,6 +4694,56 @@ from autofee_state
 	return items, rows.Err()
 }
 
+func (e *autofeeEngine) loadChannelRankingSnapshots(ctx context.Context) (map[string]autofeeRankingSnapshot, error) {
+	items := map[string]autofeeRankingSnapshot{}
+	if e == nil || e.svc == nil || e.svc.db == nil {
+		return items, nil
+	}
+	rows, err := e.svc.db.Query(ctx, `
+select channel_point, score, score_30d, state, trend_direction, trend_delta, profit_fee_7d_sat, profit_fee_30d_sat, out_ppm_30d, rebal_ppm_30d, peer_stability_score_30d, local_balance_pct
+from channel_rankings
+`)
+	if err != nil {
+		return items, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var point string
+		var snap autofeeRankingSnapshot
+		var state sql.NullString
+		var trend sql.NullString
+		if err := rows.Scan(
+			&point,
+			&snap.Score,
+			&snap.Score30d,
+			&state,
+			&trend,
+			&snap.TrendDelta,
+			&snap.ProfitFee7dSat,
+			&snap.ProfitFee30dSat,
+			&snap.OutPpm30d,
+			&snap.RebalPpm30d,
+			&snap.PeerStabilityScore,
+			&snap.LocalBalancePct,
+		); err != nil {
+			return items, err
+		}
+		point = normalizeChannelPointKey(point)
+		if point == "" {
+			continue
+		}
+		if state.Valid {
+			snap.State = strings.TrimSpace(strings.ToLower(state.String))
+		}
+		if trend.Valid {
+			snap.TrendDirection = strings.TrimSpace(strings.ToLower(trend.String))
+		}
+		items[point] = snap
+	}
+	return items, rows.Err()
+}
+
 func (e *autofeeEngine) persistState(ctx context.Context, st *autofeeChannelState) {
 	if st == nil {
 		return
@@ -4093,6 +4801,7 @@ type decision struct {
 	FloorSrc                string
 	Tags                    []string
 	InboundDiscount         int
+	PrevInboundDiscount     int
 	SuperSourceActive       bool
 	OutRatio                float64
 	OutPpm7d                int
@@ -4123,6 +4832,137 @@ type decision struct {
 	Apply                   bool
 	Error                   error
 	State                   *autofeeChannelState
+}
+
+func rescueCandidate(r autofeeRankingSnapshot, localPpm int, target int, outPpm7d int, revShare float64, topRevenue bool, slowCycleProtected bool) (bool, bool) {
+	if topRevenue || slowCycleProtected {
+		return false, false
+	}
+	stateWeak := r.State == "close" || (r.State == "monitor" && r.TrendDirection == "worsening")
+	if !stateWeak || r.ProfitFee7dSat > 0 || r.Score > rescueScoreMax || revShare > rescueRevShareMax {
+		return false, false
+	}
+	if localPpm < int(math.Ceil(float64(maxInt(target, 1))*(1.0+rescueEnterGapFrac))) {
+		return false, false
+	}
+	priority := r.State == "close" && localPpm >= int(math.Ceil(float64(maxInt(target, 1))*(1.0+rescuePriorityEnterGapFrac)))
+	if outPpm7d > 0 {
+		if localPpm >= int(math.Ceil(float64(outPpm7d)*rescueOutrateEnterMult)) {
+			return true, priority
+		}
+		if target <= int(math.Floor(float64(outPpm7d)*(1.0-rescueTargetOutrateDivergenceFrac))) {
+			return true, priority
+		}
+	}
+	return outPpm7d <= 0, priority
+}
+
+func rescueExitReady(es explorerState, now time.Time) bool {
+	if !es.RescueActive || es.RescueStartedTs <= 0 {
+		return false
+	}
+	activeHours := now.Sub(time.Unix(es.RescueStartedTs, 0).UTC()).Hours()
+	return es.RescueRounds >= rescueMinRounds || activeHours >= rescueMinActiveHours
+}
+
+func rescueRecovered(r autofeeRankingSnapshot, localPpm int, target int, outPpm7d int, revShare float64, topRevenue bool) bool {
+	if topRevenue || revShare > rescueRevShareMax {
+		return true
+	}
+	if r.ProfitFee7dSat > 0 && (r.State == "expand" || r.Score > rescueScoreMax || r.TrendDirection != "worsening") {
+		return true
+	}
+	exitTarget := int(math.Ceil(float64(maxInt(target, 1)) * (1.0 + rescueExitGapFrac)))
+	exitFloor := exitTarget
+	if outPpm7d > 0 {
+		outExit := int(math.Ceil(float64(outPpm7d) * rescueOutrateExitMult))
+		if outExit > exitFloor {
+			exitFloor = outExit
+		}
+	}
+	return localPpm <= exitFloor
+}
+
+func manageRescueState(st *autofeeChannelState, now time.Time, balancedMode bool, ranking autofeeRankingSnapshot, hasRanking bool, localPpm int, target int, outPpm7d int, revShare float64, topRevenue bool, slowCycleProtected bool) (bool, []string) {
+	if st == nil {
+		return false, nil
+	}
+	es := &st.ExplorerState
+	if !balancedMode {
+		if es.RescueActive {
+			es.RescueActive = false
+			es.RescueRounds = 0
+			es.RescueRecoverRounds = 0
+			es.RescueStartedTs = 0
+			es.RescueLastExitTs = now.Unix()
+		}
+		return false, nil
+	}
+	if !hasRanking {
+		if es.RescueActive {
+			es.RescueRounds++
+			return true, []string{"rescue", fmt.Sprintf("rescue-r%d", maxInt(1, es.RescueRounds))}
+		}
+		return false, nil
+	}
+	candidate, priorityCandidate := rescueCandidate(ranking, localPpm, target, outPpm7d, revShare, topRevenue, slowCycleProtected)
+	if es.RescueActive {
+		es.RescueRounds++
+		activeHours := 0.0
+		if es.RescueStartedTs > 0 {
+			activeHours = now.Sub(time.Unix(es.RescueStartedTs, 0).UTC()).Hours()
+		}
+		if activeHours >= rescueMaxActiveHours {
+			es.RescueActive = false
+			es.RescueLastExitTs = now.Unix()
+			es.RescueStartedTs = 0
+			es.RescueRounds = 0
+			es.RescueRecoverRounds = 0
+			return false, []string{"rescue-expired"}
+		}
+		if rescueExitReady(*es, now) && (!candidate || rescueRecovered(ranking, localPpm, target, outPpm7d, revShare, topRevenue)) {
+			es.RescueRecoverRounds++
+		} else {
+			es.RescueRecoverRounds = 0
+		}
+		if es.RescueRecoverRounds >= rescueExitConfirmRounds {
+			es.RescueActive = false
+			es.RescueLastExitTs = now.Unix()
+			es.RescueStartedTs = 0
+			es.RescueRounds = 0
+			es.RescueRecoverRounds = 0
+			return false, []string{"rescue-exit"}
+		}
+		return true, []string{"rescue", fmt.Sprintf("rescue-r%d", maxInt(1, es.RescueRounds))}
+	}
+	if !candidate {
+		return false, nil
+	}
+	if !priorityCandidate && es.RescueLastExitTs > 0 && now.Sub(time.Unix(es.RescueLastExitTs, 0).UTC()).Hours() < rescueReentryCooldownHours {
+		return false, nil
+	}
+	es.RescueActive = true
+	es.RescueStartedTs = now.Unix()
+	es.RescueRounds = 1
+	es.RescueRecoverRounds = 0
+	return true, []string{"rescue", "rescue-enter", "rescue-r1"}
+}
+
+func applyRescueFloorRelax(active bool, localPpm int, target int, floor int, floorSrc string, outPpm7d int, baseCostPpm int) (int, string, []string) {
+	if !active || target >= localPpm || floor <= target {
+		return floor, floorSrc, nil
+	}
+	relaxed := target
+	if outPpm7d > 0 {
+		relaxed = maxInt(relaxed, outPpm7d)
+	}
+	if baseCostPpm > 0 {
+		relaxed = maxInt(relaxed, int(math.Ceil(float64(baseCostPpm)*rescueSoftRebalFloorMult)))
+	}
+	if relaxed >= floor {
+		return floor, floorSrc, nil
+	}
+	return relaxed, "rescue", []string{"rescue-floor-relax"}
 }
 
 func (d *decision) withError(err error) *decision {
@@ -4175,6 +5015,11 @@ func formatAutofeeDecisionLine(d *decision, dryRun bool, isError bool) (string, 
 		floorSrc = fmt.Sprintf("(%s)", d.FloorSrc)
 	}
 	tagLine := formatAutofeeTags(d)
+	if d.InboundDiscount > 0 {
+		tagLine = strings.ReplaceAll(tagLine, fmt.Sprintf(" ↘️inb-%d", d.InboundDiscount), "")
+		tagLine = strings.ReplaceAll(tagLine, fmt.Sprintf("↘️inb-%d ", d.InboundDiscount), "")
+		tagLine = strings.TrimSpace(tagLine)
+	}
 	if tagLine == "" {
 		tagLine = "-"
 	}
@@ -4223,6 +5068,11 @@ func formatAutofeeDecisionLine(d *decision, dryRun bool, isError bool) (string, 
 		d.RevShare,
 		tagLine,
 	)
+	if d.PrevInboundDiscount != d.InboundDiscount {
+		line = line + fmt.Sprintf(" | ↘️ inb %d→%d", d.PrevInboundDiscount, d.InboundDiscount)
+	} else if d.InboundDiscount > 0 {
+		line = line + fmt.Sprintf(" | ↘️ inb %d", d.InboundDiscount)
+	}
 	if d.NewInbound {
 		line = line + fmt.Sprintf(" | NEW inbound %.1fh", d.ChannelAgeHours)
 	}
@@ -4288,6 +5138,7 @@ func buildAutofeeChannelLogEntry(d *decision, category string, dryRun bool, err 
 		RevShare:                d.RevShare,
 		Tags:                    append([]string{}, d.Tags...),
 		InboundDiscount:         d.InboundDiscount,
+		PrevInboundDiscount:     d.PrevInboundDiscount,
 		ClassLabel:              d.ClassLabel,
 		SkipReason:              skipReason,
 		Delta:                   delta,
@@ -4380,10 +5231,12 @@ func buildTelegramAutofeeRunMessages(cfg AutofeeConfig, reason string, runAt tim
 	if profile == "" {
 		profile = "moderate"
 	}
+	operationMode := normalizeAutofeeOperationMode(cfg.OperationMode)
 	localRunAt := runAt.In(time.Local)
 	summaryLines := []string{
-		fmt.Sprintf("⚡ Autofee %s | %s", strings.ToUpper(strings.TrimSpace(reason)), localRunAt.Format("2006-01-02 15:04:05")),
+		fmt.Sprintf("⚡ Autofee %s [%s] | %s", strings.ToUpper(strings.TrimSpace(reason)), strings.ToUpper(operationMode), localRunAt.Format("2006-01-02 15:04:05")),
 		fmt.Sprintf("Profile: %s", strings.ToLower(profile)),
+		fmt.Sprintf("Mode: %s", strings.ToLower(strings.ReplaceAll(operationMode, "_", " "))),
 		fmt.Sprintf("✅ changed %d | 🔺 up %d | 🔻 down %d | ➡️ same-fee %d", len(ordered), summary.changedUp, summary.changedDown, sameFeeChanges),
 		fmt.Sprintf("⏳ cooldown %d | 🧊 hold-small %d | 🟰 same-ppm %d", summary.skippedCooldown, summary.skippedSmall, summary.skippedSame),
 		fmt.Sprintf("🧯 floor-relax %d | 🚨 stall-alert %d | 🧵 forward-hot %d", summary.floorRelaxApplied, summary.stallAlert, summary.htlcForwardHot),
@@ -4538,6 +5391,11 @@ func buildTelegramAutofeeChangedChannelLineFull(d *decision) string {
 	if prediction := formatTelegramAutofeePrediction(d.PredictionCode, d.PredictionCooldownHours); prediction != "" {
 		line += " | " + prediction
 	}
+	if d.PrevInboundDiscount != d.InboundDiscount {
+		line += fmt.Sprintf(" | ↘️ inb %d→%d", d.PrevInboundDiscount, d.InboundDiscount)
+	} else if d.InboundDiscount > 0 {
+		line += fmt.Sprintf(" | ↘️ inb %d", d.InboundDiscount)
+	}
 	_ = classLabel
 	return line
 }
@@ -4589,6 +5447,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		outRatio = float64(ch.LocalBalanceSat) / float64(ch.CapacitySat)
 	}
 	outRatio, outNormMeta := effectiveChannelOutRatio(outRatio, ch.LocalBalanceSat, ch.CapacitySat, e.calib.AvgCapacitySat, e.calib.LocalRatio)
+	ranking, hasRanking := e.ranking[normalizeChannelPointKey(ch.ChannelPoint)]
 
 	fwd := forwardStats[ch.ChannelID]
 	fwd1d := forwardStats1d[ch.ChannelID]
@@ -4612,6 +5471,21 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	inAmtSat := inb.AmtMsat / 1000
 	outAmt1dSat := fwd1d.AmtMsat / 1000
 	outAmt7dSat := fwd7d.AmtMsat / 1000
+	rebal := rebalStats.ByChannel[ch.ChannelID]
+	rebal21d := rebalStats21d.ByChannel[ch.ChannelID]
+	rebalAmtSat7d := rebal.AmtMsat / 1000
+	perCost := 0
+	perCost21d := 0
+	rebalFrom21dFallback := false
+	rebalFloorSignal := false
+	if rebal.AmtMsat > 0 {
+		perCost = ppmMsat(rebal.FeeMsat, rebal.AmtMsat)
+		rebalFloorSignal = hasFloorRebalSignal(rebalAmtSat7d, ch.CapacitySat)
+	}
+	if rebal21d.AmtMsat > 0 && hasRebalFallback21dSignal(rebal21d.AmtMsat/1000, ch.CapacitySat) {
+		perCost21d = ppmMsat(rebal21d.FeeMsat, rebal21d.AmtMsat)
+		rebalFrom21dFallback = true
+	}
 
 	totalVal := outAmtSat + inAmtSat
 	biasRaw := 0.0
@@ -4698,6 +5572,14 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 	highOutStagnationPressure := stagnationClassEligible && outRatio >= stagnationHighOutRatio && weakRecentFlow
 
+	rebalSeedFloorPpm := 0
+	if perCost > 0 {
+		rebalSeedFloorPpm = int(math.Ceil(float64(perCost) * 1.10))
+		if strings.EqualFold(classLabel, "sink") && e.profile.SinkExtraFloorMargin > 0 && !highOutStagnationPressure {
+			rebalSeedFloorPpm = maxInt(rebalSeedFloorPpm, int(math.Ceil(float64(perCost)*(1.10+e.profile.SinkExtraFloorMargin))))
+		}
+	}
+
 	superSourceActive := false
 	superSourceLike := false
 	if e.cfg.SuperSourceEnabled {
@@ -4742,9 +5624,16 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		st.SuperSourceBadSince = badSince
 	}
 
-	seed, _, seedTags := e.seedForChannel(ch.RemotePubkey, st)
+	seed, _, peerMarketSkew, seedTags := e.seedForChannel(ch.RemotePubkey, st)
 	if seed <= 0 {
 		seed = 200
+	}
+	if e.cfg.OperationMode == autofeeOperationModeBalanced {
+		var seedCapTags []string
+		seed, seedCapTags = applySeedSignalCaps(e.profile, seed, outPpm7d, perCost, rebalSeedFloorPpm)
+		if len(seedCapTags) > 0 {
+			seedTags = append(seedTags, seedCapTags...)
+		}
 	}
 	st.LastSeed = int(seed)
 
@@ -4883,6 +5772,19 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if highOutStagnationPressure {
 		tags = append(tags, "stagnation-pressure")
 	}
+	marketRefillMode := e.cfg.OperationMode == autofeeOperationModeMarketRefill
+	slowCycle30dActive := false
+	slowCycle30dOutApplied := false
+	slowCycle30dRebalApplied := false
+	if !marketRefillMode {
+		var slowCycleTags []string
+		outPpm7d, perCost, slowCycle30dActive, slowCycleTags = applySlowCycle30dReferences(e.profile, ranking, hasRanking, outNormMeta.Effective, outPpm7d, perCost)
+		if len(slowCycleTags) > 0 {
+			tags = append(tags, slowCycleTags...)
+			slowCycle30dOutApplied = containsTag(slowCycleTags, "slow-cycle-30d-out")
+			slowCycle30dRebalApplied = containsTag(slowCycleTags, "slow-cycle-30d-rebal")
+		}
+	}
 	recentRebalanceCount := 0
 	recentRebalanceWeakCount := 0
 	surgeConfirmRebalanceCount := 0
@@ -4893,11 +5795,20 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		recentRebalanceWeakCount = sig.WeakCount
 		surgeConfirmRebalanceCount, surgeConfirmRebalanceAmtSat = sig.surgeConfirmInputs()
 	}
-	holdUpOnRecentRebalance := shouldHoldUpOnRecentRebalance(classLabel, outRatio, lowOutProtectThresh, recentRebalanceCount)
-	if recentRebalanceCount > 0 {
-		tags = append(tags, "rebal-recent")
-	} else if recentRebalanceWeakCount > 0 {
-		tags = append(tags, "rebal-attempt")
+	if marketRefillMode {
+		recentRebalanceCount = 0
+		recentRebalanceWeakCount = 0
+		surgeConfirmRebalanceCount = 0
+		surgeConfirmRebalanceAmtSat = 0
+	}
+	holdUpOnRecentRebalance := false
+	if !marketRefillMode {
+		holdUpOnRecentRebalance = shouldHoldUpOnRecentRebalance(classLabel, outRatio, lowOutProtectThresh, recentRebalanceCount)
+		if recentRebalanceCount > 0 {
+			tags = append(tags, "rebal-recent")
+		} else if recentRebalanceWeakCount > 0 {
+			tags = append(tags, "rebal-attempt")
+		}
 	}
 	htlcSampleLow := false
 	htlcPolicyHot := false
@@ -4999,7 +5910,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		target = localPpm
 		tags = append(tags, "rebal-recent-noup")
 	}
-	if shouldApplyFailedRebalancePressure(e.profile, outRatio, lowOutProtectThresh, recentRebalanceCount, recentRebalanceWeakCount) {
+	if !marketRefillMode && shouldApplyFailedRebalancePressure(e.profile, outRatio, lowOutProtectThresh, recentRebalanceCount, recentRebalanceWeakCount) {
 		if pressuredTarget, pressureTags := applyFailedRebalancePressure(e.profile, localPpm, target, recentRebalanceWeakCount, noFlow1d, htlcPressureSignal); pressuredTarget != target || len(pressureTags) > 0 {
 			target = pressuredTarget
 			tags = append(tags, pressureTags...)
@@ -5034,89 +5945,91 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if newInboundBootstrap && target > localPpm && target < localPpm+bootstrapMinStepUp {
 		target = localPpm + bootstrapMinStepUp
 	}
-
-	rebal := rebalStats.ByChannel[ch.ChannelID]
-	rebal21d := rebalStats21d.ByChannel[ch.ChannelID]
-	rebalAmtSat7d := rebal.AmtMsat / 1000
-	baseCostPpm := 0
-	perCost := 0
-	perCost21d := 0
-	rebalFrom21dFallback := false
-	rebalFloorSignal := false
-	if rebal.AmtMsat > 0 {
-		perCost = ppmMsat(rebal.FeeMsat, rebal.AmtMsat)
-		rebalFloorSignal = hasFloorRebalSignal(rebalAmtSat7d, ch.CapacitySat)
-	}
-	if rebal21d.AmtMsat > 0 && hasRebalFallback21dSignal(rebal21d.AmtMsat/1000, ch.CapacitySat) {
-		perCost21d = ppmMsat(rebal21d.FeeMsat, rebal21d.AmtMsat)
-		rebalFrom21dFallback = true
-	}
-
-	switch normalizeRebalCostMode(e.cfg.RebalCostMode) {
-	case "global":
-		baseCostPpm = rebalGlobalPpm
-	case "channel":
-		if perCost > 0 {
-			baseCostPpm = perCost
-			st.LastRebalCost = perCost
-			st.LastRebalCostTs = e.now
-		} else if perCost21d > 0 {
-			baseCostPpm = perCost21d
-		} else if st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour {
-			baseCostPpm = st.LastRebalCost
-		} else if outPpm7d > 0 && fwdCount >= 4 {
-			baseCostPpm = outPpm7d
-		} else if st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 21*24*time.Hour {
-			baseCostPpm = st.LastOutrate
-		} else if seed > 0 {
-			baseCostPpm = int(seed)
+	if marketRefillMode {
+		if refillTarget, refillTags := applyMarketRefillOutboundBias(e.profile, localPpm, target, outPpm7d, outRatio, recentForwards1d, noFlow1d, weakRecentFlow, e.cfg.MinPpm, e.cfg.MaxPpm); refillTarget != target || len(refillTags) > 0 {
+			target = refillTarget
+			tags = append(tags, refillTags...)
 		}
-	default:
-		baseCostPpm = rebalGlobalPpm
-		if perCost > 0 {
-			capSat := ch.CapacitySat
-			if capSat <= 0 {
-				capSat = 20000
+	}
+
+	baseCostPpm := 0
+
+	if marketRefillMode {
+		if seed > 0 {
+			baseCostPpm = int(math.Round(seed))
+		} else if st.LastSeed > 0 {
+			baseCostPpm = st.LastSeed
+		} else {
+			baseCostPpm = e.cfg.MinPpm
+		}
+	} else {
+		switch normalizeRebalCostMode(e.cfg.RebalCostMode) {
+		case "global":
+			baseCostPpm = rebalGlobalPpm
+		case "channel":
+			if perCost > 0 {
+				baseCostPpm = perCost
+				st.LastRebalCost = perCost
+				st.LastRebalCostTs = e.now
+			} else if perCost21d > 0 {
+				baseCostPpm = perCost21d
+			} else if st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour {
+				baseCostPpm = st.LastRebalCost
+			} else if outPpm7d > 0 && fwdCount >= 4 {
+				baseCostPpm = outPpm7d
+			} else if st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 21*24*time.Hour {
+				baseCostPpm = st.LastOutrate
+			} else if seed > 0 {
+				baseCostPpm = int(seed)
 			}
-			capThresh := int64(math.Round(float64(capSat) * 0.05))
-			if capThresh < 20000 {
-				capThresh = 20000
+		default:
+			baseCostPpm = rebalGlobalPpm
+			if perCost > 0 {
+				capSat := ch.CapacitySat
+				if capSat <= 0 {
+					capSat = 20000
+				}
+				capThresh := int64(math.Round(float64(capSat) * 0.05))
+				if capThresh < 20000 {
+					capThresh = 20000
+				}
+				if capThresh > 500000 {
+					capThresh = 500000
+				}
+				rebalAmtSat := rebal.AmtMsat / 1000
+				weight := 0.0
+				if capThresh > 0 {
+					weight = float64(rebalAmtSat) / float64(capThresh)
+				}
+				if weight < 0 {
+					weight = 0
+				} else if weight > 1 {
+					weight = 1
+				}
+				blended := int(math.Round(weight*float64(perCost) + (1.0-weight)*float64(rebalGlobalPpm)))
+				baseCostPpm = blended
+				st.LastRebalCost = perCost
+				st.LastRebalCostTs = e.now
+			} else if perCost21d > 0 {
+				baseCostPpm = perCost21d
+			} else if st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour {
+				baseCostPpm = st.LastRebalCost
 			}
-			if capThresh > 500000 {
-				capThresh = 500000
-			}
-			rebalAmtSat := rebal.AmtMsat / 1000
-			weight := 0.0
-			if capThresh > 0 {
-				weight = float64(rebalAmtSat) / float64(capThresh)
-			}
-			if weight < 0 {
-				weight = 0
-			} else if weight > 1 {
-				weight = 1
-			}
-			blended := int(math.Round(weight*float64(perCost) + (1.0-weight)*float64(rebalGlobalPpm)))
-			baseCostPpm = blended
-			st.LastRebalCost = perCost
-			st.LastRebalCostTs = e.now
-		} else if perCost21d > 0 {
-			baseCostPpm = perCost21d
-		} else if st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour {
-			baseCostPpm = st.LastRebalCost
 		}
 	}
 	if baseCostPpm < e.cfg.MinPpm {
 		baseCostPpm = e.cfg.MinPpm
 	}
-	if rebalFrom21dFallback && perCost <= 0 {
+	if !marketRefillMode && rebalFrom21dFallback && perCost <= 0 {
 		tags = append(tags, "rebal-fallback-21d")
 	}
-	hasOutSignal := outPpm7dRaw > 0 || outFrom21dFallback || (st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 21*24*time.Hour)
-	hasRebalSignal := perCost > 0 || rebalFrom21dFallback || (st.LastRebalCost > 0 && !st.LastRebalCostTs.IsZero() && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour)
+	hasOutSignal := outPpm7dRaw > 0 || outFrom21dFallback || slowCycle30dOutApplied || (st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 21*24*time.Hour)
+	hasRebalSignal := !marketRefillMode && (perCost > 0 || rebalFrom21dFallback || slowCycle30dRebalApplied || (st.LastRebalCost > 0 && !st.LastRebalCostTs.IsZero() && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour))
 	strongOutSignal := outPpm7dRaw > 0 || (st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 7*24*time.Hour)
-	strongRebalSignal := perCost > 0 || (st.LastRebalCost > 0 && !st.LastRebalCostTs.IsZero() && e.now.Sub(st.LastRebalCostTs) <= 7*24*time.Hour)
+	strongRebalSignal := !marketRefillMode && (perCost > 0 || (st.LastRebalCost > 0 && !st.LastRebalCostTs.IsZero() && e.now.Sub(st.LastRebalCostTs) <= 7*24*time.Hour))
 	noSignalNoUpActive := false
 	if noFlow1d &&
+		!marketRefillMode &&
 		outRatio >= lowOutNoFlowUpperRatio &&
 		target > localPpm &&
 		recentRebalanceCount == 0 &&
@@ -5201,14 +6114,16 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			outRef = st.LastOutrate
 		}
 		rebalRef := 0
-		if perCost > 0 {
-			rebalRef = perCost
-		} else if perCost21d > 0 {
-			rebalRef = perCost21d
-		} else if st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour {
-			rebalRef = st.LastRebalCost
-		} else if rebalGlobalPpm > 0 {
-			rebalRef = rebalGlobalPpm
+		if !marketRefillMode {
+			if perCost > 0 {
+				rebalRef = perCost
+			} else if perCost21d > 0 {
+				rebalRef = perCost21d
+			} else if st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour {
+				rebalRef = st.LastRebalCost
+			} else if rebalGlobalPpm > 0 {
+				rebalRef = rebalGlobalPpm
+			}
 		}
 
 		if stagnationRounds >= stagnationNoForwardRoundsPhase1 && outRef > 0 {
@@ -5262,9 +6177,9 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 
 	capRefPpm := 0
-	if perCost > 0 {
+	if !marketRefillMode && perCost > 0 {
 		capRefPpm = perCost
-	} else if st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour {
+	} else if !marketRefillMode && st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour {
 		capRefPpm = st.LastRebalCost
 	} else if outPpm7d > 0 && fwdCount >= 4 {
 		capRefPpm = outPpm7d
@@ -5277,11 +6192,13 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	discoveryHit := false
 	discoveryHard := false
 	explorerActive := false
+	drainedExplorerActive := false
 	if e.cfg.ExplorerEnabled {
 		explorerActive = e.evalExplorer(st, outRatio, fwdCount, ch.LocalBalanceSat, ch.CapacitySat, localPpm)
 		if explorerActive {
 			tags = append(tags, "explorer")
 		}
+		drainedExplorerActive = e.evalDrainedExplorer(st, outRatio, recentForwards1d, recentRebalanceCount)
 	}
 	if e.cfg.DiscoveryEnabled && fwdCount == 0 && outRatio > 0.40 {
 		discoveryHit = true
@@ -5320,6 +6237,10 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 
 	if superSourceActive {
 		target = e.cfg.MinPpm
+	}
+	if adjustedTarget, explorerTags := applyDrainedExplorerTarget(e.profile, drainedExplorerActive, st.ExplorerState.DrainedRounds, localPpm, target, seed, baseCostPpm); len(explorerTags) > 0 {
+		target = adjustedTarget
+		tags = append(tags, explorerTags...)
 	}
 	allowOutrateTargetAnchor := outPpm7d > 0 &&
 		recentRebalanceCount == 0 &&
@@ -5371,6 +6292,23 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			tags = append(tags, "no-down-neg-margin")
 		}
 	}
+	topRevenue := revShare >= 0.20 && outRatio < 0.30
+	rescueActive, rescueTags := manageRescueState(
+		st,
+		e.now,
+		!marketRefillMode,
+		ranking,
+		hasRanking,
+		localPpm,
+		target,
+		outPpm7d,
+		revShare,
+		topRevenue,
+		slowCycle30dActive,
+	)
+	if len(rescueTags) > 0 {
+		tags = append(tags, rescueTags...)
+	}
 	capFrac := e.profile.StepCap
 	minStep := 5
 	if newInboundBootstrap && bootstrapMinStepUp > minStep {
@@ -5397,11 +6335,17 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if explorerActive {
 		capFrac = math.Max(capFrac, e.profile.DiscoveryStepCapDown)
 	}
+	if marketRefillMode && target > localPpm {
+		if marketCapFrac, marketCapTags := marketRefillStepCapFrac(e.profile, outRatio); marketCapFrac > capFrac {
+			capFrac = marketCapFrac
+			tags = append(tags, marketCapTags...)
+		}
+	}
 
 	globalNegLockApplied := false
 	lockSkipTag := ""
 	if negMarginGlobal && !stagnationActive && !highOutStagnationPressure {
-		hasRecentRebal := perCost > 0 || (st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour)
+		hasRecentRebal := !marketRefillMode && (perCost > 0 || (st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour))
 		hasRecentOutrate := (outPpm7d > 0 && fwdCount >= 4) || (st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 21*24*time.Hour)
 		canLockGlobally := hasRecentRebal || hasRecentOutrate
 		if canLockGlobally {
@@ -5419,7 +6363,12 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 				lockSkipTag = "lock-skip-sink-profit"
 				capFrac = math.Max(capFrac, e.profile.StepCap)
 			} else if target < localPpm && !discoveryHit {
-				if allowSoften {
+				if rescueActive {
+					lockSkipTag = "rescue-global-relax"
+					if outPpm7d > 0 && target < outPpm7d {
+						target = outPpm7d
+					}
+				} else if allowSoften {
 					if outPpm7d > 0 {
 						pegFloor := int(math.Round(float64(outPpm7d) * softenMaxDropToPegFrac))
 						if target < pegFloor {
@@ -5506,7 +6455,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 
 	floorBasePpm := baseCostPpm
-	if perCost > 0 && !rebalFloorSignal {
+	if !marketRefillMode && perCost > 0 && !rebalFloorSignal {
 		fallbackFloorBase := floorBasePpm
 		if rebalGlobalPpm > 0 {
 			fallbackFloorBase = rebalGlobalPpm
@@ -5525,6 +6474,9 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 	floor := int(math.Ceil(float64(floorBasePpm) * 1.10))
 	floorSrc := "rebal"
+	if marketRefillMode {
+		floorSrc = "market"
+	}
 	if strings.EqualFold(classLabel, "sink") && baseCostPpm > 0 && e.profile.SinkExtraFloorMargin > 0 && !highOutStagnationPressure {
 		sinkFloor := int(math.Ceil(float64(baseCostPpm) * (1.10 + e.profile.SinkExtraFloorMargin)))
 		if sinkFloor > floor {
@@ -5562,7 +6514,9 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			withinGrace = hoursSince < float64(e.profile.OutratePegGraceHours)
 		}
 		demandPeg := seed > 0 && float64(outPpm7d) >= seed*outratePegSeedMult
-		if peg > floor && (withinGrace || demandPeg) {
+		if rescueActive && target < localPpm && peg > floor {
+			tags = append(tags, "rescue-peg-paused")
+		} else if peg > floor && (withinGrace || demandPeg) {
 			floor = peg
 			floorSrc = "peg"
 			tags = append(tags, "peg")
@@ -5577,7 +6531,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		tags = append(tags, "peg-paused-stagnation")
 	}
 
-	if explorerActive {
+	if explorerActive && !marketRefillMode {
 		rebalFloorPpm := 0
 		if perCost > 0 {
 			rebalFloorPpm = int(math.Ceil(float64(perCost) * 1.10))
@@ -5624,6 +6578,11 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		floor = localPpm
 		floorSrc = "no-signal"
 		tags = append(tags, "no-signal-floor-relax")
+	}
+	if relaxedFloor, relaxedSrc, rescueFloorTags := applyRescueFloorRelax(rescueActive, localPpm, target, floor, floorSrc, outPpm7d, baseCostPpm); len(rescueFloorTags) > 0 {
+		floor = relaxedFloor
+		floorSrc = relaxedSrc
+		tags = append(tags, rescueFloorTags...)
 	}
 	seedSoftCeilActive := seed > 0 &&
 		noFlow1d &&
@@ -5736,8 +6695,13 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		!htlcHotSignal &&
 		fwdCount < 4
 	if floorDrivenUp && weakDemandSignal {
-		finalPpm = localPpm
-		tags = append(tags, "floor-up-blocked-low-signal")
+		if adjustedPpm, explorerTags := capWeakDemandFloorUpForDrainedExplorer(e.profile, drainedExplorerActive, localPpm, finalPpm); len(explorerTags) > 0 {
+			finalPpm = adjustedPpm
+			tags = append(tags, explorerTags...)
+		} else {
+			finalPpm = localPpm
+			tags = append(tags, "floor-up-blocked-low-signal")
+		}
 	}
 
 	if rawStep != target {
@@ -5806,7 +6770,9 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		reversalConfirmRounds += antiFlipExtraRounds
 		tags = append(tags, antiFlipTags...)
 	}
-	if guardedPpm, reversalTags := applyDirectionReversalGuard(st, localPpm, finalPpm, reversalConfirmRounds); true {
+	if marketRefillMode && shouldBypassMarketRefillReversalGuard(tags, targetGapPct, finalPpm, localPpm) {
+		tags = append(tags, "market-refill-reversal-bypass")
+	} else if guardedPpm, reversalTags := applyDirectionReversalGuard(st, localPpm, finalPpm, reversalConfirmRounds); true {
 		finalPpm = guardedPpm
 		if len(reversalTags) > 0 {
 			tags = append(tags, reversalTags...)
@@ -5838,7 +6804,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		fwdsSince := fwdCount - st.BaselineFwd7d
 		cooldownHours := float64(maxInt(1, cooldownDownSec)) / 3600.0
 		if finalPpm > localPpm {
-			cooldownHours = float64(maxInt(1, cooldownUpSec)) / 3600.0
+			cooldownHours = float64(maxInt(1, effectiveCooldownUpSecForChannel(e.profile, cooldownUpSec, outRatio, holdUpOnRecentRebalance))) / 3600.0
 		}
 		if !st.LastTs.IsZero() {
 			hoursSince := e.now.Sub(st.LastTs).Hours()
@@ -5882,8 +6848,53 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if e.cfg.InboundDiscountMaxRatioOverride > 0 {
 		inboundDiscountMaxRatio = e.cfg.InboundDiscountMaxRatioOverride
 	}
-	inboundDiscount := computeInboundDiscount(e.cfg.InboundPassiveEnabled, classLabel, outRatio, fwdCount, marginPpm7d, baseCostPpm, appliedPpm, inboundDiscountMaxRatio)
-	inboundChanged := inboundDiscount != st.LastInboundDiscount
+	inboundDiscountReachOutRatio := e.profile.InboundDiscountReachOutRatio
+	if inboundDiscountReachOutRatio <= 0 {
+		inboundDiscountReachOutRatio = 0.10
+	}
+	if e.cfg.InboundDiscountReachOutRatioOverride > 0 {
+		inboundDiscountReachOutRatio = e.cfg.InboundDiscountReachOutRatioOverride
+	}
+	inboundDiscountMinRetainedSpreadFrac := e.profile.InboundDiscountMinRetainedSpreadFrac
+	if inboundDiscountMinRetainedSpreadFrac <= 0 {
+		inboundDiscountMinRetainedSpreadFrac = 0.12
+	}
+	if e.cfg.InboundDiscountMinRetainedSpreadFracOverride > 0 {
+		inboundDiscountMinRetainedSpreadFrac = e.cfg.InboundDiscountMinRetainedSpreadFracOverride
+	}
+	inboundDiscount := 0
+	if e.cfg.OperationMode == autofeeOperationModeMarketRefill {
+		var inboundTags []string
+		inboundDiscount, inboundTags = computeMarketRefillInboundDiscount(
+			true,
+			outNormMeta.Effective,
+			recentForwards1d,
+			noFlow1d,
+			weakRecentFlow,
+			peerMarketSkew,
+			baseCostPpm,
+			appliedPpm,
+			inboundDiscountMaxRatio,
+			inboundDiscountMinRetainedSpreadFrac,
+			e.profile,
+		)
+		tags = append(tags, inboundTags...)
+	} else {
+		inboundDiscount = computeInboundDiscount(
+			e.cfg.InboundPassiveEnabled,
+			classLabel,
+			outRatio,
+			fwdCount,
+			marginPpm7d,
+			baseCostPpm,
+			appliedPpm,
+			inboundDiscountMaxRatio,
+			inboundDiscountReachOutRatio,
+			inboundDiscountMinRetainedSpreadFrac,
+		)
+	}
+	prevInboundDiscount := st.LastInboundDiscount
+	inboundChanged := inboundDiscount != prevInboundDiscount
 	st.LastPpm = finalPpm
 	st.LastInboundDiscount = inboundDiscount
 	if outPpm7d > 0 {
@@ -5921,6 +6932,9 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if explorerActive && finalPpm < localPpm {
 		st.ExplorerState.Rounds++
 	}
+	if drainedExplorerActive && finalPpm > localPpm {
+		st.ExplorerState.DrainedRounds++
+	}
 	hoursSinceLastChange := 0.0
 	if !st.LastTs.IsZero() {
 		hoursSinceLastChange = e.now.Sub(st.LastTs).Hours()
@@ -5934,7 +6948,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		hoursSince := e.now.Sub(st.LastTs).Hours()
 		cooldownHours := float64(maxInt(1, cooldownDownSec)) / 3600.0
 		if finalPpm > localPpm {
-			cooldownHours = float64(maxInt(1, cooldownUpSec)) / 3600.0
+			cooldownHours = float64(maxInt(1, effectiveCooldownUpSecForChannel(e.profile, cooldownUpSec, outRatio, holdUpOnRecentRebalance))) / 3600.0
 		}
 		remaining := cooldownHours - hoursSince
 		if remaining > 0 {
@@ -5986,6 +7000,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		FloorSrc:                floorSrc,
 		Tags:                    tags,
 		InboundDiscount:         inboundDiscount,
+		PrevInboundDiscount:     prevInboundDiscount,
 		SuperSourceActive:       superSourceActive,
 		OutRatio:                outRatio,
 		OutPpm7d:                outPpm7d,
@@ -6031,12 +7046,24 @@ func (e *autofeeEngine) evalExplorer(st *autofeeChannelState, outRatio float64, 
 			stagnationPhase := st.ExplorerState.StagnationPhase
 			surgeGateRounds := st.ExplorerState.SurgeGateRounds
 			surgeGatePpm := st.ExplorerState.SurgeGatePpm
+			drainedActive := st.ExplorerState.DrainedActive
+			drainedStartedTs := st.ExplorerState.DrainedStartedTs
+			drainedRounds := st.ExplorerState.DrainedRounds
+			drainedFwdsAtStart := st.ExplorerState.DrainedFwdsAtStart
+			drainedLastExitTs := st.ExplorerState.DrainedLastExitTs
+			drainedSeen := st.ExplorerState.DrainedSeen
 			st.ExplorerState = explorerState{
 				Active:                true,
 				StartedTs:             nowTs,
 				Rounds:                0,
 				FwdsAtStart:           fwdCount,
 				Seen:                  true,
+				DrainedActive:         drainedActive,
+				DrainedStartedTs:      drainedStartedTs,
+				DrainedRounds:         drainedRounds,
+				DrainedFwdsAtStart:    drainedFwdsAtStart,
+				DrainedLastExitTs:     drainedLastExitTs,
+				DrainedSeen:           drainedSeen,
 				StagnationNoFwdRounds: stagnationNoFwdRounds,
 				StagnationPhase:       stagnationPhase,
 				SurgeGateRounds:       surgeGateRounds,
@@ -6056,16 +7083,116 @@ func (e *autofeeEngine) evalExplorer(st *autofeeChannelState, outRatio float64, 
 	}
 	return true
 }
-func (e *autofeeEngine) seedForChannel(pubkey string, st *autofeeChannelState) (float64, float64, []string) {
+
+func (e *autofeeEngine) evalDrainedExplorer(st *autofeeChannelState, outRatio float64, recentForwards1d int, recentRebalanceCount int) bool {
+	nowTs := e.now.Unix()
+	active := st.ExplorerState.DrainedActive
+	if !active {
+		daysSince := 999.0
+		if !st.LastTs.IsZero() {
+			daysSince = e.now.Sub(st.LastTs).Hours() / 24.0
+		}
+		maxFwds := maxInt(0, e.profile.DrainedExplorerRecentFwds1dMax)
+		if recentRebalanceCount == 0 &&
+			daysSince >= float64(maxInt(1, e.profile.DrainedExplorerAfterDays)) &&
+			outRatio <= e.profile.DrainedExplorerOutRatioMax &&
+			recentForwards1d <= maxFwds {
+			st.ExplorerState.DrainedActive = true
+			st.ExplorerState.DrainedStartedTs = nowTs
+			st.ExplorerState.DrainedRounds = 0
+			st.ExplorerState.DrainedFwdsAtStart = recentForwards1d
+			st.ExplorerState.DrainedSeen = true
+			return true
+		}
+		return false
+	}
+
+	hoursSince := float64(nowTs-st.ExplorerState.DrainedStartedTs) / 3600.0
+	fwdsSince := recentForwards1d - st.ExplorerState.DrainedFwdsAtStart
+	maxFwds := maxInt(0, e.profile.DrainedExplorerRecentFwds1dMax)
+	maxHours := maxInt(1, e.profile.DrainedExplorerMaxHours)
+	maxRounds := maxInt(1, e.profile.DrainedExplorerMaxRounds)
+	exitOutRatio := e.profile.DrainedExplorerOutRatioMax * 1.5
+	if exitOutRatio <= 0 {
+		exitOutRatio = e.profile.DrainedExplorerOutRatioMax
+	}
+	if recentRebalanceCount > 0 ||
+		fwdsSince >= 1 ||
+		recentForwards1d > maxFwds ||
+		hoursSince >= float64(maxHours) ||
+		st.ExplorerState.DrainedRounds >= maxRounds ||
+		(exitOutRatio > 0 && outRatio > exitOutRatio) {
+		st.ExplorerState.DrainedActive = false
+		st.ExplorerState.DrainedLastExitTs = nowTs
+		return false
+	}
+	return true
+}
+
+func applyDrainedExplorerTarget(profile autofeeProfile, active bool, rounds int, localPpm int, targetPpm int, seed float64, baseCostPpm int) (int, []string) {
+	if !active || localPpm < 0 {
+		return targetPpm, nil
+	}
+	stepPpm := maxInt(1, profile.DrainedExplorerStepPpm)
+	tags := []string{"drained-explorer", fmt.Sprintf("drained-explorer-r%d", maxInt(1, rounds+1))}
+	minTarget := localPpm + stepPpm
+	if targetPpm < minTarget {
+		targetPpm = minTarget
+		tags = append(tags, "drained-explorer-step")
+	}
+	anchorPpm := maxInt(baseCostPpm, int(math.Round(seed)))
+	if anchorPpm > 0 {
+		ceiling := int(math.Ceil(float64(anchorPpm) * 1.10))
+		if ceiling < minTarget {
+			ceiling = minTarget
+		}
+		if targetPpm > ceiling {
+			targetPpm = ceiling
+			tags = append(tags, "drained-explorer-cap")
+		}
+	}
+	return targetPpm, tags
+}
+
+func capWeakDemandFloorUpForDrainedExplorer(profile autofeeProfile, active bool, localPpm int, finalPpm int) (int, []string) {
+	if !active || finalPpm <= localPpm {
+		return finalPpm, nil
+	}
+	stepPpm := maxInt(1, profile.DrainedExplorerStepPpm)
+	maxAllowed := localPpm + stepPpm
+	if finalPpm > maxAllowed {
+		return maxAllowed, []string{"drained-explorer-cap"}
+	}
+	return finalPpm, nil
+}
+
+func (e *autofeeEngine) seedForChannel(pubkey string, st *autofeeChannelState) (float64, float64, float64, []string) {
 	tags := []string{}
+	nativeAttempted := false
+	if e.cfg.NativeSeedEnabled && pubkey != "" {
+		nativeAttempted = true
+		seed, seedP95, peerMarketSkew, nativeTags, ok, err := e.fetchNativeSeed(pubkey)
+		tags = append(tags, nativeTags...)
+		if err == nil && ok {
+			if st != nil && st.LastSeed > 0 && e.profile.SeedGuardMaxJump > 0 {
+				maxJump := 1.0 + e.profile.SeedGuardMaxJump
+				maxAllowed := float64(st.LastSeed) * maxJump
+				if seed > maxAllowed {
+					seed = maxAllowed
+					tags = append(tags, "seed:guard")
+				}
+			}
+			return seed, seedP95, peerMarketSkew, tags
+		}
+	}
 	if e.cfg.AmbossEnabled {
-		token, err := e.fetchAmbossToken(context.Background())
+		token, err := e.cachedAmbossToken(context.Background())
 		if err != nil {
 			tags = append(tags, "seed:amboss-error")
 		} else if token == "" {
 			tags = append(tags, "seed:amboss-missing")
 		} else if pubkey != "" {
-			seed, seedP95, seedTags, err := e.fetchAmbossSeed(pubkey, token)
+			seed, seedP95, peerMarketSkew, seedTags, err := e.fetchAmbossSeed(pubkey, token)
 			if err != nil {
 				tags = append(tags, "seed:amboss-error")
 			} else if seed > 0 {
@@ -6078,7 +7205,10 @@ func (e *autofeeEngine) seedForChannel(pubkey string, st *autofeeChannelState) (
 						tags = append(tags, "seed:guard")
 					}
 				}
-				return seed, seedP95, tags
+				if nativeAttempted && !containsTag(tags, "seed:native") {
+					tags = append(tags, "seed:native-fallback-amboss")
+				}
+				return seed, seedP95, peerMarketSkew, tags
 			} else {
 				tags = append(tags, "seed:amboss-empty")
 			}
@@ -6086,12 +7216,12 @@ func (e *autofeeEngine) seedForChannel(pubkey string, st *autofeeChannelState) (
 	}
 
 	if st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 21*24*time.Hour {
-		return float64(st.LastOutrate), 0, append(tags, "seed:outrate")
+		return float64(st.LastOutrate), 0, 0, append(tags, "seed:outrate")
 	}
 	if st.LastSeed > 0 {
-		return float64(st.LastSeed), 0, append(tags, "seed:mem")
+		return float64(st.LastSeed), 0, 0, append(tags, "seed:mem")
 	}
-	return 200.0, 0, append(tags, "seed:default")
+	return 200.0, 0, 0, append(tags, "seed:default")
 }
 
 func (e *autofeeEngine) fetchAmbossToken(ctx context.Context) (string, error) {
@@ -6106,6 +7236,157 @@ func (e *autofeeEngine) fetchAmbossToken(ctx context.Context) (string, error) {
 	return "", nil
 }
 
+func (e *autofeeEngine) cachedAmbossToken(ctx context.Context) (string, error) {
+	if e.ambossTokenLoad {
+		return e.ambossToken, e.ambossTokenErr
+	}
+	token, err := e.fetchAmbossToken(ctx)
+	e.ambossToken = token
+	e.ambossTokenErr = err
+	e.ambossTokenLoad = true
+	return token, err
+}
+
+func (e *autofeeEngine) fetchNativeSeed(pubkey string) (float64, float64, float64, []string, bool, error) {
+	pubkey = strings.TrimSpace(pubkey)
+	if pubkey == "" {
+		return 0, 0, 0, nil, false, nil
+	}
+	if cached, ok := e.nativeSeedCache[pubkey]; ok {
+		return cached.Seed, cached.SeedP95, cached.PeerMarketSkew, append([]string{}, cached.Tags...), cached.Ok, cached.Err
+	}
+	if e.svc == nil || e.svc.db == nil {
+		result := autofeeSeedResult{Tags: []string{"seed:native-error"}, Err: errors.New("db unavailable")}
+		e.nativeSeedCache[pubkey] = result
+		return 0, 0, 0, append([]string{}, result.Tags...), false, result.Err
+	}
+
+	end := e.now.UTC().Truncate(24 * time.Hour)
+	since := end.AddDate(0, 0, -maxInt(autofeeMinLookbackDays, e.cfg.LookbackDays))
+	rows, err := e.svc.db.Query(context.Background(), `
+select
+  to_char(date_trunc('day', h.captured_at at time zone 'UTC'), 'YYYY-MM-DD') as day,
+  coalesce(round(
+    sum(case when h.connecting_pubkey = $1 and h.advertising_pubkey <> $1 then h.fee_rate_ppm::numeric * greatest(ch.capacity_sat, 0)::numeric else 0 end)
+    / nullif(sum(case when h.connecting_pubkey = $1 and h.advertising_pubkey <> $1 then greatest(ch.capacity_sat, 0)::numeric else 0 end), 0)
+  ), 0)::bigint as inbound_weighted_avg_ppm,
+  count(*) filter (where h.connecting_pubkey = $1 and h.advertising_pubkey <> $1) as inbound_sample_count,
+  coalesce(round(
+    sum(case when h.advertising_pubkey = $1 then h.fee_rate_ppm::numeric * greatest(ch.capacity_sat, 0)::numeric else 0 end)
+    / nullif(sum(case when h.advertising_pubkey = $1 then greatest(ch.capacity_sat, 0)::numeric else 0 end), 0)
+  ), 0)::bigint as outbound_weighted_avg_ppm,
+  count(*) filter (where h.advertising_pubkey = $1) as outbound_sample_count
+from graph_channel_policy_history h
+join graph_channels ch on ch.chan_id = h.chan_id
+where (h.advertising_pubkey = $1 or h.connecting_pubkey = $1)
+  and h.captured_at >= $2
+  and h.captured_at < $3
+group by 1
+order by 1 desc
+`, pubkey, since, end)
+	if err != nil {
+		result := autofeeSeedResult{Tags: []string{"seed:native-error"}, Err: err}
+		e.nativeSeedCache[pubkey] = result
+		return 0, 0, 0, append([]string{}, result.Tags...), false, err
+	}
+	defer rows.Close()
+
+	inboundVals := make([]float64, 0, maxInt(autofeeMinLookbackDays, e.cfg.LookbackDays))
+	outboundVals := make([]float64, 0, maxInt(autofeeMinLookbackDays, e.cfg.LookbackDays))
+	totalInboundSamples := int64(0)
+	for rows.Next() {
+		var day string
+		var inboundWeightedAvg int64
+		var inboundSamples int64
+		var outboundWeightedAvg int64
+		var outboundSamples int64
+		if err := rows.Scan(&day, &inboundWeightedAvg, &inboundSamples, &outboundWeightedAvg, &outboundSamples); err != nil {
+			result := autofeeSeedResult{Tags: []string{"seed:native-error"}, Err: err}
+			e.nativeSeedCache[pubkey] = result
+			return 0, 0, 0, append([]string{}, result.Tags...), false, err
+		}
+		if inboundSamples > 0 {
+			inboundVals = append(inboundVals, float64(inboundWeightedAvg))
+			totalInboundSamples += inboundSamples
+		}
+		if outboundSamples > 0 {
+			outboundVals = append(outboundVals, float64(outboundWeightedAvg))
+		}
+	}
+	if err := rows.Err(); err != nil {
+		result := autofeeSeedResult{Tags: []string{"seed:native-error"}, Err: err}
+		e.nativeSeedCache[pubkey] = result
+		return 0, 0, 0, append([]string{}, result.Tags...), false, err
+	}
+	if len(inboundVals) < autofeeNativeSeedMinDays || totalInboundSamples < autofeeNativeSeedMinSamples {
+		result := autofeeSeedResult{Tags: []string{"seed:native-insufficient"}}
+		e.nativeSeedCache[pubkey] = result
+		return 0, 0, 0, append([]string{}, result.Tags...), false, nil
+	}
+
+	p65 := percentile(append([]float64{}, inboundVals...), 0.65)
+	p95 := percentile(append([]float64{}, inboundVals...), 0.95)
+	if p95 <= 0 {
+		result := autofeeSeedResult{Tags: []string{"seed:native-empty"}}
+		e.nativeSeedCache[pubkey] = result
+		return 0, 0, 0, append([]string{}, result.Tags...), false, nil
+	}
+
+	seed := p65
+	peerMarketSkew := 0.0
+	tags := []string{}
+
+	incMedian := percentile(append([]float64{}, inboundVals...), 0.50)
+	incMean := averageFloat64(inboundVals)
+	incStd := stddevFloat64(inboundVals, incMean)
+	if incMedian > 0 {
+		seed = (1.0-0.30)*seed + 0.30*incMedian
+		tags = append(tags, "seed:native-med")
+	}
+	if incMean > 0 && incStd > 0 {
+		sigmaMu := incStd / incMean
+		pen := math.Min(0.15, 0.25*sigmaMu)
+		if pen > 0 {
+			seed = seed * (1.0 - pen)
+			tags = append(tags, fmt.Sprintf("seed:native-vol-%d%%", int(math.Round(pen*100))))
+		}
+	}
+
+	outMean := averageFloat64(outboundVals)
+	if incMean > 0 && outMean > 0 {
+		peerMarketSkew = outMean / incMean
+		f := 1.0 + 0.20*(peerMarketSkew-1.0)
+		if f < 0.80 {
+			f = 0.80
+		} else if f > 1.50 {
+			f = 1.50
+		}
+		if math.Abs(f-1.0) > 0.001 {
+			seed = seed * f
+			tags = append(tags, fmt.Sprintf("seed:native-ratiox%.2f", f))
+		}
+	}
+
+	if seed > p95 {
+		seed = p95
+		tags = append(tags, "seed:native-p95cap")
+	}
+	if e.cfg.MaxPpm > 0 && seed > float64(e.cfg.MaxPpm) {
+		seed = float64(e.cfg.MaxPpm)
+		tags = append(tags, "seed:maxppm")
+	}
+	tags = append(tags, "seed:native")
+	result := autofeeSeedResult{
+		Seed:           seed,
+		SeedP95:        p95,
+		PeerMarketSkew: peerMarketSkew,
+		Tags:           append([]string{}, tags...),
+		Ok:             true,
+	}
+	e.nativeSeedCache[pubkey] = result
+	return seed, p95, peerMarketSkew, append([]string{}, tags...), true, nil
+}
+
 type ambossSeriesResp struct {
 	Data struct {
 		GetNodeMetrics struct {
@@ -6114,17 +7395,18 @@ type ambossSeriesResp struct {
 	} `json:"data"`
 }
 
-func (e *autofeeEngine) fetchAmbossSeed(pubkey string, token string) (float64, float64, []string, error) {
+func (e *autofeeEngine) fetchAmbossSeed(pubkey string, token string) (float64, float64, float64, []string, error) {
 	vals, err := fetchAmbossSeries(pubkey, token, e.cfg.LookbackDays, "incoming_fee_rate_metrics", "weighted_corrected_mean")
 	if err != nil {
-		return 0, 0, nil, err
+		return 0, 0, 0, nil, err
 	}
 	if len(vals) == 0 {
-		return 0, 0, nil, nil
+		return 0, 0, 0, nil, nil
 	}
 	p65 := percentile(vals, 0.65)
 	p95 := percentile(vals, 0.95)
 	seed := p65
+	peerMarketSkew := 0.0
 	tags := []string{}
 
 	incMedian, _ := ambossAvgSeries(pubkey, token, e.cfg.LookbackDays, "incoming_fee_rate_metrics", "median")
@@ -6147,8 +7429,8 @@ func (e *autofeeEngine) fetchAmbossSeed(pubkey string, token string) (float64, f
 	incWcorr, _ := ambossAvgSeries(pubkey, token, e.cfg.LookbackDays, "incoming_fee_rate_metrics", "weighted_corrected_mean")
 	outWcorr, _ := ambossAvgSeries(pubkey, token, e.cfg.LookbackDays, "outgoing_fee_rate_metrics", "weighted_corrected_mean")
 	if incWcorr > 0 && outWcorr > 0 {
-		ratio := outWcorr / incWcorr
-		f := 1.0 + 0.20*(ratio-1.0)
+		peerMarketSkew = outWcorr / incWcorr
+		f := 1.0 + 0.20*(peerMarketSkew-1.0)
 		if f < 0.80 {
 			f = 0.80
 		} else if f > 1.50 {
@@ -6164,12 +7446,12 @@ func (e *autofeeEngine) fetchAmbossSeed(pubkey string, token string) (float64, f
 		seed = p95
 		tags = append(tags, "seed:p95cap")
 	}
-	if seed > 1600 {
-		seed = 1600
-		tags = append(tags, "seed:absmax")
+	if e.cfg.MaxPpm > 0 && seed > float64(e.cfg.MaxPpm) {
+		seed = float64(e.cfg.MaxPpm)
+		tags = append(tags, "seed:maxppm")
 	}
 	tags = append(tags, "seed:amboss")
-	return seed, p95, tags, nil
+	return seed, p95, peerMarketSkew, tags, nil
 }
 
 func ambossAvgSeries(pubkey string, token string, lookbackDays int, metric string, submetric string) (float64, error) {
@@ -6445,6 +7727,29 @@ func percentile(vals []float64, q float64) float64 {
 	return vals[lo]*(float64(hi)-pos) + vals[hi]*(pos-float64(lo))
 }
 
+func averageFloat64(vals []float64) float64 {
+	if len(vals) == 0 {
+		return 0
+	}
+	total := 0.0
+	for _, v := range vals {
+		total += v
+	}
+	return total / float64(len(vals))
+}
+
+func stddevFloat64(vals []float64, mean float64) float64 {
+	if len(vals) < 2 {
+		return 0
+	}
+	total := 0.0
+	for _, v := range vals {
+		diff := v - mean
+		total += diff * diff
+	}
+	return math.Sqrt(total / float64(len(vals)))
+}
+
 func classifyChannel(biasEma float64, outRatio float64, inCount int64, outCount int64, prevLabel string, prevConf float64) (string, float64) {
 	label := "unknown"
 	conf := 0.0
@@ -6475,20 +7780,256 @@ func classifyChannel(biasEma float64, outRatio float64, inCount int64, outCount 
 	return label, math.Min(1.0, 0.5*prevConf+0.5*conf)
 }
 
-func computeInboundDiscount(enabled bool, classLabel string, outRatio float64, fwdCount int, marginPpm7d int, baseCostPpm int, appliedPpm int, maxRatio float64) int {
-	if !enabled || !strings.EqualFold(classLabel, "sink") || outRatio > 0.10 || fwdCount < 5 || marginPpm7d < 200 || appliedPpm <= 0 {
+func computeInboundDiscount(enabled bool, classLabel string, outRatio float64, fwdCount int, marginPpm7d int, baseCostPpm int, appliedPpm int, maxRatio float64, reachOutRatio float64, retainedSpreadFrac float64) int {
+	if !enabled || !strings.EqualFold(classLabel, "sink") || fwdCount < 5 || marginPpm7d < 200 || appliedPpm <= 0 {
+		return 0
+	}
+	if reachOutRatio <= 0 {
+		reachOutRatio = 0.10
+	}
+	if outRatio > reachOutRatio {
 		return 0
 	}
 	if maxRatio <= 0 {
 		maxRatio = defaultInboundDiscountMaxRatio
 	}
+	if retainedSpreadFrac <= 0 {
+		retainedSpreadFrac = 0.12
+	}
 	anchor := int(math.Ceil(float64(baseCostPpm) * 1.002))
 	maxDiscount := int(math.Ceil(float64(appliedPpm) * maxRatio))
+	minRetainedSpread := int(math.Ceil(float64(appliedPpm) * retainedSpreadFrac))
 	gap := appliedPpm - anchor
 	if gap <= 0 {
 		return 0
 	}
-	return minInt(gap, maxDiscount)
+	maxDiscountByRetainedSpread := appliedPpm - anchor - minRetainedSpread
+	if maxDiscountByRetainedSpread <= 0 {
+		return 0
+	}
+	return minInt(gap, minInt(maxDiscount, maxDiscountByRetainedSpread))
+}
+
+func adjustMarketRefillInboundTargetFracByPeerSkew(targetFrac float64, peerMarketSkew float64) (float64, []string) {
+	if targetFrac <= 0 || peerMarketSkew < 3.0 {
+		return targetFrac, nil
+	}
+	shrink := 1.0 + 0.20*(math.Log(peerMarketSkew)/math.Log(2))
+	shrink = clampFloat(shrink, 1.0, 2.5)
+	adjusted := targetFrac / shrink
+	minTargetFrac := math.Max(0.03, targetFrac*0.35)
+	if adjusted < minTargetFrac {
+		adjusted = minTargetFrac
+	}
+	tags := []string{"market-refill-skew"}
+	switch {
+	case peerMarketSkew >= 20:
+		tags = append(tags, "market-refill-skew-high")
+	case peerMarketSkew >= 8:
+		tags = append(tags, "market-refill-skew-med")
+	default:
+		tags = append(tags, "market-refill-skew-low")
+	}
+	return adjusted, tags
+}
+
+func computeMarketRefillInboundDiscount(enabled bool, effectiveOutRatio float64, recentForwards1d int, noFlow1d bool, weakRecentFlow bool, peerMarketSkew float64, baseCostPpm int, appliedPpm int, maxRatio float64, retainedSpreadFrac float64, profile autofeeProfile) (int, []string) {
+	if !enabled || appliedPpm <= 0 {
+		return 0, nil
+	}
+	if maxRatio <= 0 {
+		maxRatio = defaultInboundDiscountMaxRatio
+	}
+	if retainedSpreadFrac <= 0 {
+		retainedSpreadFrac = 0.12
+	}
+	targetFrac := profile.MarketRefillNetInboundTargetFrac
+	if targetFrac <= 0 {
+		targetFrac = 0.20
+	}
+	candidateReach := profile.MarketRefillCandidateOutRatioMax
+	if candidateReach <= 0 {
+		candidateReach = 0.15
+	}
+	exploratoryReach := profile.MarketRefillExploratoryOutRatioMax
+	if exploratoryReach < candidateReach {
+		exploratoryReach = candidateReach
+	}
+	exploratoryFwdsMax := profile.MarketRefillExploratoryFwds1dMax
+	balancedTargetFrac := math.Min(0.24, math.Max(targetFrac+0.04, targetFrac*1.20))
+	fullTargetFrac := math.Min(0.32, math.Max(targetFrac+0.08, targetFrac*1.40))
+	fullishOutRatio := math.Max(exploratoryReach, 0.50)
+	fullOutRatio := math.Max(fullishOutRatio+0.20, 0.70)
+	tags := []string{"market-refill-inbound"}
+	switch {
+	case effectiveOutRatio <= candidateReach:
+		// Keep the strongest refill pricing on the most drained channels.
+	case effectiveOutRatio <= exploratoryReach && weakRecentFlow && recentForwards1d <= exploratoryFwdsMax:
+		targetFrac = math.Max(0.03, targetFrac*0.70)
+		tags = append(tags, "market-refill-explore")
+	case effectiveOutRatio <= exploratoryReach && noFlow1d:
+		targetFrac = math.Max(0.03, targetFrac*0.70)
+		tags = append(tags, "market-refill-explore")
+	case noFlow1d && recentForwards1d <= exploratoryFwdsMax:
+		// In market-refill mode the node should test even full/dead channels
+		// instead of leaving them untouched after disabling all rebalances.
+		targetFrac = math.Min(balancedTargetFrac, math.Max(targetFrac+0.02, targetFrac*1.10))
+		tags = append(tags, "market-refill-explore")
+	case weakRecentFlow && recentForwards1d <= exploratoryFwdsMax:
+		targetFrac = math.Min(balancedTargetFrac, math.Max(targetFrac+0.03, targetFrac*1.15))
+	case effectiveOutRatio >= fullOutRatio:
+		targetFrac = fullTargetFrac
+	case effectiveOutRatio >= fullishOutRatio:
+		blend := (effectiveOutRatio - fullishOutRatio) / math.Max(0.01, fullOutRatio-fullishOutRatio)
+		targetFrac = balancedTargetFrac + (fullTargetFrac-balancedTargetFrac)*math.Max(0.0, math.Min(1.0, blend))
+	default:
+		midTop := math.Max(exploratoryReach+0.20, 0.50)
+		blend := (effectiveOutRatio - exploratoryReach) / math.Max(0.01, midTop-exploratoryReach)
+		targetFrac = targetFrac + (balancedTargetFrac-targetFrac)*math.Max(0.0, math.Min(1.0, blend))
+	}
+	if adjustedFrac, skewTags := adjustMarketRefillInboundTargetFracByPeerSkew(targetFrac, peerMarketSkew); len(skewTags) > 0 {
+		targetFrac = adjustedFrac
+		tags = append(tags, skewTags...)
+	}
+	anchor := int(math.Ceil(float64(baseCostPpm) * 1.002))
+	maxDiscount := int(math.Ceil(float64(appliedPpm) * maxRatio))
+	minRetainedSpread := int(math.Ceil(float64(appliedPpm) * retainedSpreadFrac))
+	targetNetInbound := int(math.Ceil(float64(appliedPpm) * targetFrac))
+	gapToTargetNet := appliedPpm - targetNetInbound
+	if gapToTargetNet <= 0 {
+		return 0, nil
+	}
+	maxDiscountByRetainedSpread := appliedPpm - anchor - minRetainedSpread
+	if maxDiscountByRetainedSpread <= 0 {
+		return 0, nil
+	}
+	return minInt(gapToTargetNet, minInt(maxDiscount, maxDiscountByRetainedSpread)), tags
+}
+
+func applyMarketRefillOutboundBias(profile autofeeProfile, localPpm int, targetPpm int, outPpm7d int, outRatio float64, recentForwards1d int, noFlow1d bool, weakRecentFlow bool, minPpm int, maxPpm int) (int, []string) {
+	if outRatio < 0 || targetPpm <= 0 {
+		return targetPpm, nil
+	}
+	candidateReach := profile.MarketRefillCandidateOutRatioMax
+	if candidateReach <= 0 {
+		candidateReach = 0.15
+	}
+	exploratoryReach := profile.MarketRefillExploratoryOutRatioMax
+	if exploratoryReach < candidateReach {
+		exploratoryReach = candidateReach
+	}
+	targetMult := profile.MarketRefillBaseTargetMult
+	if targetMult <= 0 {
+		targetMult = 1.50
+	}
+	targetAdd := profile.MarketRefillBaseTargetAddPpm
+	if targetAdd <= 0 {
+		targetAdd = 150
+	}
+	localHoldFrac := profile.MarketRefillLocalHoldFrac
+	if localHoldFrac <= 0 || localHoldFrac > 1 {
+		localHoldFrac = 0.35
+	}
+	localCapMult := profile.MarketRefillLocalCapMult
+	if localCapMult <= 1 {
+		localCapMult = 1.50
+	}
+	modeFloor := profile.MarketRefillMinOutboundPpm
+	if profile.MarketRefillMinOutboundMaxPpmFrac > 0 && maxPpm > 0 {
+		modeFloor = maxInt(modeFloor, int(math.Ceil(float64(maxPpm)*profile.MarketRefillMinOutboundMaxPpmFrac)))
+	}
+	// In market-refill, use a small bootstrap floor only. The main driver should be
+	// the balanced target plus premium, not a hard node-wide anchor that collapses
+	// all channels to the same target.
+	softFloor := minPpm
+	if modeFloor > 0 {
+		softFloor = maxInt(softFloor, int(math.Ceil(float64(modeFloor)*0.25)))
+	}
+	outrateFloorFrac := profile.MarketRefillOutrateFloorFrac
+	if outrateFloorFrac <= 0 {
+		outrateFloorFrac = 1.0
+	}
+	floorFromOutrate := 0
+	if outPpm7d > 0 {
+		floorFromOutrate = int(math.Ceil(float64(outPpm7d) * outrateFloorFrac))
+	}
+	tags := []string{"market-refill-up"}
+	switch {
+	case outRatio <= candidateReach:
+		targetMult = profile.MarketRefillDrainedTargetMult
+		if targetMult <= 0 {
+			targetMult = 3.50
+		}
+		targetAdd = profile.MarketRefillDrainedTargetAddPpm
+		if targetAdd <= 0 {
+			targetAdd = 1200
+		}
+		tags = append(tags, "market-refill-drained")
+	case outRatio <= exploratoryReach:
+		targetMult = profile.MarketRefillLowTargetMult
+		if targetMult <= 0 {
+			targetMult = 2.50
+		}
+		targetAdd = profile.MarketRefillLowTargetAddPpm
+		if targetAdd <= 0 {
+			targetAdd = 700
+		}
+		tags = append(tags, "market-refill-low")
+	default:
+		tags = append(tags, "market-refill-node")
+	}
+	if (noFlow1d || weakRecentFlow) && recentForwards1d <= profile.MarketRefillExploratoryFwds1dMax {
+		tags = append(tags, "market-refill-explore")
+	}
+	localFloor := 0
+	if localPpm > 0 {
+		localFloor = int(math.Ceil(float64(localPpm) * localHoldFrac))
+		if targetPpm > 0 {
+			localFloorCap := int(math.Ceil(float64(targetPpm) * localCapMult))
+			localFloor = minInt(localFloor, localFloorCap)
+		}
+	}
+	effectiveBase := maxInt(targetPpm, localFloor)
+	premiumTarget := maxInt(
+		int(math.Ceil(float64(effectiveBase)*targetMult)),
+		maxInt(effectiveBase+targetAdd, maxInt(softFloor, floorFromOutrate)),
+	)
+	if premiumTarget > maxPpm {
+		premiumTarget = maxPpm
+	}
+	if premiumTarget > targetPpm {
+		return premiumTarget, tags
+	}
+	return targetPpm, nil
+}
+
+func marketRefillStepCapFrac(profile autofeeProfile, outRatio float64) (float64, []string) {
+	candidateReach := profile.MarketRefillCandidateOutRatioMax
+	if candidateReach <= 0 {
+		candidateReach = 0.15
+	}
+	exploratoryReach := profile.MarketRefillExploratoryOutRatioMax
+	if exploratoryReach < candidateReach {
+		exploratoryReach = candidateReach
+	}
+	baseCap := math.Max(profile.StepCap*2.0, 0.20)
+	lowCap := math.Max(profile.StepCap*3.0, 0.30)
+	drainedCap := math.Max(profile.StepCap*4.0, 0.40)
+	switch {
+	case outRatio <= candidateReach:
+		return drainedCap, []string{"market-refill-stepcap", "market-refill-stepcap-drained"}
+	case outRatio <= exploratoryReach:
+		return lowCap, []string{"market-refill-stepcap", "market-refill-stepcap-low"}
+	default:
+		return baseCap, []string{"market-refill-stepcap"}
+	}
+}
+
+func shouldBypassMarketRefillReversalGuard(tags []string, targetGapPct float64, nextPpm int, localPpm int) bool {
+	if nextPpm <= localPpm || targetGapPct < 50 {
+		return false
+	}
+	return containsTag(tags, "market-refill-up")
 }
 
 func containsTag(tags []string, want string) bool {
@@ -6539,6 +8080,50 @@ func formatAutofeeTags(d *decision) string {
 			add("🧨harddrop")
 		case t == "explorer":
 			add("🧭explorer")
+		case t == "drained-explorer":
+			add("🧭drained-explorer")
+		case strings.HasPrefix(t, "drained-explorer-r"):
+			add("🧭" + strings.TrimPrefix(t, "drained-explorer-"))
+		case t == "drained-explorer-step":
+			add("🧭step-up")
+		case t == "drained-explorer-cap":
+			add("🧭cap")
+		case t == "rescue":
+			add("🛟rescue")
+		case t == "rescue-enter":
+			add("🛟enter")
+		case t == "rescue-exit":
+			add("🛟exit")
+		case t == "rescue-expired":
+			add("🛟expired")
+		case strings.HasPrefix(t, "rescue-r"):
+			add("🛟" + strings.TrimPrefix(t, "rescue-"))
+		case t == "rescue-floor-relax":
+			add("🛟floor-relax")
+		case t == "rescue-global-relax":
+			add("🛟global-relax")
+		case t == "rescue-peg-paused":
+			add("🛟peg-paused")
+		case t == "market-refill-inbound":
+			add("🌊market-refill")
+		case t == "market-refill-up":
+			add("🌊market-up")
+		case t == "market-refill-node":
+			add("🌊market-node")
+		case t == "market-refill-low":
+			add("🌊market-low")
+		case t == "market-refill-drained":
+			add("🌊market-drained")
+		case t == "market-refill-stepcap":
+			add("🌊market-cap")
+		case t == "market-refill-stepcap-low":
+			add("🌊market-cap-low")
+		case t == "market-refill-stepcap-drained":
+			add("🌊market-cap-drained")
+		case t == "market-refill-reversal-bypass":
+			add("🌊market-rev-bypass")
+		case t == "market-refill-explore":
+			add("🧪market-explore")
 		case strings.HasPrefix(t, "surge"):
 			add("📈" + t)
 		case t == "top-rev":
@@ -6635,6 +8220,12 @@ func formatAutofeeTags(d *decision) string {
 			add("🕰️out-21d")
 		case t == "rebal-fallback-21d":
 			add("🕰️rebal-21d")
+		case t == "slow-cycle-30d":
+			add("🕰️slow-30d")
+		case t == "slow-cycle-30d-out":
+			add("🕰️slow-out")
+		case t == "slow-cycle-30d-rebal":
+			add("🕰️slow-rebal")
 		case t == "no-signal-noup":
 			add("🧯no-signal-noup")
 		case t == "no-signal-floor-relax":
@@ -6715,7 +8306,7 @@ func formatAutofeeTags(d *decision) string {
 			add("🛡️seed-guard")
 		case strings.HasPrefix(t, "seed:p95cap"):
 			add("🧢seed-p95")
-		case strings.HasPrefix(t, "seed:absmax"):
+		case strings.HasPrefix(t, "seed:absmax"), strings.HasPrefix(t, "seed:maxppm"):
 			add("🧱seed-cap")
 		case strings.HasPrefix(t, "seed:soft-ceil"):
 			add("🧭seed-soft-ceil")

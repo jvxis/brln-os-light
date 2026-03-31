@@ -77,6 +77,10 @@ Notes:
 - `discovery`: discovery mode active (searching better fee equilibrium).
 - `discovery-hard`: aggressive discovery variant.
 - `explorer`: exploratory behavior active for repricing.
+- `drained-explorer`: exploratory mode for very drained and idle channels.
+- `drained-explorer-rN`: number of consecutive drained-explorer rounds.
+- `drained-explorer-step`: small upward step applied by drained explorer.
+- `drained-explorer-cap`: upward move was limited by the drained-explorer cap.
 - `surge+...`: temporary increase due to strong recent demand/flow.
 - `surge-hold...`: hold phase after surge trigger.
 - `surge-timeout-release`: surge hold released after timeout.
@@ -107,6 +111,28 @@ Notes:
 - `bootstrap`: bootstrap phase for new channel pricing.
 - `inb-<n>`: inbound discount applied (`n` ppm).
 
+## Market refill
+- `market-refill`: channel is being priced under the global `Market refill` mode.
+- `market-node`: base market-refill tier for the node-wide policy.
+- `market-low`: stronger market-refill tier for lower local balance channels.
+- `market-drained`: strongest market-refill tier for effectively drained channels.
+- `market-explore`: exploratory branch of market refill, typically used when recent useful flow is weak or absent.
+- `market-refill-up`: explicit upward bias from market-refill outbound logic.
+- `market-refill-stepcap`: upward move was split by the market-refill step cap.
+- `market-refill-reversal-bypass`: reversal guard was bypassed because market refill detected a clear regime change.
+- `market-refill-skew`: inbound discount was refined using external Amboss market skew.
+- `market-refill-skew-low`, `market-refill-skew-med`, `market-refill-skew-high`: skew classification used to decide how closely inbound should track outbound.
+
+## Rescue
+- `rescue`: channel entered a temporary rescue state inside `Balanced` mode.
+- `rescue-enter`: first rescue round.
+- `rescue-exit`: normal rescue exit after convergence or recovery.
+- `rescue-expired`: rescue expired after its maximum active window.
+- `rescue-rN`: number of consecutive rescue rounds.
+- `rescue-floor-relax`: floor was relaxed toward a band closer to the local signal.
+- `rescue-global-relax`: global negative-margin lock was partially softened under rescue.
+- `rescue-peg-paused`: peg was prevented from re-arming an upward bias while the channel was still in rescue.
+
 ## Seed and fallback provenance
 - `seed:amboss*`: seed sourced from Amboss (or Amboss fallback status).
 - `seed:med`: seed calibrated to medium profile.
@@ -118,6 +144,9 @@ Notes:
 - `seed:guard`: seed guardrail applied.
 - `seed:p95cap`: seed capped by p95 statistical cap.
 - `seed:absmax`: seed capped by absolute maximum.
+- `seed:outcap`: seed capped by `out_ppm7d`.
+- `seed:rebalcap`: seed capped by rebalance reference.
+- `seed:rebalfloor`: seed capped considering the effective rebalance floor.
 - `out-fallback-21d`: outbound fallback data from 21-day window.
 - `rebal-fallback-21d`: rebalance fallback data from 21-day window.
 

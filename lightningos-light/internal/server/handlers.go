@@ -3445,12 +3445,6 @@ func (s *Server) handleWalletSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lightningActivity, _ := s.lnd.ListRecent(ctx, walletActivityFetchLimit)
-
-	onchainActivity, _ := s.lnd.ListOnchain(ctx, walletActivityFetchLimit)
-
-	activity := append(lightningActivity, onchainActivity...)
-
 	resp := map[string]any{
 		"balances": map[string]int64{
 			"onchain_sat":                   balances.OnchainSat,
@@ -3460,12 +3454,123 @@ func (s *Server) handleWalletSummary(w http.ResponseWriter, r *http.Request) {
 			"lightning_local_sat":           balances.LightningLocalSat,
 			"lightning_unsettled_local_sat": balances.LightningUnsettledLocalSat,
 		},
-		"activity": activity,
+		"activity": []any{},
 	}
 	if len(balances.Warnings) > 0 {
 		resp["warning"] = strings.Join(balances.Warnings, " ")
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleWalletActivity(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), lndRPCTimeout)
+	defer cancel()
+
+	now := time.Now().UTC()
+	rangeKey := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("range")))
+	start := now.Add(-7 * 24 * time.Hour)
+	switch rangeKey {
+	case "", "7d":
+		rangeKey = "7d"
+	case "1m":
+		start = now.AddDate(0, -1, 0)
+	case "1a":
+		start = now.AddDate(-1, 0, 0)
+	default:
+		writeError(w, http.StatusBadRequest, "invalid range")
+		return
+	}
+
+	limit := walletActivityFetchLimit
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid limit")
+			return
+		}
+		if parsed < limit {
+			limit = parsed
+		}
+	}
+
+	offset := 0
+	if raw := strings.TrimSpace(r.URL.Query().Get("offset")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			writeError(w, http.StatusBadRequest, "invalid offset")
+			return
+		}
+		offset = parsed
+	}
+
+	if offset >= walletActivityFetchLimit {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"range":       rangeKey,
+			"offset":      offset,
+			"limit":       limit,
+			"has_more":    false,
+			"next_offset": offset,
+			"items":       []any{},
+		})
+		return
+	}
+
+	fetchLimit := offset + limit + 1
+	if fetchLimit > walletActivityFetchLimit {
+		fetchLimit = walletActivityFetchLimit
+	}
+
+	var (
+		items []lndclient.RecentActivity
+		err   error
+	)
+	if s.db != nil {
+		lightningItems, lightningErr := s.walletLightningActivity(ctx, start, now, fetchLimit)
+		if lightningErr != nil {
+			if s.logger != nil {
+				s.logger.Printf("wallet activity: notifications query failed, falling back to lnd: %v", lightningErr)
+			}
+		} else {
+			onchainItems, onchainErr := s.lnd.ListOnchainRange(ctx, start, now, fetchLimit)
+			if onchainErr != nil {
+				writeError(w, http.StatusInternalServerError, lndStatusMessage(onchainErr))
+				return
+			}
+			items = append(lightningItems, onchainItems...)
+			sort.Slice(items, func(i, j int) bool {
+				return items[i].Timestamp.After(items[j].Timestamp)
+			})
+			if len(items) > fetchLimit {
+				items = items[:fetchLimit]
+			}
+		}
+	}
+	if items == nil {
+		items, err = s.lnd.ListActivityRange(ctx, start, now, fetchLimit)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, lndStatusMessage(err))
+			return
+		}
+	}
+
+	if offset > len(items) {
+		offset = len(items)
+	}
+	endIndex := offset + limit
+	hasMore := len(items) > endIndex
+	if endIndex > len(items) {
+		endIndex = len(items)
+	}
+	pageItems := items[offset:endIndex]
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"range":       rangeKey,
+		"offset":      offset,
+		"limit":       limit,
+		"has_more":    hasMore,
+		"next_offset": endIndex,
+		"items":       pageItems,
+	})
 }
 
 func (s *Server) handleWalletAddress(w http.ResponseWriter, r *http.Request) {
@@ -3644,12 +3749,41 @@ func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+func (s *Server) classifyOnchainDestination(ctx context.Context, address string) (string, error) {
+	trimmed := strings.TrimSpace(address)
+	if trimmed == "" {
+		return "unknown", nil
+	}
+
+	isWalletAddress, err := s.lnd.IsWalletAddress(ctx, trimmed)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("wallet destination classification failed: %v", err)
+		}
+		return "unknown", err
+	}
+	if isWalletAddress {
+		return "wallet_internal", nil
+	}
+	return "external", nil
+}
+
+func requiresWalletSendConfirmation(classification string) bool {
+	switch strings.TrimSpace(classification) {
+	case "wallet_internal":
+		return false
+	default:
+		return true
+	}
+}
+
 func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Address     string `json:"address"`
-		AmountSat   int64  `json:"amount_sat"`
-		SatPerVbyte int64  `json:"sat_per_vbyte"`
-		SweepAll    bool   `json:"sweep_all"`
+		Address         string `json:"address"`
+		AmountSat       int64  `json:"amount_sat"`
+		SatPerVbyte     int64  `json:"sat_per_vbyte"`
+		SweepAll        bool   `json:"sweep_all"`
+		ConfirmPassword string `json:"confirm_password"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -3670,6 +3804,32 @@ func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
+
+	destinationClassification, _ := s.classifyOnchainDestination(ctx, address)
+	if s.auth != nil && s.auth.Enabled() && requiresWalletSendConfirmation(destinationClassification) {
+		session, ok := authSessionFromContext(r.Context())
+		if !ok {
+			writeErrorCode(w, http.StatusUnauthorized, "auth_required", "authentication required")
+			return
+		}
+		if !s.auth.HasRecentReauth(session.ID, authScopeWalletSendExternal) {
+			confirmPassword := strings.TrimSpace(req.ConfirmPassword)
+			if confirmPassword != "" {
+				if _, err := s.auth.reauth(session.ID, confirmPassword, authScopeWalletSendExternal); err != nil {
+					writeErrorCode(w, http.StatusUnauthorized, "auth_invalid_credentials", "invalid credentials")
+					return
+				}
+			} else {
+				writeJSON(w, http.StatusPreconditionRequired, map[string]any{
+					"error":                          "password confirmation required for external on-chain sends",
+					"code":                           "wallet_send_external_reauth_required",
+					"destination_classification":     destinationClassification,
+					"requires_password_confirmation": true,
+				})
+				return
+			}
+		}
+	}
 
 	txid, err := s.lnd.SendCoins(ctx, address, req.AmountSat, req.SatPerVbyte, req.SweepAll)
 	if err != nil {
@@ -3715,7 +3875,27 @@ func (s *Server) handleWalletSendPreview(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, preview)
+	destinationClassification, _ := s.classifyOnchainDestination(ctx, req.Address)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"address":                        preview.Address,
+		"sweep_all":                      preview.SweepAll,
+		"requested_amount_sat":           preview.RequestedAmountSat,
+		"recipient_amount_sat":           preview.RecipientAmountSat,
+		"fee_sat":                        preview.FeeSat,
+		"change_sat":                     preview.ChangeSat,
+		"total_debit_sat":                preview.TotalDebitSat,
+		"spendable_sat":                  preview.SpendableSat,
+		"spendable_utxo_count":           preview.SpendableUtxoCount,
+		"selected_input_count":           preview.SelectedInputCount,
+		"selected_input_sat":             preview.SelectedInputSat,
+		"estimated_vbytes":               preview.EstimatedVbytes,
+		"sat_per_vbyte":                  preview.SatPerVbyte,
+		"enough_funds":                   preview.EnoughFunds,
+		"exact":                          preview.Exact,
+		"message":                        preview.Message,
+		"destination_classification":     destinationClassification,
+		"requires_password_confirmation": requiresWalletSendConfirmation(destinationClassification),
+	})
 }
 
 type rpcStatusError struct {

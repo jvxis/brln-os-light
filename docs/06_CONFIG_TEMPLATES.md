@@ -24,7 +24,7 @@ ui:
   static_dir: "/opt/lightningos/ui"
 
 features:
-  enable_login: false
+  enable_login: true
   enable_bitcoin_local_placeholder: true
   enable_app_store_placeholder: true
 

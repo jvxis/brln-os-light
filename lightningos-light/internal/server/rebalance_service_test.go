@@ -216,8 +216,8 @@ func TestNormalizeRebalanceConfigClampsMppBounds(t *testing.T) {
 		MppRoundTimeoutSec: 1,
 	}
 	got := normalizeRebalanceConfig(cfg)
-	if got.MppMaxShards != 8 {
-		t.Fatalf("expected MppMaxShards clamped to 8, got %d", got.MppMaxShards)
+	if got.MppMaxShards != 20 {
+		t.Fatalf("expected MppMaxShards clamped to 20, got %d", got.MppMaxShards)
 	}
 	if got.MppParallelism != got.MppMaxShards {
 		t.Fatalf("expected MppParallelism clamped to MppMaxShards=%d, got %d", got.MppMaxShards, got.MppParallelism)

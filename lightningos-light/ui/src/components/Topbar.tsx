@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getHealth, getLndConfig, getLndStatus } from '../api'
+import { getHealth, getLndConfig, getLndStatus, type AuthState } from '../api'
 import { setLanguage } from '../i18n'
 import type { PaletteKey, ThemeMode } from '../theme'
+import AccountSecurityModal from './AccountSecurityModal'
 
 const statusColors: Record<string, string> = {
   OK: 'bg-glow/20 text-glow border-glow/40',
@@ -17,14 +18,30 @@ type TopbarProps = {
   palette: PaletteKey
   onThemeToggle: () => void
   onPaletteToggle: () => void
+  onLogout?: () => void
+  authState?: AuthState | null
+  onAuthUpdated?: (state: AuthState) => void
+  onAuthRefresh?: () => Promise<AuthState | void>
 }
 
-export default function Topbar({ onMenuToggle, menuOpen, theme, palette, onThemeToggle, onPaletteToggle }: TopbarProps) {
+export default function Topbar({
+  onMenuToggle,
+  menuOpen,
+  theme,
+  palette,
+  onThemeToggle,
+  onPaletteToggle,
+  onLogout,
+  authState,
+  onAuthUpdated,
+  onAuthRefresh
+}: TopbarProps) {
   const { t, i18n } = useTranslation()
   const [status, setStatus] = useState('...')
   const [issues, setIssues] = useState<Array<{ component?: string; level?: string; message?: string }>>([])
   const [nodeAlias, setNodeAlias] = useState('')
   const [nodePubkey, setNodePubkey] = useState('')
+  const [securityModalOpen, setSecurityModalOpen] = useState(false)
   const isPortuguese = i18n.language === 'pt-BR'
   const paletteName = t(`topbar.paletteNames.${palette}`)
   const paletteLabel = t('topbar.paletteLabel', { palette: paletteName })
@@ -180,9 +197,39 @@ export default function Topbar({ onMenuToggle, menuOpen, theme, palette, onTheme
           >
             <span className="h-4 w-4 rounded-full bg-glow shadow" />
           </button>
+          {authState?.enabled && onAuthUpdated && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-ink/60 px-3 py-2 text-xs uppercase tracking-wide text-fog/70 hover:text-white hover:border-white/40 transition"
+              onClick={() => setSecurityModalOpen(true)}
+            >
+              {t('topbar.changePassword')}
+            </button>
+          )}
+          {onLogout && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-ink/60 px-3 py-2 text-xs uppercase tracking-wide text-fog/70 hover:text-white hover:border-white/40 transition"
+              onClick={onLogout}
+            >
+              {t('common.logout')}
+            </button>
+          )}
         </div>
       </div>
       <div className="glow-divider mt-6" />
+      {authState?.enabled && onAuthUpdated && (
+        <AccountSecurityModal
+          open={securityModalOpen}
+          state={authState}
+          onClose={() => setSecurityModalOpen(false)}
+          onAuthenticated={(next) => {
+            onAuthUpdated(next)
+            setSecurityModalOpen(false)
+          }}
+          onRefreshState={onAuthRefresh}
+        />
+      )}
     </header>
   )
 }

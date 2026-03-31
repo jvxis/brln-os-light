@@ -35,11 +35,14 @@ import (
 const recentOnchainWindowBlocks int64 = 20160
 
 const (
-	pendingOpenBumpReasonUnavailable             = "diagnostic_unavailable"
-	pendingOpenBumpReasonFundingTxUnavailable    = "funding_tx_unavailable"
-	pendingOpenBumpReasonNoWalletOutput          = "no_wallet_output"
-	pendingOpenBumpReasonWalletOutputUnavailable = "wallet_output_unavailable"
-	pendingOpenBumpReasonChannelPointInvalid     = "channel_point_invalid"
+	walletActivityPageSize                             = 500
+	walletActivityMaxPages                             = 200
+	walletActivityApproxBlocksPerDay             int64 = 144
+	pendingOpenBumpReasonUnavailable                   = "diagnostic_unavailable"
+	pendingOpenBumpReasonFundingTxUnavailable          = "funding_tx_unavailable"
+	pendingOpenBumpReasonNoWalletOutput                = "no_wallet_output"
+	pendingOpenBumpReasonWalletOutputUnavailable       = "wallet_output_unavailable"
+	pendingOpenBumpReasonChannelPointInvalid           = "channel_point_invalid"
 )
 
 type Client struct {
@@ -53,6 +56,9 @@ type Client struct {
 	infoCache          infoSnapshot
 	infoCacheAt        time.Time
 	infoCacheValid     bool
+	walletAddressesMu  sync.Mutex
+	walletAddresses    map[string]struct{}
+	walletAddressesAt  time.Time
 	channelStateMu     sync.Mutex
 	channelInactive    map[string]time.Time
 	channelPendingOpen map[string]time.Time
@@ -1268,13 +1274,22 @@ func (c *Client) ListRecent(ctx context.Context, limit int) ([]RecentActivity, e
 					continue
 				}
 			}
+			createdAt := time.Unix(inv.CreationDate, 0).UTC()
+			settledAt := time.Time{}
+			eventTime := createdAt
+			if inv.SettleDate > 0 {
+				settledAt = time.Unix(inv.SettleDate, 0).UTC()
+				eventTime = settledAt
+			}
 			item := RecentActivity{
 				Type:        "invoice",
 				Network:     "lightning",
 				Direction:   "in",
 				AmountSat:   inv.Value,
 				Memo:        inv.Memo,
-				Timestamp:   time.Unix(inv.CreationDate, 0).UTC(),
+				Timestamp:   eventTime,
+				CreatedAt:   createdAt,
+				SettledAt:   settledAt,
 				Status:      inv.State.String(),
 				Keysend:     inv.IsKeysend,
 				PaymentHash: hash,
@@ -1318,6 +1333,431 @@ func (c *Client) ListRecent(ctx context.Context, limit int) ([]RecentActivity, e
 	}
 
 	return items, nil
+}
+
+func (c *Client) ListActivityRange(ctx context.Context, start time.Time, end time.Time, limit int) ([]RecentActivity, error) {
+	if end.IsZero() {
+		end = time.Now().UTC()
+	}
+	if start.IsZero() {
+		start = end.Add(-7 * 24 * time.Hour)
+	}
+	if end.Before(start) {
+		start, end = end, start
+	}
+
+	conn, err := c.dial(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	client := lnrpc.NewLightningClient(conn)
+
+	invoices, err := listInvoicesInRange(ctx, client, start, end, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	paymentItems, err := listPaymentsInRange(ctx, client, start, end, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	lightningItems, err := c.buildLightningActivity(ctx, client, invoices, paymentItems)
+	if err != nil {
+		return nil, err
+	}
+
+	onchainItems, err := c.listOnchainRangeWithClient(ctx, client, start, end)
+	if err != nil {
+		return nil, err
+	}
+
+	items := append(lightningItems, onchainItems...)
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Timestamp.After(items[j].Timestamp)
+	})
+	if limit > 0 && len(items) > limit {
+		items = items[:limit]
+	}
+	return items, nil
+}
+
+func (c *Client) ListOnchainRange(ctx context.Context, start time.Time, end time.Time, limit int) ([]RecentActivity, error) {
+	if end.IsZero() {
+		end = time.Now().UTC()
+	}
+	if start.IsZero() {
+		start = end.Add(-7 * 24 * time.Hour)
+	}
+	if end.Before(start) {
+		start, end = end, start
+	}
+
+	conn, err := c.dial(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	client := lnrpc.NewLightningClient(conn)
+	items, err := c.listOnchainRangeWithClient(ctx, client, start, end)
+	if err != nil {
+		return nil, err
+	}
+	if limit > 0 && len(items) > limit {
+		items = items[:limit]
+	}
+	return items, nil
+}
+
+func (c *Client) buildLightningActivity(ctx context.Context, client lnrpc.LightningClient, invoices []*lnrpc.Invoice, paymentItems []*lnrpc.Payment) ([]RecentActivity, error) {
+	pubkey := strings.TrimSpace(c.CachedPubkey())
+	if pubkey == "" {
+		if info, infoErr := client.GetInfo(ctx, &lnrpc.GetInfoRequest{}); infoErr == nil && info != nil {
+			pubkey = strings.TrimSpace(info.IdentityPubkey)
+		}
+	}
+
+	channelByID := map[uint64]ChannelInfo{}
+	if channels, err := client.ListChannels(ctx, &lnrpc.ListChannelsRequest{PeerAliasLookup: true}); err == nil && channels != nil {
+		channelByID = make(map[uint64]ChannelInfo, len(channels.Channels))
+		for _, ch := range channels.Channels {
+			if ch == nil || ch.ChanId == 0 {
+				continue
+			}
+			channelByID[ch.ChanId] = ChannelInfo{
+				ChannelID:    ch.ChanId,
+				ChannelPoint: strings.TrimSpace(ch.ChannelPoint),
+				RemotePubkey: strings.TrimSpace(ch.RemotePubkey),
+				PeerAlias:    strings.TrimSpace(ch.PeerAlias),
+			}
+		}
+	}
+
+	applyRecentChannel := func(item *RecentActivity, chanID uint64, hopPubkey string) {
+		if item == nil || chanID == 0 {
+			return
+		}
+		item.ChannelID = chanID
+		if info, ok := channelByID[chanID]; ok {
+			item.ChannelPoint = info.ChannelPoint
+			item.ChannelAlias = strings.TrimSpace(info.PeerAlias)
+			if item.ChannelAlias == "" {
+				item.ChannelAlias = shortRecentPubKey(info.RemotePubkey)
+			}
+		}
+		if item.ChannelAlias == "" {
+			item.ChannelAlias = shortRecentPubKey(hopPubkey)
+		}
+	}
+
+	rebalanceHashes := map[string]struct{}{}
+	for _, pay := range paymentItems {
+		if pay == nil || pay.Status != lnrpc.Payment_SUCCEEDED {
+			continue
+		}
+		if isSelfPayment(ctx, pubkey, client, pay) {
+			hash := strings.ToLower(strings.TrimSpace(pay.PaymentHash))
+			if hash != "" {
+				rebalanceHashes[hash] = struct{}{}
+			}
+		}
+	}
+
+	items := make([]RecentActivity, 0, len(invoices)+len(paymentItems))
+	for _, inv := range invoices {
+		if inv == nil || inv.State != lnrpc.Invoice_SETTLED {
+			continue
+		}
+		if isRebalanceMemo(inv.Memo) {
+			continue
+		}
+		hash := ""
+		if len(inv.RHash) > 0 {
+			hash = hex.EncodeToString(inv.RHash)
+		}
+		if hash != "" {
+			if _, ok := rebalanceHashes[strings.ToLower(strings.TrimSpace(hash))]; ok {
+				continue
+			}
+		}
+		amountSat := inv.Value
+		if inv.AmtPaidSat > 0 {
+			amountSat = inv.AmtPaidSat
+		}
+		createdAt := time.Unix(inv.CreationDate, 0).UTC()
+		settledAt := time.Time{}
+		eventTime := createdAt
+		if inv.SettleDate > 0 {
+			settledAt = time.Unix(inv.SettleDate, 0).UTC()
+			eventTime = settledAt
+		}
+		item := RecentActivity{
+			Type:        "invoice",
+			Network:     "lightning",
+			Direction:   "in",
+			AmountSat:   amountSat,
+			Memo:        inv.Memo,
+			Timestamp:   eventTime,
+			CreatedAt:   createdAt,
+			SettledAt:   settledAt,
+			Status:      inv.State.String(),
+			Keysend:     inv.IsKeysend,
+			PaymentHash: hash,
+		}
+		for _, htlc := range inv.Htlcs {
+			if htlc == nil || htlc.ChanId == 0 {
+				continue
+			}
+			applyRecentChannel(&item, htlc.ChanId, "")
+			break
+		}
+		items = append(items, item)
+	}
+
+	for _, pay := range paymentItems {
+		if pay == nil || pay.Status != lnrpc.Payment_SUCCEEDED {
+			continue
+		}
+		if isSelfPayment(ctx, pubkey, client, pay) {
+			continue
+		}
+		item := RecentActivity{
+			Type:        "payment",
+			Network:     "lightning",
+			Direction:   "out",
+			AmountSat:   pay.ValueSat,
+			Memo:        pay.PaymentRequest,
+			Timestamp:   recentPaymentTimestamp(pay),
+			Status:      pay.Status.String(),
+			FeeSat:      pay.FeeSat,
+			Keysend:     isKeysendPayment(pay),
+			PaymentHash: strings.ToLower(strings.TrimSpace(pay.PaymentHash)),
+		}
+		if route := recentRouteFromPayment(pay); route != nil && len(route.Hops) > 0 {
+			firstHop := route.Hops[0]
+			applyRecentChannel(&item, firstHop.ChanId, firstHop.PubKey)
+		}
+		items = append(items, item)
+	}
+
+	return items, nil
+}
+
+func listInvoicesInRange(ctx context.Context, client lnrpc.LightningClient, start time.Time, end time.Time, limit int) ([]*lnrpc.Invoice, error) {
+	pageSize := walletActivityPageRequestSize(limit)
+	items := make([]*lnrpc.Invoice, 0, int(pageSize))
+
+	var indexOffset uint64
+	var lastOffset uint64
+	for pages := 0; pages < walletActivityMaxPages; pages++ {
+		resp, err := client.ListInvoices(ctx, &lnrpc.ListInvoiceRequest{
+			Reversed:       true,
+			IndexOffset:    indexOffset,
+			NumMaxInvoices: pageSize,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if resp == nil || len(resp.Invoices) == 0 {
+			break
+		}
+
+		for _, inv := range resp.Invoices {
+			if inv == nil {
+				continue
+			}
+			eventTime := recentInvoiceTimestamp(inv)
+			if eventTime.Before(start) {
+				continue
+			}
+			if eventTime.After(end) {
+				continue
+			}
+			items = append(items, inv)
+			if limit > 0 && len(items) >= limit {
+				return items[:limit], nil
+			}
+		}
+
+		nextOffset := resp.FirstIndexOffset
+		if nextOffset == 0 {
+			for _, inv := range resp.Invoices {
+				if inv == nil || inv.AddIndex == 0 {
+					continue
+				}
+				if nextOffset == 0 || inv.AddIndex < nextOffset {
+					nextOffset = inv.AddIndex
+				}
+			}
+		}
+		if nextOffset == 0 || nextOffset == indexOffset || nextOffset == lastOffset || len(resp.Invoices) < int(pageSize) {
+			break
+		}
+		lastOffset = nextOffset
+		indexOffset = nextOffset
+	}
+
+	return items, nil
+}
+
+func listPaymentsInRange(ctx context.Context, client lnrpc.LightningClient, start time.Time, end time.Time, limit int) ([]*lnrpc.Payment, error) {
+	pageSize := walletActivityPageRequestSize(limit)
+	items := make([]*lnrpc.Payment, 0, int(pageSize))
+
+	var indexOffset uint64
+	var lastOffset uint64
+	for pages := 0; pages < walletActivityMaxPages; pages++ {
+		resp, err := client.ListPayments(ctx, &lnrpc.ListPaymentsRequest{
+			IncludeIncomplete: true,
+			Reversed:          true,
+			IndexOffset:       indexOffset,
+			MaxPayments:       pageSize,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if resp == nil || len(resp.Payments) == 0 {
+			break
+		}
+
+		pageHasInRange := false
+		oldestEventBeforeStart := false
+		for _, pay := range resp.Payments {
+			if pay == nil {
+				continue
+			}
+			eventTime := recentPaymentTimestamp(pay)
+			if eventTime.Before(start) {
+				oldestEventBeforeStart = true
+				continue
+			}
+			if eventTime.After(end) {
+				continue
+			}
+			pageHasInRange = true
+			items = append(items, pay)
+			if limit > 0 && len(items) >= limit {
+				return items[:limit], nil
+			}
+		}
+
+		nextOffset := resp.FirstIndexOffset
+		if nextOffset == 0 {
+			for _, pay := range resp.Payments {
+				if pay == nil || pay.PaymentIndex == 0 {
+					continue
+				}
+				if nextOffset == 0 || pay.PaymentIndex < nextOffset {
+					nextOffset = pay.PaymentIndex
+				}
+			}
+		}
+		if nextOffset == 0 || nextOffset == indexOffset || nextOffset == lastOffset || len(resp.Payments) < int(pageSize) {
+			break
+		}
+		if oldestEventBeforeStart && !pageHasInRange {
+			break
+		}
+		lastOffset = nextOffset
+		indexOffset = nextOffset
+	}
+
+	return items, nil
+}
+
+func (c *Client) listOnchainRangeWithClient(ctx context.Context, client lnrpc.LightningClient, start time.Time, end time.Time) ([]RecentActivity, error) {
+	startHeight := int32(0)
+	if info, infoErr := client.GetInfo(ctx, &lnrpc.GetInfoRequest{}); infoErr == nil && info != nil && info.BlockHeight > 0 {
+		rangeHours := end.Sub(start).Hours()
+		if rangeHours > 0 {
+			windowBlocks := int64(math.Ceil(rangeHours / 24 * float64(walletActivityApproxBlocksPerDay)))
+			windowBlocks += walletActivityApproxBlocksPerDay
+			if windowBlocks > 0 && int64(info.BlockHeight) > windowBlocks {
+				startHeight = int32(int64(info.BlockHeight) - windowBlocks)
+			}
+		}
+	}
+
+	resp, err := client.GetTransactions(ctx, &lnrpc.GetTransactionsRequest{
+		MaxTransactions: 0,
+		StartHeight:     startHeight,
+		EndHeight:       -1,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]RecentActivity, 0, len(resp.Transactions))
+	for _, tx := range resp.Transactions {
+		if tx == nil || tx.Amount == 0 {
+			continue
+		}
+		txTime := time.Unix(tx.TimeStamp, 0).UTC()
+		if txTime.Before(start) || txTime.After(end) {
+			continue
+		}
+
+		amount := tx.Amount
+		direction := "in"
+		if amount < 0 {
+			direction = "out"
+			amount *= -1
+		}
+		status := "PENDING"
+		if tx.NumConfirmations > 0 {
+			status = "CONFIRMED"
+		}
+
+		addresses := make([]string, 0, len(tx.OutputDetails))
+		if len(tx.OutputDetails) > 0 {
+			for _, out := range tx.OutputDetails {
+				if out == nil || out.Address == "" {
+					continue
+				}
+				addresses = append(addresses, out.Address)
+			}
+		}
+		if len(addresses) == 0 && len(tx.DestAddresses) > 0 {
+			addresses = append(addresses, tx.DestAddresses...)
+		}
+
+		items = append(items, RecentActivity{
+			Type:          "onchain",
+			Network:       "onchain",
+			Direction:     direction,
+			AmountSat:     amount,
+			Memo:          tx.Label,
+			Timestamp:     txTime,
+			Status:        status,
+			Txid:          tx.TxHash,
+			FeeSat:        tx.TotalFees,
+			Confirmations: tx.NumConfirmations,
+			BlockHeight:   tx.BlockHeight,
+			Addresses:     uniqueStrings(addresses),
+		})
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Timestamp.After(items[j].Timestamp)
+	})
+	return items, nil
+}
+
+func walletActivityPageRequestSize(limit int) uint64 {
+	if limit > 0 && limit < walletActivityPageSize {
+		return uint64(limit)
+	}
+	return walletActivityPageSize
+}
+
+func walletActivityMaxInt64(left int64, right int64) int64 {
+	if left > right {
+		return left
+	}
+	return right
 }
 
 func listRecentPaymentsWithFallback(ctx context.Context, client lnrpc.LightningClient, limit int) ([]*lnrpc.Payment, error) {
@@ -1369,6 +1809,19 @@ func recentPaymentTimestamp(pay *lnrpc.Payment) time.Time {
 	}
 	if pay.CreationTimeNs != 0 {
 		return time.Unix(0, pay.CreationTimeNs).UTC()
+	}
+	return time.Now().UTC()
+}
+
+func recentInvoiceTimestamp(inv *lnrpc.Invoice) time.Time {
+	if inv == nil {
+		return time.Time{}
+	}
+	if inv.SettleDate != 0 {
+		return time.Unix(inv.SettleDate, 0).UTC()
+	}
+	if inv.CreationDate != 0 {
+		return time.Unix(inv.CreationDate, 0).UTC()
 	}
 	return time.Now().UTC()
 }
@@ -1546,15 +1999,31 @@ func (c *Client) ListOnchain(ctx context.Context, limit int) ([]RecentActivity, 
 		if tx.NumConfirmations > 0 {
 			status = "CONFIRMED"
 		}
+		addresses := make([]string, 0, len(tx.OutputDetails))
+		if len(tx.OutputDetails) > 0 {
+			for _, out := range tx.OutputDetails {
+				if out == nil || out.Address == "" {
+					continue
+				}
+				addresses = append(addresses, out.Address)
+			}
+		}
+		if len(addresses) == 0 && len(tx.DestAddresses) > 0 {
+			addresses = append(addresses, tx.DestAddresses...)
+		}
 		items = append(items, RecentActivity{
-			Type:      "onchain",
-			Network:   "onchain",
-			Direction: direction,
-			AmountSat: amount,
-			Memo:      tx.Label,
-			Timestamp: time.Unix(tx.TimeStamp, 0).UTC(),
-			Status:    status,
-			Txid:      tx.TxHash,
+			Type:          "onchain",
+			Network:       "onchain",
+			Direction:     direction,
+			AmountSat:     amount,
+			Memo:          tx.Label,
+			Timestamp:     time.Unix(tx.TimeStamp, 0).UTC(),
+			Status:        status,
+			Txid:          tx.TxHash,
+			FeeSat:        tx.TotalFees,
+			Confirmations: tx.NumConfirmations,
+			BlockHeight:   tx.BlockHeight,
+			Addresses:     uniqueStrings(addresses),
 		})
 	}
 
@@ -4427,19 +4896,25 @@ type BumpFeeParams struct {
 }
 
 type RecentActivity struct {
-	Type         string    `json:"type"`
-	Network      string    `json:"network,omitempty"`
-	Direction    string    `json:"direction,omitempty"`
-	AmountSat    int64     `json:"amount_sat"`
-	Memo         string    `json:"memo"`
-	Timestamp    time.Time `json:"timestamp"`
-	Status       string    `json:"status"`
-	Txid         string    `json:"txid,omitempty"`
-	Keysend      bool      `json:"keysend,omitempty"`
-	ChannelID    uint64    `json:"channel_id,omitempty"`
-	ChannelPoint string    `json:"channel_point,omitempty"`
-	ChannelAlias string    `json:"channel_alias,omitempty"`
-	PaymentHash  string    `json:"-"`
+	Type          string    `json:"type"`
+	Network       string    `json:"network,omitempty"`
+	Direction     string    `json:"direction,omitempty"`
+	AmountSat     int64     `json:"amount_sat"`
+	Memo          string    `json:"memo"`
+	Timestamp     time.Time `json:"timestamp"`
+	CreatedAt     time.Time `json:"created_at,omitempty"`
+	SettledAt     time.Time `json:"settled_at,omitempty"`
+	Status        string    `json:"status"`
+	Txid          string    `json:"txid,omitempty"`
+	FeeSat        int64     `json:"fee_sat,omitempty"`
+	Confirmations int32     `json:"confirmations,omitempty"`
+	BlockHeight   int32     `json:"block_height,omitempty"`
+	Addresses     []string  `json:"addresses,omitempty"`
+	Keysend       bool      `json:"keysend,omitempty"`
+	ChannelID     uint64    `json:"channel_id,omitempty"`
+	ChannelPoint  string    `json:"channel_point,omitempty"`
+	ChannelAlias  string    `json:"channel_alias,omitempty"`
+	PaymentHash   string    `json:"payment_hash,omitempty"`
 }
 
 type OnchainTransaction struct {

@@ -3,10 +3,19 @@
 Base URL: https://127.0.0.1:8443
 
 ## Auth
-- No auth in the current build. Access is expected via LAN or VPN.
+- Session auth with secure HTTP-only cookie when `features.enable_login=true`.
+- Public auth endpoints:
+  - `GET /api/auth/state`
+  - `POST /api/auth/setup`
+  - `POST /api/auth/login`
+  - `POST /api/auth/recovery`
+- Authenticated auth endpoints:
+  - `POST /api/auth/logout`
+  - `POST /api/auth/reauth`
+- Manual external on-chain sends (`POST /api/wallet/send`) require a fresh reauthentication step.
 
 ## Error format
-- Non-2xx responses return JSON: {"error": "message"}
+- Non-2xx responses return JSON: `{"error":"message","code":"optional_code"}`
 
 ## Health and system
 

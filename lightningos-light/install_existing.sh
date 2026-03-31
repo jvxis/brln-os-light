@@ -15,6 +15,7 @@ LND_FIX_PERMS_SCRIPT="/usr/local/sbin/lightningos-fix-lnd-perms"
 LND_UPGRADE_SCRIPT="/usr/local/sbin/lightningos-upgrade-lnd"
 APP_UPGRADE_SCRIPT="/usr/local/sbin/lightningos-upgrade-app"
 TERMINAL_OPERATOR_USER="${TERMINAL_OPERATOR_USER:-losop}"
+MANAGER_BIN="/opt/lightningos/manager/lightningos-manager"
 
 CURRENT_STEP=""
 LOG_FILE="/var/log/lightningos-install-existing.log"
@@ -51,6 +52,37 @@ print_warn() {
   echo "[WARN] $1"
 }
 
+print_auth_setup_token() {
+  if [[ ! -x "$MANAGER_BIN" ]]; then
+    print_warn "Manager binary not found at $MANAGER_BIN"
+    return
+  fi
+
+  local status token_output
+  if ! status=$("$MANAGER_BIN" auth status 2>/dev/null); then
+    print_warn "Could not read auth status"
+    echo "Generate a setup token manually with:"
+    echo "  sudo $MANAGER_BIN auth setup-token new"
+    return
+  fi
+
+  if grep -q '^password_configured=true$' <<<"$status"; then
+    echo "Admin password is already configured."
+    return
+  fi
+
+  echo "Admin setup token:"
+  if token_output=$("$MANAGER_BIN" auth setup-token new 2>/dev/null); then
+    while IFS= read -r line; do
+      echo "  $line"
+    done <<<"$token_output"
+  else
+    print_warn "Automatic setup token generation failed"
+  fi
+  echo "Generate another setup token later with:"
+  echo "  sudo $MANAGER_BIN auth setup-token new"
+}
+
 get_lightningos_version() {
   local version_file="$REPO_ROOT/ui/public/version.txt"
   local version="unknown"
@@ -78,11 +110,11 @@ EOF
 get_mit_terms() {
   local license_file="$REPO_ROOT/../LICENSE"
   if [[ -f "$license_file" ]]; then
-    awk 'BEGIN{p=0} /^MIT License \\(English\\)/{p=1} /^MIT License \\(Portuguese\\)/{p=0} p{print}' "$license_file"
+    cat "$license_file"
     return
   fi
   cat <<'EOF'
-MIT License (English)
+MIT License
 
 Copyright (c) 2026 BR⚡LN
 
@@ -441,8 +473,9 @@ install_lnd_upgrade_script() {
 }
 
 configure_sudoers() {
+  local manager_user="${1:-lightningos}"
   print_step "Configuring sudoers"
-  local systemctl_path apt_get_path apt_path dpkg_path docker_path docker_compose_path systemd_run_path smartctl_path ufw_path
+  local systemctl_path apt_get_path apt_path dpkg_path docker_path docker_compose_path systemd_run_path smartctl_path ufw_path tee_path
   systemctl_path=$(command -v systemctl || true)
   apt_get_path=$(command -v apt-get || true)
   apt_path=$(command -v apt || true)
@@ -452,6 +485,7 @@ configure_sudoers() {
   systemd_run_path=$(command -v systemd-run || true)
   smartctl_path=$(command -v smartctl || true)
   ufw_path=$(command -v ufw || true)
+  tee_path=$(command -v tee || true)
   if [[ -z "$docker_path" ]]; then
     docker_path="/usr/bin/docker"
   fi
@@ -464,12 +498,15 @@ configure_sudoers() {
   if [[ -z "$smartctl_path" ]]; then
     smartctl_path="/usr/sbin/smartctl"
   fi
+  if [[ -z "$tee_path" ]]; then
+    tee_path="/usr/bin/tee"
+  fi
   if [[ -z "$systemctl_path" ]]; then
     print_warn "systemctl not found; skipping sudoers setup"
     return
   fi
   local system_cmds
-  system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} is-active lightningos-app-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${LND_UPGRADE_SCRIPT}, ${APP_UPGRADE_SCRIPT}, ${smartctl_path} *"
+  system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} is-active lightningos-app-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${LND_UPGRADE_SCRIPT}, ${APP_UPGRADE_SCRIPT}, ${smartctl_path} *, ${tee_path} /etc/lightningos/config.yaml"
   local app_cmds=()
   [[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")
   [[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")
@@ -483,11 +520,18 @@ configure_sudoers() {
   if [[ -z "$app_cmds_line" ]]; then
     app_cmds_line="/bin/true"
   fi
+  local alias_suffix system_alias app_alias
+  alias_suffix=$(printf '%s' "$manager_user" | tr '[:lower:]-' '[:upper:]_' | tr -cd 'A-Z0-9_')
+  if [[ -z "$alias_suffix" ]]; then
+    alias_suffix="LIGHTNINGOS"
+  fi
+  system_alias="LIGHTNINGOS_SYSTEM_${alias_suffix}"
+  app_alias="LIGHTNINGOS_APPS_${alias_suffix}"
   cat > /etc/sudoers.d/lightningos <<EOF
-Defaults:lightningos !requiretty
-Cmnd_Alias LIGHTNINGOS_SYSTEM = ${system_cmds}
-Cmnd_Alias LIGHTNINGOS_APPS = ${app_cmds_line}
-lightningos ALL=NOPASSWD: LIGHTNINGOS_SYSTEM, LIGHTNINGOS_APPS
+Defaults:${manager_user} !requiretty
+Cmnd_Alias ${system_alias} = ${system_cmds}
+Cmnd_Alias ${app_alias} = ${app_cmds_line}
+${manager_user} ALL=NOPASSWD: ${system_alias}, ${app_alias}
 EOF
   chmod 440 /etc/sudoers.d/lightningos
   print_ok "Sudoers configured"
@@ -1282,7 +1326,7 @@ main() {
   fi
   install_lnd_fix_perms_script
   install_lnd_upgrade_script
-  configure_sudoers
+  configure_sudoers "$manager_user"
   ensure_manager_service "$manager_user" "$manager_group"
   if [[ -n "$LND_USER" && -n "$LND_GROUP" ]]; then
     fix_lnd_permissions "$lnd_dir" "$LND_USER" "$LND_GROUP"
@@ -1341,6 +1385,7 @@ main() {
   else
     echo "Open: https://IP_DA_MAQUINA:8443"
   fi
+  print_auth_setup_token
 }
 
 main "$@"

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import QRCode from 'qrcode'
-import { createInvoice, decodeInvoice, getLnChannels, getMempoolFees, getWalletAddress, getWalletSummary, payInvoice, previewOnchainSend, sendOnchain } from '../api'
+import { APIError, createInvoice, decodeInvoice, getLnChannels, getMempoolFees, getWalletActivity, getWalletAddress, getWalletSummary, payInvoice, previewOnchainSend, reauthAuth, sendOnchain } from '../api'
 import { getLocale } from '../i18n'
 
 const emptySummary = {
@@ -33,7 +33,35 @@ type OnchainSendPreview = {
   enough_funds: boolean
   exact: boolean
   message?: string
+  destination_classification?: string
+  requires_password_confirmation?: boolean
 }
+
+type WalletActivityRange = '7d' | '1m' | '1a'
+
+type WalletActivityItem = {
+  type?: string
+  network?: string
+  direction?: string
+  amount_sat?: number
+  fee_sat?: number
+  confirmations?: number
+  block_height?: number
+  addresses?: string[]
+  memo?: string
+  timestamp?: string
+  created_at?: string
+  settled_at?: string
+  status?: string
+  txid?: string
+  keysend?: boolean
+  channel_id?: number
+  channel_point?: string
+  channel_alias?: string
+  payment_hash?: string
+}
+
+const walletActivityPageSize = 100
 
 export default function Wallet() {
   const { t, i18n } = useTranslation()
@@ -63,6 +91,10 @@ export default function Wallet() {
   const [sendStatus, setSendStatus] = useState('')
   const [sendTxid, setSendTxid] = useState('')
   const [sendRunning, setSendRunning] = useState(false)
+  const [sendConfirmOpen, setSendConfirmOpen] = useState(false)
+  const [sendConfirmPassword, setSendConfirmPassword] = useState('')
+  const [sendConfirmStatus, setSendConfirmStatus] = useState('')
+  const [sendConfirmRunning, setSendConfirmRunning] = useState(false)
   const [amount, setAmount] = useState('')
   const [memo, setMemo] = useState('')
   const [invoiceExpiry, setInvoiceExpiry] = useState('3600')
@@ -80,6 +112,13 @@ export default function Wallet() {
   const [channelsError, setChannelsError] = useState('')
   const [channelsLoading, setChannelsLoading] = useState(true)
   const [outgoingChannelPoint, setOutgoingChannelPoint] = useState('')
+  const [activityRange, setActivityRange] = useState<WalletActivityRange>('7d')
+  const [activityItems, setActivityItems] = useState<WalletActivityItem[]>([])
+  const [activityError, setActivityError] = useState('')
+  const [activityLoading, setActivityLoading] = useState(true)
+  const [activityLoadingMore, setActivityLoadingMore] = useState(false)
+  const [activityHasMore, setActivityHasMore] = useState(false)
+  const [selectedActivity, setSelectedActivity] = useState<WalletActivityItem | null>(null)
 
   const normalizePaymentInput = (value: string) => (value ? value.replace(/\s+/g, '') : '')
 
@@ -123,6 +162,52 @@ export default function Wallet() {
       clearInterval(timer)
     }
   }, [])
+
+  const loadActivity = async (options?: { offset?: number; limit?: number; append?: boolean; silent?: boolean }) => {
+    const offset = options?.offset ?? 0
+    const limit = options?.limit ?? walletActivityPageSize
+    const append = Boolean(options?.append)
+    const silent = Boolean(options?.silent)
+
+    if (append) {
+      setActivityLoadingMore(true)
+    } else if (!silent) {
+      setActivityLoading(true)
+    }
+    if (!silent) {
+      setActivityError('')
+    }
+
+    try {
+      const res: any = await getWalletActivity(activityRange, limit, offset)
+      const nextItems = Array.isArray(res?.items) ? res.items : []
+      setActivityItems((prev) => append ? [...prev, ...nextItems] : nextItems)
+      setActivityHasMore(Boolean(res?.has_more))
+    } catch (err: any) {
+      if (!silent || activityItems.length === 0) {
+        setActivityError(err?.message || t('wallet.activityUnavailable'))
+      }
+    } finally {
+      if (append) {
+        setActivityLoadingMore(false)
+      } else {
+        setActivityLoading(false)
+      }
+    }
+  }
+
+  useEffect(() => {
+    setSelectedActivity(null)
+    void loadActivity({ offset: 0, limit: walletActivityPageSize })
+  }, [activityRange, t])
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const visibleCount = Math.max(activityItems.length, walletActivityPageSize)
+      void loadActivity({ offset: 0, limit: visibleCount, silent: true })
+    }, 30000)
+    return () => clearInterval(timer)
+  }, [activityRange, activityItems.length, t])
 
   useEffect(() => {
     let mounted = true
@@ -213,12 +298,12 @@ export default function Wallet() {
   const lightningLocalBalance = Number(summary?.balances?.lightning_local_sat ?? lightningBalance)
   const lightningUnsettledLocalBalance = Number(summary?.balances?.lightning_unsettled_local_sat ?? 0)
   const lightningTotalBalance = lightningLocalBalance + lightningUnsettledLocalBalance
-  const activity = summary?.activity ?? []
+  const activity = activityItems
   const summaryTone = summaryError && summaryError.toLowerCase().includes('timeout')
     ? 'text-brass'
     : 'text-ember'
 
-  const isRebalanceActivity = (item: any) => {
+  const isRebalanceActivity = (item: WalletActivityItem) => {
     const type = String(item?.type || '').toLowerCase()
     if (type === 'rebalance') return true
     const memo = typeof item?.memo === 'string' ? item.memo.trim().toLowerCase() : ''
@@ -249,7 +334,7 @@ export default function Wallet() {
     })
   }
 
-  const activityDirection = (item: any) => {
+  const activityDirection = (item: WalletActivityItem) => {
     const direct = String(item?.direction || '').toLowerCase()
     if (direct === 'in' || direct === 'out') return direct
     const type = String(item?.type || '').toLowerCase()
@@ -258,7 +343,7 @@ export default function Wallet() {
     return ''
   }
 
-  const activityNetwork = (item: any) => {
+  const activityNetwork = (item: WalletActivityItem) => {
     const network = String(item?.network || '').toLowerCase()
     if (network === 'lightning' || network === 'onchain') return network
     const type = String(item?.type || '').toLowerCase()
@@ -267,7 +352,7 @@ export default function Wallet() {
     return ''
   }
 
-  const formatActivityType = (item: any) => {
+  const formatActivityType = (item: WalletActivityItem) => {
     const type = String(item?.type || '').toLowerCase()
     const network = activityNetwork(item)
     const direction = activityDirection(item)
@@ -282,13 +367,53 @@ export default function Wallet() {
     return label
   }
 
+  const formatActivityStatus = (item: WalletActivityItem) =>
+    String(item?.status || t('common.unknown')).replace(/_/g, ' ').toUpperCase()
+
+  const formatActivityDirectionLabel = (item: WalletActivityItem) => {
+    const direction = activityDirection(item)
+    if (direction === 'in') return t('wallet.directionIn')
+    if (direction === 'out') return t('wallet.directionOut')
+    return t('common.unknown')
+  }
+
+  const formatActivityNetworkLabel = (item: WalletActivityItem) => {
+    const network = activityNetwork(item)
+    if (network === 'lightning') return t('wallet.lightning')
+    if (network === 'onchain') return t('wallet.onchain')
+    return t('common.unknown')
+  }
+
+  const hasActivityDetail = (item: WalletActivityItem) => {
+    const network = activityNetwork(item)
+    return network === 'lightning' || network === 'onchain'
+  }
+
   const orderedActivity = [...activity]
-    .filter((item: any) => !isRebalanceActivity(item))
-    .sort((a: any, b: any) => {
+    .filter((item) => !isRebalanceActivity(item))
+    .sort((a, b) => {
       const timeA = new Date(a?.timestamp || 0).getTime()
       const timeB = new Date(b?.timestamp || 0).getTime()
       return timeB - timeA
     })
+
+  const rangeWindowMs = activityRange === '7d'
+    ? 7 * 24 * 60 * 60 * 1000
+    : activityRange === '1m'
+      ? 30 * 24 * 60 * 60 * 1000
+      : 365 * 24 * 60 * 60 * 1000
+
+  const filteredActivity = orderedActivity.filter((item) => {
+    const parsed = new Date(item?.timestamp || 0).getTime()
+    if (Number.isNaN(parsed) || parsed <= 0) return false
+    return parsed >= Date.now() - rangeWindowMs
+  })
+
+  const activityRangeOptions: Array<{ value: WalletActivityRange; label: string }> = [
+    { value: '7d', label: t('wallet.activityFilter7d') },
+    { value: '1m', label: t('wallet.activityFilter1m') },
+    { value: '1a', label: t('wallet.activityFilter1a') }
+  ]
 
   const trimMemo = (value: string, max = 30) => {
     const trimmed = value.trim()
@@ -352,6 +477,26 @@ export default function Wallet() {
       .catch(() => setInvoiceQr(null))
   }, [invoice])
 
+  useEffect(() => {
+    if (!selectedActivity) return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setSelectedActivity(null)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [selectedActivity])
+
+  const handleLoadMoreActivity = () => {
+    if (activityLoadingMore || !activityHasMore) return
+    void loadActivity({
+      offset: activityItems.length,
+      limit: walletActivityPageSize,
+      append: true
+    })
+  }
+
   const handleAddFunds = async () => {
     setShowAddress(true)
     setAddress('')
@@ -387,6 +532,9 @@ export default function Wallet() {
     setSendTxid('')
     setSendPreview(null)
     setSendPreviewStatus('')
+    setSendConfirmOpen(false)
+    setSendConfirmPassword('')
+    setSendConfirmStatus('')
   }
 
   useEffect(() => {
@@ -447,7 +595,7 @@ export default function Wallet() {
     }
   }, [sendOpen, sendAddress, sendAmount, sendFeeRate, sendSweepAll, sendRunning, t])
 
-  const handleSendOnchain = async () => {
+  const executeOnchainSend = async () => {
     const target = sendAddress.trim()
     const amountSat = Number(sendAmount || 0)
     const feeRate = Number(sendFeeRate || 0)
@@ -476,11 +624,58 @@ export default function Wallet() {
       setSendSweepAll(false)
       setSendPreview(null)
       setSendPreviewStatus('')
+      setSendConfirmOpen(false)
+      setSendConfirmPassword('')
+      setSendConfirmStatus('')
     } catch (err: any) {
+      if (err instanceof APIError && err.code === 'wallet_send_external_reauth_required') {
+        setSendConfirmOpen(true)
+        setSendConfirmStatus(t('wallet.sendPasswordRequired'))
+        return
+      }
       setSendTxid('')
       setSendStatus(err?.message || t('wallet.onchainSendFailed'))
     } finally {
       setSendRunning(false)
+    }
+  }
+
+  const handleSendOnchain = async () => {
+    const target = sendAddress.trim()
+    const amountSat = Number(sendAmount || 0)
+    if (!target) {
+      setSendStatus(t('wallet.destinationRequired'))
+      return
+    }
+    if (!sendSweepAll && amountSat <= 0) {
+      setSendStatus(t('wallet.amountMustBePositive'))
+      return
+    }
+    if (sendPreview?.requires_password_confirmation) {
+      setSendConfirmOpen(true)
+      setSendConfirmStatus('')
+      return
+    }
+    await executeOnchainSend()
+  }
+
+  const handleConfirmOnchainSend = async () => {
+    if (!sendConfirmPassword) {
+      setSendConfirmStatus(t('wallet.sendPasswordEntryRequired'))
+      return
+    }
+    setSendConfirmRunning(true)
+    setSendConfirmStatus('')
+    try {
+      await reauthAuth({
+        password: sendConfirmPassword,
+        scope: 'wallet_send_external'
+      })
+      await executeOnchainSend()
+    } catch (err: any) {
+      setSendConfirmStatus(err?.message || t('wallet.sendPasswordConfirmFailed'))
+    } finally {
+      setSendConfirmRunning(false)
     }
   }
 
@@ -711,6 +906,13 @@ export default function Wallet() {
                         <p>{t('wallet.sendPreviewChange', { amount: formatSats(sendPreview.change_sat) })}</p>
                         <p>{t('wallet.sendPreviewInputs', { selected: formatSats(sendPreview.selected_input_count), available: formatSats(sendPreview.spendable_utxo_count) })}</p>
                         <p className="sm:col-span-2">{t('wallet.sendPreviewSpendable', { amount: formatSats(sendPreview.spendable_sat), selected: formatSats(sendPreview.selected_input_sat) })}</p>
+                        {sendPreview.requires_password_confirmation && (
+                          <p className="sm:col-span-2 text-brass">
+                            {t('wallet.sendPreviewPasswordConfirmation', {
+                              classification: sendPreview.destination_classification || t('wallet.destinationExternal')
+                            })}
+                          </p>
+                        )}
                       </div>
                     )}
                     {!sendPreviewLoading && sendPreviewStatus && (
@@ -881,14 +1083,33 @@ export default function Wallet() {
       </div>
 
       <div className="section-card">
-        <h3 className="text-lg font-semibold">{t('wallet.recentActivity')}</h3>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="text-lg font-semibold">{t('wallet.recentActivity')}</h3>
+          <div className="inline-flex rounded-2xl border border-white/10 bg-ink/40 p-1">
+            {activityRangeOptions.map((option) => {
+              const active = activityRange === option.value
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setActivityRange(option.value)}
+                  className={`rounded-xl px-3 py-1 text-xs font-semibold transition ${active ? 'bg-white/10 text-fog' : 'text-fog/60 hover:text-fog'}`}
+                >
+                  {option.label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
         <div className="mt-4 max-h-[360px] overflow-y-auto pr-2">
           <div className="space-y-2 text-sm">
-          {summaryError ? (
+          {activityLoading && !activityError ? (
+            <p className="text-fog/60">{t('wallet.fetchingActivity')}</p>
+          ) : activityError ? (
             <p className="text-fog/60">{t('wallet.activityUnavailable')}</p>
-          ) : orderedActivity.length ? orderedActivity.map((item: any, idx: number) => {
+          ) : filteredActivity.length ? filteredActivity.map((item, idx: number) => {
             const typeLabel = formatActivityType(item)
-            const statusLabel = String(item.status || t('common.unknown')).replace(/_/g, ' ').toUpperCase()
+            const statusLabel = formatActivityStatus(item)
             const direction = activityDirection(item)
             const arrow = direction === 'in' ? '<-' : direction === 'out' ? '->' : '.'
             const arrowTone = direction === 'in' ? 'text-glow' : direction === 'out' ? 'text-ember' : 'text-fog/50'
@@ -898,8 +1119,25 @@ export default function Wallet() {
               : ''
             const channelAlias = typeof item?.channel_alias === 'string' ? item.channel_alias.trim() : ''
             const channelLabel = channelAlias ? ` - ${t('wallet.viaChannel', { channel: channelAlias })}` : ''
-            return (
-              <div key={`${item.type}-${idx}`} className="grid items-center gap-3 border-b border-white/10 pb-2 sm:grid-cols-[160px_1fr_auto_auto]">
+            const clickable = hasActivityDetail(item)
+            const itemKey = item.payment_hash || item.txid || `${item.type || 'activity'}-${item.timestamp || idx}-${idx}`
+            return clickable ? (
+              <button
+                key={itemKey}
+                type="button"
+                onClick={() => setSelectedActivity(item)}
+                className="grid w-full items-center gap-3 rounded-2xl border-b border-white/10 pb-2 text-left transition hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-white/20 sm:grid-cols-[160px_1fr_auto_auto]"
+              >
+                <span className="text-xs text-fog/50">{formatTimestamp(item.timestamp)}</span>
+                <div className="min-w-0">
+                  <span className="text-fog/70">{typeLabel}</span>
+                  <span className="text-fog/50"> - {statusLabel}{memoLabel}{channelLabel}</span>
+                </div>
+                <span className={`text-xs font-mono ${arrowTone}`}>{arrow}</span>
+                <span className="text-right">{formatSats(Number(item.amount_sat || 0))} sats</span>
+              </button>
+            ) : (
+              <div key={itemKey} className="grid items-center gap-3 border-b border-white/10 pb-2 sm:grid-cols-[160px_1fr_auto_auto]">
                 <span className="text-xs text-fog/50">{formatTimestamp(item.timestamp)}</span>
                 <div className="min-w-0">
                   <span className="text-fog/70">{typeLabel}</span>
@@ -910,11 +1148,211 @@ export default function Wallet() {
               </div>
             )
           }) : (
-            <p className="text-fog/60">{t('wallet.noRecentActivity')}</p>
+            <p className="text-fog/60">{orderedActivity.length ? t('wallet.noActivityInRange') : t('wallet.noRecentActivity')}</p>
           )}
           </div>
+          {!activityLoading && !activityError && filteredActivity.length > 0 && activityHasMore && (
+            <div className="mt-4 flex justify-center">
+              <button
+                type="button"
+                className={`btn-secondary ${activityLoadingMore ? 'opacity-60 pointer-events-none' : ''}`}
+                onClick={handleLoadMoreActivity}
+              >
+                {activityLoadingMore ? t('wallet.activityLoadingMore') : t('wallet.activityLoadMore')}
+              </button>
+            </div>
+          )}
         </div>
       </div>
+
+      {sendConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => {
+              if (sendConfirmRunning || sendRunning) return
+              setSendConfirmOpen(false)
+            }}
+            aria-hidden="true"
+          />
+          <div className="relative z-10 w-full max-w-md rounded-3xl border border-white/10 bg-slate/95 p-6 shadow-panel">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h4 className="text-lg font-semibold">{t('wallet.sendPasswordModalTitle')}</h4>
+                <p className="mt-1 text-sm text-fog/60">{t('wallet.sendPasswordModalBody')}</p>
+              </div>
+              <button
+                className="btn-secondary"
+                type="button"
+                onClick={() => setSendConfirmOpen(false)}
+                disabled={sendConfirmRunning || sendRunning}
+              >
+                {t('common.close')}
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-3">
+              <div className="rounded-2xl border border-white/10 bg-ink/50 p-4 text-sm text-fog/75">
+                <p>{t('wallet.destinationAddress')}</p>
+                <p className="mt-2 break-all font-mono text-xs text-fog/80">{sendAddress.trim()}</p>
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs uppercase tracking-[0.2em] text-fog/55">{t('wallet.passwordConfirmationLabel')}</label>
+                <input
+                  className="input-field"
+                  type="password"
+                  value={sendConfirmPassword}
+                  onChange={(event) => setSendConfirmPassword(event.target.value)}
+                  placeholder={t('wallet.passwordConfirmationPlaceholder')}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      void handleConfirmOnchainSend()
+                    }
+                  }}
+                />
+              </div>
+              {sendConfirmStatus && (
+                <p className="text-sm text-brass">{sendConfirmStatus}</p>
+              )}
+              <button
+                className="btn-primary w-full justify-center"
+                type="button"
+                onClick={handleConfirmOnchainSend}
+                disabled={sendConfirmRunning || sendRunning}
+              >
+                {sendConfirmRunning || sendRunning ? t('wallet.sendPasswordConfirmRunning') : t('wallet.sendPasswordConfirmAction')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedActivity && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => setSelectedActivity(null)}
+            aria-hidden="true"
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="wallet-activity-detail-title"
+            className="relative z-10 w-full max-w-2xl rounded-3xl border border-white/10 bg-slate/95 p-6 shadow-panel"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h4 id="wallet-activity-detail-title" className="text-lg font-semibold">
+                  {t('wallet.activityDetailTitle')}
+                </h4>
+                <p className="mt-1 text-sm text-fog/60">{formatActivityType(selectedActivity)}</p>
+              </div>
+              <button className="btn-secondary" type="button" onClick={() => setSelectedActivity(null)}>
+                {t('common.close')}
+              </button>
+            </div>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl border border-white/10 bg-ink/50 p-4">
+                <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailAmount')}</div>
+                <div className="mt-1 text-base font-semibold">{formatSats(Number(selectedActivity.amount_sat || 0))} sats</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-ink/50 p-4">
+                <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailStatus')}</div>
+                <div className="mt-1 text-base font-semibold">{formatActivityStatus(selectedActivity)}</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-ink/50 p-4">
+                <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailNetwork')}</div>
+                <div className="mt-1">{formatActivityNetworkLabel(selectedActivity)}</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-ink/50 p-4">
+                <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailDirection')}</div>
+                <div className="mt-1">{formatActivityDirectionLabel(selectedActivity)}</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-ink/50 p-4">
+                <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailOccurredAt')}</div>
+                <div className="mt-1">{formatTimestamp(selectedActivity.timestamp)}</div>
+              </div>
+              {selectedActivity.txid && (
+                <div className="rounded-2xl border border-white/10 bg-ink/50 p-4 sm:col-span-2">
+                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailTxid')}</div>
+                  <div className="mt-1 break-all font-mono text-xs text-fog/80">{selectedActivity.txid}</div>
+                </div>
+              )}
+              {typeof selectedActivity.confirmations === 'number' && (
+                <div className="rounded-2xl border border-white/10 bg-ink/50 p-4">
+                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailConfirmations')}</div>
+                  <div className="mt-1">{selectedActivity.confirmations}</div>
+                </div>
+              )}
+              {typeof selectedActivity.block_height === 'number' && selectedActivity.block_height > 0 && (
+                <div className="rounded-2xl border border-white/10 bg-ink/50 p-4">
+                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailBlockHeight')}</div>
+                  <div className="mt-1">{selectedActivity.block_height}</div>
+                </div>
+              )}
+              {typeof selectedActivity.fee_sat === 'number' && selectedActivity.fee_sat > 0 && (
+                <div className="rounded-2xl border border-white/10 bg-ink/50 p-4">
+                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailFee')}</div>
+                  <div className="mt-1">{formatSats(selectedActivity.fee_sat)} sats</div>
+                </div>
+              )}
+              {selectedActivity.created_at && (
+                <div className="rounded-2xl border border-white/10 bg-ink/50 p-4">
+                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailCreatedAt')}</div>
+                  <div className="mt-1">{formatTimestamp(selectedActivity.created_at)}</div>
+                </div>
+              )}
+              {selectedActivity.settled_at && (
+                <div className="rounded-2xl border border-white/10 bg-ink/50 p-4 sm:col-span-2">
+                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailSettledAt')}</div>
+                  <div className="mt-1">{formatTimestamp(selectedActivity.settled_at)}</div>
+                </div>
+              )}
+              {selectedActivity.memo && String(selectedActivity.type || '').toLowerCase() === 'invoice' && (
+                <div className="rounded-2xl border border-white/10 bg-ink/50 p-4 sm:col-span-2">
+                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailMemo')}</div>
+                  <div className="mt-1 whitespace-pre-wrap break-words">{selectedActivity.memo}</div>
+                </div>
+              )}
+              {selectedActivity.memo && String(selectedActivity.type || '').toLowerCase() === 'onchain' && (
+                <div className="rounded-2xl border border-white/10 bg-ink/50 p-4 sm:col-span-2">
+                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailLabel')}</div>
+                  <div className="mt-1 whitespace-pre-wrap break-words">{selectedActivity.memo}</div>
+                </div>
+              )}
+              {Array.isArray(selectedActivity.addresses) && selectedActivity.addresses.length > 0 && (
+                <div className="rounded-2xl border border-white/10 bg-ink/50 p-4 sm:col-span-2">
+                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailAddresses')}</div>
+                  <div className="mt-1 space-y-2">
+                    {selectedActivity.addresses.map((address, idx) => (
+                      <div key={`${address}-${idx}`} className="break-all font-mono text-xs text-fog/80">{address}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {selectedActivity.channel_alias && (
+                <div className="rounded-2xl border border-white/10 bg-ink/50 p-4">
+                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailChannel')}</div>
+                  <div className="mt-1 break-words">{selectedActivity.channel_alias}</div>
+                </div>
+              )}
+              {selectedActivity.channel_point && (
+                <div className="rounded-2xl border border-white/10 bg-ink/50 p-4">
+                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailChannelPoint')}</div>
+                  <div className="mt-1 break-all font-mono text-xs text-fog/80">{selectedActivity.channel_point}</div>
+                </div>
+              )}
+              {selectedActivity.payment_hash && (
+                <div className="rounded-2xl border border-white/10 bg-ink/50 p-4 sm:col-span-2">
+                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailPaymentHash')}</div>
+                  <div className="mt-1 break-all font-mono text-xs text-fog/80">{selectedActivity.payment_hash}</div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   )
 }

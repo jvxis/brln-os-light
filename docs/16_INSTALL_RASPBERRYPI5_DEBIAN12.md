@@ -601,7 +601,7 @@ ui:
   static_dir: "/opt/lightningos/ui"
 
 features:
-  enable_login: false
+  enable_login: true
   enable_bitcoin_local_placeholder: true
   enable_app_store_placeholder: true
 EOF
@@ -690,6 +690,13 @@ https://<YOUR_IP>:8443
 > This is expected and safe on your local network.
 
 ---
+
+If this is the first access, or an upgraded installation that still has no admin password, generate a setup token on the node:
+```bash
+sudo /opt/lightningos/manager/lightningos-manager auth setup-token new
+```
+
+Paste that token into the "Define admin password" screen before entering the wizard or dashboard.
 
 ### 6.3 Complete the wizard and create the wallet
 

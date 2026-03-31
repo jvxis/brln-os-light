@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -19,6 +20,9 @@ import (
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "auth":
+			runAuth(os.Args[2:])
+			return
 		case "reports-run":
 			runReports(os.Args[2:])
 			return
@@ -29,6 +33,42 @@ func main() {
 	}
 
 	runServer(os.Args[1:])
+}
+
+func runAuth(args []string) {
+	if len(args) == 0 {
+		log.Fatalf("auth command required: status | setup-token new | recovery new")
+	}
+
+	switch args[0] {
+	case "status":
+		status := server.LoadAuthStatus()
+		fmt.Printf("password_configured=%t\n", status.PasswordConfigured)
+		fmt.Printf("setup_token_issued=%t\n", status.SetupTokenIssued)
+		fmt.Printf("recovery_token_issued=%t\n", status.RecoveryTokenIssued)
+	case "setup-token":
+		if len(args) < 2 || args[1] != "new" {
+			log.Fatalf("usage: lightningos-manager auth setup-token new")
+		}
+		token, expiresAt, err := server.IssueSetupToken()
+		if err != nil {
+			log.Fatalf("setup token failed: %v", err)
+		}
+		fmt.Printf("setup_token=%s\n", token)
+		fmt.Printf("expires_at=%s\n", expiresAt.Format(time.RFC3339))
+	case "recovery":
+		if len(args) < 2 || args[1] != "new" {
+			log.Fatalf("usage: lightningos-manager auth recovery new")
+		}
+		token, expiresAt, err := server.IssueRecoveryToken()
+		if err != nil {
+			log.Fatalf("recovery token failed: %v", err)
+		}
+		fmt.Printf("recovery_token=%s\n", token)
+		fmt.Printf("expires_at=%s\n", expiresAt.Format(time.RFC3339))
+	default:
+		log.Fatalf("unknown auth command: %s", args[0])
+	}
 }
 
 func runServer(args []string) {

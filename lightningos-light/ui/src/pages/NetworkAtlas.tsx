@@ -113,10 +113,13 @@ const spreadAtlasLinks = (links: AtlasLink[]) => {
   })
 }
 const LIGHTNING_OPS_ROUTE_KEY = 'lightning-ops'
+const GRAPH_EXPLORER_ROUTE_KEY = 'graph-explorer'
 const buildLightningOpsChannelHash = (channelPoint: string) =>
   `#${LIGHTNING_OPS_ROUTE_KEY}?channel_point=${encodeURIComponent(channelPoint)}`
 const buildLightningOpsPeerHash = (pubkey: string) =>
   `#${LIGHTNING_OPS_ROUTE_KEY}?peer_pubkey=${encodeURIComponent(pubkey)}`
+const buildGraphExplorerPeerHash = (pubkey: string) =>
+  `#${GRAPH_EXPLORER_ROUTE_KEY}?pubkey=${encodeURIComponent(pubkey)}`
 
 const AtlasConnections = ({
   localNode,
@@ -481,7 +484,7 @@ export default function NetworkAtlas() {
                   setMapZoom(clampZoom(Number(position?.zoom) || 1))
                 }}
               >
-                <Sphere id="atlasSphere" stroke="rgba(110,128,168,0.22)" strokeWidth={0.8} fill="transparent" />
+                <Sphere id="atlasSphere" stroke="var(--atlas-sphere-stroke)" strokeWidth={0.8} fill="transparent" />
                 <Geographies geography={worldGeo as any}>
                   {({ geographies }: { geographies: any[] }) =>
                     geographies.map((geo) => (
@@ -571,6 +574,21 @@ export default function NetworkAtlas() {
               <p className="atlas-map-label">{t('networkAtlas.selectedPeer')}</p>
               <h3 className="mt-2 text-lg font-semibold">{selectedLink.alias || shortPubkey(selectedLink.pubkey)}</h3>
               <p className="mt-1 text-xs text-fog/55 break-all">{selectedLink.pubkey}</p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <a
+                  href={buildGraphExplorerPeerHash(selectedLink.pubkey)}
+                  className="inline-flex items-center rounded-full border border-sky-300/25 bg-sky-500/10 px-3 py-1 text-xs text-sky-100 transition hover:border-sky-200/40 hover:text-white"
+                >
+                  {t('nav.graphExplorer')}
+                </a>
+                <button
+                  type="button"
+                  className="atlas-control-pill"
+                  onClick={() => handleOpenChannel(selectedLink)}
+                >
+                  {t('nav.lightningOps')}
+                </button>
+              </div>
             </div>
             <div className="atlas-selected-chip">
               <span>{t('networkAtlas.connectionType')}</span>

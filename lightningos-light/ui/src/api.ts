@@ -217,6 +217,12 @@ export const searchGraphExplorerNodes = (params?: { q?: string; limit?: number }
   request(`/api/lnops/graph-explorer/search${buildQuery(params)}`)
 export const getGraphExplorerNodeGeneral = (pubkey: string) =>
   request(`/api/lnops/graph-explorer/nodes/${encodeURIComponent(pubkey)}/general`)
+export const getGraphExplorerNodeChannels = (pubkey: string, params?: { limit?: number }) =>
+  request(`/api/lnops/graph-explorer/nodes/${encodeURIComponent(pubkey)}/channels${buildQuery(params)}`)
+export const getGraphExplorerNodeClosed = (pubkey: string, params?: { range?: string; limit?: number }) =>
+  request(`/api/lnops/graph-explorer/nodes/${encodeURIComponent(pubkey)}/closed${buildQuery(params)}`)
+export const getGraphExplorerNodeFees = (pubkey: string, params?: { range?: string }) =>
+  request(`/api/lnops/graph-explorer/nodes/${encodeURIComponent(pubkey)}/fees${buildQuery(params)}`)
 export const recomputeGraphExplorer = () =>
   request('/api/lnops/graph-explorer/recompute', { method: 'POST' })
 export const getLnClosedChannels = () => request('/api/lnops/closed-channels')

@@ -209,13 +209,13 @@
   "graphExplorer": {
     "kicker": "Grafo Lightning Local",
     "title": "Explorador do Grafo",
-    "subtitle": "Busque nodes públicos por alias ou pubkey e inspecione a presença atual que o app já indexou no grafo local.",
+    "subtitle": "Busque nodes públicos por alias ou pubkey e inspecione o footprint atual que o app já indexou no grafo local.",
     "refresh": "Reindexar agora",
     "refreshing": "Reindexando...",
     "searchLabel": "Buscar node",
     "searchPlaceholder": "Alias ou pubkey",
     "searchHint": "Digite pelo menos 2 caracteres para buscar por alias ou prefixo de pubkey.",
-    "searchLiveHint": "Os resultados priorizam pubkey exata, prefixo de pubkey e alias mais próximos.",
+    "searchLiveHint": "Os resultados priorizam pubkey exata, prefixo de pubkey e aliases mais próximos.",
     "searching": "Buscando nodes...",
     "searchEmpty": "Nenhum node encontrado para a busca atual.",
     "searchFailed": "Falha ao buscar nodes no explorador do grafo.",
@@ -229,9 +229,26 @@
     "indexStatus": "Status do índice local",
     "emptyIndex": "O índice local ainda não possui dados suficientes. Aguarde o bootstrap inicial ou execute a reindexação.",
     "loadingNode": "Carregando visão geral do node...",
+    "loadingChannels": "Carregando canais públicos...",
+    "loadingClosed": "Carregando canais fechados observados...",
+    "loadingFees": "Carregando analytics de policy pública...",
+    "channelsLoadFailed": "Falha ao carregar os canais públicos do node.",
+    "closedLoadFailed": "Falha ao carregar os canais fechados observados.",
+    "feesLoadFailed": "Falha ao carregar o fee report nativo.",
+    "channelsEmpty": "Nenhum canal público aberto encontrado para este node.",
+    "closedEmpty": "Nenhum fechamento observado para o range atual.",
+    "feesEmpty": "Ainda não há dados suficientes de policy pública para montar o report.",
+    "feeHistoryEmpty": "Ainda não há histórico suficiente para o range selecionado.",
     "emptySelectionTitle": "Selecione um node para abrir o perfil",
-    "emptySelectionBody": "Use a busca acima para localizar um alias ou pubkey. A Fase 2 entrega a busca e a aba General; Channels, Closed Channels e Fee Report entram nas próximas fases.",
+    "emptySelectionBody": "Use a busca acima para localizar um alias ou pubkey. Agora o módulo já expõe General, Channels, Closed Channels e Fee Report nativo em cima do histórico local.",
     "noAddresses": "Nenhum endereço público conhecido",
+    "channelCoverage": "Canais públicos visíveis com cobertura nativa desde {{value}}",
+    "closedCoverage": "Fechamentos públicos observados desde {{value}}",
+    "feeCoverage": "Histórico de policy pública acumulado desde {{value}}",
+    "policyInboundLabel": "Inbound {{ppm}} ppm",
+    "feeDistributionHint": "Distribuição por bucket de ppm",
+    "feeDistributionCount": "{{count}} canais",
+    "feeHistoryWeighted": "ponderado {{value}} ppm",
     "badges": {
       "nativeSource": "Histórico nativo",
       "coverageSince": "Cobertura desde {{value}}",
@@ -239,9 +256,9 @@
       "idle": "Indexador ocioso"
     },
     "tabs": {
-      "general": "General",
-      "channels": "Channels",
-      "closed": "Closed Channels",
+      "general": "Geral",
+      "channels": "Canais",
+      "closed": "Canais Fechados",
       "fees": "Fee Report"
     },
     "statusCards": {
@@ -270,7 +287,10 @@
     },
     "sections": {
       "presence": "Presença pública",
-      "addressSummary": "Resumo de endereços"
+      "addressSummary": "Resumo de endereços",
+      "channels": "Canais públicos",
+      "closed": "Fechamentos observados",
+      "fees": "Policy report público"
     },
     "fields": {
       "firstSeen": "Primeira vez visto",
@@ -281,6 +301,48 @@
       "clearnetAddresses": "Endereços clearnet",
       "onionAddresses": "Endereços onion",
       "selectedPubkey": "Pubkey"
+    },
+    "columns": {
+      "peer": "Peer",
+      "channel": "Canal",
+      "capacity": "Capacidade",
+      "openBlock": "Bloco de abertura",
+      "targetPolicy": "Policy do node",
+      "peerPolicy": "Policy do peer",
+      "lastUpdate": "Última atualização",
+      "observedAt": "Observado em",
+      "closeHeight": "Bloco do fechamento",
+      "closeType": "Tipo",
+      "closeSource": "Origem",
+      "day": "Dia",
+      "outbound": "Outbound",
+      "inbound": "Inbound",
+      "samples": "Amostras"
+    },
+    "closedSummary": {
+      "total": "Fechamentos observados",
+      "capacity": "Capacidade fechada",
+      "knownTypes": "Tipos conhecidos",
+      "unknownTypes": "Tipos desconhecidos"
+    },
+    "feeSummary": {
+      "outboundTitle": "Policy outbound atual",
+      "inboundTitle": "Policy dos peers para o node",
+      "avg": "Média",
+      "weightedAvg": "Média ponderada",
+      "median": "Mediana",
+      "minMax": "Mín / Máx",
+      "disabled": "Policies desativadas",
+      "capacity": "Capacidade coberta",
+      "lastUpdate": "Última atualização"
+    },
+    "feeDistribution": {
+      "outbound": "Distribuição outbound",
+      "inbound": "Distribuição inbound"
+    },
+    "feeHistory": {
+      "title": "Histórico diário de policy",
+      "subtitle": "Média e média ponderada por dia"
     }
   },
   "topbar": {

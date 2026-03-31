@@ -229,9 +229,26 @@
     "indexStatus": "Local index status",
     "emptyIndex": "The local index does not have enough data yet. Wait for the initial bootstrap or trigger a reindex.",
     "loadingNode": "Loading node overview...",
+    "loadingChannels": "Loading public channels...",
+    "loadingClosed": "Loading observed closed channels...",
+    "loadingFees": "Loading native public policy analytics...",
+    "channelsLoadFailed": "Failed to load the node public channels.",
+    "closedLoadFailed": "Failed to load observed closed channels.",
+    "feesLoadFailed": "Failed to load the native fee report.",
+    "channelsEmpty": "No open public channels were found for this node.",
+    "closedEmpty": "No observed closures were found for the current range.",
+    "feesEmpty": "There is not enough public policy data yet to build the report.",
+    "feeHistoryEmpty": "There is not enough policy history for the selected range yet.",
     "emptySelectionTitle": "Select a node to open its profile",
-    "emptySelectionBody": "Use the search above to locate an alias or pubkey. Phase 2 delivers search and the General tab; Channels, Closed Channels, and Fee Report arrive in the next phases.",
+    "emptySelectionBody": "Use the search above to locate an alias or pubkey. The module now exposes General, Channels, Closed Channels, and a native Fee Report on top of the local historical base.",
     "noAddresses": "No known public addresses",
+    "channelCoverage": "Visible public channels with native coverage since {{value}}",
+    "closedCoverage": "Observed public closures since {{value}}",
+    "feeCoverage": "Public policy history accumulated since {{value}}",
+    "policyInboundLabel": "Inbound {{ppm}} ppm",
+    "feeDistributionHint": "Distribution by ppm bucket",
+    "feeDistributionCount": "{{count}} channels",
+    "feeHistoryWeighted": "weighted {{value}} ppm",
     "badges": {
       "nativeSource": "Native history",
       "coverageSince": "Coverage since {{value}}",
@@ -270,7 +287,10 @@
     },
     "sections": {
       "presence": "Public presence",
-      "addressSummary": "Address summary"
+      "addressSummary": "Address summary",
+      "channels": "Public channels",
+      "closed": "Observed closures",
+      "fees": "Public policy report"
     },
     "fields": {
       "firstSeen": "First seen",
@@ -281,6 +301,48 @@
       "clearnetAddresses": "Clearnet addresses",
       "onionAddresses": "Onion addresses",
       "selectedPubkey": "Pubkey"
+    },
+    "columns": {
+      "peer": "Peer",
+      "channel": "Channel",
+      "capacity": "Capacity",
+      "openBlock": "Open block",
+      "targetPolicy": "Node policy",
+      "peerPolicy": "Peer policy",
+      "lastUpdate": "Last update",
+      "observedAt": "Observed at",
+      "closeHeight": "Close height",
+      "closeType": "Type",
+      "closeSource": "Source",
+      "day": "Day",
+      "outbound": "Outbound",
+      "inbound": "Inbound",
+      "samples": "Samples"
+    },
+    "closedSummary": {
+      "total": "Observed closures",
+      "capacity": "Closed capacity",
+      "knownTypes": "Known types",
+      "unknownTypes": "Unknown types"
+    },
+    "feeSummary": {
+      "outboundTitle": "Current outbound policy",
+      "inboundTitle": "Peer-side policy toward the node",
+      "avg": "Average",
+      "weightedAvg": "Weighted average",
+      "median": "Median",
+      "minMax": "Min / Max",
+      "disabled": "Disabled policies",
+      "capacity": "Covered capacity",
+      "lastUpdate": "Last update"
+    },
+    "feeDistribution": {
+      "outbound": "Outbound distribution",
+      "inbound": "Inbound distribution"
+    },
+    "feeHistory": {
+      "title": "Daily policy history",
+      "subtitle": "Average and weighted average per day"
     }
   },
   "topbar": {

@@ -51,6 +51,7 @@
     "dashboard": "Dashboard",
     "disks": "Disks",
     "elements": "Elements",
+    "graphExplorer": "Graph Explorer",
     "lightningOps": "Lightning Ops",
     "channelRanking": "Channel Ranking",
     "onchainHub": "On-chain Hub",
@@ -203,6 +204,83 @@
       "hostUnavailable": "Missing host",
       "geoUnavailable": "Geo lookup failed",
       "unknown": "Unknown"
+    }
+  },
+  "graphExplorer": {
+    "kicker": "Local Lightning Graph",
+    "title": "Graph Explorer",
+    "subtitle": "Search public nodes by alias or pubkey and inspect the current footprint already indexed by the app in the local graph.",
+    "refresh": "Reindex now",
+    "refreshing": "Reindexing...",
+    "searchLabel": "Search node",
+    "searchPlaceholder": "Alias or pubkey",
+    "searchHint": "Type at least 2 characters to search by alias or pubkey prefix.",
+    "searchLiveHint": "Results prioritize exact pubkey, pubkey prefix, and the closest alias matches.",
+    "searching": "Searching nodes...",
+    "searchEmpty": "No node matched the current search.",
+    "searchFailed": "Failed to search graph explorer nodes.",
+    "searchResultChannels": "{{count}} public channels",
+    "statusLoadFailed": "Failed to load graph explorer status.",
+    "nodeLoadFailed": "Failed to load the selected node.",
+    "nodeNotFound": "Node not found in the local graph explorer index.",
+    "refreshFailed": "Failed to reindex the graph now.",
+    "clearSelection": "Clear selection",
+    "aliasFallback": "No public alias",
+    "indexStatus": "Local index status",
+    "emptyIndex": "The local index does not have enough data yet. Wait for the initial bootstrap or trigger a reindex.",
+    "loadingNode": "Loading node overview...",
+    "emptySelectionTitle": "Select a node to open its profile",
+    "emptySelectionBody": "Use the search above to locate an alias or pubkey. Phase 2 delivers search and the General tab; Channels, Closed Channels, and Fee Report arrive in the next phases.",
+    "noAddresses": "No known public addresses",
+    "badges": {
+      "nativeSource": "Native history",
+      "coverageSince": "Coverage since {{value}}",
+      "streaming": "Stream active",
+      "idle": "Indexer idle"
+    },
+    "tabs": {
+      "general": "General",
+      "channels": "Channels",
+      "closed": "Closed Channels",
+      "fees": "Fee Report"
+    },
+    "statusCards": {
+      "nodes": "Nodes",
+      "openChannels": "Open channels",
+      "lastSync": "Last sync"
+    },
+    "header": {
+      "source": "Source: {{value}}",
+      "coverage": "Coverage: {{value}}",
+      "lastSeen": "Last seen: {{value}}",
+      "publicChannels": "Public channels",
+      "totalCapacity": "Total capacity",
+      "addresses": "Addresses",
+      "lastPolicyUpdate": "Last policy"
+    },
+    "metrics": {
+      "publicChannels": "Public channels",
+      "peerCount": "Public peers",
+      "totalCapacity": "Total capacity",
+      "smallestChannel": "Smallest channel",
+      "largestChannel": "Largest channel",
+      "averageChannel": "Average channel",
+      "lastPolicyUpdate": "Last policy update",
+      "lastGraphUpdate": "Last graph update"
+    },
+    "sections": {
+      "presence": "Public presence",
+      "addressSummary": "Address summary"
+    },
+    "fields": {
+      "firstSeen": "First seen",
+      "lastSeen": "Last seen",
+      "oldestChannelBlock": "Oldest channel block",
+      "youngestChannelBlock": "Newest channel block",
+      "addressCount": "Public addresses",
+      "clearnetAddresses": "Clearnet addresses",
+      "onionAddresses": "Onion addresses",
+      "selectedPubkey": "Pubkey"
     }
   },
   "topbar": {

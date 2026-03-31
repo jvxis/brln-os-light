@@ -1,0 +1,61 @@
+package server
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const graphExplorerInitRetryCooldown = 10 * time.Second
+
+func (s *Server) initGraphExplorer() {
+	s.graphExplorerMu.Lock()
+	defer s.graphExplorerMu.Unlock()
+
+	if s.graphExplorer != nil && s.graphExplorerErr == "" {
+		return
+	}
+	if !s.graphExplorerInitAt.IsZero() && time.Since(s.graphExplorerInitAt) < graphExplorerInitRetryCooldown {
+		return
+	}
+	s.graphExplorerInitAt = time.Now()
+
+	dsn, err := ResolveNotificationsDSN(s.logger)
+	if err != nil {
+		s.graphExplorerErr = fmt.Sprintf("graph explorer unavailable: %v", err)
+		s.logger.Printf("%s", s.graphExplorerErr)
+		return
+	}
+
+	pool := s.db
+	if pool == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		pool, err = pgxpool.New(ctx, dsn)
+		if err != nil {
+			s.graphExplorerErr = fmt.Sprintf("graph explorer unavailable: failed to connect to postgres: %v", err)
+			s.logger.Printf("%s", s.graphExplorerErr)
+			return
+		}
+		s.db = pool
+	}
+
+	svc := NewGraphExplorerService(pool, s.logger, s.lnd)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := svc.EnsureSchema(ctx); err != nil {
+		s.graphExplorerErr = fmt.Sprintf("graph explorer unavailable: failed to init schema: %v", err)
+		s.logger.Printf("%s", s.graphExplorerErr)
+		return
+	}
+
+	s.graphExplorer = svc
+	s.graphExplorerErr = ""
+}
+
+func (s *Server) graphExplorerService() (*GraphExplorerService, string) {
+	s.initGraphExplorer()
+	return s.graphExplorer, s.graphExplorerErr
+}

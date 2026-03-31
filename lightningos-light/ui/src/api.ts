@@ -212,6 +212,13 @@ export const getNetworkAtlasMap = () => request('/api/lnops/network-map')
 export const getNetworkAtlasConfig = () => request('/api/lnops/network-map/config')
 export const updateNetworkAtlasConfig = (payload: { label?: string; lat?: string | null; lon?: string | null }) =>
   request('/api/lnops/network-map/config', { method: 'POST', body: JSON.stringify(payload) })
+export const getGraphExplorerStatus = () => request('/api/lnops/graph-explorer/status')
+export const searchGraphExplorerNodes = (params?: { q?: string; limit?: number }) =>
+  request(`/api/lnops/graph-explorer/search${buildQuery(params)}`)
+export const getGraphExplorerNodeGeneral = (pubkey: string) =>
+  request(`/api/lnops/graph-explorer/nodes/${encodeURIComponent(pubkey)}/general`)
+export const recomputeGraphExplorer = () =>
+  request('/api/lnops/graph-explorer/recompute', { method: 'POST' })
 export const getLnClosedChannels = () => request('/api/lnops/closed-channels')
 export const getChannelRankings = (params?: { limit?: number; state?: string }) =>
   request(`/api/lnops/channel-ranking${buildQuery(params)}`)

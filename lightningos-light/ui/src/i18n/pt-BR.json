@@ -51,6 +51,7 @@
     "dashboard": "Painel",
     "disks": "Discos",
     "elements": "Elements",
+    "graphExplorer": "Explorador do Grafo",
     "lightningOps": "Operações Lightning",
     "channelRanking": "Ranking de Canais",
     "onchainHub": "On-chain Hub",
@@ -203,6 +204,83 @@
       "hostUnavailable": "Host ausente",
       "geoUnavailable": "Falha no geo lookup",
       "unknown": "Desconhecido"
+    }
+  },
+  "graphExplorer": {
+    "kicker": "Grafo Lightning Local",
+    "title": "Explorador do Grafo",
+    "subtitle": "Busque nodes públicos por alias ou pubkey e inspecione a presença atual que o app já indexou no grafo local.",
+    "refresh": "Reindexar agora",
+    "refreshing": "Reindexando...",
+    "searchLabel": "Buscar node",
+    "searchPlaceholder": "Alias ou pubkey",
+    "searchHint": "Digite pelo menos 2 caracteres para buscar por alias ou prefixo de pubkey.",
+    "searchLiveHint": "Os resultados priorizam pubkey exata, prefixo de pubkey e alias mais próximos.",
+    "searching": "Buscando nodes...",
+    "searchEmpty": "Nenhum node encontrado para a busca atual.",
+    "searchFailed": "Falha ao buscar nodes no explorador do grafo.",
+    "searchResultChannels": "{{count}} canais públicos",
+    "statusLoadFailed": "Falha ao carregar o status do explorador do grafo.",
+    "nodeLoadFailed": "Falha ao carregar o node selecionado.",
+    "nodeNotFound": "Node não encontrado na base local do explorador do grafo.",
+    "refreshFailed": "Falha ao reindexar o grafo agora.",
+    "clearSelection": "Limpar seleção",
+    "aliasFallback": "Sem alias público",
+    "indexStatus": "Status do índice local",
+    "emptyIndex": "O índice local ainda não possui dados suficientes. Aguarde o bootstrap inicial ou execute a reindexação.",
+    "loadingNode": "Carregando visão geral do node...",
+    "emptySelectionTitle": "Selecione um node para abrir o perfil",
+    "emptySelectionBody": "Use a busca acima para localizar um alias ou pubkey. A Fase 2 entrega a busca e a aba General; Channels, Closed Channels e Fee Report entram nas próximas fases.",
+    "noAddresses": "Nenhum endereço público conhecido",
+    "badges": {
+      "nativeSource": "Histórico nativo",
+      "coverageSince": "Cobertura desde {{value}}",
+      "streaming": "Stream ativo",
+      "idle": "Indexador ocioso"
+    },
+    "tabs": {
+      "general": "General",
+      "channels": "Channels",
+      "closed": "Closed Channels",
+      "fees": "Fee Report"
+    },
+    "statusCards": {
+      "nodes": "Nodes",
+      "openChannels": "Canais abertos",
+      "lastSync": "Último sync"
+    },
+    "header": {
+      "source": "Fonte: {{value}}",
+      "coverage": "Cobertura: {{value}}",
+      "lastSeen": "Última vez visto: {{value}}",
+      "publicChannels": "Canais públicos",
+      "totalCapacity": "Capacidade total",
+      "addresses": "Endereços",
+      "lastPolicyUpdate": "Última policy"
+    },
+    "metrics": {
+      "publicChannels": "Canais públicos",
+      "peerCount": "Peers públicos",
+      "totalCapacity": "Capacidade total",
+      "smallestChannel": "Menor canal",
+      "largestChannel": "Maior canal",
+      "averageChannel": "Canal médio",
+      "lastPolicyUpdate": "Última atualização de policy",
+      "lastGraphUpdate": "Última atualização do grafo"
+    },
+    "sections": {
+      "presence": "Presença pública",
+      "addressSummary": "Resumo de endereços"
+    },
+    "fields": {
+      "firstSeen": "Primeira vez visto",
+      "lastSeen": "Última vez visto",
+      "oldestChannelBlock": "Bloco do canal mais antigo",
+      "youngestChannelBlock": "Bloco do canal mais novo",
+      "addressCount": "Endereços públicos",
+      "clearnetAddresses": "Endereços clearnet",
+      "onionAddresses": "Endereços onion",
+      "selectedPubkey": "Pubkey"
     }
   },
   "topbar": {

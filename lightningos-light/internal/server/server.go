@@ -64,6 +64,10 @@ type Server struct {
 	channelRankingMu            sync.Mutex
 	channelRanking              *ChannelRankingService
 	channelRankingErr           string
+	graphExplorerInitAt         time.Time
+	graphExplorerMu             sync.Mutex
+	graphExplorer               *GraphExplorerService
+	graphExplorerErr            string
 	balancedOpenInitAt          time.Time
 	balancedOpenMu              sync.Mutex
 	balancedOpen                *BalancedOpenService
@@ -113,6 +117,7 @@ func (s *Server) Run() error {
 	s.initAutofee()
 	s.initShortcuts()
 	s.initChannelRanking()
+	s.initGraphExplorer()
 	s.initBalancedOpen()
 	s.initCloseManager()
 	s.initNodeRetirement()
@@ -143,6 +148,9 @@ func (s *Server) Run() error {
 	}
 	if s.channelRanking != nil {
 		s.channelRanking.Start()
+	}
+	if s.graphExplorer != nil {
+		s.graphExplorer.Start()
 	}
 	if s.balancedOpen != nil {
 		s.balancedOpen.Start()

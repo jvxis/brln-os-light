@@ -345,12 +345,13 @@
     "feeComparison": {
       "title": "Comparação",
       "ratio": "Relação Out / In",
-      "basedOnWeighted": "Baseado nas médias ponderadas do range selecionado",
+      "basedOnWeighted": "Compara a média atual com a média dos últimos dias completos do range",
       "outbound": "Outbound",
       "inbound": "Inbound",
       "rising": "Subindo",
       "falling": "Caindo",
-      "stable": "Estável"
+      "stable": "Estável",
+      "insufficientHistory": "Histórico insuficiente"
     },
     "feeHistory": {
       "title": "Histórico diário de policy",

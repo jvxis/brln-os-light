@@ -345,12 +345,13 @@
     "feeComparison": {
       "title": "Comparison",
       "ratio": "Out / In Ratio",
-      "basedOnWeighted": "Based on weighted averages for the selected range",
+      "basedOnWeighted": "Compares the current average against the average from the last complete days in range",
       "outbound": "Outbound",
       "inbound": "Inbound",
       "rising": "Rising",
       "falling": "Falling",
-      "stable": "Stable"
+      "stable": "Stable",
+      "insufficientHistory": "Insufficient history"
     },
     "feeHistory": {
       "title": "Daily policy history",

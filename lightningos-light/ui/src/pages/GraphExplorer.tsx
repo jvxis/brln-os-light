@@ -177,6 +177,15 @@ type LndStatusResponse = {
 type ChannelSortKey = 'peer' | 'channel' | 'capacity' | 'openBlock' | 'targetPolicy' | 'peerPolicy' | 'lastUpdate'
 type SortDirection = 'asc' | 'desc'
 type FeeTrendDirection = 'up' | 'down' | 'flat'
+type FeeTrendResult = {
+  direction: FeeTrendDirection
+  deltaPct: number
+  available: boolean
+}
+
+const FEE_TREND_BASELINE_MIN_DAYS = 3
+const FEE_TREND_BASELINE_WINDOW_DAYS = 7
+const FEE_TREND_BASELINE_MIN_PPM = 25
 
 const GRAPH_EXPLORER_ROUTE_KEY = 'graph-explorer'
 const GRAPH_EXPLORER_PUBKEY_PARAM = 'pubkey'
@@ -417,17 +426,20 @@ function FeeComparisonCard({
   t
 }: {
   ratio: number
-  ratioTrend: { direction: FeeTrendDirection; deltaPct: number }
+  ratioTrend: FeeTrendResult
   outboundValue: number
   inboundValue: number
-  outboundTrend: { direction: FeeTrendDirection; deltaPct: number }
-  inboundTrend: { direction: FeeTrendDirection; deltaPct: number }
+  outboundTrend: FeeTrendResult
+  inboundTrend: FeeTrendResult
   formatInteger: (value?: number) => string
   t: (key: string, options?: any) => string
 }) {
   const ratioDisplay = Number.isFinite(ratio) && ratio > 0 ? `${ratio.toFixed(2)}x` : t('common.na')
-  const trendLabel = (direction: FeeTrendDirection) => {
-    switch (direction) {
+  const trendLabel = (trend: FeeTrendResult) => {
+    if (!trend.available) {
+      return t('graphExplorer.feeComparison.insufficientHistory')
+    }
+    switch (trend.direction) {
       case 'up':
         return t('graphExplorer.feeComparison.rising')
       case 'down':
@@ -436,7 +448,8 @@ function FeeComparisonCard({
         return t('graphExplorer.feeComparison.stable')
     }
   }
-  const trendValue = (trend: { direction: FeeTrendDirection; deltaPct: number }) => {
+  const trendValue = (trend: FeeTrendResult) => {
+    if (!trend.available) return ''
     const prefix = trend.direction === 'up' ? '+' : ''
     return `${prefix}${trend.deltaPct.toFixed(1)}%`
   }
@@ -447,8 +460,8 @@ function FeeComparisonCard({
         <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.feeComparison.ratio')}</p>
         <p className="mt-3 text-4xl font-semibold text-fog">{ratioDisplay}</p>
         <div className="mt-4 flex items-center justify-center">
-          <span className={clsx('inline-flex rounded-full border px-3 py-1 text-xs font-medium', feeTrendTone(ratioTrend.direction))}>
-            {trendLabel(ratioTrend.direction)} {trendValue(ratioTrend)}
+          <span className={clsx('inline-flex rounded-full border px-3 py-1 text-xs font-medium', feeTrendTone(ratioTrend.available ? ratioTrend.direction : 'flat'))}>
+            {trendLabel(ratioTrend)} {trendValue(ratioTrend) ? ` ${trendValue(ratioTrend)}` : ''}
           </span>
         </div>
       </div>
@@ -458,8 +471,8 @@ function FeeComparisonCard({
             <p className="text-sm font-medium text-fog">{t('graphExplorer.feeComparison.outbound')}</p>
             <p className="text-xs text-fog/55">{formatInteger(outboundValue)} ppm</p>
           </div>
-          <span className={clsx('inline-flex rounded-full border px-3 py-1 text-xs font-medium', feeTrendTone(outboundTrend.direction))}>
-            {trendLabel(outboundTrend.direction)} {trendValue(outboundTrend)}
+          <span className={clsx('inline-flex rounded-full border px-3 py-1 text-xs font-medium', feeTrendTone(outboundTrend.available ? outboundTrend.direction : 'flat'))}>
+            {trendLabel(outboundTrend)} {trendValue(outboundTrend) ? ` ${trendValue(outboundTrend)}` : ''}
           </span>
         </div>
         <div className="flex items-center justify-between gap-3">
@@ -467,8 +480,8 @@ function FeeComparisonCard({
             <p className="text-sm font-medium text-fog">{t('graphExplorer.feeComparison.inbound')}</p>
             <p className="text-xs text-fog/55">{formatInteger(inboundValue)} ppm</p>
           </div>
-          <span className={clsx('inline-flex rounded-full border px-3 py-1 text-xs font-medium', feeTrendTone(inboundTrend.direction))}>
-            {trendLabel(inboundTrend.direction)} {trendValue(inboundTrend)}
+          <span className={clsx('inline-flex rounded-full border px-3 py-1 text-xs font-medium', feeTrendTone(inboundTrend.available ? inboundTrend.direction : 'flat'))}>
+            {trendLabel(inboundTrend)} {trendValue(inboundTrend) ? ` ${trendValue(inboundTrend)}` : ''}
           </span>
         </div>
       </div>
@@ -948,38 +961,76 @@ export default function GraphExplorer() {
     [feeHistory]
   )
 
-  const computeFeeTrend = (currentValue: number, baselineValue: number) => {
+  const computeFeeTrend = (currentValue: number, baselineValue: number): FeeTrendResult => {
     const current = Number(currentValue || 0)
     const baseline = Number(baselineValue || 0)
-    if (baseline <= 0) {
-      return { direction: 'flat' as FeeTrendDirection, deltaPct: 0 }
+    if (current <= 0 || baseline <= 0) {
+      return { direction: 'flat', deltaPct: 0, available: false }
     }
     const deltaPct = ((current - baseline) / baseline) * 100
     if (Math.abs(deltaPct) < 0.05) {
-      return { direction: 'flat' as FeeTrendDirection, deltaPct: 0 }
+      return { direction: 'flat', deltaPct: 0, available: true }
     }
     return {
-      direction: deltaPct > 0 ? ('up' as FeeTrendDirection) : ('down' as FeeTrendDirection),
-      deltaPct
+      direction: deltaPct > 0 ? 'up' : 'down',
+      deltaPct,
+      available: true
     }
   }
 
-  const earliestFeePoint = feeHistoryAscending[0]
-  const outboundTrend = computeFeeTrend(
-    Number(fees?.outbound?.weighted_avg_ppm || 0),
-    Number(earliestFeePoint?.outbound_weighted_avg_ppm || 0)
+  const currentDayUTC = new Date().toISOString().slice(0, 10)
+  const buildFeeBaseline = (selector: (item: GraphExplorerFeeHistoryPoint) => number, sampleSelector: (item: GraphExplorerFeeHistoryPoint) => number) => {
+    const values = feeHistoryAscending
+      .filter((item) => item.day !== currentDayUTC)
+      .filter((item) => Number(sampleSelector(item) || 0) > 0)
+      .map((item) => Number(selector(item) || 0))
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .slice(-FEE_TREND_BASELINE_WINDOW_DAYS)
+    if (values.length < FEE_TREND_BASELINE_MIN_DAYS) {
+      return null
+    }
+    const average = values.reduce((sum, value) => sum + value, 0) / values.length
+    if (!Number.isFinite(average) || average < FEE_TREND_BASELINE_MIN_PPM) {
+      return null
+    }
+    return average
+  }
+
+  const outboundBaseline = buildFeeBaseline(
+    (item) => item.outbound_weighted_avg_ppm,
+    (item) => item.outbound_sample_count
   )
-  const inboundTrend = computeFeeTrend(
-    Number(fees?.inbound?.weighted_avg_ppm || 0),
-    Number(earliestFeePoint?.inbound_weighted_avg_ppm || 0)
+  const inboundBaseline = buildFeeBaseline(
+    (item) => item.inbound_weighted_avg_ppm,
+    (item) => item.inbound_sample_count
   )
+  const ratioBaselineSeries = feeHistoryAscending
+    .filter((item) => item.day !== currentDayUTC)
+    .filter((item) => Number(item.outbound_sample_count || 0) > 0 && Number(item.inbound_sample_count || 0) > 0)
+    .map((item) => {
+      const inbound = Number(item.inbound_weighted_avg_ppm || 0)
+      const outbound = Number(item.outbound_weighted_avg_ppm || 0)
+      if (inbound <= 0 || outbound <= 0) return 0
+      return outbound / inbound
+    })
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .slice(-FEE_TREND_BASELINE_WINDOW_DAYS)
+  const ratioBaseline = ratioBaselineSeries.length >= FEE_TREND_BASELINE_MIN_DAYS
+    ? ratioBaselineSeries.reduce((sum, value) => sum + value, 0) / ratioBaselineSeries.length
+    : null
+
+  const outboundTrend = outboundBaseline === null
+    ? { direction: 'flat' as FeeTrendDirection, deltaPct: 0, available: false }
+    : computeFeeTrend(Number(fees?.outbound?.weighted_avg_ppm || 0), outboundBaseline)
+  const inboundTrend = inboundBaseline === null
+    ? { direction: 'flat' as FeeTrendDirection, deltaPct: 0, available: false }
+    : computeFeeTrend(Number(fees?.inbound?.weighted_avg_ppm || 0), inboundBaseline)
   const currentOutInRatio = Number(fees?.inbound?.weighted_avg_ppm || 0) > 0
     ? Number(fees?.outbound?.weighted_avg_ppm || 0) / Number(fees?.inbound?.weighted_avg_ppm || 0)
     : 0
-  const earliestOutInRatio = Number(earliestFeePoint?.inbound_weighted_avg_ppm || 0) > 0
-    ? Number(earliestFeePoint?.outbound_weighted_avg_ppm || 0) / Number(earliestFeePoint?.inbound_weighted_avg_ppm || 0)
-    : 0
-  const outInRatioTrend = computeFeeTrend(currentOutInRatio, earliestOutInRatio)
+  const outInRatioTrend = ratioBaseline === null
+    ? { direction: 'flat' as FeeTrendDirection, deltaPct: 0, available: false }
+    : computeFeeTrend(currentOutInRatio, ratioBaseline)
 
   const renderGeneralTab = () => (
     <>

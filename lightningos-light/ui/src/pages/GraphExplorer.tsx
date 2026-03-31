@@ -7,6 +7,7 @@ import {
   getGraphExplorerNodeFees,
   getGraphExplorerNodeGeneral,
   getGraphExplorerStatus,
+  getLndStatus,
   recomputeGraphExplorer,
   searchGraphExplorerNodes
 } from '../api'
@@ -169,6 +170,14 @@ type GraphExplorerFeeResponse = {
   history?: GraphExplorerFeeHistoryPoint[]
 }
 
+type LndStatusResponse = {
+  block_height?: number
+}
+
+type ChannelSortKey = 'peer' | 'channel' | 'capacity' | 'openBlock' | 'targetPolicy' | 'peerPolicy' | 'lastUpdate'
+type SortDirection = 'asc' | 'desc'
+type FeeTrendDirection = 'up' | 'down' | 'flat'
+
 const GRAPH_EXPLORER_ROUTE_KEY = 'graph-explorer'
 const GRAPH_EXPLORER_PUBKEY_PARAM = 'pubkey'
 const GRAPH_EXPLORER_TAB_PARAM = 'tab'
@@ -252,6 +261,22 @@ const closeTypeTone = (value?: string) => {
     default:
       return 'border-white/10 bg-white/[0.04] text-fog/70'
   }
+}
+
+const feeTrendTone = (direction: FeeTrendDirection) => {
+  switch (direction) {
+    case 'up':
+      return 'border-emerald-400/30 bg-emerald-500/10 text-emerald-100'
+    case 'down':
+      return 'border-rose-400/30 bg-rose-500/12 text-rose-100'
+    default:
+      return 'border-white/10 bg-white/[0.04] text-fog/70'
+  }
+}
+
+const sortIndicator = (active: boolean, direction: SortDirection) => {
+  if (!active) return '-'
+  return direction === 'asc' ? '^' : 'v'
 }
 
 function PolicyCell({
@@ -381,6 +406,77 @@ function FeeSummaryCard({
   )
 }
 
+function FeeComparisonCard({
+  ratio,
+  ratioTrend,
+  outboundValue,
+  inboundValue,
+  outboundTrend,
+  inboundTrend,
+  formatInteger,
+  t
+}: {
+  ratio: number
+  ratioTrend: { direction: FeeTrendDirection; deltaPct: number }
+  outboundValue: number
+  inboundValue: number
+  outboundTrend: { direction: FeeTrendDirection; deltaPct: number }
+  inboundTrend: { direction: FeeTrendDirection; deltaPct: number }
+  formatInteger: (value?: number) => string
+  t: (key: string, options?: any) => string
+}) {
+  const ratioDisplay = Number.isFinite(ratio) && ratio > 0 ? `${ratio.toFixed(2)}x` : t('common.na')
+  const trendLabel = (direction: FeeTrendDirection) => {
+    switch (direction) {
+      case 'up':
+        return t('graphExplorer.feeComparison.rising')
+      case 'down':
+        return t('graphExplorer.feeComparison.falling')
+      default:
+        return t('graphExplorer.feeComparison.stable')
+    }
+  }
+  const trendValue = (trend: { direction: FeeTrendDirection; deltaPct: number }) => {
+    const prefix = trend.direction === 'up' ? '+' : ''
+    return `${prefix}${trend.deltaPct.toFixed(1)}%`
+  }
+  return (
+    <div className="rounded-[1.35rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] p-5">
+      <p className="text-sm font-medium text-fog">{t('graphExplorer.feeComparison.title')}</p>
+      <div className="mt-4 rounded-[1.15rem] border border-white/10 bg-black/15 px-4 py-6 text-center">
+        <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.feeComparison.ratio')}</p>
+        <p className="mt-3 text-4xl font-semibold text-fog">{ratioDisplay}</p>
+        <div className="mt-4 flex items-center justify-center">
+          <span className={clsx('inline-flex rounded-full border px-3 py-1 text-xs font-medium', feeTrendTone(ratioTrend.direction))}>
+            {trendLabel(ratioTrend.direction)} {trendValue(ratioTrend)}
+          </span>
+        </div>
+      </div>
+      <div className="mt-5 space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium text-fog">{t('graphExplorer.feeComparison.outbound')}</p>
+            <p className="text-xs text-fog/55">{formatInteger(outboundValue)} ppm</p>
+          </div>
+          <span className={clsx('inline-flex rounded-full border px-3 py-1 text-xs font-medium', feeTrendTone(outboundTrend.direction))}>
+            {trendLabel(outboundTrend.direction)} {trendValue(outboundTrend)}
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium text-fog">{t('graphExplorer.feeComparison.inbound')}</p>
+            <p className="text-xs text-fog/55">{formatInteger(inboundValue)} ppm</p>
+          </div>
+          <span className={clsx('inline-flex rounded-full border px-3 py-1 text-xs font-medium', feeTrendTone(inboundTrend.direction))}>
+            {trendLabel(inboundTrend.direction)} {trendValue(inboundTrend)}
+          </span>
+        </div>
+      </div>
+      <p className="mt-5 text-center text-xs text-fog/55">{t('graphExplorer.feeComparison.basedOnWeighted')}</p>
+    </div>
+  )
+}
+
 export default function GraphExplorer() {
   const { t, i18n } = useTranslation()
   const locale = getLocale(i18n.language)
@@ -389,16 +485,27 @@ export default function GraphExplorer() {
     () => new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }),
     [locale]
   )
+  const relativeTimeFormatter = useMemo(
+    () => new Intl.RelativeTimeFormat(locale, { numeric: 'auto' }),
+    [locale]
+  )
 
   const initialRouteState = readGraphExplorerRouteState()
   const [status, setStatus] = useState<GraphExplorerStatus | null>(null)
   const [statusError, setStatusError] = useState('')
+  const [currentBlockHeight, setCurrentBlockHeight] = useState(0)
   const [query, setQuery] = useState('')
   const [searchResults, setSearchResults] = useState<GraphExplorerSearchResult[]>([])
   const [searchLoading, setSearchLoading] = useState(false)
   const [searchError, setSearchError] = useState('')
+  const [copiedKey, setCopiedKey] = useState('')
+  const [copyError, setCopyError] = useState('')
   const [selectedPubkey, setSelectedPubkey] = useState(initialRouteState.pubkey)
   const [activeTab, setActiveTab] = useState<GraphExplorerTab>(initialRouteState.tab)
+  const [channelSort, setChannelSort] = useState<{ key: ChannelSortKey; direction: SortDirection }>({
+    key: 'capacity',
+    direction: 'desc'
+  })
   const [general, setGeneral] = useState<GraphExplorerNodeGeneral | null>(null)
   const [generalLoading, setGeneralLoading] = useState(false)
   const [generalError, setGeneralError] = useState('')
@@ -435,15 +542,71 @@ export default function GraphExplorer() {
     return numberFormatter.format(normalized)
   }
 
+  const parseTimestamp = (value?: string) => {
+    if (!value) return null
+    const parsed = new Date(value)
+    return Number.isNaN(parsed.getTime()) ? null : parsed
+  }
+
+  const estimateDateFromBlock = (blockHeight?: number) => {
+    const normalizedBlock = Math.max(0, Math.round(Number(blockHeight || 0)))
+    const normalizedTip = Math.max(0, Math.round(Number(currentBlockHeight || 0)))
+    if (!normalizedBlock || !normalizedTip || normalizedBlock > normalizedTip) return null
+    const blockDelta = normalizedTip - normalizedBlock
+    return new Date(Date.now() - blockDelta * 10 * 60 * 1000)
+  }
+
+  const formatEstimatedDate = (value?: Date | null) => {
+    if (!value) return t('common.na')
+    return `~${dateTimeFormatter.format(value)}`
+  }
+
+  const formatApproximateAge = (value?: Date | null) => {
+    if (!value) return t('common.na')
+    const diffMs = Date.now() - value.getTime()
+    if (!Number.isFinite(diffMs) || diffMs < 0) return t('common.na')
+    const units: Array<{ unit: Intl.RelativeTimeFormatUnit; ms: number }> = [
+      { unit: 'year', ms: 365 * 24 * 60 * 60 * 1000 },
+      { unit: 'month', ms: 30 * 24 * 60 * 60 * 1000 },
+      { unit: 'week', ms: 7 * 24 * 60 * 60 * 1000 },
+      { unit: 'day', ms: 24 * 60 * 60 * 1000 },
+      { unit: 'hour', ms: 60 * 60 * 1000 },
+      { unit: 'minute', ms: 60 * 1000 }
+    ]
+    const selectedUnit = units.find((item) => diffMs >= item.ms) || units[units.length - 1]
+    const amount = Math.max(1, Math.round(diffMs / selectedUnit.ms))
+    return `~${relativeTimeFormatter.format(-amount, selectedUnit.unit)}`
+  }
+
+  useEffect(() => {
+    if (!copiedKey && !copyError) return
+    const timer = window.setTimeout(() => {
+      setCopiedKey('')
+      setCopyError('')
+    }, 2200)
+    return () => window.clearTimeout(timer)
+  }, [copiedKey, copyError])
+
   useEffect(() => {
     let active = true
 
     const loadStatus = async () => {
       try {
-        const nextStatus = await getGraphExplorerStatus() as GraphExplorerStatus
+        const [graphResult, lndResult] = await Promise.allSettled([
+          getGraphExplorerStatus(),
+          getLndStatus()
+        ])
         if (!active) return
-        setStatus(nextStatus)
-        setStatusError('')
+        if (graphResult.status === 'fulfilled') {
+          setStatus(graphResult.value as GraphExplorerStatus)
+          setStatusError('')
+        } else {
+          setStatusError((graphResult.reason as any)?.message || t('graphExplorer.statusLoadFailed'))
+        }
+        if (lndResult.status === 'fulfilled') {
+          const lndStatus = lndResult.value as LndStatusResponse
+          setCurrentBlockHeight(Math.max(0, Math.round(Number(lndStatus?.block_height || 0))))
+        }
       } catch (err: any) {
         if (!active) return
         setStatusError(err?.message || t('graphExplorer.statusLoadFailed'))
@@ -642,6 +805,12 @@ export default function GraphExplorer() {
         const fallbackStatus = await getGraphExplorerStatus() as GraphExplorerStatus
         setStatus(fallbackStatus)
       }
+      try {
+        const lndStatus = await getLndStatus() as LndStatusResponse
+        setCurrentBlockHeight(Math.max(0, Math.round(Number(lndStatus?.block_height || 0))))
+      } catch {
+        // keep previous height on transient failures
+      }
       if (selectedPubkey) {
         const nextGeneral = await getGraphExplorerNodeGeneral(selectedPubkey) as GraphExplorerNodeGeneral
         setGeneral(nextGeneral)
@@ -673,6 +842,31 @@ export default function GraphExplorer() {
     }
   }
 
+  const handleCopy = async (value: string, key: string) => {
+    const text = String(value || '').trim()
+    if (!text) return
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error('clipboard_unavailable')
+      }
+      await navigator.clipboard.writeText(text)
+      setCopiedKey(key)
+      setCopyError('')
+    } catch {
+      setCopiedKey('')
+      setCopyError(t('common.copyFailedManual'))
+    }
+  }
+
+  const handleChannelSort = (key: ChannelSortKey) => {
+    setChannelSort((current) => {
+      if (current.key === key) {
+        return { key, direction: current.direction === 'asc' ? 'desc' : 'asc' }
+      }
+      return { key, direction: key === 'peer' ? 'asc' : 'desc' }
+    })
+  }
+
   const node = general?.node || null
   const selectedColor = normalizeNodeColor(node?.color)
   const coverageSince = general?.coverage_since || status?.first_native_coverage_at || ''
@@ -687,6 +881,9 @@ export default function GraphExplorer() {
   const feeHistory = Array.isArray(fees?.history) ? fees.history : []
   const outboundBins = Array.isArray(fees?.outbound_bins) ? fees.outbound_bins : []
   const inboundBins = Array.isArray(fees?.inbound_bins) ? fees.inbound_bins : []
+  const estimatedOldestChannelDate = estimateDateFromBlock(node?.oldest_channel_block)
+  const estimatedYoungestChannelDate = estimateDateFromBlock(node?.youngest_channel_block)
+  const approximateNodeStartDate = estimatedOldestChannelDate || parseTimestamp(node?.first_seen_at)
 
   const metricCards = node
     ? [
@@ -700,6 +897,89 @@ export default function GraphExplorer() {
         { key: 'lastGraphUpdate', label: t('graphExplorer.metrics.lastGraphUpdate'), value: formatTimestamp(node.last_graph_update_at) }
       ]
     : []
+
+  const sortedChannelItems = useMemo(() => {
+    const items = [...channelItems]
+    const multiplier = channelSort.direction === 'asc' ? 1 : -1
+    items.sort((left, right) => {
+      const compareString = (a?: string, b?: string) =>
+        String(a || '').localeCompare(String(b || ''), locale, { sensitivity: 'base' })
+      const compareNumber = (a?: number, b?: number) => Number(a || 0) - Number(b || 0)
+      let comparison = 0
+      switch (channelSort.key) {
+        case 'peer':
+          comparison =
+            compareString(left.peer_alias || left.peer_pubkey, right.peer_alias || right.peer_pubkey) ||
+            compareString(left.peer_pubkey, right.peer_pubkey)
+          break
+        case 'channel':
+          comparison = compareNumber(left.channel_id, right.channel_id)
+          break
+        case 'capacity':
+          comparison = compareNumber(left.capacity_sat, right.capacity_sat)
+          break
+        case 'openBlock':
+          comparison = compareNumber(left.open_block_height, right.open_block_height)
+          break
+        case 'targetPolicy':
+          comparison =
+            compareNumber(left.target_policy?.fee_rate_ppm, right.target_policy?.fee_rate_ppm) ||
+            compareNumber(left.target_policy?.fee_base_msat, right.target_policy?.fee_base_msat)
+          break
+        case 'peerPolicy':
+          comparison =
+            compareNumber(left.peer_policy?.fee_rate_ppm, right.peer_policy?.fee_rate_ppm) ||
+            compareNumber(left.peer_policy?.fee_base_msat, right.peer_policy?.fee_base_msat)
+          break
+        case 'lastUpdate':
+          comparison = compareString(left.last_policy_update, right.last_policy_update)
+          break
+      }
+      if (comparison === 0) {
+        comparison = compareNumber(left.channel_id, right.channel_id)
+      }
+      return comparison * multiplier
+    })
+    return items
+  }, [channelItems, channelSort, locale])
+
+  const feeHistoryAscending = useMemo(
+    () => [...feeHistory].sort((left, right) => String(left.day || '').localeCompare(String(right.day || ''))),
+    [feeHistory]
+  )
+
+  const computeFeeTrend = (currentValue: number, baselineValue: number) => {
+    const current = Number(currentValue || 0)
+    const baseline = Number(baselineValue || 0)
+    if (baseline <= 0) {
+      return { direction: 'flat' as FeeTrendDirection, deltaPct: 0 }
+    }
+    const deltaPct = ((current - baseline) / baseline) * 100
+    if (Math.abs(deltaPct) < 0.05) {
+      return { direction: 'flat' as FeeTrendDirection, deltaPct: 0 }
+    }
+    return {
+      direction: deltaPct > 0 ? ('up' as FeeTrendDirection) : ('down' as FeeTrendDirection),
+      deltaPct
+    }
+  }
+
+  const earliestFeePoint = feeHistoryAscending[0]
+  const outboundTrend = computeFeeTrend(
+    Number(fees?.outbound?.weighted_avg_ppm || 0),
+    Number(earliestFeePoint?.outbound_weighted_avg_ppm || 0)
+  )
+  const inboundTrend = computeFeeTrend(
+    Number(fees?.inbound?.weighted_avg_ppm || 0),
+    Number(earliestFeePoint?.inbound_weighted_avg_ppm || 0)
+  )
+  const currentOutInRatio = Number(fees?.inbound?.weighted_avg_ppm || 0) > 0
+    ? Number(fees?.outbound?.weighted_avg_ppm || 0) / Number(fees?.inbound?.weighted_avg_ppm || 0)
+    : 0
+  const earliestOutInRatio = Number(earliestFeePoint?.inbound_weighted_avg_ppm || 0) > 0
+    ? Number(earliestFeePoint?.outbound_weighted_avg_ppm || 0) / Number(earliestFeePoint?.inbound_weighted_avg_ppm || 0)
+    : 0
+  const outInRatioTrend = computeFeeTrend(currentOutInRatio, earliestOutInRatio)
 
   const renderGeneralTab = () => (
     <>
@@ -717,6 +997,13 @@ export default function GraphExplorer() {
           <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.sections.presence')}</p>
           <dl className="mt-4 space-y-4">
             <div className="flex items-center justify-between gap-4">
+              <dt className="text-sm text-fog/65">{t('graphExplorer.fields.approxNodeAge')}</dt>
+              <dd className="text-right">
+                <div className="text-sm font-medium text-fog">{formatApproximateAge(approximateNodeStartDate)}</div>
+                <div className="text-xs text-fog/55">{formatEstimatedDate(approximateNodeStartDate)}</div>
+              </dd>
+            </div>
+            <div className="flex items-center justify-between gap-4">
               <dt className="text-sm text-fog/65">{t('graphExplorer.fields.firstSeen')}</dt>
               <dd className="text-sm font-medium text-fog">{formatTimestamp(node?.first_seen_at)}</dd>
             </div>
@@ -726,11 +1013,17 @@ export default function GraphExplorer() {
             </div>
             <div className="flex items-center justify-between gap-4">
               <dt className="text-sm text-fog/65">{t('graphExplorer.fields.oldestChannelBlock')}</dt>
-              <dd className="text-sm font-medium text-fog">{formatBlock(node?.oldest_channel_block)}</dd>
+              <dd className="text-right">
+                <div className="text-sm font-medium text-fog">{formatBlock(node?.oldest_channel_block)}</div>
+                <div className="text-xs text-fog/55">{formatEstimatedDate(estimatedOldestChannelDate)}</div>
+              </dd>
             </div>
             <div className="flex items-center justify-between gap-4">
               <dt className="text-sm text-fog/65">{t('graphExplorer.fields.youngestChannelBlock')}</dt>
-              <dd className="text-sm font-medium text-fog">{formatBlock(node?.youngest_channel_block)}</dd>
+              <dd className="text-right">
+                <div className="text-sm font-medium text-fog">{formatBlock(node?.youngest_channel_block)}</div>
+                <div className="text-xs text-fog/55">{formatEstimatedDate(estimatedYoungestChannelDate)}</div>
+              </dd>
             </div>
           </dl>
         </div>
@@ -752,7 +1045,16 @@ export default function GraphExplorer() {
             </div>
             <div className="flex items-center justify-between gap-4">
               <dt className="text-sm text-fog/65">{t('graphExplorer.fields.selectedPubkey')}</dt>
-              <dd className="truncate text-sm font-medium text-fog">{shortPubkey(node?.pubkey || '')}</dd>
+              <dd className="flex items-center gap-2">
+                <span className="truncate text-sm font-medium text-fog">{shortPubkey(node?.pubkey || '')}</span>
+                <button
+                  type="button"
+                  className="rounded-full border border-white/10 bg-white/[0.05] px-2.5 py-1 text-[11px] font-medium text-fog/75 transition hover:border-white/20 hover:text-fog"
+                  onClick={() => void handleCopy(node?.pubkey || '', 'node-pubkey')}
+                >
+                  {copiedKey === 'node-pubkey' ? t('common.copied') : t('common.copy')}
+                </button>
+              </dd>
             </div>
           </dl>
         </div>
@@ -782,21 +1084,56 @@ export default function GraphExplorer() {
               {t('graphExplorer.channelCoverage', { value: formatTimestamp(channels?.coverage_since || coverageSince) })}
             </p>
           </div>
-          <div className="overflow-x-auto rounded-[1.35rem] border border-white/10 bg-white/[0.03]">
+          <div className="max-h-[42rem] overflow-auto rounded-[1.35rem] border border-white/10 bg-white/[0.03]">
             <table className="min-w-full text-sm">
-              <thead className="border-b border-white/10 bg-white/[0.025] text-left text-xs uppercase tracking-[0.14em] text-fog/45">
+              <thead className="sticky top-0 z-10 border-b border-white/10 bg-[#182232] text-left text-xs uppercase tracking-[0.14em] text-fog/45">
                 <tr>
-                  <th className="px-4 py-3">{t('graphExplorer.columns.peer')}</th>
-                  <th className="px-4 py-3">{t('graphExplorer.columns.channel')}</th>
-                  <th className="px-4 py-3">{t('graphExplorer.columns.capacity')}</th>
-                  <th className="px-4 py-3">{t('graphExplorer.columns.openBlock')}</th>
-                  <th className="px-4 py-3">{t('graphExplorer.columns.targetPolicy')}</th>
-                  <th className="px-4 py-3">{t('graphExplorer.columns.peerPolicy')}</th>
-                  <th className="px-4 py-3">{t('graphExplorer.columns.lastUpdate')}</th>
+                  <th className="px-4 py-3">
+                    <button type="button" className="flex items-center gap-2" onClick={() => handleChannelSort('peer')}>
+                      <span>{t('graphExplorer.columns.peer')}</span>
+                      <span>{sortIndicator(channelSort.key === 'peer', channelSort.direction)}</span>
+                    </button>
+                  </th>
+                  <th className="px-4 py-3">
+                    <button type="button" className="flex items-center gap-2" onClick={() => handleChannelSort('channel')}>
+                      <span>{t('graphExplorer.columns.channel')}</span>
+                      <span>{sortIndicator(channelSort.key === 'channel', channelSort.direction)}</span>
+                    </button>
+                  </th>
+                  <th className="px-4 py-3">
+                    <button type="button" className="flex items-center gap-2" onClick={() => handleChannelSort('capacity')}>
+                      <span>{t('graphExplorer.columns.capacity')}</span>
+                      <span>{sortIndicator(channelSort.key === 'capacity', channelSort.direction)}</span>
+                    </button>
+                  </th>
+                  <th className="px-4 py-3">
+                    <button type="button" className="flex items-center gap-2" onClick={() => handleChannelSort('openBlock')}>
+                      <span>{t('graphExplorer.columns.openBlock')}</span>
+                      <span>{sortIndicator(channelSort.key === 'openBlock', channelSort.direction)}</span>
+                    </button>
+                  </th>
+                  <th className="px-4 py-3">
+                    <button type="button" className="flex items-center gap-2" onClick={() => handleChannelSort('targetPolicy')}>
+                      <span>{t('graphExplorer.columns.targetPolicy')}</span>
+                      <span>{sortIndicator(channelSort.key === 'targetPolicy', channelSort.direction)}</span>
+                    </button>
+                  </th>
+                  <th className="px-4 py-3">
+                    <button type="button" className="flex items-center gap-2" onClick={() => handleChannelSort('peerPolicy')}>
+                      <span>{t('graphExplorer.columns.peerPolicy')}</span>
+                      <span>{sortIndicator(channelSort.key === 'peerPolicy', channelSort.direction)}</span>
+                    </button>
+                  </th>
+                  <th className="px-4 py-3">
+                    <button type="button" className="flex items-center gap-2" onClick={() => handleChannelSort('lastUpdate')}>
+                      <span>{t('graphExplorer.columns.lastUpdate')}</span>
+                      <span>{sortIndicator(channelSort.key === 'lastUpdate', channelSort.direction)}</span>
+                    </button>
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {channelItems.map((item) => (
+                {sortedChannelItems.map((item) => (
                   <tr key={`${item.channel_id}-${item.chan_point || 'unknown'}`} className="border-t border-white/6 align-top">
                     <td className="px-4 py-4">
                       <div className="space-y-1">
@@ -831,12 +1168,13 @@ export default function GraphExplorer() {
 
   const renderClosedTab = () => (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-[1.35rem] border border-white/10 bg-white/[0.03] p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[1.35rem] border border-white/10 bg-white/[0.03] p-5">
         <div>
           <p className="text-sm font-medium text-fog">{t('graphExplorer.sections.closed')}</p>
           <p className="mt-2 text-sm text-fog/60">
             {t('graphExplorer.closedCoverage', { value: formatTimestamp(closed?.coverage_since || coverageSince) })}
           </p>
+          <p className="mt-2 text-xs text-fog/50">{t('graphExplorer.closedTrackingHint')}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           {(['30d', '90d', '1y', 'all'] as GraphExplorerClosedRange[]).map((value) => (
@@ -972,7 +1310,7 @@ export default function GraphExplorer() {
         </div>
       ) : (
         <>
-          <div className="grid gap-4 xl:grid-cols-2">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,0.86fr)_minmax(0,1fr)]">
             <FeeSummaryCard
               title={t('graphExplorer.feeSummary.outboundTitle')}
               summary={fees?.outbound || {
@@ -988,6 +1326,16 @@ export default function GraphExplorer() {
               formatInteger={formatInteger}
               formatSats={formatSats}
               formatTimestamp={formatTimestamp}
+              t={t}
+            />
+            <FeeComparisonCard
+              ratio={currentOutInRatio}
+              ratioTrend={outInRatioTrend}
+              outboundValue={Number(fees?.outbound?.weighted_avg_ppm || 0)}
+              inboundValue={Number(fees?.inbound?.weighted_avg_ppm || 0)}
+              outboundTrend={outboundTrend}
+              inboundTrend={inboundTrend}
+              formatInteger={formatInteger}
               t={t}
             />
             <FeeSummaryCard
@@ -1272,7 +1620,16 @@ export default function GraphExplorer() {
                       <h2 className="truncate text-2xl font-semibold text-fog">
                         {node.alias || t('graphExplorer.aliasFallback')}
                       </h2>
-                      <p className="mt-2 break-all font-mono text-xs text-fog/62">{node.pubkey}</p>
+                      <div className="mt-2 flex flex-wrap items-start gap-2">
+                        <p className="min-w-0 flex-1 break-all font-mono text-xs text-fog/62">{node.pubkey}</p>
+                        <button
+                          type="button"
+                          className="rounded-full border border-white/10 bg-white/[0.05] px-2.5 py-1 text-[11px] font-medium text-fog/75 transition hover:border-white/20 hover:text-fog"
+                          onClick={() => void handleCopy(node.pubkey, 'node-pubkey')}
+                        >
+                          {copiedKey === 'node-pubkey' ? t('common.copied') : t('common.copy')}
+                        </button>
+                      </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-fog/75">
@@ -1318,17 +1675,31 @@ export default function GraphExplorer() {
                     {t('graphExplorer.noAddresses')}
                   </span>
                 ) : (
-                  addressList.map((address, index) => (
-                    <span
+                  addressList.map((address, index) => {
+                    const visibleAddress = String(address.addr || '').trim() || shortPubkey(node.pubkey)
+                    const copyValue = node.pubkey && visibleAddress
+                      ? `${node.pubkey}@${visibleAddress}`
+                      : visibleAddress
+                    const copyStateKey = `node-address-${index}`
+                    return (
+                    <button
+                      type="button"
                       key={`${address.network || 'addr'}-${address.addr || index}`}
-                      className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-fog/75"
+                      className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-left text-xs text-fog/75 transition hover:border-white/20 hover:bg-white/[0.06]"
+                      onClick={() => void handleCopy(copyValue, copyStateKey)}
+                      title={copyValue}
                     >
-                      {String(address.network || '').trim() ? `${address.network}: ` : ''}
-                      {address.addr || shortPubkey(node.pubkey)}
-                    </span>
-                  ))
+                      <span>{visibleAddress}</span>
+                      <span className="ml-2 text-[11px] text-sky-100/80">
+                        {copiedKey === copyStateKey ? t('common.copied') : t('common.copy')}
+                      </span>
+                    </button>
+                  )})
                 )}
               </div>
+              {copyError && (
+                <p className="mt-3 text-sm text-amber-200">{copyError}</p>
+              )}
             </div>
 
             {activeTab === 'general' && renderGeneralTab()}

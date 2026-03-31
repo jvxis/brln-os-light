@@ -244,6 +244,7 @@
     "noAddresses": "Nenhum endereço público conhecido",
     "channelCoverage": "Canais públicos visíveis com cobertura nativa desde {{value}}",
     "closedCoverage": "Fechamentos públicos observados desde {{value}}",
+    "closedTrackingHint": "Os closes entram quando o stream do grafo do LND reporta o evento. O histórico começa na ativação do módulo.",
     "feeCoverage": "Histórico de policy pública acumulado desde {{value}}",
     "policyInboundLabel": "Inbound {{ppm}} ppm",
     "feeDistributionHint": "Distribuição por bucket de ppm",
@@ -293,6 +294,7 @@
       "fees": "Policy report público"
     },
     "fields": {
+      "approxNodeAge": "Idade aproximada",
       "firstSeen": "Primeira vez visto",
       "lastSeen": "Última vez visto",
       "oldestChannelBlock": "Bloco do canal mais antigo",
@@ -339,6 +341,16 @@
     "feeDistribution": {
       "outbound": "Distribuição outbound",
       "inbound": "Distribuição inbound"
+    },
+    "feeComparison": {
+      "title": "Comparação",
+      "ratio": "Relação Out / In",
+      "basedOnWeighted": "Baseado nas médias ponderadas do range selecionado",
+      "outbound": "Outbound",
+      "inbound": "Inbound",
+      "rising": "Subindo",
+      "falling": "Caindo",
+      "stable": "Estável"
     },
     "feeHistory": {
       "title": "Histórico diário de policy",

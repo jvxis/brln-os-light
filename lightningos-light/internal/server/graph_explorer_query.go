@@ -282,7 +282,34 @@ func decodeGraphNodeAddresses(raw []byte) ([]lndclient.GraphNodeAddress, error) 
 	if err := json.Unmarshal(raw, &addresses); err != nil {
 		return nil, err
 	}
-	return addresses, nil
+	return normalizeGraphNodeAddresses(addresses), nil
+}
+
+func normalizeGraphNodeAddresses(addresses []lndclient.GraphNodeAddress) []lndclient.GraphNodeAddress {
+	if len(addresses) == 0 {
+		return []lndclient.GraphNodeAddress{}
+	}
+	normalized := make([]lndclient.GraphNodeAddress, 0, len(addresses))
+	seen := make(map[string]struct{}, len(addresses))
+	for _, address := range addresses {
+		addr := strings.TrimSpace(address.Addr)
+		if addr == "" {
+			continue
+		}
+		key := strings.ToLower(addr)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, lndclient.GraphNodeAddress{
+			Network: strings.TrimSpace(address.Network),
+			Addr:    addr,
+		})
+	}
+	if len(normalized) == 0 {
+		return []lndclient.GraphNodeAddress{}
+	}
+	return normalized
 }
 
 func classifyGraphNodeAddresses(addresses []lndclient.GraphNodeAddress) (int, int) {

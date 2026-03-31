@@ -469,6 +469,7 @@ type AutofeeConfig = {
     htlc_policy_fail_rate_override?: number
     htlc_liquidity_fail_rate_override?: number
     rebal_cost_mode?: string
+    native_seed_enabled: boolean
     amboss_enabled: boolean
     amboss_token_set: boolean
     inbound_passive_enabled: boolean
@@ -981,6 +982,7 @@ export default function LightningOps() {
   const [autofeeRebalMode, setAutofeeRebalMode] = useState('blend')
   const [autofeeMinPpm, setAutofeeMinPpm] = useState('10')
   const [autofeeMaxPpm, setAutofeeMaxPpm] = useState('2000')
+  const [autofeeNativeSeedEnabled, setAutofeeNativeSeedEnabled] = useState(false)
   const [autofeeAmbossEnabled, setAutofeeAmbossEnabled] = useState(false)
   const [autofeeAmbossToken, setAutofeeAmbossToken] = useState('')
   const [autofeeInboundPassive, setAutofeeInboundPassive] = useState(false)
@@ -2699,6 +2701,7 @@ export default function LightningOps() {
       setAutofeeRebalMode(cfg.rebal_cost_mode || 'blend')
       setAutofeeMinPpm(String(cfg.min_ppm ?? 10))
       setAutofeeMaxPpm(String(cfg.max_ppm ?? 2000))
+      setAutofeeNativeSeedEnabled(Boolean(cfg.native_seed_enabled))
       setAutofeeAmbossEnabled(Boolean(cfg.amboss_enabled))
       setAutofeeInboundPassive(Boolean(cfg.inbound_passive_enabled))
       setAutofeeDiscovery(Boolean(cfg.discovery_enabled))
@@ -4116,6 +4119,7 @@ export default function LightningOps() {
         rebal_cost_mode: autofeeRebalMode,
         min_ppm: minPpmRaw,
         max_ppm: maxPpmRaw,
+        native_seed_enabled: autofeeNativeSeedEnabled,
         amboss_enabled: autofeeAmbossEnabled,
         inbound_passive_enabled: autofeeInboundPassive,
         discovery_enabled: autofeeDiscovery,
@@ -5683,6 +5687,15 @@ export default function LightningOps() {
                   {t('lightningOps.autofeeSuperSourceBaseFee')}
                   <input className="input-field mt-2" type="number" min={0} value={autofeeSuperSourceBaseFee} onChange={(e) => setAutofeeSuperSourceBaseFee(e.target.value)} />
                 </label>
+              )}
+              <label className="flex items-center gap-2 text-sm text-fog/70">
+                <input type="checkbox" checked={autofeeNativeSeedEnabled} onChange={(e) => setAutofeeNativeSeedEnabled(e.target.checked)} />
+                {t('lightningOps.autofeeNativeSeed')}
+              </label>
+              {autofeeNativeSeedEnabled && (
+                <p className="text-xs text-fog/55 lg:col-span-2">
+                  {t('lightningOps.autofeeNativeSeedHint')}
+                </p>
               )}
               <label className="flex items-center gap-2 text-sm text-fog/70">
                 <input type="checkbox" checked={autofeeAmbossEnabled} onChange={(e) => setAutofeeAmbossEnabled(e.target.checked)} />

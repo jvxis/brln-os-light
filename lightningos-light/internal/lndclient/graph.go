@@ -224,14 +224,27 @@ func convertGraphNodeAddresses(items []*lnrpc.NodeAddress) []GraphNodeAddress {
 		return nil
 	}
 	addresses := make([]GraphNodeAddress, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
 	for _, item := range items {
 		if item == nil {
 			continue
 		}
+		addr := strings.TrimSpace(item.GetAddr())
+		if addr == "" {
+			continue
+		}
+		key := strings.ToLower(addr)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
 		addresses = append(addresses, GraphNodeAddress{
 			Network: strings.TrimSpace(item.GetNetwork()),
-			Addr:    strings.TrimSpace(item.GetAddr()),
+			Addr:    addr,
 		})
+	}
+	if len(addresses) == 0 {
+		return nil
 	}
 	return addresses
 }

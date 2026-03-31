@@ -196,6 +196,8 @@ create table if not exists graph_channel_policy_history (
   source text not null default 'native'
 );
 create index if not exists graph_channel_policy_history_lookup_idx on graph_channel_policy_history (chan_id, advertising_pubkey, captured_at desc);
+create index if not exists graph_channel_policy_history_advertising_pubkey_idx on graph_channel_policy_history (advertising_pubkey, captured_at desc);
+create index if not exists graph_channel_policy_history_connecting_pubkey_idx on graph_channel_policy_history (connecting_pubkey, captured_at desc);
 
 create table if not exists graph_close_events (
   id bigserial primary key,

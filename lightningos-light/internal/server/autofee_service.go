@@ -24,10 +24,12 @@ import (
 )
 
 const (
-	autofeeConfigID        = 1
-	autofeeMinLookbackDays = 5
-	autofeeMaxLookbackDays = 21
-	autofeeMinCooldownSec  = 3600
+	autofeeConfigID             = 1
+	autofeeMinLookbackDays      = 5
+	autofeeMaxLookbackDays      = 21
+	autofeeMinCooldownSec       = 3600
+	autofeeNativeSeedMinDays    = 3
+	autofeeNativeSeedMinSamples = 6
 )
 
 const superSourceBaseFeeMsatDefault = 1000
@@ -209,6 +211,7 @@ type AutofeeConfig struct {
 	HTLCPolicyFailRateOverride                   float64                           `json:"htlc_policy_fail_rate_override"`
 	HTLCLiquidityFailRateOverride                float64                           `json:"htlc_liquidity_fail_rate_override"`
 	RebalCostMode                                string                            `json:"rebal_cost_mode"`
+	NativeSeedEnabled                            bool                              `json:"native_seed_enabled"`
 	AmbossEnabled                                bool                              `json:"amboss_enabled"`
 	AmbossTokenSet                               bool                              `json:"amboss_token_set"`
 	InboundPassiveEnabled                        bool                              `json:"inbound_passive_enabled"`
@@ -265,6 +268,7 @@ type AutofeeConfigUpdate struct {
 	HTLCPolicyFailRateOverride                   *float64 `json:"htlc_policy_fail_rate_override,omitempty"`
 	HTLCLiquidityFailRateOverride                *float64 `json:"htlc_liquidity_fail_rate_override,omitempty"`
 	RebalCostMode                                *string  `json:"rebal_cost_mode,omitempty"`
+	NativeSeedEnabled                            *bool    `json:"native_seed_enabled,omitempty"`
 	AmbossEnabled                                *bool    `json:"amboss_enabled,omitempty"`
 	AmbossToken                                  *string  `json:"amboss_token,omitempty"`
 	InboundPassiveEnabled                        *bool    `json:"inbound_passive_enabled,omitempty"`
@@ -353,6 +357,9 @@ type autofeeLogItem struct {
 	LowOutThresh             float64  `json:"low_out_thresh,omitempty"`
 	LowOutProtectThresh      float64  `json:"low_out_protect_thresh,omitempty"`
 	LowOutFactor             float64  `json:"low_out_factor,omitempty"`
+	Native                   int      `json:"native,omitempty"`
+	NativeInsufficient       int      `json:"native_insufficient,omitempty"`
+	NativeErr                int      `json:"native_err,omitempty"`
 	Amboss                   int      `json:"amboss,omitempty"`
 	Missing                  int      `json:"missing,omitempty"`
 	Err                      int      `json:"err,omitempty"`
@@ -1101,6 +1108,7 @@ create table if not exists autofee_config (
   htlc_policy_fail_rate_override double precision not null default 0,
   htlc_liquidity_fail_rate_override double precision not null default 0,
   rebal_cost_mode text not null default 'blend',
+  native_seed_enabled boolean not null default false,
   amboss_enabled boolean not null default false,
   amboss_token text,
   inbound_passive_enabled boolean not null default false,
@@ -1200,6 +1208,7 @@ alter table autofee_config add column if not exists soften_max_drop_to_peg_frac_
 alter table autofee_config add column if not exists htlc_min_attempts_60m_override integer not null default 0;
 alter table autofee_config add column if not exists htlc_policy_fail_rate_override double precision not null default 0;
 alter table autofee_config add column if not exists htlc_liquidity_fail_rate_override double precision not null default 0;
+alter table autofee_config add column if not exists native_seed_enabled boolean not null default false;
 alter table autofee_state add column if not exists ss_active boolean;
 alter table autofee_state add column if not exists ss_ok_since timestamptz;
 alter table autofee_state add column if not exists ss_bad_since timestamptz;
@@ -1231,6 +1240,7 @@ func (s *AutofeeService) defaultConfig() AutofeeConfig {
 		CooldownDownSec:                 p.CooldownDownSec,
 		InboundDiscountMaxRatioOverride: 0,
 		RebalCostMode:                   rebalCostModeDefault,
+		NativeSeedEnabled:               false,
 		AmbossEnabled:                   false,
 		AmbossTokenSet:                  false,
 		InboundPassiveEnabled:           false,
@@ -1290,7 +1300,7 @@ func (s *AutofeeService) GetConfig(ctx context.Context) (AutofeeConfig, error) {
   inbound_discount_reach_out_ratio_override, inbound_discount_min_retained_spread_frac_override, outrate_floor_factor_low_override,
   soften_min_out_ratio_override, soften_max_drop_to_peg_frac_override, htlc_min_attempts_60m_override,
   htlc_policy_fail_rate_override, htlc_liquidity_fail_rate_override,
-  rebal_cost_mode, amboss_enabled, amboss_token, inbound_passive_enabled, discovery_enabled, explorer_enabled,
+  rebal_cost_mode, native_seed_enabled, amboss_enabled, amboss_token, inbound_passive_enabled, discovery_enabled, explorer_enabled,
   super_source_enabled, super_source_base_fee_msat, revfloor_enabled, circuit_breaker_enabled, extreme_drain_enabled,
   htlc_signal_enabled, htlc_mode, min_ppm, max_ppm
 from autofee_config where id=$1
@@ -1315,6 +1325,7 @@ from autofee_config where id=$1
 		&cfg.HTLCPolicyFailRateOverride,
 		&cfg.HTLCLiquidityFailRateOverride,
 		&cfg.RebalCostMode,
+		&cfg.NativeSeedEnabled,
 		&cfg.AmbossEnabled,
 		&ambossToken,
 		&cfg.InboundPassiveEnabled,
@@ -1427,6 +1438,9 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 	}
 	if req.RebalCostMode != nil {
 		current.RebalCostMode = normalizeRebalCostMode(*req.RebalCostMode)
+	}
+	if req.NativeSeedEnabled != nil {
+		current.NativeSeedEnabled = *req.NativeSeedEnabled
 	}
 	if req.AmbossEnabled != nil {
 		current.AmbossEnabled = *req.AmbossEnabled
@@ -1593,20 +1607,21 @@ set enabled=$2,
   htlc_policy_fail_rate_override=$19,
   htlc_liquidity_fail_rate_override=$20,
   rebal_cost_mode=$21,
-  amboss_enabled=$22,
-  amboss_token=$23,
-  inbound_passive_enabled=$24,
-  discovery_enabled=$25,
-  explorer_enabled=$26,
-  super_source_enabled=$27,
-  super_source_base_fee_msat=$28,
-  revfloor_enabled=$29,
-  circuit_breaker_enabled=$30,
-  extreme_drain_enabled=$31,
-  htlc_signal_enabled=$32,
-  htlc_mode=$33,
-  min_ppm=$34,
-  max_ppm=$35,
+  native_seed_enabled=$22,
+  amboss_enabled=$23,
+  amboss_token=$24,
+  inbound_passive_enabled=$25,
+  discovery_enabled=$26,
+  explorer_enabled=$27,
+  super_source_enabled=$28,
+  super_source_base_fee_msat=$29,
+  revfloor_enabled=$30,
+  circuit_breaker_enabled=$31,
+  extreme_drain_enabled=$32,
+  htlc_signal_enabled=$33,
+  htlc_mode=$34,
+  min_ppm=$35,
+  max_ppm=$36,
   updated_at=now()
 where id=$1
 `, autofeeConfigID,
@@ -1630,6 +1645,7 @@ where id=$1
 		current.HTLCPolicyFailRateOverride,
 		current.HTLCLiquidityFailRateOverride,
 		current.RebalCostMode,
+		current.NativeSeedEnabled,
 		current.AmbossEnabled,
 		ambossToken,
 		current.InboundPassiveEnabled,
@@ -2146,14 +2162,27 @@ func (s *AutofeeService) setLastError(err error) {
 // ===== Engine =====
 
 type autofeeEngine struct {
-	svc            *AutofeeService
-	cfg            AutofeeConfig
-	profile        autofeeProfile
-	superSource    superSourceThresholds
-	ignoreCooldown bool
-	calib          autofeeCalibration
-	ranking        map[string]autofeeRankingSnapshot
-	now            time.Time
+	svc             *AutofeeService
+	cfg             AutofeeConfig
+	profile         autofeeProfile
+	superSource     superSourceThresholds
+	ignoreCooldown  bool
+	calib           autofeeCalibration
+	ranking         map[string]autofeeRankingSnapshot
+	now             time.Time
+	nativeSeedCache map[string]autofeeSeedResult
+	ambossToken     string
+	ambossTokenErr  error
+	ambossTokenLoad bool
+}
+
+type autofeeSeedResult struct {
+	Seed           float64
+	SeedP95        float64
+	PeerMarketSkew float64
+	Tags           []string
+	Ok             bool
+	Err            error
 }
 
 type autofeeCalibration struct {
@@ -2185,63 +2214,72 @@ type autofeeCalibration struct {
 }
 
 type autofeeRunSummary struct {
-	total                 int
-	inactive              int
-	disabled              int
-	eligible              int
-	applied               int
-	applyErrors           int
-	changedUp             int
-	changedDown           int
-	kept                  int
-	skippedCooldown       int
-	skippedSmall          int
-	skippedSame           int
-	skippedOther          int
-	seedAmboss            int
-	seedAmbossMissing     int
-	seedAmbossError       int
-	seedAmbossEmpty       int
-	seedOutrate           int
-	seedMem               int
-	seedDefault           int
-	superSource           int
-	inboundDiscount       int
-	htlcLiqHot            int
-	htlcPolicyHot         int
-	htlcForwardHot        int
-	htlcSampleLow         int
-	reversalBlocked       int
-	reversalConfirmed     int
-	downcapGeneral        int
-	downcapLowSample      int
-	floorRelaxApplied     int
-	stallAlert            int
-	htlcAttemptsTotal     int
-	htlcLinkFailsTotal    int
-	htlcForwardFailsTotal int
-	htlcOtherFailsTotal   int
-	htlcClassifiedTotal   int
-	htlcUnclassifiedTotal int
-	htlcTopReasons        []string
-	htlcWindowMin         int
-	htlcMinAttempts       int
-	htlcMinPolicyFails    int
-	htlcMinLiquidityFails int
-	htlcMinForwardFails   int
-	htlcPolicyRateMin     float64
-	htlcLiquidityRateMin  float64
-	htlcForwardRateMin    float64
-	htlcGlobalCountFactor float64
-	htlcGlobalRateFactor  float64
-	htlcNodeFactor        float64
-	htlcLiquidityFactor   float64
-	htlcThresholdFactor   float64
+	total                  int
+	inactive               int
+	disabled               int
+	eligible               int
+	applied                int
+	applyErrors            int
+	changedUp              int
+	changedDown            int
+	kept                   int
+	skippedCooldown        int
+	skippedSmall           int
+	skippedSame            int
+	skippedOther           int
+	seedNative             int
+	seedNativeInsufficient int
+	seedNativeError        int
+	seedAmboss             int
+	seedAmbossMissing      int
+	seedAmbossError        int
+	seedAmbossEmpty        int
+	seedOutrate            int
+	seedMem                int
+	seedDefault            int
+	superSource            int
+	inboundDiscount        int
+	htlcLiqHot             int
+	htlcPolicyHot          int
+	htlcForwardHot         int
+	htlcSampleLow          int
+	reversalBlocked        int
+	reversalConfirmed      int
+	downcapGeneral         int
+	downcapLowSample       int
+	floorRelaxApplied      int
+	stallAlert             int
+	htlcAttemptsTotal      int
+	htlcLinkFailsTotal     int
+	htlcForwardFailsTotal  int
+	htlcOtherFailsTotal    int
+	htlcClassifiedTotal    int
+	htlcUnclassifiedTotal  int
+	htlcTopReasons         []string
+	htlcWindowMin          int
+	htlcMinAttempts        int
+	htlcMinPolicyFails     int
+	htlcMinLiquidityFails  int
+	htlcMinForwardFails    int
+	htlcPolicyRateMin      float64
+	htlcLiquidityRateMin   float64
+	htlcForwardRateMin     float64
+	htlcGlobalCountFactor  float64
+	htlcGlobalRateFactor   float64
+	htlcNodeFactor         float64
+	htlcLiquidityFactor    float64
+	htlcThresholdFactor    float64
 }
 
 func (s *autofeeRunSummary) addTags(tags []string) {
 	for _, tag := range tags {
 		switch tag {
+		case "seed:native":
+			s.seedNative++
+		case "seed:native-insufficient", "seed:native-empty":
+			s.seedNativeInsufficient++
+		case "seed:native-error":
+			s.seedNativeError++
 		case "seed:amboss":
 			s.seedAmboss++
 		case "seed:amboss-missing":
@@ -2320,11 +2358,12 @@ func newAutofeeEngine(svc *AutofeeService, cfg AutofeeConfig) *autofeeEngine {
 		ss = superSourceThresholdsByProfile["moderate"]
 	}
 	return &autofeeEngine{
-		svc:         svc,
-		cfg:         cfg,
-		profile:     p,
-		superSource: ss,
-		now:         time.Now().UTC(),
+		svc:             svc,
+		cfg:             cfg,
+		profile:         p,
+		superSource:     ss,
+		now:             time.Now().UTC(),
+		nativeSeedCache: make(map[string]autofeeSeedResult),
 	}
 }
 
@@ -2735,7 +2774,7 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 	)
 	seedText := fmt.Sprintf(
 		"🌱 seed amboss=%d missing=%d err=%d empty=%d outrate=%d mem=%d default=%d",
-		summary.seedAmboss, summary.seedAmbossMissing, summary.seedAmbossError, summary.seedAmbossEmpty,
+		summary.seedAmboss+summary.seedNative, summary.seedAmbossMissing+summary.seedNativeInsufficient, summary.seedAmbossError+summary.seedNativeError, summary.seedAmbossEmpty,
 		summary.seedOutrate, summary.seedMem, summary.seedDefault,
 	)
 	if e.ignoreCooldown {
@@ -2788,15 +2827,18 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 			HTLCThresholdFactor:      summary.htlcThresholdFactor,
 		}},
 		{Line: seedText, Payload: &autofeeLogItem{
-			Kind:            "seed",
-			Amboss:          summary.seedAmboss,
-			Missing:         summary.seedAmbossMissing,
-			Err:             summary.seedAmbossError,
-			Empty:           summary.seedAmbossEmpty,
-			Outrate:         summary.seedOutrate,
-			Mem:             summary.seedMem,
-			Default:         summary.seedDefault,
-			CooldownIgnored: e.ignoreCooldown,
+			Kind:               "seed",
+			Native:             summary.seedNative,
+			NativeInsufficient: summary.seedNativeInsufficient,
+			NativeErr:          summary.seedNativeError,
+			Amboss:             summary.seedAmboss,
+			Missing:            summary.seedAmbossMissing,
+			Err:                summary.seedAmbossError,
+			Empty:              summary.seedAmbossEmpty,
+			Outrate:            summary.seedOutrate,
+			Mem:                summary.seedMem,
+			Default:            summary.seedDefault,
+			CooldownIgnored:    e.ignoreCooldown,
 		}},
 	}
 	calibLine := fmt.Sprintf("⚙️ calib node=%s channels=%d cap=%d avg=%d local=%d (%.0f%%) revfloor_thr=%d revfloor_min=%d liq=%s | low_out x%.2f t<%.1f%% p<%.1f%% | htlc_k node=%.2f liq=%.2f total=%.2f | htlc_rate p>=%.1f%% l>=%.1f%% f>=%.1f%% | htlc_global c×%.2f r×%.2f",
@@ -7126,8 +7168,25 @@ func capWeakDemandFloorUpForDrainedExplorer(profile autofeeProfile, active bool,
 
 func (e *autofeeEngine) seedForChannel(pubkey string, st *autofeeChannelState) (float64, float64, float64, []string) {
 	tags := []string{}
+	nativeAttempted := false
+	if e.cfg.NativeSeedEnabled && pubkey != "" {
+		nativeAttempted = true
+		seed, seedP95, peerMarketSkew, nativeTags, ok, err := e.fetchNativeSeed(pubkey)
+		tags = append(tags, nativeTags...)
+		if err == nil && ok {
+			if st != nil && st.LastSeed > 0 && e.profile.SeedGuardMaxJump > 0 {
+				maxJump := 1.0 + e.profile.SeedGuardMaxJump
+				maxAllowed := float64(st.LastSeed) * maxJump
+				if seed > maxAllowed {
+					seed = maxAllowed
+					tags = append(tags, "seed:guard")
+				}
+			}
+			return seed, seedP95, peerMarketSkew, tags
+		}
+	}
 	if e.cfg.AmbossEnabled {
-		token, err := e.fetchAmbossToken(context.Background())
+		token, err := e.cachedAmbossToken(context.Background())
 		if err != nil {
 			tags = append(tags, "seed:amboss-error")
 		} else if token == "" {
@@ -7145,6 +7204,9 @@ func (e *autofeeEngine) seedForChannel(pubkey string, st *autofeeChannelState) (
 						seed = maxAllowed
 						tags = append(tags, "seed:guard")
 					}
+				}
+				if nativeAttempted && !containsTag(tags, "seed:native") {
+					tags = append(tags, "seed:native-fallback-amboss")
 				}
 				return seed, seedP95, peerMarketSkew, tags
 			} else {
@@ -7172,6 +7234,157 @@ func (e *autofeeEngine) fetchAmbossToken(ctx context.Context) (string, error) {
 		return strings.TrimSpace(raw.String), nil
 	}
 	return "", nil
+}
+
+func (e *autofeeEngine) cachedAmbossToken(ctx context.Context) (string, error) {
+	if e.ambossTokenLoad {
+		return e.ambossToken, e.ambossTokenErr
+	}
+	token, err := e.fetchAmbossToken(ctx)
+	e.ambossToken = token
+	e.ambossTokenErr = err
+	e.ambossTokenLoad = true
+	return token, err
+}
+
+func (e *autofeeEngine) fetchNativeSeed(pubkey string) (float64, float64, float64, []string, bool, error) {
+	pubkey = strings.TrimSpace(pubkey)
+	if pubkey == "" {
+		return 0, 0, 0, nil, false, nil
+	}
+	if cached, ok := e.nativeSeedCache[pubkey]; ok {
+		return cached.Seed, cached.SeedP95, cached.PeerMarketSkew, append([]string{}, cached.Tags...), cached.Ok, cached.Err
+	}
+	if e.svc == nil || e.svc.db == nil {
+		result := autofeeSeedResult{Tags: []string{"seed:native-error"}, Err: errors.New("db unavailable")}
+		e.nativeSeedCache[pubkey] = result
+		return 0, 0, 0, append([]string{}, result.Tags...), false, result.Err
+	}
+
+	end := e.now.UTC().Truncate(24 * time.Hour)
+	since := end.AddDate(0, 0, -maxInt(autofeeMinLookbackDays, e.cfg.LookbackDays))
+	rows, err := e.svc.db.Query(context.Background(), `
+select
+  to_char(date_trunc('day', h.captured_at at time zone 'UTC'), 'YYYY-MM-DD') as day,
+  coalesce(round(
+    sum(case when h.connecting_pubkey = $1 and h.advertising_pubkey <> $1 then h.fee_rate_ppm::numeric * greatest(ch.capacity_sat, 0)::numeric else 0 end)
+    / nullif(sum(case when h.connecting_pubkey = $1 and h.advertising_pubkey <> $1 then greatest(ch.capacity_sat, 0)::numeric else 0 end), 0)
+  ), 0)::bigint as inbound_weighted_avg_ppm,
+  count(*) filter (where h.connecting_pubkey = $1 and h.advertising_pubkey <> $1) as inbound_sample_count,
+  coalesce(round(
+    sum(case when h.advertising_pubkey = $1 then h.fee_rate_ppm::numeric * greatest(ch.capacity_sat, 0)::numeric else 0 end)
+    / nullif(sum(case when h.advertising_pubkey = $1 then greatest(ch.capacity_sat, 0)::numeric else 0 end), 0)
+  ), 0)::bigint as outbound_weighted_avg_ppm,
+  count(*) filter (where h.advertising_pubkey = $1) as outbound_sample_count
+from graph_channel_policy_history h
+join graph_channels ch on ch.chan_id = h.chan_id
+where (h.advertising_pubkey = $1 or h.connecting_pubkey = $1)
+  and h.captured_at >= $2
+  and h.captured_at < $3
+group by 1
+order by 1 desc
+`, pubkey, since, end)
+	if err != nil {
+		result := autofeeSeedResult{Tags: []string{"seed:native-error"}, Err: err}
+		e.nativeSeedCache[pubkey] = result
+		return 0, 0, 0, append([]string{}, result.Tags...), false, err
+	}
+	defer rows.Close()
+
+	inboundVals := make([]float64, 0, maxInt(autofeeMinLookbackDays, e.cfg.LookbackDays))
+	outboundVals := make([]float64, 0, maxInt(autofeeMinLookbackDays, e.cfg.LookbackDays))
+	totalInboundSamples := int64(0)
+	for rows.Next() {
+		var day string
+		var inboundWeightedAvg int64
+		var inboundSamples int64
+		var outboundWeightedAvg int64
+		var outboundSamples int64
+		if err := rows.Scan(&day, &inboundWeightedAvg, &inboundSamples, &outboundWeightedAvg, &outboundSamples); err != nil {
+			result := autofeeSeedResult{Tags: []string{"seed:native-error"}, Err: err}
+			e.nativeSeedCache[pubkey] = result
+			return 0, 0, 0, append([]string{}, result.Tags...), false, err
+		}
+		if inboundSamples > 0 {
+			inboundVals = append(inboundVals, float64(inboundWeightedAvg))
+			totalInboundSamples += inboundSamples
+		}
+		if outboundSamples > 0 {
+			outboundVals = append(outboundVals, float64(outboundWeightedAvg))
+		}
+	}
+	if err := rows.Err(); err != nil {
+		result := autofeeSeedResult{Tags: []string{"seed:native-error"}, Err: err}
+		e.nativeSeedCache[pubkey] = result
+		return 0, 0, 0, append([]string{}, result.Tags...), false, err
+	}
+	if len(inboundVals) < autofeeNativeSeedMinDays || totalInboundSamples < autofeeNativeSeedMinSamples {
+		result := autofeeSeedResult{Tags: []string{"seed:native-insufficient"}}
+		e.nativeSeedCache[pubkey] = result
+		return 0, 0, 0, append([]string{}, result.Tags...), false, nil
+	}
+
+	p65 := percentile(append([]float64{}, inboundVals...), 0.65)
+	p95 := percentile(append([]float64{}, inboundVals...), 0.95)
+	if p95 <= 0 {
+		result := autofeeSeedResult{Tags: []string{"seed:native-empty"}}
+		e.nativeSeedCache[pubkey] = result
+		return 0, 0, 0, append([]string{}, result.Tags...), false, nil
+	}
+
+	seed := p65
+	peerMarketSkew := 0.0
+	tags := []string{}
+
+	incMedian := percentile(append([]float64{}, inboundVals...), 0.50)
+	incMean := averageFloat64(inboundVals)
+	incStd := stddevFloat64(inboundVals, incMean)
+	if incMedian > 0 {
+		seed = (1.0-0.30)*seed + 0.30*incMedian
+		tags = append(tags, "seed:native-med")
+	}
+	if incMean > 0 && incStd > 0 {
+		sigmaMu := incStd / incMean
+		pen := math.Min(0.15, 0.25*sigmaMu)
+		if pen > 0 {
+			seed = seed * (1.0 - pen)
+			tags = append(tags, fmt.Sprintf("seed:native-vol-%d%%", int(math.Round(pen*100))))
+		}
+	}
+
+	outMean := averageFloat64(outboundVals)
+	if incMean > 0 && outMean > 0 {
+		peerMarketSkew = outMean / incMean
+		f := 1.0 + 0.20*(peerMarketSkew-1.0)
+		if f < 0.80 {
+			f = 0.80
+		} else if f > 1.50 {
+			f = 1.50
+		}
+		if math.Abs(f-1.0) > 0.001 {
+			seed = seed * f
+			tags = append(tags, fmt.Sprintf("seed:native-ratiox%.2f", f))
+		}
+	}
+
+	if seed > p95 {
+		seed = p95
+		tags = append(tags, "seed:native-p95cap")
+	}
+	if e.cfg.MaxPpm > 0 && seed > float64(e.cfg.MaxPpm) {
+		seed = float64(e.cfg.MaxPpm)
+		tags = append(tags, "seed:maxppm")
+	}
+	tags = append(tags, "seed:native")
+	result := autofeeSeedResult{
+		Seed:           seed,
+		SeedP95:        p95,
+		PeerMarketSkew: peerMarketSkew,
+		Tags:           append([]string{}, tags...),
+		Ok:             true,
+	}
+	e.nativeSeedCache[pubkey] = result
+	return seed, p95, peerMarketSkew, append([]string{}, tags...), true, nil
 }
 
 type ambossSeriesResp struct {
@@ -7512,6 +7725,29 @@ func percentile(vals []float64, q float64) float64 {
 		return vals[lo]
 	}
 	return vals[lo]*(float64(hi)-pos) + vals[hi]*(pos-float64(lo))
+}
+
+func averageFloat64(vals []float64) float64 {
+	if len(vals) == 0 {
+		return 0
+	}
+	total := 0.0
+	for _, v := range vals {
+		total += v
+	}
+	return total / float64(len(vals))
+}
+
+func stddevFloat64(vals []float64, mean float64) float64 {
+	if len(vals) < 2 {
+		return 0
+	}
+	total := 0.0
+	for _, v := range vals {
+		diff := v - mean
+		total += diff * diff
+	}
+	return math.Sqrt(total / float64(len(vals)))
 }
 
 func classifyChannel(biasEma float64, outRatio float64, inCount int64, outCount int64, prevLabel string, prevConf float64) (string, float64) {

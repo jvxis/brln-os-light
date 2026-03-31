@@ -1568,6 +1568,8 @@
     "autofeeRebalCostModeGlobal": "Global",
     "autofeeMinPpm": "Min fee (ppm)",
     "autofeeMaxPpm": "Max fee (ppm)",
+    "autofeeNativeSeed": "Native graph seed",
+    "autofeeNativeSeedHint": "Uses local Graph Explorer public history when coverage is sufficient; if Amboss is also enabled, it becomes the fallback.",
     "autofeeAmboss": "Amboss fee reference",
     "autofeeAmbossToken": "Amboss API token",
     "autofeeAmbossTokenSet": "Token saved",

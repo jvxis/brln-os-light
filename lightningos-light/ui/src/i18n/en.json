@@ -1093,7 +1093,7 @@
     "lightningTotal": "Total (incl. unsettled): {{amount}} sats",
     "lightningUnsettled": "Unsettled (local): {{amount}} sats",
     "memo": "Memo",
-    "noChannelsForAmount": "No channels with enough local balance for this amount.",
+    "noChannelsForAmount": "No single channel has enough local balance to force this payment. Leave it on Automatic (LND) so LND can try routing it.",
     "noActivityInRange": "No activity in this time window.",
     "noMemo": "No memo",
     "noRecentActivity": "No recent activity yet.",

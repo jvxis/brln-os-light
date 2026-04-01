@@ -1093,7 +1093,7 @@
     "lightningTotal": "Total (incl. em aberto): {{amount}} sats",
     "lightningUnsettled": "Em aberto (local): {{amount}} sats",
     "memo": "Memo",
-    "noChannelsForAmount": "Nenhum canal com saldo local suficiente para este valor.",
+    "noChannelsForAmount": "Nenhum canal individual tem saldo local suficiente para forçar este pagamento. Deixe em Automático (LND) para o LND tentar roteá-lo.",
     "noActivityInRange": "Nenhuma atividade nesta janela de tempo.",
     "noMemo": "Sem memo",
     "noRecentActivity": "Nenhuma atividade recente ainda.",

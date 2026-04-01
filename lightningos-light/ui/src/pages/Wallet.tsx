@@ -434,10 +434,11 @@ export default function Wallet() {
   }
 
   const amountForFilter = decodedAmountSat()
-  const availableChannels = channels
+  const activeChannels = channels
     .filter((ch) => ch && ch.active && ch.channel_point)
-    .filter((ch) => amountForFilter <= 0 || Number(ch.local_balance_sat || 0) >= amountForFilter)
     .sort((a, b) => Number(b.local_balance_sat || 0) - Number(a.local_balance_sat || 0))
+  const availableChannels = activeChannels
+    .filter((ch) => amountForFilter <= 0 || Number(ch.local_balance_sat || 0) >= amountForFilter)
 
   const formatChannelLabel = (ch: any) => {
     const alias = String(ch.peer_alias || '').trim()
@@ -733,6 +734,29 @@ export default function Wallet() {
         amount_sat: isLnAddress ? payAmountSat : undefined
       })
       setStatus(t('wallet.paymentSent'))
+      setPaymentRequest('')
+      setPayAmount('')
+      setDecode(null)
+      setDecodeError('')
+      setOutgoingChannelPoint('')
+      void getWalletSummary()
+        .then((data) => {
+          setSummary(data || emptySummary)
+          setSummaryWarning(data?.warning || '')
+          setSummaryError('')
+        })
+        .catch(() => {})
+      void getLnChannels()
+        .then((res: any) => {
+          setChannels(Array.isArray(res?.channels) ? res.channels : [])
+          setChannelsError('')
+        })
+        .catch(() => {})
+      void loadActivity({
+        offset: 0,
+        limit: Math.max(activityItems.length, walletActivityPageSize),
+        silent: true
+      })
     } catch (err: any) {
       setStatus(err?.message || t('wallet.paymentFailed'))
     }
@@ -1073,7 +1097,7 @@ export default function Wallet() {
             <p className="text-xs text-fog/50">
               {t('wallet.outgoingChannelHint')}
             </p>
-            {!channelsLoading && amountForFilter > 0 && availableChannels.length === 0 && (
+            {!channelsLoading && amountForFilter > 0 && availableChannels.length === 0 && activeChannels.length > 0 && (
               <p className="text-xs text-brass">{t('wallet.noChannelsForAmount')}</p>
             )}
             {channelsError && <p className="text-xs text-fog/50">{channelsError}</p>}

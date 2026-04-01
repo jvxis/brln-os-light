@@ -197,7 +197,13 @@ export const previewOnchainSend = (payload: { address: string; amount_sat?: numb
   request('/api/wallet/send/preview', { method: 'POST', body: JSON.stringify(payload) })
 export const sendOnchain = (payload: { address: string; amount_sat?: number; sat_per_vbyte?: number; sweep_all?: boolean }) =>
   request('/api/wallet/send', { method: 'POST', body: JSON.stringify(payload) })
-export const createInvoice = (payload: { amount_sat: number; memo: string; expiry_seconds?: number }) =>
+export const createInvoice = (payload: {
+  amount_sat: number
+  memo: string
+  expiry_seconds?: number
+  blinded?: boolean
+  blinded_incoming_channel_point?: string
+}) =>
   request('/api/wallet/invoice', { method: 'POST', body: JSON.stringify(payload) })
 export const decodeInvoice = (payload: { payment_request: string }) =>
   request('/api/wallet/decode', { method: 'POST', body: JSON.stringify(payload) })

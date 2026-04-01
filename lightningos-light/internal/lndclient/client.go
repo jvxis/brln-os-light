@@ -525,6 +525,11 @@ type CreatedInvoice struct {
 	PaymentAddr    []byte
 }
 
+type CreateInvoiceOptions struct {
+	IsBlinded          bool
+	IncomingChannelIDs []uint64
+}
+
 var ErrFailedPaymentsCleanupUnsupported = errors.New("lnd does not support deleting failed payments")
 
 func (m macaroonCredential) GetRequestMetadata(ctx context.Context, uri ...string) (map[string]string, error) {
@@ -1022,7 +1027,33 @@ func (c *Client) UnlockWallet(ctx context.Context, walletPassword string) error 
 	return err
 }
 
-func (c *Client) CreateInvoice(ctx context.Context, amountSat int64, memo string, expirySeconds int64) (CreatedInvoice, error) {
+func buildCreateInvoiceRequest(amountSat int64, memo string, expirySeconds int64, opts *CreateInvoiceOptions) *lnrpc.Invoice {
+	if expirySeconds <= 0 {
+		expirySeconds = 3600
+	}
+
+	req := &lnrpc.Invoice{
+		Memo:   memo,
+		Value:  amountSat,
+		Expiry: expirySeconds,
+	}
+
+	isBlinded := opts != nil && (opts.IsBlinded || len(opts.IncomingChannelIDs) > 0)
+	if !isBlinded {
+		return req
+	}
+
+	req.IsBlinded = true
+	if len(opts.IncomingChannelIDs) > 0 {
+		req.BlindedPathConfig = &lnrpc.BlindedPathConfig{
+			IncomingChannelList: append([]uint64(nil), opts.IncomingChannelIDs...),
+		}
+	}
+
+	return req
+}
+
+func (c *Client) CreateInvoice(ctx context.Context, amountSat int64, memo string, expirySeconds int64, opts *CreateInvoiceOptions) (CreatedInvoice, error) {
 	conn, err := c.dial(ctx, true)
 	if err != nil {
 		return CreatedInvoice{}, err
@@ -1031,15 +1062,7 @@ func (c *Client) CreateInvoice(ctx context.Context, amountSat int64, memo string
 
 	client := lnrpc.NewLightningClient(conn)
 
-	if expirySeconds <= 0 {
-		expirySeconds = 3600
-	}
-
-	resp, err := client.AddInvoice(ctx, &lnrpc.Invoice{
-		Memo:   memo,
-		Value:  amountSat,
-		Expiry: expirySeconds,
-	})
+	resp, err := client.AddInvoice(ctx, buildCreateInvoiceRequest(amountSat, memo, expirySeconds, opts))
 	if err != nil {
 		return CreatedInvoice{}, err
 	}

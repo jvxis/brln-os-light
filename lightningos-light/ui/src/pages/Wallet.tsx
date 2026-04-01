@@ -102,6 +102,8 @@ export default function Wallet() {
   const [invoiceQr, setInvoiceQr] = useState<string | null>(null)
   const [invoiceCopied, setInvoiceCopied] = useState(false)
   const [invoiceNotice, setInvoiceNotice] = useState('')
+  const [invoiceBlinded, setInvoiceBlinded] = useState(false)
+  const [invoiceIncomingChannelPoint, setInvoiceIncomingChannelPoint] = useState('')
   const [paymentRequest, setPaymentRequest] = useState('')
   const [payAmount, setPayAmount] = useState('')
   const [decode, setDecode] = useState<any>(null)
@@ -459,6 +461,14 @@ export default function Wallet() {
   }, [availableChannels, outgoingChannelPoint])
 
   useEffect(() => {
+    if (!invoiceIncomingChannelPoint) return
+    const exists = activeChannels.some((ch) => ch.channel_point === invoiceIncomingChannelPoint)
+    if (!exists) {
+      setInvoiceIncomingChannelPoint('')
+    }
+  }, [activeChannels, invoiceIncomingChannelPoint])
+
+  useEffect(() => {
     if (!address) {
       setAddressQr(null)
       return
@@ -692,7 +702,9 @@ export default function Wallet() {
       const res = await createInvoice({
         amount_sat: Number(amount),
         memo,
-        expiry_seconds: expirySeconds
+        expiry_seconds: expirySeconds,
+        blinded: invoiceBlinded || undefined,
+        blinded_incoming_channel_point: invoiceBlinded ? invoiceIncomingChannelPoint || undefined : undefined
       })
       setInvoice(res.payment_request)
       setStatus(t('wallet.invoiceReady'))
@@ -1015,6 +1027,36 @@ export default function Wallet() {
               value={invoiceExpiry}
               onChange={(e) => setInvoiceExpiry(e.target.value)}
             />
+          </div>
+          <div className="space-y-2 rounded-2xl border border-white/10 bg-ink/40 p-3">
+            <label className="flex items-center gap-2 text-xs text-fog/60">
+              <input
+                type="checkbox"
+                checked={invoiceBlinded}
+                onChange={(e) => setInvoiceBlinded(e.target.checked)}
+              />
+              <span>{t('wallet.invoiceBlinded')}</span>
+            </label>
+            <p className="text-xs text-fog/50">{t('wallet.invoiceBlindedHint')}</p>
+            {invoiceBlinded && (
+              <div className="space-y-2">
+                <label className="text-xs text-fog/60">{t('wallet.blindedIncomingChannel')}</label>
+                <select
+                  className="input-field"
+                  value={invoiceIncomingChannelPoint}
+                  onChange={(e) => setInvoiceIncomingChannelPoint(e.target.value)}
+                >
+                  <option value="">{t('wallet.blindedIncomingAutomatic')}</option>
+                  {activeChannels.map((ch) => (
+                    <option key={ch.channel_point} value={ch.channel_point}>
+                      {formatChannelLabel(ch)}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-fog/50">{t('wallet.blindedIncomingChannelHint')}</p>
+                {channelsError && <p className="text-xs text-fog/50">{channelsError}</p>}
+              </div>
+            )}
           </div>
           <button className="btn-primary" onClick={handleInvoice}>{t('wallet.generateInvoice')}</button>
           {invoice && (

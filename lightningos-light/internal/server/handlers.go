@@ -3591,9 +3591,11 @@ func (s *Server) handleWalletAddress(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleWalletInvoice(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		AmountSat     int64  `json:"amount_sat"`
-		Memo          string `json:"memo"`
-		ExpirySeconds int64  `json:"expiry_seconds"`
+		AmountSat                   int64  `json:"amount_sat"`
+		Memo                        string `json:"memo"`
+		ExpirySeconds               int64  `json:"expiry_seconds"`
+		Blinded                     bool   `json:"blinded"`
+		BlindedIncomingChannelPoint string `json:"blinded_incoming_channel_point"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -3611,9 +3613,40 @@ func (s *Server) handleWalletInvoice(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	invoice, err := s.lnd.CreateInvoice(ctx, req.AmountSat, req.Memo, req.ExpirySeconds)
+	createOpts := &lndclient.CreateInvoiceOptions{
+		IsBlinded: req.Blinded,
+	}
+	if point := strings.ToLower(strings.TrimSpace(req.BlindedIncomingChannelPoint)); point != "" {
+		createOpts.IsBlinded = true
+		channels, err := s.lnd.ListChannels(ctx)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, lndDetailedErrorMessage(err))
+			return
+		}
+		incomingChanID := uint64(0)
+		for _, ch := range channels {
+			if strings.ToLower(strings.TrimSpace(ch.ChannelPoint)) == point {
+				incomingChanID = ch.ChannelID
+				break
+			}
+		}
+		if incomingChanID == 0 {
+			writeError(w, http.StatusBadRequest, "selected blinded incoming channel not found")
+			return
+		}
+		createOpts.IncomingChannelIDs = []uint64{incomingChanID}
+	}
+	if !createOpts.IsBlinded && len(createOpts.IncomingChannelIDs) == 0 {
+		createOpts = nil
+	}
+
+	invoice, err := s.lnd.CreateInvoice(ctx, req.AmountSat, req.Memo, req.ExpirySeconds, createOpts)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "invoice failed")
+		msg := lndDetailedErrorMessage(err)
+		if msg == "" || msg == "LND error" {
+			msg = "invoice failed"
+		}
+		writeError(w, http.StatusInternalServerError, msg)
 		return
 	}
 

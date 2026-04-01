@@ -3258,7 +3258,7 @@ func (s *RebalanceService) createRebalanceInvoice(ctx context.Context, amount in
 		return "", "", nil, errors.New("lnd unavailable")
 	}
 	memo := fmt.Sprintf("rebalance:%d:%d:%d", jobID, sourceID, targetID)
-	inv, err := s.lnd.CreateInvoice(ctx, amount, memo, 3600)
+	inv, err := s.lnd.CreateInvoice(ctx, amount, memo, 3600, nil)
 	if err != nil {
 		return "", "", nil, err
 	}

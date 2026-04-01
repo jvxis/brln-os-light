@@ -113,7 +113,7 @@ export default function Wallet() {
   const [channels, setChannels] = useState<any[]>([])
   const [channelsError, setChannelsError] = useState('')
   const [channelsLoading, setChannelsLoading] = useState(true)
-  const [outgoingChannelPoint, setOutgoingChannelPoint] = useState('')
+  const [outgoingChannelPoints, setOutgoingChannelPoints] = useState<string[]>([])
   const [activityRange, setActivityRange] = useState<WalletActivityRange>('7d')
   const [activityItems, setActivityItems] = useState<WalletActivityItem[]>([])
   const [activityError, setActivityError] = useState('')
@@ -453,12 +453,13 @@ export default function Wallet() {
   }
 
   useEffect(() => {
-    if (!outgoingChannelPoint) return
-    const exists = availableChannels.some((ch) => ch.channel_point === outgoingChannelPoint)
-    if (!exists) {
-      setOutgoingChannelPoint('')
-    }
-  }, [availableChannels, outgoingChannelPoint])
+    const activePoints = new Set(activeChannels.map((ch) => String(ch.channel_point || '').trim()).filter(Boolean))
+    setOutgoingChannelPoints((current) => {
+      if (current.length === 0) return current
+      const next = current.filter((point) => activePoints.has(point))
+      return next.length === current.length ? current : next
+    })
+  }, [activeChannels])
 
   useEffect(() => {
     if (!invoiceIncomingChannelPoint) return
@@ -467,6 +468,16 @@ export default function Wallet() {
       setInvoiceIncomingChannelPoint('')
     }
   }, [activeChannels, invoiceIncomingChannelPoint])
+
+  const toggleOutgoingChannelPoint = (channelPoint: string) => {
+    const point = String(channelPoint || '').trim()
+    if (!point) return
+    setOutgoingChannelPoints((current) => (
+      current.includes(point)
+        ? current.filter((value) => value !== point)
+        : [...current, point]
+    ))
+  }
 
   useEffect(() => {
     if (!address) {
@@ -742,7 +753,8 @@ export default function Wallet() {
     try {
       await payInvoice({
         payment_request: cleanedPaymentRequest,
-        channel_point: outgoingChannelPoint || undefined,
+        channel_point: outgoingChannelPoints.length === 1 ? outgoingChannelPoints[0] : undefined,
+        channel_points: outgoingChannelPoints.length > 0 ? outgoingChannelPoints : undefined,
         amount_sat: isLnAddress ? payAmountSat : undefined
       })
       setStatus(t('wallet.paymentSent'))
@@ -750,7 +762,7 @@ export default function Wallet() {
       setPayAmount('')
       setDecode(null)
       setDecodeError('')
-      setOutgoingChannelPoint('')
+      setOutgoingChannelPoints([])
       void getWalletSummary()
         .then((data) => {
           setSummary(data || emptySummary)
@@ -1124,18 +1136,43 @@ export default function Wallet() {
           )}
           <div className="space-y-2">
             <label className="text-xs text-fog/60">{t('wallet.outgoingChannel')}</label>
-            <select
-              className="input-field"
-              value={outgoingChannelPoint}
-              onChange={(e) => setOutgoingChannelPoint(e.target.value)}
-            >
-              <option value="">{t('wallet.automaticLnd')}</option>
-              {availableChannels.map((ch) => (
-                <option key={ch.channel_point} value={ch.channel_point}>
-                  {formatChannelLabel(ch)}
-                </option>
-              ))}
-            </select>
+            <div className="space-y-2 rounded-2xl border border-white/10 bg-ink/30 p-3">
+              <button
+                type="button"
+                className={`w-full rounded-xl border px-3 py-2 text-left text-sm transition ${
+                  outgoingChannelPoints.length === 0
+                    ? 'border-brass/40 bg-brass/10 text-fog'
+                    : 'border-white/10 text-fog/70 hover:border-white/20 hover:text-fog'
+                }`}
+                onClick={() => setOutgoingChannelPoints([])}
+              >
+                {t('wallet.automaticLnd')}
+              </button>
+              <div className="max-h-48 space-y-2 overflow-auto pr-1">
+                {activeChannels.map((ch) => {
+                  const point = String(ch.channel_point || '').trim()
+                  const checked = outgoingChannelPoints.includes(point)
+                  return (
+                    <label
+                      key={point}
+                      className={`flex cursor-pointer items-start gap-3 rounded-xl border px-3 py-2 text-sm transition ${
+                        checked
+                          ? 'border-brass/40 bg-brass/10 text-fog'
+                          : 'border-white/10 bg-white/[0.02] text-fog/80 hover:border-white/20 hover:text-fog'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 h-4 w-4 rounded border-white/20 bg-ink/50 text-brass focus:ring-brass"
+                        checked={checked}
+                        onChange={() => toggleOutgoingChannelPoint(point)}
+                      />
+                      <span className="break-all">{formatChannelLabel(ch)}</span>
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
             <p className="text-xs text-fog/50">
               {t('wallet.outgoingChannelHint')}
             </p>

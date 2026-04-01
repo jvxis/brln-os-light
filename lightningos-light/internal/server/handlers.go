@@ -3699,10 +3699,11 @@ func (s *Server) handleWalletDecode(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PaymentRequest string `json:"payment_request"`
-		ChannelPoint   string `json:"channel_point"`
-		AmountSat      int64  `json:"amount_sat"`
-		Comment        string `json:"comment"`
+		PaymentRequest string   `json:"payment_request"`
+		ChannelPoint   string   `json:"channel_point"`
+		ChannelPoints  []string `json:"channel_points"`
+		AmountSat      int64    `json:"amount_sat"`
+		Comment        string   `json:"comment"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -3735,23 +3736,51 @@ func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
 
-	outgoingChanID := uint64(0)
-	selectedPoint := strings.ToLower(strings.TrimSpace(req.ChannelPoint))
-	if selectedPoint != "" {
+	selectedPoints := make([]string, 0, len(req.ChannelPoints)+1)
+	if point := strings.ToLower(strings.TrimSpace(req.ChannelPoint)); point != "" {
+		selectedPoints = append(selectedPoints, point)
+	}
+	for _, point := range req.ChannelPoints {
+		trimmed := strings.ToLower(strings.TrimSpace(point))
+		if trimmed != "" {
+			selectedPoints = append(selectedPoints, trimmed)
+		}
+	}
+	if len(selectedPoints) > 1 {
+		seen := make(map[string]struct{}, len(selectedPoints))
+		deduped := selectedPoints[:0]
+		for _, point := range selectedPoints {
+			if _, ok := seen[point]; ok {
+				continue
+			}
+			seen[point] = struct{}{}
+			deduped = append(deduped, point)
+		}
+		selectedPoints = deduped
+	}
+
+	outgoingChanIDs := make([]uint64, 0, len(selectedPoints))
+	if len(selectedPoints) > 0 {
 		channels, err := s.lnd.ListChannels(ctx)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, lndDetailedErrorMessage(err))
 			return
 		}
+		channelIDsByPoint := make(map[string]uint64, len(channels))
 		for _, ch := range channels {
-			if strings.ToLower(strings.TrimSpace(ch.ChannelPoint)) == selectedPoint {
-				outgoingChanID = ch.ChannelID
-				break
+			point := strings.ToLower(strings.TrimSpace(ch.ChannelPoint))
+			if point == "" || ch.ChannelID == 0 {
+				continue
 			}
+			channelIDsByPoint[point] = ch.ChannelID
 		}
-		if outgoingChanID == 0 {
-			writeError(w, http.StatusBadRequest, "selected channel not found")
-			return
+		for _, point := range selectedPoints {
+			channelID := channelIDsByPoint[point]
+			if channelID == 0 {
+				writeError(w, http.StatusBadRequest, "selected channel not found")
+				return
+			}
+			outgoingChanIDs = append(outgoingChanIDs, channelID)
 		}
 	}
 
@@ -3760,7 +3789,7 @@ func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
 		paymentHash = decoded.PaymentHash
 	}
 
-	if err := s.lnd.PayInvoice(ctx, paymentRequest, outgoingChanID); err != nil {
+	if err := s.lnd.PayInvoice(ctx, paymentRequest, outgoingChanIDs); err != nil {
 		if paymentHash != "" {
 			s.recordWalletActivity(paymentHash)
 		}

@@ -1093,21 +1093,58 @@ func (c *Client) NewAddress(ctx context.Context) (string, error) {
 	return resp.Address, nil
 }
 
-func (c *Client) PayInvoice(ctx context.Context, paymentRequest string, outgoingChanID uint64) error {
+func (c *Client) PayInvoice(ctx context.Context, paymentRequest string, outgoingChanIDs []uint64) error {
 	conn, err := c.dial(ctx, true)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 
-	client := lnrpc.NewLightningClient(conn)
-
-	req := &lnrpc.SendRequest{PaymentRequest: paymentRequest}
-	if outgoingChanID > 0 {
-		req.OutgoingChanId = outgoingChanID
+	if len(outgoingChanIDs) == 0 {
+		client := lnrpc.NewLightningClient(conn)
+		req := &lnrpc.SendRequest{PaymentRequest: paymentRequest}
+		res, err := client.SendPaymentSync(ctx, req)
+		return sendPaymentSyncError(res, err)
 	}
-	res, err := client.SendPaymentSync(ctx, req)
-	return sendPaymentSyncError(res, err)
+
+	router := routerrpc.NewRouterClient(conn)
+	req := &routerrpc.SendPaymentRequest{
+		PaymentRequest:    paymentRequest,
+		TimeoutSeconds:    paymentTimeoutSeconds(ctx, 45),
+		OutgoingChanIds:   append([]uint64(nil), outgoingChanIDs...),
+		FeeLimitMsat:      defaultRouterPaymentFeeLimitMsat(ctx, c, paymentRequest),
+		NoInflightUpdates: true,
+	}
+	maxParts := uint32(len(outgoingChanIDs))
+	if maxParts < 3 {
+		maxParts = 3
+	}
+	req.MaxParts = maxParts
+
+	stream, err := router.SendPaymentV2(ctx, req)
+	if err != nil {
+		return err
+	}
+
+	for {
+		payment, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		if payment == nil {
+			continue
+		}
+		switch payment.Status {
+		case lnrpc.Payment_SUCCEEDED:
+			return nil
+		case lnrpc.Payment_FAILED:
+			if payment.FailureReason != lnrpc.PaymentFailureReason_FAILURE_REASON_NONE {
+				return fmt.Errorf("payment failed: %s", payment.FailureReason.String())
+			}
+			return errors.New("payment failed")
+		default:
+		}
+	}
 }
 
 func sendPaymentSyncError(res *lnrpc.SendResponse, err error) error {
@@ -1120,6 +1157,56 @@ func sendPaymentSyncError(res *lnrpc.SendResponse, err error) error {
 		}
 	}
 	return nil
+}
+
+func paymentTimeoutSeconds(ctx context.Context, fallback int32) int32 {
+	if fallback <= 0 {
+		fallback = 60
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return fallback
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return 1
+	}
+	seconds := int32(math.Ceil(remaining.Seconds()))
+	if seconds < 1 {
+		return 1
+	}
+	return seconds
+}
+
+func defaultRouterPaymentFeeLimitMsat(ctx context.Context, c *Client, paymentRequest string) int64 {
+	decoded, err := c.DecodeInvoice(ctx, paymentRequest)
+	if err != nil {
+		return defaultRouterPaymentFeeLimitMsatForDecodedInvoice(DecodedInvoice{})
+	}
+	return defaultRouterPaymentFeeLimitMsatForDecodedInvoice(decoded)
+}
+
+func defaultRouterPaymentFeeLimitMsatForDecodedInvoice(decoded DecodedInvoice) int64 {
+	const maxFeeLimitMsat = int64(^uint64(0) >> 1)
+
+	amountMsat := decoded.AmountMsat
+	if amountMsat <= 0 && decoded.AmountSat > 0 {
+		amountMsat = decoded.AmountSat * 1000
+	}
+	if amountMsat <= 0 {
+		return maxFeeLimitMsat
+	}
+	if amountMsat <= 1_000_000 {
+		return amountMsat
+	}
+	feeLimitMsat := amountMsat / 20
+	if amountMsat%20 != 0 {
+		feeLimitMsat++
+	}
+	if feeLimitMsat <= 0 {
+		return maxFeeLimitMsat
+	}
+	return feeLimitMsat
 }
 
 func (c *Client) SendCoins(ctx context.Context, address string, amountSat int64, satPerVbyte int64, sendAll bool) (string, error) {

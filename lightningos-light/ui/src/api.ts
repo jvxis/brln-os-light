@@ -207,7 +207,7 @@ export const createInvoice = (payload: {
   request('/api/wallet/invoice', { method: 'POST', body: JSON.stringify(payload) })
 export const decodeInvoice = (payload: { payment_request: string }) =>
   request('/api/wallet/decode', { method: 'POST', body: JSON.stringify(payload) })
-export const payInvoice = (payload: { payment_request: string; channel_point?: string; amount_sat?: number }) =>
+export const payInvoice = (payload: { payment_request: string; channel_point?: string; channel_points?: string[]; amount_sat?: number }) =>
   request('/api/wallet/pay', { method: 'POST', body: JSON.stringify(payload) })
 
 export const getLnChannels = () => request('/api/lnops/channels')

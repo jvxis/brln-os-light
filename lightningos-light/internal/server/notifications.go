@@ -30,12 +30,14 @@ const (
 	notificationRetentionDays         = 365
 	notificationCleanupInterval       = 6 * time.Hour
 	paymentsPollInterval              = 15 * time.Second
+	paymentsPollPageSize              = 200
 	forwardsPollInterval              = 30 * time.Second
 	pendingChannelsPollInterval       = 30 * time.Second
 	waitingCloseRecoveryRetryInterval = 5 * time.Minute
 	paymentsPendingMaxAge             = 48 * time.Hour
 	telegramActivityMirrorQueueSize   = 256
 	telegramActivityMirrorSendTimeout = 1 * time.Second
+	invoiceCatchupLiveGrace           = 2 * time.Minute
 )
 
 const (
@@ -105,6 +107,10 @@ type waitingCloseRecoveryInfo struct {
 	LastRecoveredTxid string
 }
 
+type notificationUpsertOptions struct {
+	suppressMirror bool
+}
+
 type Notifier struct {
 	db     *pgxpool.Pool
 	lnd    *lndclient.Client
@@ -122,6 +128,9 @@ type Notifier struct {
 	waitingCloseRecoveries        map[string]waitingCloseRecoveryInfo
 	telegramMirrorQueue           chan Notification
 	telegramActivityMirrorEnabled atomic.Bool
+	startedAt                     time.Time
+	paymentsCatchupMode           atomic.Bool
+	invoicesCatchupMode           atomic.Bool
 }
 
 func NewNotifier(db *pgxpool.Pool, lnd *lndclient.Client, logger *log.Logger) *Notifier {
@@ -145,6 +154,7 @@ func (n *Notifier) Start() {
 	}
 	n.started = true
 	n.stop = make(chan struct{})
+	n.startedAt = time.Now().UTC()
 	n.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -529,6 +539,10 @@ create index if not exists notifications_rebal_source_idx on notifications (reba
 }
 
 func (n *Notifier) upsertNotification(ctx context.Context, eventKey string, evt Notification) (Notification, error) {
+	return n.upsertNotificationWithOptions(ctx, eventKey, evt, notificationUpsertOptions{})
+}
+
+func (n *Notifier) upsertNotificationWithOptions(ctx context.Context, eventKey string, evt Notification, opts notificationUpsertOptions) (Notification, error) {
 	if eventKey == "" {
 		return Notification{}, errors.New("event key required")
 	}
@@ -647,10 +661,21 @@ limit 1
 		changedAction := !strings.EqualFold(strings.TrimSpace(prevAction), strings.TrimSpace(stored.Action))
 		shouldMirror = changedStatus || changedType || changedAction
 	}
-	if shouldMirror {
+	if shouldMirror && !opts.suppressMirror {
 		n.enqueueTelegramActivityMirror(stored)
 	}
 	return stored, nil
+}
+
+func notificationIsHistoricalCatchup(startedAt, occurredAt time.Time, grace time.Duration) bool {
+	if startedAt.IsZero() || occurredAt.IsZero() {
+		return false
+	}
+	return occurredAt.Before(startedAt.Add(-grace))
+}
+
+func shouldContinuePaymentsCatchup(batchSize int) bool {
+	return batchSize >= paymentsPollPageSize
 }
 
 func (n *Notifier) refreshTelegramActivityMirrorSettings(ctx context.Context) {
@@ -989,6 +1014,9 @@ func (n *Notifier) runInvoices() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		cursorVal, _ := n.getCursor(ctx, "invoice_settle_index")
 		cancel()
+		if strings.TrimSpace(cursorVal) == "" {
+			n.invoicesCatchupMode.Store(true)
+		}
 
 		var settleIndex uint64
 		if cursorVal != "" {
@@ -1040,6 +1068,14 @@ func (n *Notifier) runInvoices() {
 				amount = invoice.Value
 			}
 			occurredAt := time.Unix(invoice.SettleDate, 0).UTC()
+			suppressMirror := false
+			if n.invoicesCatchupMode.Load() {
+				if notificationIsHistoricalCatchup(n.startedAt, occurredAt, invoiceCatchupLiveGrace) {
+					suppressMirror = true
+				} else {
+					n.invoicesCatchupMode.Store(false)
+				}
+			}
 			isKeysend := invoice.IsKeysend
 			evtType := "lightning"
 			peerPubkey := ""
@@ -1091,7 +1127,7 @@ func (n *Notifier) runInvoices() {
 						continue
 					}
 					rebalanceEvt := n.rebalanceEvent(ctx, pay, occurredAt)
-					if _, err := n.upsertNotification(ctx, fmt.Sprintf("payment:%s", hash), rebalanceEvt); err == nil {
+					if _, err := n.upsertNotificationWithOptions(ctx, fmt.Sprintf("payment:%s", hash), rebalanceEvt, notificationUpsertOptions{suppressMirror: suppressMirror}); err == nil {
 						_ = n.setCursor(ctx, "invoice_settle_index", strconv.FormatUint(settleIndex, 10))
 					}
 					cancel()
@@ -1099,7 +1135,7 @@ func (n *Notifier) runInvoices() {
 				}
 			}
 
-			if _, err := n.upsertNotification(ctx, fmt.Sprintf("invoice:%s", hash), evt); err == nil {
+			if _, err := n.upsertNotificationWithOptions(ctx, fmt.Sprintf("invoice:%s", hash), evt, notificationUpsertOptions{suppressMirror: suppressMirror}); err == nil {
 				_ = n.setCursor(ctx, "invoice_settle_index", strconv.FormatUint(settleIndex, 10))
 				n.reconcileRebalance(ctx, hash)
 			}
@@ -1118,7 +1154,7 @@ func (n *Notifier) runPayments() {
 		cancel()
 	}
 
-	processPayment := func(pay *lnrpc.Payment) {
+	processPayment := func(pay *lnrpc.Payment, suppressMirror bool) {
 		if pay == nil {
 			return
 		}
@@ -1222,7 +1258,7 @@ func (n *Notifier) runPayments() {
 		if isRebalance {
 			evt = n.rebalanceEvent(ctx, pay, occurredAt)
 		}
-		if _, err := n.upsertNotification(ctx, fmt.Sprintf("payment:%s", paymentHash), evt); err == nil {
+		if _, err := n.upsertNotificationWithOptions(ctx, fmt.Sprintf("payment:%s", paymentHash), evt, notificationUpsertOptions{suppressMirror: suppressMirror}); err == nil {
 			if isRebalance {
 				_ = n.removeRebalanceInvoice(ctx, paymentHash)
 			} else {
@@ -1242,6 +1278,9 @@ func (n *Notifier) runPayments() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		cursorVal, _ := n.getCursor(ctx, "payments_index")
 		cancel()
+		if strings.TrimSpace(cursorVal) == "" && !n.paymentsCatchupMode.Load() {
+			n.paymentsCatchupMode.Store(true)
+		}
 
 		var indexOffset uint64
 		if cursorVal != "" {
@@ -1260,7 +1299,7 @@ func (n *Notifier) runPayments() {
 		res, err := client.ListPayments(context.Background(), &lnrpc.ListPaymentsRequest{
 			IncludeIncomplete: true,
 			IndexOffset:       indexOffset,
-			MaxPayments:       200,
+			MaxPayments:       paymentsPollPageSize,
 			Reversed:          false,
 		})
 		_ = conn.Close()
@@ -1272,6 +1311,7 @@ func (n *Notifier) runPayments() {
 		maxIndex := indexOffset
 		pendingDirty := false
 		now := time.Now().Unix()
+		suppressMirror := n.paymentsCatchupMode.Load()
 		for _, pay := range res.Payments {
 			if pay.PaymentIndex <= indexOffset {
 				continue
@@ -1298,7 +1338,7 @@ func (n *Notifier) runPayments() {
 				}
 				continue
 			}
-			processPayment(pay)
+			processPayment(pay, suppressMirror)
 			if _, ok := pending[paymentHash]; ok {
 				delete(pending, paymentHash)
 				pendingDirty = true
@@ -1332,10 +1372,13 @@ func (n *Notifier) runPayments() {
 					pendingDirty = true
 					continue
 				}
-				processPayment(pay)
+				processPayment(pay, n.paymentsCatchupMode.Load())
 				delete(pending, hash)
 				pendingDirty = true
 			}
+		}
+		if n.paymentsCatchupMode.Load() && !shouldContinuePaymentsCatchup(len(res.Payments)) {
+			n.paymentsCatchupMode.Store(false)
 		}
 
 		if maxIndex > indexOffset {

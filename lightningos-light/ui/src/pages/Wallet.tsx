@@ -170,6 +170,7 @@ export default function Wallet() {
   const [channelsError, setChannelsError] = useState('')
   const [channelsLoading, setChannelsLoading] = useState(true)
   const [outgoingChannelPoints, setOutgoingChannelPoints] = useState<string[]>([])
+  const [outgoingChannelsExpanded, setOutgoingChannelsExpanded] = useState(false)
   const [payMaxFeeSat, setPayMaxFeeSat] = useState('')
   const [payMaxFeeTouched, setPayMaxFeeTouched] = useState(false)
   const [paymentPreview, setPaymentPreview] = useState<WalletPaymentPreview | null>(null)
@@ -570,6 +571,15 @@ export default function Wallet() {
     return `${pubkey.slice(0, 12)}...`
   }
 
+  const outgoingChannelsSummary = () => {
+    if (outgoingChannelPoints.length === 0) return t('wallet.automaticLnd')
+    if (outgoingChannelPoints.length === 1) {
+      const selected = activeChannels.find((ch) => String(ch.channel_point || '').trim() === outgoingChannelPoints[0])
+      return selected ? formatChannelLabel(selected) : t('wallet.outgoingChannelsSelected', { count: 1 })
+    }
+    return t('wallet.outgoingChannelsSelected', { count: outgoingChannelPoints.length })
+  }
+
   useEffect(() => {
     const activePoints = new Set(activeChannels.map((ch) => String(ch.channel_point || '').trim()).filter(Boolean))
     setOutgoingChannelPoints((current) => {
@@ -928,6 +938,7 @@ export default function Wallet() {
       setDecode(null)
       setDecodeError('')
       setOutgoingChannelPoints([])
+      setOutgoingChannelsExpanded(false)
       setPayMaxFeeSat('')
       setPayMaxFeeTouched(false)
       setPaymentPreview(null)
@@ -1308,39 +1319,58 @@ export default function Wallet() {
             <div className="space-y-2 rounded-2xl border border-white/10 bg-ink/30 p-3">
               <button
                 type="button"
-                className={`w-full rounded-xl border px-3 py-2 text-left text-sm transition ${
-                  outgoingChannelPoints.length === 0
+                className={`flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2 text-left text-sm transition ${
+                  outgoingChannelPoints.length === 0 && !outgoingChannelsExpanded
                     ? 'border-brass/40 bg-brass/10 text-fog'
-                    : 'border-white/10 text-fog/70 hover:border-white/20 hover:text-fog'
+                    : 'border-white/10 text-fog/80 hover:border-white/20 hover:text-fog'
                 }`}
-                onClick={() => setOutgoingChannelPoints([])}
+                onClick={() => setOutgoingChannelsExpanded((current) => !current)}
               >
-                {t('wallet.automaticLnd')}
+                <span className="min-w-0 break-all">{outgoingChannelsSummary()}</span>
+                <span className={`shrink-0 text-xs text-fog/55 transition ${outgoingChannelsExpanded ? 'rotate-180' : ''}`}>▼</span>
               </button>
-              <div className="max-h-48 space-y-2 overflow-auto pr-1">
-                {activeChannels.map((ch) => {
-                  const point = String(ch.channel_point || '').trim()
-                  const checked = outgoingChannelPoints.includes(point)
-                  return (
-                    <label
-                      key={point}
-                      className={`flex cursor-pointer items-start gap-3 rounded-xl border px-3 py-2 text-sm transition ${
-                        checked
-                          ? 'border-brass/40 bg-brass/10 text-fog'
-                          : 'border-white/10 bg-white/[0.02] text-fog/80 hover:border-white/20 hover:text-fog'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        className="mt-0.5 h-4 w-4 rounded border-white/20 bg-ink/50 text-brass focus:ring-brass"
-                        checked={checked}
-                        onChange={() => toggleOutgoingChannelPoint(point)}
-                      />
-                      <span className="break-all">{formatChannelLabel(ch)}</span>
-                    </label>
-                  )
-                })}
-              </div>
+              {outgoingChannelsExpanded && (
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    className={`w-full rounded-xl border px-3 py-2 text-left text-sm transition ${
+                      outgoingChannelPoints.length === 0
+                        ? 'border-brass/40 bg-brass/10 text-fog'
+                        : 'border-white/10 text-fog/70 hover:border-white/20 hover:text-fog'
+                    }`}
+                    onClick={() => {
+                      setOutgoingChannelPoints([])
+                      setOutgoingChannelsExpanded(false)
+                    }}
+                  >
+                    {t('wallet.automaticLnd')}
+                  </button>
+                  <div className="max-h-48 space-y-2 overflow-auto pr-1">
+                    {activeChannels.map((ch) => {
+                      const point = String(ch.channel_point || '').trim()
+                      const checked = outgoingChannelPoints.includes(point)
+                      return (
+                        <label
+                          key={point}
+                          className={`flex cursor-pointer items-start gap-3 rounded-xl border px-3 py-2 text-sm transition ${
+                            checked
+                              ? 'border-brass/40 bg-brass/10 text-fog'
+                              : 'border-white/10 bg-white/[0.02] text-fog/80 hover:border-white/20 hover:text-fog'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            className="mt-0.5 h-4 w-4 rounded border-white/20 bg-ink/50 text-brass focus:ring-brass"
+                            checked={checked}
+                            onChange={() => toggleOutgoingChannelPoint(point)}
+                          />
+                          <span className="break-all">{formatChannelLabel(ch)}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
             <p className="text-xs text-fog/50">
               {t('wallet.outgoingChannelHint')}

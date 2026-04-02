@@ -1118,6 +1118,7 @@
     "onchainUnconfirmed": "Unconfirmed: {{amount}} sats",
     "outgoingChannel": "Outgoing channels (optional)",
     "outgoingChannelHint": "When you select one or more channels, LND restricts the first hop to that set. With no selection, it can use any available channel.",
+    "outgoingChannelsSelected": "{{count}} channels selected",
     "payInvoice": "Pay invoice",
     "payingInvoice": "Paying invoice...",
     "payment": "Payment",

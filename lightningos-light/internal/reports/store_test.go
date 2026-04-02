@@ -1,6 +1,7 @@
 package reports
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -97,5 +98,55 @@ func TestBuildUpsertDaily(t *testing.T) {
 		args[28] != nil || // lightning_balance_sats
 		args[29] != nil { // total_balance_sats
 		t.Fatalf("unexpected metrics args")
+	}
+}
+
+func TestBuildUpsertLiveSnapshot(t *testing.T) {
+	loc := time.FixedZone("BRT", -3*60*60)
+	snapshot := liveSnapshot{
+		UpdatedAt: time.Date(2026, 4, 2, 9, 30, 0, 0, loc),
+		Timezone:  "America/Sao_Paulo",
+		Range: TimeRange{
+			StartLocal: time.Date(2026, 4, 2, 0, 0, 0, 0, loc),
+			EndLocal:   time.Date(2026, 4, 2, 9, 30, 0, 0, loc),
+		},
+		Metrics: Metrics{
+			ForwardFeeRevenueSat: 200,
+			RebalanceFeeCostSat:  50,
+			RoutedVolumeSat:      12000,
+		},
+		LookbackHours: 0,
+	}
+
+	query, args, err := buildUpsertLiveSnapshot(snapshot)
+	if err != nil {
+		t.Fatalf("buildUpsertLiveSnapshot returned error: %v", err)
+	}
+	if !strings.Contains(query, "insert into reports_live_cache") {
+		t.Fatalf("expected live cache insert query")
+	}
+	if !strings.Contains(query, "on conflict (timezone, lookback_hours) do update") {
+		t.Fatalf("expected live cache upsert query")
+	}
+	if len(args) != 5 {
+		t.Fatalf("expected 5 args, got %d", len(args))
+	}
+	if args[0] != "America/Sao_Paulo" {
+		t.Fatalf("unexpected timezone arg: %v", args[0])
+	}
+	if args[1] != 0 {
+		t.Fatalf("unexpected lookback arg: %v", args[1])
+	}
+
+	raw, ok := args[4].([]byte)
+	if !ok {
+		t.Fatalf("expected json payload []byte")
+	}
+	var parsed Metrics
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		t.Fatalf("failed to unmarshal payload: %v", err)
+	}
+	if parsed.ForwardFeeRevenueSat != 200 || parsed.RebalanceFeeCostSat != 50 || parsed.RoutedVolumeSat != 12000 {
+		t.Fatalf("unexpected metrics payload: %+v", parsed)
 	}
 }

@@ -47,30 +47,41 @@ func ComputeMetrics(ctx context.Context, lnd *lndclient.Client, tr TimeRange, me
 
 	rebalanceCostMsat := int64(0)
 	rebalanceCount := int64(0)
-	if rebalanceOverride != nil {
-		rebalanceCostMsat = rebalanceOverride.FeeMsat
-		rebalanceCount = rebalanceOverride.Count
-	} else {
-		rebalance, err := FetchRebalanceMetrics(ctx, lnd, tr.StartUnix(), tr.EndUnixInclusive(), memoMatch)
-		if err != nil {
-			return Metrics{}, err
-		}
-		rebalanceCostMsat = rebalance.FeeMsat
-		rebalanceCount = rebalance.Count
-	}
-
 	paymentCostMsat := int64(0)
 	paymentCount := int64(0)
-	if paymentOverride != nil {
-		paymentCostMsat = paymentOverride.FeeMsat
-		paymentCount = paymentOverride.Count
-	} else {
-		payments, err := FetchPaymentMetrics(ctx, lnd, tr.StartUnix(), tr.EndUnixInclusive(), memoMatch)
+	if rebalanceOverride == nil && paymentOverride == nil {
+		outgoing, err := FetchOutgoingPaymentMetrics(ctx, lnd, tr.StartUnix(), tr.EndUnixInclusive(), memoMatch)
 		if err != nil {
 			return Metrics{}, err
 		}
-		paymentCostMsat = payments.FeeMsat
-		paymentCount = payments.Count
+		rebalanceCostMsat = outgoing.Rebalances.FeeMsat
+		rebalanceCount = outgoing.Rebalances.Count
+		paymentCostMsat = outgoing.Payments.FeeMsat
+		paymentCount = outgoing.Payments.Count
+	} else {
+		if rebalanceOverride != nil {
+			rebalanceCostMsat = rebalanceOverride.FeeMsat
+			rebalanceCount = rebalanceOverride.Count
+		} else {
+			rebalance, err := FetchRebalanceMetrics(ctx, lnd, tr.StartUnix(), tr.EndUnixInclusive(), memoMatch)
+			if err != nil {
+				return Metrics{}, err
+			}
+			rebalanceCostMsat = rebalance.FeeMsat
+			rebalanceCount = rebalance.Count
+		}
+
+		if paymentOverride != nil {
+			paymentCostMsat = paymentOverride.FeeMsat
+			paymentCount = paymentOverride.Count
+		} else {
+			payments, err := FetchPaymentMetrics(ctx, lnd, tr.StartUnix(), tr.EndUnixInclusive(), memoMatch)
+			if err != nil {
+				return Metrics{}, err
+			}
+			paymentCostMsat = payments.FeeMsat
+			paymentCount = payments.Count
+		}
 	}
 
 	keysendReceivedMsat := int64(0)

@@ -12,6 +12,28 @@ import (
 const paymentScanPageSize = 5000
 const paymentScanMaxPages = 200000
 
+type OutgoingPaymentMetrics struct {
+	Payments   PaymentOverride
+	Rebalances RebalanceOverride
+}
+
+func FetchOutgoingPaymentMetrics(ctx context.Context, lnd *lndclient.Client, startUnix uint64, endUnix uint64, memoMatch bool) (OutgoingPaymentMetrics, error) {
+	totals := OutgoingPaymentMetrics{}
+	err := scanOutgoingPayments(ctx, lnd, startUnix, endUnix, memoMatch, func(_ int64, feeMsat int64, isRebalance bool) {
+		if isRebalance {
+			totals.Rebalances.FeeMsat += feeMsat
+			totals.Rebalances.Count++
+			return
+		}
+		totals.Payments.FeeMsat += feeMsat
+		totals.Payments.Count++
+	})
+	if err != nil {
+		return OutgoingPaymentMetrics{}, err
+	}
+	return totals, nil
+}
+
 func FetchPaymentMetrics(ctx context.Context, lnd *lndclient.Client, startUnix uint64, endUnix uint64, memoMatch bool) (PaymentOverride, error) {
 	totals := PaymentOverride{}
 	err := scanOutgoingPayments(ctx, lnd, startUnix, endUnix, memoMatch, func(_ int64, feeMsat int64, isRebalance bool) {
@@ -87,6 +109,8 @@ func scanOutgoingPayments(ctx context.Context, lnd *lndclient.Client, startUnix 
 			Reversed:          true,
 			IndexOffset:       indexOffset,
 			MaxPayments:       paymentScanPageSize,
+			CreationDateStart: startUnix,
+			CreationDateEnd:   endUnix,
 		}
 		resp, err := client.ListPayments(ctx, req)
 		if err != nil {

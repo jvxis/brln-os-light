@@ -3,6 +3,7 @@ package reports
 import (
 	"context"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 
@@ -11,31 +12,47 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const defaultLiveTTL = 60 * time.Second
+const (
+	defaultLiveTTL                  = 60 * time.Second
+	defaultLiveBuildTimeout         = 2 * time.Minute
+	defaultLivePersistedFallbackAge = 15 * time.Minute
+)
 
 type Service struct {
 	db     *pgxpool.Pool
 	lnd    *lndclient.Client
 	logger *log.Logger
 
-	liveTTL   time.Duration
-	liveMu    sync.Mutex
-	liveCache liveSnapshot
+	liveTTL          time.Duration
+	liveBuildTimeout time.Duration
+	liveMu           sync.Mutex
+	liveCache        liveSnapshot
+	liveInFlight     map[string]*liveCall
 }
 
 type liveSnapshot struct {
 	ExpiresAt     time.Time
+	UpdatedAt     time.Time
+	Timezone      string
 	Range         TimeRange
 	Metrics       Metrics
 	LookbackHours int
 }
 
+type liveCall struct {
+	done     chan struct{}
+	snapshot liveSnapshot
+	err      error
+}
+
 func NewService(db *pgxpool.Pool, lnd *lndclient.Client, logger *log.Logger) *Service {
 	return &Service{
-		db:      db,
-		lnd:     lnd,
-		logger:  logger,
-		liveTTL: defaultLiveTTL,
+		db:               db,
+		lnd:              lnd,
+		logger:           logger,
+		liveTTL:          defaultLiveTTL,
+		liveBuildTimeout: defaultLiveBuildTimeout,
+		liveInFlight:     map[string]*liveCall{},
 	}
 }
 
@@ -126,38 +143,43 @@ func (s *Service) Live(ctx context.Context, now time.Time, loc *time.Location, l
 	if loc == nil {
 		loc = time.Local
 	}
-	s.liveMu.Lock()
-	cached := s.liveCache
-	if time.Now().Before(cached.ExpiresAt) && cached.LookbackHours == lookbackHours {
-		s.liveMu.Unlock()
+
+	requestRange := BuildTimeRangeForLookback(now, loc, lookbackHours)
+	key := liveSnapshotKey(loc, lookbackHours)
+	if cached, ok := s.memoryLiveSnapshot(key); ok {
 		return cached.Range, cached.Metrics, nil
 	}
-	s.liveMu.Unlock()
 
-	tr := BuildTimeRangeForLookback(now, loc, lookbackHours)
-	onchainOverride := OnchainOverride{}
-	if quickOnchain, onchainErr := FetchOnchainFeeMetricsFast(ctx, s.lnd, tr.StartUnix(), tr.EndUnixInclusive()); onchainErr == nil {
-		onchainOverride = quickOnchain
-	} else if s.logger != nil {
-		s.logger.Printf("reports: live onchain quick scan failed, defaulting to 0 onchain cost: %v", onchainErr)
+	call, leader := s.ensureLiveCall(key)
+	if leader {
+		go s.runLiveComputation(call, key, now, loc, lookbackHours)
 	}
 
-	metrics, err := ComputeMetrics(ctx, s.lnd, tr, false, nil, nil, nil, &onchainOverride)
-	if err != nil {
-		return TimeRange{}, Metrics{}, err
+	if fallback, ok := s.usablePersistedLiveSnapshot(ctx, now, requestRange, loc, lookbackHours); ok {
+		return fallback.Range, fallback.Metrics, nil
 	}
-	metrics = s.attachBalances(ctx, metrics)
 
-	s.liveMu.Lock()
-	s.liveCache = liveSnapshot{
-		ExpiresAt:     time.Now().Add(s.liveTTL),
-		Range:         tr,
-		Metrics:       metrics,
-		LookbackHours: lookbackHours,
+	select {
+	case <-call.done:
+		if call.err == nil {
+			return call.snapshot.Range, call.snapshot.Metrics, nil
+		}
+		if fallback, ok := s.usablePersistedLiveSnapshot(ctx, now, requestRange, loc, lookbackHours); ok {
+			if s.logger != nil {
+				s.logger.Printf("reports: live build failed, using persisted snapshot fallback: %v", call.err)
+			}
+			return fallback.Range, fallback.Metrics, nil
+		}
+		return TimeRange{}, Metrics{}, call.err
+	case <-ctx.Done():
+		if fallback, ok := s.usablePersistedLiveSnapshot(ctx, now, requestRange, loc, lookbackHours); ok {
+			if s.logger != nil {
+				s.logger.Printf("reports: live request timed out, using persisted snapshot fallback: %v", ctx.Err())
+			}
+			return fallback.Range, fallback.Metrics, nil
+		}
+		return TimeRange{}, Metrics{}, ctx.Err()
 	}
-	s.liveMu.Unlock()
-
-	return tr, metrics, nil
 }
 
 func (s *Service) MovementLive(ctx context.Context, now time.Time, loc *time.Location) (MovementLive, error) {
@@ -283,4 +305,163 @@ func routedVolumeSat(metrics Metrics) float64 {
 		return float64(metrics.RoutedVolumeMsat) / 1000
 	}
 	return float64(metrics.RoutedVolumeSat)
+}
+
+func (s *Service) memoryLiveSnapshot(key string) (liveSnapshot, bool) {
+	s.liveMu.Lock()
+	defer s.liveMu.Unlock()
+
+	cached := s.liveCache
+	if cached.ExpiresAt.IsZero() || time.Now().After(cached.ExpiresAt) {
+		return liveSnapshot{}, false
+	}
+	if liveSnapshotKeyParts(cached.Timezone, cached.LookbackHours) != key {
+		return liveSnapshot{}, false
+	}
+	return cached, true
+}
+
+func (s *Service) ensureLiveCall(key string) (*liveCall, bool) {
+	s.liveMu.Lock()
+	defer s.liveMu.Unlock()
+
+	if s.liveInFlight == nil {
+		s.liveInFlight = map[string]*liveCall{}
+	}
+	if call, ok := s.liveInFlight[key]; ok {
+		return call, false
+	}
+
+	call := &liveCall{done: make(chan struct{})}
+	s.liveInFlight[key] = call
+	return call, true
+}
+
+func (s *Service) runLiveComputation(call *liveCall, key string, now time.Time, loc *time.Location, lookbackHours int) {
+	buildTimeout := s.liveBuildTimeout
+	if buildTimeout <= 0 {
+		buildTimeout = defaultLiveBuildTimeout
+	}
+
+	buildCtx, cancel := context.WithTimeout(context.Background(), buildTimeout)
+	snapshot, err := s.computeLiveSnapshot(buildCtx, now, loc, lookbackHours)
+	cancel()
+
+	s.liveMu.Lock()
+	if err == nil {
+		s.liveCache = snapshot
+	}
+	call.snapshot = snapshot
+	call.err = err
+	if s.liveInFlight != nil {
+		delete(s.liveInFlight, key)
+	}
+	close(call.done)
+	s.liveMu.Unlock()
+
+	if err == nil {
+		go s.persistLiveSnapshot(snapshot)
+	}
+}
+
+func (s *Service) computeLiveSnapshot(ctx context.Context, now time.Time, loc *time.Location, lookbackHours int) (liveSnapshot, error) {
+	if loc == nil {
+		loc = time.Local
+	}
+
+	tr := BuildTimeRangeForLookback(now, loc, lookbackHours)
+	onchainOverride := OnchainOverride{}
+	if quickOnchain, onchainErr := FetchOnchainFeeMetricsFast(ctx, s.lnd, tr.StartUnix(), tr.EndUnixInclusive()); onchainErr == nil {
+		onchainOverride = quickOnchain
+	} else if s.logger != nil {
+		s.logger.Printf("reports: live onchain quick scan failed, defaulting to 0 onchain cost: %v", onchainErr)
+	}
+
+	metrics, err := ComputeMetrics(ctx, s.lnd, tr, false, nil, nil, nil, &onchainOverride)
+	if err != nil {
+		return liveSnapshot{}, err
+	}
+	metrics = s.attachBalances(ctx, metrics)
+
+	builtAt := time.Now()
+	return liveSnapshot{
+		ExpiresAt:     builtAt.Add(s.liveTTL),
+		UpdatedAt:     builtAt,
+		Timezone:      liveSnapshotTimezone(loc),
+		Range:         tr,
+		Metrics:       metrics,
+		LookbackHours: lookbackHours,
+	}, nil
+}
+
+func (s *Service) usablePersistedLiveSnapshot(_ context.Context, now time.Time, requestRange TimeRange, loc *time.Location, lookbackHours int) (liveSnapshot, bool) {
+	lookupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	snapshot, ok, err := FetchLiveSnapshot(lookupCtx, s.db, liveSnapshotTimezone(loc), lookbackHours)
+	if err != nil {
+		if s.logger != nil && !isContextError(err) {
+			s.logger.Printf("reports: failed to load persisted live snapshot: %v", err)
+		}
+		return liveSnapshot{}, false
+	}
+	if !ok {
+		return liveSnapshot{}, false
+	}
+	if !canUsePersistedLiveSnapshot(now, requestRange, snapshot, lookbackHours, loc) {
+		return liveSnapshot{}, false
+	}
+	return snapshot, true
+}
+
+func (s *Service) persistLiveSnapshot(snapshot liveSnapshot) {
+	if s == nil || s.db == nil {
+		return
+	}
+
+	storeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := UpsertLiveSnapshot(storeCtx, s.db, snapshot); err != nil && s.logger != nil {
+		s.logger.Printf("reports: failed to persist live snapshot: %v", err)
+	}
+}
+
+func liveSnapshotTimezone(loc *time.Location) string {
+	if loc == nil {
+		return time.Local.String()
+	}
+	return loc.String()
+}
+
+func liveSnapshotKey(loc *time.Location, lookbackHours int) string {
+	return liveSnapshotKeyParts(liveSnapshotTimezone(loc), lookbackHours)
+}
+
+func liveSnapshotKeyParts(timezone string, lookbackHours int) string {
+	return timezone + "|" + strconv.Itoa(lookbackHours)
+}
+
+func canUsePersistedLiveSnapshot(now time.Time, requestRange TimeRange, snapshot liveSnapshot, lookbackHours int, loc *time.Location) bool {
+	if loc == nil {
+		loc = time.Local
+	}
+	if snapshot.Timezone != liveSnapshotTimezone(loc) || snapshot.LookbackHours != lookbackHours {
+		return false
+	}
+	if snapshot.Range.StartLocal.IsZero() || snapshot.Range.EndLocal.IsZero() {
+		return false
+	}
+	if lookbackHours <= 0 {
+		return dateOnly(snapshot.Range.StartLocal, loc).Equal(dateOnly(requestRange.StartLocal, loc))
+	}
+	if snapshot.UpdatedAt.IsZero() {
+		return false
+	}
+	age := now.Sub(snapshot.UpdatedAt)
+	return age <= defaultLivePersistedFallbackAge || age < 0
+}
+
+func isContextError(err error) bool {
+	return err == context.Canceled || err == context.DeadlineExceeded
 }

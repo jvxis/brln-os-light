@@ -2,6 +2,7 @@ package reports
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -55,6 +56,17 @@ create table if not exists reports_movement_daily (
   outbound_target_sats bigint not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
+);
+
+create table if not exists reports_live_cache (
+  timezone text not null,
+  lookback_hours integer not null default 0,
+  start_local timestamptz not null,
+  end_local timestamptz not null,
+  metrics jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (timezone, lookback_hours)
 );
 
 alter table reports_daily add column if not exists forward_fee_revenue_msat bigint not null default 0;
@@ -208,6 +220,99 @@ on conflict (report_date) do update set
   updated_at = now()
 `, normalizeReportDate(reportDate), outboundTargetSat)
 	return err
+}
+
+func UpsertLiveSnapshot(ctx context.Context, db *pgxpool.Pool, snapshot liveSnapshot) error {
+	if db == nil {
+		return nil
+	}
+	query, args, err := buildUpsertLiveSnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(ctx, query, args...)
+	return err
+}
+
+func buildUpsertLiveSnapshot(snapshot liveSnapshot) (string, []any, error) {
+	payload, err := json.Marshal(snapshot.Metrics)
+	if err != nil {
+		return "", nil, err
+	}
+
+	query := `
+insert into reports_live_cache (
+  timezone,
+  lookback_hours,
+  start_local,
+  end_local,
+  metrics
+) values ($1,$2,$3,$4,$5)
+on conflict (timezone, lookback_hours) do update set
+  start_local = excluded.start_local,
+  end_local = excluded.end_local,
+  metrics = excluded.metrics,
+  updated_at = now()
+`
+
+	args := []any{
+		snapshot.Timezone,
+		snapshot.LookbackHours,
+		snapshot.Range.StartLocal,
+		snapshot.Range.EndLocal,
+		payload,
+	}
+	return query, args, nil
+}
+
+func FetchLiveSnapshot(ctx context.Context, db *pgxpool.Pool, timezone string, lookbackHours int) (liveSnapshot, bool, error) {
+	if db == nil {
+		return liveSnapshot{}, false, nil
+	}
+
+	var startLocal time.Time
+	var endLocal time.Time
+	var metricsRaw []byte
+	var updatedAt time.Time
+	err := db.QueryRow(ctx, `
+select start_local, end_local, metrics, updated_at
+from reports_live_cache
+where timezone = $1 and lookback_hours = $2
+`, timezone, lookbackHours).Scan(&startLocal, &endLocal, &metricsRaw, &updatedAt)
+	if err != nil {
+		if isNotFound(err) {
+			return liveSnapshot{}, false, nil
+		}
+		return liveSnapshot{}, false, err
+	}
+
+	metrics := Metrics{}
+	if len(metricsRaw) > 0 {
+		if err := json.Unmarshal(metricsRaw, &metrics); err != nil {
+			return liveSnapshot{}, false, err
+		}
+	}
+	fillMsatFromSat(&metrics)
+
+	loc, locErr := ResolveLocation(timezone, time.Local)
+	if locErr != nil {
+		loc = time.Local
+	}
+	startLocal = startLocal.In(loc)
+	endLocal = endLocal.In(loc)
+
+	return liveSnapshot{
+		UpdatedAt: updatedAt,
+		Range: TimeRange{
+			StartLocal: startLocal,
+			EndLocal:   endLocal,
+			StartUTC:   startLocal.UTC(),
+			EndUTC:     endLocal.UTC(),
+		},
+		Metrics:       metrics,
+		LookbackHours: lookbackHours,
+		Timezone:      timezone,
+	}, true, nil
 }
 
 func FetchMovementTargetDaily(ctx context.Context, db *pgxpool.Pool, reportDate time.Time) (int64, bool, error) {

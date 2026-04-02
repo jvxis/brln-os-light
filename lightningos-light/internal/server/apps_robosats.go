@@ -13,7 +13,7 @@ import (
 
 const (
   robosatsImage = "recksato/robosats-client:latest"
-  robosatsTorImage = "dperson/torproxy:latest"
+  robosatsTorImage = "osminogin/tor-simple:0.4.9.5"
   robosatsPort = 12596
 )
 
@@ -160,6 +160,9 @@ func robosatsComposeContents(paths robosatsPaths) string {
   tor:
     image: %s
     restart: unless-stopped
+    volumes:
+      - tor-data:/var/lib/tor
+      - tor-log:/var/log/tor
   robosats:
     image: %s
     user: "0:0"
@@ -173,6 +176,9 @@ func robosatsComposeContents(paths robosatsPaths) string {
       TOR_PROXY_PORT: 9050
     volumes:
       - %s:/usr/src/robosats/data
+volumes:
+  tor-data:
+  tor-log:
 `, robosatsTorImage, robosatsImage, robosatsPort, robosatsPort, paths.DataDir)
 }
 

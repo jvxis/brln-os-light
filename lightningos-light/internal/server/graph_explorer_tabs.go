@@ -507,12 +507,10 @@ func normalizeGraphExplorerCloseType(value string) string {
 		return "mutual_close"
 	case "force", "force_close", "local_force_close", "remote_force_close":
 		return "force_close"
-	case "breach", "breach_close":
-		return "breach_close"
-	case "funding_canceled", "funding_cancelled":
-		return "funding_canceled"
-	case "abandoned":
-		return "abandoned"
+	case "breach", "breach_close", "penalty", "penalty_close", "justice", "justice_close":
+		return "penalty_close"
+	case "funding_canceled", "funding_cancelled", "abandoned":
+		return "unknown"
 	}
 	return value
 }

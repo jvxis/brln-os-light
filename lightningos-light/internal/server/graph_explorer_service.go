@@ -18,12 +18,16 @@ import (
 )
 
 const (
-	graphExplorerReconcileInterval = 6 * time.Hour
-	graphExplorerStreamRetryDelay  = 15 * time.Second
-	graphExplorerRefreshTimeout    = 3 * time.Minute
-	graphExplorerUpdateTimeout     = 45 * time.Second
-	graphExplorerBatchSize         = 500
-	graphExplorerConfigID          = 1
+	graphExplorerReconcileInterval  = 6 * time.Hour
+	graphExplorerStreamRetryDelay   = 15 * time.Second
+	graphExplorerRefreshTimeout     = 3 * time.Minute
+	graphExplorerUpdateTimeout      = 45 * time.Second
+	graphCloseClassifierInterval    = 2 * time.Minute
+	graphCloseClassifierTimeout     = 45 * time.Second
+	graphCloseClassifierBatchSize   = 32
+	graphCloseClassifierMaxAttempts = 3
+	graphExplorerBatchSize          = 500
+	graphExplorerConfigID           = 1
 )
 
 var ErrGraphExplorerDBUnavailable = errors.New("graph explorer db unavailable")
@@ -157,6 +161,9 @@ create table if not exists graph_channels (
   close_type text,
   last_indexed_at timestamptz not null default now()
 );
+alter table graph_channels add column if not exists close_txid text;
+alter table graph_channels add column if not exists close_confidence text;
+alter table graph_channels add column if not exists classified_at timestamptz;
 create index if not exists graph_channels_status_idx on graph_channels (status, last_seen_at desc);
 create index if not exists graph_channels_node1_idx on graph_channels (node1_pubkey, status);
 create index if not exists graph_channels_node2_idx on graph_channels (node2_pubkey, status);
@@ -212,7 +219,17 @@ create table if not exists graph_close_events (
   close_type text,
   metadata_json jsonb not null default '{}'::jsonb
 );
+alter table graph_close_events add column if not exists close_txid text;
+alter table graph_close_events add column if not exists close_fee_sat bigint;
+alter table graph_close_events add column if not exists close_classifier text;
+alter table graph_close_events add column if not exists close_confidence text;
+alter table graph_close_events add column if not exists close_reason text;
+alter table graph_close_events add column if not exists classified_at timestamptz;
+alter table graph_close_events add column if not exists classification_error text;
+alter table graph_close_events add column if not exists classification_attempts integer not null default 0;
 create index if not exists graph_close_events_chan_idx on graph_close_events (chan_id, observed_at desc);
+create index if not exists graph_close_events_pending_idx on graph_close_events (classified_at, classification_attempts, observed_at desc);
+create index if not exists graph_close_events_close_txid_idx on graph_close_events (close_txid);
 `)
 	return err
 }
@@ -236,7 +253,7 @@ func (s *GraphExplorerService) Start() {
 		defer close(doneCh)
 		s.refreshBackground()
 		var wg sync.WaitGroup
-		wg.Add(2)
+		wg.Add(3)
 		go func() {
 			defer wg.Done()
 			s.runRefreshLoop(stopCh)
@@ -244,6 +261,10 @@ func (s *GraphExplorerService) Start() {
 		go func() {
 			defer wg.Done()
 			s.runStreamLoop(stopCh)
+		}()
+		go func() {
+			defer wg.Done()
+			s.runCloseClassifierLoop(stopCh)
 		}()
 		wg.Wait()
 	}()
@@ -575,7 +596,10 @@ on conflict (chan_id) do update set
   closed_at = case when graph_channels.closed_at is not null and graph_channels.closed_at > $8 then graph_channels.closed_at else null end,
   closed_height = case when graph_channels.closed_at is not null and graph_channels.closed_at > $8 then graph_channels.closed_height else null end,
   close_source = case when graph_channels.closed_at is not null and graph_channels.closed_at > $8 then graph_channels.close_source else null end,
-  close_type = case when graph_channels.closed_at is not null and graph_channels.closed_at > $8 then graph_channels.close_type else null end
+  close_type = case when graph_channels.closed_at is not null and graph_channels.closed_at > $8 then graph_channels.close_type else null end,
+  close_txid = case when graph_channels.closed_at is not null and graph_channels.closed_at > $8 then graph_channels.close_txid else null end,
+  close_confidence = case when graph_channels.closed_at is not null and graph_channels.closed_at > $8 then graph_channels.close_confidence else null end,
+  classified_at = case when graph_channels.closed_at is not null and graph_channels.closed_at > $8 then graph_channels.classified_at else null end
 `
 
 	batch := &pgx.Batch{}
@@ -720,7 +744,10 @@ on conflict (chan_id) do update set
   closed_at = null,
   closed_height = null,
   close_source = null,
-  close_type = null
+  close_type = null,
+  close_txid = null,
+  close_confidence = null,
+  classified_at = null
 `
 
 	channelBatch := &pgx.Batch{}

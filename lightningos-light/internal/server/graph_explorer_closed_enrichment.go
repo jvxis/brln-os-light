@@ -40,8 +40,10 @@ func (s *GraphExplorerService) enrichLocalClosedChannelTypes(ctx context.Context
 		if selectedPubkey != localPubkey && graphExplorerNormalizePubkey(item.PeerPubKey) != localPubkey {
 			continue
 		}
-		if closeType := normalizeGraphExplorerCloseType(lookup.find(item.ChannelID, item.ChanPoint)); closeType != "unknown" {
-			item.CloseType = closeType
+		if localInfo, ok := lookup.find(item.ChannelID, item.ChanPoint); ok {
+			if closeType := normalizeGraphExplorerCloseType(localInfo.CloseType); closeType != "unknown" {
+				item.CloseType = closeType
+			}
 			if item.CloseSource == "" || item.CloseSource == "native" {
 				item.CloseSource = "native+lnd"
 			}

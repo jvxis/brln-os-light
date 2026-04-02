@@ -266,6 +266,7 @@ const closeTypeTone = (value?: string) => {
   switch (String(value || '').trim().toLowerCase()) {
     case 'force_close':
     case 'force':
+    case 'penalty_close':
     case 'breach_close':
       return 'border-rose-400/30 bg-rose-500/12 text-rose-100'
     case 'cooperative':

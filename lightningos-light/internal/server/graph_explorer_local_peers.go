@@ -93,28 +93,34 @@ func (s *GraphExplorerService) loadLocalPubkey(ctx context.Context) string {
 }
 
 type graphExplorerLocalClosedChannelLookup struct {
-	byChanID    map[uint64]string
-	byChanPoint map[string]string
+	byChanID    map[uint64]graphExplorerLocalClosedChannelInfo
+	byChanPoint map[string]graphExplorerLocalClosedChannelInfo
 }
 
-func (l graphExplorerLocalClosedChannelLookup) find(chanID uint64, chanPoint string) string {
+type graphExplorerLocalClosedChannelInfo struct {
+	CloseType   string
+	CloseTxID   string
+	CloseHeight int
+}
+
+func (l graphExplorerLocalClosedChannelLookup) find(chanID uint64, chanPoint string) (graphExplorerLocalClosedChannelInfo, bool) {
 	if chanID != 0 {
 		if value, ok := l.byChanID[chanID]; ok {
-			return value
+			return value, true
 		}
 	}
 	if point := graphExplorerNormalizeChanPoint(chanPoint); point != "" {
 		if value, ok := l.byChanPoint[point]; ok {
-			return value
+			return value, true
 		}
 	}
-	return ""
+	return graphExplorerLocalClosedChannelInfo{}, false
 }
 
 func (s *GraphExplorerService) loadLocalClosedChannelLookup(ctx context.Context) graphExplorerLocalClosedChannelLookup {
 	lookup := graphExplorerLocalClosedChannelLookup{
-		byChanID:    map[uint64]string{},
-		byChanPoint: map[string]string{},
+		byChanID:    map[uint64]graphExplorerLocalClosedChannelInfo{},
+		byChanPoint: map[string]graphExplorerLocalClosedChannelInfo{},
 	}
 	if s == nil || s.lnd == nil {
 		return lookup
@@ -138,15 +144,19 @@ func (s *GraphExplorerService) loadLocalClosedChannelLookup(ctx context.Context)
 	}
 
 	for _, channel := range channels {
-		closeType := normalizeGraphExplorerCloseType(channel.CloseTypeLabel)
-		if closeType == "unknown" {
+		info := graphExplorerLocalClosedChannelInfo{
+			CloseType:   normalizeGraphExplorerCloseType(channel.CloseTypeLabel),
+			CloseTxID:   strings.ToLower(strings.TrimSpace(channel.ClosingTxHash)),
+			CloseHeight: int(channel.CloseHeight),
+		}
+		if info.CloseType == "unknown" && info.CloseTxID == "" {
 			continue
 		}
 		if channel.ChanID != 0 {
-			lookup.byChanID[channel.ChanID] = closeType
+			lookup.byChanID[channel.ChanID] = info
 		}
 		if chanPoint := graphExplorerNormalizeChanPoint(channel.ChannelPoint); chanPoint != "" {
-			lookup.byChanPoint[chanPoint] = closeType
+			lookup.byChanPoint[chanPoint] = info
 		}
 	}
 	return lookup

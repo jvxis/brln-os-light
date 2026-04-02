@@ -9,9 +9,10 @@ func TestNormalizeGraphExplorerCloseType(t *testing.T) {
 		"mutual":             "mutual_close",
 		"LOCAL_FORCE_CLOSE":  "force_close",
 		"REMOTE_FORCE_CLOSE": "force_close",
-		"BREACH_CLOSE":       "breach_close",
-		"FUNDING_CANCELED":   "funding_canceled",
-		"ABANDONED":          "abandoned",
+		"BREACH_CLOSE":       "penalty_close",
+		"PENALTY_CLOSE":      "penalty_close",
+		"FUNDING_CANCELED":   "unknown",
+		"ABANDONED":          "unknown",
 		"something_custom":   "something_custom",
 	}
 

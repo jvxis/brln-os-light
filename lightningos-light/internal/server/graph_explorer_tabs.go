@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ type GraphExplorerNodeChannelsResponse struct {
 
 type GraphExplorerNodeChannel struct {
 	ChannelID           uint64                     `json:"channel_id"`
+	ShortChannelID      string                     `json:"short_channel_id,omitempty"`
 	ChanPoint           string                     `json:"chan_point,omitempty"`
 	PeerPubKey          string                     `json:"peer_pubkey"`
 	PeerAlias           string                     `json:"peer_alias,omitempty"`
@@ -49,15 +51,16 @@ type GraphExplorerClosedChannelsReport struct {
 }
 
 type GraphExplorerClosedChannel struct {
-	ChannelID    uint64     `json:"channel_id"`
-	ChanPoint    string     `json:"chan_point,omitempty"`
-	PeerPubKey   string     `json:"peer_pubkey,omitempty"`
-	PeerAlias    string     `json:"peer_alias,omitempty"`
-	CapacitySat  int64      `json:"capacity_sat"`
-	ClosedHeight int        `json:"closed_height"`
-	ObservedAt   *time.Time `json:"observed_at,omitempty"`
-	CloseType    string     `json:"close_type,omitempty"`
-	CloseSource  string     `json:"close_source,omitempty"`
+	ChannelID      uint64     `json:"channel_id"`
+	ShortChannelID string     `json:"short_channel_id,omitempty"`
+	ChanPoint      string     `json:"chan_point,omitempty"`
+	PeerPubKey     string     `json:"peer_pubkey,omitempty"`
+	PeerAlias      string     `json:"peer_alias,omitempty"`
+	CapacitySat    int64      `json:"capacity_sat"`
+	ClosedHeight   int        `json:"closed_height"`
+	ObservedAt     *time.Time `json:"observed_at,omitempty"`
+	CloseType      string     `json:"close_type,omitempty"`
+	CloseSource    string     `json:"close_source,omitempty"`
 }
 
 type GraphExplorerNodeFeeReport struct {
@@ -195,6 +198,7 @@ limit $2
 			return GraphExplorerNodeChannelsResponse{}, err
 		}
 		item.ChannelID = uint64(channelID)
+		item.ShortChannelID = graphExplorerShortChannelID(item.ChannelID)
 		item.ChanPoint = strings.TrimSpace(item.ChanPoint)
 		item.PeerPubKey = strings.TrimSpace(item.PeerPubKey)
 		item.PeerAlias = strings.TrimSpace(item.PeerAlias)
@@ -264,7 +268,6 @@ limit $3
 	defer rows.Close()
 
 	items := make([]GraphExplorerClosedChannel, 0, limit)
-	summary := GraphExplorerClosedChannelsReport{}
 	for rows.Next() {
 		var item GraphExplorerClosedChannel
 		var channelID int64
@@ -282,24 +285,20 @@ limit $3
 			return GraphExplorerNodeClosedChannelsResponse{}, err
 		}
 		item.ChannelID = uint64(channelID)
+		item.ShortChannelID = graphExplorerShortChannelID(item.ChannelID)
 		item.ChanPoint = strings.TrimSpace(item.ChanPoint)
 		item.PeerPubKey = strings.TrimSpace(item.PeerPubKey)
 		item.PeerAlias = strings.TrimSpace(item.PeerAlias)
 		item.CloseType = normalizeGraphExplorerCloseType(item.CloseType)
 		item.CloseSource = strings.TrimSpace(item.CloseSource)
 		items = append(items, item)
-
-		summary.TotalClosedChannels++
-		summary.TotalCapacitySat += item.CapacitySat
-		if item.CloseType == "unknown" {
-			summary.UnknownTypeCount++
-		} else {
-			summary.KnownTypeCount++
-		}
 	}
 	if err := rows.Err(); err != nil {
 		return GraphExplorerNodeClosedChannelsResponse{}, err
 	}
+
+	s.enrichLocalClosedChannelTypes(ctx, pubkey, items)
+	summary := summarizeGraphExplorerClosedChannels(items)
 
 	return GraphExplorerNodeClosedChannelsResponse{
 		CoverageSince: coverageSince,
@@ -498,10 +497,48 @@ func latestGraphExplorerTime(left, right *time.Time) *time.Time {
 
 func normalizeGraphExplorerCloseType(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, "-", "_")
+	value = strings.ReplaceAll(value, " ", "_")
 	if value == "" {
 		return "unknown"
 	}
+	switch value {
+	case "coop", "cooperative", "cooperative_close", "mutual", "mutual_close":
+		return "mutual_close"
+	case "force", "force_close", "local_force_close", "remote_force_close":
+		return "force_close"
+	case "breach", "breach_close":
+		return "breach_close"
+	case "funding_canceled", "funding_cancelled":
+		return "funding_canceled"
+	case "abandoned":
+		return "abandoned"
+	}
 	return value
+}
+
+func graphExplorerShortChannelID(channelID uint64) string {
+	if channelID == 0 {
+		return ""
+	}
+	blockHeight := channelID >> 40
+	txIndex := (channelID >> 16) & 0xFFFFFF
+	outputIndex := channelID & 0xFFFF
+	return fmt.Sprintf("%dx%dx%d", blockHeight, txIndex, outputIndex)
+}
+
+func summarizeGraphExplorerClosedChannels(items []GraphExplorerClosedChannel) GraphExplorerClosedChannelsReport {
+	summary := GraphExplorerClosedChannelsReport{}
+	for _, item := range items {
+		summary.TotalClosedChannels++
+		summary.TotalCapacitySat += item.CapacitySat
+		if normalizeGraphExplorerCloseType(item.CloseType) == "unknown" {
+			summary.UnknownTypeCount++
+			continue
+		}
+		summary.KnownTypeCount++
+	}
+	return summary
 }
 
 func summarizeGraphExplorerPolicies(samples []graphExplorerPolicySample) GraphExplorerFeeSummary {

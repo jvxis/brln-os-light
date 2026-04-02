@@ -90,6 +90,7 @@ type GraphExplorerPolicy = {
 
 type GraphExplorerNodeChannel = {
   channel_id: number
+  short_channel_id?: string
   chan_point?: string
   peer_pubkey: string
   peer_alias?: string
@@ -115,6 +116,7 @@ type GraphExplorerClosedSummary = {
 
 type GraphExplorerClosedChannel = {
   channel_id: number
+  short_channel_id?: string
   chan_point?: string
   peer_pubkey?: string
   peer_alias?: string
@@ -264,14 +266,41 @@ const closeTypeTone = (value?: string) => {
   switch (String(value || '').trim().toLowerCase()) {
     case 'force_close':
     case 'force':
+    case 'breach_close':
       return 'border-rose-400/30 bg-rose-500/12 text-rose-100'
     case 'cooperative':
     case 'mutual':
     case 'mutual_close':
       return 'border-emerald-400/30 bg-emerald-500/12 text-emerald-100'
+    case 'funding_canceled':
+    case 'abandoned':
+      return 'border-amber-400/30 bg-amber-500/12 text-amber-100'
     default:
       return 'border-white/10 bg-white/[0.04] text-fog/70'
   }
+}
+
+const parseShortChannelId = (value?: string): [number, number, number] | null => {
+  const trimmed = String(value || '').trim()
+  const match = /^(\d+)x(\d+)x(\d+)$/.exec(trimmed)
+  if (!match) return null
+  return [Number(match[1]), Number(match[2]), Number(match[3])]
+}
+
+const compareShortChannelId = (left?: string, right?: string) => {
+  const parsedLeft = parseShortChannelId(left)
+  const parsedRight = parseShortChannelId(right)
+  if (parsedLeft && parsedRight) {
+    for (let index = 0; index < parsedLeft.length; index += 1) {
+      if (parsedLeft[index] !== parsedRight[index]) {
+        return parsedLeft[index] - parsedRight[index]
+      }
+    }
+    return 0
+  }
+  if (parsedLeft) return 1
+  if (parsedRight) return -1
+  return String(left || '').localeCompare(String(right || ''))
 }
 
 const feeTrendTone = (direction: FeeTrendDirection) => {
@@ -949,7 +978,7 @@ export default function GraphExplorer() {
             compareString(left.peer_pubkey, right.peer_pubkey)
           break
         case 'channel':
-          comparison = compareNumber(left.channel_id, right.channel_id)
+          comparison = compareShortChannelId(left.short_channel_id, right.short_channel_id)
           break
         case 'capacity':
           comparison = compareNumber(left.capacity_sat, right.capacity_sat)
@@ -972,7 +1001,9 @@ export default function GraphExplorer() {
           break
       }
       if (comparison === 0) {
-        comparison = compareNumber(left.channel_id, right.channel_id)
+        comparison =
+          compareShortChannelId(left.short_channel_id, right.short_channel_id) ||
+          compareNumber(left.channel_id, right.channel_id)
       }
       return comparison * multiplier
     })
@@ -1220,7 +1251,7 @@ export default function GraphExplorer() {
                     </td>
                     <td className="px-4 py-4">
                       <div className="space-y-1">
-                        <div className="font-medium text-fog">{formatInteger(item.channel_id)}</div>
+                        <div className="font-medium text-fog">{item.short_channel_id || formatInteger(item.channel_id)}</div>
                         <div className="font-mono text-xs text-fog/55">{item.chan_point || t('common.na')}</div>
                       </div>
                     </td>
@@ -1327,7 +1358,7 @@ export default function GraphExplorer() {
                       </td>
                       <td className="px-4 py-4">
                         <div className="space-y-1">
-                          <div className="font-medium text-fog">{formatInteger(item.channel_id)}</div>
+                          <div className="font-medium text-fog">{item.short_channel_id || formatInteger(item.channel_id)}</div>
                           <div className="font-mono text-xs text-fog/55">{item.chan_point || t('common.na')}</div>
                         </div>
                       </td>

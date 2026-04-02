@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import QRCode from 'qrcode'
-import { APIError, createInvoice, decodeInvoice, getLnChannels, getMempoolFees, getWalletActivity, getWalletAddress, getWalletSummary, payInvoice, previewOnchainSend, reauthAuth, sendOnchain } from '../api'
+import { APIError, createInvoice, decodeInvoice, getLnChannels, getMempoolFees, getWalletActivity, getWalletAddress, getWalletPaymentDetail, getWalletSummary, payInvoice, previewOnchainSend, previewWalletPayment, reauthAuth, sendOnchain } from '../api'
 import { getLocale } from '../i18n'
 
 const emptySummary = {
@@ -61,6 +61,62 @@ type WalletActivityItem = {
   payment_hash?: string
 }
 
+type WalletRouteHop = {
+  pubkey?: string
+  alias?: string
+  channel_id?: number
+  channel_capacity_sat?: number
+  amt_to_forward_sat?: number
+  amt_to_forward_msat?: number
+  fee_sat?: number
+  fee_msat?: number
+  expiry?: number
+}
+
+type WalletRouteSummary = {
+  total_amt_sat?: number
+  total_amt_msat?: number
+  total_fees_sat?: number
+  total_fees_msat?: number
+  total_time_lock?: number
+  hop_count?: number
+  hops?: WalletRouteHop[]
+}
+
+type WalletPaymentProbe = {
+  success?: boolean
+  fee_sat?: number
+  fee_msat?: number
+  time_lock_delay?: number
+  failure_reason?: string
+}
+
+type WalletPaymentPreview = {
+  payment_request?: string
+  amount_sat?: number
+  amount_msat?: number
+  memo?: string
+  destination?: string
+  suggested_max_fee_sat?: number
+  suggested_max_fee_msat?: number
+  effective_max_fee_sat?: number
+  effective_max_fee_msat?: number
+  probe?: WalletPaymentProbe
+  routes?: WalletRouteSummary[]
+}
+
+type WalletPaymentDetail = {
+  payment_hash?: string
+  payment_request?: string
+  status?: string
+  value_sat?: number
+  value_msat?: number
+  fee_sat?: number
+  fee_msat?: number
+  created_at?: string
+  route?: WalletRouteSummary
+}
+
 const walletActivityPageSize = 100
 
 export default function Wallet() {
@@ -114,6 +170,11 @@ export default function Wallet() {
   const [channelsError, setChannelsError] = useState('')
   const [channelsLoading, setChannelsLoading] = useState(true)
   const [outgoingChannelPoints, setOutgoingChannelPoints] = useState<string[]>([])
+  const [payMaxFeeSat, setPayMaxFeeSat] = useState('')
+  const [payMaxFeeTouched, setPayMaxFeeTouched] = useState(false)
+  const [paymentPreview, setPaymentPreview] = useState<WalletPaymentPreview | null>(null)
+  const [paymentPreviewLoading, setPaymentPreviewLoading] = useState(false)
+  const [paymentPreviewError, setPaymentPreviewError] = useState('')
   const [activityRange, setActivityRange] = useState<WalletActivityRange>('7d')
   const [activityItems, setActivityItems] = useState<WalletActivityItem[]>([])
   const [activityError, setActivityError] = useState('')
@@ -121,6 +182,9 @@ export default function Wallet() {
   const [activityLoadingMore, setActivityLoadingMore] = useState(false)
   const [activityHasMore, setActivityHasMore] = useState(false)
   const [selectedActivity, setSelectedActivity] = useState<WalletActivityItem | null>(null)
+  const [selectedPaymentDetail, setSelectedPaymentDetail] = useState<WalletPaymentDetail | null>(null)
+  const [selectedPaymentDetailLoading, setSelectedPaymentDetailLoading] = useState(false)
+  const [selectedPaymentDetailError, setSelectedPaymentDetailError] = useState('')
 
   const normalizePaymentInput = (value: string) => (value ? value.replace(/\s+/g, '') : '')
 
@@ -290,6 +354,13 @@ export default function Wallet() {
     return () => clearTimeout(timer)
   }, [paymentRequest])
 
+  useEffect(() => {
+    setPaymentPreview(null)
+    setPaymentPreviewError('')
+    setPayMaxFeeSat('')
+    setPayMaxFeeTouched(false)
+  }, [paymentRequest, payAmount, outgoingChannelPoints])
+
   const cleanedPaymentRequest = stripLightningPrefix(paymentRequest)
   const isLnAddress = isLightningAddressInput(cleanedPaymentRequest)
   const payAmountSat = Number(payAmount || 0)
@@ -304,6 +375,44 @@ export default function Wallet() {
   const summaryTone = summaryError && summaryError.toLowerCase().includes('timeout')
     ? 'text-brass'
     : 'text-ember'
+
+  useEffect(() => {
+    const paymentHash = String(selectedActivity?.payment_hash || '').trim()
+    const isOutgoingLightningPayment = String(selectedActivity?.network || '').toLowerCase() === 'lightning'
+      && String(selectedActivity?.direction || '').toLowerCase() === 'out'
+      && String(selectedActivity?.type || '').toLowerCase() === 'payment'
+
+    if (!paymentHash || !isOutgoingLightningPayment) {
+      setSelectedPaymentDetail(null)
+      setSelectedPaymentDetailError('')
+      setSelectedPaymentDetailLoading(false)
+      return
+    }
+
+    let cancelled = false
+    setSelectedPaymentDetailLoading(true)
+    setSelectedPaymentDetail(null)
+    setSelectedPaymentDetailError('')
+    const loadDetail = async () => {
+      try {
+        const res = await getWalletPaymentDetail(paymentHash)
+        if (cancelled) return
+        setSelectedPaymentDetail(res)
+      } catch (err: any) {
+        if (cancelled) return
+        setSelectedPaymentDetail(null)
+        setSelectedPaymentDetailError(err?.message || t('wallet.paymentDetailUnavailable'))
+      } finally {
+        if (cancelled) return
+        setSelectedPaymentDetailLoading(false)
+      }
+    }
+
+    void loadDetail()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedActivity, t])
 
   const isRebalanceActivity = (item: WalletActivityItem) => {
     const type = String(item?.type || '').toLowerCase()
@@ -450,6 +559,15 @@ export default function Wallet() {
     const shortPoint = point && point.length > 16 ? `${point.slice(0, 8)}...${point.slice(-4)}` : point
     const localBalance = Number(ch.local_balance_sat || 0)
     return `${peerLabel} | ${shortPoint} | ${formatSats(localBalance)} sats`
+  }
+
+  const formatRouteHopLabel = (hop: WalletRouteHop) => {
+    const alias = String(hop?.alias || '').trim()
+    const pubkey = String(hop?.pubkey || '').trim()
+    if (alias) return alias
+    if (!pubkey) return t('wallet.unknownPeer')
+    if (pubkey.length <= 16) return pubkey
+    return `${pubkey.slice(0, 12)}...`
   }
 
   useEffect(() => {
@@ -740,6 +858,47 @@ export default function Wallet() {
     setInvoiceNotice('')
   }
 
+  const handlePreviewPayment = async () => {
+    if (!cleanedPaymentRequest) {
+      setPaymentPreview(null)
+      setPaymentPreviewError(t('wallet.paymentRequestRequired'))
+      return
+    }
+    if (isLnAddress && payAmountSat <= 0) {
+      setPaymentPreview(null)
+      setPaymentPreviewError(t('wallet.amountPositiveForLightningAddress'))
+      return
+    }
+    const maxFeeSatValue = Number(payMaxFeeSat || 0)
+    if (maxFeeSatValue < 0) {
+      setPaymentPreview(null)
+      setPaymentPreviewError(t('wallet.maxFeePositive'))
+      return
+    }
+
+    setPaymentPreviewLoading(true)
+    setPaymentPreviewError('')
+    try {
+      const res = await previewWalletPayment({
+        payment_request: cleanedPaymentRequest,
+        channel_point: outgoingChannelPoints.length === 1 ? outgoingChannelPoints[0] : undefined,
+        channel_points: outgoingChannelPoints.length > 0 ? outgoingChannelPoints : undefined,
+        amount_sat: isLnAddress ? payAmountSat : undefined,
+        max_fee_sat: maxFeeSatValue > 0 ? maxFeeSatValue : undefined
+      })
+      setPaymentPreview(res)
+      if (!payMaxFeeTouched) {
+        const suggested = Number(res?.suggested_max_fee_sat || 0)
+        setPayMaxFeeSat(suggested > 0 ? String(suggested) : '')
+      }
+    } catch (err: any) {
+      setPaymentPreview(null)
+      setPaymentPreviewError(err?.message || t('wallet.paymentPreviewUnavailable'))
+    } finally {
+      setPaymentPreviewLoading(false)
+    }
+  }
+
   const handlePay = async () => {
     if (!cleanedPaymentRequest) {
       setStatus(t('wallet.paymentRequestRequired'))
@@ -749,13 +908,19 @@ export default function Wallet() {
       setStatus(t('wallet.amountPositiveForLightningAddress'))
       return
     }
+    const maxFeeSatValue = Number(payMaxFeeSat || 0)
+    if (maxFeeSatValue < 0) {
+      setStatus(t('wallet.maxFeePositive'))
+      return
+    }
     setStatus(t('wallet.payingInvoice'))
     try {
       await payInvoice({
         payment_request: cleanedPaymentRequest,
         channel_point: outgoingChannelPoints.length === 1 ? outgoingChannelPoints[0] : undefined,
         channel_points: outgoingChannelPoints.length > 0 ? outgoingChannelPoints : undefined,
-        amount_sat: isLnAddress ? payAmountSat : undefined
+        amount_sat: isLnAddress ? payAmountSat : undefined,
+        max_fee_sat: maxFeeSatValue > 0 ? maxFeeSatValue : undefined
       })
       setStatus(t('wallet.paymentSent'))
       setPaymentRequest('')
@@ -763,6 +928,10 @@ export default function Wallet() {
       setDecode(null)
       setDecodeError('')
       setOutgoingChannelPoints([])
+      setPayMaxFeeSat('')
+      setPayMaxFeeTouched(false)
+      setPaymentPreview(null)
+      setPaymentPreviewError('')
       void getWalletSummary()
         .then((data) => {
           setSummary(data || emptySummary)
@@ -1181,7 +1350,89 @@ export default function Wallet() {
             )}
             {channelsError && <p className="text-xs text-fog/50">{channelsError}</p>}
           </div>
-          <button className="btn-primary" onClick={handlePay}>{t('wallet.payInvoice')}</button>
+          <div className="space-y-2">
+            <label className="text-xs text-fog/60">{t('wallet.maxFeeSat')}</label>
+            <input
+              className="input-field"
+              placeholder={t('wallet.maxFeeSatPlaceholder')}
+              type="number"
+              min={0}
+              value={payMaxFeeSat}
+              onChange={(e) => {
+                setPayMaxFeeSat(e.target.value)
+                setPayMaxFeeTouched(true)
+              }}
+            />
+            {paymentPreview?.suggested_max_fee_sat ? (
+              <p className="text-xs text-fog/50">
+                {t('wallet.maxFeeSuggested', { amount: formatSats(Number(paymentPreview.suggested_max_fee_sat || 0)) })}
+              </p>
+            ) : (
+              <p className="text-xs text-fog/50">{t('wallet.maxFeeHint')}</p>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button className="btn-secondary text-xs px-3 py-1.5" onClick={handlePreviewPayment} disabled={paymentPreviewLoading}>
+              {paymentPreviewLoading ? t('wallet.paymentPreviewLoading') : t('wallet.paymentPreviewAction')}
+            </button>
+            <button className="btn-primary" onClick={handlePay}>{t('wallet.payInvoice')}</button>
+          </div>
+          {paymentPreviewError && (
+            <p className="text-xs text-ember">{paymentPreviewError}</p>
+          )}
+          {paymentPreview && (
+            <div className="space-y-3 rounded-2xl border border-white/10 bg-ink/40 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h4 className="text-sm font-semibold">{t('wallet.paymentPreviewTitle')}</h4>
+                {paymentPreview.probe?.success ? (
+                  <span className="text-xs text-fog/60">
+                    {t('wallet.paymentPreviewProbeFee', { amount: formatSats(Number(paymentPreview.probe?.fee_sat || 0)) })}
+                  </span>
+                ) : paymentPreview.probe?.failure_reason ? (
+                  <span className="text-xs text-brass">{paymentPreview.probe.failure_reason}</span>
+                ) : null}
+              </div>
+              {Array.isArray(paymentPreview.routes) && paymentPreview.routes.length > 0 ? (
+                <div className="space-y-3">
+                  {paymentPreview.routes.map((route, routeIndex) => (
+                    <div key={`preview-route-${routeIndex}`} className="rounded-2xl border border-white/10 bg-ink/50 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <span className="font-medium text-fog">{t('wallet.paymentPreviewRoute', { index: routeIndex + 1 })}</span>
+                        <span className="text-fog/60">
+                          {t('wallet.paymentPreviewRouteMeta', {
+                            hops: Number(route?.hop_count || 0),
+                            fee: formatSats(Number(route?.total_fees_sat || 0))
+                          })}
+                        </span>
+                      </div>
+                      <div className="mt-3 space-y-2">
+                        {(route.hops || []).map((hop, hopIndex) => (
+                          <div key={`route-hop-${routeIndex}-${hopIndex}`} className="rounded-xl border border-white/8 bg-white/[0.02] px-3 py-2 text-xs">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="font-medium text-fog">
+                                {t('wallet.paymentPreviewHop', { index: hopIndex + 1, peer: formatRouteHopLabel(hop) })}
+                              </span>
+                              {typeof hop?.fee_sat === 'number' && hop.fee_sat > 0 && (
+                                <span className="text-fog/60">
+                                  {t('wallet.paymentPreviewHopFee', { amount: formatSats(Number(hop.fee_sat || 0)) })}
+                                </span>
+                              )}
+                            </div>
+                            <div className="mt-1 break-all text-fog/55">
+                              {hop.pubkey || ''}
+                              {hop.channel_id ? ` | ${t('wallet.paymentPreviewChannel', { id: hop.channel_id })}` : ''}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-fog/60">{t('wallet.paymentPreviewNoRoutes')}</p>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -1450,6 +1701,51 @@ export default function Wallet() {
                 <div className="rounded-2xl border border-white/10 bg-ink/50 p-4 sm:col-span-2">
                   <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailPaymentHash')}</div>
                   <div className="mt-1 break-all font-mono text-xs text-fog/80">{selectedActivity.payment_hash}</div>
+                </div>
+              )}
+              {selectedPaymentDetailLoading && (
+                <div className="rounded-2xl border border-white/10 bg-ink/50 p-4 sm:col-span-2">
+                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailRoute')}</div>
+                  <div className="mt-1 text-sm text-fog/60">{t('wallet.paymentDetailLoading')}</div>
+                </div>
+              )}
+              {selectedPaymentDetailError && (
+                <div className="rounded-2xl border border-white/10 bg-ink/50 p-4 sm:col-span-2">
+                  <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailRoute')}</div>
+                  <div className="mt-1 text-sm text-ember">{selectedPaymentDetailError}</div>
+                </div>
+              )}
+              {selectedPaymentDetail?.route && !selectedPaymentDetailLoading && !selectedPaymentDetailError && (
+                <div className="rounded-2xl border border-white/10 bg-ink/50 p-4 sm:col-span-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailRoute')}</div>
+                    <div className="text-xs text-fog/60">
+                      {t('wallet.activityDetailRouteMeta', {
+                        hops: Number(selectedPaymentDetail.route?.hop_count || 0),
+                        fee: formatSats(Number(selectedPaymentDetail.route?.total_fees_sat || selectedPaymentDetail.fee_sat || 0))
+                      })}
+                    </div>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {(selectedPaymentDetail.route.hops || []).map((hop, hopIndex) => (
+                      <div key={`detail-hop-${hopIndex}`} className="rounded-xl border border-white/8 bg-white/[0.02] px-3 py-2 text-xs">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-medium text-fog">
+                            {t('wallet.paymentPreviewHop', { index: hopIndex + 1, peer: formatRouteHopLabel(hop) })}
+                          </span>
+                          {typeof hop?.fee_sat === 'number' && hop.fee_sat > 0 && (
+                            <span className="text-fog/60">
+                              {t('wallet.paymentPreviewHopFee', { amount: formatSats(Number(hop.fee_sat || 0)) })}
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-1 break-all text-fog/55">
+                          {hop.pubkey || ''}
+                          {hop.channel_id ? ` | ${t('wallet.paymentPreviewChannel', { id: hop.channel_id })}` : ''}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

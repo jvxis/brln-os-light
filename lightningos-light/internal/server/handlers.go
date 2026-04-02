@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"lightningos-light/internal/lndclient"
@@ -3697,50 +3698,34 @@ func (s *Server) handleWalletDecode(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		PaymentRequest string   `json:"payment_request"`
-		ChannelPoint   string   `json:"channel_point"`
-		ChannelPoints  []string `json:"channel_points"`
-		AmountSat      int64    `json:"amount_sat"`
-		Comment        string   `json:"comment"`
-	}
-	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
-		return
-	}
-	paymentRequest := normalizePaymentRequest(req.PaymentRequest)
+func (s *Server) resolveWalletPaymentInput(ctx context.Context, rawPaymentRequest string, amountSat int64, comment string, channelPoint string, channelPoints []string) (string, []uint64, error) {
+	paymentRequest := normalizePaymentRequest(rawPaymentRequest)
 	if paymentRequest == "" {
-		writeError(w, http.StatusBadRequest, "payment_request required")
-		return
+		return "", nil, errors.New("payment_request required")
 	}
+
 	cleaned := strings.TrimSpace(paymentRequest)
 	if strings.HasPrefix(strings.ToLower(cleaned), "lightning:") {
 		cleaned = cleaned[len("lightning:"):]
 	}
 	if isLightningAddress(cleaned) {
-		if req.AmountSat <= 0 {
-			writeError(w, http.StatusBadRequest, "amount_sat must be positive for lightning address")
-			return
+		if amountSat <= 0 {
+			return "", nil, errors.New("amount_sat must be positive for lightning address")
 		}
-		resolved, err := resolveLightningAddress(r.Context(), cleaned, req.AmountSat, req.Comment)
+		resolved, err := resolveLightningAddress(ctx, cleaned, amountSat, comment)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("lightning address error: %v", err))
-			return
+			return "", nil, fmt.Errorf("lightning address error: %v", err)
 		}
 		paymentRequest = resolved
 	} else {
 		paymentRequest = cleaned
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
-	defer cancel()
-
-	selectedPoints := make([]string, 0, len(req.ChannelPoints)+1)
-	if point := strings.ToLower(strings.TrimSpace(req.ChannelPoint)); point != "" {
+	selectedPoints := make([]string, 0, len(channelPoints)+1)
+	if point := strings.ToLower(strings.TrimSpace(channelPoint)); point != "" {
 		selectedPoints = append(selectedPoints, point)
 	}
-	for _, point := range req.ChannelPoints {
+	for _, point := range channelPoints {
 		trimmed := strings.ToLower(strings.TrimSpace(point))
 		if trimmed != "" {
 			selectedPoints = append(selectedPoints, trimmed)
@@ -3760,36 +3745,111 @@ func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	outgoingChanIDs := make([]uint64, 0, len(selectedPoints))
-	if len(selectedPoints) > 0 {
-		channels, err := s.lnd.ListChannels(ctx)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, lndDetailedErrorMessage(err))
-			return
-		}
-		channelIDsByPoint := make(map[string]uint64, len(channels))
-		for _, ch := range channels {
-			point := strings.ToLower(strings.TrimSpace(ch.ChannelPoint))
-			if point == "" || ch.ChannelID == 0 {
-				continue
-			}
-			channelIDsByPoint[point] = ch.ChannelID
-		}
-		for _, point := range selectedPoints {
-			channelID := channelIDsByPoint[point]
-			if channelID == 0 {
-				writeError(w, http.StatusBadRequest, "selected channel not found")
-				return
-			}
-			outgoingChanIDs = append(outgoingChanIDs, channelID)
-		}
+	if len(selectedPoints) == 0 {
+		return paymentRequest, outgoingChanIDs, nil
 	}
+
+	resolveCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	channels, err := s.lnd.ListChannels(resolveCtx)
+	if err != nil {
+		return "", nil, errors.New(lndDetailedErrorMessage(err))
+	}
+	channelIDsByPoint := make(map[string]uint64, len(channels))
+	for _, ch := range channels {
+		point := strings.ToLower(strings.TrimSpace(ch.ChannelPoint))
+		if point == "" || ch.ChannelID == 0 {
+			continue
+		}
+		channelIDsByPoint[point] = ch.ChannelID
+	}
+	for _, point := range selectedPoints {
+		channelID := channelIDsByPoint[point]
+		if channelID == 0 {
+			return "", nil, errors.New("selected channel not found")
+		}
+		outgoingChanIDs = append(outgoingChanIDs, channelID)
+	}
+	return paymentRequest, outgoingChanIDs, nil
+}
+
+func (s *Server) handleWalletPayPreview(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		PaymentRequest string   `json:"payment_request"`
+		ChannelPoint   string   `json:"channel_point"`
+		ChannelPoints  []string `json:"channel_points"`
+		AmountSat      int64    `json:"amount_sat"`
+		Comment        string   `json:"comment"`
+		MaxFeeSat      int64    `json:"max_fee_sat"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.MaxFeeSat < 0 {
+		writeError(w, http.StatusBadRequest, "max_fee_sat must be zero or positive")
+		return
+	}
+
+	paymentRequest, outgoingChanIDs, err := s.resolveWalletPaymentInput(r.Context(), req.PaymentRequest, req.AmountSat, req.Comment, req.ChannelPoint, req.ChannelPoints)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+
+	preview, err := s.lnd.PreviewPayment(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat, 3)
+	if err != nil {
+		msg := lndRPCErrorMessage(err)
+		if isTimeoutError(err) {
+			msg = lndStatusMessage(err)
+		}
+		if msg == "" || msg == "LND error" {
+			msg = "Payment preview failed"
+		}
+		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, preview)
+}
+
+func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		PaymentRequest string   `json:"payment_request"`
+		ChannelPoint   string   `json:"channel_point"`
+		ChannelPoints  []string `json:"channel_points"`
+		AmountSat      int64    `json:"amount_sat"`
+		Comment        string   `json:"comment"`
+		MaxFeeSat      int64    `json:"max_fee_sat"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.MaxFeeSat < 0 {
+		writeError(w, http.StatusBadRequest, "max_fee_sat must be zero or positive")
+		return
+	}
+
+	paymentRequest, outgoingChanIDs, err := s.resolveWalletPaymentInput(r.Context(), req.PaymentRequest, req.AmountSat, req.Comment, req.ChannelPoint, req.ChannelPoints)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	defer cancel()
 
 	paymentHash := ""
 	if decoded, err := s.lnd.DecodeInvoice(ctx, paymentRequest); err == nil {
 		paymentHash = decoded.PaymentHash
 	}
 
-	if err := s.lnd.PayInvoice(ctx, paymentRequest, outgoingChanIDs); err != nil {
+	if err := s.lnd.PayInvoice(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat); err != nil {
 		if paymentHash != "" {
 			s.recordWalletActivity(paymentHash)
 		}
@@ -3809,6 +3869,36 @@ func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleWalletPaymentDetail(w http.ResponseWriter, r *http.Request) {
+	paymentHash := strings.TrimSpace(chi.URLParam(r, "paymentHash"))
+	if paymentHash == "" {
+		writeError(w, http.StatusBadRequest, "payment_hash required")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	details, err := s.lnd.PaymentDetails(ctx, paymentHash, 366*24*time.Hour)
+	if err != nil {
+		msg := lndRPCErrorMessage(err)
+		if isTimeoutError(err) {
+			msg = lndStatusMessage(err)
+		}
+		if msg == "" || msg == "LND error" {
+			msg = err.Error()
+		}
+		statusCode := http.StatusInternalServerError
+		if strings.Contains(strings.ToLower(msg), "not found") {
+			statusCode = http.StatusNotFound
+		}
+		writeError(w, statusCode, msg)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, details)
 }
 
 func (s *Server) classifyOnchainDestination(ctx context.Context, address string) (string, error) {

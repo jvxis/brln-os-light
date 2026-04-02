@@ -102,9 +102,11 @@ func (s *Server) routes() http.Handler {
 	r.Route("/api/wallet", func(r chi.Router) {
 		r.Get("/summary", s.handleWalletSummary)
 		r.Get("/activity", s.handleWalletActivity)
+		r.Get("/payments/{paymentHash}", s.handleWalletPaymentDetail)
 		r.Post("/address", s.handleWalletAddress)
 		r.Post("/invoice", s.handleWalletInvoice)
 		r.Post("/decode", s.handleWalletDecode)
+		r.Post("/pay/preview", s.handleWalletPayPreview)
 		r.Post("/pay", s.handleWalletPay)
 		r.Post("/send/preview", s.handleWalletSendPreview)
 		r.Post("/send", s.handleWalletSend)

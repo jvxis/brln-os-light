@@ -192,6 +192,8 @@ export const getMempoolFees = () => request('/api/mempool/fees')
 export const getWalletSummary = () => request('/api/wallet/summary')
 export const getWalletActivity = (range: '7d' | '1m' | '1a', limit = 100, offset = 0) =>
   request(`/api/wallet/activity?range=${encodeURIComponent(range)}&limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}`)
+export const getWalletPaymentDetail = (paymentHash: string) =>
+  request(`/api/wallet/payments/${encodeURIComponent(paymentHash)}`)
 export const getWalletAddress = () => request('/api/wallet/address', { method: 'POST' })
 export const previewOnchainSend = (payload: { address: string; amount_sat?: number; sat_per_vbyte: number; sweep_all?: boolean }) =>
   request('/api/wallet/send/preview', { method: 'POST', body: JSON.stringify(payload) })
@@ -207,7 +209,9 @@ export const createInvoice = (payload: {
   request('/api/wallet/invoice', { method: 'POST', body: JSON.stringify(payload) })
 export const decodeInvoice = (payload: { payment_request: string }) =>
   request('/api/wallet/decode', { method: 'POST', body: JSON.stringify(payload) })
-export const payInvoice = (payload: { payment_request: string; channel_point?: string; channel_points?: string[]; amount_sat?: number }) =>
+export const previewWalletPayment = (payload: { payment_request: string; channel_point?: string; channel_points?: string[]; amount_sat?: number; max_fee_sat?: number }) =>
+  request('/api/wallet/pay/preview', { method: 'POST', body: JSON.stringify(payload) })
+export const payInvoice = (payload: { payment_request: string; channel_point?: string; channel_points?: string[]; amount_sat?: number; max_fee_sat?: number }) =>
   request('/api/wallet/pay', { method: 'POST', body: JSON.stringify(payload) })
 
 export const getLnChannels = () => request('/api/lnops/channels')

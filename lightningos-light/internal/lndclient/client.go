@@ -322,31 +322,7 @@ func (c *Client) LookupPayment(ctx context.Context, paymentHash string, lookback
 	defer conn.Close()
 
 	client := lnrpc.NewLightningClient(conn)
-	req := &lnrpc.ListPaymentsRequest{
-		IncludeIncomplete: true,
-		Reversed:          true,
-		MaxPayments:       200,
-	}
-	if lookback > 0 {
-		start := time.Now().Add(-lookback).Unix()
-		if start > 0 {
-			req.CreationDateStart = uint64(start)
-		}
-	}
-	resp, err := client.ListPayments(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	for _, pay := range resp.Payments {
-		if pay == nil {
-			continue
-		}
-		hash := strings.ToLower(strings.TrimSpace(pay.PaymentHash))
-		if hash != "" && hash == trimmed {
-			return pay, nil
-		}
-	}
-	return nil, nil
+	return lookupPaymentWithClient(ctx, client, trimmed, lookback)
 }
 
 const failedPaymentsPageSize = 5000
@@ -510,13 +486,18 @@ type infoSnapshot struct {
 }
 
 type DecodedInvoice struct {
-	AmountSat   int64
-	AmountMsat  int64
-	Memo        string
-	Destination string
-	PaymentHash string
-	Expiry      int64
-	Timestamp   int64
+	AmountSat    int64
+	AmountMsat   int64
+	Memo         string
+	Destination  string
+	PaymentHash  string
+	Expiry       int64
+	Timestamp    int64
+	CltvExpiry   int64
+	RouteHints   []*lnrpc.RouteHint
+	PaymentAddr  []byte
+	DestFeatures []lnrpc.FeatureBit
+	BlindedPaths []*lnrpc.BlindedPaymentPath
 }
 
 type CreatedInvoice struct {
@@ -716,13 +697,18 @@ func (c *Client) DecodeInvoice(ctx context.Context, payReq string) (DecodedInvoi
 	}
 
 	return DecodedInvoice{
-		AmountSat:   resp.NumSatoshis,
-		AmountMsat:  resp.NumMsat,
-		Memo:        resp.Description,
-		Destination: resp.Destination,
-		PaymentHash: strings.ToLower(resp.PaymentHash),
-		Expiry:      resp.Expiry,
-		Timestamp:   resp.Timestamp,
+		AmountSat:    resp.NumSatoshis,
+		AmountMsat:   resp.NumMsat,
+		Memo:         resp.Description,
+		Destination:  resp.Destination,
+		PaymentHash:  strings.ToLower(resp.PaymentHash),
+		Expiry:       resp.Expiry,
+		Timestamp:    resp.Timestamp,
+		CltvExpiry:   resp.CltvExpiry,
+		RouteHints:   append([]*lnrpc.RouteHint(nil), resp.RouteHints...),
+		PaymentAddr:  append([]byte(nil), resp.PaymentAddr...),
+		DestFeatures: payReqFeatureBits(resp.Features),
+		BlindedPaths: append([]*lnrpc.BlindedPaymentPath(nil), resp.BlindedPaths...),
 	}, nil
 }
 
@@ -1093,14 +1079,14 @@ func (c *Client) NewAddress(ctx context.Context) (string, error) {
 	return resp.Address, nil
 }
 
-func (c *Client) PayInvoice(ctx context.Context, paymentRequest string, outgoingChanIDs []uint64) error {
+func (c *Client) PayInvoice(ctx context.Context, paymentRequest string, outgoingChanIDs []uint64, maxFeeSat int64) error {
 	conn, err := c.dial(ctx, true)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 
-	if len(outgoingChanIDs) == 0 {
+	if len(outgoingChanIDs) == 0 && maxFeeSat <= 0 {
 		client := lnrpc.NewLightningClient(conn)
 		req := &lnrpc.SendRequest{PaymentRequest: paymentRequest}
 		res, err := client.SendPaymentSync(ctx, req)
@@ -1108,11 +1094,15 @@ func (c *Client) PayInvoice(ctx context.Context, paymentRequest string, outgoing
 	}
 
 	router := routerrpc.NewRouterClient(conn)
+	feeLimitMsat := defaultRouterPaymentFeeLimitMsat(ctx, c, paymentRequest)
+	if maxFeeSat > 0 {
+		feeLimitMsat = maxFeeSat * 1000
+	}
 	req := &routerrpc.SendPaymentRequest{
 		PaymentRequest:    paymentRequest,
 		TimeoutSeconds:    paymentTimeoutSeconds(ctx, 45),
 		OutgoingChanIds:   append([]uint64(nil), outgoingChanIDs...),
-		FeeLimitMsat:      defaultRouterPaymentFeeLimitMsat(ctx, c, paymentRequest),
+		FeeLimitMsat:      feeLimitMsat,
 		NoInflightUpdates: true,
 	}
 	maxParts := uint32(len(outgoingChanIDs))
@@ -1207,6 +1197,378 @@ func defaultRouterPaymentFeeLimitMsatForDecodedInvoice(decoded DecodedInvoice) i
 		return maxFeeLimitMsat
 	}
 	return feeLimitMsat
+}
+
+func msatToSatCeil(msat int64) int64 {
+	if msat <= 0 {
+		return 0
+	}
+	return (msat + 999) / 1000
+}
+
+type PaymentRouteHop struct {
+	PubKey             string `json:"pubkey"`
+	Alias              string `json:"alias,omitempty"`
+	ChannelID          uint64 `json:"channel_id,omitempty"`
+	ChannelCapacitySat int64  `json:"channel_capacity_sat,omitempty"`
+	AmtToForwardSat    int64  `json:"amt_to_forward_sat,omitempty"`
+	AmtToForwardMsat   int64  `json:"amt_to_forward_msat,omitempty"`
+	FeeSat             int64  `json:"fee_sat,omitempty"`
+	FeeMsat            int64  `json:"fee_msat,omitempty"`
+	Expiry             uint32 `json:"expiry,omitempty"`
+}
+
+type PaymentRouteSummary struct {
+	TotalAmtSat   int64             `json:"total_amt_sat,omitempty"`
+	TotalAmtMsat  int64             `json:"total_amt_msat,omitempty"`
+	TotalFeesSat  int64             `json:"total_fees_sat,omitempty"`
+	TotalFeesMsat int64             `json:"total_fees_msat,omitempty"`
+	TotalTimeLock uint32            `json:"total_time_lock,omitempty"`
+	HopCount      int               `json:"hop_count"`
+	Hops          []PaymentRouteHop `json:"hops,omitempty"`
+}
+
+type PaymentProbeEstimate struct {
+	Success       bool   `json:"success"`
+	FeeSat        int64  `json:"fee_sat,omitempty"`
+	FeeMsat       int64  `json:"fee_msat,omitempty"`
+	TimeLockDelay int64  `json:"time_lock_delay,omitempty"`
+	FailureReason string `json:"failure_reason,omitempty"`
+}
+
+type PaymentPreview struct {
+	PaymentRequest      string                `json:"payment_request,omitempty"`
+	AmountSat           int64                 `json:"amount_sat,omitempty"`
+	AmountMsat          int64                 `json:"amount_msat,omitempty"`
+	Memo                string                `json:"memo,omitempty"`
+	Destination         string                `json:"destination,omitempty"`
+	SuggestedMaxFeeSat  int64                 `json:"suggested_max_fee_sat,omitempty"`
+	SuggestedMaxFeeMsat int64                 `json:"suggested_max_fee_msat,omitempty"`
+	EffectiveMaxFeeSat  int64                 `json:"effective_max_fee_sat,omitempty"`
+	EffectiveMaxFeeMsat int64                 `json:"effective_max_fee_msat,omitempty"`
+	Probe               PaymentProbeEstimate  `json:"probe"`
+	Routes              []PaymentRouteSummary `json:"routes,omitempty"`
+}
+
+type PaymentDetails struct {
+	PaymentHash    string               `json:"payment_hash,omitempty"`
+	PaymentRequest string               `json:"payment_request,omitempty"`
+	Status         string               `json:"status,omitempty"`
+	ValueSat       int64                `json:"value_sat,omitempty"`
+	ValueMsat      int64                `json:"value_msat,omitempty"`
+	FeeSat         int64                `json:"fee_sat,omitempty"`
+	FeeMsat        int64                `json:"fee_msat,omitempty"`
+	CreatedAt      time.Time            `json:"created_at,omitempty"`
+	Route          *PaymentRouteSummary `json:"route,omitempty"`
+}
+
+func (c *Client) PreviewPayment(ctx context.Context, paymentRequest string, outgoingChanIDs []uint64, maxFeeSat int64, numRoutes int32) (PaymentPreview, error) {
+	trimmed := strings.TrimSpace(paymentRequest)
+	if trimmed == "" {
+		return PaymentPreview{}, errors.New("payment_request required")
+	}
+	if numRoutes <= 0 {
+		numRoutes = 3
+	}
+
+	conn, err := c.dial(ctx, true)
+	if err != nil {
+		return PaymentPreview{}, err
+	}
+	defer conn.Close()
+
+	lightning := lnrpc.NewLightningClient(conn)
+	router := routerrpc.NewRouterClient(conn)
+
+	resp, err := lightning.DecodePayReq(ctx, &lnrpc.PayReqString{PayReq: trimmed})
+	if err != nil {
+		return PaymentPreview{}, err
+	}
+
+	decoded := DecodedInvoice{
+		AmountSat:    resp.NumSatoshis,
+		AmountMsat:   resp.NumMsat,
+		Memo:         resp.Description,
+		Destination:  strings.TrimSpace(resp.Destination),
+		PaymentHash:  strings.ToLower(strings.TrimSpace(resp.PaymentHash)),
+		Expiry:       resp.Expiry,
+		Timestamp:    resp.Timestamp,
+		CltvExpiry:   resp.CltvExpiry,
+		RouteHints:   append([]*lnrpc.RouteHint(nil), resp.RouteHints...),
+		PaymentAddr:  append([]byte(nil), resp.PaymentAddr...),
+		DestFeatures: payReqFeatureBits(resp.Features),
+		BlindedPaths: append([]*lnrpc.BlindedPaymentPath(nil), resp.BlindedPaths...),
+	}
+
+	amountMsat := decoded.AmountMsat
+	if amountMsat <= 0 && decoded.AmountSat > 0 {
+		amountMsat = decoded.AmountSat * 1000
+	}
+	if amountMsat <= 0 {
+		return PaymentPreview{}, errors.New("amountless invoices are not supported for route preview")
+	}
+
+	suggestedMaxFeeMsat := defaultRouterPaymentFeeLimitMsatForDecodedInvoice(decoded)
+	suggestedMaxFeeSat := msatToSatCeil(suggestedMaxFeeMsat)
+	effectiveMaxFeeSat := suggestedMaxFeeSat
+	effectiveMaxFeeMsat := suggestedMaxFeeMsat
+	if maxFeeSat > 0 {
+		effectiveMaxFeeSat = maxFeeSat
+		effectiveMaxFeeMsat = maxFeeSat * 1000
+	}
+
+	preview := PaymentPreview{
+		PaymentRequest:      trimmed,
+		AmountSat:           decoded.AmountSat,
+		AmountMsat:          amountMsat,
+		Memo:                decoded.Memo,
+		Destination:         decoded.Destination,
+		SuggestedMaxFeeSat:  suggestedMaxFeeSat,
+		SuggestedMaxFeeMsat: suggestedMaxFeeMsat,
+		EffectiveMaxFeeSat:  effectiveMaxFeeSat,
+		EffectiveMaxFeeMsat: effectiveMaxFeeMsat,
+	}
+
+	probeResp, probeErr := router.EstimateRouteFee(ctx, &routerrpc.RouteFeeRequest{
+		PaymentRequest: trimmed,
+		Timeout:        uint32(paymentTimeoutSeconds(ctx, 15)),
+	})
+	if probeErr == nil && probeResp != nil {
+		preview.Probe.Success = probeResp.FailureReason == lnrpc.PaymentFailureReason_FAILURE_REASON_NONE
+		preview.Probe.FeeMsat = probeResp.RoutingFeeMsat
+		preview.Probe.FeeSat = msatToSatCeil(probeResp.RoutingFeeMsat)
+		preview.Probe.TimeLockDelay = probeResp.TimeLockDelay
+		if probeResp.FailureReason != lnrpc.PaymentFailureReason_FAILURE_REASON_NONE {
+			preview.Probe.FailureReason = probeResp.FailureReason.String()
+		}
+	}
+
+	routes := make([]*lnrpc.Route, 0, numRoutes)
+	ignoredByRoute := make([]*lnrpc.EdgeLocator, 0)
+	for i := int32(0); i < numRoutes; i++ {
+		req := &lnrpc.QueryRoutesRequest{
+			PubKey:            decoded.Destination,
+			OutgoingChanIds:   append([]uint64(nil), outgoingChanIDs...),
+			UseMissionControl: true,
+		}
+		if amountMsat > 0 {
+			req.AmtMsat = amountMsat
+		} else {
+			req.Amt = decoded.AmountSat
+		}
+		if effectiveMaxFeeMsat > 0 {
+			req.FeeLimit = &lnrpc.FeeLimit{
+				Limit: &lnrpc.FeeLimit_FixedMsat{FixedMsat: effectiveMaxFeeMsat},
+			}
+		}
+		if len(decoded.BlindedPaths) > 0 {
+			req.BlindedPaymentPaths = decoded.BlindedPaths
+		} else {
+			req.RouteHints = decoded.RouteHints
+			req.DestFeatures = append([]lnrpc.FeatureBit(nil), decoded.DestFeatures...)
+			if decoded.CltvExpiry > 0 {
+				req.FinalCltvDelta = int32(decoded.CltvExpiry)
+			}
+		}
+		if len(ignoredByRoute) > 0 {
+			req.IgnoredEdges = append([]*lnrpc.EdgeLocator(nil), ignoredByRoute...)
+		}
+
+		queryResp, queryErr := lightning.QueryRoutes(ctx, req)
+		if queryErr != nil {
+			if len(routes) == 0 {
+				return preview, queryErr
+			}
+			break
+		}
+		if queryResp == nil || len(queryResp.Routes) == 0 {
+			break
+		}
+		route := queryResp.Routes[0]
+		routes = append(routes, route)
+		ignoredByRoute = append(ignoredByRoute, routeToEdgeLocators(route)...)
+	}
+
+	preview.Routes = make([]PaymentRouteSummary, 0, len(routes))
+	for _, route := range routes {
+		preview.Routes = append(preview.Routes, c.convertPaymentRouteWithClient(ctx, lightning, route))
+	}
+	if len(preview.Routes) > 0 {
+		headroom := msatToSatCeil(preview.Routes[0].TotalFeesMsat * 125 / 100)
+		if headroom > 0 && (preview.SuggestedMaxFeeSat == 0 || headroom < preview.SuggestedMaxFeeSat) {
+			preview.SuggestedMaxFeeSat = headroom
+			preview.SuggestedMaxFeeMsat = headroom * 1000
+		}
+	}
+	if preview.Probe.Success && preview.Probe.FeeSat > 0 {
+		headroom := msatToSatCeil(preview.Probe.FeeMsat * 125 / 100)
+		if headroom == 0 {
+			headroom = preview.Probe.FeeSat + 1
+		}
+		if preview.SuggestedMaxFeeSat == 0 || headroom < preview.SuggestedMaxFeeSat {
+			preview.SuggestedMaxFeeSat = headroom
+			preview.SuggestedMaxFeeMsat = headroom * 1000
+		}
+	}
+	return preview, nil
+}
+
+func (c *Client) PaymentDetails(ctx context.Context, paymentHash string, lookback time.Duration) (PaymentDetails, error) {
+	trimmed := strings.ToLower(strings.TrimSpace(paymentHash))
+	if trimmed == "" {
+		return PaymentDetails{}, errors.New("payment_hash required")
+	}
+
+	conn, err := c.dial(ctx, true)
+	if err != nil {
+		return PaymentDetails{}, err
+	}
+	defer conn.Close()
+
+	lightning := lnrpc.NewLightningClient(conn)
+	pay, err := lookupPaymentWithClient(ctx, lightning, trimmed, lookback)
+	if err != nil {
+		return PaymentDetails{}, err
+	}
+	if pay == nil {
+		return PaymentDetails{}, errors.New("payment not found")
+	}
+
+	details := PaymentDetails{
+		PaymentHash:    strings.ToLower(strings.TrimSpace(pay.PaymentHash)),
+		PaymentRequest: strings.TrimSpace(pay.PaymentRequest),
+		Status:         strings.TrimSpace(pay.Status.String()),
+		ValueSat:       pay.ValueSat,
+		ValueMsat:      pay.ValueMsat,
+		FeeSat:         pay.FeeSat,
+		FeeMsat:        pay.FeeMsat,
+		CreatedAt:      recentPaymentTimestamp(pay),
+	}
+	if details.FeeSat <= 0 {
+		details.FeeSat = msatToSatCeil(details.FeeMsat)
+	}
+	if route := recentRouteFromPayment(pay); route != nil {
+		summary := c.convertPaymentRouteWithClient(ctx, lightning, route)
+		details.Route = &summary
+	}
+	return details, nil
+}
+
+func (c *Client) convertPaymentRouteWithClient(ctx context.Context, client lnrpc.LightningClient, route *lnrpc.Route) PaymentRouteSummary {
+	summary := PaymentRouteSummary{}
+	if route == nil {
+		return summary
+	}
+	summary.TotalAmtSat = route.TotalAmt
+	summary.TotalAmtMsat = route.TotalAmtMsat
+	summary.TotalFeesSat = route.TotalFees
+	summary.TotalFeesMsat = route.TotalFeesMsat
+	summary.TotalTimeLock = route.TotalTimeLock
+	summary.HopCount = len(route.Hops)
+	if len(route.Hops) == 0 {
+		return summary
+	}
+	summary.Hops = make([]PaymentRouteHop, 0, len(route.Hops))
+	for _, hop := range route.Hops {
+		if hop == nil {
+			continue
+		}
+		summary.Hops = append(summary.Hops, PaymentRouteHop{
+			PubKey:             strings.TrimSpace(hop.PubKey),
+			Alias:              c.lookupNodeAliasWithClient(ctx, client, hop.PubKey),
+			ChannelID:          hop.ChanId,
+			ChannelCapacitySat: hop.ChanCapacity,
+			AmtToForwardSat:    hop.AmtToForward,
+			AmtToForwardMsat:   hop.AmtToForwardMsat,
+			FeeSat:             hop.Fee,
+			FeeMsat:            hop.FeeMsat,
+			Expiry:             hop.Expiry,
+		})
+	}
+	return summary
+}
+
+func lookupPaymentWithClient(ctx context.Context, client lnrpc.LightningClient, paymentHash string, lookback time.Duration) (*lnrpc.Payment, error) {
+	trimmed := strings.ToLower(strings.TrimSpace(paymentHash))
+	if trimmed == "" {
+		return nil, nil
+	}
+
+	req := &lnrpc.ListPaymentsRequest{
+		IncludeIncomplete: true,
+		Reversed:          true,
+		MaxPayments:       500,
+	}
+	cutoff := time.Time{}
+	if lookback > 0 {
+		cutoff = time.Now().Add(-lookback)
+		start := cutoff.Unix()
+		if start > 0 {
+			req.CreationDateStart = uint64(start)
+		}
+	}
+
+	var indexOffset uint64
+	var lastOffset uint64
+	for pages := 0; pages < walletActivityMaxPages; pages++ {
+		req.IndexOffset = indexOffset
+		resp, err := client.ListPayments(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		if resp == nil || len(resp.Payments) == 0 {
+			break
+		}
+
+		oldestBeforeCutoff := false
+		for _, pay := range resp.Payments {
+			if pay == nil {
+				continue
+			}
+			hash := strings.ToLower(strings.TrimSpace(pay.PaymentHash))
+			if hash == trimmed {
+				return pay, nil
+			}
+			if !cutoff.IsZero() && recentPaymentTimestamp(pay).Before(cutoff) {
+				oldestBeforeCutoff = true
+			}
+		}
+
+		nextOffset := resp.FirstIndexOffset
+		if nextOffset == 0 {
+			for _, pay := range resp.Payments {
+				if pay == nil || pay.PaymentIndex == 0 {
+					continue
+				}
+				if nextOffset == 0 || pay.PaymentIndex < nextOffset {
+					nextOffset = pay.PaymentIndex
+				}
+			}
+		}
+		if nextOffset == 0 || nextOffset == indexOffset || nextOffset == lastOffset || len(resp.Payments) < int(req.MaxPayments) {
+			break
+		}
+		if oldestBeforeCutoff {
+			break
+		}
+		lastOffset = nextOffset
+		indexOffset = nextOffset
+	}
+	return nil, nil
+}
+
+func payReqFeatureBits(features map[uint32]*lnrpc.Feature) []lnrpc.FeatureBit {
+	if len(features) == 0 {
+		return nil
+	}
+	bits := make([]lnrpc.FeatureBit, 0, len(features))
+	for bit := range features {
+		bits = append(bits, lnrpc.FeatureBit(bit))
+	}
+	sort.Slice(bits, func(i, j int) bool {
+		return bits[i] < bits[j]
+	})
+	return bits
 }
 
 func (c *Client) SendCoins(ctx context.Context, address string, amountSat int64, satPerVbyte int64, sendAll bool) (string, error) {

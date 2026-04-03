@@ -1126,6 +1126,7 @@
     "paymentDetailUnavailable": "Detalhes do pagamento indisponíveis.",
     "paymentFailed": "Falha no pagamento.",
     "paymentPreviewAction": "Preview de rota",
+    "paymentPreviewBlindedUnavailable": "O preview de rota não está disponível para invoices blindadas.",
     "paymentPreviewChannel": "Canal {{id}}",
     "paymentPreviewHop": "Hop {{index}}: {{peer}}",
     "paymentPreviewHopFee": "Taxa do hop: {{amount}} sats",

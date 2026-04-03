@@ -1307,6 +1307,9 @@ func (c *Client) PreviewPayment(ctx context.Context, paymentRequest string, outg
 	if amountMsat <= 0 {
 		return PaymentPreview{}, errors.New("amountless invoices are not supported for route preview")
 	}
+	if len(decoded.BlindedPaths) > 0 {
+		return PaymentPreview{}, errors.New("route preview is unavailable for blinded invoices")
+	}
 
 	suggestedMaxFeeMsat := defaultRouterPaymentFeeLimitMsatForDecodedInvoice(decoded)
 	suggestedMaxFeeSat := msatToSatCeil(suggestedMaxFeeMsat)

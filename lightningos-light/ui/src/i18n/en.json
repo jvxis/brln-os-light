@@ -1126,6 +1126,7 @@
     "paymentDetailUnavailable": "Payment details unavailable.",
     "paymentFailed": "Payment failed.",
     "paymentPreviewAction": "Route preview",
+    "paymentPreviewBlindedUnavailable": "Route preview is unavailable for blinded invoices.",
     "paymentPreviewChannel": "Channel {{id}}",
     "paymentPreviewHop": "Hop {{index}}: {{peer}}",
     "paymentPreviewHopFee": "Hop fee: {{amount}} sats",

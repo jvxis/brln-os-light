@@ -3695,6 +3695,8 @@ func (s *Server) handleWalletDecode(w http.ResponseWriter, r *http.Request) {
 		"destination": decoded.Destination,
 		"expiry":      decoded.Expiry,
 		"timestamp":   decoded.Timestamp,
+		"is_blinded":  len(decoded.BlindedPaths) > 0,
+		"blind_paths": len(decoded.BlindedPaths),
 	})
 }
 

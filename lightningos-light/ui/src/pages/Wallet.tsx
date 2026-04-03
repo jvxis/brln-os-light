@@ -874,6 +874,11 @@ export default function Wallet() {
       setPaymentPreviewError(t('wallet.paymentRequestRequired'))
       return
     }
+    if (!isLnAddress && decode?.is_blinded) {
+      setPaymentPreview(null)
+      setPaymentPreviewError(t('wallet.paymentPreviewBlindedUnavailable'))
+      return
+    }
     if (isLnAddress && payAmountSat <= 0) {
       setPaymentPreview(null)
       setPaymentPreviewError(t('wallet.amountPositiveForLightningAddress'))
@@ -1402,11 +1407,18 @@ export default function Wallet() {
             )}
           </div>
           <div className="flex flex-wrap gap-2">
-            <button className="btn-secondary text-xs px-3 py-1.5" onClick={handlePreviewPayment} disabled={paymentPreviewLoading}>
+            <button
+              className="btn-secondary text-xs px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={handlePreviewPayment}
+              disabled={paymentPreviewLoading || (!isLnAddress && Boolean(decode?.is_blinded))}
+            >
               {paymentPreviewLoading ? t('wallet.paymentPreviewLoading') : t('wallet.paymentPreviewAction')}
             </button>
             <button className="btn-primary" onClick={handlePay}>{t('wallet.payInvoice')}</button>
           </div>
+          {!isLnAddress && decode?.is_blinded && (
+            <p className="text-xs text-brass">{t('wallet.paymentPreviewBlindedUnavailable')}</p>
+          )}
           {paymentPreviewError && (
             <p className="text-xs text-ember">{paymentPreviewError}</p>
           )}

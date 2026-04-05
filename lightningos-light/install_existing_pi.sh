@@ -769,8 +769,16 @@ ensure_reports_services() {
   cp "$REPO_ROOT/templates/systemd/lightningos-reports.timer" /etc/systemd/system/lightningos-reports.timer
   sed -i "s|^User=.*|User=${user}|" "$svc"
   sed -i "s|^Group=.*|Group=${group}|" "$svc"
-  if getent group systemd-journal >/dev/null 2>&1; then
-    sed -i "s|^SupplementaryGroups=.*|SupplementaryGroups=systemd-journal|" "$svc"
+  local groups=("systemd-journal")
+  if [[ -n "$LND_GROUP" ]]; then
+    getent group "$LND_GROUP" >/dev/null 2>&1 && groups+=("$LND_GROUP")
+  else
+    getent group lnd >/dev/null 2>&1 && groups+=("lnd")
+  fi
+  if [[ ${#groups[@]} -gt 0 ]]; then
+    local group_line
+    group_line=$(IFS=' '; echo "${groups[*]}")
+    sed -i "s|^SupplementaryGroups=.*|SupplementaryGroups=${group_line}|" "$svc"
   else
     sed -i "/^SupplementaryGroups=/d" "$svc"
   fi

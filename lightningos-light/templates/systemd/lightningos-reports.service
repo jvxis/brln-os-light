@@ -8,6 +8,7 @@ User=lightningos
 Group=lightningos
 SupplementaryGroups=lnd systemd-journal
 Type=oneshot
+Environment=REPORTS_RUN_TIMEOUT_SEC=600
 EnvironmentFile=/etc/lightningos/secrets.env
 ExecStart=/opt/lightningos/manager/lightningos-manager reports-run --config /etc/lightningos/config.yaml
 LimitNOFILE=65536

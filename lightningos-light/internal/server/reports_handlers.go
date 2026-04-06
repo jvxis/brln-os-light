@@ -285,6 +285,7 @@ type reportSeriesItem struct {
 	NetWithKeysendSat          float64 `json:"net_with_keysend_sats"`
 	ForwardCount               int64   `json:"forward_count"`
 	RebalanceCount             int64   `json:"rebalance_count"`
+	RebalanceVolumeSat         float64 `json:"rebalance_volume_sats"`
 	PaymentCount               int64   `json:"payment_count"`
 	RoutedVolumeSat            float64 `json:"routed_volume_sats"`
 	OnchainBalanceSat          *int64  `json:"onchain_balance_sats"`
@@ -332,6 +333,7 @@ type reportMetricsPayload struct {
 	NetWithKeysendSat          float64 `json:"net_with_keysend_sats"`
 	ForwardCount               int64   `json:"forward_count"`
 	RebalanceCount             int64   `json:"rebalance_count"`
+	RebalanceVolumeSat         float64 `json:"rebalance_volume_sats"`
 	PaymentCount               int64   `json:"payment_count"`
 	RoutedVolumeSat            float64 `json:"routed_volume_sats"`
 	OnchainBalanceSat          *int64  `json:"onchain_balance_sats,omitempty"`
@@ -363,6 +365,7 @@ func mapSeries(items []reports.Row) []reportSeriesItem {
 			NetWithKeysendSat:          metricSats(item.Metrics.NetWithKeysendMsat, item.Metrics.NetWithKeysendSat),
 			ForwardCount:               item.Metrics.ForwardCount,
 			RebalanceCount:             item.Metrics.RebalanceCount,
+			RebalanceVolumeSat:         metricSats(item.Metrics.RebalanceVolumeMsat, item.Metrics.RebalanceVolumeSat),
 			PaymentCount:               item.Metrics.PaymentCount,
 			RoutedVolumeSat:            metricSats(item.Metrics.RoutedVolumeMsat, item.Metrics.RoutedVolumeSat),
 			OnchainBalanceSat:          item.Metrics.OnchainBalanceSat,
@@ -391,6 +394,7 @@ func metricsPayload(metrics reports.Metrics) reportMetricsPayload {
 		NetWithKeysendSat:          metricSats(metrics.NetWithKeysendMsat, metrics.NetWithKeysendSat),
 		ForwardCount:               metrics.ForwardCount,
 		RebalanceCount:             metrics.RebalanceCount,
+		RebalanceVolumeSat:         metricSats(metrics.RebalanceVolumeMsat, metrics.RebalanceVolumeSat),
 		PaymentCount:               metrics.PaymentCount,
 		RoutedVolumeSat:            metricSats(metrics.RoutedVolumeMsat, metrics.RoutedVolumeSat),
 		OnchainBalanceSat:          metrics.OnchainBalanceSat,

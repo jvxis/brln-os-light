@@ -41,6 +41,8 @@ create table if not exists reports_daily (
   net_with_keysend_msat bigint not null default 0,
   forward_count integer not null default 0,
   rebalance_count integer not null default 0,
+  rebalance_volume_sats bigint not null default 0,
+  rebalance_volume_msat bigint not null default 0,
   payment_count integer not null default 0,
   routed_volume_sats bigint not null default 0,
   routed_volume_msat bigint not null default 0,
@@ -87,6 +89,8 @@ alter table reports_daily add column if not exists keysend_received_count intege
 alter table reports_daily add column if not exists net_routing_profit_msat bigint not null default 0;
 alter table reports_daily add column if not exists net_with_keysend_sats bigint not null default 0;
 alter table reports_daily add column if not exists net_with_keysend_msat bigint not null default 0;
+alter table reports_daily add column if not exists rebalance_volume_sats bigint not null default 0;
+alter table reports_daily add column if not exists rebalance_volume_msat bigint not null default 0;
 alter table reports_daily add column if not exists payment_count integer not null default 0;
 alter table reports_daily add column if not exists routed_volume_msat bigint not null default 0;
 `)
@@ -131,6 +135,8 @@ func buildUpsertDaily(row Row) (string, []any) {
 		metrics.NetWithKeysendMsat,
 		metrics.ForwardCount,
 		metrics.RebalanceCount,
+		metrics.RebalanceVolumeSat,
+		metrics.RebalanceVolumeMsat,
 		metrics.PaymentCount,
 		metrics.RoutedVolumeSat,
 		metrics.RoutedVolumeMsat,
@@ -165,13 +171,15 @@ insert into reports_daily (
   net_with_keysend_msat,
   forward_count,
   rebalance_count,
+  rebalance_volume_sats,
+  rebalance_volume_msat,
   payment_count,
   routed_volume_sats,
   routed_volume_msat,
   onchain_balance_sats,
   lightning_balance_sats,
   total_balance_sats
-) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
+) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)
 on conflict (report_date) do update set
   forward_fee_revenue_sats = excluded.forward_fee_revenue_sats,
   forward_fee_revenue_msat = excluded.forward_fee_revenue_msat,
@@ -196,6 +204,8 @@ on conflict (report_date) do update set
   net_with_keysend_msat = excluded.net_with_keysend_msat,
   forward_count = excluded.forward_count,
   rebalance_count = excluded.rebalance_count,
+  rebalance_volume_sats = excluded.rebalance_volume_sats,
+  rebalance_volume_msat = excluded.rebalance_volume_msat,
   payment_count = excluded.payment_count,
   routed_volume_sats = excluded.routed_volume_sats,
   routed_volume_msat = excluded.routed_volume_msat,
@@ -394,6 +404,8 @@ select report_date,
   net_with_keysend_msat,
   forward_count,
   rebalance_count,
+  rebalance_volume_sats,
+  rebalance_volume_msat,
   payment_count,
   routed_volume_sats,
   routed_volume_msat,
@@ -449,6 +461,8 @@ select report_date,
   net_with_keysend_msat,
   forward_count,
   rebalance_count,
+  rebalance_volume_sats,
+  rebalance_volume_msat,
   payment_count,
   routed_volume_sats,
   routed_volume_msat,
@@ -506,6 +520,8 @@ select
   coalesce(sum(net_with_keysend_msat), 0),
   coalesce(sum(forward_count), 0),
   coalesce(sum(rebalance_count), 0),
+  coalesce(sum(rebalance_volume_sats), 0),
+  coalesce(sum(rebalance_volume_msat), 0),
   coalesce(sum(payment_count), 0),
   coalesce(sum(routed_volume_sats), 0),
   coalesce(sum(routed_volume_msat), 0)
@@ -536,6 +552,8 @@ where report_date >= $1 and report_date <= $2
 		&totals.NetWithKeysendMsat,
 		&totals.ForwardCount,
 		&totals.RebalanceCount,
+		&totals.RebalanceVolumeSat,
+		&totals.RebalanceVolumeMsat,
 		&totals.PaymentCount,
 		&totals.RoutedVolumeSat,
 		&totals.RoutedVolumeMsat,
@@ -580,6 +598,8 @@ select
   coalesce(sum(net_with_keysend_msat), 0),
   coalesce(sum(forward_count), 0),
   coalesce(sum(rebalance_count), 0),
+  coalesce(sum(rebalance_volume_sats), 0),
+  coalesce(sum(rebalance_volume_msat), 0),
   coalesce(sum(payment_count), 0),
   coalesce(sum(routed_volume_sats), 0),
   coalesce(sum(routed_volume_msat), 0)
@@ -609,6 +629,8 @@ from reports_daily
 		&totals.NetWithKeysendMsat,
 		&totals.ForwardCount,
 		&totals.RebalanceCount,
+		&totals.RebalanceVolumeSat,
+		&totals.RebalanceVolumeMsat,
 		&totals.PaymentCount,
 		&totals.RoutedVolumeSat,
 		&totals.RoutedVolumeMsat,
@@ -649,6 +671,8 @@ func averageMetrics(totals Metrics, days int64) Metrics {
 		NetWithKeysendMsat:         totals.NetWithKeysendMsat / days,
 		ForwardCount:               totals.ForwardCount / days,
 		RebalanceCount:             totals.RebalanceCount / days,
+		RebalanceVolumeSat:         totals.RebalanceVolumeSat / days,
+		RebalanceVolumeMsat:        totals.RebalanceVolumeMsat / days,
 		PaymentCount:               totals.PaymentCount / days,
 		RoutedVolumeSat:            totals.RoutedVolumeSat / days,
 		RoutedVolumeMsat:           totals.RoutedVolumeMsat / days,
@@ -690,6 +714,8 @@ func scanRow(scanner rowScanner) (Row, error) {
 		&metrics.NetWithKeysendMsat,
 		&metrics.ForwardCount,
 		&metrics.RebalanceCount,
+		&metrics.RebalanceVolumeSat,
+		&metrics.RebalanceVolumeMsat,
 		&metrics.PaymentCount,
 		&metrics.RoutedVolumeSat,
 		&metrics.RoutedVolumeMsat,
@@ -736,6 +762,9 @@ func fillMsatFromSat(metrics *Metrics) {
 	}
 	if metrics.RebalanceFeeCostMsat == 0 && metrics.RebalanceFeeCostSat != 0 {
 		metrics.RebalanceFeeCostMsat = metrics.RebalanceFeeCostSat * 1000
+	}
+	if metrics.RebalanceVolumeMsat == 0 && metrics.RebalanceVolumeSat != 0 {
+		metrics.RebalanceVolumeMsat = metrics.RebalanceVolumeSat * 1000
 	}
 	if metrics.PaymentFeeCostMsat == 0 && metrics.PaymentFeeCostSat != 0 {
 		metrics.PaymentFeeCostMsat = metrics.PaymentFeeCostSat * 1000

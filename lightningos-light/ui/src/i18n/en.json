@@ -950,6 +950,8 @@
     "dailyMovementUnavailable": "Daily movement unavailable",
     "forwardCount": "Forward count",
     "forwards": "Forwards",
+    "forwardRebalanceVolume": "Forwards vs rebalances volume",
+    "forwardVolume": "Forward volume",
     "granularity": {
       "day": "Daily",
       "week": "Weekly",
@@ -998,6 +1000,7 @@
       "all": "All time"
     },
     "rebalanceCount": "Rebalance count",
+    "rebalanceVolume": "Rebalance volume",
     "rebalances": "Rebalances",
     "revenue": "Revenue",
     "revenueVsCost": "Revenue vs cost",

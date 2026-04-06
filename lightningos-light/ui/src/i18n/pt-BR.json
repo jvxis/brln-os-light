@@ -950,6 +950,8 @@
     "dailyMovementUnavailable": "Meta diária indisponível",
     "forwardCount": "Contagem de Forward",
     "forwards": "Forwards",
+    "forwardRebalanceVolume": "Volume de forwards vs rebalances",
+    "forwardVolume": "Volume de forward",
     "granularity": {
       "day": "Diário",
       "week": "Semanal",
@@ -998,6 +1000,7 @@
       "all": "Todo o período"
     },
     "rebalanceCount": "Contagem de Rebalance",
+    "rebalanceVolume": "Volume de rebalance",
     "rebalances": "Rebalances",
     "revenue": "Receita",
     "revenueVsCost": "Receita vs custo",

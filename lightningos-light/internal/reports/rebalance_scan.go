@@ -14,9 +14,10 @@ const rebalanceScanMaxPages = 200000
 
 func FetchRebalanceMetrics(ctx context.Context, lnd *lndclient.Client, startUnix uint64, endUnix uint64, memoMatch bool) (RebalanceOverride, error) {
 	totals := RebalanceOverride{}
-	err := scanRebalancePayments(ctx, lnd, startUnix, endUnix, memoMatch, func(ts int64, feeMsat int64) {
+	err := scanRebalancePayments(ctx, lnd, startUnix, endUnix, memoMatch, func(ts int64, feeMsat int64, amountMsat int64) {
 		totals.FeeMsat += feeMsat
 		totals.Count++
+		totals.AmountMsat += amountMsat
 	})
 	if err != nil {
 		return RebalanceOverride{}, err
@@ -33,12 +34,13 @@ func FetchRebalanceFeesByDay(ctx context.Context, lnd *lndclient.Client, startUn
 	}
 
 	results := make(map[time.Time]RebalanceOverride)
-	err := scanRebalancePayments(ctx, lnd, startUnix, endUnix, false, func(ts int64, feeMsat int64) {
+	err := scanRebalancePayments(ctx, lnd, startUnix, endUnix, false, func(ts int64, feeMsat int64, amountMsat int64) {
 		local := time.Unix(ts, 0).In(loc)
 		dayKey := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc)
 		current := results[dayKey]
 		current.FeeMsat += feeMsat
 		current.Count++
+		current.AmountMsat += amountMsat
 		results[dayKey] = current
 	})
 	if err != nil {
@@ -47,7 +49,7 @@ func FetchRebalanceFeesByDay(ctx context.Context, lnd *lndclient.Client, startUn
 	return results, nil
 }
 
-func scanRebalancePayments(ctx context.Context, lnd *lndclient.Client, startUnix uint64, endUnix uint64, memoMatch bool, onMatch func(ts int64, feeMsat int64)) error {
+func scanRebalancePayments(ctx context.Context, lnd *lndclient.Client, startUnix uint64, endUnix uint64, memoMatch bool, onMatch func(ts int64, feeMsat int64, amountMsat int64)) error {
 	if lnd == nil {
 		return fmt.Errorf("lnd client unavailable")
 	}
@@ -131,8 +133,9 @@ func scanRebalancePayments(ctx context.Context, lnd *lndclient.Client, startUnix
 			}
 
 			feeMsat := extractPaymentFeeMsat(pay)
+			amountMsat := extractPaymentValueMsat(pay)
 			if onMatch != nil {
-				onMatch(ts, feeMsat)
+				onMatch(ts, feeMsat, amountMsat)
 			}
 		}
 

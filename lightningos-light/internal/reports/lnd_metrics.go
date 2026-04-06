@@ -14,8 +14,9 @@ const (
 )
 
 type RebalanceOverride struct {
-	FeeMsat int64
-	Count   int64
+	FeeMsat    int64
+	Count      int64
+	AmountMsat int64
 }
 
 type PaymentOverride struct {
@@ -47,6 +48,7 @@ func ComputeMetrics(ctx context.Context, lnd *lndclient.Client, tr TimeRange, me
 
 	rebalanceCostMsat := int64(0)
 	rebalanceCount := int64(0)
+	rebalanceVolumeMsat := int64(0)
 	paymentCostMsat := int64(0)
 	paymentCount := int64(0)
 	if rebalanceOverride == nil && paymentOverride == nil {
@@ -56,12 +58,14 @@ func ComputeMetrics(ctx context.Context, lnd *lndclient.Client, tr TimeRange, me
 		}
 		rebalanceCostMsat = outgoing.Rebalances.FeeMsat
 		rebalanceCount = outgoing.Rebalances.Count
+		rebalanceVolumeMsat = outgoing.Rebalances.AmountMsat
 		paymentCostMsat = outgoing.Payments.FeeMsat
 		paymentCount = outgoing.Payments.Count
 	} else {
 		if rebalanceOverride != nil {
 			rebalanceCostMsat = rebalanceOverride.FeeMsat
 			rebalanceCount = rebalanceOverride.Count
+			rebalanceVolumeMsat = rebalanceOverride.AmountMsat
 		} else {
 			rebalance, err := FetchRebalanceMetrics(ctx, lnd, tr.StartUnix(), tr.EndUnixInclusive(), memoMatch)
 			if err != nil {
@@ -69,6 +73,7 @@ func ComputeMetrics(ctx context.Context, lnd *lndclient.Client, tr TimeRange, me
 			}
 			rebalanceCostMsat = rebalance.FeeMsat
 			rebalanceCount = rebalance.Count
+			rebalanceVolumeMsat = rebalance.AmountMsat
 		}
 
 		if paymentOverride != nil {
@@ -144,6 +149,8 @@ func ComputeMetrics(ctx context.Context, lnd *lndclient.Client, tr TimeRange, me
 		NetWithKeysendMsat:         netWithKeysendMsat,
 		ForwardCount:               forwardCount,
 		RebalanceCount:             rebalanceCount,
+		RebalanceVolumeSat:         rebalanceVolumeMsat / 1000,
+		RebalanceVolumeMsat:        rebalanceVolumeMsat,
 		PaymentCount:               paymentCount,
 		RoutedVolumeSat:            routedVolumeMsat / 1000,
 		RoutedVolumeMsat:           routedVolumeMsat,
@@ -325,6 +332,47 @@ func extractPaymentFeeMsat(pay *lnrpc.Payment) int64 {
 	}
 	if msat := paymentRouteFeeMsat(pay); msat != 0 {
 		return msat
+	}
+	return 0
+}
+
+func extractPaymentValueMsat(pay *lnrpc.Payment) int64 {
+	if pay == nil {
+		return 0
+	}
+	if pay.ValueMsat != 0 {
+		return pay.ValueMsat
+	}
+	if pay.ValueSat != 0 {
+		return pay.ValueSat * 1000
+	}
+	for _, attempt := range pay.Htlcs {
+		if attempt == nil || attempt.Route == nil {
+			continue
+		}
+		if attempt.Status != lnrpc.HTLCAttempt_SUCCEEDED {
+			continue
+		}
+		hops := attempt.Route.Hops
+		if len(hops) == 0 {
+			continue
+		}
+		lastHop := hops[len(hops)-1]
+		if lastHop != nil && lastHop.AmtToForwardMsat != 0 {
+			return lastHop.AmtToForwardMsat
+		}
+		if attempt.Route.TotalAmtMsat != 0 {
+			total := attempt.Route.TotalAmtMsat - attempt.Route.TotalFeesMsat
+			if total > 0 {
+				return total
+			}
+		}
+		if attempt.Route.TotalAmt != 0 {
+			total := attempt.Route.TotalAmt - attempt.Route.TotalFees
+			if total > 0 {
+				return total * 1000
+			}
+		}
 	}
 	return 0
 }

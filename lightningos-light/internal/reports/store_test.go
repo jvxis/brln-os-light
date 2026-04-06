@@ -35,6 +35,8 @@ func TestBuildUpsertDaily(t *testing.T) {
 			NetWithKeysendMsat:         850000,
 			ForwardCount:               4,
 			RebalanceCount:             2,
+			RebalanceVolumeSat:         64000,
+			RebalanceVolumeMsat:        64000000,
 			PaymentCount:               3,
 			RoutedVolumeSat:            18000,
 			RoutedVolumeMsat:           18000000,
@@ -57,8 +59,8 @@ func TestBuildUpsertDaily(t *testing.T) {
 	if !strings.Contains(query, "total_balance_sats = coalesce(excluded.total_balance_sats, reports_daily.total_balance_sats)") {
 		t.Fatalf("expected total balance coalesce on upsert")
 	}
-	if len(args) != 30 {
-		t.Fatalf("expected 30 args, got %d", len(args))
+	if len(args) != 32 {
+		t.Fatalf("expected 32 args, got %d", len(args))
 	}
 
 	argDate, ok := args[0].(time.Time)
@@ -91,12 +93,14 @@ func TestBuildUpsertDaily(t *testing.T) {
 		args[21] != int64(850000) || // net_with_keysend_msat
 		args[22] != int64(4) || // forward_count
 		args[23] != int64(2) || // rebalance_count
-		args[24] != int64(3) || // payment_count
-		args[25] != int64(18000) || // routed_volume_sats
-		args[26] != int64(18000000) || // routed_volume_msat
-		args[27] != nil || // onchain_balance_sats
-		args[28] != nil || // lightning_balance_sats
-		args[29] != nil { // total_balance_sats
+		args[24] != int64(64000) || // rebalance_volume_sats
+		args[25] != int64(64000000) || // rebalance_volume_msat
+		args[26] != int64(3) || // payment_count
+		args[27] != int64(18000) || // routed_volume_sats
+		args[28] != int64(18000000) || // routed_volume_msat
+		args[29] != nil || // onchain_balance_sats
+		args[30] != nil || // lightning_balance_sats
+		args[31] != nil { // total_balance_sats
 		t.Fatalf("unexpected metrics args")
 	}
 }
@@ -113,6 +117,7 @@ func TestBuildUpsertLiveSnapshot(t *testing.T) {
 		Metrics: Metrics{
 			ForwardFeeRevenueSat: 200,
 			RebalanceFeeCostSat:  50,
+			RebalanceVolumeSat:   7500,
 			RoutedVolumeSat:      12000,
 		},
 		LookbackHours: 0,
@@ -146,7 +151,7 @@ func TestBuildUpsertLiveSnapshot(t *testing.T) {
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		t.Fatalf("failed to unmarshal payload: %v", err)
 	}
-	if parsed.ForwardFeeRevenueSat != 200 || parsed.RebalanceFeeCostSat != 50 || parsed.RoutedVolumeSat != 12000 {
+	if parsed.ForwardFeeRevenueSat != 200 || parsed.RebalanceFeeCostSat != 50 || parsed.RebalanceVolumeSat != 7500 || parsed.RoutedVolumeSat != 12000 {
 		t.Fatalf("unexpected metrics payload: %+v", parsed)
 	}
 }

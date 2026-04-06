@@ -19,10 +19,11 @@ type OutgoingPaymentMetrics struct {
 
 func FetchOutgoingPaymentMetrics(ctx context.Context, lnd *lndclient.Client, startUnix uint64, endUnix uint64, memoMatch bool) (OutgoingPaymentMetrics, error) {
 	totals := OutgoingPaymentMetrics{}
-	err := scanOutgoingPayments(ctx, lnd, startUnix, endUnix, memoMatch, func(_ int64, feeMsat int64, isRebalance bool) {
+	err := scanOutgoingPayments(ctx, lnd, startUnix, endUnix, memoMatch, func(_ int64, feeMsat int64, amountMsat int64, isRebalance bool) {
 		if isRebalance {
 			totals.Rebalances.FeeMsat += feeMsat
 			totals.Rebalances.Count++
+			totals.Rebalances.AmountMsat += amountMsat
 			return
 		}
 		totals.Payments.FeeMsat += feeMsat
@@ -36,7 +37,7 @@ func FetchOutgoingPaymentMetrics(ctx context.Context, lnd *lndclient.Client, sta
 
 func FetchPaymentMetrics(ctx context.Context, lnd *lndclient.Client, startUnix uint64, endUnix uint64, memoMatch bool) (PaymentOverride, error) {
 	totals := PaymentOverride{}
-	err := scanOutgoingPayments(ctx, lnd, startUnix, endUnix, memoMatch, func(_ int64, feeMsat int64, isRebalance bool) {
+	err := scanOutgoingPayments(ctx, lnd, startUnix, endUnix, memoMatch, func(_ int64, feeMsat int64, _ int64, isRebalance bool) {
 		if isRebalance {
 			return
 		}
@@ -58,7 +59,7 @@ func FetchPaymentFeesByDay(ctx context.Context, lnd *lndclient.Client, startUnix
 	}
 
 	results := make(map[time.Time]PaymentOverride)
-	err := scanOutgoingPayments(ctx, lnd, startUnix, endUnix, false, func(ts int64, feeMsat int64, isRebalance bool) {
+	err := scanOutgoingPayments(ctx, lnd, startUnix, endUnix, false, func(ts int64, feeMsat int64, _ int64, isRebalance bool) {
 		if isRebalance {
 			return
 		}
@@ -75,7 +76,7 @@ func FetchPaymentFeesByDay(ctx context.Context, lnd *lndclient.Client, startUnix
 	return results, nil
 }
 
-func scanOutgoingPayments(ctx context.Context, lnd *lndclient.Client, startUnix uint64, endUnix uint64, memoMatch bool, onMatch func(ts int64, feeMsat int64, isRebalance bool)) error {
+func scanOutgoingPayments(ctx context.Context, lnd *lndclient.Client, startUnix uint64, endUnix uint64, memoMatch bool, onMatch func(ts int64, feeMsat int64, amountMsat int64, isRebalance bool)) error {
 	if lnd == nil {
 		return fmt.Errorf("lnd client unavailable")
 	}
@@ -157,8 +158,9 @@ func scanOutgoingPayments(ctx context.Context, lnd *lndclient.Client, startUnix 
 			}
 			isRebalance := IsRebalancePayment(pay, pubkey, dest, description, memoMatch)
 			feeMsat := extractPaymentFeeMsat(pay)
+			amountMsat := extractPaymentValueMsat(pay)
 			if onMatch != nil {
-				onMatch(ts, feeMsat, isRebalance)
+				onMatch(ts, feeMsat, amountMsat, isRebalance)
 			}
 		}
 

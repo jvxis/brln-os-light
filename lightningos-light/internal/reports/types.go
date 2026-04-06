@@ -26,6 +26,8 @@ type Metrics struct {
 	NetWithKeysendMsat         int64
 	ForwardCount               int64
 	RebalanceCount             int64
+	RebalanceVolumeSat         int64
+	RebalanceVolumeMsat        int64
 	PaymentCount               int64
 	RoutedVolumeSat            int64
 	RoutedVolumeMsat           int64

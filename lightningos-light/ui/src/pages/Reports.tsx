@@ -45,6 +45,7 @@ type ReportSeriesItem = {
   net_with_keysend_sats?: number
   forward_count: number
   rebalance_count: number
+  rebalance_volume_sats?: number
   payment_count?: number
   routed_volume_sats: number
   onchain_balance_sats?: number | null
@@ -69,6 +70,7 @@ type ReportMetrics = {
   net_with_keysend_sats?: number
   forward_count: number
   rebalance_count: number
+  rebalance_volume_sats?: number
   payment_count?: number
   routed_volume_sats: number
   onchain_balance_sats?: number | null
@@ -135,6 +137,8 @@ type ChartDataPoint = {
   revenue: number
   rebalanceCost: number
   paymentCost: number
+  forwardVolume: number
+  rebalanceVolume: number
   offchainCost: number
   onchainCost: number
   onchainCoopCloseCost: number
@@ -159,6 +163,8 @@ const COLORS = {
   costRebalance: '#f59e0b',
   costPayment: '#fbbf24',
   cost: '#f59e0b',
+  forwardVolume: '#38bdf8',
+  rebalanceVolume: '#f59e0b',
   onchain: '#22c55e',
   onchainCoop: '#22c55e',
   onchainLocalForce: '#f97316',
@@ -492,6 +498,7 @@ export default function Reports() {
       net_with_keysend_sats: live.net_with_keysend_sats ?? ((live.net_routing_profit_sats ?? 0) + (live.keysend_received_sats ?? 0)),
       forward_count: live.forward_count,
       rebalance_count: live.rebalance_count,
+      rebalance_volume_sats: live.rebalance_volume_sats ?? 0,
       payment_count: live.payment_count ?? 0,
       routed_volume_sats: live.routed_volume_sats,
       onchain_balance_sats: live.onchain_balance_sats ?? null,
@@ -517,6 +524,7 @@ export default function Reports() {
       net_with_keysend_sats: live.net_with_keysend_sats ?? ((live.net_routing_profit_sats ?? 0) + (live.keysend_received_sats ?? 0)),
       forward_count: live.forward_count,
       rebalance_count: live.rebalance_count,
+      rebalance_volume_sats: live.rebalance_volume_sats ?? 0,
       payment_count: live.payment_count ?? 0,
       routed_volume_sats: live.routed_volume_sats,
       onchain_balance_sats: live.onchain_balance_sats ?? null,
@@ -642,6 +650,8 @@ export default function Reports() {
       revenue: item.forward_fee_revenue_sats,
       rebalanceCost: item.rebalance_fee_cost_sats ?? 0,
       paymentCost: item.payment_fee_cost_sats ?? 0,
+      forwardVolume: item.routed_volume_sats ?? 0,
+      rebalanceVolume: item.rebalance_volume_sats ?? 0,
       offchainCost: item.offchain_fee_cost_sats ?? item.total_fee_cost_sats ?? ((item.rebalance_fee_cost_sats ?? 0) + (item.payment_fee_cost_sats ?? 0)),
       onchainCost: item.onchain_fee_cost_sats ?? 0,
       onchainCoopCloseCost: item.onchain_coop_close_cost_sats ?? 0,
@@ -697,6 +707,8 @@ export default function Reports() {
       current.revenue += item.revenue
       current.rebalanceCost += item.rebalanceCost
       current.paymentCost += item.paymentCost
+      current.forwardVolume += item.forwardVolume
+      current.rebalanceVolume += item.rebalanceVolume
       current.offchainCost += item.offchainCost
       current.onchainCost += item.onchainCost
       current.onchainCoopCloseCost += item.onchainCoopCloseCost
@@ -1218,6 +1230,37 @@ export default function Reports() {
             </div>
           )}
         </div>
+      </div>
+
+      <div className="section-card space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-lg font-semibold">{t('reports.forwardRebalanceVolume')}</h3>
+          {renderGranularityToggle()}
+        </div>
+        {chartData.length === 0 && !seriesLoading && !seriesError ? (
+          <p className="text-sm text-fog/60">{t('reports.noData')}</p>
+        ) : (
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 10 }}>
+                <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
+                <XAxis dataKey="label" tick={{ fill: '#cbd5f5', fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: '#cbd5f5', fontSize: 11 }} tickFormatter={formatCompact} axisLine={false} tickLine={false} />
+                <Legend verticalAlign="top" height={24} formatter={(value) => <span className="text-xs text-fog/60">{value}</span>} />
+                <Tooltip
+                  cursor={{ stroke: 'rgba(255,255,255,0.1)', strokeWidth: 1 }}
+                  contentStyle={tooltipContentStyle}
+                  labelStyle={tooltipLabelStyle}
+                  itemStyle={tooltipItemStyle}
+                  formatter={(value) => formatSats(Number(value))}
+                  labelFormatter={(value) => String(value)}
+                />
+                <Line type="monotone" dataKey="forwardVolume" name={t('reports.forwardVolume')} stroke={COLORS.forwardVolume} strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="rebalanceVolume" name={t('reports.rebalanceVolume')} stroke={COLORS.rebalanceVolume} strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
       </div>
 
       <div className="section-card space-y-4">

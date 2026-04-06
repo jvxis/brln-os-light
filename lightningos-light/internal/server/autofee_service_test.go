@@ -62,6 +62,30 @@ func TestShouldHoldUpOnRecentRebalance(t *testing.T) {
 	}
 }
 
+func TestShouldHoldMatureEmptySinkUpwardPressure(t *testing.T) {
+	if !shouldHoldMatureEmptySinkUpwardPressure("sink", 24*10, 48, 0.05, 0.10, 650, 780, 0, 0, 0, false, false) {
+		t.Fatalf("expected mature empty sink with history and no signals to hold upward pressure")
+	}
+	if shouldHoldMatureEmptySinkUpwardPressure("sink", 24*2, 48, 0.05, 0.10, 650, 780, 0, 0, 0, false, false) {
+		t.Fatalf("did not expect hold during channel warmup")
+	}
+	if shouldHoldMatureEmptySinkUpwardPressure("sink", 24*10, 48, 0.05, 0.10, 650, 780, 1, 0, 0, false, false) {
+		t.Fatalf("did not expect hold when recent forwards exist")
+	}
+	if shouldHoldMatureEmptySinkUpwardPressure("sink", 24*10, 48, 0.05, 0.10, 650, 780, 0, 1, 0, false, false) {
+		t.Fatalf("did not expect hold when recent rebalance succeeded")
+	}
+	if shouldHoldMatureEmptySinkUpwardPressure("sink", 24*10, 48, 0.05, 0.10, 650, 780, 0, 0, 1, false, false) {
+		t.Fatalf("did not expect hold when recent weak rebalance attempts exist")
+	}
+	if shouldHoldMatureEmptySinkUpwardPressure("sink", 24*10, 48, 0.05, 0.10, 650, 780, 0, 0, 0, true, false) {
+		t.Fatalf("did not expect hold with HTLC pressure signal")
+	}
+	if shouldHoldMatureEmptySinkUpwardPressure("sink", 24*10, 48, 0.05, 0.10, 650, 780, 0, 0, 0, false, true) {
+		t.Fatalf("did not expect hold with HTLC forward hot signal")
+	}
+}
+
 func TestBlendTargetWithSeed(t *testing.T) {
 	base := 1000
 	blended := blendTargetWithSeed(base, 800, 0.20)

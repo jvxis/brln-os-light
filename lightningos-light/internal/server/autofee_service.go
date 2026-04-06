@@ -108,6 +108,7 @@ const (
 	defaultBootstrapCooldownDownSec     = 5400
 	defaultBootstrapMinStepUpPpm        = 15
 	defaultBootstrapSurgeHoldMaxRounds  = 2
+	matureEmptySinkHistoryHours         = 7 * 24
 	stallFloorRelaxMinRounds            = 1
 	stallFloorRelaxGapFrac              = 0.20
 	stallFloorRelaxStepFracBase         = 0.04
@@ -1859,6 +1860,33 @@ func (s *AutofeeService) LoadChannelSettings(ctx context.Context) (map[uint64]bo
 	return settings, rows.Err()
 }
 
+func (s *AutofeeService) loadRebalanceChannelSettings(ctx context.Context) (map[uint64]autofeeRebalanceChannelSetting, error) {
+	settings := map[uint64]autofeeRebalanceChannelSetting{}
+	if s.db == nil {
+		return settings, errors.New("db unavailable")
+	}
+	rows, err := s.db.Query(ctx, `
+select channel_id, auto_enabled, manual_restart_enabled
+from rebalance_channel_settings
+`)
+	if err != nil {
+		return settings, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var channelID int64
+		var item autofeeRebalanceChannelSetting
+		if err := rows.Scan(&channelID, &item.AutoEnabled, &item.ManualRestartEnabled); err != nil {
+			return settings, err
+		}
+		if channelID <= 0 {
+			continue
+		}
+		settings[uint64(channelID)] = item
+	}
+	return settings, rows.Err()
+}
+
 func (s *AutofeeService) SetChannelEnabled(ctx context.Context, channelID uint64, channelPoint string, enabled bool) error {
 	if s.db == nil {
 		return errors.New("db unavailable")
@@ -2169,11 +2197,17 @@ type autofeeEngine struct {
 	ignoreCooldown  bool
 	calib           autofeeCalibration
 	ranking         map[string]autofeeRankingSnapshot
+	rebalanceConfig map[uint64]autofeeRebalanceChannelSetting
 	now             time.Time
 	nativeSeedCache map[string]autofeeSeedResult
 	ambossToken     string
 	ambossTokenErr  error
 	ambossTokenLoad bool
+}
+
+type autofeeRebalanceChannelSetting struct {
+	AutoEnabled          bool
+	ManualRestartEnabled bool
 }
 
 type autofeeSeedResult struct {
@@ -2585,6 +2619,11 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 		e.ranking = snapshots
 	} else if e.svc.logger != nil {
 		e.svc.logger.Printf("autofee: channel ranking snapshot unavailable: %v", err)
+	}
+	if rebalanceCfg, err := e.svc.loadRebalanceChannelSettings(ctx); err == nil {
+		e.rebalanceConfig = rebalanceCfg
+	} else if e.svc.logger != nil {
+		e.svc.logger.Printf("autofee: rebalance channel settings unavailable: %v", err)
 	}
 
 	forwardStats, err := e.fetchForwardStats(ctx, e.cfg.LookbackDays)
@@ -4248,6 +4287,32 @@ func shouldHoldUpOnRecentRebalance(classLabel string, outRatio float64, lowOutPr
 	return outRatio < lowOutProtectThresh
 }
 
+func shouldHoldMatureEmptySinkUpwardPressure(classLabel string, channelAgeHours float64, bootstrapHours int, outRatio float64, lowOutProtectThresh float64, outPpm7d int, rebalRefPpm int, recentForwards1d int, recentRebalanceCount int, recentRebalanceWeakCount int, htlcPressureSignal bool, htlcForwardHot bool) bool {
+	if !strings.EqualFold(strings.TrimSpace(classLabel), "sink") {
+		return false
+	}
+	if lowOutProtectThresh <= 0 {
+		lowOutProtectThresh = defaultLowOutProtectThresh
+	}
+	if outRatio > lowOutProtectThresh {
+		return false
+	}
+	if outPpm7d <= 0 && rebalRefPpm <= 0 {
+		return false
+	}
+	if recentForwards1d > 0 || htlcPressureSignal || htlcForwardHot {
+		return false
+	}
+	if recentRebalanceCount > 0 || recentRebalanceWeakCount > 0 {
+		return false
+	}
+	matureHours := float64(matureEmptySinkHistoryHours)
+	if bootstrapHours > 0 {
+		matureHours = math.Max(matureHours, float64(bootstrapHours*2))
+	}
+	return channelAgeHours >= matureHours
+}
+
 func parseShortChannelID(raw string) (uint64, bool) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -5810,6 +5875,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			tags = append(tags, "rebal-attempt")
 		}
 	}
+	rebalSetting, rebalSettingOk := e.rebalanceConfig[ch.ChannelID]
 	htlcSampleLow := false
 	htlcPolicyHot := false
 	htlcLiquidityHot := false
@@ -5854,8 +5920,26 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		}
 	}
 	htlcPressureSignal := !htlcSampleLow && (htlcPolicyHot || htlcLiquidityHot)
+	rebalHistoryRefPpm := perCost
+	if rebalHistoryRefPpm <= 0 {
+		rebalHistoryRefPpm = perCost21d
+	}
+	holdMatureEmptySinkUp := !marketRefillMode && shouldHoldMatureEmptySinkUpwardPressure(
+		classLabel,
+		channelAgeHours,
+		bootstrapHours,
+		outRatio,
+		lowOutProtectThresh,
+		outPpm7d,
+		rebalHistoryRefPpm,
+		recentForwards1d,
+		recentRebalanceCount,
+		recentRebalanceWeakCount,
+		htlcPressureSignal,
+		htlcForwardHot,
+	)
 	surgeApplied := false
-	if outRatio < 0.10 {
+	if outRatio < 0.10 && !holdMatureEmptySinkUp {
 		lack := (0.10 - outRatio) / 0.10
 		bump := math.Min(e.profile.SurgeBumpMax, 0.5*lack)
 		if bump > 0 {
@@ -5949,6 +6033,13 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		if refillTarget, refillTags := applyMarketRefillOutboundBias(e.profile, localPpm, target, outPpm7d, outRatio, recentForwards1d, noFlow1d, weakRecentFlow, e.cfg.MinPpm, e.cfg.MaxPpm); refillTarget != target || len(refillTags) > 0 {
 			target = refillTarget
 			tags = append(tags, refillTags...)
+		}
+	}
+	if holdMatureEmptySinkUp && target > localPpm {
+		target = localPpm
+		tags = append(tags, "empty-sink-hold")
+		if rebalSettingOk && !rebalSetting.AutoEnabled && !rebalSetting.ManualRestartEnabled {
+			tags = append(tags, "empty-sink-rebal-off")
 		}
 	}
 
@@ -6477,13 +6568,18 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if marketRefillMode {
 		floorSrc = "market"
 	}
-	if strings.EqualFold(classLabel, "sink") && baseCostPpm > 0 && e.profile.SinkExtraFloorMargin > 0 && !highOutStagnationPressure {
+	if strings.EqualFold(classLabel, "sink") && baseCostPpm > 0 && e.profile.SinkExtraFloorMargin > 0 && !highOutStagnationPressure && !holdMatureEmptySinkUp {
 		sinkFloor := int(math.Ceil(float64(baseCostPpm) * (1.10 + e.profile.SinkExtraFloorMargin)))
 		if sinkFloor > floor {
 			floor = sinkFloor
 			floorSrc = "rebal-sink"
 			tags = append(tags, "sink-floor")
 		}
+	}
+	if holdMatureEmptySinkUp && (floorSrc == "rebal" || floorSrc == "rebal-sink") && floor > localPpm {
+		floor = localPpm
+		floorSrc = "rebal-hold"
+		tags = append(tags, "empty-sink-floor-hold")
 	}
 	if outPpm7d > 0 && !discoveryHit && !explorerActive {
 		outrateFloorActive := true

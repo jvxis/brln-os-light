@@ -23,6 +23,8 @@ func (s *Server) handleGraphExplorerStatusGet(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	svc.scheduleRefreshIfStale()
+
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
@@ -75,6 +77,8 @@ func (s *Server) handleGraphExplorerSearchGet(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	svc.scheduleRefreshIfStale()
+
 	limit := 10
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil {
@@ -103,6 +107,8 @@ func (s *Server) handleGraphExplorerGeneralGet(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusServiceUnavailable, msg)
 		return
 	}
+
+	svc.scheduleRefreshIfStale()
 
 	pubkey := strings.TrimSpace(chi.URLParam(r, "pubkey"))
 	if decoded, err := url.PathUnescape(pubkey); err == nil {
@@ -138,6 +144,8 @@ func (s *Server) handleGraphExplorerChannelsGet(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusServiceUnavailable, msg)
 		return
 	}
+
+	svc.scheduleRefreshIfStale()
 
 	pubkey := strings.TrimSpace(chi.URLParam(r, "pubkey"))
 	if decoded, err := url.PathUnescape(pubkey); err == nil {
@@ -181,6 +189,8 @@ func (s *Server) handleGraphExplorerClosedGet(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	svc.scheduleRefreshIfStale()
+
 	pubkey := strings.TrimSpace(chi.URLParam(r, "pubkey"))
 	if decoded, err := url.PathUnescape(pubkey); err == nil {
 		pubkey = strings.TrimSpace(decoded)
@@ -222,6 +232,8 @@ func (s *Server) handleGraphExplorerFeesGet(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusServiceUnavailable, msg)
 		return
 	}
+
+	svc.scheduleRefreshIfStale()
 
 	pubkey := strings.TrimSpace(chi.URLParam(r, "pubkey"))
 	if decoded, err := url.PathUnescape(pubkey); err == nil {

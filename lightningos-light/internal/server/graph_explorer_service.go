@@ -9,6 +9,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"lightningos-light/internal/lndclient"
@@ -24,6 +25,9 @@ const (
 	graphExplorerUpdateTimeout     = 45 * time.Second
 	graphExplorerBatchSize         = 500
 	graphExplorerConfigID          = 1
+	// graphExplorerStaleThreshold is how old the last sync can be before an
+	// on-demand access to the graph explorer triggers a background refresh.
+	graphExplorerStaleThreshold = 1 * time.Hour
 )
 
 var ErrGraphExplorerDBUnavailable = errors.New("graph explorer db unavailable")
@@ -60,6 +64,7 @@ type GraphExplorerService struct {
 	lastError  string
 	stopCh     chan struct{}
 	doneCh     chan struct{}
+	refreshing int32 // atomic: 1 while a background refresh is in progress
 }
 
 type graphPolicyKey struct {
@@ -222,30 +227,40 @@ func (s *GraphExplorerService) Start() {
 		return
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.stopCh != nil {
-		s.mu.Unlock()
 		return
 	}
+	// Mark the service as started. Background refresh loops and the gossip
+	// stream are intentionally not launched here: DescribeGraph is an
+	// expensive LND RPC that serialises the full channel graph (~170K entries)
+	// and keeping SubscribeChannelGraph open permanently causes continuous CPU
+	// and RAM pressure on LND. Refreshes are triggered on-demand instead —
+	// see scheduleRefreshIfStale.
 	s.stopCh = make(chan struct{})
 	s.doneCh = make(chan struct{})
-	stopCh := s.stopCh
-	doneCh := s.doneCh
-	s.mu.Unlock()
+	close(s.doneCh)
+}
 
+// scheduleRefreshIfStale triggers a single background Refresh when the last
+// successful sync is older than graphExplorerStaleThreshold. It is safe to
+// call from multiple concurrent goroutines: only one refresh runs at a time.
+func (s *GraphExplorerService) scheduleRefreshIfStale() {
+	if s == nil || s.db == nil || s.lnd == nil {
+		return
+	}
+	s.mu.Lock()
+	stale := s.lastSyncAt.IsZero() || time.Since(s.lastSyncAt) > graphExplorerStaleThreshold
+	s.mu.Unlock()
+	if !stale {
+		return
+	}
+	if !atomic.CompareAndSwapInt32(&s.refreshing, 0, 1) {
+		return // a refresh is already running
+	}
 	go func() {
-		defer close(doneCh)
+		defer atomic.StoreInt32(&s.refreshing, 0)
 		s.refreshBackground()
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			s.runRefreshLoop(stopCh)
-		}()
-		go func() {
-			defer wg.Done()
-			s.runStreamLoop(stopCh)
-		}()
-		wg.Wait()
 	}()
 }
 

@@ -4313,6 +4313,38 @@ func shouldHoldMatureEmptySinkUpwardPressure(classLabel string, channelAgeHours 
 	return channelAgeHours >= matureHours
 }
 
+func isRebalanceBaseCostSource(src string) bool {
+	switch strings.TrimSpace(src) {
+	case "rebal", "rebal-global", "rebal-21d", "rebal-mem", "rebal-blend":
+		return true
+	default:
+		return false
+	}
+}
+
+func isOutrateBaseCostSource(src string) bool {
+	switch strings.TrimSpace(src) {
+	case "outrate", "outrate-mem":
+		return true
+	default:
+		return false
+	}
+}
+
+func floorSourceFromBaseCost(src string, marketRefillMode bool) string {
+	if marketRefillMode {
+		return "market"
+	}
+	switch {
+	case isOutrateBaseCostSource(src):
+		return "outrate"
+	case strings.TrimSpace(src) == "seed":
+		return "seed"
+	default:
+		return "rebal"
+	}
+}
+
 func parseShortChannelID(raw string) (uint64, bool) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -6044,37 +6076,49 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 
 	baseCostPpm := 0
+	baseCostSrc := ""
 
 	if marketRefillMode {
 		if seed > 0 {
 			baseCostPpm = int(math.Round(seed))
+			baseCostSrc = "seed"
 		} else if st.LastSeed > 0 {
 			baseCostPpm = st.LastSeed
+			baseCostSrc = "seed"
 		} else {
 			baseCostPpm = e.cfg.MinPpm
+			baseCostSrc = "seed"
 		}
 	} else {
 		switch normalizeRebalCostMode(e.cfg.RebalCostMode) {
 		case "global":
 			baseCostPpm = rebalGlobalPpm
+			baseCostSrc = "rebal-global"
 		case "channel":
 			if perCost > 0 {
 				baseCostPpm = perCost
+				baseCostSrc = "rebal"
 				st.LastRebalCost = perCost
 				st.LastRebalCostTs = e.now
 			} else if perCost21d > 0 {
 				baseCostPpm = perCost21d
+				baseCostSrc = "rebal-21d"
 			} else if st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour {
 				baseCostPpm = st.LastRebalCost
+				baseCostSrc = "rebal-mem"
 			} else if outPpm7d > 0 && fwdCount >= 4 {
 				baseCostPpm = outPpm7d
+				baseCostSrc = "outrate"
 			} else if st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 21*24*time.Hour {
 				baseCostPpm = st.LastOutrate
+				baseCostSrc = "outrate-mem"
 			} else if seed > 0 {
 				baseCostPpm = int(seed)
+				baseCostSrc = "seed"
 			}
 		default:
 			baseCostPpm = rebalGlobalPpm
+			baseCostSrc = "rebal-global"
 			if perCost > 0 {
 				capSat := ch.CapacitySat
 				if capSat <= 0 {
@@ -6099,14 +6143,20 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 				}
 				blended := int(math.Round(weight*float64(perCost) + (1.0-weight)*float64(rebalGlobalPpm)))
 				baseCostPpm = blended
+				baseCostSrc = "rebal-blend"
 				st.LastRebalCost = perCost
 				st.LastRebalCostTs = e.now
 			} else if perCost21d > 0 {
 				baseCostPpm = perCost21d
+				baseCostSrc = "rebal-21d"
 			} else if st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour {
 				baseCostPpm = st.LastRebalCost
+				baseCostSrc = "rebal-mem"
 			}
 		}
+	}
+	if baseCostSrc == "" {
+		baseCostSrc = "rebal"
 	}
 	if baseCostPpm < e.cfg.MinPpm {
 		baseCostPpm = e.cfg.MinPpm
@@ -6546,33 +6596,42 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 
 	floorBasePpm := baseCostPpm
+	floorBaseSrc := baseCostSrc
 	if !marketRefillMode && perCost > 0 && !rebalFloorSignal {
 		fallbackFloorBase := floorBasePpm
+		fallbackFloorSrc := floorBaseSrc
 		if rebalGlobalPpm > 0 {
 			fallbackFloorBase = rebalGlobalPpm
+			fallbackFloorSrc = "rebal-global"
 		} else if perCost21d > 0 {
 			fallbackFloorBase = perCost21d
+			fallbackFloorSrc = "rebal-21d"
 		} else if outPpm7d > 0 {
 			fallbackFloorBase = outPpm7d
+			fallbackFloorSrc = "outrate"
 		}
 		if fallbackFloorBase < e.cfg.MinPpm {
 			fallbackFloorBase = e.cfg.MinPpm
 		}
 		if fallbackFloorBase > 0 && fallbackFloorBase < floorBasePpm {
 			floorBasePpm = fallbackFloorBase
+			floorBaseSrc = fallbackFloorSrc
 			tags = append(tags, "rebal-floor-low-volume")
 		}
 	}
 	floor := int(math.Ceil(float64(floorBasePpm) * 1.10))
-	floorSrc := "rebal"
-	if marketRefillMode {
-		floorSrc = "market"
-	}
+	floorSrc := floorSourceFromBaseCost(floorBaseSrc, marketRefillMode)
 	if strings.EqualFold(classLabel, "sink") && baseCostPpm > 0 && e.profile.SinkExtraFloorMargin > 0 && !highOutStagnationPressure && !holdMatureEmptySinkUp {
 		sinkFloor := int(math.Ceil(float64(baseCostPpm) * (1.10 + e.profile.SinkExtraFloorMargin)))
 		if sinkFloor > floor {
 			floor = sinkFloor
-			floorSrc = "rebal-sink"
+			if isOutrateBaseCostSource(baseCostSrc) {
+				floorSrc = "outrate-sink"
+			} else if strings.TrimSpace(baseCostSrc) == "seed" {
+				floorSrc = "seed-sink"
+			} else {
+				floorSrc = "rebal-sink"
+			}
 			tags = append(tags, "sink-floor")
 		}
 	}
@@ -7081,6 +7140,17 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		logStagnationRounds = stagnationRounds
 		logStagnationCap = stagnationTargetCap
 	}
+	loggedRebalPpm := 0
+	switch {
+	case perCost > 0:
+		loggedRebalPpm = perCost
+	case perCost21d > 0:
+		loggedRebalPpm = perCost21d
+	case st.LastRebalCost > 0 && !st.LastRebalCostTs.IsZero() && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour:
+		loggedRebalPpm = st.LastRebalCost
+	case !marketRefillMode && normalizeRebalCostMode(e.cfg.RebalCostMode) == "global" && rebalGlobalPpm > 0:
+		loggedRebalPpm = rebalGlobalPpm
+	}
 
 	tags = append(tags, seedTags...)
 	return &decision{
@@ -7100,7 +7170,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		SuperSourceActive:       superSourceActive,
 		OutRatio:                outRatio,
 		OutPpm7d:                outPpm7d,
-		RebalPpm:                baseCostPpm,
+		RebalPpm:                loggedRebalPpm,
 		Seed:                    int(seed),
 		Margin:                  marginPpm7d,
 		RevShare:                revShare,

@@ -86,6 +86,36 @@ func TestShouldHoldMatureEmptySinkUpwardPressure(t *testing.T) {
 	}
 }
 
+func TestBaseCostSourceClassification(t *testing.T) {
+	if !isRebalanceBaseCostSource("rebal") || !isRebalanceBaseCostSource("rebal-global") || !isRebalanceBaseCostSource("rebal-blend") {
+		t.Fatalf("expected rebalance-derived sources to be classified as rebalance")
+	}
+	if isRebalanceBaseCostSource("outrate") || isRebalanceBaseCostSource("seed") {
+		t.Fatalf("did not expect outrate/seed sources to be classified as rebalance")
+	}
+	if !isOutrateBaseCostSource("outrate") || !isOutrateBaseCostSource("outrate-mem") {
+		t.Fatalf("expected outrate-derived sources to be classified as outrate")
+	}
+	if isOutrateBaseCostSource("rebal") {
+		t.Fatalf("did not expect rebalance source to be classified as outrate")
+	}
+}
+
+func TestFloorSourceFromBaseCost(t *testing.T) {
+	if got := floorSourceFromBaseCost("outrate", false); got != "outrate" {
+		t.Fatalf("unexpected floor source for outrate fallback: got %q", got)
+	}
+	if got := floorSourceFromBaseCost("seed", false); got != "seed" {
+		t.Fatalf("unexpected floor source for seed fallback: got %q", got)
+	}
+	if got := floorSourceFromBaseCost("rebal", false); got != "rebal" {
+		t.Fatalf("unexpected floor source for rebalance fallback: got %q", got)
+	}
+	if got := floorSourceFromBaseCost("outrate", true); got != "market" {
+		t.Fatalf("unexpected floor source for market refill mode: got %q", got)
+	}
+}
+
 func TestBlendTargetWithSeed(t *testing.T) {
 	base := 1000
 	blended := blendTargetWithSeed(base, 800, 0.20)

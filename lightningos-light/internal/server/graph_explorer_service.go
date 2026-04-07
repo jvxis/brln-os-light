@@ -397,6 +397,9 @@ func (s *GraphExplorerService) Refresh(ctx context.Context) error {
 	if err := upsertGraphPoliciesSnapshot(ctx, tx, snapshot.Channels, refreshStartedAt, currentPolicies); err != nil {
 		return err
 	}
+	if err := s.reconcileLocalClosedChannels(ctx, tx, refreshStartedAt); err != nil {
+		return err
+	}
 	if err := recomputeGraphNodeAggregates(ctx, tx, refreshStartedAt); err != nil {
 		return err
 	}

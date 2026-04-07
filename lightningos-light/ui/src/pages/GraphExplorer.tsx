@@ -1334,9 +1334,9 @@ export default function GraphExplorer() {
               {t('graphExplorer.closedEmpty')}
             </div>
           ) : (
-            <div className="overflow-x-auto rounded-[1.35rem] border border-white/10 bg-white/[0.03]">
+            <div className="max-h-[38rem] overflow-auto rounded-[1.35rem] border border-white/10 bg-white/[0.03]">
               <table className="min-w-full text-sm">
-                <thead className="border-b border-white/10 bg-white/[0.025] text-left text-xs uppercase tracking-[0.14em] text-fog/45">
+                <thead className="sticky top-0 z-10 border-b border-white/10 bg-[#182232] text-left text-xs uppercase tracking-[0.14em] text-fog/45">
                   <tr>
                     <th className="px-4 py-3">{t('graphExplorer.columns.observedAt')}</th>
                     <th className="px-4 py-3">{t('graphExplorer.columns.peer')}</th>
@@ -1491,9 +1491,9 @@ export default function GraphExplorer() {
             {feeHistory.length === 0 ? (
               <p className="mt-4 text-sm text-fog/60">{t('graphExplorer.feeHistoryEmpty')}</p>
             ) : (
-              <div className="mt-4 overflow-x-auto">
+              <div className="mt-4 max-h-[32rem] overflow-auto rounded-[1.1rem] border border-white/10 bg-white/[0.02]">
                 <table className="min-w-full text-sm">
-                  <thead className="border-b border-white/10 text-left text-xs uppercase tracking-[0.14em] text-fog/45">
+                  <thead className="sticky top-0 z-10 border-b border-white/10 bg-[#182232] text-left text-xs uppercase tracking-[0.14em] text-fog/45">
                     <tr>
                       <th className="px-3 py-3">{t('graphExplorer.columns.day')}</th>
                       <th className="px-3 py-3">{t('graphExplorer.columns.outbound')}</th>

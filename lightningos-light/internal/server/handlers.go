@@ -1553,7 +1553,7 @@ func (s *Server) handleLNChannels(w http.ResponseWriter, r *http.Request) {
 		rebalFeeMsat := make(map[uint64]int64)
 		rebalAmtMsat := make(map[uint64]int64)
 		rebalRows, err := s.db.Query(dbCtx, `
-      select coalesce(rebal_target_chan_id, rebal_source_chan_id, channel_id) as chan_id,
+      select coalesce(rebal_target_chan_id, channel_id) as chan_id,
         coalesce(sum(case when fee_msat > 0 then fee_msat else fee_sat * 1000 end), 0),
         coalesce(sum(
           case
@@ -1565,8 +1565,8 @@ func (s *Server) handleLNChannels(w http.ResponseWriter, r *http.Request) {
       from notifications
       where type='rebalance' and occurred_at >= now() - interval '7 day'
         and status in ('SETTLED', 'SUCCEEDED')
-        and coalesce(rebal_target_chan_id, rebal_source_chan_id, channel_id) is not null
-      group by coalesce(rebal_target_chan_id, rebal_source_chan_id, channel_id)
+        and coalesce(rebal_target_chan_id, channel_id) is not null
+      group by coalesce(rebal_target_chan_id, channel_id)
     `)
 		if err != nil {
 			s.logger.Printf("channel economics rebalance lookup failed: %v", err)

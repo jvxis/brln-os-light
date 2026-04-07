@@ -4550,14 +4550,14 @@ group by chan_id_in
 func (e *autofeeEngine) fetchRebalanceStats(ctx context.Context, lookback int) (rebalStats, error) {
 	stats := rebalStats{ByChannel: map[uint64]rebalStat{}}
 	rows, err := e.svc.db.Query(ctx, `
-select coalesce(rebal_target_chan_id, rebal_source_chan_id) as chan_id,
+select coalesce(rebal_target_chan_id, channel_id) as chan_id,
   coalesce(sum(case when fee_msat > 0 then fee_msat else fee_sat * 1000 end), 0),
   coalesce(sum(amount_sat), 0)
 from notifications
 where type='rebalance' and occurred_at >= now() - ($1 * interval '1 day')
   and status in ('SETTLED', 'SUCCEEDED')
-  and (rebal_target_chan_id is not null or rebal_source_chan_id is not null)
-group by coalesce(rebal_target_chan_id, rebal_source_chan_id)
+  and coalesce(rebal_target_chan_id, channel_id) is not null
+group by coalesce(rebal_target_chan_id, channel_id)
 `, lookback)
 	if err != nil {
 		return stats, err

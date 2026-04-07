@@ -615,7 +615,7 @@ func (s *ChannelRankingService) fetchRebalanceStats(ctx context.Context, days in
 	stats := map[uint64]channelTrafficStat{}
 	rows, err := s.db.Query(ctx, `
 select
-  coalesce(rebal_target_chan_id, rebal_source_chan_id, channel_id) as chan_id,
+  coalesce(rebal_target_chan_id, channel_id) as chan_id,
   coalesce(sum(case when fee_msat > 0 then fee_msat else fee_sat * 1000 end), 0) as fee_msat,
   coalesce(sum(
     case
@@ -628,8 +628,8 @@ from notifications
 where type='rebalance'
   and status in ('SETTLED', 'SUCCEEDED')
   and occurred_at >= now() - ($1::int * interval '1 day')
-  and coalesce(rebal_target_chan_id, rebal_source_chan_id, channel_id) is not null
-group by coalesce(rebal_target_chan_id, rebal_source_chan_id, channel_id)
+  and coalesce(rebal_target_chan_id, channel_id) is not null
+group by coalesce(rebal_target_chan_id, channel_id)
 `, days)
 	if err != nil {
 		return stats, err

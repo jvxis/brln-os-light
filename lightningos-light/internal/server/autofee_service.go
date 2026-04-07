@@ -6514,8 +6514,12 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 
 	if outRatio < lowOutProtectThresh && target < localPpm {
-		target = localPpm
-		tags = append(tags, "no-down-low")
+		if matureEmptySinkDownAnchorActive {
+			tags = append(tags, "empty-sink-low-relax")
+		} else {
+			target = localPpm
+			tags = append(tags, "no-down-low")
+		}
 	}
 
 	if superSourceActive {
@@ -8549,6 +8553,8 @@ func formatAutofeeTags(d *decision) string {
 			add("🧯empty-sink-floor")
 		case t == "empty-sink-neg-relax":
 			add("🧯empty-sink-neg")
+		case t == "empty-sink-low-relax":
+			add("🧯empty-sink-low")
 		case t == "empty-sink-global-relax":
 			add("🧯empty-sink-global")
 		case t == "empty-sink-peg-paused":

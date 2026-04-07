@@ -844,6 +844,14 @@ ensure_lightningos_user() {
   chmod 750 /var/lib/lightningos
 }
 
+ensure_system_group() {
+  local group="$1"
+  if getent group "$group" >/dev/null 2>&1; then
+    return 0
+  fi
+  groupadd --system "$group"
+}
+
 ensure_group_membership() {
   local user="$1"
   shift
@@ -1311,6 +1319,8 @@ main() {
   set_env_value "TERMINAL_ENABLED" "1"
   ensure_terminal_helper
   ensure_terminal_service
+
+  ensure_system_group docker
 
   local membership_groups=()
   if [[ -n "$LND_GROUP" ]]; then

@@ -86,6 +86,57 @@ func TestShouldHoldMatureEmptySinkUpwardPressure(t *testing.T) {
 	}
 }
 
+func TestHasFreshAutofeePressureSignal(t *testing.T) {
+	if !hasFreshAutofeePressureSignal(0, 0, 1, 0, false, false, false) {
+		t.Fatalf("expected recent rebalance success to count as fresh pressure")
+	}
+	if !hasFreshAutofeePressureSignal(0, 0, 0, 1, false, false, false) {
+		t.Fatalf("expected recent weak rebalance attempt to count as fresh pressure")
+	}
+	if !hasFreshAutofeePressureSignal(1, 0, 0, 0, false, false, false) {
+		t.Fatalf("expected recent forwards to count as fresh pressure")
+	}
+	if !hasFreshAutofeePressureSignal(0, 0, 0, 0, true, false, false) {
+		t.Fatalf("expected HTLC pressure to count as fresh pressure")
+	}
+	if !hasFreshAutofeePressureSignal(0, 0, 0, 0, false, false, true) {
+		t.Fatalf("expected bootstrap state to count as fresh pressure")
+	}
+	if hasFreshAutofeePressureSignal(0, 0, 0, 0, false, false, false) {
+		t.Fatalf("did not expect idle channel to count as fresh pressure")
+	}
+}
+
+func TestShouldBlockAutofeeIdleUpwardPressure(t *testing.T) {
+	if !shouldBlockAutofeeIdleUpwardPressure(false, true, 250, 200, 0, 0, false, false, false, false, false) {
+		t.Fatalf("expected idle upward pressure to be blocked without observed signals")
+	}
+	if shouldBlockAutofeeIdleUpwardPressure(false, true, 250, 200, 0, 0, false, false, false, true, false) {
+		t.Fatalf("did not expect upward pressure to be blocked when observed forward signal exists")
+	}
+	if shouldBlockAutofeeIdleUpwardPressure(false, true, 250, 200, 0, 1, false, false, false, false, false) {
+		t.Fatalf("did not expect upward pressure to be blocked when weak rebalance attempts exist")
+	}
+	if shouldBlockAutofeeIdleUpwardPressure(false, true, 250, 200, 0, 0, false, false, true, false, false) {
+		t.Fatalf("did not expect upward pressure to be blocked during bootstrap")
+	}
+	if shouldBlockAutofeeIdleUpwardPressure(true, true, 250, 200, 0, 0, false, false, false, false, false) {
+		t.Fatalf("did not expect balanced-mode idle rule to apply in market refill mode")
+	}
+}
+
+func TestShouldRefreshAutofeeOutrateMemory(t *testing.T) {
+	if !shouldRefreshAutofeeOutrateMemory(400, 1, 1000) {
+		t.Fatalf("expected recent 1d forwards to refresh outrate memory")
+	}
+	if shouldRefreshAutofeeOutrateMemory(400, 0, 0) {
+		t.Fatalf("did not expect stale 7d-only outrate to refresh memory timestamp")
+	}
+	if shouldRefreshAutofeeOutrateMemory(0, 1, 1000) {
+		t.Fatalf("did not expect zero outrate to refresh memory timestamp")
+	}
+}
+
 func TestBaseCostSourceClassification(t *testing.T) {
 	if !isRebalanceBaseCostSource("rebal") || !isRebalanceBaseCostSource("rebal-global") || !isRebalanceBaseCostSource("rebal-blend") {
 		t.Fatalf("expected rebalance-derived sources to be classified as rebalance")

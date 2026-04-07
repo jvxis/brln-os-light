@@ -4313,6 +4313,50 @@ func shouldHoldMatureEmptySinkUpwardPressure(classLabel string, channelAgeHours 
 	return channelAgeHours >= matureHours
 }
 
+func hasRecentAutofeeOutrateMemory(st *autofeeChannelState, now time.Time) bool {
+	if st == nil || st.LastOutrate <= 0 || st.LastOutrateTs.IsZero() {
+		return false
+	}
+	return now.Sub(st.LastOutrateTs) <= 21*24*time.Hour
+}
+
+func hasRecentAutofeeRebalanceMemory(st *autofeeChannelState, now time.Time) bool {
+	if st == nil || st.LastRebalCost <= 0 || st.LastRebalCostTs.IsZero() {
+		return false
+	}
+	return now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour
+}
+
+func hasFreshAutofeePressureSignal(recentForwards1d int, outAmt1dSat int64, recentRebalanceCount int, recentRebalanceWeakCount int, htlcPressureSignal bool, htlcForwardHot bool, newInboundBootstrap bool) bool {
+	if newInboundBootstrap || htlcPressureSignal || htlcForwardHot {
+		return true
+	}
+	if recentRebalanceCount > 0 || recentRebalanceWeakCount > 0 {
+		return true
+	}
+	return recentForwards1d > 0 || outAmt1dSat > 0
+}
+
+func shouldBlockAutofeeIdleUpwardPressure(marketRefillMode bool, noFlow1d bool, target int, localPpm int, recentRebalanceCount int, recentRebalanceWeakCount int, htlcPressureSignal bool, htlcForwardHot bool, newInboundBootstrap bool, observedOutSignal bool, observedRebalSignal bool) bool {
+	if marketRefillMode || !noFlow1d || target <= localPpm || newInboundBootstrap {
+		return false
+	}
+	if recentRebalanceCount > 0 || recentRebalanceWeakCount > 0 {
+		return false
+	}
+	if htlcPressureSignal || htlcForwardHot {
+		return false
+	}
+	return !observedOutSignal && !observedRebalSignal
+}
+
+func shouldRefreshAutofeeOutrateMemory(outPpm7d int, recentForwards1d int, outAmt1dSat int64) bool {
+	if outPpm7d <= 0 {
+		return false
+	}
+	return recentForwards1d > 0 || outAmt1dSat > 0
+}
+
 func isRebalanceBaseCostSource(src string) bool {
 	switch strings.TrimSpace(src) {
 	case "rebal", "rebal-global", "rebal-21d", "rebal-mem", "rebal-blend":
@@ -5799,41 +5843,9 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		}
 	}
 
-	target := int(seed) + 25
+	target := int(seed)
 	noFlow1d := recentForwards1d == 0 && outAmt1dSat <= 0
 	lowOutSlowUp := false
-
-	if outRatio < lowOutProtectThresh {
-		st.LowStreak++
-	} else {
-		st.LowStreak = 0
-	}
-	if st.LowStreak >= 1 {
-		bumpAcc := math.Min(0.25, float64(st.LowStreak)*0.05)
-		if noFlow1d && bumpAcc > lowOutNoFlowBumpCap {
-			bumpAcc = lowOutNoFlowBumpCap
-			lowOutSlowUp = true
-		}
-		if target <= localPpm {
-			target = int(math.Ceil(float64(localPpm) * (1.0 + bumpAcc)))
-		} else {
-			target = int(math.Ceil(float64(target) * (1.0 + bumpAcc)))
-		}
-	}
-
-	if outRatio < lowOutThresh {
-		upMult := 1.02
-		if noFlow1d {
-			upMult = lowOutNoFlowBoostMult
-			lowOutSlowUp = true
-		}
-		target = int(math.Ceil(float64(target) * upMult))
-	} else if outRatio > e.profile.HighOutThresh {
-		target = int(math.Floor(float64(target) * 0.98))
-		if fwdCount == 0 && outRatio > 0.60 {
-			target = int(math.Floor(float64(target) * 0.985))
-		}
-	}
 
 	tags := []string{}
 	if outNormMeta.OutlierLarge || outNormMeta.OutlierSmall || math.Abs(outNormMeta.Effective-outNormMeta.Raw) >= channelOutNormTagDiffMin {
@@ -5862,9 +5874,6 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 	if outFrom21dFallback {
 		tags = append(tags, "out-fallback-21d")
-	}
-	if lowOutSlowUp {
-		tags = append(tags, "low-out-slow-up")
 	}
 	if highOutStagnationPressure {
 		tags = append(tags, "stagnation-pressure")
@@ -5952,6 +5961,61 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		}
 	}
 	htlcPressureSignal := !htlcSampleLow && (htlcPolicyHot || htlcLiquidityHot)
+	observedOutSignal := fwdCount > 0 || outAmtSat > 0 || outPpm7dRaw > 0
+	observedRebalSignal := !marketRefillMode && (rebal.AmtMsat > 0 || perCost > 0)
+	outrateMemoryActive := hasRecentAutofeeOutrateMemory(st, e.now)
+	rebalMemoryActive := !marketRefillMode && hasRecentAutofeeRebalanceMemory(st, e.now)
+	freshPressureSignal := hasFreshAutofeePressureSignal(
+		recentForwards1d,
+		outAmt1dSat,
+		recentRebalanceCount,
+		recentRebalanceWeakCount,
+		htlcPressureSignal,
+		htlcForwardHot,
+		newInboundBootstrap,
+	) || observedOutSignal || observedRebalSignal
+	if freshPressureSignal {
+		target += 25
+	}
+	if outRatio < lowOutProtectThresh {
+		if freshPressureSignal {
+			st.LowStreak++
+		} else {
+			st.LowStreak = 0
+		}
+	} else {
+		st.LowStreak = 0
+	}
+	if st.LowStreak >= 1 && freshPressureSignal {
+		bumpAcc := math.Min(0.25, float64(st.LowStreak)*0.05)
+		if noFlow1d && bumpAcc > lowOutNoFlowBumpCap {
+			bumpAcc = lowOutNoFlowBumpCap
+			lowOutSlowUp = true
+		}
+		if target <= localPpm {
+			target = int(math.Ceil(float64(localPpm) * (1.0 + bumpAcc)))
+		} else {
+			target = int(math.Ceil(float64(target) * (1.0 + bumpAcc)))
+		}
+	}
+	if outRatio < lowOutThresh {
+		if freshPressureSignal {
+			upMult := 1.02
+			if noFlow1d {
+				upMult = lowOutNoFlowBoostMult
+				lowOutSlowUp = true
+			}
+			target = int(math.Ceil(float64(target) * upMult))
+		}
+	} else if outRatio > e.profile.HighOutThresh {
+		target = int(math.Floor(float64(target) * 0.98))
+		if fwdCount == 0 && outRatio > 0.60 {
+			target = int(math.Floor(float64(target) * 0.985))
+		}
+	}
+	if lowOutSlowUp {
+		tags = append(tags, "low-out-slow-up")
+	}
 	rebalHistoryRefPpm := perCost
 	if rebalHistoryRefPpm <= 0 {
 		rebalHistoryRefPpm = perCost21d
@@ -6103,13 +6167,13 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			} else if perCost21d > 0 {
 				baseCostPpm = perCost21d
 				baseCostSrc = "rebal-21d"
-			} else if st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour {
+			} else if rebalMemoryActive {
 				baseCostPpm = st.LastRebalCost
 				baseCostSrc = "rebal-mem"
 			} else if outPpm7d > 0 && fwdCount >= 4 {
 				baseCostPpm = outPpm7d
 				baseCostSrc = "outrate"
-			} else if st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 21*24*time.Hour {
+			} else if outrateMemoryActive {
 				baseCostPpm = st.LastOutrate
 				baseCostSrc = "outrate-mem"
 			} else if seed > 0 {
@@ -6149,7 +6213,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			} else if perCost21d > 0 {
 				baseCostPpm = perCost21d
 				baseCostSrc = "rebal-21d"
-			} else if st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour {
+			} else if rebalMemoryActive {
 				baseCostPpm = st.LastRebalCost
 				baseCostSrc = "rebal-mem"
 			}
@@ -6164,17 +6228,35 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if !marketRefillMode && rebalFrom21dFallback && perCost <= 0 {
 		tags = append(tags, "rebal-fallback-21d")
 	}
-	hasOutSignal := outPpm7dRaw > 0 || outFrom21dFallback || slowCycle30dOutApplied || (st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 21*24*time.Hour)
-	hasRebalSignal := !marketRefillMode && (perCost > 0 || rebalFrom21dFallback || slowCycle30dRebalApplied || (st.LastRebalCost > 0 && !st.LastRebalCostTs.IsZero() && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour))
-	strongOutSignal := outPpm7dRaw > 0 || (st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 7*24*time.Hour)
-	strongRebalSignal := !marketRefillMode && (perCost > 0 || (st.LastRebalCost > 0 && !st.LastRebalCostTs.IsZero() && e.now.Sub(st.LastRebalCostTs) <= 7*24*time.Hour))
+	hasOutSignal := observedOutSignal || outFrom21dFallback || slowCycle30dOutApplied || outrateMemoryActive
+	hasRebalSignal := !marketRefillMode && (observedRebalSignal || rebalFrom21dFallback || slowCycle30dRebalApplied || rebalMemoryActive)
+	strongOutSignal := observedOutSignal || (outrateMemoryActive && e.now.Sub(st.LastOutrateTs) <= 7*24*time.Hour)
+	strongRebalSignal := !marketRefillMode && (observedRebalSignal || (rebalMemoryActive && e.now.Sub(st.LastRebalCostTs) <= 7*24*time.Hour))
 	noSignalNoUpActive := false
-	if noFlow1d &&
+	if shouldBlockAutofeeIdleUpwardPressure(
+		marketRefillMode,
+		noFlow1d,
+		target,
+		localPpm,
+		recentRebalanceCount,
+		recentRebalanceWeakCount,
+		htlcPressureSignal,
+		htlcForwardHot,
+		newInboundBootstrap,
+		observedOutSignal,
+		observedRebalSignal,
+	) {
+		target = localPpm
+		noSignalNoUpActive = true
+		tags = append(tags, "no-signal-noup")
+	} else if noFlow1d &&
 		!marketRefillMode &&
 		outRatio >= lowOutNoFlowUpperRatio &&
 		target > localPpm &&
 		recentRebalanceCount == 0 &&
+		recentRebalanceWeakCount == 0 &&
 		!htlcPressureSignal &&
+		!htlcForwardHot &&
 		!hasOutSignal &&
 		!hasRebalSignal {
 		target = localPpm
@@ -6320,11 +6402,11 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	capRefPpm := 0
 	if !marketRefillMode && perCost > 0 {
 		capRefPpm = perCost
-	} else if !marketRefillMode && st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour {
+	} else if !marketRefillMode && rebalMemoryActive {
 		capRefPpm = st.LastRebalCost
 	} else if outPpm7d > 0 && fwdCount >= 4 {
 		capRefPpm = outPpm7d
-	} else if st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 21*24*time.Hour {
+	} else if outrateMemoryActive {
 		capRefPpm = st.LastOutrate
 	} else if seed > 0 {
 		capRefPpm = int(seed)
@@ -6486,8 +6568,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	globalNegLockApplied := false
 	lockSkipTag := ""
 	if negMarginGlobal && !stagnationActive && !highOutStagnationPressure {
-		hasRecentRebal := !marketRefillMode && (perCost > 0 || (st.LastRebalCost > 0 && e.now.Sub(st.LastRebalCostTs) <= 21*24*time.Hour))
-		hasRecentOutrate := (outPpm7d > 0 && fwdCount >= 4) || (st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 21*24*time.Hour)
+		hasRecentRebal := !marketRefillMode && (observedRebalSignal || rebalFrom21dFallback || slowCycle30dRebalApplied)
+		hasRecentOutrate := (observedOutSignal && fwdCount >= 4) || outFrom21dFallback || slowCycle30dOutApplied
 		canLockGlobally := hasRecentRebal || hasRecentOutrate
 		if canLockGlobally {
 			allowSoften := false
@@ -7054,7 +7136,9 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	st.LastInboundDiscount = inboundDiscount
 	if outPpm7d > 0 {
 		st.LastOutrate = outPpm7d
-		st.LastOutrateTs = e.now
+		if shouldRefreshAutofeeOutrateMemory(outPpm7d, recentForwards1d, outAmt1dSat) {
+			st.LastOutrateTs = e.now
+		}
 	}
 
 	if finalPpm == localPpm {
@@ -7381,7 +7465,7 @@ func (e *autofeeEngine) seedForChannel(pubkey string, st *autofeeChannelState) (
 		}
 	}
 
-	if st.LastOutrate > 0 && !st.LastOutrateTs.IsZero() && e.now.Sub(st.LastOutrateTs) <= 21*24*time.Hour {
+	if hasRecentAutofeeOutrateMemory(st, e.now) {
 		return float64(st.LastOutrate), 0, 0, append(tags, "seed:outrate")
 	}
 	if st.LastSeed > 0 {

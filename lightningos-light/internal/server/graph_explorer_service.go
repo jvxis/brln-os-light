@@ -424,6 +424,8 @@ func (s *GraphExplorerService) applyGraphUpdate(ctx context.Context, update lndc
 	if observedAt.IsZero() {
 		observedAt = time.Now().UTC()
 	}
+	affectedPubKeys := graphExplorerCollectAffectedPubKeysFromChannelUpdates(update.ChannelUpdates)
+	closedChanIDs := graphExplorerCollectClosedChannelIDs(update.ClosedChannels)
 
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
@@ -445,8 +447,25 @@ func (s *GraphExplorerService) applyGraphUpdate(ctx context.Context, update lndc
 	if err := applyGraphClosedChannelUpdates(ctx, tx, update.ClosedChannels, observedAt); err != nil {
 		return err
 	}
-	if err := recomputeGraphNodeAggregates(ctx, tx, observedAt); err != nil {
-		return err
+	if len(closedChanIDs) > 0 {
+		closedPubKeys, err := loadGraphChannelPubKeysByChanIDs(ctx, tx, closedChanIDs)
+		if err != nil {
+			return err
+		}
+		affectedPubKeys = append(affectedPubKeys, closedPubKeys...)
+	}
+	if len(affectedPubKeys) > 0 {
+		if err := recomputeGraphNodeAggregatesForPubKeys(ctx, tx, observedAt, affectedPubKeys); err != nil {
+			return err
+		}
+	} else if len(update.ChannelUpdates) > 0 || len(update.ClosedChannels) > 0 {
+		if err := recomputeGraphNodeAggregates(ctx, tx, observedAt); err != nil {
+			return err
+		}
+	} else if len(update.NodeUpdates) == 0 {
+		if err := recomputeGraphNodeAggregates(ctx, tx, observedAt); err != nil {
+			return err
+		}
 	}
 	if err := upsertGraphSyncStateStream(ctx, tx, observedAt); err != nil {
 		return err
@@ -952,6 +971,43 @@ where not exists (
 	return err
 }
 
+func recomputeGraphNodeAggregatesForPubKeys(ctx context.Context, tx pgx.Tx, observedAt time.Time, pubkeys []string) error {
+	pubkeys = graphExplorerUniquePubKeys(pubkeys)
+	if len(pubkeys) == 0 {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `
+with affected as (
+  select distinct pubkey
+  from unnest($2::text[]) as items(pubkey)
+  where pubkey <> ''
+),
+stats as (
+  select pubkey, count(*)::integer as channel_count, coalesce(sum(capacity_sat), 0)::bigint as total_capacity_sat
+  from (
+    select ch.node1_pubkey as pubkey, ch.capacity_sat
+    from graph_channels ch
+    join affected a on a.pubkey = ch.node1_pubkey
+    where ch.status = 'open' and ch.node1_pubkey is not null and ch.node1_pubkey <> ''
+    union all
+    select ch.node2_pubkey as pubkey, ch.capacity_sat
+    from graph_channels ch
+    join affected a on a.pubkey = ch.node2_pubkey
+    where ch.status = 'open' and ch.node2_pubkey is not null and ch.node2_pubkey <> ''
+  ) flattened
+  group by pubkey
+)
+update graph_nodes n
+set channel_count = coalesce(stats.channel_count, 0),
+  total_capacity_sat = coalesce(stats.total_capacity_sat, 0),
+  last_indexed_at = $1
+from affected
+left join stats on stats.pubkey = affected.pubkey
+where n.pubkey = affected.pubkey
+`, observedAt, pubkeys)
+	return err
+}
+
 func upsertGraphSyncStateRefresh(ctx context.Context, tx pgx.Tx, observedAt time.Time) error {
 	_, err := tx.Exec(ctx, `
 insert into graph_sync_state (id, first_native_coverage_at, last_bootstrap_at, last_reconcile_at, updated_at)
@@ -1024,6 +1080,46 @@ from graph_channel_policy_current
 		result[key] = snapshot
 	}
 	return result, rows.Err()
+}
+
+func loadGraphChannelPubKeysByChanIDs(ctx context.Context, tx pgx.Tx, chanIDs []uint64) ([]string, error) {
+	chanIDs = graphExplorerUniqueChanIDs(chanIDs)
+	if len(chanIDs) == 0 {
+		return nil, nil
+	}
+	values := make([]int64, 0, len(chanIDs))
+	for _, chanID := range chanIDs {
+		if chanID == 0 {
+			continue
+		}
+		values = append(values, int64(chanID))
+	}
+	if len(values) == 0 {
+		return nil, nil
+	}
+	rows, err := tx.Query(ctx, `
+select node1_pubkey, node2_pubkey
+from graph_channels
+where chan_id = any($1)
+`, values)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	pubkeys := make([]string, 0, len(values)*2)
+	for rows.Next() {
+		var node1 string
+		var node2 string
+		if err := rows.Scan(&node1, &node2); err != nil {
+			return nil, err
+		}
+		pubkeys = append(pubkeys, node1, node2)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return graphExplorerUniquePubKeys(pubkeys), nil
 }
 
 func loadCurrentGraphPolicy(ctx context.Context, tx pgx.Tx, key graphPolicyKey) (graphPolicySnapshot, bool, error) {
@@ -1217,6 +1313,77 @@ func channelBlockHeight(channelID uint64) int {
 		return 0
 	}
 	return int(channelID >> 40)
+}
+
+func graphExplorerCollectAffectedPubKeysFromChannelUpdates(updates []lndclient.GraphChannelUpdate) []string {
+	pubkeys := make([]string, 0, len(updates)*2)
+	for _, update := range updates {
+		node1, node2 := canonicalPubKeyPair(
+			graphExplorerNormalizePubkey(update.AdvertisingNode),
+			graphExplorerNormalizePubkey(update.ConnectingNode),
+		)
+		pubkeys = append(pubkeys, node1, node2)
+	}
+	return graphExplorerUniquePubKeys(pubkeys)
+}
+
+func graphExplorerCollectClosedChannelIDs(updates []lndclient.GraphClosedChannelUpdate) []uint64 {
+	if len(updates) == 0 {
+		return nil
+	}
+	chanIDs := make([]uint64, 0, len(updates))
+	for _, update := range updates {
+		if update.ChannelID == 0 {
+			continue
+		}
+		chanIDs = append(chanIDs, update.ChannelID)
+	}
+	return graphExplorerUniqueChanIDs(chanIDs)
+}
+
+func graphExplorerUniquePubKeys(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		pubkey := graphExplorerNormalizePubkey(value)
+		if pubkey == "" {
+			continue
+		}
+		if _, ok := seen[pubkey]; ok {
+			continue
+		}
+		seen[pubkey] = struct{}{}
+		result = append(result, pubkey)
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func graphExplorerUniqueChanIDs(values []uint64) []uint64 {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[uint64]struct{}, len(values))
+	result := make([]uint64, 0, len(values))
+	for _, value := range values {
+		if value == 0 {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func canonicalPubKeyPair(left, right string) (string, string) {

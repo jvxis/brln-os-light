@@ -86,6 +86,30 @@ func TestShouldHoldMatureEmptySinkUpwardPressure(t *testing.T) {
 	}
 }
 
+func TestDeriveMatureEmptySinkHistoryAnchor(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	anchor, ok := deriveMatureEmptySinkHistoryAnchor(profile, 2207, 748, 971, 971, "rebal")
+	if !ok {
+		t.Fatalf("expected mature empty sink anchor to activate")
+	}
+	if anchor != 1185 {
+		t.Fatalf("unexpected anchor: got %d want 1185", anchor)
+	}
+
+	if _, ok := deriveMatureEmptySinkHistoryAnchor(profile, 1200, 748, 971, 971, "rebal"); ok {
+		t.Fatalf("did not expect anchor when local ppm is not detached enough")
+	}
+}
+
+func TestShouldRelaxFloorForMatureEmptySinkAnchor(t *testing.T) {
+	if !shouldRelaxFloorForMatureEmptySinkAnchor("rebal") || !shouldRelaxFloorForMatureEmptySinkAnchor("peg") || !shouldRelaxFloorForMatureEmptySinkAnchor("outrate-sink") {
+		t.Fatalf("expected history-derived floor sources to be relaxable")
+	}
+	if shouldRelaxFloorForMatureEmptySinkAnchor("revfloor") || shouldRelaxFloorForMatureEmptySinkAnchor("super-source") {
+		t.Fatalf("did not expect revfloor or super-source to be relaxable")
+	}
+}
+
 func TestHasFreshAutofeePressureSignal(t *testing.T) {
 	if !hasFreshAutofeePressureSignal(0, 0, 1, 0, false, false, false) {
 		t.Fatalf("expected recent rebalance success to count as fresh pressure")

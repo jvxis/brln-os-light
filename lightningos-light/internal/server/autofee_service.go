@@ -4313,6 +4313,52 @@ func shouldHoldMatureEmptySinkUpwardPressure(classLabel string, channelAgeHours 
 	return channelAgeHours >= matureHours
 }
 
+func matureEmptySinkHistoryAnchorParams(profile autofeeProfile) (float64, float64) {
+	switch {
+	case profile.StepCap <= 0.05:
+		return 1.55, 1.30
+	case profile.StepCap >= 0.10:
+		return 1.30, 1.20
+	default:
+		return 1.40, 1.22
+	}
+}
+
+func deriveMatureEmptySinkHistoryAnchor(profile autofeeProfile, localPpm int, outPpm7d int, rebalRefPpm int, baseCostPpm int, baseCostSrc string) (int, bool) {
+	if localPpm <= 0 {
+		return 0, false
+	}
+	refPpm := maxInt(outPpm7d, rebalRefPpm)
+	if (isRebalanceBaseCostSource(baseCostSrc) || isOutrateBaseCostSource(baseCostSrc)) && baseCostPpm > refPpm {
+		refPpm = baseCostPpm
+	}
+	if refPpm <= 0 {
+		return 0, false
+	}
+	triggerMult, anchorMult := matureEmptySinkHistoryAnchorParams(profile)
+	if float64(localPpm) < float64(refPpm)*triggerMult {
+		return 0, false
+	}
+	anchor := int(math.Ceil(float64(refPpm) * anchorMult))
+	if anchor < refPpm {
+		anchor = refPpm
+	}
+	minGap := maxInt(75, int(math.Round(float64(localPpm)*0.05)))
+	if localPpm-anchor < minGap {
+		return 0, false
+	}
+	return anchor, anchor < localPpm
+}
+
+func shouldRelaxFloorForMatureEmptySinkAnchor(floorSrc string) bool {
+	switch strings.TrimSpace(floorSrc) {
+	case "rebal", "rebal-sink", "rebal-hold", "outrate", "outrate-sink", "peg", "no-signal", "seed-soft":
+		return true
+	default:
+		return false
+	}
+}
+
 func hasRecentAutofeeOutrateMemory(st *autofeeChannelState, now time.Time) bool {
 	if st == nil || st.LastOutrate <= 0 || st.LastOutrateTs.IsZero() {
 		return false
@@ -6225,6 +6271,20 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if baseCostPpm < e.cfg.MinPpm {
 		baseCostPpm = e.cfg.MinPpm
 	}
+	matureEmptySinkDownAnchorActive := false
+	matureEmptySinkDownAnchorPpm := 0
+	if !marketRefillMode &&
+		holdMatureEmptySinkUp &&
+		rebalSettingOk &&
+		!rebalSetting.AutoEnabled &&
+		!rebalSetting.ManualRestartEnabled {
+		if anchor, ok := deriveMatureEmptySinkHistoryAnchor(e.profile, localPpm, outPpm7d, rebalHistoryRefPpm, baseCostPpm, baseCostSrc); ok {
+			target = minInt(target, anchor)
+			matureEmptySinkDownAnchorActive = true
+			matureEmptySinkDownAnchorPpm = anchor
+			tags = append(tags, "empty-sink-down-anchor")
+		}
+	}
 	if !marketRefillMode && rebalFrom21dFallback && perCost <= 0 {
 		tags = append(tags, "rebal-fallback-21d")
 	}
@@ -6508,6 +6568,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if marginPpm7d < 0 && target < localPpm {
 		if stagnationActive || highOutStagnationPressure {
 			tags = append(tags, "stagnation-neg-override")
+		} else if matureEmptySinkDownAnchorActive {
+			tags = append(tags, "empty-sink-neg-relax")
 		} else if seedSoftNegMarginRelax {
 			tags = append(tags, "seed:soft-neg-relax")
 		} else {
@@ -6591,6 +6653,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 					if outPpm7d > 0 && target < outPpm7d {
 						target = outPpm7d
 					}
+				} else if matureEmptySinkDownAnchorActive {
+					lockSkipTag = "empty-sink-global-relax"
 				} else if allowSoften {
 					if outPpm7d > 0 {
 						pegFloor := int(math.Round(float64(outPpm7d) * softenMaxDropToPegFrac))
@@ -6753,6 +6817,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		demandPeg := seed > 0 && float64(outPpm7d) >= seed*outratePegSeedMult
 		if rescueActive && target < localPpm && peg > floor {
 			tags = append(tags, "rescue-peg-paused")
+		} else if matureEmptySinkDownAnchorActive && target < localPpm && peg > floor {
+			tags = append(tags, "empty-sink-peg-paused")
 		} else if peg > floor && (withinGrace || demandPeg) {
 			floor = peg
 			floorSrc = "peg"
@@ -6839,6 +6905,11 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			floorSrc = "seed-soft"
 			tags = append(tags, softTags...)
 		}
+	}
+	if matureEmptySinkDownAnchorActive && matureEmptySinkDownAnchorPpm > 0 && floor > matureEmptySinkDownAnchorPpm && shouldRelaxFloorForMatureEmptySinkAnchor(floorSrc) {
+		floor = matureEmptySinkDownAnchorPpm
+		floorSrc = "empty-sink-anchor"
+		tags = append(tags, "empty-sink-floor-anchor")
 	}
 	if target < localPpm && floor >= localPpm {
 		stallRelaxGapFrac := e.profile.StallFloorRelaxGapFrac
@@ -8466,6 +8537,22 @@ func formatAutofeeTags(d *decision) string {
 			add("🐢low-out-up")
 		case t == "low-out-noflow-cap":
 			add("🧯noflow-up-cap")
+		case t == "empty-sink-hold":
+			add("🧯empty-sink-hold")
+		case t == "empty-sink-rebal-off":
+			add("🧯empty-sink-rebal-off")
+		case t == "empty-sink-down-anchor":
+			add("🧯empty-sink-down")
+		case t == "empty-sink-floor-hold":
+			add("🧯empty-sink-floor-hold")
+		case t == "empty-sink-floor-anchor":
+			add("🧯empty-sink-floor")
+		case t == "empty-sink-neg-relax":
+			add("🧯empty-sink-neg")
+		case t == "empty-sink-global-relax":
+			add("🧯empty-sink-global")
+		case t == "empty-sink-peg-paused":
+			add("🧯empty-sink-peg")
 		case t == "out-fallback-21d":
 			add("🕰️out-21d")
 		case t == "rebal-fallback-21d":

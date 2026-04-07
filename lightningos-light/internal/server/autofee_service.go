@@ -4035,6 +4035,10 @@ func effectiveCooldownUpSecForChannel(profile autofeeProfile, baseCooldownUpSec 
 	return cooldownSec
 }
 
+func shouldBypassStrictCooldownUp(recentRebalanceCount int, htlcLiquidityHot bool) bool {
+	return recentRebalanceCount > 0 || htlcLiquidityHot
+}
+
 func isMoveTowardTarget(localPpm int, nextPpm int, targetPpm int) bool {
 	return math.Abs(float64(targetPpm-nextPpm)) < math.Abs(float64(targetPpm-localPpm))
 }
@@ -7113,18 +7117,21 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		tags = append(tags, "cooldown-skip")
 	}
 	if finalPpm != localPpm && !e.ignoreCooldown && !skipCooldownDown {
-		fwdsSince := fwdCount - st.BaselineFwd7d
 		cooldownHours := float64(maxInt(1, cooldownDownSec)) / 3600.0
+		bypassUpCooldown := false
 		if finalPpm > localPpm {
 			cooldownHours = float64(maxInt(1, effectiveCooldownUpSecForChannel(e.profile, cooldownUpSec, outRatio, holdUpOnRecentRebalance))) / 3600.0
+			bypassUpCooldown = shouldBypassStrictCooldownUp(recentRebalanceCount, htlcLiquidityHot)
 		}
 		if !st.LastTs.IsZero() {
 			hoursSince := e.now.Sub(st.LastTs).Hours()
-			if hoursSince < cooldownHours && fwdsSince < 2 {
+			if hoursSince < cooldownHours && !(finalPpm > localPpm && bypassUpCooldown) {
 				apply = false
 				if !containsTag(tags, "cooldown") {
 					tags = append(tags, "cooldown")
 				}
+			} else if finalPpm > localPpm && bypassUpCooldown {
+				tags = append(tags, "cooldown-up-bypass")
 			}
 		}
 	}
@@ -8529,6 +8536,8 @@ func formatAutofeeTags(d *decision) string {
 			add("📌peg-paused")
 		case t == "cooldown":
 			add("⏳cooldown")
+		case t == "cooldown-up-bypass":
+			add("⏳up-bypass")
 		case t == "cooldown-profit":
 			add("⏳profit-hold")
 		case t == "cooldown-skip":

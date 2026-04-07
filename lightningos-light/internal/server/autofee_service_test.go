@@ -809,6 +809,18 @@ func TestEffectiveCooldownUpSecForChannelRespectsHoldAndBase(t *testing.T) {
 	}
 }
 
+func TestShouldBypassStrictCooldownUp(t *testing.T) {
+	if shouldBypassStrictCooldownUp(0, false) {
+		t.Fatalf("did not expect plain forward activity to bypass strict cooldown")
+	}
+	if !shouldBypassStrictCooldownUp(1, false) {
+		t.Fatalf("expected recent rebalance to bypass strict cooldown")
+	}
+	if !shouldBypassStrictCooldownUp(0, true) {
+		t.Fatalf("expected liquidity-hot signal to bypass strict cooldown")
+	}
+}
+
 func TestEvalDrainedExplorerStartsAndStops(t *testing.T) {
 	e := &autofeeEngine{
 		profile: autofeeProfiles["moderate"],

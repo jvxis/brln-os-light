@@ -26,3 +26,10 @@ func TestNormalizeGraphNodeAddressesDeduplicatesStoredDuplicates(t *testing.T) {
 		t.Fatalf("unexpected second address %q", normalized[1].Addr)
 	}
 }
+
+func TestNormalizeGraphExplorerSearchTextRemovesNoise(t *testing.T) {
+	normalized := normalizeGraphExplorerSearchText("  ⚡️Liberty⚡️   Swiss  ")
+	if normalized != "liberty swiss" {
+		t.Fatalf("unexpected normalized query %q", normalized)
+	}
+}

@@ -593,7 +593,7 @@ export default function GraphExplorer() {
     `${numberFormatter.format(Math.max(0, Math.round(Number(value || 0))))} sats`
 
   const formatInteger = (value?: number) =>
-    numberFormatter.format(Math.max(0, Math.round(Number(value || 0))))
+    numberFormatter.format(Math.round(Number(value || 0)))
 
   const formatTimestamp = (value?: string) => {
     if (!value) return t('common.na')

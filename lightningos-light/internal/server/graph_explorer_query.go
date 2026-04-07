@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 )
 
 var ErrGraphExplorerNodeNotFound = errors.New("graph explorer node not found")
+var graphExplorerSearchNoisePattern = regexp.MustCompile(`[^[:alnum:]]+`)
 
 type GraphExplorerSearchResponse struct {
 	Query         string                      `json:"query"`
@@ -84,42 +86,63 @@ func (s *GraphExplorerService) SearchNodes(ctx context.Context, query string, li
 		return GraphExplorerSearchResponse{}, err
 	}
 	localOpenPeers := s.loadLocalOpenPeerSet(ctx)
+	normalizedQuery := normalizeGraphExplorerSearchText(query)
 
 	rows, err := s.db.Query(ctx, `
 with input as (
-  select trim($1)::text as q, lower(trim($1)::text) as q_lower
+  select
+    trim($1)::text as q,
+    lower(trim($1)::text) as q_lower,
+    trim(lower($2)::text) as q_norm
+),
+nodes as (
+  select
+    n.pubkey,
+    coalesce(n.alias, '') as alias,
+    coalesce(n.color, '') as color,
+    n.channel_count,
+    n.total_capacity_sat,
+    n.last_seen_at,
+    lower(coalesce(n.alias, '')) as alias_lower,
+    trim(regexp_replace(lower(coalesce(n.alias, '')), '[^[:alnum:]]+', ' ', 'g')) as alias_norm
+  from graph_nodes n
 )
 select
   n.pubkey,
-  coalesce(n.alias, ''),
-  coalesce(n.color, ''),
+  n.alias,
+  n.color,
   n.channel_count,
   n.total_capacity_sat,
   n.last_seen_at
-from graph_nodes n
+from nodes n
 cross join input i
 where i.q <> ''
   and (
     n.pubkey = i.q
     or n.pubkey like i.q || '%'
-    or lower(coalesce(n.alias, '')) = i.q_lower
-    or lower(coalesce(n.alias, '')) like i.q_lower || '%'
-    or lower(coalesce(n.alias, '')) like '%' || i.q_lower || '%'
+    or n.alias_lower = i.q_lower
+    or n.alias_lower like i.q_lower || '%'
+    or n.alias_lower like '%' || i.q_lower || '%'
+    or (i.q_norm <> '' and n.alias_norm = i.q_norm)
+    or (i.q_norm <> '' and n.alias_norm like i.q_norm || '%')
+    or (i.q_norm <> '' and n.alias_norm like '%' || i.q_norm || '%')
   )
 order by
   case
     when n.pubkey = i.q then 0
-    when lower(coalesce(n.alias, '')) = i.q_lower then 1
-    when n.pubkey like i.q || '%' then 2
-    when lower(coalesce(n.alias, '')) like i.q_lower || '%' then 3
-    else 4
+    when n.alias_lower = i.q_lower then 1
+    when i.q_norm <> '' and n.alias_norm = i.q_norm then 2
+    when n.pubkey like i.q || '%' then 3
+    when n.alias_lower like i.q_lower || '%' then 4
+    when i.q_norm <> '' and n.alias_norm like i.q_norm || '%' then 5
+    else 6
   end asc,
   n.channel_count desc,
   n.total_capacity_sat desc,
   n.last_seen_at desc,
   n.pubkey asc
 limit $2
-`, query, limit)
+`, query, normalizedQuery, limit)
 	if err != nil {
 		return GraphExplorerSearchResponse{}, err
 	}
@@ -153,6 +176,15 @@ limit $2
 		CoverageSince: coverageSince,
 		Items:         items,
 	}, nil
+}
+
+func normalizeGraphExplorerSearchText(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" {
+		return ""
+	}
+	value = graphExplorerSearchNoisePattern.ReplaceAllString(value, " ")
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func (s *GraphExplorerService) GetNodeGeneral(ctx context.Context, pubkey string) (GraphExplorerNodeGeneral, error) {

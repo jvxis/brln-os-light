@@ -141,7 +141,7 @@ order by
   n.total_capacity_sat desc,
   n.last_seen_at desc,
   n.pubkey asc
-limit $2
+ limit $3
 `, query, normalizedQuery, limit)
 	if err != nil {
 		return GraphExplorerSearchResponse{}, err

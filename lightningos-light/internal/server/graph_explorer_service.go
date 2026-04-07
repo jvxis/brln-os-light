@@ -400,6 +400,9 @@ func (s *GraphExplorerService) Refresh(ctx context.Context) error {
 	if err := s.reconcileLocalClosedChannels(ctx, tx, refreshStartedAt); err != nil {
 		return err
 	}
+	if err := reconcileSnapshotClosedChannels(ctx, tx, refreshStartedAt); err != nil {
+		return err
+	}
 	if err := recomputeGraphNodeAggregates(ctx, tx, refreshStartedAt); err != nil {
 		return err
 	}
@@ -866,10 +869,22 @@ on conflict (chan_id) do update set
   close_source = 'native',
   last_indexed_at = excluded.last_indexed_at
 `
-	const eventQuery = `
+	const eventUpdateQuery = `
+update graph_close_events
+set node1_pubkey = case when coalesce((select node1_pubkey from graph_channels where chan_id = $1), '') <> '' then (select node1_pubkey from graph_channels where chan_id = $1) else node1_pubkey end,
+    node2_pubkey = case when coalesce((select node2_pubkey from graph_channels where chan_id = $1), '') <> '' then (select node2_pubkey from graph_channels where chan_id = $1) else node2_pubkey end,
+    capacity_sat = case when $3 > 0 then $3 else capacity_sat end,
+    closed_height = case when $4 > 0 then $4 else closed_height end,
+    observed_at = coalesce(observed_at, $5),
+    close_source = 'native',
+    metadata_json = coalesce(metadata_json, '{}'::jsonb)
+where (chan_id > 0 and chan_id = $1)
+   or ($2 <> '' and chan_point = $2)
+`
+	const eventInsertQuery = `
 insert into graph_close_events (
   chan_id, chan_point, node1_pubkey, node2_pubkey, capacity_sat, closed_height, observed_at, close_source, metadata_json
-) values (
+) select
   $1,
   $2,
   (select node1_pubkey from graph_channels where chan_id = $1),
@@ -879,6 +894,11 @@ insert into graph_close_events (
   $5,
   'native',
   '{}'::jsonb
+where not exists (
+  select 1
+  from graph_close_events
+  where (chan_id > 0 and chan_id = $1)
+     or ($2 <> '' and chan_point = $2)
 )
 `
 
@@ -908,7 +928,23 @@ insert into graph_close_events (
 			channelQueued = 0
 		}
 
-		eventBatch.Queue(eventQuery,
+		eventBatch.Queue(eventUpdateQuery,
+			int64(update.ChannelID),
+			strings.TrimSpace(update.ChanPoint),
+			update.CapacitySat,
+			int(update.ClosedHeight),
+			observedAt,
+		)
+		eventQueued++
+		if eventQueued >= graphExplorerBatchSize {
+			if err := executeBatch(ctx, tx, eventBatch, eventQueued); err != nil {
+				return err
+			}
+			eventBatch = &pgx.Batch{}
+			eventQueued = 0
+		}
+
+		eventBatch.Queue(eventInsertQuery,
 			int64(update.ChannelID),
 			strings.TrimSpace(update.ChanPoint),
 			update.CapacitySat,

@@ -255,6 +255,9 @@ export default function RebalanceCenter() {
   const [editUseDefaultEconRatio, setEditUseDefaultEconRatio] = useState<Record<number, boolean>>({})
   const [manualRestart, setManualRestart] = useState<Record<string, boolean>>({})
   const [channelSort, setChannelSort] = useState<'economic' | 'emptiest'>('economic')
+  const [channelSearch, setChannelSearch] = useState('')
+  const [channelMinCapacity, setChannelMinCapacity] = useState('')
+  const [channelShowPrivate, setChannelShowPrivate] = useState(false)
   const [skipDetailsOpen, setSkipDetailsOpen] = useState(false)
   const [scanDetailsOpen, setScanDetailsOpen] = useState(false)
   const [scanDetailsReason, setScanDetailsReason] = useState('all')
@@ -352,8 +355,28 @@ export default function RebalanceCenter() {
       estimatedCost
     }
   }
+  const filteredWorkbenchChannels = useMemo(() => {
+    let list = channels.filter((ch) => ch.active)
+    if (!channelShowPrivate) {
+      list = list.filter((ch) => !ch.private)
+    }
+    if (channelSearch.trim()) {
+      const query = channelSearch.trim().toLowerCase()
+      list = list.filter((ch) => (
+        ch.peer_alias?.toLowerCase().includes(query) ||
+        ch.remote_pubkey?.toLowerCase().includes(query) ||
+        ch.channel_point?.toLowerCase().includes(query)
+      ))
+    }
+    const minCap = Number(channelMinCapacity || 0)
+    if (minCap > 0) {
+      list = list.filter((ch) => ch.capacity_sat >= minCap)
+    }
+    return list
+  }, [channelMinCapacity, channelSearch, channelShowPrivate, channels])
+
   const sortedChannels = useMemo(() => {
-    const active = channels.filter((ch) => ch.active)
+    const active = [...filteredWorkbenchChannels]
     if (channelSort === 'emptiest' || !config) {
       return active.sort((a, b) => a.local_pct - b.local_pct)
     }
@@ -371,7 +394,7 @@ export default function RebalanceCenter() {
       }
       return a.local_pct - b.local_pct
     })
-  }, [channels, config, channelSort])
+  }, [filteredWorkbenchChannels, config, channelSort])
   const buildAttemptTotals = (attempts: RebalanceAttempt[]) => {
     const totals = new Map<number, { amount: number; fee: number }>()
     attempts.forEach((attempt) => {
@@ -1828,6 +1851,7 @@ export default function RebalanceCenter() {
           <h3 className="text-lg font-semibold">{t('rebalanceCenter.channels.title')}</h3>
           <div className="flex flex-wrap items-center gap-4 text-xs text-fog/60">
             <span>{t('rebalanceCenter.channels.count', { count: channels.length })}</span>
+            <span>{t('rebalanceCenter.channels.filteredCount', { count: sortedChannels.length })}</span>
             <div className="flex items-center gap-2">
               <span>{t('rebalanceCenter.channels.sortLabel')}</span>
               <div className="flex items-center rounded-full border border-white/10 bg-white/5 p-1">
@@ -1846,6 +1870,41 @@ export default function RebalanceCenter() {
               </div>
             </div>
           </div>
+        </div>
+        <div className="grid gap-3 lg:grid-cols-4">
+          <input
+            className="input-field"
+            placeholder={t('rebalanceCenter.channels.searchPlaceholder')}
+            value={channelSearch}
+            onChange={(e) => setChannelSearch(e.target.value)}
+          />
+          <input
+            className="input-field"
+            placeholder={t('rebalanceCenter.channels.minCapacity')}
+            type="number"
+            min={0}
+            value={channelMinCapacity}
+            onChange={(e) => setChannelMinCapacity(e.target.value)}
+          />
+          <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-fog/70">
+            <input
+              type="checkbox"
+              checked={channelShowPrivate}
+              onChange={(e) => setChannelShowPrivate(e.target.checked)}
+            />
+            {t('rebalanceCenter.channels.showPrivate')}
+          </label>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => {
+              setChannelSearch('')
+              setChannelMinCapacity('')
+              setChannelShowPrivate(false)
+            }}
+          >
+            {t('rebalanceCenter.channels.resetFilters')}
+          </button>
         </div>
         <div className="space-y-3 md:hidden">
           <div className="flex flex-wrap items-center gap-4 text-xs text-fog/60">

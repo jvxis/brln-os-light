@@ -2671,6 +2671,11 @@
     "channels": {
       "title": "Workbench de Canais",
       "count": "{{count}} canais",
+      "filteredCount": "{{count}} visíveis",
+      "searchPlaceholder": "Buscar alias, pubkey ou channel point",
+      "minCapacity": "Capacidade mínima (sats)",
+      "showPrivate": "Mostrar privados",
+      "resetFilters": "Limpar filtros",
       "sortLabel": "Ordenar",
       "sortEconomic": "Econômico",
       "sortEmptiest": "Mais vazio",

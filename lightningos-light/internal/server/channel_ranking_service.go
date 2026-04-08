@@ -1832,13 +1832,13 @@ func (s *ChannelRankingService) getTopForwardCounterparties(ctx context.Context,
 		limit = 5
 	}
 
-	selectCounterpartyID := "n.chan_id_in"
-	selectCounterpartyPoint := "coalesce(n.channel_point_in, '')"
-	filterColumn := "n.chan_id_out"
+	selectCounterpartyID := "n.chan_id_out"
+	selectCounterpartyPoint := "coalesce(n.channel_point_out, '')"
+	filterColumn := "n.chan_id_in"
 	if !inbound {
-		selectCounterpartyID = "n.chan_id_out"
-		selectCounterpartyPoint = "coalesce(n.channel_point_out, '')"
-		filterColumn = "n.chan_id_in"
+		selectCounterpartyID = "n.chan_id_in"
+		selectCounterpartyPoint = "coalesce(n.channel_point_in, '')"
+		filterColumn = "n.chan_id_out"
 	}
 
 	query := `

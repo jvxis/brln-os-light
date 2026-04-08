@@ -32,6 +32,7 @@ type Server struct {
 	reportsErr                  string
 	reportsMu                   sync.Mutex
 	reportsInitAt               time.Time
+	reportsWarmupStarted        bool
 	auth                        *AuthService
 	rebalanceInitAt             time.Time
 	rebalance                   *RebalanceService

@@ -55,6 +55,10 @@ func (s *Server) initReports() {
 
   s.reports = svc
   s.reportsErr = ""
+  if !s.reportsWarmupStarted {
+    s.reportsWarmupStarted = true
+    go s.runReportsLiveWarmup(svc)
+  }
 }
 
 func (s *Server) reportsService() (*reports.Service, string) {

@@ -12,6 +12,14 @@ type ChannelRankingRecommendation = {
   target_module?: string
 }
 
+type ChannelRankingFlowCounterparty = {
+  channel_point?: string
+  channel_id: number
+  peer_alias?: string
+  forward_count_7d: number
+  forward_amount_sat_7d: number
+}
+
 type ChannelRankingItem = {
   channel_point: string
   channel_id: number
@@ -27,6 +35,10 @@ type ChannelRankingItem = {
   inactive_duration_sec?: number
   pending_htlc_count?: number
   class_label?: string
+  forward_in_count_7d: number
+  forward_in_amount_sat_7d: number
+  forward_out_count_7d: number
+  forward_out_amount_sat_7d: number
   forward_fee_7d_sat: number
   forward_amt_7d_sat: number
   assisted_forward_fee_7d_sat: number
@@ -100,6 +112,8 @@ type ChannelRankingDetailPayload = {
   item?: ChannelRankingItem
   history?: ChannelRankingHistoryPoint[]
   peer_channels?: ChannelRankingPeerComparison[]
+  top_forward_in_sources?: ChannelRankingFlowCounterparty[]
+  top_forward_out_sinks?: ChannelRankingFlowCounterparty[]
   feedback?: ChannelRankingFeedback
 }
 
@@ -182,6 +196,8 @@ export default function ChannelRanking() {
   const [detailItem, setDetailItem] = useState<ChannelRankingItem | null>(null)
   const [detailHistory, setDetailHistory] = useState<ChannelRankingHistoryPoint[]>([])
   const [detailPeerChannels, setDetailPeerChannels] = useState<ChannelRankingPeerComparison[]>([])
+  const [detailTopForwardInSources, setDetailTopForwardInSources] = useState<ChannelRankingFlowCounterparty[]>([])
+  const [detailTopForwardOutSinks, setDetailTopForwardOutSinks] = useState<ChannelRankingFlowCounterparty[]>([])
   const [detailFeedback, setDetailFeedback] = useState<ChannelRankingFeedback | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const pendingScrollChannelRef = useRef('')
@@ -238,6 +254,9 @@ export default function ChannelRanking() {
     if (totalSec >= 60) return t('channelRanking.durationMinutes', { count: Math.floor(totalSec / 60) })
     return t('channelRanking.durationSeconds', { count: totalSec })
   }
+
+  const formatFlowSummary = (count?: number, amount?: number) =>
+    `${numberFormatter.format(Math.max(0, Math.round(Number(count || 0))))}x · ${formatSats(amount)}`
 
   const reasonLabel = (code?: string) =>
     t(`channelRanking.reasons.${String(code || '').trim()}` as any, { defaultValue: code || t('common.unknown') })
@@ -449,6 +468,8 @@ export default function ChannelRanking() {
       setDetailItem(null)
       setDetailHistory([])
       setDetailPeerChannels([])
+      setDetailTopForwardInSources([])
+      setDetailTopForwardOutSinks([])
       setDetailFeedback(null)
       return
     }
@@ -461,6 +482,8 @@ export default function ChannelRanking() {
       setDetailItem((detail?.item as ChannelRankingItem) || null)
       setDetailHistory(Array.isArray(detail?.history) ? detail.history : [])
       setDetailPeerChannels(Array.isArray(detail?.peer_channels) ? detail.peer_channels : [])
+      setDetailTopForwardInSources(Array.isArray(detail?.top_forward_in_sources) ? detail.top_forward_in_sources : [])
+      setDetailTopForwardOutSinks(Array.isArray(detail?.top_forward_out_sinks) ? detail.top_forward_out_sinks : [])
       setDetailFeedback((detail?.feedback as ChannelRankingFeedback) || null)
       })
       .catch(() => {
@@ -469,6 +492,8 @@ export default function ChannelRanking() {
         setDetailItem(fallback)
         setDetailHistory([])
         setDetailPeerChannels([])
+        setDetailTopForwardInSources([])
+        setDetailTopForwardOutSinks([])
         setDetailFeedback(null)
       })
       .finally(() => {
@@ -702,6 +727,8 @@ export default function ChannelRanking() {
                         <div>{t('channelRanking.netFees30d', { value: formatSats(item.profit_fee_30d_sat) })}</div>
                         <div>{t('channelRanking.capacity', { value: formatSats(item.capacity_sat) })}</div>
                         <div>{t('channelRanking.localBalancePct', { value: formatPct(item.local_balance_pct) })}</div>
+                        <div>{t('channelRanking.forwardIn7dCompact', { value: formatFlowSummary(item.forward_in_count_7d, item.forward_in_amount_sat_7d) })}</div>
+                        <div>{t('channelRanking.forwardOut7dCompact', { value: formatFlowSummary(item.forward_out_count_7d, item.forward_out_amount_sat_7d) })}</div>
                         <div>{t('channelRanking.peerStabilityScore30d', { value: numberFormatter.format(item.peer_stability_score_30d || 0) })}</div>
                         <div>{t('channelRanking.htlcFailures30dLabel', { value: numberFormatter.format(item.htlc_failures_30d || 0) })}</div>
                         <div>{t('channelRanking.trendDelta', { value: numberFormatter.format(item.trend_delta || 0) })}</div>
@@ -790,6 +817,8 @@ export default function ChannelRanking() {
                     <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
                       <div className="text-[11px] uppercase tracking-wide text-fog/45">{t('channelRanking.window7dTitle')}</div>
                       <div className="mt-2 space-y-1 text-fog/80">
+                        <div>{t('channelRanking.forwardIn7d', { value: formatFlowSummary(selectedDetail.forward_in_count_7d, selectedDetail.forward_in_amount_sat_7d) })}</div>
+                        <div>{t('channelRanking.forwardOut7d', { value: formatFlowSummary(selectedDetail.forward_out_count_7d, selectedDetail.forward_out_amount_sat_7d) })}</div>
                         <div>{t('channelRanking.forwardFees7d', { value: formatSats(selectedDetail.forward_fee_7d_sat) })}</div>
                         <div>{t('channelRanking.forwardAmount7d', { value: formatSats(selectedDetail.forward_amt_7d_sat) })}</div>
                         <div>{t('channelRanking.assistedForwardFees7d', { value: formatSats(selectedDetail.assisted_forward_fee_7d_sat) })}</div>
@@ -882,6 +911,49 @@ export default function ChannelRanking() {
                       ))
                     ) : (
                       <div className="text-sm text-fog/60">{t('channelRanking.historyEmpty')}</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-3 lg:grid-cols-2">
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+                  <div className="mb-2 text-sm font-medium text-fog">{t('channelRanking.topForwardInSourcesTitle')}</div>
+                  <div className="space-y-2">
+                    {detailTopForwardInSources.length > 0 ? (
+                      detailTopForwardInSources.map((entry) => (
+                        <div key={`in-${entry.channel_id}-${entry.channel_point || ''}`} className="rounded-xl border border-white/10 px-3 py-2 text-sm text-fog/80">
+                          <div className="truncate font-medium text-fog">{entry.peer_alias || entry.channel_point || String(entry.channel_id)}</div>
+                          <div className="mt-1 text-xs text-fog/60">
+                            {t('channelRanking.counterpartyFlowSummary', {
+                              count: Math.max(0, Math.round(Number(entry.forward_count_7d || 0))),
+                              value: formatSats(entry.forward_amount_sat_7d)
+                            })}
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-sm text-fog/60">{t('channelRanking.topCounterpartiesEmpty')}</div>
+                    )}
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+                  <div className="mb-2 text-sm font-medium text-fog">{t('channelRanking.topForwardOutSinksTitle')}</div>
+                  <div className="space-y-2">
+                    {detailTopForwardOutSinks.length > 0 ? (
+                      detailTopForwardOutSinks.map((entry) => (
+                        <div key={`out-${entry.channel_id}-${entry.channel_point || ''}`} className="rounded-xl border border-white/10 px-3 py-2 text-sm text-fog/80">
+                          <div className="truncate font-medium text-fog">{entry.peer_alias || entry.channel_point || String(entry.channel_id)}</div>
+                          <div className="mt-1 text-xs text-fog/60">
+                            {t('channelRanking.counterpartyFlowSummary', {
+                              count: Math.max(0, Math.round(Number(entry.forward_count_7d || 0))),
+                              value: formatSats(entry.forward_amount_sat_7d)
+                            })}
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-sm text-fog/60">{t('channelRanking.topCounterpartiesEmpty')}</div>
                     )}
                   </div>
                 </div>

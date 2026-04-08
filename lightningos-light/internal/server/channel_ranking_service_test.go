@@ -2,6 +2,7 @@ package server
 
 import (
 	"testing"
+	"time"
 
 	"lightningos-light/internal/lndclient"
 )
@@ -208,5 +209,53 @@ func TestClassifyChannelRankingDefersCloseDuringWarmup(t *testing.T) {
 	}
 	if !foundObserve {
 		t.Fatalf("expected observe_7d_before_close recommendation during warmup")
+	}
+}
+
+func TestBuildChannelRankingItemIncludesForwardMovement7d(t *testing.T) {
+	now := time.Date(2026, 4, 8, 12, 0, 0, 0, time.UTC)
+	ch := lndclient.ChannelInfo{
+		ChannelPoint:     "abc:1",
+		ChannelID:        123,
+		RemotePubkey:     "02abc",
+		PeerAlias:        "Peer",
+		Active:           true,
+		CapacitySat:      1_000_000,
+		LocalBalanceSat:  400_000,
+		RemoteBalanceSat: 600_000,
+	}
+	movement := lndclient.ChannelMovement7d{
+		ForwardInCount:      7,
+		ForwardInAmountSat:  210_000,
+		ForwardOutCount:     11,
+		ForwardOutAmountSat: 330_000,
+	}
+
+	item := buildChannelRankingItem(
+		now,
+		ch,
+		"sink",
+		channelTrafficStat{FeeSat: 100, AmountSat: 50_000, Ppm: 2000},
+		channelTrafficStat{FeeSat: 400, AmountSat: 200_000, Ppm: 2000},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{FeeSat: 50, AmountSat: 25_000, Ppm: 2000},
+		channelTrafficStat{FeeSat: 150, AmountSat: 75_000, Ppm: 2000},
+		movement,
+		channelPeerAggregate{Score30d: 70, SampleCount: 336},
+		channelHTLCAggregate{},
+	)
+
+	if item.ForwardInCount7d != movement.ForwardInCount {
+		t.Fatalf("expected forward in count %d, got %d", movement.ForwardInCount, item.ForwardInCount7d)
+	}
+	if item.ForwardInAmountSat7d != movement.ForwardInAmountSat {
+		t.Fatalf("expected forward in amount %d, got %d", movement.ForwardInAmountSat, item.ForwardInAmountSat7d)
+	}
+	if item.ForwardOutCount7d != movement.ForwardOutCount {
+		t.Fatalf("expected forward out count %d, got %d", movement.ForwardOutCount, item.ForwardOutCount7d)
+	}
+	if item.ForwardOutAmountSat7d != movement.ForwardOutAmountSat {
+		t.Fatalf("expected forward out amount %d, got %d", movement.ForwardOutAmountSat, item.ForwardOutAmountSat7d)
 	}
 }

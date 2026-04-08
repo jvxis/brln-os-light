@@ -79,10 +79,12 @@ func (s *Server) handleChannelRankingItemGet(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"item":          detail.Item,
-		"history":       detail.History,
-		"peer_channels": detail.PeerChannels,
-		"feedback":      detail.Feedback,
+		"item":                   detail.Item,
+		"history":                detail.History,
+		"peer_channels":          detail.PeerChannels,
+		"top_forward_in_sources": detail.TopForwardInSources,
+		"top_forward_out_sinks":  detail.TopForwardOutSinks,
+		"feedback":               detail.Feedback,
 	})
 }
 

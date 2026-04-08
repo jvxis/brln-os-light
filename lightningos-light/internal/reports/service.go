@@ -452,6 +452,10 @@ func canUsePersistedLiveSnapshot(now time.Time, requestRange TimeRange, snapshot
 	if snapshot.Range.StartLocal.IsZero() || snapshot.Range.EndLocal.IsZero() {
 		return false
 	}
+	staleness := requestRange.EndLocal.Sub(snapshot.Range.EndLocal)
+	if staleness > defaultLivePersistedFallbackAge {
+		return false
+	}
 	if lookbackHours <= 0 {
 		return dateOnly(snapshot.Range.StartLocal, loc).Equal(dateOnly(requestRange.StartLocal, loc))
 	}

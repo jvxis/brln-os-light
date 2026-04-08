@@ -5,7 +5,26 @@ import (
 	"time"
 )
 
-func TestCanUsePersistedLiveSnapshotSameDay(t *testing.T) {
+func TestCanUsePersistedLiveSnapshotSameDayRecent(t *testing.T) {
+	loc := time.FixedZone("BRT", -3*60*60)
+	now := time.Date(2026, 4, 2, 12, 0, 0, 0, loc)
+	request := BuildTimeRangeForToday(now, loc)
+	snapshot := liveSnapshot{
+		UpdatedAt: now.Add(-10 * time.Minute),
+		Timezone:  loc.String(),
+		Range: TimeRange{
+			StartLocal: time.Date(2026, 4, 2, 0, 0, 0, 0, loc),
+			EndLocal:   now.Add(-10 * time.Minute),
+		},
+		LookbackHours: 0,
+	}
+
+	if !canUsePersistedLiveSnapshot(now, request, snapshot, 0, loc) {
+		t.Fatalf("expected recent same-day snapshot fallback to be valid")
+	}
+}
+
+func TestCanUsePersistedLiveSnapshotRejectsStaleSameDay(t *testing.T) {
 	loc := time.FixedZone("BRT", -3*60*60)
 	now := time.Date(2026, 4, 2, 12, 0, 0, 0, loc)
 	request := BuildTimeRangeForToday(now, loc)
@@ -19,8 +38,8 @@ func TestCanUsePersistedLiveSnapshotSameDay(t *testing.T) {
 		LookbackHours: 0,
 	}
 
-	if !canUsePersistedLiveSnapshot(now, request, snapshot, 0, loc) {
-		t.Fatalf("expected same-day snapshot fallback to be valid")
+	if canUsePersistedLiveSnapshot(now, request, snapshot, 0, loc) {
+		t.Fatalf("expected stale same-day snapshot fallback to be rejected")
 	}
 }
 

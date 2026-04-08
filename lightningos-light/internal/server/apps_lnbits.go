@@ -96,7 +96,7 @@ func (s *Server) installLnbits(ctx context.Context) error {
 	if err := ensureLnbitsPaths(paths); err != nil {
 		return err
 	}
-	if err := ensureLnbitsImage(ctx); err != nil {
+	if err := pullDockerImage(ctx, lnbitsImage); err != nil {
 		return err
 	}
 	if _, err := ensureFileWithChange(paths.ComposePath, lnbitsComposeContents(paths)); err != nil {

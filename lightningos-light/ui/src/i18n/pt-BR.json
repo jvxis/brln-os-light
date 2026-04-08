@@ -2679,6 +2679,8 @@
       "sortLabel": "Ordenar",
       "sortEconomic": "Econômico",
       "sortEmptiest": "Mais vazio",
+      "sortAsc": "Asc",
+      "sortDesc": "Desc",
       "scoreLabel": "Score",
       "scoreRoiNA": "n/a",
       "scoreHint": "Score econômico: {{score}} (ganho {{gain}} · custo {{cost}} · ROI {{roi}})",

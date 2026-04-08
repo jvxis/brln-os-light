@@ -255,6 +255,7 @@ export default function RebalanceCenter() {
   const [editUseDefaultEconRatio, setEditUseDefaultEconRatio] = useState<Record<number, boolean>>({})
   const [manualRestart, setManualRestart] = useState<Record<string, boolean>>({})
   const [channelSort, setChannelSort] = useState<'economic' | 'emptiest'>('economic')
+  const [channelSortDir, setChannelSortDir] = useState<'asc' | 'desc'>('desc')
   const [channelSearch, setChannelSearch] = useState('')
   const [channelMinCapacity, setChannelMinCapacity] = useState('')
   const [channelShowPrivate, setChannelShowPrivate] = useState(false)
@@ -377,24 +378,25 @@ export default function RebalanceCenter() {
 
   const sortedChannels = useMemo(() => {
     const active = [...filteredWorkbenchChannels]
+    const direction = channelSortDir === 'desc' ? -1 : 1
     if (channelSort === 'emptiest' || !config) {
-      return active.sort((a, b) => a.local_pct - b.local_pct)
+      return active.sort((a, b) => (a.local_pct - b.local_pct) * direction)
     }
     return active.sort((a, b) => {
       const scoreA = computeChannelScore(a)
       const scoreB = computeChannelScore(b)
       if (scoreA.score !== scoreB.score) {
-        return scoreB.score - scoreA.score
+        return (scoreB.score - scoreA.score) * direction
       }
       if (scoreA.expectedRoi !== scoreB.expectedRoi) {
-        return scoreB.expectedRoi - scoreA.expectedRoi
+        return (scoreB.expectedRoi - scoreA.expectedRoi) * direction
       }
       if (a.target_amount_sat !== b.target_amount_sat) {
-        return b.target_amount_sat - a.target_amount_sat
+        return (b.target_amount_sat - a.target_amount_sat) * direction
       }
-      return a.local_pct - b.local_pct
+      return (a.local_pct - b.local_pct) * direction
     })
-  }, [filteredWorkbenchChannels, config, channelSort])
+  }, [filteredWorkbenchChannels, config, channelSort, channelSortDir])
   const buildAttemptTotals = (attempts: RebalanceAttempt[]) => {
     const totals = new Map<number, { amount: number; fee: number }>()
     attempts.forEach((attempt) => {
@@ -446,8 +448,19 @@ export default function RebalanceCenter() {
   }, [])
   useEffect(() => {
     if (typeof window === 'undefined') return
+    const stored = window.localStorage.getItem('rebalance_center_channel_sort_dir')
+    if (stored === 'asc' || stored === 'desc') {
+      setChannelSortDir(stored)
+    }
+  }, [])
+  useEffect(() => {
+    if (typeof window === 'undefined') return
     window.localStorage.setItem('rebalance_center_channel_sort', channelSort)
   }, [channelSort])
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem('rebalance_center_channel_sort_dir', channelSortDir)
+  }, [channelSortDir])
   useEffect(() => {
     pendingScrollChannelRef.current = readHashChannelPoint(REBALANCE_ROUTE_KEY)
     return () => {
@@ -1852,26 +1865,9 @@ export default function RebalanceCenter() {
           <div className="flex flex-wrap items-center gap-4 text-xs text-fog/60">
             <span>{t('rebalanceCenter.channels.count', { count: channels.length })}</span>
             <span>{t('rebalanceCenter.channels.filteredCount', { count: sortedChannels.length })}</span>
-            <div className="flex items-center gap-2">
-              <span>{t('rebalanceCenter.channels.sortLabel')}</span>
-              <div className="flex items-center rounded-full border border-white/10 bg-white/5 p-1">
-                <button
-                  className={`px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${channelSort === 'economic' ? 'rounded-full bg-emerald-500/20 text-emerald-100' : 'text-fog/60'}`}
-                  onClick={() => setChannelSort('economic')}
-                >
-                  {t('rebalanceCenter.channels.sortEconomic')}
-                </button>
-                <button
-                  className={`px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${channelSort === 'emptiest' ? 'rounded-full bg-sky-500/20 text-sky-100' : 'text-fog/60'}`}
-                  onClick={() => setChannelSort('emptiest')}
-                >
-                  {t('rebalanceCenter.channels.sortEmptiest')}
-                </button>
-              </div>
-            </div>
           </div>
         </div>
-        <div className="grid gap-3 lg:grid-cols-4">
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_auto_auto]">
           <input
             className="input-field"
             placeholder={t('rebalanceCenter.channels.searchPlaceholder')}
@@ -1886,7 +1882,18 @@ export default function RebalanceCenter() {
             value={channelMinCapacity}
             onChange={(e) => setChannelMinCapacity(e.target.value)}
           />
-          <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-fog/70">
+          <select className="input-field" value={channelSort} onChange={(e) => setChannelSort(e.target.value as 'economic' | 'emptiest')}>
+            <option value="economic">{t('rebalanceCenter.channels.sortEconomic')}</option>
+            <option value="emptiest">{t('rebalanceCenter.channels.sortEmptiest')}</option>
+          </select>
+          <button
+            type="button"
+            className="btn-secondary px-4"
+            onClick={() => setChannelSortDir((current) => (current === 'desc' ? 'asc' : 'desc'))}
+          >
+            {channelSortDir === 'desc' ? t('rebalanceCenter.channels.sortDesc') : t('rebalanceCenter.channels.sortAsc')}
+          </button>
+          <label className="flex items-center gap-2 text-[11px] text-fog/70 sm:text-xs">
             <input
               type="checkbox"
               checked={channelShowPrivate}
@@ -1894,17 +1901,6 @@ export default function RebalanceCenter() {
             />
             {t('rebalanceCenter.channels.showPrivate')}
           </label>
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => {
-              setChannelSearch('')
-              setChannelMinCapacity('')
-              setChannelShowPrivate(false)
-            }}
-          >
-            {t('rebalanceCenter.channels.resetFilters')}
-          </button>
         </div>
         <div className="space-y-3 md:hidden">
           <div className="flex flex-wrap items-center gap-4 text-xs text-fog/60">

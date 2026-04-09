@@ -1216,6 +1216,14 @@ func paymentPreviewFeeHeadroomSat(feeMsat int64) int64 {
 	return msatToSatCeil((feeMsat*125 + 99) / 100)
 }
 
+const (
+	paymentRouteLiquidityProbeTimeout = 4 * time.Second
+	paymentRouteProbeStatusLikely     = "likely_liquid"
+	paymentRouteProbeStatusFailed     = "failed"
+	paymentRouteProbeStatusTimeout    = "timeout"
+	paymentRouteProbeStatusUnknown    = "unknown"
+)
+
 func routeTotalFeeMsat(route *lnrpc.Route) int64 {
 	if route == nil {
 		return 0
@@ -1339,6 +1347,128 @@ func routeAlternativeIgnoredEdgeSets(route *lnrpc.Route, keepFirstHop bool) [][]
 	return sets
 }
 
+func probePaymentRoutes(ctx context.Context, router routerrpc.RouterClient, routes []*lnrpc.Route) []PaymentRouteProbe {
+	probes := make([]PaymentRouteProbe, len(routes))
+	if len(routes) == 0 {
+		return probes
+	}
+
+	var wg sync.WaitGroup
+	for i, route := range routes {
+		i, route := i, route
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			probeCtx, cancel := context.WithTimeout(ctx, paymentRouteLiquidityProbeTimeout)
+			defer cancel()
+			probes[i] = probePaymentRoute(probeCtx, router, route)
+		}()
+	}
+	wg.Wait()
+	return probes
+}
+
+func probePaymentRoute(ctx context.Context, router routerrpc.RouterClient, route *lnrpc.Route) PaymentRouteProbe {
+	if route == nil || len(route.Hops) == 0 {
+		return PaymentRouteProbe{
+			Status:  paymentRouteProbeStatusUnknown,
+			Message: "empty route",
+		}
+	}
+
+	attempt, err := router.SendToRouteV2(ctx, &routerrpc.SendToRouteRequest{
+		PaymentHash: probePaymentHashBytes(),
+		Route:       route,
+		SkipTempErr: false,
+	})
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) || status.Code(err) == codes.DeadlineExceeded || strings.Contains(strings.ToLower(err.Error()), "deadline exceeded") {
+			return PaymentRouteProbe{
+				Status:  paymentRouteProbeStatusTimeout,
+				Message: "probe timeout",
+			}
+		}
+		return PaymentRouteProbe{
+			Status:  paymentRouteProbeStatusUnknown,
+			Message: strings.TrimSpace(err.Error()),
+		}
+	}
+	if attempt == nil {
+		return PaymentRouteProbe{
+			Status:  paymentRouteProbeStatusUnknown,
+			Message: "empty probe response",
+		}
+	}
+
+	switch attempt.Status {
+	case lnrpc.HTLCAttempt_SUCCEEDED:
+		return PaymentRouteProbe{
+			Status:       paymentRouteProbeStatusLikely,
+			LikelyLiquid: true,
+			Message:      "probe reached destination",
+		}
+	case lnrpc.HTLCAttempt_FAILED:
+		return paymentRouteProbeFromFailure(attempt.Failure, route)
+	default:
+		return PaymentRouteProbe{
+			Status:  paymentRouteProbeStatusUnknown,
+			Message: attempt.Status.String(),
+		}
+	}
+}
+
+func probePaymentHashBytes() []byte {
+	hash, err := hex.DecodeString(RandomPaymentHash())
+	if err != nil || len(hash) != 32 {
+		return bytes.Repeat([]byte{1}, 32)
+	}
+	return hash
+}
+
+func paymentRouteProbeFromFailure(failure *lnrpc.Failure, route *lnrpc.Route) PaymentRouteProbe {
+	if failure == nil {
+		return PaymentRouteProbe{
+			Status:  paymentRouteProbeStatusUnknown,
+			Message: "no failure details",
+		}
+	}
+
+	probe := PaymentRouteProbe{
+		Status:             paymentRouteProbeStatusFailed,
+		FailureCode:        failure.Code.String(),
+		FailureSourceIndex: failure.FailureSourceIndex,
+	}
+	if failure.FailureSourceIndex > 0 {
+		probe.FailureHopIndex = int(failure.FailureSourceIndex)
+	}
+	if paymentRouteProbeReachedDestination(failure, route) {
+		probe.Status = paymentRouteProbeStatusLikely
+		probe.LikelyLiquid = true
+		probe.Message = "destination rejected fake payment hash"
+	}
+	return probe
+}
+
+func paymentRouteProbeReachedDestination(failure *lnrpc.Failure, route *lnrpc.Route) bool {
+	if failure == nil {
+		return false
+	}
+	switch failure.Code {
+	case lnrpc.Failure_INCORRECT_OR_UNKNOWN_PAYMENT_DETAILS,
+		lnrpc.Failure_INCORRECT_PAYMENT_AMOUNT,
+		lnrpc.Failure_FINAL_INCORRECT_HTLC_AMOUNT,
+		lnrpc.Failure_FINAL_INCORRECT_CLTV_EXPIRY,
+		lnrpc.Failure_FINAL_EXPIRY_TOO_SOON:
+	default:
+		return false
+	}
+	if route == nil || len(route.Hops) == 0 {
+		return true
+	}
+	sourceIndex := int(failure.FailureSourceIndex)
+	return sourceIndex == 0 || sourceIndex >= len(route.Hops)
+}
+
 type PaymentRouteHop struct {
 	PubKey             string `json:"pubkey"`
 	Alias              string `json:"alias,omitempty"`
@@ -1351,14 +1481,24 @@ type PaymentRouteHop struct {
 	Expiry             uint32 `json:"expiry,omitempty"`
 }
 
+type PaymentRouteProbe struct {
+	Status             string `json:"status,omitempty"`
+	LikelyLiquid       bool   `json:"likely_liquid,omitempty"`
+	FailureCode        string `json:"failure_code,omitempty"`
+	FailureSourceIndex uint32 `json:"failure_source_index,omitempty"`
+	FailureHopIndex    int    `json:"failure_hop_index,omitempty"`
+	Message            string `json:"message,omitempty"`
+}
+
 type PaymentRouteSummary struct {
-	TotalAmtSat   int64             `json:"total_amt_sat,omitempty"`
-	TotalAmtMsat  int64             `json:"total_amt_msat,omitempty"`
-	TotalFeesSat  int64             `json:"total_fees_sat,omitempty"`
-	TotalFeesMsat int64             `json:"total_fees_msat,omitempty"`
-	TotalTimeLock uint32            `json:"total_time_lock,omitempty"`
-	HopCount      int               `json:"hop_count"`
-	Hops          []PaymentRouteHop `json:"hops,omitempty"`
+	TotalAmtSat   int64              `json:"total_amt_sat,omitempty"`
+	TotalAmtMsat  int64              `json:"total_amt_msat,omitempty"`
+	TotalFeesSat  int64              `json:"total_fees_sat,omitempty"`
+	TotalFeesMsat int64              `json:"total_fees_msat,omitempty"`
+	TotalTimeLock uint32             `json:"total_time_lock,omitempty"`
+	HopCount      int                `json:"hop_count"`
+	Hops          []PaymentRouteHop  `json:"hops,omitempty"`
+	Probe         *PaymentRouteProbe `json:"probe,omitempty"`
 }
 
 type PaymentProbeEstimate struct {
@@ -1401,7 +1541,7 @@ func (c *Client) PreviewPayment(ctx context.Context, paymentRequest string, outg
 		return PaymentPreview{}, errors.New("payment_request required")
 	}
 	if numRoutes <= 0 {
-		numRoutes = 3
+		numRoutes = 5
 	}
 
 	conn, err := c.dial(ctx, true)
@@ -1580,12 +1720,25 @@ func (c *Client) PreviewPayment(ctx context.Context, paymentRequest string, outg
 		routes = routes[:targetRoutes]
 	}
 
+	routeProbes := probePaymentRoutes(ctx, router, routes)
 	preview.Routes = make([]PaymentRouteSummary, 0, len(routes))
-	for _, route := range routes {
-		preview.Routes = append(preview.Routes, c.convertPaymentRouteWithClient(ctx, lightning, route))
+	for i, route := range routes {
+		summary := c.convertPaymentRouteWithClient(ctx, lightning, route)
+		if i < len(routeProbes) {
+			probe := routeProbes[i]
+			summary.Probe = &probe
+		}
+		preview.Routes = append(preview.Routes, summary)
 	}
 	if len(preview.Routes) > 0 {
-		suggested := paymentPreviewFeeHeadroomSat(paymentRouteTotalFeeMsat(preview.Routes[0]))
+		suggestedRouteIndex := 0
+		for i, route := range preview.Routes {
+			if route.Probe != nil && route.Probe.LikelyLiquid {
+				suggestedRouteIndex = i
+				break
+			}
+		}
+		suggested := paymentPreviewFeeHeadroomSat(paymentRouteTotalFeeMsat(preview.Routes[suggestedRouteIndex]))
 		preview.SuggestedMaxFeeSat = suggested
 		preview.SuggestedMaxFeeMsat = suggested * 1000
 	} else if preview.Probe.Success && preview.Probe.FeeSat > 0 {

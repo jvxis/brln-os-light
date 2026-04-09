@@ -175,3 +175,37 @@ func TestPaymentTimeoutSeconds(t *testing.T) {
 		}
 	})
 }
+
+func TestPaymentRouteProbeFromFailure(t *testing.T) {
+	t.Parallel()
+
+	route := &lnrpc.Route{Hops: []*lnrpc.Hop{
+		{ChanId: 10, PubKey: "first"},
+		{ChanId: 20, PubKey: "destination"},
+	}}
+
+	t.Run("final fake hash rejection means likely liquidity", func(t *testing.T) {
+		t.Parallel()
+		probe := paymentRouteProbeFromFailure(&lnrpc.Failure{
+			Code:               lnrpc.Failure_INCORRECT_OR_UNKNOWN_PAYMENT_DETAILS,
+			FailureSourceIndex: 2,
+		}, route)
+		if probe.Status != paymentRouteProbeStatusLikely || !probe.LikelyLiquid {
+			t.Fatalf("paymentRouteProbeFromFailure() = status %q likely %v, want likely liquidity", probe.Status, probe.LikelyLiquid)
+		}
+	})
+
+	t.Run("intermediate failure means failed liquidity probe", func(t *testing.T) {
+		t.Parallel()
+		probe := paymentRouteProbeFromFailure(&lnrpc.Failure{
+			Code:               lnrpc.Failure_TEMPORARY_CHANNEL_FAILURE,
+			FailureSourceIndex: 1,
+		}, route)
+		if probe.Status != paymentRouteProbeStatusFailed || probe.LikelyLiquid {
+			t.Fatalf("paymentRouteProbeFromFailure() = status %q likely %v, want failed probe", probe.Status, probe.LikelyLiquid)
+		}
+		if probe.FailureHopIndex != 1 {
+			t.Fatalf("FailureHopIndex = %d, want 1", probe.FailureHopIndex)
+		}
+	})
+}

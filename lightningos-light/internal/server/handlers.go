@@ -39,6 +39,7 @@ const (
 	lndConnectTimeout              = 30 * time.Second
 	lndOpenChannelTimeout          = 60 * time.Second
 	lndBatchOpenChannelTimeout     = 90 * time.Second
+	lndWalletPaymentPreviewTimeout = 45 * time.Second
 	lndWalletPaymentTimeout        = 120 * time.Second
 	batchOpenMaxChannels           = 50
 	pendingOpenBumpReferenceVbytes = int64(110)
@@ -3801,10 +3802,10 @@ func (s *Server) handleWalletPayPreview(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), lndWalletPaymentPreviewTimeout)
 	defer cancel()
 
-	preview, err := s.lnd.PreviewPayment(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat, 3)
+	preview, err := s.lnd.PreviewPayment(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat, 5)
 	if err != nil {
 		msg := lndRPCErrorMessage(err)
 		if isTimeoutError(err) {

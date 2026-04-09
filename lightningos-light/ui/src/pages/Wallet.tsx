@@ -73,6 +73,15 @@ type WalletRouteHop = {
   expiry?: number
 }
 
+type WalletRouteProbe = {
+  status?: string
+  likely_liquid?: boolean
+  failure_code?: string
+  failure_source_index?: number
+  failure_hop_index?: number
+  message?: string
+}
+
 type WalletRouteSummary = {
   total_amt_sat?: number
   total_amt_msat?: number
@@ -81,6 +90,7 @@ type WalletRouteSummary = {
   total_time_lock?: number
   hop_count?: number
   hops?: WalletRouteHop[]
+  probe?: WalletRouteProbe
 }
 
 type WalletPaymentProbe = {
@@ -569,6 +579,30 @@ export default function Wallet() {
     if (!pubkey) return t('wallet.unknownPeer')
     if (pubkey.length <= 16) return pubkey
     return `${pubkey.slice(0, 12)}...`
+  }
+
+  const routeProbeLabel = (probe?: WalletRouteProbe) => {
+    if (!probe) return t('wallet.paymentPreviewLiquidityUnknown')
+    if (probe.likely_liquid || probe.status === 'likely_liquid') return t('wallet.paymentPreviewLiquidityLikely')
+    if (probe.status === 'timeout') return t('wallet.paymentPreviewLiquidityTimeout')
+    if (probe.status === 'failed' && Number(probe.failure_hop_index || 0) > 0) {
+      return t('wallet.paymentPreviewLiquidityFailedAtHop', { index: Number(probe.failure_hop_index || 0) })
+    }
+    if (probe.status === 'failed') return t('wallet.paymentPreviewLiquidityFailed')
+    return t('wallet.paymentPreviewLiquidityUnknown')
+  }
+
+  const routeProbeClassName = (probe?: WalletRouteProbe) => {
+    if (probe?.likely_liquid || probe?.status === 'likely_liquid') {
+      return 'border-teal/40 bg-teal/10 text-teal'
+    }
+    if (probe?.status === 'timeout') {
+      return 'border-brass/40 bg-brass/10 text-brass'
+    }
+    if (probe?.status === 'failed') {
+      return 'border-ember/40 bg-ember/10 text-ember'
+    }
+    return 'border-white/10 bg-white/[0.03] text-fog/60'
   }
 
   const outgoingChannelsSummary = () => {
@@ -1439,7 +1473,12 @@ export default function Wallet() {
                   {paymentPreview.routes.map((route, routeIndex) => (
                     <div key={`preview-route-${routeIndex}`} className="rounded-2xl border border-white/10 bg-ink/50 p-3">
                       <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                        <span className="font-medium text-fog">{t('wallet.paymentPreviewRoute', { index: routeIndex + 1 })}</span>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium text-fog">{t('wallet.paymentPreviewRoute', { index: routeIndex + 1 })}</span>
+                          <span className={`rounded-full border px-2 py-0.5 ${routeProbeClassName(route?.probe)}`}>
+                            {routeProbeLabel(route?.probe)}
+                          </span>
+                        </div>
                         <span className="text-fog/60">
                           {t('wallet.paymentPreviewRouteMeta', {
                             hops: Number(route?.hop_count || 0),
@@ -1447,6 +1486,11 @@ export default function Wallet() {
                           })}
                         </span>
                       </div>
+                      {route?.probe?.failure_code && (
+                        <div className="mt-2 text-xs text-fog/55">
+                          {t('wallet.paymentPreviewLiquidityCode', { code: route.probe.failure_code })}
+                        </div>
+                      )}
                       <div className="mt-3 space-y-2">
                         {(route.hops || []).map((hop, hopIndex) => (
                           <div key={`route-hop-${routeIndex}-${hopIndex}`} className="rounded-xl border border-white/8 bg-white/[0.02] px-3 py-2 text-xs">

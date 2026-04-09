@@ -50,6 +50,8 @@ const (
 )
 
 var errManualRestartCooldown = errors.New("manual restart cooldown active")
+var errManualBudgetExhausted = errors.New("manual budget exhausted")
+var errManualBudgetInsufficient = errors.New("manual budget insufficient")
 
 const (
 	rebalanceBudgetModeRevenue24hPct = "revenue_24h_pct"
@@ -1467,6 +1469,12 @@ func (s *RebalanceService) startJob(targetChannelID uint64, source string, reaso
 			if time.Since(lastRestartAt) < manualRestartInterval(cfg) {
 				return 0, errManualRestartCooldown
 			}
+		}
+	}
+	if strings.EqualFold(source, "manual") {
+		budget, _, spentManual, spentTotal := s.getDailyBudget(ctx)
+		if err := checkManualBudgetAllowance(cfg, setting, target, amount, budget, spentManual, spentTotal); err != nil {
+			return 0, err
 		}
 	}
 
@@ -5007,6 +5015,34 @@ func computeRemainingForAuto(totalBudgetSat int64, spentTotalSat int64, spentMan
 		remainingForAuto = 0
 	}
 	return remainingTotal, remainingForAuto
+}
+
+func checkManualBudgetAllowance(cfg RebalanceConfig, setting channelSetting, target lndclient.ChannelInfo, amountSat int64, totalBudgetSat int64, spentManualSat int64, spentTotalSat int64) error {
+	if amountSat <= 0 {
+		return nil
+	}
+	manualReserveSat := computeManualReserveSat(cfg, totalBudgetSat)
+	remainingTotal, _ := computeRemainingForAuto(totalBudgetSat, spentTotalSat, spentManualSat, manualReserveSat)
+	if remainingTotal <= 0 {
+		return errManualBudgetExhausted
+	}
+	feeCfg := effectiveConfigForTarget(cfg, setting)
+	targetPolicy := lndclient.ChannelPolicySnapshot{
+		FeeRatePpm:  int64Value(target.FeeRatePpm),
+		BaseFeeMsat: int64Value(target.BaseFeeMsat),
+	}
+	estimatedCost := estimateMaxCost(amountSat, targetPolicy, feeCfg)
+	if estimatedCost > 0 && estimatedCost > remainingTotal {
+		return errManualBudgetInsufficient
+	}
+	return nil
+}
+
+func int64Value(ptr *int64) int64 {
+	if ptr == nil {
+		return 0
+	}
+	return *ptr
 }
 
 func (s *RebalanceService) fetchAvgRevenue7d(ctx context.Context, start time.Time) (int64, error) {

@@ -875,7 +875,16 @@ export default function RebalanceCenter() {
       })
       void loadAll({ silent: true })
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : t('rebalanceCenter.runFailed'))
+      const message = err instanceof Error ? err.message : ''
+      if (message.includes('manual budget exhausted')) {
+        setStatus(t('rebalanceCenter.runFailedBudgetExhausted'))
+      } else if (message.includes('manual budget insufficient')) {
+        setStatus(t('rebalanceCenter.runFailedBudgetInsufficient'))
+      } else if (message.includes('manual restart cooldown active')) {
+        setStatus(t('rebalanceCenter.runFailedCooldown'))
+      } else {
+        setStatus(message || t('rebalanceCenter.runFailed'))
+      }
     }
   }
 
@@ -1279,6 +1288,11 @@ export default function RebalanceCenter() {
               {overview.last_scan_status && (overview.last_scan_status === 'budget_exhausted' || overview.last_scan_status === 'budget_insufficient') && (
                 <p className="text-xs text-amber-200">
                   {t(`rebalanceCenter.overview.budgetPaused.${overview.last_scan_status}`)}
+                </p>
+              )}
+              {(overview.remaining_total_sat ?? 0) <= 0 && (
+                <p className="text-xs text-amber-200">
+                  {t('rebalanceCenter.overview.manualPaused.exhausted')}
                 </p>
               )}
               <div className="mt-2 border-t border-white/10 pt-2 space-y-1">

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -349,7 +350,12 @@ func (s *Server) handleRebalanceRun(w http.ResponseWriter, r *http.Request) {
 	autoRestart := payload.AutoRestart != nil && *payload.AutoRestart
 	jobID, err := s.rebalance.startJob(resolvedID, "manual", "", 0, autoRestart)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		switch {
+		case errors.Is(err, errManualRestartCooldown), errors.Is(err, errManualBudgetExhausted), errors.Is(err, errManualBudgetInsufficient):
+			writeError(w, http.StatusConflict, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"job_id": jobID})

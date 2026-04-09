@@ -2477,6 +2477,9 @@
     "invalidTarget": "Target de outbound inválido.",
     "invalidEconRatio": "Override de ratio econômico inválido.",
     "runFailed": "Falha ao iniciar o rebalance.",
+    "runFailedBudgetExhausted": "Manual restart bloqueado: o orçamento total diário de rebalance foi esgotado.",
+    "runFailedBudgetInsufficient": "Manual restart bloqueado: o orçamento diário restante está baixo demais para este rebalance.",
+    "runFailedCooldown": "Manual restart bloqueado: o cooldown deste canal ainda está ativo.",
     "saving": "Salvando...",
     "save": "Salvar",
       "overview": {
@@ -2516,6 +2519,9 @@
       "budgetPaused": {
           "budget_exhausted": "Auto pausado: orçamento diário esgotado.",
           "budget_insufficient": "Auto pausado: orçamento baixo para o alvo."
+        },
+      "manualPaused": {
+          "exhausted": "Manual restart pausado: o orçamento total diário foi esgotado."
         },
         "effectiveness": "Efetividade (7d)",
         "effectivenessOperational": "Operacional (todos jobs concluídos)",

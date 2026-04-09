@@ -1,9 +1,14 @@
 package server
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"lightningos-light/internal/lndclient"
 )
+
+func ptrInt64(v int64) *int64 { return &v }
 
 func TestDefaultRebalanceConfigSplitCompatibility(t *testing.T) {
 	cfg := defaultRebalanceConfig()
@@ -270,6 +275,63 @@ func TestComputeRemainingForAutoRespectsManualReserve(t *testing.T) {
 	}
 	if remainingForAuto != 400 {
 		t.Fatalf("expected remaining for auto 400, got %d", remainingForAuto)
+	}
+}
+
+func TestCheckManualBudgetAllowanceBudgetExhausted(t *testing.T) {
+	cfg := RebalanceConfig{
+		DailyBudgetPct:       20,
+		ManualReserveEnabled: true,
+		ManualReserveMode:    rebalanceManualReserveModePct,
+		ManualReserveValue:   10,
+		EconRatio:            0.6,
+	}
+	target := lndclient.ChannelInfo{
+		ChannelID:       1,
+		CapacitySat:     1_000_000,
+		LocalBalanceSat: 100_000,
+		BaseFeeMsat:     ptrInt64(0),
+		FeeRatePpm:      ptrInt64(500),
+	}
+	err := checkManualBudgetAllowance(cfg, channelSetting{}, target, 100_000, 1000, 100, 1000)
+	if !errors.Is(err, errManualBudgetExhausted) {
+		t.Fatalf("expected manual budget exhausted, got %v", err)
+	}
+}
+
+func TestCheckManualBudgetAllowanceBudgetInsufficient(t *testing.T) {
+	cfg := RebalanceConfig{
+		EconRatio:      1,
+		DailyBudgetPct: 20,
+	}
+	target := lndclient.ChannelInfo{
+		ChannelID:       1,
+		CapacitySat:     1_000_000,
+		LocalBalanceSat: 100_000,
+		BaseFeeMsat:     ptrInt64(0),
+		FeeRatePpm:      ptrInt64(5000),
+	}
+	err := checkManualBudgetAllowance(cfg, channelSetting{}, target, 100_000, 400, 0, 100)
+	if !errors.Is(err, errManualBudgetInsufficient) {
+		t.Fatalf("expected manual budget insufficient, got %v", err)
+	}
+}
+
+func TestCheckManualBudgetAllowanceAllowsWhenBudgetFits(t *testing.T) {
+	cfg := RebalanceConfig{
+		EconRatio:      0.5,
+		DailyBudgetPct: 20,
+	}
+	target := lndclient.ChannelInfo{
+		ChannelID:       1,
+		CapacitySat:     1_000_000,
+		LocalBalanceSat: 100_000,
+		BaseFeeMsat:     ptrInt64(0),
+		FeeRatePpm:      ptrInt64(500),
+	}
+	err := checkManualBudgetAllowance(cfg, channelSetting{}, target, 100_000, 1000, 0, 100)
+	if err != nil {
+		t.Fatalf("expected manual budget allowance, got %v", err)
 	}
 }
 

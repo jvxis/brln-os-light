@@ -2477,6 +2477,9 @@
     "invalidTarget": "Invalid outbound target.",
     "invalidEconRatio": "Invalid econ ratio override.",
     "runFailed": "Rebalance failed to start.",
+    "runFailedBudgetExhausted": "Manual restart blocked: total daily rebalance budget exhausted.",
+    "runFailedBudgetInsufficient": "Manual restart blocked: remaining daily budget is too low for this rebalance.",
+    "runFailedCooldown": "Manual restart blocked: cooldown still active for this channel.",
     "saving": "Saving...",
     "save": "Save",
       "overview": {
@@ -2516,6 +2519,9 @@
         "budgetPaused": {
           "budget_exhausted": "Auto paused: daily budget exhausted.",
           "budget_insufficient": "Auto paused: budget too low for target."
+        },
+        "manualPaused": {
+          "exhausted": "Manual restart paused: total daily budget exhausted."
         },
         "effectiveness": "Effectiveness (7d)",
         "effectivenessOperational": "Operational (all completed jobs)",

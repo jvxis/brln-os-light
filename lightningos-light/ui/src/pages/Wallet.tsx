@@ -1433,6 +1433,7 @@ export default function Wallet() {
                   <span className="text-xs text-brass">{paymentPreview.probe.failure_reason}</span>
                 ) : null}
               </div>
+              <p className="text-xs leading-relaxed text-fog/55">{t('wallet.paymentPreviewLiquidityNote')}</p>
               {Array.isArray(paymentPreview.routes) && paymentPreview.routes.length > 0 ? (
                 <div className="space-y-3">
                   {paymentPreview.routes.map((route, routeIndex) => (

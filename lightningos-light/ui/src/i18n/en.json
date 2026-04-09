@@ -1131,6 +1131,7 @@
     "paymentPreviewAction": "Route preview",
     "paymentPreviewBlindedUnavailable": "Route preview is unavailable for blinded invoices.",
     "paymentPreviewChannel": "Channel {{id}}",
+    "paymentPreviewLiquidityNote": "Preview uses graph data and the selected outgoing channels; it does not guarantee liquidity on intermediate channels. Payment can still fail because of liquidity, pending HTLCs, or policy changes.",
     "paymentPreviewHop": "Hop {{index}}: {{peer}}",
     "paymentPreviewHopFee": "Hop fee: {{amount}} sats",
     "paymentPreviewLoading": "Analyzing routes...",

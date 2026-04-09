@@ -39,6 +39,7 @@ const (
 	lndConnectTimeout              = 30 * time.Second
 	lndOpenChannelTimeout          = 60 * time.Second
 	lndBatchOpenChannelTimeout     = 90 * time.Second
+	lndWalletPaymentTimeout        = 120 * time.Second
 	batchOpenMaxChannels           = 50
 	pendingOpenBumpReferenceVbytes = int64(110)
 	lndWarmupPeriod                = 90 * time.Second
@@ -3843,7 +3844,7 @@ func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), lndWalletPaymentTimeout)
 	defer cancel()
 
 	paymentHash := ""
@@ -3857,7 +3858,7 @@ func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
 		}
 		msg := lndRPCErrorMessage(err)
 		if isTimeoutError(err) {
-			msg = lndStatusMessage(err)
+			msg = "Payment timed out while LND was trying routes"
 		}
 		if msg == "" || msg == "LND error" {
 			msg = "Payment failed"

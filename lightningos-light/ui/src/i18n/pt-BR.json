@@ -1131,6 +1131,7 @@
     "paymentPreviewAction": "Preview de rota",
     "paymentPreviewBlindedUnavailable": "O preview de rota não está disponível para invoices blindadas.",
     "paymentPreviewChannel": "Canal {{id}}",
+    "paymentPreviewLiquidityNote": "O preview usa dados do grafo e os canais de saída selecionados; não garante liquidez nos canais intermediários. O pagamento ainda pode falhar por liquidez, HTLCs pendentes ou mudança de políticas.",
     "paymentPreviewHop": "Hop {{index}}: {{peer}}",
     "paymentPreviewHopFee": "Taxa do hop: {{amount}} sats",
     "paymentPreviewLoading": "Analisando rotas...",

@@ -1,7 +1,9 @@
 package lndclient
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"lightningos-light/lnrpc"
 )
@@ -149,4 +151,27 @@ func TestRouteAlternativeIgnoredEdgeSetsKeepsSelectedFirstHop(t *testing.T) {
 	if got[0][0].ChannelId != 20 || got[1][0].ChannelId != 30 {
 		t.Fatalf("routeAlternativeIgnoredEdgeSets() = channel ids %d, %d; want 20, 30", got[0][0].ChannelId, got[1][0].ChannelId)
 	}
+}
+
+func TestPaymentTimeoutSeconds(t *testing.T) {
+	t.Parallel()
+
+	t.Run("uses fallback when deadline has enough room", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if got := paymentTimeoutSeconds(ctx, 90); got != 90 {
+			t.Fatalf("paymentTimeoutSeconds() = %d, want 90", got)
+		}
+	})
+
+	t.Run("leaves response room before a short deadline", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		got := paymentTimeoutSeconds(ctx, 90)
+		if got < 7 || got > 8 {
+			t.Fatalf("paymentTimeoutSeconds() = %d, want 7 or 8", got)
+		}
+	})
 }

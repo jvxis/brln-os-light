@@ -1100,7 +1100,7 @@ func (c *Client) PayInvoice(ctx context.Context, paymentRequest string, outgoing
 	}
 	req := &routerrpc.SendPaymentRequest{
 		PaymentRequest:    paymentRequest,
-		TimeoutSeconds:    paymentTimeoutSeconds(ctx, 45),
+		TimeoutSeconds:    paymentTimeoutSeconds(ctx, 90),
 		OutgoingChanIds:   append([]uint64(nil), outgoingChanIDs...),
 		FeeLimitMsat:      feeLimitMsat,
 		NoInflightUpdates: true,
@@ -1161,9 +1161,12 @@ func paymentTimeoutSeconds(ctx context.Context, fallback int32) int32 {
 	if remaining <= 0 {
 		return 1
 	}
-	seconds := int32(math.Ceil(remaining.Seconds()))
+	seconds := int32(math.Floor(remaining.Seconds())) - 2
 	if seconds < 1 {
 		return 1
+	}
+	if seconds > fallback {
+		return fallback
 	}
 	return seconds
 }
@@ -1643,6 +1646,12 @@ func (c *Client) convertPaymentRouteWithClient(ctx context.Context, client lnrpc
 	summary.TotalAmtMsat = route.TotalAmtMsat
 	summary.TotalFeesSat = route.TotalFees
 	summary.TotalFeesMsat = route.TotalFeesMsat
+	if summary.TotalFeesMsat <= 0 {
+		summary.TotalFeesMsat = routeTotalFeeMsat(route)
+	}
+	if summary.TotalFeesMsat > 0 {
+		summary.TotalFeesSat = msatToSatCeil(summary.TotalFeesMsat)
+	}
 	summary.TotalTimeLock = route.TotalTimeLock
 	summary.HopCount = len(route.Hops)
 	if len(route.Hops) == 0 {
@@ -1653,6 +1662,14 @@ func (c *Client) convertPaymentRouteWithClient(ctx context.Context, client lnrpc
 		if hop == nil {
 			continue
 		}
+		feeMsat := hop.FeeMsat
+		if feeMsat <= 0 && hop.Fee > 0 {
+			feeMsat = hop.Fee * 1000
+		}
+		feeSat := hop.Fee
+		if feeMsat > 0 {
+			feeSat = msatToSatCeil(feeMsat)
+		}
 		summary.Hops = append(summary.Hops, PaymentRouteHop{
 			PubKey:             strings.TrimSpace(hop.PubKey),
 			Alias:              c.lookupNodeAliasWithClient(ctx, client, hop.PubKey),
@@ -1660,8 +1677,8 @@ func (c *Client) convertPaymentRouteWithClient(ctx context.Context, client lnrpc
 			ChannelCapacitySat: hop.ChanCapacity,
 			AmtToForwardSat:    hop.AmtToForward,
 			AmtToForwardMsat:   hop.AmtToForwardMsat,
-			FeeSat:             hop.Fee,
-			FeeMsat:            hop.FeeMsat,
+			FeeSat:             feeSat,
+			FeeMsat:            feeMsat,
 			Expiry:             hop.Expiry,
 		})
 	}

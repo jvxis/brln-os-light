@@ -902,10 +902,9 @@ export default function Wallet() {
         max_fee_sat: maxFeeSatValue > 0 ? maxFeeSatValue : undefined
       })
       setPaymentPreview(res)
-      if (!payMaxFeeTouched) {
-        const suggested = Number(res?.suggested_max_fee_sat || 0)
-        setPayMaxFeeSat(suggested > 0 ? String(suggested) : '')
-      }
+      const suggested = Number(res?.suggested_max_fee_sat || 0)
+      setPayMaxFeeSat(suggested > 0 ? String(suggested) : '')
+      setPayMaxFeeTouched(false)
     } catch (err: any) {
       setPaymentPreview(null)
       setPaymentPreviewError(err?.message || t('wallet.paymentPreviewUnavailable'))

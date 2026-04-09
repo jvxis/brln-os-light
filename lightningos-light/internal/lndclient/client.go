@@ -1206,6 +1206,136 @@ func msatToSatCeil(msat int64) int64 {
 	return (msat + 999) / 1000
 }
 
+func paymentPreviewFeeHeadroomSat(feeMsat int64) int64 {
+	if feeMsat <= 0 {
+		return 1
+	}
+	return msatToSatCeil((feeMsat*125 + 99) / 100)
+}
+
+func routeTotalFeeMsat(route *lnrpc.Route) int64 {
+	if route == nil {
+		return 0
+	}
+	if route.TotalFeesMsat > 0 {
+		return route.TotalFeesMsat
+	}
+	if route.TotalFees > 0 {
+		return route.TotalFees * 1000
+	}
+	var total int64
+	for _, hop := range route.Hops {
+		if hop == nil {
+			continue
+		}
+		if hop.FeeMsat > 0 {
+			total += hop.FeeMsat
+			continue
+		}
+		if hop.Fee > 0 {
+			total += hop.Fee * 1000
+		}
+	}
+	return total
+}
+
+func paymentRouteTotalFeeMsat(route PaymentRouteSummary) int64 {
+	if route.TotalFeesMsat > 0 {
+		return route.TotalFeesMsat
+	}
+	if route.TotalFeesSat > 0 {
+		return route.TotalFeesSat * 1000
+	}
+	var total int64
+	for _, hop := range route.Hops {
+		if hop.FeeMsat > 0 {
+			total += hop.FeeMsat
+			continue
+		}
+		if hop.FeeSat > 0 {
+			total += hop.FeeSat * 1000
+		}
+	}
+	return total
+}
+
+func routeTotalAmountMsat(route *lnrpc.Route) int64 {
+	if route == nil {
+		return 0
+	}
+	if route.TotalAmtMsat > 0 {
+		return route.TotalAmtMsat
+	}
+	if route.TotalAmt > 0 {
+		return route.TotalAmt * 1000
+	}
+	return 0
+}
+
+func routeKey(route *lnrpc.Route) string {
+	if route == nil || len(route.Hops) == 0 {
+		return ""
+	}
+	var builder strings.Builder
+	for _, hop := range route.Hops {
+		if hop == nil {
+			continue
+		}
+		if builder.Len() > 0 {
+			builder.WriteByte('|')
+		}
+		builder.WriteString(strconv.FormatUint(hop.ChanId, 10))
+		builder.WriteByte(':')
+		builder.WriteString(strings.TrimSpace(hop.PubKey))
+	}
+	return builder.String()
+}
+
+func edgeSetKey(edges []*lnrpc.EdgeLocator) string {
+	if len(edges) == 0 {
+		return ""
+	}
+	var builder strings.Builder
+	for _, edge := range edges {
+		if edge == nil || edge.ChannelId == 0 {
+			continue
+		}
+		if builder.Len() > 0 {
+			builder.WriteByte('|')
+		}
+		builder.WriteString(strconv.FormatUint(edge.ChannelId, 10))
+		builder.WriteByte(':')
+		builder.WriteString(strconv.FormatBool(edge.DirectionReverse))
+	}
+	return builder.String()
+}
+
+func routeAlternativeIgnoredEdgeSets(route *lnrpc.Route, keepFirstHop bool) [][]*lnrpc.EdgeLocator {
+	if route == nil || len(route.Hops) == 0 {
+		return nil
+	}
+	sets := make([][]*lnrpc.EdgeLocator, 0, len(route.Hops))
+	for i, hop := range route.Hops {
+		if hop == nil || hop.ChanId == 0 {
+			continue
+		}
+		if keepFirstHop && i == 0 {
+			continue
+		}
+		sets = append(sets, []*lnrpc.EdgeLocator{
+			{
+				ChannelId:        hop.ChanId,
+				DirectionReverse: false,
+			},
+			{
+				ChannelId:        hop.ChanId,
+				DirectionReverse: true,
+			},
+		})
+	}
+	return sets
+}
+
 type PaymentRouteHop struct {
 	PubKey             string `json:"pubkey"`
 	Alias              string `json:"alias,omitempty"`
@@ -1332,27 +1462,38 @@ func (c *Client) PreviewPayment(ctx context.Context, paymentRequest string, outg
 		EffectiveMaxFeeMsat: effectiveMaxFeeMsat,
 	}
 
-	probeResp, probeErr := router.EstimateRouteFee(ctx, &routerrpc.RouteFeeRequest{
-		PaymentRequest: trimmed,
-		Timeout:        uint32(paymentTimeoutSeconds(ctx, 15)),
-	})
-	if probeErr == nil && probeResp != nil {
-		preview.Probe.Success = probeResp.FailureReason == lnrpc.PaymentFailureReason_FAILURE_REASON_NONE
-		preview.Probe.FeeMsat = probeResp.RoutingFeeMsat
-		preview.Probe.FeeSat = msatToSatCeil(probeResp.RoutingFeeMsat)
-		preview.Probe.TimeLockDelay = probeResp.TimeLockDelay
-		if probeResp.FailureReason != lnrpc.PaymentFailureReason_FAILURE_REASON_NONE {
-			preview.Probe.FailureReason = probeResp.FailureReason.String()
+	if len(outgoingChanIDs) == 0 {
+		probeResp, probeErr := router.EstimateRouteFee(ctx, &routerrpc.RouteFeeRequest{
+			PaymentRequest: trimmed,
+			Timeout:        uint32(paymentTimeoutSeconds(ctx, 15)),
+		})
+		if probeErr == nil && probeResp != nil {
+			preview.Probe.Success = probeResp.FailureReason == lnrpc.PaymentFailureReason_FAILURE_REASON_NONE
+			preview.Probe.FeeMsat = probeResp.RoutingFeeMsat
+			preview.Probe.FeeSat = msatToSatCeil(probeResp.RoutingFeeMsat)
+			preview.Probe.TimeLockDelay = probeResp.TimeLockDelay
+			if probeResp.FailureReason != lnrpc.PaymentFailureReason_FAILURE_REASON_NONE {
+				preview.Probe.FailureReason = probeResp.FailureReason.String()
+			}
 		}
 	}
 
-	routes := make([]*lnrpc.Route, 0, numRoutes)
-	ignoredByRoute := make([]*lnrpc.EdgeLocator, 0)
-	for i := int32(0); i < numRoutes; i++ {
+	targetRoutes := int(numRoutes)
+	maxRouteCandidates := targetRoutes * 4
+	maxRouteQueries := targetRoutes * 8
+	routes := make([]*lnrpc.Route, 0, targetRoutes)
+	seenRoutes := make(map[string]struct{})
+	ignoredQueue := [][]*lnrpc.EdgeLocator{nil}
+	seenIgnoredSets := map[string]struct{}{"": {}}
+	for attempts := 0; len(ignoredQueue) > 0 && attempts < maxRouteQueries && len(routes) < maxRouteCandidates; attempts++ {
+		ignoredEdges := ignoredQueue[0]
+		ignoredQueue = ignoredQueue[1:]
+
 		req := &lnrpc.QueryRoutesRequest{
 			PubKey:            decoded.Destination,
 			OutgoingChanIds:   append([]uint64(nil), outgoingChanIDs...),
 			UseMissionControl: true,
+			TimePref:          -1,
 		}
 		if amountMsat > 0 {
 			req.AmtMsat = amountMsat
@@ -1373,23 +1514,67 @@ func (c *Client) PreviewPayment(ctx context.Context, paymentRequest string, outg
 				req.FinalCltvDelta = int32(decoded.CltvExpiry)
 			}
 		}
-		if len(ignoredByRoute) > 0 {
-			req.IgnoredEdges = append([]*lnrpc.EdgeLocator(nil), ignoredByRoute...)
+		if len(ignoredEdges) > 0 {
+			req.IgnoredEdges = append([]*lnrpc.EdgeLocator(nil), ignoredEdges...)
 		}
 
 		queryResp, queryErr := lightning.QueryRoutes(ctx, req)
 		if queryErr != nil {
-			if len(routes) == 0 {
+			if len(routes) == 0 && attempts == 0 {
 				return preview, queryErr
 			}
-			break
+			continue
 		}
 		if queryResp == nil || len(queryResp.Routes) == 0 {
-			break
+			continue
 		}
-		route := queryResp.Routes[0]
-		routes = append(routes, route)
-		ignoredByRoute = append(ignoredByRoute, routeToEdgeLocators(route)...)
+		for _, route := range queryResp.Routes {
+			if route == nil {
+				continue
+			}
+			key := routeKey(route)
+			if key != "" {
+				if _, exists := seenRoutes[key]; exists {
+					continue
+				}
+				seenRoutes[key] = struct{}{}
+			}
+			routes = append(routes, route)
+
+			keepFirstHop := len(outgoingChanIDs) == 1
+			for _, edgeSet := range routeAlternativeIgnoredEdgeSets(route, keepFirstHop) {
+				key := edgeSetKey(edgeSet)
+				if key == "" {
+					continue
+				}
+				if _, exists := seenIgnoredSets[key]; exists {
+					continue
+				}
+				seenIgnoredSets[key] = struct{}{}
+				ignoredQueue = append(ignoredQueue, edgeSet)
+			}
+		}
+	}
+	sort.SliceStable(routes, func(i, j int) bool {
+		leftFee := routeTotalFeeMsat(routes[i])
+		rightFee := routeTotalFeeMsat(routes[j])
+		if leftFee != rightFee {
+			return leftFee < rightFee
+		}
+		leftHops := len(routes[i].Hops)
+		rightHops := len(routes[j].Hops)
+		if leftHops != rightHops {
+			return leftHops < rightHops
+		}
+		leftAmt := routeTotalAmountMsat(routes[i])
+		rightAmt := routeTotalAmountMsat(routes[j])
+		if leftAmt != rightAmt {
+			return leftAmt < rightAmt
+		}
+		return routes[i].TotalTimeLock < routes[j].TotalTimeLock
+	})
+	if len(routes) > targetRoutes {
+		routes = routes[:targetRoutes]
 	}
 
 	preview.Routes = make([]PaymentRouteSummary, 0, len(routes))
@@ -1397,21 +1582,13 @@ func (c *Client) PreviewPayment(ctx context.Context, paymentRequest string, outg
 		preview.Routes = append(preview.Routes, c.convertPaymentRouteWithClient(ctx, lightning, route))
 	}
 	if len(preview.Routes) > 0 {
-		headroom := msatToSatCeil(preview.Routes[0].TotalFeesMsat * 125 / 100)
-		if headroom > 0 && (preview.SuggestedMaxFeeSat == 0 || headroom < preview.SuggestedMaxFeeSat) {
-			preview.SuggestedMaxFeeSat = headroom
-			preview.SuggestedMaxFeeMsat = headroom * 1000
-		}
-	}
-	if preview.Probe.Success && preview.Probe.FeeSat > 0 {
-		headroom := msatToSatCeil(preview.Probe.FeeMsat * 125 / 100)
-		if headroom == 0 {
-			headroom = preview.Probe.FeeSat + 1
-		}
-		if preview.SuggestedMaxFeeSat == 0 || headroom < preview.SuggestedMaxFeeSat {
-			preview.SuggestedMaxFeeSat = headroom
-			preview.SuggestedMaxFeeMsat = headroom * 1000
-		}
+		suggested := paymentPreviewFeeHeadroomSat(paymentRouteTotalFeeMsat(preview.Routes[0]))
+		preview.SuggestedMaxFeeSat = suggested
+		preview.SuggestedMaxFeeMsat = suggested * 1000
+	} else if preview.Probe.Success && preview.Probe.FeeSat > 0 {
+		suggested := paymentPreviewFeeHeadroomSat(preview.Probe.FeeMsat)
+		preview.SuggestedMaxFeeSat = suggested
+		preview.SuggestedMaxFeeMsat = suggested * 1000
 	}
 	return preview, nil
 }

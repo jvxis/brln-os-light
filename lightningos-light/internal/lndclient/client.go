@@ -1326,6 +1326,7 @@ func routeAlternativeIgnoredEdgeSets(route *lnrpc.Route, keepFirstHop bool) [][]
 		return nil
 	}
 	sets := make([][]*lnrpc.EdgeLocator, 0, len(route.Hops))
+	fullRouteEdges := make([]*lnrpc.EdgeLocator, 0, len(route.Hops)*2)
 	for i, hop := range route.Hops {
 		if hop == nil || hop.ChanId == 0 {
 			continue
@@ -1333,6 +1334,13 @@ func routeAlternativeIgnoredEdgeSets(route *lnrpc.Route, keepFirstHop bool) [][]
 		if keepFirstHop && i == 0 {
 			continue
 		}
+		fullRouteEdges = append(fullRouteEdges, &lnrpc.EdgeLocator{
+			ChannelId:        hop.ChanId,
+			DirectionReverse: false,
+		}, &lnrpc.EdgeLocator{
+			ChannelId:        hop.ChanId,
+			DirectionReverse: true,
+		})
 		sets = append(sets, []*lnrpc.EdgeLocator{
 			{
 				ChannelId:        hop.ChanId,
@@ -1343,6 +1351,9 @@ func routeAlternativeIgnoredEdgeSets(route *lnrpc.Route, keepFirstHop bool) [][]
 				DirectionReverse: true,
 			},
 		})
+	}
+	if len(fullRouteEdges) > 0 {
+		sets = append([][]*lnrpc.EdgeLocator{fullRouteEdges}, sets...)
 	}
 	return sets
 }
@@ -1588,9 +1599,13 @@ func (c *Client) PreviewPayment(ctx context.Context, paymentRequest string, outg
 	suggestedMaxFeeSat := msatToSatCeil(suggestedMaxFeeMsat)
 	effectiveMaxFeeSat := suggestedMaxFeeSat
 	effectiveMaxFeeMsat := suggestedMaxFeeMsat
+	routeSearchMaxFeeMsat := suggestedMaxFeeMsat
 	if maxFeeSat > 0 {
 		effectiveMaxFeeSat = maxFeeSat
 		effectiveMaxFeeMsat = maxFeeSat * 1000
+		if effectiveMaxFeeMsat > routeSearchMaxFeeMsat {
+			routeSearchMaxFeeMsat = effectiveMaxFeeMsat
+		}
 	}
 
 	preview := PaymentPreview{
@@ -1622,8 +1637,8 @@ func (c *Client) PreviewPayment(ctx context.Context, paymentRequest string, outg
 	}
 
 	targetRoutes := int(numRoutes)
-	maxRouteCandidates := targetRoutes * 4
-	maxRouteQueries := targetRoutes * 8
+	maxRouteCandidates := targetRoutes * 8
+	maxRouteQueries := targetRoutes * 12
 	routes := make([]*lnrpc.Route, 0, targetRoutes)
 	seenRoutes := make(map[string]struct{})
 	ignoredQueue := [][]*lnrpc.EdgeLocator{nil}
@@ -1643,9 +1658,9 @@ func (c *Client) PreviewPayment(ctx context.Context, paymentRequest string, outg
 		} else {
 			req.Amt = decoded.AmountSat
 		}
-		if effectiveMaxFeeMsat > 0 {
+		if routeSearchMaxFeeMsat > 0 {
 			req.FeeLimit = &lnrpc.FeeLimit{
-				Limit: &lnrpc.FeeLimit_FixedMsat{FixedMsat: effectiveMaxFeeMsat},
+				Limit: &lnrpc.FeeLimit_FixedMsat{FixedMsat: routeSearchMaxFeeMsat},
 			}
 		}
 		if len(decoded.BlindedPaths) > 0 {

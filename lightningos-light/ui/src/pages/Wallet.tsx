@@ -594,7 +594,7 @@ export default function Wallet() {
 
   const routeProbeClassName = (probe?: WalletRouteProbe) => {
     if (probe?.likely_liquid || probe?.status === 'likely_liquid') {
-      return 'border-teal/40 bg-teal/10 text-teal'
+      return 'border-emerald-400/40 bg-emerald-500/15 text-emerald-200'
     }
     if (probe?.status === 'timeout') {
       return 'border-brass/40 bg-brass/10 text-brass'

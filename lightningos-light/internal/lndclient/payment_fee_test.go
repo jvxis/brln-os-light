@@ -145,11 +145,14 @@ func TestRouteAlternativeIgnoredEdgeSetsKeepsSelectedFirstHop(t *testing.T) {
 	}}
 
 	got := routeAlternativeIgnoredEdgeSets(route, true)
-	if len(got) != 2 {
-		t.Fatalf("routeAlternativeIgnoredEdgeSets() returned %d sets, want 2", len(got))
+	if len(got) != 3 {
+		t.Fatalf("routeAlternativeIgnoredEdgeSets() returned %d sets, want 3", len(got))
 	}
-	if got[0][0].ChannelId != 20 || got[1][0].ChannelId != 30 {
-		t.Fatalf("routeAlternativeIgnoredEdgeSets() = channel ids %d, %d; want 20, 30", got[0][0].ChannelId, got[1][0].ChannelId)
+	if got[0][0].ChannelId != 20 || got[0][2].ChannelId != 30 {
+		t.Fatalf("routeAlternativeIgnoredEdgeSets() full route set = channel ids %d, %d; want 20, 30", got[0][0].ChannelId, got[0][2].ChannelId)
+	}
+	if got[1][0].ChannelId != 20 || got[2][0].ChannelId != 30 {
+		t.Fatalf("routeAlternativeIgnoredEdgeSets() single-edge sets = channel ids %d, %d; want 20, 30", got[1][0].ChannelId, got[2][0].ChannelId)
 	}
 }
 

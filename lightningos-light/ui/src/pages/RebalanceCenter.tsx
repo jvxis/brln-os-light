@@ -34,6 +34,10 @@ type RebalanceConfig = {
   fail_tolerance_ppm: number
   roi_min: number
   daily_budget_pct: number
+  budget_mode: string
+  manual_reserve_enabled: boolean
+  manual_reserve_mode: string
+  manual_reserve_value: number
   max_concurrent: number
   min_amount_sat: number
   max_amount_sat: number
@@ -76,9 +80,18 @@ type RebalanceOverview = {
   eligible_sources?: number
   targets_needing?: number
   daily_budget_sat: number
+  daily_budget_base_sat?: number
+  daily_budget_short_term_sat?: number
   daily_spent_sat: number
   daily_spent_auto_sat: number
   daily_spent_manual_sat: number
+  remaining_total_sat?: number
+  remaining_for_auto_sat?: number
+  manual_reserve_enabled?: boolean
+  manual_reserve_mode?: string
+  manual_reserve_value?: number
+  manual_reserve_sat?: number
+  manual_reserve_remaining_sat?: number
   live_cost_sat: number
   effectiveness_7d: number
   effectiveness_execution_7d?: number
@@ -302,6 +315,10 @@ export default function RebalanceCenter() {
       fail_tolerance_ppm: cfg.fail_tolerance_ppm,
       roi_min: cfg.roi_min,
       daily_budget_pct: cfg.daily_budget_pct,
+      budget_mode: cfg.budget_mode,
+      manual_reserve_enabled: cfg.manual_reserve_enabled,
+      manual_reserve_mode: cfg.manual_reserve_mode,
+      manual_reserve_value: cfg.manual_reserve_value,
       max_concurrent: cfg.max_concurrent,
       min_amount_sat: cfg.min_amount_sat,
       max_amount_sat: cfg.max_amount_sat,
@@ -563,6 +580,10 @@ export default function RebalanceCenter() {
         const nextConfig = cfg as RebalanceConfig
         const normalizedConfig = {
           ...nextConfig,
+          budget_mode: nextConfig.budget_mode || 'revenue_24h_pct',
+          manual_reserve_enabled: nextConfig.manual_reserve_enabled ?? false,
+          manual_reserve_mode: nextConfig.manual_reserve_mode || 'fixed_sat',
+          manual_reserve_value: nextConfig.manual_reserve_value ?? 0,
           amount_probe_steps: nextConfig.amount_probe_steps || 4,
           amount_probe_adaptive: nextConfig.amount_probe_adaptive ?? true,
           attempt_timeout_sec: nextConfig.attempt_timeout_sec || 20,
@@ -647,6 +668,10 @@ export default function RebalanceCenter() {
           fail_tolerance_ppm: config.fail_tolerance_ppm,
           roi_min: config.roi_min,
           daily_budget_pct: config.daily_budget_pct,
+          budget_mode: config.budget_mode,
+          manual_reserve_enabled: config.manual_reserve_enabled,
+          manual_reserve_mode: config.manual_reserve_mode,
+          manual_reserve_value: config.manual_reserve_value,
           max_concurrent: config.max_concurrent,
           min_amount_sat: config.min_amount_sat,
           max_amount_sat: config.max_amount_sat,
@@ -675,6 +700,10 @@ export default function RebalanceCenter() {
       })) as RebalanceConfig
       const normalizedSaved = {
         ...saved,
+        budget_mode: saved.budget_mode || 'revenue_24h_pct',
+        manual_reserve_enabled: saved.manual_reserve_enabled ?? false,
+        manual_reserve_mode: saved.manual_reserve_mode || 'fixed_sat',
+        manual_reserve_value: saved.manual_reserve_value ?? 0,
         amount_probe_steps: saved.amount_probe_steps || 4,
         amount_probe_adaptive: saved.amount_probe_adaptive ?? true,
         attempt_timeout_sec: saved.attempt_timeout_sec || 20,
@@ -1209,9 +1238,44 @@ export default function RebalanceCenter() {
             <div className="section-card space-y-2">
               <p className="text-xs uppercase tracking-wide text-fog/60">{t('rebalanceCenter.overview.dailyBudget')}</p>
               <p className="text-lg font-semibold text-fog">{formatSats(overview.daily_budget_sat)}</p>
-              <p className="text-xs text-fog/50">{t('rebalanceCenter.overview.budgetLast24h')}</p>
+              <p className="text-xs text-fog/50">
+                {overview.manual_reserve_enabled
+                  ? t('rebalanceCenter.overview.budgetModeWithReserve', {
+                      mode: t(`rebalanceCenter.settings.budgetModeOptions.${config?.budget_mode || 'revenue_24h_pct'}`)
+                    })
+                  : t('rebalanceCenter.overview.budgetMode', {
+                      mode: t(`rebalanceCenter.settings.budgetModeOptions.${config?.budget_mode || 'revenue_24h_pct'}`)
+                    })}
+              </p>
+              {typeof overview.daily_budget_base_sat === 'number' && overview.daily_budget_base_sat > 0 && (
+                <p className="text-xs text-fog/50">
+                  {t('rebalanceCenter.overview.dailyBudgetBase', { value: formatSats(overview.daily_budget_base_sat) })}
+                </p>
+              )}
+              {typeof overview.daily_budget_short_term_sat === 'number' && (
+                <p className="text-xs text-fog/50">
+                  {t('rebalanceCenter.overview.dailyBudgetShortTerm', { value: formatSats(overview.daily_budget_short_term_sat) })}
+                </p>
+              )}
               <p className="text-xs text-fog/50">{t('rebalanceCenter.overview.dailySpentAuto', { value: formatSats(overview.daily_spent_auto_sat) })}</p>
               <p className="text-xs text-fog/50">{t('rebalanceCenter.overview.dailySpentManual', { value: formatSats(overview.daily_spent_manual_sat) })}</p>
+              <p className="text-xs text-fog/50">{t('rebalanceCenter.overview.remainingTotal', { value: formatSats(overview.remaining_total_sat ?? 0) })}</p>
+              <p className="text-xs text-fog/50">{t('rebalanceCenter.overview.remainingForAuto', { value: formatSats(overview.remaining_for_auto_sat ?? 0) })}</p>
+              {overview.manual_reserve_enabled && (
+                <>
+                  <p className="text-xs text-fog/50">
+                    {t('rebalanceCenter.overview.manualReserve', {
+                      value: formatSats(overview.manual_reserve_sat ?? 0),
+                      mode: t(`rebalanceCenter.settings.manualReserveModeOptions.${overview.manual_reserve_mode || 'fixed_sat'}`)
+                    })}
+                  </p>
+                  <p className="text-xs text-fog/50">
+                    {t('rebalanceCenter.overview.manualReserveRemaining', {
+                      value: formatSats(overview.manual_reserve_remaining_sat ?? 0)
+                    })}
+                  </p>
+                </>
+              )}
               {overview.last_scan_status && (overview.last_scan_status === 'budget_exhausted' || overview.last_scan_status === 'budget_insufficient') && (
                 <p className="text-xs text-amber-200">
                   {t(`rebalanceCenter.overview.budgetPaused.${overview.last_scan_status}`)}
@@ -1375,6 +1439,58 @@ export default function RebalanceCenter() {
                 step={0.1}
                 value={config.daily_budget_pct}
                 onChange={(e) => setConfig({ ...config, daily_budget_pct: Number(e.target.value) })}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.budgetMode')}>
+                {t('rebalanceCenter.settings.budgetMode')}
+              </label>
+              <select
+                className="input-field"
+                value={config.budget_mode}
+                onChange={(e) => setConfig({ ...config, budget_mode: e.target.value })}
+              >
+                <option value="revenue_24h_pct">{t('rebalanceCenter.settings.budgetModeOptions.revenue_24h_pct')}</option>
+                <option value="hybrid_revenue">{t('rebalanceCenter.settings.budgetModeOptions.hybrid_revenue')}</option>
+              </select>
+            </div>
+            <label
+              className="flex items-center gap-2 text-sm text-fog/70"
+              title={t('rebalanceCenter.settingsHints.manualReserveEnabled')}
+            >
+              <input
+                type="checkbox"
+                checked={config.manual_reserve_enabled}
+                onChange={(e) => setConfig({ ...config, manual_reserve_enabled: e.target.checked })}
+              />
+              {t('rebalanceCenter.settings.manualReserveEnabled')}
+            </label>
+            <div className="space-y-2">
+              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.manualReserveMode')}>
+                {t('rebalanceCenter.settings.manualReserveMode')}
+              </label>
+              <select
+                className="input-field"
+                value={config.manual_reserve_mode}
+                disabled={!config.manual_reserve_enabled}
+                onChange={(e) => setConfig({ ...config, manual_reserve_mode: e.target.value })}
+              >
+                <option value="fixed_sat">{t('rebalanceCenter.settings.manualReserveModeOptions.fixed_sat')}</option>
+                <option value="pct">{t('rebalanceCenter.settings.manualReserveModeOptions.pct')}</option>
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.manualReserveValue')}>
+                {t('rebalanceCenter.settings.manualReserveValue')}
+              </label>
+              <input
+                className="input-field"
+                type="number"
+                min={0}
+                step={config.manual_reserve_mode === 'pct' ? 0.1 : 1}
+                disabled={!config.manual_reserve_enabled}
+                value={config.manual_reserve_value}
+                onChange={(e) => setConfig({ ...config, manual_reserve_value: Number(e.target.value) })}
               />
             </div>
             <div className="space-y-2">

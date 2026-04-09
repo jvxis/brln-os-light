@@ -227,6 +227,52 @@ func TestNormalizeRebalanceConfigClampsMppBounds(t *testing.T) {
 	}
 }
 
+func TestNormalizeRebalanceConfigNormalizesBudgetAndManualReserveModes(t *testing.T) {
+	cfg := RebalanceConfig{
+		BudgetMode:           "weird",
+		ManualReserveEnabled: true,
+		ManualReserveMode:    "odd",
+		ManualReserveValue:   -15,
+	}
+	got := normalizeRebalanceConfig(cfg)
+	if got.BudgetMode != rebalanceBudgetModeRevenue24hPct {
+		t.Fatalf("expected budget mode fallback=%q, got %q", rebalanceBudgetModeRevenue24hPct, got.BudgetMode)
+	}
+	if got.ManualReserveMode != rebalanceManualReserveModeFixedSat {
+		t.Fatalf("expected manual reserve mode fallback=%q, got %q", rebalanceManualReserveModeFixedSat, got.ManualReserveMode)
+	}
+	if got.ManualReserveValue != 0 {
+		t.Fatalf("expected manual reserve value clamped to 0, got %v", got.ManualReserveValue)
+	}
+}
+
+func TestComputeDailyBudgetFromRevenueHybrid(t *testing.T) {
+	cfg := RebalanceConfig{
+		DailyBudgetPct: 50,
+		BudgetMode:     rebalanceBudgetModeHybridRevenue,
+	}
+	total, base, shortTerm := computeDailyBudgetFromRevenue(cfg, 1000, 2000)
+	if base != 1000 {
+		t.Fatalf("expected base budget 1000, got %d", base)
+	}
+	if shortTerm != 500 {
+		t.Fatalf("expected short-term budget 500, got %d", shortTerm)
+	}
+	if total != 850 {
+		t.Fatalf("expected hybrid total budget 850, got %d", total)
+	}
+}
+
+func TestComputeRemainingForAutoRespectsManualReserve(t *testing.T) {
+	remainingTotal, remainingForAuto := computeRemainingForAuto(1000, 400, 100, 300)
+	if remainingTotal != 600 {
+		t.Fatalf("expected remaining total 600, got %d", remainingTotal)
+	}
+	if remainingForAuto != 400 {
+		t.Fatalf("expected remaining for auto 400, got %d", remainingForAuto)
+	}
+}
+
 func TestShouldRunMppShadowRules(t *testing.T) {
 	cfg := RebalanceConfig{}
 	if shouldRunMppExecute(cfg, "auto") {

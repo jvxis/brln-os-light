@@ -18,6 +18,7 @@ Current backlog priority order:
 2. `Autofee` dynamic liquidity state
 3. channel `parking mode`
 4. ranking-driven per-channel automation policy
+5. rebalance budget redesign with manual reserve
 
 ## 1. Autofee Signal Hierarchy And Stability Redesign
 
@@ -759,6 +760,226 @@ Avoid fully automatic closure in first iteration.
    - remove from rebalance
    - remove from Autofee
 4. Keep irreversible actions manual.
+
+## 5. Rebalance Budget Redesign With Manual Reserve
+
+### Goal
+
+Replace the current automatic rebalance budget model, which is based only on a percentage of the last 24 hours of routing revenue, with a model that:
+
+- controls total daily rebalance spend at node level
+- explicitly accounts for both `auto` and `manual` rebalance cost
+- optionally protects a separate reserve for manual restart operations
+- becomes more stable and less pro-cyclical than a pure `24h revenue pct` rule
+
+### Problem
+
+Today the automatic scanner computes:
+
+- `daily_budget_sat = forward_revenue_24h * daily_budget_pct`
+
+and the scan gate is effectively checked against:
+
+- `remaining = budget - spent_auto`
+
+This creates three issues:
+
+- total node spend can drift higher than intended when manual restarts consume a lot of fee budget
+- a strong or weak single day can distort the next day too much
+- the operator cannot explicitly protect room for manual interventions
+
+### Proposed Model
+
+The budget should become a total daily node budget:
+
+- `daily_budget_total_sat`
+
+The runtime should also support an optional manual reserve:
+
+- `manual_reserve_enabled`
+- `manual_reserve_mode`
+  - `fixed_sat`
+  - `pct`
+- `manual_reserve_value`
+
+The automatic scanner should then consume:
+
+- `remaining_for_auto = daily_budget_total_sat - spent_total - manual_reserve_remaining`
+
+Where:
+
+- `spent_total = spent_auto + spent_manual`
+- `manual_reserve_remaining` is the still-protected portion of the reserve
+- if manual reserve is disabled, this value is `0`
+
+### Budget Formula
+
+The current `24h` formula should not remain the only anchor.
+
+The recommended budget source should be hybrid:
+
+- `avg_revenue_7d` as the main anchor
+- `revenue_24h` as a short-term adjustment
+
+Suggested first formula:
+
+- `base_budget_sat = avg_revenue_7d * daily_budget_pct`
+- `short_term_budget_sat = revenue_24h * daily_budget_pct`
+- `daily_budget_total_sat = round(0.70 * base_budget_sat + 0.30 * short_term_budget_sat)`
+
+Optional later additions:
+
+- absolute minimum floor
+- absolute maximum cap
+- small carry-over from prior day
+
+### Behavior Rules
+
+#### Automatic Scan
+
+The automatic scan should:
+
+- use `spent_total`, not only `spent_auto`
+- respect the protected manual reserve
+- stop queueing jobs when only the reserved manual portion remains
+
+#### Manual Restart
+
+Manual restart should:
+
+- still consume total daily spend
+- be allowed to use the reserved portion
+- optionally warn the user when the action would exceed the total daily budget
+
+First iteration should prefer:
+
+- warnings and visibility
+- not hard-blocking manual actions unless explicitly configured later
+
+### Data Model Changes
+
+#### Backend Config
+
+Extend `RebalanceConfig` with fields such as:
+
+- `budget_mode`
+  - `revenue_24h_pct`
+  - `hybrid_revenue`
+- `manual_reserve_enabled`
+- `manual_reserve_mode`
+- `manual_reserve_value`
+- optional:
+  - `daily_budget_min_sat`
+  - `daily_budget_max_sat`
+
+#### Budget Tracking
+
+The existing `rebalance_budget_daily` table already tracks:
+
+- `budget_sat`
+- `spent_auto_sat`
+- `spent_manual_sat`
+- `spent_sat`
+
+This should be extended conceptually with computed outputs in API/overview:
+
+- `budget_total_sat`
+- `manual_reserved_sat`
+- `manual_reserved_remaining_sat`
+- `remaining_for_auto_sat`
+- `remaining_total_sat`
+
+First iteration may keep storage unchanged and compute these values at runtime.
+
+### Backend Scope
+
+Files likely involved:
+
+- `lightningos-light/internal/server/rebalance_service.go`
+- `lightningos-light/internal/server/rebalance_handlers.go`
+
+Implementation tasks:
+
+1. Add new config fields and schema migration.
+2. Refactor budget calculation away from pure `24h` revenue.
+3. Make `auto` scan consume against total spend.
+4. Add manual reserve computation.
+5. Surface reserve and remaining budget clearly in `RebalanceOverview`.
+6. Ensure manual job creation records spend consistently in the same total budget model.
+
+### UI Scope
+
+Primary screen:
+
+- `Rebalance Center`
+
+Files likely involved:
+
+- `lightningos-light/ui/src/pages/RebalanceCenter.tsx`
+- `lightningos-light/ui/src/i18n/pt-BR.json`
+- `lightningos-light/ui/src/i18n/en.json`
+
+#### Config UI Changes
+
+Add settings for:
+
+- budget mode
+- daily budget percent
+- manual reserve enabled
+- manual reserve type
+- manual reserve value
+- optional min/max total budget
+
+These should live close to the existing rebalance automation and budget settings.
+
+#### Overview UI Changes
+
+Expose clearly:
+
+- total daily budget
+- spent auto
+- spent manual
+- total spent
+- reserved for manual
+- remaining for auto
+- remaining total
+
+The overview should make it visually obvious when:
+
+- `auto` is paused because only manual reserve is left
+- manual actions are already consuming most of the day budget
+
+#### Manual Restart UX
+
+When the user triggers manual restart:
+
+- show current total budget state
+- show whether reserve is being consumed
+- show a warning if the run would push total spend above budget
+
+First iteration should prefer:
+
+- clear warning text
+- not complex modal logic
+
+### Acceptance Criteria
+
+The implementation is successful when:
+
+1. automatic rebalance no longer ignores large manual spend
+2. the operator can reserve daily budget for manual restart
+3. budget behavior is less volatile than pure `24h revenue pct`
+4. the overview explains budget state clearly without needing logs
+5. existing manual flows continue working without hidden hard blocks
+
+### Rollout Plan
+
+1. backend config and hybrid total-budget calculation
+2. update scanner to consume against total spend and reserve
+3. API/overview exposure
+4. Rebalance Center settings and overview UI
+5. manual restart warning UX
+6. observe behavior for several days before adding any hard manual block
 
 ## Non-Goals For Now
 

@@ -22,6 +22,10 @@ type rebalanceConfigPayload struct {
 	FailTolerancePpm          *int64   `json:"fail_tolerance_ppm,omitempty"`
 	ROIMin                    *float64 `json:"roi_min,omitempty"`
 	DailyBudgetPct            *float64 `json:"daily_budget_pct,omitempty"`
+	BudgetMode                *string  `json:"budget_mode,omitempty"`
+	ManualReserveEnabled      *bool    `json:"manual_reserve_enabled,omitempty"`
+	ManualReserveMode         *string  `json:"manual_reserve_mode,omitempty"`
+	ManualReserveValue        *float64 `json:"manual_reserve_value,omitempty"`
 	MaxConcurrent             *int     `json:"max_concurrent,omitempty"`
 	MinAmountSat              *int64   `json:"min_amount_sat,omitempty"`
 	MaxAmountSat              *int64   `json:"max_amount_sat,omitempty"`
@@ -150,6 +154,18 @@ func (s *Server) handleRebalanceConfigPost(w http.ResponseWriter, r *http.Reques
 	}
 	if payload.DailyBudgetPct != nil {
 		cfg.DailyBudgetPct = *payload.DailyBudgetPct
+	}
+	if payload.BudgetMode != nil {
+		cfg.BudgetMode = *payload.BudgetMode
+	}
+	if payload.ManualReserveEnabled != nil {
+		cfg.ManualReserveEnabled = *payload.ManualReserveEnabled
+	}
+	if payload.ManualReserveMode != nil {
+		cfg.ManualReserveMode = *payload.ManualReserveMode
+	}
+	if payload.ManualReserveValue != nil {
+		cfg.ManualReserveValue = *payload.ManualReserveValue
 	}
 	if payload.MaxConcurrent != nil {
 		cfg.MaxConcurrent = *payload.MaxConcurrent

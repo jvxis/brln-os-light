@@ -578,6 +578,10 @@ export const updateRebalanceConfig = (payload: {
   fail_tolerance_ppm?: number
   roi_min?: number
   daily_budget_pct?: number
+  budget_mode?: string
+  manual_reserve_enabled?: boolean
+  manual_reserve_mode?: string
+  manual_reserve_value?: number
   max_concurrent?: number
   min_amount_sat?: number
   max_amount_sat?: number

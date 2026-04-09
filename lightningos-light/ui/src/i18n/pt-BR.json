@@ -2486,6 +2486,10 @@
         "lastScan": "Última varredura: {{value}}",
         "lastScanDisabled": "Auto desativado",
         "budgetLast24h": "Baseado na receita das últimas 24h",
+      "budgetMode": "Modo do orçamento: {{mode}}",
+      "budgetModeWithReserve": "Modo do orçamento: {{mode}} · reserva manual ativa",
+      "dailyBudgetBase": "Orçamento base 7d: {{value}}",
+      "dailyBudgetShortTerm": "Orçamento curto 24h: {{value}}",
       "scanStatus": {
         "scanned": "Varredura concluída",
         "queued": "Rebalances enfileirados",
@@ -2538,6 +2542,10 @@
         "dailySpent": "Gasto: {{value}}",
       "dailySpentAuto": "Gasto auto: {{value}}",
       "dailySpentManual": "Gasto manual: {{value}}",
+      "remainingTotal": "Restante total: {{value}}",
+      "remainingForAuto": "Restante para auto: {{value}}",
+      "manualReserve": "Reserva manual ({{mode}}): {{value}}",
+      "manualReserveRemaining": "Reserva manual restante: {{value}}",
       "lastQueued": "Enfileirados na última varredura: {{count}}",
       "topScore": "Score econômico (topo): {{value}}",
       "profitSkipped": "Pulados pelo guardrail de lucro: {{count}}",
@@ -2578,6 +2586,18 @@
       "autoEnabled": "Ativar auto rebalance",
       "scanInterval": "Intervalo de varredura (seg)",
       "dailyBudgetPct": "Orçamento diário (% da receita)",
+      "budgetMode": "Modo do orçamento",
+      "budgetModeOptions": {
+        "revenue_24h_pct": "% da receita 24h",
+        "hybrid_revenue": "Híbrido 7d + 24h"
+      },
+      "manualReserveEnabled": "Proteger reserva para manual restart",
+      "manualReserveMode": "Modo da reserva manual",
+      "manualReserveModeOptions": {
+        "fixed_sat": "Sats fixos",
+        "pct": "% do orçamento total"
+      },
+      "manualReserveValue": "Valor da reserva manual",
       "deadband": "Deadband (%)",
       "sourceMinLocal": "Mínimo local para fonte (%)",
       "econRatio": "Ratio econômico",
@@ -2630,7 +2650,11 @@
     "settingsHints": {
       "autoEnabled": "Ativa varreduras e rebalances automáticos.",
       "scanInterval": "Frequência de varredura do modo automático.",
-        "dailyBudgetPct": "Teto diário como % da receita das últimas 24h.",
+        "dailyBudgetPct": "Teto diário como % da receita de roteamento usada pelo modo de orçamento selecionado.",
+      "budgetMode": "Escolhe se o orçamento diário segue só a receita das últimas 24h ou mistura média de 7d com receita de 24h.",
+      "manualReserveEnabled": "Protege parte do orçamento diário para que o auto rebalance não consuma tudo antes dos manual restarts.",
+      "manualReserveMode": "Reserva orçamento manual como sats fixos ou como percentual do orçamento total diário.",
+      "manualReserveValue": "Sats fixos ou percentual reservado para manual restart, conforme o modo selecionado.",
       "deadband": "Déficit outbound mínimo para virar alvo.",
       "sourceMinLocal": "Liquidez local mínima (outbound %) para usar como fonte.",
       "econRatio": "Fração da fee outbound usada como fee máxima.",

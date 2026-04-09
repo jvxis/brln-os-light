@@ -1034,6 +1034,7 @@ type AutofeeService struct {
 	db                 *pgxpool.Pool
 	lnd                *lndclient.Client
 	notifier           *Notifier
+	rebalance          *RebalanceService
 	htlcFailedProvider htlcFailedProvider
 	logger             loggerLike
 
@@ -1993,6 +1994,76 @@ func (s *AutofeeService) appendAutofeeLines(ctx context.Context, runID string, e
 	return nil
 }
 
+func (s *AutofeeService) loadRecentChangeStats(ctx context.Context, lookback time.Duration) (map[uint64]autofeeRecentChangeStats, error) {
+	stats := map[uint64]autofeeRecentChangeStats{}
+	if s.db == nil {
+		return stats, nil
+	}
+	if lookback <= 0 {
+		lookback = 24 * time.Hour
+	}
+	rows, err := s.db.Query(ctx, `
+select
+  payload->>'channel_id' as channel_id,
+  payload->>'local_ppm' as local_ppm,
+  payload->>'new_ppm' as new_ppm
+from autofee_logs
+where occurred_at >= now() - $1::interval
+  and coalesce(payload->>'dry_run', 'false') <> 'true'
+  and coalesce(payload->>'kind', '') = 'decision'
+  and coalesce(payload->>'channel_id', '') <> ''
+  and coalesce(payload->>'local_ppm', '') <> ''
+  and coalesce(payload->>'new_ppm', '') <> ''
+order by occurred_at asc, seq asc
+`, formatIntervalForPostgres(lookback))
+	if err != nil {
+		return stats, err
+	}
+	defer rows.Close()
+
+	lastDirByChannel := map[uint64]string{}
+	for rows.Next() {
+		var channelIDRaw string
+		var localRaw string
+		var newRaw string
+		if err := rows.Scan(&channelIDRaw, &localRaw, &newRaw); err != nil {
+			return stats, err
+		}
+		channelID, err1 := strconv.ParseUint(strings.TrimSpace(channelIDRaw), 10, 64)
+		localPpm, err2 := strconv.Atoi(strings.TrimSpace(localRaw))
+		newPpm, err3 := strconv.Atoi(strings.TrimSpace(newRaw))
+		if err1 != nil || err2 != nil || err3 != nil || channelID == 0 || newPpm == localPpm {
+			continue
+		}
+		item := stats[channelID]
+		item.ChangeCount24h++
+		dir := "down"
+		if newPpm > localPpm {
+			dir = "up"
+			item.UpCount24h++
+			if lastDirByChannel[channelID] == "up" {
+				item.ConsecutiveUp24h++
+			} else {
+				item.ConsecutiveUp24h = 1
+			}
+		} else {
+			item.DownCount24h++
+			item.ConsecutiveUp24h = 0
+		}
+		lastDirByChannel[channelID] = dir
+		stats[channelID] = item
+	}
+	return stats, rows.Err()
+}
+
+func formatIntervalForPostgres(d time.Duration) string {
+	seconds := int64(math.Round(d.Seconds()))
+	if seconds < 1 {
+		seconds = 1
+	}
+	return fmt.Sprintf("%d seconds", seconds)
+}
+
 func (s *AutofeeService) Start() {
 	s.mu.Lock()
 	if s.started {
@@ -2190,24 +2261,46 @@ func (s *AutofeeService) setLastError(err error) {
 // ===== Engine =====
 
 type autofeeEngine struct {
-	svc             *AutofeeService
-	cfg             AutofeeConfig
-	profile         autofeeProfile
-	superSource     superSourceThresholds
-	ignoreCooldown  bool
-	calib           autofeeCalibration
-	ranking         map[string]autofeeRankingSnapshot
-	rebalanceConfig map[uint64]autofeeRebalanceChannelSetting
-	now             time.Time
-	nativeSeedCache map[string]autofeeSeedResult
-	ambossToken     string
-	ambossTokenErr  error
-	ambossTokenLoad bool
+	svc              *AutofeeService
+	cfg              AutofeeConfig
+	profile          autofeeProfile
+	superSource      superSourceThresholds
+	ignoreCooldown   bool
+	calib            autofeeCalibration
+	ranking          map[string]autofeeRankingSnapshot
+	rebalanceConfig  map[uint64]autofeeRebalanceChannelSetting
+	rebalanceRuntime map[uint64]autofeeRebalanceRuntimeSnapshot
+	rebalanceROIMin  float64
+	rebalanceStatus  string
+	recentChanges    map[uint64]autofeeRecentChangeStats
+	now              time.Time
+	nativeSeedCache  map[string]autofeeSeedResult
+	ambossToken      string
+	ambossTokenErr   error
+	ambossTokenLoad  bool
 }
 
 type autofeeRebalanceChannelSetting struct {
 	AutoEnabled          bool
 	ManualRestartEnabled bool
+}
+
+type autofeeRebalanceRuntimeSnapshot struct {
+	AutoEnabled          bool
+	ManualRestartEnabled bool
+	EligibleAsTarget     bool
+	PaybackProgress      float64
+	ROIEstimate          float64
+	ROIEstimateValid     bool
+	Revenue7dSat         int64
+	RebalanceCost7dPpm   int64
+}
+
+type autofeeRecentChangeStats struct {
+	ChangeCount24h   int
+	UpCount24h       int
+	DownCount24h     int
+	ConsecutiveUp24h int
 }
 
 type autofeeSeedResult struct {
@@ -2533,17 +2626,23 @@ type autofeeChannelState struct {
 }
 
 type autofeeRankingSnapshot struct {
-	Score              int
-	Score30d           int
-	State              string
-	TrendDirection     string
-	TrendDelta         int
-	ProfitFee7dSat     int64
-	ProfitFee30dSat    int64
-	OutPpm30d          int
-	RebalPpm30d        int
-	PeerStabilityScore int
-	LocalBalancePct    float64
+	Score                   int
+	Score30d                int
+	State                   string
+	TrendDirection          string
+	TrendDelta              int
+	ProfitFee7dSat          int64
+	ProfitFee30dSat         int64
+	OutPpm30d               int
+	RebalPpm30d             int
+	PeerStabilityScore      int
+	LocalBalancePct         float64
+	ForwardInCount7d        int
+	ForwardInAmountSat7d    int64
+	ForwardOutCount7d       int
+	ForwardOutAmountSat7d   int64
+	AssistedForwardFee7dSat int64
+	RebalanceDependence     int
 }
 
 type explorerState struct {
@@ -2624,6 +2723,41 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 		e.rebalanceConfig = rebalanceCfg
 	} else if e.svc.logger != nil {
 		e.svc.logger.Printf("autofee: rebalance channel settings unavailable: %v", err)
+	}
+	if recentChanges, err := e.svc.loadRecentChangeStats(ctx, 24*time.Hour); err == nil {
+		e.recentChanges = recentChanges
+	} else if e.svc.logger != nil {
+		e.svc.logger.Printf("autofee: recent change stats unavailable: %v", err)
+	}
+	if e.svc.rebalance != nil {
+		if rebalanceCfg, err := e.svc.rebalance.GetConfig(ctx); err == nil {
+			e.rebalanceROIMin = rebalanceCfg.ROIMin
+		} else if e.svc.logger != nil {
+			e.svc.logger.Printf("autofee: rebalance config unavailable: %v", err)
+		}
+		if overview, err := e.svc.rebalance.Overview(ctx); err == nil {
+			e.rebalanceStatus = strings.TrimSpace(overview.LastScanStatus)
+		} else if e.svc.logger != nil {
+			e.svc.logger.Printf("autofee: rebalance overview unavailable: %v", err)
+		}
+		if channels, err := e.svc.rebalance.Channels(ctx); err == nil {
+			snapshots := make(map[uint64]autofeeRebalanceRuntimeSnapshot, len(channels))
+			for _, item := range channels {
+				snapshots[item.ChannelID] = autofeeRebalanceRuntimeSnapshot{
+					AutoEnabled:          item.AutoEnabled,
+					ManualRestartEnabled: item.ManualRestartEnabled,
+					EligibleAsTarget:     item.EligibleAsTarget,
+					PaybackProgress:      item.PaybackProgress,
+					ROIEstimate:          item.ROIEstimate,
+					ROIEstimateValid:     item.ROIEstimateValid,
+					Revenue7dSat:         item.Revenue7dSat,
+					RebalanceCost7dPpm:   item.RebalanceCost7dPpm,
+				}
+			}
+			e.rebalanceRuntime = snapshots
+		} else if e.svc.logger != nil {
+			e.svc.logger.Printf("autofee: rebalance channel runtime unavailable: %v", err)
+		}
 	}
 
 	forwardStats, err := e.fetchForwardStats(ctx, e.cfg.LookbackDays)
@@ -3660,6 +3794,96 @@ func shouldUseSlowCycle30d(profile autofeeProfile, ranking autofeeRankingSnapsho
 		float64(outPpm7d) <= float64(ranking.OutPpm30d)*(slowCycle30dUnderrepFrac(profile)+0.10)
 }
 
+func assistChannelMaxPpm(profile autofeeProfile) int {
+	switch profile.Name {
+	case "conservative":
+		return 150
+	case "aggressive":
+		return 400
+	default:
+		return 250
+	}
+}
+
+func shouldUseAssistChannel(profile autofeeProfile, ranking autofeeRankingSnapshot, hasRanking bool, classLabel string, localPpm int) bool {
+	if !hasRanking || localPpm < 0 {
+		return false
+	}
+	role := strings.TrimSpace(strings.ToLower(classLabel))
+	if role == "sink" {
+		return false
+	}
+	if ranking.RebalanceDependence > 60 {
+		return false
+	}
+	if ranking.ProfitFee7dSat < -500 {
+		return false
+	}
+	if localPpm > assistChannelMaxPpm(profile) {
+		return false
+	}
+	if ranking.AssistedForwardFee7dSat < 100 {
+		return false
+	}
+	if ranking.ForwardInCount7d < 4 && ranking.ForwardInAmountSat7d < 1_000_000 {
+		return false
+	}
+	if ranking.ForwardOutAmountSat7d > 0 && ranking.ForwardInAmountSat7d < int64(math.Ceil(float64(ranking.ForwardOutAmountSat7d)*0.90)) {
+		return false
+	}
+	if ranking.State == "close" && ranking.ProfitFee30dSat <= 0 {
+		return false
+	}
+	return true
+}
+
+func shouldPreserveAssistChannelUpwardPressure(active bool, recentRebalanceCount int, htlcLiquidityHot bool) bool {
+	if !active {
+		return false
+	}
+	if recentRebalanceCount > 0 || htlcLiquidityHot {
+		return false
+	}
+	return true
+}
+
+func deriveRankingPolicy(ranking autofeeRankingSnapshot, hasRanking bool, recentRebalanceCount int, htlcLiquidityHot bool, surgeConfirmSignal bool) ([]string, bool) {
+	if !hasRanking {
+		return nil, false
+	}
+	tags := []string{}
+	switch ranking.State {
+	case "expand":
+		tags = append(tags, "rank-expand")
+	case "maintain":
+		tags = append(tags, "rank-maintain")
+	case "monitor":
+		tags = append(tags, "rank-monitor")
+	case "close":
+		tags = append(tags, "rank-close")
+	}
+	if recentRebalanceCount > 0 || htlcLiquidityHot || surgeConfirmSignal {
+		return tags, false
+	}
+	switch ranking.State {
+	case "close":
+		if ranking.ProfitFee7dSat <= 0 && ranking.ProfitFee30dSat <= 0 {
+			return tags, true
+		}
+		if ranking.TrendDirection == "worsening" && ranking.ProfitFee7dSat <= 0 && ranking.Score <= 30 {
+			return tags, true
+		}
+	case "monitor":
+		if ranking.TrendDirection == "worsening" &&
+			ranking.ProfitFee7dSat <= 0 &&
+			ranking.Score <= 55 &&
+			(ranking.Score30d <= 65 || ranking.ProfitFee30dSat <= 0) {
+			return tags, true
+		}
+	}
+	return tags, false
+}
+
 func applySlowCycle30dReferences(profile autofeeProfile, ranking autofeeRankingSnapshot, hasRanking bool, effectiveOutRatio float64, outPpm7d int, rebalPpm7d int) (int, int, bool, []string) {
 	if !shouldUseSlowCycle30d(profile, ranking, hasRanking, effectiveOutRatio, outPpm7d, rebalPpm7d) {
 		return outPpm7d, rebalPpm7d, false, nil
@@ -4363,6 +4587,94 @@ func shouldRelaxFloorForMatureEmptySinkAnchor(floorSrc string) bool {
 	}
 }
 
+func shouldRelaxFloorForRankingGuard(floorSrc string) bool {
+	switch strings.TrimSpace(floorSrc) {
+	case "rebal", "rebal-sink", "rebal-hold", "outrate", "outrate-sink", "peg", "no-signal", "seed-soft":
+		return true
+	default:
+		return false
+	}
+}
+
+func deriveRebalanceExecutionPolicy(profile autofeeProfile, runtime autofeeRebalanceRuntimeSnapshot, hasRuntime bool, roiMin float64, rebalanceStatus string, classLabel string, channelAgeHours float64, bootstrapHours int, outRatio float64, lowOutProtectThresh float64, outPpm7d int, rebalHistoryRefPpm int, baseCostPpm int, baseCostSrc string, recentRebalanceCount int, recentRebalanceWeakCount int, htlcPressureSignal bool, htlcForwardHot bool, localPpm int) ([]string, bool, int, bool) {
+	if !strings.EqualFold(classLabel, "sink") {
+		return nil, false, 0, false
+	}
+	if channelAgeHours <= float64(maxInt(bootstrapHours, 1)) {
+		return nil, false, 0, false
+	}
+	if outRatio >= lowOutProtectThresh {
+		return nil, false, 0, false
+	}
+	if outPpm7d <= 0 && rebalHistoryRefPpm <= 0 {
+		return nil, false, 0, false
+	}
+	if recentRebalanceCount > 0 || recentRebalanceWeakCount > 0 || htlcPressureSignal || htlcForwardHot {
+		return nil, false, 0, false
+	}
+
+	tags := []string{"rebal-exec"}
+	reason := ""
+	switch {
+	case hasRuntime && !runtime.AutoEnabled && !runtime.ManualRestartEnabled:
+		reason = "disabled"
+	case hasRuntime && runtime.AutoEnabled && runtime.ROIEstimateValid && roiMin > 0 && runtime.ROIEstimate < roiMin:
+		reason = "roi"
+	case hasRuntime && runtime.AutoEnabled && runtime.EligibleAsTarget && (rebalanceStatus == "budget_exhausted" || rebalanceStatus == "budget_insufficient"):
+		reason = "budget"
+	case hasRuntime && runtime.AutoEnabled && runtime.EligibleAsTarget && runtime.PaybackProgress > 0 && runtime.PaybackProgress < 1.0 && runtime.RebalanceCost7dPpm > 0 && runtime.Revenue7dSat <= 0:
+		reason = "payback"
+	}
+	if reason == "" {
+		return nil, false, 0, false
+	}
+	tags = append(tags, "rebal-exec-"+reason)
+
+	anchor, ok := deriveMatureEmptySinkHistoryAnchor(profile, localPpm, outPpm7d, rebalHistoryRefPpm, baseCostPpm, baseCostSrc)
+	if !ok {
+		return tags, true, 0, false
+	}
+	return tags, true, anchor, true
+}
+
+func maxAutofeeChanges24h(profile autofeeProfile) int {
+	switch {
+	case profile.StepCap <= 0.05:
+		return 2
+	case profile.StepCap >= 0.10:
+		return 4
+	default:
+		return 3
+	}
+}
+
+func maxAutofeeConsecutiveUps24h(profile autofeeProfile) int {
+	switch {
+	case profile.StepCap <= 0.05:
+		return 1
+	case profile.StepCap >= 0.10:
+		return 3
+	default:
+		return 2
+	}
+}
+
+func shouldHoldForAutofeeChurn(profile autofeeProfile, recent autofeeRecentChangeStats, localPpm int, nextPpm int, recentRebalanceCount int, htlcLiquidityHot bool) []string {
+	if nextPpm <= localPpm {
+		return nil
+	}
+	if recentRebalanceCount > 0 || htlcLiquidityHot {
+		return nil
+	}
+	if recent.ConsecutiveUp24h >= maxAutofeeConsecutiveUps24h(profile) {
+		return []string{"churn-up-lock"}
+	}
+	if recent.ChangeCount24h >= maxAutofeeChanges24h(profile) {
+		return []string{"churn-24h-lock"}
+	}
+	return nil
+}
+
 func hasRecentAutofeeOutrateMemory(st *autofeeChannelState, now time.Time) bool {
 	if st == nil || st.LastOutrate <= 0 || st.LastOutrateTs.IsZero() {
 		return false
@@ -4891,7 +5203,8 @@ func (e *autofeeEngine) loadChannelRankingSnapshots(ctx context.Context) (map[st
 		return items, nil
 	}
 	rows, err := e.svc.db.Query(ctx, `
-select channel_point, score, score_30d, state, trend_direction, trend_delta, profit_fee_7d_sat, profit_fee_30d_sat, out_ppm_30d, rebal_ppm_30d, peer_stability_score_30d, local_balance_pct
+select channel_point, score, score_30d, state, trend_direction, trend_delta, profit_fee_7d_sat, profit_fee_30d_sat, out_ppm_30d, rebal_ppm_30d, peer_stability_score_30d, local_balance_pct,
+       forward_in_count_7d, forward_in_amount_sat_7d, forward_out_count_7d, forward_out_amount_sat_7d, assisted_forward_fee_7d_sat, rebalance_dependence_score
 from channel_rankings
 `)
 	if err != nil {
@@ -4917,6 +5230,12 @@ from channel_rankings
 			&snap.RebalPpm30d,
 			&snap.PeerStabilityScore,
 			&snap.LocalBalancePct,
+			&snap.ForwardInCount7d,
+			&snap.ForwardInAmountSat7d,
+			&snap.ForwardOutCount7d,
+			&snap.ForwardOutAmountSat7d,
+			&snap.AssistedForwardFee7dSat,
+			&snap.RebalanceDependence,
 		); err != nil {
 			return items, err
 		}
@@ -5919,6 +6238,11 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			tags = append(tags, fmt.Sprintf("outnorm:nodeadj=%+.2f", outNormMeta.NodeAdj))
 		}
 	}
+	assistChannelActive := e.cfg.OperationMode == autofeeOperationModeBalanced && shouldUseAssistChannel(e.profile, ranking, hasRanking, classLabel, localPpm)
+	assistPreserveActive := false
+	if assistChannelActive {
+		tags = append(tags, "assist-channel")
+	}
 	if newInboundBootstrap {
 		tags = append(tags, "new-inbound", "bootstrap")
 	}
@@ -5967,6 +6291,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		}
 	}
 	rebalSetting, rebalSettingOk := e.rebalanceConfig[ch.ChannelID]
+	rebalRuntime, rebalRuntimeOk := e.rebalanceRuntime[ch.ChannelID]
 	htlcSampleLow := false
 	htlcPolicyHot := false
 	htlcLiquidityHot := false
@@ -6275,6 +6600,49 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if baseCostPpm < e.cfg.MinPpm {
 		baseCostPpm = e.cfg.MinPpm
 	}
+	if shouldPreserveAssistChannelUpwardPressure(assistChannelActive, recentRebalanceCount, htlcLiquidityHot) && target > localPpm {
+		target = localPpm
+		assistPreserveActive = true
+		tags = append(tags, "assist-preserve")
+	}
+	rebalExecutionDownAnchorActive := false
+	rebalExecutionDownAnchorPpm := 0
+	if !marketRefillMode {
+		rebalExecTags, restrictUpward, downAnchorPpm, downAnchorActive := deriveRebalanceExecutionPolicy(
+			e.profile,
+			rebalRuntime,
+			rebalRuntimeOk,
+			e.rebalanceROIMin,
+			e.rebalanceStatus,
+			classLabel,
+			channelAgeHours,
+			bootstrapHours,
+			outRatio,
+			lowOutProtectThresh,
+			outPpm7d,
+			rebalHistoryRefPpm,
+			baseCostPpm,
+			baseCostSrc,
+			recentRebalanceCount,
+			recentRebalanceWeakCount,
+			htlcPressureSignal,
+			htlcForwardHot,
+			localPpm,
+		)
+		if len(rebalExecTags) > 0 {
+			tags = append(tags, rebalExecTags...)
+		}
+		if restrictUpward && target > localPpm {
+			target = localPpm
+			tags = append(tags, "rebal-exec-noup")
+		}
+		if downAnchorActive && downAnchorPpm > 0 {
+			target = minInt(target, downAnchorPpm)
+			rebalExecutionDownAnchorActive = true
+			rebalExecutionDownAnchorPpm = downAnchorPpm
+			tags = append(tags, "rebal-exec-down-anchor")
+		}
+	}
 	matureEmptySinkDownAnchorActive := false
 	matureEmptySinkDownAnchorPpm := 0
 	if !marketRefillMode &&
@@ -6520,6 +6888,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if outRatio < lowOutProtectThresh && target < localPpm {
 		if matureEmptySinkDownAnchorActive {
 			tags = append(tags, "empty-sink-low-relax")
+		} else if rebalExecutionDownAnchorActive {
+			tags = append(tags, "rebal-exec-low-relax")
 		} else {
 			target = localPpm
 			tags = append(tags, "no-down-low")
@@ -6578,6 +6948,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			tags = append(tags, "stagnation-neg-override")
 		} else if matureEmptySinkDownAnchorActive {
 			tags = append(tags, "empty-sink-neg-relax")
+		} else if rebalExecutionDownAnchorActive {
+			tags = append(tags, "rebal-exec-neg-relax")
 		} else if seedSoftNegMarginRelax {
 			tags = append(tags, "seed:soft-neg-relax")
 		} else {
@@ -6601,6 +6973,18 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	)
 	if len(rescueTags) > 0 {
 		tags = append(tags, rescueTags...)
+	}
+	rankingUpwardRestricted := false
+	if !marketRefillMode {
+		rankingPolicyTags, restrictUpward := deriveRankingPolicy(ranking, hasRanking, recentRebalanceCount, htlcLiquidityHot, surgeConfirmSignal)
+		if len(rankingPolicyTags) > 0 {
+			tags = append(tags, rankingPolicyTags...)
+		}
+		if restrictUpward && target > localPpm {
+			target = localPpm
+			rankingUpwardRestricted = true
+			tags = append(tags, "rank-up-restrict")
+		}
 	}
 	capFrac := e.profile.StepCap
 	minStep := 5
@@ -6663,6 +7047,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 					}
 				} else if matureEmptySinkDownAnchorActive {
 					lockSkipTag = "empty-sink-global-relax"
+				} else if rebalExecutionDownAnchorActive {
+					lockSkipTag = "rebal-exec-global-relax"
 				} else if allowSoften {
 					if outPpm7d > 0 {
 						pegFloor := int(math.Round(float64(outPpm7d) * softenMaxDropToPegFrac))
@@ -6827,6 +7213,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			tags = append(tags, "rescue-peg-paused")
 		} else if matureEmptySinkDownAnchorActive && target < localPpm && peg > floor {
 			tags = append(tags, "empty-sink-peg-paused")
+		} else if rebalExecutionDownAnchorActive && target < localPpm && peg > floor {
+			tags = append(tags, "rebal-exec-peg-paused")
 		} else if peg > floor && (withinGrace || demandPeg) {
 			floor = peg
 			floorSrc = "peg"
@@ -6890,10 +7278,19 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		floorSrc = "no-signal"
 		tags = append(tags, "no-signal-floor-relax")
 	}
+	if assistPreserveActive && floor > localPpm {
+		floor = localPpm
+		floorSrc = "assist"
+	}
 	if relaxedFloor, relaxedSrc, rescueFloorTags := applyRescueFloorRelax(rescueActive, localPpm, target, floor, floorSrc, outPpm7d, baseCostPpm); len(rescueFloorTags) > 0 {
 		floor = relaxedFloor
 		floorSrc = relaxedSrc
 		tags = append(tags, rescueFloorTags...)
+	}
+	if rankingUpwardRestricted && floor > localPpm && shouldRelaxFloorForRankingGuard(floorSrc) {
+		floor = localPpm
+		floorSrc = "rank"
+		tags = append(tags, "rank-floor-relax")
 	}
 	seedSoftCeilActive := seed > 0 &&
 		noFlow1d &&
@@ -6918,6 +7315,11 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		floor = matureEmptySinkDownAnchorPpm
 		floorSrc = "empty-sink-anchor"
 		tags = append(tags, "empty-sink-floor-anchor")
+	}
+	if rebalExecutionDownAnchorActive && rebalExecutionDownAnchorPpm > 0 && floor > rebalExecutionDownAnchorPpm && shouldRelaxFloorForMatureEmptySinkAnchor(floorSrc) {
+		floor = rebalExecutionDownAnchorPpm
+		floorSrc = "rebal-exec-anchor"
+		tags = append(tags, "rebal-exec-floor-anchor")
 	}
 	if target < localPpm && floor >= localPpm {
 		stallRelaxGapFrac := e.profile.StallFloorRelaxGapFrac
@@ -7052,6 +7454,10 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			if !containsTag(tags, "seed:soft-neg-relax") {
 				tags = append(tags, "seed:soft-neg-relax")
 			}
+		} else if rebalExecutionDownAnchorActive {
+			if !containsTag(tags, "rebal-exec-neg-relax") {
+				tags = append(tags, "rebal-exec-neg-relax")
+			}
 		} else {
 			finalPpm = localPpm
 			if !containsTag(tags, "no-down-neg-margin") {
@@ -7148,6 +7554,12 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			if !containsTag(tags, "cooldown-profit") {
 				tags = append(tags, "cooldown-profit")
 			}
+		}
+	}
+	if apply && finalPpm != localPpm {
+		if churnTags := shouldHoldForAutofeeChurn(e.profile, e.recentChanges[ch.ChannelID], localPpm, finalPpm, recentRebalanceCount, htlcLiquidityHot); len(churnTags) > 0 {
+			apply = false
+			tags = append(tags, churnTags...)
 		}
 	}
 
@@ -8472,6 +8884,22 @@ func formatAutofeeTags(d *decision) string {
 			add("🛑rebal-fail")
 		case t == "rebal-fail-pressure":
 			add("🔁rebal-fail-pressure")
+		case t == "assist-channel":
+			add("🪄assist")
+		case t == "assist-preserve":
+			add("🪄assist-preserve")
+		case t == "rank-expand":
+			add("rank-expand")
+		case t == "rank-maintain":
+			add("rank-maintain")
+		case t == "rank-monitor":
+			add("rank-monitor")
+		case t == "rank-close":
+			add("rank-close")
+		case t == "rank-up-restrict":
+			add("rank-up-restrict")
+		case t == "rank-floor-relax":
+			add("rank-floor-relax")
 		case t == "new-inbound":
 			add("🆕NEW-inbound")
 		case t == "bootstrap":
@@ -8544,6 +8972,10 @@ func formatAutofeeTags(d *decision) string {
 			add("🧭skip-cooldown")
 		case t == "hold-small":
 			add("🧊hold-small")
+		case t == "churn-24h-lock":
+			add("🧊churn-24h")
+		case t == "churn-up-lock":
+			add("🧊churn-up")
 		case t == "same-ppm":
 			add("🟰same-ppm")
 		case t == "low-out-slow-up":
@@ -8568,6 +9000,30 @@ func formatAutofeeTags(d *decision) string {
 			add("🧯empty-sink-global")
 		case t == "empty-sink-peg-paused":
 			add("🧯empty-sink-peg")
+		case t == "rebal-exec":
+			add("rebal-exec")
+		case t == "rebal-exec-disabled":
+			add("rebal-disabled")
+		case t == "rebal-exec-budget":
+			add("rebal-budget")
+		case t == "rebal-exec-roi":
+			add("rebal-roi")
+		case t == "rebal-exec-payback":
+			add("rebal-payback")
+		case t == "rebal-exec-noup":
+			add("rebal-noup")
+		case t == "rebal-exec-down-anchor":
+			add("rebal-down")
+		case t == "rebal-exec-floor-anchor":
+			add("rebal-floor")
+		case t == "rebal-exec-neg-relax":
+			add("rebal-neg")
+		case t == "rebal-exec-low-relax":
+			add("rebal-low")
+		case t == "rebal-exec-global-relax":
+			add("rebal-global")
+		case t == "rebal-exec-peg-paused":
+			add("rebal-peg")
 		case t == "out-fallback-21d":
 			add("🕰️out-21d")
 		case t == "rebal-fallback-21d":

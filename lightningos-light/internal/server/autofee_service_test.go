@@ -1237,6 +1237,247 @@ func TestApplySlowCycle30dReferencesRejectsWeakThirtyDayCase(t *testing.T) {
 	}
 }
 
+func TestShouldUseAssistChannel(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	ranking := autofeeRankingSnapshot{
+		State:                   "expand",
+		ProfitFee7dSat:          120,
+		AssistedForwardFee7dSat: 3200,
+		ForwardInCount7d:        18,
+		ForwardInAmountSat7d:    2_400_000,
+		ForwardOutCount7d:       4,
+		ForwardOutAmountSat7d:   1_900_000,
+		RebalanceDependence:     15,
+	}
+
+	if !shouldUseAssistChannel(profile, ranking, true, "router", 0) {
+		t.Fatalf("expected assisted low-fee router to be classified as assist-channel")
+	}
+	if shouldUseAssistChannel(profile, ranking, true, "sink", 0) {
+		t.Fatalf("did not expect sink channel to be classified as assist-channel")
+	}
+	if shouldUseAssistChannel(profile, ranking, true, "router", 400) {
+		t.Fatalf("did not expect high-fee channel to be classified as assist-channel")
+	}
+}
+
+func TestShouldPreserveAssistChannelUpwardPressure(t *testing.T) {
+	if !shouldPreserveAssistChannelUpwardPressure(true, 0, false) {
+		t.Fatalf("expected assist-channel to preserve low fee without hard upward signal")
+	}
+	if shouldPreserveAssistChannelUpwardPressure(true, 1, false) {
+		t.Fatalf("did not expect assist preserve during recent rebalance pressure")
+	}
+	if shouldPreserveAssistChannelUpwardPressure(true, 0, true) {
+		t.Fatalf("did not expect assist preserve during htlc liquidity pressure")
+	}
+}
+
+func TestDeriveRankingPolicyRestrictsWeakCloseWithoutHardSignal(t *testing.T) {
+	ranking := autofeeRankingSnapshot{
+		State:           "close",
+		TrendDirection:  "worsening",
+		ProfitFee7dSat:  -1200,
+		ProfitFee30dSat: -900,
+		Score:           24,
+		Score30d:        41,
+	}
+
+	tags, restrict := deriveRankingPolicy(ranking, true, 0, false, false)
+	if !restrict {
+		t.Fatalf("expected weak close channel to restrict upward pressure")
+	}
+	if !containsTag(tags, "rank-close") {
+		t.Fatalf("expected rank-close tag, got %+v", tags)
+	}
+}
+
+func TestDeriveRankingPolicyBypassesRestrictionOnHardSignal(t *testing.T) {
+	ranking := autofeeRankingSnapshot{
+		State:           "close",
+		TrendDirection:  "worsening",
+		ProfitFee7dSat:  -1200,
+		ProfitFee30dSat: -900,
+		Score:           24,
+		Score30d:        41,
+	}
+
+	_, restrict := deriveRankingPolicy(ranking, true, 1, false, false)
+	if restrict {
+		t.Fatalf("did not expect upward restriction when recent rebalance exists")
+	}
+}
+
+func TestDeriveRankingPolicyDoesNotRestrictExpand(t *testing.T) {
+	ranking := autofeeRankingSnapshot{
+		State:           "expand",
+		TrendDirection:  "stable",
+		ProfitFee7dSat:  1200,
+		ProfitFee30dSat: 2400,
+		Score:           78,
+		Score30d:        82,
+	}
+
+	tags, restrict := deriveRankingPolicy(ranking, true, 0, false, false)
+	if restrict {
+		t.Fatalf("did not expect expand channel to restrict upward pressure")
+	}
+	if !containsTag(tags, "rank-expand") {
+		t.Fatalf("expected rank-expand tag, got %+v", tags)
+	}
+}
+
+func TestDeriveRebalanceExecutionPolicyDisabledSink(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	runtime := autofeeRebalanceRuntimeSnapshot{
+		AutoEnabled:          false,
+		ManualRestartEnabled: false,
+	}
+
+	tags, restrict, anchor, active := deriveRebalanceExecutionPolicy(
+		profile,
+		runtime,
+		true,
+		1.10,
+		"",
+		"sink",
+		240,
+		defaultBootstrapHours,
+		0.04,
+		0.10,
+		700,
+		850,
+		850,
+		"rebal",
+		0,
+		0,
+		false,
+		false,
+		1200,
+	)
+	if !restrict || !active {
+		t.Fatalf("expected disabled sink to activate rebalance execution guard")
+	}
+	if anchor >= 1200 || anchor <= 0 {
+		t.Fatalf("expected a valid downward anchor, got %d", anchor)
+	}
+	if !containsTag(tags, "rebal-exec-disabled") {
+		t.Fatalf("expected rebal-exec-disabled tag, got %+v", tags)
+	}
+}
+
+func TestDeriveRebalanceExecutionPolicyBudgetBlockedTarget(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	runtime := autofeeRebalanceRuntimeSnapshot{
+		AutoEnabled:      true,
+		EligibleAsTarget: true,
+	}
+
+	tags, restrict, _, active := deriveRebalanceExecutionPolicy(
+		profile,
+		runtime,
+		true,
+		1.10,
+		"budget_exhausted",
+		"sink",
+		240,
+		defaultBootstrapHours,
+		0.04,
+		0.10,
+		650,
+		900,
+		900,
+		"rebal",
+		0,
+		0,
+		false,
+		false,
+		1300,
+	)
+	if !restrict || !active {
+		t.Fatalf("expected budget-blocked sink to activate rebalance execution guard")
+	}
+	if !containsTag(tags, "rebal-exec-budget") {
+		t.Fatalf("expected rebal-exec-budget tag, got %+v", tags)
+	}
+}
+
+func TestDeriveRebalanceExecutionPolicySkipsOnHardSignal(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	runtime := autofeeRebalanceRuntimeSnapshot{
+		AutoEnabled:      true,
+		EligibleAsTarget: true,
+	}
+
+	_, restrict, _, active := deriveRebalanceExecutionPolicy(
+		profile,
+		runtime,
+		true,
+		1.10,
+		"budget_exhausted",
+		"sink",
+		240,
+		defaultBootstrapHours,
+		0.04,
+		0.10,
+		650,
+		900,
+		900,
+		"rebal",
+		1,
+		0,
+		false,
+		false,
+		1300,
+	)
+	if restrict || active {
+		t.Fatalf("did not expect rebalance execution guard with recent rebalance signal")
+	}
+}
+
+func TestShouldHoldForAutofeeChurnBlocksRepeatedUps(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	recent := autofeeRecentChangeStats{
+		ChangeCount24h:   2,
+		UpCount24h:       2,
+		ConsecutiveUp24h: 2,
+	}
+
+	tags := shouldHoldForAutofeeChurn(profile, recent, 500, 560, 0, false)
+	if !containsTag(tags, "churn-up-lock") {
+		t.Fatalf("expected churn-up-lock, got %+v", tags)
+	}
+}
+
+func TestShouldHoldForAutofeeChurnBlocksBusyDayWithoutHardSignal(t *testing.T) {
+	profile := autofeeProfiles["conservative"]
+	recent := autofeeRecentChangeStats{
+		ChangeCount24h:   2,
+		UpCount24h:       1,
+		DownCount24h:     1,
+		ConsecutiveUp24h: 0,
+	}
+
+	tags := shouldHoldForAutofeeChurn(profile, recent, 500, 540, 0, false)
+	if !containsTag(tags, "churn-24h-lock") {
+		t.Fatalf("expected churn-24h-lock, got %+v", tags)
+	}
+}
+
+func TestShouldHoldForAutofeeChurnBypassesOnHardSignal(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	recent := autofeeRecentChangeStats{
+		ChangeCount24h:   4,
+		UpCount24h:       3,
+		ConsecutiveUp24h: 3,
+	}
+
+	tags := shouldHoldForAutofeeChurn(profile, recent, 500, 560, 1, false)
+	if len(tags) != 0 {
+		t.Fatalf("did not expect churn lock with recent rebalance hard signal, got %+v", tags)
+	}
+}
+
 func TestMarketRefillStepCapFrac(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
 

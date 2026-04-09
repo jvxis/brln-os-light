@@ -14,9 +14,519 @@ At the time of writing:
 
 Current backlog priority order:
 
-1. `Autofee` dynamic liquidity state
-2. channel `parking mode`
-3. ranking-driven per-channel automation policy
+1. `Autofee` signal hierarchy and stability redesign
+2. `Autofee` dynamic liquidity state
+3. channel `parking mode`
+4. ranking-driven per-channel automation policy
+
+## 1. Autofee Signal Hierarchy And Stability Redesign
+
+### Goal
+
+Make `Autofee` more efficient, less upward-biased, and significantly more stable by:
+
+- using the full signal set already available in the product
+- distinguishing channel role from liquidity urgency
+- distinguishing real rebalance execution from theoretical rebalance need
+- protecting assisted-revenue channels from unnecessary fee increases
+- reducing fee churn to avoid unnecessary graph updates
+
+The intended outcome is:
+
+- fewer cases where fees keep drifting upward without strong evidence
+- better handling of `sink` channels with weak economics
+- better preservation of low-fee channels that are useful for assisted routing
+- lower risk of frequent fee changes that could harm graph reputation
+
+### Problem
+
+Today the system already sees a rich set of signals:
+
+- `out_ppm_7d`
+- `rebal_ppm_7d`
+- `out_ppm_30d`
+- `rebal_ppm_30d`
+- `forward_in/out` counts and volumes
+- assisted revenue
+- `Channel Ranking` state, score, trend, profitability
+- rebalance attempts and outcomes
+- budget exhaustion and ROI guardrails
+- HTLC policy and liquidity failures
+- Amboss/native seeds
+- node and channel liquidity normalization via `outnorm`
+
+But the runtime hierarchy is still too permissive toward upward protection, especially for:
+
+- mature empty `sink` channels with poor economics
+- channels with little or no real recent rebalance execution
+- channels that are valuable mainly for assisted revenue at very low outbound fees
+- channels where seed or stale protection remains stronger than local evidence
+
+This creates the current operator perception:
+
+- Autofee often feels like it "always wants to go up"
+- channels can stay far above `out_ppm` or `rebal_ppm`
+- some useful low-fee channels need to be removed from Autofee manually
+
+### Proposed Direction
+
+Redesign the decision flow into four explicit layers:
+
+1. `anchor`
+   - derive the economic reference price
+2. `channel role`
+   - define what the channel is good for
+3. `execution reality`
+   - distinguish channels that can actually be rebalanced from those only theoretically needing rebalance
+4. `stability guards`
+   - suppress unnecessary fee churn
+
+The key design change is:
+
+- local economics and channel role should decide first
+- scarcity and seed should only amplify later
+
+### Stage 1. Assisted Routing Role
+
+#### Goal
+
+Prevent useful low-outbound channels from being pushed upward just because they are not marked as `super-source`.
+
+#### New Runtime States
+
+Add internal role tags:
+
+- `assist-channel`
+- `assist-preserve`
+
+#### Candidate Criteria
+
+Initial candidate conditions should combine:
+
+- meaningful `forward_in_count_7d` and/or `forward_in_amount_7d`
+- meaningful `assisted_forward_fee_7d_sat`
+- low or modest `forward_out`
+- low or moderate `rebalance_dependence_score`
+- `profit_fee_7d_sat` not strongly negative
+
+Optional profile-sensitive thresholds can be applied later, but first iteration should use conservative hard thresholds.
+
+#### Behavior
+
+For `assist-channel`:
+
+- outbound fee should not rise easily
+- `surge`, `sink-floor`, and `peg` should be weakened
+- cooldown for upward changes should be stricter
+- hold current fee unless there is a hard upward signal
+
+#### Hard Upward Signals Allowed
+
+Only permit easier increases when at least one is true:
+
+- `htlc-liquidity-hot`
+- real `rebal-recent`
+- strong `surge-confirmed`
+- strong and recent outbound growth beyond assisted role
+
+#### Expected Gains
+
+- better preservation of channels intentionally kept at low or zero outbound
+- less need to remove assisted channels from Autofee manually
+- better support for routing strategies based on inbound attractiveness
+
+### Stage 2. Ranking-Aware Gates
+
+#### Goal
+
+Use `Channel Ranking` as a primary decision gate, not only as a late correction.
+
+#### Proposed Policy Mapping
+
+- `expand`
+  - upward freedom can remain relatively normal
+- `maintain`
+  - keep target close to anchor
+- `monitor`
+  - upward moves require stronger evidence
+- `close`
+  - default behavior becomes decompression or conservative hold, not protection
+
+#### Additional Gates
+
+Reduce or disable upward pressure when:
+
+- `state = close`
+- `state = monitor` and `trend = worsening`
+- `profit_fee_7d_sat <= 0`
+- `profit_fee_30d_sat <= 0`
+- `score` and `score_30d` are weak
+
+Allow stronger upward freedom only if a hard signal is present.
+
+#### Expected Gains
+
+- fewer channels defended by Autofee when ranking already says they are weak
+- cleaner alignment between `Channel Ranking` and `Autofee`
+- less manual conflict between modules
+
+### Stage 3. Rebalance Reality Gates
+
+#### Goal
+
+Stop defending high fees for channels that are not actually receiving viable rebalance execution.
+
+#### New Runtime Signals
+
+Add explicit runtime tags and gates such as:
+
+- `rebal-budget-exhausted`
+- `rebal-roi-blocked`
+- `rebal-no-attempt-recent`
+- `rebal-disabled-channel`
+
+These should be derived from:
+
+- rebalance overview budget state
+- skipped candidates by reason
+- recent per-channel job and attempt history
+- channel-level `auto_enabled`
+- channel-level `manual_restart_enabled`
+
+#### Behavior
+
+For mature empty `sink` channels with local history and no real execution:
+
+- do not raise fees just because they remain empty
+- reduce force of `rebal-sink`, `peg`, `surge`, and `no-down-neg-margin`
+- anchor downward toward a safe band around:
+  - `max(out_ppm_7d, rebal_ref_soft)`
+
+This stage should extend the existing `empty-sink-*` logic instead of replacing it.
+
+#### Expected Gains
+
+- better decisions when rebalance is blocked by budget or ROI
+- less divergence between fee policy and actual capital deployment
+- fewer channels stuck high simply because they look scarce on paper
+
+### Stage 4. Stability And Anti-Churn Guards
+
+#### Goal
+
+Reduce unnecessary fee churn and graph-level noise.
+
+#### Proposed Guards
+
+Add runtime controls such as:
+
+- larger deadband before publishing a change
+- minimum ppm delta required to publish
+- per-channel maximum changes per 24h
+- maximum consecutive upward changes
+- strict upward cooldown by default
+- only explicit hard signals may bypass upward cooldown
+
+#### Explicit Rule
+
+Simple forward activity should not bypass `cooldown_up`.
+
+Forwards should be treated as:
+
+- evidence that the current fee is acceptable
+- not as automatic license to raise again
+
+#### Expected Gains
+
+- fewer gossip updates
+- more stable channel pricing
+- reduced chance of fee thrash harming graph reputation
+
+### Economic Anchor Model
+
+The new hierarchy should treat the economic anchor as:
+
+- `max(out_ppm_7d, rebal_ref)`
+
+Where:
+
+- `rebal_ref` comes from true recent rebalance cost when available
+- `30d` references are used only for channels protected by `slow-cycle-30d`
+- Amboss/native seed remains fallback, not dominant anchor, when mature local evidence exists
+
+### Suggested Runtime Order
+
+Refactor the runtime so `evaluateChannel` behaves conceptually like this:
+
+1. compute local market anchor
+2. derive channel role
+3. derive ranking-aware policy
+4. derive rebalance execution policy
+5. apply upward/downward pressure only after the above
+6. apply anti-churn stability guards
+7. compute inbound discount from the final outbound result
+
+### Suggested Technical Shape
+
+The implementation should introduce or refactor toward helpers such as:
+
+- `deriveChannelRole(...)`
+- `deriveAssistChannel(...)`
+- `deriveRankingPolicy(...)`
+- `deriveRebalanceExecutionPolicy(...)`
+- `deriveEconomicAnchor(...)`
+- `applyAutofeeStabilityGuards(...)`
+
+Relevant existing files:
+
+- `lightningos-light/internal/server/autofee_service.go`
+- `lightningos-light/internal/server/autofee_service_test.go`
+- `lightningos-light/internal/server/channel_ranking_service.go`
+- `lightningos-light/internal/server/rebalance_service.go`
+- `lightningos-light/internal/server/rebalance_handlers.go`
+
+### Observability
+
+Add explicit runtime tags so behavior remains auditable in Results and Telegram.
+
+New tags should include at least:
+
+- `assist-channel`
+- `assist-preserve`
+- `rank-expand`
+- `rank-maintain`
+- `rank-monitor`
+- `rank-close`
+- `rebal-budget-exhausted`
+- `rebal-roi-blocked`
+- `rebal-no-attempt-recent`
+- `rebal-disabled-channel`
+- `stability-hold`
+- `stability-delta-min`
+- `stability-max-changes`
+
+### Testing Plan
+
+Add tests for at least:
+
+1. assisted-revenue channel with low outbound fee does not rise without hard signal
+2. `close` channel with weak economics cannot receive normal upward `surge`
+3. mature empty `sink` with no attempts and blocked rebalance is anchored down
+4. `expand` channel with true liquidity pressure can still rise
+5. seed cannot dominate mature local signals
+6. upward cooldown is strict unless explicit bypass signal exists
+7. anti-churn guard suppresses small and repeated changes
+
+### Rollout Plan
+
+Implement in this order:
+
+1. `assist-channel`
+2. ranking-aware gates
+3. rebalance reality gates
+4. anti-churn guards
+
+This order is important because:
+
+- assisted routing protection fixes a real operator pain point immediately
+- ranking-aware gates improve decision quality with data already available
+- rebalance-reality gates reduce false scarcity
+- anti-churn should come last, after the main decision hierarchy is improved
+
+### Non-Goals For First Iteration
+
+Do not attempt all of the following in the same rollout:
+
+- complete UI rework of Autofee controls
+- fully automatic channel closure
+- replacing `market_refill`
+- removing all existing protection logic at once
+
+The first goal is not a full rewrite. It is a hierarchy correction.
+
+### Execution Breakdown
+
+The implementation should be split into small, reviewable increments.
+
+#### Milestone A. Assisted Channel Detection
+
+##### Scope
+
+Add explicit runtime classification for channels that are economically useful mainly because of assisted routing.
+
+##### Backend Tasks
+
+1. Add helper:
+   - `deriveAssistChannel(...)`
+2. Use these signals in the helper:
+   - `forward_in_count_7d`
+   - `forward_in_amount_sat_7d`
+   - `forward_out_count_7d`
+   - `forward_out_amount_sat_7d`
+   - `assisted_forward_fee_7d_sat`
+   - `rebalance_dependence_score`
+   - `profit_fee_7d_sat`
+3. Add runtime tags:
+   - `assist-channel`
+   - `assist-preserve`
+4. Reduce upward pressure for these channels in `balanced` mode unless hard signals exist.
+
+##### Likely Files
+
+- `lightningos-light/internal/server/autofee_service.go`
+- `lightningos-light/internal/server/autofee_service_test.go`
+
+##### Acceptance Criteria
+
+- low-outbound assisted channels no longer rise by default
+- channels with weak assisted contribution are unaffected
+- results output clearly shows the new tags
+
+#### Milestone B. Ranking-Aware Gates
+
+##### Scope
+
+Make `Channel Ranking` state and trend explicitly influence upward and downward permissions.
+
+##### Backend Tasks
+
+1. Add helper:
+   - `deriveRankingPolicy(...)`
+2. Use:
+   - `state`
+   - `score`
+   - `score_30d`
+   - `trend_direction`
+   - `profit_fee_7d_sat`
+   - `profit_fee_30d_sat`
+3. Add runtime tags:
+   - `rank-expand`
+   - `rank-maintain`
+   - `rank-monitor`
+   - `rank-close`
+4. Block or weaken `surge` and protection logic for:
+   - `close`
+   - `monitor + worsening`
+   - negative `7d` and `30d`
+
+##### Likely Files
+
+- `lightningos-light/internal/server/autofee_service.go`
+- `lightningos-light/internal/server/autofee_service_test.go`
+
+##### Acceptance Criteria
+
+- `close` channels do not receive normal upward freedom
+- `expand` channels still behave close to current baseline
+- ranking policy is visible in tags and tests
+
+#### Milestone C. Rebalance Reality Gates
+
+##### Scope
+
+Differentiate channels that need rebalance in theory from channels that are actually getting viable rebalance execution.
+
+##### Backend Tasks
+
+1. Add helper:
+   - `deriveRebalanceExecutionPolicy(...)`
+2. Feed it with:
+   - recent `rebal-recent`
+   - recent `rebal-attempt`
+   - channel `auto_enabled`
+   - channel `manual_restart_enabled`
+   - rebalance budget status
+   - skipped reasons such as `roi_guardrail` and `budget_too_low`
+3. Add tags:
+   - `rebal-budget-exhausted`
+   - `rebal-roi-blocked`
+   - `rebal-no-attempt-recent`
+   - `rebal-disabled-channel`
+4. Extend the existing `empty-sink-*` family so mature empty sinks can converge downward when rebalance is not happening in reality.
+
+##### Likely Files
+
+- `lightningos-light/internal/server/autofee_service.go`
+- `lightningos-light/internal/server/rebalance_service.go`
+- `lightningos-light/internal/server/rebalance_handlers.go`
+- `lightningos-light/internal/server/autofee_service_test.go`
+
+##### Acceptance Criteria
+
+- empty sinks with no real execution no longer stay artificially high
+- channels still receiving real rebalance pressure preserve current behavior
+- budget exhaustion becomes visible in Autofee results
+
+#### Milestone D. Stability And Anti-Churn
+
+##### Scope
+
+Reduce unnecessary fee updates and protect graph stability.
+
+##### Backend Tasks
+
+1. Add helper:
+   - `applyAutofeeStabilityGuards(...)`
+2. Add controls for:
+   - minimum ppm delta to publish
+   - per-channel max changes per 24h
+   - max consecutive upward changes
+   - strict upward cooldown
+3. Keep bypass narrow:
+   - `htlc-liquidity-hot`
+   - real `rebal-recent`
+4. Add tags:
+   - `stability-hold`
+   - `stability-delta-min`
+   - `stability-max-changes`
+
+##### Likely Files
+
+- `lightningos-light/internal/server/autofee_service.go`
+- `lightningos-light/internal/server/autofee_service_test.go`
+
+##### Acceptance Criteria
+
+- forward activity alone no longer causes repeated fee increases
+- small oscillations do not generate fee changes
+- change frequency per channel is measurably reduced
+
+### Suggested Delivery Order
+
+Use this delivery order, with tests after every milestone:
+
+1. Milestone A
+2. Milestone B
+3. Milestone C
+4. Milestone D
+
+This keeps early changes targeted and lowers regression risk.
+
+### Suggested Review Gates
+
+After each milestone, validate on a test or production-like node using:
+
+- latest Autofee rounds
+- ranking snapshots
+- rebalance overview
+- live reports
+
+Look specifically for:
+
+- fewer unjustified upward moves
+- fewer channels far above `out_ppm` and `rebal_ppm`
+- preservation of strong assisted-routing channels
+- lower fee churn over repeated rounds
+
+### Rollout Safety Notes
+
+Each milestone should be:
+
+- behind conservative gating in code
+- covered by dedicated tests
+- observable through explicit tags in Results and Telegram
+
+Do not combine multiple milestone behaviors into a single opaque patch.
 
 ## 1. Autofee Dynamic Liquidity State
 

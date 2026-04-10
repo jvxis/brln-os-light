@@ -1415,7 +1415,7 @@ export default function Wallet() {
           )}
         </div>
 
-        <div className="section-card space-y-4">
+        <div className={`section-card space-y-4 ${paymentPreviewLoading ? 'route-preview-busy' : ''}`}>
           <h3 className="text-lg font-semibold">{t('wallet.payInvoice')}</h3>
           <textarea className="input-field min-h-[140px]" placeholder={t('wallet.paymentRequestPlaceholder')} value={paymentRequest} onChange={(e) => setPaymentRequest(e.target.value)} />
           {isLnAddress && (
@@ -1539,7 +1539,7 @@ export default function Wallet() {
           </div>
           <div className="flex flex-wrap gap-2">
             <button
-              className="btn-secondary text-xs px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-50"
+              className={`btn-secondary text-xs px-3 py-1.5 disabled:opacity-50 ${paymentPreviewLoading ? 'cursor-wait' : 'disabled:cursor-not-allowed'}`}
               onClick={handlePreviewPayment}
               disabled={paymentPreviewLoading || (!isLnAddress && Boolean(decode?.is_blinded))}
             >

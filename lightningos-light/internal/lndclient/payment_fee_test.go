@@ -284,6 +284,34 @@ func TestSelectPreviewPaymentRoutesIncludesValidatedRoute(t *testing.T) {
 	}
 }
 
+func TestSelectPreviewPaymentRoutesSpreadsFeesWithoutValidatedRoute(t *testing.T) {
+	t.Parallel()
+
+	probed := make([]probedPaymentRoute, 0, 10)
+	for i := 0; i < 10; i++ {
+		probed = append(probed, probedPaymentRoute{
+			route: &lnrpc.Route{
+				TotalFeesMsat: int64(i+1) * 1000,
+				Hops: []*lnrpc.Hop{
+					{ChanId: uint64(i + 1)},
+				},
+			},
+			probe: PaymentRouteProbe{Status: paymentRouteProbeStatusFailed},
+		})
+	}
+
+	selected := selectPreviewPaymentRoutes(probed, 5)
+	if len(selected) != 5 {
+		t.Fatalf("selectPreviewPaymentRoutes() returned %d routes, want 5", len(selected))
+	}
+	if got := routeTotalFeeMsat(selected[len(selected)-1].route); got != 10_000 {
+		t.Fatalf("last selected fee = %d, want 10000 to include expensive graph candidates", got)
+	}
+	if got := routeTotalFeeMsat(selected[0].route); got != 1_000 {
+		t.Fatalf("first selected fee = %d, want 1000", got)
+	}
+}
+
 func TestSelectProbeCandidateRoutesKeepsFirstHopDiversity(t *testing.T) {
 	t.Parallel()
 

@@ -1137,7 +1137,7 @@
     "paymentPreviewLiquidityFailed": "Probe falhou",
     "paymentPreviewLiquidityFailedAtHop": "Probe falhou no hop {{index}}",
     "paymentPreviewLiquidityLikely": "Liquidez provável",
-    "paymentPreviewLiquidityNote": "O preview busca candidatos sem limitar pela taxa digitada, testa canais de saída selecionados também individualmente e exibe até 5 rotas com probe ativo. O probe melhora a confiança, mas ainda pode falhar se a liquidez ou políticas mudarem antes do pagamento.",
+    "paymentPreviewLiquidityNote": "O preview busca candidatos sem limitar pela taxa digitada, testa canais de saída selecionados também individualmente e prova os candidatos em ordem de menor taxa. Se nenhuma rota validar liquidez, a lista mostra uma amostra por faixa de taxa, incluindo rotas mais caras do grafo.",
     "paymentPreviewLiquidityTimeout": "Probe timeout",
     "paymentPreviewLiquidityUnknown": "Probe inconclusivo",
     "paymentPreviewNoValidatedRoute": "Nenhuma rota com liquidez provável foi validada. Ajuste canais/taxa e rode o preview novamente antes de pagar.",

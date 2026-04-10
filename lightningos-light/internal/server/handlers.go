@@ -39,7 +39,7 @@ const (
 	lndConnectTimeout              = 30 * time.Second
 	lndOpenChannelTimeout          = 60 * time.Second
 	lndBatchOpenChannelTimeout     = 90 * time.Second
-	lndWalletPaymentPreviewTimeout = 75 * time.Second
+	lndWalletPaymentPreviewTimeout = 120 * time.Second
 	lndWalletPaymentTimeout        = 120 * time.Second
 	batchOpenMaxChannels           = 50
 	pendingOpenBumpReferenceVbytes = int64(110)

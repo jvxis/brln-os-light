@@ -149,6 +149,11 @@ body {
   @apply border border-white/20 text-fog px-4 py-2 rounded-full hover:border-white/60 transition;
 }
 
+.route-preview-busy,
+.route-preview-busy * {
+  cursor: wait !important;
+}
+
 .theme-toggle {
   position: relative;
   display: inline-flex;

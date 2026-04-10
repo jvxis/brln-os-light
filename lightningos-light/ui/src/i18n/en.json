@@ -1137,7 +1137,7 @@
     "paymentPreviewLiquidityFailed": "Probe failed",
     "paymentPreviewLiquidityFailedAtHop": "Probe failed at hop {{index}}",
     "paymentPreviewLiquidityLikely": "Likely liquidity",
-    "paymentPreviewLiquidityNote": "Preview searches candidates without limiting discovery by the typed fee, tests selected outgoing channels individually too, and shows up to 5 actively probed routes. The probe improves confidence, but payment can still fail if liquidity or policies change before payment.",
+    "paymentPreviewLiquidityNote": "Preview searches candidates without limiting discovery by the typed fee, tests selected outgoing channels individually too, and probes candidates from the lowest fee upward. If no route validates liquidity, the list shows a fee-range sample, including more expensive graph routes.",
     "paymentPreviewLiquidityTimeout": "Probe timeout",
     "paymentPreviewLiquidityUnknown": "Probe inconclusive",
     "paymentPreviewNoValidatedRoute": "No route with likely liquidity was validated. Adjust channels/fee and run preview again before paying.",

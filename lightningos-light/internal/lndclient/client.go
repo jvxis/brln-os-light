@@ -1185,7 +1185,7 @@ func (c *Client) PayInvoiceWithValidatedRoute(ctx context.Context, paymentReques
 	if err != nil {
 		return err
 	}
-	probedRoutes := probeCheapestPaymentRouteCandidates(ctx, router, routes, int(numRoutes), int(numRoutes)*8)
+	probedRoutes := probeCheapestPaymentRouteCandidates(ctx, router, routes, int(numRoutes), len(routes))
 	var selected *lnrpc.Route
 	for _, probed := range probedRoutes {
 		if probed.route == nil || !probed.probe.LikelyLiquid {
@@ -1663,13 +1663,23 @@ func selectPreviewPaymentRoutes(probed []probedPaymentRoute, displayLimit int) [
 	if len(probed) <= displayLimit {
 		return probed
 	}
-	selected := append([]probedPaymentRoute(nil), probed[:displayLimit]...)
+	sorted := append([]probedPaymentRoute(nil), probed...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		leftFee := routeTotalFeeMsat(sorted[i].route)
+		rightFee := routeTotalFeeMsat(sorted[j].route)
+		if leftFee != rightFee {
+			return leftFee < rightFee
+		}
+		return len(sorted[i].route.Hops) < len(sorted[j].route.Hops)
+	})
+
+	selected := append([]probedPaymentRoute(nil), sorted[:displayLimit]...)
 	for _, candidate := range selected {
 		if candidate.probe.LikelyLiquid {
 			return selected
 		}
 	}
-	for _, candidate := range probed[displayLimit:] {
+	for _, candidate := range sorted[displayLimit:] {
 		if !candidate.probe.LikelyLiquid {
 			continue
 		}
@@ -1684,6 +1694,46 @@ func selectPreviewPaymentRoutes(probed []probedPaymentRoute, displayLimit int) [
 		})
 		return selected
 	}
+	return selectFeeSpreadPaymentRoutes(sorted, displayLimit)
+}
+
+func selectFeeSpreadPaymentRoutes(sorted []probedPaymentRoute, displayLimit int) []probedPaymentRoute {
+	if displayLimit <= 0 || len(sorted) <= displayLimit {
+		return sorted
+	}
+	selected := make([]probedPaymentRoute, 0, displayLimit)
+	seen := make(map[string]struct{}, displayLimit)
+	add := func(candidate probedPaymentRoute) {
+		if len(selected) >= displayLimit {
+			return
+		}
+		key := routeKey(candidate.route)
+		if key != "" {
+			if _, ok := seen[key]; ok {
+				return
+			}
+			seen[key] = struct{}{}
+		}
+		selected = append(selected, candidate)
+	}
+	for slot := 0; slot < displayLimit; slot++ {
+		index := 0
+		if displayLimit > 1 {
+			index = (len(sorted) - 1) * slot / (displayLimit - 1)
+		}
+		add(sorted[index])
+	}
+	for _, candidate := range sorted {
+		add(candidate)
+	}
+	sort.SliceStable(selected, func(i, j int) bool {
+		leftFee := routeTotalFeeMsat(selected[i].route)
+		rightFee := routeTotalFeeMsat(selected[j].route)
+		if leftFee != rightFee {
+			return leftFee < rightFee
+		}
+		return len(selected[i].route.Hops) < len(selected[j].route.Hops)
+	})
 	return selected
 }
 
@@ -2063,7 +2113,7 @@ func (c *Client) PreviewPayment(ctx context.Context, paymentRequest string, outg
 	if err != nil {
 		return preview, err
 	}
-	probedRoutes := probePaymentRouteCandidates(ctx, router, routes, targetRoutes, targetRoutes*8)
+	probedRoutes := probePaymentRouteCandidates(ctx, router, routes, targetRoutes, len(routes))
 	preview.Routes = make([]PaymentRouteSummary, 0, len(probedRoutes))
 	for _, probed := range probedRoutes {
 		route := probed.route

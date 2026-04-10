@@ -339,6 +339,50 @@ func TestSelectProbeCandidateRoutesKeepsFirstHopDiversity(t *testing.T) {
 	}
 }
 
+func TestSelectProbeCandidateRoutesKeepsExpensiveFeeSpread(t *testing.T) {
+	t.Parallel()
+
+	routes := make([]*lnrpc.Route, 0, 10)
+	for i := 0; i < 10; i++ {
+		routes = append(routes, &lnrpc.Route{
+			TotalFeesMsat: int64(i+1) * 1000,
+			Hops: []*lnrpc.Hop{
+				{ChanId: 1},
+				{ChanId: uint64(i + 10)},
+			},
+		})
+	}
+
+	selected := selectProbeCandidateRoutes(routes, 5, 3)
+	if len(selected) != 5 {
+		t.Fatalf("selectProbeCandidateRoutes() returned %d routes, want 5", len(selected))
+	}
+	hasExpensive := false
+	for _, route := range selected {
+		if routeTotalFeeMsat(route) == 10_000 {
+			hasExpensive = true
+			break
+		}
+	}
+	if !hasExpensive {
+		t.Fatalf("selectProbeCandidateRoutes() did not include expensive fee-spread route")
+	}
+}
+
+func TestPaymentRoutePreviewLimitsExpandForManyOutgoingChannels(t *testing.T) {
+	t.Parallel()
+
+	if got := paymentRoutePreviewCandidateLimit(5, 22); got <= 100 {
+		t.Fatalf("paymentRoutePreviewCandidateLimit(5, 22) = %d, want above old 100 route cap", got)
+	}
+	if got := paymentRoutePreviewQueryLimit(5, 22); got <= paymentRoutePreviewBaseQueryCount {
+		t.Fatalf("paymentRoutePreviewQueryLimit(5, 22) = %d, want above base query cap", got)
+	}
+	if got := paymentRoutePreviewProbeLimit(500, 5, 22); got != paymentRoutePreviewMaxProbes {
+		t.Fatalf("paymentRoutePreviewProbeLimit(500, 5, 22) = %d, want max probe cap %d", got, paymentRoutePreviewMaxProbes)
+	}
+}
+
 func TestMPPShardSizeCandidatesIncludesSmallShards(t *testing.T) {
 	t.Parallel()
 

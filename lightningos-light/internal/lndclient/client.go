@@ -1415,7 +1415,10 @@ const (
 	paymentRouteProbeStatusFailed     = "failed"
 	paymentRouteProbeStatusTimeout    = "timeout"
 	paymentRouteProbeStatusUnknown    = "unknown"
-	paymentRoutePreviewMaxQueryCount  = 200
+	paymentRoutePreviewBaseQueryCount = 200
+	paymentRoutePreviewMaxQueryCount  = 1200
+	paymentRoutePreviewMaxCandidates  = 800
+	paymentRoutePreviewMaxProbes      = 80
 	paymentMPPPlanMaxParts            = 20
 	paymentMPPPlanProbeBatchSize      = 5
 	paymentMPPPlanMinShardMsat        = 25_000_000
@@ -1777,6 +1780,19 @@ func selectProbeCandidateRoutes(routes []*lnrpc.Route, probeLimit int, cheapestL
 		}
 	}
 
+	for slot := 0; slot < cheapestLimit; slot++ {
+		index := 0
+		if cheapestLimit > 1 {
+			index = (len(routes) - 1) * slot / (cheapestLimit - 1)
+		}
+		if index < 0 || index >= len(routes) {
+			continue
+		}
+		if addRoute(routes[index]) {
+			return selected
+		}
+	}
+
 	for _, route := range routes {
 		if addRoute(route) {
 			return selected
@@ -1866,21 +1882,96 @@ func selectFeeSpreadPaymentRoutes(sorted []probedPaymentRoute, displayLimit int)
 	return selected
 }
 
+func paymentRoutePreviewCandidateLimit(targetRoutes int, outgoingCount int) int {
+	if targetRoutes <= 0 {
+		targetRoutes = 5
+	}
+	limit := targetRoutes * 20
+	if outgoingCount > 1 {
+		perChannel := targetRoutes * 8
+		if perChannel < 30 {
+			perChannel = 30
+		}
+		if expanded := outgoingCount * perChannel; expanded > limit {
+			limit = expanded
+		}
+	}
+	if limit > paymentRoutePreviewMaxCandidates {
+		limit = paymentRoutePreviewMaxCandidates
+	}
+	if limit < targetRoutes {
+		return targetRoutes
+	}
+	return limit
+}
+
+func paymentRoutePreviewQueryLimit(targetRoutes int, outgoingCount int) int {
+	if targetRoutes <= 0 {
+		targetRoutes = 5
+	}
+	limit := paymentRoutePreviewBaseQueryCount
+	if outgoingCount > 1 {
+		if expanded := outgoingCount * targetRoutes * 10; expanded > limit {
+			limit = expanded
+		}
+	}
+	if limit > paymentRoutePreviewMaxQueryCount {
+		return paymentRoutePreviewMaxQueryCount
+	}
+	return limit
+}
+
+func paymentRoutePreviewPerSearchSetQueryLimit(targetRoutes int, outgoingCount int) int {
+	if outgoingCount <= 1 {
+		return paymentRoutePreviewQueryLimit(targetRoutes, outgoingCount)
+	}
+	if targetRoutes <= 0 {
+		targetRoutes = 5
+	}
+	limit := targetRoutes * 3
+	if limit < 12 {
+		return 12
+	}
+	return limit
+}
+
+func paymentRoutePreviewProbeLimit(routeCount int, targetRoutes int, outgoingCount int) int {
+	if routeCount <= 0 {
+		return 0
+	}
+	if targetRoutes <= 0 {
+		targetRoutes = 5
+	}
+	limit := targetRoutes * 12
+	if limit < 40 {
+		limit = 40
+	}
+	if outgoingCount > 1 {
+		if expanded := outgoingCount * 4; expanded > limit {
+			limit = expanded
+		}
+	}
+	if limit > paymentRoutePreviewMaxProbes {
+		limit = paymentRoutePreviewMaxProbes
+	}
+	if limit > routeCount {
+		return routeCount
+	}
+	return limit
+}
+
 func (c *Client) previewPaymentRouteCandidates(ctx context.Context, lightning lnrpc.LightningClient, decoded DecodedInvoice, amountMsat int64, outgoingChanIDs []uint64, numRoutes int32) ([]*lnrpc.Route, error) {
 	targetRoutes := int(numRoutes)
 	if targetRoutes <= 0 {
 		targetRoutes = 5
 	}
-	maxRouteCandidates := targetRoutes * 20
-	maxRouteQueries := paymentRoutePreviewMaxQueryCount
-	if maxRouteQueries < targetRoutes*12 {
-		maxRouteQueries = targetRoutes * 12
-	}
+	maxRouteCandidates := paymentRoutePreviewCandidateLimit(targetRoutes, len(outgoingChanIDs))
+	maxRouteQueries := paymentRoutePreviewQueryLimit(targetRoutes, len(outgoingChanIDs))
+	perSearchSetQueryLimit := paymentRoutePreviewPerSearchSetQueryLimit(targetRoutes, len(outgoingChanIDs))
 	routeSearchMaxFeeMsat := int64(^uint64(0) >> 1)
 	routes := make([]*lnrpc.Route, 0, targetRoutes)
 	seenRoutes := make(map[string]struct{})
 	outgoingSearchSets := make([][]uint64, 0, len(outgoingChanIDs)+1)
-	outgoingSearchSets = append(outgoingSearchSets, append([]uint64(nil), outgoingChanIDs...))
 	if len(outgoingChanIDs) > 1 {
 		for _, outgoingChanID := range outgoingChanIDs {
 			if outgoingChanID == 0 {
@@ -1889,6 +1980,7 @@ func (c *Client) previewPaymentRouteCandidates(ctx context.Context, lightning ln
 			outgoingSearchSets = append(outgoingSearchSets, []uint64{outgoingChanID})
 		}
 	}
+	outgoingSearchSets = append(outgoingSearchSets, append([]uint64(nil), outgoingChanIDs...))
 	searchProfiles := []struct {
 		useMissionControl bool
 		timePref          float64
@@ -1909,10 +2001,12 @@ func (c *Client) previewPaymentRouteCandidates(ctx context.Context, lightning ln
 			}
 			ignoredQueue := [][]*lnrpc.EdgeLocator{nil}
 			seenIgnoredSets := map[string]struct{}{"": {}}
-			for len(ignoredQueue) > 0 && queryAttempts < maxRouteQueries && len(routes) < maxRouteCandidates {
+			searchSetAttempts := 0
+			for len(ignoredQueue) > 0 && queryAttempts < maxRouteQueries && len(routes) < maxRouteCandidates && searchSetAttempts < perSearchSetQueryLimit {
 				ignoredEdges := ignoredQueue[0]
 				ignoredQueue = ignoredQueue[1:]
 				queryAttempts++
+				searchSetAttempts++
 
 				req := &lnrpc.QueryRoutesRequest{
 					PubKey:            decoded.Destination,
@@ -2657,7 +2751,8 @@ func (c *Client) PreviewPayment(ctx context.Context, paymentRequest string, outg
 	if err != nil {
 		return preview, err
 	}
-	probedRoutes := probePaymentRouteCandidates(ctx, router, routes, targetRoutes, len(routes))
+	probeLimit := paymentRoutePreviewProbeLimit(len(routes), targetRoutes, len(outgoingChanIDs))
+	probedRoutes := probePaymentRouteCandidates(ctx, router, routes, targetRoutes, probeLimit)
 	preview.Routes = make([]PaymentRouteSummary, 0, len(probedRoutes))
 	for _, probed := range probedRoutes {
 		route := probed.route

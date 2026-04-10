@@ -111,6 +111,8 @@ type WalletPaymentPreview = {
   suggested_max_fee_msat?: number
   effective_max_fee_sat?: number
   effective_max_fee_msat?: number
+  liquidity_validated?: boolean
+  validated_route_count?: number
   probe?: WalletPaymentProbe
   routes?: WalletRouteSummary[]
 }
@@ -605,6 +607,12 @@ export default function Wallet() {
     return 'border-white/10 bg-white/[0.03] text-fog/60'
   }
 
+  const paymentPreviewHasLikelyLiquidRoute = Boolean(
+    paymentPreview?.liquidity_validated ||
+    paymentPreview?.routes?.some((route) => route?.probe?.likely_liquid || route?.probe?.status === 'likely_liquid')
+  )
+  const paymentBlockedByPreview = Boolean(paymentPreview && !paymentPreviewHasLikelyLiquidRoute)
+
   const outgoingChannelsSummary = () => {
     if (outgoingChannelPoints.length === 0) return t('wallet.automaticLnd')
     if (outgoingChannelPoints.length === 1) {
@@ -937,8 +945,10 @@ export default function Wallet() {
       })
       setPaymentPreview(res)
       const suggested = Number(res?.suggested_max_fee_sat || 0)
-      setPayMaxFeeSat(suggested > 0 ? String(suggested) : '')
-      setPayMaxFeeTouched(false)
+      if (suggested > 0) {
+        setPayMaxFeeSat(String(suggested))
+        setPayMaxFeeTouched(false)
+      }
     } catch (err: any) {
       setPaymentPreview(null)
       setPaymentPreviewError(err?.message || t('wallet.paymentPreviewUnavailable'))
@@ -959,6 +969,10 @@ export default function Wallet() {
     const maxFeeSatValue = Number(payMaxFeeSat || 0)
     if (maxFeeSatValue < 0) {
       setStatus(t('wallet.maxFeePositive'))
+      return
+    }
+    if (paymentBlockedByPreview) {
+      setStatus(t('wallet.paymentPreviewNoValidatedRoutePayBlocked'))
       return
     }
     setStatus(t('wallet.payingInvoice'))
@@ -1447,8 +1461,17 @@ export default function Wallet() {
             >
               {paymentPreviewLoading ? t('wallet.paymentPreviewLoading') : t('wallet.paymentPreviewAction')}
             </button>
-            <button className="btn-primary" onClick={handlePay}>{t('wallet.payInvoice')}</button>
+            <button
+              className="btn-primary disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={handlePay}
+              disabled={paymentBlockedByPreview}
+            >
+              {t('wallet.payInvoice')}
+            </button>
           </div>
+          {paymentBlockedByPreview && (
+            <p className="text-xs text-brass">{t('wallet.paymentPreviewNoValidatedRoutePayBlocked')}</p>
+          )}
           {!isLnAddress && decode?.is_blinded && (
             <p className="text-xs text-brass">{t('wallet.paymentPreviewBlindedUnavailable')}</p>
           )}
@@ -1468,6 +1491,11 @@ export default function Wallet() {
                 ) : null}
               </div>
               <p className="text-xs leading-relaxed text-fog/55">{t('wallet.paymentPreviewLiquidityNote')}</p>
+              {paymentPreviewHasLikelyLiquidRoute ? (
+                <p className="text-xs text-emerald-200">{t('wallet.paymentPreviewValidatedRouteReady')}</p>
+              ) : (
+                <p className="text-xs text-brass">{t('wallet.paymentPreviewNoValidatedRoute')}</p>
+              )}
               {Array.isArray(paymentPreview.routes) && paymentPreview.routes.length > 0 ? (
                 <div className="space-y-3">
                   {paymentPreview.routes.map((route, routeIndex) => (

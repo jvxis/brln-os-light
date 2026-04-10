@@ -212,3 +212,39 @@ func TestPaymentRouteProbeFromFailure(t *testing.T) {
 		}
 	})
 }
+
+func TestSelectPreviewPaymentRoutesIncludesValidatedRoute(t *testing.T) {
+	t.Parallel()
+
+	probed := make([]probedPaymentRoute, 0, 6)
+	for i := 0; i < 6; i++ {
+		probe := PaymentRouteProbe{Status: paymentRouteProbeStatusFailed}
+		if i == 5 {
+			probe = PaymentRouteProbe{Status: paymentRouteProbeStatusLikely, LikelyLiquid: true}
+		}
+		probed = append(probed, probedPaymentRoute{
+			route: &lnrpc.Route{
+				TotalFeesMsat: int64(i+1) * 1000,
+				Hops: []*lnrpc.Hop{
+					{ChanId: uint64(i + 1)},
+				},
+			},
+			probe: probe,
+		})
+	}
+
+	selected := selectPreviewPaymentRoutes(probed, 5)
+	if len(selected) != 5 {
+		t.Fatalf("selectPreviewPaymentRoutes() returned %d routes, want 5", len(selected))
+	}
+	hasLikely := false
+	for _, route := range selected {
+		if route.probe.LikelyLiquid {
+			hasLikely = true
+			break
+		}
+	}
+	if !hasLikely {
+		t.Fatalf("selectPreviewPaymentRoutes() did not include the validated route")
+	}
+}

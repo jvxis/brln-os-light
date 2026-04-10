@@ -1379,6 +1379,81 @@ func probePaymentRoutes(ctx context.Context, router routerrpc.RouterClient, rout
 	return probes
 }
 
+type probedPaymentRoute struct {
+	route *lnrpc.Route
+	probe PaymentRouteProbe
+}
+
+func probePaymentRouteCandidates(ctx context.Context, router routerrpc.RouterClient, routes []*lnrpc.Route, displayLimit int, probeLimit int) []probedPaymentRoute {
+	if displayLimit <= 0 {
+		displayLimit = 5
+	}
+	if probeLimit < displayLimit {
+		probeLimit = displayLimit
+	}
+	if probeLimit > len(routes) {
+		probeLimit = len(routes)
+	}
+	probed := make([]probedPaymentRoute, 0, probeLimit)
+	for start := 0; start < probeLimit; start += displayLimit {
+		end := start + displayLimit
+		if end > probeLimit {
+			end = probeLimit
+		}
+		batch := routes[start:end]
+		probes := probePaymentRoutes(ctx, router, batch)
+		foundLikely := false
+		for i, route := range batch {
+			probe := PaymentRouteProbe{Status: paymentRouteProbeStatusUnknown}
+			if i < len(probes) {
+				probe = probes[i]
+			}
+			if probe.LikelyLiquid {
+				foundLikely = true
+			}
+			probed = append(probed, probedPaymentRoute{
+				route: route,
+				probe: probe,
+			})
+		}
+		if foundLikely {
+			break
+		}
+	}
+	return selectPreviewPaymentRoutes(probed, displayLimit)
+}
+
+func selectPreviewPaymentRoutes(probed []probedPaymentRoute, displayLimit int) []probedPaymentRoute {
+	if displayLimit <= 0 {
+		displayLimit = 5
+	}
+	if len(probed) <= displayLimit {
+		return probed
+	}
+	selected := append([]probedPaymentRoute(nil), probed[:displayLimit]...)
+	for _, candidate := range selected {
+		if candidate.probe.LikelyLiquid {
+			return selected
+		}
+	}
+	for _, candidate := range probed[displayLimit:] {
+		if !candidate.probe.LikelyLiquid {
+			continue
+		}
+		selected[displayLimit-1] = candidate
+		sort.SliceStable(selected, func(i, j int) bool {
+			leftFee := routeTotalFeeMsat(selected[i].route)
+			rightFee := routeTotalFeeMsat(selected[j].route)
+			if leftFee != rightFee {
+				return leftFee < rightFee
+			}
+			return len(selected[i].route.Hops) < len(selected[j].route.Hops)
+		})
+		return selected
+	}
+	return selected
+}
+
 func probePaymentRoute(ctx context.Context, router routerrpc.RouterClient, route *lnrpc.Route) PaymentRouteProbe {
 	if route == nil || len(route.Hops) == 0 {
 		return PaymentRouteProbe{
@@ -1530,6 +1605,8 @@ type PaymentPreview struct {
 	SuggestedMaxFeeMsat int64                 `json:"suggested_max_fee_msat,omitempty"`
 	EffectiveMaxFeeSat  int64                 `json:"effective_max_fee_sat,omitempty"`
 	EffectiveMaxFeeMsat int64                 `json:"effective_max_fee_msat,omitempty"`
+	LiquidityValidated  bool                  `json:"liquidity_validated"`
+	ValidatedRouteCount int                   `json:"validated_route_count,omitempty"`
 	Probe               PaymentProbeEstimate  `json:"probe"`
 	Routes              []PaymentRouteSummary `json:"routes,omitempty"`
 }
@@ -1614,8 +1691,6 @@ func (c *Client) PreviewPayment(ctx context.Context, paymentRequest string, outg
 		AmountMsat:          amountMsat,
 		Memo:                decoded.Memo,
 		Destination:         decoded.Destination,
-		SuggestedMaxFeeSat:  suggestedMaxFeeSat,
-		SuggestedMaxFeeMsat: suggestedMaxFeeMsat,
 		EffectiveMaxFeeSat:  effectiveMaxFeeSat,
 		EffectiveMaxFeeMsat: effectiveMaxFeeMsat,
 	}
@@ -1731,35 +1806,32 @@ func (c *Client) PreviewPayment(ctx context.Context, paymentRequest string, outg
 		}
 		return routes[i].TotalTimeLock < routes[j].TotalTimeLock
 	})
-	if len(routes) > targetRoutes {
-		routes = routes[:targetRoutes]
-	}
-
-	routeProbes := probePaymentRoutes(ctx, router, routes)
-	preview.Routes = make([]PaymentRouteSummary, 0, len(routes))
-	for i, route := range routes {
+	probedRoutes := probePaymentRouteCandidates(ctx, router, routes, targetRoutes, targetRoutes*4)
+	preview.Routes = make([]PaymentRouteSummary, 0, len(probedRoutes))
+	for _, probed := range probedRoutes {
+		route := probed.route
 		summary := c.convertPaymentRouteWithClient(ctx, lightning, route)
-		if i < len(routeProbes) {
-			probe := routeProbes[i]
-			summary.Probe = &probe
+		probe := probed.probe
+		summary.Probe = &probe
+		if probe.LikelyLiquid {
+			preview.LiquidityValidated = true
+			preview.ValidatedRouteCount++
 		}
 		preview.Routes = append(preview.Routes, summary)
 	}
-	if len(preview.Routes) > 0 {
-		suggestedRouteIndex := 0
+	if preview.LiquidityValidated {
+		suggestedRouteIndex := -1
 		for i, route := range preview.Routes {
 			if route.Probe != nil && route.Probe.LikelyLiquid {
 				suggestedRouteIndex = i
 				break
 			}
 		}
-		suggested := paymentPreviewFeeHeadroomSat(paymentRouteTotalFeeMsat(preview.Routes[suggestedRouteIndex]))
-		preview.SuggestedMaxFeeSat = suggested
-		preview.SuggestedMaxFeeMsat = suggested * 1000
-	} else if preview.Probe.Success && preview.Probe.FeeSat > 0 {
-		suggested := paymentPreviewFeeHeadroomSat(preview.Probe.FeeMsat)
-		preview.SuggestedMaxFeeSat = suggested
-		preview.SuggestedMaxFeeMsat = suggested * 1000
+		if suggestedRouteIndex >= 0 {
+			suggested := paymentPreviewFeeHeadroomSat(paymentRouteTotalFeeMsat(preview.Routes[suggestedRouteIndex]))
+			preview.SuggestedMaxFeeSat = suggested
+			preview.SuggestedMaxFeeMsat = suggested * 1000
+		}
 	}
 	return preview, nil
 }

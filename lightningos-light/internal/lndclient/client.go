@@ -2092,6 +2092,130 @@ func (c *Client) mppPlanFromRoutes(ctx context.Context, lightning lnrpc.Lightnin
 	}
 }
 
+func (c *Client) buildPaymentPreviewRecommendation(ctx context.Context, lightning lnrpc.LightningClient, router routerrpc.RouterClient, decoded DecodedInvoice, amountMsat int64, outgoingChanIDs []uint64, numRoutes int32) *PaymentPreviewRecommendation {
+	if len(outgoingChanIDs) == 0 || amountMsat <= 0 {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil
+	}
+
+	routes, err := c.previewPaymentRouteCandidates(ctx, lightning, decoded, amountMsat, nil, numRoutes)
+	if err != nil || len(routes) == 0 {
+		return nil
+	}
+	targetRoutes := int(numRoutes)
+	if targetRoutes <= 0 {
+		targetRoutes = 5
+	}
+	selectedSet := paymentChannelIDSet(outgoingChanIDs)
+	selected := probeCheapestPaymentRouteOutsideSet(ctx, router, routes, targetRoutes, selectedSet)
+	if selected == nil || len(selected.Hops) == 0 || selected.Hops[0] == nil {
+		return nil
+	}
+
+	firstHop := selected.Hops[0]
+	feeMsat := routeTotalFeeMsat(selected)
+	recommendation := &PaymentPreviewRecommendation{
+		Type:                    "rebalance_target",
+		Reason:                  "automatic_lnd_found_route_outside_selected_channels",
+		TargetChannelID:         firstHop.ChanId,
+		TargetChannelIDString:   strconv.FormatUint(firstHop.ChanId, 10),
+		TargetPubKey:            strings.TrimSpace(firstHop.PubKey),
+		TargetAlias:             c.lookupNodeAliasWithClient(ctx, lightning, firstHop.PubKey),
+		EstimatedPaymentFeeSat:  msatToSatCeil(feeMsat),
+		EstimatedPaymentFeeMsat: feeMsat,
+		HopCount:                len(selected.Hops),
+		Message:                 "automatic lnd found a validated route through a channel outside the selected outgoing set",
+	}
+	if local := paymentPreviewLocalChannel(ctx, lightning, firstHop.ChanId); local != nil {
+		recommendation.TargetChannelPoint = strings.TrimSpace(local.ChannelPoint)
+		recommendation.TargetLocalBalanceSat = local.LocalBalance
+		if recommendation.TargetPubKey == "" {
+			recommendation.TargetPubKey = strings.TrimSpace(local.RemotePubkey)
+		}
+		if recommendation.TargetAlias == "" {
+			recommendation.TargetAlias = strings.TrimSpace(local.PeerAlias)
+		}
+		if recommendation.TargetAlias == "" {
+			recommendation.TargetAlias = c.lookupNodeAliasWithClient(ctx, lightning, local.RemotePubkey)
+		}
+	}
+	return recommendation
+}
+
+func probeCheapestPaymentRouteOutsideSet(ctx context.Context, router routerrpc.RouterClient, routes []*lnrpc.Route, batchSize int, excludedFirstHopChanIDs map[uint64]struct{}) *lnrpc.Route {
+	if batchSize <= 0 {
+		batchSize = 5
+	}
+	probeLimit := len(routes)
+	var selected *lnrpc.Route
+	for start := 0; start < probeLimit; start += batchSize {
+		if err := ctx.Err(); err != nil {
+			break
+		}
+		end := start + batchSize
+		if end > probeLimit {
+			end = probeLimit
+		}
+		batch := routes[start:end]
+		probes := probePaymentRoutes(ctx, router, batch)
+		foundOutside := false
+		for i, route := range batch {
+			if route == nil || len(route.Hops) == 0 || route.Hops[0] == nil {
+				continue
+			}
+			probe := PaymentRouteProbe{Status: paymentRouteProbeStatusUnknown}
+			if i < len(probes) {
+				probe = probes[i]
+			}
+			if !probe.LikelyLiquid {
+				continue
+			}
+			firstHop := route.Hops[0]
+			if _, excluded := excludedFirstHopChanIDs[firstHop.ChanId]; excluded {
+				continue
+			}
+			foundOutside = true
+			if selected == nil || routeTotalFeeMsat(route) < routeTotalFeeMsat(selected) {
+				selected = route
+			}
+		}
+		if foundOutside {
+			break
+		}
+	}
+	return selected
+}
+
+func paymentChannelIDSet(ids []uint64) map[uint64]struct{} {
+	set := make(map[uint64]struct{}, len(ids))
+	for _, id := range ids {
+		if id == 0 {
+			continue
+		}
+		set[id] = struct{}{}
+	}
+	return set
+}
+
+func paymentPreviewLocalChannel(ctx context.Context, lightning lnrpc.LightningClient, channelID uint64) *lnrpc.Channel {
+	if channelID == 0 {
+		return nil
+	}
+	resp, err := lightning.ListChannels(ctx, &lnrpc.ListChannelsRequest{PeerAliasLookup: true})
+	if err != nil || resp == nil {
+		return nil
+	}
+	for _, ch := range resp.Channels {
+		if ch == nil || ch.ChanId != channelID {
+			continue
+		}
+		return ch
+	}
+	return nil
+}
+
 func mppPaymentMaxParts(outgoingChanCount int) int {
 	maxParts := 10
 	if outgoingChanCount > 0 {
@@ -2387,6 +2511,21 @@ type PaymentMPPPlan struct {
 	Routes             []PaymentRouteSummary `json:"routes,omitempty"`
 }
 
+type PaymentPreviewRecommendation struct {
+	Type                    string `json:"type,omitempty"`
+	Reason                  string `json:"reason,omitempty"`
+	TargetChannelID         uint64 `json:"target_channel_id,omitempty"`
+	TargetChannelIDString   string `json:"target_channel_id_string,omitempty"`
+	TargetChannelPoint      string `json:"target_channel_point,omitempty"`
+	TargetAlias             string `json:"target_alias,omitempty"`
+	TargetPubKey            string `json:"target_pubkey,omitempty"`
+	TargetLocalBalanceSat   int64  `json:"target_local_balance_sat,omitempty"`
+	EstimatedPaymentFeeSat  int64  `json:"estimated_payment_fee_sat,omitempty"`
+	EstimatedPaymentFeeMsat int64  `json:"estimated_payment_fee_msat,omitempty"`
+	HopCount                int    `json:"hop_count,omitempty"`
+	Message                 string `json:"message,omitempty"`
+}
+
 type PaymentProbeEstimate struct {
 	Success       bool   `json:"success"`
 	FeeSat        int64  `json:"fee_sat,omitempty"`
@@ -2396,20 +2535,21 @@ type PaymentProbeEstimate struct {
 }
 
 type PaymentPreview struct {
-	PaymentRequest      string                `json:"payment_request,omitempty"`
-	AmountSat           int64                 `json:"amount_sat,omitempty"`
-	AmountMsat          int64                 `json:"amount_msat,omitempty"`
-	Memo                string                `json:"memo,omitempty"`
-	Destination         string                `json:"destination,omitempty"`
-	SuggestedMaxFeeSat  int64                 `json:"suggested_max_fee_sat,omitempty"`
-	SuggestedMaxFeeMsat int64                 `json:"suggested_max_fee_msat,omitempty"`
-	EffectiveMaxFeeSat  int64                 `json:"effective_max_fee_sat,omitempty"`
-	EffectiveMaxFeeMsat int64                 `json:"effective_max_fee_msat,omitempty"`
-	LiquidityValidated  bool                  `json:"liquidity_validated"`
-	ValidatedRouteCount int                   `json:"validated_route_count,omitempty"`
-	Probe               PaymentProbeEstimate  `json:"probe"`
-	Routes              []PaymentRouteSummary `json:"routes,omitempty"`
-	MPPPlan             *PaymentMPPPlan       `json:"mpp_plan,omitempty"`
+	PaymentRequest      string                        `json:"payment_request,omitempty"`
+	AmountSat           int64                         `json:"amount_sat,omitempty"`
+	AmountMsat          int64                         `json:"amount_msat,omitempty"`
+	Memo                string                        `json:"memo,omitempty"`
+	Destination         string                        `json:"destination,omitempty"`
+	SuggestedMaxFeeSat  int64                         `json:"suggested_max_fee_sat,omitempty"`
+	SuggestedMaxFeeMsat int64                         `json:"suggested_max_fee_msat,omitempty"`
+	EffectiveMaxFeeSat  int64                         `json:"effective_max_fee_sat,omitempty"`
+	EffectiveMaxFeeMsat int64                         `json:"effective_max_fee_msat,omitempty"`
+	LiquidityValidated  bool                          `json:"liquidity_validated"`
+	ValidatedRouteCount int                           `json:"validated_route_count,omitempty"`
+	Probe               PaymentProbeEstimate          `json:"probe"`
+	Routes              []PaymentRouteSummary         `json:"routes,omitempty"`
+	MPPPlan             *PaymentMPPPlan               `json:"mpp_plan,omitempty"`
+	Recommendation      *PaymentPreviewRecommendation `json:"recommendation,omitempty"`
 }
 
 type PaymentDetails struct {
@@ -2528,6 +2668,9 @@ func (c *Client) PreviewPayment(ctx context.Context, paymentRequest string, outg
 				preview.SuggestedMaxFeeMsat = plan.SuggestedMaxFeeSat * 1000
 			}
 		}
+	}
+	if !preview.LiquidityValidated && (preview.MPPPlan == nil || !preview.MPPPlan.Available) {
+		preview.Recommendation = c.buildPaymentPreviewRecommendation(ctx, lightning, router, decoded, amountMsat, outgoingChanIDs, numRoutes)
 	}
 	return preview, nil
 }

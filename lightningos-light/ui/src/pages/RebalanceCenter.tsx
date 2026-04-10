@@ -1027,6 +1027,14 @@ export default function RebalanceCenter() {
     const next = config.payback_mode_flags ^ flag
     setConfig({ ...config, payback_mode_flags: next })
   }
+  const remainingTotalSat = overview?.remaining_total_sat ?? 0
+  const remainingForAutoSat = overview?.remaining_for_auto_sat ?? 0
+  const manualReserveRemainingSat = overview?.manual_reserve_remaining_sat ?? 0
+  const autoBudgetLowThresholdSat = Math.max(1, config?.min_execute_sat ?? 500)
+  const autoBudgetLow =
+    Boolean(overview?.auto_enabled) &&
+    remainingForAutoSat > 0 &&
+    remainingForAutoSat < autoBudgetLowThresholdSat
 
   return (
     <section className="space-y-6" aria-busy={initialLoading || isRefreshing}>
@@ -1268,8 +1276,9 @@ export default function RebalanceCenter() {
               )}
               <p className="text-xs text-fog/50">{t('rebalanceCenter.overview.dailySpentAuto', { value: formatSats(overview.daily_spent_auto_sat) })}</p>
               <p className="text-xs text-fog/50">{t('rebalanceCenter.overview.dailySpentManual', { value: formatSats(overview.daily_spent_manual_sat) })}</p>
-              <p className="text-xs text-fog/50">{t('rebalanceCenter.overview.remainingTotal', { value: formatSats(overview.remaining_total_sat ?? 0) })}</p>
-              <p className="text-xs text-fog/50">{t('rebalanceCenter.overview.remainingForAuto', { value: formatSats(overview.remaining_for_auto_sat ?? 0) })}</p>
+              <p className="text-xs text-fog/50">{t('rebalanceCenter.overview.remainingTotal', { value: formatSats(remainingTotalSat) })}</p>
+              <p className="text-xs text-fog/50">{t('rebalanceCenter.overview.autoUsableBudget', { value: formatSats(remainingForAutoSat) })}</p>
+              <p className="text-xs text-fog/50">{t('rebalanceCenter.overview.manualRestartUsableBudget', { value: formatSats(remainingTotalSat) })}</p>
               {overview.manual_reserve_enabled && (
                 <>
                   <p className="text-xs text-fog/50">
@@ -1280,17 +1289,27 @@ export default function RebalanceCenter() {
                   </p>
                   <p className="text-xs text-fog/50">
                     {t('rebalanceCenter.overview.manualReserveRemaining', {
-                      value: formatSats(overview.manual_reserve_remaining_sat ?? 0)
+                      value: formatSats(manualReserveRemainingSat)
                     })}
                   </p>
+                  {manualReserveRemainingSat > 0 && (
+                    <p className="text-xs text-fog/40">{t('rebalanceCenter.overview.manualReserveNotExtra')}</p>
+                  )}
                 </>
+              )}
+              {autoBudgetLow && (
+                <p className="text-xs text-amber-200">
+                  {t('rebalanceCenter.overview.autoBudgetLow', {
+                    min: formatSats(autoBudgetLowThresholdSat)
+                  })}
+                </p>
               )}
               {overview.last_scan_status && (overview.last_scan_status === 'budget_exhausted' || overview.last_scan_status === 'budget_insufficient') && (
                 <p className="text-xs text-amber-200">
                   {t(`rebalanceCenter.overview.budgetPaused.${overview.last_scan_status}`)}
                 </p>
               )}
-              {(overview.remaining_total_sat ?? 0) <= 0 && (
+              {remainingTotalSat <= 0 && (
                 <p className="text-xs text-amber-200">
                   {t('rebalanceCenter.overview.manualPaused.exhausted')}
                 </p>
@@ -2059,6 +2078,12 @@ export default function RebalanceCenter() {
               !config || config.roi_min <= 0 || !expectedRoiValid || expectedRoi >= config.roi_min
             const passesProfit = !scoreMeta || !(scoreMeta.expectedGain > 0 && scoreMeta.estimatedCost > 0 && scoreMeta.expectedGain < scoreMeta.estimatedCost)
             const isAutoTarget = ch.eligible_as_target && ch.auto_enabled && meetsRoi && passesProfit
+            const manualRestartSelected = manualRestart[ch.channel_point] === true
+            const manualRestartBudgetLow =
+              manualRestartSelected &&
+              Boolean(scoreMeta) &&
+              (scoreMeta?.estimatedCost ?? 0) > 0 &&
+              (scoreMeta?.estimatedCost ?? 0) > remainingTotalSat
             const highlight = isAutoTarget
               ? 'bg-rose-500/10'
               : ch.eligible_as_target
@@ -2183,10 +2208,18 @@ export default function RebalanceCenter() {
                     <span>⟳</span>
                     <input
                       type="checkbox"
-                      checked={manualRestart[ch.channel_point] === true}
+                      checked={manualRestartSelected}
                       onChange={(e) => handleManualRestartToggle(ch, e.target.checked)}
                     />
                   </label>
+                  {manualRestartBudgetLow && scoreMeta && (
+                    <div className="basis-full text-[11px] text-amber-200">
+                      {t('rebalanceCenter.channels.manualRestartBudgetWarning', {
+                        cost: formatSats(scoreMeta.estimatedCost),
+                        budget: formatSats(remainingTotalSat)
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
@@ -2257,6 +2290,12 @@ export default function RebalanceCenter() {
                   !config || config.roi_min <= 0 || !expectedRoiValid || expectedRoi >= config.roi_min
                 const passesProfit = !scoreMeta || !(scoreMeta.expectedGain > 0 && scoreMeta.estimatedCost > 0 && scoreMeta.expectedGain < scoreMeta.estimatedCost)
                 const isAutoTarget = ch.eligible_as_target && ch.auto_enabled && meetsRoi && passesProfit
+                const manualRestartSelected = manualRestart[ch.channel_point] === true
+                const manualRestartBudgetLow =
+                  manualRestartSelected &&
+                  Boolean(scoreMeta) &&
+                  (scoreMeta?.estimatedCost ?? 0) > 0 &&
+                  (scoreMeta?.estimatedCost ?? 0) > remainingTotalSat
                 const scoreTitle =
                   scoreMeta
                     ? t('rebalanceCenter.channels.scoreHint', {
@@ -2384,11 +2423,19 @@ export default function RebalanceCenter() {
                         <span className="text-sm">⟳</span>
                         <input
                           type="checkbox"
-                          checked={manualRestart[ch.channel_point] === true}
+                          checked={manualRestartSelected}
                           onChange={(e) => handleManualRestartToggle(ch, e.target.checked)}
                         />
                       </div>
                     </div>
+                    {manualRestartBudgetLow && scoreMeta && (
+                      <div className="text-xs text-amber-200">
+                        {t('rebalanceCenter.channels.manualRestartBudgetWarning', {
+                          cost: formatSats(scoreMeta.estimatedCost),
+                          budget: formatSats(remainingTotalSat)
+                        })}
+                      </div>
+                    )}
                     <div className="flex flex-wrap items-center gap-2 text-xs">
                       <label className="flex items-center gap-2" title={t('rebalanceCenter.channelsHints.auto')}>
                         <input

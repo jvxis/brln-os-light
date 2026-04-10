@@ -1,6 +1,7 @@
 package lndclient
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -135,6 +136,40 @@ func TestRouteTotalFeeMsat(t *testing.T) {
 	}
 }
 
+func TestRouteForInvoicePaymentAddsMPPRecord(t *testing.T) {
+	t.Parallel()
+
+	paymentAddr := []byte{1, 2, 3}
+	route := &lnrpc.Route{Hops: []*lnrpc.Hop{
+		{ChanId: 10, PubKey: "first"},
+		{ChanId: 20, PubKey: "destination"},
+	}}
+
+	got, err := routeForInvoicePayment(route, DecodedInvoice{PaymentAddr: paymentAddr}, 123_456)
+	if err != nil {
+		t.Fatalf("routeForInvoicePayment() error = %v", err)
+	}
+	if got == route {
+		t.Fatalf("routeForInvoicePayment() returned the original route")
+	}
+	if route.Hops[1].MppRecord != nil {
+		t.Fatalf("routeForInvoicePayment() mutated the original route")
+	}
+	if got.Hops[1].MppRecord == nil {
+		t.Fatalf("routeForInvoicePayment() did not add an MPP record")
+	}
+	if got.Hops[1].MppRecord.TotalAmtMsat != 123_456 {
+		t.Fatalf("MPP total amount = %d, want 123456", got.Hops[1].MppRecord.TotalAmtMsat)
+	}
+	if got.Hops[1].TotalAmtMsat != 123_456 {
+		t.Fatalf("final hop total amount = %d, want 123456", got.Hops[1].TotalAmtMsat)
+	}
+	paymentAddr[0] = 9
+	if !bytes.Equal(got.Hops[1].MppRecord.PaymentAddr, []byte{1, 2, 3}) {
+		t.Fatalf("MPP payment addr = %v, want independent copy", got.Hops[1].MppRecord.PaymentAddr)
+	}
+}
+
 func TestRouteAlternativeIgnoredEdgeSetsKeepsSelectedFirstHop(t *testing.T) {
 	t.Parallel()
 
@@ -246,5 +281,32 @@ func TestSelectPreviewPaymentRoutesIncludesValidatedRoute(t *testing.T) {
 	}
 	if !hasLikely {
 		t.Fatalf("selectPreviewPaymentRoutes() did not include the validated route")
+	}
+}
+
+func TestSelectProbeCandidateRoutesKeepsFirstHopDiversity(t *testing.T) {
+	t.Parallel()
+
+	routes := []*lnrpc.Route{
+		{TotalFeesMsat: 1_000, Hops: []*lnrpc.Hop{{ChanId: 1}, {ChanId: 11}}},
+		{TotalFeesMsat: 2_000, Hops: []*lnrpc.Hop{{ChanId: 1}, {ChanId: 12}}},
+		{TotalFeesMsat: 3_000, Hops: []*lnrpc.Hop{{ChanId: 1}, {ChanId: 13}}},
+		{TotalFeesMsat: 4_000, Hops: []*lnrpc.Hop{{ChanId: 2}, {ChanId: 21}}},
+		{TotalFeesMsat: 5_000, Hops: []*lnrpc.Hop{{ChanId: 3}, {ChanId: 31}}},
+	}
+
+	selected := selectProbeCandidateRoutes(routes, 4, 2)
+	if len(selected) != 4 {
+		t.Fatalf("selectProbeCandidateRoutes() returned %d routes, want 4", len(selected))
+	}
+	firstHops := make(map[string]struct{})
+	for _, route := range selected {
+		firstHops[routeFirstHopKey(route)] = struct{}{}
+	}
+	if _, ok := firstHops["2"]; !ok {
+		t.Fatalf("selectProbeCandidateRoutes() did not include first hop 2")
+	}
+	if _, ok := firstHops["3"]; !ok {
+		t.Fatalf("selectProbeCandidateRoutes() did not include first hop 3")
 	}
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import QRCode from 'qrcode'
-import { APIError, createInvoice, decodeInvoice, getLnChannels, getMempoolFees, getWalletActivity, getWalletAddress, getWalletPaymentDetail, getWalletSummary, payInvoice, previewOnchainSend, previewWalletPayment, reauthAuth, sendOnchain } from '../api'
+import { APIError, createInvoice, decodeInvoice, getLnChannels, getMempoolFees, getWalletActivity, getWalletAddress, getWalletPaymentDetail, getWalletSummary, payInvoice, payInvoiceValidatedRoute, previewOnchainSend, previewWalletPayment, reauthAuth, sendOnchain } from '../api'
 import { getLocale } from '../i18n'
 
 const emptySummary = {
@@ -1041,6 +1041,67 @@ export default function Wallet() {
     }
   }
 
+  const handlePayValidatedRoute = async () => {
+    if (!cleanedPaymentRequest) {
+      setStatus(t('wallet.paymentRequestRequired'))
+      return
+    }
+    if (isLnAddress && payAmountSat <= 0) {
+      setStatus(t('wallet.amountPositiveForLightningAddress'))
+      return
+    }
+    if (!paymentPreviewHasLikelyLiquidRoute) {
+      setStatus(t('wallet.paymentPreviewNoValidatedRoutePayBlocked'))
+      return
+    }
+    const maxFeeSatValue = Number(payMaxFeeSat || 0)
+    if (maxFeeSatValue < 0) {
+      setStatus(t('wallet.maxFeePositive'))
+      return
+    }
+    setStatus(t('wallet.payingValidatedRoute'))
+    try {
+      await payInvoiceValidatedRoute({
+        payment_request: cleanedPaymentRequest,
+        channel_point: outgoingChannelPoints.length === 1 ? outgoingChannelPoints[0] : undefined,
+        channel_points: outgoingChannelPoints.length > 0 ? outgoingChannelPoints : undefined,
+        amount_sat: isLnAddress ? payAmountSat : undefined,
+        max_fee_sat: maxFeeSatValue > 0 ? maxFeeSatValue : undefined
+      })
+      setStatus(t('wallet.paymentSent'))
+      setPaymentRequest('')
+      setPayAmount('')
+      setDecode(null)
+      setDecodeError('')
+      setOutgoingChannelPoints([])
+      setOutgoingChannelsExpanded(false)
+      setPayMaxFeeSat('')
+      setPayMaxFeeTouched(false)
+      setPaymentPreview(null)
+      setPaymentPreviewError('')
+      void getWalletSummary()
+        .then((data) => {
+          setSummary(data || emptySummary)
+          setSummaryWarning(data?.warning || '')
+          setSummaryError('')
+        })
+        .catch(() => {})
+      void getLnChannels()
+        .then((res: any) => {
+          setChannels(Array.isArray(res?.channels) ? res.channels : [])
+          setChannelsError('')
+        })
+        .catch(() => {})
+      void loadActivity({
+        offset: 0,
+        limit: Math.max(activityItems.length, walletActivityPageSize),
+        silent: true
+      })
+    } catch (err: any) {
+      setStatus(err?.message || t('wallet.paymentFailed'))
+    }
+  }
+
   const decodedAmount = () => {
     if (!decode) return ''
     const amountSat = Number(decode.amount_sat || 0)
@@ -1491,6 +1552,15 @@ export default function Wallet() {
             >
               {t('wallet.payInvoice')}
             </button>
+            {paymentPreviewHasLikelyLiquidRoute && (
+              <button
+                className="btn-secondary text-xs px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={handlePayValidatedRoute}
+                disabled={paymentPreviewLoading}
+              >
+                {t('wallet.payValidatedRoute')}
+              </button>
+            )}
           </div>
           {paymentBlockedByPreview && (
             <p className="text-xs text-brass">{t('wallet.paymentPreviewNoValidatedRoutePayBlocked')}</p>

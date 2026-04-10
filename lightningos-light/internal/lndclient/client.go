@@ -30,6 +30,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 const recentOnchainWindowBlocks int64 = 20160
@@ -691,17 +692,27 @@ func (c *Client) DecodeInvoice(ctx context.Context, payReq string) (DecodedInvoi
 	defer conn.Close()
 
 	client := lnrpc.NewLightningClient(conn)
-	resp, err := client.DecodePayReq(ctx, &lnrpc.PayReqString{PayReq: payReq})
-	if err != nil {
-		return DecodedInvoice{}, err
+	decoded, _, err := decodePaymentRequestWithClient(ctx, client, payReq)
+	return decoded, err
+}
+
+func decodePaymentRequestWithClient(ctx context.Context, client lnrpc.LightningClient, payReq string) (DecodedInvoice, int64, error) {
+	trimmed := strings.TrimSpace(payReq)
+	if trimmed == "" {
+		return DecodedInvoice{}, 0, errors.New("payment_request required")
 	}
 
-	return DecodedInvoice{
+	resp, err := client.DecodePayReq(ctx, &lnrpc.PayReqString{PayReq: trimmed})
+	if err != nil {
+		return DecodedInvoice{}, 0, err
+	}
+
+	decoded := DecodedInvoice{
 		AmountSat:    resp.NumSatoshis,
 		AmountMsat:   resp.NumMsat,
 		Memo:         resp.Description,
-		Destination:  resp.Destination,
-		PaymentHash:  strings.ToLower(resp.PaymentHash),
+		Destination:  strings.TrimSpace(resp.Destination),
+		PaymentHash:  strings.ToLower(strings.TrimSpace(resp.PaymentHash)),
 		Expiry:       resp.Expiry,
 		Timestamp:    resp.Timestamp,
 		CltvExpiry:   resp.CltvExpiry,
@@ -709,7 +720,12 @@ func (c *Client) DecodeInvoice(ctx context.Context, payReq string) (DecodedInvoi
 		PaymentAddr:  append([]byte(nil), resp.PaymentAddr...),
 		DestFeatures: payReqFeatureBits(resp.Features),
 		BlindedPaths: append([]*lnrpc.BlindedPaymentPath(nil), resp.BlindedPaths...),
-	}, nil
+	}
+	amountMsat := decoded.AmountMsat
+	if amountMsat <= 0 && decoded.AmountSat > 0 {
+		amountMsat = decoded.AmountSat * 1000
+	}
+	return decoded, amountMsat, nil
 }
 
 func (c *Client) ExportAllChannelBackups(ctx context.Context) ([]byte, error) {
@@ -1137,6 +1153,117 @@ func (c *Client) PayInvoice(ctx context.Context, paymentRequest string, outgoing
 	}
 }
 
+func (c *Client) PayInvoiceWithValidatedRoute(ctx context.Context, paymentRequest string, outgoingChanIDs []uint64, maxFeeSat int64, numRoutes int32) error {
+	trimmed := strings.TrimSpace(paymentRequest)
+	if trimmed == "" {
+		return errors.New("payment_request required")
+	}
+	if numRoutes <= 0 {
+		numRoutes = 5
+	}
+
+	conn, err := c.dial(ctx, true)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	lightning := lnrpc.NewLightningClient(conn)
+	router := routerrpc.NewRouterClient(conn)
+	decoded, amountMsat, err := decodePaymentRequestWithClient(ctx, lightning, trimmed)
+	if err != nil {
+		return err
+	}
+	if amountMsat <= 0 {
+		return errors.New("amountless invoices are not supported for validated route payment")
+	}
+	if len(decoded.BlindedPaths) > 0 {
+		return errors.New("validated route payment is unavailable for blinded invoices")
+	}
+
+	routes, err := c.previewPaymentRouteCandidates(ctx, lightning, decoded, amountMsat, outgoingChanIDs, numRoutes)
+	if err != nil {
+		return err
+	}
+	probedRoutes := probeCheapestPaymentRouteCandidates(ctx, router, routes, int(numRoutes), int(numRoutes)*8)
+	var selected *lnrpc.Route
+	for _, probed := range probedRoutes {
+		if probed.route == nil || !probed.probe.LikelyLiquid {
+			continue
+		}
+		if maxFeeSat > 0 && routeTotalFeeMsat(probed.route) > maxFeeSat*1000 {
+			continue
+		}
+		if selected == nil || routeTotalFeeMsat(probed.route) < routeTotalFeeMsat(selected) {
+			selected = probed.route
+		}
+	}
+	if selected == nil {
+		if maxFeeSat > 0 {
+			return errors.New("no validated route within max fee")
+		}
+		return errors.New("no validated route with likely liquidity")
+	}
+
+	route, err := routeForInvoicePayment(selected, decoded, amountMsat)
+	if err != nil {
+		return err
+	}
+	paymentHash, err := hex.DecodeString(strings.TrimSpace(decoded.PaymentHash))
+	if err != nil || len(paymentHash) != 32 {
+		return errors.New("invalid payment hash")
+	}
+
+	attempt, err := router.SendToRouteV2(ctx, &routerrpc.SendToRouteRequest{
+		PaymentHash: paymentHash,
+		Route:       route,
+		SkipTempErr: false,
+	})
+	if err != nil {
+		return err
+	}
+	if attempt == nil {
+		return errors.New("empty route payment response")
+	}
+	switch attempt.Status {
+	case lnrpc.HTLCAttempt_SUCCEEDED:
+		return nil
+	case lnrpc.HTLCAttempt_FAILED:
+		if attempt.Failure != nil {
+			return fmt.Errorf("route payment failed: %s", attempt.Failure.Code.String())
+		}
+		return errors.New("route payment failed")
+	default:
+		return fmt.Errorf("route payment status: %s", attempt.Status.String())
+	}
+}
+
+func routeForInvoicePayment(route *lnrpc.Route, decoded DecodedInvoice, amountMsat int64) (*lnrpc.Route, error) {
+	if route == nil {
+		return nil, errors.New("route required")
+	}
+	cloned, ok := proto.Clone(route).(*lnrpc.Route)
+	if !ok || cloned == nil {
+		return nil, errors.New("invalid route")
+	}
+	if len(cloned.Hops) == 0 || cloned.Hops[len(cloned.Hops)-1] == nil {
+		return nil, errors.New("empty route")
+	}
+	if amountMsat <= 0 {
+		return nil, errors.New("amount required")
+	}
+	finalHop := cloned.Hops[len(cloned.Hops)-1]
+	if len(decoded.PaymentAddr) > 0 {
+		finalHop.MppRecord = &lnrpc.MPPRecord{
+			PaymentAddr:  append([]byte(nil), decoded.PaymentAddr...),
+			TotalAmtMsat: amountMsat,
+		}
+		finalHop.TlvPayload = true
+		finalHop.TotalAmtMsat = uint64(amountMsat)
+	}
+	return cloned, nil
+}
+
 func sendPaymentSyncError(res *lnrpc.SendResponse, err error) error {
 	if err != nil {
 		return err
@@ -1303,6 +1430,17 @@ func routeKey(route *lnrpc.Route) string {
 	return builder.String()
 }
 
+func routeFirstHopKey(route *lnrpc.Route) string {
+	if route == nil || len(route.Hops) == 0 || route.Hops[0] == nil {
+		return ""
+	}
+	hop := route.Hops[0]
+	if hop.ChanId > 0 {
+		return strconv.FormatUint(hop.ChanId, 10)
+	}
+	return strings.TrimSpace(hop.PubKey)
+}
+
 func edgeSetKey(edges []*lnrpc.EdgeLocator) string {
 	if len(edges) == 0 {
 		return ""
@@ -1395,6 +1533,8 @@ func probePaymentRouteCandidates(ctx context.Context, router routerrpc.RouterCli
 	if probeLimit > len(routes) {
 		probeLimit = len(routes)
 	}
+	routes = selectProbeCandidateRoutes(routes, probeLimit, displayLimit)
+	probeLimit = len(routes)
 	probed := make([]probedPaymentRoute, 0, probeLimit)
 	for start := 0; start < probeLimit; start += displayLimit {
 		end := start + displayLimit
@@ -1422,6 +1562,98 @@ func probePaymentRouteCandidates(ctx context.Context, router routerrpc.RouterCli
 		}
 	}
 	return selectPreviewPaymentRoutes(probed, displayLimit)
+}
+
+func probeCheapestPaymentRouteCandidates(ctx context.Context, router routerrpc.RouterClient, routes []*lnrpc.Route, batchSize int, probeLimit int) []probedPaymentRoute {
+	if batchSize <= 0 {
+		batchSize = 5
+	}
+	if probeLimit < batchSize {
+		probeLimit = batchSize
+	}
+	if probeLimit > len(routes) {
+		probeLimit = len(routes)
+	}
+	probed := make([]probedPaymentRoute, 0, probeLimit)
+	for start := 0; start < probeLimit; start += batchSize {
+		end := start + batchSize
+		if end > probeLimit {
+			end = probeLimit
+		}
+		batch := routes[start:end]
+		probes := probePaymentRoutes(ctx, router, batch)
+		foundLikely := false
+		for i, route := range batch {
+			probe := PaymentRouteProbe{Status: paymentRouteProbeStatusUnknown}
+			if i < len(probes) {
+				probe = probes[i]
+			}
+			if probe.LikelyLiquid {
+				foundLikely = true
+			}
+			probed = append(probed, probedPaymentRoute{
+				route: route,
+				probe: probe,
+			})
+		}
+		if foundLikely {
+			break
+		}
+	}
+	return probed
+}
+
+func selectProbeCandidateRoutes(routes []*lnrpc.Route, probeLimit int, cheapestLimit int) []*lnrpc.Route {
+	if probeLimit <= 0 || len(routes) <= probeLimit {
+		return routes
+	}
+	if cheapestLimit <= 0 {
+		cheapestLimit = 5
+	}
+	selected := make([]*lnrpc.Route, 0, probeLimit)
+	seenRoutes := make(map[string]struct{})
+	addRoute := func(route *lnrpc.Route) bool {
+		if route == nil {
+			return false
+		}
+		key := routeKey(route)
+		if key != "" {
+			if _, exists := seenRoutes[key]; exists {
+				return false
+			}
+			seenRoutes[key] = struct{}{}
+		}
+		selected = append(selected, route)
+		return len(selected) >= probeLimit
+	}
+
+	for i := 0; i < len(routes) && i < cheapestLimit; i++ {
+		if addRoute(routes[i]) {
+			return selected
+		}
+	}
+
+	seenFirstHops := make(map[string]struct{})
+	for _, route := range routes {
+		firstHop := routeFirstHopKey(route)
+		if firstHop == "" {
+			continue
+		}
+		if _, exists := seenFirstHops[firstHop]; exists {
+			continue
+		}
+		seenFirstHops[firstHop] = struct{}{}
+		if addRoute(route) {
+			return selected
+		}
+	}
+
+	for _, route := range routes {
+		if addRoute(route) {
+			return selected
+		}
+	}
+	return selected
 }
 
 func selectPreviewPaymentRoutes(probed []probedPaymentRoute, displayLimit int) []probedPaymentRoute {
@@ -1453,6 +1685,144 @@ func selectPreviewPaymentRoutes(probed []probedPaymentRoute, displayLimit int) [
 		return selected
 	}
 	return selected
+}
+
+func (c *Client) previewPaymentRouteCandidates(ctx context.Context, lightning lnrpc.LightningClient, decoded DecodedInvoice, amountMsat int64, outgoingChanIDs []uint64, numRoutes int32) ([]*lnrpc.Route, error) {
+	targetRoutes := int(numRoutes)
+	if targetRoutes <= 0 {
+		targetRoutes = 5
+	}
+	maxRouteCandidates := targetRoutes * 20
+	maxRouteQueries := paymentRoutePreviewMaxQueryCount
+	if maxRouteQueries < targetRoutes*12 {
+		maxRouteQueries = targetRoutes * 12
+	}
+	routeSearchMaxFeeMsat := int64(^uint64(0) >> 1)
+	routes := make([]*lnrpc.Route, 0, targetRoutes)
+	seenRoutes := make(map[string]struct{})
+	outgoingSearchSets := make([][]uint64, 0, len(outgoingChanIDs)+1)
+	outgoingSearchSets = append(outgoingSearchSets, append([]uint64(nil), outgoingChanIDs...))
+	if len(outgoingChanIDs) > 1 {
+		for _, outgoingChanID := range outgoingChanIDs {
+			if outgoingChanID == 0 {
+				continue
+			}
+			outgoingSearchSets = append(outgoingSearchSets, []uint64{outgoingChanID})
+		}
+	}
+	searchProfiles := []struct {
+		useMissionControl bool
+		timePref          float64
+	}{
+		{useMissionControl: false, timePref: -1},
+		{useMissionControl: true, timePref: 0},
+		{useMissionControl: true, timePref: 1},
+	}
+	var firstErr error
+	queryAttempts := 0
+	for _, profile := range searchProfiles {
+		if queryAttempts >= maxRouteQueries || len(routes) >= maxRouteCandidates {
+			break
+		}
+		for _, searchOutgoingChanIDs := range outgoingSearchSets {
+			if queryAttempts >= maxRouteQueries || len(routes) >= maxRouteCandidates {
+				break
+			}
+			ignoredQueue := [][]*lnrpc.EdgeLocator{nil}
+			seenIgnoredSets := map[string]struct{}{"": {}}
+			for len(ignoredQueue) > 0 && queryAttempts < maxRouteQueries && len(routes) < maxRouteCandidates {
+				ignoredEdges := ignoredQueue[0]
+				ignoredQueue = ignoredQueue[1:]
+				queryAttempts++
+
+				req := &lnrpc.QueryRoutesRequest{
+					PubKey:            decoded.Destination,
+					OutgoingChanIds:   append([]uint64(nil), searchOutgoingChanIDs...),
+					UseMissionControl: profile.useMissionControl,
+					TimePref:          profile.timePref,
+				}
+				if amountMsat > 0 {
+					req.AmtMsat = amountMsat
+				} else {
+					req.Amt = decoded.AmountSat
+				}
+				req.FeeLimit = &lnrpc.FeeLimit{
+					Limit: &lnrpc.FeeLimit_FixedMsat{FixedMsat: routeSearchMaxFeeMsat},
+				}
+				if len(decoded.BlindedPaths) > 0 {
+					req.BlindedPaymentPaths = decoded.BlindedPaths
+				} else {
+					req.RouteHints = decoded.RouteHints
+					req.DestFeatures = append([]lnrpc.FeatureBit(nil), decoded.DestFeatures...)
+					if decoded.CltvExpiry > 0 {
+						req.FinalCltvDelta = int32(decoded.CltvExpiry)
+					}
+				}
+				if len(ignoredEdges) > 0 {
+					req.IgnoredEdges = append([]*lnrpc.EdgeLocator(nil), ignoredEdges...)
+				}
+
+				queryResp, queryErr := lightning.QueryRoutes(ctx, req)
+				if queryErr != nil {
+					if firstErr == nil {
+						firstErr = queryErr
+					}
+					continue
+				}
+				if queryResp == nil || len(queryResp.Routes) == 0 {
+					continue
+				}
+				for _, route := range queryResp.Routes {
+					if route == nil {
+						continue
+					}
+					key := routeKey(route)
+					if key != "" {
+						if _, exists := seenRoutes[key]; exists {
+							continue
+						}
+						seenRoutes[key] = struct{}{}
+					}
+					routes = append(routes, route)
+
+					keepFirstHop := len(searchOutgoingChanIDs) == 1
+					for _, edgeSet := range routeAlternativeIgnoredEdgeSets(route, keepFirstHop) {
+						key := edgeSetKey(edgeSet)
+						if key == "" {
+							continue
+						}
+						if _, exists := seenIgnoredSets[key]; exists {
+							continue
+						}
+						seenIgnoredSets[key] = struct{}{}
+						ignoredQueue = append(ignoredQueue, edgeSet)
+					}
+				}
+			}
+		}
+	}
+	if len(routes) == 0 && firstErr != nil {
+		return nil, firstErr
+	}
+	sort.SliceStable(routes, func(i, j int) bool {
+		leftFee := routeTotalFeeMsat(routes[i])
+		rightFee := routeTotalFeeMsat(routes[j])
+		if leftFee != rightFee {
+			return leftFee < rightFee
+		}
+		leftHops := len(routes[i].Hops)
+		rightHops := len(routes[j].Hops)
+		if leftHops != rightHops {
+			return leftHops < rightHops
+		}
+		leftAmt := routeTotalAmountMsat(routes[i])
+		rightAmt := routeTotalAmountMsat(routes[j])
+		if leftAmt != rightAmt {
+			return leftAmt < rightAmt
+		}
+		return routes[i].TotalTimeLock < routes[j].TotalTimeLock
+	})
+	return routes, nil
 }
 
 func probePaymentRoute(ctx context.Context, router routerrpc.RouterClient, route *lnrpc.Route) PaymentRouteProbe {
@@ -1642,29 +2012,9 @@ func (c *Client) PreviewPayment(ctx context.Context, paymentRequest string, outg
 	lightning := lnrpc.NewLightningClient(conn)
 	router := routerrpc.NewRouterClient(conn)
 
-	resp, err := lightning.DecodePayReq(ctx, &lnrpc.PayReqString{PayReq: trimmed})
+	decoded, amountMsat, err := decodePaymentRequestWithClient(ctx, lightning, trimmed)
 	if err != nil {
 		return PaymentPreview{}, err
-	}
-
-	decoded := DecodedInvoice{
-		AmountSat:    resp.NumSatoshis,
-		AmountMsat:   resp.NumMsat,
-		Memo:         resp.Description,
-		Destination:  strings.TrimSpace(resp.Destination),
-		PaymentHash:  strings.ToLower(strings.TrimSpace(resp.PaymentHash)),
-		Expiry:       resp.Expiry,
-		Timestamp:    resp.Timestamp,
-		CltvExpiry:   resp.CltvExpiry,
-		RouteHints:   append([]*lnrpc.RouteHint(nil), resp.RouteHints...),
-		PaymentAddr:  append([]byte(nil), resp.PaymentAddr...),
-		DestFeatures: payReqFeatureBits(resp.Features),
-		BlindedPaths: append([]*lnrpc.BlindedPaymentPath(nil), resp.BlindedPaths...),
-	}
-
-	amountMsat := decoded.AmountMsat
-	if amountMsat <= 0 && decoded.AmountSat > 0 {
-		amountMsat = decoded.AmountSat * 1000
 	}
 	if amountMsat <= 0 {
 		return PaymentPreview{}, errors.New("amountless invoices are not supported for route preview")
@@ -1677,7 +2027,6 @@ func (c *Client) PreviewPayment(ctx context.Context, paymentRequest string, outg
 	suggestedMaxFeeSat := msatToSatCeil(suggestedMaxFeeMsat)
 	effectiveMaxFeeSat := suggestedMaxFeeSat
 	effectiveMaxFeeMsat := suggestedMaxFeeMsat
-	routeSearchMaxFeeMsat := int64(^uint64(0) >> 1)
 	if maxFeeSat > 0 {
 		effectiveMaxFeeSat = maxFeeSat
 		effectiveMaxFeeMsat = maxFeeSat * 1000
@@ -1710,120 +2059,10 @@ func (c *Client) PreviewPayment(ctx context.Context, paymentRequest string, outg
 	}
 
 	targetRoutes := int(numRoutes)
-	maxRouteCandidates := targetRoutes * 20
-	maxRouteQueries := paymentRoutePreviewMaxQueryCount
-	if maxRouteQueries < targetRoutes*12 {
-		maxRouteQueries = targetRoutes * 12
+	routes, err := c.previewPaymentRouteCandidates(ctx, lightning, decoded, amountMsat, outgoingChanIDs, numRoutes)
+	if err != nil {
+		return preview, err
 	}
-	routes := make([]*lnrpc.Route, 0, targetRoutes)
-	seenRoutes := make(map[string]struct{})
-	outgoingSearchSets := make([][]uint64, 0, len(outgoingChanIDs)+1)
-	outgoingSearchSets = append(outgoingSearchSets, append([]uint64(nil), outgoingChanIDs...))
-	if len(outgoingChanIDs) > 1 {
-		for _, outgoingChanID := range outgoingChanIDs {
-			if outgoingChanID == 0 {
-				continue
-			}
-			outgoingSearchSets = append(outgoingSearchSets, []uint64{outgoingChanID})
-		}
-	}
-	queryAttempts := 0
-	for _, searchOutgoingChanIDs := range outgoingSearchSets {
-		if queryAttempts >= maxRouteQueries || len(routes) >= maxRouteCandidates {
-			break
-		}
-		ignoredQueue := [][]*lnrpc.EdgeLocator{nil}
-		seenIgnoredSets := map[string]struct{}{"": {}}
-		for len(ignoredQueue) > 0 && queryAttempts < maxRouteQueries && len(routes) < maxRouteCandidates {
-			ignoredEdges := ignoredQueue[0]
-			ignoredQueue = ignoredQueue[1:]
-			queryAttempts++
-
-			req := &lnrpc.QueryRoutesRequest{
-				PubKey:            decoded.Destination,
-				OutgoingChanIds:   append([]uint64(nil), searchOutgoingChanIDs...),
-				UseMissionControl: false,
-				TimePref:          -1,
-			}
-			if amountMsat > 0 {
-				req.AmtMsat = amountMsat
-			} else {
-				req.Amt = decoded.AmountSat
-			}
-			if routeSearchMaxFeeMsat > 0 {
-				req.FeeLimit = &lnrpc.FeeLimit{
-					Limit: &lnrpc.FeeLimit_FixedMsat{FixedMsat: routeSearchMaxFeeMsat},
-				}
-			}
-			if len(decoded.BlindedPaths) > 0 {
-				req.BlindedPaymentPaths = decoded.BlindedPaths
-			} else {
-				req.RouteHints = decoded.RouteHints
-				req.DestFeatures = append([]lnrpc.FeatureBit(nil), decoded.DestFeatures...)
-				if decoded.CltvExpiry > 0 {
-					req.FinalCltvDelta = int32(decoded.CltvExpiry)
-				}
-			}
-			if len(ignoredEdges) > 0 {
-				req.IgnoredEdges = append([]*lnrpc.EdgeLocator(nil), ignoredEdges...)
-			}
-
-			queryResp, queryErr := lightning.QueryRoutes(ctx, req)
-			if queryErr != nil {
-				if len(routes) == 0 && queryAttempts == 1 && len(outgoingSearchSets) == 1 {
-					return preview, queryErr
-				}
-				continue
-			}
-			if queryResp == nil || len(queryResp.Routes) == 0 {
-				continue
-			}
-			for _, route := range queryResp.Routes {
-				if route == nil {
-					continue
-				}
-				key := routeKey(route)
-				if key != "" {
-					if _, exists := seenRoutes[key]; exists {
-						continue
-					}
-					seenRoutes[key] = struct{}{}
-				}
-				routes = append(routes, route)
-
-				keepFirstHop := len(searchOutgoingChanIDs) == 1
-				for _, edgeSet := range routeAlternativeIgnoredEdgeSets(route, keepFirstHop) {
-					key := edgeSetKey(edgeSet)
-					if key == "" {
-						continue
-					}
-					if _, exists := seenIgnoredSets[key]; exists {
-						continue
-					}
-					seenIgnoredSets[key] = struct{}{}
-					ignoredQueue = append(ignoredQueue, edgeSet)
-				}
-			}
-		}
-	}
-	sort.SliceStable(routes, func(i, j int) bool {
-		leftFee := routeTotalFeeMsat(routes[i])
-		rightFee := routeTotalFeeMsat(routes[j])
-		if leftFee != rightFee {
-			return leftFee < rightFee
-		}
-		leftHops := len(routes[i].Hops)
-		rightHops := len(routes[j].Hops)
-		if leftHops != rightHops {
-			return leftHops < rightHops
-		}
-		leftAmt := routeTotalAmountMsat(routes[i])
-		rightAmt := routeTotalAmountMsat(routes[j])
-		if leftAmt != rightAmt {
-			return leftAmt < rightAmt
-		}
-		return routes[i].TotalTimeLock < routes[j].TotalTimeLock
-	})
 	probedRoutes := probePaymentRouteCandidates(ctx, router, routes, targetRoutes, targetRoutes*8)
 	preview.Routes = make([]PaymentRouteSummary, 0, len(probedRoutes))
 	for _, probed := range probedRoutes {

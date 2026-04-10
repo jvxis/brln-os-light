@@ -335,6 +335,21 @@ func TestCheckManualBudgetAllowanceAllowsWhenBudgetFits(t *testing.T) {
 	}
 }
 
+func TestIsManualRestartJobDistinguishesOneShotManual(t *testing.T) {
+	if isManualRestartJob("manual", "", false) {
+		t.Fatalf("expected one-shot manual run to bypass manual restart budget gate")
+	}
+	if !isManualRestartJob("manual", "", true) {
+		t.Fatalf("expected manual run with auto restart enabled to use manual restart budget gate")
+	}
+	if !isManualRestartJob("manual", "auto-restart", false) {
+		t.Fatalf("expected background auto-restart to use manual restart budget gate")
+	}
+	if isManualRestartJob("auto", "", false) {
+		t.Fatalf("expected auto scan jobs to use auto budget gate, not manual restart gate")
+	}
+}
+
 func TestShouldRunMppShadowRules(t *testing.T) {
 	cfg := RebalanceConfig{}
 	if shouldRunMppExecute(cfg, "auto") {

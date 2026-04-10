@@ -643,8 +643,12 @@ func manualRestartInterval(cfg RebalanceConfig) time.Duration {
 	return rebalanceScanInterval(cfg)
 }
 
+func isManualRestartJob(source string, reason string, manualAutoRestart bool) bool {
+	return source == "manual" && (manualAutoRestart || reason == "auto-restart")
+}
+
 func shouldEnforceManualRestartCooldown(source string, reason string) bool {
-	return source == "manual" && reason == "auto-restart"
+	return isManualRestartJob(source, reason, false)
 }
 
 func normalizeChannelSetting(setting channelSetting) channelSetting {
@@ -1471,7 +1475,7 @@ func (s *RebalanceService) startJob(targetChannelID uint64, source string, reaso
 			}
 		}
 	}
-	if strings.EqualFold(source, "manual") {
+	if isManualRestartJob(source, reason, manualAutoRestart) {
 		budget, _, spentManual, spentTotal := s.getDailyBudget(ctx)
 		if err := checkManualBudgetAllowance(cfg, setting, target, amount, budget, spentManual, spentTotal); err != nil {
 			return 0, err

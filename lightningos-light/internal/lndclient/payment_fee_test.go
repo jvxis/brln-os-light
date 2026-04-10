@@ -383,6 +383,40 @@ func TestPaymentRoutePreviewLimitsExpandForManyOutgoingChannels(t *testing.T) {
 	}
 }
 
+func TestPaymentRouteTokenRoundTripAndValidation(t *testing.T) {
+	t.Parallel()
+
+	route := &lnrpc.Route{
+		TotalAmtMsat:  1_000_250_000,
+		TotalFeesMsat: 250_000,
+		Hops: []*lnrpc.Hop{
+			{ChanId: 1, PubKey: "source-peer", FeeMsat: 250_000, AmtToForwardMsat: 1_000_000_000},
+			{ChanId: 2, PubKey: "destination", AmtToForwardMsat: 1_000_000_000},
+		},
+	}
+
+	token := encodePaymentRouteToken(route)
+	if token == "" {
+		t.Fatalf("encodePaymentRouteToken() returned empty token")
+	}
+	decoded, err := decodePaymentRouteToken(token)
+	if err != nil {
+		t.Fatalf("decodePaymentRouteToken() error = %v", err)
+	}
+	if routeKey(decoded) != routeKey(route) {
+		t.Fatalf("decoded route key = %q, want %q", routeKey(decoded), routeKey(route))
+	}
+	if err := validatePaymentRouteForInvoice(decoded, DecodedInvoice{Destination: "destination"}, 1_000_000_000, 251); err != nil {
+		t.Fatalf("validatePaymentRouteForInvoice() error = %v", err)
+	}
+	if err := validatePaymentRouteForInvoice(decoded, DecodedInvoice{Destination: "other"}, 1_000_000_000, 251); err == nil {
+		t.Fatalf("validatePaymentRouteForInvoice() accepted destination mismatch")
+	}
+	if err := validatePaymentRouteForInvoice(decoded, DecodedInvoice{Destination: "destination"}, 1_000_000_000, 249); err == nil {
+		t.Fatalf("validatePaymentRouteForInvoice() accepted fee above max")
+	}
+}
+
 func TestMPPShardSizeCandidatesIncludesSmallShards(t *testing.T) {
 	t.Parallel()
 

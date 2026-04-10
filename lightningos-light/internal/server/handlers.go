@@ -3880,6 +3880,7 @@ func (s *Server) handleWalletPayValidatedRoute(w http.ResponseWriter, r *http.Re
 		PaymentRequest string   `json:"payment_request"`
 		ChannelPoint   string   `json:"channel_point"`
 		ChannelPoints  []string `json:"channel_points"`
+		RouteToken     string   `json:"route_token"`
 		AmountSat      int64    `json:"amount_sat"`
 		Comment        string   `json:"comment"`
 		MaxFeeSat      int64    `json:"max_fee_sat"`
@@ -3907,7 +3908,7 @@ func (s *Server) handleWalletPayValidatedRoute(w http.ResponseWriter, r *http.Re
 		paymentHash = decoded.PaymentHash
 	}
 
-	if err := s.lnd.PayInvoiceWithValidatedRoute(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat, 5); err != nil {
+	if err := s.lnd.PayInvoiceWithValidatedRoute(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat, 5, req.RouteToken); err != nil {
 		if paymentHash != "" {
 			s.recordWalletActivity(paymentHash)
 		}
@@ -3920,7 +3921,15 @@ func (s *Server) handleWalletPayValidatedRoute(w http.ResponseWriter, r *http.Re
 		}
 		statusCode := http.StatusInternalServerError
 		lowerMsg := strings.ToLower(msg)
-		if strings.Contains(lowerMsg, "no validated route") || strings.Contains(lowerMsg, "amountless invoices") || strings.Contains(lowerMsg, "blinded invoices") {
+		if strings.Contains(lowerMsg, "no validated route") ||
+			strings.Contains(lowerMsg, "validated route token") ||
+			strings.Contains(lowerMsg, "validated route destination") ||
+			strings.Contains(lowerMsg, "validated route amount") ||
+			strings.Contains(lowerMsg, "validated route exceeds") ||
+			strings.Contains(lowerMsg, "validated route is empty") ||
+			strings.Contains(lowerMsg, "validated route no longer") ||
+			strings.Contains(lowerMsg, "amountless invoices") ||
+			strings.Contains(lowerMsg, "blinded invoices") {
 			statusCode = http.StatusBadRequest
 		}
 		writeError(w, statusCode, msg)

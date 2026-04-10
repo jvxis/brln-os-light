@@ -83,6 +83,8 @@ type WalletRouteProbe = {
 }
 
 type WalletRouteSummary = {
+  route_key?: string
+  route_token?: string
   total_amt_sat?: number
   total_amt_msat?: number
   total_fees_sat?: number
@@ -675,6 +677,29 @@ export default function Wallet() {
     return 'border-white/10 bg-white/[0.03] text-fog/60'
   }
 
+  const paymentErrorMessage = (err: any, fallback: string) => {
+    const raw = String(err?.message || fallback || '').trim()
+    if (!raw) return fallback
+    const lower = raw.toLowerCase()
+    if (lower.includes('<!doctype') || lower.includes('<html') || lower.includes('<body')) {
+      return fallback
+    }
+    return raw.length > 420 ? `${raw.slice(0, 420)}...` : raw
+  }
+
+  const bestValidatedPreviewRoute = () => {
+    const routes = paymentPreview?.routes || []
+    const validated = routes.filter((route) => route?.probe?.likely_liquid || route?.probe?.status === 'likely_liquid')
+    if (validated.length === 0) return null
+    return validated.reduce((best, route) => {
+      const routeFee = Number(route?.total_fees_msat || 0)
+      const bestFee = Number(best?.total_fees_msat || 0)
+      if (bestFee <= 0) return route
+      if (routeFee <= 0) return best
+      return routeFee < bestFee ? route : best
+    }, validated[0])
+  }
+
   const paymentPreviewHasLikelyLiquidRoute = Boolean(
     paymentPreview?.liquidity_validated ||
     paymentPreview?.routes?.some((route) => route?.probe?.likely_liquid || route?.probe?.status === 'likely_liquid')
@@ -1085,7 +1110,7 @@ export default function Wallet() {
         silent: true
       })
     } catch (err: any) {
-      setStatus(err?.message || t('wallet.paymentFailed'))
+      setStatus(paymentErrorMessage(err, t('wallet.paymentFailed')))
     }
   }
 
@@ -1107,12 +1132,18 @@ export default function Wallet() {
       setStatus(t('wallet.maxFeePositive'))
       return
     }
+    const selectedRoute = bestValidatedPreviewRoute()
+    if (!selectedRoute?.route_token) {
+      setStatus(t('wallet.paymentPreviewRouteTokenMissing'))
+      return
+    }
     setStatus(t('wallet.payingValidatedRoute'))
     try {
       await payInvoiceValidatedRoute({
         payment_request: cleanedPaymentRequest,
         channel_point: outgoingChannelPoints.length === 1 ? outgoingChannelPoints[0] : undefined,
         channel_points: outgoingChannelPoints.length > 0 ? outgoingChannelPoints : undefined,
+        route_token: selectedRoute.route_token,
         amount_sat: isLnAddress ? payAmountSat : undefined,
         max_fee_sat: maxFeeSatValue > 0 ? maxFeeSatValue : undefined
       })
@@ -1146,7 +1177,7 @@ export default function Wallet() {
         silent: true
       })
     } catch (err: any) {
-      setStatus(err?.message || t('wallet.paymentFailed'))
+      setStatus(paymentErrorMessage(err, t('wallet.paymentFailed')))
     }
   }
 
@@ -1210,7 +1241,7 @@ export default function Wallet() {
         silent: true
       })
     } catch (err: any) {
-      setStatus(err?.message || t('wallet.paymentFailed'))
+      setStatus(paymentErrorMessage(err, t('wallet.paymentFailed')))
     }
   }
 
@@ -1449,7 +1480,7 @@ export default function Wallet() {
         {summaryError && (
           <p className={`mt-4 text-sm ${summaryTone}`}>{t('wallet.statusLabel', { status: summaryError })}</p>
         )}
-        {status && <p className="mt-4 text-sm text-brass">{status}</p>}
+        {status && <p className="mt-4 whitespace-pre-wrap break-words text-sm text-brass">{status}</p>}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">

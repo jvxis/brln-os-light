@@ -1181,6 +1181,7 @@
     "paymentPreviewProbeUnknownNextPeer": "A hop does not know the advertised next peer/channel.",
     "paymentPreviewRoute": "Route {{index}}",
     "paymentPreviewRouteMeta": "{{hops}} hops | fee {{fee}} sats",
+    "paymentPreviewRouteTokenMissing": "The validated route has no payment token. Run route preview again.",
     "paymentPreviewTitle": "Payment preview",
     "paymentPreviewUnavailable": "Payment preview unavailable.",
     "paymentRequestPlaceholder": "Paste payment request or lightning address",

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -1219,7 +1220,7 @@ func (c *Client) PayInvoiceWithMPP(ctx context.Context, paymentRequest string, o
 	}
 }
 
-func (c *Client) PayInvoiceWithValidatedRoute(ctx context.Context, paymentRequest string, outgoingChanIDs []uint64, maxFeeSat int64, numRoutes int32) error {
+func (c *Client) PayInvoiceWithValidatedRoute(ctx context.Context, paymentRequest string, outgoingChanIDs []uint64, maxFeeSat int64, numRoutes int32, routeToken string) error {
 	trimmed := strings.TrimSpace(paymentRequest)
 	if trimmed == "" {
 		return errors.New("payment_request required")
@@ -1247,21 +1248,38 @@ func (c *Client) PayInvoiceWithValidatedRoute(ctx context.Context, paymentReques
 		return errors.New("validated route payment is unavailable for blinded invoices")
 	}
 
-	routes, err := c.previewPaymentRouteCandidates(ctx, lightning, decoded, amountMsat, outgoingChanIDs, numRoutes)
-	if err != nil {
-		return err
-	}
-	probedRoutes := probeCheapestPaymentRouteCandidates(ctx, router, routes, int(numRoutes), len(routes))
 	var selected *lnrpc.Route
-	for _, probed := range probedRoutes {
-		if probed.route == nil || !probed.probe.LikelyLiquid {
-			continue
+	if strings.TrimSpace(routeToken) != "" {
+		selected, err = decodePaymentRouteToken(routeToken)
+		if err != nil {
+			return err
 		}
-		if maxFeeSat > 0 && routeTotalFeeMsat(probed.route) > maxFeeSat*1000 {
-			continue
+		if err := validatePaymentRouteForInvoice(selected, decoded, amountMsat, maxFeeSat); err != nil {
+			return err
 		}
-		if selected == nil || routeTotalFeeMsat(probed.route) < routeTotalFeeMsat(selected) {
-			selected = probed.route
+		probeCtx, cancel := context.WithTimeout(ctx, paymentRouteLiquidityProbeTimeout)
+		probe := probePaymentRoute(probeCtx, router, selected)
+		cancel()
+		if !probe.LikelyLiquid {
+			return fmt.Errorf("validated route no longer has likely liquidity: %s", paymentRouteProbeFailureDescription(probe))
+		}
+	} else {
+		routes, err := c.previewPaymentRouteCandidates(ctx, lightning, decoded, amountMsat, outgoingChanIDs, numRoutes)
+		if err != nil {
+			return err
+		}
+		probeLimit := paymentRoutePreviewProbeLimit(len(routes), int(numRoutes), len(outgoingChanIDs))
+		probedRoutes := probeCheapestPaymentRouteCandidates(ctx, router, routes, int(numRoutes), probeLimit)
+		for _, probed := range probedRoutes {
+			if probed.route == nil || !probed.probe.LikelyLiquid {
+				continue
+			}
+			if maxFeeSat > 0 && routeTotalFeeMsat(probed.route) > maxFeeSat*1000 {
+				continue
+			}
+			if selected == nil || routeTotalFeeMsat(probed.route) < routeTotalFeeMsat(selected) {
+				selected = probed.route
+			}
 		}
 	}
 	if selected == nil {
@@ -1296,7 +1314,7 @@ func (c *Client) PayInvoiceWithValidatedRoute(ctx context.Context, paymentReques
 		return nil
 	case lnrpc.HTLCAttempt_FAILED:
 		if attempt.Failure != nil {
-			return fmt.Errorf("route payment failed: %s", attempt.Failure.Code.String())
+			return fmt.Errorf("route payment failed: %s at hop %d", attempt.Failure.Code.String(), attempt.Failure.FailureSourceIndex)
 		}
 		return errors.New("route payment failed")
 	default:
@@ -1526,6 +1544,63 @@ func routeKey(route *lnrpc.Route) string {
 		builder.WriteString(strings.TrimSpace(hop.PubKey))
 	}
 	return builder.String()
+}
+
+func encodePaymentRouteToken(route *lnrpc.Route) string {
+	if route == nil {
+		return ""
+	}
+	encoded, err := proto.Marshal(route)
+	if err != nil || len(encoded) == 0 {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(encoded)
+}
+
+func decodePaymentRouteToken(token string) (*lnrpc.Route, error) {
+	trimmed := strings.TrimSpace(token)
+	if trimmed == "" {
+		return nil, errors.New("validated route token required")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(trimmed)
+	if err != nil {
+		return nil, errors.New("invalid validated route token")
+	}
+	route := &lnrpc.Route{}
+	if err := proto.Unmarshal(decoded, route); err != nil {
+		return nil, errors.New("invalid validated route token")
+	}
+	return route, nil
+}
+
+func validatePaymentRouteForInvoice(route *lnrpc.Route, decoded DecodedInvoice, amountMsat int64, maxFeeSat int64) error {
+	if route == nil || len(route.Hops) == 0 || route.Hops[len(route.Hops)-1] == nil {
+		return errors.New("validated route is empty")
+	}
+	if amountMsat <= 0 {
+		return errors.New("amount required")
+	}
+	finalHop := route.Hops[len(route.Hops)-1]
+	if destination := strings.TrimSpace(decoded.Destination); destination != "" && strings.TrimSpace(finalHop.PubKey) != destination {
+		return errors.New("validated route destination mismatch")
+	}
+	if finalForward := routeFinalForwardMsat(route); finalForward > 0 && finalForward != amountMsat {
+		return fmt.Errorf("validated route amount mismatch: route forwards %d msat, invoice requires %d msat", finalForward, amountMsat)
+	}
+	if maxFeeSat > 0 && routeTotalFeeMsat(route) > maxFeeSat*1000 {
+		return errors.New("validated route exceeds max fee")
+	}
+	return nil
+}
+
+func paymentRouteProbeFailureDescription(probe PaymentRouteProbe) string {
+	if code := strings.TrimSpace(probe.FailureCode); code != "" {
+		return code
+	}
+	if status := strings.TrimSpace(probe.Status); status != "" {
+		return status
+	}
+	return "unknown"
 }
 
 func routeFirstHopKey(route *lnrpc.Route) string {
@@ -2597,6 +2672,8 @@ type PaymentRouteProbe struct {
 }
 
 type PaymentRouteSummary struct {
+	RouteKey      string             `json:"route_key,omitempty"`
+	RouteToken    string             `json:"route_token,omitempty"`
 	TotalAmtSat   int64              `json:"total_amt_sat,omitempty"`
 	TotalAmtMsat  int64              `json:"total_amt_msat,omitempty"`
 	TotalFeesSat  int64              `json:"total_fees_sat,omitempty"`
@@ -2840,6 +2917,8 @@ func (c *Client) convertPaymentRouteWithClient(ctx context.Context, client lnrpc
 	if route == nil {
 		return summary
 	}
+	summary.RouteKey = routeKey(route)
+	summary.RouteToken = encodePaymentRouteToken(route)
 	summary.TotalAmtSat = route.TotalAmt
 	summary.TotalAmtMsat = route.TotalAmtMsat
 	summary.TotalFeesSat = route.TotalFees

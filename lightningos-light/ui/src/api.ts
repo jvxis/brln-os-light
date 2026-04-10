@@ -213,6 +213,8 @@ export const previewWalletPayment = (payload: { payment_request: string; channel
   request('/api/wallet/pay/preview', { method: 'POST', body: JSON.stringify(payload) })
 export const payInvoiceValidatedRoute = (payload: { payment_request: string; channel_point?: string; channel_points?: string[]; amount_sat?: number; max_fee_sat?: number }) =>
   request('/api/wallet/pay/validated-route', { method: 'POST', body: JSON.stringify(payload) })
+export const payInvoiceMPP = (payload: { payment_request: string; channel_point?: string; channel_points?: string[]; amount_sat?: number; max_fee_sat?: number; max_parts?: number; max_shard_sat?: number }) =>
+  request('/api/wallet/pay/mpp', { method: 'POST', body: JSON.stringify(payload) })
 export const payInvoice = (payload: { payment_request: string; channel_point?: string; channel_points?: string[]; amount_sat?: number; max_fee_sat?: number }) =>
   request('/api/wallet/pay', { method: 'POST', body: JSON.stringify(payload) })
 

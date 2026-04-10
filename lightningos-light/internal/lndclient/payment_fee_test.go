@@ -338,3 +338,63 @@ func TestSelectProbeCandidateRoutesKeepsFirstHopDiversity(t *testing.T) {
 		t.Fatalf("selectProbeCandidateRoutes() did not include first hop 3")
 	}
 }
+
+func TestMPPShardSizeCandidatesIncludesSmallShards(t *testing.T) {
+	t.Parallel()
+
+	got := mppShardSizeCandidates(1_000_000_000, 20)
+	wants := map[int64]bool{
+		250_000_000: false,
+		100_000_000: false,
+		50_000_000:  false,
+	}
+	for _, shard := range got {
+		if _, ok := wants[shard]; ok {
+			wants[shard] = true
+		}
+	}
+	for shard, found := range wants {
+		if !found {
+			t.Fatalf("mppShardSizeCandidates() = %v, missing %d", got, shard)
+		}
+	}
+}
+
+func TestSelectMPPLikelyRoutesCoversAmount(t *testing.T) {
+	t.Parallel()
+
+	probed := []probedPaymentRoute{
+		{
+			route: &lnrpc.Route{TotalFeesMsat: 5_000, Hops: []*lnrpc.Hop{
+				{ChanId: 1, FeeMsat: 5_000},
+				{ChanId: 11, AmtToForwardMsat: 100_000_000},
+			}},
+			probe: PaymentRouteProbe{Status: paymentRouteProbeStatusLikely, LikelyLiquid: true},
+		},
+		{
+			route: &lnrpc.Route{TotalFeesMsat: 2_000, Hops: []*lnrpc.Hop{
+				{ChanId: 2, FeeMsat: 2_000},
+				{ChanId: 12, AmtToForwardMsat: 100_000_000},
+			}},
+			probe: PaymentRouteProbe{Status: paymentRouteProbeStatusLikely, LikelyLiquid: true},
+		},
+		{
+			route: &lnrpc.Route{TotalFeesMsat: 1_000, Hops: []*lnrpc.Hop{
+				{ChanId: 3, FeeMsat: 1_000},
+				{ChanId: 13, AmtToForwardMsat: 100_000_000},
+			}},
+			probe: PaymentRouteProbe{Status: paymentRouteProbeStatusFailed},
+		},
+	}
+
+	selected, covered := selectMPPLikelyRoutes(probed, 200_000_000, 3)
+	if len(selected) != 2 {
+		t.Fatalf("selectMPPLikelyRoutes() selected %d routes, want 2", len(selected))
+	}
+	if covered != 200_000_000 {
+		t.Fatalf("selectMPPLikelyRoutes() covered %d msat, want 200000000", covered)
+	}
+	if got := routeTotalFeeMsat(selected[0].route); got != 2_000 {
+		t.Fatalf("first selected fee = %d, want cheapest likely route first", got)
+	}
+}

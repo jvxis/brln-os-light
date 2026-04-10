@@ -3934,6 +3934,66 @@ func (s *Server) handleWalletPayValidatedRoute(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+func (s *Server) handleWalletPayMPP(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		PaymentRequest string   `json:"payment_request"`
+		ChannelPoint   string   `json:"channel_point"`
+		ChannelPoints  []string `json:"channel_points"`
+		AmountSat      int64    `json:"amount_sat"`
+		Comment        string   `json:"comment"`
+		MaxFeeSat      int64    `json:"max_fee_sat"`
+		MaxParts       uint32   `json:"max_parts"`
+		MaxShardSat    int64    `json:"max_shard_sat"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.MaxFeeSat < 0 {
+		writeError(w, http.StatusBadRequest, "max_fee_sat must be zero or positive")
+		return
+	}
+	if req.MaxShardSat < 0 {
+		writeError(w, http.StatusBadRequest, "max_shard_sat must be zero or positive")
+		return
+	}
+
+	paymentRequest, outgoingChanIDs, err := s.resolveWalletPaymentInput(r.Context(), req.PaymentRequest, req.AmountSat, req.Comment, req.ChannelPoint, req.ChannelPoints)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), lndWalletPaymentTimeout)
+	defer cancel()
+
+	paymentHash := ""
+	if decoded, err := s.lnd.DecodeInvoice(ctx, paymentRequest); err == nil {
+		paymentHash = decoded.PaymentHash
+	}
+
+	if err := s.lnd.PayInvoiceWithMPP(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat, req.MaxParts, req.MaxShardSat); err != nil {
+		if paymentHash != "" {
+			s.recordWalletActivity(paymentHash)
+		}
+		msg := lndRPCErrorMessage(err)
+		if isTimeoutError(err) {
+			msg = "MPP payment timed out while LND was trying shards"
+		}
+		if msg == "" || msg == "LND error" {
+			msg = "MPP payment failed"
+		}
+		writeError(w, http.StatusInternalServerError, msg)
+		return
+	}
+
+	if paymentHash != "" {
+		s.recordWalletActivity(paymentHash)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (s *Server) handleWalletPaymentDetail(w http.ResponseWriter, r *http.Request) {
 	paymentHash := strings.TrimSpace(chi.URLParam(r, "paymentHash"))
 	if paymentHash == "" {

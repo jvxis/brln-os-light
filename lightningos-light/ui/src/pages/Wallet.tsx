@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import QRCode from 'qrcode'
-import { APIError, createInvoice, decodeInvoice, getLnChannels, getMempoolFees, getWalletActivity, getWalletAddress, getWalletPaymentDetail, getWalletSummary, payInvoice, payInvoiceValidatedRoute, previewOnchainSend, previewWalletPayment, reauthAuth, sendOnchain } from '../api'
+import { APIError, createInvoice, decodeInvoice, getLnChannels, getMempoolFees, getWalletActivity, getWalletAddress, getWalletPaymentDetail, getWalletSummary, payInvoice, payInvoiceMPP, payInvoiceValidatedRoute, previewOnchainSend, previewWalletPayment, reauthAuth, sendOnchain } from '../api'
 import { getLocale } from '../i18n'
 
 const emptySummary = {
@@ -101,6 +101,23 @@ type WalletPaymentProbe = {
   failure_reason?: string
 }
 
+type WalletMPPPlan = {
+  available?: boolean
+  total_amt_sat?: number
+  total_amt_msat?: number
+  validated_amt_sat?: number
+  validated_amt_msat?: number
+  total_fees_sat?: number
+  total_fees_msat?: number
+  suggested_max_fee_sat?: number
+  max_shard_sat?: number
+  max_shard_msat?: number
+  part_count?: number
+  max_parts?: number
+  message?: string
+  routes?: WalletRouteSummary[]
+}
+
 type WalletPaymentPreview = {
   payment_request?: string
   amount_sat?: number
@@ -115,6 +132,7 @@ type WalletPaymentPreview = {
   validated_route_count?: number
   probe?: WalletPaymentProbe
   routes?: WalletRouteSummary[]
+  mpp_plan?: WalletMPPPlan
 }
 
 type WalletPaymentDetail = {
@@ -583,6 +601,12 @@ export default function Wallet() {
     return `${pubkey.slice(0, 12)}...`
   }
 
+  const routeFinalForwardSat = (route?: WalletRouteSummary) => {
+    const hops = route?.hops || []
+    const finalHop = hops.length > 0 ? hops[hops.length - 1] : undefined
+    return Number(finalHop?.amt_to_forward_sat || route?.total_amt_sat || 0)
+  }
+
   const routeProbeLabel = (probe?: WalletRouteProbe) => {
     if (!probe) return t('wallet.paymentPreviewLiquidityUnknown')
     if (probe.likely_liquid || probe.status === 'likely_liquid') return t('wallet.paymentPreviewLiquidityLikely')
@@ -634,7 +658,10 @@ export default function Wallet() {
     paymentPreview?.liquidity_validated ||
     paymentPreview?.routes?.some((route) => route?.probe?.likely_liquid || route?.probe?.status === 'likely_liquid')
   )
-  const paymentBlockedByPreview = Boolean(paymentPreview && !paymentPreviewHasLikelyLiquidRoute)
+  const paymentPreviewHasMPPPlan = Boolean(paymentPreview?.mpp_plan?.available)
+  const paymentPreviewHasValidatedPayment = paymentPreviewHasLikelyLiquidRoute || paymentPreviewHasMPPPlan
+  const payInvoiceBlockedByPreview = Boolean(paymentPreview && !paymentPreviewHasLikelyLiquidRoute)
+  const paymentBlockedByPreview = Boolean(paymentPreview && !paymentPreviewHasValidatedPayment)
 
   const outgoingChannelsSummary = () => {
     if (outgoingChannelPoints.length === 0) return t('wallet.automaticLnd')
@@ -994,7 +1021,7 @@ export default function Wallet() {
       setStatus(t('wallet.maxFeePositive'))
       return
     }
-    if (paymentBlockedByPreview) {
+    if (payInvoiceBlockedByPreview) {
       setStatus(t('wallet.paymentPreviewNoValidatedRoutePayBlocked'))
       return
     }
@@ -1067,6 +1094,70 @@ export default function Wallet() {
         channel_points: outgoingChannelPoints.length > 0 ? outgoingChannelPoints : undefined,
         amount_sat: isLnAddress ? payAmountSat : undefined,
         max_fee_sat: maxFeeSatValue > 0 ? maxFeeSatValue : undefined
+      })
+      setStatus(t('wallet.paymentSent'))
+      setPaymentRequest('')
+      setPayAmount('')
+      setDecode(null)
+      setDecodeError('')
+      setOutgoingChannelPoints([])
+      setOutgoingChannelsExpanded(false)
+      setPayMaxFeeSat('')
+      setPayMaxFeeTouched(false)
+      setPaymentPreview(null)
+      setPaymentPreviewError('')
+      void getWalletSummary()
+        .then((data) => {
+          setSummary(data || emptySummary)
+          setSummaryWarning(data?.warning || '')
+          setSummaryError('')
+        })
+        .catch(() => {})
+      void getLnChannels()
+        .then((res: any) => {
+          setChannels(Array.isArray(res?.channels) ? res.channels : [])
+          setChannelsError('')
+        })
+        .catch(() => {})
+      void loadActivity({
+        offset: 0,
+        limit: Math.max(activityItems.length, walletActivityPageSize),
+        silent: true
+      })
+    } catch (err: any) {
+      setStatus(err?.message || t('wallet.paymentFailed'))
+    }
+  }
+
+  const handlePayMPP = async () => {
+    if (!cleanedPaymentRequest) {
+      setStatus(t('wallet.paymentRequestRequired'))
+      return
+    }
+    if (isLnAddress && payAmountSat <= 0) {
+      setStatus(t('wallet.amountPositiveForLightningAddress'))
+      return
+    }
+    const plan = paymentPreview?.mpp_plan
+    if (!plan?.available) {
+      setStatus(t('wallet.paymentPreviewNoValidatedRoutePayBlocked'))
+      return
+    }
+    const maxFeeSatValue = Number(payMaxFeeSat || 0)
+    if (maxFeeSatValue < 0) {
+      setStatus(t('wallet.maxFeePositive'))
+      return
+    }
+    setStatus(t('wallet.payingMPPPlan'))
+    try {
+      await payInvoiceMPP({
+        payment_request: cleanedPaymentRequest,
+        channel_point: outgoingChannelPoints.length === 1 ? outgoingChannelPoints[0] : undefined,
+        channel_points: outgoingChannelPoints.length > 0 ? outgoingChannelPoints : undefined,
+        amount_sat: isLnAddress ? payAmountSat : undefined,
+        max_fee_sat: maxFeeSatValue > 0 ? maxFeeSatValue : undefined,
+        max_parts: Number(plan.max_parts || 0) > 0 ? Number(plan.max_parts || 0) : undefined,
+        max_shard_sat: Number(plan.max_shard_sat || 0) > 0 ? Number(plan.max_shard_sat || 0) : undefined
       })
       setStatus(t('wallet.paymentSent'))
       setPaymentRequest('')
@@ -1548,7 +1639,7 @@ export default function Wallet() {
             <button
               className="btn-primary disabled:cursor-not-allowed disabled:opacity-50"
               onClick={handlePay}
-              disabled={paymentBlockedByPreview}
+              disabled={payInvoiceBlockedByPreview}
             >
               {t('wallet.payInvoice')}
             </button>
@@ -1559,6 +1650,15 @@ export default function Wallet() {
                 disabled={paymentPreviewLoading}
               >
                 {t('wallet.payValidatedRoute')}
+              </button>
+            )}
+            {paymentPreviewHasMPPPlan && (
+              <button
+                className="btn-secondary text-xs px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={handlePayMPP}
+                disabled={paymentPreviewLoading}
+              >
+                {t('wallet.payMPPPlan')}
               </button>
             )}
           </div>
@@ -1586,8 +1686,46 @@ export default function Wallet() {
               <p className="text-xs leading-relaxed text-fog/55">{t('wallet.paymentPreviewLiquidityNote')}</p>
               {paymentPreviewHasLikelyLiquidRoute ? (
                 <p className="text-xs text-emerald-200">{t('wallet.paymentPreviewValidatedRouteReady')}</p>
+              ) : paymentPreviewHasMPPPlan ? (
+                <p className="text-xs text-emerald-200">{t('wallet.paymentPreviewMPPReady')}</p>
               ) : (
                 <p className="text-xs text-brass">{t('wallet.paymentPreviewNoValidatedRoute')}</p>
+              )}
+              {paymentPreview.mpp_plan && (
+                <div className={`rounded-2xl border p-3 ${paymentPreview.mpp_plan.available ? 'border-emerald-400/25 bg-emerald-500/10' : 'border-brass/25 bg-brass/10'}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span className="font-medium text-fog">{t('wallet.paymentPreviewMPPTitle')}</span>
+                    <span className={paymentPreview.mpp_plan.available ? 'text-emerald-200' : 'text-brass'}>
+                      {paymentPreview.mpp_plan.available ? t('wallet.paymentPreviewMPPValidated') : t('wallet.paymentPreviewMPPPartial')}
+                    </span>
+                  </div>
+                  <div className="mt-2 grid gap-2 text-xs text-fog/60 sm:grid-cols-2">
+                    <span>{t('wallet.paymentPreviewMPPParts', { count: Number(paymentPreview.mpp_plan.part_count || 0), max: Number(paymentPreview.mpp_plan.max_parts || 0) })}</span>
+                    <span>{t('wallet.paymentPreviewMPPShard', { amount: formatSats(Number(paymentPreview.mpp_plan.max_shard_sat || 0)) })}</span>
+                    <span>{t('wallet.paymentPreviewMPPFee', { amount: formatSats(Number(paymentPreview.mpp_plan.total_fees_sat || 0)) })}</span>
+                    <span>{t('wallet.paymentPreviewMPPCoverage', { amount: formatSats(Number(paymentPreview.mpp_plan.validated_amt_sat || 0)), total: formatSats(Number(paymentPreview.mpp_plan.total_amt_sat || 0)) })}</span>
+                  </div>
+                  {Array.isArray(paymentPreview.mpp_plan.routes) && paymentPreview.mpp_plan.routes.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      {paymentPreview.mpp_plan.routes.map((route, routeIndex) => (
+                        <div key={`mpp-route-${routeIndex}`} className="rounded-xl border border-white/10 bg-ink/50 px-3 py-2 text-xs">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="font-medium text-fog">
+                              {t('wallet.paymentPreviewMPPPart', { index: routeIndex + 1 })}
+                            </span>
+                            <span className="text-fog/60">
+                              {t('wallet.paymentPreviewMPPPartMeta', {
+                                amount: formatSats(routeFinalForwardSat(route)),
+                                hops: Number(route?.hop_count || 0),
+                                fee: formatSats(Number(route?.total_fees_sat || 0))
+                              })}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
               {Array.isArray(paymentPreview.routes) && paymentPreview.routes.length > 0 ? (
                 <div className="space-y-3">

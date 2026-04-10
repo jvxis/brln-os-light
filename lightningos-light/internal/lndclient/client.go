@@ -1153,6 +1153,72 @@ func (c *Client) PayInvoice(ctx context.Context, paymentRequest string, outgoing
 	}
 }
 
+func (c *Client) PayInvoiceWithMPP(ctx context.Context, paymentRequest string, outgoingChanIDs []uint64, maxFeeSat int64, maxParts uint32, maxShardSat int64) error {
+	trimmed := strings.TrimSpace(paymentRequest)
+	if trimmed == "" {
+		return errors.New("payment_request required")
+	}
+
+	conn, err := c.dial(ctx, true)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	router := routerrpc.NewRouterClient(conn)
+	feeLimitMsat := defaultRouterPaymentFeeLimitMsat(ctx, c, trimmed)
+	if maxFeeSat > 0 {
+		feeLimitMsat = maxFeeSat * 1000
+	}
+	if maxParts == 0 {
+		maxParts = uint32(mppPaymentMaxParts(len(outgoingChanIDs)))
+	}
+	if maxParts < 2 {
+		maxParts = 2
+	}
+	if maxParts > paymentMPPPlanMaxParts {
+		maxParts = paymentMPPPlanMaxParts
+	}
+
+	req := &routerrpc.SendPaymentRequest{
+		PaymentRequest:    trimmed,
+		TimeoutSeconds:    paymentTimeoutSeconds(ctx, 120),
+		OutgoingChanIds:   append([]uint64(nil), outgoingChanIDs...),
+		FeeLimitMsat:      feeLimitMsat,
+		MaxParts:          maxParts,
+		NoInflightUpdates: true,
+		TimePref:          0,
+	}
+	if maxShardSat > 0 {
+		req.MaxShardSizeMsat = uint64(maxShardSat * 1000)
+	}
+
+	stream, err := router.SendPaymentV2(ctx, req)
+	if err != nil {
+		return err
+	}
+
+	for {
+		payment, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		if payment == nil {
+			continue
+		}
+		switch payment.Status {
+		case lnrpc.Payment_SUCCEEDED:
+			return nil
+		case lnrpc.Payment_FAILED:
+			if payment.FailureReason != lnrpc.PaymentFailureReason_FAILURE_REASON_NONE {
+				return fmt.Errorf("payment failed: %s", payment.FailureReason.String())
+			}
+			return errors.New("payment failed")
+		default:
+		}
+	}
+}
+
 func (c *Client) PayInvoiceWithValidatedRoute(ctx context.Context, paymentRequest string, outgoingChanIDs []uint64, maxFeeSat int64, numRoutes int32) error {
 	trimmed := strings.TrimSpace(paymentRequest)
 	if trimmed == "" {
@@ -1350,6 +1416,10 @@ const (
 	paymentRouteProbeStatusTimeout    = "timeout"
 	paymentRouteProbeStatusUnknown    = "unknown"
 	paymentRoutePreviewMaxQueryCount  = 200
+	paymentMPPPlanMaxParts            = 20
+	paymentMPPPlanProbeBatchSize      = 5
+	paymentMPPPlanMinShardMsat        = 25_000_000
+	paymentMPPPlanMaxShardMsat        = 500_000_000
 )
 
 func routeTotalFeeMsat(route *lnrpc.Route) int64 {
@@ -1409,6 +1479,31 @@ func routeTotalAmountMsat(route *lnrpc.Route) int64 {
 		return route.TotalAmt * 1000
 	}
 	return 0
+}
+
+func routeFinalForwardMsat(route *lnrpc.Route) int64 {
+	if route == nil || len(route.Hops) == 0 {
+		return 0
+	}
+	finalHop := route.Hops[len(route.Hops)-1]
+	if finalHop == nil {
+		return 0
+	}
+	if finalHop.AmtToForwardMsat > 0 {
+		return finalHop.AmtToForwardMsat
+	}
+	if finalHop.AmtToForward > 0 {
+		return finalHop.AmtToForward * 1000
+	}
+	total := routeTotalAmountMsat(route)
+	if total <= 0 {
+		return 0
+	}
+	fees := routeTotalFeeMsat(route)
+	if total > fees {
+		return total - fees
+	}
+	return total
 }
 
 func routeKey(route *lnrpc.Route) string {
@@ -1598,6 +1693,40 @@ func probeCheapestPaymentRouteCandidates(ctx context.Context, router routerrpc.R
 		}
 		if foundLikely {
 			break
+		}
+	}
+	return probed
+}
+
+func probePaymentRouteCandidatesExhaustive(ctx context.Context, router routerrpc.RouterClient, routes []*lnrpc.Route, batchSize int, probeLimit int) []probedPaymentRoute {
+	if batchSize <= 0 {
+		batchSize = paymentMPPPlanProbeBatchSize
+	}
+	if probeLimit <= 0 || probeLimit > len(routes) {
+		probeLimit = len(routes)
+	}
+	routes = selectProbeCandidateRoutes(routes, probeLimit, batchSize)
+	probeLimit = len(routes)
+	probed := make([]probedPaymentRoute, 0, probeLimit)
+	for start := 0; start < probeLimit; start += batchSize {
+		if err := ctx.Err(); err != nil {
+			break
+		}
+		end := start + batchSize
+		if end > probeLimit {
+			end = probeLimit
+		}
+		batch := routes[start:end]
+		probes := probePaymentRoutes(ctx, router, batch)
+		for i, route := range batch {
+			probe := PaymentRouteProbe{Status: paymentRouteProbeStatusUnknown}
+			if i < len(probes) {
+				probe = probes[i]
+			}
+			probed = append(probed, probedPaymentRoute{
+				route: route,
+				probe: probe,
+			})
 		}
 	}
 	return probed
@@ -1875,6 +2004,239 @@ func (c *Client) previewPaymentRouteCandidates(ctx context.Context, lightning ln
 	return routes, nil
 }
 
+func (c *Client) buildMPPPaymentPlan(ctx context.Context, lightning lnrpc.LightningClient, router routerrpc.RouterClient, decoded DecodedInvoice, amountMsat int64, outgoingChanIDs []uint64) *PaymentMPPPlan {
+	maxParts := mppPaymentMaxParts(len(outgoingChanIDs))
+	shardCandidates := mppShardSizeCandidates(amountMsat, maxParts)
+	if len(shardCandidates) == 0 {
+		return nil
+	}
+
+	bestPartial := &PaymentMPPPlan{
+		Available:    false,
+		TotalAmtSat:  msatToSatCeil(amountMsat),
+		TotalAmtMsat: amountMsat,
+		MaxParts:     maxParts,
+		Message:      "no mpp shard route validated liquidity",
+	}
+	for _, shardMsat := range shardCandidates {
+		if err := ctx.Err(); err != nil {
+			break
+		}
+		neededParts := int(ceilDivInt64(amountMsat, shardMsat))
+		if neededParts <= 1 || neededParts > maxParts {
+			continue
+		}
+		routes, err := c.previewPaymentRouteCandidates(ctx, lightning, decoded, shardMsat, outgoingChanIDs, 5)
+		if err != nil || len(routes) == 0 {
+			continue
+		}
+		probeLimit := mppPlanProbeLimit(neededParts, len(routes))
+		probed := probePaymentRouteCandidatesExhaustive(ctx, router, routes, paymentMPPPlanProbeBatchSize, probeLimit)
+		selected, coveredMsat := selectMPPLikelyRoutes(probed, amountMsat, maxParts)
+		plan := c.mppPlanFromRoutes(ctx, lightning, selected, amountMsat, coveredMsat, maxParts, shardMsat)
+		if plan == nil {
+			continue
+		}
+		if plan.ValidatedAmtMsat > bestPartial.ValidatedAmtMsat {
+			bestPartial = plan
+		}
+		if plan.Available {
+			return plan
+		}
+	}
+	if bestPartial.ValidatedAmtMsat > 0 {
+		return bestPartial
+	}
+	return nil
+}
+
+func (c *Client) mppPlanFromRoutes(ctx context.Context, lightning lnrpc.LightningClient, routes []probedPaymentRoute, amountMsat int64, coveredMsat int64, maxParts int, shardMsat int64) *PaymentMPPPlan {
+	if len(routes) == 0 {
+		return nil
+	}
+	totalFeesMsat := int64(0)
+	summaries := make([]PaymentRouteSummary, 0, len(routes))
+	for _, candidate := range routes {
+		if candidate.route == nil {
+			continue
+		}
+		totalFeesMsat += routeTotalFeeMsat(candidate.route)
+		summary := c.convertPaymentRouteWithClient(ctx, lightning, candidate.route)
+		probe := candidate.probe
+		summary.Probe = &probe
+		summaries = append(summaries, summary)
+	}
+	if len(summaries) == 0 {
+		return nil
+	}
+	available := coveredMsat >= amountMsat
+	message := "mpp plan validated liquidity"
+	if !available {
+		message = "partial mpp liquidity only"
+	}
+	return &PaymentMPPPlan{
+		Available:          available,
+		TotalAmtSat:        msatToSatCeil(amountMsat),
+		TotalAmtMsat:       amountMsat,
+		ValidatedAmtSat:    msatToSatCeil(coveredMsat),
+		ValidatedAmtMsat:   coveredMsat,
+		TotalFeesSat:       msatToSatCeil(totalFeesMsat),
+		TotalFeesMsat:      totalFeesMsat,
+		SuggestedMaxFeeSat: paymentPreviewFeeHeadroomSat(totalFeesMsat),
+		MaxShardSat:        msatToSatCeil(shardMsat),
+		MaxShardMsat:       shardMsat,
+		PartCount:          len(summaries),
+		MaxParts:           maxParts,
+		Message:            message,
+		Routes:             summaries,
+	}
+}
+
+func mppPaymentMaxParts(outgoingChanCount int) int {
+	maxParts := 10
+	if outgoingChanCount > 0 {
+		maxParts = outgoingChanCount
+	}
+	if maxParts < 4 {
+		maxParts = 4
+	}
+	if maxParts > paymentMPPPlanMaxParts {
+		maxParts = paymentMPPPlanMaxParts
+	}
+	return maxParts
+}
+
+func mppShardSizeCandidates(amountMsat int64, maxParts int) []int64 {
+	if amountMsat <= 0 || maxParts < 2 {
+		return nil
+	}
+	added := make(map[int64]struct{})
+	candidates := make([]int64, 0, 8)
+	add := func(shardMsat int64) {
+		if shardMsat <= 0 || shardMsat >= amountMsat {
+			return
+		}
+		if shardMsat > paymentMPPPlanMaxShardMsat {
+			shardMsat = paymentMPPPlanMaxShardMsat
+		}
+		if shardMsat < paymentMPPPlanMinShardMsat {
+			return
+		}
+		parts := ceilDivInt64(amountMsat, shardMsat)
+		if parts <= 1 || parts > int64(maxParts) {
+			return
+		}
+		if _, ok := added[shardMsat]; ok {
+			return
+		}
+		added[shardMsat] = struct{}{}
+		candidates = append(candidates, shardMsat)
+	}
+	for _, parts := range []int{2, 4, 5, 8, 10, maxParts} {
+		if parts <= 1 {
+			continue
+		}
+		add(ceilDivInt64(amountMsat, int64(parts)))
+	}
+	for _, shardMsat := range []int64{250_000_000, 200_000_000, 100_000_000, 50_000_000} {
+		add(shardMsat)
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i] > candidates[j]
+	})
+	return candidates
+}
+
+func mppPlanProbeLimit(neededParts int, routeCount int) int {
+	if routeCount <= 0 {
+		return 0
+	}
+	limit := neededParts * 3
+	if limit < 15 {
+		limit = 15
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	if limit > routeCount {
+		limit = routeCount
+	}
+	return limit
+}
+
+func selectMPPLikelyRoutes(probed []probedPaymentRoute, amountMsat int64, maxParts int) ([]probedPaymentRoute, int64) {
+	if amountMsat <= 0 || maxParts <= 0 {
+		return nil, 0
+	}
+	likely := make([]probedPaymentRoute, 0, len(probed))
+	for _, candidate := range probed {
+		if candidate.route == nil || !candidate.probe.LikelyLiquid || routeFinalForwardMsat(candidate.route) <= 0 {
+			continue
+		}
+		likely = append(likely, candidate)
+	}
+	sort.SliceStable(likely, func(i, j int) bool {
+		leftAmt := routeFinalForwardMsat(likely[i].route)
+		rightAmt := routeFinalForwardMsat(likely[j].route)
+		leftFee := routeTotalFeeMsat(likely[i].route)
+		rightFee := routeTotalFeeMsat(likely[j].route)
+		if leftAmt > 0 && rightAmt > 0 && leftFee*rightAmt != rightFee*leftAmt {
+			return leftFee*rightAmt < rightFee*leftAmt
+		}
+		if leftFee != rightFee {
+			return leftFee < rightFee
+		}
+		return leftAmt > rightAmt
+	})
+
+	selected := make([]probedPaymentRoute, 0, maxParts)
+	seenRoutes := make(map[string]struct{})
+	seenFirstHops := make(map[string]struct{})
+	coveredMsat := int64(0)
+	add := func(candidate probedPaymentRoute, requireNewFirstHop bool) {
+		if len(selected) >= maxParts || coveredMsat >= amountMsat {
+			return
+		}
+		key := routeKey(candidate.route)
+		if key != "" {
+			if _, ok := seenRoutes[key]; ok {
+				return
+			}
+		}
+		firstHop := routeFirstHopKey(candidate.route)
+		if requireNewFirstHop && firstHop != "" {
+			if _, ok := seenFirstHops[firstHop]; ok {
+				return
+			}
+		}
+		if key != "" {
+			seenRoutes[key] = struct{}{}
+		}
+		if firstHop != "" {
+			seenFirstHops[firstHop] = struct{}{}
+		}
+		selected = append(selected, candidate)
+		coveredMsat += routeFinalForwardMsat(candidate.route)
+	}
+	for _, candidate := range likely {
+		add(candidate, true)
+	}
+	for _, candidate := range likely {
+		add(candidate, false)
+	}
+	return selected, coveredMsat
+}
+
+func ceilDivInt64(value int64, divisor int64) int64 {
+	if divisor <= 0 {
+		return 0
+	}
+	if value <= 0 {
+		return 0
+	}
+	return (value + divisor - 1) / divisor
+}
+
 func probePaymentRoute(ctx context.Context, router routerrpc.RouterClient, route *lnrpc.Route) PaymentRouteProbe {
 	if route == nil || len(route.Hops) == 0 {
 		return PaymentRouteProbe{
@@ -2008,6 +2370,23 @@ type PaymentRouteSummary struct {
 	Probe         *PaymentRouteProbe `json:"probe,omitempty"`
 }
 
+type PaymentMPPPlan struct {
+	Available          bool                  `json:"available"`
+	TotalAmtSat        int64                 `json:"total_amt_sat,omitempty"`
+	TotalAmtMsat       int64                 `json:"total_amt_msat,omitempty"`
+	ValidatedAmtSat    int64                 `json:"validated_amt_sat,omitempty"`
+	ValidatedAmtMsat   int64                 `json:"validated_amt_msat,omitempty"`
+	TotalFeesSat       int64                 `json:"total_fees_sat,omitempty"`
+	TotalFeesMsat      int64                 `json:"total_fees_msat,omitempty"`
+	SuggestedMaxFeeSat int64                 `json:"suggested_max_fee_sat,omitempty"`
+	MaxShardSat        int64                 `json:"max_shard_sat,omitempty"`
+	MaxShardMsat       int64                 `json:"max_shard_msat,omitempty"`
+	PartCount          int                   `json:"part_count,omitempty"`
+	MaxParts           int                   `json:"max_parts,omitempty"`
+	Message            string                `json:"message,omitempty"`
+	Routes             []PaymentRouteSummary `json:"routes,omitempty"`
+}
+
 type PaymentProbeEstimate struct {
 	Success       bool   `json:"success"`
 	FeeSat        int64  `json:"fee_sat,omitempty"`
@@ -2030,6 +2409,7 @@ type PaymentPreview struct {
 	ValidatedRouteCount int                   `json:"validated_route_count,omitempty"`
 	Probe               PaymentProbeEstimate  `json:"probe"`
 	Routes              []PaymentRouteSummary `json:"routes,omitempty"`
+	MPPPlan             *PaymentMPPPlan       `json:"mpp_plan,omitempty"`
 }
 
 type PaymentDetails struct {
@@ -2138,6 +2518,15 @@ func (c *Client) PreviewPayment(ctx context.Context, paymentRequest string, outg
 			suggested := paymentPreviewFeeHeadroomSat(paymentRouteTotalFeeMsat(preview.Routes[suggestedRouteIndex]))
 			preview.SuggestedMaxFeeSat = suggested
 			preview.SuggestedMaxFeeMsat = suggested * 1000
+		}
+	}
+	if !preview.LiquidityValidated {
+		if plan := c.buildMPPPaymentPlan(ctx, lightning, router, decoded, amountMsat, outgoingChanIDs); plan != nil {
+			preview.MPPPlan = plan
+			if plan.Available && plan.SuggestedMaxFeeSat > 0 {
+				preview.SuggestedMaxFeeSat = plan.SuggestedMaxFeeSat
+				preview.SuggestedMaxFeeMsat = plan.SuggestedMaxFeeSat * 1000
+			}
 		}
 	}
 	return preview, nil

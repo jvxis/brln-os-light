@@ -108,6 +108,7 @@ func (s *Server) routes() http.Handler {
 		r.Post("/decode", s.handleWalletDecode)
 		r.Post("/pay/preview", s.handleWalletPayPreview)
 		r.Post("/pay/validated-route", s.handleWalletPayValidatedRoute)
+		r.Post("/pay/mpp", s.handleWalletPayMPP)
 		r.Post("/pay", s.handleWalletPay)
 		r.Post("/send/preview", s.handleWalletSendPreview)
 		r.Post("/send", s.handleWalletSend)

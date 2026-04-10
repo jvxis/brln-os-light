@@ -272,6 +272,13 @@ strip_crlf() {
   fi
 }
 
+read_env_file_value() {
+  local key="$1"
+  local file="${2:-/etc/lightningos/secrets.env}"
+  [[ -r "$file" ]] || return 0
+  awk -v key="$key" 'index($0, key "=") == 1 { print substr($0, length(key) + 2) }' "$file" | tail -n1
+}
+
 ensure_secrets_env_defaults() {
   local file="/etc/lightningos/secrets.env"
   mkdir -p /etc/lightningos
@@ -1388,16 +1395,18 @@ install_systemd() {
   systemctl enable --now lightningos-reports.timer
   systemctl restart lnd >/dev/null 2>&1 || true
   systemctl restart lightningos-manager >/dev/null 2>&1 || true
+  local terminal_enabled="0"
+  local terminal_credential=""
   if [[ -f /etc/lightningos/secrets.env ]]; then
-    # shellcheck disable=SC1091
-    source /etc/lightningos/secrets.env
+    terminal_enabled="$(read_env_file_value TERMINAL_ENABLED /etc/lightningos/secrets.env)"
+    terminal_credential="$(read_env_file_value TERMINAL_CREDENTIAL /etc/lightningos/secrets.env)"
   fi
-    if [[ "${TERMINAL_ENABLED:-0}" == "1" && -n "${TERMINAL_CREDENTIAL:-}" ]]; then
-      systemctl enable --now lightningos-terminal >/dev/null 2>&1 || true
-      systemctl restart lightningos-terminal >/dev/null 2>&1 || true
-    else
-      systemctl disable --now lightningos-terminal >/dev/null 2>&1 || true
-    fi
+  if [[ "${terminal_enabled:-0}" == "1" && -n "${terminal_credential:-}" ]]; then
+    systemctl enable --now lightningos-terminal >/dev/null 2>&1 || true
+    systemctl restart lightningos-terminal >/dev/null 2>&1 || true
+  else
+    systemctl disable --now lightningos-terminal >/dev/null 2>&1 || true
+  fi
   ensure_ufw_manager_port
   print_ok "Services enabled and started"
 }

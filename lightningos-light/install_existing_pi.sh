@@ -226,6 +226,13 @@ set_env_value() {
   fi
 }
 
+read_env_value() {
+  local key="$1"
+  local file="${2:-$SECRETS_PATH}"
+  [[ -r "$file" ]] || return 0
+  awk -v key="$key" 'index($0, key "=") == 1 { print substr($0, length(key) + 2) }' "$file" | tail -n1
+}
+
 ensure_secrets_file() {
   mkdir -p /etc/lightningos
   if [[ ! -f "$SECRETS_PATH" ]]; then
@@ -1449,12 +1456,14 @@ main() {
   if [[ -f /etc/systemd/system/lightningos-reports.timer ]]; then
     systemctl enable --now lightningos-reports.timer
   fi
+  local terminal_enabled="0"
+  local terminal_credential=""
   if [[ -f /etc/lightningos/secrets.env ]]; then
-    # shellcheck disable=SC1091
-    source /etc/lightningos/secrets.env
+    terminal_enabled="$(read_env_value TERMINAL_ENABLED /etc/lightningos/secrets.env)"
+    terminal_credential="$(read_env_value TERMINAL_CREDENTIAL /etc/lightningos/secrets.env)"
   fi
   if [[ -f /etc/systemd/system/lightningos-terminal.service ]]; then
-    if [[ "${TERMINAL_ENABLED:-0}" == "1" && -n "${TERMINAL_CREDENTIAL:-}" ]]; then
+    if [[ "${terminal_enabled:-0}" == "1" && -n "${terminal_credential:-}" ]]; then
       systemctl enable --now lightningos-terminal >/dev/null 2>&1 || true
       systemctl restart lightningos-terminal >/dev/null 2>&1 || true
     else

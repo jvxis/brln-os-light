@@ -123,6 +123,7 @@ type WalletPaymentRecommendation = {
   reason?: string
   target_channel_id?: number
   target_channel_id_string?: string
+  target_channel_selected?: boolean
   target_channel_point?: string
   target_alias?: string
   target_pubkey?: string
@@ -130,6 +131,10 @@ type WalletPaymentRecommendation = {
   estimated_payment_fee_sat?: number
   estimated_payment_fee_msat?: number
   hop_count?: number
+  candidate_route_count?: number
+  probed_route_count?: number
+  probe_status?: string
+  probe_failure_code?: string
   message?: string
 }
 
@@ -1743,50 +1748,83 @@ export default function Wallet() {
                   )}
                 </div>
               )}
-              {paymentPreview.recommendation?.type === 'rebalance_target' && (
-                <div className="rounded-2xl border border-sky-400/25 bg-sky-500/10 p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <span className="font-medium text-fog">{t('wallet.paymentPreviewRebalanceRecommendationTitle')}</span>
-                    <a className="btn-secondary px-3 py-1 text-[11px]" href="#rebalance-center">
-                      {t('wallet.paymentPreviewRebalanceOpen')}
-                    </a>
-                  </div>
-                  <p className="mt-2 text-xs leading-relaxed text-fog/65">
-                    {t('wallet.paymentPreviewRebalanceRecommendation', {
-                      channel: paymentPreview.recommendation.target_alias ||
-                        paymentPreview.recommendation.target_channel_point ||
-                        paymentPreview.recommendation.target_pubkey ||
-                        t('wallet.unknownPeer')
-                    })}
-                  </p>
-                  <div className="mt-3 grid gap-2 text-xs text-fog/60 sm:grid-cols-2">
-                    <span>
-                      {t('wallet.paymentPreviewRebalanceTarget', {
-                        channel: paymentPreview.recommendation.target_channel_id_string ||
-                          paymentPreview.recommendation.target_channel_point ||
-                          paymentPreview.recommendation.target_channel_id ||
-                          '-'
-                      })}
-                    </span>
-                    <span>
-                      {t('wallet.paymentPreviewRebalanceFee', {
-                        amount: formatSats(Number(paymentPreview.recommendation.estimated_payment_fee_sat || 0)),
-                        hops: Number(paymentPreview.recommendation.hop_count || 0)
-                      })}
-                    </span>
-                    {typeof paymentPreview.recommendation.target_local_balance_sat === 'number' && (
-                      <span>
-                        {t('wallet.paymentPreviewRebalanceLocalBalance', {
-                          amount: formatSats(Number(paymentPreview.recommendation.target_local_balance_sat || 0))
-                        })}
+              {paymentPreview.recommendation && (() => {
+                const recommendation = paymentPreview.recommendation
+                const isRebalanceTarget = recommendation.type === 'rebalance_target'
+                const isAutomaticValidated = recommendation.type === 'automatic_lnd_validated_route'
+                const hasValidatedAutomaticRoute = isRebalanceTarget || isAutomaticValidated
+                const channelLabel = recommendation.target_alias ||
+                  recommendation.target_channel_point ||
+                  recommendation.target_pubkey ||
+                  t('wallet.unknownPeer')
+                return (
+                  <div className={`rounded-2xl border p-3 ${hasValidatedAutomaticRoute ? 'border-sky-400/25 bg-sky-500/10' : 'border-brass/25 bg-brass/10'}`}>
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <span className="font-medium text-fog">
+                        {hasValidatedAutomaticRoute
+                          ? t('wallet.paymentPreviewRebalanceRecommendationTitle')
+                          : t('wallet.paymentPreviewAutomaticDiagnosticTitle')}
                       </span>
+                      {isRebalanceTarget && (
+                        <a className="btn-secondary px-3 py-1 text-[11px]" href="#rebalance-center">
+                          {t('wallet.paymentPreviewRebalanceOpen')}
+                        </a>
+                      )}
+                    </div>
+                    <p className="mt-2 text-xs leading-relaxed text-fog/65">
+                      {isRebalanceTarget
+                        ? t('wallet.paymentPreviewRebalanceRecommendation', { channel: channelLabel })
+                        : isAutomaticValidated
+                          ? t('wallet.paymentPreviewAutomaticSelectedRecommendation', { channel: channelLabel })
+                          : t('wallet.paymentPreviewAutomaticNoValidatedRoute')}
+                    </p>
+                    {hasValidatedAutomaticRoute ? (
+                      <div className="mt-3 grid gap-2 text-xs text-fog/60 sm:grid-cols-2">
+                        <span>
+                          {t('wallet.paymentPreviewRebalanceTarget', {
+                            channel: recommendation.target_channel_id_string ||
+                              recommendation.target_channel_point ||
+                              recommendation.target_channel_id ||
+                              '-'
+                          })}
+                        </span>
+                        <span>
+                          {t('wallet.paymentPreviewRebalanceFee', {
+                            amount: formatSats(Number(recommendation.estimated_payment_fee_sat || 0)),
+                            hops: Number(recommendation.hop_count || 0)
+                          })}
+                        </span>
+                        {typeof recommendation.target_local_balance_sat === 'number' && (
+                          <span>
+                            {t('wallet.paymentPreviewRebalanceLocalBalance', {
+                              amount: formatSats(Number(recommendation.target_local_balance_sat || 0))
+                            })}
+                          </span>
+                        )}
+                        <span className="break-all">
+                          {recommendation.target_channel_point || recommendation.target_pubkey || ''}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="mt-3 grid gap-2 text-xs text-fog/60 sm:grid-cols-2">
+                        <span>
+                          {t('wallet.paymentPreviewAutomaticProbeStats', {
+                            routes: Number(recommendation.candidate_route_count || 0),
+                            probes: Number(recommendation.probed_route_count || 0)
+                          })}
+                        </span>
+                        {(recommendation.probe_failure_code || recommendation.probe_status) && (
+                          <span>
+                            {t('wallet.paymentPreviewAutomaticProbeCode', {
+                              code: recommendation.probe_failure_code || recommendation.probe_status || '-'
+                            })}
+                          </span>
+                        )}
+                      </div>
                     )}
-                    <span className="break-all">
-                      {paymentPreview.recommendation.target_channel_point || paymentPreview.recommendation.target_pubkey || ''}
-                    </span>
                   </div>
-                </div>
-              )}
+                )
+              })()}
               {Array.isArray(paymentPreview.routes) && paymentPreview.routes.length > 0 ? (
                 <div className="space-y-3">
                   {paymentPreview.routes.map((route, routeIndex) => (

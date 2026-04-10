@@ -2102,31 +2102,59 @@ func (c *Client) buildPaymentPreviewRecommendation(ctx context.Context, lightnin
 
 	routes, err := c.previewPaymentRouteCandidates(ctx, lightning, decoded, amountMsat, nil, numRoutes)
 	if err != nil || len(routes) == 0 {
-		return nil
+		return &PaymentPreviewRecommendation{
+			Type:    "automatic_lnd_no_route",
+			Reason:  "automatic_lnd_no_route_candidates",
+			Message: "automatic lnd returned no candidate route",
+		}
 	}
 	targetRoutes := int(numRoutes)
 	if targetRoutes <= 0 {
 		targetRoutes = 5
 	}
 	selectedSet := paymentChannelIDSet(outgoingChanIDs)
-	selected := probeCheapestPaymentRouteOutsideSet(ctx, router, routes, targetRoutes, selectedSet)
+	selected, selectedProbe, probedCount := probeCheapestPaymentRouteForRecommendation(ctx, router, routes, targetRoutes)
 	if selected == nil || len(selected.Hops) == 0 || selected.Hops[0] == nil {
-		return nil
+		recommendation := &PaymentPreviewRecommendation{
+			Type:                "automatic_lnd_no_validated_route",
+			Reason:              "automatic_lnd_probe_failed",
+			CandidateRouteCount: len(routes),
+			ProbedRouteCount:    probedCount,
+			ProbeFailureCode:    selectedProbe.FailureCode,
+			Message:             "automatic lnd found graph routes but no probe validated liquidity",
+		}
+		if selectedProbe.Status != "" {
+			recommendation.ProbeStatus = selectedProbe.Status
+		}
+		return recommendation
 	}
 
 	firstHop := selected.Hops[0]
 	feeMsat := routeTotalFeeMsat(selected)
+	_, targetSelected := selectedSet[firstHop.ChanId]
+	recommendationType := "rebalance_target"
+	recommendationReason := "automatic_lnd_found_route_outside_selected_channels"
+	recommendationMessage := "automatic lnd found a validated route through a channel outside the selected outgoing set"
+	if targetSelected {
+		recommendationType = "automatic_lnd_validated_route"
+		recommendationReason = "automatic_lnd_found_route_using_selected_channel"
+		recommendationMessage = "automatic lnd found a validated route through a channel already in the selected outgoing set"
+	}
 	recommendation := &PaymentPreviewRecommendation{
-		Type:                    "rebalance_target",
-		Reason:                  "automatic_lnd_found_route_outside_selected_channels",
+		Type:                    recommendationType,
+		Reason:                  recommendationReason,
 		TargetChannelID:         firstHop.ChanId,
 		TargetChannelIDString:   strconv.FormatUint(firstHop.ChanId, 10),
+		TargetChannelSelected:   targetSelected,
 		TargetPubKey:            strings.TrimSpace(firstHop.PubKey),
 		TargetAlias:             c.lookupNodeAliasWithClient(ctx, lightning, firstHop.PubKey),
 		EstimatedPaymentFeeSat:  msatToSatCeil(feeMsat),
 		EstimatedPaymentFeeMsat: feeMsat,
 		HopCount:                len(selected.Hops),
-		Message:                 "automatic lnd found a validated route through a channel outside the selected outgoing set",
+		CandidateRouteCount:     len(routes),
+		ProbedRouteCount:        probedCount,
+		ProbeStatus:             selectedProbe.Status,
+		Message:                 recommendationMessage,
 	}
 	if local := paymentPreviewLocalChannel(ctx, lightning, firstHop.ChanId); local != nil {
 		recommendation.TargetChannelPoint = strings.TrimSpace(local.ChannelPoint)
@@ -2144,12 +2172,13 @@ func (c *Client) buildPaymentPreviewRecommendation(ctx context.Context, lightnin
 	return recommendation
 }
 
-func probeCheapestPaymentRouteOutsideSet(ctx context.Context, router routerrpc.RouterClient, routes []*lnrpc.Route, batchSize int, excludedFirstHopChanIDs map[uint64]struct{}) *lnrpc.Route {
+func probeCheapestPaymentRouteForRecommendation(ctx context.Context, router routerrpc.RouterClient, routes []*lnrpc.Route, batchSize int) (*lnrpc.Route, PaymentRouteProbe, int) {
 	if batchSize <= 0 {
 		batchSize = 5
 	}
 	probeLimit := len(routes)
-	var selected *lnrpc.Route
+	probedCount := 0
+	lastProbe := PaymentRouteProbe{Status: paymentRouteProbeStatusUnknown}
 	for start := 0; start < probeLimit; start += batchSize {
 		if err := ctx.Err(); err != nil {
 			break
@@ -2160,7 +2189,6 @@ func probeCheapestPaymentRouteOutsideSet(ctx context.Context, router routerrpc.R
 		}
 		batch := routes[start:end]
 		probes := probePaymentRoutes(ctx, router, batch)
-		foundOutside := false
 		for i, route := range batch {
 			if route == nil || len(route.Hops) == 0 || route.Hops[0] == nil {
 				continue
@@ -2169,23 +2197,14 @@ func probeCheapestPaymentRouteOutsideSet(ctx context.Context, router routerrpc.R
 			if i < len(probes) {
 				probe = probes[i]
 			}
-			if !probe.LikelyLiquid {
-				continue
+			probedCount++
+			lastProbe = probe
+			if probe.LikelyLiquid {
+				return route, probe, probedCount
 			}
-			firstHop := route.Hops[0]
-			if _, excluded := excludedFirstHopChanIDs[firstHop.ChanId]; excluded {
-				continue
-			}
-			foundOutside = true
-			if selected == nil || routeTotalFeeMsat(route) < routeTotalFeeMsat(selected) {
-				selected = route
-			}
-		}
-		if foundOutside {
-			break
 		}
 	}
-	return selected
+	return nil, lastProbe, probedCount
 }
 
 func paymentChannelIDSet(ids []uint64) map[uint64]struct{} {
@@ -2516,6 +2535,7 @@ type PaymentPreviewRecommendation struct {
 	Reason                  string `json:"reason,omitempty"`
 	TargetChannelID         uint64 `json:"target_channel_id,omitempty"`
 	TargetChannelIDString   string `json:"target_channel_id_string,omitempty"`
+	TargetChannelSelected   bool   `json:"target_channel_selected,omitempty"`
 	TargetChannelPoint      string `json:"target_channel_point,omitempty"`
 	TargetAlias             string `json:"target_alias,omitempty"`
 	TargetPubKey            string `json:"target_pubkey,omitempty"`
@@ -2523,6 +2543,10 @@ type PaymentPreviewRecommendation struct {
 	EstimatedPaymentFeeSat  int64  `json:"estimated_payment_fee_sat,omitempty"`
 	EstimatedPaymentFeeMsat int64  `json:"estimated_payment_fee_msat,omitempty"`
 	HopCount                int    `json:"hop_count,omitempty"`
+	CandidateRouteCount     int    `json:"candidate_route_count,omitempty"`
+	ProbedRouteCount        int    `json:"probed_route_count,omitempty"`
+	ProbeStatus             string `json:"probe_status,omitempty"`
+	ProbeFailureCode        string `json:"probe_failure_code,omitempty"`
 	Message                 string `json:"message,omitempty"`
 }
 

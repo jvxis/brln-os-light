@@ -594,6 +594,29 @@ export default function Wallet() {
     return t('wallet.paymentPreviewLiquidityUnknown')
   }
 
+  const routeProbeHint = (probe?: WalletRouteProbe) => {
+    if (!probe || probe.likely_liquid || probe.status === 'likely_liquid') return ''
+    const code = String(probe.failure_code || '').trim()
+    switch (code) {
+      case 'TEMPORARY_CHANNEL_FAILURE':
+        return t('wallet.paymentPreviewProbeTemporaryChannelFailure')
+      case 'FEE_INSUFFICIENT':
+        return t('wallet.paymentPreviewProbeFeeInsufficient')
+      case 'CHANNEL_DISABLED':
+        return t('wallet.paymentPreviewProbeChannelDisabled')
+      case 'AMOUNT_BELOW_MINIMUM':
+        return t('wallet.paymentPreviewProbeAmountBelowMinimum')
+      case 'UNKNOWN_NEXT_PEER':
+        return t('wallet.paymentPreviewProbeUnknownNextPeer')
+      case 'TEMPORARY_NODE_FAILURE':
+        return t('wallet.paymentPreviewProbeTemporaryNodeFailure')
+      case 'MPP_TIMEOUT':
+        return t('wallet.paymentPreviewProbeMppTimeout')
+      default:
+        return code ? t('wallet.paymentPreviewProbeGenericFailure') : ''
+    }
+  }
+
   const routeProbeClassName = (probe?: WalletRouteProbe) => {
     if (probe?.likely_liquid || probe?.status === 'likely_liquid') {
       return 'border-emerald-400/40 bg-emerald-500/15 text-emerald-200'
@@ -1517,6 +1540,11 @@ export default function Wallet() {
                       {route?.probe?.failure_code && (
                         <div className="mt-2 text-xs text-fog/55">
                           {t('wallet.paymentPreviewLiquidityCode', { code: route.probe.failure_code })}
+                        </div>
+                      )}
+                      {routeProbeHint(route?.probe) && (
+                        <div className="mt-1 text-xs text-fog/55">
+                          {routeProbeHint(route?.probe)}
                         </div>
                       )}
                       <div className="mt-3 space-y-2">

@@ -1222,6 +1222,7 @@ const (
 	paymentRouteProbeStatusFailed     = "failed"
 	paymentRouteProbeStatusTimeout    = "timeout"
 	paymentRouteProbeStatusUnknown    = "unknown"
+	paymentRoutePreviewMaxQueryCount  = 200
 )
 
 func routeTotalFeeMsat(route *lnrpc.Route) int64 {
@@ -1676,13 +1677,10 @@ func (c *Client) PreviewPayment(ctx context.Context, paymentRequest string, outg
 	suggestedMaxFeeSat := msatToSatCeil(suggestedMaxFeeMsat)
 	effectiveMaxFeeSat := suggestedMaxFeeSat
 	effectiveMaxFeeMsat := suggestedMaxFeeMsat
-	routeSearchMaxFeeMsat := suggestedMaxFeeMsat
+	routeSearchMaxFeeMsat := int64(^uint64(0) >> 1)
 	if maxFeeSat > 0 {
 		effectiveMaxFeeSat = maxFeeSat
 		effectiveMaxFeeMsat = maxFeeSat * 1000
-		if effectiveMaxFeeMsat > routeSearchMaxFeeMsat {
-			routeSearchMaxFeeMsat = effectiveMaxFeeMsat
-		}
 	}
 
 	preview := PaymentPreview{
@@ -1712,79 +1710,99 @@ func (c *Client) PreviewPayment(ctx context.Context, paymentRequest string, outg
 	}
 
 	targetRoutes := int(numRoutes)
-	maxRouteCandidates := targetRoutes * 8
-	maxRouteQueries := targetRoutes * 12
+	maxRouteCandidates := targetRoutes * 20
+	maxRouteQueries := paymentRoutePreviewMaxQueryCount
+	if maxRouteQueries < targetRoutes*12 {
+		maxRouteQueries = targetRoutes * 12
+	}
 	routes := make([]*lnrpc.Route, 0, targetRoutes)
 	seenRoutes := make(map[string]struct{})
-	ignoredQueue := [][]*lnrpc.EdgeLocator{nil}
-	seenIgnoredSets := map[string]struct{}{"": {}}
-	for attempts := 0; len(ignoredQueue) > 0 && attempts < maxRouteQueries && len(routes) < maxRouteCandidates; attempts++ {
-		ignoredEdges := ignoredQueue[0]
-		ignoredQueue = ignoredQueue[1:]
-
-		req := &lnrpc.QueryRoutesRequest{
-			PubKey:            decoded.Destination,
-			OutgoingChanIds:   append([]uint64(nil), outgoingChanIDs...),
-			UseMissionControl: true,
-			TimePref:          -1,
-		}
-		if amountMsat > 0 {
-			req.AmtMsat = amountMsat
-		} else {
-			req.Amt = decoded.AmountSat
-		}
-		if routeSearchMaxFeeMsat > 0 {
-			req.FeeLimit = &lnrpc.FeeLimit{
-				Limit: &lnrpc.FeeLimit_FixedMsat{FixedMsat: routeSearchMaxFeeMsat},
-			}
-		}
-		if len(decoded.BlindedPaths) > 0 {
-			req.BlindedPaymentPaths = decoded.BlindedPaths
-		} else {
-			req.RouteHints = decoded.RouteHints
-			req.DestFeatures = append([]lnrpc.FeatureBit(nil), decoded.DestFeatures...)
-			if decoded.CltvExpiry > 0 {
-				req.FinalCltvDelta = int32(decoded.CltvExpiry)
-			}
-		}
-		if len(ignoredEdges) > 0 {
-			req.IgnoredEdges = append([]*lnrpc.EdgeLocator(nil), ignoredEdges...)
-		}
-
-		queryResp, queryErr := lightning.QueryRoutes(ctx, req)
-		if queryErr != nil {
-			if len(routes) == 0 && attempts == 0 {
-				return preview, queryErr
-			}
-			continue
-		}
-		if queryResp == nil || len(queryResp.Routes) == 0 {
-			continue
-		}
-		for _, route := range queryResp.Routes {
-			if route == nil {
+	outgoingSearchSets := make([][]uint64, 0, len(outgoingChanIDs)+1)
+	outgoingSearchSets = append(outgoingSearchSets, append([]uint64(nil), outgoingChanIDs...))
+	if len(outgoingChanIDs) > 1 {
+		for _, outgoingChanID := range outgoingChanIDs {
+			if outgoingChanID == 0 {
 				continue
 			}
-			key := routeKey(route)
-			if key != "" {
-				if _, exists := seenRoutes[key]; exists {
-					continue
-				}
-				seenRoutes[key] = struct{}{}
-			}
-			routes = append(routes, route)
+			outgoingSearchSets = append(outgoingSearchSets, []uint64{outgoingChanID})
+		}
+	}
+	queryAttempts := 0
+	for _, searchOutgoingChanIDs := range outgoingSearchSets {
+		if queryAttempts >= maxRouteQueries || len(routes) >= maxRouteCandidates {
+			break
+		}
+		ignoredQueue := [][]*lnrpc.EdgeLocator{nil}
+		seenIgnoredSets := map[string]struct{}{"": {}}
+		for len(ignoredQueue) > 0 && queryAttempts < maxRouteQueries && len(routes) < maxRouteCandidates {
+			ignoredEdges := ignoredQueue[0]
+			ignoredQueue = ignoredQueue[1:]
+			queryAttempts++
 
-			keepFirstHop := len(outgoingChanIDs) == 1
-			for _, edgeSet := range routeAlternativeIgnoredEdgeSets(route, keepFirstHop) {
-				key := edgeSetKey(edgeSet)
-				if key == "" {
+			req := &lnrpc.QueryRoutesRequest{
+				PubKey:            decoded.Destination,
+				OutgoingChanIds:   append([]uint64(nil), searchOutgoingChanIDs...),
+				UseMissionControl: false,
+				TimePref:          -1,
+			}
+			if amountMsat > 0 {
+				req.AmtMsat = amountMsat
+			} else {
+				req.Amt = decoded.AmountSat
+			}
+			if routeSearchMaxFeeMsat > 0 {
+				req.FeeLimit = &lnrpc.FeeLimit{
+					Limit: &lnrpc.FeeLimit_FixedMsat{FixedMsat: routeSearchMaxFeeMsat},
+				}
+			}
+			if len(decoded.BlindedPaths) > 0 {
+				req.BlindedPaymentPaths = decoded.BlindedPaths
+			} else {
+				req.RouteHints = decoded.RouteHints
+				req.DestFeatures = append([]lnrpc.FeatureBit(nil), decoded.DestFeatures...)
+				if decoded.CltvExpiry > 0 {
+					req.FinalCltvDelta = int32(decoded.CltvExpiry)
+				}
+			}
+			if len(ignoredEdges) > 0 {
+				req.IgnoredEdges = append([]*lnrpc.EdgeLocator(nil), ignoredEdges...)
+			}
+
+			queryResp, queryErr := lightning.QueryRoutes(ctx, req)
+			if queryErr != nil {
+				if len(routes) == 0 && queryAttempts == 1 && len(outgoingSearchSets) == 1 {
+					return preview, queryErr
+				}
+				continue
+			}
+			if queryResp == nil || len(queryResp.Routes) == 0 {
+				continue
+			}
+			for _, route := range queryResp.Routes {
+				if route == nil {
 					continue
 				}
-				if _, exists := seenIgnoredSets[key]; exists {
-					continue
+				key := routeKey(route)
+				if key != "" {
+					if _, exists := seenRoutes[key]; exists {
+						continue
+					}
+					seenRoutes[key] = struct{}{}
 				}
-				seenIgnoredSets[key] = struct{}{}
-				ignoredQueue = append(ignoredQueue, edgeSet)
+				routes = append(routes, route)
+
+				keepFirstHop := len(searchOutgoingChanIDs) == 1
+				for _, edgeSet := range routeAlternativeIgnoredEdgeSets(route, keepFirstHop) {
+					key := edgeSetKey(edgeSet)
+					if key == "" {
+						continue
+					}
+					if _, exists := seenIgnoredSets[key]; exists {
+						continue
+					}
+					seenIgnoredSets[key] = struct{}{}
+					ignoredQueue = append(ignoredQueue, edgeSet)
+				}
 			}
 		}
 	}
@@ -1806,7 +1824,7 @@ func (c *Client) PreviewPayment(ctx context.Context, paymentRequest string, outg
 		}
 		return routes[i].TotalTimeLock < routes[j].TotalTimeLock
 	})
-	probedRoutes := probePaymentRouteCandidates(ctx, router, routes, targetRoutes, targetRoutes*4)
+	probedRoutes := probePaymentRouteCandidates(ctx, router, routes, targetRoutes, targetRoutes*8)
 	preview.Routes = make([]PaymentRouteSummary, 0, len(probedRoutes))
 	for _, probed := range probedRoutes {
 		route := probed.route

@@ -140,6 +140,7 @@ type GraphExplorerFeeSummary = {
   min_ppm: number
   max_ppm: number
   avg_ppm: number
+  corrected_avg_ppm: number
   median_ppm: number
   weighted_avg_ppm: number
   total_capacity_sat: number
@@ -157,9 +158,11 @@ type GraphExplorerFeeBin = {
 type GraphExplorerFeeHistoryPoint = {
   day: string
   outbound_avg_ppm: number
+  outbound_corrected_avg_ppm: number
   outbound_weighted_avg_ppm: number
   outbound_sample_count: number
   inbound_avg_ppm: number
+  inbound_corrected_avg_ppm: number
   inbound_weighted_avg_ppm: number
   inbound_sample_count: number
 }
@@ -436,6 +439,10 @@ function FeeSummaryCard({
           <dd className="text-sm font-medium text-fog">{formatInteger(summary.avg_ppm)} ppm</dd>
         </div>
         <div className="flex items-center justify-between gap-4">
+          <dt className="text-sm text-fog/65">{t('graphExplorer.feeSummary.correctedAvg')}</dt>
+          <dd className="text-sm font-medium text-fog">{formatInteger(summary.corrected_avg_ppm)} ppm</dd>
+        </div>
+        <div className="flex items-center justify-between gap-4">
           <dt className="text-sm text-fog/65">{t('graphExplorer.feeSummary.weightedAvg')}</dt>
           <dd className="text-sm font-medium text-fog">{formatInteger(summary.weighted_avg_ppm)} ppm</dd>
         </div>
@@ -538,7 +545,7 @@ function FeeComparisonCard({
           </span>
         </div>
       </div>
-      <p className="mt-5 text-center text-xs text-fog/55">{t('graphExplorer.feeComparison.basedOnWeighted')}</p>
+      <p className="mt-5 text-center text-xs text-fog/55">{t('graphExplorer.feeComparison.basedOnCorrected')}</p>
     </div>
   )
 }
@@ -1052,19 +1059,19 @@ export default function GraphExplorer() {
   }
 
   const outboundBaseline = buildFeeBaseline(
-    (item) => item.outbound_weighted_avg_ppm,
+    (item) => item.outbound_corrected_avg_ppm,
     (item) => item.outbound_sample_count
   )
   const inboundBaseline = buildFeeBaseline(
-    (item) => item.inbound_weighted_avg_ppm,
+    (item) => item.inbound_corrected_avg_ppm,
     (item) => item.inbound_sample_count
   )
   const ratioBaselineSeries = feeHistoryAscending
     .filter((item) => item.day !== currentDayUTC)
     .filter((item) => Number(item.outbound_sample_count || 0) > 0 && Number(item.inbound_sample_count || 0) > 0)
     .map((item) => {
-      const inbound = Number(item.inbound_weighted_avg_ppm || 0)
-      const outbound = Number(item.outbound_weighted_avg_ppm || 0)
+      const inbound = Number(item.inbound_corrected_avg_ppm || 0)
+      const outbound = Number(item.outbound_corrected_avg_ppm || 0)
       if (inbound <= 0 || outbound <= 0) return 0
       return outbound / inbound
     })
@@ -1076,12 +1083,12 @@ export default function GraphExplorer() {
 
   const outboundTrend = outboundBaseline === null
     ? { direction: 'flat' as FeeTrendDirection, deltaPct: 0, available: false }
-    : computeFeeTrend(Number(fees?.outbound?.weighted_avg_ppm || 0), outboundBaseline)
+    : computeFeeTrend(Number(fees?.outbound?.corrected_avg_ppm || 0), outboundBaseline)
   const inboundTrend = inboundBaseline === null
     ? { direction: 'flat' as FeeTrendDirection, deltaPct: 0, available: false }
-    : computeFeeTrend(Number(fees?.inbound?.weighted_avg_ppm || 0), inboundBaseline)
-  const currentOutInRatio = Number(fees?.inbound?.weighted_avg_ppm || 0) > 0
-    ? Number(fees?.outbound?.weighted_avg_ppm || 0) / Number(fees?.inbound?.weighted_avg_ppm || 0)
+    : computeFeeTrend(Number(fees?.inbound?.corrected_avg_ppm || 0), inboundBaseline)
+  const currentOutInRatio = Number(fees?.inbound?.corrected_avg_ppm || 0) > 0
+    ? Number(fees?.outbound?.corrected_avg_ppm || 0) / Number(fees?.inbound?.corrected_avg_ppm || 0)
     : 0
   const outInRatioTrend = ratioBaseline === null
     ? { direction: 'flat' as FeeTrendDirection, deltaPct: 0, available: false }
@@ -1428,6 +1435,7 @@ export default function GraphExplorer() {
                 min_ppm: 0,
                 max_ppm: 0,
                 avg_ppm: 0,
+                corrected_avg_ppm: 0,
                 median_ppm: 0,
                 weighted_avg_ppm: 0,
                 total_capacity_sat: 0
@@ -1440,8 +1448,8 @@ export default function GraphExplorer() {
             <FeeComparisonCard
               ratio={currentOutInRatio}
               ratioTrend={outInRatioTrend}
-              outboundValue={Number(fees?.outbound?.weighted_avg_ppm || 0)}
-              inboundValue={Number(fees?.inbound?.weighted_avg_ppm || 0)}
+              outboundValue={Number(fees?.outbound?.corrected_avg_ppm || 0)}
+              inboundValue={Number(fees?.inbound?.corrected_avg_ppm || 0)}
               outboundTrend={outboundTrend}
               inboundTrend={inboundTrend}
               formatInteger={formatInteger}
@@ -1455,6 +1463,7 @@ export default function GraphExplorer() {
                 min_ppm: 0,
                 max_ppm: 0,
                 avg_ppm: 0,
+                corrected_avg_ppm: 0,
                 median_ppm: 0,
                 weighted_avg_ppm: 0,
                 total_capacity_sat: 0
@@ -1508,11 +1517,17 @@ export default function GraphExplorer() {
                         <td className="px-3 py-3 text-fog">
                           <div>{formatInteger(item.outbound_avg_ppm)} ppm</div>
                           <div className="text-xs text-fog/55">
+                            {t('graphExplorer.feeHistoryCorrected', { value: formatInteger(item.outbound_corrected_avg_ppm) })}
+                          </div>
+                          <div className="text-xs text-fog/55">
                             {t('graphExplorer.feeHistoryWeighted', { value: formatInteger(item.outbound_weighted_avg_ppm) })}
                           </div>
                         </td>
                         <td className="px-3 py-3 text-fog">
                           <div>{formatInteger(item.inbound_avg_ppm)} ppm</div>
+                          <div className="text-xs text-fog/55">
+                            {t('graphExplorer.feeHistoryCorrected', { value: formatInteger(item.inbound_corrected_avg_ppm) })}
+                          </div>
                           <div className="text-xs text-fog/55">
                             {t('graphExplorer.feeHistoryWeighted', { value: formatInteger(item.inbound_weighted_avg_ppm) })}
                           </div>

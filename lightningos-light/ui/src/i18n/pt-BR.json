@@ -250,6 +250,7 @@
     "localOpenChannelIndicator": "Tem canal aberto com o seu node",
     "feeDistributionHint": "Distribuição por bucket de ppm",
     "feeDistributionCount": "{{count}} canais",
+    "feeHistoryCorrected": "corrigido {{value}} ppm",
     "feeHistoryWeighted": "ponderado {{value}} ppm",
     "badges": {
       "nativeSource": "Histórico nativo",
@@ -332,6 +333,7 @@
       "outboundTitle": "Policy outbound atual",
       "inboundTitle": "Policy dos peers para o node",
       "avg": "Média",
+      "correctedAvg": "Média corrigida",
       "weightedAvg": "Média ponderada",
       "median": "Mediana",
       "minMax": "Mín / Máx",
@@ -346,7 +348,7 @@
     "feeComparison": {
       "title": "Comparação",
       "ratio": "Relação Out / In",
-      "basedOnWeighted": "Compara a média atual com a média dos últimos dias completos do range",
+      "basedOnCorrected": "Compara a média corrigida atual com a média dos últimos dias completos do range",
       "outbound": "Outbound",
       "inbound": "Inbound",
       "rising": "Subindo",
@@ -356,7 +358,7 @@
     },
     "feeHistory": {
       "title": "Histórico diário de policy",
-      "subtitle": "Média e média ponderada por dia"
+      "subtitle": "Média, média corrigida e média ponderada por dia"
     }
   },
   "topbar": {

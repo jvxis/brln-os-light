@@ -79,6 +79,7 @@ type GraphExplorerFeeSummary struct {
 	MinPpm             int64      `json:"min_ppm"`
 	MaxPpm             int64      `json:"max_ppm"`
 	AvgPpm             int64      `json:"avg_ppm"`
+	CorrectedAvgPpm    int64      `json:"corrected_avg_ppm"`
 	MedianPpm          int64      `json:"median_ppm"`
 	WeightedAvgPpm     int64      `json:"weighted_avg_ppm"`
 	TotalCapacitySat   int64      `json:"total_capacity_sat"`
@@ -94,13 +95,15 @@ type GraphExplorerFeeDistribution struct {
 }
 
 type GraphExplorerFeeHistoryPoint struct {
-	Day                    string `json:"day"`
-	OutboundAvgPpm         int64  `json:"outbound_avg_ppm"`
-	OutboundWeightedAvgPpm int64  `json:"outbound_weighted_avg_ppm"`
-	OutboundSampleCount    int    `json:"outbound_sample_count"`
-	InboundAvgPpm          int64  `json:"inbound_avg_ppm"`
-	InboundWeightedAvgPpm  int64  `json:"inbound_weighted_avg_ppm"`
-	InboundSampleCount     int    `json:"inbound_sample_count"`
+	Day                     string `json:"day"`
+	OutboundAvgPpm          int64  `json:"outbound_avg_ppm"`
+	OutboundCorrectedAvgPpm int64  `json:"outbound_corrected_avg_ppm"`
+	OutboundWeightedAvgPpm  int64  `json:"outbound_weighted_avg_ppm"`
+	OutboundSampleCount     int    `json:"outbound_sample_count"`
+	InboundAvgPpm           int64  `json:"inbound_avg_ppm"`
+	InboundCorrectedAvgPpm  int64  `json:"inbound_corrected_avg_ppm"`
+	InboundWeightedAvgPpm   int64  `json:"inbound_weighted_avg_ppm"`
+	InboundSampleCount      int    `json:"inbound_sample_count"`
 }
 
 type graphExplorerPolicySample struct {
@@ -108,6 +111,12 @@ type graphExplorerPolicySample struct {
 	CapacitySat  int64
 	Disabled     bool
 	LastUpdateAt *time.Time
+}
+
+type graphExplorerFeeHistoryBucket struct {
+	Day      time.Time
+	Outbound []graphExplorerPolicySample
+	Inbound  []graphExplorerPolicySample
 }
 
 type graphExplorerRangeSpec struct {
@@ -393,52 +402,65 @@ where ch.status = 'open'
 
 	historyRows, err := s.db.Query(ctx, `
 select
-  to_char(date_trunc('day', h.captured_at at time zone 'UTC'), 'YYYY-MM-DD') as day,
-  coalesce(round(avg(case when h.advertising_pubkey = $1 then h.fee_rate_ppm::numeric end)), 0)::bigint as outbound_avg_ppm,
-  coalesce(round(
-    sum(case when h.advertising_pubkey = $1 then h.fee_rate_ppm::numeric * greatest(ch.capacity_sat, 0)::numeric else 0 end)
-    / nullif(sum(case when h.advertising_pubkey = $1 then greatest(ch.capacity_sat, 0)::numeric else 0 end), 0)
-  ), 0)::bigint as outbound_weighted_avg_ppm,
-  count(*) filter (where h.advertising_pubkey = $1) as outbound_sample_count,
-  coalesce(round(avg(case when h.connecting_pubkey = $1 and h.advertising_pubkey <> $1 then h.fee_rate_ppm::numeric end)), 0)::bigint as inbound_avg_ppm,
-  coalesce(round(
-    sum(case when h.connecting_pubkey = $1 and h.advertising_pubkey <> $1 then h.fee_rate_ppm::numeric * greatest(ch.capacity_sat, 0)::numeric else 0 end)
-    / nullif(sum(case when h.connecting_pubkey = $1 and h.advertising_pubkey <> $1 then greatest(ch.capacity_sat, 0)::numeric else 0 end), 0)
-  ), 0)::bigint as inbound_weighted_avg_ppm,
-  count(*) filter (where h.connecting_pubkey = $1 and h.advertising_pubkey <> $1) as inbound_sample_count
+  date_trunc('day', h.captured_at at time zone 'UTC')::date as day,
+  h.advertising_pubkey,
+  h.connecting_pubkey,
+  coalesce(h.fee_rate_ppm, 0),
+  greatest(ch.capacity_sat, 0),
+  coalesce(h.disabled, false)
 from graph_channel_policy_history h
 join graph_channels ch on ch.chan_id = h.chan_id
 where (h.advertising_pubkey = $1 or h.connecting_pubkey = $1)
   and ($2::timestamptz is null or h.captured_at >= $2)
-group by 1
-order by 1 desc
-limit 90
-`, pubkey, rangeSpec.since)
+order by day desc, h.captured_at desc
+`, pubkey, graphExplorerHistorySince(rangeSpec.since))
 	if err != nil {
 		return GraphExplorerNodeFeeReport{}, err
 	}
 	defer historyRows.Close()
 
-	history := make([]GraphExplorerFeeHistoryPoint, 0, 90)
+	historyBuckets := make(map[string]*graphExplorerFeeHistoryBucket)
 	for historyRows.Next() {
-		var item GraphExplorerFeeHistoryPoint
+		var day time.Time
+		var advertisingPubKey string
+		var connectingPubKey string
+		var ppm int64
+		var capacitySat int64
+		var disabled bool
 		if err := historyRows.Scan(
-			&item.Day,
-			&item.OutboundAvgPpm,
-			&item.OutboundWeightedAvgPpm,
-			&item.OutboundSampleCount,
-			&item.InboundAvgPpm,
-			&item.InboundWeightedAvgPpm,
-			&item.InboundSampleCount,
+			&day,
+			&advertisingPubKey,
+			&connectingPubKey,
+			&ppm,
+			&capacitySat,
+			&disabled,
 		); err != nil {
 			return GraphExplorerNodeFeeReport{}, err
 		}
-		item.Day = strings.TrimSpace(item.Day)
-		history = append(history, item)
+		day = day.UTC()
+		dayKey := day.Format("2006-01-02")
+		bucket := historyBuckets[dayKey]
+		if bucket == nil {
+			bucket = &graphExplorerFeeHistoryBucket{Day: day}
+			historyBuckets[dayKey] = bucket
+		}
+		sample := graphExplorerPolicySample{
+			Ppm:         ppm,
+			CapacitySat: capacitySat,
+			Disabled:    disabled,
+		}
+		if advertisingPubKey == pubkey {
+			bucket.Outbound = append(bucket.Outbound, sample)
+		}
+		if connectingPubKey == pubkey && advertisingPubKey != pubkey {
+			bucket.Inbound = append(bucket.Inbound, sample)
+		}
 	}
 	if err := historyRows.Err(); err != nil {
 		return GraphExplorerNodeFeeReport{}, err
 	}
+
+	history := graphExplorerBuildFeeHistory(historyBuckets)
 
 	return GraphExplorerNodeFeeReport{
 		CoverageSince: coverageSince,
@@ -587,11 +609,139 @@ func summarizeGraphExplorerPolicies(samples []graphExplorerPolicySample) GraphEx
 		MinPpm:             minPpm,
 		MaxPpm:             maxPpm,
 		AvgPpm:             totalPpm / int64(len(samples)),
+		CorrectedAvgPpm:    graphExplorerCorrectedWeightedAvg(samples, median),
 		MedianPpm:          median,
 		WeightedAvgPpm:     weightedAvg,
 		TotalCapacitySat:   totalCapacity,
 		LastPolicyUpdateAt: lastUpdateAt,
 	}
+}
+
+func graphExplorerBuildFeeHistory(buckets map[string]*graphExplorerFeeHistoryBucket) []GraphExplorerFeeHistoryPoint {
+	if len(buckets) == 0 {
+		return nil
+	}
+	dayKeys := make([]string, 0, len(buckets))
+	for dayKey := range buckets {
+		dayKeys = append(dayKeys, dayKey)
+	}
+	sort.Slice(dayKeys, func(i, j int) bool { return dayKeys[i] > dayKeys[j] })
+	if len(dayKeys) > 90 {
+		dayKeys = dayKeys[:90]
+	}
+
+	history := make([]GraphExplorerFeeHistoryPoint, 0, len(dayKeys))
+	for _, dayKey := range dayKeys {
+		bucket := buckets[dayKey]
+		outboundSummary := summarizeGraphExplorerPolicies(bucket.Outbound)
+		inboundSummary := summarizeGraphExplorerPolicies(bucket.Inbound)
+		history = append(history, GraphExplorerFeeHistoryPoint{
+			Day:                     dayKey,
+			OutboundAvgPpm:          outboundSummary.AvgPpm,
+			OutboundCorrectedAvgPpm: outboundSummary.CorrectedAvgPpm,
+			OutboundWeightedAvgPpm:  outboundSummary.WeightedAvgPpm,
+			OutboundSampleCount:     outboundSummary.ChannelCount,
+			InboundAvgPpm:           inboundSummary.AvgPpm,
+			InboundCorrectedAvgPpm:  inboundSummary.CorrectedAvgPpm,
+			InboundWeightedAvgPpm:   inboundSummary.WeightedAvgPpm,
+			InboundSampleCount:      inboundSummary.ChannelCount,
+		})
+	}
+	return history
+}
+
+func graphExplorerHistorySince(rangeSince *time.Time) *time.Time {
+	boundedSince := time.Now().UTC().AddDate(0, 0, -89)
+	if rangeSince == nil || rangeSince.Before(boundedSince) {
+		return &boundedSince
+	}
+	return rangeSince
+}
+
+func graphExplorerCorrectedWeightedAvg(samples []graphExplorerPolicySample, median int64) int64 {
+	if len(samples) == 0 {
+		return 0
+	}
+
+	deviationSamples := make([]graphExplorerPolicySample, 0, len(samples))
+	for _, sample := range samples {
+		deviation := sample.Ppm - median
+		if deviation < 0 {
+			deviation = -deviation
+		}
+		deviationSamples = append(deviationSamples, graphExplorerPolicySample{
+			Ppm:         deviation,
+			CapacitySat: sample.CapacitySat,
+		})
+	}
+
+	mad := graphExplorerWeightedMedian(deviationSamples)
+	spread := mad * 3
+	if spread < 25 {
+		spread = 25
+	}
+	lowerBound := median - spread
+	upperBound := median + spread
+
+	var totalCapacity int64
+	var weightedNumerator int64
+	var totalClamped int64
+	for _, sample := range samples {
+		clamped := sample.Ppm
+		if clamped < lowerBound {
+			clamped = lowerBound
+		} else if clamped > upperBound {
+			clamped = upperBound
+		}
+		totalClamped += clamped
+		if sample.CapacitySat > 0 {
+			totalCapacity += sample.CapacitySat
+			weightedNumerator += clamped * sample.CapacitySat
+		}
+	}
+	if totalCapacity > 0 {
+		return weightedNumerator / totalCapacity
+	}
+	return totalClamped / int64(len(samples))
+}
+
+func graphExplorerWeightedMedian(samples []graphExplorerPolicySample) int64 {
+	if len(samples) == 0 {
+		return 0
+	}
+	ordered := append([]graphExplorerPolicySample(nil), samples...)
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].Ppm == ordered[j].Ppm {
+			return ordered[i].CapacitySat < ordered[j].CapacitySat
+		}
+		return ordered[i].Ppm < ordered[j].Ppm
+	})
+
+	var totalWeight int64
+	for _, sample := range ordered {
+		if sample.CapacitySat > 0 {
+			totalWeight += sample.CapacitySat
+			continue
+		}
+		totalWeight++
+	}
+	if totalWeight <= 0 {
+		return ordered[len(ordered)/2].Ppm
+	}
+
+	threshold := (totalWeight + 1) / 2
+	var cumulative int64
+	for _, sample := range ordered {
+		weight := sample.CapacitySat
+		if weight <= 0 {
+			weight = 1
+		}
+		cumulative += weight
+		if cumulative >= threshold {
+			return sample.Ppm
+		}
+	}
+	return ordered[len(ordered)-1].Ppm
 }
 
 func graphExplorerDistributePolicies(samples []graphExplorerPolicySample) []GraphExplorerFeeDistribution {

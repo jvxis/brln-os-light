@@ -250,6 +250,7 @@
     "localOpenChannelIndicator": "Has an open channel with your node",
     "feeDistributionHint": "Distribution by ppm bucket",
     "feeDistributionCount": "{{count}} channels",
+    "feeHistoryCorrected": "corrected {{value}} ppm",
     "feeHistoryWeighted": "weighted {{value}} ppm",
     "badges": {
       "nativeSource": "Native history",
@@ -332,6 +333,7 @@
       "outboundTitle": "Current outbound policy",
       "inboundTitle": "Peer-side policy toward the node",
       "avg": "Average",
+      "correctedAvg": "Corrected average",
       "weightedAvg": "Weighted average",
       "median": "Median",
       "minMax": "Min / Max",
@@ -346,7 +348,7 @@
     "feeComparison": {
       "title": "Comparison",
       "ratio": "Out / In Ratio",
-      "basedOnWeighted": "Compares the current average against the average from the last complete days in range",
+      "basedOnCorrected": "Compares the current corrected average against the average from the last complete days in range",
       "outbound": "Outbound",
       "inbound": "Inbound",
       "rising": "Rising",
@@ -356,7 +358,7 @@
     },
     "feeHistory": {
       "title": "Daily policy history",
-      "subtitle": "Average and weighted average per day"
+      "subtitle": "Average, corrected average and weighted average per day"
     }
   },
   "topbar": {

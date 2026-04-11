@@ -12,7 +12,7 @@ import (
 
 const (
 	reportsLiveWarmIntervalEnv     = "REPORTS_LIVE_WARM_INTERVAL_SEC"
-	reportsLiveWarmDefaultInterval = 15 * time.Minute
+	reportsLiveWarmDefaultInterval = 5 * time.Minute
 	reportsLiveWarmDefaultTimeout  = 2 * time.Minute
 )
 
@@ -29,13 +29,13 @@ func (s *Server) runReportsLiveWarmup(svc *reports.Service) {
 		return
 	}
 	if s.logger != nil {
-		s.logger.Printf("reports: live warmup enabled (interval %s)", interval)
+		s.logger.Printf("reports: live warmup enabled (interval %s, build timeout %s)", interval, reportsLiveBuildTimeout())
 	}
 
 	warm := func() {
 		now := time.Now()
 		loc := s.reportsLocation()
-		timeout := reportsLiveWarmTimeout()
+		timeout := reportsLiveBuildTimeout()
 
 		targetCtx, cancelTarget := context.WithTimeout(context.Background(), timeout)
 		if _, err := svc.EnsureMovementTargetForDate(targetCtx, now, loc); err != nil && s.logger != nil {
@@ -85,7 +85,7 @@ func reportsLiveWarmInterval() time.Duration {
 	return time.Duration(parsed) * time.Second
 }
 
-func reportsLiveWarmTimeout() time.Duration {
+func reportsLiveBuildTimeout() time.Duration {
 	raw := strings.TrimSpace(os.Getenv("REPORTS_RUN_TIMEOUT_SEC"))
 	if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
 		return time.Duration(parsed) * time.Second

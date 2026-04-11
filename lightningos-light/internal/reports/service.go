@@ -56,6 +56,15 @@ func NewService(db *pgxpool.Pool, lnd *lndclient.Client, logger *log.Logger) *Se
 	}
 }
 
+func (s *Service) SetLiveBuildTimeout(timeout time.Duration) {
+	if s == nil || timeout <= 0 {
+		return
+	}
+	s.liveMu.Lock()
+	s.liveBuildTimeout = timeout
+	s.liveMu.Unlock()
+}
+
 func (s *Service) EnsureSchema(ctx context.Context) error {
 	return EnsureSchema(ctx, s.db)
 }

@@ -4,7 +4,7 @@ Esta traducao e apenas informativa. Em caso de divergencia, o texto oficial e ap
 
 ## Texto traduzido
 
-Copyright (c) 2026 jvxis
+Copyright (c) 2026 BRLN
 
 E concedida, gratuitamente, a qualquer pessoa que obtenha uma copia
 deste software e dos arquivos de documentacao associados (o "Software"),

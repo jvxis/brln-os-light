@@ -30,6 +30,7 @@ const (
 	autofeeMinCooldownSec       = 3600
 	autofeeNativeSeedMinDays    = 3
 	autofeeNativeSeedMinSamples = 6
+	autofeeRefreshRebalMarkup   = 0.10
 )
 
 const superSourceBaseFeeMsatDefault = 1000
@@ -300,6 +301,31 @@ type AutofeeChannelSettingEntry struct {
 	Enabled      bool
 }
 
+type AutofeeRefreshItem struct {
+	ChannelID    uint64 `json:"channel_id"`
+	ChannelPoint string `json:"channel_point"`
+	Alias        string `json:"alias,omitempty"`
+	CurrentPpm   int    `json:"current_ppm"`
+	TargetPpm    int    `json:"target_ppm,omitempty"`
+	ReferencePpm int    `json:"reference_ppm,omitempty"`
+	Source       string `json:"source,omitempty"`
+	Changed      bool   `json:"changed"`
+	Applied      bool   `json:"applied"`
+	Reason       string `json:"reason,omitempty"`
+	Error        string `json:"error,omitempty"`
+}
+
+type AutofeeRefreshResult struct {
+	Total          int                  `json:"total"`
+	Updated        int                  `json:"updated"`
+	Same           int                  `json:"same"`
+	Skipped        int                  `json:"skipped"`
+	Errors         int                  `json:"errors"`
+	DryRun         bool                 `json:"dry_run"`
+	RebalMarkupPct float64              `json:"rebal_markup_pct"`
+	Items          []AutofeeRefreshItem `json:"items,omitempty"`
+}
+
 type autofeeLogItem struct {
 	Kind                     string   `json:"kind"`
 	Category                 string   `json:"category,omitempty"`
@@ -370,6 +396,11 @@ type autofeeLogItem struct {
 	Mem                      int      `json:"mem,omitempty"`
 	Default                  int      `json:"default,omitempty"`
 	CooldownIgnored          bool     `json:"cooldown_ignored,omitempty"`
+	UpdatedCount             int      `json:"updated_count,omitempty"`
+	SameCount                int      `json:"same_count,omitempty"`
+	SkippedCount             int      `json:"skipped_count,omitempty"`
+	ErrorCount               int      `json:"error_count,omitempty"`
+	RebalMarkupPct           float64  `json:"rebal_markup_pct,omitempty"`
 	Alias                    string   `json:"alias,omitempty"`
 	ChannelID                uint64   `json:"channel_id,omitempty"`
 	ChannelPoint             string   `json:"channel_point,omitempty"`
@@ -412,6 +443,8 @@ type autofeeLogItem struct {
 	HoursSinceLastChange     float64  `json:"hours_since_last_change,omitempty"`
 	TargetGapPpm             int      `json:"target_gap_ppm,omitempty"`
 	TargetGapPct             float64  `json:"target_gap_pct,omitempty"`
+	ReferencePpm             int      `json:"reference_ppm,omitempty"`
+	RefreshSource            string   `json:"refresh_source,omitempty"`
 }
 
 type autofeeProfile struct {
@@ -1080,6 +1113,7 @@ select max(occurred_at)
 from autofee_logs
 where seq = 0
   and coalesce(payload->>'dry_run', 'false') <> 'true'
+  and coalesce(payload->>'reason', '') <> 'refresh'
 `).Scan(&ts)
 	if err != nil || !ts.Valid {
 		return time.Time{}, false
@@ -2701,6 +2735,311 @@ func (s *AutofeeService) LoadChannelSettingsDetailed(ctx context.Context) ([]Aut
 	return entries, rows.Err()
 }
 
+func (s *AutofeeService) RefreshReferenceFees(ctx context.Context, dryRun bool) (AutofeeRefreshResult, error) {
+	runAt := time.Now().UTC()
+	result := AutofeeRefreshResult{DryRun: dryRun, RebalMarkupPct: autofeeRefreshRebalMarkup * 100}
+	if s.db == nil {
+		return result, errors.New("db unavailable")
+	}
+	if s.lnd == nil {
+		return result, errors.New("lnd unavailable")
+	}
+
+	cfg, err := s.GetConfig(ctx)
+	if err != nil {
+		return result, err
+	}
+	engine := newAutofeeEngine(s, cfg)
+
+	channels, err := s.lnd.ListChannels(ctx)
+	if err != nil {
+		return result, err
+	}
+	result.Total = len(channels)
+
+	forwardStats7d, err := engine.fetchForwardStats(ctx, 7)
+	if err != nil {
+		return result, err
+	}
+	forwardStats21d, err := engine.fetchForwardStats(ctx, 21)
+	if err != nil {
+		return result, err
+	}
+	rebalStats7d, err := engine.fetchRebalanceStats(ctx, 7)
+	if err != nil {
+		return result, err
+	}
+	rebalStats21d, err := engine.fetchRebalanceStats(ctx, 21)
+	if err != nil {
+		return result, err
+	}
+
+	result.Items = make([]AutofeeRefreshItem, 0, len(channels))
+	for _, ch := range channels {
+		item := AutofeeRefreshItem{
+			ChannelID:    ch.ChannelID,
+			ChannelPoint: strings.TrimSpace(ch.ChannelPoint),
+			Alias:        strings.TrimSpace(ch.PeerAlias),
+		}
+		if item.Alias == "" {
+			item.Alias = strings.TrimSpace(ch.RemotePubkey)
+		}
+		if ch.FeeRatePpm != nil {
+			item.CurrentPpm = int(*ch.FeeRatePpm)
+		}
+		if item.ChannelPoint == "" || ch.ChannelID == 0 {
+			item.Reason = "invalid-channel"
+			result.Skipped++
+			result.Items = append(result.Items, item)
+			continue
+		}
+
+		targetPpm, referencePpm, source, ok := selectAutofeeRefreshReference(
+			ch.CapacitySat,
+			forwardStats7d[ch.ChannelID],
+			forwardStats21d[ch.ChannelID],
+			rebalStats7d.ByChannel[ch.ChannelID],
+			rebalStats21d.ByChannel[ch.ChannelID],
+			autofeeRefreshRebalMarkup,
+		)
+		if !ok {
+			seedPpm, seedSource, seedErr := engine.refreshSeedForChannel(ctx, strings.TrimSpace(ch.RemotePubkey))
+			if seedErr != nil {
+				item.Error = seedErr.Error()
+				item.Reason = "seed-error"
+				result.Errors++
+				result.Items = append(result.Items, item)
+				continue
+			}
+			if seedPpm > 0 {
+				targetPpm = int(math.Round(seedPpm))
+				referencePpm = targetPpm
+				source = seedSource
+				ok = true
+			}
+		}
+		if !ok || targetPpm <= 0 {
+			item.Reason = "missing-reference"
+			result.Skipped++
+			result.Items = append(result.Items, item)
+			continue
+		}
+
+		targetPpm = clampInt(targetPpm, cfg.MinPpm, cfg.MaxPpm)
+		item.TargetPpm = targetPpm
+		item.ReferencePpm = referencePpm
+		item.Source = source
+		item.Changed = targetPpm != item.CurrentPpm
+
+		if !item.Changed {
+			item.Reason = "same"
+			result.Same++
+			result.Items = append(result.Items, item)
+			continue
+		}
+
+		policy, err := s.lnd.GetChannelPolicy(ctx, item.ChannelPoint)
+		if err != nil {
+			item.Error = err.Error()
+			item.Reason = "policy-error"
+			result.Errors++
+			result.Items = append(result.Items, item)
+			continue
+		}
+
+		if !dryRun {
+			timeLockDelta := policy.TimeLockDelta
+			if timeLockDelta <= 0 {
+				timeLockDelta = 144
+			}
+			inboundEnabled := policy.InboundBaseMsat != 0 || policy.InboundFeeRatePpm != 0
+			if err := s.lnd.UpdateChannelFees(
+				ctx,
+				item.ChannelPoint,
+				false,
+				policy.BaseFeeMsat,
+				int64(targetPpm),
+				timeLockDelta,
+				inboundEnabled,
+				policy.InboundBaseMsat,
+				policy.InboundFeeRatePpm,
+			); err != nil {
+				item.Error = err.Error()
+				item.Reason = "apply-error"
+				result.Errors++
+				result.Items = append(result.Items, item)
+				continue
+			}
+			item.Applied = true
+		}
+
+		result.Updated++
+		result.Items = append(result.Items, item)
+	}
+
+	if entries := buildAutofeeRefreshLogEntries(cfg, runAt, result); len(entries) > 0 {
+		logCtx, logCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := s.appendAutofeeLines(logCtx, fmt.Sprintf("%d", time.Now().UnixNano()), entries); err != nil && s.logger != nil {
+			s.logger.Printf("autofee refresh: log insert failed: %v", err)
+		}
+		logCancel()
+	}
+	if !dryRun {
+		s.sendTelegramAutofeeRefreshSummary(cfg, runAt, result)
+	}
+
+	return result, nil
+}
+
+func autofeeRefreshCategory(item AutofeeRefreshItem) string {
+	if strings.TrimSpace(item.Error) != "" {
+		return "error"
+	}
+	if item.Changed {
+		return "changed"
+	}
+	if strings.TrimSpace(item.Reason) == "same" {
+		return "kept"
+	}
+	return "skipped"
+}
+
+func formatAutofeeRefreshChannelLine(item AutofeeRefreshItem, dryRun bool) string {
+	alias := strings.TrimSpace(item.Alias)
+	if alias == "" {
+		alias = fmt.Sprintf("chan-%d", item.ChannelID)
+	}
+	category := autofeeRefreshCategory(item)
+	prefix := "🫤"
+	switch category {
+	case "changed":
+		if item.TargetPpm > item.CurrentPpm {
+			prefix = "✅🔺"
+		} else if item.TargetPpm < item.CurrentPpm {
+			prefix = "✅🔻"
+		} else {
+			prefix = "✅➡️"
+		}
+	case "skipped":
+		prefix = "⏭️"
+	case "error":
+		prefix = "❌"
+	}
+	if category == "error" {
+		return fmt.Sprintf("%s %s: %s", prefix, alias, strings.TrimSpace(item.Error))
+	}
+	action := fmt.Sprintf("keep %d ppm", item.CurrentPpm)
+	if category == "changed" {
+		if dryRun {
+			action = fmt.Sprintf("dry-set %d→%d ppm", item.CurrentPpm, item.TargetPpm)
+		} else {
+			action = fmt.Sprintf("set %d→%d ppm", item.CurrentPpm, item.TargetPpm)
+		}
+	}
+	delta := item.TargetPpm - item.CurrentPpm
+	deltaPct := 0.0
+	if item.CurrentPpm > 0 && item.TargetPpm != item.CurrentPpm {
+		deltaPct = math.Abs(float64(delta)) / float64(item.CurrentPpm) * 100.0
+	}
+	deltaStr := ""
+	if item.CurrentPpm > 0 && item.TargetPpm != item.CurrentPpm {
+		deltaStr = fmt.Sprintf(" (%+d, %.1f%%)", delta, deltaPct)
+	}
+	line := fmt.Sprintf("%s %s: %s%s", prefix, alias, action, deltaStr)
+	if item.ReferencePpm > 0 {
+		line += fmt.Sprintf(" | ref≈%d", item.ReferencePpm)
+	}
+	if src := strings.TrimSpace(item.Source); src != "" {
+		line += fmt.Sprintf(" | source %s", src)
+	}
+	if category == "skipped" && strings.TrimSpace(item.Reason) != "" {
+		line += fmt.Sprintf(" | %s", item.Reason)
+	}
+	return line
+}
+
+func buildAutofeeRefreshChannelLogEntry(item AutofeeRefreshItem, dryRun bool) autofeeLogEntry {
+	category := autofeeRefreshCategory(item)
+	targetPpm := item.TargetPpm
+	if targetPpm <= 0 {
+		targetPpm = item.CurrentPpm
+	}
+	delta := targetPpm - item.CurrentPpm
+	deltaPct := 0.0
+	if item.CurrentPpm > 0 && targetPpm != item.CurrentPpm {
+		deltaPct = math.Abs(float64(delta)) / float64(item.CurrentPpm) * 100.0
+	}
+	payload := &autofeeLogItem{
+		Kind:          "channel",
+		Category:      category,
+		Reason:        "refresh",
+		DryRun:        dryRun,
+		Alias:         item.Alias,
+		ChannelID:     item.ChannelID,
+		ChannelPoint:  item.ChannelPoint,
+		LocalPpm:      item.CurrentPpm,
+		NewPpm:        targetPpm,
+		Target:        targetPpm,
+		TargetRaw:     targetPpm,
+		TargetFinal:   targetPpm,
+		ReferencePpm:  item.ReferencePpm,
+		RefreshSource: item.Source,
+		SkipReason:    item.Reason,
+		Delta:         delta,
+		DeltaPct:      deltaPct,
+	}
+	if strings.TrimSpace(item.Error) != "" {
+		payload.Error = item.Error
+	}
+	return autofeeLogEntry{Line: formatAutofeeRefreshChannelLine(item, dryRun), Payload: payload}
+}
+
+func buildAutofeeRefreshLogEntries(cfg AutofeeConfig, runAt time.Time, result AutofeeRefreshResult) []autofeeLogEntry {
+	header := fmt.Sprintf("⚡ Autofee REFRESH [%s] | %s", strings.ToUpper(normalizeAutofeeOperationMode(cfg.OperationMode)), runAt.Format(time.RFC3339))
+	if result.DryRun {
+		header += " (dry-run)"
+	}
+	summaryLine := fmt.Sprintf("🔄 updated %d | same %d | skipped %d | errors %d | rebal_markup +%.0f%%", result.Updated, result.Same, result.Skipped, result.Errors, result.RebalMarkupPct)
+	entries := []autofeeLogEntry{
+		{Line: header, Payload: &autofeeLogItem{Kind: "header", Reason: "refresh", OperationMode: cfg.OperationMode, DryRun: result.DryRun, Timestamp: runAt.Format(time.RFC3339)}},
+		{Line: summaryLine, Payload: &autofeeLogItem{Kind: "refresh_summary", Reason: "refresh", DryRun: result.DryRun, UpdatedCount: result.Updated, SameCount: result.Same, SkippedCount: result.Skipped, ErrorCount: result.Errors, RebalMarkupPct: result.RebalMarkupPct}},
+	}
+	changedLines := []autofeeLogEntry{}
+	keptLines := []autofeeLogEntry{}
+	skippedLines := []autofeeLogEntry{}
+	errorLines := []autofeeLogEntry{}
+	for _, item := range result.Items {
+		entry := buildAutofeeRefreshChannelLogEntry(item, result.DryRun)
+		switch autofeeRefreshCategory(item) {
+		case "changed":
+			changedLines = append(changedLines, entry)
+		case "kept":
+			keptLines = append(keptLines, entry)
+		case "error":
+			errorLines = append(errorLines, entry)
+		default:
+			skippedLines = append(skippedLines, entry)
+		}
+	}
+	if len(changedLines) > 0 {
+		entries = append(entries, autofeeLogEntry{Line: "✅", Payload: &autofeeLogItem{Kind: "section", Category: "changed", Reason: "refresh"}})
+		entries = append(entries, changedLines...)
+	}
+	if len(keptLines) > 0 {
+		entries = append(entries, autofeeLogEntry{Line: "🫤", Payload: &autofeeLogItem{Kind: "section", Category: "kept", Reason: "refresh"}})
+		entries = append(entries, keptLines...)
+	}
+	if len(skippedLines) > 0 {
+		entries = append(entries, autofeeLogEntry{Line: "⏭️", Payload: &autofeeLogItem{Kind: "section", Category: "skipped", Reason: "refresh"}})
+		entries = append(entries, skippedLines...)
+	}
+	if len(errorLines) > 0 {
+		entries = append(entries, autofeeLogEntry{Line: "❌", Payload: &autofeeLogItem{Kind: "section", Category: "error", Reason: "refresh"}})
+		entries = append(entries, errorLines...)
+	}
+	return entries
+}
+
 func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string) error {
 	channels, err := e.svc.lnd.ListChannels(ctx)
 	if err != nil {
@@ -3681,6 +4020,40 @@ func minRebalFallback21dSat(capacitySat int64) int64 {
 
 func hasRebalFallback21dSignal(rebalAmt21dSat int64, capacitySat int64) bool {
 	return rebalAmt21dSat >= minRebalFallback21dSat(capacitySat)
+}
+
+func applyAutofeeRefreshRebalMarkup(referencePpm int, markupFrac float64) int {
+	if referencePpm <= 0 {
+		return 0
+	}
+	if markupFrac < 0 {
+		markupFrac = 0
+	}
+	return int(math.Ceil(float64(referencePpm) * (1.0 + markupFrac)))
+}
+
+func selectAutofeeRefreshReference(capacitySat int64, forward7d forwardStat, forward21d forwardStat, rebal7d rebalStat, rebal21d rebalStat, rebalMarkupFrac float64) (int, int, string, bool) {
+	outPpm7d := ppmMsat(forward7d.FeeMsat, forward7d.AmtMsat)
+	if outPpm7d > 0 {
+		return outPpm7d, outPpm7d, "outppm7d", true
+	}
+
+	outPpm21d := ppmMsat(forward21d.FeeMsat, forward21d.AmtMsat)
+	if outPpm21d > 0 && hasOutFallback21dSignal(int(forward21d.Count), forward21d.AmtMsat/1000, capacitySat) {
+		return outPpm21d, outPpm21d, "outppm21d", true
+	}
+
+	rebalPpm7d := ppmMsat(rebal7d.FeeMsat, rebal7d.AmtMsat)
+	if rebalPpm7d > 0 {
+		return applyAutofeeRefreshRebalMarkup(rebalPpm7d, rebalMarkupFrac), rebalPpm7d, "rebalppm7d", true
+	}
+
+	rebalPpm21d := ppmMsat(rebal21d.FeeMsat, rebal21d.AmtMsat)
+	if rebalPpm21d > 0 && hasRebalFallback21dSignal(rebal21d.AmtMsat/1000, capacitySat) {
+		return applyAutofeeRefreshRebalMarkup(rebalPpm21d, rebalMarkupFrac), rebalPpm21d, "rebalppm21d", true
+	}
+
+	return 0, 0, "", false
 }
 
 func slowCycle30dMinScore(profile autofeeProfile) int {
@@ -5762,6 +6135,45 @@ func (s *AutofeeService) sendTelegramAutofeeRunSummary(cfg AutofeeConfig, reason
 	}
 }
 
+func (s *AutofeeService) sendTelegramAutofeeRefreshSummary(cfg AutofeeConfig, runAt time.Time, result AutofeeRefreshResult) {
+	if s.db == nil || result.Total == 0 {
+		return
+	}
+	tgCfg := readTelegramBackupConfig()
+	if strings.TrimSpace(tgCfg.BotToken) == "" || strings.TrimSpace(tgCfg.ChatID) == "" {
+		return
+	}
+
+	loadCtx, loadCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	settings, err := loadTelegramNotificationSettings(loadCtx, s.db)
+	loadCancel()
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("autofee refresh: telegram settings unavailable: %v", err)
+		}
+		return
+	}
+	if !settings.AutofeeSummaryEnabled {
+		return
+	}
+
+	messages := buildTelegramAutofeeRefreshMessages(cfg, runAt, result)
+	if len(messages) == 0 {
+		return
+	}
+
+	sendCtx, sendCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer sendCancel()
+	for _, msg := range messages {
+		if err := sendTelegramMessages(sendCtx, tgCfg.BotToken, tgCfg.ChatID, msg); err != nil {
+			if s.logger != nil {
+				s.logger.Printf("autofee refresh: telegram summary send failed: %v", err)
+			}
+			return
+		}
+	}
+}
+
 func buildTelegramAutofeeRunMessages(cfg AutofeeConfig, reason string, runAt time.Time, summary autofeeRunSummary, calib autofeeCalibration, changed []*decision) []string {
 	if len(changed) == 0 {
 		return nil
@@ -5806,6 +6218,54 @@ func buildTelegramAutofeeRunMessages(cfg AutofeeConfig, reason string, runAt tim
 		channelLines = append(channelLines, buildTelegramAutofeeChangedChannelLineFull(d))
 	}
 	messages = append(messages, chunkTelegramAutofeeSection("✅ Changed channels", channelLines, telegramMessageMaxChars)...)
+	return messages
+}
+
+func buildTelegramAutofeeRefreshMessages(cfg AutofeeConfig, runAt time.Time, result AutofeeRefreshResult) []string {
+	localRunAt := runAt.In(time.Local)
+	operationMode := normalizeAutofeeOperationMode(cfg.OperationMode)
+	summaryLines := []string{
+		fmt.Sprintf("🔄 Autofee REFRESH [%s] | %s", strings.ToUpper(operationMode), localRunAt.Format("2006-01-02 15:04:05")),
+		fmt.Sprintf("Updated: %d | Same: %d | Skipped: %d | Errors: %d", result.Updated, result.Same, result.Skipped, result.Errors),
+		fmt.Sprintf("Rebal markup: +%.0f%%", result.RebalMarkupPct),
+	}
+	if result.DryRun {
+		summaryLines = append(summaryLines, "Mode: dry-run")
+	}
+	messages := []string{strings.Join(summaryLines, "\n")}
+
+	changed := make([]AutofeeRefreshItem, 0)
+	errorsList := make([]AutofeeRefreshItem, 0)
+	for _, item := range result.Items {
+		switch autofeeRefreshCategory(item) {
+		case "changed":
+			changed = append(changed, item)
+		case "error":
+			errorsList = append(errorsList, item)
+		}
+	}
+	sort.SliceStable(changed, func(i, j int) bool {
+		left := absInt(changed[i].TargetPpm - changed[i].CurrentPpm)
+		right := absInt(changed[j].TargetPpm - changed[j].CurrentPpm)
+		if left != right {
+			return left > right
+		}
+		return strings.ToLower(strings.TrimSpace(changed[i].Alias)) < strings.ToLower(strings.TrimSpace(changed[j].Alias))
+	})
+	if len(changed) > 0 {
+		lines := make([]string, 0, len(changed))
+		for _, item := range changed {
+			lines = append(lines, buildTelegramAutofeeRefreshChannelLine(item))
+		}
+		messages = append(messages, chunkTelegramAutofeeSection("✅ Refresh changes", lines, telegramMessageMaxChars)...)
+	}
+	if len(errorsList) > 0 {
+		lines := make([]string, 0, len(errorsList))
+		for _, item := range errorsList {
+			lines = append(lines, buildTelegramAutofeeRefreshChannelLine(item))
+		}
+		messages = append(messages, chunkTelegramAutofeeSection("❌ Refresh errors", lines, telegramMessageMaxChars)...)
+	}
 	return messages
 }
 
@@ -5857,6 +6317,56 @@ func chunkTelegramAutofeeSection(header string, lines []string, maxChars int) []
 		chunks = append(chunks, builder.String())
 	}
 	return chunks
+}
+
+func buildTelegramAutofeeRefreshChannelLine(item AutofeeRefreshItem) string {
+	alias := telegramShortValue(strings.TrimSpace(item.Alias), 48)
+	if alias == "" {
+		alias = fmt.Sprintf("chan-%d", item.ChannelID)
+	}
+	category := autofeeRefreshCategory(item)
+	prefix := "🫤"
+	switch category {
+	case "changed":
+		if item.TargetPpm > item.CurrentPpm {
+			prefix = "✅🔺"
+		} else if item.TargetPpm < item.CurrentPpm {
+			prefix = "✅🔻"
+		} else {
+			prefix = "✅➡️"
+		}
+	case "error":
+		prefix = "❌"
+	case "skipped":
+		prefix = "⏭️"
+	}
+	if category == "error" {
+		return fmt.Sprintf("%s %s: %s", prefix, alias, telegramShortValue(strings.TrimSpace(item.Error), 160))
+	}
+	action := fmt.Sprintf("keep %d ppm", item.CurrentPpm)
+	if category == "changed" {
+		action = fmt.Sprintf("set %d→%d ppm", item.CurrentPpm, item.TargetPpm)
+	}
+	delta := item.TargetPpm - item.CurrentPpm
+	deltaPct := 0.0
+	if item.CurrentPpm > 0 && item.TargetPpm != item.CurrentPpm {
+		deltaPct = math.Abs(float64(delta)) / float64(item.CurrentPpm) * 100.0
+	}
+	deltaStr := ""
+	if item.CurrentPpm > 0 && item.TargetPpm != item.CurrentPpm {
+		deltaStr = fmt.Sprintf(" (%+d, %.1f%%)", delta, deltaPct)
+	}
+	line := fmt.Sprintf("%s %s: %s%s", prefix, alias, action, deltaStr)
+	if item.ReferencePpm > 0 {
+		line += fmt.Sprintf(" | ref≈%d", item.ReferencePpm)
+	}
+	if src := strings.TrimSpace(item.Source); src != "" {
+		line += fmt.Sprintf(" | %s", src)
+	}
+	if category == "skipped" && strings.TrimSpace(item.Reason) != "" {
+		line += fmt.Sprintf(" | %s", item.Reason)
+	}
+	return line
 }
 
 func buildTelegramAutofeeChangedChannelLineFull(d *decision) string {
@@ -8054,6 +8564,41 @@ func (e *autofeeEngine) seedForChannel(pubkey string, st *autofeeChannelState) (
 		return float64(st.LastSeed), 0, 0, append(tags, "seed:mem")
 	}
 	return 200.0, 0, 0, append(tags, "seed:default")
+}
+
+func (e *autofeeEngine) refreshSeedForChannel(ctx context.Context, pubkey string) (float64, string, error) {
+	pubkey = strings.TrimSpace(pubkey)
+	if pubkey == "" {
+		return 0, "", nil
+	}
+
+	if e.cfg.AmbossEnabled {
+		token, err := e.cachedAmbossToken(ctx)
+		if err != nil {
+			return 0, "", err
+		}
+		if token != "" {
+			seed, _, _, _, err := e.fetchAmbossSeed(pubkey, token)
+			if err != nil {
+				return 0, "", err
+			}
+			if seed > 0 {
+				return seed, "seed:amboss", nil
+			}
+		}
+	}
+
+	if e.cfg.NativeSeedEnabled {
+		seed, _, _, _, ok, err := e.fetchNativeSeed(pubkey)
+		if err != nil {
+			return 0, "", err
+		}
+		if ok && seed > 0 {
+			return seed, "seed:native", nil
+		}
+	}
+
+	return 0, "", nil
 }
 
 func (e *autofeeEngine) fetchAmbossToken(ctx context.Context) (string, error) {

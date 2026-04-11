@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { acceptBalancedOpenSession, addLnWatchtower, boostPeers, bumpFeeCloseManagerSession, bumpPendingOpenChannel, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getChannelRankings, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelFees, getLnChannelPeerRecommendations, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, previewBatchOpenChannels, previewOpenChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, recoverCloseManagerSession, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker } from '../api'
+import { acceptBalancedOpenSession, addLnWatchtower, boostPeers, bumpFeeCloseManagerSession, bumpPendingOpenChannel, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getChannelRankings, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelFees, getLnChannelPeerRecommendations, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, previewBatchOpenChannels, previewOpenChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, recoverCloseManagerSession, refreshAutofeeReferences, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker } from '../api'
 import { getLocale } from '../i18n'
 
 type Channel = {
@@ -559,6 +559,11 @@ type AutofeeResultItem = {
   mem?: number
   default?: number
   cooldown_ignored?: boolean
+  updated_count?: number
+  same_count?: number
+  skipped_count?: number
+  error_count?: number
+  rebal_markup_pct?: number
   node_class?: string
   liquidity_class?: string
   channel_count?: number
@@ -606,6 +611,8 @@ type AutofeeResultItem = {
   hours_since_last_change?: number
   target_gap_ppm?: number
   target_gap_pct?: number
+  reference_ppm?: number
+  refresh_source?: string
 }
 
 type AutofeeChannelRound = {
@@ -624,6 +631,8 @@ type AutofeeChannelRound = {
   prediction_cooldown_hours?: number
   skip_reason?: string
   error?: string
+  reference_ppm?: number
+  refresh_source?: string
 }
 
 const normalizeAutofeeChannelID = (channelID?: number | string) => {
@@ -693,7 +702,9 @@ const collectAutofeeChannelRounds = (items: AutofeeResultItem[], maxPerChannel =
       prediction_code: item.prediction_code,
       prediction_cooldown_hours: item.prediction_cooldown_hours,
       skip_reason: item.skip_reason,
-      error: item.error
+      error: item.error,
+      reference_ppm: item.reference_ppm,
+      refresh_source: item.refresh_source
     })
   })
 
@@ -1438,6 +1449,7 @@ export default function LightningOps() {
     const normalized = (reason || '').toLowerCase()
     if (normalized === 'manual') return t('lightningOps.autofeeResultsReasonManual')
     if (normalized === 'scheduled') return t('lightningOps.autofeeResultsReasonScheduled')
+    if (normalized === 'refresh') return t('lightningOps.autofeeResultsReasonRefresh')
     if (reason) return reason.toUpperCase()
     return t('lightningOps.autofeeResultsReasonUnknown')
   }
@@ -1446,6 +1458,7 @@ export default function LightningOps() {
     const normalized = (reason || '').toLowerCase().trim()
     if (normalized === 'manual') return t('lightningOps.autofeeHistoryManual')
     if (normalized === 'scheduled') return t('lightningOps.autofeeHistoryAutomatic')
+    if (normalized === 'refresh') return t('lightningOps.autofeeHistoryRefresh')
     return t('lightningOps.autofeeHistoryUnknown')
   }
 
@@ -1496,6 +1509,11 @@ export default function LightningOps() {
   }
 
   const formatAutofeeHistorySignals = (round: AutofeeChannelRound) => {
+    if ((round.reason || '').toLowerCase().trim() === 'refresh') {
+      const reference = Math.round(Number(round.reference_ppm || 0))
+      const source = (round.refresh_source || '').trim() || '-'
+      return `🔄 ${t('lightningOps.autofeeRefreshReference')} ${reference} | ${t('lightningOps.autofeeRefreshSource')} ${source}`
+    }
     const target = Math.round(Number(round.target || 0))
     const floor = Math.round(Number(round.floor || 0))
     const seed = Math.round(Number(round.seed || 0))
@@ -1645,6 +1663,9 @@ export default function LightningOps() {
       : t('lightningOps.autofeeOperationModeBalanced')
     const ts = item.timestamp ? new Date(item.timestamp) : null
     const timeLabel = ts && !Number.isNaN(ts.getTime()) ? ts.toLocaleString() : t('common.na')
+    if ((item.reason || '').toLowerCase().trim() === 'refresh') {
+      return `🔄 ${item.dry_run ? 'DRY REFRESH' : 'REFRESH'} [${modeLabel}] | ${timeLabel}`
+    }
     return t('lightningOps.autofeeResultsHeader', { reason: reasonLabel, dry: dryLabel, time: timeLabel, mode: modeLabel })
   }
 
@@ -1720,6 +1741,35 @@ export default function LightningOps() {
       parts.push(`htlc_unclassified_top ${item.htlc_top_reasons.join(' | ')}`)
     }
     return `📊 ${parts.join(' | ')}`
+  }
+
+  const formatAutofeeRefreshSummary = (item: AutofeeResultItem) => {
+    const updated = item.updated_count ?? 0
+    const same = item.same_count ?? 0
+    const skipped = item.skipped_count ?? 0
+    const errors = item.error_count ?? 0
+    const markup = typeof item.rebal_markup_pct === 'number' ? item.rebal_markup_pct.toFixed(0) : '0'
+    return `🔄 ${item.dry_run ? 'DRY REFRESH SUMMARY' : 'REFRESH SUMMARY'} | updated ${updated} | same ${same} | skipped ${skipped} | errors ${errors} | rebal_markup +${markup}%`
+  }
+
+  const formatAutofeeRefreshSource = (value?: string) => {
+    const normalized = (value || '').trim().toLowerCase()
+    switch (normalized) {
+      case 'outppm7d':
+        return 'outppm7d'
+      case 'outppm21d':
+        return 'outppm21d'
+      case 'rebalppm7d':
+        return 'rebalppm7d+10%'
+      case 'rebalppm21d':
+        return 'rebalppm21d+10%'
+      case 'seed:amboss':
+        return 'seed:amboss'
+      case 'seed:native':
+        return 'seed:native'
+      default:
+        return value || '-'
+    }
   }
 
   const formatAutofeeSeed = (item: AutofeeResultItem) => {
@@ -2070,6 +2120,43 @@ export default function LightningOps() {
   }
 
   const formatAutofeeChannelLine = (item: AutofeeResultItem) => {
+    if ((item.reason || '').toLowerCase().trim() === 'refresh') {
+      const alias = (item.alias || '').trim() || (item.channel_id ? `chan-${item.channel_id}` : t('common.unknown'))
+      const localPpm = item.local_ppm ?? 0
+      const newPpm = item.new_ppm ?? localPpm
+      const delta = item.delta ?? (newPpm - localPpm)
+      const deltaPct = item.delta_pct ?? (localPpm > 0 && newPpm !== localPpm ? Math.abs(delta) / localPpm * 100 : 0)
+      const deltaStr = localPpm > 0 && newPpm !== localPpm ? ` (${delta >= 0 ? '+' : ''}${delta}, ${deltaPct.toFixed(1)}%)` : ''
+      const source = formatAutofeeRefreshSource(item.refresh_source)
+      const reference = item.reference_ppm ?? 0
+
+      let prefix = '🔄🫤'
+      if (item.category === 'changed') {
+        prefix = newPpm > localPpm ? '🔄✅🔺' : newPpm < localPpm ? '🔄✅🔻' : '🔄✅➡️'
+      } else if (item.category === 'skipped') {
+        prefix = '🔄⏭️'
+      } else if (item.category === 'error') {
+        prefix = '🔄❌'
+      }
+
+      if (item.category === 'error') {
+        return `${prefix} ${alias}: ${item.error || item.skip_reason || t('common.unknown')}`
+      }
+
+      const action = item.category === 'changed'
+        ? `${item.dry_run ? 'DRY set' : 'set'} ${localPpm}→${newPpm} ppm${deltaStr}`
+        : `keep ${localPpm} ppm`
+      let line = `${prefix} ${alias}: ${action}`
+      if (reference > 0) {
+        line += ` | ${t('lightningOps.autofeeRefreshReference')} ≈${reference}`
+      }
+      line += ` | ${t('lightningOps.autofeeRefreshSource')} ${source}`
+      if (item.category === 'skipped' && item.skip_reason) {
+        line += ` | ${item.skip_reason}`
+      }
+      return line
+    }
+
     const alias = (item.alias || '').trim() || (item.channel_id ? `chan-${item.channel_id}` : t('common.unknown'))
     const localPpm = item.local_ppm ?? 0
     const newPpm = item.new_ppm ?? localPpm
@@ -2156,14 +2243,17 @@ export default function LightningOps() {
     return prediction ? `${baseLine} | ${prediction}` : baseLine
   }
 
-  const formatAutofeeSectionLine = (category?: string) => {
+  const formatAutofeeSectionLine = (category?: string, reason?: string) => {
+    const isRefresh = (reason || '').toLowerCase().trim() === 'refresh'
     switch ((category || '').toLowerCase()) {
       case 'changed':
-        return `✅ ${t('lightningOps.autofeeResultsSectionChanged')}`
+        return `${isRefresh ? '🔄✅' : '✅'} ${t('lightningOps.autofeeResultsSectionChanged')}`
       case 'kept':
-        return `🟰 ${t('lightningOps.autofeeResultsSectionNoChange')}`
+        return `${isRefresh ? '🔄🟰' : '🟰'} ${t('lightningOps.autofeeResultsSectionNoChange')}`
       case 'skipped':
-        return `🟰 ${t('lightningOps.autofeeResultsSectionNoChange')}`
+        return `${isRefresh ? '🔄⏭️' : '🟰'} ${t('lightningOps.autofeeResultsSectionNoChange')}`
+      case 'error':
+        return `${isRefresh ? '🔄❌' : '❌'} ${t('lightningOps.autofeeHistoryOutcomeError')}`
       default:
         return ''
     }
@@ -2241,6 +2331,9 @@ export default function LightningOps() {
           case 'summary':
             line = formatAutofeeSummary(item)
             break
+          case 'refresh_summary':
+            line = formatAutofeeRefreshSummary(item)
+            break
           case 'seed':
             line = formatAutofeeSeed(item)
             break
@@ -2251,7 +2344,7 @@ export default function LightningOps() {
             line = formatAutofeeCalib(item)
             break
           case 'section':
-            line = formatAutofeeSectionLine(item.category)
+            line = formatAutofeeSectionLine(item.category, item.reason)
             break
           case 'explorer':
             line = formatAutofeeExplorerLine(item)
@@ -4330,6 +4423,35 @@ export default function LightningOps() {
     }
   }
 
+  const handleAutofeeRefresh = async (dryRun = false) => {
+    if (autofeeBusy) return
+    setAutofeeBusy(true)
+    setAutofeeMessage(dryRun ? t('lightningOps.autofeeDryRefreshing') : t('lightningOps.autofeeRefreshing'))
+    try {
+      const payload = await refreshAutofeeReferences({ dry_run: dryRun })
+      const updated = Number((payload as any)?.updated || 0)
+      const same = Number((payload as any)?.same || 0)
+      const skipped = Number((payload as any)?.skipped || 0)
+      const errors = Number((payload as any)?.errors || 0)
+      setAutofeeMessage(dryRun
+        ? t('lightningOps.autofeeDryRefreshDone', { updated, same, skipped, errors })
+        : t('lightningOps.autofeeRefreshDone', { updated, same, skipped, errors }))
+      if (!dryRun) {
+        const channelsPayload = await getLnChannels()
+        applyChannelsPayload(channelsPayload)
+      }
+      const results = await getAutofeeResults(buildAutofeeResultsQuery())
+      const resultsPayload = results as any
+      setAutofeeResults(Array.isArray(resultsPayload?.lines) ? resultsPayload.lines : [])
+      setAutofeeResultItems(Array.isArray(resultsPayload?.items) ? resultsPayload.items : [])
+      setAutofeeResultsStatus('')
+    } catch (err: any) {
+      setAutofeeMessage(err?.message || (dryRun ? t('lightningOps.autofeeDryRefreshFailed') : t('lightningOps.autofeeRefreshFailed')))
+    } finally {
+      setAutofeeBusy(false)
+    }
+  }
+
   const handleToggleFailedPaymentsCleaner = async () => {
     if (failedPaymentsCleanerBusy) return
     const nextEnabled = !failedPaymentsCleaner?.enabled
@@ -5754,6 +5876,8 @@ export default function LightningOps() {
 
             <div className="flex flex-wrap items-center gap-3">
               <button className="btn-primary" onClick={handleAutofeeSave} disabled={autofeeBusy}>{t('common.save')}</button>
+              <button className="btn-secondary" onClick={() => handleAutofeeRefresh(true)} disabled={autofeeBusy}>{t('lightningOps.autofeeDryRefresh')}</button>
+              <button className="btn-secondary" onClick={() => handleAutofeeRefresh(false)} disabled={autofeeBusy}>{t('lightningOps.autofeeRefresh')}</button>
               <button className="btn-secondary" onClick={() => handleAutofeeRun(true)} disabled={autofeeBusy}>{t('lightningOps.autofeeDryRun')}</button>
               <button className="btn-secondary" onClick={() => handleAutofeeRun(false)} disabled={autofeeBusy}>{t('lightningOps.autofeeRunNow')}</button>
             </div>

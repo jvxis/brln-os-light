@@ -273,6 +273,75 @@ func TestShouldHoldSeedDrivenUpOnFullChannel(t *testing.T) {
 	}
 }
 
+func TestApplyAutofeeRefreshRebalMarkup(t *testing.T) {
+	if got := applyAutofeeRefreshRebalMarkup(500, 0.10); got != 550 {
+		t.Fatalf("unexpected refresh rebal markup: got %d want 550", got)
+	}
+	if got := applyAutofeeRefreshRebalMarkup(500, -0.25); got != 500 {
+		t.Fatalf("negative markup should clamp to zero: got %d want 500", got)
+	}
+}
+
+func TestSelectAutofeeRefreshReferencePrefersOutppm(t *testing.T) {
+	target, ref, source, ok := selectAutofeeRefreshReference(
+		5_000_000,
+		forwardStat{FeeMsat: 500_000, AmtMsat: 1_000_000_000, Count: 10},
+		forwardStat{FeeMsat: 800_000, AmtMsat: 1_000_000_000, Count: 20},
+		rebalStat{FeeMsat: 200_000, AmtMsat: 500_000_000},
+		rebalStat{FeeMsat: 400_000, AmtMsat: 500_000_000},
+		0.10,
+	)
+	if !ok {
+		t.Fatalf("expected outppm reference to be selected")
+	}
+	if target != 500 || ref != 500 || source != "outppm7d" {
+		t.Fatalf("unexpected outppm selection: target=%d ref=%d source=%q", target, ref, source)
+	}
+}
+
+func TestSelectAutofeeRefreshReferenceFallsBackToRebalMarkup(t *testing.T) {
+	target, ref, source, ok := selectAutofeeRefreshReference(
+		5_000_000,
+		forwardStat{},
+		forwardStat{},
+		rebalStat{FeeMsat: 300_000, AmtMsat: 500_000_000},
+		rebalStat{},
+		0.10,
+	)
+	if !ok {
+		t.Fatalf("expected rebal reference to be selected")
+	}
+	if target != 660 || ref != 600 || source != "rebalppm7d" {
+		t.Fatalf("unexpected rebal selection: target=%d ref=%d source=%q", target, ref, source)
+	}
+}
+
+func TestSelectAutofeeRefreshReferenceUses21dFallbacks(t *testing.T) {
+	target, ref, source, ok := selectAutofeeRefreshReference(
+		5_000_000,
+		forwardStat{},
+		forwardStat{FeeMsat: 600_000, AmtMsat: 1_000_000_000, Count: 6},
+		rebalStat{},
+		rebalStat{},
+		0.10,
+	)
+	if !ok || target != 600 || ref != 600 || source != "outppm21d" {
+		t.Fatalf("unexpected 21d outrate fallback: ok=%v target=%d ref=%d source=%q", ok, target, ref, source)
+	}
+
+	target, ref, source, ok = selectAutofeeRefreshReference(
+		5_000_000,
+		forwardStat{},
+		forwardStat{},
+		rebalStat{},
+		rebalStat{FeeMsat: 250_000, AmtMsat: 250_000_000},
+		0.10,
+	)
+	if !ok || target != 1100 || ref != 1000 || source != "rebalppm21d" {
+		t.Fatalf("unexpected 21d rebal fallback: ok=%v target=%d ref=%d source=%q", ok, target, ref, source)
+	}
+}
+
 func TestComputeInboundDiscountWithRetainedSpread(t *testing.T) {
 	got := computeInboundDiscount(true, "sink", 0.12, 6, 300, 500, 1000, 0.95, 0.15, 0.12)
 	if got != 379 {

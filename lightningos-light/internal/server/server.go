@@ -107,6 +107,7 @@ func New(cfg *config.Config, logger *log.Logger) *Server {
 
 func (s *Server) Run() error {
 	s.startAppUpgradeChecker()
+	s.startPublicPoolRuntimeReconciler()
 	s.initNotifications()
 	s.initReports()
 	s.startTelegramNotifications()

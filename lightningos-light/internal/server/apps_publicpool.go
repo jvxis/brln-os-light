@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"lightningos-light/internal/system"
 )
@@ -19,6 +20,7 @@ const (
 	publicPoolUIPort       = 8081
 	publicPoolDefaultNet   = "mainnet"
 	publicPoolDefaultIDTag = "LightningOS-PublicPool"
+	publicPoolUfwRetries   = 5
 )
 
 var publicPoolBackendImageCandidates = []string{
@@ -407,18 +409,85 @@ func ensurePublicPoolUfwAccess(ctx context.Context, values publicPoolRuntimeValu
 	}
 
 	if values.NeedsLocalRPCBridgeUFW {
-		bridge, bridgeErr := publicPoolBridgeName(ctx)
-		if bridgeErr == nil && bridge != "" {
-			port := values.LocalExternalBitcoinPort
-			if port <= 0 {
-				port = 8332
+		port := values.LocalExternalBitcoinPort
+		if port <= 0 {
+			port = 8332
+		}
+		var bridge string
+		for attempt := 0; attempt < publicPoolUfwRetries; attempt++ {
+			bridge, err = publicPoolBridgeName(ctx)
+			if err == nil && bridge != "" {
+				if _, allowErr := system.RunCommandWithSudo(ctx, "ufw", "allow", "in", "on", bridge, "to", "any", "port", strconv.Itoa(port), "proto", "tcp"); allowErr == nil {
+					return lastErr
+				} else {
+					err = allowErr
+				}
 			}
-			if _, err := system.RunCommandWithSudo(ctx, "ufw", "allow", "in", "on", bridge, "to", "any", "port", strconv.Itoa(port), "proto", "tcp"); err != nil {
-				lastErr = err
+			time.Sleep(2 * time.Second)
+		}
+		if err != nil {
+			if bridge != "" {
+				lastErr = fmt.Errorf("failed to apply ufw rule for %s:%d: %w", bridge, port, err)
+			} else {
+				lastErr = fmt.Errorf("failed to apply ufw rule for public-pool bridge: %w", err)
 			}
 		}
 	}
 	return lastErr
+}
+
+func (s *Server) startPublicPoolRuntimeReconciler() {
+	go func() {
+		time.Sleep(15 * time.Second)
+		for attempt := 0; attempt < publicPoolUfwRetries; attempt++ {
+			if attempt > 0 {
+				time.Sleep(10 * time.Second)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			err := s.reconcileRunningPublicPoolUfwAccess(ctx)
+			cancel()
+			if err == nil {
+				return
+			}
+			if s.logger != nil {
+				s.logger.Printf("public-pool: startup ufw reconcile failed (attempt %d/%d): %v", attempt+1, publicPoolUfwRetries, err)
+			}
+		}
+	}()
+}
+
+func (s *Server) reconcileRunningPublicPoolUfwAccess(ctx context.Context) error {
+	paths := publicPoolAppPaths()
+	if !fileExists(paths.ComposePath) {
+		return nil
+	}
+	status, err := getComposeStatus(ctx, paths.Root, paths.ComposePath, "public-pool")
+	if err != nil || status != "running" {
+		return err
+	}
+	values, err := s.resolvePublicPoolUfwRuntimeValues(ctx)
+	if err != nil {
+		return err
+	}
+	return ensurePublicPoolUfwAccess(ctx, values)
+}
+
+func (s *Server) resolvePublicPoolUfwRuntimeValues(ctx context.Context) (publicPoolRuntimeValues, error) {
+	values := publicPoolRuntimeValues{}
+	if readBitcoinSource() == "remote" {
+		return values, nil
+	}
+	if fileExists(bitcoinCoreAppPaths().ComposePath) {
+		return values, nil
+	}
+	localCfg, _, err := readBitcoinLocalRPCConfig(ctx)
+	if err != nil {
+		return publicPoolRuntimeValues{}, fmt.Errorf("local bitcoin RPC unavailable: %w", err)
+	}
+	_, localPort := parseMainchainRPC(localCfg.Host)
+	values.NeedsLocalRPCBridgeUFW = true
+	values.LocalExternalBitcoinPort = localPort
+	return values, nil
 }
 
 func publicPoolBridgeName(ctx context.Context) (string, error) {

@@ -583,6 +583,7 @@ export const updateRebalanceConfig = (payload: {
   roi_min?: number
   daily_budget_pct?: number
   budget_mode?: string
+  budget_auto_only?: boolean
   manual_reserve_enabled?: boolean
   manual_reserve_mode?: string
   manual_reserve_value?: number

@@ -76,6 +76,7 @@ type RebalanceConfig struct {
 	ROIMin                    float64 `json:"roi_min"`
 	DailyBudgetPct            float64 `json:"daily_budget_pct"`
 	BudgetMode                string  `json:"budget_mode"`
+	BudgetAutoOnly            bool    `json:"budget_auto_only"`
 	ManualReserveEnabled      bool    `json:"manual_reserve_enabled"`
 	ManualReserveMode         string  `json:"manual_reserve_mode"`
 	ManualReserveValue        float64 `json:"manual_reserve_value"`
@@ -126,6 +127,7 @@ type RebalanceOverview struct {
 	DailySpentManualSat           int64                 `json:"daily_spent_manual_sat"`
 	RemainingTotalSat             int64                 `json:"remaining_total_sat"`
 	RemainingForAutoSat           int64                 `json:"remaining_for_auto_sat"`
+	BudgetAutoOnly                bool                  `json:"budget_auto_only"`
 	ManualReserveEnabled          bool                  `json:"manual_reserve_enabled"`
 	ManualReserveMode             string                `json:"manual_reserve_mode,omitempty"`
 	ManualReserveValue            float64               `json:"manual_reserve_value,omitempty"`
@@ -397,6 +399,7 @@ func defaultRebalanceConfig() RebalanceConfig {
 		ROIMin:                    1.1,
 		DailyBudgetPct:            50,
 		BudgetMode:                rebalanceBudgetModeRevenue24hPct,
+		BudgetAutoOnly:            false,
 		ManualReserveEnabled:      false,
 		ManualReserveMode:         rebalanceManualReserveModeFixedSat,
 		ManualReserveValue:        0,
@@ -1291,9 +1294,9 @@ func (s *RebalanceService) runAutoScan() {
 		}
 	}
 
-	budget, _, spentManual, spentTotal := s.getDailyBudget(ctx)
+	budget, spentAuto, _, _ := s.getDailyBudget(ctx)
 	manualReserveSat := computeManualReserveSat(cfg, budget)
-	_, remaining := computeRemainingForAuto(budget, spentTotal, spentManual, manualReserveSat)
+	remaining := computeRemainingForAuto(budget, spentAuto, manualReserveSat)
 	if remaining == 0 {
 		scanCandidates = len(candidates)
 		scanRemainingBudget = 0
@@ -1475,7 +1478,7 @@ func (s *RebalanceService) startJob(targetChannelID uint64, source string, reaso
 			}
 		}
 	}
-	if isManualRestartJob(source, reason, manualAutoRestart) {
+	if shouldEnforceManualRestartBudget(cfg, source, reason, manualAutoRestart) {
 		budget, _, spentManual, spentTotal := s.getDailyBudget(ctx)
 		if err := checkManualBudgetAllowance(cfg, setting, target, amount, budget, spentManual, spentTotal); err != nil {
 			return 0, err
@@ -4365,6 +4368,7 @@ end $$;
     roi_min double precision not null default 1.1,
     daily_budget_pct double precision not null default 50,
     budget_mode text not null default 'revenue_24h_pct',
+    budget_auto_only boolean not null default false,
     manual_reserve_enabled boolean not null default false,
     manual_reserve_mode text not null default 'fixed_sat',
     manual_reserve_value double precision not null default 0,
@@ -4410,6 +4414,8 @@ end $$;
     add column if not exists amount_probe_steps integer not null default 4;
   alter table rebalance_config
     add column if not exists budget_mode text not null default 'revenue_24h_pct';
+  alter table rebalance_config
+    add column if not exists budget_auto_only boolean not null default false;
   alter table rebalance_config
     add column if not exists manual_reserve_enabled boolean not null default false;
   alter table rebalance_config
@@ -4608,7 +4614,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 	}
 
 	row := s.db.QueryRow(ctx, `
-  select auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
+  select auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, mc_half_life_sec, payback_mode_flags,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles
@@ -4628,6 +4634,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.ROIMin,
 		&cfg.DailyBudgetPct,
 		&cfg.BudgetMode,
+		&cfg.BudgetAutoOnly,
 		&cfg.ManualReserveEnabled,
 		&cfg.ManualReserveMode,
 		&cfg.ManualReserveValue,
@@ -4675,11 +4682,11 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
 	}
 	_, err := s.db.Exec(ctx, `
   insert into rebalance_config (
-    id, auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
+    id, auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, mc_half_life_sec, payback_mode_flags,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,now())
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scan_interval_sec = excluded.scan_interval_sec,
@@ -4693,6 +4700,7 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     roi_min = excluded.roi_min,
     daily_budget_pct = excluded.daily_budget_pct,
     budget_mode = excluded.budget_mode,
+    budget_auto_only = excluded.budget_auto_only,
     manual_reserve_enabled = excluded.manual_reserve_enabled,
     manual_reserve_mode = excluded.manual_reserve_mode,
     manual_reserve_value = excluded.manual_reserve_value,
@@ -4722,7 +4730,7 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     critical_min_available_sats = excluded.critical_min_available_sats,
     critical_cycles = excluded.critical_cycles,
     updated_at = now()
-  `, rebalanceConfigID, cfg.AutoEnabled, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
+  `, rebalanceConfigID, cfg.AutoEnabled, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
 		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles,
 	)
 	return err
@@ -5005,28 +5013,46 @@ func computeManualReserveSat(cfg RebalanceConfig, totalBudgetSat int64) int64 {
 	}
 }
 
-func computeRemainingForAuto(totalBudgetSat int64, spentTotalSat int64, spentManualSat int64, manualReserveSat int64) (int64, int64) {
+func computeRemainingTotalBudget(totalBudgetSat int64, spentTotalSat int64) int64 {
 	remainingTotal := totalBudgetSat - spentTotalSat
 	if remainingTotal < 0 {
 		remainingTotal = 0
 	}
+	return remainingTotal
+}
+
+func computeManualReserveRemaining(manualReserveSat int64, spentManualSat int64) int64 {
 	manualReserveRemaining := manualReserveSat - spentManualSat
 	if manualReserveRemaining < 0 {
 		manualReserveRemaining = 0
 	}
-	remainingForAuto := remainingTotal - manualReserveRemaining
+	return manualReserveRemaining
+}
+
+func computeRemainingForAuto(totalBudgetSat int64, spentAutoSat int64, manualReserveSat int64) int64 {
+	autoBudgetCap := totalBudgetSat - manualReserveSat
+	if autoBudgetCap < 0 {
+		autoBudgetCap = 0
+	}
+	remainingForAuto := autoBudgetCap - spentAutoSat
 	if remainingForAuto < 0 {
 		remainingForAuto = 0
 	}
-	return remainingTotal, remainingForAuto
+	return remainingForAuto
 }
 
-func checkManualBudgetAllowance(cfg RebalanceConfig, setting channelSetting, target lndclient.ChannelInfo, amountSat int64, totalBudgetSat int64, spentManualSat int64, spentTotalSat int64) error {
+func shouldEnforceManualRestartBudget(cfg RebalanceConfig, source string, reason string, manualAutoRestart bool) bool {
+	if cfg.BudgetAutoOnly {
+		return false
+	}
+	return isManualRestartJob(source, reason, manualAutoRestart)
+}
+
+func checkManualBudgetAllowance(cfg RebalanceConfig, setting channelSetting, target lndclient.ChannelInfo, amountSat int64, totalBudgetSat int64, _ int64, spentTotalSat int64) error {
 	if amountSat <= 0 {
 		return nil
 	}
-	manualReserveSat := computeManualReserveSat(cfg, totalBudgetSat)
-	remainingTotal, _ := computeRemainingForAuto(totalBudgetSat, spentTotalSat, spentManualSat, manualReserveSat)
+	remainingTotal := computeRemainingTotalBudget(totalBudgetSat, spentTotalSat)
 	if remainingTotal <= 0 {
 		return errManualBudgetExhausted
 	}
@@ -5210,7 +5236,7 @@ func (s *RebalanceService) refreshDailySpend(ctx context.Context) (int64, int64,
 
 	loc := time.Local
 	now := time.Now().In(loc)
-	dayStart := now.Add(-24 * time.Hour)
+	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
 	dayEnd := now
 
 	var autoMsat int64
@@ -5562,11 +5588,9 @@ func (s *RebalanceService) Overview(ctx context.Context) (RebalanceOverview, err
 	avgRevenue7d, _ := s.fetchAvgRevenue7d(ctx, now.AddDate(0, 0, -6))
 	_, baseBudget, shortTermBudget := computeDailyBudgetFromRevenue(cfg, revenue24h, avgRevenue7d)
 	manualReserveSat := computeManualReserveSat(cfg, budget)
-	remainingTotal, remainingForAuto := computeRemainingForAuto(budget, spent, spentManual, manualReserveSat)
-	manualReserveRemaining := manualReserveSat - spentManual
-	if manualReserveRemaining < 0 {
-		manualReserveRemaining = 0
-	}
+	remainingTotal := computeRemainingTotalBudget(budget, spent)
+	remainingForAuto := computeRemainingForAuto(budget, spentAuto, manualReserveSat)
+	manualReserveRemaining := computeManualReserveRemaining(manualReserveSat, spentManual)
 	liveCost := int64(0)
 	if s.db != nil {
 		var liveMsat int64
@@ -5682,6 +5706,7 @@ where report_date >= current_date - interval '6 days'
 		DailySpentManualSat:           spentManual,
 		RemainingTotalSat:             remainingTotal,
 		RemainingForAutoSat:           remainingForAuto,
+		BudgetAutoOnly:                cfg.BudgetAutoOnly,
 		ManualReserveEnabled:          cfg.ManualReserveEnabled,
 		ManualReserveMode:             cfg.ManualReserveMode,
 		ManualReserveValue:            cfg.ManualReserveValue,

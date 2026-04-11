@@ -269,12 +269,20 @@ func TestComputeDailyBudgetFromRevenueHybrid(t *testing.T) {
 }
 
 func TestComputeRemainingForAutoRespectsManualReserve(t *testing.T) {
-	remainingTotal, remainingForAuto := computeRemainingForAuto(1000, 400, 100, 300)
+	remainingTotal := computeRemainingTotalBudget(1000, 400)
+	remainingForAuto := computeRemainingForAuto(1000, 300, 300)
 	if remainingTotal != 600 {
 		t.Fatalf("expected remaining total 600, got %d", remainingTotal)
 	}
 	if remainingForAuto != 400 {
 		t.Fatalf("expected remaining for auto 400, got %d", remainingForAuto)
+	}
+}
+
+func TestComputeRemainingForAutoUsesAutoSpendCap(t *testing.T) {
+	remainingForAuto := computeRemainingForAuto(1000, 850, 300)
+	if remainingForAuto != 0 {
+		t.Fatalf("expected remaining for auto 0 when auto spend exceeds auto cap, got %d", remainingForAuto)
 	}
 }
 
@@ -347,6 +355,17 @@ func TestIsManualRestartJobDistinguishesOneShotManual(t *testing.T) {
 	}
 	if isManualRestartJob("auto", "", false) {
 		t.Fatalf("expected auto scan jobs to use auto budget gate, not manual restart gate")
+	}
+}
+
+func TestShouldEnforceManualRestartBudgetHonorsAutoOnlyMode(t *testing.T) {
+	cfg := RebalanceConfig{}
+	if !shouldEnforceManualRestartBudget(cfg, "manual", "", true) {
+		t.Fatalf("expected manual restart budget enforcement when auto-only mode is disabled")
+	}
+	cfg.BudgetAutoOnly = true
+	if shouldEnforceManualRestartBudget(cfg, "manual", "", true) {
+		t.Fatalf("expected manual restart budget to be bypassed when budget_auto_only is enabled")
 	}
 }
 

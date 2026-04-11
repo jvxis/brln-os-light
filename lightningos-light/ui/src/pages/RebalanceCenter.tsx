@@ -35,6 +35,7 @@ type RebalanceConfig = {
   roi_min: number
   daily_budget_pct: number
   budget_mode: string
+  budget_auto_only: boolean
   manual_reserve_enabled: boolean
   manual_reserve_mode: string
   manual_reserve_value: number
@@ -87,6 +88,7 @@ type RebalanceOverview = {
   daily_spent_manual_sat: number
   remaining_total_sat?: number
   remaining_for_auto_sat?: number
+  budget_auto_only?: boolean
   manual_reserve_enabled?: boolean
   manual_reserve_mode?: string
   manual_reserve_value?: number
@@ -316,6 +318,7 @@ export default function RebalanceCenter() {
       roi_min: cfg.roi_min,
       daily_budget_pct: cfg.daily_budget_pct,
       budget_mode: cfg.budget_mode,
+      budget_auto_only: cfg.budget_auto_only,
       manual_reserve_enabled: cfg.manual_reserve_enabled,
       manual_reserve_mode: cfg.manual_reserve_mode,
       manual_reserve_value: cfg.manual_reserve_value,
@@ -581,6 +584,7 @@ export default function RebalanceCenter() {
         const normalizedConfig = {
           ...nextConfig,
           budget_mode: nextConfig.budget_mode || 'revenue_24h_pct',
+          budget_auto_only: nextConfig.budget_auto_only ?? false,
           manual_reserve_enabled: nextConfig.manual_reserve_enabled ?? false,
           manual_reserve_mode: nextConfig.manual_reserve_mode || 'fixed_sat',
           manual_reserve_value: nextConfig.manual_reserve_value ?? 0,
@@ -669,6 +673,7 @@ export default function RebalanceCenter() {
           roi_min: config.roi_min,
           daily_budget_pct: config.daily_budget_pct,
           budget_mode: config.budget_mode,
+          budget_auto_only: config.budget_auto_only,
           manual_reserve_enabled: config.manual_reserve_enabled,
           manual_reserve_mode: config.manual_reserve_mode,
           manual_reserve_value: config.manual_reserve_value,
@@ -701,6 +706,7 @@ export default function RebalanceCenter() {
       const normalizedSaved = {
         ...saved,
         budget_mode: saved.budget_mode || 'revenue_24h_pct',
+        budget_auto_only: saved.budget_auto_only ?? false,
         manual_reserve_enabled: saved.manual_reserve_enabled ?? false,
         manual_reserve_mode: saved.manual_reserve_mode || 'fixed_sat',
         manual_reserve_value: saved.manual_reserve_value ?? 0,
@@ -1030,6 +1036,14 @@ export default function RebalanceCenter() {
   const remainingTotalSat = overview?.remaining_total_sat ?? 0
   const remainingForAutoSat = overview?.remaining_for_auto_sat ?? 0
   const manualReserveRemainingSat = overview?.manual_reserve_remaining_sat ?? 0
+  const budgetAutoOnly = overview?.budget_auto_only ?? config?.budget_auto_only ?? false
+  const manualRestartBudgetEnforced = !budgetAutoOnly
+  const autoBudgetCapSat = Math.max(0, (overview?.daily_budget_sat ?? 0) - (overview?.manual_reserve_sat ?? 0))
+  const manualReserveEncroached =
+    manualRestartBudgetEnforced &&
+    manualReserveRemainingSat > 0 &&
+    remainingTotalSat > 0 &&
+    manualReserveRemainingSat > remainingTotalSat
   const autoBudgetLowThresholdSat = Math.max(1, config?.min_execute_sat ?? 500)
   const autoBudgetLow =
     Boolean(overview?.auto_enabled) &&
@@ -1256,7 +1270,11 @@ export default function RebalanceCenter() {
               <p className="text-xs uppercase tracking-wide text-fog/60">{t('rebalanceCenter.overview.dailyBudget')}</p>
               <p className="text-lg font-semibold text-fog">{formatSats(overview.daily_budget_sat)}</p>
               <p className="text-xs text-fog/50">
-                {overview.manual_reserve_enabled
+                {budgetAutoOnly
+                  ? t('rebalanceCenter.overview.budgetModeAutoOnly', {
+                      mode: t(`rebalanceCenter.settings.budgetModeOptions.${config?.budget_mode || 'revenue_24h_pct'}`)
+                    })
+                  : overview.manual_reserve_enabled
                   ? t('rebalanceCenter.overview.budgetModeWithReserve', {
                       mode: t(`rebalanceCenter.settings.budgetModeOptions.${config?.budget_mode || 'revenue_24h_pct'}`)
                     })
@@ -1277,8 +1295,15 @@ export default function RebalanceCenter() {
               <p className="text-xs text-fog/50">{t('rebalanceCenter.overview.dailySpentAuto', { value: formatSats(overview.daily_spent_auto_sat) })}</p>
               <p className="text-xs text-fog/50">{t('rebalanceCenter.overview.dailySpentManual', { value: formatSats(overview.daily_spent_manual_sat) })}</p>
               <p className="text-xs text-fog/50">{t('rebalanceCenter.overview.remainingTotal', { value: formatSats(remainingTotalSat) })}</p>
+              {overview.manual_reserve_enabled && (
+                <p className="text-xs text-fog/50">{t('rebalanceCenter.overview.autoBudgetCap', { value: formatSats(autoBudgetCapSat) })}</p>
+              )}
               <p className="text-xs text-fog/50">{t('rebalanceCenter.overview.autoUsableBudget', { value: formatSats(remainingForAutoSat) })}</p>
-              <p className="text-xs text-fog/50">{t('rebalanceCenter.overview.manualRestartUsableBudget', { value: formatSats(remainingTotalSat) })}</p>
+              {manualRestartBudgetEnforced ? (
+                <p className="text-xs text-fog/50">{t('rebalanceCenter.overview.manualRestartUsableBudget', { value: formatSats(remainingTotalSat) })}</p>
+              ) : (
+                <p className="text-xs text-emerald-200">{t('rebalanceCenter.overview.manualRestartIgnoresBudget')}</p>
+              )}
               {overview.manual_reserve_enabled && (
                 <>
                   <p className="text-xs text-fog/50">
@@ -1293,9 +1318,16 @@ export default function RebalanceCenter() {
                     })}
                   </p>
                   {manualReserveRemainingSat > 0 && (
-                    <p className="text-xs text-fog/40">{t('rebalanceCenter.overview.manualReserveNotExtra')}</p>
+                    <p className="text-xs text-fog/40">
+                      {budgetAutoOnly
+                        ? t('rebalanceCenter.overview.manualReserveAutoOnly')
+                        : t('rebalanceCenter.overview.manualReserveNotExtra')}
+                    </p>
                   )}
                 </>
+              )}
+              {manualReserveEncroached && (
+                <p className="text-xs text-amber-200">{t('rebalanceCenter.overview.manualReserveEncroached')}</p>
               )}
               {autoBudgetLow && (
                 <p className="text-xs text-amber-200">
@@ -1309,7 +1341,7 @@ export default function RebalanceCenter() {
                   {t(`rebalanceCenter.overview.budgetPaused.${overview.last_scan_status}`)}
                 </p>
               )}
-              {remainingTotalSat <= 0 && (
+              {manualRestartBudgetEnforced && remainingTotalSat <= 0 && (
                 <p className="text-xs text-amber-200">
                   {t('rebalanceCenter.overview.manualPaused.exhausted')}
                 </p>
@@ -1487,6 +1519,17 @@ export default function RebalanceCenter() {
                 <option value="hybrid_revenue">{t('rebalanceCenter.settings.budgetModeOptions.hybrid_revenue')}</option>
               </select>
             </div>
+            <label
+              className="flex items-center gap-2 text-sm text-fog/70"
+              title={t('rebalanceCenter.settingsHints.budgetAutoOnly')}
+            >
+              <input
+                type="checkbox"
+                checked={config.budget_auto_only}
+                onChange={(e) => setConfig({ ...config, budget_auto_only: e.target.checked })}
+              />
+              {t('rebalanceCenter.settings.budgetAutoOnly')}
+            </label>
             <label
               className="flex items-center gap-2 text-sm text-fog/70"
               title={t('rebalanceCenter.settingsHints.manualReserveEnabled')}
@@ -2080,6 +2123,7 @@ export default function RebalanceCenter() {
             const isAutoTarget = ch.eligible_as_target && ch.auto_enabled && meetsRoi && passesProfit
             const manualRestartSelected = manualRestart[ch.channel_point] === true
             const manualRestartBudgetLow =
+              manualRestartBudgetEnforced &&
               manualRestartSelected &&
               Boolean(scoreMeta) &&
               (scoreMeta?.estimatedCost ?? 0) > 0 &&
@@ -2292,6 +2336,7 @@ export default function RebalanceCenter() {
                 const isAutoTarget = ch.eligible_as_target && ch.auto_enabled && meetsRoi && passesProfit
                 const manualRestartSelected = manualRestart[ch.channel_point] === true
                 const manualRestartBudgetLow =
+                  manualRestartBudgetEnforced &&
                   manualRestartSelected &&
                   Boolean(scoreMeta) &&
                   (scoreMeta?.estimatedCost ?? 0) > 0 &&

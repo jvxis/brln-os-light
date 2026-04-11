@@ -24,6 +24,7 @@ type rebalanceConfigPayload struct {
 	ROIMin                    *float64 `json:"roi_min,omitempty"`
 	DailyBudgetPct            *float64 `json:"daily_budget_pct,omitempty"`
 	BudgetMode                *string  `json:"budget_mode,omitempty"`
+	BudgetAutoOnly            *bool    `json:"budget_auto_only,omitempty"`
 	ManualReserveEnabled      *bool    `json:"manual_reserve_enabled,omitempty"`
 	ManualReserveMode         *string  `json:"manual_reserve_mode,omitempty"`
 	ManualReserveValue        *float64 `json:"manual_reserve_value,omitempty"`
@@ -158,6 +159,9 @@ func (s *Server) handleRebalanceConfigPost(w http.ResponseWriter, r *http.Reques
 	}
 	if payload.BudgetMode != nil {
 		cfg.BudgetMode = *payload.BudgetMode
+	}
+	if payload.BudgetAutoOnly != nil {
+		cfg.BudgetAutoOnly = *payload.BudgetAutoOnly
 	}
 	if payload.ManualReserveEnabled != nil {
 		cfg.ManualReserveEnabled = *payload.ManualReserveEnabled

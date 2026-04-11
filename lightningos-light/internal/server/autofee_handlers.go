@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -247,6 +248,35 @@ func (s *Server) handleAutofeeRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleAutofeeRefresh(w http.ResponseWriter, r *http.Request) {
+	svc, errMsg := s.autofeeService()
+	if svc == nil {
+		if errMsg == "" {
+			errMsg = "autofee unavailable"
+		}
+		writeError(w, http.StatusServiceUnavailable, errMsg)
+		return
+	}
+
+	var req struct {
+		DryRun bool `json:"dry_run"`
+	}
+	if err := readJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	defer cancel()
+
+	result, err := svc.RefreshReferenceFees(ctx, req.DryRun)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) handleAutofeeStatus(w http.ResponseWriter, r *http.Request) {

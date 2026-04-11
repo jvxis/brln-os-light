@@ -30,6 +30,7 @@ const (
 	autofeeMinCooldownSec       = 3600
 	autofeeNativeSeedMinDays    = 3
 	autofeeNativeSeedMinSamples = 6
+	autofeeRefreshRebalMarkup   = 0.10
 )
 
 const superSourceBaseFeeMsatDefault = 1000
@@ -298,6 +299,31 @@ type AutofeeChannelSettingEntry struct {
 	ChannelID    uint64
 	ChannelPoint string
 	Enabled      bool
+}
+
+type AutofeeRefreshItem struct {
+	ChannelID    uint64 `json:"channel_id"`
+	ChannelPoint string `json:"channel_point"`
+	Alias        string `json:"alias,omitempty"`
+	CurrentPpm   int    `json:"current_ppm"`
+	TargetPpm    int    `json:"target_ppm,omitempty"`
+	ReferencePpm int    `json:"reference_ppm,omitempty"`
+	Source       string `json:"source,omitempty"`
+	Changed      bool   `json:"changed"`
+	Applied      bool   `json:"applied"`
+	Reason       string `json:"reason,omitempty"`
+	Error        string `json:"error,omitempty"`
+}
+
+type AutofeeRefreshResult struct {
+	Total          int                  `json:"total"`
+	Updated        int                  `json:"updated"`
+	Same           int                  `json:"same"`
+	Skipped        int                  `json:"skipped"`
+	Errors         int                  `json:"errors"`
+	DryRun         bool                 `json:"dry_run"`
+	RebalMarkupPct float64              `json:"rebal_markup_pct"`
+	Items          []AutofeeRefreshItem `json:"items,omitempty"`
 }
 
 type autofeeLogItem struct {
@@ -2701,6 +2727,150 @@ func (s *AutofeeService) LoadChannelSettingsDetailed(ctx context.Context) ([]Aut
 	return entries, rows.Err()
 }
 
+func (s *AutofeeService) RefreshReferenceFees(ctx context.Context, dryRun bool) (AutofeeRefreshResult, error) {
+	result := AutofeeRefreshResult{DryRun: dryRun, RebalMarkupPct: autofeeRefreshRebalMarkup * 100}
+	if s.db == nil {
+		return result, errors.New("db unavailable")
+	}
+	if s.lnd == nil {
+		return result, errors.New("lnd unavailable")
+	}
+
+	cfg, err := s.GetConfig(ctx)
+	if err != nil {
+		return result, err
+	}
+	engine := newAutofeeEngine(s, cfg)
+
+	channels, err := s.lnd.ListChannels(ctx)
+	if err != nil {
+		return result, err
+	}
+	result.Total = len(channels)
+
+	forwardStats7d, err := engine.fetchForwardStats(ctx, 7)
+	if err != nil {
+		return result, err
+	}
+	forwardStats21d, err := engine.fetchForwardStats(ctx, 21)
+	if err != nil {
+		return result, err
+	}
+	rebalStats7d, err := engine.fetchRebalanceStats(ctx, 7)
+	if err != nil {
+		return result, err
+	}
+	rebalStats21d, err := engine.fetchRebalanceStats(ctx, 21)
+	if err != nil {
+		return result, err
+	}
+
+	result.Items = make([]AutofeeRefreshItem, 0, len(channels))
+	for _, ch := range channels {
+		item := AutofeeRefreshItem{
+			ChannelID:    ch.ChannelID,
+			ChannelPoint: strings.TrimSpace(ch.ChannelPoint),
+			Alias:        strings.TrimSpace(ch.PeerAlias),
+		}
+		if item.Alias == "" {
+			item.Alias = strings.TrimSpace(ch.RemotePubkey)
+		}
+		if ch.FeeRatePpm != nil {
+			item.CurrentPpm = int(*ch.FeeRatePpm)
+		}
+		if item.ChannelPoint == "" || ch.ChannelID == 0 {
+			item.Reason = "invalid-channel"
+			result.Skipped++
+			result.Items = append(result.Items, item)
+			continue
+		}
+
+		targetPpm, referencePpm, source, ok := selectAutofeeRefreshReference(
+			ch.CapacitySat,
+			forwardStats7d[ch.ChannelID],
+			forwardStats21d[ch.ChannelID],
+			rebalStats7d.ByChannel[ch.ChannelID],
+			rebalStats21d.ByChannel[ch.ChannelID],
+			autofeeRefreshRebalMarkup,
+		)
+		if !ok {
+			seedPpm, seedSource, seedErr := engine.refreshSeedForChannel(ctx, strings.TrimSpace(ch.RemotePubkey))
+			if seedErr != nil {
+				item.Error = seedErr.Error()
+				item.Reason = "seed-error"
+				result.Errors++
+				result.Items = append(result.Items, item)
+				continue
+			}
+			if seedPpm > 0 {
+				targetPpm = int(math.Round(seedPpm))
+				referencePpm = targetPpm
+				source = seedSource
+				ok = true
+			}
+		}
+		if !ok || targetPpm <= 0 {
+			item.Reason = "missing-reference"
+			result.Skipped++
+			result.Items = append(result.Items, item)
+			continue
+		}
+
+		targetPpm = clampInt(targetPpm, cfg.MinPpm, cfg.MaxPpm)
+		item.TargetPpm = targetPpm
+		item.ReferencePpm = referencePpm
+		item.Source = source
+		item.Changed = targetPpm != item.CurrentPpm
+
+		if !item.Changed {
+			item.Reason = "same"
+			result.Same++
+			result.Items = append(result.Items, item)
+			continue
+		}
+
+		policy, err := s.lnd.GetChannelPolicy(ctx, item.ChannelPoint)
+		if err != nil {
+			item.Error = err.Error()
+			item.Reason = "policy-error"
+			result.Errors++
+			result.Items = append(result.Items, item)
+			continue
+		}
+
+		if !dryRun {
+			timeLockDelta := policy.TimeLockDelta
+			if timeLockDelta <= 0 {
+				timeLockDelta = 144
+			}
+			inboundEnabled := policy.InboundBaseMsat != 0 || policy.InboundFeeRatePpm != 0
+			if err := s.lnd.UpdateChannelFees(
+				ctx,
+				item.ChannelPoint,
+				false,
+				policy.BaseFeeMsat,
+				int64(targetPpm),
+				timeLockDelta,
+				inboundEnabled,
+				policy.InboundBaseMsat,
+				policy.InboundFeeRatePpm,
+			); err != nil {
+				item.Error = err.Error()
+				item.Reason = "apply-error"
+				result.Errors++
+				result.Items = append(result.Items, item)
+				continue
+			}
+			item.Applied = true
+		}
+
+		result.Updated++
+		result.Items = append(result.Items, item)
+	}
+
+	return result, nil
+}
+
 func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string) error {
 	channels, err := e.svc.lnd.ListChannels(ctx)
 	if err != nil {
@@ -3681,6 +3851,40 @@ func minRebalFallback21dSat(capacitySat int64) int64 {
 
 func hasRebalFallback21dSignal(rebalAmt21dSat int64, capacitySat int64) bool {
 	return rebalAmt21dSat >= minRebalFallback21dSat(capacitySat)
+}
+
+func applyAutofeeRefreshRebalMarkup(referencePpm int, markupFrac float64) int {
+	if referencePpm <= 0 {
+		return 0
+	}
+	if markupFrac < 0 {
+		markupFrac = 0
+	}
+	return int(math.Ceil(float64(referencePpm) * (1.0 + markupFrac)))
+}
+
+func selectAutofeeRefreshReference(capacitySat int64, forward7d forwardStat, forward21d forwardStat, rebal7d rebalStat, rebal21d rebalStat, rebalMarkupFrac float64) (int, int, string, bool) {
+	outPpm7d := ppmMsat(forward7d.FeeMsat, forward7d.AmtMsat)
+	if outPpm7d > 0 {
+		return outPpm7d, outPpm7d, "outppm7d", true
+	}
+
+	outPpm21d := ppmMsat(forward21d.FeeMsat, forward21d.AmtMsat)
+	if outPpm21d > 0 && hasOutFallback21dSignal(int(forward21d.Count), forward21d.AmtMsat/1000, capacitySat) {
+		return outPpm21d, outPpm21d, "outppm21d", true
+	}
+
+	rebalPpm7d := ppmMsat(rebal7d.FeeMsat, rebal7d.AmtMsat)
+	if rebalPpm7d > 0 {
+		return applyAutofeeRefreshRebalMarkup(rebalPpm7d, rebalMarkupFrac), rebalPpm7d, "rebalppm7d", true
+	}
+
+	rebalPpm21d := ppmMsat(rebal21d.FeeMsat, rebal21d.AmtMsat)
+	if rebalPpm21d > 0 && hasRebalFallback21dSignal(rebal21d.AmtMsat/1000, capacitySat) {
+		return applyAutofeeRefreshRebalMarkup(rebalPpm21d, rebalMarkupFrac), rebalPpm21d, "rebalppm21d", true
+	}
+
+	return 0, 0, "", false
 }
 
 func slowCycle30dMinScore(profile autofeeProfile) int {
@@ -8054,6 +8258,41 @@ func (e *autofeeEngine) seedForChannel(pubkey string, st *autofeeChannelState) (
 		return float64(st.LastSeed), 0, 0, append(tags, "seed:mem")
 	}
 	return 200.0, 0, 0, append(tags, "seed:default")
+}
+
+func (e *autofeeEngine) refreshSeedForChannel(ctx context.Context, pubkey string) (float64, string, error) {
+	pubkey = strings.TrimSpace(pubkey)
+	if pubkey == "" {
+		return 0, "", nil
+	}
+
+	if e.cfg.AmbossEnabled {
+		token, err := e.cachedAmbossToken(ctx)
+		if err != nil {
+			return 0, "", err
+		}
+		if token != "" {
+			seed, _, _, _, err := e.fetchAmbossSeed(pubkey, token)
+			if err != nil {
+				return 0, "", err
+			}
+			if seed > 0 {
+				return seed, "seed:amboss", nil
+			}
+		}
+	}
+
+	if e.cfg.NativeSeedEnabled {
+		seed, _, _, _, ok, err := e.fetchNativeSeed(pubkey)
+		if err != nil {
+			return 0, "", err
+		}
+		if ok && seed > 0 {
+			return seed, "seed:native", nil
+		}
+	}
+
+	return 0, "", nil
 }
 
 func (e *autofeeEngine) fetchAmbossToken(ctx context.Context) (string, error) {

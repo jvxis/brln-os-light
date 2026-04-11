@@ -45,8 +45,8 @@ func TestSummarizeGraphExplorerPoliciesComputesCorrectedAverage(t *testing.T) {
 	if summary.WeightedAvgPpm != 893 {
 		t.Fatalf("expected weighted avg 893, got %d", summary.WeightedAvgPpm)
 	}
-	if summary.CorrectedAvgPpm != 31 {
-		t.Fatalf("expected corrected avg 31, got %d", summary.CorrectedAvgPpm)
+	if summary.CorrectedAvgPpm != 545 {
+		t.Fatalf("expected corrected avg 545, got %d", summary.CorrectedAvgPpm)
 	}
 	if summary.CorrectedAvgPpm >= summary.WeightedAvgPpm {
 		t.Fatalf("expected corrected avg %d to stay below weighted avg %d", summary.CorrectedAvgPpm, summary.WeightedAvgPpm)
@@ -77,10 +77,10 @@ func TestGraphExplorerBuildFeeHistoryIncludesCorrectedAverage(t *testing.T) {
 	if history[0].Day != "2026-04-11" {
 		t.Fatalf("expected day 2026-04-11, got %q", history[0].Day)
 	}
-	if history[0].OutboundCorrectedAvgPpm != 18 {
-		t.Fatalf("expected outbound corrected avg 18, got %d", history[0].OutboundCorrectedAvgPpm)
+	if history[0].OutboundCorrectedAvgPpm != 208 {
+		t.Fatalf("expected outbound corrected avg 208, got %d", history[0].OutboundCorrectedAvgPpm)
 	}
-	if history[0].InboundCorrectedAvgPpm != -491 {
-		t.Fatalf("expected inbound corrected avg -491, got %d", history[0].InboundCorrectedAvgPpm)
+	if history[0].InboundCorrectedAvgPpm != -399 {
+		t.Fatalf("expected inbound corrected avg -399, got %d", history[0].InboundCorrectedAvgPpm)
 	}
 }

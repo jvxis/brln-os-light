@@ -609,7 +609,7 @@ func summarizeGraphExplorerPolicies(samples []graphExplorerPolicySample) GraphEx
 		MinPpm:             minPpm,
 		MaxPpm:             maxPpm,
 		AvgPpm:             totalPpm / int64(len(samples)),
-		CorrectedAvgPpm:    graphExplorerCorrectedWeightedAvg(samples, median),
+		CorrectedAvgPpm:    graphExplorerCorrectedWeightedAvg(weightedAvg, median),
 		MedianPpm:          median,
 		WeightedAvgPpm:     weightedAvg,
 		TotalCapacitySat:   totalCapacity,
@@ -658,90 +658,10 @@ func graphExplorerHistorySince(rangeSince *time.Time) *time.Time {
 	return rangeSince
 }
 
-func graphExplorerCorrectedWeightedAvg(samples []graphExplorerPolicySample, median int64) int64 {
-	if len(samples) == 0 {
-		return 0
-	}
-
-	deviationSamples := make([]graphExplorerPolicySample, 0, len(samples))
-	for _, sample := range samples {
-		deviation := sample.Ppm - median
-		if deviation < 0 {
-			deviation = -deviation
-		}
-		deviationSamples = append(deviationSamples, graphExplorerPolicySample{
-			Ppm:         deviation,
-			CapacitySat: sample.CapacitySat,
-		})
-	}
-
-	mad := graphExplorerWeightedMedian(deviationSamples)
-	spread := mad * 3
-	if spread < 25 {
-		spread = 25
-	}
-	lowerBound := median - spread
-	upperBound := median + spread
-
-	var totalCapacity int64
-	var weightedNumerator int64
-	var totalClamped int64
-	for _, sample := range samples {
-		clamped := sample.Ppm
-		if clamped < lowerBound {
-			clamped = lowerBound
-		} else if clamped > upperBound {
-			clamped = upperBound
-		}
-		totalClamped += clamped
-		if sample.CapacitySat > 0 {
-			totalCapacity += sample.CapacitySat
-			weightedNumerator += clamped * sample.CapacitySat
-		}
-	}
-	if totalCapacity > 0 {
-		return weightedNumerator / totalCapacity
-	}
-	return totalClamped / int64(len(samples))
-}
-
-func graphExplorerWeightedMedian(samples []graphExplorerPolicySample) int64 {
-	if len(samples) == 0 {
-		return 0
-	}
-	ordered := append([]graphExplorerPolicySample(nil), samples...)
-	sort.Slice(ordered, func(i, j int) bool {
-		if ordered[i].Ppm == ordered[j].Ppm {
-			return ordered[i].CapacitySat < ordered[j].CapacitySat
-		}
-		return ordered[i].Ppm < ordered[j].Ppm
-	})
-
-	var totalWeight int64
-	for _, sample := range ordered {
-		if sample.CapacitySat > 0 {
-			totalWeight += sample.CapacitySat
-			continue
-		}
-		totalWeight++
-	}
-	if totalWeight <= 0 {
-		return ordered[len(ordered)/2].Ppm
-	}
-
-	threshold := (totalWeight + 1) / 2
-	var cumulative int64
-	for _, sample := range ordered {
-		weight := sample.CapacitySat
-		if weight <= 0 {
-			weight = 1
-		}
-		cumulative += weight
-		if cumulative >= threshold {
-			return sample.Ppm
-		}
-	}
-	return ordered[len(ordered)-1].Ppm
+func graphExplorerCorrectedWeightedAvg(weightedAvg, median int64) int64 {
+	const weightedShare = 0.60
+	const medianShare = 0.40
+	return int64(float64(weightedAvg)*weightedShare + float64(median)*medianShare)
 }
 
 func graphExplorerDistributePolicies(samples []graphExplorerPolicySample) []GraphExplorerFeeDistribution {

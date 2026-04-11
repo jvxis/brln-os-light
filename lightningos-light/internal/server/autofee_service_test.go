@@ -810,14 +810,19 @@ func TestEffectiveCooldownUpSecForChannelRespectsHoldAndBase(t *testing.T) {
 }
 
 func TestShouldBypassStrictCooldownUp(t *testing.T) {
-	if shouldBypassStrictCooldownUp(0, false) {
+	profile := autofeeProfiles["moderate"]
+
+	if shouldBypassStrictCooldownUp(profile, 0, false, 500, 400, 0, 400, "outrate") {
 		t.Fatalf("did not expect plain forward activity to bypass strict cooldown")
 	}
-	if !shouldBypassStrictCooldownUp(1, false) {
-		t.Fatalf("expected recent rebalance to bypass strict cooldown")
-	}
-	if !shouldBypassStrictCooldownUp(0, true) {
+	if !shouldBypassStrictCooldownUp(profile, 0, true, 2000, 400, 0, 400, "outrate") {
 		t.Fatalf("expected liquidity-hot signal to bypass strict cooldown")
+	}
+	if !shouldBypassStrictCooldownUp(profile, 1, false, 480, 400, 0, 400, "outrate") {
+		t.Fatalf("expected recent rebalance near the historical reference to bypass strict cooldown")
+	}
+	if shouldBypassStrictCooldownUp(profile, 1, false, 930, 409, 430, 430, "rebal") {
+		t.Fatalf("did not expect detached recent-rebalance channel to bypass strict cooldown")
 	}
 }
 

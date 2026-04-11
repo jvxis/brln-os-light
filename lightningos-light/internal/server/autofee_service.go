@@ -4259,8 +4259,35 @@ func effectiveCooldownUpSecForChannel(profile autofeeProfile, baseCooldownUpSec 
 	return cooldownSec
 }
 
-func shouldBypassStrictCooldownUp(recentRebalanceCount int, htlcLiquidityHot bool) bool {
-	return recentRebalanceCount > 0 || htlcLiquidityHot
+func strictCooldownBypassDetachedMult(profile autofeeProfile) float64 {
+	switch {
+	case profile.StepCap <= 0.05:
+		return 1.20
+	case profile.StepCap >= 0.10:
+		return 1.30
+	default:
+		return 1.25
+	}
+}
+
+func shouldBypassStrictCooldownUp(profile autofeeProfile, recentRebalanceCount int, htlcLiquidityHot bool, localPpm int, outPpm7d int, rebalRefPpm int, baseCostPpm int, baseCostSrc string) bool {
+	if htlcLiquidityHot {
+		return true
+	}
+	if recentRebalanceCount <= 0 {
+		return false
+	}
+	if localPpm <= 0 {
+		return true
+	}
+	refPpm := maxInt(outPpm7d, rebalRefPpm)
+	if (isRebalanceBaseCostSource(baseCostSrc) || isOutrateBaseCostSource(baseCostSrc)) && baseCostPpm > refPpm {
+		refPpm = baseCostPpm
+	}
+	if refPpm <= 0 {
+		return true
+	}
+	return float64(localPpm) <= float64(refPpm)*strictCooldownBypassDetachedMult(profile)
 }
 
 func isMoveTowardTarget(localPpm int, nextPpm int, targetPpm int) bool {
@@ -7091,6 +7118,11 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		tags = append(tags, "extreme-drain-unlock")
 	}
 
+	if holdMatureEmptySinkUp && target > localPpm {
+		target = localPpm
+		tags = append(tags, "empty-sink-hard-hold")
+	}
+
 	if target > localPpm {
 		tags = append(tags, "trend-up")
 	} else if target < localPpm {
@@ -7277,6 +7309,11 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		floor = localPpm
 		floorSrc = "no-signal"
 		tags = append(tags, "no-signal-floor-relax")
+	}
+	if holdMatureEmptySinkUp && floor > localPpm && shouldRelaxFloorForMatureEmptySinkAnchor(floorSrc) {
+		floor = localPpm
+		floorSrc = "empty-sink-hold"
+		tags = append(tags, "empty-sink-floor-hard-hold")
 	}
 	if assistPreserveActive && floor > localPpm {
 		floor = localPpm
@@ -7527,7 +7564,16 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		bypassUpCooldown := false
 		if finalPpm > localPpm {
 			cooldownHours = float64(maxInt(1, effectiveCooldownUpSecForChannel(e.profile, cooldownUpSec, outRatio, holdUpOnRecentRebalance))) / 3600.0
-			bypassUpCooldown = shouldBypassStrictCooldownUp(recentRebalanceCount, htlcLiquidityHot)
+			bypassUpCooldown = shouldBypassStrictCooldownUp(
+				e.profile,
+				recentRebalanceCount,
+				htlcLiquidityHot,
+				localPpm,
+				outPpm7d,
+				rebalHistoryRefPpm,
+				baseCostPpm,
+				baseCostSrc,
+			)
 		}
 		if !st.LastTs.IsZero() {
 			hoursSince := e.now.Sub(st.LastTs).Hours()
@@ -8984,6 +9030,10 @@ func formatAutofeeTags(d *decision) string {
 			add("🧯noflow-up-cap")
 		case t == "empty-sink-hold":
 			add("🧯empty-sink-hold")
+		case t == "empty-sink-hard-hold":
+			add("🧯empty-sink-hard")
+		case t == "empty-sink-floor-hard-hold":
+			add("🧱empty-sink-floor")
 		case t == "empty-sink-rebal-off":
 			add("🧯empty-sink-rebal-off")
 		case t == "empty-sink-down-anchor":

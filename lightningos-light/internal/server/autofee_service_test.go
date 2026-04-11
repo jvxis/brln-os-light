@@ -235,6 +235,44 @@ func TestApplySeedSoftEnvelopeDoesNotRaiseFloorWhenNotAllowed(t *testing.T) {
 	}
 }
 
+func TestEffectiveChannelOutRatioKeepsNonOutlierRaw(t *testing.T) {
+	got, meta := effectiveChannelOutRatio(1.0, 5_000_000, 5_000_000, 8_000_000, 0.30)
+	if math.Abs(got-1.0) > 0.000001 {
+		t.Fatalf("expected non-outlier channel to keep raw out ratio, got %.6f want 1.0", got)
+	}
+	if meta.OutlierSmall || meta.OutlierLarge {
+		t.Fatalf("did not expect 5M on 8M average to be classified as outlier: %+v", meta)
+	}
+}
+
+func TestEffectiveChannelOutRatioAdjustsTrueSmallOutlier(t *testing.T) {
+	got, meta := effectiveChannelOutRatio(1.0, 499_000, 500_000, 9_000_000, 0.30)
+	if !meta.OutlierSmall {
+		t.Fatalf("expected 500k on 9M average to be classified as small outlier: %+v", meta)
+	}
+	if !(got < meta.Raw) {
+		t.Fatalf("expected normalized out ratio to be lower for true small outlier: got %.6f raw %.6f", got, meta.Raw)
+	}
+}
+
+func TestShouldHoldSeedDrivenUpOnFullChannel(t *testing.T) {
+	if !shouldHoldSeedDrivenUpOnFullChannel(false, 0.99, 213, 190, 0, 0, "seed") {
+		t.Fatalf("expected seed-driven up hold for full channel without local history")
+	}
+	if shouldHoldSeedDrivenUpOnFullChannel(false, 0.62, 213, 190, 0, 0, "seed") {
+		t.Fatalf("did not expect hold when channel is not full")
+	}
+	if shouldHoldSeedDrivenUpOnFullChannel(false, 0.99, 213, 190, 25, 0, "seed") {
+		t.Fatalf("did not expect hold when local outrate history exists")
+	}
+	if shouldHoldSeedDrivenUpOnFullChannel(false, 0.99, 213, 190, 0, 120, "seed") {
+		t.Fatalf("did not expect hold when local rebalance history exists")
+	}
+	if shouldHoldSeedDrivenUpOnFullChannel(false, 0.99, 213, 190, 0, 0, "outrate") {
+		t.Fatalf("did not expect hold when base cost is not seed")
+	}
+}
+
 func TestComputeInboundDiscountWithRetainedSpread(t *testing.T) {
 	got := computeInboundDiscount(true, "sink", 0.12, 6, 300, 500, 1000, 0.95, 0.15, 0.12)
 	if got != 379 {

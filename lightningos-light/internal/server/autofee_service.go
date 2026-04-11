@@ -153,6 +153,7 @@ const (
 	channelOutlierLargeCapRelMin        = 2.00
 	channelOutlierSmallCapRelMax        = 0.50
 	channelOutNormTagDiffMin            = 0.04
+	seedFullHoldOutRatioMin             = 0.90
 	classificationBiasEMAAlpha          = 0.60
 	classificationSinkBiasMin           = 0.45
 	classificationSourceBiasMax         = -0.35
@@ -378,6 +379,7 @@ type autofeeLogItem struct {
 	TargetRaw                int      `json:"target_raw,omitempty"`
 	TargetFinal              int      `json:"target_final,omitempty"`
 	OutRatio                 float64  `json:"out_ratio,omitempty"`
+	OutRatioEffective        float64  `json:"out_ratio_effective,omitempty"`
 	OutPpm7d                 int      `json:"out_ppm7d,omitempty"`
 	RebalPpm7d               int      `json:"rebal_ppm7d,omitempty"`
 	Seed                     int      `json:"seed,omitempty"`
@@ -3584,16 +3586,18 @@ func effectiveChannelOutRatio(outRatio float64, localBalSat int64, capacitySat i
 	meta.CapRel = capRel
 	meta.OutlierLarge = capRel >= channelOutlierLargeCapRelMin
 	meta.OutlierSmall = capRel <= channelOutlierSmallCapRelMax
+	localSat := math.Max(0.0, float64(localBalSat))
+	meta.LocalToAvg = localSat / float64(avgCapacitySat)
+	if !meta.OutlierLarge && !meta.OutlierSmall {
+		return effective, meta
+	}
 	sizeFactor := math.Pow(capRel, channelSizeRatioExponent)
 	sizeFactor = clampFloat(sizeFactor, channelSizeRatioFactorMin, channelSizeRatioFactorMax)
 	ratioAdj := clampFloat(effective*sizeFactor, 0.0, 1.0)
-
-	localSat := math.Max(0.0, float64(localBalSat))
 	absScore := 0.0
 	if localSat > 0 {
 		absScore = localSat / (localSat + float64(avgCapacitySat))
 	}
-	meta.LocalToAvg = localSat / float64(avgCapacitySat)
 
 	blendWeight := 0.0
 	blendDen := math.Log(channelOutlierBlendFullAtRatio)
@@ -4739,6 +4743,19 @@ func shouldBlockAutofeeIdleUpwardPressure(marketRefillMode bool, noFlow1d bool, 
 	return !observedOutSignal && !observedRebalSignal
 }
 
+func shouldHoldSeedDrivenUpOnFullChannel(marketRefillMode bool, rawOutRatio float64, target int, localPpm int, outPpm7d int, rebalHistoryRefPpm int, baseCostSrc string) bool {
+	if marketRefillMode || target <= localPpm {
+		return false
+	}
+	if rawOutRatio < seedFullHoldOutRatioMin {
+		return false
+	}
+	if outPpm7d > 0 || rebalHistoryRefPpm > 0 {
+		return false
+	}
+	return strings.TrimSpace(baseCostSrc) == "seed"
+}
+
 func shouldRefreshAutofeeOutrateMemory(outPpm7d int, recentForwards1d int, outAmt1dSat int64) bool {
 	if outPpm7d <= 0 {
 		return false
@@ -5341,6 +5358,7 @@ type decision struct {
 	PrevInboundDiscount     int
 	SuperSourceActive       bool
 	OutRatio                float64
+	OutRatioEffective       float64
 	OutPpm7d                int
 	RebalPpm                int
 	Seed                    int
@@ -5666,6 +5684,7 @@ func buildAutofeeChannelLogEntry(d *decision, category string, dryRun bool, err 
 		TargetRaw:               d.TargetRaw,
 		TargetFinal:             d.TargetFinal,
 		OutRatio:                d.OutRatio,
+		OutRatioEffective:       d.OutRatioEffective,
 		OutPpm7d:                d.OutPpm7d,
 		RebalPpm7d:              d.RebalPpm,
 		Seed:                    d.Seed,
@@ -5979,11 +5998,11 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		localPpm = e.cfg.MinPpm
 	}
 
-	outRatio := 0.5
+	rawOutRatio := 0.5
 	if ch.CapacitySat > 0 {
-		outRatio = float64(ch.LocalBalanceSat) / float64(ch.CapacitySat)
+		rawOutRatio = float64(ch.LocalBalanceSat) / float64(ch.CapacitySat)
 	}
-	outRatio, outNormMeta := effectiveChannelOutRatio(outRatio, ch.LocalBalanceSat, ch.CapacitySat, e.calib.AvgCapacitySat, e.calib.LocalRatio)
+	outRatio, outNormMeta := effectiveChannelOutRatio(rawOutRatio, ch.LocalBalanceSat, ch.CapacitySat, e.calib.AvgCapacitySat, e.calib.LocalRatio)
 	ranking, hasRanking := e.ranking[normalizeChannelPointKey(ch.ChannelPoint)]
 
 	fwd := forwardStats[ch.ChannelID]
@@ -7118,6 +7137,20 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		tags = append(tags, "extreme-drain-unlock")
 	}
 
+	seedFullHoldActive := shouldHoldSeedDrivenUpOnFullChannel(
+		marketRefillMode,
+		rawOutRatio,
+		target,
+		localPpm,
+		outPpm7d,
+		rebalHistoryRefPpm,
+		baseCostSrc,
+	)
+	if seedFullHoldActive {
+		target = localPpm
+		tags = append(tags, "seed-full-hold")
+	}
+
 	if holdMatureEmptySinkUp && target > localPpm {
 		target = localPpm
 		tags = append(tags, "empty-sink-hard-hold")
@@ -7309,6 +7342,14 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		floor = localPpm
 		floorSrc = "no-signal"
 		tags = append(tags, "no-signal-floor-relax")
+	}
+	if seedFullHoldActive && floor > localPpm {
+		switch floorSrc {
+		case "seed", "seed-sink", "seed-soft":
+			floor = localPpm
+			floorSrc = "seed-hold"
+			tags = append(tags, "seed-full-floor-hold")
+		}
 	}
 	if holdMatureEmptySinkUp && floor > localPpm && shouldRelaxFloorForMatureEmptySinkAnchor(floorSrc) {
 		floor = localPpm
@@ -7792,7 +7833,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		InboundDiscount:         inboundDiscount,
 		PrevInboundDiscount:     prevInboundDiscount,
 		SuperSourceActive:       superSourceActive,
-		OutRatio:                outRatio,
+		OutRatio:                rawOutRatio,
+		OutRatioEffective:       outRatio,
 		OutPpm7d:                outPpm7d,
 		RebalPpm:                loggedRebalPpm,
 		Seed:                    int(seed),
@@ -9034,6 +9076,10 @@ func formatAutofeeTags(d *decision) string {
 			add("🧯empty-sink-hard")
 		case t == "empty-sink-floor-hard-hold":
 			add("🧱empty-sink-floor")
+		case t == "seed-full-hold":
+			add("🧭seed-full-hold")
+		case t == "seed-full-floor-hold":
+			add("🧱seed-full-floor")
 		case t == "empty-sink-rebal-off":
 			add("🧯empty-sink-rebal-off")
 		case t == "empty-sink-down-anchor":

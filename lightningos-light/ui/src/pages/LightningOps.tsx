@@ -577,6 +577,7 @@ type AutofeeResultItem = {
   target_raw?: number
   target_final?: number
   out_ratio?: number
+  out_ratio_effective?: number
   out_ppm7d?: number
   rebal_ppm7d?: number
   seed?: number

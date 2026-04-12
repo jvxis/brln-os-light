@@ -4634,15 +4634,65 @@ func antiFlipExtraConfirmRoundsForChannel(profile autofeeProfile, st *autofeeCha
 	return extraRounds, []string{"anti-flip-window"}
 }
 
-func capBalancedFloorDrivenUp(profile autofeeProfile, classLabel string, outRatio float64, localPpm int, targetPpm int, finalPpm int) (int, []string) {
+func dynamicGoodOutRatio(profile autofeeProfile, liquidityClass string, nodeLocalRatio float64, meta outRatioNormalizationMeta) float64 {
+	base := profile.BalancedUpOutRatioMin
+	if profile.OutrateTargetOutRatioMin > base {
+		base = profile.OutrateTargetOutRatioMin
+	}
+	if base <= 0 {
+		base = profile.HighOutThresh
+	}
+	if base <= 0 {
+		base = 0.20
+	}
+
+	factor := 1.0
+	switch strings.ToLower(strings.TrimSpace(liquidityClass)) {
+	case "drained":
+		factor *= 0.82
+	case "full":
+		factor *= 1.12
+	default:
+		factor *= 1.0
+	}
+
+	if nodeLocalRatio > 0 && nodeLocalRatio < 1 {
+		if nodeLocalRatio < 0.50 {
+			lack := (0.50 - nodeLocalRatio) / 0.50
+			factor *= 1.0 - clampFloat(lack, 0.0, 1.0)*0.20
+		} else if nodeLocalRatio > 0.50 {
+			headroom := (nodeLocalRatio - 0.50) / 0.50
+			factor *= 1.0 + clampFloat(headroom, 0.0, 1.0)*0.12
+		}
+	}
+
+	if meta.OutlierSmall {
+		factor *= 0.92
+	} else if meta.OutlierLarge {
+		factor *= 1.08
+	}
+
+	return clampFloat(base*factor, 0.08, 0.35)
+}
+
+func dynamicUpwardPressureOutRatio(rawOutRatio float64, effectiveOutRatio float64, meta outRatioNormalizationMeta) float64 {
+	if meta.OutlierLarge || meta.OutlierSmall {
+		return effectiveOutRatio
+	}
+	return rawOutRatio
+}
+
+func capBalancedFloorDrivenUp(profile autofeeProfile, classLabel string, outRatio float64, goodOutRatio float64, localPpm int, targetPpm int, finalPpm int) (int, []string) {
 	if finalPpm <= localPpm || targetPpm > localPpm || localPpm <= 0 {
 		return finalPpm, nil
 	}
-	minOutRatio := profile.BalancedUpOutRatioMin
-	if minOutRatio <= 0 {
-		minOutRatio = 0.20
+	if goodOutRatio <= 0 {
+		goodOutRatio = profile.BalancedUpOutRatioMin
 	}
-	if outRatio < minOutRatio {
+	if goodOutRatio <= 0 {
+		goodOutRatio = 0.20
+	}
+	if outRatio < goodOutRatio {
 		return finalPpm, nil
 	}
 	capFrac := profile.BalancedFloorUpCap
@@ -4700,15 +4750,17 @@ func applyHistoryReferenceUpCap(marketRefillMode bool, newInboundBootstrap bool,
 	return targetPpm, finalPpm, nil
 }
 
-func applyOutrateTargetAnchor(profile autofeeProfile, targetPpm int, outPpm7d int, outRatio float64, fwdCount int) (int, []string) {
+func applyOutrateTargetAnchor(profile autofeeProfile, targetPpm int, outPpm7d int, outRatio float64, goodOutRatio float64, fwdCount int) (int, []string) {
 	if targetPpm <= 0 || outPpm7d <= 0 {
 		return targetPpm, nil
 	}
-	minOutRatio := profile.OutrateTargetOutRatioMin
-	if minOutRatio <= 0 {
-		minOutRatio = 0.20
+	if goodOutRatio <= 0 {
+		goodOutRatio = profile.OutrateTargetOutRatioMin
 	}
-	if outRatio < minOutRatio {
+	if goodOutRatio <= 0 {
+		goodOutRatio = 0.20
+	}
+	if outRatio < goodOutRatio {
 		return targetPpm, nil
 	}
 	minFwds := profile.OutrateTargetMinFwds
@@ -6748,6 +6800,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		rawOutRatio = float64(ch.LocalBalanceSat) / float64(ch.CapacitySat)
 	}
 	outRatio, outNormMeta := effectiveChannelOutRatio(rawOutRatio, ch.LocalBalanceSat, ch.CapacitySat, e.calib.AvgCapacitySat, e.calib.LocalRatio)
+	upwardPressureOutRatio := dynamicUpwardPressureOutRatio(rawOutRatio, outRatio, outNormMeta)
+	goodOutRatio := dynamicGoodOutRatio(e.profile, e.calib.LiquidityClass, e.calib.LocalRatio, outNormMeta)
 	ranking, hasRanking := e.ranking[normalizeChannelPointKey(ch.ChannelPoint)]
 
 	fwd := forwardStats[ch.ChannelID]
@@ -7705,7 +7759,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		!superSourceActive &&
 		!highOutStagnationPressure
 	if allowOutrateTargetAnchor {
-		anchoredTarget, anchorTags := applyOutrateTargetAnchor(e.profile, target, outPpm7d, outRatio, fwdCount)
+		anchoredTarget, anchorTags := applyOutrateTargetAnchor(e.profile, target, outPpm7d, upwardPressureOutRatio, goodOutRatio, fwdCount)
 		if anchoredTarget > target {
 			target = anchoredTarget
 			tags = append(tags, anchorTags...)
@@ -7971,7 +8025,10 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 	floor := int(math.Ceil(float64(floorBasePpm) * 1.10))
 	floorSrc := floorSourceFromBaseCost(floorBaseSrc, marketRefillMode)
-	if strings.EqualFold(classLabel, "sink") && baseCostPpm > 0 && e.profile.SinkExtraFloorMargin > 0 && !highOutStagnationPressure && !holdMatureEmptySinkUp {
+	goodLiquidityHold := !marketRefillMode &&
+		strings.EqualFold(classLabel, "sink") &&
+		upwardPressureOutRatio >= goodOutRatio
+	if strings.EqualFold(classLabel, "sink") && baseCostPpm > 0 && e.profile.SinkExtraFloorMargin > 0 && !highOutStagnationPressure && !holdMatureEmptySinkUp && !goodLiquidityHold {
 		sinkFloor := int(math.Ceil(float64(baseCostPpm) * (1.10 + e.profile.SinkExtraFloorMargin)))
 		if sinkFloor > floor {
 			floor = sinkFloor
@@ -7984,6 +8041,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			}
 			tags = append(tags, "sink-floor")
 		}
+	} else if goodLiquidityHold && strings.EqualFold(classLabel, "sink") && baseCostPpm > 0 && e.profile.SinkExtraFloorMargin > 0 && !highOutStagnationPressure && !holdMatureEmptySinkUp {
+		tags = append(tags, "sink-floor-paused-goodliq")
 	}
 	if holdMatureEmptySinkUp && (floorSrc == "rebal" || floorSrc == "rebal-sink") && floor > localPpm {
 		floor = localPpm
@@ -8025,6 +8084,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			tags = append(tags, "empty-sink-peg-paused")
 		} else if rebalExecutionDownAnchorActive && target < localPpm && peg > floor {
 			tags = append(tags, "rebal-exec-peg-paused")
+		} else if goodLiquidityHold && peg > floor {
+			tags = append(tags, "peg-paused-goodliq")
 		} else if peg > floor && (withinGrace || demandPeg) {
 			floor = peg
 			floorSrc = "peg"
@@ -8070,6 +8131,19 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			floor = revFloor
 			floorSrc = "revfloor"
 			tags = append(tags, "revfloor")
+		}
+	}
+
+	if !marketRefillMode &&
+		floor > localPpm &&
+		outPpm7d <= 0 &&
+		rebalHistoryRefPpm <= 0 &&
+		upwardPressureOutRatio >= goodOutRatio {
+		switch floorSrc {
+		case "seed", "seed-sink", "seed-soft":
+			floor = localPpm
+			floorSrc = "seed-goodliq-hold"
+			tags = append(tags, "seed-goodliq-hold")
 		}
 	}
 
@@ -8262,7 +8336,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 
 	floorDrivenUp := finalPpm > localPpm && floor > localPpm && floor > target
 	if floorDrivenUp {
-		if cappedPpm, capTags := capBalancedFloorDrivenUp(e.profile, classLabel, outRatio, localPpm, target, finalPpm); cappedPpm != finalPpm {
+		if cappedPpm, capTags := capBalancedFloorDrivenUp(e.profile, classLabel, upwardPressureOutRatio, goodOutRatio, localPpm, target, finalPpm); cappedPpm != finalPpm {
 			finalPpm = cappedPpm
 			tags = append(tags, capTags...)
 			floorDrivenUp = finalPpm > localPpm && floor > localPpm && floor > target

@@ -255,6 +255,26 @@ func TestEffectiveChannelOutRatioAdjustsTrueSmallOutlier(t *testing.T) {
 	}
 }
 
+func TestDynamicUpwardPressureOutRatioPrefersRawForNormalChannels(t *testing.T) {
+	meta := outRatioNormalizationMeta{}
+	got := dynamicUpwardPressureOutRatio(0.31, 0.24, meta)
+	if math.Abs(got-0.31) > 0.000001 {
+		t.Fatalf("expected normal channel upward gate to use raw ratio, got %.6f want 0.31", got)
+	}
+}
+
+func TestDynamicGoodOutRatioDropsWhenNodeLiquidityIsDrained(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	drained := dynamicGoodOutRatio(profile, "drained", 0.30, outRatioNormalizationMeta{})
+	full := dynamicGoodOutRatio(profile, "full", 0.80, outRatioNormalizationMeta{})
+	if !(drained < profile.BalancedUpOutRatioMin) {
+		t.Fatalf("expected drained node threshold below profile base, got %.4f base %.4f", drained, profile.BalancedUpOutRatioMin)
+	}
+	if !(full > drained) {
+		t.Fatalf("expected full node threshold above drained threshold, got full %.4f drained %.4f", full, drained)
+	}
+}
+
 func TestShouldHoldSeedDrivenUpOnFullChannel(t *testing.T) {
 	if !shouldHoldSeedDrivenUpOnFullChannel(false, 0.99, 213, 190, 0, 0, "seed") {
 		t.Fatalf("expected seed-driven up hold for full channel without local history")
@@ -899,7 +919,7 @@ func TestAntiFlipExtraConfirmRoundsBypassesStrongSignal(t *testing.T) {
 
 func TestCapBalancedFloorDrivenUpForRouter(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
-	capped, tags := capBalancedFloorDrivenUp(profile, "router", 0.32, 1710, 1533, 2012)
+	capped, tags := capBalancedFloorDrivenUp(profile, "router", 0.32, 0.20, 1710, 1533, 2012)
 	if capped >= 2012 {
 		t.Fatalf("expected balanced floor-driven rise to be capped below floor, got %d", capped)
 	}
@@ -913,7 +933,7 @@ func TestCapBalancedFloorDrivenUpForRouter(t *testing.T) {
 
 func TestCapBalancedFloorDrivenUpBypassesDrainedSink(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
-	capped, tags := capBalancedFloorDrivenUp(profile, "sink", 0.08, 1000, 950, 1180)
+	capped, tags := capBalancedFloorDrivenUp(profile, "sink", 0.08, 0.20, 1000, 950, 1180)
 	if capped != 1180 {
 		t.Fatalf("expected drained sink to keep stronger upward floor, got %d", capped)
 	}
@@ -924,7 +944,7 @@ func TestCapBalancedFloorDrivenUpBypassesDrainedSink(t *testing.T) {
 
 func TestCapBalancedFloorDrivenUpForMidLiquiditySink(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
-	capped, tags := capBalancedFloorDrivenUp(profile, "sink", 0.24, 1784, 1592, 2369)
+	capped, tags := capBalancedFloorDrivenUp(profile, "sink", 0.24, 0.20, 1784, 1592, 2369)
 	if capped >= 2369 {
 		t.Fatalf("expected mid-liquidity sink rise to be capped below floor, got %d", capped)
 	}
@@ -938,7 +958,7 @@ func TestCapBalancedFloorDrivenUpForMidLiquiditySink(t *testing.T) {
 
 func TestApplyOutrateTargetAnchorModerate(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
-	anchored, tags := applyOutrateTargetAnchor(profile, 512, 1086, 0.32, 9)
+	anchored, tags := applyOutrateTargetAnchor(profile, 512, 1086, 0.32, 0.20, 9)
 	if anchored != 869 {
 		t.Fatalf("unexpected anchored target: got %d want 869", anchored)
 	}
@@ -949,7 +969,7 @@ func TestApplyOutrateTargetAnchorModerate(t *testing.T) {
 
 func TestApplyOutrateTargetAnchorBypassesLowLiquidity(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
-	anchored, tags := applyOutrateTargetAnchor(profile, 512, 1086, 0.12, 9)
+	anchored, tags := applyOutrateTargetAnchor(profile, 512, 1086, 0.12, 0.20, 9)
 	if anchored != 512 {
 		t.Fatalf("expected low-liquidity channel to keep original target, got %d", anchored)
 	}

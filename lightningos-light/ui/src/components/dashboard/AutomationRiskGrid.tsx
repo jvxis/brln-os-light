@@ -65,25 +65,25 @@ function AutomationRow({ label, enabled, status, lastOkAt, lastAttemptAt, lastEr
   const { t, i18n } = useTranslation()
   const locale = getLocale(i18n.language)
   const badge = buildAutomationBadge(t, enabled, status, Boolean(lastError))
+  const primaryMeta = lastError
+    ? `${t('dashboard.lastErrorLabel')}: ${lastError}`
+    : lastOkAt
+      ? `${t('dashboard.lastRunLabel')}: ${formatTimeAgo(locale, lastOkAt)}`
+      : lastAttemptAt
+        ? `${t('dashboard.lastAttemptLabel')}: ${formatTimeAgo(locale, lastAttemptAt)}`
+        : extra || t('common.na')
+  const secondaryMeta = extra && (lastError || lastOkAt || lastAttemptAt) ? extra : ''
 
   return (
     <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm font-medium text-fog/85">{label}</p>
-          <p className="mt-1 text-xs text-fog/50">
-            {lastError
-              ? `${t('dashboard.lastErrorLabel')}: ${lastError}`
-              : lastOkAt
-                ? `${t('dashboard.lastRunLabel')}: ${formatTimeAgo(locale, lastOkAt)}`
-                : lastAttemptAt
-                  ? `${t('dashboard.lastAttemptLabel')}: ${formatTimeAgo(locale, lastAttemptAt)}`
-                : extra || t('common.na')}
-          </p>
+          <p className="mt-1 text-xs text-fog/50">{primaryMeta}</p>
         </div>
         <StatusBadge label={badge.label} tone={badge.tone} />
       </div>
-      {extra && !lastError && !lastOkAt && !lastAttemptAt ? <p className="mt-2 text-xs text-fog/50">{extra}</p> : null}
+      {secondaryMeta ? <p className="mt-2 text-xs text-fog/50">{secondaryMeta}</p> : null}
     </div>
   )
 }

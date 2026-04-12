@@ -259,3 +259,62 @@ func TestBuildChannelRankingItemIncludesForwardMovement7d(t *testing.T) {
 		t.Fatalf("expected forward out amount %d, got %d", movement.ForwardOutAmountSat, item.ForwardOutAmountSat7d)
 	}
 }
+
+func TestLatestChannelRankingSyncAt(t *testing.T) {
+	base := time.Date(2026, 4, 12, 18, 0, 0, 0, time.UTC)
+	later := base.Add(3 * time.Minute)
+
+	tests := []struct {
+		name      string
+		persisted *time.Time
+		inMemory  *time.Time
+		want      *time.Time
+	}{
+		{
+			name:      "prefers persisted snapshot after restart",
+			persisted: &base,
+			inMemory:  nil,
+			want:      &base,
+		},
+		{
+			name:      "prefers newer in-memory refresh",
+			persisted: &base,
+			inMemory:  &later,
+			want:      &later,
+		},
+		{
+			name:      "prefers newer persisted snapshot",
+			persisted: &later,
+			inMemory:  &base,
+			want:      &later,
+		},
+		{
+			name:      "returns nil when both are empty",
+			persisted: nil,
+			inMemory:  nil,
+			want:      nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := latestChannelRankingSyncAt(tt.persisted, tt.inMemory)
+			switch {
+			case tt.want == nil && got != nil:
+				t.Fatalf("expected nil, got %v", *got)
+			case tt.want != nil && got == nil:
+				t.Fatalf("expected %v, got nil", *tt.want)
+			case tt.want != nil && !got.Equal(*tt.want):
+				t.Fatalf("expected %v, got %v", *tt.want, *got)
+			}
+			if got != nil {
+				if tt.persisted != nil && got == tt.persisted {
+					t.Fatalf("expected cloned pointer instead of persisted input")
+				}
+				if tt.inMemory != nil && got == tt.inMemory {
+					t.Fatalf("expected cloned pointer instead of in-memory input")
+				}
+			}
+		})
+	}
+}

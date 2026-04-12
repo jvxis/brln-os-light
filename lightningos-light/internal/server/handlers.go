@@ -378,6 +378,10 @@ type bitcoinStatus struct {
 	VerificationProgress float64 `json:"verification_progress,omitempty"`
 	InitialBlockDownload bool    `json:"initial_block_download,omitempty"`
 	BestBlockHash        string  `json:"best_block_hash,omitempty"`
+	Pruned               bool    `json:"pruned,omitempty"`
+	PruneHeight          int64   `json:"prune_height,omitempty"`
+	PruneTargetSize      int64   `json:"prune_target_size,omitempty"`
+	SizeOnDisk           int64   `json:"size_on_disk,omitempty"`
 }
 
 type mempoolConnectivityNode struct {
@@ -441,7 +445,7 @@ func (s *Server) handleBitcoin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBitcoinActive(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), bitcoinActiveHandlerTimeout(readBitcoinSource()))
 	defer cancel()
 
 	status, err := s.bitcoinActiveStatusCached(ctx)
@@ -624,16 +628,9 @@ func (s *Server) bitcoinLocalStatusActive(ctx context.Context) (bitcoinStatus, e
 			if strings.TrimSpace(cfg.User) != "" && strings.TrimSpace(cfg.Pass) != "" {
 				info, rpcErr := fetchBitcoinInfo(ctx, cfg.Host, cfg.User, cfg.Pass)
 				if rpcErr == nil {
-					status.RPCOk = true
-					status.Chain = info.Chain
-					status.Blocks = info.Blocks
-					status.Headers = info.Headers
-					status.VerificationProgress = info.VerificationProgress
-					status.InitialBlockDownload = info.InitialBlockDownload
-					status.BestBlockHash = info.BestBlockHash
-					if netInfo, netErr := fetchBitcoinNetworkInfo(ctx, cfg.Host, cfg.User, cfg.Pass); netErr == nil {
-						status.Version = netInfo.Version
-						status.Subversion = netInfo.Subversion
+					applyBitcoinInfoToStatus(&status, info)
+					if netInfo, ok := fetchBitcoinNetworkInfoBestEffort(ctx, cfg.Host, cfg.User, cfg.Pass); ok {
+						applyBitcoinNetworkInfoToStatus(&status, netInfo)
 					}
 				} else {
 					status.RPCOk = false
@@ -644,17 +641,12 @@ func (s *Server) bitcoinLocalStatusActive(ctx context.Context) (bitcoinStatus, e
 		status.ZMQRawTxOk = testTCP(status.ZMQRawTx)
 		return status, nil
 	}
-	info, netInfo, err := fetchBitcoinLocalInfo(ctx, paths)
+	info, err := fetchBitcoinLocalChainInfo(ctx, paths)
 	if err == nil {
-		status.RPCOk = true
-		status.Chain = info.Chain
-		status.Blocks = info.Blocks
-		status.Headers = info.Headers
-		status.VerificationProgress = info.VerificationProgress
-		status.InitialBlockDownload = info.InitialBlockDownload
-		status.BestBlockHash = info.BestBlockHash
-		status.Version = netInfo.Version
-		status.Subversion = netInfo.Subversion
+		applyBitcoinCLIChainInfoToStatus(&status, info)
+		if netInfo, ok := fetchBitcoinLocalNetworkInfoBestEffort(ctx, paths); ok {
+			applyBitcoinCLINetworkInfoToStatus(&status, netInfo)
+		}
 	}
 	status.ZMQRawBlockOk = testTCP(status.ZMQRawBlock)
 	status.ZMQRawTxOk = testTCP(status.ZMQRawTx)
@@ -4332,6 +4324,31 @@ func fetchBitcoinNetworkInfo(ctx context.Context, host, user, pass string) (bitc
 		return bitcoinNetworkInfo{}, err
 	}
 	return parseBitcoinNetworkInfo(body)
+}
+
+func applyBitcoinInfoToStatus(status *bitcoinStatus, info bitcoinInfo) {
+	if status == nil {
+		return
+	}
+	status.RPCOk = true
+	status.Chain = info.Chain
+	status.Blocks = info.Blocks
+	status.Headers = info.Headers
+	status.VerificationProgress = info.VerificationProgress
+	status.InitialBlockDownload = info.InitialBlockDownload
+	status.BestBlockHash = info.BestBlockHash
+	status.Pruned = info.Pruned
+	status.PruneHeight = info.PruneHeight
+	status.PruneTargetSize = info.PruneTargetSize
+	status.SizeOnDisk = info.SizeOnDisk
+}
+
+func applyBitcoinNetworkInfoToStatus(status *bitcoinStatus, info bitcoinNetworkInfo) {
+	if status == nil {
+		return
+	}
+	status.Version = info.Version
+	status.Subversion = info.Subversion
 }
 
 func testBitcoinRPC(ctx context.Context, host, user, pass string) (bool, error) {

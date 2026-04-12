@@ -2,12 +2,16 @@ package server
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
 const (
-	bitcoinStatusCacheOK  = 30 * time.Second
-	bitcoinStatusCacheErr = 45 * time.Second
+	bitcoinStatusCacheOK            = 30 * time.Second
+	bitcoinStatusCacheErr           = 45 * time.Second
+	bitcoinActiveFetchTimeoutRemote = 4 * time.Second
+	bitcoinActiveFetchTimeoutLocal  = 8 * time.Second
+	bitcoinLocalFetchTimeout        = 10 * time.Second
 )
 
 type cachedBitcoinStatus struct {
@@ -46,31 +50,61 @@ func (s *Server) invalidateBitcoinStatusCaches() {
 	s.bitcoinStatusMu.Unlock()
 }
 
+func bitcoinActiveFetchTimeout(source string) time.Duration {
+	if strings.EqualFold(strings.TrimSpace(source), "local") {
+		return bitcoinActiveFetchTimeoutLocal
+	}
+	return bitcoinActiveFetchTimeoutRemote
+}
+
+func bitcoinActiveHandlerTimeout(source string) time.Duration {
+	return bitcoinActiveFetchTimeout(source) + time.Second
+}
+
+func bitcoinLocalHandlerTimeout() time.Duration {
+	return bitcoinLocalFetchTimeout + time.Second
+}
+
+func (s *Server) cachedBitcoinActiveStatus(source string, now time.Time) (bitcoinStatus, error, bool) {
+	if s == nil {
+		return bitcoinStatus{}, nil, false
+	}
+	s.bitcoinStatusMu.Lock()
+	defer s.bitcoinStatusMu.Unlock()
+	entry, ok := s.bitcoinActiveCache[source]
+	if !ok || !now.Before(entry.expiresAt) {
+		return bitcoinStatus{}, nil, false
+	}
+	return entry.value, entry.err, true
+}
+
+func (s *Server) cachedBitcoinLocalStatus(now time.Time) (bitcoinLocalStatus, error, bool) {
+	if s == nil {
+		return bitcoinLocalStatus{}, nil, false
+	}
+	s.bitcoinStatusMu.Lock()
+	defer s.bitcoinStatusMu.Unlock()
+	if !now.Before(s.bitcoinLocalCache.expiresAt) {
+		return bitcoinLocalStatus{}, nil, false
+	}
+	return s.bitcoinLocalCache.value, s.bitcoinLocalCache.err, true
+}
+
 func (s *Server) bitcoinActiveStatusCached(ctx context.Context) (bitcoinStatus, error) {
 	source := readBitcoinSource()
 	now := time.Now()
 
-	s.bitcoinStatusMu.Lock()
-	if entry, ok := s.bitcoinActiveCache[source]; ok && now.Before(entry.expiresAt) {
-		status := entry.value
-		err := entry.err
-		s.bitcoinStatusMu.Unlock()
+	if status, err, ok := s.cachedBitcoinActiveStatus(source, now); ok {
 		return status, err
 	}
-	s.bitcoinStatusMu.Unlock()
 
 	resultCh := s.bitcoinStatusGroup.DoChan("bitcoin-active:"+source, func() (any, error) {
 		now := time.Now()
-		s.bitcoinStatusMu.Lock()
-		if entry, ok := s.bitcoinActiveCache[source]; ok && now.Before(entry.expiresAt) {
-			status := entry.value
-			err := entry.err
-			s.bitcoinStatusMu.Unlock()
+		if status, err, ok := s.cachedBitcoinActiveStatus(source, now); ok {
 			return status, err
 		}
-		s.bitcoinStatusMu.Unlock()
 
-		fetchCtx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		fetchCtx, cancel := context.WithTimeout(context.Background(), bitcoinActiveFetchTimeout(source))
 		defer cancel()
 
 		var (
@@ -98,6 +132,9 @@ func (s *Server) bitcoinActiveStatusCached(ctx context.Context) (bitcoinStatus, 
 
 	select {
 	case <-ctx.Done():
+		if status, err, ok := s.cachedBitcoinActiveStatus(source, time.Now()); ok {
+			return status, err
+		}
 		return bitcoinStatus{}, ctx.Err()
 	case result := <-resultCh:
 		status, _ := result.Val.(bitcoinStatus)
@@ -111,27 +148,17 @@ func (s *Server) bitcoinActiveStatusCached(ctx context.Context) (bitcoinStatus, 
 func (s *Server) bitcoinLocalStatusCached(ctx context.Context) (bitcoinLocalStatus, error) {
 	now := time.Now()
 
-	s.bitcoinStatusMu.Lock()
-	if now.Before(s.bitcoinLocalCache.expiresAt) {
-		status := s.bitcoinLocalCache.value
-		err := s.bitcoinLocalCache.err
-		s.bitcoinStatusMu.Unlock()
+	if status, err, ok := s.cachedBitcoinLocalStatus(now); ok {
 		return status, err
 	}
-	s.bitcoinStatusMu.Unlock()
 
 	resultCh := s.bitcoinStatusGroup.DoChan("bitcoin-local-status", func() (any, error) {
 		now := time.Now()
-		s.bitcoinStatusMu.Lock()
-		if now.Before(s.bitcoinLocalCache.expiresAt) {
-			status := s.bitcoinLocalCache.value
-			err := s.bitcoinLocalCache.err
-			s.bitcoinStatusMu.Unlock()
+		if status, err, ok := s.cachedBitcoinLocalStatus(now); ok {
 			return status, err
 		}
-		s.bitcoinStatusMu.Unlock()
 
-		fetchCtx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		fetchCtx, cancel := context.WithTimeout(context.Background(), bitcoinLocalFetchTimeout)
 		defer cancel()
 
 		status, err := s.bitcoinLocalStatus(fetchCtx)
@@ -148,6 +175,9 @@ func (s *Server) bitcoinLocalStatusCached(ctx context.Context) (bitcoinLocalStat
 
 	select {
 	case <-ctx.Done():
+		if status, err, ok := s.cachedBitcoinLocalStatus(time.Now()); ok {
+			return status, err
+		}
 		return bitcoinLocalStatus{}, ctx.Err()
 	case result := <-resultCh:
 		status, _ := result.Val.(bitcoinLocalStatus)

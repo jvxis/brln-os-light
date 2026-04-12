@@ -18,7 +18,7 @@ import (
 
 const (
 	channelRankingPollInterval          = 3 * time.Minute
-	channelRankingRefreshMinAge         = 30 * time.Second
+	channelRankingRefreshMinAge         = channelRankingPollInterval + 30*time.Second
 	channelRankingAssistedRevenueWeight = 0.5
 )
 

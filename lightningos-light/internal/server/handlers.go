@@ -1351,7 +1351,15 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	timeout := 4 * time.Second
+	switch service {
+	case "lnd":
+		timeout = 12 * time.Second
+	case "lightningos-manager", "postgresql":
+		timeout = 8 * time.Second
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
 	if service == "autofee" {

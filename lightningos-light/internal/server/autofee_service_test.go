@@ -372,7 +372,7 @@ func TestSelectAutofeeRefreshReferenceFallsBackToRebalMarkup(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected rebal reference to be selected")
 	}
-	if target != 660 || ref != 600 || source != "rebalppm7d" {
+	if target != 660 || ref != 600 || source != "rebalppm7d+10%" {
 		t.Fatalf("unexpected rebal selection: target=%d ref=%d source=%q", target, ref, source)
 	}
 }
@@ -410,8 +410,71 @@ func TestSelectAutofeeRefreshReferenceUses21dFallbacks(t *testing.T) {
 		rebalStat{FeeMsat: 250_000, AmtMsat: 250_000_000},
 		0.10,
 	)
-	if !ok || target != 1100 || ref != 1000 || source != "rebalppm21d" {
+	if !ok || target != 1100 || ref != 1000 || source != "rebalppm21d+10%" {
 		t.Fatalf("unexpected 21d rebal fallback: ok=%v target=%d ref=%d source=%q", ok, target, ref, source)
+	}
+}
+
+func TestSelectAutofeeRefreshInboundDiscountBalancedEligible(t *testing.T) {
+	cfg := AutofeeConfig{InboundPassiveEnabled: true}
+	profile := autofeeProfiles["moderate"]
+	discount, source, apply := selectAutofeeRefreshInboundDiscount(
+		cfg,
+		profile,
+		0.08,
+		0.08,
+		forwardStat{},
+		forwardStat{FeeMsat: 1_000_000, AmtMsat: 1_000_000_000, Count: 6},
+		5_000_000,
+		500,
+		1000,
+	)
+	if !apply || source != "balanced" {
+		t.Fatalf("expected balanced inbound refresh to apply, apply=%v source=%q", apply, source)
+	}
+	if discount <= 0 {
+		t.Fatalf("expected positive inbound discount, got %d", discount)
+	}
+}
+
+func TestSelectAutofeeRefreshInboundDiscountBalancedPreservesIneligible(t *testing.T) {
+	cfg := AutofeeConfig{InboundPassiveEnabled: true}
+	profile := autofeeProfiles["moderate"]
+	discount, source, apply := selectAutofeeRefreshInboundDiscount(
+		cfg,
+		profile,
+		0.30,
+		0.30,
+		forwardStat{},
+		forwardStat{FeeMsat: 1_000_000, AmtMsat: 1_000_000_000, Count: 6},
+		5_000_000,
+		500,
+		1000,
+	)
+	if apply || source != "" || discount != 0 {
+		t.Fatalf("expected ineligible balanced inbound refresh to preserve current setting, apply=%v source=%q discount=%d", apply, source, discount)
+	}
+}
+
+func TestSelectAutofeeRefreshInboundDiscountMarketRefillApplies(t *testing.T) {
+	cfg := AutofeeConfig{OperationMode: autofeeOperationModeMarketRefill}
+	profile := autofeeProfiles["moderate"]
+	discount, source, apply := selectAutofeeRefreshInboundDiscount(
+		cfg,
+		profile,
+		0.08,
+		0.08,
+		forwardStat{Count: 1},
+		forwardStat{},
+		5_000_000,
+		200,
+		1000,
+	)
+	if !apply || source != "market-refill" {
+		t.Fatalf("expected market refill inbound refresh to apply, apply=%v source=%q", apply, source)
+	}
+	if discount <= 0 {
+		t.Fatalf("expected positive market refill inbound discount, got %d", discount)
 	}
 }
 

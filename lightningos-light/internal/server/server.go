@@ -14,6 +14,7 @@ import (
 	"lightningos-light/internal/reports"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/sync/singleflight"
 )
 
 type Server struct {
@@ -89,6 +90,10 @@ type Server struct {
 	lndRestartMu                sync.RWMutex
 	lastLNDRestart              time.Time
 	walletActivityMu            sync.Mutex
+	bitcoinStatusMu             sync.Mutex
+	bitcoinStatusGroup          singleflight.Group
+	bitcoinActiveCache          map[string]cachedBitcoinStatus
+	bitcoinLocalCache           cachedBitcoinLocalStatus
 }
 
 func New(cfg *config.Config, logger *log.Logger) *Server {
@@ -97,6 +102,7 @@ func New(cfg *config.Config, logger *log.Logger) *Server {
 		logger:             logger,
 		lnd:                lndclient.New(cfg, logger),
 		networkMapGeoCache: make(map[string]networkMapGeoCacheEntry),
+		bitcoinActiveCache: make(map[string]cachedBitcoinStatus),
 	}
 	srv.auth = NewAuthService(cfg, logger)
 	srv.chat = NewChatService(srv.lnd, logger)

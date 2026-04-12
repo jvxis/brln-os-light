@@ -302,7 +302,7 @@ export default function App() {
     void refreshExternalBitcoinDetected()
     const timer = window.setInterval(refreshDepixEnabled, 30000)
     const boletoTimer = window.setInterval(refreshBoletoEnabled, 30000)
-    const externalBitcoinTimer = window.setInterval(refreshExternalBitcoinDetected, 30000)
+    const externalBitcoinTimer = window.setInterval(refreshExternalBitcoinDetected, 300000)
     window.addEventListener('apps:changed', handleAppsChanged as EventListener)
     return () => {
       window.clearInterval(timer)

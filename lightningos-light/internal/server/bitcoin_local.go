@@ -111,6 +111,18 @@ var blockCadenceMu sync.Mutex
 var blockCadenceState blockCadenceCache
 
 func (s *Server) handleBitcoinLocalStatus(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
+	defer cancel()
+
+	resp, err := s.bitcoinLocalStatusCached(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "bitcoin local status error")
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) bitcoinLocalStatus(ctx context.Context) (bitcoinLocalStatus, error) {
 	paths := bitcoinCoreAppPaths()
 	resp := bitcoinLocalStatus{
 		Installed: false,
@@ -119,20 +131,16 @@ func (s *Server) handleBitcoinLocalStatus(w http.ResponseWriter, r *http.Request
 		DataDir:   paths.DataDir,
 	}
 	if !fileExists(paths.ComposePath) {
-		ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
-		defer cancel()
 		cfg, _, err := readBitcoinLocalRPCConfig(ctx)
 		if err != nil {
-			writeJSON(w, http.StatusOK, resp)
-			return
+			return resp, nil
 		}
 		resp.Source = "external"
 		resp.Status = "external"
 		info, rpcErr := fetchBitcoinInfo(ctx, cfg.Host, cfg.User, cfg.Pass)
 		if rpcErr != nil {
 			resp.RPCOk = false
-			writeJSON(w, http.StatusOK, resp)
-			return
+			return resp, nil
 		}
 		resp.RPCOk = true
 		resp.Chain = info.Chain
@@ -155,32 +163,25 @@ func (s *Server) handleBitcoinLocalStatus(w http.ResponseWriter, r *http.Request
 			resp.BlockCadenceWindowSec = blockCadenceWindowSec
 			resp.BlockCadence = buckets
 		}
-		writeJSON(w, http.StatusOK, resp)
-		return
+		return resp, nil
 	}
 	resp.Installed = true
 	resp.Source = "app"
 
-	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
-	defer cancel()
-
 	status, err := getComposeStatus(ctx, paths.Root, paths.ComposePath, "bitcoind")
 	if err != nil {
 		resp.Status = "unknown"
-		writeJSON(w, http.StatusOK, resp)
-		return
+		return resp, nil
 	}
 	resp.Status = status
 	if status != "running" {
-		writeJSON(w, http.StatusOK, resp)
-		return
+		return resp, nil
 	}
 
 	chainInfo, netInfo, err := fetchBitcoinLocalInfo(ctx, paths)
 	if err != nil {
 		resp.RPCOk = false
-		writeJSON(w, http.StatusOK, resp)
-		return
+		return resp, nil
 	}
 
 	resp.RPCOk = true
@@ -204,7 +205,7 @@ func (s *Server) handleBitcoinLocalStatus(w http.ResponseWriter, r *http.Request
 		resp.BlockCadence = buckets
 	}
 
-	writeJSON(w, http.StatusOK, resp)
+	return resp, nil
 }
 
 func (s *Server) handleBitcoinLocalConfigGet(w http.ResponseWriter, r *http.Request) {
@@ -295,6 +296,7 @@ func (s *Server) handleBitcoinLocalConfigPost(w http.ResponseWriter, r *http.Req
 			return
 		}
 	}
+	s.invalidateBitcoinStatusCaches()
 
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

@@ -107,20 +107,14 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	btcCtx, btcCancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer btcCancel()
 	bitcoinSource := readBitcoinSource()
-	bitcoin := bitcoinStatus{}
-	err = nil
-	if bitcoinSource == "local" {
-		bitcoin, err = s.bitcoinLocalStatusActive(btcCtx)
-		if err != nil {
+	bitcoin, err := s.bitcoinActiveStatusCached(btcCtx)
+	if err != nil {
+		if bitcoinSource == "local" {
 			issues = append(issues, healthIssue{Component: "bitcoin", Level: "WARN", Message: "Bitcoin local check failed"})
-			status = elevate(status, "WARN")
-		}
-	} else {
-		bitcoin, err = s.bitcoinStatus(btcCtx)
-		if err != nil {
+		} else {
 			issues = append(issues, healthIssue{Component: "bitcoin", Level: "WARN", Message: "Bitcoin remote check failed"})
-			status = elevate(status, "WARN")
 		}
+		status = elevate(status, "WARN")
 	}
 	if err == nil {
 		if !bitcoin.RPCOk {
@@ -450,18 +444,7 @@ func (s *Server) handleBitcoinActive(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
 
-	source := readBitcoinSource()
-	if source == "local" {
-		status, err := s.bitcoinLocalStatusActive(ctx)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "bitcoin local status error")
-			return
-		}
-		writeJSON(w, http.StatusOK, status)
-		return
-	}
-
-	status, err := s.bitcoinStatus(ctx)
+	status, err := s.bitcoinActiveStatusCached(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "bitcoin status error")
 		return
@@ -533,6 +516,7 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
 	if err := storeBitcoinSource(source); err != nil {
 		s.logger.Printf("failed to store bitcoin source: %v", err)
 	}
+	s.invalidateBitcoinStatusCaches()
 
 	needsBitcoinRestart := source == "local" && localUpdated
 	if source == "local" && !needsBitcoinRestart {

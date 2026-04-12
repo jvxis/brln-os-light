@@ -370,6 +370,7 @@ type bitcoinStatus struct {
 	RPCOk                bool    `json:"rpc_ok"`
 	ZMQRawBlockOk        bool    `json:"zmq_rawblock_ok"`
 	ZMQRawTxOk           bool    `json:"zmq_rawtx_ok"`
+	Connections          int     `json:"connections,omitempty"`
 	Version              int     `json:"version,omitempty"`
 	Subversion           string  `json:"subversion,omitempty"`
 	Chain                string  `json:"chain,omitempty"`
@@ -4347,6 +4348,7 @@ func applyBitcoinNetworkInfoToStatus(status *bitcoinStatus, info bitcoinNetworkI
 	if status == nil {
 		return
 	}
+	status.Connections = info.Connections
 	status.Version = info.Version
 	status.Subversion = info.Subversion
 }

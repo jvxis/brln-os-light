@@ -85,6 +85,24 @@ func TestApplyBitcoinCLIChainInfoToStatusIncludesPruneFields(t *testing.T) {
 	}
 }
 
+func TestApplyBitcoinCLINetworkInfoToStatusIncludesConnections(t *testing.T) {
+	status := bitcoinStatus{}
+	info := bitcoinCLINetworkInfo{
+		Version:     300000,
+		Subversion:  "/Satoshi:30.0.0/",
+		Connections: 11,
+	}
+
+	applyBitcoinCLINetworkInfoToStatus(&status, info)
+
+	if status.Connections != info.Connections {
+		t.Fatalf("expected connections %d, got %d", info.Connections, status.Connections)
+	}
+	if status.Version != info.Version || status.Subversion != info.Subversion {
+		t.Fatalf("expected network metadata to be copied: %+v", status)
+	}
+}
+
 func TestContextHasBudget(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()

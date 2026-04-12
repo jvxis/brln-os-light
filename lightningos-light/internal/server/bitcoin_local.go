@@ -658,6 +658,7 @@ func applyBitcoinCLINetworkInfoToStatus(status *bitcoinStatus, info bitcoinCLINe
 	if status == nil {
 		return
 	}
+	status.Connections = info.Connections
 	status.Version = info.Version
 	status.Subversion = info.Subversion
 }

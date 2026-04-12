@@ -58,6 +58,7 @@ export default function CoreHealthGrid({
   const cadenceTotal = cadenceBuckets.reduce((sum, bucket) => sum + bucket.count, 0)
   const cadenceHours = ((bitcoin?.block_cadence_window_sec ?? 600) * Math.max(1, cadenceBuckets.length)) / 3600
   const cadenceAvg = cadenceHours > 0 ? cadenceTotal / cadenceHours : 0
+  const cpuPercent = system?.cpu_percent_avg_30s ?? system?.cpu_percent ?? 0
 
   const copyToClipboard = async (value: string) => {
     if (!value) return
@@ -334,11 +335,11 @@ export default function CoreHealthGrid({
             <div className="mt-5 space-y-4">
               <HorizontalBarGauge
                 label={t('dashboard.cpuLoad')}
-                value={system.cpu_percent ?? 0}
+                value={cpuPercent}
                 max={100}
-                valueLabel={`${formatPercent(locale, system.cpu_percent)}%`}
+                valueLabel={`${formatPercent(locale, cpuPercent)}%`}
                 detail={`${formatPercent(locale, system.cpu_load_1, 2)} load`}
-                tone={(system.cpu_percent ?? 0) >= 85 ? 'danger' : (system.cpu_percent ?? 0) >= 65 ? 'warn' : 'ok'}
+                tone={cpuPercent >= 85 ? 'danger' : cpuPercent >= 65 ? 'warn' : 'ok'}
               />
               <HorizontalBarGauge
                 label={t('dashboard.ramUsed')}

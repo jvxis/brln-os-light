@@ -15,6 +15,9 @@ export type SystemStats = {
   uptime_sec?: number
   cpu_load_1?: number
   cpu_percent?: number
+  cpu_percent_now?: number
+  cpu_percent_avg_30s?: number
+  cpu_cores?: number
   ram_total_mb?: number
   ram_used_mb?: number
   temperature_c?: number

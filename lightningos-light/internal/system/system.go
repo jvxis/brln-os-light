@@ -21,13 +21,16 @@ type DiskUsage struct {
 }
 
 type SystemStats struct {
-	UptimeSec    int64       `json:"uptime_sec"`
-	CPULoad1     float64     `json:"cpu_load_1"`
-	CPUPercent   float64     `json:"cpu_percent"`
-	RAMTotalMB   int64       `json:"ram_total_mb"`
-	RAMUsedMB    int64       `json:"ram_used_mb"`
-	Disk         []DiskUsage `json:"disk"`
-	TemperatureC float64     `json:"temperature_c"`
+	UptimeSec        int64       `json:"uptime_sec"`
+	CPULoad1         float64     `json:"cpu_load_1"`
+	CPUPercent       float64     `json:"cpu_percent"`
+	CPUPercentNow    float64     `json:"cpu_percent_now,omitempty"`
+	CPUPercentAvg30s float64     `json:"cpu_percent_avg_30s,omitempty"`
+	CPUCores         int         `json:"cpu_cores,omitempty"`
+	RAMTotalMB       int64       `json:"ram_total_mb"`
+	RAMUsedMB        int64       `json:"ram_used_mb"`
+	Disk             []DiskUsage `json:"disk"`
+	TemperatureC     float64     `json:"temperature_c"`
 }
 
 func GetSystemStats(ctx context.Context) (SystemStats, error) {
@@ -44,9 +47,12 @@ func GetSystemStats(ctx context.Context) (SystemStats, error) {
 		stats.CPULoad1 = load1
 	}
 
-	cpuPercent, err := readCPUPercent(120 * time.Millisecond)
+	cpuUsage, err := readCPUUsageSnapshot()
 	if err == nil {
-		stats.CPUPercent = cpuPercent
+		stats.CPUPercent = preferredCPUPercent(cpuUsage)
+		stats.CPUPercentNow = cpuUsage.Latest
+		stats.CPUPercentAvg30s = cpuUsage.Average30s
+		stats.CPUCores = cpuUsage.Cores
 	}
 
 	totalMB, usedMB, err := readMemInfo()
@@ -124,9 +130,16 @@ func readCPUStat() (idle uint64, total uint64, err error) {
 	if !scanner.Scan() {
 		return 0, 0, errors.New("cpu stat empty")
 	}
-	fields := strings.Fields(scanner.Text())
+	return parseCPUStatLine(scanner.Text())
+}
+
+func parseCPUStatLine(line string) (idle uint64, total uint64, err error) {
+	fields := strings.Fields(line)
 	if len(fields) < 5 {
 		return 0, 0, errors.New("cpu stat parse error")
+	}
+	if fields[0] != "cpu" {
+		return 0, 0, errors.New("cpu stat missing aggregate")
 	}
 	for i := 1; i < len(fields); i++ {
 		v, err := strconv.ParseUint(fields[i], 10, 64)
@@ -134,8 +147,8 @@ func readCPUStat() (idle uint64, total uint64, err error) {
 			continue
 		}
 		total += v
-		if i == 4 {
-			idle = v
+		if i == 4 || i == 5 {
+			idle += v
 		}
 	}
 	return idle, total, nil

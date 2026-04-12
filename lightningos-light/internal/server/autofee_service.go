@@ -321,12 +321,12 @@ type AutofeeRefreshItem struct {
 type AutofeeRefreshResult struct {
 	Total          int                  `json:"total"`
 	Updated        int                  `json:"updated"`
-	InboundUpdated int                  `json:"inbound_updated,omitempty"`
+	InboundUpdated int                  `json:"inbound_updated"`
 	Same           int                  `json:"same"`
 	Skipped        int                  `json:"skipped"`
 	Errors         int                  `json:"errors"`
 	DryRun         bool                 `json:"dry_run"`
-	IncludeInbound bool                 `json:"include_inbound,omitempty"`
+	IncludeInbound bool                 `json:"include_inbound"`
 	RebalMarkupPct float64              `json:"rebal_markup_pct"`
 	Items          []AutofeeRefreshItem `json:"items,omitempty"`
 }
@@ -355,7 +355,7 @@ type autofeeLogItem struct {
 	Same                     int      `json:"same,omitempty"`
 	Disabled                 int      `json:"disabled,omitempty"`
 	Inactive                 int      `json:"inactive,omitempty"`
-	InboundDisc              int      `json:"inbound_disc,omitempty"`
+	InboundDisc              int      `json:"inbound_disc"`
 	SuperSource              int      `json:"super_source,omitempty"`
 	HTLCLiqHot               int      `json:"htlc_liq_hot,omitempty"`
 	HTLCPolicyHot            int      `json:"htlc_policy_hot,omitempty"`
@@ -450,10 +450,10 @@ type autofeeLogItem struct {
 	TargetGapPct             float64  `json:"target_gap_pct,omitempty"`
 	ReferencePpm             int      `json:"reference_ppm,omitempty"`
 	RefreshSource            string   `json:"refresh_source,omitempty"`
-	CurrentInboundDiscount   int      `json:"current_inbound_discount,omitempty"`
-	TargetInboundDiscount    int      `json:"target_inbound_discount,omitempty"`
+	CurrentInboundDiscount   int      `json:"current_inbound_discount"`
+	TargetInboundDiscount    int      `json:"target_inbound_discount"`
 	InboundSource            string   `json:"inbound_source,omitempty"`
-	IncludeInbound           bool     `json:"include_inbound,omitempty"`
+	IncludeInbound           bool     `json:"include_inbound"`
 }
 
 type autofeeProfile struct {

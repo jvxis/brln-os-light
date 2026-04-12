@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  getAmbossHealth,
   enableLoginAuth,
   getAppUpgradeStatus,
   getAutofeeStatus,
@@ -9,6 +10,7 @@ import {
   getDisk,
   getHealth,
   getLndStatus,
+  getLnChanHeal,
   getLnFailedPaymentsCleaner,
   getLnHtlcManager,
   getLnTorPeerChecker,
@@ -37,7 +39,9 @@ import RecentActivityCard from './RecentActivityCard'
 import StatusBadge from './StatusBadge'
 import { toneFromHealthStatus } from './formatters'
 import type {
+  AmbossHealthStatus,
   AutofeeStatus,
+  ChanHealStatus,
   CloseRecoveryStatus,
   DiskSmart,
   FailedPaymentsCleanerStatus,
@@ -91,6 +95,8 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
   const [movementLive, setMovementLive] = useState<MovementLiveResponse | null>(null)
   const [rebalanceOverview, setRebalanceOverview] = useState<RebalanceOverview | null>(null)
   const [autofeeStatus, setAutofeeStatus] = useState<AutofeeStatus | null>(null)
+  const [ambossHealth, setAmbossHealth] = useState<AmbossHealthStatus | null>(null)
+  const [chanHealStatus, setChanHealStatus] = useState<ChanHealStatus | null>(null)
   const [closeManagerStatus, setCloseManagerStatus] = useState<CloseRecoveryStatus | null>(null)
   const [htlcManagerStatus, setHtlcManagerStatus] = useState<HtlcManagerStatus | null>(null)
   const [torPeerCheckerStatus, setTorPeerCheckerStatus] = useState<TorPeerCheckerStatus | null>(null)
@@ -270,9 +276,11 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
   useEffect(() => {
     let mounted = true
     const load = async () => {
-      const [rebalanceRes, autofeeRes, closeManagerRes, htlcRes, torRes, failedRes, retirementRes, successionRes] = await Promise.allSettled([
+      const [rebalanceRes, autofeeRes, ambossRes, chanHealRes, closeManagerRes, htlcRes, torRes, failedRes, retirementRes, successionRes] = await Promise.allSettled([
         getRebalanceOverview(),
         getAutofeeStatus(),
+        getAmbossHealth(),
+        getLnChanHeal(),
         getCloseManagerStatus(),
         getLnHtlcManager(),
         getLnTorPeerChecker(),
@@ -289,6 +297,14 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
       }
       if (autofeeRes.status === 'fulfilled') {
         setAutofeeStatus((autofeeRes.value ?? null) as AutofeeStatus | null)
+        fulfilled += 1
+      }
+      if (ambossRes.status === 'fulfilled') {
+        setAmbossHealth((ambossRes.value ?? null) as AmbossHealthStatus | null)
+        fulfilled += 1
+      }
+      if (chanHealRes.status === 'fulfilled') {
+        setChanHealStatus((chanHealRes.value ?? null) as ChanHealStatus | null)
         fulfilled += 1
       }
       if (closeManagerRes.status === 'fulfilled') {
@@ -643,6 +659,8 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
         <AutomationRiskGrid
           rebalance={rebalanceOverview}
           autofee={autofeeStatus}
+          amboss={ambossHealth}
+          chanHeal={chanHealStatus}
           closeManager={closeManagerStatus}
           htlcManager={htlcManagerStatus}
           torPeerChecker={torPeerCheckerStatus}

@@ -218,6 +218,28 @@ export type AutofeeStatus = {
   last_error?: string
 }
 
+export type AmbossHealthStatus = {
+  enabled?: boolean
+  status?: string
+  last_ok_at?: string
+  last_error?: string
+  last_error_at?: string
+  last_attempt_at?: string
+  interval_sec?: number
+  consecutive_failures?: number
+}
+
+export type ChanHealStatus = {
+  enabled?: boolean
+  status?: string
+  last_ok_at?: string
+  last_error?: string
+  last_error_at?: string
+  last_attempt_at?: string
+  interval_sec?: number
+  last_updated?: number
+}
+
 export type CloseRecoveryStatus = {
   available?: boolean
   active_count?: number

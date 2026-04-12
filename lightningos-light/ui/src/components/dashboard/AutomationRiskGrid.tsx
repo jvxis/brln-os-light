@@ -1,10 +1,12 @@
 import { useTranslation } from 'react-i18next'
 import { getLocale } from '../../i18n'
-import { formatPercent, formatSats, formatTimeAgo, toneFromStatusText } from './formatters'
+import { formatPercent, formatSats, formatTimeAgo } from './formatters'
 import HorizontalBarGauge from './HorizontalBarGauge'
 import StatusBadge from './StatusBadge'
 import type {
+  AmbossHealthStatus,
   AutofeeStatus,
+  ChanHealStatus,
   CloseRecoveryStatus,
   FailedPaymentsCleanerStatus,
   HtlcManagerStatus,
@@ -17,6 +19,8 @@ import type {
 type AutomationRiskGridProps = {
   rebalance: RebalanceOverview | null
   autofee: AutofeeStatus | null
+  amboss: AmbossHealthStatus | null
+  chanHeal: ChanHealStatus | null
   closeManager: CloseRecoveryStatus | null
   htlcManager: HtlcManagerStatus | null
   torPeerChecker: TorPeerCheckerStatus | null
@@ -27,21 +31,40 @@ type AutomationRiskGridProps = {
 
 type AutomationRowProps = {
   label: string
-  status?: string | boolean | null
+  enabled?: boolean | null
+  status?: string | null
   lastOkAt?: string
+  lastAttemptAt?: string
   lastError?: string
   extra?: string
 }
 
-function AutomationRow({ label, status, lastOkAt, lastError, extra }: AutomationRowProps) {
+const normalizeStatus = (value?: string | null) => String(value || '').trim().toLowerCase()
+
+function buildAutomationBadge(t: ReturnType<typeof useTranslation>['t'], enabled?: boolean | null, status?: string | null, hasError?: boolean) {
+  if (enabled === false) {
+    return { label: t('common.disabled'), tone: 'muted' as const }
+  }
+  const normalized = normalizeStatus(status)
+  if (normalized === 'ok') {
+    return { label: t('common.ok'), tone: 'ok' as const }
+  }
+  if (normalized === 'warn' || hasError) {
+    return { label: t('common.fail'), tone: 'warn' as const }
+  }
+  if (normalized === 'checking') {
+    return { label: t('common.check'), tone: 'info' as const }
+  }
+  if (enabled) {
+    return { label: t('common.enabled'), tone: 'info' as const }
+  }
+  return { label: t('common.na'), tone: 'muted' as const }
+}
+
+function AutomationRow({ label, enabled, status, lastOkAt, lastAttemptAt, lastError, extra }: AutomationRowProps) {
   const { t, i18n } = useTranslation()
   const locale = getLocale(i18n.language)
-  const statusLabel = typeof status === 'boolean'
-    ? (status ? t('common.enabled') : t('common.disabled'))
-    : (status || t('common.na'))
-  const tone = typeof status === 'boolean'
-    ? (status ? 'ok' : 'warn')
-    : toneFromStatusText(status)
+  const badge = buildAutomationBadge(t, enabled, status, Boolean(lastError))
 
   return (
     <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
@@ -53,12 +76,14 @@ function AutomationRow({ label, status, lastOkAt, lastError, extra }: Automation
               ? `${t('dashboard.lastErrorLabel')}: ${lastError}`
               : lastOkAt
                 ? `${t('dashboard.lastRunLabel')}: ${formatTimeAgo(locale, lastOkAt)}`
+                : lastAttemptAt
+                  ? `${t('dashboard.lastAttemptLabel')}: ${formatTimeAgo(locale, lastAttemptAt)}`
                 : extra || t('common.na')}
           </p>
         </div>
-        <StatusBadge label={statusLabel} tone={tone} />
+        <StatusBadge label={badge.label} tone={badge.tone} />
       </div>
-      {extra && !lastError && !lastOkAt ? <p className="mt-2 text-xs text-fog/50">{extra}</p> : null}
+      {extra && !lastError && !lastOkAt && !lastAttemptAt ? <p className="mt-2 text-xs text-fog/50">{extra}</p> : null}
     </div>
   )
 }
@@ -66,6 +91,8 @@ function AutomationRow({ label, status, lastOkAt, lastError, extra }: Automation
 export default function AutomationRiskGrid({
   rebalance,
   autofee,
+  amboss,
+  chanHeal,
   closeManager,
   htlcManager,
   torPeerChecker,
@@ -84,6 +111,39 @@ export default function AutomationRiskGrid({
   const roi7d = typeof rebalance?.roi_7d === 'number' ? ratioFormatter.format(rebalance.roi_7d) : '-'
   const effectiveness7dRaw = rebalance?.effectiveness_execution_7d ?? rebalance?.effectiveness_7d
   const effectiveness7d = typeof effectiveness7dRaw === 'number' ? `${formatPercent(locale, effectiveness7dRaw * 100)}%` : '-'
+
+  const formatAutomationInterval = (value?: { interval_sec?: number; interval_minutes?: number; interval_hours?: number } | null) => {
+    if (typeof value?.interval_hours === 'number' && value.interval_hours > 0) {
+      return t('dashboard.automationEveryHours', { count: value.interval_hours })
+    }
+    if (typeof value?.interval_minutes === 'number' && value.interval_minutes > 0) {
+      return t('dashboard.automationEveryMinutes', { count: value.interval_minutes })
+    }
+    if (typeof value?.interval_sec === 'number' && value.interval_sec > 0) {
+      const seconds = value.interval_sec
+      if (seconds % 3600 === 0) return t('dashboard.automationEveryHours', { count: seconds / 3600 })
+      if (seconds % 60 === 0) return t('dashboard.automationEveryMinutes', { count: seconds / 60 })
+      return t('dashboard.automationEverySeconds', { count: seconds })
+    }
+    return ''
+  }
+
+  const buildAutomationExtra = (value?: {
+    enabled?: boolean
+    status?: string
+    interval_sec?: number
+    interval_minutes?: number
+    interval_hours?: number
+  } | null, fallback?: string) => {
+    const intervalHint = formatAutomationInterval(value)
+    const normalized = normalizeStatus(value?.status)
+    if (normalized === 'checking' && value?.enabled) {
+      return intervalHint
+        ? `${t('dashboard.awaitingFirstRunHint')} ${intervalHint}`
+        : t('dashboard.awaitingFirstRunHint')
+    }
+    return fallback || intervalHint || undefined
+  }
 
   return (
     <article className="section-card">
@@ -161,25 +221,63 @@ export default function AutomationRiskGrid({
 
           <div className="mt-4 grid gap-3">
             <AutomationRow
+              label={t('lightningOps.ambossHealthTitle')}
+              enabled={amboss?.enabled}
+              status={amboss?.status}
+              lastOkAt={amboss?.last_ok_at}
+              lastAttemptAt={amboss?.last_attempt_at}
+              lastError={amboss?.last_error}
+              extra={buildAutomationExtra(amboss)}
+            />
+            <AutomationRow
+              label={t('lightningOps.chanHealTitle')}
+              enabled={chanHeal?.enabled}
+              status={chanHeal?.status}
+              lastOkAt={chanHeal?.last_ok_at}
+              lastAttemptAt={chanHeal?.last_attempt_at}
+              lastError={chanHeal?.last_error}
+              extra={buildAutomationExtra(
+                chanHeal,
+                typeof chanHeal?.last_updated === 'number'
+                  ? t('lightningOps.chanHealLastUpdated', { count: chanHeal.last_updated })
+                  : undefined,
+              )}
+            />
+            <AutomationRow
               label={t('lightningOps.htlcManagerTitle')}
-              status={htlcManager?.status || htlcManager?.enabled}
-              lastOkAt={htlcManager?.last_ok_at || htlcManager?.last_attempt_at}
+              enabled={htlcManager?.enabled}
+              status={htlcManager?.status}
+              lastOkAt={htlcManager?.last_ok_at}
+              lastAttemptAt={htlcManager?.last_attempt_at}
               lastError={htlcManager?.last_error}
-              extra={typeof htlcManager?.last_changed_count === 'number' ? t('dashboard.channelsChangedHint', { count: htlcManager.last_changed_count }) : undefined}
+              extra={buildAutomationExtra(
+                htlcManager,
+                typeof htlcManager?.last_changed_count === 'number' ? t('dashboard.channelsChangedHint', { count: htlcManager.last_changed_count }) : undefined,
+              )}
             />
             <AutomationRow
               label={t('lightningOps.torPeerTitle')}
-              status={torPeerChecker?.status || torPeerChecker?.enabled}
-              lastOkAt={torPeerChecker?.last_ok_at || torPeerChecker?.last_attempt_at}
+              enabled={torPeerChecker?.enabled}
+              status={torPeerChecker?.status}
+              lastOkAt={torPeerChecker?.last_ok_at}
+              lastAttemptAt={torPeerChecker?.last_attempt_at}
               lastError={torPeerChecker?.last_error}
-              extra={typeof torPeerChecker?.last_switched_count === 'number' ? t('dashboard.peersSwitchedHint', { count: torPeerChecker.last_switched_count }) : undefined}
+              extra={buildAutomationExtra(
+                torPeerChecker,
+                typeof torPeerChecker?.last_switched_count === 'number' ? t('dashboard.peersSwitchedHint', { count: torPeerChecker.last_switched_count }) : undefined,
+              )}
             />
             <AutomationRow
               label={t('lightningOps.failedPaymentsCleanerTitle')}
-              status={failedPaymentsCleaner?.status || failedPaymentsCleaner?.enabled}
-              lastOkAt={failedPaymentsCleaner?.last_ok_at || failedPaymentsCleaner?.last_attempt_at}
+              enabled={failedPaymentsCleaner?.enabled}
+              status={failedPaymentsCleaner?.status}
+              lastOkAt={failedPaymentsCleaner?.last_ok_at}
+              lastAttemptAt={failedPaymentsCleaner?.last_attempt_at}
               lastError={failedPaymentsCleaner?.last_error}
-              extra={typeof failedPaymentsCleaner?.last_deleted_count === 'number' ? t('dashboard.deletedPaymentsHint', { count: failedPaymentsCleaner.last_deleted_count }) : undefined}
+              extra={buildAutomationExtra(
+                failedPaymentsCleaner,
+                typeof failedPaymentsCleaner?.last_deleted_count === 'number' ? t('dashboard.deletedPaymentsHint', { count: failedPaymentsCleaner.last_deleted_count }) : undefined,
+              )}
             />
           </div>
         </div>

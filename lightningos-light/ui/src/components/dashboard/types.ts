@@ -205,6 +205,7 @@ export type RebalanceOverview = {
   remaining_for_auto_sat?: number
   live_cost_sat?: number
   effectiveness_7d?: number
+  effectiveness_execution_7d?: number
   roi_7d?: number
   success_attempts_24h?: number
   success_amount_24h_sat?: number

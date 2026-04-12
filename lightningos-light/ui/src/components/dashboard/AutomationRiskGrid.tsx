@@ -75,11 +75,15 @@ export default function AutomationRiskGrid({
 }: AutomationRiskGridProps) {
   const { t, i18n } = useTranslation()
   const locale = getLocale(i18n.language)
+  const ratioFormatter = new Intl.NumberFormat(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
   const dailyBudget = rebalance?.daily_budget_sat ?? 0
   const dailySpent = rebalance?.daily_spent_sat ?? 0
   const budgetUsage = dailyBudget > 0 ? (dailySpent / dailyBudget) * 100 : 0
   const actionRequiredCount = closeManager?.action_required_count ?? 0
+  const roi7d = typeof rebalance?.roi_7d === 'number' ? ratioFormatter.format(rebalance.roi_7d) : '-'
+  const effectiveness7dRaw = rebalance?.effectiveness_execution_7d ?? rebalance?.effectiveness_7d
+  const effectiveness7d = typeof effectiveness7dRaw === 'number' ? `${formatPercent(locale, effectiveness7dRaw * 100)}%` : '-'
 
   return (
     <article className="section-card">
@@ -113,11 +117,11 @@ export default function AutomationRiskGrid({
             <div className="grid grid-cols-2 gap-3">
               <div className="rounded-2xl border border-white/10 bg-ink/30 px-3 py-3">
                 <p className="text-xs uppercase tracking-wide text-fog/45">{t('dashboard.roi7dLabel')}</p>
-                <p className="mt-2 text-lg font-semibold">{formatPercent(locale, rebalance?.roi_7d)}%</p>
+                <p className="mt-2 text-lg font-semibold">{roi7d}</p>
               </div>
               <div className="rounded-2xl border border-white/10 bg-ink/30 px-3 py-3">
                 <p className="text-xs uppercase tracking-wide text-fog/45">{t('dashboard.effectiveness7dLabel')}</p>
-                <p className="mt-2 text-lg font-semibold">{formatPercent(locale, rebalance?.effectiveness_7d)}%</p>
+                <p className="mt-2 text-lg font-semibold">{effectiveness7d}</p>
               </div>
               <div className="rounded-2xl border border-white/10 bg-ink/30 px-3 py-3">
                 <p className="text-xs uppercase tracking-wide text-fog/45">{t('dashboard.success24hLabel')}</p>

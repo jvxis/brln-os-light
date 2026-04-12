@@ -4034,23 +4034,43 @@ func applyAutofeeRefreshRebalMarkup(referencePpm int, markupFrac float64) int {
 
 func selectAutofeeRefreshReference(capacitySat int64, forward7d forwardStat, forward21d forwardStat, rebal7d rebalStat, rebal21d rebalStat, rebalMarkupFrac float64) (int, int, string, bool) {
 	outPpm7d := ppmMsat(forward7d.FeeMsat, forward7d.AmtMsat)
-	if outPpm7d > 0 {
-		return outPpm7d, outPpm7d, "outppm7d", true
-	}
-
-	outPpm21d := ppmMsat(forward21d.FeeMsat, forward21d.AmtMsat)
-	if outPpm21d > 0 && hasOutFallback21dSignal(int(forward21d.Count), forward21d.AmtMsat/1000, capacitySat) {
-		return outPpm21d, outPpm21d, "outppm21d", true
-	}
-
 	rebalPpm7d := ppmMsat(rebal7d.FeeMsat, rebal7d.AmtMsat)
-	if rebalPpm7d > 0 {
-		return applyAutofeeRefreshRebalMarkup(rebalPpm7d, rebalMarkupFrac), rebalPpm7d, "rebalppm7d", true
+	outPpm21d := ppmMsat(forward21d.FeeMsat, forward21d.AmtMsat)
+	hasOut21d := outPpm21d > 0 && hasOutFallback21dSignal(int(forward21d.Count), forward21d.AmtMsat/1000, capacitySat)
+	rebalPpm21d := ppmMsat(rebal21d.FeeMsat, rebal21d.AmtMsat)
+	hasRebal21d := rebalPpm21d > 0 && hasRebalFallback21dSignal(rebal21d.AmtMsat/1000, capacitySat)
+
+	outRef := 0
+	outSource := ""
+	switch {
+	case outPpm7d > 0:
+		outRef = outPpm7d
+		outSource = "outppm7d"
+	case hasOut21d:
+		outRef = outPpm21d
+		outSource = "outppm21d"
 	}
 
-	rebalPpm21d := ppmMsat(rebal21d.FeeMsat, rebal21d.AmtMsat)
-	if rebalPpm21d > 0 && hasRebalFallback21dSignal(rebal21d.AmtMsat/1000, capacitySat) {
-		return applyAutofeeRefreshRebalMarkup(rebalPpm21d, rebalMarkupFrac), rebalPpm21d, "rebalppm21d", true
+	rebalRef := 0
+	rebalSource := ""
+	switch {
+	case rebalPpm7d > 0:
+		rebalRef = rebalPpm7d
+		rebalSource = "rebalppm7d"
+	case hasRebal21d:
+		rebalRef = rebalPpm21d
+		rebalSource = "rebalppm21d"
+	}
+
+	if outRef > 0 {
+		if rebalRef > outRef {
+			return rebalRef, rebalRef, rebalSource, true
+		}
+		return outRef, outRef, outSource, true
+	}
+
+	if rebalRef > 0 {
+		return applyAutofeeRefreshRebalMarkup(rebalRef, rebalMarkupFrac), rebalRef, rebalSource, true
 	}
 
 	return 0, 0, "", false
@@ -4474,6 +4494,50 @@ func capBalancedFloorDrivenUp(profile autofeeProfile, classLabel string, outRati
 		return capped, []string{"balanced-floor-up-cap"}
 	}
 	return finalPpm, nil
+}
+
+func hasStrongUpwardPressureSignal(recentRebalanceCount int, htlcLiquidityHot bool, surgeConfirmSignal bool) bool {
+	return recentRebalanceCount > 0 || htlcLiquidityHot || surgeConfirmSignal
+}
+
+func applyOutnormFallbackUpHold(marketRefillMode bool, newInboundBootstrap bool, localPpm int, targetPpm int, finalPpm int, meta outRatioNormalizationMeta, outFrom21dFallback bool, rebalFrom21dFallback bool, observedOutSignal bool, observedRebalSignal bool, recentRebalanceCount int, htlcLiquidityHot bool, surgeConfirmSignal bool) (int, int, []string) {
+	if marketRefillMode || newInboundBootstrap || finalPpm <= localPpm {
+		return targetPpm, finalPpm, nil
+	}
+	if !meta.OutlierLarge && !meta.OutlierSmall {
+		return targetPpm, finalPpm, nil
+	}
+	if observedOutSignal || observedRebalSignal {
+		return targetPpm, finalPpm, nil
+	}
+	if !outFrom21dFallback && !rebalFrom21dFallback {
+		return targetPpm, finalPpm, nil
+	}
+	if hasStrongUpwardPressureSignal(recentRebalanceCount, htlcLiquidityHot, surgeConfirmSignal) {
+		return targetPpm, finalPpm, nil
+	}
+	return localPpm, localPpm, []string{"outnorm-fallback-hold"}
+}
+
+func applyHistoryReferenceUpCap(marketRefillMode bool, newInboundBootstrap bool, localPpm int, targetPpm int, finalPpm int, outPpm7d int, rebalHistoryRefPpm int, recentRebalanceCount int, htlcLiquidityHot bool, surgeConfirmSignal bool) (int, int, []string) {
+	if marketRefillMode || newInboundBootstrap || finalPpm <= localPpm {
+		return targetPpm, finalPpm, nil
+	}
+	historyRef := maxInt(outPpm7d, rebalHistoryRefPpm)
+	if historyRef <= 0 {
+		return targetPpm, finalPpm, nil
+	}
+	if hasStrongUpwardPressureSignal(recentRebalanceCount, htlcLiquidityHot, surgeConfirmSignal) {
+		return targetPpm, finalPpm, nil
+	}
+	if localPpm >= historyRef {
+		return localPpm, localPpm, []string{"history-up-hold"}
+	}
+	if finalPpm > historyRef {
+		capped := maxInt(localPpm, historyRef)
+		return minInt(targetPpm, historyRef), capped, []string{"history-up-cap"}
+	}
+	return targetPpm, finalPpm, nil
 }
 
 func applyOutrateTargetAnchor(profile autofeeProfile, targetPpm int, outPpm7d int, outRatio float64, fwdCount int) (int, []string) {
@@ -7986,6 +8050,43 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			profitProtectLocked = true
 		}
 		finalPpm = clampInt(finalPpm, e.cfg.MinPpm, e.cfg.MaxPpm)
+	}
+
+	if cappedTarget, cappedPpm, capTags := applyOutnormFallbackUpHold(
+		marketRefillMode,
+		newInboundBootstrap,
+		localPpm,
+		target,
+		finalPpm,
+		outNormMeta,
+		outFrom21dFallback,
+		rebalFrom21dFallback,
+		observedOutSignal,
+		observedRebalSignal,
+		recentRebalanceCount,
+		htlcLiquidityHot,
+		surgeConfirmSignal,
+	); len(capTags) > 0 {
+		target = cappedTarget
+		finalPpm = cappedPpm
+		tags = append(tags, capTags...)
+	}
+
+	if cappedTarget, cappedPpm, capTags := applyHistoryReferenceUpCap(
+		marketRefillMode,
+		newInboundBootstrap,
+		localPpm,
+		target,
+		finalPpm,
+		outPpm7d,
+		rebalHistoryRefPpm,
+		recentRebalanceCount,
+		htlcLiquidityHot,
+		surgeConfirmSignal,
+	); len(capTags) > 0 {
+		target = cappedTarget
+		finalPpm = cappedPpm
+		tags = append(tags, capTags...)
 	}
 
 	floorDrivenUp := finalPpm > localPpm && floor > localPpm && floor > target

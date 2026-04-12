@@ -273,6 +273,50 @@ func TestShouldHoldSeedDrivenUpOnFullChannel(t *testing.T) {
 	}
 }
 
+func TestApplyOutnormFallbackUpHold(t *testing.T) {
+	target, final, tags := applyOutnormFallbackUpHold(
+		false,
+		false,
+		327,
+		352,
+		352,
+		outRatioNormalizationMeta{OutlierLarge: true},
+		true,
+		true,
+		false,
+		false,
+		0,
+		false,
+		false,
+	)
+	if target != 327 || final != 327 {
+		t.Fatalf("expected weak outnorm fallback up move to be held: target=%d final=%d", target, final)
+	}
+	if len(tags) != 1 || tags[0] != "outnorm-fallback-hold" {
+		t.Fatalf("unexpected tags: %#v", tags)
+	}
+}
+
+func TestApplyHistoryReferenceUpCapCapsToHistory(t *testing.T) {
+	target, final, tags := applyHistoryReferenceUpCap(false, false, 130, 378, 314, 110, 285, 0, false, false)
+	if target != 285 || final != 285 {
+		t.Fatalf("expected up move capped to history reference: target=%d final=%d", target, final)
+	}
+	if len(tags) != 1 || tags[0] != "history-up-cap" {
+		t.Fatalf("unexpected tags: %#v", tags)
+	}
+}
+
+func TestApplyHistoryReferenceUpCapHoldsWhenAlreadyAboveHistory(t *testing.T) {
+	target, final, tags := applyHistoryReferenceUpCap(false, false, 574, 596, 596, 521, 522, 0, false, false)
+	if target != 574 || final != 574 {
+		t.Fatalf("expected no further rise when current ppm already exceeds history reference: target=%d final=%d", target, final)
+	}
+	if len(tags) != 1 || tags[0] != "history-up-hold" {
+		t.Fatalf("unexpected tags: %#v", tags)
+	}
+}
+
 func TestApplyAutofeeRefreshRebalMarkup(t *testing.T) {
 	if got := applyAutofeeRefreshRebalMarkup(500, 0.10); got != 550 {
 		t.Fatalf("unexpected refresh rebal markup: got %d want 550", got)
@@ -296,6 +340,23 @@ func TestSelectAutofeeRefreshReferencePrefersOutppm(t *testing.T) {
 	}
 	if target != 500 || ref != 500 || source != "outppm7d" {
 		t.Fatalf("unexpected outppm selection: target=%d ref=%d source=%q", target, ref, source)
+	}
+}
+
+func TestSelectAutofeeRefreshReferencePrefersHigherRebalWithoutMarkup(t *testing.T) {
+	target, ref, source, ok := selectAutofeeRefreshReference(
+		5_000_000,
+		forwardStat{FeeMsat: 500_000, AmtMsat: 1_000_000_000, Count: 10},
+		forwardStat{},
+		rebalStat{FeeMsat: 600_000, AmtMsat: 1_000_000_000},
+		rebalStat{},
+		0.10,
+	)
+	if !ok {
+		t.Fatalf("expected rebal reference to be selected when it is above outrate")
+	}
+	if target != 600 || ref != 600 || source != "rebalppm7d" {
+		t.Fatalf("unexpected higher rebal selection: target=%d ref=%d source=%q", target, ref, source)
 	}
 }
 
@@ -327,6 +388,18 @@ func TestSelectAutofeeRefreshReferenceUses21dFallbacks(t *testing.T) {
 	)
 	if !ok || target != 600 || ref != 600 || source != "outppm21d" {
 		t.Fatalf("unexpected 21d outrate fallback: ok=%v target=%d ref=%d source=%q", ok, target, ref, source)
+	}
+
+	target, ref, source, ok = selectAutofeeRefreshReference(
+		5_000_000,
+		forwardStat{},
+		forwardStat{FeeMsat: 600_000, AmtMsat: 1_000_000_000, Count: 6},
+		rebalStat{},
+		rebalStat{FeeMsat: 800_000, AmtMsat: 1_000_000_000},
+		0.10,
+	)
+	if !ok || target != 800 || ref != 800 || source != "rebalppm21d" {
+		t.Fatalf("unexpected 21d higher rebal selection: ok=%v target=%d ref=%d source=%q", ok, target, ref, source)
 	}
 
 	target, ref, source, ok = selectAutofeeRefreshReference(

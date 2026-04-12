@@ -1,12 +1,11 @@
 import { useTranslation } from 'react-i18next'
 import { getLocale } from '../../i18n'
-import { clamp, formatPercent, formatSats, formatSignedSats, metricNetWithKeysend, toneFromHealthStatus } from './formatters'
+import { clamp, formatPercent, formatSats, formatSignedSats, metricNetWithKeysend } from './formatters'
 import MetricTile from './MetricTile'
 import StackedRatioBar from './StackedRatioBar'
-import type { HealthPayload, LiveResponse, LndStatus, MovementLiveResponse, ReportRangeResponse, SummaryResponse } from './types'
+import type { LiveResponse, LndStatus, MovementLiveResponse, ReportRangeResponse, SummaryResponse } from './types'
 
 type NodePulseRowProps = {
-  health: HealthPayload | null
   live: LiveResponse | null
   range: ReportRangeResponse | null
   summary: SummaryResponse | null
@@ -15,7 +14,6 @@ type NodePulseRowProps = {
 }
 
 export default function NodePulseRow({
-  health,
   live,
   range,
   summary,
@@ -25,15 +23,8 @@ export default function NodePulseRow({
   const { t, i18n } = useTranslation()
   const locale = getLocale(i18n.language)
 
-  const healthStatus = health?.status || t('dashboard.loadingStatus')
-  const healthTone = toneFromHealthStatus(health?.status)
-  const issues = Array.isArray(health?.issues) ? health.issues : []
-  const firstIssue = issues[0]
-  const healthDetail = firstIssue?.message
-    ? `${String(firstIssue.component || 'system').toUpperCase()}: ${firstIssue.message}`
-    : undefined
-
   const sparklineSource = Array.isArray(range?.series) ? [...range.series].sort((a, b) => a.date.localeCompare(b.date)) : []
+  const revenueTrend = sparklineSource.map((item) => ({ value: item.forward_fee_revenue_sats ?? 0 }))
   const netTrend = sparklineSource.map((item) => ({ value: metricNetWithKeysend(item) }))
   const volumeTrend = sparklineSource.map((item) => ({ value: item.routed_volume_sats ?? 0 }))
 
@@ -48,12 +39,12 @@ export default function NodePulseRow({
   return (
     <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
       <MetricTile
-        label={t('dashboard.overallStatus')}
-        value={healthStatus}
-        sublabel={issues.length > 0 ? t('dashboard.issueCount', { count: issues.length }) : t('topbar.allSystemsGreen')}
-        detail={healthDetail}
-        tone={healthTone}
-        badgeLabel={healthStatus}
+        label={t('reports.revenue')}
+        value={`${formatSats(locale, live?.forward_fee_revenue_sats)} sats`}
+        sublabel={t('dashboard.todayWindow')}
+        detail={monthDays > 0 ? t('dashboard.monthTrendHint', { count: monthDays }) : undefined}
+        tone="info"
+        trend={revenueTrend}
       />
 
       <MetricTile

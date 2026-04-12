@@ -633,7 +633,6 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
       )}
 
       <NodePulseRow
-        health={health}
         live={reportsLive}
         range={reportsRange}
         summary={reportsSummary}

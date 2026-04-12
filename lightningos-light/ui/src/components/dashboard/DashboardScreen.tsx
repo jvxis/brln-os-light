@@ -346,7 +346,7 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
     let mounted = true
     const load = async () => {
       try {
-        const next = await getNotifications(5) as { items?: NotificationItem[] } | NotificationItem[]
+        const next = await getNotifications(12) as { items?: NotificationItem[] } | NotificationItem[]
         if (!mounted) return
         const items = Array.isArray(next)
           ? next as NotificationItem[]

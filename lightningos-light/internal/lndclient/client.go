@@ -406,9 +406,17 @@ func (c *Client) CleanFailedPayments(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 
+	if err := c.DeleteFailedPayments(ctx); err != nil {
+		return 0, err
+	}
+
+	return failedCount, nil
+}
+
+func (c *Client) DeleteFailedPayments(ctx context.Context) error {
 	conn, err := c.dial(ctx, true)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	defer conn.Close()
 
@@ -420,13 +428,13 @@ func (c *Client) CleanFailedPayments(ctx context.Context) (int, error) {
 		if st, ok := status.FromError(err); ok {
 			msg := strings.ToLower(strings.TrimSpace(st.Message()))
 			if st.Code() == codes.Unimplemented || strings.Contains(msg, "unimplemented") {
-				return 0, ErrFailedPaymentsCleanupUnsupported
+				return ErrFailedPaymentsCleanupUnsupported
 			}
 		}
-		return 0, err
+		return err
 	}
 
-	return failedCount, nil
+	return nil
 }
 
 type macaroonCredential struct {

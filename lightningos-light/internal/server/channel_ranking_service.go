@@ -18,7 +18,6 @@ import (
 
 const (
 	channelRankingPollInterval          = 3 * time.Minute
-	channelRankingRefreshMinAge         = 30 * time.Second
 	channelRankingAssistedRevenueWeight = 0.5
 )
 
@@ -376,19 +375,6 @@ func (s *ChannelRankingService) lastSyncAtPtr() *time.Time {
 	}
 	value := s.lastSyncAt
 	return &value
-}
-
-func (s *ChannelRankingService) refreshIfStale(ctx context.Context) error {
-	if s == nil {
-		return ErrChannelRankingDBUnavailable
-	}
-	s.mu.Lock()
-	lastSyncAt := s.lastSyncAt
-	s.mu.Unlock()
-	if !lastSyncAt.IsZero() && time.Since(lastSyncAt) < channelRankingRefreshMinAge {
-		return nil
-	}
-	return s.Refresh(ctx)
 }
 
 func (s *ChannelRankingService) Refresh(ctx context.Context) error {
@@ -1705,6 +1691,10 @@ func (s *ChannelRankingService) Status(ctx context.Context) (ChannelRankingStatu
 	if s == nil || s.db == nil {
 		return ChannelRankingStatus{}, ErrChannelRankingDBUnavailable
 	}
+	persistedLastSyncAt, err := s.persistedLastSyncAt(ctx)
+	if err != nil {
+		return ChannelRankingStatus{}, err
+	}
 	rows, err := s.db.Query(ctx, `
 select state, count(*)
 from channel_rankings
@@ -1716,7 +1706,7 @@ group by state
 	defer rows.Close()
 	status := ChannelRankingStatus{
 		Available:   true,
-		LastSyncAt:  s.lastSyncAtPtr(),
+		LastSyncAt:  latestChannelRankingSyncAt(persistedLastSyncAt, s.lastSyncAtPtr()),
 		StateCounts: map[string]int{},
 	}
 	for rows.Next() {
@@ -1728,6 +1718,42 @@ group by state
 		status.StateCounts[state] = count
 	}
 	return status, rows.Err()
+}
+
+func (s *ChannelRankingService) persistedLastSyncAt(ctx context.Context) (*time.Time, error) {
+	if s == nil || s.db == nil {
+		return nil, ErrChannelRankingDBUnavailable
+	}
+	var computedAt sql.NullTime
+	if err := s.db.QueryRow(ctx, `select max(computed_at) from channel_rankings`).Scan(&computedAt); err != nil {
+		return nil, err
+	}
+	if !computedAt.Valid {
+		return nil, nil
+	}
+	value := computedAt.Time.UTC()
+	return &value, nil
+}
+
+func latestChannelRankingSyncAt(persisted *time.Time, inMemory *time.Time) *time.Time {
+	switch {
+	case persisted == nil:
+		return cloneTimePtr(inMemory)
+	case inMemory == nil:
+		return cloneTimePtr(persisted)
+	case persisted.After(*inMemory):
+		return cloneTimePtr(persisted)
+	default:
+		return cloneTimePtr(inMemory)
+	}
+}
+
+func cloneTimePtr(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	cloned := value.UTC()
+	return &cloned
 }
 
 func (s *ChannelRankingService) getHistory(ctx context.Context, channelPoint string, limit int) ([]ChannelRankingHistoryPoint, error) {

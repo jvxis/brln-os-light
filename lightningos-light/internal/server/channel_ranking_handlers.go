@@ -32,9 +32,6 @@ func (s *Server) handleChannelRankingGet(w http.ResponseWriter, r *http.Request)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	if err := svc.refreshIfStale(ctx); err != nil && s.logger != nil {
-		s.logger.Printf("channel ranking refresh on read failed: %v", err)
-	}
 	items, status, err := svc.List(ctx, limit, state)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load channel ranking")
@@ -70,9 +67,6 @@ func (s *Server) handleChannelRankingItemGet(w http.ResponseWriter, r *http.Requ
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	if err := svc.refreshIfStale(ctx); err != nil && s.logger != nil {
-		s.logger.Printf("channel ranking refresh on detail read failed: %v", err)
-	}
 	detail, err := svc.GetDetail(ctx, channelPoint)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "channel ranking not found")

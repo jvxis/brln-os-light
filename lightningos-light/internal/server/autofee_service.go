@@ -302,26 +302,31 @@ type AutofeeChannelSettingEntry struct {
 }
 
 type AutofeeRefreshItem struct {
-	ChannelID    uint64 `json:"channel_id"`
-	ChannelPoint string `json:"channel_point"`
-	Alias        string `json:"alias,omitempty"`
-	CurrentPpm   int    `json:"current_ppm"`
-	TargetPpm    int    `json:"target_ppm,omitempty"`
-	ReferencePpm int    `json:"reference_ppm,omitempty"`
-	Source       string `json:"source,omitempty"`
-	Changed      bool   `json:"changed"`
-	Applied      bool   `json:"applied"`
-	Reason       string `json:"reason,omitempty"`
-	Error        string `json:"error,omitempty"`
+	ChannelID              uint64 `json:"channel_id"`
+	ChannelPoint           string `json:"channel_point"`
+	Alias                  string `json:"alias,omitempty"`
+	CurrentPpm             int    `json:"current_ppm"`
+	TargetPpm              int    `json:"target_ppm,omitempty"`
+	ReferencePpm           int    `json:"reference_ppm,omitempty"`
+	Source                 string `json:"source,omitempty"`
+	CurrentInboundDiscount int    `json:"current_inbound_discount,omitempty"`
+	TargetInboundDiscount  int    `json:"target_inbound_discount,omitempty"`
+	InboundSource          string `json:"inbound_source,omitempty"`
+	Changed                bool   `json:"changed"`
+	Applied                bool   `json:"applied"`
+	Reason                 string `json:"reason,omitempty"`
+	Error                  string `json:"error,omitempty"`
 }
 
 type AutofeeRefreshResult struct {
 	Total          int                  `json:"total"`
 	Updated        int                  `json:"updated"`
+	InboundUpdated int                  `json:"inbound_updated"`
 	Same           int                  `json:"same"`
 	Skipped        int                  `json:"skipped"`
 	Errors         int                  `json:"errors"`
 	DryRun         bool                 `json:"dry_run"`
+	IncludeInbound bool                 `json:"include_inbound"`
 	RebalMarkupPct float64              `json:"rebal_markup_pct"`
 	Items          []AutofeeRefreshItem `json:"items,omitempty"`
 }
@@ -350,7 +355,7 @@ type autofeeLogItem struct {
 	Same                     int      `json:"same,omitempty"`
 	Disabled                 int      `json:"disabled,omitempty"`
 	Inactive                 int      `json:"inactive,omitempty"`
-	InboundDisc              int      `json:"inbound_disc,omitempty"`
+	InboundDisc              int      `json:"inbound_disc"`
 	SuperSource              int      `json:"super_source,omitempty"`
 	HTLCLiqHot               int      `json:"htlc_liq_hot,omitempty"`
 	HTLCPolicyHot            int      `json:"htlc_policy_hot,omitempty"`
@@ -445,6 +450,10 @@ type autofeeLogItem struct {
 	TargetGapPct             float64  `json:"target_gap_pct,omitempty"`
 	ReferencePpm             int      `json:"reference_ppm,omitempty"`
 	RefreshSource            string   `json:"refresh_source,omitempty"`
+	CurrentInboundDiscount   int      `json:"current_inbound_discount"`
+	TargetInboundDiscount    int      `json:"target_inbound_discount"`
+	InboundSource            string   `json:"inbound_source,omitempty"`
+	IncludeInbound           bool     `json:"include_inbound"`
 }
 
 type autofeeProfile struct {
@@ -2735,9 +2744,9 @@ func (s *AutofeeService) LoadChannelSettingsDetailed(ctx context.Context) ([]Aut
 	return entries, rows.Err()
 }
 
-func (s *AutofeeService) RefreshReferenceFees(ctx context.Context, dryRun bool) (AutofeeRefreshResult, error) {
+func (s *AutofeeService) RefreshReferenceFees(ctx context.Context, dryRun bool, includeInbound bool) (AutofeeRefreshResult, error) {
 	runAt := time.Now().UTC()
-	result := AutofeeRefreshResult{DryRun: dryRun, RebalMarkupPct: autofeeRefreshRebalMarkup * 100}
+	result := AutofeeRefreshResult{DryRun: dryRun, IncludeInbound: includeInbound, RebalMarkupPct: autofeeRefreshRebalMarkup * 100}
 	if s.db == nil {
 		return result, errors.New("db unavailable")
 	}
@@ -2761,6 +2770,13 @@ func (s *AutofeeService) RefreshReferenceFees(ctx context.Context, dryRun bool) 
 	if err != nil {
 		return result, err
 	}
+	forwardStats1d := map[uint64]forwardStat{}
+	if includeInbound {
+		forwardStats1d, err = engine.fetchForwardStats(ctx, 1)
+		if err != nil {
+			return result, err
+		}
+	}
 	forwardStats21d, err := engine.fetchForwardStats(ctx, 21)
 	if err != nil {
 		return result, err
@@ -2774,12 +2790,29 @@ func (s *AutofeeService) RefreshReferenceFees(ctx context.Context, dryRun bool) 
 		return result, err
 	}
 
+	totalCap := int64(0)
+	totalLocal := int64(0)
+	for _, ch := range channels {
+		totalCap += ch.CapacitySat
+		totalLocal += ch.LocalBalanceSat
+	}
+	avgCap := int64(0)
+	nodeLocalRatio := 0.0
+	if len(channels) > 0 {
+		avgCap = totalCap / int64(len(channels))
+	}
+	if totalCap > 0 {
+		nodeLocalRatio = float64(totalLocal) / float64(totalCap)
+	}
+
 	result.Items = make([]AutofeeRefreshItem, 0, len(channels))
 	for _, ch := range channels {
 		item := AutofeeRefreshItem{
-			ChannelID:    ch.ChannelID,
-			ChannelPoint: strings.TrimSpace(ch.ChannelPoint),
-			Alias:        strings.TrimSpace(ch.PeerAlias),
+			ChannelID:              ch.ChannelID,
+			ChannelPoint:           strings.TrimSpace(ch.ChannelPoint),
+			Alias:                  strings.TrimSpace(ch.PeerAlias),
+			CurrentInboundDiscount: 0,
+			TargetInboundDiscount:  0,
 		}
 		if item.Alias == "" {
 			item.Alias = strings.TrimSpace(ch.RemotePubkey)
@@ -2829,14 +2862,7 @@ func (s *AutofeeService) RefreshReferenceFees(ctx context.Context, dryRun bool) 
 		item.TargetPpm = targetPpm
 		item.ReferencePpm = referencePpm
 		item.Source = source
-		item.Changed = targetPpm != item.CurrentPpm
-
-		if !item.Changed {
-			item.Reason = "same"
-			result.Same++
-			result.Items = append(result.Items, item)
-			continue
-		}
+		outboundChanged := targetPpm != item.CurrentPpm
 
 		policy, err := s.lnd.GetChannelPolicy(ctx, item.ChannelPoint)
 		if err != nil {
@@ -2846,13 +2872,52 @@ func (s *AutofeeService) RefreshReferenceFees(ctx context.Context, dryRun bool) 
 			result.Items = append(result.Items, item)
 			continue
 		}
+		item.CurrentInboundDiscount = currentInboundDiscountFromPolicy(policy)
+		item.TargetInboundDiscount = item.CurrentInboundDiscount
+		inboundEnabled := policy.InboundBaseMsat != 0 || policy.InboundFeeRatePpm != 0
+		inboundFeeRatePpm := policy.InboundFeeRatePpm
+		if includeInbound {
+			rawOutRatio := 0.5
+			if ch.CapacitySat > 0 {
+				rawOutRatio = float64(ch.LocalBalanceSat) / float64(ch.CapacitySat)
+			}
+			effectiveOutRatio, _ := effectiveChannelOutRatio(rawOutRatio, ch.LocalBalanceSat, ch.CapacitySat, avgCap, nodeLocalRatio)
+			if targetInboundDiscount, inboundSource, applyInbound := selectAutofeeRefreshInboundDiscount(
+				cfg,
+				engine.profile,
+				rawOutRatio,
+				effectiveOutRatio,
+				forwardStats1d[ch.ChannelID],
+				forwardStats7d[ch.ChannelID],
+				ch.CapacitySat,
+				referencePpm,
+				targetPpm,
+			); applyInbound {
+				item.TargetInboundDiscount = targetInboundDiscount
+				item.InboundSource = inboundSource
+				inboundEnabled = targetInboundDiscount > 0
+				if targetInboundDiscount > 0 {
+					inboundFeeRatePpm = int64(-targetInboundDiscount)
+				} else {
+					inboundFeeRatePpm = 0
+				}
+			}
+		}
+		inboundChanged := item.TargetInboundDiscount != item.CurrentInboundDiscount
+		item.Changed = outboundChanged || inboundChanged
+
+		if !item.Changed {
+			item.Reason = "same"
+			result.Same++
+			result.Items = append(result.Items, item)
+			continue
+		}
 
 		if !dryRun {
 			timeLockDelta := policy.TimeLockDelta
 			if timeLockDelta <= 0 {
 				timeLockDelta = 144
 			}
-			inboundEnabled := policy.InboundBaseMsat != 0 || policy.InboundFeeRatePpm != 0
 			if err := s.lnd.UpdateChannelFees(
 				ctx,
 				item.ChannelPoint,
@@ -2862,7 +2927,7 @@ func (s *AutofeeService) RefreshReferenceFees(ctx context.Context, dryRun bool) 
 				timeLockDelta,
 				inboundEnabled,
 				policy.InboundBaseMsat,
-				policy.InboundFeeRatePpm,
+				inboundFeeRatePpm,
 			); err != nil {
 				item.Error = err.Error()
 				item.Reason = "apply-error"
@@ -2874,6 +2939,9 @@ func (s *AutofeeService) RefreshReferenceFees(ctx context.Context, dryRun bool) 
 		}
 
 		result.Updated++
+		if inboundChanged {
+			result.InboundUpdated++
+		}
 		result.Items = append(result.Items, item)
 	}
 
@@ -2952,6 +3020,14 @@ func formatAutofeeRefreshChannelLine(item AutofeeRefreshItem, dryRun bool) strin
 	if src := strings.TrimSpace(item.Source); src != "" {
 		line += fmt.Sprintf(" | source %s", src)
 	}
+	if item.CurrentInboundDiscount != item.TargetInboundDiscount {
+		line += fmt.Sprintf(" | ↘️ inb %d→%d", item.CurrentInboundDiscount, item.TargetInboundDiscount)
+		if src := strings.TrimSpace(item.InboundSource); src != "" {
+			line += fmt.Sprintf(" (%s)", src)
+		}
+	} else if item.TargetInboundDiscount > 0 {
+		line += fmt.Sprintf(" | ↘️ inb %d", item.TargetInboundDiscount)
+	}
 	if category == "skipped" && strings.TrimSpace(item.Reason) != "" {
 		line += fmt.Sprintf(" | %s", item.Reason)
 	}
@@ -2970,23 +3046,28 @@ func buildAutofeeRefreshChannelLogEntry(item AutofeeRefreshItem, dryRun bool) au
 		deltaPct = math.Abs(float64(delta)) / float64(item.CurrentPpm) * 100.0
 	}
 	payload := &autofeeLogItem{
-		Kind:          "channel",
-		Category:      category,
-		Reason:        "refresh",
-		DryRun:        dryRun,
-		Alias:         item.Alias,
-		ChannelID:     item.ChannelID,
-		ChannelPoint:  item.ChannelPoint,
-		LocalPpm:      item.CurrentPpm,
-		NewPpm:        targetPpm,
-		Target:        targetPpm,
-		TargetRaw:     targetPpm,
-		TargetFinal:   targetPpm,
-		ReferencePpm:  item.ReferencePpm,
-		RefreshSource: item.Source,
-		SkipReason:    item.Reason,
-		Delta:         delta,
-		DeltaPct:      deltaPct,
+		Kind:                   "channel",
+		Category:               category,
+		Reason:                 "refresh",
+		DryRun:                 dryRun,
+		Alias:                  item.Alias,
+		ChannelID:              item.ChannelID,
+		ChannelPoint:           item.ChannelPoint,
+		LocalPpm:               item.CurrentPpm,
+		NewPpm:                 targetPpm,
+		Target:                 targetPpm,
+		TargetRaw:              targetPpm,
+		TargetFinal:            targetPpm,
+		ReferencePpm:           item.ReferencePpm,
+		RefreshSource:          item.Source,
+		InboundDiscount:        item.TargetInboundDiscount,
+		PrevInboundDiscount:    item.CurrentInboundDiscount,
+		CurrentInboundDiscount: item.CurrentInboundDiscount,
+		TargetInboundDiscount:  item.TargetInboundDiscount,
+		InboundSource:          item.InboundSource,
+		SkipReason:             item.Reason,
+		Delta:                  delta,
+		DeltaPct:               deltaPct,
 	}
 	if strings.TrimSpace(item.Error) != "" {
 		payload.Error = item.Error
@@ -3000,9 +3081,12 @@ func buildAutofeeRefreshLogEntries(cfg AutofeeConfig, runAt time.Time, result Au
 		header += " (dry-run)"
 	}
 	summaryLine := fmt.Sprintf("🔄 updated %d | same %d | skipped %d | errors %d | rebal_markup +%.0f%%", result.Updated, result.Same, result.Skipped, result.Errors, result.RebalMarkupPct)
+	if result.IncludeInbound {
+		summaryLine += fmt.Sprintf(" | inbound %d", result.InboundUpdated)
+	}
 	entries := []autofeeLogEntry{
-		{Line: header, Payload: &autofeeLogItem{Kind: "header", Reason: "refresh", OperationMode: cfg.OperationMode, DryRun: result.DryRun, Timestamp: runAt.Format(time.RFC3339)}},
-		{Line: summaryLine, Payload: &autofeeLogItem{Kind: "refresh_summary", Reason: "refresh", DryRun: result.DryRun, UpdatedCount: result.Updated, SameCount: result.Same, SkippedCount: result.Skipped, ErrorCount: result.Errors, RebalMarkupPct: result.RebalMarkupPct}},
+		{Line: header, Payload: &autofeeLogItem{Kind: "header", Reason: "refresh", OperationMode: cfg.OperationMode, DryRun: result.DryRun, Timestamp: runAt.Format(time.RFC3339), IncludeInbound: result.IncludeInbound}},
+		{Line: summaryLine, Payload: &autofeeLogItem{Kind: "refresh_summary", Reason: "refresh", DryRun: result.DryRun, UpdatedCount: result.Updated, SameCount: result.Same, SkippedCount: result.Skipped, ErrorCount: result.Errors, RebalMarkupPct: result.RebalMarkupPct, InboundDisc: result.InboundUpdated, IncludeInbound: result.IncludeInbound}},
 	}
 	changedLines := []autofeeLogEntry{}
 	keptLines := []autofeeLogEntry{}
@@ -4032,28 +4116,124 @@ func applyAutofeeRefreshRebalMarkup(referencePpm int, markupFrac float64) int {
 	return int(math.Ceil(float64(referencePpm) * (1.0 + markupFrac)))
 }
 
+func currentInboundDiscountFromPolicy(policy lndclient.ChannelPolicy) int {
+	if policy.InboundFeeRatePpm >= 0 {
+		return 0
+	}
+	return absInt(int(-policy.InboundFeeRatePpm))
+}
+
 func selectAutofeeRefreshReference(capacitySat int64, forward7d forwardStat, forward21d forwardStat, rebal7d rebalStat, rebal21d rebalStat, rebalMarkupFrac float64) (int, int, string, bool) {
 	outPpm7d := ppmMsat(forward7d.FeeMsat, forward7d.AmtMsat)
-	if outPpm7d > 0 {
-		return outPpm7d, outPpm7d, "outppm7d", true
-	}
-
-	outPpm21d := ppmMsat(forward21d.FeeMsat, forward21d.AmtMsat)
-	if outPpm21d > 0 && hasOutFallback21dSignal(int(forward21d.Count), forward21d.AmtMsat/1000, capacitySat) {
-		return outPpm21d, outPpm21d, "outppm21d", true
-	}
-
 	rebalPpm7d := ppmMsat(rebal7d.FeeMsat, rebal7d.AmtMsat)
-	if rebalPpm7d > 0 {
-		return applyAutofeeRefreshRebalMarkup(rebalPpm7d, rebalMarkupFrac), rebalPpm7d, "rebalppm7d", true
+	outPpm21d := ppmMsat(forward21d.FeeMsat, forward21d.AmtMsat)
+	hasOut21d := outPpm21d > 0 && hasOutFallback21dSignal(int(forward21d.Count), forward21d.AmtMsat/1000, capacitySat)
+	rebalPpm21d := ppmMsat(rebal21d.FeeMsat, rebal21d.AmtMsat)
+	hasRebal21d := rebalPpm21d > 0 && hasRebalFallback21dSignal(rebal21d.AmtMsat/1000, capacitySat)
+
+	outRef := 0
+	outSource := ""
+	switch {
+	case outPpm7d > 0:
+		outRef = outPpm7d
+		outSource = "outppm7d"
+	case hasOut21d:
+		outRef = outPpm21d
+		outSource = "outppm21d"
 	}
 
-	rebalPpm21d := ppmMsat(rebal21d.FeeMsat, rebal21d.AmtMsat)
-	if rebalPpm21d > 0 && hasRebalFallback21dSignal(rebal21d.AmtMsat/1000, capacitySat) {
-		return applyAutofeeRefreshRebalMarkup(rebalPpm21d, rebalMarkupFrac), rebalPpm21d, "rebalppm21d", true
+	rebalRef := 0
+	rebalSource := ""
+	switch {
+	case rebalPpm7d > 0:
+		rebalRef = rebalPpm7d
+		rebalSource = "rebalppm7d"
+	case hasRebal21d:
+		rebalRef = rebalPpm21d
+		rebalSource = "rebalppm21d"
+	}
+
+	if outRef > 0 {
+		if rebalRef > outRef {
+			return rebalRef, rebalRef, rebalSource, true
+		}
+		return outRef, outRef, outSource, true
+	}
+
+	if rebalRef > 0 {
+		return applyAutofeeRefreshRebalMarkup(rebalRef, rebalMarkupFrac), rebalRef, rebalSource + "+10%", true
 	}
 
 	return 0, 0, "", false
+}
+
+func selectAutofeeRefreshInboundDiscount(cfg AutofeeConfig, profile autofeeProfile, rawOutRatio float64, effectiveOutRatio float64, forward1d forwardStat, forward7d forwardStat, capacitySat int64, baseCostPpm int, appliedPpm int) (int, string, bool) {
+	if appliedPpm <= 0 || baseCostPpm <= 0 {
+		return 0, "", false
+	}
+
+	inboundDiscountMaxRatio := defaultInboundDiscountMaxRatio
+	if cfg.InboundDiscountMaxRatioOverride > 0 {
+		inboundDiscountMaxRatio = cfg.InboundDiscountMaxRatioOverride
+	}
+	inboundDiscountMinRetainedSpreadFrac := profile.InboundDiscountMinRetainedSpreadFrac
+	if inboundDiscountMinRetainedSpreadFrac <= 0 {
+		inboundDiscountMinRetainedSpreadFrac = 0.12
+	}
+	if cfg.InboundDiscountMinRetainedSpreadFracOverride > 0 {
+		inboundDiscountMinRetainedSpreadFrac = cfg.InboundDiscountMinRetainedSpreadFracOverride
+	}
+
+	switch normalizeAutofeeOperationMode(cfg.OperationMode) {
+	case autofeeOperationModeMarketRefill:
+		recentForwards1d := int(forward1d.Count)
+		noFlow1d := recentForwards1d == 0 && forward1d.AmtMsat <= 0
+		weakRecentFlow := !hasStagnationRecoveryFlow(recentForwards1d, forward1d.AmtMsat/1000, capacitySat)
+		discount, _ := computeMarketRefillInboundDiscount(
+			true,
+			effectiveOutRatio,
+			recentForwards1d,
+			noFlow1d,
+			weakRecentFlow,
+			0,
+			baseCostPpm,
+			appliedPpm,
+			inboundDiscountMaxRatio,
+			inboundDiscountMinRetainedSpreadFrac,
+			profile,
+		)
+		return discount, "market-refill", true
+	default:
+		if !cfg.InboundPassiveEnabled {
+			return 0, "", false
+		}
+		inboundDiscountReachOutRatio := profile.InboundDiscountReachOutRatio
+		if inboundDiscountReachOutRatio <= 0 {
+			inboundDiscountReachOutRatio = 0.10
+		}
+		if cfg.InboundDiscountReachOutRatioOverride > 0 {
+			inboundDiscountReachOutRatio = cfg.InboundDiscountReachOutRatioOverride
+		}
+		fwdCount := int(forward7d.Count)
+		outPpm7d := ppmMsat(forward7d.FeeMsat, forward7d.AmtMsat)
+		marginPpm7d := outPpm7d - int(math.Ceil(float64(baseCostPpm)*1.10))
+		if rawOutRatio > inboundDiscountReachOutRatio || fwdCount < 5 || marginPpm7d < 200 {
+			return 0, "", false
+		}
+		discount := computeInboundDiscount(
+			true,
+			"sink",
+			rawOutRatio,
+			fwdCount,
+			marginPpm7d,
+			baseCostPpm,
+			appliedPpm,
+			inboundDiscountMaxRatio,
+			inboundDiscountReachOutRatio,
+			inboundDiscountMinRetainedSpreadFrac,
+		)
+		return discount, "balanced", true
+	}
 }
 
 func slowCycle30dMinScore(profile autofeeProfile) int {
@@ -4454,15 +4634,65 @@ func antiFlipExtraConfirmRoundsForChannel(profile autofeeProfile, st *autofeeCha
 	return extraRounds, []string{"anti-flip-window"}
 }
 
-func capBalancedFloorDrivenUp(profile autofeeProfile, classLabel string, outRatio float64, localPpm int, targetPpm int, finalPpm int) (int, []string) {
+func dynamicGoodOutRatio(profile autofeeProfile, liquidityClass string, nodeLocalRatio float64, meta outRatioNormalizationMeta) float64 {
+	base := profile.BalancedUpOutRatioMin
+	if profile.OutrateTargetOutRatioMin > base {
+		base = profile.OutrateTargetOutRatioMin
+	}
+	if base <= 0 {
+		base = profile.HighOutThresh
+	}
+	if base <= 0 {
+		base = 0.20
+	}
+
+	factor := 1.0
+	switch strings.ToLower(strings.TrimSpace(liquidityClass)) {
+	case "drained":
+		factor *= 0.82
+	case "full":
+		factor *= 1.12
+	default:
+		factor *= 1.0
+	}
+
+	if nodeLocalRatio > 0 && nodeLocalRatio < 1 {
+		if nodeLocalRatio < 0.50 {
+			lack := (0.50 - nodeLocalRatio) / 0.50
+			factor *= 1.0 - clampFloat(lack, 0.0, 1.0)*0.20
+		} else if nodeLocalRatio > 0.50 {
+			headroom := (nodeLocalRatio - 0.50) / 0.50
+			factor *= 1.0 + clampFloat(headroom, 0.0, 1.0)*0.12
+		}
+	}
+
+	if meta.OutlierSmall {
+		factor *= 0.92
+	} else if meta.OutlierLarge {
+		factor *= 1.08
+	}
+
+	return clampFloat(base*factor, 0.08, 0.35)
+}
+
+func dynamicUpwardPressureOutRatio(rawOutRatio float64, effectiveOutRatio float64, meta outRatioNormalizationMeta) float64 {
+	if meta.OutlierLarge || meta.OutlierSmall {
+		return effectiveOutRatio
+	}
+	return rawOutRatio
+}
+
+func capBalancedFloorDrivenUp(profile autofeeProfile, classLabel string, outRatio float64, goodOutRatio float64, localPpm int, targetPpm int, finalPpm int) (int, []string) {
 	if finalPpm <= localPpm || targetPpm > localPpm || localPpm <= 0 {
 		return finalPpm, nil
 	}
-	minOutRatio := profile.BalancedUpOutRatioMin
-	if minOutRatio <= 0 {
-		minOutRatio = 0.20
+	if goodOutRatio <= 0 {
+		goodOutRatio = profile.BalancedUpOutRatioMin
 	}
-	if outRatio < minOutRatio {
+	if goodOutRatio <= 0 {
+		goodOutRatio = 0.20
+	}
+	if outRatio < goodOutRatio {
 		return finalPpm, nil
 	}
 	capFrac := profile.BalancedFloorUpCap
@@ -4476,15 +4706,61 @@ func capBalancedFloorDrivenUp(profile autofeeProfile, classLabel string, outRati
 	return finalPpm, nil
 }
 
-func applyOutrateTargetAnchor(profile autofeeProfile, targetPpm int, outPpm7d int, outRatio float64, fwdCount int) (int, []string) {
+func hasStrongUpwardPressureSignal(recentRebalanceCount int, htlcLiquidityHot bool, surgeConfirmSignal bool) bool {
+	return recentRebalanceCount > 0 || htlcLiquidityHot || surgeConfirmSignal
+}
+
+func applyOutnormFallbackUpHold(marketRefillMode bool, newInboundBootstrap bool, localPpm int, targetPpm int, finalPpm int, meta outRatioNormalizationMeta, outFrom21dFallback bool, rebalFrom21dFallback bool, observedOutSignal bool, observedRebalSignal bool, recentRebalanceCount int, htlcLiquidityHot bool, surgeConfirmSignal bool) (int, int, []string) {
+	if marketRefillMode || newInboundBootstrap || finalPpm <= localPpm {
+		return targetPpm, finalPpm, nil
+	}
+	if !meta.OutlierLarge && !meta.OutlierSmall {
+		return targetPpm, finalPpm, nil
+	}
+	if observedOutSignal || observedRebalSignal {
+		return targetPpm, finalPpm, nil
+	}
+	if !outFrom21dFallback && !rebalFrom21dFallback {
+		return targetPpm, finalPpm, nil
+	}
+	if hasStrongUpwardPressureSignal(recentRebalanceCount, htlcLiquidityHot, surgeConfirmSignal) {
+		return targetPpm, finalPpm, nil
+	}
+	return localPpm, localPpm, []string{"outnorm-fallback-hold"}
+}
+
+func applyHistoryReferenceUpCap(marketRefillMode bool, newInboundBootstrap bool, localPpm int, targetPpm int, finalPpm int, outPpm7d int, rebalHistoryRefPpm int, recentRebalanceCount int, htlcLiquidityHot bool, surgeConfirmSignal bool) (int, int, []string) {
+	if marketRefillMode || newInboundBootstrap || finalPpm <= localPpm {
+		return targetPpm, finalPpm, nil
+	}
+	historyRef := maxInt(outPpm7d, rebalHistoryRefPpm)
+	if historyRef <= 0 {
+		return targetPpm, finalPpm, nil
+	}
+	if hasStrongUpwardPressureSignal(recentRebalanceCount, htlcLiquidityHot, surgeConfirmSignal) {
+		return targetPpm, finalPpm, nil
+	}
+	if localPpm >= historyRef {
+		return localPpm, localPpm, []string{"history-up-hold"}
+	}
+	if finalPpm > historyRef {
+		capped := maxInt(localPpm, historyRef)
+		return minInt(targetPpm, historyRef), capped, []string{"history-up-cap"}
+	}
+	return targetPpm, finalPpm, nil
+}
+
+func applyOutrateTargetAnchor(profile autofeeProfile, targetPpm int, outPpm7d int, outRatio float64, goodOutRatio float64, fwdCount int) (int, []string) {
 	if targetPpm <= 0 || outPpm7d <= 0 {
 		return targetPpm, nil
 	}
-	minOutRatio := profile.OutrateTargetOutRatioMin
-	if minOutRatio <= 0 {
-		minOutRatio = 0.20
+	if goodOutRatio <= 0 {
+		goodOutRatio = profile.OutrateTargetOutRatioMin
 	}
-	if outRatio < minOutRatio {
+	if goodOutRatio <= 0 {
+		goodOutRatio = 0.20
+	}
+	if outRatio < goodOutRatio {
 		return targetPpm, nil
 	}
 	minFwds := profile.OutrateTargetMinFwds
@@ -6229,6 +6505,9 @@ func buildTelegramAutofeeRefreshMessages(cfg AutofeeConfig, runAt time.Time, res
 		fmt.Sprintf("Updated: %d | Same: %d | Skipped: %d | Errors: %d", result.Updated, result.Same, result.Skipped, result.Errors),
 		fmt.Sprintf("Rebal markup: +%.0f%%", result.RebalMarkupPct),
 	}
+	if result.IncludeInbound {
+		summaryLines = append(summaryLines, fmt.Sprintf("Inbound refresh: enabled | changed %d", result.InboundUpdated))
+	}
 	if result.DryRun {
 		summaryLines = append(summaryLines, "Mode: dry-run")
 	}
@@ -6362,6 +6641,14 @@ func buildTelegramAutofeeRefreshChannelLine(item AutofeeRefreshItem) string {
 	}
 	if src := strings.TrimSpace(item.Source); src != "" {
 		line += fmt.Sprintf(" | %s", src)
+	}
+	if item.CurrentInboundDiscount != item.TargetInboundDiscount {
+		line += fmt.Sprintf(" | ↘️ inb %d→%d", item.CurrentInboundDiscount, item.TargetInboundDiscount)
+		if src := strings.TrimSpace(item.InboundSource); src != "" {
+			line += fmt.Sprintf(" (%s)", src)
+		}
+	} else if item.TargetInboundDiscount > 0 {
+		line += fmt.Sprintf(" | ↘️ inb %d", item.TargetInboundDiscount)
 	}
 	if category == "skipped" && strings.TrimSpace(item.Reason) != "" {
 		line += fmt.Sprintf(" | %s", item.Reason)
@@ -6513,6 +6800,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		rawOutRatio = float64(ch.LocalBalanceSat) / float64(ch.CapacitySat)
 	}
 	outRatio, outNormMeta := effectiveChannelOutRatio(rawOutRatio, ch.LocalBalanceSat, ch.CapacitySat, e.calib.AvgCapacitySat, e.calib.LocalRatio)
+	upwardPressureOutRatio := dynamicUpwardPressureOutRatio(rawOutRatio, outRatio, outNormMeta)
+	goodOutRatio := dynamicGoodOutRatio(e.profile, e.calib.LiquidityClass, e.calib.LocalRatio, outNormMeta)
 	ranking, hasRanking := e.ranking[normalizeChannelPointKey(ch.ChannelPoint)]
 
 	fwd := forwardStats[ch.ChannelID]
@@ -7470,7 +7759,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		!superSourceActive &&
 		!highOutStagnationPressure
 	if allowOutrateTargetAnchor {
-		anchoredTarget, anchorTags := applyOutrateTargetAnchor(e.profile, target, outPpm7d, outRatio, fwdCount)
+		anchoredTarget, anchorTags := applyOutrateTargetAnchor(e.profile, target, outPpm7d, upwardPressureOutRatio, goodOutRatio, fwdCount)
 		if anchoredTarget > target {
 			target = anchoredTarget
 			tags = append(tags, anchorTags...)
@@ -7736,7 +8025,10 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 	floor := int(math.Ceil(float64(floorBasePpm) * 1.10))
 	floorSrc := floorSourceFromBaseCost(floorBaseSrc, marketRefillMode)
-	if strings.EqualFold(classLabel, "sink") && baseCostPpm > 0 && e.profile.SinkExtraFloorMargin > 0 && !highOutStagnationPressure && !holdMatureEmptySinkUp {
+	goodLiquidityHold := !marketRefillMode &&
+		strings.EqualFold(classLabel, "sink") &&
+		upwardPressureOutRatio >= goodOutRatio
+	if strings.EqualFold(classLabel, "sink") && baseCostPpm > 0 && e.profile.SinkExtraFloorMargin > 0 && !highOutStagnationPressure && !holdMatureEmptySinkUp && !goodLiquidityHold {
 		sinkFloor := int(math.Ceil(float64(baseCostPpm) * (1.10 + e.profile.SinkExtraFloorMargin)))
 		if sinkFloor > floor {
 			floor = sinkFloor
@@ -7749,6 +8041,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			}
 			tags = append(tags, "sink-floor")
 		}
+	} else if goodLiquidityHold && strings.EqualFold(classLabel, "sink") && baseCostPpm > 0 && e.profile.SinkExtraFloorMargin > 0 && !highOutStagnationPressure && !holdMatureEmptySinkUp {
+		tags = append(tags, "sink-floor-paused-goodliq")
 	}
 	if holdMatureEmptySinkUp && (floorSrc == "rebal" || floorSrc == "rebal-sink") && floor > localPpm {
 		floor = localPpm
@@ -7790,6 +8084,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			tags = append(tags, "empty-sink-peg-paused")
 		} else if rebalExecutionDownAnchorActive && target < localPpm && peg > floor {
 			tags = append(tags, "rebal-exec-peg-paused")
+		} else if goodLiquidityHold && peg > floor {
+			tags = append(tags, "peg-paused-goodliq")
 		} else if peg > floor && (withinGrace || demandPeg) {
 			floor = peg
 			floorSrc = "peg"
@@ -7835,6 +8131,19 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			floor = revFloor
 			floorSrc = "revfloor"
 			tags = append(tags, "revfloor")
+		}
+	}
+
+	if !marketRefillMode &&
+		floor > localPpm &&
+		outPpm7d <= 0 &&
+		rebalHistoryRefPpm <= 0 &&
+		upwardPressureOutRatio >= goodOutRatio {
+		switch floorSrc {
+		case "seed", "seed-sink", "seed-soft":
+			floor = localPpm
+			floorSrc = "seed-goodliq-hold"
+			tags = append(tags, "seed-goodliq-hold")
 		}
 	}
 
@@ -7988,9 +8297,46 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		finalPpm = clampInt(finalPpm, e.cfg.MinPpm, e.cfg.MaxPpm)
 	}
 
+	if cappedTarget, cappedPpm, capTags := applyOutnormFallbackUpHold(
+		marketRefillMode,
+		newInboundBootstrap,
+		localPpm,
+		target,
+		finalPpm,
+		outNormMeta,
+		outFrom21dFallback,
+		rebalFrom21dFallback,
+		observedOutSignal,
+		observedRebalSignal,
+		recentRebalanceCount,
+		htlcLiquidityHot,
+		surgeConfirmSignal,
+	); len(capTags) > 0 {
+		target = cappedTarget
+		finalPpm = cappedPpm
+		tags = append(tags, capTags...)
+	}
+
+	if cappedTarget, cappedPpm, capTags := applyHistoryReferenceUpCap(
+		marketRefillMode,
+		newInboundBootstrap,
+		localPpm,
+		target,
+		finalPpm,
+		outPpm7d,
+		rebalHistoryRefPpm,
+		recentRebalanceCount,
+		htlcLiquidityHot,
+		surgeConfirmSignal,
+	); len(capTags) > 0 {
+		target = cappedTarget
+		finalPpm = cappedPpm
+		tags = append(tags, capTags...)
+	}
+
 	floorDrivenUp := finalPpm > localPpm && floor > localPpm && floor > target
 	if floorDrivenUp {
-		if cappedPpm, capTags := capBalancedFloorDrivenUp(e.profile, classLabel, outRatio, localPpm, target, finalPpm); cappedPpm != finalPpm {
+		if cappedPpm, capTags := capBalancedFloorDrivenUp(e.profile, classLabel, upwardPressureOutRatio, goodOutRatio, localPpm, target, finalPpm); cappedPpm != finalPpm {
 			finalPpm = cappedPpm
 			tags = append(tags, capTags...)
 			floorDrivenUp = finalPpm > localPpm && floor > localPpm && floor > target

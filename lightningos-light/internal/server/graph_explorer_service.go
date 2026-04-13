@@ -18,16 +18,17 @@ import (
 )
 
 const (
-	graphExplorerReconcileInterval  = 6 * time.Hour
-	graphExplorerStreamRetryDelay   = 15 * time.Second
-	graphExplorerRefreshTimeout     = 3 * time.Minute
-	graphExplorerUpdateTimeout      = 45 * time.Second
-	graphCloseClassifierInterval    = 2 * time.Minute
-	graphCloseClassifierTimeout     = 45 * time.Second
-	graphCloseClassifierBatchSize   = 32
-	graphCloseClassifierMaxAttempts = 3
-	graphExplorerBatchSize          = 500
-	graphExplorerConfigID           = 1
+	graphExplorerReconcileInterval   = 6 * time.Hour
+	graphExplorerStreamRetryDelay    = 15 * time.Second
+	graphExplorerRefreshTimeout      = 3 * time.Minute
+	graphExplorerUpdateTimeout       = 45 * time.Second
+	graphExplorerStartupRefreshDelay = 5 * time.Minute
+	graphCloseClassifierInterval     = 2 * time.Minute
+	graphCloseClassifierTimeout      = 45 * time.Second
+	graphCloseClassifierBatchSize    = 32
+	graphCloseClassifierMaxAttempts  = 3
+	graphExplorerBatchSize           = 500
+	graphExplorerConfigID            = 1
 )
 
 var ErrGraphExplorerDBUnavailable = errors.New("graph explorer db unavailable")
@@ -251,9 +252,12 @@ func (s *GraphExplorerService) Start() {
 
 	go func() {
 		defer close(doneCh)
-		s.refreshBackground()
 		var wg sync.WaitGroup
-		wg.Add(3)
+		wg.Add(4)
+		go func() {
+			defer wg.Done()
+			s.runStartupRefresh(stopCh)
+		}()
 		go func() {
 			defer wg.Done()
 			s.runRefreshLoop(stopCh)
@@ -268,6 +272,23 @@ func (s *GraphExplorerService) Start() {
 		}()
 		wg.Wait()
 	}()
+}
+
+func (s *GraphExplorerService) runStartupRefresh(stopCh <-chan struct{}) {
+	if s == nil || s.db == nil || s.lnd == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	warmState := s.hasWarmState(ctx)
+	cancel()
+	if warmState {
+		if !sleepWithStop(stopCh, graphExplorerStartupRefreshDelay) {
+			return
+		}
+	}
+
+	s.refreshBackground()
 }
 
 func (s *GraphExplorerService) runRefreshLoop(stopCh <-chan struct{}) {
@@ -546,6 +567,21 @@ select
 
 	status.RefillAvailable = graphExplorerAmbossTokenAvailable(ctx, s.db)
 	return status, nil
+}
+
+func (s *GraphExplorerService) hasWarmState(ctx context.Context) bool {
+	if s == nil || s.db == nil {
+		return false
+	}
+
+	var nodeCount int
+	if err := s.db.QueryRow(ctx, `select count(*) from graph_nodes`).Scan(&nodeCount); err != nil {
+		if s.logger != nil {
+			s.logger.Printf("graph explorer warm-state check failed: %v", err)
+		}
+		return false
+	}
+	return nodeCount > 0
 }
 
 func upsertGraphNodesSnapshot(ctx context.Context, tx pgx.Tx, nodes []lndclient.GraphNode, observedAt time.Time) error {

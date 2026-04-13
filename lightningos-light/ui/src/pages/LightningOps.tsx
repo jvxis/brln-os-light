@@ -592,6 +592,7 @@ type AutofeeResultItem = {
   rev_share?: number
   tags?: string[]
   inbound_discount?: number
+  prev_inbound_discount?: number
   class_label?: string
   skip_reason?: string
   error?: string
@@ -600,6 +601,11 @@ type AutofeeResultItem = {
   prediction_code?: string
   prediction_cooldown_hours?: number
   new_inbound?: boolean
+  current_inbound_discount?: number
+  target_inbound_discount?: number
+  inbound_source?: string
+  inbound_updated?: number
+  include_inbound?: boolean
   channel_age_hours?: number
   htlc_attempts?: number
   htlc_forward_fails?: number
@@ -997,6 +1003,7 @@ export default function LightningOps() {
   const [autofeeNativeSeedEnabled, setAutofeeNativeSeedEnabled] = useState(false)
   const [autofeeAmbossEnabled, setAutofeeAmbossEnabled] = useState(false)
   const [autofeeAmbossToken, setAutofeeAmbossToken] = useState('')
+  const [autofeeRefreshIncludeInbound, setAutofeeRefreshIncludeInbound] = useState(true)
   const [autofeeInboundPassive, setAutofeeInboundPassive] = useState(false)
   const [autofeeDiscovery, setAutofeeDiscovery] = useState(true)
   const [autofeeExplorer, setAutofeeExplorer] = useState(true)
@@ -1745,11 +1752,13 @@ export default function LightningOps() {
 
   const formatAutofeeRefreshSummary = (item: AutofeeResultItem) => {
     const updated = item.updated_count ?? 0
+    const inboundUpdated = item.inbound_disc ?? item.inbound_updated ?? 0
     const same = item.same_count ?? 0
     const skipped = item.skipped_count ?? 0
     const errors = item.error_count ?? 0
     const markup = typeof item.rebal_markup_pct === 'number' ? item.rebal_markup_pct.toFixed(0) : '0'
-    return `🔄 ${item.dry_run ? 'DRY REFRESH SUMMARY' : 'REFRESH SUMMARY'} | updated ${updated} | same ${same} | skipped ${skipped} | errors ${errors} | rebal_markup +${markup}%`
+    const inboundPart = item.include_inbound ? ` | inbound ${inboundUpdated}` : ''
+    return `🔄 ${item.dry_run ? 'DRY REFRESH SUMMARY' : 'REFRESH SUMMARY'} | updated ${updated} | same ${same} | skipped ${skipped} | errors ${errors}${inboundPart} | rebal_markup +${markup}%`
   }
 
   const formatAutofeeRefreshSource = (value?: string) => {
@@ -1760,8 +1769,12 @@ export default function LightningOps() {
       case 'outppm21d':
         return 'outppm21d'
       case 'rebalppm7d':
-        return 'rebalppm7d+10%'
+        return 'rebalppm7d'
       case 'rebalppm21d':
+        return 'rebalppm21d'
+      case 'rebalppm7d+10%':
+        return 'rebalppm7d+10%'
+      case 'rebalppm21d+10%':
         return 'rebalppm21d+10%'
       case 'seed:amboss':
         return 'seed:amboss'
@@ -2129,6 +2142,8 @@ export default function LightningOps() {
       const deltaStr = localPpm > 0 && newPpm !== localPpm ? ` (${delta >= 0 ? '+' : ''}${delta}, ${deltaPct.toFixed(1)}%)` : ''
       const source = formatAutofeeRefreshSource(item.refresh_source)
       const reference = item.reference_ppm ?? 0
+      const currentInbound = item.current_inbound_discount ?? item.prev_inbound_discount ?? 0
+      const targetInbound = item.target_inbound_discount ?? item.inbound_discount ?? currentInbound
 
       let prefix = '🔄🫤'
       if (item.category === 'changed') {
@@ -2151,6 +2166,14 @@ export default function LightningOps() {
         line += ` | ${t('lightningOps.autofeeRefreshReference')} ≈${reference}`
       }
       line += ` | ${t('lightningOps.autofeeRefreshSource')} ${source}`
+      if (currentInbound !== targetInbound) {
+        line += ` | ↘️ inb ${currentInbound}→${targetInbound}`
+        if (item.inbound_source) {
+          line += ` (${item.inbound_source})`
+        }
+      } else if (targetInbound > 0) {
+        line += ` | ↘️ inb ${targetInbound}`
+      }
       if (item.category === 'skipped' && item.skip_reason) {
         line += ` | ${item.skip_reason}`
       }
@@ -4428,14 +4451,18 @@ export default function LightningOps() {
     setAutofeeBusy(true)
     setAutofeeMessage(dryRun ? t('lightningOps.autofeeDryRefreshing') : t('lightningOps.autofeeRefreshing'))
     try {
-      const payload = await refreshAutofeeReferences({ dry_run: dryRun })
+      const payload = await refreshAutofeeReferences({ dry_run: dryRun, include_inbound: autofeeRefreshIncludeInbound })
       const updated = Number((payload as any)?.updated || 0)
+      const inboundUpdated = Number((payload as any)?.inbound_updated || 0)
       const same = Number((payload as any)?.same || 0)
       const skipped = Number((payload as any)?.skipped || 0)
       const errors = Number((payload as any)?.errors || 0)
-      setAutofeeMessage(dryRun
+      const messageBase = dryRun
         ? t('lightningOps.autofeeDryRefreshDone', { updated, same, skipped, errors })
-        : t('lightningOps.autofeeRefreshDone', { updated, same, skipped, errors }))
+        : t('lightningOps.autofeeRefreshDone', { updated, same, skipped, errors })
+      setAutofeeMessage(autofeeRefreshIncludeInbound
+        ? `${messageBase} ${t('lightningOps.autofeeRefreshInboundDone', { count: inboundUpdated })}`
+        : messageBase)
       if (!dryRun) {
         const channelsPayload = await getLnChannels()
         applyChannelsPayload(channelsPayload)
@@ -5881,6 +5908,11 @@ export default function LightningOps() {
               <button className="btn-secondary" onClick={() => handleAutofeeRun(true)} disabled={autofeeBusy}>{t('lightningOps.autofeeDryRun')}</button>
               <button className="btn-secondary" onClick={() => handleAutofeeRun(false)} disabled={autofeeBusy}>{t('lightningOps.autofeeRunNow')}</button>
             </div>
+            <label className="flex items-center gap-2 text-xs text-fog/60">
+              <input type="checkbox" checked={autofeeRefreshIncludeInbound} onChange={(e) => setAutofeeRefreshIncludeInbound(e.target.checked)} />
+              {t('lightningOps.autofeeRefreshIncludeInbound')}
+            </label>
+            <p className="text-xs text-fog/45">{t('lightningOps.autofeeRefreshIncludeInboundHint')}</p>
 
             {autofeeMessage && <p className="text-sm text-brass">{autofeeMessage}</p>}
             <div className="text-xs text-fog/60">

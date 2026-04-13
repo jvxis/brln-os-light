@@ -255,6 +255,26 @@ func TestEffectiveChannelOutRatioAdjustsTrueSmallOutlier(t *testing.T) {
 	}
 }
 
+func TestDynamicUpwardPressureOutRatioPrefersRawForNormalChannels(t *testing.T) {
+	meta := outRatioNormalizationMeta{}
+	got := dynamicUpwardPressureOutRatio(0.31, 0.24, meta)
+	if math.Abs(got-0.31) > 0.000001 {
+		t.Fatalf("expected normal channel upward gate to use raw ratio, got %.6f want 0.31", got)
+	}
+}
+
+func TestDynamicGoodOutRatioDropsWhenNodeLiquidityIsDrained(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	drained := dynamicGoodOutRatio(profile, "drained", 0.30, outRatioNormalizationMeta{})
+	full := dynamicGoodOutRatio(profile, "full", 0.80, outRatioNormalizationMeta{})
+	if !(drained < profile.BalancedUpOutRatioMin) {
+		t.Fatalf("expected drained node threshold below profile base, got %.4f base %.4f", drained, profile.BalancedUpOutRatioMin)
+	}
+	if !(full > drained) {
+		t.Fatalf("expected full node threshold above drained threshold, got full %.4f drained %.4f", full, drained)
+	}
+}
+
 func TestShouldHoldSeedDrivenUpOnFullChannel(t *testing.T) {
 	if !shouldHoldSeedDrivenUpOnFullChannel(false, 0.99, 213, 190, 0, 0, "seed") {
 		t.Fatalf("expected seed-driven up hold for full channel without local history")
@@ -270,6 +290,50 @@ func TestShouldHoldSeedDrivenUpOnFullChannel(t *testing.T) {
 	}
 	if shouldHoldSeedDrivenUpOnFullChannel(false, 0.99, 213, 190, 0, 0, "outrate") {
 		t.Fatalf("did not expect hold when base cost is not seed")
+	}
+}
+
+func TestApplyOutnormFallbackUpHold(t *testing.T) {
+	target, final, tags := applyOutnormFallbackUpHold(
+		false,
+		false,
+		327,
+		352,
+		352,
+		outRatioNormalizationMeta{OutlierLarge: true},
+		true,
+		true,
+		false,
+		false,
+		0,
+		false,
+		false,
+	)
+	if target != 327 || final != 327 {
+		t.Fatalf("expected weak outnorm fallback up move to be held: target=%d final=%d", target, final)
+	}
+	if len(tags) != 1 || tags[0] != "outnorm-fallback-hold" {
+		t.Fatalf("unexpected tags: %#v", tags)
+	}
+}
+
+func TestApplyHistoryReferenceUpCapCapsToHistory(t *testing.T) {
+	target, final, tags := applyHistoryReferenceUpCap(false, false, 130, 378, 314, 110, 285, 0, false, false)
+	if target != 285 || final != 285 {
+		t.Fatalf("expected up move capped to history reference: target=%d final=%d", target, final)
+	}
+	if len(tags) != 1 || tags[0] != "history-up-cap" {
+		t.Fatalf("unexpected tags: %#v", tags)
+	}
+}
+
+func TestApplyHistoryReferenceUpCapHoldsWhenAlreadyAboveHistory(t *testing.T) {
+	target, final, tags := applyHistoryReferenceUpCap(false, false, 574, 596, 596, 521, 522, 0, false, false)
+	if target != 574 || final != 574 {
+		t.Fatalf("expected no further rise when current ppm already exceeds history reference: target=%d final=%d", target, final)
+	}
+	if len(tags) != 1 || tags[0] != "history-up-hold" {
+		t.Fatalf("unexpected tags: %#v", tags)
 	}
 }
 
@@ -299,6 +363,23 @@ func TestSelectAutofeeRefreshReferencePrefersOutppm(t *testing.T) {
 	}
 }
 
+func TestSelectAutofeeRefreshReferencePrefersHigherRebalWithoutMarkup(t *testing.T) {
+	target, ref, source, ok := selectAutofeeRefreshReference(
+		5_000_000,
+		forwardStat{FeeMsat: 500_000, AmtMsat: 1_000_000_000, Count: 10},
+		forwardStat{},
+		rebalStat{FeeMsat: 600_000, AmtMsat: 1_000_000_000},
+		rebalStat{},
+		0.10,
+	)
+	if !ok {
+		t.Fatalf("expected rebal reference to be selected when it is above outrate")
+	}
+	if target != 600 || ref != 600 || source != "rebalppm7d" {
+		t.Fatalf("unexpected higher rebal selection: target=%d ref=%d source=%q", target, ref, source)
+	}
+}
+
 func TestSelectAutofeeRefreshReferenceFallsBackToRebalMarkup(t *testing.T) {
 	target, ref, source, ok := selectAutofeeRefreshReference(
 		5_000_000,
@@ -311,7 +392,7 @@ func TestSelectAutofeeRefreshReferenceFallsBackToRebalMarkup(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected rebal reference to be selected")
 	}
-	if target != 660 || ref != 600 || source != "rebalppm7d" {
+	if target != 660 || ref != 600 || source != "rebalppm7d+10%" {
 		t.Fatalf("unexpected rebal selection: target=%d ref=%d source=%q", target, ref, source)
 	}
 }
@@ -332,13 +413,88 @@ func TestSelectAutofeeRefreshReferenceUses21dFallbacks(t *testing.T) {
 	target, ref, source, ok = selectAutofeeRefreshReference(
 		5_000_000,
 		forwardStat{},
+		forwardStat{FeeMsat: 600_000, AmtMsat: 1_000_000_000, Count: 6},
+		rebalStat{},
+		rebalStat{FeeMsat: 800_000, AmtMsat: 1_000_000_000},
+		0.10,
+	)
+	if !ok || target != 800 || ref != 800 || source != "rebalppm21d" {
+		t.Fatalf("unexpected 21d higher rebal selection: ok=%v target=%d ref=%d source=%q", ok, target, ref, source)
+	}
+
+	target, ref, source, ok = selectAutofeeRefreshReference(
+		5_000_000,
+		forwardStat{},
 		forwardStat{},
 		rebalStat{},
 		rebalStat{FeeMsat: 250_000, AmtMsat: 250_000_000},
 		0.10,
 	)
-	if !ok || target != 1100 || ref != 1000 || source != "rebalppm21d" {
+	if !ok || target != 1100 || ref != 1000 || source != "rebalppm21d+10%" {
 		t.Fatalf("unexpected 21d rebal fallback: ok=%v target=%d ref=%d source=%q", ok, target, ref, source)
+	}
+}
+
+func TestSelectAutofeeRefreshInboundDiscountBalancedEligible(t *testing.T) {
+	cfg := AutofeeConfig{InboundPassiveEnabled: true}
+	profile := autofeeProfiles["moderate"]
+	discount, source, apply := selectAutofeeRefreshInboundDiscount(
+		cfg,
+		profile,
+		0.08,
+		0.08,
+		forwardStat{},
+		forwardStat{FeeMsat: 1_000_000, AmtMsat: 1_000_000_000, Count: 6},
+		5_000_000,
+		500,
+		1000,
+	)
+	if !apply || source != "balanced" {
+		t.Fatalf("expected balanced inbound refresh to apply, apply=%v source=%q", apply, source)
+	}
+	if discount <= 0 {
+		t.Fatalf("expected positive inbound discount, got %d", discount)
+	}
+}
+
+func TestSelectAutofeeRefreshInboundDiscountBalancedPreservesIneligible(t *testing.T) {
+	cfg := AutofeeConfig{InboundPassiveEnabled: true}
+	profile := autofeeProfiles["moderate"]
+	discount, source, apply := selectAutofeeRefreshInboundDiscount(
+		cfg,
+		profile,
+		0.30,
+		0.30,
+		forwardStat{},
+		forwardStat{FeeMsat: 1_000_000, AmtMsat: 1_000_000_000, Count: 6},
+		5_000_000,
+		500,
+		1000,
+	)
+	if apply || source != "" || discount != 0 {
+		t.Fatalf("expected ineligible balanced inbound refresh to preserve current setting, apply=%v source=%q discount=%d", apply, source, discount)
+	}
+}
+
+func TestSelectAutofeeRefreshInboundDiscountMarketRefillApplies(t *testing.T) {
+	cfg := AutofeeConfig{OperationMode: autofeeOperationModeMarketRefill}
+	profile := autofeeProfiles["moderate"]
+	discount, source, apply := selectAutofeeRefreshInboundDiscount(
+		cfg,
+		profile,
+		0.08,
+		0.08,
+		forwardStat{Count: 1},
+		forwardStat{},
+		5_000_000,
+		200,
+		1000,
+	)
+	if !apply || source != "market-refill" {
+		t.Fatalf("expected market refill inbound refresh to apply, apply=%v source=%q", apply, source)
+	}
+	if discount <= 0 {
+		t.Fatalf("expected positive market refill inbound discount, got %d", discount)
 	}
 }
 
@@ -763,7 +919,7 @@ func TestAntiFlipExtraConfirmRoundsBypassesStrongSignal(t *testing.T) {
 
 func TestCapBalancedFloorDrivenUpForRouter(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
-	capped, tags := capBalancedFloorDrivenUp(profile, "router", 0.32, 1710, 1533, 2012)
+	capped, tags := capBalancedFloorDrivenUp(profile, "router", 0.32, 0.20, 1710, 1533, 2012)
 	if capped >= 2012 {
 		t.Fatalf("expected balanced floor-driven rise to be capped below floor, got %d", capped)
 	}
@@ -777,7 +933,7 @@ func TestCapBalancedFloorDrivenUpForRouter(t *testing.T) {
 
 func TestCapBalancedFloorDrivenUpBypassesDrainedSink(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
-	capped, tags := capBalancedFloorDrivenUp(profile, "sink", 0.08, 1000, 950, 1180)
+	capped, tags := capBalancedFloorDrivenUp(profile, "sink", 0.08, 0.20, 1000, 950, 1180)
 	if capped != 1180 {
 		t.Fatalf("expected drained sink to keep stronger upward floor, got %d", capped)
 	}
@@ -788,7 +944,7 @@ func TestCapBalancedFloorDrivenUpBypassesDrainedSink(t *testing.T) {
 
 func TestCapBalancedFloorDrivenUpForMidLiquiditySink(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
-	capped, tags := capBalancedFloorDrivenUp(profile, "sink", 0.24, 1784, 1592, 2369)
+	capped, tags := capBalancedFloorDrivenUp(profile, "sink", 0.24, 0.20, 1784, 1592, 2369)
 	if capped >= 2369 {
 		t.Fatalf("expected mid-liquidity sink rise to be capped below floor, got %d", capped)
 	}
@@ -802,7 +958,7 @@ func TestCapBalancedFloorDrivenUpForMidLiquiditySink(t *testing.T) {
 
 func TestApplyOutrateTargetAnchorModerate(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
-	anchored, tags := applyOutrateTargetAnchor(profile, 512, 1086, 0.32, 9)
+	anchored, tags := applyOutrateTargetAnchor(profile, 512, 1086, 0.32, 0.20, 9)
 	if anchored != 869 {
 		t.Fatalf("unexpected anchored target: got %d want 869", anchored)
 	}
@@ -813,7 +969,7 @@ func TestApplyOutrateTargetAnchorModerate(t *testing.T) {
 
 func TestApplyOutrateTargetAnchorBypassesLowLiquidity(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
-	anchored, tags := applyOutrateTargetAnchor(profile, 512, 1086, 0.12, 9)
+	anchored, tags := applyOutrateTargetAnchor(profile, 512, 1086, 0.12, 0.20, 9)
 	if anchored != 512 {
 		t.Fatalf("expected low-liquidity channel to keep original target, got %d", anchored)
 	}

@@ -107,20 +107,14 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	btcCtx, btcCancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer btcCancel()
 	bitcoinSource := readBitcoinSource()
-	bitcoin := bitcoinStatus{}
-	err = nil
-	if bitcoinSource == "local" {
-		bitcoin, err = s.bitcoinLocalStatusActive(btcCtx)
-		if err != nil {
+	bitcoin, err := s.bitcoinActiveStatusCached(btcCtx)
+	if err != nil {
+		if bitcoinSource == "local" {
 			issues = append(issues, healthIssue{Component: "bitcoin", Level: "WARN", Message: "Bitcoin local check failed"})
-			status = elevate(status, "WARN")
-		}
-	} else {
-		bitcoin, err = s.bitcoinStatus(btcCtx)
-		if err != nil {
+		} else {
 			issues = append(issues, healthIssue{Component: "bitcoin", Level: "WARN", Message: "Bitcoin remote check failed"})
-			status = elevate(status, "WARN")
 		}
+		status = elevate(status, "WARN")
 	}
 	if err == nil {
 		if !bitcoin.RPCOk {
@@ -376,6 +370,7 @@ type bitcoinStatus struct {
 	RPCOk                bool    `json:"rpc_ok"`
 	ZMQRawBlockOk        bool    `json:"zmq_rawblock_ok"`
 	ZMQRawTxOk           bool    `json:"zmq_rawtx_ok"`
+	Connections          int     `json:"connections,omitempty"`
 	Version              int     `json:"version,omitempty"`
 	Subversion           string  `json:"subversion,omitempty"`
 	Chain                string  `json:"chain,omitempty"`
@@ -384,6 +379,10 @@ type bitcoinStatus struct {
 	VerificationProgress float64 `json:"verification_progress,omitempty"`
 	InitialBlockDownload bool    `json:"initial_block_download,omitempty"`
 	BestBlockHash        string  `json:"best_block_hash,omitempty"`
+	Pruned               bool    `json:"pruned,omitempty"`
+	PruneHeight          int64   `json:"prune_height,omitempty"`
+	PruneTargetSize      int64   `json:"prune_target_size,omitempty"`
+	SizeOnDisk           int64   `json:"size_on_disk,omitempty"`
 }
 
 type mempoolConnectivityNode struct {
@@ -447,21 +446,10 @@ func (s *Server) handleBitcoin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBitcoinActive(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), bitcoinActiveHandlerTimeout(readBitcoinSource()))
 	defer cancel()
 
-	source := readBitcoinSource()
-	if source == "local" {
-		status, err := s.bitcoinLocalStatusActive(ctx)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "bitcoin local status error")
-			return
-		}
-		writeJSON(w, http.StatusOK, status)
-		return
-	}
-
-	status, err := s.bitcoinStatus(ctx)
+	status, err := s.bitcoinActiveStatusCached(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "bitcoin status error")
 		return
@@ -533,6 +521,7 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
 	if err := storeBitcoinSource(source); err != nil {
 		s.logger.Printf("failed to store bitcoin source: %v", err)
 	}
+	s.invalidateBitcoinStatusCaches()
 
 	needsBitcoinRestart := source == "local" && localUpdated
 	if source == "local" && !needsBitcoinRestart {
@@ -640,16 +629,9 @@ func (s *Server) bitcoinLocalStatusActive(ctx context.Context) (bitcoinStatus, e
 			if strings.TrimSpace(cfg.User) != "" && strings.TrimSpace(cfg.Pass) != "" {
 				info, rpcErr := fetchBitcoinInfo(ctx, cfg.Host, cfg.User, cfg.Pass)
 				if rpcErr == nil {
-					status.RPCOk = true
-					status.Chain = info.Chain
-					status.Blocks = info.Blocks
-					status.Headers = info.Headers
-					status.VerificationProgress = info.VerificationProgress
-					status.InitialBlockDownload = info.InitialBlockDownload
-					status.BestBlockHash = info.BestBlockHash
-					if netInfo, netErr := fetchBitcoinNetworkInfo(ctx, cfg.Host, cfg.User, cfg.Pass); netErr == nil {
-						status.Version = netInfo.Version
-						status.Subversion = netInfo.Subversion
+					applyBitcoinInfoToStatus(&status, info)
+					if netInfo, ok := fetchBitcoinNetworkInfoBestEffort(ctx, cfg.Host, cfg.User, cfg.Pass); ok {
+						applyBitcoinNetworkInfoToStatus(&status, netInfo)
 					}
 				} else {
 					status.RPCOk = false
@@ -660,17 +642,12 @@ func (s *Server) bitcoinLocalStatusActive(ctx context.Context) (bitcoinStatus, e
 		status.ZMQRawTxOk = testTCP(status.ZMQRawTx)
 		return status, nil
 	}
-	info, netInfo, err := fetchBitcoinLocalInfo(ctx, paths)
+	info, err := fetchBitcoinLocalChainInfo(ctx, paths)
 	if err == nil {
-		status.RPCOk = true
-		status.Chain = info.Chain
-		status.Blocks = info.Blocks
-		status.Headers = info.Headers
-		status.VerificationProgress = info.VerificationProgress
-		status.InitialBlockDownload = info.InitialBlockDownload
-		status.BestBlockHash = info.BestBlockHash
-		status.Version = netInfo.Version
-		status.Subversion = netInfo.Subversion
+		applyBitcoinCLIChainInfoToStatus(&status, info)
+		if netInfo, ok := fetchBitcoinLocalNetworkInfoBestEffort(ctx, paths); ok {
+			applyBitcoinCLINetworkInfoToStatus(&status, netInfo)
+		}
 	}
 	status.ZMQRawBlockOk = testTCP(status.ZMQRawBlock)
 	status.ZMQRawTxOk = testTCP(status.ZMQRawTx)
@@ -1367,7 +1344,15 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	timeout := 4 * time.Second
+	switch service {
+	case "lnd":
+		timeout = 12 * time.Second
+	case "lightningos-manager", "postgresql":
+		timeout = 8 * time.Second
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
 	if service == "autofee" {
@@ -4340,6 +4325,32 @@ func fetchBitcoinNetworkInfo(ctx context.Context, host, user, pass string) (bitc
 		return bitcoinNetworkInfo{}, err
 	}
 	return parseBitcoinNetworkInfo(body)
+}
+
+func applyBitcoinInfoToStatus(status *bitcoinStatus, info bitcoinInfo) {
+	if status == nil {
+		return
+	}
+	status.RPCOk = true
+	status.Chain = info.Chain
+	status.Blocks = info.Blocks
+	status.Headers = info.Headers
+	status.VerificationProgress = info.VerificationProgress
+	status.InitialBlockDownload = info.InitialBlockDownload
+	status.BestBlockHash = info.BestBlockHash
+	status.Pruned = info.Pruned
+	status.PruneHeight = info.PruneHeight
+	status.PruneTargetSize = info.PruneTargetSize
+	status.SizeOnDisk = info.SizeOnDisk
+}
+
+func applyBitcoinNetworkInfoToStatus(status *bitcoinStatus, info bitcoinNetworkInfo) {
+	if status == nil {
+		return
+	}
+	status.Connections = info.Connections
+	status.Version = info.Version
+	status.Subversion = info.Subversion
 }
 
 func testBitcoinRPC(ctx context.Context, host, user, pass string) (bool, error) {

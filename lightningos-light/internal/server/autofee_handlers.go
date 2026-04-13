@@ -231,7 +231,8 @@ func (s *Server) handleAutofeeRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		DryRun bool `json:"dry_run"`
+		DryRun         bool `json:"dry_run"`
+		IncludeInbound bool `json:"include_inbound"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -261,7 +262,8 @@ func (s *Server) handleAutofeeRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DryRun bool `json:"dry_run"`
+		DryRun         bool `json:"dry_run"`
+		IncludeInbound bool `json:"include_inbound"`
 	}
 	if err := readJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -271,7 +273,7 @@ func (s *Server) handleAutofeeRefresh(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
 
-	result, err := svc.RefreshReferenceFees(ctx, req.DryRun)
+	result, err := svc.RefreshReferenceFees(ctx, req.DryRun, req.IncludeInbound)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -292,10 +293,39 @@ func updateLndRestOptions(lines []string, gateways []string) ([]string, bool) {
 		uniqueGateways = append(uniqueGateways, gateway)
 	}
 
+	cleaned := append([]string{}, lines...)
+	insertIdx := -1
+	for i, line := range lines {
+		if !strings.EqualFold(strings.TrimSpace(line), "[Application Options]") {
+			continue
+		}
+		insertIdx = i + 1
+		managedEnd := insertIdx
+		preserved := []string{}
+		for managedEnd < len(lines) {
+			trimmed := strings.TrimSpace(lines[managedEnd])
+			if !isLndRestManagedLine(trimmed) {
+				break
+			}
+			if !isLndRestAppManagedLine(trimmed) {
+				preserved = append(preserved, lines[managedEnd])
+			}
+			managedEnd++
+		}
+		cleaned = append([]string{}, lines[:insertIdx]...)
+		cleaned = append(cleaned, preserved...)
+		cleaned = append(cleaned, lines[managedEnd:]...)
+		break
+	}
+	if insertIdx == -1 {
+		cleaned = append(cleaned, "[Application Options]")
+		insertIdx = len(cleaned)
+	}
+
 	restSet := map[string]bool{}
 	tlsExtraIPSet := map[string]bool{}
 	tlsExtraDomainSet := map[string]bool{}
-	for _, line := range lines {
+	for _, line := range cleaned {
 		trimmed := strings.TrimSpace(line)
 		switch {
 		case strings.HasPrefix(trimmed, "restlisten="):
@@ -338,26 +368,72 @@ func updateLndRestOptions(lines []string, gateways []string) ([]string, bool) {
 		}
 	}
 
-	if len(block) == 0 {
-		return lines, false
-	}
+	updated := append([]string{}, cleaned[:insertIdx]...)
+	updated = append(updated, block...)
+	updated = append(updated, cleaned[insertIdx:]...)
 
-	insertIdx := -1
-	for i, line := range lines {
-		if strings.EqualFold(strings.TrimSpace(line), "[Application Options]") {
-			insertIdx = i + 1
-			break
+	changed := len(updated) != len(lines)
+	if !changed {
+		for i := range updated {
+			if updated[i] != lines[i] {
+				changed = true
+				break
+			}
 		}
 	}
-	if insertIdx == -1 {
-		lines = append(lines, "[Application Options]")
-		insertIdx = len(lines)
+	return updated, changed
+}
+
+func isLndRestManagedLine(trimmed string) bool {
+	return strings.HasPrefix(trimmed, "restlisten=") ||
+		strings.HasPrefix(trimmed, "tlsextraip=") ||
+		strings.HasPrefix(trimmed, "tlsextradomain=")
+}
+
+func isLndRestAppManagedLine(trimmed string) bool {
+	switch {
+	case strings.HasPrefix(trimmed, "tlsextradomain="):
+		return strings.TrimSpace(strings.TrimPrefix(trimmed, "tlsextradomain=")) == "host.docker.internal"
+	case strings.HasPrefix(trimmed, "tlsextraip="):
+		return isLikelyDockerGatewayIP(strings.TrimSpace(strings.TrimPrefix(trimmed, "tlsextraip=")))
+	case strings.HasPrefix(trimmed, "restlisten="):
+		return isLikelyDockerGatewayAddr(strings.TrimSpace(strings.TrimPrefix(trimmed, "restlisten=")))
+	default:
+		return false
+	}
+}
+
+func isLikelyDockerGatewayAddr(value string) bool {
+	host, port, err := net.SplitHostPort(value)
+	if err != nil {
+		return false
+	}
+	if port != "8080" {
+		return false
+	}
+	if host == "127.0.0.1" {
+		return true
+	}
+	return isLikelyDockerGatewayIP(host)
+}
+
+func isLikelyDockerGatewayIP(value string) bool {
+	ip := net.ParseIP(value)
+	if ip == nil {
+		return false
+	}
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return false
 	}
 
-	updated := append([]string{}, lines[:insertIdx]...)
-	updated = append(updated, block...)
-	updated = append(updated, lines[insertIdx:]...)
-	return updated, true
+	private := ip4[0] == 10 ||
+		(ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31) ||
+		(ip4[0] == 192 && ip4[1] == 168)
+	if !private {
+		return false
+	}
+	return ip4[3] == 1
 }
 
 func lnbitsNetworkGatewayIP(ctx context.Context) (string, error) {

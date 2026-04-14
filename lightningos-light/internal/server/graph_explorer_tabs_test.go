@@ -97,8 +97,8 @@ func TestSummarizeGraphExplorerPoliciesIgnoresCeilingPoliciesInCorrectedAverage(
 	if summary.WeightedAvgPpm != 250001275 {
 		t.Fatalf("expected weighted avg 250001275, got %d", summary.WeightedAvgPpm)
 	}
-	if summary.CorrectedAvgPpm != 1660 {
-		t.Fatalf("expected corrected avg 1660, got %d", summary.CorrectedAvgPpm)
+	if summary.CorrectedAvgPpm != 1700 {
+		t.Fatalf("expected corrected avg 1700, got %d", summary.CorrectedAvgPpm)
 	}
 	if summary.CorrectedAvgPpm >= 1000000 {
 		t.Fatalf("expected corrected avg %d to ignore ceiling fee", summary.CorrectedAvgPpm)

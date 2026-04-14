@@ -598,6 +598,7 @@ func summarizeGraphExplorerPolicies(samples []graphExplorerPolicySample) GraphEx
 	weightedAvg := graphExplorerWeightedAvg(weightedNumerator, totalCapacity)
 
 	correctedSamples := graphExplorerCorrectedSamples(samples)
+	hadCeilingPolicies := len(correctedSamples) < len(samples)
 	correctedValues := make([]int64, 0, len(correctedSamples))
 	var correctedCapacity int64
 	var correctedWeightedNumerator int64
@@ -615,7 +616,7 @@ func summarizeGraphExplorerPolicies(samples []graphExplorerPolicySample) GraphEx
 		MinPpm:             minPpm,
 		MaxPpm:             maxPpm,
 		AvgPpm:             totalPpm / int64(len(samples)),
-		CorrectedAvgPpm:    graphExplorerCorrectedWeightedAvg(correctedWeightedAvg, correctedMedian),
+		CorrectedAvgPpm:    graphExplorerCorrectedWeightedAvg(correctedWeightedAvg, correctedMedian, hadCeilingPolicies),
 		MedianPpm:          median,
 		WeightedAvgPpm:     weightedAvg,
 		TotalCapacitySat:   totalCapacity,
@@ -664,7 +665,10 @@ func graphExplorerHistorySince(rangeSince *time.Time) *time.Time {
 	return rangeSince
 }
 
-func graphExplorerCorrectedWeightedAvg(weightedAvg, median int64) int64 {
+func graphExplorerCorrectedWeightedAvg(weightedAvg, median int64, hadCeilingPolicies bool) int64 {
+	if hadCeilingPolicies {
+		return weightedAvg
+	}
 	const weightedShare = 0.60
 	const medianShare = 0.40
 	return int64(float64(weightedAvg)*weightedShare + float64(median)*medianShare)

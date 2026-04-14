@@ -124,6 +124,8 @@ type graphExplorerRangeSpec struct {
 	since *time.Time
 }
 
+const graphExplorerCorrectedCeilingPpm int64 = 1_000_000
+
 func (s *GraphExplorerService) ListNodeChannels(ctx context.Context, pubkey string, limit int) (GraphExplorerNodeChannelsResponse, error) {
 	if s == nil || s.db == nil {
 		return GraphExplorerNodeChannelsResponse{}, ErrGraphExplorerDBUnavailable
@@ -592,16 +594,20 @@ func summarizeGraphExplorerPolicies(samples []graphExplorerPolicySample) GraphEx
 		lastUpdateAt = latestGraphExplorerTime(lastUpdateAt, sample.LastUpdateAt)
 	}
 
-	sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
-	median := values[len(values)/2]
-	if len(values)%2 == 0 {
-		median = (values[len(values)/2-1] + values[len(values)/2]) / 2
-	}
+	median := graphExplorerMedian(values)
+	weightedAvg := graphExplorerWeightedAvg(weightedNumerator, totalCapacity)
 
-	weightedAvg := int64(0)
-	if totalCapacity > 0 {
-		weightedAvg = weightedNumerator / totalCapacity
+	correctedSamples := graphExplorerCorrectedSamples(samples)
+	correctedValues := make([]int64, 0, len(correctedSamples))
+	var correctedCapacity int64
+	var correctedWeightedNumerator int64
+	for _, sample := range correctedSamples {
+		correctedValues = append(correctedValues, sample.Ppm)
+		correctedCapacity += sample.CapacitySat
+		correctedWeightedNumerator += sample.Ppm * sample.CapacitySat
 	}
+	correctedMedian := graphExplorerMedian(correctedValues)
+	correctedWeightedAvg := graphExplorerWeightedAvg(correctedWeightedNumerator, correctedCapacity)
 
 	return GraphExplorerFeeSummary{
 		ChannelCount:       len(samples),
@@ -609,7 +615,7 @@ func summarizeGraphExplorerPolicies(samples []graphExplorerPolicySample) GraphEx
 		MinPpm:             minPpm,
 		MaxPpm:             maxPpm,
 		AvgPpm:             totalPpm / int64(len(samples)),
-		CorrectedAvgPpm:    graphExplorerCorrectedWeightedAvg(weightedAvg, median),
+		CorrectedAvgPpm:    graphExplorerCorrectedWeightedAvg(correctedWeightedAvg, correctedMedian),
 		MedianPpm:          median,
 		WeightedAvgPpm:     weightedAvg,
 		TotalCapacitySat:   totalCapacity,
@@ -662,6 +668,40 @@ func graphExplorerCorrectedWeightedAvg(weightedAvg, median int64) int64 {
 	const weightedShare = 0.60
 	const medianShare = 0.40
 	return int64(float64(weightedAvg)*weightedShare + float64(median)*medianShare)
+}
+
+func graphExplorerCorrectedSamples(samples []graphExplorerPolicySample) []graphExplorerPolicySample {
+	filtered := make([]graphExplorerPolicySample, 0, len(samples))
+	for _, sample := range samples {
+		if sample.Ppm >= graphExplorerCorrectedCeilingPpm {
+			continue
+		}
+		filtered = append(filtered, sample)
+	}
+	if len(filtered) == 0 {
+		return samples
+	}
+	return filtered
+}
+
+func graphExplorerMedian(values []int64) int64 {
+	if len(values) == 0 {
+		return 0
+	}
+	ordered := append([]int64(nil), values...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i] < ordered[j] })
+	median := ordered[len(ordered)/2]
+	if len(ordered)%2 == 0 {
+		median = (ordered[len(ordered)/2-1] + ordered[len(ordered)/2]) / 2
+	}
+	return median
+}
+
+func graphExplorerWeightedAvg(weightedNumerator, totalCapacity int64) int64 {
+	if totalCapacity <= 0 {
+		return 0
+	}
+	return weightedNumerator / totalCapacity
 }
 
 func graphExplorerDistributePolicies(samples []graphExplorerPolicySample) []GraphExplorerFeeDistribution {

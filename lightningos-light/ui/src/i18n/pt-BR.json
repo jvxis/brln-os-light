@@ -444,6 +444,10 @@
     "publicPoolConfServer": "server=1",
     "publicPoolConfRpcBind": "rpcbind=0.0.0.0:8332",
     "publicPoolConfRpcAllow": "rpcallowip=172.16.0.0/12",
+    "electrsTcpEndpoint": "Endpoint Electrum TCP: {{endpoint}}",
+    "electrsIndexing": "Indexando: {{index}} / {{tip}} ({{percent}}%)",
+    "electrsSynced": "Sincronizado no bloco {{height}}",
+    "electrsMetricsUnavailable": "Métricas indisponíveis — reinicie o electrs para publicar a porta 4224.",
     "subtitle": "Instale serviços opcionais sob demanda. Docker é instalado automaticamente quando necessário.",
     "title": "Loja de Apps",
     "uninstall": "Desinstalar"

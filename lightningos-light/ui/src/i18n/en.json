@@ -444,6 +444,10 @@
     "publicPoolConfServer": "server=1",
     "publicPoolConfRpcBind": "rpcbind=0.0.0.0:8332",
     "publicPoolConfRpcAllow": "rpcallowip=172.16.0.0/12",
+    "electrsTcpEndpoint": "Electrum TCP endpoint: {{endpoint}}",
+    "electrsIndexing": "Indexing: {{index}} / {{tip}} ({{percent}}%)",
+    "electrsSynced": "Synced at block {{height}}",
+    "electrsMetricsUnavailable": "Metrics unavailable — restart electrs to publish port 4224.",
     "subtitle": "Install optional services on demand. Docker is installed automatically when required.",
     "title": "App Store",
     "uninstall": "Uninstall"

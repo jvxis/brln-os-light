@@ -664,6 +664,7 @@ export const deleteShortcut = (id: number) =>
   request(`/api/shortcuts/${encodeURIComponent(String(id))}`, { method: 'DELETE' })
 
 export const getApps = () => request('/api/apps')
+export const getElectrsStatus = () => request('/api/apps/electrs/status')
 export const getAppAdminPassword = (id: string) => request(`/api/apps/${id}/admin-password`)
 export const installApp = (id: string) => request(`/api/apps/${id}/install`, { method: 'POST' })
 export const uninstallApp = (id: string) => request(`/api/apps/${id}/uninstall`, { method: 'POST' })

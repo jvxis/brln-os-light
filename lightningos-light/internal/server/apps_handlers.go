@@ -145,6 +145,10 @@ func (s *Server) handleAppResetAdmin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+func (s *Server) handleElectrsStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.fetchElectrsStatus(r.Context()))
+}
+
 func (s *Server) handleAppAdminPassword(w http.ResponseWriter, r *http.Request) {
 	appID := chi.URLParam(r, "id")
 	if appID == "" {

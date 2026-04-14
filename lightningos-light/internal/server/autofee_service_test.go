@@ -337,6 +337,18 @@ func TestApplyHistoryReferenceUpCapHoldsWhenAlreadyAboveHistory(t *testing.T) {
 	}
 }
 
+func TestShouldPauseOutratePegHeadroomWhenOutrateAlreadyClearsRebalSpread(t *testing.T) {
+	if !shouldPauseOutratePegHeadroom(1639, 1217, 301) {
+		t.Fatalf("expected peg headroom to pause when outrate already exceeds rebal by 20%%+ with positive margin")
+	}
+	if shouldPauseOutratePegHeadroom(1400, 1217, 301) {
+		t.Fatalf("did not expect peg headroom pause below required outrate/rebal spread")
+	}
+	if shouldPauseOutratePegHeadroom(1639, 1217, -10) {
+		t.Fatalf("did not expect peg headroom pause with negative margin")
+	}
+}
+
 func TestApplyAutofeeRefreshRebalMarkup(t *testing.T) {
 	if got := applyAutofeeRefreshRebalMarkup(500, 0.10); got != 550 {
 		t.Fatalf("unexpected refresh rebal markup: got %d want 550", got)

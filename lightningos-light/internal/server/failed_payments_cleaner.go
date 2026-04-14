@@ -21,7 +21,8 @@ const (
 	failedPaymentsCleanerDefaultIntervalHours = 24
 	failedPaymentsCleanerMinIntervalHours     = 1
 	failedPaymentsCleanerMaxIntervalHours     = 168
-	failedPaymentsCleanerRunTimeout           = 45 * time.Second
+	failedPaymentsCleanerCountTimeout         = 5 * time.Minute
+	failedPaymentsCleanerDeleteTimeout        = 15 * time.Minute
 )
 
 var errInvalidFailedPaymentsCleanerConfig = errors.New("invalid failed payments cleaner config")
@@ -52,9 +53,14 @@ type failedPaymentsCleanerTrigger struct {
 	force bool
 }
 
+type failedPaymentsCleanerLND interface {
+	CountFailedPayments(ctx context.Context) (int, error)
+	DeleteFailedPayments(ctx context.Context) error
+}
+
 type FailedPaymentsCleaner struct {
 	db     *pgxpool.Pool
-	lnd    *lndclient.Client
+	lnd    failedPaymentsCleanerLND
 	logger *log.Logger
 
 	mu               sync.Mutex
@@ -71,7 +77,7 @@ type FailedPaymentsCleaner struct {
 	intervalUpdated  chan struct{}
 }
 
-func NewFailedPaymentsCleaner(db *pgxpool.Pool, lnd *lndclient.Client, logger *log.Logger) *FailedPaymentsCleaner {
+func NewFailedPaymentsCleaner(db *pgxpool.Pool, lnd failedPaymentsCleanerLND, logger *log.Logger) *FailedPaymentsCleaner {
 	return &FailedPaymentsCleaner{
 		db:     db,
 		lnd:    lnd,
@@ -370,19 +376,67 @@ func (m *FailedPaymentsCleaner) tick(force bool) {
 		m.mu.Unlock()
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), failedPaymentsCleanerRunTimeout)
-	deleted, err := m.lnd.CleanFailedPayments(ctx)
-	cancel()
+	countCtx, countCancel := context.WithTimeout(context.Background(), failedPaymentsCleanerCountTimeout)
+	deleted, err := m.lnd.CountFailedPayments(countCtx)
+	countCancel()
 	if err != nil {
-		m.recordFailure(err)
+		m.recordFailure(failedPaymentsCleanerErrorMessage("counting failed payments", failedPaymentsCleanerCountTimeout, err))
+		return
+	}
+	if deleted == 0 {
+		m.recordSuccess(0)
+		return
+	}
+
+	deleteCtx, deleteCancel := context.WithTimeout(context.Background(), failedPaymentsCleanerDeleteTimeout)
+	err = m.lnd.DeleteFailedPayments(deleteCtx)
+	deleteCancel()
+	if err != nil {
+		m.recordFailure(failedPaymentsCleanerErrorMessage("deleting failed payments", failedPaymentsCleanerDeleteTimeout, err))
 		return
 	}
 
 	m.recordSuccess(deleted)
 }
 
-func (m *FailedPaymentsCleaner) recordFailure(err error) {
-	msg := strings.TrimSpace(err.Error())
+func failedPaymentsCleanerErrorMessage(stage string, timeout time.Duration, err error) string {
+	if err == nil {
+		return "failed payments cleanup failed"
+	}
+	if errors.Is(err, lndclient.ErrFailedPaymentsCleanupUnsupported) {
+		return err.Error()
+	}
+	if errors.Is(err, context.DeadlineExceeded) || isTimeoutError(err) {
+		return fmt.Sprintf("failed payments cleanup timed out after %s while %s", formatFailedPaymentsCleanerTimeout(timeout), stage)
+	}
+	msg := strings.TrimSpace(lndDetailedErrorMessage(err))
+	if msg == "" {
+		msg = strings.TrimSpace(err.Error())
+	}
+	if msg == "" {
+		return "failed payments cleanup failed"
+	}
+	if stage == "" {
+		return msg
+	}
+	return fmt.Sprintf("%s: %s", stage, msg)
+}
+
+func formatFailedPaymentsCleanerTimeout(timeout time.Duration) string {
+	if timeout <= 0 {
+		return "0s"
+	}
+	if timeout%time.Minute == 0 {
+		return fmt.Sprintf("%dm", int(timeout/time.Minute))
+	}
+	if timeout%time.Second == 0 {
+		return fmt.Sprintf("%ds", int(timeout/time.Second))
+	}
+	return timeout.String()
+}
+
+func (m *FailedPaymentsCleaner) recordFailure(msg string) {
+	msg = strings.TrimSpace(msg)
 	if msg == "" {
 		msg = "failed payments cleanup failed"
 	}

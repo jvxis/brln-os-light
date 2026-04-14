@@ -1000,6 +1000,7 @@ var autofeeProfiles = map[string]autofeeProfile{
 const (
 	outratePegHeadroom           = 1.05
 	outratePegSeedMult           = 1.10
+	outratePegRebalSpreadMinFrac = 0.20
 	outrateFloorFactor           = 1.00
 	outrateFloorMinFwds          = 4
 	outrateFloorDisableBelowFwds = 5
@@ -4750,6 +4751,16 @@ func applyHistoryReferenceUpCap(marketRefillMode bool, newInboundBootstrap bool,
 	return targetPpm, finalPpm, nil
 }
 
+func shouldPauseOutratePegHeadroom(outPpm7d int, rebalHistoryRefPpm int, marginPpm7d int) bool {
+	if outPpm7d <= 0 || rebalHistoryRefPpm <= 0 {
+		return false
+	}
+	if marginPpm7d < 0 {
+		return false
+	}
+	return float64(outPpm7d) >= float64(rebalHistoryRefPpm)*(1.0+outratePegRebalSpreadMinFrac)
+}
+
 func applyOutrateTargetAnchor(profile autofeeProfile, targetPpm int, outPpm7d int, outRatio float64, goodOutRatio float64, fwdCount int) (int, []string) {
 	if targetPpm <= 0 || outPpm7d <= 0 {
 		return targetPpm, nil
@@ -8071,13 +8082,18 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		}
 	}
 	if outPpm7d > 0 && fwdCount >= 4 && !highOutStagnationPressure {
-		peg := int(math.Ceil(float64(outPpm7d) * outratePegHeadroom))
+		pegHeadroomPaused := shouldPauseOutratePegHeadroom(outPpm7d, rebalHistoryRefPpm, marginPpm7d)
+		peg := outPpm7d
+		if !pegHeadroomPaused {
+			peg = int(math.Ceil(float64(outPpm7d) * outratePegHeadroom))
+		}
 		withinGrace := true
 		if !st.LastTs.IsZero() && e.profile.OutratePegGraceHours > 0 {
 			hoursSince := e.now.Sub(st.LastTs).Hours()
 			withinGrace = hoursSince < float64(e.profile.OutratePegGraceHours)
 		}
 		demandPeg := seed > 0 && float64(outPpm7d) >= seed*outratePegSeedMult
+		pegEligible := withinGrace || demandPeg
 		if rescueActive && target < localPpm && peg > floor {
 			tags = append(tags, "rescue-peg-paused")
 		} else if matureEmptySinkDownAnchorActive && target < localPpm && peg > floor {
@@ -8086,16 +8102,23 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			tags = append(tags, "rebal-exec-peg-paused")
 		} else if goodLiquidityHold && peg > floor {
 			tags = append(tags, "peg-paused-goodliq")
-		} else if peg > floor && (withinGrace || demandPeg) {
+		} else if peg > floor && pegEligible {
 			floor = peg
-			floorSrc = "peg"
-			tags = append(tags, "peg")
-			if withinGrace {
-				tags = append(tags, "peg-grace")
+			if pegHeadroomPaused {
+				floorSrc = "outrate"
+				tags = append(tags, "peg-headroom-paused")
+			} else {
+				floorSrc = "peg"
+				tags = append(tags, "peg")
+				if withinGrace {
+					tags = append(tags, "peg-grace")
+				}
+				if demandPeg {
+					tags = append(tags, "peg-demand")
+				}
 			}
-			if demandPeg {
-				tags = append(tags, "peg-demand")
-			}
+		} else if pegHeadroomPaused && pegEligible {
+			tags = append(tags, "peg-headroom-paused")
 		}
 	} else if outPpm7d > 0 && fwdCount >= 4 && highOutStagnationPressure {
 		tags = append(tags, "peg-paused-stagnation")
@@ -9939,6 +9962,8 @@ func formatAutofeeTags(d *decision) string {
 			add("📌peg-grace")
 		case t == "peg-demand":
 			add("📌peg-demand")
+		case t == "peg-headroom-paused":
+			add("📌peg-cap")
 		case t == "peg-paused-stagnation":
 			add("📌peg-paused")
 		case t == "cooldown":

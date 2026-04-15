@@ -84,3 +84,23 @@ func TestGraphExplorerBuildFeeHistoryIncludesCorrectedAverage(t *testing.T) {
 		t.Fatalf("expected inbound corrected avg -399, got %d", history[0].InboundCorrectedAvgPpm)
 	}
 }
+
+func TestSummarizeGraphExplorerPoliciesIgnoresCeilingPoliciesInCorrectedAverage(t *testing.T) {
+	samples := []graphExplorerPolicySample{
+		{Ppm: 1500, CapacitySat: 1_000_000},
+		{Ppm: 1600, CapacitySat: 1_000_000},
+		{Ppm: 2000, CapacitySat: 1_000_000},
+		{Ppm: 1_000_000_000, CapacitySat: 1_000_000},
+	}
+
+	summary := summarizeGraphExplorerPolicies(samples)
+	if summary.WeightedAvgPpm != 250001275 {
+		t.Fatalf("expected weighted avg 250001275, got %d", summary.WeightedAvgPpm)
+	}
+	if summary.CorrectedAvgPpm != 1700 {
+		t.Fatalf("expected corrected avg 1700, got %d", summary.CorrectedAvgPpm)
+	}
+	if summary.CorrectedAvgPpm >= 1000000 {
+		t.Fatalf("expected corrected avg %d to ignore ceiling fee", summary.CorrectedAvgPpm)
+	}
+}

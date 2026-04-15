@@ -3109,6 +3109,38 @@
       "prepare_coop_close": "Prepare cooperative close",
       "review_with_close_manager": "Review in Close Manager"
     },
+    "openCandidates": {
+      "title": "Suggested New Channels",
+      "subtitle": "Candidate peers built from observed routes, local operational pain, and the cached graph snapshot.",
+      "lastSync": "Last sync: {{value}}",
+      "count": "{{count}} candidates",
+      "loading": "Loading open channel candidates...",
+      "refreshing": "Running now...",
+      "runNow": "Run now",
+      "unavailable": "Open channel candidates unavailable.",
+      "empty": "No peer reached the recommendation threshold in this run.",
+      "score": "Score {{value}}",
+      "confidence": "Confidence {{value}}",
+      "routeHits": "Observed routes 30d: {{count}}",
+      "routeVolume": "Route volume 30d: {{value}}",
+      "routeCost": "Observed route cost: {{value}} ppm",
+      "failedAttempts": "Failed attempts 30d: {{count}}",
+      "problemAdjacency": "Adjacency to problem peers: {{count}}",
+      "strongAdjacency": "Adjacency to strong peers: {{count}}",
+      "graphChannels": "Public graph channels: {{count}}",
+      "graphCapacity": "Public capacity: {{value}}",
+      "bestOutbound": "Best public outbound fee: {{value}} ppm",
+      "reasons": {
+        "route_flow_observed": "Observed in our routes",
+        "route_cost_high": "Meaningful route cost",
+        "rebalance_path_observed": "Appears in rebalance paths",
+        "adjacent_to_problem_peer": "Adjacent to a problem peer",
+        "adjacent_to_strong_peer": "Adjacent to a strong peer",
+        "graph_presence_strong": "Strong public graph presence",
+        "public_policy_competitive": "Competitive public policy",
+        "failed_routes_observed": "Also appeared in failed routes"
+      }
+    },
     "targetModules": {
       "lightning-ops": "Lightning Ops",
       "autofee": "Autofee",

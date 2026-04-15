@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getChannelRanking, getChannelRankings, recomputeChannelRankings } from '../api'
+import {
+  getChannelOpenCandidates,
+  getChannelRanking,
+  getChannelRankings,
+  recomputeChannelOpenCandidates,
+  recomputeChannelRankings
+} from '../api'
 import { getLocale } from '../i18n'
 
 type ChannelRankingReason = {
@@ -125,6 +131,42 @@ type ChannelRankingFeedback = {
   window_hours?: number
 }
 
+type ChannelOpenCandidateReason = {
+  code: string
+}
+
+type ChannelOpenCandidateItem = {
+  peer_pubkey: string
+  peer_alias?: string
+  route_hit_count_30d: number
+  route_volume_sat_30d: number
+  route_cost_to_msat_30d: number
+  route_cost_ppm_30d: number
+  failed_attempts_30d: number
+  payment_hit_count_30d: number
+  rebalance_hit_count_30d: number
+  shared_problem_peer_count: number
+  shared_problem_capacity_sat: number
+  shared_strong_peer_count: number
+  shared_strong_capacity_sat: number
+  graph_channel_count: number
+  graph_total_capacity_sat: number
+  best_outbound_fee_ppm: number
+  best_inbound_fee_ppm: number
+  score: number
+  confidence: number
+  reasons?: ChannelOpenCandidateReason[]
+  computed_at?: string
+}
+
+type ChannelOpenCandidatesPayload = {
+  available?: boolean
+  last_sync_at?: string
+  last_error?: string
+  candidate_count?: number
+  items?: ChannelOpenCandidateItem[]
+}
+
 const CHANNEL_RANKING_ROUTE_KEY = 'channel-ranking'
 const LIGHTNING_OPS_ROUTE_KEY = 'lightning-ops'
 const REBALANCE_ROUTE_KEY = 'rebalance-center'
@@ -185,6 +227,13 @@ export default function ChannelRanking() {
   const [status, setStatus] = useState('')
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [openCandidates, setOpenCandidates] = useState<ChannelOpenCandidateItem[]>([])
+  const [openCandidatesAvailable, setOpenCandidatesAvailable] = useState(true)
+  const [openCandidatesLastSyncAt, setOpenCandidatesLastSyncAt] = useState('')
+  const [openCandidatesStatus, setOpenCandidatesStatus] = useState('')
+  const [openCandidatesCount, setOpenCandidatesCount] = useState(0)
+  const [openCandidatesLoading, setOpenCandidatesLoading] = useState(true)
+  const [openCandidatesRefreshing, setOpenCandidatesRefreshing] = useState(false)
   const [filter, setFilter] = useState<'all' | 'expand' | 'maintain' | 'monitor' | 'close'>('all')
   const [search, setSearch] = useState('')
   const [activityFilter, setActivityFilter] = useState<'all' | 'active' | 'inactive'>('all')
@@ -261,6 +310,11 @@ export default function ChannelRanking() {
   const reasonLabel = (code?: string) =>
     t(`channelRanking.reasons.${String(code || '').trim()}` as any, { defaultValue: code || t('common.unknown') })
 
+  const openCandidateReasonLabel = (code?: string) =>
+    t(`channelRanking.openCandidates.reasons.${String(code || '').trim()}` as any, {
+      defaultValue: code || t('common.unknown')
+    })
+
   const recommendationLabel = (code?: string) =>
     t(`channelRanking.recommendations.${String(code || '').trim()}` as any, {
       defaultValue: code || t('common.unknown')
@@ -325,6 +379,34 @@ export default function ChannelRanking() {
     }
   }
 
+  const loadOpenCandidates = async (options: { recompute?: boolean } = {}) => {
+    const recompute = options.recompute === true
+    if (recompute) {
+      setOpenCandidatesRefreshing(true)
+    } else {
+      setOpenCandidatesLoading(true)
+    }
+    try {
+      if (recompute) {
+        await recomputeChannelOpenCandidates()
+      }
+      const payload = await getChannelOpenCandidates({ limit: 8 }) as ChannelOpenCandidatesPayload
+      setOpenCandidates(Array.isArray(payload?.items) ? payload.items : [])
+      setOpenCandidatesAvailable(payload?.available !== false)
+      setOpenCandidatesLastSyncAt(String(payload?.last_sync_at || ''))
+      setOpenCandidatesCount(Math.max(0, Number(payload?.candidate_count || 0)))
+      setOpenCandidatesStatus(String(payload?.last_error || '').trim())
+    } catch (err: any) {
+      setOpenCandidates([])
+      setOpenCandidatesAvailable(false)
+      setOpenCandidatesCount(0)
+      setOpenCandidatesStatus(err?.message || t('channelRanking.openCandidates.unavailable'))
+    } finally {
+      setOpenCandidatesLoading(false)
+      setOpenCandidatesRefreshing(false)
+    }
+  }
+
   useEffect(() => {
     pendingScrollChannelRef.current = readHashChannelPoint(CHANNEL_RANKING_ROUTE_KEY)
     const handleHashChange = () => {
@@ -336,6 +418,7 @@ export default function ChannelRanking() {
     }
     window.addEventListener('hashchange', handleHashChange)
     void load()
+    void loadOpenCandidates()
     return () => {
       window.removeEventListener('hashchange', handleHashChange)
       if (focusClearTimerRef.current !== null) {
@@ -672,6 +755,103 @@ export default function ChannelRanking() {
             {sortedItems.length === 0 && <div>{t('common.na')}</div>}
           </div>
         </div>
+      </section>
+
+      <section className="rounded-3xl border border-white/10 bg-ink/60 p-4 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="space-y-1">
+            <h3 className="text-lg font-semibold">{t('channelRanking.openCandidates.title')}</h3>
+            <p className="text-sm text-fog/70">{t('channelRanking.openCandidates.subtitle')}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-fog/70">
+              {t('channelRanking.openCandidates.lastSync', {
+                value: openCandidatesLastSyncAt ? formatTimestamp(openCandidatesLastSyncAt) : t('common.unavailable')
+              })}
+            </div>
+            <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-fog/70">
+              {t('channelRanking.openCandidates.count', { count: openCandidatesCount })}
+            </div>
+            <button
+              type="button"
+              className={`btn-secondary ${openCandidatesRefreshing ? 'opacity-60 pointer-events-none' : ''}`}
+              onClick={() => void loadOpenCandidates({ recompute: true })}
+              disabled={openCandidatesRefreshing}
+            >
+              {openCandidatesRefreshing
+                ? t('channelRanking.openCandidates.refreshing')
+                : t('channelRanking.openCandidates.runNow')}
+            </button>
+          </div>
+        </div>
+
+        {openCandidatesStatus && (
+          <div className="mt-4 rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+            {openCandidatesStatus}
+          </div>
+        )}
+
+        {!openCandidatesStatus && !openCandidatesAvailable && (
+          <div className="mt-4 rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+            {t('channelRanking.openCandidates.unavailable')}
+          </div>
+        )}
+
+        {openCandidatesLoading ? (
+          <p className="mt-4 text-sm text-fog/70">{t('channelRanking.openCandidates.loading')}</p>
+        ) : openCandidates.length === 0 ? (
+          <p className="mt-4 text-sm text-fog/70">{t('channelRanking.openCandidates.empty')}</p>
+        ) : (
+          <div className="mt-4 grid gap-3 xl:grid-cols-2">
+            {openCandidates.map((item) => (
+              <div key={item.peer_pubkey} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 space-y-1">
+                    <div className="truncate text-sm font-medium text-fog">{item.peer_alias || item.peer_pubkey}</div>
+                    <div className="break-all text-[11px] text-fog/55">{item.peer_pubkey}</div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full border border-emerald-400/30 bg-emerald-500/15 px-2.5 py-1 text-[11px] text-emerald-200">
+                      {t('channelRanking.openCandidates.score', { value: numberFormatter.format(item.score) })}
+                    </span>
+                    <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-fog/75">
+                      {t('channelRanking.openCandidates.confidence', { value: numberFormatter.format(item.confidence) })}
+                    </span>
+                    <a
+                      href={buildGraphExplorerHash(item.peer_pubkey)}
+                      className="text-xs text-sky-200 hover:text-sky-100"
+                    >
+                      {t('nav.graphExplorer')}
+                    </a>
+                  </div>
+                </div>
+                <div className="mt-3 grid gap-2 text-xs text-fog/70 sm:grid-cols-2 xl:grid-cols-3">
+                  <div>{t('channelRanking.openCandidates.routeHits', { count: item.route_hit_count_30d || 0 })}</div>
+                  <div>{t('channelRanking.openCandidates.routeVolume', { value: formatSats(item.route_volume_sat_30d) })}</div>
+                  <div>{t('channelRanking.openCandidates.routeCost', { value: numberFormatter.format(item.route_cost_ppm_30d || 0) })}</div>
+                  <div>{t('channelRanking.openCandidates.failedAttempts', { count: item.failed_attempts_30d || 0 })}</div>
+                  <div>{t('channelRanking.openCandidates.problemAdjacency', { count: item.shared_problem_peer_count || 0 })}</div>
+                  <div>{t('channelRanking.openCandidates.strongAdjacency', { count: item.shared_strong_peer_count || 0 })}</div>
+                  <div>{t('channelRanking.openCandidates.graphChannels', { count: item.graph_channel_count || 0 })}</div>
+                  <div>{t('channelRanking.openCandidates.graphCapacity', { value: formatSats(item.graph_total_capacity_sat) })}</div>
+                  <div>{t('channelRanking.openCandidates.bestOutbound', { value: numberFormatter.format(item.best_outbound_fee_ppm || 0) })}</div>
+                </div>
+                {!!item.reasons?.length && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {item.reasons.map((reason) => (
+                      <span
+                        key={`${item.peer_pubkey}-${reason.code}`}
+                        className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-fog/75"
+                      >
+                        {openCandidateReasonLabel(reason.code)}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       <div className="space-y-6">

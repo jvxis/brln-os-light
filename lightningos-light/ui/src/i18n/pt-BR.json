@@ -3109,6 +3109,38 @@
       "prepare_coop_close": "Preparar fechamento cooperativo",
       "review_with_close_manager": "Revisar na Gestão de Fechamentos"
     },
+    "openCandidates": {
+      "title": "Novos Canais Sugeridos",
+      "subtitle": "Peers candidatos calculados a partir de rotas observadas, dor operacional local e snapshot do grafo.",
+      "lastSync": "Última atualização: {{value}}",
+      "count": "{{count}} candidatos",
+      "loading": "Carregando candidatos de abertura...",
+      "refreshing": "Rodando agora...",
+      "runNow": "Rodar agora",
+      "unavailable": "Candidatos de abertura indisponíveis.",
+      "empty": "Nenhum peer candidato forte o suficiente nesta rodada.",
+      "score": "Score {{value}}",
+      "confidence": "Confiança {{value}}",
+      "routeHits": "Rotas observadas 30d: {{count}}",
+      "routeVolume": "Volume em rotas 30d: {{value}}",
+      "routeCost": "Custo observado: {{value}} ppm",
+      "failedAttempts": "Tentativas falhas 30d: {{count}}",
+      "problemAdjacency": "Adjacências com peers problemáticos: {{count}}",
+      "strongAdjacency": "Adjacências com peers fortes: {{count}}",
+      "graphChannels": "Canais públicos no grafo: {{count}}",
+      "graphCapacity": "Capacidade pública: {{value}}",
+      "bestOutbound": "Melhor fee pública outbound: {{value}} ppm",
+      "reasons": {
+        "route_flow_observed": "Fluxo observado nas nossas rotas",
+        "route_cost_high": "Custo de rota relevante",
+        "rebalance_path_observed": "Aparece em rotas de rebalance",
+        "adjacent_to_problem_peer": "Adjacente a peer problemático",
+        "adjacent_to_strong_peer": "Adjacente a peer forte",
+        "graph_presence_strong": "Boa presença no grafo público",
+        "public_policy_competitive": "Policy pública competitiva",
+        "failed_routes_observed": "Também apareceu em rotas falhas"
+      }
+    },
     "targetModules": {
       "lightning-ops": "Lightning Ops",
       "autofee": "Autofee",

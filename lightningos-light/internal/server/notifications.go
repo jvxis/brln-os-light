@@ -85,6 +85,40 @@ type Notification struct {
 	Memo              string    `json:"memo,omitempty"`
 }
 
+type paymentRouteAttemptRecord struct {
+	PaymentHash        string
+	PaymentIndex       int64
+	PaymentType        string
+	PaymentStatus      string
+	PaymentCreatedAt   time.Time
+	AttemptID          int64
+	AttemptStatus      string
+	AttemptStartedAt   time.Time
+	AttemptResolvedAt  time.Time
+	FailureCode        string
+	FailureSourceIndex int64
+	TotalAmtMsat       int64
+	TotalFeeMsat       int64
+	TotalTimeLock      int64
+	HopCount           int
+}
+
+type paymentRouteHopRecord struct {
+	PaymentHash      string
+	AttemptID        int64
+	HopIndex         int
+	NodePubkey       string
+	NodeAlias        string
+	ChannelID        int64
+	ChannelCapacity  int64
+	AmtToForwardMsat int64
+	FeeMsat          int64
+	Expiry           int64
+	CostToMsat       int64
+	IsFirstHop       bool
+	IsFinalHop       bool
+}
+
 type rebalanceRouteInfo struct {
 	PeerLabel    string
 	ChannelLabel string
@@ -503,6 +537,55 @@ create index if not exists notifications_chan_out_idx on notifications (chan_id_
 create index if not exists notifications_chan_in_idx on notifications (chan_id_in, occurred_at desc);
 create index if not exists notifications_rebal_target_idx on notifications (rebal_target_chan_id, occurred_at desc);
 create index if not exists notifications_rebal_source_idx on notifications (rebal_source_chan_id, occurred_at desc);
+
+create table if not exists payment_route_attempts (
+  payment_hash text not null,
+  payment_index bigint not null default 0,
+  payment_type text not null,
+  payment_status text not null,
+  payment_created_at timestamptz not null,
+  attempt_id bigint not null,
+  attempt_status text not null,
+  attempt_started_at timestamptz,
+  attempt_resolved_at timestamptz,
+  failure_code text,
+  failure_source_index integer,
+  total_amt_msat bigint not null default 0,
+  total_fee_msat bigint not null default 0,
+  total_time_lock integer not null default 0,
+  hop_count integer not null default 0,
+  created_at timestamptz not null default now(),
+  primary key (payment_hash, attempt_id)
+);
+
+create index if not exists payment_route_attempts_created_at_idx on payment_route_attempts (payment_created_at desc);
+create index if not exists payment_route_attempts_type_idx on payment_route_attempts (payment_type, payment_created_at desc);
+create index if not exists payment_route_attempts_status_idx on payment_route_attempts (payment_status, attempt_status, payment_created_at desc);
+
+create table if not exists payment_route_hops (
+  payment_hash text not null,
+  attempt_id bigint not null,
+  hop_index integer not null,
+  node_pubkey text,
+  node_alias text,
+  channel_id bigint,
+  channel_capacity_sat bigint not null default 0,
+  amt_to_forward_msat bigint not null default 0,
+  fee_msat bigint not null default 0,
+  expiry integer not null default 0,
+  cost_to_msat bigint not null default 0,
+  is_first_hop boolean not null default false,
+  is_final_hop boolean not null default false,
+  created_at timestamptz not null default now(),
+  primary key (payment_hash, attempt_id, hop_index),
+  foreign key (payment_hash, attempt_id)
+    references payment_route_attempts (payment_hash, attempt_id)
+    on delete cascade
+);
+
+create index if not exists payment_route_hops_pubkey_idx on payment_route_hops (node_pubkey);
+create index if not exists payment_route_hops_channel_idx on payment_route_hops (channel_id);
+create index if not exists payment_route_hops_cost_idx on payment_route_hops (cost_to_msat desc);
 
   create table if not exists notification_cursors (
     key text primary key,
@@ -984,6 +1067,14 @@ returning id, occurred_at, type, action, direction, status, amount_sat, fee_sat,
 		return
 	}
 
+	if pay != nil {
+		updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := n.updatePaymentRouteHistoryType(updateCtx, normalized, "rebalance"); err != nil && n.logger != nil {
+			n.logger.Printf("notifications: payment route history rebalance update failed for %s: %v", normalized, err)
+		}
+		cancel()
+	}
+
 	n.broadcast(updated)
 }
 
@@ -1259,11 +1350,17 @@ func (n *Notifier) runPayments() {
 			evt = n.rebalanceEvent(ctx, pay, occurredAt)
 		}
 		if _, err := n.upsertNotificationWithOptions(ctx, fmt.Sprintf("payment:%s", paymentHash), evt, notificationUpsertOptions{suppressMirror: suppressMirror}); err == nil {
+			paymentType := paymentRouteType(pay, isKeysend, isRebalance)
+			if routeErr := n.replacePaymentRouteHistory(ctx, pay, paymentType, occurredAt); routeErr != nil && n.logger != nil {
+				n.logger.Printf("notifications: payment route history upsert failed for %s: %v", paymentHash, routeErr)
+			}
 			if isRebalance {
 				_ = n.removeRebalanceInvoice(ctx, paymentHash)
 			} else {
 				n.reconcileRebalance(ctx, paymentHash)
 			}
+		} else if n.logger != nil {
+			n.logger.Printf("notifications: payment upsert failed for %s: %v", paymentHash, err)
 		}
 		cancel()
 	}
@@ -2080,6 +2177,228 @@ limit 1`).Scan(&occurredAt)
 
 func normalizeHash(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func paymentRouteType(pay *lnrpc.Payment, isKeysend bool, isRebalance bool) string {
+	if isRebalance {
+		return "rebalance"
+	}
+	if isKeysend {
+		return "keysend"
+	}
+	if isProbePayment(pay) {
+		return "probe"
+	}
+	return "lightning"
+}
+
+func routeTotalAmtMsat(route *lnrpc.Route) int64 {
+	if route == nil {
+		return 0
+	}
+	if route.TotalAmtMsat != 0 {
+		return route.TotalAmtMsat
+	}
+	if route.TotalAmt != 0 {
+		return route.TotalAmt * 1000
+	}
+	return 0
+}
+
+func routeTotalFeeMsat(route *lnrpc.Route) int64 {
+	if route == nil {
+		return 0
+	}
+	if route.TotalFeesMsat != 0 {
+		return route.TotalFeesMsat
+	}
+	if route.TotalFees != 0 {
+		return route.TotalFees * 1000
+	}
+	return 0
+}
+
+func hopAmtToForwardMsat(hop *lnrpc.Hop) int64 {
+	if hop == nil {
+		return 0
+	}
+	if hop.AmtToForwardMsat != 0 {
+		return hop.AmtToForwardMsat
+	}
+	if hop.AmtToForward != 0 {
+		return hop.AmtToForward * 1000
+	}
+	return 0
+}
+
+func hopFeeMsat(hop *lnrpc.Hop) int64 {
+	if hop == nil {
+		return 0
+	}
+	if hop.FeeMsat != 0 {
+		return hop.FeeMsat
+	}
+	if hop.Fee != 0 {
+		return hop.Fee * 1000
+	}
+	return 0
+}
+
+func unixNanoToTime(ns int64) time.Time {
+	if ns <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ns).UTC()
+}
+
+func buildPaymentRouteHistory(pay *lnrpc.Payment, paymentType string, paymentCreatedAt time.Time) ([]paymentRouteAttemptRecord, []paymentRouteHopRecord) {
+	if pay == nil {
+		return nil, nil
+	}
+
+	paymentHash := normalizeHash(pay.PaymentHash)
+	if paymentHash == "" {
+		return nil, nil
+	}
+
+	paymentStatus := strings.TrimSpace(pay.Status.String())
+	attempts := make([]paymentRouteAttemptRecord, 0, len(pay.Htlcs))
+	hops := make([]paymentRouteHopRecord, 0)
+	for _, attempt := range pay.Htlcs {
+		if attempt == nil {
+			continue
+		}
+
+		route := attempt.GetRoute()
+		routeHops := route.GetHops()
+		attemptRecord := paymentRouteAttemptRecord{
+			PaymentHash:       paymentHash,
+			PaymentIndex:      int64(pay.PaymentIndex),
+			PaymentType:       paymentType,
+			PaymentStatus:     paymentStatus,
+			PaymentCreatedAt:  paymentCreatedAt,
+			AttemptID:         int64(attempt.AttemptId),
+			AttemptStatus:     strings.TrimSpace(attempt.Status.String()),
+			AttemptStartedAt:  unixNanoToTime(attempt.AttemptTimeNs),
+			AttemptResolvedAt: unixNanoToTime(attempt.ResolveTimeNs),
+			TotalAmtMsat:      routeTotalAmtMsat(route),
+			TotalFeeMsat:      routeTotalFeeMsat(route),
+			TotalTimeLock:     int64(route.GetTotalTimeLock()),
+			HopCount:          len(routeHops),
+		}
+		if failure := attempt.GetFailure(); failure != nil {
+			attemptRecord.FailureCode = strings.TrimSpace(failure.Code.String())
+			attemptRecord.FailureSourceIndex = int64(failure.FailureSourceIndex)
+		}
+		attempts = append(attempts, attemptRecord)
+
+		costToMsat := int64(0)
+		for hopIdx, hop := range routeHops {
+			if hop == nil {
+				continue
+			}
+			hops = append(hops, paymentRouteHopRecord{
+				PaymentHash:      paymentHash,
+				AttemptID:        int64(attempt.AttemptId),
+				HopIndex:         hopIdx + 1,
+				NodePubkey:       strings.TrimSpace(hop.PubKey),
+				ChannelID:        int64(hop.ChanId),
+				ChannelCapacity:  hop.ChanCapacity,
+				AmtToForwardMsat: hopAmtToForwardMsat(hop),
+				FeeMsat:          hopFeeMsat(hop),
+				Expiry:           int64(hop.Expiry),
+				CostToMsat:       costToMsat,
+				IsFirstHop:       hopIdx == 0,
+				IsFinalHop:       hopIdx == len(routeHops)-1,
+			})
+			costToMsat += hopFeeMsat(hop)
+		}
+	}
+
+	return attempts, hops
+}
+
+func (n *Notifier) replacePaymentRouteHistory(ctx context.Context, pay *lnrpc.Payment, paymentType string, paymentCreatedAt time.Time) error {
+	if n == nil || n.db == nil || pay == nil {
+		return nil
+	}
+
+	paymentHash := normalizeHash(pay.PaymentHash)
+	if paymentHash == "" {
+		return nil
+	}
+
+	attempts, hops := buildPaymentRouteHistory(pay, paymentType, paymentCreatedAt)
+	tx, err := n.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `
+delete from payment_route_attempts
+where payment_hash=$1
+`, paymentHash); err != nil {
+		return err
+	}
+
+	for _, attempt := range attempts {
+		_, err := tx.Exec(ctx, `
+insert into payment_route_attempts (
+  payment_hash, payment_index, payment_type, payment_status, payment_created_at,
+  attempt_id, attempt_status, attempt_started_at, attempt_resolved_at,
+  failure_code, failure_source_index, total_amt_msat, total_fee_msat, total_time_lock, hop_count
+) values (
+  $1,$2,$3,$4,$5,
+  $6,$7,$8,$9,
+  $10,$11,$12,$13,$14,$15
+)
+`, attempt.PaymentHash, attempt.PaymentIndex, attempt.PaymentType, attempt.PaymentStatus, attempt.PaymentCreatedAt,
+			attempt.AttemptID, attempt.AttemptStatus, nullableTime(attempt.AttemptStartedAt), nullableTime(attempt.AttemptResolvedAt),
+			nullableString(attempt.FailureCode), nullableInt(attempt.FailureSourceIndex), attempt.TotalAmtMsat, attempt.TotalFeeMsat, attempt.TotalTimeLock, attempt.HopCount)
+		if err != nil {
+			return err
+		}
+	}
+
+	for _, hop := range hops {
+		_, err := tx.Exec(ctx, `
+insert into payment_route_hops (
+  payment_hash, attempt_id, hop_index, node_pubkey, node_alias, channel_id,
+  channel_capacity_sat, amt_to_forward_msat, fee_msat, expiry, cost_to_msat,
+  is_first_hop, is_final_hop
+) values (
+  $1,$2,$3,$4,$5,$6,
+  $7,$8,$9,$10,$11,
+  $12,$13
+)
+`, hop.PaymentHash, hop.AttemptID, hop.HopIndex, nullableString(hop.NodePubkey), nullableString(hop.NodeAlias), nullableInt(hop.ChannelID),
+			hop.ChannelCapacity, hop.AmtToForwardMsat, hop.FeeMsat, hop.Expiry, hop.CostToMsat,
+			hop.IsFirstHop, hop.IsFinalHop)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit(ctx)
+}
+
+func (n *Notifier) updatePaymentRouteHistoryType(ctx context.Context, paymentHash string, paymentType string) error {
+	if n == nil || n.db == nil {
+		return nil
+	}
+
+	normalized := normalizeHash(paymentHash)
+	if normalized == "" {
+		return nil
+	}
+
+	_, err := n.db.Exec(ctx, `
+update payment_route_attempts
+set payment_type=$2
+where payment_hash=$1
+`, normalized, strings.TrimSpace(paymentType))
+	return err
 }
 
 func (n *Notifier) lookupPaymentByHash(ctx context.Context, paymentHash string) (*lnrpc.Payment, error) {

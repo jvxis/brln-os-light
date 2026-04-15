@@ -29,14 +29,23 @@ func TestComputeChannelOpenCandidateScorePrefersStrongerEvidence(t *testing.T) {
 		BestOutboundFeePpm:    2_000,
 	}
 
-	strongScore, strongConfidence := computeChannelOpenCandidateScore(strong)
-	weakScore, weakConfidence := computeChannelOpenCandidateScore(weak)
+	strongDemand, strongRelief, strongGraph, strongScore, strongConfidence := computeChannelOpenCandidateScore(strong)
+	weakDemand, weakRelief, weakGraph, weakScore, weakConfidence := computeChannelOpenCandidateScore(weak)
 
 	if strongScore <= weakScore {
 		t.Fatalf("expected strong candidate score %d to exceed weak score %d", strongScore, weakScore)
 	}
 	if strongConfidence <= weakConfidence {
 		t.Fatalf("expected strong candidate confidence %d to exceed weak confidence %d", strongConfidence, weakConfidence)
+	}
+	if strongDemand <= weakDemand {
+		t.Fatalf("expected strong demand %d to exceed weak demand %d", strongDemand, weakDemand)
+	}
+	if strongRelief <= weakRelief {
+		t.Fatalf("expected strong relief %d to exceed weak relief %d", strongRelief, weakRelief)
+	}
+	if strongGraph <= weakGraph {
+		t.Fatalf("expected strong graph score %d to exceed weak graph score %d", strongGraph, weakGraph)
 	}
 }
 
@@ -71,5 +80,38 @@ func TestBuildChannelOpenCandidateReasonsIncludesExpectedSignals(t *testing.T) {
 		if _, ok := codes[code]; !ok {
 			t.Fatalf("expected reason %q in %+v", code, reasons)
 		}
+	}
+}
+
+func TestShouldKeepChannelOpenCandidateRejectsWeakGraphOnlyCandidate(t *testing.T) {
+	item := &ChannelOpenCandidateItem{
+		PeerPubkey:        "peer-graph-only",
+		GraphChannelCount: 24,
+		GraphQualityScore: 70,
+		ReliefScore:       24,
+		Score:             27,
+		Confidence:        30,
+	}
+
+	if shouldKeepChannelOpenCandidate(item, true) {
+		t.Fatalf("expected weak graph-only candidate to be rejected")
+	}
+}
+
+func TestShouldKeepChannelOpenCandidateKeepsDirectDemandCandidate(t *testing.T) {
+	item := &ChannelOpenCandidateItem{
+		PeerPubkey:         "peer-direct-demand",
+		RouteHitCount30d:   2,
+		RouteVolumeSat30d:  250_000,
+		DemandScore:        30,
+		GraphQualityScore:  20,
+		ReliefScore:        0,
+		Score:              22,
+		Confidence:         18,
+		BestOutboundFeePpm: 800,
+	}
+
+	if !shouldKeepChannelOpenCandidate(item, true) {
+		t.Fatalf("expected direct-demand candidate to be kept")
 	}
 }

@@ -21,7 +21,7 @@ const (
 	channelOpenCandidatesRefreshMaxAge  = 24 * time.Hour
 	channelOpenCandidatesRefreshTimeout = 75 * time.Second
 	channelOpenCandidatesRouteLookback  = 30 * 24 * time.Hour
-	channelOpenCandidatesPersistLimit   = 75
+	channelOpenCandidatesPersistLimit   = 40
 	channelOpenCandidatesRouteSeedLimit = 160
 	channelOpenCandidatesProblemLimit   = 140
 	channelOpenCandidatesStrongLimit    = 100
@@ -51,6 +51,9 @@ type ChannelOpenCandidateItem struct {
 	GraphTotalCapacitySat    int64                        `json:"graph_total_capacity_sat"`
 	BestOutboundFeePpm       int64                        `json:"best_outbound_fee_ppm"`
 	BestInboundFeePpm        int64                        `json:"best_inbound_fee_ppm"`
+	DemandScore              int                          `json:"demand_score"`
+	ReliefScore              int                          `json:"relief_score"`
+	GraphQualityScore        int                          `json:"graph_quality_score"`
 	Score                    int                          `json:"score"`
 	Confidence               int                          `json:"confidence"`
 	Reasons                  []ChannelOpenCandidateReason `json:"reasons,omitempty"`
@@ -102,6 +105,11 @@ type channelOpenGraphMetric struct {
 	BestInboundFeePpm  int64
 }
 
+type channelOpenRouteCoverage struct {
+	DirectEvidenceNodes int
+	SuccessfulHits      int
+}
+
 func NewChannelOpenCandidatesService(db *pgxpool.Pool, logger *log.Logger, lnd *lndclient.Client) *ChannelOpenCandidatesService {
 	return &ChannelOpenCandidatesService{
 		db:     db,
@@ -133,6 +141,9 @@ create table if not exists channel_open_candidates (
   graph_total_capacity_sat bigint not null default 0,
   best_outbound_fee_ppm bigint not null default 0,
   best_inbound_fee_ppm bigint not null default 0,
+  demand_score integer not null default 0,
+  relief_score integer not null default 0,
+  graph_quality_score integer not null default 0,
   score integer not null default 0,
   confidence integer not null default 0,
   reasons_json jsonb not null default '[]'::jsonb,
@@ -151,6 +162,9 @@ create table if not exists channel_open_candidate_sync_state (
 insert into channel_open_candidate_sync_state (id)
 values (true)
 on conflict (id) do nothing;
+alter table channel_open_candidates add column if not exists demand_score integer not null default 0;
+alter table channel_open_candidates add column if not exists relief_score integer not null default 0;
+alter table channel_open_candidates add column if not exists graph_quality_score integer not null default 0;
 `)
 	return err
 }
@@ -288,7 +302,8 @@ select peer_pubkey, coalesce(peer_alias, ''), route_hit_count_30d, route_volume_
   route_cost_to_msat_30d, route_cost_ppm_30d, failed_attempts_30d, payment_hit_count_30d,
   rebalance_hit_count_30d, shared_problem_peer_count, shared_problem_capacity_sat,
   shared_strong_peer_count, shared_strong_capacity_sat, graph_channel_count,
-  graph_total_capacity_sat, best_outbound_fee_ppm, best_inbound_fee_ppm,
+  graph_total_capacity_sat, best_outbound_fee_ppm, best_inbound_fee_ppm, demand_score,
+  relief_score, graph_quality_score,
   score, confidence, reasons_json, computed_at
 from channel_open_candidates
 order by score desc, confidence desc, route_cost_to_msat_30d desc, route_volume_sat_30d desc, peer_pubkey asc
@@ -308,6 +323,8 @@ func (s *ChannelOpenCandidatesService) buildCandidates(ctx context.Context, comp
 	if err != nil {
 		return nil, err
 	}
+	routeCoverage := summarizeChannelOpenRouteCoverage(routeSignals)
+	strictAdjacencyOnly := routeCoverage.DirectEvidenceNodes < 8 || routeCoverage.SuccessfulHits < 20
 	problemSignals, err := s.fetchNeighborSignals(ctx, selfPubkey, false)
 	if err != nil {
 		return nil, err
@@ -349,10 +366,10 @@ func (s *ChannelOpenCandidatesService) buildCandidates(ctx context.Context, comp
 	items := make([]ChannelOpenCandidateItem, 0, len(itemsByPubkey))
 	for _, item := range itemsByPubkey {
 		item.RouteCostPpm30d = channelOpenCostPpm(item.RouteCostToMsat30d, item.RouteVolumeSat30d)
-		item.Score, item.Confidence = computeChannelOpenCandidateScore(item)
+		item.DemandScore, item.ReliefScore, item.GraphQualityScore, item.Score, item.Confidence = computeChannelOpenCandidateScore(item)
 		item.Reasons = buildChannelOpenCandidateReasons(item)
 		item.ComputedAt = computedAt
-		if !shouldKeepChannelOpenCandidate(item) {
+		if !shouldKeepChannelOpenCandidate(item, strictAdjacencyOnly) {
 			continue
 		}
 		items = append(items, *item)
@@ -449,6 +466,23 @@ limit $3
 		out[graphExplorerNormalizePubkey(item.PubKey)] = item
 	}
 	return out, rows.Err()
+}
+
+func summarizeChannelOpenRouteCoverage(signals map[string]channelOpenRouteSignal) channelOpenRouteCoverage {
+	var out channelOpenRouteCoverage
+	for _, signal := range signals {
+		hasDirectEvidence := signal.RouteHitCount30d > 0 ||
+			signal.RouteVolumeSat30d > 0 ||
+			signal.PaymentHitCount30d > 0 ||
+			signal.RebalanceHitCount30d > 0 ||
+			signal.FailedAttempts30d > 0
+		if !hasDirectEvidence {
+			continue
+		}
+		out.DirectEvidenceNodes++
+		out.SuccessfulHits += signal.RouteHitCount30d
+	}
+	return out
 }
 
 func (s *ChannelOpenCandidatesService) fetchNeighborSignals(ctx context.Context, selfPubkey string, strong bool) (map[string]channelOpenNeighborSignal, error) {
@@ -574,9 +608,9 @@ where lower(n.pubkey) = any($1::text[])
 	return rows.Err()
 }
 
-func computeChannelOpenCandidateScore(item *ChannelOpenCandidateItem) (int, int) {
+func computeChannelOpenCandidateScore(item *ChannelOpenCandidateItem) (int, int, int, int, int) {
 	if item == nil {
-		return 0, 0
+		return 0, 0, 0, 0, 0
 	}
 
 	routeEvidence := channelOpenMinInt(30, item.RouteHitCount30d*3)
@@ -607,6 +641,15 @@ func computeChannelOpenCandidateScore(item *ChannelOpenCandidateItem) (int, int)
 		failurePenalty = channelOpenMinInt(10, item.FailedAttempts30d-item.RouteHitCount30d+4)
 	}
 
+	rawDemand := routeEvidence + routeVolume + routeCost + rebalanceBonus - failurePenalty
+	demandScore := channelOpenClampInt((rawDemand*100)/78, 0, 100)
+
+	rawRelief := problemBonus + strongBonus + channelOpenMinInt(5, rebalanceBonus/2)
+	reliefScore := channelOpenClampInt((rawRelief*100)/33, 0, 100)
+
+	rawGraphQuality := graphPresence + feeBonus
+	graphQualityScore := channelOpenClampInt((rawGraphQuality*100)/20, 0, 100)
+
 	score := routeEvidence + routeVolume + routeCost + rebalanceBonus + problemBonus + strongBonus + graphPresence + feeBonus - failurePenalty
 	score = channelOpenClampInt(score, 0, 100)
 
@@ -619,7 +662,7 @@ func computeChannelOpenCandidateScore(item *ChannelOpenCandidateItem) (int, int)
 	}
 	confidence = channelOpenClampInt(confidence, 0, 100)
 
-	return score, confidence
+	return demandScore, reliefScore, graphQualityScore, score, confidence
 }
 
 func buildChannelOpenCandidateReasons(item *ChannelOpenCandidateItem) []ChannelOpenCandidateReason {
@@ -654,20 +697,34 @@ func buildChannelOpenCandidateReasons(item *ChannelOpenCandidateItem) []ChannelO
 	return reasons
 }
 
-func shouldKeepChannelOpenCandidate(item *ChannelOpenCandidateItem) bool {
+func shouldKeepChannelOpenCandidate(item *ChannelOpenCandidateItem, strictAdjacencyOnly bool) bool {
 	if item == nil {
 		return false
 	}
 	if strings.TrimSpace(item.PeerPubkey) == "" {
 		return false
 	}
-	if item.Score <= 0 {
+	if item.Score < 18 || item.Confidence < 12 {
 		return false
 	}
-	if item.RouteHitCount30d > 0 || item.SharedProblemPeerCount > 0 || item.SharedStrongPeerCount > 0 {
+	hasDirectDemand := item.RouteHitCount30d > 0 ||
+		item.RouteVolumeSat30d > 0 ||
+		item.PaymentHitCount30d > 0 ||
+		item.RebalanceHitCount30d > 0 ||
+		item.FailedAttempts30d > 0
+	if hasDirectDemand {
 		return true
 	}
-	return false
+
+	meaningfulRelief := item.SharedProblemPeerCount >= 2 ||
+		item.SharedProblemCapacitySat >= 50_000_000 ||
+		item.ReliefScore >= 45
+	strongGraph := item.GraphQualityScore >= 35 && item.GraphChannelCount >= 5
+
+	if strictAdjacencyOnly {
+		return meaningfulRelief && strongGraph && item.Score >= 28
+	}
+	return meaningfulRelief && strongGraph && item.Score >= 24
 }
 
 func appendUniqueChannelOpenCandidateReason(list []ChannelOpenCandidateReason, candidate ChannelOpenCandidateReason) []ChannelOpenCandidateReason {
@@ -744,18 +801,21 @@ insert into channel_open_candidates (
   route_cost_ppm_30d, failed_attempts_30d, payment_hit_count_30d, rebalance_hit_count_30d,
   shared_problem_peer_count, shared_problem_capacity_sat, shared_strong_peer_count, shared_strong_capacity_sat,
   graph_channel_count, graph_total_capacity_sat, best_outbound_fee_ppm, best_inbound_fee_ppm,
+  demand_score, relief_score, graph_quality_score,
   score, confidence, reasons_json, computed_at
 ) values (
   $1,$2,$3,$4,$5,
   $6,$7,$8,$9,
   $10,$11,$12,$13,
   $14,$15,$16,$17,
-  $18,$19,$20::jsonb,$21
+  $18,$19,$20,
+  $21,$22,$23::jsonb,$24
 )
 `, item.PeerPubkey, nullableString(item.PeerAlias), item.RouteHitCount30d, item.RouteVolumeSat30d, item.RouteCostToMsat30d,
 			item.RouteCostPpm30d, item.FailedAttempts30d, item.PaymentHitCount30d, item.RebalanceHitCount30d,
 			item.SharedProblemPeerCount, item.SharedProblemCapacitySat, item.SharedStrongPeerCount, item.SharedStrongCapacitySat,
 			item.GraphChannelCount, item.GraphTotalCapacitySat, item.BestOutboundFeePpm, item.BestInboundFeePpm,
+			item.DemandScore, item.ReliefScore, item.GraphQualityScore,
 			item.Score, item.Confidence, string(reasonsJSON), computedAt)
 		if err != nil {
 			return err
@@ -837,6 +897,9 @@ func scanChannelOpenCandidateItems(rows channelOpenCandidateRows) ([]ChannelOpen
 			&item.GraphTotalCapacitySat,
 			&item.BestOutboundFeePpm,
 			&item.BestInboundFeePpm,
+			&item.DemandScore,
+			&item.ReliefScore,
+			&item.GraphQualityScore,
 			&item.Score,
 			&item.Confidence,
 			&reasonsRaw,

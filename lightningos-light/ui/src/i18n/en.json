@@ -54,6 +54,7 @@
     "graphExplorer": "Graph Explorer",
     "lightningOps": "Lightning Ops",
     "channelRanking": "Channel Ranking",
+    "newChannels": "New Channels",
     "onchainHub": "On-chain Hub",
     "lndConfig": "LND Config",
     "lndInfo": "LND Info",

@@ -160,7 +160,7 @@ export default function ChannelOpenCandidates() {
         ) : items.length === 0 ? (
           <p className="text-sm text-fog/70">{t('channelRanking.openCandidates.empty')}</p>
         ) : (
-          <div className="overflow-x-auto pb-2">
+          <div className="max-h-[72vh] overflow-auto pb-2 pr-1">
             <div className="grid min-w-[78rem] gap-3 xl:grid-cols-2">
               {items.map((item) => (
                 <div key={item.peer_pubkey} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
@@ -184,13 +184,25 @@ export default function ChannelOpenCandidates() {
                     <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-fog/75">
                       {t('channelRanking.openCandidates.confidence', { value: numberFormatter.format(item.confidence) })}
                     </span>
-                    <span className={`rounded-full border px-2.5 py-1 text-[11px] ${categoryBadgeClass('demand')}`}>
+                    <span
+                      className={`cursor-help rounded-full border px-2.5 py-1 text-[11px] ${categoryBadgeClass('demand')}`}
+                      title={t('channelRanking.openCandidates.demandHint')}
+                      aria-label={t('channelRanking.openCandidates.demandHint')}
+                    >
                       {t('channelRanking.openCandidates.demand', { value: numberFormatter.format(item.demand_score || 0) })}
                     </span>
-                    <span className={`rounded-full border px-2.5 py-1 text-[11px] ${categoryBadgeClass('relief')}`}>
+                    <span
+                      className={`cursor-help rounded-full border px-2.5 py-1 text-[11px] ${categoryBadgeClass('relief')}`}
+                      title={t('channelRanking.openCandidates.reliefHint')}
+                      aria-label={t('channelRanking.openCandidates.reliefHint')}
+                    >
                       {t('channelRanking.openCandidates.relief', { value: numberFormatter.format(item.relief_score || 0) })}
                     </span>
-                    <span className={`rounded-full border px-2.5 py-1 text-[11px] ${categoryBadgeClass('graph')}`}>
+                    <span
+                      className={`cursor-help rounded-full border px-2.5 py-1 text-[11px] ${categoryBadgeClass('graph')}`}
+                      title={t('channelRanking.openCandidates.graphQualityHint')}
+                      aria-label={t('channelRanking.openCandidates.graphQualityHint')}
+                    >
                       {t('channelRanking.openCandidates.graphQuality', { value: numberFormatter.format(item.graph_quality_score || 0) })}
                     </span>
                   </div>

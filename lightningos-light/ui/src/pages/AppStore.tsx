@@ -11,6 +11,7 @@ import lnbitsIcon from '../assets/apps/lnbits.svg'
 import fswapIcon from '../assets/apps/fswap.png'
 import publicPoolIcon from '../assets/apps/public-pool.svg'
 import electrsIcon from '../assets/apps/electrs.svg'
+import mempoolIcon from '../assets/apps/mempool.svg'
 
 type AppInfo = {
   id: string
@@ -54,7 +55,8 @@ const iconMap: Record<string, string> = {
   lnbits: lnbitsIcon,
   fswap: fswapIcon,
   publicpool: publicPoolIcon,
-  electrs: electrsIcon
+  electrs: electrsIcon,
+  mempool: mempoolIcon
 }
 
 const internalRoutes: Record<string, string> = {

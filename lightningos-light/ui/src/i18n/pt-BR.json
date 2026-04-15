@@ -2705,7 +2705,7 @@
       "manualReserveNotExtra": "A reserva é protegida contra o auto; o manual restart ainda fica limitado pelo orçamento total restante.",
       "manualReserveAutoOnly": "A reserva é protegida contra o auto; o manual restart não fica limitado pelo orçamento diário neste modo.",
       "manualReserveEncroached": "A reserva protegida já foi parcialmente consumida por gasto anterior; no momento, só o orçamento total restante está garantido.",
-      "autoBudgetLow": "Auto está ativo, mas o orçamento útil está abaixo do valor mínimo executável ({{min}}).",
+      "autoBudgetTight": "Auto segue ativo, mas a última varredura pulou {{count}} alvo(s) porque o orçamento útil restante ({{budget}}) ficou apertado para os limites atuais.",
       "lastQueued": "Enfileirados na última varredura: {{count}}",
       "topScore": "Score econômico (topo): {{value}}",
       "profitSkipped": "Pulados pelo guardrail de lucro: {{count}}",

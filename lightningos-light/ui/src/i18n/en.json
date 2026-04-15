@@ -2705,7 +2705,7 @@
         "manualReserveNotExtra": "Reserve is protected from auto; manual restart is still limited by total remaining budget.",
         "manualReserveAutoOnly": "Reserve is protected from auto; manual restart is not limited by the daily budget in this mode.",
         "manualReserveEncroached": "Protected reserve is already partially encroached by earlier spend; only total remaining budget is guaranteed right now.",
-        "autoBudgetLow": "Auto is enabled, but usable auto budget is below the minimum executable amount ({{min}}).",
+        "autoBudgetTight": "Auto remains enabled, but the last scan skipped {{count}} target(s) because the remaining usable auto budget ({{budget}}) was too tight for the current limits.",
         "lastQueued": "Queued last scan: {{count}}",
         "topScore": "Top economic score: {{value}}",
         "profitSkipped": "Skipped by profit guardrail: {{count}}",

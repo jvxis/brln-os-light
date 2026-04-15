@@ -1044,11 +1044,13 @@ export default function RebalanceCenter() {
     manualReserveRemainingSat > 0 &&
     remainingTotalSat > 0 &&
     manualReserveRemainingSat > remainingTotalSat
-  const autoBudgetLowThresholdSat = Math.max(1, config?.min_execute_sat ?? 500)
-  const autoBudgetLow =
+  const autoBudgetBlockedCount =
+    (overview?.last_scan_reasons?.budget_below_min ?? 0) +
+    (overview?.last_scan_reasons?.budget_too_low ?? 0)
+  const autoBudgetTight =
     Boolean(overview?.auto_enabled) &&
     remainingForAutoSat > 0 &&
-    remainingForAutoSat < autoBudgetLowThresholdSat
+    autoBudgetBlockedCount > 0
 
   return (
     <section className="space-y-6" aria-busy={initialLoading || isRefreshing}>
@@ -1329,10 +1331,11 @@ export default function RebalanceCenter() {
               {manualReserveEncroached && (
                 <p className="text-xs text-amber-200">{t('rebalanceCenter.overview.manualReserveEncroached')}</p>
               )}
-              {autoBudgetLow && (
+              {autoBudgetTight && (
                 <p className="text-xs text-amber-200">
-                  {t('rebalanceCenter.overview.autoBudgetLow', {
-                    min: formatSats(autoBudgetLowThresholdSat)
+                  {t('rebalanceCenter.overview.autoBudgetTight', {
+                    count: autoBudgetBlockedCount,
+                    budget: formatSats(remainingForAutoSat)
                   })}
                 </p>
               )}

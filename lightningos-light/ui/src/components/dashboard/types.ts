@@ -87,6 +87,34 @@ export type LndStatus = {
   }
 }
 
+export type LndPeer = {
+  pub_key?: string
+  alias?: string
+  address?: string
+  inbound?: boolean
+  bytes_sent?: number
+  bytes_recv?: number
+  sat_sent?: number
+  sat_recv?: number
+  ping_time?: number
+  sync_type?: string
+  last_error?: string
+  last_error_time?: number
+}
+
+export type LndChannel = {
+  channel_point: string
+  channel_id: number
+  remote_pubkey?: string
+  peer_alias?: string
+  active?: boolean
+  private?: boolean
+  capacity_sat?: number
+  local_balance_sat?: number
+  remote_balance_sat?: number
+  unsettled_balance_sat?: number
+}
+
 export type BitcoinCadenceBucket = {
   start_time?: number
   end_time?: number

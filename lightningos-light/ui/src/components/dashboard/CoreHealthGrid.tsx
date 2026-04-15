@@ -14,10 +14,12 @@ import {
 import HorizontalBarGauge from './HorizontalBarGauge'
 import StackedRatioBar from './StackedRatioBar'
 import StatusBadge from './StatusBadge'
-import type { BitcoinStatus, DiskSmart, LndStatus, PostgresStatus, SystemStats } from './types'
+import type { BitcoinStatus, DiskSmart, LndChannel, LndPeer, LndStatus, PostgresStatus, SystemStats } from './types'
 
 type CoreHealthGridProps = {
   lnd: LndStatus | null
+  lndPeers: LndPeer[]
+  lndChannels: LndChannel[]
   bitcoin: BitcoinStatus | null
   postgres: PostgresStatus | null
   system: SystemStats | null
@@ -33,6 +35,8 @@ const toneFromSmartStatus = (value?: string) => {
 
 export default function CoreHealthGrid({
   lnd,
+  lndPeers,
+  lndChannels,
   bitcoin,
   postgres,
   system,
@@ -59,6 +63,22 @@ export default function CoreHealthGrid({
   const cadenceHours = ((bitcoin?.block_cadence_window_sec ?? 600) * Math.max(1, cadenceBuckets.length)) / 3600
   const cadenceAvg = cadenceHours > 0 ? cadenceTotal / cadenceHours : 0
   const cpuPercent = system?.cpu_percent_avg_30s ?? system?.cpu_percent ?? 0
+  const peerAddressHost = (value?: string) => {
+    const raw = String(value || '').trim().toLowerCase()
+    if (!raw) return ''
+    return raw.includes('@') ? raw.split('@').pop() || '' : raw
+  }
+  const isTorPeer = (value?: string) => peerAddressHost(value).includes('.onion')
+  const connectedPeerCount = lndPeers.length
+  const torPeerCount = lndPeers.filter((peer) => isTorPeer(peer.address)).length
+  const clearnetPeerCount = lndPeers.filter((peer) => {
+    const host = peerAddressHost(peer.address)
+    return host !== '' && !host.includes('.onion')
+  }).length
+  const outboundLiquiditySat = lndChannels.reduce((sum, channel) => sum + Math.max(0, Number(channel.local_balance_sat || 0)), 0)
+  const inboundLiquiditySat = lndChannels.reduce((sum, channel) => sum + Math.max(0, Number(channel.remote_balance_sat || 0)), 0)
+  const totalLiquiditySat = outboundLiquiditySat + inboundLiquiditySat
+  const outboundSharePct = totalLiquiditySat > 0 ? (outboundLiquiditySat / totalLiquiditySat) * 100 : 0
 
   const copyToClipboard = async (value: string) => {
     if (!value) return
@@ -95,8 +115,14 @@ export default function CoreHealthGrid({
                   </div>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                  <p className="text-xs uppercase tracking-wide text-fog/45">{t('dashboard.blockHeight')}</p>
-                  <p className="mt-3 text-2xl font-semibold">{formatSats(locale, lnd.block_height)}</p>
+                  <p className="text-xs uppercase tracking-wide text-fog/45">{t('dashboard.connectedPeersLabel')}</p>
+                  <div className="mt-3 flex items-start justify-between gap-3">
+                    <p className="text-2xl font-semibold">{formatSats(locale, connectedPeerCount)}</p>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <StatusBadge label={t('dashboard.peerCountByType', { type: t('dashboard.clearnetLabel'), value: formatSats(locale, clearnetPeerCount) })} tone="ok" />
+                      <StatusBadge label={t('dashboard.peerCountByType', { type: t('dashboard.torLabel'), value: formatSats(locale, torPeerCount) })} tone="muted" />
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -119,17 +145,18 @@ export default function CoreHealthGrid({
 
               <div>
                 <div className="mb-2 flex items-center justify-between text-sm">
-                  <span className="text-fog/70">{t('dashboard.balances')}</span>
-                  <span className="text-fog">{t('dashboard.balanceSummary', {
-                    onchain: formatSats(locale, lnd.balances?.onchain_sat),
-                    lightning: formatSats(locale, lnd.balances?.lightning_sat),
-                  })}</span>
+                  <span className="text-fog/70">{t('dashboard.liquiditySplit')}</span>
+                  <span className="text-fog">{t('dashboard.outboundShareLabel', { value: formatPercent(locale, outboundSharePct) })}</span>
                 </div>
+                <p className="mb-2 text-xs text-fog/55">{t('dashboard.outboundInboundSummary', {
+                  outbound: formatSats(locale, outboundLiquiditySat),
+                  inbound: formatSats(locale, inboundLiquiditySat),
+                })}</p>
                 <StackedRatioBar
                   compact
                   segments={[
-                    { label: t('dashboard.onchainShort'), value: lnd.balances?.onchain_sat ?? 0, tone: 'ok' },
-                    { label: t('dashboard.lightningShort'), value: lnd.balances?.lightning_sat ?? 0, tone: 'info' },
+                    { label: t('dashboard.outboundLabel'), value: outboundLiquiditySat, tone: 'ok' },
+                    { label: t('dashboard.inboundLabel'), value: inboundLiquiditySat, tone: 'info' },
                   ]}
                 />
               </div>

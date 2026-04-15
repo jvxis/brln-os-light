@@ -10,9 +10,11 @@ import {
   getDisk,
   getHealth,
   getLndStatus,
+  getLnChannels,
   getLnChanHeal,
   getLnFailedPaymentsCleaner,
   getLnHtlcManager,
+  getLnPeers,
   getLnTorPeerChecker,
   getLogs,
   getNodeRetirementStatus,
@@ -46,6 +48,8 @@ import type {
   DiskSmart,
   FailedPaymentsCleanerStatus,
   HealthPayload,
+  LndChannel,
+  LndPeer,
   HtlcManagerStatus,
   LndStatus,
   LiveResponse,
@@ -88,6 +92,8 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
   const [bitcoin, setBitcoin] = useState<BitcoinStatus | null>(null)
   const [postgres, setPostgres] = useState<PostgresStatus | null>(null)
   const [lnd, setLnd] = useState<LndStatus | null>(null)
+  const [lndPeers, setLndPeers] = useState<LndPeer[]>([])
+  const [lndChannels, setLndChannels] = useState<LndChannel[]>([])
   const [health, setHealth] = useState<HealthPayload | null>(null)
   const [reportsLive, setReportsLive] = useState<LiveResponse | null>(null)
   const [reportsRange, setReportsRange] = useState<ReportRangeResponse | null>(null)
@@ -188,12 +194,14 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
   useEffect(() => {
     let mounted = true
     const load = async () => {
-      const [systemRes, diskRes, bitcoinRes, postgresRes, lndRes] = await Promise.allSettled([
+      const [systemRes, diskRes, bitcoinRes, postgresRes, lndRes, lndPeersRes, lndChannelsRes] = await Promise.allSettled([
         getSystem(),
         getDisk(),
         getBitcoinActive(),
         getPostgres(),
         getLndStatus(),
+        getLnPeers(),
+        getLnChannels(),
       ])
       if (!mounted) return
 
@@ -216,6 +224,16 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
       }
       if (lndRes.status === 'fulfilled') {
         setLnd((lndRes.value ?? null) as LndStatus | null)
+        fulfilled += 1
+      }
+      if (lndPeersRes.status === 'fulfilled') {
+        const peersPayload = lndPeersRes.value as { peers?: LndPeer[] } | null
+        setLndPeers(Array.isArray(peersPayload?.peers) ? peersPayload.peers : [])
+        fulfilled += 1
+      }
+      if (lndChannelsRes.status === 'fulfilled') {
+        const channelsPayload = lndChannelsRes.value as { channels?: LndChannel[] } | null
+        setLndChannels(Array.isArray(channelsPayload?.channels) ? channelsPayload.channels : [])
         fulfilled += 1
       }
       setCoreStatus(fulfilled > 0 ? 'ok' : 'unavailable')
@@ -642,6 +660,8 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
 
       <CoreHealthGrid
         lnd={lnd}
+        lndPeers={lndPeers}
+        lndChannels={lndChannels}
         bitcoin={bitcoin}
         postgres={postgres}
         system={system}

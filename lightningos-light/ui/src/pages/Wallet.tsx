@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import QrScanner from 'qr-scanner'
 import QRCode from 'qrcode'
 import { APIError, createInvoice, decodeInvoice, getLnChannels, getMempoolFees, getWalletActivity, getWalletAddress, getWalletPaymentDetail, getWalletSummary, payInvoice, payInvoiceMPP, payInvoiceValidatedRoute, previewOnchainSend, previewWalletPayment, reauthAuth, sendOnchain } from '../api'
 import { getLocale } from '../i18n'
@@ -239,6 +240,11 @@ export default function Wallet() {
   const [selectedPaymentDetail, setSelectedPaymentDetail] = useState<WalletPaymentDetail | null>(null)
   const [selectedPaymentDetailLoading, setSelectedPaymentDetailLoading] = useState(false)
   const [selectedPaymentDetailError, setSelectedPaymentDetailError] = useState('')
+  const [mobileQrAvailable, setMobileQrAvailable] = useState<boolean | null>(null)
+  const [mobileQrScannerOpen, setMobileQrScannerOpen] = useState(false)
+  const [mobileQrScannerStatus, setMobileQrScannerStatus] = useState('')
+  const scannerVideoRef = useRef<HTMLVideoElement | null>(null)
+  const scannerRef = useRef<QrScanner | null>(null)
 
   const normalizePaymentInput = (value: string) => (value ? value.replace(/\s+/g, '') : '')
 
@@ -254,6 +260,51 @@ export default function Wallet() {
     const cleaned = stripLightningPrefix(value)
     const parts = cleaned.split('@')
     return parts.length === 2 && parts[0] && parts[1]
+  }
+
+  const normalizeScannedPaymentValue = (value: string) => {
+    const trimmed = String(value || '').trim()
+    if (!trimmed) return ''
+
+    try {
+      const parsed = new URL(trimmed)
+      const lightning = parsed.searchParams.get('lightning') || parsed.searchParams.get('invoice')
+      if (lightning) {
+        return stripLightningPrefix(lightning)
+      }
+    } catch {
+      // Ignore non-URL payloads and fall back to the raw scan result.
+    }
+
+    return stripLightningPrefix(trimmed)
+  }
+
+  const stopMobileQrScanner = () => {
+    if (!scannerRef.current) return
+    scannerRef.current.destroy()
+    scannerRef.current = null
+  }
+
+  const getQrScannerErrorMessage = (err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err || '')
+    const normalized = message.toLowerCase()
+    if (
+      normalized.includes('permission') ||
+      normalized.includes('denied') ||
+      normalized.includes('notallowed') ||
+      normalized.includes('not allowed')
+    ) {
+      return t('wallet.qrScannerPermissionDenied')
+    }
+    if (
+      normalized.includes('camera') ||
+      normalized.includes('device') ||
+      normalized.includes('notfound') ||
+      normalized.includes('not found')
+    ) {
+      return t('wallet.qrScannerNoCamera')
+    }
+    return t('wallet.qrScannerStartFailed')
   }
 
   useEffect(() => {
@@ -377,6 +428,22 @@ export default function Wallet() {
   }, [])
 
   useEffect(() => {
+    let mounted = true
+    QrScanner.hasCamera()
+      .then((available) => {
+        if (!mounted) return
+        setMobileQrAvailable(available)
+      })
+      .catch(() => {
+        if (!mounted) return
+        setMobileQrAvailable(Boolean(globalThis.navigator?.mediaDevices?.getUserMedia))
+      })
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  useEffect(() => {
     const cleaned = stripLightningPrefix(paymentRequest)
     if (!cleaned) {
       setDecode(null)
@@ -414,6 +481,63 @@ export default function Wallet() {
     setPayMaxFeeSat('')
     setPayMaxFeeTouched(false)
   }, [paymentRequest, payAmount, outgoingChannelPoints])
+
+  useEffect(() => {
+    if (!mobileQrScannerOpen) {
+      stopMobileQrScanner()
+      return
+    }
+
+    const video = scannerVideoRef.current
+    if (!video) return
+
+    let active = true
+    setMobileQrScannerStatus(t('wallet.qrScannerStarting'))
+
+    const scanner = new QrScanner(
+      video,
+      (result) => {
+        if (!active) return
+        const scannedValue = normalizeScannedPaymentValue(result?.data || '')
+        if (!scannedValue) return
+
+        stopMobileQrScanner()
+        setPaymentRequest(scannedValue)
+        setDecodeError('')
+        setPaymentPreview(null)
+        setPaymentPreviewError('')
+        setStatus('')
+        setMobileQrScannerStatus('')
+        setMobileQrScannerOpen(false)
+      },
+      {
+        preferredCamera: 'environment',
+        maxScansPerSecond: 8,
+        returnDetailedScanResult: true,
+        onDecodeError: () => {
+          // Ignore transient decode misses while scanning frames.
+        }
+      }
+    )
+
+    scannerRef.current = scanner
+
+    scanner.start()
+      .then(() => {
+        if (!active) return
+        setMobileQrScannerStatus(t('wallet.qrScannerReady'))
+      })
+      .catch((err) => {
+        if (!active) return
+        stopMobileQrScanner()
+        setMobileQrScannerStatus(getQrScannerErrorMessage(err))
+      })
+
+    return () => {
+      active = false
+      stopMobileQrScanner()
+    }
+  }, [mobileQrScannerOpen, t])
 
   const cleanedPaymentRequest = stripLightningPrefix(paymentRequest)
   const isLnAddress = isLightningAddressInput(cleanedPaymentRequest)
@@ -1254,6 +1378,17 @@ export default function Wallet() {
     return t('wallet.amountless')
   }
 
+  const openMobileQrScanner = () => {
+    setMobileQrScannerStatus('')
+    setMobileQrScannerOpen(true)
+  }
+
+  const closeMobileQrScanner = () => {
+    stopMobileQrScanner()
+    setMobileQrScannerStatus('')
+    setMobileQrScannerOpen(false)
+  }
+
   return (
     <section className="space-y-6">
       <div className="section-card">
@@ -1560,7 +1695,32 @@ export default function Wallet() {
 
         <div className={`section-card space-y-4 ${paymentPreviewLoading ? 'route-preview-busy' : ''}`}>
           <h3 className="text-lg font-semibold">{t('wallet.payInvoice')}</h3>
-          <textarea className="input-field min-h-[140px]" placeholder={t('wallet.paymentRequestPlaceholder')} value={paymentRequest} onChange={(e) => setPaymentRequest(e.target.value)} />
+          <div className="relative">
+            <textarea
+              className="input-field min-h-[140px] pr-20 sm:pr-4"
+              placeholder={t('wallet.paymentRequestPlaceholder')}
+              value={paymentRequest}
+              onChange={(e) => setPaymentRequest(e.target.value)}
+            />
+            {mobileQrAvailable !== false && (
+              <button
+                type="button"
+                className="absolute right-3 top-3 inline-flex items-center gap-1 rounded-lg border border-white/10 bg-ink/90 px-2 py-1 text-[11px] text-fog/70 transition hover:border-brass/40 hover:text-fog sm:hidden"
+                onClick={openMobileQrScanner}
+                aria-label={t('wallet.qrScannerAction')}
+                title={t('wallet.qrScannerAction')}
+              >
+                <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+                  <path d="M3 7V4.5A1.5 1.5 0 0 1 4.5 3H7" />
+                  <path d="M13 3h2.5A1.5 1.5 0 0 1 17 4.5V7" />
+                  <path d="M17 13v2.5A1.5 1.5 0 0 1 15.5 17H13" />
+                  <path d="M7 17H4.5A1.5 1.5 0 0 1 3 15.5V13" />
+                  <path d="M7 7h2v2H7zM11 7h2v2h-2zM7 11h2v2H7zM11 11h2v2h-2z" />
+                </svg>
+                <span>QR</span>
+              </button>
+            )}
+          </div>
           {isLnAddress && (
             <div className="space-y-2">
               <label className="text-xs text-fog/60">{t('wallet.amountSats')}</label>
@@ -1914,6 +2074,38 @@ export default function Wallet() {
           )}
         </div>
       </div>
+
+      {mobileQrScannerOpen && (
+        <div className="fixed inset-0 z-50 bg-ink/95 px-4 py-5 sm:hidden">
+          <div className="mx-auto flex h-full w-full max-w-md flex-col gap-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h4 className="text-base font-semibold text-fog">{t('wallet.qrScannerTitle')}</h4>
+                <p className="mt-1 text-xs leading-relaxed text-fog/60">{t('wallet.qrScannerHint')}</p>
+              </div>
+              <button
+                type="button"
+                className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-fog/70 transition hover:border-white/20 hover:text-fog"
+                onClick={closeMobileQrScanner}
+              >
+                {t('common.close')}
+              </button>
+            </div>
+            <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-black">
+              <video
+                ref={scannerVideoRef}
+                className="aspect-square w-full object-cover"
+                muted
+                playsInline
+              />
+              <div className="pointer-events-none absolute inset-[14%] rounded-[28px] border border-brass/70 shadow-[0_0_0_9999px_rgba(5,10,18,0.42)]" />
+            </div>
+            <p className={`text-xs ${mobileQrScannerStatus === t('wallet.qrScannerReady') ? 'text-emerald-200' : 'text-fog/65'}`}>
+              {mobileQrScannerStatus || t('wallet.qrScannerStarting')}
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="section-card">
         <div className="flex flex-wrap items-center justify-between gap-3">

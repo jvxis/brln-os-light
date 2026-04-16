@@ -211,6 +211,7 @@ func defaultBitcoinCoreConfig() (string, error) {
   lines := []string{
     "server=1",
     "printtoconsole=1",
+    "txindex=1",
     "rpcuser=lightningos",
     "rpcpassword=" + password,
     "rpcbind=0.0.0.0:8332",

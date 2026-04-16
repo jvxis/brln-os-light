@@ -11,6 +11,7 @@ import NetworkAtlas from './pages/NetworkAtlas'
 import GraphExplorer from './pages/GraphExplorer'
 import LightningOps from './pages/LightningOps'
 import ChannelRanking from './pages/ChannelRanking'
+import ChannelOpenCandidates from './pages/ChannelOpenCandidates'
 import RebalanceCenter from './pages/RebalanceCenter'
 import OnchainHub from './pages/OnchainHub'
 import Chat from './pages/Chat'
@@ -196,6 +197,7 @@ export default function App() {
       { key: 'graph-explorer', label: t('nav.graphExplorer'), element: <GraphExplorer /> },
       { key: 'lightning-ops', label: t('nav.lightningOps'), element: <LightningOps /> },
       { key: 'channel-ranking', label: t('nav.channelRanking'), element: <ChannelRanking /> },
+      { key: 'new-channels', label: t('nav.newChannels'), element: <ChannelOpenCandidates /> },
       { key: 'rebalance-center', label: t('nav.rebalanceCenter'), element: <RebalanceCenter /> },
       { key: 'onchain-hub', label: t('nav.onchainHub'), element: <OnchainHub /> },
       { key: 'chat', label: t('nav.chat'), element: <Chat /> },

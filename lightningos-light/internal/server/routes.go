@@ -147,6 +147,8 @@ func (s *Server) routes() http.Handler {
 		r.Get("/autofee/results", s.handleAutofeeResults)
 		r.Get("/channel-ranking", s.handleChannelRankingGet)
 		r.Post("/channel-ranking/recompute", s.handleChannelRankingRecomputePost)
+		r.Get("/channel-ranking/open-candidates", s.handleChannelOpenCandidatesGet)
+		r.Post("/channel-ranking/open-candidates/recompute", s.handleChannelOpenCandidatesRecomputePost)
 		r.Get("/channel-ranking/{channel_point}", s.handleChannelRankingItemGet)
 		r.Get("/close-manager/status", s.handleCloseManagerStatusGet)
 		r.Get("/close-manager/sessions", s.handleCloseManagerSessionsGet)

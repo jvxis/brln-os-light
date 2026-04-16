@@ -246,6 +246,10 @@ export const getChannelRanking = (channelPoint: string) =>
   request(`/api/lnops/channel-ranking/${encodeURIComponent(channelPoint)}`)
 export const recomputeChannelRankings = () =>
   request('/api/lnops/channel-ranking/recompute', { method: 'POST' })
+export const getChannelOpenCandidates = (params?: { limit?: number }) =>
+  request(`/api/lnops/channel-ranking/open-candidates${buildQuery(params)}`)
+export const recomputeChannelOpenCandidates = () =>
+  request('/api/lnops/channel-ranking/open-candidates/recompute', { method: 'POST' })
 export const getCloseManagerStatus = () => request('/api/lnops/close-manager/status')
 export const getCloseManagerSessions = (limit = 100) =>
   request(`/api/lnops/close-manager/sessions?limit=${encodeURIComponent(String(limit))}`)

@@ -32,6 +32,9 @@ TERMINAL_SCRIPT="/usr/local/sbin/lightningos-terminal"
 TERMINAL_OPERATOR_USER="${TERMINAL_OPERATOR_USER:-losop}"
 MANAGER_BIN="/opt/lightningos/manager/lightningos-manager"
 
+NETWORK="${LIGHTNINGOS_NETWORK:-}"
+NETWORK_CHAIN_DIR=""
+
 CURRENT_STEP=""
 LOG_FILE="/var/log/lightningos-install.log"
 
@@ -160,6 +163,60 @@ confirm_mit_license() {
       [Nn]*) echo "Installation cancelled."; exit 1 ;;
     esac
   done
+}
+
+select_network() {
+  print_step "Selecting Bitcoin network"
+  local choice="${NETWORK:-}"
+  if [[ -z "$choice" ]]; then
+    if [[ ! -t 0 ]]; then
+      choice="mainnet"
+      print_warn "Non-interactive mode; defaulting to mainnet. Override with LIGHTNINGOS_NETWORK=testnet."
+    else
+      echo "Choose the Bitcoin network for LND:"
+      echo "  1) mainnet (default)"
+      echo "  2) testnet"
+      local reply
+      read -r -p "Network [1/2]: " reply
+      reply="${reply:-1}"
+      case "$reply" in
+        2|t|T|testnet|TESTNET) choice="testnet" ;;
+        *) choice="mainnet" ;;
+      esac
+    fi
+  fi
+  case "$choice" in
+    mainnet|MAINNET) NETWORK="mainnet"; NETWORK_CHAIN_DIR="mainnet" ;;
+    testnet|TESTNET) NETWORK="testnet"; NETWORK_CHAIN_DIR="testnet3" ;;
+    *) echo "Unsupported network '$choice' (use mainnet or testnet)." >&2; exit 1 ;;
+  esac
+  export LIGHTNINGOS_NETWORK="$NETWORK"
+  print_ok "Network: ${NETWORK} (chain dir: ${NETWORK_CHAIN_DIR})"
+  if [[ "$NETWORK" == "testnet" ]]; then
+    print_warn "bitcoin_remote defaults point to a mainnet bitcoind."
+    print_warn "Edit /etc/lightningos/config.yaml and /data/lnd/lnd.conf [Bitcoind] to target a testnet bitcoind."
+  fi
+}
+
+apply_network_to_configs() {
+  print_step "Applying ${NETWORK} selection to configs"
+  local macaroon_path="/data/lnd/data/chain/bitcoin/${NETWORK_CHAIN_DIR}/admin.macaroon"
+  if [[ -f /etc/lightningos/config.yaml ]]; then
+    if grep -Eq '^[[:space:]]*admin_macaroon_path:' /etc/lightningos/config.yaml; then
+      sed -i "s|^\([[:space:]]*\)admin_macaroon_path:.*|\1admin_macaroon_path: \"${macaroon_path}\"|" /etc/lightningos/config.yaml
+    fi
+  fi
+  if [[ -f "$LND_CONF" ]]; then
+    sed -i -E '/^[[:space:]]*bitcoin\.(mainnet|testnet|signet|regtest)[[:space:]]*=.*/d' "$LND_CONF"
+    if grep -Eq '^[[:space:]]*\[Bitcoin\][[:space:]]*$' "$LND_CONF"; then
+      sed -i "0,/^\[Bitcoin\]$/s//[Bitcoin]\nbitcoin.${NETWORK}=1/" "$LND_CONF"
+    else
+      printf '\n[Bitcoin]\nbitcoin.%s=1\n' "$NETWORK" >> "$LND_CONF"
+    fi
+    chown lnd:lnd "$LND_CONF" 2>/dev/null || true
+    chmod 660 "$LND_CONF" 2>/dev/null || true
+  fi
+  print_ok "Configs set to ${NETWORK}"
 }
 
 show_welcome_and_license() {
@@ -962,11 +1019,11 @@ fix_permissions() {
     chown lnd:lnd "$LND_DIR/password.txt"
     chmod 660 "$LND_DIR/password.txt"
   fi
-  if [[ -f "$LND_DIR/data/chain/bitcoin/mainnet/admin.macaroon" ]]; then
-    chown lnd:lnd "$LND_DIR/data/chain/bitcoin/mainnet/admin.macaroon"
-    chmod 640 "$LND_DIR/data/chain/bitcoin/mainnet/admin.macaroon"
+  if [[ -f "$LND_DIR/data/chain/bitcoin/${NETWORK_CHAIN_DIR}/admin.macaroon" ]]; then
+    chown lnd:lnd "$LND_DIR/data/chain/bitcoin/${NETWORK_CHAIN_DIR}/admin.macaroon"
+    chmod 640 "$LND_DIR/data/chain/bitcoin/${NETWORK_CHAIN_DIR}/admin.macaroon"
   fi
-  for dir in "$LND_DIR/data" "$LND_DIR/data/chain" "$LND_DIR/data/chain/bitcoin" "$LND_DIR/data/chain/bitcoin/mainnet"; do
+  for dir in "$LND_DIR/data" "$LND_DIR/data/chain" "$LND_DIR/data/chain/bitcoin" "$LND_DIR/data/chain/bitcoin/${NETWORK_CHAIN_DIR}"; do
     if [[ -d "$dir" ]]; then
       chown lnd:lnd "$dir"
       chmod 750 "$dir"
@@ -1005,8 +1062,8 @@ validate_lnd_conf() {
   if grep -Eq '^[[:space:]]*bitcoin\.active[[:space:]]*=' "$LND_CONF"; then
     print_warn "lnd.conf has deprecated bitcoin.active (remove it)"
   fi
-  if ! grep -Eq '^[[:space:]]*bitcoin\.mainnet[[:space:]]*=[[:space:]]*(1|true)[[:space:]]*$' "$LND_CONF"; then
-    print_warn "lnd.conf missing bitcoin.mainnet=1"
+  if ! grep -Eq "^[[:space:]]*bitcoin\.${NETWORK}[[:space:]]*=[[:space:]]*(1|true)[[:space:]]*$" "$LND_CONF"; then
+    print_warn "lnd.conf missing bitcoin.${NETWORK}=1"
   fi
   if ! grep -Eq '^[[:space:]]*bitcoin\.node[[:space:]]*=[[:space:]]*bitcoind[[:space:]]*$' "$LND_CONF"; then
     print_warn "lnd.conf missing bitcoin.node=bitcoind"
@@ -1019,7 +1076,7 @@ validate_lnd_conf() {
 }
 
 warn_existing_wallet() {
-  local wallet_db="$LND_DIR/data/chain/bitcoin/mainnet/wallet.db"
+  local wallet_db="$LND_DIR/data/chain/bitcoin/${NETWORK_CHAIN_DIR}/wallet.db"
   if [[ -f "$wallet_db" ]]; then
     print_warn "Wallet database already exists at $wallet_db"
     print_warn "Wizard 'Create new' will fail. Use Unlock, or move /data/lnd for a clean install."
@@ -1513,6 +1570,7 @@ main() {
   show_welcome_and_license
   require_root
   print_step "LightningOS Light installation starting"
+  select_network
   ensure_operator_user
   configure_sudoers
   install_packages
@@ -1531,6 +1589,7 @@ main() {
   install_helper_scripts
   prepare_lnd_data_dir
   copy_templates
+  apply_network_to_configs
   validate_lnd_conf
   warn_existing_wallet
   fix_permissions

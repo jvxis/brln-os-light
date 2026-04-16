@@ -349,6 +349,29 @@ func TestShouldPauseOutratePegHeadroomWhenOutrateAlreadyClearsRebalSpread(t *tes
 	}
 }
 
+func TestShouldProtectRebalanceFloorFromStallRelaxOnRebalanceDependentSink(t *testing.T) {
+	ranking := autofeeRankingSnapshot{RebalanceDependence: 70}
+	if !shouldProtectRebalanceFloorFromStallRelax("sink", "rebal", 1716, ranking, true, 1654) {
+		t.Fatalf("expected rebalance-dependent sink to protect rebal floor from stall relax")
+	}
+	if shouldProtectRebalanceFloorFromStallRelax("sink", "outrate", 1716, ranking, true, 1654) {
+		t.Fatalf("did not expect non-rebal floor source to trigger stall-relax guard")
+	}
+	if shouldProtectRebalanceFloorFromStallRelax("router", "rebal", 1716, ranking, true, 1654) {
+		t.Fatalf("did not expect non-sink channel to trigger stall-relax guard")
+	}
+}
+
+func TestShouldProtectRebalanceFloorFromStallRelaxWhenRebalDominatesHistory(t *testing.T) {
+	ranking := autofeeRankingSnapshot{OutPpm30d: 1620, RebalPpm30d: 1923}
+	if !shouldProtectRebalanceFloorFromStallRelax("sink", "rebal-sink", 1716, ranking, true, 1654) {
+		t.Fatalf("expected stronger rebalance history to protect rebal floor from stall relax")
+	}
+	if shouldProtectRebalanceFloorFromStallRelax("sink", "rebal-sink", 0, ranking, true, 1654) {
+		t.Fatalf("did not expect stall-relax guard without rebal ppm history")
+	}
+}
+
 func TestApplyAutofeeRefreshRebalMarkup(t *testing.T) {
 	if got := applyAutofeeRefreshRebalMarkup(500, 0.10); got != 550 {
 		t.Fatalf("unexpected refresh rebal markup: got %d want 550", got)

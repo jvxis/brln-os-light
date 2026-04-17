@@ -575,7 +575,25 @@ func (c *Client) GetStatus(ctx context.Context) (Status, error) {
 	c.statusMu.Unlock()
 
 	status, err := c.getStatusUncached(ctx)
+	c.storeStatusCache(status, err)
+	return status, err
+}
 
+func (c *Client) GetStatusFresh(ctx context.Context) (Status, error) {
+	status, err := c.getStatusUncached(ctx)
+	c.storeStatusCache(status, err)
+	return status, err
+}
+
+func (c *Client) InvalidateStatusCache() {
+	c.statusMu.Lock()
+	c.statusCached = false
+	c.statusErr = nil
+	c.statusNextFetch = time.Time{}
+	c.statusMu.Unlock()
+}
+
+func (c *Client) storeStatusCache(status Status, err error) {
 	ttl := statusCacheOK
 	if err != nil {
 		ttl = statusCacheErr
@@ -590,8 +608,6 @@ func (c *Client) GetStatus(ctx context.Context) (Status, error) {
 	c.statusCached = true
 	c.statusNextFetch = time.Now().Add(ttl)
 	c.statusMu.Unlock()
-
-	return status, err
 }
 
 func (c *Client) CachedPubkey() string {

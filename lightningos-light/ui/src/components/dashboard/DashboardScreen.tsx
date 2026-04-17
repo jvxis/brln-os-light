@@ -584,7 +584,7 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
   }
 
   useEffect(() => {
-    if (!lndRestartModalOpen || lndRestartComplete || !lndRestartStartedAt) return
+    if (!lndRestartModalOpen || !lndRestartStartedAt) return
     let mounted = true
 
     const loadLogs = async () => {
@@ -601,9 +601,29 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
       }
     }
 
+    void loadLogs()
+    const timer = window.setInterval(() => {
+      void loadLogs()
+    }, LND_RESTART_POLL_INTERVAL_MS)
+
+    return () => {
+      mounted = false
+      window.clearInterval(timer)
+    }
+  }, [
+    lndRestartModalOpen,
+    lndRestartSince,
+    lndRestartStartedAt,
+    t,
+  ])
+
+  useEffect(() => {
+    if (!lndRestartModalOpen || lndRestartComplete || !lndRestartStartedAt) return
+    let mounted = true
+
     const refreshStatus = async () => {
       try {
-        const nextStatus = await getLndStatus() as LndStatus
+        const nextStatus = await getLndStatus(true) as LndStatus
         if (!mounted) return
 
         setLndRestartStatusSnapshot(nextStatus)
@@ -673,10 +693,8 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
       }
     }
 
-    void loadLogs()
     void refreshStatus()
     const timer = window.setInterval(() => {
-      void loadLogs()
       void refreshStatus()
     }, LND_RESTART_POLL_INTERVAL_MS)
 
@@ -686,10 +704,8 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
     }
   }, [
     lndRestartComplete,
-    lndRestartError,
     lndRestartModalOpen,
     lndRestartRequested,
-    lndRestartSince,
     lndRestartStartedAt,
     t,
   ])

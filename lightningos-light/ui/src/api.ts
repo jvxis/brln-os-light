@@ -143,7 +143,8 @@ export const getElementsStatus = () => request('/api/elements/status')
 export const getElementsMainchain = () => request('/api/elements/mainchain')
 export const setElementsMainchain = (payload: { source: 'local' | 'remote' }) =>
   request('/api/elements/mainchain', { method: 'POST', body: JSON.stringify(payload) })
-export const getLndStatus = () => request('/api/lnd/status')
+export const getLndStatus = (force?: boolean) =>
+  request(`/api/lnd/status${buildQuery({ force: force ? 1 : undefined })}`)
 export const getLndConfig = () => request('/api/lnd/config')
 export const getLndUpgradeStatus = (force?: boolean) =>
   request(`/api/lnd/upgrade/status${buildQuery({ force: force ? 1 : undefined })}`)

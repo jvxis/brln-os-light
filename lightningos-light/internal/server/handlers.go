@@ -960,11 +960,18 @@ type lndStatusResponse struct {
 func (s *Server) handleLNDStatus(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), lndRPCTimeout)
 	defer cancel()
+	force, _ := strconv.ParseBool(strings.TrimSpace(r.URL.Query().Get("force")))
 
 	resp := lndStatusResponse{}
 	resp.ServiceActive = system.SystemctlIsActive(ctx, "lnd")
 
-	status, err := s.lnd.GetStatus(ctx)
+	var status lndclient.Status
+	var err error
+	if force {
+		status, err = s.lnd.GetStatusFresh(ctx)
+	} else {
+		status, err = s.lnd.GetStatus(ctx)
+	}
 	_ = err
 	resp.WalletState = status.WalletState
 	resp.SyncedToChain = status.SyncedToChain
@@ -3285,6 +3292,9 @@ func isHexColor(value string) bool {
 }
 
 func (s *Server) markLNDRestart() {
+	if s.lnd != nil {
+		s.lnd.InvalidateStatusCache()
+	}
 	s.lndRestartMu.Lock()
 	s.lastLNDRestart = time.Now()
 	s.lndRestartMu.Unlock()

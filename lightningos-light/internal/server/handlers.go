@@ -1241,7 +1241,13 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
 	defer cancel()
 
-	if err := system.SystemctlRestart(ctx, service); err != nil {
+	var err error
+	if service == "lnd" {
+		err = system.SystemctlRestartNoBlock(ctx, service)
+	} else {
+		err = system.SystemctlRestart(ctx, service)
+	}
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "restart failed")
 		return
 	}

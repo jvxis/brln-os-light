@@ -83,8 +83,8 @@ type DashboardScreenProps = {
 
 type LoadState = 'loading' | 'ok' | 'unavailable'
 
-const LND_RESTART_POLL_INTERVAL_MS = 3000
-const LND_RESTART_TIMEOUT_MS = 180000
+const LND_RESTART_POLL_INTERVAL_MS = 5000
+const LND_RESTART_TIMEOUT_MS = 2 * 60 * 60 * 1000
 
 export default function DashboardScreen({ authState }: DashboardScreenProps) {
   const { t, i18n } = useTranslation()
@@ -495,7 +495,8 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
       setLndRestartRequested(true)
       setLndRestartMessage(t('dashboard.lndRestartWaitingService'))
     } catch (err) {
-      setLndRestartMessage('')
+      setLndRestartRequested(true)
+      setLndRestartMessage(t('dashboard.lndRestartCommandQueued'))
       setLndRestartError(err instanceof Error ? err.message : t('dashboard.lndRestartFailed'))
       setLndRestartLocked(false)
     } finally {
@@ -583,7 +584,7 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
   }
 
   useEffect(() => {
-    if (!lndRestartModalOpen || lndRestartComplete || lndRestartError || !lndRestartStartedAt) return
+    if (!lndRestartModalOpen || lndRestartComplete || !lndRestartStartedAt) return
     let mounted = true
 
     const loadLogs = async () => {
@@ -623,6 +624,7 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
         if (rpcReady) {
           setLndRestartComplete(true)
           setLndRestartLocked(false)
+          setLndRestartError(null)
           setLndRestartMessage(t('dashboard.lndRestartCompleted'))
 
           const [peersRes, channelsRes] = await Promise.allSettled([getLnPeers(), getLnChannels()])
@@ -1048,8 +1050,10 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
             </div>
 
             {lndRestartMessage && <p className="mt-4 text-sm text-brass">{lndRestartMessage}</p>}
-            {lndRestartError && <p className="mt-2 text-sm text-rose-200">{lndRestartError}</p>}
-            {lndRestartComplete && !lndRestartError && (
+            {lndRestartError && !lndRestartComplete && (
+              <p className="mt-2 text-sm text-rose-200">{lndRestartError}</p>
+            )}
+            {lndRestartComplete && (
               <p className="mt-2 text-sm text-emerald-200">{t('dashboard.lndRestartCompletedHint')}</p>
             )}
 

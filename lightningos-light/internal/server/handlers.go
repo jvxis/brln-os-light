@@ -1244,6 +1244,7 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "unsupported service")
 		return
 	}
+	startedAt := time.Now().UTC()
 
 	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
 	defer cancel()
@@ -1262,7 +1263,10 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 		s.markLNDRestart()
 	}
 
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":         true,
+		"started_at": startedAt.Format(time.RFC3339Nano),
+	})
 }
 
 func (s *Server) handleSystemAction(w http.ResponseWriter, r *http.Request) {

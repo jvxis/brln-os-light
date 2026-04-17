@@ -147,6 +147,7 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
   const [lndRestartMessage, setLndRestartMessage] = useState('')
   const [lndRestartSince, setLndRestartSince] = useState('')
   const [lndRestartStartedAt, setLndRestartStartedAt] = useState(0)
+  const [lndRestartLogsLoadedOnce, setLndRestartLogsLoadedOnce] = useState(false)
   const [lndRestartStatusSnapshot, setLndRestartStatusSnapshot] = useState<LndStatus | null>(null)
   const lndRestartLogContainerRef = useRef<HTMLDivElement | null>(null)
 
@@ -193,6 +194,7 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
     && !lndRestartStatusSnapshot?.info_stale
   )
   const lndRestartCanClose = !lndRestartBusy && (!lndRestartLocked || Boolean(lndRestartError) || lndRestartComplete)
+  const lndRestartLogsFallbackToTail = lndRestartComplete && lndRestartLogs.length === 0 && lndRestartLogsLoadedOnce
 
   const formatVersion = (value?: string) => {
     if (!value) return t('common.na')
@@ -483,6 +485,7 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
     setLndRestartLocked(true)
     setLndRestartLogs([])
     setLndRestartLogsStatus('')
+    setLndRestartLogsLoadedOnce(false)
     setLndRestartError(null)
     setLndRestartComplete(false)
     setLndRestartMessage(t('dashboard.lndRestartStarting'))
@@ -491,7 +494,14 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
     setLndRestartStatusSnapshot(null)
 
     try {
-      await restartService({ service: 'lnd' })
+      const res = await restartService({ service: 'lnd' }) as { started_at?: string } | null
+      const startedAtRaw = typeof res?.started_at === 'string' ? res.started_at : ''
+      if (startedAtRaw) {
+        const parsed = new Date(startedAtRaw)
+        if (!Number.isNaN(parsed.getTime())) {
+          setLndRestartSince(new Date(parsed.getTime() - 15000).toISOString())
+        }
+      }
       setLndRestartRequested(true)
       setLndRestartMessage(t('dashboard.lndRestartWaitingService'))
     } catch (err) {
@@ -588,15 +598,19 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
     let mounted = true
 
     const loadLogs = async () => {
-      setLndRestartLogsStatus(t('dashboard.lndRestartLogsLoading'))
+      if (!lndRestartLogsLoadedOnce) {
+        setLndRestartLogsStatus(t('dashboard.lndRestartLogsLoading'))
+      }
       try {
-        const res = await getLogs('lnd', 200, lndRestartSince || undefined)
+        const res = await getLogs('lnd', 200, lndRestartLogsFallbackToTail ? undefined : (lndRestartSince || undefined))
         if (!mounted) return
         const lines: string[] = Array.isArray(res?.lines) ? res.lines : []
         setLndRestartLogs(lines)
+        setLndRestartLogsLoadedOnce(true)
         setLndRestartLogsStatus('')
       } catch (err) {
         if (!mounted) return
+        setLndRestartLogsLoadedOnce(true)
         setLndRestartLogsStatus(err instanceof Error ? err.message : t('logs.fetchFailed'))
       }
     }
@@ -611,6 +625,9 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
       window.clearInterval(timer)
     }
   }, [
+    lndRestartComplete,
+    lndRestartLogsFallbackToTail,
+    lndRestartLogsLoadedOnce,
     lndRestartModalOpen,
     lndRestartSince,
     lndRestartStartedAt,

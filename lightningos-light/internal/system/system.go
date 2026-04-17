@@ -354,6 +354,22 @@ func SystemctlRestart(ctx context.Context, service string) error {
 	return fmt.Errorf("systemctl restart failed: %w; sudo restart failed: %v", err, sudoErr)
 }
 
+func SystemctlRestartNoBlock(ctx context.Context, service string) error {
+	systemctl := systemctlPath()
+	_, err := RunCommand(ctx, systemctl, "restart", "--no-block", service)
+	if err == nil {
+		return nil
+	}
+	sudoPath, sudoErr := exec.LookPath("sudo")
+	if sudoErr != nil {
+		return err
+	}
+	if _, sudoErr = RunCommand(ctx, sudoPath, "-n", systemctl, "restart", "--no-block", service); sudoErr == nil {
+		return nil
+	}
+	return fmt.Errorf("systemctl restart --no-block failed: %w; sudo restart failed: %v", err, sudoErr)
+}
+
 func SystemctlPower(ctx context.Context, action string) error {
 	if action != "reboot" && action != "poweroff" {
 		return fmt.Errorf("unsupported system action")

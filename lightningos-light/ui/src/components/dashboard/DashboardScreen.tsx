@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   getAmbossHealth,
@@ -83,6 +83,9 @@ type DashboardScreenProps = {
 
 type LoadState = 'loading' | 'ok' | 'unavailable'
 
+const LND_RESTART_POLL_INTERVAL_MS = 5000
+const LND_RESTART_TIMEOUT_MS = 2 * 60 * 60 * 1000
+
 export default function DashboardScreen({ authState }: DashboardScreenProps) {
   const { t, i18n } = useTranslation()
   const locale = getLocale(i18n.language)
@@ -133,6 +136,20 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
   const [enableLoginBusy, setEnableLoginBusy] = useState(false)
   const [enableLoginMessage, setEnableLoginMessage] = useState('')
   const [enableLoginError, setEnableLoginError] = useState<string | null>(null)
+  const [lndRestartModalOpen, setLndRestartModalOpen] = useState(false)
+  const [lndRestartBusy, setLndRestartBusy] = useState(false)
+  const [lndRestartRequested, setLndRestartRequested] = useState(false)
+  const [lndRestartLocked, setLndRestartLocked] = useState(false)
+  const [lndRestartLogs, setLndRestartLogs] = useState<string[]>([])
+  const [lndRestartLogsStatus, setLndRestartLogsStatus] = useState('')
+  const [lndRestartError, setLndRestartError] = useState<string | null>(null)
+  const [lndRestartComplete, setLndRestartComplete] = useState(false)
+  const [lndRestartMessage, setLndRestartMessage] = useState('')
+  const [lndRestartSince, setLndRestartSince] = useState('')
+  const [lndRestartStartedAt, setLndRestartStartedAt] = useState(0)
+  const [lndRestartLogsLoadedOnce, setLndRestartLogsLoadedOnce] = useState(false)
+  const [lndRestartStatusSnapshot, setLndRestartStatusSnapshot] = useState<LndStatus | null>(null)
+  const lndRestartLogContainerRef = useRef<HTMLDivElement | null>(null)
 
   const overallTone = health?.status
     ? toneFromHealthStatus(health.status)
@@ -170,6 +187,14 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
   const systemActionButtonClass = systemActionIsShutdown
     ? 'text-rose-200 border-rose-400/30'
     : 'text-amber-200 border-amber-400/30'
+  const lndRestartRpcReady = Boolean(
+    lndRestartStatusSnapshot?.service_active
+    && lndRestartStatusSnapshot?.wallet_state === 'unlocked'
+    && lndRestartStatusSnapshot?.info_known
+    && !lndRestartStatusSnapshot?.info_stale
+  )
+  const lndRestartCanClose = !lndRestartBusy && (!lndRestartLocked || Boolean(lndRestartError) || lndRestartComplete)
+  const lndRestartLogsFallbackToTail = lndRestartComplete && lndRestartLogs.length === 0 && lndRestartLogsLoadedOnce
 
   const formatVersion = (value?: string) => {
     if (!value) return t('common.na')
@@ -429,8 +454,76 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
     }
   }, [])
 
+  useEffect(() => {
+    if (!lndRestartModalOpen) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
+  }, [lndRestartModalOpen])
+
+  useEffect(() => {
+    if (!lndRestartModalOpen) return
+    const container = lndRestartLogContainerRef.current
+    if (!container) return
+    container.scrollTop = container.scrollHeight
+  }, [lndRestartLogs, lndRestartModalOpen])
+
+  const closeLndRestartModal = () => {
+    if (!lndRestartCanClose) return
+    setLndRestartModalOpen(false)
+  }
+
+  const startLndRestartFlow = async () => {
+    if (lndRestartBusy || lndRestartLocked) return
+
+    const sinceNow = new Date(Date.now() - 15000).toISOString()
+    setLndRestartModalOpen(true)
+    setLndRestartBusy(true)
+    setLndRestartRequested(false)
+    setLndRestartLocked(true)
+    setLndRestartLogs([])
+    setLndRestartLogsStatus('')
+    setLndRestartLogsLoadedOnce(false)
+    setLndRestartError(null)
+    setLndRestartComplete(false)
+    setLndRestartMessage(t('dashboard.lndRestartStarting'))
+    setLndRestartSince(sinceNow)
+    setLndRestartStartedAt(Date.now())
+    setLndRestartStatusSnapshot(null)
+
+    try {
+      const res = await restartService({ service: 'lnd' }) as { started_at?: string } | null
+      const startedAtRaw = typeof res?.started_at === 'string' ? res.started_at : ''
+      if (startedAtRaw) {
+        const parsed = new Date(startedAtRaw)
+        if (!Number.isNaN(parsed.getTime())) {
+          setLndRestartSince(new Date(parsed.getTime() - 15000).toISOString())
+        }
+      }
+      setLndRestartRequested(true)
+      setLndRestartMessage(t('dashboard.lndRestartWaitingService'))
+    } catch (err) {
+      setLndRestartRequested(true)
+      setLndRestartMessage(t('dashboard.lndRestartCommandQueued'))
+      setLndRestartError(err instanceof Error ? err.message : t('dashboard.lndRestartFailed'))
+      setLndRestartLocked(false)
+    } finally {
+      setLndRestartBusy(false)
+    }
+  }
+
   const restart = async (service: string) => {
-    await restartService({ service })
+    try {
+      if (service === 'lnd') {
+        await startLndRestartFlow()
+        return
+      }
+      await restartService({ service })
+    } catch (err) {
+      console.error(`Failed to restart ${service}`, err)
+    }
   }
 
   const openSystemAction = (action: 'restart' | 'shutdown') => {
@@ -499,6 +592,140 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
       loadAppUpgradeStatus(true, true)
     }
   }
+
+  useEffect(() => {
+    if (!lndRestartModalOpen || !lndRestartStartedAt) return
+    let mounted = true
+
+    const loadLogs = async () => {
+      if (!lndRestartLogsLoadedOnce) {
+        setLndRestartLogsStatus(t('dashboard.lndRestartLogsLoading'))
+      }
+      try {
+        const res = await getLogs('lnd', 200, lndRestartLogsFallbackToTail ? undefined : (lndRestartSince || undefined))
+        if (!mounted) return
+        const lines: string[] = Array.isArray(res?.lines) ? res.lines : []
+        setLndRestartLogs(lines)
+        setLndRestartLogsLoadedOnce(true)
+        setLndRestartLogsStatus('')
+      } catch (err) {
+        if (!mounted) return
+        setLndRestartLogsLoadedOnce(true)
+        setLndRestartLogsStatus(err instanceof Error ? err.message : t('logs.fetchFailed'))
+      }
+    }
+
+    void loadLogs()
+    const timer = window.setInterval(() => {
+      void loadLogs()
+    }, LND_RESTART_POLL_INTERVAL_MS)
+
+    return () => {
+      mounted = false
+      window.clearInterval(timer)
+    }
+  }, [
+    lndRestartComplete,
+    lndRestartLogsFallbackToTail,
+    lndRestartLogsLoadedOnce,
+    lndRestartModalOpen,
+    lndRestartSince,
+    lndRestartStartedAt,
+    t,
+  ])
+
+  useEffect(() => {
+    if (!lndRestartModalOpen || lndRestartComplete || !lndRestartStartedAt) return
+    let mounted = true
+
+    const refreshStatus = async () => {
+      try {
+        const nextStatus = await getLndStatus(true) as LndStatus
+        if (!mounted) return
+
+        setLndRestartStatusSnapshot(nextStatus)
+        setLnd(nextStatus)
+
+        const timedOut = Date.now() - lndRestartStartedAt >= LND_RESTART_TIMEOUT_MS
+        if (!lndRestartRequested) {
+          return
+        }
+
+        const rpcReady = Boolean(
+          nextStatus?.service_active
+          && nextStatus?.wallet_state === 'unlocked'
+          && nextStatus?.info_known
+          && !nextStatus?.info_stale
+        )
+
+        if (rpcReady) {
+          setLndRestartComplete(true)
+          setLndRestartLocked(false)
+          setLndRestartError(null)
+          setLndRestartMessage(t('dashboard.lndRestartCompleted'))
+
+          const [peersRes, channelsRes] = await Promise.allSettled([getLnPeers(), getLnChannels()])
+          if (!mounted) return
+
+          if (peersRes.status === 'fulfilled') {
+            const peersPayload = peersRes.value as { peers?: LndPeer[] } | null
+            setLndPeers(Array.isArray(peersPayload?.peers) ? peersPayload.peers : [])
+          }
+          if (channelsRes.status === 'fulfilled') {
+            const channelsPayload = channelsRes.value as { channels?: LndChannel[] } | null
+            setLndChannels(Array.isArray(channelsPayload?.channels) ? channelsPayload.channels : [])
+          }
+          return
+        }
+
+        if (timedOut) {
+          setLndRestartError(t('dashboard.lndRestartTimeout'))
+          setLndRestartLocked(false)
+          return
+        }
+
+        if (!nextStatus?.service_active) {
+          setLndRestartMessage(t('dashboard.lndRestartWaitingService'))
+          return
+        }
+
+        if (nextStatus?.wallet_state === 'locked') {
+          setLndRestartMessage(t('dashboard.lndRestartWaitingWallet'))
+          return
+        }
+
+        setLndRestartMessage(t('dashboard.lndRestartWaitingRpc'))
+      } catch (err) {
+        if (!mounted) return
+        if (lndRestartRequested && Date.now() - lndRestartStartedAt >= LND_RESTART_TIMEOUT_MS) {
+          setLndRestartError(t('dashboard.lndRestartTimeout'))
+          setLndRestartLocked(false)
+          return
+        }
+        setLndRestartStatusSnapshot(null)
+        setLndRestartMessage(t('dashboard.lndRestartWaitingService'))
+        if (err instanceof Error) {
+          setLndRestartLogsStatus(err.message)
+        }
+      }
+    }
+
+    void refreshStatus()
+    const timer = window.setInterval(() => {
+      void refreshStatus()
+    }, LND_RESTART_POLL_INTERVAL_MS)
+
+    return () => {
+      mounted = false
+      window.clearInterval(timer)
+    }
+  }, [
+    lndRestartComplete,
+    lndRestartModalOpen,
+    lndRestartRequested,
+    lndRestartStartedAt,
+    t,
+  ])
 
   useEffect(() => {
     if (!appUpgradeModalOpen) return
@@ -605,10 +832,15 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
             <p className="mt-3 text-sm text-fog/65">{topSummary}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2 xl:justify-end">
-            <button className="btn-secondary text-xs px-3 py-2 sm:text-sm sm:px-4" onClick={() => restart('lnd')} type="button">
+            <button
+              className={`btn-secondary text-xs px-3 py-2 sm:text-sm sm:px-4 ${(lndRestartBusy || lndRestartLocked) ? 'opacity-60 pointer-events-none' : ''}`}
+              onClick={() => void restart('lnd')}
+              type="button"
+              disabled={lndRestartBusy || lndRestartLocked}
+            >
               {t('dashboard.restartLnd')}
             </button>
-            <button className="btn-secondary text-xs px-3 py-2 sm:text-sm sm:px-4" onClick={() => restart('lightningos-manager')} type="button">
+            <button className="btn-secondary text-xs px-3 py-2 sm:text-sm sm:px-4" onClick={() => void restart('lightningos-manager')} type="button">
               {t('dashboard.restartManager')}
             </button>
             <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-2 py-1 w-full xl:w-auto">
@@ -820,6 +1052,70 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
                 type="button"
               >
                 {enableLoginBusy ? t('auth.legacyEnableBusy') : t('auth.legacyEnableAction')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {lndRestartModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center px-4">
+          <div
+            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+            onClick={closeLndRestartModal}
+            aria-hidden="true"
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="lnd-restart-title"
+            className="relative z-10 w-full max-w-3xl rounded-3xl border border-white/10 bg-slate/95 p-6 shadow-panel"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h4 id="lnd-restart-title" className="text-lg font-semibold">{t('dashboard.lndRestartTitle')}</h4>
+                <p className="mt-2 text-sm text-fog/70">{t('dashboard.lndRestartBody')}</p>
+              </div>
+              <StatusBadge
+                label={lndRestartComplete ? t('common.ok') : lndRestartRpcReady ? t('common.ok') : t('dashboard.runningLabel')}
+                tone={lndRestartComplete ? 'ok' : lndRestartRpcReady ? 'ok' : 'warn'}
+              />
+            </div>
+
+            {lndRestartMessage && <p className="mt-4 text-sm text-brass">{lndRestartMessage}</p>}
+            {lndRestartError && !lndRestartComplete && (
+              <p className="mt-2 text-sm text-rose-200">{lndRestartError}</p>
+            )}
+            {lndRestartComplete && (
+              <p className="mt-2 text-sm text-emerald-200">{t('dashboard.lndRestartCompletedHint')}</p>
+            )}
+
+            <div className="mt-4">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm text-fog/70">{t('logs.services.lnd')}</span>
+                <span className="text-xs text-fog/50">
+                  {lndRestartComplete
+                    ? t('dashboard.lndRestartCompleted')
+                    : t('dashboard.lndRestartLogsHint')}
+                </span>
+              </div>
+              {lndRestartLogsStatus && <p className="mt-2 text-xs text-brass">{lndRestartLogsStatus}</p>}
+              <div
+                ref={lndRestartLogContainerRef}
+                className="mt-2 max-h-[320px] overflow-y-auto rounded-2xl border border-white/10 bg-ink/70 p-3 text-xs font-mono whitespace-pre-wrap"
+              >
+                {lndRestartLogs.length ? lndRestartLogs.join('\n') : t('logs.noLogs')}
+              </div>
+            </div>
+
+            <div className="mt-5 flex items-center justify-end gap-3">
+              <button
+                className={`btn-secondary ${lndRestartCanClose ? '' : 'opacity-60 pointer-events-none'}`}
+                onClick={closeLndRestartModal}
+                type="button"
+                disabled={!lndRestartCanClose}
+              >
+                {lndRestartComplete || lndRestartError ? t('common.close') : t('common.cancel')}
               </button>
             </div>
           </div>

@@ -960,11 +960,18 @@ type lndStatusResponse struct {
 func (s *Server) handleLNDStatus(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), lndRPCTimeout)
 	defer cancel()
+	force, _ := strconv.ParseBool(strings.TrimSpace(r.URL.Query().Get("force")))
 
 	resp := lndStatusResponse{}
 	resp.ServiceActive = system.SystemctlIsActive(ctx, "lnd")
 
-	status, err := s.lnd.GetStatus(ctx)
+	var status lndclient.Status
+	var err error
+	if force {
+		status, err = s.lnd.GetStatusFresh(ctx)
+	} else {
+		status, err = s.lnd.GetStatus(ctx)
+	}
 	_ = err
 	resp.WalletState = status.WalletState
 	resp.SyncedToChain = status.SyncedToChain
@@ -1237,11 +1244,18 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "unsupported service")
 		return
 	}
+	startedAt := time.Now().UTC()
 
 	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
 	defer cancel()
 
-	if err := system.SystemctlRestart(ctx, service); err != nil {
+	var err error
+	if service == "lnd" {
+		err = system.SystemctlRestartNoBlock(ctx, service)
+	} else {
+		err = system.SystemctlRestart(ctx, service)
+	}
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "restart failed")
 		return
 	}
@@ -1249,7 +1263,10 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 		s.markLNDRestart()
 	}
 
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":         true,
+		"started_at": startedAt.Format(time.RFC3339Nano),
+	})
 }
 
 func (s *Server) handleSystemAction(w http.ResponseWriter, r *http.Request) {
@@ -3279,6 +3296,9 @@ func isHexColor(value string) bool {
 }
 
 func (s *Server) markLNDRestart() {
+	if s.lnd != nil {
+		s.lnd.InvalidateStatusCache()
+	}
 	s.lndRestartMu.Lock()
 	s.lastLNDRestart = time.Now()
 	s.lndRestartMu.Unlock()

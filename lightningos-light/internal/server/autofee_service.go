@@ -5287,6 +5287,30 @@ func shouldRelaxFloorForRankingGuard(floorSrc string) bool {
 	}
 }
 
+func shouldProtectRebalanceFloorFromStallRelax(classLabel string, floorSrc string, rebalPpm7d int, ranking autofeeRankingSnapshot, hasRanking bool, outPpm7d int) bool {
+	if !strings.EqualFold(strings.TrimSpace(classLabel), "sink") {
+		return false
+	}
+	switch strings.TrimSpace(floorSrc) {
+	case "rebal", "rebal-sink", "rebal-hold":
+	default:
+		return false
+	}
+	if rebalPpm7d <= 0 {
+		return false
+	}
+	if hasRanking && ranking.RebalanceDependence >= 60 {
+		return true
+	}
+	if outPpm7d > 0 && rebalPpm7d >= outPpm7d {
+		return true
+	}
+	if hasRanking && ranking.RebalPpm30d > 0 && ranking.OutPpm30d > 0 && ranking.RebalPpm30d >= ranking.OutPpm30d {
+		return true
+	}
+	return false
+}
+
 func deriveRebalanceExecutionPolicy(profile autofeeProfile, runtime autofeeRebalanceRuntimeSnapshot, hasRuntime bool, roiMin float64, rebalanceStatus string, classLabel string, channelAgeHours float64, bootstrapHours int, outRatio float64, lowOutProtectThresh float64, outPpm7d int, rebalHistoryRefPpm int, baseCostPpm int, baseCostSrc string, recentRebalanceCount int, recentRebalanceWeakCount int, htlcPressureSignal bool, htlcForwardHot bool, localPpm int) ([]string, bool, int, bool) {
 	if !strings.EqualFold(classLabel, "sink") {
 		return nil, false, 0, false
@@ -8269,6 +8293,10 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			if relaxedFloor < e.cfg.MinPpm {
 				relaxedFloor = e.cfg.MinPpm
 			}
+			if shouldProtectRebalanceFloorFromStallRelax(classLabel, floorSrc, perCost, ranking, hasRanking, outPpm7d) && relaxedFloor < perCost {
+				relaxedFloor = perCost
+				tags = append(tags, "stall-relax-rebal-guard")
+			}
 			if relaxedFloor < floor {
 				floor = relaxedFloor
 				floorSrc = "stall-relax"
@@ -10084,6 +10112,8 @@ func formatAutofeeTags(d *decision) string {
 			add("🧱floor-lock")
 		case t == "floor-relax-stall":
 			add("🧯floor-relax")
+		case t == "stall-relax-rebal-guard":
+			add("🛡️stall-relax-rebal")
 		case t == "reversal-guard":
 			add("↩️reversal-guard")
 		case t == "reversal-confirmed":

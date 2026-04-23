@@ -19,6 +19,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 
 	"lightningos-light/internal/lndclient"
 	"lightningos-light/internal/system"
@@ -28,9 +30,9 @@ const (
 	secretsPath                    = "/etc/lightningos/secrets.env"
 	lndConfPath                    = "/data/lnd/lnd.conf"
 	lndPasswordPath                = "/data/lnd/password.txt"
-	lndWalletDBPath                = "/data/lnd/data/chain/bitcoin/mainnet/wallet.db"
-	lndChannelDBPath               = "/data/lnd/data/graph/mainnet/channel.db"
-	lndAdminMacaroonPath           = "/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon"
+	lndChainRoot                   = "/data/lnd/data/chain/bitcoin"
+	lndGraphRoot                   = "/data/lnd/data/graph"
+	lndDefaultChainDir             = "mainnet"
 	lndFixPermsScript              = "/usr/local/sbin/lightningos-fix-lnd-perms"
 	mempoolBaseURL                 = "https://mempool.space/api/v1/lightning"
 	boostPeersDefaultLimit         = 25
@@ -463,7 +465,8 @@ func (s *Server) handleBitcoinSourceGet(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Source string `json:"source"`
+		Source        string `json:"source"`
+		AllowUnsynced bool   `json:"allow_unsynced"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -477,7 +480,10 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "source must be local or remote")
 		return
 	}
-	if source == "local" {
+	// allow_unsynced lets the first-run wizard commit to "local" while bitcoind
+	// is still in IBD. LND itself tolerates a syncing chain backend during
+	// wallet init, so gating on full sync only makes sense for a live switch.
+	if source == "local" && !req.AllowUnsynced {
 		readyCtx, readyCancel := context.WithTimeout(r.Context(), 6*time.Second)
 		defer readyCancel()
 		ready, _ := s.bitcoinLocalReady(readyCtx)
@@ -488,7 +494,10 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
 	}
 
 	remoteUser, remotePass := readBitcoinSecrets()
-	if remoteUser == "" || remotePass == "" {
+	// Remote creds are only strictly required when that block will be active.
+	// When committing to local, we still write a commented remote block so a
+	// later switch is possible; empty values in a commented block are harmless.
+	if source == "remote" && (remoteUser == "" || remotePass == "") {
 		writeError(w, http.StatusBadRequest, "remote RPC credentials missing")
 		return
 	}
@@ -1057,7 +1066,7 @@ func detectLNDDBBackend() string {
 }
 
 func lndChannelDBSizeGB() (float64, error) {
-	info, err := os.Stat(lndChannelDBPath)
+	info, err := os.Stat(lndChannelDBPath())
 	if err != nil {
 		return 0, err
 	}
@@ -1065,8 +1074,21 @@ func lndChannelDBSizeGB() (float64, error) {
 }
 
 func (s *Server) handleWizardStatus(w http.ResponseWriter, r *http.Request) {
+	exists := walletExists()
+	// If the filesystem check sees nothing, fall back to a gRPC probe via the
+	// WalletUnlocker service. This covers the case where /data/lnd/data is
+	// 700-perm or the wallet.db lives under a chain subdir we don't hardcode
+	// (testnet, signet). Without this the wizard would force the user back to
+	// the wizard on every navigation.
+	if !exists {
+		probeCtx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		if probed, probeErr := s.lnd.ProbeWalletExists(probeCtx); probeErr == nil && probed {
+			exists = true
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"wallet_exists": walletExists(),
+		"wallet_exists": exists,
 	})
 }
 
@@ -1158,11 +1180,58 @@ func walletExists() bool {
 	if walletPasswordAvailable() {
 		return true
 	}
-	info, err := os.Stat(lndWalletDBPath)
-	if err != nil {
-		return false
+	// LND stores wallet.db under /data/lnd/data/chain/bitcoin/<chain>/ where
+	// <chain> is mainnet/testnet/testnet3/signet/regtest depending on the
+	// active network. Checking only the mainnet path misidentifies a running
+	// testnet/signet node as a fresh install.
+	matches, _ := filepath.Glob(filepath.Join(lndChainRoot, "*", "wallet.db"))
+	for _, path := range matches {
+		info, err := os.Stat(path)
+		if err == nil && info.Size() > 0 {
+			return true
+		}
 	}
-	return info.Size() > 0
+	return false
+}
+
+// lndActiveChainDir returns the chain subdirectory name LND is actively
+// using ("mainnet", "testnet", "testnet3", "signet", "regtest"). It probes
+// the filesystem for an existing wallet.db rather than reading lnd.conf so
+// it works across chain renames (e.g. LND 0.18+ moving testnet3→testnet).
+// If no wallet has been created yet, it falls back to lndDefaultChainDir so
+// paths remain usable on a fresh install; any consumer that actually needs
+// to read the macaroon will fail at open time with "no such file", which
+// the health handler already translates to "LND macaroon missing".
+func lndActiveChainDir() string {
+	matches, _ := filepath.Glob(filepath.Join(lndChainRoot, "*", "wallet.db"))
+	if len(matches) == 0 {
+		return lndDefaultChainDir
+	}
+	best := matches[0]
+	var bestMtime time.Time
+	for _, m := range matches {
+		info, err := os.Stat(m)
+		if err != nil {
+			continue
+		}
+		if mt := info.ModTime(); mt.After(bestMtime) {
+			best = m
+			bestMtime = mt
+		}
+	}
+	return filepath.Base(filepath.Dir(best))
+}
+
+func lndAdminMacaroonPath() string {
+	return filepath.Join(lndChainRoot, lndActiveChainDir(), "admin.macaroon")
+}
+
+func lndWalletDBPath() string {
+	return filepath.Join(lndChainRoot, lndActiveChainDir(), "wallet.db")
+}
+
+func lndChannelDBPath() string {
+	return filepath.Join(lndGraphRoot, lndActiveChainDir(), "channel.db")
 }
 
 func (s *Server) handleInitWallet(w http.ResponseWriter, r *http.Request) {
@@ -1217,7 +1286,29 @@ func (s *Server) handleUnlockWallet(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if err := s.lnd.UnlockWallet(ctx, req.WalletPassword); err != nil {
-		writeError(w, http.StatusInternalServerError, "unlock failed")
+		// Once LND unlocks, the WalletUnlocker gRPC service stops serving.
+		// Different LND versions report this differently: some return
+		// codes.Unimplemented, others return codes.Unknown with the message
+		// "wallet already unlocked, WalletUnlocker service is no longer
+		// available". Either way the wizard should treat it as success.
+		// We can't verify the password (WalletUnlocker is gone), so we also
+		// deliberately skip writing the auto-unlock file to avoid clobbering
+		// it with something wrong.
+		msg := strings.ToLower(strings.TrimSpace(err.Error()))
+		alreadyUnlocked := strings.Contains(msg, "wallet already unlocked") ||
+			strings.Contains(msg, "walletunlocker service is no longer available")
+		if st, ok := grpcstatus.FromError(err); ok && st.Code() == codes.Unimplemented {
+			alreadyUnlocked = true
+		}
+		if alreadyUnlocked {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "already_unlocked": true})
+			return
+		}
+		surface := strings.TrimSpace(err.Error())
+		if surface == "" {
+			surface = "unlock failed"
+		}
+		writeError(w, http.StatusInternalServerError, surface)
 		return
 	}
 	if err := storeWalletUnlock(req.WalletPassword); err != nil {
@@ -4857,7 +4948,7 @@ func (s *Server) scheduleLNDPermissionsFix(reason string) {
 	}
 	go func() {
 		waitCtx, waitCancel := context.WithTimeout(context.Background(), 12*time.Second)
-		waitForFile(waitCtx, lndAdminMacaroonPath)
+		waitForFile(waitCtx, lndAdminMacaroonPath())
 		waitCancel()
 		runCtx, runCancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer runCancel()

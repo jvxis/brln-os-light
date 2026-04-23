@@ -345,7 +345,7 @@ func peerswapConfigDefaults(ctx context.Context) (peerswapConfigValues, error) {
   }
   return peerswapConfigValues{
     LndTLSPath: "/data/lnd/tls.cert",
-    LndMacaroonPath: "/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon",
+    LndMacaroonPath: lndAdminMacaroonPath(),
     ElementsRPCUser: user,
     ElementsRPCPass: pass,
     ElementsRPCHost: "http://127.0.0.1",

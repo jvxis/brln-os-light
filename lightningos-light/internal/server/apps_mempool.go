@@ -23,16 +23,13 @@ const (
 	mempoolFrontendHostPort = 8999
 	mempoolFrontendInternal = 8080
 	mempoolBackendInternal  = 8999
-	mempoolDBContainerUID   = 1000
-	mempoolDBContainerGID   = 1000
+	mempoolDBVolumeName     = "mempool_dbdata"
 )
 
 type mempoolPaths struct {
 	Root        string
 	ComposePath string
 	EnvPath     string
-	CacheDir    string
-	DBDataDir   string
 }
 
 type mempoolRuntimeValues struct {
@@ -100,26 +97,24 @@ func (a mempoolApp) Stop(ctx context.Context) error {
 func (a mempoolApp) Uninstall(ctx context.Context) error {
 	paths := mempoolAppPaths()
 	if fileExists(paths.ComposePath) {
-		_ = runCompose(ctx, paths.Root, paths.ComposePath, "down", "--remove-orphans")
+		// --volumes wipes the named DB volume. Mempool's statistics history is
+		// a consulting app's cache — all rebuildable from Bitcoin Core, so a
+		// clean uninstall is preferred over preserving an orphaned DB that
+		// would then go stale vs. rotated credentials on the next install.
+		_ = runCompose(ctx, paths.Root, paths.ComposePath, "down", "--volumes", "--remove-orphans")
 	}
 	if err := os.RemoveAll(paths.Root); err != nil {
 		return fmt.Errorf("failed to remove app files: %w", err)
 	}
-	// Intentionally preserve the MariaDB data dir so a reinstall keeps the
-	// statistics history. Matches the electrs uninstall behaviour for the
-	// rocksdb index.
 	return nil
 }
 
 func mempoolAppPaths() mempoolPaths {
 	root := filepath.Join(appsRoot, mempoolAppID)
-	dataRoot := filepath.Join(appsDataRoot, mempoolAppID)
 	return mempoolPaths{
 		Root:        root,
 		ComposePath: filepath.Join(root, "docker-compose.yaml"),
 		EnvPath:     filepath.Join(root, ".env"),
-		CacheDir:    filepath.Join(dataRoot, "cache"),
-		DBDataDir:   filepath.Join(dataRoot, "mysql"),
 	}
 }
 
@@ -137,8 +132,8 @@ func (s *Server) applyMempool(ctx context.Context) error {
 	}
 
 	paths := mempoolAppPaths()
-	if err := ensureMempoolPaths(ctx, paths); err != nil {
-		return err
+	if err := os.MkdirAll(paths.Root, 0750); err != nil {
+		return fmt.Errorf("failed to create app directory: %w", err)
 	}
 
 	if err := ensureDockerImage(ctx, mempoolBackendImage); err != nil {
@@ -182,28 +177,6 @@ func ensureMempoolUfwAccess(ctx context.Context) error {
 	}
 	_, err = system.RunCommandWithSudo(ctx, "ufw", "allow", fmt.Sprintf("%d/tcp", mempoolFrontendHostPort))
 	return err
-}
-
-// ensureMempoolPaths creates the on-host directories and chowns them to the
-// uid/gid that the mempool + mariadb containers run as (1000:1000 in upstream
-// images). Without the chown mariadb refuses to initialise its data dir.
-func ensureMempoolPaths(ctx context.Context, paths mempoolPaths) error {
-	if err := os.MkdirAll(paths.Root, 0750); err != nil {
-		return fmt.Errorf("failed to create app directory: %w", err)
-	}
-	script := fmt.Sprintf(`set -e
-mkdir -p %[1]q %[2]q
-chown -R %[3]d:%[4]d %[1]q %[2]q
-chmod 750 %[1]q %[2]q
-`, paths.CacheDir, paths.DBDataDir, mempoolDBContainerUID, mempoolDBContainerGID)
-	if out, err := runSystemd(ctx, "/bin/sh", "-c", script); err != nil {
-		msg := strings.TrimSpace(out)
-		if msg == "" {
-			return fmt.Errorf("failed to prepare mempool data directories: %w", err)
-		}
-		return fmt.Errorf("failed to prepare mempool data directories: %s", msg)
-	}
-	return nil
 }
 
 func (s *Server) resolveMempoolRuntimeValues(ctx context.Context, bitcoinPaths bitcoinCorePaths, paths mempoolPaths) (mempoolRuntimeValues, error) {
@@ -296,29 +269,33 @@ func ensureMempoolEnv(paths mempoolPaths, values mempoolRuntimeValues) error {
 // by those apps' compose files) so it can reach bitcoind:8332 and electrs:50001
 // without needing to publish those on the host. Substitution variables come
 // from the sibling `.env` file written by ensureMempoolEnv.
-func mempoolComposeContents(paths mempoolPaths) string {
+//
+// Persistence model: the MariaDB data dir lives in a Docker-managed named
+// volume so the manager (running as `lightningos`) never has to mkdir/chown
+// host paths that need uid 999 escalation. Mempool's /backend/cache is left
+// ephemeral inside the container — everything there is regenerable from
+// bitcoind + electrs, so wiping it between restarts costs nothing.
+func mempoolComposeContents(_ mempoolPaths) string {
 	return fmt.Sprintf(`services:
   mempool-web:
     image: %[1]s
     container_name: mempool-web
     restart: unless-stopped
     stop_grace_period: 1m
-    user: "1000:1000"
     depends_on:
       - mempool-api
     environment:
-      FRONTEND_HTTP_PORT: "%[7]d"
+      FRONTEND_HTTP_PORT: "%[6]d"
       BACKEND_MAINNET_HTTP_HOST: "mempool-api"
-      BACKEND_MAINNET_HTTP_PORT: "%[8]d"
+      BACKEND_MAINNET_HTTP_PORT: "%[7]d"
     command: "./wait-for mempool-db:3306 --timeout=720 -- nginx -g 'daemon off;'"
     ports:
-      - "%[6]d:%[7]d"
+      - "%[5]d:%[6]d"
   mempool-api:
     image: %[2]s
     container_name: mempool-api
     restart: unless-stopped
     stop_grace_period: 1m
-    user: "1000:1000"
     depends_on:
       - mempool-db
     environment:
@@ -342,21 +319,18 @@ func mempoolComposeContents(paths mempoolPaths) string {
       - default
       - bitcoincore
       - electrs
-    volumes:
-      - %[4]s:/backend/cache
   mempool-db:
     image: %[3]s
     container_name: mempool-db
     restart: unless-stopped
     stop_grace_period: 1m
-    user: "1000:1000"
     environment:
       MYSQL_DATABASE: "mempool"
       MYSQL_USER: "mempool"
       MYSQL_PASSWORD: "${MEMPOOL_DB_PASSWORD}"
       MYSQL_ROOT_PASSWORD: "${MEMPOOL_DB_ROOT_PASSWORD}"
     volumes:
-      - %[5]s:/var/lib/mysql
+      - %[4]s:/var/lib/mysql
 
 networks:
   default:
@@ -367,12 +341,15 @@ networks:
   electrs:
     external: true
     name: electrs_default
+
+volumes:
+  %[4]s:
+    name: %[4]s
 `,
 		mempoolFrontendImage,
 		mempoolBackendImage,
 		mempoolDBImage,
-		paths.CacheDir,
-		paths.DBDataDir,
+		mempoolDBVolumeName,
 		mempoolFrontendHostPort,
 		mempoolFrontendInternal,
 		mempoolBackendInternal,

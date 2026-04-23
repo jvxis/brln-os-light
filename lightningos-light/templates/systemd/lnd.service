@@ -7,6 +7,14 @@ Wants=network-online.target
 ExecStart=/usr/local/bin/lnd --lnddir=/home/lnd/.lnd
 ExecStop=/usr/local/bin/lncli stop
 
+# LND mkdirs its data tree with mode 0700 regardless of UMask, so the
+# lightningos-manager (which runs as `lightningos`, a member of the `lnd`
+# group) cannot traverse to read macaroons. Reapply 0750 on every start
+# so the group-read perm survives chain switches and wipe/reinit events.
+# Errors are swallowed: if /data/lnd/data doesn't exist yet (fresh
+# install before first unlock), nothing to do.
+ExecStartPost=/bin/sh -c 'find /data/lnd/data -type d -exec chmod 0750 {} + 2>/dev/null || true'
+
 # Process management
 Restart=on-failure
 RestartSec=60

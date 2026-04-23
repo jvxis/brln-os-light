@@ -130,7 +130,7 @@ export const getPostgres = () => request('/api/postgres')
 export const getBitcoin = () => request('/api/bitcoin')
 export const getBitcoinActive = () => request('/api/bitcoin/active')
 export const getBitcoinSource = () => request('/api/bitcoin/source')
-export const setBitcoinSource = (payload: { source: 'local' | 'remote' }) =>
+export const setBitcoinSource = (payload: { source: 'local' | 'remote'; allow_unsynced?: boolean }) =>
   request('/api/bitcoin/source', { method: 'POST', body: JSON.stringify(payload) })
 export const getBitcoinLocalStatus = () => request('/api/bitcoin-local/status')
 export const getBitcoinLocalConfig = () => request('/api/bitcoin-local/config')

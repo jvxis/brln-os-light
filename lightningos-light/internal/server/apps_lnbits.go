@@ -202,7 +202,7 @@ func ensureLnbitsEnv(paths lnbitsPaths) error {
 		{"LNBITS_BACKEND_WALLET_CLASS", "LndRestWallet"},
 		{"LND_REST_ENDPOINT", "https://host.docker.internal:8080/"},
 		{"LND_REST_CERT", "/data/lnd/tls.cert"},
-		{"LND_REST_MACAROON", "/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon"},
+		{"LND_REST_MACAROON", lndAdminMacaroonPath()},
 		{"LNBITS_EXTENSIONS_PATH", "/app/data/extensions"},
 		{"LNBITS_HOST", "0.0.0.0"},
 		{"LNBITS_PORT", "5000"},

@@ -1004,6 +1004,30 @@ func (c *Client) getStatusUncached(ctx context.Context) (Status, error) {
 	return status, primaryErr
 }
 
+// ProbeWalletExists returns true when LND appears to already have a wallet,
+// inferred from the WalletUnlocker RPC without requiring the admin macaroon.
+// On a fresh node GenSeed succeeds (we discard the disposable seed). On any
+// node that already has a wallet — whether locked or already unlocked — it
+// returns an error (either "wallet already exists" or "WalletUnlocker service
+// is no longer available"), which we translate to true.
+//
+// Useful as a fallback for walletExists() when the filesystem check cannot
+// see /data/lnd/data due to directory perms or chain-subdir mismatches.
+func (c *Client) ProbeWalletExists(ctx context.Context) (bool, error) {
+	conn, err := c.dial(ctx, false)
+	if err != nil {
+		return false, err
+	}
+	defer conn.Close()
+
+	client := lnrpc.NewWalletUnlockerClient(conn)
+	_, err = client.GenSeed(ctx, &lnrpc.GenSeedRequest{})
+	if err == nil {
+		return false, nil
+	}
+	return true, nil
+}
+
 func (c *Client) GenSeed(ctx context.Context, seedPassphrase string) ([]string, error) {
 	conn, err := c.dial(ctx, false)
 	if err != nil {

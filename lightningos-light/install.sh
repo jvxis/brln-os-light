@@ -187,7 +187,7 @@ select_network() {
   fi
   case "$choice" in
     mainnet|MAINNET) NETWORK="mainnet"; NETWORK_CHAIN_DIR="mainnet" ;;
-    testnet|TESTNET) NETWORK="testnet"; NETWORK_CHAIN_DIR="testnet3" ;;
+    testnet|TESTNET) NETWORK="testnet"; NETWORK_CHAIN_DIR="testnet" ;;
     *) echo "Unsupported network '$choice' (use mainnet or testnet)." >&2; exit 1 ;;
   esac
   export LIGHTNINGOS_NETWORK="$NETWORK"

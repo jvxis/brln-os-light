@@ -19,12 +19,11 @@ const (
   electrsRPCPort     = 50001
   electrsMonitorPort = 4224
   electrsImageName   = "lightningos/electrs:v0.11.1"
-  electrsDataDir     = "/data/electrs"
+  electrsVolumeName  = "electrs_data"
 )
 
 type electrsPaths struct {
   Root        string
-  DataDir     string
   ComposePath string
   CookiePath  string
 }
@@ -33,6 +32,8 @@ type electrsRuntimeValues struct {
   BitcoinRPCUser string
   BitcoinRPCPass string
   BitcoinRPCPort int
+  Network        string
+  BitcoinP2PPort int
 }
 
 type electrsApp struct {
@@ -92,13 +93,15 @@ func (a electrsApp) Stop(ctx context.Context) error {
 func (a electrsApp) Uninstall(ctx context.Context) error {
   paths := electrsAppPaths()
   if fileExists(paths.ComposePath) {
-    _ = runCompose(ctx, paths.Root, paths.ComposePath, "down", "--remove-orphans")
+    // --volumes wipes the rocksdb index. Re-indexing costs hours on mainnet
+    // but avoids the silent-credentials-drift failure mode where a rotated
+    // bitcoin.cookie no longer matches the bitcoind RPC user stored in an
+    // old index. The index is fully reproducible from Bitcoin Core.
+    _ = runCompose(ctx, paths.Root, paths.ComposePath, "down", "--volumes", "--remove-orphans")
   }
   if err := os.RemoveAll(paths.Root); err != nil {
     return fmt.Errorf("failed to remove app files: %w", err)
   }
-  // Intentionally preserve electrsDataDir (~60 GB rocksdb index) so the next
-  // install does not have to re-index from scratch. Matches apps_bitcoincore.
   return nil
 }
 
@@ -106,7 +109,6 @@ func electrsAppPaths() electrsPaths {
   root := filepath.Join(appsRoot, electrsAppID)
   return electrsPaths{
     Root:        root,
-    DataDir:     electrsDataDir,
     ComposePath: filepath.Join(root, "docker-compose.yaml"),
     CookiePath:  filepath.Join(root, "bitcoin.cookie"),
   }
@@ -123,8 +125,8 @@ func (s *Server) applyElectrs(ctx context.Context) error {
   }
 
   paths := electrsAppPaths()
-  if err := ensureElectrsPaths(ctx, paths); err != nil {
-    return err
+  if err := os.MkdirAll(paths.Root, 0750); err != nil {
+    return fmt.Errorf("failed to create app directory: %w", err)
   }
 
   values, err := s.resolveElectrsRuntimeValues(ctx, bitcoinPaths)
@@ -149,28 +151,6 @@ func (s *Server) applyElectrs(ctx context.Context) error {
   return runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d")
 }
 
-func ensureElectrsPaths(ctx context.Context, paths electrsPaths) error {
-  if err := os.MkdirAll(paths.Root, 0750); err != nil {
-    return fmt.Errorf("failed to create app directory: %w", err)
-  }
-  // /data is owned by root, so the manager process can't mkdir it directly.
-  // Escalate via systemd-run (same trick the Elements app uses for /data/elements)
-  // to create the rocksdb dir and chown it to the electrs container uid/gid 1000.
-  script := fmt.Sprintf(`set -e
-mkdir -p %[1]q
-chown 1000:1000 %[1]q
-chmod 750 %[1]q
-`, paths.DataDir)
-  if out, err := runSystemd(ctx, "/bin/sh", "-c", script); err != nil {
-    msg := strings.TrimSpace(out)
-    if msg == "" {
-      return fmt.Errorf("failed to create app data directory %s: %w", paths.DataDir, err)
-    }
-    return fmt.Errorf("failed to create app data directory %s: %s", paths.DataDir, msg)
-  }
-  return nil
-}
-
 func (s *Server) resolveElectrsRuntimeValues(ctx context.Context, bitcoinPaths bitcoinCorePaths) (electrsRuntimeValues, error) {
   localCfg, updated, err := readBitcoinLocalRPCConfig(ctx)
   if err != nil {
@@ -185,21 +165,72 @@ func (s *Server) resolveElectrsRuntimeValues(ctx context.Context, bitcoinPaths b
     }
   }
   _, rpcPort := parseMainchainRPC(localCfg.Host)
+  // /data/bitcoin/bitcoin.conf is root-owned on a deployed host, so read via
+  // the same docker-exec ladder readBitcoinCoreConfig uses — direct ReadFile
+  // would silently permission-deny and fall back to treating the node as
+  // mainnet, misconfiguring electrs.
+  rawConf, err := readBitcoinCoreConfig(ctx, bitcoinPaths)
+  if err != nil {
+    return electrsRuntimeValues{}, fmt.Errorf("failed to read bitcoin.conf for chain detection: %w", err)
+  }
+  network, p2pPort := detectBitcoinCoreChain(rawConf)
   return electrsRuntimeValues{
     BitcoinRPCUser: localCfg.User,
     BitcoinRPCPass: localCfg.Pass,
     BitcoinRPCPort: rpcPort,
+    Network:        network,
+    BitcoinP2PPort: p2pPort,
   }, nil
 }
 
-func electrsComposeContents(paths electrsPaths, values electrsRuntimeValues) string {
+// detectBitcoinCoreChain scans a bitcoin.conf body for a top-level chain
+// selector (testnet/signet/regtest) and returns the electrs --network value
+// plus the default bitcoind P2P port for that chain. Only top-level keys
+// (above any [section] header) are considered, matching how bitcoind itself
+// interprets chain selectors.
+func detectBitcoinCoreChain(raw string) (string, int) {
+  for _, line := range strings.Split(raw, "\n") {
+    trimmed := strings.TrimSpace(line)
+    if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+      continue
+    }
+    if strings.HasPrefix(trimmed, "[") {
+      break
+    }
+    parts := strings.SplitN(trimmed, "=", 2)
+    if len(parts) != 2 {
+      continue
+    }
+    key := strings.TrimSpace(parts[0])
+    value := strings.TrimSpace(parts[1])
+    if value != "1" {
+      continue
+    }
+    switch key {
+    case "testnet":
+      return "testnet", 18333
+    case "signet":
+      return "signet", 38333
+    case "regtest":
+      return "regtest", 18444
+    }
+  }
+  return "bitcoin", 8333
+}
+
+// electrsComposeContents builds the docker-compose file. The rocksdb index
+// lives in a Docker-managed named volume (electrs_data) rather than a host
+// bind mount so the manager (running as `lightningos`) doesn't need to
+// escalate via systemd-run to chown /data/electrs to the container uid.
+// The lightningos/electrs image declares VOLUME /data/db with the expected
+// ownership, so Docker sets the perms correctly on the first mount.
+func electrsComposeContents(_ electrsPaths, values electrsRuntimeValues) string {
   return fmt.Sprintf(`services:
   electrs:
     image: %s
     container_name: electrs
     restart: unless-stopped
     stop_grace_period: 1m
-    user: "1000:1000"
     networks:
       - default
       - bitcoincore
@@ -210,10 +241,10 @@ func electrsComposeContents(paths electrsPaths, values electrsRuntimeValues) str
       - %s:/data/db
       - ./bitcoin.cookie:/run/bitcoin.cookie:ro
     command:
-      - --network=bitcoin
+      - --network=%s
       - --db-dir=/data/db
       - --daemon-rpc-addr=bitcoind:%d
-      - --daemon-p2p-addr=bitcoind:8333
+      - --daemon-p2p-addr=bitcoind:%d
       - --electrum-rpc-addr=0.0.0.0:%d
       - --monitoring-addr=0.0.0.0:%d
       - --cookie-file=/run/bitcoin.cookie
@@ -226,14 +257,22 @@ networks:
   bitcoincore:
     external: true
     name: bitcoincore_default
+
+volumes:
+  %s:
+    name: %s
 `,
     electrsImageName,
     electrsRPCPort, electrsRPCPort,
     electrsMonitorPort, electrsMonitorPort,
-    paths.DataDir,
+    electrsVolumeName,
+    values.Network,
     values.BitcoinRPCPort,
+    values.BitcoinP2PPort,
     electrsRPCPort,
     electrsMonitorPort,
+    electrsVolumeName,
+    electrsVolumeName,
   )
 }
 

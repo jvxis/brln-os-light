@@ -1000,6 +1000,107 @@ detect_core_service_users() {
   fi
 }
 
+detect_active_chain_dir() {
+  # Echoes the chain subdirectory name ("mainnet", "testnet", "testnet3",
+  # "signet", "regtest") whose wallet.db has the newest mtime under the
+  # configured LND data dir, or empty if no wallet.db exists yet. Used to
+  # skip prompting when LND has already been initialised on a specific
+  # chain — stomping on that with a mainnet default rewrote the manager's
+  # admin_macaroon_path to a non-existent path and broke every subsystem.
+  local lnd_dir="$1"
+  local base="${lnd_dir}/data/chain/bitcoin"
+  [[ -d "$base" ]] || return 0
+  local newest="" newest_mtime=0
+  while IFS= read -r db; do
+    [[ -z "$db" ]] && continue
+    local mtime
+    mtime=$(stat -c %Y "$db" 2>/dev/null || echo 0)
+    if (( mtime > newest_mtime )); then
+      newest="$db"
+      newest_mtime=$mtime
+    fi
+  done < <(find "$base" -mindepth 2 -maxdepth 2 -name wallet.db 2>/dev/null)
+  if [[ -n "$newest" ]]; then
+    basename "$(dirname "$newest")"
+  fi
+}
+
+select_network() {
+  local lnd_dir="$1"
+  print_step "Detecting LND network"
+  NETWORK_CHAIN_DIR=$(detect_active_chain_dir "$lnd_dir" || true)
+  if [[ -n "$NETWORK_CHAIN_DIR" ]]; then
+    case "$NETWORK_CHAIN_DIR" in
+      mainnet) NETWORK="mainnet" ;;
+      testnet|testnet3) NETWORK="testnet" ;;
+      signet) NETWORK="signet" ;;
+      regtest) NETWORK="regtest" ;;
+      *) NETWORK="$NETWORK_CHAIN_DIR" ;;
+    esac
+    print_ok "Detected existing wallet on ${NETWORK} (chain dir: ${NETWORK_CHAIN_DIR}); using that"
+    return
+  fi
+
+  local choice="${LIGHTNINGOS_NETWORK:-${NETWORK:-}}"
+  if [[ -z "$choice" ]]; then
+    if [[ ! -t 0 ]]; then
+      choice="mainnet"
+      print_warn "Non-interactive mode; defaulting to mainnet. Override with LIGHTNINGOS_NETWORK=testnet."
+    else
+      echo "No existing wallet detected. Choose the Bitcoin network for LND:"
+      echo "  1) mainnet (default)"
+      echo "  2) testnet"
+      local reply
+      read -r -p "Network [1/2]: " reply
+      reply="${reply:-1}"
+      case "$reply" in
+        2|t|T|testnet|TESTNET) choice="testnet" ;;
+        *) choice="mainnet" ;;
+      esac
+    fi
+  fi
+  case "$choice" in
+    mainnet|MAINNET) NETWORK="mainnet"; NETWORK_CHAIN_DIR="mainnet" ;;
+    testnet|TESTNET) NETWORK="testnet"; NETWORK_CHAIN_DIR="testnet" ;;
+    *) echo "Unsupported network '$choice' (use mainnet or testnet)." >&2; exit 1 ;;
+  esac
+  export LIGHTNINGOS_NETWORK="$NETWORK"
+  print_ok "Network: ${NETWORK} (chain dir: ${NETWORK_CHAIN_DIR})"
+}
+
+apply_network_to_configs() {
+  local lnd_conf="$1"
+  local lnd_user="$2"
+  local lnd_group="$3"
+  print_step "Applying ${NETWORK} selection to configs"
+  local macaroon_path="/data/lnd/data/chain/bitcoin/${NETWORK_CHAIN_DIR}/admin.macaroon"
+  if [[ -f "$CONFIG_PATH" ]]; then
+    if grep -Eq '^[[:space:]]*admin_macaroon_path:' "$CONFIG_PATH"; then
+      sed -i "s|^\([[:space:]]*\)admin_macaroon_path:.*|\1admin_macaroon_path: \"${macaroon_path}\"|" "$CONFIG_PATH"
+    fi
+  fi
+  # Only rewrite lnd.conf's bitcoin.* flags when there is no active flag yet.
+  # If the operator already had the node running on a specific chain, their
+  # lnd.conf is authoritative — stomping on it could migrate the wallet.
+  if [[ -f "$lnd_conf" ]]; then
+    local existing_flag
+    existing_flag=$(grep -E '^[[:space:]]*bitcoin\.(mainnet|testnet|signet|regtest)[[:space:]]*=[[:space:]]*(1|true)' "$lnd_conf" | head -1 || true)
+    if [[ -z "$existing_flag" ]]; then
+      sed -i -E '/^[[:space:]]*bitcoin\.(mainnet|testnet|signet|regtest)[[:space:]]*=.*/d' "$lnd_conf"
+      if grep -Eq '^[[:space:]]*\[Bitcoin\][[:space:]]*$' "$lnd_conf"; then
+        sed -i "0,/^\[Bitcoin\]$/s//[Bitcoin]\nbitcoin.${NETWORK}=1/" "$lnd_conf"
+      else
+        printf '\n[Bitcoin]\nbitcoin.%s=1\n' "$NETWORK" >> "$lnd_conf"
+      fi
+      if [[ -n "$lnd_user" && -n "$lnd_group" ]]; then
+        chown "${lnd_user}:${lnd_group}" "$lnd_conf" 2>/dev/null || true
+      fi
+      chmod 660 "$lnd_conf" 2>/dev/null || true
+    fi
+  fi
+  print_ok "Configs set to ${NETWORK}"
+}
+
 fix_lnd_permissions() {
   local lnd_dir="$1"
   local lnd_user="$2"
@@ -1009,7 +1110,6 @@ fix_lnd_permissions() {
     return 0
   fi
 
-  local chain_dir="${lnd_dir}/data/chain/bitcoin/mainnet"
   local lnd_conf="${lnd_dir}/lnd.conf"
   if [[ -d "$lnd_dir" ]]; then
     chown "$lnd_user:$lnd_group" "$lnd_dir"
@@ -1019,19 +1119,22 @@ fix_lnd_permissions() {
     chown "$lnd_user:$lnd_group" "$lnd_conf"
     chmod 660 "$lnd_conf"
   fi
-  for dir in "$lnd_dir/data" "$lnd_dir/data/chain" "$lnd_dir/data/chain/bitcoin" "$chain_dir"; do
-    if [[ -d "$dir" ]]; then
-      chown "$lnd_user:$lnd_group" "$dir"
-      chmod 750 "$dir"
-    fi
-  done
+  # Recursively 0750 every directory under data/ so the manager (member of
+  # $lnd_group) can traverse regardless of which chain LND is on. Hardcoding
+  # a single chain dir here skipped testnet/signet/regtest nodes and broke
+  # macaroon reads until the manager's gRPC dial surfaced EACCES.
+  if [[ -d "$lnd_dir/data" ]]; then
+    find "$lnd_dir/data" -type d -exec chown "$lnd_user:$lnd_group" {} +
+    find "$lnd_dir/data" -type d -exec chmod 750 {} +
+  fi
   if [[ -f "$lnd_dir/tls.cert" ]]; then
     chown "$lnd_user:$lnd_group" "$lnd_dir/tls.cert"
     chmod 640 "$lnd_dir/tls.cert"
   fi
-  if [[ -d "$chain_dir" ]]; then
+  # Chmod any macaroon file under any chain dir; same reasoning as above.
+  if [[ -d "$lnd_dir/data/chain/bitcoin" ]]; then
     shopt -s nullglob
-    for mac in "$chain_dir"/*.macaroon; do
+    for mac in "$lnd_dir"/data/chain/bitcoin/*/*.macaroon; do
       chown "$lnd_user:$lnd_group" "$mac"
       chmod 640 "$mac"
     done
@@ -1424,6 +1527,8 @@ main() {
   install_lnd_upgrade_script
   configure_sudoers "$manager_user"
   ensure_manager_service "$manager_user" "$manager_group"
+  select_network "$lnd_dir"
+  apply_network_to_configs "$lnd_conf" "$LND_USER" "$LND_GROUP"
   if [[ -n "$LND_USER" && -n "$LND_GROUP" ]]; then
     fix_lnd_permissions "$lnd_dir" "$LND_USER" "$LND_GROUP"
   else

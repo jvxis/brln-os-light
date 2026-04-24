@@ -2256,6 +2256,7 @@
     "channelRankingBadge": "{{state}} · {{score}}",
     "openInChannelRanking": "Abrir no Ranking de Canais",
     "prepareCloseChannel": "Preparar close no card Fechar canal",
+    "copyChannelId": "Copiar channel id",
     "privateChannel": "Canal privado",
     "pubkeyLabel": "Pubkey: {{pubkey}}",
     "publicChannel": "Canal público",

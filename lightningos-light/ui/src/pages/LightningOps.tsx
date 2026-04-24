@@ -6,6 +6,7 @@ import { getLocale } from '../i18n'
 type Channel = {
   channel_point: string
   channel_id: number
+  channel_id_str?: string
   remote_pubkey: string
   peer_alias: string
   initiator?: boolean
@@ -906,6 +907,7 @@ export default function LightningOps() {
   const [peerRecommendationLoadingByChannel, setPeerRecommendationLoadingByChannel] = useState<Record<string, boolean>>({})
   const [peerRecommendationErrorByChannel, setPeerRecommendationErrorByChannel] = useState<Record<string, string>>({})
   const [peerRecommendationCopiedKey, setPeerRecommendationCopiedKey] = useState('')
+  const [copiedChannelIDKey, setCopiedChannelIDKey] = useState('')
 
   const [peerAddress, setPeerAddress] = useState('')
   const [peerTemporary, setPeerTemporary] = useState(false)
@@ -4623,6 +4625,29 @@ export default function LightningOps() {
     }
   }
 
+  const channelIDText = (channel: Pick<Channel, 'channel_id' | 'channel_id_str'>) => {
+    const precise = String(channel.channel_id_str || '').trim()
+    if (precise) return precise
+    const fallback = Number(channel.channel_id || 0)
+    if (!Number.isFinite(fallback) || fallback <= 0) return ''
+    return Math.trunc(fallback).toString()
+  }
+
+  const handleCopyChannelID = async (channel: Channel) => {
+    const value = channelIDText(channel)
+    if (!value) return
+    try {
+      await navigator.clipboard.writeText(value)
+      const key = channel.channel_point || value
+      setCopiedChannelIDKey(key)
+      window.setTimeout(() => {
+        setCopiedChannelIDKey((current) => current === key ? '' : current)
+      }, 1600)
+    } catch {
+      setStatus(t('common.copyFailedManual'))
+    }
+  }
+
   const handleScbFileSelected = async (event: any) => {
     const file = event?.target?.files?.[0]
     if (!file) return
@@ -6671,6 +6696,8 @@ export default function LightningOps() {
                 const rebalanceLink = ch.channel_point
                   ? buildHashWithChannelPoint(REBALANCE_ROUTE_KEY, ch.channel_point)
                   : `#${REBALANCE_ROUTE_KEY}`
+                const channelIDValue = channelIDText(ch)
+                const channelIDCopied = copiedChannelIDKey === (ch.channel_point || channelIDValue)
                 const cardClassBase = isFCRisk
                   ? 'rounded-2xl border border-rose-400/45 bg-rose-500/10 p-5 min-h-[170px]'
                   : localDisabled && ch.active
@@ -6681,7 +6708,36 @@ export default function LightningOps() {
                   <div key={ch.channel_point} id={channelCardID(ch.channel_point)} className={cardClass}>
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <p className="text-sm text-fog/60">{ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer')}</p>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <p className="text-sm text-fog/60">{ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer')}</p>
+                          {channelIDValue && (
+                            <button
+                              type="button"
+                              className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition ${
+                                channelIDCopied
+                                  ? 'border-glow/60 bg-glow/15 text-glow'
+                                  : 'border-white/10 text-fog/35 hover:border-white/25 hover:text-fog/75'
+                              }`}
+                              title={channelIDCopied ? t('common.copied') : t('lightningOps.copyChannelId')}
+                              aria-label={channelIDCopied ? t('common.copied') : t('lightningOps.copyChannelId')}
+                              onClick={() => { void handleCopyChannelID(ch) }}
+                            >
+                              <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.8">
+                                {channelIDCopied ? (
+                                  <path d="M5 12.5l4 4L19 7" />
+                                ) : (
+                                  <>
+                                    <path d="M4 7h16" />
+                                    <path d="M4 12h16" />
+                                    <path d="M4 17h16" />
+                                    <path d="M8 4L6 20" />
+                                    <path d="M18 4l-2 16" />
+                                  </>
+                                )}
+                              </svg>
+                            </button>
+                          )}
+                        </div>
                         {peerProfileLinkGroup(ch.remote_pubkey)}
                         <div className="mt-0.5 flex flex-wrap items-center gap-2">
                           <p className="min-w-0 break-all text-xs text-fog/50">

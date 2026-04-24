@@ -1051,6 +1051,26 @@ export default function RebalanceCenter() {
     Boolean(overview?.auto_enabled) &&
     remainingForAutoSat > 0 &&
     autoBudgetBlockedCount > 0
+  const autoBudgetPaused =
+    Boolean(overview?.auto_enabled) &&
+    remainingForAutoSat <= 0
+  const manualRestartBudgetPaused =
+    manualRestartBudgetEnforced &&
+    remainingTotalSat <= 0
+  const budgetPauseMessageKey =
+    autoBudgetPaused && manualRestartBudgetPaused
+      ? 'bothExhausted'
+      : autoBudgetPaused
+      ? budgetAutoOnly
+        ? 'autoOnlyExhausted'
+        : 'autoExhausted'
+      : manualRestartBudgetPaused
+      ? 'manualExhausted'
+      : ''
+  const autoBudgetInsufficient =
+    Boolean(overview?.auto_enabled) &&
+    !autoBudgetPaused &&
+    overview?.last_scan_status === 'budget_insufficient'
 
   return (
     <section className="space-y-6" aria-busy={initialLoading || isRefreshing}>
@@ -1339,14 +1359,14 @@ export default function RebalanceCenter() {
                   })}
                 </p>
               )}
-              {overview.last_scan_status && (overview.last_scan_status === 'budget_exhausted' || overview.last_scan_status === 'budget_insufficient') && (
+              {budgetPauseMessageKey && (
                 <p className="text-xs text-amber-200">
-                  {t(`rebalanceCenter.overview.budgetPaused.${overview.last_scan_status}`)}
+                  {t(`rebalanceCenter.overview.budgetPaused.${budgetPauseMessageKey}`)}
                 </p>
               )}
-              {manualRestartBudgetEnforced && remainingTotalSat <= 0 && (
+              {autoBudgetInsufficient && (
                 <p className="text-xs text-amber-200">
-                  {t('rebalanceCenter.overview.manualPaused.exhausted')}
+                  {t('rebalanceCenter.overview.budgetPaused.autoInsufficient')}
                 </p>
               )}
               <div className="mt-2 border-t border-white/10 pt-2 space-y-1">

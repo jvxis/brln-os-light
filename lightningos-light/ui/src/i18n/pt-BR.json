@@ -2693,12 +2693,12 @@
       "scanReasonTargetNotFound": "target não encontrado",
       "scanReasonStartError": "erro ao iniciar",
       "budgetPaused": {
-          "budget_exhausted": "Auto pausado: orçamento diário esgotado.",
-          "budget_insufficient": "Auto pausado: orçamento baixo para o alvo."
-        },
-      "manualPaused": {
-          "exhausted": "Manual restart pausado: o orçamento total diário foi esgotado."
-        },
+        "bothExhausted": "Auto rebalance e manual restart pausados: o orçamento total diário foi esgotado.",
+        "autoExhausted": "Auto rebalance pausado: o orçamento útil para auto foi esgotado. O manual restart ainda segue o orçamento total diário.",
+        "autoOnlyExhausted": "Auto rebalance pausado: o orçamento diário exclusivo do auto foi esgotado. O manual restart não é limitado por este modo de orçamento.",
+        "manualExhausted": "Manual restart pausado: o orçamento total diário foi esgotado. O auto rebalance ainda tem orçamento útil disponível.",
+        "autoInsufficient": "Auto rebalance segue ativo, mas o orçamento da última varredura ficou baixo para os limites atuais do alvo."
+      },
         "effectiveness": "Efetividade (7d)",
         "effectivenessOperational": "Operacional (todos jobs concluídos)",
         "effectivenessExecution": "Execução (jobs com tentativas)",

@@ -3098,6 +3098,7 @@
     "reasons": {
       "positive_net_fees": "Receita líquida positiva",
       "negative_net_fees": "Receita líquida negativa",
+      "close_candidate_pending_30d": "Candidato a close aguardando confirmação de 30 dias",
       "strong_volume": "Bom volume de roteamento",
       "low_usage": "Baixa utilização",
       "rebalance_cost_high": "Rebalance caro",
@@ -3122,6 +3123,7 @@
       "review_htlc_failures": "Revisar falhas HTLC no HTLC Manager",
       "observe_before_close": "Monitorar antes de promover para fechamento",
       "observe_7d_before_close": "Observar mais 7 dias antes de avaliar fechamento",
+      "observe_30d_before_close": "Observar até a fraqueza persistir por 30 dias antes de fechar",
       "review_fee_positioning": "Revisar posicionamento de fee e liquidez",
       "review_inbound_assist_role": "Validar papel do canal como entrada de forwards",
       "keep_channel_under_observation": "Manter canal sob observação",

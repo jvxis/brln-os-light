@@ -19,6 +19,7 @@ import (
 const (
 	channelRankingPollInterval          = 3 * time.Minute
 	channelRankingAssistedRevenueWeight = 0.5
+	channelRankingClosePersistence      = 30 * 24 * time.Hour
 )
 
 var ErrChannelRankingDBUnavailable = errors.New("channel ranking db unavailable")
@@ -40,6 +41,7 @@ type ChannelRankingHistoryPoint struct {
 	TrendDirection  string    `json:"trend_direction,omitempty"`
 	TrendDelta      int       `json:"trend_delta,omitempty"`
 	State           string    `json:"state"`
+	CloseCandidate  bool      `json:"close_candidate,omitempty"`
 	ProfitFee7dSat  int64     `json:"profit_fee_7d_sat"`
 	ProfitFee30dSat int64     `json:"profit_fee_30d_sat"`
 }
@@ -135,6 +137,7 @@ type ChannelRankingItem struct {
 	State                    string                         `json:"state"`
 	Reasons                  []ChannelRankingReason         `json:"reasons,omitempty"`
 	Recommendations          []ChannelRankingRecommendation `json:"recommendations,omitempty"`
+	CloseCandidate           bool                           `json:"close_candidate,omitempty"`
 	ComputedAt               time.Time                      `json:"computed_at"`
 }
 
@@ -259,6 +262,7 @@ create table if not exists channel_ranking_history (
   trend_direction text not null default 'stable',
   trend_delta integer not null default 0,
   state text not null default 'monitor',
+  close_candidate boolean not null default false,
   profit_fee_7d_sat bigint not null default 0,
   profit_fee_30d_sat bigint not null default 0,
   created_at timestamptz not null default now(),
@@ -313,6 +317,7 @@ alter table channel_rankings add column if not exists score_7d integer not null 
 alter table channel_rankings add column if not exists score_30d integer not null default 0;
 alter table channel_rankings add column if not exists trend_direction text not null default 'stable';
 alter table channel_rankings add column if not exists trend_delta integer not null default 0;
+alter table channel_ranking_history add column if not exists close_candidate boolean not null default false;
 alter table channel_rankings add column if not exists forward_in_count_7d integer not null default 0;
 alter table channel_rankings add column if not exists forward_in_amount_sat_7d bigint not null default 0;
 alter table channel_rankings add column if not exists forward_out_count_7d integer not null default 0;
@@ -467,6 +472,9 @@ func (s *ChannelRankingService) Refresh(ctx context.Context) error {
 			peerAggregates[strings.TrimSpace(ch.RemotePubkey)],
 			htlcAggregates[ch.ChannelID],
 		)
+		if err := s.applyClosePersistenceGuard(ctx, &item); err != nil {
+			return err
+		}
 		if err := s.upsertItem(ctx, item); err != nil {
 			return err
 		}
@@ -1050,6 +1058,7 @@ func buildChannelRankingItem(
 		State:                    state,
 		Reasons:                  reasons,
 		Recommendations:          recommendations,
+		CloseCandidate:           state == "close",
 		ComputedAt:               now,
 	}
 }
@@ -1090,6 +1099,98 @@ func appendUniqueRecommendation(list []ChannelRankingRecommendation, candidate C
 		}
 	}
 	return append(list, candidate)
+}
+
+func appendUniqueReason(list []ChannelRankingReason, candidate ChannelRankingReason) []ChannelRankingReason {
+	code := strings.TrimSpace(candidate.Code)
+	if code == "" {
+		return list
+	}
+	for _, existing := range list {
+		if strings.TrimSpace(existing.Code) == code {
+			return list
+		}
+	}
+	return append(list, ChannelRankingReason{Code: code})
+}
+
+func filterCloseActionRecommendations(list []ChannelRankingRecommendation) []ChannelRankingRecommendation {
+	out := make([]ChannelRankingRecommendation, 0, len(list))
+	for _, recommendation := range list {
+		switch strings.TrimSpace(recommendation.Code) {
+		case "prepare_coop_close", "review_with_close_manager", "stop_nonessential_rebalances":
+			continue
+		default:
+			out = append(out, recommendation)
+		}
+	}
+	return out
+}
+
+func (s *ChannelRankingService) applyClosePersistenceGuard(ctx context.Context, item *ChannelRankingItem) error {
+	if item == nil || !item.CloseCandidate || strings.TrimSpace(item.State) != "close" {
+		return nil
+	}
+	matured, err := s.closeCandidateMatured(ctx, item.ChannelPoint, item.ComputedAt)
+	if err != nil {
+		return err
+	}
+	if matured {
+		return nil
+	}
+
+	item.State = "monitor"
+	item.Reasons = appendUniqueReason(item.Reasons, ChannelRankingReason{Code: "close_candidate_pending_30d"})
+	item.Recommendations = filterCloseActionRecommendations(item.Recommendations)
+	item.Recommendations = appendUniqueRecommendation(item.Recommendations, ChannelRankingRecommendation{Code: "observe_30d_before_close", TargetModule: "lightning-ops"})
+	if item.RebalFee7dSat > 0 && item.RebalFee7dSat >= rankingMaxInt64(50, item.ForwardFee7dSat) {
+		item.Recommendations = appendUniqueRecommendation(item.Recommendations, ChannelRankingRecommendation{Code: "reduce_rebalance_priority", TargetModule: "rebalance"})
+	}
+	if item.ProfitFee7dSat <= 0 {
+		item.Recommendations = appendUniqueRecommendation(item.Recommendations, ChannelRankingRecommendation{Code: "review_autofee_bounds", TargetModule: "autofee"})
+	}
+	if len(item.Recommendations) > 3 {
+		item.Recommendations = item.Recommendations[:3]
+	}
+	return nil
+}
+
+func (s *ChannelRankingService) closeCandidateMatured(ctx context.Context, channelPoint string, now time.Time) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, ErrChannelRankingDBUnavailable
+	}
+	channelPoint = strings.TrimSpace(channelPoint)
+	if channelPoint == "" {
+		return false, nil
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+
+	var candidateSince sql.NullTime
+	err := s.db.QueryRow(ctx, `
+with last_non_candidate as (
+  select max(computed_bucket) as ts
+  from channel_ranking_history
+  where channel_point = $1
+    and not (coalesce(close_candidate, false) or state = 'close')
+),
+candidate_run as (
+  select min(computed_bucket) as since
+  from channel_ranking_history
+  where channel_point = $1
+    and (coalesce(close_candidate, false) or state = 'close')
+    and computed_bucket > coalesce((select ts from last_non_candidate), '-infinity'::timestamptz)
+)
+select since from candidate_run
+`, channelPoint).Scan(&candidateSince)
+	if err != nil {
+		return false, err
+	}
+	if !candidateSince.Valid {
+		return false, nil
+	}
+	return !candidateSince.Time.After(now.UTC().Add(-channelRankingClosePersistence)), nil
 }
 
 func classifyChannelRanking(
@@ -1556,9 +1657,9 @@ func (s *ChannelRankingService) upsertHistoryPoint(ctx context.Context, item Cha
 	computedBucket := item.ComputedAt.UTC().Truncate(time.Hour)
 	_, err := s.db.Exec(ctx, `
 insert into channel_ranking_history (
-  channel_point, computed_bucket, score, score_7d, score_30d, trend_direction, trend_delta, state, profit_fee_7d_sat, profit_fee_30d_sat, created_at
+  channel_point, computed_bucket, score, score_7d, score_30d, trend_direction, trend_delta, state, close_candidate, profit_fee_7d_sat, profit_fee_30d_sat, created_at
 ) values (
-  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
 )
 on conflict (channel_point, computed_bucket) do update set
   score = excluded.score,
@@ -1567,10 +1668,11 @@ on conflict (channel_point, computed_bucket) do update set
   trend_direction = excluded.trend_direction,
   trend_delta = excluded.trend_delta,
   state = excluded.state,
+  close_candidate = excluded.close_candidate,
   profit_fee_7d_sat = excluded.profit_fee_7d_sat,
   profit_fee_30d_sat = excluded.profit_fee_30d_sat,
   created_at = excluded.created_at
-`, item.ChannelPoint, computedBucket, item.Score, item.Score7d, item.Score30d, item.TrendDirection, item.TrendDelta, item.State, item.ProfitFee7dSat, item.ProfitFee30dSat, item.ComputedAt)
+`, item.ChannelPoint, computedBucket, item.Score, item.Score7d, item.Score30d, item.TrendDirection, item.TrendDelta, item.State, item.CloseCandidate, item.ProfitFee7dSat, item.ProfitFee30dSat, item.ComputedAt)
 	return err
 }
 
@@ -1761,7 +1863,7 @@ func (s *ChannelRankingService) getHistory(ctx context.Context, channelPoint str
 		limit = 24
 	}
 	rows, err := s.db.Query(ctx, `
-select computed_bucket, score, score_7d, score_30d, trend_direction, trend_delta, state, profit_fee_7d_sat, profit_fee_30d_sat
+select computed_bucket, score, score_7d, score_30d, trend_direction, trend_delta, state, close_candidate, profit_fee_7d_sat, profit_fee_30d_sat
 from channel_ranking_history
 where channel_point = $1
 order by computed_bucket desc
@@ -1783,6 +1885,7 @@ limit $2
 			&trendDirection,
 			&item.TrendDelta,
 			&item.State,
+			&item.CloseCandidate,
 			&item.ProfitFee7dSat,
 			&item.ProfitFee30dSat,
 		); err != nil {

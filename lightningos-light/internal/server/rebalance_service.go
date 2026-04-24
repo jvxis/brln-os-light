@@ -1294,9 +1294,9 @@ func (s *RebalanceService) runAutoScan() {
 		}
 	}
 
-	budget, spentAuto, _, _ := s.getDailyBudget(ctx)
+	budget, spentAuto, _, spentTotal := s.getDailyBudget(ctx)
 	manualReserveSat := computeManualReserveSat(cfg, budget)
-	remaining := computeRemainingForAuto(budget, spentAuto, manualReserveSat)
+	remaining := computeRemainingForAuto(budget, spentAuto, spentTotal, manualReserveSat, cfg.BudgetAutoOnly)
 	if remaining == 0 {
 		scanCandidates = len(candidates)
 		scanRemainingBudget = 0
@@ -5029,7 +5029,7 @@ func computeManualReserveRemaining(manualReserveSat int64, spentManualSat int64)
 	return manualReserveRemaining
 }
 
-func computeRemainingForAuto(totalBudgetSat int64, spentAutoSat int64, manualReserveSat int64) int64 {
+func computeRemainingForAuto(totalBudgetSat int64, spentAutoSat int64, spentTotalSat int64, manualReserveSat int64, budgetAutoOnly bool) int64 {
 	autoBudgetCap := totalBudgetSat - manualReserveSat
 	if autoBudgetCap < 0 {
 		autoBudgetCap = 0
@@ -5037,6 +5037,12 @@ func computeRemainingForAuto(totalBudgetSat int64, spentAutoSat int64, manualRes
 	remainingForAuto := autoBudgetCap - spentAutoSat
 	if remainingForAuto < 0 {
 		remainingForAuto = 0
+	}
+	if !budgetAutoOnly {
+		remainingTotal := computeRemainingTotalBudget(totalBudgetSat, spentTotalSat)
+		if remainingTotal < remainingForAuto {
+			remainingForAuto = remainingTotal
+		}
 	}
 	return remainingForAuto
 }
@@ -5589,7 +5595,7 @@ func (s *RebalanceService) Overview(ctx context.Context) (RebalanceOverview, err
 	_, baseBudget, shortTermBudget := computeDailyBudgetFromRevenue(cfg, revenue24h, avgRevenue7d)
 	manualReserveSat := computeManualReserveSat(cfg, budget)
 	remainingTotal := computeRemainingTotalBudget(budget, spent)
-	remainingForAuto := computeRemainingForAuto(budget, spentAuto, manualReserveSat)
+	remainingForAuto := computeRemainingForAuto(budget, spentAuto, spent, manualReserveSat, cfg.BudgetAutoOnly)
 	manualReserveRemaining := computeManualReserveRemaining(manualReserveSat, spentManual)
 	liveCost := int64(0)
 	if s.db != nil {

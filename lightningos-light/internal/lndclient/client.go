@@ -4659,6 +4659,7 @@ func (c *Client) ListChannels(ctx context.Context) ([]ChannelInfo, error) {
 		channels = append(channels, ChannelInfo{
 			ChannelPoint:        ch.ChannelPoint,
 			ChannelID:           ch.ChanId,
+			ChannelIDString:     strconv.FormatUint(ch.ChanId, 10),
 			RemotePubkey:        ch.RemotePubkey,
 			PeerAlias:           ch.PeerAlias,
 			Initiator:           ch.Initiator,
@@ -6750,6 +6751,7 @@ type ChannelMovement7d struct {
 type ChannelInfo struct {
 	ChannelPoint        string                   `json:"channel_point"`
 	ChannelID           uint64                   `json:"channel_id"`
+	ChannelIDString     string                   `json:"channel_id_str"`
 	RemotePubkey        string                   `json:"remote_pubkey"`
 	PeerAlias           string                   `json:"peer_alias"`
 	Initiator           bool                     `json:"initiator"`

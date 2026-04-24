@@ -2285,6 +2285,7 @@
     "channelRankingBadge": "{{state}} · {{score}}",
     "openInChannelRanking": "Abrir no Ranking de Canais",
     "prepareCloseChannel": "Preparar close no card Fechar canal",
+    "copyChannelId": "Copiar channel id",
     "privateChannel": "Canal privado",
     "pubkeyLabel": "Pubkey: {{pubkey}}",
     "publicChannel": "Canal público",
@@ -2722,12 +2723,12 @@
       "scanReasonTargetNotFound": "target não encontrado",
       "scanReasonStartError": "erro ao iniciar",
       "budgetPaused": {
-          "budget_exhausted": "Auto pausado: orçamento diário esgotado.",
-          "budget_insufficient": "Auto pausado: orçamento baixo para o alvo."
-        },
-      "manualPaused": {
-          "exhausted": "Manual restart pausado: o orçamento total diário foi esgotado."
-        },
+        "bothExhausted": "Auto rebalance e manual restart pausados: o orçamento total diário foi esgotado.",
+        "autoExhausted": "Auto rebalance pausado: o orçamento útil para auto foi esgotado. O manual restart ainda segue o orçamento total diário.",
+        "autoOnlyExhausted": "Auto rebalance pausado: o orçamento diário exclusivo do auto foi esgotado. O manual restart não é limitado por este modo de orçamento.",
+        "manualExhausted": "Manual restart pausado: o orçamento total diário foi esgotado. O auto rebalance ainda tem orçamento útil disponível.",
+        "autoInsufficient": "Auto rebalance segue ativo, mas o orçamento da última varredura ficou baixo para os limites atuais do alvo."
+      },
         "effectiveness": "Efetividade (7d)",
         "effectivenessOperational": "Operacional (todos jobs concluídos)",
         "effectivenessExecution": "Execução (jobs com tentativas)",
@@ -3127,6 +3128,7 @@
     "reasons": {
       "positive_net_fees": "Receita líquida positiva",
       "negative_net_fees": "Receita líquida negativa",
+      "close_candidate_pending_30d": "Candidato a close aguardando confirmação de 30 dias",
       "strong_volume": "Bom volume de roteamento",
       "low_usage": "Baixa utilização",
       "rebalance_cost_high": "Rebalance caro",
@@ -3151,6 +3153,7 @@
       "review_htlc_failures": "Revisar falhas HTLC no HTLC Manager",
       "observe_before_close": "Monitorar antes de promover para fechamento",
       "observe_7d_before_close": "Observar mais 7 dias antes de avaliar fechamento",
+      "observe_30d_before_close": "Observar até a fraqueza persistir por 30 dias antes de fechar",
       "review_fee_positioning": "Revisar posicionamento de fee e liquidez",
       "review_inbound_assist_role": "Validar papel do canal como entrada de forwards",
       "keep_channel_under_observation": "Manter canal sob observação",

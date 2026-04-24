@@ -270,7 +270,7 @@ func TestComputeDailyBudgetFromRevenueHybrid(t *testing.T) {
 
 func TestComputeRemainingForAutoRespectsManualReserve(t *testing.T) {
 	remainingTotal := computeRemainingTotalBudget(1000, 400)
-	remainingForAuto := computeRemainingForAuto(1000, 300, 300)
+	remainingForAuto := computeRemainingForAuto(1000, 300, 400, 300, false)
 	if remainingTotal != 600 {
 		t.Fatalf("expected remaining total 600, got %d", remainingTotal)
 	}
@@ -280,9 +280,23 @@ func TestComputeRemainingForAutoRespectsManualReserve(t *testing.T) {
 }
 
 func TestComputeRemainingForAutoUsesAutoSpendCap(t *testing.T) {
-	remainingForAuto := computeRemainingForAuto(1000, 850, 300)
+	remainingForAuto := computeRemainingForAuto(1000, 850, 850, 300, false)
 	if remainingForAuto != 0 {
 		t.Fatalf("expected remaining for auto 0 when auto spend exceeds auto cap, got %d", remainingForAuto)
+	}
+}
+
+func TestComputeRemainingForAutoUsesTotalSpendWhenBudgetNotAutoOnly(t *testing.T) {
+	remainingForAuto := computeRemainingForAuto(1000, 300, 1100, 0, false)
+	if remainingForAuto != 0 {
+		t.Fatalf("expected remaining for auto 0 when total budget exhausted, got %d", remainingForAuto)
+	}
+}
+
+func TestComputeRemainingForAutoIgnoresManualSpendWhenBudgetAutoOnly(t *testing.T) {
+	remainingForAuto := computeRemainingForAuto(1000, 300, 1100, 0, true)
+	if remainingForAuto != 700 {
+		t.Fatalf("expected remaining for auto to ignore manual spend in auto-only mode, got %d", remainingForAuto)
 	}
 }
 

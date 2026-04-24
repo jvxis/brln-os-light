@@ -2285,6 +2285,7 @@
     "channelRankingBadge": "{{state}} · {{score}}",
     "openInChannelRanking": "Open in Channel Ranking",
     "prepareCloseChannel": "Prepare close in Close channel card",
+    "copyChannelId": "Copy channel id",
     "privateChannel": "Private channel",
     "pubkeyLabel": "Pubkey: {{pubkey}}",
     "publicChannel": "Public channel",
@@ -2722,11 +2723,11 @@
         "scanReasonTargetNotFound": "target not found",
         "scanReasonStartError": "start error",
         "budgetPaused": {
-          "budget_exhausted": "Auto paused: daily budget exhausted.",
-          "budget_insufficient": "Auto paused: budget too low for target."
-        },
-        "manualPaused": {
-          "exhausted": "Manual restart paused: total daily budget exhausted."
+          "bothExhausted": "Auto rebalance and manual restart paused: total daily budget exhausted.",
+          "autoExhausted": "Auto rebalance paused: usable auto budget exhausted. Manual restart still follows the total daily budget.",
+          "autoOnlyExhausted": "Auto rebalance paused: auto-only daily budget exhausted. Manual restart is not limited by this budget mode.",
+          "manualExhausted": "Manual restart paused: total daily budget exhausted. Auto rebalance still has usable auto budget available.",
+          "autoInsufficient": "Auto rebalance remains enabled, but the last scan budget was too low for the current target limits."
         },
         "effectiveness": "Effectiveness (7d)",
         "effectivenessOperational": "Operational (all completed jobs)",
@@ -3127,6 +3128,7 @@
     "reasons": {
       "positive_net_fees": "Positive net fees",
       "negative_net_fees": "Negative net fees",
+      "close_candidate_pending_30d": "Close candidate pending 30-day confirmation",
       "strong_volume": "Strong routing volume",
       "low_usage": "Low usage",
       "rebalance_cost_high": "High rebalance cost",
@@ -3151,6 +3153,7 @@
       "review_htlc_failures": "Review HTLC failures in HTLC Manager",
       "observe_before_close": "Monitor before promoting to close",
       "observe_7d_before_close": "Observe for 7 more days before evaluating close",
+      "observe_30d_before_close": "Observe until weakness persists for 30 days before closing",
       "review_fee_positioning": "Review fee positioning and liquidity shape",
       "review_inbound_assist_role": "Review the channel's role as a forward entry path",
       "keep_channel_under_observation": "Keep channel under observation",

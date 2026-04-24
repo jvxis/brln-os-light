@@ -1,5 +1,6 @@
 # Go
 /bin/
+/dist/
 /tmp/
 *.exe
 *.out

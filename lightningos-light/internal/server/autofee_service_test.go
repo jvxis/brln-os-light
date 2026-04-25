@@ -1611,6 +1611,66 @@ func TestDeriveRankingPolicyBypassesRestrictionOnHardSignal(t *testing.T) {
 	}
 }
 
+func TestDeriveRankingPolicyRestrictsMonitorRebalanceLossWithoutWorsening(t *testing.T) {
+	ranking := autofeeRankingSnapshot{
+		State:               "monitor",
+		TrendDirection:      "stable",
+		ProfitFee7dSat:      -1200,
+		ProfitFee30dSat:     900,
+		Score:               62,
+		Score30d:            72,
+		OutPpm30d:           1200,
+		RebalPpm30d:         1280,
+		RebalanceDependence: 55,
+	}
+
+	tags, restrict := deriveRankingPolicy(ranking, true, 0, false, false)
+	if !restrict {
+		t.Fatalf("expected monitor channel with rebalance-heavy loss to restrict upward pressure")
+	}
+	if !containsTag(tags, "rank-monitor") || !containsTag(tags, "rank-monitor-loss-noup") {
+		t.Fatalf("expected monitor loss restriction tags, got %+v", tags)
+	}
+}
+
+func TestDeriveRankingPolicyAllowsMonitorRebalanceLossOnHardSignal(t *testing.T) {
+	ranking := autofeeRankingSnapshot{
+		State:               "monitor",
+		TrendDirection:      "stable",
+		ProfitFee7dSat:      -1200,
+		ProfitFee30dSat:     900,
+		Score:               62,
+		Score30d:            72,
+		OutPpm30d:           1200,
+		RebalPpm30d:         1280,
+		RebalanceDependence: 55,
+	}
+
+	_, restrict := deriveRankingPolicy(ranking, true, 1, false, false)
+	if restrict {
+		t.Fatalf("did not expect upward restriction when recent rebalance confirms demand")
+	}
+}
+
+func TestDeriveRankingPolicyAllowsMonitorLossWithoutRebalancePressure(t *testing.T) {
+	ranking := autofeeRankingSnapshot{
+		State:               "monitor",
+		TrendDirection:      "stable",
+		ProfitFee7dSat:      -120,
+		ProfitFee30dSat:     900,
+		Score:               62,
+		Score30d:            72,
+		OutPpm30d:           1200,
+		RebalPpm30d:         420,
+		RebalanceDependence: 20,
+	}
+
+	_, restrict := deriveRankingPolicy(ranking, true, 0, false, false)
+	if restrict {
+		t.Fatalf("did not expect upward restriction for a light, non-rebalance-heavy monitor loss")
+	}
+}
+
 func TestDeriveRankingPolicyDoesNotRestrictExpand(t *testing.T) {
 	ranking := autofeeRankingSnapshot{
 		State:           "expand",

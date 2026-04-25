@@ -4405,6 +4405,19 @@ func shouldPreserveAssistChannelUpwardPressure(active bool, recentRebalanceCount
 	return true
 }
 
+func rankingRebalanceCostHeavy(ranking autofeeRankingSnapshot) bool {
+	if ranking.RebalanceDependence >= 50 {
+		return true
+	}
+	if ranking.RebalPpm30d <= 0 {
+		return false
+	}
+	if ranking.OutPpm30d > 0 && ranking.RebalPpm30d >= int(math.Round(float64(ranking.OutPpm30d)*0.85)) {
+		return true
+	}
+	return ranking.ProfitFee30dSat <= 0
+}
+
 func deriveRankingPolicy(ranking autofeeRankingSnapshot, hasRanking bool, recentRebalanceCount int, htlcLiquidityHot bool, surgeConfirmSignal bool) ([]string, bool) {
 	if !hasRanking {
 		return nil, false
@@ -4436,6 +4449,10 @@ func deriveRankingPolicy(ranking autofeeRankingSnapshot, hasRanking bool, recent
 			ranking.ProfitFee7dSat <= 0 &&
 			ranking.Score <= 55 &&
 			(ranking.Score30d <= 65 || ranking.ProfitFee30dSat <= 0) {
+			return tags, true
+		}
+		if ranking.ProfitFee7dSat <= 0 && rankingRebalanceCostHeavy(ranking) {
+			tags = append(tags, "rank-monitor-loss-noup")
 			return tags, true
 		}
 	}
@@ -9930,6 +9947,8 @@ func formatAutofeeTags(d *decision) string {
 			add("rank-up-restrict")
 		case t == "rank-floor-relax":
 			add("rank-floor-relax")
+		case t == "rank-monitor-loss-noup":
+			add("rank-monitor-loss-noup")
 		case t == "new-inbound":
 			add("🆕NEW-inbound")
 		case t == "bootstrap":

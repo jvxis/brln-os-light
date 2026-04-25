@@ -20,6 +20,9 @@ const (
 	channelRankingPollInterval          = 3 * time.Minute
 	channelRankingAssistedRevenueWeight = 0.5
 	channelRankingClosePersistence      = 30 * 24 * time.Hour
+	channelRankingHTLCPolicyHigh30d     = 25
+	channelRankingHTLCLiquidityHigh30d  = 150
+	channelRankingHTLCLinkHigh30d       = 200
 )
 
 var ErrChannelRankingDBUnavailable = errors.New("channel ranking db unavailable")
@@ -1193,6 +1196,13 @@ select since from candidate_run
 	return !candidateSince.Time.After(now.UTC().Add(-channelRankingClosePersistence)), nil
 }
 
+func channelRankingHTLCOperationalRiskHigh(aggregate channelHTLCAggregate) bool {
+	linkFailures := rankingMaxInt(0, aggregate.Policy) + rankingMaxInt(0, aggregate.Liquidity)
+	return rankingMaxInt(0, aggregate.Policy) >= channelRankingHTLCPolicyHigh30d ||
+		rankingMaxInt(0, aggregate.Liquidity) >= channelRankingHTLCLiquidityHigh30d ||
+		linkFailures >= channelRankingHTLCLinkHigh30d
+}
+
 func classifyChannelRanking(
 	ch lndclient.ChannelInfo,
 	capacity int64,
@@ -1271,7 +1281,7 @@ func classifyChannelRanking(
 	rebalanceHeavy30d := rebal30d.FeeSat > 0 && rebal30d.FeeSat >= rankingMaxInt64(150, rankingMaxInt64(1, forward30d.FeeSat))
 	longInactive := !ch.Active && rankingMaxInt64(0, ch.InactiveDurationSec) >= 7*24*3600
 	unstablePeer := peerStabilityScore30d > 0 && peerStabilityScore30d < 45
-	htlcFailuresHigh := htlcAggregate.Total >= 8 || htlcAggregate.Liquidity >= 4 || htlcAggregate.Policy >= 4
+	htlcFailuresHigh := channelRankingHTLCOperationalRiskHigh(htlcAggregate)
 	persistentWeakEconomics := effectiveProfitSat30d <= 0 || score30d < 36 || rebalanceHeavy30d
 	severeOperationalRisk := longInactive || unstablePeer || htlcFailuresHigh || rebalanceDependenceScore >= 85
 	closeWarmup := peerSampleCount30d > 0 && peerSampleCount30d < 336

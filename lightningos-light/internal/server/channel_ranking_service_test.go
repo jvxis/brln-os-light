@@ -162,6 +162,95 @@ func TestClassifyChannelRankingCreditsAssistedRevenueBeforeClose(t *testing.T) {
 	}
 }
 
+func TestClassifyChannelRankingMaintainsWithForwardHTLCNoise(t *testing.T) {
+	ch := lndclient.ChannelInfo{
+		Active:           true,
+		CapacitySat:      5_000_000,
+		LocalBalanceSat:  2_500_000,
+		RemoteBalanceSat: 2_500_000,
+	}
+
+	state, _, recommendations := classifyChannelRanking(
+		ch,
+		5_000_000,
+		50,
+		channelTrafficStat{FeeSat: 400, AmountSat: 700_000},
+		channelTrafficStat{FeeSat: 1_800, AmountSat: 3_000_000},
+		channelTrafficStat{FeeSat: 400, AmountSat: 700_000},
+		channelTrafficStat{FeeSat: 1_800, AmountSat: 3_000_000},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{FeeSat: 40, AmountSat: 100_000},
+		channelTrafficStat{FeeSat: 160, AmountSat: 400_000},
+		360,
+		1_640,
+		360,
+		1_640,
+		58,
+		62,
+		70,
+		500,
+		channelHTLCAggregate{Total: 2_000, Forward: 1_980, Policy: 3, Liquidity: 17},
+		24,
+	)
+
+	if state != "maintain" {
+		t.Fatalf("expected maintain when HTLC pressure is mostly forward-path noise, got %s", state)
+	}
+	for _, recommendation := range recommendations {
+		if recommendation.Code == "review_htlc_failures" {
+			t.Fatalf("did not expect HTLC review to block maintain on forward-path noise")
+		}
+	}
+}
+
+func TestClassifyChannelRankingKeepsSevereLocalHTLCRiskUnderMonitor(t *testing.T) {
+	ch := lndclient.ChannelInfo{
+		Active:           true,
+		CapacitySat:      5_000_000,
+		LocalBalanceSat:  2_500_000,
+		RemoteBalanceSat: 2_500_000,
+	}
+
+	state, _, recommendations := classifyChannelRanking(
+		ch,
+		5_000_000,
+		50,
+		channelTrafficStat{FeeSat: 400, AmountSat: 700_000},
+		channelTrafficStat{FeeSat: 1_800, AmountSat: 3_000_000},
+		channelTrafficStat{FeeSat: 400, AmountSat: 700_000},
+		channelTrafficStat{FeeSat: 1_800, AmountSat: 3_000_000},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{FeeSat: 40, AmountSat: 100_000},
+		channelTrafficStat{FeeSat: 160, AmountSat: 400_000},
+		360,
+		1_640,
+		360,
+		1_640,
+		58,
+		62,
+		70,
+		500,
+		channelHTLCAggregate{Total: 2_000, Forward: 1_700, Policy: 20, Liquidity: 280},
+		24,
+	)
+
+	if state != "monitor" {
+		t.Fatalf("expected monitor for severe local HTLC risk, got %s", state)
+	}
+	foundReview := false
+	for _, recommendation := range recommendations {
+		if recommendation.Code == "review_htlc_failures" {
+			foundReview = true
+			break
+		}
+	}
+	if !foundReview {
+		t.Fatalf("expected HTLC review recommendation for severe local HTLC risk")
+	}
+}
+
 func TestClassifyChannelRankingDefersCloseDuringWarmup(t *testing.T) {
 	ch := lndclient.ChannelInfo{
 		Active:              false,

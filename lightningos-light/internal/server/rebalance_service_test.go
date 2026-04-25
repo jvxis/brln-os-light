@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"lightningos-light/internal/lndclient"
 )
@@ -210,6 +211,44 @@ func TestBuildScanDetailIncludesBelowExecuteMinReason(t *testing.T) {
 	}
 	if !strings.Contains(got, "below execute min amount: 3") {
 		t.Fatalf("expected below_execute_min reason in detail, got %q", got)
+	}
+}
+
+func TestPairFailureTTLAdaptsByReasonAndFailureCount(t *testing.T) {
+	if got := pairFailureTTL("unknown failure", 10); got != pairFailTTL {
+		t.Fatalf("expected unknown failures to preserve default ttl, got %s", got)
+	}
+	if got := pairFailureTTL("rpc error: code = Unknown desc = unable to find a path to destination", 1); got != 20*time.Minute {
+		t.Fatalf("expected no-path base ttl 20m, got %s", got)
+	}
+	if got := pairFailureTTL("mpp shard: probe returned no amount", 2); got != 30*time.Minute {
+		t.Fatalf("expected probe ttl with one backoff to be 30m, got %s", got)
+	}
+	if got := pairFailureTTL("no matching outgoing channel available", 8); got != pairFailTTLMax {
+		t.Fatalf("expected repeated structural failure to cap at %s, got %s", pairFailTTLMax, got)
+	}
+}
+
+func TestShouldSkipPairForRecentFailureHonorsSuccessResetAndAdaptiveTTL(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	stat := pairStat{
+		LastFailAt:     now.Add(-10 * time.Minute),
+		LastFailReason: "unable to find a path to destination",
+		FailCount:      1,
+	}
+	if !shouldSkipPairForRecentFailure(stat, now) {
+		t.Fatalf("expected recent no-path failure to be skipped")
+	}
+
+	stat.LastFailAt = now.Add(-25 * time.Minute)
+	if shouldSkipPairForRecentFailure(stat, now) {
+		t.Fatalf("did not expect expired no-path failure to be skipped")
+	}
+
+	stat.LastFailAt = now.Add(-10 * time.Minute)
+	stat.LastSuccessAt = now.Add(-5 * time.Minute)
+	if shouldSkipPairForRecentFailure(stat, now) {
+		t.Fatalf("did not expect pair to be skipped after a newer success")
 	}
 }
 

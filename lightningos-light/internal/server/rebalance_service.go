@@ -28,6 +28,7 @@ const (
 
 const (
 	pairFailTTL    = 30 * time.Second
+	pairFailTTLMax = 2 * time.Hour
 	pairSuccessTTL = 24 * time.Hour
 )
 
@@ -278,6 +279,8 @@ type pairStat struct {
 	TargetChannelID  uint64
 	LastSuccessAt    time.Time
 	LastFailAt       time.Time
+	LastFailReason   string
+	FailCount        int
 	SuccessAmountSat int64
 	SuccessFeePpm    int64
 }
@@ -792,6 +795,68 @@ func shouldUseRecentFailureCache(jobSource string, jobReason string) bool {
 	}
 	jobReason = strings.TrimSpace(strings.ToLower(jobReason))
 	return jobSource == "manual" && jobReason == "auto-restart"
+}
+
+func normalizedPairFailReason(reason string) string {
+	reason = strings.TrimSpace(strings.ToLower(reason))
+	for strings.HasPrefix(reason, "mpp shard:") {
+		reason = strings.TrimSpace(strings.TrimPrefix(reason, "mpp shard:"))
+	}
+	return reason
+}
+
+func pairFailureBaseTTL(reason string) (time.Duration, bool) {
+	reason = normalizedPairFailReason(reason)
+	switch {
+	case strings.Contains(reason, "no matching outgoing channel"):
+		return 45 * time.Minute, true
+	case strings.Contains(reason, "insufficient local balance"):
+		return 45 * time.Minute, true
+	case strings.Contains(reason, "unable to find a path"):
+		return 20 * time.Minute, true
+	case strings.Contains(reason, "probe returned no amount"):
+		return 15 * time.Minute, true
+	case strings.Contains(reason, "route fee exceeds limit"):
+		return 15 * time.Minute, true
+	case strings.Contains(reason, "temporary_channel_failure") || strings.Contains(reason, "temporary channel failure"):
+		return 5 * time.Minute, true
+	case strings.Contains(reason, "timeout") || strings.Contains(reason, "deadlineexceeded") || strings.Contains(reason, "deadline exceeded"):
+		return 5 * time.Minute, true
+	default:
+		return pairFailTTL, false
+	}
+}
+
+func pairFailureTTL(reason string, failCount int) time.Duration {
+	base, known := pairFailureBaseTTL(reason)
+	if !known || failCount <= 1 {
+		return base
+	}
+	ttl := base
+	for i := 1; i < failCount; i++ {
+		if ttl >= pairFailTTLMax/2 {
+			return pairFailTTLMax
+		}
+		ttl *= 2
+	}
+	if ttl > pairFailTTLMax {
+		return pairFailTTLMax
+	}
+	return ttl
+}
+
+func shouldSkipPairForRecentFailure(stat pairStat, now time.Time) bool {
+	if stat.LastFailAt.IsZero() {
+		return false
+	}
+	if !stat.LastSuccessAt.IsZero() && !stat.LastSuccessAt.Before(stat.LastFailAt) {
+		return false
+	}
+	ttl := pairFailureTTL(stat.LastFailReason, stat.FailCount)
+	if ttl <= 0 {
+		return false
+	}
+	return now.Sub(stat.LastFailAt) <= ttl
 }
 
 func buildMppShadowPlan(targetAmountSat int64, sources []RebalanceChannel, cfg RebalanceConfig) mppShadowPlan {
@@ -1741,10 +1806,8 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 				}
 			}
 			hasRecentFail := false
-			if !stat.LastFailAt.IsZero() && time.Since(stat.LastFailAt) <= pairFailTTL {
-				if stat.LastSuccessAt.IsZero() || stat.LastFailAt.After(stat.LastSuccessAt) {
-					hasRecentFail = true
-				}
+			if shouldSkipPairForRecentFailure(stat, time.Now()) {
+				hasRecentFail = true
 			}
 			age := time.Duration(0)
 			if !stat.LastSuccessAt.IsZero() {
@@ -2928,7 +2991,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			}
 			if useRecentFailureCache {
 				if stat, ok := pairStats[source.ChannelID]; ok {
-					if !stat.LastFailAt.IsZero() && time.Since(stat.LastFailAt) <= pairFailTTL && (stat.LastSuccessAt.IsZero() || stat.LastSuccessAt.Before(stat.LastFailAt)) {
+					if shouldSkipPairForRecentFailure(stat, time.Now()) {
 						continue
 					}
 				}
@@ -3141,7 +3204,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 
 			if useRecentFailureCache {
 				if stat, ok := pairStats[source.ChannelID]; ok {
-					if !stat.LastFailAt.IsZero() && time.Since(stat.LastFailAt) <= pairFailTTL && (stat.LastSuccessAt.IsZero() || stat.LastSuccessAt.Before(stat.LastFailAt)) {
+					if shouldSkipPairForRecentFailure(stat, time.Now()) {
 						skippedByCache++
 						continue
 					}
@@ -3444,6 +3507,9 @@ insert into rebalance_pair_stats (
 ) values ($1,$2,$3,$4,$5,$6,1)
  on conflict (source_channel_id, target_channel_id) do update set
   last_success_at = excluded.last_success_at,
+  last_fail_at = null,
+  last_fail_reason = null,
+  fail_count = 0,
   success_amount_sat = excluded.success_amount_sat,
   success_fee_ppm = excluded.success_fee_ppm,
   success_fee_paid_sat = excluded.success_fee_paid_sat,
@@ -3473,7 +3539,7 @@ func (s *RebalanceService) loadPairStatsForTarget(ctx context.Context, targetID 
 		return stats
 	}
 	rows, err := s.db.Query(ctx, `
-select source_channel_id, target_channel_id, last_success_at, last_fail_at, success_amount_sat, success_fee_ppm
+select source_channel_id, target_channel_id, last_success_at, last_fail_at, last_fail_reason, fail_count, success_amount_sat, success_fee_ppm
 from rebalance_pair_stats
 where target_channel_id=$1
 `, int64(targetID))
@@ -3486,14 +3552,17 @@ where target_channel_id=$1
 		var targetIDRow int64
 		var lastSuccess pgtype.Timestamptz
 		var lastFail pgtype.Timestamptz
+		var lastFailReason pgtype.Text
+		var failCount int
 		var successAmount int64
 		var successFee int64
-		if err := rows.Scan(&sourceID, &targetIDRow, &lastSuccess, &lastFail, &successAmount, &successFee); err != nil {
+		if err := rows.Scan(&sourceID, &targetIDRow, &lastSuccess, &lastFail, &lastFailReason, &failCount, &successAmount, &successFee); err != nil {
 			return stats
 		}
 		stat := pairStat{
 			SourceChannelID:  uint64(sourceID),
 			TargetChannelID:  uint64(targetIDRow),
+			FailCount:        failCount,
 			SuccessAmountSat: successAmount,
 			SuccessFeePpm:    successFee,
 		}
@@ -3502,6 +3571,9 @@ where target_channel_id=$1
 		}
 		if lastFail.Valid {
 			stat.LastFailAt = lastFail.Time
+		}
+		if lastFailReason.Valid {
+			stat.LastFailReason = lastFailReason.String
 		}
 		stats[uint64(sourceID)] = stat
 	}

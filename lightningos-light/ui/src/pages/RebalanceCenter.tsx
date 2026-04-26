@@ -967,6 +967,8 @@ export default function RebalanceCenter() {
         return t('rebalanceCenter.overview.skipReasonBusy')
       case 'recently_attempted':
         return t('rebalanceCenter.overview.skipReasonRecent')
+      case 'target_cooldown':
+        return t('rebalanceCenter.overview.scanReasonTargetCooldown')
       case 'below_execute_min':
         return t('rebalanceCenter.overview.scanReasonBudgetMin')
       default:
@@ -981,6 +983,8 @@ export default function RebalanceCenter() {
         return t('rebalanceCenter.overview.scanReasonBalanced')
       case 'recently_attempted':
         return t('rebalanceCenter.overview.scanReasonRecent')
+      case 'target_cooldown':
+        return t('rebalanceCenter.overview.scanReasonTargetCooldown')
       case 'fee_cap_zero':
         return t('rebalanceCenter.overview.scanReasonFeeCap')
       case 'below_execute_min':
@@ -1002,7 +1006,7 @@ export default function RebalanceCenter() {
     const reasons = overview.last_scan_reasons ?? {}
     const entries = Object.entries(reasons).filter(([, count]) => count > 0)
     if (entries.length > 0) {
-      const ordered = ['channel_busy', 'target_already_balanced', 'recently_attempted', 'fee_cap_zero', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
+      const ordered = ['channel_busy', 'target_already_balanced', 'recently_attempted', 'target_cooldown', 'fee_cap_zero', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
       entries.sort((a, b) => {
         const ai = ordered.indexOf(a[0])
         const bi = ordered.indexOf(b[0])

@@ -33,6 +33,15 @@ const (
 )
 
 const (
+	recentCooldownWindow      = 30 * time.Minute
+	recentCooldownTTL         = 30 * time.Minute
+	sourceCooldownMinAttempts = 25
+	sourceCooldownMaxSuccess  = 1
+	targetCooldownMinAttempts = 25
+	targetCooldownMaxSuccess  = 0
+)
+
+const (
 	queueLingerSeconds = 20
 )
 
@@ -283,6 +292,14 @@ type pairStat struct {
 	FailCount        int
 	SuccessAmountSat int64
 	SuccessFeePpm    int64
+}
+
+type recentCooldownStat struct {
+	ChannelID     uint64
+	Attempts      int
+	Failures      int
+	Successes     int
+	LastAttemptAt time.Time
 }
 
 type rebalanceCost7dStat struct {
@@ -859,6 +876,22 @@ func shouldSkipPairForRecentFailure(stat pairStat, now time.Time) bool {
 	return now.Sub(stat.LastFailAt) <= ttl
 }
 
+func shouldCooldownRecentFailures(stat recentCooldownStat, minAttempts int, maxSuccesses int, now time.Time) bool {
+	if stat.Attempts < minAttempts {
+		return false
+	}
+	if stat.Successes > maxSuccesses {
+		return false
+	}
+	if stat.Failures <= stat.Successes {
+		return false
+	}
+	if stat.LastAttemptAt.IsZero() {
+		return false
+	}
+	return now.Sub(stat.LastAttemptAt) <= recentCooldownTTL
+}
+
 func buildMppShadowPlan(targetAmountSat int64, sources []RebalanceChannel, cfg RebalanceConfig) mppShadowPlan {
 	plan := mppShadowPlan{}
 	if targetAmountSat <= 0 {
@@ -1085,6 +1118,7 @@ func (s *RebalanceService) runManualRestartWatch() {
 	_ = s.applyForwardDeltas(ctx, ledger)
 	revenueByChannel, _ := s.fetchChannelRevenue7d(ctx)
 	costByChannel, _ := s.fetchChannelRebalanceCost7d(ctx)
+	targetCooldowns := s.loadRecentTargetCooldowns(ctx, time.Now().Add(-recentCooldownWindow))
 
 	channels, err := s.lnd.ListChannels(ctx)
 	if err != nil {
@@ -1095,6 +1129,9 @@ func (s *RebalanceService) runManualRestartWatch() {
 	for _, ch := range channels {
 		setting := settings[ch.ChannelID]
 		if !setting.ManualRestartEnabled {
+			continue
+		}
+		if shouldCooldownRecentFailures(targetCooldowns[ch.ChannelID], targetCooldownMinAttempts, targetCooldownMaxSuccess, time.Now()) {
 			continue
 		}
 		if s.isChannelBusy(ch.ChannelID) {
@@ -1181,6 +1218,7 @@ func (s *RebalanceService) runAutoScan() {
 	revenueByChannel, _ := s.fetchChannelRevenue7d(ctx)
 	costByChannel, _ := s.fetchChannelRebalanceCost7d(ctx)
 	lastAutoByTarget := s.loadLastAutoEnqueueTimes(ctx)
+	targetCooldowns := s.loadRecentTargetCooldowns(ctx, scanAt.Add(-recentCooldownWindow))
 	s.mu.Lock()
 	for channelID, last := range s.lastAutoByTarget {
 		if existing, ok := lastAutoByTarget[channelID]; !ok || last.After(existing) {
@@ -1198,6 +1236,7 @@ func (s *RebalanceService) runAutoScan() {
 	totalAvailable := int64(0)
 	roiSkipped := 0
 	belowExecuteMinSkipped := 0
+	targetCooldownSkipped := 0
 	topScoreSet := false
 	for _, ch := range channels {
 		setting := settings[ch.ChannelID]
@@ -1208,6 +1247,18 @@ func (s *RebalanceService) runAutoScan() {
 		}
 
 		if setting.AutoEnabled && snapshot.EligibleAsTarget {
+			if shouldCooldownRecentFailures(targetCooldowns[ch.ChannelID], targetCooldownMinAttempts, targetCooldownMaxSuccess, scanAt) {
+				targetCooldownSkipped++
+				skippedDetails = append(skippedDetails, RebalanceSkipDetail{
+					ChannelID:         snapshot.ChannelID,
+					ChannelPoint:      snapshot.ChannelPoint,
+					PeerAlias:         snapshot.PeerAlias,
+					TargetOutboundPct: snapshot.TargetOutboundPct,
+					TargetAmountSat:   snapshot.TargetAmountSat,
+					Reason:            "target_cooldown",
+				})
+				continue
+			}
 			targetCfg := effectiveConfigForTarget(cfg, setting)
 			targetAmount := snapshot.TargetAmountSat
 			minExecuteSat := effectiveMinExecuteSat(targetCfg)
@@ -1294,6 +1345,9 @@ func (s *RebalanceService) runAutoScan() {
 		scanReasons = map[string]int{}
 		if belowExecuteMinSkipped > 0 {
 			scanReasons["below_execute_min"] = belowExecuteMinSkipped
+		}
+		if targetCooldownSkipped > 0 {
+			scanReasons["target_cooldown"] = targetCooldownSkipped
 		}
 		if profitSkipped > 0 {
 			scanStatus = "profit_guardrail"
@@ -1701,6 +1755,20 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 	}
 
 	sources := filterSources(channelSnapshots, targetChannelID)
+	if useRecentFailureCache {
+		sourceCooldowns := s.loadRecentSourceCooldowns(ctx, time.Now().Add(-recentCooldownWindow))
+		if len(sourceCooldowns) > 0 {
+			filteredSources := make([]RebalanceChannel, 0, len(sources))
+			now := time.Now()
+			for _, source := range sources {
+				if shouldCooldownRecentFailures(sourceCooldowns[source.ChannelID], sourceCooldownMinAttempts, sourceCooldownMaxSuccess, now) {
+					continue
+				}
+				filteredSources = append(filteredSources, source)
+			}
+			sources = filteredSources
+		}
+	}
 	if shouldRunMppShadow(feeCfg, jobSource) {
 		shadowPlan := buildMppShadowPlan(amount, sources, feeCfg)
 		if err := s.insertMppShadowPlan(ctx, jobID, targetChannelID, jobSource, feeCfg, amount, shadowPlan); err != nil {
@@ -1792,6 +1860,29 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 	}
 
 	pairStats := s.loadPairStatsForTarget(ctx, targetChannelID)
+	recordPairSuccess := func(ctx context.Context, sourceChannelID uint64, targetChannelID uint64, amountSat int64, feePpm int64, feePaidSat int64) {
+		s.recordPairSuccess(ctx, sourceChannelID, targetChannelID, amountSat, feePpm, feePaidSat)
+		stat := pairStats[sourceChannelID]
+		stat.SourceChannelID = sourceChannelID
+		stat.TargetChannelID = targetChannelID
+		stat.LastSuccessAt = time.Now()
+		stat.LastFailAt = time.Time{}
+		stat.LastFailReason = ""
+		stat.FailCount = 0
+		stat.SuccessAmountSat = amountSat
+		stat.SuccessFeePpm = feePpm
+		pairStats[sourceChannelID] = stat
+	}
+	recordPairFailure := func(ctx context.Context, sourceChannelID uint64, targetChannelID uint64, reason string) {
+		s.recordPairFailure(ctx, sourceChannelID, targetChannelID, reason)
+		stat := pairStats[sourceChannelID]
+		stat.SourceChannelID = sourceChannelID
+		stat.TargetChannelID = targetChannelID
+		stat.LastFailAt = time.Now()
+		stat.LastFailReason = reason
+		stat.FailCount++
+		pairStats[sourceChannelID] = stat
+	}
 
 	sort.Slice(sources, func(i, j int) bool {
 		rank := func(ch RebalanceChannel) (bool, bool, int64, int64, time.Duration) {
@@ -1919,6 +2010,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 	ignoredPairSet := map[string]struct{}{}
 	ignoredPairs := make([]*lnrpc.NodePair, 0)
 	maxIgnoredEntries := 500
+	ignoredMu := sync.Mutex{}
 
 	sleepWithContext := func(d time.Duration) bool {
 		if d <= 0 {
@@ -2045,6 +2137,18 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			addIgnoredPair(failedHop.PubKey, fromPub)
 		}
 	}
+	snapshotIgnoredRoutes := func() ([]*lnrpc.EdgeLocator, []*lnrpc.NodePair) {
+		ignoredMu.Lock()
+		defer ignoredMu.Unlock()
+		edgeSnapshot := append([]*lnrpc.EdgeLocator(nil), ignoredEdges...)
+		pairSnapshot := append([]*lnrpc.NodePair(nil), ignoredPairs...)
+		return edgeSnapshot, pairSnapshot
+	}
+	noteRouteFailureFromShard := func(route *lnrpc.Route, failureIndex uint32) {
+		ignoredMu.Lock()
+		defer ignoredMu.Unlock()
+		noteRouteFailure(route, failureIndex)
+	}
 
 	reconcileTimeoutPayment := func(paymentHash string, feeLimitPpm int64, source RebalanceChannel, fallbackAmount int64) (bool, int64) {
 		if s.lnd == nil || strings.TrimSpace(paymentHash) == "" {
@@ -2069,7 +2173,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 		}
 		attemptIndex++
 		_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountSent, feeLimitPpm, feePaidSat, "succeeded", paymentHash, "")
-		s.recordPairSuccess(ctx, source.ChannelID, targetChannelID, amountSent, feeLimitPpm, feePaidSat)
+		recordPairSuccess(ctx, source.ChannelID, targetChannelID, amountSent, feeLimitPpm, feePaidSat)
 		_ = s.applyRebalanceLedger(ctx, targetChannelID, amountSent, feePaidSat)
 		_ = s.addBudgetSpend(ctx, feePaidSat, jobSource)
 		return true, amountSent
@@ -2135,7 +2239,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(attemptCtx.Err(), context.DeadlineExceeded) {
 				attemptIndex++
 				_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", "", "attempt timeout")
-				s.recordPairFailure(ctx, source.ChannelID, targetChannelID, "attempt timeout")
+				recordPairFailure(ctx, source.ChannelID, targetChannelID, "attempt timeout")
 				return false, false, 0, true, nil, 0
 			}
 			if isNoPathError(err) {
@@ -2146,7 +2250,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			if logRouteFailure {
 				attemptIndex++
 				_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", "", err.Error())
-				s.recordPairFailure(ctx, source.ChannelID, targetChannelID, err.Error())
+				recordPairFailure(ctx, source.ChannelID, targetChannelID, err.Error())
 			}
 			return false, false, 0, false, nil, 0
 		}
@@ -2214,12 +2318,12 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 				if errors.Is(err, context.DeadlineExceeded) || errors.Is(attemptCtx.Err(), context.DeadlineExceeded) {
 					attemptIndex++
 					_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, routeAmount, routeFeeLimitPpm, 0, "failed", "", "attempt timeout")
-					s.recordPairFailure(ctx, source.ChannelID, targetChannelID, "attempt timeout")
+					recordPairFailure(ctx, source.ChannelID, targetChannelID, "attempt timeout")
 					return false, false, 0, true, nil, 0
 				}
 				attemptIndex++
 				_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, routeAmount, routeFeeLimitPpm, 0, "failed", "", err.Error())
-				s.recordPairFailure(ctx, source.ChannelID, targetChannelID, err.Error())
+				recordPairFailure(ctx, source.ChannelID, targetChannelID, err.Error())
 				return false, false, 0, false, nil, 0
 			}
 			lastPaymentHash = paymentHash
@@ -2254,7 +2358,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 				}
 				attemptIndex++
 				_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, routeAmount, routeFeeLimitPpm, feePaidSat, "succeeded", paymentHash, "")
-				s.recordPairSuccess(ctx, source.ChannelID, targetChannelID, routeAmount, routeFeeLimitPpm, feePaidSat)
+				recordPairSuccess(ctx, source.ChannelID, targetChannelID, routeAmount, routeFeeLimitPpm, feePaidSat)
 				_ = s.applyRebalanceLedger(ctx, targetChannelID, routeAmount, feePaidSat)
 				_ = s.addBudgetSpend(ctx, feePaidSat, jobSource)
 				return true, false, routeMaxSat, false, activeRoute, routeAmount
@@ -2286,7 +2390,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 							}
 							attemptIndex++
 							_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, routeAmount, routeFeeLimitPpm, feePaidSat, "succeeded", paymentHash, "")
-							s.recordPairSuccess(ctx, source.ChannelID, targetChannelID, routeAmount, routeFeeLimitPpm, feePaidSat)
+							recordPairSuccess(ctx, source.ChannelID, targetChannelID, routeAmount, routeFeeLimitPpm, feePaidSat)
 							_ = s.applyRebalanceLedger(ctx, targetChannelID, routeAmount, feePaidSat)
 							_ = s.addBudgetSpend(ctx, feePaidSat, jobSource)
 							return true, false, updatedRouteMax, false, updatedRoute, routeAmount
@@ -2315,7 +2419,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 									if retryFeeMsat > 0 && rebuilt.TotalFeesMsat > retryFeeMsat {
 										attemptIndex++
 										_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, maxAmount, retryFeePpm, 0, "failed", retryHash, "route fee exceeds limit")
-										s.recordPairFailure(ctx, source.ChannelID, targetChannelID, "route fee exceeds limit")
+										recordPairFailure(ctx, source.ChannelID, targetChannelID, "route fee exceeds limit")
 										continue
 									}
 									applyMppRecord(rebuilt, retryAddr, maxAmount)
@@ -2330,14 +2434,14 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 										}
 										attemptIndex++
 										_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, maxAmount, retryFeePpm, feePaidSat, "succeeded", retryHash, "")
-										s.recordPairSuccess(ctx, source.ChannelID, targetChannelID, maxAmount, retryFeePpm, feePaidSat)
+										recordPairSuccess(ctx, source.ChannelID, targetChannelID, maxAmount, retryFeePpm, feePaidSat)
 										_ = s.applyRebalanceLedger(ctx, targetChannelID, maxAmount, feePaidSat)
 										_ = s.addBudgetSpend(ctx, feePaidSat, jobSource)
 										return true, false, probeRouteMax, false, rebuilt, maxAmount
 									}
 									attemptIndex++
 									_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, maxAmount, retryFeePpm, 0, "failed", retryHash, retrySendErr.Error())
-									s.recordPairFailure(ctx, source.ChannelID, targetChannelID, retrySendErr.Error())
+									recordPairFailure(ctx, source.ChannelID, targetChannelID, retrySendErr.Error())
 									lastErr = retrySendErr
 								}
 							}
@@ -2372,7 +2476,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			}
 			attemptIndex++
 			_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, timeoutAmount, timeoutFeePpm, 0, "failed", timeoutHash, "attempt timeout")
-			s.recordPairFailure(ctx, source.ChannelID, targetChannelID, "attempt timeout")
+			recordPairFailure(ctx, source.ChannelID, targetChannelID, "attempt timeout")
 			return false, false, 0, true, nil, 0
 		}
 		failReason := ""
@@ -2392,7 +2496,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			}
 			attemptIndex++
 			_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, failAmount, failFeePpm, 0, "failed", lastPaymentHash, failReason)
-			s.recordPairFailure(ctx, source.ChannelID, targetChannelID, failReason)
+			recordPairFailure(ctx, source.ChannelID, targetChannelID, failReason)
 		}
 		return false, false, 0, false, nil, 0
 	}
@@ -2441,7 +2545,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			if logRouteFailure {
 				attemptIndex++
 				_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", "", err.Error())
-				s.recordPairFailure(ctx, source.ChannelID, targetChannelID, err.Error())
+				recordPairFailure(ctx, source.ChannelID, targetChannelID, err.Error())
 			}
 			return false, false, 0, false, nil, 0
 		}
@@ -2456,7 +2560,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			if logRouteFailure {
 				attemptIndex++
 				_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", "", "route fee exceeds limit")
-				s.recordPairFailure(ctx, source.ChannelID, targetChannelID, "route fee exceeds limit")
+				recordPairFailure(ctx, source.ChannelID, targetChannelID, "route fee exceeds limit")
 			}
 			return false, false, 0, false, nil, 0
 		}
@@ -2476,12 +2580,12 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(attemptCtx.Err(), context.DeadlineExceeded) {
 				attemptIndex++
 				_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", "", "attempt timeout")
-				s.recordPairFailure(ctx, source.ChannelID, targetChannelID, "attempt timeout")
+				recordPairFailure(ctx, source.ChannelID, targetChannelID, "attempt timeout")
 				return false, false, 0, true, nil, 0
 			}
 			attemptIndex++
 			_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", "", err.Error())
-			s.recordPairFailure(ctx, source.ChannelID, targetChannelID, err.Error())
+			recordPairFailure(ctx, source.ChannelID, targetChannelID, err.Error())
 			return false, false, 0, false, nil, 0
 		}
 
@@ -2493,7 +2597,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			feePaidSat := msatToSatCeil(routeFeeMsat)
 			attemptIndex++
 			_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, feePaidSat, "succeeded", paymentHash, "")
-			s.recordPairSuccess(ctx, source.ChannelID, targetChannelID, amountTry, feeLimitPpm, feePaidSat)
+			recordPairSuccess(ctx, source.ChannelID, targetChannelID, amountTry, feeLimitPpm, feePaidSat)
 			_ = s.applyRebalanceLedger(ctx, targetChannelID, amountTry, feePaidSat)
 			_ = s.addBudgetSpend(ctx, feePaidSat, jobSource)
 			return true, false, routeMaxSat, false, route, amountTry
@@ -2522,7 +2626,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 							feePaidSat := msatToSatCeil(updatedRoute.TotalFeesMsat)
 							attemptIndex++
 							_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, feePaidSat, "succeeded", paymentHash, "")
-							s.recordPairSuccess(ctx, source.ChannelID, targetChannelID, amountTry, feeLimitPpm, feePaidSat)
+							recordPairSuccess(ctx, source.ChannelID, targetChannelID, amountTry, feeLimitPpm, feePaidSat)
 							_ = s.applyRebalanceLedger(ctx, targetChannelID, amountTry, feePaidSat)
 							_ = s.addBudgetSpend(ctx, feePaidSat, jobSource)
 							return true, false, updatedRouteMax, false, updatedRoute, amountTry
@@ -2553,7 +2657,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			}
 			attemptIndex++
 			_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", paymentHash, "attempt timeout")
-			s.recordPairFailure(ctx, source.ChannelID, targetChannelID, "attempt timeout")
+			recordPairFailure(ctx, source.ChannelID, targetChannelID, "attempt timeout")
 			return false, false, 0, true, nil, 0
 		}
 		failReason := ""
@@ -2565,7 +2669,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 		if logRouteFailure {
 			attemptIndex++
 			_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", paymentHash, failReason)
-			s.recordPairFailure(ctx, source.ChannelID, targetChannelID, failReason)
+			recordPairFailure(ctx, source.ChannelID, targetChannelID, failReason)
 		}
 		return false, false, 0, false, nil, 0
 	}
@@ -2853,7 +2957,8 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 		}
 		defer cancelAttempt()
 
-		routes, err := s.lnd.QueryRoutes(attemptCtx, selfPubkey, amountTry, source.ChannelID, targetSnapshot.RemotePubkey, feeLimitMsat, 3, nil, nil)
+		ignoredEdgeSnapshot, ignoredPairSnapshot := snapshotIgnoredRoutes()
+		routes, err := s.lnd.QueryRoutes(attemptCtx, selfPubkey, amountTry, source.ChannelID, targetSnapshot.RemotePubkey, feeLimitMsat, 3, ignoredEdgeSnapshot, ignoredPairSnapshot)
 		if err != nil {
 			if ctx.Err() != nil {
 				result.Fatal = true
@@ -2962,6 +3067,10 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 				result.TimedOut = true
 				result.FailReason = "attempt timeout"
 				return result
+			}
+			var routeFailure lndclient.RouteFailureError
+			if errors.As(sendErr, &routeFailure) && routeFailure.Failure != nil && routeFailure.Code == lnrpc.Failure_TEMPORARY_CHANNEL_FAILURE {
+				noteRouteFailureFromShard(route, routeFailure.FailureSourceIndex)
 			}
 			result.FailReason = sendErr.Error()
 			return result
@@ -3127,7 +3236,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			}
 			if res.Succeeded {
 				_ = s.insertAttempt(ctx, jobID, attemptIndex, res.Source.ChannelID, attemptAmount, res.FeeLimitPpm, res.FeePaidSat, "succeeded", res.PaymentHash, "")
-				s.recordPairSuccess(ctx, res.Source.ChannelID, targetChannelID, attemptAmount, res.FeeLimitPpm, res.FeePaidSat)
+				recordPairSuccess(ctx, res.Source.ChannelID, targetChannelID, attemptAmount, res.FeeLimitPpm, res.FeePaidSat)
 				_ = s.applyRebalanceLedger(ctx, targetChannelID, attemptAmount, res.FeePaidSat)
 				_ = s.addBudgetSpend(ctx, res.FeePaidSat, jobSource)
 				succeededShards++
@@ -3157,7 +3266,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			}
 			shardFailReason := formatMppShardFailReason(failReason)
 			_ = s.insertAttempt(ctx, jobID, attemptIndex, res.Source.ChannelID, attemptAmount, res.FeeLimitPpm, 0, "failed", res.PaymentHash, shardFailReason)
-			s.recordPairFailure(ctx, res.Source.ChannelID, targetChannelID, shardFailReason)
+			recordPairFailure(ctx, res.Source.ChannelID, targetChannelID, shardFailReason)
 		}
 
 		if s.logger != nil {
@@ -3580,6 +3689,91 @@ where target_channel_id=$1
 	return stats
 }
 
+func (s *RebalanceService) loadRecentSourceCooldowns(ctx context.Context, since time.Time) map[uint64]recentCooldownStat {
+	stats := map[uint64]recentCooldownStat{}
+	if s.db == nil {
+		return stats
+	}
+	rows, err := s.db.Query(ctx, `
+select source_channel_id,
+  count(*) as attempts,
+  coalesce(sum(case when status='succeeded' then 1 else 0 end), 0) as successes,
+  coalesce(sum(case when status<>'succeeded' then 1 else 0 end), 0) as failures,
+  max(coalesce(finished_at, started_at)) as last_attempt_at
+from rebalance_attempts
+where coalesce(finished_at, started_at) >= $1
+group by source_channel_id
+`, since)
+	if err != nil {
+		return stats
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var channelID int64
+		var attempts int
+		var successes int
+		var failures int
+		var lastAttempt pgtype.Timestamptz
+		if err := rows.Scan(&channelID, &attempts, &successes, &failures, &lastAttempt); err != nil {
+			return stats
+		}
+		stat := recentCooldownStat{
+			ChannelID: uint64(channelID),
+			Attempts:  attempts,
+			Successes: successes,
+			Failures:  failures,
+		}
+		if lastAttempt.Valid {
+			stat.LastAttemptAt = lastAttempt.Time
+		}
+		stats[uint64(channelID)] = stat
+	}
+	return stats
+}
+
+func (s *RebalanceService) loadRecentTargetCooldowns(ctx context.Context, since time.Time) map[uint64]recentCooldownStat {
+	stats := map[uint64]recentCooldownStat{}
+	if s.db == nil {
+		return stats
+	}
+	rows, err := s.db.Query(ctx, `
+select j.target_channel_id,
+  count(*) as attempts,
+  coalesce(sum(case when a.status='succeeded' then 1 else 0 end), 0) as successes,
+  coalesce(sum(case when a.status<>'succeeded' then 1 else 0 end), 0) as failures,
+  max(coalesce(a.finished_at, a.started_at)) as last_attempt_at
+from rebalance_attempts a
+join rebalance_jobs j on j.id = a.job_id
+where coalesce(a.finished_at, a.started_at) >= $1
+group by j.target_channel_id
+`, since)
+	if err != nil {
+		return stats
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var channelID int64
+		var attempts int
+		var successes int
+		var failures int
+		var lastAttempt pgtype.Timestamptz
+		if err := rows.Scan(&channelID, &attempts, &successes, &failures, &lastAttempt); err != nil {
+			return stats
+		}
+		stat := recentCooldownStat{
+			ChannelID: uint64(channelID),
+			Attempts:  attempts,
+			Successes: successes,
+			Failures:  failures,
+		}
+		if lastAttempt.Valid {
+			stat.LastAttemptAt = lastAttempt.Time
+		}
+		stats[uint64(channelID)] = stat
+	}
+	return stats
+}
+
 func (s *RebalanceService) acquireSem(ctx context.Context) bool {
 	s.mu.Lock()
 	sem := s.sem
@@ -3799,6 +3993,7 @@ func (s *RebalanceService) scheduleManualRestart(info manualRestartInfo) {
 	ledger, _ := s.loadLedger(restartCtx)
 	revenueByChannel, _ := s.fetchChannelRevenue7d(restartCtx)
 	costByChannel, _ := s.fetchChannelRebalanceCost7d(restartCtx)
+	targetCooldowns := s.loadRecentTargetCooldowns(restartCtx, time.Now().Add(-recentCooldownWindow))
 
 	channels, err := s.lnd.ListChannels(restartCtx)
 	if err != nil {
@@ -3820,6 +4015,9 @@ func (s *RebalanceService) scheduleManualRestart(info manualRestartInfo) {
 
 	setting := settings[target.ChannelID]
 	if !setting.ManualRestartEnabled {
+		return
+	}
+	if shouldCooldownRecentFailures(targetCooldowns[target.ChannelID], targetCooldownMinAttempts, targetCooldownMaxSuccess, time.Now()) {
 		return
 	}
 	snapshot := s.buildChannelSnapshot(restartCtx, cfg, false, target, setting, ledger[target.ChannelID], revenueByChannel[target.ChannelID], costByChannel[target.ChannelID], exclusions[target.ChannelID])
@@ -5694,6 +5892,8 @@ where type='rebalance' and occurred_at >= now() - interval '1 day'
 	var totalCount int64
 	var attemptedCount int64
 	var jobsWithoutAttemptCount int64
+	var attemptCount int64
+	var successfulAttemptCount int64
 	_ = s.db.QueryRow(ctx, `
 with jobs_7d as (
   select id, status
@@ -5705,20 +5905,37 @@ jobs_with_attempts as (
     select 1 from rebalance_attempts a where a.job_id = j.id
   ) as has_attempt
   from jobs_7d j
+),
+job_stats as (
+  select
+    coalesce(sum(case when status in ('succeeded','partial') then 1 else 0 end), 0) as success_count,
+    count(*) as total_count,
+    coalesce(sum(case when has_attempt then 1 else 0 end), 0) as attempted_count,
+    coalesce(sum(case when not has_attempt then 1 else 0 end), 0) as jobs_without_attempt_count
+  from jobs_with_attempts
+),
+attempt_stats as (
+  select
+    count(*) as attempt_count,
+    coalesce(sum(case when status='succeeded' then 1 else 0 end), 0) as successful_attempt_count
+  from rebalance_attempts
+  where coalesce(finished_at, started_at) >= now() - interval '7 days'
 )
 select
-  coalesce(sum(case when status in ('succeeded','partial') then 1 else 0 end), 0) as success_count,
-  count(*) as total_count,
-  coalesce(sum(case when has_attempt then 1 else 0 end), 0) as attempted_count,
-  coalesce(sum(case when not has_attempt then 1 else 0 end), 0) as jobs_without_attempt_count
-from jobs_with_attempts
-`).Scan(&successCount, &totalCount, &attemptedCount, &jobsWithoutAttemptCount)
-	if totalCount > 0 {
-		effectiveness = float64(successCount) / float64(totalCount)
+  job_stats.success_count,
+  job_stats.total_count,
+  job_stats.attempted_count,
+  job_stats.jobs_without_attempt_count,
+  attempt_stats.attempt_count,
+  attempt_stats.successful_attempt_count
+from job_stats, attempt_stats
+`).Scan(&successCount, &totalCount, &attemptedCount, &jobsWithoutAttemptCount, &attemptCount, &successfulAttemptCount)
+	if attemptedCount > 0 {
+		effectiveness = float64(successCount) / float64(attemptedCount)
 	}
 	effectivenessExecution := 0.0
-	if attemptedCount > 0 {
-		effectivenessExecution = float64(successCount) / float64(attemptedCount)
+	if attemptCount > 0 {
+		effectivenessExecution = float64(successfulAttemptCount) / float64(attemptCount)
 	}
 	jobsWithoutAttemptRate := 0.0
 	if totalCount > 0 {

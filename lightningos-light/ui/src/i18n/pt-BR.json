@@ -2688,6 +2688,7 @@
       "scanReasonBusy": "canal ocupado",
       "scanReasonBalanced": "target já balanceado",
       "scanReasonRecent": "tentado recentemente",
+      "scanReasonTargetCooldown": "cooldown do target",
       "scanReasonFeeCap": "fee cap zerado",
       "scanReasonBudgetMin": "orçamento abaixo do mínimo",
       "scanReasonBudgetLow": "orçamento muito baixo",
@@ -2701,8 +2702,8 @@
         "autoInsufficient": "Auto rebalance segue ativo, mas o orçamento da última varredura ficou baixo para os limites atuais do alvo."
       },
         "effectiveness": "Efetividade (7d)",
-        "effectivenessOperational": "Operacional (todos jobs concluídos)",
-        "effectivenessExecution": "Execução (jobs com tentativas)",
+        "effectivenessOperational": "Jobs com tentativa",
+        "effectivenessExecution": "Tentativas",
         "jobsWithoutAttempt7d": "Concluídos sem tentativa (7d): {{value}} jobs",
         "jobsWithoutAttemptRate7d": "Participação sem tentativa (7d): {{value}}",
         "roi": "ROI 7d: {{value}}",

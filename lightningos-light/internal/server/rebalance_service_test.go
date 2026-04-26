@@ -252,6 +252,36 @@ func TestShouldSkipPairForRecentFailureHonorsSuccessResetAndAdaptiveTTL(t *testi
 	}
 }
 
+func TestShouldCooldownRecentFailuresRequiresRecentFailurePressure(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	stat := recentCooldownStat{
+		Attempts:      25,
+		Failures:      25,
+		Successes:     0,
+		LastAttemptAt: now.Add(-5 * time.Minute),
+	}
+	if !shouldCooldownRecentFailures(stat, 25, 0, now) {
+		t.Fatalf("expected recent high-failure stat to enter cooldown")
+	}
+
+	stat.Attempts = 24
+	if shouldCooldownRecentFailures(stat, 25, 0, now) {
+		t.Fatalf("did not expect cooldown below attempt threshold")
+	}
+
+	stat.Attempts = 25
+	stat.Successes = 1
+	if shouldCooldownRecentFailures(stat, 25, 0, now) {
+		t.Fatalf("did not expect cooldown above success threshold")
+	}
+
+	stat.Successes = 0
+	stat.LastAttemptAt = now.Add(-recentCooldownTTL - time.Second)
+	if shouldCooldownRecentFailures(stat, 25, 0, now) {
+		t.Fatalf("did not expect expired failure pressure to remain in cooldown")
+	}
+}
+
 func TestNormalizeRebalanceConfigClampsMppBounds(t *testing.T) {
 	cfg := RebalanceConfig{
 		MppMaxShards:       99,

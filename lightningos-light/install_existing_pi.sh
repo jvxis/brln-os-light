@@ -1142,13 +1142,13 @@ get_os_codename() {
 detect_installed_postgres_major() {
   local version=""
   if command -v pg_lsclusters >/dev/null 2>&1; then
-    version=$(pg_lsclusters 2>/dev/null | awk 'NR>1 && $4=="online" {print $1}' | sort -nr | head -n1) || true
+    version=$(pg_lsclusters 2>/dev/null | awk 'NR>1 && $1 ~ /^[0-9]+$/ && $4=="online" {print $1}' | sort -nr | head -n1) || true
     if [[ -z "$version" ]]; then
-      version=$(pg_lsclusters 2>/dev/null | awk 'NR>1 {print $1}' | sort -nr | head -n1) || true
+      version=$(pg_lsclusters 2>/dev/null | awk 'NR>1 && $1 ~ /^[0-9]+$/ {print $1}' | sort -nr | head -n1) || true
     fi
   fi
   if [[ -z "$version" ]]; then
-    version=$(dpkg-query -W -f='${Package}\n' 'postgresql-[0-9]*' 2>/dev/null | sed 's/postgresql-//' | sort -nr | head -n1) || true
+    version=$(dpkg-query -W -f='${Package}\n' 'postgresql-[0-9]*' 2>/dev/null | sed -n 's/^postgresql-\([0-9][0-9]*\)$/\1/p' | sort -nr | head -n1) || true
   fi
   echo "$version"
 }
@@ -1181,10 +1181,10 @@ resolve_postgres_version() {
     return 0
   fi
   local versions
-  versions=$(apt-cache search --names-only '^postgresql-[0-9]+$' 2>/dev/null | awk '{print $1}' | sed 's/postgresql-//' | sort -nr)
+  versions=$(apt-cache search --names-only '^postgresql-[0-9]+$' 2>/dev/null | awk '{print $1}' | sed -n 's/^postgresql-\([0-9][0-9]*\)$/\1/p' | sort -nr)
   if [[ -z "$versions" ]]; then
-    print_warn "Could not detect PostgreSQL versions; falling back to 17"
-    POSTGRES_VERSION="17"
+    print_warn "Could not detect PostgreSQL versions; falling back to 18"
+    POSTGRES_VERSION="18"
     return 0
   fi
   POSTGRES_VERSION=$(echo "$versions" | head -n1)

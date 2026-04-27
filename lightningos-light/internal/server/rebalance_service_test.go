@@ -227,6 +227,9 @@ func TestPairFailureTTLAdaptsByReasonAndFailureCount(t *testing.T) {
 	if got := pairFailureTTL("no matching outgoing channel available", 8); got != pairFailTTLMax {
 		t.Fatalf("expected repeated structural failure to cap at %s, got %s", pairFailTTLMax, got)
 	}
+	if pairFailTTLMax > rebalanceMaxCooldown {
+		t.Fatalf("expected pair failure ttl cap <= max rebalance cooldown, got %s", pairFailTTLMax)
+	}
 }
 
 func TestShouldSkipPairForRecentFailureHonorsSuccessResetAndAdaptiveTTL(t *testing.T) {
@@ -279,6 +282,29 @@ func TestShouldCooldownRecentFailuresRequiresRecentFailurePressure(t *testing.T)
 	stat.LastAttemptAt = now.Add(-recentCooldownTTL - time.Second)
 	if shouldCooldownRecentFailures(stat, 25, 0, now) {
 		t.Fatalf("did not expect expired failure pressure to remain in cooldown")
+	}
+}
+
+func TestShouldCooldownTargetRecentFailuresIncludesNoAttemptJobs(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	noAttempt := recentCooldownStat{
+		Attempts:      targetNoAttemptCooldownMinFailures,
+		Failures:      targetNoAttemptCooldownMinFailures,
+		LastAttemptAt: now.Add(-5 * time.Minute),
+	}
+	if !shouldCooldownTargetRecentFailures(recentCooldownStat{}, noAttempt, now) {
+		t.Fatalf("expected repeated no-attempt target failures to trigger target cooldown")
+	}
+
+	noAttempt.Successes = 1
+	if shouldCooldownTargetRecentFailures(recentCooldownStat{}, noAttempt, now) {
+		t.Fatalf("did not expect no-attempt cooldown after a recent target success")
+	}
+
+	noAttempt.Successes = 0
+	noAttempt.LastAttemptAt = now.Add(-recentCooldownTTL - time.Second)
+	if shouldCooldownTargetRecentFailures(recentCooldownStat{}, noAttempt, now) {
+		t.Fatalf("did not expect expired no-attempt target failures to keep target in cooldown")
 	}
 }
 

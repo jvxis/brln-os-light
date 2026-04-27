@@ -1372,6 +1372,19 @@ generate_tls() {
   print_ok "TLS generated"
 }
 
+start_lnd_initial() {
+  systemctl enable lnd
+  if systemctl start lnd; then
+    print_ok "LND service started"
+    return 0
+  fi
+  print_warn "LND did not start yet; continue the UI wizard to configure Bitcoin RPC and wallet"
+  systemctl status lnd --no-pager || true
+  if command -v journalctl >/dev/null 2>&1; then
+    journalctl -u lnd -n 80 --no-pager || true
+  fi
+}
+
 install_systemd() {
   print_step "Installing systemd services"
   cp "$REPO_ROOT/templates/systemd/lnd.service" /etc/systemd/system/lnd.service
@@ -1390,7 +1403,7 @@ install_systemd() {
   if ! wait_for_tor_control; then
     print_warn "Tor control port 9051 not ready; LND may fail to start"
   fi
-  systemctl enable --now lnd
+  start_lnd_initial
   systemctl enable --now lightningos-manager
   systemctl enable --now lightningos-reports.timer
   systemctl restart lnd >/dev/null 2>&1 || true

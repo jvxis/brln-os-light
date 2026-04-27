@@ -1372,17 +1372,29 @@ generate_tls() {
   print_ok "TLS generated"
 }
 
+lnd_has_bitcoin_rpc_config() {
+  if [[ -r /home/lnd/.bitcoin/bitcoin.conf ]]; then
+    return 0
+  fi
+  [[ -f "$LND_CONF" ]] || return 1
+  grep -Eq '^[[:space:]]*bitcoind\.rpchost[[:space:]]*=' "$LND_CONF" \
+    && grep -Eq '^[[:space:]]*bitcoind\.rpcuser[[:space:]]*=' "$LND_CONF" \
+    && grep -Eq '^[[:space:]]*bitcoind\.rpcpass[[:space:]]*=' "$LND_CONF"
+}
+
 start_lnd_initial() {
   systemctl enable lnd
+  if ! lnd_has_bitcoin_rpc_config; then
+    systemctl stop lnd >/dev/null 2>&1 || true
+    systemctl reset-failed lnd >/dev/null 2>&1 || true
+    print_ok "LND service enabled; start deferred until the UI wizard configures Bitcoin RPC and wallet"
+    return 0
+  fi
   if systemctl start lnd; then
     print_ok "LND service started"
     return 0
   fi
-  print_warn "LND did not start yet; continue the UI wizard to configure Bitcoin RPC and wallet"
-  systemctl status lnd --no-pager || true
-  if command -v journalctl >/dev/null 2>&1; then
-    journalctl -u lnd -n 80 --no-pager || true
-  fi
+  print_warn "LND service enabled but did not start; check: systemctl status lnd --no-pager"
 }
 
 install_systemd() {
@@ -1406,7 +1418,6 @@ install_systemd() {
   start_lnd_initial
   systemctl enable --now lightningos-manager
   systemctl enable --now lightningos-reports.timer
-  systemctl restart lnd >/dev/null 2>&1 || true
   systemctl restart lightningos-manager >/dev/null 2>&1 || true
   local terminal_enabled="0"
   local terminal_credential=""
@@ -1421,7 +1432,7 @@ install_systemd() {
     systemctl disable --now lightningos-terminal >/dev/null 2>&1 || true
   fi
   ensure_ufw_manager_port
-  print_ok "Services enabled and started"
+  print_ok "Services enabled"
 }
 
 start_tor_service() {
@@ -1461,6 +1472,8 @@ service_status_summary() {
   for svc in postgresql lnd lightningos-manager; do
     if systemctl is-active --quiet "$svc"; then
       print_ok "$svc is active"
+    elif [[ "$svc" == "lnd" ]] && ! lnd_has_bitcoin_rpc_config && systemctl is-enabled --quiet lnd; then
+      print_ok "lnd is enabled; waiting for Bitcoin RPC and wallet setup"
     else
       print_warn "$svc is not active"
     fi

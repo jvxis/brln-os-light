@@ -7,7 +7,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func reconcileSnapshotClosedChannels(ctx context.Context, tx pgx.Tx, observedAt time.Time) error {
+const graphExplorerSnapshotCloseGrace = 12 * time.Hour
+
+func reconcileSnapshotClosedChannels(ctx context.Context, tx pgx.Tx, observedAt time.Time, localPubkey string) error {
+	localPubkey = graphExplorerNormalizePubkey(localPubkey)
+	closeCutoff := observedAt.Add(-graphExplorerSnapshotCloseGrace)
+
 	const updateQuery = `
 with snapshot_closed as (
   update graph_channels
@@ -19,7 +24,14 @@ with snapshot_closed as (
       end,
       last_indexed_at = $1
   where status = 'open'
-    and last_seen_at < $1
+    and last_seen_at < $2
+    and (
+      $3 = ''
+      or (
+        coalesce(node1_pubkey, '') <> $3
+        and coalesce(node2_pubkey, '') <> $3
+      )
+    )
   returning chan_id, chan_point, node1_pubkey, node2_pubkey, capacity_sat, coalesce(closed_height, 0) as closed_height,
             coalesce(closed_at, $1) as observed_at, close_source
 )
@@ -36,7 +48,7 @@ where (e.chan_id > 0 and e.chan_id = sc.chan_id)
    or (coalesce(sc.chan_point, '') <> '' and e.chan_point = sc.chan_point)
 `
 
-	if _, err := tx.Exec(ctx, updateQuery, observedAt); err != nil {
+	if _, err := tx.Exec(ctx, updateQuery, observedAt, closeCutoff, localPubkey); err != nil {
 		return err
 	}
 

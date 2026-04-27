@@ -16,6 +16,82 @@ type graphExplorerChannelKeySet struct {
 	byChanPoint map[string]struct{}
 }
 
+func (s *GraphExplorerService) reconcileLocalOpenChannels(ctx context.Context, tx pgx.Tx, localPubkey string, observedAt time.Time) error {
+	if s == nil || s.lnd == nil {
+		return nil
+	}
+
+	localPubkey = graphExplorerNormalizePubkey(localPubkey)
+	if localPubkey == "" {
+		return nil
+	}
+
+	channels, err := s.lnd.ListOpenChannelRefs(ctx)
+	if err != nil {
+		return err
+	}
+
+	const reopenQuery = `
+update graph_channels
+set node1_pubkey = case when $3 <> '' then $3 else node1_pubkey end,
+    node2_pubkey = case when $4 <> '' then $4 else node2_pubkey end,
+    capacity_sat = case when $5 > 0 then $5 else capacity_sat end,
+    open_block_height = case when $6 > 0 then $6 else open_block_height end,
+    status = 'open',
+    last_seen_at = greatest(coalesce(last_seen_at, $7), $7),
+    last_indexed_at = $7,
+    closed_at = null,
+    closed_height = null,
+    close_source = null,
+    close_type = null,
+    close_txid = null,
+    close_confidence = null,
+    classified_at = null
+where (chan_id > 0 and chan_id = $1)
+   or ($2 <> '' and chan_point = $2)
+`
+	const cleanupQuery = `
+delete from graph_close_events
+where ((chan_id > 0 and chan_id = $1) or ($2 <> '' and chan_point = $2))
+  and (
+    close_source = 'native+snapshot'
+    or metadata_json ->> 'source' = 'snapshot_missing'
+  )
+`
+
+	batch := &pgx.Batch{}
+	queued := 0
+	for _, channel := range channels {
+		chanPoint := graphExplorerNormalizeChanPoint(channel.ChannelPoint)
+		if channel.ChannelID == 0 && chanPoint == "" {
+			continue
+		}
+		remotePubkey := graphExplorerNormalizePubkey(channel.RemotePubkey)
+		node1, node2 := canonicalPubKeyPair(localPubkey, remotePubkey)
+
+		batch.Queue(reopenQuery,
+			int64(channel.ChannelID),
+			chanPoint,
+			node1,
+			node2,
+			channel.CapacitySat,
+			channelBlockHeight(channel.ChannelID),
+			observedAt,
+		)
+		queued++
+		batch.Queue(cleanupQuery, int64(channel.ChannelID), chanPoint)
+		queued++
+		if queued >= graphExplorerBatchSize {
+			if err := executeBatch(ctx, tx, batch, queued); err != nil {
+				return err
+			}
+			batch = &pgx.Batch{}
+			queued = 0
+		}
+	}
+	return executeBatch(ctx, tx, batch, queued)
+}
+
 func (s *GraphExplorerService) reconcileLocalClosedChannels(ctx context.Context, tx pgx.Tx, observedAt time.Time) error {
 	if s == nil || s.lnd == nil {
 		return nil

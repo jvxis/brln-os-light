@@ -418,10 +418,14 @@ func (s *GraphExplorerService) Refresh(ctx context.Context) error {
 	if err := upsertGraphPoliciesSnapshot(ctx, tx, snapshot.Channels, refreshStartedAt, currentPolicies); err != nil {
 		return err
 	}
+	localPubkey := s.loadLocalPubkey(ctx)
+	if err := s.reconcileLocalOpenChannels(ctx, tx, localPubkey, refreshStartedAt); err != nil {
+		return err
+	}
 	if err := s.reconcileLocalClosedChannels(ctx, tx, refreshStartedAt); err != nil {
 		return err
 	}
-	if err := reconcileSnapshotClosedChannels(ctx, tx, refreshStartedAt); err != nil {
+	if err := reconcileSnapshotClosedChannels(ctx, tx, refreshStartedAt, localPubkey); err != nil {
 		return err
 	}
 	if err := recomputeGraphNodeAggregates(ctx, tx, refreshStartedAt); err != nil {
@@ -688,7 +692,25 @@ on conflict (chan_id) do update set
 			queued = 0
 		}
 	}
-	return executeBatch(ctx, tx, batch, queued)
+	if err := executeBatch(ctx, tx, batch, queued); err != nil {
+		return err
+	}
+	return cleanupGraphSnapshotCloseEventsForRecentlyOpenChannels(ctx, tx, observedAt)
+}
+
+func cleanupGraphSnapshotCloseEventsForRecentlyOpenChannels(ctx context.Context, tx pgx.Tx, observedAt time.Time) error {
+	_, err := tx.Exec(ctx, `
+delete from graph_close_events e
+using graph_channels ch
+where ch.status = 'open'
+  and ch.last_seen_at = $1
+  and ((e.chan_id > 0 and e.chan_id = ch.chan_id) or (coalesce(ch.chan_point, '') <> '' and e.chan_point = ch.chan_point))
+  and (
+    e.close_source = 'native+snapshot'
+    or e.metadata_json ->> 'source' = 'snapshot_missing'
+  )
+`, observedAt)
+	return err
 }
 
 func upsertGraphPoliciesSnapshot(ctx context.Context, tx pgx.Tx, channels []lndclient.GraphChannel, observedAt time.Time, currentPolicies map[graphPolicyKey]graphPolicySnapshot) error {
@@ -817,6 +839,16 @@ on conflict (chan_id) do update set
 	currentQueued := 0
 	historyBatch := &pgx.Batch{}
 	historyQueued := 0
+	cleanupBatch := &pgx.Batch{}
+	cleanupQueued := 0
+	const closeCleanupQuery = `
+delete from graph_close_events
+where ((chan_id > 0 and chan_id = $1) or ($2 <> '' and chan_point = $2))
+  and (
+    close_source = 'native+snapshot'
+    or metadata_json ->> 'source' = 'snapshot_missing'
+  )
+`
 
 	for _, update := range updates {
 		if update.ChannelID == 0 {
@@ -839,6 +871,15 @@ on conflict (chan_id) do update set
 			}
 			channelBatch = &pgx.Batch{}
 			channelQueued = 0
+		}
+		cleanupBatch.Queue(closeCleanupQuery, int64(update.ChannelID), strings.TrimSpace(update.ChanPoint))
+		cleanupQueued++
+		if cleanupQueued >= graphExplorerBatchSize {
+			if err := executeBatch(ctx, tx, cleanupBatch, cleanupQueued); err != nil {
+				return err
+			}
+			cleanupBatch = &pgx.Batch{}
+			cleanupQueued = 0
 		}
 
 		candidate := graphPolicyCandidateFromUpdate(update, observedAt)
@@ -885,7 +926,10 @@ on conflict (chan_id) do update set
 	if err := executeBatch(ctx, tx, currentBatch, currentQueued); err != nil {
 		return err
 	}
-	return executeBatch(ctx, tx, historyBatch, historyQueued)
+	if err := executeBatch(ctx, tx, historyBatch, historyQueued); err != nil {
+		return err
+	}
+	return executeBatch(ctx, tx, cleanupBatch, cleanupQueued)
 }
 
 func applyGraphClosedChannelUpdates(ctx context.Context, tx pgx.Tx, updates []lndclient.GraphClosedChannelUpdate, observedAt time.Time) error {

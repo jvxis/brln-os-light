@@ -4663,6 +4663,34 @@ func (c *Client) ListChannels(ctx context.Context) ([]ChannelInfo, error) {
 	return channels, nil
 }
 
+func (c *Client) ListOpenChannelRefs(ctx context.Context) ([]ChannelRef, error) {
+	conn, err := c.dial(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	client := lnrpc.NewLightningClient(conn)
+	resp, err := client.ListChannels(ctx, &lnrpc.ListChannelsRequest{})
+	if err != nil {
+		return nil, err
+	}
+
+	channels := make([]ChannelRef, 0, len(resp.Channels))
+	for _, ch := range resp.Channels {
+		if ch == nil {
+			continue
+		}
+		channels = append(channels, ChannelRef{
+			ChannelPoint: strings.TrimSpace(ch.ChannelPoint),
+			ChannelID:    ch.ChanId,
+			RemotePubkey: strings.TrimSpace(ch.RemotePubkey),
+			CapacitySat:  ch.Capacity,
+		})
+	}
+	return channels, nil
+}
+
 func (c *Client) ListPendingChannels(ctx context.Context) ([]PendingChannelInfo, error) {
 	conn, err := c.dial(ctx, true)
 	if err != nil {
@@ -6756,6 +6784,13 @@ type ChannelInfo struct {
 	RebalFee7dSat       *int64                   `json:"rebal_fee_7d_sat,omitempty"`
 	ProfitFee7dSat      *int64                   `json:"profit_fee_7d_sat,omitempty"`
 	Movement7d          *ChannelMovement7d       `json:"movement_7d,omitempty"`
+}
+
+type ChannelRef struct {
+	ChannelPoint string
+	ChannelID    uint64
+	RemotePubkey string
+	CapacitySat  int64
 }
 
 func normalizeChannelPointKey(point string) string {

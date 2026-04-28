@@ -255,6 +255,15 @@ func TestShouldSkipPairForRecentFailureHonorsSuccessResetAndAdaptiveTTL(t *testi
 	}
 }
 
+func TestIsStructuralRebalanceFailureNormalizesMppPrefix(t *testing.T) {
+	if !isStructuralRebalanceFailure("mpp shard: rpc error: code = Unknown desc = unable to find a path to destination") {
+		t.Fatalf("expected mpp no-path failure to be structural")
+	}
+	if isStructuralRebalanceFailure("route fee exceeds limit") {
+		t.Fatalf("did not expect fee limit failure to be structural")
+	}
+}
+
 func TestShouldCooldownRecentFailuresRequiresRecentFailurePressure(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	stat := recentCooldownStat{
@@ -312,18 +321,18 @@ func TestShouldCooldownTargetRecentFailuresIncludesNoAttemptJobs(t *testing.T) {
 		Failures:      targetNoAttemptCooldownMinFailures,
 		LastAttemptAt: now.Add(-5 * time.Minute),
 	}
-	if !shouldCooldownTargetRecentFailures(recentCooldownStat{}, noAttempt, recentCooldownStat{}, now) {
+	if !shouldCooldownTargetRecentFailures(recentCooldownStat{}, noAttempt, recentCooldownStat{}, recentCooldownStat{}, now) {
 		t.Fatalf("expected repeated no-attempt target failures to trigger target cooldown")
 	}
 
 	noAttempt.Successes = 1
-	if shouldCooldownTargetRecentFailures(recentCooldownStat{}, noAttempt, recentCooldownStat{}, now) {
+	if shouldCooldownTargetRecentFailures(recentCooldownStat{}, noAttempt, recentCooldownStat{}, recentCooldownStat{}, now) {
 		t.Fatalf("did not expect no-attempt cooldown after a recent target success")
 	}
 
 	noAttempt.Successes = 0
 	noAttempt.LastAttemptAt = now.Add(-recentCooldownTTL - time.Second)
-	if shouldCooldownTargetRecentFailures(recentCooldownStat{}, noAttempt, recentCooldownStat{}, now) {
+	if shouldCooldownTargetRecentFailures(recentCooldownStat{}, noAttempt, recentCooldownStat{}, recentCooldownStat{}, now) {
 		t.Fatalf("did not expect expired no-attempt target failures to keep target in cooldown")
 	}
 }
@@ -335,21 +344,45 @@ func TestShouldCooldownTargetRecentFailuresIncludesAllSourcesFailedJobs(t *testi
 		Failures:      targetFailedCooldownMinFailures,
 		LastAttemptAt: now.Add(-5 * time.Minute),
 	}
-	if !shouldCooldownTargetRecentFailures(recentCooldownStat{}, recentCooldownStat{}, failed, now) {
+	if !shouldCooldownTargetRecentFailures(recentCooldownStat{}, recentCooldownStat{}, failed, recentCooldownStat{}, now) {
 		t.Fatalf("expected repeated all-sources-failed jobs to trigger target cooldown")
 	}
 
 	failed.Attempts = targetFailedCooldownMinFailures - 1
 	failed.Failures = failed.Attempts
-	if shouldCooldownTargetRecentFailures(recentCooldownStat{}, recentCooldownStat{}, failed, now) {
+	if shouldCooldownTargetRecentFailures(recentCooldownStat{}, recentCooldownStat{}, failed, recentCooldownStat{}, now) {
 		t.Fatalf("did not expect all-sources-failed cooldown below failure threshold")
 	}
 
 	failed.Attempts = targetFailedCooldownMinFailures
 	failed.Failures = targetFailedCooldownMinFailures
 	failed.Successes = 1
-	if shouldCooldownTargetRecentFailures(recentCooldownStat{}, recentCooldownStat{}, failed, now) {
+	if shouldCooldownTargetRecentFailures(recentCooldownStat{}, recentCooldownStat{}, failed, recentCooldownStat{}, now) {
 		t.Fatalf("did not expect all-sources-failed cooldown after a recent target success")
+	}
+}
+
+func TestShouldCooldownTargetRecentFailuresIncludesDistinctSourceFailures(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	distinct := recentCooldownStat{
+		Attempts:        targetDistinctSourceMinFailures,
+		Failures:        targetDistinctSourceMinFailures,
+		DistinctSources: targetDistinctSourceMinFailures,
+		LastFailureAt:   now.Add(-5 * time.Minute),
+	}
+	if !shouldCooldownTargetRecentFailures(recentCooldownStat{}, recentCooldownStat{}, recentCooldownStat{}, distinct, now) {
+		t.Fatalf("expected distinct source structural failures to trigger target cooldown")
+	}
+
+	distinct.DistinctSources = targetDistinctSourceMinFailures - 1
+	if shouldCooldownTargetRecentFailures(recentCooldownStat{}, recentCooldownStat{}, recentCooldownStat{}, distinct, now) {
+		t.Fatalf("did not expect distinct source cooldown below source threshold")
+	}
+
+	distinct.DistinctSources = targetDistinctSourceMinFailures
+	distinct.LastSuccessAt = now.Add(-2 * time.Minute)
+	if shouldCooldownTargetRecentFailures(recentCooldownStat{}, recentCooldownStat{}, recentCooldownStat{}, distinct, now) {
+		t.Fatalf("did not expect distinct source cooldown after a newer target success")
 	}
 }
 

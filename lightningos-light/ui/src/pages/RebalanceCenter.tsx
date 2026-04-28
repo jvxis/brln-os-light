@@ -122,6 +122,23 @@ type RebalanceOverview = {
   mpp_shadow_floor_blocked_sources_24h?: number
   mpp_shadow_avg_planned_shards_24h?: number
   mpp_shadow_avg_actual_attempts_24h?: number
+  mpp_structural_abort_jobs_24h?: number
+  top_failure_reasons_30m?: RebalanceReasonStat[]
+  route_dead_targets_30m?: RebalanceTargetStat[]
+}
+
+type RebalanceReasonStat = {
+  reason: string
+  count: number
+}
+
+type RebalanceTargetStat = {
+  channel_id: number
+  peer_alias?: string
+  failed_sources: number
+  failure_attempts: number
+  last_failure_at?: string
+  reason?: string
 }
 
 type RebalanceScanSkip = {
@@ -1460,6 +1477,9 @@ export default function RebalanceCenter() {
                     {t('rebalanceCenter.overview.mppPartialJobs24h', { value: formatter.format(overview.mpp_shadow_partial_jobs_24h ?? 0) })}
                   </p>
                   <p className="text-xs text-fog/50">
+                    {t('rebalanceCenter.overview.mppStructuralAbortJobs24h', { value: formatter.format(overview.mpp_structural_abort_jobs_24h ?? 0) })}
+                  </p>
+                  <p className="text-xs text-fog/50">
                     {t('rebalanceCenter.overview.mppFloorBlockedSources24h', { value: formatter.format(overview.mpp_shadow_floor_blocked_sources_24h ?? 0) })}
                   </p>
                   <p className="text-xs text-fog/50">
@@ -1469,6 +1489,36 @@ export default function RebalanceCenter() {
                     {t('rebalanceCenter.overview.mppActualSentSat24h', { value: formatSats(overview.mpp_shadow_actual_sent_sat_24h ?? 0) })}
                   </p>
                 </div>
+              </div>
+            )}
+            {((overview.top_failure_reasons_30m?.length ?? 0) > 0 || (overview.route_dead_targets_30m?.length ?? 0) > 0) && (
+              <div className="mt-2 border-t border-white/10 pt-2 space-y-2">
+                <p className="text-[10px] uppercase tracking-wide text-fog/60">{t('rebalanceCenter.overview.failureTelemetry30m')}</p>
+                {(overview.top_failure_reasons_30m?.length ?? 0) > 0 && (
+                  <div className="space-y-1">
+                    {overview.top_failure_reasons_30m?.slice(0, 3).map((item) => (
+                      <p key={item.reason} className="truncate text-xs text-fog/50">
+                        {t('rebalanceCenter.overview.failureReasonRow', {
+                          reason: item.reason,
+                          value: formatter.format(item.count)
+                        })}
+                      </p>
+                    ))}
+                  </div>
+                )}
+                {(overview.route_dead_targets_30m?.length ?? 0) > 0 && (
+                  <div className="space-y-1">
+                    {overview.route_dead_targets_30m?.slice(0, 3).map((item) => (
+                      <p key={item.channel_id} className="truncate text-xs text-fog/50">
+                        {t('rebalanceCenter.overview.routeDeadTargetRow', {
+                          target: item.peer_alias || String(item.channel_id),
+                          sources: formatter.format(item.failed_sources),
+                          attempts: formatter.format(item.failure_attempts)
+                        })}
+                      </p>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>

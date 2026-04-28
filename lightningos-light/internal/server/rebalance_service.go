@@ -38,6 +38,7 @@ const (
 	recentCooldownTTL                   = 30 * time.Minute
 	targetNoAttemptCooldownWindow       = rebalanceMaxCooldown
 	targetFailedCooldownWindow          = rebalanceMaxCooldown
+	targetDistinctSourceCooldownWindow  = rebalanceMaxCooldown
 	sourceCooldownMinAttempts           = 25
 	sourceCooldownMaxSuccess            = 1
 	targetCooldownMinAttempts           = 25
@@ -46,6 +47,8 @@ const (
 	targetNoAttemptCooldownMaxSuccesses = 0
 	targetFailedCooldownMinFailures     = 5
 	targetFailedCooldownMaxSuccesses    = 0
+	targetDistinctSourceMinFailures     = 6
+	targetDistinctSourceMaxSuccesses    = 0
 )
 
 const (
@@ -58,6 +61,11 @@ const (
 
 const (
 	autoTargetCooldownMin = 10 * time.Minute
+)
+
+const (
+	mppStructuralAbortMinAttempts = 4
+	mppStructuralAbortRatio       = 0.70
 )
 
 const (
@@ -180,6 +188,9 @@ type RebalanceOverview struct {
 	MppShadowFloorBlocked24h      int64                 `json:"mpp_shadow_floor_blocked_sources_24h"`
 	MppShadowAvgPlannedShards24h  float64               `json:"mpp_shadow_avg_planned_shards_24h"`
 	MppShadowAvgActualAttempts24h float64               `json:"mpp_shadow_avg_actual_attempts_24h"`
+	MppStructuralAbortJobs24h     int64                 `json:"mpp_structural_abort_jobs_24h"`
+	TopFailureReasons30m          []RebalanceReasonStat `json:"top_failure_reasons_30m,omitempty"`
+	RouteDeadTargets30m           []RebalanceTargetStat `json:"route_dead_targets_30m,omitempty"`
 }
 
 type RebalanceSkipDetail struct {
@@ -193,6 +204,20 @@ type RebalanceSkipDetail struct {
 	ExpectedROI       float64 `json:"expected_roi"`
 	ExpectedROIValid  bool    `json:"expected_roi_valid"`
 	Reason            string  `json:"reason"`
+}
+
+type RebalanceReasonStat struct {
+	Reason string `json:"reason"`
+	Count  int64  `json:"count"`
+}
+
+type RebalanceTargetStat struct {
+	ChannelID       uint64 `json:"channel_id"`
+	PeerAlias       string `json:"peer_alias,omitempty"`
+	FailedSources   int64  `json:"failed_sources"`
+	FailureAttempts int64  `json:"failure_attempts"`
+	LastFailureAt   string `json:"last_failure_at,omitempty"`
+	Reason          string `json:"reason,omitempty"`
 }
 
 type RebalanceChannel struct {
@@ -302,13 +327,14 @@ type pairStat struct {
 }
 
 type recentCooldownStat struct {
-	ChannelID     uint64
-	Attempts      int
-	Failures      int
-	Successes     int
-	LastAttemptAt time.Time
-	LastFailureAt time.Time
-	LastSuccessAt time.Time
+	ChannelID       uint64
+	Attempts        int
+	Failures        int
+	Successes       int
+	DistinctSources int
+	LastAttemptAt   time.Time
+	LastFailureAt   time.Time
+	LastSuccessAt   time.Time
 }
 
 type rebalanceCost7dStat struct {
@@ -831,6 +857,24 @@ func normalizedPairFailReason(reason string) string {
 	return reason
 }
 
+func isStructuralRebalanceFailure(reason string) bool {
+	reason = normalizedPairFailReason(reason)
+	switch {
+	case strings.Contains(reason, "unable to find a path"):
+		return true
+	case strings.Contains(reason, "no matching outgoing channel"):
+		return true
+	case strings.Contains(reason, "probe returned no amount"):
+		return true
+	case strings.Contains(reason, "attempt timeout"):
+		return true
+	case strings.Contains(reason, "deadlineexceeded") || strings.Contains(reason, "deadline exceeded"):
+		return true
+	default:
+		return false
+	}
+}
+
 func pairFailureBaseTTL(reason string) (time.Duration, bool) {
 	reason = normalizedPairFailReason(reason)
 	switch {
@@ -905,14 +949,37 @@ func shouldCooldownRecentFailures(stat recentCooldownStat, minAttempts int, maxS
 	return now.Sub(lastFailureAt) <= recentCooldownTTL
 }
 
-func shouldCooldownTargetRecentFailures(attemptStat recentCooldownStat, noAttemptStat recentCooldownStat, failedStat recentCooldownStat, now time.Time) bool {
+func shouldCooldownDistinctSourceFailures(stat recentCooldownStat, minSources int, maxSuccesses int, now time.Time) bool {
+	if stat.DistinctSources < minSources {
+		return false
+	}
+	if stat.Successes > maxSuccesses && (stat.LastSuccessAt.IsZero() || stat.LastFailureAt.IsZero()) {
+		return false
+	}
+	lastFailureAt := stat.LastFailureAt
+	if lastFailureAt.IsZero() {
+		lastFailureAt = stat.LastAttemptAt
+	}
+	if lastFailureAt.IsZero() {
+		return false
+	}
+	if !stat.LastSuccessAt.IsZero() && !stat.LastSuccessAt.Before(lastFailureAt) {
+		return false
+	}
+	return now.Sub(lastFailureAt) <= recentCooldownTTL
+}
+
+func shouldCooldownTargetRecentFailures(attemptStat recentCooldownStat, noAttemptStat recentCooldownStat, failedStat recentCooldownStat, distinctSourceStat recentCooldownStat, now time.Time) bool {
 	if shouldCooldownRecentFailures(attemptStat, targetCooldownMinAttempts, targetCooldownMaxSuccess, now) {
 		return true
 	}
 	if shouldCooldownRecentFailures(noAttemptStat, targetNoAttemptCooldownMinFailures, targetNoAttemptCooldownMaxSuccesses, now) {
 		return true
 	}
-	return shouldCooldownRecentFailures(failedStat, targetFailedCooldownMinFailures, targetFailedCooldownMaxSuccesses, now)
+	if shouldCooldownRecentFailures(failedStat, targetFailedCooldownMinFailures, targetFailedCooldownMaxSuccesses, now) {
+		return true
+	}
+	return shouldCooldownDistinctSourceFailures(distinctSourceStat, targetDistinctSourceMinFailures, targetDistinctSourceMaxSuccesses, now)
 }
 
 func buildMppShadowPlan(targetAmountSat int64, sources []RebalanceChannel, cfg RebalanceConfig) mppShadowPlan {
@@ -1144,6 +1211,7 @@ func (s *RebalanceService) runManualRestartWatch() {
 	targetCooldowns := s.loadRecentTargetCooldowns(ctx, time.Now().Add(-recentCooldownWindow))
 	targetNoAttemptCooldowns := s.loadRecentTargetNoAttemptCooldowns(ctx, time.Now().Add(-targetNoAttemptCooldownWindow))
 	targetFailedCooldowns := s.loadRecentTargetFailedCooldowns(ctx, time.Now().Add(-targetFailedCooldownWindow))
+	targetDistinctSourceCooldowns := s.loadRecentTargetDistinctSourceCooldowns(ctx, time.Now().Add(-targetDistinctSourceCooldownWindow))
 
 	channels, err := s.lnd.ListChannels(ctx)
 	if err != nil {
@@ -1156,7 +1224,7 @@ func (s *RebalanceService) runManualRestartWatch() {
 		if !setting.ManualRestartEnabled {
 			continue
 		}
-		if shouldCooldownTargetRecentFailures(targetCooldowns[ch.ChannelID], targetNoAttemptCooldowns[ch.ChannelID], targetFailedCooldowns[ch.ChannelID], time.Now()) {
+		if shouldCooldownTargetRecentFailures(targetCooldowns[ch.ChannelID], targetNoAttemptCooldowns[ch.ChannelID], targetFailedCooldowns[ch.ChannelID], targetDistinctSourceCooldowns[ch.ChannelID], time.Now()) {
 			continue
 		}
 		if s.isChannelBusy(ch.ChannelID) {
@@ -1246,6 +1314,7 @@ func (s *RebalanceService) runAutoScan() {
 	targetCooldowns := s.loadRecentTargetCooldowns(ctx, scanAt.Add(-recentCooldownWindow))
 	targetNoAttemptCooldowns := s.loadRecentTargetNoAttemptCooldowns(ctx, scanAt.Add(-targetNoAttemptCooldownWindow))
 	targetFailedCooldowns := s.loadRecentTargetFailedCooldowns(ctx, scanAt.Add(-targetFailedCooldownWindow))
+	targetDistinctSourceCooldowns := s.loadRecentTargetDistinctSourceCooldowns(ctx, scanAt.Add(-targetDistinctSourceCooldownWindow))
 	s.mu.Lock()
 	for channelID, last := range s.lastAutoByTarget {
 		if existing, ok := lastAutoByTarget[channelID]; !ok || last.After(existing) {
@@ -1274,7 +1343,7 @@ func (s *RebalanceService) runAutoScan() {
 		}
 
 		if setting.AutoEnabled && snapshot.EligibleAsTarget {
-			if shouldCooldownTargetRecentFailures(targetCooldowns[ch.ChannelID], targetNoAttemptCooldowns[ch.ChannelID], targetFailedCooldowns[ch.ChannelID], scanAt) {
+			if shouldCooldownTargetRecentFailures(targetCooldowns[ch.ChannelID], targetNoAttemptCooldowns[ch.ChannelID], targetFailedCooldowns[ch.ChannelID], targetDistinctSourceCooldowns[ch.ChannelID], scanAt) {
 				targetCooldownSkipped++
 				skippedDetails = append(skippedDetails, RebalanceSkipDetail{
 					ChannelID:         snapshot.ChannelID,
@@ -1912,10 +1981,14 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 	}
 
 	sort.Slice(sources, func(i, j int) bool {
-		rank := func(ch RebalanceChannel) (bool, bool, int64, int64, time.Duration) {
+		rank := func(ch RebalanceChannel) (bool, bool, int64, int64, int64, time.Duration) {
+			sourceCostPpm := ch.OutgoingFeePpm
+			if sourceCostPpm < 0 {
+				sourceCostPpm = 0
+			}
 			stat, ok := pairStats[ch.ChannelID]
 			if !ok {
-				return false, false, 0, 0, 0
+				return false, false, sourceCostPpm, 0, 0, 0
 			}
 			hasRecentSuccess := false
 			if !stat.LastSuccessAt.IsZero() && time.Since(stat.LastSuccessAt) <= pairSuccessTTL {
@@ -1931,11 +2004,11 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			if !stat.LastSuccessAt.IsZero() {
 				age = time.Since(stat.LastSuccessAt)
 			}
-			return hasRecentSuccess, hasRecentFail, stat.SuccessFeePpm, stat.SuccessAmountSat, age
+			return hasRecentSuccess, hasRecentFail, sourceCostPpm, stat.SuccessFeePpm, stat.SuccessAmountSat, age
 		}
 
-		iSuccess, iFail, iFee, iAmt, iAge := rank(sources[i])
-		jSuccess, jFail, jFee, jAmt, jAge := rank(sources[j])
+		iSuccess, iFail, iSourceCost, iFee, iAmt, iAge := rank(sources[i])
+		jSuccess, jFail, jSourceCost, jFee, jAmt, jAge := rank(sources[j])
 
 		if iSuccess != jSuccess {
 			return iSuccess
@@ -1953,6 +2026,9 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			if iAmt != jAmt {
 				return iAmt > jAmt
 			}
+		}
+		if iSourceCost != jSourceCost {
+			return iSourceCost < jSourceCost
 		}
 		return sources[i].MaxSourceSat > sources[j].MaxSourceSat
 	})
@@ -3236,6 +3312,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 
 		attemptedShards := 0
 		succeededShards := 0
+		structuralFailureShards := 0
 		sourceSuccessRemaining := make(map[uint64]int64, len(allowedSources))
 		for _, source := range allowedSources {
 			sourceSuccessRemaining[source.ChannelID] = source.MaxSourceSat
@@ -3291,9 +3368,29 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 					failReason = "mpp shard failed"
 				}
 			}
+			if isStructuralRebalanceFailure(failReason) {
+				structuralFailureShards++
+			}
 			shardFailReason := formatMppShardFailReason(failReason)
 			_ = s.insertAttempt(ctx, jobID, attemptIndex, res.Source.ChannelID, attemptAmount, res.FeeLimitPpm, 0, "failed", res.PaymentHash, shardFailReason)
 			recordPairFailure(ctx, res.Source.ChannelID, targetChannelID, shardFailReason)
+		}
+
+		if succeededShards == 0 && attemptedShards >= mppStructuralAbortMinAttempts {
+			structuralRatio := float64(structuralFailureShards) / float64(attemptedShards)
+			if structuralRatio >= mppStructuralAbortRatio {
+				s.finishJob(jobID, "failed", "mpp structural failure")
+				if s.logger != nil {
+					s.logger.Printf(
+						"rebalance mpp execute: job=%d aborting fallback structural_failures=%d attempted_shards=%d ratio=%.2f",
+						jobID,
+						structuralFailureShards,
+						attemptedShards,
+						structuralRatio,
+					)
+				}
+				return true, false
+			}
 		}
 
 		if s.logger != nil {
@@ -4001,6 +4098,93 @@ group by target_channel_id
 	return stats
 }
 
+func (s *RebalanceService) loadRecentTargetDistinctSourceCooldowns(ctx context.Context, since time.Time) map[uint64]recentCooldownStat {
+	stats := map[uint64]recentCooldownStat{}
+	if s.db == nil {
+		return stats
+	}
+	rows, err := s.db.Query(ctx, `
+with events as (
+  select
+    j.target_channel_id,
+    a.source_channel_id,
+    a.status,
+    a.fail_reason,
+    coalesce(a.finished_at, a.started_at) as occurred_at
+  from rebalance_attempts a
+  join rebalance_jobs j on j.id = a.job_id
+  where coalesce(a.finished_at, a.started_at) >= $1
+),
+last_success as (
+  select target_channel_id, max(occurred_at) as last_success_at
+  from events
+  where status='succeeded'
+  group by target_channel_id
+),
+pressure as (
+  select e.*, ls.last_success_at
+  from events e
+  left join last_success ls using (target_channel_id)
+  where ls.last_success_at is null or e.occurred_at > ls.last_success_at
+),
+structural_failures as (
+  select *
+  from pressure
+  where status<>'succeeded'
+    and (
+      lower(coalesce(fail_reason, '')) like '%unable to find a path%'
+      or lower(coalesce(fail_reason, '')) like '%no matching outgoing channel%'
+      or lower(coalesce(fail_reason, '')) like '%probe returned no amount%'
+      or lower(coalesce(fail_reason, '')) like '%attempt timeout%'
+      or lower(coalesce(fail_reason, '')) like '%deadlineexceeded%'
+      or lower(coalesce(fail_reason, '')) like '%deadline exceeded%'
+    )
+)
+select target_channel_id,
+  count(*) as failures,
+  count(distinct source_channel_id) as distinct_sources,
+  max(occurred_at) as last_failure_at,
+  max(last_success_at) as last_success_at
+from structural_failures
+group by target_channel_id
+`, since)
+	if err != nil {
+		return stats
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var channelID int64
+		var failures int
+		var distinctSources int
+		var lastFailure pgtype.Timestamptz
+		var lastSuccess pgtype.Timestamptz
+		if err := rows.Scan(&channelID, &failures, &distinctSources, &lastFailure, &lastSuccess); err != nil {
+			return stats
+		}
+		if failures <= 0 || distinctSources <= 0 {
+			continue
+		}
+		stat := recentCooldownStat{
+			ChannelID:       uint64(channelID),
+			Attempts:        failures,
+			Failures:        failures,
+			DistinctSources: distinctSources,
+			LastAttemptAt:   time.Time{},
+			LastFailureAt:   time.Time{},
+			LastSuccessAt:   time.Time{},
+		}
+		if lastFailure.Valid {
+			stat.LastAttemptAt = lastFailure.Time
+			stat.LastFailureAt = lastFailure.Time
+		}
+		if lastSuccess.Valid {
+			stat.LastSuccessAt = lastSuccess.Time
+		}
+		stats[uint64(channelID)] = stat
+	}
+	return stats
+}
+
 func (s *RebalanceService) acquireSem(ctx context.Context) bool {
 	s.mu.Lock()
 	sem := s.sem
@@ -4223,6 +4407,7 @@ func (s *RebalanceService) scheduleManualRestart(info manualRestartInfo) {
 	targetCooldowns := s.loadRecentTargetCooldowns(restartCtx, time.Now().Add(-recentCooldownWindow))
 	targetNoAttemptCooldowns := s.loadRecentTargetNoAttemptCooldowns(restartCtx, time.Now().Add(-targetNoAttemptCooldownWindow))
 	targetFailedCooldowns := s.loadRecentTargetFailedCooldowns(restartCtx, time.Now().Add(-targetFailedCooldownWindow))
+	targetDistinctSourceCooldowns := s.loadRecentTargetDistinctSourceCooldowns(restartCtx, time.Now().Add(-targetDistinctSourceCooldownWindow))
 
 	channels, err := s.lnd.ListChannels(restartCtx)
 	if err != nil {
@@ -4246,7 +4431,7 @@ func (s *RebalanceService) scheduleManualRestart(info manualRestartInfo) {
 	if !setting.ManualRestartEnabled {
 		return
 	}
-	if shouldCooldownTargetRecentFailures(targetCooldowns[target.ChannelID], targetNoAttemptCooldowns[target.ChannelID], targetFailedCooldowns[target.ChannelID], time.Now()) {
+	if shouldCooldownTargetRecentFailures(targetCooldowns[target.ChannelID], targetNoAttemptCooldowns[target.ChannelID], targetFailedCooldowns[target.ChannelID], targetDistinctSourceCooldowns[target.ChannelID], time.Now()) {
 		return
 	}
 	snapshot := s.buildChannelSnapshot(restartCtx, cfg, false, target, setting, ledger[target.ChannelID], revenueByChannel[target.ChannelID], costByChannel[target.ChannelID], exclusions[target.ChannelID])
@@ -5953,6 +6138,149 @@ where created_at >= now() - interval '24 hours'
 	return metrics, err
 }
 
+func (s *RebalanceService) fetchMppStructuralAbortJobs24h(ctx context.Context) int64 {
+	if s.db == nil {
+		return 0
+	}
+	var count int64
+	_ = s.db.QueryRow(ctx, `
+select count(*)
+from rebalance_jobs
+where completed_at >= now() - interval '24 hours'
+  and status='failed'
+  and reason='mpp structural failure'
+`).Scan(&count)
+	return count
+}
+
+func (s *RebalanceService) fetchFailureTelemetry30m(ctx context.Context) ([]RebalanceReasonStat, []RebalanceTargetStat) {
+	if s.db == nil {
+		return nil, nil
+	}
+
+	reasonCounts := map[string]int64{}
+	rows, err := s.db.Query(ctx, `
+select coalesce(fail_reason, ''), count(*)
+from rebalance_attempts
+where coalesce(finished_at, started_at) >= now() - interval '30 minutes'
+  and status <> 'succeeded'
+group by coalesce(fail_reason, '')
+`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var reason string
+			var count int64
+			if err := rows.Scan(&reason, &count); err != nil {
+				break
+			}
+			normalized := normalizedPairFailReason(reason)
+			if normalized == "" {
+				normalized = "unknown"
+			}
+			reasonCounts[normalized] += count
+		}
+	}
+
+	reasons := make([]RebalanceReasonStat, 0, len(reasonCounts))
+	for reason, count := range reasonCounts {
+		reasons = append(reasons, RebalanceReasonStat{Reason: reason, Count: count})
+	}
+	sort.Slice(reasons, func(i, j int) bool {
+		if reasons[i].Count != reasons[j].Count {
+			return reasons[i].Count > reasons[j].Count
+		}
+		return reasons[i].Reason < reasons[j].Reason
+	})
+	if len(reasons) > 10 {
+		reasons = reasons[:10]
+	}
+
+	aliasMap := map[uint64]string{}
+	if s.lnd != nil {
+		if channels, err := s.lnd.ListChannels(ctx); err == nil {
+			for _, ch := range channels {
+				if ch.ChannelID != 0 && ch.PeerAlias != "" {
+					aliasMap[ch.ChannelID] = ch.PeerAlias
+				}
+			}
+		}
+	}
+
+	targetRows, err := s.db.Query(ctx, `
+with events as (
+  select
+    j.target_channel_id,
+    a.source_channel_id,
+    a.status,
+    a.fail_reason,
+    coalesce(a.finished_at, a.started_at) as occurred_at
+  from rebalance_attempts a
+  join rebalance_jobs j on j.id = a.job_id
+  where coalesce(a.finished_at, a.started_at) >= now() - interval '30 minutes'
+),
+last_success as (
+  select target_channel_id, max(occurred_at) as last_success_at
+  from events
+  where status='succeeded'
+  group by target_channel_id
+),
+pressure as (
+  select e.*
+  from events e
+  left join last_success ls using (target_channel_id)
+  where (ls.last_success_at is null or e.occurred_at > ls.last_success_at)
+    and e.status <> 'succeeded'
+),
+structural_failures as (
+  select *
+  from pressure
+  where (
+      lower(coalesce(fail_reason, '')) like '%unable to find a path%'
+      or lower(coalesce(fail_reason, '')) like '%no matching outgoing channel%'
+      or lower(coalesce(fail_reason, '')) like '%probe returned no amount%'
+      or lower(coalesce(fail_reason, '')) like '%attempt timeout%'
+      or lower(coalesce(fail_reason, '')) like '%deadlineexceeded%'
+      or lower(coalesce(fail_reason, '')) like '%deadline exceeded%'
+    )
+)
+select target_channel_id,
+  count(distinct source_channel_id) as failed_sources,
+  count(*) as failure_attempts,
+  max(occurred_at) as last_failure_at
+from structural_failures
+group by target_channel_id
+order by failed_sources desc, failure_attempts desc, last_failure_at desc
+limit 10
+`)
+	if err != nil {
+		return reasons, nil
+	}
+	defer targetRows.Close()
+	targets := []RebalanceTargetStat{}
+	for targetRows.Next() {
+		var channelID int64
+		var failedSources int64
+		var failureAttempts int64
+		var lastFailure pgtype.Timestamptz
+		if err := targetRows.Scan(&channelID, &failedSources, &failureAttempts, &lastFailure); err != nil {
+			return reasons, targets
+		}
+		stat := RebalanceTargetStat{
+			ChannelID:       uint64(channelID),
+			PeerAlias:       aliasMap[uint64(channelID)],
+			FailedSources:   failedSources,
+			FailureAttempts: failureAttempts,
+			Reason:          "structural_failures",
+		}
+		if lastFailure.Valid {
+			stat.LastFailureAt = lastFailure.Time.UTC().Format(time.RFC3339)
+		}
+		targets = append(targets, stat)
+	}
+	return reasons, targets
+}
+
 func (s *RebalanceService) insertJob(ctx context.Context, target *lndclient.ChannelInfo, source string, reason string, targetPct float64, amount int64) (int64, error) {
 	if s.db == nil {
 		return 0, errors.New("db unavailable")
@@ -6117,6 +6445,9 @@ where type='rebalance' and occurred_at >= now() - interval '1 day'
 	paybackProgressRebalanced := 0.0
 	attemptTelemetry := rebalanceAttemptTelemetry24h{}
 	mppShadowTelemetry := mppShadowTelemetry24h{}
+	mppStructuralAbortJobs := int64(0)
+	topFailureReasons30m := []RebalanceReasonStat{}
+	routeDeadTargets30m := []RebalanceTargetStat{}
 	var successCount int64
 	var totalCount int64
 	var attemptedCount int64
@@ -6197,6 +6528,8 @@ where report_date >= current_date - interval '6 days'
 	if telemetry, err := s.fetchMppShadowTelemetry24h(ctx); err == nil {
 		mppShadowTelemetry = telemetry
 	}
+	mppStructuralAbortJobs = s.fetchMppStructuralAbortJobs24h(ctx)
+	topFailureReasons30m, routeDeadTargets30m = s.fetchFailureTelemetry30m(ctx)
 
 	eligibleSources := 0
 	targetsNeeding := 0
@@ -6275,6 +6608,9 @@ where report_date >= current_date - interval '6 days'
 		MppShadowFloorBlocked24h:      mppShadowTelemetry.FloorBlocked,
 		MppShadowAvgPlannedShards24h:  mppShadowTelemetry.AvgPlannedShards,
 		MppShadowAvgActualAttempts24h: mppShadowTelemetry.AvgActualAttempts,
+		MppStructuralAbortJobs24h:     mppStructuralAbortJobs,
+		TopFailureReasons30m:          topFailureReasons30m,
+		RouteDeadTargets30m:           routeDeadTargets30m,
 	}
 	if !lastScan.IsZero() {
 		overview.LastScanAt = lastScan.UTC().Format(time.RFC3339)

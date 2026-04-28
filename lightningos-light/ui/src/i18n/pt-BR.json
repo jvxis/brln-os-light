@@ -2764,9 +2764,13 @@
       "mppSuccessJobs24h": "Jobs com sucesso: {{value}}",
       "mppFailedJobs24h": "Jobs falhados: {{value}}",
       "mppPartialJobs24h": "Jobs parciais: {{value}}",
+      "mppStructuralAbortJobs24h": "Aborts estruturais: {{value}}",
       "mppFloorBlockedSources24h": "Fontes bloqueadas por piso dinâmico: {{value}}",
       "mppPlannedSat24h": "Planejado: {{value}}",
-      "mppActualSentSat24h": "Executado: {{value}}"
+      "mppActualSentSat24h": "Executado: {{value}}",
+      "failureTelemetry30m": "Falhas 30m",
+      "failureReasonRow": "{{reason}}: {{value}}",
+      "routeDeadTargetRow": "{{target}}: {{sources}} fontes · {{attempts}} tentativas"
     },
     "settings": {
       "title": "Configurações de Rebalance",

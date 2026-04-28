@@ -240,6 +240,7 @@ export type RebalanceOverview = {
   roi_7d?: number
   success_attempts_24h?: number
   success_amount_24h_sat?: number
+  mpp_structural_abort_jobs_24h?: number
 }
 
 export type AutofeeStatus = {

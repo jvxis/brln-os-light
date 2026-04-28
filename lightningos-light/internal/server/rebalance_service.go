@@ -37,12 +37,15 @@ const (
 	recentCooldownWindow                = 30 * time.Minute
 	recentCooldownTTL                   = 30 * time.Minute
 	targetNoAttemptCooldownWindow       = rebalanceMaxCooldown
+	targetFailedCooldownWindow          = rebalanceMaxCooldown
 	sourceCooldownMinAttempts           = 25
 	sourceCooldownMaxSuccess            = 1
 	targetCooldownMinAttempts           = 25
 	targetCooldownMaxSuccess            = 0
 	targetNoAttemptCooldownMinFailures  = 3
 	targetNoAttemptCooldownMaxSuccesses = 0
+	targetFailedCooldownMinFailures     = 5
+	targetFailedCooldownMaxSuccesses    = 0
 )
 
 const (
@@ -896,11 +899,14 @@ func shouldCooldownRecentFailures(stat recentCooldownStat, minAttempts int, maxS
 	return now.Sub(stat.LastAttemptAt) <= recentCooldownTTL
 }
 
-func shouldCooldownTargetRecentFailures(attemptStat recentCooldownStat, noAttemptStat recentCooldownStat, now time.Time) bool {
+func shouldCooldownTargetRecentFailures(attemptStat recentCooldownStat, noAttemptStat recentCooldownStat, failedStat recentCooldownStat, now time.Time) bool {
 	if shouldCooldownRecentFailures(attemptStat, targetCooldownMinAttempts, targetCooldownMaxSuccess, now) {
 		return true
 	}
-	return shouldCooldownRecentFailures(noAttemptStat, targetNoAttemptCooldownMinFailures, targetNoAttemptCooldownMaxSuccesses, now)
+	if shouldCooldownRecentFailures(noAttemptStat, targetNoAttemptCooldownMinFailures, targetNoAttemptCooldownMaxSuccesses, now) {
+		return true
+	}
+	return shouldCooldownRecentFailures(failedStat, targetFailedCooldownMinFailures, targetFailedCooldownMaxSuccesses, now)
 }
 
 func buildMppShadowPlan(targetAmountSat int64, sources []RebalanceChannel, cfg RebalanceConfig) mppShadowPlan {
@@ -1131,6 +1137,7 @@ func (s *RebalanceService) runManualRestartWatch() {
 	costByChannel, _ := s.fetchChannelRebalanceCost7d(ctx)
 	targetCooldowns := s.loadRecentTargetCooldowns(ctx, time.Now().Add(-recentCooldownWindow))
 	targetNoAttemptCooldowns := s.loadRecentTargetNoAttemptCooldowns(ctx, time.Now().Add(-targetNoAttemptCooldownWindow))
+	targetFailedCooldowns := s.loadRecentTargetFailedCooldowns(ctx, time.Now().Add(-targetFailedCooldownWindow))
 
 	channels, err := s.lnd.ListChannels(ctx)
 	if err != nil {
@@ -1143,7 +1150,7 @@ func (s *RebalanceService) runManualRestartWatch() {
 		if !setting.ManualRestartEnabled {
 			continue
 		}
-		if shouldCooldownTargetRecentFailures(targetCooldowns[ch.ChannelID], targetNoAttemptCooldowns[ch.ChannelID], time.Now()) {
+		if shouldCooldownTargetRecentFailures(targetCooldowns[ch.ChannelID], targetNoAttemptCooldowns[ch.ChannelID], targetFailedCooldowns[ch.ChannelID], time.Now()) {
 			continue
 		}
 		if s.isChannelBusy(ch.ChannelID) {
@@ -1232,6 +1239,7 @@ func (s *RebalanceService) runAutoScan() {
 	lastAutoByTarget := s.loadLastAutoEnqueueTimes(ctx)
 	targetCooldowns := s.loadRecentTargetCooldowns(ctx, scanAt.Add(-recentCooldownWindow))
 	targetNoAttemptCooldowns := s.loadRecentTargetNoAttemptCooldowns(ctx, scanAt.Add(-targetNoAttemptCooldownWindow))
+	targetFailedCooldowns := s.loadRecentTargetFailedCooldowns(ctx, scanAt.Add(-targetFailedCooldownWindow))
 	s.mu.Lock()
 	for channelID, last := range s.lastAutoByTarget {
 		if existing, ok := lastAutoByTarget[channelID]; !ok || last.After(existing) {
@@ -1260,7 +1268,7 @@ func (s *RebalanceService) runAutoScan() {
 		}
 
 		if setting.AutoEnabled && snapshot.EligibleAsTarget {
-			if shouldCooldownTargetRecentFailures(targetCooldowns[ch.ChannelID], targetNoAttemptCooldowns[ch.ChannelID], scanAt) {
+			if shouldCooldownTargetRecentFailures(targetCooldowns[ch.ChannelID], targetNoAttemptCooldowns[ch.ChannelID], targetFailedCooldowns[ch.ChannelID], scanAt) {
 				targetCooldownSkipped++
 				skippedDetails = append(skippedDetails, RebalanceSkipDetail{
 					ChannelID:         snapshot.ChannelID,
@@ -3835,6 +3843,50 @@ group by j.target_channel_id
 	return stats
 }
 
+func (s *RebalanceService) loadRecentTargetFailedCooldowns(ctx context.Context, since time.Time) map[uint64]recentCooldownStat {
+	stats := map[uint64]recentCooldownStat{}
+	if s.db == nil {
+		return stats
+	}
+	rows, err := s.db.Query(ctx, `
+select j.target_channel_id,
+  coalesce(sum(case when j.status='failed' and j.reason='all sources failed' then 1 else 0 end), 0) as failures,
+  coalesce(sum(case when j.status in ('succeeded','partial') then 1 else 0 end), 0) as successes,
+  max(case when j.status='failed' and j.reason='all sources failed' then j.completed_at else null end) as last_failure_at
+from rebalance_jobs j
+where j.completed_at >= $1
+  and j.status in ('succeeded','partial','failed')
+group by j.target_channel_id
+`, since)
+	if err != nil {
+		return stats
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var channelID int64
+		var failures int
+		var successes int
+		var lastAttempt pgtype.Timestamptz
+		if err := rows.Scan(&channelID, &failures, &successes, &lastAttempt); err != nil {
+			return stats
+		}
+		if failures <= 0 {
+			continue
+		}
+		stat := recentCooldownStat{
+			ChannelID: uint64(channelID),
+			Attempts:  failures,
+			Successes: successes,
+			Failures:  failures,
+		}
+		if lastAttempt.Valid {
+			stat.LastAttemptAt = lastAttempt.Time
+		}
+		stats[uint64(channelID)] = stat
+	}
+	return stats
+}
+
 func (s *RebalanceService) acquireSem(ctx context.Context) bool {
 	s.mu.Lock()
 	sem := s.sem
@@ -4056,6 +4108,7 @@ func (s *RebalanceService) scheduleManualRestart(info manualRestartInfo) {
 	costByChannel, _ := s.fetchChannelRebalanceCost7d(restartCtx)
 	targetCooldowns := s.loadRecentTargetCooldowns(restartCtx, time.Now().Add(-recentCooldownWindow))
 	targetNoAttemptCooldowns := s.loadRecentTargetNoAttemptCooldowns(restartCtx, time.Now().Add(-targetNoAttemptCooldownWindow))
+	targetFailedCooldowns := s.loadRecentTargetFailedCooldowns(restartCtx, time.Now().Add(-targetFailedCooldownWindow))
 
 	channels, err := s.lnd.ListChannels(restartCtx)
 	if err != nil {
@@ -4079,7 +4132,7 @@ func (s *RebalanceService) scheduleManualRestart(info manualRestartInfo) {
 	if !setting.ManualRestartEnabled {
 		return
 	}
-	if shouldCooldownTargetRecentFailures(targetCooldowns[target.ChannelID], targetNoAttemptCooldowns[target.ChannelID], time.Now()) {
+	if shouldCooldownTargetRecentFailures(targetCooldowns[target.ChannelID], targetNoAttemptCooldowns[target.ChannelID], targetFailedCooldowns[target.ChannelID], time.Now()) {
 		return
 	}
 	snapshot := s.buildChannelSnapshot(restartCtx, cfg, false, target, setting, ledger[target.ChannelID], revenueByChannel[target.ChannelID], costByChannel[target.ChannelID], exclusions[target.ChannelID])

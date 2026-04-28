@@ -292,19 +292,44 @@ func TestShouldCooldownTargetRecentFailuresIncludesNoAttemptJobs(t *testing.T) {
 		Failures:      targetNoAttemptCooldownMinFailures,
 		LastAttemptAt: now.Add(-5 * time.Minute),
 	}
-	if !shouldCooldownTargetRecentFailures(recentCooldownStat{}, noAttempt, now) {
+	if !shouldCooldownTargetRecentFailures(recentCooldownStat{}, noAttempt, recentCooldownStat{}, now) {
 		t.Fatalf("expected repeated no-attempt target failures to trigger target cooldown")
 	}
 
 	noAttempt.Successes = 1
-	if shouldCooldownTargetRecentFailures(recentCooldownStat{}, noAttempt, now) {
+	if shouldCooldownTargetRecentFailures(recentCooldownStat{}, noAttempt, recentCooldownStat{}, now) {
 		t.Fatalf("did not expect no-attempt cooldown after a recent target success")
 	}
 
 	noAttempt.Successes = 0
 	noAttempt.LastAttemptAt = now.Add(-recentCooldownTTL - time.Second)
-	if shouldCooldownTargetRecentFailures(recentCooldownStat{}, noAttempt, now) {
+	if shouldCooldownTargetRecentFailures(recentCooldownStat{}, noAttempt, recentCooldownStat{}, now) {
 		t.Fatalf("did not expect expired no-attempt target failures to keep target in cooldown")
+	}
+}
+
+func TestShouldCooldownTargetRecentFailuresIncludesAllSourcesFailedJobs(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	failed := recentCooldownStat{
+		Attempts:      targetFailedCooldownMinFailures,
+		Failures:      targetFailedCooldownMinFailures,
+		LastAttemptAt: now.Add(-5 * time.Minute),
+	}
+	if !shouldCooldownTargetRecentFailures(recentCooldownStat{}, recentCooldownStat{}, failed, now) {
+		t.Fatalf("expected repeated all-sources-failed jobs to trigger target cooldown")
+	}
+
+	failed.Attempts = targetFailedCooldownMinFailures - 1
+	failed.Failures = failed.Attempts
+	if shouldCooldownTargetRecentFailures(recentCooldownStat{}, recentCooldownStat{}, failed, now) {
+		t.Fatalf("did not expect all-sources-failed cooldown below failure threshold")
+	}
+
+	failed.Attempts = targetFailedCooldownMinFailures
+	failed.Failures = targetFailedCooldownMinFailures
+	failed.Successes = 1
+	if shouldCooldownTargetRecentFailures(recentCooldownStat{}, recentCooldownStat{}, failed, now) {
+		t.Fatalf("did not expect all-sources-failed cooldown after a recent target success")
 	}
 }
 

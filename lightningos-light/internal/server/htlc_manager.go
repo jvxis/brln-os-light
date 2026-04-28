@@ -26,6 +26,7 @@ const (
   htlcManagerDefaultMaxLocalPct = 0
   htlcManagerMaxHysteresisBaseSat int64 = 250
   htlcManagerMaxHysteresisDivisor int64 = 1000 // 0.10% of effective channel capacity in sats
+  htlcManagerMaxHysteresisTargetDivisor uint64 = 10 // 10% of target max HTLC in sats
   htlcManagerVolatileHysteresisMultiplier int64 = 3
   htlcManagerMinIntervalMinutes = 1
   htlcManagerMaxIntervalMinutes = 48 * 60
@@ -866,6 +867,13 @@ func withinMaxHTLCHysteresis(currentMaxMsat uint64, targetMaxMsat uint64, effect
     if relSat > thresholdSat {
       thresholdSat = relSat
     }
+  }
+  targetThresholdSat := int64(targetMaxMsat / 1000 / htlcManagerMaxHysteresisTargetDivisor)
+  if targetThresholdSat < 1 {
+    targetThresholdSat = 1
+  }
+  if targetThresholdSat < thresholdSat {
+    thresholdSat = targetThresholdSat
   }
   if volatileBalance && thresholdSat > 0 {
     if thresholdSat > math.MaxInt64/htlcManagerVolatileHysteresisMultiplier {

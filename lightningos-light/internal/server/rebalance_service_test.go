@@ -285,6 +285,26 @@ func TestShouldCooldownRecentFailuresRequiresRecentFailurePressure(t *testing.T)
 	}
 }
 
+func TestShouldCooldownRecentFailuresOnlySuccessAfterFailureResets(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	stat := recentCooldownStat{
+		Attempts:      5,
+		Failures:      5,
+		Successes:     1,
+		LastAttemptAt: now.Add(-5 * time.Minute),
+		LastFailureAt: now.Add(-5 * time.Minute),
+		LastSuccessAt: now.Add(-20 * time.Minute),
+	}
+	if !shouldCooldownRecentFailures(stat, 5, 0, now) {
+		t.Fatalf("expected success before the latest failure to keep cooldown active")
+	}
+
+	stat.LastSuccessAt = now.Add(-2 * time.Minute)
+	if shouldCooldownRecentFailures(stat, 5, 0, now) {
+		t.Fatalf("did not expect cooldown after a newer success")
+	}
+}
+
 func TestShouldCooldownTargetRecentFailuresIncludesNoAttemptJobs(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	noAttempt := recentCooldownStat{

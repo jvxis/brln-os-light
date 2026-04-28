@@ -307,6 +307,8 @@ type recentCooldownStat struct {
 	Failures      int
 	Successes     int
 	LastAttemptAt time.Time
+	LastFailureAt time.Time
+	LastSuccessAt time.Time
 }
 
 type rebalanceCost7dStat struct {
@@ -884,19 +886,23 @@ func shouldSkipPairForRecentFailure(stat pairStat, now time.Time) bool {
 }
 
 func shouldCooldownRecentFailures(stat recentCooldownStat, minAttempts int, maxSuccesses int, now time.Time) bool {
-	if stat.Attempts < minAttempts {
+	lastFailureAt := stat.LastFailureAt
+	if lastFailureAt.IsZero() {
+		lastFailureAt = stat.LastAttemptAt
+	}
+	if lastFailureAt.IsZero() {
 		return false
 	}
-	if stat.Successes > maxSuccesses {
+	if !stat.LastSuccessAt.IsZero() && !stat.LastSuccessAt.Before(lastFailureAt) {
 		return false
 	}
-	if stat.Failures <= stat.Successes {
+	if stat.Successes > maxSuccesses && (stat.LastSuccessAt.IsZero() || stat.LastFailureAt.IsZero()) {
 		return false
 	}
-	if stat.LastAttemptAt.IsZero() {
+	if stat.Attempts < minAttempts || stat.Failures < minAttempts {
 		return false
 	}
-	return now.Sub(stat.LastAttemptAt) <= recentCooldownTTL
+	return now.Sub(lastFailureAt) <= recentCooldownTTL
 }
 
 func shouldCooldownTargetRecentFailures(attemptStat recentCooldownStat, noAttemptStat recentCooldownStat, failedStat recentCooldownStat, now time.Time) bool {
@@ -3716,13 +3722,34 @@ func (s *RebalanceService) loadRecentSourceCooldowns(ctx context.Context, since 
 		return stats
 	}
 	rows, err := s.db.Query(ctx, `
+with events as (
+  select
+    source_channel_id,
+    status,
+    coalesce(finished_at, started_at) as occurred_at
+  from rebalance_attempts
+  where coalesce(finished_at, started_at) >= $1
+),
+last_success as (
+  select source_channel_id, max(occurred_at) as last_success_at
+  from events
+  where status='succeeded'
+  group by source_channel_id
+),
+pressure as (
+  select e.*, ls.last_success_at
+  from events e
+  left join last_success ls using (source_channel_id)
+  where ls.last_success_at is null or e.occurred_at > ls.last_success_at
+)
 select source_channel_id,
   count(*) as attempts,
   coalesce(sum(case when status='succeeded' then 1 else 0 end), 0) as successes,
   coalesce(sum(case when status<>'succeeded' then 1 else 0 end), 0) as failures,
-  max(coalesce(finished_at, started_at)) as last_attempt_at
-from rebalance_attempts
-where coalesce(finished_at, started_at) >= $1
+  max(occurred_at) as last_attempt_at,
+  max(case when status<>'succeeded' then occurred_at else null end) as last_failure_at,
+  max(last_success_at) as last_success_at
+from pressure
 group by source_channel_id
 `, since)
 	if err != nil {
@@ -3735,7 +3762,9 @@ group by source_channel_id
 		var successes int
 		var failures int
 		var lastAttempt pgtype.Timestamptz
-		if err := rows.Scan(&channelID, &attempts, &successes, &failures, &lastAttempt); err != nil {
+		var lastFailure pgtype.Timestamptz
+		var lastSuccess pgtype.Timestamptz
+		if err := rows.Scan(&channelID, &attempts, &successes, &failures, &lastAttempt, &lastFailure, &lastSuccess); err != nil {
 			return stats
 		}
 		stat := recentCooldownStat{
@@ -3746,6 +3775,12 @@ group by source_channel_id
 		}
 		if lastAttempt.Valid {
 			stat.LastAttemptAt = lastAttempt.Time
+		}
+		if lastFailure.Valid {
+			stat.LastFailureAt = lastFailure.Time
+		}
+		if lastSuccess.Valid {
+			stat.LastSuccessAt = lastSuccess.Time
 		}
 		stats[uint64(channelID)] = stat
 	}
@@ -3758,15 +3793,36 @@ func (s *RebalanceService) loadRecentTargetCooldowns(ctx context.Context, since 
 		return stats
 	}
 	rows, err := s.db.Query(ctx, `
-select j.target_channel_id,
+with events as (
+  select
+    j.target_channel_id,
+    a.status,
+    coalesce(a.finished_at, a.started_at) as occurred_at
+  from rebalance_attempts a
+  join rebalance_jobs j on j.id = a.job_id
+  where coalesce(a.finished_at, a.started_at) >= $1
+),
+last_success as (
+  select target_channel_id, max(occurred_at) as last_success_at
+  from events
+  where status='succeeded'
+  group by target_channel_id
+),
+pressure as (
+  select e.*, ls.last_success_at
+  from events e
+  left join last_success ls using (target_channel_id)
+  where ls.last_success_at is null or e.occurred_at > ls.last_success_at
+)
+select target_channel_id,
   count(*) as attempts,
-  coalesce(sum(case when a.status='succeeded' then 1 else 0 end), 0) as successes,
-  coalesce(sum(case when a.status<>'succeeded' then 1 else 0 end), 0) as failures,
-  max(coalesce(a.finished_at, a.started_at)) as last_attempt_at
-from rebalance_attempts a
-join rebalance_jobs j on j.id = a.job_id
-where coalesce(a.finished_at, a.started_at) >= $1
-group by j.target_channel_id
+  coalesce(sum(case when status='succeeded' then 1 else 0 end), 0) as successes,
+  coalesce(sum(case when status<>'succeeded' then 1 else 0 end), 0) as failures,
+  max(occurred_at) as last_attempt_at,
+  max(case when status<>'succeeded' then occurred_at else null end) as last_failure_at,
+  max(last_success_at) as last_success_at
+from pressure
+group by target_channel_id
 `, since)
 	if err != nil {
 		return stats
@@ -3778,7 +3834,9 @@ group by j.target_channel_id
 		var successes int
 		var failures int
 		var lastAttempt pgtype.Timestamptz
-		if err := rows.Scan(&channelID, &attempts, &successes, &failures, &lastAttempt); err != nil {
+		var lastFailure pgtype.Timestamptz
+		var lastSuccess pgtype.Timestamptz
+		if err := rows.Scan(&channelID, &attempts, &successes, &failures, &lastAttempt, &lastFailure, &lastSuccess); err != nil {
 			return stats
 		}
 		stat := recentCooldownStat{
@@ -3789,6 +3847,12 @@ group by j.target_channel_id
 		}
 		if lastAttempt.Valid {
 			stat.LastAttemptAt = lastAttempt.Time
+		}
+		if lastFailure.Valid {
+			stat.LastFailureAt = lastFailure.Time
+		}
+		if lastSuccess.Valid {
+			stat.LastSuccessAt = lastSuccess.Time
 		}
 		stats[uint64(channelID)] = stat
 	}
@@ -3801,18 +3865,37 @@ func (s *RebalanceService) loadRecentTargetNoAttemptCooldowns(ctx context.Contex
 		return stats
 	}
 	rows, err := s.db.Query(ctx, `
-select j.target_channel_id,
-  coalesce(sum(case when j.status='failed' and j.reason='all sources skipped (recent failures)' and not exists (
-    select 1 from rebalance_attempts a where a.job_id = j.id
-  ) then 1 else 0 end), 0) as no_attempt_failures,
-  coalesce(sum(case when j.status in ('succeeded','partial') then 1 else 0 end), 0) as successes,
-  max(case when j.status='failed' and j.reason='all sources skipped (recent failures)' and not exists (
-    select 1 from rebalance_attempts a where a.job_id = j.id
-  ) then j.completed_at else null end) as last_no_attempt_failure_at
-from rebalance_jobs j
-where j.completed_at >= $1
-  and j.status in ('succeeded','partial','failed')
-group by j.target_channel_id
+with events as (
+  select
+    j.target_channel_id,
+    j.status,
+    j.completed_at as occurred_at,
+    (j.status='failed' and j.reason='all sources skipped (recent failures)' and not exists (
+      select 1 from rebalance_attempts a where a.job_id = j.id
+    )) as no_attempt_failure
+  from rebalance_jobs j
+  where j.completed_at >= $1
+    and j.status in ('succeeded','partial','failed')
+),
+last_success as (
+  select target_channel_id, max(occurred_at) as last_success_at
+  from events
+  where status in ('succeeded','partial')
+  group by target_channel_id
+),
+pressure as (
+  select e.*, ls.last_success_at
+  from events e
+  left join last_success ls using (target_channel_id)
+  where ls.last_success_at is null or e.occurred_at > ls.last_success_at
+)
+select target_channel_id,
+  coalesce(sum(case when no_attempt_failure then 1 else 0 end), 0) as no_attempt_failures,
+  coalesce(sum(case when status in ('succeeded','partial') then 1 else 0 end), 0) as successes,
+  max(case when no_attempt_failure then occurred_at else null end) as last_no_attempt_failure_at,
+  max(last_success_at) as last_success_at
+from pressure
+group by target_channel_id
 `, since)
 	if err != nil {
 		return stats
@@ -3823,7 +3906,8 @@ group by j.target_channel_id
 		var failures int
 		var successes int
 		var lastAttempt pgtype.Timestamptz
-		if err := rows.Scan(&channelID, &failures, &successes, &lastAttempt); err != nil {
+		var lastSuccess pgtype.Timestamptz
+		if err := rows.Scan(&channelID, &failures, &successes, &lastAttempt, &lastSuccess); err != nil {
 			return stats
 		}
 		if failures <= 0 {
@@ -3837,6 +3921,10 @@ group by j.target_channel_id
 		}
 		if lastAttempt.Valid {
 			stat.LastAttemptAt = lastAttempt.Time
+			stat.LastFailureAt = lastAttempt.Time
+		}
+		if lastSuccess.Valid {
+			stat.LastSuccessAt = lastSuccess.Time
 		}
 		stats[uint64(channelID)] = stat
 	}
@@ -3849,14 +3937,35 @@ func (s *RebalanceService) loadRecentTargetFailedCooldowns(ctx context.Context, 
 		return stats
 	}
 	rows, err := s.db.Query(ctx, `
-select j.target_channel_id,
-  coalesce(sum(case when j.status='failed' and j.reason='all sources failed' then 1 else 0 end), 0) as failures,
-  coalesce(sum(case when j.status in ('succeeded','partial') then 1 else 0 end), 0) as successes,
-  max(case when j.status='failed' and j.reason='all sources failed' then j.completed_at else null end) as last_failure_at
-from rebalance_jobs j
-where j.completed_at >= $1
-  and j.status in ('succeeded','partial','failed')
-group by j.target_channel_id
+with events as (
+  select
+    j.target_channel_id,
+    j.status,
+    j.reason,
+    j.completed_at as occurred_at
+  from rebalance_jobs j
+  where j.completed_at >= $1
+    and j.status in ('succeeded','partial','failed')
+),
+last_success as (
+  select target_channel_id, max(occurred_at) as last_success_at
+  from events
+  where status in ('succeeded','partial')
+  group by target_channel_id
+),
+pressure as (
+  select e.*, ls.last_success_at
+  from events e
+  left join last_success ls using (target_channel_id)
+  where ls.last_success_at is null or e.occurred_at > ls.last_success_at
+)
+select target_channel_id,
+  coalesce(sum(case when status='failed' and reason='all sources failed' then 1 else 0 end), 0) as failures,
+  coalesce(sum(case when status in ('succeeded','partial') then 1 else 0 end), 0) as successes,
+  max(case when status='failed' and reason='all sources failed' then occurred_at else null end) as last_failure_at,
+  max(last_success_at) as last_success_at
+from pressure
+group by target_channel_id
 `, since)
 	if err != nil {
 		return stats
@@ -3867,7 +3976,8 @@ group by j.target_channel_id
 		var failures int
 		var successes int
 		var lastAttempt pgtype.Timestamptz
-		if err := rows.Scan(&channelID, &failures, &successes, &lastAttempt); err != nil {
+		var lastSuccess pgtype.Timestamptz
+		if err := rows.Scan(&channelID, &failures, &successes, &lastAttempt, &lastSuccess); err != nil {
 			return stats
 		}
 		if failures <= 0 {
@@ -3881,6 +3991,10 @@ group by j.target_channel_id
 		}
 		if lastAttempt.Valid {
 			stat.LastAttemptAt = lastAttempt.Time
+			stat.LastFailureAt = lastAttempt.Time
+		}
+		if lastSuccess.Valid {
+			stat.LastSuccessAt = lastSuccess.Time
 		}
 		stats[uint64(channelID)] = stat
 	}

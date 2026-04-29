@@ -173,6 +173,18 @@ join_by_comma() {
   done
 }
 
+sudoers_no_requiretty_line() {
+  local user="$1"
+  [[ -n "${VISUDO_BIN:-}" ]] || return 0
+  local tmp
+  tmp="$(mktemp)"
+  printf 'Defaults:%s !requiretty\n' "$user" > "$tmp"
+  if "$VISUDO_BIN" -cf "$tmp" >/dev/null 2>&1; then
+    printf 'Defaults:%s !requiretty\n' "$user"
+  fi
+  rm -f "$tmp"
+}
+
 configure_manager_sudoers() {
   local manager_user=""
   manager_user="$("$SYSTEMCTL_BIN" show -p User --value lightningos-manager 2>/dev/null | tr -d '[:space:]')"
@@ -187,6 +199,7 @@ configure_manager_sudoers() {
   local alias_suffix=""
   local system_alias=""
   local app_alias=""
+  local no_requiretty_line=""
 
   if [[ "$manager_user" != "lightningos" ]]; then
     sudoers_path="/etc/sudoers.d/lightningos-${manager_user}"
@@ -211,9 +224,10 @@ configure_manager_sudoers() {
   fi
   system_alias="LIGHTNINGOS_SYSTEM_${alias_suffix}"
   app_alias="LIGHTNINGOS_APPS_${alias_suffix}"
+  no_requiretty_line="$(sudoers_no_requiretty_line "$manager_user")"
 
   cat > "$sudoers_path" <<EOF
-Defaults:${manager_user} !requiretty
+${no_requiretty_line}
 Cmnd_Alias ${system_alias} = ${system_cmds}
 Cmnd_Alias ${app_alias} = ${app_cmds_line}
 ${manager_user} ALL=NOPASSWD: ${system_alias}, ${app_alias}

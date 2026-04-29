@@ -450,6 +450,20 @@ ensure_smartmontools() {
   print_ok "smartmontools installed"
 }
 
+sudoers_no_requiretty_line() {
+  local user="$1"
+  local visudo_path
+  visudo_path=$(command -v visudo || true)
+  [[ -n "$visudo_path" ]] || return 0
+  local tmp
+  tmp=$(mktemp)
+  printf 'Defaults:%s !requiretty\n' "$user" > "$tmp"
+  if "$visudo_path" -cf "$tmp" >/dev/null 2>&1; then
+    printf 'Defaults:%s !requiretty\n' "$user"
+  fi
+  rm -f "$tmp"
+}
+
 configure_smartctl_sudoers() {
   local user="$1"
   if [[ "$user" == "root" ]]; then
@@ -466,8 +480,10 @@ configure_smartctl_sudoers() {
     smartctl_path="/usr/sbin/smartctl"
   fi
   local sudoers="/etc/sudoers.d/lightningos-smartctl"
+  local no_requiretty_line
+  no_requiretty_line=$(sudoers_no_requiretty_line "$user")
   cat > "$sudoers" <<EOF
-Defaults:${user} !requiretty
+${no_requiretty_line}
 ${user} ALL=NOPASSWD: ${smartctl_path} *
 EOF
   chmod 440 "$sudoers"
@@ -551,8 +567,10 @@ configure_sudoers() {
   fi
   system_alias="LIGHTNINGOS_SYSTEM_${alias_suffix}"
   app_alias="LIGHTNINGOS_APPS_${alias_suffix}"
+  local no_requiretty_line
+  no_requiretty_line=$(sudoers_no_requiretty_line "$manager_user")
   cat > /etc/sudoers.d/lightningos <<EOF
-Defaults:${manager_user} !requiretty
+${no_requiretty_line}
 Cmnd_Alias ${system_alias} = ${system_cmds}
 Cmnd_Alias ${app_alias} = ${app_cmds_line}
 ${manager_user} ALL=NOPASSWD: ${system_alias}, ${app_alias}

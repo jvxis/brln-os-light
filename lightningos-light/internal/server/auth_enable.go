@@ -39,11 +39,11 @@ func (s *Server) handleAuthEnableLogin(w http.ResponseWriter, r *http.Request) {
 			s.logger.Printf("auth enable compat fix failed: %v", compatFixErr)
 		}
 		if retryErr != nil {
-		if s.logger != nil {
+			if s.logger != nil {
 				s.logger.Printf("auth enable failed: %v", retryErr)
-		}
-		writeErrorCode(w, http.StatusInternalServerError, "auth_enable_failed", "failed to enable login protection")
-		return
+			}
+			writeErrorCode(w, http.StatusInternalServerError, "auth_enable_failed", "failed to enable login protection")
+			return
 		}
 	}
 
@@ -139,11 +139,15 @@ func ensureAuthEnableCompat(ctx context.Context, configPath string) error {
 	systemdRunPath := authLookupPath("systemd-run", "/usr/bin/systemd-run")
 	sudoersPath := "/etc/sudoers.d/lightningos-auth-enable"
 
-	content := strings.Join([]string{
-		fmt.Sprintf("Defaults:%s !requiretty", managerUser),
+	lines := []string{}
+	if noRequireTTY := sudoersNoRequireTTYLine(ctx, managerUser); noRequireTTY != "" {
+		lines = append(lines, noRequireTTY)
+	}
+	lines = append(lines,
 		fmt.Sprintf("%s ALL=NOPASSWD: %s %s, %s restart lightningos-manager, %s *", managerUser, teePath, configPath, systemctlPath, systemdRunPath),
 		"",
-	}, "\n")
+	)
+	content := strings.Join(lines, "\n")
 
 	if err := system.WriteFileWithSudo(ctx, sudoersPath, []byte(content)); err != nil {
 		return err
@@ -157,6 +161,29 @@ func ensureAuthEnableCompat(ctx context.Context, configPath string) error {
 		return err
 	}
 	return nil
+}
+
+func sudoersNoRequireTTYLine(ctx context.Context, managerUser string) string {
+	visudoPath, err := exec.LookPath("visudo")
+	if err != nil || strings.TrimSpace(visudoPath) == "" {
+		return ""
+	}
+	tmp, err := os.CreateTemp("", "lightningos-sudoers-*.tmp")
+	if err != nil {
+		return ""
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.WriteString(fmt.Sprintf("Defaults:%s !requiretty\n", managerUser)); err != nil {
+		_ = tmp.Close()
+		return ""
+	}
+	if err := tmp.Close(); err != nil {
+		return ""
+	}
+	if err := exec.CommandContext(ctx, visudoPath, "-cf", tmp.Name()).Run(); err != nil {
+		return ""
+	}
+	return fmt.Sprintf("Defaults:%s !requiretty", managerUser)
 }
 
 func authEnableManagerUser() string {

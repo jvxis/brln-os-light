@@ -4720,6 +4720,9 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		sourceFloorPct = rebalanceDefaultTargetOutboundPct
 	}
 	maxSource := int64(float64(ch.LocalBalanceSat) - (float64(ch.CapacitySat) * (sourceFloorPct / 100)))
+	if maxSource < 0 {
+		maxSource = 0
+	}
 	eligibleSource := maxSource > 0 && localPct >= sourceFloorPct
 	effectiveProtected := protected
 	if protected > 0 {

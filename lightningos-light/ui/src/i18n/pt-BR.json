@@ -456,8 +456,8 @@
       "requiresBitcoinRpc": "Nao foi possivel verificar o status do Bitcoin Core. Inicie o Bitcoin Core e tente novamente.",
       "requiresBitcoinStore": "Instale o Bitcoin Core pela Loja de Apps antes de instalar este app.",
       "requiresLocalBitcoinSource": "Este app exige Bitcoin Core da Loja de Apps como fonte Bitcoin ativa.",
-      "requiresTxIndex": "Este app exige txindex=1 totalmente sincronizado. Ative txindex e reindexe o Bitcoin Core antes de instalar.",
-      "requiresUnprunedBitcoin": "Este app exige Bitcoin Core sem pruning. Desative pruning e reindexe antes de instalar."
+      "requiresTxIndex": "Este app exige txindex=1 antes de instalar.",
+      "requiresUnprunedBitcoin": "Este app exige Bitcoin Core sem pruning. Desative pruning antes de instalar."
     }
   },
   "shortcuts": {

@@ -51,19 +51,19 @@ func (s *Server) fullIndexAppAvailability(ctx context.Context) fullIndexAppAvail
 		return fullIndexUnavailable(fullIndexUnavailableBitcoinRPC, "Bitcoin Core config could not be read. Start Bitcoin Core and try again.")
 	}
 	if pruned, _ := parseBitcoinCorePrune(raw); pruned {
-		return fullIndexUnavailable(fullIndexUnavailableUnpruned, "Electrs and Mempool require a non-pruned Bitcoin Core node. Disable pruning and reindex before installing.")
+		return fullIndexUnavailable(fullIndexUnavailableUnpruned, "Electrs and Mempool require a non-pruned Bitcoin Core node. Disable pruning before installing.")
 	}
 
 	if chainInfo, err := fetchBitcoinLocalChainInfo(checkCtx, paths); err == nil && chainInfo.Pruned {
-		return fullIndexUnavailable(fullIndexUnavailableUnpruned, "Electrs and Mempool require a non-pruned Bitcoin Core node. Disable pruning and reindex before installing.")
+		return fullIndexUnavailable(fullIndexUnavailableUnpruned, "Electrs and Mempool require a non-pruned Bitcoin Core node. Disable pruning before installing.")
 	}
 
 	txIndexReady, txIndexKnown, err := bitcoinCoreTxIndexReady(checkCtx, paths, raw)
 	if err != nil {
-		return fullIndexUnavailable(fullIndexUnavailableTxIndex, "Electrs and Mempool require txindex=1. Enable txindex and reindex Bitcoin Core before installing.")
+		return fullIndexUnavailable(fullIndexUnavailableTxIndex, "Electrs and Mempool require txindex=1 before installing.")
 	}
 	if !txIndexKnown || !txIndexReady {
-		return fullIndexUnavailable(fullIndexUnavailableTxIndex, "Electrs and Mempool require txindex=1. Enable txindex and reindex Bitcoin Core before installing.")
+		return fullIndexUnavailable(fullIndexUnavailableTxIndex, "Electrs and Mempool require txindex=1 before installing.")
 	}
 
 	return fullIndexAppAvailability{Available: true}

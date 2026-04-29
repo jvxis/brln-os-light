@@ -905,6 +905,33 @@ func shouldBlockPairForCurrentJobFailure(reason string) bool {
 	return isStructuralRebalanceFailure(reason) || isTemporaryPairFailure(reason)
 }
 
+func hasRebalanceFallbackCandidate(sources []RebalanceChannel, sourceAvailable map[uint64]int64, pairStats map[uint64]pairStat, currentJobBlockedPairs map[uint64]struct{}, useRecentFailureCache bool, minExecuteSat int64, now time.Time) bool {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	for _, source := range sources {
+		available := sourceAvailable[source.ChannelID]
+		if available <= 0 {
+			continue
+		}
+		if minExecuteSat > 0 && available < minExecuteSat {
+			continue
+		}
+		if useRecentFailureCache {
+			if stat, ok := pairStats[source.ChannelID]; ok {
+				if shouldSkipPairForRecentFailure(stat, now) {
+					continue
+				}
+			}
+			if _, ok := currentJobBlockedPairs[source.ChannelID]; ok {
+				continue
+			}
+		}
+		return true
+	}
+	return false
+}
+
 func shouldRunTargetCooldownProbe(lastAutoAt time.Time, now time.Time) bool {
 	if now.IsZero() {
 		now = time.Now()
@@ -3526,6 +3553,18 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 		if succeededShards == 0 && attemptedShards >= mppStructuralAbortMinAttempts {
 			structuralRatio := float64(structuralFailureShards) / float64(attemptedShards)
 			if structuralRatio >= mppStructuralAbortRatio {
+				if hasRebalanceFallbackCandidate(sources, sourceAvailable, pairStats, currentJobBlockedPairs, useRecentFailureCache, minExecuteSat, time.Now()) {
+					if s.logger != nil {
+						s.logger.Printf(
+							"rebalance mpp execute: job=%d structural threshold reached; falling back to legacy structural_failures=%d attempted_shards=%d ratio=%.2f",
+							jobID,
+							structuralFailureShards,
+							attemptedShards,
+							structuralRatio,
+						)
+					}
+					return false, false
+				}
 				s.finishJob(jobID, "failed", "mpp structural failure")
 				if s.logger != nil {
 					s.logger.Printf(

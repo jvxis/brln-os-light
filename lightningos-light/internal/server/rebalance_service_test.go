@@ -281,6 +281,45 @@ func TestShouldBlockPairForCurrentJobFailure(t *testing.T) {
 	}
 }
 
+func TestHasRebalanceFallbackCandidateSkipsBlockedMppSources(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	sources := []RebalanceChannel{
+		{ChannelID: 1},
+		{ChannelID: 2},
+		{ChannelID: 3},
+	}
+	sourceAvailable := map[uint64]int64{
+		1: 100_000,
+		2: 100_000,
+		3: 100_000,
+	}
+	pairStats := map[uint64]pairStat{
+		1: {
+			LastFailAt:     now.Add(-time.Minute),
+			LastFailReason: "mpp shard: unable to find a path to destination",
+			FailCount:      1,
+		},
+	}
+	currentJobBlockedPairs := map[uint64]struct{}{
+		2: {},
+	}
+
+	if !hasRebalanceFallbackCandidate(sources, sourceAvailable, pairStats, currentJobBlockedPairs, true, 50_000, now) {
+		t.Fatalf("expected unblocked source to allow legacy fallback")
+	}
+
+	currentJobBlockedPairs[3] = struct{}{}
+	if hasRebalanceFallbackCandidate(sources, sourceAvailable, pairStats, currentJobBlockedPairs, true, 50_000, now) {
+		t.Fatalf("did not expect fallback when all available sources are blocked or cooling down")
+	}
+
+	sourceAvailable[3] = 40_000
+	delete(currentJobBlockedPairs, 3)
+	if hasRebalanceFallbackCandidate(sources, sourceAvailable, pairStats, currentJobBlockedPairs, true, 50_000, now) {
+		t.Fatalf("did not expect fallback when the only open source is below execute minimum")
+	}
+}
+
 func TestTargetCooldownProbeHelpers(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	if !shouldRunTargetCooldownProbe(time.Time{}, now) {

@@ -255,6 +255,7 @@ export default function Wizard() {
               </div>
               <ul className="space-y-2 text-sm text-fog/70">
                 <li>{t('wizard.pathClubBenefitImmediate')}</li>
+                <li>{t('wizard.pathClubBenefitParallel')}</li>
                 <li>{t('wizard.pathClubBenefitRpc')}</li>
                 <li>{t('wizard.pathClubBenefitSupport')}</li>
               </ul>

@@ -52,7 +52,7 @@ func mempoolDefinition() appDefinition {
 	return appDefinition{
 		ID:          mempoolAppID,
 		Name:        "Mempool",
-		Description: "Self-hosted mempool.space dashboard backed by your Bitcoin Core node and electrs index.",
+		Description: "Self-hosted mempool.space dashboard for your Bitcoin Core node. Requires Electrs installed and running.",
 		Port:        mempoolFrontendHostPort,
 	}
 }

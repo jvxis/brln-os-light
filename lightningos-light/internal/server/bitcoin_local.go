@@ -859,7 +859,7 @@ func updateBitcoinCoreConfig(raw string, mode string, pruneMiB int) string {
 			if strings.HasPrefix(check, "prune=") {
 				continue
 			}
-			if mode == "pruned" && strings.HasPrefix(check, "txindex=") {
+			if strings.HasPrefix(check, "txindex=") {
 				continue
 			}
 		}
@@ -868,6 +868,7 @@ func updateBitcoinCoreConfig(raw string, mode string, pruneMiB int) string {
 	if mode == "pruned" {
 		updated = append(updated, fmt.Sprintf("prune=%d", pruneMiB))
 	} else {
+		updated = append(updated, "txindex=1")
 		updated = append(updated, "prune=0")
 	}
 	return ensureTrailingNewline(strings.Join(updated, "\n"))

@@ -1,5 +1,5 @@
 ﻿
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   getRebalanceChannels,
@@ -100,6 +100,11 @@ type RebalanceOverview = {
   jobs_without_attempt_7d?: number
   jobs_without_attempt_rate_7d?: number
   roi_7d: number
+  attempts_24h?: number
+  failed_attempts_24h?: number
+  attempt_success_rate_24h?: number
+  attempts_per_success_attempt_24h?: number
+  success_sats_per_attempt_24h?: number
   success_attempts_24h?: number
   success_amount_24h_sat?: number
   success_avg_amount_24h_sat?: number
@@ -139,6 +144,40 @@ type RebalanceTargetStat = {
   failure_attempts: number
   last_failure_at?: string
   reason?: string
+}
+
+function MetricDisclosure({
+  title,
+  summary,
+  open,
+  onToggle,
+  children
+}: {
+  title: string
+  summary: string
+  open: boolean
+  onToggle: () => void
+  children: ReactNode
+}) {
+  return (
+    <div className="mt-2 border-t border-white/10 pt-2">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-3 rounded-md py-1 text-left transition hover:text-cyan-100"
+        aria-expanded={open}
+        onClick={onToggle}
+      >
+        <span className="text-[10px] uppercase tracking-wide text-fog/60">{title}</span>
+        <span className="flex min-w-0 items-center gap-2 text-right text-[11px] text-fog/45">
+          <span className="truncate normal-case tracking-normal">{summary}</span>
+          <span className="grid h-5 w-5 shrink-0 place-items-center rounded border border-white/10 text-fog/60">
+            {open ? '-' : '+'}
+          </span>
+        </span>
+      </button>
+      {open && <div className="mt-2 space-y-1">{children}</div>}
+    </div>
+  )
 }
 
 type RebalanceScanSkip = {
@@ -293,6 +332,9 @@ export default function RebalanceCenter() {
   const [channelShowPrivate, setChannelShowPrivate] = useState(false)
   const [skipDetailsOpen, setSkipDetailsOpen] = useState(false)
   const [scanDetailsOpen, setScanDetailsOpen] = useState(false)
+  const [metrics24hOpen, setMetrics24hOpen] = useState(false)
+  const [mppMetricsOpen, setMppMetricsOpen] = useState(false)
+  const [failureTelemetryOpen, setFailureTelemetryOpen] = useState(false)
   const [scanDetailsReason, setScanDetailsReason] = useState('all')
   const [scanDetailsShowAll, setScanDetailsShowAll] = useState(false)
   const [focusedChannelPoint, setFocusedChannelPoint] = useState('')
@@ -1390,8 +1432,43 @@ export default function RebalanceCenter() {
                   {t('rebalanceCenter.overview.budgetPaused.autoInsufficient')}
                 </p>
               )}
-              <div className="mt-2 border-t border-white/10 pt-2 space-y-1">
-                <p className="text-[10px] uppercase tracking-wide text-fog/60">{t('rebalanceCenter.overview.metrics24h')}</p>
+              <MetricDisclosure
+                title={t('rebalanceCenter.overview.metrics24h')}
+                summary={t('rebalanceCenter.overview.metrics24hSummary', {
+                  attempts: formatter.format(overview.attempts_24h ?? 0),
+                  successes: formatter.format(overview.success_attempts_24h ?? 0),
+                  rate: formatPct((overview.attempt_success_rate_24h ?? 0) * 100)
+                })}
+                open={metrics24hOpen}
+                onToggle={() => setMetrics24hOpen((value) => !value)}
+              >
+                <p className="text-xs text-fog/50">
+                  {t('rebalanceCenter.overview.attempts24h', {
+                    value: formatter.format(overview.attempts_24h ?? 0)
+                  })}
+                </p>
+                <p className="text-xs text-fog/50">
+                  {t('rebalanceCenter.overview.failedAttempts24h', {
+                    value: formatter.format(overview.failed_attempts_24h ?? 0)
+                  })}
+                </p>
+                <p className="text-xs text-fog/50">
+                  {t('rebalanceCenter.overview.attemptSuccessRate24h', {
+                    value: formatPct((overview.attempt_success_rate_24h ?? 0) * 100)
+                  })}
+                </p>
+                <p className="text-xs text-fog/50">
+                  {t('rebalanceCenter.overview.attemptsPerSuccess24h', {
+                    value: overview.attempts_per_success_attempt_24h
+                      ? formatter.format(Math.round(overview.attempts_per_success_attempt_24h * 10) / 10)
+                      : '0'
+                  })}
+                </p>
+                <p className="text-xs text-fog/50">
+                  {t('rebalanceCenter.overview.successSatsPerAttempt24h', {
+                    value: formatSats(overview.success_sats_per_attempt_24h ?? 0)
+                  })}
+                </p>
                 <p className="text-xs text-fog/50">
                   {t('rebalanceCenter.overview.successAttempts24h', {
                     value: formatter.format(overview.success_attempts_24h ?? 0)
@@ -1427,7 +1504,7 @@ export default function RebalanceCenter() {
                     </p>
                   </>
                 )}
-              </div>
+              </MetricDisclosure>
             </div>
           <div className="section-card space-y-2">
             <p className="text-xs uppercase tracking-wide text-fog/60">{t('rebalanceCenter.overview.autoMode')}</p>
@@ -1455,8 +1532,16 @@ export default function RebalanceCenter() {
               </div>
             </div>
             {config?.mpp_enabled && (
-              <div className="mt-2 border-t border-white/10 pt-2 space-y-1">
-                <p className="text-[10px] uppercase tracking-wide text-fog/60">{t('rebalanceCenter.overview.mppMetrics24h')}</p>
+              <MetricDisclosure
+                title={t('rebalanceCenter.overview.mppMetrics24h')}
+                summary={t('rebalanceCenter.overview.mppMetricsSummary', {
+                  success: formatter.format(overview.mpp_shadow_success_jobs_24h ?? 0),
+                  partial: formatter.format(overview.mpp_shadow_partial_jobs_24h ?? 0),
+                  aborts: formatter.format(overview.mpp_structural_abort_jobs_24h ?? 0)
+                })}
+                open={mppMetricsOpen}
+                onToggle={() => setMppMetricsOpen((value) => !value)}
+              >
                 <div className="grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2">
                   <p className="text-xs text-fog/50">
                     {t('rebalanceCenter.overview.mppJobs24h', { value: formatter.format(overview.mpp_shadow_jobs_24h ?? 0) })}
@@ -1489,11 +1574,18 @@ export default function RebalanceCenter() {
                     {t('rebalanceCenter.overview.mppActualSentSat24h', { value: formatSats(overview.mpp_shadow_actual_sent_sat_24h ?? 0) })}
                   </p>
                 </div>
-              </div>
+              </MetricDisclosure>
             )}
             {((overview.top_failure_reasons_30m?.length ?? 0) > 0 || (overview.route_dead_targets_30m?.length ?? 0) > 0) && (
-              <div className="mt-2 border-t border-white/10 pt-2 space-y-2">
-                <p className="text-[10px] uppercase tracking-wide text-fog/60">{t('rebalanceCenter.overview.failureTelemetry30m')}</p>
+              <MetricDisclosure
+                title={t('rebalanceCenter.overview.failureTelemetry30m')}
+                summary={t('rebalanceCenter.overview.failureTelemetrySummary', {
+                  reasons: formatter.format(overview.top_failure_reasons_30m?.length ?? 0),
+                  targets: formatter.format(overview.route_dead_targets_30m?.length ?? 0)
+                })}
+                open={failureTelemetryOpen}
+                onToggle={() => setFailureTelemetryOpen((value) => !value)}
+              >
                 {(overview.top_failure_reasons_30m?.length ?? 0) > 0 && (
                   <div className="space-y-1">
                     {overview.top_failure_reasons_30m?.slice(0, 3).map((item) => (
@@ -1519,7 +1611,7 @@ export default function RebalanceCenter() {
                     ))}
                   </div>
                 )}
-              </div>
+              </MetricDisclosure>
             )}
           </div>
         </div>

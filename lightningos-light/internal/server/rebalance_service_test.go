@@ -264,6 +264,44 @@ func TestIsStructuralRebalanceFailureNormalizesMppPrefix(t *testing.T) {
 	}
 }
 
+func TestShouldBlockPairForCurrentJobFailure(t *testing.T) {
+	cases := []struct {
+		reason string
+		want   bool
+	}{
+		{"rpc error: code = Unknown desc = unable to find a path to destination", true},
+		{"mpp shard: probe returned no amount", true},
+		{"route failed: TEMPORARY_CHANNEL_FAILURE", true},
+		{"route fee exceeds limit", false},
+	}
+	for _, tc := range cases {
+		if got := shouldBlockPairForCurrentJobFailure(tc.reason); got != tc.want {
+			t.Fatalf("shouldBlockPairForCurrentJobFailure(%q)=%v want %v", tc.reason, got, tc.want)
+		}
+	}
+}
+
+func TestTargetCooldownProbeHelpers(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	if !shouldRunTargetCooldownProbe(time.Time{}, now) {
+		t.Fatalf("expected missing last auto time to allow cooldown probe")
+	}
+	if shouldRunTargetCooldownProbe(now.Add(-targetCooldownProbeInterval+time.Second), now) {
+		t.Fatalf("did not expect cooldown probe before interval")
+	}
+	if !shouldRunTargetCooldownProbe(now.Add(-targetCooldownProbeInterval-time.Second), now) {
+		t.Fatalf("expected cooldown probe after interval")
+	}
+
+	cfg := RebalanceConfig{MinSplitEnabled: true, MinProbeSat: 5_000, MinExecuteSat: 50_000, MinAmountSat: 10_000}
+	if got := rebalanceCooldownProbeAmount(250_000, cfg); got != 50_000 {
+		t.Fatalf("expected cooldown probe to use execute minimum, got %d", got)
+	}
+	if got := rebalanceCooldownProbeAmount(30_000, cfg); got != 30_000 {
+		t.Fatalf("expected cooldown probe to cap at target amount, got %d", got)
+	}
+}
+
 func TestShouldCooldownRecentFailuresRequiresRecentFailurePressure(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	stat := recentCooldownStat{

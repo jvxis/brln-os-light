@@ -69,6 +69,12 @@ const (
 )
 
 const (
+	targetCooldownProbeReason     = "cooldown-probe"
+	targetCooldownProbeInterval   = 15 * time.Minute
+	targetCooldownProbeMaxSources = 2
+)
+
+const (
 	paybackModePayback  = 1 << 0
 	paybackModeTime     = 1 << 1
 	paybackModeCritical = 1 << 2
@@ -164,9 +170,14 @@ type RebalanceOverview struct {
 	JobsWithoutAttempt7d          int64                 `json:"jobs_without_attempt_7d"`
 	JobsWithoutAttemptRate7d      float64               `json:"jobs_without_attempt_rate_7d"`
 	ROI7d                         float64               `json:"roi_7d"`
+	Attempts24h                   int64                 `json:"attempts_24h"`
+	FailedAttempts24h             int64                 `json:"failed_attempts_24h"`
 	SuccessAttempts24h            int64                 `json:"success_attempts_24h"`
 	SuccessAmount24hSat           int64                 `json:"success_amount_24h_sat"`
 	SuccessAvgAmount24hSat        int64                 `json:"success_avg_amount_24h_sat"`
+	AttemptSuccessRate24h         float64               `json:"attempt_success_rate_24h"`
+	AttemptsPerSuccessAttempt24h  float64               `json:"attempts_per_success_attempt_24h"`
+	SuccessSatsPerAttempt24h      float64               `json:"success_sats_per_attempt_24h"`
 	SuccessBelowMinAttempts24h    int64                 `json:"success_below_min_attempts_24h"`
 	SuccessBelowMinAmount24hSat   int64                 `json:"success_below_min_amount_24h_sat"`
 	SuccessBelowMinRate24h        float64               `json:"success_below_min_rate_24h"`
@@ -344,9 +355,14 @@ type rebalanceCost7dStat struct {
 }
 
 type rebalanceAttemptTelemetry24h struct {
+	Attempts                 int64
+	FailedAttempts           int64
 	SuccessAttempts          int64
 	SuccessAmountSat         int64
 	SuccessAvgAmountSat      int64
+	AttemptSuccessRate       float64
+	AttemptsPerSuccess       float64
+	SuccessSatsPerAttempt    float64
 	SuccessBelowMinAttempts  int64
 	SuccessBelowMinAmountSat int64
 	SuccessBelowMinRate      float64
@@ -840,6 +856,11 @@ func shouldRunMppShadow(cfg RebalanceConfig, jobSource string) bool {
 	return shouldRunMppExecute(cfg, jobSource)
 }
 
+func isTargetCooldownProbeJob(jobSource string, jobReason string) bool {
+	return strings.TrimSpace(strings.ToLower(jobSource)) == "auto" &&
+		strings.TrimSpace(strings.ToLower(jobReason)) == targetCooldownProbeReason
+}
+
 func shouldUseRecentFailureCache(jobSource string, jobReason string) bool {
 	jobSource = strings.TrimSpace(strings.ToLower(jobSource))
 	if jobSource == "auto" {
@@ -873,6 +894,42 @@ func isStructuralRebalanceFailure(reason string) bool {
 	default:
 		return false
 	}
+}
+
+func isTemporaryPairFailure(reason string) bool {
+	reason = normalizedPairFailReason(reason)
+	return strings.Contains(reason, "temporary_channel_failure") || strings.Contains(reason, "temporary channel failure")
+}
+
+func shouldBlockPairForCurrentJobFailure(reason string) bool {
+	return isStructuralRebalanceFailure(reason) || isTemporaryPairFailure(reason)
+}
+
+func shouldRunTargetCooldownProbe(lastAutoAt time.Time, now time.Time) bool {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if lastAutoAt.IsZero() {
+		return true
+	}
+	return now.Sub(lastAutoAt) >= targetCooldownProbeInterval
+}
+
+func rebalanceCooldownProbeAmount(targetAmountSat int64, cfg RebalanceConfig) int64 {
+	if targetAmountSat <= 0 {
+		return 0
+	}
+	amount := effectiveStartAmountSat(cfg)
+	if minExecute := effectiveMinExecuteSat(cfg); minExecute > amount {
+		amount = minExecute
+	}
+	if amount <= 0 {
+		amount = targetAmountSat
+	}
+	if amount > targetAmountSat {
+		amount = targetAmountSat
+	}
+	return amount
 }
 
 func pairFailureBaseTTL(reason string) (time.Duration, bool) {
@@ -1343,7 +1400,31 @@ func (s *RebalanceService) runAutoScan() {
 		}
 
 		if setting.AutoEnabled && snapshot.EligibleAsTarget {
+			targetCfg := effectiveConfigForTarget(cfg, setting)
+			targetAmount := snapshot.TargetAmountSat
+			minExecuteSat := effectiveMinExecuteSat(targetCfg)
 			if shouldCooldownTargetRecentFailures(targetCooldowns[ch.ChannelID], targetNoAttemptCooldowns[ch.ChannelID], targetFailedCooldowns[ch.ChannelID], targetDistinctSourceCooldowns[ch.ChannelID], scanAt) {
+				if shouldRunTargetCooldownProbe(lastAutoByTarget[snapshot.ChannelID], scanAt) {
+					probeAmount := rebalanceCooldownProbeAmount(targetAmount, targetCfg)
+					if probeAmount > 0 && (!targetCfg.MinSplitEnabled || minExecuteSat <= 0 || probeAmount >= minExecuteSat) {
+						probeSnapshot := snapshot
+						probeSnapshot.TargetAmountSat = probeAmount
+						candidates = append(candidates, rebalanceTarget{
+							Channel:           probeSnapshot,
+							ExpectedGainSat:   0,
+							EstimatedCostSat:  0,
+							ExpectedROI:       0,
+							ExpectedROIValid:  false,
+							Score:             -1,
+							LastAutoAt:        lastAutoByTarget[snapshot.ChannelID],
+							CooldownProbe:     true,
+							ProbeAmountSat:    probeAmount,
+							OriginalAmountSat: targetAmount,
+						})
+						targetCooldownSkipped++
+						continue
+					}
+				}
 				targetCooldownSkipped++
 				skippedDetails = append(skippedDetails, RebalanceSkipDetail{
 					ChannelID:         snapshot.ChannelID,
@@ -1355,9 +1436,6 @@ func (s *RebalanceService) runAutoScan() {
 				})
 				continue
 			}
-			targetCfg := effectiveConfigForTarget(cfg, setting)
-			targetAmount := snapshot.TargetAmountSat
-			minExecuteSat := effectiveMinExecuteSat(targetCfg)
 			if targetCfg.MinSplitEnabled && minExecuteSat > 0 && targetAmount < minExecuteSat {
 				belowExecuteMinSkipped++
 				skippedDetails = append(skippedDetails, RebalanceSkipDetail{
@@ -1463,6 +1541,9 @@ func (s *RebalanceService) runAutoScan() {
 	sort.Slice(candidates, func(i, j int) bool {
 		a := candidates[i]
 		b := candidates[j]
+		if a.CooldownProbe != b.CooldownProbe {
+			return !a.CooldownProbe
+		}
 		if a.LastAutoAt.IsZero() != b.LastAutoAt.IsZero() {
 			return a.LastAutoAt.IsZero()
 		}
@@ -1554,6 +1635,14 @@ func (s *RebalanceService) runAutoScan() {
 		targetAmount := target.Channel.TargetAmountSat
 		estimatedCost := estimateMaxCost(targetAmount, targetPolicy, targetCfg)
 		amountOverride := int64(0)
+		reason := ""
+		if target.CooldownProbe {
+			amountOverride = target.ProbeAmountSat
+			targetAmount = target.ProbeAmountSat
+			estimatedCost = estimateMaxCost(targetAmount, targetPolicy, targetCfg)
+			reason = targetCooldownProbeReason
+			noteSkip("target_cooldown_probe")
+		}
 		if estimatedCost > remaining {
 			fitAmount := (remaining * 1_000_000) / maxFeePpm
 			if fitAmount <= 0 {
@@ -1575,7 +1664,7 @@ func (s *RebalanceService) runAutoScan() {
 				continue
 			}
 		}
-		_, err = s.startJob(target.Channel.ChannelID, "auto", "", amountOverride, false)
+		_, err = s.startJob(target.Channel.ChannelID, "auto", reason, amountOverride, false)
 		if err == nil {
 			s.mu.Lock()
 			s.lastAutoByTarget[target.Channel.ChannelID] = scanAt
@@ -1636,13 +1725,16 @@ func (s *RebalanceService) runAutoScan() {
 }
 
 type rebalanceTarget struct {
-	Channel          RebalanceChannel
-	ExpectedGainSat  int64
-	EstimatedCostSat int64
-	ExpectedROI      float64
-	ExpectedROIValid bool
-	Score            int64
-	LastAutoAt       time.Time
+	Channel           RebalanceChannel
+	ExpectedGainSat   int64
+	EstimatedCostSat  int64
+	ExpectedROI       float64
+	ExpectedROIValid  bool
+	Score             int64
+	LastAutoAt        time.Time
+	CooldownProbe     bool
+	ProbeAmountSat    int64
+	OriginalAmountSat int64
 }
 
 func (s *RebalanceService) startJob(targetChannelID uint64, source string, reason string, amountOverride int64, manualAutoRestart bool) (int64, error) {
@@ -1725,6 +1817,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 	minExecuteSat := effectiveMinExecuteSat(cfg)
 	minProbeSat := effectiveMinProbeSat(cfg)
 	useRecentFailureCache := shouldUseRecentFailureCache(jobSource, jobReason)
+	cooldownProbeJob := isTargetCooldownProbeJob(jobSource, jobReason)
 	timeoutSec := cfg.RebalanceTimeoutSec
 	if timeoutSec <= 0 {
 		timeoutSec = 600
@@ -1783,6 +1876,12 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 	minExecuteSat = effectiveMinExecuteSat(feeCfg)
 	minProbeSat = effectiveMinProbeSat(feeCfg)
 	startAmountSat := effectiveStartAmountSat(feeCfg)
+	if cooldownProbeJob {
+		probeAmount := rebalanceCooldownProbeAmount(amount, feeCfg)
+		if probeAmount > 0 && probeAmount < amount {
+			amount = probeAmount
+		}
+	}
 	exclusions, _ := s.loadExclusions(ctx)
 	ledger, _ := s.loadLedger(ctx)
 	_ = s.applyForwardDeltas(ctx, ledger)
@@ -1865,7 +1964,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			sources = filteredSources
 		}
 	}
-	if shouldRunMppShadow(feeCfg, jobSource) {
+	if shouldRunMppShadow(feeCfg, jobSource) && !cooldownProbeJob {
 		shadowPlan := buildMppShadowPlan(amount, sources, feeCfg)
 		if err := s.insertMppShadowPlan(ctx, jobID, targetChannelID, jobSource, feeCfg, amount, shadowPlan); err != nil {
 			if s.logger != nil {
@@ -1956,8 +2055,22 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 	}
 
 	pairStats := s.loadPairStatsForTarget(ctx, targetChannelID)
+	currentJobBlockedPairs := map[uint64]struct{}{}
+	shouldSkipCurrentJobSource := func(sourceChannelID uint64) bool {
+		_, ok := currentJobBlockedPairs[sourceChannelID]
+		return ok
+	}
+	blockCurrentJobPair := func(sourceChannelID uint64, reason string) {
+		if !useRecentFailureCache || sourceChannelID == 0 {
+			return
+		}
+		if shouldBlockPairForCurrentJobFailure(reason) {
+			currentJobBlockedPairs[sourceChannelID] = struct{}{}
+		}
+	}
 	recordPairSuccess := func(ctx context.Context, sourceChannelID uint64, targetChannelID uint64, amountSat int64, feePpm int64, feePaidSat int64) {
 		s.recordPairSuccess(ctx, sourceChannelID, targetChannelID, amountSat, feePpm, feePaidSat)
+		delete(currentJobBlockedPairs, sourceChannelID)
 		stat := pairStats[sourceChannelID]
 		stat.SourceChannelID = sourceChannelID
 		stat.TargetChannelID = targetChannelID
@@ -1971,6 +2084,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 	}
 	recordPairFailure := func(ctx context.Context, sourceChannelID uint64, targetChannelID uint64, reason string) {
 		s.recordPairFailure(ctx, sourceChannelID, targetChannelID, reason)
+		blockCurrentJobPair(sourceChannelID, reason)
 		stat := pairStats[sourceChannelID]
 		stat.SourceChannelID = sourceChannelID
 		stat.TargetChannelID = targetChannelID
@@ -2032,6 +2146,9 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 		}
 		return sources[i].MaxSourceSat > sources[j].MaxSourceSat
 	})
+	if cooldownProbeJob && len(sources) > targetCooldownProbeMaxSources {
+		sources = sources[:targetCooldownProbeMaxSources]
+	}
 	refreshSourceAvailability(true)
 
 	targetPolicy := lndclient.ChannelPolicySnapshot{
@@ -2294,6 +2411,9 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 
 	attemptPayment := func(source RebalanceChannel, amountTry int64, feeLimitMsat int64, logRouteFailure bool) (bool, bool, int64, bool, *lnrpc.Route, int64) {
 		attemptedAny = true
+		if shouldSkipCurrentJobSource(source.ChannelID) {
+			return false, false, 0, false, nil, 0
+		}
 		if ctx.Err() != nil {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				finishOnTimeout()
@@ -2606,6 +2726,9 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 
 	attemptPaymentWithRoute := func(source RebalanceChannel, baseRoute *lnrpc.Route, amountTry int64, feeLimitMsat int64, logRouteFailure bool) (bool, bool, int64, bool, *lnrpc.Route, int64) {
 		attemptedAny = true
+		if shouldSkipCurrentJobSource(source.ChannelID) {
+			return false, false, 0, false, nil, 0
+		}
 		if ctx.Err() != nil {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				finishOnTimeout()
@@ -2869,6 +2992,9 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 					continue
 				}
 				consecutiveFailures++
+				if shouldSkipCurrentJobSource(source.ChannelID) {
+					return false, false
+				}
 				if consecutiveFailures >= refreshAfterFailures {
 					success, fatal, routeMax, timedOut, refreshedRoute, refreshedAmount := attemptPayment(source, next, 0, true)
 					if fatal {
@@ -2889,6 +3015,9 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 						continue
 					}
 					consecutiveFailures = 0
+					if shouldSkipCurrentJobSource(source.ChannelID) {
+						return false, false
+					}
 				}
 				phase = "steady"
 
@@ -2908,6 +3037,9 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 					continue
 				}
 				consecutiveFailures++
+				if shouldSkipCurrentJobSource(source.ChannelID) {
+					return false, false
+				}
 				if consecutiveFailures >= refreshAfterFailures {
 					success, fatal, routeMax, timedOut, refreshedRoute, refreshedAmount := attemptPayment(source, current, 0, true)
 					if fatal {
@@ -2928,6 +3060,9 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 						continue
 					}
 					consecutiveFailures = 0
+					if shouldSkipCurrentJobSource(source.ChannelID) {
+						return false, false
+					}
 				}
 				phase = "decrease"
 
@@ -2962,6 +3097,9 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 					continue
 				}
 				consecutiveFailures++
+				if shouldSkipCurrentJobSource(source.ChannelID) {
+					return false, false
+				}
 				if consecutiveFailures >= refreshAfterFailures {
 					success, fatal, routeMax, timedOut, refreshedRoute, refreshedAmount := attemptPayment(source, current, 0, true)
 					if fatal {
@@ -2983,6 +3121,9 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 						continue
 					}
 					consecutiveFailures = 0
+					if shouldSkipCurrentJobSource(source.ChannelID) {
+						return false, false
+					}
 				}
 			}
 		}
@@ -3186,6 +3327,9 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 	}
 
 	runMppPrepass := func() (bool, bool) {
+		if cooldownProbeJob {
+			return false, false
+		}
 		if !shouldRunMppExecute(feeCfg, jobSource) {
 			return false, false
 		}
@@ -3206,6 +3350,9 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 					if shouldSkipPairForRecentFailure(stat, time.Now()) {
 						continue
 					}
+				}
+				if shouldSkipCurrentJobSource(source.ChannelID) {
+					continue
 				}
 			}
 			cappedSource := source
@@ -3442,6 +3589,10 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 						continue
 					}
 				}
+				if shouldSkipCurrentJobSource(source.ChannelID) {
+					skippedByCache++
+					continue
+				}
 			}
 
 			maxFromSource := sourceAvailable[source.ChannelID]
@@ -3510,6 +3661,10 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 						sourceAvailable[source.ChannelID] = sourceRemaining
 						continue
 					}
+					if shouldSkipCurrentJobSource(source.ChannelID) {
+						sourceAvailable[source.ChannelID] = sourceRemaining
+						continue
+					}
 				}
 			}
 
@@ -3559,6 +3714,9 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 					break
 				}
 				if !success {
+					if shouldSkipCurrentJobSource(source.ChannelID) {
+						break
+					}
 					continue
 				}
 				routeCap := int64(0)
@@ -5979,12 +6137,16 @@ func (s *RebalanceService) fetchAttemptTelemetry24h(ctx context.Context, minAmou
 	}
 	end := time.Now().In(time.Local)
 	start := end.Add(-24 * time.Hour)
+	var attempts int64
+	var failedAttempts int64
 	var successAttempts int64
 	var successAmountSat int64
 	var belowAttempts int64
 	var belowAmountSat int64
 	err := s.db.QueryRow(ctx, `
 select
+  count(*) as attempts,
+  coalesce(sum(case when status<>'succeeded' then 1 else 0 end), 0) as failed_attempts,
   coalesce(sum(case when status='succeeded' then 1 else 0 end), 0) as success_attempts,
   coalesce(sum(case when status='succeeded' then amount_sat else 0 end), 0) as success_amount_sat,
   coalesce(sum(case when status='succeeded' and $3 > 0 and amount_sat < $3 then 1 else 0 end), 0) as success_below_min_attempts,
@@ -5992,16 +6154,23 @@ select
 from rebalance_attempts
 where coalesce(finished_at, started_at) >= $1
   and coalesce(finished_at, started_at) <= $2
-`, start, end, minAmountSat).Scan(&successAttempts, &successAmountSat, &belowAttempts, &belowAmountSat)
+`, start, end, minAmountSat).Scan(&attempts, &failedAttempts, &successAttempts, &successAmountSat, &belowAttempts, &belowAmountSat)
 	if err != nil {
 		return metrics, err
 	}
+	metrics.Attempts = attempts
+	metrics.FailedAttempts = failedAttempts
 	metrics.SuccessAttempts = successAttempts
 	metrics.SuccessAmountSat = successAmountSat
 	metrics.SuccessBelowMinAttempts = belowAttempts
 	metrics.SuccessBelowMinAmountSat = belowAmountSat
+	if attempts > 0 {
+		metrics.AttemptSuccessRate = float64(successAttempts) / float64(attempts)
+		metrics.SuccessSatsPerAttempt = float64(successAmountSat) / float64(attempts)
+	}
 	if successAttempts > 0 {
 		metrics.SuccessAvgAmountSat = successAmountSat / successAttempts
+		metrics.AttemptsPerSuccess = float64(attempts) / float64(successAttempts)
 		metrics.SuccessBelowMinRate = float64(belowAttempts) / float64(successAttempts)
 	}
 	return metrics, nil
@@ -6575,9 +6744,14 @@ where report_date >= current_date - interval '6 days'
 		JobsWithoutAttempt7d:          jobsWithoutAttemptCount,
 		JobsWithoutAttemptRate7d:      jobsWithoutAttemptRate,
 		ROI7d:                         roi,
+		Attempts24h:                   attemptTelemetry.Attempts,
+		FailedAttempts24h:             attemptTelemetry.FailedAttempts,
 		SuccessAttempts24h:            attemptTelemetry.SuccessAttempts,
 		SuccessAmount24hSat:           attemptTelemetry.SuccessAmountSat,
 		SuccessAvgAmount24hSat:        attemptTelemetry.SuccessAvgAmountSat,
+		AttemptSuccessRate24h:         attemptTelemetry.AttemptSuccessRate,
+		AttemptsPerSuccessAttempt24h:  attemptTelemetry.AttemptsPerSuccess,
+		SuccessSatsPerAttempt24h:      attemptTelemetry.SuccessSatsPerAttempt,
 		SuccessBelowMinAttempts24h:    attemptTelemetry.SuccessBelowMinAttempts,
 		SuccessBelowMinAmount24hSat:   attemptTelemetry.SuccessBelowMinAmountSat,
 		SuccessBelowMinRate24h:        attemptTelemetry.SuccessBelowMinRate,

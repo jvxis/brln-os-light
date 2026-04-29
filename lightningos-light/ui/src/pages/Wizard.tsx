@@ -1,21 +1,29 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   createWalletSeed,
   initWallet,
   postBitcoinRemote,
   unlockWallet,
-  getBitcoin
+  getBitcoin,
+  getBitcoinLocalStatus,
+  installApp,
+  setBitcoinSource
 } from '../api'
+
+type BitcoinPath = 'club' | 'local' | null
 
 export default function Wizard() {
   const { t } = useTranslation()
   const [step, setStep] = useState(1)
+  const [btcPath, setBtcPath] = useState<BitcoinPath>(null)
   const [rpcUser, setRpcUser] = useState('')
   const [rpcPass, setRpcPass] = useState('')
   const [bitcoinHost, setBitcoinHost] = useState('')
   const [zmqBlock, setZmqBlock] = useState('')
   const [zmqTx, setZmqTx] = useState('')
+  const [localStatus, setLocalStatus] = useState<any>(null)
+  const [localInstalling, setLocalInstalling] = useState(false)
   const [walletMode, setWalletMode] = useState<'create' | 'import'>('create')
   const [walletPassword, setWalletPassword] = useState('')
   const [walletPasswordConfirm, setWalletPasswordConfirm] = useState('')
@@ -25,6 +33,7 @@ export default function Wizard() {
   const [unlockPass, setUnlockPass] = useState('')
   const [status, setStatus] = useState('')
   const [statusTone, setStatusTone] = useState<'neutral' | 'success' | 'warn' | 'error'>('neutral')
+  const localPollRef = useRef<number | null>(null)
 
   useEffect(() => {
     getBitcoin().then((data: any) => {
@@ -33,6 +42,34 @@ export default function Wizard() {
       setZmqTx(data.zmq_rawtx)
     }).catch(() => null)
   }, [])
+
+  useEffect(() => {
+    if (step !== 1 || btcPath !== 'local') {
+      if (localPollRef.current !== null) {
+        window.clearInterval(localPollRef.current)
+        localPollRef.current = null
+      }
+      return
+    }
+    let active = true
+    const tick = async () => {
+      try {
+        const data: any = await getBitcoinLocalStatus()
+        if (active) setLocalStatus(data)
+      } catch {
+        /* transient while the container is starting */
+      }
+    }
+    tick()
+    localPollRef.current = window.setInterval(tick, 4000)
+    return () => {
+      active = false
+      if (localPollRef.current !== null) {
+        window.clearInterval(localPollRef.current)
+        localPollRef.current = null
+      }
+    }
+  }, [step, btcPath])
 
   const next = () => setStep((prev) => Math.min(prev + 1, 4))
 
@@ -78,6 +115,35 @@ export default function Wizard() {
       setStatus(err?.message || t('wizard.rpcValidationFailedRetry'))
       setStatusTone('error')
     }
+  }
+
+  const handlePickLocal = async () => {
+    setBtcPath('local')
+    setStatus(t('wizard.localPreparing'))
+    setStatusTone('warn')
+    try {
+      const current: any = await getBitcoinLocalStatus().catch(() => null)
+      if (!current?.installed) {
+        setLocalInstalling(true)
+        await installApp('bitcoincore')
+      }
+      setLocalInstalling(false)
+      await setBitcoinSource({ source: 'local', allow_unsynced: true })
+      const updated: any = await getBitcoinLocalStatus().catch(() => null)
+      if (updated) setLocalStatus(updated)
+      setStatus(t('wizard.localCommitted'))
+      setStatusTone('success')
+    } catch (err: any) {
+      setLocalInstalling(false)
+      setStatus(err?.message || t('wizard.localFailed'))
+      setStatusTone('error')
+    }
+  }
+
+  const handleContinueLocal = () => {
+    setStatus('')
+    setStatusTone('neutral')
+    next()
   }
 
   const handleGenerateSeed = async () => {
@@ -170,9 +236,57 @@ export default function Wizard() {
         )}
       </div>
 
-      {step === 1 && (
+      {step === 1 && btcPath === null && (
+        <div className="space-y-4">
+          <div>
+            <h3 className="text-lg font-semibold">{t('wizard.step1ChooseTitle')}</h3>
+            <p className="text-sm text-fog/70 mt-1">{t('wizard.step1ChooseSubtitle')}</p>
+          </div>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <button
+              type="button"
+              className="section-card text-left space-y-4 border-glow/30 hover:border-glow/70 transition"
+              onClick={() => { setBtcPath('club'); setStatus(''); setStatusTone('neutral') }}
+            >
+              <div>
+                <p className="text-xs uppercase text-brass">{t('wizard.pathClubBadge')}</p>
+                <h4 className="text-xl font-semibold mt-1">{t('wizard.pathClubTitle')}</h4>
+                <p className="text-sm text-fog/70 mt-2">{t('wizard.pathClubDesc')}</p>
+              </div>
+              <ul className="space-y-2 text-sm text-fog/70">
+                <li>{t('wizard.pathClubBenefitImmediate')}</li>
+                <li>{t('wizard.pathClubBenefitRpc')}</li>
+                <li>{t('wizard.pathClubBenefitSupport')}</li>
+              </ul>
+            </button>
+            <button
+              type="button"
+              className="section-card text-left space-y-4 hover:border-brass/70 transition"
+              onClick={handlePickLocal}
+            >
+              <div>
+                <p className="text-xs uppercase text-brass">{t('wizard.pathLocalBadge')}</p>
+                <h4 className="text-xl font-semibold mt-1">{t('wizard.pathLocalTitle')}</h4>
+                <p className="text-sm text-fog/70 mt-2">{t('wizard.pathLocalDesc')}</p>
+              </div>
+              <ul className="space-y-2 text-sm text-fog/70">
+                <li>{t('wizard.pathLocalBenefitSovereign')}</li>
+                <li>{t('wizard.pathLocalBenefitDelayed')}</li>
+                <li>{t('wizard.pathLocalBenefitStorage')}</li>
+              </ul>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {step === 1 && btcPath === 'club' && (
         <div className="section-card space-y-4">
-          <h3 className="text-lg font-semibold">{t('wizard.step1Title')}</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-semibold">{t('wizard.step1Title')}</h3>
+            <button className="text-xs text-fog/60 underline underline-offset-4" onClick={() => setBtcPath(null)}>
+              {t('wizard.back')}
+            </button>
+          </div>
           <div className="grid gap-4 lg:grid-cols-3 text-sm text-fog/60">
             <div>
               <p className="uppercase text-xs">{t('wizard.rpcHost')}</p>
@@ -203,6 +317,43 @@ export default function Wizard() {
             <input className="input-field" placeholder={t('wizard.rpcPassword')} type="password" value={rpcPass} onChange={(e) => setRpcPass(e.target.value)} />
           </div>
           <button className="btn-primary" onClick={handleBitcoin}>{t('wizard.testAndSave')}</button>
+        </div>
+      )}
+
+      {step === 1 && btcPath === 'local' && (
+        <div className="section-card space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-semibold">{t('wizard.step1LocalTitle')}</h3>
+            <button className="text-xs text-fog/60 underline underline-offset-4" onClick={() => { setBtcPath(null); setLocalStatus(null) }}>
+              {t('wizard.back')}
+            </button>
+          </div>
+          <p className="text-sm text-fog/70">{t('wizard.step1LocalHelp')}</p>
+          {localInstalling && <p className="text-sm text-brass">{t('wizard.localInstalling')}</p>}
+          {localStatus && (
+            <div className="grid gap-3 lg:grid-cols-3 text-sm">
+              <div>
+                <p className="uppercase text-xs text-fog/50">{t('wizard.localContainer')}</p>
+                <p>{localStatus.status === 'running' ? t('wizard.localRunning') : localStatus.installed ? t('wizard.localInstalled') : t('wizard.localAbsent')}</p>
+              </div>
+              <div>
+                <p className="uppercase text-xs text-fog/50">{t('wizard.localBlocks')}</p>
+                <p>{typeof localStatus.blocks === 'number' ? `${localStatus.blocks}` : '-'}{typeof localStatus.headers === 'number' ? ` / ${localStatus.headers}` : ''}</p>
+              </div>
+              <div>
+                <p className="uppercase text-xs text-fog/50">{t('wizard.localSync')}</p>
+                <p>{typeof localStatus.verification_progress === 'number' ? `${(localStatus.verification_progress * 100).toFixed(2)}%` : '-'}</p>
+              </div>
+            </div>
+          )}
+          <p className="text-xs text-fog/60">{t('wizard.localSyncNote')}</p>
+          <button
+            className="btn-primary"
+            onClick={handleContinueLocal}
+            disabled={!localStatus?.installed}
+          >
+            {t('wizard.continueToWallet')}
+          </button>
         </div>
       )}
 

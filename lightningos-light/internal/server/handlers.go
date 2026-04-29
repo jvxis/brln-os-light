@@ -463,7 +463,8 @@ func (s *Server) handleBitcoinSourceGet(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Source string `json:"source"`
+		Source        string `json:"source"`
+		AllowUnsynced bool   `json:"allow_unsynced"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -477,7 +478,7 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "source must be local or remote")
 		return
 	}
-	if source == "local" {
+	if source == "local" && !req.AllowUnsynced {
 		readyCtx, readyCancel := context.WithTimeout(r.Context(), 6*time.Second)
 		defer readyCancel()
 		ready, _ := s.bitcoinLocalReady(readyCtx)
@@ -488,7 +489,7 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
 	}
 
 	remoteUser, remotePass := readBitcoinSecrets()
-	if remoteUser == "" || remotePass == "" {
+	if source == "remote" && (remoteUser == "" || remotePass == "") {
 		writeError(w, http.StatusBadRequest, "remote RPC credentials missing")
 		return
 	}

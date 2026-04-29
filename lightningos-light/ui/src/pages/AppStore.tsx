@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getAppAdminPassword, getApps, getBitcoinLocalStatus, getBitcoinSource, installApp, resetAppAdmin, startApp, stopApp, uninstallApp } from '../api'
+import { getAppAdminPassword, getApps, getBitcoinLocalStatus, getBitcoinSource, getElectrsStatus, installApp, resetAppAdmin, startApp, stopApp, uninstallApp } from '../api'
 import lndgIcon from '../assets/apps/lndg.ico'
 import bitcoincoreIcon from '../assets/apps/bitcoincore.png'
 import elementsIcon from '../assets/apps/elements.png'
@@ -10,6 +10,8 @@ import depixIcon from '../assets/apps/depix.svg'
 import lnbitsIcon from '../assets/apps/lnbits.svg'
 import fswapIcon from '../assets/apps/fswap.png'
 import publicPoolIcon from '../assets/apps/public-pool.svg'
+import electrsIcon from '../assets/apps/electrs.svg'
+import mempoolIcon from '../assets/apps/mempool.svg'
 
 type AppInfo = {
   id: string
@@ -20,6 +22,9 @@ type AppInfo = {
   port?: number
   external_url?: string
   admin_password_path?: string
+  available?: boolean
+  unavailable_reason?: string
+  unavailable_message?: string
 }
 
 type BitcoinLocalStatus = {
@@ -33,6 +38,16 @@ type BitcoinSourceStatus = {
 type BitcoinMode = 'remote' | 'local_app' | 'local_external' | 'local_none'
 type InstallFilter = 'all' | 'installed' | 'not_installed'
 
+type ElectrsStatus = {
+  installed: boolean
+  running: boolean
+  rpc_port: number
+  index_height: number
+  tip_height: number
+  indexing: boolean
+  message?: string
+}
+
 const iconMap: Record<string, string> = {
   lndg: lndgIcon,
   bitcoincore: bitcoincoreIcon,
@@ -42,7 +57,9 @@ const iconMap: Record<string, string> = {
   depixbuy: depixIcon,
   lnbits: lnbitsIcon,
   fswap: fswapIcon,
-  publicpool: publicPoolIcon
+  publicpool: publicPoolIcon,
+  electrs: electrsIcon,
+  mempool: mempoolIcon
 }
 
 const internalRoutes: Record<string, string> = {
@@ -72,6 +89,7 @@ export default function AppStore() {
   const [copying, setCopying] = useState<Record<string, boolean>>({})
   const [hideBitcoinCore, setHideBitcoinCore] = useState(false)
   const [bitcoinMode, setBitcoinMode] = useState<BitcoinMode>('remote')
+  const [electrsStatus, setElectrsStatus] = useState<ElectrsStatus | null>(null)
   const [installFilter, setInstallFilter] = useState<InstallFilter>(() => {
     if (typeof window === 'undefined') return 'all'
     const stored = window.localStorage.getItem(APP_STORE_INSTALL_FILTER_KEY)
@@ -93,6 +111,23 @@ export default function AppStore() {
         return t('common.unknown')
       default:
         return value ? value.replace('_', ' ') : t('common.unknown')
+    }
+  }
+
+  const resolveUnavailableMessage = (app: AppInfo) => {
+    switch (app.unavailable_reason) {
+      case 'requires_local_bitcoin_source':
+        return t('appStore.unavailable.requiresLocalBitcoinSource')
+      case 'requires_bitcoin_store':
+        return t('appStore.unavailable.requiresBitcoinStore')
+      case 'requires_bitcoin_rpc':
+        return t('appStore.unavailable.requiresBitcoinRpc')
+      case 'requires_unpruned_bitcoin':
+        return t('appStore.unavailable.requiresUnprunedBitcoin')
+      case 'requires_txindex':
+        return t('appStore.unavailable.requiresTxIndex')
+      default:
+        return app.unavailable_message || ''
     }
   }
 
@@ -139,6 +174,31 @@ export default function AppStore() {
     if (typeof window === 'undefined') return
     window.localStorage.setItem(APP_STORE_INSTALL_FILTER_KEY, installFilter)
   }, [installFilter])
+
+  const electrsApp = apps.find((app) => app.id === 'electrs')
+  const electrsRunning = Boolean(electrsApp?.installed && electrsApp?.status === 'running')
+  useEffect(() => {
+    if (!electrsRunning) {
+      setElectrsStatus(null)
+      return
+    }
+    let cancelled = false
+    const tick = () => {
+      getElectrsStatus()
+        .then((data: ElectrsStatus) => {
+          if (!cancelled) setElectrsStatus(data)
+        })
+        .catch(() => {
+          if (!cancelled) setElectrsStatus(null)
+        })
+    }
+    tick()
+    const handle = window.setInterval(tick, 10_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(handle)
+    }
+  }, [electrsRunning])
 
   const handleAction = async (id: string, action: 'install' | 'start' | 'stop' | 'uninstall') => {
     setMessage('')
@@ -272,13 +332,15 @@ export default function AppStore() {
           const publicPoolUrl = openUrl || `http://${host}:${publicPoolUIPortFallback}`
           const publicPoolStratumEndpoint = `${host}:${publicPoolStratumPort}`
           const icon = iconMap[app.id]
+          const unavailable = app.available === false
+          const unavailableMessage = unavailable ? resolveUnavailableMessage(app) : ''
           return (
             <div key={app.id} className="section-card space-y-4">
               <div className="flex items-start justify-between gap-4">
                 <div className="flex items-start gap-4">
                   <div className="h-12 w-12 rounded-2xl bg-transparent flex items-center justify-center overflow-hidden">
                     {icon ? (
-                      <img src={icon} alt={`${app.name} icon`} className="h-12 w-12 rounded-2xl object-cover" />
+                      <img src={icon} alt={`${app.name} icon`} className={`h-12 w-12 rounded-2xl ${app.id === 'electrs' ? 'object-contain' : 'object-cover'}`} />
                     ) : (
                       <span className="text-xs text-fog/50">{t('appStore.appBadge')}</span>
                     )}
@@ -318,6 +380,32 @@ export default function AppStore() {
                     )}
                   </div>
                 )}
+                {unavailable && unavailableMessage && (
+                  <p className="text-amber-300/80">{unavailableMessage}</p>
+                )}
+                {app.id === 'electrs' && app.installed && (
+                  <>
+                    <p className="font-mono text-[11px] text-fog/70">
+                      {t('appStore.electrsTcpEndpoint', { endpoint: `${host}:${electrsStatus?.rpc_port || 50001}` })}
+                    </p>
+                    {electrsStatus && electrsStatus.running && electrsStatus.index_height > 0 && electrsStatus.tip_height > 0 && (
+                      electrsStatus.indexing ? (
+                        <p>
+                          {t('appStore.electrsIndexing', {
+                            index: electrsStatus.index_height.toLocaleString(),
+                            tip: electrsStatus.tip_height.toLocaleString(),
+                            percent: ((electrsStatus.index_height / electrsStatus.tip_height) * 100).toFixed(2)
+                          })}
+                        </p>
+                      ) : (
+                        <p>{t('appStore.electrsSynced', { height: electrsStatus.index_height.toLocaleString() })}</p>
+                      )
+                    )}
+                    {electrsStatus && electrsStatus.running && electrsStatus.index_height === 0 && (
+                      <p className="text-amber-300/80">{t('appStore.electrsMetricsUnavailable')}</p>
+                    )}
+                  </>
+                )}
                 {app.id === 'publicpool' && (
                   <>
                     <p>{t('appStore.publicPoolUiAccess', { url: publicPoolUrl })}</p>
@@ -336,7 +424,7 @@ export default function AppStore() {
 
               <div className="flex flex-wrap items-center gap-3">
                 {!app.installed && (
-                  <button className="btn-primary" disabled={isBusy} onClick={() => handleAction(app.id, 'install')}>
+                  <button className="btn-primary" disabled={isBusy || unavailable} title={unavailable ? unavailableMessage : undefined} onClick={() => handleAction(app.id, 'install')}>
                     {isBusy ? t('appStore.installing') : t('appStore.install')}
                   </button>
                 )}
@@ -372,7 +460,7 @@ export default function AppStore() {
                 )}
                 {app.installed && app.status !== 'running' && (
                   <>
-                    <button className="btn-primary" disabled={isBusy} onClick={() => handleAction(app.id, 'start')}>
+                    <button className="btn-primary" disabled={isBusy || unavailable} title={unavailable ? unavailableMessage : undefined} onClick={() => handleAction(app.id, 'start')}>
                       {isBusy ? t('appStore.starting') : t('common.start')}
                     </button>
                     {app.id === 'lndg' && (

@@ -13,6 +13,7 @@ func (s *Server) handleAppsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := make([]appInfo, 0, len(apps))
+	var fullIndexAvailability *fullIndexAppAvailability
 	for _, app := range apps {
 		info, infoErr := app.Info(r.Context())
 		if infoErr != nil {
@@ -22,6 +23,15 @@ func (s *Server) handleAppsList(w http.ResponseWriter, r *http.Request) {
 			if info.Installed {
 				info.Status = "unknown"
 			}
+		}
+		if info.ID == electrsAppID || info.ID == mempoolAppID {
+			if fullIndexAvailability == nil {
+				availability := s.fullIndexAppAvailability(r.Context())
+				fullIndexAvailability = &availability
+			}
+			info.Available = fullIndexAvailability.Available
+			info.UnavailableReason = fullIndexAvailability.Reason
+			info.UnavailableMessage = fullIndexAvailability.Message
 		}
 		resp = append(resp, info)
 	}
@@ -143,6 +153,10 @@ func (s *Server) handleAppResetAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleElectrsStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.fetchElectrsStatus(r.Context()))
 }
 
 func (s *Server) handleAppAdminPassword(w http.ResponseWriter, r *http.Request) {

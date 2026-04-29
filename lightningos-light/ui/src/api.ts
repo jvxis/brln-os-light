@@ -130,7 +130,7 @@ export const getPostgres = () => request('/api/postgres')
 export const getBitcoin = () => request('/api/bitcoin')
 export const getBitcoinActive = () => request('/api/bitcoin/active')
 export const getBitcoinSource = () => request('/api/bitcoin/source')
-export const setBitcoinSource = (payload: { source: 'local' | 'remote' }) =>
+export const setBitcoinSource = (payload: { source: 'local' | 'remote'; allow_unsynced?: boolean }) =>
   request('/api/bitcoin/source', { method: 'POST', body: JSON.stringify(payload) })
 export const getBitcoinLocalStatus = () => request('/api/bitcoin-local/status')
 export const getBitcoinLocalConfig = () => request('/api/bitcoin-local/config')
@@ -669,6 +669,7 @@ export const deleteShortcut = (id: number) =>
   request(`/api/shortcuts/${encodeURIComponent(String(id))}`, { method: 'DELETE' })
 
 export const getApps = () => request('/api/apps')
+export const getElectrsStatus = () => request('/api/apps/electrs/status')
 export const getAppAdminPassword = (id: string) => request(`/api/apps/${id}/admin-password`)
 export const installApp = (id: string) => request(`/api/apps/${id}/install`, { method: 'POST' })
 export const uninstallApp = (id: string) => request(`/api/apps/${id}/uninstall`, { method: 'POST' })

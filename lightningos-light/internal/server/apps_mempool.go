@@ -122,6 +122,9 @@ func (s *Server) applyMempool(ctx context.Context) error {
 	if err := ensureDocker(ctx); err != nil {
 		return err
 	}
+	if err := s.requireFullIndexApps(ctx); err != nil {
+		return err
+	}
 
 	bitcoinPaths := bitcoinCoreAppPaths()
 	if !fileExists(bitcoinPaths.ComposePath) {
@@ -129,6 +132,13 @@ func (s *Server) applyMempool(ctx context.Context) error {
 	}
 	if !fileExists(electrsAppPaths().ComposePath) {
 		return errors.New("Mempool requires the Electrs app to be installed")
+	}
+	electrsInfo, err := newElectrsApp(s).Info(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to read Electrs status: %w", err)
+	}
+	if electrsInfo.Status != "running" {
+		return errors.New("Mempool requires Electrs to be installed and running")
 	}
 
 	paths := mempoolAppPaths()

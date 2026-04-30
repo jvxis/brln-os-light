@@ -179,7 +179,6 @@ func runGoldenScenario(t *testing.T, sc goldenScenario) {
 	}
 	rebalStats21d := rebalStats
 	if sc.rebal21d.AmtMsat > 0 {
-		rebalStats21d = rebalStats21d
 		rebalStats21d.ByChannel = map[uint64]rebalStat{id: sc.rebal21d}
 	}
 	htlcSignals := map[uint64]htlcFailureSignal{}

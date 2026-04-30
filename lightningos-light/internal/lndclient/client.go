@@ -876,6 +876,50 @@ func (c *Client) GetChannelPolicy(ctx context.Context, channelPoint string) (Cha
 	}, nil
 }
 
+// GetChannelPolicyByID fetches the local-side policy directly via GetChanInfo
+// without re-listing all channels, which is what GetChannelPolicy does
+// internally. Use this when the caller already has chanID + remotePubkey
+// (e.g. from a prior ListChannels pass) to save one round-trip per call.
+func (c *Client) GetChannelPolicyByID(ctx context.Context, chanID uint64, remotePubkey string, channelPoint string) (ChannelPolicy, error) {
+	if chanID == 0 {
+		return ChannelPolicy{}, errors.New("chan_id required")
+	}
+	conn, err := c.dial(ctx, true)
+	if err != nil {
+		return ChannelPolicy{}, err
+	}
+	defer conn.Close()
+
+	client := lnrpc.NewLightningClient(conn)
+	edge, err := client.GetChanInfo(ctx, &lnrpc.ChanInfoRequest{ChanId: chanID})
+	if err != nil {
+		return ChannelPolicy{}, err
+	}
+
+	policy := edge.Node1Policy
+	if remotePubkey != "" {
+		if edge.Node1Pub == remotePubkey {
+			policy = edge.Node2Policy
+		} else if edge.Node2Pub == remotePubkey {
+			policy = edge.Node1Policy
+		}
+	}
+	if policy == nil {
+		return ChannelPolicy{}, errors.New("channel policy unavailable")
+	}
+
+	return ChannelPolicy{
+		ChannelPoint:      channelPoint,
+		BaseFeeMsat:       policy.FeeBaseMsat,
+		FeeRatePpm:        policy.FeeRateMilliMsat,
+		TimeLockDelta:     int64(policy.TimeLockDelta),
+		MinHtlcMsat:       maxInt64ToUint64(policy.MinHtlc),
+		MaxHtlcMsat:       policy.MaxHtlcMsat,
+		InboundBaseMsat:   int64(policy.InboundFeeBaseMsat),
+		InboundFeeRatePpm: int64(policy.InboundFeeRateMilliMsat),
+	}, nil
+}
+
 func (c *Client) getStatusUncached(ctx context.Context) (Status, error) {
 	now := time.Now()
 	conn, err := c.dial(ctx, true)

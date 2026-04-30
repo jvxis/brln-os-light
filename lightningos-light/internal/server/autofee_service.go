@@ -1294,15 +1294,21 @@ alter table autofee_state add column if not exists ss_ok_since timestamptz;
 alter table autofee_state add column if not exists ss_bad_since timestamptz;
 alter table autofee_state add column if not exists last_dir text;
 alter table autofee_state add column if not exists stalled_rounds integer not null default 0;
+alter table autofee_state add column if not exists apply_error_streak integer not null default 0;
+alter table autofee_state add column if not exists last_apply_error text;
+alter table autofee_state add column if not exists apply_error_alerted boolean not null default false;
 alter table autofee_logs add column if not exists payload jsonb;
 `)
 	if err != nil {
 		return err
 	}
 
+	// On new installs, enable native seed by default. Existing rows are not
+	// touched (on conflict do nothing) — users who already configured the
+	// service keep whatever they had.
 	_, err = s.db.Exec(ctx, `
-insert into autofee_config (id)
-values ($1)
+insert into autofee_config (id, native_seed_enabled)
+values ($1, true)
 on conflict (id) do nothing
 `, autofeeConfigID)
 	return err
@@ -1320,7 +1326,7 @@ func (s *AutofeeService) defaultConfig() AutofeeConfig {
 		CooldownDownSec:                 p.CooldownDownSec,
 		InboundDiscountMaxRatioOverride: 0,
 		RebalCostMode:                   rebalCostModeDefault,
-		NativeSeedEnabled:               false,
+		NativeSeedEnabled:               true,
 		AmbossEnabled:                   false,
 		AmbossTokenSet:                  false,
 		InboundPassiveEnabled:           false,
@@ -2173,6 +2179,11 @@ const (
 	autofeeOutcomeMeasurementBatch    = 50
 )
 
+// Threshold for the apply-failure alert. After this many consecutive failed
+// applies on the same channel a Telegram alert fires once. Successful apply
+// resets the streak.
+const autofeeApplyErrorAlertThreshold = 3
+
 // measurementLoop periodically processes pending autofee_outcomes rows whose
 // 24h window has elapsed. Runs independently from the decision loop so it
 // keeps measuring even when Autofee is disabled.
@@ -2526,6 +2537,7 @@ type autofeeEngine struct {
 	recentChanges    map[uint64]autofeeRecentChangeStats
 	now              time.Time
 	nativeSeedCache  map[string]autofeeSeedResult
+	policyCache      map[string]lndclient.ChannelPolicy
 	ambossToken      string
 	ambossTokenErr   error
 	ambossTokenLoad  bool
@@ -2742,6 +2754,7 @@ func newAutofeeEngine(svc *AutofeeService, cfg AutofeeConfig) *autofeeEngine {
 		superSource:     ss,
 		now:             time.Now().UTC(),
 		nativeSeedCache: make(map[string]autofeeSeedResult),
+		policyCache:     make(map[string]lndclient.ChannelPolicy),
 	}
 }
 
@@ -2874,6 +2887,9 @@ type autofeeChannelState struct {
 	SuperSourceOkSince  time.Time
 	SuperSourceBadSince time.Time
 	ExplorerState       explorerState
+	ApplyErrorStreak    int
+	LastApplyError      string
+	ApplyErrorAlerted   bool
 }
 
 type autofeeRankingSnapshot struct {
@@ -3526,7 +3542,25 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 			if err := e.applyDecision(ctx, ch, decision); err != nil {
 				summary.applyErrors++
 				errorLines = append(errorLines, buildAutofeeChannelLogEntry(decision.withError(err), "error", dryRun, err))
+				if st := decision.State; st != nil {
+					st.ApplyErrorStreak++
+					st.LastApplyError = err.Error()
+					crossedThreshold := st.ApplyErrorStreak >= autofeeApplyErrorAlertThreshold && !st.ApplyErrorAlerted
+					if crossedThreshold {
+						st.ApplyErrorAlerted = true
+					}
+					e.persistApplyErrorState(ctx, st.ChannelID, st.ApplyErrorStreak, st.LastApplyError, st.ApplyErrorAlerted)
+					if crossedThreshold {
+						go e.svc.sendTelegramAutofeeApplyAlert(decision.Alias, decision.ChannelPoint, st.ApplyErrorStreak, st.LastApplyError)
+					}
+				}
 				continue
+			}
+			if st := decision.State; st != nil && (st.ApplyErrorStreak > 0 || st.ApplyErrorAlerted || st.LastApplyError != "") {
+				st.ApplyErrorStreak = 0
+				st.LastApplyError = ""
+				st.ApplyErrorAlerted = false
+				e.persistApplyErrorState(ctx, st.ChannelID, 0, "", false)
 			}
 			changedDecisions = append(changedDecisions, decision)
 			changedLines = append(changedLines, buildAutofeeChannelLogEntry(decision, "changed", dryRun, nil))
@@ -6053,7 +6087,8 @@ func (e *autofeeEngine) loadState(ctx context.Context) (map[uint64]*autofeeChann
 	rows, err := e.svc.db.Query(ctx, `
 select channel_id, last_ppm, last_inbound_discount_ppm, last_seed_ppm, last_outrate_ppm, last_outrate_ts,
   last_rebal_cost_ppm, last_rebal_cost_ts, last_ts, last_dir, low_streak, stalled_rounds, baseline_fwd7d, class_label, class_conf, bias_ema,
-  first_seen_ts, ss_active, ss_ok_since, ss_bad_since, explorer_state
+  first_seen_ts, ss_active, ss_ok_since, ss_bad_since, explorer_state,
+  apply_error_streak, last_apply_error, apply_error_alerted
 from autofee_state
 `)
 	if err != nil {
@@ -6084,10 +6119,19 @@ from autofee_state
 		var ssOkSince pgtype.Timestamptz
 		var ssBadSince pgtype.Timestamptz
 		var explorerRaw []byte
+		var applyErrorStreak int
+		var lastApplyError pgtype.Text
+		var applyErrorAlerted bool
 		if err := rows.Scan(&channelID, &lastPpm, &lastInb, &lastSeed, &lastOut, &lastOutTs, &lastRebal, &lastRebalTs, &lastTs, &lastDir,
-			&lowStreak, &stalledRounds, &baseline, &classLabel, &classConf, &biasEma, &firstSeen, &ssActive, &ssOkSince, &ssBadSince, &explorerRaw); err != nil {
+			&lowStreak, &stalledRounds, &baseline, &classLabel, &classConf, &biasEma, &firstSeen, &ssActive, &ssOkSince, &ssBadSince, &explorerRaw,
+			&applyErrorStreak, &lastApplyError, &applyErrorAlerted); err != nil {
 			return items, err
 		}
+		st.ApplyErrorStreak = applyErrorStreak
+		if lastApplyError.Valid {
+			st.LastApplyError = lastApplyError.String
+		}
+		st.ApplyErrorAlerted = applyErrorAlerted
 		st.ChannelID = uint64(channelID)
 		if lastPpm.Valid {
 			st.LastPpm = int(lastPpm.Int32)
@@ -6214,8 +6258,9 @@ func (e *autofeeEngine) persistState(ctx context.Context, st *autofeeChannelStat
 insert into autofee_state (
   channel_id, last_ppm, last_inbound_discount_ppm, last_seed_ppm, last_outrate_ppm, last_outrate_ts,
   last_rebal_cost_ppm, last_rebal_cost_ts, last_ts, last_dir, low_streak, stalled_rounds, baseline_fwd7d, class_label, class_conf, bias_ema,
-  first_seen_ts, ss_active, ss_ok_since, ss_bad_since, explorer_state
-) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+  first_seen_ts, ss_active, ss_ok_since, ss_bad_since, explorer_state,
+  apply_error_streak, last_apply_error, apply_error_alerted
+) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
 `+
 		`on conflict (channel_id) do update set
   last_ppm=excluded.last_ppm,
@@ -6237,14 +6282,36 @@ insert into autofee_state (
   ss_active=excluded.ss_active,
   ss_ok_since=excluded.ss_ok_since,
   ss_bad_since=excluded.ss_bad_since,
-  explorer_state=excluded.explorer_state
+  explorer_state=excluded.explorer_state,
+  apply_error_streak=excluded.apply_error_streak,
+  last_apply_error=excluded.last_apply_error,
+  apply_error_alerted=excluded.apply_error_alerted
 `, int64(st.ChannelID), nullableInt(int64(st.LastPpm)), nullableInt(int64(st.LastInboundDiscount)),
 		nullableInt(int64(st.LastSeed)), nullableInt(int64(st.LastOutrate)), nullableTime(st.LastOutrateTs),
 		nullableInt(int64(st.LastRebalCost)), nullableTime(st.LastRebalCostTs), nullableTime(st.LastTs),
 		nullableString(st.LastDir), st.LowStreak, st.StalledRounds, st.BaselineFwd7d, nullableString(st.ClassLabel), nullableFloat(st.ClassConf),
 		nullableFloat(st.BiasEma), nullableTime(st.FirstSeen), st.SuperSourceActive,
 		nullableTime(st.SuperSourceOkSince), nullableTime(st.SuperSourceBadSince), rawExplorer,
+		st.ApplyErrorStreak, nullableString(st.LastApplyError), st.ApplyErrorAlerted,
 	)
+}
+
+// persistApplyErrorState updates only the apply-error tracking fields. Used
+// after applyDecision so the streak survives across runs without rewriting
+// the rest of the state row (which was already persisted before apply).
+func (e *autofeeEngine) persistApplyErrorState(ctx context.Context, channelID uint64, streak int, lastError string, alerted bool) {
+	if e == nil || e.svc == nil || e.svc.db == nil {
+		return
+	}
+	upCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if _, err := e.svc.db.Exec(upCtx, `
+update autofee_state
+set apply_error_streak=$2, last_apply_error=$3, apply_error_alerted=$4
+where channel_id=$1
+`, int64(channelID), streak, nullableString(lastError), alerted); err != nil && e.svc.logger != nil {
+		e.svc.logger.Printf("autofee: persistApplyErrorState failed for channel %d: %v", channelID, err)
+	}
 }
 
 // ===== decisions =====
@@ -6666,6 +6733,50 @@ func (s *AutofeeService) sendTelegramAutofeeRunSummary(cfg AutofeeConfig, reason
 			}
 			return
 		}
+	}
+}
+
+// sendTelegramAutofeeApplyAlert notifies operators when a channel has failed
+// to receive its policy update for autofeeApplyErrorAlertThreshold consecutive
+// runs. We send the message only on the threshold crossing; further failures
+// stay silent until a successful apply resets the streak.
+func (s *AutofeeService) sendTelegramAutofeeApplyAlert(alias, channelPoint string, streak int, lastError string) {
+	if s.db == nil {
+		return
+	}
+	tgCfg := readTelegramBackupConfig()
+	if strings.TrimSpace(tgCfg.BotToken) == "" || strings.TrimSpace(tgCfg.ChatID) == "" {
+		return
+	}
+	loadCtx, loadCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	settings, err := loadTelegramNotificationSettings(loadCtx, s.db)
+	loadCancel()
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("autofee: telegram settings unavailable for apply alert: %v", err)
+		}
+		return
+	}
+	if !settings.AutofeeSummaryEnabled {
+		return
+	}
+	displayAlias := strings.TrimSpace(alias)
+	if displayAlias == "" {
+		displayAlias = channelPoint
+	}
+	msg := fmt.Sprintf(
+		"🚨 *Autofee* — falha persistente ao aplicar política\n\n"+
+			"*Canal:* %s\n"+
+			"*Channel point:* `%s`\n"+
+			"*Falhas consecutivas:* %d\n"+
+			"*Último erro:* `%s`\n\n"+
+			"Verifique a conectividade com o LND e o canal. Após sucesso o alerta volta a armar.",
+		displayAlias, channelPoint, streak, lastError,
+	)
+	sendCtx, sendCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer sendCancel()
+	if err := sendTelegramMessages(sendCtx, tgCfg.BotToken, tgCfg.ChatID, msg); err != nil && s.logger != nil {
+		s.logger.Printf("autofee: telegram apply alert send failed: %v", err)
 	}
 }
 
@@ -9560,8 +9671,7 @@ func (e *autofeeEngine) applyDecision(ctx context.Context, ch lndclient.ChannelI
 	}
 
 	if baseFee == 0 || timeLock == 0 {
-		policy, err := e.svc.lnd.GetChannelPolicy(ctx, ch.ChannelPoint)
-		if err == nil {
+		if policy, ok := e.fetchChannelPolicy(ctx, ch); ok {
 			baseFee = policy.BaseFeeMsat
 			timeLock = policy.TimeLockDelta
 		}
@@ -9573,7 +9683,111 @@ func (e *autofeeEngine) applyDecision(ctx context.Context, ch lndclient.ChannelI
 		baseFee = int64(e.cfg.SuperSourceBaseFeeMsat)
 	}
 
-	return e.svc.lnd.UpdateChannelFees(ctx, ch.ChannelPoint, false, baseFee, feeRate, timeLock, inboundEnabled, 0, inboundRate)
+	return e.applyChannelFeesWithRetry(ctx, ch, baseFee, feeRate, timeLock, inboundEnabled, inboundRate)
+}
+
+// applyChannelFeesWithRetry wraps UpdateChannelFees with a small retry loop
+// for transient errors (gRPC unavailable, deadline exceeded, transport reset).
+// Permanent errors return immediately. Three attempts total (original + 2
+// retries) with 200ms and 600ms backoffs. The retry only applies inside the
+// caller's context — if the context is canceled we abort.
+func (e *autofeeEngine) applyChannelFeesWithRetry(ctx context.Context, ch lndclient.ChannelInfo, baseFee, feeRate, timeLock int64, inboundEnabled bool, inboundRate int64) error {
+	if e.svc == nil || e.svc.lnd == nil {
+		return errors.New("lnd unavailable")
+	}
+	backoffs := []time.Duration{200 * time.Millisecond, 600 * time.Millisecond}
+	var lastErr error
+	for attempt := 0; attempt <= len(backoffs); attempt++ {
+		err := e.svc.lnd.UpdateChannelFees(ctx, ch.ChannelPoint, false, baseFee, feeRate, timeLock, inboundEnabled, 0, inboundRate)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if !isTransientApplyError(err) {
+			return err
+		}
+		if attempt >= len(backoffs) {
+			break
+		}
+		if e.svc.logger != nil {
+			e.svc.logger.Printf("autofee: transient apply error on %s (attempt %d/%d): %v", ch.ChannelPoint, attempt+1, len(backoffs)+1, err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoffs[attempt]):
+		}
+	}
+	return lastErr
+}
+
+// isTransientApplyError reports whether err looks like a transient transport
+// or capacity issue worth retrying. We match on substrings so we don't have
+// to import gRPC status here; the strings are stable across Go gRPC versions.
+func isTransientApplyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	hints := []string{
+		"unavailable",
+		"deadline exceeded",
+		"deadlineexceeded",
+		"resource exhausted",
+		"resourceexhausted",
+		"transport is closing",
+		"transport is broken",
+		"connection reset",
+		"connection refused",
+		"i/o timeout",
+		"no such host",
+		"eof",
+	}
+	for _, hint := range hints {
+		if strings.Contains(msg, hint) {
+			return true
+		}
+	}
+	return false
+}
+
+// fetchChannelPolicy returns the local-side policy for ch, using a per-Run
+// cache so repeated lookups within the same Execute pass cost a single RPC.
+// Prefers GetChannelPolicyByID (one GetChanInfo) over GetChannelPolicy (which
+// re-runs ListChannels). On failure falls back to legacy method to preserve
+// behavior on edge cases (e.g. graph entry not yet propagated).
+func (e *autofeeEngine) fetchChannelPolicy(ctx context.Context, ch lndclient.ChannelInfo) (lndclient.ChannelPolicy, bool) {
+	key := ch.ChannelPoint
+	if key == "" {
+		return lndclient.ChannelPolicy{}, false
+	}
+	if e.policyCache != nil {
+		if cached, ok := e.policyCache[key]; ok {
+			return cached, true
+		}
+	}
+	if e.svc == nil || e.svc.lnd == nil {
+		return lndclient.ChannelPolicy{}, false
+	}
+	if ch.ChannelID != 0 {
+		if policy, err := e.svc.lnd.GetChannelPolicyByID(ctx, ch.ChannelID, ch.RemotePubkey, ch.ChannelPoint); err == nil {
+			if e.policyCache != nil {
+				e.policyCache[key] = policy
+			}
+			return policy, true
+		}
+	}
+	policy, err := e.svc.lnd.GetChannelPolicy(ctx, ch.ChannelPoint)
+	if err != nil {
+		return lndclient.ChannelPolicy{}, false
+	}
+	if e.policyCache != nil {
+		e.policyCache[key] = policy
+	}
+	return policy, true
 }
 
 // recordOutcome persists one row per kind ('outbound' or 'inbound') describing

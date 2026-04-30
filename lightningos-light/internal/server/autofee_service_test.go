@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"math"
 	"testing"
 	"time"
@@ -1956,5 +1958,35 @@ func TestCapDownMoveGeneral(t *testing.T) {
 	}
 	if unchanged != 850 {
 		t.Fatalf("expected unchanged value when htlc sample low cap is active: got %d want 850", unchanged)
+	}
+}
+
+func TestIsTransientApplyError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"context_canceled_sentinel", context.Canceled, false},
+		{"context_deadline_sentinel", context.DeadlineExceeded, false},
+		{"grpc_unavailable", errors.New("rpc error: code = Unavailable desc = connection error"), true},
+		{"grpc_deadline_string", errors.New("context deadline exceeded while waiting"), true},
+		{"resource_exhausted", errors.New("rpc error: code = ResourceExhausted desc = ..."), true},
+		{"transport_closing", errors.New("transport is closing"), true},
+		{"connection_reset", errors.New("read tcp: connection reset by peer"), true},
+		{"connection_refused", errors.New("dial tcp: connect: connection refused"), true},
+		{"i_o_timeout", errors.New("read tcp: i/o timeout"), true},
+		{"eof", errors.New("EOF"), true},
+		{"invalid_argument", errors.New("rpc error: code = InvalidArgument desc = bad fee"), false},
+		{"not_found", errors.New("channel not found"), false},
+		{"permission_denied", errors.New("permission denied"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isTransientApplyError(tc.err); got != tc.want {
+				t.Fatalf("isTransientApplyError(%v) = %v want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }

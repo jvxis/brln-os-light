@@ -17,20 +17,38 @@ LightningOS Light é um instalador completo de daemon de nó Lightning, com gere
 - Sem Docker na stack principal
 - LND gerenciado via systemd, gRPC em localhost
 - A seed phrase nunca é persistida nem registrada em logs
-- Assistente para credenciais RPC do Bitcoin e setup de carteira
-- Suite Lightning Ops: peers/canais, Rebalance Center, Autofee, Ranking de Canais, Aposentar Node, sinais HTLC e Channel Auto Heal
+- Assistente para credenciais RPC do Bitcoin, seed/carteira nativa e primeiro cadastro de admin
+- Dashboard redesenhado com pulso do node, saúde do core, risco das automações, atividade recente e painéis de receita
+- Suite Lightning Ops: peers/canais, Graph Explorer, Novos Canais, Rebalance Center, Autofee, Ranking de Canais, Aposentar Node, sinais HTLC e Channel Auto Heal
+- Carteira com leitura de QR de invoice, invoices blinded, preview/probing de rotas, pagamento por rota validada e detalhes de pagamento
 - Chat Keysend: 1 sat por mensagem + taxas de roteamento, indicadores de não lidas, retenção de 30 dias
 - Notificações em tempo real (on-chain, Lightning, canais, forwards, rebalances)
 - Notificações Telegram: backups SCB, resumos financeiros, comandos sob demanda `/scb` e `/balances`
-- Relatórios diários de roteamento (timer + backfill + API live)
-- App Store: LNDg, Peerswap (psweb), Elements, Bitcoin Core
+- Relatórios diários de roteamento (timer + backfill + API live + API live de movimento)
+- App Store: Bitcoin Core, Electrs, Mempool, LNDg, LNbits, Elements, Peerswap (psweb), RoboSats Gateway, Public Pool, Buy DePix, FSwap
 - Gestão de Bitcoin Local (status + config) e visualizador de logs
+
+## Novidades desde a atualização 0.3.9 do README
+Estes releases cobrem `0.3.10-Beta` até `0.3.18-Beta`, além da versão atual de desenvolvimento `0.3.19-Beta` em `ui/public/version.txt`.
+
+- Acesso admin e cadastro inicial: setup de primeiro acesso, tokens locais de setup/recovery, fluxo para habilitar login em instalações antigas e restart mais seguro do manager em mudanças de autenticação.
+- Graph Explorer: snapshot nativo do grafo, busca de nodes, abas de visão geral/canais/fechados/fees, reconciliação de peers locais, enriquecimento de origem de fechamento, distribuições de fee, tetos de policy e recompute.
+- Módulo Novos Canais: candidatos a peer com base em rotas observadas, rotas falhas, atrito operacional local, qualidade do grafo, demanda, alívio, confiança e evidência de rota/custo em 30 dias.
+- Dashboard renovado: componentes extraídos, cards mais ricos de LND/sistema, painéis de receita e atividade recente, saúde do core, risco das automações, pulso do node e modal de restart do LND com contexto de journal.
+- Melhorias na carteira: invoices blinded, leitura de QR para pagamento, preview/probing de rota, recomendação de rota automática, pagamento por rota validada, metadados de rota/pagamento e comportamento mais seguro para invoices com blind paths.
+- Rebalance Center: pisos separados de probe/execução, MSPR multi-source paralelo, cooldown de rota morta, TTL adaptativo, peso por efetividade da origem, cooldown quando todas as origens falham, reserva/orçamento manual, mensagens mais claras e novos defaults.
+- Autofee: defaults de perfil enviados pelo backend, telemetria de refresh, thresholds dinâmicos, melhor tratamento de canais em monitor, correções de market-refill/stall-relax/old-sinks e comportamento mais conservador quando o sinal local é fraco.
+- Relatórios e notificações: warm-up de relatório live, API live de movimento, armazenamento de histórico de rota, catch-up mais robusto, correções Telegram e mais contexto de pagamento/rota.
+- Expansão da App Store: apps Electrs e Mempool, status/checks de full-index, melhorias em Bitcoin Core/RoboSats/LNbits/Public Pool e refinamentos de install/status para apps Docker.
+- Instalador e operação: suporte a Docker em nós existentes, compatibilidade sudoers com Ubuntu 26, correções de instalação, terminal mais seguro, melhor restart do LND e correções de install/Graph Explorer.
 
 ## Estrutura do repositório
 - `cmd/lightningos-manager`: backend Go (API + UI estática)
 - `ui`: UI React + Tailwind
 - `templates`: units systemd e templates de configuração
 - `install.sh`: instalador idempotente (wrapper em `scripts/install.sh`)
+- `install_existing.sh`: instalador para nós existentes (x86_64/amd64)
+- `install_existing_pi.sh`: instalador para nós existentes em Raspberry Pi 4 (arm64)
 - `configs/config.yaml`: configuração local de desenvolvimento
 
 ## Instalação (Ubuntu Server)
@@ -94,6 +112,17 @@ sudo iptables -I INPUT -i br-<id> -p tcp --dport 10009 -j ACCEPT
 Siga o guia de Nó Existente:
 - PT-BR: `docs/13_EXISTING_NODE_GUIDE_PT_BR.md`
 - EN: `docs/14_EXISTING_NODE_GUIDE_EN.md`
+
+Rode o instalador correspondente ao seu ambiente:
+```bash
+cd lightningos-light
+
+# Nó existente em x86_64/amd64
+sudo ./install_existing.sh
+
+# Nó existente em Raspberry Pi 4 (arm64)
+sudo ./install_existing_pi.sh
+```
 
 Acesse a UI de outra máquina na mesma LAN:
 `https://<IP_LAN_DO_SERVIDOR>:8443`
@@ -206,16 +235,50 @@ Endpoints de API:
 - `GET /api/reports/custom?from=YYYY-MM-DD&to=YYYY-MM-DD` (máx. 730 dias)
 - `GET /api/reports/summary?range=...`
 - `GET /api/reports/live` (hoje 00:00 local -> agora, cache ~60s)
+- `GET /api/reports/movement/live` (janela live de movimento/rebalance do dia atual)
 
 ## Lightning Ops (mapa de funcionalidades)
 - Gestão de canais: controles de peer/canal, atualizações de policy e refinamentos de card/saldo de canal.
-- Ranking de Canais: score por canal, estado recomendado, comparação 7d vs 30d, recomendações acionáveis e links para Autofee, Rebalance, HTLC Manager e Gestão de Fechamentos.
-- Rebalance Center: rebalances manuais + automáticos com targeting por score, watchdogs, pre-probing, guardrails de ROI e auto-restart opcional no modo manual.
-- Autofee: automação de taxas por canal com âncoras de custo, seed Amboss, integração de sinais HTLC, calibração por tamanho/liquidez do nó, scheduler/manual run e histórico detalhado.
+- Graph Explorer: snapshot nativo do grafo, busca de nodes, abas geral/canais/fechados/fees, reconciliação de peers locais e histórico de policy de fees.
+- Novos Canais: candidatos de peers a partir de rotas observadas, atrito local, qualidade do grafo, demanda, alívio e confiança.
+- Ranking de Canais: score por canal, estado recomendado, comparação 7d vs 30d, sinais de top source/sink, recomendações acionáveis e links para Autofee, Rebalance, HTLC Manager, Novos Canais e Gestão de Fechamentos.
+- Rebalance Center: rebalances manuais + automáticos com targeting por score, watchdogs, pre-probing, pisos separados de probe/execução, MSPR, guardrails de ROI, peso por efetividade de origem e auto-restart opcional no modo manual.
+- Autofee: automação de taxas por canal com âncoras de custo, seed Amboss, integração de sinais HTLC, tratamento de canais em monitor, telemetria de refresh, calibração por tamanho/liquidez do nó, scheduler/manual run e histórico detalhado.
 - Aposentar Node (Node Retirement): fluxo guiado de descomissionamento seguro com linha do tempo de sessão, controle de fechamento cooperativo, tratamento de exceções e reconciliação on-chain.
 - HTLC Manager: telemetria HTLC com histerese usada pelo Autofee e por decisões de liquidez.
 - Channel Auto Heal + Tor peers checker: guardrails operacionais para confiabilidade de peer/canal.
 - Health checks: opção de follow-bitcoin para fluxos de saúde de LND/nó.
+
+## Graph Explorer
+Graph Explorer é a camada nativa de inspeção do grafo. Ele monta e mantém um snapshot do grafo a partir do LND e permite inspecionar peers sem sair do LightningOS Light.
+
+O que ele oferece:
+- Busca por alias, pubkey, endereço e metadados do grafo.
+- Visão geral do node com pubkey/endereço copiáveis e contexto da fonte do grafo.
+- Aba de canais com capacidade pública, policy, direção e dados do peer.
+- Aba de fechados com classificação de fechamento, origem do fechamento, enriquecimento de canais locais e contexto recuperado quando disponível.
+- Aba de fees com resumo de policies outbound/inbound, gráficos de distribuição, histórico médio de fees e indicadores de teto de policy.
+- Ação de recompute para reconstruir o snapshot em mudanças relevantes de grafo ou node.
+
+Uso operacional:
+- Use antes de abrir canais para investigar candidatos e sua presença pública no grafo.
+- Use o enriquecimento de canais fechados para entender comportamento histórico de fechamento.
+- Use os resumos de fee para comparar o pricing anunciado do peer com sua estratégia de Autofee e roteamento.
+
+## Novos Canais
+Novos Canais é um módulo de recomendação para abertura de canais. Ele combina evidência local de roteamento com o snapshot do grafo para ranquear peers que podem aliviar gargalos ou melhorar caminhos de receita.
+
+Entradas do candidato:
+- Rotas bem-sucedidas observadas e volume de rota nos últimos 30 dias.
+- Tentativas de rota falhas e evidência de caminhos caros.
+- Adjacência compartilhada com peers fortes ou problemáticos.
+- Quantidade de canais públicos, capacidade total e melhores fees outbound anunciadas.
+- Score de demanda, score de alívio, score de qualidade do grafo, confiança e motivos legíveis.
+
+Como usar:
+- Comece por candidatos de alta confiança que também tenham sinais de demanda ou alívio.
+- Confira o candidato no Graph Explorer antes de alocar capital.
+- Use a recomendação como insumo para abrir canal, não como gatilho automático.
 
 ## Ranking de Canais
 O Ranking de Canais é a camada de análise dos canais abertos. Ele foi feito para responder rapidamente quatro perguntas práticas:
@@ -314,6 +377,7 @@ Comportamento principal:
 - Alvos são escolhidos quando o déficit de liquidez outbound passa do deadband e o spread de taxa é positivo; estimativa de ROI usa receita de roteamento dos últimos 7 dias vs custo estimado de rebalance.
 - Alvos automáticos são ranqueados por **economic score** = (ganho esperado - custo estimado), priorizando canais de maior margem.
 - Um **profit guardrail** impede enqueue automático quando ganho esperado é menor que custo estimado (quando ambos são conhecidos). Se ROI for indeterminado (cost = 0 com spread positivo), auto continua permitido.
+- A seleção de origem também considera efetividade da origem e cooldown temporário de rota morta, evitando insistir em alvos/origens que falham repetidamente.
 - Seleção de origem é ponderada por histórico do par: pares recentes bem-sucedidos com taxas menores são priorizados, e falhas recentes são despriorizadas.
 - A visão geral mostra **Last scan** em horário local e status da varredura (ex.: sem origens, sem candidatos, orçamento esgotado), além de telemetria econômica (top score, skips por profit guardrail) e detalhes opcionais de skip.
 - Rebalances manuais podem opcionalmente usar **auto-restart** (toggle por canal) com cooldown de 60s até o alvo ser alcançado.
@@ -336,6 +400,8 @@ Parâmetros de configuração:
 - `Enable auto rebalance`: liga/desliga varredura automática.
 - `Scan interval (sec)`: frequência da varredura automática.
 - `Daily budget (% of revenue)`: percentual da receita de roteamento das últimas 24h alocado para auto-rebalances.
+- `Budget mode` / `Budget auto only`: modo híbrido de orçamento pode proteger execuções automáticas e deixar o comportamento de manual restart mais claro.
+- `Manual reserve`: reserva opcional fixa ou percentual para proteger parte do orçamento para fluxos de manual restart.
 - `Deadband (%)`: déficit mínimo de outbound antes de um canal virar alvo.
 - `Minimum local for source (%)`: liquidez local mínima para um canal ser origem.
 - `Economic ratio`: fração da taxa outbound do canal alvo (base+ppm) usada como limite máximo de taxa.
@@ -366,8 +432,8 @@ Parâmetros de configuração:
 Controles de split mínimo (`Split min (probe/execute)`):
 - Objetivo: separar a âncora econômica de início (`Minimum (sats)`) dos pisos rígidos de probe e execução.
 - `Split min (probe/execute)`: habilita pisos separados para probe e execução.
-- `Min probe amount (sats)` (`min_probe_sat`, padrão `0`): piso mínimo permitido no probe quando split está ligado. `0` herda `Minimum (sats)`.
-- `Min execute amount (sats)` (`min_execute_sat`, padrão `0`): piso mínimo permitido para execução real quando split está ligado. `0` herda `Minimum (sats)`.
+- `Min probe amount (sats)` (`min_probe_sat`, padrão `5000`): piso mínimo permitido no probe quando split está ligado.
+- `Min execute amount (sats)` (`min_execute_sat`, padrão `10000`): piso mínimo permitido para execução real quando split está ligado.
 Interações importantes:
 - As tentativas continuam começando com âncora em `Minimum (sats)` (compatível com comportamento legado).
 - Com split ligado, o probe pode descer até `min_probe_sat` e a execução é bloqueada abaixo de `min_execute_sat`.
@@ -378,19 +444,19 @@ Recomendação prática:
 
 MSPR (`MSPR (Paralelo Multi-Source)`):
 - Objetivo: aumentar a chance de sucesso no primeiro passe tentando shards em múltiplas fontes em paralelo, antes do fallback legado sequencial.
-- `Enable MSPR` (`mpp_enabled`, padrão `false`): habilita o prepass MSPR com execução real.
-- `MSPR for auto jobs only` (`mpp_auto_only`, padrão `false`): quando ligado, só jobs auto usam MSPR; jobs manuais ficam no legado.
-- `Max shards` (`mpp_max_shards`, padrão `8`, faixa `1..20`): máximo de shards planejados na rodada MSPR.
-- `Parallel workers` (`mpp_parallelism`, padrão `6`, faixa `1..max_shards`): número máximo de tentativas de shard concorrentes na rodada.
-- `Min shard amount (sats)` (`mpp_min_shard_sat`, padrão `1000`): tamanho mínimo de shard planejado pelo MSPR.
-- `Round timeout (sec)` (`mpp_round_timeout_sec`, padrão `30`): tempo máximo da rodada MSPR antes de cair para tentativas legadas.
+- `Enable MSPR` (`mpp_enabled`, padrão `true`): habilita o prepass MSPR com execução real.
+- `MSPR for auto jobs only` (`mpp_auto_only`, padrão `true`): quando ligado, só jobs auto usam MSPR; jobs manuais ficam no legado.
+- `Max shards` (`mpp_max_shards`, padrão `6`, faixa `1..20`): máximo de shards planejados na rodada MSPR.
+- `Parallel workers` (`mpp_parallelism`, padrão `3`, faixa `1..max_shards`): número máximo de tentativas de shard concorrentes na rodada.
+- `Min shard amount (sats)` (`mpp_min_shard_sat`, padrão `10000`): tamanho mínimo de shard planejado pelo MSPR.
+- `Round timeout (sec)` (`mpp_round_timeout_sec`, padrão `35`): tempo máximo da rodada MSPR antes de cair para tentativas legadas.
 Modelo de execução:
 - O MSPR roda um prepass paralelo (com plano de shards e workers).
 - Shards com sucesso são executados e contabilizados imediatamente.
 - Após o prepass, o job continua na mesma fila/fluxo legado para o valor remanescente.
 - Falhas de shard aparecem no histórico com prefixo `mpp shard:` no motivo.
 Recomendação prática:
-- Comece com `max_shards=8`, `parallel_workers=6`, `min_shard=1000`, `round_timeout=30`.
+- Comece com os defaults atuais: `max_shards=6`, `parallel_workers=3`, `min_shard=10000`, `round_timeout=35`, com `auto only` habilitado.
 - Se os primeiros shards ainda estiverem grandes, aumente shards (até `20`) e mantenha workers menor ou igual a shards.
 - Se o nó estiver sensível a carga, reduza primeiro os workers paralelos (não o número de shards).
 
@@ -682,11 +748,15 @@ journalctl -u lightningos-manager -n 200 --no-pager
 ss -ltn | grep :8443
 ```
 
-### App Store (LNDg, Peerswap, Elements, Bitcoin Core)
+### App Store (Bitcoin Core, Electrs, Mempool, LNDg, LNbits, Elements, Peerswap, RoboSats, Public Pool, Buy DePix, FSwap)
+- Bitcoin Core roda via Docker com dados em `/data/bitcoin`.
+- Electrs roda via Docker, indexa o Bitcoin Core local, expõe Electrum TCP na porta `50001` e publica métricas em `127.0.0.1:4224`.
+- Mempool roda uma stack mempool.space local em `http://<IP_LAN_DO_SERVIDOR>:8999` e exige Bitcoin Core + Electrs instalados e rodando.
 - LNDg roda em Docker e escuta em `http://<IP_LAN_DO_SERVIDOR>:8889`.
+- LNbits roda em Docker e integra com a conexão local do LND.
 - Peerswap instala `peerswapd` + `psweb` (UI em `http://<IP_LAN_DO_SERVIDOR>:1984`) e requer Elements.
 - Elements roda como serviço nativo (Liquid Elements node, RPC em `127.0.0.1:7041`).
-- Bitcoin Core roda via Docker com dados em `/data/bitcoin`.
+- RoboSats Gateway, Public Pool, Buy DePix e FSwap são gerenciados pelo mesmo fluxo de instalar/iniciar/parar/status da App Store.
 
 Notas LNDg:
 - A página de logs do LNDg lê `/var/log/lndg-controller.log` dentro do container. Se estiver vazio, verifique `docker logs lndg-lndg-1`.

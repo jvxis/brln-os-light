@@ -20,14 +20,30 @@ LightningOS Light is a Full Lightning Node Daemon Installer, Lightning node mana
 - No Docker in the core stack
 - LND managed via systemd, gRPC on localhost
 - Seed phrase is never persisted or logged
-- Wizard for Bitcoin RPC credentials and wallet setup
-- Lightning Ops suite: peers/channels, Rebalance Center, Autofee, Channel Ranking, Node Retirement, HTLC signals, and Channel Auto Heal
+- Wizard for Bitcoin RPC credentials, native seed/wallet setup, and first admin enrollment
+- Redesigned dashboard with node pulse, core health, automation risk, recent activity, and revenue panels
+- Lightning Ops suite: peers/channels, Graph Explorer, New Channels, Rebalance Center, Autofee, Channel Ranking, Node Retirement, HTLC signals, and Channel Auto Heal
+- Wallet with QR invoice scanning, blinded invoice support, route preview/probing, validated-route payments, and payment detail views
 - Keysend Chat: 1 sat per message + routing fees, unread indicators, 30-day retention
 - Real-time notifications (on-chain, Lightning, channels, forwards, rebalances)
 - Telegram notifications: SCB backups, financial summaries, on-demand `/scb` and `/balances`
-- Daily routing reports (timer + backfill + live API)
-- App Store: LNDg, Peerswap (psweb), Elements, Bitcoin Core
+- Daily routing reports (timer + backfill + live API + movement live API)
+- App Store: Bitcoin Core, Electrs, Mempool, LNDg, LNbits, Elements, Peerswap (psweb), RoboSats Gateway, Public Pool, Buy DePix, FSwap
 - Bitcoin Local management (status + config) and logs viewer
+
+## New since the 0.3.9 README update
+These releases cover `0.3.10-Beta` through `0.3.18-Beta`, plus the current `0.3.19-Beta` development version in `ui/public/version.txt`.
+
+- Admin access and enrollment: first-run setup, local setup/recovery tokens, legacy-login enable flow, and safer manager restart handling around authentication changes.
+- Graph Explorer: native graph snapshot, node search, node/channel/closed-channel/fee tabs, local-peer reconciliation, close-source enrichment, fee distributions, policy ceilings, and recompute controls.
+- New Channels recommendation module: candidate peers from observed routes, failed routes, local operational pain, graph quality, demand, relief, confidence, and 30-day route/cost evidence.
+- Dashboard refresh: extracted dashboard components, richer LND/system cards, revenue and recent activity panels, core health, automation risk, node pulse, and safer LND restart modal with live journal context.
+- Wallet upgrades: blinded invoices, QR scanning for invoice payment, route preview/probing, automatic-route recommendations, validated-route payment execution, better payment detail/route metadata, and safer behavior for blind-path invoices.
+- Rebalance Center upgrades: split probe/execute floors, MSPR multi-source parallel prepass, route-dead cooldown, adaptive TTL, source-effectiveness weighting, all-sources-failed cooldown, manual reserve/budget controls, clearer messages, and updated defaults.
+- Autofee upgrades: backend-supplied profile defaults, refresh telemetry, dynamic thresholds, stronger inbound/monitor-state handling, market-refill fixes, stall relaxation fixes, old-sink handling, and more conservative behavior around weak local signals.
+- Reports and notifications: live report warm-up, movement live API, route-history storage, better catch-up behavior, Telegram notification fixes, and richer payment/route context.
+- App Store expansion: Electrs and Mempool apps, full-index dependency checks/status, improved Bitcoin Core/RoboSats/LNbits/Public Pool handling, and Docker app install/status refinements.
+- Installer and operations: existing-node Docker setup support, Ubuntu 26 sudoers compatibility, improved install fixes, safer terminal behavior, LND restart handling, and Graph Explorer/install fixes.
 
 ## Repository layout
 - `cmd/lightningos-manager`: Go backend (API + static UI)
@@ -221,17 +237,51 @@ API endpoints:
 - `GET /api/reports/range?range=d-1|month|3m|6m|12m|all` (month = last 30 days)
 - `GET /api/reports/custom?from=YYYY-MM-DD&to=YYYY-MM-DD` (max 730 days)
 - `GET /api/reports/summary?range=...`
+- `GET /api/reports/movement/live` (live movement/rebalance window for the current day)
 - `GET /api/reports/live` (today 00:00 local → now, cached ~60s)
 
 ## Lightning Ops (feature map)
 - Channel management: peer/channel controls, policy updates, and channel card/balance refinements.
-- Channel Ranking: per-channel score, recommended state, 7d vs 30d comparison, actionable recommendations, and links into Autofee, Rebalance, HTLC Manager, and Close Manager.
-- Rebalance Center: manual + auto rebalances with score-based targeting, watchdogs, pre-probing, ROI guardrails, and optional manual auto-restart.
-- Autofee: per-channel fee automation with cost anchors, Amboss seeding, HTLC signal integration, calibration by node size/liquidity, scheduler/manual runs, and detailed run history.
+- Graph Explorer: native network graph snapshot, node search, general/channel/closed/fee tabs, local-peer reconciliation, and fee-policy history.
+- New Channels: peer candidates built from observed routes, local pain, graph quality, demand, relief, and confidence.
+- Channel Ranking: per-channel score, recommended state, 7d vs 30d comparison, top source/sink signals, actionable recommendations, and links into Autofee, Rebalance, HTLC Manager, New Channels, and Close Manager.
+- Rebalance Center: manual + auto rebalances with score-based targeting, watchdogs, pre-probing, split probe/execute floors, MSPR, ROI guardrails, source-effectiveness weighting, and optional manual auto-restart.
+- Autofee: per-channel fee automation with cost anchors, Amboss seeding, HTLC signal integration, monitor-state handling, refresh telemetry, calibration by node size/liquidity, scheduler/manual runs, and detailed run history.
 - Node Retirement: guided safe node decommission workflow with session timeline, cooperative close controls, exception handling, and on-chain reconciliation.
 - HTLC Manager: hysteresis-based HTLC telemetry used by Autofee and liquidity decisions.
 - Channel Auto Heal + Tor peers checker: operational guardrails for peer/channel reliability.
 - Health checks: optional follow-bitcoin checks for LND/node health workflows.
+
+## Graph Explorer
+Graph Explorer is the native graph-inspection layer. It builds and caches a graph snapshot from LND, then lets the operator inspect peers without leaving LightningOS Light.
+
+What it provides:
+- Search by alias, pubkey, address, and graph metadata.
+- General node view with copyable pubkey/address data and graph source context.
+- Channels tab with public channel capacity, policy, direction, and peer data.
+- Closed tab with close classification, close source, local-channel enrichment, and recovered close context when available.
+- Fees tab with outbound/inbound policy summaries, distribution charts, average fee history, and policy ceiling indicators.
+- Recompute action for rebuilding the cached snapshot after major graph or node changes.
+
+Operational use:
+- Use it before opening channels to inspect candidate peers and their public-channel footprint.
+- Use closed-channel enrichment to understand historical close behavior.
+- Use fee summaries to compare a peer's advertised pricing against your own Autofee and routing strategy.
+
+## New Channels
+New Channels is a recommendation module for opening channels. It combines your local routing evidence with the cached graph snapshot to rank peers that may relieve routing pain or improve revenue paths.
+
+Candidate inputs:
+- Observed successful routes and route volume over 30 days.
+- Failed route attempts and expensive path evidence.
+- Shared adjacency with strong peers or problem peers.
+- Graph channel count, total capacity, and best advertised outbound fees.
+- Demand score, relief score, graph-quality score, confidence, and human-readable reasons.
+
+How to use it:
+- Start with high-confidence candidates that also show route demand or relief signals.
+- Cross-check the candidate in Graph Explorer before committing capital.
+- Use the recommendation as an input to channel opening, not as an automatic open trigger.
 
 ## Channel Ranking
 Channel Ranking is the analysis layer for open channels. It is designed to answer four practical questions quickly:
@@ -330,6 +380,7 @@ Key behavior:
 - Targets are chosen when outbound liquidity deficit exceeds the deadband and fee spread is positive; ROI estimate uses last 7 days of routing revenue vs estimated rebalance cost.
 - Auto targets are ranked by **economic score** = (expected gain − estimated cost), so higher-margin channels are prioritized.
 - A **profit guardrail** prevents auto enqueues when expected gain is lower than estimated cost (when both are known). If ROI is indeterminate (cost = 0 with positive spread), auto is still allowed.
+- Source selection now also considers source effectiveness and temporary route-dead cooldowns, so repeatedly failing targets/sources are cooled down before wasting more attempts.
 - Source selection is weighted by pair history: recent successful pairs with lower fees are prioritized, while recent failures are de‑prioritized.
 - The overview shows **Last scan** in local time and a scan status (e.g., no sources, no candidates, budget exhausted) plus economic telemetry (top score, profit guardrail skips) and optional skip details.
 - Manual rebalances can optionally **auto-restart** (per-channel toggle) with a 60s cooldown until the target is reached.
@@ -352,6 +403,8 @@ Configuration parameters:
 - `Enable auto rebalance`: turns auto scanning on/off.
 - `Scan interval (sec)`: how often auto scan runs.
 - `Daily budget (% of revenue)`: percent of the last 24h routing revenue allocated to auto rebalances.
+- `Budget mode` / `Budget auto only`: hybrid budget mode can protect auto runs while leaving manual restart behavior clearer.
+- `Manual reserve`: optional fixed or percentage reserve that protects part of the budget for manual restart workflows.
 - `Deadband (%)`: minimum outbound deficit before a channel becomes a target.
 - `Minimum local for source (%)`: minimum local liquidity required for a channel to be a source.
 - `Economic ratio`: fraction of the target channel outbound fee (base+ppm) used as the maximum fee cap.
@@ -382,8 +435,8 @@ Configuration parameters:
 Split min controls (`Split min (probe/execute)`):
 - Purpose: decouple the economic start anchor (`Minimum (sats)`) from strict probe/execute floors.
 - `Split min (probe/execute)`: enables separate floor controls for probing and execution.
-- `Min probe amount (sats)` (`min_probe_sat`, default `0`): minimum amount allowed during route probing when split is enabled. `0` falls back to `Minimum (sats)`.
-- `Min execute amount (sats)` (`min_execute_sat`, default `0`): minimum amount allowed to be actually sent when split is enabled. `0` falls back to `Minimum (sats)`.
+- `Min probe amount (sats)` (`min_probe_sat`, default `5000`): minimum amount allowed during route probing when split is enabled.
+- `Min execute amount (sats)` (`min_execute_sat`, default `10000`): minimum amount allowed to be actually sent when split is enabled.
 Key interactions:
 - Attempts still start anchored by `Minimum (sats)` (legacy-compatible behavior).
 - If split is enabled, probing can go down to `min_probe_sat` and execution is blocked below `min_execute_sat`.
@@ -394,19 +447,19 @@ Practical recommendation:
 
 MSPR (`MSPR (Multi-Source Parallel)`):
 - Purpose: increase first-pass success chance by trying shards across multiple source channels in parallel before legacy sequential fallback.
-- `Enable MSPR` (`mpp_enabled`, default `false`): enables MSPR prepass execution.
-- `MSPR for auto jobs only` (`mpp_auto_only`, default `false`): when enabled, only auto jobs use MSPR; manual jobs stay legacy.
-- `Max shards` (`mpp_max_shards`, default `8`, range `1..20`): max number of shards planned for the MSPR round.
-- `Parallel workers` (`mpp_parallelism`, default `6`, range `1..max_shards`): max concurrent shard attempts in the round.
-- `Min shard amount (sats)` (`mpp_min_shard_sat`, default `1000`): minimum shard size planned by MSPR.
-- `Round timeout (sec)` (`mpp_round_timeout_sec`, default `30`): max duration for one MSPR round before fallback to legacy attempts.
+- `Enable MSPR` (`mpp_enabled`, default `true`): enables MSPR prepass execution.
+- `MSPR for auto jobs only` (`mpp_auto_only`, default `true`): when enabled, only auto jobs use MSPR; manual jobs stay legacy.
+- `Max shards` (`mpp_max_shards`, default `6`, range `1..20`): max number of shards planned for the MSPR round.
+- `Parallel workers` (`mpp_parallelism`, default `3`, range `1..max_shards`): max concurrent shard attempts in the round.
+- `Min shard amount (sats)` (`mpp_min_shard_sat`, default `10000`): minimum shard size planned by MSPR.
+- `Round timeout (sec)` (`mpp_round_timeout_sec`, default `35`): max duration for one MSPR round before fallback to legacy attempts.
 Execution model:
 - MSPR runs one parallel prepass (using shard plan + workers).
 - Successful shards are executed and accounted immediately.
 - After the prepass, the job continues in the same legacy queue/attempt flow for remaining amount.
 - Failed shard attempts appear in history with `mpp shard:` reason prefix.
 Practical recommendation:
-- Start with `max_shards=8`, `parallel_workers=6`, `min_shard=1000`, `round_timeout=30`.
+- Start with the shipped defaults: `max_shards=6`, `parallel_workers=3`, `min_shard=10000`, `round_timeout=35`, `auto only` enabled.
 - If you see too many large first shards, increase shards (up to `20`) and keep workers lower or equal to shards.
 - If your node is resource-constrained, reduce parallel workers first (not shard count).
 
@@ -698,11 +751,15 @@ journalctl -u lightningos-manager -n 200 --no-pager
 ss -ltn | grep :8443
 ```
 
-### App Store (LNDg, Peerswap, Elements, Bitcoin Core)
+### App Store (Bitcoin Core, Electrs, Mempool, LNDg, LNbits, Elements, Peerswap, RoboSats, Public Pool, Buy DePix, FSwap)
+- Bitcoin Core runs via Docker with data in `/data/bitcoin`.
+- Electrs runs via Docker, indexes the local Bitcoin Core node, exposes Electrum TCP on port `50001`, and publishes metrics on `127.0.0.1:4224`.
+- Mempool runs a self-hosted mempool.space stack on `http://<SERVER_LAN_IP>:8999` and requires Bitcoin Core + Electrs installed and running.
 - LNDg runs in Docker and listens on `http://<SERVER_LAN_IP>:8889`.
+- LNbits runs in Docker and integrates with the local LND connection.
 - Peerswap installs `peerswapd` + `psweb` (UI on `http://<SERVER_LAN_IP>:1984`) and requires Elements.
 - Elements runs as a native service (Liquid Elements node, RPC on `127.0.0.1:7041`).
-- Bitcoin Core runs via Docker with data in `/data/bitcoin`.
+- RoboSats Gateway, Public Pool, Buy DePix, and FSwap are managed from the same App Store install/start/stop/status flow.
 
 LNDg notes:
 - The LNDg logs page reads `/var/log/lndg-controller.log` inside the container. If it is empty, check `docker logs lndg-lndg-1`.

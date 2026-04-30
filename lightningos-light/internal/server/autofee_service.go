@@ -1232,6 +1232,38 @@ create table if not exists autofee_market_refill_fee_snapshot (
 );
 create index if not exists autofee_market_refill_fee_snapshot_captured_idx on autofee_market_refill_fee_snapshot (captured_at desc);
 
+create table if not exists autofee_outcomes (
+  id bigserial primary key,
+  run_id text not null,
+  channel_id bigint not null,
+  channel_point text not null,
+  kind text not null,
+  decided_at timestamptz not null,
+  prev_ppm integer not null,
+  new_ppm integer not null,
+  target_ppm integer,
+  floor_ppm integer,
+  floor_src text,
+  class_label text,
+  tags jsonb not null default '[]'::jsonb,
+  out_ratio_pre real,
+  out_ppm7d_pre integer,
+  margin_ppm7d_pre integer,
+  fwd_count_7d_pre integer,
+  measured_at timestamptz,
+  fwd_count_24h_after integer,
+  fwd_amt_msat_24h_after bigint,
+  fwd_fee_msat_24h_after bigint,
+  rebal_amt_msat_24h_after bigint,
+  rebal_fee_msat_24h_after bigint,
+  measurement_status text not null default 'pending',
+  measurement_error text,
+  unique (run_id, channel_id, kind)
+);
+create index if not exists autofee_outcomes_status_idx on autofee_outcomes (measurement_status, decided_at);
+create index if not exists autofee_outcomes_channel_idx on autofee_outcomes (channel_id, decided_at desc);
+create index if not exists autofee_outcomes_decided_at_idx on autofee_outcomes (decided_at desc);
+
 alter table autofee_config add column if not exists super_source_enabled boolean not null default false;
 alter table autofee_config add column if not exists operation_mode text not null default 'balanced';
 alter table autofee_config add column if not exists market_refill_rebalance_prev_saved boolean not null default false;
@@ -2119,9 +2151,11 @@ func (s *AutofeeService) Start() {
 	s.started = true
 	s.stop = make(chan struct{})
 	s.wake = make(chan struct{}, 1)
+	stop := s.stop
 	s.mu.Unlock()
 
 	go s.loop()
+	go s.measurementLoop(stop)
 }
 
 func (s *AutofeeService) Stop() {
@@ -2131,6 +2165,177 @@ func (s *AutofeeService) Stop() {
 		s.stop = nil
 	}
 	s.mu.Unlock()
+}
+
+const (
+	autofeeOutcomeMeasurementWindow   = 24 * time.Hour
+	autofeeOutcomeMeasurementInterval = 30 * time.Minute
+	autofeeOutcomeMeasurementBatch    = 50
+)
+
+// measurementLoop periodically processes pending autofee_outcomes rows whose
+// 24h window has elapsed. Runs independently from the decision loop so it
+// keeps measuring even when Autofee is disabled.
+func (s *AutofeeService) measurementLoop(stop <-chan struct{}) {
+	if stop == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil && s.logger != nil {
+			s.logger.Printf("autofee: measurementLoop panic recovered: %v", r)
+		}
+	}()
+
+	// Initial run on startup so we don't wait the full interval after a restart.
+	s.runMeasurementTick()
+
+	ticker := time.NewTicker(autofeeOutcomeMeasurementInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			s.runMeasurementTick()
+		}
+	}
+}
+
+func (s *AutofeeService) runMeasurementTick() {
+	defer func() {
+		if r := recover(); r != nil && s.logger != nil {
+			s.logger.Printf("autofee: measurement tick panic recovered: %v", r)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := s.MeasureOutcomes(ctx); err != nil && s.logger != nil {
+		s.logger.Printf("autofee: measurement tick failed: %v", err)
+	}
+}
+
+// MeasureOutcomes scans up to autofeeOutcomeMeasurementBatch pending rows
+// older than 24h, computes the post-decision metrics, and updates each row.
+// Failures on individual rows are recorded as measurement_status='error' so
+// the batch does not abort. Safe to call manually.
+func (s *AutofeeService) MeasureOutcomes(ctx context.Context) error {
+	if s.db == nil {
+		return errors.New("db unavailable")
+	}
+
+	rows, err := s.db.Query(ctx, `
+select id, channel_id, decided_at
+from autofee_outcomes
+where measurement_status='pending'
+  and decided_at < now() - interval '24 hours'
+order by decided_at asc
+limit $1
+`, autofeeOutcomeMeasurementBatch)
+	if err != nil {
+		return err
+	}
+
+	type pending struct {
+		ID        int64
+		ChannelID int64
+		DecidedAt time.Time
+	}
+	items := make([]pending, 0, autofeeOutcomeMeasurementBatch)
+	for rows.Next() {
+		var p pending
+		if err := rows.Scan(&p.ID, &p.ChannelID, &p.DecidedAt); err != nil {
+			rows.Close()
+			return err
+		}
+		items = append(items, p)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, it := range items {
+		if err := s.measureOne(ctx, it.ID, uint64(it.ChannelID), it.DecidedAt); err != nil {
+			if s.logger != nil {
+				s.logger.Printf("autofee: measure outcome id=%d failed: %v", it.ID, err)
+			}
+			updCtx, updCancel := context.WithTimeout(ctx, 2*time.Second)
+			_, _ = s.db.Exec(updCtx, `
+update autofee_outcomes
+set measurement_status='error',
+    measurement_error=$2,
+    measured_at=now()
+where id=$1
+`, it.ID, err.Error())
+			updCancel()
+		}
+	}
+	return nil
+}
+
+func (s *AutofeeService) measureOne(ctx context.Context, id int64, channelID uint64, decidedAt time.Time) error {
+	windowStart := decidedAt
+	windowEnd := decidedAt.Add(autofeeOutcomeMeasurementWindow)
+
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var fwdFee, fwdAmt int64
+	var fwdCount int
+	err := s.db.QueryRow(queryCtx, `
+select
+  coalesce(sum(
+    case
+      when fee_msat > 0 then fee_msat
+      when fee_sat > 0 then fee_sat * 1000
+      when amount_in_msat > 0 and amount_out_msat > 0 and amount_in_msat > amount_out_msat then amount_in_msat - amount_out_msat
+      else 0
+    end
+  ), 0),
+  coalesce(sum(case when amount_out_msat > 0 then amount_out_msat else amount_sat * 1000 end), 0),
+  count(*)
+from notifications
+where type='forward'
+  and coalesce(chan_id_out, channel_id) = $1
+  and occurred_at >= $2
+  and occurred_at < $3
+`, int64(channelID), windowStart, windowEnd).Scan(&fwdFee, &fwdAmt, &fwdCount)
+	if err != nil {
+		return fmt.Errorf("forward stats: %w", err)
+	}
+
+	var rebalFee, rebalAmtSat int64
+	err = s.db.QueryRow(queryCtx, `
+select
+  coalesce(sum(case when fee_msat > 0 then fee_msat else fee_sat * 1000 end), 0),
+  coalesce(sum(amount_sat), 0)
+from notifications
+where type='rebalance'
+  and coalesce(rebal_target_chan_id, channel_id) = $1
+  and status in ('SETTLED', 'SUCCEEDED')
+  and occurred_at >= $2
+  and occurred_at < $3
+`, int64(channelID), windowStart, windowEnd).Scan(&rebalFee, &rebalAmtSat)
+	if err != nil {
+		return fmt.Errorf("rebalance stats: %w", err)
+	}
+	rebalAmtMsat := rebalAmtSat * 1000
+
+	updCtx, updCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer updCancel()
+	_, err = s.db.Exec(updCtx, `
+update autofee_outcomes
+set measurement_status='measured',
+    measured_at=now(),
+    fwd_count_24h_after=$2,
+    fwd_amt_msat_24h_after=$3,
+    fwd_fee_msat_24h_after=$4,
+    rebal_amt_msat_24h_after=$5,
+    rebal_fee_msat_24h_after=$6,
+    measurement_error=null
+where id=$1
+`, id, fwdCount, fwdAmt, fwdFee, rebalAmtMsat, rebalFee)
+	return err
 }
 
 func (s *AutofeeService) nudgeScheduler() {
@@ -3325,6 +3530,7 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 			}
 			changedDecisions = append(changedDecisions, decision)
 			changedLines = append(changedLines, buildAutofeeChannelLogEntry(decision, "changed", dryRun, nil))
+			e.recordOutcome(ctx, runID, decision, e.now)
 		} else {
 			if decision.NewPpm == decision.LocalPpm {
 				summary.kept++
@@ -9368,6 +9574,60 @@ func (e *autofeeEngine) applyDecision(ctx context.Context, ch lndclient.ChannelI
 	}
 
 	return e.svc.lnd.UpdateChannelFees(ctx, ch.ChannelPoint, false, baseFee, feeRate, timeLock, inboundEnabled, 0, inboundRate)
+}
+
+// recordOutcome persists one row per kind ('outbound' or 'inbound') describing
+// what changed in this decision plus the pre-decision channel snapshot. It is
+// best-effort: any DB error is logged and swallowed so it can never break the
+// run loop.
+func (e *autofeeEngine) recordOutcome(ctx context.Context, runID string, d *decision, decidedAt time.Time) {
+	if d == nil || e.svc == nil || e.svc.db == nil || runID == "" {
+		return
+	}
+	tagsJSON, err := json.Marshal(d.Tags)
+	if err != nil || len(tagsJSON) == 0 {
+		tagsJSON = []byte("[]")
+	}
+	insertCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	if d.NewPpm != d.LocalPpm {
+		if _, err := e.svc.db.Exec(insertCtx, `
+insert into autofee_outcomes (
+  run_id, channel_id, channel_point, kind, decided_at,
+  prev_ppm, new_ppm, target_ppm, floor_ppm, floor_src,
+  class_label, tags,
+  out_ratio_pre, out_ppm7d_pre, margin_ppm7d_pre, fwd_count_7d_pre
+) values ($1,$2,$3,'outbound',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+on conflict (run_id, channel_id, kind) do nothing
+`,
+			runID, int64(d.ChannelID), d.ChannelPoint, decidedAt,
+			d.LocalPpm, d.NewPpm, d.Target, d.Floor, d.FloorSrc,
+			d.ClassLabel, tagsJSON,
+			float32(d.OutRatio), d.OutPpm7d, d.Margin, d.FwdCount,
+		); err != nil && e.svc.logger != nil {
+			e.svc.logger.Printf("autofee: outcome insert (outbound) failed: %v", err)
+		}
+	}
+
+	if d.InboundDiscount != d.PrevInboundDiscount {
+		if _, err := e.svc.db.Exec(insertCtx, `
+insert into autofee_outcomes (
+  run_id, channel_id, channel_point, kind, decided_at,
+  prev_ppm, new_ppm,
+  class_label, tags,
+  out_ratio_pre, out_ppm7d_pre, margin_ppm7d_pre, fwd_count_7d_pre
+) values ($1,$2,$3,'inbound',$4,$5,$6,$7,$8,$9,$10,$11,$12)
+on conflict (run_id, channel_id, kind) do nothing
+`,
+			runID, int64(d.ChannelID), d.ChannelPoint, decidedAt,
+			d.PrevInboundDiscount, d.InboundDiscount,
+			d.ClassLabel, tagsJSON,
+			float32(d.OutRatio), d.OutPpm7d, d.Margin, d.FwdCount,
+		); err != nil && e.svc.logger != nil {
+			e.svc.logger.Printf("autofee: outcome insert (inbound) failed: %v", err)
+		}
+	}
 }
 
 func (e *autofeeEngine) logDecision(ctx context.Context, action string, d *decision) error {

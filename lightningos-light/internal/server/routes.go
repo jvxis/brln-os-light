@@ -145,6 +145,8 @@ func (s *Server) routes() http.Handler {
 		r.Post("/autofee/refresh", s.handleAutofeeRefresh)
 		r.Get("/autofee/status", s.handleAutofeeStatus)
 		r.Get("/autofee/results", s.handleAutofeeResults)
+		r.Get("/autofee/outcomes", s.handleAutofeeOutcomesGet)
+		r.Post("/autofee/outcomes/measure", s.handleAutofeeOutcomesMeasureNow)
 		r.Get("/channel-ranking", s.handleChannelRankingGet)
 		r.Post("/channel-ranking/recompute", s.handleChannelRankingRecomputePost)
 		r.Get("/channel-ranking/open-candidates", s.handleChannelOpenCandidatesGet)

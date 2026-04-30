@@ -471,3 +471,287 @@ func parseAutofeeTime(raw string) (time.Time, bool) {
 	}
 	return time.Time{}, false
 }
+
+func (s *Server) handleAutofeeOutcomesGet(w http.ResponseWriter, r *http.Request) {
+	svc, errMsg := s.autofeeService()
+	if svc == nil {
+		if errMsg == "" {
+			errMsg = "autofee unavailable"
+		}
+		writeError(w, http.StatusServiceUnavailable, errMsg)
+		return
+	}
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, "db unavailable")
+		return
+	}
+
+	q := r.URL.Query()
+	now := time.Now().UTC()
+	until := now
+	if ts, ok := parseAutofeeTime(q.Get("until")); ok {
+		until = ts
+	}
+	since := until.Add(-30 * 24 * time.Hour)
+	if ts, ok := parseAutofeeTime(q.Get("since")); ok {
+		since = ts
+	}
+	if since.After(until) {
+		writeError(w, http.StatusBadRequest, "since must be before until")
+		return
+	}
+
+	kindFilter := strings.ToLower(strings.TrimSpace(q.Get("kind")))
+	switch kindFilter {
+	case "", "outbound", "inbound":
+	default:
+		writeError(w, http.StatusBadRequest, "kind must be outbound or inbound")
+		return
+	}
+
+	limit := 100
+	if raw := strings.TrimSpace(q.Get("limit")); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	totals := map[string]int{}
+	totalsRows, err := s.db.Query(ctx, `
+select measurement_status, count(*)
+from autofee_outcomes
+where decided_at >= $1 and decided_at <= $2
+group by measurement_status
+`, since, until)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for totalsRows.Next() {
+		var status string
+		var count int
+		if err := totalsRows.Scan(&status, &count); err != nil {
+			totalsRows.Close()
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		totals[status] = count
+	}
+	totalsRows.Close()
+	if err := totalsRows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	type aggRow struct {
+		Key           string  `json:"key"`
+		Count         int     `json:"count"`
+		AvgFwd24h     float64 `json:"avg_fwd_24h"`
+		AvgAmtMsat24h float64 `json:"avg_amt_msat_24h"`
+		AvgFeeMsat24h float64 `json:"avg_fee_msat_24h"`
+		AvgPpmDelta   float64 `json:"avg_ppm_delta"`
+	}
+
+	byTag := []aggRow{}
+	tagRows, err := s.db.Query(ctx, `
+select tag,
+  count(*)::bigint,
+  coalesce(avg(fwd_count_24h_after), 0)::float8,
+  coalesce(avg(fwd_amt_msat_24h_after), 0)::float8,
+  coalesce(avg(fwd_fee_msat_24h_after), 0)::float8,
+  coalesce(avg(new_ppm - prev_ppm), 0)::float8
+from autofee_outcomes,
+     jsonb_array_elements_text(tags) as tag
+where decided_at >= $1 and decided_at <= $2
+  and measurement_status='measured'
+group by tag
+order by count(*) desc
+limit 50
+`, since, until)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for tagRows.Next() {
+		var row aggRow
+		if err := tagRows.Scan(&row.Key, &row.Count, &row.AvgFwd24h, &row.AvgAmtMsat24h, &row.AvgFeeMsat24h, &row.AvgPpmDelta); err != nil {
+			tagRows.Close()
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		byTag = append(byTag, row)
+	}
+	tagRows.Close()
+	if err := tagRows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	byClass := []aggRow{}
+	classRows, err := s.db.Query(ctx, `
+select coalesce(nullif(class_label, ''), 'unknown'),
+  count(*)::bigint,
+  coalesce(avg(fwd_count_24h_after), 0)::float8,
+  coalesce(avg(fwd_amt_msat_24h_after), 0)::float8,
+  coalesce(avg(fwd_fee_msat_24h_after), 0)::float8,
+  coalesce(avg(new_ppm - prev_ppm), 0)::float8
+from autofee_outcomes
+where decided_at >= $1 and decided_at <= $2
+  and measurement_status='measured'
+group by coalesce(nullif(class_label, ''), 'unknown')
+order by count(*) desc
+`, since, until)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for classRows.Next() {
+		var row aggRow
+		if err := classRows.Scan(&row.Key, &row.Count, &row.AvgFwd24h, &row.AvgAmtMsat24h, &row.AvgFeeMsat24h, &row.AvgPpmDelta); err != nil {
+			classRows.Close()
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		byClass = append(byClass, row)
+	}
+	classRows.Close()
+	if err := classRows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	listRows, err := s.db.Query(ctx, `
+select id, run_id, channel_id, channel_point, kind, decided_at,
+  prev_ppm, new_ppm, target_ppm, floor_ppm, floor_src,
+  class_label, tags,
+  out_ratio_pre, out_ppm7d_pre, margin_ppm7d_pre, fwd_count_7d_pre,
+  measured_at, measurement_status, measurement_error,
+  fwd_count_24h_after, fwd_amt_msat_24h_after, fwd_fee_msat_24h_after,
+  rebal_amt_msat_24h_after, rebal_fee_msat_24h_after
+from autofee_outcomes
+where decided_at >= $1 and decided_at <= $2
+  and ($3 = '' or kind = $3)
+order by decided_at desc
+limit $4
+`, since, until, kindFilter, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer listRows.Close()
+
+	items := []map[string]any{}
+	for listRows.Next() {
+		var (
+			id              int64
+			runID           string
+			channelID       int64
+			channelPoint    string
+			kind            string
+			decidedAt       time.Time
+			prevPpm         int
+			newPpm          int
+			targetPpm       *int
+			floorPpm        *int
+			floorSrc        *string
+			classLabel      *string
+			tagsRaw         []byte
+			outRatioPre     *float64
+			outPpm7dPre     *int
+			marginPpm7dPre  *int
+			fwdCount7dPre   *int
+			measuredAt      *time.Time
+			status          string
+			measurementErr  *string
+			fwdCount24h     *int
+			fwdAmtMsat24h   *int64
+			fwdFeeMsat24h   *int64
+			rebalAmtMsat24h *int64
+			rebalFeeMsat24h *int64
+		)
+		if err := listRows.Scan(
+			&id, &runID, &channelID, &channelPoint, &kind, &decidedAt,
+			&prevPpm, &newPpm, &targetPpm, &floorPpm, &floorSrc,
+			&classLabel, &tagsRaw,
+			&outRatioPre, &outPpm7dPre, &marginPpm7dPre, &fwdCount7dPre,
+			&measuredAt, &status, &measurementErr,
+			&fwdCount24h, &fwdAmtMsat24h, &fwdFeeMsat24h,
+			&rebalAmtMsat24h, &rebalFeeMsat24h,
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		var tagsJSON any
+		if len(tagsRaw) > 0 {
+			_ = json.Unmarshal(tagsRaw, &tagsJSON)
+		}
+		row := map[string]any{
+			"id":                  id,
+			"run_id":              runID,
+			"channel_id":          channelID,
+			"channel_point":       channelPoint,
+			"kind":                kind,
+			"decided_at":          decidedAt.Format(time.RFC3339),
+			"prev_ppm":            prevPpm,
+			"new_ppm":             newPpm,
+			"target_ppm":          targetPpm,
+			"floor_ppm":           floorPpm,
+			"floor_src":           floorSrc,
+			"class_label":         classLabel,
+			"tags":                tagsJSON,
+			"out_ratio_pre":       outRatioPre,
+			"out_ppm7d_pre":       outPpm7dPre,
+			"margin_ppm7d_pre":    marginPpm7dPre,
+			"fwd_count_7d_pre":    fwdCount7dPre,
+			"measurement_status":  status,
+			"measurement_error":   measurementErr,
+			"fwd_count_24h_after": fwdCount24h,
+			"fwd_amt_msat_24h":    fwdAmtMsat24h,
+			"fwd_fee_msat_24h":    fwdFeeMsat24h,
+			"rebal_amt_msat_24h":  rebalAmtMsat24h,
+			"rebal_fee_msat_24h":  rebalFeeMsat24h,
+		}
+		if measuredAt != nil {
+			row["measured_at"] = measuredAt.Format(time.RFC3339)
+		}
+		items = append(items, row)
+	}
+	if err := listRows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"since":    since.Format(time.RFC3339),
+		"until":    until.Format(time.RFC3339),
+		"window":   "24h",
+		"totals":   totals,
+		"by_tag":   byTag,
+		"by_class": byClass,
+		"items":    items,
+	})
+}
+
+func (s *Server) handleAutofeeOutcomesMeasureNow(w http.ResponseWriter, r *http.Request) {
+	svc, errMsg := s.autofeeService()
+	if svc == nil {
+		if errMsg == "" {
+			errMsg = "autofee unavailable"
+		}
+		writeError(w, http.StatusServiceUnavailable, errMsg)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+	if err := svc.MeasureOutcomes(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}

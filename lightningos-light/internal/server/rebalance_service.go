@@ -459,42 +459,42 @@ func NewRebalanceService(db *pgxpool.Pool, lnd *lndclient.Client, logger *log.Lo
 func defaultRebalanceConfig() RebalanceConfig {
 	return RebalanceConfig{
 		AutoEnabled:               false,
-		ScanIntervalSec:           600,
-		DeadbandPct:               10,
-		SourceMinLocalPct:         50,
+		ScanIntervalSec:           900,
+		DeadbandPct:               5,
+		SourceMinLocalPct:         35,
 		EconRatio:                 0.6,
 		EconRatioMaxPpm:           0,
 		FeeLimitPpm:               0,
 		LostProfit:                false,
-		FailTolerancePpm:          1000,
+		FailTolerancePpm:          500,
 		ROIMin:                    1.1,
-		DailyBudgetPct:            50,
-		BudgetMode:                rebalanceBudgetModeRevenue24hPct,
-		BudgetAutoOnly:            false,
+		DailyBudgetPct:            25,
+		BudgetMode:                rebalanceBudgetModeHybridRevenue,
+		BudgetAutoOnly:            true,
 		ManualReserveEnabled:      false,
 		ManualReserveMode:         rebalanceManualReserveModeFixedSat,
 		ManualReserveValue:        0,
 		MaxConcurrent:             2,
-		MinAmountSat:              20000,
+		MinAmountSat:              50000,
 		MaxAmountSat:              0,
-		MinSplitEnabled:           false,
-		MinProbeSat:               0,
-		MinExecuteSat:             0,
-		MppEnabled:                false,
-		MppMaxShards:              8,
-		MppParallelism:            6,
-		MppMinShardSat:            1000,
-		MppRoundTimeoutSec:        30,
-		MppAutoOnly:               false,
-		FeeLadderSteps:            4,
-		AmountProbeSteps:          4,
+		MinSplitEnabled:           true,
+		MinProbeSat:               5000,
+		MinExecuteSat:             10000,
+		MppEnabled:                true,
+		MppMaxShards:              6,
+		MppParallelism:            3,
+		MppMinShardSat:            10000,
+		MppRoundTimeoutSec:        35,
+		MppAutoOnly:               true,
+		FeeLadderSteps:            1,
+		AmountProbeSteps:          6,
 		AmountProbeAdaptive:       true,
-		AttemptTimeoutSec:         20,
+		AttemptTimeoutSec:         45,
 		RebalanceTimeoutSec:       600,
 		ManualRestartWatch:        false,
 		MissionControlHalfLifeSec: 0,
 		PaybackModeFlags:          paybackModePayback | paybackModeTime | paybackModeCritical,
-		UnlockDays:                14,
+		UnlockDays:                7,
 		CriticalReleasePct:        20,
 		CriticalMinSources:        2,
 		CriticalMinAvailableSats:  0,
@@ -5241,42 +5241,42 @@ end $$;
   create table if not exists rebalance_config (
     id smallint primary key,
     auto_enabled boolean not null default false,
-    scan_interval_sec integer not null default 600,
-    deadband_pct double precision not null default 10,
-    source_min_local_pct double precision not null default 50,
+    scan_interval_sec integer not null default 900,
+    deadband_pct double precision not null default 5,
+    source_min_local_pct double precision not null default 35,
     econ_ratio double precision not null default 0.6,
     econ_ratio_max_ppm bigint not null default 0,
     fee_limit_ppm bigint not null default 0,
     lost_profit boolean not null default false,
-    fail_tolerance_ppm bigint not null default 1000,
+    fail_tolerance_ppm bigint not null default 500,
     roi_min double precision not null default 1.1,
-    daily_budget_pct double precision not null default 50,
-    budget_mode text not null default 'revenue_24h_pct',
-    budget_auto_only boolean not null default false,
+    daily_budget_pct double precision not null default 25,
+    budget_mode text not null default 'hybrid_revenue',
+    budget_auto_only boolean not null default true,
     manual_reserve_enabled boolean not null default false,
     manual_reserve_mode text not null default 'fixed_sat',
     manual_reserve_value double precision not null default 0,
     max_concurrent integer not null default 2,
-    min_amount_sat bigint not null default 20000,
+    min_amount_sat bigint not null default 50000,
     max_amount_sat bigint not null default 0,
-    min_split_enabled boolean not null default false,
-    min_probe_sat bigint not null default 0,
-    min_execute_sat bigint not null default 0,
-    mpp_enabled boolean not null default false,
-    mpp_max_shards integer not null default 8,
-    mpp_parallelism integer not null default 6,
-    mpp_min_shard_sat bigint not null default 1000,
-    mpp_round_timeout_sec integer not null default 30,
-    mpp_auto_only boolean not null default false,
-    fee_ladder_steps integer not null default 4,
-    amount_probe_steps integer not null default 4,
+    min_split_enabled boolean not null default true,
+    min_probe_sat bigint not null default 5000,
+    min_execute_sat bigint not null default 10000,
+    mpp_enabled boolean not null default true,
+    mpp_max_shards integer not null default 6,
+    mpp_parallelism integer not null default 3,
+    mpp_min_shard_sat bigint not null default 10000,
+    mpp_round_timeout_sec integer not null default 35,
+    mpp_auto_only boolean not null default true,
+    fee_ladder_steps integer not null default 1,
+    amount_probe_steps integer not null default 6,
     amount_probe_adaptive boolean not null default true,
-    attempt_timeout_sec integer not null default 20,
+    attempt_timeout_sec integer not null default 45,
     rebalance_timeout_sec integer not null default 600,
     manual_restart_watch boolean not null default false,
     mc_half_life_sec bigint not null default 0,
     payback_mode_flags integer not null default 7,
-    unlock_days integer not null default 14,
+    unlock_days integer not null default 7,
     critical_release_pct double precision not null default 20,
     critical_min_sources integer not null default 2,
     critical_min_available_sats bigint not null default 0,
@@ -5285,7 +5285,7 @@ end $$;
   );
 
   alter table rebalance_config
-    add column if not exists source_min_local_pct double precision not null default 50;
+    add column if not exists source_min_local_pct double precision not null default 35;
   alter table rebalance_config
     add column if not exists econ_ratio_max_ppm bigint not null default 0;
   alter table rebalance_config
@@ -5293,13 +5293,13 @@ end $$;
   alter table rebalance_config
     add column if not exists lost_profit boolean not null default false;
   alter table rebalance_config
-    add column if not exists fail_tolerance_ppm bigint not null default 1000;
+    add column if not exists fail_tolerance_ppm bigint not null default 500;
   alter table rebalance_config
-    add column if not exists amount_probe_steps integer not null default 4;
+    add column if not exists amount_probe_steps integer not null default 6;
   alter table rebalance_config
-    add column if not exists budget_mode text not null default 'revenue_24h_pct';
+    add column if not exists budget_mode text not null default 'hybrid_revenue';
   alter table rebalance_config
-    add column if not exists budget_auto_only boolean not null default false;
+    add column if not exists budget_auto_only boolean not null default true;
   alter table rebalance_config
     add column if not exists manual_reserve_enabled boolean not null default false;
   alter table rebalance_config
@@ -5307,33 +5307,35 @@ end $$;
   alter table rebalance_config
     add column if not exists manual_reserve_value double precision not null default 0;
   alter table rebalance_config
-    add column if not exists min_split_enabled boolean not null default false;
+    add column if not exists min_split_enabled boolean not null default true;
   alter table rebalance_config
-    add column if not exists min_probe_sat bigint not null default 0;
+    add column if not exists min_probe_sat bigint not null default 5000;
   alter table rebalance_config
-    add column if not exists min_execute_sat bigint not null default 0;
+    add column if not exists min_execute_sat bigint not null default 10000;
   alter table rebalance_config
-    add column if not exists mpp_enabled boolean not null default false;
+    add column if not exists mpp_enabled boolean not null default true;
   alter table rebalance_config
-    add column if not exists mpp_max_shards integer not null default 8;
+    add column if not exists mpp_max_shards integer not null default 6;
   alter table rebalance_config
-    add column if not exists mpp_parallelism integer not null default 6;
+    add column if not exists mpp_parallelism integer not null default 3;
   alter table rebalance_config
-    add column if not exists mpp_min_shard_sat bigint not null default 1000;
+    add column if not exists mpp_min_shard_sat bigint not null default 10000;
   alter table rebalance_config
-    add column if not exists mpp_round_timeout_sec integer not null default 30;
+    add column if not exists mpp_round_timeout_sec integer not null default 35;
   alter table rebalance_config
-    alter column mpp_max_shards set default 8;
+    alter column mpp_max_shards set default 6;
   alter table rebalance_config
-    alter column mpp_parallelism set default 6;
+    alter column mpp_parallelism set default 3;
   alter table rebalance_config
-    alter column mpp_round_timeout_sec set default 30;
+    alter column mpp_min_shard_sat set default 10000;
   alter table rebalance_config
-    add column if not exists mpp_auto_only boolean not null default false;
+    alter column mpp_round_timeout_sec set default 35;
+  alter table rebalance_config
+    add column if not exists mpp_auto_only boolean not null default true;
   alter table rebalance_config
     add column if not exists amount_probe_adaptive boolean not null default true;
   alter table rebalance_config
-    add column if not exists attempt_timeout_sec integer not null default 20;
+    add column if not exists attempt_timeout_sec integer not null default 45;
   alter table rebalance_config
     add column if not exists rebalance_timeout_sec integer not null default 600;
  alter table rebalance_config
@@ -5342,6 +5344,41 @@ end $$;
     add column if not exists mc_half_life_sec bigint not null default 0;
   alter table rebalance_config
     add column if not exists new_channel_exclusion_seeded boolean not null default false;
+
+  alter table rebalance_config
+    alter column scan_interval_sec set default 900;
+  alter table rebalance_config
+    alter column deadband_pct set default 5;
+  alter table rebalance_config
+    alter column source_min_local_pct set default 35;
+  alter table rebalance_config
+    alter column fail_tolerance_ppm set default 500;
+  alter table rebalance_config
+    alter column daily_budget_pct set default 25;
+  alter table rebalance_config
+    alter column budget_mode set default 'hybrid_revenue';
+  alter table rebalance_config
+    alter column budget_auto_only set default true;
+  alter table rebalance_config
+    alter column min_amount_sat set default 50000;
+  alter table rebalance_config
+    alter column min_split_enabled set default true;
+  alter table rebalance_config
+    alter column min_probe_sat set default 5000;
+  alter table rebalance_config
+    alter column min_execute_sat set default 10000;
+  alter table rebalance_config
+    alter column mpp_enabled set default true;
+  alter table rebalance_config
+    alter column mpp_auto_only set default true;
+  alter table rebalance_config
+    alter column fee_ladder_steps set default 1;
+  alter table rebalance_config
+    alter column amount_probe_steps set default 6;
+  alter table rebalance_config
+    alter column attempt_timeout_sec set default 45;
+  alter table rebalance_config
+    alter column unlock_days set default 7;
 
   alter table if exists rebalance_channel_settings
     add column if not exists manual_restart_enabled boolean not null default false;

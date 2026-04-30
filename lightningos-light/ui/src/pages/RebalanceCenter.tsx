@@ -16,11 +16,14 @@ import {
 } from '../api'
 import { getLocale } from '../i18n'
 
-const MSPR_DEFAULT_MAX_SHARDS = 8
+const REBALANCE_DEFAULT_MIN_PROBE_SAT = 5000
+const REBALANCE_DEFAULT_MIN_EXECUTE_SAT = 10000
+const REBALANCE_DEFAULT_BUDGET_MODE = 'hybrid_revenue'
+const MSPR_DEFAULT_MAX_SHARDS = 6
 const MSPR_MAX_SHARDS_LIMIT = 20
-const MSPR_DEFAULT_PARALLELISM = 6
-const MSPR_DEFAULT_MIN_SHARD_SAT = 1000
-const MSPR_DEFAULT_ROUND_TIMEOUT_SEC = 30
+const MSPR_DEFAULT_PARALLELISM = 3
+const MSPR_DEFAULT_MIN_SHARD_SAT = 10000
+const MSPR_DEFAULT_ROUND_TIMEOUT_SEC = 35
 
 type RebalanceConfig = {
   auto_enabled: boolean
@@ -642,7 +645,7 @@ export default function RebalanceCenter() {
         const nextConfig = cfg as RebalanceConfig
         const normalizedConfig = {
           ...nextConfig,
-          budget_mode: nextConfig.budget_mode || 'revenue_24h_pct',
+          budget_mode: nextConfig.budget_mode || REBALANCE_DEFAULT_BUDGET_MODE,
           budget_auto_only: nextConfig.budget_auto_only ?? false,
           manual_reserve_enabled: nextConfig.manual_reserve_enabled ?? false,
           manual_reserve_mode: nextConfig.manual_reserve_mode || 'fixed_sat',
@@ -764,7 +767,7 @@ export default function RebalanceCenter() {
       })) as RebalanceConfig
       const normalizedSaved = {
         ...saved,
-        budget_mode: saved.budget_mode || 'revenue_24h_pct',
+        budget_mode: saved.budget_mode || REBALANCE_DEFAULT_BUDGET_MODE,
         budget_auto_only: saved.budget_auto_only ?? false,
         manual_reserve_enabled: saved.manual_reserve_enabled ?? false,
         manual_reserve_mode: saved.manual_reserve_mode || 'fixed_sat',
@@ -1357,14 +1360,14 @@ export default function RebalanceCenter() {
               <p className="text-xs text-fog/50">
                 {budgetAutoOnly
                   ? t('rebalanceCenter.overview.budgetModeAutoOnly', {
-                      mode: t(`rebalanceCenter.settings.budgetModeOptions.${config?.budget_mode || 'revenue_24h_pct'}`)
+                      mode: t(`rebalanceCenter.settings.budgetModeOptions.${config?.budget_mode || REBALANCE_DEFAULT_BUDGET_MODE}`)
                     })
                   : overview.manual_reserve_enabled
                   ? t('rebalanceCenter.overview.budgetModeWithReserve', {
-                      mode: t(`rebalanceCenter.settings.budgetModeOptions.${config?.budget_mode || 'revenue_24h_pct'}`)
+                      mode: t(`rebalanceCenter.settings.budgetModeOptions.${config?.budget_mode || REBALANCE_DEFAULT_BUDGET_MODE}`)
                     })
                   : t('rebalanceCenter.overview.budgetMode', {
-                      mode: t(`rebalanceCenter.settings.budgetModeOptions.${config?.budget_mode || 'revenue_24h_pct'}`)
+                      mode: t(`rebalanceCenter.settings.budgetModeOptions.${config?.budget_mode || REBALANCE_DEFAULT_BUDGET_MODE}`)
                     })}
               </p>
               {typeof overview.daily_budget_base_sat === 'number' && overview.daily_budget_base_sat > 0 && (
@@ -1684,8 +1687,8 @@ export default function RebalanceCenter() {
                 value={config.budget_mode}
                 onChange={(e) => setConfig({ ...config, budget_mode: e.target.value })}
               >
-                <option value="revenue_24h_pct">{t('rebalanceCenter.settings.budgetModeOptions.revenue_24h_pct')}</option>
                 <option value="hybrid_revenue">{t('rebalanceCenter.settings.budgetModeOptions.hybrid_revenue')}</option>
+                <option value="revenue_24h_pct">{t('rebalanceCenter.settings.budgetModeOptions.revenue_24h_pct')}</option>
               </select>
             </div>
             <label
@@ -2095,7 +2098,7 @@ export default function RebalanceCenter() {
                     disabled={!config.min_split_enabled}
                     onChange={(e) => setConfig({ ...config, min_probe_sat: Number(e.target.value) })}
                   />
-                  <p className="text-[11px] text-fog/50">{t('rebalanceCenter.settings.minProbeRecommended', { value: formatSats(1000) })}</p>
+                  <p className="text-[11px] text-fog/50">{t('rebalanceCenter.settings.minProbeRecommended', { value: formatSats(REBALANCE_DEFAULT_MIN_PROBE_SAT) })}</p>
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.minExecuteAmount')}>
@@ -2110,7 +2113,7 @@ export default function RebalanceCenter() {
                     onChange={(e) => setConfig({ ...config, min_execute_sat: Number(e.target.value) })}
                   />
                   <p className="text-[11px] text-fog/50">
-                    {t('rebalanceCenter.settings.minExecuteRecommended', { value: formatSats(config.min_probe_sat) })}
+                    {t('rebalanceCenter.settings.minExecuteRecommended', { value: formatSats(REBALANCE_DEFAULT_MIN_EXECUTE_SAT) })}
                   </p>
                 </div>
               </div>

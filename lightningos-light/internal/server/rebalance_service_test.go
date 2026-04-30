@@ -11,40 +11,76 @@ import (
 
 func ptrInt64(v int64) *int64 { return &v }
 
-func TestDefaultRebalanceConfigSplitCompatibility(t *testing.T) {
+func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	cfg := defaultRebalanceConfig()
-	if cfg.MinSplitEnabled {
-		t.Fatalf("expected split mode disabled by default")
+	if cfg.AutoEnabled {
+		t.Fatalf("expected auto mode disabled by default")
 	}
-	if cfg.MinProbeSat != 0 {
-		t.Fatalf("expected default min_probe_sat=0, got %d", cfg.MinProbeSat)
+	if cfg.ScanIntervalSec != 900 {
+		t.Fatalf("expected scan_interval_sec default=900, got %d", cfg.ScanIntervalSec)
 	}
-	if cfg.MinExecuteSat != 0 {
-		t.Fatalf("expected default min_execute_sat=0, got %d", cfg.MinExecuteSat)
+	if cfg.DeadbandPct != 5 {
+		t.Fatalf("expected deadband default=5, got %f", cfg.DeadbandPct)
 	}
-	if cfg.MinAmountSat <= 0 {
-		t.Fatalf("expected default min_amount_sat > 0, got %d", cfg.MinAmountSat)
+	if cfg.SourceMinLocalPct != 35 {
+		t.Fatalf("expected source_min_local_pct default=35, got %f", cfg.SourceMinLocalPct)
 	}
-	if effectiveMinExecuteSat(cfg) != cfg.MinAmountSat {
-		t.Fatalf("expected effective execute min to match legacy min when split is off")
+	if cfg.DailyBudgetPct != 25 {
+		t.Fatalf("expected daily_budget_pct default=25, got %f", cfg.DailyBudgetPct)
 	}
-	if effectiveMinProbeSat(cfg) != cfg.MinAmountSat {
-		t.Fatalf("expected effective probe min to match legacy min when split is off")
+	if cfg.BudgetMode != rebalanceBudgetModeHybridRevenue {
+		t.Fatalf("expected budget_mode default=%s, got %s", rebalanceBudgetModeHybridRevenue, cfg.BudgetMode)
 	}
-	if cfg.MppEnabled {
-		t.Fatalf("expected MSPR disabled by default")
+	if !cfg.BudgetAutoOnly {
+		t.Fatalf("expected budget_auto_only default=true")
 	}
-	if cfg.MppMaxShards != 8 {
-		t.Fatalf("expected mpp_max_shards default=8, got %d", cfg.MppMaxShards)
+	if cfg.MinAmountSat != 50000 {
+		t.Fatalf("expected min_amount_sat default=50000, got %d", cfg.MinAmountSat)
 	}
-	if cfg.MppParallelism != 6 {
-		t.Fatalf("expected mpp_parallelism default=6, got %d", cfg.MppParallelism)
+	if !cfg.MinSplitEnabled {
+		t.Fatalf("expected split mode enabled by default")
 	}
-	if cfg.MppMinShardSat != 1000 {
-		t.Fatalf("expected mpp_min_shard_sat default=1000, got %d", cfg.MppMinShardSat)
+	if cfg.MinProbeSat != 5000 {
+		t.Fatalf("expected default min_probe_sat=5000, got %d", cfg.MinProbeSat)
 	}
-	if cfg.MppRoundTimeoutSec != 30 {
-		t.Fatalf("expected mpp_round_timeout_sec default=30, got %d", cfg.MppRoundTimeoutSec)
+	if cfg.MinExecuteSat != 10000 {
+		t.Fatalf("expected default min_execute_sat=10000, got %d", cfg.MinExecuteSat)
+	}
+	if effectiveMinExecuteSat(cfg) != cfg.MinExecuteSat {
+		t.Fatalf("expected effective execute min to use split execute min")
+	}
+	if effectiveMinProbeSat(cfg) != cfg.MinProbeSat {
+		t.Fatalf("expected effective probe min to use split probe min")
+	}
+	if !cfg.MppEnabled {
+		t.Fatalf("expected MSPR enabled by default")
+	}
+	if !cfg.MppAutoOnly {
+		t.Fatalf("expected MSPR auto-only by default")
+	}
+	if cfg.MppMaxShards != 6 {
+		t.Fatalf("expected mpp_max_shards default=6, got %d", cfg.MppMaxShards)
+	}
+	if cfg.MppParallelism != 3 {
+		t.Fatalf("expected mpp_parallelism default=3, got %d", cfg.MppParallelism)
+	}
+	if cfg.MppMinShardSat != 10000 {
+		t.Fatalf("expected mpp_min_shard_sat default=10000, got %d", cfg.MppMinShardSat)
+	}
+	if cfg.MppRoundTimeoutSec != 35 {
+		t.Fatalf("expected mpp_round_timeout_sec default=35, got %d", cfg.MppRoundTimeoutSec)
+	}
+	if cfg.FeeLadderSteps != 1 {
+		t.Fatalf("expected fee_ladder_steps default=1, got %d", cfg.FeeLadderSteps)
+	}
+	if cfg.AmountProbeSteps != 6 {
+		t.Fatalf("expected amount_probe_steps default=6, got %d", cfg.AmountProbeSteps)
+	}
+	if cfg.AttemptTimeoutSec != 45 {
+		t.Fatalf("expected attempt_timeout_sec default=45, got %d", cfg.AttemptTimeoutSec)
+	}
+	if cfg.UnlockDays != 7 {
+		t.Fatalf("expected unlock_days default=7, got %d", cfg.UnlockDays)
 	}
 }
 
@@ -69,17 +105,17 @@ func TestNormalizeRebalanceConfigClampsNegativeFields(t *testing.T) {
 	if got.MinExecuteSat != 0 {
 		t.Fatalf("expected MinExecuteSat clamped to 0, got %d", got.MinExecuteSat)
 	}
-	if got.MppMaxShards != 8 {
-		t.Fatalf("expected MppMaxShards fallback=8, got %d", got.MppMaxShards)
+	if got.MppMaxShards != 6 {
+		t.Fatalf("expected MppMaxShards fallback=6, got %d", got.MppMaxShards)
 	}
-	if got.MppParallelism != 6 {
-		t.Fatalf("expected MppParallelism fallback=6, got %d", got.MppParallelism)
+	if got.MppParallelism != 3 {
+		t.Fatalf("expected MppParallelism fallback=3, got %d", got.MppParallelism)
 	}
-	if got.MppMinShardSat != 1000 {
-		t.Fatalf("expected MppMinShardSat fallback=1000, got %d", got.MppMinShardSat)
+	if got.MppMinShardSat != 10000 {
+		t.Fatalf("expected MppMinShardSat fallback=10000, got %d", got.MppMinShardSat)
 	}
-	if got.MppRoundTimeoutSec != 30 {
-		t.Fatalf("expected MppRoundTimeoutSec fallback=30, got %d", got.MppRoundTimeoutSec)
+	if got.MppRoundTimeoutSec != 35 {
+		t.Fatalf("expected MppRoundTimeoutSec fallback=35, got %d", got.MppRoundTimeoutSec)
 	}
 }
 

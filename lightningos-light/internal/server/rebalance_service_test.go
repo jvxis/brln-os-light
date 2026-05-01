@@ -109,6 +109,25 @@ func TestNormalizeRebalanceConfigClampsSourceMinPaybackProgress(t *testing.T) {
 	}
 }
 
+func TestAutoTargetCostGateRequiresSpreadAboveExpectedCost(t *testing.T) {
+	if passesAutoTargetCostGate(channelSetting{}, 131, 88) {
+		t.Fatalf("expected cost gate to block when effective spread is below expected cost")
+	}
+	if !passesAutoTargetCostGate(channelSetting{}, 131, 132) {
+		t.Fatalf("expected cost gate to pass when effective spread is above expected cost")
+	}
+	if !passesAutoTargetCostGate(channelSetting{}, 0, 0) {
+		t.Fatalf("expected zero expected cost to pass")
+	}
+}
+
+func TestAutoTargetCostGateBypassAllowsBelowCostSpread(t *testing.T) {
+	setting := channelSetting{AutoBypassCostGate: true}
+	if !passesAutoTargetCostGate(setting, 131, 88) {
+		t.Fatalf("expected auto cost gate bypass to allow below-cost effective spread")
+	}
+}
+
 func TestNormalizeRebalanceConfigClampsNegativeFields(t *testing.T) {
 	cfg := RebalanceConfig{
 		MinAmountSat:  -1,

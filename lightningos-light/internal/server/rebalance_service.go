@@ -294,6 +294,7 @@ type RebalanceChannel struct {
 	ManualRestartEnabled   bool     `json:"manual_restart_enabled"`
 	UseDefaultEconRatio    bool     `json:"use_default_econ_ratio"`
 	EconRatioOverride      *float64 `json:"econ_ratio_override,omitempty"`
+	AutoBypassCostGate     bool     `json:"auto_bypass_cost_gate"`
 	EligibleAsTarget       bool     `json:"eligible_as_target"`
 	EligibleAsManualTarget bool     `json:"eligible_as_manual_target"`
 	EligibleAsSource       bool     `json:"eligible_as_source"`
@@ -357,6 +358,7 @@ type channelSetting struct {
 	UseDefaultEconRatio  bool
 	EconRatioOverride    float64
 	EconRatioOverrideSet bool
+	AutoBypassCostGate   bool
 }
 
 type channelLedger struct {
@@ -1410,6 +1412,10 @@ func effectiveConfigForTarget(cfg RebalanceConfig, setting channelSetting) Rebal
 	return effective
 }
 
+func passesAutoTargetCostGate(setting channelSetting, expectedCostPpm int64, effectiveSpreadPpm int64) bool {
+	return setting.AutoBypassCostGate || expectedCostPpm <= 0 || effectiveSpreadPpm > expectedCostPpm
+}
+
 func (s *RebalanceService) reconcileNewChannelDefaults(ctx context.Context, channels []lndclient.ChannelInfo, settings map[uint64]channelSetting, exclusions map[uint64]bool) {
 	if s.db == nil || len(channels) == 0 {
 		return
@@ -1434,9 +1440,9 @@ func (s *RebalanceService) reconcileNewChannelDefaults(ctx context.Context, chan
 
 		_, err := s.db.Exec(ctx, `
 insert into rebalance_channel_settings (
-  channel_id, channel_point, target_outbound_pct, auto_enabled, manual_restart_enabled, use_default_econ_ratio, updated_at
+  channel_id, channel_point, target_outbound_pct, auto_enabled, manual_restart_enabled, use_default_econ_ratio, auto_bypass_cost_gate, updated_at
 )
-values ($1,$2,$3,false,false,true,now())
+values ($1,$2,$3,false,false,true,false,now())
  on conflict (channel_id) do update set channel_point=excluded.channel_point, updated_at=now()
 `, int64(ch.ChannelID), ch.ChannelPoint, rebalanceDefaultTargetOutboundPct)
 		if err != nil {
@@ -5300,7 +5306,10 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 	if eligibleManualTarget {
 		// Wave 1.4: require effective spread to clear the expected rebalance
 		// cost (historical 7d ppm, or cfg.RebalanceCostFloorPpm fallback).
-		if expectedCostPpm <= 0 || effectiveSpreadPpm > expectedCostPpm {
+		// auto_bypass_cost_gate is a per-channel operator override for cases
+		// where explicit strategy should win over this conservative gate. It
+		// does not bypass ROI/profit guardrails later in the auto scan.
+		if passesAutoTargetCostGate(setting, expectedCostPpm, effectiveSpreadPpm) {
 			eligibleTarget = true
 		}
 	}
@@ -5395,6 +5404,7 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		ManualRestartEnabled:   setting.ManualRestartEnabled,
 		UseDefaultEconRatio:    setting.UseDefaultEconRatio,
 		EconRatioOverride:      econRatioOverride,
+		AutoBypassCostGate:     setting.AutoBypassCostGate,
 		EligibleAsTarget:       eligibleTarget,
 		EligibleAsManualTarget: eligibleManualTarget,
 		EligibleAsSource:       eligibleSource && !excluded,
@@ -5996,6 +6006,8 @@ end $$;
     add column if not exists use_default_econ_ratio boolean not null default true;
   alter table if exists rebalance_channel_settings
     add column if not exists econ_ratio_override double precision;
+  alter table if exists rebalance_channel_settings
+    add column if not exists auto_bypass_cost_gate boolean not null default false;
 
 create table if not exists rebalance_channel_settings (
   channel_id bigint primary key,
@@ -6005,6 +6017,7 @@ create table if not exists rebalance_channel_settings (
   manual_restart_enabled boolean not null default false,
   use_default_econ_ratio boolean not null default true,
   econ_ratio_override double precision,
+  auto_bypass_cost_gate boolean not null default false,
   updated_at timestamptz not null default now()
 );
 
@@ -6312,7 +6325,7 @@ func (s *RebalanceService) loadChannelSettings(ctx context.Context) (map[uint64]
 		return settings, nil
 	}
 	rows, err := s.db.Query(ctx, `
-select channel_id, channel_point, target_outbound_pct, auto_enabled, manual_restart_enabled, use_default_econ_ratio, econ_ratio_override from rebalance_channel_settings
+select channel_id, channel_point, target_outbound_pct, auto_enabled, manual_restart_enabled, use_default_econ_ratio, econ_ratio_override, auto_bypass_cost_gate from rebalance_channel_settings
 `)
 	if err != nil {
 		return settings, err
@@ -6322,7 +6335,7 @@ select channel_id, channel_point, target_outbound_pct, auto_enabled, manual_rest
 		var channelID int64
 		var setting channelSetting
 		var econRatioOverride pgtype.Float8
-		if err := rows.Scan(&channelID, &setting.ChannelPoint, &setting.TargetOutboundPct, &setting.AutoEnabled, &setting.ManualRestartEnabled, &setting.UseDefaultEconRatio, &econRatioOverride); err != nil {
+		if err := rows.Scan(&channelID, &setting.ChannelPoint, &setting.TargetOutboundPct, &setting.AutoEnabled, &setting.ManualRestartEnabled, &setting.UseDefaultEconRatio, &econRatioOverride, &setting.AutoBypassCostGate); err != nil {
 			return settings, err
 		}
 		if econRatioOverride.Valid {
@@ -8204,10 +8217,10 @@ order by started_at desc`
 }
 
 func (s *RebalanceService) SetChannelTarget(ctx context.Context, channelID uint64, channelPoint string, targetPct float64) error {
-	return s.UpdateChannelTargetSettings(ctx, channelID, channelPoint, &targetPct, nil, nil)
+	return s.UpdateChannelTargetSettings(ctx, channelID, channelPoint, &targetPct, nil, nil, nil)
 }
 
-func (s *RebalanceService) UpdateChannelTargetSettings(ctx context.Context, channelID uint64, channelPoint string, targetPct *float64, useDefaultEconRatio *bool, econRatioOverride *float64) error {
+func (s *RebalanceService) UpdateChannelTargetSettings(ctx context.Context, channelID uint64, channelPoint string, targetPct *float64, useDefaultEconRatio *bool, econRatioOverride *float64, autoBypassCostGate *bool) error {
 	if s.db == nil {
 		return errors.New("db unavailable")
 	}
@@ -8228,10 +8241,10 @@ func (s *RebalanceService) UpdateChannelTargetSettings(ctx context.Context, chan
 	})
 	var currentOverride pgtype.Float8
 	err := s.db.QueryRow(ctx, `
-select channel_point, target_outbound_pct, auto_enabled, manual_restart_enabled, use_default_econ_ratio, econ_ratio_override
+select channel_point, target_outbound_pct, auto_enabled, manual_restart_enabled, use_default_econ_ratio, econ_ratio_override, auto_bypass_cost_gate
 from rebalance_channel_settings
 where channel_id=$1
-`, int64(channelID)).Scan(&current.ChannelPoint, &current.TargetOutboundPct, &current.AutoEnabled, &current.ManualRestartEnabled, &current.UseDefaultEconRatio, &currentOverride)
+`, int64(channelID)).Scan(&current.ChannelPoint, &current.TargetOutboundPct, &current.AutoEnabled, &current.ManualRestartEnabled, &current.UseDefaultEconRatio, &currentOverride, &current.AutoBypassCostGate)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
@@ -8254,6 +8267,9 @@ where channel_id=$1
 		current.EconRatioOverride = *econRatioOverride
 		current.EconRatioOverrideSet = true
 	}
+	if autoBypassCostGate != nil {
+		current.AutoBypassCostGate = *autoBypassCostGate
+	}
 
 	if current.UseDefaultEconRatio {
 		current.EconRatioOverride = 0
@@ -8273,9 +8289,9 @@ where channel_id=$1
 
 	_, err = s.db.Exec(ctx, `
 insert into rebalance_channel_settings (
-  channel_id, channel_point, target_outbound_pct, auto_enabled, manual_restart_enabled, use_default_econ_ratio, econ_ratio_override, updated_at
+  channel_id, channel_point, target_outbound_pct, auto_enabled, manual_restart_enabled, use_default_econ_ratio, econ_ratio_override, auto_bypass_cost_gate, updated_at
 )
-values ($1,$2,$3,$4,$5,$6,$7,now())
+values ($1,$2,$3,$4,$5,$6,$7,$8,now())
  on conflict (channel_id) do update set
   channel_point=excluded.channel_point,
   target_outbound_pct=excluded.target_outbound_pct,
@@ -8283,8 +8299,9 @@ values ($1,$2,$3,$4,$5,$6,$7,now())
   manual_restart_enabled=excluded.manual_restart_enabled,
   use_default_econ_ratio=excluded.use_default_econ_ratio,
   econ_ratio_override=excluded.econ_ratio_override,
+  auto_bypass_cost_gate=excluded.auto_bypass_cost_gate,
   updated_at=now()
-`, int64(channelID), current.ChannelPoint, current.TargetOutboundPct, current.AutoEnabled, current.ManualRestartEnabled, current.UseDefaultEconRatio, overrideValue)
+`, int64(channelID), current.ChannelPoint, current.TargetOutboundPct, current.AutoEnabled, current.ManualRestartEnabled, current.UseDefaultEconRatio, overrideValue, current.AutoBypassCostGate)
 	return err
 }
 

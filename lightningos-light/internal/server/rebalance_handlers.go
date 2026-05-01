@@ -71,6 +71,7 @@ type rebalanceChannelTargetPayload struct {
 	TargetOutboundPct   *float64 `json:"target_outbound_pct,omitempty"`
 	UseDefaultEconRatio *bool    `json:"use_default_econ_ratio,omitempty"`
 	EconRatioOverride   *float64 `json:"econ_ratio_override,omitempty"`
+	AutoBypassCostGate  *bool    `json:"auto_bypass_cost_gate,omitempty"`
 }
 
 type rebalanceChannelAutoPayload struct {
@@ -412,8 +413,9 @@ func (s *Server) handleRebalanceChannelTarget(w http.ResponseWriter, r *http.Req
 	targetPct := payload.TargetOutboundPct
 	useDefaultEconRatio := payload.UseDefaultEconRatio
 	econRatioOverride := payload.EconRatioOverride
-	if targetPct == nil && useDefaultEconRatio == nil && econRatioOverride == nil {
-		writeError(w, http.StatusBadRequest, "target_outbound_pct or econ ratio update required")
+	autoBypassCostGate := payload.AutoBypassCostGate
+	if targetPct == nil && useDefaultEconRatio == nil && econRatioOverride == nil && autoBypassCostGate == nil {
+		writeError(w, http.StatusBadRequest, "target_outbound_pct, econ ratio, or auto cost gate update required")
 		return
 	}
 	if targetPct != nil && (*targetPct <= 0 || *targetPct > 100) {
@@ -431,7 +433,7 @@ func (s *Server) handleRebalanceChannelTarget(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := s.rebalance.UpdateChannelTargetSettings(ctx, resolvedID, resolvedPoint, targetPct, useDefaultEconRatio, econRatioOverride); err != nil {
+	if err := s.rebalance.UpdateChannelTargetSettings(ctx, resolvedID, resolvedPoint, targetPct, useDefaultEconRatio, econRatioOverride, autoBypassCostGate); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

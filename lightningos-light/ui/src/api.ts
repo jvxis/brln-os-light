@@ -643,6 +643,7 @@ export const updateRebalanceChannelTarget = (payload: {
   target_outbound_pct?: number
   use_default_econ_ratio?: boolean
   econ_ratio_override?: number
+  auto_bypass_cost_gate?: boolean
 }) =>
   request('/api/rebalance/channel/target', { method: 'POST', body: JSON.stringify(payload) })
 export const updateRebalanceChannelAuto = (payload: { channel_id: number; channel_point?: string; auto_enabled: boolean }) =>

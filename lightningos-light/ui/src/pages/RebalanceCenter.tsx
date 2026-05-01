@@ -222,6 +222,7 @@ type RebalanceChannel = {
   manual_restart_enabled: boolean
   use_default_econ_ratio: boolean
   econ_ratio_override?: number
+  auto_bypass_cost_gate?: boolean
   eligible_as_target: boolean
   eligible_as_manual_target: boolean
   eligible_as_source: boolean
@@ -332,6 +333,7 @@ export default function RebalanceCenter() {
   const [editTargets, setEditTargets] = useState<Record<number, string>>({})
   const [editEconRatios, setEditEconRatios] = useState<Record<number, string>>({})
   const [editUseDefaultEconRatio, setEditUseDefaultEconRatio] = useState<Record<number, boolean>>({})
+  const [editAutoBypassCostGate, setEditAutoBypassCostGate] = useState<Record<number, boolean>>({})
   const [manualRestart, setManualRestart] = useState<Record<string, boolean>>({})
   const [channelSort, setChannelSort] = useState<'economic' | 'emptiest'>('economic')
   const [channelSortDir, setChannelSortDir] = useState<'asc' | 'desc'>('desc')
@@ -607,6 +609,8 @@ export default function RebalanceCenter() {
   const parseLocaleDecimal = (raw: string) => Number(raw.replace(/\s/g, '').replace(',', '.'))
   const channelUseDefaultEconRatio = (channel: RebalanceChannel) =>
     editUseDefaultEconRatio[channel.channel_id] ?? channel.use_default_econ_ratio
+  const channelAutoBypassCostGate = (channel: RebalanceChannel) =>
+    editAutoBypassCostGate[channel.channel_id] ?? Boolean(channel.auto_bypass_cost_gate)
   const channelEconRatioInput = (channel: RebalanceChannel) => {
     if (channelUseDefaultEconRatio(channel)) {
       return formatEconRatio(config?.econ_ratio ?? 0)
@@ -906,6 +910,7 @@ export default function RebalanceCenter() {
       return
     }
     const useDefault = channelUseDefaultEconRatio(channel)
+    const autoBypassCostGate = channelAutoBypassCostGate(channel)
     const parsedEcon = parseLocaleDecimal(channelEconRatioInput(channel))
     if (!useDefault && (!Number.isFinite(parsedEcon) || parsedEcon < 0.01 || parsedEcon > 0.99)) {
       setStatus(t('rebalanceCenter.invalidEconRatio'))
@@ -917,7 +922,8 @@ export default function RebalanceCenter() {
         channel_point: channel.channel_point,
         target_outbound_pct: parsedTarget,
         use_default_econ_ratio: useDefault,
-        econ_ratio_override: useDefault ? undefined : parsedEcon
+        econ_ratio_override: useDefault ? undefined : parsedEcon,
+        auto_bypass_cost_gate: autoBypassCostGate
       })
       setEditTargets((prev) => ({ ...prev, [channel.channel_id]: String(parsedTarget) }))
       setEditUseDefaultEconRatio((prev) => ({ ...prev, [channel.channel_id]: useDefault }))
@@ -925,6 +931,7 @@ export default function RebalanceCenter() {
         ...prev,
         [channel.channel_id]: useDefault ? formatEconRatio(config?.econ_ratio ?? 0) : formatEconRatio(parsedEcon)
       }))
+      setEditAutoBypassCostGate((prev) => ({ ...prev, [channel.channel_id]: autoBypassCostGate }))
       void loadAll({ silent: true })
     } catch (err) {
       setStatus(err instanceof Error ? err.message : t('rebalanceCenter.saveFailed'))
@@ -2434,6 +2441,14 @@ export default function RebalanceCenter() {
                     />
                     {t('rebalanceCenter.channels.useDefaultEconRatio')}
                   </label>
+                  <label className="flex items-center gap-2 text-xs text-amber-100/80" title={t('rebalanceCenter.channelsHints.autoBypassCostGate')}>
+                    <input
+                      type="checkbox"
+                      checked={channelAutoBypassCostGate(ch)}
+                      onChange={(e) => setEditAutoBypassCostGate((prev) => ({ ...prev, [ch.channel_id]: e.target.checked }))}
+                    />
+                    {t('rebalanceCenter.channels.autoBypassCostGate')}
+                  </label>
                   <div className="text-xs text-fog/50">
                     {t('rebalanceCenter.channels.amount', { value: formatSats(ch.target_amount_sat) })}
                   </div>
@@ -2658,6 +2673,14 @@ export default function RebalanceCenter() {
                         {t('rebalanceCenter.channels.useDefaultEconRatio')}
                       </label>
                     </div>
+                    <label className="mt-1 flex items-center gap-1 whitespace-nowrap text-[11px] text-amber-100/80" title={t('rebalanceCenter.channelsHints.autoBypassCostGate')}>
+                      <input
+                        type="checkbox"
+                        checked={channelAutoBypassCostGate(ch)}
+                        onChange={(e) => setEditAutoBypassCostGate((prev) => ({ ...prev, [ch.channel_id]: e.target.checked }))}
+                      />
+                      {t('rebalanceCenter.channels.autoBypassCostGate')}
+                    </label>
                     <div className="text-xs text-fog/50">
                       {t('rebalanceCenter.channels.amount', { value: formatSats(ch.target_amount_sat) })}
                     </div>
@@ -2942,6 +2965,3 @@ export default function RebalanceCenter() {
     </section>
   )
 }
-
-
-

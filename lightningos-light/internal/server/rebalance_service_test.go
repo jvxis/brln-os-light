@@ -339,8 +339,40 @@ func TestIsStructuralRebalanceFailureNormalizesMppPrefix(t *testing.T) {
 	if !isStructuralRebalanceFailure("mpp shard: rpc error: code = Unknown desc = unable to find a path to destination") {
 		t.Fatalf("expected mpp no-path failure to be structural")
 	}
+	if !isStructuralRebalanceFailure("mpp structural failure") {
+		t.Fatalf("expected mpp structural abort to be structural")
+	}
+	if !isStructuralRebalanceFailure("no route returned") {
+		t.Fatalf("expected empty route result to be structural")
+	}
 	if isStructuralRebalanceFailure("route fee exceeds limit") {
 		t.Fatalf("did not expect fee limit failure to be structural")
+	}
+}
+
+func TestMissionControlStateExposesResetTelemetry(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	svc := &RebalanceService{
+		lastMCResetAt:     now.Add(-time.Minute),
+		lastMCResetReason: "auto",
+		mcResetCount:      3,
+	}
+
+	state := svc.missionControlState(now)
+	if state.LastMCResetAt != svc.lastMCResetAt.UTC().Format(time.RFC3339) {
+		t.Fatalf("unexpected last reset timestamp %q", state.LastMCResetAt)
+	}
+	if state.LastMCResetReason != "auto" {
+		t.Fatalf("unexpected reset reason %q", state.LastMCResetReason)
+	}
+	if state.MCResetCount != 3 {
+		t.Fatalf("unexpected reset count %d", state.MCResetCount)
+	}
+	if state.MCResetCooldownSec != int64(mcResetCooldown/time.Second) {
+		t.Fatalf("unexpected cooldown seconds %d", state.MCResetCooldownSec)
+	}
+	if state.MCResetCooldownRemainingSec != int64((mcResetCooldown-time.Minute)/time.Second) {
+		t.Fatalf("unexpected remaining cooldown %d", state.MCResetCooldownRemainingSec)
 	}
 }
 

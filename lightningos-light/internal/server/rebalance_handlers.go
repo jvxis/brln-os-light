@@ -284,6 +284,21 @@ func (s *Server) handleRebalanceOverview(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, overview)
 }
 
+func (s *Server) handleRebalanceMissionControlReset(w http.ResponseWriter, r *http.Request) {
+	if s.rebalance == nil {
+		writeError(w, http.StatusServiceUnavailable, "rebalance unavailable")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	state, err := s.rebalance.ResetMissionControl(ctx, "manual")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, state)
+}
+
 func (s *Server) handleRebalanceChannels(w http.ResponseWriter, r *http.Request) {
 	if s.rebalance == nil {
 		writeError(w, http.StatusServiceUnavailable, "rebalance unavailable")

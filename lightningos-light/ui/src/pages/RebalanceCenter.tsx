@@ -7,6 +7,7 @@ import {
   getRebalanceHistory,
   getRebalanceOverview,
   getRebalanceQueue,
+  resetRebalanceMissionControl,
   runRebalance,
   updateRebalanceChannelAuto,
   updateRebalanceChannelManualRestart,
@@ -84,6 +85,11 @@ type RebalanceOverview = {
   last_scan_profit_skipped?: number
   last_scan_queued?: number
   last_scan_skipped?: RebalanceScanSkip[]
+  last_mc_reset_at?: string
+  last_mc_reset_reason?: string
+  mc_reset_count?: number
+  mc_reset_cooldown_sec?: number
+  mc_reset_cooldown_remaining_sec?: number
   eligible_sources?: number
   targets_needing?: number
   daily_budget_sat: number
@@ -345,6 +351,7 @@ export default function RebalanceCenter() {
   const [metrics24hOpen, setMetrics24hOpen] = useState(false)
   const [mppMetricsOpen, setMppMetricsOpen] = useState(false)
   const [failureTelemetryOpen, setFailureTelemetryOpen] = useState(false)
+  const [mcResetBusy, setMcResetBusy] = useState(false)
   const [scanDetailsReason, setScanDetailsReason] = useState('all')
   const [scanDetailsShowAll, setScanDetailsShowAll] = useState(false)
   const [focusedChannelPoint, setFocusedChannelPoint] = useState('')
@@ -813,6 +820,24 @@ export default function RebalanceCenter() {
       setStatus(err instanceof Error ? err.message : t('rebalanceCenter.settingsSaveFailed'))
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleResetMissionControl = async () => {
+    if (!window.confirm(t('rebalanceCenter.overview.mcResetConfirm'))) {
+      return
+    }
+    setMcResetBusy(true)
+    setStatus(t('rebalanceCenter.overview.mcResetRunning'))
+    try {
+      await resetRebalanceMissionControl()
+      const ovw = await getRebalanceOverview()
+      setOverview(ovw as RebalanceOverview)
+      setStatus(t('rebalanceCenter.overview.mcResetDone'))
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : t('rebalanceCenter.overview.mcResetFailed'))
+    } finally {
+      setMcResetBusy(false)
     }
   }
 
@@ -1535,6 +1560,46 @@ export default function RebalanceCenter() {
               {overview.auto_enabled ? t('common.enabled') : t('common.disabled')}
             </p>
             <p className="text-xs text-fog/50">{t('rebalanceCenter.overview.scanInterval', { value: config?.scan_interval_sec || '-' })}</p>
+            <div className="mt-2 border-t border-white/10 pt-2">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0 space-y-1">
+                  <p className="text-[10px] uppercase tracking-wide text-fog/60">{t('rebalanceCenter.overview.missionControl')}</p>
+                  <p className="text-xs text-fog/50">
+                    {t('rebalanceCenter.overview.mcLastReset', {
+                      value: overview.last_mc_reset_at
+                        ? formatTimestamp(overview.last_mc_reset_at)
+                        : t('rebalanceCenter.overview.mcNeverReset')
+                    })}
+                  </p>
+                  <p className="text-xs text-fog/50">
+                    {t('rebalanceCenter.overview.mcResetCount', {
+                      value: formatter.format(overview.mc_reset_count ?? 0)
+                    })}
+                    {overview.last_mc_reset_reason
+                      ? ` · ${t('rebalanceCenter.overview.mcResetReason', { reason: overview.last_mc_reset_reason })}`
+                      : ''}
+                  </p>
+                  {(overview.mc_reset_cooldown_remaining_sec ?? 0) > 0 && (
+                    <p className="text-xs text-amber-200">
+                      {t('rebalanceCenter.overview.mcCooldownRemaining', {
+                        value: formatter.format(overview.mc_reset_cooldown_remaining_sec ?? 0)
+                      })}
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="btn-secondary text-xs px-3 py-1"
+                  title={t('rebalanceCenter.overview.mcResetHint')}
+                  disabled={mcResetBusy}
+                  onClick={handleResetMissionControl}
+                >
+                  {mcResetBusy
+                    ? t('rebalanceCenter.overview.mcResetRunningShort')
+                    : t('rebalanceCenter.overview.mcResetAction')}
+                </button>
+              </div>
+            </div>
             <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
               <div>
                 <p className="text-[10px] uppercase tracking-wide text-fog/60">{t('rebalanceCenter.overview.splitMode')}</p>

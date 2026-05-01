@@ -70,6 +70,8 @@ const (
 	mcResetCooldown = 5 * time.Minute
 )
 
+var errMissionControlResetCooldown = errors.New("mission control reset cooldown")
+
 const (
 	// rebalancePaybackMinCostSat is the floor below which a channel is treated
 	// as "fresh" for the SourceMinPaybackProgress filter — a tiny amount of
@@ -190,6 +192,11 @@ type RebalanceOverview struct {
 	LastScanProfitSkipped         int                   `json:"last_scan_profit_skipped"`
 	LastScanQueued                int                   `json:"last_scan_queued"`
 	LastScanSkipped               []RebalanceSkipDetail `json:"last_scan_skipped,omitempty"`
+	LastMCResetAt                 string                `json:"last_mc_reset_at,omitempty"`
+	LastMCResetReason             string                `json:"last_mc_reset_reason,omitempty"`
+	MCResetCount                  int64                 `json:"mc_reset_count"`
+	MCResetCooldownSec            int64                 `json:"mc_reset_cooldown_sec"`
+	MCResetCooldownRemainingSec   int64                 `json:"mc_reset_cooldown_remaining_sec,omitempty"`
 	DailyBudgetSat                int64                 `json:"daily_budget_sat"`
 	DailyBudgetBaseSat            int64                 `json:"daily_budget_base_sat"`
 	DailyBudgetShortTermSat       int64                 `json:"daily_budget_short_term_sat"`
@@ -242,6 +249,14 @@ type RebalanceOverview struct {
 	MppStructuralAbortJobs24h     int64                 `json:"mpp_structural_abort_jobs_24h"`
 	TopFailureReasons30m          []RebalanceReasonStat `json:"top_failure_reasons_30m,omitempty"`
 	RouteDeadTargets30m           []RebalanceTargetStat `json:"route_dead_targets_30m,omitempty"`
+}
+
+type RebalanceMissionControlState struct {
+	LastMCResetAt               string `json:"last_mc_reset_at,omitempty"`
+	LastMCResetReason           string `json:"last_mc_reset_reason,omitempty"`
+	MCResetCount                int64  `json:"mc_reset_count"`
+	MCResetCooldownSec          int64  `json:"mc_reset_cooldown_sec"`
+	MCResetCooldownRemainingSec int64  `json:"mc_reset_cooldown_remaining_sec,omitempty"`
 }
 
 type RebalanceSkipDetail struct {
@@ -541,6 +556,8 @@ type RebalanceService struct {
 	manualRestartCancel        map[uint64]*manualRestartHandle
 	lastAutoByTarget           map[uint64]time.Time
 	lastMCResetAt              time.Time
+	lastMCResetReason          string
+	mcResetCount               int64
 	drainRateCache             map[uint64]int64
 	drainRateCacheAt           time.Time
 }
@@ -818,34 +835,89 @@ func (s *RebalanceService) applyMissionControlHalfLife(ctx context.Context, cfg 
 	s.mu.Unlock()
 }
 
+func (s *RebalanceService) missionControlStateLocked(now time.Time) RebalanceMissionControlState {
+	state := RebalanceMissionControlState{
+		LastMCResetReason:  s.lastMCResetReason,
+		MCResetCount:       s.mcResetCount,
+		MCResetCooldownSec: int64(mcResetCooldown / time.Second),
+	}
+	if !s.lastMCResetAt.IsZero() {
+		state.LastMCResetAt = s.lastMCResetAt.UTC().Format(time.RFC3339)
+		if now.IsZero() {
+			now = time.Now()
+		}
+		if remaining := mcResetCooldown - now.Sub(s.lastMCResetAt); remaining > 0 {
+			state.MCResetCooldownRemainingSec = int64(remaining.Round(time.Second) / time.Second)
+			if state.MCResetCooldownRemainingSec < 1 {
+				state.MCResetCooldownRemainingSec = 1
+			}
+		}
+	}
+	return state
+}
+
+func (s *RebalanceService) missionControlState(now time.Time) RebalanceMissionControlState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.missionControlStateLocked(now)
+}
+
+// ResetMissionControl forces an operator-requested LND Mission Control reset
+// and records the reset telemetry exposed in the overview.
+func (s *RebalanceService) ResetMissionControl(ctx context.Context, trigger string) (RebalanceMissionControlState, error) {
+	return s.resetMissionControl(ctx, trigger, true)
+}
+
 // tryResetMissionControl invokes LND ResetMissionControl with a cross-job
 // cooldown so a burst of concurrent failures triggers at most one reset per
 // mcResetCooldown window. Returns true when the reset was performed, false
 // when skipped (cooldown not yet elapsed or LND unavailable).
 func (s *RebalanceService) tryResetMissionControl(ctx context.Context, trigger string) bool {
+	_, err := s.resetMissionControl(ctx, trigger, false)
+	return err == nil
+}
+
+func (s *RebalanceService) resetMissionControl(ctx context.Context, trigger string, force bool) (RebalanceMissionControlState, error) {
 	if s.lnd == nil {
-		return false
+		return s.missionControlState(time.Now()), errors.New("lnd unavailable")
 	}
+	trigger = strings.TrimSpace(trigger)
+	if trigger == "" {
+		trigger = "manual"
+	}
+	now := time.Now()
 	s.mu.Lock()
-	if !s.lastMCResetAt.IsZero() && time.Since(s.lastMCResetAt) < mcResetCooldown {
+	if !force && !s.lastMCResetAt.IsZero() && now.Sub(s.lastMCResetAt) < mcResetCooldown {
+		state := s.missionControlStateLocked(now)
 		s.mu.Unlock()
-		return false
+		return state, errMissionControlResetCooldown
 	}
-	s.lastMCResetAt = time.Now()
+	previousAt := s.lastMCResetAt
+	previousReason := s.lastMCResetReason
+	s.lastMCResetAt = now
+	s.lastMCResetReason = trigger
 	s.mu.Unlock()
 	if err := s.lnd.ResetMissionControl(ctx); err != nil {
 		s.mu.Lock()
-		s.lastMCResetAt = time.Time{}
+		if s.lastMCResetAt.Equal(now) && s.lastMCResetReason == trigger {
+			s.lastMCResetAt = previousAt
+			s.lastMCResetReason = previousReason
+		}
+		state := s.missionControlStateLocked(time.Now())
 		s.mu.Unlock()
 		if s.logger != nil {
 			s.logger.Printf("rebalance %s: mission control reset failed: %v", trigger, err)
 		}
-		return false
+		return state, err
 	}
+	s.mu.Lock()
+	s.mcResetCount++
+	state := s.missionControlStateLocked(time.Now())
+	s.mu.Unlock()
 	if s.logger != nil {
 		s.logger.Printf("rebalance %s: mission control reset triggered", trigger)
 	}
-	return true
+	return state, nil
 }
 
 // resetSemaphore is called on Start() and on UpdateConfig(). It records the
@@ -1106,9 +1178,13 @@ func isStructuralRebalanceFailure(reason string) bool {
 	switch {
 	case strings.Contains(reason, "unable to find a path"):
 		return true
+	case strings.Contains(reason, "no route"):
+		return true
 	case strings.Contains(reason, "no matching outgoing channel"):
 		return true
 	case strings.Contains(reason, "probe returned no amount"):
+		return true
+	case strings.Contains(reason, "mpp structural failure"):
 		return true
 	case strings.Contains(reason, "attempt timeout"):
 		return true
@@ -1191,7 +1267,11 @@ func pairFailureBaseTTL(reason string) (time.Duration, bool) {
 		return 45 * time.Minute, true
 	case strings.Contains(reason, "unable to find a path"):
 		return 20 * time.Minute, true
+	case strings.Contains(reason, "no route"):
+		return 20 * time.Minute, true
 	case strings.Contains(reason, "probe returned no amount"):
+		return 15 * time.Minute, true
+	case strings.Contains(reason, "mpp structural failure"):
 		return 15 * time.Minute, true
 	case strings.Contains(reason, "route fee exceeds limit"):
 		return 15 * time.Minute, true
@@ -2652,12 +2732,12 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 	if attemptTimeoutSec <= 0 {
 		attemptTimeoutSec = 60
 	}
-	autoNoPathBackoff := time.Duration(0)
-	autoNoPathBase := 1 * time.Second
-	autoNoPathMax := 10 * time.Second
-	autoNoPathCount := 0
-	autoNoPathThreshold := 6
-	autoNoPathResetDone := false
+	autoStructuralBackoff := time.Duration(0)
+	autoStructuralBase := 1 * time.Second
+	autoStructuralMax := 10 * time.Second
+	autoStructuralCount := 0
+	autoStructuralThreshold := 6
+	autoStructuralResetDone := false
 	ignoredEdgeSet := map[string]struct{}{}
 	ignoredEdges := make([]*lnrpc.EdgeLocator, 0)
 	ignoredPairSet := map[string]struct{}{}
@@ -2679,18 +2759,18 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 		}
 	}
 
-	// Hotfix 6.5: extend the no-path counter and MC reset trigger to manual
+	// Hotfix 6.5: extend the structural-failure counter and MC reset trigger to manual
 	// auto-restart jobs (source=manual, reason=auto-restart). User-triggered
 	// manuals (operator clicking "Manual Rebal In") are intentionally left out
 	// — they should not be able to reset MC as a side effect of diagnostics.
 	jobCountsForMCReset := jobSource == "auto" || isManualRestartJob(jobSource, jobReason, false)
 
-	noteAutoNoPath := func() {
-		if !jobCountsForMCReset {
+	noteAutoStructuralFailure := func(reason string, backoff bool) {
+		if !jobCountsForMCReset || !isStructuralRebalanceFailure(reason) {
 			return
 		}
-		autoNoPathCount++
-		if !autoNoPathResetDone && autoNoPathCount >= autoNoPathThreshold {
+		autoStructuralCount++
+		if !autoStructuralResetDone && autoStructuralCount >= autoStructuralThreshold {
 			resetCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			trigger := jobSource
 			if isManualRestartJob(jobSource, jobReason, false) {
@@ -2699,25 +2779,28 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			done := s.tryResetMissionControl(resetCtx, trigger)
 			cancel()
 			if done {
-				autoNoPathResetDone = true
-				autoNoPathCount = 0
+				autoStructuralResetDone = true
+				autoStructuralCount = 0
 			}
 		}
-		if autoNoPathBackoff <= 0 {
-			autoNoPathBackoff = autoNoPathBase
+		if !backoff {
+			return
+		}
+		if autoStructuralBackoff <= 0 {
+			autoStructuralBackoff = autoStructuralBase
 		} else {
-			autoNoPathBackoff *= 2
-			if autoNoPathBackoff > autoNoPathMax {
-				autoNoPathBackoff = autoNoPathMax
+			autoStructuralBackoff *= 2
+			if autoStructuralBackoff > autoStructuralMax {
+				autoStructuralBackoff = autoStructuralMax
 			}
 		}
-		_ = sleepWithContext(autoNoPathBackoff)
+		_ = sleepWithContext(autoStructuralBackoff)
 	}
 
-	resetAutoNoPath := func() {
+	resetAutoStructuralFailure := func() {
 		if jobCountsForMCReset {
-			autoNoPathBackoff = 0
-			autoNoPathCount = 0
+			autoStructuralBackoff = 0
+			autoStructuralCount = 0
 		}
 	}
 
@@ -2902,7 +2985,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 						applyMppRecord(cachedRoute, paymentAddr, amountTry)
 						if _, sendErr := s.lnd.SendToRoute(attemptCtx, paymentHash, cachedRoute); sendErr == nil {
 							cancelAttempt()
-							resetAutoNoPath()
+							resetAutoStructuralFailure()
 							feePaidSat := msatToSatCeil(cachedFeeMsat)
 							attemptIndex++
 							_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, feePaidSat, "succeeded", paymentHash, "", nil)
@@ -2937,12 +3020,13 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 				attemptIndex++
 				_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", "", "attempt timeout", nil)
 				recordPairFailure(ctx, source.ChannelID, targetChannelID, "attempt timeout")
+				noteAutoStructuralFailure("attempt timeout", false)
 				return false, false, 0, true, nil, 0
 			}
-			if isNoPathError(err) {
-				noteAutoNoPath()
+			if isStructuralRebalanceFailure(err.Error()) {
+				noteAutoStructuralFailure(err.Error(), true)
 			} else {
-				resetAutoNoPath()
+				resetAutoStructuralFailure()
 			}
 			if logRouteFailure {
 				attemptIndex++
@@ -3048,7 +3132,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			_, err = s.lnd.SendToRoute(attemptCtx, paymentHash, activeRoute)
 			if err == nil {
 				cancelAttempt()
-				resetAutoNoPath()
+				resetAutoStructuralFailure()
 				feePaidSat := msatToSatCeil(routeFeeMsat)
 				if feePaidSat == 0 && probeFeeMsat > 0 {
 					feePaidSat = msatToSatCeil(probeFeeMsat)
@@ -3080,7 +3164,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 						_, retryErr := s.lnd.SendToRoute(attemptCtx, paymentHash, updatedRoute)
 						if retryErr == nil {
 							cancelAttempt()
-							resetAutoNoPath()
+							resetAutoStructuralFailure()
 							feePaidSat := msatToSatCeil(updatedRoute.TotalFeesMsat)
 							if feePaidSat == 0 && probeFeeMsat > 0 {
 								feePaidSat = msatToSatCeil(probeFeeMsat)
@@ -3124,7 +3208,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 									_, retrySendErr := s.lnd.SendToRoute(attemptCtx, retryHash, rebuilt)
 									if retrySendErr == nil {
 										cancelAttempt()
-										resetAutoNoPath()
+										resetAutoStructuralFailure()
 										feePaidSat := msatToSatCeil(rebuilt.TotalFeesMsat)
 										if feePaidSat == 0 && rebuilt.TotalFeesMsat > 0 {
 											feePaidSat = msatToSatCeil(rebuilt.TotalFeesMsat)
@@ -3174,6 +3258,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			attemptIndex++
 			_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, timeoutAmount, timeoutFeePpm, 0, "failed", timeoutHash, "attempt timeout", nil)
 			recordPairFailure(ctx, source.ChannelID, targetChannelID, "attempt timeout")
+			noteAutoStructuralFailure("attempt timeout", false)
 			return false, false, 0, true, nil, 0
 		}
 		failReason := ""
@@ -3195,6 +3280,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, failAmount, failFeePpm, 0, "failed", lastPaymentHash, failReason, parseRouteFailure(lastErr, nil))
 			recordPairFailure(ctx, source.ChannelID, targetChannelID, failReason)
 		}
+		noteAutoStructuralFailure(failReason, false)
 		return false, false, 0, false, nil, 0
 	}
 
@@ -3293,7 +3379,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 		_, err = s.lnd.SendToRoute(attemptCtx, paymentHash, route)
 		if err == nil {
 			cancelAttempt()
-			resetAutoNoPath()
+			resetAutoStructuralFailure()
 			feePaidSat := msatToSatCeil(routeFeeMsat)
 			attemptIndex++
 			_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, feePaidSat, "succeeded", paymentHash, "", nil)
@@ -3322,7 +3408,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 						_, retryErr := s.lnd.SendToRoute(attemptCtx, paymentHash, updatedRoute)
 						if retryErr == nil {
 							cancelAttempt()
-							resetAutoNoPath()
+							resetAutoStructuralFailure()
 							feePaidSat := msatToSatCeil(updatedRoute.TotalFeesMsat)
 							attemptIndex++
 							_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, feePaidSat, "succeeded", paymentHash, "", nil)
@@ -3358,6 +3444,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			attemptIndex++
 			_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", paymentHash, "attempt timeout", nil)
 			recordPairFailure(ctx, source.ChannelID, targetChannelID, "attempt timeout")
+			noteAutoStructuralFailure("attempt timeout", false)
 			return false, false, 0, true, nil, 0
 		}
 		failReason := ""
@@ -3371,6 +3458,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", paymentHash, failReason, parseRouteFailure(lastErr, route))
 			recordPairFailure(ctx, source.ChannelID, targetChannelID, failReason)
 		}
+		noteAutoStructuralFailure(failReason, false)
 		return false, false, 0, false, nil, 0
 	}
 
@@ -3999,6 +4087,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			shardFailReason := formatMppShardFailReason(failReason)
 			_ = s.insertAttempt(ctx, jobID, attemptIndex, res.Source.ChannelID, attemptAmount, res.FeeLimitPpm, 0, "failed", res.PaymentHash, shardFailReason, res.FailureInfo)
 			recordPairFailure(ctx, res.Source.ChannelID, targetChannelID, shardFailReason)
+			noteAutoStructuralFailure(shardFailReason, false)
 		}
 
 		if succeededShards == 0 && attemptedShards >= mppStructuralAbortMinAttempts {
@@ -4016,6 +4105,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 					}
 					return false, false
 				}
+				noteAutoStructuralFailure("mpp structural failure", false)
 				s.finishJob(jobID, "failed", "mpp structural failure")
 				if s.logger != nil {
 					s.logger.Printf(
@@ -7802,6 +7892,7 @@ where report_date >= current_date - interval '6 days'
 	lastScanProfitSkipped := s.lastScanProfitSkipped
 	lastScanQueued := s.lastScanQueued
 	lastScanSkipped := append([]RebalanceSkipDetail(nil), s.lastScanSkipped...)
+	mcState := s.missionControlStateLocked(time.Now())
 	s.mu.Unlock()
 
 	overview := RebalanceOverview{
@@ -7851,6 +7942,11 @@ where report_date >= current_date - interval '6 days'
 		LastScanProfitSkipped:         lastScanProfitSkipped,
 		LastScanQueued:                lastScanQueued,
 		LastScanSkipped:               lastScanSkipped,
+		LastMCResetAt:                 mcState.LastMCResetAt,
+		LastMCResetReason:             mcState.LastMCResetReason,
+		MCResetCount:                  mcState.MCResetCount,
+		MCResetCooldownSec:            mcState.MCResetCooldownSec,
+		MCResetCooldownRemainingSec:   mcState.MCResetCooldownRemainingSec,
 		EligibleSources:               eligibleSources,
 		TargetsNeeding:                targetsNeeding,
 		MppShadowJobs24h:              mppShadowTelemetry.Jobs,

@@ -216,6 +216,7 @@ func (s *Server) routes() http.Handler {
 		r.Get("/history", s.handleRebalanceHistory)
 		r.Post("/run", s.handleRebalanceRun)
 		r.Post("/stop", s.handleRebalanceStop)
+		r.Post("/mission-control/reset", s.handleRebalanceMissionControlReset)
 		r.Post("/channel/target", s.handleRebalanceChannelTarget)
 		r.Post("/channel/auto", s.handleRebalanceChannelAuto)
 		r.Post("/channel/manual-restart", s.handleRebalanceChannelManualRestart)

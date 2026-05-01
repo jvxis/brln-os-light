@@ -628,6 +628,8 @@ export const getRebalanceChannels = () => request('/api/rebalance/channels')
 export const getRebalanceQueue = () => request('/api/rebalance/queue')
 export const getRebalanceHistory = (limit = 0) =>
   limit > 0 ? request(`/api/rebalance/history?limit=${limit}`) : request('/api/rebalance/history')
+export const resetRebalanceMissionControl = () =>
+  request('/api/rebalance/mission-control/reset', { method: 'POST', body: JSON.stringify({}) })
 export const runRebalance = (payload: {
   channel_id: number
   channel_point?: string

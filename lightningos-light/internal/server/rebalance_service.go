@@ -272,43 +272,43 @@ type RebalanceTargetStat struct {
 }
 
 type RebalanceChannel struct {
-	ChannelID             uint64   `json:"channel_id"`
-	ChannelPoint          string   `json:"channel_point"`
-	PeerAlias             string   `json:"peer_alias"`
-	RemotePubkey          string   `json:"remote_pubkey"`
-	Active                bool     `json:"active"`
-	Private               bool     `json:"private"`
-	CapacitySat           int64    `json:"capacity_sat"`
-	LocalBalanceSat       int64    `json:"local_balance_sat"`
-	RemoteBalanceSat      int64    `json:"remote_balance_sat"`
-	LocalPct              float64  `json:"local_pct"`
-	RemotePct             float64  `json:"remote_pct"`
-	OutgoingFeePpm        int64    `json:"outgoing_fee_ppm"`
-	OutgoingBaseMsat      int64    `json:"outgoing_base_msat"`
-	PeerFeeRatePpm        int64    `json:"peer_fee_rate_ppm"`
-	PeerBaseMsat          int64    `json:"peer_base_msat"`
-	SpreadPpm             int64    `json:"spread_ppm"`
-	TargetOutboundPct     float64  `json:"target_outbound_pct"`
-	TargetAmountSat       int64    `json:"target_amount_sat"`
-	AutoEnabled           bool     `json:"auto_enabled"`
-	ManualRestartEnabled  bool     `json:"manual_restart_enabled"`
-	UseDefaultEconRatio   bool     `json:"use_default_econ_ratio"`
-	EconRatioOverride     *float64 `json:"econ_ratio_override,omitempty"`
-	EligibleAsTarget      bool     `json:"eligible_as_target"`
-	EligibleAsManualTarget bool    `json:"eligible_as_manual_target"`
-	EligibleAsSource      bool     `json:"eligible_as_source"`
-	ProtectedLiquiditySat int64    `json:"protected_liquidity_sat"`
-	PaybackProgress       float64  `json:"payback_progress"`
-	MaxSourceSat          int64    `json:"max_source_sat"`
-	Revenue7dSat          int64    `json:"revenue_7d_sat"`
-	DrainRateSatPerHour   int64    `json:"drain_rate_sat_per_hour"`
-	PendingOutgoingHtlcs  int      `json:"pending_outgoing_htlcs"`
-	RebalanceCost7dSat    int64    `json:"rebalance_cost_7d_sat"`
-	RebalanceCost7dPpm    int64    `json:"rebalance_cost_7d_ppm"`
-	RebalanceAmount7dSat  int64    `json:"rebalance_amount_7d_sat"`
-	ROIEstimate           float64  `json:"roi_estimate"`
-	ROIEstimateValid      bool     `json:"roi_estimate_valid"`
-	ExcludedAsSource      bool     `json:"excluded_as_source"`
+	ChannelID              uint64   `json:"channel_id"`
+	ChannelPoint           string   `json:"channel_point"`
+	PeerAlias              string   `json:"peer_alias"`
+	RemotePubkey           string   `json:"remote_pubkey"`
+	Active                 bool     `json:"active"`
+	Private                bool     `json:"private"`
+	CapacitySat            int64    `json:"capacity_sat"`
+	LocalBalanceSat        int64    `json:"local_balance_sat"`
+	RemoteBalanceSat       int64    `json:"remote_balance_sat"`
+	LocalPct               float64  `json:"local_pct"`
+	RemotePct              float64  `json:"remote_pct"`
+	OutgoingFeePpm         int64    `json:"outgoing_fee_ppm"`
+	OutgoingBaseMsat       int64    `json:"outgoing_base_msat"`
+	PeerFeeRatePpm         int64    `json:"peer_fee_rate_ppm"`
+	PeerBaseMsat           int64    `json:"peer_base_msat"`
+	SpreadPpm              int64    `json:"spread_ppm"`
+	TargetOutboundPct      float64  `json:"target_outbound_pct"`
+	TargetAmountSat        int64    `json:"target_amount_sat"`
+	AutoEnabled            bool     `json:"auto_enabled"`
+	ManualRestartEnabled   bool     `json:"manual_restart_enabled"`
+	UseDefaultEconRatio    bool     `json:"use_default_econ_ratio"`
+	EconRatioOverride      *float64 `json:"econ_ratio_override,omitempty"`
+	EligibleAsTarget       bool     `json:"eligible_as_target"`
+	EligibleAsManualTarget bool     `json:"eligible_as_manual_target"`
+	EligibleAsSource       bool     `json:"eligible_as_source"`
+	ProtectedLiquiditySat  int64    `json:"protected_liquidity_sat"`
+	PaybackProgress        float64  `json:"payback_progress"`
+	MaxSourceSat           int64    `json:"max_source_sat"`
+	Revenue7dSat           int64    `json:"revenue_7d_sat"`
+	DrainRateSatPerHour    int64    `json:"drain_rate_sat_per_hour"`
+	PendingOutgoingHtlcs   int      `json:"pending_outgoing_htlcs"`
+	RebalanceCost7dSat     int64    `json:"rebalance_cost_7d_sat"`
+	RebalanceCost7dPpm     int64    `json:"rebalance_cost_7d_ppm"`
+	RebalanceAmount7dSat   int64    `json:"rebalance_amount_7d_sat"`
+	ROIEstimate            float64  `json:"roi_estimate"`
+	ROIEstimateValid       bool     `json:"roi_estimate_valid"`
+	ExcludedAsSource       bool     `json:"excluded_as_source"`
 }
 
 type RebalanceJob struct {
@@ -1635,121 +1635,32 @@ func (s *RebalanceService) runAutoScan() {
 	criticalActive := cfg.CriticalCycles > 0 && s.criticalMissCount >= cfg.CriticalCycles
 	s.mu.Unlock()
 
-	candidates := []rebalanceTarget{}
-	eligibleSources := 0
-	totalAvailable := int64(0)
-	roiSkipped := 0
-	belowExecuteMinSkipped := 0
-	targetCooldownSkipped := 0
-	topScoreSet := false
+	snapshots := make([]RebalanceChannel, 0, len(channels))
 	for _, ch := range channels {
 		setting := settings[ch.ChannelID]
 		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
-		if snapshot.EligibleAsSource {
-			eligibleSources++
-			totalAvailable += snapshot.MaxSourceSat
-		}
-
-		if setting.AutoEnabled && snapshot.EligibleAsTarget {
-			targetCfg := effectiveConfigForTarget(cfg, setting)
-			targetAmount := snapshot.TargetAmountSat
-			minExecuteSat := effectiveMinExecuteSat(targetCfg)
-			if shouldCooldownTargetRecentFailures(targetCooldowns[ch.ChannelID], targetNoAttemptCooldowns[ch.ChannelID], targetFailedCooldowns[ch.ChannelID], targetDistinctSourceCooldowns[ch.ChannelID], scanAt) {
-				if shouldRunTargetCooldownProbe(lastAutoByTarget[snapshot.ChannelID], scanAt) {
-					probeAmount := rebalanceCooldownProbeAmount(targetAmount, targetCfg)
-					if probeAmount > 0 && (!targetCfg.MinSplitEnabled || minExecuteSat <= 0 || probeAmount >= minExecuteSat) {
-						probeSnapshot := snapshot
-						probeSnapshot.TargetAmountSat = probeAmount
-						candidates = append(candidates, rebalanceTarget{
-							Channel:           probeSnapshot,
-							ExpectedGainSat:   0,
-							EstimatedCostSat:  0,
-							ExpectedROI:       0,
-							ExpectedROIValid:  false,
-							Score:             -1,
-							LastAutoAt:        lastAutoByTarget[snapshot.ChannelID],
-							CooldownProbe:     true,
-							ProbeAmountSat:    probeAmount,
-							OriginalAmountSat: targetAmount,
-						})
-						targetCooldownSkipped++
-						continue
-					}
-				}
-				targetCooldownSkipped++
-				skippedDetails = append(skippedDetails, RebalanceSkipDetail{
-					ChannelID:         snapshot.ChannelID,
-					ChannelPoint:      snapshot.ChannelPoint,
-					PeerAlias:         snapshot.PeerAlias,
-					TargetOutboundPct: snapshot.TargetOutboundPct,
-					TargetAmountSat:   snapshot.TargetAmountSat,
-					Reason:            "target_cooldown",
-				})
-				continue
-			}
-			if targetCfg.MinSplitEnabled && minExecuteSat > 0 && targetAmount < minExecuteSat {
-				belowExecuteMinSkipped++
-				skippedDetails = append(skippedDetails, RebalanceSkipDetail{
-					ChannelID:         snapshot.ChannelID,
-					ChannelPoint:      snapshot.ChannelPoint,
-					PeerAlias:         snapshot.PeerAlias,
-					TargetOutboundPct: snapshot.TargetOutboundPct,
-					TargetAmountSat:   targetAmount,
-					Reason:            "below_execute_min",
-				})
-				continue
-			}
-			estimatedCost := estimateHistoricalCost(targetAmount, snapshot.RebalanceCost7dPpm)
-			expectedGain := estimateTargetGain(targetAmount, snapshot.Revenue7dSat, snapshot.LocalBalanceSat, snapshot.CapacitySat)
-			expectedROI, roiValid := estimateTargetROI(expectedGain, estimatedCost, targetAmount, snapshot.OutgoingFeePpm, snapshot.PeerFeeRatePpm)
-			if cfg.ROIMin > 0 && roiValid && expectedROI < cfg.ROIMin {
-				roiSkipped++
-				skippedDetails = append(skippedDetails, RebalanceSkipDetail{
-					ChannelID:         snapshot.ChannelID,
-					ChannelPoint:      snapshot.ChannelPoint,
-					PeerAlias:         snapshot.PeerAlias,
-					TargetOutboundPct: snapshot.TargetOutboundPct,
-					TargetAmountSat:   targetAmount,
-					ExpectedGainSat:   expectedGain,
-					EstimatedCostSat:  estimatedCost,
-					ExpectedROI:       expectedROI,
-					ExpectedROIValid:  roiValid,
-					Reason:            "roi_guardrail",
-				})
-				continue
-			}
-			if expectedGain > 0 && estimatedCost > 0 && expectedGain < estimatedCost {
-				profitSkipped++
-				skippedDetails = append(skippedDetails, RebalanceSkipDetail{
-					ChannelID:         snapshot.ChannelID,
-					ChannelPoint:      snapshot.ChannelPoint,
-					PeerAlias:         snapshot.PeerAlias,
-					TargetOutboundPct: snapshot.TargetOutboundPct,
-					TargetAmountSat:   targetAmount,
-					ExpectedGainSat:   expectedGain,
-					EstimatedCostSat:  estimatedCost,
-					ExpectedROI:       expectedROI,
-					ExpectedROIValid:  roiValid,
-					Reason:            "profit_guardrail",
-				})
-				continue
-			}
-			score := expectedGain - estimatedCost
-			candidates = append(candidates, rebalanceTarget{
-				Channel:          snapshot,
-				ExpectedGainSat:  expectedGain,
-				EstimatedCostSat: estimatedCost,
-				ExpectedROI:      expectedROI,
-				ExpectedROIValid: roiValid,
-				Score:            score,
-				LastAutoAt:       lastAutoByTarget[snapshot.ChannelID],
-			})
-			if !topScoreSet || score > topScore {
-				topScore = score
-				topScoreSet = true
-			}
-		}
+		snapshots = append(snapshots, snapshot)
 	}
+	candidatePlan := buildAndOrderRebalanceCandidates(rebalanceAutoScanCandidateInput{
+		Channels:                      snapshots,
+		Settings:                      settings,
+		Cfg:                           cfg,
+		ScanAt:                        scanAt,
+		LastAutoByTarget:              lastAutoByTarget,
+		TargetCooldowns:               targetCooldowns,
+		TargetNoAttemptCooldowns:      targetNoAttemptCooldowns,
+		TargetFailedCooldowns:         targetFailedCooldowns,
+		TargetDistinctSourceCooldowns: targetDistinctSourceCooldowns,
+	})
+	candidates := candidatePlan.Candidates
+	eligibleSources := candidatePlan.EligibleSources
+	totalAvailable := candidatePlan.TotalAvailable
+	roiSkipped := candidatePlan.ROISkipped
+	belowExecuteMinSkipped := candidatePlan.BelowExecuteMinSkipped
+	targetCooldownSkipped := candidatePlan.TargetCooldownSkipped
+	profitSkipped = candidatePlan.ProfitSkipped
+	topScore = candidatePlan.TopScore
+	skippedDetails = append(skippedDetails, candidatePlan.SkippedDetails...)
 
 	if eligibleSources == 0 ||
 		(cfg.CriticalMinSources > 0 && eligibleSources < cfg.CriticalMinSources) ||
@@ -1789,76 +1700,6 @@ func (s *RebalanceService) runAutoScan() {
 	s.criticalMissCount = 0
 	s.mu.Unlock()
 
-	// Wave 1.1: score-first ordering with a 10% bucket. Candidates within 10%
-	// of the top score are treated as a tie and broken by fairness (oldest
-	// LastAutoAt first); below the bucket, raw score wins.
-	inTopBucket := func(score int64) bool {
-		if !topScoreSet {
-			return false
-		}
-		if topScore <= 0 {
-			return score == topScore
-		}
-		return score*10 >= topScore*9
-	}
-	sort.Slice(candidates, func(i, j int) bool {
-		a := candidates[i]
-		b := candidates[j]
-		if a.CooldownProbe != b.CooldownProbe {
-			return !a.CooldownProbe
-		}
-		aBucket := inTopBucket(a.Score)
-		bBucket := inTopBucket(b.Score)
-		if aBucket != bBucket {
-			return aBucket
-		}
-		if !aBucket && a.Score != b.Score {
-			return a.Score > b.Score
-		}
-		if a.LastAutoAt.IsZero() != b.LastAutoAt.IsZero() {
-			return a.LastAutoAt.IsZero()
-		}
-		if !a.LastAutoAt.IsZero() && !b.LastAutoAt.IsZero() && !a.LastAutoAt.Equal(b.LastAutoAt) {
-			return a.LastAutoAt.Before(b.LastAutoAt)
-		}
-		if a.Score != b.Score {
-			return a.Score > b.Score
-		}
-		if a.ExpectedROI != b.ExpectedROI {
-			return a.ExpectedROI > b.ExpectedROI
-		}
-		if a.Channel.TargetAmountSat != b.Channel.TargetAmountSat {
-			return a.Channel.TargetAmountSat > b.Channel.TargetAmountSat
-		}
-		if a.Channel.LocalPct != b.Channel.LocalPct {
-			return a.Channel.LocalPct < b.Channel.LocalPct
-		}
-		return a.Channel.ChannelID < b.Channel.ChannelID
-	})
-
-	cooldown := time.Duration(cfg.ScanIntervalSec) * time.Second
-	if cooldown <= 0 {
-		cooldown = autoTargetCooldownMin
-	} else if cooldown < autoTargetCooldownMin {
-		cooldown = autoTargetCooldownMin
-	}
-	recentSkipped := 0
-	if len(candidates) > 1 {
-		filtered := make([]rebalanceTarget, 0, len(candidates))
-		for _, target := range candidates {
-			if !target.LastAutoAt.IsZero() && scanAt.Sub(target.LastAutoAt) < cooldown {
-				recentSkipped++
-				continue
-			}
-			filtered = append(filtered, target)
-		}
-		if len(filtered) > 0 {
-			candidates = filtered
-		} else {
-			recentSkipped = 0
-		}
-	}
-
 	budget, spentAuto, _, spentTotal := s.getDailyBudget(ctx)
 	manualReserveSat := computeManualReserveSat(cfg, budget)
 	remaining := computeRemainingForAuto(budget, spentAuto, spentTotal, manualReserveSat, cfg.BudgetAutoOnly)
@@ -1877,7 +1718,7 @@ func (s *RebalanceService) runAutoScan() {
 		}
 		skipReasons[key]++
 	}
-	for i := 0; i < recentSkipped; i++ {
+	for i := 0; i < candidatePlan.RecentSkipped; i++ {
 		noteSkip("recently_attempted")
 	}
 
@@ -2004,6 +1845,248 @@ type rebalanceTarget struct {
 	CooldownProbe     bool
 	ProbeAmountSat    int64
 	OriginalAmountSat int64
+}
+
+type rebalanceAutoScanCandidateInput struct {
+	Channels                      []RebalanceChannel
+	Settings                      map[uint64]channelSetting
+	Cfg                           RebalanceConfig
+	ScanAt                        time.Time
+	LastAutoByTarget              map[uint64]time.Time
+	TargetCooldowns               map[uint64]recentCooldownStat
+	TargetNoAttemptCooldowns      map[uint64]recentCooldownStat
+	TargetFailedCooldowns         map[uint64]recentCooldownStat
+	TargetDistinctSourceCooldowns map[uint64]recentCooldownStat
+}
+
+type rebalanceAutoScanCandidatePlan struct {
+	Candidates             []rebalanceTarget
+	SkippedDetails         []RebalanceSkipDetail
+	SkipReasons            map[string]int
+	EligibleSources        int
+	TotalAvailable         int64
+	ProfitSkipped          int
+	ROISkipped             int
+	BelowExecuteMinSkipped int
+	TargetCooldownSkipped  int
+	RecentSkipped          int
+	TopScore               int64
+	TopScoreSet            bool
+}
+
+func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) rebalanceAutoScanCandidatePlan {
+	plan := rebalanceAutoScanCandidatePlan{
+		Candidates:     []rebalanceTarget{},
+		SkippedDetails: []RebalanceSkipDetail{},
+		SkipReasons:    map[string]int{},
+	}
+	noteSkip := func(reason string) {
+		if reason != "" {
+			plan.SkipReasons[reason]++
+		}
+	}
+
+	for _, snapshot := range input.Channels {
+		if snapshot.EligibleAsSource {
+			plan.EligibleSources++
+			plan.TotalAvailable += snapshot.MaxSourceSat
+		}
+
+		setting := input.Settings[snapshot.ChannelID]
+		if !setting.AutoEnabled || !snapshot.EligibleAsTarget {
+			continue
+		}
+
+		targetCfg := effectiveConfigForTarget(input.Cfg, setting)
+		targetAmount := snapshot.TargetAmountSat
+		minExecuteSat := effectiveMinExecuteSat(targetCfg)
+		if shouldCooldownTargetRecentFailures(
+			input.TargetCooldowns[snapshot.ChannelID],
+			input.TargetNoAttemptCooldowns[snapshot.ChannelID],
+			input.TargetFailedCooldowns[snapshot.ChannelID],
+			input.TargetDistinctSourceCooldowns[snapshot.ChannelID],
+			input.ScanAt,
+		) {
+			if shouldRunTargetCooldownProbe(input.LastAutoByTarget[snapshot.ChannelID], input.ScanAt) {
+				probeAmount := rebalanceCooldownProbeAmount(targetAmount, targetCfg)
+				if probeAmount > 0 && (!targetCfg.MinSplitEnabled || minExecuteSat <= 0 || probeAmount >= minExecuteSat) {
+					probeSnapshot := snapshot
+					probeSnapshot.TargetAmountSat = probeAmount
+					plan.Candidates = append(plan.Candidates, rebalanceTarget{
+						Channel:           probeSnapshot,
+						ExpectedGainSat:   0,
+						EstimatedCostSat:  0,
+						ExpectedROI:       0,
+						ExpectedROIValid:  false,
+						Score:             -1,
+						LastAutoAt:        input.LastAutoByTarget[snapshot.ChannelID],
+						CooldownProbe:     true,
+						ProbeAmountSat:    probeAmount,
+						OriginalAmountSat: targetAmount,
+					})
+					plan.TargetCooldownSkipped++
+					noteSkip("target_cooldown")
+					continue
+				}
+			}
+			plan.TargetCooldownSkipped++
+			noteSkip("target_cooldown")
+			plan.SkippedDetails = append(plan.SkippedDetails, RebalanceSkipDetail{
+				ChannelID:         snapshot.ChannelID,
+				ChannelPoint:      snapshot.ChannelPoint,
+				PeerAlias:         snapshot.PeerAlias,
+				TargetOutboundPct: snapshot.TargetOutboundPct,
+				TargetAmountSat:   snapshot.TargetAmountSat,
+				Reason:            "target_cooldown",
+			})
+			continue
+		}
+		if targetCfg.MinSplitEnabled && minExecuteSat > 0 && targetAmount < minExecuteSat {
+			plan.BelowExecuteMinSkipped++
+			noteSkip("below_execute_min")
+			plan.SkippedDetails = append(plan.SkippedDetails, RebalanceSkipDetail{
+				ChannelID:         snapshot.ChannelID,
+				ChannelPoint:      snapshot.ChannelPoint,
+				PeerAlias:         snapshot.PeerAlias,
+				TargetOutboundPct: snapshot.TargetOutboundPct,
+				TargetAmountSat:   targetAmount,
+				Reason:            "below_execute_min",
+			})
+			continue
+		}
+		estimatedCost := estimateHistoricalCost(targetAmount, snapshot.RebalanceCost7dPpm)
+		expectedGain := estimateTargetGain(targetAmount, snapshot.Revenue7dSat, snapshot.LocalBalanceSat, snapshot.CapacitySat)
+		expectedROI, roiValid := estimateTargetROI(expectedGain, estimatedCost, targetAmount, snapshot.OutgoingFeePpm, snapshot.PeerFeeRatePpm)
+		if input.Cfg.ROIMin > 0 && roiValid && expectedROI < input.Cfg.ROIMin {
+			plan.ROISkipped++
+			noteSkip("roi_guardrail")
+			plan.SkippedDetails = append(plan.SkippedDetails, RebalanceSkipDetail{
+				ChannelID:         snapshot.ChannelID,
+				ChannelPoint:      snapshot.ChannelPoint,
+				PeerAlias:         snapshot.PeerAlias,
+				TargetOutboundPct: snapshot.TargetOutboundPct,
+				TargetAmountSat:   targetAmount,
+				ExpectedGainSat:   expectedGain,
+				EstimatedCostSat:  estimatedCost,
+				ExpectedROI:       expectedROI,
+				ExpectedROIValid:  roiValid,
+				Reason:            "roi_guardrail",
+			})
+			continue
+		}
+		if expectedGain > 0 && estimatedCost > 0 && expectedGain < estimatedCost {
+			plan.ProfitSkipped++
+			noteSkip("profit_guardrail")
+			plan.SkippedDetails = append(plan.SkippedDetails, RebalanceSkipDetail{
+				ChannelID:         snapshot.ChannelID,
+				ChannelPoint:      snapshot.ChannelPoint,
+				PeerAlias:         snapshot.PeerAlias,
+				TargetOutboundPct: snapshot.TargetOutboundPct,
+				TargetAmountSat:   targetAmount,
+				ExpectedGainSat:   expectedGain,
+				EstimatedCostSat:  estimatedCost,
+				ExpectedROI:       expectedROI,
+				ExpectedROIValid:  roiValid,
+				Reason:            "profit_guardrail",
+			})
+			continue
+		}
+		score := expectedGain - estimatedCost
+		plan.Candidates = append(plan.Candidates, rebalanceTarget{
+			Channel:          snapshot,
+			ExpectedGainSat:  expectedGain,
+			EstimatedCostSat: estimatedCost,
+			ExpectedROI:      expectedROI,
+			ExpectedROIValid: roiValid,
+			Score:            score,
+			LastAutoAt:       input.LastAutoByTarget[snapshot.ChannelID],
+		})
+		if !plan.TopScoreSet || score > plan.TopScore {
+			plan.TopScore = score
+			plan.TopScoreSet = true
+		}
+	}
+
+	sortRebalanceTargets(plan.Candidates, plan.TopScore, plan.TopScoreSet)
+	plan.Candidates, plan.RecentSkipped = filterRecentRebalanceTargets(plan.Candidates, input.Cfg, input.ScanAt)
+	for i := 0; i < plan.RecentSkipped; i++ {
+		noteSkip("recently_attempted")
+	}
+	return plan
+}
+
+func sortRebalanceTargets(candidates []rebalanceTarget, topScore int64, topScoreSet bool) {
+	// Wave 1.1: score-first ordering with a 10% bucket. Candidates within 10%
+	// of the top score are treated as a tie and broken by fairness (oldest
+	// LastAutoAt first); below the bucket, raw score wins.
+	inTopBucket := func(score int64) bool {
+		if !topScoreSet {
+			return false
+		}
+		if topScore <= 0 {
+			return score == topScore
+		}
+		return score*10 >= topScore*9
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		a := candidates[i]
+		b := candidates[j]
+		if a.CooldownProbe != b.CooldownProbe {
+			return !a.CooldownProbe
+		}
+		aBucket := inTopBucket(a.Score)
+		bBucket := inTopBucket(b.Score)
+		if aBucket != bBucket {
+			return aBucket
+		}
+		if !aBucket && a.Score != b.Score {
+			return a.Score > b.Score
+		}
+		if a.LastAutoAt.IsZero() != b.LastAutoAt.IsZero() {
+			return a.LastAutoAt.IsZero()
+		}
+		if !a.LastAutoAt.IsZero() && !b.LastAutoAt.IsZero() && !a.LastAutoAt.Equal(b.LastAutoAt) {
+			return a.LastAutoAt.Before(b.LastAutoAt)
+		}
+		if a.Score != b.Score {
+			return a.Score > b.Score
+		}
+		if a.ExpectedROI != b.ExpectedROI {
+			return a.ExpectedROI > b.ExpectedROI
+		}
+		if a.Channel.TargetAmountSat != b.Channel.TargetAmountSat {
+			return a.Channel.TargetAmountSat > b.Channel.TargetAmountSat
+		}
+		if a.Channel.LocalPct != b.Channel.LocalPct {
+			return a.Channel.LocalPct < b.Channel.LocalPct
+		}
+		return a.Channel.ChannelID < b.Channel.ChannelID
+	})
+}
+
+func filterRecentRebalanceTargets(candidates []rebalanceTarget, cfg RebalanceConfig, scanAt time.Time) ([]rebalanceTarget, int) {
+	cooldown := time.Duration(cfg.ScanIntervalSec) * time.Second
+	if cooldown <= 0 {
+		cooldown = autoTargetCooldownMin
+	} else if cooldown < autoTargetCooldownMin {
+		cooldown = autoTargetCooldownMin
+	}
+	recentSkipped := 0
+	if len(candidates) <= 1 {
+		return candidates, recentSkipped
+	}
+	filtered := make([]rebalanceTarget, 0, len(candidates))
+	for _, target := range candidates {
+		if !target.LastAutoAt.IsZero() && scanAt.Sub(target.LastAutoAt) < cooldown {
+			recentSkipped++
+			continue
+		}
+		filtered = append(filtered, target)
+	}
+	if len(filtered) > 0 {
+		return filtered, recentSkipped
+	}
+	return candidates, 0
 }
 
 func (s *RebalanceService) startJob(targetChannelID uint64, source string, reason string, amountOverride int64, manualAutoRestart bool) (int64, error) {
@@ -5290,43 +5373,43 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 	}
 
 	return RebalanceChannel{
-		ChannelID:             ch.ChannelID,
-		ChannelPoint:          ch.ChannelPoint,
-		PeerAlias:             ch.PeerAlias,
-		RemotePubkey:          ch.RemotePubkey,
-		Active:                ch.Active,
-		Private:               ch.Private,
-		CapacitySat:           ch.CapacitySat,
-		LocalBalanceSat:       ch.LocalBalanceSat,
-		RemoteBalanceSat:      ch.RemoteBalanceSat,
-		LocalPct:              localPct,
-		RemotePct:             remotePct,
-		OutgoingFeePpm:        outgoingFee,
-		OutgoingBaseMsat:      outgoingBaseMsat,
-		PeerFeeRatePpm:        peerFeeRate,
-		PeerBaseMsat:          peerBaseMsat,
-		SpreadPpm:             spread,
-		TargetOutboundPct:     target,
-		TargetAmountSat:       targetAmount,
-		AutoEnabled:           setting.AutoEnabled,
-		ManualRestartEnabled:  setting.ManualRestartEnabled,
-		UseDefaultEconRatio:   setting.UseDefaultEconRatio,
-		EconRatioOverride:     econRatioOverride,
+		ChannelID:              ch.ChannelID,
+		ChannelPoint:           ch.ChannelPoint,
+		PeerAlias:              ch.PeerAlias,
+		RemotePubkey:           ch.RemotePubkey,
+		Active:                 ch.Active,
+		Private:                ch.Private,
+		CapacitySat:            ch.CapacitySat,
+		LocalBalanceSat:        ch.LocalBalanceSat,
+		RemoteBalanceSat:       ch.RemoteBalanceSat,
+		LocalPct:               localPct,
+		RemotePct:              remotePct,
+		OutgoingFeePpm:         outgoingFee,
+		OutgoingBaseMsat:       outgoingBaseMsat,
+		PeerFeeRatePpm:         peerFeeRate,
+		PeerBaseMsat:           peerBaseMsat,
+		SpreadPpm:              spread,
+		TargetOutboundPct:      target,
+		TargetAmountSat:        targetAmount,
+		AutoEnabled:            setting.AutoEnabled,
+		ManualRestartEnabled:   setting.ManualRestartEnabled,
+		UseDefaultEconRatio:    setting.UseDefaultEconRatio,
+		EconRatioOverride:      econRatioOverride,
 		EligibleAsTarget:       eligibleTarget,
 		EligibleAsManualTarget: eligibleManualTarget,
 		EligibleAsSource:       eligibleSource && !excluded,
-		ProtectedLiquiditySat: protected,
-		PaybackProgress:       paybackProgress,
-		MaxSourceSat:          maxSource,
-		Revenue7dSat:          revenue7dSat,
-		DrainRateSatPerHour:   drainRateSatPerHour,
-		PendingOutgoingHtlcs:  pendingOutgoing,
-		RebalanceCost7dSat:    cost7d.FeeSat,
-		RebalanceCost7dPpm:    cost7d.FeePpm,
-		RebalanceAmount7dSat:  cost7d.AmountSat,
-		ROIEstimate:           roiEstimate,
-		ROIEstimateValid:      roiEstimateValid,
-		ExcludedAsSource:      excluded,
+		ProtectedLiquiditySat:  protected,
+		PaybackProgress:        paybackProgress,
+		MaxSourceSat:           maxSource,
+		Revenue7dSat:           revenue7dSat,
+		DrainRateSatPerHour:    drainRateSatPerHour,
+		PendingOutgoingHtlcs:   pendingOutgoing,
+		RebalanceCost7dSat:     cost7d.FeeSat,
+		RebalanceCost7dPpm:     cost7d.FeePpm,
+		RebalanceAmount7dSat:   cost7d.AmountSat,
+		ROIEstimate:            roiEstimate,
+		ROIEstimateValid:       roiEstimateValid,
+		ExcludedAsSource:       excluded,
 	}
 }
 

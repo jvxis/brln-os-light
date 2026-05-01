@@ -2096,7 +2096,7 @@ export default function RebalanceCenter() {
                 min={0}
                 max={5}
                 step={0.05}
-                placeholder="0"
+                placeholder="0.95"
                 value={config.source_min_payback_progress}
                 onChange={(e) => setConfig({ ...config, source_min_payback_progress: Number(e.target.value) })}
               />

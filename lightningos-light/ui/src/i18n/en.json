@@ -2941,7 +2941,7 @@
       "criticalMinAvailable": "Minimum total source liquidity required to avoid critical mode.",
       "criticalCycles": "Number of consecutive critical scans before releasing.",
       "rebalanceCostFloorPpm": "Assumed cost ppm used when a target has no recent rebalance history. Channels are only eligible as targets when (spread × econ ratio) exceeds this floor.",
-      "sourceMinPaybackProgress": "Minimum lifetime payback (forwarding revenue / rebalance cost) for a channel to qualify as source. 0 disables the filter (current behavior). Set to 0.95 to require channels to be near or above break-even before draining them again. Channels with insignificant historical cost (under 500 sat) bypass this filter so freshly opened channels remain eligible."
+      "sourceMinPaybackProgress": "Minimum lifetime payback (forwarding revenue / rebalance cost) for a channel to qualify as source. Default 0.95 — channels must be near or above break-even before being drained again. Set to 0 to disable. Set to 1.0 for strict break-even. Channels with insignificant historical cost (under 500 sat) bypass this filter so freshly opened channels remain eligible."
     },
     "channels": {
       "title": "Channel Workbench",

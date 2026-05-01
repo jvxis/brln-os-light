@@ -571,7 +571,7 @@ func defaultRebalanceConfig() RebalanceConfig {
 		CriticalMinAvailableSats:  0,
 		CriticalCycles:            3,
 		RebalanceCostFloorPpm:     250,
-		SourceMinPaybackProgress:  0,
+		SourceMinPaybackProgress:  0.95,
 	}
 }
 
@@ -5568,7 +5568,7 @@ end $$;
   alter table rebalance_config
     add column if not exists rebalance_cost_floor_ppm bigint not null default 250;
   alter table rebalance_config
-    add column if not exists source_min_payback_progress double precision not null default 0;
+    add column if not exists source_min_payback_progress double precision not null default 0.95;
 
   alter table rebalance_config
     alter column scan_interval_sec set default 900;

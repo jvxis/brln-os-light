@@ -85,6 +85,9 @@ func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	if cfg.RebalanceCostFloorPpm != 250 {
 		t.Fatalf("expected rebalance_cost_floor_ppm default=250, got %d", cfg.RebalanceCostFloorPpm)
 	}
+	if cfg.SourceMinPaybackProgress != 0.95 {
+		t.Fatalf("expected source_min_payback_progress default=0.95, got %f", cfg.SourceMinPaybackProgress)
+	}
 }
 
 func TestNormalizeRebalanceConfigClampsRebalanceCostFloor(t *testing.T) {
@@ -93,6 +96,15 @@ func TestNormalizeRebalanceConfigClampsRebalanceCostFloor(t *testing.T) {
 	got := normalizeRebalanceConfig(cfg)
 	if got.RebalanceCostFloorPpm != 0 {
 		t.Fatalf("expected RebalanceCostFloorPpm clamped to 0, got %d", got.RebalanceCostFloorPpm)
+	}
+}
+
+func TestNormalizeRebalanceConfigClampsSourceMinPaybackProgress(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	cfg.SourceMinPaybackProgress = -0.5
+	got := normalizeRebalanceConfig(cfg)
+	if got.SourceMinPaybackProgress != 0 {
+		t.Fatalf("expected SourceMinPaybackProgress clamped to 0, got %f", got.SourceMinPaybackProgress)
 	}
 }
 

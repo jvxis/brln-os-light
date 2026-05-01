@@ -2941,7 +2941,7 @@
       "criticalMinAvailable": "Mínimo de liquidez total para evitar modo crítico.",
       "criticalCycles": "Número de ciclos críticos antes de liberar.",
       "rebalanceCostFloorPpm": "Custo ppm assumido quando o canal não tem histórico recente de rebal. Um canal só vira alvo se (spread × econ ratio) > este piso.",
-      "sourceMinPaybackProgress": "Payback mínimo de vida (receita de forward / custo de rebal) para o canal ser elegível como source. 0 desativa o filtro (comportamento padrão). Ajuste para 0.95 para exigir que o canal esteja próximo do break-even antes de ser drenado de novo. Canais com custo histórico irrelevante (abaixo de 500 sat) ignoram este filtro, então canais novos continuam elegíveis."
+      "sourceMinPaybackProgress": "Payback mínimo de vida (receita de forward / custo de rebal) para o canal ser elegível como source. Padrão 0.95 — canais precisam estar próximos ou acima do break-even antes de serem drenados de novo. Coloque 0 para desativar. Coloque 1.0 para exigir break-even estrito. Canais com custo histórico irrelevante (abaixo de 500 sat) ignoram este filtro, então canais novos continuam elegíveis."
     },
     "channels": {
       "title": "Workbench de Canais",

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -89,6 +90,17 @@ const (
 )
 
 const (
+	// pairStatsStaleAfter is how long a pair_stats row that has only ever
+	// failed (last_success_at IS NULL) is kept around before cleanup. Older
+	// rows are deleted daily so the source/target sort no longer carries
+	// graveyard entries that bias the cooldown skip filter against
+	// historically dead pairs that may have become routable again.
+	pairStatsStaleAfter = 60 * 24 * time.Hour
+	// pairStatsCleanupInterval is how often the cleanup loop fires.
+	pairStatsCleanupInterval = 24 * time.Hour
+)
+
+const (
 	mppStructuralAbortMinAttempts = 4
 	mppStructuralAbortRatio       = 0.70
 )
@@ -163,6 +175,7 @@ type RebalanceConfig struct {
 	CriticalCycles            int     `json:"critical_cycles"`
 	RebalanceCostFloorPpm     int64   `json:"rebalance_cost_floor_ppm"`
 	SourceMinPaybackProgress  float64 `json:"source_min_payback_progress"`
+	MissionControlReinforce   bool    `json:"mission_control_reinforce"`
 }
 
 type RebalanceOverview struct {
@@ -289,6 +302,7 @@ type RebalanceChannel struct {
 	MaxSourceSat          int64    `json:"max_source_sat"`
 	Revenue7dSat          int64    `json:"revenue_7d_sat"`
 	DrainRateSatPerHour   int64    `json:"drain_rate_sat_per_hour"`
+	PendingOutgoingHtlcs  int      `json:"pending_outgoing_htlcs"`
 	RebalanceCost7dSat    int64    `json:"rebalance_cost_7d_sat"`
 	RebalanceCost7dPpm    int64    `json:"rebalance_cost_7d_ppm"`
 	RebalanceAmount7dSat  int64    `json:"rebalance_amount_7d_sat"`
@@ -356,14 +370,15 @@ type channelLedger struct {
 }
 
 type pairStat struct {
-	SourceChannelID  uint64
-	TargetChannelID  uint64
-	LastSuccessAt    time.Time
-	LastFailAt       time.Time
-	LastFailReason   string
-	FailCount        int
-	SuccessAmountSat int64
-	SuccessFeePpm    int64
+	SourceChannelID      uint64
+	TargetChannelID      uint64
+	LastSuccessAt        time.Time
+	LastFailAt           time.Time
+	LastFailReason       string
+	FailCount            int
+	SuccessAmountSat     int64
+	SuccessFeePpm        int64
+	LastSuccessRouteHops []string // Wave 4.1: hop pubkeys of the last successful route
 }
 
 type recentCooldownStat struct {
@@ -587,6 +602,7 @@ func defaultRebalanceConfig() RebalanceConfig {
 		CriticalCycles:            3,
 		RebalanceCostFloorPpm:     250,
 		SourceMinPaybackProgress:  0.95,
+		MissionControlReinforce:   false,
 	}
 }
 
@@ -625,6 +641,62 @@ func (s *RebalanceService) Start() {
 
 	go s.runAutoLoop()
 	go s.runManualRestartWatchLoop()
+	go s.runPairStatsCleanupLoop()
+}
+
+// runPairStatsCleanupLoop periodically deletes stale pair_stats rows. Wave 4.3.
+// A row is considered stale when it has only ever failed (last_success_at IS
+// NULL) and the last failure is older than pairStatsStaleAfter. These rows
+// otherwise sit in the table and color the source/target sort + recent-failure
+// cooldown filter long after the underlying network state has changed.
+func (s *RebalanceService) runPairStatsCleanupLoop() {
+	// Run once at startup (after a brief delay to avoid Start() contention),
+	// then on the interval.
+	startupDelay := time.NewTimer(5 * time.Minute)
+	select {
+	case <-startupDelay.C:
+		s.cleanupStalePairStats()
+	case <-s.stop:
+		if !startupDelay.Stop() {
+			<-startupDelay.C
+		}
+		return
+	}
+	for {
+		timer := time.NewTimer(pairStatsCleanupInterval)
+		select {
+		case <-timer.C:
+			s.cleanupStalePairStats()
+		case <-s.stop:
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return
+		}
+	}
+}
+
+func (s *RebalanceService) cleanupStalePairStats() {
+	if s.db == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cutoff := time.Now().Add(-pairStatsStaleAfter)
+	tag, err := s.db.Exec(ctx, `
+delete from rebalance_pair_stats
+where last_success_at is null
+  and last_fail_at is not null
+  and last_fail_at < $1`, cutoff)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("rebalance pair_stats cleanup failed: %v", err)
+		}
+		return
+	}
+	if s.logger != nil && tag.RowsAffected() > 0 {
+		s.logger.Printf("rebalance pair_stats cleanup: removed %d stale rows (cutoff=%s)", tag.RowsAffected(), cutoff.Format(time.RFC3339))
+	}
 }
 
 func (s *RebalanceService) ResolveChannel(ctx context.Context, channelID uint64, channelPoint string) (uint64, string, error) {
@@ -2297,6 +2369,9 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 	}
 
 	currentJobBlockedPairs := map[uint64]struct{}{}
+	// selfPubkey is fetched below before the source loop runs; declared here so
+	// the recordPairSuccess closure can capture it for Wave 4.4 reinforcement.
+	var selfPubkey string
 	shouldSkipCurrentJobSource := func(sourceChannelID uint64) bool {
 		_, ok := currentJobBlockedPairs[sourceChannelID]
 		return ok
@@ -2309,8 +2384,8 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			currentJobBlockedPairs[sourceChannelID] = struct{}{}
 		}
 	}
-	recordPairSuccess := func(ctx context.Context, sourceChannelID uint64, targetChannelID uint64, amountSat int64, feePpm int64, feePaidSat int64) {
-		s.recordPairSuccess(ctx, sourceChannelID, targetChannelID, amountSat, feePpm, feePaidSat)
+	recordPairSuccess := func(ctx context.Context, sourceChannelID uint64, targetChannelID uint64, amountSat int64, feePpm int64, feePaidSat int64, routeHops []string) {
+		s.recordPairSuccess(ctx, sourceChannelID, targetChannelID, amountSat, feePpm, feePaidSat, routeHops)
 		delete(currentJobBlockedPairs, sourceChannelID)
 		stat := pairStats[sourceChannelID]
 		stat.SourceChannelID = sourceChannelID
@@ -2321,7 +2396,19 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 		stat.FailCount = 0
 		stat.SuccessAmountSat = amountSat
 		stat.SuccessFeePpm = feePpm
+		if len(routeHops) > 0 {
+			stat.LastSuccessRouteHops = append([]string(nil), routeHops...)
+		}
 		pairStats[sourceChannelID] = stat
+		// Wave 4.4: opt-in MC reinforcement after every recorded success.
+		// Run async so the post-payment accounting path is not delayed by an
+		// extra RPC.
+		if cfg.MissionControlReinforce && len(routeHops) > 0 {
+			hops := append([]string(nil), routeHops...)
+			amount := amountSat
+			self := selfPubkey
+			go s.reinforceMissionControl(self, hops, amount)
+		}
 	}
 	recordPairFailure := func(ctx context.Context, sourceChannelID uint64, targetChannelID uint64, reason string) {
 		s.recordPairFailure(ctx, sourceChannelID, targetChannelID, reason)
@@ -2385,6 +2472,10 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 		if iSourceCost != jSourceCost {
 			return iSourceCost < jSourceCost
 		}
+		// Wave 3.4: prefer sources with fewer outgoing HTLCs locked.
+		if sources[i].PendingOutgoingHtlcs != sources[j].PendingOutgoingHtlcs {
+			return sources[i].PendingOutgoingHtlcs < sources[j].PendingOutgoingHtlcs
+		}
 		return sources[i].MaxSourceSat > sources[j].MaxSourceSat
 	})
 	if cooldownProbeJob && len(sources) > targetCooldownProbeMaxSources {
@@ -2403,11 +2494,12 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 		return
 	}
 
-	selfPubkey, selfErr := s.lnd.SelfPubkey(ctx)
-	if selfErr != nil || strings.TrimSpace(selfPubkey) == "" {
+	pubkey, selfErr := s.lnd.SelfPubkey(ctx)
+	if selfErr != nil || strings.TrimSpace(pubkey) == "" {
 		s.finishJob(jobID, "failed", "local pubkey unavailable")
 		return
 	}
+	selfPubkey = pubkey
 
 	warmSourceID := uint64(0)
 	warmAmount := int64(0)
@@ -2648,7 +2740,9 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 		}
 		attemptIndex++
 		_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountSent, feeLimitPpm, feePaidSat, "succeeded", paymentHash, "", nil)
-		recordPairSuccess(ctx, source.ChannelID, targetChannelID, amountSent, feeLimitPpm, feePaidSat)
+		// Hops not available here: this path reconciles a previously-timed-out
+		// payment via LookupPayment, which doesn't return the route.
+		recordPairSuccess(ctx, source.ChannelID, targetChannelID, amountSent, feeLimitPpm, feePaidSat, nil)
 		_ = s.applyRebalanceLedger(ctx, targetChannelID, amountSent, feePaidSat)
 		_ = s.addBudgetSpend(ctx, feePaidSat, jobSource)
 		return true, amountSent
@@ -2700,6 +2794,42 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 		cancelAttempt := func() {}
 		if attemptTimeoutSec > 0 {
 			attemptCtx, cancelAttempt = context.WithTimeout(ctx, time.Duration(attemptTimeoutSec)*time.Second)
+		}
+
+		// Wave 4.1: fast path — try the cached winning hops via BuildRoute
+		// before invoking QueryRoutes. Skips pathfinding when the previous
+		// success route is still viable. Failures here fall through silently
+		// to the regular QueryRoutes flow (no pair failure recorded — the
+		// cache may simply be stale).
+		if stat, ok := pairStats[source.ChannelID]; ok && len(stat.LastSuccessRouteHops) > 0 && s.lnd != nil {
+			if cachedRoute, buildErr := s.lnd.BuildRoute(attemptCtx, amountTry, source.ChannelID, stat.LastSuccessRouteHops); buildErr == nil && cachedRoute != nil {
+				cachedFeeMsat := cachedRoute.TotalFeesMsat
+				if cachedFeeMsat == 0 && cachedRoute.TotalFees > 0 {
+					cachedFeeMsat = cachedRoute.TotalFees * 1000
+				}
+				if feeLimitMsat <= 0 || cachedFeeMsat <= feeLimitMsat {
+					_, paymentHash, paymentAddr, invErr := s.createRebalanceInvoice(attemptCtx, amountTry, jobID, source.ChannelID, targetChannelID)
+					if invErr == nil {
+						applyMppRecord(cachedRoute, paymentAddr, amountTry)
+						if _, sendErr := s.lnd.SendToRoute(attemptCtx, paymentHash, cachedRoute); sendErr == nil {
+							cancelAttempt()
+							resetAutoNoPath()
+							feePaidSat := msatToSatCeil(cachedFeeMsat)
+							attemptIndex++
+							_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, feePaidSat, "succeeded", paymentHash, "", nil)
+							recordPairSuccess(ctx, source.ChannelID, targetChannelID, amountTry, feeLimitPpm, feePaidSat, extractHopPubkeys(cachedRoute))
+							_ = s.applyRebalanceLedger(ctx, targetChannelID, amountTry, feePaidSat)
+							_ = s.addBudgetSpend(ctx, feePaidSat, jobSource)
+							cachedRouteMax := s.maxAmountOnRouteSat(attemptCtx, cachedRoute, selfPubkey)
+							if s.logger != nil {
+								s.logger.Printf("rebalance job=%d: cached route fast-path succeeded source=%d amount=%d hops=%d", jobID, source.ChannelID, amountTry, len(stat.LastSuccessRouteHops))
+							}
+							return true, false, cachedRouteMax, false, cachedRoute, amountTry
+						}
+						// SendToRoute failed; fall through to QueryRoutes.
+					}
+				}
+			}
 		}
 
 		routes, err := s.lnd.QueryRoutes(attemptCtx, selfPubkey, amountTry, source.ChannelID, targetSnapshot.RemotePubkey, feeLimitMsat, 5, ignoredEdges, ignoredPairs)
@@ -2836,7 +2966,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 				}
 				attemptIndex++
 				_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, routeAmount, routeFeeLimitPpm, feePaidSat, "succeeded", paymentHash, "", nil)
-				recordPairSuccess(ctx, source.ChannelID, targetChannelID, routeAmount, routeFeeLimitPpm, feePaidSat)
+				recordPairSuccess(ctx, source.ChannelID, targetChannelID, routeAmount, routeFeeLimitPpm, feePaidSat, extractHopPubkeys(activeRoute))
 				_ = s.applyRebalanceLedger(ctx, targetChannelID, routeAmount, feePaidSat)
 				_ = s.addBudgetSpend(ctx, feePaidSat, jobSource)
 				return true, false, routeMaxSat, false, activeRoute, routeAmount
@@ -2868,7 +2998,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 							}
 							attemptIndex++
 							_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, routeAmount, routeFeeLimitPpm, feePaidSat, "succeeded", paymentHash, "", nil)
-							recordPairSuccess(ctx, source.ChannelID, targetChannelID, routeAmount, routeFeeLimitPpm, feePaidSat)
+							recordPairSuccess(ctx, source.ChannelID, targetChannelID, routeAmount, routeFeeLimitPpm, feePaidSat, extractHopPubkeys(updatedRoute))
 							_ = s.applyRebalanceLedger(ctx, targetChannelID, routeAmount, feePaidSat)
 							_ = s.addBudgetSpend(ctx, feePaidSat, jobSource)
 							return true, false, updatedRouteMax, false, updatedRoute, routeAmount
@@ -2912,7 +3042,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 										}
 										attemptIndex++
 										_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, maxAmount, retryFeePpm, feePaidSat, "succeeded", retryHash, "", nil)
-										recordPairSuccess(ctx, source.ChannelID, targetChannelID, maxAmount, retryFeePpm, feePaidSat)
+										recordPairSuccess(ctx, source.ChannelID, targetChannelID, maxAmount, retryFeePpm, feePaidSat, extractHopPubkeys(rebuilt))
 										_ = s.applyRebalanceLedger(ctx, targetChannelID, maxAmount, feePaidSat)
 										_ = s.addBudgetSpend(ctx, feePaidSat, jobSource)
 										return true, false, probeRouteMax, false, rebuilt, maxAmount
@@ -3078,7 +3208,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			feePaidSat := msatToSatCeil(routeFeeMsat)
 			attemptIndex++
 			_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, feePaidSat, "succeeded", paymentHash, "", nil)
-			recordPairSuccess(ctx, source.ChannelID, targetChannelID, amountTry, feeLimitPpm, feePaidSat)
+			recordPairSuccess(ctx, source.ChannelID, targetChannelID, amountTry, feeLimitPpm, feePaidSat, extractHopPubkeys(route))
 			_ = s.applyRebalanceLedger(ctx, targetChannelID, amountTry, feePaidSat)
 			_ = s.addBudgetSpend(ctx, feePaidSat, jobSource)
 			return true, false, routeMaxSat, false, route, amountTry
@@ -3107,7 +3237,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 							feePaidSat := msatToSatCeil(updatedRoute.TotalFeesMsat)
 							attemptIndex++
 							_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, feePaidSat, "succeeded", paymentHash, "", nil)
-							recordPairSuccess(ctx, source.ChannelID, targetChannelID, amountTry, feeLimitPpm, feePaidSat)
+							recordPairSuccess(ctx, source.ChannelID, targetChannelID, amountTry, feeLimitPpm, feePaidSat, extractHopPubkeys(updatedRoute))
 							_ = s.applyRebalanceLedger(ctx, targetChannelID, amountTry, feePaidSat)
 							_ = s.addBudgetSpend(ctx, feePaidSat, jobSource)
 							return true, false, updatedRouteMax, false, updatedRoute, amountTry
@@ -3394,6 +3524,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 		FeeLimitPpm     int64
 		FeePaidSat      int64
 		RouteMaxSat     int64
+		RouteHops       []string // Wave 4.1: pubkey path of the winning shard route
 		PaymentHash     string
 		FailReason      string
 		FailureInfo     *attemptFailureInfo
@@ -3580,6 +3711,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 		result.Succeeded = true
 		result.AmountSent = routeAmount
 		result.FeePaidSat = msatToSatCeil(routeFeeMsat)
+		result.RouteHops = extractHopPubkeys(route)
 		return result
 	}
 
@@ -3744,7 +3876,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			}
 			if res.Succeeded {
 				_ = s.insertAttempt(ctx, jobID, attemptIndex, res.Source.ChannelID, attemptAmount, res.FeeLimitPpm, res.FeePaidSat, "succeeded", res.PaymentHash, "", nil)
-				recordPairSuccess(ctx, res.Source.ChannelID, targetChannelID, attemptAmount, res.FeeLimitPpm, res.FeePaidSat)
+				recordPairSuccess(ctx, res.Source.ChannelID, targetChannelID, attemptAmount, res.FeeLimitPpm, res.FeePaidSat, res.RouteHops)
 				_ = s.applyRebalanceLedger(ctx, targetChannelID, attemptAmount, res.FeePaidSat)
 				_ = s.addBudgetSpend(ctx, res.FeePaidSat, jobSource)
 				succeededShards++
@@ -4127,6 +4259,70 @@ func compareHops(hop1 *lnrpc.Hop, hop2 *lnrpc.Hop) bool {
 		hop1.Expiry == hop2.Expiry
 }
 
+// extractHopPubkeys returns the pubkey path of a route as a slice of hex
+// strings, suitable for `BuildRoute` reuse on the next attempt (Wave 4.1).
+// Empty pubkeys are skipped so a malformed route doesn't poison the cache.
+func extractHopPubkeys(route *lnrpc.Route) []string {
+	if route == nil {
+		return nil
+	}
+	hops := make([]string, 0, len(route.Hops))
+	for _, h := range route.Hops {
+		if h == nil {
+			continue
+		}
+		pk := strings.TrimSpace(h.PubKey)
+		if pk == "" {
+			continue
+		}
+		hops = append(hops, pk)
+	}
+	return hops
+}
+
+// reinforceMissionControl pushes positive history entries into LND's mission
+// control for each pair along a successful rebalance route (Wave 4.4). Only
+// fires when cfg.MissionControlReinforce is true. selfPubkey anchors the path
+// because routeHops is the pubkey list AFTER the origin (LND convention). All
+// RPC errors are logged but not returned — reinforcement is best-effort and
+// must never block a successful job's accounting.
+func (s *RebalanceService) reinforceMissionControl(selfPubkey string, routeHops []string, amountSat int64) {
+	if s.lnd == nil || len(routeHops) == 0 || amountSat <= 0 {
+		return
+	}
+	updates := make([]lndclient.MissionControlPairUpdate, 0, len(routeHops))
+	now := time.Now()
+	prevPubkey := strings.TrimSpace(selfPubkey)
+	for _, hop := range routeHops {
+		nextPubkey := strings.TrimSpace(hop)
+		if prevPubkey == "" || nextPubkey == "" {
+			prevPubkey = nextPubkey
+			continue
+		}
+		updates = append(updates, lndclient.MissionControlPairUpdate{
+			NodeFromPubkey: prevPubkey,
+			NodeToPubkey:   nextPubkey,
+			SuccessTime:    now,
+			SuccessAmtSat:  amountSat,
+		})
+		prevPubkey = nextPubkey
+	}
+	if len(updates) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := s.lnd.ImportMissionControl(ctx, updates); err != nil {
+		if s.logger != nil {
+			s.logger.Printf("rebalance MC reinforce failed (pairs=%d): %v", len(updates), err)
+		}
+		return
+	}
+	if s.logger != nil {
+		s.logger.Printf("rebalance MC reinforce: %d pairs updated for amount=%d sats", len(updates), amountSat)
+	}
+}
+
 func isNoPathError(err error) bool {
 	if err == nil {
 		return false
@@ -4156,15 +4352,23 @@ insert into rebalance_channel_ledger (
 	return err
 }
 
-func (s *RebalanceService) recordPairSuccess(ctx context.Context, sourceID uint64, targetID uint64, amountSat int64, feePpm int64, feePaidSat int64) {
+func (s *RebalanceService) recordPairSuccess(ctx context.Context, sourceID uint64, targetID uint64, amountSat int64, feePpm int64, feePaidSat int64, routeHops []string) {
 	if s.db == nil || sourceID == 0 || targetID == 0 {
 		return
 	}
 	now := time.Now().UTC()
+	// Wave 4.1: serialize hops as JSON for the next job to attempt BuildRoute
+	// before falling back to QueryRoutes. nil hops → store SQL null.
+	var hopsParam any
+	if len(routeHops) > 0 {
+		if data, err := json.Marshal(routeHops); err == nil {
+			hopsParam = string(data)
+		}
+	}
 	_, _ = s.db.Exec(ctx, `
 insert into rebalance_pair_stats (
-  source_channel_id, target_channel_id, last_success_at, success_amount_sat, success_fee_ppm, success_fee_paid_sat, success_count
-) values ($1,$2,$3,$4,$5,$6,1)
+  source_channel_id, target_channel_id, last_success_at, success_amount_sat, success_fee_ppm, success_fee_paid_sat, success_count, last_success_route_hops
+) values ($1,$2,$3,$4,$5,$6,1,$7)
  on conflict (source_channel_id, target_channel_id) do update set
   last_success_at = excluded.last_success_at,
   last_fail_at = null,
@@ -4173,8 +4377,9 @@ insert into rebalance_pair_stats (
   success_amount_sat = excluded.success_amount_sat,
   success_fee_ppm = excluded.success_fee_ppm,
   success_fee_paid_sat = excluded.success_fee_paid_sat,
-  success_count = rebalance_pair_stats.success_count + 1
-`, int64(sourceID), int64(targetID), now, amountSat, feePpm, feePaidSat)
+  success_count = rebalance_pair_stats.success_count + 1,
+  last_success_route_hops = coalesce(excluded.last_success_route_hops, rebalance_pair_stats.last_success_route_hops)
+`, int64(sourceID), int64(targetID), now, amountSat, feePpm, feePaidSat, hopsParam)
 }
 
 func (s *RebalanceService) recordPairFailure(ctx context.Context, sourceID uint64, targetID uint64, reason string) {
@@ -4199,7 +4404,7 @@ func (s *RebalanceService) loadPairStatsForTarget(ctx context.Context, targetID 
 		return stats
 	}
 	rows, err := s.db.Query(ctx, `
-select source_channel_id, target_channel_id, last_success_at, last_fail_at, last_fail_reason, fail_count, success_amount_sat, success_fee_ppm
+select source_channel_id, target_channel_id, last_success_at, last_fail_at, last_fail_reason, fail_count, success_amount_sat, success_fee_ppm, last_success_route_hops
 from rebalance_pair_stats
 where target_channel_id=$1
 `, int64(targetID))
@@ -4216,7 +4421,8 @@ where target_channel_id=$1
 		var failCount int
 		var successAmount int64
 		var successFee int64
-		if err := rows.Scan(&sourceID, &targetIDRow, &lastSuccess, &lastFail, &lastFailReason, &failCount, &successAmount, &successFee); err != nil {
+		var routeHopsRaw []byte
+		if err := rows.Scan(&sourceID, &targetIDRow, &lastSuccess, &lastFail, &lastFailReason, &failCount, &successAmount, &successFee, &routeHopsRaw); err != nil {
 			return stats
 		}
 		stat := pairStat{
@@ -4234,6 +4440,12 @@ where target_channel_id=$1
 		}
 		if lastFailReason.Valid {
 			stat.LastFailReason = lastFailReason.String
+		}
+		if len(routeHopsRaw) > 0 {
+			var hops []string
+			if err := json.Unmarshal(routeHopsRaw, &hops); err == nil && len(hops) > 0 {
+				stat.LastSuccessRouteHops = hops
+			}
 		}
 		stats[uint64(sourceID)] = stat
 	}
@@ -4950,6 +5162,16 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 	spread := outgoingFee - peerFeeRate
 	target := setting.TargetOutboundPct
 
+	// Wave 3.4: count outgoing HTLCs locked on this channel — used as a
+	// tiebreaker so the source sort prefers channels with less concurrent
+	// activity (lower collision risk during a rebalance attempt).
+	pendingOutgoing := 0
+	for _, htlc := range ch.PendingHtlcs {
+		if !htlc.Incoming {
+			pendingOutgoing++
+		}
+	}
+
 	protected := int64(0)
 	paidCost := int64(0)
 	paidRevenue := int64(0)
@@ -5098,6 +5320,7 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		MaxSourceSat:          maxSource,
 		Revenue7dSat:          revenue7dSat,
 		DrainRateSatPerHour:   drainRateSatPerHour,
+		PendingOutgoingHtlcs:  pendingOutgoing,
 		RebalanceCost7dSat:    cost7d.FeeSat,
 		RebalanceCost7dPpm:    cost7d.FeePpm,
 		RebalanceAmount7dSat:  cost7d.AmountSat,
@@ -5646,6 +5869,8 @@ end $$;
     add column if not exists rebalance_cost_floor_ppm bigint not null default 250;
   alter table rebalance_config
     add column if not exists source_min_payback_progress double precision not null default 0.95;
+  alter table rebalance_config
+    add column if not exists mission_control_reinforce boolean not null default false;
 
   alter table rebalance_config
     alter column scan_interval_sec set default 900;
@@ -5845,6 +6070,9 @@ create index if not exists rebalance_mpp_shadow_success_idx on rebalance_mpp_sha
 create index if not exists rebalance_pair_stats_fail_idx on rebalance_pair_stats (last_fail_at desc);
 create index if not exists rebalance_pair_stats_success_idx on rebalance_pair_stats (last_success_at desc);
 create index if not exists notifications_channel_id_idx on notifications (channel_id);
+
+alter table if exists rebalance_pair_stats
+  add column if not exists last_success_route_hops jsonb;
 `)
 	if err != nil {
 		return err
@@ -5870,7 +6098,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
   select auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, mc_half_life_sec, payback_mode_flags,
-    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress
+    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce
   from rebalance_config where id=$1`, rebalanceConfigID)
 
 	cfg := defaultRebalanceConfig()
@@ -5918,6 +6146,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.CriticalCycles,
 		&cfg.RebalanceCostFloorPpm,
 		&cfg.SourceMinPaybackProgress,
+		&cfg.MissionControlReinforce,
 	)
 	if err != nil {
 		return cfg, err
@@ -5940,8 +6169,8 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     id, auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, mc_half_life_sec, payback_mode_flags,
-    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,now())
+    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, updated_at
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scan_interval_sec = excluded.scan_interval_sec,
@@ -5986,9 +6215,10 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     critical_cycles = excluded.critical_cycles,
     rebalance_cost_floor_ppm = excluded.rebalance_cost_floor_ppm,
     source_min_payback_progress = excluded.source_min_payback_progress,
+    mission_control_reinforce = excluded.mission_control_reinforce,
     updated_at = now()
   `, rebalanceConfigID, cfg.AutoEnabled, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
-		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress,
+		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce,
 	)
 	return err
 }

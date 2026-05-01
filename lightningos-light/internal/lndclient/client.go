@@ -280,6 +280,63 @@ func (c *Client) ResetMissionControl(ctx context.Context) error {
 	return err
 }
 
+// MissionControlPairUpdate carries a single positive history entry that the
+// caller wants to push into LND's mission control. Used to reinforce
+// successful routes (Wave 4.4).
+type MissionControlPairUpdate struct {
+	NodeFromPubkey string
+	NodeToPubkey   string
+	SuccessTime    time.Time
+	SuccessAmtSat  int64
+}
+
+// ImportMissionControl pushes a batch of pair updates into LND's mission
+// control via the XImportMissionControl RPC. Force=true overrides existing
+// entries unconditionally; we use that here because the caller is feeding
+// known-good data and wants it to take effect immediately.
+func (c *Client) ImportMissionControl(ctx context.Context, updates []MissionControlPairUpdate) error {
+	if len(updates) == 0 {
+		return nil
+	}
+	conn, err := c.dial(ctx, true)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	client := routerrpc.NewRouterClient(conn)
+	pairs := make([]*routerrpc.PairHistory, 0, len(updates))
+	for _, u := range updates {
+		from, err := hex.DecodeString(strings.TrimSpace(u.NodeFromPubkey))
+		if err != nil || len(from) != 33 {
+			continue
+		}
+		to, err := hex.DecodeString(strings.TrimSpace(u.NodeToPubkey))
+		if err != nil || len(to) != 33 {
+			continue
+		}
+		successTime := u.SuccessTime
+		if successTime.IsZero() {
+			successTime = time.Now()
+		}
+		pairs = append(pairs, &routerrpc.PairHistory{
+			NodeFrom: from,
+			NodeTo:   to,
+			History: &routerrpc.PairData{
+				SuccessTime:   successTime.Unix(),
+				SuccessAmtSat: u.SuccessAmtSat,
+			},
+		})
+	}
+	if len(pairs) == 0 {
+		return nil
+	}
+	_, err = client.XImportMissionControl(ctx, &routerrpc.XImportMissionControlRequest{
+		Pairs: pairs,
+		Force: true,
+	})
+	return err
+}
+
 func (c *Client) UpdateMissionControlHalfLife(ctx context.Context, halfLifeSec int64) error {
 	conn, err := c.dial(ctx, true)
 	if err != nil {

@@ -69,6 +69,7 @@ type RebalanceConfig = {
   critical_cycles: number
   rebalance_cost_floor_ppm: number
   source_min_payback_progress: number
+  mission_control_reinforce: boolean
 }
 
 type RebalanceOverview = {
@@ -414,7 +415,8 @@ export default function RebalanceCenter() {
       critical_min_available_sats: cfg.critical_min_available_sats,
       critical_cycles: cfg.critical_cycles,
       rebalance_cost_floor_ppm: cfg.rebalance_cost_floor_ppm,
-      source_min_payback_progress: cfg.source_min_payback_progress
+      source_min_payback_progress: cfg.source_min_payback_progress,
+      mission_control_reinforce: cfg.mission_control_reinforce
     })
   }
   const estimateHistoricalCost = (amountSat: number, feePpm: number) => {
@@ -771,7 +773,8 @@ export default function RebalanceCenter() {
           critical_min_available_sats: config.critical_min_available_sats,
         critical_cycles: config.critical_cycles,
         rebalance_cost_floor_ppm: config.rebalance_cost_floor_ppm,
-        source_min_payback_progress: config.source_min_payback_progress
+        source_min_payback_progress: config.source_min_payback_progress,
+        mission_control_reinforce: config.mission_control_reinforce
       })) as RebalanceConfig
       const normalizedSaved = {
         ...saved,
@@ -2101,6 +2104,16 @@ export default function RebalanceCenter() {
                 value={config.source_min_payback_progress}
                 onChange={(e) => setConfig({ ...config, source_min_payback_progress: Number(e.target.value) })}
               />
+            </div>
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.missionControlReinforce')}>
+                <input
+                  type="checkbox"
+                  checked={config.mission_control_reinforce}
+                  onChange={(e) => setConfig({ ...config, mission_control_reinforce: e.target.checked })}
+                />
+                {t('rebalanceCenter.settings.missionControlReinforce')}
+              </label>
             </div>
           </div>
         )}

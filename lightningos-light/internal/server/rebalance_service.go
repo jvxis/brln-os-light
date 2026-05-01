@@ -70,6 +70,16 @@ const (
 )
 
 const (
+	// rebalancePaybackMinCostSat is the floor below which a channel is treated
+	// as "fresh" for the SourceMinPaybackProgress filter — a tiny amount of
+	// historical paid cost (e.g. one cheap probe) should not lock the channel
+	// out of being a source. Channels with paid_cost <= this bypass the payback
+	// gate. Tuned conservatively: a single succeeded rebalance routinely costs
+	// far more than this.
+	rebalancePaybackMinCostSat int64 = 500
+)
+
+const (
 	mppStructuralAbortMinAttempts = 4
 	mppStructuralAbortRatio       = 0.70
 )
@@ -143,6 +153,7 @@ type RebalanceConfig struct {
 	CriticalMinAvailableSats  int64   `json:"critical_min_available_sats"`
 	CriticalCycles            int     `json:"critical_cycles"`
 	RebalanceCostFloorPpm     int64   `json:"rebalance_cost_floor_ppm"`
+	SourceMinPaybackProgress  float64 `json:"source_min_payback_progress"`
 }
 
 type RebalanceOverview struct {
@@ -560,6 +571,7 @@ func defaultRebalanceConfig() RebalanceConfig {
 		CriticalMinAvailableSats:  0,
 		CriticalCycles:            3,
 		RebalanceCostFloorPpm:     250,
+		SourceMinPaybackProgress:  0,
 	}
 }
 
@@ -880,6 +892,9 @@ func normalizeRebalanceConfig(cfg RebalanceConfig) RebalanceConfig {
 	}
 	if cfg.RebalanceCostFloorPpm < 0 {
 		cfg.RebalanceCostFloorPpm = 0
+	}
+	if cfg.SourceMinPaybackProgress < 0 {
+		cfg.SourceMinPaybackProgress = 0
 	}
 	return cfg
 }
@@ -4918,6 +4933,17 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		maxSource = 0
 	}
 	eligibleSource := maxSource > 0 && localPct >= sourceFloorPct
+	// Source payback filter (Policy C): when SourceMinPaybackProgress > 0, a
+	// channel only qualifies as source if either it has no significant
+	// historical rebalance cost (paid_cost <= rebalancePaybackMinCostSat,
+	// covering fresh channels) OR its lifetime payback (paid_revenue /
+	// paid_cost) is above the configured threshold. Default 0 disables the
+	// filter and preserves the previous behavior. Recommended setting: 0.95.
+	if eligibleSource && cfg.SourceMinPaybackProgress > 0 {
+		if paidCost > rebalancePaybackMinCostSat && paybackProgress < cfg.SourceMinPaybackProgress {
+			eligibleSource = false
+		}
+	}
 	effectiveProtected := protected
 	if protected > 0 {
 		unlocked := false
@@ -5541,6 +5567,8 @@ end $$;
     add column if not exists new_channel_exclusion_seeded boolean not null default false;
   alter table rebalance_config
     add column if not exists rebalance_cost_floor_ppm bigint not null default 250;
+  alter table rebalance_config
+    add column if not exists source_min_payback_progress double precision not null default 0;
 
   alter table rebalance_config
     alter column scan_interval_sec set default 900;
@@ -5765,7 +5793,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
   select auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, mc_half_life_sec, payback_mode_flags,
-    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm
+    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress
   from rebalance_config where id=$1`, rebalanceConfigID)
 
 	cfg := defaultRebalanceConfig()
@@ -5812,6 +5840,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.CriticalMinAvailableSats,
 		&cfg.CriticalCycles,
 		&cfg.RebalanceCostFloorPpm,
+		&cfg.SourceMinPaybackProgress,
 	)
 	if err != nil {
 		return cfg, err
@@ -5834,8 +5863,8 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     id, auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, mc_half_life_sec, payback_mode_flags,
-    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,now())
+    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, updated_at
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scan_interval_sec = excluded.scan_interval_sec,
@@ -5879,9 +5908,10 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     critical_min_available_sats = excluded.critical_min_available_sats,
     critical_cycles = excluded.critical_cycles,
     rebalance_cost_floor_ppm = excluded.rebalance_cost_floor_ppm,
+    source_min_payback_progress = excluded.source_min_payback_progress,
     updated_at = now()
   `, rebalanceConfigID, cfg.AutoEnabled, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
-		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm,
+		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress,
 	)
 	return err
 }

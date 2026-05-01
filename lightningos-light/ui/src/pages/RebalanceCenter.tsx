@@ -68,6 +68,7 @@ type RebalanceConfig = {
   critical_min_available_sats: number
   critical_cycles: number
   rebalance_cost_floor_ppm: number
+  source_min_payback_progress: number
 }
 
 type RebalanceOverview = {
@@ -411,7 +412,8 @@ export default function RebalanceCenter() {
       critical_min_sources: cfg.critical_min_sources,
       critical_min_available_sats: cfg.critical_min_available_sats,
       critical_cycles: cfg.critical_cycles,
-      rebalance_cost_floor_ppm: cfg.rebalance_cost_floor_ppm
+      rebalance_cost_floor_ppm: cfg.rebalance_cost_floor_ppm,
+      source_min_payback_progress: cfg.source_min_payback_progress
     })
   }
   const estimateHistoricalCost = (amountSat: number, feePpm: number) => {
@@ -767,7 +769,8 @@ export default function RebalanceCenter() {
           critical_min_sources: config.critical_min_sources,
           critical_min_available_sats: config.critical_min_available_sats,
         critical_cycles: config.critical_cycles,
-        rebalance_cost_floor_ppm: config.rebalance_cost_floor_ppm
+        rebalance_cost_floor_ppm: config.rebalance_cost_floor_ppm,
+        source_min_payback_progress: config.source_min_payback_progress
       })) as RebalanceConfig
       const normalizedSaved = {
         ...saved,
@@ -2081,6 +2084,21 @@ export default function RebalanceCenter() {
                 placeholder="250"
                 value={config.rebalance_cost_floor_ppm}
                 onChange={(e) => setConfig({ ...config, rebalance_cost_floor_ppm: Number(e.target.value) })}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.sourceMinPaybackProgress')}>
+                {t('rebalanceCenter.settings.sourceMinPaybackProgress')}
+              </label>
+              <input
+                className="input-field"
+                type="number"
+                min={0}
+                max={5}
+                step={0.05}
+                placeholder="0"
+                value={config.source_min_payback_progress}
+                onChange={(e) => setConfig({ ...config, source_min_payback_progress: Number(e.target.value) })}
               />
             </div>
           </div>

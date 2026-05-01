@@ -620,6 +620,7 @@ export const updateRebalanceConfig = (payload: {
   critical_min_available_sats?: number
   critical_cycles?: number
   rebalance_cost_floor_ppm?: number
+  source_min_payback_progress?: number
 }) => request('/api/rebalance/config', { method: 'POST', body: JSON.stringify(payload) })
 export const getRebalanceOverview = () => request('/api/rebalance/overview')
 export const getRebalanceChannels = () => request('/api/rebalance/channels')

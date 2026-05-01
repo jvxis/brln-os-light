@@ -136,6 +136,7 @@ type RebalanceConfig struct {
 	CriticalMinSources        int     `json:"critical_min_sources"`
 	CriticalMinAvailableSats  int64   `json:"critical_min_available_sats"`
 	CriticalCycles            int     `json:"critical_cycles"`
+	RebalanceCostFloorPpm     int64   `json:"rebalance_cost_floor_ppm"`
 }
 
 type RebalanceOverview struct {
@@ -550,6 +551,7 @@ func defaultRebalanceConfig() RebalanceConfig {
 		CriticalMinSources:        2,
 		CriticalMinAvailableSats:  0,
 		CriticalCycles:            3,
+		RebalanceCostFloorPpm:     250,
 	}
 }
 
@@ -837,6 +839,9 @@ func normalizeRebalanceConfig(cfg RebalanceConfig) RebalanceConfig {
 	}
 	if cfg.ManualReserveMode == rebalanceManualReserveModePct && cfg.ManualReserveValue > 100 {
 		cfg.ManualReserveValue = 100
+	}
+	if cfg.RebalanceCostFloorPpm < 0 {
+		cfg.RebalanceCostFloorPpm = 0
 	}
 	return cfg
 }
@@ -1616,19 +1621,37 @@ func (s *RebalanceService) runAutoScan() {
 	s.criticalMissCount = 0
 	s.mu.Unlock()
 
+	// Wave 1.1: score-first ordering with a 10% bucket. Candidates within 10%
+	// of the top score are treated as a tie and broken by fairness (oldest
+	// LastAutoAt first); below the bucket, raw score wins.
+	inTopBucket := func(score int64) bool {
+		if !topScoreSet {
+			return false
+		}
+		if topScore <= 0 {
+			return score == topScore
+		}
+		return score*10 >= topScore*9
+	}
 	sort.Slice(candidates, func(i, j int) bool {
 		a := candidates[i]
 		b := candidates[j]
 		if a.CooldownProbe != b.CooldownProbe {
 			return !a.CooldownProbe
 		}
+		aBucket := inTopBucket(a.Score)
+		bBucket := inTopBucket(b.Score)
+		if aBucket != bBucket {
+			return aBucket
+		}
+		if !aBucket && a.Score != b.Score {
+			return a.Score > b.Score
+		}
 		if a.LastAutoAt.IsZero() != b.LastAutoAt.IsZero() {
 			return a.LastAutoAt.IsZero()
 		}
-		if !a.LastAutoAt.IsZero() && !b.LastAutoAt.IsZero() {
-			if !a.LastAutoAt.Equal(b.LastAutoAt) {
-				return a.LastAutoAt.Before(b.LastAutoAt)
-			}
+		if !a.LastAutoAt.IsZero() && !b.LastAutoAt.IsZero() && !a.LastAutoAt.Equal(b.LastAutoAt) {
+			return a.LastAutoAt.Before(b.LastAutoAt)
 		}
 		if a.Score != b.Score {
 			return a.Score > b.Score
@@ -2010,6 +2033,39 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 		return
 	}
 
+	// Wave 1.5: pre-load pair stats so that wave 1.2 (fee floor) and 1.3
+	// (adaptive start amount) can use them before the loop starts. The map
+	// is shared with the recordPairSuccess/Failure closures defined below.
+	pairStats := s.loadPairStatsForTarget(ctx, targetChannelID)
+
+	// Wave 1.3: bump the start amount toward the most recent proven success
+	// across all sources. Capped at the job amount so we never over-shoot.
+	if startAmountSat < amount {
+		bestAdaptive := int64(0)
+		now := time.Now()
+		for _, stat := range pairStats {
+			if stat.SuccessAmountSat <= 0 || stat.LastSuccessAt.IsZero() {
+				continue
+			}
+			if now.Sub(stat.LastSuccessAt) > pairSuccessTTL {
+				continue
+			}
+			if !stat.LastFailAt.IsZero() && stat.LastFailAt.After(stat.LastSuccessAt) {
+				continue
+			}
+			candidate := stat.SuccessAmountSat * 12 / 10
+			if candidate > bestAdaptive {
+				bestAdaptive = candidate
+			}
+		}
+		if bestAdaptive > amount {
+			bestAdaptive = amount
+		}
+		if bestAdaptive > startAmountSat {
+			startAmountSat = bestAdaptive
+		}
+	}
+
 	targetSnapshot := RebalanceChannel{}
 	for _, snap := range channelSnapshots {
 		if snap.ChannelID == targetChannelID {
@@ -2132,7 +2188,6 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 		lastSourceRefreshAt = time.Now()
 	}
 
-	pairStats := s.loadPairStatsForTarget(ctx, targetChannelID)
 	currentJobBlockedPairs := map[uint64]struct{}{}
 	shouldSkipCurrentJobSource := func(sourceChannelID uint64) bool {
 		_, ok := currentJobBlockedPairs[sourceChannelID]
@@ -2272,8 +2327,19 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			BaseFeeMsat: source.OutgoingBaseMsat,
 		}
 		maxFeeMsat, err := calcFeeLimitMsat(stat.SuccessAmountSat*1000, targetPolicy, &sourcePolicy, feeCfg)
+		if err != nil {
+			continue
+		}
 		maxFeePpm := feeMsatToPpm(maxFeeMsat, stat.SuccessAmountSat)
-		if err != nil || maxFeePpm <= 0 || stat.SuccessFeePpm > maxFeePpm {
+		// Wave 1.2: lift the warm cap to at least 1.05× the historical success
+		// fee so a temporary spread shrink does not reject a pair that already
+		// proved viable.
+		floorPpm := stat.SuccessFeePpm + (stat.SuccessFeePpm / 20)
+		if floorPpm > maxFeePpm {
+			maxFeePpm = floorPpm
+			maxFeeMsat = ppmToFeeLimitMsat(stat.SuccessAmountSat, floorPpm)
+		}
+		if maxFeePpm <= 0 || stat.SuccessFeePpm > maxFeePpm {
 			continue
 		}
 		if minExecuteSat > 0 && stat.SuccessAmountSat < minExecuteSat {
@@ -2283,7 +2349,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			warmAt = stat.LastSuccessAt
 			warmSourceID = source.ChannelID
 			warmAmount = stat.SuccessAmountSat
-			warmFeePpm = stat.SuccessFeePpm
+			warmFeePpm = maxFeePpm
 		}
 	}
 
@@ -4768,10 +4834,31 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		paybackProgress = float64(paidRevenue) / float64(paidCost)
 	}
 
+	// Wave 1.4: per-channel econ ratio (defaults to global cfg.EconRatio).
+	effectiveEconRatio := cfg.EconRatio
+	if !setting.UseDefaultEconRatio && setting.EconRatioOverrideSet {
+		effectiveEconRatio = setting.EconRatioOverride
+	}
+	if effectiveEconRatio <= 0 {
+		effectiveEconRatio = cfg.EconRatio
+	}
+	expectedCostPpm := cost7d.FeePpm
+	if expectedCostPpm <= 0 {
+		expectedCostPpm = cfg.RebalanceCostFloorPpm
+	}
+	effectiveSpreadPpm := int64(0)
+	if spread > 0 && effectiveEconRatio > 0 {
+		effectiveSpreadPpm = int64(float64(spread) * effectiveEconRatio)
+	}
+
 	eligibleTarget := false
 	deficitPct := target - localPct
 	if ch.Active && deficitPct > cfg.DeadbandPct && outgoingFee > peerFeeRate {
-		eligibleTarget = true
+		// Wave 1.4: require effective spread to clear the expected rebalance
+		// cost (historical 7d ppm, or cfg.RebalanceCostFloorPpm fallback).
+		if expectedCostPpm <= 0 || effectiveSpreadPpm > expectedCostPpm {
+			eligibleTarget = true
+		}
 	}
 
 	sourceFloorPct := cfg.SourceMinLocalPct
@@ -5403,6 +5490,8 @@ end $$;
     add column if not exists mc_half_life_sec bigint not null default 0;
   alter table rebalance_config
     add column if not exists new_channel_exclusion_seeded boolean not null default false;
+  alter table rebalance_config
+    add column if not exists rebalance_cost_floor_ppm bigint not null default 250;
 
   alter table rebalance_config
     alter column scan_interval_sec set default 900;
@@ -5627,7 +5716,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
   select auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, mc_half_life_sec, payback_mode_flags,
-    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles
+    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm
   from rebalance_config where id=$1`, rebalanceConfigID)
 
 	cfg := defaultRebalanceConfig()
@@ -5673,6 +5762,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.CriticalMinSources,
 		&cfg.CriticalMinAvailableSats,
 		&cfg.CriticalCycles,
+		&cfg.RebalanceCostFloorPpm,
 	)
 	if err != nil {
 		return cfg, err
@@ -5695,8 +5785,8 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     id, auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, mc_half_life_sec, payback_mode_flags,
-    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,now())
+    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, updated_at
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scan_interval_sec = excluded.scan_interval_sec,
@@ -5739,9 +5829,10 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     critical_min_sources = excluded.critical_min_sources,
     critical_min_available_sats = excluded.critical_min_available_sats,
     critical_cycles = excluded.critical_cycles,
+    rebalance_cost_floor_ppm = excluded.rebalance_cost_floor_ppm,
     updated_at = now()
   `, rebalanceConfigID, cfg.AutoEnabled, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
-		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles,
+		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm,
 	)
 	return err
 }

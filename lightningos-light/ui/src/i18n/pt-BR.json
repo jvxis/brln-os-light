@@ -2891,7 +2891,8 @@
       "criticalRelease": "Liberação crítica (%)",
       "criticalMinSources": "Mínimo de fontes críticas",
       "criticalMinAvailable": "Mínimo disponível (sats)",
-      "criticalCycles": "Ciclos críticos"
+      "criticalCycles": "Ciclos críticos",
+      "rebalanceCostFloorPpm": "Piso de custo de rebal. (ppm)"
     },
     "settingsHints": {
       "autoEnabled": "Ativa varreduras e rebalances automáticos.",
@@ -2937,7 +2938,8 @@
       "criticalRelease": "Percentual liberado por ciclo crítico.",
       "criticalMinSources": "Mínimo de fontes elegíveis para evitar modo crítico.",
       "criticalMinAvailable": "Mínimo de liquidez total para evitar modo crítico.",
-      "criticalCycles": "Número de ciclos críticos antes de liberar."
+      "criticalCycles": "Número de ciclos críticos antes de liberar.",
+      "rebalanceCostFloorPpm": "Custo ppm assumido quando o canal não tem histórico recente de rebal. Um canal só vira alvo se (spread × econ ratio) > este piso."
     },
     "channels": {
       "title": "Workbench de Canais",

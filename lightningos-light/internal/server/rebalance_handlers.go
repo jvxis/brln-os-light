@@ -53,6 +53,7 @@ type rebalanceConfigPayload struct {
 	CriticalMinSources        *int     `json:"critical_min_sources,omitempty"`
 	CriticalMinAvailableSats  *int64   `json:"critical_min_available_sats,omitempty"`
 	CriticalCycles            *int     `json:"critical_cycles,omitempty"`
+	RebalanceCostFloorPpm     *int64   `json:"rebalance_cost_floor_ppm,omitempty"`
 }
 
 type rebalanceRunPayload struct {
@@ -246,6 +247,9 @@ func (s *Server) handleRebalanceConfigPost(w http.ResponseWriter, r *http.Reques
 	}
 	if payload.CriticalCycles != nil {
 		cfg.CriticalCycles = *payload.CriticalCycles
+	}
+	if payload.RebalanceCostFloorPpm != nil {
+		cfg.RebalanceCostFloorPpm = *payload.RebalanceCostFloorPpm
 	}
 
 	updated, err := s.rebalance.UpdateConfig(ctx, cfg)

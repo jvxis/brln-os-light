@@ -2891,7 +2891,8 @@
       "criticalRelease": "Critical release (%)",
       "criticalMinSources": "Critical min sources",
       "criticalMinAvailable": "Critical min available (sats)",
-      "criticalCycles": "Critical cycles"
+      "criticalCycles": "Critical cycles",
+      "rebalanceCostFloorPpm": "Rebalance cost floor (ppm)"
     },
     "settingsHints": {
       "autoEnabled": "Turns on periodic scans and automatic rebalances.",
@@ -2937,7 +2938,8 @@
       "criticalRelease": "Percent of protected liquidity released per critical cycle.",
       "criticalMinSources": "Minimum eligible sources required to avoid critical mode.",
       "criticalMinAvailable": "Minimum total source liquidity required to avoid critical mode.",
-      "criticalCycles": "Number of consecutive critical scans before releasing."
+      "criticalCycles": "Number of consecutive critical scans before releasing.",
+      "rebalanceCostFloorPpm": "Assumed cost ppm used when a target has no recent rebalance history. Channels are only eligible as targets when (spread × econ ratio) exceeds this floor."
     },
     "channels": {
       "title": "Channel Workbench",

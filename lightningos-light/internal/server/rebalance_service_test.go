@@ -82,6 +82,18 @@ func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	if cfg.UnlockDays != 7 {
 		t.Fatalf("expected unlock_days default=7, got %d", cfg.UnlockDays)
 	}
+	if cfg.RebalanceCostFloorPpm != 250 {
+		t.Fatalf("expected rebalance_cost_floor_ppm default=250, got %d", cfg.RebalanceCostFloorPpm)
+	}
+}
+
+func TestNormalizeRebalanceConfigClampsRebalanceCostFloor(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	cfg.RebalanceCostFloorPpm = -100
+	got := normalizeRebalanceConfig(cfg)
+	if got.RebalanceCostFloorPpm != 0 {
+		t.Fatalf("expected RebalanceCostFloorPpm clamped to 0, got %d", got.RebalanceCostFloorPpm)
+	}
 }
 
 func TestNormalizeRebalanceConfigClampsNegativeFields(t *testing.T) {

@@ -67,6 +67,7 @@ type RebalanceConfig = {
   critical_min_sources: number
   critical_min_available_sats: number
   critical_cycles: number
+  rebalance_cost_floor_ppm: number
 }
 
 type RebalanceOverview = {
@@ -408,7 +409,8 @@ export default function RebalanceCenter() {
       critical_release_pct: cfg.critical_release_pct,
       critical_min_sources: cfg.critical_min_sources,
       critical_min_available_sats: cfg.critical_min_available_sats,
-      critical_cycles: cfg.critical_cycles
+      critical_cycles: cfg.critical_cycles,
+      rebalance_cost_floor_ppm: cfg.rebalance_cost_floor_ppm
     })
   }
   const estimateHistoricalCost = (amountSat: number, feePpm: number) => {
@@ -763,7 +765,8 @@ export default function RebalanceCenter() {
           critical_release_pct: config.critical_release_pct,
           critical_min_sources: config.critical_min_sources,
           critical_min_available_sats: config.critical_min_available_sats,
-        critical_cycles: config.critical_cycles
+        critical_cycles: config.critical_cycles,
+        rebalance_cost_floor_ppm: config.rebalance_cost_floor_ppm
       })) as RebalanceConfig
       const normalizedSaved = {
         ...saved,
@@ -2063,6 +2066,20 @@ export default function RebalanceCenter() {
                 min={1}
                 value={config.critical_cycles}
                 onChange={(e) => setConfig({ ...config, critical_cycles: Number(e.target.value) })}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.rebalanceCostFloorPpm')}>
+                {t('rebalanceCenter.settings.rebalanceCostFloorPpm')}
+              </label>
+              <input
+                className="input-field"
+                type="number"
+                min={0}
+                step={1}
+                placeholder="250"
+                value={config.rebalance_cost_floor_ppm}
+                onChange={(e) => setConfig({ ...config, rebalance_cost_floor_ppm: Number(e.target.value) })}
               />
             </div>
           </div>

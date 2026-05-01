@@ -80,6 +80,15 @@ const (
 )
 
 const (
+	// drainRateCacheTTL is the freshness window for the per-channel drain
+	// rate (sats/hour forwarded out, computed from the last 24h of
+	// forwarding_history). Pulling forwarding_history is expensive enough
+	// that we don't want to do it on every scan/job, but stale enough is
+	// also fine — a 10 min TTL strikes the balance for the 15 min scan loop.
+	drainRateCacheTTL = 10 * time.Minute
+)
+
+const (
 	mppStructuralAbortMinAttempts = 4
 	mppStructuralAbortRatio       = 0.70
 )
@@ -279,6 +288,7 @@ type RebalanceChannel struct {
 	PaybackProgress       float64  `json:"payback_progress"`
 	MaxSourceSat          int64    `json:"max_source_sat"`
 	Revenue7dSat          int64    `json:"revenue_7d_sat"`
+	DrainRateSatPerHour   int64    `json:"drain_rate_sat_per_hour"`
 	RebalanceCost7dSat    int64    `json:"rebalance_cost_7d_sat"`
 	RebalanceCost7dPpm    int64    `json:"rebalance_cost_7d_ppm"`
 	RebalanceAmount7dSat  int64    `json:"rebalance_amount_7d_sat"`
@@ -505,12 +515,17 @@ type RebalanceService struct {
 	lastScanSkipped            []RebalanceSkipDetail
 	criticalMissCount          int
 	sem                        chan struct{}
+	semInflight                int
+	semDesiredCap              int
+	semPendingResize           bool
 	channelLocks               map[uint64]bool
 	jobCancel                  map[int64]context.CancelFunc
 	manualRestart              map[int64]manualRestartInfo
 	manualRestartCancel        map[uint64]*manualRestartHandle
 	lastAutoByTarget           map[uint64]time.Time
 	lastMCResetAt              time.Time
+	drainRateCache             map[uint64]int64
+	drainRateCacheAt           time.Time
 }
 
 func NewRebalanceService(db *pgxpool.Pool, lnd *lndclient.Client, logger *log.Logger) *RebalanceService {
@@ -759,18 +774,43 @@ func (s *RebalanceService) tryResetMissionControl(ctx context.Context, trigger s
 	return true
 }
 
+// resetSemaphore is called on Start() and on UpdateConfig(). It records the
+// desired capacity (from cfg.MaxConcurrent) and rebuilds the semaphore channel
+// only when there are no in-flight jobs. When a resize lands while jobs are
+// running, the new size is staged in semDesiredCap and applied by the last
+// releaseSem() of the in-flight set. This prevents leaking slots into a fresh
+// channel when defer-release of running jobs hits a replaced semaphore.
+//
+// Wave 2.3: previously this rebuilt s.sem unconditionally, which could either
+// duplicate capacity (running jobs holding the old channel + a fresh empty new
+// channel) or starve the new channel of a phantom slot when the old job
+// released onto it.
 func (s *RebalanceService) resetSemaphore() {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	cfg := s.cfg
 	if !s.cfgLoaded {
 		cfg = defaultRebalanceConfig()
 	}
-	cap := cfg.MaxConcurrent
-	if cap <= 0 {
-		cap = 1
+	desired := cfg.MaxConcurrent
+	if desired <= 0 {
+		desired = 1
 	}
-	s.sem = make(chan struct{}, cap)
-	s.mu.Unlock()
+	s.semDesiredCap = desired
+	if s.sem == nil {
+		// First-time initialization: create immediately.
+		s.sem = make(chan struct{}, desired)
+		s.semInflight = 0
+		s.semPendingResize = false
+		return
+	}
+	if s.semInflight == 0 {
+		s.sem = make(chan struct{}, desired)
+		s.semPendingResize = false
+		return
+	}
+	// Jobs are in flight on the existing channel; defer the resize.
+	s.semPendingResize = true
 }
 
 func (s *RebalanceService) triggerScan() {
@@ -1401,6 +1441,7 @@ func (s *RebalanceService) runManualRestartWatch() {
 	_ = s.applyForwardDeltas(ctx, ledger)
 	revenueByChannel, _ := s.fetchChannelRevenue7d(ctx)
 	costByChannel, _ := s.fetchChannelRebalanceCost7d(ctx)
+	drainRateByChannel := s.fetchChannelDrainRate24h(ctx)
 	targetCooldowns := s.loadRecentTargetCooldowns(ctx, time.Now().Add(-recentCooldownWindow))
 	targetNoAttemptCooldowns := s.loadRecentTargetNoAttemptCooldowns(ctx, time.Now().Add(-targetNoAttemptCooldownWindow))
 	targetFailedCooldowns := s.loadRecentTargetFailedCooldowns(ctx, time.Now().Add(-targetFailedCooldownWindow))
@@ -1423,7 +1464,7 @@ func (s *RebalanceService) runManualRestartWatch() {
 		if s.isChannelBusy(ch.ChannelID) {
 			continue
 		}
-		snapshot := s.buildChannelSnapshot(ctx, cfg, false, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], costByChannel[ch.ChannelID], exclusions[ch.ChannelID])
+		snapshot := s.buildChannelSnapshot(ctx, cfg, false, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
 		if !snapshot.EligibleAsTarget {
 			continue
 		}
@@ -1503,20 +1544,22 @@ func (s *RebalanceService) runAutoScan() {
 
 	revenueByChannel, _ := s.fetchChannelRevenue7d(ctx)
 	costByChannel, _ := s.fetchChannelRebalanceCost7d(ctx)
+	drainRateByChannel := s.fetchChannelDrainRate24h(ctx)
 	lastAutoByTarget := s.loadLastAutoEnqueueTimes(ctx)
 	targetCooldowns := s.loadRecentTargetCooldowns(ctx, scanAt.Add(-recentCooldownWindow))
 	targetNoAttemptCooldowns := s.loadRecentTargetNoAttemptCooldowns(ctx, scanAt.Add(-targetNoAttemptCooldownWindow))
 	targetFailedCooldowns := s.loadRecentTargetFailedCooldowns(ctx, scanAt.Add(-targetFailedCooldownWindow))
 	targetDistinctSourceCooldowns := s.loadRecentTargetDistinctSourceCooldowns(ctx, scanAt.Add(-targetDistinctSourceCooldownWindow))
+
+	// Wave 2.2: merge in-memory lastAutoByTarget and read criticalActive under
+	// a single mutex session so other goroutines cannot mutate them between
+	// the two reads.
 	s.mu.Lock()
 	for channelID, last := range s.lastAutoByTarget {
 		if existing, ok := lastAutoByTarget[channelID]; !ok || last.After(existing) {
 			lastAutoByTarget[channelID] = last
 		}
 	}
-	s.mu.Unlock()
-
-	s.mu.Lock()
 	criticalActive := cfg.CriticalCycles > 0 && s.criticalMissCount >= cfg.CriticalCycles
 	s.mu.Unlock()
 
@@ -1529,7 +1572,7 @@ func (s *RebalanceService) runAutoScan() {
 	topScoreSet := false
 	for _, ch := range channels {
 		setting := settings[ch.ChannelID]
-		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], costByChannel[ch.ChannelID], exclusions[ch.ChannelID])
+		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
 		if snapshot.EligibleAsSource {
 			eligibleSources++
 			totalAvailable += snapshot.MaxSourceSat
@@ -2047,14 +2090,26 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 	}
 	s.reconcileNewChannelDefaults(ctx, channels, settings, exclusions)
 
-	revenueByChannel, _ := s.fetchChannelRevenue7d(ctx)
-	costByChannel, _ := s.fetchChannelRebalanceCost7d(ctx)
+	// Wave 2.4: abort the job if revenue/cost fetch fails. Previously these
+	// errors were silently dropped and the snapshot used zero values for both,
+	// corrupting ROI estimation and target eligibility (zero spread/cost makes
+	// any target appear free to rebalance).
+	revenueByChannel, revErr := s.fetchChannelRevenue7d(ctx)
+	costByChannel, costErr := s.fetchChannelRebalanceCost7d(ctx)
+	if revErr != nil || costErr != nil {
+		if s.logger != nil {
+			s.logger.Printf("rebalance job=%d: db unavailable for revenue/cost fetch (revErr=%v costErr=%v)", jobID, revErr, costErr)
+		}
+		s.finishJob(jobID, "failed", "db unavailable")
+		return
+	}
+	drainRateByChannel := s.fetchChannelDrainRate24h(ctx)
 
 	targetFound := false
 	channelSnapshots := []RebalanceChannel{}
 	for _, ch := range channels {
 		setting := settings[ch.ChannelID]
-		snapshot := s.buildChannelSnapshot(ctx, cfg, false, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], costByChannel[ch.ChannelID], exclusions[ch.ChannelID])
+		snapshot := s.buildChannelSnapshot(ctx, cfg, false, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
 		if ch.ChannelID == targetChannelID {
 			targetFound = true
 			snapshot.TargetOutboundPct = targetPct
@@ -4566,12 +4621,19 @@ func (s *RebalanceService) acquireSem(ctx context.Context) bool {
 	}
 	select {
 	case sem <- struct{}{}:
+		s.mu.Lock()
+		s.semInflight++
+		s.mu.Unlock()
 		return true
 	case <-ctx.Done():
 		return false
 	}
 }
 
+// releaseSem releases the slot on the same channel the job acquired (s.sem may
+// be replaced by resetSemaphore between acquire and release). When the last
+// in-flight job releases and a resize was deferred by resetSemaphore, the new
+// capacity is applied here.
 func (s *RebalanceService) releaseSem() {
 	s.mu.Lock()
 	sem := s.sem
@@ -4583,6 +4645,19 @@ func (s *RebalanceService) releaseSem() {
 	case <-sem:
 	default:
 	}
+	s.mu.Lock()
+	if s.semInflight > 0 {
+		s.semInflight--
+	}
+	if s.semInflight == 0 && s.semPendingResize {
+		desired := s.semDesiredCap
+		if desired <= 0 {
+			desired = 1
+		}
+		s.sem = make(chan struct{}, desired)
+		s.semPendingResize = false
+	}
+	s.mu.Unlock()
 }
 
 func (s *RebalanceService) tryLockChannel(channelID uint64) bool {
@@ -4782,6 +4857,7 @@ func (s *RebalanceService) scheduleManualRestart(info manualRestartInfo) {
 	ledger, _ := s.loadLedger(restartCtx)
 	revenueByChannel, _ := s.fetchChannelRevenue7d(restartCtx)
 	costByChannel, _ := s.fetchChannelRebalanceCost7d(restartCtx)
+	drainRateByChannel := s.fetchChannelDrainRate24h(restartCtx)
 	targetCooldowns := s.loadRecentTargetCooldowns(restartCtx, time.Now().Add(-recentCooldownWindow))
 	targetNoAttemptCooldowns := s.loadRecentTargetNoAttemptCooldowns(restartCtx, time.Now().Add(-targetNoAttemptCooldownWindow))
 	targetFailedCooldowns := s.loadRecentTargetFailedCooldowns(restartCtx, time.Now().Add(-targetFailedCooldownWindow))
@@ -4812,7 +4888,7 @@ func (s *RebalanceService) scheduleManualRestart(info manualRestartInfo) {
 	if shouldCooldownTargetRecentFailures(targetCooldowns[target.ChannelID], targetNoAttemptCooldowns[target.ChannelID], targetFailedCooldowns[target.ChannelID], targetDistinctSourceCooldowns[target.ChannelID], time.Now()) {
 		return
 	}
-	snapshot := s.buildChannelSnapshot(restartCtx, cfg, false, target, setting, ledger[target.ChannelID], revenueByChannel[target.ChannelID], costByChannel[target.ChannelID], exclusions[target.ChannelID])
+	snapshot := s.buildChannelSnapshot(restartCtx, cfg, false, target, setting, ledger[target.ChannelID], revenueByChannel[target.ChannelID], costByChannel[target.ChannelID], drainRateByChannel[target.ChannelID], exclusions[target.ChannelID])
 	deficit := computeDeficitAmount(target, snapshot.TargetOutboundPct)
 	if deficit <= 0 {
 		return
@@ -4846,7 +4922,7 @@ set status='cancelled', reason='cancelled', completed_at=now()
 where id=$1 and status in ('running','queued')`, jobID)
 }
 
-func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg RebalanceConfig, criticalActive bool, ch lndclient.ChannelInfo, setting channelSetting, ledger *channelLedger, revenue7dSat int64, cost7d rebalanceCost7dStat, excluded bool) RebalanceChannel {
+func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg RebalanceConfig, criticalActive bool, ch lndclient.ChannelInfo, setting channelSetting, ledger *channelLedger, revenue7dSat int64, cost7d rebalanceCost7dStat, drainRateSatPerHour int64, excluded bool) RebalanceChannel {
 	setting = normalizeChannelSetting(setting)
 	capacity := float64(ch.CapacitySat)
 	localPct := 0.0
@@ -5021,6 +5097,7 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		PaybackProgress:       paybackProgress,
 		MaxSourceSat:          maxSource,
 		Revenue7dSat:          revenue7dSat,
+		DrainRateSatPerHour:   drainRateSatPerHour,
 		RebalanceCost7dSat:    cost7d.FeeSat,
 		RebalanceCost7dPpm:    cost7d.FeePpm,
 		RebalanceAmount7dSat:  cost7d.AmountSat,
@@ -6111,6 +6188,95 @@ group by channel_id`)
 		revenue[uint64(channelID)] = feeMsat / 1000
 	}
 	return revenue, rows.Err()
+}
+
+// fetchChannelDrainRate24h returns sats/hour forwarded OUT through each channel
+// over the last 24 hours, computed from LND's forwarding_history. Used by the
+// scan/job snapshot to inform demand-driven scoring (Wave 3.1). Cached for
+// drainRateCacheTTL since paginating ForwardingHistory is expensive enough
+// that we don't want to redo it on every scan.
+func (s *RebalanceService) fetchChannelDrainRate24h(ctx context.Context) map[uint64]int64 {
+	s.mu.Lock()
+	if s.drainRateCache != nil && !s.drainRateCacheAt.IsZero() && time.Since(s.drainRateCacheAt) < drainRateCacheTTL {
+		cached := make(map[uint64]int64, len(s.drainRateCache))
+		for k, v := range s.drainRateCache {
+			cached[k] = v
+		}
+		s.mu.Unlock()
+		return cached
+	}
+	s.mu.Unlock()
+
+	result := map[uint64]int64{}
+	if s.lnd == nil {
+		return result
+	}
+	conn, err := s.lnd.DialLightning(ctx)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("rebalance drain rate: dial failed: %v", err)
+		}
+		return result
+	}
+	defer conn.Close()
+
+	client := lnrpc.NewLightningClient(conn)
+	end := time.Now()
+	start := end.Add(-24 * time.Hour)
+
+	amtSatByChan := map[uint64]int64{}
+	var offset uint32
+	for {
+		resp, err := client.ForwardingHistory(ctx, &lnrpc.ForwardingHistoryRequest{
+			StartTime:    uint64(start.Unix()),
+			EndTime:      uint64(end.Unix()),
+			IndexOffset:  offset,
+			NumMaxEvents: rebalanceForwardPageSize,
+		})
+		if err != nil {
+			if s.logger != nil {
+				s.logger.Printf("rebalance drain rate: forwarding_history failed at offset=%d: %v", offset, err)
+			}
+			return result
+		}
+		if resp == nil || len(resp.ForwardingEvents) == 0 {
+			break
+		}
+		for _, evt := range resp.ForwardingEvents {
+			if evt == nil || evt.ChanIdOut == 0 {
+				continue
+			}
+			amt := int64(evt.AmtOut)
+			if amt == 0 && evt.AmtOutMsat > 0 {
+				amt = int64(evt.AmtOutMsat / 1000)
+			}
+			if amt > 0 {
+				amtSatByChan[evt.ChanIdOut] += amt
+			}
+		}
+		if resp.LastOffsetIndex <= offset {
+			break
+		}
+		offset = resp.LastOffsetIndex
+		if len(resp.ForwardingEvents) < rebalanceForwardPageSize {
+			break
+		}
+	}
+
+	for chanID, amtSat := range amtSatByChan {
+		result[chanID] = amtSat / 24
+	}
+
+	s.mu.Lock()
+	cached := make(map[uint64]int64, len(result))
+	for k, v := range result {
+		cached[k] = v
+	}
+	s.drainRateCache = cached
+	s.drainRateCacheAt = time.Now()
+	s.mu.Unlock()
+
+	return result
 }
 
 func (s *RebalanceService) ensureDailyBudget(ctx context.Context, cfg RebalanceConfig) error {
@@ -7394,6 +7560,7 @@ func (s *RebalanceService) Channels(ctx context.Context) ([]RebalanceChannel, er
 
 	revenueByChannel, _ := s.fetchChannelRevenue7d(ctx)
 	costByChannel, _ := s.fetchChannelRebalanceCost7d(ctx)
+	drainRateByChannel := s.fetchChannelDrainRate24h(ctx)
 	channels, err := s.lnd.ListChannels(ctx)
 	if err != nil {
 		return nil, err
@@ -7416,7 +7583,7 @@ func (s *RebalanceService) Channels(ctx context.Context) ([]RebalanceChannel, er
 			seenPoints[point] = true
 		}
 		setting := settings[ch.ChannelID]
-		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], costByChannel[ch.ChannelID], exclusions[ch.ChannelID])
+		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
 		result = append(result, snapshot)
 	}
 	return result, nil
@@ -7438,6 +7605,7 @@ func (s *RebalanceService) computeEligibilityCounts(ctx context.Context, cfg Reb
 	s.reconcileNewChannelDefaults(ctx, channels, settings, exclusions)
 	revenueByChannel, _ := s.fetchChannelRevenue7d(ctx)
 	costByChannel, _ := s.fetchChannelRebalanceCost7d(ctx)
+	drainRateByChannel := s.fetchChannelDrainRate24h(ctx)
 
 	s.mu.Lock()
 	criticalActive := cfg.CriticalCycles > 0 && s.criticalMissCount >= cfg.CriticalCycles
@@ -7447,7 +7615,7 @@ func (s *RebalanceService) computeEligibilityCounts(ctx context.Context, cfg Reb
 	targetsNeeding := 0
 	for _, ch := range channels {
 		setting := settings[ch.ChannelID]
-		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], costByChannel[ch.ChannelID], exclusions[ch.ChannelID])
+		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
 		if snapshot.EligibleAsSource {
 			eligibleSources++
 		}

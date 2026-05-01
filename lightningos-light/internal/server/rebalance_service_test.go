@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -773,5 +774,77 @@ func TestBuildMppShadowPlanHandlesInsufficientSourceLiquidity(t *testing.T) {
 	}
 	if plan.PlannedRemainderSat != 20000 {
 		t.Fatalf("expected full remainder=20000, got %d", plan.PlannedRemainderSat)
+	}
+}
+
+// Wave 2.3: resetSemaphore must defer the resize when jobs are in flight, and
+// the last release must rebuild the channel at the new desired capacity.
+func TestResetSemaphoreDefersWhileInflight(t *testing.T) {
+	s := &RebalanceService{}
+	s.cfg = RebalanceConfig{MaxConcurrent: 2}
+	s.cfgLoaded = true
+	s.resetSemaphore()
+	if s.sem == nil || cap(s.sem) != 2 {
+		t.Fatalf("expected initial sem cap=2, got %v", cap(s.sem))
+	}
+
+	// Acquire 2 slots (simulate 2 in-flight jobs).
+	if !s.acquireSem(context.Background()) {
+		t.Fatalf("acquire slot 1 failed")
+	}
+	if !s.acquireSem(context.Background()) {
+		t.Fatalf("acquire slot 2 failed")
+	}
+	if s.semInflight != 2 {
+		t.Fatalf("expected inflight=2, got %d", s.semInflight)
+	}
+
+	// Bump MaxConcurrent to 5; reset must defer because inflight > 0.
+	s.cfg.MaxConcurrent = 5
+	s.resetSemaphore()
+	if !s.semPendingResize {
+		t.Fatalf("expected pending resize after concurrent jobs holding slots")
+	}
+	if cap(s.sem) != 2 {
+		t.Fatalf("expected sem capacity unchanged (still 2) while jobs inflight, got %d", cap(s.sem))
+	}
+
+	// Release first slot — still inflight, capacity must remain 2.
+	s.releaseSem()
+	if cap(s.sem) != 2 {
+		t.Fatalf("expected sem capacity 2 after partial release, got %d", cap(s.sem))
+	}
+	if !s.semPendingResize {
+		t.Fatalf("expected pending resize still set, got cleared")
+	}
+
+	// Release last slot — resize must apply.
+	s.releaseSem()
+	if cap(s.sem) != 5 {
+		t.Fatalf("expected sem capacity 5 after final release, got %d", cap(s.sem))
+	}
+	if s.semPendingResize {
+		t.Fatalf("expected pending resize cleared after apply")
+	}
+	if s.semInflight != 0 {
+		t.Fatalf("expected inflight=0, got %d", s.semInflight)
+	}
+}
+
+// Wave 2.3: when no jobs are in flight, resetSemaphore must apply the new
+// capacity immediately.
+func TestResetSemaphoreAppliesImmediatelyWhenIdle(t *testing.T) {
+	s := &RebalanceService{}
+	s.cfg = RebalanceConfig{MaxConcurrent: 1}
+	s.cfgLoaded = true
+	s.resetSemaphore()
+
+	s.cfg.MaxConcurrent = 4
+	s.resetSemaphore()
+	if cap(s.sem) != 4 {
+		t.Fatalf("expected immediate resize to 4 when idle, got %d", cap(s.sem))
+	}
+	if s.semPendingResize {
+		t.Fatalf("expected no pending resize after immediate apply")
 	}
 }

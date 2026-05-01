@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -sk -b /tmp/cookies.txt:*)",
+      "Bash(curl -sk -c /tmp/cookies.txt:*)",
+      "Bash(go build:*)",
+      "Bash(go test:*)"
+    ]
+  }
+}

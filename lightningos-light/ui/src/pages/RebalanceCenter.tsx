@@ -228,6 +228,7 @@ type RebalanceChannel = {
   payback_progress: number
   max_source_sat: number
   revenue_7d_sat: number
+  drain_rate_sat_per_hour?: number
   rebalance_cost_7d_sat: number
   rebalance_cost_7d_ppm: number
   rebalance_amount_7d_sat: number

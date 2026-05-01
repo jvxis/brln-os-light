@@ -402,6 +402,57 @@ type paybackTotals7d struct {
 	CostSat              int64
 }
 
+type BaselineMetricsPeriod struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+	Days int    `json:"days"`
+}
+
+type BaselineMetricsAggregate struct {
+	JobsTotal               int64    `json:"jobs_total"`
+	JobsSucceeded           int64    `json:"jobs_succeeded"`
+	JobsPartial             int64    `json:"jobs_partial"`
+	JobsFailed              int64    `json:"jobs_failed"`
+	JobsCancelled           int64    `json:"jobs_cancelled"`
+	AttemptsTotal           int64    `json:"attempts_total"`
+	AttemptsSucceeded       int64    `json:"attempts_succeeded"`
+	SuccessRate             float64  `json:"success_rate"`
+	PartialRate             float64  `json:"partial_rate"`
+	FailedRate              float64  `json:"failed_rate"`
+	AvgAttemptsPerJob       float64  `json:"avg_attempts_per_job"`
+	AvgSatsPerSuccessfulJob float64  `json:"avg_sats_per_successful_job"`
+	AvgFeePpmPaid           float64  `json:"avg_fee_ppm_paid"`
+	FeePaidSatTotal         int64    `json:"fee_paid_sat_total"`
+	AmountSucceededSatTotal int64    `json:"amount_succeeded_sat_total"`
+	TimeToPaybackP50Hours   *float64 `json:"time_to_payback_p50_hours,omitempty"`
+}
+
+type BaselineMetricsDaily struct {
+	Day                     string   `json:"day"`
+	JobsTotal               int64    `json:"jobs_total"`
+	JobsSucceeded           int64    `json:"jobs_succeeded"`
+	JobsPartial             int64    `json:"jobs_partial"`
+	JobsFailed              int64    `json:"jobs_failed"`
+	JobsCancelled           int64    `json:"jobs_cancelled"`
+	AttemptsTotal           int64    `json:"attempts_total"`
+	AttemptsSucceeded       int64    `json:"attempts_succeeded"`
+	SuccessRate             float64  `json:"success_rate"`
+	PartialRate             float64  `json:"partial_rate"`
+	FailedRate              float64  `json:"failed_rate"`
+	AvgAttemptsPerJob       float64  `json:"avg_attempts_per_job"`
+	AvgSatsPerSuccessfulJob float64  `json:"avg_sats_per_successful_job"`
+	AvgFeePpmPaid           float64  `json:"avg_fee_ppm_paid"`
+	FeePaidSatTotal         int64    `json:"fee_paid_sat_total"`
+	AmountSucceededSatTotal int64    `json:"amount_succeeded_sat_total"`
+	TimeToPaybackP50Hours   *float64 `json:"time_to_payback_p50_hours,omitempty"`
+}
+
+type BaselineMetrics struct {
+	Period    BaselineMetricsPeriod    `json:"period"`
+	Aggregate BaselineMetricsAggregate `json:"aggregate"`
+	Daily     []BaselineMetricsDaily   `json:"daily"`
+}
+
 type manualRestartInfo struct {
 	TargetChannelID uint64
 }
@@ -2419,7 +2470,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			feePaidSat = msatToSatCeil(pay.FeeMsat)
 		}
 		attemptIndex++
-		_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountSent, feeLimitPpm, feePaidSat, "succeeded", paymentHash, "")
+		_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountSent, feeLimitPpm, feePaidSat, "succeeded", paymentHash, "", nil)
 		recordPairSuccess(ctx, source.ChannelID, targetChannelID, amountSent, feeLimitPpm, feePaidSat)
 		_ = s.applyRebalanceLedger(ctx, targetChannelID, amountSent, feePaidSat)
 		_ = s.addBudgetSpend(ctx, feePaidSat, jobSource)
@@ -2488,7 +2539,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			}
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(attemptCtx.Err(), context.DeadlineExceeded) {
 				attemptIndex++
-				_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", "", "attempt timeout")
+				_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", "", "attempt timeout", nil)
 				recordPairFailure(ctx, source.ChannelID, targetChannelID, "attempt timeout")
 				return false, false, 0, true, nil, 0
 			}
@@ -2499,7 +2550,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			}
 			if logRouteFailure {
 				attemptIndex++
-				_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", "", err.Error())
+				_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", "", err.Error(), nil)
 				recordPairFailure(ctx, source.ChannelID, targetChannelID, err.Error())
 			}
 			return false, false, 0, false, nil, 0
@@ -2567,12 +2618,12 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 				}
 				if errors.Is(err, context.DeadlineExceeded) || errors.Is(attemptCtx.Err(), context.DeadlineExceeded) {
 					attemptIndex++
-					_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, routeAmount, routeFeeLimitPpm, 0, "failed", "", "attempt timeout")
+					_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, routeAmount, routeFeeLimitPpm, 0, "failed", "", "attempt timeout", nil)
 					recordPairFailure(ctx, source.ChannelID, targetChannelID, "attempt timeout")
 					return false, false, 0, true, nil, 0
 				}
 				attemptIndex++
-				_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, routeAmount, routeFeeLimitPpm, 0, "failed", "", err.Error())
+				_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, routeAmount, routeFeeLimitPpm, 0, "failed", "", err.Error(), nil)
 				recordPairFailure(ctx, source.ChannelID, targetChannelID, err.Error())
 				return false, false, 0, false, nil, 0
 			}
@@ -2607,7 +2658,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 					feePaidSat = msatToSatCeil(probeFeeMsat)
 				}
 				attemptIndex++
-				_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, routeAmount, routeFeeLimitPpm, feePaidSat, "succeeded", paymentHash, "")
+				_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, routeAmount, routeFeeLimitPpm, feePaidSat, "succeeded", paymentHash, "", nil)
 				recordPairSuccess(ctx, source.ChannelID, targetChannelID, routeAmount, routeFeeLimitPpm, feePaidSat)
 				_ = s.applyRebalanceLedger(ctx, targetChannelID, routeAmount, feePaidSat)
 				_ = s.addBudgetSpend(ctx, feePaidSat, jobSource)
@@ -2639,7 +2690,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 								feePaidSat = msatToSatCeil(probeFeeMsat)
 							}
 							attemptIndex++
-							_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, routeAmount, routeFeeLimitPpm, feePaidSat, "succeeded", paymentHash, "")
+							_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, routeAmount, routeFeeLimitPpm, feePaidSat, "succeeded", paymentHash, "", nil)
 							recordPairSuccess(ctx, source.ChannelID, targetChannelID, routeAmount, routeFeeLimitPpm, feePaidSat)
 							_ = s.applyRebalanceLedger(ctx, targetChannelID, routeAmount, feePaidSat)
 							_ = s.addBudgetSpend(ctx, feePaidSat, jobSource)
@@ -2668,7 +2719,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 								if rebuildErr == nil {
 									if retryFeeMsat > 0 && rebuilt.TotalFeesMsat > retryFeeMsat {
 										attemptIndex++
-										_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, maxAmount, retryFeePpm, 0, "failed", retryHash, "route fee exceeds limit")
+										_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, maxAmount, retryFeePpm, 0, "failed", retryHash, "route fee exceeds limit", nil)
 										recordPairFailure(ctx, source.ChannelID, targetChannelID, "route fee exceeds limit")
 										continue
 									}
@@ -2683,14 +2734,14 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 											feePaidSat = msatToSatCeil(rebuilt.TotalFeesMsat)
 										}
 										attemptIndex++
-										_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, maxAmount, retryFeePpm, feePaidSat, "succeeded", retryHash, "")
+										_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, maxAmount, retryFeePpm, feePaidSat, "succeeded", retryHash, "", nil)
 										recordPairSuccess(ctx, source.ChannelID, targetChannelID, maxAmount, retryFeePpm, feePaidSat)
 										_ = s.applyRebalanceLedger(ctx, targetChannelID, maxAmount, feePaidSat)
 										_ = s.addBudgetSpend(ctx, feePaidSat, jobSource)
 										return true, false, probeRouteMax, false, rebuilt, maxAmount
 									}
 									attemptIndex++
-									_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, maxAmount, retryFeePpm, 0, "failed", retryHash, retrySendErr.Error())
+									_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, maxAmount, retryFeePpm, 0, "failed", retryHash, retrySendErr.Error(), parseRouteFailure(retrySendErr, rebuilt))
 									recordPairFailure(ctx, source.ChannelID, targetChannelID, retrySendErr.Error())
 									lastErr = retrySendErr
 								}
@@ -2725,7 +2776,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 				return true, false, 0, false, nil, sent
 			}
 			attemptIndex++
-			_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, timeoutAmount, timeoutFeePpm, 0, "failed", timeoutHash, "attempt timeout")
+			_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, timeoutAmount, timeoutFeePpm, 0, "failed", timeoutHash, "attempt timeout", nil)
 			recordPairFailure(ctx, source.ChannelID, targetChannelID, "attempt timeout")
 			return false, false, 0, true, nil, 0
 		}
@@ -2745,7 +2796,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 				failFeePpm = lastFeeLimitPpm
 			}
 			attemptIndex++
-			_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, failAmount, failFeePpm, 0, "failed", lastPaymentHash, failReason)
+			_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, failAmount, failFeePpm, 0, "failed", lastPaymentHash, failReason, parseRouteFailure(lastErr, nil))
 			recordPairFailure(ctx, source.ChannelID, targetChannelID, failReason)
 		}
 		return false, false, 0, false, nil, 0
@@ -2797,7 +2848,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			cancelAttempt()
 			if logRouteFailure {
 				attemptIndex++
-				_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", "", err.Error())
+				_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", "", err.Error(), nil)
 				recordPairFailure(ctx, source.ChannelID, targetChannelID, err.Error())
 			}
 			return false, false, 0, false, nil, 0
@@ -2812,7 +2863,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			cancelAttempt()
 			if logRouteFailure {
 				attemptIndex++
-				_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", "", "route fee exceeds limit")
+				_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", "", "route fee exceeds limit", nil)
 				recordPairFailure(ctx, source.ChannelID, targetChannelID, "route fee exceeds limit")
 			}
 			return false, false, 0, false, nil, 0
@@ -2832,12 +2883,12 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			}
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(attemptCtx.Err(), context.DeadlineExceeded) {
 				attemptIndex++
-				_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", "", "attempt timeout")
+				_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", "", "attempt timeout", nil)
 				recordPairFailure(ctx, source.ChannelID, targetChannelID, "attempt timeout")
 				return false, false, 0, true, nil, 0
 			}
 			attemptIndex++
-			_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", "", err.Error())
+			_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", "", err.Error(), nil)
 			recordPairFailure(ctx, source.ChannelID, targetChannelID, err.Error())
 			return false, false, 0, false, nil, 0
 		}
@@ -2849,7 +2900,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			resetAutoNoPath()
 			feePaidSat := msatToSatCeil(routeFeeMsat)
 			attemptIndex++
-			_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, feePaidSat, "succeeded", paymentHash, "")
+			_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, feePaidSat, "succeeded", paymentHash, "", nil)
 			recordPairSuccess(ctx, source.ChannelID, targetChannelID, amountTry, feeLimitPpm, feePaidSat)
 			_ = s.applyRebalanceLedger(ctx, targetChannelID, amountTry, feePaidSat)
 			_ = s.addBudgetSpend(ctx, feePaidSat, jobSource)
@@ -2878,7 +2929,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 							resetAutoNoPath()
 							feePaidSat := msatToSatCeil(updatedRoute.TotalFeesMsat)
 							attemptIndex++
-							_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, feePaidSat, "succeeded", paymentHash, "")
+							_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, feePaidSat, "succeeded", paymentHash, "", nil)
 							recordPairSuccess(ctx, source.ChannelID, targetChannelID, amountTry, feeLimitPpm, feePaidSat)
 							_ = s.applyRebalanceLedger(ctx, targetChannelID, amountTry, feePaidSat)
 							_ = s.addBudgetSpend(ctx, feePaidSat, jobSource)
@@ -2909,7 +2960,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 				return true, false, 0, false, nil, sent
 			}
 			attemptIndex++
-			_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", paymentHash, "attempt timeout")
+			_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", paymentHash, "attempt timeout", nil)
 			recordPairFailure(ctx, source.ChannelID, targetChannelID, "attempt timeout")
 			return false, false, 0, true, nil, 0
 		}
@@ -2921,7 +2972,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 		}
 		if logRouteFailure {
 			attemptIndex++
-			_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", paymentHash, failReason)
+			_ = s.insertAttempt(ctx, jobID, attemptIndex, source.ChannelID, amountTry, feeLimitPpm, 0, "failed", paymentHash, failReason, parseRouteFailure(lastErr, route))
 			recordPairFailure(ctx, source.ChannelID, targetChannelID, failReason)
 		}
 		return false, false, 0, false, nil, 0
@@ -3168,6 +3219,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 		RouteMaxSat     int64
 		PaymentHash     string
 		FailReason      string
+		FailureInfo     *attemptFailureInfo
 		Attempted       bool
 		Succeeded       bool
 		TimedOut        bool
@@ -3343,6 +3395,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 			if errors.As(sendErr, &routeFailure) && routeFailure.Failure != nil && routeFailure.Code == lnrpc.Failure_TEMPORARY_CHANNEL_FAILURE {
 				noteRouteFailureFromShard(route, routeFailure.FailureSourceIndex)
 			}
+			result.FailureInfo = parseRouteFailure(sendErr, route)
 			result.FailReason = sendErr.Error()
 			return result
 		}
@@ -3513,7 +3566,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 				attemptAmount = res.AmountSent
 			}
 			if res.Succeeded {
-				_ = s.insertAttempt(ctx, jobID, attemptIndex, res.Source.ChannelID, attemptAmount, res.FeeLimitPpm, res.FeePaidSat, "succeeded", res.PaymentHash, "")
+				_ = s.insertAttempt(ctx, jobID, attemptIndex, res.Source.ChannelID, attemptAmount, res.FeeLimitPpm, res.FeePaidSat, "succeeded", res.PaymentHash, "", nil)
 				recordPairSuccess(ctx, res.Source.ChannelID, targetChannelID, attemptAmount, res.FeeLimitPpm, res.FeePaidSat)
 				_ = s.applyRebalanceLedger(ctx, targetChannelID, attemptAmount, res.FeePaidSat)
 				_ = s.addBudgetSpend(ctx, res.FeePaidSat, jobSource)
@@ -3546,7 +3599,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 				structuralFailureShards++
 			}
 			shardFailReason := formatMppShardFailReason(failReason)
-			_ = s.insertAttempt(ctx, jobID, attemptIndex, res.Source.ChannelID, attemptAmount, res.FeeLimitPpm, 0, "failed", res.PaymentHash, shardFailReason)
+			_ = s.insertAttempt(ctx, jobID, attemptIndex, res.Source.ChannelID, attemptAmount, res.FeeLimitPpm, 0, "failed", res.PaymentHash, shardFailReason, res.FailureInfo)
 			recordPairFailure(ctx, res.Source.ChannelID, targetChannelID, shardFailReason)
 		}
 
@@ -4473,6 +4526,12 @@ update rebalance_jobs
 set status=$2, reason=$3, completed_at=$4
 where id=$1`, jobID, status, nullableString(reason), completedAt)
 	s.broadcast(RebalanceEvent{Type: "job", JobID: jobID, Status: status, Message: reason})
+
+	go func() {
+		snapCtx, snapCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer snapCancel()
+		s.snapshotMetricsDay(snapCtx, completedAt)
+	}()
 
 	info, ok := s.takeManualRestart(jobID)
 	if ok && s.shouldManualRestart(status, reason) {
@@ -5440,9 +5499,39 @@ create table if not exists rebalance_attempts (
   status text not null,
   payment_hash text,
   fail_reason text,
+  fail_source_index integer,
+  fail_hop_pubkey text,
   started_at timestamptz not null default now(),
   finished_at timestamptz
 );
+
+alter table if exists rebalance_attempts
+  add column if not exists fail_source_index integer;
+alter table if exists rebalance_attempts
+  add column if not exists fail_hop_pubkey text;
+
+create table if not exists rebalance_metrics_daily (
+  day date primary key,
+  jobs_total integer not null default 0,
+  jobs_succeeded integer not null default 0,
+  jobs_partial integer not null default 0,
+  jobs_failed integer not null default 0,
+  jobs_cancelled integer not null default 0,
+  attempts_total bigint not null default 0,
+  attempts_succeeded bigint not null default 0,
+  success_rate double precision not null default 0,
+  partial_rate double precision not null default 0,
+  failed_rate double precision not null default 0,
+  avg_attempts_per_job double precision not null default 0,
+  avg_sats_per_successful_job double precision not null default 0,
+  avg_fee_ppm_paid double precision not null default 0,
+  fee_paid_sat_total bigint not null default 0,
+  amount_succeeded_sat_total bigint not null default 0,
+  time_to_payback_p50_hours double precision,
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists rebalance_metrics_daily_day_idx on rebalance_metrics_daily (day desc);
 
 create table if not exists rebalance_mpp_shadow (
   job_id bigint primary key references rebalance_jobs(id) on delete cascade,
@@ -6635,6 +6724,227 @@ select
 	}, nil
 }
 
+const (
+	baselineMetricsDefaultDays = 30
+	baselineMetricsMaxDays     = 365
+)
+
+func (s *RebalanceService) BaselineMetrics(ctx context.Context, days int) (BaselineMetrics, error) {
+	if days <= 0 {
+		days = baselineMetricsDefaultDays
+	}
+	if days > baselineMetricsMaxDays {
+		days = baselineMetricsMaxDays
+	}
+	now := time.Now().UTC()
+	to := now
+	from := time.Date(to.Year(), to.Month(), to.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -(days - 1))
+	result := BaselineMetrics{
+		Period: BaselineMetricsPeriod{
+			From: from.Format("2006-01-02"),
+			To:   to.Format("2006-01-02"),
+			Days: days,
+		},
+		Daily: []BaselineMetricsDaily{},
+	}
+	if s.db == nil {
+		return result, nil
+	}
+
+	daily, err := s.queryBaselineDaily(ctx, from, to.Add(24*time.Hour))
+	if err != nil {
+		return result, err
+	}
+	result.Daily = daily
+
+	for _, d := range daily {
+		result.Aggregate.JobsTotal += d.JobsTotal
+		result.Aggregate.JobsSucceeded += d.JobsSucceeded
+		result.Aggregate.JobsPartial += d.JobsPartial
+		result.Aggregate.JobsFailed += d.JobsFailed
+		result.Aggregate.JobsCancelled += d.JobsCancelled
+		result.Aggregate.AttemptsTotal += d.AttemptsTotal
+		result.Aggregate.AttemptsSucceeded += d.AttemptsSucceeded
+		result.Aggregate.FeePaidSatTotal += d.FeePaidSatTotal
+		result.Aggregate.AmountSucceededSatTotal += d.AmountSucceededSatTotal
+	}
+	if result.Aggregate.JobsTotal > 0 {
+		denom := float64(result.Aggregate.JobsTotal)
+		result.Aggregate.SuccessRate = float64(result.Aggregate.JobsSucceeded) / denom
+		result.Aggregate.PartialRate = float64(result.Aggregate.JobsPartial) / denom
+		result.Aggregate.FailedRate = float64(result.Aggregate.JobsFailed) / denom
+		result.Aggregate.AvgAttemptsPerJob = float64(result.Aggregate.AttemptsTotal) / denom
+	}
+	successfulJobs := result.Aggregate.JobsSucceeded + result.Aggregate.JobsPartial
+	if successfulJobs > 0 {
+		result.Aggregate.AvgSatsPerSuccessfulJob = float64(result.Aggregate.AmountSucceededSatTotal) / float64(successfulJobs)
+	}
+	if result.Aggregate.AmountSucceededSatTotal > 0 {
+		result.Aggregate.AvgFeePpmPaid = float64(result.Aggregate.FeePaidSatTotal) * 1_000_000.0 / float64(result.Aggregate.AmountSucceededSatTotal)
+	}
+
+	if p50, ok := s.queryTimeToPaybackP50(ctx, from, to.Add(24*time.Hour)); ok {
+		result.Aggregate.TimeToPaybackP50Hours = &p50
+	}
+
+	return result, nil
+}
+
+func (s *RebalanceService) queryBaselineDaily(ctx context.Context, from time.Time, to time.Time) ([]BaselineMetricsDaily, error) {
+	rows, err := s.db.Query(ctx, `
+with jobs_d as (
+  select
+    (j.completed_at at time zone 'UTC')::date as day,
+    j.status,
+    coalesce((select count(*) from rebalance_attempts a where a.job_id=j.id), 0) as attempts_total,
+    coalesce((select count(*) from rebalance_attempts a where a.job_id=j.id and a.status='succeeded'), 0) as attempts_succeeded,
+    coalesce((select sum(amount_sat) from rebalance_attempts a where a.job_id=j.id and a.status='succeeded'), 0) as amount_succeeded_sat,
+    coalesce((select sum(fee_paid_sat) from rebalance_attempts a where a.job_id=j.id and a.status='succeeded'), 0) as fee_paid_sat
+  from rebalance_jobs j
+  where j.completed_at >= $1 and j.completed_at < $2
+    and j.status in ('succeeded','partial','failed','cancelled')
+)
+select
+  day,
+  count(*) as jobs_total,
+  count(*) filter (where status='succeeded') as jobs_succeeded,
+  count(*) filter (where status='partial') as jobs_partial,
+  count(*) filter (where status='failed') as jobs_failed,
+  count(*) filter (where status='cancelled') as jobs_cancelled,
+  coalesce(sum(attempts_total), 0)::bigint as attempts_total,
+  coalesce(sum(attempts_succeeded), 0)::bigint as attempts_succeeded,
+  coalesce(sum(amount_succeeded_sat), 0)::bigint as amount_succeeded_sat_total,
+  coalesce(sum(fee_paid_sat), 0)::bigint as fee_paid_sat_total
+from jobs_d
+group by day
+order by day
+`, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]BaselineMetricsDaily, 0)
+	for rows.Next() {
+		var d BaselineMetricsDaily
+		var day time.Time
+		if err := rows.Scan(&day, &d.JobsTotal, &d.JobsSucceeded, &d.JobsPartial, &d.JobsFailed, &d.JobsCancelled,
+			&d.AttemptsTotal, &d.AttemptsSucceeded, &d.AmountSucceededSatTotal, &d.FeePaidSatTotal); err != nil {
+			return nil, err
+		}
+		d.Day = day.Format("2006-01-02")
+		if d.JobsTotal > 0 {
+			denom := float64(d.JobsTotal)
+			d.SuccessRate = float64(d.JobsSucceeded) / denom
+			d.PartialRate = float64(d.JobsPartial) / denom
+			d.FailedRate = float64(d.JobsFailed) / denom
+			d.AvgAttemptsPerJob = float64(d.AttemptsTotal) / denom
+		}
+		successJobs := d.JobsSucceeded + d.JobsPartial
+		if successJobs > 0 {
+			d.AvgSatsPerSuccessfulJob = float64(d.AmountSucceededSatTotal) / float64(successJobs)
+		}
+		if d.AmountSucceededSatTotal > 0 {
+			d.AvgFeePpmPaid = float64(d.FeePaidSatTotal) * 1_000_000.0 / float64(d.AmountSucceededSatTotal)
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+func (s *RebalanceService) queryTimeToPaybackP50(ctx context.Context, from time.Time, to time.Time) (float64, bool) {
+	if s.db == nil {
+		return 0, false
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	var p50 pgtype.Float8
+	err := s.db.QueryRow(queryCtx, `
+with succ_jobs as (
+  select j.id, j.target_channel_id, j.completed_at,
+    coalesce((select sum(fee_paid_sat) from rebalance_attempts a where a.job_id=j.id and a.status='succeeded'), 0) as fee_paid_sat
+  from rebalance_jobs j
+  where j.completed_at >= $1 and j.completed_at < $2
+    and j.status in ('succeeded','partial')
+),
+filtered_jobs as (
+  select * from succ_jobs where fee_paid_sat > 0
+),
+fwd as (
+  select s.id as job_id, s.completed_at, s.fee_paid_sat,
+    n.occurred_at,
+    sum(case when n.fee_msat > 0 then n.fee_msat else n.fee_sat * 1000 end)
+      over (partition by s.id order by n.occurred_at rows between unbounded preceding and current row) as cum_fee_msat
+  from filtered_jobs s
+  join notifications n
+    on n.channel_id = s.target_channel_id
+   and n.type='forward'
+   and n.occurred_at >= s.completed_at
+   and n.occurred_at < $2
+),
+job_payback as (
+  select job_id,
+    min(extract(epoch from (occurred_at - completed_at))/3600.0) as hours_to_payback
+  from fwd
+  where cum_fee_msat >= fee_paid_sat * 1000
+  group by job_id
+)
+select percentile_cont(0.5) within group (order by hours_to_payback)
+from job_payback
+`, from, to).Scan(&p50)
+	if err != nil || !p50.Valid {
+		return 0, false
+	}
+	return p50.Float64, true
+}
+
+func (s *RebalanceService) snapshotMetricsDay(ctx context.Context, day time.Time) {
+	if s.db == nil {
+		return
+	}
+	dayStart := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
+	dayEnd := dayStart.Add(24 * time.Hour)
+	daily, err := s.queryBaselineDaily(ctx, dayStart, dayEnd)
+	if err != nil || len(daily) == 0 {
+		return
+	}
+	d := daily[0]
+	var paybackP50 any
+	if p50, ok := s.queryTimeToPaybackP50(ctx, dayStart, dayEnd); ok {
+		paybackP50 = p50
+	}
+	_, _ = s.db.Exec(ctx, `
+insert into rebalance_metrics_daily (
+  day, jobs_total, jobs_succeeded, jobs_partial, jobs_failed, jobs_cancelled,
+  attempts_total, attempts_succeeded, success_rate, partial_rate, failed_rate,
+  avg_attempts_per_job, avg_sats_per_successful_job, avg_fee_ppm_paid,
+  fee_paid_sat_total, amount_succeeded_sat_total, time_to_payback_p50_hours, updated_at
+) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17, now())
+on conflict (day) do update set
+  jobs_total=excluded.jobs_total,
+  jobs_succeeded=excluded.jobs_succeeded,
+  jobs_partial=excluded.jobs_partial,
+  jobs_failed=excluded.jobs_failed,
+  jobs_cancelled=excluded.jobs_cancelled,
+  attempts_total=excluded.attempts_total,
+  attempts_succeeded=excluded.attempts_succeeded,
+  success_rate=excluded.success_rate,
+  partial_rate=excluded.partial_rate,
+  failed_rate=excluded.failed_rate,
+  avg_attempts_per_job=excluded.avg_attempts_per_job,
+  avg_sats_per_successful_job=excluded.avg_sats_per_successful_job,
+  avg_fee_ppm_paid=excluded.avg_fee_ppm_paid,
+  fee_paid_sat_total=excluded.fee_paid_sat_total,
+  amount_succeeded_sat_total=excluded.amount_succeeded_sat_total,
+  time_to_payback_p50_hours=excluded.time_to_payback_p50_hours,
+  updated_at=now()
+`,
+		dayStart, d.JobsTotal, d.JobsSucceeded, d.JobsPartial, d.JobsFailed, d.JobsCancelled,
+		d.AttemptsTotal, d.AttemptsSucceeded, d.SuccessRate, d.PartialRate, d.FailedRate,
+		d.AvgAttemptsPerJob, d.AvgSatsPerSuccessfulJob, d.AvgFeePpmPaid,
+		d.FeePaidSatTotal, d.AmountSucceededSatTotal, paybackP50,
+	)
+}
+
 func (s *RebalanceService) markJobRunning(jobID int64) {
 	if s.db == nil || jobID <= 0 {
 		return
@@ -6649,15 +6959,46 @@ set status='running',
 where id=$1 and status='queued'`, jobID)
 }
 
-func (s *RebalanceService) insertAttempt(ctx context.Context, jobID int64, idx int, sourceChannelID uint64, amount int64, feePpm int64, feePaidSat int64, status string, paymentHash string, failReason string) error {
+type attemptFailureInfo struct {
+	SourceIndex int32
+	HopPubkey   string
+}
+
+func parseRouteFailure(err error, route *lnrpc.Route) *attemptFailureInfo {
+	if err == nil {
+		return nil
+	}
+	var routeFailure lndclient.RouteFailureError
+	if !errors.As(err, &routeFailure) {
+		return nil
+	}
+	info := &attemptFailureInfo{SourceIndex: int32(routeFailure.FailureSourceIndex)}
+	if route != nil {
+		hopIdx := int(routeFailure.FailureSourceIndex) - 1
+		if hopIdx >= 0 && hopIdx < len(route.Hops) {
+			info.HopPubkey = route.Hops[hopIdx].PubKey
+		}
+	}
+	return info
+}
+
+func (s *RebalanceService) insertAttempt(ctx context.Context, jobID int64, idx int, sourceChannelID uint64, amount int64, feePpm int64, feePaidSat int64, status string, paymentHash string, failReason string, fail *attemptFailureInfo) error {
 	if s.db == nil {
 		return nil
 	}
+	var failSourceIndex any
+	var failHopPubkey any
+	if fail != nil {
+		failSourceIndex = int32(fail.SourceIndex)
+		if fail.HopPubkey != "" {
+			failHopPubkey = fail.HopPubkey
+		}
+	}
 	_, err := s.db.Exec(ctx, `
 insert into rebalance_attempts (
-  job_id, attempt_index, source_channel_id, amount_sat, fee_limit_ppm, fee_paid_sat, status, payment_hash, fail_reason, finished_at
-) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,now())
-`, jobID, idx, int64(sourceChannelID), amount, feePpm, feePaidSat, status, nullableString(paymentHash), nullableString(failReason))
+  job_id, attempt_index, source_channel_id, amount_sat, fee_limit_ppm, fee_paid_sat, status, payment_hash, fail_reason, fail_source_index, fail_hop_pubkey, finished_at
+) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now())
+`, jobID, idx, int64(sourceChannelID), amount, feePpm, feePaidSat, status, nullableString(paymentHash), nullableString(failReason), failSourceIndex, failHopPubkey)
 	return err
 }
 

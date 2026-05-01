@@ -502,6 +502,27 @@ func (s *Server) handleRebalanceExclude(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+func (s *Server) handleRebalanceMetricsBaseline(w http.ResponseWriter, r *http.Request) {
+	if s.rebalance == nil {
+		writeError(w, http.StatusServiceUnavailable, "rebalance unavailable")
+		return
+	}
+	days := 30
+	if raw := strings.TrimSpace(r.URL.Query().Get("days")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			days = parsed
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+	defer cancel()
+	metrics, err := s.rebalance.BaselineMetrics(ctx, days)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, metrics)
+}
+
 func (s *Server) handleRebalanceStream(w http.ResponseWriter, r *http.Request) {
 	if s.rebalance == nil {
 		writeError(w, http.StatusServiceUnavailable, "rebalance unavailable")

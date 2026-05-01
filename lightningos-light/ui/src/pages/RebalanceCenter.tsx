@@ -611,6 +611,8 @@ export default function RebalanceCenter() {
     editUseDefaultEconRatio[channel.channel_id] ?? channel.use_default_econ_ratio
   const channelAutoBypassCostGate = (channel: RebalanceChannel) =>
     editAutoBypassCostGate[channel.channel_id] ?? Boolean(channel.auto_bypass_cost_gate)
+  const channelDraftEligibleAsTarget = (channel: RebalanceChannel) =>
+    channel.eligible_as_target || (channelAutoBypassCostGate(channel) && channel.eligible_as_manual_target)
   const channelEconRatioInput = (channel: RebalanceChannel) => {
     if (channelUseDefaultEconRatio(channel)) {
       return formatEconRatio(config?.econ_ratio ?? 0)
@@ -2349,7 +2351,8 @@ export default function RebalanceCenter() {
             const meetsRoi =
               !config || config.roi_min <= 0 || !expectedRoiValid || expectedRoi >= config.roi_min
             const passesProfit = !scoreMeta || !(scoreMeta.expectedGain > 0 && scoreMeta.estimatedCost > 0 && scoreMeta.expectedGain < scoreMeta.estimatedCost)
-            const isAutoTarget = ch.eligible_as_target && ch.auto_enabled && meetsRoi && passesProfit
+            const draftEligibleAsTarget = channelDraftEligibleAsTarget(ch)
+            const isAutoTarget = draftEligibleAsTarget && ch.auto_enabled && meetsRoi && passesProfit
             const manualRestartSelected = manualRestart[ch.channel_point] === true
             const manualRestartBudgetLow =
               manualRestartBudgetEnforced &&
@@ -2359,7 +2362,7 @@ export default function RebalanceCenter() {
               (scoreMeta?.estimatedCost ?? 0) > remainingTotalSat
             const highlight = isAutoTarget
               ? 'bg-rose-500/10'
-              : ch.eligible_as_target
+              : draftEligibleAsTarget
                 ? 'bg-amber-500/10'
                 : ch.eligible_as_source
                   ? 'bg-emerald-500/10'
@@ -2570,7 +2573,8 @@ export default function RebalanceCenter() {
                 const meetsRoi =
                   !config || config.roi_min <= 0 || !expectedRoiValid || expectedRoi >= config.roi_min
                 const passesProfit = !scoreMeta || !(scoreMeta.expectedGain > 0 && scoreMeta.estimatedCost > 0 && scoreMeta.expectedGain < scoreMeta.estimatedCost)
-                const isAutoTarget = ch.eligible_as_target && ch.auto_enabled && meetsRoi && passesProfit
+                const draftEligibleAsTarget = channelDraftEligibleAsTarget(ch)
+                const isAutoTarget = draftEligibleAsTarget && ch.auto_enabled && meetsRoi && passesProfit
                 const manualRestartSelected = manualRestart[ch.channel_point] === true
                 const manualRestartBudgetLow =
                   manualRestartBudgetEnforced &&
@@ -2589,7 +2593,7 @@ export default function RebalanceCenter() {
                     : undefined
                 const highlight = isAutoTarget
                   ? 'bg-rose-500/10'
-                  : ch.eligible_as_target
+                  : draftEligibleAsTarget
                     ? 'bg-amber-500/10'
                     : ch.eligible_as_source
                       ? 'bg-emerald-500/10'

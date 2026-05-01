@@ -221,6 +221,7 @@ type RebalanceChannel = {
   use_default_econ_ratio: boolean
   econ_ratio_override?: number
   eligible_as_target: boolean
+  eligible_as_manual_target: boolean
   eligible_as_source: boolean
   protected_liquidity_sat: number
   payback_progress: number
@@ -2432,7 +2433,7 @@ export default function RebalanceCenter() {
                   <button
                     className="btn-primary text-xs px-3 py-1"
                     onClick={() => handleRunRebalance(ch)}
-                    disabled={!ch.eligible_as_target}
+                    disabled={!ch.eligible_as_manual_target}
                     title={t('rebalanceCenter.channelsHints.rebalanceIn')}
                   >
                     {t('rebalanceCenter.channels.rebalanceIn')}
@@ -2645,7 +2646,7 @@ export default function RebalanceCenter() {
                       <button
                         className="btn-primary text-xs px-3 py-1"
                         onClick={() => handleRunRebalance(ch)}
-                        disabled={!ch.eligible_as_target}
+                        disabled={!ch.eligible_as_manual_target}
                         title={t('rebalanceCenter.channelsHints.rebalanceIn')}
                       >
                         {t('rebalanceCenter.channels.rebalanceIn')}

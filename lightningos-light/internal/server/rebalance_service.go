@@ -262,6 +262,7 @@ type RebalanceChannel struct {
 	UseDefaultEconRatio   bool     `json:"use_default_econ_ratio"`
 	EconRatioOverride     *float64 `json:"econ_ratio_override,omitempty"`
 	EligibleAsTarget      bool     `json:"eligible_as_target"`
+	EligibleAsManualTarget bool    `json:"eligible_as_manual_target"`
 	EligibleAsSource      bool     `json:"eligible_as_source"`
 	ProtectedLiquiditySat int64    `json:"protected_liquidity_sat"`
 	PaybackProgress       float64  `json:"payback_progress"`
@@ -4893,7 +4894,14 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 
 	eligibleTarget := false
 	deficitPct := target - localPct
-	if ch.Active && deficitPct > cfg.DeadbandPct && outgoingFee > peerFeeRate {
+	// Hotfix: eligibleManualTarget mirrors the gates that runJob actually
+	// enforces for the target channel (see runJob override around the
+	// channelSnapshot loop). User-triggered manual runs bypass the wave 1.4
+	// economic filter and the ROI guardrail — those are auto/auto-restart
+	// only — so the UI should not disable the "Manual Rebal In" button just
+	// because EligibleAsTarget is false.
+	eligibleManualTarget := ch.Active && deficitPct > cfg.DeadbandPct && outgoingFee > peerFeeRate
+	if eligibleManualTarget {
 		// Wave 1.4: require effective spread to clear the expected rebalance
 		// cost (historical 7d ppm, or cfg.RebalanceCostFloorPpm fallback).
 		if expectedCostPpm <= 0 || effectiveSpreadPpm > expectedCostPpm {
@@ -4980,8 +4988,9 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		ManualRestartEnabled:  setting.ManualRestartEnabled,
 		UseDefaultEconRatio:   setting.UseDefaultEconRatio,
 		EconRatioOverride:     econRatioOverride,
-		EligibleAsTarget:      eligibleTarget,
-		EligibleAsSource:      eligibleSource && !excluded,
+		EligibleAsTarget:       eligibleTarget,
+		EligibleAsManualTarget: eligibleManualTarget,
+		EligibleAsSource:       eligibleSource && !excluded,
 		ProtectedLiquiditySat: protected,
 		PaybackProgress:       paybackProgress,
 		MaxSourceSat:          maxSource,

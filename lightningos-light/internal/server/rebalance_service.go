@@ -64,6 +64,12 @@ const (
 )
 
 const (
+	// mcResetCooldown debounces ResetMissionControl across concurrent jobs so a
+	// burst of failures does not thrash MC. Tuned for the 15-min scan cycle.
+	mcResetCooldown = 5 * time.Minute
+)
+
+const (
 	mppStructuralAbortMinAttempts = 4
 	mppStructuralAbortRatio       = 0.70
 )
@@ -492,6 +498,7 @@ type RebalanceService struct {
 	manualRestart              map[int64]manualRestartInfo
 	manualRestartCancel        map[uint64]*manualRestartHandle
 	lastAutoByTarget           map[uint64]time.Time
+	lastMCResetAt              time.Time
 }
 
 func NewRebalanceService(db *pgxpool.Pool, lnd *lndclient.Client, logger *log.Logger) *RebalanceService {
@@ -707,6 +714,36 @@ func (s *RebalanceService) applyMissionControlHalfLife(ctx context.Context, cfg 
 	s.mu.Lock()
 	s.mcHalfLifeApplied = cfg.MissionControlHalfLifeSec
 	s.mu.Unlock()
+}
+
+// tryResetMissionControl invokes LND ResetMissionControl with a cross-job
+// cooldown so a burst of concurrent failures triggers at most one reset per
+// mcResetCooldown window. Returns true when the reset was performed, false
+// when skipped (cooldown not yet elapsed or LND unavailable).
+func (s *RebalanceService) tryResetMissionControl(ctx context.Context, trigger string) bool {
+	if s.lnd == nil {
+		return false
+	}
+	s.mu.Lock()
+	if !s.lastMCResetAt.IsZero() && time.Since(s.lastMCResetAt) < mcResetCooldown {
+		s.mu.Unlock()
+		return false
+	}
+	s.lastMCResetAt = time.Now()
+	s.mu.Unlock()
+	if err := s.lnd.ResetMissionControl(ctx); err != nil {
+		s.mu.Lock()
+		s.lastMCResetAt = time.Time{}
+		s.mu.Unlock()
+		if s.logger != nil {
+			s.logger.Printf("rebalance %s: mission control reset failed: %v", trigger, err)
+		}
+		return false
+	}
+	if s.logger != nil {
+		s.logger.Printf("rebalance %s: mission control reset triggered", trigger)
+	}
+	return true
 }
 
 func (s *RebalanceService) resetSemaphore() {
@@ -2390,25 +2427,28 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 		}
 	}
 
+	// Hotfix 6.5: extend the no-path counter and MC reset trigger to manual
+	// auto-restart jobs (source=manual, reason=auto-restart). User-triggered
+	// manuals (operator clicking "Manual Rebal In") are intentionally left out
+	// — they should not be able to reset MC as a side effect of diagnostics.
+	jobCountsForMCReset := jobSource == "auto" || isManualRestartJob(jobSource, jobReason, false)
+
 	noteAutoNoPath := func() {
-		if jobSource != "auto" {
+		if !jobCountsForMCReset {
 			return
 		}
 		autoNoPathCount++
 		if !autoNoPathResetDone && autoNoPathCount >= autoNoPathThreshold {
-			if s.lnd != nil {
-				resetCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-				err := s.lnd.ResetMissionControl(resetCtx)
-				cancel()
-				if err == nil {
-					autoNoPathResetDone = true
-					autoNoPathCount = 0
-					if s.logger != nil {
-						s.logger.Printf("rebalance auto: mission control reset after %d no-path attempts", autoNoPathThreshold)
-					}
-				} else if s.logger != nil {
-					s.logger.Printf("rebalance auto: mission control reset failed: %v", err)
-				}
+			resetCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			trigger := jobSource
+			if isManualRestartJob(jobSource, jobReason, false) {
+				trigger = "manual-restart"
+			}
+			done := s.tryResetMissionControl(resetCtx, trigger)
+			cancel()
+			if done {
+				autoNoPathResetDone = true
+				autoNoPathCount = 0
 			}
 		}
 		if autoNoPathBackoff <= 0 {
@@ -2423,7 +2463,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 	}
 
 	resetAutoNoPath := func() {
-		if jobSource == "auto" {
+		if jobCountsForMCReset {
 			autoNoPathBackoff = 0
 			autoNoPathCount = 0
 		}

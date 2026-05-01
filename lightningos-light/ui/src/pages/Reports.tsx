@@ -352,12 +352,16 @@ export default function Reports() {
     return inParens ? -parsed : parsed
   }
 
-  const formatDateLabel = (value: string) => {
+  const formatDateLabel = (value: string, includeYear = false) => {
     const parsed = parseInputDate(value)
     if (!parsed) {
       return value
     }
-    return parsed.toLocaleDateString(locale, { month: 'short', day: 'numeric' })
+    return parsed.toLocaleDateString(locale, {
+      month: 'short',
+      day: 'numeric',
+      ...(includeYear ? { year: 'numeric' } : {})
+    })
   }
 
   const formatMonthLabel = (value: string) => {
@@ -368,16 +372,16 @@ export default function Reports() {
     return parsed.toLocaleDateString(locale, { month: 'short', year: 'numeric' })
   }
 
-  const formatRangeLabel = (startValue: string, endValue: string, granularity: ChartGranularity) => {
+  const formatRangeLabel = (startValue: string, endValue: string, granularity: ChartGranularity, includeYear = false) => {
     if (granularity === 'month') {
       return formatMonthLabel(startValue)
     }
     if (granularity === 'week') {
-      const start = formatDateLabel(startValue)
-      const end = formatDateLabel(endValue)
+      const start = formatDateLabel(startValue, includeYear)
+      const end = formatDateLabel(endValue, includeYear)
       return start === end ? start : `${start} - ${end}`
     }
-    return formatDateLabel(startValue)
+    return formatDateLabel(startValue, includeYear)
   }
 
   const formatDateLong = (value: string) => {
@@ -666,6 +670,8 @@ export default function Reports() {
     return mapped.sort((a, b) => a.date.localeCompare(b.date))
   }, [series])
 
+  const showYearInChartLabels = range === 'all'
+
   const chartData = useMemo<ChartDataPoint[]>(() => {
     if (rawChartData.length === 0) {
       return []
@@ -675,7 +681,7 @@ export default function Reports() {
         ...item,
         startDate: item.date,
         endDate: item.date,
-        label: formatRangeLabel(item.date, item.date, 'day')
+        label: formatRangeLabel(item.date, item.date, 'day', showYearInChartLabels)
       }))
     }
 
@@ -726,9 +732,9 @@ export default function Reports() {
       .map(([key, item]) => ({
         ...item,
         date: key,
-        label: formatRangeLabel(item.startDate, item.endDate, chartGranularity)
+        label: formatRangeLabel(item.startDate, item.endDate, chartGranularity, showYearInChartLabels)
       }))
-  }, [chartGranularity, locale, rawChartData])
+  }, [chartGranularity, locale, rawChartData, showYearInChartLabels])
 
   const chartDataWithCost = useMemo<ChartDataPoint[]>(
     () => chartData.map((item) => ({

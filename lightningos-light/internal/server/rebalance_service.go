@@ -34,6 +34,14 @@ const (
 )
 
 const (
+	permanentFailScoreHalfLife      = 7 * 24 * time.Hour
+	permanentFailScoreMax           = 20.0
+	permanentFailScoreSkipThreshold = 3.0
+	permanentFailScoreTTLStep       = time.Hour
+	permanentFailScoreTTLMax        = 6 * time.Hour
+)
+
+const (
 	rebalanceMaxCooldown                = time.Hour
 	recentCooldownWindow                = 30 * time.Minute
 	recentCooldownTTL                   = 30 * time.Minute
@@ -395,6 +403,8 @@ type pairStat struct {
 	LastFailAt           time.Time
 	LastFailReason       string
 	FailCount            int
+	PermanentFailScore   float64
+	PermanentFailUpdated time.Time
 	SuccessAmountSat     int64
 	SuccessFeePpm        int64
 	LastSuccessRouteHops []string // Wave 4.1: hop pubkeys of the last successful route
@@ -1321,6 +1331,78 @@ func pairFailureTTL(reason string, failCount int) time.Duration {
 	return ttl
 }
 
+func permanentFailScoreIncrement(reason string) float64 {
+	if isStructuralRebalanceFailure(reason) {
+		return 1
+	}
+	if isTemporaryPairFailure(reason) {
+		return 0.25
+	}
+	return 0
+}
+
+func decayedPermanentFailScore(score float64, updatedAt time.Time, now time.Time) float64 {
+	if score <= 0 {
+		return 0
+	}
+	if math.IsNaN(score) || math.IsInf(score, 0) {
+		return 0
+	}
+	if score > permanentFailScoreMax {
+		score = permanentFailScoreMax
+	}
+	if updatedAt.IsZero() {
+		return score
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	elapsed := now.Sub(updatedAt)
+	if elapsed <= 0 {
+		return score
+	}
+	decayed := score * math.Pow(0.5, float64(elapsed)/float64(permanentFailScoreHalfLife))
+	if decayed < 0.01 {
+		return 0
+	}
+	return decayed
+}
+
+func nextPermanentFailScore(current float64, updatedAt time.Time, now time.Time, increment float64) float64 {
+	if increment <= 0 {
+		return decayedPermanentFailScore(current, updatedAt, now)
+	}
+	next := decayedPermanentFailScore(current, updatedAt, now) + increment
+	if next > permanentFailScoreMax {
+		return permanentFailScoreMax
+	}
+	return next
+}
+
+func permanentFailScoreTTL(score float64) time.Duration {
+	if score < permanentFailScoreSkipThreshold {
+		return 0
+	}
+	steps := int(math.Ceil(score - permanentFailScoreSkipThreshold + 1))
+	if steps < 1 {
+		steps = 1
+	}
+	ttl := time.Duration(steps) * permanentFailScoreTTLStep
+	if ttl > permanentFailScoreTTLMax {
+		return permanentFailScoreTTLMax
+	}
+	return ttl
+}
+
+func pairFailureTTLForStat(stat pairStat, now time.Time) time.Duration {
+	ttl := pairFailureTTL(stat.LastFailReason, stat.FailCount)
+	permanentTTL := permanentFailScoreTTL(decayedPermanentFailScore(stat.PermanentFailScore, stat.PermanentFailUpdated, now))
+	if permanentTTL > ttl {
+		return permanentTTL
+	}
+	return ttl
+}
+
 func shouldSkipPairForRecentFailure(stat pairStat, now time.Time) bool {
 	if stat.LastFailAt.IsZero() {
 		return false
@@ -1328,7 +1410,10 @@ func shouldSkipPairForRecentFailure(stat pairStat, now time.Time) bool {
 	if !stat.LastSuccessAt.IsZero() && !stat.LastSuccessAt.Before(stat.LastFailAt) {
 		return false
 	}
-	ttl := pairFailureTTL(stat.LastFailReason, stat.FailCount)
+	if now.IsZero() {
+		now = time.Now()
+	}
+	ttl := pairFailureTTLForStat(stat, now)
 	if ttl <= 0 {
 		return false
 	}
@@ -2587,13 +2672,16 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 	recordPairSuccess := func(ctx context.Context, sourceChannelID uint64, targetChannelID uint64, amountSat int64, feePpm int64, feePaidSat int64, routeHops []string) {
 		s.recordPairSuccess(ctx, sourceChannelID, targetChannelID, amountSat, feePpm, feePaidSat, routeHops)
 		delete(currentJobBlockedPairs, sourceChannelID)
+		now := time.Now()
 		stat := pairStats[sourceChannelID]
 		stat.SourceChannelID = sourceChannelID
 		stat.TargetChannelID = targetChannelID
-		stat.LastSuccessAt = time.Now()
+		stat.LastSuccessAt = now
 		stat.LastFailAt = time.Time{}
 		stat.LastFailReason = ""
 		stat.FailCount = 0
+		stat.PermanentFailScore = 0
+		stat.PermanentFailUpdated = now
 		stat.SuccessAmountSat = amountSat
 		stat.SuccessFeePpm = feePpm
 		if len(routeHops) > 0 {
@@ -2613,50 +2701,60 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 	recordPairFailure := func(ctx context.Context, sourceChannelID uint64, targetChannelID uint64, reason string) {
 		s.recordPairFailure(ctx, sourceChannelID, targetChannelID, reason)
 		blockCurrentJobPair(sourceChannelID, reason)
+		now := time.Now()
 		stat := pairStats[sourceChannelID]
 		stat.SourceChannelID = sourceChannelID
 		stat.TargetChannelID = targetChannelID
-		stat.LastFailAt = time.Now()
+		stat.LastFailAt = now
 		stat.LastFailReason = reason
 		stat.FailCount++
+		if increment := permanentFailScoreIncrement(reason); increment > 0 {
+			stat.PermanentFailScore = nextPermanentFailScore(stat.PermanentFailScore, stat.PermanentFailUpdated, now, increment)
+			stat.PermanentFailUpdated = now
+		}
 		pairStats[sourceChannelID] = stat
 	}
 
+	rankNow := time.Now()
 	sort.Slice(sources, func(i, j int) bool {
-		rank := func(ch RebalanceChannel) (bool, bool, int64, int64, int64, time.Duration) {
+		rank := func(ch RebalanceChannel) (bool, bool, float64, int64, int64, int64, time.Duration) {
 			sourceCostPpm := ch.OutgoingFeePpm
 			if sourceCostPpm < 0 {
 				sourceCostPpm = 0
 			}
 			stat, ok := pairStats[ch.ChannelID]
 			if !ok {
-				return false, false, sourceCostPpm, 0, 0, 0
+				return false, false, 0, sourceCostPpm, 0, 0, 0
 			}
 			hasRecentSuccess := false
-			if !stat.LastSuccessAt.IsZero() && time.Since(stat.LastSuccessAt) <= pairSuccessTTL {
+			if !stat.LastSuccessAt.IsZero() && rankNow.Sub(stat.LastSuccessAt) <= pairSuccessTTL {
 				if stat.LastFailAt.IsZero() || stat.LastSuccessAt.After(stat.LastFailAt) {
 					hasRecentSuccess = true
 				}
 			}
 			hasRecentFail := false
-			if shouldSkipPairForRecentFailure(stat, time.Now()) {
+			if shouldSkipPairForRecentFailure(stat, rankNow) {
 				hasRecentFail = true
 			}
+			permanentFailScore := decayedPermanentFailScore(stat.PermanentFailScore, stat.PermanentFailUpdated, rankNow)
 			age := time.Duration(0)
 			if !stat.LastSuccessAt.IsZero() {
-				age = time.Since(stat.LastSuccessAt)
+				age = rankNow.Sub(stat.LastSuccessAt)
 			}
-			return hasRecentSuccess, hasRecentFail, sourceCostPpm, stat.SuccessFeePpm, stat.SuccessAmountSat, age
+			return hasRecentSuccess, hasRecentFail, permanentFailScore, sourceCostPpm, stat.SuccessFeePpm, stat.SuccessAmountSat, age
 		}
 
-		iSuccess, iFail, iSourceCost, iFee, iAmt, iAge := rank(sources[i])
-		jSuccess, jFail, jSourceCost, jFee, jAmt, jAge := rank(sources[j])
+		iSuccess, iFail, iPermanentFailScore, iSourceCost, iFee, iAmt, iAge := rank(sources[i])
+		jSuccess, jFail, jPermanentFailScore, jSourceCost, jFee, jAmt, jAge := rank(sources[j])
 
 		if iSuccess != jSuccess {
 			return iSuccess
 		}
 		if iFail != jFail {
 			return !iFail
+		}
+		if math.Abs(iPermanentFailScore-jPermanentFailScore) > 0.25 {
+			return iPermanentFailScore < jPermanentFailScore
 		}
 		if iSuccess && jSuccess {
 			if iFee != jFee {
@@ -4584,6 +4682,8 @@ insert into rebalance_pair_stats (
   last_fail_at = null,
   last_fail_reason = null,
   fail_count = 0,
+  permanent_fail_score = 0,
+  permanent_fail_updated_at = excluded.last_success_at,
   success_amount_sat = excluded.success_amount_sat,
   success_fee_ppm = excluded.success_fee_ppm,
   success_fee_paid_sat = excluded.success_fee_paid_sat,
@@ -4597,15 +4697,30 @@ func (s *RebalanceService) recordPairFailure(ctx context.Context, sourceID uint6
 		return
 	}
 	now := time.Now().UTC()
+	permanentIncrement := permanentFailScoreIncrement(reason)
 	_, _ = s.db.Exec(ctx, `
 insert into rebalance_pair_stats (
-  source_channel_id, target_channel_id, last_fail_at, last_fail_reason, fail_count
-) values ($1,$2,$3,$4,1)
+  source_channel_id, target_channel_id, last_fail_at, last_fail_reason, fail_count, permanent_fail_score, permanent_fail_updated_at
+) values ($1,$2,$3,$4,1,$5,case when $5::double precision > 0 then $3::timestamptz else null end)
  on conflict (source_channel_id, target_channel_id) do update set
   last_fail_at = excluded.last_fail_at,
   last_fail_reason = excluded.last_fail_reason,
-  fail_count = rebalance_pair_stats.fail_count + 1
-`, int64(sourceID), int64(targetID), now, nullableString(reason))
+  fail_count = rebalance_pair_stats.fail_count + 1,
+  permanent_fail_score = case
+    when $5::double precision <= 0 then rebalance_pair_stats.permanent_fail_score
+    else least($7::double precision,
+      (greatest(0, coalesce(rebalance_pair_stats.permanent_fail_score, 0)) *
+        case
+          when rebalance_pair_stats.permanent_fail_updated_at is null then 1
+          else power(0.5, greatest(0, extract(epoch from ($3::timestamptz - rebalance_pair_stats.permanent_fail_updated_at))) / $6::double precision)
+        end
+      ) + $5::double precision)
+  end,
+  permanent_fail_updated_at = case
+    when $5::double precision > 0 then excluded.permanent_fail_updated_at
+    else rebalance_pair_stats.permanent_fail_updated_at
+  end
+`, int64(sourceID), int64(targetID), now, nullableString(reason), permanentIncrement, permanentFailScoreHalfLife.Seconds(), permanentFailScoreMax)
 }
 
 func (s *RebalanceService) loadPairStatsForTarget(ctx context.Context, targetID uint64) map[uint64]pairStat {
@@ -4614,7 +4729,7 @@ func (s *RebalanceService) loadPairStatsForTarget(ctx context.Context, targetID 
 		return stats
 	}
 	rows, err := s.db.Query(ctx, `
-select source_channel_id, target_channel_id, last_success_at, last_fail_at, last_fail_reason, fail_count, success_amount_sat, success_fee_ppm, last_success_route_hops
+select source_channel_id, target_channel_id, last_success_at, last_fail_at, last_fail_reason, fail_count, success_amount_sat, success_fee_ppm, last_success_route_hops, permanent_fail_score, permanent_fail_updated_at
 from rebalance_pair_stats
 where target_channel_id=$1
 `, int64(targetID))
@@ -4632,15 +4747,18 @@ where target_channel_id=$1
 		var successAmount int64
 		var successFee int64
 		var routeHopsRaw []byte
-		if err := rows.Scan(&sourceID, &targetIDRow, &lastSuccess, &lastFail, &lastFailReason, &failCount, &successAmount, &successFee, &routeHopsRaw); err != nil {
+		var permanentFailScore float64
+		var permanentFailUpdated pgtype.Timestamptz
+		if err := rows.Scan(&sourceID, &targetIDRow, &lastSuccess, &lastFail, &lastFailReason, &failCount, &successAmount, &successFee, &routeHopsRaw, &permanentFailScore, &permanentFailUpdated); err != nil {
 			return stats
 		}
 		stat := pairStat{
-			SourceChannelID:  uint64(sourceID),
-			TargetChannelID:  uint64(targetIDRow),
-			FailCount:        failCount,
-			SuccessAmountSat: successAmount,
-			SuccessFeePpm:    successFee,
+			SourceChannelID:    uint64(sourceID),
+			TargetChannelID:    uint64(targetIDRow),
+			FailCount:          failCount,
+			PermanentFailScore: permanentFailScore,
+			SuccessAmountSat:   successAmount,
+			SuccessFeePpm:      successFee,
 		}
 		if lastSuccess.Valid {
 			stat.LastSuccessAt = lastSuccess.Time
@@ -4650,6 +4768,9 @@ where target_channel_id=$1
 		}
 		if lastFailReason.Valid {
 			stat.LastFailReason = lastFailReason.String
+		}
+		if permanentFailUpdated.Valid {
+			stat.PermanentFailUpdated = permanentFailUpdated.Time
 		}
 		if len(routeHopsRaw) > 0 {
 			var hops []string
@@ -6381,6 +6502,8 @@ create table if not exists rebalance_pair_stats (
   success_fee_paid_sat bigint not null default 0,
   success_count integer not null default 0,
   fail_count integer not null default 0,
+  permanent_fail_score double precision not null default 0,
+  permanent_fail_updated_at timestamptz,
   primary key (source_channel_id, target_channel_id)
 );
 
@@ -6412,6 +6535,10 @@ create index if not exists notifications_channel_id_idx on notifications (channe
 
 alter table if exists rebalance_pair_stats
   add column if not exists last_success_route_hops jsonb;
+alter table if exists rebalance_pair_stats
+  add column if not exists permanent_fail_score double precision not null default 0;
+alter table if exists rebalance_pair_stats
+  add column if not exists permanent_fail_updated_at timestamptz;
 `)
 	if err != nil {
 		return err

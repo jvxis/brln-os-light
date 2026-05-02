@@ -354,6 +354,27 @@ func TestPairFailureTTLAdaptsByReasonAndFailureCount(t *testing.T) {
 	}
 }
 
+func TestPermanentFailScoreDecaysAndWeightsFailureTypes(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	decayed := decayedPermanentFailScore(8, now.Add(-permanentFailScoreHalfLife), now)
+	if decayed < 3.99 || decayed > 4.01 {
+		t.Fatalf("expected one half-life to halve score to about 4, got %.4f", decayed)
+	}
+	next := nextPermanentFailScore(8, now.Add(-permanentFailScoreHalfLife), now, 1)
+	if next < 4.99 || next > 5.01 {
+		t.Fatalf("expected decayed score plus increment to be about 5, got %.4f", next)
+	}
+	if got := permanentFailScoreIncrement("rpc error: code = Unknown desc = unable to find a path to destination"); got != 1 {
+		t.Fatalf("expected structural failure increment 1, got %.2f", got)
+	}
+	if got := permanentFailScoreIncrement("temporary_channel_failure"); got != 0.25 {
+		t.Fatalf("expected temporary channel failure increment 0.25, got %.2f", got)
+	}
+	if got := permanentFailScoreIncrement("route fee exceeds limit"); got != 0 {
+		t.Fatalf("expected fee-limit failure to avoid permanent score, got %.2f", got)
+	}
+}
+
 func TestShouldSkipPairForRecentFailureHonorsSuccessResetAndAdaptiveTTL(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	stat := pairStat{
@@ -374,6 +395,31 @@ func TestShouldSkipPairForRecentFailureHonorsSuccessResetAndAdaptiveTTL(t *testi
 	stat.LastSuccessAt = now.Add(-5 * time.Minute)
 	if shouldSkipPairForRecentFailure(stat, now) {
 		t.Fatalf("did not expect pair to be skipped after a newer success")
+	}
+}
+
+func TestShouldSkipPairForRecentFailureUsesPermanentFailScoreTTL(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	stat := pairStat{
+		LastFailAt:           now.Add(-2 * time.Hour),
+		LastFailReason:       "unable to find a path to destination",
+		FailCount:            1,
+		PermanentFailScore:   5,
+		PermanentFailUpdated: now,
+	}
+	if !shouldSkipPairForRecentFailure(stat, now) {
+		t.Fatalf("expected permanent fail score to extend skip ttl beyond normal no-path ttl")
+	}
+
+	stat.LastFailAt = now.Add(-4 * time.Hour)
+	if shouldSkipPairForRecentFailure(stat, now) {
+		t.Fatalf("did not expect pair skip after permanent score ttl expires")
+	}
+
+	stat.LastFailAt = now.Add(-2 * time.Hour)
+	stat.LastSuccessAt = now.Add(-1 * time.Minute)
+	if shouldSkipPairForRecentFailure(stat, now) {
+		t.Fatalf("did not expect permanent fail score to override a newer success")
 	}
 }
 

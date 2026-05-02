@@ -138,6 +138,41 @@ func TestNormalizeRebalanceConfigClampsGainModelAndVelocityWeight(t *testing.T) 
 	}
 }
 
+func TestEstimateTimeToPaybackHours(t *testing.T) {
+	hours, valid := estimateTimeToPaybackHours(800, 1000, 840)
+	if !valid {
+		t.Fatalf("expected time-to-payback estimate to be valid")
+	}
+	if hours != 40 {
+		t.Fatalf("expected 40 hours to payback, got %.2f", hours)
+	}
+
+	hours, valid = estimateTimeToPaybackHours(1000, 1000, 840)
+	if !valid || hours != 0 {
+		t.Fatalf("expected paid-back channel to return 0 valid hours, got %.2f valid=%v", hours, valid)
+	}
+
+	if _, valid = estimateTimeToPaybackHours(100, 1000, 0); valid {
+		t.Fatalf("expected invalid estimate without recent revenue")
+	}
+}
+
+func TestLimitRebalanceSkipDetailsCopiesAndCaps(t *testing.T) {
+	details := []RebalanceSkipDetail{
+		{ChannelID: 1, Reason: "a"},
+		{ChannelID: 2, Reason: "b"},
+		{ChannelID: 3, Reason: "c"},
+	}
+	got := limitRebalanceSkipDetails(details, 2)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 details, got %d", len(got))
+	}
+	details[0].Reason = "mutated"
+	if got[0].Reason != "a" {
+		t.Fatalf("expected capped details to be copied, got %q", got[0].Reason)
+	}
+}
+
 func TestApplyRebalanceConfigPayloadOnlyTouchesProvidedFields(t *testing.T) {
 	cfg := defaultRebalanceConfig()
 	deadband := 0.0

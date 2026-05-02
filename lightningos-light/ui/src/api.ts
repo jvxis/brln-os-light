@@ -627,6 +627,8 @@ export const updateRebalanceConfig = (payload: {
 }) => request('/api/rebalance/config', { method: 'POST', body: JSON.stringify(payload) })
 export const getRebalanceOverview = () => request('/api/rebalance/overview')
 export const getRebalanceChannels = () => request('/api/rebalance/channels')
+export const getRebalancePairStats = (targetChannelId: number) =>
+  request(`/api/rebalance/pair-stats?target_channel_id=${encodeURIComponent(String(targetChannelId))}`)
 export const getRebalanceQueue = () => request('/api/rebalance/queue')
 export const getRebalanceHistory = (limit = 0) =>
   limit > 0 ? request(`/api/rebalance/history?limit=${limit}`) : request('/api/rebalance/history')

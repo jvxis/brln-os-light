@@ -212,6 +212,7 @@ func (s *Server) routes() http.Handler {
 		r.Post("/config", s.handleRebalanceConfigPost)
 		r.Get("/overview", s.handleRebalanceOverview)
 		r.Get("/channels", s.handleRebalanceChannels)
+		r.Get("/pair-stats", s.handleRebalancePairStats)
 		r.Get("/queue", s.handleRebalanceQueue)
 		r.Get("/history", s.handleRebalanceHistory)
 		r.Post("/run", s.handleRebalanceRun)

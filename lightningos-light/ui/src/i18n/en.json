@@ -2841,6 +2841,14 @@
       "show": "Configure",
       "showAdvancedControls": "Show advanced controls",
       "hideAdvancedControls": "Hide advanced controls",
+      "groups": {
+        "operation": "Operation",
+        "budget": "Budget and reserve",
+        "targets": "Targets and limits",
+        "economics": "Economics and score",
+        "execution": "Execution and attempts",
+        "payback": "Protection and payback"
+      },
       "autoEnabled": "Enable auto rebalance",
       "scanInterval": "Scan interval (sec)",
       "dailyBudgetPct": "Daily budget (% of revenue)",
@@ -3005,7 +3013,22 @@
         "auto": "Auto",
         "excludeSource": "Exclude source",
         "roiEstimate": "ROI est. {{value}}",
-        "roiEstimateNA": "ROI est. n/a"
+        "roiEstimateNA": "ROI est. n/a",
+        "timeToPayback": "TTP",
+        "timeToPaybackPaid": "paid",
+        "timeToPaybackHours": "{{value}}h",
+        "timeToPaybackDays": "{{value}}d",
+        "timeToPaybackNA": "n/a",
+        "pairStats": "Pairs",
+        "pairStatsTitle": "Source -> target pairs",
+        "pairStatsLoading": "Loading pairs...",
+        "pairStatsEmpty": "No pair history for this target.",
+        "pairStatsError": "Failed to load pairs.",
+        "pairStatsLastSuccess": "Last success",
+        "pairStatsLastFail": "Last fail",
+        "pairStatsFailScore": "Fail score",
+        "pairStatsSuccess": "Success",
+        "pairStatsRoute": "Route"
       },
     "channelsHints": {
       "targetOutbound": "Desired outbound liquidity percentage after the rebalance.",
@@ -3015,6 +3038,8 @@
       "save": "Save target outbound, channel econ ratio, and cost-gate override.",
       "rebalanceIn": "Start a rebalance to increase local (outbound) liquidity.",
       "rebalanceRestart": "Auto-restart manual rebalances after cooldown until the target is reached.",
+      "timeToPayback": "Estimated time for recent revenue to pay back this channel's remaining rebalance cost.",
+      "pairStats": "Shows source -> target history for this channel, including latest successes, failures, decayed permanent score, and saved route when available.",
       "auto": "Allow auto mode to rebalance in this channel.",
       "excludeSource": "Never use this channel as a source for rebalances."
     },

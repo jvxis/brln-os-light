@@ -33,6 +33,8 @@ const (
 	autofeeRefreshRebalMarkup   = 0.10
 )
 
+const autofeeRebalanceSettlingWindow = 30 * time.Minute
+
 const superSourceBaseFeeMsatDefault = 1000
 const rebalCostModeDefault = "blend"
 const htlcModeDefault = "full"
@@ -2690,6 +2692,8 @@ func (s *autofeeRunSummary) addTags(tags []string) {
 			s.skippedSmall++
 		case "same-ppm":
 			s.skippedSame++
+		case "autofee_settling":
+			s.skippedOther++
 		case "htlc-liquidity-hot":
 			s.htlcLiqHot++
 		case "htlc-policy-hot":
@@ -3570,7 +3574,7 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 				summary.kept++
 			}
 			cat := "kept"
-			if containsTag(decision.Tags, "cooldown") || containsTag(decision.Tags, "hold-small") {
+			if hasAutofeeSkipTag(decision.Tags) {
 				cat = "skipped"
 			}
 			entry := buildAutofeeChannelLogEntry(decision, cat, dryRun, nil)
@@ -3802,8 +3806,10 @@ type rebalStats struct {
 type recentRebalanceSignal struct {
 	Count      int
 	AmtSat     int64
+	LastAt     time.Time
 	WeakCount  int
 	WeakAmtSat int64
+	WeakLastAt time.Time
 }
 
 type recentWeakRebalanceJob struct {
@@ -3816,6 +3822,34 @@ func (s recentRebalanceSignal) surgeConfirmInputs() (int, int64) {
 	weightedCount := float64(s.Count) + float64(s.WeakCount)*weakRebalanceAttemptCountWeight
 	weightedAmt := float64(s.AmtSat) + float64(s.WeakAmtSat)*weakRebalanceAttemptAmtWeight
 	return int(math.Round(weightedCount)), int64(math.Round(weightedAmt))
+}
+
+func (s recentRebalanceSignal) latestAt() time.Time {
+	latest := time.Time{}
+	if s.Count > 0 && !s.LastAt.IsZero() {
+		latest = s.LastAt
+	}
+	if s.WeakCount > 0 && !s.WeakLastAt.IsZero() && (latest.IsZero() || s.WeakLastAt.After(latest)) {
+		latest = s.WeakLastAt
+	}
+	return latest
+}
+
+func shouldHoldAutofeeForRebalanceSettling(sig recentRebalanceSignal, now time.Time, window time.Duration) bool {
+	if window <= 0 {
+		return false
+	}
+	latest := sig.latestAt()
+	if latest.IsZero() {
+		return false
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if latest.After(now) {
+		return true
+	}
+	return now.Sub(latest) <= window
 }
 
 func collapseWeakRebalanceCampaigns(jobs []recentWeakRebalanceJob, campaignGap time.Duration) map[uint64]recentRebalanceSignal {
@@ -3834,6 +3868,7 @@ func collapseWeakRebalanceCampaigns(jobs []recentWeakRebalanceJob, campaignGap t
 	})
 	var currentChan uint64
 	var lastTs time.Time
+	var campaignLastTs time.Time
 	var campaignAmt int64
 	flush := func() {
 		if currentChan == 0 {
@@ -3842,6 +3877,9 @@ func collapseWeakRebalanceCampaigns(jobs []recentWeakRebalanceJob, campaignGap t
 		sig := out[currentChan]
 		sig.WeakCount++
 		sig.WeakAmtSat += campaignAmt
+		if !campaignLastTs.IsZero() && (sig.WeakLastAt.IsZero() || campaignLastTs.After(sig.WeakLastAt)) {
+			sig.WeakLastAt = campaignLastTs
+		}
 		out[currentChan] = sig
 	}
 	for _, job := range jobs {
@@ -3852,10 +3890,12 @@ func collapseWeakRebalanceCampaigns(jobs []recentWeakRebalanceJob, campaignGap t
 			flush()
 			currentChan = job.ChannelID
 			lastTs = job.Ts
+			campaignLastTs = job.Ts
 			campaignAmt = job.AmtSat
 			continue
 		}
 		lastTs = job.Ts
+		campaignLastTs = job.Ts
 		if job.AmtSat > campaignAmt {
 			campaignAmt = job.AmtSat
 		}
@@ -6004,7 +6044,8 @@ func (e *autofeeEngine) fetchRecentRebalanceTouches(ctx context.Context, success
 select
   j.target_channel_id as chan_id,
   count(*)::bigint as success_count,
-  coalesce(sum(coalesce(a.amount_sat, 0)), 0)::bigint as success_amt_sat
+  coalesce(sum(coalesce(a.amount_sat, 0)), 0)::bigint as success_amt_sat,
+  max(coalesce(a.finished_at, a.started_at)) as last_success_at
 from rebalance_attempts a
 join rebalance_jobs j on j.id = a.job_id
 where j.target_channel_id is not null
@@ -6021,7 +6062,8 @@ group by j.target_channel_id
 		var chanID int64
 		var successCount int64
 		var successAmtSat int64
-		if err := successRows.Scan(&chanID, &successCount, &successAmtSat); err != nil {
+		var lastSuccessAt time.Time
+		if err := successRows.Scan(&chanID, &successCount, &successAmtSat, &lastSuccessAt); err != nil {
 			return touches, err
 		}
 		if chanID <= 0 {
@@ -6030,6 +6072,9 @@ group by j.target_channel_id
 		sig := touches[uint64(chanID)]
 		sig.Count += int(successCount)
 		sig.AmtSat += successAmtSat
+		if !lastSuccessAt.IsZero() && (sig.LastAt.IsZero() || lastSuccessAt.After(sig.LastAt)) {
+			sig.LastAt = lastSuccessAt
+		}
 		touches[uint64(chanID)] = sig
 	}
 	if err := successRows.Err(); err != nil {
@@ -6527,7 +6572,7 @@ func formatAutofeeDecisionLine(d *decision, dryRun bool, isError bool) (string, 
 		category = "changed"
 	} else {
 		action = fmt.Sprintf("mantém %d ppm", d.LocalPpm)
-		if containsTag(d.Tags, "cooldown") || containsTag(d.Tags, "hold-small") {
+		if hasAutofeeSkipTag(d.Tags) {
 			category = "skipped"
 		}
 	}
@@ -6641,6 +6686,8 @@ func buildAutofeeChannelLogEntry(d *decision, category string, dryRun bool, err 
 			skipReason = "cooldown"
 		} else if containsTag(d.Tags, "hold-small") {
 			skipReason = "hold-small"
+		} else if containsTag(d.Tags, "autofee_settling") {
+			skipReason = "autofee_settling"
 		} else if containsTag(d.Tags, "same-ppm") {
 			skipReason = "same-ppm"
 		}
@@ -7483,13 +7530,15 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	recentRebalanceWeakCount := 0
 	surgeConfirmRebalanceCount := 0
 	surgeConfirmRebalanceAmtSat := int64(0)
+	rebalanceTouch := recentRebalanceSignal{}
 	if recentRebalanceTouches != nil {
-		sig := recentRebalanceTouches[ch.ChannelID]
-		recentRebalanceCount = sig.Count
-		recentRebalanceWeakCount = sig.WeakCount
-		surgeConfirmRebalanceCount, surgeConfirmRebalanceAmtSat = sig.surgeConfirmInputs()
+		rebalanceTouch = recentRebalanceTouches[ch.ChannelID]
+		recentRebalanceCount = rebalanceTouch.Count
+		recentRebalanceWeakCount = rebalanceTouch.WeakCount
+		surgeConfirmRebalanceCount, surgeConfirmRebalanceAmtSat = rebalanceTouch.surgeConfirmInputs()
 	}
 	if marketRefillMode {
+		rebalanceTouch = recentRebalanceSignal{}
 		recentRebalanceCount = 0
 		recentRebalanceWeakCount = 0
 		surgeConfirmRebalanceCount = 0
@@ -8888,6 +8937,12 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		if churnTags := shouldHoldForAutofeeChurn(e.profile, e.recentChanges[ch.ChannelID], localPpm, finalPpm, recentRebalanceCount, htlcLiquidityHot); len(churnTags) > 0 {
 			apply = false
 			tags = append(tags, churnTags...)
+		}
+	}
+	if apply && finalPpm != localPpm && shouldHoldAutofeeForRebalanceSettling(rebalanceTouch, e.now, autofeeRebalanceSettlingWindow) {
+		apply = false
+		if !containsTag(tags, "autofee_settling") {
+			tags = append(tags, "autofee_settling")
 		}
 	}
 
@@ -10306,6 +10361,12 @@ func containsTag(tags []string, want string) bool {
 	return false
 }
 
+func hasAutofeeSkipTag(tags []string) bool {
+	return containsTag(tags, "cooldown") ||
+		containsTag(tags, "hold-small") ||
+		containsTag(tags, "autofee_settling")
+}
+
 func formatAutofeeTags(d *decision) string {
 	if d == nil {
 		return ""
@@ -10501,6 +10562,8 @@ func formatAutofeeTags(d *decision) string {
 			add("🧊churn-24h")
 		case t == "churn-up-lock":
 			add("🧊churn-up")
+		case t == "autofee_settling":
+			add("autofee-settling")
 		case t == "same-ppm":
 			add("🟰same-ppm")
 		case t == "low-out-slow-up":

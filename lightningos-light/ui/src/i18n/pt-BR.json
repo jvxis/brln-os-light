@@ -2841,6 +2841,14 @@
       "show": "Configurar",
       "showAdvancedControls": "Mostrar controles avançados",
       "hideAdvancedControls": "Ocultar controles avançados",
+      "groups": {
+        "operation": "Operação",
+        "budget": "Orçamento e reserva",
+        "targets": "Alvos e limites",
+        "economics": "Economia e score",
+        "execution": "Execução e tentativas",
+        "payback": "Proteção e payback"
+      },
       "autoEnabled": "Ativar auto rebalance",
       "scanInterval": "Intervalo de varredura (seg)",
       "dailyBudgetPct": "Orçamento diário (% da receita)",
@@ -3005,7 +3013,22 @@
         "auto": "Auto",
         "excludeSource": "Excluir fonte",
         "roiEstimate": "ROI est. {{value}}",
-        "roiEstimateNA": "ROI est. ind"
+        "roiEstimateNA": "ROI est. ind",
+        "timeToPayback": "TTP",
+        "timeToPaybackPaid": "pago",
+        "timeToPaybackHours": "{{value}}h",
+        "timeToPaybackDays": "{{value}}d",
+        "timeToPaybackNA": "n/a",
+        "pairStats": "Pares",
+        "pairStatsTitle": "Pares fonte -> alvo",
+        "pairStatsLoading": "Carregando pares...",
+        "pairStatsEmpty": "Sem historico de pares para este alvo.",
+        "pairStatsError": "Falha ao carregar pares.",
+        "pairStatsLastSuccess": "Ult. sucesso",
+        "pairStatsLastFail": "Ult. falha",
+        "pairStatsFailScore": "Score falha",
+        "pairStatsSuccess": "Sucesso",
+        "pairStatsRoute": "Rota"
       },
     "channelsHints": {
       "targetOutbound": "Percentual de outbound desejado após o rebalance.",
@@ -3015,6 +3038,8 @@
       "save": "Salvar target outbound, ratio econômico e override do gate de custo.",
       "rebalanceIn": "Iniciar rebalance manual para aumentar liquidez local (outbound).",
       "rebalanceRestart": "Reinicia o rebalance manual após cooldown até atingir o alvo.",
+      "timeToPayback": "Tempo estimado para a receita recente pagar o custo de rebalance ainda em aberto deste canal.",
+      "pairStats": "Mostra o historico fonte -> alvo deste canal, incluindo ultimos sucessos, falhas, score permanente com decay e rota salva quando disponivel.",
       "auto": "Permitir que o modo automático aumente a liquidez local deste canal.",
       "excludeSource": "Nunca usar este canal como fonte de rebalance."
     },

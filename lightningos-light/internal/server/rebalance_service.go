@@ -325,6 +325,8 @@ type RebalanceChannel struct {
 	EligibleAsSource       bool     `json:"eligible_as_source"`
 	ProtectedLiquiditySat  int64    `json:"protected_liquidity_sat"`
 	PaybackProgress        float64  `json:"payback_progress"`
+	TimeToPaybackHours     float64  `json:"time_to_payback_hours"`
+	TimeToPaybackValid     bool     `json:"time_to_payback_valid"`
 	MaxSourceSat           int64    `json:"max_source_sat"`
 	Revenue7dSat           int64    `json:"revenue_7d_sat"`
 	DrainRateSatPerHour    int64    `json:"drain_rate_sat_per_hour"`
@@ -335,6 +337,23 @@ type RebalanceChannel struct {
 	ROIEstimate            float64  `json:"roi_estimate"`
 	ROIEstimateValid       bool     `json:"roi_estimate_valid"`
 	ExcludedAsSource       bool     `json:"excluded_as_source"`
+}
+
+type RebalancePairStat struct {
+	SourceChannelID      uint64   `json:"source_channel_id"`
+	SourceChannelPoint   string   `json:"source_channel_point,omitempty"`
+	SourcePeerAlias      string   `json:"source_peer_alias,omitempty"`
+	TargetChannelID      uint64   `json:"target_channel_id"`
+	TargetChannelPoint   string   `json:"target_channel_point,omitempty"`
+	TargetPeerAlias      string   `json:"target_peer_alias,omitempty"`
+	LastSuccessAt        string   `json:"last_success_at,omitempty"`
+	LastFailAt           string   `json:"last_fail_at,omitempty"`
+	LastFailReason       string   `json:"last_fail_reason,omitempty"`
+	FailCount            int      `json:"fail_count"`
+	PermanentFailScore   float64  `json:"permanent_fail_score"`
+	SuccessAmountSat     int64    `json:"success_amount_sat"`
+	SuccessFeePpm        int64    `json:"success_fee_ppm"`
+	LastSuccessRouteHops []string `json:"last_success_route_hops,omitempty"`
 }
 
 type RebalanceJob struct {
@@ -1783,6 +1802,7 @@ func (s *RebalanceService) runAutoScan() {
 	queuedCount := 0
 	skippedDetails := []RebalanceSkipDetail{}
 	defer func() {
+		limitedSkipped := limitRebalanceSkipDetails(skippedDetails, scanSkipDetailLimit)
 		s.mu.Lock()
 		s.lastScan = scanAt
 		s.lastScanStatus = scanStatus
@@ -1797,11 +1817,13 @@ func (s *RebalanceService) runAutoScan() {
 		s.lastScanTopScoreSat = topScore
 		s.lastScanProfitSkipped = profitSkipped
 		s.lastScanQueued = queuedCount
-		if len(skippedDetails) > scanSkipDetailLimit {
-			skippedDetails = skippedDetails[:scanSkipDetailLimit]
-		}
-		s.lastScanSkipped = skippedDetails
+		s.lastScanSkipped = limitedSkipped
 		s.mu.Unlock()
+		persistCtx, persistCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer persistCancel()
+		if err := s.persistRebalanceScanSkips(persistCtx, scanAt, limitedSkipped); err != nil && s.logger != nil {
+			s.logger.Printf("rebalance scan skips persist failed: %v", err)
+		}
 	}()
 
 	revenueByChannel, _ := s.fetchChannelRevenue7d(ctx)
@@ -2022,6 +2044,84 @@ func (s *RebalanceService) runAutoScan() {
 	if s.logger != nil {
 		s.logger.Printf("rebalance scan: candidates=%d queued=%d profit_skipped=%d roi_skipped=%d top_score=%d sats", len(candidates), queuedCount, profitSkipped, roiSkipped, topScore)
 	}
+}
+
+func limitRebalanceSkipDetails(details []RebalanceSkipDetail, limit int) []RebalanceSkipDetail {
+	if len(details) == 0 || limit <= 0 {
+		return []RebalanceSkipDetail{}
+	}
+	if len(details) > limit {
+		details = details[:limit]
+	}
+	out := make([]RebalanceSkipDetail, len(details))
+	copy(out, details)
+	return out
+}
+
+func (s *RebalanceService) persistRebalanceScanSkips(ctx context.Context, scanAt time.Time, details []RebalanceSkipDetail) error {
+	if s.db == nil || scanAt.IsZero() || len(details) == 0 {
+		return nil
+	}
+	_, _ = s.db.Exec(ctx, `delete from rebalance_scan_skips where scan_at < now() - interval '14 days'`)
+	batch := &pgx.Batch{}
+	for _, detail := range details {
+		batch.Queue(`
+insert into rebalance_scan_skips (
+  scan_at, channel_id, channel_point, peer_alias, target_outbound_pct, target_amount_sat,
+  expected_gain_sat, estimated_cost_sat, expected_roi, expected_roi_valid, reason
+) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+`, scanAt.UTC(), int64(detail.ChannelID), detail.ChannelPoint, detail.PeerAlias, detail.TargetOutboundPct, detail.TargetAmountSat, detail.ExpectedGainSat, detail.EstimatedCostSat, detail.ExpectedROI, detail.ExpectedROIValid, detail.Reason)
+	}
+	br := s.db.SendBatch(ctx, batch)
+	defer br.Close()
+	for range details {
+		if _, err := br.Exec(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *RebalanceService) loadRebalanceScanSkips(ctx context.Context, scanAt time.Time, limit int) []RebalanceSkipDetail {
+	if s.db == nil || scanAt.IsZero() || limit <= 0 {
+		return []RebalanceSkipDetail{}
+	}
+	rows, err := s.db.Query(ctx, `
+select channel_id, channel_point, peer_alias, target_outbound_pct, target_amount_sat,
+  expected_gain_sat, estimated_cost_sat, expected_roi, expected_roi_valid, reason
+from rebalance_scan_skips
+where scan_at=$1
+order by id
+limit $2
+`, scanAt.UTC(), limit)
+	if err != nil {
+		return []RebalanceSkipDetail{}
+	}
+	defer rows.Close()
+	out := []RebalanceSkipDetail{}
+	for rows.Next() {
+		var detail RebalanceSkipDetail
+		var channelID int64
+		if err := rows.Scan(
+			&channelID,
+			&detail.ChannelPoint,
+			&detail.PeerAlias,
+			&detail.TargetOutboundPct,
+			&detail.TargetAmountSat,
+			&detail.ExpectedGainSat,
+			&detail.EstimatedCostSat,
+			&detail.ExpectedROI,
+			&detail.ExpectedROIValid,
+			&detail.Reason,
+		); err != nil {
+			return out
+		}
+		if channelID > 0 {
+			detail.ChannelID = uint64(channelID)
+		}
+		out = append(out, detail)
+	}
+	return out
 }
 
 type rebalanceTarget struct {
@@ -4830,6 +4930,80 @@ where target_channel_id=$1
 	return stats
 }
 
+func (s *RebalanceService) PairStats(ctx context.Context, targetID uint64) ([]RebalancePairStat, error) {
+	if targetID == 0 {
+		return []RebalancePairStat{}, nil
+	}
+	stats := s.loadPairStatsForTarget(ctx, targetID)
+	if len(stats) == 0 {
+		return []RebalancePairStat{}, nil
+	}
+
+	aliases := map[uint64]string{}
+	points := map[uint64]string{}
+	if s.lnd != nil {
+		if channels, err := s.lnd.ListChannels(ctx); err == nil {
+			for _, ch := range channels {
+				aliases[ch.ChannelID] = ch.PeerAlias
+				points[ch.ChannelID] = ch.ChannelPoint
+			}
+		}
+	}
+
+	now := time.Now()
+	result := make([]RebalancePairStat, 0, len(stats))
+	for _, stat := range stats {
+		item := RebalancePairStat{
+			SourceChannelID:      stat.SourceChannelID,
+			SourceChannelPoint:   points[stat.SourceChannelID],
+			SourcePeerAlias:      aliases[stat.SourceChannelID],
+			TargetChannelID:      stat.TargetChannelID,
+			TargetChannelPoint:   points[stat.TargetChannelID],
+			TargetPeerAlias:      aliases[stat.TargetChannelID],
+			LastFailReason:       stat.LastFailReason,
+			FailCount:            stat.FailCount,
+			PermanentFailScore:   decayedPermanentFailScore(stat.PermanentFailScore, stat.PermanentFailUpdated, now),
+			SuccessAmountSat:     stat.SuccessAmountSat,
+			SuccessFeePpm:        stat.SuccessFeePpm,
+			LastSuccessRouteHops: append([]string(nil), stat.LastSuccessRouteHops...),
+		}
+		if !stat.LastSuccessAt.IsZero() {
+			item.LastSuccessAt = stat.LastSuccessAt.UTC().Format(time.RFC3339)
+		}
+		if !stat.LastFailAt.IsZero() {
+			item.LastFailAt = stat.LastFailAt.UTC().Format(time.RFC3339)
+		}
+		result = append(result, item)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		left := latestPairStatEventTime(result[i])
+		right := latestPairStatEventTime(result[j])
+		if !left.Equal(right) {
+			return left.After(right)
+		}
+		if result[i].PermanentFailScore != result[j].PermanentFailScore {
+			return result[i].PermanentFailScore > result[j].PermanentFailScore
+		}
+		return result[i].SourceChannelID < result[j].SourceChannelID
+	})
+	return result, nil
+}
+
+func latestPairStatEventTime(stat RebalancePairStat) time.Time {
+	latest := time.Time{}
+	if stat.LastSuccessAt != "" {
+		if parsed, err := time.Parse(time.RFC3339, stat.LastSuccessAt); err == nil {
+			latest = parsed
+		}
+	}
+	if stat.LastFailAt != "" {
+		if parsed, err := time.Parse(time.RFC3339, stat.LastFailAt); err == nil && (latest.IsZero() || parsed.After(latest)) {
+			latest = parsed
+		}
+	}
+	return latest
+}
+
 func (s *RebalanceService) loadRecentSourceCooldowns(ctx context.Context, since time.Time) map[uint64]recentCooldownStat {
 	stats := map[uint64]recentCooldownStat{}
 	if s.db == nil {
@@ -5565,6 +5739,7 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 	if paidCost > 0 {
 		paybackProgress = float64(paidRevenue) / float64(paidCost)
 	}
+	timeToPaybackHours, timeToPaybackValid := estimateTimeToPaybackHours(paidRevenue, paidCost, revenue7dSat)
 
 	// Wave 1.4: per-channel econ ratio (defaults to global cfg.EconRatio).
 	effectiveEconRatio := cfg.EconRatio
@@ -5699,6 +5874,8 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		EligibleAsSource:       eligibleSource && !excluded,
 		ProtectedLiquiditySat:  protected,
 		PaybackProgress:        paybackProgress,
+		TimeToPaybackHours:     timeToPaybackHours,
+		TimeToPaybackValid:     timeToPaybackValid,
 		MaxSourceSat:           maxSource,
 		Revenue7dSat:           revenue7dSat,
 		DrainRateSatPerHour:    drainRateSatPerHour,
@@ -5710,6 +5887,24 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		ROIEstimateValid:       roiEstimateValid,
 		ExcludedAsSource:       excluded,
 	}
+}
+
+func estimateTimeToPaybackHours(paidRevenueSat int64, paidCostSat int64, revenue7dSat int64) (float64, bool) {
+	if paidCostSat <= 0 {
+		return 0, false
+	}
+	remainingSat := paidCostSat - paidRevenueSat
+	if remainingSat <= 0 {
+		return 0, true
+	}
+	if revenue7dSat <= 0 {
+		return 0, false
+	}
+	revenuePerHour := float64(revenue7dSat) / (7 * 24)
+	if revenuePerHour <= 0 {
+		return 0, false
+	}
+	return float64(remainingSat) / revenuePerHour, true
 }
 
 func computeDeficitAmount(ch lndclient.ChannelInfo, targetOutboundPct float64) int64 {
@@ -6554,6 +6749,22 @@ create table if not exists rebalance_pair_stats (
   primary key (source_channel_id, target_channel_id)
 );
 
+create table if not exists rebalance_scan_skips (
+  id bigserial primary key,
+  scan_at timestamptz not null,
+  channel_id bigint not null default 0,
+  channel_point text not null default '',
+  peer_alias text not null default '',
+  target_outbound_pct double precision not null default 0,
+  target_amount_sat bigint not null default 0,
+  expected_gain_sat bigint not null default 0,
+  estimated_cost_sat bigint not null default 0,
+  expected_roi double precision not null default 0,
+  expected_roi_valid boolean not null default false,
+  reason text not null,
+  created_at timestamptz not null default now()
+);
+
 create table if not exists rebalance_budget_daily (
   day date primary key,
   budget_sat bigint not null,
@@ -6578,6 +6789,8 @@ create index if not exists rebalance_mpp_shadow_created_idx on rebalance_mpp_sha
 create index if not exists rebalance_mpp_shadow_success_idx on rebalance_mpp_shadow (actual_any_success, created_at desc);
 create index if not exists rebalance_pair_stats_fail_idx on rebalance_pair_stats (last_fail_at desc);
 create index if not exists rebalance_pair_stats_success_idx on rebalance_pair_stats (last_success_at desc);
+create index if not exists rebalance_scan_skips_scan_idx on rebalance_scan_skips (scan_at desc);
+create index if not exists rebalance_scan_skips_reason_idx on rebalance_scan_skips (reason, scan_at desc);
 create index if not exists notifications_channel_id_idx on notifications (channel_id);
 
 alter table if exists rebalance_pair_stats
@@ -8225,6 +8438,11 @@ where report_date >= current_date - interval '6 days'
 	lastScanSkipped := append([]RebalanceSkipDetail(nil), s.lastScanSkipped...)
 	mcState := s.missionControlStateLocked(time.Now())
 	s.mu.Unlock()
+	if !lastScan.IsZero() {
+		if persisted := s.loadRebalanceScanSkips(ctx, lastScan, scanSkipDetailLimit); len(persisted) > 0 {
+			lastScanSkipped = persisted
+		}
+	}
 
 	overview := RebalanceOverview{
 		AutoEnabled:                   cfg.AutoEnabled,

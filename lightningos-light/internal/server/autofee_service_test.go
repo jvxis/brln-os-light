@@ -1843,6 +1843,42 @@ func TestShouldHoldForAutofeeChurnBypassesOnHardSignal(t *testing.T) {
 	}
 }
 
+func TestShouldHoldAutofeeForRebalanceSettling(t *testing.T) {
+	now := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
+	hard := recentRebalanceSignal{Count: 1, LastAt: now.Add(-10 * time.Minute)}
+	if !shouldHoldAutofeeForRebalanceSettling(hard, now, autofeeRebalanceSettlingWindow) {
+		t.Fatalf("expected recent successful rebalance to hold autofee apply")
+	}
+
+	weak := recentRebalanceSignal{WeakCount: 1, WeakLastAt: now.Add(-10 * time.Minute)}
+	if !shouldHoldAutofeeForRebalanceSettling(weak, now, autofeeRebalanceSettlingWindow) {
+		t.Fatalf("expected recent weak rebalance attempt to hold autofee apply")
+	}
+
+	old := recentRebalanceSignal{Count: 1, LastAt: now.Add(-2 * time.Hour)}
+	if shouldHoldAutofeeForRebalanceSettling(old, now, autofeeRebalanceSettlingWindow) {
+		t.Fatalf("did not expect old rebalance signal to hold autofee apply")
+	}
+}
+
+func TestAutofeeSettlingSkipLogEntry(t *testing.T) {
+	d := &decision{
+		Alias:    "peer",
+		Apply:    false,
+		LocalPpm: 100,
+		NewPpm:   140,
+		Tags:     []string{"autofee_settling"},
+	}
+	_, category := formatAutofeeDecisionLine(d, false, false)
+	if category != "skipped" {
+		t.Fatalf("expected settling decision category skipped, got %q", category)
+	}
+	entry := buildAutofeeChannelLogEntry(d, "", false, nil)
+	if entry.Payload == nil || entry.Payload.SkipReason != "autofee_settling" {
+		t.Fatalf("expected skip_reason=autofee_settling, got %+v", entry.Payload)
+	}
+}
+
 func TestMarketRefillStepCapFrac(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
 

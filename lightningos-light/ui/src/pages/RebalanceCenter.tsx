@@ -1,11 +1,12 @@
 ﻿
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   getRebalanceChannels,
   getRebalanceConfig,
   getRebalanceHistory,
   getRebalanceOverview,
+  getRebalancePairStats,
   getRebalanceQueue,
   resetRebalanceMissionControl,
   runRebalance,
@@ -196,6 +197,28 @@ function MetricDisclosure({
   )
 }
 
+function SettingsSubcard({
+  title,
+  subtitle,
+  className = '',
+  children
+}: {
+  title: string
+  subtitle?: string
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <div className={`rounded-lg border border-white/10 bg-white/5 p-3 space-y-3 ${className}`}>
+      <div>
+        <p className="text-xs uppercase tracking-wide text-fog/60">{title}</p>
+        {subtitle && <p className="text-xs text-fog/50">{subtitle}</p>}
+      </div>
+      {children}
+    </div>
+  )
+}
+
 type RebalanceScanSkip = {
   channel_id: number
   channel_point: string
@@ -207,6 +230,23 @@ type RebalanceScanSkip = {
   expected_roi: number
   expected_roi_valid: boolean
   reason: string
+}
+
+type RebalancePairStat = {
+  source_channel_id: number
+  source_channel_point?: string
+  source_peer_alias?: string
+  target_channel_id: number
+  target_channel_point?: string
+  target_peer_alias?: string
+  last_success_at?: string
+  last_fail_at?: string
+  last_fail_reason?: string
+  fail_count: number
+  permanent_fail_score: number
+  success_amount_sat: number
+  success_fee_ppm: number
+  last_success_route_hops?: string[]
 }
 
 type RebalanceChannel = {
@@ -238,6 +278,8 @@ type RebalanceChannel = {
   eligible_as_source: boolean
   protected_liquidity_sat: number
   payback_progress: number
+  time_to_payback_hours?: number
+  time_to_payback_valid?: boolean
   max_source_sat: number
   revenue_7d_sat: number
   drain_rate_sat_per_hour?: number
@@ -355,6 +397,10 @@ export default function RebalanceCenter() {
   const [metrics24hOpen, setMetrics24hOpen] = useState(false)
   const [mppMetricsOpen, setMppMetricsOpen] = useState(false)
   const [failureTelemetryOpen, setFailureTelemetryOpen] = useState(false)
+  const [pairStatsOpen, setPairStatsOpen] = useState<Record<number, boolean>>({})
+  const [pairStatsByChannel, setPairStatsByChannel] = useState<Record<number, RebalancePairStat[]>>({})
+  const [pairStatsLoading, setPairStatsLoading] = useState<Record<number, boolean>>({})
+  const [pairStatsError, setPairStatsError] = useState<Record<number, boolean>>({})
   const [mcResetBusy, setMcResetBusy] = useState(false)
   const [scanDetailsReason, setScanDetailsReason] = useState('all')
   const [scanDetailsShowAll, setScanDetailsShowAll] = useState(false)
@@ -382,6 +428,13 @@ export default function RebalanceCenter() {
     const date = new Date(value)
     if (Number.isNaN(date.getTime())) return value
     return dateTimeFormatter.format(date)
+  }
+  const formatTimeToPayback = (channel: RebalanceChannel) => {
+    if (!channel.time_to_payback_valid) return t('rebalanceCenter.channels.timeToPaybackNA')
+    const hours = Math.max(0, channel.time_to_payback_hours || 0)
+    if (hours <= 0) return t('rebalanceCenter.channels.timeToPaybackPaid')
+    if (hours < 24) return t('rebalanceCenter.channels.timeToPaybackHours', { value: pctFormatter.format(hours) })
+    return t('rebalanceCenter.channels.timeToPaybackDays', { value: pctFormatter.format(hours / 24) })
   }
   const configSignature = (cfg?: RebalanceConfig | null) => {
     if (!cfg) return ''
@@ -1034,6 +1087,26 @@ export default function RebalanceCenter() {
     }
   }
 
+  const handleTogglePairStats = async (channel: RebalanceChannel) => {
+    const channelID = channel.channel_id
+    const willOpen = !pairStatsOpen[channelID]
+    setPairStatsOpen((prev) => ({ ...prev, [channelID]: willOpen }))
+    if (!willOpen || pairStatsByChannel[channelID] || pairStatsLoading[channelID]) {
+      return
+    }
+    setPairStatsLoading((prev) => ({ ...prev, [channelID]: true }))
+    setPairStatsError((prev) => ({ ...prev, [channelID]: false }))
+    try {
+      const response = await getRebalancePairStats(channelID)
+      const pairs = Array.isArray((response as any)?.pairs) ? (response as any).pairs : []
+      setPairStatsByChannel((prev) => ({ ...prev, [channelID]: pairs }))
+    } catch {
+      setPairStatsError((prev) => ({ ...prev, [channelID]: true }))
+    } finally {
+      setPairStatsLoading((prev) => ({ ...prev, [channelID]: false }))
+    }
+  }
+
   const handleManualRestartToggle = async (channel: RebalanceChannel, enabled: boolean) => {
     bumpChannelStateVersion()
     const key = channel.channel_point
@@ -1215,6 +1288,65 @@ export default function RebalanceCenter() {
     Boolean(overview?.auto_enabled) &&
     !autoBudgetPaused &&
     overview?.last_scan_status === 'budget_insufficient'
+  const renderPairStatsPanel = (channel: RebalanceChannel) => {
+    const channelID = channel.channel_id
+    const pairs = pairStatsByChannel[channelID] ?? []
+    const loading = pairStatsLoading[channelID] === true
+    const failed = pairStatsError[channelID] === true
+    return (
+      <div className="mt-3 border-t border-white/10 pt-3 text-xs text-fog/60">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <span className="font-semibold text-fog/80" title={t('rebalanceCenter.channelsHints.pairStats')}>
+            {t('rebalanceCenter.channels.pairStatsTitle')}
+          </span>
+          <span>{pairs.length}</span>
+        </div>
+        {loading && <div>{t('rebalanceCenter.channels.pairStatsLoading')}</div>}
+        {failed && <div className="text-rose-200">{t('rebalanceCenter.channels.pairStatsError')}</div>}
+        {!loading && !failed && pairs.length === 0 && (
+          <div>{t('rebalanceCenter.channels.pairStatsEmpty')}</div>
+        )}
+        {!loading && !failed && pairs.length > 0 && (
+          <div className="space-y-2">
+            {pairs.map((pair) => (
+              <div
+                key={`${pair.source_channel_id}-${pair.target_channel_id}`}
+                className="grid gap-2 border-t border-white/5 pt-2 md:grid-cols-[minmax(0,1.3fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,0.8fr)_minmax(0,1fr)]"
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-fog/80">{pair.source_peer_alias || pair.source_channel_id}</div>
+                  <div className="truncate text-[11px] text-fog/40">{pair.source_channel_point || pair.source_channel_id}</div>
+                </div>
+                <div>
+                  <div className="text-fog/40">{t('rebalanceCenter.channels.pairStatsLastSuccess')}</div>
+                  <div>{formatTimestamp(pair.last_success_at)}</div>
+                </div>
+                <div>
+                  <div className="text-fog/40">{t('rebalanceCenter.channels.pairStatsLastFail')}</div>
+                  <div>{formatTimestamp(pair.last_fail_at)}</div>
+                  {pair.last_fail_reason && <div className="truncate text-[11px] text-fog/40">{pair.last_fail_reason}</div>}
+                </div>
+                <div>
+                  <div className="text-fog/40">{t('rebalanceCenter.channels.pairStatsFailScore')}</div>
+                  <div>{formatRoi(pair.permanent_fail_score || 0)} / {pair.fail_count || 0}</div>
+                </div>
+                <div>
+                  <div className="text-fog/40">{t('rebalanceCenter.channels.pairStatsSuccess')}</div>
+                  <div>{formatSats(pair.success_amount_sat || 0)}</div>
+                  <div className="text-[11px] text-fog/40">{pair.success_fee_ppm || 0} ppm</div>
+                  {pair.last_success_route_hops && pair.last_success_route_hops.length > 0 && (
+                    <div className="truncate text-[11px] text-fog/40" title={pair.last_success_route_hops.join(' -> ')}>
+                      {t('rebalanceCenter.channels.pairStatsRoute')}: {pair.last_success_route_hops.length}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <section className="space-y-6" aria-busy={initialLoading || isRefreshing}>
@@ -1759,643 +1891,662 @@ export default function RebalanceCenter() {
           </div>
         </div>
         {config && autoOpen && (
-          <div className="grid gap-4 lg:grid-cols-3">
-            <label
-              className="flex items-center gap-2 text-sm text-fog/70"
-              title={t('rebalanceCenter.settingsHints.autoEnabled')}
-            >
-              <input
-                type="checkbox"
-                checked={config.auto_enabled}
-                onChange={(e) => setConfig({ ...config, auto_enabled: e.target.checked })}
-              />
-              {t('rebalanceCenter.settings.autoEnabled')}
-            </label>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.scanInterval')}>
-                {t('rebalanceCenter.settings.scanInterval')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={30}
-                value={config.scan_interval_sec}
-                onChange={(e) => setConfig({ ...config, scan_interval_sec: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.dailyBudgetPct')}>
-                {t('rebalanceCenter.settings.dailyBudgetPct')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={0}
-                step={0.1}
-                value={config.daily_budget_pct}
-                onChange={(e) => setConfig({ ...config, daily_budget_pct: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.budgetMode')}>
-                {t('rebalanceCenter.settings.budgetMode')}
-              </label>
-              <select
-                className="input-field"
-                value={config.budget_mode}
-                onChange={(e) => setConfig({ ...config, budget_mode: e.target.value })}
-              >
-                <option value="hybrid_revenue">{t('rebalanceCenter.settings.budgetModeOptions.hybrid_revenue')}</option>
-                <option value="revenue_24h_pct">{t('rebalanceCenter.settings.budgetModeOptions.revenue_24h_pct')}</option>
-              </select>
-            </div>
-            <label
-              className="flex items-center gap-2 text-sm text-fog/70"
-              title={t('rebalanceCenter.settingsHints.budgetAutoOnly')}
-            >
-              <input
-                type="checkbox"
-                checked={config.budget_auto_only}
-                onChange={(e) => setConfig({ ...config, budget_auto_only: e.target.checked })}
-              />
-              {t('rebalanceCenter.settings.budgetAutoOnly')}
-            </label>
-            <label
-              className="flex items-center gap-2 text-sm text-fog/70"
-              title={t('rebalanceCenter.settingsHints.manualReserveEnabled')}
-            >
-              <input
-                type="checkbox"
-                checked={config.manual_reserve_enabled}
-                onChange={(e) => setConfig({ ...config, manual_reserve_enabled: e.target.checked })}
-              />
-              {t('rebalanceCenter.settings.manualReserveEnabled')}
-            </label>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.manualReserveMode')}>
-                {t('rebalanceCenter.settings.manualReserveMode')}
-              </label>
-              <select
-                className="input-field"
-                value={config.manual_reserve_mode}
-                disabled={!config.manual_reserve_enabled}
-                onChange={(e) => setConfig({ ...config, manual_reserve_mode: e.target.value })}
-              >
-                <option value="fixed_sat">{t('rebalanceCenter.settings.manualReserveModeOptions.fixed_sat')}</option>
-                <option value="pct">{t('rebalanceCenter.settings.manualReserveModeOptions.pct')}</option>
-              </select>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.manualReserveValue')}>
-                {t('rebalanceCenter.settings.manualReserveValue')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={0}
-                step={config.manual_reserve_mode === 'pct' ? 0.1 : 1}
-                disabled={!config.manual_reserve_enabled}
-                value={config.manual_reserve_value}
-                onChange={(e) => setConfig({ ...config, manual_reserve_value: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.deadband')}>
-                {t('rebalanceCenter.settings.deadband')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={0}
-                step={0.1}
-                value={config.deadband_pct}
-                onChange={(e) => setConfig({ ...config, deadband_pct: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.sourceMinLocal')}>
-                {t('rebalanceCenter.settings.sourceMinLocal')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={0}
-                step={0.1}
-                value={config.source_min_local_pct}
-                onChange={(e) => setConfig({ ...config, source_min_local_pct: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.econRatio')}>
-                {t('rebalanceCenter.settings.econRatio')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={0}
-                step={0.05}
-                value={config.econ_ratio}
-                onChange={(e) => setConfig({ ...config, econ_ratio: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.econRatioMaxPpm')}>
-                {t('rebalanceCenter.settings.econRatioMaxPpm')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={0}
-                value={config.econ_ratio_max_ppm}
-                onChange={(e) => setConfig({ ...config, econ_ratio_max_ppm: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.feeLimitPpm')}>
-                {t('rebalanceCenter.settings.feeLimitPpm')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={0}
-                value={config.fee_limit_ppm}
-                onChange={(e) => setConfig({ ...config, fee_limit_ppm: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.lostProfit')}>
-                <input
-                  type="checkbox"
-                  checked={config.lost_profit}
-                  onChange={(e) => setConfig({ ...config, lost_profit: e.target.checked })}
-                />
-                {t('rebalanceCenter.settings.lostProfit')}
-              </label>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.roiMin')}>
-                {t('rebalanceCenter.settings.roiMin')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={0}
-                step={0.1}
-                value={config.roi_min}
-                onChange={(e) => setConfig({ ...config, roi_min: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.gainModelVersion')}>
-                {t('rebalanceCenter.settings.gainModelVersion')}
-              </label>
-              <select
-                className="input-field"
-                value={config.gain_model_version}
-                onChange={(e) => setConfig({ ...config, gain_model_version: Number(e.target.value) })}
-              >
-                <option value={1}>{t('rebalanceCenter.settings.gainModelOptions.v1')}</option>
-                <option value={2}>{t('rebalanceCenter.settings.gainModelOptions.v2')}</option>
-              </select>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.velocityWeight')}>
-                {t('rebalanceCenter.settings.velocityWeight')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={0}
-                max={1}
-                step={0.05}
-                value={config.velocity_weight}
-                onChange={(e) => setConfig({ ...config, velocity_weight: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.maxConcurrent')}>
-                {t('rebalanceCenter.settings.maxConcurrent')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={1}
-                value={config.max_concurrent}
-                onChange={(e) => setConfig({ ...config, max_concurrent: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.minAmount')}>
-                {t('rebalanceCenter.settings.minAmount')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={0}
-                value={config.min_amount_sat}
-                onChange={(e) => setConfig({ ...config, min_amount_sat: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.maxAmount')}>
-                {t('rebalanceCenter.settings.maxAmount')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={0}
-                value={config.max_amount_sat}
-                onChange={(e) => setConfig({ ...config, max_amount_sat: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.feeSteps')}>
-                {t('rebalanceCenter.settings.feeSteps')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={1}
-                value={config.fee_ladder_steps}
-                onChange={(e) => setConfig({ ...config, fee_ladder_steps: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.amountProbeSteps')}>
-                {t('rebalanceCenter.settings.amountProbeSteps')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={1}
-                value={config.amount_probe_steps}
-                onChange={(e) => setConfig({ ...config, amount_probe_steps: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.failTolerancePpm')}>
-                {t('rebalanceCenter.settings.failTolerancePpm')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={0}
-                value={config.fail_tolerance_ppm}
-                onChange={(e) => setConfig({ ...config, fail_tolerance_ppm: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.attemptTimeout')}>
-                {t('rebalanceCenter.settings.attemptTimeout')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={5}
-                value={config.attempt_timeout_sec}
-                onChange={(e) => setConfig({ ...config, attempt_timeout_sec: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.rebalanceTimeout')}>
-                {t('rebalanceCenter.settings.rebalanceTimeout')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={60}
-                value={config.rebalance_timeout_sec}
-                onChange={(e) => setConfig({ ...config, rebalance_timeout_sec: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.manualRestartWatch')}>
-                <input
-                  type="checkbox"
-                  checked={config.manual_restart_watch}
-                  onChange={(e) => setConfig({ ...config, manual_restart_watch: e.target.checked })}
-                />
-                {t('rebalanceCenter.settings.manualRestartWatch')}
-              </label>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mcHalfLife')}>
-                {t('rebalanceCenter.settings.mcHalfLife')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={0}
-                value={config.mc_half_life_sec}
-                onChange={(e) => setConfig({ ...config, mc_half_life_sec: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.amountProbeAdaptive')}>
-                <input
-                  type="checkbox"
-                  checked={config.amount_probe_adaptive}
-                  onChange={(e) => setConfig({ ...config, amount_probe_adaptive: e.target.checked })}
-                />
-                {t('rebalanceCenter.settings.amountProbeAdaptive')}
-              </label>
-            </div>
-          </div>
-        )}
-        {config && autoOpen && (
-          <div className="grid gap-4 lg:grid-cols-3">
-            <div className="space-y-2">
-              <p className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.paybackPolicy')}>
-                {t('rebalanceCenter.settings.paybackPolicy')}
-              </p>
-              <label
-                className="flex items-center gap-2 text-sm text-fog/70"
-                title={t('rebalanceCenter.settingsHints.paybackMode')}
-              >
-                <input
-                  type="checkbox"
-                  checked={(config.payback_mode_flags & PAYBACK_MODE_PAYBACK) !== 0}
-                  onChange={() => togglePaybackFlag(PAYBACK_MODE_PAYBACK)}
-                />
-                {t('rebalanceCenter.settings.paybackMode')}
-              </label>
-              <label
-                className="flex items-center gap-2 text-sm text-fog/70"
-                title={t('rebalanceCenter.settingsHints.timeMode')}
-              >
-                <input
-                  type="checkbox"
-                  checked={(config.payback_mode_flags & PAYBACK_MODE_TIME) !== 0}
-                  onChange={() => togglePaybackFlag(PAYBACK_MODE_TIME)}
-                />
-                {t('rebalanceCenter.settings.timeMode')}
-              </label>
-              <label
-                className="flex items-center gap-2 text-sm text-fog/70"
-                title={t('rebalanceCenter.settingsHints.criticalMode')}
-              >
-                <input
-                  type="checkbox"
-                  checked={(config.payback_mode_flags & PAYBACK_MODE_CRITICAL) !== 0}
-                  onChange={() => togglePaybackFlag(PAYBACK_MODE_CRITICAL)}
-                />
-                {t('rebalanceCenter.settings.criticalMode')}
-              </label>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.unlockDays')}>
-                {t('rebalanceCenter.settings.unlockDays')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={1}
-                value={config.unlock_days}
-                onChange={(e) => setConfig({ ...config, unlock_days: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.criticalRelease')}>
-                {t('rebalanceCenter.settings.criticalRelease')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={0}
-                step={1}
-                value={config.critical_release_pct}
-                onChange={(e) => setConfig({ ...config, critical_release_pct: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.criticalMinSources')}>
-                {t('rebalanceCenter.settings.criticalMinSources')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={0}
-                step={1}
-                placeholder="2"
-                value={config.critical_min_sources}
-                onChange={(e) => setConfig({ ...config, critical_min_sources: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.criticalMinAvailable')}>
-                {t('rebalanceCenter.settings.criticalMinAvailable')}
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  className="input-field flex-1"
-                  type="number"
-                  min={0}
-                  step={1}
-                  placeholder="0"
-                  value={config.critical_min_available_sats}
-                  onChange={(e) => setConfig({ ...config, critical_min_available_sats: Number(e.target.value) })}
-                />
-                <span className="text-xs text-fog/60">sats</span>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.criticalCycles')}>
-                {t('rebalanceCenter.settings.criticalCycles')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={1}
-                value={config.critical_cycles}
-                onChange={(e) => setConfig({ ...config, critical_cycles: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.rebalanceCostFloorPpm')}>
-                {t('rebalanceCenter.settings.rebalanceCostFloorPpm')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={0}
-                step={1}
-                placeholder="250"
-                value={config.rebalance_cost_floor_ppm}
-                onChange={(e) => setConfig({ ...config, rebalance_cost_floor_ppm: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.sourceMinPaybackProgress')}>
-                {t('rebalanceCenter.settings.sourceMinPaybackProgress')}
-              </label>
-              <input
-                className="input-field"
-                type="number"
-                min={0}
-                max={5}
-                step={0.05}
-                placeholder="0.95"
-                value={config.source_min_payback_progress}
-                onChange={(e) => setConfig({ ...config, source_min_payback_progress: Number(e.target.value) })}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.missionControlReinforce')}>
-                <input
-                  type="checkbox"
-                  checked={config.mission_control_reinforce}
-                  onChange={(e) => setConfig({ ...config, mission_control_reinforce: e.target.checked })}
-                />
-                {t('rebalanceCenter.settings.missionControlReinforce')}
-              </label>
-            </div>
-          </div>
-        )}
-        {config && autoOpen && advancedControlsOpen && (
-          <div className="grid gap-4 lg:grid-cols-3">
-            <div className="lg:col-span-3 rounded-xl border border-white/10 bg-white/5 p-3 space-y-3">
-              <div>
-                <p className="text-xs uppercase tracking-wide text-fog/60">{t('rebalanceCenter.settings.splitMinTitle')}</p>
-                <p className="text-xs text-fog/50">{t('rebalanceCenter.settings.splitMinSubtitle')}</p>
-              </div>
-              <div className="grid gap-3 lg:grid-cols-3">
-                <div className="space-y-2">
-                  <label className="flex items-center gap-2 text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.minSplitEnabled')}>
+          <div className="space-y-4">
+            <div className="grid gap-4 xl:grid-cols-2">
+              <SettingsSubcard title={t('rebalanceCenter.settings.groups.operation')}>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label
+                    className="flex items-center gap-2 text-sm text-fog/70"
+                    title={t('rebalanceCenter.settingsHints.autoEnabled')}
+                  >
                     <input
                       type="checkbox"
-                      checked={config.min_split_enabled}
-                      onChange={(e) => setConfig({ ...config, min_split_enabled: e.target.checked })}
+                      checked={config.auto_enabled}
+                      onChange={(e) => setConfig({ ...config, auto_enabled: e.target.checked })}
                     />
-                    {t('rebalanceCenter.settings.minSplitEnabled')}
+                    {t('rebalanceCenter.settings.autoEnabled')}
                   </label>
-                  <p className="text-[11px] text-fog/50">{t('rebalanceCenter.settings.splitMinRecommended')}</p>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.minProbeAmount')}>
-                    {t('rebalanceCenter.settings.minProbeAmount')}
-                  </label>
-                  <input
-                    className="input-field"
-                    type="number"
-                    min={0}
-                    value={config.min_probe_sat}
-                    disabled={!config.min_split_enabled}
-                    onChange={(e) => setConfig({ ...config, min_probe_sat: Number(e.target.value) })}
-                  />
-                  <p className="text-[11px] text-fog/50">{t('rebalanceCenter.settings.minProbeRecommended', { value: formatSats(REBALANCE_DEFAULT_MIN_PROBE_SAT) })}</p>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.minExecuteAmount')}>
-                    {t('rebalanceCenter.settings.minExecuteAmount')}
-                  </label>
-                  <input
-                    className="input-field"
-                    type="number"
-                    min={0}
-                    value={config.min_execute_sat}
-                    disabled={!config.min_split_enabled}
-                    onChange={(e) => setConfig({ ...config, min_execute_sat: Number(e.target.value) })}
-                  />
-                  <p className="text-[11px] text-fog/50">
-                    {t('rebalanceCenter.settings.minExecuteRecommended', { value: formatSats(REBALANCE_DEFAULT_MIN_EXECUTE_SAT) })}
-                  </p>
-                </div>
-              </div>
-            </div>
-            <div className="lg:col-span-3 rounded-xl border border-white/10 bg-white/5 p-3 space-y-3">
-              <div>
-                <p className="text-xs uppercase tracking-wide text-fog/60">{t('rebalanceCenter.settings.mppTitle')}</p>
-                <p className="text-xs text-fog/50">{t('rebalanceCenter.settings.mppSubtitle')}</p>
-              </div>
-              <div className="grid gap-3 lg:grid-cols-3">
-                <div className="space-y-2">
-                  <label className="flex items-center gap-2 text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mppEnabled')}>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.scanInterval')}>
+                      {t('rebalanceCenter.settings.scanInterval')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={30}
+                      value={config.scan_interval_sec}
+                      onChange={(e) => setConfig({ ...config, scan_interval_sec: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.maxConcurrent')}>
+                      {t('rebalanceCenter.settings.maxConcurrent')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={1}
+                      value={config.max_concurrent}
+                      onChange={(e) => setConfig({ ...config, max_concurrent: Number(e.target.value) })}
+                    />
+                  </div>
+                  <label className="flex items-center gap-2 text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.manualRestartWatch')}>
                     <input
                       type="checkbox"
-                      checked={config.mpp_enabled}
-                      onChange={(e) => setConfig({ ...config, mpp_enabled: e.target.checked })}
+                      checked={config.manual_restart_watch}
+                      onChange={(e) => setConfig({ ...config, manual_restart_watch: e.target.checked })}
                     />
-                    {t('rebalanceCenter.settings.mppEnabled')}
+                    {t('rebalanceCenter.settings.manualRestartWatch')}
                   </label>
-                  <label className="flex items-center gap-2 text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mppAutoOnly')}>
+                </div>
+              </SettingsSubcard>
+
+              <SettingsSubcard title={t('rebalanceCenter.settings.groups.budget')}>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.dailyBudgetPct')}>
+                      {t('rebalanceCenter.settings.dailyBudgetPct')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={0}
+                      step={0.1}
+                      value={config.daily_budget_pct}
+                      onChange={(e) => setConfig({ ...config, daily_budget_pct: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.budgetMode')}>
+                      {t('rebalanceCenter.settings.budgetMode')}
+                    </label>
+                    <select
+                      className="input-field"
+                      value={config.budget_mode}
+                      onChange={(e) => setConfig({ ...config, budget_mode: e.target.value })}
+                    >
+                      <option value="hybrid_revenue">{t('rebalanceCenter.settings.budgetModeOptions.hybrid_revenue')}</option>
+                      <option value="revenue_24h_pct">{t('rebalanceCenter.settings.budgetModeOptions.revenue_24h_pct')}</option>
+                    </select>
+                  </div>
+                  <label
+                    className="flex items-center gap-2 text-sm text-fog/70"
+                    title={t('rebalanceCenter.settingsHints.budgetAutoOnly')}
+                  >
                     <input
                       type="checkbox"
-                      checked={config.mpp_auto_only}
-                      disabled={!config.mpp_enabled}
-                      onChange={(e) => setConfig({ ...config, mpp_auto_only: e.target.checked })}
+                      checked={config.budget_auto_only}
+                      onChange={(e) => setConfig({ ...config, budget_auto_only: e.target.checked })}
                     />
-                    {t('rebalanceCenter.settings.mppAutoOnly')}
+                    {t('rebalanceCenter.settings.budgetAutoOnly')}
+                  </label>
+                  <label
+                    className="flex items-center gap-2 text-sm text-fog/70"
+                    title={t('rebalanceCenter.settingsHints.manualReserveEnabled')}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={config.manual_reserve_enabled}
+                      onChange={(e) => setConfig({ ...config, manual_reserve_enabled: e.target.checked })}
+                    />
+                    {t('rebalanceCenter.settings.manualReserveEnabled')}
+                  </label>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.manualReserveMode')}>
+                      {t('rebalanceCenter.settings.manualReserveMode')}
+                    </label>
+                    <select
+                      className="input-field"
+                      value={config.manual_reserve_mode}
+                      disabled={!config.manual_reserve_enabled}
+                      onChange={(e) => setConfig({ ...config, manual_reserve_mode: e.target.value })}
+                    >
+                      <option value="fixed_sat">{t('rebalanceCenter.settings.manualReserveModeOptions.fixed_sat')}</option>
+                      <option value="pct">{t('rebalanceCenter.settings.manualReserveModeOptions.pct')}</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.manualReserveValue')}>
+                      {t('rebalanceCenter.settings.manualReserveValue')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={0}
+                      step={config.manual_reserve_mode === 'pct' ? 0.1 : 1}
+                      disabled={!config.manual_reserve_enabled}
+                      value={config.manual_reserve_value}
+                      onChange={(e) => setConfig({ ...config, manual_reserve_value: Number(e.target.value) })}
+                    />
+                  </div>
+                </div>
+              </SettingsSubcard>
+
+              <SettingsSubcard title={t('rebalanceCenter.settings.groups.targets')}>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.deadband')}>
+                      {t('rebalanceCenter.settings.deadband')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={0}
+                      step={0.1}
+                      value={config.deadband_pct}
+                      onChange={(e) => setConfig({ ...config, deadband_pct: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.sourceMinLocal')}>
+                      {t('rebalanceCenter.settings.sourceMinLocal')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={0}
+                      step={0.1}
+                      value={config.source_min_local_pct}
+                      onChange={(e) => setConfig({ ...config, source_min_local_pct: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.minAmount')}>
+                      {t('rebalanceCenter.settings.minAmount')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={0}
+                      value={config.min_amount_sat}
+                      onChange={(e) => setConfig({ ...config, min_amount_sat: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.maxAmount')}>
+                      {t('rebalanceCenter.settings.maxAmount')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={0}
+                      value={config.max_amount_sat}
+                      onChange={(e) => setConfig({ ...config, max_amount_sat: Number(e.target.value) })}
+                    />
+                  </div>
+                </div>
+              </SettingsSubcard>
+
+              <SettingsSubcard title={t('rebalanceCenter.settings.groups.economics')}>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.econRatio')}>
+                      {t('rebalanceCenter.settings.econRatio')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={0}
+                      step={0.05}
+                      value={config.econ_ratio}
+                      onChange={(e) => setConfig({ ...config, econ_ratio: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.econRatioMaxPpm')}>
+                      {t('rebalanceCenter.settings.econRatioMaxPpm')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={0}
+                      value={config.econ_ratio_max_ppm}
+                      onChange={(e) => setConfig({ ...config, econ_ratio_max_ppm: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.feeLimitPpm')}>
+                      {t('rebalanceCenter.settings.feeLimitPpm')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={0}
+                      value={config.fee_limit_ppm}
+                      onChange={(e) => setConfig({ ...config, fee_limit_ppm: Number(e.target.value) })}
+                    />
+                  </div>
+                  <label className="flex items-center gap-2 text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.lostProfit')}>
+                    <input
+                      type="checkbox"
+                      checked={config.lost_profit}
+                      onChange={(e) => setConfig({ ...config, lost_profit: e.target.checked })}
+                    />
+                    {t('rebalanceCenter.settings.lostProfit')}
+                  </label>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.roiMin')}>
+                      {t('rebalanceCenter.settings.roiMin')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={0}
+                      step={0.1}
+                      value={config.roi_min}
+                      onChange={(e) => setConfig({ ...config, roi_min: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.rebalanceCostFloorPpm')}>
+                      {t('rebalanceCenter.settings.rebalanceCostFloorPpm')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={0}
+                      step={1}
+                      placeholder="250"
+                      value={config.rebalance_cost_floor_ppm}
+                      onChange={(e) => setConfig({ ...config, rebalance_cost_floor_ppm: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.gainModelVersion')}>
+                      {t('rebalanceCenter.settings.gainModelVersion')}
+                    </label>
+                    <select
+                      className="input-field"
+                      value={config.gain_model_version}
+                      onChange={(e) => setConfig({ ...config, gain_model_version: Number(e.target.value) })}
+                    >
+                      <option value={1}>{t('rebalanceCenter.settings.gainModelOptions.v1')}</option>
+                      <option value={2}>{t('rebalanceCenter.settings.gainModelOptions.v2')}</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.velocityWeight')}>
+                      {t('rebalanceCenter.settings.velocityWeight')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={config.velocity_weight}
+                      onChange={(e) => setConfig({ ...config, velocity_weight: Number(e.target.value) })}
+                    />
+                  </div>
+                </div>
+              </SettingsSubcard>
+
+              <SettingsSubcard title={t('rebalanceCenter.settings.groups.execution')}>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.feeSteps')}>
+                      {t('rebalanceCenter.settings.feeSteps')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={1}
+                      value={config.fee_ladder_steps}
+                      onChange={(e) => setConfig({ ...config, fee_ladder_steps: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.amountProbeSteps')}>
+                      {t('rebalanceCenter.settings.amountProbeSteps')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={1}
+                      value={config.amount_probe_steps}
+                      onChange={(e) => setConfig({ ...config, amount_probe_steps: Number(e.target.value) })}
+                    />
+                  </div>
+                  <label className="flex items-center gap-2 text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.amountProbeAdaptive')}>
+                    <input
+                      type="checkbox"
+                      checked={config.amount_probe_adaptive}
+                      onChange={(e) => setConfig({ ...config, amount_probe_adaptive: e.target.checked })}
+                    />
+                    {t('rebalanceCenter.settings.amountProbeAdaptive')}
+                  </label>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.failTolerancePpm')}>
+                      {t('rebalanceCenter.settings.failTolerancePpm')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={0}
+                      value={config.fail_tolerance_ppm}
+                      onChange={(e) => setConfig({ ...config, fail_tolerance_ppm: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.attemptTimeout')}>
+                      {t('rebalanceCenter.settings.attemptTimeout')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={5}
+                      value={config.attempt_timeout_sec}
+                      onChange={(e) => setConfig({ ...config, attempt_timeout_sec: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.rebalanceTimeout')}>
+                      {t('rebalanceCenter.settings.rebalanceTimeout')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={60}
+                      value={config.rebalance_timeout_sec}
+                      onChange={(e) => setConfig({ ...config, rebalance_timeout_sec: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mcHalfLife')}>
+                      {t('rebalanceCenter.settings.mcHalfLife')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={0}
+                      value={config.mc_half_life_sec}
+                      onChange={(e) => setConfig({ ...config, mc_half_life_sec: Number(e.target.value) })}
+                    />
+                  </div>
+                  <label className="flex items-center gap-2 text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.missionControlReinforce')}>
+                    <input
+                      type="checkbox"
+                      checked={config.mission_control_reinforce}
+                      onChange={(e) => setConfig({ ...config, mission_control_reinforce: e.target.checked })}
+                    />
+                    {t('rebalanceCenter.settings.missionControlReinforce')}
                   </label>
                 </div>
-                <div className="space-y-2">
-                  <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mppMaxShards')}>
-                    {t('rebalanceCenter.settings.mppMaxShards')}
-                  </label>
-                  <input
-                    className="input-field"
-                    type="number"
-                    min={1}
-                    max={MSPR_MAX_SHARDS_LIMIT}
-                    value={config.mpp_max_shards}
-                    disabled={!config.mpp_enabled}
-                    onChange={(e) => {
-                      const nextMaxShards = Math.max(1, Math.min(MSPR_MAX_SHARDS_LIMIT, Number(e.target.value) || 1))
-                      const nextParallelism = Math.max(1, Math.min(config.mpp_parallelism || 1, nextMaxShards))
-                      setConfig({ ...config, mpp_max_shards: nextMaxShards, mpp_parallelism: nextParallelism })
-                    }}
-                  />
-                  <p className="text-[11px] text-fog/50">{t('rebalanceCenter.settings.mppMaxShardsRecommended', { value: MSPR_DEFAULT_MAX_SHARDS })}</p>
+              </SettingsSubcard>
+
+              <SettingsSubcard title={t('rebalanceCenter.settings.groups.payback')} className="xl:col-span-2">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  <div className="space-y-2">
+                    <p className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.paybackPolicy')}>
+                      {t('rebalanceCenter.settings.paybackPolicy')}
+                    </p>
+                    <label
+                      className="flex items-center gap-2 text-sm text-fog/70"
+                      title={t('rebalanceCenter.settingsHints.paybackMode')}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={(config.payback_mode_flags & PAYBACK_MODE_PAYBACK) !== 0}
+                        onChange={() => togglePaybackFlag(PAYBACK_MODE_PAYBACK)}
+                      />
+                      {t('rebalanceCenter.settings.paybackMode')}
+                    </label>
+                    <label
+                      className="flex items-center gap-2 text-sm text-fog/70"
+                      title={t('rebalanceCenter.settingsHints.timeMode')}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={(config.payback_mode_flags & PAYBACK_MODE_TIME) !== 0}
+                        onChange={() => togglePaybackFlag(PAYBACK_MODE_TIME)}
+                      />
+                      {t('rebalanceCenter.settings.timeMode')}
+                    </label>
+                    <label
+                      className="flex items-center gap-2 text-sm text-fog/70"
+                      title={t('rebalanceCenter.settingsHints.criticalMode')}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={(config.payback_mode_flags & PAYBACK_MODE_CRITICAL) !== 0}
+                        onChange={() => togglePaybackFlag(PAYBACK_MODE_CRITICAL)}
+                      />
+                      {t('rebalanceCenter.settings.criticalMode')}
+                    </label>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.unlockDays')}>
+                      {t('rebalanceCenter.settings.unlockDays')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={1}
+                      value={config.unlock_days}
+                      onChange={(e) => setConfig({ ...config, unlock_days: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.criticalRelease')}>
+                      {t('rebalanceCenter.settings.criticalRelease')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={config.critical_release_pct}
+                      onChange={(e) => setConfig({ ...config, critical_release_pct: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.criticalMinSources')}>
+                      {t('rebalanceCenter.settings.criticalMinSources')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={0}
+                      step={1}
+                      placeholder="2"
+                      value={config.critical_min_sources}
+                      onChange={(e) => setConfig({ ...config, critical_min_sources: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.criticalMinAvailable')}>
+                      {t('rebalanceCenter.settings.criticalMinAvailable')}
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        className="input-field flex-1"
+                        type="number"
+                        min={0}
+                        step={1}
+                        placeholder="0"
+                        value={config.critical_min_available_sats}
+                        onChange={(e) => setConfig({ ...config, critical_min_available_sats: Number(e.target.value) })}
+                      />
+                      <span className="text-xs text-fog/60">sats</span>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.criticalCycles')}>
+                      {t('rebalanceCenter.settings.criticalCycles')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={1}
+                      value={config.critical_cycles}
+                      onChange={(e) => setConfig({ ...config, critical_cycles: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.sourceMinPaybackProgress')}>
+                      {t('rebalanceCenter.settings.sourceMinPaybackProgress')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={0}
+                      max={5}
+                      step={0.05}
+                      placeholder="0.95"
+                      value={config.source_min_payback_progress}
+                      onChange={(e) => setConfig({ ...config, source_min_payback_progress: Number(e.target.value) })}
+                    />
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mppParallelism')}>
-                    {t('rebalanceCenter.settings.mppParallelism')}
-                  </label>
-                  <input
-                    className="input-field"
-                    type="number"
-                    min={1}
-                    max={Math.max(1, Math.min(MSPR_MAX_SHARDS_LIMIT, config.mpp_max_shards || 1))}
-                    value={config.mpp_parallelism}
-                    disabled={!config.mpp_enabled}
-                    onChange={(e) => {
-                      const maxAllowed = Math.max(1, Math.min(MSPR_MAX_SHARDS_LIMIT, config.mpp_max_shards || 1))
-                      const nextParallelism = Math.max(1, Math.min(maxAllowed, Number(e.target.value) || 1))
-                      setConfig({ ...config, mpp_parallelism: nextParallelism })
-                    }}
-                  />
-                  <p className="text-[11px] text-fog/50">{t('rebalanceCenter.settings.mppParallelismRecommended', { value: MSPR_DEFAULT_PARALLELISM })}</p>
-                  <p className="text-[11px] text-fog/45">{t('rebalanceCenter.settings.mppParallelismBoundedByShards')}</p>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mppMinShardSat')}>
-                    {t('rebalanceCenter.settings.mppMinShardSat')}
-                  </label>
-                  <input
-                    className="input-field"
-                    type="number"
-                    min={1}
-                    value={config.mpp_min_shard_sat}
-                    disabled={!config.mpp_enabled}
-                    onChange={(e) => setConfig({ ...config, mpp_min_shard_sat: Number(e.target.value) })}
-                  />
-                  <p className="text-[11px] text-fog/50">{t('rebalanceCenter.settings.mppMinShardSatRecommended', { value: formatSats(MSPR_DEFAULT_MIN_SHARD_SAT) })}</p>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mppRoundTimeout')}>
-                    {t('rebalanceCenter.settings.mppRoundTimeout')}
-                  </label>
-                  <input
-                    className="input-field"
-                    type="number"
-                    min={5}
-                    value={config.mpp_round_timeout_sec}
-                    disabled={!config.mpp_enabled}
-                    onChange={(e) => setConfig({ ...config, mpp_round_timeout_sec: Number(e.target.value) })}
-                  />
-                  <p className="text-[11px] text-fog/50">{t('rebalanceCenter.settings.mppRoundTimeoutRecommended', { value: MSPR_DEFAULT_ROUND_TIMEOUT_SEC })}</p>
-                </div>
-              </div>
+              </SettingsSubcard>
             </div>
+
+            {advancedControlsOpen && (
+              <div className="grid gap-4 xl:grid-cols-2">
+                <SettingsSubcard
+                  title={t('rebalanceCenter.settings.splitMinTitle')}
+                  subtitle={t('rebalanceCenter.settings.splitMinSubtitle')}
+                >
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <div className="space-y-2">
+                      <label className="flex items-center gap-2 text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.minSplitEnabled')}>
+                        <input
+                          type="checkbox"
+                          checked={config.min_split_enabled}
+                          onChange={(e) => setConfig({ ...config, min_split_enabled: e.target.checked })}
+                        />
+                        {t('rebalanceCenter.settings.minSplitEnabled')}
+                      </label>
+                      <p className="text-[11px] text-fog/50">{t('rebalanceCenter.settings.splitMinRecommended')}</p>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.minProbeAmount')}>
+                        {t('rebalanceCenter.settings.minProbeAmount')}
+                      </label>
+                      <input
+                        className="input-field"
+                        type="number"
+                        min={0}
+                        value={config.min_probe_sat}
+                        disabled={!config.min_split_enabled}
+                        onChange={(e) => setConfig({ ...config, min_probe_sat: Number(e.target.value) })}
+                      />
+                      <p className="text-[11px] text-fog/50">{t('rebalanceCenter.settings.minProbeRecommended', { value: formatSats(REBALANCE_DEFAULT_MIN_PROBE_SAT) })}</p>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.minExecuteAmount')}>
+                        {t('rebalanceCenter.settings.minExecuteAmount')}
+                      </label>
+                      <input
+                        className="input-field"
+                        type="number"
+                        min={0}
+                        value={config.min_execute_sat}
+                        disabled={!config.min_split_enabled}
+                        onChange={(e) => setConfig({ ...config, min_execute_sat: Number(e.target.value) })}
+                      />
+                      <p className="text-[11px] text-fog/50">
+                        {t('rebalanceCenter.settings.minExecuteRecommended', { value: formatSats(REBALANCE_DEFAULT_MIN_EXECUTE_SAT) })}
+                      </p>
+                    </div>
+                  </div>
+                </SettingsSubcard>
+
+                <SettingsSubcard
+                  title={t('rebalanceCenter.settings.mppTitle')}
+                  subtitle={t('rebalanceCenter.settings.mppSubtitle')}
+                >
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    <div className="space-y-2">
+                      <label className="flex items-center gap-2 text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mppEnabled')}>
+                        <input
+                          type="checkbox"
+                          checked={config.mpp_enabled}
+                          onChange={(e) => setConfig({ ...config, mpp_enabled: e.target.checked })}
+                        />
+                        {t('rebalanceCenter.settings.mppEnabled')}
+                      </label>
+                      <label className="flex items-center gap-2 text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mppAutoOnly')}>
+                        <input
+                          type="checkbox"
+                          checked={config.mpp_auto_only}
+                          disabled={!config.mpp_enabled}
+                          onChange={(e) => setConfig({ ...config, mpp_auto_only: e.target.checked })}
+                        />
+                        {t('rebalanceCenter.settings.mppAutoOnly')}
+                      </label>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mppMaxShards')}>
+                        {t('rebalanceCenter.settings.mppMaxShards')}
+                      </label>
+                      <input
+                        className="input-field"
+                        type="number"
+                        min={1}
+                        max={MSPR_MAX_SHARDS_LIMIT}
+                        value={config.mpp_max_shards}
+                        disabled={!config.mpp_enabled}
+                        onChange={(e) => {
+                          const nextMaxShards = Math.max(1, Math.min(MSPR_MAX_SHARDS_LIMIT, Number(e.target.value) || 1))
+                          const nextParallelism = Math.max(1, Math.min(config.mpp_parallelism || 1, nextMaxShards))
+                          setConfig({ ...config, mpp_max_shards: nextMaxShards, mpp_parallelism: nextParallelism })
+                        }}
+                      />
+                      <p className="text-[11px] text-fog/50">{t('rebalanceCenter.settings.mppMaxShardsRecommended', { value: MSPR_DEFAULT_MAX_SHARDS })}</p>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mppParallelism')}>
+                        {t('rebalanceCenter.settings.mppParallelism')}
+                      </label>
+                      <input
+                        className="input-field"
+                        type="number"
+                        min={1}
+                        max={Math.max(1, Math.min(MSPR_MAX_SHARDS_LIMIT, config.mpp_max_shards || 1))}
+                        value={config.mpp_parallelism}
+                        disabled={!config.mpp_enabled}
+                        onChange={(e) => {
+                          const maxAllowed = Math.max(1, Math.min(MSPR_MAX_SHARDS_LIMIT, config.mpp_max_shards || 1))
+                          const nextParallelism = Math.max(1, Math.min(maxAllowed, Number(e.target.value) || 1))
+                          setConfig({ ...config, mpp_parallelism: nextParallelism })
+                        }}
+                      />
+                      <p className="text-[11px] text-fog/50">{t('rebalanceCenter.settings.mppParallelismRecommended', { value: MSPR_DEFAULT_PARALLELISM })}</p>
+                      <p className="text-[11px] text-fog/45">{t('rebalanceCenter.settings.mppParallelismBoundedByShards')}</p>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mppMinShardSat')}>
+                        {t('rebalanceCenter.settings.mppMinShardSat')}
+                      </label>
+                      <input
+                        className="input-field"
+                        type="number"
+                        min={1}
+                        value={config.mpp_min_shard_sat}
+                        disabled={!config.mpp_enabled}
+                        onChange={(e) => setConfig({ ...config, mpp_min_shard_sat: Number(e.target.value) })}
+                      />
+                      <p className="text-[11px] text-fog/50">{t('rebalanceCenter.settings.mppMinShardSatRecommended', { value: formatSats(MSPR_DEFAULT_MIN_SHARD_SAT) })}</p>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mppRoundTimeout')}>
+                        {t('rebalanceCenter.settings.mppRoundTimeout')}
+                      </label>
+                      <input
+                        className="input-field"
+                        type="number"
+                        min={5}
+                        value={config.mpp_round_timeout_sec}
+                        disabled={!config.mpp_enabled}
+                        onChange={(e) => setConfig({ ...config, mpp_round_timeout_sec: Number(e.target.value) })}
+                      />
+                      <p className="text-[11px] text-fog/50">{t('rebalanceCenter.settings.mppRoundTimeoutRecommended', { value: MSPR_DEFAULT_ROUND_TIMEOUT_SEC })}</p>
+                    </div>
+                  </div>
+                </SettingsSubcard>
+              </div>
+            )}
           </div>
         )}
         {autoOpen && (
@@ -2587,6 +2738,9 @@ export default function RebalanceCenter() {
                     <div className="text-fog/50">{t('rebalanceCenter.channels.protected')}</div>
                     <div>{formatSats(ch.protected_liquidity_sat)}</div>
                     <div className="text-fog/50">{t('rebalanceCenter.channels.payback', { value: (ch.payback_progress * 100).toFixed(0) })}</div>
+                    <div className="text-fog/50" title={t('rebalanceCenter.channelsHints.timeToPayback')}>
+                      {t('rebalanceCenter.channels.timeToPayback')}: {formatTimeToPayback(ch)}
+                    </div>
                   </div>
                   <div>
                     <div className="text-fog/50">
@@ -2621,6 +2775,13 @@ export default function RebalanceCenter() {
                       onChange={(e) => handleManualRestartToggle(ch, e.target.checked)}
                     />
                   </label>
+                  <button
+                    className="btn-secondary text-xs px-3 py-1"
+                    onClick={() => handleTogglePairStats(ch)}
+                    title={t('rebalanceCenter.channelsHints.pairStats')}
+                  >
+                    {pairStatsOpen[ch.channel_id] ? t('common.hide') : t('rebalanceCenter.channels.pairStats')}
+                  </button>
                   {manualRestartBudgetLow && scoreMeta && (
                     <div className="basis-full text-[11px] text-amber-200">
                       {t('rebalanceCenter.channels.manualRestartBudgetWarning', {
@@ -2649,6 +2810,7 @@ export default function RebalanceCenter() {
                     {t('rebalanceCenter.channels.excludeSource')}
                   </label>
                 </div>
+                {pairStatsOpen[ch.channel_id] && renderPairStatsPanel(ch)}
               </article>
             )
           })}
@@ -2667,6 +2829,9 @@ export default function RebalanceCenter() {
                   </div>
                 </th>
                 <th className="pb-2 text-center">{t('rebalanceCenter.channels.protected')}</th>
+                <th className="pb-2 pl-4 text-center" title={t('rebalanceCenter.channelsHints.timeToPayback')}>
+                  {t('rebalanceCenter.channels.timeToPayback')}
+                </th>
                 <th className="pb-2">
                   <div className="flex flex-col gap-2">
                     <span>{t('rebalanceCenter.channels.actions')}</span>
@@ -2728,8 +2893,8 @@ export default function RebalanceCenter() {
                   ? buildHashWithChannelPoint(LIGHTNING_OPS_ROUTE_KEY, ch.channel_point)
                   : `#${LIGHTNING_OPS_ROUTE_KEY}`
                 return (
+                  <Fragment key={ch.channel_point || String(ch.channel_id)}>
                   <tr
-                    key={ch.channel_point || String(ch.channel_id)}
                     id={desktopChannelRowID(ch.channel_point)}
                     className={`border-t border-white/5 group ${highlight} ${isFocused ? 'bg-sky-500/20' : ''}`}
                   >
@@ -2818,6 +2983,9 @@ export default function RebalanceCenter() {
                     <div>{formatSats(ch.protected_liquidity_sat)}</div>
                     <div className="text-xs text-fog/50">{t('rebalanceCenter.channels.payback', { value: (ch.payback_progress * 100).toFixed(0) })}</div>
                   </td>
+                  <td className="py-3 pl-4 text-center text-xs text-fog/60" title={t('rebalanceCenter.channelsHints.timeToPayback')}>
+                    {formatTimeToPayback(ch)}
+                  </td>
                   <td className="py-3 space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <button
@@ -2846,6 +3014,13 @@ export default function RebalanceCenter() {
                           onChange={(e) => handleManualRestartToggle(ch, e.target.checked)}
                         />
                       </div>
+                      <button
+                        className="btn-secondary text-xs px-3 py-1"
+                        onClick={() => handleTogglePairStats(ch)}
+                        title={t('rebalanceCenter.channelsHints.pairStats')}
+                      >
+                        {pairStatsOpen[ch.channel_id] ? t('common.hide') : t('rebalanceCenter.channels.pairStats')}
+                      </button>
                     </div>
                     {manualRestartBudgetLow && scoreMeta && (
                       <div className="text-xs text-amber-200">
@@ -2880,6 +3055,14 @@ export default function RebalanceCenter() {
                     </div>
                     </td>
                   </tr>
+                  {pairStatsOpen[ch.channel_id] && (
+                    <tr className="border-t border-white/5 bg-white/[0.02]">
+                      <td colSpan={7} className="px-3 pb-3">
+                        {renderPairStatsPanel(ch)}
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 )
               })}
             </tbody>

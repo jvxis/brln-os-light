@@ -327,6 +327,26 @@ func (s *Server) handleRebalanceChannels(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{"channels": channels})
 }
 
+func (s *Server) handleRebalancePairStats(w http.ResponseWriter, r *http.Request) {
+	if s.rebalance == nil {
+		writeError(w, http.StatusServiceUnavailable, "rebalance unavailable")
+		return
+	}
+	targetID, err := strconv.ParseUint(strings.TrimSpace(r.URL.Query().Get("target_channel_id")), 10, 64)
+	if err != nil || targetID == 0 {
+		writeError(w, http.StatusBadRequest, "target_channel_id required")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
+	defer cancel()
+	stats, err := s.rebalance.PairStats(ctx, targetID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"pairs": stats})
+}
+
 func (s *Server) handleRebalanceQueue(w http.ResponseWriter, r *http.Request) {
 	if s.rebalance == nil {
 		writeError(w, http.StatusServiceUnavailable, "rebalance unavailable")

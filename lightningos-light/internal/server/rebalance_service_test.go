@@ -89,6 +89,12 @@ func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	if cfg.SourceMinPaybackProgress != 0.95 {
 		t.Fatalf("expected source_min_payback_progress default=0.95, got %f", cfg.SourceMinPaybackProgress)
 	}
+	if cfg.GainModelVersion != 1 {
+		t.Fatalf("expected gain_model_version default=1, got %d", cfg.GainModelVersion)
+	}
+	if cfg.VelocityWeight != 0.7 {
+		t.Fatalf("expected velocity_weight default=0.7, got %f", cfg.VelocityWeight)
+	}
 }
 
 func TestNormalizeRebalanceConfigClampsRebalanceCostFloor(t *testing.T) {
@@ -109,6 +115,29 @@ func TestNormalizeRebalanceConfigClampsSourceMinPaybackProgress(t *testing.T) {
 	}
 }
 
+func TestNormalizeRebalanceConfigClampsGainModelAndVelocityWeight(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	cfg.GainModelVersion = 99
+	cfg.VelocityWeight = 1.7
+	got := normalizeRebalanceConfig(cfg)
+	if got.GainModelVersion != 2 {
+		t.Fatalf("expected GainModelVersion clamped to 2, got %d", got.GainModelVersion)
+	}
+	if got.VelocityWeight != 1 {
+		t.Fatalf("expected VelocityWeight clamped to 1, got %f", got.VelocityWeight)
+	}
+
+	cfg.GainModelVersion = -1
+	cfg.VelocityWeight = -0.1
+	got = normalizeRebalanceConfig(cfg)
+	if got.GainModelVersion != 1 {
+		t.Fatalf("expected GainModelVersion fallback to 1, got %d", got.GainModelVersion)
+	}
+	if got.VelocityWeight != 0 {
+		t.Fatalf("expected VelocityWeight clamped to 0, got %f", got.VelocityWeight)
+	}
+}
+
 func TestAutoTargetCostGateRequiresSpreadAboveExpectedCost(t *testing.T) {
 	if passesAutoTargetCostGate(channelSetting{}, 131, 88) {
 		t.Fatalf("expected cost gate to block when effective spread is below expected cost")
@@ -125,6 +154,19 @@ func TestAutoTargetCostGateBypassAllowsBelowCostSpread(t *testing.T) {
 	setting := channelSetting{AutoBypassCostGate: true}
 	if !passesAutoTargetCostGate(setting, 131, 88) {
 		t.Fatalf("expected auto cost gate bypass to allow below-cost effective spread")
+	}
+}
+
+func TestEstimateTargetGainV2UsesSpreadEffectiveness(t *testing.T) {
+	got := estimateTargetGainV2(1_000_000, 1_000, 250)
+	if got != 750 {
+		t.Fatalf("expected v2 gain 750 sats, got %d", got)
+	}
+	if got := estimateTargetGainV2(1_000_000, 1_000, 1_000); got != 0 {
+		t.Fatalf("expected zero gain when peer fee erases spread, got %d", got)
+	}
+	if got := spreadEffectiveness(1_000, 250); got != 0.75 {
+		t.Fatalf("expected spread effectiveness 0.75, got %f", got)
 	}
 }
 

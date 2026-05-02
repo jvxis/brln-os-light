@@ -2864,6 +2864,12 @@
       "feeLimitPpm": "Limite de fee (ppm)",
       "lostProfit": "Subtrair fees da fonte",
       "roiMin": "ROI mínimo",
+      "gainModelVersion": "Modelo de ganho",
+      "gainModelOptions": {
+        "v1": "v1: receita histórica",
+        "v2": "v2: spread efetivo + velocidade"
+      },
+      "velocityWeight": "Peso da velocidade",
       "maxConcurrent": "Max. concorrentes",
         "minAmount": "Mínimo (sats)",
         "maxAmount": "Máximo (sats)",
@@ -2925,6 +2931,8 @@
       "feeLimitPpm": "Substitui o econ ratio por um fee ppm fixo (0 = desativado).",
       "lostProfit": "Subtrai as fees estimadas do canal fonte do orçamento de fee.",
       "roiMin": "ROI mínimo esperado (receita 7d / custo estimado).",
+      "gainModelVersion": "v1 mantém o modelo legado de receita proporcional. v2 estima ganho pelo spread efetivo e ativa o score por velocidade de drenagem.",
+      "velocityWeight": "Peso de 0 a 1 aplicado ao sinal de velocidade real do canal no score v2. 0 prioriza idade/fairness; 1 prioriza drain rate relativo.",
       "maxConcurrent": "Máximo de rebalances simultâneos.",
         "minAmount": "Quantidade mínima por rebalance.",
         "maxAmount": "Quantidade máxima por rebalance. 0 = sem limite.",

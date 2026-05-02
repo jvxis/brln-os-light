@@ -56,6 +56,8 @@ type rebalanceConfigPayload struct {
 	RebalanceCostFloorPpm     *int64   `json:"rebalance_cost_floor_ppm,omitempty"`
 	SourceMinPaybackProgress  *float64 `json:"source_min_payback_progress,omitempty"`
 	MissionControlReinforce   *bool    `json:"mission_control_reinforce,omitempty"`
+	GainModelVersion          *int     `json:"gain_model_version,omitempty"`
+	VelocityWeight            *float64 `json:"velocity_weight,omitempty"`
 }
 
 type rebalanceRunPayload struct {
@@ -259,6 +261,12 @@ func (s *Server) handleRebalanceConfigPost(w http.ResponseWriter, r *http.Reques
 	}
 	if payload.MissionControlReinforce != nil {
 		cfg.MissionControlReinforce = *payload.MissionControlReinforce
+	}
+	if payload.GainModelVersion != nil {
+		cfg.GainModelVersion = *payload.GainModelVersion
+	}
+	if payload.VelocityWeight != nil {
+		cfg.VelocityWeight = *payload.VelocityWeight
 	}
 
 	updated, err := s.rebalance.UpdateConfig(ctx, cfg)

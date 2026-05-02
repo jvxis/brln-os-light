@@ -174,3 +174,55 @@ func TestBuildAndOrderRebalanceCandidatesGolden(t *testing.T) {
 		t.Fatalf("skipped details:\n got %#v\nwant %#v", gotDetails, wantDetails)
 	}
 }
+
+func TestBuildAndOrderRebalanceCandidatesGainModelV2UsesVelocity(t *testing.T) {
+	now := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
+	cfg := defaultRebalanceConfig()
+	cfg.AutoEnabled = true
+	cfg.GainModelVersion = 2
+	cfg.VelocityWeight = 0.7
+	cfg.ROIMin = 0
+	cfg.MinSplitEnabled = true
+	cfg.MinExecuteSat = 10_000
+
+	highVelocity := rebalanceGoldenTarget(201, "high-velocity", 1_000_000, 400_000, 1, 100)
+	highVelocity.DrainRateSatPerHour = 10_000
+	lowVelocity := rebalanceGoldenTarget(202, "low-velocity", 1_000_000, 400_000, 1, 100)
+	lowVelocity.DrainRateSatPerHour = 0
+
+	channels := []RebalanceChannel{
+		rebalanceGoldenSource(1, 2_000_000),
+		lowVelocity,
+		highVelocity,
+	}
+	settings := map[uint64]channelSetting{}
+	for _, ch := range channels {
+		settings[ch.ChannelID] = channelSetting{
+			ChannelID:           ch.ChannelID,
+			TargetOutboundPct:   ch.TargetOutboundPct,
+			AutoEnabled:         true,
+			UseDefaultEconRatio: true,
+		}
+	}
+
+	got := buildAndOrderRebalanceCandidates(rebalanceAutoScanCandidateInput{
+		Channels:         channels,
+		Settings:         settings,
+		Cfg:              cfg,
+		ScanAt:           now,
+		LastAutoByTarget: map[uint64]time.Time{},
+	})
+
+	if len(got.Candidates) != 2 {
+		t.Fatalf("candidates length: got %d, want 2", len(got.Candidates))
+	}
+	if got.Candidates[0].Channel.ChannelID != 201 {
+		t.Fatalf("expected high velocity candidate first, got channel %d", got.Candidates[0].Channel.ChannelID)
+	}
+	if got.Candidates[0].ExpectedGainSat != 900 {
+		t.Fatalf("expected v2 gain 900 sats, got %d", got.Candidates[0].ExpectedGainSat)
+	}
+	if got.Candidates[0].Score <= got.Candidates[1].Score {
+		t.Fatalf("expected velocity-adjusted score to beat low velocity score, got %d <= %d", got.Candidates[0].Score, got.Candidates[1].Score)
+	}
+}

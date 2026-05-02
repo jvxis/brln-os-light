@@ -178,6 +178,8 @@ type RebalanceConfig struct {
 	RebalanceCostFloorPpm     int64   `json:"rebalance_cost_floor_ppm"`
 	SourceMinPaybackProgress  float64 `json:"source_min_payback_progress"`
 	MissionControlReinforce   bool    `json:"mission_control_reinforce"`
+	GainModelVersion          int     `json:"gain_model_version"`
+	VelocityWeight            float64 `json:"velocity_weight"`
 }
 
 type RebalanceOverview struct {
@@ -622,6 +624,8 @@ func defaultRebalanceConfig() RebalanceConfig {
 		RebalanceCostFloorPpm:     250,
 		SourceMinPaybackProgress:  0.95,
 		MissionControlReinforce:   false,
+		GainModelVersion:          1,
+		VelocityWeight:            0.7,
 	}
 }
 
@@ -1081,6 +1085,21 @@ func normalizeRebalanceConfig(cfg RebalanceConfig) RebalanceConfig {
 	}
 	if cfg.SourceMinPaybackProgress < 0 {
 		cfg.SourceMinPaybackProgress = 0
+	}
+	if cfg.GainModelVersion <= 0 {
+		cfg.GainModelVersion = def.GainModelVersion
+	}
+	if cfg.GainModelVersion > 2 {
+		cfg.GainModelVersion = 2
+	}
+	if math.IsNaN(cfg.VelocityWeight) || math.IsInf(cfg.VelocityWeight, 0) {
+		cfg.VelocityWeight = def.VelocityWeight
+	}
+	if cfg.VelocityWeight < 0 {
+		cfg.VelocityWeight = 0
+	}
+	if cfg.VelocityWeight > 1 {
+		cfg.VelocityWeight = 1
 	}
 	return cfg
 }
@@ -2041,7 +2060,7 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 			continue
 		}
 		estimatedCost := estimateHistoricalCost(targetAmount, snapshot.RebalanceCost7dPpm)
-		expectedGain := estimateTargetGain(targetAmount, snapshot.Revenue7dSat, snapshot.LocalBalanceSat, snapshot.CapacitySat)
+		expectedGain := estimateTargetGainForConfig(targetCfg, snapshot, targetAmount)
 		expectedROI, roiValid := estimateTargetROI(expectedGain, estimatedCost, targetAmount, snapshot.OutgoingFeePpm, snapshot.PeerFeeRatePpm)
 		if input.Cfg.ROIMin > 0 && roiValid && expectedROI < input.Cfg.ROIMin {
 			plan.ROISkipped++
@@ -2093,6 +2112,18 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 		}
 	}
 
+	applyMultiObjectiveScores(plan.Candidates, input.Cfg, input.ScanAt)
+	plan.TopScore = 0
+	plan.TopScoreSet = false
+	for _, candidate := range plan.Candidates {
+		if candidate.CooldownProbe {
+			continue
+		}
+		if !plan.TopScoreSet || candidate.Score > plan.TopScore {
+			plan.TopScore = candidate.Score
+			plan.TopScoreSet = true
+		}
+	}
 	sortRebalanceTargets(plan.Candidates, plan.TopScore, plan.TopScoreSet)
 	plan.Candidates, plan.RecentSkipped = filterRecentRebalanceTargets(plan.Candidates, input.Cfg, input.ScanAt)
 	for i := 0; i < plan.RecentSkipped; i++ {
@@ -5687,6 +5718,118 @@ func estimateTargetGain(amountSat int64, revenue7dSat int64, localBalanceSat int
 	return int64(math.Round(gain))
 }
 
+func estimateTargetGainForConfig(cfg RebalanceConfig, snapshot RebalanceChannel, amountSat int64) int64 {
+	if cfg.GainModelVersion >= 2 {
+		return estimateTargetGainV2(amountSat, snapshot.OutgoingFeePpm, snapshot.PeerFeeRatePpm)
+	}
+	return estimateTargetGain(amountSat, snapshot.Revenue7dSat, snapshot.LocalBalanceSat, snapshot.CapacitySat)
+}
+
+func spreadEffectiveness(outgoingFeePpm int64, peerFeeRatePpm int64) float64 {
+	if outgoingFeePpm <= 0 {
+		return 0
+	}
+	effectiveness := 1 - (float64(peerFeeRatePpm) / float64(outgoingFeePpm))
+	if effectiveness < 0 {
+		return 0
+	}
+	if effectiveness > 1 {
+		return 1
+	}
+	return effectiveness
+}
+
+func estimateTargetGainV2(amountSat int64, outgoingFeePpm int64, peerFeeRatePpm int64) int64 {
+	if amountSat <= 0 || outgoingFeePpm <= 0 {
+		return 0
+	}
+	effectiveness := spreadEffectiveness(outgoingFeePpm, peerFeeRatePpm)
+	if effectiveness <= 0 {
+		return 0
+	}
+	gain := (float64(amountSat) * float64(outgoingFeePpm) / 1_000_000.0) * effectiveness
+	if gain <= 0 {
+		return 0
+	}
+	return int64(math.Round(gain))
+}
+
+func applyMultiObjectiveScores(candidates []rebalanceTarget, cfg RebalanceConfig, scanAt time.Time) {
+	if cfg.GainModelVersion < 2 || len(candidates) == 0 {
+		return
+	}
+	maxDrainRate := int64(0)
+	for _, candidate := range candidates {
+		if candidate.CooldownProbe {
+			continue
+		}
+		if candidate.Channel.DrainRateSatPerHour > maxDrainRate {
+			maxDrainRate = candidate.Channel.DrainRateSatPerHour
+		}
+	}
+	for i := range candidates {
+		if candidates[i].CooldownProbe {
+			continue
+		}
+		candidates[i].Score = multiObjectiveRebalanceScore(candidates[i].Score, candidates[i].Channel.DrainRateSatPerHour, maxDrainRate, candidates[i].LastAutoAt, scanAt, cfg)
+	}
+}
+
+func multiObjectiveRebalanceScore(economicScore int64, drainRateSatPerHour int64, maxDrainRateSatPerHour int64, lastAutoAt time.Time, scanAt time.Time, cfg RebalanceConfig) int64 {
+	if cfg.GainModelVersion < 2 || economicScore == 0 {
+		return economicScore
+	}
+	velocityWeight := cfg.VelocityWeight
+	if math.IsNaN(velocityWeight) || math.IsInf(velocityWeight, 0) {
+		velocityWeight = defaultRebalanceConfig().VelocityWeight
+	}
+	if velocityWeight < 0 {
+		velocityWeight = 0
+	}
+	if velocityWeight > 1 {
+		velocityWeight = 1
+	}
+	velocityMultiplier := 0.0
+	if maxDrainRateSatPerHour > 0 && drainRateSatPerHour > 0 {
+		velocityMultiplier = float64(drainRateSatPerHour) / float64(maxDrainRateSatPerHour)
+		if velocityMultiplier > 1 {
+			velocityMultiplier = 1
+		}
+	}
+	ageBoost := rebalanceTargetAgeBoost(lastAutoAt, scanAt, cfg.ScanIntervalSec)
+	multiplier := (velocityWeight * velocityMultiplier) + ((1 - velocityWeight) * ageBoost)
+	if multiplier <= 0 {
+		return 0
+	}
+	return int64(math.Round(float64(economicScore) * multiplier))
+}
+
+func rebalanceTargetAgeBoost(lastAutoAt time.Time, scanAt time.Time, scanIntervalSec int) float64 {
+	if scanAt.IsZero() {
+		scanAt = time.Now()
+	}
+	if lastAutoAt.IsZero() {
+		return 1.5
+	}
+	cooldown := time.Duration(scanIntervalSec) * time.Second
+	if cooldown < autoTargetCooldownMin {
+		cooldown = autoTargetCooldownMin
+	}
+	age := scanAt.Sub(lastAutoAt)
+	if age <= cooldown {
+		return 1
+	}
+	excess := age - cooldown
+	boost := 1 + (float64(excess) / float64(24*time.Hour) * 0.5)
+	if boost > 1.5 {
+		return 1.5
+	}
+	if boost < 1 {
+		return 1
+	}
+	return boost
+}
+
 func buildScanDetail(reasons map[string]int, remaining int64, candidates int) string {
 	if len(reasons) == 0 {
 		return ""
@@ -5985,6 +6128,8 @@ end $$;
     critical_min_sources integer not null default 2,
     critical_min_available_sats bigint not null default 0,
     critical_cycles integer not null default 3,
+    gain_model_version integer not null default 1,
+    velocity_weight double precision not null default 0.7,
     updated_at timestamptz not null default now()
   );
 
@@ -6054,6 +6199,10 @@ end $$;
     add column if not exists source_min_payback_progress double precision not null default 0.95;
   alter table rebalance_config
     add column if not exists mission_control_reinforce boolean not null default false;
+  alter table rebalance_config
+    add column if not exists gain_model_version integer not null default 1;
+  alter table rebalance_config
+    add column if not exists velocity_weight double precision not null default 0.7;
 
   alter table rebalance_config
     alter column scan_interval_sec set default 900;
@@ -6089,6 +6238,10 @@ end $$;
     alter column attempt_timeout_sec set default 45;
   alter table rebalance_config
     alter column unlock_days set default 7;
+  alter table rebalance_config
+    alter column gain_model_version set default 1;
+  alter table rebalance_config
+    alter column velocity_weight set default 0.7;
 
   alter table if exists rebalance_channel_settings
     add column if not exists manual_restart_enabled boolean not null default false;
@@ -6284,7 +6437,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
   select auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, mc_half_life_sec, payback_mode_flags,
-    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce
+    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight
   from rebalance_config where id=$1`, rebalanceConfigID)
 
 	cfg := defaultRebalanceConfig()
@@ -6333,6 +6486,8 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.RebalanceCostFloorPpm,
 		&cfg.SourceMinPaybackProgress,
 		&cfg.MissionControlReinforce,
+		&cfg.GainModelVersion,
+		&cfg.VelocityWeight,
 	)
 	if err != nil {
 		return cfg, err
@@ -6355,8 +6510,8 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     id, auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, mc_half_life_sec, payback_mode_flags,
-    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,now())
+    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, updated_at
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scan_interval_sec = excluded.scan_interval_sec,
@@ -6402,9 +6557,11 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     rebalance_cost_floor_ppm = excluded.rebalance_cost_floor_ppm,
     source_min_payback_progress = excluded.source_min_payback_progress,
     mission_control_reinforce = excluded.mission_control_reinforce,
+    gain_model_version = excluded.gain_model_version,
+    velocity_weight = excluded.velocity_weight,
     updated_at = now()
   `, rebalanceConfigID, cfg.AutoEnabled, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
-		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce,
+		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight,
 	)
 	return err
 }

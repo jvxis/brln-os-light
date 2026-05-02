@@ -622,6 +622,8 @@ export const updateRebalanceConfig = (payload: {
   rebalance_cost_floor_ppm?: number
   source_min_payback_progress?: number
   mission_control_reinforce?: boolean
+  gain_model_version?: number
+  velocity_weight?: number
 }) => request('/api/rebalance/config', { method: 'POST', body: JSON.stringify(payload) })
 export const getRebalanceOverview = () => request('/api/rebalance/overview')
 export const getRebalanceChannels = () => request('/api/rebalance/channels')

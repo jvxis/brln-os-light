@@ -2864,6 +2864,12 @@
       "feeLimitPpm": "Fee limit (ppm)",
       "lostProfit": "Subtract source fees",
       "roiMin": "ROI minimum",
+      "gainModelVersion": "Gain model",
+      "gainModelOptions": {
+        "v1": "v1: historical revenue",
+        "v2": "v2: effective spread + velocity"
+      },
+      "velocityWeight": "Velocity weight",
       "maxConcurrent": "Max concurrent",
         "minAmount": "Min amount (sats)",
         "maxAmount": "Max amount (sats)",
@@ -2925,6 +2931,8 @@
       "feeLimitPpm": "Overrides econ ratio with a fixed max fee ppm (0 = disabled).",
       "lostProfit": "Subtract estimated source channel fees from the max fee budget.",
       "roiMin": "Minimum expected ROI (7d revenue / estimated cost) to auto rebalance.",
+      "gainModelVersion": "v1 keeps the legacy proportional revenue model. v2 estimates gain from effective spread and enables drain-rate velocity scoring.",
+      "velocityWeight": "Weight from 0 to 1 applied to the channel's real velocity signal in v2 scoring. 0 favors age/fairness; 1 favors relative drain rate.",
       "maxConcurrent": "Maximum simultaneous rebalance jobs.",
         "minAmount": "Minimum sats per rebalance attempt.",
         "maxAmount": "Maximum sats per rebalance attempt. 0 = no cap.",

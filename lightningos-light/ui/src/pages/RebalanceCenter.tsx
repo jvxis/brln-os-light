@@ -821,7 +821,7 @@ export default function RebalanceCenter() {
     const channelID = channel.channel_id
     const willOpen = !pairStatsOpen[channelID]
     setPairStatsOpen((prev) => ({ ...prev, [channelID]: willOpen }))
-    if (!willOpen || pairStatsByChannel[channelID] || pairStatsLoading[channelID]) {
+    if (!willOpen || pairStatsLoading[channelID]) {
       return
     }
     setPairStatsLoading((prev) => ({ ...prev, [channelID]: true }))

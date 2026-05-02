@@ -796,6 +796,28 @@ export default function RebalanceCenter() {
     }
   }
 
+  const handleAutoBypassCostGateToggle = async (channel: RebalanceChannel, checked: boolean) => {
+    const key = channelKey(channel)
+    const previous = channelAutoBypassCostGate(channel)
+    setEditAutoBypassCostGate((prev) => ({ ...prev, [key]: checked }))
+    setChannels((prev) =>
+      prev.map((ch) => (isSameChannel(ch, channel) ? { ...ch, auto_bypass_cost_gate: checked } : ch))
+    )
+    try {
+      await updateRebalanceChannelTarget({
+        channel_point: channel.channel_point,
+        auto_bypass_cost_gate: checked
+      })
+      void loadAll({ silent: true })
+    } catch (err) {
+      setEditAutoBypassCostGate((prev) => ({ ...prev, [key]: previous }))
+      setChannels((prev) =>
+        prev.map((ch) => (isSameChannel(ch, channel) ? { ...ch, auto_bypass_cost_gate: previous } : ch))
+      )
+      setStatus(err instanceof Error ? err.message : t('rebalanceCenter.saveFailed'))
+    }
+  }
+
   const handleRunRebalance = async (channel: RebalanceChannel) => {
     const nextValue = editTargets[channelKey(channel)]
     const parsed = nextValue ? Number(nextValue) : channel.target_outbound_pct
@@ -2476,7 +2498,7 @@ export default function RebalanceCenter() {
                     <input
                       type="checkbox"
                       checked={channelAutoBypassCostGate(ch)}
-                      onChange={(e) => setEditAutoBypassCostGate((prev) => ({ ...prev, [channelKey(ch)]: e.target.checked }))}
+                      onChange={(e) => void handleAutoBypassCostGateToggle(ch, e.target.checked)}
                     />
                     {t('rebalanceCenter.channels.autoBypassCostGate')}
                   </label>
@@ -2723,7 +2745,7 @@ export default function RebalanceCenter() {
                       <input
                         type="checkbox"
                         checked={channelAutoBypassCostGate(ch)}
-                        onChange={(e) => setEditAutoBypassCostGate((prev) => ({ ...prev, [channelKey(ch)]: e.target.checked }))}
+                        onChange={(e) => void handleAutoBypassCostGateToggle(ch, e.target.checked)}
                       />
                       {t('rebalanceCenter.channels.autoBypassCostGate')}
                     </label>

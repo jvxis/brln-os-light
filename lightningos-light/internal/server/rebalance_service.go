@@ -813,17 +813,17 @@ func (s *RebalanceService) ResolveChannel(ctx context.Context, channelID uint64,
 	if err != nil {
 		return 0, "", err
 	}
-	if channelID != 0 {
-		for _, ch := range channels {
-			if ch.ChannelID == channelID {
-				return ch.ChannelID, ch.ChannelPoint, nil
-			}
-		}
-	}
 	trimmed := strings.TrimSpace(channelPoint)
 	if trimmed != "" {
 		for _, ch := range channels {
 			if strings.EqualFold(ch.ChannelPoint, trimmed) {
+				return ch.ChannelID, ch.ChannelPoint, nil
+			}
+		}
+	}
+	if channelID != 0 {
+		for _, ch := range channels {
+			if ch.ChannelID == channelID {
 				return ch.ChannelID, ch.ChannelPoint, nil
 			}
 		}

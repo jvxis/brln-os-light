@@ -38,7 +38,7 @@ export function PairStatsPanel({
         <div className="space-y-2">
           {pairs.map((pair) => (
             <div
-              key={`${pair.source_channel_id}-${pair.target_channel_id}`}
+              key={`${pair.source_channel_point || pair.source_channel_id}-${pair.target_channel_point || pair.target_channel_id}`}
               className="grid gap-2 border-t border-white/5 pt-2 md:grid-cols-[minmax(0,1.3fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,0.8fr)_minmax(0,1fr)]"
             >
               <div className="min-w-0">

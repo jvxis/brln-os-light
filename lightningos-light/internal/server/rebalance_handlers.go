@@ -510,14 +510,29 @@ func (s *Server) handleRebalancePairStats(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusServiceUnavailable, "rebalance unavailable")
 		return
 	}
-	targetID, err := strconv.ParseUint(strings.TrimSpace(r.URL.Query().Get("target_channel_id")), 10, 64)
-	if err != nil || targetID == 0 {
-		writeError(w, http.StatusBadRequest, "target_channel_id required")
+	rawTargetID := strings.TrimSpace(r.URL.Query().Get("target_channel_id"))
+	targetPoint := strings.TrimSpace(r.URL.Query().Get("target_channel_point"))
+	if rawTargetID == "" && targetPoint == "" {
+		writeError(w, http.StatusBadRequest, "target_channel_id or target_channel_point required")
 		return
+	}
+	var targetID uint64
+	if rawTargetID != "" {
+		parsed, err := strconv.ParseUint(rawTargetID, 10, 64)
+		if err != nil || parsed == 0 {
+			writeError(w, http.StatusBadRequest, "invalid target_channel_id")
+			return
+		}
+		targetID = parsed
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
 	defer cancel()
-	stats, err := s.rebalance.PairStats(ctx, targetID)
+	resolvedID, _, err := s.rebalance.ResolveChannel(ctx, targetID, targetPoint)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	stats, err := s.rebalance.PairStats(ctx, resolvedID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

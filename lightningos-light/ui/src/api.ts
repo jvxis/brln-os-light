@@ -629,16 +629,16 @@ export const updateRebalanceConfig = (payload: {
 }) => request('/api/rebalance/config', { method: 'POST', body: JSON.stringify(payload) })
 export const getRebalanceOverview = () => request('/api/rebalance/overview')
 export const getRebalanceChannels = () => request('/api/rebalance/channels')
-export const getRebalancePairStats = (targetChannelId: number) =>
-  request(`/api/rebalance/pair-stats?target_channel_id=${encodeURIComponent(String(targetChannelId))}`)
+export const getRebalancePairStats = (targetChannelPoint: string) =>
+  request(`/api/rebalance/pair-stats?target_channel_point=${encodeURIComponent(targetChannelPoint)}`)
 export const getRebalanceQueue = () => request('/api/rebalance/queue')
 export const getRebalanceHistory = (limit = 0) =>
   limit > 0 ? request(`/api/rebalance/history?limit=${limit}`) : request('/api/rebalance/history')
 export const resetRebalanceMissionControl = () =>
   request('/api/rebalance/mission-control/reset', { method: 'POST', body: JSON.stringify({}) })
 export const runRebalance = (payload: {
-  channel_id: number
-  channel_point?: string
+  channel_id?: number
+  channel_point: string
   target_outbound_pct?: number
   auto_restart?: boolean
 }) =>
@@ -646,7 +646,7 @@ export const runRebalance = (payload: {
 export const stopRebalance = (payload: { job_id: number }) =>
   request('/api/rebalance/stop', { method: 'POST', body: JSON.stringify(payload) })
 export const updateRebalanceChannelTarget = (payload: {
-  channel_id: number
+  channel_id?: number
   channel_point: string
   target_outbound_pct?: number
   use_default_econ_ratio?: boolean
@@ -654,11 +654,11 @@ export const updateRebalanceChannelTarget = (payload: {
   auto_bypass_cost_gate?: boolean
 }) =>
   request('/api/rebalance/channel/target', { method: 'POST', body: JSON.stringify(payload) })
-export const updateRebalanceChannelAuto = (payload: { channel_id: number; channel_point?: string; auto_enabled: boolean }) =>
+export const updateRebalanceChannelAuto = (payload: { channel_id?: number; channel_point: string; auto_enabled: boolean }) =>
   request('/api/rebalance/channel/auto', { method: 'POST', body: JSON.stringify(payload) })
-export const updateRebalanceChannelManualRestart = (payload: { channel_id: number; channel_point?: string; enabled: boolean }) =>
+export const updateRebalanceChannelManualRestart = (payload: { channel_id?: number; channel_point: string; enabled: boolean }) =>
   request('/api/rebalance/channel/manual-restart', { method: 'POST', body: JSON.stringify(payload) })
-export const updateRebalanceExclude = (payload: { channel_id: number; channel_point: string; excluded: boolean }) =>
+export const updateRebalanceExclude = (payload: { channel_id?: number; channel_point: string; excluded: boolean }) =>
   request('/api/rebalance/channel/exclude', { method: 'POST', body: JSON.stringify(payload) })
 
 export const getDepixConfig = (params?: { user_key?: string; timezone?: string }) =>

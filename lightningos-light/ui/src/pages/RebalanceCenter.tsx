@@ -104,10 +104,10 @@ export default function RebalanceCenter() {
   const [saving, setSaving] = useState(false)
   const [autoOpen, setAutoOpen] = useState(false)
   const [advancedControlsOpen, setAdvancedControlsOpen] = useState(false)
-  const [editTargets, setEditTargets] = useState<Record<number, string>>({})
-  const [editEconRatios, setEditEconRatios] = useState<Record<number, string>>({})
-  const [editUseDefaultEconRatio, setEditUseDefaultEconRatio] = useState<Record<number, boolean>>({})
-  const [editAutoBypassCostGate, setEditAutoBypassCostGate] = useState<Record<number, boolean>>({})
+  const [editTargets, setEditTargets] = useState<Record<string, string>>({})
+  const [editEconRatios, setEditEconRatios] = useState<Record<string, string>>({})
+  const [editUseDefaultEconRatio, setEditUseDefaultEconRatio] = useState<Record<string, boolean>>({})
+  const [editAutoBypassCostGate, setEditAutoBypassCostGate] = useState<Record<string, boolean>>({})
   const [manualRestart, setManualRestart] = useState<Record<string, boolean>>({})
   const [channelSort, setChannelSort] = useState<'economic' | 'emptiest'>('economic')
   const [channelSortDir, setChannelSortDir] = useState<'asc' | 'desc'>('desc')
@@ -119,10 +119,10 @@ export default function RebalanceCenter() {
   const [metrics24hOpen, setMetrics24hOpen] = useState(false)
   const [mppMetricsOpen, setMppMetricsOpen] = useState(false)
   const [failureTelemetryOpen, setFailureTelemetryOpen] = useState(false)
-  const [pairStatsOpen, setPairStatsOpen] = useState<Record<number, boolean>>({})
-  const [pairStatsByChannel, setPairStatsByChannel] = useState<Record<number, RebalancePairStat[]>>({})
-  const [pairStatsLoading, setPairStatsLoading] = useState<Record<number, boolean>>({})
-  const [pairStatsError, setPairStatsError] = useState<Record<number, boolean>>({})
+  const [pairStatsOpen, setPairStatsOpen] = useState<Record<string, boolean>>({})
+  const [pairStatsByChannel, setPairStatsByChannel] = useState<Record<string, RebalancePairStat[]>>({})
+  const [pairStatsLoading, setPairStatsLoading] = useState<Record<string, boolean>>({})
+  const [pairStatsError, setPairStatsError] = useState<Record<string, boolean>>({})
   const [mcResetBusy, setMcResetBusy] = useState(false)
   const [scanDetailsReason, setScanDetailsReason] = useState('all')
   const [scanDetailsShowAll, setScanDetailsShowAll] = useState(false)
@@ -418,17 +418,19 @@ export default function RebalanceCenter() {
     }
   }
   const parseLocaleDecimal = (raw: string) => Number(raw.replace(/\s/g, '').replace(',', '.'))
+  const channelKey = (channel: Pick<RebalanceChannel, 'channel_id' | 'channel_point'>) =>
+    channel.channel_point || String(channel.channel_id)
   const channelUseDefaultEconRatio = (channel: RebalanceChannel) =>
-    editUseDefaultEconRatio[channel.channel_id] ?? channel.use_default_econ_ratio
+    editUseDefaultEconRatio[channelKey(channel)] ?? channel.use_default_econ_ratio
   const channelAutoBypassCostGate = (channel: RebalanceChannel) =>
-    editAutoBypassCostGate[channel.channel_id] ?? Boolean(channel.auto_bypass_cost_gate)
+    editAutoBypassCostGate[channelKey(channel)] ?? Boolean(channel.auto_bypass_cost_gate)
   const channelDraftEligibleAsTarget = (channel: RebalanceChannel) =>
     channel.eligible_as_target || (channelAutoBypassCostGate(channel) && channel.eligible_as_manual_target)
   const channelEconRatioInput = (channel: RebalanceChannel) => {
     if (channelUseDefaultEconRatio(channel)) {
       return formatEconRatio(config?.econ_ratio ?? 0)
     }
-    const edited = editEconRatios[channel.channel_id]
+    const edited = editEconRatios[channelKey(channel)]
     if (edited !== undefined) return edited
     const fallback =
       channel.econ_ratio_override && channel.econ_ratio_override > 0
@@ -439,7 +441,12 @@ export default function RebalanceCenter() {
   const isSameChannel = (
     left: Pick<RebalanceChannel, 'channel_id' | 'channel_point'>,
     right: Pick<RebalanceChannel, 'channel_id' | 'channel_point'>
-  ) => left.channel_id === right.channel_id || (Boolean(left.channel_point) && left.channel_point === right.channel_point)
+  ) => {
+    if (left.channel_point && right.channel_point) {
+      return left.channel_point === right.channel_point
+    }
+    return left.channel_id === right.channel_id
+  }
   const bumpChannelStateVersion = () => {
     channelStateVersionRef.current += 1
     return channelStateVersionRef.current
@@ -673,7 +680,6 @@ export default function RebalanceCenter() {
     }
     try {
       await updateRebalanceChannelAuto({
-        channel_id: channel.channel_id,
         channel_point: channel.channel_point,
         auto_enabled: enabled
       })
@@ -699,7 +705,6 @@ export default function RebalanceCenter() {
       await Promise.all(
         sortedChannels.map((channel) =>
           updateRebalanceChannelAuto({
-            channel_id: channel.channel_id,
             channel_point: channel.channel_point,
             auto_enabled: enabled
           })
@@ -719,7 +724,6 @@ export default function RebalanceCenter() {
       await Promise.all(
         sortedChannels.map((channel) =>
           updateRebalanceExclude({
-            channel_id: channel.channel_id,
             channel_point: channel.channel_point,
             excluded
           })
@@ -736,7 +740,7 @@ export default function RebalanceCenter() {
     const previous = channel.excluded_as_source
     setChannels((prev) => prev.map((ch) => (isSameChannel(ch, channel) ? { ...ch, excluded_as_source: excluded } : ch)))
     try {
-      await updateRebalanceExclude({ channel_id: channel.channel_id, channel_point: channel.channel_point, excluded })
+      await updateRebalanceExclude({ channel_point: channel.channel_point, excluded })
       void loadAll({ silent: true })
     } catch (err) {
       setChannels((prev) => prev.map((ch) => (isSameChannel(ch, channel) ? { ...ch, excluded_as_source: previous } : ch)))
@@ -746,7 +750,8 @@ export default function RebalanceCenter() {
 
   const handleSaveChannelSettings = async (channel: RebalanceChannel) => {
     bumpChannelStateVersion()
-    const nextTargetValue = editTargets[channel.channel_id]
+    const key = channelKey(channel)
+    const nextTargetValue = editTargets[key]
     const parsedTarget = nextTargetValue !== undefined ? Number(nextTargetValue) : channel.target_outbound_pct
     if (!Number.isFinite(parsedTarget) || parsedTarget <= 0 || parsedTarget >= 100) {
       setStatus(t('rebalanceCenter.invalidTarget'))
@@ -761,20 +766,19 @@ export default function RebalanceCenter() {
     }
     try {
       await updateRebalanceChannelTarget({
-        channel_id: channel.channel_id,
         channel_point: channel.channel_point,
         target_outbound_pct: parsedTarget,
         use_default_econ_ratio: useDefault,
         econ_ratio_override: useDefault ? undefined : parsedEcon,
         auto_bypass_cost_gate: autoBypassCostGate
       })
-      setEditTargets((prev) => ({ ...prev, [channel.channel_id]: String(parsedTarget) }))
-      setEditUseDefaultEconRatio((prev) => ({ ...prev, [channel.channel_id]: useDefault }))
+      setEditTargets((prev) => ({ ...prev, [key]: String(parsedTarget) }))
+      setEditUseDefaultEconRatio((prev) => ({ ...prev, [key]: useDefault }))
       setEditEconRatios((prev) => ({
         ...prev,
-        [channel.channel_id]: useDefault ? formatEconRatio(config?.econ_ratio ?? 0) : formatEconRatio(parsedEcon)
+        [key]: useDefault ? formatEconRatio(config?.econ_ratio ?? 0) : formatEconRatio(parsedEcon)
       }))
-      setEditAutoBypassCostGate((prev) => ({ ...prev, [channel.channel_id]: autoBypassCostGate }))
+      setEditAutoBypassCostGate((prev) => ({ ...prev, [key]: autoBypassCostGate }))
       void loadAll({ silent: true })
     } catch (err) {
       setStatus(err instanceof Error ? err.message : t('rebalanceCenter.saveFailed'))
@@ -782,22 +786,22 @@ export default function RebalanceCenter() {
   }
 
   const handleUseDefaultEconRatioToggle = (channel: RebalanceChannel, checked: boolean) => {
-    setEditUseDefaultEconRatio((prev) => ({ ...prev, [channel.channel_id]: checked }))
+    const key = channelKey(channel)
+    setEditUseDefaultEconRatio((prev) => ({ ...prev, [key]: checked }))
     if (!checked) {
       const current = channelEconRatioInput(channel)
       if (!current || current.trim() === '') {
-        setEditEconRatios((prev) => ({ ...prev, [channel.channel_id]: formatEconRatio(config?.econ_ratio ?? 0) }))
+        setEditEconRatios((prev) => ({ ...prev, [key]: formatEconRatio(config?.econ_ratio ?? 0) }))
       }
     }
   }
 
   const handleRunRebalance = async (channel: RebalanceChannel) => {
-    const nextValue = editTargets[channel.channel_id]
+    const nextValue = editTargets[channelKey(channel)]
     const parsed = nextValue ? Number(nextValue) : channel.target_outbound_pct
     const autoRestart = manualRestart[channel.channel_point] === true
     try {
       await runRebalance({
-        channel_id: channel.channel_id,
         channel_point: channel.channel_point,
         target_outbound_pct: parsed,
         auto_restart: autoRestart
@@ -818,22 +822,22 @@ export default function RebalanceCenter() {
   }
 
   const handleTogglePairStats = async (channel: RebalanceChannel) => {
-    const channelID = channel.channel_id
-    const willOpen = !pairStatsOpen[channelID]
-    setPairStatsOpen((prev) => ({ ...prev, [channelID]: willOpen }))
-    if (!willOpen || pairStatsLoading[channelID]) {
+    const key = channelKey(channel)
+    const willOpen = !pairStatsOpen[key]
+    setPairStatsOpen((prev) => ({ ...prev, [key]: willOpen }))
+    if (!willOpen || pairStatsLoading[key]) {
       return
     }
-    setPairStatsLoading((prev) => ({ ...prev, [channelID]: true }))
-    setPairStatsError((prev) => ({ ...prev, [channelID]: false }))
+    setPairStatsLoading((prev) => ({ ...prev, [key]: true }))
+    setPairStatsError((prev) => ({ ...prev, [key]: false }))
     try {
-      const response = await getRebalancePairStats(channelID)
+      const response = await getRebalancePairStats(channel.channel_point)
       const pairs = Array.isArray((response as any)?.pairs) ? (response as any).pairs : []
-      setPairStatsByChannel((prev) => ({ ...prev, [channelID]: pairs }))
+      setPairStatsByChannel((prev) => ({ ...prev, [key]: pairs }))
     } catch {
-      setPairStatsError((prev) => ({ ...prev, [channelID]: true }))
+      setPairStatsError((prev) => ({ ...prev, [key]: true }))
     } finally {
-      setPairStatsLoading((prev) => ({ ...prev, [channelID]: false }))
+      setPairStatsLoading((prev) => ({ ...prev, [key]: false }))
     }
   }
 
@@ -852,7 +856,6 @@ export default function RebalanceCenter() {
     )
     try {
       await updateRebalanceChannelManualRestart({
-        channel_id: channel.channel_id,
         channel_point: channel.channel_point,
         enabled
       })
@@ -1046,12 +1049,12 @@ export default function RebalanceCenter() {
     !autoBudgetPaused &&
     overview?.last_scan_status === 'budget_insufficient'
   const renderPairStatsPanel = (channel: RebalanceChannel) => {
-    const channelID = channel.channel_id
+    const key = channelKey(channel)
     return (
       <PairStatsPanel
-        pairs={pairStatsByChannel[channelID] ?? []}
-        loading={pairStatsLoading[channelID] === true}
-        failed={pairStatsError[channelID] === true}
+        pairs={pairStatsByChannel[key] ?? []}
+        loading={pairStatsLoading[key] === true}
+        failed={pairStatsError[key] === true}
         t={t}
         formatTimestamp={formatTimestamp}
         formatRoi={formatRoi}
@@ -1177,7 +1180,7 @@ export default function RebalanceCenter() {
                   )}
                   <div className="space-y-2">
                     {(scanDetailsShowAll ? diagnosticSkipDetails : diagnosticSkipDetails.slice(0, 12)).map((item) => (
-                      <div key={`${item.channel_id}-${item.reason}`} className="rounded-lg border border-white/10 bg-white/5 p-2">
+                      <div key={`${item.channel_point || item.channel_id}-${item.reason}`} className="rounded-lg border border-white/10 bg-white/5 p-2">
                         <div className="text-fog/80">
                           {item.peer_alias || item.channel_point}
                         </div>
@@ -1213,7 +1216,7 @@ export default function RebalanceCenter() {
               {skipDetailsOpen && profitSkipDetails.length > 0 && (
                 <div className="mt-2 space-y-2 text-[11px] text-fog/70">
                   {profitSkipDetails.map((item) => (
-                    <div key={item.channel_id} className="rounded-lg border border-white/10 bg-white/5 p-2">
+                    <div key={item.channel_point || item.channel_id} className="rounded-lg border border-white/10 bg-white/5 p-2">
                       <div className="text-fog/80">
                         {item.peer_alias || item.channel_point}
                       </div>
@@ -2435,8 +2438,8 @@ export default function RebalanceCenter() {
                       max={99}
                       step={0.1}
                       title={t('rebalanceCenter.channelsHints.targetOutbound')}
-                      value={editTargets[ch.channel_id] ?? String(Math.round(ch.target_outbound_pct * 10) / 10)}
-                      onChange={(e) => setEditTargets((prev) => ({ ...prev, [ch.channel_id]: e.target.value }))}
+                      value={editTargets[channelKey(ch)] ?? String(Math.round(ch.target_outbound_pct * 10) / 10)}
+                      onChange={(e) => setEditTargets((prev) => ({ ...prev, [channelKey(ch)]: e.target.value }))}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
                           e.preventDefault()
@@ -2452,7 +2455,7 @@ export default function RebalanceCenter() {
                       title={t('rebalanceCenter.channelsHints.econRatio')}
                       value={channelEconRatioInput(ch)}
                       disabled={channelUseDefaultEconRatio(ch)}
-                      onChange={(e) => setEditEconRatios((prev) => ({ ...prev, [ch.channel_id]: e.target.value }))}
+                      onChange={(e) => setEditEconRatios((prev) => ({ ...prev, [channelKey(ch)]: e.target.value }))}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
                           e.preventDefault()
@@ -2473,7 +2476,7 @@ export default function RebalanceCenter() {
                     <input
                       type="checkbox"
                       checked={channelAutoBypassCostGate(ch)}
-                      onChange={(e) => setEditAutoBypassCostGate((prev) => ({ ...prev, [ch.channel_id]: e.target.checked }))}
+                      onChange={(e) => setEditAutoBypassCostGate((prev) => ({ ...prev, [channelKey(ch)]: e.target.checked }))}
                     />
                     {t('rebalanceCenter.channels.autoBypassCostGate')}
                   </label>
@@ -2529,7 +2532,7 @@ export default function RebalanceCenter() {
                     onClick={() => handleTogglePairStats(ch)}
                     title={t('rebalanceCenter.channelsHints.pairStats')}
                   >
-                    {pairStatsOpen[ch.channel_id] ? t('common.hide') : t('rebalanceCenter.channels.pairStats')}
+                    {pairStatsOpen[channelKey(ch)] ? t('common.hide') : t('rebalanceCenter.channels.pairStats')}
                   </button>
                   {manualRestartBudgetLow && scoreMeta && (
                     <div className="basis-full text-[11px] text-amber-200">
@@ -2559,7 +2562,7 @@ export default function RebalanceCenter() {
                     {t('rebalanceCenter.channels.excludeSource')}
                   </label>
                 </div>
-                {pairStatsOpen[ch.channel_id] && renderPairStatsPanel(ch)}
+                {pairStatsOpen[channelKey(ch)] && renderPairStatsPanel(ch)}
               </article>
             )
           })}
@@ -2682,8 +2685,8 @@ export default function RebalanceCenter() {
                         max={99}
                         step={0.1}
                         title={t('rebalanceCenter.channelsHints.targetOutbound')}
-                        value={editTargets[ch.channel_id] ?? String(Math.round(ch.target_outbound_pct * 10) / 10)}
-                        onChange={(e) => setEditTargets((prev) => ({ ...prev, [ch.channel_id]: e.target.value }))}
+                        value={editTargets[channelKey(ch)] ?? String(Math.round(ch.target_outbound_pct * 10) / 10)}
+                        onChange={(e) => setEditTargets((prev) => ({ ...prev, [channelKey(ch)]: e.target.value }))}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') {
                             e.preventDefault()
@@ -2699,7 +2702,7 @@ export default function RebalanceCenter() {
                         title={t('rebalanceCenter.channelsHints.econRatio')}
                         value={channelEconRatioInput(ch)}
                         disabled={channelUseDefaultEconRatio(ch)}
-                        onChange={(e) => setEditEconRatios((prev) => ({ ...prev, [ch.channel_id]: e.target.value }))}
+                        onChange={(e) => setEditEconRatios((prev) => ({ ...prev, [channelKey(ch)]: e.target.value }))}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') {
                             e.preventDefault()
@@ -2720,7 +2723,7 @@ export default function RebalanceCenter() {
                       <input
                         type="checkbox"
                         checked={channelAutoBypassCostGate(ch)}
-                        onChange={(e) => setEditAutoBypassCostGate((prev) => ({ ...prev, [ch.channel_id]: e.target.checked }))}
+                        onChange={(e) => setEditAutoBypassCostGate((prev) => ({ ...prev, [channelKey(ch)]: e.target.checked }))}
                       />
                       {t('rebalanceCenter.channels.autoBypassCostGate')}
                     </label>
@@ -2768,7 +2771,7 @@ export default function RebalanceCenter() {
                         onClick={() => handleTogglePairStats(ch)}
                         title={t('rebalanceCenter.channelsHints.pairStats')}
                       >
-                        {pairStatsOpen[ch.channel_id] ? t('common.hide') : t('rebalanceCenter.channels.pairStats')}
+                        {pairStatsOpen[channelKey(ch)] ? t('common.hide') : t('rebalanceCenter.channels.pairStats')}
                       </button>
                     </div>
                     {manualRestartBudgetLow && scoreMeta && (
@@ -2804,7 +2807,7 @@ export default function RebalanceCenter() {
                     </div>
                     </td>
                   </tr>
-                  {pairStatsOpen[ch.channel_id] && (
+                  {pairStatsOpen[channelKey(ch)] && (
                     <tr className="border-t border-white/5 bg-white/[0.02]">
                       <td colSpan={7} className="px-3 pb-3">
                         {renderPairStatsPanel(ch)}

@@ -162,12 +162,4 @@ Comparação direta entre o Rebalance Center do LightningOS Light e o rebalancer
 | sats movidos / sat gasto | Não publica | 1.866 → **2.986 (+60%)** |
 | avg_fee_ppm_paid | Não publica | 535,8 → **335,0 (−37%)** |
 
----
 
-## Resumo qualitativo
-
-**LNDG** é bom o suficiente pra operadores casuais — config simples, comportamento reativo, integração tight com Django. Mas é uma camada fina sobre o pathfinding do LND.
-
-**LightningOS Light** é uma plataforma de decisão que trata cada rebalance como um problema multi-objetivo: economics, demanda real, aprendizado por par, custos históricos, interlock com AutoFee, descoberta dinâmica de capacidade. O que o LNDG resolve com "tenta de novo daqui 30min" o nosso resolve com state machine + cached routes + permanent fail score.
-
-A **única** característica do LNDG sem equivalente nosso é a randomização de amount (`±variance%`). Não vale copiar — não tem evidência de que ajude, e poderia conflitar com o `BuildRoute` fast path.

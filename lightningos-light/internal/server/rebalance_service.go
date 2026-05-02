@@ -2539,6 +2539,50 @@ type rebalanceJobRunState struct {
 	currentJobBlockedPairs map[uint64]struct{}
 }
 
+type rebalanceMppShardTask struct {
+	ShardIndex int
+	Source     RebalanceChannel
+	AmountSat  int64
+}
+
+type rebalanceMppShardAttemptResult struct {
+	ShardIndex      int
+	Source          RebalanceChannel
+	AmountRequested int64
+	AmountSent      int64
+	FeeLimitPpm     int64
+	FeePaidSat      int64
+	RouteMaxSat     int64
+	RouteHops       []string
+	PaymentHash     string
+	FailReason      string
+	FailureInfo     *attemptFailureInfo
+	Attempted       bool
+	Succeeded       bool
+	TimedOut        bool
+	Fatal           bool
+}
+
+type rebalanceMppPrepassContext struct {
+	runner                     *rebalanceJobRunner
+	state                      *rebalanceJobRunState
+	targetPolicy               lndclient.ChannelPolicySnapshot
+	selfPubkey                 string
+	remaining                  *int64
+	attemptedAny               *bool
+	attemptIndex               *int
+	attemptTimeoutSec          int
+	refreshSourceAvailability  func(bool)
+	shouldSkipCurrentJobSource func(uint64) bool
+	snapshotIgnoredRoutes      func() ([]*lnrpc.EdgeLocator, []*lnrpc.NodePair)
+	noteRouteFailureFromShard  func(*lnrpc.Route, uint32)
+	finishOnTimeout            func()
+	recordPairSuccess          func(context.Context, uint64, uint64, int64, int64, int64, []string)
+	recordPairFailure          func(context.Context, uint64, uint64, string)
+	noteAutoStructuralFailure  func(string, bool)
+	applySuccess               func(int64, int64, *int64, *int64) bool
+}
+
 func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount int64, targetPct float64, jobSource string, jobReason string) {
 	runner := rebalanceJobRunner{
 		service:         s,
@@ -4104,446 +4148,27 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 		return false, false
 	}
 
-	type mppShardAttemptResult struct {
-		ShardIndex      int
-		Source          RebalanceChannel
-		AmountRequested int64
-		AmountSent      int64
-		FeeLimitPpm     int64
-		FeePaidSat      int64
-		RouteMaxSat     int64
-		RouteHops       []string // Wave 4.1: pubkey path of the winning shard route
-		PaymentHash     string
-		FailReason      string
-		FailureInfo     *attemptFailureInfo
-		Attempted       bool
-		Succeeded       bool
-		TimedOut        bool
-		Fatal           bool
+	mppPrepass := rebalanceMppPrepassContext{
+		runner:                     r,
+		state:                      st,
+		targetPolicy:               targetPolicy,
+		selfPubkey:                 selfPubkey,
+		remaining:                  &remaining,
+		attemptedAny:               &attemptedAny,
+		attemptIndex:               &attemptIndex,
+		attemptTimeoutSec:          attemptTimeoutSec,
+		refreshSourceAvailability:  refreshSourceAvailability,
+		shouldSkipCurrentJobSource: shouldSkipCurrentJobSource,
+		snapshotIgnoredRoutes:      snapshotIgnoredRoutes,
+		noteRouteFailureFromShard:  noteRouteFailureFromShard,
+		finishOnTimeout:            finishOnTimeout,
+		recordPairSuccess:          recordPairSuccess,
+		recordPairFailure:          recordPairFailure,
+		noteAutoStructuralFailure:  noteAutoStructuralFailure,
+		applySuccess:               applySuccess,
 	}
 
-	formatMppShardFailReason := func(reason string) string {
-		trimmed := strings.TrimSpace(reason)
-		if trimmed == "" {
-			trimmed = "failed"
-		}
-		if strings.HasPrefix(strings.ToLower(trimmed), "mpp shard:") {
-			return trimmed
-		}
-		return "mpp shard: " + trimmed
-	}
-
-	attemptMppShard := func(roundCtx context.Context, source RebalanceChannel, amountTry int64) mppShardAttemptResult {
-		result := mppShardAttemptResult{
-			Source:          source,
-			AmountRequested: amountTry,
-			AmountSent:      amountTry,
-			Attempted:       true,
-		}
-		if amountTry <= 0 {
-			result.Attempted = false
-			return result
-		}
-		if feeCfg.MinSplitEnabled && minExecuteSat > 0 && amountTry < minExecuteSat {
-			result.Attempted = false
-			return result
-		}
-		if roundCtx.Err() != nil {
-			if ctx.Err() != nil {
-				result.Fatal = true
-			} else {
-				result.TimedOut = true
-				result.FailReason = "mpp round timeout"
-			}
-			return result
-		}
-
-		sourcePolicy := lndclient.ChannelPolicySnapshot{
-			FeeRatePpm:  source.OutgoingFeePpm,
-			BaseFeeMsat: source.OutgoingBaseMsat,
-		}
-		feeLimitMsat, feeErr := calcFeeLimitMsat(amountTry*1000, targetPolicy, &sourcePolicy, feeCfg)
-		if feeErr != nil || feeLimitMsat <= 0 {
-			result.FailReason = "fee cap zero"
-			return result
-		}
-		result.FeeLimitPpm = feeMsatToPpm(feeLimitMsat, amountTry)
-
-		attemptCtx := roundCtx
-		cancelAttempt := func() {}
-		if attemptTimeoutSec > 0 {
-			attemptCtx, cancelAttempt = context.WithTimeout(roundCtx, time.Duration(attemptTimeoutSec)*time.Second)
-		}
-		defer cancelAttempt()
-
-		ignoredEdgeSnapshot, ignoredPairSnapshot := snapshotIgnoredRoutes()
-		routes, err := s.lnd.QueryRoutes(attemptCtx, selfPubkey, amountTry, source.ChannelID, targetSnapshot.RemotePubkey, feeLimitMsat, 3, ignoredEdgeSnapshot, ignoredPairSnapshot)
-		if err != nil {
-			if ctx.Err() != nil {
-				result.Fatal = true
-				result.FailReason = "cancelled"
-				return result
-			}
-			if errors.Is(err, context.DeadlineExceeded) || errors.Is(attemptCtx.Err(), context.DeadlineExceeded) || errors.Is(roundCtx.Err(), context.DeadlineExceeded) {
-				result.TimedOut = true
-				result.FailReason = "attempt timeout"
-				return result
-			}
-			result.FailReason = err.Error()
-			return result
-		}
-
-		var route *lnrpc.Route
-		for _, candidate := range routes {
-			if candidate != nil {
-				route = candidate
-				break
-			}
-		}
-		if route == nil {
-			result.FailReason = "no route returned"
-			return result
-		}
-
-		routeAmount := amountTry
-		if feeCfg.AmountProbeSteps > 0 {
-			maxAmount, probeErr := s.probeRoute(attemptCtx, route, amountTry, minProbeSat, feeCfg.AmountProbeSteps, targetPolicy, sourcePolicy, feeCfg)
-			if probeErr != nil {
-				result.FailReason = probeErr.Error()
-				return result
-			}
-			if maxAmount <= 0 {
-				result.FailReason = "probe returned no amount"
-				return result
-			}
-			if maxAmount < routeAmount {
-				routeAmount = maxAmount
-			}
-		}
-		if feeCfg.MinSplitEnabled && minExecuteSat > 0 && routeAmount < minExecuteSat {
-			result.FailReason = "probe amount below execute minimum"
-			return result
-		}
-		if routeAmount <= 0 {
-			result.FailReason = "invalid shard amount"
-			return result
-		}
-
-		if routeAmount != amountTry {
-			rebuilt, rebuildErr := s.rebuildRouteForAmount(attemptCtx, route, routeAmount)
-			if rebuildErr != nil {
-				result.FailReason = rebuildErr.Error()
-				return result
-			}
-			route = rebuilt
-			result.AmountSent = routeAmount
-			feeLimitMsat, feeErr = calcFeeLimitMsat(routeAmount*1000, targetPolicy, &sourcePolicy, feeCfg)
-			if feeErr != nil || feeLimitMsat <= 0 {
-				result.FailReason = "fee cap zero"
-				return result
-			}
-			result.FeeLimitPpm = feeMsatToPpm(feeLimitMsat, routeAmount)
-		}
-
-		routeFeeMsat := int64(0)
-		if route.TotalFeesMsat > 0 {
-			routeFeeMsat = route.TotalFeesMsat
-		} else if route.TotalFees > 0 {
-			routeFeeMsat = route.TotalFees * 1000
-		}
-		if feeLimitMsat > 0 && routeFeeMsat > feeLimitMsat {
-			result.FailReason = "route fee exceeds limit"
-			return result
-		}
-
-		_, paymentHash, paymentAddr, invErr := s.createRebalanceInvoice(attemptCtx, routeAmount, jobID, source.ChannelID, targetChannelID)
-		if invErr != nil {
-			if ctx.Err() != nil {
-				result.Fatal = true
-				result.FailReason = "cancelled"
-				return result
-			}
-			if errors.Is(invErr, context.DeadlineExceeded) || errors.Is(attemptCtx.Err(), context.DeadlineExceeded) || errors.Is(roundCtx.Err(), context.DeadlineExceeded) {
-				result.TimedOut = true
-				result.FailReason = "attempt timeout"
-				return result
-			}
-			result.FailReason = invErr.Error()
-			return result
-		}
-		result.PaymentHash = paymentHash
-		applyMppRecord(route, paymentAddr, routeAmount)
-		result.RouteMaxSat = s.maxAmountOnRouteSat(attemptCtx, route, selfPubkey)
-
-		_, sendErr := s.lnd.SendToRoute(attemptCtx, paymentHash, route)
-		if sendErr != nil {
-			if ctx.Err() != nil {
-				result.Fatal = true
-				result.FailReason = "cancelled"
-				return result
-			}
-			if errors.Is(sendErr, context.DeadlineExceeded) || errors.Is(attemptCtx.Err(), context.DeadlineExceeded) || errors.Is(roundCtx.Err(), context.DeadlineExceeded) {
-				result.TimedOut = true
-				result.FailReason = "attempt timeout"
-				return result
-			}
-			var routeFailure lndclient.RouteFailureError
-			if errors.As(sendErr, &routeFailure) && routeFailure.Failure != nil && routeFailure.Code == lnrpc.Failure_TEMPORARY_CHANNEL_FAILURE {
-				noteRouteFailureFromShard(route, routeFailure.FailureSourceIndex)
-			}
-			result.FailureInfo = parseRouteFailure(sendErr, route)
-			result.FailReason = sendErr.Error()
-			return result
-		}
-
-		result.Succeeded = true
-		result.AmountSent = routeAmount
-		result.FeePaidSat = msatToSatCeil(routeFeeMsat)
-		result.RouteHops = extractHopPubkeys(route)
-		return result
-	}
-
-	runMppPrepass := func() (bool, bool) {
-		if cooldownProbeJob {
-			return false, false
-		}
-		if !shouldRunMppExecute(feeCfg, jobSource) {
-			return false, false
-		}
-		if remaining <= 0 {
-			return true, false
-		}
-		refreshSourceAvailability(false)
-
-		allowedSources := make([]RebalanceChannel, 0, len(sources))
-		sourceByID := make(map[uint64]RebalanceChannel, len(sources))
-		for _, source := range sources {
-			availableCap := sourceAvailable[source.ChannelID]
-			if availableCap <= 0 {
-				continue
-			}
-			if useRecentFailureCache {
-				if stat, ok := pairStats[source.ChannelID]; ok {
-					if shouldSkipPairForRecentFailure(stat, time.Now()) {
-						continue
-					}
-				}
-				if shouldSkipCurrentJobSource(source.ChannelID) {
-					continue
-				}
-			}
-			cappedSource := source
-			cappedSource.MaxSourceSat = availableCap
-			allowedSources = append(allowedSources, cappedSource)
-			sourceByID[source.ChannelID] = cappedSource
-		}
-		if len(allowedSources) == 0 {
-			return false, false
-		}
-
-		plan := buildMppShadowPlan(remaining, allowedSources, feeCfg)
-		if plan.PlannedShards <= 0 {
-			return false, false
-		}
-
-		roundTimeoutSec := feeCfg.MppRoundTimeoutSec
-		if roundTimeoutSec <= 0 {
-			roundTimeoutSec = 20
-		}
-		roundCtx, cancelRound := context.WithTimeout(ctx, time.Duration(roundTimeoutSec)*time.Second)
-		defer cancelRound()
-		parallelism := feeCfg.MppParallelism
-		if parallelism <= 0 {
-			parallelism = 1
-		}
-		if parallelism > plan.PlannedShards {
-			parallelism = plan.PlannedShards
-		}
-
-		type shardTask struct {
-			ShardIndex int
-			Source     RebalanceChannel
-			AmountSat  int64
-		}
-		tasks := make([]shardTask, 0, plan.PlannedShards)
-		planSourceRemaining := make(map[uint64]int64, len(allowedSources))
-		for _, source := range allowedSources {
-			planSourceRemaining[source.ChannelID] = source.MaxSourceSat
-		}
-		remainingForPlan := remaining
-		for idx, shard := range plan.Shards {
-			if remainingForPlan <= 0 {
-				break
-			}
-			source, ok := sourceByID[shard.SourceChannelID]
-			if !ok {
-				continue
-			}
-			capLeft := planSourceRemaining[source.ChannelID]
-			if capLeft <= 0 {
-				continue
-			}
-			amountTry := shard.AmountSat
-			if amountTry > remainingForPlan {
-				amountTry = remainingForPlan
-			}
-			if amountTry > capLeft {
-				amountTry = capLeft
-			}
-			if amountTry <= 0 {
-				continue
-			}
-			if minExecuteSat > 0 && amountTry < minExecuteSat {
-				continue
-			}
-			tasks = append(tasks, shardTask{
-				ShardIndex: idx,
-				Source:     source,
-				AmountSat:  amountTry,
-			})
-			planSourceRemaining[source.ChannelID] -= amountTry
-			remainingForPlan -= amountTry
-		}
-		if len(tasks) == 0 {
-			return false, false
-		}
-
-		sem := make(chan struct{}, parallelism)
-		resultsCh := make(chan mppShardAttemptResult, len(tasks))
-		var wg sync.WaitGroup
-		for _, task := range tasks {
-			task := task
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				sem <- struct{}{}
-				defer func() { <-sem }()
-				res := attemptMppShard(roundCtx, task.Source, task.AmountSat)
-				res.ShardIndex = task.ShardIndex
-				resultsCh <- res
-			}()
-		}
-		wg.Wait()
-		close(resultsCh)
-
-		results := make([]mppShardAttemptResult, 0, len(tasks))
-		for res := range resultsCh {
-			results = append(results, res)
-		}
-		sort.Slice(results, func(i, j int) bool {
-			return results[i].ShardIndex < results[j].ShardIndex
-		})
-
-		attemptedShards := 0
-		succeededShards := 0
-		structuralFailureShards := 0
-		sourceSuccessRemaining := make(map[uint64]int64, len(allowedSources))
-		for _, source := range allowedSources {
-			sourceSuccessRemaining[source.ChannelID] = source.MaxSourceSat
-		}
-
-		for _, res := range results {
-			if res.Fatal {
-				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-					finishOnTimeout()
-				} else {
-					s.finishJob(jobID, "cancelled", "cancelled")
-				}
-				return false, true
-			}
-			if !res.Attempted {
-				continue
-			}
-			attemptedAny = true
-			attemptedShards++
-
-			attemptIndex++
-			attemptAmount := res.AmountRequested
-			if res.AmountSent > 0 {
-				attemptAmount = res.AmountSent
-			}
-			if res.Succeeded {
-				_ = s.insertAttempt(ctx, jobID, attemptIndex, res.Source.ChannelID, attemptAmount, res.FeeLimitPpm, res.FeePaidSat, "succeeded", res.PaymentHash, "", nil)
-				recordPairSuccess(ctx, res.Source.ChannelID, targetChannelID, attemptAmount, res.FeeLimitPpm, res.FeePaidSat, res.RouteHops)
-				_ = s.applyRebalanceLedger(ctx, targetChannelID, attemptAmount, res.FeePaidSat)
-				_ = s.addBudgetSpend(ctx, res.FeePaidSat, jobSource)
-				succeededShards++
-
-				routeCap := int64(0)
-				sourceCap := sourceSuccessRemaining[res.Source.ChannelID]
-				if applySuccess(attemptAmount, res.RouteMaxSat, &routeCap, &sourceCap) {
-					sourceSuccessRemaining[res.Source.ChannelID] = sourceCap
-					sourceAvailable[res.Source.ChannelID] = sourceCap
-					if s.logger != nil {
-						s.logger.Printf("rebalance mpp execute: job=%d completed via parallel prepass shards=%d/%d", jobID, succeededShards, attemptedShards)
-					}
-					return true, false
-				}
-				sourceSuccessRemaining[res.Source.ChannelID] = sourceCap
-				sourceAvailable[res.Source.ChannelID] = sourceCap
-				continue
-			}
-
-			failReason := res.FailReason
-			if strings.TrimSpace(failReason) == "" {
-				if res.TimedOut {
-					failReason = "attempt timeout"
-				} else {
-					failReason = "mpp shard failed"
-				}
-			}
-			if isStructuralRebalanceFailure(failReason) {
-				structuralFailureShards++
-			}
-			shardFailReason := formatMppShardFailReason(failReason)
-			_ = s.insertAttempt(ctx, jobID, attemptIndex, res.Source.ChannelID, attemptAmount, res.FeeLimitPpm, 0, "failed", res.PaymentHash, shardFailReason, res.FailureInfo)
-			recordPairFailure(ctx, res.Source.ChannelID, targetChannelID, shardFailReason)
-			noteAutoStructuralFailure(shardFailReason, false)
-		}
-
-		if succeededShards == 0 && attemptedShards >= mppStructuralAbortMinAttempts {
-			structuralRatio := float64(structuralFailureShards) / float64(attemptedShards)
-			if structuralRatio >= mppStructuralAbortRatio {
-				if hasRebalanceFallbackCandidate(sources, sourceAvailable, pairStats, currentJobBlockedPairs, useRecentFailureCache, minExecuteSat, time.Now()) {
-					if s.logger != nil {
-						s.logger.Printf(
-							"rebalance mpp execute: job=%d structural threshold reached; falling back to legacy structural_failures=%d attempted_shards=%d ratio=%.2f",
-							jobID,
-							structuralFailureShards,
-							attemptedShards,
-							structuralRatio,
-						)
-					}
-					return false, false
-				}
-				noteAutoStructuralFailure("mpp structural failure", false)
-				s.finishJob(jobID, "failed", "mpp structural failure")
-				if s.logger != nil {
-					s.logger.Printf(
-						"rebalance mpp execute: job=%d aborting fallback structural_failures=%d attempted_shards=%d ratio=%.2f",
-						jobID,
-						structuralFailureShards,
-						attemptedShards,
-						structuralRatio,
-					)
-				}
-				return true, false
-			}
-		}
-
-		if s.logger != nil {
-			s.logger.Printf(
-				"rebalance mpp execute: job=%d parallel prepass attempted_shards=%d succeeded_shards=%d remaining=%d (fallback legacy)",
-				jobID,
-				attemptedShards,
-				succeededShards,
-				remaining,
-			)
-		}
-		return false, false
-	}
-
-	if finished, fatal := runMppPrepass(); fatal {
+	if finished, fatal := mppPrepass.run(); fatal {
 		return
 	} else if finished {
 		return
@@ -4762,6 +4387,433 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 		return
 	}
 	s.finishJob(jobID, "failed", "all sources failed")
+}
+
+func (m *rebalanceMppPrepassContext) run() (bool, bool) {
+	r := m.runner
+	st := m.state
+	s := r.service
+	ctx := st.ctx
+	feeCfg := st.feeCfg
+	if st.cooldownProbeJob {
+		return false, false
+	}
+	if !shouldRunMppExecute(feeCfg, r.jobSource) {
+		return false, false
+	}
+	if *m.remaining <= 0 {
+		return true, false
+	}
+	m.refreshSourceAvailability(false)
+
+	allowedSources := make([]RebalanceChannel, 0, len(st.sources))
+	sourceByID := make(map[uint64]RebalanceChannel, len(st.sources))
+	for _, source := range st.sources {
+		availableCap := st.sourceAvailable[source.ChannelID]
+		if availableCap <= 0 {
+			continue
+		}
+		if st.useRecentFailureCache {
+			if stat, ok := st.pairStats[source.ChannelID]; ok {
+				if shouldSkipPairForRecentFailure(stat, time.Now()) {
+					continue
+				}
+			}
+			if m.shouldSkipCurrentJobSource(source.ChannelID) {
+				continue
+			}
+		}
+		cappedSource := source
+		cappedSource.MaxSourceSat = availableCap
+		allowedSources = append(allowedSources, cappedSource)
+		sourceByID[source.ChannelID] = cappedSource
+	}
+	if len(allowedSources) == 0 {
+		return false, false
+	}
+
+	plan := buildMppShadowPlan(*m.remaining, allowedSources, feeCfg)
+	if plan.PlannedShards <= 0 {
+		return false, false
+	}
+
+	roundTimeoutSec := feeCfg.MppRoundTimeoutSec
+	if roundTimeoutSec <= 0 {
+		roundTimeoutSec = 20
+	}
+	roundCtx, cancelRound := context.WithTimeout(ctx, time.Duration(roundTimeoutSec)*time.Second)
+	defer cancelRound()
+	parallelism := feeCfg.MppParallelism
+	if parallelism <= 0 {
+		parallelism = 1
+	}
+	if parallelism > plan.PlannedShards {
+		parallelism = plan.PlannedShards
+	}
+
+	tasks := make([]rebalanceMppShardTask, 0, plan.PlannedShards)
+	planSourceRemaining := make(map[uint64]int64, len(allowedSources))
+	for _, source := range allowedSources {
+		planSourceRemaining[source.ChannelID] = source.MaxSourceSat
+	}
+	remainingForPlan := *m.remaining
+	for idx, shard := range plan.Shards {
+		if remainingForPlan <= 0 {
+			break
+		}
+		source, ok := sourceByID[shard.SourceChannelID]
+		if !ok {
+			continue
+		}
+		capLeft := planSourceRemaining[source.ChannelID]
+		if capLeft <= 0 {
+			continue
+		}
+		amountTry := shard.AmountSat
+		if amountTry > remainingForPlan {
+			amountTry = remainingForPlan
+		}
+		if amountTry > capLeft {
+			amountTry = capLeft
+		}
+		if amountTry <= 0 {
+			continue
+		}
+		if st.minExecuteSat > 0 && amountTry < st.minExecuteSat {
+			continue
+		}
+		tasks = append(tasks, rebalanceMppShardTask{
+			ShardIndex: idx,
+			Source:     source,
+			AmountSat:  amountTry,
+		})
+		planSourceRemaining[source.ChannelID] -= amountTry
+		remainingForPlan -= amountTry
+	}
+	if len(tasks) == 0 {
+		return false, false
+	}
+
+	sem := make(chan struct{}, parallelism)
+	resultsCh := make(chan rebalanceMppShardAttemptResult, len(tasks))
+	var wg sync.WaitGroup
+	for _, task := range tasks {
+		task := task
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			res := m.attemptShard(roundCtx, task.Source, task.AmountSat)
+			res.ShardIndex = task.ShardIndex
+			resultsCh <- res
+		}()
+	}
+	wg.Wait()
+	close(resultsCh)
+
+	results := make([]rebalanceMppShardAttemptResult, 0, len(tasks))
+	for res := range resultsCh {
+		results = append(results, res)
+	}
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].ShardIndex < results[j].ShardIndex
+	})
+
+	attemptedShards := 0
+	succeededShards := 0
+	structuralFailureShards := 0
+	sourceSuccessRemaining := make(map[uint64]int64, len(allowedSources))
+	for _, source := range allowedSources {
+		sourceSuccessRemaining[source.ChannelID] = source.MaxSourceSat
+	}
+
+	for _, res := range results {
+		if res.Fatal {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				m.finishOnTimeout()
+			} else {
+				s.finishJob(r.jobID, "cancelled", "cancelled")
+			}
+			return false, true
+		}
+		if !res.Attempted {
+			continue
+		}
+		*m.attemptedAny = true
+		attemptedShards++
+
+		*m.attemptIndex = *m.attemptIndex + 1
+		attemptIndex := *m.attemptIndex
+		attemptAmount := res.AmountRequested
+		if res.AmountSent > 0 {
+			attemptAmount = res.AmountSent
+		}
+		if res.Succeeded {
+			_ = s.insertAttempt(ctx, r.jobID, attemptIndex, res.Source.ChannelID, attemptAmount, res.FeeLimitPpm, res.FeePaidSat, "succeeded", res.PaymentHash, "", nil)
+			m.recordPairSuccess(ctx, res.Source.ChannelID, r.targetChannelID, attemptAmount, res.FeeLimitPpm, res.FeePaidSat, res.RouteHops)
+			_ = s.applyRebalanceLedger(ctx, r.targetChannelID, attemptAmount, res.FeePaidSat)
+			_ = s.addBudgetSpend(ctx, res.FeePaidSat, r.jobSource)
+			succeededShards++
+
+			routeCap := int64(0)
+			sourceCap := sourceSuccessRemaining[res.Source.ChannelID]
+			if m.applySuccess(attemptAmount, res.RouteMaxSat, &routeCap, &sourceCap) {
+				sourceSuccessRemaining[res.Source.ChannelID] = sourceCap
+				st.sourceAvailable[res.Source.ChannelID] = sourceCap
+				if s.logger != nil {
+					s.logger.Printf("rebalance mpp execute: job=%d completed via parallel prepass shards=%d/%d", r.jobID, succeededShards, attemptedShards)
+				}
+				return true, false
+			}
+			sourceSuccessRemaining[res.Source.ChannelID] = sourceCap
+			st.sourceAvailable[res.Source.ChannelID] = sourceCap
+			continue
+		}
+
+		failReason := res.FailReason
+		if strings.TrimSpace(failReason) == "" {
+			if res.TimedOut {
+				failReason = "attempt timeout"
+			} else {
+				failReason = "mpp shard failed"
+			}
+		}
+		if isStructuralRebalanceFailure(failReason) {
+			structuralFailureShards++
+		}
+		shardFailReason := formatMppShardFailReason(failReason)
+		_ = s.insertAttempt(ctx, r.jobID, attemptIndex, res.Source.ChannelID, attemptAmount, res.FeeLimitPpm, 0, "failed", res.PaymentHash, shardFailReason, res.FailureInfo)
+		m.recordPairFailure(ctx, res.Source.ChannelID, r.targetChannelID, shardFailReason)
+		m.noteAutoStructuralFailure(shardFailReason, false)
+	}
+
+	if succeededShards == 0 && attemptedShards >= mppStructuralAbortMinAttempts {
+		structuralRatio := float64(structuralFailureShards) / float64(attemptedShards)
+		if structuralRatio >= mppStructuralAbortRatio {
+			if hasRebalanceFallbackCandidate(st.sources, st.sourceAvailable, st.pairStats, st.currentJobBlockedPairs, st.useRecentFailureCache, st.minExecuteSat, time.Now()) {
+				if s.logger != nil {
+					s.logger.Printf(
+						"rebalance mpp execute: job=%d structural threshold reached; falling back to legacy structural_failures=%d attempted_shards=%d ratio=%.2f",
+						r.jobID,
+						structuralFailureShards,
+						attemptedShards,
+						structuralRatio,
+					)
+				}
+				return false, false
+			}
+			m.noteAutoStructuralFailure("mpp structural failure", false)
+			s.finishJob(r.jobID, "failed", "mpp structural failure")
+			if s.logger != nil {
+				s.logger.Printf(
+					"rebalance mpp execute: job=%d aborting fallback structural_failures=%d attempted_shards=%d ratio=%.2f",
+					r.jobID,
+					structuralFailureShards,
+					attemptedShards,
+					structuralRatio,
+				)
+			}
+			return true, false
+		}
+	}
+
+	if s.logger != nil {
+		s.logger.Printf(
+			"rebalance mpp execute: job=%d parallel prepass attempted_shards=%d succeeded_shards=%d remaining=%d (fallback legacy)",
+			r.jobID,
+			attemptedShards,
+			succeededShards,
+			*m.remaining,
+		)
+	}
+	return false, false
+}
+
+func (m *rebalanceMppPrepassContext) attemptShard(roundCtx context.Context, source RebalanceChannel, amountTry int64) rebalanceMppShardAttemptResult {
+	r := m.runner
+	st := m.state
+	s := r.service
+	ctx := st.ctx
+	feeCfg := st.feeCfg
+	result := rebalanceMppShardAttemptResult{
+		Source:          source,
+		AmountRequested: amountTry,
+		AmountSent:      amountTry,
+		Attempted:       true,
+	}
+	if amountTry <= 0 {
+		result.Attempted = false
+		return result
+	}
+	if feeCfg.MinSplitEnabled && st.minExecuteSat > 0 && amountTry < st.minExecuteSat {
+		result.Attempted = false
+		return result
+	}
+	if roundCtx.Err() != nil {
+		if ctx.Err() != nil {
+			result.Fatal = true
+		} else {
+			result.TimedOut = true
+			result.FailReason = "mpp round timeout"
+		}
+		return result
+	}
+
+	sourcePolicy := lndclient.ChannelPolicySnapshot{
+		FeeRatePpm:  source.OutgoingFeePpm,
+		BaseFeeMsat: source.OutgoingBaseMsat,
+	}
+	feeLimitMsat, feeErr := calcFeeLimitMsat(amountTry*1000, m.targetPolicy, &sourcePolicy, feeCfg)
+	if feeErr != nil || feeLimitMsat <= 0 {
+		result.FailReason = "fee cap zero"
+		return result
+	}
+	result.FeeLimitPpm = feeMsatToPpm(feeLimitMsat, amountTry)
+
+	attemptCtx := roundCtx
+	cancelAttempt := func() {}
+	if m.attemptTimeoutSec > 0 {
+		attemptCtx, cancelAttempt = context.WithTimeout(roundCtx, time.Duration(m.attemptTimeoutSec)*time.Second)
+	}
+	defer cancelAttempt()
+
+	ignoredEdgeSnapshot, ignoredPairSnapshot := m.snapshotIgnoredRoutes()
+	routes, err := s.lnd.QueryRoutes(attemptCtx, m.selfPubkey, amountTry, source.ChannelID, st.targetSnapshot.RemotePubkey, feeLimitMsat, 3, ignoredEdgeSnapshot, ignoredPairSnapshot)
+	if err != nil {
+		if ctx.Err() != nil {
+			result.Fatal = true
+			result.FailReason = "cancelled"
+			return result
+		}
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(attemptCtx.Err(), context.DeadlineExceeded) || errors.Is(roundCtx.Err(), context.DeadlineExceeded) {
+			result.TimedOut = true
+			result.FailReason = "attempt timeout"
+			return result
+		}
+		result.FailReason = err.Error()
+		return result
+	}
+
+	var route *lnrpc.Route
+	for _, candidate := range routes {
+		if candidate != nil {
+			route = candidate
+			break
+		}
+	}
+	if route == nil {
+		result.FailReason = "no route returned"
+		return result
+	}
+
+	routeAmount := amountTry
+	if feeCfg.AmountProbeSteps > 0 {
+		maxAmount, probeErr := s.probeRoute(attemptCtx, route, amountTry, st.minProbeSat, feeCfg.AmountProbeSteps, m.targetPolicy, sourcePolicy, feeCfg)
+		if probeErr != nil {
+			result.FailReason = probeErr.Error()
+			return result
+		}
+		if maxAmount <= 0 {
+			result.FailReason = "probe returned no amount"
+			return result
+		}
+		if maxAmount < routeAmount {
+			routeAmount = maxAmount
+		}
+	}
+	if feeCfg.MinSplitEnabled && st.minExecuteSat > 0 && routeAmount < st.minExecuteSat {
+		result.FailReason = "probe amount below execute minimum"
+		return result
+	}
+	if routeAmount <= 0 {
+		result.FailReason = "invalid shard amount"
+		return result
+	}
+
+	if routeAmount != amountTry {
+		rebuilt, rebuildErr := s.rebuildRouteForAmount(attemptCtx, route, routeAmount)
+		if rebuildErr != nil {
+			result.FailReason = rebuildErr.Error()
+			return result
+		}
+		route = rebuilt
+		result.AmountSent = routeAmount
+		feeLimitMsat, feeErr = calcFeeLimitMsat(routeAmount*1000, m.targetPolicy, &sourcePolicy, feeCfg)
+		if feeErr != nil || feeLimitMsat <= 0 {
+			result.FailReason = "fee cap zero"
+			return result
+		}
+		result.FeeLimitPpm = feeMsatToPpm(feeLimitMsat, routeAmount)
+	}
+
+	routeFeeMsat := int64(0)
+	if route.TotalFeesMsat > 0 {
+		routeFeeMsat = route.TotalFeesMsat
+	} else if route.TotalFees > 0 {
+		routeFeeMsat = route.TotalFees * 1000
+	}
+	if feeLimitMsat > 0 && routeFeeMsat > feeLimitMsat {
+		result.FailReason = "route fee exceeds limit"
+		return result
+	}
+
+	_, paymentHash, paymentAddr, invErr := s.createRebalanceInvoice(attemptCtx, routeAmount, r.jobID, source.ChannelID, r.targetChannelID)
+	if invErr != nil {
+		if ctx.Err() != nil {
+			result.Fatal = true
+			result.FailReason = "cancelled"
+			return result
+		}
+		if errors.Is(invErr, context.DeadlineExceeded) || errors.Is(attemptCtx.Err(), context.DeadlineExceeded) || errors.Is(roundCtx.Err(), context.DeadlineExceeded) {
+			result.TimedOut = true
+			result.FailReason = "attempt timeout"
+			return result
+		}
+		result.FailReason = invErr.Error()
+		return result
+	}
+	result.PaymentHash = paymentHash
+	applyMppRecord(route, paymentAddr, routeAmount)
+	result.RouteMaxSat = s.maxAmountOnRouteSat(attemptCtx, route, m.selfPubkey)
+
+	_, sendErr := s.lnd.SendToRoute(attemptCtx, paymentHash, route)
+	if sendErr != nil {
+		if ctx.Err() != nil {
+			result.Fatal = true
+			result.FailReason = "cancelled"
+			return result
+		}
+		if errors.Is(sendErr, context.DeadlineExceeded) || errors.Is(attemptCtx.Err(), context.DeadlineExceeded) || errors.Is(roundCtx.Err(), context.DeadlineExceeded) {
+			result.TimedOut = true
+			result.FailReason = "attempt timeout"
+			return result
+		}
+		var routeFailure lndclient.RouteFailureError
+		if errors.As(sendErr, &routeFailure) && routeFailure.Failure != nil && routeFailure.Code == lnrpc.Failure_TEMPORARY_CHANNEL_FAILURE {
+			m.noteRouteFailureFromShard(route, routeFailure.FailureSourceIndex)
+		}
+		result.FailureInfo = parseRouteFailure(sendErr, route)
+		result.FailReason = sendErr.Error()
+		return result
+	}
+
+	result.Succeeded = true
+	result.AmountSent = routeAmount
+	result.FeePaidSat = msatToSatCeil(routeFeeMsat)
+	result.RouteHops = extractHopPubkeys(route)
+	return result
+}
+
+func formatMppShardFailReason(reason string) string {
+	trimmed := strings.TrimSpace(reason)
+	if trimmed == "" {
+		trimmed = "failed"
+	}
+	if strings.HasPrefix(strings.ToLower(trimmed), "mpp shard:") {
+		return trimmed
+	}
+	return "mpp shard: " + trimmed
 }
 
 func (s *RebalanceService) createRebalanceInvoice(ctx context.Context, amount int64, jobID int64, sourceID uint64, targetID uint64) (string, string, []byte, error) {

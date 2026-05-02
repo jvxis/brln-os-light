@@ -138,6 +138,42 @@ func TestNormalizeRebalanceConfigClampsGainModelAndVelocityWeight(t *testing.T) 
 	}
 }
 
+func TestApplyRebalanceConfigPayloadOnlyTouchesProvidedFields(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	deadband := 0.0
+	budgetAutoOnly := false
+	minExecuteSat := int64(25_000)
+	gainModelVersion := 2
+	velocityWeight := 0.35
+
+	got := applyRebalanceConfigPayload(cfg, rebalanceConfigPayload{
+		DeadbandPct:      &deadband,
+		BudgetAutoOnly:   &budgetAutoOnly,
+		MinExecuteSat:    &minExecuteSat,
+		GainModelVersion: &gainModelVersion,
+		VelocityWeight:   &velocityWeight,
+	})
+
+	if got.DeadbandPct != 0 {
+		t.Fatalf("expected explicit zero deadband to be applied, got %f", got.DeadbandPct)
+	}
+	if got.BudgetAutoOnly {
+		t.Fatalf("expected explicit false budget_auto_only to be applied")
+	}
+	if got.MinExecuteSat != minExecuteSat {
+		t.Fatalf("expected min_execute_sat=%d, got %d", minExecuteSat, got.MinExecuteSat)
+	}
+	if got.GainModelVersion != gainModelVersion {
+		t.Fatalf("expected gain_model_version=%d, got %d", gainModelVersion, got.GainModelVersion)
+	}
+	if got.VelocityWeight != velocityWeight {
+		t.Fatalf("expected velocity_weight=%f, got %f", velocityWeight, got.VelocityWeight)
+	}
+	if got.ScanIntervalSec != cfg.ScanIntervalSec {
+		t.Fatalf("expected omitted scan_interval_sec to remain %d, got %d", cfg.ScanIntervalSec, got.ScanIntervalSec)
+	}
+}
+
 func TestAutoTargetCostGateRequiresSpreadAboveExpectedCost(t *testing.T) {
 	if passesAutoTargetCostGate(channelSetting{}, 131, 88) {
 		t.Fatalf("expected cost gate to block when effective spread is below expected cost")

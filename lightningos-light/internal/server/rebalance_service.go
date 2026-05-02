@@ -2366,40 +2366,87 @@ func (s *RebalanceService) startJob(targetChannelID uint64, source string, reaso
 	return jobID, nil
 }
 
+type rebalanceJobRunner struct {
+	service         *RebalanceService
+	jobID           int64
+	targetChannelID uint64
+	amount          int64
+	targetPct       float64
+	jobSource       string
+	jobReason       string
+}
+
 func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount int64, targetPct float64, jobSource string, jobReason string) {
+	runner := rebalanceJobRunner{
+		service:         s,
+		jobID:           jobID,
+		targetChannelID: targetChannelID,
+		amount:          amount,
+		targetPct:       targetPct,
+		jobSource:       jobSource,
+		jobReason:       jobReason,
+	}
+	runner.run()
+}
+
+func (r *rebalanceJobRunner) contextWithTimeout(cfg RebalanceConfig) (context.Context, context.CancelFunc) {
+	timeoutSec := cfg.RebalanceTimeoutSec
+	if timeoutSec <= 0 {
+		timeoutSec = 600
+	}
+	return context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
+}
+
+func (r *rebalanceJobRunner) registerCancel(cancel context.CancelFunc) {
+	r.service.mu.Lock()
+	r.service.jobCancel[r.jobID] = cancel
+	r.service.mu.Unlock()
+}
+
+func (r *rebalanceJobRunner) unregisterCancel() {
+	r.service.mu.Lock()
+	delete(r.service.jobCancel, r.jobID)
+	r.service.mu.Unlock()
+}
+
+func (r *rebalanceJobRunner) finalizeMppShadow(shadowRecorded bool, floorBlockedSources map[uint64]struct{}) {
+	if !shadowRecorded {
+		return
+	}
+	shadowCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := r.service.updateMppShadowFloorBlockedSources(shadowCtx, r.jobID, int64(len(floorBlockedSources))); err != nil && r.service.logger != nil {
+		r.service.logger.Printf("rebalance mpp shadow floor telemetry update failed: job=%d err=%v", r.jobID, err)
+	}
+	if err := r.service.finalizeMppShadowPlan(shadowCtx, r.jobID); err != nil && r.service.logger != nil {
+		r.service.logger.Printf("rebalance mpp shadow finalize failed: job=%d err=%v", r.jobID, err)
+	}
+}
+
+func (r *rebalanceJobRunner) run() {
+	s := r.service
+	jobID := r.jobID
+	targetChannelID := r.targetChannelID
+	amount := r.amount
+	targetPct := r.targetPct
+	jobSource := r.jobSource
+	jobReason := r.jobReason
+
 	cfg, _ := s.loadConfig(context.Background())
 	minExecuteSat := effectiveMinExecuteSat(cfg)
 	minProbeSat := effectiveMinProbeSat(cfg)
 	useRecentFailureCache := shouldUseRecentFailureCache(jobSource, jobReason)
 	cooldownProbeJob := isTargetCooldownProbeJob(jobSource, jobReason)
-	timeoutSec := cfg.RebalanceTimeoutSec
-	if timeoutSec <= 0 {
-		timeoutSec = 600
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
-	s.mu.Lock()
-	s.jobCancel[jobID] = cancel
-	s.mu.Unlock()
+	ctx, cancel := r.contextWithTimeout(cfg)
+	r.registerCancel(cancel)
 
 	defer func() {
-		s.mu.Lock()
-		delete(s.jobCancel, jobID)
-		s.mu.Unlock()
+		r.unregisterCancel()
 	}()
 	shadowRecorded := false
 	floorBlockedSources := map[uint64]struct{}{}
 	defer func() {
-		if !shadowRecorded {
-			return
-		}
-		shadowCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := s.updateMppShadowFloorBlockedSources(shadowCtx, jobID, int64(len(floorBlockedSources))); err != nil && s.logger != nil {
-			s.logger.Printf("rebalance mpp shadow floor telemetry update failed: job=%d err=%v", jobID, err)
-		}
-		if err := s.finalizeMppShadowPlan(shadowCtx, jobID); err != nil && s.logger != nil {
-			s.logger.Printf("rebalance mpp shadow finalize failed: job=%d err=%v", jobID, err)
-		}
+		r.finalizeMppShadow(shadowRecorded, floorBlockedSources)
 	}()
 
 	if !s.acquireSem(ctx) {

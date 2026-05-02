@@ -130,6 +130,17 @@ func (s *Server) handleRebalanceConfigPost(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	cfg = applyRebalanceConfigPayload(cfg, payload)
+
+	updated, err := s.rebalance.UpdateConfig(ctx, cfg)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func applyRebalanceConfigPayload(cfg RebalanceConfig, payload rebalanceConfigPayload) RebalanceConfig {
 	if payload.AutoEnabled != nil {
 		cfg.AutoEnabled = *payload.AutoEnabled
 	}
@@ -268,13 +279,7 @@ func (s *Server) handleRebalanceConfigPost(w http.ResponseWriter, r *http.Reques
 	if payload.VelocityWeight != nil {
 		cfg.VelocityWeight = *payload.VelocityWeight
 	}
-
-	updated, err := s.rebalance.UpdateConfig(ctx, cfg)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, updated)
+	return cfg
 }
 
 func (s *Server) handleRebalanceOverview(w http.ResponseWriter, r *http.Request) {

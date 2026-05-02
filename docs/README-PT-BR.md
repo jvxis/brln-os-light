@@ -36,7 +36,7 @@ Estes releases cobrem `0.3.10-Beta` até `0.3.18-Beta`, além da versão atual d
 - Módulo Novos Canais: candidatos a peer com base em rotas observadas, rotas falhas, atrito operacional local, qualidade do grafo, demanda, alívio, confiança e evidência de rota/custo em 30 dias.
 - Dashboard renovado: componentes extraídos, cards mais ricos de LND/sistema, painéis de receita e atividade recente, saúde do core, risco das automações, pulso do node e modal de restart do LND com contexto de journal.
 - Melhorias na carteira: invoices blinded, leitura de QR para pagamento, preview/probing de rota, recomendação de rota automática, pagamento por rota validada, metadados de rota/pagamento e comportamento mais seguro para invoices com blind paths.
-- Rebalance Center: pisos separados de probe/execução, MSPR multi-source paralelo, cooldown de rota morta, TTL adaptativo, peso por efetividade da origem, cooldown quando todas as origens falham, reserva/orçamento manual, mensagens mais claras e novos defaults.
+- Rebalance Center: pisos separados de probe/execução, MSPR multi-source paralelo, cooldown de rota morta, TTL adaptativo, peso por efetividade da origem, proteção de source por payback, bypass de cost gate por canal, cooldown quando todas as origens falham, reserva/orçamento manual, métricas baseline, mensagens mais claras, novos defaults e curso operacional novo.
 - Autofee: defaults de perfil enviados pelo backend, telemetria de refresh, thresholds dinâmicos, melhor tratamento de canais em monitor, correções de market-refill/stall-relax/old-sinks e comportamento mais conservador quando o sinal local é fraco.
 - Relatórios e notificações: warm-up de relatório live, API live de movimento, armazenamento de histórico de rota, catch-up mais robusto, correções Telegram e mais contexto de pagamento/rota.
 - Expansão da App Store: apps Electrs e Mempool, status/checks de full-index, melhorias em Bitcoin Core/RoboSats/LNbits/Public Pool e refinamentos de install/status para apps Docker.
@@ -368,19 +368,27 @@ Nota importante:
 Esses três elementos são relacionados, mas não idênticos. Um canal com score mediano ainda pode cair em `Monitorar` ou `Fechar` se os sinais de risco e manutenção estiverem ruins o suficiente.
 
 ## Rebalance Center
-Rebalance Center é um otimizador de liquidez de entrada (local/outbound) para LND. Ele pode rodar rebalances manuais por canal ou varreduras totalmente automáticas que enfileiram rebalances com base em ROI e restrições de orçamento. Um rebalance só avança quando **outgoing fee > peer fee**, para que você nunca pague mais do que a cobrança do peer sem spread positivo. Custos são rastreados por notificações (fee msat) e agregados em custo live + gasto diário auto/manual.
+Rebalance Center é um otimizador de liquidez de entrada (local/outbound) para LND. Ele move liquidez local para canais onde essa liquidez tende a ser vendida com vantagem econômica: pouco outbound/local, `outgoing_fee_ppm > peer_fee_ppm`, source com liquidez sobrando e custo de rota abaixo do ganho esperado. Ele pode rodar rebalances manuais por canal ou varreduras totalmente automáticas que enfileiram rebalances com base em cost gate, ROI, profit guardrail, cooldowns e restrições de orçamento. Custos são rastreados por notificações (fee msat) e agregados em custo live + gasto diário auto/manual.
+
+Curso operacional:
+- PT-BR: `docs/23_REBALANCE_CENTER_COURSE_PT_BR.md`
+- EN: `docs/24_REBALANCE_CENTER_COURSE_EN.md`
 
 Comportamento principal:
+- Manual Rebal In usa elegibilidade manual mais permissiva e serve para teste, correção pontual ou ação forçada em um canal específico.
 - Rebalances manuais ignoram orçamento diário e podem ser iniciados por canal.
 - Rebalances automáticos respeitam orçamento diário e só miram canais marcados explicitamente como `Auto`.
 - Canais de origem são selecionados entre os com liquidez local suficiente e não excluídos; um canal preenchido por rebalance fica **protegido** e não pode ser usado como origem até regras de payback liberarem.
 - Alvos são escolhidos quando o déficit de liquidez outbound passa do deadband e o spread de taxa é positivo; estimativa de ROI usa receita de roteamento dos últimos 7 dias vs custo estimado de rebalance.
+- Alvos automáticos também passam por cost gate, ROI mínimo, profit guardrail, cooldowns de target/source, checagem de canal ocupado, piso de execução e orçamento restante.
 - Alvos automáticos são ranqueados por **economic score** = (ganho esperado - custo estimado), priorizando canais de maior margem.
 - Um **profit guardrail** impede enqueue automático quando ganho esperado é menor que custo estimado (quando ambos são conhecidos). Se ROI for indeterminado (cost = 0 com spread positivo), auto continua permitido.
+- `Bypass cost gate` é por canal. Ele ignora apenas o gate de custo esperado; ROI e profit guardrail continuam protegendo o job depois.
 - A seleção de origem também considera efetividade da origem e cooldown temporário de rota morta, evitando insistir em alvos/origens que falham repetidamente.
 - Seleção de origem é ponderada por histórico do par: pares recentes bem-sucedidos com taxas menores são priorizados, e falhas recentes são despriorizadas.
-- A visão geral mostra **Last scan** em horário local e status da varredura (ex.: sem origens, sem candidatos, orçamento esgotado), além de telemetria econômica (top score, skips por profit guardrail) e detalhes opcionais de skip.
-- Rebalances manuais podem opcionalmente usar **auto-restart** (toggle por canal) com cooldown de 60s até o alvo ser alcançado.
+- A visão geral mostra **Live cost 24h**, sources/targets elegíveis, **Last scan** em horário local, status/reasons da varredura, effectiveness/attempts, ROI/payback progress, pressão de falhas de rota, MSPR 24h e detalhes opcionais de skip.
+- Métricas baseline ficam em `/api/rebalance/metrics/baseline?days=1`; use 24h para comparação rápida e 7d para decisão mais confiável.
+- Manual Restart Watch respeita `EligibleAsTarget`; ele tenta novamente jobs manuais com auto-restart depois do intervalo/cooldown e só ignora o cost gate quando `Bypass cost gate` está habilitado no canal.
 - **Pre-probing** de rota roda antes do envio, buscando o maior valor viável na rota.
 
 Channel Workbench:
@@ -409,6 +417,10 @@ Parâmetros de configuração:
 - `Fee limit (ppm)`: sobrescreve economic ratio com limite fixo máximo de taxa ppm (0 = desativado).
 - `Subtract source fees`: reduz orçamento de taxa com estimativa de source fees (mais conservador).
 - `ROI minimum`: ROI mínimo estimado (receita 7d / custo estimado) para enfileirar jobs auto.
+- `Rebalance cost floor (ppm)`: custo mínimo esperado de rota quando o canal não tem histórico útil.
+- `Gain model version`: v1 usa receita histórica; v2 usa spread efetivo mais velocidade.
+- `Velocity weight`: controla quanto o v2 prioriza canais com drain rate real em vez de fairness/idade.
+- `Source min payback progress`: protege canais que compraram liquidez por rebalance até a receita pagar parte suficiente do custo.
 - `Max concurrent`: máximo de rebalances simultâneos.
 - `Minimum (sats)`: âncora legada de início das tentativas; com split desligado, também vira o piso efetivo de probe/execução.
 - `Maximum (sats)`: limite superior do tamanho de rebalance (0 = ilimitado).
@@ -457,6 +469,7 @@ Modelo de execução:
 - Falhas de shard aparecem no histórico com prefixo `mpp shard:` no motivo.
 Recomendação prática:
 - Comece com os defaults atuais: `max_shards=6`, `parallel_workers=3`, `min_shard=10000`, `round_timeout=35`, com `auto only` habilitado.
+- Se houver `mpp_structural_abort` frequente, reduza paralelismo ou número de shards.
 - Se os primeiros shards ainda estiverem grandes, aumente shards (até `20`) e mantenha workers menor ou igual a shards.
 - Se o nó estiver sensível a carga, reduza primeiro os workers paralelos (não o número de shards).
 

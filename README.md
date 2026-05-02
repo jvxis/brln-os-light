@@ -39,7 +39,7 @@ These releases cover `0.3.10-Beta` through `0.3.18-Beta`, plus the current `0.3.
 - New Channels recommendation module: candidate peers from observed routes, failed routes, local operational pain, graph quality, demand, relief, confidence, and 30-day route/cost evidence.
 - Dashboard refresh: extracted dashboard components, richer LND/system cards, revenue and recent activity panels, core health, automation risk, node pulse, and safer LND restart modal with live journal context.
 - Wallet upgrades: blinded invoices, QR scanning for invoice payment, route preview/probing, automatic-route recommendations, validated-route payment execution, better payment detail/route metadata, and safer behavior for blind-path invoices.
-- Rebalance Center upgrades: split probe/execute floors, MSPR multi-source parallel prepass, route-dead cooldown, adaptive TTL, source-effectiveness weighting, all-sources-failed cooldown, manual reserve/budget controls, clearer messages, and updated defaults.
+- Rebalance Center upgrades: split probe/execute floors, MSPR multi-source parallel prepass, route-dead cooldown, adaptive TTL, source-effectiveness weighting, payback-aware source protection, per-channel cost-gate bypass, all-sources-failed cooldown, manual reserve/budget controls, baseline metrics, clearer messages, updated defaults, and new operator course docs.
 - Autofee upgrades: backend-supplied profile defaults, refresh telemetry, dynamic thresholds, stronger inbound/monitor-state handling, market-refill fixes, stall relaxation fixes, old-sink handling, and more conservative behavior around weak local signals.
 - Reports and notifications: live report warm-up, movement live API, route-history storage, better catch-up behavior, Telegram notification fixes, and richer payment/route context.
 - App Store expansion: Electrs and Mempool apps, full-index dependency checks/status, improved Bitcoin Core/RoboSats/LNbits/Public Pool handling, and Docker app install/status refinements.
@@ -371,19 +371,27 @@ Important note:
 These three are related, but not identical. A medium-score channel can still be classified as `Monitor` or `Close` if the risk and maintenance signals are bad enough.
 
 ## Rebalance Center
-Rebalance Center is an inbound (local/outbound) liquidity optimizer for LND. It can run manual rebalances per channel or fully automated scans that enqueue rebalances based on ROI and budget constraints. A rebalance only proceeds when **outgoing fee > peer fee** so you never pay more than the peer charge without a positive spread. Costs are tracked from notifications (fee msat) and aggregated into live cost + daily auto/manual spending.
+Rebalance Center is an inbound (local/outbound) liquidity optimizer for LND. It moves local liquidity toward channels where that liquidity can likely be sold with an economic advantage: low outbound/local balance, `outgoing_fee_ppm > peer_fee_ppm`, available source liquidity, and route cost below the expected gain. It can run manual rebalances per channel or fully automated scans that enqueue rebalances based on cost gate, ROI, profit guardrail, cooldowns, and budget constraints. Costs are tracked from notifications (fee msat) and aggregated into live cost + daily auto/manual spending.
+
+Operator course:
+- EN: `docs/24_REBALANCE_CENTER_COURSE_EN.md`
+- PT-BR: `docs/23_REBALANCE_CENTER_COURSE_PT_BR.md`
 
 Key behavior:
+- Manual Rebal In uses more permissive manual target eligibility and can be used for testing, one-off correction, or forcing a specific channel.
 - Manual rebalances ignore the daily budget and can be started per channel.
 - Auto rebalances respect the daily budget and only target channels explicitly marked as `Auto`.
 - Source channels are selected from those with enough local liquidity and not excluded; a channel filled by rebalance becomes **protected** and cannot be used as a source until payback rules release it.
 - Targets are chosen when outbound liquidity deficit exceeds the deadband and fee spread is positive; ROI estimate uses last 7 days of routing revenue vs estimated rebalance cost.
+- Auto targets also pass the cost gate, ROI minimum, profit guardrail, target/source cooldowns, channel busy checks, execute floor, and remaining budget.
 - Auto targets are ranked by **economic score** = (expected gain − estimated cost), so higher-margin channels are prioritized.
 - A **profit guardrail** prevents auto enqueues when expected gain is lower than estimated cost (when both are known). If ROI is indeterminate (cost = 0 with positive spread), auto is still allowed.
+- `Bypass cost gate` is per-channel. It skips only the expected-cost gate; ROI and profit guardrails still protect the job afterward.
 - Source selection now also considers source effectiveness and temporary route-dead cooldowns, so repeatedly failing targets/sources are cooled down before wasting more attempts.
 - Source selection is weighted by pair history: recent successful pairs with lower fees are prioritized, while recent failures are de‑prioritized.
-- The overview shows **Last scan** in local time and a scan status (e.g., no sources, no candidates, budget exhausted) plus economic telemetry (top score, profit guardrail skips) and optional skip details.
-- Manual rebalances can optionally **auto-restart** (per-channel toggle) with a 60s cooldown until the target is reached.
+- The overview shows **Live cost 24h**, eligible sources/targets, **Last scan** in local time, scan status/reasons, effectiveness/attempts, ROI/payback progress, route failure pressure, MSPR 24h, and optional skip details.
+- Baseline metrics are available at `/api/rebalance/metrics/baseline?days=1`; use 24h for a quick comparison and 7d for a stronger decision.
+- Manual Restart Watch respects `EligibleAsTarget`; it retries manual auto-restart jobs after interval/cooldown and only ignores the cost gate when `Bypass cost gate` is enabled for that channel.
 - Route **pre-probing** runs before sending, searching for the largest feasible amount on the route.
 
 Channel Workbench:
@@ -412,6 +420,10 @@ Configuration parameters:
 - `Fee limit (ppm)`: overrides economic ratio with a fixed max fee ppm (0 = disabled).
 - `Subtract source fees`: reduces the fee budget by estimated source fees (more conservative).
 - `ROI minimum`: minimum estimated ROI (7d revenue / estimated cost) to enqueue auto jobs.
+- `Rebalance cost floor (ppm)`: minimum expected route cost when the channel has no usable cost history.
+- `Gain model version`: v1 uses historical revenue; v2 uses effective spread plus velocity.
+- `Velocity weight`: controls how strongly v2 prioritizes channels with real drain rate over fairness/age.
+- `Source min payback progress`: protects channels that bought liquidity by rebalance until enough revenue has paid the cost back.
 - `Max concurrent`: maximum number of rebalances running at the same time.
 - `Minimum (sats)`: legacy start anchor for attempts; with split disabled, it is also the effective probe/execute floor.
 - `Maximum (sats)`: upper bound for rebalance size (0 = unlimited).
@@ -460,6 +472,7 @@ Execution model:
 - Failed shard attempts appear in history with `mpp shard:` reason prefix.
 Practical recommendation:
 - Start with the shipped defaults: `max_shards=6`, `parallel_workers=3`, `min_shard=10000`, `round_timeout=35`, `auto only` enabled.
+- If you see frequent `mpp_structural_abort`, reduce parallelism or shard count.
 - If you see too many large first shards, increase shards (up to `20`) and keep workers lower or equal to shards.
 - If your node is resource-constrained, reduce parallel workers first (not shard count).
 

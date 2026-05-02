@@ -2513,6 +2513,32 @@ type rebalanceJobRunner struct {
 	jobReason       string
 }
 
+type rebalanceJobRunState struct {
+	ready                  bool
+	ctx                    context.Context
+	cancel                 context.CancelFunc
+	cancelRegistered       bool
+	workerAcquired         bool
+	targetLocked           bool
+	cfg                    RebalanceConfig
+	feeCfg                 RebalanceConfig
+	amount                 int64
+	minExecuteSat          int64
+	minProbeSat            int64
+	startAmountSat         int64
+	useRecentFailureCache  bool
+	cooldownProbeJob       bool
+	shadowRecorded         bool
+	floorBlockedSources    map[uint64]struct{}
+	pairStats              map[uint64]pairStat
+	targetSnapshot         RebalanceChannel
+	sources                []RebalanceChannel
+	sourceFloorPct         float64
+	sourceBaseCap          map[uint64]int64
+	sourceAvailable        map[uint64]int64
+	currentJobBlockedPairs map[uint64]struct{}
+}
+
 func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount int64, targetPct float64, jobSource string, jobReason string) {
 	runner := rebalanceJobRunner{
 		service:         s,
@@ -2560,7 +2586,41 @@ func (r *rebalanceJobRunner) finalizeMppShadow(shadowRecorded bool, floorBlocked
 	}
 }
 
+func (r *rebalanceJobRunner) finalize(st *rebalanceJobRunState) {
+	if st == nil {
+		return
+	}
+	if st.targetLocked {
+		r.service.unlockChannel(r.targetChannelID)
+		st.targetLocked = false
+	}
+	if st.workerAcquired {
+		r.service.releaseSem()
+		st.workerAcquired = false
+	}
+	r.finalizeMppShadow(st.shadowRecorded, st.floorBlockedSources)
+	if st.cancelRegistered {
+		r.unregisterCancel()
+		st.cancelRegistered = false
+	}
+	if st.cancel != nil {
+		st.cancel()
+		st.cancel = nil
+	}
+}
+
 func (r *rebalanceJobRunner) run() {
+	st := &rebalanceJobRunState{}
+	r.prepare(st)
+	if !st.ready {
+		r.finalize(st)
+		return
+	}
+	defer r.finalize(st)
+	r.runLegacyLoop(st)
+}
+
+func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 	s := r.service
 	jobID := r.jobID
 	targetChannelID := r.targetChannelID
@@ -2575,28 +2635,23 @@ func (r *rebalanceJobRunner) run() {
 	useRecentFailureCache := shouldUseRecentFailureCache(jobSource, jobReason)
 	cooldownProbeJob := isTargetCooldownProbeJob(jobSource, jobReason)
 	ctx, cancel := r.contextWithTimeout(cfg)
+	st.ctx = ctx
+	st.cancel = cancel
 	r.registerCancel(cancel)
-
-	defer func() {
-		r.unregisterCancel()
-	}()
-	shadowRecorded := false
-	floorBlockedSources := map[uint64]struct{}{}
-	defer func() {
-		r.finalizeMppShadow(shadowRecorded, floorBlockedSources)
-	}()
+	st.cancelRegistered = true
+	st.floorBlockedSources = map[uint64]struct{}{}
 
 	if !s.acquireSem(ctx) {
 		s.finishJob(jobID, "failed", "no worker available")
 		return
 	}
-	defer s.releaseSem()
+	st.workerAcquired = true
 
 	if !s.tryLockChannel(targetChannelID) {
 		s.finishJob(jobID, "failed", "channel busy")
 		return
 	}
-	defer s.unlockChannel(targetChannelID)
+	st.targetLocked = true
 
 	s.markJobRunning(jobID)
 
@@ -2754,7 +2809,7 @@ func (r *rebalanceJobRunner) run() {
 				s.logger.Printf("rebalance mpp shadow insert failed: job=%d err=%v", jobID, err)
 			}
 		} else {
-			shadowRecorded = true
+			st.shadowRecorded = true
 			if s.logger != nil {
 				s.logger.Printf(
 					"rebalance mpp shadow: job=%d source=%s planned_shards=%d planned_total=%d remainder=%d eligible_sources=%d planned_sources=%d",
@@ -2788,6 +2843,49 @@ func (r *rebalanceJobRunner) run() {
 		sourceBaseCap[source.ChannelID] = baseCap
 		sourceAvailable[source.ChannelID] = baseCap
 	}
+
+	st.cfg = cfg
+	st.feeCfg = feeCfg
+	st.amount = amount
+	st.minExecuteSat = minExecuteSat
+	st.minProbeSat = minProbeSat
+	st.startAmountSat = startAmountSat
+	st.useRecentFailureCache = useRecentFailureCache
+	st.cooldownProbeJob = cooldownProbeJob
+	st.pairStats = pairStats
+	st.targetSnapshot = targetSnapshot
+	st.sources = sources
+	st.sourceFloorPct = sourceFloorPct
+	st.sourceBaseCap = sourceBaseCap
+	st.sourceAvailable = sourceAvailable
+	st.currentJobBlockedPairs = map[uint64]struct{}{}
+	st.ready = true
+	return
+}
+
+func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
+	s := r.service
+	jobID := r.jobID
+	targetChannelID := r.targetChannelID
+	jobSource := r.jobSource
+	jobReason := r.jobReason
+	ctx := st.ctx
+	cfg := st.cfg
+	feeCfg := st.feeCfg
+	amount := st.amount
+	minExecuteSat := st.minExecuteSat
+	minProbeSat := st.minProbeSat
+	startAmountSat := st.startAmountSat
+	useRecentFailureCache := st.useRecentFailureCache
+	cooldownProbeJob := st.cooldownProbeJob
+	pairStats := st.pairStats
+	targetSnapshot := st.targetSnapshot
+	sources := st.sources
+	sourceFloorPct := st.sourceFloorPct
+	sourceBaseCap := st.sourceBaseCap
+	sourceAvailable := st.sourceAvailable
+	floorBlockedSources := st.floorBlockedSources
+
 	lastSourceRefreshAt := time.Time{}
 	refreshSourceAvailability := func(force bool) {
 		if s.lnd == nil {
@@ -2837,7 +2935,7 @@ func (r *rebalanceJobRunner) run() {
 		lastSourceRefreshAt = time.Now()
 	}
 
-	currentJobBlockedPairs := map[uint64]struct{}{}
+	currentJobBlockedPairs := st.currentJobBlockedPairs
 	// selfPubkey is fetched below before the source loop runs; declared here so
 	// the recordPairSuccess closure can capture it for Wave 4.4 reinforcement.
 	var selfPubkey string

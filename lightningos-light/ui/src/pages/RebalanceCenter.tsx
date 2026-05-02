@@ -1,5 +1,5 @@
 ﻿
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   getRebalanceChannels,
@@ -16,6 +16,18 @@ import {
   updateRebalanceConfig,
   updateRebalanceExclude
 } from '../api'
+import { MetricDisclosure } from '../components/rebalance/MetricDisclosure'
+import { PairStatsPanel } from '../components/rebalance/PairStatsPanel'
+import { SettingsSubcard } from '../components/rebalance/SettingsSubcard'
+import type {
+  RebalanceAttempt,
+  RebalanceChannel,
+  RebalanceConfig,
+  RebalanceJob,
+  RebalanceOverview,
+  RebalancePairStat,
+  RebalanceScanSkip
+} from '../components/rebalance/types'
 import { getLocale } from '../i18n'
 
 const REBALANCE_DEFAULT_MIN_PROBE_SAT = 5000
@@ -30,300 +42,6 @@ const MSPR_MAX_SHARDS_LIMIT = 20
 const MSPR_DEFAULT_PARALLELISM = 3
 const MSPR_DEFAULT_MIN_SHARD_SAT = 10000
 const MSPR_DEFAULT_ROUND_TIMEOUT_SEC = 35
-
-type RebalanceConfig = {
-  auto_enabled: boolean
-  scan_interval_sec: number
-  deadband_pct: number
-  source_min_local_pct: number
-  econ_ratio: number
-  econ_ratio_max_ppm: number
-  fee_limit_ppm: number
-  lost_profit: boolean
-  fail_tolerance_ppm: number
-  roi_min: number
-  daily_budget_pct: number
-  budget_mode: string
-  budget_auto_only: boolean
-  manual_reserve_enabled: boolean
-  manual_reserve_mode: string
-  manual_reserve_value: number
-  max_concurrent: number
-  min_amount_sat: number
-  max_amount_sat: number
-  min_split_enabled: boolean
-  min_probe_sat: number
-  min_execute_sat: number
-  mpp_enabled: boolean
-  mpp_max_shards: number
-  mpp_parallelism: number
-  mpp_min_shard_sat: number
-  mpp_round_timeout_sec: number
-  mpp_auto_only: boolean
-  fee_ladder_steps: number
-  amount_probe_steps: number
-  amount_probe_adaptive: boolean
-  attempt_timeout_sec: number
-  rebalance_timeout_sec: number
-  manual_restart_watch: boolean
-  mc_half_life_sec: number
-  payback_mode_flags: number
-  unlock_days: number
-  critical_release_pct: number
-  critical_min_sources: number
-  critical_min_available_sats: number
-  critical_cycles: number
-  rebalance_cost_floor_ppm: number
-  source_min_payback_progress: number
-  mission_control_reinforce: boolean
-  gain_model_version: number
-  velocity_weight: number
-  autofee_settling_window_sec: number
-  autofee_settling_multiplier: number
-}
-
-type RebalanceOverview = {
-  auto_enabled: boolean
-  last_scan_at?: string
-  last_scan_status?: string
-  last_scan_detail?: string
-  last_scan_candidates?: number
-  last_scan_remaining_budget_sat?: number
-  last_scan_reasons?: Record<string, number>
-  last_scan_top_score_sat?: number
-  last_scan_profit_skipped?: number
-  last_scan_queued?: number
-  last_scan_skipped?: RebalanceScanSkip[]
-  last_mc_reset_at?: string
-  last_mc_reset_reason?: string
-  mc_reset_count?: number
-  mc_reset_cooldown_sec?: number
-  mc_reset_cooldown_remaining_sec?: number
-  eligible_sources?: number
-  targets_needing?: number
-  daily_budget_sat: number
-  daily_budget_base_sat?: number
-  daily_budget_short_term_sat?: number
-  daily_spent_sat: number
-  daily_spent_auto_sat: number
-  daily_spent_manual_sat: number
-  remaining_total_sat?: number
-  remaining_for_auto_sat?: number
-  budget_auto_only?: boolean
-  manual_reserve_enabled?: boolean
-  manual_reserve_mode?: string
-  manual_reserve_value?: number
-  manual_reserve_sat?: number
-  manual_reserve_remaining_sat?: number
-  live_cost_sat: number
-  effectiveness_7d: number
-  effectiveness_execution_7d?: number
-  jobs_without_attempt_7d?: number
-  jobs_without_attempt_rate_7d?: number
-  roi_7d: number
-  attempts_24h?: number
-  failed_attempts_24h?: number
-  attempt_success_rate_24h?: number
-  attempts_per_success_attempt_24h?: number
-  success_sats_per_attempt_24h?: number
-  success_attempts_24h?: number
-  success_amount_24h_sat?: number
-  success_avg_amount_24h_sat?: number
-  success_below_min_attempts_24h?: number
-  success_below_min_amount_24h_sat?: number
-  success_below_min_rate_24h?: number
-  payback_revenue_sat: number
-  payback_revenue_rebalanced_sat: number
-  payback_cost_sat: number
-  payback_progress: number
-  payback_progress_rebalanced: number
-  mpp_shadow_jobs_24h?: number
-  mpp_shadow_plan_ready_24h?: number
-  mpp_shadow_planned_sat_24h?: number
-  mpp_shadow_actual_sent_sat_24h?: number
-  mpp_shadow_in_progress_jobs_24h?: number
-  mpp_shadow_success_jobs_24h?: number
-  mpp_shadow_failed_jobs_24h?: number
-  mpp_shadow_partial_jobs_24h?: number
-  mpp_shadow_floor_blocked_sources_24h?: number
-  mpp_shadow_avg_planned_shards_24h?: number
-  mpp_shadow_avg_actual_attempts_24h?: number
-  mpp_structural_abort_jobs_24h?: number
-  top_failure_reasons_30m?: RebalanceReasonStat[]
-  route_dead_targets_30m?: RebalanceTargetStat[]
-}
-
-type RebalanceReasonStat = {
-  reason: string
-  count: number
-}
-
-type RebalanceTargetStat = {
-  channel_id: number
-  peer_alias?: string
-  failed_sources: number
-  failure_attempts: number
-  last_failure_at?: string
-  reason?: string
-}
-
-function MetricDisclosure({
-  title,
-  summary,
-  open,
-  onToggle,
-  children
-}: {
-  title: string
-  summary: string
-  open: boolean
-  onToggle: () => void
-  children: ReactNode
-}) {
-  return (
-    <div className="mt-2 border-t border-white/10 pt-2">
-      <button
-        type="button"
-        className="flex w-full items-center justify-between gap-3 rounded-md py-1 text-left transition hover:text-cyan-100"
-        aria-expanded={open}
-        onClick={onToggle}
-      >
-        <span className="text-[10px] uppercase tracking-wide text-fog/60">{title}</span>
-        <span className="flex min-w-0 items-center gap-2 text-right text-[11px] text-fog/45">
-          <span className="truncate normal-case tracking-normal">{summary}</span>
-          <span className="grid h-5 w-5 shrink-0 place-items-center rounded border border-white/10 text-fog/60">
-            {open ? '-' : '+'}
-          </span>
-        </span>
-      </button>
-      {open && <div className="mt-2 space-y-1">{children}</div>}
-    </div>
-  )
-}
-
-function SettingsSubcard({
-  title,
-  subtitle,
-  className = '',
-  children
-}: {
-  title: string
-  subtitle?: string
-  className?: string
-  children: ReactNode
-}) {
-  return (
-    <div className={`rounded-lg border border-white/10 bg-white/5 p-3 space-y-3 ${className}`}>
-      <div>
-        <p className="text-xs uppercase tracking-wide text-fog/60">{title}</p>
-        {subtitle && <p className="text-xs text-fog/50">{subtitle}</p>}
-      </div>
-      {children}
-    </div>
-  )
-}
-
-type RebalanceScanSkip = {
-  channel_id: number
-  channel_point: string
-  peer_alias: string
-  target_outbound_pct: number
-  target_amount_sat: number
-  expected_gain_sat: number
-  estimated_cost_sat: number
-  expected_roi: number
-  expected_roi_valid: boolean
-  reason: string
-}
-
-type RebalancePairStat = {
-  source_channel_id: number
-  source_channel_point?: string
-  source_peer_alias?: string
-  target_channel_id: number
-  target_channel_point?: string
-  target_peer_alias?: string
-  last_success_at?: string
-  last_fail_at?: string
-  last_fail_reason?: string
-  fail_count: number
-  permanent_fail_score: number
-  success_amount_sat: number
-  success_fee_ppm: number
-  last_success_route_hops?: string[]
-}
-
-type RebalanceChannel = {
-  channel_id: number
-  channel_point: string
-  peer_alias: string
-  remote_pubkey: string
-  active: boolean
-  private: boolean
-  capacity_sat: number
-  local_balance_sat: number
-  remote_balance_sat: number
-  local_pct: number
-  remote_pct: number
-  outgoing_fee_ppm: number
-  outgoing_base_msat: number
-  peer_fee_rate_ppm: number
-  peer_base_msat: number
-  spread_ppm: number
-  target_outbound_pct: number
-  target_amount_sat: number
-  auto_enabled: boolean
-  manual_restart_enabled: boolean
-  use_default_econ_ratio: boolean
-  econ_ratio_override?: number
-  auto_bypass_cost_gate?: boolean
-  eligible_as_target: boolean
-  eligible_as_manual_target: boolean
-  eligible_as_source: boolean
-  protected_liquidity_sat: number
-  payback_progress: number
-  time_to_payback_hours?: number
-  time_to_payback_valid?: boolean
-  max_source_sat: number
-  revenue_7d_sat: number
-  drain_rate_sat_per_hour?: number
-  rebalance_cost_7d_sat: number
-  rebalance_cost_7d_ppm: number
-  rebalance_amount_7d_sat: number
-  roi_estimate: number
-  roi_estimate_valid?: boolean
-  excluded_as_source: boolean
-}
-
-type RebalanceJob = {
-  id: number
-  created_at: string
-  completed_at?: string
-  source: string
-  status: string
-  reason?: string
-  target_channel_id: number
-  target_channel_point: string
-  target_peer_alias?: string
-  target_outbound_pct: number
-  target_amount_sat: number
-}
-
-type RebalanceAttempt = {
-  id: number
-  job_id: number
-  attempt_index: number
-  source_channel_id: number
-  source_peer_alias?: string
-  amount_sat: number
-  fee_limit_ppm: number
-  fee_paid_sat: number
-  status: string
-  payment_hash?: string
-  fail_reason?: string
-  started_at?: string
-  finished_at?: string
-}
 
 const PAYBACK_MODE_PAYBACK = 1
 const PAYBACK_MODE_TIME = 2
@@ -1302,61 +1020,16 @@ export default function RebalanceCenter() {
     overview?.last_scan_status === 'budget_insufficient'
   const renderPairStatsPanel = (channel: RebalanceChannel) => {
     const channelID = channel.channel_id
-    const pairs = pairStatsByChannel[channelID] ?? []
-    const loading = pairStatsLoading[channelID] === true
-    const failed = pairStatsError[channelID] === true
     return (
-      <div className="mt-3 border-t border-white/10 pt-3 text-xs text-fog/60">
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <span className="font-semibold text-fog/80" title={t('rebalanceCenter.channelsHints.pairStats')}>
-            {t('rebalanceCenter.channels.pairStatsTitle')}
-          </span>
-          <span>{pairs.length}</span>
-        </div>
-        {loading && <div>{t('rebalanceCenter.channels.pairStatsLoading')}</div>}
-        {failed && <div className="text-rose-200">{t('rebalanceCenter.channels.pairStatsError')}</div>}
-        {!loading && !failed && pairs.length === 0 && (
-          <div>{t('rebalanceCenter.channels.pairStatsEmpty')}</div>
-        )}
-        {!loading && !failed && pairs.length > 0 && (
-          <div className="space-y-2">
-            {pairs.map((pair) => (
-              <div
-                key={`${pair.source_channel_id}-${pair.target_channel_id}`}
-                className="grid gap-2 border-t border-white/5 pt-2 md:grid-cols-[minmax(0,1.3fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,0.8fr)_minmax(0,1fr)]"
-              >
-                <div className="min-w-0">
-                  <div className="truncate text-fog/80">{pair.source_peer_alias || pair.source_channel_id}</div>
-                  <div className="truncate text-[11px] text-fog/40">{pair.source_channel_point || pair.source_channel_id}</div>
-                </div>
-                <div>
-                  <div className="text-fog/40">{t('rebalanceCenter.channels.pairStatsLastSuccess')}</div>
-                  <div>{formatTimestamp(pair.last_success_at)}</div>
-                </div>
-                <div>
-                  <div className="text-fog/40">{t('rebalanceCenter.channels.pairStatsLastFail')}</div>
-                  <div>{formatTimestamp(pair.last_fail_at)}</div>
-                  {pair.last_fail_reason && <div className="truncate text-[11px] text-fog/40">{pair.last_fail_reason}</div>}
-                </div>
-                <div>
-                  <div className="text-fog/40">{t('rebalanceCenter.channels.pairStatsFailScore')}</div>
-                  <div>{formatRoi(pair.permanent_fail_score || 0)} / {pair.fail_count || 0}</div>
-                </div>
-                <div>
-                  <div className="text-fog/40">{t('rebalanceCenter.channels.pairStatsSuccess')}</div>
-                  <div>{formatSats(pair.success_amount_sat || 0)}</div>
-                  <div className="text-[11px] text-fog/40">{pair.success_fee_ppm || 0} ppm</div>
-                  {pair.last_success_route_hops && pair.last_success_route_hops.length > 0 && (
-                    <div className="truncate text-[11px] text-fog/40" title={pair.last_success_route_hops.join(' -> ')}>
-                      {t('rebalanceCenter.channels.pairStatsRoute')}: {pair.last_success_route_hops.length}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <PairStatsPanel
+        pairs={pairStatsByChannel[channelID] ?? []}
+        loading={pairStatsLoading[channelID] === true}
+        failed={pairStatsError[channelID] === true}
+        t={t}
+        formatTimestamp={formatTimestamp}
+        formatRoi={formatRoi}
+        formatSats={formatSats}
+      />
     )
   }
 

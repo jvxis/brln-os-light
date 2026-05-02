@@ -22,26 +22,40 @@ import (
 )
 
 const (
+	// rebalanceConfigID is the singleton row in rebalance_config.
 	rebalanceConfigID                 = 1
 	rebalanceDefaultTargetOutboundPct = 50.0
-	rebalanceForwardPageSize          = 50000
+	// rebalanceForwardPageSize bounds forwarding_history pagination so long
+	// lived nodes can compute revenue/drain signals without unbounded memory.
+	rebalanceForwardPageSize       = 50000
+	rebalanceDefaultMppMinShardSat = int64(10000)
 )
 
 const (
+	// Recent pair failure cache: short enough to avoid retry storms inside a
+	// job/scan burst, but capped to one hour for persistent structural issues.
 	pairFailTTL    = 30 * time.Second
 	pairFailTTLMax = time.Hour
+	// Winning routes are considered warm for one day; after that we prefer a
+	// fresh path discovery over leaning on stale network state.
 	pairSuccessTTL = 24 * time.Hour
 )
 
 const (
+	// Permanent fail score decays slowly so repeated structural failures remain
+	// visible across days without making a pair dead forever.
 	permanentFailScoreHalfLife      = 7 * 24 * time.Hour
 	permanentFailScoreMax           = 20.0
 	permanentFailScoreSkipThreshold = 3.0
-	permanentFailScoreTTLStep       = time.Hour
-	permanentFailScoreTTLMax        = 6 * time.Hour
+	// Each score step extends the skip TTL by an hour, capped at six hours.
+	permanentFailScoreTTLStep = time.Hour
+	permanentFailScoreTTLMax  = 6 * time.Hour
 )
 
 const (
+	// Cooldown windows protect targets/sources from repeated no-path attempts.
+	// The short recent window catches immediate retries; target-specific
+	// variants use the max cooldown for stronger structural signals.
 	rebalanceMaxCooldown                = time.Hour
 	recentCooldownWindow                = 30 * time.Minute
 	recentCooldownTTL                   = 30 * time.Minute
@@ -61,14 +75,20 @@ const (
 )
 
 const (
+	// Queue entries linger briefly in the UI after completion so operators can
+	// see the transition before the queue view compacts.
 	queueLingerSeconds = 20
 )
 
 const (
+	// scanSkipDetailLimit caps persisted/rendered diagnostic rows for the last
+	// scan while preserving aggregate skip counters separately.
 	scanSkipDetailLimit = 50
 )
 
 const (
+	// autoTargetCooldownMin is the minimum spacing between automatic enqueue
+	// attempts for the same target outside the stronger failure cooldowns.
 	autoTargetCooldownMin = 10 * time.Minute
 )
 
@@ -111,17 +131,24 @@ const (
 )
 
 const (
+	// MSPR structural abort only fires after enough parallel shards fail, and
+	// only when most of them look structural. This preserves legacy fallback
+	// when at least one shard succeeded or failures look transient.
 	mppStructuralAbortMinAttempts = 4
 	mppStructuralAbortRatio       = 0.70
 )
 
 const (
+	// Cooldown probes are small automatic jobs used to periodically test a
+	// target that is otherwise blocked by recent-failure cooldown.
 	targetCooldownProbeReason     = "cooldown-probe"
 	targetCooldownProbeInterval   = 15 * time.Minute
 	targetCooldownProbeMaxSources = 2
 )
 
 const (
+	// Payback flags decide when previously protected liquidity can become
+	// available as source capacity again.
 	paybackModePayback  = 1 << 0
 	paybackModeTime     = 1 << 1
 	paybackModeCritical = 1 << 2
@@ -207,6 +234,9 @@ type RebalanceOverview struct {
 	LastScanProfitSkipped         int                   `json:"last_scan_profit_skipped"`
 	LastScanQueued                int                   `json:"last_scan_queued"`
 	LastScanSkipped               []RebalanceSkipDetail `json:"last_scan_skipped,omitempty"`
+	LastManualRestartAt           string                `json:"last_manual_restart_at,omitempty"`
+	LastManualRestartQueued       int                   `json:"last_manual_restart_queued"`
+	LastManualRestartReasons      map[string]int        `json:"last_manual_restart_reasons,omitempty"`
 	LastMCResetAt                 string                `json:"last_mc_reset_at,omitempty"`
 	LastMCResetReason             string                `json:"last_mc_reset_reason,omitempty"`
 	MCResetCount                  int64                 `json:"mc_reset_count"`
@@ -445,6 +475,20 @@ type recentCooldownStat struct {
 	LastSuccessAt   time.Time
 }
 
+type recentTargetCooldownWindows struct {
+	RecentSince         time.Time
+	NoAttemptSince      time.Time
+	FailedSince         time.Time
+	DistinctSourceSince time.Time
+}
+
+type recentTargetCooldownSet struct {
+	Recent         map[uint64]recentCooldownStat
+	NoAttempt      map[uint64]recentCooldownStat
+	Failed         map[uint64]recentCooldownStat
+	DistinctSource map[uint64]recentCooldownStat
+}
+
 type rebalanceCost7dStat struct {
 	FeeSat    int64
 	AmountSat int64
@@ -581,6 +625,9 @@ type RebalanceService struct {
 	lastScanProfitSkipped      int
 	lastScanQueued             int
 	lastScanSkipped            []RebalanceSkipDetail
+	lastManualRestartAt        time.Time
+	lastManualRestartQueued    int
+	lastManualRestartReasons   map[string]int
 	criticalMissCount          int
 	sem                        chan struct{}
 	semInflight                int
@@ -639,7 +686,7 @@ func defaultRebalanceConfig() RebalanceConfig {
 		MppEnabled:                true,
 		MppMaxShards:              6,
 		MppParallelism:            3,
-		MppMinShardSat:            10000,
+		MppMinShardSat:            rebalanceDefaultMppMinShardSat,
 		MppRoundTimeoutSec:        35,
 		MppAutoOnly:               true,
 		FeeLadderSteps:            1,
@@ -815,8 +862,12 @@ func (s *RebalanceService) Unsubscribe(ch chan RebalanceEvent) {
 
 func (s *RebalanceService) broadcast(evt RebalanceEvent) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	subs := make([]chan RebalanceEvent, 0, len(s.subs))
 	for ch := range s.subs {
+		subs = append(subs, ch)
+	}
+	s.mu.Unlock()
+	for _, ch := range subs {
 		select {
 		case ch <- evt:
 		default:
@@ -1054,6 +1105,51 @@ func shouldEnforceManualRestartCooldown(source string, reason string) bool {
 	return isManualRestartJob(source, reason, false)
 }
 
+func manualRestartWatchEligibility(snapshot RebalanceChannel, cfg RebalanceConfig) (bool, string) {
+	if !snapshot.EligibleAsTarget {
+		return false, "target_not_eligible"
+	}
+	if cfg.ROIMin > 0 && snapshot.ROIEstimateValid && snapshot.ROIEstimate < cfg.ROIMin {
+		return false, "roi_guardrail"
+	}
+	return true, ""
+}
+
+func manualRestartStartErrorReason(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case err.Error() == "channel busy":
+		return "channel_busy"
+	case errors.Is(err, errManualRestartCooldown):
+		return "target_cooldown"
+	case errors.Is(err, errManualBudgetExhausted):
+		return "budget_too_low"
+	case errors.Is(err, errManualBudgetInsufficient):
+		return "budget_too_low"
+	default:
+		return "start_error"
+	}
+}
+
+func defaultRecentTargetCooldownWindows(now time.Time) recentTargetCooldownWindows {
+	return recentTargetCooldownWindows{
+		RecentSince:         now.Add(-recentCooldownWindow),
+		NoAttemptSince:      now.Add(-targetNoAttemptCooldownWindow),
+		FailedSince:         now.Add(-targetFailedCooldownWindow),
+		DistinctSourceSince: now.Add(-targetDistinctSourceCooldownWindow),
+	}
+}
+
+func (s *RebalanceService) loadRecentTargetCooldownSet(ctx context.Context, windows recentTargetCooldownWindows) recentTargetCooldownSet {
+	return recentTargetCooldownSet{
+		Recent:         s.loadRecentTargetCooldowns(ctx, windows.RecentSince),
+		NoAttempt:      s.loadRecentTargetNoAttemptCooldowns(ctx, windows.NoAttemptSince),
+		Failed:         s.loadRecentTargetFailedCooldowns(ctx, windows.FailedSince),
+		DistinctSource: s.loadRecentTargetDistinctSourceCooldowns(ctx, windows.DistinctSourceSince),
+	}
+}
+
 func normalizeChannelSetting(setting channelSetting) channelSetting {
 	if setting.TargetOutboundPct <= 0 || setting.TargetOutboundPct > 100 {
 		setting.TargetOutboundPct = rebalanceDefaultTargetOutboundPct
@@ -1103,7 +1199,7 @@ func normalizeRebalanceConfig(cfg RebalanceConfig) RebalanceConfig {
 		cfg.MppParallelism = cfg.MppMaxShards
 	}
 	if cfg.MppMinShardSat <= 0 {
-		cfg.MppMinShardSat = def.MppMinShardSat
+		cfg.MppMinShardSat = defaultMppMinShardSatForConfig(cfg)
 	}
 	if cfg.MppRoundTimeoutSec <= 0 {
 		cfg.MppRoundTimeoutSec = def.MppRoundTimeoutSec
@@ -1150,6 +1246,13 @@ func normalizeRebalanceConfig(cfg RebalanceConfig) RebalanceConfig {
 		cfg.AutofeeSettlingMultiplier = 1
 	}
 	return cfg
+}
+
+func defaultMppMinShardSatForConfig(cfg RebalanceConfig) int64 {
+	if minExecuteSat := effectiveMinExecuteSat(cfg); minExecuteSat > 0 {
+		return minExecuteSat
+	}
+	return rebalanceDefaultMppMinShardSat
 }
 
 func normalizeRebalanceBudgetMode(raw string) string {
@@ -1735,6 +1838,18 @@ func (s *RebalanceService) runManualRestartWatch() {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
+	scanAt := time.Now()
+	queuedCount := 0
+	restartReasons := map[string]int{}
+	noteManualSkip := func(reason string) {
+		if reason != "" {
+			restartReasons[reason]++
+		}
+	}
+	defer func() {
+		s.recordManualRestartWatch(scanAt, queuedCount, restartReasons)
+	}()
+
 	settings, _ := s.loadChannelSettings(ctx)
 	exclusions, _ := s.loadExclusions(ctx)
 	ledger, _ := s.loadLedger(ctx)
@@ -1742,13 +1857,11 @@ func (s *RebalanceService) runManualRestartWatch() {
 	revenueByChannel, _ := s.fetchChannelRevenue7d(ctx)
 	costByChannel, _ := s.fetchChannelRebalanceCost7d(ctx)
 	drainRateByChannel := s.fetchChannelDrainRate24h(ctx)
-	targetCooldowns := s.loadRecentTargetCooldowns(ctx, time.Now().Add(-recentCooldownWindow))
-	targetNoAttemptCooldowns := s.loadRecentTargetNoAttemptCooldowns(ctx, time.Now().Add(-targetNoAttemptCooldownWindow))
-	targetFailedCooldowns := s.loadRecentTargetFailedCooldowns(ctx, time.Now().Add(-targetFailedCooldownWindow))
-	targetDistinctSourceCooldowns := s.loadRecentTargetDistinctSourceCooldowns(ctx, time.Now().Add(-targetDistinctSourceCooldownWindow))
+	targetCooldowns := s.loadRecentTargetCooldownSet(ctx, defaultRecentTargetCooldownWindows(scanAt))
 
 	channels, err := s.lnd.ListChannels(ctx)
 	if err != nil {
+		noteManualSkip("start_error")
 		return
 	}
 	s.reconcileNewChannelDefaults(ctx, channels, settings, exclusions)
@@ -1758,28 +1871,35 @@ func (s *RebalanceService) runManualRestartWatch() {
 		if !setting.ManualRestartEnabled {
 			continue
 		}
-		if shouldCooldownTargetRecentFailures(targetCooldowns[ch.ChannelID], targetNoAttemptCooldowns[ch.ChannelID], targetFailedCooldowns[ch.ChannelID], targetDistinctSourceCooldowns[ch.ChannelID], time.Now()) {
+		if shouldCooldownTargetRecentFailures(targetCooldowns.Recent[ch.ChannelID], targetCooldowns.NoAttempt[ch.ChannelID], targetCooldowns.Failed[ch.ChannelID], targetCooldowns.DistinctSource[ch.ChannelID], scanAt) {
+			noteManualSkip("target_cooldown")
 			continue
 		}
 		if s.isChannelBusy(ch.ChannelID) {
+			noteManualSkip("channel_busy")
 			continue
 		}
 		snapshot := s.buildChannelSnapshot(ctx, cfg, false, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
-		if !snapshot.EligibleAsTarget {
+		if ok, reason := manualRestartWatchEligibility(snapshot, cfg); !ok {
+			noteManualSkip(reason)
 			continue
 		}
 		deficit := computeDeficitAmount(ch, snapshot.TargetOutboundPct)
 		if deficit <= 0 {
+			noteManualSkip("target_already_balanced")
 			continue
 		}
 		minExecuteSat := effectiveMinExecuteSat(cfg)
 		if minExecuteSat > 0 && deficit < minExecuteSat {
+			noteManualSkip("below_execute_min")
 			continue
 		}
 		_, err := s.startJob(ch.ChannelID, "manual", "auto-restart", 0, true)
-		if err != nil && (err.Error() == "channel busy" || errors.Is(err, errManualRestartCooldown)) {
+		if err != nil {
+			noteManualSkip(manualRestartStartErrorReason(err))
 			continue
 		}
+		queuedCount++
 	}
 }
 
@@ -1828,11 +1948,7 @@ func (s *RebalanceService) runAutoScan() {
 		s.lastScanDetail = scanDetail
 		s.lastScanCandidates = scanCandidates
 		s.lastScanRemainingBudgetSat = scanRemainingBudget
-		reasonsCopy := map[string]int{}
-		for key, value := range scanReasons {
-			reasonsCopy[key] = value
-		}
-		s.lastScanReasons = reasonsCopy
+		s.lastScanReasons = copyReasonCounts(scanReasons)
 		s.lastScanTopScoreSat = topScore
 		s.lastScanProfitSkipped = profitSkipped
 		s.lastScanQueued = queuedCount
@@ -1850,10 +1966,7 @@ func (s *RebalanceService) runAutoScan() {
 	drainRateByChannel := s.fetchChannelDrainRate24h(ctx)
 	autofeeAdjustments := s.fetchRecentAutofeeAdjustments(ctx, scanAt, time.Duration(cfg.AutofeeSettlingWindowSec)*time.Second)
 	lastAutoByTarget := s.loadLastAutoEnqueueTimes(ctx)
-	targetCooldowns := s.loadRecentTargetCooldowns(ctx, scanAt.Add(-recentCooldownWindow))
-	targetNoAttemptCooldowns := s.loadRecentTargetNoAttemptCooldowns(ctx, scanAt.Add(-targetNoAttemptCooldownWindow))
-	targetFailedCooldowns := s.loadRecentTargetFailedCooldowns(ctx, scanAt.Add(-targetFailedCooldownWindow))
-	targetDistinctSourceCooldowns := s.loadRecentTargetDistinctSourceCooldowns(ctx, scanAt.Add(-targetDistinctSourceCooldownWindow))
+	targetCooldowns := s.loadRecentTargetCooldownSet(ctx, defaultRecentTargetCooldownWindows(scanAt))
 
 	// Wave 2.2: merge in-memory lastAutoByTarget and read criticalActive under
 	// a single mutex session so other goroutines cannot mutate them between
@@ -1879,10 +1992,10 @@ func (s *RebalanceService) runAutoScan() {
 		Cfg:                           cfg,
 		ScanAt:                        scanAt,
 		LastAutoByTarget:              lastAutoByTarget,
-		TargetCooldowns:               targetCooldowns,
-		TargetNoAttemptCooldowns:      targetNoAttemptCooldowns,
-		TargetFailedCooldowns:         targetFailedCooldowns,
-		TargetDistinctSourceCooldowns: targetDistinctSourceCooldowns,
+		TargetCooldowns:               targetCooldowns.Recent,
+		TargetNoAttemptCooldowns:      targetCooldowns.NoAttempt,
+		TargetFailedCooldowns:         targetCooldowns.Failed,
+		TargetDistinctSourceCooldowns: targetCooldowns.DistinctSource,
 		AutofeeRecentAdjustments:      autofeeAdjustments,
 	})
 	candidates := candidatePlan.Candidates
@@ -2044,7 +2157,7 @@ func (s *RebalanceService) runAutoScan() {
 		scanStatus = "queued"
 		scanCandidates = len(candidates)
 		scanRemainingBudget = remaining
-		scanReasons = map[string]int{}
+		scanReasons = copyReasonCounts(skipReasons)
 	} else if remaining > 0 {
 		budgetBlocked := skipReasons["budget_too_low"] + skipReasons["budget_below_min"]
 		if budgetBlocked == len(candidates) {
@@ -2054,11 +2167,7 @@ func (s *RebalanceService) runAutoScan() {
 		}
 		scanCandidates = len(candidates)
 		scanRemainingBudget = remaining
-		reasonsCopy := map[string]int{}
-		for key, value := range skipReasons {
-			reasonsCopy[key] = value
-		}
-		scanReasons = reasonsCopy
+		scanReasons = copyReasonCounts(skipReasons)
 		scanDetail = buildScanDetail(skipReasons, remaining, len(candidates))
 	}
 
@@ -2077,6 +2186,25 @@ func limitRebalanceSkipDetails(details []RebalanceSkipDetail, limit int) []Rebal
 	out := make([]RebalanceSkipDetail, len(details))
 	copy(out, details)
 	return out
+}
+
+func copyReasonCounts(reasons map[string]int) map[string]int {
+	if len(reasons) == 0 {
+		return map[string]int{}
+	}
+	out := make(map[string]int, len(reasons))
+	for key, value := range reasons {
+		out[key] = value
+	}
+	return out
+}
+
+func (s *RebalanceService) recordManualRestartWatch(scanAt time.Time, queued int, reasons map[string]int) {
+	s.mu.Lock()
+	s.lastManualRestartAt = scanAt
+	s.lastManualRestartQueued = queued
+	s.lastManualRestartReasons = copyReasonCounts(reasons)
+	s.mu.Unlock()
 }
 
 func (s *RebalanceService) persistRebalanceScanSkips(ctx context.Context, scanAt time.Time, details []RebalanceSkipDetail) error {
@@ -5809,10 +5937,7 @@ func (s *RebalanceService) scheduleManualRestart(info manualRestartInfo) {
 	revenueByChannel, _ := s.fetchChannelRevenue7d(restartCtx)
 	costByChannel, _ := s.fetchChannelRebalanceCost7d(restartCtx)
 	drainRateByChannel := s.fetchChannelDrainRate24h(restartCtx)
-	targetCooldowns := s.loadRecentTargetCooldowns(restartCtx, time.Now().Add(-recentCooldownWindow))
-	targetNoAttemptCooldowns := s.loadRecentTargetNoAttemptCooldowns(restartCtx, time.Now().Add(-targetNoAttemptCooldownWindow))
-	targetFailedCooldowns := s.loadRecentTargetFailedCooldowns(restartCtx, time.Now().Add(-targetFailedCooldownWindow))
-	targetDistinctSourceCooldowns := s.loadRecentTargetDistinctSourceCooldowns(restartCtx, time.Now().Add(-targetDistinctSourceCooldownWindow))
+	targetCooldowns := s.loadRecentTargetCooldownSet(restartCtx, defaultRecentTargetCooldownWindows(time.Now()))
 
 	channels, err := s.lnd.ListChannels(restartCtx)
 	if err != nil {
@@ -5836,19 +5961,19 @@ func (s *RebalanceService) scheduleManualRestart(info manualRestartInfo) {
 	if !setting.ManualRestartEnabled {
 		return
 	}
-	if shouldCooldownTargetRecentFailures(targetCooldowns[target.ChannelID], targetNoAttemptCooldowns[target.ChannelID], targetFailedCooldowns[target.ChannelID], targetDistinctSourceCooldowns[target.ChannelID], time.Now()) {
+	if shouldCooldownTargetRecentFailures(targetCooldowns.Recent[target.ChannelID], targetCooldowns.NoAttempt[target.ChannelID], targetCooldowns.Failed[target.ChannelID], targetCooldowns.DistinctSource[target.ChannelID], time.Now()) {
 		return
 	}
 	snapshot := s.buildChannelSnapshot(restartCtx, cfg, false, target, setting, ledger[target.ChannelID], revenueByChannel[target.ChannelID], costByChannel[target.ChannelID], drainRateByChannel[target.ChannelID], exclusions[target.ChannelID])
+	if ok, _ := manualRestartWatchEligibility(snapshot, cfg); !ok {
+		return
+	}
 	deficit := computeDeficitAmount(target, snapshot.TargetOutboundPct)
 	if deficit <= 0 {
 		return
 	}
 	minExecuteSat := effectiveMinExecuteSat(cfg)
 	if minExecuteSat > 0 && deficit < minExecuteSat {
-		return
-	}
-	if !snapshot.EligibleAsTarget {
 		return
 	}
 
@@ -8716,6 +8841,9 @@ where report_date >= current_date - interval '6 days'
 	lastScanProfitSkipped := s.lastScanProfitSkipped
 	lastScanQueued := s.lastScanQueued
 	lastScanSkipped := append([]RebalanceSkipDetail(nil), s.lastScanSkipped...)
+	lastManualRestartAt := s.lastManualRestartAt
+	lastManualRestartQueued := s.lastManualRestartQueued
+	lastManualRestartReasons := copyReasonCounts(s.lastManualRestartReasons)
 	mcState := s.missionControlStateLocked(time.Now())
 	s.mu.Unlock()
 	if !lastScan.IsZero() {
@@ -8771,6 +8899,8 @@ where report_date >= current_date - interval '6 days'
 		LastScanProfitSkipped:         lastScanProfitSkipped,
 		LastScanQueued:                lastScanQueued,
 		LastScanSkipped:               lastScanSkipped,
+		LastManualRestartQueued:       lastManualRestartQueued,
+		LastManualRestartReasons:      lastManualRestartReasons,
 		LastMCResetAt:                 mcState.LastMCResetAt,
 		LastMCResetReason:             mcState.LastMCResetReason,
 		MCResetCount:                  mcState.MCResetCount,
@@ -8795,6 +8925,9 @@ where report_date >= current_date - interval '6 days'
 	}
 	if !lastScan.IsZero() {
 		overview.LastScanAt = lastScan.UTC().Format(time.RFC3339)
+	}
+	if !lastManualRestartAt.IsZero() {
+		overview.LastManualRestartAt = lastManualRestartAt.UTC().Format(time.RFC3339)
 	}
 	return overview, nil
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -123,6 +124,10 @@ func (s *Server) handleRebalanceConfigPost(w http.ResponseWriter, r *http.Reques
 	var payload rebalanceConfigPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid payload")
+		return
+	}
+	if err := validateRebalanceConfigPayload(payload); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
@@ -288,6 +293,171 @@ func applyRebalanceConfigPayload(cfg RebalanceConfig, payload rebalanceConfigPay
 		cfg.AutofeeSettlingMultiplier = *payload.AutofeeSettlingMultiplier
 	}
 	return cfg
+}
+
+func validateRebalanceConfigPayload(payload rebalanceConfigPayload) error {
+	if err := validateOptionalInt("scan_interval_sec", payload.ScanIntervalSec, 1, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalFloat("deadband_pct", payload.DeadbandPct, 0, 100); err != nil {
+		return err
+	}
+	if err := validateOptionalFloat("source_min_local_pct", payload.SourceMinLocalPct, 0, 100); err != nil {
+		return err
+	}
+	if err := validateOptionalFloat("econ_ratio", payload.EconRatio, 0.01, 1); err != nil {
+		return err
+	}
+	if err := validateOptionalInt64("econ_ratio_max_ppm", payload.EconRatioMaxPpm, 0, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalInt64("fee_limit_ppm", payload.FeeLimitPpm, 0, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalInt64("fail_tolerance_ppm", payload.FailTolerancePpm, 0, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalFloat("roi_min", payload.ROIMin, 0, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalFloat("daily_budget_pct", payload.DailyBudgetPct, 0, 100); err != nil {
+		return err
+	}
+	if payload.BudgetMode != nil && normalizeRebalanceBudgetMode(*payload.BudgetMode) != strings.TrimSpace(strings.ToLower(*payload.BudgetMode)) {
+		return errors.New("budget_mode must be revenue_24h_pct or hybrid_revenue")
+	}
+	if payload.ManualReserveMode != nil && normalizeRebalanceManualReserveMode(*payload.ManualReserveMode) != strings.TrimSpace(strings.ToLower(*payload.ManualReserveMode)) {
+		return errors.New("manual_reserve_mode must be fixed_sat or pct")
+	}
+	if err := validateOptionalFloat("manual_reserve_value", payload.ManualReserveValue, 0, 0); err != nil {
+		return err
+	}
+	if payload.ManualReserveMode != nil && strings.TrimSpace(strings.ToLower(*payload.ManualReserveMode)) == rebalanceManualReserveModePct {
+		if err := validateOptionalFloat("manual_reserve_value", payload.ManualReserveValue, 0, 100); err != nil {
+			return err
+		}
+	}
+	if err := validateOptionalInt("max_concurrent", payload.MaxConcurrent, 1, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalInt64("min_amount_sat", payload.MinAmountSat, 0, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalInt64("max_amount_sat", payload.MaxAmountSat, 0, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalInt64("min_probe_sat", payload.MinProbeSat, 0, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalInt64("min_execute_sat", payload.MinExecuteSat, 0, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("mpp_max_shards", payload.MppMaxShards, 1, 20); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("mpp_parallelism", payload.MppParallelism, 1, 20); err != nil {
+		return err
+	}
+	if err := validateOptionalInt64("mpp_min_shard_sat", payload.MppMinShardSat, 0, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("mpp_round_timeout_sec", payload.MppRoundTimeoutSec, 1, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("fee_ladder_steps", payload.FeeLadderSteps, 1, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("amount_probe_steps", payload.AmountProbeSteps, 0, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("attempt_timeout_sec", payload.AttemptTimeoutSec, 1, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("rebalance_timeout_sec", payload.RebalanceTimeoutSec, 1, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalInt64("mc_half_life_sec", payload.MissionControlHalfLifeSec, 0, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("payback_mode_flags", payload.PaybackModeFlags, 0, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("unlock_days", payload.UnlockDays, 0, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalFloat("critical_release_pct", payload.CriticalReleasePct, 0, 100); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("critical_min_sources", payload.CriticalMinSources, 0, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalInt64("critical_min_available_sats", payload.CriticalMinAvailableSats, 0, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("critical_cycles", payload.CriticalCycles, 0, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalInt64("rebalance_cost_floor_ppm", payload.RebalanceCostFloorPpm, 0, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalFloat("source_min_payback_progress", payload.SourceMinPaybackProgress, 0, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("gain_model_version", payload.GainModelVersion, 1, 2); err != nil {
+		return err
+	}
+	if err := validateOptionalFloat("velocity_weight", payload.VelocityWeight, 0, 1); err != nil {
+		return err
+	}
+	if err := validateOptionalInt64("autofee_settling_window_sec", payload.AutofeeSettlingWindowSec, 0, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalFloat("autofee_settling_multiplier", payload.AutofeeSettlingMultiplier, 0, 1); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateOptionalInt(field string, value *int, min int, max int) error {
+	if value == nil {
+		return nil
+	}
+	if *value < min {
+		return fmt.Errorf("%s must be >= %d", field, min)
+	}
+	if max > 0 && *value > max {
+		return fmt.Errorf("%s must be <= %d", field, max)
+	}
+	return nil
+}
+
+func validateOptionalInt64(field string, value *int64, min int64, max int64) error {
+	if value == nil {
+		return nil
+	}
+	if *value < min {
+		return fmt.Errorf("%s must be >= %d", field, min)
+	}
+	if max > 0 && *value > max {
+		return fmt.Errorf("%s must be <= %d", field, max)
+	}
+	return nil
+}
+
+func validateOptionalFloat(field string, value *float64, min float64, max float64) error {
+	if value == nil {
+		return nil
+	}
+	if math.IsNaN(*value) || math.IsInf(*value, 0) {
+		return fmt.Errorf("%s must be finite", field)
+	}
+	if *value < min {
+		return fmt.Errorf("%s must be >= %.2f", field, min)
+	}
+	if max > 0 && *value > max {
+		return fmt.Errorf("%s must be <= %.2f", field, max)
+	}
+	return nil
 }
 
 func (s *Server) handleRebalanceOverview(w http.ResponseWriter, r *http.Request) {

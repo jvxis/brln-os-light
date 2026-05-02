@@ -61,6 +61,9 @@ export type RebalanceOverview = {
   last_scan_profit_skipped?: number
   last_scan_queued?: number
   last_scan_skipped?: RebalanceScanSkip[]
+  last_manual_restart_at?: string
+  last_manual_restart_queued?: number
+  last_manual_restart_reasons?: Record<string, number>
   last_mc_reset_at?: string
   last_mc_reset_reason?: string
   mc_reset_count?: number

@@ -928,6 +928,12 @@ export default function RebalanceCenter() {
         return t('rebalanceCenter.overview.scanReasonRecent')
       case 'target_cooldown':
         return t('rebalanceCenter.overview.scanReasonTargetCooldown')
+      case 'target_not_eligible':
+        return t('rebalanceCenter.overview.scanReasonTargetNotEligible')
+      case 'roi_guardrail':
+        return t('rebalanceCenter.overview.scanReasonRoi')
+      case 'profit_guardrail':
+        return t('rebalanceCenter.overview.scanReasonProfit')
       case 'fee_cap_zero':
         return t('rebalanceCenter.overview.scanReasonFeeCap')
       case 'below_execute_min':
@@ -949,7 +955,7 @@ export default function RebalanceCenter() {
     const reasons = overview.last_scan_reasons ?? {}
     const entries = Object.entries(reasons).filter(([, count]) => count > 0)
     if (entries.length > 0) {
-      const ordered = ['channel_busy', 'target_already_balanced', 'recently_attempted', 'target_cooldown', 'fee_cap_zero', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
+      const ordered = ['channel_busy', 'target_already_balanced', 'target_not_eligible', 'recently_attempted', 'target_cooldown', 'roi_guardrail', 'profit_guardrail', 'fee_cap_zero', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
       entries.sort((a, b) => {
         const ai = ordered.indexOf(a[0])
         const bi = ordered.indexOf(b[0])
@@ -959,7 +965,11 @@ export default function RebalanceCenter() {
         return a[0].localeCompare(b[0])
       })
       const reasonsText = entries.map(([key, count]) => `${formatScanReason(key)}: ${count}`).join(', ')
-      const parts = [t('rebalanceCenter.overview.scanDetailNoJobs')]
+      const parts = [
+        overview.last_scan_status === 'queued'
+          ? t('rebalanceCenter.overview.scanDetailQueued')
+          : t('rebalanceCenter.overview.scanDetailNoJobs')
+      ]
       if ((overview.last_scan_candidates ?? 0) > 0) {
         parts.push(t('rebalanceCenter.overview.scanDetailCandidates', { count: overview.last_scan_candidates }))
       }
@@ -973,6 +983,23 @@ export default function RebalanceCenter() {
       return t('rebalanceCenter.overview.scanDetail', { value: overview.last_scan_detail })
     }
     return ''
+  }, [overview, t])
+  const manualRestartDetailText = useMemo(() => {
+    if (!overview) return ''
+    const reasons = overview.last_manual_restart_reasons ?? {}
+    const entries = Object.entries(reasons).filter(([, count]) => count > 0)
+    if (entries.length === 0) return ''
+    const ordered = ['channel_busy', 'target_already_balanced', 'target_not_eligible', 'target_cooldown', 'roi_guardrail', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
+    entries.sort((a, b) => {
+      const ai = ordered.indexOf(a[0])
+      const bi = ordered.indexOf(b[0])
+      const ap = ai === -1 ? Number.MAX_SAFE_INTEGER : ai
+      const bp = bi === -1 ? Number.MAX_SAFE_INTEGER : bi
+      if (ap !== bp) return ap - bp
+      return a[0].localeCompare(b[0])
+    })
+    const reasonsText = entries.map(([key, count]) => `${formatScanReason(key)}: ${count}`).join(', ')
+    return t('rebalanceCenter.overview.manualRestartReasons', { value: reasonsText })
   }, [overview, t])
 
   const togglePaybackFlag = (flag: number) => {
@@ -1091,6 +1118,14 @@ export default function RebalanceCenter() {
                 <p className="text-xs text-fog/50">
                   {t('rebalanceCenter.overview.lastQueued', { count: overview.last_scan_queued })}
                 </p>
+              )}
+              {config?.manual_restart_watch && (overview.last_manual_restart_queued ?? 0) > 0 && (
+                <p className="text-xs text-fog/50">
+                  {t('rebalanceCenter.overview.lastManualRestartQueued', { count: overview.last_manual_restart_queued })}
+                </p>
+              )}
+              {config?.manual_restart_watch && manualRestartDetailText && (
+                <p className="text-xs text-fog/50">{manualRestartDetailText}</p>
               )}
               {overview.auto_enabled && typeof overview.last_scan_top_score_sat === 'number' && overview.last_scan_top_score_sat > 0 && (
                 <p className="text-xs text-fog/50">

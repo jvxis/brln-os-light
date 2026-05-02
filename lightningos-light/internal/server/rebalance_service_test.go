@@ -11,6 +11,11 @@ import (
 )
 
 func ptrInt64(v int64) *int64 { return &v }
+func ptrInt(v int) *int       { return &v }
+func ptrFloat64(v float64) *float64 {
+	return &v
+}
+func ptrString(v string) *string { return &v }
 
 func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	cfg := defaultRebalanceConfig()
@@ -135,6 +140,91 @@ func TestNormalizeRebalanceConfigClampsGainModelAndVelocityWeight(t *testing.T) 
 	}
 	if got.VelocityWeight != 0 {
 		t.Fatalf("expected VelocityWeight clamped to 0, got %f", got.VelocityWeight)
+	}
+}
+
+func TestNormalizeRebalanceConfigDefaultsMppMinShardFromExecuteMin(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	cfg.MinSplitEnabled = true
+	cfg.MinExecuteSat = 25000
+	cfg.MppMinShardSat = 0
+
+	got := normalizeRebalanceConfig(cfg)
+	if got.MppMinShardSat != cfg.MinExecuteSat {
+		t.Fatalf("expected MppMinShardSat fallback=%d, got %d", cfg.MinExecuteSat, got.MppMinShardSat)
+	}
+}
+
+func TestManualRestartWatchEligibilityHonorsPerChannelCostGateBypass(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	snapshot := RebalanceChannel{
+		EligibleAsTarget:       false,
+		EligibleAsManualTarget: true,
+	}
+	ok, reason := manualRestartWatchEligibility(snapshot, cfg)
+	if ok || reason != "target_not_eligible" {
+		t.Fatalf("expected cost gate to block without per-channel bypass, got ok=%v reason=%q", ok, reason)
+	}
+
+	snapshot.EligibleAsTarget = true
+	ok, reason = manualRestartWatchEligibility(snapshot, cfg)
+	if !ok || reason != "" {
+		t.Fatalf("expected per-channel cost gate bypass to allow manual restart watch, got ok=%v reason=%q", ok, reason)
+	}
+
+	cfg.ROIMin = 1.4
+	snapshot.ROIEstimateValid = true
+	snapshot.ROIEstimate = 1.1
+	ok, reason = manualRestartWatchEligibility(snapshot, cfg)
+	if ok || reason != "roi_guardrail" {
+		t.Fatalf("expected ROI guardrail to block manual restart watch, got ok=%v reason=%q", ok, reason)
+	}
+}
+
+func TestValidateRebalanceConfigPayloadAllowsValidPartialPayload(t *testing.T) {
+	payload := rebalanceConfigPayload{
+		DeadbandPct:               ptrFloat64(4),
+		BudgetMode:                ptrString(rebalanceBudgetModeHybridRevenue),
+		ManualReserveMode:         ptrString(rebalanceManualReserveModePct),
+		ManualReserveValue:        ptrFloat64(25),
+		MppMaxShards:              ptrInt(6),
+		MppParallelism:            ptrInt(3),
+		GainModelVersion:          ptrInt(2),
+		VelocityWeight:            ptrFloat64(0.4),
+		AutofeeSettlingMultiplier: ptrFloat64(0.5),
+		AutofeeSettlingWindowSec:  ptrInt64(7200),
+		CriticalMinAvailableSats:  ptrInt64(0),
+		SourceMinPaybackProgress:  ptrFloat64(0.95),
+		RebalanceCostFloorPpm:     ptrInt64(250),
+		MissionControlHalfLifeSec: ptrInt64(3600),
+	}
+
+	if err := validateRebalanceConfigPayload(payload); err != nil {
+		t.Fatalf("expected valid payload, got %v", err)
+	}
+}
+
+func TestValidateRebalanceConfigPayloadRejectsInvalidFields(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload rebalanceConfigPayload
+	}{
+		{name: "deadband below range", payload: rebalanceConfigPayload{DeadbandPct: ptrFloat64(-1)}},
+		{name: "mpp shards above range", payload: rebalanceConfigPayload{MppMaxShards: ptrInt(21)}},
+		{name: "velocity above range", payload: rebalanceConfigPayload{VelocityWeight: ptrFloat64(1.2)}},
+		{name: "invalid budget mode", payload: rebalanceConfigPayload{BudgetMode: ptrString("invalid")}},
+		{name: "manual reserve pct above range", payload: rebalanceConfigPayload{
+			ManualReserveMode:  ptrString(rebalanceManualReserveModePct),
+			ManualReserveValue: ptrFloat64(101),
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validateRebalanceConfigPayload(tc.payload); err == nil {
+				t.Fatalf("expected validation error")
+			}
+		})
 	}
 }
 

@@ -230,6 +230,9 @@ export type RebalanceOverview = {
   auto_enabled?: boolean
   last_scan_at?: string
   last_scan_status?: string
+  last_manual_restart_at?: string
+  last_manual_restart_queued?: number
+  last_manual_restart_reasons?: Record<string, number>
   daily_budget_sat?: number
   daily_spent_sat?: number
   remaining_total_sat?: number

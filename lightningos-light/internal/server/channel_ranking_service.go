@@ -17,12 +17,14 @@ import (
 )
 
 const (
-	channelRankingPollInterval          = 3 * time.Minute
-	channelRankingAssistedRevenueWeight = 0.5
-	channelRankingClosePersistence      = 30 * 24 * time.Hour
-	channelRankingHTLCPolicyHigh30d     = 25
-	channelRankingHTLCLiquidityHigh30d  = 150
-	channelRankingHTLCLinkHigh30d       = 200
+	channelRankingPollInterval               = 3 * time.Minute
+	channelRankingAssistedRevenueWeight      = 0.5
+	channelRankingClosePersistence           = 30 * 24 * time.Hour
+	channelRankingHTLCPolicyHigh30d          = 25
+	channelRankingHTLCLiquidityHigh30d       = 150
+	channelRankingHTLCLinkHigh30d            = 200
+	channelRankingRebalanceNoPaybackPenalty  = 30
+	channelRankingRebalanceNoPaybackScoreCap = 23
 )
 
 var ErrChannelRankingDBUnavailable = errors.New("channel ranking db unavailable")
@@ -982,7 +984,9 @@ func buildChannelRankingItem(
 		Ppm:       forward30d.Ppm,
 	}
 	rebalanceDependenceScore := computeRebalanceDependenceScore(forward30d, rebal30d)
+	rebalanceNoPayback := channelRankingRebalanceNoPaybackAfter7d(forward7d, assisted7d, rebal7d, rebal30d, effectiveProfitSat30d)
 	score7d := computeChannelRankingScore(ch, capacity, localPct, effectiveForward7d, rebal7d, effectiveProfitSat7d, peerAggregate.Score30d, htlcAggregate, rebalanceDependenceScore)
+	score7d = applyRebalanceNoPaybackPenalty(score7d, rebalanceNoPayback)
 	score30d := computeChannelRankingScore(ch, capacity, localPct, effectiveForward30d, rebal30d, effectiveProfitSat30d, peerAggregate.Score30d, htlcAggregate, rebalanceDependenceScore)
 	trendDirection, trendDelta := computeChannelRankingTrend(score7d, score30d)
 	state, reasons, recommendations := classifyChannelRanking(
@@ -1007,6 +1011,7 @@ func buildChannelRankingItem(
 		peerAggregate.SampleCount,
 		htlcAggregate,
 		rebalanceDependenceScore,
+		rebalanceNoPayback,
 	)
 
 	return ChannelRankingItem{
@@ -1088,6 +1093,26 @@ func computeChannelRankingTrend(score7d int, score30d int) (string, int) {
 	default:
 		return "stable", delta
 	}
+}
+
+func channelRankingRebalanceNoPaybackAfter7d(forward7d channelTrafficStat, assisted7d channelTrafficStat, rebal7d channelTrafficStat, rebal30d channelTrafficStat, effectiveProfitSat30d int64) bool {
+	if rebal30d.FeeSat <= 0 || rebal30d.AmountSat <= 0 || effectiveProfitSat30d >= 0 {
+		return false
+	}
+	if rebal7d.FeeSat > 0 || rebal7d.AmountSat > 0 {
+		return false
+	}
+	if forward7d.FeeSat > 0 || forward7d.AmountSat > 0 || assisted7d.FeeSat > 0 || assisted7d.AmountSat > 0 {
+		return false
+	}
+	return true
+}
+
+func applyRebalanceNoPaybackPenalty(score int, noPayback bool) int {
+	if !noPayback {
+		return score
+	}
+	return clampInt(score-channelRankingRebalanceNoPaybackPenalty, 0, channelRankingRebalanceNoPaybackScoreCap)
 }
 
 func appendUniqueRecommendation(list []ChannelRankingRecommendation, candidate ChannelRankingRecommendation) []ChannelRankingRecommendation {
@@ -1225,6 +1250,7 @@ func classifyChannelRanking(
 	peerSampleCount30d int,
 	htlcAggregate channelHTLCAggregate,
 	rebalanceDependenceScore int,
+	rebalanceNoPayback bool,
 ) (string, []ChannelRankingReason, []ChannelRankingRecommendation) {
 	reasons := make([]ChannelRankingReason, 0, 6)
 	recommendations := make([]ChannelRankingRecommendation, 0, 4)
@@ -1265,6 +1291,9 @@ func classifyChannelRanking(
 	if rebalanceDependenceScore >= 65 {
 		reasons = append(reasons, ChannelRankingReason{Code: "rebalance_dependence_high"})
 	}
+	if rebalanceNoPayback {
+		reasons = append(reasons, ChannelRankingReason{Code: "rebalance_no_payback"})
+	}
 	if capacity > 0 {
 		netPpm := (float64(effectiveProfitSat7d) / float64(capacity)) * 1_000_000
 		if netPpm >= 75 {
@@ -1282,8 +1311,8 @@ func classifyChannelRanking(
 	longInactive := !ch.Active && rankingMaxInt64(0, ch.InactiveDurationSec) >= 7*24*3600
 	unstablePeer := peerStabilityScore30d > 0 && peerStabilityScore30d < 45
 	htlcFailuresHigh := channelRankingHTLCOperationalRiskHigh(htlcAggregate)
-	persistentWeakEconomics := effectiveProfitSat30d <= 0 || score30d < 36 || rebalanceHeavy30d
-	severeOperationalRisk := longInactive || unstablePeer || htlcFailuresHigh || rebalanceDependenceScore >= 85
+	persistentWeakEconomics := effectiveProfitSat30d <= 0 || score30d < 36 || rebalanceHeavy30d || rebalanceNoPayback
+	severeOperationalRisk := longInactive || unstablePeer || htlcFailuresHigh || rebalanceDependenceScore >= 85 || rebalanceNoPayback
 	closeWarmup := peerSampleCount30d > 0 && peerSampleCount30d < 336
 	closeDeferredForWarmup := false
 
@@ -1313,11 +1342,19 @@ func classifyChannelRanking(
 		recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "keep_autofee_active", TargetModule: "autofee"})
 	case "close":
 		recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "stop_nonessential_rebalances", TargetModule: "rebalance"})
-		recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "prepare_coop_close", TargetModule: "lightning-ops"})
+		if rebalanceNoPayback {
+			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "prepare_close_candidate", TargetModule: "lightning-ops"})
+		} else {
+			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "prepare_coop_close", TargetModule: "lightning-ops"})
+		}
 		recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "review_with_close_manager", TargetModule: "close-manager"})
 	default:
 		if closeDeferredForWarmup {
 			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "observe_7d_before_close", TargetModule: "lightning-ops"})
+		}
+		if rebalanceNoPayback {
+			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "stop_nonessential_rebalances", TargetModule: "rebalance"})
+			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "prepare_close_candidate", TargetModule: "lightning-ops"})
 		}
 		if rebalanceHeavy7d {
 			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "reduce_rebalance_priority", TargetModule: "rebalance"})

@@ -41,6 +41,7 @@ func TestClassifyChannelRankingKeepsStrong30dChannelUnderMonitor(t *testing.T) {
 		368,
 		channelHTLCAggregate{Total: 2, Forward: 2},
 		48,
+		false,
 	)
 
 	if state != "monitor" {
@@ -80,6 +81,7 @@ func TestClassifyChannelRankingClosesOnSevereOperationalRisk(t *testing.T) {
 		400,
 		channelHTLCAggregate{Total: 10, Liquidity: 5},
 		82,
+		false,
 	)
 
 	if state != "close" {
@@ -135,6 +137,7 @@ func TestClassifyChannelRankingCreditsAssistedRevenueBeforeClose(t *testing.T) {
 		368,
 		channelHTLCAggregate{},
 		22,
+		false,
 	)
 
 	if state == "close" {
@@ -192,6 +195,7 @@ func TestClassifyChannelRankingMaintainsWithForwardHTLCNoise(t *testing.T) {
 		500,
 		channelHTLCAggregate{Total: 2_000, Forward: 1_980, Policy: 3, Liquidity: 17},
 		24,
+		false,
 	)
 
 	if state != "maintain" {
@@ -234,6 +238,7 @@ func TestClassifyChannelRankingKeepsSevereLocalHTLCRiskUnderMonitor(t *testing.T
 		500,
 		channelHTLCAggregate{Total: 2_000, Forward: 1_700, Policy: 20, Liquidity: 280},
 		24,
+		false,
 	)
 
 	if state != "monitor" {
@@ -279,6 +284,7 @@ func TestClassifyChannelRankingDefersCloseDuringWarmup(t *testing.T) {
 		48,
 		channelHTLCAggregate{Total: 10, Liquidity: 5},
 		82,
+		false,
 	)
 
 	if state != "monitor" {
@@ -349,6 +355,54 @@ func TestBuildChannelRankingItemIncludesForwardMovement7d(t *testing.T) {
 	}
 }
 
+func TestBuildChannelRankingItemTreatsIdlePostRebalanceAsCloseCandidate(t *testing.T) {
+	now := time.Date(2026, 5, 2, 19, 55, 0, 0, time.UTC)
+	ch := lndclient.ChannelInfo{
+		ChannelPoint:     "rebalance-no-payback:0",
+		ChannelID:        99,
+		RemotePubkey:     "02deadbeef",
+		PeerAlias:        "IdlePeer",
+		Active:           true,
+		CapacitySat:      10_000_000,
+		LocalBalanceSat:  13_129,
+		RemoteBalanceSat: 9_985_861,
+	}
+
+	item := buildChannelRankingItem(
+		now,
+		ch,
+		"",
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{FeeSat: 19, AmountSat: 13_129, Ppm: 1381},
+		lndclient.ChannelMovement7d{},
+		channelPeerAggregate{Score30d: 51, SampleCount: 719},
+		channelHTLCAggregate{},
+	)
+
+	if item.TrendDirection != "worsening" {
+		t.Fatalf("expected stale rebalance with no payback to be worsening, got %s", item.TrendDirection)
+	}
+	if item.Score7d >= 24 {
+		t.Fatalf("expected no-payback penalty to push score below close threshold, got %d", item.Score7d)
+	}
+	if item.State != "close" {
+		t.Fatalf("expected close candidate before persistence guard, got %s", item.State)
+	}
+	if !item.CloseCandidate {
+		t.Fatalf("expected close candidate flag")
+	}
+	if !hasChannelRankingReason(item.Reasons, "rebalance_no_payback") {
+		t.Fatalf("expected rebalance_no_payback reason")
+	}
+	if !hasChannelRankingRecommendation(item.Recommendations, "prepare_close_candidate") {
+		t.Fatalf("expected prepare_close_candidate recommendation")
+	}
+}
+
 func TestLatestChannelRankingSyncAt(t *testing.T) {
 	base := time.Date(2026, 4, 12, 18, 0, 0, 0, time.UTC)
 	later := base.Add(3 * time.Minute)
@@ -406,4 +460,22 @@ func TestLatestChannelRankingSyncAt(t *testing.T) {
 			}
 		})
 	}
+}
+
+func hasChannelRankingReason(reasons []ChannelRankingReason, code string) bool {
+	for _, reason := range reasons {
+		if reason.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+func hasChannelRankingRecommendation(recommendations []ChannelRankingRecommendation, code string) bool {
+	for _, recommendation := range recommendations {
+		if recommendation.Code == code {
+			return true
+		}
+	}
+	return false
 }

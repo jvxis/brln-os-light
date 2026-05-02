@@ -226,3 +226,60 @@ func TestBuildAndOrderRebalanceCandidatesGainModelV2UsesVelocity(t *testing.T) {
 		t.Fatalf("expected velocity-adjusted score to beat low velocity score, got %d <= %d", got.Candidates[0].Score, got.Candidates[1].Score)
 	}
 }
+
+func TestBuildAndOrderRebalanceCandidatesAutofeeSettlingDampensTarget(t *testing.T) {
+	now := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
+	cfg := defaultRebalanceConfig()
+	cfg.AutoEnabled = true
+	cfg.ROIMin = 0
+	cfg.MinSplitEnabled = true
+	cfg.MinExecuteSat = 10_000
+	cfg.AutofeeSettlingWindowSec = 7200
+	cfg.AutofeeSettlingMultiplier = 0.5
+
+	hot := rebalanceGoldenTarget(301, "hot-recently-tuned", 200_000, 400_000, 12_000, 500)
+	steady := rebalanceGoldenTarget(302, "steady", 200_000, 400_000, 9_000, 500)
+
+	channels := []RebalanceChannel{
+		rebalanceGoldenSource(1, 1_000_000),
+		hot,
+		steady,
+	}
+	settings := map[uint64]channelSetting{}
+	for _, ch := range channels {
+		settings[ch.ChannelID] = channelSetting{
+			ChannelID:           ch.ChannelID,
+			TargetOutboundPct:   ch.TargetOutboundPct,
+			AutoEnabled:         true,
+			UseDefaultEconRatio: true,
+		}
+	}
+
+	got := buildAndOrderRebalanceCandidates(rebalanceAutoScanCandidateInput{
+		Channels:                 channels,
+		Settings:                 settings,
+		Cfg:                      cfg,
+		ScanAt:                   now,
+		LastAutoByTarget:         map[uint64]time.Time{},
+		AutofeeRecentAdjustments: map[uint64]time.Time{301: now.Add(-30 * time.Minute)},
+	})
+
+	if got.AutofeeDampened != 1 {
+		t.Fatalf("expected 1 dampened candidate, got %d", got.AutofeeDampened)
+	}
+	if got.SkipReasons["autofee_settling_target"] != 1 {
+		t.Fatalf("expected autofee_settling_target reason counted once, got %#v", got.SkipReasons)
+	}
+	// hot's score (5_900) was halved to ~2_950 so steady (4_400) wins.
+	if len(got.Candidates) < 2 {
+		t.Fatalf("expected 2 candidates, got %d", len(got.Candidates))
+	}
+	if got.Candidates[0].Channel.ChannelID != 302 {
+		t.Fatalf("expected steady (302) to lead after dampening, got channel %d", got.Candidates[0].Channel.ChannelID)
+	}
+	for _, c := range got.Candidates {
+		if c.Channel.ChannelID == 301 && (!c.AutofeeDampened || c.AutofeeAdjustedAt.IsZero()) {
+			t.Fatalf("expected channel 301 marked dampened with timestamp set")
+		}
+	}
+}

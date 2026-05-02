@@ -23,6 +23,8 @@ const REBALANCE_DEFAULT_MIN_EXECUTE_SAT = 10000
 const REBALANCE_DEFAULT_BUDGET_MODE = 'hybrid_revenue'
 const REBALANCE_DEFAULT_GAIN_MODEL_VERSION = 1
 const REBALANCE_DEFAULT_VELOCITY_WEIGHT = 0.7
+const REBALANCE_DEFAULT_AUTOFEE_SETTLING_WINDOW_SEC = 7200
+const REBALANCE_DEFAULT_AUTOFEE_SETTLING_MULTIPLIER = 0.5
 const MSPR_DEFAULT_MAX_SHARDS = 6
 const MSPR_MAX_SHARDS_LIMIT = 20
 const MSPR_DEFAULT_PARALLELISM = 3
@@ -76,6 +78,8 @@ type RebalanceConfig = {
   mission_control_reinforce: boolean
   gain_model_version: number
   velocity_weight: number
+  autofee_settling_window_sec: number
+  autofee_settling_multiplier: number
 }
 
 type RebalanceOverview = {
@@ -484,7 +488,9 @@ export default function RebalanceCenter() {
       source_min_payback_progress: cfg.source_min_payback_progress,
       mission_control_reinforce: cfg.mission_control_reinforce,
       gain_model_version: cfg.gain_model_version,
-      velocity_weight: cfg.velocity_weight
+      velocity_weight: cfg.velocity_weight,
+      autofee_settling_window_sec: cfg.autofee_settling_window_sec,
+      autofee_settling_multiplier: cfg.autofee_settling_multiplier
     })
   }
   const estimateHistoricalCost = (amountSat: number, feePpm: number) => {
@@ -767,7 +773,9 @@ export default function RebalanceCenter() {
           mpp_round_timeout_sec: nextConfig.mpp_round_timeout_sec || MSPR_DEFAULT_ROUND_TIMEOUT_SEC,
           mpp_auto_only: nextConfig.mpp_auto_only ?? false,
           gain_model_version: nextConfig.gain_model_version || REBALANCE_DEFAULT_GAIN_MODEL_VERSION,
-          velocity_weight: typeof nextConfig.velocity_weight === 'number' ? nextConfig.velocity_weight : REBALANCE_DEFAULT_VELOCITY_WEIGHT
+          velocity_weight: typeof nextConfig.velocity_weight === 'number' ? nextConfig.velocity_weight : REBALANCE_DEFAULT_VELOCITY_WEIGHT,
+          autofee_settling_window_sec: typeof nextConfig.autofee_settling_window_sec === 'number' ? nextConfig.autofee_settling_window_sec : REBALANCE_DEFAULT_AUTOFEE_SETTLING_WINDOW_SEC,
+          autofee_settling_multiplier: typeof nextConfig.autofee_settling_multiplier === 'number' ? nextConfig.autofee_settling_multiplier : REBALANCE_DEFAULT_AUTOFEE_SETTLING_MULTIPLIER
         }
         setServerConfig(normalizedConfig)
         const currentSig = configSignature(configRef.current)
@@ -871,7 +879,9 @@ export default function RebalanceCenter() {
         source_min_payback_progress: config.source_min_payback_progress,
         mission_control_reinforce: config.mission_control_reinforce,
         gain_model_version: config.gain_model_version,
-        velocity_weight: config.velocity_weight
+        velocity_weight: config.velocity_weight,
+        autofee_settling_window_sec: config.autofee_settling_window_sec,
+        autofee_settling_multiplier: config.autofee_settling_multiplier
       })) as RebalanceConfig
       const normalizedSaved = {
         ...saved,
@@ -896,7 +906,9 @@ export default function RebalanceCenter() {
         mpp_round_timeout_sec: saved.mpp_round_timeout_sec || MSPR_DEFAULT_ROUND_TIMEOUT_SEC,
         mpp_auto_only: saved.mpp_auto_only ?? false,
         gain_model_version: saved.gain_model_version || REBALANCE_DEFAULT_GAIN_MODEL_VERSION,
-        velocity_weight: typeof saved.velocity_weight === 'number' ? saved.velocity_weight : REBALANCE_DEFAULT_VELOCITY_WEIGHT
+        velocity_weight: typeof saved.velocity_weight === 'number' ? saved.velocity_weight : REBALANCE_DEFAULT_VELOCITY_WEIGHT,
+        autofee_settling_window_sec: typeof saved.autofee_settling_window_sec === 'number' ? saved.autofee_settling_window_sec : REBALANCE_DEFAULT_AUTOFEE_SETTLING_WINDOW_SEC,
+        autofee_settling_multiplier: typeof saved.autofee_settling_multiplier === 'number' ? saved.autofee_settling_multiplier : REBALANCE_DEFAULT_AUTOFEE_SETTLING_MULTIPLIER
       }
       setServerConfig(normalizedSaved)
       setConfig(normalizedSaved)
@@ -2176,6 +2188,35 @@ export default function RebalanceCenter() {
                       step={0.05}
                       value={config.velocity_weight}
                       onChange={(e) => setConfig({ ...config, velocity_weight: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.autofeeSettlingWindowSec')}>
+                      {t('rebalanceCenter.settings.autofeeSettlingWindowSec')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={0}
+                      step={60}
+                      placeholder="7200"
+                      value={config.autofee_settling_window_sec}
+                      onChange={(e) => setConfig({ ...config, autofee_settling_window_sec: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.autofeeSettlingMultiplier')}>
+                      {t('rebalanceCenter.settings.autofeeSettlingMultiplier')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      placeholder="0.5"
+                      value={config.autofee_settling_multiplier}
+                      onChange={(e) => setConfig({ ...config, autofee_settling_multiplier: Number(e.target.value) })}
                     />
                   </div>
                 </div>

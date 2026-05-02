@@ -228,6 +228,96 @@ func TestAutoTargetCostGateBypassAllowsBelowCostSpread(t *testing.T) {
 	}
 }
 
+func TestApplyAutofeeSettlingPenaltyDampensRecentTargets(t *testing.T) {
+	now := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
+	cfg := defaultRebalanceConfig()
+	cfg.AutofeeSettlingWindowSec = 7200
+	cfg.AutofeeSettlingMultiplier = 0.5
+
+	candidates := []rebalanceTarget{
+		{Channel: RebalanceChannel{ChannelID: 100}, Score: 1000},
+		{Channel: RebalanceChannel{ChannelID: 101}, Score: 800},
+		{Channel: RebalanceChannel{ChannelID: 102}, Score: 600, CooldownProbe: true},
+	}
+	adjustments := map[uint64]time.Time{
+		100: now.Add(-30 * time.Minute), // inside window → dampen
+		101: now.Add(-3 * time.Hour),    // outside window → keep
+		102: now.Add(-10 * time.Minute), // probe → never dampened
+	}
+	dampened := applyAutofeeSettlingPenalty(candidates, adjustments, cfg, now)
+	if dampened != 1 {
+		t.Fatalf("expected 1 dampened candidate, got %d", dampened)
+	}
+	if candidates[0].Score != 500 || !candidates[0].AutofeeDampened {
+		t.Fatalf("candidate 100: got score=%d dampened=%v, want 500/true", candidates[0].Score, candidates[0].AutofeeDampened)
+	}
+	if candidates[1].Score != 800 || candidates[1].AutofeeDampened {
+		t.Fatalf("candidate 101 (outside window): got score=%d dampened=%v, want 800/false", candidates[1].Score, candidates[1].AutofeeDampened)
+	}
+	if candidates[2].Score != 600 || candidates[2].AutofeeDampened {
+		t.Fatalf("candidate 102 (probe): got score=%d dampened=%v, want 600/false", candidates[2].Score, candidates[2].AutofeeDampened)
+	}
+}
+
+func TestApplyAutofeeSettlingPenaltyNoOpWhenWindowZero(t *testing.T) {
+	now := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
+	cfg := defaultRebalanceConfig()
+	cfg.AutofeeSettlingWindowSec = 0
+	cfg.AutofeeSettlingMultiplier = 0.5
+
+	candidates := []rebalanceTarget{{Channel: RebalanceChannel{ChannelID: 100}, Score: 1000}}
+	adjustments := map[uint64]time.Time{100: now.Add(-1 * time.Minute)}
+	if dampened := applyAutofeeSettlingPenalty(candidates, adjustments, cfg, now); dampened != 0 {
+		t.Fatalf("expected no dampening when window=0, got %d", dampened)
+	}
+	if candidates[0].Score != 1000 || candidates[0].AutofeeDampened {
+		t.Fatalf("candidate untouched expected, got score=%d dampened=%v", candidates[0].Score, candidates[0].AutofeeDampened)
+	}
+}
+
+func TestApplyAutofeeSettlingPenaltyNoOpWhenMultiplierIsOne(t *testing.T) {
+	now := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
+	cfg := defaultRebalanceConfig()
+	cfg.AutofeeSettlingWindowSec = 7200
+	cfg.AutofeeSettlingMultiplier = 1.0
+
+	candidates := []rebalanceTarget{{Channel: RebalanceChannel{ChannelID: 100}, Score: 1000}}
+	adjustments := map[uint64]time.Time{100: now.Add(-30 * time.Minute)}
+	if dampened := applyAutofeeSettlingPenalty(candidates, adjustments, cfg, now); dampened != 0 {
+		t.Fatalf("expected no dampening when multiplier=1, got %d", dampened)
+	}
+}
+
+func TestNormalizeRebalanceConfigClampsAutofeeSettling(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	cfg.AutofeeSettlingWindowSec = -10
+	cfg.AutofeeSettlingMultiplier = -0.5
+	got := normalizeRebalanceConfig(cfg)
+	if got.AutofeeSettlingWindowSec != 0 {
+		t.Fatalf("expected window clamped to 0, got %d", got.AutofeeSettlingWindowSec)
+	}
+	if got.AutofeeSettlingMultiplier != 0 {
+		t.Fatalf("expected multiplier clamped to 0, got %f", got.AutofeeSettlingMultiplier)
+	}
+
+	cfg2 := defaultRebalanceConfig()
+	cfg2.AutofeeSettlingMultiplier = 5
+	got2 := normalizeRebalanceConfig(cfg2)
+	if got2.AutofeeSettlingMultiplier != 1 {
+		t.Fatalf("expected multiplier capped to 1, got %f", got2.AutofeeSettlingMultiplier)
+	}
+}
+
+func TestDefaultRebalanceConfigIncludesAutofeeSettlingDefaults(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	if cfg.AutofeeSettlingWindowSec != 7200 {
+		t.Fatalf("expected default window 7200, got %d", cfg.AutofeeSettlingWindowSec)
+	}
+	if cfg.AutofeeSettlingMultiplier != 0.5 {
+		t.Fatalf("expected default multiplier 0.5, got %f", cfg.AutofeeSettlingMultiplier)
+	}
+}
+
 func TestEstimateTargetGainV2UsesSpreadEffectiveness(t *testing.T) {
 	got := estimateTargetGainV2(1_000_000, 1_000, 250)
 	if got != 750 {

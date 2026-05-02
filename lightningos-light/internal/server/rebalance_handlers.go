@@ -58,6 +58,8 @@ type rebalanceConfigPayload struct {
 	MissionControlReinforce   *bool    `json:"mission_control_reinforce,omitempty"`
 	GainModelVersion          *int     `json:"gain_model_version,omitempty"`
 	VelocityWeight            *float64 `json:"velocity_weight,omitempty"`
+	AutofeeSettlingWindowSec  *int64   `json:"autofee_settling_window_sec,omitempty"`
+	AutofeeSettlingMultiplier *float64 `json:"autofee_settling_multiplier,omitempty"`
 }
 
 type rebalanceRunPayload struct {
@@ -278,6 +280,12 @@ func applyRebalanceConfigPayload(cfg RebalanceConfig, payload rebalanceConfigPay
 	}
 	if payload.VelocityWeight != nil {
 		cfg.VelocityWeight = *payload.VelocityWeight
+	}
+	if payload.AutofeeSettlingWindowSec != nil {
+		cfg.AutofeeSettlingWindowSec = *payload.AutofeeSettlingWindowSec
+	}
+	if payload.AutofeeSettlingMultiplier != nil {
+		cfg.AutofeeSettlingMultiplier = *payload.AutofeeSettlingMultiplier
 	}
 	return cfg
 }

@@ -2878,6 +2878,8 @@
         "v2": "v2: spread efetivo + velocidade"
       },
       "velocityWeight": "Peso da velocidade",
+      "autofeeSettlingWindowSec": "Janela pós-AutoFee (s)",
+      "autofeeSettlingMultiplier": "Multiplicador pós-AutoFee",
       "maxConcurrent": "Max. concorrentes",
         "minAmount": "Mínimo (sats)",
         "maxAmount": "Máximo (sats)",
@@ -2941,6 +2943,8 @@
       "roiMin": "ROI mínimo esperado (receita 7d / custo estimado).",
       "gainModelVersion": "v1 mantém o modelo legado de receita proporcional. v2 estima ganho pelo spread efetivo e ativa o score por velocidade de drenagem.",
       "velocityWeight": "Peso de 0 a 1 aplicado ao sinal de velocidade real do canal no score v2. 0 prioriza idade/fairness; 1 prioriza drain rate relativo.",
+      "autofeeSettlingWindowSec": "Janela em segundos após o AutoFee ajustar a fee de saída em que o score de rebalance é despriorizado. 0 desliga. Padrão: 7200 (2h).",
+      "autofeeSettlingMultiplier": "Multiplicador aplicado ao score de targets ajustados pelo AutoFee dentro da janela. 1 desliga; 0,5 corta o score pela metade (recomendado).",
       "maxConcurrent": "Máximo de rebalances simultâneos.",
         "minAmount": "Quantidade mínima por rebalance.",
         "maxAmount": "Quantidade máxima por rebalance. 0 = sem limite.",

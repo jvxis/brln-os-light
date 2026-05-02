@@ -188,6 +188,11 @@ type RebalanceConfig struct {
 	MissionControlReinforce   bool    `json:"mission_control_reinforce"`
 	GainModelVersion          int     `json:"gain_model_version"`
 	VelocityWeight            float64 `json:"velocity_weight"`
+	// Wave 6.1b: when AutoFee adjusted a target's outgoing fee within this
+	// window, dampen its rebalance score by AutofeeSettlingMultiplier (a value
+	// in (0,1]). 0 disables the dampening.
+	AutofeeSettlingWindowSec  int64   `json:"autofee_settling_window_sec"`
+	AutofeeSettlingMultiplier float64 `json:"autofee_settling_multiplier"`
 }
 
 type RebalanceOverview struct {
@@ -655,6 +660,8 @@ func defaultRebalanceConfig() RebalanceConfig {
 		MissionControlReinforce:   false,
 		GainModelVersion:          1,
 		VelocityWeight:            0.7,
+		AutofeeSettlingWindowSec:  7200,
+		AutofeeSettlingMultiplier: 0.5,
 	}
 }
 
@@ -1129,6 +1136,18 @@ func normalizeRebalanceConfig(cfg RebalanceConfig) RebalanceConfig {
 	}
 	if cfg.VelocityWeight > 1 {
 		cfg.VelocityWeight = 1
+	}
+	if cfg.AutofeeSettlingWindowSec < 0 {
+		cfg.AutofeeSettlingWindowSec = 0
+	}
+	if math.IsNaN(cfg.AutofeeSettlingMultiplier) || math.IsInf(cfg.AutofeeSettlingMultiplier, 0) {
+		cfg.AutofeeSettlingMultiplier = def.AutofeeSettlingMultiplier
+	}
+	if cfg.AutofeeSettlingMultiplier < 0 {
+		cfg.AutofeeSettlingMultiplier = 0
+	}
+	if cfg.AutofeeSettlingMultiplier > 1 {
+		cfg.AutofeeSettlingMultiplier = 1
 	}
 	return cfg
 }
@@ -1829,6 +1848,7 @@ func (s *RebalanceService) runAutoScan() {
 	revenueByChannel, _ := s.fetchChannelRevenue7d(ctx)
 	costByChannel, _ := s.fetchChannelRebalanceCost7d(ctx)
 	drainRateByChannel := s.fetchChannelDrainRate24h(ctx)
+	autofeeAdjustments := s.fetchRecentAutofeeAdjustments(ctx, scanAt, time.Duration(cfg.AutofeeSettlingWindowSec)*time.Second)
 	lastAutoByTarget := s.loadLastAutoEnqueueTimes(ctx)
 	targetCooldowns := s.loadRecentTargetCooldowns(ctx, scanAt.Add(-recentCooldownWindow))
 	targetNoAttemptCooldowns := s.loadRecentTargetNoAttemptCooldowns(ctx, scanAt.Add(-targetNoAttemptCooldownWindow))
@@ -1863,6 +1883,7 @@ func (s *RebalanceService) runAutoScan() {
 		TargetNoAttemptCooldowns:      targetNoAttemptCooldowns,
 		TargetFailedCooldowns:         targetFailedCooldowns,
 		TargetDistinctSourceCooldowns: targetDistinctSourceCooldowns,
+		AutofeeRecentAdjustments:      autofeeAdjustments,
 	})
 	candidates := candidatePlan.Candidates
 	eligibleSources := candidatePlan.EligibleSources
@@ -2135,6 +2156,11 @@ type rebalanceTarget struct {
 	CooldownProbe     bool
 	ProbeAmountSat    int64
 	OriginalAmountSat int64
+	// Wave 6.1b: set to true when score was dampened because AutoFee
+	// adjusted this channel inside the settling window. AutofeeAdjustedAt
+	// holds the timestamp of the most recent autofee adjustment.
+	AutofeeDampened   bool
+	AutofeeAdjustedAt time.Time
 }
 
 type rebalanceAutoScanCandidateInput struct {
@@ -2147,6 +2173,10 @@ type rebalanceAutoScanCandidateInput struct {
 	TargetNoAttemptCooldowns      map[uint64]recentCooldownStat
 	TargetFailedCooldowns         map[uint64]recentCooldownStat
 	TargetDistinctSourceCooldowns map[uint64]recentCooldownStat
+	// Wave 6.1b: most recent AutoFee outbound-fee adjustment per channel.
+	// Targets ajustados dentro de cfg.AutofeeSettlingWindowSec têm o score
+	// multiplicado por cfg.AutofeeSettlingMultiplier (despriorização, não skip).
+	AutofeeRecentAdjustments map[uint64]time.Time
 }
 
 type rebalanceAutoScanCandidatePlan struct {
@@ -2160,8 +2190,11 @@ type rebalanceAutoScanCandidatePlan struct {
 	BelowExecuteMinSkipped int
 	TargetCooldownSkipped  int
 	RecentSkipped          int
-	TopScore               int64
-	TopScoreSet            bool
+	// Wave 6.1b: count of candidates whose score was dampened because
+	// AutoFee adjusted them inside the settling window. Não é skip.
+	AutofeeDampened int
+	TopScore        int64
+	TopScoreSet     bool
 }
 
 func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) rebalanceAutoScanCandidatePlan {
@@ -2298,6 +2331,10 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 	}
 
 	applyMultiObjectiveScores(plan.Candidates, input.Cfg, input.ScanAt)
+	plan.AutofeeDampened = applyAutofeeSettlingPenalty(plan.Candidates, input.AutofeeRecentAdjustments, input.Cfg, input.ScanAt)
+	if plan.AutofeeDampened > 0 {
+		noteSkip("autofee_settling_target") // observability counter; candidate still queued
+	}
 	plan.TopScore = 0
 	plan.TopScoreSet = false
 	for _, candidate := range plan.Candidates {
@@ -6193,6 +6230,44 @@ func rebalanceTargetAgeBoost(lastAutoAt time.Time, scanAt time.Time, scanInterva
 	return boost
 }
 
+// applyAutofeeSettlingPenalty implements Wave 6.1b: targets que tiveram a fee
+// de saída ajustada pelo AutoFee dentro do window têm o score multiplicado por
+// cfg.AutofeeSettlingMultiplier. Não é skip — é despriorização no sort.
+// Retorna a contagem de candidatos afetados (probes não contam).
+func applyAutofeeSettlingPenalty(candidates []rebalanceTarget, adjustments map[uint64]time.Time, cfg RebalanceConfig, scanAt time.Time) int {
+	if cfg.AutofeeSettlingWindowSec <= 0 || cfg.AutofeeSettlingMultiplier >= 1 || len(adjustments) == 0 || len(candidates) == 0 {
+		return 0
+	}
+	multiplier := cfg.AutofeeSettlingMultiplier
+	if math.IsNaN(multiplier) || math.IsInf(multiplier, 0) || multiplier < 0 {
+		return 0
+	}
+	if scanAt.IsZero() {
+		scanAt = time.Now()
+	}
+	window := time.Duration(cfg.AutofeeSettlingWindowSec) * time.Second
+	dampened := 0
+	for i := range candidates {
+		if candidates[i].CooldownProbe {
+			continue
+		}
+		adjustedAt, ok := adjustments[candidates[i].Channel.ChannelID]
+		if !ok || adjustedAt.IsZero() {
+			continue
+		}
+		if adjustedAt.After(scanAt) {
+			// Future timestamp (clock skew) — treat as just-adjusted.
+		} else if scanAt.Sub(adjustedAt) > window {
+			continue
+		}
+		candidates[i].Score = int64(math.Round(float64(candidates[i].Score) * multiplier))
+		candidates[i].AutofeeDampened = true
+		candidates[i].AutofeeAdjustedAt = adjustedAt
+		dampened++
+	}
+	return dampened
+}
+
 func buildScanDetail(reasons map[string]int, remaining int64, candidates int) string {
 	if len(reasons) == 0 {
 		return ""
@@ -6493,6 +6568,8 @@ end $$;
     critical_cycles integer not null default 3,
     gain_model_version integer not null default 1,
     velocity_weight double precision not null default 0.7,
+    autofee_settling_window_sec bigint not null default 7200,
+    autofee_settling_multiplier double precision not null default 0.5,
     updated_at timestamptz not null default now()
   );
 
@@ -6566,6 +6643,10 @@ end $$;
     add column if not exists gain_model_version integer not null default 1;
   alter table rebalance_config
     add column if not exists velocity_weight double precision not null default 0.7;
+  alter table rebalance_config
+    add column if not exists autofee_settling_window_sec bigint not null default 7200;
+  alter table rebalance_config
+    add column if not exists autofee_settling_multiplier double precision not null default 0.5;
 
   alter table rebalance_config
     alter column scan_interval_sec set default 900;
@@ -6605,6 +6686,10 @@ end $$;
     alter column gain_model_version set default 1;
   alter table rebalance_config
     alter column velocity_weight set default 0.7;
+  alter table rebalance_config
+    alter column autofee_settling_window_sec set default 7200;
+  alter table rebalance_config
+    alter column autofee_settling_multiplier set default 0.5;
 
   alter table if exists rebalance_channel_settings
     add column if not exists manual_restart_enabled boolean not null default false;
@@ -6824,7 +6909,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
   select auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, mc_half_life_sec, payback_mode_flags,
-    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight
+    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier
   from rebalance_config where id=$1`, rebalanceConfigID)
 
 	cfg := defaultRebalanceConfig()
@@ -6875,6 +6960,8 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.MissionControlReinforce,
 		&cfg.GainModelVersion,
 		&cfg.VelocityWeight,
+		&cfg.AutofeeSettlingWindowSec,
+		&cfg.AutofeeSettlingMultiplier,
 	)
 	if err != nil {
 		return cfg, err
@@ -6897,8 +6984,8 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     id, auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, mc_half_life_sec, payback_mode_flags,
-    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,now())
+    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, updated_at
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scan_interval_sec = excluded.scan_interval_sec,
@@ -6946,9 +7033,11 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     mission_control_reinforce = excluded.mission_control_reinforce,
     gain_model_version = excluded.gain_model_version,
     velocity_weight = excluded.velocity_weight,
+    autofee_settling_window_sec = excluded.autofee_settling_window_sec,
+    autofee_settling_multiplier = excluded.autofee_settling_multiplier,
     updated_at = now()
   `, rebalanceConfigID, cfg.AutoEnabled, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
-		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight,
+		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier,
 	)
 	return err
 }
@@ -7155,6 +7244,47 @@ group by channel_id`)
 // scan/job snapshot to inform demand-driven scoring (Wave 3.1). Cached for
 // drainRateCacheTTL since paginating ForwardingHistory is expensive enough
 // that we don't want to redo it on every scan.
+// fetchRecentAutofeeAdjustments returns the most recent AutoFee outbound-fee
+// change timestamp per channel, restricted to changes within the window. Used
+// by Wave 6.1b to dampen rebalance scores for targets in autofee settling.
+// Returns an empty map if the window is non-positive, the table is missing,
+// or the db handle is unavailable.
+func (s *RebalanceService) fetchRecentAutofeeAdjustments(ctx context.Context, scanAt time.Time, window time.Duration) map[uint64]time.Time {
+	out := map[uint64]time.Time{}
+	if s.db == nil || window <= 0 {
+		return out
+	}
+	if scanAt.IsZero() {
+		scanAt = time.Now()
+	}
+	cutoff := scanAt.Add(-window)
+	rows, err := s.db.Query(ctx, `
+select channel_id, max(decided_at)
+from autofee_outcomes
+where kind = 'outbound'
+  and decided_at >= $1
+group by channel_id
+`, cutoff.UTC())
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("rebalance autofee adjustments fetch failed: %v", err)
+		}
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var channelID int64
+		var decidedAt time.Time
+		if err := rows.Scan(&channelID, &decidedAt); err != nil {
+			continue
+		}
+		if channelID > 0 {
+			out[uint64(channelID)] = decidedAt
+		}
+	}
+	return out
+}
+
 func (s *RebalanceService) fetchChannelDrainRate24h(ctx context.Context) map[uint64]int64 {
 	s.mu.Lock()
 	if s.drainRateCache != nil && !s.drainRateCacheAt.IsZero() && time.Since(s.drainRateCacheAt) < drainRateCacheTTL {

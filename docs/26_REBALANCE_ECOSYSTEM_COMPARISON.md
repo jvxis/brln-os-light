@@ -175,13 +175,6 @@ Comparação direta entre o Rebalance Center do LightningOS Light e os três pri
 | Validação 400 | Mínima | Validação CLI | Validação CLI | `validateOptionalInt/Int64/Float` em todos os campos de config |
 | Config clamps | N/A | N/A | N/A | `normalizeRebalanceConfig` clampa todos os campos pra ranges válidos |
 
-## 17. Resultados empíricos (referência)
-
-| Métrica | LNDG (típico) | BOS | Regolancer | LightningOS Light (2026-05-02 vs baseline 12d) |
-|---|---|---|---|---|
-| success_rate | ~3-8% | N/A (single-shot) | N/A | 1,04% → 3,95% (~4×) |
-| sats movidos / sat gasto | Não publica | N/A | N/A | 1.866 → **2.986 (+60%)** |
-| avg_fee_ppm_paid | Não publica | N/A | N/A | 535,8 → **335,0 (−37%)** |
 
 ---
 
@@ -199,38 +192,5 @@ Comparação direta entre o Rebalance Center do LightningOS Light e os três pri
 ### LightningOS Light
 **Plataforma de decisão multi-objetivo** que trata cada rebalance como problema combinado: economics, demanda real, aprendizado por par persistente, custos históricos, interlock com AutoFee, descoberta dinâmica de capacidade. O que outros resolvem com "tenta de novo daqui 30min" o nosso resolve com state machine + cached routes + permanent fail score com decay.
 
----
 
-## Lessons learned (ou não)
 
-### Do LNDG
-- ❌ **Nada algorítmico**. RapidFire (× 1.21 / ÷ 2) é caso particular do nosso state machine 3-fases.
-- O AutoFee deles (`af.py`) é interessante mas separado do rebalance.
-
-### Do BOS
-- ❌ **`probeDestination` find_max** — tem mérito teórico (descoberta sem comprometer pagamento), mas:
-  - Probe HTLC ainda toca MC (forwarders veem fluxo, falha registra)
-  - Já temos descoberta dinâmica via state machine + `applySuccess` route cap
-  - Wave 4.1 (cached hops) elimina re-discovery após 1ª sucesso
-  - Custo de implementar > ganho marginal
-- ❌ **Tag-based peer grouping** — UX/ergonomia, não eficiência. Possivelmente Onda 9 polish.
-- ❌ **`--out-inbound` semantic** — caso de uso muito específico.
-
-### Do Regolancer
-- ❌ **Probe binary search via `TEMPORARY_CHANNEL_FAILURE`** — **já temos** em `probeRouteRecursive` ([rebalance_service.go:6620-6702](../lightningos-light/internal/server/rebalance_service.go#L6620-L6702)), invocado em 3 sites do legacyLoop. Mesmo algoritmo.
-- ❌ **`tryRapidRebalance`** — caso particular do nosso state machine `increase` phase.
-- ❌ **`failedPairs` in-memory** — temos versão persistente + `permanent_fail_score` com decay temporal.
-
-### Verdict global
-
-**Nenhuma das três ferramentas tem feature de execução algorítmica que melhore a nossa eficiência.** O que elas têm a mais é:
-- **Simplicidade de config** (todas as três)
-- **Tags/avoid ad-hoc** (BOS) — ergonomia operador
-- **Single-binary deploy** (regolancer) — devops-friendly
-
-O que **nós temos a mais** é tudo orquestração + persistência + interlock — investimento que rendeu nos KPIs:
-- success_rate ~4×
-- sats movidos por sat gasto +60%
-- avg fee ppm paid −37%
-
-**Recomendação: nenhuma ação.** Continuar focando em refinamentos próprios (tunar `velocity_weight`, ajustar `daily_budget_pct`, expandir bypass cost gate quando faz sentido).

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -117,6 +118,110 @@ func TestNormalizeRebalanceConfigClampsSourceMinPaybackProgress(t *testing.T) {
 	got := normalizeRebalanceConfig(cfg)
 	if got.SourceMinPaybackProgress != 0 {
 		t.Fatalf("expected SourceMinPaybackProgress clamped to 0, got %f", got.SourceMinPaybackProgress)
+	}
+}
+
+// TestComputeEffectiveProtectedFreshChannel: a channel with no significant
+// historical paid_cost has zero protection regardless of payback progress.
+func TestComputeEffectiveProtectedFreshChannel(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	got := computeEffectiveProtected(0, 0, 0, cfg, time.Time{}, false)
+	if got != 0 {
+		t.Fatalf("expected 0 protection for fresh channel (no liquidity), got %d", got)
+	}
+	got = computeEffectiveProtected(1_000_000, 100, 0, cfg, time.Time{}, false)
+	if got != 0 {
+		t.Fatalf("expected 0 protection when paid_cost <= 500 sat, got %d", got)
+	}
+}
+
+// TestComputeEffectiveProtectedForwardDriven: a channel with small paid_liquidity
+// (most of its local came from forwards) has only the rebalanced portion locked.
+// Mirrors the Boltz case: 4.94M local but 200k from rebalance, payback=0.
+func TestComputeEffectiveProtectedForwardDriven(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	got := computeEffectiveProtected(200_000, 1_000, 0, cfg, time.Time{}, false)
+	if got != 200_000 {
+		t.Fatalf("expected full lock of paid_liquidity (200k) at payback=0, got %d", got)
+	}
+}
+
+// TestComputeEffectiveProtectedSinkChannel: a pure sink (large paid_liquidity,
+// payback=0) has full lock. Mirrors the 1sats.com case that motivated Policy C.
+func TestComputeEffectiveProtectedSinkChannel(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	got := computeEffectiveProtected(5_000_000, 50_000, 0, cfg, time.Time{}, false)
+	if got != 5_000_000 {
+		t.Fatalf("expected full lock for sink with payback=0, got %d", got)
+	}
+}
+
+// TestComputeEffectiveProtectedRouterFullPayback: a router that recouped its
+// rebalance cost via forwards has zero protection (free to be source again).
+func TestComputeEffectiveProtectedRouterFullPayback(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	// payback = 1.25 (revenue exceeds cost) > threshold 0.95
+	got := computeEffectiveProtected(2_000_000, 4_000, 1.25, cfg, time.Time{}, false)
+	if got != 0 {
+		t.Fatalf("expected 0 protection when payback >= threshold, got %d", got)
+	}
+	// At threshold exactly
+	got = computeEffectiveProtected(2_000_000, 4_000, 0.95, cfg, time.Time{}, false)
+	if got != 0 {
+		t.Fatalf("expected 0 protection at payback == threshold, got %d", got)
+	}
+}
+
+// TestComputeEffectiveProtectedRouterPartialPayback: with payback halfway to
+// threshold, protection is roughly half of paid_liquidity.
+func TestComputeEffectiveProtectedRouterPartialPayback(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	// payback = 0.5, threshold = 0.95 → unrecouped = 1 - 0.5/0.95 ≈ 0.4737
+	got := computeEffectiveProtected(2_000_000, 10_000, 0.5, cfg, time.Time{}, false)
+	expected := int64(math.Round(2_000_000 * (1 - 0.5/0.95)))
+	if got != expected {
+		t.Fatalf("expected proportional protection %d at payback=0.5, got %d", expected, got)
+	}
+}
+
+// TestComputeEffectiveProtectedTimeUnlock: after UnlockDays without a fresh
+// rebalance, time-mode releases all protection regardless of payback.
+func TestComputeEffectiveProtectedTimeUnlock(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	cfg.UnlockDays = 7
+	long := time.Now().Add(-30 * 24 * time.Hour)
+	got := computeEffectiveProtected(2_000_000, 10_000, 0, cfg, long, false)
+	if got != 0 {
+		t.Fatalf("expected 0 protection after time-unlock, got %d", got)
+	}
+	// Within unlock window: still locked
+	recent := time.Now().Add(-2 * 24 * time.Hour)
+	got = computeEffectiveProtected(2_000_000, 10_000, 0, cfg, recent, false)
+	if got != 2_000_000 {
+		t.Fatalf("expected full lock within unlock window, got %d", got)
+	}
+}
+
+// TestComputeEffectiveProtectedCriticalRelease: critical mode releases
+// CriticalReleasePct of the still-protected amount.
+func TestComputeEffectiveProtectedCriticalRelease(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	cfg.CriticalReleasePct = 20 // release 20% on critical
+	got := computeEffectiveProtected(1_000_000, 10_000, 0, cfg, time.Time{}, true)
+	expected := int64(1_000_000 - 1_000_000*0.20)
+	if got != expected {
+		t.Fatalf("expected %d after critical release of 20%%, got %d", expected, got)
+	}
+}
+
+// TestComputeEffectiveProtectedDisabledPaybackMode: when paybackModePayback is
+// off, payback progress is ignored and protection stays full.
+func TestComputeEffectiveProtectedDisabledPaybackMode(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	cfg.PaybackModeFlags = 0 // all flags off
+	got := computeEffectiveProtected(2_000_000, 10_000, 1.0, cfg, time.Time{}, false)
+	if got != 2_000_000 {
+		t.Fatalf("expected full lock when paybackModePayback off, got %d", got)
 	}
 }
 

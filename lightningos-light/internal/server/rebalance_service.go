@@ -6099,41 +6099,24 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		maxSource = 0
 	}
 	eligibleSource := maxSource > 0 && localPct >= sourceFloorPct
-	// Source payback filter (Policy C): when SourceMinPaybackProgress > 0, a
-	// channel only qualifies as source if either it has no significant
-	// historical rebalance cost (paid_cost <= rebalancePaybackMinCostSat,
-	// covering fresh channels) OR its lifetime payback (paid_revenue /
-	// paid_cost) is above the configured threshold. Default 0 disables the
-	// filter and preserves the previous behavior. Recommended setting: 0.95.
-	if eligibleSource && cfg.SourceMinPaybackProgress > 0 {
-		if paidCost > rebalancePaybackMinCostSat && paybackProgress < cfg.SourceMinPaybackProgress {
-			eligibleSource = false
-		}
-	}
-	effectiveProtected := protected
-	if protected > 0 {
-		unlocked := false
-		if (cfg.PaybackModeFlags&paybackModePayback) != 0 && paidCost > 0 && paidRevenue >= paidCost {
-			unlocked = true
-		}
-		if (cfg.PaybackModeFlags&paybackModeTime) != 0 && !lastRebalance.IsZero() && cfg.UnlockDays > 0 {
-			if time.Since(lastRebalance) >= time.Duration(cfg.UnlockDays)*24*time.Hour {
-				unlocked = true
-			}
-		}
-		if !unlocked && criticalActive && (cfg.PaybackModeFlags&paybackModeCritical) != 0 {
-			release := int64(math.Round(float64(protected) * (cfg.CriticalReleasePct / 100)))
-			effectiveProtected = protected - release
-			if effectiveProtected < 0 {
-				effectiveProtected = 0
-			}
-		} else if unlocked {
-			effectiveProtected = 0
-		}
-		maxSource -= effectiveProtected
-		if maxSource < 0 {
-			maxSource = 0
-		}
+	// Source protection (unified Policy C, 2026-05-04 refactor): combines the
+	// previous binary "block channels with low payback" gate and the
+	// "effectiveProtected" lock into a single proportional formula keyed on
+	// paid_liquidity_sat × unrecouped_fraction.
+	//
+	// Rationale: the old binary gate blocked forward-driven channels (e.g.
+	// Boltz with small paid_liquidity but big local from forwards) even though
+	// most of their local balance was never rebalanced in. The proportional
+	// formula caps source contribution to "free" liquidity only.
+	//
+	// SourceMinPaybackProgress is reinterpreted as the threshold of payback
+	// progress at which liquidity is considered fully recouped (default 0.95).
+	// At payback >= threshold, effectiveProtected = 0. At payback = 0,
+	// effectiveProtected = paid_liquidity_sat (full lock). Linear in between.
+	effectiveProtected := computeEffectiveProtected(protected, paidCost, paybackProgress, cfg, lastRebalance, criticalActive)
+	maxSource -= effectiveProtected
+	if maxSource < 0 {
+		maxSource = 0
 	}
 	if maxSource <= 0 || !ch.Active {
 		eligibleSource = false
@@ -6199,6 +6182,86 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		ROIEstimateValid:       roiEstimateValid,
 		ExcludedAsSource:       excluded,
 	}
+}
+
+// computeEffectiveProtected returns the portion of paid_liquidity_sat that
+// should be reserved (excluded from MaxSourceSat) to prevent the channel from
+// being used as a rebalance source while it still has unrecouped cost.
+//
+// The protection scales linearly with payback progress against
+// SourceMinPaybackProgress (default 0.95):
+//   - paid_cost <= rebalancePaybackMinCostSat → 0 (fresh channel, no history)
+//   - paybackProgress >= threshold → 0 (fully recouped)
+//   - else → paid_liquidity_sat × (1 - paybackProgress / threshold)
+//
+// PaybackMode flags layer on top:
+//   - paybackModePayback (default on): only releases when payback ≥ threshold
+//     (already encoded in the proportional formula).
+//   - paybackModeTime: time-based unlock after UnlockDays of inactivity.
+//     Forces protection to 0 once the deadline passes, regardless of payback.
+//   - paybackModeCritical: emergency partial release of CriticalReleasePct%
+//     when the node is in critical mode.
+func computeEffectiveProtected(paidLiquiditySat int64, paidCost int64, paybackProgress float64, cfg RebalanceConfig, lastRebalance time.Time, criticalActive bool) int64 {
+	if paidLiquiditySat <= 0 {
+		return 0
+	}
+	// Fresh channel: paid_cost too small to take seriously.
+	if paidCost <= rebalancePaybackMinCostSat {
+		return 0
+	}
+
+	threshold := cfg.SourceMinPaybackProgress
+	if threshold <= 0 {
+		threshold = 1.0
+	}
+	if math.IsNaN(threshold) || math.IsInf(threshold, 0) {
+		threshold = 1.0
+	}
+
+	protected := paidLiquiditySat
+	// Proportional protection based on payback progress.
+	if (cfg.PaybackModeFlags & paybackModePayback) != 0 {
+		if paybackProgress >= threshold {
+			protected = 0
+		} else if paybackProgress > 0 {
+			unrecouped := 1.0 - (paybackProgress / threshold)
+			if unrecouped < 0 {
+				unrecouped = 0
+			}
+			if unrecouped > 1 {
+				unrecouped = 1
+			}
+			protected = int64(math.Round(float64(paidLiquiditySat) * unrecouped))
+		}
+		// paybackProgress <= 0 → keep full protected
+	}
+
+	// Time-based unlock: after UnlockDays without a fresh rebalance, release
+	// regardless of payback. Operator-tunable knob to "give up" on stuck
+	// channels.
+	if (cfg.PaybackModeFlags&paybackModeTime) != 0 && !lastRebalance.IsZero() && cfg.UnlockDays > 0 {
+		if time.Since(lastRebalance) >= time.Duration(cfg.UnlockDays)*24*time.Hour {
+			return 0
+		}
+	}
+
+	// Critical mode: emergency release of a fraction of the still-protected
+	// amount to free liquidity for critical channels.
+	if criticalActive && (cfg.PaybackModeFlags&paybackModeCritical) != 0 && protected > 0 {
+		release := int64(math.Round(float64(protected) * (cfg.CriticalReleasePct / 100)))
+		protected -= release
+		if protected < 0 {
+			protected = 0
+		}
+	}
+
+	if protected < 0 {
+		protected = 0
+	}
+	if protected > paidLiquiditySat {
+		protected = paidLiquiditySat
+	}
+	return protected
 }
 
 func estimateTimeToPaybackHours(paidRevenueSat int64, paidCostSat int64, revenue7dSat int64) (float64, bool) {

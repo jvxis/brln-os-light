@@ -13,10 +13,22 @@ import (
 )
 
 const (
-	KeysendPreimageRecord uint64 = 5482373484
-	KeysendMessageRecord  uint64 = 34349334
-	KeysendSenderRecord   uint64 = 34349339
+	KeysendPreimageRecord        uint64 = 5482373484
+	KeysendMessageRecord         uint64 = 34349334
+	KeysendSenderRecord          uint64 = 34349339
+	KeysendSenderSignatureRecord uint64 = 34349340
 )
+
+func KeysendIdentityPayload(senderPubkey string, recipientPubkey string, amountSat int64, paymentHash string, message string) string {
+	return fmt.Sprintf(
+		"brln-chat-v1\nsender=%s\nrecipient=%s\namount_sat=%d\npayment_hash=%s\nmessage=%s",
+		strings.ToLower(strings.TrimSpace(senderPubkey)),
+		strings.ToLower(strings.TrimSpace(recipientPubkey)),
+		amountSat,
+		strings.ToLower(strings.TrimSpace(paymentHash)),
+		message,
+	)
+}
 
 func (c *Client) SendKeysendMessage(ctx context.Context, pubkeyHex string, amountSat int64, message string) (string, error) {
 	trimmed := strings.TrimSpace(pubkeyHex)
@@ -35,8 +47,9 @@ func (c *Client) SendKeysendMessage(ctx context.Context, pubkeyHex string, amoun
 	}
 
 	senderRecord := []byte(nil)
-	if senderPubkey, err := c.SelfPubkey(ctx); err == nil {
-		senderPubkey = strings.TrimSpace(senderPubkey)
+	senderPubkey := ""
+	if selfPubkey, err := c.SelfPubkey(ctx); err == nil {
+		senderPubkey = strings.TrimSpace(selfPubkey)
 		if senderPubkey != "" {
 			if senderBytes, err := hex.DecodeString(senderPubkey); err == nil && len(senderBytes) == 33 {
 				senderRecord = senderBytes
@@ -49,6 +62,7 @@ func (c *Client) SendKeysendMessage(ctx context.Context, pubkeyHex string, amoun
 		return "", err
 	}
 	hash := sha256.Sum256(preimage)
+	paymentHash := hex.EncodeToString(hash[:])
 
 	conn, err := c.dial(ctx, true)
 	if err != nil {
@@ -63,6 +77,9 @@ func (c *Client) SendKeysendMessage(ctx context.Context, pubkeyHex string, amoun
 	}
 	if len(senderRecord) == 33 {
 		records[KeysendSenderRecord] = senderRecord
+		if signature, err := c.SignMessage(ctx, KeysendIdentityPayload(senderPubkey, trimmed, amountSat, paymentHash, message)); err == nil {
+			records[KeysendSenderSignatureRecord] = []byte(signature)
+		}
 	}
 
 	res, err := client.SendPaymentSync(ctx, &lnrpc.SendRequest{
@@ -75,5 +92,5 @@ func (c *Client) SendKeysendMessage(ctx context.Context, pubkeyHex string, amoun
 		return "", err
 	}
 
-	return hex.EncodeToString(hash[:]), nil
+	return paymentHash, nil
 }

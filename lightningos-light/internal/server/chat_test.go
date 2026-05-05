@@ -4,6 +4,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"lightningos-light/internal/lndclient"
+	"lightningos-light/lnrpc"
 )
 
 func TestBuildSentKeysendNotificationIncludesMessage(t *testing.T) {
@@ -33,3 +36,79 @@ func TestBuildSentKeysendNotificationIncludesMessage(t *testing.T) {
 	}
 }
 
+func TestResolveChatAmountSat(t *testing.T) {
+	if got, err := resolveChatAmountSat(nil); err != nil || got != chatDefaultAmountSat {
+		t.Fatalf("expected default amount, got amount=%d err=%v", got, err)
+	}
+	custom := int64(2500)
+	if got, err := resolveChatAmountSat(&custom); err != nil || got != custom {
+		t.Fatalf("expected custom amount, got amount=%d err=%v", got, err)
+	}
+	zero := int64(0)
+	if _, err := resolveChatAmountSat(&zero); err == nil {
+		t.Fatal("expected zero amount to fail")
+	}
+}
+
+func TestChatSendErrorCodeIncorrectPaymentDetails(t *testing.T) {
+	if got := chatSendErrorCode("incorrect Payment details"); got != "chat_keysend_incorrect_payment_details" {
+		t.Fatalf("unexpected code: %s", got)
+	}
+}
+
+func TestExtractKeysendMessageIncludesSenderSignature(t *testing.T) {
+	invoice := &lnrpc.Invoice{
+		Htlcs: []*lnrpc.InvoiceHTLC{
+			{
+				ChanId: 123,
+				CustomRecords: map[uint64][]byte{
+					lndclient.KeysendMessageRecord:         []byte("hello"),
+					lndclient.KeysendSenderRecord:          mustDecodeHexPubkey(t, "020000000000000000000000000000000000000000000000000000000000000001"),
+					lndclient.KeysendSenderSignatureRecord: []byte("signature"),
+				},
+			},
+		},
+	}
+	message, chanID, sender, signature := extractKeysendMessage(invoice)
+	if message != "hello" || chanID != 123 {
+		t.Fatalf("unexpected message metadata: message=%q chanID=%d", message, chanID)
+	}
+	if sender != "020000000000000000000000000000000000000000000000000000000000000001" {
+		t.Fatalf("unexpected sender: %s", sender)
+	}
+	if signature != "signature" {
+		t.Fatalf("unexpected signature: %s", signature)
+	}
+}
+
+func mustDecodeHexPubkey(t *testing.T, value string) []byte {
+	t.Helper()
+	decoded := make([]byte, 33)
+	for i := range decoded {
+		decoded[i] = 0
+	}
+	if len(value) != 66 {
+		t.Fatalf("test pubkey must be 66 hex chars")
+	}
+	for i := 0; i < len(decoded); i++ {
+		hi := fromHex(t, value[i*2])
+		lo := fromHex(t, value[i*2+1])
+		decoded[i] = hi<<4 | lo
+	}
+	return decoded
+}
+
+func fromHex(t *testing.T, value byte) byte {
+	t.Helper()
+	switch {
+	case value >= '0' && value <= '9':
+		return value - '0'
+	case value >= 'a' && value <= 'f':
+		return value - 'a' + 10
+	case value >= 'A' && value <= 'F':
+		return value - 'A' + 10
+	default:
+		t.Fatalf("invalid hex byte: %q", value)
+	}
+	return 0
+}

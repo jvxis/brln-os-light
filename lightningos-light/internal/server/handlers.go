@@ -3031,6 +3031,7 @@ func (s *Server) handleChatSend(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		PeerPubkey string `json:"peer_pubkey"`
 		Message    string `json:"message"`
+		AmountSat  *int64 `json:"amount_sat,omitempty"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -3050,11 +3051,16 @@ func (s *Server) handleChatSend(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	amountSat, err := resolveChatAmountSat(req.AmountSat)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 	defer cancel()
 
-	msg, err := s.chat.SendMessage(ctx, peerPubkey, message)
+	msg, err := s.chat.SendMessage(ctx, peerPubkey, amountSat, message)
 	if err != nil {
 		detail := lndRPCErrorMessage(err)
 		if isTimeoutError(err) {
@@ -3063,10 +3069,36 @@ func (s *Server) handleChatSend(w http.ResponseWriter, r *http.Request) {
 		if detail == "" || detail == "LND error" {
 			detail = "Keysend failed"
 		}
-		writeError(w, http.StatusInternalServerError, detail)
+		writeErrorCode(w, http.StatusInternalServerError, chatSendErrorCode(detail), detail)
 		return
 	}
 	writeJSON(w, http.StatusOK, msg)
+}
+
+func resolveChatAmountSat(amount *int64) (int64, error) {
+	if amount == nil {
+		return chatDefaultAmountSat, nil
+	}
+	if *amount <= 0 {
+		return 0, errors.New("amount_sat must be positive")
+	}
+	return *amount, nil
+}
+
+func chatSendErrorCode(detail string) string {
+	lower := strings.ToLower(strings.TrimSpace(detail))
+	switch {
+	case strings.Contains(lower, "incorrect payment details"):
+		return "chat_keysend_incorrect_payment_details"
+	case strings.Contains(lower, "no route") || strings.Contains(lower, "unable to find a path") || strings.Contains(lower, "temporary channel failure"):
+		return "chat_keysend_route_failed"
+	case strings.Contains(lower, "insufficient") || strings.Contains(lower, "balance"):
+		return "chat_keysend_insufficient_balance"
+	case strings.Contains(lower, "timeout") || strings.Contains(lower, "deadline exceeded"):
+		return "chat_keysend_timeout"
+	default:
+		return "chat_keysend_failed"
+	}
 }
 
 type lndUserConf struct {

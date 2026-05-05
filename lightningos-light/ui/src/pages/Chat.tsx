@@ -15,6 +15,8 @@ type ChatPeer = Peer & {
   last_message_at?: number
   last_message?: string
   last_message_direction?: 'in' | 'out'
+  identity_source?: string
+  sender_verified?: boolean
 }
 
 type ChatMessage = {
@@ -25,6 +27,9 @@ type ChatMessage = {
   message: string
   status: string
   payment_hash?: string
+  amount_sat?: number
+  identity_source?: string
+  sender_verified?: boolean
 }
 
 type ChatInboxItem = {
@@ -34,6 +39,8 @@ type ChatInboxItem = {
   last_message_at?: string
   last_message?: string
   last_message_direction?: 'in' | 'out'
+  identity_source?: string
+  sender_verified?: boolean
 }
 
 type ParsedInboxItem = {
@@ -43,9 +50,12 @@ type ParsedInboxItem = {
   last_message_at: number
   last_message: string
   last_message_direction?: 'in' | 'out'
+  identity_source?: string
+  sender_verified?: boolean
 }
 
 const messageLimit = 500
+const defaultAmountSat = 1
 const lastReadKey = 'chat:lastRead'
 
 const formatTimestamp = (value: string | number | undefined, locale: string) => {
@@ -59,6 +69,42 @@ const formatTimestamp = (value: string | number | undefined, locale: string) => 
     minute: '2-digit',
     hour12: false
   })
+}
+
+const parsePositiveSatAmount = (value: string) => {
+  const trimmed = value.trim()
+  if (!/^\d+$/.test(trimmed)) return null
+  const parsed = Number(trimmed)
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) return null
+  return parsed
+}
+
+const formatSats = (value: number | undefined) => {
+  if (!value || value <= 0) return ''
+  return `${value.toLocaleString()} sat`
+}
+
+const chatSendErrorMessage = (err: any, t: (key: string, options?: any) => string) => {
+  const code = typeof err?.code === 'string' ? err.code : ''
+  switch (code) {
+    case 'chat_keysend_incorrect_payment_details':
+      return t('chat.errorIncorrectPaymentDetails')
+    case 'chat_keysend_route_failed':
+      return t('chat.errorRouteFailed')
+    case 'chat_keysend_insufficient_balance':
+      return t('chat.errorInsufficientBalance')
+    case 'chat_keysend_timeout':
+      return t('chat.errorTimeout')
+    default:
+      break
+  }
+  const message = typeof err?.message === 'string' ? err.message : ''
+  const lower = message.toLowerCase()
+  if (lower.includes('incorrect payment details')) return t('chat.errorIncorrectPaymentDetails')
+  if (lower.includes('no route') || lower.includes('unable to find a path')) return t('chat.errorRouteFailed')
+  if (lower.includes('insufficient') || lower.includes('balance')) return t('chat.errorInsufficientBalance')
+  if (lower.includes('timeout') || lower.includes('deadline exceeded')) return t('chat.errorTimeout')
+  return message || t('chat.sendFailed')
 }
 
 export default function Chat() {
@@ -90,6 +136,7 @@ export default function Chat() {
   })
   const [messageStatus, setMessageStatus] = useState('')
   const [draft, setDraft] = useState('')
+  const [amountSatInput, setAmountSatInput] = useState(String(defaultAmountSat))
   const [sending, setSending] = useState(false)
   const [loadingMessages, setLoadingMessages] = useState(false)
   const bottomRef = useRef<HTMLDivElement | null>(null)
@@ -217,6 +264,8 @@ export default function Chat() {
           last_message_at: !Number.isNaN(rawLastMessageAt) && rawLastMessageAt ? rawLastMessageAt : lastInboundAt,
           last_message: (item.last_message || '').trim(),
           last_message_direction: item.last_message_direction,
+          identity_source: item.identity_source,
+          sender_verified: item.sender_verified,
         } as ParsedInboxItem
       })
       .filter((item): item is ParsedInboxItem => item !== null)
@@ -241,6 +290,8 @@ export default function Chat() {
         last_message_at: inboxMatch?.last_message_at,
         last_message: inboxMatch?.last_message,
         last_message_direction: inboxMatch?.last_message_direction,
+        identity_source: inboxMatch?.identity_source,
+        sender_verified: inboxMatch?.sender_verified,
       })
       return
     }
@@ -252,6 +303,8 @@ export default function Chat() {
         last_message_at: inboxMatch.last_message_at,
         last_message: inboxMatch.last_message,
         last_message_direction: inboxMatch.last_message_direction,
+        identity_source: inboxMatch.identity_source,
+        sender_verified: inboxMatch.sender_verified,
       } : current)
     }
   }, [inboxByPeer, peers, selectedPeer?.pub_key])
@@ -283,6 +336,8 @@ export default function Chat() {
         last_message_at: inbox?.last_message_at,
         last_message: inbox?.last_message,
         last_message_direction: inbox?.last_message_direction,
+        identity_source: inbox?.identity_source,
+        sender_verified: inbox?.sender_verified,
       } as ChatPeer
     })
     list.sort((a, b) => {
@@ -313,6 +368,8 @@ export default function Chat() {
         last_message_at: item.last_message_at,
         last_message: item.last_message,
         last_message_direction: item.last_message_direction,
+        identity_source: item.identity_source,
+        sender_verified: item.sender_verified,
       } satisfies ChatPeer))
       .sort((a, b) => {
         const aUnread = unreadPeers.has(a.pub_key)
@@ -352,15 +409,16 @@ export default function Chat() {
   }, [peerQuery, recentPeers])
 
   const overLimit = draft.trim().length > messageLimit
-  const canSend = Boolean(selectedPeer && selectedOnline && draft.trim() && !overLimit && !sending)
+  const amountSat = parsePositiveSatAmount(amountSatInput)
+  const canSend = Boolean(selectedPeer && selectedOnline && draft.trim() && amountSat && !overLimit && !sending)
 
   const handleSend = async () => {
-    if (!selectedPeer || !canSend) return
+    if (!selectedPeer || !canSend || !amountSat) return
     const trimmed = draft.trim()
     setSending(true)
     setMessageStatus(t('chat.sending'))
     try {
-      const res = await sendChatMessage({ peer_pubkey: selectedPeer.pub_key, message: trimmed })
+      const res = await sendChatMessage({ peer_pubkey: selectedPeer.pub_key, message: trimmed, amount_sat: amountSat })
       setDraft('')
       setMessages((prev) => [...prev, res])
       setInboxItems((prev) => {
@@ -372,13 +430,15 @@ export default function Chat() {
           last_message_at: res.timestamp,
           last_message: trimmed,
           last_message_direction: 'out',
+          sender_verified: true,
+          identity_source: 'local',
         }
         const rest = prev.filter((item) => item.peer_pubkey !== selectedPeer.pub_key)
         return [nextItem, ...rest]
       })
       setMessageStatus('')
     } catch (err: any) {
-      setMessageStatus(err?.message || t('chat.sendFailed'))
+      setMessageStatus(chatSendErrorMessage(err, t))
     } finally {
       setSending(false)
     }
@@ -513,7 +573,7 @@ export default function Chat() {
                         <span>{peer.alias || peer.pub_key}</span>
                         {unreadPeers.has(peer.pub_key) && (
                           <span className="rounded-full bg-brass/20 px-2 py-0.5 text-[10px] uppercase tracking-wide text-brass">
-                            New
+                            {t('chat.newMessage')}
                           </span>
                         )}
                       </div>
@@ -553,7 +613,7 @@ export default function Chat() {
                         <div className="flex items-center justify-between gap-2 text-sm text-fog break-all">
                           <span>{peer.alias || peer.pub_key}</span>
                           <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-fog/70">
-                            {unreadPeers.has(peer.pub_key) ? 'New' : t('chat.peerOffline')}
+                            {unreadPeers.has(peer.pub_key) ? t('chat.newMessage') : t('chat.peerOffline')}
                           </span>
                         </div>
                         <div className="mt-2 text-[11px] text-fog/55 break-words">
@@ -591,6 +651,13 @@ export default function Chat() {
                   ? (selectedOnline ? t('chat.peerOnline') : t('chat.peerOffline'))
                   : t('chat.choosePeer')}
               </p>
+              {selectedPeer?.last_message_direction === 'in' && selectedPeer.identity_source && selectedPeer.identity_source !== 'signed_sender' && (
+                <p className="mt-1 text-[11px] text-fog/50">
+                  {selectedPeer.identity_source === 'incoming_channel'
+                    ? t('chat.senderFromIncomingChannel')
+                    : t('chat.senderUnverified')}
+                </p>
+              )}
             </div>
             {selectedPeer && (
               <span className="text-xs text-fog/60 break-all">{selectedPeer.pub_key}</span>
@@ -623,9 +690,15 @@ export default function Chat() {
                   }`}
                 >
                   <div className="whitespace-pre-wrap break-words">{msg.message}</div>
-                  <div className="mt-2 flex items-center justify-between text-[11px] text-fog/50">
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-fog/50">
                     <span>{formatTimestamp(msg.timestamp, locale)}</span>
-                    {msg.direction === 'out' && <span>{msg.status}</span>}
+                    <span className="flex flex-wrap items-center justify-end gap-2">
+                      {formatSats(msg.amount_sat) && <span>{formatSats(msg.amount_sat)}</span>}
+                      {msg.direction === 'in' && msg.identity_source && msg.identity_source !== 'signed_sender' && (
+                        <span>{msg.identity_source === 'incoming_channel' ? t('chat.senderFromChannelShort') : t('chat.senderUnverifiedShort')}</span>
+                      )}
+                      {msg.direction === 'out' && <span>{msg.status}</span>}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -645,12 +718,31 @@ export default function Chat() {
             />
             <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-fog/60">
               <span>{draft.trim().length}/{messageLimit}</span>
-              <button className="btn-primary" onClick={handleSend} disabled={!canSend}>
-                {sending ? t('chat.sending') : t('chat.sendOneSat')}
-              </button>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <label className="flex items-center gap-2">
+                  <span>{t('chat.amountSat')}</span>
+                  <input
+                    className="input-field !w-28 px-3 py-2 text-sm"
+                    type="number"
+                    min="1"
+                    step="1"
+                    inputMode="numeric"
+                    value={amountSatInput}
+                    onChange={(e) => setAmountSatInput(e.target.value)}
+                    disabled={!selectedPeer || !selectedOnline || sending}
+                    aria-label={t('chat.amountSat')}
+                  />
+                </label>
+                <button className="btn-primary" onClick={handleSend} disabled={!canSend}>
+                  {sending ? t('chat.sending') : t('chat.sendAmount', { amount: amountSat || defaultAmountSat })}
+                </button>
+              </div>
             </div>
             {overLimit && (
               <p className="text-xs text-ember">{t('chat.messageTooLong', { count: messageLimit })}</p>
+            )}
+            {amountSatInput.trim() && !amountSat && (
+              <p className="text-xs text-ember">{t('chat.invalidAmount')}</p>
             )}
           </div>
         </div>

@@ -513,7 +513,7 @@ export const getChatMessages = (peerPubkey: string, limit = 200) =>
 export const getChatInbox = () =>
   request('/api/chat/inbox')
 
-export const sendChatMessage = (payload: { peer_pubkey: string; message: string }) =>
+export const sendChatMessage = (payload: { peer_pubkey: string; message: string; amount_sat?: number }) =>
   request('/api/chat/send', { method: 'POST', body: JSON.stringify(payload) })
 
 export const getNotifications = (limit = 200) =>

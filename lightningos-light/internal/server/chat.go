@@ -33,16 +33,20 @@ const (
 	chatMessageMaxLength    = 500
 	chatPreviewMaxRunes     = 140
 	chatCursorStateKey      = "chat_invoices_settle_index"
+	chatDefaultAmountSat    = int64(1)
 )
 
 type ChatMessage struct {
-	Timestamp   time.Time `json:"timestamp"`
-	PeerPubkey  string    `json:"peer_pubkey"`
-	PeerAlias   string    `json:"peer_alias,omitempty"`
-	Direction   string    `json:"direction"`
-	Message     string    `json:"message"`
-	Status      string    `json:"status"`
-	PaymentHash string    `json:"payment_hash,omitempty"`
+	Timestamp      time.Time `json:"timestamp"`
+	PeerPubkey     string    `json:"peer_pubkey"`
+	PeerAlias      string    `json:"peer_alias,omitempty"`
+	Direction      string    `json:"direction"`
+	Message        string    `json:"message"`
+	Status         string    `json:"status"`
+	PaymentHash    string    `json:"payment_hash,omitempty"`
+	AmountSat      int64     `json:"amount_sat,omitempty"`
+	IdentitySource string    `json:"identity_source,omitempty"`
+	SenderVerified bool      `json:"sender_verified,omitempty"`
 }
 
 type ChatInboxItem struct {
@@ -52,6 +56,8 @@ type ChatInboxItem struct {
 	LastMessageAt        time.Time `json:"last_message_at"`
 	LastMessage          string    `json:"last_message,omitempty"`
 	LastMessageDirection string    `json:"last_message_direction,omitempty"`
+	IdentitySource       string    `json:"identity_source,omitempty"`
+	SenderVerified       bool      `json:"sender_verified,omitempty"`
 }
 
 type ChatService struct {
@@ -143,20 +149,26 @@ func (c *ChatService) Inbox() ([]ChatInboxItem, error) {
 	return c.legacy.inbox()
 }
 
-func (c *ChatService) SendMessage(ctx context.Context, peerPubkey string, message string) (ChatMessage, error) {
-	paymentHash, err := c.lnd.SendKeysendMessage(ctx, peerPubkey, 1, message)
+func (c *ChatService) SendMessage(ctx context.Context, peerPubkey string, amountSat int64, message string) (ChatMessage, error) {
+	if amountSat <= 0 {
+		amountSat = chatDefaultAmountSat
+	}
+	paymentHash, err := c.lnd.SendKeysendMessage(ctx, peerPubkey, amountSat, message)
 	if err != nil {
 		return ChatMessage{}, err
 	}
 
 	msg := ChatMessage{
-		Timestamp:   time.Now().UTC(),
-		PeerPubkey:  strings.TrimSpace(peerPubkey),
-		PeerAlias:   c.resolvePeerAlias(peerPubkey),
-		Direction:   "out",
-		Message:     message,
-		Status:      "sent",
-		PaymentHash: paymentHash,
+		Timestamp:      time.Now().UTC(),
+		PeerPubkey:     strings.TrimSpace(peerPubkey),
+		PeerAlias:      c.resolvePeerAlias(peerPubkey),
+		Direction:      "out",
+		Message:        message,
+		Status:         "sent",
+		PaymentHash:    paymentHash,
+		AmountSat:      amountSat,
+		IdentitySource: "local",
+		SenderVerified: true,
 	}
 	persistCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	if err := c.persistMessage(persistCtx, msg); err != nil {
@@ -198,7 +210,7 @@ func buildSentKeysendNotification(msg ChatMessage, hash string, aliasLookup func
 		Action:      "sent",
 		Direction:   "out",
 		Status:      "SUCCEEDED",
-		AmountSat:   1,
+		AmountSat:   msg.AmountSat,
 		PeerPubkey:  strings.TrimSpace(msg.PeerPubkey),
 		PeerAlias:   alias,
 		PaymentHash: hash,
@@ -255,19 +267,35 @@ func (c *ChatService) runInvoices() {
 				continue
 			}
 
-			message, chanID, senderPubkey := extractKeysendMessage(invoice)
+			message, chanID, senderPubkey, senderSignature := extractKeysendMessage(invoice)
 			if message == "" {
 				continue
 			}
 
 			peerPubkey := ""
 			peerAlias := ""
-			if senderPubkey != "" && isValidPubkeyHex(senderPubkey) {
-				peerPubkey = senderPubkey
-				peerAlias = c.resolvePeerAlias(peerPubkey)
+			paymentHash := strings.ToLower(hex.EncodeToString(invoice.RHash))
+			amountSat := keysendInvoiceAmountSat(invoice)
+			identitySource := ""
+			senderVerified := false
+			if senderPubkey != "" && senderSignature != "" && isValidPubkeyHex(senderPubkey) {
+				if c.verifyKeysendSender(invoice, senderPubkey, senderSignature, amountSat, paymentHash, message) {
+					peerPubkey = senderPubkey
+					peerAlias = c.resolvePeerAlias(peerPubkey)
+					identitySource = "signed_sender"
+					senderVerified = true
+				}
 			}
 			if peerPubkey == "" && chanID != 0 {
 				peerPubkey, peerAlias = c.lookupPeerByChanID(chanID)
+				if peerPubkey != "" {
+					identitySource = "incoming_channel"
+				}
+			}
+			if peerPubkey == "" && senderPubkey != "" && isValidPubkeyHex(senderPubkey) {
+				peerPubkey = senderPubkey
+				peerAlias = c.resolvePeerAlias(peerPubkey)
+				identitySource = "sender_record"
 			}
 			if peerPubkey == "" {
 				continue
@@ -277,13 +305,16 @@ func (c *ChatService) runInvoices() {
 			}
 
 			msg := ChatMessage{
-				Timestamp:   time.Unix(invoice.SettleDate, 0).UTC(),
-				PeerPubkey:  peerPubkey,
-				PeerAlias:   peerAlias,
-				Direction:   "in",
-				Message:     message,
-				Status:      "received",
-				PaymentHash: strings.ToLower(hex.EncodeToString(invoice.RHash)),
+				Timestamp:      time.Unix(invoice.SettleDate, 0).UTC(),
+				PeerPubkey:     peerPubkey,
+				PeerAlias:      peerAlias,
+				Direction:      "in",
+				Message:        message,
+				Status:         "received",
+				PaymentHash:    paymentHash,
+				AmountSat:      amountSat,
+				IdentitySource: identitySource,
+				SenderVerified: senderVerified,
 			}
 			persistCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			if err := c.persistMessage(persistCtx, msg); err != nil {
@@ -395,8 +426,15 @@ create table if not exists chat_messages (
   message text not null,
   status text not null default '',
   payment_hash text not null default '',
+  amount_sat bigint not null default 0,
+  identity_source text not null default '',
+  sender_verified boolean not null default false,
   created_at timestamptz not null default now()
 );
+
+alter table chat_messages add column if not exists amount_sat bigint not null default 0;
+alter table chat_messages add column if not exists identity_source text not null default '';
+alter table chat_messages add column if not exists sender_verified boolean not null default false;
 
 create index if not exists idx_chat_messages_peer_time_desc on chat_messages (peer_pubkey, timestamp desc, id desc);
 create index if not exists idx_chat_messages_direction_time_desc on chat_messages (direction, timestamp desc, id desc);
@@ -428,10 +466,10 @@ func (c *ChatService) importLegacyData(ctx context.Context, db *pgxpool.Pool) er
 		for _, msg := range messages {
 			item := normalizeChatMessage(msg)
 			batch.Queue(`
-insert into chat_messages (timestamp, peer_pubkey, peer_alias, direction, message, status, payment_hash)
-values ($1, $2, $3, $4, $5, $6, $7)
+insert into chat_messages (timestamp, peer_pubkey, peer_alias, direction, message, status, payment_hash, amount_sat, identity_source, sender_verified)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 on conflict do nothing
-`, item.Timestamp, item.PeerPubkey, item.PeerAlias, item.Direction, item.Message, item.Status, item.PaymentHash)
+`, item.Timestamp, item.PeerPubkey, item.PeerAlias, item.Direction, item.Message, item.Status, item.PaymentHash, item.AmountSat, item.IdentitySource, item.SenderVerified)
 		}
 
 		br := tx.SendBatch(ctx, batch)
@@ -482,10 +520,10 @@ func (c *ChatService) dbAppendMessage(ctx context.Context, db *pgxpool.Pool, msg
 		return err
 	}
 	_, err := db.Exec(ctx, `
-insert into chat_messages (timestamp, peer_pubkey, peer_alias, direction, message, status, payment_hash)
-values ($1, $2, $3, $4, $5, $6, $7)
+insert into chat_messages (timestamp, peer_pubkey, peer_alias, direction, message, status, payment_hash, amount_sat, identity_source, sender_verified)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 on conflict do nothing
-`, msg.Timestamp, msg.PeerPubkey, msg.PeerAlias, msg.Direction, msg.Message, msg.Status, msg.PaymentHash)
+`, msg.Timestamp, msg.PeerPubkey, msg.PeerAlias, msg.Direction, msg.Message, msg.Status, msg.PaymentHash, msg.AmountSat, msg.IdentitySource, msg.SenderVerified)
 	return err
 }
 
@@ -500,7 +538,7 @@ func (c *ChatService) dbListMessages(ctx context.Context, db *pgxpool.Pool, peer
 	}
 
 	rows, err := db.Query(ctx, `
-select timestamp, peer_pubkey, peer_alias, direction, message, status, payment_hash
+select timestamp, peer_pubkey, peer_alias, direction, message, status, payment_hash, amount_sat, identity_source, sender_verified
 from chat_messages
 where peer_pubkey = $1
   and timestamp >= now() - interval '30 day'
@@ -523,6 +561,9 @@ limit $2
 			&item.Message,
 			&item.Status,
 			&item.PaymentHash,
+			&item.AmountSat,
+			&item.IdentitySource,
+			&item.SenderVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -556,7 +597,9 @@ latest_message as (
     peer_pubkey,
     timestamp as last_message_at,
     message as last_message,
-    direction as last_message_direction
+    direction as last_message_direction,
+    identity_source,
+    sender_verified
   from chat_messages
   where timestamp >= now() - interval '30 day'
   order by peer_pubkey, timestamp desc, id desc
@@ -576,7 +619,9 @@ select
   inbound.last_inbound_at,
   coalesce(msg.last_message_at, inbound.last_inbound_at) as last_message_at,
   coalesce(msg.last_message, '') as last_message,
-  coalesce(msg.last_message_direction, '') as last_message_direction
+  coalesce(msg.last_message_direction, '') as last_message_direction,
+  coalesce(msg.identity_source, '') as identity_source,
+  coalesce(msg.sender_verified, false) as sender_verified
 from latest_inbound inbound
 left join latest_message msg on msg.peer_pubkey = inbound.peer_pubkey
 left join latest_alias alias on alias.peer_pubkey = inbound.peer_pubkey
@@ -597,6 +642,8 @@ order by coalesce(msg.last_message_at, inbound.last_inbound_at) desc, inbound.pe
 			&item.LastMessageAt,
 			&item.LastMessage,
 			&item.LastMessageDirection,
+			&item.IdentitySource,
+			&item.SenderVerified,
 		); err != nil {
 			return nil, err
 		}
@@ -637,9 +684,9 @@ set value = excluded.value,
 	return err
 }
 
-func extractKeysendMessage(invoice *lnrpc.Invoice) (string, uint64, string) {
+func extractKeysendMessage(invoice *lnrpc.Invoice) (string, uint64, string, string) {
 	if invoice == nil {
-		return "", 0, ""
+		return "", 0, "", ""
 	}
 	for _, htlc := range invoice.Htlcs {
 		if htlc == nil {
@@ -653,9 +700,10 @@ func extractKeysendMessage(invoice *lnrpc.Invoice) (string, uint64, string) {
 			continue
 		}
 		sender := keysendSenderFromRecords(htlc.CustomRecords)
-		return string(payload), htlc.ChanId, sender
+		signature := keysendSignatureFromRecords(htlc.CustomRecords)
+		return string(payload), htlc.ChanId, sender, signature
 	}
-	return "", 0, ""
+	return "", 0, "", ""
 }
 
 func keysendSenderFromRecords(records map[uint64][]byte) string {
@@ -673,6 +721,60 @@ func keysendSenderFromRecords(records map[uint64][]byte) string {
 		return strings.ToLower(string(raw))
 	}
 	return ""
+}
+
+func keysendSignatureFromRecords(records map[uint64][]byte) string {
+	if len(records) == 0 {
+		return ""
+	}
+	raw, ok := records[lndclient.KeysendSenderSignatureRecord]
+	if !ok || len(raw) == 0 {
+		return ""
+	}
+	if !utf8.Valid(raw) {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
+}
+
+func keysendInvoiceAmountSat(invoice *lnrpc.Invoice) int64 {
+	if invoice == nil {
+		return 0
+	}
+	if invoice.AmtPaidSat > 0 {
+		return invoice.AmtPaidSat
+	}
+	if invoice.AmtPaidMsat > 0 {
+		return invoice.AmtPaidMsat / 1000
+	}
+	if invoice.Value > 0 {
+		return invoice.Value
+	}
+	return 0
+}
+
+func (c *ChatService) verifyKeysendSender(invoice *lnrpc.Invoice, senderPubkey string, signature string, amountSat int64, paymentHash string, message string) bool {
+	if c == nil || c.lnd == nil || invoice == nil {
+		return false
+	}
+	recipientPubkey := ""
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	if pubkey, err := c.lnd.SelfPubkey(ctx); err == nil {
+		recipientPubkey = pubkey
+	}
+	cancel()
+	if strings.TrimSpace(recipientPubkey) == "" {
+		return false
+	}
+
+	payload := lndclient.KeysendIdentityPayload(senderPubkey, recipientPubkey, amountSat, paymentHash, message)
+	verifyCtx, verifyCancel := context.WithTimeout(context.Background(), 4*time.Second)
+	recoveredPubkey, valid, err := c.lnd.VerifyMessage(verifyCtx, payload, signature)
+	verifyCancel()
+	if err != nil || !valid {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(recoveredPubkey), strings.TrimSpace(senderPubkey))
 }
 
 func validateChatMessage(message string) error {
@@ -707,6 +809,10 @@ func normalizeChatMessage(msg ChatMessage) ChatMessage {
 	normalized.Message = strings.TrimSpace(msg.Message)
 	normalized.Status = strings.TrimSpace(msg.Status)
 	normalized.PaymentHash = normalizeHash(msg.PaymentHash)
+	if normalized.AmountSat < 0 {
+		normalized.AmountSat = 0
+	}
+	normalized.IdentitySource = strings.TrimSpace(msg.IdentitySource)
 	return normalized
 }
 
@@ -830,6 +936,8 @@ func (s *chatFileStore) inbox() ([]ChatInboxItem, error) {
 				LastMessageAt:        msg.Timestamp,
 				LastMessage:          chatPreview(msg.Message),
 				LastMessageDirection: msg.Direction,
+				IdentitySource:       strings.TrimSpace(msg.IdentitySource),
+				SenderVerified:       msg.SenderVerified,
 			}
 		}
 		if alias := strings.TrimSpace(msg.PeerAlias); alias != "" {

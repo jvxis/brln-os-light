@@ -1111,7 +1111,7 @@ export default function RebalanceCenter() {
               <p className="text-xs uppercase tracking-wide text-fog/60">{t('rebalanceCenter.overview.liveCost')}</p>
               <p className="text-lg font-semibold text-fog">{formatSats(overview.live_cost_sat)}</p>
               <p className="text-xs text-fog/50">{t('rebalanceCenter.overview.last24h')}</p>
-              <p className="text-xs text-fog/50">
+              <p className={budgetUnlimited ? 'text-xs text-amber-200' : 'text-xs text-fog/50'}>
                 {t('rebalanceCenter.overview.eligibleCounts', {
                   sources: overview.eligible_sources ?? 0,
                   targets: overview.targets_needing ?? 0
@@ -1353,7 +1353,7 @@ export default function RebalanceCenter() {
               {overview.manual_reserve_enabled && (
                 <p className="text-xs text-fog/50">{t('rebalanceCenter.overview.autoBudgetCap', { value: formatSats(autoBudgetCapSat) })}</p>
               )}
-              <p className={budgetUnlimited ? 'text-xs text-emerald-200' : 'text-xs text-fog/50'}>
+              <p className={budgetUnlimited ? 'text-xs text-amber-200' : 'text-xs text-fog/50'}>
                 {budgetUnlimited
                   ? t('rebalanceCenter.overview.autoBudgetUnlimited', { value: formatSats(remainingForAutoSat) })
                   : t('rebalanceCenter.overview.autoUsableBudget', { value: formatSats(remainingForAutoSat) })}
@@ -1361,7 +1361,7 @@ export default function RebalanceCenter() {
               {manualRestartBudgetEnforced ? (
                 <p className="text-xs text-fog/50">{t('rebalanceCenter.overview.manualRestartUsableBudget', { value: formatSats(remainingTotalSat) })}</p>
               ) : (
-                <p className="text-xs text-emerald-200">
+                <p className={budgetUnlimited ? 'text-xs text-amber-200' : 'text-xs text-emerald-200'}>
                   {budgetUnlimited
                     ? t('rebalanceCenter.overview.manualRestartBudgetUnlimited', { value: formatSats(remainingTotalSat) })
                     : t('rebalanceCenter.overview.manualRestartIgnoresBudget')}
@@ -1709,7 +1709,19 @@ export default function RebalanceCenter() {
               </SettingsSubcard>
 
               <SettingsSubcard title={t('rebalanceCenter.settings.groups.budget')}>
-                <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-3">
+                  <label
+                    className="flex items-center gap-2 text-sm text-fog/70"
+                    title={t('rebalanceCenter.settingsHints.budgetUnlimited')}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={config.budget_unlimited}
+                      onChange={(e) => setConfig({ ...config, budget_unlimited: e.target.checked })}
+                    />
+                    {t('rebalanceCenter.settings.budgetUnlimited')}
+                  </label>
+                  <div className="grid gap-3 md:grid-cols-2">
                   <div className="space-y-2">
                     <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.dailyBudgetPct')}>
                       {t('rebalanceCenter.settings.dailyBudgetPct')}
@@ -1738,17 +1750,6 @@ export default function RebalanceCenter() {
                       <option value="revenue_24h_pct">{t('rebalanceCenter.settings.budgetModeOptions.revenue_24h_pct')}</option>
                     </select>
                   </div>
-                  <label
-                    className="flex items-center gap-2 text-sm text-fog/70"
-                    title={t('rebalanceCenter.settingsHints.budgetUnlimited')}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={config.budget_unlimited}
-                      onChange={(e) => setConfig({ ...config, budget_unlimited: e.target.checked })}
-                    />
-                    {t('rebalanceCenter.settings.budgetUnlimited')}
-                  </label>
                   <label
                     className="flex items-center gap-2 text-sm text-fog/70"
                     title={t('rebalanceCenter.settingsHints.budgetAutoOnly')}
@@ -1800,6 +1801,7 @@ export default function RebalanceCenter() {
                       value={config.manual_reserve_value}
                       onChange={(e) => setConfig({ ...config, manual_reserve_value: Number(e.target.value) })}
                     />
+                  </div>
                   </div>
                 </div>
               </SettingsSubcard>

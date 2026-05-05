@@ -11,6 +11,7 @@ export type RebalanceConfig = {
   roi_min: number
   daily_budget_pct: number
   budget_mode: string
+  budget_unlimited: boolean
   budget_auto_only: boolean
   manual_reserve_enabled: boolean
   manual_reserve_mode: string
@@ -79,6 +80,7 @@ export type RebalanceOverview = {
   daily_spent_manual_sat: number
   remaining_total_sat?: number
   remaining_for_auto_sat?: number
+  budget_unlimited?: boolean
   budget_auto_only?: boolean
   manual_reserve_enabled?: boolean
   manual_reserve_mode?: string

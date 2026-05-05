@@ -25,6 +25,7 @@ type rebalanceConfigPayload struct {
 	ROIMin                    *float64 `json:"roi_min,omitempty"`
 	DailyBudgetPct            *float64 `json:"daily_budget_pct,omitempty"`
 	BudgetMode                *string  `json:"budget_mode,omitempty"`
+	BudgetUnlimited           *bool    `json:"budget_unlimited,omitempty"`
 	BudgetAutoOnly            *bool    `json:"budget_auto_only,omitempty"`
 	ManualReserveEnabled      *bool    `json:"manual_reserve_enabled,omitempty"`
 	ManualReserveMode         *string  `json:"manual_reserve_mode,omitempty"`
@@ -183,6 +184,9 @@ func applyRebalanceConfigPayload(cfg RebalanceConfig, payload rebalanceConfigPay
 	}
 	if payload.BudgetMode != nil {
 		cfg.BudgetMode = *payload.BudgetMode
+	}
+	if payload.BudgetUnlimited != nil {
+		cfg.BudgetUnlimited = *payload.BudgetUnlimited
 	}
 	if payload.BudgetAutoOnly != nil {
 		cfg.BudgetAutoOnly = *payload.BudgetAutoOnly

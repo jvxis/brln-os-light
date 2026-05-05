@@ -181,6 +181,7 @@ type RebalanceConfig struct {
 	ROIMin                    float64 `json:"roi_min"`
 	DailyBudgetPct            float64 `json:"daily_budget_pct"`
 	BudgetMode                string  `json:"budget_mode"`
+	BudgetUnlimited           bool    `json:"budget_unlimited"`
 	BudgetAutoOnly            bool    `json:"budget_auto_only"`
 	ManualReserveEnabled      bool    `json:"manual_reserve_enabled"`
 	ManualReserveMode         string  `json:"manual_reserve_mode"`
@@ -250,6 +251,7 @@ type RebalanceOverview struct {
 	DailySpentManualSat           int64                 `json:"daily_spent_manual_sat"`
 	RemainingTotalSat             int64                 `json:"remaining_total_sat"`
 	RemainingForAutoSat           int64                 `json:"remaining_for_auto_sat"`
+	BudgetUnlimited               bool                  `json:"budget_unlimited"`
 	BudgetAutoOnly                bool                  `json:"budget_auto_only"`
 	ManualReserveEnabled          bool                  `json:"manual_reserve_enabled"`
 	ManualReserveMode             string                `json:"manual_reserve_mode,omitempty"`
@@ -673,6 +675,7 @@ func defaultRebalanceConfig() RebalanceConfig {
 		ROIMin:                    1.1,
 		DailyBudgetPct:            25,
 		BudgetMode:                rebalanceBudgetModeHybridRevenue,
+		BudgetUnlimited:           false,
 		BudgetAutoOnly:            true,
 		ManualReserveEnabled:      false,
 		ManualReserveMode:         rebalanceManualReserveModeFixedSat,
@@ -2049,7 +2052,8 @@ func (s *RebalanceService) runAutoScan() {
 	budget, spentAuto, _, spentTotal := s.getDailyBudget(ctx)
 	manualReserveSat := computeManualReserveSat(cfg, budget)
 	remaining := computeRemainingForAuto(budget, spentAuto, spentTotal, manualReserveSat, cfg.BudgetAutoOnly)
-	if remaining == 0 {
+	budgetEnforced := shouldEnforceAutoBudget(cfg)
+	if budgetEnforced && remaining == 0 {
 		scanCandidates = len(candidates)
 		scanRemainingBudget = 0
 		scanReasons = map[string]int{"budget_too_low": len(candidates)}
@@ -2069,7 +2073,7 @@ func (s *RebalanceService) runAutoScan() {
 	}
 
 	for _, target := range candidates {
-		if remaining <= 0 {
+		if budgetEnforced && remaining <= 0 {
 			scanStatus = "budget_exhausted"
 			break
 		}
@@ -2099,7 +2103,7 @@ func (s *RebalanceService) runAutoScan() {
 			reason = targetCooldownProbeReason
 			noteSkip("target_cooldown_probe")
 		}
-		if estimatedCost > remaining {
+		if budgetEnforced && estimatedCost > remaining {
 			fitAmount := (remaining * 1_000_000) / maxFeePpm
 			if fitAmount <= 0 {
 				noteSkip("budget_too_low")
@@ -2125,7 +2129,9 @@ func (s *RebalanceService) runAutoScan() {
 			s.mu.Lock()
 			s.lastAutoByTarget[target.Channel.ChannelID] = scanAt
 			s.mu.Unlock()
-			remaining -= estimatedCost
+			if budgetEnforced {
+				remaining -= estimatedCost
+			}
 			queuedCount++
 		} else {
 			switch err.Error() {
@@ -2158,9 +2164,9 @@ func (s *RebalanceService) runAutoScan() {
 		scanCandidates = len(candidates)
 		scanRemainingBudget = remaining
 		scanReasons = copyReasonCounts(skipReasons)
-	} else if remaining > 0 {
+	} else if remaining > 0 || !budgetEnforced {
 		budgetBlocked := skipReasons["budget_too_low"] + skipReasons["budget_below_min"]
-		if budgetBlocked == len(candidates) {
+		if budgetEnforced && budgetBlocked == len(candidates) {
 			scanStatus = "budget_insufficient"
 		} else {
 			scanStatus = "no_queue"
@@ -6875,6 +6881,7 @@ end $$;
     roi_min double precision not null default 1.1,
     daily_budget_pct double precision not null default 25,
     budget_mode text not null default 'hybrid_revenue',
+    budget_unlimited boolean not null default false,
     budget_auto_only boolean not null default true,
     manual_reserve_enabled boolean not null default false,
     manual_reserve_mode text not null default 'fixed_sat',
@@ -6925,6 +6932,8 @@ end $$;
     add column if not exists amount_probe_steps integer not null default 6;
   alter table rebalance_config
     add column if not exists budget_mode text not null default 'hybrid_revenue';
+  alter table rebalance_config
+    add column if not exists budget_unlimited boolean not null default false;
   alter table rebalance_config
     add column if not exists budget_auto_only boolean not null default true;
   alter table rebalance_config
@@ -6998,6 +7007,8 @@ end $$;
     alter column daily_budget_pct set default 25;
   alter table rebalance_config
     alter column budget_mode set default 'hybrid_revenue';
+  alter table rebalance_config
+    alter column budget_unlimited set default false;
   alter table rebalance_config
     alter column budget_auto_only set default true;
   alter table rebalance_config
@@ -7244,7 +7255,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 	}
 
 	row := s.db.QueryRow(ctx, `
-  select auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
+  select auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_unlimited, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, mc_half_life_sec, payback_mode_flags,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier
@@ -7264,6 +7275,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.ROIMin,
 		&cfg.DailyBudgetPct,
 		&cfg.BudgetMode,
+		&cfg.BudgetUnlimited,
 		&cfg.BudgetAutoOnly,
 		&cfg.ManualReserveEnabled,
 		&cfg.ManualReserveMode,
@@ -7319,11 +7331,11 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
 	}
 	_, err := s.db.Exec(ctx, `
   insert into rebalance_config (
-    id, auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
+    id, auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_unlimited, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, mc_half_life_sec, payback_mode_flags,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,now())
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scan_interval_sec = excluded.scan_interval_sec,
@@ -7337,6 +7349,7 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     roi_min = excluded.roi_min,
     daily_budget_pct = excluded.daily_budget_pct,
     budget_mode = excluded.budget_mode,
+    budget_unlimited = excluded.budget_unlimited,
     budget_auto_only = excluded.budget_auto_only,
     manual_reserve_enabled = excluded.manual_reserve_enabled,
     manual_reserve_mode = excluded.manual_reserve_mode,
@@ -7374,7 +7387,7 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     autofee_settling_window_sec = excluded.autofee_settling_window_sec,
     autofee_settling_multiplier = excluded.autofee_settling_multiplier,
     updated_at = now()
-  `, rebalanceConfigID, cfg.AutoEnabled, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
+  `, rebalanceConfigID, cfg.AutoEnabled, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetUnlimited, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
 		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier,
 	)
 	return err
@@ -7821,7 +7834,14 @@ func computeRemainingForAuto(totalBudgetSat int64, spentAutoSat int64, spentTota
 	return remainingForAuto
 }
 
+func shouldEnforceAutoBudget(cfg RebalanceConfig) bool {
+	return !cfg.BudgetUnlimited
+}
+
 func shouldEnforceManualRestartBudget(cfg RebalanceConfig, source string, reason string, manualAutoRestart bool) bool {
+	if cfg.BudgetUnlimited {
+		return false
+	}
 	if cfg.BudgetAutoOnly {
 		return false
 	}
@@ -8925,6 +8945,7 @@ where report_date >= current_date - interval '6 days'
 		DailySpentManualSat:           spentManual,
 		RemainingTotalSat:             remainingTotal,
 		RemainingForAutoSat:           remainingForAuto,
+		BudgetUnlimited:               cfg.BudgetUnlimited,
 		BudgetAutoOnly:                cfg.BudgetAutoOnly,
 		ManualReserveEnabled:          cfg.ManualReserveEnabled,
 		ManualReserveMode:             cfg.ManualReserveMode,

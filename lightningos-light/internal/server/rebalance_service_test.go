@@ -13,6 +13,7 @@ import (
 
 func ptrInt64(v int64) *int64 { return &v }
 func ptrInt(v int) *int       { return &v }
+func ptrBool(v bool) *bool    { return &v }
 func ptrFloat64(v float64) *float64 {
 	return &v
 }
@@ -37,6 +38,9 @@ func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	}
 	if cfg.BudgetMode != rebalanceBudgetModeHybridRevenue {
 		t.Fatalf("expected budget_mode default=%s, got %s", rebalanceBudgetModeHybridRevenue, cfg.BudgetMode)
+	}
+	if cfg.BudgetUnlimited {
+		t.Fatalf("expected budget_unlimited default=false")
 	}
 	if !cfg.BudgetAutoOnly {
 		t.Fatalf("expected budget_auto_only default=true")
@@ -378,6 +382,7 @@ func TestApplyRebalanceConfigPayloadOnlyTouchesProvidedFields(t *testing.T) {
 
 	got := applyRebalanceConfigPayload(cfg, rebalanceConfigPayload{
 		DeadbandPct:      &deadband,
+		BudgetUnlimited:  ptrBool(true),
 		BudgetAutoOnly:   &budgetAutoOnly,
 		MinExecuteSat:    &minExecuteSat,
 		GainModelVersion: &gainModelVersion,
@@ -389,6 +394,9 @@ func TestApplyRebalanceConfigPayloadOnlyTouchesProvidedFields(t *testing.T) {
 	}
 	if got.BudgetAutoOnly {
 		t.Fatalf("expected explicit false budget_auto_only to be applied")
+	}
+	if !got.BudgetUnlimited {
+		t.Fatalf("expected explicit true budget_unlimited to be applied")
 	}
 	if got.MinExecuteSat != minExecuteSat {
 		t.Fatalf("expected min_execute_sat=%d, got %d", minExecuteSat, got.MinExecuteSat)
@@ -1106,6 +1114,17 @@ func TestComputeRemainingForAutoIgnoresManualSpendWhenBudgetAutoOnly(t *testing.
 	}
 }
 
+func TestShouldEnforceAutoBudgetHonorsUnlimitedMode(t *testing.T) {
+	cfg := RebalanceConfig{}
+	if !shouldEnforceAutoBudget(cfg) {
+		t.Fatalf("expected auto budget enforcement by default")
+	}
+	cfg.BudgetUnlimited = true
+	if shouldEnforceAutoBudget(cfg) {
+		t.Fatalf("expected unlimited budget to bypass auto budget enforcement")
+	}
+}
+
 func TestCheckManualBudgetAllowanceBudgetExhausted(t *testing.T) {
 	cfg := RebalanceConfig{
 		DailyBudgetPct:       20,
@@ -1183,6 +1202,11 @@ func TestShouldEnforceManualRestartBudgetHonorsAutoOnlyMode(t *testing.T) {
 	if !shouldEnforceManualRestartBudget(cfg, "manual", "", true) {
 		t.Fatalf("expected manual restart budget enforcement when auto-only mode is disabled")
 	}
+	cfg.BudgetUnlimited = true
+	if shouldEnforceManualRestartBudget(cfg, "manual", "", true) {
+		t.Fatalf("expected unlimited budget to bypass manual restart budget enforcement")
+	}
+	cfg.BudgetUnlimited = false
 	cfg.BudgetAutoOnly = true
 	if shouldEnforceManualRestartBudget(cfg, "manual", "", true) {
 		t.Fatalf("expected manual restart budget to be bypassed when budget_auto_only is enabled")

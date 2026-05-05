@@ -3228,6 +3228,8 @@
       "htlc_failures_elevated": "Elevated HTLC failures",
       "rebalance_dependence_high": "High rebalance dependence",
       "rebalance_no_payback": "Rebalance has no payback after 7 days",
+      "no_economic_movement_30d": "No economic movement in 30 days",
+      "rebalance_only_30d": "Only 30d movement was rebalance",
       "assisted_revenue_support": "Channel is relevant as a forward entry path",
       "capital_efficiency_high": "High capital efficiency",
       "capital_efficiency_low": "Low capital efficiency"

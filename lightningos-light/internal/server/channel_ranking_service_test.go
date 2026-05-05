@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -42,6 +43,8 @@ func TestClassifyChannelRankingKeepsStrong30dChannelUnderMonitor(t *testing.T) {
 		channelHTLCAggregate{Total: 2, Forward: 2},
 		48,
 		false,
+		false,
+		false,
 	)
 
 	if state != "monitor" {
@@ -81,6 +84,8 @@ func TestClassifyChannelRankingClosesOnSevereOperationalRisk(t *testing.T) {
 		400,
 		channelHTLCAggregate{Total: 10, Liquidity: 5},
 		82,
+		false,
+		false,
 		false,
 	)
 
@@ -137,6 +142,8 @@ func TestClassifyChannelRankingCreditsAssistedRevenueBeforeClose(t *testing.T) {
 		368,
 		channelHTLCAggregate{},
 		22,
+		false,
+		false,
 		false,
 	)
 
@@ -196,6 +203,8 @@ func TestClassifyChannelRankingMaintainsWithForwardHTLCNoise(t *testing.T) {
 		channelHTLCAggregate{Total: 2_000, Forward: 1_980, Policy: 3, Liquidity: 17},
 		24,
 		false,
+		false,
+		false,
 	)
 
 	if state != "maintain" {
@@ -238,6 +247,8 @@ func TestClassifyChannelRankingKeepsSevereLocalHTLCRiskUnderMonitor(t *testing.T
 		500,
 		channelHTLCAggregate{Total: 2_000, Forward: 1_700, Policy: 20, Liquidity: 280},
 		24,
+		false,
+		false,
 		false,
 	)
 
@@ -284,6 +295,8 @@ func TestClassifyChannelRankingDefersCloseDuringWarmup(t *testing.T) {
 		48,
 		channelHTLCAggregate{Total: 10, Liquidity: 5},
 		82,
+		false,
+		false,
 		false,
 	)
 
@@ -400,6 +413,111 @@ func TestBuildChannelRankingItemTreatsIdlePostRebalanceAsCloseCandidate(t *testi
 	}
 	if !hasChannelRankingRecommendation(item.Recommendations, "prepare_close_candidate") {
 		t.Fatalf("expected prepare_close_candidate recommendation")
+	}
+}
+
+func TestBuildChannelRankingItemTreatsNoMovement30dAsCloseCandidate(t *testing.T) {
+	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	ch := lndclient.ChannelInfo{
+		ChannelPoint:     "idle-30d:0",
+		ChannelID:        100,
+		RemotePubkey:     "02idle",
+		PeerAlias:        "Idle30d",
+		Active:           true,
+		CapacitySat:      5_000_000,
+		LocalBalanceSat:  2_500_000,
+		RemoteBalanceSat: 2_500_000,
+	}
+
+	item := buildChannelRankingItem(
+		now,
+		ch,
+		"",
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		lndclient.ChannelMovement7d{},
+		channelPeerAggregate{Score30d: 75, SampleCount: 720},
+		channelHTLCAggregate{},
+	)
+
+	if item.Score7d >= 24 {
+		t.Fatalf("expected 30d idle penalty to push score below close threshold, got %d", item.Score7d)
+	}
+	if item.State != "close" {
+		t.Fatalf("expected no movement in 30d to become close candidate before persistence guard, got %s", item.State)
+	}
+	if !hasChannelRankingReason(item.Reasons, "no_economic_movement_30d") {
+		t.Fatalf("expected no_economic_movement_30d reason")
+	}
+	if !hasChannelRankingRecommendation(item.Recommendations, "prepare_close_candidate") {
+		t.Fatalf("expected prepare_close_candidate recommendation")
+	}
+}
+
+func TestBuildChannelRankingItemTreatsRebalanceOnly30dAsCloseCandidate(t *testing.T) {
+	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	ch := lndclient.ChannelInfo{
+		ChannelPoint:     "rebalance-only-30d:0",
+		ChannelID:        101,
+		RemotePubkey:     "02rebalonly",
+		PeerAlias:        "RebalanceOnly",
+		Active:           true,
+		CapacitySat:      5_000_000,
+		LocalBalanceSat:  150_000,
+		RemoteBalanceSat: 4_850_000,
+	}
+
+	item := buildChannelRankingItem(
+		now,
+		ch,
+		"",
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{FeeSat: 60, AmountSat: 100_000, Ppm: 600},
+		channelTrafficStat{FeeSat: 60, AmountSat: 100_000, Ppm: 600},
+		lndclient.ChannelMovement7d{},
+		channelPeerAggregate{Score30d: 75, SampleCount: 720},
+		channelHTLCAggregate{},
+	)
+
+	if item.Score7d >= 24 {
+		t.Fatalf("expected rebalance-only 30d penalty to push score below close threshold, got %d", item.Score7d)
+	}
+	if item.State != "close" {
+		t.Fatalf("expected rebalance-only 30d to become close candidate before persistence guard, got %s", item.State)
+	}
+	if !hasChannelRankingReason(item.Reasons, "rebalance_only_30d") {
+		t.Fatalf("expected rebalance_only_30d reason")
+	}
+	if !hasChannelRankingRecommendation(item.Recommendations, "stop_nonessential_rebalances") {
+		t.Fatalf("expected stop_nonessential_rebalances recommendation")
+	}
+	if !hasChannelRankingRecommendation(item.Recommendations, "prepare_close_candidate") {
+		t.Fatalf("expected prepare_close_candidate recommendation")
+	}
+}
+
+func TestApplyClosePersistenceGuardAllowsThirtyDayIdleEvidence(t *testing.T) {
+	service := &ChannelRankingService{}
+	item := ChannelRankingItem{
+		ChannelPoint:   "idle-30d:0",
+		State:          "close",
+		CloseCandidate: true,
+		Reasons:        []ChannelRankingReason{{Code: "no_economic_movement_30d"}},
+		ComputedAt:     time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC),
+	}
+
+	if err := service.applyClosePersistenceGuard(context.Background(), &item); err != nil {
+		t.Fatalf("expected 30d idle evidence to bypass persistence lookup, got %v", err)
+	}
+	if item.State != "close" {
+		t.Fatalf("expected state to remain close, got %s", item.State)
 	}
 }
 

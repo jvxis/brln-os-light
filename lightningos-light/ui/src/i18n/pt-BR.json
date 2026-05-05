@@ -3228,6 +3228,8 @@
       "htlc_failures_elevated": "Falhas HTLC elevadas",
       "rebalance_dependence_high": "Alta dependência de rebalance",
       "rebalance_no_payback": "Rebalance sem payback após 7 dias",
+      "no_economic_movement_30d": "Sem movimento econômico em 30 dias",
+      "rebalance_only_30d": "Único movimento em 30 dias foi rebalance",
       "assisted_revenue_support": "Canal relevante como entrada de forwards",
       "capital_efficiency_high": "Boa eficiência de capital",
       "capital_efficiency_low": "Eficiência de capital baixa"

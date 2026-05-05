@@ -416,6 +416,45 @@ func TestBuildChannelRankingItemTreatsIdlePostRebalanceAsCloseCandidate(t *testi
 	}
 }
 
+func TestBuildChannelRankingItemDoesNotFlagRebalanceNoPaybackWithoutFull7dObservation(t *testing.T) {
+	now := time.Date(2026, 5, 2, 19, 55, 0, 0, time.UTC)
+	ch := lndclient.ChannelInfo{
+		ChannelPoint:     "new-node-rebalance:0",
+		ChannelID:        103,
+		RemotePubkey:     "02newrebal",
+		PeerAlias:        "NewRebalancePeer",
+		Active:           true,
+		CapacitySat:      10_000_000,
+		LocalBalanceSat:  13_129,
+		RemoteBalanceSat: 9_985_861,
+	}
+
+	item := buildChannelRankingItem(
+		now,
+		ch,
+		"",
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{FeeSat: 19, AmountSat: 13_129, Ppm: 1381},
+		lndclient.ChannelMovement7d{},
+		channelPeerAggregate{Score30d: 51, SampleCount: 48},
+		channelHTLCAggregate{},
+	)
+
+	if item.State == "close" {
+		t.Fatalf("expected insufficient 7d observation to avoid close, got %s", item.State)
+	}
+	if hasChannelRankingReason(item.Reasons, "rebalance_no_payback") {
+		t.Fatalf("did not expect rebalance_no_payback reason without full 7d observation")
+	}
+	if hasChannelRankingRecommendation(item.Recommendations, "prepare_close_candidate") {
+		t.Fatalf("did not expect close candidate recommendation without full 7d observation")
+	}
+}
+
 func TestBuildChannelRankingItemTreatsNoMovement30dAsCloseCandidate(t *testing.T) {
 	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
 	ch := lndclient.ChannelInfo{
@@ -455,6 +494,48 @@ func TestBuildChannelRankingItemTreatsNoMovement30dAsCloseCandidate(t *testing.T
 	}
 	if !hasChannelRankingRecommendation(item.Recommendations, "prepare_close_candidate") {
 		t.Fatalf("expected prepare_close_candidate recommendation")
+	}
+}
+
+func TestBuildChannelRankingItemDoesNotCloseIdleChannelWithoutFull30dObservation(t *testing.T) {
+	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	ch := lndclient.ChannelInfo{
+		ChannelPoint:     "new-node-idle:0",
+		ChannelID:        102,
+		RemotePubkey:     "02newnode",
+		PeerAlias:        "NewNodePeer",
+		Active:           true,
+		CapacitySat:      5_000_000,
+		LocalBalanceSat:  2_500_000,
+		RemoteBalanceSat: 2_500_000,
+	}
+
+	item := buildChannelRankingItem(
+		now,
+		ch,
+		"",
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		lndclient.ChannelMovement7d{},
+		channelPeerAggregate{Score30d: 75, SampleCount: 48},
+		channelHTLCAggregate{},
+	)
+
+	if item.State == "close" {
+		t.Fatalf("expected insufficient 30d observation to avoid close, got %s", item.State)
+	}
+	if item.Score7d < 24 {
+		t.Fatalf("expected idle 30d penalty not to apply before full observation, got score %d", item.Score7d)
+	}
+	if hasChannelRankingReason(item.Reasons, "no_economic_movement_30d") {
+		t.Fatalf("did not expect no_economic_movement_30d reason without full observation")
+	}
+	if hasChannelRankingReason(item.Reasons, "low_usage") {
+		t.Fatalf("did not expect low_usage reason without full 7d observation")
 	}
 }
 

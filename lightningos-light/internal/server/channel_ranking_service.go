@@ -23,10 +23,12 @@ const (
 	channelRankingHTLCPolicyHigh30d          = 25
 	channelRankingHTLCLiquidityHigh30d       = 150
 	channelRankingHTLCLinkHigh30d            = 200
+	channelRankingFull7dObservationSamples   = 7 * 24
 	channelRankingRebalanceNoPaybackPenalty  = 30
 	channelRankingRebalanceNoPaybackScoreCap = 23
 	channelRankingIdle30dPenalty             = 40
 	channelRankingIdle30dScoreCap            = 23
+	channelRankingFull30dObservationSamples  = 30 * 24
 )
 
 var ErrChannelRankingDBUnavailable = errors.New("channel ranking db unavailable")
@@ -986,9 +988,11 @@ func buildChannelRankingItem(
 		Ppm:       forward30d.Ppm,
 	}
 	rebalanceDependenceScore := computeRebalanceDependenceScore(forward30d, rebal30d)
-	rebalanceNoPayback := channelRankingRebalanceNoPaybackAfter7d(forward7d, assisted7d, rebal7d, rebal30d, effectiveProfitSat30d)
-	noEconomicMovement30d := channelRankingNoEconomicMovement30d(forward30d, assisted30d, rebal30d)
-	rebalanceOnly30d := channelRankingRebalanceOnly30d(forward30d, assisted30d, rebal30d)
+	full7dObservation := channelRankingHasFull7dObservation(peerAggregate.SampleCount)
+	rebalanceNoPayback := full7dObservation && channelRankingRebalanceNoPaybackAfter7d(forward7d, assisted7d, rebal7d, rebal30d, effectiveProfitSat30d)
+	full30dObservation := channelRankingHasFull30dObservation(peerAggregate.SampleCount)
+	noEconomicMovement30d := full30dObservation && channelRankingNoEconomicMovement30d(forward30d, assisted30d, rebal30d)
+	rebalanceOnly30d := full30dObservation && channelRankingRebalanceOnly30d(forward30d, assisted30d, rebal30d)
 	score7d := computeChannelRankingScore(ch, capacity, localPct, effectiveForward7d, rebal7d, effectiveProfitSat7d, peerAggregate.Score30d, htlcAggregate, rebalanceDependenceScore)
 	score7d = applyRebalanceNoPaybackPenalty(score7d, rebalanceNoPayback)
 	score7d = applyIdle30dPenalty(score7d, noEconomicMovement30d || rebalanceOnly30d)
@@ -1126,6 +1130,14 @@ func channelRankingNoEconomicMovement30d(forward30d channelTrafficStat, assisted
 	return !channelTrafficHasMovement(forward30d) &&
 		!channelTrafficHasMovement(assisted30d) &&
 		!channelTrafficHasMovement(rebal30d)
+}
+
+func channelRankingHasFull7dObservation(peerSampleCount30d int) bool {
+	return peerSampleCount30d >= channelRankingFull7dObservationSamples
+}
+
+func channelRankingHasFull30dObservation(peerSampleCount30d int) bool {
+	return peerSampleCount30d >= channelRankingFull30dObservationSamples
 }
 
 func channelRankingRebalanceOnly30d(forward30d channelTrafficStat, assisted30d channelTrafficStat, rebal30d channelTrafficStat) bool {
@@ -1305,6 +1317,7 @@ func classifyChannelRanking(
 ) (string, []ChannelRankingReason, []ChannelRankingRecommendation) {
 	reasons := make([]ChannelRankingReason, 0, 6)
 	recommendations := make([]ChannelRankingRecommendation, 0, 4)
+	full7dObservation := channelRankingHasFull7dObservation(peerSampleCount30d)
 
 	if profitSat7d > 0 {
 		reasons = append(reasons, ChannelRankingReason{Code: "positive_net_fees"})
@@ -1318,7 +1331,7 @@ func classifyChannelRanking(
 	if capacity > 0 && forward7d.AmountSat >= rankingMaxInt64(50000, capacity/2) {
 		reasons = append(reasons, ChannelRankingReason{Code: "strong_volume"})
 	}
-	if capacity > 0 && effectiveForward7d.AmountSat < rankingMaxInt64(25000, capacity/50) {
+	if full7dObservation && capacity > 0 && effectiveForward7d.AmountSat < rankingMaxInt64(25000, capacity/50) {
 		reasons = append(reasons, ChannelRankingReason{Code: "low_usage"})
 	}
 	if rebal7d.FeeSat > 0 && rebal7d.FeeSat >= rankingMaxInt64(50, forward7d.FeeSat) {
@@ -1439,7 +1452,7 @@ func classifyChannelRanking(
 		if htlcAggregate.Total >= 5 {
 			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "review_htlc_failures", TargetModule: "htlc-manager"})
 		}
-		if capacity > 0 && effectiveForward7d.AmountSat < rankingMaxInt64(25000, capacity/50) {
+		if full7dObservation && capacity > 0 && effectiveForward7d.AmountSat < rankingMaxInt64(25000, capacity/50) {
 			recommendations = appendUniqueRecommendation(recommendations, ChannelRankingRecommendation{Code: "observe_7d_before_close", TargetModule: "lightning-ops"})
 		}
 		if profitSat7d < 0 && effectiveProfitSat7d > profitSat7d {

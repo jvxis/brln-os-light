@@ -1321,11 +1321,15 @@ export default function RebalanceCenter() {
               <p className="text-xs uppercase tracking-wide text-fog/60">{t('rebalanceCenter.overview.dailyBudget')}</p>
               <p className="text-lg font-semibold text-fog">{formatSats(overview.daily_budget_sat)}</p>
               <p className="text-xs text-fog/50">
-                {budgetUnlimited
-                  ? t('rebalanceCenter.overview.budgetModeUnlimited', {
+                {budgetUnlimited ? (
+                  <>
+                    {t('rebalanceCenter.overview.budgetMode', {
                       mode: t(`rebalanceCenter.settings.budgetModeOptions.${config?.budget_mode || REBALANCE_DEFAULT_BUDGET_MODE}`)
-                    })
-                  : budgetAutoOnly
+                    })}
+                    {' · '}
+                    <span className="font-semibold text-amber-200">{t('rebalanceCenter.overview.budgetModeUnlimitedBadge')}</span>
+                  </>
+                ) : budgetAutoOnly
                   ? t('rebalanceCenter.overview.budgetModeAutoOnly', {
                       mode: t(`rebalanceCenter.settings.budgetModeOptions.${config?.budget_mode || REBALANCE_DEFAULT_BUDGET_MODE}`)
                     })

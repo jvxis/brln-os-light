@@ -2722,6 +2722,7 @@
       "budgetModeWithReserve": "Modo do orçamento: {{mode}} · reserva manual ativa",
       "budgetModeAutoOnly": "Modo do orçamento: {{mode}} · aplicado somente ao auto",
       "budgetModeUnlimited": "Modo do orçamento: {{mode}} · orçamento ilimitado ativo",
+      "budgetModeUnlimitedBadge": "orçamento ilimitado ativo",
       "dailyBudgetBase": "Orçamento base 7d: {{value}}",
       "dailyBudgetShortTerm": "Orçamento curto 24h: {{value}}",
       "scanStatus": {

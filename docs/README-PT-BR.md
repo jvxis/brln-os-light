@@ -768,7 +768,7 @@ ss -ltn | grep :8443
 - LNDg roda em Docker e escuta em `http://<IP_LAN_DO_SERVIDOR>:8889`.
 - LNbits roda em Docker e integra com a conexão local do LND.
 - Peerswap instala `peerswapd` + `psweb` (UI em `http://<IP_LAN_DO_SERVIDOR>:1984`) e requer Elements.
-- Elements roda como serviço nativo (Liquid Elements node, RPC em `127.0.0.1:7041`).
+- Elements roda como serviço nativo (Liquid Elements node, RPC em `127.0.0.1:7041`) e pode usar o Bitcoin remoto do clube ou um bitcoind local detectado pelo LND/bitcoin.conf.
 - RoboSats Gateway, Public Pool, Buy DePix e FSwap são gerenciados pelo mesmo fluxo de instalar/iniciar/parar/status da App Store.
 
 Notas LNDg:

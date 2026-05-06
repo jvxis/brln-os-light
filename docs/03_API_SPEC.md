@@ -71,7 +71,7 @@ GET /api/elements/status
 
 GET /api/elements/mainchain
 - Returns Elements mainchain source, RPC host/port, and local readiness.
-  - local_ready: true when Bitcoin Core is installed, running, and fully synced.
+  - local_ready: true when a local Bitcoin RPC (App Store or external) is reachable and fully synced.
 
 POST /api/elements/mainchain
 Body:

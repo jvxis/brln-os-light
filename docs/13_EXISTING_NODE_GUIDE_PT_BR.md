@@ -15,7 +15,7 @@ Pode ser necessario realizar varios ajustes manuais e adaptacoes que nao estao t
 
 ## Premissas
 - Dados em /data/lnd e /data/bitcoin.
-- Se o seu Bitcoin Core esta em outro diretorio (ex: /mnt/bitcoin-data), crie um bind mount ou symlink para /data/bitcoin (o LightningOS so le /data/bitcoin/bitcoin.conf).
+- Se o seu Bitcoin Core esta em outro diretorio (ex: /mnt/bitcoin-data), prefira expor as credenciais locais no bloco `[Bitcoind]` do `/data/lnd/lnd.conf`. Como fallback, mantenha um `bitcoin.conf` legivel em um caminho detectavel: `/data/bitcoin/bitcoin.conf`, `/etc/bitcoin/bitcoin.conf`, `/var/lib/bitcoind/bitcoin.conf`, `/home/bitcoin/.bitcoin/bitcoin.conf`, `/home/admin/.bitcoin/bitcoin.conf` ou `/root/.bitcoin/bitcoin.conf`.
 - Se voce ja usa /home/admin/.lnd e /home/admin/.bitcoin, o instalador guiado pode criar /data/lnd e /data/bitcoin apontando para esses caminhos.
 - Usuario admin com links simbolicos /home/admin/.lnd -> /data/lnd e /home/admin/.bitcoin -> /data/bitcoin.
 - Alternativa: usuarios lnd e bitcoin com dados em /data, e o admin nos grupos lnd e bitcoin.
@@ -157,7 +157,7 @@ curl -k https://127.0.0.1:8443/api/health
 
 ### 5) Requisitos de caminho
 - `/data/lnd` continua sendo o caminho esperado para recursos como editor de `lnd.conf` e auto-unlock.
-- Para Bitcoin local, garanta `bitcoin.conf` legivel em `/data/bitcoin/bitcoin.conf` (ou origem equivalente detectavel).
+- Para Bitcoin local, garanta `bitcoind.rpcuser` e `bitcoind.rpcpass` no bloco `[Bitcoind]` do `/data/lnd/lnd.conf`, ou um `bitcoin.conf` legivel em uma origem detectavel, incluindo `/home/admin/.bitcoin/bitcoin.conf`.
 
 ## Troubleshooting rapido
 - `sudo: a password is required` ao usar `sudo -n`: sudoers do `lightningos` invalido ou incompleto.

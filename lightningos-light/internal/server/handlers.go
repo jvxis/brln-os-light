@@ -658,14 +658,7 @@ func (s *Server) bitcoinLocalStatusActive(ctx context.Context) (bitcoinStatus, e
 func readBitcoinLocalRPCConfig(ctx context.Context) (bitcoinRPCConfig, bool, error) {
 	paths := bitcoinCoreAppPaths()
 	if !fileExists(paths.ComposePath) {
-		configCandidates := []string{
-			paths.ConfigPath,
-			"/etc/bitcoin/bitcoin.conf",
-			"/var/lib/bitcoind/bitcoin.conf",
-			"/home/bitcoin/.bitcoin/bitcoin.conf",
-			"/root/.bitcoin/bitcoin.conf",
-		}
-		for _, candidate := range configCandidates {
+		for _, candidate := range localBitcoinConfigCandidates(paths) {
 			if cfg, ok := readBitcoinConfRPCConfig(candidate); ok {
 				return cfg, false, nil
 			}
@@ -697,6 +690,17 @@ func readBitcoinLocalRPCConfig(ctx context.Context) (bitcoinRPCConfig, bool, err
 		ZMQBlock: zmqBlock,
 		ZMQTx:    zmqTx,
 	}, updated, nil
+}
+
+func localBitcoinConfigCandidates(paths bitcoinCorePaths) []string {
+	return []string{
+		paths.ConfigPath,
+		"/etc/bitcoin/bitcoin.conf",
+		"/var/lib/bitcoind/bitcoin.conf",
+		"/home/bitcoin/.bitcoin/bitcoin.conf",
+		"/home/admin/.bitcoin/bitcoin.conf",
+		"/root/.bitcoin/bitcoin.conf",
+	}
 }
 
 func readBitcoinConfRPCConfig(path string) (bitcoinRPCConfig, bool) {
@@ -757,8 +761,11 @@ func readBitcoindRPCConfigFromLNDConf() (bitcoinRPCConfig, bool) {
 	if err != nil {
 		return bitcoinRPCConfig{}, false
 	}
-	lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
+	return parseBitcoindRPCConfigFromLNDConf(string(raw))
+}
 
+func parseBitcoindRPCConfigFromLNDConf(raw string) (bitcoinRPCConfig, bool) {
+	lines := strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n")
 	inBitcoind := false
 	cfg := bitcoinRPCConfig{
 		Host:     "127.0.0.1:8332",
@@ -819,8 +826,11 @@ func readBitcoinTaggedRPCConfigFromLNDConf(tag string) (bitcoinRPCConfig, bool) 
 	if err != nil {
 		return bitcoinRPCConfig{}, false
 	}
-	lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
+	return parseBitcoinTaggedRPCConfigFromLNDConf(string(raw), tag)
+}
 
+func parseBitcoinTaggedRPCConfigFromLNDConf(raw string, tag string) (bitcoinRPCConfig, bool) {
+	lines := strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n")
 	inBitcoind := false
 	inTarget := false
 	cfg := bitcoinRPCConfig{

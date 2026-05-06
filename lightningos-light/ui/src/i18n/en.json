@@ -1100,6 +1100,7 @@
     },
     "historicalRange": "Historical range",
     "lastUpdated": "Last updated {{time}}.",
+    "last30Days": "Last 30 days",
     "lightning": "Lightning",
     "liveRange": "Today 00:00 - now",
     "liveWindow": "Live window",
@@ -1149,6 +1150,7 @@
     "routedVolume": "Routed volume",
     "selectDate": "Select date",
     "selectMonth": "Select month",
+    "selectMonthPlaceholder": "Specific month",
     "showChart": "Show chart",
     "hideChart": "Hide chart",
     "settings": {

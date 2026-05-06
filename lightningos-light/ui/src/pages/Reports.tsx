@@ -213,7 +213,7 @@ const buildYAxisTicks = (maxValue: number, segments: number) => {
 export default function Reports() {
   const { t, i18n } = useTranslation()
   const locale = getLocale(i18n.language)
-  const [range, setRange] = useState<RangeKey>('d-1')
+  const [range, setRange] = useState<RangeKey>('month')
   const [customDate, setCustomDate] = useState(() => {
     const value = new Date()
     value.setDate(value.getDate() - 1)
@@ -222,14 +222,8 @@ export default function Reports() {
     const day = String(value.getDate()).padStart(2, '0')
     return `${year}-${month}-${day}`
   })
-  const [customMonth, setCustomMonth] = useState(() => {
-    const value = new Date()
-    const year = value.getFullYear()
-    const month = String(value.getMonth() + 1).padStart(2, '0')
-    return `${year}-${month}`
-  })
+  const [customMonth, setCustomMonth] = useState('')
   const [series, setSeries] = useState<ReportSeriesItem[]>([])
-  const [chartSeries, setChartSeries] = useState<ReportSeriesItem[]>([])
   const [summary, setSummary] = useState<SummaryResponse | null>(null)
   const [live, setLive] = useState<LiveResponse | null>(null)
   const [movementLive, setMovementLive] = useState<MovementLiveResponse | null>(null)
@@ -237,8 +231,6 @@ export default function Reports() {
   const [movementError, setMovementError] = useState('')
   const [seriesLoading, setSeriesLoading] = useState(true)
   const [seriesError, setSeriesError] = useState('')
-  const [chartLoading, setChartLoading] = useState(true)
-  const [chartError, setChartError] = useState('')
   const [liveLoading, setLiveLoading] = useState(true)
   const [liveError, setLiveError] = useState('')
   const [configLoading, setConfigLoading] = useState(true)
@@ -348,7 +340,7 @@ export default function Reports() {
     if (range === 'date') {
       return { from: customDate, to: customDate }
     }
-    if (range === 'month') {
+    if (range === 'month' && customMonth) {
       const parsed = parseInputMonth(customMonth) ?? new Date()
       const start = startOfMonth(parsed)
       const end = endOfMonth(start)
@@ -522,32 +514,6 @@ export default function Reports() {
   }, [customRangeWindow, movementLive?.date, range, t])
 
   useEffect(() => {
-    let active = true
-    setChartLoading(true)
-    setChartError('')
-
-    getReportsRange('month')
-      .then((rangeResp) => {
-        if (!active) return
-        const typedRange = rangeResp as SeriesResponse
-        setChartSeries(Array.isArray(typedRange.series) ? typedRange.series : [])
-      })
-      .catch((err) => {
-        if (!active) return
-        setChartError(err instanceof Error ? err.message : t('reports.unavailable'))
-        setChartSeries([])
-      })
-      .finally(() => {
-        if (!active) return
-        setChartLoading(false)
-      })
-
-    return () => {
-      active = false
-    }
-  }, [t])
-
-  useEffect(() => {
     const selectedToday = range === 'date' && isTodaySelection(customDate, movementLive?.date)
     if (!selectedToday || !live) return
 
@@ -712,7 +678,7 @@ export default function Reports() {
   }
 
   const rawChartData = useMemo(() => {
-    const mapped = chartSeries.map((item) => ({
+    const mapped = series.map((item) => ({
       date: item.date,
       net: item.net_with_keysend_sats ?? item.net_routing_profit_sats,
       netRouting: item.net_routing_profit_sats,
@@ -733,9 +699,9 @@ export default function Reports() {
       total: item.total_balance_sats ?? null
     }))
     return mapped.sort((a, b) => a.date.localeCompare(b.date))
-  }, [chartSeries])
+  }, [series])
 
-  const showYearInChartLabels = false
+  const showYearInChartLabels = range === 'all'
 
   const chartData = useMemo<ChartDataPoint[]>(() => {
     if (rawChartData.length === 0) {
@@ -996,6 +962,10 @@ export default function Reports() {
     return years
   }, [selectedMonthParts.year])
   const updateCustomMonth = (month: string, year = selectedMonthParts.year) => {
+    if (!month) {
+      setCustomMonth('')
+      return
+    }
     const nextMonth = `${year}-${month}`
     setCustomMonth(nextMonth > currentMonthInput ? currentMonthInput : nextMonth)
   }
@@ -1010,11 +980,11 @@ export default function Reports() {
     return 'text-fog/60'
   }
   const renderChartStatus = (hasData: boolean, emptyMessage = t('reports.noData')) => {
-    if (chartLoading && !hasData) {
+    if (seriesLoading && !hasData) {
       return <p className="text-sm text-fog/60">{t('reports.loadingRange')}</p>
     }
-    if (chartError) {
-      return <p className="text-sm text-brass">{chartError}</p>
+    if (seriesError) {
+      return <p className="text-sm text-brass">{seriesError}</p>
     }
     if (!hasData) {
       return <p className="text-sm text-fog/60">{emptyMessage}</p>
@@ -1174,12 +1144,20 @@ export default function Reports() {
           {range === 'month' && (
             <label className="block text-sm text-fog/70">
               {t('reports.selectMonth')}
-              <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_8rem]">
+              <div className="mt-2 grid gap-2 sm:grid-cols-[auto_minmax(0,1fr)_8rem]">
+                <button
+                  type="button"
+                  className={customMonth ? 'btn-secondary' : 'btn-primary'}
+                  onClick={() => setCustomMonth('')}
+                >
+                  {t('reports.last30Days')}
+                </button>
                 <select
                   className="input-field"
-                  value={selectedMonthParts.month}
+                  value={customMonth ? selectedMonthParts.month : ''}
                   onChange={(e) => updateCustomMonth(e.target.value)}
                 >
+                  <option value="" disabled>{t('reports.selectMonthPlaceholder')}</option>
                   {monthOptions.map((option) => (
                     <option
                       key={option.month}

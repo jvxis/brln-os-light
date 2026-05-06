@@ -762,7 +762,7 @@ ss -ltn | grep :8443
 ```
 
 ### App Store (Bitcoin Core, Electrs, Mempool, LNDg, LNbits, Elements, Peerswap, RoboSats, Public Pool, Buy DePix, FSwap)
-- Bitcoin Core roda via Docker com dados em `/data/bitcoin`.
+- Bitcoin Core roda via Docker e usa `/data/bitcoin` por padrão. Na instalação, ele pode opcionalmente usar um diretório de blockchain customizado em um volume já montado; o app não altera esse diretório depois.
 - Electrs roda via Docker, indexa o Bitcoin Core local, expõe Electrum TCP na porta `50001` e publica métricas em `127.0.0.1:4224`.
 - Mempool roda uma stack mempool.space local em `http://<IP_LAN_DO_SERVIDOR>:8999` e exige Bitcoin Core + Electrs instalados e rodando.
 - LNDg roda em Docker e escuta em `http://<IP_LAN_DO_SERVIDOR>:8889`.

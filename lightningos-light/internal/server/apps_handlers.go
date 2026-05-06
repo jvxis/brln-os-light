@@ -55,6 +55,22 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "app not found")
 		return
 	}
+	if appID == bitcoinCoreAppID {
+		var req bitcoinCoreInstallOptions
+		if r.ContentLength != 0 {
+			if err := readJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+				writeError(w, http.StatusBadRequest, "invalid json")
+				return
+			}
+		}
+		if err := s.installBitcoinCoreWithOptions(r.Context(), req); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.invalidateBitcoinStatusCaches()
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
 	if appID == elementsAppID {
 		var req elementsInstallOptions
 		if r.ContentLength != 0 {

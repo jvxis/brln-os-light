@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -23,7 +24,17 @@ type bitcoinCoreApp struct {
 	server *Server
 }
 
-const bitcoinCoreImage = "bitcoin/bitcoin:latest"
+const (
+	bitcoinCoreAppID            = "bitcoincore"
+	bitcoinCoreImage            = "bitcoin/bitcoin:latest"
+	bitcoinCoreDefaultDataDir   = "/data/bitcoin"
+	bitcoinCoreDataDirStateFile = "data_dir"
+	bitcoinCoreMinFreeKiB       = 10 * 1024 * 1024
+)
+
+type bitcoinCoreInstallOptions struct {
+	DataDir string `json:"data_dir"`
+}
 
 func newBitcoinCoreApp(s *Server) appHandler {
 	return bitcoinCoreApp{server: s}
@@ -31,7 +42,7 @@ func newBitcoinCoreApp(s *Server) appHandler {
 
 func bitcoincoreDefinition() appDefinition {
 	return appDefinition{
-		ID:          "bitcoincore",
+		ID:          bitcoinCoreAppID,
 		Name:        "Bitcoin Core",
 		Description: "Run a local Bitcoin Core node with Docker.",
 		Port:        0,
@@ -76,8 +87,8 @@ func (a bitcoinCoreApp) Stop(ctx context.Context) error {
 }
 
 func bitcoinCoreAppPaths() bitcoinCorePaths {
-	root := filepath.Join(appsRoot, "bitcoincore")
-	dataDir := "/data/bitcoin"
+	root := filepath.Join(appsRoot, bitcoinCoreAppID)
+	dataDir := readBitcoinCoreDataDir()
 	return bitcoinCorePaths{
 		Root:           root,
 		DataDir:        dataDir,
@@ -87,14 +98,134 @@ func bitcoinCoreAppPaths() bitcoinCorePaths {
 	}
 }
 
+func bitcoinCoreAppDataDir() string {
+	return filepath.Join(appsDataRoot, bitcoinCoreAppID)
+}
+
+func bitcoinCoreDataDirStatePath() string {
+	return filepath.Join(bitcoinCoreAppDataDir(), bitcoinCoreDataDirStateFile)
+}
+
+func readBitcoinCoreDataDir() string {
+	raw, err := os.ReadFile(bitcoinCoreDataDirStatePath())
+	if err != nil {
+		return bitcoinCoreDefaultDataDir
+	}
+	normalized, err := normalizeBitcoinCoreDataDir(string(raw))
+	if err != nil {
+		return bitcoinCoreDefaultDataDir
+	}
+	return normalized
+}
+
+func writeBitcoinCoreDataDir(dataDir string) error {
+	normalized, err := normalizeBitcoinCoreDataDir(dataDir)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(bitcoinCoreAppDataDir(), 0750); err != nil {
+		return err
+	}
+	return writeFile(bitcoinCoreDataDirStatePath(), normalized+"\n", 0640)
+}
+
+func normalizeBitcoinCoreDataDir(dataDir string) (string, error) {
+	trimmed := strings.TrimSpace(dataDir)
+	if trimmed == "" {
+		return bitcoinCoreDefaultDataDir, nil
+	}
+	if strings.Contains(trimmed, "\\") {
+		return "", errors.New("bitcoin data_dir must be a Linux absolute path")
+	}
+	if !strings.HasPrefix(trimmed, "/") {
+		return "", errors.New("bitcoin data_dir must be an absolute path")
+	}
+	cleaned := path.Clean(trimmed)
+	if cleaned == "." || cleaned == "/" {
+		return "", errors.New("bitcoin data_dir cannot be the filesystem root")
+	}
+	if cleaned == "/data" {
+		return "", errors.New("bitcoin data_dir cannot be /data")
+	}
+	if !linuxPathHasSafeChars(cleaned) {
+		return "", errors.New("bitcoin data_dir may only contain letters, numbers, slash, dot, underscore, and hyphen")
+	}
+	if cleaned == bitcoinCoreDefaultDataDir {
+		return cleaned, nil
+	}
+	for _, blocked := range bitcoinCoreBlockedDataDirPrefixes() {
+		if cleaned == blocked || strings.HasPrefix(cleaned, blocked+"/") {
+			return "", fmt.Errorf("bitcoin data_dir cannot be inside %s", blocked)
+		}
+	}
+	return cleaned, nil
+}
+
+func bitcoinCoreBlockedDataDirPrefixes() []string {
+	return []string{
+		"/bin",
+		"/boot",
+		"/data/bitcoin",
+		"/data/elements",
+		"/data/lnd",
+		"/dev",
+		"/etc",
+		"/home",
+		"/lib",
+		"/lib64",
+		"/proc",
+		"/root",
+		"/run",
+		"/sbin",
+		"/sys",
+		"/tmp",
+		"/usr",
+		"/var",
+	}
+}
+
 func (s *Server) installBitcoinCore(ctx context.Context) error {
+	return s.installBitcoinCoreWithOptions(ctx, bitcoinCoreInstallOptions{})
+}
+
+func (s *Server) installBitcoinCoreWithOptions(ctx context.Context, opts bitcoinCoreInstallOptions) error {
+	requestedDataDir := strings.TrimSpace(opts.DataDir)
+	if requestedDataDir != "" {
+		normalized, err := normalizeBitcoinCoreDataDir(requestedDataDir)
+		if err != nil {
+			return err
+		}
+		currentPaths := bitcoinCoreAppPaths()
+		if fileExists(currentPaths.ComposePath) && normalized != currentPaths.DataDir {
+			return errors.New("Bitcoin Core data directory cannot be changed after installation")
+		}
+		if normalized == bitcoinCoreDefaultDataDir {
+			if err := writeBitcoinCoreDataDir(normalized); err != nil {
+				return err
+			}
+		} else {
+			if err := validateBitcoinCoreInstallDataDir(ctx, normalized); err != nil {
+				return err
+			}
+			if err := writeBitcoinCoreDataDir(normalized); err != nil {
+				return err
+			}
+		}
+	}
+
+	paths := bitcoinCoreAppPaths()
+	if requestedDataDir == "" && paths.DataDir != bitcoinCoreDefaultDataDir {
+		if err := validateBitcoinCoreInstallDataDir(ctx, paths.DataDir); err != nil {
+			return err
+		}
+	}
+
 	if err := ensureDocker(ctx); err != nil {
 		return err
 	}
 	if err := ensureBitcoinCoreImage(ctx); err != nil {
 		return err
 	}
-	paths := bitcoinCoreAppPaths()
 	if err := os.MkdirAll(paths.Root, 0750); err != nil {
 		return fmt.Errorf("failed to create app directory: %w", err)
 	}
@@ -116,6 +247,58 @@ func (s *Server) installBitcoinCore(ctx context.Context) error {
 		if err := runCompose(ctx, paths.Root, paths.ComposePath, "restart", "bitcoind"); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func validateBitcoinCoreInstallDataDir(ctx context.Context, dataDir string) error {
+	normalized, err := normalizeBitcoinCoreDataDir(dataDir)
+	if err != nil {
+		return err
+	}
+	parent := path.Dir(normalized)
+	script := fmt.Sprintf(`set -e
+parent=%s
+data=%s
+if [ ! -d "$parent" ]; then
+  echo "parent directory does not exist: $parent" >&2
+  exit 10
+fi
+if command -v findmnt >/dev/null 2>&1; then
+  mount_target="$(findmnt -T "$parent" -no TARGET 2>/dev/null | head -n1 || true)"
+  if [ -z "$mount_target" ]; then
+    echo "parent directory is not on a mounted filesystem: $parent" >&2
+    exit 11
+  fi
+  if [ "$mount_target" = "/" ]; then
+    echo "parent directory is on the root filesystem; mount the target volume first: $parent" >&2
+    exit 12
+  fi
+fi
+mkdir -p "$data"
+if [ ! -d "$data" ]; then
+  echo "data directory is not a directory: $data" >&2
+  exit 13
+fi
+touch "$data/.lightningos-write-test"
+rm -f "$data/.lightningos-write-test"
+available="$(df -Pk "$data" | awk 'NR==2 {print $4}')"
+if [ -z "$available" ]; then
+  echo "could not determine free space in $data" >&2
+  exit 14
+fi
+if [ "$available" -lt %d ]; then
+  echo "not enough free space in $data" >&2
+  exit 15
+fi
+`, shellQuote(parent), shellQuote(normalized), bitcoinCoreMinFreeKiB)
+	out, err := runSystemd(ctx, "/bin/sh", "-c", script)
+	if err != nil {
+		msg := strings.TrimSpace(out)
+		if msg == "" {
+			return fmt.Errorf("bitcoin data_dir validation failed: %w", err)
+		}
+		return fmt.Errorf("bitcoin data_dir validation failed: %s", msg)
 	}
 	return nil
 }

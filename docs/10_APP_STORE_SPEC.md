@@ -34,9 +34,9 @@ The core types live in:
 - /var/lib/lightningos/apps-data/<id>
   - persistent data, database data, logs, secrets
 
-Some apps use fixed paths (example: Bitcoin Core uses /data/bitcoin).
+Some apps use default data paths (example: Bitcoin Core defaults to /data/bitcoin).
 
-Native apps may use an additional data directory under /data (example: Elements defaults to /data/elements). Elements can optionally receive a custom data directory at install time only; changing it later is not supported.
+Apps with blockchain data may optionally receive a custom data directory at install time only. Bitcoin Core defaults to /data/bitcoin and Elements defaults to /data/elements; changing either directory later is not supported.
 
 ## App lifecycle
 Docker apps:
@@ -44,7 +44,7 @@ Docker apps:
 - Status: derived from docker compose ps
 - Start: docker compose up -d
 - Stop: docker compose stop
-- Uninstall: docker compose down and remove app files
+- Uninstall: docker compose down and remove app files (Bitcoin Core does not delete the selected blockchain directory)
 
 Native apps:
 - Installed: binary + systemd unit exist

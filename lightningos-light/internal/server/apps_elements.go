@@ -179,7 +179,7 @@ func normalizeElementsDataDir(dataDir string) (string, error) {
 	if cleaned == "." || cleaned == "/" {
 		return "", errors.New("elements data_dir cannot be the filesystem root")
 	}
-	if !elementsDataDirHasSafeChars(cleaned) {
+	if !linuxPathHasSafeChars(cleaned) {
 		return "", errors.New("elements data_dir may only contain letters, numbers, slash, dot, underscore, and hyphen")
 	}
 	for _, blocked := range elementsBlockedDataDirPrefixes() {
@@ -188,27 +188,6 @@ func normalizeElementsDataDir(dataDir string) (string, error) {
 		}
 	}
 	return cleaned, nil
-}
-
-func elementsDataDirHasSafeChars(value string) bool {
-	for _, char := range value {
-		if char >= 'a' && char <= 'z' {
-			continue
-		}
-		if char >= 'A' && char <= 'Z' {
-			continue
-		}
-		if char >= '0' && char <= '9' {
-			continue
-		}
-		switch char {
-		case '/', '.', '_', '-':
-			continue
-		default:
-			return false
-		}
-	}
-	return true
 }
 
 func elementsBlockedDataDirPrefixes() []string {

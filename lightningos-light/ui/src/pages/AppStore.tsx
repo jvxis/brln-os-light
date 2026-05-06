@@ -81,6 +81,7 @@ const statusStyles: Record<string, string> = {
 const publicPoolUIPortFallback = 8081
 const publicPoolStratumPort = 3333
 const APP_STORE_INSTALL_FILTER_KEY = 'app_store_install_filter'
+const bitcoinCoreDefaultDataDir = '/data/bitcoin'
 const elementsDefaultDataDir = '/data/elements'
 
 export default function AppStore() {
@@ -93,6 +94,9 @@ export default function AppStore() {
   const [hideBitcoinCore, setHideBitcoinCore] = useState(false)
   const [bitcoinMode, setBitcoinMode] = useState<BitcoinMode>('remote')
   const [electrsStatus, setElectrsStatus] = useState<ElectrsStatus | null>(null)
+  const [bitcoinCoreInstallOpen, setBitcoinCoreInstallOpen] = useState(false)
+  const [bitcoinCoreCustomDataDir, setBitcoinCoreCustomDataDir] = useState(false)
+  const [bitcoinCoreDataDir, setBitcoinCoreDataDir] = useState(bitcoinCoreDefaultDataDir)
   const [elementsInstallOpen, setElementsInstallOpen] = useState(false)
   const [elementsCustomDataDir, setElementsCustomDataDir] = useState(false)
   const [elementsDataDir, setElementsDataDir] = useState(elementsDefaultDataDir)
@@ -207,6 +211,12 @@ export default function AppStore() {
   }, [electrsRunning])
 
   const handleAction = async (id: string, action: AppAction, payload?: { data_dir?: string }) => {
+    if (id === 'bitcoincore' && action === 'install' && !payload) {
+      setBitcoinCoreCustomDataDir(false)
+      setBitcoinCoreDataDir(bitcoinCoreDefaultDataDir)
+      setBitcoinCoreInstallOpen(true)
+      return
+    }
     if (id === 'elements' && action === 'install' && !payload) {
       setElementsCustomDataDir(false)
       setElementsDataDir(elementsDefaultDataDir)
@@ -231,6 +241,12 @@ export default function AppStore() {
         return next
       })
     }
+  }
+
+  const handleBitcoinCoreInstallConfirm = async () => {
+    const payload = bitcoinCoreCustomDataDir ? { data_dir: bitcoinCoreDataDir.trim() } : {}
+    setBitcoinCoreInstallOpen(false)
+    await handleAction('bitcoincore', 'install', payload)
   }
 
   const handleElementsInstallConfirm = async () => {
@@ -508,6 +524,65 @@ export default function AppStore() {
       )}
       {!loading && apps.length > 0 && visibleApps.length === 0 && (
         <p className="text-fog/60">{t('appStore.noAppsForFilter')}</p>
+      )}
+
+      {bitcoinCoreInstallOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="w-full max-w-lg rounded-lg border border-white/10 bg-ink p-5 shadow-xl">
+            <div className="space-y-2">
+              <h3 className="text-lg font-semibold">{t('appStore.bitcoinCoreInstallTitle')}</h3>
+              <p className="text-sm text-fog/60">{t('appStore.bitcoinCoreInstallBody')}</p>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              <label className="flex items-start gap-3 text-sm text-fog/80">
+                <input
+                  className="mt-1"
+                  type="checkbox"
+                  checked={bitcoinCoreCustomDataDir}
+                  onChange={(event) => {
+                    setBitcoinCoreCustomDataDir(event.target.checked)
+                    if (!event.target.checked) setBitcoinCoreDataDir(bitcoinCoreDefaultDataDir)
+                  }}
+                />
+                <span>{t('appStore.bitcoinCoreUseCustomDataDir')}</span>
+              </label>
+
+              <div className="space-y-2">
+                <label className="text-xs uppercase tracking-wide text-fog/50" htmlFor="bitcoin-core-data-dir">
+                  {t('appStore.bitcoinCoreDataDirLabel')}
+                </label>
+                <input
+                  id="bitcoin-core-data-dir"
+                  className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-fog outline-none focus:border-brass"
+                  value={bitcoinCoreCustomDataDir ? bitcoinCoreDataDir : bitcoinCoreDefaultDataDir}
+                  disabled={!bitcoinCoreCustomDataDir}
+                  onChange={(event) => setBitcoinCoreDataDir(event.target.value)}
+                  placeholder={bitcoinCoreDefaultDataDir}
+                />
+                <p className="text-xs text-fog/50">{t('appStore.bitcoinCoreDataDirHint')}</p>
+              </div>
+            </div>
+
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button
+                className="btn-secondary"
+                type="button"
+                onClick={() => setBitcoinCoreInstallOpen(false)}
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                className="btn-primary"
+                type="button"
+                disabled={bitcoinCoreCustomDataDir && bitcoinCoreDataDir.trim() === ''}
+                onClick={handleBitcoinCoreInstallConfirm}
+              >
+                {t('appStore.install')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {elementsInstallOpen && (

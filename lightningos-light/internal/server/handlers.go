@@ -104,9 +104,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		status = elevate(status, "ERR")
 	}
 
-	btcCtx, btcCancel := context.WithTimeout(r.Context(), 3*time.Second)
-	defer btcCancel()
 	bitcoinSource := readBitcoinSource()
+	btcCtx, btcCancel := context.WithTimeout(r.Context(), bitcoinActiveHandlerTimeout(bitcoinSource))
+	defer btcCancel()
 	bitcoin, err := s.bitcoinActiveStatusCached(btcCtx)
 	if err != nil {
 		if bitcoinSource == "local" {
@@ -117,7 +117,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		status = elevate(status, "WARN")
 	}
 	if err == nil {
-		if !bitcoin.RPCOk {
+		if bitcoin.RPCStale {
+			issues = append(issues, healthIssue{Component: "bitcoin", Level: "WARN", Message: "Bitcoin RPC check stale"})
+			status = elevate(status, "WARN")
+		} else if !bitcoin.RPCOk {
 			issues = append(issues, healthIssue{Component: "bitcoin", Level: "ERR", Message: "Bitcoin RPC unreachable"})
 			status = elevate(status, "ERR")
 		}
@@ -368,6 +371,8 @@ type bitcoinStatus struct {
 	ZMQRawBlock          string  `json:"zmq_rawblock"`
 	ZMQRawTx             string  `json:"zmq_rawtx"`
 	RPCOk                bool    `json:"rpc_ok"`
+	RPCStale             bool    `json:"rpc_stale,omitempty"`
+	RPCLastOKAgeSeconds  int64   `json:"rpc_last_ok_age_seconds,omitempty"`
 	ZMQRawBlockOk        bool    `json:"zmq_rawblock_ok"`
 	ZMQRawTxOk           bool    `json:"zmq_rawtx_ok"`
 	Connections          int     `json:"connections,omitempty"`

@@ -8,7 +8,9 @@ import (
 
 const (
 	bitcoinStatusCacheOK            = 30 * time.Second
+	bitcoinStatusCacheStale         = 10 * time.Second
 	bitcoinStatusCacheErr           = 45 * time.Second
+	bitcoinStatusStaleOKGrace       = 2 * time.Minute
 	bitcoinActiveFetchTimeoutRemote = 4 * time.Second
 	bitcoinActiveFetchTimeoutLocal  = 8 * time.Second
 	bitcoinLocalFetchTimeout        = 10 * time.Second
@@ -18,6 +20,7 @@ type cachedBitcoinStatus struct {
 	value     bitcoinStatus
 	err       error
 	expiresAt time.Time
+	fetchedAt time.Time
 }
 
 type cachedBitcoinLocalStatus struct {
@@ -27,6 +30,9 @@ type cachedBitcoinLocalStatus struct {
 }
 
 func bitcoinStatusTTL(status bitcoinStatus, err error) time.Duration {
+	if err == nil && status.RPCOk && status.RPCStale {
+		return bitcoinStatusCacheStale
+	}
 	if err != nil || !status.RPCOk {
 		return bitcoinStatusCacheErr
 	}
@@ -78,6 +84,22 @@ func (s *Server) cachedBitcoinActiveStatus(source string, now time.Time) (bitcoi
 	return entry.value, entry.err, true
 }
 
+func (s *Server) staleBitcoinActiveStatus(source string, now time.Time) (bitcoinStatus, time.Time, bool) {
+	if s == nil {
+		return bitcoinStatus{}, time.Time{}, false
+	}
+	s.bitcoinStatusMu.Lock()
+	defer s.bitcoinStatusMu.Unlock()
+	entry, ok := s.bitcoinActiveCache[source]
+	if !ok || !entry.value.RPCOk || entry.fetchedAt.IsZero() {
+		return bitcoinStatus{}, time.Time{}, false
+	}
+	if now.Sub(entry.fetchedAt) > bitcoinStatusStaleOKGrace {
+		return bitcoinStatus{}, time.Time{}, false
+	}
+	return entry.value, entry.fetchedAt, true
+}
+
 func (s *Server) cachedBitcoinLocalStatus(now time.Time) (bitcoinLocalStatus, error, bool) {
 	if s == nil {
 		return bitcoinLocalStatus{}, nil, false
@@ -88,6 +110,16 @@ func (s *Server) cachedBitcoinLocalStatus(now time.Time) (bitcoinLocalStatus, er
 		return bitcoinLocalStatus{}, nil, false
 	}
 	return s.bitcoinLocalCache.value, s.bitcoinLocalCache.err, true
+}
+
+func markBitcoinStatusStale(status bitcoinStatus, fetchedAt, now time.Time) bitcoinStatus {
+	status.RPCOk = true
+	status.RPCStale = true
+	status.RPCLastOKAgeSeconds = 0
+	if !fetchedAt.IsZero() && now.After(fetchedAt) {
+		status.RPCLastOKAgeSeconds = int64(now.Sub(fetchedAt).Seconds())
+	}
+	return status
 }
 
 func (s *Server) bitcoinActiveStatusCached(ctx context.Context) (bitcoinStatus, error) {
@@ -117,6 +149,16 @@ func (s *Server) bitcoinActiveStatusCached(ctx context.Context) (bitcoinStatus, 
 			status, err = s.bitcoinStatus(fetchCtx)
 		}
 
+		now = time.Now()
+		statusFetchedAt := time.Time{}
+		if staleStatus, fetchedAt, ok := s.staleBitcoinActiveStatus(source, now); ok && (err != nil || !status.RPCOk) {
+			status = markBitcoinStatusStale(staleStatus, fetchedAt, now)
+			err = nil
+			statusFetchedAt = fetchedAt
+		} else if err == nil && status.RPCOk {
+			statusFetchedAt = now
+		}
+
 		s.bitcoinStatusMu.Lock()
 		if s.bitcoinActiveCache == nil {
 			s.bitcoinActiveCache = make(map[string]cachedBitcoinStatus)
@@ -124,7 +166,8 @@ func (s *Server) bitcoinActiveStatusCached(ctx context.Context) (bitcoinStatus, 
 		s.bitcoinActiveCache[source] = cachedBitcoinStatus{
 			value:     status,
 			err:       err,
-			expiresAt: time.Now().Add(bitcoinStatusTTL(status, err)),
+			expiresAt: now.Add(bitcoinStatusTTL(status, err)),
+			fetchedAt: statusFetchedAt,
 		}
 		s.bitcoinStatusMu.Unlock()
 		return status, err
@@ -134,6 +177,10 @@ func (s *Server) bitcoinActiveStatusCached(ctx context.Context) (bitcoinStatus, 
 	case <-ctx.Done():
 		if status, err, ok := s.cachedBitcoinActiveStatus(source, time.Now()); ok {
 			return status, err
+		}
+		now := time.Now()
+		if status, fetchedAt, ok := s.staleBitcoinActiveStatus(source, now); ok {
+			return markBitcoinStatusStale(status, fetchedAt, now), nil
 		}
 		return bitcoinStatus{}, ctx.Err()
 	case result := <-resultCh:

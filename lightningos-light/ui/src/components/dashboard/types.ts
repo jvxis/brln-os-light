@@ -127,6 +127,8 @@ export type BitcoinStatus = {
   zmq_rawblock?: string
   zmq_rawtx?: string
   rpc_ok?: boolean
+  rpc_stale?: boolean
+  rpc_last_ok_age_seconds?: number
   zmq_rawblock_ok?: boolean
   zmq_rawtx_ok?: boolean
   version?: number

@@ -9,7 +9,7 @@ import {
   Cell,
   Legend,
   Line,
-  LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -148,6 +148,16 @@ type ChartDataPoint = {
   onchain: number | null
   lightning: number | null
   total: number | null
+}
+
+type BalanceChangeDataPoint = {
+  label: string
+  onchain: number | null
+  lightning: number | null
+  total: number | null
+  onchainChange: number | null
+  lightningChange: number | null
+  totalChange: number | null
 }
 
 const primaryRangeOptions: RangeKey[] = ['d-1', 'date', 'month', '3m', '6m', '12m', 'all']
@@ -892,7 +902,46 @@ export default function Reports() {
     ]
   }, [live, t])
 
-  const hasBalances = chartData.some((item) => item.onchain !== null || item.lightning !== null || item.total !== null)
+  const balancePoints = useMemo(
+    () => chartData
+      .filter((item) => item.onchain !== null || item.lightning !== null || item.total !== null)
+      .map((item) => {
+        const onchain = item.onchain
+        const lightning = item.lightning
+        const total = item.total ?? (onchain !== null && lightning !== null ? onchain + lightning : null)
+        return { ...item, onchain, lightning, total }
+      }),
+    [chartData]
+  )
+  const balanceChangeData = useMemo<BalanceChangeDataPoint[]>(
+    () => balancePoints.map((item, index) => {
+      const previous = index > 0 ? balancePoints[index - 1] : null
+      return {
+        label: item.label,
+        onchain: item.onchain,
+        lightning: item.lightning,
+        total: item.total,
+        onchainChange: previous && item.onchain !== null && previous.onchain !== null ? item.onchain - previous.onchain : null,
+        lightningChange: previous && item.lightning !== null && previous.lightning !== null ? item.lightning - previous.lightning : null,
+        totalChange: previous && item.total !== null && previous.total !== null ? item.total - previous.total : null
+      }
+    }),
+    [balancePoints]
+  )
+  const latestBalance = balancePoints.length > 0 ? balancePoints[balancePoints.length - 1] : null
+  const firstBalance = balancePoints[0] ?? null
+  const balancePeriodChange = {
+    onchain: latestBalance?.onchain !== null && latestBalance?.onchain !== undefined && firstBalance?.onchain !== null && firstBalance?.onchain !== undefined
+      ? latestBalance.onchain - firstBalance.onchain
+      : null,
+    lightning: latestBalance?.lightning !== null && latestBalance?.lightning !== undefined && firstBalance?.lightning !== null && firstBalance?.lightning !== undefined
+      ? latestBalance.lightning - firstBalance.lightning
+      : null,
+    total: latestBalance?.total !== null && latestBalance?.total !== undefined && firstBalance?.total !== null && firstBalance?.total !== undefined
+      ? latestBalance.total - firstBalance.total
+      : null
+  }
+  const hasBalances = balancePoints.length > 0
   const movementPct = movementLive?.movement_pct ?? 0
   const hasMovementTarget = (movementLive?.outbound_target_sats ?? 0) > 0
   const movementProgress = Math.max(0, Math.min(100, movementPct))
@@ -918,6 +967,48 @@ export default function Reports() {
   const summaryAveragesNetWithKeysend = summary?.averages.net_with_keysend_sats ?? ((summary?.averages.net_routing_profit_sats ?? 0) + (summary?.averages.keysend_received_sats ?? 0))
   const summaryAveragesNetWithOnchain = summaryAveragesNetWithKeysend - summaryAveragesOnchainCost
   const currentMonthInput = formatInputMonth(new Date())
+  const currentMonthNumber = currentMonthInput.slice(5)
+  const selectedMonthParts = useMemo(() => {
+    const parsed = parseInputMonth(customMonth) ?? new Date()
+    return {
+      year: parsed.getFullYear(),
+      month: String(parsed.getMonth() + 1).padStart(2, '0')
+    }
+  }, [customMonth])
+  const monthOptions = useMemo(
+    () => Array.from({ length: 12 }, (_, index) => {
+      const month = String(index + 1).padStart(2, '0')
+      const label = new Intl.DateTimeFormat(locale, { month: 'long' }).format(new Date(2026, index, 1))
+      return { month, label }
+    }),
+    [locale]
+  )
+  const yearOptions = useMemo(() => {
+    const currentYear = new Date().getFullYear()
+    const years: number[] = []
+    for (let year = currentYear; year >= 2009; year -= 1) {
+      years.push(year)
+    }
+    if (!years.includes(selectedMonthParts.year)) {
+      years.push(selectedMonthParts.year)
+      years.sort((a, b) => b - a)
+    }
+    return years
+  }, [selectedMonthParts.year])
+  const updateCustomMonth = (month: string, year = selectedMonthParts.year) => {
+    const nextMonth = `${year}-${month}`
+    setCustomMonth(nextMonth > currentMonthInput ? currentMonthInput : nextMonth)
+  }
+  const formatSignedSats = (value: number | null) => {
+    if (value === null) return t('common.na')
+    return value > 0 ? `+${formatSats(value)}` : formatSats(value)
+  }
+  const balanceChangeTone = (value: number | null) => {
+    if (value === null) return 'text-fog/50'
+    if (value > 0) return 'text-emerald-300'
+    if (value < 0) return 'text-rose-300'
+    return 'text-fog/60'
+  }
   const renderChartStatus = (hasData: boolean, emptyMessage = t('reports.noData')) => {
     if (chartLoading && !hasData) {
       return <p className="text-sm text-fog/60">{t('reports.loadingRange')}</p>
@@ -1083,13 +1174,32 @@ export default function Reports() {
           {range === 'month' && (
             <label className="block text-sm text-fog/70">
               {t('reports.selectMonth')}
-              <input
-                className="input-field mt-2"
-                type="month"
-                value={customMonth}
-                max={currentMonthInput}
-                onChange={(e) => setCustomMonth(e.target.value)}
-              />
+              <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_8rem]">
+                <select
+                  className="input-field"
+                  value={selectedMonthParts.month}
+                  onChange={(e) => updateCustomMonth(e.target.value)}
+                >
+                  {monthOptions.map((option) => (
+                    <option
+                      key={option.month}
+                      value={option.month}
+                      disabled={selectedMonthParts.year === new Date().getFullYear() && option.month > currentMonthNumber}
+                    >
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="input-field"
+                  value={selectedMonthParts.year}
+                  onChange={(e) => updateCustomMonth(selectedMonthParts.month, Number(e.target.value))}
+                >
+                  {yearOptions.map((year) => (
+                    <option key={year} value={year}>{year}</option>
+                  ))}
+                </select>
+              </div>
             </label>
           )}
           {seriesLoading && series.length === 0 && <p className="text-sm text-fog/60">{t('reports.loadingRange')}</p>}
@@ -1372,32 +1482,55 @@ export default function Reports() {
           </div>
         </div>
         {renderChartStatus(hasBalances, t('reports.balanceHistoryUnavailable')) ?? (
-          <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 10 }}>
-                <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
-                <XAxis dataKey="label" tick={{ fill: '#cbd5f5', fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis
-                  tick={{ fill: '#cbd5f5', fontSize: 11 }}
-                  tickFormatter={formatCompact}
-                  axisLine={false}
-                  tickLine={false}
-                  tickCount={14}
-                />
-                <Legend verticalAlign="top" height={24} formatter={(value) => <span className="text-xs text-fog/60">{value}</span>} />
-                <Tooltip
-                  cursor={{ stroke: 'rgba(255,255,255,0.1)', strokeWidth: 1 }}
-                  contentStyle={tooltipContentStyle}
-                  labelStyle={tooltipLabelStyle}
-                  itemStyle={tooltipItemStyle}
-                  formatter={(value) => formatSats(Number(value))}
-                  labelFormatter={(value) => String(value)}
-                />
-                <Line type="monotone" dataKey="onchain" name={t('reports.onchain')} stroke={COLORS.onchain} strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="lightning" name={t('reports.lightning')} stroke={COLORS.lightning} strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="total" name={t('reports.total')} stroke={COLORS.total} strokeWidth={2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
+          <div className="space-y-4">
+            {latestBalance && (
+              <div className="grid gap-3 md:grid-cols-3">
+                {[
+                  { key: 'total', label: t('reports.total'), value: latestBalance.total, change: balancePeriodChange.total, color: COLORS.total },
+                  { key: 'lightning', label: t('reports.lightning'), value: latestBalance.lightning, change: balancePeriodChange.lightning, color: COLORS.lightning },
+                  { key: 'onchain', label: t('reports.onchain'), value: latestBalance.onchain, change: balancePeriodChange.onchain, color: COLORS.onchain }
+                ].map((item) => (
+                  <div key={item.key} className="rounded-2xl bg-white/5 px-4 py-3">
+                    <p className="text-xs uppercase tracking-wide text-fog/50">{item.label}</p>
+                    <p className="mt-1 text-lg font-semibold text-fog">
+                      {item.value === null ? t('common.na') : formatSats(item.value)}
+                    </p>
+                    <p className={`mt-1 text-xs ${balanceChangeTone(item.change)}`}>
+                      {t('reports.periodChange')} {formatSignedSats(item.change)}
+                    </p>
+                    <span className="mt-3 block h-1 rounded-full" style={{ backgroundColor: item.color }} />
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={balanceChangeData} margin={{ top: 10, right: 10, left: 0, bottom: 10 }}>
+                  <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
+                  <XAxis dataKey="label" tick={{ fill: '#cbd5f5', fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis
+                    tick={{ fill: '#cbd5f5', fontSize: 11 }}
+                    tickFormatter={formatCompact}
+                    axisLine={false}
+                    tickLine={false}
+                    tickCount={9}
+                  />
+                  <ReferenceLine y={0} stroke="rgba(255,255,255,0.18)" />
+                  <Legend verticalAlign="top" height={24} formatter={(value) => <span className="text-xs text-fog/60">{value}</span>} />
+                  <Tooltip
+                    cursor={{ fill: 'rgba(255,255,255,0.06)' }}
+                    contentStyle={tooltipContentStyle}
+                    labelStyle={tooltipLabelStyle}
+                    itemStyle={tooltipItemStyle}
+                    formatter={(value) => formatSignedSats(Number(value))}
+                    labelFormatter={(value) => String(value)}
+                  />
+                  <Bar dataKey="onchainChange" name={t('reports.onchainChange')} fill={COLORS.onchain} fillOpacity={0.72} radius={[5, 5, 0, 0]} />
+                  <Bar dataKey="lightningChange" name={t('reports.lightningChange')} fill={COLORS.lightning} fillOpacity={0.72} radius={[5, 5, 0, 0]} />
+                  <Bar dataKey="totalChange" name={t('reports.totalChange')} fill={COLORS.total} fillOpacity={0.72} radius={[5, 5, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         )}
       </div>

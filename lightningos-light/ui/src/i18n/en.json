@@ -1137,7 +1137,11 @@
     "revenueVsCost": "Revenue vs cost",
     "routedVolume": "Routed volume",
     "selectDate": "Select date",
+    "selectMonth": "Select month",
+    "showChart": "Show chart",
+    "hideChart": "Hide chart",
     "settings": {
+      "configure": "Configure",
       "liveLookback": "Live lookback (hours)",
       "liveLookbackHint": "Reduce the live window for large nodes. Leave blank for full day.",
       "liveTimeout": "Live timeout (seconds)",

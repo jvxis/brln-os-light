@@ -1137,7 +1137,11 @@
     "revenueVsCost": "Receita vs custo",
     "routedVolume": "Volume roteado",
     "selectDate": "Selecionar data",
+    "selectMonth": "Selecionar mês",
+    "showChart": "Mostrar gráfico",
+    "hideChart": "Ocultar gráfico",
     "settings": {
+      "configure": "Configurar",
       "liveLookback": "Janela ao vivo (horas)",
       "liveLookbackHint": "Reduza a janela ao vivo em nodes grandes. Deixe vazio para o dia inteiro.",
       "liveTimeout": "Timeout ao vivo (segundos)",

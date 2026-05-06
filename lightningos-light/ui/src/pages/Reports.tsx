@@ -145,7 +145,6 @@ type ChartDataPoint = {
   onchainLocalForceCost: number
   onchainRemoteForceCost: number
   costWithOnchain: number
-  costForChart: number
   onchain: number | null
   lightning: number | null
   total: number | null
@@ -213,7 +212,14 @@ export default function Reports() {
     const day = String(value.getDate()).padStart(2, '0')
     return `${year}-${month}-${day}`
   })
+  const [customMonth, setCustomMonth] = useState(() => {
+    const value = new Date()
+    const year = value.getFullYear()
+    const month = String(value.getMonth() + 1).padStart(2, '0')
+    return `${year}-${month}`
+  })
   const [series, setSeries] = useState<ReportSeriesItem[]>([])
+  const [chartSeries, setChartSeries] = useState<ReportSeriesItem[]>([])
   const [summary, setSummary] = useState<SummaryResponse | null>(null)
   const [live, setLive] = useState<LiveResponse | null>(null)
   const [movementLive, setMovementLive] = useState<MovementLiveResponse | null>(null)
@@ -221,6 +227,8 @@ export default function Reports() {
   const [movementError, setMovementError] = useState('')
   const [seriesLoading, setSeriesLoading] = useState(true)
   const [seriesError, setSeriesError] = useState('')
+  const [chartLoading, setChartLoading] = useState(true)
+  const [chartError, setChartError] = useState('')
   const [liveLoading, setLiveLoading] = useState(true)
   const [liveError, setLiveError] = useState('')
   const [configLoading, setConfigLoading] = useState(true)
@@ -229,6 +237,8 @@ export default function Reports() {
   const [liveTimeout, setLiveTimeout] = useState('')
   const [liveLookback, setLiveLookback] = useState('')
   const [runTimeout, setRunTimeout] = useState('')
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [cumulativeOpen, setCumulativeOpen] = useState(false)
   const [chartGranularity, setChartGranularity] = useState<ChartGranularity>('day')
   const [includeOnchainCostInCharts, setIncludeOnchainCostInCharts] = useState(false)
   const [includeOnchainBreakdownInCharts, setIncludeOnchainBreakdownInCharts] = useState(false)
@@ -245,8 +255,20 @@ export default function Reports() {
     const day = String(value.getDate()).padStart(2, '0')
     return `${year}-${month}-${day}`
   }
+  const formatInputMonth = (value: Date) => {
+    const year = value.getFullYear()
+    const month = String(value.getMonth() + 1).padStart(2, '0')
+    return `${year}-${month}`
+  }
   const parseInputDate = (value: string) => {
     const parsed = new Date(`${value}T00:00:00`)
+    if (Number.isNaN(parsed.getTime())) {
+      return null
+    }
+    return parsed
+  }
+  const parseInputMonth = (value: string) => {
+    const parsed = new Date(`${value}-01T00:00:00`)
     if (Number.isNaN(parsed.getTime())) {
       return null
     }
@@ -316,12 +338,20 @@ export default function Reports() {
     if (range === 'date') {
       return { from: customDate, to: customDate }
     }
+    if (range === 'month') {
+      const parsed = parseInputMonth(customMonth) ?? new Date()
+      const start = startOfMonth(parsed)
+      const end = endOfMonth(start)
+      const yesterday = shiftDays(new Date(), -1)
+      const cappedEnd = end.getTime() > yesterday.getTime() ? clampEndDate(start, yesterday) : end
+      return { from: formatInputDate(start), to: formatInputDate(cappedEnd) }
+    }
     if (range === 'prev-month' || range === 'current-month' || range === 'prev-year' || range === 'current-year') {
       const selected = quickRanges[range]
       return { from: selected.from, to: selected.to }
     }
     return null
-  }, [customDate, quickRanges, range])
+  }, [customDate, customMonth, quickRanges, range])
 
   const rangeLabel = (value: RangeKey) => {
     if (value === 'prev-month' || value === 'current-month' || value === 'prev-year' || value === 'current-year') {
@@ -480,6 +510,32 @@ export default function Reports() {
       active = false
     }
   }, [customRangeWindow, movementLive?.date, range, t])
+
+  useEffect(() => {
+    let active = true
+    setChartLoading(true)
+    setChartError('')
+
+    getReportsRange('month')
+      .then((rangeResp) => {
+        if (!active) return
+        const typedRange = rangeResp as SeriesResponse
+        setChartSeries(Array.isArray(typedRange.series) ? typedRange.series : [])
+      })
+      .catch((err) => {
+        if (!active) return
+        setChartError(err instanceof Error ? err.message : t('reports.unavailable'))
+        setChartSeries([])
+      })
+      .finally(() => {
+        if (!active) return
+        setChartLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [t])
 
   useEffect(() => {
     const selectedToday = range === 'date' && isTodaySelection(customDate, movementLive?.date)
@@ -646,7 +702,7 @@ export default function Reports() {
   }
 
   const rawChartData = useMemo(() => {
-    const mapped = series.map((item) => ({
+    const mapped = chartSeries.map((item) => ({
       date: item.date,
       net: item.net_with_keysend_sats ?? item.net_routing_profit_sats,
       netRouting: item.net_routing_profit_sats,
@@ -662,15 +718,14 @@ export default function Reports() {
       onchainLocalForceCost: item.onchain_local_force_cost_sats ?? 0,
       onchainRemoteForceCost: item.onchain_remote_force_cost_sats ?? 0,
       costWithOnchain: item.total_fee_cost_with_onchain_sats ?? ((item.offchain_fee_cost_sats ?? item.total_fee_cost_sats ?? ((item.rebalance_fee_cost_sats ?? 0) + (item.payment_fee_cost_sats ?? 0))) + (item.onchain_fee_cost_sats ?? 0)),
-      costForChart: 0,
       onchain: item.onchain_balance_sats ?? null,
       lightning: item.lightning_balance_sats ?? null,
       total: item.total_balance_sats ?? null
     }))
     return mapped.sort((a, b) => a.date.localeCompare(b.date))
-  }, [series])
+  }, [chartSeries])
 
-  const showYearInChartLabels = range === 'all'
+  const showYearInChartLabels = false
 
   const chartData = useMemo<ChartDataPoint[]>(() => {
     if (rawChartData.length === 0) {
@@ -735,14 +790,6 @@ export default function Reports() {
         label: formatRangeLabel(item.startDate, item.endDate, chartGranularity, showYearInChartLabels)
       }))
   }, [chartGranularity, locale, rawChartData, showYearInChartLabels])
-
-  const chartDataWithCost = useMemo<ChartDataPoint[]>(
-    () => chartData.map((item) => ({
-      ...item,
-      costForChart: includeOnchainCostInCharts ? item.costWithOnchain : item.offchainCost
-    })),
-    [chartData, includeOnchainCostInCharts]
-  )
 
   const cumulativeCostData = useMemo(() => {
     let cumulativeRevenue = 0
@@ -870,6 +917,19 @@ export default function Reports() {
   const summaryAveragesCostWithOnchain = summary?.averages.total_fee_cost_with_onchain_sats ?? (summaryAveragesOffchainCost + summaryAveragesOnchainCost)
   const summaryAveragesNetWithKeysend = summary?.averages.net_with_keysend_sats ?? ((summary?.averages.net_routing_profit_sats ?? 0) + (summary?.averages.keysend_received_sats ?? 0))
   const summaryAveragesNetWithOnchain = summaryAveragesNetWithKeysend - summaryAveragesOnchainCost
+  const currentMonthInput = formatInputMonth(new Date())
+  const renderChartStatus = (hasData: boolean, emptyMessage = t('reports.noData')) => {
+    if (chartLoading && !hasData) {
+      return <p className="text-sm text-fog/60">{t('reports.loadingRange')}</p>
+    }
+    if (chartError) {
+      return <p className="text-sm text-brass">{chartError}</p>
+    }
+    if (!hasData) {
+      return <p className="text-sm text-fog/60">{emptyMessage}</p>
+    }
+    return null
+  }
   const renderGranularityToggle = () => (
     <div className="inline-flex items-center gap-1 rounded-full bg-white/10 p-1">
       {chartGranularityOptions.map((option) => (
@@ -1020,6 +1080,18 @@ export default function Reports() {
               />
             </label>
           )}
+          {range === 'month' && (
+            <label className="block text-sm text-fog/70">
+              {t('reports.selectMonth')}
+              <input
+                className="input-field mt-2"
+                type="month"
+                value={customMonth}
+                max={currentMonthInput}
+                onChange={(e) => setCustomMonth(e.target.value)}
+              />
+            </label>
+          )}
           {seriesLoading && series.length === 0 && <p className="text-sm text-fog/60">{t('reports.loadingRange')}</p>}
           {seriesError && <p className="text-sm text-brass">{seriesError}</p>}
           {!seriesLoading && !seriesError && summary && (
@@ -1106,57 +1178,71 @@ export default function Reports() {
       </div>
 
       <div className="section-card space-y-4">
-        <div>
-          <h3 className="text-lg font-semibold">{t('reports.settings.title')}</h3>
-          <p className="text-fog/60">{t('reports.settings.subtitle')}</p>
-        </div>
-        {configLoading && <p className="text-sm text-fog/60">{t('reports.settings.loading')}</p>}
-        {!configLoading && (
-          <div className="grid gap-4 lg:grid-cols-3">
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70">{t('reports.settings.liveTimeout')}</label>
-              <input
-                className="input-field"
-                type="number"
-                min={0}
-                placeholder="60"
-                value={liveTimeout}
-                onChange={(e) => setLiveTimeout(e.target.value)}
-              />
-              <p className="text-xs text-fog/50">{t('reports.settings.liveTimeoutHint')}</p>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70">{t('reports.settings.liveLookback')}</label>
-              <input
-                className="input-field"
-                type="number"
-                min={0}
-                placeholder="24"
-                value={liveLookback}
-                onChange={(e) => setLiveLookback(e.target.value)}
-              />
-              <p className="text-xs text-fog/50">{t('reports.settings.liveLookbackHint')}</p>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-fog/70">{t('reports.settings.runTimeout')}</label>
-              <input
-                className="input-field"
-                type="number"
-                min={0}
-                placeholder="300"
-                value={runTimeout}
-                onChange={(e) => setRunTimeout(e.target.value)}
-              />
-              <p className="text-xs text-fog/50">{t('reports.settings.runTimeoutHint')}</p>
-            </div>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-semibold">{t('reports.settings.title')}</h3>
+            <p className="text-fog/60">{t('reports.settings.subtitle')}</p>
           </div>
-        )}
-        <div className="flex flex-wrap items-center gap-3">
-          <button className="btn-primary" onClick={handleSaveConfig} disabled={configSaving}>
-            {configSaving ? t('reports.settings.saving') : t('reports.settings.save')}
+          <button
+            className="btn-secondary text-xs px-3 py-2"
+            type="button"
+            aria-expanded={settingsOpen}
+            onClick={() => setSettingsOpen((open) => !open)}
+          >
+            {settingsOpen ? t('common.hide') : t('reports.settings.configure')}
           </button>
-          {configStatus && <span className="text-sm text-fog/60">{configStatus}</span>}
         </div>
+        {settingsOpen && (
+          <>
+            {configLoading && <p className="text-sm text-fog/60">{t('reports.settings.loading')}</p>}
+            {!configLoading && (
+              <div className="grid gap-4 lg:grid-cols-3">
+                <div className="space-y-2">
+                  <label className="text-sm text-fog/70">{t('reports.settings.liveTimeout')}</label>
+                  <input
+                    className="input-field"
+                    type="number"
+                    min={0}
+                    placeholder="60"
+                    value={liveTimeout}
+                    onChange={(e) => setLiveTimeout(e.target.value)}
+                  />
+                  <p className="text-xs text-fog/50">{t('reports.settings.liveTimeoutHint')}</p>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm text-fog/70">{t('reports.settings.liveLookback')}</label>
+                  <input
+                    className="input-field"
+                    type="number"
+                    min={0}
+                    placeholder="24"
+                    value={liveLookback}
+                    onChange={(e) => setLiveLookback(e.target.value)}
+                  />
+                  <p className="text-xs text-fog/50">{t('reports.settings.liveLookbackHint')}</p>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm text-fog/70">{t('reports.settings.runTimeout')}</label>
+                  <input
+                    className="input-field"
+                    type="number"
+                    min={0}
+                    placeholder="300"
+                    value={runTimeout}
+                    onChange={(e) => setRunTimeout(e.target.value)}
+                  />
+                  <p className="text-xs text-fog/50">{t('reports.settings.runTimeoutHint')}</p>
+                </div>
+              </div>
+            )}
+            <div className="flex flex-wrap items-center gap-3">
+              <button className="btn-primary" onClick={handleSaveConfig} disabled={configSaving}>
+                {configSaving ? t('reports.settings.saving') : t('reports.settings.save')}
+              </button>
+              {configStatus && <span className="text-sm text-fog/60">{configStatus}</span>}
+            </div>
+          </>
+        )}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -1165,9 +1251,7 @@ export default function Reports() {
             <h3 className="text-lg font-semibold">{t('reports.netWithKeysend')}</h3>
             {renderGranularityToggle()}
           </div>
-          {chartData.length === 0 && !seriesLoading && !seriesError ? (
-            <p className="text-sm text-fog/60">{t('reports.noData')}</p>
-          ) : (
+          {renderChartStatus(chartData.length > 0) ?? (
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 10 }}>
@@ -1211,12 +1295,10 @@ export default function Reports() {
             />
             <span>{t('reports.includeOnchainCost')}</span>
           </label>
-          {chartData.length === 0 && !seriesLoading && !seriesError ? (
-            <p className="text-sm text-fog/60">{t('reports.noData')}</p>
-          ) : (
+          {renderChartStatus(chartData.length > 0) ?? (
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartDataWithCost} margin={{ top: 10, right: 10, left: 0, bottom: 10 }}>
+                <BarChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 10 }}>
                   <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
                   <XAxis dataKey="label" tick={{ fill: '#cbd5f5', fontSize: 11 }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fill: '#cbd5f5', fontSize: 11 }} tickFormatter={formatCompact} axisLine={false} tickLine={false} />
@@ -1229,9 +1311,13 @@ export default function Reports() {
                     formatter={(value) => formatSats(Number(value))}
                     labelFormatter={(value) => String(value)}
                   />
-                  <Line type="monotone" dataKey="revenue" name={t('reports.revenue')} stroke={COLORS.revenue} strokeWidth={2} dot={false} />
-                  <Line type="monotone" dataKey="costForChart" name={t('reports.cost')} stroke={COLORS.cost} strokeWidth={2} dot={false} />
-                </LineChart>
+                  <Bar dataKey="revenue" stackId="revenue" name={t('reports.revenue')} fill={COLORS.revenue} fillOpacity={0.72} radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="rebalanceCost" stackId="cost" name={t('reports.rebalances')} fill={COLORS.costRebalance} fillOpacity={0.7} />
+                  <Bar dataKey="paymentCost" stackId="cost" name={t('reports.payments')} fill={COLORS.costPayment} fillOpacity={0.7} radius={includeOnchainCostInCharts ? [0, 0, 0, 0] : [6, 6, 0, 0]} />
+                  {includeOnchainCostInCharts && (
+                    <Bar dataKey="onchainCost" stackId="cost" name={t('reports.onchainCost')} fill={COLORS.onchain} fillOpacity={0.7} radius={[6, 6, 0, 0]} />
+                  )}
+                </BarChart>
               </ResponsiveContainer>
             </div>
           )}
@@ -1243,12 +1329,20 @@ export default function Reports() {
           <h3 className="text-lg font-semibold">{t('reports.forwardRebalanceVolume')}</h3>
           {renderGranularityToggle()}
         </div>
-        {chartData.length === 0 && !seriesLoading && !seriesError ? (
-          <p className="text-sm text-fog/60">{t('reports.noData')}</p>
-        ) : (
+        {renderChartStatus(chartData.length > 0) ?? (
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 10 }}>
+              <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 10 }}>
+                <defs>
+                  <linearGradient id="forwardVolumeGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={COLORS.forwardVolume} stopOpacity={0.45} />
+                    <stop offset="95%" stopColor={COLORS.forwardVolume} stopOpacity={0.04} />
+                  </linearGradient>
+                  <linearGradient id="rebalanceVolumeGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={COLORS.rebalanceVolume} stopOpacity={0.4} />
+                    <stop offset="95%" stopColor={COLORS.rebalanceVolume} stopOpacity={0.04} />
+                  </linearGradient>
+                </defs>
                 <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
                 <XAxis dataKey="label" tick={{ fill: '#cbd5f5', fontSize: 11 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: '#cbd5f5', fontSize: 11 }} tickFormatter={formatCompact} axisLine={false} tickLine={false} />
@@ -1261,9 +1355,9 @@ export default function Reports() {
                   formatter={(value) => formatSats(Number(value))}
                   labelFormatter={(value) => String(value)}
                 />
-                <Line type="monotone" dataKey="forwardVolume" name={t('reports.forwardVolume')} stroke={COLORS.forwardVolume} strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="rebalanceVolume" name={t('reports.rebalanceVolume')} stroke={COLORS.rebalanceVolume} strokeWidth={2} dot={false} />
-              </LineChart>
+                <Area type="monotone" dataKey="forwardVolume" name={t('reports.forwardVolume')} stroke={COLORS.forwardVolume} fill="url(#forwardVolumeGradient)" strokeWidth={2} dot={false} />
+                <Area type="monotone" dataKey="rebalanceVolume" name={t('reports.rebalanceVolume')} stroke={COLORS.rebalanceVolume} fill="url(#rebalanceVolumeGradient)" strokeWidth={2} dot={false} />
+              </AreaChart>
             </ResponsiveContainer>
           </div>
         )}
@@ -1277,9 +1371,7 @@ export default function Reports() {
             {renderGranularityToggle()}
           </div>
         </div>
-        {!hasBalances && !seriesLoading && !seriesError ? (
-          <p className="text-sm text-fog/60">{t('reports.balanceHistoryUnavailable')}</p>
-        ) : (
+        {renderChartStatus(hasBalances, t('reports.balanceHistoryUnavailable')) ?? (
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 10 }}>
@@ -1314,41 +1406,52 @@ export default function Reports() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 className="text-lg font-semibold">{t('reports.cumulativeRevenueCosts')}</h3>
           <div className="flex flex-wrap items-center gap-3">
-            <label className="inline-flex items-center gap-2 text-sm text-fog/70">
-              <input
-                type="checkbox"
-                className="h-4 w-4 accent-emerald-500"
-                checked={includeOnchainCostInCharts}
-                onChange={(e) => setIncludeOnchainCostInCharts(e.target.checked)}
-              />
-              <span>{t('reports.includeOnchainCost')}</span>
-            </label>
-            <label className={`inline-flex items-center gap-2 text-sm ${includeOnchainCostInCharts ? 'text-fog/70' : 'text-fog/40'}`}>
-              <input
-                type="checkbox"
-                className="h-4 w-4 accent-emerald-500"
-                checked={includeOnchainBreakdownInCharts}
-                disabled={!includeOnchainCostInCharts}
-                onChange={(e) => setIncludeOnchainBreakdownInCharts(e.target.checked)}
-              />
-              <span>{t('reports.includeOnchainBreakdown')}</span>
-            </label>
-            <label className={`inline-flex items-center gap-2 text-sm ${includeOnchainCostInCharts ? 'text-fog/70' : 'text-fog/40'}`}>
-              <input
-                type="checkbox"
-                className="h-4 w-4 accent-emerald-500"
-                checked={useDualScaleInCumulativeChart}
-                disabled={!includeOnchainCostInCharts}
-                onChange={(e) => setUseDualScaleInCumulativeChart(e.target.checked)}
-              />
-              <span>{t('reports.dualScale')}</span>
-            </label>
-            {renderGranularityToggle()}
+            {cumulativeOpen && (
+              <>
+                <label className="inline-flex items-center gap-2 text-sm text-fog/70">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-emerald-500"
+                    checked={includeOnchainCostInCharts}
+                    onChange={(e) => setIncludeOnchainCostInCharts(e.target.checked)}
+                  />
+                  <span>{t('reports.includeOnchainCost')}</span>
+                </label>
+                <label className={`inline-flex items-center gap-2 text-sm ${includeOnchainCostInCharts ? 'text-fog/70' : 'text-fog/40'}`}>
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-emerald-500"
+                    checked={includeOnchainBreakdownInCharts}
+                    disabled={!includeOnchainCostInCharts}
+                    onChange={(e) => setIncludeOnchainBreakdownInCharts(e.target.checked)}
+                  />
+                  <span>{t('reports.includeOnchainBreakdown')}</span>
+                </label>
+                <label className={`inline-flex items-center gap-2 text-sm ${includeOnchainCostInCharts ? 'text-fog/70' : 'text-fog/40'}`}>
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-emerald-500"
+                    checked={useDualScaleInCumulativeChart}
+                    disabled={!includeOnchainCostInCharts}
+                    onChange={(e) => setUseDualScaleInCumulativeChart(e.target.checked)}
+                  />
+                  <span>{t('reports.dualScale')}</span>
+                </label>
+                {renderGranularityToggle()}
+              </>
+            )}
+            <button
+              className="btn-secondary text-xs px-3 py-2"
+              type="button"
+              aria-expanded={cumulativeOpen}
+              onClick={() => setCumulativeOpen((open) => !open)}
+            >
+              {cumulativeOpen ? t('reports.hideChart') : t('reports.showChart')}
+            </button>
           </div>
         </div>
-        {cumulativeCostData.length === 0 && !seriesLoading && !seriesError ? (
-          <p className="text-sm text-fog/60">{t('reports.noData')}</p>
-        ) : (
+        {cumulativeOpen && (
+          renderChartStatus(cumulativeCostData.length > 0) ?? (
           <div className="h-[60rem]">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={cumulativeCostData} margin={{ top: 10, right: 10, left: 0, bottom: 10 }}>
@@ -1491,7 +1594,7 @@ export default function Reports() {
               </AreaChart>
             </ResponsiveContainer>
           </div>
-        )}
+        ))}
       </div>
     </section>
   )

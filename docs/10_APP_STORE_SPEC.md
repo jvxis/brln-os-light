@@ -36,7 +36,7 @@ The core types live in:
 
 Some apps use fixed paths (example: Bitcoin Core uses /data/bitcoin).
 
-Native apps may use an additional fixed data directory under /data (example: Elements uses /data/elements).
+Native apps may use an additional data directory under /data (example: Elements defaults to /data/elements). Elements can optionally receive a custom data directory at install time only; changing it later is not supported.
 
 ## App lifecycle
 Docker apps:
@@ -50,7 +50,7 @@ Native apps:
 - Installed: binary + systemd unit exist
 - Status: derived from systemctl is-active
 - Start/Stop: systemctl start/stop
-- Uninstall: disable systemd unit and remove app files (data dir policy varies per app; Elements keeps /data/elements)
+- Uninstall: disable systemd unit and remove app files (data dir policy varies per app; Elements does not delete the selected data directory)
 
 ## Helpers you should reuse
 - ensureDocker(ctx): installs docker and compose when needed

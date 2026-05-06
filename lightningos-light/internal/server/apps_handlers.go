@@ -1,6 +1,8 @@
 package server
 
 import (
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -51,6 +53,21 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 	}
 	if app == nil {
 		writeError(w, http.StatusNotFound, "app not found")
+		return
+	}
+	if appID == elementsAppID {
+		var req elementsInstallOptions
+		if r.ContentLength != 0 {
+			if err := readJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+				writeError(w, http.StatusBadRequest, "invalid json")
+				return
+			}
+		}
+		if err := s.installElementsWithOptions(r.Context(), req); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		return
 	}
 	if err := app.Install(r.Context()); err != nil {

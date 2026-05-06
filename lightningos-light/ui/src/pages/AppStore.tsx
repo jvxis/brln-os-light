@@ -48,6 +48,8 @@ type ElectrsStatus = {
   message?: string
 }
 
+type AppAction = 'install' | 'start' | 'stop' | 'uninstall'
+
 const iconMap: Record<string, string> = {
   lndg: lndgIcon,
   bitcoincore: bitcoincoreIcon,
@@ -79,6 +81,7 @@ const statusStyles: Record<string, string> = {
 const publicPoolUIPortFallback = 8081
 const publicPoolStratumPort = 3333
 const APP_STORE_INSTALL_FILTER_KEY = 'app_store_install_filter'
+const elementsDefaultDataDir = '/data/elements'
 
 export default function AppStore() {
   const { t } = useTranslation()
@@ -90,6 +93,9 @@ export default function AppStore() {
   const [hideBitcoinCore, setHideBitcoinCore] = useState(false)
   const [bitcoinMode, setBitcoinMode] = useState<BitcoinMode>('remote')
   const [electrsStatus, setElectrsStatus] = useState<ElectrsStatus | null>(null)
+  const [elementsInstallOpen, setElementsInstallOpen] = useState(false)
+  const [elementsCustomDataDir, setElementsCustomDataDir] = useState(false)
+  const [elementsDataDir, setElementsDataDir] = useState(elementsDefaultDataDir)
   const [installFilter, setInstallFilter] = useState<InstallFilter>(() => {
     if (typeof window === 'undefined') return 'all'
     const stored = window.localStorage.getItem(APP_STORE_INSTALL_FILTER_KEY)
@@ -200,11 +206,17 @@ export default function AppStore() {
     }
   }, [electrsRunning])
 
-  const handleAction = async (id: string, action: 'install' | 'start' | 'stop' | 'uninstall') => {
+  const handleAction = async (id: string, action: AppAction, payload?: { data_dir?: string }) => {
+    if (id === 'elements' && action === 'install' && !payload) {
+      setElementsCustomDataDir(false)
+      setElementsDataDir(elementsDefaultDataDir)
+      setElementsInstallOpen(true)
+      return
+    }
     setMessage('')
     setBusy((prev) => ({ ...prev, [id]: action }))
     try {
-      if (action === 'install') await installApp(id)
+      if (action === 'install') await installApp(id, payload)
       if (action === 'start') await startApp(id)
       if (action === 'stop') await stopApp(id)
       if (action === 'uninstall') await uninstallApp(id)
@@ -219,6 +231,12 @@ export default function AppStore() {
         return next
       })
     }
+  }
+
+  const handleElementsInstallConfirm = async () => {
+    const dataDir = elementsCustomDataDir ? elementsDataDir.trim() : elementsDefaultDataDir
+    setElementsInstallOpen(false)
+    await handleAction('elements', 'install', { data_dir: dataDir })
   }
 
   const handleResetAdmin = async (id: string) => {
@@ -490,6 +508,65 @@ export default function AppStore() {
       )}
       {!loading && apps.length > 0 && visibleApps.length === 0 && (
         <p className="text-fog/60">{t('appStore.noAppsForFilter')}</p>
+      )}
+
+      {elementsInstallOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="w-full max-w-lg rounded-lg border border-white/10 bg-ink p-5 shadow-xl">
+            <div className="space-y-2">
+              <h3 className="text-lg font-semibold">{t('appStore.elementsInstallTitle')}</h3>
+              <p className="text-sm text-fog/60">{t('appStore.elementsInstallBody')}</p>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              <label className="flex items-start gap-3 text-sm text-fog/80">
+                <input
+                  className="mt-1"
+                  type="checkbox"
+                  checked={elementsCustomDataDir}
+                  onChange={(event) => {
+                    setElementsCustomDataDir(event.target.checked)
+                    if (!event.target.checked) setElementsDataDir(elementsDefaultDataDir)
+                  }}
+                />
+                <span>{t('appStore.elementsUseCustomDataDir')}</span>
+              </label>
+
+              <div className="space-y-2">
+                <label className="text-xs uppercase tracking-wide text-fog/50" htmlFor="elements-data-dir">
+                  {t('appStore.elementsDataDirLabel')}
+                </label>
+                <input
+                  id="elements-data-dir"
+                  className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-fog outline-none focus:border-brass"
+                  value={elementsCustomDataDir ? elementsDataDir : elementsDefaultDataDir}
+                  disabled={!elementsCustomDataDir}
+                  onChange={(event) => setElementsDataDir(event.target.value)}
+                  placeholder={elementsDefaultDataDir}
+                />
+                <p className="text-xs text-fog/50">{t('appStore.elementsDataDirHint')}</p>
+              </div>
+            </div>
+
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button
+                className="btn-secondary"
+                type="button"
+                onClick={() => setElementsInstallOpen(false)}
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                className="btn-primary"
+                type="button"
+                disabled={elementsCustomDataDir && elementsDataDir.trim() === ''}
+                onClick={handleElementsInstallConfirm}
+              >
+                {t('appStore.install')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </section>
   )

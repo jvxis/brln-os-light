@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -15,12 +16,15 @@ import (
 )
 
 const (
-	elementsAppID       = "elements"
-	elementsVersion     = "23.3.1"
-	elementsUser        = "losop"
-	elementsServiceName = "lightningos-elements"
-	elementsRPCPort     = 7041
-	elementsFallbackFee = "0.00001"
+	elementsAppID            = "elements"
+	elementsVersion          = "23.3.1"
+	elementsUser             = "losop"
+	elementsServiceName      = "lightningos-elements"
+	elementsRPCPort          = 7041
+	elementsFallbackFee      = "0.00001"
+	elementsDefaultDataDir   = "/data/elements"
+	elementsDataDirStateFile = "data_dir"
+	elementsMinFreeKiB       = 1024 * 1024
 )
 
 var elementsAssetDirs = []string{
@@ -53,6 +57,10 @@ type elementsConfigValues struct {
 	MainchainPort int
 	MainchainUser string
 	MainchainPass string
+}
+
+type elementsInstallOptions struct {
+	DataDir string `json:"data_dir"`
 }
 
 func newElementsApp(s *Server) appHandler {
@@ -107,9 +115,9 @@ func (a elementsApp) Stop(ctx context.Context) error {
 
 func elementsAppPaths() elementsPaths {
 	root := filepath.Join(appsRoot, elementsAppID)
-	dataDir := "/data/elements"
+	dataDir := readElementsDataDir()
 	binDir := filepath.Join(root, "bin")
-	appDataDir := filepath.Join(appsDataRoot, elementsAppID)
+	appDataDir := elementsAppDataDir()
 	return elementsPaths{
 		Root:                root,
 		DataDir:             dataDir,
@@ -125,7 +133,135 @@ func elementsAppPaths() elementsPaths {
 	}
 }
 
+func elementsAppDataDir() string {
+	return filepath.Join(appsDataRoot, elementsAppID)
+}
+
+func elementsDataDirStatePath() string {
+	return filepath.Join(elementsAppDataDir(), elementsDataDirStateFile)
+}
+
+func readElementsDataDir() string {
+	raw, err := os.ReadFile(elementsDataDirStatePath())
+	if err != nil {
+		return elementsDefaultDataDir
+	}
+	normalized, err := normalizeElementsDataDir(string(raw))
+	if err != nil {
+		return elementsDefaultDataDir
+	}
+	return normalized
+}
+
+func writeElementsDataDir(dataDir string) error {
+	normalized, err := normalizeElementsDataDir(dataDir)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(elementsAppDataDir(), 0750); err != nil {
+		return err
+	}
+	return writeFile(elementsDataDirStatePath(), normalized+"\n", 0640)
+}
+
+func normalizeElementsDataDir(dataDir string) (string, error) {
+	trimmed := strings.TrimSpace(dataDir)
+	if trimmed == "" {
+		return elementsDefaultDataDir, nil
+	}
+	if strings.Contains(trimmed, "\\") {
+		return "", errors.New("elements data_dir must be a Linux absolute path")
+	}
+	if !strings.HasPrefix(trimmed, "/") {
+		return "", errors.New("elements data_dir must be an absolute path")
+	}
+	cleaned := path.Clean(trimmed)
+	if cleaned == "." || cleaned == "/" {
+		return "", errors.New("elements data_dir cannot be the filesystem root")
+	}
+	if !elementsDataDirHasSafeChars(cleaned) {
+		return "", errors.New("elements data_dir may only contain letters, numbers, slash, dot, underscore, and hyphen")
+	}
+	for _, blocked := range elementsBlockedDataDirPrefixes() {
+		if cleaned == blocked || strings.HasPrefix(cleaned, blocked+"/") {
+			return "", fmt.Errorf("elements data_dir cannot be inside %s", blocked)
+		}
+	}
+	return cleaned, nil
+}
+
+func elementsDataDirHasSafeChars(value string) bool {
+	for _, char := range value {
+		if char >= 'a' && char <= 'z' {
+			continue
+		}
+		if char >= 'A' && char <= 'Z' {
+			continue
+		}
+		if char >= '0' && char <= '9' {
+			continue
+		}
+		switch char {
+		case '/', '.', '_', '-':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func elementsBlockedDataDirPrefixes() []string {
+	return []string{
+		"/bin",
+		"/boot",
+		"/dev",
+		"/etc",
+		"/home",
+		"/lib",
+		"/lib64",
+		"/proc",
+		"/root",
+		"/run",
+		"/sbin",
+		"/sys",
+		"/tmp",
+		"/usr",
+		"/var",
+		"/data/bitcoin",
+		"/data/lnd",
+	}
+}
+
 func (s *Server) installElements(ctx context.Context) error {
+	return s.installElementsWithOptions(ctx, elementsInstallOptions{})
+}
+
+func (s *Server) installElementsWithOptions(ctx context.Context, opts elementsInstallOptions) error {
+	requestedDataDir := strings.TrimSpace(opts.DataDir)
+	if requestedDataDir != "" {
+		normalized, err := normalizeElementsDataDir(requestedDataDir)
+		if err != nil {
+			return err
+		}
+		currentPaths := elementsAppPaths()
+		if fileExists(currentPaths.ElementsdPath) && normalized != currentPaths.DataDir {
+			return errors.New("Elements data directory cannot be changed after installation")
+		}
+		if normalized == elementsDefaultDataDir {
+			if err := writeElementsDataDir(normalized); err != nil {
+				return err
+			}
+		} else {
+			if err := validateElementsInstallDataDir(ctx, normalized); err != nil {
+				return err
+			}
+			if err := writeElementsDataDir(normalized); err != nil {
+				return err
+			}
+		}
+	}
+
 	paths := elementsAppPaths()
 	if err := os.MkdirAll(paths.Root, 0750); err != nil {
 		return fmt.Errorf("failed to create app directory: %w", err)
@@ -147,6 +283,49 @@ func (s *Server) installElements(ctx context.Context) error {
 	}
 	if _, err := runSystemd(ctx, "systemctl", "enable", "--now", elementsServiceName); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateElementsInstallDataDir(ctx context.Context, dataDir string) error {
+	normalized, err := normalizeElementsDataDir(dataDir)
+	if err != nil {
+		return err
+	}
+	parent := path.Dir(normalized)
+	script := fmt.Sprintf(`set -e
+parent=%s
+data=%s
+if [ ! -d "$parent" ]; then
+  echo "parent directory does not exist: $parent" >&2
+  exit 10
+fi
+if command -v findmnt >/dev/null 2>&1; then
+  findmnt -T "$parent" >/dev/null || {
+    echo "parent directory is not on a mounted filesystem: $parent" >&2
+    exit 11
+  }
+fi
+mkdir -p "$data"
+if [ ! -d "$data" ]; then
+  echo "data directory is not a directory: $data" >&2
+  exit 12
+fi
+touch "$data/.lightningos-write-test"
+rm -f "$data/.lightningos-write-test"
+available="$(df -Pk "$data" | awk 'NR==2 {print $4}')"
+if [ -n "$available" ] && [ "$available" -lt %d ]; then
+  echo "not enough free space in $data" >&2
+  exit 13
+fi
+`, shellQuote(parent), shellQuote(normalized), elementsMinFreeKiB)
+	out, err := runSystemd(ctx, "/bin/sh", "-c", script)
+	if err != nil {
+		msg := strings.TrimSpace(out)
+		if msg == "" {
+			return fmt.Errorf("elements data_dir validation failed: %w", err)
+		}
+		return fmt.Errorf("elements data_dir validation failed: %s", msg)
 	}
 	return nil
 }

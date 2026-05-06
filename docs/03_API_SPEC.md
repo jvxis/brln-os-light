@@ -247,6 +247,13 @@ GET /api/apps
 - Returns app list with status.
 
 POST /api/apps/{id}/install
+- Installs an app.
+- For `elements`, optional body:
+{
+  "data_dir": "/mnt/liquid-ssd/elements"
+}
+- `data_dir` is install-time only; existing Elements data is not migrated.
+
 POST /api/apps/{id}/start
 POST /api/apps/{id}/stop
 POST /api/apps/{id}/uninstall

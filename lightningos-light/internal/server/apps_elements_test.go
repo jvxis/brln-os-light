@@ -68,3 +68,40 @@ func TestLocalBitcoinConfigCandidatesIncludesAdminBitcoinConf(t *testing.T) {
 		t.Fatalf("expected /home/admin/.bitcoin/bitcoin.conf in candidates: %#v", candidates)
 	}
 }
+
+func TestNormalizeElementsDataDir(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		want    string
+		wantErr bool
+	}{
+		{name: "blank defaults", value: "", want: elementsDefaultDataDir},
+		{name: "cleans path", value: "/mnt/liquid/../liquid/elements/", want: "/mnt/liquid/elements"},
+		{name: "rejects relative", value: "mnt/liquid/elements", wantErr: true},
+		{name: "rejects root", value: "/", wantErr: true},
+		{name: "rejects system dir", value: "/var/lib/elements", wantErr: true},
+		{name: "rejects bitcoin dir", value: "/data/bitcoin/elements", wantErr: true},
+		{name: "rejects spaces", value: "/mnt/liquid ssd/elements", wantErr: true},
+		{name: "rejects shell chars", value: "/mnt/liquid;ssd/elements", wantErr: true},
+		{name: "allows data elements default", value: "/data/elements", want: "/data/elements"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := normalizeElementsDataDir(tc.value)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("expected %q, got %q", tc.want, got)
+			}
+		})
+	}
+}

@@ -684,7 +684,8 @@ export const deleteShortcut = (id: number) =>
 export const getApps = () => request('/api/apps')
 export const getElectrsStatus = () => request('/api/apps/electrs/status')
 export const getAppAdminPassword = (id: string) => request(`/api/apps/${id}/admin-password`)
-export const installApp = (id: string) => request(`/api/apps/${id}/install`, { method: 'POST' })
+export const installApp = (id: string, payload?: { data_dir?: string }) =>
+  request(`/api/apps/${id}/install`, { method: 'POST', body: JSON.stringify(payload ?? {}) })
 export const uninstallApp = (id: string) => request(`/api/apps/${id}/uninstall`, { method: 'POST' })
 export const startApp = (id: string) => request(`/api/apps/${id}/start`, { method: 'POST' })
 export const stopApp = (id: string) => request(`/api/apps/${id}/stop`, { method: 'POST' })

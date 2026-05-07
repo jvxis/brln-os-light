@@ -399,6 +399,7 @@ type RebalanceJob struct {
 	CompletedAt        string  `json:"completed_at,omitempty"`
 	Source             string  `json:"source"`
 	Status             string  `json:"status"`
+	TriggerReason      string  `json:"trigger_reason,omitempty"`
 	Reason             string  `json:"reason,omitempty"`
 	TargetChannelID    uint64  `json:"target_channel_id"`
 	TargetChannelPoint string  `json:"target_channel_point"`
@@ -5791,7 +5792,7 @@ select max(created_at)
 from rebalance_jobs
 where target_channel_id=$1
   and source='manual'
-  and coalesce(reason, '')='auto-restart'
+  and coalesce(trigger_reason, reason, '')='auto-restart'
 `, int64(channelID)).Scan(&createdAt)
 	if err != nil || !createdAt.Valid {
 		return time.Time{}, false
@@ -7084,6 +7085,7 @@ create table if not exists rebalance_jobs (
   completed_at timestamptz,
   source text not null,
   status text not null,
+  trigger_reason text,
   reason text,
   target_channel_id bigint not null,
   target_channel_point text not null,
@@ -7091,6 +7093,14 @@ create table if not exists rebalance_jobs (
   target_amount_sat bigint not null,
   config_snapshot jsonb
 );
+
+alter table if exists rebalance_jobs
+  add column if not exists trigger_reason text;
+update rebalance_jobs
+  set trigger_reason=reason
+  where trigger_reason is null
+    and reason is not null
+    and status in ('queued','running');
 
 create table if not exists rebalance_attempts (
   id bigserial primary key,
@@ -8409,8 +8419,8 @@ func (s *RebalanceService) insertJob(ctx context.Context, target *lndclient.Chan
 	var jobID int64
 	err := s.db.QueryRow(ctx, `
 insert into rebalance_jobs (
-  source, status, reason, target_channel_id, target_channel_point, target_outbound_pct, target_amount_sat, config_snapshot
-) values ($1,'queued',$2,$3,$4,$5,$6,$7)
+  source, status, trigger_reason, reason, target_channel_id, target_channel_point, target_outbound_pct, target_amount_sat, config_snapshot
+) values ($1,'queued',$2,$2,$3,$4,$5,$6,$7)
  returning id
 `, source, nullableString(reason), int64(target.ChannelID), target.ChannelPoint, targetPct, amount, nil).Scan(&jobID)
 	return jobID, err
@@ -9140,7 +9150,7 @@ func (s *RebalanceService) Queue(ctx context.Context) ([]RebalanceJob, []Rebalan
 		}
 	}
 	rows, err := s.db.Query(ctx, `
-select id, created_at, completed_at, source, status, reason, target_channel_id,
+select id, created_at, completed_at, source, status, trigger_reason, reason, target_channel_id,
   target_channel_point, target_outbound_pct, target_amount_sat
 from rebalance_jobs
 where status in ('running','queued')
@@ -9155,15 +9165,19 @@ order by created_at desc
 		var job RebalanceJob
 		var created time.Time
 		var completed pgtype.Timestamptz
+		var triggerReason pgtype.Text
 		var reason pgtype.Text
 		var targetChannelID int64
-		if err := rows.Scan(&job.ID, &created, &completed, &job.Source, &job.Status, &reason, &targetChannelID,
+		if err := rows.Scan(&job.ID, &created, &completed, &job.Source, &job.Status, &triggerReason, &reason, &targetChannelID,
 			&job.TargetChannelPoint, &job.TargetOutboundPct, &job.TargetAmountSat); err != nil {
 			return jobs, attempts, err
 		}
 		job.CreatedAt = created.UTC().Format(time.RFC3339)
 		if completed.Valid {
 			job.CompletedAt = completed.Time.UTC().Format(time.RFC3339)
+		}
+		if triggerReason.Valid {
+			job.TriggerReason = triggerReason.String
 		}
 		if reason.Valid {
 			job.Reason = reason.String
@@ -9269,7 +9283,7 @@ func (s *RebalanceService) History(ctx context.Context, limit int) ([]RebalanceJ
 		limit = 0
 	}
 	baseQuery := `
-select id, created_at, completed_at, source, status, reason, target_channel_id,
+select id, created_at, completed_at, source, status, trigger_reason, reason, target_channel_id,
   target_channel_point, target_outbound_pct, target_amount_sat
 from rebalance_jobs
 where status in ('succeeded','failed','cancelled','partial')
@@ -9289,15 +9303,19 @@ order by created_at desc`
 		var job RebalanceJob
 		var created time.Time
 		var completed pgtype.Timestamptz
+		var triggerReason pgtype.Text
 		var reason pgtype.Text
 		var targetChannelID int64
-		if err := rows.Scan(&job.ID, &created, &completed, &job.Source, &job.Status, &reason, &targetChannelID,
+		if err := rows.Scan(&job.ID, &created, &completed, &job.Source, &job.Status, &triggerReason, &reason, &targetChannelID,
 			&job.TargetChannelPoint, &job.TargetOutboundPct, &job.TargetAmountSat); err != nil {
 			return jobs, attempts, err
 		}
 		job.CreatedAt = created.UTC().Format(time.RFC3339)
 		if completed.Valid {
 			job.CompletedAt = completed.Time.UTC().Format(time.RFC3339)
+		}
+		if triggerReason.Valid {
+			job.TriggerReason = triggerReason.String
 		}
 		if reason.Valid {
 			job.Reason = reason.String

@@ -217,6 +217,7 @@ export type RebalanceJob = {
   completed_at?: string
   source: string
   status: string
+  trigger_reason?: string
   reason?: string
   target_channel_id: number
   target_channel_point: string

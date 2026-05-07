@@ -1197,6 +1197,18 @@ func TestIsManualRestartJobDistinguishesOneShotManual(t *testing.T) {
 	}
 }
 
+func TestShouldUseRecentFailureCacheIncludesManualAutoRestart(t *testing.T) {
+	if !shouldUseRecentFailureCache("auto", "") {
+		t.Fatalf("expected auto jobs to use recent failure cache")
+	}
+	if !shouldUseRecentFailureCache("manual", "auto-restart") {
+		t.Fatalf("expected manual auto-restart jobs to use recent failure cache")
+	}
+	if shouldUseRecentFailureCache("manual", "") {
+		t.Fatalf("expected one-shot manual jobs to bypass recent failure cache")
+	}
+}
+
 func TestShouldEnforceManualRestartBudgetHonorsAutoOnlyMode(t *testing.T) {
 	cfg := RebalanceConfig{}
 	if !shouldEnforceManualRestartBudget(cfg, "manual", "", true) {

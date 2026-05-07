@@ -4518,7 +4518,7 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 	}
 
 	if !attemptedAny && skippedByCache > 0 {
-		s.finishJob(jobID, "failed", "all sources skipped (recent failures)")
+		s.finishJob(jobID, "skipped", "all sources skipped (recent failures)")
 		return
 	}
 	s.finishJob(jobID, "failed", "all sources failed")
@@ -5480,12 +5480,12 @@ with events as (
     j.target_channel_id,
     j.status,
     j.completed_at as occurred_at,
-    (j.status='failed' and j.reason='all sources skipped (recent failures)' and not exists (
+    (j.status='skipped' and not exists (
       select 1 from rebalance_attempts a where a.job_id = j.id
     )) as no_attempt_failure
   from rebalance_jobs j
   where j.completed_at >= $1
-    and j.status in ('succeeded','partial','failed')
+    and j.status in ('succeeded','partial','failed','skipped')
 ),
 last_success as (
   select target_channel_id, max(occurred_at) as last_success_at
@@ -5903,6 +5903,8 @@ func (s *RebalanceService) shouldManualRestart(status string, reason string) boo
 	if status == "failed" {
 		return true
 	}
+	// status=="skipped" → não re-agenda. Pair cache TTL ainda está ativo (15min-6h);
+	// o runManualRestartWatchLoop (15min) cobre o re-test natural sem criar phantom.
 	return false
 }
 
@@ -9286,7 +9288,7 @@ func (s *RebalanceService) History(ctx context.Context, limit int) ([]RebalanceJ
 select id, created_at, completed_at, source, status, trigger_reason, reason, target_channel_id,
   target_channel_point, target_outbound_pct, target_amount_sat
 from rebalance_jobs
-where status in ('succeeded','failed','cancelled','partial')
+where status in ('succeeded','failed','cancelled','partial','skipped')
   and completed_at >= now() - interval '1 day'
 order by created_at desc`
 	var rows pgx.Rows
@@ -9328,7 +9330,7 @@ order by created_at desc`
 	attemptBase := `
 with recent as (
   select id from rebalance_jobs
-  where status in ('succeeded','failed','cancelled','partial')
+  where status in ('succeeded','failed','cancelled','partial','skipped')
     and completed_at >= now() - interval '1 day'
   order by created_at desc
 )

@@ -3119,7 +3119,8 @@
         "all": "All",
         "succeeded": "Success",
         "partial": "Partial",
-        "failed": "Failed"
+        "failed": "Failed",
+        "skipped": "Skipped"
       },
       "empty": "No completed rebalances yet.",
       "targetLabel": "In {{value}}",

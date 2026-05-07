@@ -97,7 +97,7 @@ export default function RebalanceCenter() {
   const [historyExpanded, setHistoryExpanded] = useState<Record<number, boolean>>({})
   const [serverConfig, setServerConfig] = useState<RebalanceConfig | null>(null)
   const [configDirty, setConfigDirty] = useState(false)
-  const [historyFilter, setHistoryFilter] = useState<'all' | 'succeeded' | 'partial' | 'failed'>('all')
+  const [historyFilter, setHistoryFilter] = useState<'all' | 'succeeded' | 'partial' | 'failed' | 'skipped'>('all')
   const [initialLoading, setInitialLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [status, setStatus] = useState('')
@@ -414,6 +414,8 @@ export default function RebalanceCenter() {
         return 'text-amber-200'
       case 'failed':
         return 'text-rose-200'
+      case 'skipped':
+        return 'text-sky-300'
       default:
         return 'text-fog/60'
     }
@@ -2970,7 +2972,7 @@ export default function RebalanceCenter() {
               <p className="text-xs text-fog/50">{t('rebalanceCenter.history.last24h')}</p>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-xs">
-              {(['all', 'succeeded', 'partial', 'failed'] as const).map((filter) => (
+              {(['all', 'succeeded', 'partial', 'failed', 'skipped'] as const).map((filter) => (
                 <button
                   key={filter}
                   className={`rounded-full border px-3 py-1 ${

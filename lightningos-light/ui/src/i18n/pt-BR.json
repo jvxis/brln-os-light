@@ -3119,7 +3119,8 @@
         "all": "Todos",
         "succeeded": "Sucesso",
         "partial": "Parcial",
-        "failed": "Falhos"
+        "failed": "Falhos",
+        "skipped": "Pulados"
       },
       "empty": "Sem rebalances concluídos.",
       "targetLabel": "Para {{value}}",

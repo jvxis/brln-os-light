@@ -725,7 +725,7 @@ func defaultRebalanceConfig() RebalanceConfig {
 		VelocityWeight:            0.7,
 		AutofeeSettlingWindowSec:  7200,
 		AutofeeSettlingMultiplier: 0.5,
-		DelegatedFastPathEnabled:  false,
+		DelegatedFastPathEnabled:  true,
 	}
 }
 
@@ -7075,7 +7075,7 @@ end $$;
     velocity_weight double precision not null default 0.7,
     autofee_settling_window_sec bigint not null default 7200,
     autofee_settling_multiplier double precision not null default 0.5,
-    delegated_fast_path_enabled boolean not null default false,
+    delegated_fast_path_enabled boolean not null default true,
     updated_at timestamptz not null default now()
   );
 
@@ -7156,7 +7156,7 @@ end $$;
   alter table rebalance_config
     add column if not exists autofee_settling_multiplier double precision not null default 0.5;
   alter table rebalance_config
-    add column if not exists delegated_fast_path_enabled boolean not null default false;
+    add column if not exists delegated_fast_path_enabled boolean not null default true;
 
   alter table rebalance_config
     alter column scan_interval_sec set default 900;
@@ -7203,7 +7203,7 @@ end $$;
   alter table rebalance_config
     alter column autofee_settling_multiplier set default 0.5;
   alter table rebalance_config
-    alter column delegated_fast_path_enabled set default false;
+    alter column delegated_fast_path_enabled set default true;
 
   alter table if exists rebalance_channel_settings
     add column if not exists manual_restart_enabled boolean not null default false;

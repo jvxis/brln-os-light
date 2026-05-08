@@ -2004,6 +2004,18 @@ export default function RebalanceCenter() {
 
               <SettingsSubcard title={t('rebalanceCenter.settings.groups.execution')}>
                 <div className="grid gap-3 md:grid-cols-2">
+                  <label
+                    className="md:col-span-2 flex items-start gap-2 rounded-lg border border-mint/40 bg-mint/5 px-3 py-2 text-sm text-fog/80"
+                    title={t('rebalanceCenter.settingsHints.delegatedFastPath')}
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={config.delegated_fast_path_enabled}
+                      onChange={(e) => setConfig({ ...config, delegated_fast_path_enabled: e.target.checked })}
+                    />
+                    <span>{t('rebalanceCenter.settings.delegatedFastPath')}</span>
+                  </label>
                   <div className="space-y-2">
                     <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.feeSteps')}>
                       {t('rebalanceCenter.settings.feeSteps')}
@@ -2091,14 +2103,6 @@ export default function RebalanceCenter() {
                       onChange={(e) => setConfig({ ...config, mission_control_reinforce: e.target.checked })}
                     />
                     {t('rebalanceCenter.settings.missionControlReinforce')}
-                  </label>
-                  <label className="flex items-center gap-2 text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.delegatedFastPath')}>
-                    <input
-                      type="checkbox"
-                      checked={config.delegated_fast_path_enabled}
-                      onChange={(e) => setConfig({ ...config, delegated_fast_path_enabled: e.target.checked })}
-                    />
-                    {t('rebalanceCenter.settings.delegatedFastPath')}
                   </label>
                 </div>
               </SettingsSubcard>

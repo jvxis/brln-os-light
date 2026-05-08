@@ -7266,6 +7266,9 @@ alter table if exists rebalance_jobs
   add column if not exists trigger_reason text;
 alter table if exists rebalance_jobs
   add column if not exists fast_path_attempted boolean not null default false;
+-- Backfill: jobs com reason='delegated-fast-path' são por definição sucessos via fast-path,
+-- então marcamos retroativamente para que o telemetry não subconte (idempotente).
+update rebalance_jobs set fast_path_attempted=true where reason='delegated-fast-path' and not fast_path_attempted;
 update rebalance_jobs
   set trigger_reason=reason
   where trigger_reason is null

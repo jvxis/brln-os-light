@@ -384,6 +384,23 @@ func routeToEdgeLocators(route *lnrpc.Route) []*lnrpc.EdgeLocator {
 }
 
 func (c *Client) SendPaymentWithConstraints(ctx context.Context, paymentRequest string, outgoingChanID uint64, lastHopPubkey string, feeLimitMsat int64, timeoutSec int32, maxParts uint32) (*lnrpc.Payment, error) {
+  ids := []uint64{}
+  if outgoingChanID != 0 {
+    ids = []uint64{outgoingChanID}
+  }
+  return c.sendPaymentMultiSource(ctx, paymentRequest, ids, lastHopPubkey, feeLimitMsat, timeoutSec, maxParts)
+}
+
+// SendPaymentMultiSource entrega o pathfinding ao LND nativo passando todas as
+// sources elegíveis em uma única chamada (modelo do LNDG). Quando outgoingChanIDs
+// tem múltiplos elementos, o LND escolhe internamente entre eles e pode usar MPP
+// para combinar caminhos — isso costuma achar rotas que iterando source-por-source
+// nunca encontraríamos.
+func (c *Client) SendPaymentMultiSource(ctx context.Context, paymentRequest string, outgoingChanIDs []uint64, lastHopPubkey string, feeLimitMsat int64, timeoutSec int32, maxParts uint32) (*lnrpc.Payment, error) {
+  return c.sendPaymentMultiSource(ctx, paymentRequest, outgoingChanIDs, lastHopPubkey, feeLimitMsat, timeoutSec, maxParts)
+}
+
+func (c *Client) sendPaymentMultiSource(ctx context.Context, paymentRequest string, outgoingChanIDs []uint64, lastHopPubkey string, feeLimitMsat int64, timeoutSec int32, maxParts uint32) (*lnrpc.Payment, error) {
   trimmed := strings.TrimSpace(paymentRequest)
   if trimmed == "" {
     return nil, errors.New("payment_request required")
@@ -406,10 +423,14 @@ func (c *Client) SendPaymentWithConstraints(ctx context.Context, paymentRequest 
   req := &routerrpc.SendPaymentRequest{
     PaymentRequest: trimmed,
     TimeoutSeconds: timeoutSec,
-    OutgoingChanId: outgoingChanID,
     AllowSelfPayment: true,
     MaxParts: maxParts,
     NoInflightUpdates: true,
+  }
+  if len(outgoingChanIDs) == 1 {
+    req.OutgoingChanId = outgoingChanIDs[0]
+  } else if len(outgoingChanIDs) > 1 {
+    req.OutgoingChanIds = append([]uint64(nil), outgoingChanIDs...)
   }
   if feeLimitMsat > 0 {
     req.FeeLimitMsat = feeLimitMsat

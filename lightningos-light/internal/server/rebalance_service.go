@@ -33,9 +33,11 @@ const (
 
 const (
 	// Recent pair failure cache: short enough to avoid retry storms inside a
-	// job/scan burst, but capped to one hour for persistent structural issues.
+	// job/scan burst, but capped to 30 minutes — alinhado com o AR-WaitPeriod do
+	// LNDG, que retesta pares falhados a cada 30 min e tem ~3-8 % de success rate
+	// em redes em que ficamos travados muito mais tempo.
 	pairFailTTL    = 30 * time.Second
-	pairFailTTLMax = time.Hour
+	pairFailTTLMax = 30 * time.Minute
 	// Winning routes are considered warm for one day; after that we prefer a
 	// fresh path discovery over leaning on stale network state.
 	pairSuccessTTL = 24 * time.Hour
@@ -43,13 +45,16 @@ const (
 
 const (
 	// Permanent fail score decays slowly so repeated structural failures remain
-	// visible across days without making a pair dead forever.
+	// visible across days without making a pair dead forever. Threshold elevado
+	// pra 5.0 (era 3.0) reduz falsos cooldowns em mercado lento — exige sinal
+	// mais consistente antes de descartar um par. TTL max 1h (era 6h) alinha
+	// com o ritmo de revisão do AR-WaitPeriod do LNDG.
 	permanentFailScoreHalfLife      = 7 * 24 * time.Hour
 	permanentFailScoreMax           = 20.0
-	permanentFailScoreSkipThreshold = 3.0
-	// Each score step extends the skip TTL by an hour, capped at six hours.
+	permanentFailScoreSkipThreshold = 5.0
+	// Each score step extends the skip TTL by an hour, capped at one hour.
 	permanentFailScoreTTLStep = time.Hour
-	permanentFailScoreTTLMax  = 6 * time.Hour
+	permanentFailScoreTTLMax  = time.Hour
 )
 
 const (
@@ -221,6 +226,13 @@ type RebalanceConfig struct {
 	// in (0,1]). 0 disables the dampening.
 	AutofeeSettlingWindowSec  int64   `json:"autofee_settling_window_sec"`
 	AutofeeSettlingMultiplier float64 `json:"autofee_settling_multiplier"`
+	// DelegatedFastPathEnabled habilita o caminho rápido inspirado no LNDG: antes
+	// do loop por source, monta a lista completa de sources elegíveis e entrega
+	// numa única chamada SendPaymentV2 com OutgoingChanIds=[all]+MPP. O LND nativo
+	// faz pathfinding multi-source e MPP em paralelo. Em sucesso, persistimos
+	// uma attempt agregada e finalizamos o job. Em falha, caímos no loop legado
+	// (per-source com BuildRoute/QueryRoutes). Default false (opt-in).
+	DelegatedFastPathEnabled bool `json:"delegated_fast_path_enabled"`
 }
 
 type RebalanceOverview struct {
@@ -713,6 +725,7 @@ func defaultRebalanceConfig() RebalanceConfig {
 		VelocityWeight:            0.7,
 		AutofeeSettlingWindowSec:  7200,
 		AutofeeSettlingMultiplier: 0.5,
+		DelegatedFastPathEnabled:  false,
 	}
 }
 
@@ -2796,7 +2809,151 @@ func (r *rebalanceJobRunner) run() {
 		return
 	}
 	defer r.finalize(st)
+	if r.runDelegatedFastPath(st) {
+		return
+	}
 	r.runLegacyLoop(st)
+}
+
+// runDelegatedFastPath é o caminho rápido inspirado no LNDG: passa todas as
+// sources elegíveis ao LND nativo numa única chamada SendPaymentV2 com MPP,
+// deixando que pathfinder + Mission Control nativos escolham. Em sucesso,
+// finaliza o job e retorna true (legacy loop é skipado). Em falha, retorna
+// false e o caller cai no loop tradicional.
+//
+// Bypassa pair-cache (LND nativo decide qual source/rota usar). Mantém o
+// mesmo fee_limit do loop legado. Persiste UMA attempt agregada com
+// payment_hash. Em sucesso, chama recordPairSuccess para a source da rota
+// vencedora — preserva aprendizado por par + reinforce de MC se habilitado.
+func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool {
+	if st == nil || !st.ready {
+		return false
+	}
+	cfg := st.cfg
+	if !cfg.DelegatedFastPathEnabled {
+		return false
+	}
+	// cooldown-probe é design diferente: ele tem que iterar pequenos probes
+	// pra reabilitar targets — não delegar.
+	if st.cooldownProbeJob {
+		return false
+	}
+	s := r.service
+	if s.lnd == nil || s.db == nil {
+		return false
+	}
+	ctx := st.ctx
+	if ctx == nil || ctx.Err() != nil {
+		return false
+	}
+	targetSnapshot := st.targetSnapshot
+	if strings.TrimSpace(targetSnapshot.RemotePubkey) == "" {
+		return false
+	}
+
+	// Coletar sources com capacidade suficiente.
+	sourceIDs := make([]uint64, 0, len(st.sources))
+	for _, source := range st.sources {
+		if st.sourceAvailable[source.ChannelID] >= st.minExecuteSat {
+			sourceIDs = append(sourceIDs, source.ChannelID)
+		}
+	}
+	if len(sourceIDs) == 0 {
+		return false
+	}
+
+	// Fee limit — mesmo cálculo do loop legado.
+	feeCfg := st.feeCfg
+	targetPolicy := lndclient.ChannelPolicySnapshot{
+		FeeRatePpm:  targetSnapshot.OutgoingFeePpm,
+		BaseFeeMsat: targetSnapshot.OutgoingBaseMsat,
+	}
+	maxFeeMsat, feeErr := calcFeeLimitMsat(st.amount*1000, targetPolicy, nil, feeCfg)
+	maxFeePpm := feeMsatToPpm(maxFeeMsat, st.amount)
+	if feeErr != nil || maxFeeMsat <= 0 || maxFeePpm <= 0 {
+		return false
+	}
+
+	selfPub, selfErr := s.lnd.SelfPubkey(ctx)
+	if selfErr != nil || strings.TrimSpace(selfPub) == "" {
+		return false
+	}
+	expirySec := int64(feeCfg.RebalanceTimeoutSec)
+	if expirySec <= 0 {
+		expirySec = 600
+	}
+	invoice, invErr := s.lnd.CreateInvoice(ctx, st.amount, "rebalance-fast-path", expirySec, nil)
+	if invErr != nil || strings.TrimSpace(invoice.PaymentRequest) == "" {
+		return false
+	}
+
+	timeoutSec := int32(feeCfg.RebalanceTimeoutSec)
+	if timeoutSec <= 0 {
+		timeoutSec = 300
+	}
+	maxParts := uint32(1)
+	if feeCfg.MppEnabled && feeCfg.MppMaxShards > 1 {
+		maxParts = uint32(feeCfg.MppMaxShards)
+	}
+
+	if s.logger != nil {
+		s.logger.Printf("rebalance fast-path: job=%d target=%d amount=%d sources=%d fee_cap_ppm=%d", r.jobID, r.targetChannelID, st.amount, len(sourceIDs), maxFeePpm)
+	}
+
+	payment, sendErr := s.lnd.SendPaymentMultiSource(
+		ctx,
+		invoice.PaymentRequest,
+		sourceIDs,
+		targetSnapshot.RemotePubkey,
+		maxFeeMsat,
+		timeoutSec,
+		maxParts,
+	)
+	if sendErr != nil || payment == nil || payment.Status != lnrpc.Payment_SUCCEEDED {
+		// Falha — fall-through para legacy loop. Não envenenamos pair-cache aqui:
+		// "LND nativo não achou rota agora" é diferente de "esta source falhou".
+		// O legacy loop, se rodar em seguida, registra falhas per-source com
+		// granularidade adequada.
+		if s.logger != nil && sendErr != nil {
+			s.logger.Printf("rebalance fast-path failed: job=%d err=%v (falling back to legacy loop)", r.jobID, sendErr)
+		}
+		return false
+	}
+
+	feePaidSat := payment.FeeSat
+	if feePaidSat == 0 && payment.FeeMsat > 0 {
+		feePaidSat = payment.FeeMsat / 1000
+	}
+	sourceUsed := uint64(0)
+	routeHops := []string{}
+	for _, htlc := range payment.Htlcs {
+		if htlc.Status != lnrpc.HTLCAttempt_SUCCEEDED || htlc.Route == nil || len(htlc.Route.Hops) == 0 {
+			continue
+		}
+		sourceUsed = htlc.Route.Hops[0].ChanId
+		for _, hop := range htlc.Route.Hops {
+			if hop.PubKey != "" {
+				routeHops = append(routeHops, hop.PubKey)
+			}
+		}
+		break
+	}
+	if sourceUsed == 0 && len(sourceIDs) == 1 {
+		sourceUsed = sourceIDs[0]
+	}
+
+	_ = s.insertAttempt(ctx, r.jobID, 1, sourceUsed, st.amount, maxFeePpm, feePaidSat, "succeeded", invoice.PaymentHash, "", nil)
+	if sourceUsed != 0 {
+		s.recordPairSuccess(ctx, sourceUsed, r.targetChannelID, st.amount, maxFeePpm, feePaidSat, routeHops)
+		if cfg.MissionControlReinforce && len(routeHops) > 0 {
+			go s.reinforceMissionControl(selfPub, append([]string(nil), routeHops...), st.amount)
+		}
+	}
+	if s.logger != nil {
+		s.logger.Printf("rebalance fast-path succeeded: job=%d source=%d fee_paid=%d hops=%d", r.jobID, sourceUsed, feePaidSat, len(routeHops))
+	}
+	s.finishJob(r.jobID, "succeeded", "delegated-fast-path")
+	return true
 }
 
 func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
@@ -6918,6 +7075,7 @@ end $$;
     velocity_weight double precision not null default 0.7,
     autofee_settling_window_sec bigint not null default 7200,
     autofee_settling_multiplier double precision not null default 0.5,
+    delegated_fast_path_enabled boolean not null default false,
     updated_at timestamptz not null default now()
   );
 
@@ -6997,6 +7155,8 @@ end $$;
     add column if not exists autofee_settling_window_sec bigint not null default 7200;
   alter table rebalance_config
     add column if not exists autofee_settling_multiplier double precision not null default 0.5;
+  alter table rebalance_config
+    add column if not exists delegated_fast_path_enabled boolean not null default false;
 
   alter table rebalance_config
     alter column scan_interval_sec set default 900;
@@ -7042,6 +7202,8 @@ end $$;
     alter column autofee_settling_window_sec set default 7200;
   alter table rebalance_config
     alter column autofee_settling_multiplier set default 0.5;
+  alter table rebalance_config
+    alter column delegated_fast_path_enabled set default false;
 
   alter table if exists rebalance_channel_settings
     add column if not exists manual_restart_enabled boolean not null default false;
@@ -7270,7 +7432,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
   select auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_unlimited, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, mc_half_life_sec, payback_mode_flags,
-    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier
+    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled
   from rebalance_config where id=$1`, rebalanceConfigID)
 
 	cfg := defaultRebalanceConfig()
@@ -7324,6 +7486,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.VelocityWeight,
 		&cfg.AutofeeSettlingWindowSec,
 		&cfg.AutofeeSettlingMultiplier,
+		&cfg.DelegatedFastPathEnabled,
 	)
 	if err != nil {
 		return cfg, err
@@ -7346,8 +7509,8 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     id, auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_unlimited, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, mc_half_life_sec, payback_mode_flags,
-    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,now())
+    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, updated_at
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scan_interval_sec = excluded.scan_interval_sec,
@@ -7398,9 +7561,10 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     velocity_weight = excluded.velocity_weight,
     autofee_settling_window_sec = excluded.autofee_settling_window_sec,
     autofee_settling_multiplier = excluded.autofee_settling_multiplier,
+    delegated_fast_path_enabled = excluded.delegated_fast_path_enabled,
     updated_at = now()
   `, rebalanceConfigID, cfg.AutoEnabled, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetUnlimited, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
-		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier,
+		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled,
 	)
 	return err
 }

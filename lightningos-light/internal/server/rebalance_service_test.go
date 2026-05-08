@@ -763,9 +763,13 @@ func TestShouldSkipPairForRecentFailureHonorsSuccessResetAndAdaptiveTTL(t *testi
 }
 
 func TestShouldSkipPairForRecentFailureUsesPermanentFailScoreTTL(t *testing.T) {
+	// Score >= permanentFailScoreSkipThreshold (5) ativa o TTL extra do
+	// permanent fail score (cap em permanentFailScoreTTLMax = 1h).
+	// Pair TTL base para "unable to find a path" é 20min (failCount=1) — o
+	// permanent score deve estender o skip além desse base.
 	now := time.Unix(1_700_000_000, 0).UTC()
 	stat := pairStat{
-		LastFailAt:           now.Add(-2 * time.Hour),
+		LastFailAt:           now.Add(-30 * time.Minute),
 		LastFailReason:       "unable to find a path to destination",
 		FailCount:            1,
 		PermanentFailScore:   5,
@@ -775,7 +779,7 @@ func TestShouldSkipPairForRecentFailureUsesPermanentFailScoreTTL(t *testing.T) {
 		t.Fatalf("expected permanent fail score to extend skip ttl beyond normal no-path ttl")
 	}
 
-	stat.LastFailAt = now.Add(-4 * time.Hour)
+	stat.LastFailAt = now.Add(-2 * time.Hour)
 	if shouldSkipPairForRecentFailure(stat, now) {
 		t.Fatalf("did not expect pair skip after permanent score ttl expires")
 	}

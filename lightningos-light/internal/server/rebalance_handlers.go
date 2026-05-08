@@ -62,6 +62,7 @@ type rebalanceConfigPayload struct {
 	VelocityWeight            *float64 `json:"velocity_weight,omitempty"`
 	AutofeeSettlingWindowSec  *int64   `json:"autofee_settling_window_sec,omitempty"`
 	AutofeeSettlingMultiplier *float64 `json:"autofee_settling_multiplier,omitempty"`
+	DelegatedFastPathEnabled  *bool    `json:"delegated_fast_path_enabled,omitempty"`
 }
 
 type rebalanceRunPayload struct {
@@ -295,6 +296,9 @@ func applyRebalanceConfigPayload(cfg RebalanceConfig, payload rebalanceConfigPay
 	}
 	if payload.AutofeeSettlingMultiplier != nil {
 		cfg.AutofeeSettlingMultiplier = *payload.AutofeeSettlingMultiplier
+	}
+	if payload.DelegatedFastPathEnabled != nil {
+		cfg.DelegatedFastPathEnabled = *payload.DelegatedFastPathEnabled
 	}
 	return cfg
 }

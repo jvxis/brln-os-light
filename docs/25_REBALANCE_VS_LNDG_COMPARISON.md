@@ -1,8 +1,10 @@
 # Rebalance Center vs LNDG — Comparação Funcional Completa
 
-Comparação direta entre o Rebalance Center do LightningOS Light e o rebalancer do [LNDG](https://github.com/cryptosharks131/lndg). Atualizado em 2026-05-02 contra `master` do LNDG.
+Comparação direta entre o Rebalance Center do LightningOS Light e o rebalancer do [LNDG](https://github.com/cryptosharks131/lndg). Atualizado em 2026-05-08 contra `master` do LNDG.
 
-> **TL;DR.** LNDG é uma camada fina e reativa sobre o pathfinding do LND. LightningOS Light é uma plataforma de decisão multi-objetivo que combina economics, demanda real, aprendizado por par, descoberta dinâmica de capacidade e interlock com AutoFee. A única característica do LNDG sem equivalente nosso é a randomização de amount (`±variance%`) — não vale copiar.
+> **TL;DR (revisado 2026-05-08).** LNDG é uma camada fina sobre o pathfinding do LND, mas essa simplicidade é exatamente sua força em redes onde nosso modelo multi-camada filtra demais. LightningOS Light continua sendo uma plataforma de decisão multi-objetivo (economics, demanda real, aprendizado por par, interlock com AutoFee), mas a partir de **0.3.25-Beta** oferece um modo **`delegated_fast_path_enabled`** que mimica a abordagem do LNDG: uma única chamada `SendPaymentV2(outgoing_chan_ids=[all-eligible])` com MPP, deixando o pathfinder + Mission Control nativos do LND escolherem. Em sucesso, finaliza o job; em falha, cai no loop tradicional. Operadores que reportaram "ligo o LNDG e os rebalances acontecem imediato" devem ligar esse flag.
+
+> **Diferença arquitetural que o doc original minimizou:** LNDG passa **TODAS as sources elegíveis ao LND em uma única chamada**; o LND nativo então faz pathfinding multi-source com MPP, retry interno, MC nativo. Nós iteramos source-por-source com `BuildRoute`/`QueryRoutes` + `SendToRoute`. Para self-payment com `allow_self_payment=true`, o LND nativo tem otimizações específicas (anos de tuning Lightning Labs) que nosso modelo per-source explícito não captura. Soma-se a isso filtros pré-attempt empilhados (Política C, ROI guardrail, cost gate 1.4, payback progress) e cooldowns sobrepostos (pair_fail_ttl + permanent_fail_score) que LNDG não tem — combinado, eliminamos candidatos viáveis antes de tentar. Veja o backlog `docs/lndg-parity-investigation.md`.
 
 ## 1. Seleção e priorização de targets
 

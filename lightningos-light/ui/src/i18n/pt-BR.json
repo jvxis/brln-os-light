@@ -2967,7 +2967,8 @@
       "criticalCycles": "Ciclos críticos",
       "rebalanceCostFloorPpm": "Piso de custo de rebal. (ppm)",
       "sourceMinPaybackProgress": "Payback mínimo de source (0 = off)",
-      "missionControlReinforce": "Reforçar Mission Control após sucesso"
+      "missionControlReinforce": "Reforçar Mission Control após sucesso",
+      "delegatedFastPath": "Caminho rápido (delegar pathfinding ao LND, modo LNDG)"
     },
     "settingsHints": {
       "autoEnabled": "Ativa varreduras e rebalances automáticos.",
@@ -3021,7 +3022,8 @@
       "criticalCycles": "Número de ciclos críticos antes de liberar.",
       "rebalanceCostFloorPpm": "Custo ppm assumido quando o canal não tem histórico recente de rebal. Um canal só vira alvo se (spread × econ ratio) > este piso.",
       "sourceMinPaybackProgress": "Payback mínimo de vida (receita de forward / custo de rebal) para o canal ser elegível como source. Padrão 0.95 — canais precisam estar próximos ou acima do break-even antes de serem drenados de novo. Coloque 0 para desativar. Coloque 1.0 para exigir break-even estrito. Canais com custo histórico irrelevante (abaixo de 500 sat) ignoram este filtro, então canais novos continuam elegíveis.",
-      "missionControlReinforce": "A cada rebalance bem-sucedido, envia entradas positivas para cada par da rota ao Mission Control do LND. Ajuda o LND a aprender caminhos bons mais rápido e recuperar de envenenamento do MC. Desativado por padrão; ative se seu nó tem erros 'no path' crônicos apesar de rotas conhecidas funcionarem."
+      "missionControlReinforce": "A cada rebalance bem-sucedido, envia entradas positivas para cada par da rota ao Mission Control do LND. Ajuda o LND a aprender caminhos bons mais rápido e recuperar de envenenamento do MC. Desativado por padrão; ative se seu nó tem erros 'no path' crônicos apesar de rotas conhecidas funcionarem.",
+      "delegatedFastPath": "Antes de iterar source-por-source, tenta uma única chamada SendPaymentV2 com TODAS as sources elegíveis e MPP ligado, deixando o LND nativo escolher pathfinding e fragmentação (igual ao LNDG). Em sucesso, finaliza o job e pula o loop tradicional. Em falha, cai no loop legado normalmente. Bypassa pair-cache (LND tem seu próprio Mission Control). Desligado por padrão — ligue se está vendo muitos 'no path' apesar de existirem sources viáveis."
     },
     "channels": {
       "title": "Workbench de Canais",

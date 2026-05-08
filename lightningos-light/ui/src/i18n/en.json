@@ -2967,7 +2967,8 @@
       "criticalCycles": "Critical cycles",
       "rebalanceCostFloorPpm": "Rebalance cost floor (ppm)",
       "sourceMinPaybackProgress": "Source min payback (0 = off)",
-      "missionControlReinforce": "Reinforce Mission Control after success"
+      "missionControlReinforce": "Reinforce Mission Control after success",
+      "delegatedFastPath": "Fast-path (delegate pathfinding to LND, LNDG-style)"
     },
     "settingsHints": {
       "autoEnabled": "Turns on periodic scans and automatic rebalances.",
@@ -3021,7 +3022,8 @@
       "criticalCycles": "Number of consecutive critical scans before releasing.",
       "rebalanceCostFloorPpm": "Assumed cost ppm used when a target has no recent rebalance history. Channels are only eligible as targets when (spread × econ ratio) exceeds this floor.",
       "sourceMinPaybackProgress": "Minimum lifetime payback (forwarding revenue / rebalance cost) for a channel to qualify as source. Default 0.95 — channels must be near or above break-even before being drained again. Set to 0 to disable. Set to 1.0 for strict break-even. Channels with insignificant historical cost (under 500 sat) bypass this filter so freshly opened channels remain eligible.",
-      "missionControlReinforce": "After every successful rebalance attempt, push positive history entries for each pair on the route into LND's Mission Control. Helps LND learn good paths faster and recover from MC poisoning. Off by default; enable if your node has chronic 'no path' errors despite known-good routes."
+      "missionControlReinforce": "After every successful rebalance attempt, push positive history entries for each pair on the route into LND's Mission Control. Helps LND learn good paths faster and recover from MC poisoning. Off by default; enable if your node has chronic 'no path' errors despite known-good routes.",
+      "delegatedFastPath": "Before iterating source-by-source, tries a single SendPaymentV2 call with ALL eligible sources and MPP enabled, letting LND's native pathfinder choose paths and split (LNDG-style). On success, finalizes the job and skips the legacy loop. On failure, falls back to the source-by-source loop normally. Bypasses pair-cache (LND has its own Mission Control). Off by default — enable if you're seeing 'no path' errors despite viable sources existing."
     },
     "channels": {
       "title": "Channel Workbench",

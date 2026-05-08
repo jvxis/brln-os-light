@@ -48,6 +48,7 @@ export type RebalanceConfig = {
   velocity_weight: number
   autofee_settling_window_sec: number
   autofee_settling_multiplier: number
+  delegated_fast_path_enabled: boolean
 }
 
 export type RebalanceOverview = {

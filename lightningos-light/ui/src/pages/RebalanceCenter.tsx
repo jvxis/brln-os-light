@@ -209,7 +209,8 @@ export default function RebalanceCenter() {
       gain_model_version: cfg.gain_model_version,
       velocity_weight: cfg.velocity_weight,
       autofee_settling_window_sec: cfg.autofee_settling_window_sec,
-      autofee_settling_multiplier: cfg.autofee_settling_multiplier
+      autofee_settling_multiplier: cfg.autofee_settling_multiplier,
+      delegated_fast_path_enabled: cfg.delegated_fast_path_enabled
     })
   }
   const estimateHistoricalCost = (amountSat: number, feePpm: number) => {
@@ -611,7 +612,8 @@ export default function RebalanceCenter() {
         gain_model_version: config.gain_model_version,
         velocity_weight: config.velocity_weight,
         autofee_settling_window_sec: config.autofee_settling_window_sec,
-        autofee_settling_multiplier: config.autofee_settling_multiplier
+        autofee_settling_multiplier: config.autofee_settling_multiplier,
+        delegated_fast_path_enabled: config.delegated_fast_path_enabled
       })) as RebalanceConfig
       const normalizedSaved = {
         ...saved,
@@ -2089,6 +2091,14 @@ export default function RebalanceCenter() {
                       onChange={(e) => setConfig({ ...config, mission_control_reinforce: e.target.checked })}
                     />
                     {t('rebalanceCenter.settings.missionControlReinforce')}
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.delegatedFastPath')}>
+                    <input
+                      type="checkbox"
+                      checked={config.delegated_fast_path_enabled}
+                      onChange={(e) => setConfig({ ...config, delegated_fast_path_enabled: e.target.checked })}
+                    />
+                    {t('rebalanceCenter.settings.delegatedFastPath')}
                   </label>
                 </div>
               </SettingsSubcard>

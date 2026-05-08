@@ -627,6 +627,7 @@ export const updateRebalanceConfig = (payload: {
   velocity_weight?: number
   autofee_settling_window_sec?: number
   autofee_settling_multiplier?: number
+  delegated_fast_path_enabled?: boolean
 }) => request('/api/rebalance/config', { method: 'POST', body: JSON.stringify(payload) })
 export const getRebalanceOverview = () => request('/api/rebalance/overview')
 export const getRebalanceChannels = () => request('/api/rebalance/channels')

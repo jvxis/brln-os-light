@@ -2981,13 +2981,13 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 	st.floorBlockedSources = map[uint64]struct{}{}
 
 	if !s.acquireSem(ctx) {
-		s.finishJob(jobID, "failed", "no worker available")
+		s.finishJob(jobID, "skipped", "no worker available")
 		return
 	}
 	st.workerAcquired = true
 
 	if !s.tryLockChannel(targetChannelID) {
-		s.finishJob(jobID, "failed", "channel busy")
+		s.finishJob(jobID, "skipped", "channel busy")
 		return
 	}
 	st.targetLocked = true
@@ -2995,7 +2995,7 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 	s.markJobRunning(jobID)
 
 	if minExecuteSat > 0 && amount < minExecuteSat {
-		s.finishJob(jobID, "failed", "amount below minimum")
+		s.finishJob(jobID, "skipped", "amount below minimum")
 		return
 	}
 	if cfg.MaxAmountSat > 0 && amount > cfg.MaxAmountSat {
@@ -3068,11 +3068,11 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 	}
 
 	if amount <= 0 {
-		s.finishJob(jobID, "failed", "target already balanced")
+		s.finishJob(jobID, "skipped", "target already balanced")
 		return
 	}
 	if minExecuteSat > 0 && amount < minExecuteSat {
-		s.finishJob(jobID, "failed", "amount below minimum")
+		s.finishJob(jobID, "skipped", "amount below minimum")
 		return
 	}
 
@@ -3118,11 +3118,11 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 	}
 
 	if !targetSnapshot.EligibleAsTarget {
-		s.finishJob(jobID, "failed", "target not eligible")
+		s.finishJob(jobID, "skipped", "target not eligible")
 		return
 	}
 	if strings.TrimSpace(targetSnapshot.RemotePubkey) == "" {
-		s.finishJob(jobID, "failed", "target peer unavailable")
+		s.finishJob(jobID, "skipped", "target peer unavailable")
 		return
 	}
 
@@ -3164,7 +3164,7 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 		}
 	}
 	if len(sources) == 0 {
-		s.finishJob(jobID, "failed", "no eligible sources")
+		s.finishJob(jobID, "skipped", "no eligible sources")
 		return
 	}
 
@@ -5640,7 +5640,7 @@ with events as (
     j.target_channel_id,
     j.status,
     j.completed_at as occurred_at,
-    (j.status='skipped' and not exists (
+    (j.status='skipped' and j.reason='all sources skipped (recent failures)' and not exists (
       select 1 from rebalance_attempts a where a.job_id = j.id
     )) as no_attempt_failure
   from rebalance_jobs j

@@ -287,6 +287,9 @@ type RebalanceOverview struct {
 	SuccessBelowMinAttempts24h    int64                 `json:"success_below_min_attempts_24h"`
 	SuccessBelowMinAmount24hSat   int64                 `json:"success_below_min_amount_24h_sat"`
 	SuccessBelowMinRate24h        float64               `json:"success_below_min_rate_24h"`
+	FastPathAttempts24h           int64                 `json:"fast_path_attempts_24h"`
+	FastPathSuccesses24h          int64                 `json:"fast_path_successes_24h"`
+	FastPathHitRate24h            float64               `json:"fast_path_hit_rate_24h"`
 	PaybackRevenueSat             int64                 `json:"payback_revenue_sat"`
 	PaybackRevenueRebalancedSat   int64                 `json:"payback_revenue_rebalanced_sat"`
 	PaybackCostSat                int64                 `json:"payback_cost_sat"`
@@ -2833,11 +2836,10 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 	if !cfg.DelegatedFastPathEnabled {
 		return false
 	}
-	// cooldown-probe é design diferente: ele tem que iterar pequenos probes
-	// pra reabilitar targets — não delegar.
-	if st.cooldownProbeJob {
-		return false
-	}
+	// cooldown-probe usa o mesmo fast-path: o amount já vem reduzido por
+	// rebalanceCooldownProbeAmount (linha ~3009), e delegar ao LND com
+	// outgoing_chan_ids=[all] testa "esse target voltou?" muito mais
+	// efetivamente do que iterar 2 sources sequencialmente sob pair-cache.
 	s := r.service
 	if s.lnd == nil || s.db == nil {
 		return false
@@ -2899,6 +2901,7 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 	if s.logger != nil {
 		s.logger.Printf("rebalance fast-path: job=%d target=%d amount=%d sources=%d fee_cap_ppm=%d", r.jobID, r.targetChannelID, st.amount, len(sourceIDs), maxFeePpm)
 	}
+	s.markFastPathAttempted(r.jobID)
 
 	payment, sendErr := s.lnd.SendPaymentMultiSource(
 		ctx,
@@ -7255,11 +7258,14 @@ create table if not exists rebalance_jobs (
   target_channel_point text not null,
   target_outbound_pct double precision not null,
   target_amount_sat bigint not null,
-  config_snapshot jsonb
+  config_snapshot jsonb,
+  fast_path_attempted boolean not null default false
 );
 
 alter table if exists rebalance_jobs
   add column if not exists trigger_reason text;
+alter table if exists rebalance_jobs
+  add column if not exists fast_path_attempted boolean not null default false;
 update rebalance_jobs
   set trigger_reason=reason
   where trigger_reason is null
@@ -8450,6 +8456,26 @@ where completed_at >= now() - interval '24 hours'
 	return count
 }
 
+// fetchFastPathTelemetry24h retorna (attempts, successes) do delegated
+// fast-path nas últimas 24h. attempts conta jobs com fast_path_attempted=true;
+// successes conta o subconjunto que finalizou succeeded com reason
+// 'delegated-fast-path'. hit_rate = successes/attempts é derivado pelo caller.
+func (s *RebalanceService) fetchFastPathTelemetry24h(ctx context.Context) (int64, int64) {
+	if s.db == nil {
+		return 0, 0
+	}
+	var attempts int64
+	var successes int64
+	_ = s.db.QueryRow(ctx, `
+select
+  coalesce(sum(case when fast_path_attempted then 1 else 0 end), 0) as attempts,
+  coalesce(sum(case when fast_path_attempted and status='succeeded' and reason='delegated-fast-path' then 1 else 0 end), 0) as successes
+from rebalance_jobs
+where completed_at >= now() - interval '24 hours'
+`).Scan(&attempts, &successes)
+	return attempts, successes
+}
+
 func (s *RebalanceService) fetchFailureTelemetry30m(ctx context.Context) ([]RebalanceReasonStat, []RebalanceTargetStat) {
 	if s.db == nil {
 		return nil, nil
@@ -8919,6 +8945,18 @@ set status='running',
 where id=$1 and status='queued'`, jobID)
 }
 
+// markFastPathAttempted marca o job como tendo tentado o caminho delegado
+// (independente do resultado). Permite contar attempts vs successes via
+// SQL — combinado com reason='delegated-fast-path' nos sucessos, dá hit-rate.
+func (s *RebalanceService) markFastPathAttempted(jobID int64) {
+	if s.db == nil || jobID <= 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, _ = s.db.Exec(ctx, `update rebalance_jobs set fast_path_attempted=true where id=$1`, jobID)
+}
+
 type attemptFailureInfo struct {
 	SourceIndex int32
 	HopPubkey   string
@@ -9074,6 +9112,11 @@ where report_date >= current_date - interval '6 days'
 	if telemetry, err := s.fetchAttemptTelemetry24h(ctx, effectiveMinExecuteSat(cfg)); err == nil {
 		attemptTelemetry = telemetry
 	}
+	fastPathAttempts24h, fastPathSuccesses24h := s.fetchFastPathTelemetry24h(ctx)
+	fastPathHitRate24h := 0.0
+	if fastPathAttempts24h > 0 {
+		fastPathHitRate24h = float64(fastPathSuccesses24h) / float64(fastPathAttempts24h)
+	}
 	if telemetry, err := s.fetchMppShadowTelemetry24h(ctx); err == nil {
 		mppShadowTelemetry = telemetry
 	}
@@ -9145,6 +9188,9 @@ where report_date >= current_date - interval '6 days'
 		SuccessBelowMinAttempts24h:    attemptTelemetry.SuccessBelowMinAttempts,
 		SuccessBelowMinAmount24hSat:   attemptTelemetry.SuccessBelowMinAmountSat,
 		SuccessBelowMinRate24h:        attemptTelemetry.SuccessBelowMinRate,
+		FastPathAttempts24h:           fastPathAttempts24h,
+		FastPathSuccesses24h:          fastPathSuccesses24h,
+		FastPathHitRate24h:            fastPathHitRate24h,
 		PaybackRevenueSat:             paybackRevenue,
 		PaybackRevenueRebalancedSat:   paybackRevenueRebalanced,
 		PaybackCostSat:                paybackCost,

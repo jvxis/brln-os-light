@@ -105,6 +105,9 @@ export type RebalanceOverview = {
   success_below_min_attempts_24h?: number
   success_below_min_amount_24h_sat?: number
   success_below_min_rate_24h?: number
+  fast_path_attempts_24h?: number
+  fast_path_successes_24h?: number
+  fast_path_hit_rate_24h?: number
   payback_revenue_sat: number
   payback_revenue_rebalanced_sat: number
   payback_cost_sat: number

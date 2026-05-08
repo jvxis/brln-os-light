@@ -1492,6 +1492,15 @@ export default function RebalanceCenter() {
                     </p>
                   </>
                 )}
+                {(overview.fast_path_attempts_24h ?? 0) > 0 && (
+                  <p className="text-xs text-mint/80">
+                    {t('rebalanceCenter.overview.fastPath24h', {
+                      attempts: formatter.format(overview.fast_path_attempts_24h ?? 0),
+                      successes: formatter.format(overview.fast_path_successes_24h ?? 0),
+                      rate: formatPct((overview.fast_path_hit_rate_24h ?? 0) * 100)
+                    })}
+                  </p>
+                )}
               </MetricDisclosure>
             </div>
           <div className="section-card space-y-2">

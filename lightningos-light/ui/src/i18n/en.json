@@ -2794,6 +2794,7 @@
         "belowMinAttempts24h": "Below min attempts: {{value}} (min {{min}})",
         "belowMinAmount24h": "Below min moved: {{value}}",
         "belowMinRate24h": "Below min share: {{value}}",
+        "fastPath24h": "Fast-path 24h: {{successes}}/{{attempts}} succeeded ({{rate}})",
         "paybackGroupRebalanced": "Rebalanced channels (7d)",
         "paybackGroupAll": "All channels (7d)",
         "paybackRevenue": "Payback routed: {{value}}",

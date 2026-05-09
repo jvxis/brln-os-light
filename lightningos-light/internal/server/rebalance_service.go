@@ -3048,7 +3048,15 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 	jobSource := r.jobSource
 	jobReason := r.jobReason
 
-	cfg, _ := s.loadConfig(context.Background())
+	// loadConfig com context.Background() (sem timeout) era bug crítico: se DB
+	// pool saturasse durante burst de jobs, TODOS os goroutines ficavam presos
+	// aqui INDEFINIDAMENTE — antes mesmo de acquireSem ou markJobRunning.
+	// Resultado: jobs em status='queued' coletados pelo cleanupStaleJobs após
+	// 600s, marcados como reason='timeout', completed_at em batch idêntico.
+	// Wrap com 5s pra falhar rápido em caso de pool exausto.
+	loadCfgCtx, loadCfgCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	cfg, _ := s.loadConfig(loadCfgCtx)
+	loadCfgCancel()
 	minExecuteSat := effectiveMinExecuteSat(cfg)
 	minProbeSat := effectiveMinProbeSat(cfg)
 	useRecentFailureCache := shouldUseRecentFailureCache(jobSource, jobReason)

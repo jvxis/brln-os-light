@@ -101,6 +101,7 @@ const (
 	surgeConfirmMinRounds               = 2
 	surgeConfirmRebalCapFrac            = 0.015
 	floorRebalMinCapFrac                = 0.015
+	floorRebalMinSuccessCount           = int64(2)
 	weakRebalanceAttemptCountWeight     = 0.35
 	weakRebalanceAttemptAmtWeight       = 0.25
 	defaultSurgeHoldMaxRounds           = 6
@@ -374,7 +375,9 @@ type autofeeLogItem struct {
 	HTLCForwardFailsTotal    int      `json:"htlc_forward_fails_total,omitempty"`
 	HTLCOtherFailsTotal      int      `json:"htlc_other_fails_total,omitempty"`
 	HTLCClassifiedTotal      int      `json:"htlc_classified_total,omitempty"`
+	HTLCClassifiedRatio      float64  `json:"htlc_classified_ratio,omitempty"`
 	HTLCUnclassifiedTotal    int      `json:"htlc_unclassified_total,omitempty"`
+	HTLCNoisySampleApplied   bool     `json:"htlc_noisy_sample_applied,omitempty"`
 	HTLCTopReasons           []string `json:"htlc_top_reasons,omitempty"`
 	HTLCWindowMin            int      `json:"htlc_window_min,omitempty"`
 	HTLCMinAttempts          int      `json:"htlc_min_attempts,omitempty"`
@@ -554,6 +557,10 @@ type autofeeProfile struct {
 	HTLCPolicyHotBump                    float64
 	HTLCPolicyHotNoDownMarginPpm         int
 	HTLCHotStepCapBoost                  float64
+	LargeGapStepCapBoostPctMin           float64
+	LargeGapStepCapBoost                 float64
+	LargeGapStepCapBoostPctStrong        float64
+	LargeGapStepCapBoostStrong           float64
 	SurgeHoldMaxRounds                   int
 	SurgeHoldUnlockStepPpm               int
 	BootstrapHours                       int
@@ -697,6 +704,10 @@ var autofeeProfiles = map[string]autofeeProfile{
 		HTLCPolicyHotBump:                    0.015,
 		HTLCPolicyHotNoDownMarginPpm:         0,
 		HTLCHotStepCapBoost:                  0.01,
+		LargeGapStepCapBoostPctMin:           30,
+		LargeGapStepCapBoost:                 0.02,
+		LargeGapStepCapBoostPctStrong:        50,
+		LargeGapStepCapBoostStrong:           0.04,
 		SurgeHoldMaxRounds:                   7,
 		SurgeHoldUnlockStepPpm:               15,
 		BootstrapHours:                       48,
@@ -829,6 +840,10 @@ var autofeeProfiles = map[string]autofeeProfile{
 		HTLCPolicyHotBump:                    0.025,
 		HTLCPolicyHotNoDownMarginPpm:         25,
 		HTLCHotStepCapBoost:                  0.02,
+		LargeGapStepCapBoostPctMin:           25,
+		LargeGapStepCapBoost:                 0.03,
+		LargeGapStepCapBoostPctStrong:        45,
+		LargeGapStepCapBoostStrong:           0.06,
 		SurgeHoldMaxRounds:                   5,
 		SurgeHoldUnlockStepPpm:               15,
 		BootstrapHours:                       48,
@@ -961,6 +976,10 @@ var autofeeProfiles = map[string]autofeeProfile{
 		HTLCPolicyHotBump:                    0.035,
 		HTLCPolicyHotNoDownMarginPpm:         50,
 		HTLCHotStepCapBoost:                  0.03,
+		LargeGapStepCapBoostPctMin:           20,
+		LargeGapStepCapBoost:                 0.05,
+		LargeGapStepCapBoostPctStrong:        40,
+		LargeGapStepCapBoostStrong:           0.10,
 		SurgeHoldMaxRounds:                   4,
 		SurgeHoldUnlockStepPpm:               20,
 		BootstrapHours:                       72,
@@ -1015,16 +1034,19 @@ const (
 const (
 	// Global HTLC sensitivity knobs applied after profile/node/liquidity calibration.
 	// Keep them shared across all profiles so behavior stays consistent network-wide.
-	htlcGlobalMinCountFactor     = 0.55
-	htlcGlobalRateFactor         = 0.75
-	htlcGlobalMinAttemptsFloor   = 4
-	htlcGlobalMinFailsFloor      = 2
-	htlcGlobalPolicyRateFloor    = 0.08
-	htlcGlobalLiquidityRateFloor = 0.10
-	htlcForwardSoftCountFactor   = 0.45
-	htlcForwardSoftRateFactor    = 0.50
-	htlcForwardSoftRateFloor     = 0.10
-	htlcForwardSoftMinFailsFloor = 2
+	htlcGlobalMinCountFactor        = 0.55
+	htlcGlobalRateFactor            = 0.75
+	htlcGlobalMinAttemptsFloor      = 4
+	htlcGlobalMinFailsFloor         = 2
+	htlcGlobalPolicyRateFloor       = 0.08
+	htlcGlobalLiquidityRateFloor    = 0.10
+	htlcForwardSoftCountFactor      = 0.45
+	htlcForwardSoftRateFactor       = 0.50
+	htlcForwardSoftRateFloor        = 0.10
+	htlcForwardSoftMinFailsFloor    = 2
+	htlcClassifiedMinRatio          = 0.05
+	htlcNoisySampleForwardRateMult  = 1.5
+	htlcNoisySampleForwardCountMult = 1.5
 )
 
 var htlcPolicyFailureTokens = []string{
@@ -2603,6 +2625,8 @@ type autofeeCalibration struct {
 	HTLCGlobalCountFactor float64
 	HTLCGlobalRateFactor  float64
 	HTLCWindowMin         int
+	HTLCClassifiedRatio   float64
+	HTLCNoisySample       bool
 	LowOutThresh          float64
 	LowOutProtectThresh   float64
 	LowOutFactor          float64
@@ -2649,7 +2673,9 @@ type autofeeRunSummary struct {
 	htlcForwardFailsTotal  int
 	htlcOtherFailsTotal    int
 	htlcClassifiedTotal    int
+	htlcClassifiedRatio    float64
 	htlcUnclassifiedTotal  int
+	htlcNoisySampleApplied bool
 	htlcTopReasons         []string
 	htlcWindowMin          int
 	htlcMinAttempts        int
@@ -3484,7 +3510,9 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 	summary.htlcForwardFailsTotal = htlcMeta.ForwardFailsTotal
 	summary.htlcOtherFailsTotal = htlcMeta.OtherFailsTotal
 	summary.htlcClassifiedTotal = htlcMeta.ClassifiedTotal
+	summary.htlcClassifiedRatio = htlcMeta.ClassifiedRatio
 	summary.htlcUnclassifiedTotal = htlcMeta.UnclassifiedTotal
+	summary.htlcNoisySampleApplied = htlcMeta.NoisySampleApplied
 	summary.htlcTopReasons = append([]string{}, htlcMeta.TopReasons...)
 	summary.htlcPolicyRateMin = htlcMeta.PolicyRateMin
 	summary.htlcLiquidityRateMin = htlcMeta.LiquidityRateMin
@@ -3656,7 +3684,9 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 			HTLCForwardFailsTotal:    summary.htlcForwardFailsTotal,
 			HTLCOtherFailsTotal:      summary.htlcOtherFailsTotal,
 			HTLCClassifiedTotal:      summary.htlcClassifiedTotal,
+			HTLCClassifiedRatio:      summary.htlcClassifiedRatio,
 			HTLCUnclassifiedTotal:    summary.htlcUnclassifiedTotal,
+			HTLCNoisySampleApplied:   summary.htlcNoisySampleApplied,
 			HTLCTopReasons:           append([]string{}, summary.htlcTopReasons...),
 			HTLCWindowMin:            summary.htlcWindowMin,
 			HTLCMinAttempts:          summary.htlcMinAttempts,
@@ -3717,6 +3747,8 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 			HTLCPolicyFailRateMin:    e.calib.HTLCPolicyRateMin,
 			HTLCLiquidityFailRateMin: e.calib.HTLCLiquidityRateMin,
 			HTLCForwardFailRateMin:   e.calib.HTLCForwardRateMin,
+			HTLCClassifiedRatio:      e.calib.HTLCClassifiedRatio,
+			HTLCNoisySampleApplied:   e.calib.HTLCNoisySample,
 			HTLCGlobalCountFactor:    e.calib.HTLCGlobalCountFactor,
 			HTLCGlobalRateFactor:     e.calib.HTLCGlobalRateFactor,
 			HTLCNodeFactor:           e.calib.HTLCNodeFactor,
@@ -3733,22 +3765,28 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 			fmt.Sprintf("htlc_forward %d", summary.htlcForwardFailsTotal),
 			fmt.Sprintf("htlc_unclassified %d", summary.htlcUnclassifiedTotal),
 		}
+		diagParts = append(diagParts, fmt.Sprintf("htlc_classified_ratio %.1f%%", summary.htlcClassifiedRatio*100))
+		if summary.htlcNoisySampleApplied {
+			diagParts = append(diagParts, "htlc_noisy_sample")
+		}
 		if len(summary.htlcTopReasons) > 0 {
 			diagParts = append(diagParts, "htlc_unclassified_top "+strings.Join(summary.htlcTopReasons, " | "))
 		}
 		entries = append(entries, autofeeLogEntry{
 			Line: "🧪 " + strings.Join(diagParts, " | "),
 			Payload: &autofeeLogItem{
-				Kind:                  "htlc_diag",
-				Category:              "htlc_diag",
-				HTLCTopReasons:        append([]string{}, summary.htlcTopReasons...),
-				HTLCForwardFailsTotal: summary.htlcForwardFailsTotal,
-				HTLCLinkFailsTotal:    summary.htlcLinkFailsTotal,
-				HTLCOtherFailsTotal:   summary.htlcOtherFailsTotal,
-				HTLCUnclassifiedTotal: summary.htlcUnclassifiedTotal,
-				HTLCClassifiedTotal:   summary.htlcClassifiedTotal,
-				HTLCAttemptsTotal:     summary.htlcAttemptsTotal,
-				HTLCWindowMin:         summary.htlcWindowMin,
+				Kind:                   "htlc_diag",
+				Category:               "htlc_diag",
+				HTLCTopReasons:         append([]string{}, summary.htlcTopReasons...),
+				HTLCForwardFailsTotal:  summary.htlcForwardFailsTotal,
+				HTLCLinkFailsTotal:     summary.htlcLinkFailsTotal,
+				HTLCOtherFailsTotal:    summary.htlcOtherFailsTotal,
+				HTLCUnclassifiedTotal:  summary.htlcUnclassifiedTotal,
+				HTLCClassifiedTotal:    summary.htlcClassifiedTotal,
+				HTLCClassifiedRatio:    summary.htlcClassifiedRatio,
+				HTLCNoisySampleApplied: summary.htlcNoisySampleApplied,
+				HTLCAttemptsTotal:      summary.htlcAttemptsTotal,
+				HTLCWindowMin:          summary.htlcWindowMin,
 			},
 		})
 	}
@@ -3799,6 +3837,7 @@ type inboundStat struct {
 type rebalStat struct {
 	FeeMsat int64
 	AmtMsat int64
+	Count   int64
 }
 
 type rebalStats struct {
@@ -3919,32 +3958,72 @@ type htlcFailureSignal struct {
 	LiquidityFailRate60m float64
 	WindowMin            int
 	SampleLow            bool
+	NoisySample          bool
 	PolicyHot            bool
 	LiquidityHot         bool
 	ForwardHot           bool
 }
 
 type htlcSignalMeta struct {
-	WindowMin         int
-	MinAttempts       int
-	MinPolicyFails    int
-	MinLiquidityFails int
-	MinForwardFails   int
-	AttemptsTotal     int
-	LinkFailsTotal    int
-	ForwardFailsTotal int
-	OtherFailsTotal   int
-	ClassifiedTotal   int
-	UnclassifiedTotal int
-	TopReasons        []string
-	PolicyRateMin     float64
-	LiquidityRateMin  float64
-	ForwardRateMin    float64
-	GlobalCountFactor float64
-	GlobalRateFactor  float64
-	NodeFactor        float64
-	LiquidityFactor   float64
-	ThresholdFactor   float64
+	WindowMin          int
+	MinAttempts        int
+	MinPolicyFails     int
+	MinLiquidityFails  int
+	MinForwardFails    int
+	AttemptsTotal      int
+	LinkFailsTotal     int
+	ForwardFailsTotal  int
+	OtherFailsTotal    int
+	ClassifiedTotal    int
+	ClassifiedRatio    float64
+	UnclassifiedTotal  int
+	NoisySampleApplied bool
+	TopReasons         []string
+	PolicyRateMin      float64
+	LiquidityRateMin   float64
+	ForwardRateMin     float64
+	GlobalCountFactor  float64
+	GlobalRateFactor   float64
+	NodeFactor         float64
+	LiquidityFactor    float64
+	ThresholdFactor    float64
+}
+
+func applyHTLCSignalMetaToCalibration(calib *autofeeCalibration, meta htlcSignalMeta) {
+	if calib == nil {
+		return
+	}
+	calib.HTLCWindowMin = meta.WindowMin
+	calib.HTLCMinAttempts = meta.MinAttempts
+	calib.HTLCMinPolicyFails = meta.MinPolicyFails
+	calib.HTLCMinLiquidityFails = meta.MinLiquidityFails
+	calib.HTLCMinForwardFails = meta.MinForwardFails
+	calib.HTLCPolicyRateMin = meta.PolicyRateMin
+	calib.HTLCLiquidityRateMin = meta.LiquidityRateMin
+	calib.HTLCForwardRateMin = meta.ForwardRateMin
+	calib.HTLCClassifiedRatio = meta.ClassifiedRatio
+	calib.HTLCNoisySample = meta.NoisySampleApplied
+	calib.HTLCGlobalCountFactor = meta.GlobalCountFactor
+	calib.HTLCGlobalRateFactor = meta.GlobalRateFactor
+	calib.HTLCNodeFactor = meta.NodeFactor
+	calib.HTLCLiquidityFactor = meta.LiquidityFactor
+	calib.HTLCThresholdFactor = meta.ThresholdFactor
+}
+
+func applyHTLCNoisySampleDampening(attemptsTotal int, classifiedTotal int, minForwardFails int, forwardRateThreshold float64) (int, float64, bool, float64) {
+	if attemptsTotal <= 0 {
+		return minForwardFails, forwardRateThreshold, false, 0
+	}
+	classifiedRatio := float64(classifiedTotal) / float64(attemptsTotal)
+	if classifiedRatio >= htlcClassifiedMinRatio {
+		return minForwardFails, forwardRateThreshold, false, classifiedRatio
+	}
+	dampenedFails := int(math.Ceil(float64(maxInt(1, minForwardFails)) * htlcNoisySampleForwardCountMult))
+	dampenedRate := forwardRateThreshold
+	if dampenedRate > 0 {
+		dampenedRate = math.Min(1, dampenedRate*htlcNoisySampleForwardRateMult)
+	}
+	return maxInt(minForwardFails, dampenedFails), dampenedRate, true, classifiedRatio
 }
 
 func (e *autofeeEngine) buildHTLCFailureSignals(channels []lndclient.ChannelInfo) (map[uint64]htlcFailureSignal, htlcSignalMeta) {
@@ -3999,19 +4078,7 @@ func (e *autofeeEngine) buildHTLCFailureSignals(channels []lndclient.ChannelInfo
 		LiquidityFactor:   liquidityFactor,
 		ThresholdFactor:   thresholdFactor,
 	}
-	e.calib.HTLCWindowMin = meta.WindowMin
-	e.calib.HTLCMinAttempts = meta.MinAttempts
-	e.calib.HTLCMinPolicyFails = meta.MinPolicyFails
-	e.calib.HTLCMinLiquidityFails = meta.MinLiquidityFails
-	e.calib.HTLCMinForwardFails = meta.MinForwardFails
-	e.calib.HTLCPolicyRateMin = meta.PolicyRateMin
-	e.calib.HTLCLiquidityRateMin = meta.LiquidityRateMin
-	e.calib.HTLCForwardRateMin = meta.ForwardRateMin
-	e.calib.HTLCGlobalCountFactor = meta.GlobalCountFactor
-	e.calib.HTLCGlobalRateFactor = meta.GlobalRateFactor
-	e.calib.HTLCNodeFactor = meta.NodeFactor
-	e.calib.HTLCLiquidityFactor = meta.LiquidityFactor
-	e.calib.HTLCThresholdFactor = meta.ThresholdFactor
+	applyHTLCSignalMetaToCalibration(&e.calib, meta)
 	if !e.cfg.HTLCSignalEnabled {
 		return signals, meta
 	}
@@ -4090,6 +4157,15 @@ func (e *autofeeEngine) buildHTLCFailureSignals(channels []lndclient.ChannelInfo
 	meta.ClassifiedTotal = classifiedTotal
 	meta.UnclassifiedTotal = unclassifiedTotal
 	meta.TopReasons = summarizeTopReasonCounts(unclassifiedReasons, 3)
+	minForwardFails, forwardRateThreshold, meta.NoisySampleApplied, meta.ClassifiedRatio = applyHTLCNoisySampleDampening(
+		attemptsTotal,
+		classifiedTotal,
+		minForwardFails,
+		forwardRateThreshold,
+	)
+	meta.MinForwardFails = minForwardFails
+	meta.ForwardRateMin = forwardRateThreshold
+	applyHTLCSignalMetaToCalibration(&e.calib, meta)
 
 	for _, ch := range channels {
 		if ch.ChannelID == 0 {
@@ -4134,6 +4210,7 @@ func (e *autofeeEngine) buildHTLCFailureSignals(channels []lndclient.ChannelInfo
 			LiquidityFailRate60m: liqRate,
 			WindowMin:            windowMin,
 			SampleLow:            sampleLow,
+			NoisySample:          meta.NoisySampleApplied,
 			PolicyHot:            policyHot,
 			LiquidityHot:         liquidityHot,
 			ForwardHot:           forwardHot,
@@ -4788,8 +4865,11 @@ func minFloorRebalSat(capacitySat int64) int64 {
 	return int64(math.Ceil(float64(capacitySat) * floorRebalMinCapFrac))
 }
 
-func hasFloorRebalSignal(rebalAmtSat int64, capacitySat int64) bool {
+func hasFloorRebalSignal(rebalAmtSat int64, capacitySat int64, successCount int64) bool {
 	if rebalAmtSat <= 0 {
+		return false
+	}
+	if successCount < floorRebalMinSuccessCount {
 		return false
 	}
 	minAmtSat := minFloorRebalSat(capacitySat)
@@ -4797,6 +4877,17 @@ func hasFloorRebalSignal(rebalAmtSat int64, capacitySat int64) bool {
 		return true
 	}
 	return rebalAmtSat >= minAmtSat
+}
+
+func rebalFloorConfidence(successCount int64) float64 {
+	if successCount <= 0 {
+		return 0
+	}
+	confidence := float64(successCount) / float64(floorRebalMinSuccessCount)
+	if confidence > 1 {
+		return 1
+	}
+	return confidence
 }
 
 func hasSurgeConfirmSignal(recentRebalanceCount int, recentRebalanceAmtSat int64, capacitySat int64) bool {
@@ -4860,6 +4951,32 @@ func calcTargetGapPct(localPpm int, targetPpm int) float64 {
 		return 0
 	}
 	return math.Abs(float64(targetPpm-localPpm)) / float64(localPpm) * 100.0
+}
+
+func largeGapStepCapBoost(profile autofeeProfile, localPpm int, targetPpm int) (float64, bool) {
+	if localPpm <= 0 || targetPpm == localPpm {
+		return 0, false
+	}
+	minGapPct := profile.LargeGapStepCapBoostPctMin
+	if minGapPct <= 0 {
+		return 0, false
+	}
+	gapPct := calcTargetGapPct(localPpm, targetPpm)
+	if gapPct < minGapPct {
+		return 0, false
+	}
+	boost := profile.LargeGapStepCapBoost
+	strong := false
+	if profile.LargeGapStepCapBoostPctStrong > 0 &&
+		gapPct >= profile.LargeGapStepCapBoostPctStrong &&
+		profile.LargeGapStepCapBoostStrong > boost {
+		boost = profile.LargeGapStepCapBoostStrong
+		strong = true
+	}
+	if boost <= 0 {
+		return 0, false
+	}
+	return boost, strong
 }
 
 func shouldEmitStallAlert(stalledRounds int, targetGapPct float64) bool {
@@ -6010,7 +6127,8 @@ func (e *autofeeEngine) fetchRebalanceStats(ctx context.Context, lookback int) (
 	rows, err := e.svc.db.Query(ctx, `
 select coalesce(rebal_target_chan_id, channel_id) as chan_id,
   coalesce(sum(case when fee_msat > 0 then fee_msat else fee_sat * 1000 end), 0),
-  coalesce(sum(amount_sat), 0)
+  coalesce(sum(amount_sat), 0),
+  count(*)::bigint
 from notifications
 where type='rebalance' and occurred_at >= now() - ($1 * interval '1 day')
   and status in ('SETTLED', 'SUCCEEDED')
@@ -6025,10 +6143,11 @@ group by coalesce(rebal_target_chan_id, channel_id)
 		var chanID int64
 		var feeMsat int64
 		var amtSat int64
-		if err := rows.Scan(&chanID, &feeMsat, &amtSat); err != nil {
+		var count int64
+		if err := rows.Scan(&chanID, &feeMsat, &amtSat, &count); err != nil {
 			return stats, err
 		}
-		stats.ByChannel[uint64(chanID)] = rebalStat{FeeMsat: feeMsat, AmtMsat: amtSat * 1000}
+		stats.ByChannel[uint64(chanID)] = rebalStat{FeeMsat: feeMsat, AmtMsat: amtSat * 1000, Count: count}
 	}
 	if err := rows.Err(); err != nil {
 		return stats, err
@@ -6036,11 +6155,12 @@ group by coalesce(rebal_target_chan_id, channel_id)
 
 	err = e.svc.db.QueryRow(ctx, `
 select coalesce(sum(case when fee_msat > 0 then fee_msat else fee_sat * 1000 end), 0),
-  coalesce(sum(amount_sat), 0)
+  coalesce(sum(amount_sat), 0),
+  count(*)::bigint
 from notifications
 where type='rebalance' and occurred_at >= now() - ($1 * interval '1 day')
   and status in ('SETTLED', 'SUCCEEDED')
-`, lookback).Scan(&stats.Global.FeeMsat, &stats.Global.AmtMsat)
+`, lookback).Scan(&stats.Global.FeeMsat, &stats.Global.AmtMsat, &stats.Global.Count)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return stats, err
 	}
@@ -7276,9 +7396,12 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	perCost21d := 0
 	rebalFrom21dFallback := false
 	rebalFloorSignal := false
+	rebalConfidence := rebalFloorConfidence(rebal.Count)
+	rebalLowConfidence := false
 	if rebal.AmtMsat > 0 {
 		perCost = ppmMsat(rebal.FeeMsat, rebal.AmtMsat)
-		rebalFloorSignal = hasFloorRebalSignal(rebalAmtSat7d, ch.CapacitySat)
+		rebalLowConfidence = rebal.Count < floorRebalMinSuccessCount
+		rebalFloorSignal = hasFloorRebalSignal(rebalAmtSat7d, ch.CapacitySat, rebal.Count)
 	}
 	if rebal21d.AmtMsat > 0 && hasRebalFallback21dSignal(rebal21d.AmtMsat/1000, ch.CapacitySat) {
 		perCost21d = ppmMsat(rebal21d.FeeMsat, rebal21d.AmtMsat)
@@ -7537,6 +7660,9 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if outFrom21dFallback {
 		tags = append(tags, "out-fallback-21d")
 	}
+	if rebalLowConfidence {
+		tags = append(tags, "rebal-low-confidence")
+	}
 	if highOutStagnationPressure {
 		tags = append(tags, "stagnation-pressure")
 	}
@@ -7610,6 +7736,9 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		htlcWindowMin = signal.WindowMin
 		if signal.SampleLow {
 			tags = append(tags, "htlc-sample-low")
+		}
+		if signal.NoisySample {
+			tags = append(tags, "htlc-noisy-sample")
 		}
 		if signal.PolicyHot {
 			tags = append(tags, "htlc-policy-hot")
@@ -7824,7 +7953,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			baseCostPpm = rebalGlobalPpm
 			baseCostSrc = "rebal-global"
 		case "channel":
-			if perCost > 0 {
+			if perCost > 0 && rebalConfidence >= 1 {
 				baseCostPpm = perCost
 				baseCostSrc = "rebal"
 				st.LastRebalCost = perCost
@@ -7870,6 +7999,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 				} else if weight > 1 {
 					weight = 1
 				}
+				weight *= rebalConfidence
 				blended := int(math.Round(weight*float64(perCost) + (1.0-weight)*float64(rebalGlobalPpm)))
 				baseCostPpm = blended
 				baseCostSrc = "rebal-blend"
@@ -8293,6 +8423,13 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if fwdCount == 0 && outRatio > 0.60 {
 		capFrac = math.Max(capFrac, 0.12)
 	}
+	if boost, strong := largeGapStepCapBoost(e.profile, localPpm, target); boost > 0 {
+		capFrac = math.Max(capFrac, e.profile.StepCap+boost)
+		tags = append(tags, "large-gap-step-boost")
+		if strong {
+			tags = append(tags, "large-gap-step-boost-strong")
+		}
+	}
 	if discoveryHit {
 		capFrac = math.Max(capFrac, e.profile.DiscoveryStepCapDown)
 	}
@@ -8465,7 +8602,11 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		if fallbackFloorBase > 0 && fallbackFloorBase < floorBasePpm {
 			floorBasePpm = fallbackFloorBase
 			floorBaseSrc = fallbackFloorSrc
-			tags = append(tags, "rebal-floor-low-volume")
+			if rebalLowConfidence {
+				tags = append(tags, "rebal-floor-low-confidence")
+			} else {
+				tags = append(tags, "rebal-floor-low-volume")
+			}
 		}
 	}
 	floor := int(math.Ceil(float64(floorBasePpm) * 1.10))
@@ -10540,6 +10681,8 @@ func formatAutofeeTags(d *decision) string {
 			add("🧵forward-hot")
 		case t == "htlc-sample-low":
 			add("📉htlc-low-sample")
+		case t == "htlc-noisy-sample":
+			add("htlc-noisy")
 		case t == "htlc-neutral-lock":
 			add("🧯htlc-neutral")
 		case strings.HasPrefix(t, "htlc-liq+"):
@@ -10554,6 +10697,10 @@ func formatAutofeeTags(d *decision) string {
 			add("🧯neutral-nodown")
 		case t == "htlc-step-boost":
 			add("⚡htlc-step")
+		case t == "large-gap-step-boost":
+			add("large-gap-step")
+		case t == "large-gap-step-boost-strong":
+			add("large-gap-step+")
 		case strings.HasPrefix(t, "negm+"):
 			add("💹" + t)
 		case t == "outrate-floor":
@@ -10664,6 +10811,10 @@ func formatAutofeeTags(d *decision) string {
 			add("🧯no-signal-noup")
 		case t == "no-signal-floor-relax":
 			add("🧯no-signal-floor")
+		case t == "rebal-low-confidence":
+			add("rebal-low-conf")
+		case t == "rebal-floor-low-confidence":
+			add("rebal-floor-low-conf")
 		case t == "rebal-floor-low-volume":
 			add("🧪rebal-low-volume")
 		case t == "floor-up-blocked-low-signal":

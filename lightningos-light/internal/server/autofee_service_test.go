@@ -752,17 +752,88 @@ func TestHasFloorRebalSignal(t *testing.T) {
 	capSat := int64(10_000_000)
 	minAmtSat := minFloorRebalSat(capSat)
 
-	if hasFloorRebalSignal(0, capSat) {
+	if hasFloorRebalSignal(0, capSat, floorRebalMinSuccessCount) {
 		t.Fatalf("expected false without rebalance volume")
 	}
-	if hasFloorRebalSignal(minAmtSat-1, capSat) {
+	if hasFloorRebalSignal(minAmtSat-1, capSat, floorRebalMinSuccessCount) {
 		t.Fatalf("expected false when rebalance amount is below floor threshold")
 	}
-	if !hasFloorRebalSignal(minAmtSat, capSat) {
+	if hasFloorRebalSignal(minAmtSat, capSat, floorRebalMinSuccessCount-1) {
+		t.Fatalf("expected false when rebalance success count is below confidence threshold")
+	}
+	if !hasFloorRebalSignal(minAmtSat, capSat, floorRebalMinSuccessCount) {
 		t.Fatalf("expected true when rebalance amount meets floor threshold")
 	}
-	if !hasFloorRebalSignal(1, 0) {
+	if !hasFloorRebalSignal(1, 0, floorRebalMinSuccessCount) {
 		t.Fatalf("expected true with positive amount when capacity is unknown")
+	}
+}
+
+func TestRebalFloorConfidence(t *testing.T) {
+	if got := rebalFloorConfidence(0); got != 0 {
+		t.Fatalf("expected zero confidence without settled rebalances: got %.2f", got)
+	}
+	if got := rebalFloorConfidence(1); got != 0.5 {
+		t.Fatalf("expected half confidence for one settled rebalance: got %.2f", got)
+	}
+	if got := rebalFloorConfidence(2); got != 1 {
+		t.Fatalf("expected full confidence at threshold: got %.2f", got)
+	}
+	if got := rebalFloorConfidence(5); got != 1 {
+		t.Fatalf("expected confidence to cap at one: got %.2f", got)
+	}
+}
+
+func TestApplyHTLCNoisySampleDampening(t *testing.T) {
+	minFails, rate, noisy, ratio := applyHTLCNoisySampleDampening(100, 0, 2, 0.10)
+	if !noisy || minFails != 3 || math.Abs(rate-0.15) > 0.000001 || ratio != 0 {
+		t.Fatalf("expected zero-classified sample to dampen: minFails=%d rate=%.4f noisy=%v ratio=%.2f", minFails, rate, noisy, ratio)
+	}
+
+	minFails, rate, noisy, ratio = applyHTLCNoisySampleDampening(100, 2, 2, 0.10)
+	if !noisy {
+		t.Fatalf("expected noisy sample dampening to apply")
+	}
+	if ratio != 0.02 {
+		t.Fatalf("unexpected classified ratio: got %.2f want %.2f", ratio, 0.02)
+	}
+	if minFails != 3 {
+		t.Fatalf("unexpected dampened min forward fails: got %d want %d", minFails, 3)
+	}
+	if math.Abs(rate-0.15) > 0.000001 {
+		t.Fatalf("unexpected dampened forward rate: got %.4f want %.4f", rate, 0.15)
+	}
+
+	minFails, rate, noisy, ratio = applyHTLCNoisySampleDampening(100, 10, 2, 0.10)
+	if noisy {
+		t.Fatalf("did not expect dampening when classified ratio is healthy")
+	}
+	if minFails != 2 || rate != 0.10 || ratio != 0.10 {
+		t.Fatalf("unexpected unchanged thresholds: minFails=%d rate=%.2f ratio=%.2f", minFails, rate, ratio)
+	}
+}
+
+func TestLargeGapStepCapBoost(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+
+	boost, strong := largeGapStepCapBoost(profile, 1000, 1200)
+	if boost != 0 || strong {
+		t.Fatalf("did not expect boost below minimum gap: boost=%.2f strong=%v", boost, strong)
+	}
+
+	boost, strong = largeGapStepCapBoost(profile, 1000, 1300)
+	if math.Abs(boost-0.03) > 0.000001 || strong {
+		t.Fatalf("expected regular moderate gap boost: boost=%.2f strong=%v", boost, strong)
+	}
+
+	boost, strong = largeGapStepCapBoost(profile, 1000, 1500)
+	if math.Abs(boost-0.06) > 0.000001 || !strong {
+		t.Fatalf("expected strong moderate gap boost: boost=%.2f strong=%v", boost, strong)
+	}
+
+	boost, strong = largeGapStepCapBoost(profile, 1000, 1000)
+	if boost != 0 || strong {
+		t.Fatalf("did not expect boost for stable target: boost=%.2f strong=%v", boost, strong)
 	}
 }
 

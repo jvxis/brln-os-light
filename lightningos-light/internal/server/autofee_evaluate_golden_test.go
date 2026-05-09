@@ -65,31 +65,31 @@ func goldenDefaultCfg() AutofeeConfig {
 
 func goldenDefaultCalib() autofeeCalibration {
 	return autofeeCalibration{
-		NodeClass:            "M",
-		LiquidityClass:       "balanced",
-		ChannelCount:         12,
-		TotalCapacitySat:     50_000_000,
-		AvgCapacitySat:       4_000_000,
-		LocalCapacitySat:     25_000_000,
-		LocalRatio:           0.50,
-		RevfloorBaseline:     60,
-		RevfloorMinAbs:       140,
-		LowOutThresh:         0.10,
-		LowOutProtectThresh:  0.10,
-		LowOutFactor:         1.0,
-		HTLCNodeFactor:       1.0,
-		HTLCLiquidityFactor:  1.0,
-		HTLCThresholdFactor:  1.0,
-		HTLCMinAttempts:      12,
-		HTLCMinPolicyFails:   3,
+		NodeClass:             "M",
+		LiquidityClass:        "balanced",
+		ChannelCount:          12,
+		TotalCapacitySat:      50_000_000,
+		AvgCapacitySat:        4_000_000,
+		LocalCapacitySat:      25_000_000,
+		LocalRatio:            0.50,
+		RevfloorBaseline:      60,
+		RevfloorMinAbs:        140,
+		LowOutThresh:          0.10,
+		LowOutProtectThresh:   0.10,
+		LowOutFactor:          1.0,
+		HTLCNodeFactor:        1.0,
+		HTLCLiquidityFactor:   1.0,
+		HTLCThresholdFactor:   1.0,
+		HTLCMinAttempts:       12,
+		HTLCMinPolicyFails:    3,
 		HTLCMinLiquidityFails: 2,
-		HTLCMinForwardFails:  2,
-		HTLCPolicyRateMin:    0.15,
-		HTLCLiquidityRateMin: 0.16,
-		HTLCForwardRateMin:   0.10,
+		HTLCMinForwardFails:   2,
+		HTLCPolicyRateMin:     0.15,
+		HTLCLiquidityRateMin:  0.16,
+		HTLCForwardRateMin:    0.10,
 		HTLCGlobalCountFactor: 1.0,
-		HTLCGlobalRateFactor: 1.0,
-		HTLCWindowMin:        60,
+		HTLCGlobalRateFactor:  1.0,
+		HTLCWindowMin:         60,
 	}
 }
 
@@ -175,11 +175,19 @@ func runGoldenScenario(t *testing.T, sc goldenScenario) {
 	}
 	rebalStats := rebalStats{ByChannel: map[uint64]rebalStat{}}
 	if sc.rebal7d.AmtMsat > 0 {
-		rebalStats.ByChannel[id] = sc.rebal7d
+		rebal7d := sc.rebal7d
+		if rebal7d.Count == 0 {
+			rebal7d.Count = floorRebalMinSuccessCount
+		}
+		rebalStats.ByChannel[id] = rebal7d
 	}
 	rebalStats21d := rebalStats
 	if sc.rebal21d.AmtMsat > 0 {
-		rebalStats21d.ByChannel = map[uint64]rebalStat{id: sc.rebal21d}
+		rebal21d := sc.rebal21d
+		if rebal21d.Count == 0 {
+			rebal21d.Count = floorRebalMinSuccessCount
+		}
+		rebalStats21d.ByChannel = map[uint64]rebalStat{id: rebal21d}
 	}
 	htlcSignals := map[uint64]htlcFailureSignal{}
 	if sc.htlcSignal != nil {
@@ -339,10 +347,10 @@ func TestEvaluateChannelGolden_StagnationPhase1NormalizesDown(t *testing.T) {
 			},
 		},
 		// 7d shows past flow, 1d empty (no recent flow).
-		forward7d: forwardStat{FeeMsat: 2_500_000, AmtMsat: 5_000_000_000, Count: 5}, // 500 ppm
-		forward1d: forwardStat{},
-		inbound:   inboundStat{AmtMsat: 30_000_000_000, Count: 6},
-		rebal7d:   rebalStat{FeeMsat: 350_000, AmtMsat: 1_400_000_000}, // 250 ppm
+		forward7d:     forwardStat{FeeMsat: 2_500_000, AmtMsat: 5_000_000_000, Count: 5}, // 500 ppm
+		forward1d:     forwardStat{},
+		inbound:       inboundStat{AmtMsat: 30_000_000_000, Count: 6},
+		rebal7d:       rebalStat{FeeMsat: 350_000, AmtMsat: 1_400_000_000}, // 250 ppm
 		expectedTrend: "down",
 		requiredTags:  []string{"stagnation"},
 	})
@@ -366,13 +374,13 @@ func TestEvaluateChannelGolden_NoSignalHoldsAtLocal(t *testing.T) {
 			FirstSeen:     now.Add(-60 * 24 * time.Hour),
 			LastTs:        now.Add(-72 * time.Hour),
 		},
-		forward7d:     forwardStat{},
-		forward1d:     forwardStat{},
-		inbound:       inboundStat{},
-		rebal7d:       rebalStat{},
+		forward7d:      forwardStat{},
+		forward1d:      forwardStat{},
+		inbound:        inboundStat{},
+		rebal7d:        rebalStat{},
 		rebalGlobalPpm: 0,
-		expectedTrend: "flat",
-		requiredTags:  []string{"no-signal-noup"},
+		expectedTrend:  "flat",
+		requiredTags:   []string{"no-signal-noup"},
 	})
 }
 
@@ -456,10 +464,10 @@ func TestEvaluateChannelGolden_ProfitProtectLocksDrainedNeg(t *testing.T) {
 			LastDir:       "down",
 		},
 		// outrate ≈ 200, rebal ≈ 600 → margin negative, but no recent flow.
-		forward7d:     forwardStat{FeeMsat: 1_000_000, AmtMsat: 5_000_000_000, Count: 2}, // 200 ppm
-		forward1d:     forwardStat{},
-		rebal7d:       rebalStat{FeeMsat: 1_200_000, AmtMsat: 2_000_000_000},             // 600 ppm cost
-		cfgMutator:    cfgMut,
+		forward7d:  forwardStat{FeeMsat: 1_000_000, AmtMsat: 5_000_000_000, Count: 2}, // 200 ppm
+		forward1d:  forwardStat{},
+		rebal7d:    rebalStat{FeeMsat: 1_200_000, AmtMsat: 2_000_000_000}, // 600 ppm cost
+		cfgMutator: cfgMut,
 		// At minimum, must not move down: assert NewPpm >= LocalPpm.
 		// We assert a tag from the family of locks rather than the exact one,
 		// since the engine has multiple no-down paths in this state.

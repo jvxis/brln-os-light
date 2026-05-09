@@ -770,9 +770,39 @@ func (s *RebalanceService) Start() {
 
 	s.resetSemaphore()
 
+	// Cleanup imediato de jobs órfãos do shutdown anterior (deploy/crash).
+	// Sem isso, jobs que ficaram em status='running' aparecem como ghost
+	// timeouts quando o operador abre a UI da fila — mostra "duração 2h+"
+	// sendo que o serviço estava parado a maior parte desse tempo.
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	s.cleanupStaleJobs(cleanupCtx)
+	cleanupCancel()
+
 	go s.runAutoLoop()
 	go s.runManualRestartWatchLoop()
 	go s.runPairStatsCleanupLoop()
+	go s.runStaleJobsCleanupLoop()
+}
+
+// runStaleJobsCleanupLoop chama cleanupStaleJobs periodicamente. Garante
+// que jobs órfãos sejam limpos mesmo sem operador abrindo a UI da fila —
+// importante após restarts/crashes onde goroutines morrem sem chamar
+// finishJob, deixando rows com status='running' indefinidamente.
+func (s *RebalanceService) runStaleJobsCleanupLoop() {
+	const interval = 2 * time.Minute
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	for {
+		select {
+		case <-timer.C:
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			s.cleanupStaleJobs(ctx)
+			cancel()
+			timer.Reset(interval)
+		case <-s.stop:
+			return
+		}
+	}
 }
 
 // runPairStatsCleanupLoop periodically deletes stale pair_stats rows. Wave 4.3.
@@ -2901,14 +2931,14 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 		return false
 	}
 
-	// Cap de 120s no fast-path: o LND nativo, quando não acha rota, fica
+	// Cap de 180s no fast-path: o LND nativo, quando não acha rota, fica
 	// explorando exaustivamente até estourar timeout. Com volume alto (centenas
 	// de fast-paths/dia), 10 min × N falhas concorrentes saturam gRPC e causam
 	// cascata de "lnd unavailable" em outros jobs (ListChannels também pendura).
-	// 120s é tempo suficiente para LND descobrir rota viável via MPP — falhas
-	// que levariam mais que isso quase nunca produzem sucesso. Em falha, cai
-	// no legacy loop normalmente.
-	const fastPathMaxTimeoutSec = 120
+	// 180s permite MPP exploration mais profunda (alguns sucessos demoraram 3-8
+	// min antes da cap) sem deixar gRPC saturar — em falha, ainda sobram ~7 min
+	// do orçamento total do job para o legacy loop fazer RapidFire.
+	const fastPathMaxTimeoutSec = 180
 	timeoutSec := int32(fastPathMaxTimeoutSec)
 	if rebalTo := int32(feeCfg.RebalanceTimeoutSec); rebalTo > 0 && rebalTo < timeoutSec {
 		timeoutSec = rebalTo

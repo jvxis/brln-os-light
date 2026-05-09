@@ -193,6 +193,29 @@ func TestFloorSourceFromBaseCost(t *testing.T) {
 	}
 }
 
+func TestFormatAutofeeFloorSourceIncludesBaseDetail(t *testing.T) {
+	tests := []struct {
+		name         string
+		floorSrc     string
+		floorBaseSrc string
+		floorBasePpm int
+		want         string
+	}{
+		{name: "collapsed rebal global", floorSrc: "rebal", floorBaseSrc: "rebal-global", floorBasePpm: 426, want: "(rebal-global≈426)"},
+		{name: "collapsed outrate memory", floorSrc: "outrate", floorBaseSrc: "outrate-mem", floorBasePpm: 350, want: "(outrate-mem≈350)"},
+		{name: "same source", floorSrc: "peg", floorBaseSrc: "peg", floorBasePpm: 500, want: "(peg≈500)"},
+		{name: "relaxed source keeps base", floorSrc: "assist", floorBaseSrc: "rebal-global", floorBasePpm: 426, want: "(assist; base rebal-global≈426)"},
+		{name: "legacy source", floorSrc: "rebal", want: "(rebal)"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := formatAutofeeFloorSource(tc.floorSrc, tc.floorBaseSrc, tc.floorBasePpm); got != tc.want {
+				t.Fatalf("unexpected floor source: got %q want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestBlendTargetWithSeed(t *testing.T) {
 	base := 1000
 	blended := blendTargetWithSeed(base, 800, 0.20)

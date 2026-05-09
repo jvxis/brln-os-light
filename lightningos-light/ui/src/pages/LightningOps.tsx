@@ -589,6 +589,9 @@ type AutofeeResultItem = {
   seed?: number
   floor?: number
   floor_src?: string
+  floor_base_ppm?: number
+  floor_base_src?: string
+  rebal_cost_mode?: string
   margin?: number
   rev_share?: number
   tags?: string[]
@@ -632,6 +635,9 @@ type AutofeeChannelRound = {
   target?: number
   floor?: number
   floor_src?: string
+  floor_base_ppm?: number
+  floor_base_src?: string
+  rebal_cost_mode?: string
   seed?: number
   tags?: string[]
   prediction_code?: string
@@ -651,6 +657,28 @@ const normalizeAutofeeChannelID = (channelID?: number | string) => {
     return String(Math.trunc(channelID))
   }
   return ''
+}
+
+const formatAutofeeFloorSource = (floorSrc?: string, floorBaseSrc?: string, floorBasePpm?: number) => {
+  let source = (floorSrc || '').trim()
+  const baseSource = (floorBaseSrc || '').trim()
+  const basePpm = typeof floorBasePpm === 'number' && Number.isFinite(floorBasePpm)
+    ? Math.round(floorBasePpm)
+    : 0
+  if (!source && baseSource) source = baseSource
+  if (!source) return ''
+  if (baseSource && basePpm > 0) {
+    if (baseSource === source) {
+      source = `${source}≈${basePpm}`
+    } else if (source === 'rebal' && baseSource.startsWith('rebal-')) {
+      source = `${baseSource}≈${basePpm}`
+    } else if (source === 'outrate' && baseSource.startsWith('outrate-')) {
+      source = `${baseSource}≈${basePpm}`
+    } else {
+      source = `${source}; base ${baseSource}≈${basePpm}`
+    }
+  }
+  return `(${source})`
 }
 
 const autofeeChannelKey = (channelPoint?: string, channelID?: number | string) => {
@@ -703,7 +731,10 @@ const collectAutofeeChannelRounds = (items: AutofeeResultItem[], maxPerChannel =
       new_ppm: item.new_ppm,
       target: item.target,
       floor: item.floor,
-      floor_src: item.floor_src,
+      floor_src: formatAutofeeFloorSource(item.floor_src, item.floor_base_src, item.floor_base_ppm).replace(/^\(|\)$/g, '') || item.floor_src,
+      floor_base_ppm: item.floor_base_ppm,
+      floor_base_src: item.floor_base_src,
+      rebal_cost_mode: item.rebal_cost_mode,
       seed: item.seed,
       tags: Array.isArray(item.tags) ? [...item.tags] : [],
       prediction_code: item.prediction_code,
@@ -2234,7 +2265,7 @@ export default function LightningOps() {
     const rebalPpm7d = item.rebal_ppm7d ?? 0
     const seed = item.seed ?? 0
     const floor = item.floor ?? 0
-    const floorSrc = item.floor_src ? `(${item.floor_src})` : ''
+    const floorSrc = formatAutofeeFloorSource(item.floor_src, item.floor_base_src, item.floor_base_ppm)
     const margin = item.margin ?? 0
     const revShare = typeof item.rev_share === 'number' ? item.rev_share : 0
     const tagLine = formatAutofeeTags(tags, item.inbound_discount, item.class_label) || '-'

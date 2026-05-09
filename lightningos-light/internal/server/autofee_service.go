@@ -423,6 +423,9 @@ type autofeeLogItem struct {
 	Seed                     int      `json:"seed,omitempty"`
 	Floor                    int      `json:"floor,omitempty"`
 	FloorSrc                 string   `json:"floor_src,omitempty"`
+	FloorBasePpm             int      `json:"floor_base_ppm,omitempty"`
+	FloorBaseSrc             string   `json:"floor_base_src,omitempty"`
+	RebalCostMode            string   `json:"rebal_cost_mode,omitempty"`
 	Margin                   int      `json:"margin,omitempty"`
 	RevShare                 float64  `json:"rev_share,omitempty"`
 	Tags                     []string `json:"tags,omitempty"`
@@ -5776,6 +5779,30 @@ func floorSourceFromBaseCost(src string, marketRefillMode bool) string {
 	}
 }
 
+func formatAutofeeFloorSource(floorSrc string, floorBaseSrc string, floorBasePpm int) string {
+	floorSrc = strings.TrimSpace(floorSrc)
+	floorBaseSrc = strings.TrimSpace(floorBaseSrc)
+	switch {
+	case floorSrc == "" && floorBaseSrc == "":
+		return ""
+	case floorSrc == "":
+		floorSrc = floorBaseSrc
+	}
+	if floorBaseSrc != "" && floorBasePpm > 0 {
+		switch {
+		case floorBaseSrc == floorSrc:
+			floorSrc = fmt.Sprintf("%s≈%d", floorSrc, floorBasePpm)
+		case floorSrc == "rebal" && strings.HasPrefix(floorBaseSrc, "rebal-"):
+			floorSrc = fmt.Sprintf("%s≈%d", floorBaseSrc, floorBasePpm)
+		case floorSrc == "outrate" && strings.HasPrefix(floorBaseSrc, "outrate-"):
+			floorSrc = fmt.Sprintf("%s≈%d", floorBaseSrc, floorBasePpm)
+		default:
+			floorSrc = fmt.Sprintf("%s; base %s≈%d", floorSrc, floorBaseSrc, floorBasePpm)
+		}
+	}
+	return fmt.Sprintf("(%s)", floorSrc)
+}
+
 func parseShortChannelID(raw string) (uint64, bool) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -6372,6 +6399,9 @@ type decision struct {
 	TargetFinal             int
 	Floor                   int
 	FloorSrc                string
+	FloorBasePpm            int
+	FloorBaseSrc            string
+	RebalCostMode           string
 	Tags                    []string
 	InboundDiscount         int
 	PrevInboundDiscount     int
@@ -6584,10 +6614,7 @@ func formatAutofeeDecisionLine(d *decision, dryRun bool, isError bool) (string, 
 		deltaStr = fmt.Sprintf(" (%+d, %.1f%%)", delta, pct)
 	}
 
-	floorSrc := ""
-	if d.FloorSrc != "" {
-		floorSrc = fmt.Sprintf("(%s)", d.FloorSrc)
-	}
+	floorSrc := formatAutofeeFloorSource(d.FloorSrc, d.FloorBaseSrc, d.FloorBasePpm)
 	tagLine := formatAutofeeTags(d)
 	if d.InboundDiscount > 0 {
 		tagLine = strings.ReplaceAll(tagLine, fmt.Sprintf(" ↘️inb-%d", d.InboundDiscount), "")
@@ -6711,6 +6738,9 @@ func buildAutofeeChannelLogEntry(d *decision, category string, dryRun bool, err 
 		Seed:                    d.Seed,
 		Floor:                   d.Floor,
 		FloorSrc:                d.FloorSrc,
+		FloorBasePpm:            d.FloorBasePpm,
+		FloorBaseSrc:            d.FloorBaseSrc,
+		RebalCostMode:           d.RebalCostMode,
 		Margin:                  d.Margin,
 		RevShare:                d.RevShare,
 		Tags:                    append([]string{}, d.Tags...),
@@ -7111,10 +7141,7 @@ func buildTelegramAutofeeChangedChannelLineFull(d *decision) string {
 	if d.LocalPpm > 0 && d.NewPpm != d.LocalPpm {
 		deltaStr = fmt.Sprintf(" (%+d, %.1f%%)", delta, deltaPct)
 	}
-	floorSrc := ""
-	if d.FloorSrc != "" {
-		floorSrc = fmt.Sprintf("(%s)", d.FloorSrc)
-	}
+	floorSrc := formatAutofeeFloorSource(d.FloorSrc, d.FloorBaseSrc, d.FloorBasePpm)
 	action := fmt.Sprintf("set %d→%d ppm", d.LocalPpm, d.NewPpm)
 	tagLine := formatAutofeeTags(d)
 	if tagLine == "" {
@@ -9125,6 +9152,9 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		TargetFinal:             finalPpm,
 		Floor:                   floor,
 		FloorSrc:                floorSrc,
+		FloorBasePpm:            floorBasePpm,
+		FloorBaseSrc:            floorBaseSrc,
+		RebalCostMode:           normalizeRebalCostMode(e.cfg.RebalCostMode),
 		Tags:                    tags,
 		InboundDiscount:         inboundDiscount,
 		PrevInboundDiscount:     prevInboundDiscount,

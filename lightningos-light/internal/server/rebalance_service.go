@@ -2896,9 +2896,17 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 		return false
 	}
 
+	// Cap de 120s no fast-path: o LND nativo, quando não acha rota, fica
+	// explorando exaustivamente até estourar timeout. Com volume alto (centenas
+	// de fast-paths/dia), 10 min × N falhas concorrentes saturam gRPC e causam
+	// cascata de "lnd unavailable" em outros jobs (ListChannels também pendura).
+	// 120s é tempo suficiente para LND descobrir rota viável via MPP — falhas
+	// que levariam mais que isso quase nunca produzem sucesso. Em falha, cai
+	// no legacy loop normalmente.
+	const fastPathMaxTimeoutSec = 120
 	timeoutSec := int32(feeCfg.RebalanceTimeoutSec)
-	if timeoutSec <= 0 {
-		timeoutSec = 300
+	if timeoutSec <= 0 || timeoutSec > fastPathMaxTimeoutSec {
+		timeoutSec = fastPathMaxTimeoutSec
 	}
 	maxParts := uint32(1)
 	if feeCfg.MppEnabled && feeCfg.MppMaxShards > 1 {
@@ -2906,7 +2914,7 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 	}
 
 	if s.logger != nil {
-		s.logger.Printf("rebalance fast-path: job=%d target=%d amount=%d sources=%d fee_cap_ppm=%d", r.jobID, r.targetChannelID, st.amount, len(sourceIDs), maxFeePpm)
+		s.logger.Printf("rebalance fast-path: job=%d target=%d amount=%d sources=%d fee_cap_ppm=%d timeout_sec=%d", r.jobID, r.targetChannelID, st.amount, len(sourceIDs), maxFeePpm, timeoutSec)
 	}
 	s.markFastPathAttempted(r.jobID)
 

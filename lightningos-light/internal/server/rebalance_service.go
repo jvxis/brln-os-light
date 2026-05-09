@@ -380,20 +380,20 @@ type RebalanceChannel struct {
 	// efetivamente travada agora pela Política C v2 (linear em payback_progress).
 	// Diferente de ProtectedLiquiditySat (lifetime aportado), esse valor reflete
 	// o lock real do momento — é o que a UI deveria mostrar como "Protegido".
-	EffectiveProtectedSat  int64    `json:"effective_protected_sat"`
-	PaybackProgress        float64  `json:"payback_progress"`
-	TimeToPaybackHours     float64  `json:"time_to_payback_hours"`
-	TimeToPaybackValid     bool     `json:"time_to_payback_valid"`
-	MaxSourceSat           int64    `json:"max_source_sat"`
-	Revenue7dSat           int64    `json:"revenue_7d_sat"`
-	DrainRateSatPerHour    int64    `json:"drain_rate_sat_per_hour"`
-	PendingOutgoingHtlcs   int      `json:"pending_outgoing_htlcs"`
-	RebalanceCost7dSat     int64    `json:"rebalance_cost_7d_sat"`
-	RebalanceCost7dPpm     int64    `json:"rebalance_cost_7d_ppm"`
-	RebalanceAmount7dSat   int64    `json:"rebalance_amount_7d_sat"`
-	ROIEstimate            float64  `json:"roi_estimate"`
-	ROIEstimateValid       bool     `json:"roi_estimate_valid"`
-	ExcludedAsSource       bool     `json:"excluded_as_source"`
+	EffectiveProtectedSat int64   `json:"effective_protected_sat"`
+	PaybackProgress       float64 `json:"payback_progress"`
+	TimeToPaybackHours    float64 `json:"time_to_payback_hours"`
+	TimeToPaybackValid    bool    `json:"time_to_payback_valid"`
+	MaxSourceSat          int64   `json:"max_source_sat"`
+	Revenue7dSat          int64   `json:"revenue_7d_sat"`
+	DrainRateSatPerHour   int64   `json:"drain_rate_sat_per_hour"`
+	PendingOutgoingHtlcs  int     `json:"pending_outgoing_htlcs"`
+	RebalanceCost7dSat    int64   `json:"rebalance_cost_7d_sat"`
+	RebalanceCost7dPpm    int64   `json:"rebalance_cost_7d_ppm"`
+	RebalanceAmount7dSat  int64   `json:"rebalance_amount_7d_sat"`
+	ROIEstimate           float64 `json:"roi_estimate"`
+	ROIEstimateValid      bool    `json:"roi_estimate_valid"`
+	ExcludedAsSource      bool    `json:"excluded_as_source"`
 }
 
 type RebalancePairStat struct {
@@ -1392,11 +1392,14 @@ func isTargetCooldownProbeJob(jobSource string, jobReason string) bool {
 }
 
 func shouldUseRecentFailureCache(jobSource string, jobReason string) bool {
+	jobReason = strings.TrimSpace(strings.ToLower(jobReason))
+	if jobReason == targetCooldownProbeReason {
+		return false
+	}
 	jobSource = strings.TrimSpace(strings.ToLower(jobSource))
 	if jobSource == "auto" {
 		return true
 	}
-	jobReason = strings.TrimSpace(strings.ToLower(jobReason))
 	return jobSource == "manual" && jobReason == "auto-restart"
 }
 
@@ -1464,6 +1467,24 @@ func hasRebalanceFallbackCandidate(sources []RebalanceChannel, sourceAvailable m
 		return true
 	}
 	return false
+}
+
+func filterExecutableSources(sources []RebalanceChannel, sourceAvailable map[uint64]int64, minExecuteSat int64) []RebalanceChannel {
+	if len(sources) == 0 {
+		return sources
+	}
+	filtered := make([]RebalanceChannel, 0, len(sources))
+	for _, source := range sources {
+		available := sourceAvailable[source.ChannelID]
+		if available <= 0 {
+			continue
+		}
+		if minExecuteSat > 0 && available < minExecuteSat {
+			continue
+		}
+		filtered = append(filtered, source)
+	}
+	return filtered
 }
 
 func shouldRunTargetCooldownProbe(lastAutoAt time.Time, now time.Time) bool {
@@ -3503,10 +3524,17 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 		}
 		return sources[i].MaxSourceSat > sources[j].MaxSourceSat
 	})
-	if cooldownProbeJob && len(sources) > targetCooldownProbeMaxSources {
-		sources = sources[:targetCooldownProbeMaxSources]
-	}
 	refreshSourceAvailability(true)
+	if cooldownProbeJob {
+		sources = filterExecutableSources(sources, sourceAvailable, minExecuteSat)
+		if len(sources) > targetCooldownProbeMaxSources {
+			sources = sources[:targetCooldownProbeMaxSources]
+		}
+		if len(sources) == 0 {
+			s.finishJob(jobID, "skipped", "no executable sources")
+			return
+		}
+	}
 
 	targetPolicy := lndclient.ChannelPolicySnapshot{
 		FeeRatePpm:  targetSnapshot.OutgoingFeePpm,
@@ -4787,6 +4815,10 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 		s.finishJob(jobID, "skipped", "all sources skipped (recent failures)")
 		return
 	}
+	if !attemptedAny {
+		s.finishJob(jobID, "skipped", "no executable sources")
+		return
+	}
 	s.finishJob(jobID, "failed", "all sources failed")
 }
 
@@ -5746,7 +5778,7 @@ with events as (
     j.target_channel_id,
     j.status,
     j.completed_at as occurred_at,
-    (j.status='skipped' and j.reason='all sources skipped (recent failures)' and not exists (
+    (j.status='skipped' and j.reason in ('all sources skipped (recent failures)', 'no executable sources') and not exists (
       select 1 from rebalance_attempts a where a.job_id = j.id
     )) as no_attempt_failure
   from rebalance_jobs j

@@ -888,6 +888,31 @@ func TestHasRebalanceFallbackCandidateSkipsBlockedMppSources(t *testing.T) {
 	}
 }
 
+func TestFilterExecutableSourcesSkipsBelowExecuteMinimum(t *testing.T) {
+	sources := []RebalanceChannel{
+		{ChannelID: 1},
+		{ChannelID: 2},
+		{ChannelID: 3},
+		{ChannelID: 4},
+		{ChannelID: 5},
+	}
+	sourceAvailable := map[uint64]int64{
+		1: 1_038,
+		2: 6_406,
+		3: 50_000,
+		4: 250_000,
+		5: 0,
+	}
+
+	got := filterExecutableSources(sources, sourceAvailable, 10_000)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 executable sources, got %d", len(got))
+	}
+	if got[0].ChannelID != 3 || got[1].ChannelID != 4 {
+		t.Fatalf("unexpected executable source order: %+v", got)
+	}
+}
+
 func TestTargetCooldownProbeHelpers(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	if !shouldRunTargetCooldownProbe(time.Time{}, now) {
@@ -1204,6 +1229,9 @@ func TestIsManualRestartJobDistinguishesOneShotManual(t *testing.T) {
 func TestShouldUseRecentFailureCacheIncludesManualAutoRestart(t *testing.T) {
 	if !shouldUseRecentFailureCache("auto", "") {
 		t.Fatalf("expected auto jobs to use recent failure cache")
+	}
+	if shouldUseRecentFailureCache("auto", targetCooldownProbeReason) {
+		t.Fatalf("expected cooldown probes to bypass recent failure cache")
 	}
 	if !shouldUseRecentFailureCache("manual", "auto-restart") {
 		t.Fatalf("expected manual auto-restart jobs to use recent failure cache")

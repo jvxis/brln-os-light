@@ -2836,10 +2836,17 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 	if !cfg.DelegatedFastPathEnabled {
 		return false
 	}
-	// cooldown-probe usa o mesmo fast-path: o amount já vem reduzido por
-	// rebalanceCooldownProbeAmount (linha ~3009), e delegar ao LND com
-	// outgoing_chan_ids=[all] testa "esse target voltou?" muito mais
-	// efetivamente do que iterar 2 sources sequencialmente sob pair-cache.
+	// cooldown-probe é excluído do fast-path. Avaliação em 2026-05-09 mostrou
+	// que probes via fast-path têm hit rate baixo (5 %) e cada falha consome
+	// 10 min de gRPC esperando o LND nativo esgotar a busca contra targets
+	// estruturalmente mortos. Em ~7h de janela, isso virou 27 timeouts contra
+	// 3 sucessos — custo-benefício ruim. Probes voltam ao loop legado: itera
+	// 2 sources e falha rápido se rota não existe. Peers em cooldown voltam
+	// naturalmente via auto-scan / auto-restart quando permanentFailScoreTTL
+	// (cap 1h) expira.
+	if st.cooldownProbeJob {
+		return false
+	}
 	s := r.service
 	if s.lnd == nil || s.db == nil {
 		return false

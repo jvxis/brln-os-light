@@ -35,7 +35,7 @@ Adicionado flag `delegated_fast_path_enabled` em `RebalanceConfig` (default **fa
 - Em sucesso: persiste 1 attempt agregada (`payment_hash`, `fee_paid_sat`, source da rota vencedora extraída do primeiro htlc), chama `recordPairSuccess` para a source usada (preserva aprendizado por par), reinforce de MC se `mission_control_reinforce` ligado, finaliza job como `succeeded` com reason `"delegated-fast-path"`.
 - Em falha: silent fall-through pro `runLegacyLoop` tradicional. Não envenena pair-cache (a falha é "LND não achou rota agora", não "esta source falhou").
 - Bypassa pair-cache (LND tem seu próprio Mission Control). Mantém EligibleAsSource e cooldowns target-level.
-- Cooldown-probe jobs continuam no fluxo legado (probes existem para reabilitar targets via diferentes sources, semântica diferente).
+- Cooldown-probe jobs **excluídos** do fast-path. Avaliação empírica em 2026-05-09 mostrou hit rate baixo (5 %) e cada falha consumindo 10 min de gRPC contra targets estruturalmente mortos. Em ~7h de janela, gerou 27 timeouts vs 3 sucessos — custo-benefício ruim. Probes voltaram ao loop legado (itera 2 sources, falha rápido). Peers em cooldown voltam naturalmente via auto-scan/auto-restart quando `permanentFailScoreTTLMax` (1h) expira. Histórico desta decisão: temporariamente incluiu cooldown-probe entre 0.3.26 e 0.3.27 antes da remoção definitiva.
 
 Implementação:
 - [lndclient/rebalance.go:386-470](../internal/lndclient/rebalance.go) — novo `SendPaymentMultiSource` aceitando `[]uint64` de `outgoing_chan_ids`. Mantém `SendPaymentWithConstraints` como wrapper compat.

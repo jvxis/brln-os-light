@@ -43,3 +43,25 @@ func TestStorageMountEligibility(t *testing.T) {
 		t.Fatal("expected non-Linux permissions filesystem to be ineligible")
 	}
 }
+
+func TestPreferStorageMountUsesRealFilesystemOverAutomount(t *testing.T) {
+	automount := storageMount{
+		Mount:   "/mnt/blockchain",
+		Source:  "systemd-1",
+		FSType:  "autofs",
+		Options: "rw,relatime",
+	}
+	raidMount := storageMount{
+		Mount:     "/mnt/blockchain",
+		Source:    "/dev/md127",
+		FSType:    "xfs",
+		Options:   "rw,noatime",
+		FreeBytes: 926 * 1024 * 1024 * 1024,
+	}
+	if !preferStorageMount(raidMount, automount) {
+		t.Fatal("expected xfs raid mount to replace autofs automount")
+	}
+	if preferStorageMount(automount, raidMount) {
+		t.Fatal("expected autofs automount not to replace xfs raid mount")
+	}
+}

@@ -145,22 +145,20 @@ func readStorageMounts(ctx context.Context) ([]storageMount, error) {
 		return nil, err
 	}
 	mounts := []storageMount{}
-	seen := map[string]bool{}
+	indexByMount := map[string]int{}
 	var walk func([]findmntFilesystem)
 	walk = func(items []findmntFilesystem) {
 		for _, item := range items {
-			mount := strings.TrimSpace(item.Target)
-			if mount != "" && !seen[mount] {
-				seen[mount] = true
-				mounts = append(mounts, storageMount{
-					Mount:     mount,
-					Source:    strings.TrimSpace(item.Source),
-					FSType:    strings.TrimSpace(item.FSType),
-					Options:   strings.TrimSpace(item.Options),
-					SizeBytes: findmntSizeBytes(item.Size),
-					UsedBytes: findmntSizeBytes(item.Used),
-					FreeBytes: findmntSizeBytes(item.Avail),
-				})
+			candidate := storageMountFromFindmnt(item)
+			if candidate.Mount != "" {
+				if idx, ok := indexByMount[candidate.Mount]; ok {
+					if preferStorageMount(candidate, mounts[idx]) {
+						mounts[idx] = candidate
+					}
+				} else {
+					indexByMount[candidate.Mount] = len(mounts)
+					mounts = append(mounts, candidate)
+				}
 			}
 			if len(item.Children) > 0 {
 				walk(item.Children)
@@ -169,6 +167,45 @@ func readStorageMounts(ctx context.Context) ([]storageMount, error) {
 	}
 	walk(parsed.Filesystems)
 	return mounts, nil
+}
+
+func storageMountFromFindmnt(item findmntFilesystem) storageMount {
+	mount := strings.TrimSpace(item.Target)
+	if mount == "" {
+		return storageMount{}
+	}
+	return storageMount{
+		Mount:     path.Clean(mount),
+		Source:    strings.TrimSpace(item.Source),
+		FSType:    strings.TrimSpace(item.FSType),
+		Options:   strings.TrimSpace(item.Options),
+		SizeBytes: findmntSizeBytes(item.Size),
+		UsedBytes: findmntSizeBytes(item.Used),
+		FreeBytes: findmntSizeBytes(item.Avail),
+	}
+}
+
+func preferStorageMount(candidate storageMount, current storageMount) bool {
+	candidateReal := candidate.FSType != "" && !storagePseudoFilesystem(candidate.FSType)
+	currentReal := current.FSType != "" && !storagePseudoFilesystem(current.FSType)
+	if candidateReal != currentReal {
+		return candidateReal
+	}
+	candidateSupported := storageSupportedFilesystem(candidate.FSType)
+	currentSupported := storageSupportedFilesystem(current.FSType)
+	if candidateSupported != currentSupported {
+		return candidateSupported
+	}
+	if candidate.FreeBytes > 0 && current.FreeBytes <= 0 {
+		return true
+	}
+	if candidate.SizeBytes > 0 && current.SizeBytes <= 0 {
+		return true
+	}
+	if strings.HasPrefix(candidate.Source, "/dev/") && !strings.HasPrefix(current.Source, "/dev/") {
+		return true
+	}
+	return false
 }
 
 func buildAppStorageTarget(appID string, mount storageMount) appStorageTarget {

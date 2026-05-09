@@ -60,7 +60,8 @@ type elementsConfigValues struct {
 }
 
 type elementsInstallOptions struct {
-	DataDir string `json:"data_dir"`
+	DataDir      string `json:"data_dir"`
+	StorageMount string `json:"storage_mount"`
 }
 
 func newElementsApp(s *Server) appHandler {
@@ -217,8 +218,11 @@ func (s *Server) installElements(ctx context.Context) error {
 }
 
 func (s *Server) installElementsWithOptions(ctx context.Context, opts elementsInstallOptions) error {
-	requestedDataDir := strings.TrimSpace(opts.DataDir)
-	if requestedDataDir != "" {
+	requestedDataDir, dataDirRequested, err := resolveElementsInstallDataDir(ctx, opts)
+	if err != nil {
+		return err
+	}
+	if dataDirRequested {
 		normalized, err := normalizeElementsDataDir(requestedDataDir)
 		if err != nil {
 			return err
@@ -266,6 +270,25 @@ func (s *Server) installElementsWithOptions(ctx context.Context, opts elementsIn
 	return nil
 }
 
+func resolveElementsInstallDataDir(ctx context.Context, opts elementsInstallOptions) (string, bool, error) {
+	requestedDataDir := strings.TrimSpace(opts.DataDir)
+	requestedMount := strings.TrimSpace(opts.StorageMount)
+	if requestedDataDir != "" && requestedMount != "" {
+		return "", false, errors.New("choose either data_dir or storage_mount for Elements installation")
+	}
+	if requestedMount != "" {
+		dataDir, err := resolveInstallDataDirFromStorageMount(ctx, elementsAppID, requestedMount)
+		if err != nil {
+			return "", false, err
+		}
+		return dataDir, true, nil
+	}
+	if requestedDataDir != "" {
+		return requestedDataDir, true, nil
+	}
+	return "", false, nil
+}
+
 func validateElementsInstallDataDir(ctx context.Context, dataDir string) error {
 	normalized, err := normalizeElementsDataDir(dataDir)
 	if err != nil {
@@ -275,29 +298,76 @@ func validateElementsInstallDataDir(ctx context.Context, dataDir string) error {
 	script := fmt.Sprintf(`set -e
 parent=%s
 data=%s
-if [ ! -d "$parent" ]; then
-  echo "parent directory does not exist: $parent" >&2
-  exit 10
+user=%s
+if ! id "$user" >/dev/null 2>&1; then
+  echo "service user does not exist: $user" >&2
+  exit 11
+fi
+nearest="$parent"
+while [ ! -e "$nearest" ] && [ "$nearest" != "/" ]; do
+  nearest="$(dirname "$nearest")"
+done
+if [ ! -d "$nearest" ]; then
+  echo "nearest existing parent is not a directory: $nearest" >&2
+  exit 12
 fi
 if command -v findmnt >/dev/null 2>&1; then
-  findmnt -T "$parent" >/dev/null || {
-    echo "parent directory is not on a mounted filesystem: $parent" >&2
-    exit 11
-  }
+  mount_target="$(findmnt -T "$nearest" -no TARGET 2>/dev/null | head -n1 || true)"
+  if [ -z "$mount_target" ]; then
+    echo "parent directory is not on a mounted filesystem: $nearest" >&2
+    exit 13
+  fi
+  if [ "$mount_target" = "/" ]; then
+    echo "parent directory is on the root filesystem; mount the target volume first: $parent" >&2
+    exit 14
+  fi
 fi
+mkdir -p "$parent"
 mkdir -p "$data"
 if [ ! -d "$data" ]; then
   echo "data directory is not a directory: $data" >&2
-  exit 12
+  exit 15
 fi
-touch "$data/.lightningos-write-test"
-rm -f "$data/.lightningos-write-test"
+grant_traverse() {
+  dir="$1"
+  if command -v setfacl >/dev/null 2>&1; then
+    setfacl -m "u:$user:x" "$dir" 2>/dev/null || chmod o+x "$dir"
+  else
+    chmod o+x "$dir"
+  fi
+}
+current=""
+rest="${parent#/}"
+old_ifs="$IFS"
+IFS="/"
+for part in $rest; do
+  current="$current/$part"
+  if [ -d "$current" ]; then
+    grant_traverse "$current"
+  fi
+done
+IFS="$old_ifs"
+chown "$user:$user" "$data"
+chmod 750 "$data"
+if ! command -v runuser >/dev/null 2>&1; then
+  echo "runuser is required to validate $user access" >&2
+  exit 16
+fi
+runuser -u "$user" -- test -x "$parent"
+runuser -u "$user" -- /bin/sh -c 'set -e
+data="$1"
+test -d "$data"
+test -r "$data"
+test -w "$data"
+touch "$data/.lightningos-user-write-test"
+rm -f "$data/.lightningos-user-write-test"
+' sh "$data"
 available="$(df -Pk "$data" | awk 'NR==2 {print $4}')"
 if [ -n "$available" ] && [ "$available" -lt %d ]; then
   echo "not enough free space in $data" >&2
-  exit 13
+  exit 17
 fi
-`, shellQuote(parent), shellQuote(normalized), elementsMinFreeKiB)
+`, shellQuote(parent), shellQuote(normalized), shellQuote(elementsUser), elementsMinFreeKiB)
 	out, err := runSystemd(ctx, "/bin/sh", "-c", script)
 	if err != nil {
 		msg := strings.TrimSpace(out)
@@ -358,17 +428,88 @@ func (s *Server) uninstallElements(ctx context.Context) error {
 
 func ensureElementsDataDir(ctx context.Context, paths elementsPaths) error {
 	script := fmt.Sprintf(`set -e
-if [ -d /data ]; then
-  if command -v setfacl >/dev/null 2>&1; then
-    setfacl -m u:%[2]s:rx /data
+data=%s
+user=%s
+default_data=%s
+parent="$(dirname "$data")"
+if [ ! -d "$parent" ]; then
+  if [ "$data" = "$default_data" ]; then
+    mkdir -p "$parent"
+    chmod 755 "$parent"
   else
-    chmod o+x /data
+    nearest="$parent"
+    while [ ! -e "$nearest" ] && [ "$nearest" != "/" ]; do
+      nearest="$(dirname "$nearest")"
+    done
+    if [ ! -d "$nearest" ]; then
+      echo "nearest existing parent is not a directory: $nearest" >&2
+      exit 10
+    fi
+    if command -v findmnt >/dev/null 2>&1; then
+      mount_target="$(findmnt -T "$nearest" -no TARGET 2>/dev/null | head -n1 || true)"
+      if [ -z "$mount_target" ]; then
+        echo "parent directory is not on a mounted filesystem: $nearest" >&2
+        exit 12
+      fi
+      if [ "$mount_target" = "/" ]; then
+        echo "parent directory is on the root filesystem; mount the target volume first: $parent" >&2
+        exit 13
+      fi
+    fi
+    mkdir -p "$parent"
   fi
 fi
-mkdir -p "%[1]s"
-chown %[2]s:%[2]s "%[1]s"
-chmod 750 "%[1]s"
-`, paths.DataDir, elementsUser)
+if ! id "$user" >/dev/null 2>&1; then
+  echo "service user does not exist: $user" >&2
+  exit 11
+fi
+if [ "$data" != "$default_data" ] && command -v findmnt >/dev/null 2>&1; then
+  mount_target="$(findmnt -T "$parent" -no TARGET 2>/dev/null | head -n1 || true)"
+  if [ -z "$mount_target" ]; then
+    echo "parent directory is not on a mounted filesystem: $parent" >&2
+    exit 12
+  fi
+  if [ "$mount_target" = "/" ]; then
+    echo "parent directory is on the root filesystem; mount the target volume first: $parent" >&2
+    exit 13
+  fi
+fi
+grant_traverse() {
+  dir="$1"
+  if command -v setfacl >/dev/null 2>&1; then
+    setfacl -m "u:$user:x" "$dir" 2>/dev/null || chmod o+x "$dir"
+  else
+    chmod o+x "$dir"
+  fi
+}
+current=""
+rest="${parent#/}"
+old_ifs="$IFS"
+IFS="/"
+for part in $rest; do
+  current="$current/$part"
+  if [ -d "$current" ]; then
+    grant_traverse "$current"
+  fi
+done
+IFS="$old_ifs"
+mkdir -p "$data"
+chown "$user:$user" "$data"
+chmod 750 "$data"
+if ! command -v runuser >/dev/null 2>&1; then
+  echo "runuser is required to validate $user access" >&2
+  exit 14
+fi
+runuser -u "$user" -- test -x "$parent"
+runuser -u "$user" -- /bin/sh -c 'set -e
+data="$1"
+test -d "$data"
+test -r "$data"
+test -w "$data"
+touch "$data/.lightningos-user-write-test"
+rm -f "$data/.lightningos-user-write-test"
+' sh "$data"
+`, shellQuote(paths.DataDir), shellQuote(elementsUser), shellQuote(elementsDefaultDataDir))
 	if _, err := runSystemd(ctx, "/bin/sh", "-c", script); err != nil {
 		return fmt.Errorf("failed to prepare %s: %w", paths.DataDir, err)
 	}

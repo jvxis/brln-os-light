@@ -59,6 +59,7 @@ func (s *Server) routes() http.Handler {
 	r.Post("/api/lnd/upgrade", s.handleLNDUpgradeStart)
 	r.Post("/api/app/upgrade/start", s.handleAppUpgradeStart)
 	r.Get("/api/apps", s.handleAppsList)
+	r.Get("/api/apps/storage-targets", s.handleAppStorageTargets)
 	r.Post("/api/apps/{id}/install", s.handleAppInstall)
 	r.Post("/api/apps/{id}/uninstall", s.handleAppUninstall)
 	r.Post("/api/apps/{id}/start", s.handleAppStart)

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getAppAdminPassword, getApps, getBitcoinLocalStatus, getBitcoinSource, getElectrsStatus, installApp, resetAppAdmin, startApp, stopApp, uninstallApp } from '../api'
+import { getAppAdminPassword, getAppStorageTargets, getApps, getBitcoinLocalStatus, getBitcoinSource, getElectrsStatus, installApp, resetAppAdmin, startApp, stopApp, uninstallApp, type StorageTarget } from '../api'
 import lndgIcon from '../assets/apps/lndg.ico'
 import bitcoincoreIcon from '../assets/apps/bitcoincore.png'
 import elementsIcon from '../assets/apps/elements.png'
@@ -49,6 +49,7 @@ type ElectrsStatus = {
 }
 
 type AppAction = 'install' | 'start' | 'stop' | 'uninstall'
+type InstallPayload = { data_dir?: string; storage_mount?: string }
 
 const iconMap: Record<string, string> = {
   lndg: lndgIcon,
@@ -95,11 +96,17 @@ export default function AppStore() {
   const [bitcoinMode, setBitcoinMode] = useState<BitcoinMode>('remote')
   const [electrsStatus, setElectrsStatus] = useState<ElectrsStatus | null>(null)
   const [bitcoinCoreInstallOpen, setBitcoinCoreInstallOpen] = useState(false)
-  const [bitcoinCoreCustomDataDir, setBitcoinCoreCustomDataDir] = useState(false)
-  const [bitcoinCoreDataDir, setBitcoinCoreDataDir] = useState(bitcoinCoreDefaultDataDir)
+  const [bitcoinCoreUseStorageMount, setBitcoinCoreUseStorageMount] = useState(false)
+  const [bitcoinCoreStorageTargets, setBitcoinCoreStorageTargets] = useState<StorageTarget[]>([])
+  const [bitcoinCoreSelectedMount, setBitcoinCoreSelectedMount] = useState('')
+  const [bitcoinCoreStorageLoading, setBitcoinCoreStorageLoading] = useState(false)
+  const [bitcoinCoreStorageError, setBitcoinCoreStorageError] = useState('')
   const [elementsInstallOpen, setElementsInstallOpen] = useState(false)
-  const [elementsCustomDataDir, setElementsCustomDataDir] = useState(false)
-  const [elementsDataDir, setElementsDataDir] = useState(elementsDefaultDataDir)
+  const [elementsUseStorageMount, setElementsUseStorageMount] = useState(false)
+  const [elementsStorageTargets, setElementsStorageTargets] = useState<StorageTarget[]>([])
+  const [elementsSelectedMount, setElementsSelectedMount] = useState('')
+  const [elementsStorageLoading, setElementsStorageLoading] = useState(false)
+  const [elementsStorageError, setElementsStorageError] = useState('')
   const [installFilter, setInstallFilter] = useState<InstallFilter>(() => {
     if (typeof window === 'undefined') return 'all'
     const stored = window.localStorage.getItem(APP_STORE_INSTALL_FILTER_KEY)
@@ -185,6 +192,58 @@ export default function AppStore() {
     window.localStorage.setItem(APP_STORE_INSTALL_FILTER_KEY, installFilter)
   }, [installFilter])
 
+  const loadBitcoinCoreStorageTargets = () => {
+    setBitcoinCoreStorageLoading(true)
+    setBitcoinCoreStorageError('')
+    getAppStorageTargets('bitcoincore')
+      .then((data: { targets?: StorageTarget[] }) => {
+        const targets = data?.targets || []
+        setBitcoinCoreStorageTargets(targets)
+        setBitcoinCoreSelectedMount((current) => {
+          if (current && targets.some((target) => target.eligible && target.mount === current)) return current
+          return targets.find((target) => target.eligible)?.mount || ''
+        })
+      })
+      .catch((err: unknown) => {
+        setBitcoinCoreStorageError(err instanceof Error ? err.message : t('appStore.storageLoadFailed'))
+        setBitcoinCoreStorageTargets([])
+        setBitcoinCoreSelectedMount('')
+      })
+      .finally(() => setBitcoinCoreStorageLoading(false))
+  }
+
+  const loadElementsStorageTargets = () => {
+    setElementsStorageLoading(true)
+    setElementsStorageError('')
+    getAppStorageTargets('elements')
+      .then((data: { targets?: StorageTarget[] }) => {
+        const targets = data?.targets || []
+        setElementsStorageTargets(targets)
+        setElementsSelectedMount((current) => {
+          if (current && targets.some((target) => target.eligible && target.mount === current)) return current
+          return targets.find((target) => target.eligible)?.mount || ''
+        })
+      })
+      .catch((err: unknown) => {
+        setElementsStorageError(err instanceof Error ? err.message : t('appStore.storageLoadFailed'))
+        setElementsStorageTargets([])
+        setElementsSelectedMount('')
+      })
+      .finally(() => setElementsStorageLoading(false))
+  }
+
+  useEffect(() => {
+    if (bitcoinCoreInstallOpen && bitcoinCoreUseStorageMount) {
+      loadBitcoinCoreStorageTargets()
+    }
+  }, [bitcoinCoreInstallOpen, bitcoinCoreUseStorageMount])
+
+  useEffect(() => {
+    if (elementsInstallOpen && elementsUseStorageMount) {
+      loadElementsStorageTargets()
+    }
+  }, [elementsInstallOpen, elementsUseStorageMount])
+
   const electrsApp = apps.find((app) => app.id === 'electrs')
   const electrsRunning = Boolean(electrsApp?.installed && electrsApp?.status === 'running')
   useEffect(() => {
@@ -210,16 +269,18 @@ export default function AppStore() {
     }
   }, [electrsRunning])
 
-  const handleAction = async (id: string, action: AppAction, payload?: { data_dir?: string }) => {
+  const handleAction = async (id: string, action: AppAction, payload?: InstallPayload) => {
     if (id === 'bitcoincore' && action === 'install' && !payload) {
-      setBitcoinCoreCustomDataDir(false)
-      setBitcoinCoreDataDir(bitcoinCoreDefaultDataDir)
+      setBitcoinCoreUseStorageMount(false)
+      setBitcoinCoreSelectedMount('')
+      setBitcoinCoreStorageError('')
       setBitcoinCoreInstallOpen(true)
       return
     }
     if (id === 'elements' && action === 'install' && !payload) {
-      setElementsCustomDataDir(false)
-      setElementsDataDir(elementsDefaultDataDir)
+      setElementsUseStorageMount(false)
+      setElementsSelectedMount('')
+      setElementsStorageError('')
       setElementsInstallOpen(true)
       return
     }
@@ -244,15 +305,15 @@ export default function AppStore() {
   }
 
   const handleBitcoinCoreInstallConfirm = async () => {
-    const payload = bitcoinCoreCustomDataDir ? { data_dir: bitcoinCoreDataDir.trim() } : {}
+    const payload = bitcoinCoreUseStorageMount ? { storage_mount: bitcoinCoreSelectedMount } : {}
     setBitcoinCoreInstallOpen(false)
     await handleAction('bitcoincore', 'install', payload)
   }
 
   const handleElementsInstallConfirm = async () => {
-    const dataDir = elementsCustomDataDir ? elementsDataDir.trim() : elementsDefaultDataDir
+    const payload = elementsUseStorageMount ? { storage_mount: elementsSelectedMount } : { data_dir: elementsDefaultDataDir }
     setElementsInstallOpen(false)
-    await handleAction('elements', 'install', { data_dir: dataDir })
+    await handleAction('elements', 'install', payload)
   }
 
   const handleResetAdmin = async (id: string) => {
@@ -304,6 +365,19 @@ export default function AppStore() {
     if (installFilter === 'installed') return app.installed
     if (installFilter === 'not_installed') return !app.installed
     return true
+  })
+  const eligibleBitcoinCoreStorageTargets = bitcoinCoreStorageTargets.filter((target) => target.eligible)
+  const selectedBitcoinCoreStorageTarget = eligibleBitcoinCoreStorageTargets.find((target) => target.mount === bitcoinCoreSelectedMount)
+  const eligibleElementsStorageTargets = elementsStorageTargets.filter((target) => target.eligible)
+  const selectedElementsStorageTarget = eligibleElementsStorageTargets.find((target) => target.mount === elementsSelectedMount)
+  const formatStorageGB = (value?: number) => {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '-'
+    return value >= 100 ? value.toFixed(0) : value.toFixed(1)
+  }
+  const storageTargetLabel = (target: StorageTarget) => t('appStore.storageTargetOption', {
+    mount: target.mount,
+    free: formatStorageGB(target.free_gb),
+    fstype: target.fstype || target.source || 'fs'
   })
 
   return (
@@ -539,29 +613,58 @@ export default function AppStore() {
                 <input
                   className="mt-1"
                   type="checkbox"
-                  checked={bitcoinCoreCustomDataDir}
+                  checked={bitcoinCoreUseStorageMount}
                   onChange={(event) => {
-                    setBitcoinCoreCustomDataDir(event.target.checked)
-                    if (!event.target.checked) setBitcoinCoreDataDir(bitcoinCoreDefaultDataDir)
+                    setBitcoinCoreUseStorageMount(event.target.checked)
+                    if (!event.target.checked) setBitcoinCoreSelectedMount('')
                   }}
                 />
-                <span>{t('appStore.bitcoinCoreUseCustomDataDir')}</span>
+                <span>{t('appStore.bitcoinCoreUseStorageMount')}</span>
               </label>
 
-              <div className="space-y-2">
-                <label className="text-xs uppercase tracking-wide text-fog/50" htmlFor="bitcoin-core-data-dir">
-                  {t('appStore.bitcoinCoreDataDirLabel')}
-                </label>
-                <input
-                  id="bitcoin-core-data-dir"
-                  className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-fog outline-none focus:border-brass"
-                  value={bitcoinCoreCustomDataDir ? bitcoinCoreDataDir : bitcoinCoreDefaultDataDir}
-                  disabled={!bitcoinCoreCustomDataDir}
-                  onChange={(event) => setBitcoinCoreDataDir(event.target.value)}
-                  placeholder={bitcoinCoreDefaultDataDir}
-                />
-                <p className="text-xs text-fog/50">{t('appStore.bitcoinCoreDataDirHint')}</p>
-              </div>
+              {bitcoinCoreUseStorageMount ? (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <label className="text-xs uppercase tracking-wide text-fog/50" htmlFor="bitcoin-core-storage-mount">
+                      {t('appStore.storageVolumeLabel')}
+                    </label>
+                    <button className="text-xs text-fog/60 hover:text-fog" type="button" onClick={loadBitcoinCoreStorageTargets}>
+                      {t('common.refresh')}
+                    </button>
+                  </div>
+                  {bitcoinCoreStorageLoading ? (
+                    <p className="text-sm text-fog/60">{t('appStore.storageLoadingVolumes')}</p>
+                  ) : (
+                    <select
+                      id="bitcoin-core-storage-mount"
+                      className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-fog outline-none focus:border-brass disabled:opacity-60"
+                      value={bitcoinCoreSelectedMount}
+                      disabled={eligibleBitcoinCoreStorageTargets.length === 0}
+                      onChange={(event) => setBitcoinCoreSelectedMount(event.target.value)}
+                    >
+                      {eligibleBitcoinCoreStorageTargets.map((target) => (
+                        <option key={target.mount} value={target.mount}>
+                          {storageTargetLabel(target)}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {bitcoinCoreStorageError && <p className="text-xs text-rose-300">{bitcoinCoreStorageError}</p>}
+                  {!bitcoinCoreStorageLoading && !bitcoinCoreStorageError && eligibleBitcoinCoreStorageTargets.length === 0 && (
+                    <p className="text-xs text-amber-300/80">{t('appStore.storageNoEligibleVolumes')}</p>
+                  )}
+                  {selectedBitcoinCoreStorageTarget && (
+                    <p className="break-all rounded-md border border-white/10 bg-black/20 px-3 py-2 font-mono text-xs text-fog/70">
+                      {t('appStore.storageSelectedPath', { path: selectedBitcoinCoreStorageTarget.suggested_path })}
+                    </p>
+                  )}
+                  <p className="text-xs text-fog/50">{t('appStore.bitcoinCoreDataDirHint')}</p>
+                </div>
+              ) : (
+                <p className="break-all rounded-md border border-white/10 bg-black/20 px-3 py-2 font-mono text-xs text-fog/70">
+                  {t('appStore.storageDefaultPath', { path: bitcoinCoreDefaultDataDir })}
+                </p>
+              )}
             </div>
 
             <div className="mt-6 flex flex-wrap justify-end gap-3">
@@ -575,7 +678,7 @@ export default function AppStore() {
               <button
                 className="btn-primary"
                 type="button"
-                disabled={bitcoinCoreCustomDataDir && bitcoinCoreDataDir.trim() === ''}
+                disabled={bitcoinCoreUseStorageMount && !bitcoinCoreSelectedMount}
                 onClick={handleBitcoinCoreInstallConfirm}
               >
                 {t('appStore.install')}
@@ -598,29 +701,58 @@ export default function AppStore() {
                 <input
                   className="mt-1"
                   type="checkbox"
-                  checked={elementsCustomDataDir}
+                  checked={elementsUseStorageMount}
                   onChange={(event) => {
-                    setElementsCustomDataDir(event.target.checked)
-                    if (!event.target.checked) setElementsDataDir(elementsDefaultDataDir)
+                    setElementsUseStorageMount(event.target.checked)
+                    if (!event.target.checked) setElementsSelectedMount('')
                   }}
                 />
-                <span>{t('appStore.elementsUseCustomDataDir')}</span>
+                <span>{t('appStore.elementsUseStorageMount')}</span>
               </label>
 
-              <div className="space-y-2">
-                <label className="text-xs uppercase tracking-wide text-fog/50" htmlFor="elements-data-dir">
-                  {t('appStore.elementsDataDirLabel')}
-                </label>
-                <input
-                  id="elements-data-dir"
-                  className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-fog outline-none focus:border-brass"
-                  value={elementsCustomDataDir ? elementsDataDir : elementsDefaultDataDir}
-                  disabled={!elementsCustomDataDir}
-                  onChange={(event) => setElementsDataDir(event.target.value)}
-                  placeholder={elementsDefaultDataDir}
-                />
-                <p className="text-xs text-fog/50">{t('appStore.elementsDataDirHint')}</p>
-              </div>
+              {elementsUseStorageMount ? (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <label className="text-xs uppercase tracking-wide text-fog/50" htmlFor="elements-storage-mount">
+                      {t('appStore.storageVolumeLabel')}
+                    </label>
+                    <button className="text-xs text-fog/60 hover:text-fog" type="button" onClick={loadElementsStorageTargets}>
+                      {t('common.refresh')}
+                    </button>
+                  </div>
+                  {elementsStorageLoading ? (
+                    <p className="text-sm text-fog/60">{t('appStore.storageLoadingVolumes')}</p>
+                  ) : (
+                    <select
+                      id="elements-storage-mount"
+                      className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-fog outline-none focus:border-brass disabled:opacity-60"
+                      value={elementsSelectedMount}
+                      disabled={eligibleElementsStorageTargets.length === 0}
+                      onChange={(event) => setElementsSelectedMount(event.target.value)}
+                    >
+                      {eligibleElementsStorageTargets.map((target) => (
+                        <option key={target.mount} value={target.mount}>
+                          {storageTargetLabel(target)}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {elementsStorageError && <p className="text-xs text-rose-300">{elementsStorageError}</p>}
+                  {!elementsStorageLoading && !elementsStorageError && eligibleElementsStorageTargets.length === 0 && (
+                    <p className="text-xs text-amber-300/80">{t('appStore.storageNoEligibleVolumes')}</p>
+                  )}
+                  {selectedElementsStorageTarget && (
+                    <p className="break-all rounded-md border border-white/10 bg-black/20 px-3 py-2 font-mono text-xs text-fog/70">
+                      {t('appStore.storageSelectedPath', { path: selectedElementsStorageTarget.suggested_path })}
+                    </p>
+                  )}
+                  <p className="text-xs text-fog/50">{t('appStore.elementsDataDirHint')}</p>
+                </div>
+              ) : (
+                <p className="break-all rounded-md border border-white/10 bg-black/20 px-3 py-2 font-mono text-xs text-fog/70">
+                  {t('appStore.storageDefaultPath', { path: elementsDefaultDataDir })}
+                </p>
+              )}
             </div>
 
             <div className="mt-6 flex flex-wrap justify-end gap-3">
@@ -634,7 +766,7 @@ export default function AppStore() {
               <button
                 className="btn-primary"
                 type="button"
-                disabled={elementsCustomDataDir && elementsDataDir.trim() === ''}
+                disabled={elementsUseStorageMount && !elementsSelectedMount}
                 onClick={handleElementsInstallConfirm}
               >
                 {t('appStore.install')}

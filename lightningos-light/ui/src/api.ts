@@ -682,10 +682,25 @@ export const createShortcut = (payload: { name: string; url: string; emoji: stri
 export const deleteShortcut = (id: number) =>
   request(`/api/shortcuts/${encodeURIComponent(String(id))}`, { method: 'DELETE' })
 
+export type StorageTarget = {
+  mount: string
+  source?: string
+  fstype?: string
+  total_gb?: number
+  used_gb?: number
+  free_gb?: number
+  used_percent?: number
+  eligible: boolean
+  reason?: string
+  suggested_path: string
+}
+
 export const getApps = () => request('/api/apps')
+export const getAppStorageTargets = (app: string) =>
+  request(`/api/apps/storage-targets${buildQuery({ app })}`)
 export const getElectrsStatus = () => request('/api/apps/electrs/status')
 export const getAppAdminPassword = (id: string) => request(`/api/apps/${id}/admin-password`)
-export const installApp = (id: string, payload?: { data_dir?: string }) =>
+export const installApp = (id: string, payload?: { data_dir?: string; storage_mount?: string }) =>
   request(`/api/apps/${id}/install`, { method: 'POST', body: JSON.stringify(payload ?? {}) })
 export const uninstallApp = (id: string) => request(`/api/apps/${id}/uninstall`, { method: 'POST' })
 export const startApp = (id: string) => request(`/api/apps/${id}/start`, { method: 'POST' })

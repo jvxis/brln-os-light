@@ -33,7 +33,8 @@ const (
 )
 
 type bitcoinCoreInstallOptions struct {
-	DataDir string `json:"data_dir"`
+	DataDir      string `json:"data_dir"`
+	StorageMount string `json:"storage_mount"`
 }
 
 func newBitcoinCoreApp(s *Server) appHandler {
@@ -189,8 +190,11 @@ func (s *Server) installBitcoinCore(ctx context.Context) error {
 }
 
 func (s *Server) installBitcoinCoreWithOptions(ctx context.Context, opts bitcoinCoreInstallOptions) error {
-	requestedDataDir := strings.TrimSpace(opts.DataDir)
-	if requestedDataDir != "" {
+	requestedDataDir, dataDirRequested, err := resolveBitcoinCoreInstallDataDir(ctx, opts)
+	if err != nil {
+		return err
+	}
+	if dataDirRequested {
 		normalized, err := normalizeBitcoinCoreDataDir(requestedDataDir)
 		if err != nil {
 			return err
@@ -214,7 +218,7 @@ func (s *Server) installBitcoinCoreWithOptions(ctx context.Context, opts bitcoin
 	}
 
 	paths := bitcoinCoreAppPaths()
-	if requestedDataDir == "" && paths.DataDir != bitcoinCoreDefaultDataDir {
+	if !dataDirRequested && paths.DataDir != bitcoinCoreDefaultDataDir {
 		if err := validateBitcoinCoreInstallDataDir(ctx, paths.DataDir); err != nil {
 			return err
 		}
@@ -251,6 +255,25 @@ func (s *Server) installBitcoinCoreWithOptions(ctx context.Context, opts bitcoin
 	return nil
 }
 
+func resolveBitcoinCoreInstallDataDir(ctx context.Context, opts bitcoinCoreInstallOptions) (string, bool, error) {
+	requestedDataDir := strings.TrimSpace(opts.DataDir)
+	requestedMount := strings.TrimSpace(opts.StorageMount)
+	if requestedDataDir != "" && requestedMount != "" {
+		return "", false, errors.New("choose either data_dir or storage_mount for Bitcoin Core installation")
+	}
+	if requestedMount != "" {
+		dataDir, err := resolveInstallDataDirFromStorageMount(ctx, bitcoinCoreAppID, requestedMount)
+		if err != nil {
+			return "", false, err
+		}
+		return dataDir, true, nil
+	}
+	if requestedDataDir != "" {
+		return requestedDataDir, true, nil
+	}
+	return "", false, nil
+}
+
 func validateBitcoinCoreInstallDataDir(ctx context.Context, dataDir string) error {
 	normalized, err := normalizeBitcoinCoreDataDir(dataDir)
 	if err != nil {
@@ -260,14 +283,18 @@ func validateBitcoinCoreInstallDataDir(ctx context.Context, dataDir string) erro
 	script := fmt.Sprintf(`set -e
 parent=%s
 data=%s
-if [ ! -d "$parent" ]; then
-  echo "parent directory does not exist: $parent" >&2
+nearest="$parent"
+while [ ! -e "$nearest" ] && [ "$nearest" != "/" ]; do
+  nearest="$(dirname "$nearest")"
+done
+if [ ! -d "$nearest" ]; then
+  echo "nearest existing parent is not a directory: $nearest" >&2
   exit 10
 fi
 if command -v findmnt >/dev/null 2>&1; then
-  mount_target="$(findmnt -T "$parent" -no TARGET 2>/dev/null | head -n1 || true)"
+  mount_target="$(findmnt -T "$nearest" -no TARGET 2>/dev/null | head -n1 || true)"
   if [ -z "$mount_target" ]; then
-    echo "parent directory is not on a mounted filesystem: $parent" >&2
+    echo "parent directory is not on a mounted filesystem: $nearest" >&2
     exit 11
   fi
   if [ "$mount_target" = "/" ]; then
@@ -316,6 +343,11 @@ func (s *Server) uninstallBitcoinCore(ctx context.Context) error {
 
 func (s *Server) startBitcoinCore(ctx context.Context) error {
 	paths := bitcoinCoreAppPaths()
+	if paths.DataDir != bitcoinCoreDefaultDataDir {
+		if err := validateBitcoinCoreInstallDataDir(ctx, paths.DataDir); err != nil {
+			return err
+		}
+	}
 	if err := os.MkdirAll(paths.Root, 0750); err != nil {
 		return fmt.Errorf("failed to create app directory: %w", err)
 	}

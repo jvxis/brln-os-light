@@ -666,6 +666,15 @@ type RebalanceService struct {
 	mcResetCount               int64
 	drainRateCache             map[uint64]int64
 	drainRateCacheAt           time.Time
+
+	// Cache curto de ListChannels para evitar saturação de gRPC quando
+	// múltiplos jobs (cooldown-probe burst, auto-restart watch, auto-scan)
+	// chamam ListChannels concorrentemente. Sem isso, 5+ chamadas simultâneas
+	// pesadas (~99 canais com PeerAliasLookup) hangam o LND e geram cascata
+	// de "lnd unavailable". TTL curto (5s) permite estado quase-fresh.
+	chCacheMu      sync.Mutex
+	chCacheData    []lndclient.ChannelInfo
+	chCacheFetchAt time.Time
 }
 
 func NewRebalanceService(db *pgxpool.Pool, lnd *lndclient.Client, logger *log.Logger) *RebalanceService {
@@ -1914,7 +1923,7 @@ func (s *RebalanceService) runManualRestartWatch() {
 	drainRateByChannel := s.fetchChannelDrainRate24h(ctx)
 	targetCooldowns := s.loadRecentTargetCooldownSet(ctx, defaultRecentTargetCooldownWindows(scanAt))
 
-	channels, err := s.lnd.ListChannels(ctx)
+	channels, err := s.listChannelsCached(ctx)
 	if err != nil {
 		noteManualSkip("start_error")
 		return
@@ -1980,7 +1989,7 @@ func (s *RebalanceService) runAutoScan() {
 
 	_ = s.applyForwardDeltas(ctx, ledger)
 
-	channels, err := s.lnd.ListChannels(ctx)
+	channels, err := s.listChannelsCached(ctx)
 	if err != nil {
 		return
 	}
@@ -2623,7 +2632,7 @@ func (s *RebalanceService) startJob(targetChannelID uint64, source string, reaso
 		cfg = defaultRebalanceConfig()
 	}
 
-	channels, err := s.lnd.ListChannels(ctx)
+	channels, err := s.listChannelsCached(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -3089,7 +3098,7 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 	ledger, _ := s.loadLedger(ctx)
 	_ = s.applyForwardDeltas(ctx, ledger)
 
-	channels, err := s.lnd.ListChannels(ctx)
+	channels, err := s.listChannelsCached(ctx)
 	if err != nil {
 		s.finishJob(jobID, "failed", "lnd unavailable")
 		return
@@ -3306,7 +3315,7 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 		}
 		refreshCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
 		defer cancel()
-		channelsNow, err := s.lnd.ListChannels(refreshCtx)
+		channelsNow, err := s.listChannelsCached(refreshCtx)
 		if err != nil {
 			return
 		}
@@ -6179,7 +6188,7 @@ func (s *RebalanceService) scheduleManualRestart(info manualRestartInfo) {
 	drainRateByChannel := s.fetchChannelDrainRate24h(restartCtx)
 	targetCooldowns := s.loadRecentTargetCooldownSet(restartCtx, defaultRecentTargetCooldownWindows(time.Now()))
 
-	channels, err := s.lnd.ListChannels(restartCtx)
+	channels, err := s.listChannelsCached(restartCtx)
 	if err != nil {
 		return
 	}
@@ -9018,6 +9027,37 @@ set status='running',
   reason=null,
   completed_at=null
 where id=$1 and status='queued'`, jobID)
+}
+
+// listChannelsCached devolve a lista de canais via cache curto (5s) para
+// evitar saturação do gRPC do LND quando múltiplos jobs disparam ListChannels
+// concorrentemente (bursts de cooldown-probe + auto-restart-watch + etc).
+// O fetch usa per-call timeout de 15s para falhar rápido se o LND estiver
+// hung, em vez de pendurar pelo timeout do job (10 min).
+//
+// Single-flight implícito via mutex: callers concorrentes esperam o primeiro
+// fetch completar e depois leem o cache. Erros NÃO são cached — falhas
+// retentam imediatamente para detectar recovery rápido.
+func (s *RebalanceService) listChannelsCached(ctx context.Context) ([]lndclient.ChannelInfo, error) {
+	const cacheTTL = 5 * time.Second
+	const fetchTimeout = 15 * time.Second
+	if s.lnd == nil {
+		return nil, errors.New("lnd unavailable")
+	}
+	s.chCacheMu.Lock()
+	defer s.chCacheMu.Unlock()
+	if !s.chCacheFetchAt.IsZero() && time.Since(s.chCacheFetchAt) < cacheTTL && s.chCacheData != nil {
+		return s.chCacheData, nil
+	}
+	fetchCtx, cancel := context.WithTimeout(ctx, fetchTimeout)
+	defer cancel()
+	data, err := s.lnd.ListChannels(fetchCtx)
+	if err != nil {
+		return nil, err
+	}
+	s.chCacheData = data
+	s.chCacheFetchAt = time.Now()
+	return data, nil
 }
 
 // markFastPathAttempted marca o job como tendo tentado o caminho delegado

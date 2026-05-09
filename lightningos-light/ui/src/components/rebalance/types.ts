@@ -201,6 +201,7 @@ export type RebalanceChannel = {
   eligible_as_manual_target: boolean
   eligible_as_source: boolean
   protected_liquidity_sat: number
+  effective_protected_sat: number
   payback_progress: number
   time_to_payback_hours?: number
   time_to_payback_valid?: boolean

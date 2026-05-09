@@ -376,6 +376,11 @@ type RebalanceChannel struct {
 	EligibleAsManualTarget bool     `json:"eligible_as_manual_target"`
 	EligibleAsSource       bool     `json:"eligible_as_source"`
 	ProtectedLiquiditySat  int64    `json:"protected_liquidity_sat"`
+	// EffectiveProtectedSat é a porção de paid_liquidity_sat que está
+	// efetivamente travada agora pela Política C v2 (linear em payback_progress).
+	// Diferente de ProtectedLiquiditySat (lifetime aportado), esse valor reflete
+	// o lock real do momento — é o que a UI deveria mostrar como "Protegido".
+	EffectiveProtectedSat  int64    `json:"effective_protected_sat"`
 	PaybackProgress        float64  `json:"payback_progress"`
 	TimeToPaybackHours     float64  `json:"time_to_payback_hours"`
 	TimeToPaybackValid     bool     `json:"time_to_payback_valid"`
@@ -6373,6 +6378,7 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		EligibleAsManualTarget: eligibleManualTarget,
 		EligibleAsSource:       eligibleSource && !excluded,
 		ProtectedLiquiditySat:  protected,
+		EffectiveProtectedSat:  effectiveProtected,
 		PaybackProgress:        paybackProgress,
 		TimeToPaybackHours:     timeToPaybackHours,
 		TimeToPaybackValid:     timeToPaybackValid,

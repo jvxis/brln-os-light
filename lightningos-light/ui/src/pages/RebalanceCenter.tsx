@@ -2578,7 +2578,7 @@ export default function RebalanceCenter() {
                 <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
                   <div>
                     <div className="text-fog/50">{t('rebalanceCenter.channels.protected')}</div>
-                    <div>{formatSats(ch.protected_liquidity_sat)}</div>
+                    <div>{formatSats(ch.effective_protected_sat ?? 0)}</div>
                     <div className="text-fog/50">{t('rebalanceCenter.channels.payback', { value: (ch.payback_progress * 100).toFixed(0) })}</div>
                     <div className="text-fog/50" title={t('rebalanceCenter.channelsHints.timeToPayback')}>
                       {t('rebalanceCenter.channels.timeToPayback')}: {formatTimeToPayback(ch)}
@@ -2822,7 +2822,7 @@ export default function RebalanceCenter() {
                     </div>
                   </td>
                   <td className="py-3 text-center">
-                    <div>{formatSats(ch.protected_liquidity_sat)}</div>
+                    <div>{formatSats(ch.effective_protected_sat ?? 0)}</div>
                     <div className="text-xs text-fog/50">{t('rebalanceCenter.channels.payback', { value: (ch.payback_progress * 100).toFixed(0) })}</div>
                   </td>
                   <td className="py-3 pl-4 text-center text-xs text-fog/60" title={t('rebalanceCenter.channelsHints.timeToPayback')}>

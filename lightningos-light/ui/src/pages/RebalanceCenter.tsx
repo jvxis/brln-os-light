@@ -2940,11 +2940,16 @@ export default function RebalanceCenter() {
                 )}
                 {queueAttempts.filter((attempt) => attempt.job_id === job.id).map((attempt) => (
                   <div key={attempt.id} className="mt-2 text-xs text-fog/60">
-                    {t('rebalanceCenter.queue.attempt', {
-                      index: attempt.attempt_index,
-                      amount: formatSats(attempt.amount_sat),
-                      fee: attempt.fee_limit_ppm
-                    })}
+                    {attempt.attempt_index === 0
+                      ? t('rebalanceCenter.queue.fastPathAttempt', {
+                          amount: formatSats(attempt.amount_sat),
+                          fee: attempt.fee_limit_ppm
+                        })
+                      : t('rebalanceCenter.queue.attempt', {
+                          index: attempt.attempt_index,
+                          amount: formatSats(attempt.amount_sat),
+                          fee: attempt.fee_limit_ppm
+                        })}
                     {attempt.source_peer_alias && (
                       <span className="text-fog/50">
                         {' '}
@@ -3066,11 +3071,16 @@ export default function RebalanceCenter() {
                   <div className="mt-3 border-t border-white/10 pt-3">
                     {(historyAttemptsByJob.get(job.id) || []).map((attempt) => (
                       <div key={attempt.id} className="mt-2 text-xs text-fog/60">
-                        {t('rebalanceCenter.queue.attempt', {
-                          index: attempt.attempt_index,
-                          amount: formatSats(attempt.amount_sat),
-                          fee: attempt.fee_limit_ppm
-                        })}
+                        {attempt.attempt_index === 0
+                          ? t('rebalanceCenter.queue.fastPathAttempt', {
+                              amount: formatSats(attempt.amount_sat),
+                              fee: attempt.fee_limit_ppm
+                            })
+                          : t('rebalanceCenter.queue.attempt', {
+                              index: attempt.attempt_index,
+                              amount: formatSats(attempt.amount_sat),
+                              fee: attempt.fee_limit_ppm
+                            })}
                         {attempt.source_peer_alias && (
                           <span className="text-fog/50">
                             {' '}

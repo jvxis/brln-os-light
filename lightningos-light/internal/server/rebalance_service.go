@@ -2940,6 +2940,17 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 		// "LND nativo não achou rota agora" é diferente de "esta source falhou".
 		// O legacy loop, se rodar em seguida, registra falhas per-source com
 		// granularidade adequada.
+		failReason := "fast-path: failed"
+		if sendErr != nil {
+			failReason = "fast-path: " + sendErr.Error()
+		} else if payment != nil && payment.FailureReason != lnrpc.PaymentFailureReason_FAILURE_REASON_NONE {
+			failReason = "fast-path: " + strings.ToLower(strings.TrimPrefix(payment.FailureReason.String(), "FAILURE_REASON_"))
+		}
+		// Persiste a tentativa do fast-path no histórico (attempt_index=0,
+		// source_channel_id=0 → UI mostra como "Fast-path multi-source").
+		// Permite ao operador ver que o fast-path foi tentado primeiro antes
+		// das tentativas per-source do legacy loop.
+		_ = s.insertAttempt(ctx, r.jobID, 0, 0, st.amount, maxFeePpm, 0, "failed", "", failReason, nil)
 		if s.logger != nil && sendErr != nil {
 			s.logger.Printf("rebalance fast-path failed: job=%d err=%v (falling back to legacy loop)", r.jobID, sendErr)
 		}
@@ -2968,7 +2979,9 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 		sourceUsed = sourceIDs[0]
 	}
 
-	_ = s.insertAttempt(ctx, r.jobID, 1, sourceUsed, st.amount, maxFeePpm, feePaidSat, "succeeded", invoice.PaymentHash, "", nil)
+	// attempt_index=0 indica que esse foi o caminho do fast-path (multi-source).
+	// Legacy attempts começam em 1 e incrementam — fica visualmente separado.
+	_ = s.insertAttempt(ctx, r.jobID, 0, sourceUsed, st.amount, maxFeePpm, feePaidSat, "succeeded", invoice.PaymentHash, "", nil)
 	if sourceUsed != 0 {
 		s.recordPairSuccess(ctx, sourceUsed, r.targetChannelID, st.amount, maxFeePpm, feePaidSat, routeHops)
 		if cfg.MissionControlReinforce && len(routeHops) > 0 {

@@ -3103,6 +3103,7 @@
       "amountFee": "Valor: {{amount}} · Taxa: {{fee}}",
       "remaining": "Restante: {{value}}",
       "attempt": "Tentativa {{index}} - {{amount}} - fee cap {{fee}} ppm",
+      "fastPathAttempt": "Fast-path (multi-source) - {{amount}} - fee cap {{fee}} ppm",
       "sourceInline": "· Fonte {{value}}",
       "source": "Fonte: {{value}}",
       "reason": "Motivo: {{value}}",

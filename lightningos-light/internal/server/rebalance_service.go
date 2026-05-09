@@ -2904,9 +2904,9 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 	// que levariam mais que isso quase nunca produzem sucesso. Em falha, cai
 	// no legacy loop normalmente.
 	const fastPathMaxTimeoutSec = 120
-	timeoutSec := int32(feeCfg.RebalanceTimeoutSec)
-	if timeoutSec <= 0 || timeoutSec > fastPathMaxTimeoutSec {
-		timeoutSec = fastPathMaxTimeoutSec
+	timeoutSec := int32(fastPathMaxTimeoutSec)
+	if rebalTo := int32(feeCfg.RebalanceTimeoutSec); rebalTo > 0 && rebalTo < timeoutSec {
+		timeoutSec = rebalTo
 	}
 	maxParts := uint32(1)
 	if feeCfg.MppEnabled && feeCfg.MppMaxShards > 1 {
@@ -2918,8 +2918,16 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 	}
 	s.markFastPathAttempted(r.jobID)
 
+	// Sub-context do job ctx: garante que o fast-path NUNCA consuma mais do que
+	// timeoutSec+10s do orçamento total do job. Em falha, o ctx do job ainda
+	// tem ~8 min de saldo para o legacy loop rodar — preservando RapidFire,
+	// partials, e pair-cache learning. Sem isso, fast-path pendurado consumia
+	// o ctx inteiro e o legacy loop não tinha como tentar nada.
+	fastPathCtx, fastPathCancel := context.WithTimeout(ctx, time.Duration(timeoutSec+10)*time.Second)
+	defer fastPathCancel()
+
 	payment, sendErr := s.lnd.SendPaymentMultiSource(
-		ctx,
+		fastPathCtx,
 		invoice.PaymentRequest,
 		sourceIDs,
 		targetSnapshot.RemotePubkey,

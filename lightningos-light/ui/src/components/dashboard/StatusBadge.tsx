@@ -18,7 +18,7 @@ const toneClasses: Record<Tone, string> = {
 export default function StatusBadge({ label, tone = 'muted', size = 'sm' }: StatusBadgeProps) {
   const sizeClass = size === 'md' ? 'px-3 py-1 text-xs' : 'px-2 py-0.5 text-[11px]'
   return (
-    <span className={`inline-flex items-center rounded-full border uppercase tracking-wide ${sizeClass} ${toneClasses[tone]}`}>
+    <span className={`inline-flex max-w-full items-center justify-center rounded-full border text-center uppercase leading-tight tracking-wide [overflow-wrap:anywhere] ${sizeClass} ${toneClasses[tone]}`}>
       {label}
     </span>
   )

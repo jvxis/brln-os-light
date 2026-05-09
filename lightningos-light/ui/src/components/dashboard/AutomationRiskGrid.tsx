@@ -75,18 +75,27 @@ function AutomationRow({ label, enabled, status, lastOkAt, lastAttemptAt, lastEr
   const secondaryMeta = extra && (lastError || lastOkAt || lastAttemptAt) ? extra : ''
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-medium text-fog/85">{label}</p>
-          <p className="mt-1 text-xs text-fog/50">{primaryMeta}</p>
+    <div className="min-w-0 overflow-hidden rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+        <div className="min-w-0 flex-1 basis-40">
+          <p className="text-sm font-medium leading-snug text-fog/85 [overflow-wrap:anywhere]">{label}</p>
+          <p className="mt-1 text-xs leading-snug text-fog/50 [overflow-wrap:anywhere]">{primaryMeta}</p>
         </div>
-        <StatusBadge label={badge.label} tone={badge.tone} />
+        <div className="max-w-full shrink-0">
+          <StatusBadge label={badge.label} tone={badge.tone} />
+        </div>
       </div>
-      {secondaryMeta ? <p className="mt-2 text-xs text-fog/50">{secondaryMeta}</p> : null}
+      {secondaryMeta ? <p className="mt-2 text-xs leading-snug text-fog/50 [overflow-wrap:anywhere]">{secondaryMeta}</p> : null}
     </div>
   )
 }
+
+const automationGridClass = 'mt-6 grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,16rem),1fr))]'
+const panelClass = 'min-w-0 rounded-3xl border border-white/10 bg-white/5 p-4'
+const metricGridClass = 'grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,7.5rem),1fr))]'
+const metricTileClass = 'min-w-0 overflow-hidden rounded-2xl border border-white/10 bg-ink/30 px-3 py-3'
+const metricLabelClass = 'text-xs uppercase leading-snug tracking-[0.04em] text-fog/45 [overflow-wrap:anywhere]'
+const splitRowClass = 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1'
 
 export default function AutomationRiskGrid({
   rebalance,
@@ -146,23 +155,25 @@ export default function AutomationRiskGrid({
   }
 
   return (
-    <article className="section-card">
+    <article className="section-card min-w-0">
       <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <p className="text-xs uppercase tracking-[0.24em] text-fog/45">{t('dashboard.automationKicker')}</p>
-          <h3 className="mt-2 text-xl font-semibold">{t('dashboard.automationTitle')}</h3>
-          <p className="mt-2 text-sm text-fog/60">{t('dashboard.automationSubtitle')}</p>
+        <div className="min-w-0">
+          <p className="text-xs uppercase tracking-[0.24em] text-fog/45 [overflow-wrap:anywhere]">{t('dashboard.automationKicker')}</p>
+          <h3 className="mt-2 text-xl font-semibold [overflow-wrap:anywhere]">{t('dashboard.automationTitle')}</h3>
+          <p className="mt-2 text-sm text-fog/60 [overflow-wrap:anywhere]">{t('dashboard.automationSubtitle')}</p>
         </div>
       </div>
 
-      <div className="mt-6 grid gap-4 xl:grid-cols-3">
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h4 className="text-base font-semibold">{t('dashboard.rebalanceBudgetTitle')}</h4>
-              <p className="mt-1 text-sm text-fog/60">{t('dashboard.rebalanceBudgetHint')}</p>
+      <div className={automationGridClass}>
+        <div className={panelClass}>
+          <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+            <div className="min-w-0 flex-1 basis-44">
+              <h4 className="text-base font-semibold leading-snug [overflow-wrap:anywhere]">{t('dashboard.rebalanceBudgetTitle')}</h4>
+              <p className="mt-1 text-sm leading-snug text-fog/60 [overflow-wrap:anywhere]">{t('dashboard.rebalanceBudgetHint')}</p>
             </div>
-            <StatusBadge label={rebalance?.auto_enabled ? t('common.enabled') : t('common.disabled')} tone={rebalance?.auto_enabled ? 'ok' : 'warn'} />
+            <div className="max-w-full shrink-0">
+              <StatusBadge label={rebalance?.auto_enabled ? t('common.enabled') : t('common.disabled')} tone={rebalance?.auto_enabled ? 'ok' : 'warn'} />
+            </div>
           </div>
 
           <div className="mt-4 space-y-4">
@@ -174,35 +185,37 @@ export default function AutomationRiskGrid({
               tone={budgetUsage >= 90 ? 'danger' : budgetUsage >= 70 ? 'warn' : 'ok'}
             />
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-2xl border border-white/10 bg-ink/30 px-3 py-3">
-                <p className="text-xs uppercase tracking-wide text-fog/45">{t('dashboard.roi7dLabel')}</p>
-                <p className="mt-2 text-lg font-semibold">{roi7d}</p>
+            <div className={metricGridClass}>
+              <div className={metricTileClass}>
+                <p className={metricLabelClass}>{t('dashboard.roi7dLabel')}</p>
+                <p className="mt-2 text-lg font-semibold [overflow-wrap:anywhere]">{roi7d}</p>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-ink/30 px-3 py-3">
-                <p className="text-xs uppercase tracking-wide text-fog/45">{t('dashboard.effectiveness7dLabel')}</p>
-                <p className="mt-2 text-lg font-semibold">{effectiveness7d}</p>
+              <div className={metricTileClass}>
+                <p className={metricLabelClass}>{t('dashboard.effectiveness7dLabel')}</p>
+                <p className="mt-2 text-lg font-semibold [overflow-wrap:anywhere]">{effectiveness7d}</p>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-ink/30 px-3 py-3">
-                <p className="text-xs uppercase tracking-wide text-fog/45">{t('dashboard.success24hLabel')}</p>
-                <p className="mt-2 text-lg font-semibold">{formatSats(locale, rebalance?.success_attempts_24h)}</p>
+              <div className={metricTileClass}>
+                <p className={metricLabelClass}>{t('dashboard.success24hLabel')}</p>
+                <p className="mt-2 text-lg font-semibold [overflow-wrap:anywhere]">{formatSats(locale, rebalance?.success_attempts_24h)}</p>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-ink/30 px-3 py-3">
-                <p className="text-xs uppercase tracking-wide text-fog/45">{t('dashboard.liveCostLabel')}</p>
-                <p className="mt-2 text-lg font-semibold">{formatSats(locale, rebalance?.live_cost_sat)} sats</p>
+              <div className={metricTileClass}>
+                <p className={metricLabelClass}>{t('dashboard.liveCostLabel')}</p>
+                <p className="mt-2 text-lg font-semibold [overflow-wrap:anywhere]">{formatSats(locale, rebalance?.live_cost_sat)} sats</p>
               </div>
             </div>
 
-            <div className="rounded-2xl border border-white/10 bg-ink/30 px-4 py-3 text-sm">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-fog/60">{t('dashboard.remainingBudgetLabel')}</span>
-                <span>{formatSats(locale, rebalance?.remaining_total_sat ?? 0)} sats</span>
+            <div className="min-w-0 overflow-hidden rounded-2xl border border-white/10 bg-ink/30 px-4 py-3 text-sm">
+              <div className={splitRowClass}>
+                <span className="min-w-0 text-fog/60 [overflow-wrap:anywhere]">{t('dashboard.remainingBudgetLabel')}</span>
+                <span className="min-w-0 text-right [overflow-wrap:anywhere]">{formatSats(locale, rebalance?.remaining_total_sat ?? 0)} sats</span>
               </div>
-              <div className="mt-2 flex items-center justify-between gap-3">
-                <span className="text-fog/60">{t('dashboard.autofeeStatusLabel')}</span>
-                <StatusBadge label={autofee?.running ? t('dashboard.runningLabel') : t('dashboard.idleLabel')} tone={autofee?.running ? 'ok' : 'muted'} />
+              <div className={`mt-2 ${splitRowClass}`}>
+                <span className="min-w-0 text-fog/60 [overflow-wrap:anywhere]">{t('dashboard.autofeeStatusLabel')}</span>
+                <div className="max-w-full shrink-0">
+                  <StatusBadge label={autofee?.running ? t('dashboard.runningLabel') : t('dashboard.idleLabel')} tone={autofee?.running ? 'ok' : 'muted'} />
+                </div>
               </div>
-              <div className="mt-2 text-xs text-fog/50">
+              <div className="mt-2 text-xs leading-snug text-fog/50 [overflow-wrap:anywhere]">
                 {autofee?.last_error
                   ? `${t('dashboard.lastErrorLabel')}: ${autofee.last_error}`
                   : `${t('dashboard.nextRunLabel')}: ${formatTimeAgo(locale, autofee?.next_run_at)}`}
@@ -211,15 +224,15 @@ export default function AutomationRiskGrid({
           </div>
         </div>
 
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h4 className="text-base font-semibold">{t('dashboard.automationsTitle')}</h4>
-              <p className="mt-1 text-sm text-fog/60">{t('dashboard.automationsHint')}</p>
+        <div className={panelClass}>
+          <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+            <div className="min-w-0 flex-1">
+              <h4 className="text-base font-semibold leading-snug [overflow-wrap:anywhere]">{t('dashboard.automationsTitle')}</h4>
+              <p className="mt-1 text-sm leading-snug text-fog/60 [overflow-wrap:anywhere]">{t('dashboard.automationsHint')}</p>
             </div>
           </div>
 
-          <div className="mt-4 grid gap-3">
+          <div className="mt-4 grid min-w-0 gap-3">
             <AutomationRow
               label={t('lightningOps.ambossHealthTitle')}
               enabled={amboss?.enabled}
@@ -282,56 +295,62 @@ export default function AutomationRiskGrid({
           </div>
         </div>
 
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h4 className="text-base font-semibold">{t('dashboard.riskRecoveryTitle')}</h4>
-              <p className="mt-1 text-sm text-fog/60">{t('dashboard.riskRecoveryHint')}</p>
+        <div className={panelClass}>
+          <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+            <div className="min-w-0 flex-1 basis-44">
+              <h4 className="text-base font-semibold leading-snug [overflow-wrap:anywhere]">{t('dashboard.riskRecoveryTitle')}</h4>
+              <p className="mt-1 text-sm leading-snug text-fog/60 [overflow-wrap:anywhere]">{t('dashboard.riskRecoveryHint')}</p>
             </div>
-            <StatusBadge
-              label={actionRequiredCount > 0 ? t('dashboard.actionRequiredBadge', { count: actionRequiredCount }) : t('common.ok')}
-              tone={actionRequiredCount > 0 ? 'danger' : 'ok'}
-            />
+            <div className="max-w-full shrink-0">
+              <StatusBadge
+                label={actionRequiredCount > 0 ? t('dashboard.actionRequiredBadge', { count: actionRequiredCount }) : t('common.ok')}
+                tone={actionRequiredCount > 0 ? 'danger' : 'ok'}
+              />
+            </div>
           </div>
 
-          <div className="mt-4 grid gap-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-2xl border border-white/10 bg-ink/30 px-3 py-3">
-                <p className="text-xs uppercase tracking-wide text-fog/45">{t('dashboard.activeClosingsLabel')}</p>
-                <p className="mt-2 text-lg font-semibold">{formatSats(locale, closeManager?.active_count)}</p>
+          <div className="mt-4 grid min-w-0 gap-3">
+            <div className={metricGridClass}>
+              <div className={metricTileClass}>
+                <p className={metricLabelClass}>{t('dashboard.activeClosingsLabel')}</p>
+                <p className="mt-2 text-lg font-semibold [overflow-wrap:anywhere]">{formatSats(locale, closeManager?.active_count)}</p>
               </div>
-              <div className="rounded-2xl border border-white/10 bg-ink/30 px-3 py-3">
-                <p className="text-xs uppercase tracking-wide text-fog/45">{t('dashboard.blockedHtlcLabel')}</p>
-                <p className="mt-2 text-lg font-semibold">{formatSats(locale, closeManager?.htlc_blocked_count)}</p>
+              <div className={metricTileClass}>
+                <p className={metricLabelClass}>{t('dashboard.blockedHtlcLabel')}</p>
+                <p className="mt-2 text-lg font-semibold [overflow-wrap:anywhere]">{formatSats(locale, closeManager?.htlc_blocked_count)}</p>
               </div>
             </div>
 
-            <div className="rounded-2xl border border-white/10 bg-ink/30 px-4 py-3">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-fog/70">{t('dashboard.nodeRetirementLabel')}</span>
-                <StatusBadge
-                  label={nodeRetirement?.active ? nodeRetirement.active_state || t('dashboard.activeLabel') : t('common.inactive')}
-                  tone={nodeRetirement?.active ? 'warn' : 'muted'}
-                />
+            <div className="min-w-0 overflow-hidden rounded-2xl border border-white/10 bg-ink/30 px-4 py-3">
+              <div className={splitRowClass}>
+                <span className="min-w-0 text-sm text-fog/70 [overflow-wrap:anywhere]">{t('dashboard.nodeRetirementLabel')}</span>
+                <div className="max-w-full shrink-0">
+                  <StatusBadge
+                    label={nodeRetirement?.active ? nodeRetirement.active_state || t('dashboard.activeLabel') : t('common.inactive')}
+                    tone={nodeRetirement?.active ? 'warn' : 'muted'}
+                  />
+                </div>
               </div>
-              <p className="mt-2 text-xs text-fog/50">
+              <p className="mt-2 text-xs leading-snug text-fog/50 [overflow-wrap:anywhere]">
                 {successionConfig?.enabled
                   ? `${t('dashboard.successionDeadlineLabel')}: ${formatTimeAgo(locale, successionConfig.deadline_at)}`
                   : t('dashboard.successionDisabledHint')}
               </p>
             </div>
 
-            <div className="rounded-2xl border border-white/10 bg-ink/30 px-4 py-3">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-fog/70">{t('dashboard.successionLabel')}</span>
-                <StatusBadge
-                  label={successionConfig?.status || (successionConfig?.enabled ? t('dashboard.armedLabel') : t('common.disabled'))}
-                  tone={successionConfig?.enabled ? 'warn' : 'muted'}
-                />
+            <div className="min-w-0 overflow-hidden rounded-2xl border border-white/10 bg-ink/30 px-4 py-3">
+              <div className={splitRowClass}>
+                <span className="min-w-0 text-sm text-fog/70 [overflow-wrap:anywhere]">{t('dashboard.successionLabel')}</span>
+                <div className="max-w-full shrink-0">
+                  <StatusBadge
+                    label={successionConfig?.status || (successionConfig?.enabled ? t('dashboard.armedLabel') : t('common.disabled'))}
+                    tone={successionConfig?.enabled ? 'warn' : 'muted'}
+                  />
+                </div>
               </div>
-              <div className="mt-2 grid gap-2 text-xs text-fog/50 sm:grid-cols-2">
-                <span>{t('dashboard.lastAliveLabel')}: {formatTimeAgo(locale, successionConfig?.last_alive_at)}</span>
-                <span>{t('dashboard.nextCheckLabel')}: {formatTimeAgo(locale, successionConfig?.next_check_at)}</span>
+              <div className="mt-2 grid gap-2 text-xs leading-snug text-fog/50 [grid-template-columns:repeat(auto-fit,minmax(min(100%,7rem),1fr))]">
+                <span className="min-w-0 [overflow-wrap:anywhere]">{t('dashboard.lastAliveLabel')}: {formatTimeAgo(locale, successionConfig?.last_alive_at)}</span>
+                <span className="min-w-0 [overflow-wrap:anywhere]">{t('dashboard.nextCheckLabel')}: {formatTimeAgo(locale, successionConfig?.next_check_at)}</span>
               </div>
             </div>
           </div>

@@ -29,10 +29,10 @@ export default function HorizontalBarGauge({
   const percent = max > 0 ? clamp((value / max) * 100) : 0
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between gap-3 text-sm">
-        <span className="text-fog/70">{label}</span>
-        <span className="font-medium text-fog">{valueLabel ?? `${Math.round(percent)}%`}</span>
+    <div className="min-w-0 space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-sm">
+        <span className="min-w-0 text-fog/70 [overflow-wrap:anywhere]">{label}</span>
+        <span className="min-w-0 text-right font-medium text-fog [overflow-wrap:anywhere]">{valueLabel ?? `${Math.round(percent)}%`}</span>
       </div>
       <div className="h-2 overflow-hidden rounded-full bg-white/8">
         <div
@@ -40,7 +40,7 @@ export default function HorizontalBarGauge({
           style={{ width: `${percent}%` }}
         />
       </div>
-      {detail ? <p className="text-xs text-fog/50">{detail}</p> : null}
+      {detail ? <p className="text-xs text-fog/50 [overflow-wrap:anywhere]">{detail}</p> : null}
     </div>
   )
 }

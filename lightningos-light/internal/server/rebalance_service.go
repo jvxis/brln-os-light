@@ -3061,18 +3061,35 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 	minProbeSat := effectiveMinProbeSat(cfg)
 	useRecentFailureCache := shouldUseRecentFailureCache(jobSource, jobReason)
 	cooldownProbeJob := isTargetCooldownProbeJob(jobSource, jobReason)
+	st.floorBlockedSources = map[uint64]struct{}{}
+
+	// CTX SEPARATION (fix 2026-05-09):
+	//
+	// Antes, o ctx do job (RebalanceTimeoutSec=600s) era criado ANTES do
+	// acquireSem. Com fila (max_concurrent saturado), o ctx começava a contar
+	// na espera, chegando ao prepare/legacy loop com pouco tempo restante e
+	// "morrendo" em timeout antes de tentar nada. Combinado com o
+	// cleanupStaleJobs (a cada 2min), produzia clusters massivos de
+	// status='failed', reason='timeout' visíveis na UI.
+	//
+	// Agora: acquireSem espera por TEMPO INDETERMINADO até pegar slot.
+	// Cada job entra na fila e respeita seu turno — ninguém é cortado por
+	// causa de queue wait. SOMENTE após pegar o slot, ctx de execução é
+	// criado fresco com 600s completos. Goroutines presas em acquireSem
+	// são liberadas no shutdown (s.stop fecha).
+	if !s.acquireSem(context.Background()) {
+		s.finishJob(jobID, "skipped", "no worker available")
+		return
+	}
+	st.workerAcquired = true
+
+	// Ctx de execução criado SÓ agora — cada job tem seus 600s completos
+	// para rodar prepare + fast-path + legacy loop.
 	ctx, cancel := r.contextWithTimeout(cfg)
 	st.ctx = ctx
 	st.cancel = cancel
 	r.registerCancel(cancel)
 	st.cancelRegistered = true
-	st.floorBlockedSources = map[uint64]struct{}{}
-
-	if !s.acquireSem(ctx) {
-		s.finishJob(jobID, "skipped", "no worker available")
-		return
-	}
-	st.workerAcquired = true
 
 	if !s.tryLockChannel(targetChannelID) {
 		s.finishJob(jobID, "skipped", "channel busy")
@@ -5949,10 +5966,15 @@ group by target_channel_id
 func (s *RebalanceService) acquireSem(ctx context.Context) bool {
 	s.mu.Lock()
 	sem := s.sem
+	stop := s.stop
 	s.mu.Unlock()
 	if sem == nil {
 		return true
 	}
+	// Bloqueia indefinidamente esperando slot. Saída em 3 casos:
+	// 1. Slot adquirido (case sem <- struct{}{})
+	// 2. ctx cancelado pelo caller (raramente — caller usa context.Background())
+	// 3. Service shutting down (stop closed) → libera goroutines presas
 	select {
 	case sem <- struct{}{}:
 		s.mu.Lock()
@@ -5960,6 +5982,8 @@ func (s *RebalanceService) acquireSem(ctx context.Context) bool {
 		s.mu.Unlock()
 		return true
 	case <-ctx.Done():
+		return false
+	case <-stop:
 		return false
 	}
 }
@@ -9593,7 +9617,19 @@ func (s *RebalanceService) cleanupStaleJobs(ctx context.Context) {
 	if timeoutSec <= 0 {
 		timeoutSec = 600
 	}
-	cutoff := time.Now().Add(-time.Duration(timeoutSec) * time.Second)
+	// Cleanup só pega jobs REALMENTE órfãos: deploys/crashes onde a goroutine
+	// morreu sem chamar finishJob. Como a fila tem espera indeterminada
+	// (acquireSem com context.Background()), jobs em status='queued' podem
+	// legitimamente esperar muito. Cutoff de 1h é generoso — qualquer job
+	// vivo nessa janela ainda está rodando ou na fila por capacity.
+	// Jobs aparentemente "stuck" mais antigos que 1h são presumivelmente
+	// resíduos de processo antigo (restart sem cleanup adequado).
+	const stuckJobMaxSec = 3600 // 1 hour
+	totalCutoffSec := timeoutSec
+	if totalCutoffSec < stuckJobMaxSec {
+		totalCutoffSec = stuckJobMaxSec
+	}
+	cutoff := time.Now().Add(-time.Duration(totalCutoffSec) * time.Second)
 	_, _ = s.db.Exec(ctx, `
 update rebalance_jobs
 set status = case

@@ -779,13 +779,14 @@ func (s *RebalanceService) Start() {
 
 	s.resetSemaphore()
 
-	// Cleanup imediato de jobs órfãos do shutdown anterior (deploy/crash).
-	// Sem isso, jobs que ficaram em status='running' aparecem como ghost
-	// timeouts quando o operador abre a UI da fila — mostra "duração 2h+"
-	// sendo que o serviço estava parado a maior parte desse tempo.
-	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	s.cleanupStaleJobs(cleanupCtx)
-	cleanupCancel()
+	// Cleanup AGRESSIVO de jobs órfãos no startup. Após restart/crash, qualquer
+	// job em status='running' OU 'queued' no DB é por definição órfão — não há
+	// goroutine viva no processo novo executando-os. Marcar TODOS sem filtro
+	// de idade (diferente do cleanupStaleJobs periódico que respeita 1h pra
+	// não pegar jobs em fila legitimamente esperando).
+	startupCtx, startupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	s.cleanupOrphanedJobsAtStartup(startupCtx)
+	startupCancel()
 
 	go s.runAutoLoop()
 	go s.runManualRestartWatchLoop()
@@ -9603,6 +9604,37 @@ order by started_at desc
 	}
 
 	return jobs, attempts, nil
+}
+
+// cleanupOrphanedJobsAtStartup marca TODOS os jobs com status='running' ou
+// 'queued' como órfãos, sem filtro de idade. Chamado uma vez no Start() após
+// restart — nesse momento qualquer job nesses status é por definição órfão
+// (não existe goroutine viva no processo novo para executá-los). Usar reason
+// específica "orphaned by restart" pra distinguir de timeouts genuínos.
+func (s *RebalanceService) cleanupOrphanedJobsAtStartup(ctx context.Context) {
+	if s.db == nil {
+		return
+	}
+	res, err := s.db.Exec(ctx, `
+update rebalance_jobs
+set status = case
+  when exists (select 1 from rebalance_attempts a where a.job_id=rebalance_jobs.id and a.status='succeeded')
+    then 'partial'
+  else 'failed'
+end,
+reason = case
+  when exists (select 1 from rebalance_attempts a where a.job_id=rebalance_jobs.id and a.status='succeeded')
+    then 'orphaned by restart (partial)'
+  else 'orphaned by restart'
+end,
+completed_at=now()
+where status in ('running','queued')
+`)
+	if err == nil && s.logger != nil {
+		if rows := res.RowsAffected(); rows > 0 {
+			s.logger.Printf("rebalance startup: cleaned %d orphaned jobs from previous shutdown", rows)
+		}
+	}
 }
 
 func (s *RebalanceService) cleanupStaleJobs(ctx context.Context) {

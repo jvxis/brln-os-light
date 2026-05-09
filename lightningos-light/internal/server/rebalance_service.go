@@ -9047,13 +9047,27 @@ func (s *RebalanceService) listChannelsCached(ctx context.Context) ([]lndclient.
 	s.chCacheMu.Lock()
 	defer s.chCacheMu.Unlock()
 	if !s.chCacheFetchAt.IsZero() && time.Since(s.chCacheFetchAt) < cacheTTL && s.chCacheData != nil {
+		if s.logger != nil {
+			s.logger.Printf("rebalance listChannelsCached: HIT (age=%dms, channels=%d)", time.Since(s.chCacheFetchAt).Milliseconds(), len(s.chCacheData))
+		}
 		return s.chCacheData, nil
 	}
+	if s.logger != nil {
+		s.logger.Printf("rebalance listChannelsCached: MISS, fetching from LND (timeout=%s)", fetchTimeout)
+	}
+	startedAt := time.Now()
 	fetchCtx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
 	data, err := s.lnd.ListChannels(fetchCtx)
+	elapsed := time.Since(startedAt)
 	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("rebalance listChannelsCached: fetch FAILED after %s err=%v", elapsed, err)
+		}
 		return nil, err
+	}
+	if s.logger != nil {
+		s.logger.Printf("rebalance listChannelsCached: fetch OK in %s (channels=%d)", elapsed, len(data))
 	}
 	s.chCacheData = data
 	s.chCacheFetchAt = time.Now()

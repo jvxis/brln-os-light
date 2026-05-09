@@ -865,33 +865,7 @@ func elementsArchiveSuffix() (string, error) {
 }
 
 func parseMainchainRPC(host string) (string, int) {
-	trimmed := strings.TrimSpace(host)
-	if trimmed == "" {
-		return "127.0.0.1", 8332
-	}
-	trimmed = strings.TrimPrefix(trimmed, "http://")
-	trimmed = strings.TrimPrefix(trimmed, "https://")
-	trimmed = strings.TrimPrefix(trimmed, "tcp://")
-	if !strings.Contains(trimmed, ":") {
-		return trimmed, 8332
-	}
-	parts := strings.Split(trimmed, ":")
-	if len(parts) == 2 {
-		port, err := strconv.Atoi(parts[1])
-		if err != nil || port <= 0 {
-			return parts[0], 8332
-		}
-		return parts[0], port
-	}
-	hostPart, portPart, err := net.SplitHostPort(trimmed)
-	if err == nil {
-		port, err := strconv.Atoi(portPart)
-		if err != nil || port <= 0 {
-			return hostPart, 8332
-		}
-		return hostPart, port
-	}
-	return trimmed, 8332
+	return normalizeBitcoinRPCHostPort(host, 8332)
 }
 
 type elementsMainchainConfig struct {

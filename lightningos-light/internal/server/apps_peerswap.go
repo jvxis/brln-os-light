@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -23,14 +24,15 @@ const (
 )
 
 type peerswapPaths struct {
-	Root           string
-	BinDir         string
-	AppDataDir     string
-	ConfigDir      string
-	ConfigPath     string
-	ServicePath    string
-	WebServicePath string
-	VersionPath    string
+	Root            string
+	BinDir          string
+	AppDataDir      string
+	ConfigDir       string
+	ConfigPath      string
+	PSWebConfigPath string
+	ServicePath     string
+	WebServicePath  string
+	VersionPath     string
 }
 
 type peerswapApp struct {
@@ -103,14 +105,15 @@ func (a peerswapApp) Stop(ctx context.Context) error {
 func peerswapAppPaths() peerswapPaths {
 	root := filepath.Join(appsRoot, peerswapAppID)
 	return peerswapPaths{
-		Root:           root,
-		BinDir:         filepath.Join(root, "bin"),
-		AppDataDir:     filepath.Join(appsDataRoot, peerswapAppID),
-		ConfigDir:      filepath.Join("/home", peerswapUser, ".peerswap"),
-		ConfigPath:     filepath.Join("/home", peerswapUser, ".peerswap", "peerswap.conf"),
-		ServicePath:    filepath.Join("/etc/systemd/system", peerswapServiceName+".service"),
-		WebServicePath: filepath.Join("/etc/systemd/system", pswebServiceName+".service"),
-		VersionPath:    filepath.Join(root, "VERSION"),
+		Root:            root,
+		BinDir:          filepath.Join(root, "bin"),
+		AppDataDir:      filepath.Join(appsDataRoot, peerswapAppID),
+		ConfigDir:       filepath.Join("/home", peerswapUser, ".peerswap"),
+		ConfigPath:      filepath.Join("/home", peerswapUser, ".peerswap", "peerswap.conf"),
+		PSWebConfigPath: filepath.Join("/home", peerswapUser, ".peerswap", "pswebconfig.json"),
+		ServicePath:     filepath.Join("/etc/systemd/system", peerswapServiceName+".service"),
+		WebServicePath:  filepath.Join("/etc/systemd/system", pswebServiceName+".service"),
+		VersionPath:     filepath.Join(root, "VERSION"),
 	}
 }
 
@@ -333,10 +336,12 @@ func ensurePeerswapConfig(ctx context.Context, paths peerswapPaths) error {
 	} else {
 		updated = updatePeerswapConfig(raw, values)
 	}
-	if updated == raw {
-		return nil
+	if updated != raw {
+		if err := writePeerswapConfig(ctx, paths, updated); err != nil {
+			return err
+		}
 	}
-	return writePeerswapConfig(ctx, paths, updated)
+	return ensurePSWebConfig(ctx, paths, values)
 }
 
 func peerswapConfigDefaults(ctx context.Context) (peerswapConfigValues, error) {
@@ -508,6 +513,115 @@ func writePeerswapConfig(ctx context.Context, paths peerswapPaths, content strin
 	return nil
 }
 
+func ensurePSWebConfig(ctx context.Context, paths peerswapPaths, values peerswapConfigValues) error {
+	cfg, err := readPSWebConfig(ctx, paths)
+	if err != nil {
+		return err
+	}
+
+	bitcoinCfg, _, bitcoinErr := readBitcoinLocalRPCConfig(ctx)
+	changed := updatePSWebConfigMap(cfg, paths, values, bitcoinCfg, bitcoinErr == nil)
+	if !changed {
+		return nil
+	}
+	return writePSWebConfig(ctx, paths, cfg)
+}
+
+func readPSWebConfig(ctx context.Context, paths peerswapPaths) (map[string]any, error) {
+	out, err := runSystemd(ctx, "/bin/sh", "-c", "cat "+paths.PSWebConfigPath)
+	if err != nil {
+		msg := strings.ToLower(out + err.Error())
+		if strings.Contains(msg, "no such file") || strings.Contains(msg, "not found") {
+			return map[string]any{}, nil
+		}
+		return nil, err
+	}
+	raw := strings.TrimSpace(out)
+	if raw == "" {
+		return map[string]any{}, nil
+	}
+	cfg := map[string]any{}
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		return map[string]any{}, nil
+	}
+	return cfg, nil
+}
+
+func updatePSWebConfigMap(cfg map[string]any, paths peerswapPaths, values peerswapConfigValues, bitcoinCfg bitcoinRPCConfig, hasBitcoin bool) bool {
+	changed := false
+	set := func(key string, value any) {
+		if pswebConfigValueEqual(cfg[key], value) {
+			return
+		}
+		cfg[key] = value
+		changed = true
+	}
+
+	set("DataDir", paths.ConfigDir)
+	set("ElementsUser", values.ElementsRPCUser)
+	set("ElementsPass", values.ElementsRPCPass)
+	set("BitcoinSwaps", strings.EqualFold(values.BitcoinSwaps, "true"))
+	set("Chain", "mainnet")
+	set("ElementsDir", values.ElementsDataDir)
+	set("ElementsDirMapped", values.ElementsDataDir)
+	set("ElementsHost", values.ElementsRPCHost)
+	set("ElementsPort", strconv.Itoa(values.ElementsRPCPort))
+	set("ElementsWallet", values.ElementsRPCWallet)
+	set("LightningDir", "/data/lnd")
+
+	if hasBitcoin {
+		set("BitcoinHost", pswebBitcoinHost(bitcoinCfg.Host))
+		set("BitcoinUser", bitcoinCfg.User)
+		set("BitcoinPass", bitcoinCfg.Pass)
+	} else if existingHost, ok := cfg["BitcoinHost"].(string); ok && shouldNormalizePSWebBitcoinHost(existingHost) {
+		set("BitcoinHost", pswebBitcoinHost(existingHost))
+	}
+
+	return changed
+}
+
+func shouldNormalizePSWebBitcoinHost(host string) bool {
+	return strings.Contains(host, ":8332:") ||
+		strings.Contains(host, ":18332:") ||
+		strings.Contains(host, ":18443:")
+}
+
+func pswebConfigValueEqual(existing any, desired any) bool {
+	switch desiredValue := desired.(type) {
+	case string:
+		existingValue, ok := existing.(string)
+		return ok && existingValue == desiredValue
+	case bool:
+		existingValue, ok := existing.(bool)
+		return ok && existingValue == desiredValue
+	default:
+		return existing == desired
+	}
+}
+
+func pswebBitcoinHost(host string) string {
+	return "http://" + bitcoinRPCHostPort(host, 8332)
+}
+
+func writePSWebConfig(ctx context.Context, paths peerswapPaths, cfg map[string]any) error {
+	content, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmpPath := filepath.Join(paths.Root, "pswebconfig.json.tmp")
+	if err := writeFile(tmpPath, string(content)+"\n", 0640); err != nil {
+		return err
+	}
+	defer func() {
+		_ = os.Remove(tmpPath)
+	}()
+	script := fmt.Sprintf("install -m 0644 -o %s -g %s %s %s", peerswapUser, peerswapUser, tmpPath, paths.PSWebConfigPath)
+	if _, err := runSystemd(ctx, "/bin/sh", "-c", script); err != nil {
+		return err
+	}
+	return nil
+}
+
 func ensurePeerswapServices(ctx context.Context, paths peerswapPaths) error {
 	svc := peerswapServiceContents(paths)
 	if existing, err := os.ReadFile(paths.ServicePath); err == nil && string(existing) == svc {
@@ -561,6 +675,7 @@ User=%s
 Group=%s
 SupplementaryGroups=lnd
 Environment=HOME=/home/%s
+Environment=USER=%s
 WorkingDirectory=/home/%s
 ExecStart=%s
 Restart=on-failure
@@ -568,7 +683,7 @@ RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-`, elementsServiceName+".service", peerswapUser, peerswapUser, peerswapUser, peerswapUser, filepath.Join(paths.BinDir, "peerswapd"))
+`, elementsServiceName+".service", peerswapUser, peerswapUser, peerswapUser, peerswapUser, peerswapUser, filepath.Join(paths.BinDir, "peerswapd"))
 }
 
 func pswebServiceContents(paths peerswapPaths) string {
@@ -583,14 +698,15 @@ User=%s
 Group=%s
 SupplementaryGroups=lnd
 Environment=HOME=/home/%s
+Environment=USER=%s
 WorkingDirectory=/home/%s
-ExecStart=%s
+ExecStart=%s -datadir %s
 Restart=on-failure
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-`, peerswapServiceName+".service", peerswapUser, peerswapUser, peerswapUser, peerswapUser, filepath.Join(paths.BinDir, "psweb"))
+`, peerswapServiceName+".service", peerswapUser, peerswapUser, peerswapUser, peerswapUser, peerswapUser, filepath.Join(paths.BinDir, "psweb"), paths.ConfigDir)
 }
 
 func peerswapServiceStatus(ctx context.Context) (string, error) {

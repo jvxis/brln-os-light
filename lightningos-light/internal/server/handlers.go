@@ -800,11 +800,7 @@ func parseBitcoindRPCConfigFromLNDConf(raw string) (bitcoinRPCConfig, bool) {
 		switch key {
 		case "bitcoind.rpchost":
 			if val != "" {
-				host := strings.TrimPrefix(val, "tcp://")
-				if !strings.Contains(host, ":") {
-					host = host + ":8332"
-				}
-				cfg.Host = host
+				cfg.Host = bitcoinRPCHostPort(val, 8332)
 			}
 		case "bitcoind.rpcuser":
 			cfg.User = val
@@ -879,11 +875,7 @@ func parseBitcoinTaggedRPCConfigFromLNDConf(raw string, tag string) (bitcoinRPCC
 		switch key {
 		case "bitcoind.rpchost":
 			if val != "" {
-				host := strings.TrimPrefix(val, "tcp://")
-				if !strings.Contains(host, ":") {
-					host = host + ":8332"
-				}
-				cfg.Host = host
+				cfg.Host = bitcoinRPCHostPort(val, 8332)
 			}
 		case "bitcoind.rpcuser":
 			cfg.User = val

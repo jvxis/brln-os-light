@@ -61,6 +61,22 @@ bitcoind.rpcuser=local-user
 	}
 }
 
+func TestParseBitcoindRPCConfigFromLNDConfNormalizesURLHost(t *testing.T) {
+	raw := `[Bitcoind]
+bitcoind.rpchost=http://127.0.0.1:8332
+bitcoind.rpcuser=local-user
+bitcoind.rpcpass=local-pass
+`
+
+	cfg, ok := parseBitcoindRPCConfigFromLNDConf(raw)
+	if !ok {
+		t.Fatalf("expected config")
+	}
+	if cfg.Host != "127.0.0.1:8332" {
+		t.Fatalf("expected normalized host, got %q", cfg.Host)
+	}
+}
+
 func TestLocalBitcoinConfigCandidatesIncludesAdminBitcoinConf(t *testing.T) {
 	paths := bitcoinCorePaths{ConfigPath: "/data/bitcoin/bitcoin.conf"}
 	candidates := localBitcoinConfigCandidates(paths)

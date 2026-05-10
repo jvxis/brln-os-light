@@ -1951,6 +1951,7 @@ func (s *Server) handleLNPeers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	peers = s.enrichPeerAliasesFromGraph(ctx, peers)
 	writeJSON(w, http.StatusOK, map[string]any{"peers": peers})
 }
 

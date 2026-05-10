@@ -32,6 +32,12 @@ type GraphExplorerSearchResult struct {
 	HasLocalOpenChannel bool       `json:"has_local_open_channel"`
 }
 
+type GraphExplorerNodeLookup struct {
+	PubKey    string                       `json:"pubkey"`
+	Alias     string                       `json:"alias,omitempty"`
+	Addresses []lndclient.GraphNodeAddress `json:"addresses,omitempty"`
+}
+
 type GraphExplorerNodeGeneral struct {
 	CoverageSince *time.Time               `json:"coverage_since,omitempty"`
 	Source        string                   `json:"source"`
@@ -59,6 +65,49 @@ type GraphExplorerNodeProfile struct {
 	LastSeenAt            *time.Time                   `json:"last_seen_at,omitempty"`
 	LastGraphUpdateAt     *time.Time                   `json:"last_graph_update_at,omitempty"`
 	LastPolicyUpdateAt    *time.Time                   `json:"last_policy_update_at,omitempty"`
+}
+
+func (s *GraphExplorerService) LookupNodes(ctx context.Context, pubkeys []string) (map[string]GraphExplorerNodeLookup, error) {
+	out := map[string]GraphExplorerNodeLookup{}
+	if s == nil || s.db == nil {
+		return out, ErrGraphExplorerDBUnavailable
+	}
+
+	pubkeys = graphExplorerUniquePubKeys(pubkeys)
+	if len(pubkeys) == 0 {
+		return out, nil
+	}
+
+	rows, err := s.db.Query(ctx, `
+select pubkey, coalesce(alias, ''), addresses_json
+from graph_nodes
+where pubkey = any($1::text[])
+`, pubkeys)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var item GraphExplorerNodeLookup
+		var rawAddresses []byte
+		if err := rows.Scan(&item.PubKey, &item.Alias, &rawAddresses); err != nil {
+			return out, err
+		}
+		item.PubKey = graphExplorerNormalizePubkey(item.PubKey)
+		item.Alias = strings.TrimSpace(item.Alias)
+		item.Addresses, err = decodeGraphNodeAddresses(rawAddresses)
+		if err != nil {
+			return out, err
+		}
+		if item.PubKey != "" {
+			out[item.PubKey] = item
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+	return out, nil
 }
 
 func (s *GraphExplorerService) SearchNodes(ctx context.Context, query string, limit int) (GraphExplorerSearchResponse, error) {

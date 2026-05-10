@@ -114,6 +114,7 @@ type networkMapPeerState struct {
 	ChannelCount   int
 	CapacitySat    int64
 	Active         bool
+	GraphHasOnion  bool
 }
 
 func (s *Server) handleLNNetworkMapGet(w http.ResponseWriter, r *http.Request) {
@@ -257,6 +258,7 @@ func (s *Server) buildNetworkMapPayload(ctx context.Context) (networkMapResponse
 			state.Socket = socket
 		}
 	}
+	s.enrichNetworkMapPeerStatesFromGraph(ctx, peerStates)
 
 	localNode, err := s.resolveLocalNode(ctx, status)
 	if err != nil {
@@ -536,25 +538,52 @@ func shortAtlasPubkey(pubkey string) string {
 	return trimmed[:9] + "..." + trimmed[len(trimmed)-6:]
 }
 
+func (s *Server) enrichNetworkMapPeerStatesFromGraph(ctx context.Context, peerStates map[string]*networkMapPeerState) {
+	pubkeys := make([]string, 0, len(peerStates))
+	for _, state := range peerStates {
+		if state == nil {
+			continue
+		}
+		if pubkey := strings.TrimSpace(state.PubKey); pubkey != "" {
+			pubkeys = append(pubkeys, pubkey)
+		}
+	}
+	applyNetworkMapGraphLookups(peerStates, s.lookupGraphExplorerNodes(ctx, pubkeys))
+}
+
+func applyNetworkMapGraphLookups(peerStates map[string]*networkMapPeerState, lookups map[string]GraphExplorerNodeLookup) {
+	if len(peerStates) == 0 || len(lookups) == 0 {
+		return
+	}
+	for _, state := range peerStates {
+		if state == nil {
+			continue
+		}
+		node, ok := lookups[graphExplorerNormalizePubkey(state.PubKey)]
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(state.Alias) == "" {
+			state.Alias = strings.TrimSpace(node.Alias)
+		}
+		if normalizeSocket(state.Socket) != "" {
+			continue
+		}
+		clearnet, hasOnion := splitGraphNodeSockets(node.Addresses)
+		if len(clearnet) > 0 {
+			state.Socket = clearnet[0]
+		}
+		state.GraphHasOnion = hasOnion
+	}
+}
+
 func (s *Server) resolveAtlasSocket(ctx context.Context, state *networkMapPeerState) (socket string, isOnion bool, isPrivateIP bool, reason string) {
 	if state == nil {
 		return "", false, false, "missing_peer"
 	}
 	socket = normalizeSocket(state.Socket)
 	if socket == "" {
-		detailsCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
-		defer cancel()
-		details, err := s.lnd.GetNodeDetails(detailsCtx, state.PubKey)
-		if err == nil {
-			clearnet, hasOnion := splitNodeSockets(details.Addresses)
-			if len(clearnet) > 0 {
-				socket = clearnet[0]
-			}
-			isOnion = hasOnion && socket == ""
-		}
-	}
-	if socket == "" {
-		if isOnion {
+		if state.GraphHasOnion {
 			return "", true, false, "tor_only"
 		}
 		return "", false, false, "address_unavailable"

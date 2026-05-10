@@ -5099,18 +5099,24 @@ func (c *Client) ListPeers(ctx context.Context) ([]PeerInfo, error) {
 	aliasMap := map[string]string{}
 	if channels, err := client.ListChannels(ctx, &lnrpc.ListChannelsRequest{PeerAliasLookup: true}); err == nil {
 		for _, ch := range channels.Channels {
-			if ch.RemotePubkey != "" && ch.PeerAlias != "" {
-				aliasMap[ch.RemotePubkey] = ch.PeerAlias
+			pubkey := normalizePubkeyCacheKey(ch.RemotePubkey)
+			alias := strings.TrimSpace(ch.PeerAlias)
+			if pubkey != "" && alias != "" {
+				aliasMap[pubkey] = alias
 			}
 		}
 	}
 
-	peers := make([]PeerInfo, 0, len(resp.Peers))
-	for _, peer := range resp.Peers {
-		alias := aliasMap[peer.PubKey]
-		if alias == "" {
-			alias = c.lookupNodeAliasWithClient(ctx, client, peer.PubKey)
+	return buildPeerInfos(resp.Peers, aliasMap), nil
+}
+
+func buildPeerInfos(respPeers []*lnrpc.Peer, aliasMap map[string]string) []PeerInfo {
+	peers := make([]PeerInfo, 0, len(respPeers))
+	for _, peer := range respPeers {
+		if peer == nil {
+			continue
 		}
+		alias := strings.TrimSpace(aliasMap[normalizePubkeyCacheKey(peer.PubKey)])
 		lastErr := ""
 		lastErrTime := int64(0)
 		if len(peer.Errors) > 0 {
@@ -5134,8 +5140,7 @@ func (c *Client) ListPeers(ctx context.Context) ([]PeerInfo, error) {
 			LastErrorTime: lastErrTime,
 		})
 	}
-
-	return peers, nil
+	return peers
 }
 
 func (c *Client) ListWatchtowers(ctx context.Context, includeSessions bool, excludeExhaustedSessions bool) ([]WatchtowerInfo, error) {

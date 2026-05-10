@@ -105,6 +105,9 @@ func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	if cfg.VelocityWeight != 0.7 {
 		t.Fatalf("expected velocity_weight default=0.7, got %f", cfg.VelocityWeight)
 	}
+	if cfg.DelegatedFastPathStrictPayback {
+		t.Fatalf("expected delegated_fast_path_strict_payback default=false")
+	}
 }
 
 func TestNormalizeRebalanceConfigClampsRebalanceCostFloor(t *testing.T) {
@@ -379,14 +382,16 @@ func TestApplyRebalanceConfigPayloadOnlyTouchesProvidedFields(t *testing.T) {
 	minExecuteSat := int64(25_000)
 	gainModelVersion := 2
 	velocityWeight := 0.35
+	cfg.DelegatedFastPathStrictPayback = true
 
 	got := applyRebalanceConfigPayload(cfg, rebalanceConfigPayload{
-		DeadbandPct:      &deadband,
-		BudgetUnlimited:  ptrBool(true),
-		BudgetAutoOnly:   &budgetAutoOnly,
-		MinExecuteSat:    &minExecuteSat,
-		GainModelVersion: &gainModelVersion,
-		VelocityWeight:   &velocityWeight,
+		DeadbandPct:                    &deadband,
+		BudgetUnlimited:                ptrBool(true),
+		BudgetAutoOnly:                 &budgetAutoOnly,
+		MinExecuteSat:                  &minExecuteSat,
+		GainModelVersion:               &gainModelVersion,
+		VelocityWeight:                 &velocityWeight,
+		DelegatedFastPathStrictPayback: ptrBool(false),
 	})
 
 	if got.DeadbandPct != 0 {
@@ -406,6 +411,9 @@ func TestApplyRebalanceConfigPayloadOnlyTouchesProvidedFields(t *testing.T) {
 	}
 	if got.VelocityWeight != velocityWeight {
 		t.Fatalf("expected velocity_weight=%f, got %f", velocityWeight, got.VelocityWeight)
+	}
+	if got.DelegatedFastPathStrictPayback {
+		t.Fatalf("expected explicit false delegated_fast_path_strict_payback to be applied")
 	}
 	if got.ScanIntervalSec != cfg.ScanIntervalSec {
 		t.Fatalf("expected omitted scan_interval_sec to remain %d, got %d", cfg.ScanIntervalSec, got.ScanIntervalSec)
@@ -910,6 +918,31 @@ func TestFilterExecutableSourcesSkipsBelowExecuteMinimum(t *testing.T) {
 	}
 	if got[0].ChannelID != 3 || got[1].ChannelID != 4 {
 		t.Fatalf("unexpected executable source order: %+v", got)
+	}
+}
+
+func TestDelegatedFastPathSourceIDsStrictPaybackRequiresFullAmount(t *testing.T) {
+	sources := []RebalanceChannel{
+		{ChannelID: 1},
+		{ChannelID: 2},
+		{ChannelID: 3},
+		{ChannelID: 4},
+	}
+	sourceAvailable := map[uint64]int64{
+		1: 9_000,
+		2: 40_000,
+		3: 120_000,
+		4: 250_000,
+	}
+
+	loose := delegatedFastPathSourceIDs(sources, sourceAvailable, 100_000, 10_000, false)
+	if len(loose) != 3 || loose[0] != 2 || loose[1] != 3 || loose[2] != 4 {
+		t.Fatalf("unexpected loose fast-path source ids: %+v", loose)
+	}
+
+	strict := delegatedFastPathSourceIDs(sources, sourceAvailable, 100_000, 10_000, true)
+	if len(strict) != 2 || strict[0] != 3 || strict[1] != 4 {
+		t.Fatalf("unexpected strict fast-path source ids: %+v", strict)
 	}
 }
 

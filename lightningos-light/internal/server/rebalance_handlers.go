@@ -13,57 +13,58 @@ import (
 )
 
 type rebalanceConfigPayload struct {
-	AutoEnabled               *bool    `json:"auto_enabled,omitempty"`
-	ScanIntervalSec           *int     `json:"scan_interval_sec,omitempty"`
-	DeadbandPct               *float64 `json:"deadband_pct,omitempty"`
-	SourceMinLocalPct         *float64 `json:"source_min_local_pct,omitempty"`
-	EconRatio                 *float64 `json:"econ_ratio,omitempty"`
-	EconRatioMaxPpm           *int64   `json:"econ_ratio_max_ppm,omitempty"`
-	FeeLimitPpm               *int64   `json:"fee_limit_ppm,omitempty"`
-	LostProfit                *bool    `json:"lost_profit,omitempty"`
-	FailTolerancePpm          *int64   `json:"fail_tolerance_ppm,omitempty"`
-	ROIMin                    *float64 `json:"roi_min,omitempty"`
-	DailyBudgetPct            *float64 `json:"daily_budget_pct,omitempty"`
-	BudgetMode                *string  `json:"budget_mode,omitempty"`
-	BudgetUnlimited           *bool    `json:"budget_unlimited,omitempty"`
-	BudgetAutoOnly            *bool    `json:"budget_auto_only,omitempty"`
-	ManualReserveEnabled      *bool    `json:"manual_reserve_enabled,omitempty"`
-	ManualReserveMode         *string  `json:"manual_reserve_mode,omitempty"`
-	ManualReserveValue        *float64 `json:"manual_reserve_value,omitempty"`
-	MaxConcurrent             *int     `json:"max_concurrent,omitempty"`
-	MinAmountSat              *int64   `json:"min_amount_sat,omitempty"`
-	MaxAmountSat              *int64   `json:"max_amount_sat,omitempty"`
-	MinSplitEnabled           *bool    `json:"min_split_enabled,omitempty"`
-	MinProbeSat               *int64   `json:"min_probe_sat,omitempty"`
-	MinExecuteSat             *int64   `json:"min_execute_sat,omitempty"`
-	MppEnabled                *bool    `json:"mpp_enabled,omitempty"`
-	MppMaxShards              *int     `json:"mpp_max_shards,omitempty"`
-	MppParallelism            *int     `json:"mpp_parallelism,omitempty"`
-	MppMinShardSat            *int64   `json:"mpp_min_shard_sat,omitempty"`
-	MppRoundTimeoutSec        *int     `json:"mpp_round_timeout_sec,omitempty"`
-	MppAutoOnly               *bool    `json:"mpp_auto_only,omitempty"`
-	FeeLadderSteps            *int     `json:"fee_ladder_steps,omitempty"`
-	AmountProbeSteps          *int     `json:"amount_probe_steps,omitempty"`
-	AmountProbeAdaptive       *bool    `json:"amount_probe_adaptive,omitempty"`
-	AttemptTimeoutSec         *int     `json:"attempt_timeout_sec,omitempty"`
-	RebalanceTimeoutSec       *int     `json:"rebalance_timeout_sec,omitempty"`
-	ManualRestartWatch        *bool    `json:"manual_restart_watch,omitempty"`
-	CooldownProbeEnabled      *bool    `json:"cooldown_probe_enabled,omitempty"`
-	MissionControlHalfLifeSec *int64   `json:"mc_half_life_sec,omitempty"`
-	PaybackModeFlags          *int     `json:"payback_mode_flags,omitempty"`
-	UnlockDays                *int     `json:"unlock_days,omitempty"`
-	CriticalReleasePct        *float64 `json:"critical_release_pct,omitempty"`
-	CriticalMinSources        *int     `json:"critical_min_sources,omitempty"`
-	CriticalMinAvailableSats  *int64   `json:"critical_min_available_sats,omitempty"`
-	CriticalCycles            *int     `json:"critical_cycles,omitempty"`
-	RebalanceCostFloorPpm     *int64   `json:"rebalance_cost_floor_ppm,omitempty"`
-	SourceMinPaybackProgress  *float64 `json:"source_min_payback_progress,omitempty"`
-	MissionControlReinforce   *bool    `json:"mission_control_reinforce,omitempty"`
-	GainModelVersion          *int     `json:"gain_model_version,omitempty"`
-	VelocityWeight            *float64 `json:"velocity_weight,omitempty"`
-	AutofeeSettlingWindowSec  *int64   `json:"autofee_settling_window_sec,omitempty"`
-	AutofeeSettlingMultiplier *float64 `json:"autofee_settling_multiplier,omitempty"`
-	DelegatedFastPathEnabled  *bool    `json:"delegated_fast_path_enabled,omitempty"`
+	AutoEnabled                    *bool    `json:"auto_enabled,omitempty"`
+	ScanIntervalSec                *int     `json:"scan_interval_sec,omitempty"`
+	DeadbandPct                    *float64 `json:"deadband_pct,omitempty"`
+	SourceMinLocalPct              *float64 `json:"source_min_local_pct,omitempty"`
+	EconRatio                      *float64 `json:"econ_ratio,omitempty"`
+	EconRatioMaxPpm                *int64   `json:"econ_ratio_max_ppm,omitempty"`
+	FeeLimitPpm                    *int64   `json:"fee_limit_ppm,omitempty"`
+	LostProfit                     *bool    `json:"lost_profit,omitempty"`
+	FailTolerancePpm               *int64   `json:"fail_tolerance_ppm,omitempty"`
+	ROIMin                         *float64 `json:"roi_min,omitempty"`
+	DailyBudgetPct                 *float64 `json:"daily_budget_pct,omitempty"`
+	BudgetMode                     *string  `json:"budget_mode,omitempty"`
+	BudgetUnlimited                *bool    `json:"budget_unlimited,omitempty"`
+	BudgetAutoOnly                 *bool    `json:"budget_auto_only,omitempty"`
+	ManualReserveEnabled           *bool    `json:"manual_reserve_enabled,omitempty"`
+	ManualReserveMode              *string  `json:"manual_reserve_mode,omitempty"`
+	ManualReserveValue             *float64 `json:"manual_reserve_value,omitempty"`
+	MaxConcurrent                  *int     `json:"max_concurrent,omitempty"`
+	MinAmountSat                   *int64   `json:"min_amount_sat,omitempty"`
+	MaxAmountSat                   *int64   `json:"max_amount_sat,omitempty"`
+	MinSplitEnabled                *bool    `json:"min_split_enabled,omitempty"`
+	MinProbeSat                    *int64   `json:"min_probe_sat,omitempty"`
+	MinExecuteSat                  *int64   `json:"min_execute_sat,omitempty"`
+	MppEnabled                     *bool    `json:"mpp_enabled,omitempty"`
+	MppMaxShards                   *int     `json:"mpp_max_shards,omitempty"`
+	MppParallelism                 *int     `json:"mpp_parallelism,omitempty"`
+	MppMinShardSat                 *int64   `json:"mpp_min_shard_sat,omitempty"`
+	MppRoundTimeoutSec             *int     `json:"mpp_round_timeout_sec,omitempty"`
+	MppAutoOnly                    *bool    `json:"mpp_auto_only,omitempty"`
+	FeeLadderSteps                 *int     `json:"fee_ladder_steps,omitempty"`
+	AmountProbeSteps               *int     `json:"amount_probe_steps,omitempty"`
+	AmountProbeAdaptive            *bool    `json:"amount_probe_adaptive,omitempty"`
+	AttemptTimeoutSec              *int     `json:"attempt_timeout_sec,omitempty"`
+	RebalanceTimeoutSec            *int     `json:"rebalance_timeout_sec,omitempty"`
+	ManualRestartWatch             *bool    `json:"manual_restart_watch,omitempty"`
+	CooldownProbeEnabled           *bool    `json:"cooldown_probe_enabled,omitempty"`
+	MissionControlHalfLifeSec      *int64   `json:"mc_half_life_sec,omitempty"`
+	PaybackModeFlags               *int     `json:"payback_mode_flags,omitempty"`
+	UnlockDays                     *int     `json:"unlock_days,omitempty"`
+	CriticalReleasePct             *float64 `json:"critical_release_pct,omitempty"`
+	CriticalMinSources             *int     `json:"critical_min_sources,omitempty"`
+	CriticalMinAvailableSats       *int64   `json:"critical_min_available_sats,omitempty"`
+	CriticalCycles                 *int     `json:"critical_cycles,omitempty"`
+	RebalanceCostFloorPpm          *int64   `json:"rebalance_cost_floor_ppm,omitempty"`
+	SourceMinPaybackProgress       *float64 `json:"source_min_payback_progress,omitempty"`
+	MissionControlReinforce        *bool    `json:"mission_control_reinforce,omitempty"`
+	GainModelVersion               *int     `json:"gain_model_version,omitempty"`
+	VelocityWeight                 *float64 `json:"velocity_weight,omitempty"`
+	AutofeeSettlingWindowSec       *int64   `json:"autofee_settling_window_sec,omitempty"`
+	AutofeeSettlingMultiplier      *float64 `json:"autofee_settling_multiplier,omitempty"`
+	DelegatedFastPathEnabled       *bool    `json:"delegated_fast_path_enabled,omitempty"`
+	DelegatedFastPathStrictPayback *bool    `json:"delegated_fast_path_strict_payback,omitempty"`
 }
 
 type rebalanceRunPayload struct {
@@ -303,6 +304,9 @@ func applyRebalanceConfigPayload(cfg RebalanceConfig, payload rebalanceConfigPay
 	}
 	if payload.DelegatedFastPathEnabled != nil {
 		cfg.DelegatedFastPathEnabled = *payload.DelegatedFastPathEnabled
+	}
+	if payload.DelegatedFastPathStrictPayback != nil {
+		cfg.DelegatedFastPathStrictPayback = *payload.DelegatedFastPathStrictPayback
 	}
 	return cfg
 }

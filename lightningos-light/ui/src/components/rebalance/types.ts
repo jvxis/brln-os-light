@@ -50,6 +50,7 @@ export type RebalanceConfig = {
   autofee_settling_window_sec: number
   autofee_settling_multiplier: number
   delegated_fast_path_enabled: boolean
+  delegated_fast_path_strict_payback: boolean
 }
 
 export type RebalanceOverview = {

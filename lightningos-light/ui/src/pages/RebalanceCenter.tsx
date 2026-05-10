@@ -211,7 +211,8 @@ export default function RebalanceCenter() {
       velocity_weight: cfg.velocity_weight,
       autofee_settling_window_sec: cfg.autofee_settling_window_sec,
       autofee_settling_multiplier: cfg.autofee_settling_multiplier,
-      delegated_fast_path_enabled: cfg.delegated_fast_path_enabled
+      delegated_fast_path_enabled: cfg.delegated_fast_path_enabled,
+      delegated_fast_path_strict_payback: cfg.delegated_fast_path_strict_payback
     })
   }
   const estimateHistoricalCost = (amountSat: number, feePpm: number) => {
@@ -507,7 +508,9 @@ export default function RebalanceCenter() {
           gain_model_version: nextConfig.gain_model_version || REBALANCE_DEFAULT_GAIN_MODEL_VERSION,
           velocity_weight: typeof nextConfig.velocity_weight === 'number' ? nextConfig.velocity_weight : REBALANCE_DEFAULT_VELOCITY_WEIGHT,
           autofee_settling_window_sec: typeof nextConfig.autofee_settling_window_sec === 'number' ? nextConfig.autofee_settling_window_sec : REBALANCE_DEFAULT_AUTOFEE_SETTLING_WINDOW_SEC,
-          autofee_settling_multiplier: typeof nextConfig.autofee_settling_multiplier === 'number' ? nextConfig.autofee_settling_multiplier : REBALANCE_DEFAULT_AUTOFEE_SETTLING_MULTIPLIER
+          autofee_settling_multiplier: typeof nextConfig.autofee_settling_multiplier === 'number' ? nextConfig.autofee_settling_multiplier : REBALANCE_DEFAULT_AUTOFEE_SETTLING_MULTIPLIER,
+          delegated_fast_path_enabled: nextConfig.delegated_fast_path_enabled ?? true,
+          delegated_fast_path_strict_payback: nextConfig.delegated_fast_path_strict_payback ?? false
         }
         setServerConfig(normalizedConfig)
         const currentSig = configSignature(configRef.current)
@@ -616,7 +619,8 @@ export default function RebalanceCenter() {
         velocity_weight: config.velocity_weight,
         autofee_settling_window_sec: config.autofee_settling_window_sec,
         autofee_settling_multiplier: config.autofee_settling_multiplier,
-        delegated_fast_path_enabled: config.delegated_fast_path_enabled
+        delegated_fast_path_enabled: config.delegated_fast_path_enabled,
+        delegated_fast_path_strict_payback: config.delegated_fast_path_strict_payback
       })) as RebalanceConfig
       const normalizedSaved = {
         ...saved,
@@ -645,7 +649,9 @@ export default function RebalanceCenter() {
         gain_model_version: saved.gain_model_version || REBALANCE_DEFAULT_GAIN_MODEL_VERSION,
         velocity_weight: typeof saved.velocity_weight === 'number' ? saved.velocity_weight : REBALANCE_DEFAULT_VELOCITY_WEIGHT,
         autofee_settling_window_sec: typeof saved.autofee_settling_window_sec === 'number' ? saved.autofee_settling_window_sec : REBALANCE_DEFAULT_AUTOFEE_SETTLING_WINDOW_SEC,
-        autofee_settling_multiplier: typeof saved.autofee_settling_multiplier === 'number' ? saved.autofee_settling_multiplier : REBALANCE_DEFAULT_AUTOFEE_SETTLING_MULTIPLIER
+        autofee_settling_multiplier: typeof saved.autofee_settling_multiplier === 'number' ? saved.autofee_settling_multiplier : REBALANCE_DEFAULT_AUTOFEE_SETTLING_MULTIPLIER,
+        delegated_fast_path_enabled: saved.delegated_fast_path_enabled ?? true,
+        delegated_fast_path_strict_payback: saved.delegated_fast_path_strict_payback ?? false
       }
       setServerConfig(normalizedSaved)
       setConfig(normalizedSaved)
@@ -2040,6 +2046,18 @@ export default function RebalanceCenter() {
                       onChange={(e) => setConfig({ ...config, delegated_fast_path_enabled: e.target.checked })}
                     />
                     <span>{t('rebalanceCenter.settings.delegatedFastPath')}</span>
+                  </label>
+                  <label
+                    className="md:col-span-2 flex items-start gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-fog/80"
+                    title={t('rebalanceCenter.settingsHints.delegatedFastPathStrictPayback')}
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={config.delegated_fast_path_strict_payback}
+                      onChange={(e) => setConfig({ ...config, delegated_fast_path_strict_payback: e.target.checked })}
+                    />
+                    <span>{t('rebalanceCenter.settings.delegatedFastPathStrictPayback')}</span>
                   </label>
                   <label
                     className="md:col-span-2 flex items-start gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-fog/80"

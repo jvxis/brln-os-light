@@ -154,16 +154,16 @@ export default function ChannelOpenCandidates() {
         </div>
       )}
 
-      <section className="rounded-3xl border border-white/10 bg-ink/60 p-4 sm:p-5">
+      <section className="min-w-0 rounded-3xl border border-white/10 bg-ink/60 p-4 sm:p-5">
         {loading ? (
           <p className="text-sm text-fog/70">{t('channelRanking.openCandidates.loading')}</p>
         ) : items.length === 0 ? (
           <p className="text-sm text-fog/70">{t('channelRanking.openCandidates.empty')}</p>
         ) : (
-          <div className="max-h-[72vh] overflow-auto pb-2 pr-1">
-            <div className="grid min-w-[78rem] gap-3 xl:grid-cols-2">
+          <div className="max-h-[72vh] overflow-y-auto overflow-x-hidden pb-2 pr-1">
+            <div className="grid min-w-0 gap-3 xl:grid-cols-2">
               {items.map((item) => (
-                <div key={item.peer_pubkey} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <div key={item.peer_pubkey} className="min-w-0 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 space-y-1">
                       <div className="truncate text-sm font-medium text-fog">{item.peer_alias || item.peer_pubkey}</div>
@@ -177,29 +177,29 @@ export default function ChannelOpenCandidates() {
                     </a>
                   </div>
 
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <span className="rounded-full border border-emerald-400/30 bg-emerald-500/15 px-2.5 py-1 text-[11px] text-emerald-200">
+                  <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="max-w-full rounded-full border border-emerald-400/30 bg-emerald-500/15 px-2.5 py-1 text-[11px] text-emerald-200 [overflow-wrap:anywhere]">
                       {t('channelRanking.openCandidates.score', { value: numberFormatter.format(item.score) })}
                     </span>
-                    <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-fog/75">
+                    <span className="max-w-full rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-fog/75 [overflow-wrap:anywhere]">
                       {t('channelRanking.openCandidates.confidence', { value: numberFormatter.format(item.confidence) })}
                     </span>
                     <span
-                      className={`cursor-help rounded-full border px-2.5 py-1 text-[11px] ${categoryBadgeClass('demand')}`}
+                      className={`max-w-full cursor-help rounded-full border px-2.5 py-1 text-[11px] [overflow-wrap:anywhere] ${categoryBadgeClass('demand')}`}
                       title={t('channelRanking.openCandidates.demandHint')}
                       aria-label={t('channelRanking.openCandidates.demandHint')}
                     >
                       {t('channelRanking.openCandidates.demand', { value: numberFormatter.format(item.demand_score || 0) })}
                     </span>
                     <span
-                      className={`cursor-help rounded-full border px-2.5 py-1 text-[11px] ${categoryBadgeClass('relief')}`}
+                      className={`max-w-full cursor-help rounded-full border px-2.5 py-1 text-[11px] [overflow-wrap:anywhere] ${categoryBadgeClass('relief')}`}
                       title={t('channelRanking.openCandidates.reliefHint')}
                       aria-label={t('channelRanking.openCandidates.reliefHint')}
                     >
                       {t('channelRanking.openCandidates.relief', { value: numberFormatter.format(item.relief_score || 0) })}
                     </span>
                     <span
-                      className={`cursor-help rounded-full border px-2.5 py-1 text-[11px] ${categoryBadgeClass('graph')}`}
+                      className={`max-w-full cursor-help rounded-full border px-2.5 py-1 text-[11px] [overflow-wrap:anywhere] ${categoryBadgeClass('graph')}`}
                       title={t('channelRanking.openCandidates.graphQualityHint')}
                       aria-label={t('channelRanking.openCandidates.graphQualityHint')}
                     >
@@ -207,7 +207,7 @@ export default function ChannelOpenCandidates() {
                     </span>
                   </div>
 
-                  <div className="mt-3 grid gap-2 text-xs text-fog/70 md:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4">
+                  <div className="mt-3 grid min-w-0 gap-2 text-xs text-fog/70 [overflow-wrap:anywhere] md:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4">
                     <div>{t('channelRanking.openCandidates.routeHits', { count: item.route_hit_count_30d || 0 })}</div>
                     <div>{t('channelRanking.openCandidates.routeVolume', { value: formatSats(item.route_volume_sat_30d) })}</div>
                     <div>{t('channelRanking.openCandidates.routeCost', { value: numberFormatter.format(item.route_cost_ppm_30d || 0) })}</div>
@@ -220,11 +220,11 @@ export default function ChannelOpenCandidates() {
                   </div>
 
                   {!!item.reasons?.length && (
-                    <div className="mt-3 flex flex-wrap gap-2">
+                    <div className="mt-3 flex min-w-0 flex-wrap gap-2">
                       {item.reasons.map((reason) => (
                         <span
                           key={`${item.peer_pubkey}-${reason.code}`}
-                          className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-fog/75"
+                          className="max-w-full rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-fog/75 [overflow-wrap:anywhere]"
                         >
                           {reasonLabel(reason.code)}
                         </span>

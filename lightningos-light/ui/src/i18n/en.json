@@ -758,6 +758,7 @@
     "noLogs": "No logs yet.",
     "services": {
       "autofee": "Autofee",
+      "bitcoin": "Bitcoin",
       "lnd": "LND",
       "lndUpgrade": "LND upgrade",
       "appUpgrade": "App upgrade",
@@ -767,7 +768,7 @@
       "psweb": "Psweb",
       "postgres": "Postgres"
     },
-    "subtitle": "Tail recent logs for systemd services.",
+    "subtitle": "Tail recent logs for systemd services and local Docker apps.",
     "title": "Logs"
   },
   "terminal": {

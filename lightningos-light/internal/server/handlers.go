@@ -1352,7 +1352,7 @@ func parsePeerAddress(address string) (string, string, error) {
 }
 
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
-	service := r.URL.Query().Get("service")
+	serviceRaw := strings.TrimSpace(r.URL.Query().Get("service"))
 	linesRaw := r.URL.Query().Get("lines")
 	sinceRaw := strings.TrimSpace(r.URL.Query().Get("since"))
 
@@ -1363,7 +1363,20 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	service = mapService(service)
+	if isBitcoinLogService(serviceRaw) {
+		ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+		defer cancel()
+
+		out, source, err := s.readBitcoinLocalLogLines(ctx, lines, sinceRaw)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("log read failed: %v", err))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"service": "bitcoin", "source": source, "lines": out})
+		return
+	}
+
+	service := mapService(serviceRaw)
 	if service == "" {
 		writeError(w, http.StatusBadRequest, "unsupported service")
 		return
@@ -1398,6 +1411,105 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"service": service, "lines": out})
+}
+
+func isBitcoinLogService(service string) bool {
+	switch strings.ToLower(strings.TrimSpace(service)) {
+	case "bitcoin", "bitcoind", "bitcoin-core", bitcoinCoreAppID:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) readBitcoinLocalLogLines(ctx context.Context, lines int, since string) ([]string, string, error) {
+	paths := bitcoinCoreAppPaths()
+	var dockerErr error
+	if fileExists(paths.ComposePath) {
+		out, err := readBitcoinComposeLogLines(ctx, paths, lines, since)
+		if err == nil {
+			return out, "docker:bitcoind", nil
+		}
+		dockerErr = err
+	}
+
+	if service := bitcoinSystemdLogService(ctx); service != "" {
+		out, err := system.JournalTailSince(ctx, service, lines, since)
+		if err == nil {
+			return out, "systemd:" + service, nil
+		}
+		if dockerErr != nil {
+			return nil, "", fmt.Errorf("docker log read failed: %v; systemd log read failed: %w", dockerErr, err)
+		}
+		return nil, "", err
+	}
+
+	if dockerErr != nil {
+		return nil, "", dockerErr
+	}
+
+	out, err := system.JournalTailSince(ctx, "bitcoind", lines, since)
+	if err != nil {
+		return nil, "", errors.New("local bitcoin logs not available")
+	}
+	return out, "systemd:bitcoind", nil
+}
+
+func readBitcoinComposeLogLines(ctx context.Context, paths bitcoinCorePaths, lines int, since string) ([]string, error) {
+	if lines <= 0 {
+		lines = 200
+	}
+	cmd, baseArgs, err := resolveCompose(ctx)
+	if err != nil {
+		return nil, err
+	}
+	fullArgs := append(baseArgs, composeBaseArgs(paths.Root, paths.ComposePath)...)
+	fullArgs = append(fullArgs, "logs", "--no-color", "--tail", strconv.Itoa(lines))
+	if strings.TrimSpace(since) != "" {
+		fullArgs = append(fullArgs, "--since", strings.TrimSpace(since))
+	}
+	fullArgs = append(fullArgs, "bitcoind")
+
+	out, err := system.RunCommandWithSudo(ctx, cmd, fullArgs...)
+	if err != nil {
+		return nil, err
+	}
+	return splitLogLines(out), nil
+}
+
+func bitcoinSystemdLogService(ctx context.Context) string {
+	for _, service := range []string{
+		"bitcoind",
+		"bitcoin",
+		"bitcoin-core",
+		"snap.bitcoin-core.bitcoind",
+	} {
+		if systemdUnitLoaded(ctx, service) {
+			return service
+		}
+	}
+	return ""
+}
+
+func systemdUnitLoaded(ctx context.Context, service string) bool {
+	out, err := system.RunCommand(ctx, "systemctl", "show", "-p", "LoadState", "--value", service)
+	if err != nil {
+		return false
+	}
+	state := strings.TrimSpace(out)
+	return state != "" && state != "not-found"
+}
+
+func splitLogLines(out string) []string {
+	raw := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n")
+	lines := make([]string, 0, len(raw))
+	for _, line := range raw {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 func (s *Server) handleLNDConfigGet(w http.ResponseWriter, r *http.Request) {

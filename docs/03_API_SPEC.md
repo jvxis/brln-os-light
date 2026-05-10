@@ -151,6 +151,7 @@ Body:
 
 GET /api/logs?service=lnd&lines=200
 - Returns a list of log lines.
+- `service=bitcoin` returns local Bitcoin logs from the LightningOS Docker app when installed, otherwise from a local bitcoind systemd unit.
 
 ## Wallet
 

@@ -4,6 +4,7 @@ import { getLogs } from '../api'
 
 const services = [
   { labelKey: 'logs.services.lnd', value: 'lnd' },
+  { labelKey: 'logs.services.bitcoin', value: 'bitcoin' },
   { labelKey: 'logs.services.autofee', value: 'autofee' },
   { labelKey: 'logs.services.lndUpgrade', value: 'lnd-upgrade' },
   { labelKey: 'logs.services.appUpgrade', value: 'app-upgrade' },

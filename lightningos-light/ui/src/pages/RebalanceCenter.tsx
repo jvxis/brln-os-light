@@ -196,6 +196,7 @@ export default function RebalanceCenter() {
       attempt_timeout_sec: cfg.attempt_timeout_sec,
       rebalance_timeout_sec: cfg.rebalance_timeout_sec,
       manual_restart_watch: cfg.manual_restart_watch,
+      cooldown_probe_enabled: cfg.cooldown_probe_enabled,
       mc_half_life_sec: cfg.mc_half_life_sec,
       payback_mode_flags: cfg.payback_mode_flags,
       unlock_days: cfg.unlock_days,
@@ -492,6 +493,7 @@ export default function RebalanceCenter() {
           attempt_timeout_sec: nextConfig.attempt_timeout_sec || 20,
           rebalance_timeout_sec: nextConfig.rebalance_timeout_sec || 600,
           manual_restart_watch: nextConfig.manual_restart_watch ?? false,
+          cooldown_probe_enabled: nextConfig.cooldown_probe_enabled ?? false,
           mc_half_life_sec: nextConfig.mc_half_life_sec || 0,
           min_split_enabled: nextConfig.min_split_enabled ?? false,
           min_probe_sat: nextConfig.min_probe_sat || 0,
@@ -599,6 +601,7 @@ export default function RebalanceCenter() {
           attempt_timeout_sec: config.attempt_timeout_sec,
           rebalance_timeout_sec: config.rebalance_timeout_sec,
           manual_restart_watch: config.manual_restart_watch,
+          cooldown_probe_enabled: config.cooldown_probe_enabled,
           mc_half_life_sec: config.mc_half_life_sec,
           payback_mode_flags: config.payback_mode_flags,
           unlock_days: config.unlock_days,
@@ -628,6 +631,7 @@ export default function RebalanceCenter() {
         attempt_timeout_sec: saved.attempt_timeout_sec || 20,
         rebalance_timeout_sec: saved.rebalance_timeout_sec || 600,
         manual_restart_watch: saved.manual_restart_watch ?? false,
+        cooldown_probe_enabled: saved.cooldown_probe_enabled ?? false,
         mc_half_life_sec: saved.mc_half_life_sec || 0,
         min_split_enabled: saved.min_split_enabled ?? false,
         min_probe_sat: saved.min_probe_sat || 0,
@@ -945,6 +949,12 @@ export default function RebalanceCenter() {
         return t('rebalanceCenter.overview.skipReasonRecent')
       case 'target_cooldown':
         return t('rebalanceCenter.overview.scanReasonTargetCooldown')
+      case 'target_cooldown_probe_backoff':
+        return t('rebalanceCenter.overview.scanReasonTargetCooldownProbeBackoff')
+      case 'target_cooldown_probe_deferred':
+        return t('rebalanceCenter.overview.scanReasonTargetCooldownProbeDeferred')
+      case 'target_cooldown_probe_busy':
+        return t('rebalanceCenter.overview.scanReasonTargetCooldownProbeBusy')
       case 'below_execute_min':
         return t('rebalanceCenter.overview.scanReasonBudgetMin')
       default:
@@ -961,6 +971,12 @@ export default function RebalanceCenter() {
         return t('rebalanceCenter.overview.scanReasonRecent')
       case 'target_cooldown':
         return t('rebalanceCenter.overview.scanReasonTargetCooldown')
+      case 'target_cooldown_probe_backoff':
+        return t('rebalanceCenter.overview.scanReasonTargetCooldownProbeBackoff')
+      case 'target_cooldown_probe_deferred':
+        return t('rebalanceCenter.overview.scanReasonTargetCooldownProbeDeferred')
+      case 'target_cooldown_probe_busy':
+        return t('rebalanceCenter.overview.scanReasonTargetCooldownProbeBusy')
       case 'target_not_eligible':
         return t('rebalanceCenter.overview.scanReasonTargetNotEligible')
       case 'roi_guardrail':
@@ -988,7 +1004,7 @@ export default function RebalanceCenter() {
     const reasons = overview.last_scan_reasons ?? {}
     const entries = Object.entries(reasons).filter(([, count]) => count > 0)
     if (entries.length > 0) {
-      const ordered = ['channel_busy', 'target_already_balanced', 'target_not_eligible', 'recently_attempted', 'target_cooldown', 'roi_guardrail', 'profit_guardrail', 'fee_cap_zero', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
+      const ordered = ['channel_busy', 'target_already_balanced', 'target_not_eligible', 'recently_attempted', 'target_cooldown', 'target_cooldown_probe_backoff', 'target_cooldown_probe_deferred', 'target_cooldown_probe_busy', 'roi_guardrail', 'profit_guardrail', 'fee_cap_zero', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
       entries.sort((a, b) => {
         const ai = ordered.indexOf(a[0])
         const bi = ordered.indexOf(b[0])
@@ -1022,7 +1038,7 @@ export default function RebalanceCenter() {
     const reasons = overview.last_manual_restart_reasons ?? {}
     const entries = Object.entries(reasons).filter(([, count]) => count > 0)
     if (entries.length === 0) return ''
-    const ordered = ['channel_busy', 'target_already_balanced', 'target_not_eligible', 'target_cooldown', 'roi_guardrail', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
+    const ordered = ['channel_busy', 'target_already_balanced', 'target_not_eligible', 'target_cooldown', 'target_cooldown_probe_backoff', 'target_cooldown_probe_deferred', 'target_cooldown_probe_busy', 'roi_guardrail', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
     entries.sort((a, b) => {
       const ai = ordered.indexOf(a[0])
       const bi = ordered.indexOf(b[0])
@@ -2024,6 +2040,18 @@ export default function RebalanceCenter() {
                       onChange={(e) => setConfig({ ...config, delegated_fast_path_enabled: e.target.checked })}
                     />
                     <span>{t('rebalanceCenter.settings.delegatedFastPath')}</span>
+                  </label>
+                  <label
+                    className="md:col-span-2 flex items-start gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-fog/80"
+                    title={t('rebalanceCenter.settingsHints.cooldownProbeEnabled')}
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={config.cooldown_probe_enabled}
+                      onChange={(e) => setConfig({ ...config, cooldown_probe_enabled: e.target.checked })}
+                    />
+                    <span>{t('rebalanceCenter.settings.cooldownProbeEnabled')}</span>
                   </label>
                   <div className="space-y-2">
                     <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.feeSteps')}>

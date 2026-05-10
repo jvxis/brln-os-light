@@ -146,9 +146,20 @@ const (
 const (
 	// Cooldown probes are small automatic jobs used to periodically test a
 	// target that is otherwise blocked by recent-failure cooldown.
-	targetCooldownProbeReason     = "cooldown-probe"
-	targetCooldownProbeInterval   = 15 * time.Minute
-	targetCooldownProbeMaxSources = 2
+	targetCooldownProbeReason          = "cooldown-probe"
+	targetCooldownProbeInterval        = 15 * time.Minute
+	targetCooldownProbeBackoffInterval = rebalanceMaxCooldown
+	// With the 1h backoff below, testing four ranked sources gives the probe
+	// enough coverage to reopen real opportunities while still reducing total
+	// churn versus the old 15m x 2-source loop.
+	targetCooldownProbeMaxSources     = 4
+	cooldownProbeWorkerSlots          = 1
+	targetCooldownProbeBackoffReason  = "target_cooldown_probe_backoff"
+	targetCooldownProbeDeferredReason = "target_cooldown_probe_deferred"
+	targetCooldownProbeBusyReason     = "target_cooldown_probe_busy"
+	cooldownProbeDeferredJobReason    = "cooldown probe deferred"
+	cooldownProbeBusyJobReason        = "cooldown probe busy"
+	cooldownProbeDisabledJobReason    = "cooldown probe disabled"
 )
 
 const (
@@ -209,6 +220,7 @@ type RebalanceConfig struct {
 	AttemptTimeoutSec         int     `json:"attempt_timeout_sec"`
 	RebalanceTimeoutSec       int     `json:"rebalance_timeout_sec"`
 	ManualRestartWatch        bool    `json:"manual_restart_watch"`
+	CooldownProbeEnabled      bool    `json:"cooldown_probe_enabled"`
 	MissionControlHalfLifeSec int64   `json:"mc_half_life_sec"`
 	PaybackModeFlags          int     `json:"payback_mode_flags"`
 	UnlockDays                int     `json:"unlock_days"`
@@ -656,6 +668,7 @@ type RebalanceService struct {
 	semInflight                int
 	semDesiredCap              int
 	semPendingResize           bool
+	cooldownProbeSem           chan struct{}
 	channelLocks               map[uint64]bool
 	jobCancel                  map[int64]context.CancelFunc
 	manualRestart              map[int64]manualRestartInfo
@@ -688,6 +701,7 @@ func NewRebalanceService(db *pgxpool.Pool, lnd *lndclient.Client, logger *log.Lo
 		manualRestart:       map[int64]manualRestartInfo{},
 		manualRestartCancel: map[uint64]*manualRestartHandle{},
 		lastAutoByTarget:    map[uint64]time.Time{},
+		cooldownProbeSem:    make(chan struct{}, cooldownProbeWorkerSlots),
 	}
 }
 
@@ -728,6 +742,7 @@ func defaultRebalanceConfig() RebalanceConfig {
 		AttemptTimeoutSec:         45,
 		RebalanceTimeoutSec:       600,
 		ManualRestartWatch:        false,
+		CooldownProbeEnabled:      false,
 		MissionControlHalfLifeSec: 0,
 		PaybackModeFlags:          paybackModePayback | paybackModeTime | paybackModeCritical,
 		UnlockDays:                7,
@@ -1488,13 +1503,30 @@ func filterExecutableSources(sources []RebalanceChannel, sourceAvailable map[uin
 }
 
 func shouldRunTargetCooldownProbe(lastAutoAt time.Time, now time.Time) bool {
+	return shouldRunTargetCooldownProbeAfter(lastAutoAt, now, targetCooldownProbeInterval)
+}
+
+func shouldRunTargetCooldownProbeAfter(lastAutoAt time.Time, now time.Time, interval time.Duration) bool {
 	if now.IsZero() {
 		now = time.Now()
+	}
+	if interval <= 0 {
+		interval = targetCooldownProbeInterval
 	}
 	if lastAutoAt.IsZero() {
 		return true
 	}
-	return now.Sub(lastAutoAt) >= targetCooldownProbeInterval
+	return now.Sub(lastAutoAt) >= interval
+}
+
+func targetCooldownProbeIntervalForStats(attemptStat recentCooldownStat, noAttemptStat recentCooldownStat, failedStat recentCooldownStat, distinctSourceStat recentCooldownStat) time.Duration {
+	if attemptStat.Failures >= targetCooldownMinAttempts ||
+		noAttemptStat.Failures >= targetNoAttemptCooldownMinFailures ||
+		failedStat.Failures >= targetFailedCooldownMinFailures ||
+		distinctSourceStat.DistinctSources >= targetDistinctSourceMinFailures {
+		return targetCooldownProbeBackoffInterval
+	}
+	return targetCooldownProbeInterval
 }
 
 func rebalanceCooldownProbeAmount(targetAmountSat int64, cfg RebalanceConfig) int64 {
@@ -2151,6 +2183,30 @@ func (s *RebalanceService) runAutoScan() {
 		}
 		skipReasons[key]++
 	}
+	addSkippedDetail := func(target rebalanceTarget, reason string) {
+		if reason == "" {
+			return
+		}
+		targetAmount := target.OriginalAmountSat
+		if targetAmount <= 0 {
+			targetAmount = target.Channel.TargetAmountSat
+		}
+		skippedDetails = append(skippedDetails, RebalanceSkipDetail{
+			ChannelID:         target.Channel.ChannelID,
+			ChannelPoint:      target.Channel.ChannelPoint,
+			PeerAlias:         target.Channel.PeerAlias,
+			TargetOutboundPct: target.Channel.TargetOutboundPct,
+			TargetAmountSat:   targetAmount,
+			ExpectedGainSat:   target.ExpectedGainSat,
+			EstimatedCostSat:  target.EstimatedCostSat,
+			ExpectedROI:       target.ExpectedROI,
+			ExpectedROIValid:  target.ExpectedROIValid,
+			Reason:            reason,
+		})
+	}
+	priorityWorkActiveAtScan := s.hasActivePriorityRebalanceWork(ctx, 0)
+	queuedPriorityCount := 0
+	queuedCooldownProbeCount := 0
 	for i := 0; i < candidatePlan.RecentSkipped; i++ {
 		noteSkip("recently_attempted")
 	}
@@ -2207,6 +2263,18 @@ func (s *RebalanceService) runAutoScan() {
 				continue
 			}
 		}
+		if target.CooldownProbe {
+			switch {
+			case priorityWorkActiveAtScan || queuedPriorityCount > 0:
+				noteSkip(targetCooldownProbeDeferredReason)
+				addSkippedDetail(target, targetCooldownProbeDeferredReason)
+				continue
+			case queuedCooldownProbeCount >= cooldownProbeWorkerSlots || !s.cooldownProbeSlotAvailable():
+				noteSkip(targetCooldownProbeBusyReason)
+				addSkippedDetail(target, targetCooldownProbeBusyReason)
+				continue
+			}
+		}
 		_, err = s.startJob(target.Channel.ChannelID, "auto", reason, amountOverride, false)
 		if err == nil {
 			s.mu.Lock()
@@ -2214,6 +2282,11 @@ func (s *RebalanceService) runAutoScan() {
 			s.mu.Unlock()
 			if budgetEnforced {
 				remaining -= estimatedCost
+			}
+			if target.CooldownProbe {
+				queuedCooldownProbeCount++
+			} else {
+				queuedPriorityCount++
 			}
 			queuedCount++
 		} else {
@@ -2440,32 +2513,51 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 		targetCfg := effectiveConfigForTarget(input.Cfg, setting)
 		targetAmount := snapshot.TargetAmountSat
 		minExecuteSat := effectiveMinExecuteSat(targetCfg)
+		targetAttemptCooldown := input.TargetCooldowns[snapshot.ChannelID]
+		targetNoAttemptCooldown := input.TargetNoAttemptCooldowns[snapshot.ChannelID]
+		targetFailedCooldown := input.TargetFailedCooldowns[snapshot.ChannelID]
+		targetDistinctSourceCooldown := input.TargetDistinctSourceCooldowns[snapshot.ChannelID]
 		if shouldCooldownTargetRecentFailures(
-			input.TargetCooldowns[snapshot.ChannelID],
-			input.TargetNoAttemptCooldowns[snapshot.ChannelID],
-			input.TargetFailedCooldowns[snapshot.ChannelID],
-			input.TargetDistinctSourceCooldowns[snapshot.ChannelID],
+			targetAttemptCooldown,
+			targetNoAttemptCooldown,
+			targetFailedCooldown,
+			targetDistinctSourceCooldown,
 			input.ScanAt,
 		) {
-			if shouldRunTargetCooldownProbe(input.LastAutoByTarget[snapshot.ChannelID], input.ScanAt) {
-				probeAmount := rebalanceCooldownProbeAmount(targetAmount, targetCfg)
-				if probeAmount > 0 && (!targetCfg.MinSplitEnabled || minExecuteSat <= 0 || probeAmount >= minExecuteSat) {
-					probeSnapshot := snapshot
-					probeSnapshot.TargetAmountSat = probeAmount
-					plan.Candidates = append(plan.Candidates, rebalanceTarget{
-						Channel:           probeSnapshot,
-						ExpectedGainSat:   0,
-						EstimatedCostSat:  0,
-						ExpectedROI:       0,
-						ExpectedROIValid:  false,
-						Score:             -1,
-						LastAutoAt:        input.LastAutoByTarget[snapshot.ChannelID],
-						CooldownProbe:     true,
-						ProbeAmountSat:    probeAmount,
-						OriginalAmountSat: targetAmount,
-					})
+			if input.Cfg.CooldownProbeEnabled {
+				probeInterval := targetCooldownProbeIntervalForStats(targetAttemptCooldown, targetNoAttemptCooldown, targetFailedCooldown, targetDistinctSourceCooldown)
+				if shouldRunTargetCooldownProbeAfter(input.LastAutoByTarget[snapshot.ChannelID], input.ScanAt, probeInterval) {
+					probeAmount := rebalanceCooldownProbeAmount(targetAmount, targetCfg)
+					if probeAmount > 0 && (!targetCfg.MinSplitEnabled || minExecuteSat <= 0 || probeAmount >= minExecuteSat) {
+						probeSnapshot := snapshot
+						probeSnapshot.TargetAmountSat = probeAmount
+						plan.Candidates = append(plan.Candidates, rebalanceTarget{
+							Channel:           probeSnapshot,
+							ExpectedGainSat:   0,
+							EstimatedCostSat:  0,
+							ExpectedROI:       0,
+							ExpectedROIValid:  false,
+							Score:             -1,
+							LastAutoAt:        input.LastAutoByTarget[snapshot.ChannelID],
+							CooldownProbe:     true,
+							ProbeAmountSat:    probeAmount,
+							OriginalAmountSat: targetAmount,
+						})
+						plan.TargetCooldownSkipped++
+						noteSkip("target_cooldown")
+						continue
+					}
+				} else if probeInterval > targetCooldownProbeInterval {
 					plan.TargetCooldownSkipped++
-					noteSkip("target_cooldown")
+					noteSkip(targetCooldownProbeBackoffReason)
+					plan.SkippedDetails = append(plan.SkippedDetails, RebalanceSkipDetail{
+						ChannelID:         snapshot.ChannelID,
+						ChannelPoint:      snapshot.ChannelPoint,
+						PeerAlias:         snapshot.PeerAlias,
+						TargetOutboundPct: snapshot.TargetOutboundPct,
+						TargetAmountSat:   snapshot.TargetAmountSat,
+						Reason:            targetCooldownProbeBackoffReason,
+					})
 					continue
 				}
 			}
@@ -2736,6 +2828,7 @@ type rebalanceJobRunState struct {
 	cancel                 context.CancelFunc
 	cancelRegistered       bool
 	workerAcquired         bool
+	cooldownProbeAcquired  bool
 	targetLocked           bool
 	cfg                    RebalanceConfig
 	feeCfg                 RebalanceConfig
@@ -2858,6 +2951,10 @@ func (r *rebalanceJobRunner) finalize(st *rebalanceJobRunState) {
 	if st.workerAcquired {
 		r.service.releaseSem()
 		st.workerAcquired = false
+	}
+	if st.cooldownProbeAcquired {
+		r.service.releaseCooldownProbeSem()
+		st.cooldownProbeAcquired = false
 	}
 	r.finalizeMppShadow(st.shadowRecorded, st.floorBlockedSources)
 	if st.cancelRegistered {
@@ -3083,7 +3180,12 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 	minProbeSat := effectiveMinProbeSat(cfg)
 	useRecentFailureCache := shouldUseRecentFailureCache(jobSource, jobReason)
 	cooldownProbeJob := isTargetCooldownProbeJob(jobSource, jobReason)
+	st.cooldownProbeJob = cooldownProbeJob
 	st.floorBlockedSources = map[uint64]struct{}{}
+	if cooldownProbeJob && !cfg.CooldownProbeEnabled {
+		s.finishJob(jobID, "skipped", cooldownProbeDisabledJobReason)
+		return
+	}
 
 	// CTX SEPARATION (fix 2026-05-09):
 	//
@@ -3099,11 +3201,26 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 	// causa de queue wait. SOMENTE após pegar o slot, ctx de execução é
 	// criado fresco com 600s completos. Goroutines presas em acquireSem
 	// são liberadas no shutdown (s.stop fecha).
-	if !s.acquireSem(context.Background()) {
-		s.finishJob(jobID, "skipped", "no worker available")
-		return
+	if cooldownProbeJob {
+		priorityCtx, priorityCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		priorityBusy := s.hasActivePriorityRebalanceWork(priorityCtx, jobID)
+		priorityCancel()
+		if priorityBusy {
+			s.finishJob(jobID, "skipped", cooldownProbeDeferredJobReason)
+			return
+		}
+		if !s.acquireCooldownProbeSem(context.Background()) {
+			s.finishJob(jobID, "skipped", cooldownProbeBusyJobReason)
+			return
+		}
+		st.cooldownProbeAcquired = true
+	} else {
+		if !s.acquireSem(context.Background()) {
+			s.finishJob(jobID, "skipped", "no worker available")
+			return
+		}
+		st.workerAcquired = true
 	}
-	st.workerAcquired = true
 
 	// Ctx de execução criado SÓ agora — cada job tem seus 600s completos
 	// para rodar prepare + fast-path + legacy loop.
@@ -3317,7 +3434,6 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 	st.minProbeSat = minProbeSat
 	st.startAmountSat = startAmountSat
 	st.useRecentFailureCache = useRecentFailureCache
-	st.cooldownProbeJob = cooldownProbeJob
 	st.pairStats = pairStats
 	st.targetSnapshot = targetSnapshot
 	st.sources = sources
@@ -6021,6 +6137,64 @@ func (s *RebalanceService) acquireSem(ctx context.Context) bool {
 	}
 }
 
+func (s *RebalanceService) cooldownProbeSlotAvailable() bool {
+	s.mu.Lock()
+	sem := s.cooldownProbeSem
+	s.mu.Unlock()
+	if sem == nil {
+		return true
+	}
+	return len(sem) < cap(sem)
+}
+
+func (s *RebalanceService) acquireCooldownProbeSem(ctx context.Context) bool {
+	s.mu.Lock()
+	sem := s.cooldownProbeSem
+	stop := s.stop
+	s.mu.Unlock()
+	if sem == nil {
+		return true
+	}
+	select {
+	case sem <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	case <-stop:
+		return false
+	default:
+		return false
+	}
+}
+
+func (s *RebalanceService) releaseCooldownProbeSem() {
+	s.mu.Lock()
+	sem := s.cooldownProbeSem
+	s.mu.Unlock()
+	if sem == nil {
+		return
+	}
+	select {
+	case <-sem:
+	default:
+	}
+}
+
+func (s *RebalanceService) hasActivePriorityRebalanceWork(ctx context.Context, currentJobID int64) bool {
+	if s.db == nil {
+		return false
+	}
+	var count int
+	err := s.db.QueryRow(ctx, `
+select count(*)
+from rebalance_jobs
+where status in ('queued','running')
+  and id <> $1
+  and not (source='auto' and coalesce(trigger_reason, reason, '')=$2)
+`, currentJobID, targetCooldownProbeReason).Scan(&count)
+	return err == nil && count > 0
+}
+
 // releaseSem releases the slot on the same channel the job acquired (s.sem may
 // be replaced by resetSemaphore between acquire and release). When the last
 // in-flight job releases and a resize was deferred by resetSemaphore, the new
@@ -7213,6 +7387,7 @@ end $$;
     attempt_timeout_sec integer not null default 45,
     rebalance_timeout_sec integer not null default 600,
     manual_restart_watch boolean not null default false,
+    cooldown_probe_enabled boolean not null default false,
     mc_half_life_sec bigint not null default 0,
     payback_mode_flags integer not null default 7,
     unlock_days integer not null default 7,
@@ -7287,6 +7462,8 @@ end $$;
  alter table rebalance_config
     add column if not exists manual_restart_watch boolean not null default false;
   alter table rebalance_config
+    add column if not exists cooldown_probe_enabled boolean not null default false;
+  alter table rebalance_config
     add column if not exists mc_half_life_sec bigint not null default 0;
   alter table rebalance_config
     add column if not exists new_channel_exclusion_seeded boolean not null default false;
@@ -7353,6 +7530,8 @@ end $$;
     alter column autofee_settling_multiplier set default 0.5;
   alter table rebalance_config
     alter column delegated_fast_path_enabled set default true;
+  alter table rebalance_config
+    alter column cooldown_probe_enabled set default false;
 
   alter table if exists rebalance_channel_settings
     add column if not exists manual_restart_enabled boolean not null default false;
@@ -7586,7 +7765,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 	row := s.db.QueryRow(ctx, `
   select auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_unlimited, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
-    fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, mc_half_life_sec, payback_mode_flags,
+    fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled
   from rebalance_config where id=$1`, rebalanceConfigID)
 
@@ -7627,6 +7806,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.AttemptTimeoutSec,
 		&cfg.RebalanceTimeoutSec,
 		&cfg.ManualRestartWatch,
+		&cfg.CooldownProbeEnabled,
 		&cfg.MissionControlHalfLifeSec,
 		&cfg.PaybackModeFlags,
 		&cfg.UnlockDays,
@@ -7663,9 +7843,9 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
   insert into rebalance_config (
     id, auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_unlimited, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
-    fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, mc_half_life_sec, payback_mode_flags,
+    fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,now())
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scan_interval_sec = excluded.scan_interval_sec,
@@ -7702,6 +7882,7 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     attempt_timeout_sec = excluded.attempt_timeout_sec,
     rebalance_timeout_sec = excluded.rebalance_timeout_sec,
     manual_restart_watch = excluded.manual_restart_watch,
+    cooldown_probe_enabled = excluded.cooldown_probe_enabled,
     mc_half_life_sec = excluded.mc_half_life_sec,
     payback_mode_flags = excluded.payback_mode_flags,
     unlock_days = excluded.unlock_days,
@@ -7719,7 +7900,7 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     delegated_fast_path_enabled = excluded.delegated_fast_path_enabled,
     updated_at = now()
   `, rebalanceConfigID, cfg.AutoEnabled, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetUnlimited, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
-		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled,
+		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled,
 	)
 	return err
 }

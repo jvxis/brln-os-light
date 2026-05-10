@@ -48,6 +48,7 @@ type rebalanceConfigPayload struct {
 	AttemptTimeoutSec         *int     `json:"attempt_timeout_sec,omitempty"`
 	RebalanceTimeoutSec       *int     `json:"rebalance_timeout_sec,omitempty"`
 	ManualRestartWatch        *bool    `json:"manual_restart_watch,omitempty"`
+	CooldownProbeEnabled      *bool    `json:"cooldown_probe_enabled,omitempty"`
 	MissionControlHalfLifeSec *int64   `json:"mc_half_life_sec,omitempty"`
 	PaybackModeFlags          *int     `json:"payback_mode_flags,omitempty"`
 	UnlockDays                *int     `json:"unlock_days,omitempty"`
@@ -254,6 +255,9 @@ func applyRebalanceConfigPayload(cfg RebalanceConfig, payload rebalanceConfigPay
 	}
 	if payload.ManualRestartWatch != nil {
 		cfg.ManualRestartWatch = *payload.ManualRestartWatch
+	}
+	if payload.CooldownProbeEnabled != nil {
+		cfg.CooldownProbeEnabled = *payload.CooldownProbeEnabled
 	}
 	if payload.MissionControlHalfLifeSec != nil {
 		cfg.MissionControlHalfLifeSec = *payload.MissionControlHalfLifeSec

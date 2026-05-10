@@ -47,6 +47,7 @@ func TestBuildAndOrderRebalanceCandidatesGolden(t *testing.T) {
 	cfg.MinSplitEnabled = true
 	cfg.MinAmountSat = 50_000
 	cfg.MinExecuteSat = 10_000
+	cfg.CooldownProbeEnabled = true
 
 	channels := []RebalanceChannel{
 		rebalanceGoldenSource(1, 500_000),
@@ -75,7 +76,7 @@ func TestBuildAndOrderRebalanceCandidatesGolden(t *testing.T) {
 		101: now.Add(-1 * time.Hour),
 		102: now.Add(-3 * time.Hour),
 		103: now.Add(-2 * time.Minute),
-		105: now.Add(-20 * time.Minute),
+		105: now.Add(-2 * time.Hour),
 		109: now.Add(-5 * time.Minute),
 	}
 	recentFailures := recentCooldownStat{
@@ -112,11 +113,12 @@ func TestBuildAndOrderRebalanceCandidatesGolden(t *testing.T) {
 	}
 
 	wantReasons := map[string]int{
-		"below_execute_min":  1,
-		"roi_guardrail":      1,
-		"profit_guardrail":   1,
-		"target_cooldown":    2,
-		"recently_attempted": 1,
+		"below_execute_min":             1,
+		"roi_guardrail":                 1,
+		"profit_guardrail":              1,
+		"target_cooldown":               1,
+		"target_cooldown_probe_backoff": 1,
+		"recently_attempted":            1,
 	}
 	if !reflect.DeepEqual(got.SkipReasons, wantReasons) {
 		t.Fatalf("skip reasons:\n got %#v\nwant %#v", got.SkipReasons, wantReasons)
@@ -168,7 +170,7 @@ func TestBuildAndOrderRebalanceCandidatesGolden(t *testing.T) {
 		106: "below_execute_min",
 		107: "roi_guardrail",
 		108: "profit_guardrail",
-		109: "target_cooldown",
+		109: "target_cooldown_probe_backoff",
 	}
 	if !reflect.DeepEqual(gotDetails, wantDetails) {
 		t.Fatalf("skipped details:\n got %#v\nwant %#v", gotDetails, wantDetails)

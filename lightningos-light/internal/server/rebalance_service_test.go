@@ -924,6 +924,12 @@ func TestTargetCooldownProbeHelpers(t *testing.T) {
 	if !shouldRunTargetCooldownProbe(now.Add(-targetCooldownProbeInterval-time.Second), now) {
 		t.Fatalf("expected cooldown probe after interval")
 	}
+	if shouldRunTargetCooldownProbeAfter(now.Add(-targetCooldownProbeBackoffInterval+time.Second), now, targetCooldownProbeBackoffInterval) {
+		t.Fatalf("did not expect cooldown probe before backoff interval")
+	}
+	if !shouldRunTargetCooldownProbeAfter(now.Add(-targetCooldownProbeBackoffInterval-time.Second), now, targetCooldownProbeBackoffInterval) {
+		t.Fatalf("expected cooldown probe after backoff interval")
+	}
 
 	cfg := RebalanceConfig{MinSplitEnabled: true, MinProbeSat: 5_000, MinExecuteSat: 50_000, MinAmountSat: 10_000}
 	if got := rebalanceCooldownProbeAmount(250_000, cfg); got != 50_000 {
@@ -931,6 +937,135 @@ func TestTargetCooldownProbeHelpers(t *testing.T) {
 	}
 	if got := rebalanceCooldownProbeAmount(30_000, cfg); got != 30_000 {
 		t.Fatalf("expected cooldown probe to cap at target amount, got %d", got)
+	}
+}
+
+func TestTargetCooldownProbeIntervalBacksOffStrongFailurePressure(t *testing.T) {
+	if got := targetCooldownProbeIntervalForStats(recentCooldownStat{}, recentCooldownStat{}, recentCooldownStat{}, recentCooldownStat{}); got != targetCooldownProbeInterval {
+		t.Fatalf("expected base probe interval, got %v", got)
+	}
+	failed := recentCooldownStat{
+		Attempts: targetFailedCooldownMinFailures,
+		Failures: targetFailedCooldownMinFailures,
+	}
+	if got := targetCooldownProbeIntervalForStats(recentCooldownStat{}, recentCooldownStat{}, failed, recentCooldownStat{}); got != targetCooldownProbeBackoffInterval {
+		t.Fatalf("expected backed-off probe interval for failed target pressure, got %v", got)
+	}
+	distinct := recentCooldownStat{DistinctSources: targetDistinctSourceMinFailures}
+	if got := targetCooldownProbeIntervalForStats(recentCooldownStat{}, recentCooldownStat{}, recentCooldownStat{}, distinct); got != targetCooldownProbeBackoffInterval {
+		t.Fatalf("expected backed-off probe interval for distinct source pressure, got %v", got)
+	}
+}
+
+func TestCooldownProbeSemaphoreIsSingleSlotAndIndependent(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	svc.stop = make(chan struct{})
+
+	if !svc.cooldownProbeSlotAvailable() {
+		t.Fatalf("expected empty cooldown probe slot to be available")
+	}
+	if !svc.acquireCooldownProbeSem(context.Background()) {
+		t.Fatalf("expected first cooldown probe acquire to succeed")
+	}
+	if svc.cooldownProbeSlotAvailable() {
+		t.Fatalf("did not expect cooldown probe slot to remain available")
+	}
+	if svc.acquireCooldownProbeSem(context.Background()) {
+		t.Fatalf("did not expect second cooldown probe acquire to succeed")
+	}
+
+	svc.releaseCooldownProbeSem()
+	if !svc.acquireCooldownProbeSem(context.Background()) {
+		t.Fatalf("expected cooldown probe acquire after release to succeed")
+	}
+	svc.releaseCooldownProbeSem()
+}
+
+func TestBuildAndOrderRebalanceCandidatesBacksOffCooldownProbe(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	cfg := defaultRebalanceConfig()
+	cfg.MinSplitEnabled = true
+	cfg.MinExecuteSat = 10_000
+	cfg.MinAmountSat = 50_000
+	cfg.CooldownProbeEnabled = true
+
+	input := rebalanceAutoScanCandidateInput{
+		Channels: []RebalanceChannel{{
+			ChannelID:         1,
+			ChannelPoint:      "abc:0",
+			PeerAlias:         "target",
+			TargetAmountSat:   100_000,
+			TargetOutboundPct: 20,
+			EligibleAsTarget:  true,
+		}},
+		Settings: map[uint64]channelSetting{
+			1: {AutoEnabled: true},
+		},
+		Cfg:              cfg,
+		ScanAt:           now,
+		LastAutoByTarget: map[uint64]time.Time{1: now.Add(-30 * time.Minute)},
+		TargetFailedCooldowns: map[uint64]recentCooldownStat{
+			1: {
+				Attempts:      targetFailedCooldownMinFailures,
+				Failures:      targetFailedCooldownMinFailures,
+				LastAttemptAt: now.Add(-5 * time.Minute),
+			},
+		},
+	}
+
+	plan := buildAndOrderRebalanceCandidates(input)
+	if len(plan.Candidates) != 0 {
+		t.Fatalf("expected cooldown probe to stay backed off, got %d candidates", len(plan.Candidates))
+	}
+	if plan.SkipReasons["target_cooldown_probe_backoff"] != 1 {
+		t.Fatalf("expected probe backoff skip reason, got %+v", plan.SkipReasons)
+	}
+
+	input.LastAutoByTarget[1] = now.Add(-targetCooldownProbeBackoffInterval - time.Second)
+	plan = buildAndOrderRebalanceCandidates(input)
+	if len(plan.Candidates) != 1 || !plan.Candidates[0].CooldownProbe {
+		t.Fatalf("expected backed-off probe after interval, got %+v", plan.Candidates)
+	}
+}
+
+func TestBuildAndOrderRebalanceCandidatesSkipsCooldownProbeWhenDisabled(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	cfg := defaultRebalanceConfig()
+	cfg.MinSplitEnabled = true
+	cfg.MinExecuteSat = 10_000
+	cfg.MinAmountSat = 50_000
+	cfg.CooldownProbeEnabled = false
+
+	input := rebalanceAutoScanCandidateInput{
+		Channels: []RebalanceChannel{{
+			ChannelID:         1,
+			ChannelPoint:      "abc:0",
+			PeerAlias:         "target",
+			TargetAmountSat:   100_000,
+			TargetOutboundPct: 20,
+			EligibleAsTarget:  true,
+		}},
+		Settings: map[uint64]channelSetting{
+			1: {AutoEnabled: true},
+		},
+		Cfg:              cfg,
+		ScanAt:           now,
+		LastAutoByTarget: map[uint64]time.Time{1: now.Add(-2 * time.Hour)},
+		TargetFailedCooldowns: map[uint64]recentCooldownStat{
+			1: {
+				Attempts:      targetFailedCooldownMinFailures,
+				Failures:      targetFailedCooldownMinFailures,
+				LastAttemptAt: now.Add(-5 * time.Minute),
+			},
+		},
+	}
+
+	plan := buildAndOrderRebalanceCandidates(input)
+	if len(plan.Candidates) != 0 {
+		t.Fatalf("expected disabled cooldown probe to produce no candidates, got %d", len(plan.Candidates))
+	}
+	if plan.SkipReasons["target_cooldown"] != 1 {
+		t.Fatalf("expected target_cooldown skip when probes are disabled, got %+v", plan.SkipReasons)
 	}
 }
 

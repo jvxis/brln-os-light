@@ -185,12 +185,27 @@ const (
 )
 
 const (
+	rebalanceSchedulerModeRulesAuto       = "rules_auto"
+	rebalanceSchedulerModeSovereignShadow = "sovereign_shadow"
+	rebalanceSchedulerModeSovereignLive   = "sovereign_live"
+
+	rebalanceSovereignScopeAutoOnly             = "auto_only"
+	rebalanceSovereignScopeAutoAndManualRestart = "auto_and_manual_restart"
+
+	rebalanceSovereignReason = "sovereign-autopilot"
+)
+
+const (
 	rebalanceManualReserveModeFixedSat = "fixed_sat"
 	rebalanceManualReserveModePct      = "pct"
 )
 
 type RebalanceConfig struct {
 	AutoEnabled                   bool    `json:"auto_enabled"`
+	SchedulerMode                 string  `json:"scheduler_mode"`
+	SovereignCandidateScope       string  `json:"sovereign_candidate_scope"`
+	SovereignMaxJobsPerCycle      int     `json:"sovereign_max_jobs_per_cycle"`
+	SovereignMinExpectedProfitSat int64   `json:"sovereign_min_expected_profit_sat"`
 	ScanIntervalSec               int     `json:"scan_interval_sec"`
 	DeadbandPct                   float64 `json:"deadband_pct"`
 	SourceMinLocalPct             float64 `json:"source_min_local_pct"`
@@ -260,81 +275,89 @@ type RebalanceConfig struct {
 }
 
 type RebalanceOverview struct {
-	AutoEnabled                   bool                  `json:"auto_enabled"`
-	LastScanAt                    string                `json:"last_scan_at,omitempty"`
-	LastScanStatus                string                `json:"last_scan_status,omitempty"`
-	LastScanDetail                string                `json:"last_scan_detail,omitempty"`
-	LastScanCandidates            int                   `json:"last_scan_candidates"`
-	LastScanRemainingBudgetSat    int64                 `json:"last_scan_remaining_budget_sat"`
-	LastScanReasons               map[string]int        `json:"last_scan_reasons,omitempty"`
-	LastScanTopScoreSat           int64                 `json:"last_scan_top_score_sat"`
-	LastScanProfitSkipped         int                   `json:"last_scan_profit_skipped"`
-	LastScanQueued                int                   `json:"last_scan_queued"`
-	LastScanSkipped               []RebalanceSkipDetail `json:"last_scan_skipped,omitempty"`
-	LastManualRestartAt           string                `json:"last_manual_restart_at,omitempty"`
-	LastManualRestartQueued       int                   `json:"last_manual_restart_queued"`
-	LastManualRestartReasons      map[string]int        `json:"last_manual_restart_reasons,omitempty"`
-	LastMCResetAt                 string                `json:"last_mc_reset_at,omitempty"`
-	LastMCResetReason             string                `json:"last_mc_reset_reason,omitempty"`
-	MCResetCount                  int64                 `json:"mc_reset_count"`
-	MCResetCooldownSec            int64                 `json:"mc_reset_cooldown_sec"`
-	MCResetCooldownRemainingSec   int64                 `json:"mc_reset_cooldown_remaining_sec,omitempty"`
-	DailyBudgetSat                int64                 `json:"daily_budget_sat"`
-	DailyBudgetBaseSat            int64                 `json:"daily_budget_base_sat"`
-	DailyBudgetShortTermSat       int64                 `json:"daily_budget_short_term_sat"`
-	DailySpentSat                 int64                 `json:"daily_spent_sat"`
-	DailySpentAutoSat             int64                 `json:"daily_spent_auto_sat"`
-	DailySpentManualSat           int64                 `json:"daily_spent_manual_sat"`
-	RemainingTotalSat             int64                 `json:"remaining_total_sat"`
-	RemainingForAutoSat           int64                 `json:"remaining_for_auto_sat"`
-	BudgetUnlimited               bool                  `json:"budget_unlimited"`
-	BudgetAutoOnly                bool                  `json:"budget_auto_only"`
-	ManualReserveEnabled          bool                  `json:"manual_reserve_enabled"`
-	ManualReserveMode             string                `json:"manual_reserve_mode,omitempty"`
-	ManualReserveValue            float64               `json:"manual_reserve_value,omitempty"`
-	ManualReserveSat              int64                 `json:"manual_reserve_sat"`
-	ManualReserveRemainingSat     int64                 `json:"manual_reserve_remaining_sat"`
-	LiveCostSat                   int64                 `json:"live_cost_sat"`
-	Effectiveness7d               float64               `json:"effectiveness_7d"`
-	EffectivenessExecution7d      float64               `json:"effectiveness_execution_7d"`
-	JobsWithoutAttempt7d          int64                 `json:"jobs_without_attempt_7d"`
-	JobsWithoutAttemptRate7d      float64               `json:"jobs_without_attempt_rate_7d"`
-	ROI7d                         float64               `json:"roi_7d"`
-	Attempts24h                   int64                 `json:"attempts_24h"`
-	FailedAttempts24h             int64                 `json:"failed_attempts_24h"`
-	SuccessAttempts24h            int64                 `json:"success_attempts_24h"`
-	SuccessAmount24hSat           int64                 `json:"success_amount_24h_sat"`
-	SuccessAvgAmount24hSat        int64                 `json:"success_avg_amount_24h_sat"`
-	AttemptSuccessRate24h         float64               `json:"attempt_success_rate_24h"`
-	AttemptsPerSuccessAttempt24h  float64               `json:"attempts_per_success_attempt_24h"`
-	SuccessSatsPerAttempt24h      float64               `json:"success_sats_per_attempt_24h"`
-	SuccessBelowMinAttempts24h    int64                 `json:"success_below_min_attempts_24h"`
-	SuccessBelowMinAmount24hSat   int64                 `json:"success_below_min_amount_24h_sat"`
-	SuccessBelowMinRate24h        float64               `json:"success_below_min_rate_24h"`
-	FastPathAttempts24h           int64                 `json:"fast_path_attempts_24h"`
-	FastPathSuccesses24h          int64                 `json:"fast_path_successes_24h"`
-	FastPathHitRate24h            float64               `json:"fast_path_hit_rate_24h"`
-	PaybackRevenueSat             int64                 `json:"payback_revenue_sat"`
-	PaybackRevenueRebalancedSat   int64                 `json:"payback_revenue_rebalanced_sat"`
-	PaybackCostSat                int64                 `json:"payback_cost_sat"`
-	PaybackProgress               float64               `json:"payback_progress"`
-	PaybackProgressRebalanced     float64               `json:"payback_progress_rebalanced"`
-	EligibleSources               int                   `json:"eligible_sources"`
-	TargetsNeeding                int                   `json:"targets_needing"`
-	MppShadowJobs24h              int64                 `json:"mpp_shadow_jobs_24h"`
-	MppShadowPlanReady24h         int64                 `json:"mpp_shadow_plan_ready_24h"`
-	MppShadowPlannedSat24h        int64                 `json:"mpp_shadow_planned_sat_24h"`
-	MppShadowActualSentSat24h     int64                 `json:"mpp_shadow_actual_sent_sat_24h"`
-	MppShadowInProgressJobs24h    int64                 `json:"mpp_shadow_in_progress_jobs_24h"`
-	MppShadowSuccessJobs24h       int64                 `json:"mpp_shadow_success_jobs_24h"`
-	MppShadowFailedJobs24h        int64                 `json:"mpp_shadow_failed_jobs_24h"`
-	MppShadowPartialJobs24h       int64                 `json:"mpp_shadow_partial_jobs_24h"`
-	MppShadowFloorBlocked24h      int64                 `json:"mpp_shadow_floor_blocked_sources_24h"`
-	MppShadowAvgPlannedShards24h  float64               `json:"mpp_shadow_avg_planned_shards_24h"`
-	MppShadowAvgActualAttempts24h float64               `json:"mpp_shadow_avg_actual_attempts_24h"`
-	MppStructuralAbortJobs24h     int64                 `json:"mpp_structural_abort_jobs_24h"`
-	TopFailureReasons30m          []RebalanceReasonStat `json:"top_failure_reasons_30m,omitempty"`
-	RouteDeadTargets30m           []RebalanceTargetStat `json:"route_dead_targets_30m,omitempty"`
+	AutoEnabled                   bool                         `json:"auto_enabled"`
+	SchedulerMode                 string                       `json:"scheduler_mode"`
+	SovereignLastDecisionAt       string                       `json:"sovereign_last_decision_at,omitempty"`
+	SovereignLastMode             string                       `json:"sovereign_last_mode,omitempty"`
+	SovereignCandidates           int                          `json:"sovereign_candidates"`
+	SovereignSelected             int                          `json:"sovereign_selected"`
+	SovereignExpectedProfitSat    int64                        `json:"sovereign_expected_profit_sat"`
+	SovereignBudgetRemainingSat   int64                        `json:"sovereign_budget_remaining_sat"`
+	SovereignDecisions            []RebalanceSovereignDecision `json:"sovereign_decisions,omitempty"`
+	LastScanAt                    string                       `json:"last_scan_at,omitempty"`
+	LastScanStatus                string                       `json:"last_scan_status,omitempty"`
+	LastScanDetail                string                       `json:"last_scan_detail,omitempty"`
+	LastScanCandidates            int                          `json:"last_scan_candidates"`
+	LastScanRemainingBudgetSat    int64                        `json:"last_scan_remaining_budget_sat"`
+	LastScanReasons               map[string]int               `json:"last_scan_reasons,omitempty"`
+	LastScanTopScoreSat           int64                        `json:"last_scan_top_score_sat"`
+	LastScanProfitSkipped         int                          `json:"last_scan_profit_skipped"`
+	LastScanQueued                int                          `json:"last_scan_queued"`
+	LastScanSkipped               []RebalanceSkipDetail        `json:"last_scan_skipped,omitempty"`
+	LastManualRestartAt           string                       `json:"last_manual_restart_at,omitempty"`
+	LastManualRestartQueued       int                          `json:"last_manual_restart_queued"`
+	LastManualRestartReasons      map[string]int               `json:"last_manual_restart_reasons,omitempty"`
+	LastMCResetAt                 string                       `json:"last_mc_reset_at,omitempty"`
+	LastMCResetReason             string                       `json:"last_mc_reset_reason,omitempty"`
+	MCResetCount                  int64                        `json:"mc_reset_count"`
+	MCResetCooldownSec            int64                        `json:"mc_reset_cooldown_sec"`
+	MCResetCooldownRemainingSec   int64                        `json:"mc_reset_cooldown_remaining_sec,omitempty"`
+	DailyBudgetSat                int64                        `json:"daily_budget_sat"`
+	DailyBudgetBaseSat            int64                        `json:"daily_budget_base_sat"`
+	DailyBudgetShortTermSat       int64                        `json:"daily_budget_short_term_sat"`
+	DailySpentSat                 int64                        `json:"daily_spent_sat"`
+	DailySpentAutoSat             int64                        `json:"daily_spent_auto_sat"`
+	DailySpentManualSat           int64                        `json:"daily_spent_manual_sat"`
+	RemainingTotalSat             int64                        `json:"remaining_total_sat"`
+	RemainingForAutoSat           int64                        `json:"remaining_for_auto_sat"`
+	BudgetUnlimited               bool                         `json:"budget_unlimited"`
+	BudgetAutoOnly                bool                         `json:"budget_auto_only"`
+	ManualReserveEnabled          bool                         `json:"manual_reserve_enabled"`
+	ManualReserveMode             string                       `json:"manual_reserve_mode,omitempty"`
+	ManualReserveValue            float64                      `json:"manual_reserve_value,omitempty"`
+	ManualReserveSat              int64                        `json:"manual_reserve_sat"`
+	ManualReserveRemainingSat     int64                        `json:"manual_reserve_remaining_sat"`
+	LiveCostSat                   int64                        `json:"live_cost_sat"`
+	Effectiveness7d               float64                      `json:"effectiveness_7d"`
+	EffectivenessExecution7d      float64                      `json:"effectiveness_execution_7d"`
+	JobsWithoutAttempt7d          int64                        `json:"jobs_without_attempt_7d"`
+	JobsWithoutAttemptRate7d      float64                      `json:"jobs_without_attempt_rate_7d"`
+	ROI7d                         float64                      `json:"roi_7d"`
+	Attempts24h                   int64                        `json:"attempts_24h"`
+	FailedAttempts24h             int64                        `json:"failed_attempts_24h"`
+	SuccessAttempts24h            int64                        `json:"success_attempts_24h"`
+	SuccessAmount24hSat           int64                        `json:"success_amount_24h_sat"`
+	SuccessAvgAmount24hSat        int64                        `json:"success_avg_amount_24h_sat"`
+	AttemptSuccessRate24h         float64                      `json:"attempt_success_rate_24h"`
+	AttemptsPerSuccessAttempt24h  float64                      `json:"attempts_per_success_attempt_24h"`
+	SuccessSatsPerAttempt24h      float64                      `json:"success_sats_per_attempt_24h"`
+	SuccessBelowMinAttempts24h    int64                        `json:"success_below_min_attempts_24h"`
+	SuccessBelowMinAmount24hSat   int64                        `json:"success_below_min_amount_24h_sat"`
+	SuccessBelowMinRate24h        float64                      `json:"success_below_min_rate_24h"`
+	FastPathAttempts24h           int64                        `json:"fast_path_attempts_24h"`
+	FastPathSuccesses24h          int64                        `json:"fast_path_successes_24h"`
+	FastPathHitRate24h            float64                      `json:"fast_path_hit_rate_24h"`
+	PaybackRevenueSat             int64                        `json:"payback_revenue_sat"`
+	PaybackRevenueRebalancedSat   int64                        `json:"payback_revenue_rebalanced_sat"`
+	PaybackCostSat                int64                        `json:"payback_cost_sat"`
+	PaybackProgress               float64                      `json:"payback_progress"`
+	PaybackProgressRebalanced     float64                      `json:"payback_progress_rebalanced"`
+	EligibleSources               int                          `json:"eligible_sources"`
+	TargetsNeeding                int                          `json:"targets_needing"`
+	MppShadowJobs24h              int64                        `json:"mpp_shadow_jobs_24h"`
+	MppShadowPlanReady24h         int64                        `json:"mpp_shadow_plan_ready_24h"`
+	MppShadowPlannedSat24h        int64                        `json:"mpp_shadow_planned_sat_24h"`
+	MppShadowActualSentSat24h     int64                        `json:"mpp_shadow_actual_sent_sat_24h"`
+	MppShadowInProgressJobs24h    int64                        `json:"mpp_shadow_in_progress_jobs_24h"`
+	MppShadowSuccessJobs24h       int64                        `json:"mpp_shadow_success_jobs_24h"`
+	MppShadowFailedJobs24h        int64                        `json:"mpp_shadow_failed_jobs_24h"`
+	MppShadowPartialJobs24h       int64                        `json:"mpp_shadow_partial_jobs_24h"`
+	MppShadowFloorBlocked24h      int64                        `json:"mpp_shadow_floor_blocked_sources_24h"`
+	MppShadowAvgPlannedShards24h  float64                      `json:"mpp_shadow_avg_planned_shards_24h"`
+	MppShadowAvgActualAttempts24h float64                      `json:"mpp_shadow_avg_actual_attempts_24h"`
+	MppStructuralAbortJobs24h     int64                        `json:"mpp_structural_abort_jobs_24h"`
+	TopFailureReasons30m          []RebalanceReasonStat        `json:"top_failure_reasons_30m,omitempty"`
+	RouteDeadTargets30m           []RebalanceTargetStat        `json:"route_dead_targets_30m,omitempty"`
 }
 
 type RebalanceMissionControlState struct {
@@ -356,6 +379,21 @@ type RebalanceSkipDetail struct {
 	ExpectedROI       float64 `json:"expected_roi"`
 	ExpectedROIValid  bool    `json:"expected_roi_valid"`
 	Reason            string  `json:"reason"`
+}
+
+type RebalanceSovereignDecision struct {
+	ChannelID         uint64  `json:"channel_id"`
+	ChannelPoint      string  `json:"channel_point"`
+	PeerAlias         string  `json:"peer_alias"`
+	Selected          bool    `json:"selected"`
+	Reason            string  `json:"reason"`
+	Score             int64   `json:"score"`
+	AmountSat         int64   `json:"amount_sat"`
+	ExpectedGainSat   int64   `json:"expected_gain_sat"`
+	EstimatedCostSat  int64   `json:"estimated_cost_sat"`
+	ExpectedProfitSat int64   `json:"expected_profit_sat"`
+	ExpectedROI       float64 `json:"expected_roi"`
+	ExpectedROIValid  bool    `json:"expected_roi_valid"`
 }
 
 type RebalanceReasonStat struct {
@@ -665,43 +703,50 @@ type RebalanceService struct {
 	lnd    *lndclient.Client
 	logger *log.Logger
 
-	mu                         sync.Mutex
-	started                    bool
-	stop                       chan struct{}
-	wake                       chan struct{}
-	subs                       map[chan RebalanceEvent]struct{}
-	cfg                        RebalanceConfig
-	cfgLoaded                  bool
-	mcHalfLifeApplied          int64
-	lastScan                   time.Time
-	lastScanStatus             string
-	lastScanDetail             string
-	lastScanCandidates         int
-	lastScanRemainingBudgetSat int64
-	lastScanReasons            map[string]int
-	lastScanTopScoreSat        int64
-	lastScanProfitSkipped      int
-	lastScanQueued             int
-	lastScanSkipped            []RebalanceSkipDetail
-	lastManualRestartAt        time.Time
-	lastManualRestartQueued    int
-	lastManualRestartReasons   map[string]int
-	criticalMissCount          int
-	sem                        chan struct{}
-	semInflight                int
-	semDesiredCap              int
-	semPendingResize           bool
-	cooldownProbeSem           chan struct{}
-	channelLocks               map[uint64]bool
-	jobCancel                  map[int64]context.CancelFunc
-	manualRestart              map[int64]manualRestartInfo
-	manualRestartCancel        map[uint64]*manualRestartHandle
-	lastAutoByTarget           map[uint64]time.Time
-	lastMCResetAt              time.Time
-	lastMCResetReason          string
-	mcResetCount               int64
-	drainRateCache             map[uint64]int64
-	drainRateCacheAt           time.Time
+	mu                              sync.Mutex
+	started                         bool
+	stop                            chan struct{}
+	wake                            chan struct{}
+	subs                            map[chan RebalanceEvent]struct{}
+	cfg                             RebalanceConfig
+	cfgLoaded                       bool
+	mcHalfLifeApplied               int64
+	lastScan                        time.Time
+	lastScanStatus                  string
+	lastScanDetail                  string
+	lastScanCandidates              int
+	lastScanRemainingBudgetSat      int64
+	lastScanReasons                 map[string]int
+	lastScanTopScoreSat             int64
+	lastScanProfitSkipped           int
+	lastScanQueued                  int
+	lastScanSkipped                 []RebalanceSkipDetail
+	lastSovereignDecisionAt         time.Time
+	lastSovereignMode               string
+	lastSovereignCandidates         int
+	lastSovereignSelected           int
+	lastSovereignExpectedProfitSat  int64
+	lastSovereignBudgetRemainingSat int64
+	lastSovereignDecisions          []RebalanceSovereignDecision
+	lastManualRestartAt             time.Time
+	lastManualRestartQueued         int
+	lastManualRestartReasons        map[string]int
+	criticalMissCount               int
+	sem                             chan struct{}
+	semInflight                     int
+	semDesiredCap                   int
+	semPendingResize                bool
+	cooldownProbeSem                chan struct{}
+	channelLocks                    map[uint64]bool
+	jobCancel                       map[int64]context.CancelFunc
+	manualRestart                   map[int64]manualRestartInfo
+	manualRestartCancel             map[uint64]*manualRestartHandle
+	lastAutoByTarget                map[uint64]time.Time
+	lastMCResetAt                   time.Time
+	lastMCResetReason               string
+	mcResetCount                    int64
+	drainRateCache                  map[uint64]int64
+	drainRateCacheAt                time.Time
 
 	// Cache curto de ListChannels para evitar saturação de gRPC quando
 	// múltiplos jobs (cooldown-probe burst, auto-restart watch, auto-scan)
@@ -731,6 +776,10 @@ func NewRebalanceService(db *pgxpool.Pool, lnd *lndclient.Client, logger *log.Lo
 func defaultRebalanceConfig() RebalanceConfig {
 	return RebalanceConfig{
 		AutoEnabled:                    false,
+		SchedulerMode:                  rebalanceSchedulerModeRulesAuto,
+		SovereignCandidateScope:        rebalanceSovereignScopeAutoAndManualRestart,
+		SovereignMaxJobsPerCycle:       2,
+		SovereignMinExpectedProfitSat:  0,
 		ScanIntervalSec:                900,
 		DeadbandPct:                    5,
 		SourceMinLocalPct:              35,
@@ -1238,6 +1287,21 @@ func manualRestartStartErrorReason(err error) string {
 	}
 }
 
+func autoStartErrorReason(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case err.Error() == "channel busy":
+		return "channel_busy"
+	case err.Error() == "target already within range":
+		return "target_already_balanced"
+	case err.Error() == "target channel not found":
+		return "target_not_found"
+	default:
+		return "start_error"
+	}
+}
+
 func defaultRecentTargetCooldownWindows(now time.Time) recentTargetCooldownWindows {
 	return recentTargetCooldownWindows{
 		RecentSince:         now.Add(-recentCooldownWindow),
@@ -1280,6 +1344,14 @@ func normalizeChannelSetting(setting channelSetting) channelSetting {
 
 func normalizeRebalanceConfig(cfg RebalanceConfig) RebalanceConfig {
 	def := defaultRebalanceConfig()
+	cfg.SchedulerMode = normalizeRebalanceSchedulerMode(cfg.SchedulerMode)
+	cfg.SovereignCandidateScope = normalizeRebalanceSovereignScope(cfg.SovereignCandidateScope)
+	if cfg.SovereignMaxJobsPerCycle <= 0 {
+		cfg.SovereignMaxJobsPerCycle = def.SovereignMaxJobsPerCycle
+	}
+	if cfg.SovereignMinExpectedProfitSat < 0 {
+		cfg.SovereignMinExpectedProfitSat = 0
+	}
 	if cfg.MinAmountSat < 0 {
 		cfg.MinAmountSat = 0
 	}
@@ -1355,6 +1427,31 @@ func normalizeRebalanceConfig(cfg RebalanceConfig) RebalanceConfig {
 		cfg.AutofeeSettlingMultiplier = 1
 	}
 	return cfg
+}
+
+func normalizeRebalanceSchedulerMode(raw string) string {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case rebalanceSchedulerModeSovereignShadow:
+		return rebalanceSchedulerModeSovereignShadow
+	case rebalanceSchedulerModeSovereignLive:
+		return rebalanceSchedulerModeSovereignLive
+	default:
+		return rebalanceSchedulerModeRulesAuto
+	}
+}
+
+func normalizeRebalanceSovereignScope(raw string) string {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case rebalanceSovereignScopeAutoOnly:
+		return rebalanceSovereignScopeAutoOnly
+	default:
+		return rebalanceSovereignScopeAutoAndManualRestart
+	}
+}
+
+func isSovereignSchedulerMode(mode string) bool {
+	mode = normalizeRebalanceSchedulerMode(mode)
+	return mode == rebalanceSchedulerModeSovereignShadow || mode == rebalanceSchedulerModeSovereignLive
 }
 
 func freshPaidLiquidityLockDuration(cfg RebalanceConfig) time.Duration {
@@ -2005,6 +2102,10 @@ func (s *RebalanceService) runManualRestartWatch() {
 	if err != nil || !cfg.ManualRestartWatch {
 		return
 	}
+	if normalizeRebalanceSchedulerMode(cfg.SchedulerMode) == rebalanceSchedulerModeSovereignLive {
+		s.recordManualRestartWatch(time.Now(), 0, map[string]int{"sovereign_live": 1})
+		return
+	}
 	if s.lnd == nil {
 		return
 	}
@@ -2158,6 +2259,35 @@ func (s *RebalanceService) runAutoScan() {
 		setting := settings[ch.ChannelID]
 		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
 		snapshots = append(snapshots, snapshot)
+	}
+	schedulerMode := normalizeRebalanceSchedulerMode(cfg.SchedulerMode)
+	if isSovereignSchedulerMode(schedulerMode) {
+		sovereignPlan := buildAndOrderRebalanceCandidates(rebalanceAutoScanCandidateInput{
+			Channels:                      snapshots,
+			Settings:                      settings,
+			Cfg:                           cfg,
+			ScanAt:                        scanAt,
+			LastAutoByTarget:              lastAutoByTarget,
+			IncludeManualRestartTargets:   cfg.SovereignCandidateScope == rebalanceSovereignScopeAutoAndManualRestart,
+			DisableCooldownProbe:          true,
+			TargetCooldowns:               targetCooldowns.Recent,
+			TargetNoAttemptCooldowns:      targetCooldowns.NoAttempt,
+			TargetFailedCooldowns:         targetCooldowns.Failed,
+			TargetDistinctSourceCooldowns: targetCooldowns.DistinctSource,
+			AutofeeRecentAdjustments:      autofeeAdjustments,
+		})
+		sovereignResult := s.executeSovereignAutopilot(ctx, cfg, settings, sovereignPlan, scanAt, schedulerMode == rebalanceSchedulerModeSovereignLive)
+		s.recordSovereignAutopilot(scanAt, schedulerMode, sovereignResult)
+		if schedulerMode == rebalanceSchedulerModeSovereignLive {
+			scanStatus = sovereignResult.Status
+			scanDetail = sovereignResult.Detail
+			scanCandidates = sovereignResult.Candidates
+			scanRemainingBudget = sovereignResult.BudgetRemainingSat
+			scanReasons = copyReasonCounts(sovereignResult.SkipReasons)
+			topScore = sovereignPlan.TopScore
+			queuedCount = sovereignResult.Selected
+			return
+		}
 	}
 	candidatePlan := buildAndOrderRebalanceCandidates(rebalanceAutoScanCandidateInput{
 		Channels:                      snapshots,
@@ -2416,6 +2546,190 @@ func copyReasonCounts(reasons map[string]int) map[string]int {
 	return out
 }
 
+type sovereignAutopilotResult struct {
+	Candidates         int
+	Selected           int
+	ExpectedProfitSat  int64
+	BudgetRemainingSat int64
+	Decisions          []RebalanceSovereignDecision
+	SkipReasons        map[string]int
+	Status             string
+	Detail             string
+}
+
+func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg RebalanceConfig, settings map[uint64]channelSetting, plan rebalanceAutoScanCandidatePlan, scanAt time.Time, live bool) sovereignAutopilotResult {
+	result := sovereignAutopilotResult{
+		Candidates:  len(plan.Candidates),
+		Decisions:   []RebalanceSovereignDecision{},
+		SkipReasons: copyReasonCounts(plan.SkipReasons),
+		Status:      "sovereign_shadow",
+	}
+	if live {
+		result.Status = "sovereign_live"
+	}
+	noteSkip := func(reason string) {
+		if reason != "" {
+			result.SkipReasons[reason]++
+		}
+	}
+
+	budget, _, _, spentTotal := s.getDailyBudget(ctx)
+	remaining := computeRemainingTotalBudget(budget, spentTotal)
+	budgetEnforced := !cfg.BudgetUnlimited
+	result.BudgetRemainingSat = remaining
+	if budgetEnforced && remaining == 0 {
+		result.Status = "budget_exhausted"
+		noteSkip("budget_too_low")
+	}
+
+	maxJobs := cfg.SovereignMaxJobsPerCycle
+	if maxJobs <= 0 {
+		maxJobs = defaultRebalanceConfig().SovereignMaxJobsPerCycle
+	}
+	if maxJobs > cfg.MaxConcurrent && cfg.MaxConcurrent > 0 {
+		maxJobs = cfg.MaxConcurrent
+	}
+
+	for _, target := range plan.Candidates {
+		if len(result.Decisions) >= scanSkipDetailLimit {
+			break
+		}
+		targetCfg := effectiveConfigForTarget(cfg, settings[target.Channel.ChannelID])
+		targetPolicy := lndclient.ChannelPolicySnapshot{
+			FeeRatePpm:  target.Channel.OutgoingFeePpm,
+			BaseFeeMsat: target.Channel.OutgoingBaseMsat,
+		}
+		targetAmount := target.Channel.TargetAmountSat
+		estimatedCost := target.EstimatedCostSat
+		if estimatedCost <= 0 {
+			estimatedCost = estimateMaxCost(targetAmount, targetPolicy, targetCfg)
+		}
+		expectedProfit := target.ExpectedGainSat - estimatedCost
+		decision := RebalanceSovereignDecision{
+			ChannelID:         target.Channel.ChannelID,
+			ChannelPoint:      target.Channel.ChannelPoint,
+			PeerAlias:         target.Channel.PeerAlias,
+			Score:             target.Score,
+			AmountSat:         targetAmount,
+			ExpectedGainSat:   target.ExpectedGainSat,
+			EstimatedCostSat:  estimatedCost,
+			ExpectedProfitSat: expectedProfit,
+			ExpectedROI:       target.ExpectedROI,
+			ExpectedROIValid:  target.ExpectedROIValid,
+		}
+
+		switch {
+		case target.CooldownProbe:
+			decision.Reason = "cooldown_probe_not_sovereign"
+			noteSkip(decision.Reason)
+		case maxJobs > 0 && result.Selected >= maxJobs:
+			decision.Reason = "cycle_limit"
+			noteSkip(decision.Reason)
+		case expectedProfit < cfg.SovereignMinExpectedProfitSat:
+			decision.Reason = "expected_profit_below_min"
+			noteSkip(decision.Reason)
+		case s.isChannelBusy(target.Channel.ChannelID):
+			decision.Reason = "channel_busy"
+			noteSkip(decision.Reason)
+		default:
+			amountOverride := int64(0)
+			budgetCost := estimateMaxCost(targetAmount, targetPolicy, targetCfg)
+			if budgetCost <= 0 {
+				budgetCost = estimatedCost
+			}
+			if budgetEnforced && budgetCost > remaining {
+				maxFeeMsat, err := calcFeeLimitMsat(targetAmount*1000, targetPolicy, nil, targetCfg)
+				if err != nil || maxFeeMsat <= 0 {
+					decision.Reason = "fee_cap_zero"
+					noteSkip(decision.Reason)
+					result.Decisions = append(result.Decisions, decision)
+					continue
+				}
+				maxFeePpm := feeMsatToPpm(maxFeeMsat, targetAmount)
+				fitAmount := int64(0)
+				if maxFeePpm > 0 {
+					fitAmount = (remaining * 1_000_000) / maxFeePpm
+				}
+				if fitAmount > targetAmount {
+					fitAmount = targetAmount
+				}
+				minExecuteSat := effectiveMinExecuteSat(targetCfg)
+				if fitAmount <= 0 || (minExecuteSat > 0 && fitAmount < minExecuteSat) {
+					decision.Reason = "budget_below_min"
+					noteSkip(decision.Reason)
+					result.Decisions = append(result.Decisions, decision)
+					continue
+				}
+				amountOverride = fitAmount
+				targetAmount = fitAmount
+				budgetCost = estimateMaxCost(targetAmount, targetPolicy, targetCfg)
+				if budgetCost > remaining {
+					decision.Reason = "budget_too_low"
+					noteSkip(decision.Reason)
+					result.Decisions = append(result.Decisions, decision)
+					continue
+				}
+				decision.AmountSat = targetAmount
+				decision.EstimatedCostSat = budgetCost
+				decision.ExpectedGainSat = estimateTargetGainForConfig(targetCfg, target.Channel, targetAmount)
+				decision.ExpectedProfitSat = decision.ExpectedGainSat - decision.EstimatedCostSat
+			}
+			if live {
+				_, err := s.startJob(target.Channel.ChannelID, "auto", rebalanceSovereignReason, amountOverride, false)
+				if err != nil {
+					decision.Reason = autoStartErrorReason(err)
+					noteSkip(decision.Reason)
+					result.Decisions = append(result.Decisions, decision)
+					continue
+				}
+				s.mu.Lock()
+				s.lastAutoByTarget[target.Channel.ChannelID] = scanAt
+				s.mu.Unlock()
+			}
+			decision.Selected = true
+			if live {
+				decision.Reason = "queued"
+			} else {
+				decision.Reason = "would_queue"
+			}
+			result.Selected++
+			result.ExpectedProfitSat += decision.ExpectedProfitSat
+			if budgetEnforced {
+				remaining -= budgetCost
+				if remaining < 0 {
+					remaining = 0
+				}
+				result.BudgetRemainingSat = remaining
+			}
+		}
+		result.Decisions = append(result.Decisions, decision)
+	}
+
+	if result.Candidates == 0 {
+		result.Status = "no_candidates"
+	} else if result.Status != "budget_exhausted" {
+		if live && result.Selected > 0 {
+			result.Status = "queued"
+		} else if live {
+			result.Status = "no_queue"
+		}
+	}
+	result.Detail = buildScanDetail(result.SkipReasons, result.BudgetRemainingSat, result.Candidates)
+	return result
+}
+
+func (s *RebalanceService) recordSovereignAutopilot(scanAt time.Time, mode string, result sovereignAutopilotResult) {
+	s.mu.Lock()
+	s.lastSovereignDecisionAt = scanAt
+	s.lastSovereignMode = normalizeRebalanceSchedulerMode(mode)
+	s.lastSovereignCandidates = result.Candidates
+	s.lastSovereignSelected = result.Selected
+	s.lastSovereignExpectedProfitSat = result.ExpectedProfitSat
+	s.lastSovereignBudgetRemainingSat = result.BudgetRemainingSat
+	s.lastSovereignDecisions = append([]RebalanceSovereignDecision(nil), result.Decisions...)
+	s.mu.Unlock()
+}
+
 func (s *RebalanceService) recordManualRestartWatch(scanAt time.Time, queued int, reasons map[string]int) {
 	s.mu.Lock()
 	s.lastManualRestartAt = scanAt
@@ -2514,6 +2828,8 @@ type rebalanceAutoScanCandidateInput struct {
 	Cfg                           RebalanceConfig
 	ScanAt                        time.Time
 	LastAutoByTarget              map[uint64]time.Time
+	IncludeManualRestartTargets   bool
+	DisableCooldownProbe          bool
 	TargetCooldowns               map[uint64]recentCooldownStat
 	TargetNoAttemptCooldowns      map[uint64]recentCooldownStat
 	TargetFailedCooldowns         map[uint64]recentCooldownStat
@@ -2561,7 +2877,8 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 		}
 
 		setting := input.Settings[snapshot.ChannelID]
-		if !setting.AutoEnabled || !snapshot.EligibleAsTarget {
+		inScope := setting.AutoEnabled || (input.IncludeManualRestartTargets && setting.ManualRestartEnabled)
+		if !inScope || !snapshot.EligibleAsTarget {
 			continue
 		}
 
@@ -2579,7 +2896,7 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 			targetDistinctSourceCooldown,
 			input.ScanAt,
 		) {
-			if input.Cfg.CooldownProbeEnabled {
+			if !input.DisableCooldownProbe && input.Cfg.CooldownProbeEnabled {
 				probeInterval := targetCooldownProbeIntervalForStats(targetAttemptCooldown, targetNoAttemptCooldown, targetFailedCooldown, targetDistinctSourceCooldown)
 				if shouldRunTargetCooldownProbeAfter(input.LastAutoByTarget[snapshot.ChannelID], input.ScanAt, probeInterval) {
 					probeAmount := rebalanceCooldownProbeAmount(targetAmount, targetCfg)
@@ -7428,6 +7745,10 @@ end $$;
   create table if not exists rebalance_config (
     id smallint primary key,
     auto_enabled boolean not null default false,
+    scheduler_mode text not null default 'rules_auto',
+    sovereign_candidate_scope text not null default 'auto_and_manual_restart',
+    sovereign_max_jobs_per_cycle integer not null default 2,
+    sovereign_min_expected_profit_sat bigint not null default 0,
     scan_interval_sec integer not null default 900,
     deadband_pct double precision not null default 5,
     source_min_local_pct double precision not null default 35,
@@ -7481,6 +7802,14 @@ end $$;
     updated_at timestamptz not null default now()
   );
 
+  alter table rebalance_config
+    add column if not exists scheduler_mode text not null default 'rules_auto';
+  alter table rebalance_config
+    add column if not exists sovereign_candidate_scope text not null default 'auto_and_manual_restart';
+  alter table rebalance_config
+    add column if not exists sovereign_max_jobs_per_cycle integer not null default 2;
+  alter table rebalance_config
+    add column if not exists sovereign_min_expected_profit_sat bigint not null default 0;
   alter table rebalance_config
     add column if not exists source_min_local_pct double precision not null default 35;
   alter table rebalance_config
@@ -7568,6 +7897,14 @@ end $$;
   alter table rebalance_config
     add column if not exists delegated_fast_path_strict_payback boolean not null default true;
 
+  alter table rebalance_config
+    alter column scheduler_mode set default 'rules_auto';
+  alter table rebalance_config
+    alter column sovereign_candidate_scope set default 'auto_and_manual_restart';
+  alter table rebalance_config
+    alter column sovereign_max_jobs_per_cycle set default 2;
+  alter table rebalance_config
+    alter column sovereign_min_expected_profit_sat set default 0;
   alter table rebalance_config
     alter column scan_interval_sec set default 900;
   alter table rebalance_config
@@ -7853,7 +8190,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 	}
 
 	row := s.db.QueryRow(ctx, `
-  select auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_unlimited, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
+  select auto_enabled, scheduler_mode, sovereign_candidate_scope, sovereign_max_jobs_per_cycle, sovereign_min_expected_profit_sat, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_unlimited, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags, fresh_paid_liquidity_lock_enabled, fresh_paid_liquidity_lock_hours,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback
@@ -7862,6 +8199,10 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 	cfg := defaultRebalanceConfig()
 	err := row.Scan(
 		&cfg.AutoEnabled,
+		&cfg.SchedulerMode,
+		&cfg.SovereignCandidateScope,
+		&cfg.SovereignMaxJobsPerCycle,
+		&cfg.SovereignMinExpectedProfitSat,
 		&cfg.ScanIntervalSec,
 		&cfg.DeadbandPct,
 		&cfg.SourceMinLocalPct,
@@ -7934,13 +8275,17 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
 	}
 	_, err := s.db.Exec(ctx, `
   insert into rebalance_config (
-    id, auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_unlimited, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
+    id, auto_enabled, scheduler_mode, sovereign_candidate_scope, sovereign_max_jobs_per_cycle, sovereign_min_expected_profit_sat, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_unlimited, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags, fresh_paid_liquidity_lock_enabled, fresh_paid_liquidity_lock_hours,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback, updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,now())
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
+    scheduler_mode = excluded.scheduler_mode,
+    sovereign_candidate_scope = excluded.sovereign_candidate_scope,
+    sovereign_max_jobs_per_cycle = excluded.sovereign_max_jobs_per_cycle,
+    sovereign_min_expected_profit_sat = excluded.sovereign_min_expected_profit_sat,
     scan_interval_sec = excluded.scan_interval_sec,
     deadband_pct = excluded.deadband_pct,
     source_min_local_pct = excluded.source_min_local_pct,
@@ -7995,7 +8340,7 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     delegated_fast_path_enabled = excluded.delegated_fast_path_enabled,
     delegated_fast_path_strict_payback = excluded.delegated_fast_path_strict_payback,
     updated_at = now()
-  `, rebalanceConfigID, cfg.AutoEnabled, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetUnlimited, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
+  `, rebalanceConfigID, cfg.AutoEnabled, cfg.SchedulerMode, cfg.SovereignCandidateScope, cfg.SovereignMaxJobsPerCycle, cfg.SovereignMinExpectedProfitSat, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetUnlimited, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
 		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.FreshPaidLiquidityLockEnabled, cfg.FreshPaidLiquidityLockHours, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback,
 	)
 	return err
@@ -9707,6 +10052,13 @@ where report_date >= current_date - interval '6 days'
 	lastScanProfitSkipped := s.lastScanProfitSkipped
 	lastScanQueued := s.lastScanQueued
 	lastScanSkipped := append([]RebalanceSkipDetail(nil), s.lastScanSkipped...)
+	lastSovereignDecisionAt := s.lastSovereignDecisionAt
+	lastSovereignMode := s.lastSovereignMode
+	lastSovereignCandidates := s.lastSovereignCandidates
+	lastSovereignSelected := s.lastSovereignSelected
+	lastSovereignExpectedProfitSat := s.lastSovereignExpectedProfitSat
+	lastSovereignBudgetRemainingSat := s.lastSovereignBudgetRemainingSat
+	lastSovereignDecisions := append([]RebalanceSovereignDecision(nil), s.lastSovereignDecisions...)
 	lastManualRestartAt := s.lastManualRestartAt
 	lastManualRestartQueued := s.lastManualRestartQueued
 	lastManualRestartReasons := copyReasonCounts(s.lastManualRestartReasons)
@@ -9717,9 +10069,21 @@ where report_date >= current_date - interval '6 days'
 			lastScanSkipped = persisted
 		}
 	}
+	lastSovereignDecisionAtText := ""
+	if !lastSovereignDecisionAt.IsZero() {
+		lastSovereignDecisionAtText = lastSovereignDecisionAt.UTC().Format(time.RFC3339)
+	}
 
 	overview := RebalanceOverview{
 		AutoEnabled:                   cfg.AutoEnabled,
+		SchedulerMode:                 normalizeRebalanceSchedulerMode(cfg.SchedulerMode),
+		SovereignLastDecisionAt:       lastSovereignDecisionAtText,
+		SovereignLastMode:             lastSovereignMode,
+		SovereignCandidates:           lastSovereignCandidates,
+		SovereignSelected:             lastSovereignSelected,
+		SovereignExpectedProfitSat:    lastSovereignExpectedProfitSat,
+		SovereignBudgetRemainingSat:   lastSovereignBudgetRemainingSat,
+		SovereignDecisions:            lastSovereignDecisions,
 		DailyBudgetSat:                budget,
 		DailyBudgetBaseSat:            baseBudget,
 		DailyBudgetShortTermSat:       shortTermBudget,

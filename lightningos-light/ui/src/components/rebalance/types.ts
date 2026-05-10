@@ -1,5 +1,9 @@
 export type RebalanceConfig = {
   auto_enabled: boolean
+  scheduler_mode: string
+  sovereign_candidate_scope: string
+  sovereign_max_jobs_per_cycle: number
+  sovereign_min_expected_profit_sat: number
   scan_interval_sec: number
   deadband_pct: number
   source_min_local_pct: number
@@ -55,8 +59,31 @@ export type RebalanceConfig = {
   delegated_fast_path_strict_payback: boolean
 }
 
+export type RebalanceSovereignDecision = {
+  channel_id: number
+  channel_point: string
+  peer_alias: string
+  selected: boolean
+  reason: string
+  score: number
+  amount_sat: number
+  expected_gain_sat: number
+  estimated_cost_sat: number
+  expected_profit_sat: number
+  expected_roi: number
+  expected_roi_valid: boolean
+}
+
 export type RebalanceOverview = {
   auto_enabled: boolean
+  scheduler_mode?: string
+  sovereign_last_decision_at?: string
+  sovereign_last_mode?: string
+  sovereign_candidates?: number
+  sovereign_selected?: number
+  sovereign_expected_profit_sat?: number
+  sovereign_budget_remaining_sat?: number
+  sovereign_decisions?: RebalanceSovereignDecision[]
   last_scan_at?: string
   last_scan_status?: string
   last_scan_detail?: string

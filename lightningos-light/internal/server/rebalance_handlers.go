@@ -14,6 +14,10 @@ import (
 
 type rebalanceConfigPayload struct {
 	AutoEnabled                    *bool    `json:"auto_enabled,omitempty"`
+	SchedulerMode                  *string  `json:"scheduler_mode,omitempty"`
+	SovereignCandidateScope        *string  `json:"sovereign_candidate_scope,omitempty"`
+	SovereignMaxJobsPerCycle       *int     `json:"sovereign_max_jobs_per_cycle,omitempty"`
+	SovereignMinExpectedProfitSat  *int64   `json:"sovereign_min_expected_profit_sat,omitempty"`
 	ScanIntervalSec                *int     `json:"scan_interval_sec,omitempty"`
 	DeadbandPct                    *float64 `json:"deadband_pct,omitempty"`
 	SourceMinLocalPct              *float64 `json:"source_min_local_pct,omitempty"`
@@ -156,6 +160,18 @@ func (s *Server) handleRebalanceConfigPost(w http.ResponseWriter, r *http.Reques
 func applyRebalanceConfigPayload(cfg RebalanceConfig, payload rebalanceConfigPayload) RebalanceConfig {
 	if payload.AutoEnabled != nil {
 		cfg.AutoEnabled = *payload.AutoEnabled
+	}
+	if payload.SchedulerMode != nil {
+		cfg.SchedulerMode = *payload.SchedulerMode
+	}
+	if payload.SovereignCandidateScope != nil {
+		cfg.SovereignCandidateScope = *payload.SovereignCandidateScope
+	}
+	if payload.SovereignMaxJobsPerCycle != nil {
+		cfg.SovereignMaxJobsPerCycle = *payload.SovereignMaxJobsPerCycle
+	}
+	if payload.SovereignMinExpectedProfitSat != nil {
+		cfg.SovereignMinExpectedProfitSat = *payload.SovereignMinExpectedProfitSat
 	}
 	if payload.ScanIntervalSec != nil {
 		cfg.ScanIntervalSec = *payload.ScanIntervalSec
@@ -320,6 +336,18 @@ func applyRebalanceConfigPayload(cfg RebalanceConfig, payload rebalanceConfigPay
 }
 
 func validateRebalanceConfigPayload(payload rebalanceConfigPayload) error {
+	if payload.SchedulerMode != nil && normalizeRebalanceSchedulerMode(*payload.SchedulerMode) != strings.TrimSpace(strings.ToLower(*payload.SchedulerMode)) {
+		return errors.New("scheduler_mode must be rules_auto, sovereign_shadow, or sovereign_live")
+	}
+	if payload.SovereignCandidateScope != nil && normalizeRebalanceSovereignScope(*payload.SovereignCandidateScope) != strings.TrimSpace(strings.ToLower(*payload.SovereignCandidateScope)) {
+		return errors.New("sovereign_candidate_scope must be auto_only or auto_and_manual_restart")
+	}
+	if err := validateOptionalInt("sovereign_max_jobs_per_cycle", payload.SovereignMaxJobsPerCycle, 1, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalInt64("sovereign_min_expected_profit_sat", payload.SovereignMinExpectedProfitSat, 0, 0); err != nil {
+		return err
+	}
 	if err := validateOptionalInt("scan_interval_sec", payload.ScanIntervalSec, 1, 0); err != nil {
 		return err
 	}

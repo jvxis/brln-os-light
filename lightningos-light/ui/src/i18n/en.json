@@ -2895,7 +2895,27 @@
         "failureTelemetry30m": "Failures 30m",
         "failureTelemetrySummary": "{{reasons}} reasons · {{targets}} targets",
         "failureReasonRow": "{{reason}}: {{value}}",
-        "routeDeadTargetRow": "{{target}}: {{sources}} sources · {{attempts}} attempts"
+        "routeDeadTargetRow": "{{target}}: {{sources}} sources · {{attempts}} attempts",
+        "schedulerMode": "Scheduler: {{mode}}",
+        "autopilotLastDecision": "Last decision: {{value}}",
+        "autopilotNoDecision": "no decision yet",
+        "autopilotSummary": "{{candidates}} candidates · {{selected}} selected · exp. profit {{profit}}",
+        "scanReasonExpectedProfit": "expected profit below minimum",
+        "scanReasonCycleLimit": "cycle limit",
+        "scanReasonCooldownProbeNotSovereign": "cooldown-probe outside autopilot",
+        "scanReasonWouldQueue": "would queue",
+        "scanReasonSovereignLive": "autopilot live active"
+    },
+    "autopilot": {
+      "title": "Autopilot Decisions",
+      "summary": "{{mode}} · {{candidates}} candidates · {{selected}} selected · exp. profit {{profit}}",
+      "selected": "Selected",
+      "skipped": "Skipped",
+      "empty": "No autopilot decision recorded in this session.",
+      "amount": "Amount: {{value}}",
+      "profit": "Exp. profit: {{value}}",
+      "cost": "Exp. cost: {{value}}",
+      "roi": "ROI: {{value}}"
     },
     "settings": {
       "title": "Rebalance Settings",
@@ -2913,6 +2933,22 @@
         "payback": "Protection and payback"
       },
       "autoEnabled": "Enable auto rebalance",
+      "sovereignTitle": "Sovereign Autopilot",
+      "sovereignSubtitle": "Single scheduler that prioritizes rebalances by expected return.",
+      "sovereignConfigSummary": "{{mode}} · {{scope}} · max {{jobs}}",
+      "schedulerMode": "Scheduler mode",
+      "schedulerModeOptions": {
+        "rules_auto": "Rules auto",
+        "sovereign_shadow": "Autopilot shadow",
+        "sovereign_live": "Autopilot live"
+      },
+      "sovereignCandidateScope": "Candidate scope",
+      "sovereignCandidateScopeOptions": {
+        "auto_and_manual_restart": "Auto + manual restart",
+        "auto_only": "Auto channels only"
+      },
+      "sovereignMaxJobsPerCycle": "Max jobs per cycle",
+      "sovereignMinExpectedProfit": "Min expected profit (sats)",
       "scanInterval": "Scan interval (sec)",
       "dailyBudgetPct": "Daily budget (% of revenue)",
       "budgetMode": "Budget mode",
@@ -2998,6 +3034,10 @@
     },
     "settingsHints": {
       "autoEnabled": "Turns on periodic scans and automatic rebalances.",
+      "schedulerMode": "Chooses who queues automatic jobs. In live mode, autopilot replaces rules auto and the automatic manual-restart watcher.",
+      "sovereignCandidateScope": "Controls whether autopilot considers only auto channels or also channels marked for manual restart.",
+      "sovereignMaxJobsPerCycle": "Maximum jobs autopilot may queue in one scan.",
+      "sovereignMinExpectedProfit": "Minimum expected profit for a sovereign candidate. 0 allows any candidate that passes ROI/cost guardrails.",
       "scanInterval": "How often the auto engine scans channels for opportunities.",
         "dailyBudgetPct": "Daily spend cap as a % of routing revenue used by the selected budget mode.",
       "budgetMode": "Choose whether the daily budget follows only the last 24h revenue or blends 7d average with 24h revenue.",

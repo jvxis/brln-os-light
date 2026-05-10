@@ -24,6 +24,18 @@ func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	if cfg.AutoEnabled {
 		t.Fatalf("expected auto mode disabled by default")
 	}
+	if cfg.SchedulerMode != rebalanceSchedulerModeRulesAuto {
+		t.Fatalf("expected scheduler_mode default=%s, got %s", rebalanceSchedulerModeRulesAuto, cfg.SchedulerMode)
+	}
+	if cfg.SovereignCandidateScope != rebalanceSovereignScopeAutoAndManualRestart {
+		t.Fatalf("expected sovereign_candidate_scope default=%s, got %s", rebalanceSovereignScopeAutoAndManualRestart, cfg.SovereignCandidateScope)
+	}
+	if cfg.SovereignMaxJobsPerCycle != 2 {
+		t.Fatalf("expected sovereign_max_jobs_per_cycle default=2, got %d", cfg.SovereignMaxJobsPerCycle)
+	}
+	if cfg.SovereignMinExpectedProfitSat != 0 {
+		t.Fatalf("expected sovereign_min_expected_profit_sat default=0, got %d", cfg.SovereignMinExpectedProfitSat)
+	}
 	if cfg.ScanIntervalSec != 900 {
 		t.Fatalf("expected scan_interval_sec default=900, got %d", cfg.ScanIntervalSec)
 	}
@@ -339,21 +351,25 @@ func TestManualRestartWatchEligibilityHonorsPerChannelCostGateBypass(t *testing.
 
 func TestValidateRebalanceConfigPayloadAllowsValidPartialPayload(t *testing.T) {
 	payload := rebalanceConfigPayload{
-		DeadbandPct:                 ptrFloat64(4),
-		BudgetMode:                  ptrString(rebalanceBudgetModeHybridRevenue),
-		ManualReserveMode:           ptrString(rebalanceManualReserveModePct),
-		ManualReserveValue:          ptrFloat64(25),
-		MppMaxShards:                ptrInt(6),
-		MppParallelism:              ptrInt(3),
-		GainModelVersion:            ptrInt(2),
-		VelocityWeight:              ptrFloat64(0.4),
-		AutofeeSettlingMultiplier:   ptrFloat64(0.5),
-		AutofeeSettlingWindowSec:    ptrInt64(7200),
-		CriticalMinAvailableSats:    ptrInt64(0),
-		SourceMinPaybackProgress:    ptrFloat64(0.95),
-		RebalanceCostFloorPpm:       ptrInt64(250),
-		MissionControlHalfLifeSec:   ptrInt64(3600),
-		FreshPaidLiquidityLockHours: ptrInt(12),
+		SchedulerMode:                 ptrString(rebalanceSchedulerModeSovereignShadow),
+		SovereignCandidateScope:       ptrString(rebalanceSovereignScopeAutoAndManualRestart),
+		SovereignMaxJobsPerCycle:      ptrInt(2),
+		SovereignMinExpectedProfitSat: ptrInt64(0),
+		DeadbandPct:                   ptrFloat64(4),
+		BudgetMode:                    ptrString(rebalanceBudgetModeHybridRevenue),
+		ManualReserveMode:             ptrString(rebalanceManualReserveModePct),
+		ManualReserveValue:            ptrFloat64(25),
+		MppMaxShards:                  ptrInt(6),
+		MppParallelism:                ptrInt(3),
+		GainModelVersion:              ptrInt(2),
+		VelocityWeight:                ptrFloat64(0.4),
+		AutofeeSettlingMultiplier:     ptrFloat64(0.5),
+		AutofeeSettlingWindowSec:      ptrInt64(7200),
+		CriticalMinAvailableSats:      ptrInt64(0),
+		SourceMinPaybackProgress:      ptrFloat64(0.95),
+		RebalanceCostFloorPpm:         ptrInt64(250),
+		MissionControlHalfLifeSec:     ptrInt64(3600),
+		FreshPaidLiquidityLockHours:   ptrInt(12),
 	}
 
 	if err := validateRebalanceConfigPayload(payload); err != nil {
@@ -370,6 +386,10 @@ func TestValidateRebalanceConfigPayloadRejectsInvalidFields(t *testing.T) {
 		{name: "mpp shards above range", payload: rebalanceConfigPayload{MppMaxShards: ptrInt(21)}},
 		{name: "velocity above range", payload: rebalanceConfigPayload{VelocityWeight: ptrFloat64(1.2)}},
 		{name: "fresh lock hours below range", payload: rebalanceConfigPayload{FreshPaidLiquidityLockHours: ptrInt(0)}},
+		{name: "invalid scheduler mode", payload: rebalanceConfigPayload{SchedulerMode: ptrString("legacy")}},
+		{name: "invalid sovereign scope", payload: rebalanceConfigPayload{SovereignCandidateScope: ptrString("manual_only")}},
+		{name: "sovereign jobs below range", payload: rebalanceConfigPayload{SovereignMaxJobsPerCycle: ptrInt(0)}},
+		{name: "sovereign min profit below range", payload: rebalanceConfigPayload{SovereignMinExpectedProfitSat: ptrInt64(-1)}},
 		{name: "invalid budget mode", payload: rebalanceConfigPayload{BudgetMode: ptrString("invalid")}},
 		{name: "manual reserve pct above range", payload: rebalanceConfigPayload{
 			ManualReserveMode:  ptrString(rebalanceManualReserveModePct),
@@ -429,9 +449,17 @@ func TestApplyRebalanceConfigPayloadOnlyTouchesProvidedFields(t *testing.T) {
 	gainModelVersion := 2
 	velocityWeight := 0.35
 	freshPaidLiquidityLockHours := 12
+	schedulerMode := rebalanceSchedulerModeSovereignShadow
+	sovereignScope := rebalanceSovereignScopeAutoOnly
+	sovereignMaxJobs := 3
+	sovereignMinProfit := int64(42)
 	cfg.DelegatedFastPathStrictPayback = true
 
 	got := applyRebalanceConfigPayload(cfg, rebalanceConfigPayload{
+		SchedulerMode:                  &schedulerMode,
+		SovereignCandidateScope:        &sovereignScope,
+		SovereignMaxJobsPerCycle:       &sovereignMaxJobs,
+		SovereignMinExpectedProfitSat:  &sovereignMinProfit,
 		DeadbandPct:                    &deadband,
 		BudgetUnlimited:                ptrBool(true),
 		BudgetAutoOnly:                 &budgetAutoOnly,
@@ -469,6 +497,18 @@ func TestApplyRebalanceConfigPayloadOnlyTouchesProvidedFields(t *testing.T) {
 	}
 	if got.DelegatedFastPathStrictPayback {
 		t.Fatalf("expected explicit false delegated_fast_path_strict_payback to be applied")
+	}
+	if got.SchedulerMode != schedulerMode {
+		t.Fatalf("expected scheduler_mode=%s, got %s", schedulerMode, got.SchedulerMode)
+	}
+	if got.SovereignCandidateScope != sovereignScope {
+		t.Fatalf("expected sovereign_candidate_scope=%s, got %s", sovereignScope, got.SovereignCandidateScope)
+	}
+	if got.SovereignMaxJobsPerCycle != sovereignMaxJobs {
+		t.Fatalf("expected sovereign_max_jobs_per_cycle=%d, got %d", sovereignMaxJobs, got.SovereignMaxJobsPerCycle)
+	}
+	if got.SovereignMinExpectedProfitSat != sovereignMinProfit {
+		t.Fatalf("expected sovereign_min_expected_profit_sat=%d, got %d", sovereignMinProfit, got.SovereignMinExpectedProfitSat)
 	}
 	if got.ScanIntervalSec != cfg.ScanIntervalSec {
 		t.Fatalf("expected omitted scan_interval_sec to remain %d, got %d", cfg.ScanIntervalSec, got.ScanIntervalSec)
@@ -1154,6 +1194,203 @@ func TestBuildAndOrderRebalanceCandidatesSkipsCooldownProbeWhenDisabled(t *testi
 	}
 	if plan.SkipReasons["target_cooldown"] != 1 {
 		t.Fatalf("expected target_cooldown skip when probes are disabled, got %+v", plan.SkipReasons)
+	}
+}
+
+func TestBuildAndOrderRebalanceCandidatesCanIncludeManualRestartTargets(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	cfg := defaultRebalanceConfig()
+	cfg.ROIMin = 0
+	cfg.MinSplitEnabled = true
+	cfg.MinExecuteSat = 10_000
+	cfg.MinAmountSat = 50_000
+
+	channels := []RebalanceChannel{
+		{
+			ChannelID:         1,
+			ChannelPoint:      "auto:0",
+			PeerAlias:         "auto",
+			CapacitySat:       1_000_000,
+			LocalBalanceSat:   100_000,
+			OutgoingFeePpm:    1_000,
+			TargetAmountSat:   100_000,
+			TargetOutboundPct: 20,
+			EligibleAsTarget:  true,
+			Revenue7dSat:      10_000,
+		},
+		{
+			ChannelID:         2,
+			ChannelPoint:      "manual:0",
+			PeerAlias:         "manual",
+			CapacitySat:       1_000_000,
+			LocalBalanceSat:   100_000,
+			OutgoingFeePpm:    1_000,
+			TargetAmountSat:   100_000,
+			TargetOutboundPct: 20,
+			EligibleAsTarget:  true,
+			Revenue7dSat:      10_000,
+		},
+	}
+	settings := map[uint64]channelSetting{
+		1: {AutoEnabled: true},
+		2: {ManualRestartEnabled: true},
+	}
+
+	plan := buildAndOrderRebalanceCandidates(rebalanceAutoScanCandidateInput{
+		Channels: channels,
+		Settings: settings,
+		Cfg:      cfg,
+		ScanAt:   now,
+	})
+	if len(plan.Candidates) != 1 || plan.Candidates[0].Channel.ChannelID != 1 {
+		t.Fatalf("expected only auto-enabled target by default, got %+v", plan.Candidates)
+	}
+
+	plan = buildAndOrderRebalanceCandidates(rebalanceAutoScanCandidateInput{
+		Channels:                    channels,
+		Settings:                    settings,
+		Cfg:                         cfg,
+		ScanAt:                      now,
+		IncludeManualRestartTargets: true,
+	})
+	if len(plan.Candidates) != 2 {
+		t.Fatalf("expected auto and manual-restart targets, got %+v", plan.Candidates)
+	}
+	seen := map[uint64]bool{}
+	for _, candidate := range plan.Candidates {
+		seen[candidate.Channel.ChannelID] = true
+	}
+	if !seen[1] || !seen[2] {
+		t.Fatalf("expected candidates for channels 1 and 2, got %+v", plan.Candidates)
+	}
+}
+
+func TestBuildAndOrderRebalanceCandidatesCanDisableCooldownProbePerPlan(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	cfg := defaultRebalanceConfig()
+	cfg.MinSplitEnabled = true
+	cfg.MinExecuteSat = 10_000
+	cfg.MinAmountSat = 50_000
+	cfg.CooldownProbeEnabled = true
+
+	input := rebalanceAutoScanCandidateInput{
+		Channels: []RebalanceChannel{{
+			ChannelID:         1,
+			ChannelPoint:      "abc:0",
+			PeerAlias:         "target",
+			TargetAmountSat:   100_000,
+			TargetOutboundPct: 20,
+			EligibleAsTarget:  true,
+		}},
+		Settings: map[uint64]channelSetting{
+			1: {AutoEnabled: true},
+		},
+		Cfg:                  cfg,
+		ScanAt:               now,
+		LastAutoByTarget:     map[uint64]time.Time{1: now.Add(-targetCooldownProbeBackoffInterval - time.Second)},
+		DisableCooldownProbe: true,
+		TargetFailedCooldowns: map[uint64]recentCooldownStat{
+			1: {
+				Attempts:      targetFailedCooldownMinFailures,
+				Failures:      targetFailedCooldownMinFailures,
+				LastAttemptAt: now.Add(-5 * time.Minute),
+			},
+		},
+	}
+
+	plan := buildAndOrderRebalanceCandidates(input)
+	if len(plan.Candidates) != 0 {
+		t.Fatalf("expected per-plan cooldown probe disable to produce no candidates, got %+v", plan.Candidates)
+	}
+	if plan.SkipReasons["target_cooldown"] != 1 {
+		t.Fatalf("expected target_cooldown skip when plan disables probes, got %+v", plan.SkipReasons)
+	}
+
+	input.DisableCooldownProbe = false
+	plan = buildAndOrderRebalanceCandidates(input)
+	if len(plan.Candidates) != 1 || !plan.Candidates[0].CooldownProbe {
+		t.Fatalf("expected normal cooldown probe when plan allows probes, got %+v", plan.Candidates)
+	}
+}
+
+func TestExecuteSovereignAutopilotShadowRecordsWouldQueueAndSkips(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = true
+	cfg.SovereignMaxJobsPerCycle = 1
+	cfg.SovereignMinExpectedProfitSat = 50
+
+	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{
+		{
+			Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "low:0", PeerAlias: "low", TargetAmountSat: 100_000},
+			ExpectedGainSat:  120,
+			EstimatedCostSat: 100,
+			Score:            20,
+		},
+		{
+			Channel:          RebalanceChannel{ChannelID: 2, ChannelPoint: "good:0", PeerAlias: "good", TargetAmountSat: 100_000},
+			ExpectedGainSat:  300,
+			EstimatedCostSat: 100,
+			Score:            200,
+		},
+		{
+			Channel:          RebalanceChannel{ChannelID: 3, ChannelPoint: "cap:0", PeerAlias: "cap", TargetAmountSat: 100_000},
+			ExpectedGainSat:  500,
+			EstimatedCostSat: 100,
+			Score:            400,
+		},
+	}}
+
+	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, time.Now(), false)
+	if result.Status != "sovereign_shadow" {
+		t.Fatalf("expected shadow status, got %q", result.Status)
+	}
+	if result.Selected != 1 || result.ExpectedProfitSat != 200 {
+		t.Fatalf("expected one selected decision with 200 sat expected profit, got selected=%d profit=%d", result.Selected, result.ExpectedProfitSat)
+	}
+	if len(result.Decisions) != 3 {
+		t.Fatalf("expected 3 decisions, got %d", len(result.Decisions))
+	}
+	if result.Decisions[0].Reason != "expected_profit_below_min" {
+		t.Fatalf("expected first decision below min profit, got %+v", result.Decisions[0])
+	}
+	if !result.Decisions[1].Selected || result.Decisions[1].Reason != "would_queue" {
+		t.Fatalf("expected second decision to be a shadow queue, got %+v", result.Decisions[1])
+	}
+	if result.Decisions[2].Reason != "cycle_limit" {
+		t.Fatalf("expected third decision to be cycle-limited, got %+v", result.Decisions[2])
+	}
+}
+
+func TestExecuteSovereignAutopilotLiveKeepsBudgetExhaustedStatus(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = false
+	cfg.MinSplitEnabled = true
+	cfg.MinExecuteSat = 10_000
+	cfg.SovereignMaxJobsPerCycle = 2
+
+	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{{
+		Channel: RebalanceChannel{
+			ChannelID:       1,
+			ChannelPoint:    "budget:0",
+			PeerAlias:       "budget",
+			TargetAmountSat: 100_000,
+			OutgoingFeePpm:  1_000,
+		},
+		ExpectedGainSat: 1_000,
+		Score:           1_000,
+	}}}
+
+	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, time.Now(), true)
+	if result.Status != "budget_exhausted" {
+		t.Fatalf("expected budget_exhausted status, got %q", result.Status)
+	}
+	if result.Selected != 0 {
+		t.Fatalf("expected no selected decisions, got %d", result.Selected)
+	}
+	if result.SkipReasons["budget_too_low"] == 0 && result.SkipReasons["budget_below_min"] == 0 {
+		t.Fatalf("expected budget skip reason, got %+v", result.SkipReasons)
 	}
 }
 

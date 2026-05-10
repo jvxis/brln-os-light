@@ -2895,7 +2895,27 @@
       "failureTelemetry30m": "Falhas 30m",
       "failureTelemetrySummary": "{{reasons}} motivos · {{targets}} alvos",
       "failureReasonRow": "{{reason}}: {{value}}",
-      "routeDeadTargetRow": "{{target}}: {{sources}} fontes · {{attempts}} tentativas"
+      "routeDeadTargetRow": "{{target}}: {{sources}} fontes · {{attempts}} tentativas",
+      "schedulerMode": "Scheduler: {{mode}}",
+      "autopilotLastDecision": "Última decisão: {{value}}",
+      "autopilotNoDecision": "sem decisão ainda",
+      "autopilotSummary": "{{candidates}} candidatos · {{selected}} selecionados · lucro esp. {{profit}}",
+      "scanReasonExpectedProfit": "lucro esperado abaixo do mínimo",
+      "scanReasonCycleLimit": "limite do ciclo",
+      "scanReasonCooldownProbeNotSovereign": "cooldown-probe fora do autopilot",
+      "scanReasonWouldQueue": "enfileiraria",
+      "scanReasonSovereignLive": "autopilot live ativo"
+    },
+    "autopilot": {
+      "title": "Decisões do Autopilot",
+      "summary": "{{mode}} · {{candidates}} candidatos · {{selected}} selecionados · lucro esp. {{profit}}",
+      "selected": "Selecionados",
+      "skipped": "Ignorados",
+      "empty": "Nenhuma decisão do autopilot registrada nesta sessão.",
+      "amount": "Valor: {{value}}",
+      "profit": "Lucro esp.: {{value}}",
+      "cost": "Custo esp.: {{value}}",
+      "roi": "ROI: {{value}}"
     },
     "settings": {
       "title": "Configurações de Rebalance",
@@ -2913,6 +2933,22 @@
         "payback": "Proteção e payback"
       },
       "autoEnabled": "Ativar auto rebalance",
+      "sovereignTitle": "Sovereign Autopilot",
+      "sovereignSubtitle": "Scheduler único para priorizar rebalances por retorno esperado.",
+      "sovereignConfigSummary": "{{mode}} · {{scope}} · máx. {{jobs}}",
+      "schedulerMode": "Modo do scheduler",
+      "schedulerModeOptions": {
+        "rules_auto": "Auto por regras",
+        "sovereign_shadow": "Autopilot shadow",
+        "sovereign_live": "Autopilot live"
+      },
+      "sovereignCandidateScope": "Escopo dos candidatos",
+      "sovereignCandidateScopeOptions": {
+        "auto_and_manual_restart": "Auto + manual restart",
+        "auto_only": "Somente canais auto"
+      },
+      "sovereignMaxJobsPerCycle": "Máx. jobs por ciclo",
+      "sovereignMinExpectedProfit": "Lucro esperado mínimo (sats)",
       "scanInterval": "Intervalo de varredura (seg)",
       "dailyBudgetPct": "Orçamento diário (% da receita)",
       "budgetMode": "Modo do orçamento",
@@ -2998,6 +3034,10 @@
     },
     "settingsHints": {
       "autoEnabled": "Ativa varreduras e rebalances automáticos.",
+      "schedulerMode": "Escolhe quem enfileira jobs automáticos. No modo live, o autopilot substitui o auto por regras e o manual restart watch automático.",
+      "sovereignCandidateScope": "Define se o autopilot considera só canais marcados como auto ou também canais marcados para manual restart.",
+      "sovereignMaxJobsPerCycle": "Limite de jobs que o autopilot pode enfileirar em uma varredura.",
+      "sovereignMinExpectedProfit": "Lucro esperado mínimo para um candidato soberano. 0 permite qualquer candidato que passe pelos guardrails de ROI/custo.",
       "scanInterval": "Frequência de varredura do modo automático.",
         "dailyBudgetPct": "Teto diário como % da receita de roteamento usada pelo modo de orçamento selecionado.",
       "budgetMode": "Escolhe se o orçamento diário segue só a receita das últimas 24h ou mistura média de 7d com receita de 24h.",

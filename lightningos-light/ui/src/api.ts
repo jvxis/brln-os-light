@@ -579,6 +579,10 @@ export const updateReportsConfig = (payload: {
 export const getRebalanceConfig = () => request('/api/rebalance/config')
 export const updateRebalanceConfig = (payload: {
   auto_enabled?: boolean
+  scheduler_mode?: string
+  sovereign_candidate_scope?: string
+  sovereign_max_jobs_per_cycle?: number
+  sovereign_min_expected_profit_sat?: number
   scan_interval_sec?: number
   deadband_pct?: number
   source_min_local_pct?: number

@@ -108,6 +108,9 @@ func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	if !cfg.FreshPaidLiquidityLockEnabled {
 		t.Fatalf("expected fresh_paid_liquidity_lock_enabled default=true")
 	}
+	if cfg.FreshPaidLiquidityLockHours != 6 {
+		t.Fatalf("expected fresh_paid_liquidity_lock_hours default=6, got %d", cfg.FreshPaidLiquidityLockHours)
+	}
 	if !cfg.DelegatedFastPathStrictPayback {
 		t.Fatalf("expected delegated_fast_path_strict_payback default=true")
 	}
@@ -336,20 +339,21 @@ func TestManualRestartWatchEligibilityHonorsPerChannelCostGateBypass(t *testing.
 
 func TestValidateRebalanceConfigPayloadAllowsValidPartialPayload(t *testing.T) {
 	payload := rebalanceConfigPayload{
-		DeadbandPct:               ptrFloat64(4),
-		BudgetMode:                ptrString(rebalanceBudgetModeHybridRevenue),
-		ManualReserveMode:         ptrString(rebalanceManualReserveModePct),
-		ManualReserveValue:        ptrFloat64(25),
-		MppMaxShards:              ptrInt(6),
-		MppParallelism:            ptrInt(3),
-		GainModelVersion:          ptrInt(2),
-		VelocityWeight:            ptrFloat64(0.4),
-		AutofeeSettlingMultiplier: ptrFloat64(0.5),
-		AutofeeSettlingWindowSec:  ptrInt64(7200),
-		CriticalMinAvailableSats:  ptrInt64(0),
-		SourceMinPaybackProgress:  ptrFloat64(0.95),
-		RebalanceCostFloorPpm:     ptrInt64(250),
-		MissionControlHalfLifeSec: ptrInt64(3600),
+		DeadbandPct:                 ptrFloat64(4),
+		BudgetMode:                  ptrString(rebalanceBudgetModeHybridRevenue),
+		ManualReserveMode:           ptrString(rebalanceManualReserveModePct),
+		ManualReserveValue:          ptrFloat64(25),
+		MppMaxShards:                ptrInt(6),
+		MppParallelism:              ptrInt(3),
+		GainModelVersion:            ptrInt(2),
+		VelocityWeight:              ptrFloat64(0.4),
+		AutofeeSettlingMultiplier:   ptrFloat64(0.5),
+		AutofeeSettlingWindowSec:    ptrInt64(7200),
+		CriticalMinAvailableSats:    ptrInt64(0),
+		SourceMinPaybackProgress:    ptrFloat64(0.95),
+		RebalanceCostFloorPpm:       ptrInt64(250),
+		MissionControlHalfLifeSec:   ptrInt64(3600),
+		FreshPaidLiquidityLockHours: ptrInt(12),
 	}
 
 	if err := validateRebalanceConfigPayload(payload); err != nil {
@@ -365,6 +369,7 @@ func TestValidateRebalanceConfigPayloadRejectsInvalidFields(t *testing.T) {
 		{name: "deadband below range", payload: rebalanceConfigPayload{DeadbandPct: ptrFloat64(-1)}},
 		{name: "mpp shards above range", payload: rebalanceConfigPayload{MppMaxShards: ptrInt(21)}},
 		{name: "velocity above range", payload: rebalanceConfigPayload{VelocityWeight: ptrFloat64(1.2)}},
+		{name: "fresh lock hours below range", payload: rebalanceConfigPayload{FreshPaidLiquidityLockHours: ptrInt(0)}},
 		{name: "invalid budget mode", payload: rebalanceConfigPayload{BudgetMode: ptrString("invalid")}},
 		{name: "manual reserve pct above range", payload: rebalanceConfigPayload{
 			ManualReserveMode:  ptrString(rebalanceManualReserveModePct),
@@ -423,6 +428,7 @@ func TestApplyRebalanceConfigPayloadOnlyTouchesProvidedFields(t *testing.T) {
 	minExecuteSat := int64(25_000)
 	gainModelVersion := 2
 	velocityWeight := 0.35
+	freshPaidLiquidityLockHours := 12
 	cfg.DelegatedFastPathStrictPayback = true
 
 	got := applyRebalanceConfigPayload(cfg, rebalanceConfigPayload{
@@ -433,6 +439,7 @@ func TestApplyRebalanceConfigPayloadOnlyTouchesProvidedFields(t *testing.T) {
 		GainModelVersion:               &gainModelVersion,
 		VelocityWeight:                 &velocityWeight,
 		FreshPaidLiquidityLockEnabled:  ptrBool(false),
+		FreshPaidLiquidityLockHours:    &freshPaidLiquidityLockHours,
 		DelegatedFastPathStrictPayback: ptrBool(false),
 	})
 
@@ -456,6 +463,9 @@ func TestApplyRebalanceConfigPayloadOnlyTouchesProvidedFields(t *testing.T) {
 	}
 	if got.FreshPaidLiquidityLockEnabled {
 		t.Fatalf("expected explicit false fresh_paid_liquidity_lock_enabled to be applied")
+	}
+	if got.FreshPaidLiquidityLockHours != freshPaidLiquidityLockHours {
+		t.Fatalf("expected fresh_paid_liquidity_lock_hours=%d, got %d", freshPaidLiquidityLockHours, got.FreshPaidLiquidityLockHours)
 	}
 	if got.DelegatedFastPathStrictPayback {
 		t.Fatalf("expected explicit false delegated_fast_path_strict_payback to be applied")

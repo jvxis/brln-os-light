@@ -2906,7 +2906,7 @@
       "groups": {
         "operation": "Operação",
         "budget": "Orçamento e reserva",
-        "targets": "Alvos e limites",
+        "targets": "Alvos, fontes e tamanho",
         "economics": "Economia e score",
         "execution": "Execução e tentativas",
         "payback": "Proteção e payback"
@@ -2949,6 +2949,8 @@
         "splitMinTitle": "Controles de Split do Mínimo",
         "splitMinSubtitle": "Mantém o início legado do amount enquanto define pisos de probe e execução.",
         "splitMinRecommended": "Recomendado para iniciantes: ligado, com pisos pequenos para evitar execuções irrelevantes.",
+        "advancedRoutingTitle": "Avançado e diagnóstico",
+        "advancedRoutingSubtitle": "Controles de baixo nível para cooldown probes e Mission Control.",
         "minSplitEnabled": "Split do mínimo (probe/execução)",
         "minProbeAmount": "Mínimo do probe (sats)",
         "minExecuteAmount": "Mínimo de execução (sats)",
@@ -2990,7 +2992,8 @@
       "missionControlReinforce": "Reforçar Mission Control após sucesso",
       "delegatedFastPath": "Caminho rápido — delegar pathfinding ao LND nativo",
       "delegatedFastPathStrictPayback": "Fast-path respeita payback",
-      "freshPaidLiquidityLock": "Travar liquidez recém-paga"
+      "freshPaidLiquidityLock": "Travar liquidez recém-paga",
+      "freshPaidLiquidityLockHours": "Horas da trava fresh"
     },
     "settingsHints": {
       "autoEnabled": "Ativa varreduras e rebalances automáticos.",
@@ -3048,7 +3051,8 @@
       "missionControlReinforce": "A cada rebalance bem-sucedido, envia entradas positivas para cada par da rota ao Mission Control do LND. Ajuda o LND a aprender caminhos bons mais rápido e recuperar de envenenamento do MC. Desativado por padrão; ative se seu nó tem erros 'no path' crônicos apesar de rotas conhecidas funcionarem.",
       "delegatedFastPath": "Antes de iterar source-por-source, tenta uma única chamada SendPaymentV2 com TODAS as sources elegíveis e MPP ligado, deixando o pathfinder e o Mission Control nativos do LND escolherem rota e fragmentação. Em sucesso, finaliza o job e pula o loop tradicional. Em falha, cai no loop legado normalmente. Recomendado em ambientes onde aparecem muitos 'no path' apesar de existirem sources viáveis.",
       "delegatedFastPathStrictPayback": "Quando ativo, o fast-path só entrega ao LND sources cujo limite livre pós-payback cobre o valor inteiro do rebalance. Ativado por padrão para explorar source floor agressivo sem drenar liquidez protegida.",
-      "freshPaidLiquidityLock": "Quando ativo, liquidez comprada por rebalance fica protegida por 6h ou até ser consumida por forwards. Evita A->B e logo depois B->C usando sats recém-pagos. Ativado por padrão."
+      "freshPaidLiquidityLock": "Quando ativo, liquidez comprada por rebalance fica protegida pela janela configurada ou até ser consumida por forwards. Evita A->B e logo depois B->C usando sats recém-pagos. Ativado por padrão.",
+      "freshPaidLiquidityLockHours": "Duração da trava de liquidez recém-paga. Padrão: 6h."
     },
     "channels": {
       "title": "Workbench de Canais",

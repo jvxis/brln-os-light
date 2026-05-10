@@ -2906,7 +2906,7 @@
       "groups": {
         "operation": "Operation",
         "budget": "Budget and reserve",
-        "targets": "Targets and limits",
+        "targets": "Targets, sources and size",
         "economics": "Economics and score",
         "execution": "Execution and attempts",
         "payback": "Protection and payback"
@@ -2949,6 +2949,8 @@
         "splitMinTitle": "Split Min Controls",
         "splitMinSubtitle": "Keep legacy start amount while configuring probe and execution floors.",
         "splitMinRecommended": "Recommended for new users: on, with small floors to avoid irrelevant executions.",
+        "advancedRoutingTitle": "Advanced and diagnostics",
+        "advancedRoutingSubtitle": "Low-level controls for cooldown probes and Mission Control.",
         "minSplitEnabled": "Split min (probe/execute)",
         "minProbeAmount": "Min probe amount (sats)",
         "minExecuteAmount": "Min execute amount (sats)",
@@ -2990,7 +2992,8 @@
       "missionControlReinforce": "Reinforce Mission Control after success",
       "delegatedFastPath": "Fast-path — delegate pathfinding to native LND",
       "delegatedFastPathStrictPayback": "Fast-path respects payback",
-      "freshPaidLiquidityLock": "Lock fresh paid liquidity"
+      "freshPaidLiquidityLock": "Lock fresh paid liquidity",
+      "freshPaidLiquidityLockHours": "Fresh lock hours"
     },
     "settingsHints": {
       "autoEnabled": "Turns on periodic scans and automatic rebalances.",
@@ -3048,7 +3051,8 @@
       "missionControlReinforce": "After every successful rebalance attempt, push positive history entries for each pair on the route into LND's Mission Control. Helps LND learn good paths faster and recover from MC poisoning. Off by default; enable if your node has chronic 'no path' errors despite known-good routes.",
       "delegatedFastPath": "Before iterating source-by-source, tries a single SendPaymentV2 call with ALL eligible sources and MPP enabled, letting LND's native pathfinder and Mission Control choose paths and shard the payment. On success, finalizes the job and skips the legacy loop. On failure, falls back to the source-by-source loop normally. Recommended in environments where you see 'no path' errors despite viable sources existing.",
       "delegatedFastPathStrictPayback": "When enabled, fast-path only passes sources whose post-payback free limit can cover the full rebalance amount. On by default when using aggressive source floors without draining protected liquidity.",
-      "freshPaidLiquidityLock": "When enabled, liquidity purchased by rebalance stays protected for 6h or until forwards consume it. Avoids A->B and then B->C immediately using freshly paid sats. On by default."
+      "freshPaidLiquidityLock": "When enabled, liquidity purchased by rebalance stays protected for the configured window or until forwards consume it. Avoids A->B and then B->C immediately using freshly paid sats. On by default.",
+      "freshPaidLiquidityLockHours": "Duration of the fresh paid liquidity lock. Default: 6h."
     },
     "channels": {
       "title": "Channel Workbench",

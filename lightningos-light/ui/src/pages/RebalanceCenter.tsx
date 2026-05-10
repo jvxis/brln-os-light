@@ -37,6 +37,7 @@ const REBALANCE_DEFAULT_GAIN_MODEL_VERSION = 1
 const REBALANCE_DEFAULT_VELOCITY_WEIGHT = 0.7
 const REBALANCE_DEFAULT_AUTOFEE_SETTLING_WINDOW_SEC = 7200
 const REBALANCE_DEFAULT_AUTOFEE_SETTLING_MULTIPLIER = 0.5
+const REBALANCE_DEFAULT_FRESH_LOCK_HOURS = 6
 const MSPR_DEFAULT_MAX_SHARDS = 6
 const MSPR_MAX_SHARDS_LIMIT = 20
 const MSPR_DEFAULT_PARALLELISM = 3
@@ -200,6 +201,7 @@ export default function RebalanceCenter() {
       mc_half_life_sec: cfg.mc_half_life_sec,
       payback_mode_flags: cfg.payback_mode_flags,
       fresh_paid_liquidity_lock_enabled: cfg.fresh_paid_liquidity_lock_enabled,
+      fresh_paid_liquidity_lock_hours: cfg.fresh_paid_liquidity_lock_hours,
       unlock_days: cfg.unlock_days,
       critical_release_pct: cfg.critical_release_pct,
       critical_min_sources: cfg.critical_min_sources,
@@ -498,6 +500,7 @@ export default function RebalanceCenter() {
           cooldown_probe_enabled: nextConfig.cooldown_probe_enabled ?? false,
           mc_half_life_sec: nextConfig.mc_half_life_sec || 0,
           fresh_paid_liquidity_lock_enabled: nextConfig.fresh_paid_liquidity_lock_enabled ?? true,
+          fresh_paid_liquidity_lock_hours: nextConfig.fresh_paid_liquidity_lock_hours || REBALANCE_DEFAULT_FRESH_LOCK_HOURS,
           min_split_enabled: nextConfig.min_split_enabled ?? false,
           min_probe_sat: nextConfig.min_probe_sat || 0,
           min_execute_sat: nextConfig.min_execute_sat || 0,
@@ -610,6 +613,7 @@ export default function RebalanceCenter() {
           mc_half_life_sec: config.mc_half_life_sec,
           payback_mode_flags: config.payback_mode_flags,
           fresh_paid_liquidity_lock_enabled: config.fresh_paid_liquidity_lock_enabled,
+          fresh_paid_liquidity_lock_hours: Math.max(1, Number(config.fresh_paid_liquidity_lock_hours) || REBALANCE_DEFAULT_FRESH_LOCK_HOURS),
           unlock_days: config.unlock_days,
           critical_release_pct: config.critical_release_pct,
           critical_min_sources: config.critical_min_sources,
@@ -641,6 +645,7 @@ export default function RebalanceCenter() {
         cooldown_probe_enabled: saved.cooldown_probe_enabled ?? false,
         mc_half_life_sec: saved.mc_half_life_sec || 0,
         fresh_paid_liquidity_lock_enabled: saved.fresh_paid_liquidity_lock_enabled ?? true,
+        fresh_paid_liquidity_lock_hours: saved.fresh_paid_liquidity_lock_hours || REBALANCE_DEFAULT_FRESH_LOCK_HOURS,
         min_split_enabled: saved.min_split_enabled ?? false,
         min_probe_sat: saved.min_probe_sat || 0,
         min_execute_sat: saved.min_execute_sat || 0,
@@ -2037,10 +2042,10 @@ export default function RebalanceCenter() {
                 </div>
               </SettingsSubcard>
 
-              <SettingsSubcard title={t('rebalanceCenter.settings.groups.execution')}>
-                <div className="grid gap-3 md:grid-cols-2">
+              <SettingsSubcard title={t('rebalanceCenter.settings.groups.execution')} className="xl:col-span-2">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <label
-                    className="md:col-span-2 flex items-start gap-2 rounded-lg border border-mint/40 bg-mint/5 px-3 py-2 text-sm text-fog/80"
+                    className="md:col-span-2 xl:col-span-4 flex min-h-[42px] items-start gap-2 rounded-lg border border-mint/40 bg-mint/5 px-3 py-2 text-sm text-fog/80"
                     title={t('rebalanceCenter.settingsHints.delegatedFastPath')}
                   >
                     <input
@@ -2051,42 +2056,93 @@ export default function RebalanceCenter() {
                     />
                     <span>{t('rebalanceCenter.settings.delegatedFastPath')}</span>
                   </label>
-                  <label
-                    className="md:col-span-2 flex items-start gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-fog/80"
-                    title={t('rebalanceCenter.settingsHints.delegatedFastPathStrictPayback')}
-                  >
+                  <div className="space-y-2">
+                    <label className="flex min-h-[42px] items-start gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-fog/80" title={t('rebalanceCenter.settingsHints.mppEnabled')}>
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={config.mpp_enabled}
+                        onChange={(e) => setConfig({ ...config, mpp_enabled: e.target.checked })}
+                      />
+                      <span>{t('rebalanceCenter.settings.mppEnabled')}</span>
+                    </label>
+                    <label className="flex min-h-[42px] items-start gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-fog/80" title={t('rebalanceCenter.settingsHints.mppAutoOnly')}>
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={config.mpp_auto_only}
+                        disabled={!config.mpp_enabled}
+                        onChange={(e) => setConfig({ ...config, mpp_auto_only: e.target.checked })}
+                      />
+                      <span>{t('rebalanceCenter.settings.mppAutoOnly')}</span>
+                    </label>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mppMaxShards')}>
+                      {t('rebalanceCenter.settings.mppMaxShards')}
+                    </label>
                     <input
-                      type="checkbox"
-                      className="mt-1"
-                      checked={config.delegated_fast_path_strict_payback}
-                      onChange={(e) => setConfig({ ...config, delegated_fast_path_strict_payback: e.target.checked })}
+                      className="input-field"
+                      type="number"
+                      min={1}
+                      max={MSPR_MAX_SHARDS_LIMIT}
+                      value={config.mpp_max_shards}
+                      disabled={!config.mpp_enabled}
+                      onChange={(e) => {
+                        const nextMaxShards = Math.max(1, Math.min(MSPR_MAX_SHARDS_LIMIT, Number(e.target.value) || 1))
+                        const nextParallelism = Math.max(1, Math.min(config.mpp_parallelism || 1, nextMaxShards))
+                        setConfig({ ...config, mpp_max_shards: nextMaxShards, mpp_parallelism: nextParallelism })
+                      }}
                     />
-                    <span>{t('rebalanceCenter.settings.delegatedFastPathStrictPayback')}</span>
-                  </label>
-                  <label
-                    className="md:col-span-2 flex items-start gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-fog/80"
-                    title={t('rebalanceCenter.settingsHints.freshPaidLiquidityLock')}
-                  >
+                    <p className="text-[11px] text-fog/50">{t('rebalanceCenter.settings.mppMaxShardsRecommended', { value: MSPR_DEFAULT_MAX_SHARDS })}</p>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mppParallelism')}>
+                      {t('rebalanceCenter.settings.mppParallelism')}
+                    </label>
                     <input
-                      type="checkbox"
-                      className="mt-1"
-                      checked={config.fresh_paid_liquidity_lock_enabled}
-                      onChange={(e) => setConfig({ ...config, fresh_paid_liquidity_lock_enabled: e.target.checked })}
+                      className="input-field"
+                      type="number"
+                      min={1}
+                      max={Math.max(1, Math.min(MSPR_MAX_SHARDS_LIMIT, config.mpp_max_shards || 1))}
+                      value={config.mpp_parallelism}
+                      disabled={!config.mpp_enabled}
+                      onChange={(e) => {
+                        const maxAllowed = Math.max(1, Math.min(MSPR_MAX_SHARDS_LIMIT, config.mpp_max_shards || 1))
+                        const nextParallelism = Math.max(1, Math.min(maxAllowed, Number(e.target.value) || 1))
+                        setConfig({ ...config, mpp_parallelism: nextParallelism })
+                      }}
                     />
-                    <span>{t('rebalanceCenter.settings.freshPaidLiquidityLock')}</span>
-                  </label>
-                  <label
-                    className="md:col-span-2 flex items-start gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-fog/80"
-                    title={t('rebalanceCenter.settingsHints.cooldownProbeEnabled')}
-                  >
+                    <p className="text-[11px] text-fog/50">{t('rebalanceCenter.settings.mppParallelismRecommended', { value: MSPR_DEFAULT_PARALLELISM })}</p>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mppMinShardSat')}>
+                      {t('rebalanceCenter.settings.mppMinShardSat')}
+                    </label>
                     <input
-                      type="checkbox"
-                      className="mt-1"
-                      checked={config.cooldown_probe_enabled}
-                      onChange={(e) => setConfig({ ...config, cooldown_probe_enabled: e.target.checked })}
+                      className="input-field"
+                      type="number"
+                      min={1}
+                      value={config.mpp_min_shard_sat}
+                      disabled={!config.mpp_enabled}
+                      onChange={(e) => setConfig({ ...config, mpp_min_shard_sat: Number(e.target.value) })}
                     />
-                    <span>{t('rebalanceCenter.settings.cooldownProbeEnabled')}</span>
-                  </label>
+                    <p className="text-[11px] text-fog/50">{t('rebalanceCenter.settings.mppMinShardSatRecommended', { value: formatSats(MSPR_DEFAULT_MIN_SHARD_SAT) })}</p>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mppRoundTimeout')}>
+                      {t('rebalanceCenter.settings.mppRoundTimeout')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={5}
+                      value={config.mpp_round_timeout_sec}
+                      disabled={!config.mpp_enabled}
+                      onChange={(e) => setConfig({ ...config, mpp_round_timeout_sec: Number(e.target.value) })}
+                    />
+                    <p className="text-[11px] text-fog/50">{t('rebalanceCenter.settings.mppRoundTimeoutRecommended', { value: MSPR_DEFAULT_ROUND_TIMEOUT_SEC })}</p>
+                  </div>
                   <div className="space-y-2">
                     <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.feeSteps')}>
                       {t('rebalanceCenter.settings.feeSteps')}
@@ -2111,13 +2167,14 @@ export default function RebalanceCenter() {
                       onChange={(e) => setConfig({ ...config, amount_probe_steps: Number(e.target.value) })}
                     />
                   </div>
-                  <label className="flex items-center gap-2 text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.amountProbeAdaptive')}>
+                  <label className="flex min-h-[42px] items-start gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-fog/80" title={t('rebalanceCenter.settingsHints.amountProbeAdaptive')}>
                     <input
                       type="checkbox"
+                      className="mt-1"
                       checked={config.amount_probe_adaptive}
                       onChange={(e) => setConfig({ ...config, amount_probe_adaptive: e.target.checked })}
                     />
-                    {t('rebalanceCenter.settings.amountProbeAdaptive')}
+                    <span>{t('rebalanceCenter.settings.amountProbeAdaptive')}</span>
                   </label>
                   <div className="space-y-2">
                     <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.failTolerancePpm')}>
@@ -2155,31 +2212,49 @@ export default function RebalanceCenter() {
                       onChange={(e) => setConfig({ ...config, rebalance_timeout_sec: Number(e.target.value) })}
                     />
                   </div>
-                  <div className="space-y-2">
-                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mcHalfLife')}>
-                      {t('rebalanceCenter.settings.mcHalfLife')}
-                    </label>
-                    <input
-                      className="input-field"
-                      type="number"
-                      min={0}
-                      value={config.mc_half_life_sec}
-                      onChange={(e) => setConfig({ ...config, mc_half_life_sec: Number(e.target.value) })}
-                    />
-                  </div>
-                  <label className="flex items-center gap-2 text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.missionControlReinforce')}>
-                    <input
-                      type="checkbox"
-                      checked={config.mission_control_reinforce}
-                      onChange={(e) => setConfig({ ...config, mission_control_reinforce: e.target.checked })}
-                    />
-                    {t('rebalanceCenter.settings.missionControlReinforce')}
-                  </label>
                 </div>
               </SettingsSubcard>
 
               <SettingsSubcard title={t('rebalanceCenter.settings.groups.payback')} className="xl:col-span-2">
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <label
+                    className="flex min-h-[42px] items-start gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-fog/80"
+                    title={t('rebalanceCenter.settingsHints.delegatedFastPathStrictPayback')}
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={config.delegated_fast_path_strict_payback}
+                      onChange={(e) => setConfig({ ...config, delegated_fast_path_strict_payback: e.target.checked })}
+                    />
+                    <span>{t('rebalanceCenter.settings.delegatedFastPathStrictPayback')}</span>
+                  </label>
+                  <label
+                    className="flex min-h-[42px] items-start gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-fog/80"
+                    title={t('rebalanceCenter.settingsHints.freshPaidLiquidityLock')}
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={config.fresh_paid_liquidity_lock_enabled}
+                      onChange={(e) => setConfig({ ...config, fresh_paid_liquidity_lock_enabled: e.target.checked })}
+                    />
+                    <span>{t('rebalanceCenter.settings.freshPaidLiquidityLock')}</span>
+                  </label>
+                  <div className="space-y-2">
+                    <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.freshPaidLiquidityLockHours')}>
+                      {t('rebalanceCenter.settings.freshPaidLiquidityLockHours')}
+                    </label>
+                    <input
+                      className="input-field"
+                      type="number"
+                      min={1}
+                      step={1}
+                      disabled={!config.fresh_paid_liquidity_lock_enabled}
+                      value={config.fresh_paid_liquidity_lock_hours}
+                      onChange={(e) => setConfig({ ...config, fresh_paid_liquidity_lock_hours: Number(e.target.value) })}
+                    />
+                  </div>
                   <div className="space-y-2">
                     <p className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.paybackPolicy')}>
                       {t('rebalanceCenter.settings.paybackPolicy')}
@@ -2357,96 +2432,43 @@ export default function RebalanceCenter() {
                 </SettingsSubcard>
 
                 <SettingsSubcard
-                  title={t('rebalanceCenter.settings.mppTitle')}
-                  subtitle={t('rebalanceCenter.settings.mppSubtitle')}
+                  title={t('rebalanceCenter.settings.advancedRoutingTitle')}
+                  subtitle={t('rebalanceCenter.settings.advancedRoutingSubtitle')}
                 >
-                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <label
+                      className="md:col-span-2 flex min-h-[42px] items-start gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-fog/80"
+                      title={t('rebalanceCenter.settingsHints.cooldownProbeEnabled')}
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={config.cooldown_probe_enabled}
+                        onChange={(e) => setConfig({ ...config, cooldown_probe_enabled: e.target.checked })}
+                      />
+                      <span>{t('rebalanceCenter.settings.cooldownProbeEnabled')}</span>
+                    </label>
                     <div className="space-y-2">
-                      <label className="flex items-center gap-2 text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mppEnabled')}>
-                        <input
-                          type="checkbox"
-                          checked={config.mpp_enabled}
-                          onChange={(e) => setConfig({ ...config, mpp_enabled: e.target.checked })}
-                        />
-                        {t('rebalanceCenter.settings.mppEnabled')}
-                      </label>
-                      <label className="flex items-center gap-2 text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mppAutoOnly')}>
-                        <input
-                          type="checkbox"
-                          checked={config.mpp_auto_only}
-                          disabled={!config.mpp_enabled}
-                          onChange={(e) => setConfig({ ...config, mpp_auto_only: e.target.checked })}
-                        />
-                        {t('rebalanceCenter.settings.mppAutoOnly')}
-                      </label>
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mppMaxShards')}>
-                        {t('rebalanceCenter.settings.mppMaxShards')}
+                      <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mcHalfLife')}>
+                        {t('rebalanceCenter.settings.mcHalfLife')}
                       </label>
                       <input
                         className="input-field"
                         type="number"
-                        min={1}
-                        max={MSPR_MAX_SHARDS_LIMIT}
-                        value={config.mpp_max_shards}
-                        disabled={!config.mpp_enabled}
-                        onChange={(e) => {
-                          const nextMaxShards = Math.max(1, Math.min(MSPR_MAX_SHARDS_LIMIT, Number(e.target.value) || 1))
-                          const nextParallelism = Math.max(1, Math.min(config.mpp_parallelism || 1, nextMaxShards))
-                          setConfig({ ...config, mpp_max_shards: nextMaxShards, mpp_parallelism: nextParallelism })
-                        }}
+                        min={0}
+                        value={config.mc_half_life_sec}
+                        onChange={(e) => setConfig({ ...config, mc_half_life_sec: Number(e.target.value) })}
                       />
-                      <p className="text-[11px] text-fog/50">{t('rebalanceCenter.settings.mppMaxShardsRecommended', { value: MSPR_DEFAULT_MAX_SHARDS })}</p>
                     </div>
-                    <div className="space-y-2">
-                      <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mppParallelism')}>
-                        {t('rebalanceCenter.settings.mppParallelism')}
-                      </label>
+                    <label className="flex min-h-[42px] items-start gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-fog/80" title={t('rebalanceCenter.settingsHints.missionControlReinforce')}>
                       <input
-                        className="input-field"
-                        type="number"
-                        min={1}
-                        max={Math.max(1, Math.min(MSPR_MAX_SHARDS_LIMIT, config.mpp_max_shards || 1))}
-                        value={config.mpp_parallelism}
-                        disabled={!config.mpp_enabled}
-                        onChange={(e) => {
-                          const maxAllowed = Math.max(1, Math.min(MSPR_MAX_SHARDS_LIMIT, config.mpp_max_shards || 1))
-                          const nextParallelism = Math.max(1, Math.min(maxAllowed, Number(e.target.value) || 1))
-                          setConfig({ ...config, mpp_parallelism: nextParallelism })
-                        }}
+                        type="checkbox"
+                        className="mt-1"
+                        checked={config.mission_control_reinforce}
+                        onChange={(e) => setConfig({ ...config, mission_control_reinforce: e.target.checked })}
                       />
-                      <p className="text-[11px] text-fog/50">{t('rebalanceCenter.settings.mppParallelismRecommended', { value: MSPR_DEFAULT_PARALLELISM })}</p>
-                      <p className="text-[11px] text-fog/45">{t('rebalanceCenter.settings.mppParallelismBoundedByShards')}</p>
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mppMinShardSat')}>
-                        {t('rebalanceCenter.settings.mppMinShardSat')}
-                      </label>
-                      <input
-                        className="input-field"
-                        type="number"
-                        min={1}
-                        value={config.mpp_min_shard_sat}
-                        disabled={!config.mpp_enabled}
-                        onChange={(e) => setConfig({ ...config, mpp_min_shard_sat: Number(e.target.value) })}
-                      />
-                      <p className="text-[11px] text-fog/50">{t('rebalanceCenter.settings.mppMinShardSatRecommended', { value: formatSats(MSPR_DEFAULT_MIN_SHARD_SAT) })}</p>
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.mppRoundTimeout')}>
-                        {t('rebalanceCenter.settings.mppRoundTimeout')}
-                      </label>
-                      <input
-                        className="input-field"
-                        type="number"
-                        min={5}
-                        value={config.mpp_round_timeout_sec}
-                        disabled={!config.mpp_enabled}
-                        onChange={(e) => setConfig({ ...config, mpp_round_timeout_sec: Number(e.target.value) })}
-                      />
-                      <p className="text-[11px] text-fog/50">{t('rebalanceCenter.settings.mppRoundTimeoutRecommended', { value: MSPR_DEFAULT_ROUND_TIMEOUT_SEC })}</p>
-                    </div>
+                      <span>{t('rebalanceCenter.settings.missionControlReinforce')}</span>
+                    </label>
                   </div>
                 </SettingsSubcard>
               </div>

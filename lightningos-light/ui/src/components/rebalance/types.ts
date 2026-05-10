@@ -38,6 +38,7 @@ export type RebalanceConfig = {
   mc_half_life_sec: number
   payback_mode_flags: number
   fresh_paid_liquidity_lock_enabled: boolean
+  fresh_paid_liquidity_lock_hours: number
   unlock_days: number
   critical_release_pct: number
   critical_min_sources: number

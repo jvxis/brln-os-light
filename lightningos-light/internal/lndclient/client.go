@@ -679,6 +679,43 @@ func (c *Client) CachedPubkey() string {
 	return cached.Pubkey
 }
 
+func (c *Client) SyncedToGraph(ctx context.Context) (bool, error) {
+	if c == nil {
+		return false, errors.New("lnd client unavailable")
+	}
+	now := time.Now()
+	conn, err := c.dial(ctx, true)
+	if err != nil {
+		return false, err
+	}
+	defer conn.Close()
+
+	client := lnrpc.NewLightningClient(conn)
+	info, err := client.GetInfo(ctx, &lnrpc.GetInfoRequest{})
+	if err != nil {
+		return false, err
+	}
+
+	uris := uniqueStrings(info.Uris)
+	c.statusMu.Lock()
+	c.infoCache = infoSnapshot{
+		SyncedToChain: info.SyncedToChain,
+		SyncedToGraph: info.SyncedToGraph,
+		BlockHeight:   int64(info.BlockHeight),
+		Version:       info.Version,
+		Pubkey:        info.IdentityPubkey,
+		URIs:          append([]string(nil), uris...),
+	}
+	if len(uris) > 0 {
+		c.infoCache.URI = uris[0]
+	}
+	c.infoCacheAt = now
+	c.infoCacheValid = true
+	c.statusMu.Unlock()
+
+	return info.SyncedToGraph, nil
+}
+
 func (c *Client) GetBalances(ctx context.Context) (BalanceSummary, error) {
 	conn, err := c.dial(ctx, true)
 	if err != nil {

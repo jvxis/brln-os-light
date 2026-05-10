@@ -22,6 +22,7 @@ const (
 	graphExplorerStreamRetryDelay    = 15 * time.Second
 	graphExplorerRefreshTimeout      = 3 * time.Minute
 	graphExplorerUpdateTimeout       = 45 * time.Second
+	graphExplorerGraphReadyTimeout   = 5 * time.Second
 	graphExplorerStartupRefreshDelay = 5 * time.Minute
 	graphCloseClassifierInterval     = 2 * time.Minute
 	graphCloseClassifierTimeout      = 45 * time.Second
@@ -31,7 +32,10 @@ const (
 	graphExplorerConfigID            = 1
 )
 
-var ErrGraphExplorerDBUnavailable = errors.New("graph explorer db unavailable")
+var (
+	ErrGraphExplorerDBUnavailable  = errors.New("graph explorer db unavailable")
+	ErrGraphExplorerGraphNotSynced = errors.New("lnd graph not synced")
+)
 
 type GraphExplorerStatus struct {
 	Available             bool       `json:"available"`
@@ -311,6 +315,10 @@ func (s *GraphExplorerService) refreshBackground() {
 	ctx, cancel := context.WithTimeout(context.Background(), graphExplorerRefreshTimeout)
 	defer cancel()
 	if err := s.Refresh(ctx); err != nil {
+		if errors.Is(err, ErrGraphExplorerGraphNotSynced) {
+			s.clearError()
+			return
+		}
 		s.recordError(err)
 		if s.logger != nil {
 			s.logger.Printf("graph explorer refresh failed: %v", err)
@@ -329,6 +337,30 @@ func (s *GraphExplorerService) runStreamLoop(stopCh <-chan struct{}) {
 		case <-stopCh:
 			return
 		default:
+		}
+
+		readyCtx, readyCancel := context.WithTimeout(context.Background(), graphExplorerGraphReadyTimeout)
+		readyErr := s.requireNativeGraphReady(readyCtx)
+		readyCancel()
+		if readyErr != nil {
+			if errors.Is(readyErr, ErrGraphExplorerGraphNotSynced) {
+				s.clearError()
+			} else {
+				s.recordError(readyErr)
+				if s.logger != nil {
+					s.logger.Printf("graph explorer graph sync check failed: %v", readyErr)
+				}
+			}
+			if !sleepWithStop(stopCh, graphExplorerStreamRetryDelay) {
+				return
+			}
+			continue
+		}
+		coverageCtx, coverageCancel := context.WithTimeout(context.Background(), graphExplorerGraphReadyTimeout)
+		hasCoverage := s.hasNativeCoverage(coverageCtx)
+		coverageCancel()
+		if !hasCoverage {
+			s.refreshBackground()
 		}
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -385,6 +417,9 @@ func (s *GraphExplorerService) Refresh(ctx context.Context) error {
 	}
 	if s.lnd == nil {
 		return errors.New("lnd unavailable")
+	}
+	if err := s.requireNativeGraphReady(ctx); err != nil {
+		return err
 	}
 
 	refreshStartedAt := time.Now().UTC()
@@ -586,6 +621,39 @@ func (s *GraphExplorerService) hasWarmState(ctx context.Context) bool {
 		return false
 	}
 	return nodeCount > 0
+}
+
+func (s *GraphExplorerService) hasNativeCoverage(ctx context.Context) bool {
+	if s == nil || s.db == nil {
+		return false
+	}
+
+	var ready bool
+	if err := s.db.QueryRow(ctx, `
+select first_native_coverage_at is not null
+from graph_sync_state
+where id = true
+`).Scan(&ready); err != nil {
+		if s.logger != nil {
+			s.logger.Printf("graph explorer native coverage check failed: %v", err)
+		}
+		return false
+	}
+	return ready
+}
+
+func (s *GraphExplorerService) requireNativeGraphReady(ctx context.Context) error {
+	if s == nil || s.lnd == nil {
+		return errors.New("lnd unavailable")
+	}
+	synced, err := s.lnd.SyncedToGraph(ctx)
+	if err != nil {
+		return err
+	}
+	if !synced {
+		return ErrGraphExplorerGraphNotSynced
+	}
+	return nil
 }
 
 func upsertGraphNodesSnapshot(ctx context.Context, tx pgx.Tx, nodes []lndclient.GraphNode, observedAt time.Time) error {

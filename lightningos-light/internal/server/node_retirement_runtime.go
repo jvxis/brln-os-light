@@ -186,13 +186,22 @@ func (s *NodeRetirementService) stepQuiesce(ctx context.Context, session NodeRet
 	}
 
 	errs := make([]string, 0, 4)
+	autofeeAction := "unavailable"
 	if s.autofee != nil {
 		current, err := s.autofee.GetConfig(ctx)
 		if err == nil && current.Enabled {
 			disabled := false
 			if _, err := s.autofee.UpdateConfig(ctx, AutofeeConfigUpdate{Enabled: &disabled}); err != nil {
 				errs = append(errs, "autofee disable failed: "+err.Error())
+				autofeeAction = "disable_failed"
+			} else {
+				autofeeAction = "disabled"
 			}
+		} else if err != nil {
+			errs = append(errs, "autofee config load failed: "+err.Error())
+			autofeeAction = "config_load_failed"
+		} else {
+			autofeeAction = "already_disabled"
 		}
 	}
 	if s.rebalance != nil {
@@ -224,7 +233,7 @@ func (s *NodeRetirementService) stepQuiesce(ctx context.Context, session NodeRet
 	}
 
 	payload := map[string]any{
-		"autofee":                  "best-effort stop",
+		"autofee":                  autofeeAction,
 		"rebalance":                "best-effort stop",
 		"forwarding_disabled":      true,
 		"preapprove_fc_offline":    cfg.PreapproveFCOffline,

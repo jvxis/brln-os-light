@@ -48,6 +48,10 @@ func (s *Server) handleGraphExplorerRecomputePost(w http.ResponseWriter, r *http
 	ctx, cancel := context.WithTimeout(r.Context(), graphExplorerRefreshTimeout)
 	defer cancel()
 	if err := svc.Refresh(ctx); err != nil {
+		if errors.Is(err, ErrGraphExplorerGraphNotSynced) {
+			writeError(w, http.StatusPreconditionFailed, "lnd graph is not synced yet")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to recompute graph explorer state")
 		return
 	}

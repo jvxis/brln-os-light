@@ -4213,6 +4213,10 @@ export default function LightningOps() {
 
   const handleAutofeeSave = async () => {
     if (autofeeBusy) return
+    if (!autofeeConfig) {
+      setAutofeeMessage(t('lightningOps.autofeeConfigUnavailable'))
+      return
+    }
     setAutofeeBusy(true)
     setAutofeeMessage(t('lightningOps.autofeeSaving'))
     try {
@@ -4286,7 +4290,9 @@ export default function LightningOps() {
         payload.amboss_token = autofeeAmbossToken.trim()
       }
       const res = await updateAutofeeConfig(payload)
-      setAutofeeConfig(res as AutofeeConfig)
+      const nextConfig = res as AutofeeConfig
+      setAutofeeConfig(nextConfig)
+      setAutofeeEnabled(Boolean(nextConfig.enabled))
       setAutofeeMessage(t('lightningOps.autofeeSaved'))
       setAutofeeAmbossToken('')
       const status = await getAutofeeStatus()
@@ -5661,7 +5667,7 @@ export default function LightningOps() {
           <>
             <div className="grid gap-4 lg:grid-cols-3">
               <label className="flex items-center gap-2 text-sm text-fog/70">
-                <input type="checkbox" checked={autofeeEnabled} onChange={(e) => setAutofeeEnabled(e.target.checked)} />
+                <input type="checkbox" checked={autofeeEnabled} disabled={!autofeeConfig || autofeeBusy} onChange={(e) => setAutofeeEnabled(e.target.checked)} />
                 {t('lightningOps.autofeeEnabled')}
               </label>
               <label className="text-sm text-fog/70">
@@ -5958,7 +5964,7 @@ export default function LightningOps() {
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
-              <button className="btn-primary" onClick={handleAutofeeSave} disabled={autofeeBusy}>{t('common.save')}</button>
+              <button className="btn-primary" onClick={handleAutofeeSave} disabled={autofeeBusy || !autofeeConfig}>{t('common.save')}</button>
               <button className="btn-secondary" onClick={() => handleAutofeeRefresh(true)} disabled={autofeeBusy}>{t('lightningOps.autofeeDryRefresh')}</button>
               <button className="btn-secondary" onClick={() => handleAutofeeRefresh(false)} disabled={autofeeBusy}>{t('lightningOps.autofeeRefresh')}</button>
               <button className="btn-secondary" onClick={() => handleAutofeeRun(true)} disabled={autofeeBusy}>{t('lightningOps.autofeeDryRun')}</button>

@@ -1952,10 +1952,33 @@ func (n *Notifier) lookupNodeAlias(pubkey string) string {
 		return ""
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	return n.lnd.LookupNodeAlias(ctx, trimmed)
+	if alias := n.lookupGraphNodeAlias(ctx, trimmed); alias != "" {
+		return alias
+	}
+	return shortPubKey(trimmed)
+}
+
+func (n *Notifier) lookupGraphNodeAlias(ctx context.Context, pubkey string) string {
+	if n == nil || n.db == nil {
+		return ""
+	}
+	normalized := graphExplorerNormalizePubkey(pubkey)
+	if normalized == "" {
+		return ""
+	}
+
+	var alias string
+	if err := n.db.QueryRow(ctx, `
+select coalesce(alias, '')
+from graph_nodes
+where pubkey = $1
+`, normalized).Scan(&alias); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(alias)
 }
 
 func (n *Notifier) runForwards() {

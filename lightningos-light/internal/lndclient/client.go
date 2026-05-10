@@ -4845,21 +4845,20 @@ func (c *Client) ListPendingChannels(ctx context.Context) ([]PendingChannelInfo,
 	aliasMap := map[string]string{}
 	if channels, err := client.ListChannels(ctx, &lnrpc.ListChannelsRequest{PeerAliasLookup: true}); err == nil {
 		for _, ch := range channels.Channels {
-			if ch.RemotePubkey != "" && ch.PeerAlias != "" {
-				aliasMap[ch.RemotePubkey] = ch.PeerAlias
+			pubkey := normalizePubkeyCacheKey(ch.RemotePubkey)
+			alias := strings.TrimSpace(ch.PeerAlias)
+			if pubkey != "" && alias != "" {
+				aliasMap[pubkey] = alias
 			}
 		}
 	}
 
 	resolveAlias := func(pubkey string) string {
-		if pubkey == "" {
+		key := normalizePubkeyCacheKey(pubkey)
+		if key == "" {
 			return ""
 		}
-		if alias := aliasMap[pubkey]; alias != "" {
-			return alias
-		}
-		if alias := c.lookupNodeAliasWithClient(ctx, client, pubkey); alias != "" {
-			aliasMap[pubkey] = alias
+		if alias := strings.TrimSpace(aliasMap[key]); alias != "" {
 			return alias
 		}
 		return ""
@@ -5028,20 +5027,12 @@ func (c *Client) ListClosedChannels(ctx context.Context) ([]ClosedChannelInfo, e
 		}
 	}
 
-	aliasMap := map[string]string{}
 	items := make([]ClosedChannelInfo, 0, len(resp.GetChannels()))
 	for _, ch := range resp.GetChannels() {
 		if ch == nil {
 			continue
 		}
 		remotePubkey := strings.TrimSpace(ch.GetRemotePubkey())
-		peerAlias := aliasMap[remotePubkey]
-		if peerAlias == "" && remotePubkey != "" {
-			peerAlias = c.lookupNodeAliasWithClient(ctx, client, remotePubkey)
-			if peerAlias != "" {
-				aliasMap[remotePubkey] = peerAlias
-			}
-		}
 		resolutions := make([]ClosedChannelResolutionInfo, 0, len(ch.GetResolutions()))
 		for _, res := range ch.GetResolutions() {
 			if res == nil {
@@ -5058,7 +5049,7 @@ func (c *Client) ListClosedChannels(ctx context.Context) ([]ClosedChannelInfo, e
 			ClosedAt:             txTimeByID[strings.ToLower(strings.TrimSpace(ch.GetClosingTxHash()))],
 			ClosingTxHash:        strings.ToLower(strings.TrimSpace(ch.GetClosingTxHash())),
 			RemotePubkey:         remotePubkey,
-			PeerAlias:            peerAlias,
+			PeerAlias:            "",
 			CapacitySat:          ch.GetCapacity(),
 			SettledBalanceSat:    ch.GetSettledBalance(),
 			TimeLockedBalanceSat: ch.GetTimeLockedBalance(),

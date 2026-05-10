@@ -168,6 +168,11 @@ const (
 	paybackModePayback  = 1 << 0
 	paybackModeTime     = 1 << 1
 	paybackModeCritical = 1 << 2
+
+	// Fresh paid liquidity is kept out of source capacity briefly even when the
+	// channel's aggregate payback is already healthy. This avoids immediately
+	// recycling freshly purchased liquidity into another rebalance.
+	freshPaidLiquidityLockDuration = 6 * time.Hour
 )
 
 var errManualRestartCooldown = errors.New("manual restart cooldown active")
@@ -185,54 +190,55 @@ const (
 )
 
 type RebalanceConfig struct {
-	AutoEnabled               bool    `json:"auto_enabled"`
-	ScanIntervalSec           int     `json:"scan_interval_sec"`
-	DeadbandPct               float64 `json:"deadband_pct"`
-	SourceMinLocalPct         float64 `json:"source_min_local_pct"`
-	EconRatio                 float64 `json:"econ_ratio"`
-	EconRatioMaxPpm           int64   `json:"econ_ratio_max_ppm"`
-	FeeLimitPpm               int64   `json:"fee_limit_ppm"`
-	LostProfit                bool    `json:"lost_profit"`
-	FailTolerancePpm          int64   `json:"fail_tolerance_ppm"`
-	ROIMin                    float64 `json:"roi_min"`
-	DailyBudgetPct            float64 `json:"daily_budget_pct"`
-	BudgetMode                string  `json:"budget_mode"`
-	BudgetUnlimited           bool    `json:"budget_unlimited"`
-	BudgetAutoOnly            bool    `json:"budget_auto_only"`
-	ManualReserveEnabled      bool    `json:"manual_reserve_enabled"`
-	ManualReserveMode         string  `json:"manual_reserve_mode"`
-	ManualReserveValue        float64 `json:"manual_reserve_value"`
-	MaxConcurrent             int     `json:"max_concurrent"`
-	MinAmountSat              int64   `json:"min_amount_sat"`
-	MaxAmountSat              int64   `json:"max_amount_sat"`
-	MinSplitEnabled           bool    `json:"min_split_enabled"`
-	MinProbeSat               int64   `json:"min_probe_sat"`
-	MinExecuteSat             int64   `json:"min_execute_sat"`
-	MppEnabled                bool    `json:"mpp_enabled"`
-	MppMaxShards              int     `json:"mpp_max_shards"`
-	MppParallelism            int     `json:"mpp_parallelism"`
-	MppMinShardSat            int64   `json:"mpp_min_shard_sat"`
-	MppRoundTimeoutSec        int     `json:"mpp_round_timeout_sec"`
-	MppAutoOnly               bool    `json:"mpp_auto_only"`
-	FeeLadderSteps            int     `json:"fee_ladder_steps"`
-	AmountProbeSteps          int     `json:"amount_probe_steps"`
-	AmountProbeAdaptive       bool    `json:"amount_probe_adaptive"`
-	AttemptTimeoutSec         int     `json:"attempt_timeout_sec"`
-	RebalanceTimeoutSec       int     `json:"rebalance_timeout_sec"`
-	ManualRestartWatch        bool    `json:"manual_restart_watch"`
-	CooldownProbeEnabled      bool    `json:"cooldown_probe_enabled"`
-	MissionControlHalfLifeSec int64   `json:"mc_half_life_sec"`
-	PaybackModeFlags          int     `json:"payback_mode_flags"`
-	UnlockDays                int     `json:"unlock_days"`
-	CriticalReleasePct        float64 `json:"critical_release_pct"`
-	CriticalMinSources        int     `json:"critical_min_sources"`
-	CriticalMinAvailableSats  int64   `json:"critical_min_available_sats"`
-	CriticalCycles            int     `json:"critical_cycles"`
-	RebalanceCostFloorPpm     int64   `json:"rebalance_cost_floor_ppm"`
-	SourceMinPaybackProgress  float64 `json:"source_min_payback_progress"`
-	MissionControlReinforce   bool    `json:"mission_control_reinforce"`
-	GainModelVersion          int     `json:"gain_model_version"`
-	VelocityWeight            float64 `json:"velocity_weight"`
+	AutoEnabled                   bool    `json:"auto_enabled"`
+	ScanIntervalSec               int     `json:"scan_interval_sec"`
+	DeadbandPct                   float64 `json:"deadband_pct"`
+	SourceMinLocalPct             float64 `json:"source_min_local_pct"`
+	EconRatio                     float64 `json:"econ_ratio"`
+	EconRatioMaxPpm               int64   `json:"econ_ratio_max_ppm"`
+	FeeLimitPpm                   int64   `json:"fee_limit_ppm"`
+	LostProfit                    bool    `json:"lost_profit"`
+	FailTolerancePpm              int64   `json:"fail_tolerance_ppm"`
+	ROIMin                        float64 `json:"roi_min"`
+	DailyBudgetPct                float64 `json:"daily_budget_pct"`
+	BudgetMode                    string  `json:"budget_mode"`
+	BudgetUnlimited               bool    `json:"budget_unlimited"`
+	BudgetAutoOnly                bool    `json:"budget_auto_only"`
+	ManualReserveEnabled          bool    `json:"manual_reserve_enabled"`
+	ManualReserveMode             string  `json:"manual_reserve_mode"`
+	ManualReserveValue            float64 `json:"manual_reserve_value"`
+	MaxConcurrent                 int     `json:"max_concurrent"`
+	MinAmountSat                  int64   `json:"min_amount_sat"`
+	MaxAmountSat                  int64   `json:"max_amount_sat"`
+	MinSplitEnabled               bool    `json:"min_split_enabled"`
+	MinProbeSat                   int64   `json:"min_probe_sat"`
+	MinExecuteSat                 int64   `json:"min_execute_sat"`
+	MppEnabled                    bool    `json:"mpp_enabled"`
+	MppMaxShards                  int     `json:"mpp_max_shards"`
+	MppParallelism                int     `json:"mpp_parallelism"`
+	MppMinShardSat                int64   `json:"mpp_min_shard_sat"`
+	MppRoundTimeoutSec            int     `json:"mpp_round_timeout_sec"`
+	MppAutoOnly                   bool    `json:"mpp_auto_only"`
+	FeeLadderSteps                int     `json:"fee_ladder_steps"`
+	AmountProbeSteps              int     `json:"amount_probe_steps"`
+	AmountProbeAdaptive           bool    `json:"amount_probe_adaptive"`
+	AttemptTimeoutSec             int     `json:"attempt_timeout_sec"`
+	RebalanceTimeoutSec           int     `json:"rebalance_timeout_sec"`
+	ManualRestartWatch            bool    `json:"manual_restart_watch"`
+	CooldownProbeEnabled          bool    `json:"cooldown_probe_enabled"`
+	MissionControlHalfLifeSec     int64   `json:"mc_half_life_sec"`
+	PaybackModeFlags              int     `json:"payback_mode_flags"`
+	FreshPaidLiquidityLockEnabled bool    `json:"fresh_paid_liquidity_lock_enabled"`
+	UnlockDays                    int     `json:"unlock_days"`
+	CriticalReleasePct            float64 `json:"critical_release_pct"`
+	CriticalMinSources            int     `json:"critical_min_sources"`
+	CriticalMinAvailableSats      int64   `json:"critical_min_available_sats"`
+	CriticalCycles                int     `json:"critical_cycles"`
+	RebalanceCostFloorPpm         int64   `json:"rebalance_cost_floor_ppm"`
+	SourceMinPaybackProgress      float64 `json:"source_min_payback_progress"`
+	MissionControlReinforce       bool    `json:"mission_control_reinforce"`
+	GainModelVersion              int     `json:"gain_model_version"`
+	VelocityWeight                float64 `json:"velocity_weight"`
 	// Wave 6.1b: when AutoFee adjusted a target's outgoing fee within this
 	// window, dampen its rebalance score by AutofeeSettlingMultiplier (a value
 	// in (0,1]). 0 disables the dampening.
@@ -481,13 +487,24 @@ type channelSetting struct {
 }
 
 type channelLedger struct {
-	ChannelID        uint64
-	PaidLiquiditySat int64
-	PaidCostSat      int64
-	PaidRevenueSat   int64
-	LastRebalanceAt  time.Time
-	LastForwardAt    time.Time
-	LastUnlockAt     time.Time
+	ChannelID             uint64
+	PaidLiquiditySat      int64
+	FreshPaidLiquiditySat int64
+	PaidCostSat           int64
+	PaidRevenueSat        int64
+	LastRebalanceAt       time.Time
+	LastForwardAt         time.Time
+	LastUnlockAt          time.Time
+}
+
+type freshPaidLiquidityLot struct {
+	AmountSat  int64
+	OccurredAt time.Time
+}
+
+type freshPaidLiquidityTracker struct {
+	ttl  time.Duration
+	lots map[uint64][]freshPaidLiquidityLot
 }
 
 type pairStat struct {
@@ -750,6 +767,7 @@ func defaultRebalanceConfig() RebalanceConfig {
 		CooldownProbeEnabled:           false,
 		MissionControlHalfLifeSec:      0,
 		PaybackModeFlags:               paybackModePayback | paybackModeTime | paybackModeCritical,
+		FreshPaidLiquidityLockEnabled:  true,
 		UnlockDays:                     7,
 		CriticalReleasePct:             20,
 		CriticalMinSources:             2,
@@ -763,7 +781,7 @@ func defaultRebalanceConfig() RebalanceConfig {
 		AutofeeSettlingWindowSec:       7200,
 		AutofeeSettlingMultiplier:      0.5,
 		DelegatedFastPathEnabled:       true,
-		DelegatedFastPathStrictPayback: false,
+		DelegatedFastPathStrictPayback: true,
 	}
 }
 
@@ -6547,11 +6565,13 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 	}
 
 	protected := int64(0)
+	freshProtected := int64(0)
 	paidCost := int64(0)
 	paidRevenue := int64(0)
 	lastRebalance := time.Time{}
 	if ledger != nil {
 		protected = ledger.PaidLiquiditySat
+		freshProtected = ledger.FreshPaidLiquiditySat
 		paidCost = ledger.PaidCostSat
 		paidRevenue = ledger.PaidRevenueSat
 		lastRebalance = ledger.LastRebalanceAt
@@ -6624,6 +6644,7 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 	// At payback >= threshold, effectiveProtected = 0. At payback = 0,
 	// effectiveProtected = paid_liquidity_sat (full lock). Linear in between.
 	effectiveProtected := computeEffectiveProtected(protected, paidCost, paybackProgress, cfg, lastRebalance, criticalActive)
+	effectiveProtected = applyFreshPaidLiquidityLock(effectiveProtected, freshProtected, protected, cfg)
 	maxSource -= effectiveProtected
 	if maxSource < 0 {
 		maxSource = 0
@@ -6773,6 +6794,25 @@ func computeEffectiveProtected(paidLiquiditySat int64, paidCost int64, paybackPr
 		protected = paidLiquiditySat
 	}
 	return protected
+}
+
+func applyFreshPaidLiquidityLock(effectiveProtected int64, freshPaidLiquiditySat int64, paidLiquiditySat int64, cfg RebalanceConfig) int64 {
+	if !cfg.FreshPaidLiquidityLockEnabled || freshPaidLiquiditySat <= 0 {
+		return effectiveProtected
+	}
+	if paidLiquiditySat > 0 && freshPaidLiquiditySat > paidLiquiditySat {
+		freshPaidLiquiditySat = paidLiquiditySat
+	}
+	if freshPaidLiquiditySat > effectiveProtected {
+		effectiveProtected = freshPaidLiquiditySat
+	}
+	if paidLiquiditySat > 0 && effectiveProtected > paidLiquiditySat {
+		effectiveProtected = paidLiquiditySat
+	}
+	if effectiveProtected < 0 {
+		return 0
+	}
+	return effectiveProtected
 }
 
 func estimateTimeToPaybackHours(paidRevenueSat int64, paidCostSat int64, revenue7dSat int64) (float64, bool) {
@@ -7412,6 +7452,7 @@ end $$;
     cooldown_probe_enabled boolean not null default false,
     mc_half_life_sec bigint not null default 0,
     payback_mode_flags integer not null default 7,
+    fresh_paid_liquidity_lock_enabled boolean not null default true,
     unlock_days integer not null default 7,
     critical_release_pct double precision not null default 20,
     critical_min_sources integer not null default 2,
@@ -7422,7 +7463,7 @@ end $$;
     autofee_settling_window_sec bigint not null default 7200,
     autofee_settling_multiplier double precision not null default 0.5,
     delegated_fast_path_enabled boolean not null default true,
-    delegated_fast_path_strict_payback boolean not null default false,
+    delegated_fast_path_strict_payback boolean not null default true,
     updated_at timestamptz not null default now()
   );
 
@@ -7489,6 +7530,8 @@ end $$;
   alter table rebalance_config
     add column if not exists mc_half_life_sec bigint not null default 0;
   alter table rebalance_config
+    add column if not exists fresh_paid_liquidity_lock_enabled boolean not null default true;
+  alter table rebalance_config
     add column if not exists new_channel_exclusion_seeded boolean not null default false;
   alter table rebalance_config
     add column if not exists rebalance_cost_floor_ppm bigint not null default 250;
@@ -7507,7 +7550,7 @@ end $$;
   alter table rebalance_config
     add column if not exists delegated_fast_path_enabled boolean not null default true;
   alter table rebalance_config
-    add column if not exists delegated_fast_path_strict_payback boolean not null default false;
+    add column if not exists delegated_fast_path_strict_payback boolean not null default true;
 
   alter table rebalance_config
     alter column scan_interval_sec set default 900;
@@ -7556,7 +7599,9 @@ end $$;
   alter table rebalance_config
     alter column delegated_fast_path_enabled set default true;
   alter table rebalance_config
-    alter column delegated_fast_path_strict_payback set default false;
+    alter column delegated_fast_path_strict_payback set default true;
+  alter table rebalance_config
+    alter column fresh_paid_liquidity_lock_enabled set default true;
   alter table rebalance_config
     alter column cooldown_probe_enabled set default false;
 
@@ -7792,7 +7837,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 	row := s.db.QueryRow(ctx, `
   select auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_unlimited, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
-    fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags,
+    fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags, fresh_paid_liquidity_lock_enabled,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback
   from rebalance_config where id=$1`, rebalanceConfigID)
 
@@ -7836,6 +7881,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.CooldownProbeEnabled,
 		&cfg.MissionControlHalfLifeSec,
 		&cfg.PaybackModeFlags,
+		&cfg.FreshPaidLiquidityLockEnabled,
 		&cfg.UnlockDays,
 		&cfg.CriticalReleasePct,
 		&cfg.CriticalMinSources,
@@ -7871,9 +7917,9 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
   insert into rebalance_config (
     id, auto_enabled, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_unlimited, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
-    fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags,
+    fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags, fresh_paid_liquidity_lock_enabled,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback, updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,now())
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scan_interval_sec = excluded.scan_interval_sec,
@@ -7913,6 +7959,7 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     cooldown_probe_enabled = excluded.cooldown_probe_enabled,
     mc_half_life_sec = excluded.mc_half_life_sec,
     payback_mode_flags = excluded.payback_mode_flags,
+    fresh_paid_liquidity_lock_enabled = excluded.fresh_paid_liquidity_lock_enabled,
     unlock_days = excluded.unlock_days,
     critical_release_pct = excluded.critical_release_pct,
     critical_min_sources = excluded.critical_min_sources,
@@ -7929,7 +7976,7 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     delegated_fast_path_strict_payback = excluded.delegated_fast_path_strict_payback,
     updated_at = now()
   `, rebalanceConfigID, cfg.AutoEnabled, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetUnlimited, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
-		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback,
+		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.FreshPaidLiquidityLockEnabled, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback,
 	)
 	return err
 }
@@ -8010,11 +8057,92 @@ func (s *RebalanceService) loadExclusions(ctx context.Context) (map[uint64]bool,
 	return excluded, rows.Err()
 }
 
+func newFreshPaidLiquidityTracker(ttl time.Duration) *freshPaidLiquidityTracker {
+	if ttl <= 0 {
+		ttl = freshPaidLiquidityLockDuration
+	}
+	return &freshPaidLiquidityTracker{
+		ttl:  ttl,
+		lots: map[uint64][]freshPaidLiquidityLot{},
+	}
+}
+
+func (t *freshPaidLiquidityTracker) expire(channelID uint64, at time.Time) {
+	if t == nil || t.ttl <= 0 {
+		return
+	}
+	lots := t.lots[channelID]
+	if len(lots) == 0 {
+		return
+	}
+	cutoff := at.Add(-t.ttl)
+	keepFrom := 0
+	for keepFrom < len(lots) && !lots[keepFrom].OccurredAt.After(cutoff) {
+		keepFrom++
+	}
+	if keepFrom == 0 {
+		return
+	}
+	if keepFrom >= len(lots) {
+		delete(t.lots, channelID)
+		return
+	}
+	t.lots[channelID] = append([]freshPaidLiquidityLot(nil), lots[keepFrom:]...)
+}
+
+func (t *freshPaidLiquidityTracker) add(channelID uint64, amountSat int64, at time.Time) {
+	if t == nil || channelID == 0 || amountSat <= 0 {
+		return
+	}
+	t.expire(channelID, at)
+	t.lots[channelID] = append(t.lots[channelID], freshPaidLiquidityLot{
+		AmountSat:  amountSat,
+		OccurredAt: at,
+	})
+}
+
+func (t *freshPaidLiquidityTracker) consume(channelID uint64, amountSat int64, at time.Time) {
+	if t == nil || channelID == 0 || amountSat <= 0 {
+		return
+	}
+	t.expire(channelID, at)
+	lots := t.lots[channelID]
+	for amountSat > 0 && len(lots) > 0 {
+		if lots[0].AmountSat > amountSat {
+			lots[0].AmountSat -= amountSat
+			amountSat = 0
+			break
+		}
+		amountSat -= lots[0].AmountSat
+		lots = lots[1:]
+	}
+	if len(lots) == 0 {
+		delete(t.lots, channelID)
+		return
+	}
+	t.lots[channelID] = lots
+}
+
+func (t *freshPaidLiquidityTracker) total(channelID uint64, at time.Time) int64 {
+	if t == nil || channelID == 0 {
+		return 0
+	}
+	t.expire(channelID, at)
+	total := int64(0)
+	for _, lot := range t.lots[channelID] {
+		if lot.AmountSat > 0 {
+			total += lot.AmountSat
+		}
+	}
+	return total
+}
+
 func (s *RebalanceService) loadLedger(ctx context.Context) (map[uint64]*channelLedger, error) {
 	ledger := map[uint64]*channelLedger{}
 	if s.db == nil {
 		return ledger, nil
 	}
+	freshTracker := newFreshPaidLiquidityTracker(freshPaidLiquidityLockDuration)
 	rows, err := s.db.Query(ctx, `
 select occurred_at, type,
   coalesce(rebal_target_chan_id, channel_id) as rebalance_channel_id,
@@ -8065,6 +8193,7 @@ order by occurred_at asc, id asc
 			}
 			if amountSat > 0 {
 				entry.PaidLiquiditySat += amountSat
+				freshTracker.add(channelID, amountSat, occurredAt)
 			}
 			if feeMsat > 0 {
 				entry.PaidCostSat += msatToSatCeil(feeMsat)
@@ -8089,13 +8218,24 @@ order by occurred_at asc, id asc
 			if entry.PaidLiquiditySat < 0 {
 				entry.PaidLiquiditySat = 0
 			}
+			freshTracker.consume(channelID, amountSat, occurredAt)
 		}
 		if feeMsat > 0 {
 			entry.PaidRevenueSat += feeMsat / 1000
 		}
 		entry.LastForwardAt = occurredAt
 	}
-	return ledger, rows.Err()
+	if err := rows.Err(); err != nil {
+		return ledger, err
+	}
+	now := time.Now().UTC()
+	for channelID, entry := range ledger {
+		entry.FreshPaidLiquiditySat = freshTracker.total(channelID, now)
+		if entry.FreshPaidLiquiditySat > entry.PaidLiquiditySat {
+			entry.FreshPaidLiquiditySat = entry.PaidLiquiditySat
+		}
+	}
+	return ledger, nil
 }
 
 func (s *RebalanceService) applyForwardDeltas(ctx context.Context, ledger map[uint64]*channelLedger) error {

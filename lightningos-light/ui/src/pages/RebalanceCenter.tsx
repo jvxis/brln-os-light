@@ -199,6 +199,7 @@ export default function RebalanceCenter() {
       cooldown_probe_enabled: cfg.cooldown_probe_enabled,
       mc_half_life_sec: cfg.mc_half_life_sec,
       payback_mode_flags: cfg.payback_mode_flags,
+      fresh_paid_liquidity_lock_enabled: cfg.fresh_paid_liquidity_lock_enabled,
       unlock_days: cfg.unlock_days,
       critical_release_pct: cfg.critical_release_pct,
       critical_min_sources: cfg.critical_min_sources,
@@ -496,6 +497,7 @@ export default function RebalanceCenter() {
           manual_restart_watch: nextConfig.manual_restart_watch ?? false,
           cooldown_probe_enabled: nextConfig.cooldown_probe_enabled ?? false,
           mc_half_life_sec: nextConfig.mc_half_life_sec || 0,
+          fresh_paid_liquidity_lock_enabled: nextConfig.fresh_paid_liquidity_lock_enabled ?? true,
           min_split_enabled: nextConfig.min_split_enabled ?? false,
           min_probe_sat: nextConfig.min_probe_sat || 0,
           min_execute_sat: nextConfig.min_execute_sat || 0,
@@ -510,7 +512,7 @@ export default function RebalanceCenter() {
           autofee_settling_window_sec: typeof nextConfig.autofee_settling_window_sec === 'number' ? nextConfig.autofee_settling_window_sec : REBALANCE_DEFAULT_AUTOFEE_SETTLING_WINDOW_SEC,
           autofee_settling_multiplier: typeof nextConfig.autofee_settling_multiplier === 'number' ? nextConfig.autofee_settling_multiplier : REBALANCE_DEFAULT_AUTOFEE_SETTLING_MULTIPLIER,
           delegated_fast_path_enabled: nextConfig.delegated_fast_path_enabled ?? true,
-          delegated_fast_path_strict_payback: nextConfig.delegated_fast_path_strict_payback ?? false
+          delegated_fast_path_strict_payback: nextConfig.delegated_fast_path_strict_payback ?? true
         }
         setServerConfig(normalizedConfig)
         const currentSig = configSignature(configRef.current)
@@ -607,6 +609,7 @@ export default function RebalanceCenter() {
           cooldown_probe_enabled: config.cooldown_probe_enabled,
           mc_half_life_sec: config.mc_half_life_sec,
           payback_mode_flags: config.payback_mode_flags,
+          fresh_paid_liquidity_lock_enabled: config.fresh_paid_liquidity_lock_enabled,
           unlock_days: config.unlock_days,
           critical_release_pct: config.critical_release_pct,
           critical_min_sources: config.critical_min_sources,
@@ -637,6 +640,7 @@ export default function RebalanceCenter() {
         manual_restart_watch: saved.manual_restart_watch ?? false,
         cooldown_probe_enabled: saved.cooldown_probe_enabled ?? false,
         mc_half_life_sec: saved.mc_half_life_sec || 0,
+        fresh_paid_liquidity_lock_enabled: saved.fresh_paid_liquidity_lock_enabled ?? true,
         min_split_enabled: saved.min_split_enabled ?? false,
         min_probe_sat: saved.min_probe_sat || 0,
         min_execute_sat: saved.min_execute_sat || 0,
@@ -651,7 +655,7 @@ export default function RebalanceCenter() {
         autofee_settling_window_sec: typeof saved.autofee_settling_window_sec === 'number' ? saved.autofee_settling_window_sec : REBALANCE_DEFAULT_AUTOFEE_SETTLING_WINDOW_SEC,
         autofee_settling_multiplier: typeof saved.autofee_settling_multiplier === 'number' ? saved.autofee_settling_multiplier : REBALANCE_DEFAULT_AUTOFEE_SETTLING_MULTIPLIER,
         delegated_fast_path_enabled: saved.delegated_fast_path_enabled ?? true,
-        delegated_fast_path_strict_payback: saved.delegated_fast_path_strict_payback ?? false
+        delegated_fast_path_strict_payback: saved.delegated_fast_path_strict_payback ?? true
       }
       setServerConfig(normalizedSaved)
       setConfig(normalizedSaved)
@@ -2058,6 +2062,18 @@ export default function RebalanceCenter() {
                       onChange={(e) => setConfig({ ...config, delegated_fast_path_strict_payback: e.target.checked })}
                     />
                     <span>{t('rebalanceCenter.settings.delegatedFastPathStrictPayback')}</span>
+                  </label>
+                  <label
+                    className="md:col-span-2 flex items-start gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-fog/80"
+                    title={t('rebalanceCenter.settingsHints.freshPaidLiquidityLock')}
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={config.fresh_paid_liquidity_lock_enabled}
+                      onChange={(e) => setConfig({ ...config, fresh_paid_liquidity_lock_enabled: e.target.checked })}
+                    />
+                    <span>{t('rebalanceCenter.settings.freshPaidLiquidityLock')}</span>
                   </label>
                   <label
                     className="md:col-span-2 flex items-start gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-fog/80"

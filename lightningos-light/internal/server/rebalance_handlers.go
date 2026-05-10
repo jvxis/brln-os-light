@@ -51,6 +51,7 @@ type rebalanceConfigPayload struct {
 	CooldownProbeEnabled           *bool    `json:"cooldown_probe_enabled,omitempty"`
 	MissionControlHalfLifeSec      *int64   `json:"mc_half_life_sec,omitempty"`
 	PaybackModeFlags               *int     `json:"payback_mode_flags,omitempty"`
+	FreshPaidLiquidityLockEnabled  *bool    `json:"fresh_paid_liquidity_lock_enabled,omitempty"`
 	UnlockDays                     *int     `json:"unlock_days,omitempty"`
 	CriticalReleasePct             *float64 `json:"critical_release_pct,omitempty"`
 	CriticalMinSources             *int     `json:"critical_min_sources,omitempty"`
@@ -265,6 +266,9 @@ func applyRebalanceConfigPayload(cfg RebalanceConfig, payload rebalanceConfigPay
 	}
 	if payload.PaybackModeFlags != nil {
 		cfg.PaybackModeFlags = *payload.PaybackModeFlags
+	}
+	if payload.FreshPaidLiquidityLockEnabled != nil {
+		cfg.FreshPaidLiquidityLockEnabled = *payload.FreshPaidLiquidityLockEnabled
 	}
 	if payload.UnlockDays != nil {
 		cfg.UnlockDays = *payload.UnlockDays

@@ -2989,7 +2989,8 @@
       "sourceMinPaybackProgress": "Source min payback (0 = off)",
       "missionControlReinforce": "Reinforce Mission Control after success",
       "delegatedFastPath": "Fast-path — delegate pathfinding to native LND",
-      "delegatedFastPathStrictPayback": "Fast-path respects payback"
+      "delegatedFastPathStrictPayback": "Fast-path respects payback",
+      "freshPaidLiquidityLock": "Lock fresh paid liquidity"
     },
     "settingsHints": {
       "autoEnabled": "Turns on periodic scans and automatic rebalances.",
@@ -3046,7 +3047,8 @@
       "sourceMinPaybackProgress": "Minimum lifetime payback (forwarding revenue / rebalance cost) for a channel to qualify as source. Default 0.95 — channels must be near or above break-even before being drained again. Set to 0 to disable. Set to 1.0 for strict break-even. Channels with insignificant historical cost (under 500 sat) bypass this filter so freshly opened channels remain eligible.",
       "missionControlReinforce": "After every successful rebalance attempt, push positive history entries for each pair on the route into LND's Mission Control. Helps LND learn good paths faster and recover from MC poisoning. Off by default; enable if your node has chronic 'no path' errors despite known-good routes.",
       "delegatedFastPath": "Before iterating source-by-source, tries a single SendPaymentV2 call with ALL eligible sources and MPP enabled, letting LND's native pathfinder and Mission Control choose paths and shard the payment. On success, finalizes the job and skips the legacy loop. On failure, falls back to the source-by-source loop normally. Recommended in environments where you see 'no path' errors despite viable sources existing.",
-      "delegatedFastPathStrictPayback": "When enabled, fast-path only passes sources whose post-payback free limit can cover the full rebalance amount. Off by default to preserve fast-path efficiency; enable it when using aggressive source floors without draining protected liquidity."
+      "delegatedFastPathStrictPayback": "When enabled, fast-path only passes sources whose post-payback free limit can cover the full rebalance amount. On by default when using aggressive source floors without draining protected liquidity.",
+      "freshPaidLiquidityLock": "When enabled, liquidity purchased by rebalance stays protected for 6h or until forwards consume it. Avoids A->B and then B->C immediately using freshly paid sats. On by default."
     },
     "channels": {
       "title": "Channel Workbench",

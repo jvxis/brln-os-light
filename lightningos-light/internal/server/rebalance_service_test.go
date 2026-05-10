@@ -105,8 +105,11 @@ func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	if cfg.VelocityWeight != 0.7 {
 		t.Fatalf("expected velocity_weight default=0.7, got %f", cfg.VelocityWeight)
 	}
-	if cfg.DelegatedFastPathStrictPayback {
-		t.Fatalf("expected delegated_fast_path_strict_payback default=false")
+	if !cfg.FreshPaidLiquidityLockEnabled {
+		t.Fatalf("expected fresh_paid_liquidity_lock_enabled default=true")
+	}
+	if !cfg.DelegatedFastPathStrictPayback {
+		t.Fatalf("expected delegated_fast_path_strict_payback default=true")
 	}
 }
 
@@ -229,6 +232,44 @@ func TestComputeEffectiveProtectedDisabledPaybackMode(t *testing.T) {
 	got := computeEffectiveProtected(2_000_000, 10_000, 1.0, cfg, time.Time{}, false)
 	if got != 2_000_000 {
 		t.Fatalf("expected full lock when paybackModePayback off, got %d", got)
+	}
+}
+
+func TestApplyFreshPaidLiquidityLock(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	got := applyFreshPaidLiquidityLock(0, 300_000, 1_000_000, cfg)
+	if got != 300_000 {
+		t.Fatalf("expected fresh lock to protect 300k, got %d", got)
+	}
+	got = applyFreshPaidLiquidityLock(600_000, 300_000, 1_000_000, cfg)
+	if got != 600_000 {
+		t.Fatalf("expected existing stronger payback lock to remain 600k, got %d", got)
+	}
+	got = applyFreshPaidLiquidityLock(0, 1_200_000, 1_000_000, cfg)
+	if got != 1_000_000 {
+		t.Fatalf("expected fresh lock capped at paid liquidity, got %d", got)
+	}
+	cfg.FreshPaidLiquidityLockEnabled = false
+	got = applyFreshPaidLiquidityLock(0, 300_000, 1_000_000, cfg)
+	if got != 0 {
+		t.Fatalf("expected disabled fresh lock to leave protection unchanged, got %d", got)
+	}
+}
+
+func TestFreshPaidLiquidityTrackerExpiresAndConsumes(t *testing.T) {
+	base := time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC)
+	tracker := newFreshPaidLiquidityTracker(6 * time.Hour)
+	tracker.add(1, 1_000_000, base)
+	tracker.consume(1, 250_000, base.Add(2*time.Hour))
+	if got := tracker.total(1, base.Add(3*time.Hour)); got != 750_000 {
+		t.Fatalf("expected 750k fresh liquidity after forward, got %d", got)
+	}
+	tracker.add(1, 500_000, base.Add(5*time.Hour))
+	if got := tracker.total(1, base.Add(6*time.Hour-time.Second)); got != 1_250_000 {
+		t.Fatalf("expected both lots inside fresh window, got %d", got)
+	}
+	if got := tracker.total(1, base.Add(6*time.Hour)); got != 500_000 {
+		t.Fatalf("expected first lot to expire exactly at 6h, got %d", got)
 	}
 }
 
@@ -391,6 +432,7 @@ func TestApplyRebalanceConfigPayloadOnlyTouchesProvidedFields(t *testing.T) {
 		MinExecuteSat:                  &minExecuteSat,
 		GainModelVersion:               &gainModelVersion,
 		VelocityWeight:                 &velocityWeight,
+		FreshPaidLiquidityLockEnabled:  ptrBool(false),
 		DelegatedFastPathStrictPayback: ptrBool(false),
 	})
 
@@ -411,6 +453,9 @@ func TestApplyRebalanceConfigPayloadOnlyTouchesProvidedFields(t *testing.T) {
 	}
 	if got.VelocityWeight != velocityWeight {
 		t.Fatalf("expected velocity_weight=%f, got %f", velocityWeight, got.VelocityWeight)
+	}
+	if got.FreshPaidLiquidityLockEnabled {
+		t.Fatalf("expected explicit false fresh_paid_liquidity_lock_enabled to be applied")
 	}
 	if got.DelegatedFastPathStrictPayback {
 		t.Fatalf("expected explicit false delegated_fast_path_strict_payback to be applied")

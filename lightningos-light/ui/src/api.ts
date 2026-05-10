@@ -616,6 +616,7 @@ export const updateRebalanceConfig = (payload: {
   cooldown_probe_enabled?: boolean
   mc_half_life_sec?: number
   payback_mode_flags?: number
+  fresh_paid_liquidity_lock_enabled?: boolean
   unlock_days?: number
   critical_release_pct?: number
   critical_min_sources?: number

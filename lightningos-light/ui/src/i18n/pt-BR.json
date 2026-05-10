@@ -2989,7 +2989,8 @@
       "sourceMinPaybackProgress": "Payback mínimo de source (0 = off)",
       "missionControlReinforce": "Reforçar Mission Control após sucesso",
       "delegatedFastPath": "Caminho rápido — delegar pathfinding ao LND nativo",
-      "delegatedFastPathStrictPayback": "Fast-path respeita payback"
+      "delegatedFastPathStrictPayback": "Fast-path respeita payback",
+      "freshPaidLiquidityLock": "Travar liquidez recém-paga"
     },
     "settingsHints": {
       "autoEnabled": "Ativa varreduras e rebalances automáticos.",
@@ -3046,7 +3047,8 @@
       "sourceMinPaybackProgress": "Payback mínimo de vida (receita de forward / custo de rebal) para o canal ser elegível como source. Padrão 0.95 — canais precisam estar próximos ou acima do break-even antes de serem drenados de novo. Coloque 0 para desativar. Coloque 1.0 para exigir break-even estrito. Canais com custo histórico irrelevante (abaixo de 500 sat) ignoram este filtro, então canais novos continuam elegíveis.",
       "missionControlReinforce": "A cada rebalance bem-sucedido, envia entradas positivas para cada par da rota ao Mission Control do LND. Ajuda o LND a aprender caminhos bons mais rápido e recuperar de envenenamento do MC. Desativado por padrão; ative se seu nó tem erros 'no path' crônicos apesar de rotas conhecidas funcionarem.",
       "delegatedFastPath": "Antes de iterar source-por-source, tenta uma única chamada SendPaymentV2 com TODAS as sources elegíveis e MPP ligado, deixando o pathfinder e o Mission Control nativos do LND escolherem rota e fragmentação. Em sucesso, finaliza o job e pula o loop tradicional. Em falha, cai no loop legado normalmente. Recomendado em ambientes onde aparecem muitos 'no path' apesar de existirem sources viáveis.",
-      "delegatedFastPathStrictPayback": "Quando ativo, o fast-path só entrega ao LND sources cujo limite livre pós-payback cobre o valor inteiro do rebalance. Desativado por padrão para preservar a eficiência do fast-path; ative para explorar source floor agressivo sem drenar liquidez protegida."
+      "delegatedFastPathStrictPayback": "Quando ativo, o fast-path só entrega ao LND sources cujo limite livre pós-payback cobre o valor inteiro do rebalance. Ativado por padrão para explorar source floor agressivo sem drenar liquidez protegida.",
+      "freshPaidLiquidityLock": "Quando ativo, liquidez comprada por rebalance fica protegida por 6h ou até ser consumida por forwards. Evita A->B e logo depois B->C usando sats recém-pagos. Ativado por padrão."
     },
     "channels": {
       "title": "Workbench de Canais",

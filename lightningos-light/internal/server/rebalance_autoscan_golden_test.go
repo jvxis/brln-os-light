@@ -285,3 +285,82 @@ func TestBuildAndOrderRebalanceCandidatesAutofeeSettlingDampensTarget(t *testing
 		}
 	}
 }
+
+func TestBuildAndOrderRebalanceCandidatesSovereignRankingUsesHistoryAndBudgetCost(t *testing.T) {
+	now := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
+	cfg := defaultRebalanceConfig()
+	cfg.AutoEnabled = true
+	cfg.GainModelVersion = 2
+	cfg.VelocityWeight = 0
+	cfg.ROIMin = 0
+	cfg.MinSplitEnabled = true
+	cfg.MinExecuteSat = 10_000
+	cfg.RebalanceCostFloorPpm = 250
+
+	successful := rebalanceGoldenTarget(401, "successful", 200_000, 400_000, 1, 250)
+	successful.OutgoingFeePpm = 2_000
+	successful.PeerFeeRatePpm = 500
+
+	risky := rebalanceGoldenTarget(402, "risky", 200_000, 400_000, 1, 0)
+	risky.OutgoingFeePpm = 3_000
+	risky.PeerFeeRatePpm = 500
+
+	channels := []RebalanceChannel{
+		rebalanceGoldenSource(1, 1_000_000),
+		risky,
+		successful,
+	}
+	settings := map[uint64]channelSetting{}
+	for _, ch := range channels {
+		settings[ch.ChannelID] = channelSetting{
+			ChannelID:           ch.ChannelID,
+			TargetOutboundPct:   ch.TargetOutboundPct,
+			AutoEnabled:         true,
+			UseDefaultEconRatio: true,
+		}
+	}
+
+	got := buildAndOrderRebalanceCandidates(rebalanceAutoScanCandidateInput{
+		Channels:         channels,
+		Settings:         settings,
+		Cfg:              cfg,
+		ScanAt:           now,
+		LastAutoByTarget: map[uint64]time.Time{},
+		SovereignRanking: true,
+		PairStatsByTarget: map[uint64]rebalanceTargetPairStats{
+			401: {
+				TargetChannelID: 401,
+				Attempts:        10,
+				Successes:       8,
+				Failures:        2,
+			},
+			402: {
+				TargetChannelID:          402,
+				Attempts:                 50,
+				Successes:                0,
+				Failures:                 50,
+				RecentStructuralFailures: 25,
+				PermanentFailScore:       permanentFailScoreSkipThreshold,
+			},
+		},
+	})
+
+	if len(got.Candidates) != 2 {
+		t.Fatalf("candidates length: got %d, want 2", len(got.Candidates))
+	}
+	if got.Candidates[0].Channel.ChannelID != 401 {
+		t.Fatalf("expected successful target first, got channel %d with score %d", got.Candidates[0].Channel.ChannelID, got.Candidates[0].Score)
+	}
+	if got.Candidates[1].Channel.ChannelID != 402 {
+		t.Fatalf("expected risky target second, got channel %d", got.Candidates[1].Channel.ChannelID)
+	}
+	if got.Candidates[0].Score <= got.Candidates[1].Score {
+		t.Fatalf("expected successful score to beat risky score, got %d <= %d", got.Candidates[0].Score, got.Candidates[1].Score)
+	}
+	if got.Candidates[1].EstimatedCostSat == 0 {
+		t.Fatalf("expected sovereign cost floor for no-history risky target")
+	}
+	if got.Candidates[1].BudgetCostSat <= got.Candidates[1].EstimatedCostSat {
+		t.Fatalf("expected budget cost to retain conservative fee cap, got budget=%d estimated=%d", got.Candidates[1].BudgetCostSat, got.Candidates[1].EstimatedCostSat)
+	}
+}

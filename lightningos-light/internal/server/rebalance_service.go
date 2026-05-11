@@ -382,18 +382,23 @@ type RebalanceSkipDetail struct {
 }
 
 type RebalanceSovereignDecision struct {
-	ChannelID         uint64  `json:"channel_id"`
-	ChannelPoint      string  `json:"channel_point"`
-	PeerAlias         string  `json:"peer_alias"`
-	Selected          bool    `json:"selected"`
-	Reason            string  `json:"reason"`
-	Score             int64   `json:"score"`
-	AmountSat         int64   `json:"amount_sat"`
-	ExpectedGainSat   int64   `json:"expected_gain_sat"`
-	EstimatedCostSat  int64   `json:"estimated_cost_sat"`
-	ExpectedProfitSat int64   `json:"expected_profit_sat"`
-	ExpectedROI       float64 `json:"expected_roi"`
-	ExpectedROIValid  bool    `json:"expected_roi_valid"`
+	ChannelID                uint64  `json:"channel_id"`
+	ChannelPoint             string  `json:"channel_point"`
+	PeerAlias                string  `json:"peer_alias"`
+	Selected                 bool    `json:"selected"`
+	Reason                   string  `json:"reason"`
+	Score                    int64   `json:"score"`
+	AmountSat                int64   `json:"amount_sat"`
+	ExpectedGainSat          int64   `json:"expected_gain_sat"`
+	EstimatedCostSat         int64   `json:"estimated_cost_sat"`
+	ExpectedProfitSat        int64   `json:"expected_profit_sat"`
+	ExpectedROI              float64 `json:"expected_roi"`
+	ExpectedROIValid         bool    `json:"expected_roi_valid"`
+	BudgetCostSat            int64   `json:"budget_cost_sat,omitempty"`
+	HistoricalAttempts       int     `json:"historical_attempts,omitempty"`
+	HistoricalSuccesses      int     `json:"historical_successes,omitempty"`
+	HistoricalSuccessRate    float64 `json:"historical_success_rate,omitempty"`
+	RecentStructuralFailures int     `json:"recent_structural_failures,omitempty"`
 }
 
 type RebalanceReasonStat struct {
@@ -468,6 +473,7 @@ type RebalancePairStat struct {
 	LastSuccessAt        string   `json:"last_success_at,omitempty"`
 	LastFailAt           string   `json:"last_fail_at,omitempty"`
 	LastFailReason       string   `json:"last_fail_reason,omitempty"`
+	SuccessCount         int      `json:"success_count"`
 	FailCount            int      `json:"fail_count"`
 	PermanentFailScore   float64  `json:"permanent_fail_score"`
 	SuccessAmountSat     int64    `json:"success_amount_sat"`
@@ -552,12 +558,24 @@ type pairStat struct {
 	LastSuccessAt        time.Time
 	LastFailAt           time.Time
 	LastFailReason       string
+	SuccessCount         int
 	FailCount            int
 	PermanentFailScore   float64
 	PermanentFailUpdated time.Time
 	SuccessAmountSat     int64
 	SuccessFeePpm        int64
 	LastSuccessRouteHops []string // Wave 4.1: hop pubkeys of the last successful route
+}
+
+type rebalanceTargetPairStats struct {
+	TargetChannelID          uint64
+	Attempts                 int
+	Successes                int
+	Failures                 int
+	RecentStructuralFailures int
+	PermanentFailScore       float64
+	LastSuccessAt            time.Time
+	LastFailAt               time.Time
 }
 
 type recentCooldownStat struct {
@@ -2262,14 +2280,28 @@ func (s *RebalanceService) runAutoScan() {
 	}
 	schedulerMode := normalizeRebalanceSchedulerMode(cfg.SchedulerMode)
 	if isSovereignSchedulerMode(schedulerMode) {
+		sovereignTargetIDs := make([]uint64, 0, len(snapshots))
+		includeManualRestartTargets := cfg.SovereignCandidateScope == rebalanceSovereignScopeAutoAndManualRestart
+		for _, snapshot := range snapshots {
+			setting := settings[snapshot.ChannelID]
+			if !snapshot.EligibleAsTarget {
+				continue
+			}
+			if setting.AutoEnabled || (includeManualRestartTargets && setting.ManualRestartEnabled) {
+				sovereignTargetIDs = append(sovereignTargetIDs, snapshot.ChannelID)
+			}
+		}
+		sovereignPairStats := s.loadPairStatsSummaryForTargets(ctx, sovereignTargetIDs, scanAt)
 		sovereignPlan := buildAndOrderRebalanceCandidates(rebalanceAutoScanCandidateInput{
 			Channels:                      snapshots,
 			Settings:                      settings,
 			Cfg:                           cfg,
 			ScanAt:                        scanAt,
 			LastAutoByTarget:              lastAutoByTarget,
-			IncludeManualRestartTargets:   cfg.SovereignCandidateScope == rebalanceSovereignScopeAutoAndManualRestart,
+			IncludeManualRestartTargets:   includeManualRestartTargets,
 			DisableCooldownProbe:          true,
+			SovereignRanking:              true,
+			PairStatsByTarget:             sovereignPairStats,
 			TargetCooldowns:               targetCooldowns.Recent,
 			TargetNoAttemptCooldowns:      targetCooldowns.NoAttempt,
 			TargetFailedCooldowns:         targetCooldowns.Failed,
@@ -2604,18 +2636,38 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 		if estimatedCost <= 0 {
 			estimatedCost = estimateMaxCost(targetAmount, targetPolicy, targetCfg)
 		}
+		budgetCost := target.BudgetCostSat
+		if budgetCost <= 0 {
+			budgetCost = estimateMaxCost(targetAmount, targetPolicy, targetCfg)
+		}
+		if budgetCost <= 0 {
+			budgetCost = estimatedCost
+		}
+		historicalAttempts := target.PairStats.Attempts
+		if historicalAttempts <= 0 {
+			historicalAttempts = target.PairStats.Successes + target.PairStats.Failures
+		}
+		historicalSuccessRate := 0.0
+		if historicalAttempts > 0 {
+			historicalSuccessRate = float64(target.PairStats.Successes) / float64(historicalAttempts)
+		}
 		expectedProfit := target.ExpectedGainSat - estimatedCost
 		decision := RebalanceSovereignDecision{
-			ChannelID:         target.Channel.ChannelID,
-			ChannelPoint:      target.Channel.ChannelPoint,
-			PeerAlias:         target.Channel.PeerAlias,
-			Score:             target.Score,
-			AmountSat:         targetAmount,
-			ExpectedGainSat:   target.ExpectedGainSat,
-			EstimatedCostSat:  estimatedCost,
-			ExpectedProfitSat: expectedProfit,
-			ExpectedROI:       target.ExpectedROI,
-			ExpectedROIValid:  target.ExpectedROIValid,
+			ChannelID:                target.Channel.ChannelID,
+			ChannelPoint:             target.Channel.ChannelPoint,
+			PeerAlias:                target.Channel.PeerAlias,
+			Score:                    target.Score,
+			AmountSat:                targetAmount,
+			ExpectedGainSat:          target.ExpectedGainSat,
+			EstimatedCostSat:         estimatedCost,
+			ExpectedProfitSat:        expectedProfit,
+			ExpectedROI:              target.ExpectedROI,
+			ExpectedROIValid:         target.ExpectedROIValid,
+			BudgetCostSat:            budgetCost,
+			HistoricalAttempts:       historicalAttempts,
+			HistoricalSuccesses:      target.PairStats.Successes,
+			HistoricalSuccessRate:    historicalSuccessRate,
+			RecentStructuralFailures: target.PairStats.RecentStructuralFailures,
 		}
 
 		switch {
@@ -2633,10 +2685,6 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 			noteSkip(decision.Reason)
 		default:
 			amountOverride := int64(0)
-			budgetCost := estimateMaxCost(targetAmount, targetPolicy, targetCfg)
-			if budgetCost <= 0 {
-				budgetCost = estimatedCost
-			}
 			if budgetEnforced && budgetCost > remaining {
 				maxFeeMsat, err := calcFeeLimitMsat(targetAmount*1000, targetPolicy, nil, targetCfg)
 				if err != nil || maxFeeMsat <= 0 {
@@ -2671,6 +2719,7 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 				}
 				decision.AmountSat = targetAmount
 				decision.EstimatedCostSat = budgetCost
+				decision.BudgetCostSat = budgetCost
 				decision.ExpectedGainSat = estimateTargetGainForConfig(targetCfg, target.Channel, targetAmount)
 				decision.ExpectedProfitSat = decision.ExpectedGainSat - decision.EstimatedCostSat
 			}
@@ -2808,10 +2857,12 @@ type rebalanceTarget struct {
 	Channel           RebalanceChannel
 	ExpectedGainSat   int64
 	EstimatedCostSat  int64
+	BudgetCostSat     int64
 	ExpectedROI       float64
 	ExpectedROIValid  bool
 	Score             int64
 	LastAutoAt        time.Time
+	PairStats         rebalanceTargetPairStats
 	CooldownProbe     bool
 	ProbeAmountSat    int64
 	OriginalAmountSat int64
@@ -2830,6 +2881,8 @@ type rebalanceAutoScanCandidateInput struct {
 	LastAutoByTarget              map[uint64]time.Time
 	IncludeManualRestartTargets   bool
 	DisableCooldownProbe          bool
+	SovereignRanking              bool
+	PairStatsByTarget             map[uint64]rebalanceTargetPairStats
 	TargetCooldowns               map[uint64]recentCooldownStat
 	TargetNoAttemptCooldowns      map[uint64]recentCooldownStat
 	TargetFailedCooldowns         map[uint64]recentCooldownStat
@@ -2958,7 +3011,18 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 			})
 			continue
 		}
+		targetPolicy := lndclient.ChannelPolicySnapshot{
+			FeeRatePpm:  snapshot.OutgoingFeePpm,
+			BaseFeeMsat: snapshot.OutgoingBaseMsat,
+		}
+		budgetCost := estimateMaxCost(targetAmount, targetPolicy, targetCfg)
 		estimatedCost := estimateHistoricalCost(targetAmount, snapshot.RebalanceCost7dPpm)
+		if input.SovereignRanking && estimatedCost <= 0 {
+			estimatedCost = estimateHistoricalCost(targetAmount, targetCfg.RebalanceCostFloorPpm)
+		}
+		if input.SovereignRanking && estimatedCost <= 0 {
+			estimatedCost = budgetCost
+		}
 		expectedGain := estimateTargetGainForConfig(targetCfg, snapshot, targetAmount)
 		expectedROI, roiValid := estimateTargetROI(expectedGain, estimatedCost, targetAmount, snapshot.OutgoingFeePpm, snapshot.PeerFeeRatePpm)
 		if input.Cfg.ROIMin > 0 && roiValid && expectedROI < input.Cfg.ROIMin {
@@ -3000,10 +3064,12 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 			Channel:          snapshot,
 			ExpectedGainSat:  expectedGain,
 			EstimatedCostSat: estimatedCost,
+			BudgetCostSat:    budgetCost,
 			ExpectedROI:      expectedROI,
 			ExpectedROIValid: roiValid,
 			Score:            score,
 			LastAutoAt:       input.LastAutoByTarget[snapshot.ChannelID],
+			PairStats:        input.PairStatsByTarget[snapshot.ChannelID],
 		})
 		if !plan.TopScoreSet || score > plan.TopScore {
 			plan.TopScore = score
@@ -3012,6 +3078,9 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 	}
 
 	applyMultiObjectiveScores(plan.Candidates, input.Cfg, input.ScanAt)
+	if input.SovereignRanking {
+		applySovereignRiskAdjustedScores(plan.Candidates, input.Cfg)
+	}
 	plan.AutofeeDampened = applyAutofeeSettlingPenalty(plan.Candidates, input.AutofeeRecentAdjustments, input.Cfg, input.ScanAt)
 	if plan.AutofeeDampened > 0 {
 		noteSkip("autofee_settling_target") // observability counter; candidate still queued
@@ -5982,7 +6051,7 @@ func (s *RebalanceService) loadPairStatsForTarget(ctx context.Context, targetID 
 		return stats
 	}
 	rows, err := s.db.Query(ctx, `
-select source_channel_id, target_channel_id, last_success_at, last_fail_at, last_fail_reason, fail_count, success_amount_sat, success_fee_ppm, last_success_route_hops, permanent_fail_score, permanent_fail_updated_at
+select source_channel_id, target_channel_id, last_success_at, last_fail_at, last_fail_reason, success_count, fail_count, success_amount_sat, success_fee_ppm, last_success_route_hops, permanent_fail_score, permanent_fail_updated_at
 from rebalance_pair_stats
 where target_channel_id=$1
 `, int64(targetID))
@@ -5996,18 +6065,20 @@ where target_channel_id=$1
 		var lastSuccess pgtype.Timestamptz
 		var lastFail pgtype.Timestamptz
 		var lastFailReason pgtype.Text
+		var successCount int
 		var failCount int
 		var successAmount int64
 		var successFee int64
 		var routeHopsRaw []byte
 		var permanentFailScore float64
 		var permanentFailUpdated pgtype.Timestamptz
-		if err := rows.Scan(&sourceID, &targetIDRow, &lastSuccess, &lastFail, &lastFailReason, &failCount, &successAmount, &successFee, &routeHopsRaw, &permanentFailScore, &permanentFailUpdated); err != nil {
+		if err := rows.Scan(&sourceID, &targetIDRow, &lastSuccess, &lastFail, &lastFailReason, &successCount, &failCount, &successAmount, &successFee, &routeHopsRaw, &permanentFailScore, &permanentFailUpdated); err != nil {
 			return stats
 		}
 		stat := pairStat{
 			SourceChannelID:    uint64(sourceID),
 			TargetChannelID:    uint64(targetIDRow),
+			SuccessCount:       successCount,
 			FailCount:          failCount,
 			PermanentFailScore: permanentFailScore,
 			SuccessAmountSat:   successAmount,
@@ -6034,6 +6105,80 @@ where target_channel_id=$1
 		stats[uint64(sourceID)] = stat
 	}
 	return stats
+}
+
+func (s *RebalanceService) loadPairStatsSummaryForTargets(ctx context.Context, targetIDs []uint64, now time.Time) map[uint64]rebalanceTargetPairStats {
+	summaries := map[uint64]rebalanceTargetPairStats{}
+	if s.db == nil || len(targetIDs) == 0 {
+		return summaries
+	}
+	ids := make([]int64, 0, len(targetIDs))
+	seen := map[uint64]struct{}{}
+	for _, id := range targetIDs {
+		if id == 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, int64(id))
+	}
+	if len(ids) == 0 {
+		return summaries
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	rows, err := s.db.Query(ctx, `
+select target_channel_id, last_success_at, last_fail_at, last_fail_reason, success_count, fail_count, permanent_fail_score, permanent_fail_updated_at
+from rebalance_pair_stats
+where target_channel_id = any($1::bigint[])
+`, ids)
+	if err != nil {
+		return summaries
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var targetID int64
+		var lastSuccess pgtype.Timestamptz
+		var lastFail pgtype.Timestamptz
+		var lastFailReason pgtype.Text
+		var successCount int
+		var failCount int
+		var permanentFailScore float64
+		var permanentFailUpdated pgtype.Timestamptz
+		if err := rows.Scan(&targetID, &lastSuccess, &lastFail, &lastFailReason, &successCount, &failCount, &permanentFailScore, &permanentFailUpdated); err != nil {
+			return summaries
+		}
+		if targetID <= 0 {
+			continue
+		}
+		key := uint64(targetID)
+		stat := summaries[key]
+		stat.TargetChannelID = key
+		stat.Successes += successCount
+		stat.Failures += failCount
+		stat.Attempts += successCount + failCount
+		if lastSuccess.Valid && (stat.LastSuccessAt.IsZero() || lastSuccess.Time.After(stat.LastSuccessAt)) {
+			stat.LastSuccessAt = lastSuccess.Time
+		}
+		if lastFail.Valid {
+			if stat.LastFailAt.IsZero() || lastFail.Time.After(stat.LastFailAt) {
+				stat.LastFailAt = lastFail.Time
+			}
+			if lastFailReason.Valid && isStructuralRebalanceFailure(lastFailReason.String) && now.Sub(lastFail.Time) <= targetFailedCooldownWindow {
+				recentFailures := failCount
+				if recentFailures <= 0 {
+					recentFailures = 1
+				}
+				stat.RecentStructuralFailures += recentFailures
+			}
+		}
+		stat.PermanentFailScore += decayedPermanentFailScore(permanentFailScore, permanentFailUpdated.Time, now)
+		summaries[key] = stat
+	}
+	return summaries
 }
 
 func (s *RebalanceService) PairStats(ctx context.Context, targetID uint64) ([]RebalancePairStat, error) {
@@ -6067,6 +6212,7 @@ func (s *RebalanceService) PairStats(ctx context.Context, targetID uint64) ([]Re
 			TargetChannelPoint:   points[stat.TargetChannelID],
 			TargetPeerAlias:      aliases[stat.TargetChannelID],
 			LastFailReason:       stat.LastFailReason,
+			SuccessCount:         stat.SuccessCount,
 			FailCount:            stat.FailCount,
 			PermanentFailScore:   decayedPermanentFailScore(stat.PermanentFailScore, stat.PermanentFailUpdated, now),
 			SuccessAmountSat:     stat.SuccessAmountSat,
@@ -7447,6 +7593,127 @@ func rebalanceTargetAgeBoost(lastAutoAt time.Time, scanAt time.Time, scanInterva
 		return 1
 	}
 	return boost
+}
+
+func applySovereignRiskAdjustedScores(candidates []rebalanceTarget, cfg RebalanceConfig) {
+	for i := range candidates {
+		if candidates[i].CooldownProbe || candidates[i].Score <= 0 {
+			continue
+		}
+		multiplier := sovereignSuccessScoreMultiplier(candidates[i].PairStats)
+		multiplier *= sovereignROIScoreMultiplier(candidates[i].ExpectedROI, candidates[i].ExpectedROIValid, cfg)
+		multiplier *= sovereignBudgetEfficiencyScoreMultiplier(candidates[i])
+		if math.IsNaN(multiplier) || math.IsInf(multiplier, 0) || multiplier <= 0 {
+			continue
+		}
+		score := int64(math.Round(float64(candidates[i].Score) * multiplier))
+		if score <= 0 {
+			score = 1
+		}
+		candidates[i].Score = score
+	}
+}
+
+func sovereignSuccessScoreMultiplier(stats rebalanceTargetPairStats) float64 {
+	attempts := stats.Attempts
+	if attempts <= 0 {
+		attempts = stats.Successes + stats.Failures
+	}
+	multiplier := 0.9
+	if attempts > 0 {
+		successes := stats.Successes
+		if successes < 0 {
+			successes = 0
+		}
+		if successes > attempts {
+			successes = attempts
+		}
+		successRate := float64(successes) / float64(attempts)
+		confidence := float64(attempts) / 20.0
+		if confidence > 1 {
+			confidence = 1
+		}
+		observed := 0.2 + (0.8 * successRate)
+		multiplier = ((1 - confidence) * 1.0) + (confidence * observed)
+		if attempts >= 5 && successRate > 0.5 {
+			multiplier += math.Min(0.15, (successRate-0.5)*0.3)
+		}
+	}
+	if stats.RecentStructuralFailures >= targetCooldownMinAttempts {
+		multiplier *= 0.15
+	} else if stats.RecentStructuralFailures >= 10 {
+		multiplier *= 0.25
+	} else if stats.RecentStructuralFailures > 0 {
+		pressure := 1 - (float64(stats.RecentStructuralFailures) * 0.08)
+		if pressure < 0.55 {
+			pressure = 0.55
+		}
+		multiplier *= pressure
+	}
+	if stats.PermanentFailScore >= permanentFailScoreSkipThreshold {
+		multiplier *= 0.35
+	} else if stats.PermanentFailScore > 0 {
+		pressure := 1 - (stats.PermanentFailScore / (permanentFailScoreSkipThreshold * 2))
+		if pressure < 0.5 {
+			pressure = 0.5
+		}
+		multiplier *= pressure
+	}
+	if multiplier < 0.05 {
+		return 0.05
+	}
+	if multiplier > 1.2 {
+		return 1.2
+	}
+	return multiplier
+}
+
+func sovereignROIScoreMultiplier(expectedROI float64, roiValid bool, cfg RebalanceConfig) float64 {
+	if !roiValid || expectedROI <= 0 || math.IsNaN(expectedROI) || math.IsInf(expectedROI, 0) {
+		return 0.75
+	}
+	baseline := cfg.ROIMin
+	if baseline <= 0 || math.IsNaN(baseline) || math.IsInf(baseline, 0) {
+		baseline = 1.0
+	}
+	ratio := expectedROI / baseline
+	if ratio <= 0 || math.IsNaN(ratio) || math.IsInf(ratio, 0) {
+		return 0.75
+	}
+	multiplier := math.Sqrt(ratio)
+	if multiplier < 0.5 {
+		return 0.5
+	}
+	if multiplier > 2 {
+		return 2
+	}
+	return multiplier
+}
+
+func sovereignBudgetEfficiencyScoreMultiplier(candidate rebalanceTarget) float64 {
+	profit := candidate.ExpectedGainSat - candidate.EstimatedCostSat
+	if profit <= 0 {
+		return 0.5
+	}
+	budgetCost := candidate.BudgetCostSat
+	if budgetCost <= 0 {
+		budgetCost = candidate.EstimatedCostSat
+	}
+	if budgetCost <= 0 {
+		return 1
+	}
+	efficiency := float64(profit) / float64(budgetCost)
+	if efficiency <= 0 || math.IsNaN(efficiency) || math.IsInf(efficiency, 0) {
+		return 0.5
+	}
+	multiplier := math.Sqrt(efficiency)
+	if multiplier < 0.35 {
+		return 0.35
+	}
+	if multiplier > 1.75 {
+		return 1.75
+	}
+	return multiplier
 }
 
 // applyAutofeeSettlingPenalty implements Wave 6.1b: targets que tiveram a fee

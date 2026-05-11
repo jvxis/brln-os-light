@@ -196,6 +196,12 @@ const (
 )
 
 const (
+	sovereignHistoryMinAttempts               = 100
+	sovereignMinHistoricalSuccessRate         = 0.02
+	sovereignHistoricalSuccessRateBelowReason = "historical_success_rate_below_min"
+)
+
+const (
 	rebalanceManualReserveModeFixedSat = "fixed_sat"
 	rebalanceManualReserveModePct      = "pct"
 )
@@ -394,11 +400,11 @@ type RebalanceSovereignDecision struct {
 	ExpectedProfitSat        int64   `json:"expected_profit_sat"`
 	ExpectedROI              float64 `json:"expected_roi"`
 	ExpectedROIValid         bool    `json:"expected_roi_valid"`
-	BudgetCostSat            int64   `json:"budget_cost_sat,omitempty"`
-	HistoricalAttempts       int     `json:"historical_attempts,omitempty"`
-	HistoricalSuccesses      int     `json:"historical_successes,omitempty"`
-	HistoricalSuccessRate    float64 `json:"historical_success_rate,omitempty"`
-	RecentStructuralFailures int     `json:"recent_structural_failures,omitempty"`
+	BudgetCostSat            int64   `json:"budget_cost_sat"`
+	HistoricalAttempts       int     `json:"historical_attempts"`
+	HistoricalSuccesses      int     `json:"historical_successes"`
+	HistoricalSuccessRate    float64 `json:"historical_success_rate"`
+	RecentStructuralFailures int     `json:"recent_structural_failures"`
 }
 
 type RebalanceReasonStat struct {
@@ -2643,14 +2649,7 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 		if budgetCost <= 0 {
 			budgetCost = estimatedCost
 		}
-		historicalAttempts := target.PairStats.Attempts
-		if historicalAttempts <= 0 {
-			historicalAttempts = target.PairStats.Successes + target.PairStats.Failures
-		}
-		historicalSuccessRate := 0.0
-		if historicalAttempts > 0 {
-			historicalSuccessRate = float64(target.PairStats.Successes) / float64(historicalAttempts)
-		}
+		historicalSuccessRate, historicalAttempts := sovereignHistoricalSuccessRate(target.PairStats)
 		expectedProfit := target.ExpectedGainSat - estimatedCost
 		decision := RebalanceSovereignDecision{
 			ChannelID:                target.Channel.ChannelID,
@@ -2673,6 +2672,9 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 		switch {
 		case target.CooldownProbe:
 			decision.Reason = "cooldown_probe_not_sovereign"
+			noteSkip(decision.Reason)
+		case shouldSkipSovereignLowSuccessHistory(target.PairStats):
+			decision.Reason = sovereignHistoricalSuccessRateBelowReason
 			noteSkip(decision.Reason)
 		case maxJobs > 0 && result.Selected >= maxJobs:
 			decision.Reason = "cycle_limit"
@@ -7614,21 +7616,33 @@ func applySovereignRiskAdjustedScores(candidates []rebalanceTarget, cfg Rebalanc
 	}
 }
 
-func sovereignSuccessScoreMultiplier(stats rebalanceTargetPairStats) float64 {
+func shouldSkipSovereignLowSuccessHistory(stats rebalanceTargetPairStats) bool {
+	rate, attempts := sovereignHistoricalSuccessRate(stats)
+	return attempts >= sovereignHistoryMinAttempts && rate < sovereignMinHistoricalSuccessRate
+}
+
+func sovereignHistoricalSuccessRate(stats rebalanceTargetPairStats) (float64, int) {
 	attempts := stats.Attempts
 	if attempts <= 0 {
 		attempts = stats.Successes + stats.Failures
 	}
+	if attempts <= 0 {
+		return 0, 0
+	}
+	successes := stats.Successes
+	if successes < 0 {
+		successes = 0
+	}
+	if successes > attempts {
+		successes = attempts
+	}
+	return float64(successes) / float64(attempts), attempts
+}
+
+func sovereignSuccessScoreMultiplier(stats rebalanceTargetPairStats) float64 {
+	successRate, attempts := sovereignHistoricalSuccessRate(stats)
 	multiplier := 0.9
 	if attempts > 0 {
-		successes := stats.Successes
-		if successes < 0 {
-			successes = 0
-		}
-		if successes > attempts {
-			successes = attempts
-		}
-		successRate := float64(successes) / float64(attempts)
 		confidence := float64(attempts) / 20.0
 		if confidence > 1 {
 			confidence = 1
@@ -7767,6 +7781,7 @@ func buildScanDetail(reasons map[string]int, remaining int64, candidates int) st
 		{key: "target_already_balanced", label: "target already balanced"},
 		{key: "recently_attempted", label: "recently attempted"},
 		{key: "fee_cap_zero", label: "fee cap zero"},
+		{key: sovereignHistoricalSuccessRateBelowReason, label: "historical success rate below min"},
 		{key: "below_execute_min", label: "below execute min amount"},
 		{key: "budget_below_min", label: "budget below min amount"},
 		{key: "budget_too_low", label: "budget too low"},

@@ -241,6 +241,11 @@ read_env_value() {
   awk -v key="$key" 'index($0, key "=") == 1 { print substr($0, length(key) + 2) }' "$file" | tail -n1
 }
 
+is_usable_dsn() {
+  local dsn="${1:-}"
+  [[ -n "$dsn" && "$dsn" != *CHANGE_ME* ]]
+}
+
 ensure_secrets_file() {
   mkdir -p /etc/lightningos
   if [[ ! -f "$SECRETS_PATH" ]]; then
@@ -574,6 +579,31 @@ read_conf_value() {
   line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
   if [[ -n "$line" ]]; then
     echo "$line"
+  fi
+}
+
+read_lnd_postgres_dsn() {
+  local lnd_conf="$1"
+  local dsn
+  dsn=$(read_conf_value "$lnd_conf" "db.postgres.dsn")
+  if is_usable_dsn "$dsn"; then
+    echo "$dsn"
+  fi
+}
+
+persist_lnd_postgres_dsn() {
+  local lnd_conf="$1"
+  local dsn current
+  dsn=$(read_lnd_postgres_dsn "$lnd_conf")
+  if [[ -z "$dsn" ]]; then
+    return 0
+  fi
+  current=$(read_env_value "LND_PG_DSN")
+  if ! is_usable_dsn "$current"; then
+    set_env_value "LND_PG_DSN" "$dsn"
+    print_ok "Saved existing LND Postgres DSN to secrets.env"
+  elif [[ "$current" != "$dsn" ]]; then
+    print_warn "LND_PG_DSN already exists in secrets.env; keeping existing value"
   fi
 }
 
@@ -1049,27 +1079,41 @@ fix_lnd_permissions() {
 }
 
 ensure_postgres_service() {
+  local install_mode="${1:-allow-install}"
   if ! service_exists "postgresql"; then
     print_warn "PostgreSQL service not found"
+    if [[ "$install_mode" != "allow-install" ]]; then
+      print_warn "Not installing a new PostgreSQL server for an existing LND Postgres setup"
+      return 1
+    fi
     if prompt_yes_no "Install PostgreSQL now (required for reports/notifications)?" "y"; then
       if command -v apt-get >/dev/null 2>&1; then
-        install_postgres_packages
+        if ! install_postgres_packages; then
+          print_warn "PostgreSQL installation failed"
+          return 1
+        fi
       else
         print_warn "apt-get not found; install PostgreSQL manually"
-        return
+        return 1
       fi
     else
-      return
+      return 1
     fi
   fi
   if ! systemctl is-active --quiet postgresql; then
     if prompt_yes_no "PostgreSQL is inactive. Enable and start it now?" "y"; then
-      systemctl enable --now postgresql
-      print_ok "PostgreSQL started"
+      if systemctl enable --now postgresql; then
+        print_ok "PostgreSQL started"
+      else
+        print_warn "Failed to start PostgreSQL"
+        return 1
+      fi
     else
       print_warn "PostgreSQL is required for reports/notifications"
+      return 1
     fi
   fi
+  systemctl is-active --quiet postgresql
 }
 
 get_os_codename() {
@@ -1139,61 +1183,133 @@ resolve_postgres_version() {
 
 install_postgres_packages() {
   print_step "Installing PostgreSQL"
-  apt-get update
-  setup_postgres_repo
-  apt-get update
-  resolve_postgres_version
+  apt-get update || return 1
+  setup_postgres_repo || return 1
+  apt-get update || return 1
+  resolve_postgres_version || return 1
   apt-get install -y \
     postgresql-common \
     postgresql-client-common \
     postgresql-"${POSTGRES_VERSION}" \
-    postgresql-client-"${POSTGRES_VERSION}"
+    postgresql-client-"${POSTGRES_VERSION}" || return 1
   print_ok "PostgreSQL installed"
 }
 
 psql_as_postgres() {
   if command -v runuser >/dev/null 2>&1; then
-    runuser -u postgres -- psql -X "$@"
+    PGCONNECT_TIMEOUT=5 runuser -u postgres -- psql -X "$@"
   else
-    sudo -u postgres psql -X "$@"
+    PGCONNECT_TIMEOUT=5 sudo -u postgres psql -X "$@"
   fi
+}
+
+ensure_psql_client() {
+  if command -v psql >/dev/null 2>&1; then
+    return 0
+  fi
+  print_warn "psql not found"
+  if command -v apt-get >/dev/null 2>&1 && prompt_yes_no "Install PostgreSQL client (psql) now?" "y"; then
+    if apt-get update && apt-get install -y postgresql-client; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
+psql_admin() {
+  local admin_dsn="${1:-}"
+  shift || true
+  if [[ -n "$admin_dsn" ]]; then
+    PGCONNECT_TIMEOUT=5 psql -X "$admin_dsn" "$@"
+  else
+    psql_as_postgres "$@"
+  fi
+}
+
+can_use_local_postgres_admin() {
+  command -v psql >/dev/null 2>&1 || return 1
+  systemctl is-active --quiet postgresql || return 1
+  psql_as_postgres -tAc "select 1" >/dev/null 2>&1
 }
 
 escape_pg_password() {
   printf '%s' "$1" | sed "s/'/''/g"
 }
 
+build_postgres_dsn_from_admin() {
+  local admin_dsn="${1:-}"
+  local user="$2"
+  local pass="$3"
+  local db="$4"
+  if [[ -z "$admin_dsn" ]]; then
+    echo "postgres://${user}:${pass}@127.0.0.1:5432/${db}?sslmode=disable"
+    return 0
+  fi
+  if [[ "$admin_dsn" != *"://"* ]]; then
+    echo "postgres://${user}:${pass}@127.0.0.1:5432/${db}?sslmode=disable"
+    return 0
+  fi
+  local scheme rest host_path authority query path_part
+  scheme="${admin_dsn%%://*}"
+  rest="${admin_dsn#*://}"
+  if [[ "$rest" == *@* ]]; then
+    host_path="${rest#*@}"
+  else
+    host_path="$rest"
+  fi
+  authority="$host_path"
+  query=""
+  if [[ "$host_path" == */* ]]; then
+    authority="${host_path%%/*}"
+    path_part="${host_path#*/}"
+    if [[ "$path_part" == *\?* ]]; then
+      query="?${path_part#*\?}"
+    fi
+  elif [[ "$authority" == *\?* ]]; then
+    query="?${authority#*\?}"
+    authority="${authority%%\?*}"
+  fi
+  if [[ -z "$authority" ]]; then
+    echo "postgres://${user}:${pass}@127.0.0.1:5432/${db}?sslmode=disable"
+    return 0
+  fi
+  echo "${scheme}://${user}:${pass}@${authority}/${db}${query}"
+}
+
 ensure_pg_role() {
   local role="$1"
   local options="$2"
   local password="$3"
+  local admin_dsn="${4:-}"
   local exists
-  exists=$(psql_as_postgres -tAc "select 1 from pg_roles where rolname='${role}'" 2>/dev/null | tr -d '[:space:]')
+  exists=$(psql_admin "$admin_dsn" -tAc "select 1 from pg_roles where rolname='${role}'" 2>/dev/null | tr -d '[:space:]')
   if [[ "$exists" == "1" ]]; then
-    psql_as_postgres -v ON_ERROR_STOP=1 -c "alter role ${role} with ${options} password '${password}'"
+    psql_admin "$admin_dsn" -v ON_ERROR_STOP=1 -c "alter role ${role} with ${options} password '${password}'"
   else
-    psql_as_postgres -v ON_ERROR_STOP=1 -c "create role ${role} with login ${options} password '${password}'"
+    psql_admin "$admin_dsn" -v ON_ERROR_STOP=1 -c "create role ${role} with login ${options} password '${password}'"
   fi
 }
 
 ensure_pg_database() {
   local db="$1"
   local owner="$2"
+  local admin_dsn="${3:-}"
   local exists
-  exists=$(psql_as_postgres -tAc "select 1 from pg_database where datname='${db}'" 2>/dev/null | tr -d '[:space:]')
+  exists=$(psql_admin "$admin_dsn" -tAc "select 1 from pg_database where datname='${db}'" 2>/dev/null | tr -d '[:space:]')
   if [[ "$exists" == "1" ]]; then
-    psql_as_postgres -v ON_ERROR_STOP=1 -c "alter database ${db} owner to ${owner}"
+    psql_admin "$admin_dsn" -v ON_ERROR_STOP=1 -c "alter database ${db} owner to ${owner}"
   else
-    psql_as_postgres -v ON_ERROR_STOP=1 -c "create database ${db} owner ${owner}"
+    psql_admin "$admin_dsn" -v ON_ERROR_STOP=1 -c "create database ${db} owner ${owner}"
   fi
 }
 
 provision_notifications_db() {
-  if ! command -v psql >/dev/null 2>&1; then
-    print_warn "psql not found; cannot provision database"
+  local admin_dsn="${1:-}"
+  if ! ensure_psql_client; then
+    print_warn "psql not available; cannot provision database"
     return 1
   fi
-  if ! systemctl is-active --quiet postgresql; then
+  if [[ -z "$admin_dsn" ]] && ! systemctl is-active --quiet postgresql; then
     print_warn "PostgreSQL is not active; cannot provision database"
     return 1
   fi
@@ -1212,12 +1328,12 @@ provision_notifications_db() {
   admin_pass_esc=$(escape_pg_password "$admin_pass")
   app_pass_esc=$(escape_pg_password "$app_pass")
 
-  ensure_pg_role "$NOTIFICATIONS_ADMIN_USER" "createrole createdb" "$admin_pass_esc"
-  ensure_pg_role "$NOTIFICATIONS_APP_USER" "" "$app_pass_esc"
-  ensure_pg_database "$NOTIFICATIONS_DB_NAME" "$NOTIFICATIONS_APP_USER"
+  ensure_pg_role "$NOTIFICATIONS_ADMIN_USER" "createrole createdb" "$admin_pass_esc" "$admin_dsn" || return 1
+  ensure_pg_role "$NOTIFICATIONS_APP_USER" "" "$app_pass_esc" "$admin_dsn" || return 1
+  ensure_pg_database "$NOTIFICATIONS_DB_NAME" "$NOTIFICATIONS_APP_USER" "$admin_dsn" || return 1
 
-  set_env_value "NOTIFICATIONS_PG_DSN" "postgres://${NOTIFICATIONS_APP_USER}:${app_pass}@127.0.0.1:5432/${NOTIFICATIONS_DB_NAME}?sslmode=disable"
-  set_env_value "NOTIFICATIONS_PG_ADMIN_DSN" "postgres://${NOTIFICATIONS_ADMIN_USER}:${admin_pass}@127.0.0.1:5432/postgres?sslmode=disable"
+  set_env_value "NOTIFICATIONS_PG_DSN" "$(build_postgres_dsn_from_admin "$admin_dsn" "$NOTIFICATIONS_APP_USER" "$app_pass" "$NOTIFICATIONS_DB_NAME")"
+  set_env_value "NOTIFICATIONS_PG_ADMIN_DSN" "$(build_postgres_dsn_from_admin "$admin_dsn" "$NOTIFICATIONS_ADMIN_USER" "$admin_pass" "postgres")"
   print_ok "Notifications database ready (${NOTIFICATIONS_DB_NAME})"
 }
 
@@ -1284,6 +1400,7 @@ main() {
   lnd_backend=$(detect_lnd_backend "$lnd_conf")
   if [[ "$lnd_backend" == "postgres" ]]; then
     print_ok "Detected LND backend: postgres"
+    persist_lnd_postgres_dsn "$lnd_conf"
   elif [[ "$lnd_backend" == "bolt" ]]; then
     print_ok "Detected LND backend: bolt/sqlite"
   else
@@ -1300,16 +1417,38 @@ main() {
     print_ok "Detected Bitcoin service user: ${BITCOIN_USER}"
   fi
 
+  local local_postgres_admin_ready="0"
   if [[ "$lnd_backend" != "postgres" ]]; then
     if prompt_yes_no "Install/enable Postgres for reports/notifications?" "y"; then
-      ensure_postgres_service
+      if ensure_postgres_service "allow-install" && can_use_local_postgres_admin; then
+        local_postgres_admin_ready="1"
+      else
+        print_warn "Local PostgreSQL admin access is not ready"
+      fi
     fi
   else
-    ensure_postgres_service
+    if ensure_postgres_service "no-install" && can_use_local_postgres_admin; then
+      local_postgres_admin_ready="1"
+    else
+      print_warn "Use an admin DSN for the existing PostgreSQL server when creating the LightningOS database"
+    fi
   fi
 
   if prompt_yes_no "Create/ensure LightningOS database and users now?" "y"; then
-    provision_notifications_db || print_warn "Database provisioning skipped"
+    local provision_admin_dsn=""
+    if [[ "$local_postgres_admin_ready" != "1" ]]; then
+      provision_admin_dsn=$(read_env_value "NOTIFICATIONS_PG_ADMIN_DSN")
+      if ! is_usable_dsn "$provision_admin_dsn"; then
+        provision_admin_dsn=$(prompt_value "Enter PostgreSQL admin DSN for the existing server (blank to skip DB creation)")
+      fi
+      if [[ -z "$provision_admin_dsn" ]]; then
+        print_warn "Database provisioning skipped"
+      elif ! provision_notifications_db "$provision_admin_dsn"; then
+        print_warn "Database provisioning skipped"
+      fi
+    elif ! provision_notifications_db; then
+      print_warn "Database provisioning skipped"
+    fi
   fi
 
   local notifications_dsn

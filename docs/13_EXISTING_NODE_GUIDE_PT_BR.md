@@ -33,6 +33,8 @@ sudo ./install_existing.sh
 ```
 Ele pergunta sobre Go/npm (necessarios para build), Postgres, terminal e ajustes basicos.
 Quando voce optar por Postgres, o script cria os usuarios e o banco do LightningOS e preenche o secrets.env automaticamente.
+Se o LND ja usa Postgres, o script nao instala um novo servidor Postgres por padrao: ele tenta usar o servico local existente e, se nao houver acesso administrativo local, pede um `NOTIFICATIONS_PG_ADMIN_DSN` para criar apenas o banco `lightningos` no servidor existente.
+Quando encontra `db.postgres.dsn` no `lnd.conf`, o script tambem preenche `LND_PG_DSN` se o valor em `secrets.env` ainda estiver no placeholder.
 O script tambem cria/atualiza os services do systemd com estes usuarios:
 - lightningos-manager: usa o usuario/grupo `lightningos`.
 - lightningos-reports: usa o mesmo usuario/grupo (`lightningos`).

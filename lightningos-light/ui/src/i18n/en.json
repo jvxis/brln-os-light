@@ -2909,6 +2909,12 @@
     "autopilot": {
       "title": "Autopilot Decisions",
       "summary": "{{mode}} · {{candidates}} candidates · {{selected}} selected · exp. profit {{profit}}",
+      "headerStatus": "{{mode}} active",
+      "headerSummary": "{{candidates}} candidates · {{selected}} selected",
+      "save": "Save Autopilot",
+      "saving": "Saving...",
+      "saved": "Autopilot saved.",
+      "saveFailed": "Failed to save Autopilot.",
       "selected": "Selected",
       "skipped": "Skipped",
       "empty": "No autopilot decision recorded in this session.",

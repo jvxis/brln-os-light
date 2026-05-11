@@ -106,6 +106,7 @@ export default function RebalanceCenter() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [status, setStatus] = useState('')
   const [saving, setSaving] = useState(false)
+  const [autopilotSaving, setAutopilotSaving] = useState(false)
   const [autoOpen, setAutoOpen] = useState(false)
   const [advancedControlsOpen, setAdvancedControlsOpen] = useState(false)
   const [editTargets, setEditTargets] = useState<Record<string, string>>({})
@@ -157,6 +158,43 @@ export default function RebalanceCenter() {
     if (Number.isNaN(date.getTime())) return value
     return dateTimeFormatter.format(date)
   }
+  const normalizeLoadedConfig = (raw: RebalanceConfig): RebalanceConfig => ({
+    ...raw,
+    scheduler_mode: raw.scheduler_mode || REBALANCE_DEFAULT_SCHEDULER_MODE,
+    sovereign_candidate_scope: raw.sovereign_candidate_scope || REBALANCE_DEFAULT_SOVEREIGN_SCOPE,
+    sovereign_max_jobs_per_cycle: raw.sovereign_max_jobs_per_cycle || REBALANCE_DEFAULT_SOVEREIGN_MAX_JOBS,
+    sovereign_min_expected_profit_sat: raw.sovereign_min_expected_profit_sat || 0,
+    budget_mode: raw.budget_mode || REBALANCE_DEFAULT_BUDGET_MODE,
+    budget_unlimited: raw.budget_unlimited ?? false,
+    budget_auto_only: raw.budget_auto_only ?? false,
+    manual_reserve_enabled: raw.manual_reserve_enabled ?? false,
+    manual_reserve_mode: raw.manual_reserve_mode || 'fixed_sat',
+    manual_reserve_value: raw.manual_reserve_value ?? 0,
+    amount_probe_steps: raw.amount_probe_steps || 4,
+    amount_probe_adaptive: raw.amount_probe_adaptive ?? true,
+    attempt_timeout_sec: raw.attempt_timeout_sec || 20,
+    rebalance_timeout_sec: raw.rebalance_timeout_sec || 600,
+    manual_restart_watch: raw.manual_restart_watch ?? false,
+    cooldown_probe_enabled: raw.cooldown_probe_enabled ?? false,
+    mc_half_life_sec: raw.mc_half_life_sec || 0,
+    fresh_paid_liquidity_lock_enabled: raw.fresh_paid_liquidity_lock_enabled ?? true,
+    fresh_paid_liquidity_lock_hours: raw.fresh_paid_liquidity_lock_hours || REBALANCE_DEFAULT_FRESH_LOCK_HOURS,
+    min_split_enabled: raw.min_split_enabled ?? false,
+    min_probe_sat: raw.min_probe_sat || 0,
+    min_execute_sat: raw.min_execute_sat || 0,
+    mpp_enabled: raw.mpp_enabled ?? false,
+    mpp_max_shards: raw.mpp_max_shards || MSPR_DEFAULT_MAX_SHARDS,
+    mpp_parallelism: raw.mpp_parallelism || MSPR_DEFAULT_PARALLELISM,
+    mpp_min_shard_sat: raw.mpp_min_shard_sat || MSPR_DEFAULT_MIN_SHARD_SAT,
+    mpp_round_timeout_sec: raw.mpp_round_timeout_sec || MSPR_DEFAULT_ROUND_TIMEOUT_SEC,
+    mpp_auto_only: raw.mpp_auto_only ?? false,
+    gain_model_version: raw.gain_model_version || REBALANCE_DEFAULT_GAIN_MODEL_VERSION,
+    velocity_weight: typeof raw.velocity_weight === 'number' ? raw.velocity_weight : REBALANCE_DEFAULT_VELOCITY_WEIGHT,
+    autofee_settling_window_sec: typeof raw.autofee_settling_window_sec === 'number' ? raw.autofee_settling_window_sec : REBALANCE_DEFAULT_AUTOFEE_SETTLING_WINDOW_SEC,
+    autofee_settling_multiplier: typeof raw.autofee_settling_multiplier === 'number' ? raw.autofee_settling_multiplier : REBALANCE_DEFAULT_AUTOFEE_SETTLING_MULTIPLIER,
+    delegated_fast_path_enabled: raw.delegated_fast_path_enabled ?? true,
+    delegated_fast_path_strict_payback: raw.delegated_fast_path_strict_payback ?? true
+  })
   const formatTimeToPayback = (channel: RebalanceChannel) => {
     if (!channel.time_to_payback_valid) return t('rebalanceCenter.channels.timeToPaybackNA')
     const hours = Math.max(0, channel.time_to_payback_hours || 0)
@@ -225,6 +263,15 @@ export default function RebalanceCenter() {
       autofee_settling_multiplier: cfg.autofee_settling_multiplier,
       delegated_fast_path_enabled: cfg.delegated_fast_path_enabled,
       delegated_fast_path_strict_payback: cfg.delegated_fast_path_strict_payback
+    })
+  }
+  const autopilotConfigSignature = (cfg?: RebalanceConfig | null) => {
+    if (!cfg) return ''
+    return JSON.stringify({
+      scheduler_mode: cfg.scheduler_mode || REBALANCE_DEFAULT_SCHEDULER_MODE,
+      sovereign_candidate_scope: cfg.sovereign_candidate_scope || REBALANCE_DEFAULT_SOVEREIGN_SCOPE,
+      sovereign_max_jobs_per_cycle: cfg.sovereign_max_jobs_per_cycle || REBALANCE_DEFAULT_SOVEREIGN_MAX_JOBS,
+      sovereign_min_expected_profit_sat: cfg.sovereign_min_expected_profit_sat || 0
     })
   }
   const estimateHistoricalCost = (amountSat: number, feePpm: number) => {
@@ -492,44 +539,7 @@ export default function RebalanceCenter() {
           getRebalanceQueue(),
           getRebalanceHistory()
         ])
-        const nextConfig = cfg as RebalanceConfig
-        const normalizedConfig = {
-          ...nextConfig,
-          scheduler_mode: nextConfig.scheduler_mode || REBALANCE_DEFAULT_SCHEDULER_MODE,
-          sovereign_candidate_scope: nextConfig.sovereign_candidate_scope || REBALANCE_DEFAULT_SOVEREIGN_SCOPE,
-          sovereign_max_jobs_per_cycle: nextConfig.sovereign_max_jobs_per_cycle || REBALANCE_DEFAULT_SOVEREIGN_MAX_JOBS,
-          sovereign_min_expected_profit_sat: nextConfig.sovereign_min_expected_profit_sat || 0,
-          budget_mode: nextConfig.budget_mode || REBALANCE_DEFAULT_BUDGET_MODE,
-          budget_unlimited: nextConfig.budget_unlimited ?? false,
-          budget_auto_only: nextConfig.budget_auto_only ?? false,
-          manual_reserve_enabled: nextConfig.manual_reserve_enabled ?? false,
-          manual_reserve_mode: nextConfig.manual_reserve_mode || 'fixed_sat',
-          manual_reserve_value: nextConfig.manual_reserve_value ?? 0,
-          amount_probe_steps: nextConfig.amount_probe_steps || 4,
-          amount_probe_adaptive: nextConfig.amount_probe_adaptive ?? true,
-          attempt_timeout_sec: nextConfig.attempt_timeout_sec || 20,
-          rebalance_timeout_sec: nextConfig.rebalance_timeout_sec || 600,
-          manual_restart_watch: nextConfig.manual_restart_watch ?? false,
-          cooldown_probe_enabled: nextConfig.cooldown_probe_enabled ?? false,
-          mc_half_life_sec: nextConfig.mc_half_life_sec || 0,
-          fresh_paid_liquidity_lock_enabled: nextConfig.fresh_paid_liquidity_lock_enabled ?? true,
-          fresh_paid_liquidity_lock_hours: nextConfig.fresh_paid_liquidity_lock_hours || REBALANCE_DEFAULT_FRESH_LOCK_HOURS,
-          min_split_enabled: nextConfig.min_split_enabled ?? false,
-          min_probe_sat: nextConfig.min_probe_sat || 0,
-          min_execute_sat: nextConfig.min_execute_sat || 0,
-          mpp_enabled: nextConfig.mpp_enabled ?? false,
-          mpp_max_shards: nextConfig.mpp_max_shards || MSPR_DEFAULT_MAX_SHARDS,
-          mpp_parallelism: nextConfig.mpp_parallelism || MSPR_DEFAULT_PARALLELISM,
-          mpp_min_shard_sat: nextConfig.mpp_min_shard_sat || MSPR_DEFAULT_MIN_SHARD_SAT,
-          mpp_round_timeout_sec: nextConfig.mpp_round_timeout_sec || MSPR_DEFAULT_ROUND_TIMEOUT_SEC,
-          mpp_auto_only: nextConfig.mpp_auto_only ?? false,
-          gain_model_version: nextConfig.gain_model_version || REBALANCE_DEFAULT_GAIN_MODEL_VERSION,
-          velocity_weight: typeof nextConfig.velocity_weight === 'number' ? nextConfig.velocity_weight : REBALANCE_DEFAULT_VELOCITY_WEIGHT,
-          autofee_settling_window_sec: typeof nextConfig.autofee_settling_window_sec === 'number' ? nextConfig.autofee_settling_window_sec : REBALANCE_DEFAULT_AUTOFEE_SETTLING_WINDOW_SEC,
-          autofee_settling_multiplier: typeof nextConfig.autofee_settling_multiplier === 'number' ? nextConfig.autofee_settling_multiplier : REBALANCE_DEFAULT_AUTOFEE_SETTLING_MULTIPLIER,
-          delegated_fast_path_enabled: nextConfig.delegated_fast_path_enabled ?? true,
-          delegated_fast_path_strict_payback: nextConfig.delegated_fast_path_strict_payback ?? true
-        }
+        const normalizedConfig = normalizeLoadedConfig(cfg as RebalanceConfig)
         setServerConfig(normalizedConfig)
         const currentSig = configSignature(configRef.current)
         const nextSig = configSignature(normalizedConfig)
@@ -646,43 +656,7 @@ export default function RebalanceCenter() {
         delegated_fast_path_enabled: config.delegated_fast_path_enabled,
         delegated_fast_path_strict_payback: config.delegated_fast_path_strict_payback
       })) as RebalanceConfig
-      const normalizedSaved = {
-        ...saved,
-        scheduler_mode: saved.scheduler_mode || REBALANCE_DEFAULT_SCHEDULER_MODE,
-        sovereign_candidate_scope: saved.sovereign_candidate_scope || REBALANCE_DEFAULT_SOVEREIGN_SCOPE,
-        sovereign_max_jobs_per_cycle: saved.sovereign_max_jobs_per_cycle || REBALANCE_DEFAULT_SOVEREIGN_MAX_JOBS,
-        sovereign_min_expected_profit_sat: saved.sovereign_min_expected_profit_sat || 0,
-        budget_mode: saved.budget_mode || REBALANCE_DEFAULT_BUDGET_MODE,
-        budget_unlimited: saved.budget_unlimited ?? false,
-        budget_auto_only: saved.budget_auto_only ?? false,
-        manual_reserve_enabled: saved.manual_reserve_enabled ?? false,
-        manual_reserve_mode: saved.manual_reserve_mode || 'fixed_sat',
-        manual_reserve_value: saved.manual_reserve_value ?? 0,
-        amount_probe_steps: saved.amount_probe_steps || 4,
-        amount_probe_adaptive: saved.amount_probe_adaptive ?? true,
-        attempt_timeout_sec: saved.attempt_timeout_sec || 20,
-        rebalance_timeout_sec: saved.rebalance_timeout_sec || 600,
-        manual_restart_watch: saved.manual_restart_watch ?? false,
-        cooldown_probe_enabled: saved.cooldown_probe_enabled ?? false,
-        mc_half_life_sec: saved.mc_half_life_sec || 0,
-        fresh_paid_liquidity_lock_enabled: saved.fresh_paid_liquidity_lock_enabled ?? true,
-        fresh_paid_liquidity_lock_hours: saved.fresh_paid_liquidity_lock_hours || REBALANCE_DEFAULT_FRESH_LOCK_HOURS,
-        min_split_enabled: saved.min_split_enabled ?? false,
-        min_probe_sat: saved.min_probe_sat || 0,
-        min_execute_sat: saved.min_execute_sat || 0,
-        mpp_enabled: saved.mpp_enabled ?? false,
-        mpp_max_shards: saved.mpp_max_shards || MSPR_DEFAULT_MAX_SHARDS,
-        mpp_parallelism: saved.mpp_parallelism || MSPR_DEFAULT_PARALLELISM,
-        mpp_min_shard_sat: saved.mpp_min_shard_sat || MSPR_DEFAULT_MIN_SHARD_SAT,
-        mpp_round_timeout_sec: saved.mpp_round_timeout_sec || MSPR_DEFAULT_ROUND_TIMEOUT_SEC,
-        mpp_auto_only: saved.mpp_auto_only ?? false,
-        gain_model_version: saved.gain_model_version || REBALANCE_DEFAULT_GAIN_MODEL_VERSION,
-        velocity_weight: typeof saved.velocity_weight === 'number' ? saved.velocity_weight : REBALANCE_DEFAULT_VELOCITY_WEIGHT,
-        autofee_settling_window_sec: typeof saved.autofee_settling_window_sec === 'number' ? saved.autofee_settling_window_sec : REBALANCE_DEFAULT_AUTOFEE_SETTLING_WINDOW_SEC,
-        autofee_settling_multiplier: typeof saved.autofee_settling_multiplier === 'number' ? saved.autofee_settling_multiplier : REBALANCE_DEFAULT_AUTOFEE_SETTLING_MULTIPLIER,
-        delegated_fast_path_enabled: saved.delegated_fast_path_enabled ?? true,
-        delegated_fast_path_strict_payback: saved.delegated_fast_path_strict_payback ?? true
-      }
+      const normalizedSaved = normalizeLoadedConfig(saved)
       setServerConfig(normalizedSaved)
       setConfig(normalizedSaved)
       setStatus(t('rebalanceCenter.settingsSaved'))
@@ -691,6 +665,38 @@ export default function RebalanceCenter() {
       setStatus(err instanceof Error ? err.message : t('rebalanceCenter.settingsSaveFailed'))
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleSaveAutopilotConfig = async () => {
+    if (!config) return
+    setAutopilotSaving(true)
+    setStatus('')
+    try {
+      const saved = (await updateRebalanceConfig({
+        scheduler_mode: config.scheduler_mode,
+        sovereign_candidate_scope: config.sovereign_candidate_scope,
+        sovereign_max_jobs_per_cycle: Math.max(1, Number(config.sovereign_max_jobs_per_cycle) || REBALANCE_DEFAULT_SOVEREIGN_MAX_JOBS),
+        sovereign_min_expected_profit_sat: Math.max(0, Number(config.sovereign_min_expected_profit_sat) || 0)
+      })) as RebalanceConfig
+      const normalizedSaved = normalizeLoadedConfig(saved)
+      setServerConfig(normalizedSaved)
+      setConfig((current) => {
+        if (!current) return normalizedSaved
+        return {
+          ...current,
+          scheduler_mode: normalizedSaved.scheduler_mode,
+          sovereign_candidate_scope: normalizedSaved.sovereign_candidate_scope,
+          sovereign_max_jobs_per_cycle: normalizedSaved.sovereign_max_jobs_per_cycle,
+          sovereign_min_expected_profit_sat: normalizedSaved.sovereign_min_expected_profit_sat
+        }
+      })
+      setStatus(t('rebalanceCenter.autopilot.saved'))
+      void loadAll({ silent: true })
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : t('rebalanceCenter.autopilot.saveFailed'))
+    } finally {
+      setAutopilotSaving(false)
     }
   }
 
@@ -1155,6 +1161,9 @@ export default function RebalanceCenter() {
     !budgetUnlimited &&
     !autoBudgetPaused &&
     overview?.last_scan_status === 'budget_insufficient'
+  const activeSchedulerMode = overview?.scheduler_mode || config?.scheduler_mode || REBALANCE_DEFAULT_SCHEDULER_MODE
+  const autopilotModeActive = activeSchedulerMode === 'sovereign_shadow' || activeSchedulerMode === 'sovereign_live'
+  const autopilotConfigDirty = autopilotConfigSignature(config) !== autopilotConfigSignature(serverConfig)
   const renderPairStatsPanel = (channel: RebalanceChannel) => {
     const key = channelKey(channel)
     return (
@@ -1177,6 +1186,21 @@ export default function RebalanceCenter() {
           <h2 className="text-2xl font-semibold">{t('rebalanceCenter.title')}</h2>
           <p className="text-fog/60">{t('rebalanceCenter.subtitle')}</p>
         </div>
+        {autopilotModeActive && (
+          <div className={`rounded-lg border px-3 py-2 text-right ${activeSchedulerMode === 'sovereign_live' ? 'border-emerald-400/30 bg-emerald-400/10' : 'border-cyan-400/25 bg-cyan-400/10'}`}>
+            <p className={`text-xs uppercase tracking-wide ${activeSchedulerMode === 'sovereign_live' ? 'text-emerald-200' : 'text-cyan-200'}`}>
+              {t('rebalanceCenter.autopilot.headerStatus', {
+                mode: t(`rebalanceCenter.settings.schedulerModeOptions.${activeSchedulerMode}`)
+              })}
+            </p>
+            <p className="text-xs text-fog/55">
+              {t('rebalanceCenter.autopilot.headerSummary', {
+                candidates: formatter.format(overview?.sovereign_candidates ?? 0),
+                selected: formatter.format(overview?.sovereign_selected ?? 0)
+              })}
+            </p>
+          </div>
+        )}
       </div>
 
       {status && <p className="text-sm text-brass">{status}</p>}
@@ -1750,6 +1774,100 @@ export default function RebalanceCenter() {
         </div>
       )}
 
+      {config && (
+        <div className="section-card space-y-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 items-start justify-between gap-3 text-left"
+              aria-expanded={autopilotConfigOpen}
+              onClick={() => setAutopilotConfigOpen((value) => !value)}
+            >
+              <span className="min-w-0">
+                <span className="block text-xs uppercase tracking-wide text-fog/60">{t('rebalanceCenter.settings.sovereignTitle')}</span>
+                <span className="block text-sm text-fog">{t('rebalanceCenter.settings.sovereignSubtitle')}</span>
+                <span className="mt-1 block truncate text-xs text-fog/45">
+                  {t('rebalanceCenter.settings.sovereignConfigSummary', {
+                    mode: t(`rebalanceCenter.settings.schedulerModeOptions.${config.scheduler_mode}`),
+                    scope: t(`rebalanceCenter.settings.sovereignCandidateScopeOptions.${config.sovereign_candidate_scope}`),
+                    jobs: formatter.format(config.sovereign_max_jobs_per_cycle || REBALANCE_DEFAULT_SOVEREIGN_MAX_JOBS)
+                  })}
+                </span>
+              </span>
+              <span className="grid h-6 w-6 shrink-0 place-items-center rounded border border-white/10 text-fog/60">
+                {autopilotConfigOpen ? '-' : '+'}
+              </span>
+            </button>
+            <button
+              type="button"
+              className="btn-primary px-3 py-1 text-xs"
+              disabled={autopilotSaving || !autopilotConfigDirty}
+              onClick={handleSaveAutopilotConfig}
+            >
+              {autopilotSaving ? t('rebalanceCenter.autopilot.saving') : t('rebalanceCenter.autopilot.save')}
+            </button>
+          </div>
+          {autopilotConfigOpen && (
+            <div className="grid gap-3 border-t border-white/10 pt-3 md:grid-cols-4">
+              <div className="space-y-2">
+                <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.schedulerMode')}>
+                  {t('rebalanceCenter.settings.schedulerMode')}
+                </label>
+                <select
+                  className="input-field"
+                  value={config.scheduler_mode}
+                  onChange={(e) => setConfig({ ...config, scheduler_mode: e.target.value })}
+                >
+                  <option value="rules_auto">{t('rebalanceCenter.settings.schedulerModeOptions.rules_auto')}</option>
+                  <option value="sovereign_shadow">{t('rebalanceCenter.settings.schedulerModeOptions.sovereign_shadow')}</option>
+                  <option value="sovereign_live">{t('rebalanceCenter.settings.schedulerModeOptions.sovereign_live')}</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.sovereignCandidateScope')}>
+                  {t('rebalanceCenter.settings.sovereignCandidateScope')}
+                </label>
+                <select
+                  className="input-field"
+                  value={config.sovereign_candidate_scope}
+                  disabled={config.scheduler_mode === 'rules_auto'}
+                  onChange={(e) => setConfig({ ...config, sovereign_candidate_scope: e.target.value })}
+                >
+                  <option value="auto_and_manual_restart">{t('rebalanceCenter.settings.sovereignCandidateScopeOptions.auto_and_manual_restart')}</option>
+                  <option value="auto_only">{t('rebalanceCenter.settings.sovereignCandidateScopeOptions.auto_only')}</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.sovereignMaxJobsPerCycle')}>
+                  {t('rebalanceCenter.settings.sovereignMaxJobsPerCycle')}
+                </label>
+                <input
+                  className="input-field"
+                  type="number"
+                  min={1}
+                  disabled={config.scheduler_mode === 'rules_auto'}
+                  value={config.sovereign_max_jobs_per_cycle}
+                  onChange={(e) => setConfig({ ...config, sovereign_max_jobs_per_cycle: Number(e.target.value) })}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.sovereignMinExpectedProfit')}>
+                  {t('rebalanceCenter.settings.sovereignMinExpectedProfit')}
+                </label>
+                <input
+                  className="input-field"
+                  type="number"
+                  min={0}
+                  disabled={config.scheduler_mode === 'rules_auto'}
+                  value={config.sovereign_min_expected_profit_sat}
+                  onChange={(e) => setConfig({ ...config, sovereign_min_expected_profit_sat: Number(e.target.value) })}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {overview && (overview.scheduler_mode === 'sovereign_shadow' || overview.scheduler_mode === 'sovereign_live') && (
         <div className="section-card">
           <MetricDisclosure
@@ -1884,90 +2002,6 @@ export default function RebalanceCenter() {
                   </label>
                 </div>
               </SettingsSubcard>
-
-              <div className="rounded-lg border border-white/10 bg-white/5 p-3">
-                <button
-                  type="button"
-                  className="flex w-full items-start justify-between gap-3 text-left"
-                  aria-expanded={autopilotConfigOpen}
-                  onClick={() => setAutopilotConfigOpen((value) => !value)}
-                >
-                  <span>
-                    <span className="block text-xs uppercase tracking-wide text-fog/60">{t('rebalanceCenter.settings.sovereignTitle')}</span>
-                    <span className="block text-xs text-fog/50">{t('rebalanceCenter.settings.sovereignSubtitle')}</span>
-                  </span>
-                  <span className="flex min-w-0 items-center gap-2 text-right text-[11px] text-fog/45">
-                    <span className="truncate normal-case tracking-normal">
-                      {t('rebalanceCenter.settings.sovereignConfigSummary', {
-                        mode: t(`rebalanceCenter.settings.schedulerModeOptions.${config.scheduler_mode}`),
-                        scope: t(`rebalanceCenter.settings.sovereignCandidateScopeOptions.${config.sovereign_candidate_scope}`),
-                        jobs: formatter.format(config.sovereign_max_jobs_per_cycle || REBALANCE_DEFAULT_SOVEREIGN_MAX_JOBS)
-                      })}
-                    </span>
-                    <span className="grid h-5 w-5 shrink-0 place-items-center rounded border border-white/10 text-fog/60">
-                      {autopilotConfigOpen ? '-' : '+'}
-                    </span>
-                  </span>
-                </button>
-                {autopilotConfigOpen && (
-                  <div className="mt-3 grid gap-3 md:grid-cols-2">
-                    <div className="space-y-2">
-                      <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.schedulerMode')}>
-                        {t('rebalanceCenter.settings.schedulerMode')}
-                      </label>
-                      <select
-                        className="input-field"
-                        value={config.scheduler_mode}
-                        onChange={(e) => setConfig({ ...config, scheduler_mode: e.target.value })}
-                      >
-                        <option value="rules_auto">{t('rebalanceCenter.settings.schedulerModeOptions.rules_auto')}</option>
-                        <option value="sovereign_shadow">{t('rebalanceCenter.settings.schedulerModeOptions.sovereign_shadow')}</option>
-                        <option value="sovereign_live">{t('rebalanceCenter.settings.schedulerModeOptions.sovereign_live')}</option>
-                      </select>
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.sovereignCandidateScope')}>
-                        {t('rebalanceCenter.settings.sovereignCandidateScope')}
-                      </label>
-                      <select
-                        className="input-field"
-                        value={config.sovereign_candidate_scope}
-                        disabled={config.scheduler_mode === 'rules_auto'}
-                        onChange={(e) => setConfig({ ...config, sovereign_candidate_scope: e.target.value })}
-                      >
-                        <option value="auto_and_manual_restart">{t('rebalanceCenter.settings.sovereignCandidateScopeOptions.auto_and_manual_restart')}</option>
-                        <option value="auto_only">{t('rebalanceCenter.settings.sovereignCandidateScopeOptions.auto_only')}</option>
-                      </select>
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.sovereignMaxJobsPerCycle')}>
-                        {t('rebalanceCenter.settings.sovereignMaxJobsPerCycle')}
-                      </label>
-                      <input
-                        className="input-field"
-                        type="number"
-                        min={1}
-                        disabled={config.scheduler_mode === 'rules_auto'}
-                        value={config.sovereign_max_jobs_per_cycle}
-                        onChange={(e) => setConfig({ ...config, sovereign_max_jobs_per_cycle: Number(e.target.value) })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.sovereignMinExpectedProfit')}>
-                        {t('rebalanceCenter.settings.sovereignMinExpectedProfit')}
-                      </label>
-                      <input
-                        className="input-field"
-                        type="number"
-                        min={0}
-                        disabled={config.scheduler_mode === 'rules_auto'}
-                        value={config.sovereign_min_expected_profit_sat}
-                        onChange={(e) => setConfig({ ...config, sovereign_min_expected_profit_sat: Number(e.target.value) })}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
 
               <SettingsSubcard title={t('rebalanceCenter.settings.groups.budget')}>
                 <div className="space-y-3">

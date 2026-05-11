@@ -196,9 +196,10 @@ const (
 )
 
 const (
-	sovereignHistoryMinAttempts               = 100
-	sovereignMinHistoricalSuccessRate         = 0.02
-	sovereignHistoricalSuccessRateBelowReason = "historical_success_rate_below_min"
+	sovereignLowSuccessMinAttempts       = 100
+	sovereignLowSuccessRate              = 0.02
+	sovereignLowSuccessProfitFloorSat    = int64(1000)
+	sovereignLowSuccessOpportunityReason = "low_success_opportunity_below_floor"
 )
 
 const (
@@ -2673,8 +2674,8 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 		case target.CooldownProbe:
 			decision.Reason = "cooldown_probe_not_sovereign"
 			noteSkip(decision.Reason)
-		case shouldSkipSovereignLowSuccessHistory(target.PairStats):
-			decision.Reason = sovereignHistoricalSuccessRateBelowReason
+		case shouldSkipSovereignLowSuccessOpportunity(target.PairStats, expectedProfit, cfg):
+			decision.Reason = sovereignLowSuccessOpportunityReason
 			noteSkip(decision.Reason)
 		case maxJobs > 0 && result.Selected >= maxJobs:
 			decision.Reason = "cycle_limit"
@@ -2724,6 +2725,18 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 				decision.BudgetCostSat = budgetCost
 				decision.ExpectedGainSat = estimateTargetGainForConfig(targetCfg, target.Channel, targetAmount)
 				decision.ExpectedProfitSat = decision.ExpectedGainSat - decision.EstimatedCostSat
+				if decision.ExpectedProfitSat < cfg.SovereignMinExpectedProfitSat {
+					decision.Reason = "expected_profit_below_min"
+					noteSkip(decision.Reason)
+					result.Decisions = append(result.Decisions, decision)
+					continue
+				}
+				if shouldSkipSovereignLowSuccessOpportunity(target.PairStats, decision.ExpectedProfitSat, cfg) {
+					decision.Reason = sovereignLowSuccessOpportunityReason
+					noteSkip(decision.Reason)
+					result.Decisions = append(result.Decisions, decision)
+					continue
+				}
 			}
 			if live {
 				_, err := s.startJob(target.Channel.ChannelID, "auto", rebalanceSovereignReason, amountOverride, false)
@@ -6170,11 +6183,7 @@ where target_channel_id = any($1::bigint[])
 				stat.LastFailAt = lastFail.Time
 			}
 			if lastFailReason.Valid && isStructuralRebalanceFailure(lastFailReason.String) && now.Sub(lastFail.Time) <= targetFailedCooldownWindow {
-				recentFailures := failCount
-				if recentFailures <= 0 {
-					recentFailures = 1
-				}
-				stat.RecentStructuralFailures += recentFailures
+				stat.RecentStructuralFailures++
 			}
 		}
 		stat.PermanentFailScore += decayedPermanentFailScore(permanentFailScore, permanentFailUpdated.Time, now)
@@ -7616,9 +7625,16 @@ func applySovereignRiskAdjustedScores(candidates []rebalanceTarget, cfg Rebalanc
 	}
 }
 
-func shouldSkipSovereignLowSuccessHistory(stats rebalanceTargetPairStats) bool {
+func shouldSkipSovereignLowSuccessOpportunity(stats rebalanceTargetPairStats, expectedProfitSat int64, cfg RebalanceConfig) bool {
 	rate, attempts := sovereignHistoricalSuccessRate(stats)
-	return attempts >= sovereignHistoryMinAttempts && rate < sovereignMinHistoricalSuccessRate
+	if attempts < sovereignLowSuccessMinAttempts || rate >= sovereignLowSuccessRate {
+		return false
+	}
+	floor := sovereignLowSuccessProfitFloorSat
+	if cfg.SovereignMinExpectedProfitSat > 0 && cfg.SovereignMinExpectedProfitSat*10 > floor {
+		floor = cfg.SovereignMinExpectedProfitSat * 10
+	}
+	return expectedProfitSat < floor
 }
 
 func sovereignHistoricalSuccessRate(stats rebalanceTargetPairStats) (float64, int) {
@@ -7781,7 +7797,7 @@ func buildScanDetail(reasons map[string]int, remaining int64, candidates int) st
 		{key: "target_already_balanced", label: "target already balanced"},
 		{key: "recently_attempted", label: "recently attempted"},
 		{key: "fee_cap_zero", label: "fee cap zero"},
-		{key: sovereignHistoricalSuccessRateBelowReason, label: "historical success rate below min"},
+		{key: sovereignLowSuccessOpportunityReason, label: "low success opportunity below floor"},
 		{key: "below_execute_min", label: "below execute min amount"},
 		{key: "budget_below_min", label: "budget below min amount"},
 		{key: "budget_too_low", label: "budget too low"},

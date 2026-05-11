@@ -1362,7 +1362,7 @@ func TestExecuteSovereignAutopilotShadowRecordsWouldQueueAndSkips(t *testing.T) 
 	}
 }
 
-func TestExecuteSovereignAutopilotSkipsLowHistoricalSuccessRate(t *testing.T) {
+func TestExecuteSovereignAutopilotSkipsLowSuccessOnlyWhenProfitIsLow(t *testing.T) {
 	svc := NewRebalanceService(nil, nil, nil)
 	cfg := defaultRebalanceConfig()
 	cfg.BudgetUnlimited = true
@@ -1372,13 +1372,13 @@ func TestExecuteSovereignAutopilotSkipsLowHistoricalSuccessRate(t *testing.T) {
 	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{
 		{
 			Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "dead:0", PeerAlias: "dead", TargetAmountSat: 100_000},
-			ExpectedGainSat:  1_200,
+			ExpectedGainSat:  700,
 			EstimatedCostSat: 100,
-			Score:            1_100,
+			Score:            600,
 			PairStats: rebalanceTargetPairStats{
-				Attempts:  sovereignHistoryMinAttempts,
+				Attempts:  sovereignLowSuccessMinAttempts,
 				Successes: 0,
-				Failures:  sovereignHistoryMinAttempts,
+				Failures:  sovereignLowSuccessMinAttempts,
 			},
 		},
 		{
@@ -1398,11 +1398,39 @@ func TestExecuteSovereignAutopilotSkipsLowHistoricalSuccessRate(t *testing.T) {
 	if result.Selected != 1 {
 		t.Fatalf("expected one selected decision, got %d", result.Selected)
 	}
-	if result.Decisions[0].Reason != sovereignHistoricalSuccessRateBelowReason {
+	if result.Decisions[0].Reason != sovereignLowSuccessOpportunityReason {
 		t.Fatalf("expected low success history skip, got %+v", result.Decisions[0])
 	}
 	if !result.Decisions[1].Selected || result.Decisions[1].Reason != "would_queue" {
 		t.Fatalf("expected healthier candidate selected, got %+v", result.Decisions[1])
+	}
+}
+
+func TestExecuteSovereignAutopilotAllowsLowSuccessHighProfit(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = true
+	cfg.SovereignMaxJobsPerCycle = 1
+	cfg.SovereignMinExpectedProfitSat = 80
+
+	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{{
+		Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "high-profit:0", PeerAlias: "high-profit", TargetAmountSat: 1_000_000},
+		ExpectedGainSat:  6_000,
+		EstimatedCostSat: 500,
+		Score:            5_500,
+		PairStats: rebalanceTargetPairStats{
+			Attempts:  sovereignLowSuccessMinAttempts,
+			Successes: 0,
+			Failures:  sovereignLowSuccessMinAttempts,
+		},
+	}}}
+
+	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, time.Now(), false)
+	if result.Selected != 1 {
+		t.Fatalf("expected high-profit low-success candidate selected, got %d", result.Selected)
+	}
+	if !result.Decisions[0].Selected || result.Decisions[0].Reason != "would_queue" {
+		t.Fatalf("expected high-profit low-success opportunity to remain eligible, got %+v", result.Decisions[0])
 	}
 }
 

@@ -29,18 +29,18 @@ LightningOS Light é um instalador completo de daemon de nó Lightning, com gere
 - Gestão de Bitcoin Local (status + config) e visualizador de logs
 
 ## Novidades desde a atualização 0.3.9 do README
-Estes releases cobrem `0.3.10-Beta` até `0.3.18-Beta`, além da versão atual de desenvolvimento `0.3.19-Beta` em `ui/public/version.txt`.
+Estas notas cobrem `0.3.10-Beta` até `0.3.27-Beta`, além da versão atual de desenvolvimento `0.4.0-Beta` em `ui/public/version.txt`.
 
-- Acesso admin e cadastro inicial: setup de primeiro acesso, tokens locais de setup/recovery, fluxo para habilitar login em instalações antigas e restart mais seguro do manager em mudanças de autenticação.
-- Graph Explorer: snapshot nativo do grafo, busca de nodes, abas de visão geral/canais/fechados/fees, reconciliação de peers locais, enriquecimento de origem de fechamento, distribuições de fee, tetos de policy e recompute.
-- Módulo Novos Canais: candidatos a peer com base em rotas observadas, rotas falhas, atrito operacional local, qualidade do grafo, demanda, alívio, confiança e evidência de rota/custo em 30 dias.
-- Dashboard renovado: componentes extraídos, cards mais ricos de LND/sistema, painéis de receita e atividade recente, saúde do core, risco das automações, pulso do node e modal de restart do LND com contexto de journal.
+- Acesso admin e cadastro inicial: setup de primeiro acesso, tokens locais de setup/recovery, fluxo para habilitar login em instalações antigas, restart mais seguro do manager em mudanças de autenticação e nova UI de enrollment.
+- Graph Explorer: snapshot nativo do grafo, busca de nodes, abas de visão geral/canais/fechados/fees, reconciliação de peers locais, enriquecimento de origem de fechamento, distribuições de fee, tetos de policy, recompute e correções posteriores de Graph/Lightning Ops.
+- Módulo Novos Canais: candidatos a peer com base em rotas observadas, rotas falhas, atrito operacional local, qualidade do grafo, demanda, alívio, confiança, evidência de rota/custo em 30 dias e ajustes de layout mobile.
+- Dashboard e System Pulse: componentes extraídos, cards mais ricos de LND/sistema, painéis de receita e atividade recente, saúde do core, risco das automações, pulso do node, checks de Bitcoin, correções no card de automação e flows de restart do LND mais seguros com contexto de journal.
 - Melhorias na carteira: invoices blinded, leitura de QR para pagamento, preview/probing de rota, recomendação de rota automática, pagamento por rota validada, metadados de rota/pagamento e comportamento mais seguro para invoices com blind paths.
-- Rebalance Center: pisos separados de probe/execução, MSPR multi-source paralelo, cooldown de rota morta, TTL adaptativo, peso por efetividade da origem, proteção de source por payback, bypass de cost gate por canal, cooldown quando todas as origens falham, reserva/orçamento manual, métricas baseline, mensagens mais claras, novos defaults e curso operacional novo.
-- Autofee: defaults de perfil enviados pelo backend, telemetria de refresh, thresholds dinâmicos, melhor tratamento de canais em monitor, correções de market-refill/stall-relax/old-sinks e comportamento mais conservador quando o sinal local é fraco.
-- Relatórios e notificações: warm-up de relatório live, API live de movimento, armazenamento de histórico de rota, catch-up mais robusto, correções Telegram e mais contexto de pagamento/rota.
-- Expansão da App Store: apps Electrs e Mempool, status/checks de full-index, melhorias em Bitcoin Core/RoboSats/LNbits/Public Pool e refinamentos de install/status para apps Docker.
-- Instalador e operação: suporte a Docker em nós existentes, compatibilidade sudoers com Ubuntu 26, correções de instalação, terminal mais seguro, melhor restart do LND e correções de install/Graph Explorer.
+- Rebalance Center: Auto Pilot fase 1 com modos de scheduler por regras/shadow/live, escopo de candidatos, controles de máximo de jobs e lucro esperado, telemetria de decisão, fila consciente de orçamento e status shadow/live na UI.
+- Execução e guardrails de rebalance: fast path delegado ao LND nativo com strict payback, fast path via `BuildRoute` em rota cacheada, decomposição MPP, modelo de ganho v2 com score de velocidade, reset/reforço de Mission Control, permanent-fail score com decaimento, refactors de cooldown-probe, trava de liquidez paga recente, modos de orçamento ilimitado/auto-only, reserva manual, tempo efetivo de jobs e reorganização da UI.
+- Autofee: defaults de perfil enviados pelo backend, telemetria de refresh/rebalance, thresholds dinâmicos, melhor tratamento de canais em monitor, dampener de settling target, golden tests, correções de market-refill/stall-relax/old-sinks e comportamento mais conservador quando o sinal local é fraco.
+- Relatórios, notificações e visibilidade operacional: warm-up de relatório live, API live de movimento, armazenamento de histórico de rota, catch-up mais robusto, ranges históricos em relatórios, melhorias no gráfico de saldos, ano nos tooltips, correções Telegram, APIs locais de peers, logs de Bitcoin Local, cópia de channel ID, histerese de HTLC e mais contexto de pagamento/rota.
+- App Store e instaladores: apps Electrs/Mempool, status/checks de full-index, diretórios customizados para Bitcoin/Elements, detecção de Bitcoin local para Elements, melhorias em Bitcoin Core/RoboSats/LNbits/Public Pool/Peerswap, refinamentos de apps Docker, compatibilidade sudoers com Ubuntu 26 e suporte a setup de nó existente com LND usando Postgres mais provisionamento do DB de relatórios/notificações do LightningOS.
 
 ## Estrutura do repositório
 - `cmd/lightningos-manager`: backend Go (API + UI estática)
@@ -55,8 +55,8 @@ Estes releases cobrem `0.3.10-Beta` até `0.3.18-Beta`, além da versão atual d
 O instalador provisiona tudo que é necessário em um Ubuntu limpo:
 - Postgres, smartmontools, curl, jq, ca-certificates, openssl, build tools
 - Tor (ControlPort habilitado) + i2pd habilitado por padrão
-- Go 1.22.x e Node.js 20.x (se ausentes ou antigos)
-- Binários do LND (padrão `v0.20.0-beta`)
+- Go 1.24.12 e a major mais recente do Node.js (fallback para Node.js 20.x se a detecção falhar)
+- Binários do LND (padrão `v0.20.1-beta`)
 - Binário do LightningOS Manager (compilado localmente)
 - Build da UI (compilada localmente)
 - Serviços systemd e templates de configuração

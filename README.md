@@ -32,18 +32,18 @@ LightningOS Light is a Full Lightning Node Daemon Installer, Lightning node mana
 - Bitcoin Local management (status + config) and logs viewer
 
 ## New since the 0.3.9 README update
-These releases cover `0.3.10-Beta` through `0.3.18-Beta`, plus the current `0.3.19-Beta` development version in `ui/public/version.txt`.
+These notes cover `0.3.10-Beta` through `0.3.27-Beta`, plus the current `0.4.0-Beta` development version in `ui/public/version.txt`.
 
-- Admin access and enrollment: first-run setup, local setup/recovery tokens, legacy-login enable flow, and safer manager restart handling around authentication changes.
-- Graph Explorer: native graph snapshot, node search, node/channel/closed-channel/fee tabs, local-peer reconciliation, close-source enrichment, fee distributions, policy ceilings, and recompute controls.
-- New Channels recommendation module: candidate peers from observed routes, failed routes, local operational pain, graph quality, demand, relief, confidence, and 30-day route/cost evidence.
-- Dashboard refresh: extracted dashboard components, richer LND/system cards, revenue and recent activity panels, core health, automation risk, node pulse, and safer LND restart modal with live journal context.
-- Wallet upgrades: blinded invoices, QR scanning for invoice payment, route preview/probing, automatic-route recommendations, validated-route payment execution, better payment detail/route metadata, and safer behavior for blind-path invoices.
-- Rebalance Center upgrades: split probe/execute floors, MSPR multi-source parallel prepass, route-dead cooldown, adaptive TTL, source-effectiveness weighting, payback-aware source protection, per-channel cost-gate bypass, all-sources-failed cooldown, manual reserve/budget controls, baseline metrics, clearer messages, updated defaults, and new operator course docs.
-- Autofee upgrades: backend-supplied profile defaults, refresh telemetry, dynamic thresholds, stronger inbound/monitor-state handling, market-refill fixes, stall relaxation fixes, old-sink handling, and more conservative behavior around weak local signals.
-- Reports and notifications: live report warm-up, movement live API, route-history storage, better catch-up behavior, Telegram notification fixes, and richer payment/route context.
-- App Store expansion: Electrs and Mempool apps, full-index dependency checks/status, improved Bitcoin Core/RoboSats/LNbits/Public Pool handling, and Docker app install/status refinements.
-- Installer and operations: existing-node Docker setup support, Ubuntu 26 sudoers compatibility, improved install fixes, safer terminal behavior, LND restart handling, and Graph Explorer/install fixes.
+- Admin access and enrollment: first-run setup, local setup/recovery tokens, legacy-login enable flow, safer manager restart handling, and the newer enrollment UI.
+- Graph Explorer: native graph snapshot, node search, node/channel/closed-channel/fee tabs, local-peer reconciliation, close-source enrichment, fee distributions, policy ceilings, recompute controls, and follow-up Graph/Lightning Ops fixes.
+- New Channels recommendation module: candidate peers from observed routes, failed routes, local operational pain, graph quality, demand, relief, confidence, 30-day route/cost evidence, and mobile layout refinements.
+- Dashboard and system pulse: extracted dashboard components, richer LND/system cards, revenue and recent activity panels, core health, automation risk, node pulse, Bitcoin checks, automation-card fixes, and safer LND restart flows with journal context.
+- Wallet upgrades: blinded invoices, QR invoice scanning, route preview/probing, automatic-route recommendations, validated-route payment execution, payment detail/route metadata, and safer behavior for blind-path invoices.
+- Rebalance Center: Auto Pilot phase 1 with rules/shadow/live scheduler modes, candidate scope, max-jobs and expected-profit controls, decision telemetry, budget-aware queueing, and shadow/live status in the UI.
+- Rebalance execution and guardrails: native LND delegated fast path with strict payback, cached `BuildRoute` fast path, MPP decomposition, v2 gain model with velocity scoring, Mission Control reset/reinforcement, decaying permanent-fail scores, cooldown-probe refactors, fresh paid liquidity lock, unlimited/auto-only budget modes, manual reserve, effective job timing, and UI reorganization.
+- Autofee upgrades: backend-supplied profile defaults, refresh/rebalance telemetry, dynamic thresholds, stronger inbound/monitor-state handling, settling-target dampening, golden tests, market-refill fixes, stall relaxation fixes, old-sink handling, and more conservative behavior around weak local signals.
+- Reports, notifications, and ops visibility: live report warm-up, movement live API, route-history storage, improved catch-up behavior, historical report ranges, balances chart improvements, year tooltips, Telegram notification fixes, local peer APIs, Bitcoin Local logs, channel-ID copy, HTLC hysteresis, and richer payment/route context.
+- App Store and installers: Electrs/Mempool apps, full-index dependency checks/status, custom Bitcoin/Elements data directories, local Bitcoin detection for Elements, improved Bitcoin Core/RoboSats/LNbits/Public Pool/Peerswap handling, Docker app refinements, Ubuntu 26 sudoers compatibility, and existing-node setup support for LND backed by Postgres plus LightningOS reports/notifications DB provisioning.
 
 ## Repository layout
 - `cmd/lightningos-manager`: Go backend (API + static UI)
@@ -58,8 +58,8 @@ These releases cover `0.3.10-Beta` through `0.3.18-Beta`, plus the current `0.3.
 The installer provisions everything needed on a clean Ubuntu box:
 - Postgres, smartmontools, curl, jq, ca-certificates, openssl, build tools
 - Tor (ControlPort enabled) + i2pd enabled by default
-- Go 1.22.x and Node.js 20.x (if missing or too old)
-- LND binaries (default `v0.20.0-beta`)
+- Go 1.24.12 and the latest Node.js major (falls back to Node.js 20.x if resolution fails)
+- LND binaries (default `v0.20.1-beta`)
 - LightningOS Manager binary (compiled locally)
 - UI build (compiled locally)
 - systemd services and config templates

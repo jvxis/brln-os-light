@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -1431,6 +1432,111 @@ func TestExecuteSovereignAutopilotAllowsLowSuccessHighProfit(t *testing.T) {
 	}
 	if !result.Decisions[0].Selected || result.Decisions[0].Reason != "would_queue" {
 		t.Fatalf("expected high-profit low-success opportunity to remain eligible, got %+v", result.Decisions[0])
+	}
+}
+
+func TestExecuteSovereignAutopilotSkipsRouteDeadLowProfit(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = true
+	cfg.SovereignMaxJobsPerCycle = 1
+	cfg.SovereignMinExpectedProfitSat = 50
+
+	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{
+		{
+			Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "route-dead:0", PeerAlias: "route-dead", TargetAmountSat: 100_000},
+			ExpectedGainSat:  700,
+			EstimatedCostSat: 100,
+			Score:            600,
+			PairStats: rebalanceTargetPairStats{
+				RecentStructuralFailures: sovereignRouteDeadMinFailedSources,
+			},
+		},
+		{
+			Channel:          RebalanceChannel{ChannelID: 2, ChannelPoint: "healthy:0", PeerAlias: "healthy", TargetAmountSat: 100_000},
+			ExpectedGainSat:  200,
+			EstimatedCostSat: 100,
+			Score:            100,
+		},
+	}}
+
+	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, time.Now(), false)
+	if result.Selected != 1 {
+		t.Fatalf("expected one selected decision, got %d", result.Selected)
+	}
+	if result.Decisions[0].Reason != sovereignRouteDeadOpportunityReason {
+		t.Fatalf("expected route-dead opportunity skip, got %+v", result.Decisions[0])
+	}
+	if !result.Decisions[1].Selected || result.Decisions[1].Reason != "would_queue" {
+		t.Fatalf("expected healthy candidate selected, got %+v", result.Decisions[1])
+	}
+}
+
+func TestExecuteSovereignAutopilotAllowsRouteDeadHighProfit(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = true
+	cfg.SovereignMaxJobsPerCycle = 1
+	cfg.SovereignMinExpectedProfitSat = 50
+
+	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{{
+		Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "route-dead-high-profit:0", PeerAlias: "route-dead-high-profit", TargetAmountSat: 1_000_000},
+		ExpectedGainSat:  6_000,
+		EstimatedCostSat: 500,
+		Score:            5_500,
+		PairStats: rebalanceTargetPairStats{
+			RecentStructuralFailures: sovereignRouteDeadMinFailedSources,
+		},
+	}}}
+
+	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, time.Now(), false)
+	if result.Selected != 1 {
+		t.Fatalf("expected high-profit route-dead candidate selected, got %d", result.Selected)
+	}
+	if !result.Decisions[0].Selected || result.Decisions[0].Reason != "would_queue" {
+		t.Fatalf("expected high-profit route-dead opportunity to remain eligible, got %+v", result.Decisions[0])
+	}
+}
+
+func TestExecuteSovereignAutopilotContinuesPastDecisionDetailLimit(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = true
+	cfg.SovereignMaxJobsPerCycle = 1
+	cfg.SovereignMinExpectedProfitSat = 50
+
+	plan := rebalanceAutoScanCandidatePlan{Candidates: make([]rebalanceTarget, 0, scanSkipDetailLimit+1)}
+	for i := 0; i < scanSkipDetailLimit; i++ {
+		plan.Candidates = append(plan.Candidates, rebalanceTarget{
+			Channel:          RebalanceChannel{ChannelID: uint64(i + 1), ChannelPoint: fmt.Sprintf("low-%d:0", i), PeerAlias: fmt.Sprintf("low-%d", i), TargetAmountSat: 100_000},
+			ExpectedGainSat:  120,
+			EstimatedCostSat: 100,
+			Score:            int64(1_000 - i),
+		})
+	}
+	plan.Candidates = append(plan.Candidates, rebalanceTarget{
+		Channel:          RebalanceChannel{ChannelID: 999, ChannelPoint: "good:0", PeerAlias: "good", TargetAmountSat: 100_000},
+		ExpectedGainSat:  300,
+		EstimatedCostSat: 100,
+		Score:            1,
+	})
+
+	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, time.Now(), false)
+	if result.Selected != 1 {
+		t.Fatalf("expected candidate after detail cap to be selected, got %d", result.Selected)
+	}
+	if result.ExpectedProfitSat != 200 {
+		t.Fatalf("expected selected profit 200 sats, got %d", result.ExpectedProfitSat)
+	}
+	foundSelected := false
+	for _, decision := range result.Decisions {
+		if decision.ChannelID == 999 && decision.Selected {
+			foundSelected = true
+			break
+		}
+	}
+	if !foundSelected {
+		t.Fatalf("expected selected decision after detail cap to be retained, got %+v", result.Decisions)
 	}
 }
 

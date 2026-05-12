@@ -982,6 +982,17 @@ export default function RebalanceCenter() {
   const autopilotDecisions = overview?.sovereign_decisions ?? []
   const autopilotSelectedDecisions = autopilotDecisions.filter((decision) => decision.selected)
   const autopilotSkippedDecisions = autopilotDecisions.filter((decision) => !decision.selected)
+  const autopilotHistory24h = overview?.sovereign_history_24h ?? []
+  const autopilotHistoryTotals = useMemo(() => {
+    return autopilotHistory24h.reduce(
+      (acc, entry) => ({
+        scans: acc.scans + 1,
+        selected: acc.selected + (entry.selected ?? 0),
+        expectedProfit: acc.expectedProfit + (entry.expected_profit_sat ?? 0)
+      }),
+      { scans: 0, selected: 0, expectedProfit: 0 }
+    )
+  }, [autopilotHistory24h])
   const formatSkipReason = (reason: string) => {
     switch (reason) {
       case 'roi_guardrail':
@@ -1008,6 +1019,10 @@ export default function RebalanceCenter() {
         return t('rebalanceCenter.overview.scanReasonCycleLimit')
       case 'cooldown_probe_not_sovereign':
         return t('rebalanceCenter.overview.scanReasonCooldownProbeNotSovereign')
+      case 'low_success_opportunity_below_floor':
+        return t('rebalanceCenter.overview.scanReasonLowSuccessOpportunity')
+      case 'route_dead_opportunity_below_floor':
+        return t('rebalanceCenter.overview.scanReasonRouteDeadOpportunity')
       case 'would_queue':
         return t('rebalanceCenter.overview.scanReasonWouldQueue')
       case 'queued':
@@ -1052,6 +1067,10 @@ export default function RebalanceCenter() {
         return t('rebalanceCenter.overview.scanReasonCycleLimit')
       case 'cooldown_probe_not_sovereign':
         return t('rebalanceCenter.overview.scanReasonCooldownProbeNotSovereign')
+      case 'low_success_opportunity_below_floor':
+        return t('rebalanceCenter.overview.scanReasonLowSuccessOpportunity')
+      case 'route_dead_opportunity_below_floor':
+        return t('rebalanceCenter.overview.scanReasonRouteDeadOpportunity')
       case 'sovereign_live':
         return t('rebalanceCenter.overview.scanReasonSovereignLive')
       case 'target_not_found':
@@ -1062,12 +1081,19 @@ export default function RebalanceCenter() {
         return reason
     }
   }
+  const formatReasonSummary = (reasons?: Record<string, number>, limit = 3) => {
+    const entries = Object.entries(reasons ?? {})
+      .filter(([, count]) => count > 0)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, limit)
+    return entries.map(([reason, count]) => `${formatScanReason(reason)}: ${formatter.format(count)}`).join(', ')
+  }
   const scanDetailText = useMemo(() => {
     if (!overview) return ''
     const reasons = overview.last_scan_reasons ?? {}
     const entries = Object.entries(reasons).filter(([, count]) => count > 0)
     if (entries.length > 0) {
-      const ordered = ['channel_busy', 'target_already_balanced', 'target_not_eligible', 'recently_attempted', 'target_cooldown', 'target_cooldown_probe_backoff', 'target_cooldown_probe_deferred', 'target_cooldown_probe_busy', 'roi_guardrail', 'profit_guardrail', 'expected_profit_below_min', 'cycle_limit', 'cooldown_probe_not_sovereign', 'fee_cap_zero', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
+      const ordered = ['channel_busy', 'target_already_balanced', 'target_not_eligible', 'recently_attempted', 'target_cooldown', 'target_cooldown_probe_backoff', 'target_cooldown_probe_deferred', 'target_cooldown_probe_busy', 'roi_guardrail', 'profit_guardrail', 'expected_profit_below_min', 'cycle_limit', 'cooldown_probe_not_sovereign', 'route_dead_opportunity_below_floor', 'low_success_opportunity_below_floor', 'fee_cap_zero', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
       entries.sort((a, b) => {
         const ai = ordered.indexOf(a[0])
         const bi = ordered.indexOf(b[0])
@@ -1882,6 +1908,48 @@ export default function RebalanceCenter() {
             onToggle={() => setAutopilotDecisionsOpen((value) => !value)}
           >
             <div className="space-y-4">
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs uppercase tracking-wide text-fog/60">{t('rebalanceCenter.autopilot.history24h')}</p>
+                  <p className="text-xs text-fog/50">
+                    {t('rebalanceCenter.autopilot.historySummary', {
+                      scans: formatter.format(autopilotHistoryTotals.scans),
+                      selected: formatter.format(autopilotHistoryTotals.selected),
+                      profit: formatSats(autopilotHistoryTotals.expectedProfit)
+                    })}
+                  </p>
+                </div>
+                {autopilotHistory24h.length > 0 ? (
+                  <div className="grid gap-2">
+                    {autopilotHistory24h.slice(0, 8).map((entry) => {
+                      const reasonSummary = formatReasonSummary(entry.skip_reasons)
+                      return (
+                        <div key={entry.id ?? entry.scan_at} className="rounded-lg border border-white/10 bg-white/5 p-2 text-xs text-fog/70">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="font-semibold text-fog">{formatTimestamp(entry.scan_at)}</span>
+                            <span className="text-fog/50">{t(`rebalanceCenter.settings.schedulerModeOptions.${entry.mode}`)}</span>
+                          </div>
+                          <div className="mt-1 grid gap-1 sm:grid-cols-3">
+                            <span>
+                              {t('rebalanceCenter.autopilot.historySelected', {
+                                selected: formatter.format(entry.selected ?? 0),
+                                candidates: formatter.format(entry.candidates ?? 0)
+                              })}
+                            </span>
+                            <span>{t('rebalanceCenter.autopilot.profit', { value: formatSats(entry.expected_profit_sat ?? 0) })}</span>
+                            <span>{t('rebalanceCenter.autopilot.historyBudget', { value: formatSats(entry.budget_remaining_sat ?? 0) })}</span>
+                          </div>
+                          {reasonSummary && (
+                            <p className="mt-1 text-fog/50">{t('rebalanceCenter.autopilot.historyReasons', { value: reasonSummary })}</p>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-sm text-fog/60">{t('rebalanceCenter.autopilot.historyEmpty')}</p>
+                )}
+              </div>
               {autopilotSelectedDecisions.length > 0 && (
                 <div className="space-y-2">
                   <p className="text-xs uppercase tracking-wide text-fog/60">{t('rebalanceCenter.autopilot.selected')}</p>

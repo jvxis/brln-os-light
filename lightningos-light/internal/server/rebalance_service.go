@@ -200,6 +200,9 @@ const (
 	sovereignLowSuccessRate              = 0.02
 	sovereignLowSuccessProfitFloorSat    = int64(1000)
 	sovereignLowSuccessOpportunityReason = "low_success_opportunity_below_floor"
+	sovereignRouteDeadMinFailedSources   = 8
+	sovereignRouteDeadProfitFloorSat     = int64(1000)
+	sovereignRouteDeadOpportunityReason  = "route_dead_opportunity_below_floor"
 )
 
 const (
@@ -291,6 +294,7 @@ type RebalanceOverview struct {
 	SovereignExpectedProfitSat    int64                        `json:"sovereign_expected_profit_sat"`
 	SovereignBudgetRemainingSat   int64                        `json:"sovereign_budget_remaining_sat"`
 	SovereignDecisions            []RebalanceSovereignDecision `json:"sovereign_decisions,omitempty"`
+	SovereignHistory24h           []RebalanceSovereignHistory  `json:"sovereign_history_24h,omitempty"`
 	LastScanAt                    string                       `json:"last_scan_at,omitempty"`
 	LastScanStatus                string                       `json:"last_scan_status,omitempty"`
 	LastScanDetail                string                       `json:"last_scan_detail,omitempty"`
@@ -406,6 +410,21 @@ type RebalanceSovereignDecision struct {
 	HistoricalSuccesses      int     `json:"historical_successes"`
 	HistoricalSuccessRate    float64 `json:"historical_success_rate"`
 	RecentStructuralFailures int     `json:"recent_structural_failures"`
+}
+
+type RebalanceSovereignHistory struct {
+	ID                 int64                        `json:"id,omitempty"`
+	ScanAt             string                       `json:"scan_at"`
+	Mode               string                       `json:"mode"`
+	Status             string                       `json:"status"`
+	Candidates         int                          `json:"candidates"`
+	Selected           int                          `json:"selected"`
+	ExpectedProfitSat  int64                        `json:"expected_profit_sat"`
+	BudgetRemainingSat int64                        `json:"budget_remaining_sat"`
+	SkipReasons        map[string]int               `json:"skip_reasons,omitempty"`
+	SelectedDecisions  []RebalanceSovereignDecision `json:"selected_decisions,omitempty"`
+	Decisions          []RebalanceSovereignDecision `json:"decisions,omitempty"`
+	Detail             string                       `json:"detail,omitempty"`
 }
 
 type RebalanceReasonStat struct {
@@ -2316,7 +2335,7 @@ func (s *RebalanceService) runAutoScan() {
 			AutofeeRecentAdjustments:      autofeeAdjustments,
 		})
 		sovereignResult := s.executeSovereignAutopilot(ctx, cfg, settings, sovereignPlan, scanAt, schedulerMode == rebalanceSchedulerModeSovereignLive)
-		s.recordSovereignAutopilot(scanAt, schedulerMode, sovereignResult)
+		s.recordSovereignAutopilot(ctx, scanAt, schedulerMode, sovereignResult)
 		if schedulerMode == rebalanceSchedulerModeSovereignLive {
 			scanStatus = sovereignResult.Status
 			scanDetail = sovereignResult.Detail
@@ -2628,11 +2647,13 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 	if maxJobs > cfg.MaxConcurrent && cfg.MaxConcurrent > 0 {
 		maxJobs = cfg.MaxConcurrent
 	}
+	appendDecision := func(decision RebalanceSovereignDecision) {
+		if decision.Selected || len(result.Decisions) < scanSkipDetailLimit {
+			result.Decisions = append(result.Decisions, decision)
+		}
+	}
 
 	for _, target := range plan.Candidates {
-		if len(result.Decisions) >= scanSkipDetailLimit {
-			break
-		}
 		targetCfg := effectiveConfigForTarget(cfg, settings[target.Channel.ChannelID])
 		targetPolicy := lndclient.ChannelPolicySnapshot{
 			FeeRatePpm:  target.Channel.OutgoingFeePpm,
@@ -2674,6 +2695,9 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 		case target.CooldownProbe:
 			decision.Reason = "cooldown_probe_not_sovereign"
 			noteSkip(decision.Reason)
+		case shouldSkipSovereignRouteDeadOpportunity(target.PairStats, expectedProfit, cfg):
+			decision.Reason = sovereignRouteDeadOpportunityReason
+			noteSkip(decision.Reason)
 		case shouldSkipSovereignLowSuccessOpportunity(target.PairStats, expectedProfit, cfg):
 			decision.Reason = sovereignLowSuccessOpportunityReason
 			noteSkip(decision.Reason)
@@ -2693,7 +2717,7 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 				if err != nil || maxFeeMsat <= 0 {
 					decision.Reason = "fee_cap_zero"
 					noteSkip(decision.Reason)
-					result.Decisions = append(result.Decisions, decision)
+					appendDecision(decision)
 					continue
 				}
 				maxFeePpm := feeMsatToPpm(maxFeeMsat, targetAmount)
@@ -2708,7 +2732,7 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 				if fitAmount <= 0 || (minExecuteSat > 0 && fitAmount < minExecuteSat) {
 					decision.Reason = "budget_below_min"
 					noteSkip(decision.Reason)
-					result.Decisions = append(result.Decisions, decision)
+					appendDecision(decision)
 					continue
 				}
 				amountOverride = fitAmount
@@ -2717,7 +2741,7 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 				if budgetCost > remaining {
 					decision.Reason = "budget_too_low"
 					noteSkip(decision.Reason)
-					result.Decisions = append(result.Decisions, decision)
+					appendDecision(decision)
 					continue
 				}
 				decision.AmountSat = targetAmount
@@ -2728,13 +2752,19 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 				if decision.ExpectedProfitSat < cfg.SovereignMinExpectedProfitSat {
 					decision.Reason = "expected_profit_below_min"
 					noteSkip(decision.Reason)
-					result.Decisions = append(result.Decisions, decision)
+					appendDecision(decision)
+					continue
+				}
+				if shouldSkipSovereignRouteDeadOpportunity(target.PairStats, decision.ExpectedProfitSat, cfg) {
+					decision.Reason = sovereignRouteDeadOpportunityReason
+					noteSkip(decision.Reason)
+					appendDecision(decision)
 					continue
 				}
 				if shouldSkipSovereignLowSuccessOpportunity(target.PairStats, decision.ExpectedProfitSat, cfg) {
 					decision.Reason = sovereignLowSuccessOpportunityReason
 					noteSkip(decision.Reason)
-					result.Decisions = append(result.Decisions, decision)
+					appendDecision(decision)
 					continue
 				}
 			}
@@ -2743,7 +2773,7 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 				if err != nil {
 					decision.Reason = autoStartErrorReason(err)
 					noteSkip(decision.Reason)
-					result.Decisions = append(result.Decisions, decision)
+					appendDecision(decision)
 					continue
 				}
 				s.mu.Lock()
@@ -2766,7 +2796,7 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 				result.BudgetRemainingSat = remaining
 			}
 		}
-		result.Decisions = append(result.Decisions, decision)
+		appendDecision(decision)
 	}
 
 	if result.Candidates == 0 {
@@ -2782,7 +2812,7 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 	return result
 }
 
-func (s *RebalanceService) recordSovereignAutopilot(scanAt time.Time, mode string, result sovereignAutopilotResult) {
+func (s *RebalanceService) recordSovereignAutopilot(ctx context.Context, scanAt time.Time, mode string, result sovereignAutopilotResult) {
 	s.mu.Lock()
 	s.lastSovereignDecisionAt = scanAt
 	s.lastSovereignMode = normalizeRebalanceSchedulerMode(mode)
@@ -2792,6 +2822,9 @@ func (s *RebalanceService) recordSovereignAutopilot(scanAt time.Time, mode strin
 	s.lastSovereignBudgetRemainingSat = result.BudgetRemainingSat
 	s.lastSovereignDecisions = append([]RebalanceSovereignDecision(nil), result.Decisions...)
 	s.mu.Unlock()
+	if err := s.persistSovereignAutopilotHistory(ctx, scanAt, mode, result); err != nil && s.logger != nil {
+		s.logger.Printf("rebalance sovereign history persist failed: %v", err)
+	}
 }
 
 func (s *RebalanceService) recordManualRestartWatch(scanAt time.Time, queued int, reasons map[string]int) {
@@ -2824,6 +2857,28 @@ insert into rebalance_scan_skips (
 		}
 	}
 	return nil
+}
+
+func (s *RebalanceService) persistSovereignAutopilotHistory(ctx context.Context, scanAt time.Time, mode string, result sovereignAutopilotResult) error {
+	if s.db == nil || scanAt.IsZero() {
+		return nil
+	}
+	skipReasonsRaw, err := json.Marshal(result.SkipReasons)
+	if err != nil {
+		return err
+	}
+	decisionsRaw, err := json.Marshal(result.Decisions)
+	if err != nil {
+		return err
+	}
+	_, _ = s.db.Exec(ctx, `delete from rebalance_sovereign_history where scan_at < now() - interval '48 hours'`)
+	_, err = s.db.Exec(ctx, `
+insert into rebalance_sovereign_history (
+  scan_at, mode, status, candidates, selected, expected_profit_sat,
+  budget_remaining_sat, skip_reasons, decisions, detail
+) values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10)
+`, scanAt.UTC(), normalizeRebalanceSchedulerMode(mode), result.Status, result.Candidates, result.Selected, result.ExpectedProfitSat, result.BudgetRemainingSat, string(skipReasonsRaw), string(decisionsRaw), result.Detail)
+	return err
 }
 
 func (s *RebalanceService) loadRebalanceScanSkips(ctx context.Context, scanAt time.Time, limit int) []RebalanceSkipDetail {
@@ -2864,6 +2919,78 @@ limit $2
 			detail.ChannelID = uint64(channelID)
 		}
 		out = append(out, detail)
+	}
+	return out
+}
+
+func (s *RebalanceService) SovereignHistory(ctx context.Context, limit int, includeDecisions bool) ([]RebalanceSovereignHistory, error) {
+	if limit <= 0 {
+		limit = 288
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	return s.loadSovereignAutopilotHistory(ctx, time.Now().Add(-24*time.Hour), limit, includeDecisions), nil
+}
+
+func (s *RebalanceService) loadSovereignAutopilotHistory(ctx context.Context, since time.Time, limit int, includeDecisions bool) []RebalanceSovereignHistory {
+	if s.db == nil || limit <= 0 {
+		return []RebalanceSovereignHistory{}
+	}
+	if since.IsZero() {
+		since = time.Now().Add(-24 * time.Hour)
+	}
+	rows, err := s.db.Query(ctx, `
+select id, scan_at, mode, status, candidates, selected, expected_profit_sat,
+  budget_remaining_sat, skip_reasons::text, decisions::text, detail
+from rebalance_sovereign_history
+where scan_at >= $1
+order by scan_at desc
+limit $2
+`, since.UTC(), limit)
+	if err != nil {
+		return []RebalanceSovereignHistory{}
+	}
+	defer rows.Close()
+	out := []RebalanceSovereignHistory{}
+	for rows.Next() {
+		var entry RebalanceSovereignHistory
+		var scanAt time.Time
+		var skipReasonsRaw string
+		var decisionsRaw string
+		if err := rows.Scan(
+			&entry.ID,
+			&scanAt,
+			&entry.Mode,
+			&entry.Status,
+			&entry.Candidates,
+			&entry.Selected,
+			&entry.ExpectedProfitSat,
+			&entry.BudgetRemainingSat,
+			&skipReasonsRaw,
+			&decisionsRaw,
+			&entry.Detail,
+		); err != nil {
+			return out
+		}
+		entry.ScanAt = scanAt.UTC().Format(time.RFC3339)
+		if err := json.Unmarshal([]byte(skipReasonsRaw), &entry.SkipReasons); err != nil || entry.SkipReasons == nil {
+			entry.SkipReasons = map[string]int{}
+		}
+		var decisions []RebalanceSovereignDecision
+		if err := json.Unmarshal([]byte(decisionsRaw), &decisions); err == nil {
+			selected := make([]RebalanceSovereignDecision, 0, entry.Selected)
+			for _, decision := range decisions {
+				if decision.Selected {
+					selected = append(selected, decision)
+				}
+			}
+			entry.SelectedDecisions = selected
+			if includeDecisions {
+				entry.Decisions = decisions
+			}
+		}
+		out = append(out, entry)
 	}
 	return out
 }
@@ -3075,6 +3202,10 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 			continue
 		}
 		score := expectedGain - estimatedCost
+		pairStats := input.PairStatsByTarget[snapshot.ChannelID]
+		if targetDistinctSourceCooldown.DistinctSources > pairStats.RecentStructuralFailures {
+			pairStats.RecentStructuralFailures = targetDistinctSourceCooldown.DistinctSources
+		}
 		plan.Candidates = append(plan.Candidates, rebalanceTarget{
 			Channel:          snapshot,
 			ExpectedGainSat:  expectedGain,
@@ -3084,7 +3215,7 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 			ExpectedROIValid: roiValid,
 			Score:            score,
 			LastAutoAt:       input.LastAutoByTarget[snapshot.ChannelID],
-			PairStats:        input.PairStatsByTarget[snapshot.ChannelID],
+			PairStats:        pairStats,
 		})
 		if !plan.TopScoreSet || score > plan.TopScore {
 			plan.TopScore = score
@@ -7637,6 +7768,17 @@ func shouldSkipSovereignLowSuccessOpportunity(stats rebalanceTargetPairStats, ex
 	return expectedProfitSat < floor
 }
 
+func shouldSkipSovereignRouteDeadOpportunity(stats rebalanceTargetPairStats, expectedProfitSat int64, cfg RebalanceConfig) bool {
+	if stats.RecentStructuralFailures < sovereignRouteDeadMinFailedSources {
+		return false
+	}
+	floor := sovereignRouteDeadProfitFloorSat
+	if cfg.SovereignMinExpectedProfitSat > 0 && cfg.SovereignMinExpectedProfitSat*10 > floor {
+		floor = cfg.SovereignMinExpectedProfitSat * 10
+	}
+	return expectedProfitSat < floor
+}
+
 func sovereignHistoricalSuccessRate(stats rebalanceTargetPairStats) (float64, int) {
 	attempts := stats.Attempts
 	if attempts <= 0 {
@@ -7797,6 +7939,7 @@ func buildScanDetail(reasons map[string]int, remaining int64, candidates int) st
 		{key: "target_already_balanced", label: "target already balanced"},
 		{key: "recently_attempted", label: "recently attempted"},
 		{key: "fee_cap_zero", label: "fee cap zero"},
+		{key: sovereignRouteDeadOpportunityReason, label: "route dead opportunity below floor"},
 		{key: sovereignLowSuccessOpportunityReason, label: "low success opportunity below floor"},
 		{key: "below_execute_min", label: "below execute min amount"},
 		{key: "budget_below_min", label: "budget below min amount"},
@@ -8432,6 +8575,21 @@ create table if not exists rebalance_scan_skips (
   created_at timestamptz not null default now()
 );
 
+create table if not exists rebalance_sovereign_history (
+  id bigserial primary key,
+  scan_at timestamptz not null,
+  mode text not null,
+  status text not null,
+  candidates integer not null default 0,
+  selected integer not null default 0,
+  expected_profit_sat bigint not null default 0,
+  budget_remaining_sat bigint not null default 0,
+  skip_reasons jsonb not null default '{}'::jsonb,
+  decisions jsonb not null default '[]'::jsonb,
+  detail text not null default '',
+  created_at timestamptz not null default now()
+);
+
 create table if not exists rebalance_budget_daily (
   day date primary key,
   budget_sat bigint not null,
@@ -8458,6 +8616,7 @@ create index if not exists rebalance_pair_stats_fail_idx on rebalance_pair_stats
 create index if not exists rebalance_pair_stats_success_idx on rebalance_pair_stats (last_success_at desc);
 create index if not exists rebalance_scan_skips_scan_idx on rebalance_scan_skips (scan_at desc);
 create index if not exists rebalance_scan_skips_reason_idx on rebalance_scan_skips (reason, scan_at desc);
+create index if not exists rebalance_sovereign_history_scan_idx on rebalance_sovereign_history (scan_at desc);
 create index if not exists notifications_channel_id_idx on notifications (channel_id);
 
 alter table if exists rebalance_pair_stats
@@ -10367,6 +10526,7 @@ where report_date >= current_date - interval '6 days'
 			lastScanSkipped = persisted
 		}
 	}
+	sovereignHistory24h := s.loadSovereignAutopilotHistory(ctx, time.Now().Add(-24*time.Hour), 288, false)
 	lastSovereignDecisionAtText := ""
 	if !lastSovereignDecisionAt.IsZero() {
 		lastSovereignDecisionAtText = lastSovereignDecisionAt.UTC().Format(time.RFC3339)
@@ -10382,6 +10542,7 @@ where report_date >= current_date - interval '6 days'
 		SovereignExpectedProfitSat:    lastSovereignExpectedProfitSat,
 		SovereignBudgetRemainingSat:   lastSovereignBudgetRemainingSat,
 		SovereignDecisions:            lastSovereignDecisions,
+		SovereignHistory24h:           sovereignHistory24h,
 		DailyBudgetSat:                budget,
 		DailyBudgetBaseSat:            baseBudget,
 		DailyBudgetShortTermSat:       shortTermBudget,

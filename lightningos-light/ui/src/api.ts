@@ -644,6 +644,13 @@ export const getRebalancePairStats = (targetChannelPoint: string) =>
 export const getRebalanceQueue = () => request('/api/rebalance/queue')
 export const getRebalanceHistory = (limit = 0) =>
   limit > 0 ? request(`/api/rebalance/history?limit=${limit}`) : request('/api/rebalance/history')
+export const getRebalanceSovereignHistory = (limit = 0, includeDecisions = false) => {
+  const params = new URLSearchParams()
+  if (limit > 0) params.set('limit', String(limit))
+  if (includeDecisions) params.set('include_decisions', '1')
+  const query = params.toString()
+  return request(query ? `/api/rebalance/sovereign-history?${query}` : '/api/rebalance/sovereign-history')
+}
 export const resetRebalanceMissionControl = () =>
   request('/api/rebalance/mission-control/reset', { method: 'POST', body: JSON.stringify({}) })
 export const runRebalance = (payload: {

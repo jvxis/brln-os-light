@@ -631,6 +631,31 @@ func (s *Server) handleRebalanceHistory(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{"jobs": jobs, "attempts": attempts})
 }
 
+func (s *Server) handleRebalanceSovereignHistory(w http.ResponseWriter, r *http.Request) {
+	if s.rebalance == nil {
+		writeError(w, http.StatusServiceUnavailable, "rebalance unavailable")
+		return
+	}
+	limit := 0
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			limit = parsed
+		}
+	}
+	includeDecisions := strings.EqualFold(r.URL.Query().Get("include_decisions"), "true") ||
+		r.URL.Query().Get("include_decisions") == "1" ||
+		strings.EqualFold(r.URL.Query().Get("decisions"), "true") ||
+		r.URL.Query().Get("decisions") == "1"
+	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
+	defer cancel()
+	history, err := s.rebalance.SovereignHistory(ctx, limit, includeDecisions)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"history": history})
+}
+
 func (s *Server) handleRebalanceRun(w http.ResponseWriter, r *http.Request) {
 	if s.rebalance == nil {
 		writeError(w, http.StatusServiceUnavailable, "rebalance unavailable")

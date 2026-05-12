@@ -72,6 +72,26 @@ export type RebalanceSovereignDecision = {
   expected_profit_sat: number
   expected_roi: number
   expected_roi_valid: boolean
+  budget_cost_sat?: number
+  historical_attempts?: number
+  historical_successes?: number
+  historical_success_rate?: number
+  recent_structural_failures?: number
+}
+
+export type RebalanceSovereignHistory = {
+  id?: number
+  scan_at: string
+  mode: string
+  status: string
+  candidates: number
+  selected: number
+  expected_profit_sat: number
+  budget_remaining_sat: number
+  skip_reasons?: Record<string, number>
+  selected_decisions?: RebalanceSovereignDecision[]
+  decisions?: RebalanceSovereignDecision[]
+  detail?: string
 }
 
 export type RebalanceOverview = {
@@ -84,6 +104,7 @@ export type RebalanceOverview = {
   sovereign_expected_profit_sat?: number
   sovereign_budget_remaining_sat?: number
   sovereign_decisions?: RebalanceSovereignDecision[]
+  sovereign_history_24h?: RebalanceSovereignHistory[]
   last_scan_at?: string
   last_scan_status?: string
   last_scan_detail?: string

@@ -87,6 +87,48 @@ As credenciais sao gravadas no arquivo de ambiente do app em:
 
 Ao desinstalar pela App Store, o LightningOS remove os arquivos do app em `/var/lib/lightningos/apps/fedimint`, mas preserva os dados persistentes em `/var/lib/lightningos/apps-data/fedimint`.
 
+## Desinstalacao e reset completo
+
+O botao `Uninstall` da App Store e conservador. Ele executa `docker compose down --remove-orphans` e remove os arquivos operacionais em:
+
+```text
+/var/lib/lightningos/apps/fedimint
+```
+
+Ele nao remove automaticamente:
+
+- dados do guardiao em `/var/lib/lightningos/apps-data/fedimint/fedimintd`;
+- dados do gateway em `/var/lib/lightningos/apps-data/fedimint/gatewayd`;
+- senha admin do gateway;
+- imagens Docker baixadas;
+- entradas adicionadas ao `/data/lnd/lnd.conf`;
+- regras UFW adicionadas.
+
+Isso evita apagar uma federacao por acidente. Em uma federacao real, remover os dados do guardiao pode causar perda operacional ou perda de acesso se nao houver backup.
+
+Para uma instalacao de teste ou uma instalacao parcial/quebrada, use reset completo apenas quando tiver certeza de que os dados podem ser descartados:
+
+```bash
+sudo docker compose \
+  --env-file /var/lib/lightningos/apps/fedimint/.env \
+  --project-directory /var/lib/lightningos/apps/fedimint \
+  -f /var/lib/lightningos/apps/fedimint/docker-compose.yaml \
+  down --remove-orphans
+
+sudo rm -rf /var/lib/lightningos/apps/fedimint
+sudo rm -rf /var/lib/lightningos/apps-data/fedimint
+```
+
+Depois atualize/reinstale o LightningOS Manager e instale o Fedimint novamente pela App Store:
+
+```bash
+cd ~/brln-os-light
+git pull
+cd lightningos-light
+sudo ./install_existing.sh
+sudo systemctl restart lightningos-manager
+```
+
 ## Criar federacao de teste com 1 guardiao
 
 1. Instale o Fedimint pela App Store.

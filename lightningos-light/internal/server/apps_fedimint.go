@@ -462,9 +462,6 @@ func ensureFedimintLndGrpcAccess(ctx context.Context) error {
 	if bridgeIP, err := dockerGatewayIP(ctx); err == nil && bridgeIP != "" {
 		gateways = append(gateways, bridgeIP)
 	}
-	if gatewayIP, err := fedimintNetworkGatewayIP(ctx); err == nil && gatewayIP != "" && !stringInSlice(gatewayIP, gateways) {
-		gateways = append(gateways, gatewayIP)
-	}
 	if len(gateways) == 0 {
 		return errors.New("unable to determine docker gateway IPs")
 	}
@@ -497,8 +494,22 @@ func addLndGrpcAccessOptions(lines []string, gateways []string) ([]string, bool)
 		}
 		cleanedGateways = append(cleanedGateways, trimmed)
 	}
+	allowedGateways := map[string]bool{}
+	for _, gateway := range cleanedGateways {
+		allowedGateways[gateway] = true
+	}
 
-	updated := append([]string{}, lines...)
+	removedStaleDockerLine := false
+	updated := []string{}
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if isFedimintStaleDockerGrpcLine(trimmed, allowedGateways) {
+			removedStaleDockerLine = true
+			continue
+		}
+		updated = append(updated, line)
+	}
+
 	insertIdx := -1
 	for i, line := range updated {
 		if strings.EqualFold(strings.TrimSpace(line), "[Application Options]") {
@@ -538,6 +549,9 @@ func addLndGrpcAccessOptions(lines []string, gateways []string) ([]string, bool)
 		}
 	}
 	if len(block) == 0 {
+		if removedStaleDockerLine {
+			return updated, true
+		}
 		return lines, false
 	}
 
@@ -545,6 +559,23 @@ func addLndGrpcAccessOptions(lines []string, gateways []string) ([]string, bool)
 	next = append(next, block...)
 	next = append(next, updated[insertIdx:]...)
 	return next, true
+}
+
+func isFedimintStaleDockerGrpcLine(trimmed string, allowedGateways map[string]bool) bool {
+	switch {
+	case strings.HasPrefix(trimmed, "tlsextraip="):
+		ip := strings.TrimSpace(strings.TrimPrefix(trimmed, "tlsextraip="))
+		return isLikelyDockerGatewayIP(ip) && !allowedGateways[ip]
+	case strings.HasPrefix(trimmed, "rpclisten="):
+		addr := strings.TrimSpace(strings.TrimPrefix(trimmed, "rpclisten="))
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil || port != "10009" {
+			return false
+		}
+		return isLikelyDockerGatewayIP(host) && !allowedGateways[host]
+	default:
+		return false
+	}
 }
 
 func fedimintNetworkGatewayIP(ctx context.Context) (string, error) {

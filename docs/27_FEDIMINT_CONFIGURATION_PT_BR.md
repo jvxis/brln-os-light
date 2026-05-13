@@ -208,6 +208,36 @@ Na Guardian UI, confira:
 - Lightning V2 com o gateway registrado.
 - Wallet sem erros de consenso.
 
+## Troubleshooting: LND nao inicia apos reset/desinstalacao
+
+Se o LND falhar com erro parecido com:
+
+```text
+listen tcp4 172.19.0.1:10009: bind: cannot assign requested address
+```
+
+isso indica que ficou uma entrada `rpclisten` apontando para uma bridge Docker que nao existe mais. Isso pode acontecer depois de uma instalacao parcial, reset manual ou remocao de rede Docker.
+
+Confirme a linha no `lnd.conf`:
+
+```bash
+sudo grep -nE 'rpclisten=.*10009|tlsextraip=' /data/lnd/lnd.conf
+ip -4 addr | grep 172.19.0.1
+```
+
+Se o IP do erro nao aparecer no `ip -4 addr`, remova apenas as linhas daquele IP:
+
+```bash
+sudo cp /data/lnd/lnd.conf /data/lnd/lnd.conf.bak-fedimint-$(date +%Y%m%d-%H%M%S)
+sudo sed -i '/^rpclisten=172\.19\.0\.1:10009$/d' /data/lnd/lnd.conf
+sudo sed -i '/^tlsextraip=172\.19\.0\.1$/d' /data/lnd/lnd.conf
+sudo rm -f /data/lnd/tls.cert /data/lnd/tls.key
+sudo systemctl restart lnd
+sudo journalctl -u lnd -n 80 --no-pager
+```
+
+Troque `172.19.0.1` pelo IP exato mostrado no erro. Nao remova `rpclisten=127.0.0.1:10009`.
+
 ## Observacoes de seguranca
 
 - Federacao com 1 guardiao e apenas para teste.

@@ -80,19 +80,19 @@ func TestFedimintComposeOmitsBitcoinCoreNetworkForExternalBitcoin(t *testing.T) 
 func TestAddLndGrpcAccessOptionsPreservesExistingOptions(t *testing.T) {
 	lines := []string{
 		"[Application Options]",
-		"tlsextraip=172.19.0.1",
+		"tlsextraip=192.168.68.64",
 		"tlsextradomain=host.docker.internal",
 		"rpclisten=127.0.0.1:10009",
 		"restlisten=172.19.0.1:8080",
 		"# alias=LightningOS-Node",
 	}
 
-	got, changed := addLndGrpcAccessOptions(lines, []string{"172.20.0.1"})
+	got, changed := addLndGrpcAccessOptions(lines, []string{"172.17.0.1"})
 	want := []string{
 		"[Application Options]",
-		"tlsextraip=172.20.0.1",
-		"rpclisten=172.20.0.1:10009",
-		"tlsextraip=172.19.0.1",
+		"tlsextraip=172.17.0.1",
+		"rpclisten=172.17.0.1:10009",
+		"tlsextraip=192.168.68.64",
 		"tlsextradomain=host.docker.internal",
 		"rpclisten=127.0.0.1:10009",
 		"restlisten=172.19.0.1:8080",
@@ -122,5 +122,32 @@ func TestAddLndGrpcAccessOptionsNoChangeWhenPresent(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, lines) {
 		t.Fatalf("unexpected LND config\nwant: %#v\ngot:  %#v", lines, got)
+	}
+}
+
+func TestAddLndGrpcAccessOptionsRemovesStaleDockerBridgeListeners(t *testing.T) {
+	lines := []string{
+		"[Application Options]",
+		"tlsextraip=172.19.0.1",
+		"rpclisten=172.19.0.1:10009",
+		"rpclisten=127.0.0.1:10009",
+		"alias=LightningOS-Node",
+	}
+
+	got, changed := addLndGrpcAccessOptions(lines, []string{"172.17.0.1"})
+	want := []string{
+		"[Application Options]",
+		"tlsextradomain=host.docker.internal",
+		"tlsextraip=172.17.0.1",
+		"rpclisten=172.17.0.1:10009",
+		"rpclisten=127.0.0.1:10009",
+		"alias=LightningOS-Node",
+	}
+
+	if !changed {
+		t.Fatalf("expected stale Docker listener cleanup")
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected LND config\nwant: %#v\ngot:  %#v", want, got)
 	}
 }

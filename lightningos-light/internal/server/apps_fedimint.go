@@ -503,7 +503,7 @@ func addLndGrpcAccessOptions(lines []string, gateways []string) ([]string, bool)
 	updated := []string{}
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if isFedimintStaleDockerGrpcLine(trimmed, allowedGateways) {
+		if isStaleDockerGrpcLine(trimmed, allowedGateways) {
 			removedStaleDockerLine = true
 			continue
 		}
@@ -561,7 +561,7 @@ func addLndGrpcAccessOptions(lines []string, gateways []string) ([]string, bool)
 	return next, true
 }
 
-func isFedimintStaleDockerGrpcLine(trimmed string, allowedGateways map[string]bool) bool {
+func isStaleDockerGrpcLine(trimmed string, allowedGateways map[string]bool) bool {
 	switch {
 	case strings.HasPrefix(trimmed, "tlsextraip="):
 		ip := strings.TrimSpace(strings.TrimPrefix(trimmed, "tlsextraip="))

@@ -255,10 +255,6 @@ func ensureLnbitsRestAccess(ctx context.Context) error {
 	if err == nil && bridgeIP != "" {
 		gateways = append(gateways, bridgeIP)
 	}
-	lnbitsGatewayIP, err := lnbitsNetworkGatewayIP(ctx)
-	if err == nil && lnbitsGatewayIP != "" && !stringInSlice(lnbitsGatewayIP, gateways) {
-		gateways = append(gateways, lnbitsGatewayIP)
-	}
 	if len(gateways) == 0 {
 		return errors.New("unable to determine docker gateway IPs")
 	}

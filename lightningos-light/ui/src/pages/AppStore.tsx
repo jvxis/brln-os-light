@@ -471,7 +471,7 @@ export default function AppStore() {
               </div>
 
               <div className="text-xs text-fog/50 space-y-1">
-                {app.port ? (
+                {app.port && app.id !== 'fedimint' ? (
                   <p>{t('appStore.defaultPort', { port: app.port })}</p>
                 ) : internalRoute ? (
                   <p>{t('appStore.defaultAccess', { access: internalRouteLabel })}</p>

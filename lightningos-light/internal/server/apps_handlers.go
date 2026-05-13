@@ -198,15 +198,20 @@ func (s *Server) handleAppAdminPassword(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "missing app id")
 		return
 	}
-	if appID != "lndg" {
+	if appID != "lndg" && appID != fedimintAppID {
 		writeError(w, http.StatusBadRequest, "admin password not available for this app")
 		return
 	}
 
-	paths := lndgAppPaths()
-	password := readSecretFile(paths.AdminPasswordPath)
-	if password == "" {
-		password = readEnvValue(paths.EnvPath, "LNDG_ADMIN_PASSWORD")
+	var password string
+	if appID == "lndg" {
+		paths := lndgAppPaths()
+		password = readSecretFile(paths.AdminPasswordPath)
+		if password == "" {
+			password = readEnvValue(paths.EnvPath, "LNDG_ADMIN_PASSWORD")
+		}
+	} else {
+		password = readSecretFile(fedimintAppPaths().GatewayAdminPasswordPath)
 	}
 	if password == "" {
 		writeError(w, http.StatusNotFound, "admin password unavailable")

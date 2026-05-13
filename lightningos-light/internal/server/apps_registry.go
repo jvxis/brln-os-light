@@ -10,6 +10,7 @@ func (s *Server) appRegistry() ([]appHandler, error) {
 		newBitcoinCoreApp(s),
 		newElectrsApp(s),
 		newMempoolApp(s),
+		newFedimintApp(s),
 		newLndgApp(s),
 		newLnbitsApp(s),
 		newElementsApp(s),

@@ -12,6 +12,7 @@ import fswapIcon from '../assets/apps/fswap.png'
 import publicPoolIcon from '../assets/apps/public-pool.svg'
 import electrsIcon from '../assets/apps/electrs.svg'
 import mempoolIcon from '../assets/apps/mempool.svg'
+import fedimintIcon from '../assets/apps/fedimint.svg'
 
 type AppInfo = {
   id: string
@@ -62,7 +63,8 @@ const iconMap: Record<string, string> = {
   fswap: fswapIcon,
   publicpool: publicPoolIcon,
   electrs: electrsIcon,
-  mempool: mempoolIcon
+  mempool: mempoolIcon,
+  fedimint: fedimintIcon
 }
 
 const internalRoutes: Record<string, string> = {
@@ -81,6 +83,8 @@ const statusStyles: Record<string, string> = {
 
 const publicPoolUIPortFallback = 8081
 const publicPoolStratumPort = 3333
+const fedimintGatewayUIPort = 8176
+const fedimintGatewayLightningPort = 10010
 const APP_STORE_INSTALL_FILTER_KEY = 'app_store_install_filter'
 const bitcoinCoreDefaultDataDir = '/data/bitcoin'
 const elementsDefaultDataDir = '/data/elements'
@@ -439,9 +443,12 @@ export default function AppStore() {
           const openUrl = app.external_url || (app.port ? `http://${host}:${app.port}` : '')
           const publicPoolUrl = openUrl || `http://${host}:${publicPoolUIPortFallback}`
           const publicPoolStratumEndpoint = `${host}:${publicPoolStratumPort}`
+          const fedimintGatewayUrl = `http://${host}:${fedimintGatewayUIPort}`
+          const fedimintGatewayLightningEndpoint = `${host}:${fedimintGatewayLightningPort}`
           const icon = iconMap[app.id]
           const unavailable = app.available === false
           const unavailableMessage = unavailable ? resolveUnavailableMessage(app) : ''
+          const canCopyAdminPassword = app.id === 'lndg' || app.id === 'fedimint'
           return (
             <div key={app.id} className="section-card space-y-4">
               <div className="flex items-start justify-between gap-4">
@@ -472,12 +479,12 @@ export default function AppStore() {
                 {app.admin_password_path && (
                   <div className="flex flex-wrap items-center gap-2">
                     <span>{t('appStore.adminPasswordSavedAt', { path: app.admin_password_path })}</span>
-                    {app.id === 'lndg' && (
+                    {canCopyAdminPassword && (
                       <button
                         className="text-fog/50 hover:text-fog"
                         onClick={() => handleCopyAdminPassword(app.id)}
-                        title={t('appStore.copyLndgPassword')}
-                        aria-label={t('appStore.copyLndgPassword')}
+                        title={t('appStore.copyAdminPassword')}
+                        aria-label={t('appStore.copyAdminPassword')}
                         disabled={Boolean(copying[app.id])}
                       >
                         <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
@@ -526,6 +533,13 @@ export default function AppStore() {
                         <p className="font-mono text-[11px] text-fog/70">{t('appStore.publicPoolConfRpcAllow')}</p>
                       </>
                     )}
+                  </>
+                )}
+                {app.id === 'fedimint' && (
+                  <>
+                    <p>{t('appStore.fedimintGuardianUiAccess', { url: openUrl })}</p>
+                    <p>{t('appStore.fedimintGatewayUiAccess', { url: fedimintGatewayUrl })}</p>
+                    <p>{t('appStore.fedimintGatewayLightningEndpoint', { endpoint: fedimintGatewayLightningEndpoint })}</p>
                   </>
                 )}
               </div>

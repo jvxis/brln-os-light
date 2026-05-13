@@ -18,18 +18,17 @@ import (
 )
 
 const (
-	fedimintAppID                = "fedimint"
-	fedimintdImage               = "fedimint/fedimintd:v0.11.1"
-	fedimintGatewayImage         = "fedimint/gatewayd:v0.11.1"
-	fedimintP2PPort              = 8173
-	fedimintAPIPort              = 8174
-	fedimintUIPort               = 8175
-	fedimintGatewayUIPort        = 8176
-	fedimintGatewayIrohPort      = 8177
-	fedimintGatewayLightningPort = 10010
-	fedimintLndTLSCertPath       = "/data/lnd/tls.cert"
-	fedimintNetworkName          = "fedimint_default"
-	fedimintUfwRetries           = 5
+	fedimintAppID           = "fedimint"
+	fedimintdImage          = "fedimint/fedimintd:v0.11.1"
+	fedimintGatewayImage    = "fedimint/gatewayd:v0.11.1"
+	fedimintP2PPort         = 8173
+	fedimintAPIPort         = 8174
+	fedimintUIPort          = 8175
+	fedimintGatewayUIPort   = 8176
+	fedimintGatewayIrohPort = 8177
+	fedimintLndTLSCertPath  = "/data/lnd/tls.cert"
+	fedimintNetworkName     = "fedimint_default"
+	fedimintUfwRetries      = 5
 )
 
 type fedimintPaths struct {
@@ -337,7 +336,7 @@ func fedimintLndRPCAddr(cfg *config.Config) string {
 		raw = strings.TrimSpace(cfg.LND.GRPCHost)
 	}
 	_, port := normalizeBitcoinRPCHostPort(raw, 10009)
-	return fedimintHTTPRPCURL("host.docker.internal", port)
+	return "https://" + net.JoinHostPort("host.docker.internal", strconv.Itoa(port))
 }
 
 func fedimintHTTPRPCURL(host string, port int) string {
@@ -433,7 +432,6 @@ func fedimintComposeContents(paths fedimintPaths, values fedimintRuntimeValues) 
     ports:
       - "%[9]d:%[9]d/tcp"
       - "%[10]d:%[10]d/udp"
-      - "%[11]d:%[11]d/tcp"
     volumes:
       - %[4]s:/data
       - /data/lnd:/data/lnd:ro
@@ -442,17 +440,17 @@ func fedimintComposeContents(paths fedimintPaths, values fedimintRuntimeValues) 
       FM_GATEWAY_LISTEN_ADDR: 0.0.0.0:%[9]d
       FM_GATEWAY_NETWORK: bitcoin
       FM_GATEWAY_IROH_LISTEN_ADDR: 0.0.0.0:%[10]d
-      FM_GATEWAY_BCRYPT_PASSWORD_HASH: "%[12]s"
+      FM_GATEWAY_BCRYPT_PASSWORD_HASH: "%[11]s"
       FM_BITCOIND_URL: ${FEDIMINT_BITCOIN_RPC_URL}
       FM_BITCOIND_USERNAME: ${FEDIMINT_BITCOIN_RPC_USER}
       FM_BITCOIND_PASSWORD: ${FEDIMINT_BITCOIN_RPC_PASS}
-      FM_LND_RPC_ADDR: %[13]s
-      FM_LND_TLS_CERT: %[15]s
-      FM_LND_MACAROON: %[16]s
-%[17]s
+      FM_LND_RPC_ADDR: %[12]s
+      FM_LND_TLS_CERT: %[14]s
+      FM_LND_MACAROON: %[15]s
+%[16]s
 networks:
   default:
-%[18]s`, fedimintdImage, fedimintGatewayImage, paths.FedimintDataDir, paths.GatewayDataDir, paths.EnvPath, fedimintP2PPort, fedimintAPIPort, fedimintUIPort, fedimintGatewayUIPort, fedimintGatewayIrohPort, fedimintGatewayLightningPort, escapeComposeDollar(values.GatewayPasswordHash), values.LndRPCAddr, fedimintdNetworks, values.LndTLSCertPath, values.LndMacaroonPath, gatewayNetworks, extraNetworkDecl)
+%[17]s`, fedimintdImage, fedimintGatewayImage, paths.FedimintDataDir, paths.GatewayDataDir, paths.EnvPath, fedimintP2PPort, fedimintAPIPort, fedimintUIPort, fedimintGatewayUIPort, fedimintGatewayIrohPort, escapeComposeDollar(values.GatewayPasswordHash), values.LndRPCAddr, fedimintdNetworks, values.LndTLSCertPath, values.LndMacaroonPath, gatewayNetworks, extraNetworkDecl)
 }
 
 func escapeComposeDollar(value string) string {
@@ -575,7 +573,6 @@ func ensureFedimintUfwAccess(ctx context.Context, values fedimintRuntimeValues) 
 		{strconv.Itoa(fedimintUIPort), "tcp", "guardian ui"},
 		{strconv.Itoa(fedimintGatewayUIPort), "tcp", "gateway ui"},
 		{strconv.Itoa(fedimintGatewayIrohPort), "udp", "gateway iroh"},
-		{strconv.Itoa(fedimintGatewayLightningPort), "tcp", "gateway lightning"},
 	} {
 		if _, err := system.RunCommandWithSudo(ctx, "ufw", "allow", rule[0]+"/"+rule[1]); err != nil {
 			lastErr = fmt.Errorf("%s: %w", rule[2], err)

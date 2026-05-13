@@ -448,7 +448,7 @@
     "publicPoolConfRpcAllow": "rpcallowip=172.16.0.0/12",
     "fedimintGuardianUiAccess": "UI Guardian: {{url}}",
     "fedimintGatewayUiAccess": "UI Gateway: {{url}}",
-    "fedimintGatewayLightningEndpoint": "Endpoint Lightning do Gateway: {{endpoint}}",
+    "fedimintGatewayApiUrl": "URL do Gateway para Lightning V2: {{url}}",
     "electrsTcpEndpoint": "Endpoint Electrum TCP: {{endpoint}}",
     "electrsIndexing": "Indexando: {{index}} / {{tip}} ({{percent}}%)",
     "electrsSynced": "Sincronizado no bloco {{height}}",

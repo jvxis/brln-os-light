@@ -84,7 +84,6 @@ const statusStyles: Record<string, string> = {
 const publicPoolUIPortFallback = 8081
 const publicPoolStratumPort = 3333
 const fedimintGatewayUIPort = 8176
-const fedimintGatewayLightningPort = 10010
 const APP_STORE_INSTALL_FILTER_KEY = 'app_store_install_filter'
 const bitcoinCoreDefaultDataDir = '/data/bitcoin'
 const elementsDefaultDataDir = '/data/elements'
@@ -444,7 +443,7 @@ export default function AppStore() {
           const publicPoolUrl = openUrl || `http://${host}:${publicPoolUIPortFallback}`
           const publicPoolStratumEndpoint = `${host}:${publicPoolStratumPort}`
           const fedimintGatewayUrl = `http://${host}:${fedimintGatewayUIPort}`
-          const fedimintGatewayLightningEndpoint = `${host}:${fedimintGatewayLightningPort}`
+          const fedimintGatewayApiUrl = `http://${host}:${fedimintGatewayUIPort}/v1`
           const icon = iconMap[app.id]
           const unavailable = app.available === false
           const unavailableMessage = unavailable ? resolveUnavailableMessage(app) : ''
@@ -539,7 +538,7 @@ export default function AppStore() {
                   <>
                     <p>{t('appStore.fedimintGuardianUiAccess', { url: openUrl })}</p>
                     <p>{t('appStore.fedimintGatewayUiAccess', { url: fedimintGatewayUrl })}</p>
-                    <p>{t('appStore.fedimintGatewayLightningEndpoint', { endpoint: fedimintGatewayLightningEndpoint })}</p>
+                    <p>{t('appStore.fedimintGatewayApiUrl', { url: fedimintGatewayApiUrl })}</p>
                   </>
                 )}
               </div>

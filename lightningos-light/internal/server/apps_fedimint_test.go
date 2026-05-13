@@ -17,7 +17,7 @@ func TestFedimintComposeUsesExistingBitcoinAndLnd(t *testing.T) {
 		BitcoinRPCPass:        "bitcoin-pass",
 		UseBitcoinCoreNetwork: true,
 		GatewayPasswordHash:   "$2a$10$abcdefghijklmnopqrstuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu",
-		LndRPCAddr:            "http://host.docker.internal:10009",
+		LndRPCAddr:            "https://host.docker.internal:10009",
 		LndTLSCertPath:        "/data/lnd/tls.cert",
 		LndMacaroonPath:       "/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon",
 	}
@@ -29,7 +29,7 @@ func TestFedimintComposeUsesExistingBitcoinAndLnd(t *testing.T) {
 		"image: fedimint/gatewayd:v0.11.1",
 		"command: gatewayd lnd",
 		"FM_BITCOIND_URL: ${FEDIMINT_BITCOIN_RPC_URL}",
-		"FM_LND_RPC_ADDR: http://host.docker.internal:10009",
+		"FM_LND_RPC_ADDR: https://host.docker.internal:10009",
 		"- /data/lnd:/data/lnd:ro",
 		"name: bitcoincore_default",
 	} {
@@ -39,6 +39,9 @@ func TestFedimintComposeUsesExistingBitcoinAndLnd(t *testing.T) {
 	}
 	if strings.Contains(compose, "bitcoind/bitcoin") {
 		t.Fatalf("compose should not install a second bitcoind\n%s", compose)
+	}
+	if strings.Contains(compose, "10010:10010") || strings.Contains(compose, "FM_PORT_LDK") {
+		t.Fatalf("LND mode should not expose the LDK lightning port\n%s", compose)
 	}
 	if strings.Contains(compose, "%!(") {
 		t.Fatalf("compose has fmt artifact\n%s", compose)
@@ -54,7 +57,7 @@ func TestFedimintComposeOmitsBitcoinCoreNetworkForExternalBitcoin(t *testing.T) 
 		BitcoinRPCUser:      "bitcoin-user",
 		BitcoinRPCPass:      "bitcoin-pass",
 		GatewayPasswordHash: "$2a$10$abcdefghijklmnopqrstuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu",
-		LndRPCAddr:          "http://host.docker.internal:10009",
+		LndRPCAddr:          "https://host.docker.internal:10009",
 		LndTLSCertPath:      "/data/lnd/tls.cert",
 		LndMacaroonPath:     "/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon",
 	})

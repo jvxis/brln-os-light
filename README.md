@@ -28,7 +28,7 @@ LightningOS Light is a Full Lightning Node Daemon Installer, Lightning node mana
 - Real-time notifications (on-chain, Lightning, channels, forwards, rebalances)
 - Telegram notifications: SCB backups, financial summaries, on-demand `/scb` and `/balances`
 - Daily routing reports (timer + backfill + live API + movement live API)
-- App Store: Bitcoin Core, Electrs, Mempool, LNDg, LNbits, Elements, Peerswap (psweb), RoboSats Gateway, Public Pool, Buy DePix, FSwap
+- App Store: Bitcoin Core, Electrs, Mempool, LNDg, LNbits, Elements, Peerswap (psweb), RoboSats Gateway, Public Pool, Buy DePix, FSwap, Fedimint
 - Bitcoin Local management (status + config) and logs viewer
 
 ## New since the 0.3.9 README update
@@ -43,7 +43,7 @@ These notes cover `0.3.10-Beta` through `0.3.27-Beta`, plus the current `0.4.0-B
 - Rebalance execution and guardrails: native LND delegated fast path with strict payback, cached `BuildRoute` fast path, MPP decomposition, v2 gain model with velocity scoring, Mission Control reset/reinforcement, decaying permanent-fail scores, cooldown-probe refactors, fresh paid liquidity lock, unlimited/auto-only budget modes, manual reserve, effective job timing, and UI reorganization.
 - Autofee upgrades: backend-supplied profile defaults, refresh/rebalance telemetry, dynamic thresholds, stronger inbound/monitor-state handling, settling-target dampening, golden tests, market-refill fixes, stall relaxation fixes, old-sink handling, and more conservative behavior around weak local signals.
 - Reports, notifications, and ops visibility: live report warm-up, movement live API, route-history storage, improved catch-up behavior, historical report ranges, balances chart improvements, year tooltips, Telegram notification fixes, local peer APIs, Bitcoin Local logs, channel-ID copy, HTLC hysteresis, and richer payment/route context.
-- App Store and installers: Electrs/Mempool apps, full-index dependency checks/status, custom Bitcoin/Elements data directories, local Bitcoin detection for Elements, improved Bitcoin Core/RoboSats/LNbits/Public Pool/Peerswap handling, Docker app refinements, Ubuntu 26 sudoers compatibility, and existing-node setup support for LND backed by Postgres plus LightningOS reports/notifications DB provisioning.
+- App Store and installers: Electrs/Mempool apps, full-index dependency checks/status, custom Bitcoin/Elements data directories, local Bitcoin detection for Elements, improved Bitcoin Core/RoboSats/LNbits/Public Pool/Peerswap handling, Fedimint guardian/gateway support, Docker app refinements, Ubuntu 26 sudoers compatibility, and existing-node setup support for LND backed by Postgres plus LightningOS reports/notifications DB provisioning.
 
 ## Repository layout
 - `cmd/lightningos-manager`: Go backend (API + static UI)
@@ -764,7 +764,7 @@ journalctl -u lightningos-manager -n 200 --no-pager
 ss -ltn | grep :8443
 ```
 
-### App Store (Bitcoin Core, Electrs, Mempool, LNDg, LNbits, Elements, Peerswap, RoboSats, Public Pool, Buy DePix, FSwap)
+### App Store (Bitcoin Core, Electrs, Mempool, LNDg, LNbits, Elements, Peerswap, RoboSats, Public Pool, Buy DePix, FSwap, Fedimint)
 - Bitcoin Core runs via Docker and defaults to data in `/data/bitcoin`. During install, it can optionally use a custom blockchain directory on a pre-mounted volume; this cannot be changed later by the app.
 - Electrs runs via Docker, indexes the local Bitcoin Core node, exposes Electrum TCP on port `50001`, and publishes metrics on `127.0.0.1:4224`.
 - Mempool runs a self-hosted mempool.space stack on `http://<SERVER_LAN_IP>:8999` and requires Bitcoin Core + Electrs installed and running.
@@ -773,6 +773,7 @@ ss -ltn | grep :8443
 - Peerswap installs `peerswapd` + `psweb` (UI on `http://<SERVER_LAN_IP>:1984`) and requires Elements.
 - Elements runs as a native service (Liquid Elements node, RPC on `127.0.0.1:7041`) and can use either the club remote Bitcoin RPC or a local bitcoind detected from LND/bitcoin.conf. During install, Elements can optionally use a custom data directory on a pre-mounted volume; this cannot be changed later by the app.
 - RoboSats Gateway, Public Pool, Buy DePix, and FSwap are managed from the same App Store install/start/stop/status flow.
+- Fedimint runs `fedimintd` plus `gatewayd lnd`, reusing the configured Bitcoin RPC and the local LND. See the [Fedimint configuration guide](docs/27_FEDIMINT_CONFIGURATION_PT_BR.md).
 
 LNDg notes:
 - The LNDg logs page reads `/var/log/lndg-controller.log` inside the container. If it is empty, check `docker logs lndg-lndg-1`.

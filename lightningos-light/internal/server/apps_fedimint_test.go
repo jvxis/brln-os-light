@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestFedimintComposeUsesExistingBitcoinAndLnd(t *testing.T) {
@@ -48,6 +50,14 @@ func TestFedimintComposeUsesExistingBitcoinAndLnd(t *testing.T) {
 	}
 	if !strings.Contains(compose, "FM_GATEWAY_BCRYPT_PASSWORD_HASH: \"$$2a$$10$$") {
 		t.Fatalf("bcrypt hash must escape dollars for compose interpolation\n%s", compose)
+	}
+
+	var parsed map[string]any
+	if err := yaml.Unmarshal([]byte(compose), &parsed); err != nil {
+		t.Fatalf("compose must be valid YAML: %v\n%s", err, compose)
+	}
+	if strings.Contains(compose, "\n/data/lnd/tls.cert\n") {
+		t.Fatalf("compose must not render LND cert path as a standalone YAML line\n%s", compose)
 	}
 }
 

@@ -418,7 +418,7 @@ func fedimintComposeContents(paths fedimintPaths, values fedimintRuntimeValues) 
       FM_BIND_P2P: 0.0.0.0:%[6]d
       FM_BIND_API: 0.0.0.0:%[7]d
       FM_BIND_UI: 0.0.0.0:%[8]d
-%[14]s
+%[13]s
   gatewayd:
     image: %[2]s
     command: gatewayd lnd

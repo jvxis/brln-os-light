@@ -196,28 +196,33 @@ const (
 )
 
 const (
-	sovereignLowSuccessMinAttempts              = 100
-	sovereignLowSuccessRate                     = 0.02
-	sovereignLowSuccessVeryWeakRate             = 0.005
-	sovereignLowSuccessWeakRate                 = 0.01
-	sovereignLowSuccessVeryWeakProfitCostRatio  = 3.0
-	sovereignLowSuccessWeakProfitCostRatio      = 1.5
-	sovereignLowSuccessProfitCostRatio          = 1.20
-	sovereignLowSuccessOpportunityReason        = "low_success_opportunity_below_floor"
-	sovereignBudgetEfficiencyProfitCostRatio    = 0.50
-	sovereignBudgetEfficiencyHighSuccessRate    = 0.05
-	sovereignBudgetEfficiencyOpportunityReason  = "budget_efficiency_below_floor"
-	sovereignRiskScoreFloor                     = 0.02
-	sovereignRouteDeadSourceShare               = 0.20
-	sovereignRouteDeadMediumSourceShare         = 0.35
-	sovereignRouteDeadHighSourceShare           = 0.50
-	sovereignRouteDeadSevereSourceShare         = 0.65
-	sovereignRouteDeadProfitCostRatio           = 1.5
-	sovereignRouteDeadMediumProfitCostRatio     = 2.0
-	sovereignRouteDeadHighProfitCostRatio       = 3.0
-	sovereignRouteDeadOpportunityReason         = "route_dead_opportunity_below_floor"
-	sovereignRouteDeadFallbackMinFailedSources  = 8
-	sovereignRouteDeadFallbackSevereFailSources = targetCooldownMinAttempts
+	sovereignLowSuccessMinAttempts               = 100
+	sovereignLowSuccessRate                      = 0.02
+	sovereignLowSuccessVeryWeakRate              = 0.005
+	sovereignLowSuccessWeakRate                  = 0.01
+	sovereignLowSuccessVeryWeakProfitCostRatio   = 3.0
+	sovereignLowSuccessWeakProfitCostRatio       = 1.5
+	sovereignLowSuccessProfitCostRatio           = 1.20
+	sovereignLowSuccessOpportunityReason         = "low_success_opportunity_below_floor"
+	sovereignBudgetEfficiencyProfitCostRatio     = 0.50
+	sovereignBudgetEfficiencyHighSuccessRate     = 0.05
+	sovereignBudgetEfficiencyOpportunityReason   = "budget_efficiency_below_floor"
+	sovereignRiskScoreFloor                      = 0.02
+	sovereignRouteDeadSourceShare                = 0.20
+	sovereignRouteDeadMediumSourceShare          = 0.35
+	sovereignRouteDeadHighSourceShare            = 0.50
+	sovereignRouteDeadSevereSourceShare          = 0.65
+	sovereignRouteDeadProfitCostRatio            = 1.5
+	sovereignRouteDeadMediumProfitCostRatio      = 2.0
+	sovereignRouteDeadHighProfitCostRatio        = 3.0
+	sovereignRouteDeadOpportunityReason          = "route_dead_opportunity_below_floor"
+	sovereignRouteDeadFallbackMinFailedSources   = 8
+	sovereignRouteDeadFallbackSevereFailSources  = targetCooldownMinAttempts
+	sovereignTargetStructuralCooldownReason      = "target_structural_cooldown"
+	sovereignTargetStructuralCooldownMinAttempts = 20
+	sovereignTargetStructuralCooldownLookback    = 24 * time.Hour
+	sovereignTargetStructuralCooldownFirst       = 2 * time.Hour
+	sovereignTargetStructuralCooldownRepeat      = 6 * time.Hour
 )
 
 const (
@@ -633,6 +638,14 @@ type recentCooldownStat struct {
 	LastAttemptAt   time.Time
 	LastFailureAt   time.Time
 	LastSuccessAt   time.Time
+}
+
+type sovereignTargetStructuralCooldownStat struct {
+	TargetChannelID     uint64
+	Failures            int
+	LastFailureAttempts int
+	LastFailureAt       time.Time
+	LastSuccessAt       time.Time
 }
 
 type recentTargetCooldownWindows struct {
@@ -2358,6 +2371,7 @@ func (s *RebalanceService) runAutoScan() {
 			}
 		}
 		sovereignPairStats := s.loadPairStatsSummaryForTargets(ctx, sovereignTargetIDs, scanAt)
+		sovereignStructuralCooldowns := s.loadSovereignTargetStructuralCooldowns(ctx, sovereignTargetIDs, scanAt)
 		sovereignPlan := buildAndOrderRebalanceCandidates(rebalanceAutoScanCandidateInput{
 			Channels:                      snapshots,
 			Settings:                      settings,
@@ -2368,6 +2382,7 @@ func (s *RebalanceService) runAutoScan() {
 			DisableCooldownProbe:          true,
 			SovereignRanking:              true,
 			PairStatsByTarget:             sovereignPairStats,
+			SovereignStructuralCooldowns:  sovereignStructuralCooldowns,
 			TargetCooldowns:               targetCooldowns.Recent,
 			TargetNoAttemptCooldowns:      targetCooldowns.NoAttempt,
 			TargetFailedCooldowns:         targetCooldowns.Failed,
@@ -2730,10 +2745,16 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 			HistoricalSuccessRate:    historicalSuccessRate,
 			RecentStructuralFailures: target.PairStats.RecentStructuralFailures,
 		}
+		if target.StructuralCooldown.LastFailureAttempts > decision.RecentStructuralFailures {
+			decision.RecentStructuralFailures = target.StructuralCooldown.LastFailureAttempts
+		}
 
 		switch {
 		case target.CooldownProbe:
 			decision.Reason = "cooldown_probe_not_sovereign"
+			noteSkip(decision.Reason)
+		case shouldSkipSovereignTargetStructuralCooldown(target.StructuralCooldown, scanAt):
+			decision.Reason = sovereignTargetStructuralCooldownReason
 			noteSkip(decision.Reason)
 		case shouldSkipSovereignRouteDeadOpportunity(target.PairStats, expectedProfit, budgetCost, plan.EligibleSources, cfg):
 			decision.Reason = sovereignRouteDeadOpportunityReason
@@ -3045,18 +3066,19 @@ limit $2
 }
 
 type rebalanceTarget struct {
-	Channel           RebalanceChannel
-	ExpectedGainSat   int64
-	EstimatedCostSat  int64
-	BudgetCostSat     int64
-	ExpectedROI       float64
-	ExpectedROIValid  bool
-	Score             int64
-	LastAutoAt        time.Time
-	PairStats         rebalanceTargetPairStats
-	CooldownProbe     bool
-	ProbeAmountSat    int64
-	OriginalAmountSat int64
+	Channel            RebalanceChannel
+	ExpectedGainSat    int64
+	EstimatedCostSat   int64
+	BudgetCostSat      int64
+	ExpectedROI        float64
+	ExpectedROIValid   bool
+	Score              int64
+	LastAutoAt         time.Time
+	PairStats          rebalanceTargetPairStats
+	StructuralCooldown sovereignTargetStructuralCooldownStat
+	CooldownProbe      bool
+	ProbeAmountSat     int64
+	OriginalAmountSat  int64
 	// Wave 6.1b: set to true when score was dampened because AutoFee
 	// adjusted this channel inside the settling window. AutofeeAdjustedAt
 	// holds the timestamp of the most recent autofee adjustment.
@@ -3074,6 +3096,7 @@ type rebalanceAutoScanCandidateInput struct {
 	DisableCooldownProbe          bool
 	SovereignRanking              bool
 	PairStatsByTarget             map[uint64]rebalanceTargetPairStats
+	SovereignStructuralCooldowns  map[uint64]sovereignTargetStructuralCooldownStat
 	TargetCooldowns               map[uint64]recentCooldownStat
 	TargetNoAttemptCooldowns      map[uint64]recentCooldownStat
 	TargetFailedCooldowns         map[uint64]recentCooldownStat
@@ -3256,15 +3279,16 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 			pairStats.RecentStructuralFailures = targetDistinctSourceCooldown.DistinctSources
 		}
 		plan.Candidates = append(plan.Candidates, rebalanceTarget{
-			Channel:          snapshot,
-			ExpectedGainSat:  expectedGain,
-			EstimatedCostSat: estimatedCost,
-			BudgetCostSat:    budgetCost,
-			ExpectedROI:      expectedROI,
-			ExpectedROIValid: roiValid,
-			Score:            score,
-			LastAutoAt:       input.LastAutoByTarget[snapshot.ChannelID],
-			PairStats:        pairStats,
+			Channel:            snapshot,
+			ExpectedGainSat:    expectedGain,
+			EstimatedCostSat:   estimatedCost,
+			BudgetCostSat:      budgetCost,
+			ExpectedROI:        expectedROI,
+			ExpectedROIValid:   roiValid,
+			Score:              score,
+			LastAutoAt:         input.LastAutoByTarget[snapshot.ChannelID],
+			PairStats:          pairStats,
+			StructuralCooldown: input.SovereignStructuralCooldowns[snapshot.ChannelID],
 		})
 		if !plan.TopScoreSet || score > plan.TopScore {
 			plan.TopScore = score
@@ -6819,6 +6843,105 @@ group by target_channel_id
 	return stats
 }
 
+func (s *RebalanceService) loadSovereignTargetStructuralCooldowns(ctx context.Context, targetIDs []uint64, now time.Time) map[uint64]sovereignTargetStructuralCooldownStat {
+	stats := map[uint64]sovereignTargetStructuralCooldownStat{}
+	if s.db == nil || len(targetIDs) == 0 {
+		return stats
+	}
+	ids := make([]int64, 0, len(targetIDs))
+	seen := map[uint64]struct{}{}
+	for _, id := range targetIDs {
+		if id == 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, int64(id))
+	}
+	if len(ids) == 0 {
+		return stats
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	since := now.Add(-sovereignTargetStructuralCooldownLookback)
+	rows, err := s.db.Query(ctx, `
+with scoped_targets as (
+  select unnest($1::bigint[]) as target_channel_id
+),
+jobs as (
+  select
+    j.id,
+    j.target_channel_id,
+    j.status,
+    j.reason,
+    j.completed_at,
+    coalesce((select count(*) from rebalance_attempts a where a.job_id=j.id), 0) as attempt_count
+  from rebalance_jobs j
+  join scoped_targets st on st.target_channel_id = j.target_channel_id
+  where j.completed_at >= $2
+    and j.completed_at is not null
+    and j.status in ('succeeded','partial','failed')
+),
+last_success as (
+  select target_channel_id, max(completed_at) as last_success_at
+  from jobs
+  where status in ('succeeded','partial')
+  group by target_channel_id
+),
+failure_jobs as (
+  select j.*, ls.last_success_at
+  from jobs j
+  left join last_success ls using (target_channel_id)
+  where j.status='failed'
+    and j.reason='all sources failed'
+    and j.attempt_count >= $3
+    and (ls.last_success_at is null or j.completed_at > ls.last_success_at)
+)
+select target_channel_id,
+  count(*) as failures,
+  max(attempt_count) as last_failure_attempts,
+  max(completed_at) as last_failure_at,
+  max(last_success_at) as last_success_at
+from failure_jobs
+group by target_channel_id
+`, ids, since, sovereignTargetStructuralCooldownMinAttempts)
+	if err != nil {
+		return stats
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var channelID int64
+		var failures int
+		var lastFailureAttempts int
+		var lastFailure pgtype.Timestamptz
+		var lastSuccess pgtype.Timestamptz
+		if err := rows.Scan(&channelID, &failures, &lastFailureAttempts, &lastFailure, &lastSuccess); err != nil {
+			return stats
+		}
+		if channelID <= 0 || failures <= 0 {
+			continue
+		}
+		stat := sovereignTargetStructuralCooldownStat{
+			TargetChannelID:     uint64(channelID),
+			Failures:            failures,
+			LastFailureAttempts: lastFailureAttempts,
+		}
+		if lastFailure.Valid {
+			stat.LastFailureAt = lastFailure.Time
+		}
+		if lastSuccess.Valid {
+			stat.LastSuccessAt = lastSuccess.Time
+		}
+		if shouldSkipSovereignTargetStructuralCooldown(stat, now) {
+			stats[uint64(channelID)] = stat
+		}
+	}
+	return stats
+}
+
 func (s *RebalanceService) acquireSem(ctx context.Context) bool {
 	s.mu.Lock()
 	sem := s.sem
@@ -7850,6 +7973,30 @@ func shouldSkipSovereignRouteDeadOpportunity(stats rebalanceTargetPairStats, exp
 	return profitCostRatio < sovereignRouteDeadRequiredProfitCostRatio(routeDeadShare)
 }
 
+func shouldSkipSovereignTargetStructuralCooldown(stat sovereignTargetStructuralCooldownStat, now time.Time) bool {
+	if stat.Failures <= 0 || stat.LastFailureAt.IsZero() {
+		return false
+	}
+	if !stat.LastSuccessAt.IsZero() && !stat.LastSuccessAt.Before(stat.LastFailureAt) {
+		return false
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	elapsed := now.Sub(stat.LastFailureAt)
+	if elapsed < 0 {
+		return true
+	}
+	return elapsed < sovereignTargetStructuralCooldownDuration(stat.Failures)
+}
+
+func sovereignTargetStructuralCooldownDuration(failures int) time.Duration {
+	if failures >= 2 {
+		return sovereignTargetStructuralCooldownRepeat
+	}
+	return sovereignTargetStructuralCooldownFirst
+}
+
 func sovereignProfitCostRatio(expectedProfitSat int64, budgetCostSat int64) (float64, bool) {
 	if expectedProfitSat <= 0 {
 		return 0, true
@@ -8099,6 +8246,7 @@ func buildScanDetail(reasons map[string]int, remaining int64, candidates int) st
 		{key: "target_already_balanced", label: "target already balanced"},
 		{key: "recently_attempted", label: "recently attempted"},
 		{key: "fee_cap_zero", label: "fee cap zero"},
+		{key: sovereignTargetStructuralCooldownReason, label: "target structural cooldown"},
 		{key: sovereignRouteDeadOpportunityReason, label: "route dead opportunity below floor"},
 		{key: sovereignLowSuccessOpportunityReason, label: "low success opportunity below floor"},
 		{key: sovereignBudgetEfficiencyOpportunityReason, label: "budget efficiency below floor"},

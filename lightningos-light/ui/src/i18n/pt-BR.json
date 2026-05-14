@@ -2907,6 +2907,7 @@
       "scanReasonExpectedProfit": "lucro esperado abaixo do mínimo",
       "scanReasonCycleLimit": "limite do ciclo",
       "scanReasonCooldownProbeNotSovereign": "cooldown-probe fora do autopilot",
+      "scanReasonTargetStructuralCooldown": "target em cooldown estrutural",
       "scanReasonLowSuccessOpportunity": "oportunidade com baixo sucesso abaixo do piso",
       "scanReasonBudgetEfficiency": "eficiência de budget abaixo do piso",
       "scanReasonRouteDeadOpportunity": "rota morta recente abaixo do piso",

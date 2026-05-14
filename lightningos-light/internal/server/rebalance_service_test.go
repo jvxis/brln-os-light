@@ -1734,6 +1734,80 @@ func TestExecuteSovereignAutopilotSkipsSevereRouteDeadEvenWhenProfitRatioIsHigh(
 	}
 }
 
+func TestExecuteSovereignAutopilotSkipsStructuralCooldownAndContinues(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = true
+	cfg.SovereignMaxJobsPerCycle = 1
+	cfg.SovereignMinExpectedProfitSat = 50
+	scanAt := time.Now()
+
+	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{
+		{
+			Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "structural:0", PeerAlias: "structural", TargetAmountSat: 1_000_000},
+			ExpectedGainSat:  5_000,
+			EstimatedCostSat: 500,
+			BudgetCostSat:    1_000,
+			Score:            4_500,
+			PairStats: rebalanceTargetPairStats{
+				Attempts:  1_000,
+				Successes: 50,
+				Failures:  950,
+			},
+			StructuralCooldown: sovereignTargetStructuralCooldownStat{
+				TargetChannelID:     1,
+				Failures:            1,
+				LastFailureAttempts: 40,
+				LastFailureAt:       scanAt.Add(-90 * time.Minute),
+			},
+		},
+		{
+			Channel:          RebalanceChannel{ChannelID: 2, ChannelPoint: "next-best:0", PeerAlias: "next-best", TargetAmountSat: 100_000},
+			ExpectedGainSat:  300,
+			EstimatedCostSat: 100,
+			BudgetCostSat:    200,
+			Score:            200,
+			PairStats: rebalanceTargetPairStats{
+				Attempts:  1_000,
+				Successes: 50,
+				Failures:  950,
+			},
+		},
+	}}
+
+	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, scanAt, false)
+	if result.Selected != 1 {
+		t.Fatalf("expected one selected decision, got %d", result.Selected)
+	}
+	if result.Decisions[0].Reason != sovereignTargetStructuralCooldownReason {
+		t.Fatalf("expected structural cooldown skip, got %+v", result.Decisions[0])
+	}
+	if result.Decisions[0].RecentStructuralFailures != 40 {
+		t.Fatalf("expected structural failure attempts to be visible, got %d", result.Decisions[0].RecentStructuralFailures)
+	}
+	if !result.Decisions[1].Selected || result.Decisions[1].Reason != "would_queue" {
+		t.Fatalf("expected next candidate selected, got %+v", result.Decisions[1])
+	}
+}
+
+func TestSovereignStructuralCooldownDurationProgresses(t *testing.T) {
+	scanAt := time.Now()
+	firstFailure := sovereignTargetStructuralCooldownStat{
+		Failures:      1,
+		LastFailureAt: scanAt.Add(-3 * time.Hour),
+	}
+	if shouldSkipSovereignTargetStructuralCooldown(firstFailure, scanAt) {
+		t.Fatalf("expected first structural cooldown to expire after 3h")
+	}
+	repeatedFailure := sovereignTargetStructuralCooldownStat{
+		Failures:      2,
+		LastFailureAt: scanAt.Add(-3 * time.Hour),
+	}
+	if !shouldSkipSovereignTargetStructuralCooldown(repeatedFailure, scanAt) {
+		t.Fatalf("expected repeated structural cooldown to remain active after 3h")
+	}
+}
+
 func TestExecuteSovereignAutopilotContinuesPastDecisionDetailLimit(t *testing.T) {
 	svc := NewRebalanceService(nil, nil, nil)
 	cfg := defaultRebalanceConfig()

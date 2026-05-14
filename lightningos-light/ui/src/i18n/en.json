@@ -2907,6 +2907,7 @@
         "scanReasonExpectedProfit": "expected profit below minimum",
         "scanReasonCycleLimit": "cycle limit",
         "scanReasonCooldownProbeNotSovereign": "cooldown-probe outside autopilot",
+        "scanReasonTargetStructuralCooldown": "target structural cooldown",
         "scanReasonLowSuccessOpportunity": "low-success opportunity below floor",
         "scanReasonBudgetEfficiency": "budget efficiency below floor",
         "scanReasonRouteDeadOpportunity": "recent route-dead opportunity below floor",

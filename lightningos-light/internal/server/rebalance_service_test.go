@@ -37,6 +37,21 @@ func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	if cfg.SovereignMinExpectedProfitSat != 0 {
 		t.Fatalf("expected sovereign_min_expected_profit_sat default=0, got %d", cfg.SovereignMinExpectedProfitSat)
 	}
+	if cfg.SovereignLowSuccessMinRate != 0.02 {
+		t.Fatalf("expected sovereign_low_success_min_rate default=0.02, got %f", cfg.SovereignLowSuccessMinRate)
+	}
+	if cfg.SovereignLowSuccessMinProfitCostRatio != 1.2 {
+		t.Fatalf("expected sovereign_low_success_min_profit_cost_ratio default=1.2, got %f", cfg.SovereignLowSuccessMinProfitCostRatio)
+	}
+	if cfg.SovereignBudgetEfficiencyMinRatio != 0.5 {
+		t.Fatalf("expected sovereign_budget_efficiency_min_ratio default=0.5, got %f", cfg.SovereignBudgetEfficiencyMinRatio)
+	}
+	if cfg.SovereignRouteDeadSourceShare != 0.2 {
+		t.Fatalf("expected sovereign_route_dead_source_share default=0.2, got %f", cfg.SovereignRouteDeadSourceShare)
+	}
+	if cfg.SovereignRiskScoreFloor != 0.02 {
+		t.Fatalf("expected sovereign_risk_score_floor default=0.02, got %f", cfg.SovereignRiskScoreFloor)
+	}
 	if cfg.ScanIntervalSec != 900 {
 		t.Fatalf("expected scan_interval_sec default=900, got %d", cfg.ScanIntervalSec)
 	}
@@ -352,25 +367,30 @@ func TestManualRestartWatchEligibilityHonorsPerChannelCostGateBypass(t *testing.
 
 func TestValidateRebalanceConfigPayloadAllowsValidPartialPayload(t *testing.T) {
 	payload := rebalanceConfigPayload{
-		SchedulerMode:                 ptrString(rebalanceSchedulerModeSovereignShadow),
-		SovereignCandidateScope:       ptrString(rebalanceSovereignScopeAutoAndManualRestart),
-		SovereignMaxJobsPerCycle:      ptrInt(2),
-		SovereignMinExpectedProfitSat: ptrInt64(0),
-		DeadbandPct:                   ptrFloat64(4),
-		BudgetMode:                    ptrString(rebalanceBudgetModeHybridRevenue),
-		ManualReserveMode:             ptrString(rebalanceManualReserveModePct),
-		ManualReserveValue:            ptrFloat64(25),
-		MppMaxShards:                  ptrInt(6),
-		MppParallelism:                ptrInt(3),
-		GainModelVersion:              ptrInt(2),
-		VelocityWeight:                ptrFloat64(0.4),
-		AutofeeSettlingMultiplier:     ptrFloat64(0.5),
-		AutofeeSettlingWindowSec:      ptrInt64(7200),
-		CriticalMinAvailableSats:      ptrInt64(0),
-		SourceMinPaybackProgress:      ptrFloat64(0.95),
-		RebalanceCostFloorPpm:         ptrInt64(250),
-		MissionControlHalfLifeSec:     ptrInt64(3600),
-		FreshPaidLiquidityLockHours:   ptrInt(12),
+		SchedulerMode:                         ptrString(rebalanceSchedulerModeSovereignShadow),
+		SovereignCandidateScope:               ptrString(rebalanceSovereignScopeAutoAndManualRestart),
+		SovereignMaxJobsPerCycle:              ptrInt(2),
+		SovereignMinExpectedProfitSat:         ptrInt64(0),
+		SovereignLowSuccessMinRate:            ptrFloat64(0.02),
+		SovereignLowSuccessMinProfitCostRatio: ptrFloat64(1.2),
+		SovereignBudgetEfficiencyMinRatio:     ptrFloat64(0.5),
+		SovereignRouteDeadSourceShare:         ptrFloat64(0.2),
+		SovereignRiskScoreFloor:               ptrFloat64(0.02),
+		DeadbandPct:                           ptrFloat64(4),
+		BudgetMode:                            ptrString(rebalanceBudgetModeHybridRevenue),
+		ManualReserveMode:                     ptrString(rebalanceManualReserveModePct),
+		ManualReserveValue:                    ptrFloat64(25),
+		MppMaxShards:                          ptrInt(6),
+		MppParallelism:                        ptrInt(3),
+		GainModelVersion:                      ptrInt(2),
+		VelocityWeight:                        ptrFloat64(0.4),
+		AutofeeSettlingMultiplier:             ptrFloat64(0.5),
+		AutofeeSettlingWindowSec:              ptrInt64(7200),
+		CriticalMinAvailableSats:              ptrInt64(0),
+		SourceMinPaybackProgress:              ptrFloat64(0.95),
+		RebalanceCostFloorPpm:                 ptrInt64(250),
+		MissionControlHalfLifeSec:             ptrInt64(3600),
+		FreshPaidLiquidityLockHours:           ptrInt(12),
 	}
 
 	if err := validateRebalanceConfigPayload(payload); err != nil {
@@ -391,6 +411,11 @@ func TestValidateRebalanceConfigPayloadRejectsInvalidFields(t *testing.T) {
 		{name: "invalid sovereign scope", payload: rebalanceConfigPayload{SovereignCandidateScope: ptrString("manual_only")}},
 		{name: "sovereign jobs below range", payload: rebalanceConfigPayload{SovereignMaxJobsPerCycle: ptrInt(0)}},
 		{name: "sovereign min profit below range", payload: rebalanceConfigPayload{SovereignMinExpectedProfitSat: ptrInt64(-1)}},
+		{name: "sovereign low success rate above range", payload: rebalanceConfigPayload{SovereignLowSuccessMinRate: ptrFloat64(1.1)}},
+		{name: "sovereign low success profit cost below range", payload: rebalanceConfigPayload{SovereignLowSuccessMinProfitCostRatio: ptrFloat64(-0.1)}},
+		{name: "sovereign budget efficiency below range", payload: rebalanceConfigPayload{SovereignBudgetEfficiencyMinRatio: ptrFloat64(-0.1)}},
+		{name: "sovereign route dead share below range", payload: rebalanceConfigPayload{SovereignRouteDeadSourceShare: ptrFloat64(0)}},
+		{name: "sovereign risk floor above range", payload: rebalanceConfigPayload{SovereignRiskScoreFloor: ptrFloat64(0.3)}},
 		{name: "invalid budget mode", payload: rebalanceConfigPayload{BudgetMode: ptrString("invalid")}},
 		{name: "manual reserve pct above range", payload: rebalanceConfigPayload{
 			ManualReserveMode:  ptrString(rebalanceManualReserveModePct),
@@ -454,22 +479,32 @@ func TestApplyRebalanceConfigPayloadOnlyTouchesProvidedFields(t *testing.T) {
 	sovereignScope := rebalanceSovereignScopeAutoOnly
 	sovereignMaxJobs := 3
 	sovereignMinProfit := int64(42)
+	sovereignLowSuccessRate := 0.03
+	sovereignLowSuccessProfitCost := 1.8
+	sovereignBudgetEfficiency := 0.65
+	sovereignRouteDeadShare := 0.25
+	sovereignRiskFloor := 0.015
 	cfg.DelegatedFastPathStrictPayback = true
 
 	got := applyRebalanceConfigPayload(cfg, rebalanceConfigPayload{
-		SchedulerMode:                  &schedulerMode,
-		SovereignCandidateScope:        &sovereignScope,
-		SovereignMaxJobsPerCycle:       &sovereignMaxJobs,
-		SovereignMinExpectedProfitSat:  &sovereignMinProfit,
-		DeadbandPct:                    &deadband,
-		BudgetUnlimited:                ptrBool(true),
-		BudgetAutoOnly:                 &budgetAutoOnly,
-		MinExecuteSat:                  &minExecuteSat,
-		GainModelVersion:               &gainModelVersion,
-		VelocityWeight:                 &velocityWeight,
-		FreshPaidLiquidityLockEnabled:  ptrBool(false),
-		FreshPaidLiquidityLockHours:    &freshPaidLiquidityLockHours,
-		DelegatedFastPathStrictPayback: ptrBool(false),
+		SchedulerMode:                         &schedulerMode,
+		SovereignCandidateScope:               &sovereignScope,
+		SovereignMaxJobsPerCycle:              &sovereignMaxJobs,
+		SovereignMinExpectedProfitSat:         &sovereignMinProfit,
+		SovereignLowSuccessMinRate:            &sovereignLowSuccessRate,
+		SovereignLowSuccessMinProfitCostRatio: &sovereignLowSuccessProfitCost,
+		SovereignBudgetEfficiencyMinRatio:     &sovereignBudgetEfficiency,
+		SovereignRouteDeadSourceShare:         &sovereignRouteDeadShare,
+		SovereignRiskScoreFloor:               &sovereignRiskFloor,
+		DeadbandPct:                           &deadband,
+		BudgetUnlimited:                       ptrBool(true),
+		BudgetAutoOnly:                        &budgetAutoOnly,
+		MinExecuteSat:                         &minExecuteSat,
+		GainModelVersion:                      &gainModelVersion,
+		VelocityWeight:                        &velocityWeight,
+		FreshPaidLiquidityLockEnabled:         ptrBool(false),
+		FreshPaidLiquidityLockHours:           &freshPaidLiquidityLockHours,
+		DelegatedFastPathStrictPayback:        ptrBool(false),
 	})
 
 	if got.DeadbandPct != 0 {
@@ -510,6 +545,21 @@ func TestApplyRebalanceConfigPayloadOnlyTouchesProvidedFields(t *testing.T) {
 	}
 	if got.SovereignMinExpectedProfitSat != sovereignMinProfit {
 		t.Fatalf("expected sovereign_min_expected_profit_sat=%d, got %d", sovereignMinProfit, got.SovereignMinExpectedProfitSat)
+	}
+	if got.SovereignLowSuccessMinRate != sovereignLowSuccessRate {
+		t.Fatalf("expected sovereign_low_success_min_rate=%f, got %f", sovereignLowSuccessRate, got.SovereignLowSuccessMinRate)
+	}
+	if got.SovereignLowSuccessMinProfitCostRatio != sovereignLowSuccessProfitCost {
+		t.Fatalf("expected sovereign_low_success_min_profit_cost_ratio=%f, got %f", sovereignLowSuccessProfitCost, got.SovereignLowSuccessMinProfitCostRatio)
+	}
+	if got.SovereignBudgetEfficiencyMinRatio != sovereignBudgetEfficiency {
+		t.Fatalf("expected sovereign_budget_efficiency_min_ratio=%f, got %f", sovereignBudgetEfficiency, got.SovereignBudgetEfficiencyMinRatio)
+	}
+	if got.SovereignRouteDeadSourceShare != sovereignRouteDeadShare {
+		t.Fatalf("expected sovereign_route_dead_source_share=%f, got %f", sovereignRouteDeadShare, got.SovereignRouteDeadSourceShare)
+	}
+	if got.SovereignRiskScoreFloor != sovereignRiskFloor {
+		t.Fatalf("expected sovereign_risk_score_floor=%f, got %f", sovereignRiskFloor, got.SovereignRiskScoreFloor)
 	}
 	if got.ScanIntervalSec != cfg.ScanIntervalSec {
 		t.Fatalf("expected omitted scan_interval_sec to remain %d, got %d", cfg.ScanIntervalSec, got.ScanIntervalSec)
@@ -1485,6 +1535,7 @@ func TestExecuteSovereignAutopilotAllowsLowSuccessBestAvailableBand(t *testing.T
 	cfg.BudgetUnlimited = true
 	cfg.SovereignMaxJobsPerCycle = 1
 	cfg.SovereignMinExpectedProfitSat = 50
+	cfg.SovereignLowSuccessMinProfitCostRatio = 0.70
 
 	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{{
 		Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "best-available:0", PeerAlias: "best-available", TargetAmountSat: 100_000},

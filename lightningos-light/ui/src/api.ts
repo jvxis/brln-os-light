@@ -583,6 +583,11 @@ export const updateRebalanceConfig = (payload: {
   sovereign_candidate_scope?: string
   sovereign_max_jobs_per_cycle?: number
   sovereign_min_expected_profit_sat?: number
+  sovereign_low_success_min_rate?: number
+  sovereign_low_success_min_profit_cost_ratio?: number
+  sovereign_budget_efficiency_min_ratio?: number
+  sovereign_route_dead_source_share?: number
+  sovereign_risk_score_floor?: number
   scan_interval_sec?: number
   deadband_pct?: number
   source_min_local_pct?: number

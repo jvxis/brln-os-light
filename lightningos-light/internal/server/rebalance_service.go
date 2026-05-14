@@ -202,12 +202,12 @@ const (
 	sovereignLowSuccessWeakRate                 = 0.01
 	sovereignLowSuccessVeryWeakProfitCostRatio  = 3.0
 	sovereignLowSuccessWeakProfitCostRatio      = 1.5
-	sovereignLowSuccessProfitCostRatio          = 0.70
+	sovereignLowSuccessProfitCostRatio          = 1.20
 	sovereignLowSuccessOpportunityReason        = "low_success_opportunity_below_floor"
 	sovereignBudgetEfficiencyProfitCostRatio    = 0.50
 	sovereignBudgetEfficiencyHighSuccessRate    = 0.05
-	sovereignBudgetEfficiencyHighSuccessRatio   = 0.25
 	sovereignBudgetEfficiencyOpportunityReason  = "budget_efficiency_below_floor"
+	sovereignRiskScoreFloor                     = 0.02
 	sovereignRouteDeadSourceShare               = 0.20
 	sovereignRouteDeadMediumSourceShare         = 0.35
 	sovereignRouteDeadHighSourceShare           = 0.50
@@ -226,60 +226,65 @@ const (
 )
 
 type RebalanceConfig struct {
-	AutoEnabled                   bool    `json:"auto_enabled"`
-	SchedulerMode                 string  `json:"scheduler_mode"`
-	SovereignCandidateScope       string  `json:"sovereign_candidate_scope"`
-	SovereignMaxJobsPerCycle      int     `json:"sovereign_max_jobs_per_cycle"`
-	SovereignMinExpectedProfitSat int64   `json:"sovereign_min_expected_profit_sat"`
-	ScanIntervalSec               int     `json:"scan_interval_sec"`
-	DeadbandPct                   float64 `json:"deadband_pct"`
-	SourceMinLocalPct             float64 `json:"source_min_local_pct"`
-	EconRatio                     float64 `json:"econ_ratio"`
-	EconRatioMaxPpm               int64   `json:"econ_ratio_max_ppm"`
-	FeeLimitPpm                   int64   `json:"fee_limit_ppm"`
-	LostProfit                    bool    `json:"lost_profit"`
-	FailTolerancePpm              int64   `json:"fail_tolerance_ppm"`
-	ROIMin                        float64 `json:"roi_min"`
-	DailyBudgetPct                float64 `json:"daily_budget_pct"`
-	BudgetMode                    string  `json:"budget_mode"`
-	BudgetUnlimited               bool    `json:"budget_unlimited"`
-	BudgetAutoOnly                bool    `json:"budget_auto_only"`
-	ManualReserveEnabled          bool    `json:"manual_reserve_enabled"`
-	ManualReserveMode             string  `json:"manual_reserve_mode"`
-	ManualReserveValue            float64 `json:"manual_reserve_value"`
-	MaxConcurrent                 int     `json:"max_concurrent"`
-	MinAmountSat                  int64   `json:"min_amount_sat"`
-	MaxAmountSat                  int64   `json:"max_amount_sat"`
-	MinSplitEnabled               bool    `json:"min_split_enabled"`
-	MinProbeSat                   int64   `json:"min_probe_sat"`
-	MinExecuteSat                 int64   `json:"min_execute_sat"`
-	MppEnabled                    bool    `json:"mpp_enabled"`
-	MppMaxShards                  int     `json:"mpp_max_shards"`
-	MppParallelism                int     `json:"mpp_parallelism"`
-	MppMinShardSat                int64   `json:"mpp_min_shard_sat"`
-	MppRoundTimeoutSec            int     `json:"mpp_round_timeout_sec"`
-	MppAutoOnly                   bool    `json:"mpp_auto_only"`
-	FeeLadderSteps                int     `json:"fee_ladder_steps"`
-	AmountProbeSteps              int     `json:"amount_probe_steps"`
-	AmountProbeAdaptive           bool    `json:"amount_probe_adaptive"`
-	AttemptTimeoutSec             int     `json:"attempt_timeout_sec"`
-	RebalanceTimeoutSec           int     `json:"rebalance_timeout_sec"`
-	ManualRestartWatch            bool    `json:"manual_restart_watch"`
-	CooldownProbeEnabled          bool    `json:"cooldown_probe_enabled"`
-	MissionControlHalfLifeSec     int64   `json:"mc_half_life_sec"`
-	PaybackModeFlags              int     `json:"payback_mode_flags"`
-	FreshPaidLiquidityLockEnabled bool    `json:"fresh_paid_liquidity_lock_enabled"`
-	FreshPaidLiquidityLockHours   int     `json:"fresh_paid_liquidity_lock_hours"`
-	UnlockDays                    int     `json:"unlock_days"`
-	CriticalReleasePct            float64 `json:"critical_release_pct"`
-	CriticalMinSources            int     `json:"critical_min_sources"`
-	CriticalMinAvailableSats      int64   `json:"critical_min_available_sats"`
-	CriticalCycles                int     `json:"critical_cycles"`
-	RebalanceCostFloorPpm         int64   `json:"rebalance_cost_floor_ppm"`
-	SourceMinPaybackProgress      float64 `json:"source_min_payback_progress"`
-	MissionControlReinforce       bool    `json:"mission_control_reinforce"`
-	GainModelVersion              int     `json:"gain_model_version"`
-	VelocityWeight                float64 `json:"velocity_weight"`
+	AutoEnabled                           bool    `json:"auto_enabled"`
+	SchedulerMode                         string  `json:"scheduler_mode"`
+	SovereignCandidateScope               string  `json:"sovereign_candidate_scope"`
+	SovereignMaxJobsPerCycle              int     `json:"sovereign_max_jobs_per_cycle"`
+	SovereignMinExpectedProfitSat         int64   `json:"sovereign_min_expected_profit_sat"`
+	SovereignLowSuccessMinRate            float64 `json:"sovereign_low_success_min_rate"`
+	SovereignLowSuccessMinProfitCostRatio float64 `json:"sovereign_low_success_min_profit_cost_ratio"`
+	SovereignBudgetEfficiencyMinRatio     float64 `json:"sovereign_budget_efficiency_min_ratio"`
+	SovereignRouteDeadSourceShare         float64 `json:"sovereign_route_dead_source_share"`
+	SovereignRiskScoreFloor               float64 `json:"sovereign_risk_score_floor"`
+	ScanIntervalSec                       int     `json:"scan_interval_sec"`
+	DeadbandPct                           float64 `json:"deadband_pct"`
+	SourceMinLocalPct                     float64 `json:"source_min_local_pct"`
+	EconRatio                             float64 `json:"econ_ratio"`
+	EconRatioMaxPpm                       int64   `json:"econ_ratio_max_ppm"`
+	FeeLimitPpm                           int64   `json:"fee_limit_ppm"`
+	LostProfit                            bool    `json:"lost_profit"`
+	FailTolerancePpm                      int64   `json:"fail_tolerance_ppm"`
+	ROIMin                                float64 `json:"roi_min"`
+	DailyBudgetPct                        float64 `json:"daily_budget_pct"`
+	BudgetMode                            string  `json:"budget_mode"`
+	BudgetUnlimited                       bool    `json:"budget_unlimited"`
+	BudgetAutoOnly                        bool    `json:"budget_auto_only"`
+	ManualReserveEnabled                  bool    `json:"manual_reserve_enabled"`
+	ManualReserveMode                     string  `json:"manual_reserve_mode"`
+	ManualReserveValue                    float64 `json:"manual_reserve_value"`
+	MaxConcurrent                         int     `json:"max_concurrent"`
+	MinAmountSat                          int64   `json:"min_amount_sat"`
+	MaxAmountSat                          int64   `json:"max_amount_sat"`
+	MinSplitEnabled                       bool    `json:"min_split_enabled"`
+	MinProbeSat                           int64   `json:"min_probe_sat"`
+	MinExecuteSat                         int64   `json:"min_execute_sat"`
+	MppEnabled                            bool    `json:"mpp_enabled"`
+	MppMaxShards                          int     `json:"mpp_max_shards"`
+	MppParallelism                        int     `json:"mpp_parallelism"`
+	MppMinShardSat                        int64   `json:"mpp_min_shard_sat"`
+	MppRoundTimeoutSec                    int     `json:"mpp_round_timeout_sec"`
+	MppAutoOnly                           bool    `json:"mpp_auto_only"`
+	FeeLadderSteps                        int     `json:"fee_ladder_steps"`
+	AmountProbeSteps                      int     `json:"amount_probe_steps"`
+	AmountProbeAdaptive                   bool    `json:"amount_probe_adaptive"`
+	AttemptTimeoutSec                     int     `json:"attempt_timeout_sec"`
+	RebalanceTimeoutSec                   int     `json:"rebalance_timeout_sec"`
+	ManualRestartWatch                    bool    `json:"manual_restart_watch"`
+	CooldownProbeEnabled                  bool    `json:"cooldown_probe_enabled"`
+	MissionControlHalfLifeSec             int64   `json:"mc_half_life_sec"`
+	PaybackModeFlags                      int     `json:"payback_mode_flags"`
+	FreshPaidLiquidityLockEnabled         bool    `json:"fresh_paid_liquidity_lock_enabled"`
+	FreshPaidLiquidityLockHours           int     `json:"fresh_paid_liquidity_lock_hours"`
+	UnlockDays                            int     `json:"unlock_days"`
+	CriticalReleasePct                    float64 `json:"critical_release_pct"`
+	CriticalMinSources                    int     `json:"critical_min_sources"`
+	CriticalMinAvailableSats              int64   `json:"critical_min_available_sats"`
+	CriticalCycles                        int     `json:"critical_cycles"`
+	RebalanceCostFloorPpm                 int64   `json:"rebalance_cost_floor_ppm"`
+	SourceMinPaybackProgress              float64 `json:"source_min_payback_progress"`
+	MissionControlReinforce               bool    `json:"mission_control_reinforce"`
+	GainModelVersion                      int     `json:"gain_model_version"`
+	VelocityWeight                        float64 `json:"velocity_weight"`
 	// Wave 6.1b: when AutoFee adjusted a target's outgoing fee within this
 	// window, dampen its rebalance score by AutofeeSettlingMultiplier (a value
 	// in (0,1]). 0 disables the dampening.
@@ -834,64 +839,69 @@ func NewRebalanceService(db *pgxpool.Pool, lnd *lndclient.Client, logger *log.Lo
 
 func defaultRebalanceConfig() RebalanceConfig {
 	return RebalanceConfig{
-		AutoEnabled:                    false,
-		SchedulerMode:                  rebalanceSchedulerModeRulesAuto,
-		SovereignCandidateScope:        rebalanceSovereignScopeAutoAndManualRestart,
-		SovereignMaxJobsPerCycle:       2,
-		SovereignMinExpectedProfitSat:  0,
-		ScanIntervalSec:                900,
-		DeadbandPct:                    5,
-		SourceMinLocalPct:              35,
-		EconRatio:                      0.6,
-		EconRatioMaxPpm:                0,
-		FeeLimitPpm:                    0,
-		LostProfit:                     false,
-		FailTolerancePpm:               500,
-		ROIMin:                         1.1,
-		DailyBudgetPct:                 25,
-		BudgetMode:                     rebalanceBudgetModeHybridRevenue,
-		BudgetUnlimited:                false,
-		BudgetAutoOnly:                 true,
-		ManualReserveEnabled:           false,
-		ManualReserveMode:              rebalanceManualReserveModeFixedSat,
-		ManualReserveValue:             0,
-		MaxConcurrent:                  2,
-		MinAmountSat:                   50000,
-		MaxAmountSat:                   0,
-		MinSplitEnabled:                true,
-		MinProbeSat:                    5000,
-		MinExecuteSat:                  10000,
-		MppEnabled:                     true,
-		MppMaxShards:                   6,
-		MppParallelism:                 3,
-		MppMinShardSat:                 rebalanceDefaultMppMinShardSat,
-		MppRoundTimeoutSec:             35,
-		MppAutoOnly:                    true,
-		FeeLadderSteps:                 1,
-		AmountProbeSteps:               6,
-		AmountProbeAdaptive:            true,
-		AttemptTimeoutSec:              45,
-		RebalanceTimeoutSec:            600,
-		ManualRestartWatch:             false,
-		CooldownProbeEnabled:           false,
-		MissionControlHalfLifeSec:      0,
-		PaybackModeFlags:               paybackModePayback | paybackModeTime | paybackModeCritical,
-		FreshPaidLiquidityLockEnabled:  true,
-		FreshPaidLiquidityLockHours:    freshPaidLiquidityLockDefaultHours,
-		UnlockDays:                     7,
-		CriticalReleasePct:             20,
-		CriticalMinSources:             2,
-		CriticalMinAvailableSats:       0,
-		CriticalCycles:                 3,
-		RebalanceCostFloorPpm:          250,
-		SourceMinPaybackProgress:       0.95,
-		MissionControlReinforce:        false,
-		GainModelVersion:               1,
-		VelocityWeight:                 0.7,
-		AutofeeSettlingWindowSec:       7200,
-		AutofeeSettlingMultiplier:      0.5,
-		DelegatedFastPathEnabled:       true,
-		DelegatedFastPathStrictPayback: true,
+		AutoEnabled:                           false,
+		SchedulerMode:                         rebalanceSchedulerModeRulesAuto,
+		SovereignCandidateScope:               rebalanceSovereignScopeAutoAndManualRestart,
+		SovereignMaxJobsPerCycle:              2,
+		SovereignMinExpectedProfitSat:         0,
+		SovereignLowSuccessMinRate:            sovereignLowSuccessRate,
+		SovereignLowSuccessMinProfitCostRatio: sovereignLowSuccessProfitCostRatio,
+		SovereignBudgetEfficiencyMinRatio:     sovereignBudgetEfficiencyProfitCostRatio,
+		SovereignRouteDeadSourceShare:         sovereignRouteDeadSourceShare,
+		SovereignRiskScoreFloor:               sovereignRiskScoreFloor,
+		ScanIntervalSec:                       900,
+		DeadbandPct:                           5,
+		SourceMinLocalPct:                     35,
+		EconRatio:                             0.6,
+		EconRatioMaxPpm:                       0,
+		FeeLimitPpm:                           0,
+		LostProfit:                            false,
+		FailTolerancePpm:                      500,
+		ROIMin:                                1.1,
+		DailyBudgetPct:                        25,
+		BudgetMode:                            rebalanceBudgetModeHybridRevenue,
+		BudgetUnlimited:                       false,
+		BudgetAutoOnly:                        true,
+		ManualReserveEnabled:                  false,
+		ManualReserveMode:                     rebalanceManualReserveModeFixedSat,
+		ManualReserveValue:                    0,
+		MaxConcurrent:                         2,
+		MinAmountSat:                          50000,
+		MaxAmountSat:                          0,
+		MinSplitEnabled:                       true,
+		MinProbeSat:                           5000,
+		MinExecuteSat:                         10000,
+		MppEnabled:                            true,
+		MppMaxShards:                          6,
+		MppParallelism:                        3,
+		MppMinShardSat:                        rebalanceDefaultMppMinShardSat,
+		MppRoundTimeoutSec:                    35,
+		MppAutoOnly:                           true,
+		FeeLadderSteps:                        1,
+		AmountProbeSteps:                      6,
+		AmountProbeAdaptive:                   true,
+		AttemptTimeoutSec:                     45,
+		RebalanceTimeoutSec:                   600,
+		ManualRestartWatch:                    false,
+		CooldownProbeEnabled:                  false,
+		MissionControlHalfLifeSec:             0,
+		PaybackModeFlags:                      paybackModePayback | paybackModeTime | paybackModeCritical,
+		FreshPaidLiquidityLockEnabled:         true,
+		FreshPaidLiquidityLockHours:           freshPaidLiquidityLockDefaultHours,
+		UnlockDays:                            7,
+		CriticalReleasePct:                    20,
+		CriticalMinSources:                    2,
+		CriticalMinAvailableSats:              0,
+		CriticalCycles:                        3,
+		RebalanceCostFloorPpm:                 250,
+		SourceMinPaybackProgress:              0.95,
+		MissionControlReinforce:               false,
+		GainModelVersion:                      1,
+		VelocityWeight:                        0.7,
+		AutofeeSettlingWindowSec:              7200,
+		AutofeeSettlingMultiplier:             0.5,
+		DelegatedFastPathEnabled:              true,
+		DelegatedFastPathStrictPayback:        true,
 	}
 }
 
@@ -1411,6 +1421,11 @@ func normalizeRebalanceConfig(cfg RebalanceConfig) RebalanceConfig {
 	if cfg.SovereignMinExpectedProfitSat < 0 {
 		cfg.SovereignMinExpectedProfitSat = 0
 	}
+	cfg.SovereignLowSuccessMinRate = normalizeRatioConfig(cfg.SovereignLowSuccessMinRate, def.SovereignLowSuccessMinRate, 1)
+	cfg.SovereignLowSuccessMinProfitCostRatio = normalizeRatioConfig(cfg.SovereignLowSuccessMinProfitCostRatio, def.SovereignLowSuccessMinProfitCostRatio, 0)
+	cfg.SovereignBudgetEfficiencyMinRatio = normalizeRatioConfig(cfg.SovereignBudgetEfficiencyMinRatio, def.SovereignBudgetEfficiencyMinRatio, 0)
+	cfg.SovereignRouteDeadSourceShare = normalizeRatioConfig(cfg.SovereignRouteDeadSourceShare, def.SovereignRouteDeadSourceShare, 1)
+	cfg.SovereignRiskScoreFloor = normalizeRatioConfig(cfg.SovereignRiskScoreFloor, def.SovereignRiskScoreFloor, 0.2)
 	if cfg.MinAmountSat < 0 {
 		cfg.MinAmountSat = 0
 	}
@@ -1506,6 +1521,16 @@ func normalizeRebalanceSovereignScope(raw string) string {
 	default:
 		return rebalanceSovereignScopeAutoAndManualRestart
 	}
+}
+
+func normalizeRatioConfig(value float64, fallback float64, max float64) float64 {
+	if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+		return fallback
+	}
+	if max > 0 && value > max {
+		return max
+	}
+	return value
 }
 
 func isSovereignSchedulerMode(mode string) bool {
@@ -7766,7 +7791,7 @@ func applySovereignRiskAdjustedScores(candidates []rebalanceTarget, cfg Rebalanc
 		if candidates[i].CooldownProbe || candidates[i].Score <= 0 {
 			continue
 		}
-		multiplier := sovereignSuccessScoreMultiplier(candidates[i].PairStats)
+		multiplier := sovereignSuccessScoreMultiplier(candidates[i].PairStats, cfg)
 		multiplier *= sovereignROIScoreMultiplier(candidates[i].ExpectedROI, candidates[i].ExpectedROIValid, cfg)
 		multiplier *= sovereignBudgetEfficiencyScoreMultiplier(candidates[i])
 		if math.IsNaN(multiplier) || math.IsInf(multiplier, 0) || multiplier <= 0 {
@@ -7780,38 +7805,39 @@ func applySovereignRiskAdjustedScores(candidates []rebalanceTarget, cfg Rebalanc
 	}
 }
 
-func shouldSkipSovereignLowSuccessOpportunity(stats rebalanceTargetPairStats, expectedProfitSat int64, budgetCostSat int64, _ RebalanceConfig) bool {
+func shouldSkipSovereignLowSuccessOpportunity(stats rebalanceTargetPairStats, expectedProfitSat int64, budgetCostSat int64, cfg RebalanceConfig) bool {
 	rate, attempts := sovereignHistoricalSuccessRate(stats)
-	if attempts < sovereignLowSuccessMinAttempts || rate >= sovereignLowSuccessRate {
+	if attempts < sovereignLowSuccessMinAttempts || rate >= sovereignLowSuccessRateForConfig(cfg) {
 		return false
 	}
 	profitCostRatio, ok := sovereignProfitCostRatio(expectedProfitSat, budgetCostSat)
 	if !ok {
 		return true
 	}
-	return profitCostRatio < sovereignLowSuccessRequiredProfitCostRatio(rate)
+	return profitCostRatio < sovereignLowSuccessRequiredProfitCostRatio(rate, cfg)
 }
 
-func shouldSkipSovereignBudgetEfficiencyOpportunity(stats rebalanceTargetPairStats, expectedProfitSat int64, budgetCostSat int64, _ RebalanceConfig) bool {
+func shouldSkipSovereignBudgetEfficiencyOpportunity(stats rebalanceTargetPairStats, expectedProfitSat int64, budgetCostSat int64, cfg RebalanceConfig) bool {
 	profitCostRatio, ok := sovereignProfitCostRatio(expectedProfitSat, budgetCostSat)
 	if !ok {
 		return true
 	}
-	if profitCostRatio >= sovereignBudgetEfficiencyProfitCostRatio {
+	minRatio := sovereignBudgetEfficiencyMinRatioForConfig(cfg)
+	if profitCostRatio >= minRatio {
 		return false
 	}
 	rate, attempts := sovereignHistoricalSuccessRate(stats)
 	if attempts >= sovereignLowSuccessMinAttempts &&
 		rate >= sovereignBudgetEfficiencyHighSuccessRate &&
-		profitCostRatio >= sovereignBudgetEfficiencyHighSuccessRatio {
+		profitCostRatio >= sovereignBudgetEfficiencyHighSuccessRatioForConfig(cfg) {
 		return false
 	}
 	return true
 }
 
-func shouldSkipSovereignRouteDeadOpportunity(stats rebalanceTargetPairStats, expectedProfitSat int64, budgetCostSat int64, eligibleSources int, _ RebalanceConfig) bool {
-	routeDeadShare := sovereignRouteDeadShare(stats, eligibleSources)
-	if routeDeadShare < sovereignRouteDeadSourceShare {
+func shouldSkipSovereignRouteDeadOpportunity(stats rebalanceTargetPairStats, expectedProfitSat int64, budgetCostSat int64, eligibleSources int, cfg RebalanceConfig) bool {
+	routeDeadShare := sovereignRouteDeadShare(stats, eligibleSources, cfg)
+	if routeDeadShare < sovereignRouteDeadSourceShareForConfig(cfg) {
 		return false
 	}
 	if routeDeadShare >= sovereignRouteDeadSevereSourceShare {
@@ -7838,18 +7864,43 @@ func sovereignProfitCostRatio(expectedProfitSat int64, budgetCostSat int64) (flo
 	return ratio, true
 }
 
-func sovereignLowSuccessRequiredProfitCostRatio(successRate float64) float64 {
+func sovereignLowSuccessRateForConfig(cfg RebalanceConfig) float64 {
+	return normalizeRatioConfig(cfg.SovereignLowSuccessMinRate, sovereignLowSuccessRate, 1)
+}
+
+func sovereignLowSuccessProfitCostRatioForConfig(cfg RebalanceConfig) float64 {
+	return normalizeRatioConfig(cfg.SovereignLowSuccessMinProfitCostRatio, sovereignLowSuccessProfitCostRatio, 0)
+}
+
+func sovereignBudgetEfficiencyMinRatioForConfig(cfg RebalanceConfig) float64 {
+	return normalizeRatioConfig(cfg.SovereignBudgetEfficiencyMinRatio, sovereignBudgetEfficiencyProfitCostRatio, 0)
+}
+
+func sovereignBudgetEfficiencyHighSuccessRatioForConfig(cfg RebalanceConfig) float64 {
+	return sovereignBudgetEfficiencyMinRatioForConfig(cfg) / 2
+}
+
+func sovereignRouteDeadSourceShareForConfig(cfg RebalanceConfig) float64 {
+	return normalizeRatioConfig(cfg.SovereignRouteDeadSourceShare, sovereignRouteDeadSourceShare, 1)
+}
+
+func sovereignRiskScoreFloorForConfig(cfg RebalanceConfig) float64 {
+	return normalizeRatioConfig(cfg.SovereignRiskScoreFloor, sovereignRiskScoreFloor, 0.2)
+}
+
+func sovereignLowSuccessRequiredProfitCostRatio(successRate float64, cfg RebalanceConfig) float64 {
+	base := sovereignLowSuccessProfitCostRatioForConfig(cfg)
 	switch {
 	case successRate < sovereignLowSuccessVeryWeakRate:
-		return sovereignLowSuccessVeryWeakProfitCostRatio
+		return math.Max(base, sovereignLowSuccessVeryWeakProfitCostRatio)
 	case successRate < sovereignLowSuccessWeakRate:
-		return sovereignLowSuccessWeakProfitCostRatio
+		return math.Max(base, sovereignLowSuccessWeakProfitCostRatio)
 	default:
-		return sovereignLowSuccessProfitCostRatio
+		return base
 	}
 }
 
-func sovereignRouteDeadShare(stats rebalanceTargetPairStats, eligibleSources int) float64 {
+func sovereignRouteDeadShare(stats rebalanceTargetPairStats, eligibleSources int, cfg RebalanceConfig) float64 {
 	failures := stats.RecentStructuralFailures
 	if failures <= 0 {
 		return 0
@@ -7859,7 +7910,7 @@ func sovereignRouteDeadShare(stats rebalanceTargetPairStats, eligibleSources int
 			return sovereignRouteDeadSevereSourceShare
 		}
 		if failures >= sovereignRouteDeadFallbackMinFailedSources {
-			return sovereignRouteDeadSourceShare
+			return sovereignRouteDeadSourceShareForConfig(cfg)
 		}
 		return 0
 	}
@@ -7902,42 +7953,46 @@ func sovereignHistoricalSuccessRate(stats rebalanceTargetPairStats) (float64, in
 	return float64(successes) / float64(attempts), attempts
 }
 
-func sovereignSuccessScoreMultiplier(stats rebalanceTargetPairStats) float64 {
+func sovereignSuccessScoreMultiplier(stats rebalanceTargetPairStats, cfg RebalanceConfig) float64 {
 	successRate, attempts := sovereignHistoricalSuccessRate(stats)
+	floor := sovereignRiskScoreFloorForConfig(cfg)
 	multiplier := 0.9
 	if attempts > 0 {
-		confidence := float64(attempts) / 20.0
+		confidence := float64(attempts) / float64(sovereignLowSuccessMinAttempts)
 		if confidence > 1 {
 			confidence = 1
 		}
-		observed := 0.2 + (0.8 * successRate)
+		observed := floor
+		if successRate > 0 {
+			observed += (1 - floor) * math.Pow(successRate, 0.85)
+		}
 		multiplier = ((1 - confidence) * 1.0) + (confidence * observed)
-		if attempts >= 5 && successRate > 0.5 {
+		if attempts >= sovereignLowSuccessMinAttempts && successRate > 0.5 {
 			multiplier += math.Min(0.15, (successRate-0.5)*0.3)
 		}
 	}
 	if stats.RecentStructuralFailures >= targetCooldownMinAttempts {
-		multiplier *= 0.15
+		multiplier *= 0.05
 	} else if stats.RecentStructuralFailures >= 10 {
-		multiplier *= 0.25
+		multiplier *= 0.12
 	} else if stats.RecentStructuralFailures > 0 {
-		pressure := 1 - (float64(stats.RecentStructuralFailures) * 0.08)
-		if pressure < 0.55 {
-			pressure = 0.55
+		pressure := 1 - (float64(stats.RecentStructuralFailures) * 0.10)
+		if pressure < 0.30 {
+			pressure = 0.30
 		}
 		multiplier *= pressure
 	}
 	if stats.PermanentFailScore >= permanentFailScoreSkipThreshold {
-		multiplier *= 0.35
+		multiplier *= 0.20
 	} else if stats.PermanentFailScore > 0 {
 		pressure := 1 - (stats.PermanentFailScore / (permanentFailScoreSkipThreshold * 2))
-		if pressure < 0.5 {
-			pressure = 0.5
+		if pressure < 0.35 {
+			pressure = 0.35
 		}
 		multiplier *= pressure
 	}
-	if multiplier < 0.05 {
-		return 0.05
+	if multiplier < floor {
+		return floor
 	}
 	if multiplier > 1.2 {
 		return 1.2
@@ -8296,6 +8351,11 @@ end $$;
     sovereign_candidate_scope text not null default 'auto_and_manual_restart',
     sovereign_max_jobs_per_cycle integer not null default 2,
     sovereign_min_expected_profit_sat bigint not null default 0,
+    sovereign_low_success_min_rate double precision not null default 0.02,
+    sovereign_low_success_min_profit_cost_ratio double precision not null default 1.2,
+    sovereign_budget_efficiency_min_ratio double precision not null default 0.5,
+    sovereign_route_dead_source_share double precision not null default 0.2,
+    sovereign_risk_score_floor double precision not null default 0.02,
     scan_interval_sec integer not null default 900,
     deadband_pct double precision not null default 5,
     source_min_local_pct double precision not null default 35,
@@ -8357,6 +8417,16 @@ end $$;
     add column if not exists sovereign_max_jobs_per_cycle integer not null default 2;
   alter table rebalance_config
     add column if not exists sovereign_min_expected_profit_sat bigint not null default 0;
+  alter table rebalance_config
+    add column if not exists sovereign_low_success_min_rate double precision not null default 0.02;
+  alter table rebalance_config
+    add column if not exists sovereign_low_success_min_profit_cost_ratio double precision not null default 1.2;
+  alter table rebalance_config
+    add column if not exists sovereign_budget_efficiency_min_ratio double precision not null default 0.5;
+  alter table rebalance_config
+    add column if not exists sovereign_route_dead_source_share double precision not null default 0.2;
+  alter table rebalance_config
+    add column if not exists sovereign_risk_score_floor double precision not null default 0.02;
   alter table rebalance_config
     add column if not exists source_min_local_pct double precision not null default 35;
   alter table rebalance_config
@@ -8452,6 +8522,16 @@ end $$;
     alter column sovereign_max_jobs_per_cycle set default 2;
   alter table rebalance_config
     alter column sovereign_min_expected_profit_sat set default 0;
+  alter table rebalance_config
+    alter column sovereign_low_success_min_rate set default 0.02;
+  alter table rebalance_config
+    alter column sovereign_low_success_min_profit_cost_ratio set default 1.2;
+  alter table rebalance_config
+    alter column sovereign_budget_efficiency_min_ratio set default 0.5;
+  alter table rebalance_config
+    alter column sovereign_route_dead_source_share set default 0.2;
+  alter table rebalance_config
+    alter column sovereign_risk_score_floor set default 0.02;
   alter table rebalance_config
     alter column scan_interval_sec set default 900;
   alter table rebalance_config
@@ -8753,7 +8833,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 	}
 
 	row := s.db.QueryRow(ctx, `
-  select auto_enabled, scheduler_mode, sovereign_candidate_scope, sovereign_max_jobs_per_cycle, sovereign_min_expected_profit_sat, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_unlimited, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
+  select auto_enabled, scheduler_mode, sovereign_candidate_scope, sovereign_max_jobs_per_cycle, sovereign_min_expected_profit_sat, sovereign_low_success_min_rate, sovereign_low_success_min_profit_cost_ratio, sovereign_budget_efficiency_min_ratio, sovereign_route_dead_source_share, sovereign_risk_score_floor, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_unlimited, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags, fresh_paid_liquidity_lock_enabled, fresh_paid_liquidity_lock_hours,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback
@@ -8766,6 +8846,11 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.SovereignCandidateScope,
 		&cfg.SovereignMaxJobsPerCycle,
 		&cfg.SovereignMinExpectedProfitSat,
+		&cfg.SovereignLowSuccessMinRate,
+		&cfg.SovereignLowSuccessMinProfitCostRatio,
+		&cfg.SovereignBudgetEfficiencyMinRatio,
+		&cfg.SovereignRouteDeadSourceShare,
+		&cfg.SovereignRiskScoreFloor,
 		&cfg.ScanIntervalSec,
 		&cfg.DeadbandPct,
 		&cfg.SourceMinLocalPct,
@@ -8838,17 +8923,22 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
 	}
 	_, err := s.db.Exec(ctx, `
   insert into rebalance_config (
-    id, auto_enabled, scheduler_mode, sovereign_candidate_scope, sovereign_max_jobs_per_cycle, sovereign_min_expected_profit_sat, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_unlimited, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
+    id, auto_enabled, scheduler_mode, sovereign_candidate_scope, sovereign_max_jobs_per_cycle, sovereign_min_expected_profit_sat, sovereign_low_success_min_rate, sovereign_low_success_min_profit_cost_ratio, sovereign_budget_efficiency_min_ratio, sovereign_route_dead_source_share, sovereign_risk_score_floor, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_unlimited, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags, fresh_paid_liquidity_lock_enabled, fresh_paid_liquidity_lock_hours,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback, updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,now())
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scheduler_mode = excluded.scheduler_mode,
     sovereign_candidate_scope = excluded.sovereign_candidate_scope,
     sovereign_max_jobs_per_cycle = excluded.sovereign_max_jobs_per_cycle,
     sovereign_min_expected_profit_sat = excluded.sovereign_min_expected_profit_sat,
+    sovereign_low_success_min_rate = excluded.sovereign_low_success_min_rate,
+    sovereign_low_success_min_profit_cost_ratio = excluded.sovereign_low_success_min_profit_cost_ratio,
+    sovereign_budget_efficiency_min_ratio = excluded.sovereign_budget_efficiency_min_ratio,
+    sovereign_route_dead_source_share = excluded.sovereign_route_dead_source_share,
+    sovereign_risk_score_floor = excluded.sovereign_risk_score_floor,
     scan_interval_sec = excluded.scan_interval_sec,
     deadband_pct = excluded.deadband_pct,
     source_min_local_pct = excluded.source_min_local_pct,
@@ -8903,7 +8993,7 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     delegated_fast_path_enabled = excluded.delegated_fast_path_enabled,
     delegated_fast_path_strict_payback = excluded.delegated_fast_path_strict_payback,
     updated_at = now()
-  `, rebalanceConfigID, cfg.AutoEnabled, cfg.SchedulerMode, cfg.SovereignCandidateScope, cfg.SovereignMaxJobsPerCycle, cfg.SovereignMinExpectedProfitSat, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetUnlimited, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
+  `, rebalanceConfigID, cfg.AutoEnabled, cfg.SchedulerMode, cfg.SovereignCandidateScope, cfg.SovereignMaxJobsPerCycle, cfg.SovereignMinExpectedProfitSat, cfg.SovereignLowSuccessMinRate, cfg.SovereignLowSuccessMinProfitCostRatio, cfg.SovereignBudgetEfficiencyMinRatio, cfg.SovereignRouteDeadSourceShare, cfg.SovereignRiskScoreFloor, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetUnlimited, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
 		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.FreshPaidLiquidityLockEnabled, cfg.FreshPaidLiquidityLockHours, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback,
 	)
 	return err

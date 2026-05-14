@@ -41,6 +41,11 @@ const REBALANCE_DEFAULT_FRESH_LOCK_HOURS = 6
 const REBALANCE_DEFAULT_SCHEDULER_MODE = 'rules_auto'
 const REBALANCE_DEFAULT_SOVEREIGN_SCOPE = 'auto_and_manual_restart'
 const REBALANCE_DEFAULT_SOVEREIGN_MAX_JOBS = 2
+const REBALANCE_DEFAULT_SOVEREIGN_LOW_SUCCESS_MIN_RATE = 0.02
+const REBALANCE_DEFAULT_SOVEREIGN_LOW_SUCCESS_MIN_PROFIT_COST_RATIO = 1.2
+const REBALANCE_DEFAULT_SOVEREIGN_BUDGET_EFFICIENCY_MIN_RATIO = 0.5
+const REBALANCE_DEFAULT_SOVEREIGN_ROUTE_DEAD_SOURCE_SHARE = 0.2
+const REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR = 0.02
 const MSPR_DEFAULT_MAX_SHARDS = 6
 const MSPR_MAX_SHARDS_LIMIT = 20
 const MSPR_DEFAULT_PARALLELISM = 3
@@ -164,6 +169,11 @@ export default function RebalanceCenter() {
     sovereign_candidate_scope: raw.sovereign_candidate_scope || REBALANCE_DEFAULT_SOVEREIGN_SCOPE,
     sovereign_max_jobs_per_cycle: raw.sovereign_max_jobs_per_cycle || REBALANCE_DEFAULT_SOVEREIGN_MAX_JOBS,
     sovereign_min_expected_profit_sat: raw.sovereign_min_expected_profit_sat || 0,
+    sovereign_low_success_min_rate: typeof raw.sovereign_low_success_min_rate === 'number' ? raw.sovereign_low_success_min_rate : REBALANCE_DEFAULT_SOVEREIGN_LOW_SUCCESS_MIN_RATE,
+    sovereign_low_success_min_profit_cost_ratio: typeof raw.sovereign_low_success_min_profit_cost_ratio === 'number' ? raw.sovereign_low_success_min_profit_cost_ratio : REBALANCE_DEFAULT_SOVEREIGN_LOW_SUCCESS_MIN_PROFIT_COST_RATIO,
+    sovereign_budget_efficiency_min_ratio: typeof raw.sovereign_budget_efficiency_min_ratio === 'number' ? raw.sovereign_budget_efficiency_min_ratio : REBALANCE_DEFAULT_SOVEREIGN_BUDGET_EFFICIENCY_MIN_RATIO,
+    sovereign_route_dead_source_share: typeof raw.sovereign_route_dead_source_share === 'number' ? raw.sovereign_route_dead_source_share : REBALANCE_DEFAULT_SOVEREIGN_ROUTE_DEAD_SOURCE_SHARE,
+    sovereign_risk_score_floor: typeof raw.sovereign_risk_score_floor === 'number' ? raw.sovereign_risk_score_floor : REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR,
     budget_mode: raw.budget_mode || REBALANCE_DEFAULT_BUDGET_MODE,
     budget_unlimited: raw.budget_unlimited ?? false,
     budget_auto_only: raw.budget_auto_only ?? false,
@@ -210,6 +220,11 @@ export default function RebalanceCenter() {
       sovereign_candidate_scope: cfg.sovereign_candidate_scope,
       sovereign_max_jobs_per_cycle: cfg.sovereign_max_jobs_per_cycle,
       sovereign_min_expected_profit_sat: cfg.sovereign_min_expected_profit_sat,
+      sovereign_low_success_min_rate: cfg.sovereign_low_success_min_rate,
+      sovereign_low_success_min_profit_cost_ratio: cfg.sovereign_low_success_min_profit_cost_ratio,
+      sovereign_budget_efficiency_min_ratio: cfg.sovereign_budget_efficiency_min_ratio,
+      sovereign_route_dead_source_share: cfg.sovereign_route_dead_source_share,
+      sovereign_risk_score_floor: cfg.sovereign_risk_score_floor,
       scan_interval_sec: cfg.scan_interval_sec,
       deadband_pct: cfg.deadband_pct,
       source_min_local_pct: cfg.source_min_local_pct,
@@ -271,7 +286,12 @@ export default function RebalanceCenter() {
       scheduler_mode: cfg.scheduler_mode || REBALANCE_DEFAULT_SCHEDULER_MODE,
       sovereign_candidate_scope: cfg.sovereign_candidate_scope || REBALANCE_DEFAULT_SOVEREIGN_SCOPE,
       sovereign_max_jobs_per_cycle: cfg.sovereign_max_jobs_per_cycle || REBALANCE_DEFAULT_SOVEREIGN_MAX_JOBS,
-      sovereign_min_expected_profit_sat: cfg.sovereign_min_expected_profit_sat || 0
+      sovereign_min_expected_profit_sat: cfg.sovereign_min_expected_profit_sat || 0,
+      sovereign_low_success_min_rate: cfg.sovereign_low_success_min_rate ?? REBALANCE_DEFAULT_SOVEREIGN_LOW_SUCCESS_MIN_RATE,
+      sovereign_low_success_min_profit_cost_ratio: cfg.sovereign_low_success_min_profit_cost_ratio ?? REBALANCE_DEFAULT_SOVEREIGN_LOW_SUCCESS_MIN_PROFIT_COST_RATIO,
+      sovereign_budget_efficiency_min_ratio: cfg.sovereign_budget_efficiency_min_ratio ?? REBALANCE_DEFAULT_SOVEREIGN_BUDGET_EFFICIENCY_MIN_RATIO,
+      sovereign_route_dead_source_share: cfg.sovereign_route_dead_source_share ?? REBALANCE_DEFAULT_SOVEREIGN_ROUTE_DEAD_SOURCE_SHARE,
+      sovereign_risk_score_floor: cfg.sovereign_risk_score_floor ?? REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR
     })
   }
   const estimateHistoricalCost = (amountSat: number, feePpm: number) => {
@@ -602,6 +622,11 @@ export default function RebalanceCenter() {
           sovereign_candidate_scope: config.sovereign_candidate_scope,
           sovereign_max_jobs_per_cycle: Math.max(1, Number(config.sovereign_max_jobs_per_cycle) || REBALANCE_DEFAULT_SOVEREIGN_MAX_JOBS),
           sovereign_min_expected_profit_sat: Math.max(0, Number(config.sovereign_min_expected_profit_sat) || 0),
+          sovereign_low_success_min_rate: Math.max(0, Math.min(1, Number(config.sovereign_low_success_min_rate) || REBALANCE_DEFAULT_SOVEREIGN_LOW_SUCCESS_MIN_RATE)),
+          sovereign_low_success_min_profit_cost_ratio: Math.max(0, Number(config.sovereign_low_success_min_profit_cost_ratio) || REBALANCE_DEFAULT_SOVEREIGN_LOW_SUCCESS_MIN_PROFIT_COST_RATIO),
+          sovereign_budget_efficiency_min_ratio: Math.max(0, Number(config.sovereign_budget_efficiency_min_ratio) || REBALANCE_DEFAULT_SOVEREIGN_BUDGET_EFFICIENCY_MIN_RATIO),
+          sovereign_route_dead_source_share: Math.max(0.01, Math.min(1, Number(config.sovereign_route_dead_source_share) || REBALANCE_DEFAULT_SOVEREIGN_ROUTE_DEAD_SOURCE_SHARE)),
+          sovereign_risk_score_floor: Math.max(0.001, Math.min(0.2, Number(config.sovereign_risk_score_floor) || REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR)),
           scan_interval_sec: config.scan_interval_sec,
           deadband_pct: config.deadband_pct,
           source_min_local_pct: config.source_min_local_pct,
@@ -677,7 +702,12 @@ export default function RebalanceCenter() {
         scheduler_mode: config.scheduler_mode,
         sovereign_candidate_scope: config.sovereign_candidate_scope,
         sovereign_max_jobs_per_cycle: Math.max(1, Number(config.sovereign_max_jobs_per_cycle) || REBALANCE_DEFAULT_SOVEREIGN_MAX_JOBS),
-        sovereign_min_expected_profit_sat: Math.max(0, Number(config.sovereign_min_expected_profit_sat) || 0)
+        sovereign_min_expected_profit_sat: Math.max(0, Number(config.sovereign_min_expected_profit_sat) || 0),
+        sovereign_low_success_min_rate: Math.max(0, Math.min(1, Number(config.sovereign_low_success_min_rate) || REBALANCE_DEFAULT_SOVEREIGN_LOW_SUCCESS_MIN_RATE)),
+        sovereign_low_success_min_profit_cost_ratio: Math.max(0, Number(config.sovereign_low_success_min_profit_cost_ratio) || REBALANCE_DEFAULT_SOVEREIGN_LOW_SUCCESS_MIN_PROFIT_COST_RATIO),
+        sovereign_budget_efficiency_min_ratio: Math.max(0, Number(config.sovereign_budget_efficiency_min_ratio) || REBALANCE_DEFAULT_SOVEREIGN_BUDGET_EFFICIENCY_MIN_RATIO),
+        sovereign_route_dead_source_share: Math.max(0.01, Math.min(1, Number(config.sovereign_route_dead_source_share) || REBALANCE_DEFAULT_SOVEREIGN_ROUTE_DEAD_SOURCE_SHARE)),
+        sovereign_risk_score_floor: Math.max(0.001, Math.min(0.2, Number(config.sovereign_risk_score_floor) || REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR))
       })) as RebalanceConfig
       const normalizedSaved = normalizeLoadedConfig(saved)
       setServerConfig(normalizedSaved)
@@ -688,7 +718,12 @@ export default function RebalanceCenter() {
           scheduler_mode: normalizedSaved.scheduler_mode,
           sovereign_candidate_scope: normalizedSaved.sovereign_candidate_scope,
           sovereign_max_jobs_per_cycle: normalizedSaved.sovereign_max_jobs_per_cycle,
-          sovereign_min_expected_profit_sat: normalizedSaved.sovereign_min_expected_profit_sat
+          sovereign_min_expected_profit_sat: normalizedSaved.sovereign_min_expected_profit_sat,
+          sovereign_low_success_min_rate: normalizedSaved.sovereign_low_success_min_rate,
+          sovereign_low_success_min_profit_cost_ratio: normalizedSaved.sovereign_low_success_min_profit_cost_ratio,
+          sovereign_budget_efficiency_min_ratio: normalizedSaved.sovereign_budget_efficiency_min_ratio,
+          sovereign_route_dead_source_share: normalizedSaved.sovereign_route_dead_source_share,
+          sovereign_risk_score_floor: normalizedSaved.sovereign_risk_score_floor
         }
       })
       setStatus(t('rebalanceCenter.autopilot.saved'))
@@ -1021,6 +1056,8 @@ export default function RebalanceCenter() {
         return t('rebalanceCenter.overview.scanReasonCooldownProbeNotSovereign')
       case 'low_success_opportunity_below_floor':
         return t('rebalanceCenter.overview.scanReasonLowSuccessOpportunity')
+      case 'budget_efficiency_below_floor':
+        return t('rebalanceCenter.overview.scanReasonBudgetEfficiency')
       case 'route_dead_opportunity_below_floor':
         return t('rebalanceCenter.overview.scanReasonRouteDeadOpportunity')
       case 'would_queue':
@@ -1093,7 +1130,7 @@ export default function RebalanceCenter() {
     const reasons = overview.last_scan_reasons ?? {}
     const entries = Object.entries(reasons).filter(([, count]) => count > 0)
     if (entries.length > 0) {
-      const ordered = ['channel_busy', 'target_already_balanced', 'target_not_eligible', 'recently_attempted', 'target_cooldown', 'target_cooldown_probe_backoff', 'target_cooldown_probe_deferred', 'target_cooldown_probe_busy', 'roi_guardrail', 'profit_guardrail', 'expected_profit_below_min', 'cycle_limit', 'cooldown_probe_not_sovereign', 'route_dead_opportunity_below_floor', 'low_success_opportunity_below_floor', 'fee_cap_zero', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
+      const ordered = ['channel_busy', 'target_already_balanced', 'target_not_eligible', 'recently_attempted', 'target_cooldown', 'target_cooldown_probe_backoff', 'target_cooldown_probe_deferred', 'target_cooldown_probe_busy', 'roi_guardrail', 'profit_guardrail', 'expected_profit_below_min', 'cycle_limit', 'cooldown_probe_not_sovereign', 'route_dead_opportunity_below_floor', 'low_success_opportunity_below_floor', 'budget_efficiency_below_floor', 'fee_cap_zero', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
       entries.sort((a, b) => {
         const ai = ordered.indexOf(a[0])
         const bi = ordered.indexOf(b[0])
@@ -1834,7 +1871,7 @@ export default function RebalanceCenter() {
             </button>
           </div>
           {autopilotConfigOpen && (
-            <div className="grid gap-3 border-t border-white/10 pt-3 md:grid-cols-4">
+            <div className="grid gap-3 border-t border-white/10 pt-3 md:grid-cols-3 xl:grid-cols-5">
               <div className="space-y-2">
                 <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.schedulerMode')}>
                   {t('rebalanceCenter.settings.schedulerMode')}
@@ -1887,6 +1924,79 @@ export default function RebalanceCenter() {
                   disabled={config.scheduler_mode === 'rules_auto'}
                   value={config.sovereign_min_expected_profit_sat}
                   onChange={(e) => setConfig({ ...config, sovereign_min_expected_profit_sat: Number(e.target.value) })}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.sovereignLowSuccessMinRate')}>
+                  {t('rebalanceCenter.settings.sovereignLowSuccessMinRate')}
+                </label>
+                <input
+                  className="input-field"
+                  type="number"
+                  min={0.1}
+                  max={100}
+                  step={0.1}
+                  disabled={config.scheduler_mode === 'rules_auto'}
+                  value={Number(((config.sovereign_low_success_min_rate ?? REBALANCE_DEFAULT_SOVEREIGN_LOW_SUCCESS_MIN_RATE) * 100).toFixed(3))}
+                  onChange={(e) => setConfig({ ...config, sovereign_low_success_min_rate: Number(e.target.value) / 100 })}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.sovereignLowSuccessMinProfitCostRatio')}>
+                  {t('rebalanceCenter.settings.sovereignLowSuccessMinProfitCostRatio')}
+                </label>
+                <input
+                  className="input-field"
+                  type="number"
+                  min={0.1}
+                  step={0.05}
+                  disabled={config.scheduler_mode === 'rules_auto'}
+                  value={config.sovereign_low_success_min_profit_cost_ratio}
+                  onChange={(e) => setConfig({ ...config, sovereign_low_success_min_profit_cost_ratio: Number(e.target.value) })}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.sovereignBudgetEfficiencyMinRatio')}>
+                  {t('rebalanceCenter.settings.sovereignBudgetEfficiencyMinRatio')}
+                </label>
+                <input
+                  className="input-field"
+                  type="number"
+                  min={0.05}
+                  step={0.05}
+                  disabled={config.scheduler_mode === 'rules_auto'}
+                  value={config.sovereign_budget_efficiency_min_ratio}
+                  onChange={(e) => setConfig({ ...config, sovereign_budget_efficiency_min_ratio: Number(e.target.value) })}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.sovereignRouteDeadSourceShare')}>
+                  {t('rebalanceCenter.settings.sovereignRouteDeadSourceShare')}
+                </label>
+                <input
+                  className="input-field"
+                  type="number"
+                  min={1}
+                  max={100}
+                  step={1}
+                  disabled={config.scheduler_mode === 'rules_auto'}
+                  value={Number(((config.sovereign_route_dead_source_share ?? REBALANCE_DEFAULT_SOVEREIGN_ROUTE_DEAD_SOURCE_SHARE) * 100).toFixed(2))}
+                  onChange={(e) => setConfig({ ...config, sovereign_route_dead_source_share: Number(e.target.value) / 100 })}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.sovereignRiskScoreFloor')}>
+                  {t('rebalanceCenter.settings.sovereignRiskScoreFloor')}
+                </label>
+                <input
+                  className="input-field"
+                  type="number"
+                  min={0.1}
+                  max={20}
+                  step={0.1}
+                  disabled={config.scheduler_mode === 'rules_auto'}
+                  value={Number(((config.sovereign_risk_score_floor ?? REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR) * 100).toFixed(3))}
+                  onChange={(e) => setConfig({ ...config, sovereign_risk_score_floor: Number(e.target.value) / 100 })}
                 />
               </div>
             </div>

@@ -493,7 +493,7 @@ func validateRebalanceConfigPayload(payload rebalanceConfigPayload) error {
 	if err := validateOptionalFloat("source_min_payback_progress", payload.SourceMinPaybackProgress, 0, 0); err != nil {
 		return err
 	}
-	if err := validateOptionalInt("gain_model_version", payload.GainModelVersion, 1, 2); err != nil {
+	if err := validateOptionalInt("gain_model_version", payload.GainModelVersion, 1, 3); err != nil {
 		return err
 	}
 	if err := validateOptionalFloat("velocity_weight", payload.VelocityWeight, 0, 1); err != nil {

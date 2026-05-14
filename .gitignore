@@ -1,2 +1,6 @@
 CLAUDE.md
 .claude/
+
+# Local API debug scratch (auth cookies, response dumps)
+.lnos_*.json
+.lnos_*.txt

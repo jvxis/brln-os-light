@@ -203,6 +203,13 @@ const (
 	sovereignLowSuccessVeryWeakProfitCostRatio   = 3.0
 	sovereignLowSuccessWeakProfitCostRatio       = 1.5
 	sovereignLowSuccessProfitCostRatio           = 1.20
+	// "Empirically dead" guards — skip channels regardless of conditional
+	// profit/cost ratio when their historical performance is so poor that
+	// the expected value of any new attempt is dominated by P(failure)×cost.
+	// The conditional profit only matters when P(success) is non-trivial.
+	sovereignLowSuccessDeadZeroAttempts = 200  // 0 successes in N+ attempts → never routed
+	sovereignLowSuccessDeadRate         = 0.001 // 0.1% — empirically dead at this scale
+	sovereignLowSuccessDeadAttempts     = 1000  // need this many attempts to call it dead
 	sovereignLowSuccessOpportunityReason         = "low_success_opportunity_below_floor"
 	sovereignBudgetEfficiencyProfitCostRatio     = 0.50
 	sovereignBudgetEfficiencyHighSuccessRate     = 0.05
@@ -3294,10 +3301,21 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 			})
 			continue
 		}
-		score := expectedGain - estimatedCost
 		pairStats := input.PairStatsByTarget[snapshot.ChannelID]
 		if targetDistinctSourceCooldown.DistinctSources > pairStats.RecentStructuralFailures {
 			pairStats.RecentStructuralFailures = targetDistinctSourceCooldown.DistinctSources
+		}
+		// v3+: weight the economic score by historical success probability.
+		//   EV = expectedGain × P(success) - estimatedCost × P(failure)
+		// A channel that essentially never routes ends up with a negative
+		// score regardless of how attractive its conditional profit looks,
+		// so the autopilot won't queue it even when better candidates are
+		// in cooldown. v1/v2 keep the legacy (gain - cost) score.
+		var score int64
+		if input.Cfg.GainModelVersion >= 3 {
+			score = evWeightedEconomicScore(expectedGain, estimatedCost, pairStats)
+		} else {
+			score = expectedGain - estimatedCost
 		}
 		plan.Candidates = append(plan.Candidates, rebalanceTarget{
 			Channel:            snapshot,
@@ -7869,6 +7887,38 @@ func estimateTargetGainV2(amountSat int64, outgoingFeePpm int64, peerFeeRatePpm 
 // max (amount × spread). When no demand signal is available the channel is
 // treated as a cold-start: half of the theoretical gain is returned and the
 // ROI guardrails + roiValid=false multiplier (0.9) handle the rest.
+// evWeightedSuccessProbability returns the success probability used by v3
+// scoring. With few attempts it shrinks toward a cold-start prior so the
+// autopilot can explore brand-new pairs; once enough samples accumulate it
+// trusts the observed rate.
+func evWeightedSuccessProbability(stats rebalanceTargetPairStats) float64 {
+	const coldStartPrior = 0.5
+	const fullConfidenceAt = float64(sovereignLowSuccessMinAttempts)
+	attempts := stats.Attempts
+	if attempts <= 0 {
+		return coldStartPrior
+	}
+	successes := stats.Successes
+	if successes < 0 {
+		successes = 0
+	}
+	if successes > attempts {
+		successes = attempts
+	}
+	rate := float64(successes) / float64(attempts)
+	confidence := math.Min(1.0, float64(attempts)/fullConfidenceAt)
+	return rate*confidence + coldStartPrior*(1-confidence)
+}
+
+// evWeightedEconomicScore returns expected value of a rebalance attempt:
+// gain × P(success) − cost × P(failure). The output is a signed sat count
+// where negative scores represent attempts that lose money on average.
+func evWeightedEconomicScore(expectedGainSat int64, estimatedCostSat int64, stats rebalanceTargetPairStats) int64 {
+	p := evWeightedSuccessProbability(stats)
+	ev := float64(expectedGainSat)*p - float64(estimatedCostSat)*(1-p)
+	return int64(math.Round(ev))
+}
+
 func estimateTargetGainV3(amountSat int64, outgoingFeePpm int64, peerFeeRatePpm int64, revenue7dSat int64, localBalanceSat int64, capacitySat int64, drainRateSatPerHour int64) int64 {
 	if amountSat <= 0 || outgoingFeePpm <= 0 {
 		return 0
@@ -8026,6 +8076,16 @@ func shouldSkipSovereignLowSuccessOpportunity(stats rebalanceTargetPairStats, ex
 	rate, attempts := sovereignHistoricalSuccessRate(stats)
 	if attempts < sovereignLowSuccessMinAttempts || rate >= sovereignLowSuccessRateForConfig(cfg) {
 		return false
+	}
+	// Empirically-dead guards: when a target has accumulated enough attempts
+	// to establish that it essentially never succeeds, skip regardless of the
+	// conditional profit/cost ratio. The expected value of attempting again
+	// is dominated by P(failure)×cost.
+	if stats.Successes == 0 && attempts >= sovereignLowSuccessDeadZeroAttempts {
+		return true
+	}
+	if rate < sovereignLowSuccessDeadRate && attempts >= sovereignLowSuccessDeadAttempts {
+		return true
 	}
 	costBasis := estimatedCostSat
 	if costBasis <= 0 {

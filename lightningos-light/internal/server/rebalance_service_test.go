@@ -1485,6 +1485,73 @@ func TestExecuteSovereignAutopilotAllowsLowSuccessHighProfit(t *testing.T) {
 	}
 }
 
+// Production regression: N21 channel had 2017 attempts and 0 successes but
+// the autopilot was still selecting it because the conditional profit/cost
+// ratio (347/57 ≈ 6.09) cleared the 3.0x very-weak threshold. With a
+// success rate of 0 the expected value of attempting is negative regardless
+// of conditional profit, so the dead-zero-attempts guard must skip.
+func TestExecuteSovereignAutopilotSkipsEmpiricallyDeadZeroSuccess(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = true
+	cfg.SovereignMaxJobsPerCycle = 1
+	cfg.SovereignMinExpectedProfitSat = 0
+
+	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{{
+		Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "n21:0", PeerAlias: "n21", TargetAmountSat: 1_000_000},
+		ExpectedGainSat:  404,
+		EstimatedCostSat: 57,
+		BudgetCostSat:    57,
+		Score:            347,
+		PairStats: rebalanceTargetPairStats{
+			Attempts:  2017,
+			Successes: 0,
+			Failures:  2017,
+		},
+	}}}
+
+	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, time.Now(), false)
+	if result.Selected != 0 {
+		t.Fatalf("expected empirically dead channel skipped, got selected=%d", result.Selected)
+	}
+	if result.Decisions[0].Reason != sovereignLowSuccessOpportunityReason {
+		t.Fatalf("expected low_success skip reason, got %+v", result.Decisions[0])
+	}
+}
+
+// Production regression: JoyeuxNoeuel channel had 25927 attempts with only 2
+// successes (0.0077%). Conditional ratio 8.83x cleared the very-weak 3.0x
+// gate so it was queued. With rate well below 0.1% and >1000 attempts, the
+// empirically-dead guard must skip.
+func TestExecuteSovereignAutopilotSkipsEmpiricallyDeadBelowDeadRate(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = true
+	cfg.SovereignMaxJobsPerCycle = 1
+	cfg.SovereignMinExpectedProfitSat = 0
+
+	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{{
+		Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "joyeux:0", PeerAlias: "joyeux", TargetAmountSat: 1_000_000},
+		ExpectedGainSat:  728,
+		EstimatedCostSat: 74,
+		BudgetCostSat:    74,
+		Score:            654,
+		PairStats: rebalanceTargetPairStats{
+			Attempts:  25927,
+			Successes: 2,
+			Failures:  25925,
+		},
+	}}}
+
+	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, time.Now(), false)
+	if result.Selected != 0 {
+		t.Fatalf("expected sub-deadRate channel skipped, got selected=%d", result.Selected)
+	}
+	if result.Decisions[0].Reason != sovereignLowSuccessOpportunityReason {
+		t.Fatalf("expected low_success skip reason, got %+v", result.Decisions[0])
+	}
+}
+
 func TestExecuteSovereignAutopilotAllowsLowSuccessWhenExpectedCostPremiumIsStrong(t *testing.T) {
 	svc := NewRebalanceService(nil, nil, nil)
 	cfg := defaultRebalanceConfig()
@@ -2496,5 +2563,136 @@ func TestEstimateTargetGainV3UsesStrongestDemandSignal(t *testing.T) {
 	gain = estimateTargetGainV3(amount, 100, 100, 0, amount, amount*2, 0)
 	if gain != 0 {
 		t.Fatalf("expected 0 when spread is non-positive, got %d", gain)
+	}
+}
+
+func TestEvWeightedSuccessProbabilityShrinksTowardPrior(t *testing.T) {
+	// No history: full prior weight (0.5).
+	if got := evWeightedSuccessProbability(rebalanceTargetPairStats{}); got != 0.5 {
+		t.Fatalf("expected 0.5 cold-start prior with no attempts, got %f", got)
+	}
+
+	// 10 attempts, all successful: confidence = 0.1, observed = 1.0
+	// → 1.0*0.1 + 0.5*0.9 = 0.55
+	got := evWeightedSuccessProbability(rebalanceTargetPairStats{Attempts: 10, Successes: 10})
+	if math.Abs(got-0.55) > 1e-9 {
+		t.Fatalf("expected 0.55 shrinkage at 10 perfect attempts, got %f", got)
+	}
+
+	// 100+ attempts (full confidence): observed rate trusted directly.
+	got = evWeightedSuccessProbability(rebalanceTargetPairStats{Attempts: 200, Successes: 50})
+	if math.Abs(got-0.25) > 1e-9 {
+		t.Fatalf("expected 0.25 at 200/50, got %f", got)
+	}
+
+	// Empirically dead pair (0/2017): rate 0, confidence 1 → 0.0
+	got = evWeightedSuccessProbability(rebalanceTargetPairStats{Attempts: 2017, Successes: 0})
+	if got != 0 {
+		t.Fatalf("expected 0 for fully-dead pair, got %f", got)
+	}
+}
+
+// EV-weighted score must turn the production "JoyeuxNoeuel" pattern (high
+// conditional profit + near-zero success rate) into a strongly negative
+// score so it never reaches the candidate top of the list, even when better
+// candidates are in cooldown. Mirror N21 (0/2017) and JoyeuxNoeuel
+// (2/25927) shapes.
+func TestEvWeightedEconomicScorePunishesDeadPairs(t *testing.T) {
+	// N21: gain=347, cost=57, 0/2017 attempts. p=0 → EV = -57.
+	score := evWeightedEconomicScore(347, 57, rebalanceTargetPairStats{Attempts: 2017, Successes: 0})
+	if score != -57 {
+		t.Fatalf("expected N21-shape EV = -57, got %d", score)
+	}
+
+	// JoyeuxNoeuel: gain=654, cost=74, 2/25927 attempts. p≈0.000077
+	// EV ≈ 654*0.000077 - 74*0.999923 ≈ 0.05 - 73.99 ≈ -74
+	score = evWeightedEconomicScore(654, 74, rebalanceTargetPairStats{Attempts: 25927, Successes: 2})
+	if score > -70 {
+		t.Fatalf("expected JoyeuxNoeuel-shape EV strongly negative (<=-70), got %d", score)
+	}
+
+	// Healthy pair: gain=400, cost=50, 50/100 → p=0.5 (full confidence).
+	// EV = 400*0.5 - 50*0.5 = 175.
+	score = evWeightedEconomicScore(400, 50, rebalanceTargetPairStats{Attempts: 100, Successes: 50})
+	if score != 175 {
+		t.Fatalf("expected healthy-pair EV = 175, got %d", score)
+	}
+
+	// Cold start (no attempts): prior 0.5 → EV = gain*0.5 - cost*0.5.
+	// For gain=400 cost=50 → 175 (same as healthy with full data at 50% rate).
+	score = evWeightedEconomicScore(400, 50, rebalanceTargetPairStats{})
+	if score != 175 {
+		t.Fatalf("expected cold-start prior EV = 175, got %d", score)
+	}
+}
+
+// When GainModelVersion >= 3, buildAndOrderRebalanceCandidates must replace
+// score = (gain - cost) with the EV-weighted formula. Dead pairs end up
+// with negative scores and rank below healthy pairs even when their
+// conditional profit is much higher.
+func TestBuildAndOrderRebalanceCandidatesUsesEVScoreInV3(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	cfg.GainModelVersion = 3
+	cfg.ROIMin = 0
+	cfg.DeadbandPct = 0
+	cfg.RebalanceCostFloorPpm = 0
+
+	channels := []RebalanceChannel{
+		{
+			ChannelID:          1,
+			PeerAlias:          "dead-high-conditional",
+			Active:             true,
+			EligibleAsTarget:   true,
+			OutgoingFeePpm:     1000,
+			PeerFeeRatePpm:     0,
+			TargetAmountSat:    1_000_000,
+			TargetOutboundPct:  100,
+			LocalPct:           0,
+			Revenue7dSat:       100,
+			LocalBalanceSat:    1_000_000,
+			CapacitySat:        2_000_000,
+			RebalanceCost7dPpm: 50,
+		},
+		{
+			ChannelID:          2,
+			PeerAlias:          "healthy",
+			Active:             true,
+			EligibleAsTarget:   true,
+			OutgoingFeePpm:     500,
+			PeerFeeRatePpm:     50,
+			TargetAmountSat:    1_000_000,
+			TargetOutboundPct:  100,
+			LocalPct:           0,
+			Revenue7dSat:       100,
+			LocalBalanceSat:    1_000_000,
+			CapacitySat:        2_000_000,
+			RebalanceCost7dPpm: 50,
+		},
+	}
+	plan := buildAndOrderRebalanceCandidates(rebalanceAutoScanCandidateInput{
+		Channels:         channels,
+		Settings:         map[uint64]channelSetting{1: {AutoEnabled: true}, 2: {AutoEnabled: true}},
+		Cfg:              cfg,
+		SovereignRanking: true,
+		PairStatsByTarget: map[uint64]rebalanceTargetPairStats{
+			1: {Attempts: 2000, Successes: 0}, // empirically dead
+			2: {Attempts: 200, Successes: 100}, // 50% rate
+		},
+		ScanAt: time.Now(),
+	})
+	if len(plan.Candidates) != 2 {
+		t.Fatalf("expected 2 candidates, got %d", len(plan.Candidates))
+	}
+	// Healthy must rank above dead even though dead's conditional gain is
+	// roughly 2× larger.
+	if plan.Candidates[0].Channel.PeerAlias != "healthy" {
+		t.Fatalf("expected healthy candidate first under v3 EV scoring, got %q (score=%d)",
+			plan.Candidates[0].Channel.PeerAlias, plan.Candidates[0].Score)
+	}
+	if plan.Candidates[0].Score <= 0 {
+		t.Fatalf("expected healthy candidate positive score, got %d", plan.Candidates[0].Score)
+	}
+	if plan.Candidates[1].Score >= 0 {
+		t.Fatalf("expected dead candidate non-positive EV score, got %d", plan.Candidates[1].Score)
 	}
 }

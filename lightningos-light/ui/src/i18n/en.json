@@ -3000,7 +3000,8 @@
       "gainModelVersion": "Gain model",
       "gainModelOptions": {
         "v1": "v1: historical revenue",
-        "v2": "v2: effective spread + velocity"
+        "v2": "v2: effective spread + velocity",
+        "v3": "v3: hybrid (revenue + drain projection, demand-aware)"
       },
       "velocityWeight": "Velocity weight",
       "autofeeSettlingWindowSec": "AutoFee settling window (sec)",
@@ -3083,7 +3084,7 @@
       "feeLimitPpm": "Overrides econ ratio with a fixed max fee ppm (0 = disabled).",
       "lostProfit": "Subtract estimated source channel fees from the max fee budget.",
       "roiMin": "Minimum expected ROI (7d revenue / estimated cost) to auto rebalance.",
-      "gainModelVersion": "v1 keeps the legacy proportional revenue model. v2 estimates gain from effective spread and enables drain-rate velocity scoring.",
+      "gainModelVersion": "v1 keeps the legacy proportional revenue model. v2 estimates gain from effective spread and enables drain-rate velocity scoring. v3 combines historical revenue with drain-rate projection (7d horizon) capped by the theoretical max, with a 50% cold-start floor for new channels.",
       "velocityWeight": "Weight from 0 to 1 applied to the channel's real velocity signal in v2 scoring. 0 favors age/fairness; 1 favors relative drain rate.",
       "autofeeSettlingWindowSec": "Window in seconds after AutoFee adjusts a channel's outgoing fee during which the rebalance score is dampened. 0 disables the dampening. Default 7200 (2h).",
       "autofeeSettlingMultiplier": "Score multiplier applied to targets adjusted by AutoFee inside the window. 1 disables the dampening; 0.5 halves the score (recommended).",

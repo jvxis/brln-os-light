@@ -3000,7 +3000,8 @@
       "gainModelVersion": "Modelo de ganho",
       "gainModelOptions": {
         "v1": "v1: receita histórica",
-        "v2": "v2: spread efetivo + velocidade"
+        "v2": "v2: spread efetivo + velocidade",
+        "v3": "v3: híbrido (receita + projeção de drain, demand-aware)"
       },
       "velocityWeight": "Peso da velocidade",
       "autofeeSettlingWindowSec": "Janela pós-AutoFee (s)",
@@ -3083,7 +3084,7 @@
       "feeLimitPpm": "Substitui o econ ratio por um fee ppm fixo (0 = desativado).",
       "lostProfit": "Subtrai as fees estimadas do canal fonte do orçamento de fee.",
       "roiMin": "ROI mínimo esperado (receita 7d / custo estimado).",
-      "gainModelVersion": "v1 mantém o modelo legado de receita proporcional. v2 estima ganho pelo spread efetivo e ativa o score por velocidade de drenagem.",
+      "gainModelVersion": "v1 mantém o modelo legado de receita proporcional. v2 estima ganho pelo spread efetivo e ativa o score por velocidade de drenagem. v3 combina receita histórica com projeção de drain rate (horizonte 7d), capado no teórico, com piso de 50% para canais novos (cold-start).",
       "velocityWeight": "Peso de 0 a 1 aplicado ao sinal de velocidade real do canal no score v2. 0 prioriza idade/fairness; 1 prioriza drain rate relativo.",
       "autofeeSettlingWindowSec": "Janela em segundos após o AutoFee ajustar a fee de saída em que o score de rebalance é despriorizado. 0 desliga. Padrão: 7200 (2h).",
       "autofeeSettlingMultiplier": "Multiplicador aplicado ao score de targets ajustados pelo AutoFee dentro da janela. 1 desliga; 0,5 corta o score pela metade (recomendado).",

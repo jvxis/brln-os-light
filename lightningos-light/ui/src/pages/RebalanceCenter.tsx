@@ -310,8 +310,32 @@ export default function RebalanceCenter() {
     const spreadEffectiveness = Math.max(0, Math.min(1, 1 - (peerFeeRatePpm / outgoingFeePpm)))
     return Math.round((amountSat * outgoingFeePpm / 1_000_000) * spreadEffectiveness)
   }
+  const estimateTargetGainV3 = (amountSat: number, outgoingFeePpm: number, peerFeeRatePpm: number, revenue7d: number, localBalance: number, capacity: number, drainRateSatPerHour: number) => {
+    if (amountSat <= 0 || outgoingFeePpm <= 0) return 0
+    const spreadEffectiveness = Math.max(0, Math.min(1, 1 - (peerFeeRatePpm / outgoingFeePpm)))
+    if (spreadEffectiveness <= 0) return 0
+    const theoretical = (amountSat * outgoingFeePpm / 1_000_000) * spreadEffectiveness
+    if (theoretical <= 0) return 0
+    let historical = 0
+    if (revenue7d > 0) {
+      let denom = localBalance > 0 ? localBalance : capacity
+      if (amountSat > denom) denom = amountSat
+      if (denom > 0) historical = revenue7d * (amountSat / denom)
+    }
+    let projected = 0
+    if (drainRateSatPerHour > 0) {
+      const horizonHours = 168
+      const volume = Math.min(amountSat, drainRateSatPerHour * horizonHours)
+      projected = volume * outgoingFeePpm / 1_000_000 * spreadEffectiveness
+    }
+    const demand = Math.max(historical, projected)
+    const gain = demand > 0 ? Math.min(demand, theoretical) : theoretical * 0.5
+    return Math.round(gain)
+  }
   const computeVelocityScore = (economicScore: number, drainRateSatPerHour: number, maxDrainRateSatPerHour: number) => {
-    if (!config || config.gain_model_version < 2 || economicScore === 0) return economicScore
+    // v3 already folds drain rate into the base gain, so applying the
+    // velocity multiplier again would double-count demand.
+    if (!config || config.gain_model_version < 2 || config.gain_model_version >= 3 || economicScore === 0) return economicScore
     const velocityWeight = Math.max(0, Math.min(1, config.velocity_weight ?? REBALANCE_DEFAULT_VELOCITY_WEIGHT))
     const velocityMultiplier = maxDrainRateSatPerHour > 0 && drainRateSatPerHour > 0
       ? Math.min(1, drainRateSatPerHour / maxDrainRateSatPerHour)
@@ -320,9 +344,15 @@ export default function RebalanceCenter() {
     return Math.round(economicScore * ((velocityWeight * velocityMultiplier) + ((1 - velocityWeight) * ageBoost)))
   }
   const computeChannelScore = (ch: RebalanceChannel, maxDrainRateSatPerHour = 0) => {
-    let expectedGain = config?.gain_model_version && config.gain_model_version >= 2
-      ? estimateTargetGainV2(ch.target_amount_sat, ch.outgoing_fee_ppm, ch.peer_fee_rate_ppm)
-      : estimateTargetGain(ch.target_amount_sat, ch.revenue_7d_sat, ch.local_balance_sat, ch.capacity_sat)
+    const gainModel = config?.gain_model_version ?? 1
+    let expectedGain: number
+    if (gainModel >= 3) {
+      expectedGain = estimateTargetGainV3(ch.target_amount_sat, ch.outgoing_fee_ppm, ch.peer_fee_rate_ppm, ch.revenue_7d_sat, ch.local_balance_sat, ch.capacity_sat, ch.drain_rate_sat_per_hour || 0)
+    } else if (gainModel >= 2) {
+      expectedGain = estimateTargetGainV2(ch.target_amount_sat, ch.outgoing_fee_ppm, ch.peer_fee_rate_ppm)
+    } else {
+      expectedGain = estimateTargetGain(ch.target_amount_sat, ch.revenue_7d_sat, ch.local_balance_sat, ch.capacity_sat)
+    }
     let estimatedCost = estimateHistoricalCost(ch.target_amount_sat, ch.rebalance_cost_7d_ppm)
     if (ch.target_amount_sat <= 0) {
       expectedGain = Math.max(0, ch.revenue_7d_sat || 0)
@@ -2425,6 +2455,7 @@ export default function RebalanceCenter() {
                     >
                       <option value={1}>{t('rebalanceCenter.settings.gainModelOptions.v1')}</option>
                       <option value={2}>{t('rebalanceCenter.settings.gainModelOptions.v2')}</option>
+                      <option value={3}>{t('rebalanceCenter.settings.gainModelOptions.v3')}</option>
                     </select>
                   </div>
                   <div className="space-y-2">

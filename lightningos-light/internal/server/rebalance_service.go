@@ -2660,7 +2660,7 @@ func (s *RebalanceService) runAutoScan() {
 		scanCandidates = len(candidates)
 		scanRemainingBudget = remaining
 		scanReasons = copyReasonCounts(skipReasons)
-		scanDetail = buildScanDetail(skipReasons, remaining, len(candidates))
+		scanDetail = buildScanDetail(skipReasons, remaining, len(candidates), queuedCount)
 	}
 
 	if s.logger != nil {
@@ -2920,7 +2920,7 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 			result.Status = "no_queue"
 		}
 	}
-	result.Detail = buildScanDetail(result.SkipReasons, result.BudgetRemainingSat, result.Candidates)
+	result.Detail = buildScanDetail(result.SkipReasons, result.BudgetRemainingSat, result.Candidates, result.Selected)
 	return result
 }
 
@@ -8578,7 +8578,7 @@ func applyAutofeeSettlingPenalty(candidates []rebalanceTarget, adjustments map[u
 	return dampened
 }
 
-func buildScanDetail(reasons map[string]int, remaining int64, candidates int) string {
+func buildScanDetail(reasons map[string]int, remaining int64, candidates int, queued int) string {
 	if len(reasons) == 0 {
 		return ""
 	}
@@ -8611,7 +8611,12 @@ func buildScanDetail(reasons map[string]int, remaining int64, candidates int) st
 		return ""
 	}
 	base := "No jobs queued."
-	if candidates > 0 {
+	if queued > 0 {
+		base = fmt.Sprintf("Queued %d job(s).", queued)
+		if candidates > 0 {
+			base = fmt.Sprintf("Queued %d job(s). Candidates after guardrails: %d.", queued, candidates)
+		}
+	} else if candidates > 0 {
 		base = fmt.Sprintf("No jobs queued. Candidates after guardrails: %d.", candidates)
 	}
 	if remaining > 0 {

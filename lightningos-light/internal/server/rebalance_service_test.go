@@ -845,12 +845,25 @@ func TestBuildScanDetailIncludesBelowExecuteMinReason(t *testing.T) {
 	reasons := map[string]int{
 		"below_execute_min": 3,
 	}
-	got := buildScanDetail(reasons, 0, 5)
+	got := buildScanDetail(reasons, 0, 5, 0)
 	if got == "" {
 		t.Fatalf("expected non-empty scan detail")
 	}
 	if !strings.Contains(got, "below execute min amount: 3") {
 		t.Fatalf("expected below_execute_min reason in detail, got %q", got)
+	}
+}
+
+func TestBuildScanDetailShowsQueuedWhenJobsQueued(t *testing.T) {
+	reasons := map[string]int{
+		sovereignLowSuccessOpportunityReason: 2,
+	}
+	got := buildScanDetail(reasons, 0, 29, 5)
+	if !strings.Contains(got, "Queued 5 job(s).") {
+		t.Fatalf("expected queued base in detail, got %q", got)
+	}
+	if strings.Contains(got, "No jobs queued") {
+		t.Fatalf("did not expect no_queue wording when jobs were queued, got %q", got)
 	}
 }
 

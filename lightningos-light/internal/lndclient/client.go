@@ -6308,10 +6308,16 @@ func (c *Client) BatchOpenChannel(ctx context.Context, channels []BatchOpenChann
 func (c *Client) CloseChannel(ctx context.Context, channelPoint string, force bool, satPerVbyte int64) (string, error) {
 	maxFeePerVbyte := int64(0)
 	if !force && satPerVbyte > 0 {
-		maxFeePerVbyte = satPerVbyte
+		maxFeePerVbyte = deriveCloseMaxFeePerVbyte(satPerVbyte)
 	}
 
 	closingTxid, err := c.closeChannelOnce(ctx, channelPoint, force, satPerVbyte, maxFeePerVbyte)
+	if err != nil && !force && isCloseFeeProposalExceedsMaxError(err) {
+		boostedMaxFee := boostedCloseMaxFeePerVbyte(maxFeePerVbyte)
+		if boostedMaxFee > maxFeePerVbyte {
+			closingTxid, err = c.closeChannelOnce(ctx, channelPoint, force, satPerVbyte, boostedMaxFee)
+		}
+	}
 	if err != nil && isChannelClosingInProgressError(err) {
 		err = nil
 	}
@@ -6612,6 +6618,37 @@ func isChannelClosingInProgressError(err error) bool {
 		strings.Contains(value, "channel is being closed") ||
 		strings.Contains(value, "channel shutdown already initiated") ||
 		strings.Contains(value, "already pending channel close")
+}
+
+func deriveCloseMaxFeePerVbyte(satPerVbyte int64) int64 {
+	if satPerVbyte <= 0 {
+		return 0
+	}
+	maxFee := int64(math.Ceil(float64(satPerVbyte) * 1.35))
+	minFee := satPerVbyte + 2
+	if maxFee < minFee {
+		maxFee = minFee
+	}
+	return maxFee
+}
+
+func boostedCloseMaxFeePerVbyte(maxFeePerVbyte int64) int64 {
+	if maxFeePerVbyte <= 0 {
+		return 0
+	}
+	boosted := int64(math.Ceil(float64(maxFeePerVbyte) * 1.5))
+	if boosted <= maxFeePerVbyte {
+		boosted = maxFeePerVbyte + 5
+	}
+	return boosted
+}
+
+func isCloseFeeProposalExceedsMaxError(err error) bool {
+	if err == nil {
+		return false
+	}
+	value := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(value, "latest fee proposal exceeds max fee")
 }
 
 func isAlreadyPublishedTxError(err error) bool {

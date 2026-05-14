@@ -297,6 +297,12 @@ type RebalanceConfig struct {
 	MissionControlReinforce               bool    `json:"mission_control_reinforce"`
 	GainModelVersion                      int     `json:"gain_model_version"`
 	VelocityWeight                        float64 `json:"velocity_weight"`
+	// SovereignEVWeightedScoring switches the score formula from the legacy
+	// (gain - cost) to EV-weighted (gain × P(success) − cost × P(failure)).
+	// Default OFF: with cumulative pair stats it filters too aggressively
+	// because long-term observed rates under-represent current routing
+	// success. Enable once windowed pair stats land.
+	SovereignEVWeightedScoring bool `json:"sovereign_ev_weighted_scoring"`
 	// Wave 6.1b: when AutoFee adjusted a target's outgoing fee within this
 	// window, dampen its rebalance score by AutofeeSettlingMultiplier (a value
 	// in (0,1]). 0 disables the dampening.
@@ -3305,14 +3311,13 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 		if targetDistinctSourceCooldown.DistinctSources > pairStats.RecentStructuralFailures {
 			pairStats.RecentStructuralFailures = targetDistinctSourceCooldown.DistinctSources
 		}
-		// v3+: weight the economic score by historical success probability.
-		//   EV = expectedGain × P(success) - estimatedCost × P(failure)
-		// A channel that essentially never routes ends up with a negative
-		// score regardless of how attractive its conditional profit looks,
-		// so the autopilot won't queue it even when better candidates are
-		// in cooldown. v1/v2 keep the legacy (gain - cost) score.
+		// EV-weighted scoring is gated by an opt-in flag: with cumulative
+		// pair stats it filters too aggressively because long-term observed
+		// rates under-represent current routing success. When enabled the
+		// score is gain × P(success) − cost × P(failure); otherwise the
+		// legacy gain − cost score is used.
 		var score int64
-		if input.Cfg.GainModelVersion >= 3 {
+		if input.Cfg.SovereignEVWeightedScoring {
 			score = evWeightedEconomicScore(expectedGain, estimatedCost, pairStats)
 		} else {
 			score = expectedGain - estimatedCost

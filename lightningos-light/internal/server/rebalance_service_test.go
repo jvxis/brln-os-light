@@ -2626,13 +2626,14 @@ func TestEvWeightedEconomicScorePunishesDeadPairs(t *testing.T) {
 	}
 }
 
-// When GainModelVersion >= 3, buildAndOrderRebalanceCandidates must replace
-// score = (gain - cost) with the EV-weighted formula. Dead pairs end up
-// with negative scores and rank below healthy pairs even when their
-// conditional profit is much higher.
-func TestBuildAndOrderRebalanceCandidatesUsesEVScoreInV3(t *testing.T) {
+// When SovereignEVWeightedScoring is on, buildAndOrderRebalanceCandidates
+// must replace score = (gain - cost) with the EV-weighted formula. Dead
+// pairs end up with negative scores and rank below healthy pairs even when
+// their conditional profit is much higher.
+func TestBuildAndOrderRebalanceCandidatesUsesEVScoreWhenEnabled(t *testing.T) {
 	cfg := defaultRebalanceConfig()
 	cfg.GainModelVersion = 3
+	cfg.SovereignEVWeightedScoring = true
 	cfg.ROIMin = 0
 	cfg.DeadbandPct = 0
 	cfg.RebalanceCostFloorPpm = 0

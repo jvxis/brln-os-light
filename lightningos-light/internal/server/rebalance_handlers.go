@@ -72,6 +72,7 @@ type rebalanceConfigPayload struct {
 	MissionControlReinforce               *bool    `json:"mission_control_reinforce,omitempty"`
 	GainModelVersion                      *int     `json:"gain_model_version,omitempty"`
 	VelocityWeight                        *float64 `json:"velocity_weight,omitempty"`
+	SovereignEVWeightedScoring            *bool    `json:"sovereign_ev_weighted_scoring,omitempty"`
 	AutofeeSettlingWindowSec              *int64   `json:"autofee_settling_window_sec,omitempty"`
 	AutofeeSettlingMultiplier             *float64 `json:"autofee_settling_multiplier,omitempty"`
 	DelegatedFastPathEnabled              *bool    `json:"delegated_fast_path_enabled,omitempty"`
@@ -339,6 +340,9 @@ func applyRebalanceConfigPayload(cfg RebalanceConfig, payload rebalanceConfigPay
 	}
 	if payload.VelocityWeight != nil {
 		cfg.VelocityWeight = *payload.VelocityWeight
+	}
+	if payload.SovereignEVWeightedScoring != nil {
+		cfg.SovereignEVWeightedScoring = *payload.SovereignEVWeightedScoring
 	}
 	if payload.AutofeeSettlingWindowSec != nil {
 		cfg.AutofeeSettlingWindowSec = *payload.AutofeeSettlingWindowSec

@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	lnbitsImage = "lnbits/lnbits:v1.5.3"
+	lnbitsImage = "lnbits/lnbits:latest"
 	lnbitsPort  = 5000
 )
 
@@ -177,6 +177,9 @@ func ensureLnbitsPaths(paths lnbitsPaths) error {
 }
 
 func ensureLnbitsImage(ctx context.Context) error {
+	if strings.HasSuffix(lnbitsImage, ":latest") {
+		return pullDockerImage(ctx, lnbitsImage)
+	}
 	return ensureDockerImage(ctx, lnbitsImage)
 }
 
@@ -206,6 +209,7 @@ func ensureLnbitsEnv(paths lnbitsPaths) error {
 		{"LNBITS_EXTENSIONS_PATH", "/app/data/extensions"},
 		{"LNBITS_HOST", "0.0.0.0"},
 		{"LNBITS_PORT", "5000"},
+		{"AUTH_HTTPS_ONLY", "false"},
 	}
 	if !fileExists(paths.EnvPath) {
 		lines := make([]string, 0, len(defaults)+1)

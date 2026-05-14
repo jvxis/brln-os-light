@@ -1,19 +1,33 @@
 package server
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 )
 
-func TestLnbitsComposeUsesPinnedImage(t *testing.T) {
+func TestLnbitsComposeUsesLatestImage(t *testing.T) {
 	compose := lnbitsComposeContents(lnbitsPaths{DataDir: "/var/lib/lightningos/apps-data/lnbits/data"})
 
-	if !strings.Contains(compose, "image: lnbits/lnbits:v1.5.3") {
-		t.Fatalf("compose must use pinned LNbits image\n%s", compose)
+	if !strings.Contains(compose, "image: lnbits/lnbits:latest") {
+		t.Fatalf("compose must use latest LNbits image\n%s", compose)
 	}
-	if strings.Contains(compose, "lnbits/lnbits:latest") {
-		t.Fatalf("compose must not use latest LNbits image\n%s", compose)
+}
+
+func TestEnsureLnbitsEnvAllowsLocalHTTPAuth(t *testing.T) {
+	paths := lnbitsPaths{EnvPath: filepath.Join(t.TempDir(), ".env")}
+
+	if err := ensureLnbitsEnv(paths); err != nil {
+		t.Fatalf("ensure env: %v", err)
+	}
+	content, err := os.ReadFile(paths.EnvPath)
+	if err != nil {
+		t.Fatalf("read env: %v", err)
+	}
+	if !strings.Contains(string(content), "AUTH_HTTPS_ONLY=false\n") {
+		t.Fatalf("env must allow local HTTP auth\n%s", string(content))
 	}
 }
 

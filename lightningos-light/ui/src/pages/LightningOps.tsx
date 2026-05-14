@@ -5444,10 +5444,28 @@ export default function LightningOps() {
   }
 
   const channelOptions = useMemo(() => {
-    return channels.map((ch) => ({
-      value: ch.channel_point,
-      label: `${ch.peer_alias || ch.remote_pubkey.slice(0, 12)} - ${ch.channel_point}`
-    }))
+    const shortenChannelPoint = (point: string) => {
+      const [txid = '', vout = ''] = (point || '').split(':')
+      if (txid.length <= 12) return point || ''
+      const head = txid.slice(0, 6)
+      const tail = txid.slice(-4)
+      return vout !== '' ? `${head}…${tail}:${vout}` : `${head}…${tail}`
+    }
+    const formatCapacity = (sats: number) => {
+      const value = Number(sats || 0)
+      if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
+      if (value >= 1_000) return `${(value / 1_000).toFixed(0)}k`
+      return String(value)
+    }
+    return channels.map((ch) => {
+      const alias = ch.peer_alias || ch.remote_pubkey.slice(0, 12)
+      const shortPoint = shortenChannelPoint(ch.channel_point)
+      const capacity = formatCapacity(ch.capacity_sat)
+      return {
+        value: ch.channel_point,
+        label: `${alias} · ${shortPoint} · ${capacity} sats`,
+      }
+    })
   }, [channels])
 
   const selectedCloseChannel = useMemo(

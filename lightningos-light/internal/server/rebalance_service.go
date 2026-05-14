@@ -196,13 +196,24 @@ const (
 )
 
 const (
-	sovereignLowSuccessMinAttempts       = 100
-	sovereignLowSuccessRate              = 0.02
-	sovereignLowSuccessProfitFloorSat    = int64(1000)
-	sovereignLowSuccessOpportunityReason = "low_success_opportunity_below_floor"
-	sovereignRouteDeadMinFailedSources   = 8
-	sovereignRouteDeadProfitFloorSat     = int64(1000)
-	sovereignRouteDeadOpportunityReason  = "route_dead_opportunity_below_floor"
+	sovereignLowSuccessMinAttempts              = 100
+	sovereignLowSuccessRate                     = 0.02
+	sovereignLowSuccessVeryWeakRate             = 0.005
+	sovereignLowSuccessWeakRate                 = 0.01
+	sovereignLowSuccessVeryWeakProfitCostRatio  = 3.0
+	sovereignLowSuccessWeakProfitCostRatio      = 2.0
+	sovereignLowSuccessProfitCostRatio          = 1.25
+	sovereignLowSuccessOpportunityReason        = "low_success_opportunity_below_floor"
+	sovereignRouteDeadSourceShare               = 0.20
+	sovereignRouteDeadMediumSourceShare         = 0.35
+	sovereignRouteDeadHighSourceShare           = 0.50
+	sovereignRouteDeadSevereSourceShare         = 0.65
+	sovereignRouteDeadProfitCostRatio           = 1.5
+	sovereignRouteDeadMediumProfitCostRatio     = 2.0
+	sovereignRouteDeadHighProfitCostRatio       = 3.0
+	sovereignRouteDeadOpportunityReason         = "route_dead_opportunity_below_floor"
+	sovereignRouteDeadFallbackMinFailedSources  = 8
+	sovereignRouteDeadFallbackSevereFailSources = targetCooldownMinAttempts
 )
 
 const (
@@ -2695,10 +2706,10 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 		case target.CooldownProbe:
 			decision.Reason = "cooldown_probe_not_sovereign"
 			noteSkip(decision.Reason)
-		case shouldSkipSovereignRouteDeadOpportunity(target.PairStats, expectedProfit, cfg):
+		case shouldSkipSovereignRouteDeadOpportunity(target.PairStats, expectedProfit, budgetCost, plan.EligibleSources, cfg):
 			decision.Reason = sovereignRouteDeadOpportunityReason
 			noteSkip(decision.Reason)
-		case shouldSkipSovereignLowSuccessOpportunity(target.PairStats, expectedProfit, cfg):
+		case shouldSkipSovereignLowSuccessOpportunity(target.PairStats, expectedProfit, budgetCost, cfg):
 			decision.Reason = sovereignLowSuccessOpportunityReason
 			noteSkip(decision.Reason)
 		case maxJobs > 0 && result.Selected >= maxJobs:
@@ -2755,13 +2766,13 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 					appendDecision(decision)
 					continue
 				}
-				if shouldSkipSovereignRouteDeadOpportunity(target.PairStats, decision.ExpectedProfitSat, cfg) {
+				if shouldSkipSovereignRouteDeadOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.BudgetCostSat, plan.EligibleSources, cfg) {
 					decision.Reason = sovereignRouteDeadOpportunityReason
 					noteSkip(decision.Reason)
 					appendDecision(decision)
 					continue
 				}
-				if shouldSkipSovereignLowSuccessOpportunity(target.PairStats, decision.ExpectedProfitSat, cfg) {
+				if shouldSkipSovereignLowSuccessOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.BudgetCostSat, cfg) {
 					decision.Reason = sovereignLowSuccessOpportunityReason
 					noteSkip(decision.Reason)
 					appendDecision(decision)
@@ -7756,27 +7767,91 @@ func applySovereignRiskAdjustedScores(candidates []rebalanceTarget, cfg Rebalanc
 	}
 }
 
-func shouldSkipSovereignLowSuccessOpportunity(stats rebalanceTargetPairStats, expectedProfitSat int64, cfg RebalanceConfig) bool {
+func shouldSkipSovereignLowSuccessOpportunity(stats rebalanceTargetPairStats, expectedProfitSat int64, budgetCostSat int64, _ RebalanceConfig) bool {
 	rate, attempts := sovereignHistoricalSuccessRate(stats)
 	if attempts < sovereignLowSuccessMinAttempts || rate >= sovereignLowSuccessRate {
 		return false
 	}
-	floor := sovereignLowSuccessProfitFloorSat
-	if cfg.SovereignMinExpectedProfitSat > 0 && cfg.SovereignMinExpectedProfitSat*10 > floor {
-		floor = cfg.SovereignMinExpectedProfitSat * 10
+	profitCostRatio, ok := sovereignProfitCostRatio(expectedProfitSat, budgetCostSat)
+	if !ok {
+		return true
 	}
-	return expectedProfitSat < floor
+	return profitCostRatio < sovereignLowSuccessRequiredProfitCostRatio(rate)
 }
 
-func shouldSkipSovereignRouteDeadOpportunity(stats rebalanceTargetPairStats, expectedProfitSat int64, cfg RebalanceConfig) bool {
-	if stats.RecentStructuralFailures < sovereignRouteDeadMinFailedSources {
+func shouldSkipSovereignRouteDeadOpportunity(stats rebalanceTargetPairStats, expectedProfitSat int64, budgetCostSat int64, eligibleSources int, _ RebalanceConfig) bool {
+	routeDeadShare := sovereignRouteDeadShare(stats, eligibleSources)
+	if routeDeadShare < sovereignRouteDeadSourceShare {
 		return false
 	}
-	floor := sovereignRouteDeadProfitFloorSat
-	if cfg.SovereignMinExpectedProfitSat > 0 && cfg.SovereignMinExpectedProfitSat*10 > floor {
-		floor = cfg.SovereignMinExpectedProfitSat * 10
+	if routeDeadShare >= sovereignRouteDeadSevereSourceShare {
+		return true
 	}
-	return expectedProfitSat < floor
+	profitCostRatio, ok := sovereignProfitCostRatio(expectedProfitSat, budgetCostSat)
+	if !ok {
+		return true
+	}
+	return profitCostRatio < sovereignRouteDeadRequiredProfitCostRatio(routeDeadShare)
+}
+
+func sovereignProfitCostRatio(expectedProfitSat int64, budgetCostSat int64) (float64, bool) {
+	if expectedProfitSat <= 0 {
+		return 0, true
+	}
+	if budgetCostSat <= 0 {
+		return 0, false
+	}
+	ratio := float64(expectedProfitSat) / float64(budgetCostSat)
+	if math.IsNaN(ratio) || math.IsInf(ratio, 0) {
+		return 0, false
+	}
+	return ratio, true
+}
+
+func sovereignLowSuccessRequiredProfitCostRatio(successRate float64) float64 {
+	switch {
+	case successRate < sovereignLowSuccessVeryWeakRate:
+		return sovereignLowSuccessVeryWeakProfitCostRatio
+	case successRate < sovereignLowSuccessWeakRate:
+		return sovereignLowSuccessWeakProfitCostRatio
+	default:
+		return sovereignLowSuccessProfitCostRatio
+	}
+}
+
+func sovereignRouteDeadShare(stats rebalanceTargetPairStats, eligibleSources int) float64 {
+	failures := stats.RecentStructuralFailures
+	if failures <= 0 {
+		return 0
+	}
+	if eligibleSources <= 0 {
+		if failures >= sovereignRouteDeadFallbackSevereFailSources {
+			return sovereignRouteDeadSevereSourceShare
+		}
+		if failures >= sovereignRouteDeadFallbackMinFailedSources {
+			return sovereignRouteDeadSourceShare
+		}
+		return 0
+	}
+	share := float64(failures) / float64(eligibleSources)
+	if math.IsNaN(share) || math.IsInf(share, 0) || share < 0 {
+		return 0
+	}
+	if share > 1 {
+		return 1
+	}
+	return share
+}
+
+func sovereignRouteDeadRequiredProfitCostRatio(routeDeadShare float64) float64 {
+	switch {
+	case routeDeadShare >= sovereignRouteDeadHighSourceShare:
+		return sovereignRouteDeadHighProfitCostRatio
+	case routeDeadShare >= sovereignRouteDeadMediumSourceShare:
+		return sovereignRouteDeadMediumProfitCostRatio
+	default:
+		return sovereignRouteDeadProfitCostRatio
+	}
 }
 
 func sovereignHistoricalSuccessRate(stats rebalanceTargetPairStats) (float64, int) {

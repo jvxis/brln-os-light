@@ -1479,6 +1479,35 @@ func TestExecuteSovereignAutopilotSkipsLowSuccessWhenProfitCostRatioIsWeak(t *te
 	}
 }
 
+func TestExecuteSovereignAutopilotAllowsLowSuccessBestAvailableBand(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = true
+	cfg.SovereignMaxJobsPerCycle = 1
+	cfg.SovereignMinExpectedProfitSat = 50
+
+	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{{
+		Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "best-available:0", PeerAlias: "best-available", TargetAmountSat: 100_000},
+		ExpectedGainSat:  175,
+		EstimatedCostSat: 100,
+		BudgetCostSat:    100,
+		Score:            75,
+		PairStats: rebalanceTargetPairStats{
+			Attempts:  1_000,
+			Successes: 12,
+			Failures:  988,
+		},
+	}}}
+
+	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, time.Now(), false)
+	if result.Selected != 1 {
+		t.Fatalf("expected best-available low-success candidate selected, got %d", result.Selected)
+	}
+	if !result.Decisions[0].Selected || result.Decisions[0].Reason != "would_queue" {
+		t.Fatalf("expected best-available low-success candidate to remain eligible, got %+v", result.Decisions[0])
+	}
+}
+
 func TestExecuteSovereignAutopilotSkipsRouteDeadLowProfit(t *testing.T) {
 	svc := NewRebalanceService(nil, nil, nil)
 	cfg := defaultRebalanceConfig()

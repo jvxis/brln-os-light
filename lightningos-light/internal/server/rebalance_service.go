@@ -201,8 +201,8 @@ const (
 	sovereignLowSuccessVeryWeakRate             = 0.005
 	sovereignLowSuccessWeakRate                 = 0.01
 	sovereignLowSuccessVeryWeakProfitCostRatio  = 3.0
-	sovereignLowSuccessWeakProfitCostRatio      = 2.0
-	sovereignLowSuccessProfitCostRatio          = 1.25
+	sovereignLowSuccessWeakProfitCostRatio      = 1.5
+	sovereignLowSuccessProfitCostRatio          = 0.70
 	sovereignLowSuccessOpportunityReason        = "low_success_opportunity_below_floor"
 	sovereignRouteDeadSourceShare               = 0.20
 	sovereignRouteDeadMediumSourceShare         = 0.35

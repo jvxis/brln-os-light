@@ -1485,6 +1485,64 @@ func TestExecuteSovereignAutopilotAllowsLowSuccessHighProfit(t *testing.T) {
 	}
 }
 
+func TestExecuteSovereignAutopilotAllowsLowSuccessWhenExpectedCostPremiumIsStrong(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = true
+	cfg.SovereignMaxJobsPerCycle = 1
+	cfg.SovereignMinExpectedProfitSat = 50
+
+	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{{
+		Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "low-success-profitable:0", PeerAlias: "low-success-profitable", TargetAmountSat: 1_914_409},
+		ExpectedGainSat:  5_870,
+		EstimatedCostSat: 288,
+		BudgetCostSat:    4_698,
+		Score:            5_582,
+		PairStats: rebalanceTargetPairStats{
+			Attempts:  143_853,
+			Successes: 227,
+			Failures:  143_626,
+		},
+	}}}
+
+	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, time.Now(), false)
+	if result.Selected != 1 {
+		t.Fatalf("expected low-success candidate with strong expected-cost premium selected, got %d", result.Selected)
+	}
+	if !result.Decisions[0].Selected || result.Decisions[0].Reason != "would_queue" {
+		t.Fatalf("expected low-success candidate to remain eligible, got %+v", result.Decisions[0])
+	}
+}
+
+func TestExecuteSovereignAutopilotStillSkipsBudgetInefficientLowSuccessCandidate(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = true
+	cfg.SovereignMaxJobsPerCycle = 1
+	cfg.SovereignMinExpectedProfitSat = 50
+
+	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{{
+		Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "budget-inefficient-low-success:0", PeerAlias: "budget-inefficient-low-success", TargetAmountSat: 1_914_409},
+		ExpectedGainSat:  5_870,
+		EstimatedCostSat: 288,
+		BudgetCostSat:    20_000,
+		Score:            5_582,
+		PairStats: rebalanceTargetPairStats{
+			Attempts:  143_853,
+			Successes: 227,
+			Failures:  143_626,
+		},
+	}}}
+
+	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, time.Now(), false)
+	if result.Selected != 0 {
+		t.Fatalf("expected no selected decisions, got %d", result.Selected)
+	}
+	if result.Decisions[0].Reason != sovereignBudgetEfficiencyOpportunityReason {
+		t.Fatalf("expected budget efficiency skip after low-success premium passes, got %+v", result.Decisions[0])
+	}
+}
+
 func TestExecuteSovereignAutopilotSkipsLowSuccessWhenProfitCostRatioIsWeak(t *testing.T) {
 	svc := NewRebalanceService(nil, nil, nil)
 	cfg := defaultRebalanceConfig()

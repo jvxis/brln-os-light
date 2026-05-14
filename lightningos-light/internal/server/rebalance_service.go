@@ -2759,7 +2759,7 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 		case shouldSkipSovereignRouteDeadOpportunity(target.PairStats, expectedProfit, budgetCost, plan.EligibleSources, cfg):
 			decision.Reason = sovereignRouteDeadOpportunityReason
 			noteSkip(decision.Reason)
-		case shouldSkipSovereignLowSuccessOpportunity(target.PairStats, expectedProfit, budgetCost, cfg):
+		case shouldSkipSovereignLowSuccessOpportunity(target.PairStats, expectedProfit, estimatedCost, budgetCost, cfg):
 			decision.Reason = sovereignLowSuccessOpportunityReason
 			noteSkip(decision.Reason)
 		case maxJobs > 0 && result.Selected >= maxJobs:
@@ -2809,7 +2809,14 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 					continue
 				}
 				decision.AmountSat = targetAmount
-				decision.EstimatedCostSat = budgetCost
+				resizedEstimatedCost := estimateHistoricalCost(targetAmount, target.Channel.RebalanceCost7dPpm)
+				if resizedEstimatedCost <= 0 {
+					resizedEstimatedCost = estimateHistoricalCost(targetAmount, targetCfg.RebalanceCostFloorPpm)
+				}
+				if resizedEstimatedCost <= 0 {
+					resizedEstimatedCost = budgetCost
+				}
+				decision.EstimatedCostSat = resizedEstimatedCost
 				decision.BudgetCostSat = budgetCost
 				decision.ExpectedGainSat = estimateTargetGainForConfig(targetCfg, target.Channel, targetAmount)
 				decision.ExpectedProfitSat = decision.ExpectedGainSat - decision.EstimatedCostSat
@@ -2831,7 +2838,7 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 					appendDecision(decision)
 					continue
 				}
-				if shouldSkipSovereignLowSuccessOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.BudgetCostSat, cfg) {
+				if shouldSkipSovereignLowSuccessOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.EstimatedCostSat, decision.BudgetCostSat, cfg) {
 					decision.Reason = sovereignLowSuccessOpportunityReason
 					noteSkip(decision.Reason)
 					appendDecision(decision)
@@ -7928,12 +7935,16 @@ func applySovereignRiskAdjustedScores(candidates []rebalanceTarget, cfg Rebalanc
 	}
 }
 
-func shouldSkipSovereignLowSuccessOpportunity(stats rebalanceTargetPairStats, expectedProfitSat int64, budgetCostSat int64, cfg RebalanceConfig) bool {
+func shouldSkipSovereignLowSuccessOpportunity(stats rebalanceTargetPairStats, expectedProfitSat int64, estimatedCostSat int64, budgetCostSat int64, cfg RebalanceConfig) bool {
 	rate, attempts := sovereignHistoricalSuccessRate(stats)
 	if attempts < sovereignLowSuccessMinAttempts || rate >= sovereignLowSuccessRateForConfig(cfg) {
 		return false
 	}
-	profitCostRatio, ok := sovereignProfitCostRatio(expectedProfitSat, budgetCostSat)
+	costBasis := estimatedCostSat
+	if costBasis <= 0 {
+		costBasis = budgetCostSat
+	}
+	profitCostRatio, ok := sovereignProfitCostRatio(expectedProfitSat, costBasis)
 	if !ok {
 		return true
 	}

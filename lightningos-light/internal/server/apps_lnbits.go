@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	lnbitsImage = "lnbits/lnbits:latest"
+	lnbitsImage = "lnbits/lnbits:v1.5.3"
 	lnbitsPort  = 5000
 )
 

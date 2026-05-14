@@ -2,8 +2,20 @@ package server
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
+
+func TestLnbitsComposeUsesPinnedImage(t *testing.T) {
+	compose := lnbitsComposeContents(lnbitsPaths{DataDir: "/var/lib/lightningos/apps-data/lnbits/data"})
+
+	if !strings.Contains(compose, "image: lnbits/lnbits:v1.5.3") {
+		t.Fatalf("compose must use pinned LNbits image\n%s", compose)
+	}
+	if strings.Contains(compose, "lnbits/lnbits:latest") {
+		t.Fatalf("compose must not use latest LNbits image\n%s", compose)
+	}
+}
 
 func TestUpdateLndRestOptionsReplacesStaleManagedGateways(t *testing.T) {
 	lines := []string{

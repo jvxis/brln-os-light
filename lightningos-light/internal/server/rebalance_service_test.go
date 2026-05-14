@@ -1508,6 +1508,81 @@ func TestExecuteSovereignAutopilotAllowsLowSuccessBestAvailableBand(t *testing.T
 	}
 }
 
+func TestExecuteSovereignAutopilotSkipsBudgetInefficientModerateSuccess(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = true
+	cfg.SovereignMaxJobsPerCycle = 1
+	cfg.SovereignMinExpectedProfitSat = 100
+
+	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{
+		{
+			Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "budget-heavy:0", PeerAlias: "budget-heavy", TargetAmountSat: 1_216_284},
+			ExpectedGainSat:  1_447,
+			EstimatedCostSat: 1_081,
+			BudgetCostSat:    1_158,
+			Score:            366,
+			PairStats: rebalanceTargetPairStats{
+				Attempts:  100_000,
+				Successes: 2_700,
+				Failures:  97_300,
+			},
+		},
+		{
+			Channel:          RebalanceChannel{ChannelID: 2, ChannelPoint: "efficient:0", PeerAlias: "efficient", TargetAmountSat: 500_000},
+			ExpectedGainSat:  900,
+			EstimatedCostSat: 200,
+			BudgetCostSat:    700,
+			Score:            200,
+			PairStats: rebalanceTargetPairStats{
+				Attempts:  1_000,
+				Successes: 30,
+				Failures:  970,
+			},
+		},
+	}}
+
+	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, time.Now(), false)
+	if result.Selected != 1 {
+		t.Fatalf("expected one selected decision, got %d", result.Selected)
+	}
+	if result.Decisions[0].Reason != sovereignBudgetEfficiencyOpportunityReason {
+		t.Fatalf("expected budget efficiency skip, got %+v", result.Decisions[0])
+	}
+	if !result.Decisions[1].Selected || result.Decisions[1].Reason != "would_queue" {
+		t.Fatalf("expected efficient candidate selected, got %+v", result.Decisions[1])
+	}
+}
+
+func TestExecuteSovereignAutopilotAllowsBudgetInefficientHighSuccess(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = true
+	cfg.SovereignMaxJobsPerCycle = 1
+	cfg.SovereignMinExpectedProfitSat = 100
+
+	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{{
+		Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "high-hit-rate:0", PeerAlias: "high-hit-rate", TargetAmountSat: 500_000},
+		ExpectedGainSat:  600,
+		EstimatedCostSat: 300,
+		BudgetCostSat:    1_000,
+		Score:            300,
+		PairStats: rebalanceTargetPairStats{
+			Attempts:  1_000,
+			Successes: 100,
+			Failures:  900,
+		},
+	}}}
+
+	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, time.Now(), false)
+	if result.Selected != 1 {
+		t.Fatalf("expected high-hit-rate budget-heavy candidate selected, got %d", result.Selected)
+	}
+	if !result.Decisions[0].Selected || result.Decisions[0].Reason != "would_queue" {
+		t.Fatalf("expected high-hit-rate budget-heavy opportunity to remain eligible, got %+v", result.Decisions[0])
+	}
+}
+
 func TestExecuteSovereignAutopilotSkipsRouteDeadLowProfit(t *testing.T) {
 	svc := NewRebalanceService(nil, nil, nil)
 	cfg := defaultRebalanceConfig()

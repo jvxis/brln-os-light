@@ -204,6 +204,10 @@ const (
 	sovereignLowSuccessWeakProfitCostRatio      = 1.5
 	sovereignLowSuccessProfitCostRatio          = 0.70
 	sovereignLowSuccessOpportunityReason        = "low_success_opportunity_below_floor"
+	sovereignBudgetEfficiencyProfitCostRatio    = 0.50
+	sovereignBudgetEfficiencyHighSuccessRate    = 0.05
+	sovereignBudgetEfficiencyHighSuccessRatio   = 0.25
+	sovereignBudgetEfficiencyOpportunityReason  = "budget_efficiency_below_floor"
 	sovereignRouteDeadSourceShare               = 0.20
 	sovereignRouteDeadMediumSourceShare         = 0.35
 	sovereignRouteDeadHighSourceShare           = 0.50
@@ -2718,6 +2722,9 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 		case expectedProfit < cfg.SovereignMinExpectedProfitSat:
 			decision.Reason = "expected_profit_below_min"
 			noteSkip(decision.Reason)
+		case shouldSkipSovereignBudgetEfficiencyOpportunity(target.PairStats, expectedProfit, budgetCost, cfg):
+			decision.Reason = sovereignBudgetEfficiencyOpportunityReason
+			noteSkip(decision.Reason)
 		case s.isChannelBusy(target.Channel.ChannelID):
 			decision.Reason = "channel_busy"
 			noteSkip(decision.Reason)
@@ -2762,6 +2769,12 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 				decision.ExpectedProfitSat = decision.ExpectedGainSat - decision.EstimatedCostSat
 				if decision.ExpectedProfitSat < cfg.SovereignMinExpectedProfitSat {
 					decision.Reason = "expected_profit_below_min"
+					noteSkip(decision.Reason)
+					appendDecision(decision)
+					continue
+				}
+				if shouldSkipSovereignBudgetEfficiencyOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.BudgetCostSat, cfg) {
+					decision.Reason = sovereignBudgetEfficiencyOpportunityReason
 					noteSkip(decision.Reason)
 					appendDecision(decision)
 					continue
@@ -7779,6 +7792,23 @@ func shouldSkipSovereignLowSuccessOpportunity(stats rebalanceTargetPairStats, ex
 	return profitCostRatio < sovereignLowSuccessRequiredProfitCostRatio(rate)
 }
 
+func shouldSkipSovereignBudgetEfficiencyOpportunity(stats rebalanceTargetPairStats, expectedProfitSat int64, budgetCostSat int64, _ RebalanceConfig) bool {
+	profitCostRatio, ok := sovereignProfitCostRatio(expectedProfitSat, budgetCostSat)
+	if !ok {
+		return true
+	}
+	if profitCostRatio >= sovereignBudgetEfficiencyProfitCostRatio {
+		return false
+	}
+	rate, attempts := sovereignHistoricalSuccessRate(stats)
+	if attempts >= sovereignLowSuccessMinAttempts &&
+		rate >= sovereignBudgetEfficiencyHighSuccessRate &&
+		profitCostRatio >= sovereignBudgetEfficiencyHighSuccessRatio {
+		return false
+	}
+	return true
+}
+
 func shouldSkipSovereignRouteDeadOpportunity(stats rebalanceTargetPairStats, expectedProfitSat int64, budgetCostSat int64, eligibleSources int, _ RebalanceConfig) bool {
 	routeDeadShare := sovereignRouteDeadShare(stats, eligibleSources)
 	if routeDeadShare < sovereignRouteDeadSourceShare {
@@ -8016,6 +8046,7 @@ func buildScanDetail(reasons map[string]int, remaining int64, candidates int) st
 		{key: "fee_cap_zero", label: "fee cap zero"},
 		{key: sovereignRouteDeadOpportunityReason, label: "route dead opportunity below floor"},
 		{key: sovereignLowSuccessOpportunityReason, label: "low success opportunity below floor"},
+		{key: sovereignBudgetEfficiencyOpportunityReason, label: "budget efficiency below floor"},
 		{key: "below_execute_min", label: "below execute min amount"},
 		{key: "budget_below_min", label: "budget below min amount"},
 		{key: "budget_too_low", label: "budget too low"},

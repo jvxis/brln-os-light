@@ -1552,6 +1552,109 @@ func TestExecuteSovereignAutopilotSkipsEmpiricallyDeadBelowDeadRate(t *testing.T
 	}
 }
 
+func TestExecuteSovereignAutopilotRecentStatsPreventLifetimeDeadBan(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = true
+	cfg.SovereignMaxJobsPerCycle = 1
+	cfg.SovereignMinExpectedProfitSat = 0
+
+	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{{
+		Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "old-dead-now-unknown:0", PeerAlias: "old-dead-now-unknown", TargetAmountSat: 1_000_000},
+		ExpectedGainSat:  728,
+		EstimatedCostSat: 74,
+		BudgetCostSat:    74,
+		Score:            654,
+		PairStats: rebalanceTargetPairStats{
+			Attempts:          25_927,
+			Successes:         2,
+			Failures:          25_925,
+			RecentStatsLoaded: true,
+		},
+	}}}
+
+	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, time.Now(), false)
+	if result.Selected != 1 {
+		t.Fatalf("expected stale lifetime stats not to hard-ban the candidate, got selected=%d decisions=%+v", result.Selected, result.Decisions)
+	}
+	if !result.Decisions[0].Selected || result.Decisions[0].Reason != "would_queue" {
+		t.Fatalf("expected candidate selected once recent stats are empty, got %+v", result.Decisions[0])
+	}
+}
+
+func TestExecuteSovereignAutopilotRecentEmpiricalDeadIsCooldown(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = true
+	cfg.SovereignMaxJobsPerCycle = 1
+	cfg.SovereignMinExpectedProfitSat = 0
+	scanAt := time.Date(2026, 5, 14, 20, 0, 0, 0, time.UTC)
+
+	makePlan := func(lastFail time.Time) rebalanceAutoScanCandidatePlan {
+		return rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{{
+			Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "recent-dead:0", PeerAlias: "recent-dead", TargetAmountSat: 1_000_000},
+			ExpectedGainSat:  6_000,
+			EstimatedCostSat: 500,
+			BudgetCostSat:    500,
+			Score:            5_500,
+			PairStats: rebalanceTargetPairStats{
+				RecentStatsLoaded:   true,
+				RecentAttempts:      sovereignRecentEmpiricalDeadMinJobs,
+				RecentFailures:      sovereignRecentEmpiricalDeadMinJobs,
+				RecentLastFailAt:    lastFail,
+				RecentLastSuccessAt: time.Time{},
+			},
+		}}}
+	}
+
+	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, makePlan(scanAt.Add(-30*time.Minute)), scanAt, false)
+	if result.Selected != 0 {
+		t.Fatalf("expected active recent-dead cooldown to skip, got selected=%d", result.Selected)
+	}
+	if result.Decisions[0].Reason != sovereignLowSuccessOpportunityReason {
+		t.Fatalf("expected low_success cooldown reason, got %+v", result.Decisions[0])
+	}
+
+	result = svc.executeSovereignAutopilot(context.Background(), cfg, nil, makePlan(scanAt.Add(-3*time.Hour)), scanAt, false)
+	if result.Selected != 1 {
+		t.Fatalf("expected recent-dead cooldown to expire and allow high-premium candidate, got selected=%d decisions=%+v", result.Selected, result.Decisions)
+	}
+	if !result.Decisions[0].Selected || result.Decisions[0].Reason != "would_queue" {
+		t.Fatalf("expected candidate selected after cooldown expiry, got %+v", result.Decisions[0])
+	}
+}
+
+func TestExecuteSovereignAutopilotRecentLowSuccessWeakPremiumStillSkips(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = true
+	cfg.SovereignMaxJobsPerCycle = 1
+	cfg.SovereignMinExpectedProfitSat = 0
+	scanAt := time.Date(2026, 5, 14, 20, 0, 0, 0, time.UTC)
+
+	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{{
+		Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "recent-low-success:0", PeerAlias: "recent-low-success", TargetAmountSat: 1_000_000},
+		ExpectedGainSat:  700,
+		EstimatedCostSat: 500,
+		BudgetCostSat:    500,
+		Score:            200,
+		PairStats: rebalanceTargetPairStats{
+			RecentStatsLoaded: true,
+			RecentAttempts:    sovereignRecentLowSuccessMinJobs,
+			RecentFailures:    sovereignRecentLowSuccessMinJobs,
+			RecentLastFailAt:  scanAt.Add(-3 * time.Hour),
+		},
+	}}}
+
+	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, scanAt, false)
+	if result.Selected != 0 {
+		t.Fatalf("expected recent low-success weak premium skipped, got selected=%d", result.Selected)
+	}
+	if result.Decisions[0].Reason != sovereignLowSuccessOpportunityReason {
+		t.Fatalf("expected low_success skip reason, got %+v", result.Decisions[0])
+	}
+}
+
 func TestExecuteSovereignAutopilotAllowsLowSuccessWhenExpectedCostPremiumIsStrong(t *testing.T) {
 	svc := NewRebalanceService(nil, nil, nil)
 	cfg := defaultRebalanceConfig()
@@ -2676,7 +2779,7 @@ func TestBuildAndOrderRebalanceCandidatesUsesEVScoreWhenEnabled(t *testing.T) {
 		Cfg:              cfg,
 		SovereignRanking: true,
 		PairStatsByTarget: map[uint64]rebalanceTargetPairStats{
-			1: {Attempts: 2000, Successes: 0}, // empirically dead
+			1: {Attempts: 2000, Successes: 0},  // empirically dead
 			2: {Attempts: 200, Successes: 100}, // 50% rate
 		},
 		ScanAt: time.Now(),

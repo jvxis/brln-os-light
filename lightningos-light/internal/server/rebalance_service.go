@@ -196,20 +196,24 @@ const (
 )
 
 const (
-	sovereignLowSuccessMinAttempts               = 100
-	sovereignLowSuccessRate                      = 0.02
-	sovereignLowSuccessVeryWeakRate              = 0.005
-	sovereignLowSuccessWeakRate                  = 0.01
-	sovereignLowSuccessVeryWeakProfitCostRatio   = 3.0
-	sovereignLowSuccessWeakProfitCostRatio       = 1.5
-	sovereignLowSuccessProfitCostRatio           = 1.20
-	// "Empirically dead" guards — skip channels regardless of conditional
-	// profit/cost ratio when their historical performance is so poor that
-	// the expected value of any new attempt is dominated by P(failure)×cost.
-	// The conditional profit only matters when P(success) is non-trivial.
-	sovereignLowSuccessDeadZeroAttempts = 200  // 0 successes in N+ attempts → never routed
-	sovereignLowSuccessDeadRate         = 0.001 // 0.1% — empirically dead at this scale
-	sovereignLowSuccessDeadAttempts     = 1000  // need this many attempts to call it dead
+	sovereignLowSuccessMinAttempts             = 100
+	sovereignLowSuccessRate                    = 0.02
+	sovereignLowSuccessVeryWeakRate            = 0.005
+	sovereignLowSuccessWeakRate                = 0.01
+	sovereignLowSuccessVeryWeakProfitCostRatio = 3.0
+	sovereignLowSuccessWeakProfitCostRatio     = 1.5
+	sovereignLowSuccessProfitCostRatio         = 1.20
+	// Lifetime empirically-dead guards are only a fallback when recent job
+	// stats were not loaded. Sovereign scans prefer the 7d job window below
+	// so old cumulative pair stats do not permanently ban a recovered target.
+	sovereignLowSuccessDeadZeroAttempts          = 200   // 0 successes in N+ attempts → never routed
+	sovereignLowSuccessDeadRate                  = 0.001 // 0.1% — empirically dead at this scale
+	sovereignLowSuccessDeadAttempts              = 1000  // need this many attempts to call it dead
+	sovereignRecentTargetStatsWindow             = 7 * 24 * time.Hour
+	sovereignRecentLowSuccessMinJobs             = 5
+	sovereignRecentEmpiricalDeadMinJobs          = 3
+	sovereignRecentEmpiricalDeadFirst            = 2 * time.Hour
+	sovereignRecentEmpiricalDeadRepeat           = 6 * time.Hour
 	sovereignLowSuccessOpportunityReason         = "low_success_opportunity_below_floor"
 	sovereignBudgetEfficiencyProfitCostRatio     = 0.50
 	sovereignBudgetEfficiencyHighSuccessRate     = 0.05
@@ -646,6 +650,13 @@ type rebalanceTargetPairStats struct {
 	PermanentFailScore       float64
 	LastSuccessAt            time.Time
 	LastFailAt               time.Time
+	RecentStatsLoaded        bool
+	RecentAttempts           int
+	RecentSuccesses          int
+	RecentFailures           int
+	RecentAllSourcesFailed   int
+	RecentLastSuccessAt      time.Time
+	RecentLastFailAt         time.Time
 }
 
 type recentCooldownStat struct {
@@ -2390,6 +2401,8 @@ func (s *RebalanceService) runAutoScan() {
 			}
 		}
 		sovereignPairStats := s.loadPairStatsSummaryForTargets(ctx, sovereignTargetIDs, scanAt)
+		sovereignRecentStats := s.loadRecentSovereignTargetStats(ctx, sovereignTargetIDs, scanAt)
+		mergeRecentSovereignTargetStats(sovereignPairStats, sovereignRecentStats)
 		sovereignStructuralCooldowns := s.loadSovereignTargetStructuralCooldowns(ctx, sovereignTargetIDs, scanAt)
 		sovereignPlan := buildAndOrderRebalanceCandidates(rebalanceAutoScanCandidateInput{
 			Channels:                      snapshots,
@@ -2781,7 +2794,7 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 		case shouldSkipSovereignRouteDeadOpportunity(target.PairStats, expectedProfit, budgetCost, plan.EligibleSources, cfg):
 			decision.Reason = sovereignRouteDeadOpportunityReason
 			noteSkip(decision.Reason)
-		case shouldSkipSovereignLowSuccessOpportunity(target.PairStats, expectedProfit, estimatedCost, budgetCost, cfg):
+		case shouldSkipSovereignLowSuccessOpportunity(target.PairStats, expectedProfit, estimatedCost, budgetCost, cfg, scanAt):
 			decision.Reason = sovereignLowSuccessOpportunityReason
 			noteSkip(decision.Reason)
 		case maxJobs > 0 && result.Selected >= maxJobs:
@@ -2860,7 +2873,7 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 					appendDecision(decision)
 					continue
 				}
-				if shouldSkipSovereignLowSuccessOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.EstimatedCostSat, decision.BudgetCostSat, cfg) {
+				if shouldSkipSovereignLowSuccessOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.EstimatedCostSat, decision.BudgetCostSat, cfg, scanAt) {
 					decision.Reason = sovereignLowSuccessOpportunityReason
 					noteSkip(decision.Reason)
 					appendDecision(decision)
@@ -6440,6 +6453,102 @@ where target_channel_id = any($1::bigint[])
 	return summaries
 }
 
+func (s *RebalanceService) loadRecentSovereignTargetStats(ctx context.Context, targetIDs []uint64, now time.Time) map[uint64]rebalanceTargetPairStats {
+	summaries := map[uint64]rebalanceTargetPairStats{}
+	if len(targetIDs) == 0 {
+		return summaries
+	}
+	ids := make([]int64, 0, len(targetIDs))
+	seen := map[uint64]struct{}{}
+	for _, id := range targetIDs {
+		if id == 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, int64(id))
+		summaries[id] = rebalanceTargetPairStats{
+			TargetChannelID:   id,
+			RecentStatsLoaded: true,
+		}
+	}
+	if s.db == nil || len(ids) == 0 {
+		return summaries
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	since := now.Add(-sovereignRecentTargetStatsWindow)
+	rows, err := s.db.Query(ctx, `
+select
+  target_channel_id,
+  count(*) filter (where status in ('succeeded','partial','failed')) as jobs,
+  count(*) filter (where status in ('succeeded','partial')) as success_jobs,
+  count(*) filter (where status='failed') as failed_jobs,
+  count(*) filter (where status='failed' and reason='all sources failed') as all_sources_failed_jobs,
+  max(completed_at) filter (where status in ('succeeded','partial')) as last_success_at,
+  max(completed_at) filter (where status='failed') as last_fail_at
+from rebalance_jobs
+where target_channel_id = any($1::bigint[])
+  and completed_at is not null
+  and completed_at >= $2
+  and status in ('succeeded','partial','failed')
+group by target_channel_id
+`, ids, since)
+	if err != nil {
+		return summaries
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var targetID int64
+		var attempts int64
+		var successes int64
+		var failures int64
+		var allSourcesFailed int64
+		var lastSuccess pgtype.Timestamptz
+		var lastFail pgtype.Timestamptz
+		if err := rows.Scan(&targetID, &attempts, &successes, &failures, &allSourcesFailed, &lastSuccess, &lastFail); err != nil {
+			return summaries
+		}
+		if targetID <= 0 {
+			continue
+		}
+		key := uint64(targetID)
+		stat := summaries[key]
+		stat.TargetChannelID = key
+		stat.RecentStatsLoaded = true
+		stat.RecentAttempts = int(attempts)
+		stat.RecentSuccesses = int(successes)
+		stat.RecentFailures = int(failures)
+		stat.RecentAllSourcesFailed = int(allSourcesFailed)
+		if lastSuccess.Valid {
+			stat.RecentLastSuccessAt = lastSuccess.Time
+		}
+		if lastFail.Valid {
+			stat.RecentLastFailAt = lastFail.Time
+		}
+		summaries[key] = stat
+	}
+	return summaries
+}
+
+func mergeRecentSovereignTargetStats(base map[uint64]rebalanceTargetPairStats, recent map[uint64]rebalanceTargetPairStats) {
+	for targetID, recentStat := range recent {
+		stat := base[targetID]
+		stat.TargetChannelID = targetID
+		stat.RecentStatsLoaded = recentStat.RecentStatsLoaded
+		stat.RecentAttempts = recentStat.RecentAttempts
+		stat.RecentSuccesses = recentStat.RecentSuccesses
+		stat.RecentFailures = recentStat.RecentFailures
+		stat.RecentAllSourcesFailed = recentStat.RecentAllSourcesFailed
+		stat.RecentLastSuccessAt = recentStat.RecentLastSuccessAt
+		stat.RecentLastFailAt = recentStat.RecentLastFailAt
+		base[targetID] = stat
+	}
+}
+
 func (s *RebalanceService) PairStats(ctx context.Context, targetID uint64) ([]RebalancePairStat, error) {
 	if targetID == 0 {
 		return []RebalancePairStat{}, nil
@@ -7900,10 +8009,14 @@ func evWeightedSuccessProbability(stats rebalanceTargetPairStats) float64 {
 	const coldStartPrior = 0.5
 	const fullConfidenceAt = float64(sovereignLowSuccessMinAttempts)
 	attempts := stats.Attempts
+	successes := stats.Successes
+	if stats.RecentStatsLoaded {
+		attempts = stats.RecentAttempts
+		successes = stats.RecentSuccesses
+	}
 	if attempts <= 0 {
 		return coldStartPrior
 	}
-	successes := stats.Successes
 	if successes < 0 {
 		successes = 0
 	}
@@ -8077,20 +8190,24 @@ func applySovereignRiskAdjustedScores(candidates []rebalanceTarget, cfg Rebalanc
 	}
 }
 
-func shouldSkipSovereignLowSuccessOpportunity(stats rebalanceTargetPairStats, expectedProfitSat int64, estimatedCostSat int64, budgetCostSat int64, cfg RebalanceConfig) bool {
-	rate, attempts := sovereignHistoricalSuccessRate(stats)
-	if attempts < sovereignLowSuccessMinAttempts || rate >= sovereignLowSuccessRateForConfig(cfg) {
+func shouldSkipSovereignLowSuccessOpportunity(stats rebalanceTargetPairStats, expectedProfitSat int64, estimatedCostSat int64, budgetCostSat int64, cfg RebalanceConfig, now time.Time) bool {
+	if shouldSkipSovereignRecentEmpiricalCooldown(stats, now) {
+		return true
+	}
+	rate, attempts, ok := sovereignLowSuccessGateStats(stats)
+	if !ok || rate >= sovereignLowSuccessRateForConfig(cfg) {
 		return false
 	}
-	// Empirically-dead guards: when a target has accumulated enough attempts
-	// to establish that it essentially never succeeds, skip regardless of the
-	// conditional profit/cost ratio. The expected value of attempting again
-	// is dominated by P(failure)×cost.
-	if stats.Successes == 0 && attempts >= sovereignLowSuccessDeadZeroAttempts {
-		return true
-	}
-	if rate < sovereignLowSuccessDeadRate && attempts >= sovereignLowSuccessDeadAttempts {
-		return true
+	if !stats.RecentStatsLoaded {
+		// Lifetime pair stats remain a fallback for tests and older runtimes,
+		// but production sovereign scans load recent job stats and avoid using
+		// these cumulative counters as a permanent hard ban.
+		if stats.Successes == 0 && attempts >= sovereignLowSuccessDeadZeroAttempts {
+			return true
+		}
+		if rate < sovereignLowSuccessDeadRate && attempts >= sovereignLowSuccessDeadAttempts {
+			return true
+		}
 	}
 	costBasis := estimatedCostSat
 	if costBasis <= 0 {
@@ -8101,6 +8218,48 @@ func shouldSkipSovereignLowSuccessOpportunity(stats rebalanceTargetPairStats, ex
 		return true
 	}
 	return profitCostRatio < sovereignLowSuccessRequiredProfitCostRatio(rate, cfg)
+}
+
+func sovereignLowSuccessGateStats(stats rebalanceTargetPairStats) (float64, int, bool) {
+	if stats.RecentStatsLoaded {
+		if stats.RecentAttempts < sovereignRecentLowSuccessMinJobs {
+			return 0, stats.RecentAttempts, false
+		}
+		return successRate(stats.RecentSuccesses, stats.RecentAttempts), stats.RecentAttempts, true
+	}
+	rate, attempts := sovereignHistoricalSuccessRate(stats)
+	if attempts < sovereignLowSuccessMinAttempts {
+		return rate, attempts, false
+	}
+	return rate, attempts, true
+}
+
+func shouldSkipSovereignRecentEmpiricalCooldown(stats rebalanceTargetPairStats, now time.Time) bool {
+	if !stats.RecentStatsLoaded {
+		return false
+	}
+	if stats.RecentAttempts < sovereignRecentEmpiricalDeadMinJobs ||
+		stats.RecentFailures < sovereignRecentEmpiricalDeadMinJobs ||
+		stats.RecentSuccesses > 0 ||
+		stats.RecentLastFailAt.IsZero() {
+		return false
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	elapsed := now.Sub(stats.RecentLastFailAt)
+	if elapsed < 0 {
+		return true
+	}
+	duration := sovereignRecentEmpiricalCooldownDuration(stats.RecentFailures, stats.RecentAllSourcesFailed)
+	return elapsed < duration
+}
+
+func sovereignRecentEmpiricalCooldownDuration(failures int, allSourcesFailed int) time.Duration {
+	if failures >= sovereignRecentEmpiricalDeadMinJobs*2 || allSourcesFailed >= 2 {
+		return sovereignRecentEmpiricalDeadRepeat
+	}
+	return sovereignRecentEmpiricalDeadFirst
 }
 
 func shouldSkipSovereignBudgetEfficiencyOpportunity(stats rebalanceTargetPairStats, expectedProfitSat int64, budgetCostSat int64, cfg RebalanceConfig) bool {
@@ -8263,8 +8422,28 @@ func sovereignHistoricalSuccessRate(stats rebalanceTargetPairStats) (float64, in
 	return float64(successes) / float64(attempts), attempts
 }
 
+func successRate(successes int, attempts int) float64 {
+	if attempts <= 0 {
+		return 0
+	}
+	if successes < 0 {
+		successes = 0
+	}
+	if successes > attempts {
+		successes = attempts
+	}
+	return float64(successes) / float64(attempts)
+}
+
+func sovereignSuccessRateForRisk(stats rebalanceTargetPairStats) (float64, int) {
+	if stats.RecentStatsLoaded {
+		return successRate(stats.RecentSuccesses, stats.RecentAttempts), stats.RecentAttempts
+	}
+	return sovereignHistoricalSuccessRate(stats)
+}
+
 func sovereignSuccessScoreMultiplier(stats rebalanceTargetPairStats, cfg RebalanceConfig) float64 {
-	successRate, attempts := sovereignHistoricalSuccessRate(stats)
+	successRate, attempts := sovereignSuccessRateForRisk(stats)
 	floor := sovereignRiskScoreFloorForConfig(cfg)
 	multiplier := 0.9
 	if attempts > 0 {

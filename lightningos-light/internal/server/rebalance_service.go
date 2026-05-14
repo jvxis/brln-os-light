@@ -435,6 +435,12 @@ type RebalanceSovereignDecision struct {
 	HistoricalSuccesses      int     `json:"historical_successes"`
 	HistoricalSuccessRate    float64 `json:"historical_success_rate"`
 	RecentStructuralFailures int     `json:"recent_structural_failures"`
+	// Score multiplier breakdown — surfaced for UI debugging so operators can
+	// reason about why a given target won/lost the ranking without re-running
+	// the scorer mentally.
+	SuccessMultiplier          float64 `json:"success_multiplier,omitempty"`
+	ROIMultiplier              float64 `json:"roi_multiplier,omitempty"`
+	BudgetEfficiencyMultiplier float64 `json:"budget_efficiency_multiplier,omitempty"`
 }
 
 type RebalanceSovereignHistory struct {
@@ -1489,8 +1495,8 @@ func normalizeRebalanceConfig(cfg RebalanceConfig) RebalanceConfig {
 	if cfg.GainModelVersion <= 0 {
 		cfg.GainModelVersion = def.GainModelVersion
 	}
-	if cfg.GainModelVersion > 2 {
-		cfg.GainModelVersion = 2
+	if cfg.GainModelVersion > 3 {
+		cfg.GainModelVersion = 3
 	}
 	if math.IsNaN(cfg.VelocityWeight) || math.IsInf(cfg.VelocityWeight, 0) {
 		cfg.VelocityWeight = def.VelocityWeight
@@ -2729,21 +2735,24 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 		historicalSuccessRate, historicalAttempts := sovereignHistoricalSuccessRate(target.PairStats)
 		expectedProfit := target.ExpectedGainSat - estimatedCost
 		decision := RebalanceSovereignDecision{
-			ChannelID:                target.Channel.ChannelID,
-			ChannelPoint:             target.Channel.ChannelPoint,
-			PeerAlias:                target.Channel.PeerAlias,
-			Score:                    target.Score,
-			AmountSat:                targetAmount,
-			ExpectedGainSat:          target.ExpectedGainSat,
-			EstimatedCostSat:         estimatedCost,
-			ExpectedProfitSat:        expectedProfit,
-			ExpectedROI:              target.ExpectedROI,
-			ExpectedROIValid:         target.ExpectedROIValid,
-			BudgetCostSat:            budgetCost,
-			HistoricalAttempts:       historicalAttempts,
-			HistoricalSuccesses:      target.PairStats.Successes,
-			HistoricalSuccessRate:    historicalSuccessRate,
-			RecentStructuralFailures: target.PairStats.RecentStructuralFailures,
+			ChannelID:                  target.Channel.ChannelID,
+			ChannelPoint:               target.Channel.ChannelPoint,
+			PeerAlias:                  target.Channel.PeerAlias,
+			Score:                      target.Score,
+			AmountSat:                  targetAmount,
+			ExpectedGainSat:            target.ExpectedGainSat,
+			EstimatedCostSat:           estimatedCost,
+			ExpectedProfitSat:          expectedProfit,
+			ExpectedROI:                target.ExpectedROI,
+			ExpectedROIValid:           target.ExpectedROIValid,
+			BudgetCostSat:              budgetCost,
+			HistoricalAttempts:         historicalAttempts,
+			HistoricalSuccesses:        target.PairStats.Successes,
+			HistoricalSuccessRate:      historicalSuccessRate,
+			RecentStructuralFailures:   target.PairStats.RecentStructuralFailures,
+			SuccessMultiplier:          target.SuccessMultiplier,
+			ROIMultiplier:              target.ROIMultiplier,
+			BudgetEfficiencyMultiplier: target.BudgetEfficiencyMultiplier,
 		}
 		if target.StructuralCooldown.LastFailureAttempts > decision.RecentStructuralFailures {
 			decision.RecentStructuralFailures = target.StructuralCooldown.LastFailureAttempts
@@ -3091,6 +3100,11 @@ type rebalanceTarget struct {
 	// holds the timestamp of the most recent autofee adjustment.
 	AutofeeDampened   bool
 	AutofeeAdjustedAt time.Time
+	// Risk-adjusted score multiplier breakdown — populated by
+	// applySovereignRiskAdjustedScores and surfaced on the decision struct.
+	SuccessMultiplier          float64
+	ROIMultiplier              float64
+	BudgetEfficiencyMultiplier float64
 }
 
 type rebalanceAutoScanCandidateInput struct {
@@ -7805,6 +7819,9 @@ func estimateTargetGain(amountSat int64, revenue7dSat int64, localBalanceSat int
 }
 
 func estimateTargetGainForConfig(cfg RebalanceConfig, snapshot RebalanceChannel, amountSat int64) int64 {
+	if cfg.GainModelVersion >= 3 {
+		return estimateTargetGainV3(amountSat, snapshot.OutgoingFeePpm, snapshot.PeerFeeRatePpm, snapshot.Revenue7dSat, snapshot.LocalBalanceSat, snapshot.CapacitySat, snapshot.DrainRateSatPerHour)
+	}
 	if cfg.GainModelVersion >= 2 {
 		return estimateTargetGainV2(amountSat, snapshot.OutgoingFeePpm, snapshot.PeerFeeRatePpm)
 	}
@@ -7840,8 +7857,74 @@ func estimateTargetGainV2(amountSat int64, outgoingFeePpm int64, peerFeeRatePpm 
 	return int64(math.Round(gain))
 }
 
+// estimateTargetGainV3 combines v1 (demand from historical revenue) and v2
+// (spread × amount) to fix two failure modes of the earlier models:
+//   - v1 returns zero for brand-new channels (no Revenue7d), blocking the
+//     autopilot from ever exploring them.
+//   - v2 assumes the full rebalanced amount will be forwarded, so an idle
+//     high-fee channel ranks the same as an active one with similar spread.
+//
+// v3 uses the strongest available demand signal (historical revenue or the
+// drain-rate projected over a 7-day horizon) and caps it by the theoretical
+// max (amount × spread). When no demand signal is available the channel is
+// treated as a cold-start: half of the theoretical gain is returned and the
+// ROI guardrails + roiValid=false multiplier (0.9) handle the rest.
+func estimateTargetGainV3(amountSat int64, outgoingFeePpm int64, peerFeeRatePpm int64, revenue7dSat int64, localBalanceSat int64, capacitySat int64, drainRateSatPerHour int64) int64 {
+	if amountSat <= 0 || outgoingFeePpm <= 0 {
+		return 0
+	}
+	effectiveness := spreadEffectiveness(outgoingFeePpm, peerFeeRatePpm)
+	if effectiveness <= 0 {
+		return 0
+	}
+	theoretical := (float64(amountSat) * float64(outgoingFeePpm) / 1_000_000.0) * effectiveness
+	if theoretical <= 0 {
+		return 0
+	}
+
+	historical := 0.0
+	if revenue7dSat > 0 {
+		denom := localBalanceSat
+		if denom <= 0 {
+			denom = capacitySat
+		}
+		if amountSat > denom {
+			denom = amountSat
+		}
+		if denom > 0 {
+			historical = float64(revenue7dSat) * (float64(amountSat) / float64(denom))
+		}
+	}
+
+	projected := 0.0
+	if drainRateSatPerHour > 0 {
+		const horizonHours = 24.0 * 7.0
+		volume := float64(drainRateSatPerHour) * horizonHours
+		if volume > float64(amountSat) {
+			volume = float64(amountSat)
+		}
+		projected = volume * float64(outgoingFeePpm) / 1_000_000.0 * effectiveness
+	}
+
+	demand := math.Max(historical, projected)
+	var gain float64
+	if demand > 0 {
+		gain = math.Min(demand, theoretical)
+	} else {
+		// Cold-start: keep 50% of theoretical to let the autopilot probe new
+		// channels. The roiValid=false multiplier still trims the score.
+		gain = theoretical * 0.5
+	}
+	if gain <= 0 {
+		return 0
+	}
+	return int64(math.Round(gain))
+}
+
 func applyMultiObjectiveScores(candidates []rebalanceTarget, cfg RebalanceConfig, scanAt time.Time) {
-	if cfg.GainModelVersion < 2 || len(candidates) == 0 {
+	// v3 already folds demand (revenue + drain rate) into the base gain, so
+	// applying the velocity multiplier again would double-count it.
+	if cfg.GainModelVersion < 2 || cfg.GainModelVersion >= 3 || len(candidates) == 0 {
 		return
 	}
 	maxDrainRate := int64(0)
@@ -7921,9 +8004,13 @@ func applySovereignRiskAdjustedScores(candidates []rebalanceTarget, cfg Rebalanc
 		if candidates[i].CooldownProbe || candidates[i].Score <= 0 {
 			continue
 		}
-		multiplier := sovereignSuccessScoreMultiplier(candidates[i].PairStats, cfg)
-		multiplier *= sovereignROIScoreMultiplier(candidates[i].ExpectedROI, candidates[i].ExpectedROIValid, cfg)
-		multiplier *= sovereignBudgetEfficiencyScoreMultiplier(candidates[i])
+		successMul := sovereignSuccessScoreMultiplier(candidates[i].PairStats, cfg)
+		roiMul := sovereignROIScoreMultiplier(candidates[i].ExpectedROI, candidates[i].ExpectedROIValid, cfg)
+		budgetMul := sovereignBudgetEfficiencyScoreMultiplier(candidates[i])
+		candidates[i].SuccessMultiplier = successMul
+		candidates[i].ROIMultiplier = roiMul
+		candidates[i].BudgetEfficiencyMultiplier = budgetMul
+		multiplier := successMul * roiMul * budgetMul
 		if math.IsNaN(multiplier) || math.IsInf(multiplier, 0) || multiplier <= 0 {
 			continue
 		}
@@ -8159,8 +8246,11 @@ func sovereignSuccessScoreMultiplier(stats rebalanceTargetPairStats, cfg Rebalan
 }
 
 func sovereignROIScoreMultiplier(expectedROI float64, roiValid bool, cfg RebalanceConfig) float64 {
+	// Cold-start: when ROI cannot be evaluated (no rebalance history yet)
+	// apply only a mild penalty so brand-new pairs can still be probed by the
+	// autopilot. The hard ROIMin gate already filters truly bad candidates.
 	if !roiValid || expectedROI <= 0 || math.IsNaN(expectedROI) || math.IsInf(expectedROI, 0) {
-		return 0.75
+		return 0.9
 	}
 	baseline := cfg.ROIMin
 	if baseline <= 0 || math.IsNaN(baseline) || math.IsInf(baseline, 0) {
@@ -8168,7 +8258,7 @@ func sovereignROIScoreMultiplier(expectedROI float64, roiValid bool, cfg Rebalan
 	}
 	ratio := expectedROI / baseline
 	if ratio <= 0 || math.IsNaN(ratio) || math.IsInf(ratio, 0) {
-		return 0.75
+		return 0.9
 	}
 	multiplier := math.Sqrt(ratio)
 	if multiplier < 0.5 {

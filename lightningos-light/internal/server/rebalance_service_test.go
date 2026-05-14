@@ -309,8 +309,8 @@ func TestNormalizeRebalanceConfigClampsGainModelAndVelocityWeight(t *testing.T) 
 	cfg.GainModelVersion = 99
 	cfg.VelocityWeight = 1.7
 	got := normalizeRebalanceConfig(cfg)
-	if got.GainModelVersion != 2 {
-		t.Fatalf("expected GainModelVersion clamped to 2, got %d", got.GainModelVersion)
+	if got.GainModelVersion != 3 {
+		t.Fatalf("expected GainModelVersion clamped to 3, got %d", got.GainModelVersion)
 	}
 	if got.VelocityWeight != 1 {
 		t.Fatalf("expected VelocityWeight clamped to 1, got %f", got.VelocityWeight)
@@ -2415,5 +2415,86 @@ func TestResetSemaphoreAppliesImmediatelyWhenIdle(t *testing.T) {
 	}
 	if s.semPendingResize {
 		t.Fatalf("expected no pending resize after immediate apply")
+	}
+}
+
+// Golden happy-path test for sortRebalanceTargets: with three healthy
+// candidates differing in score and fairness age, the sorter must put the
+// top-10% bucket first (broken by oldest LastAutoAt), then fall back to raw
+// score for candidates outside the bucket.
+func TestSortRebalanceTargetsHappyPathOrder(t *testing.T) {
+	now := time.Now()
+	candidates := []rebalanceTarget{
+		{
+			Channel:    RebalanceChannel{ChannelID: 1, PeerAlias: "fresh-top"},
+			Score:      1000,
+			LastAutoAt: now.Add(-1 * time.Hour),
+		},
+		{
+			Channel:    RebalanceChannel{ChannelID: 2, PeerAlias: "stale-top"},
+			Score:      950, // within 10% of 1000 → same bucket
+			LastAutoAt: now.Add(-24 * time.Hour),
+		},
+		{
+			Channel:    RebalanceChannel{ChannelID: 3, PeerAlias: "midfield"},
+			Score:      500, // outside top bucket
+			LastAutoAt: now.Add(-72 * time.Hour),
+		},
+	}
+
+	sortRebalanceTargets(candidates, 1000, true)
+
+	if candidates[0].Channel.PeerAlias != "stale-top" {
+		t.Fatalf("expected stale-top to win fairness tiebreak, got %q", candidates[0].Channel.PeerAlias)
+	}
+	if candidates[1].Channel.PeerAlias != "fresh-top" {
+		t.Fatalf("expected fresh-top second in bucket, got %q", candidates[1].Channel.PeerAlias)
+	}
+	if candidates[2].Channel.PeerAlias != "midfield" {
+		t.Fatalf("expected midfield last (outside bucket), got %q", candidates[2].Channel.PeerAlias)
+	}
+}
+
+// estimateTargetGainV3 must use the strongest demand signal (historical
+// revenue vs projected throughput) and cap by the theoretical max.
+func TestEstimateTargetGainV3UsesStrongestDemandSignal(t *testing.T) {
+	// Theoretical max for 1M sats at 500 ppm with peer at 100 ppm:
+	//   gain = 1_000_000 * 500/1e6 * (1 - 100/500) = 500 * 0.8 = 400
+	const amount = int64(1_000_000)
+	const outFee = int64(500)
+	const peerFee = int64(100)
+
+	// Channel with strong drain rate (saturates amount) and no revenue.
+	// Projected volume = drainRate(10_000) × 168h = 1_680_000 > amount → cap.
+	gain := estimateTargetGainV3(amount, outFee, peerFee, 0, amount, amount*2, 10_000)
+	if gain != 400 {
+		t.Fatalf("expected 400 sats from saturating drain rate, got %d", gain)
+	}
+
+	// Channel with weak drain rate (only 500 sat/h × 168 = 84_000 of volume).
+	// Projected gain = 84_000 * 500/1e6 * 0.8 = 33.6 → rounds to 34.
+	gain = estimateTargetGainV3(amount, outFee, peerFee, 0, amount, amount*2, 500)
+	if gain != 34 {
+		t.Fatalf("expected 34 sats from weak drain projection, got %d", gain)
+	}
+
+	// Channel with strong revenue7d (10k sats) and no drain rate signal —
+	// historical wins. historical = 10_000 * (amount/amount) = 10_000, but
+	// capped by theoretical 400.
+	gain = estimateTargetGainV3(amount, outFee, peerFee, 10_000, amount, amount*2, 0)
+	if gain != 400 {
+		t.Fatalf("expected theoretical cap at 400, got %d", gain)
+	}
+
+	// Cold-start: no demand signals → 50% of theoretical = 200.
+	gain = estimateTargetGainV3(amount, outFee, peerFee, 0, amount, amount*2, 0)
+	if gain != 200 {
+		t.Fatalf("expected cold-start 50%% discount = 200, got %d", gain)
+	}
+
+	// Idle channel with neither revenue nor drain rate and no spread → 0.
+	gain = estimateTargetGainV3(amount, 100, 100, 0, amount, amount*2, 0)
+	if gain != 0 {
+		t.Fatalf("expected 0 when spread is non-positive, got %d", gain)
 	}
 }

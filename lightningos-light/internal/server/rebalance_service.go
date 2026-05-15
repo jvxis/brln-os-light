@@ -234,6 +234,14 @@ const (
 	sovereignTargetStructuralCooldownLookback    = 24 * time.Hour
 	sovereignTargetStructuralCooldownFirst       = 2 * time.Hour
 	sovereignTargetStructuralCooldownRepeat      = 6 * time.Hour
+	sovereignCostReliableHistoryPct              = int64(100)
+	sovereignCostConservativeBudgetPct           = int64(100)
+	sovereignUnsoldPaidLiquidityReason           = "paid_liquidity_unsold_cooldown"
+	sovereignUnsoldPaidLiquidityLookback         = 24 * time.Hour
+	sovereignUnsoldPaidLiquidityMinAge           = 2 * time.Hour
+	sovereignUnsoldPaidLiquidityMinFillPct       = int64(25)
+	sovereignUnsoldPaidLiquidityMinForwardPct    = int64(10)
+	sovereignUnsoldPaidLiquidityMinFeePaybackPct = int64(25)
 )
 
 const (
@@ -452,6 +460,9 @@ type RebalanceSovereignDecision struct {
 	HistoricalSuccesses      int     `json:"historical_successes"`
 	HistoricalSuccessRate    float64 `json:"historical_success_rate"`
 	RecentStructuralFailures int     `json:"recent_structural_failures"`
+	RecentRebalanceSentSat   int64   `json:"recent_rebalance_sent_sat,omitempty"`
+	RecentForwardedAfterSat  int64   `json:"recent_forwarded_after_sat,omitempty"`
+	RecentForwardFeeAfterSat int64   `json:"recent_forward_fee_after_sat,omitempty"`
 	// Score multiplier breakdown — surfaced for UI debugging so operators can
 	// reason about why a given target won/lost the ranking without re-running
 	// the scorer mentally.
@@ -556,18 +567,37 @@ type RebalancePairStat struct {
 }
 
 type RebalanceJob struct {
-	ID                 int64   `json:"id"`
-	CreatedAt          string  `json:"created_at"`
-	CompletedAt        string  `json:"completed_at,omitempty"`
-	Source             string  `json:"source"`
-	Status             string  `json:"status"`
-	TriggerReason      string  `json:"trigger_reason,omitempty"`
-	Reason             string  `json:"reason,omitempty"`
-	TargetChannelID    uint64  `json:"target_channel_id"`
-	TargetChannelPoint string  `json:"target_channel_point"`
-	TargetOutboundPct  float64 `json:"target_outbound_pct"`
-	TargetAmountSat    int64   `json:"target_amount_sat"`
-	TargetPeerAlias    string  `json:"target_peer_alias,omitempty"`
+	ID                         int64   `json:"id"`
+	CreatedAt                  string  `json:"created_at"`
+	CompletedAt                string  `json:"completed_at,omitempty"`
+	Source                     string  `json:"source"`
+	Status                     string  `json:"status"`
+	TriggerReason              string  `json:"trigger_reason,omitempty"`
+	Reason                     string  `json:"reason,omitempty"`
+	TargetChannelID            uint64  `json:"target_channel_id"`
+	TargetChannelPoint         string  `json:"target_channel_point"`
+	TargetOutboundPct          float64 `json:"target_outbound_pct"`
+	TargetAmountSat            int64   `json:"target_amount_sat"`
+	TargetPeerAlias            string  `json:"target_peer_alias,omitempty"`
+	SovereignExpectedGainSat   int64   `json:"sovereign_expected_gain_sat,omitempty"`
+	SovereignEstimatedCostSat  int64   `json:"sovereign_estimated_cost_sat,omitempty"`
+	SovereignExpectedProfitSat int64   `json:"sovereign_expected_profit_sat,omitempty"`
+	SovereignBudgetCostSat     int64   `json:"sovereign_budget_cost_sat,omitempty"`
+	SovereignScore             int64   `json:"sovereign_score,omitempty"`
+	ActualSentSat              int64   `json:"actual_sent_sat,omitempty"`
+	ActualRebalanceFeeSat      int64   `json:"actual_rebalance_fee_sat,omitempty"`
+	Forward1hCount             int64   `json:"forward_1h_count,omitempty"`
+	Forward1hAmountSat         int64   `json:"forward_1h_amount_sat,omitempty"`
+	Forward1hFeeSat            int64   `json:"forward_1h_fee_sat,omitempty"`
+	RealizedNet1hSat           int64   `json:"realized_net_1h_sat,omitempty"`
+	Forward6hCount             int64   `json:"forward_6h_count,omitempty"`
+	Forward6hAmountSat         int64   `json:"forward_6h_amount_sat,omitempty"`
+	Forward6hFeeSat            int64   `json:"forward_6h_fee_sat,omitempty"`
+	RealizedNet6hSat           int64   `json:"realized_net_6h_sat,omitempty"`
+	Forward24hCount            int64   `json:"forward_24h_count,omitempty"`
+	Forward24hAmountSat        int64   `json:"forward_24h_amount_sat,omitempty"`
+	Forward24hFeeSat           int64   `json:"forward_24h_fee_sat,omitempty"`
+	RealizedNet24hSat          int64   `json:"realized_net_24h_sat,omitempty"`
 }
 
 type RebalanceAttempt struct {
@@ -676,6 +706,22 @@ type sovereignTargetStructuralCooldownStat struct {
 	LastFailureAttempts int
 	LastFailureAt       time.Time
 	LastSuccessAt       time.Time
+}
+
+type sovereignUnsoldLiquidityStat struct {
+	CompletedAt      time.Time
+	SentSat          int64
+	FeePaidSat       int64
+	ForwardAmountSat int64
+	ForwardFeeSat    int64
+}
+
+type rebalanceJobEconomics struct {
+	ExpectedGainSat   int64
+	EstimatedCostSat  int64
+	ExpectedProfitSat int64
+	BudgetCostSat     int64
+	Score             int64
 }
 
 type recentTargetCooldownWindows struct {
@@ -2404,6 +2450,7 @@ func (s *RebalanceService) runAutoScan() {
 		sovereignRecentStats := s.loadRecentSovereignTargetStats(ctx, sovereignTargetIDs, scanAt)
 		mergeRecentSovereignTargetStats(sovereignPairStats, sovereignRecentStats)
 		sovereignStructuralCooldowns := s.loadSovereignTargetStructuralCooldowns(ctx, sovereignTargetIDs, scanAt)
+		sovereignUnsoldLiquidity := s.loadSovereignUnsoldPaidLiquidityStats(ctx, sovereignTargetIDs, scanAt)
 		sovereignPlan := buildAndOrderRebalanceCandidates(rebalanceAutoScanCandidateInput{
 			Channels:                      snapshots,
 			Settings:                      settings,
@@ -2415,6 +2462,7 @@ func (s *RebalanceService) runAutoScan() {
 			SovereignRanking:              true,
 			PairStatsByTarget:             sovereignPairStats,
 			SovereignStructuralCooldowns:  sovereignStructuralCooldowns,
+			SovereignUnsoldLiquidity:      sovereignUnsoldLiquidity,
 			TargetCooldowns:               targetCooldowns.Recent,
 			TargetNoAttemptCooldowns:      targetCooldowns.NoAttempt,
 			TargetFailedCooldowns:         targetCooldowns.Failed,
@@ -2776,6 +2824,9 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 			HistoricalSuccesses:        target.PairStats.Successes,
 			HistoricalSuccessRate:      historicalSuccessRate,
 			RecentStructuralFailures:   target.PairStats.RecentStructuralFailures,
+			RecentRebalanceSentSat:     target.UnsoldLiquidity.SentSat,
+			RecentForwardedAfterSat:    target.UnsoldLiquidity.ForwardAmountSat,
+			RecentForwardFeeAfterSat:   target.UnsoldLiquidity.ForwardFeeSat,
 			SuccessMultiplier:          target.SuccessMultiplier,
 			ROIMultiplier:              target.ROIMultiplier,
 			BudgetEfficiencyMultiplier: target.BudgetEfficiencyMultiplier,
@@ -2790,6 +2841,9 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 			noteSkip(decision.Reason)
 		case shouldSkipSovereignTargetStructuralCooldown(target.StructuralCooldown, scanAt):
 			decision.Reason = sovereignTargetStructuralCooldownReason
+			noteSkip(decision.Reason)
+		case shouldSkipSovereignUnsoldPaidLiquidity(target.UnsoldLiquidity, scanAt):
+			decision.Reason = sovereignUnsoldPaidLiquidityReason
 			noteSkip(decision.Reason)
 		case shouldSkipSovereignRouteDeadOpportunity(target.PairStats, expectedProfit, budgetCost, plan.EligibleSources, cfg):
 			decision.Reason = sovereignRouteDeadOpportunityReason
@@ -2844,13 +2898,7 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 					continue
 				}
 				decision.AmountSat = targetAmount
-				resizedEstimatedCost := estimateHistoricalCost(targetAmount, target.Channel.RebalanceCost7dPpm)
-				if resizedEstimatedCost <= 0 {
-					resizedEstimatedCost = estimateHistoricalCost(targetAmount, targetCfg.RebalanceCostFloorPpm)
-				}
-				if resizedEstimatedCost <= 0 {
-					resizedEstimatedCost = budgetCost
-				}
+				resizedEstimatedCost := estimateSovereignTargetCost(targetAmount, target.Channel.RebalanceCost7dPpm, target.Channel.RebalanceAmount7dSat, budgetCost, targetCfg)
 				decision.EstimatedCostSat = resizedEstimatedCost
 				decision.BudgetCostSat = budgetCost
 				decision.ExpectedGainSat = estimateTargetGainForConfig(targetCfg, target.Channel, targetAmount)
@@ -2881,7 +2929,14 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 				}
 			}
 			if live {
-				_, err := s.startJob(target.Channel.ChannelID, "auto", rebalanceSovereignReason, amountOverride, false)
+				economics := rebalanceJobEconomics{
+					ExpectedGainSat:   decision.ExpectedGainSat,
+					EstimatedCostSat:  decision.EstimatedCostSat,
+					ExpectedProfitSat: decision.ExpectedProfitSat,
+					BudgetCostSat:     decision.BudgetCostSat,
+					Score:             decision.Score,
+				}
+				_, err := s.startJobWithEconomics(target.Channel.ChannelID, "auto", rebalanceSovereignReason, amountOverride, false, economics)
 				if err != nil {
 					decision.Reason = autoStartErrorReason(err)
 					noteSkip(decision.Reason)
@@ -3131,6 +3186,7 @@ type rebalanceTarget struct {
 	SuccessMultiplier          float64
 	ROIMultiplier              float64
 	BudgetEfficiencyMultiplier float64
+	UnsoldLiquidity            sovereignUnsoldLiquidityStat
 }
 
 type rebalanceAutoScanCandidateInput struct {
@@ -3144,6 +3200,7 @@ type rebalanceAutoScanCandidateInput struct {
 	SovereignRanking              bool
 	PairStatsByTarget             map[uint64]rebalanceTargetPairStats
 	SovereignStructuralCooldowns  map[uint64]sovereignTargetStructuralCooldownStat
+	SovereignUnsoldLiquidity      map[uint64]sovereignUnsoldLiquidityStat
 	TargetCooldowns               map[uint64]recentCooldownStat
 	TargetNoAttemptCooldowns      map[uint64]recentCooldownStat
 	TargetFailedCooldowns         map[uint64]recentCooldownStat
@@ -3277,12 +3334,11 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 			BaseFeeMsat: snapshot.OutgoingBaseMsat,
 		}
 		budgetCost := estimateMaxCost(targetAmount, targetPolicy, targetCfg)
-		estimatedCost := estimateHistoricalCost(targetAmount, snapshot.RebalanceCost7dPpm)
-		if input.SovereignRanking && estimatedCost <= 0 {
-			estimatedCost = estimateHistoricalCost(targetAmount, targetCfg.RebalanceCostFloorPpm)
-		}
-		if input.SovereignRanking && estimatedCost <= 0 {
-			estimatedCost = budgetCost
+		estimatedCost := int64(0)
+		if input.SovereignRanking {
+			estimatedCost = estimateSovereignTargetCost(targetAmount, snapshot.RebalanceCost7dPpm, snapshot.RebalanceAmount7dSat, budgetCost, targetCfg)
+		} else {
+			estimatedCost = estimateHistoricalCost(targetAmount, snapshot.RebalanceCost7dPpm)
 		}
 		expectedGain := estimateTargetGainForConfig(targetCfg, snapshot, targetAmount)
 		expectedROI, roiValid := estimateTargetROI(expectedGain, estimatedCost, targetAmount, snapshot.OutgoingFeePpm, snapshot.PeerFeeRatePpm)
@@ -3346,6 +3402,7 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 			LastAutoAt:         input.LastAutoByTarget[snapshot.ChannelID],
 			PairStats:          pairStats,
 			StructuralCooldown: input.SovereignStructuralCooldowns[snapshot.ChannelID],
+			UnsoldLiquidity:    input.SovereignUnsoldLiquidity[snapshot.ChannelID],
 		})
 		if !plan.TopScoreSet || score > plan.TopScore {
 			plan.TopScore = score
@@ -3455,6 +3512,10 @@ func filterRecentRebalanceTargets(candidates []rebalanceTarget, cfg RebalanceCon
 }
 
 func (s *RebalanceService) startJob(targetChannelID uint64, source string, reason string, amountOverride int64, manualAutoRestart bool) (int64, error) {
+	return s.startJobWithEconomics(targetChannelID, source, reason, amountOverride, manualAutoRestart, rebalanceJobEconomics{})
+}
+
+func (s *RebalanceService) startJobWithEconomics(targetChannelID uint64, source string, reason string, amountOverride int64, manualAutoRestart bool, economics rebalanceJobEconomics) (int64, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -3509,7 +3570,7 @@ func (s *RebalanceService) startJob(targetChannelID uint64, source string, reaso
 		}
 	}
 
-	jobID, err := s.insertJob(ctx, &target, source, reason, targetPct, amount)
+	jobID, err := s.insertJob(ctx, &target, source, reason, targetPct, amount, economics)
 	if err != nil {
 		return 0, err
 	}
@@ -7095,6 +7156,103 @@ group by target_channel_id
 	return stats
 }
 
+func (s *RebalanceService) loadSovereignUnsoldPaidLiquidityStats(ctx context.Context, targetIDs []uint64, now time.Time) map[uint64]sovereignUnsoldLiquidityStat {
+	stats := map[uint64]sovereignUnsoldLiquidityStat{}
+	if s.db == nil || len(targetIDs) == 0 {
+		return stats
+	}
+	ids := make([]int64, 0, len(targetIDs))
+	seen := map[uint64]struct{}{}
+	for _, id := range targetIDs {
+		if id == 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, int64(id))
+	}
+	if len(ids) == 0 {
+		return stats
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	since := now.Add(-sovereignUnsoldPaidLiquidityLookback)
+	rows, err := s.db.Query(ctx, `
+with job_stats as (
+  select
+    j.id,
+    j.target_channel_id,
+    j.completed_at,
+    j.target_amount_sat,
+    coalesce(sum(a.amount_sat) filter (where a.status='succeeded'), 0) as sent_sat,
+    coalesce(sum(a.fee_paid_sat) filter (where a.status='succeeded'), 0) as fee_paid_sat
+  from rebalance_jobs j
+  left join rebalance_attempts a on a.job_id = j.id
+  where j.target_channel_id = any($1::bigint[])
+    and j.trigger_reason = $2
+    and j.status in ('succeeded','partial')
+    and j.completed_at is not null
+    and j.completed_at >= $3
+    and j.completed_at <= $4
+  group by j.id, j.target_channel_id, j.completed_at, j.target_amount_sat
+),
+latest as (
+  select distinct on (target_channel_id)
+    id, target_channel_id, completed_at, sent_sat, fee_paid_sat
+  from job_stats
+  where sent_sat > 0
+    and target_amount_sat > 0
+    and sent_sat * 100 >= target_amount_sat * $5
+  order by target_channel_id, completed_at desc, id desc
+)
+select
+  l.target_channel_id,
+  l.completed_at,
+  l.sent_sat,
+  l.fee_paid_sat,
+  coalesce(sum(n.amount_sat), 0) as forward_amount_sat,
+  coalesce(sum(case when n.fee_msat > 0 then n.fee_msat else n.fee_sat * 1000 end), 0) as forward_fee_msat
+from latest l
+left join notifications n on n.type='forward'
+  and n.channel_id = l.target_channel_id
+  and n.occurred_at >= l.completed_at
+  and n.occurred_at <= $4
+group by l.target_channel_id, l.completed_at, l.sent_sat, l.fee_paid_sat
+`, ids, rebalanceSovereignReason, since, now, sovereignUnsoldPaidLiquidityMinFillPct)
+	if err != nil {
+		return stats
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var channelID int64
+		var completedAt time.Time
+		var sentSat int64
+		var feePaidSat int64
+		var forwardAmountSat int64
+		var forwardFeeMsat int64
+		if err := rows.Scan(&channelID, &completedAt, &sentSat, &feePaidSat, &forwardAmountSat, &forwardFeeMsat); err != nil {
+			return stats
+		}
+		if channelID == 0 || sentSat <= 0 {
+			continue
+		}
+		stat := sovereignUnsoldLiquidityStat{
+			CompletedAt:      completedAt,
+			SentSat:          sentSat,
+			FeePaidSat:       feePaidSat,
+			ForwardAmountSat: forwardAmountSat,
+			ForwardFeeSat:    forwardFeeMsat / 1000,
+		}
+		if shouldSkipSovereignUnsoldPaidLiquidity(stat, now) {
+			stats[uint64(channelID)] = stat
+		}
+	}
+	return stats
+}
+
 func (s *RebalanceService) acquireSem(ctx context.Context) bool {
 	s.mu.Lock()
 	sem := s.sem
@@ -7929,6 +8087,32 @@ func estimateHistoricalCost(amountSat int64, feePpm int64) int64 {
 	return msatToSatCeil(feeMsat)
 }
 
+func estimateSovereignTargetCost(amountSat int64, historicalFeePpm int64, historicalAmountSat int64, budgetCostSat int64, cfg RebalanceConfig) int64 {
+	historicalCost := estimateHistoricalCost(amountSat, historicalFeePpm)
+	floorCost := estimateHistoricalCost(amountSat, cfg.RebalanceCostFloorPpm)
+	estimatedCost := historicalCost
+	if floorCost > estimatedCost {
+		estimatedCost = floorCost
+	}
+	if !hasReliableSovereignCostHistory(amountSat, historicalAmountSat) {
+		conservativeCost := (budgetCostSat * sovereignCostConservativeBudgetPct) / 100
+		if conservativeCost > estimatedCost {
+			estimatedCost = conservativeCost
+		}
+	}
+	if estimatedCost <= 0 {
+		estimatedCost = budgetCostSat
+	}
+	return estimatedCost
+}
+
+func hasReliableSovereignCostHistory(amountSat int64, historicalAmountSat int64) bool {
+	if amountSat <= 0 || historicalAmountSat <= 0 {
+		return false
+	}
+	return historicalAmountSat*100 >= amountSat*sovereignCostReliableHistoryPct
+}
+
 func estimateTargetGain(amountSat int64, revenue7dSat int64, localBalanceSat int64, capacitySat int64) int64 {
 	if amountSat <= 0 || revenue7dSat <= 0 {
 		return 0
@@ -8319,6 +8503,26 @@ func sovereignTargetStructuralCooldownDuration(failures int) time.Duration {
 	return sovereignTargetStructuralCooldownFirst
 }
 
+func shouldSkipSovereignUnsoldPaidLiquidity(stat sovereignUnsoldLiquidityStat, now time.Time) bool {
+	if stat.CompletedAt.IsZero() || stat.SentSat <= 0 {
+		return false
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	age := now.Sub(stat.CompletedAt)
+	if age < sovereignUnsoldPaidLiquidityMinAge || age > sovereignUnsoldPaidLiquidityLookback {
+		return false
+	}
+	if stat.ForwardAmountSat*100 >= stat.SentSat*sovereignUnsoldPaidLiquidityMinForwardPct {
+		return false
+	}
+	if stat.FeePaidSat > 0 && stat.ForwardFeeSat*100 >= stat.FeePaidSat*sovereignUnsoldPaidLiquidityMinFeePaybackPct {
+		return false
+	}
+	return true
+}
+
 func sovereignProfitCostRatio(expectedProfitSat int64, budgetCostSat int64) (float64, bool) {
 	if expectedProfitSat <= 0 {
 		return 0, true
@@ -8592,6 +8796,7 @@ func buildScanDetail(reasons map[string]int, remaining int64, candidates int, qu
 		{key: "recently_attempted", label: "recently attempted"},
 		{key: "fee_cap_zero", label: "fee cap zero"},
 		{key: sovereignTargetStructuralCooldownReason, label: "target structural cooldown"},
+		{key: sovereignUnsoldPaidLiquidityReason, label: "paid liquidity unsold cooldown"},
 		{key: sovereignRouteDeadOpportunityReason, label: "route dead opportunity below floor"},
 		{key: sovereignLowSuccessOpportunityReason, label: "low success opportunity below floor"},
 		{key: sovereignBudgetEfficiencyOpportunityReason, label: "budget efficiency below floor"},
@@ -9136,13 +9341,28 @@ create table if not exists rebalance_jobs (
   target_outbound_pct double precision not null,
   target_amount_sat bigint not null,
   config_snapshot jsonb,
-  fast_path_attempted boolean not null default false
+  fast_path_attempted boolean not null default false,
+  sovereign_expected_gain_sat bigint not null default 0,
+  sovereign_estimated_cost_sat bigint not null default 0,
+  sovereign_expected_profit_sat bigint not null default 0,
+  sovereign_budget_cost_sat bigint not null default 0,
+  sovereign_score bigint not null default 0
 );
 
 alter table if exists rebalance_jobs
   add column if not exists trigger_reason text;
 alter table if exists rebalance_jobs
   add column if not exists fast_path_attempted boolean not null default false;
+alter table if exists rebalance_jobs
+  add column if not exists sovereign_expected_gain_sat bigint not null default 0;
+alter table if exists rebalance_jobs
+  add column if not exists sovereign_estimated_cost_sat bigint not null default 0;
+alter table if exists rebalance_jobs
+  add column if not exists sovereign_expected_profit_sat bigint not null default 0;
+alter table if exists rebalance_jobs
+  add column if not exists sovereign_budget_cost_sat bigint not null default 0;
+alter table if exists rebalance_jobs
+  add column if not exists sovereign_score bigint not null default 0;
 -- Backfill: jobs com reason='delegated-fast-path' são por definição sucessos via fast-path,
 -- então marcamos retroativamente para que o telemetry não subconte (idempotente).
 update rebalance_jobs set fast_path_attempted=true where reason='delegated-fast-path' and not fast_path_attempted;
@@ -9302,6 +9522,7 @@ create index if not exists rebalance_scan_skips_scan_idx on rebalance_scan_skips
 create index if not exists rebalance_scan_skips_reason_idx on rebalance_scan_skips (reason, scan_at desc);
 create index if not exists rebalance_sovereign_history_scan_idx on rebalance_sovereign_history (scan_at desc);
 create index if not exists notifications_channel_id_idx on notifications (channel_id);
+create index if not exists notifications_channel_occurred_idx on notifications (channel_id, occurred_at desc);
 
 alter table if exists rebalance_pair_stats
   add column if not exists last_success_route_hops jsonb;
@@ -10619,17 +10840,19 @@ limit 10
 	return reasons, targets
 }
 
-func (s *RebalanceService) insertJob(ctx context.Context, target *lndclient.ChannelInfo, source string, reason string, targetPct float64, amount int64) (int64, error) {
+func (s *RebalanceService) insertJob(ctx context.Context, target *lndclient.ChannelInfo, source string, reason string, targetPct float64, amount int64, economics rebalanceJobEconomics) (int64, error) {
 	if s.db == nil {
 		return 0, errors.New("db unavailable")
 	}
 	var jobID int64
 	err := s.db.QueryRow(ctx, `
 insert into rebalance_jobs (
-  source, status, trigger_reason, reason, target_channel_id, target_channel_point, target_outbound_pct, target_amount_sat, config_snapshot
-) values ($1,'queued',$2,$2,$3,$4,$5,$6,$7)
+  source, status, trigger_reason, reason, target_channel_id, target_channel_point, target_outbound_pct, target_amount_sat, config_snapshot,
+  sovereign_expected_gain_sat, sovereign_estimated_cost_sat, sovereign_expected_profit_sat, sovereign_budget_cost_sat, sovereign_score
+) values ($1,'queued',$2,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
  returning id
-`, source, nullableString(reason), int64(target.ChannelID), target.ChannelPoint, targetPct, amount, nil).Scan(&jobID)
+`, source, nullableString(reason), int64(target.ChannelID), target.ChannelPoint, targetPct, amount, nil,
+		economics.ExpectedGainSat, economics.EstimatedCostSat, economics.ExpectedProfitSat, economics.BudgetCostSat, economics.Score).Scan(&jobID)
 	return jobID, err
 }
 
@@ -11620,7 +11843,9 @@ func (s *RebalanceService) History(ctx context.Context, limit int) ([]RebalanceJ
 	}
 	baseQuery := `
 select id, created_at, completed_at, source, status, trigger_reason, reason, target_channel_id,
-  target_channel_point, target_outbound_pct, target_amount_sat
+  target_channel_point, target_outbound_pct, target_amount_sat,
+  sovereign_expected_gain_sat, sovereign_estimated_cost_sat, sovereign_expected_profit_sat,
+  sovereign_budget_cost_sat, sovereign_score
 from rebalance_jobs
 where status in ('succeeded','failed','cancelled','partial','skipped')
   and completed_at >= now() - interval '1 day'
@@ -11643,7 +11868,9 @@ order by created_at desc`
 		var reason pgtype.Text
 		var targetChannelID int64
 		if err := rows.Scan(&job.ID, &created, &completed, &job.Source, &job.Status, &triggerReason, &reason, &targetChannelID,
-			&job.TargetChannelPoint, &job.TargetOutboundPct, &job.TargetAmountSat); err != nil {
+			&job.TargetChannelPoint, &job.TargetOutboundPct, &job.TargetAmountSat,
+			&job.SovereignExpectedGainSat, &job.SovereignEstimatedCostSat, &job.SovereignExpectedProfitSat,
+			&job.SovereignBudgetCostSat, &job.SovereignScore); err != nil {
 			return jobs, attempts, err
 		}
 		job.CreatedAt = created.UTC().Format(time.RFC3339)
@@ -11660,6 +11887,7 @@ order by created_at desc`
 		job.TargetPeerAlias = aliasMap[job.TargetChannelID]
 		jobs = append(jobs, job)
 	}
+	jobs = s.enrichRebalanceJobEconomics(ctx, jobs)
 
 	attemptBase := `
 with recent as (
@@ -11710,6 +11938,116 @@ order by started_at desc`
 	}
 
 	return jobs, attempts, nil
+}
+
+func (s *RebalanceService) enrichRebalanceJobEconomics(ctx context.Context, jobs []RebalanceJob) []RebalanceJob {
+	if s.db == nil || len(jobs) == 0 {
+		return jobs
+	}
+	ids := make([]int64, 0, len(jobs))
+	indexByID := map[int64]int{}
+	for i := range jobs {
+		ids = append(ids, jobs[i].ID)
+		indexByID[jobs[i].ID] = i
+	}
+
+	rows, err := s.db.Query(ctx, `
+select
+  j.id,
+  coalesce(sum(a.amount_sat) filter (where a.status='succeeded'), 0) as sent_sat,
+  coalesce(sum(a.fee_paid_sat) filter (where a.status='succeeded'), 0) as fee_paid_sat
+from rebalance_jobs j
+left join rebalance_attempts a on a.job_id = j.id
+where j.id = any($1::bigint[])
+group by j.id
+`, ids)
+	if err == nil {
+		for rows.Next() {
+			var jobID int64
+			var sentSat int64
+			var feePaidSat int64
+			if err := rows.Scan(&jobID, &sentSat, &feePaidSat); err != nil {
+				break
+			}
+			if idx, ok := indexByID[jobID]; ok {
+				jobs[idx].ActualSentSat = sentSat
+				jobs[idx].ActualRebalanceFeeSat = feePaidSat
+				jobs[idx].RealizedNet1hSat = jobs[idx].Forward1hFeeSat - feePaidSat
+				jobs[idx].RealizedNet6hSat = jobs[idx].Forward6hFeeSat - feePaidSat
+				jobs[idx].RealizedNet24hSat = jobs[idx].Forward24hFeeSat - feePaidSat
+			}
+		}
+		rows.Close()
+	}
+
+	forwardRows, err := s.db.Query(ctx, `
+select
+  j.id,
+  count(n.id) filter (where n.occurred_at < j.completed_at + interval '1 hour') as forward_1h_count,
+  coalesce(sum(n.amount_sat) filter (where n.occurred_at < j.completed_at + interval '1 hour'), 0) as forward_1h_amount_sat,
+  coalesce(sum(case when n.fee_msat > 0 then n.fee_msat else n.fee_sat * 1000 end) filter (where n.occurred_at < j.completed_at + interval '1 hour'), 0) as forward_1h_fee_msat,
+  count(n.id) filter (where n.occurred_at < j.completed_at + interval '6 hours') as forward_6h_count,
+  coalesce(sum(n.amount_sat) filter (where n.occurred_at < j.completed_at + interval '6 hours'), 0) as forward_6h_amount_sat,
+  coalesce(sum(case when n.fee_msat > 0 then n.fee_msat else n.fee_sat * 1000 end) filter (where n.occurred_at < j.completed_at + interval '6 hours'), 0) as forward_6h_fee_msat,
+  count(n.id) as forward_24h_count,
+  coalesce(sum(n.amount_sat), 0) as forward_24h_amount_sat,
+  coalesce(sum(case when n.fee_msat > 0 then n.fee_msat else n.fee_sat * 1000 end), 0) as forward_24h_fee_msat
+from rebalance_jobs j
+left join notifications n on n.type='forward'
+  and j.completed_at is not null
+  and n.channel_id = j.target_channel_id
+  and n.occurred_at >= j.completed_at
+  and n.occurred_at < j.completed_at + interval '24 hours'
+where j.id = any($1::bigint[])
+group by j.id
+`, ids)
+	if err != nil {
+		return jobs
+	}
+	defer forwardRows.Close()
+	for forwardRows.Next() {
+		var jobID int64
+		var fee1hMsat int64
+		var fee6hMsat int64
+		var fee24hMsat int64
+		var forward1hCount int64
+		var forward1hAmount int64
+		var forward6hCount int64
+		var forward6hAmount int64
+		var forward24hCount int64
+		var forward24hAmount int64
+		if err := forwardRows.Scan(
+			&jobID,
+			&forward1hCount,
+			&forward1hAmount,
+			&fee1hMsat,
+			&forward6hCount,
+			&forward6hAmount,
+			&fee6hMsat,
+			&forward24hCount,
+			&forward24hAmount,
+			&fee24hMsat,
+		); err != nil {
+			return jobs
+		}
+		idx, ok := indexByID[jobID]
+		if !ok {
+			continue
+		}
+		jobs[idx].Forward1hCount = forward1hCount
+		jobs[idx].Forward1hAmountSat = forward1hAmount
+		jobs[idx].Forward1hFeeSat = fee1hMsat / 1000
+		jobs[idx].Forward6hCount = forward6hCount
+		jobs[idx].Forward6hAmountSat = forward6hAmount
+		jobs[idx].Forward6hFeeSat = fee6hMsat / 1000
+		jobs[idx].Forward24hCount = forward24hCount
+		jobs[idx].Forward24hAmountSat = forward24hAmount
+		jobs[idx].Forward24hFeeSat = fee24hMsat / 1000
+		jobs[idx].RealizedNet1hSat = jobs[idx].Forward1hFeeSat - jobs[idx].ActualRebalanceFeeSat
+		jobs[idx].RealizedNet6hSat = jobs[idx].Forward6hFeeSat - jobs[idx].ActualRebalanceFeeSat
+		jobs[idx].RealizedNet24hSat = jobs[idx].Forward24hFeeSat - jobs[idx].ActualRebalanceFeeSat
+	}
+	return jobs
 }
 
 func (s *RebalanceService) SetChannelTarget(ctx context.Context, channelID uint64, channelPoint string, targetPct float64) error {

@@ -2049,6 +2049,99 @@ func TestSovereignStructuralCooldownDurationProgresses(t *testing.T) {
 	}
 }
 
+func TestEstimateSovereignTargetCostUsesBudgetUntilHistoryReliable(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	cfg.RebalanceCostFloorPpm = 150
+	amount := int64(1_000_000)
+	budgetCost := int64(2_500)
+
+	got := estimateSovereignTargetCost(amount, 100, amount/2, budgetCost, cfg)
+	if got != budgetCost {
+		t.Fatalf("expected conservative budget cost for unreliable history, got %d", got)
+	}
+
+	got = estimateSovereignTargetCost(amount, 100, amount, budgetCost, cfg)
+	if got != 150 {
+		t.Fatalf("expected historical/floor cost after reliable history, got %d", got)
+	}
+}
+
+func TestShouldSkipSovereignUnsoldPaidLiquidity(t *testing.T) {
+	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	stat := sovereignUnsoldLiquidityStat{
+		CompletedAt:      now.Add(-3 * time.Hour),
+		SentSat:          1_000_000,
+		FeePaidSat:       1_000,
+		ForwardAmountSat: 50_000,
+		ForwardFeeSat:    100,
+	}
+	if !shouldSkipSovereignUnsoldPaidLiquidity(stat, now) {
+		t.Fatalf("expected unsold paid liquidity to be skipped")
+	}
+
+	stat.ForwardAmountSat = 100_000
+	if shouldSkipSovereignUnsoldPaidLiquidity(stat, now) {
+		t.Fatalf("expected enough forwarded liquidity to clear cooldown")
+	}
+
+	stat.ForwardAmountSat = 0
+	stat.ForwardFeeSat = 250
+	if shouldSkipSovereignUnsoldPaidLiquidity(stat, now) {
+		t.Fatalf("expected enough fee payback to clear cooldown")
+	}
+
+	stat.ForwardFeeSat = 0
+	stat.CompletedAt = now.Add(-30 * time.Minute)
+	if shouldSkipSovereignUnsoldPaidLiquidity(stat, now) {
+		t.Fatalf("expected fresh rebalance to wait for the minimum age before cooldown")
+	}
+}
+
+func TestExecuteSovereignAutopilotSkipsUnsoldPaidLiquidityAndContinues(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = true
+	cfg.SovereignMaxJobsPerCycle = 1
+	cfg.SovereignMinExpectedProfitSat = 0
+	scanAt := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+
+	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{
+		{
+			Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "unsold:0", PeerAlias: "unsold", TargetAmountSat: 1_000_000},
+			ExpectedGainSat:  2_000,
+			EstimatedCostSat: 500,
+			BudgetCostSat:    700,
+			Score:            1_500,
+			UnsoldLiquidity: sovereignUnsoldLiquidityStat{
+				CompletedAt: scanAt.Add(-3 * time.Hour),
+				SentSat:     1_000_000,
+				FeePaidSat:  500,
+			},
+		},
+		{
+			Channel:          RebalanceChannel{ChannelID: 2, ChannelPoint: "healthy:0", PeerAlias: "healthy", TargetAmountSat: 1_000_000},
+			ExpectedGainSat:  800,
+			EstimatedCostSat: 200,
+			BudgetCostSat:    400,
+			Score:            600,
+		},
+	}}
+
+	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, scanAt, false)
+	if result.Selected != 1 {
+		t.Fatalf("expected one selected decision, got %d", result.Selected)
+	}
+	if len(result.Decisions) < 2 {
+		t.Fatalf("expected skip and selected decisions, got %+v", result.Decisions)
+	}
+	if result.Decisions[0].Reason != sovereignUnsoldPaidLiquidityReason {
+		t.Fatalf("expected unsold paid liquidity skip, got %+v", result.Decisions[0])
+	}
+	if !result.Decisions[1].Selected || result.Decisions[1].Reason != "would_queue" {
+		t.Fatalf("expected next candidate selected, got %+v", result.Decisions[1])
+	}
+}
+
 func TestExecuteSovereignAutopilotContinuesPastDecisionDetailLimit(t *testing.T) {
 	svc := NewRebalanceService(nil, nil, nil)
 	cfg := defaultRebalanceConfig()
@@ -2756,34 +2849,36 @@ func TestBuildAndOrderRebalanceCandidatesUsesEVScoreWhenEnabled(t *testing.T) {
 
 	channels := []RebalanceChannel{
 		{
-			ChannelID:          1,
-			PeerAlias:          "dead-high-conditional",
-			Active:             true,
-			EligibleAsTarget:   true,
-			OutgoingFeePpm:     1000,
-			PeerFeeRatePpm:     0,
-			TargetAmountSat:    1_000_000,
-			TargetOutboundPct:  100,
-			LocalPct:           0,
-			Revenue7dSat:       100,
-			LocalBalanceSat:    1_000_000,
-			CapacitySat:        2_000_000,
-			RebalanceCost7dPpm: 50,
+			ChannelID:            1,
+			PeerAlias:            "dead-high-conditional",
+			Active:               true,
+			EligibleAsTarget:     true,
+			OutgoingFeePpm:       1000,
+			PeerFeeRatePpm:       0,
+			TargetAmountSat:      1_000_000,
+			TargetOutboundPct:    100,
+			LocalPct:             0,
+			Revenue7dSat:         100,
+			LocalBalanceSat:      1_000_000,
+			CapacitySat:          2_000_000,
+			RebalanceCost7dPpm:   50,
+			RebalanceAmount7dSat: 1_000_000,
 		},
 		{
-			ChannelID:          2,
-			PeerAlias:          "healthy",
-			Active:             true,
-			EligibleAsTarget:   true,
-			OutgoingFeePpm:     500,
-			PeerFeeRatePpm:     50,
-			TargetAmountSat:    1_000_000,
-			TargetOutboundPct:  100,
-			LocalPct:           0,
-			Revenue7dSat:       100,
-			LocalBalanceSat:    1_000_000,
-			CapacitySat:        2_000_000,
-			RebalanceCost7dPpm: 50,
+			ChannelID:            2,
+			PeerAlias:            "healthy",
+			Active:               true,
+			EligibleAsTarget:     true,
+			OutgoingFeePpm:       500,
+			PeerFeeRatePpm:       50,
+			TargetAmountSat:      1_000_000,
+			TargetOutboundPct:    100,
+			LocalPct:             0,
+			Revenue7dSat:         100,
+			LocalBalanceSat:      1_000_000,
+			CapacitySat:          2_000_000,
+			RebalanceCost7dPpm:   50,
+			RebalanceAmount7dSat: 1_000_000,
 		},
 	}
 	plan := buildAndOrderRebalanceCandidates(rebalanceAutoScanCandidateInput{

@@ -2908,6 +2908,8 @@
         "scanReasonCycleLimit": "cycle limit",
         "scanReasonCooldownProbeNotSovereign": "cooldown-probe outside autopilot",
         "scanReasonTargetStructuralCooldown": "target structural cooldown",
+        "scanReasonPaidLiquidityUnsoldCooldown": "unsold paid liquidity cooldown",
+        "scanReasonPaidLiquidityUnsoldPenalty": "unsold paid liquidity penalty",
         "scanReasonLowSuccessOpportunity": "low-success opportunity below floor",
         "scanReasonBudgetEfficiency": "budget efficiency below floor",
         "scanReasonRouteDeadOpportunity": "recent route-dead opportunity below floor",
@@ -2935,7 +2937,9 @@
       "amount": "Amount: {{value}}",
       "profit": "Exp. profit: {{value}}",
       "cost": "Exp. cost: {{value}}",
-      "roi": "ROI: {{value}}"
+      "roi": "ROI: {{value}}",
+      "unsoldLiquidity": "Paid liquidity: {{sent}} · sold: {{forwarded}}",
+      "unsoldPayback": "Recovered fee: {{fee}} · score {{multiplier}}"
     },
     "settings": {
       "title": "Rebalance Settings",
@@ -3230,7 +3234,16 @@
       "targetLabel": "In {{value}}",
       "target": "Target outbound: {{value}}",
       "amountFee": "Amount: {{amount}} · Fees: {{fee}}",
-      "remaining": "Remaining: {{value}}"
+      "remaining": "Remaining: {{value}}",
+      "expectedProfit": "Exp. profit: {{value}}",
+      "actualSent": "Executed: {{value}}",
+      "actualCost": "Actual cost: {{value}}",
+      "net1h": "Net 1h: {{value}}",
+      "net6h": "Net 6h: {{value}}",
+      "net24h": "Net 24h: {{value}}",
+      "attributedForward6h": "Attrib. forward 6h: {{value}}",
+      "forwardAfter6h": "Forward after 6h: {{value}}",
+      "forwardAfter6hFee": "Fee after 6h: {{value}}"
     }
   },
   "channelRanking": {

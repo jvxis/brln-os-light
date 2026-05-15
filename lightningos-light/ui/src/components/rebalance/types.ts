@@ -82,6 +82,14 @@ export type RebalanceSovereignDecision = {
   historical_successes?: number
   historical_success_rate?: number
   recent_structural_failures?: number
+  recent_rebalance_sent_sat?: number
+  recent_rebalance_target_sat?: number
+  recent_forwarded_after_sat?: number
+  recent_forward_fee_after_sat?: number
+  success_multiplier?: number
+  roi_multiplier?: number
+  budget_efficiency_multiplier?: number
+  unsold_liquidity_multiplier?: number
 }
 
 export type RebalanceSovereignHistory = {
@@ -286,6 +294,31 @@ export type RebalanceJob = {
   target_peer_alias?: string
   target_outbound_pct: number
   target_amount_sat: number
+  sovereign_expected_gain_sat?: number
+  sovereign_estimated_cost_sat?: number
+  sovereign_expected_profit_sat?: number
+  sovereign_budget_cost_sat?: number
+  sovereign_score?: number
+  actual_sent_sat?: number
+  actual_rebalance_fee_sat?: number
+  forward_1h_count?: number
+  forward_1h_amount_sat?: number
+  forward_1h_fee_sat?: number
+  attributed_forward_1h_amount_sat?: number
+  attributed_forward_1h_fee_sat?: number
+  realized_net_1h_sat?: number
+  forward_6h_count?: number
+  forward_6h_amount_sat?: number
+  forward_6h_fee_sat?: number
+  attributed_forward_6h_amount_sat?: number
+  attributed_forward_6h_fee_sat?: number
+  realized_net_6h_sat?: number
+  forward_24h_count?: number
+  forward_24h_amount_sat?: number
+  forward_24h_fee_sat?: number
+  attributed_forward_24h_amount_sat?: number
+  attributed_forward_24h_fee_sat?: number
+  realized_net_24h_sat?: number
 }
 
 export type RebalanceAttempt = {

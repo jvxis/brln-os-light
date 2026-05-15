@@ -2070,6 +2070,7 @@ func TestShouldSkipSovereignUnsoldPaidLiquidity(t *testing.T) {
 	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
 	stat := sovereignUnsoldLiquidityStat{
 		CompletedAt:      now.Add(-3 * time.Hour),
+		TargetAmountSat:  1_000_000,
 		SentSat:          1_000_000,
 		FeePaidSat:       1_000,
 		ForwardAmountSat: 50_000,
@@ -2097,6 +2098,47 @@ func TestShouldSkipSovereignUnsoldPaidLiquidity(t *testing.T) {
 	}
 }
 
+func TestSovereignUnsoldPaidLiquiditySoftPenaltyAfterHardWindow(t *testing.T) {
+	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	stat := sovereignUnsoldLiquidityStat{
+		CompletedAt:     now.Add(-5 * time.Hour),
+		TargetAmountSat: 1_000_000,
+		SentSat:         500_000,
+		FeePaidSat:      1_000,
+	}
+	if shouldSkipSovereignUnsoldPaidLiquidity(stat, now) {
+		t.Fatalf("expected moderate unsold liquidity to become a score penalty after hard window")
+	}
+	multiplier := sovereignUnsoldPaidLiquidityScoreMultiplier(stat, now)
+	if multiplier <= 0 || multiplier >= 1 {
+		t.Fatalf("expected soft penalty multiplier between 0 and 1, got %f", multiplier)
+	}
+
+	severe := stat
+	severe.SentSat = 900_000
+	if !shouldSkipSovereignUnsoldPaidLiquidity(severe, now) {
+		t.Fatalf("expected severe large unsold fill with zero sale to remain hard skipped")
+	}
+}
+
+func TestAttributedForwardEconomicsCapsForwardProfitToSentAmount(t *testing.T) {
+	amount, fee, net := attributedForwardEconomics(100_000, 50, 1_000_000, 500)
+	if amount != 100_000 {
+		t.Fatalf("expected attributed amount capped to sent sats, got %d", amount)
+	}
+	if fee != 50 {
+		t.Fatalf("expected proportional attributed fee, got %d", fee)
+	}
+	if net != 0 {
+		t.Fatalf("expected capped net to pay back cost exactly, got %d", net)
+	}
+
+	amount, fee, net = attributedForwardEconomics(0, 0, 1_000_000, 500)
+	if amount != 0 || fee != 0 || net != 0 {
+		t.Fatalf("expected failed no-send job to have no attributed economics, got amount=%d fee=%d net=%d", amount, fee, net)
+	}
+}
+
 func TestExecuteSovereignAutopilotSkipsUnsoldPaidLiquidityAndContinues(t *testing.T) {
 	svc := NewRebalanceService(nil, nil, nil)
 	cfg := defaultRebalanceConfig()
@@ -2113,9 +2155,10 @@ func TestExecuteSovereignAutopilotSkipsUnsoldPaidLiquidityAndContinues(t *testin
 			BudgetCostSat:    700,
 			Score:            1_500,
 			UnsoldLiquidity: sovereignUnsoldLiquidityStat{
-				CompletedAt: scanAt.Add(-3 * time.Hour),
-				SentSat:     1_000_000,
-				FeePaidSat:  500,
+				CompletedAt:     scanAt.Add(-3 * time.Hour),
+				TargetAmountSat: 1_000_000,
+				SentSat:         1_000_000,
+				FeePaidSat:      500,
 			},
 		},
 		{

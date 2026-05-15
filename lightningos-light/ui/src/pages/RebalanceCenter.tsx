@@ -26,7 +26,8 @@ import type {
   RebalanceJob,
   RebalanceOverview,
   RebalancePairStat,
-  RebalanceScanSkip
+  RebalanceScanSkip,
+  RebalanceSovereignDecision
 } from '../components/rebalance/types'
 import { getLocale } from '../i18n'
 
@@ -445,6 +446,18 @@ export default function RebalanceCenter() {
     }
     return historyJobs.filter((job) => job.status === historyFilter)
   }, [historyFilter, historyJobs])
+  const hasAutopilotEconomics = (job: RebalanceJob) =>
+    Boolean(
+      job.sovereign_expected_profit_sat ||
+        job.actual_sent_sat ||
+        job.actual_rebalance_fee_sat ||
+        job.forward_1h_amount_sat ||
+        job.forward_6h_amount_sat ||
+        job.forward_24h_amount_sat ||
+        job.realized_net_1h_sat ||
+        job.realized_net_6h_sat ||
+        job.realized_net_24h_sat
+    )
 
   useEffect(() => {
     setConfigDirty(configSignature(config) !== configSignature(serverConfig))
@@ -1086,6 +1099,10 @@ export default function RebalanceCenter() {
         return t('rebalanceCenter.overview.scanReasonCooldownProbeNotSovereign')
       case 'target_structural_cooldown':
         return t('rebalanceCenter.overview.scanReasonTargetStructuralCooldown')
+      case 'paid_liquidity_unsold_cooldown':
+        return t('rebalanceCenter.overview.scanReasonPaidLiquidityUnsoldCooldown')
+      case 'paid_liquidity_unsold_penalty':
+        return t('rebalanceCenter.overview.scanReasonPaidLiquidityUnsoldPenalty')
       case 'low_success_opportunity_below_floor':
         return t('rebalanceCenter.overview.scanReasonLowSuccessOpportunity')
       case 'budget_efficiency_below_floor':
@@ -1138,6 +1155,10 @@ export default function RebalanceCenter() {
         return t('rebalanceCenter.overview.scanReasonCooldownProbeNotSovereign')
       case 'target_structural_cooldown':
         return t('rebalanceCenter.overview.scanReasonTargetStructuralCooldown')
+      case 'paid_liquidity_unsold_cooldown':
+        return t('rebalanceCenter.overview.scanReasonPaidLiquidityUnsoldCooldown')
+      case 'paid_liquidity_unsold_penalty':
+        return t('rebalanceCenter.overview.scanReasonPaidLiquidityUnsoldPenalty')
       case 'low_success_opportunity_below_floor':
         return t('rebalanceCenter.overview.scanReasonLowSuccessOpportunity')
       case 'budget_efficiency_below_floor':
@@ -1161,12 +1182,32 @@ export default function RebalanceCenter() {
       .slice(0, limit)
     return entries.map(([reason, count]) => `${formatScanReason(reason)}: ${formatter.format(count)}`).join(', ')
   }
+  const renderAutopilotLiquiditySignal = (decision: RebalanceSovereignDecision) => {
+    if (!decision.recent_rebalance_sent_sat) return null
+    const multiplier = decision.unsold_liquidity_multiplier
+    return (
+      <div className="mt-2 grid gap-1 rounded-md border border-amber-300/15 bg-amber-300/5 p-2 text-[11px] text-fog/60 sm:grid-cols-2">
+        <span>
+          {t('rebalanceCenter.autopilot.unsoldLiquidity', {
+            sent: formatSats(decision.recent_rebalance_sent_sat ?? 0),
+            forwarded: formatSats(decision.recent_forwarded_after_sat ?? 0)
+          })}
+        </span>
+        <span>
+          {t('rebalanceCenter.autopilot.unsoldPayback', {
+            fee: formatSats(decision.recent_forward_fee_after_sat ?? 0),
+            multiplier: multiplier && multiplier > 0 && multiplier < 1 ? formatPct(multiplier * 100) : formatPct(100)
+          })}
+        </span>
+      </div>
+    )
+  }
   const scanDetailText = useMemo(() => {
     if (!overview) return ''
     const reasons = overview.last_scan_reasons ?? {}
     const entries = Object.entries(reasons).filter(([, count]) => count > 0)
     if (entries.length > 0) {
-      const ordered = ['channel_busy', 'target_already_balanced', 'target_not_eligible', 'recently_attempted', 'target_cooldown', 'target_structural_cooldown', 'target_cooldown_probe_backoff', 'target_cooldown_probe_deferred', 'target_cooldown_probe_busy', 'roi_guardrail', 'profit_guardrail', 'expected_profit_below_min', 'cycle_limit', 'cooldown_probe_not_sovereign', 'route_dead_opportunity_below_floor', 'low_success_opportunity_below_floor', 'budget_efficiency_below_floor', 'fee_cap_zero', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
+      const ordered = ['channel_busy', 'target_already_balanced', 'target_not_eligible', 'recently_attempted', 'target_cooldown', 'target_structural_cooldown', 'paid_liquidity_unsold_cooldown', 'paid_liquidity_unsold_penalty', 'target_cooldown_probe_backoff', 'target_cooldown_probe_deferred', 'target_cooldown_probe_busy', 'roi_guardrail', 'profit_guardrail', 'expected_profit_below_min', 'cycle_limit', 'cooldown_probe_not_sovereign', 'route_dead_opportunity_below_floor', 'low_success_opportunity_below_floor', 'budget_efficiency_below_floor', 'fee_cap_zero', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
       entries.sort((a, b) => {
         const ai = ordered.indexOf(a[0])
         const bi = ordered.indexOf(b[0])
@@ -1200,7 +1241,7 @@ export default function RebalanceCenter() {
     const reasons = overview.last_manual_restart_reasons ?? {}
     const entries = Object.entries(reasons).filter(([, count]) => count > 0)
     if (entries.length === 0) return ''
-    const ordered = ['channel_busy', 'target_already_balanced', 'target_not_eligible', 'target_cooldown', 'target_cooldown_probe_backoff', 'target_cooldown_probe_deferred', 'target_cooldown_probe_busy', 'roi_guardrail', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
+    const ordered = ['channel_busy', 'target_already_balanced', 'target_not_eligible', 'target_cooldown', 'target_structural_cooldown', 'paid_liquidity_unsold_cooldown', 'paid_liquidity_unsold_penalty', 'target_cooldown_probe_backoff', 'target_cooldown_probe_deferred', 'target_cooldown_probe_busy', 'roi_guardrail', 'below_execute_min', 'budget_below_min', 'budget_too_low', 'target_not_found', 'start_error']
     entries.sort((a, b) => {
       const ai = ordered.indexOf(a[0])
       const bi = ordered.indexOf(b[0])
@@ -2112,6 +2153,7 @@ export default function RebalanceCenter() {
                           <span>{t('rebalanceCenter.autopilot.cost', { value: formatSats(decision.estimated_cost_sat) })}</span>
                           <span>{t('rebalanceCenter.autopilot.roi', { value: decision.expected_roi_valid ? formatRoi(decision.expected_roi) : 'n/a' })}</span>
                         </div>
+                        {renderAutopilotLiquiditySignal(decision)}
                       </div>
                     ))}
                   </div>
@@ -2133,6 +2175,7 @@ export default function RebalanceCenter() {
                           <span>{t('rebalanceCenter.autopilot.cost', { value: formatSats(decision.estimated_cost_sat) })}</span>
                           <span>{t('rebalanceCenter.autopilot.roi', { value: decision.expected_roi_valid ? formatRoi(decision.expected_roi) : 'n/a' })}</span>
                         </div>
+                        {renderAutopilotLiquiditySignal(decision)}
                       </div>
                     ))}
                   </div>
@@ -3615,6 +3658,19 @@ export default function RebalanceCenter() {
                 )}
                 {historyExpanded[job.id] && (
                   <div className="mt-3 border-t border-white/10 pt-3">
+                    {hasAutopilotEconomics(job) && (
+                      <div className="mb-3 grid gap-2 rounded-lg border border-white/10 bg-white/[0.03] p-3 text-xs text-fog/60 sm:grid-cols-3">
+                        <span>{t('rebalanceCenter.history.expectedProfit', { value: formatSats(job.sovereign_expected_profit_sat ?? 0) })}</span>
+                        <span>{t('rebalanceCenter.history.actualSent', { value: formatSats(job.actual_sent_sat ?? 0) })}</span>
+                        <span>{t('rebalanceCenter.history.actualCost', { value: formatSats(job.actual_rebalance_fee_sat ?? 0) })}</span>
+                        <span>{t('rebalanceCenter.history.net1h', { value: formatSats(job.realized_net_1h_sat ?? 0) })}</span>
+                        <span>{t('rebalanceCenter.history.net6h', { value: formatSats(job.realized_net_6h_sat ?? 0) })}</span>
+                        <span>{t('rebalanceCenter.history.net24h', { value: formatSats(job.realized_net_24h_sat ?? 0) })}</span>
+                        <span>{t('rebalanceCenter.history.attributedForward6h', { value: formatSats(job.attributed_forward_6h_amount_sat ?? 0) })}</span>
+                        <span>{t('rebalanceCenter.history.forwardAfter6h', { value: formatSats(job.forward_6h_amount_sat ?? 0) })}</span>
+                        <span>{t('rebalanceCenter.history.forwardAfter6hFee', { value: formatSats(job.forward_6h_fee_sat ?? 0) })}</span>
+                      </div>
+                    )}
                     {(historyAttemptsByJob.get(job.id) || []).map((attempt) => (
                       <div key={attempt.id} className="mt-2 text-xs text-fog/60">
                         {attempt.attempt_index === 0

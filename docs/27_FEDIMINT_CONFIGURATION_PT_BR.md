@@ -1,231 +1,233 @@
-# Configuracao do Fedimint no LightningOS Light
+# Configuracao Fedimint no LightningOS
 
-Este guia documenta a integracao atual do app Fedimint na App Store do LightningOS Light.
+O LightningOS separa Fedimint em dois apps independentes:
 
-O app instala dois servicos Docker:
+- **Fedimint Guardian**: roda `fedimintd` e participa da federacao como guardiao.
+- **Fedimint Lightning Gateway**: roda `gatewayd lnd` e conecta o LND local a uma ou mais federacoes.
 
-- `fedimintd`: guardiao da federacao.
-- `gatewayd lnd`: gateway Lightning conectado ao LND local do LightningOS.
+Essa separacao segue a arquitetura do Fedimint: o Lightning Gateway nao e guardiao. Ele e um ator economico separado, usado para trocar ecash por pagamentos Lightning.
 
-Ele nao instala um `bitcoind` proprio. O Fedimint reutiliza o Bitcoin RPC ja configurado no LightningOS, seja o Bitcoin Core da App Store, um Bitcoin local externo ou um Bitcoin remoto.
+Referencias upstream:
 
-## Pre-requisitos
+- Deploy Fedimint: <https://github.com/fedimint/fedimint/blob/master/docs/deploying.md>
+- Docker guardian: <https://github.com/fedimint/fedimint/tree/master/docker/fedimintd>
+- Docker gateway: <https://github.com/fedimint/fedimint/tree/master/docker/gatewayd>
+- Start9 Fedimint: <https://github.com/fedimint/fedimint/tree/master/fedimint-startos>
 
-- Bitcoin RPC configurado no LightningOS.
-- LND local funcionando e sincronizado.
-- Arquivos do LND disponiveis em:
-  - `/data/lnd/tls.cert`
-  - `/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon`
-- Docker disponivel. A App Store instala Docker sob demanda quando necessario.
+## Apps
 
-## Endpoints
+### Fedimint Guardian
 
-Em uma instalacao LAN, substitua `<SERVER_LAN_IP>` pelo IP do servidor LightningOS:
+Use este app quando o usuario sera guardiao da federacao.
 
-- Guardian UI: `http://<SERVER_LAN_IP>:8175`
-- Gateway UI: `http://<SERVER_LAN_IP>:8176`
-- Gateway Lightning V2 URL: `http://<SERVER_LAN_IP>:8176/v1`
+Ele roda apenas `fedimintd`.
 
-O endpoint `http://<SERVER_LAN_IP>:8176/v1` serve apenas para testes dentro da mesma rede. Para usuarios externos, registre o gateway com uma URL publica HTTPS, por exemplo:
+Nao usa LND.
 
-```text
-https://gateway.exemplo.com/v1
+Configuracao principal:
+
+```yaml
+FM_ENABLE_IROH: "true"
+FM_BITCOIN_NETWORK: bitcoin
+FM_ESPLORA_URL: https://mempool.space/api
+FM_BIND_P2P: 0.0.0.0:8173
+FM_BIND_API: 0.0.0.0:8174
+FM_BIND_UI: 0.0.0.0:8175
 ```
 
-Nao registre `192.168.x.x`, `10.x.x.x` ou `172.16-31.x.x` para uma federacao que sera usada fora da LAN.
+### Fedimint Lightning Gateway
 
-## Portas usadas
+Use este app no servidor que tem LND e quer oferecer gateway Lightning para uma federacao.
 
-- `8173/tcp` e `8173/udp`: comunicacao P2P do guardiao.
-- `8174/udp`: API/Iroh do guardiao.
+Ele roda apenas `gatewayd lnd`.
+
+Configuracao principal:
+
+```yaml
+FM_GATEWAY_DATA_DIR: /data
+FM_GATEWAY_LISTEN_ADDR: 0.0.0.0:8176
+FM_GATEWAY_NETWORK: bitcoin
+FM_GATEWAY_IROH_LISTEN_ADDR: 0.0.0.0:8177
+FM_GATEWAY_BCRYPT_PASSWORD_HASH: <gerado pelo LightningOS>
+FM_ESPLORA_URL: https://mempool.space/api
+FM_LND_RPC_ADDR: https://host.docker.internal:10009
+FM_LND_TLS_CERT: /data/lnd/tls.cert
+FM_LND_MACAROON: /data/lnd/data/chain/bitcoin/mainnet/admin.macaroon
+```
+
+O gateway monta `/data/lnd` como somente leitura.
+
+## Esplora
+
+Os dois apps usam:
+
+```text
+https://mempool.space/api
+```
+
+Isso evita depender do Bitcoin RPC local dentro da integracao Fedimint.
+
+Tradeoff: essa opcao e mais simples, mas menos privada e menos autonoma do que usar o proprio bitcoind. Se `mempool.space` ficar indisponivel, limitado ou instavel, o Fedimint pode ser afetado.
+
+## Portas
+
+### Guardian
+
+- `8173/tcp`: P2P TLS.
+- `8173/udp`: P2P Iroh.
+- `8174/udp`: API Iroh.
 - `8175/tcp`: Guardian UI.
+
+### Gateway
+
 - `8176/tcp`: Gateway UI/API.
-- `8177/udp`: Iroh do gateway.
+- `8177/udp`: Gateway Iroh.
 
-Como o gateway roda em modo LND (`gatewayd lnd`), a porta Lightning `10010` do modo LDK nao e usada por esta integracao.
+A porta `10010/tcp` nao e usada nesta integracao, porque ela pertence ao modo LDK. O LightningOS usa `gatewayd lnd`.
 
-## LND
+Nao exponha publicamente:
 
-O gateway usa o LND local via gRPC:
+- LND gRPC `10009`;
+- LND REST `8080`;
+- Guardian UI `8175`, exceto por rede confiavel, VPN ou proxy autenticado.
 
-```text
-https://host.docker.internal:10009
-```
+## Iroh e IP publico
 
-Durante a instalacao/start do Fedimint, o LightningOS pode adicionar entradas ao `/data/lnd/lnd.conf` para permitir acesso gRPC a partir da rede Docker do app:
+Com Iroh habilitado, nao exigimos dominio ou IP publico para criar uma federacao basica. Iroh tenta conexao direta e pode usar mecanismos de NAT traversal.
 
-```text
-tlsextradomain=host.docker.internal
-rpclisten=127.0.0.1:10009
-tlsextraip=<docker-gateway-ip>
-rpclisten=<docker-gateway-ip>:10009
-```
+Abrir UDP ajuda a confiabilidade, mas nao deve ser tratado como pre-requisito absoluto para testes.
 
-Essa alteracao e aditiva. Se o arquivo mudar, o LightningOS remove `tls.cert`/`tls.key` para o LND regenerar o certificado e reinicia o servico `lnd`.
+Para producao, ainda prefira rede estavel, backups e operadores independentes.
 
-## Bitcoin
+## Diretorios
 
-O app resolve o Bitcoin RPC a partir da configuracao existente:
+### Guardian
 
-- Bitcoin Core da App Store: usa a rede Docker `bitcoincore_default` e acessa `http://bitcoind:8332`.
-- Bitcoin local externo: usa `host.docker.internal:<porta>`.
-- Bitcoin remoto: usa as credenciais ja configuradas no LightningOS/LND.
+- Compose: `/var/lib/lightningos/apps/fedimint-guardian/docker-compose.yaml`
+- Dados: `/var/lib/lightningos/apps-data/fedimint-guardian/fedimintd`
 
-As credenciais sao gravadas no arquivo de ambiente do app em:
+### Gateway
 
-```text
-/var/lib/lightningos/apps/fedimint/.env
-```
+- Compose: `/var/lib/lightningos/apps/fedimint-gateway/docker-compose.yaml`
+- Dados: `/var/lib/lightningos/apps-data/fedimint-gateway/gatewayd`
+- Senha admin: `/var/lib/lightningos/apps-data/fedimint-gateway/gateway-admin.txt`
+- Hash da senha: `/var/lib/lightningos/apps-data/fedimint-gateway/gateway-password-hash.txt`
 
-## Caminhos de dados
+## Instalar uma federacao com 4 guardioes
 
-- Compose: `/var/lib/lightningos/apps/fedimint/docker-compose.yaml`
-- Env: `/var/lib/lightningos/apps/fedimint/.env`
-- Dados do guardiao: `/var/lib/lightningos/apps-data/fedimint/fedimintd`
-- Dados do gateway: `/var/lib/lightningos/apps-data/fedimint/gatewayd`
-- Senha admin do gateway: `/var/lib/lightningos/apps-data/fedimint/gateway-admin.txt`
+Exemplo com voce e mais 3 usuarios do app:
 
-Ao desinstalar pela App Store, o LightningOS remove os arquivos do app em `/var/lib/lightningos/apps/fedimint`, mas preserva os dados persistentes em `/var/lib/lightningos/apps-data/fedimint`.
+1. Cada um dos 4 usuarios instala **Fedimint Guardian** no seu proprio servidor.
+2. Cada guardiao abre a Guardian UI em `http://<IP_LAN>:8175`.
+3. Cada guardiao define uma senha forte.
+4. Cada guardiao gera seu setup code.
+5. Todos trocam os setup codes entre si.
+6. Cada guardiao insere os outros 3 setup codes na sua UI.
+7. A federacao executa DKG.
+8. Depois que a federacao estiver criada, gere o invite code.
+9. O operador do LND instala **Fedimint Lightning Gateway**.
+10. Na Gateway UI em `http://<IP_LAN>:8176`, cole o invite code em "Connect a new Federation".
 
-## Desinstalacao e reset completo
+O operador do gateway pode ser tambem um guardiao, mas nao precisa ser.
 
-O botao `Uninstall` da App Store e conservador. Ele executa `docker compose down --remove-orphans` e remove os arquivos operacionais em:
+## Teste solo
 
-```text
-/var/lib/lightningos/apps/fedimint
-```
+Para teste local:
 
-Ele nao remove automaticamente:
+1. Instale **Fedimint Guardian**.
+2. Crie uma federacao com 1 guardiao.
+3. Instale **Fedimint Lightning Gateway** no mesmo servidor.
+4. Abra `http://<IP_LAN>:8176`.
+5. Confirme que o status do gateway esta `Running`.
+6. Confirme que a secao Lightning Node mostra:
+   - Node Type: `External LND`;
+   - Status: `Synced`;
+   - Block Height maior que zero.
+7. Conecte o gateway a federacao usando o invite code.
 
-- dados do guardiao em `/var/lib/lightningos/apps-data/fedimint/fedimintd`;
-- dados do gateway em `/var/lib/lightningos/apps-data/fedimint/gatewayd`;
-- senha admin do gateway;
-- imagens Docker baixadas;
-- entradas adicionadas ao `/data/lnd/lnd.conf`;
-- regras UFW adicionadas.
+## Validacoes
 
-Isso evita apagar uma federacao por acidente. Em uma federacao real, remover os dados do guardiao pode causar perda operacional ou perda de acesso se nao houver backup.
-
-Para uma instalacao de teste ou uma instalacao parcial/quebrada, use reset completo apenas quando tiver certeza de que os dados podem ser descartados:
+Guardian:
 
 ```bash
 sudo docker compose \
-  --env-file /var/lib/lightningos/apps/fedimint/.env \
-  --project-directory /var/lib/lightningos/apps/fedimint \
-  -f /var/lib/lightningos/apps/fedimint/docker-compose.yaml \
-  down --remove-orphans
+  --project-directory /var/lib/lightningos/apps/fedimint-guardian \
+  -f /var/lib/lightningos/apps/fedimint-guardian/docker-compose.yaml \
+  ps
 
-sudo rm -rf /var/lib/lightningos/apps/fedimint
-sudo rm -rf /var/lib/lightningos/apps-data/fedimint
+sudo docker compose \
+  --project-directory /var/lib/lightningos/apps/fedimint-guardian \
+  -f /var/lib/lightningos/apps/fedimint-guardian/docker-compose.yaml \
+  logs --tail=200 fedimintd
 ```
 
-Depois atualize/reinstale o LightningOS Manager e instale o Fedimint novamente pela App Store:
+Gateway:
 
 ```bash
-cd ~/brln-os-light
-git pull
-cd lightningos-light
-sudo ./install_existing.sh
-sudo systemctl restart lightningos-manager
+sudo docker compose \
+  --project-directory /var/lib/lightningos/apps/fedimint-gateway \
+  -f /var/lib/lightningos/apps/fedimint-gateway/docker-compose.yaml \
+  ps
+
+sudo docker compose \
+  --project-directory /var/lib/lightningos/apps/fedimint-gateway \
+  -f /var/lib/lightningos/apps/fedimint-gateway/docker-compose.yaml \
+  logs --tail=200 gatewayd
 ```
 
-## Criar federacao de teste com 1 guardiao
-
-1. Instale o Fedimint pela App Store.
-2. Abra a Guardian UI em `http://<SERVER_LAN_IP>:8175`.
-3. Crie uma nova federacao solo apenas para teste.
-4. Baixe o backup do guardiao.
-5. Abra a Gateway UI em `http://<SERVER_LAN_IP>:8176`.
-6. Confirme que o LND aparece como `External LND` e `Synced`.
-7. Cole o invite code da federacao em `Connect a new Federation`.
-8. Na Guardian UI, em Lightning V2, registre o gateway:
-
-```text
-http://<SERVER_LAN_IP>:8176/v1
-```
-
-Use uma URL publica HTTPS no lugar do IP LAN se clientes externos forem participar.
-
-## Criar federacao basica com 4 guardioes
-
-Uma federacao solo existente nao deve ser convertida para 4 guardioes. Crie uma nova federacao.
-
-Modelo recomendado para teste:
-
-- Guardiao 1: seu servidor LightningOS, com `fedimintd` e `gatewayd lnd`.
-- Guardiao 2: servidor do usuario A, com `fedimintd`.
-- Guardiao 3: servidor do usuario B, com `fedimintd`.
-- Guardiao 4: servidor do usuario C, com `fedimintd`.
-
-Somente o servidor que opera o gateway precisa conectar ao LND. Os outros guardioes nao precisam acessar o seu LND.
-
-Fluxo operacional:
-
-1. Cada guardiao instala o app Fedimint em seu proprio servidor.
-2. Cada guardiao abre sua Guardian UI.
-3. Um guardiao inicia o setup da federacao com 4 guardioes.
-4. Cada guardiao gera seu setup code.
-5. Os 4 guardioes compartilham os setup codes por um canal seguro fora da aplicacao.
-6. Cada guardiao informa os codigos dos demais na Guardian UI.
-7. Todos finalizam o setup/DKG.
-8. Cada guardiao baixa e guarda seu backup.
-9. O operador do gateway cola o invite code da federacao na Gateway UI.
-10. A federacao registra o gateway em Lightning V2 com uma URL acessivel pelos clientes.
-
-Com `FM_ENABLE_IROH=true`, a comunicacao entre guardioes pode funcionar mesmo atras de NAT/firewall. Para producao, prefira rede estavel e endpoint publico HTTPS para o gateway.
-
-## Verificacoes
-
-Status dos containers:
+LND:
 
 ```bash
-sudo docker compose -f /var/lib/lightningos/apps/fedimint/docker-compose.yaml ps
+sudo grep -nE 'host.docker.internal|rpclisten=.*10009|tlsextraip=' /data/lnd/lnd.conf
+sudo journalctl -u lnd -n 80 --no-pager
 ```
 
-Logs:
+## Uninstall
 
-```bash
-sudo docker compose -f /var/lib/lightningos/apps/fedimint/docker-compose.yaml logs --tail=200 fedimintd
-sudo docker compose -f /var/lib/lightningos/apps/fedimint/docker-compose.yaml logs --tail=200 gatewayd
-```
+O uninstall dos dois apps e destrutivo por design.
 
-Checar se o LND foi preparado para Docker:
+Ao desinstalar **Fedimint Guardian**, o LightningOS:
 
-```bash
-sudo grep -E 'host.docker.internal|rpclisten=.*10009|tlsextraip' /data/lnd/lnd.conf
-```
+- para o compose;
+- remove containers/orphans/volumes do compose;
+- remove `/var/lib/lightningos/apps/fedimint-guardian`;
+- remove `/var/lib/lightningos/apps-data/fedimint-guardian`;
+- remove a imagem `fedimint/fedimintd:v0.11.1`.
 
-Na Gateway UI, confira:
+Ao desinstalar **Fedimint Lightning Gateway**, o LightningOS:
 
-- `Gateway Network Information`: `Running`.
-- `Lightning Node`: `External LND`.
-- `Status`: `Synced`.
-- `Block Height`: proximo ao bloco atual do LND.
+- para o compose;
+- remove containers/orphans/volumes do compose;
+- remove `/var/lib/lightningos/apps/fedimint-gateway`;
+- remove `/var/lib/lightningos/apps-data/fedimint-gateway`;
+- remove a imagem `fedimint/gatewayd:v0.11.1`;
+- nao altera o `lnd.conf`.
 
-Na Guardian UI, confira:
+Antes de desinstalar um guardiao real, faca backup pela Guardian UI. Remover os dados do guardiao remove a identidade e o material local daquele guardiao.
 
-- Bitcoin RPC conectado.
-- Lightning V2 com o gateway registrado.
-- Wallet sem erros de consenso.
+## Migracao do app antigo combinado
 
-## Troubleshooting: LND nao inicia apos reset/desinstalacao
+Versoes anteriores do LightningOS usavam um unico app `fedimint`, com `fedimintd` e `gatewayd lnd` juntos.
 
-Se o LND falhar com erro parecido com:
+Ao instalar os novos apps, o LightningOS tenta migrar de forma conservadora:
+
+- instalar **Fedimint Guardian** move `/var/lib/lightningos/apps-data/fedimint/fedimintd` para o novo diretorio do Guardian;
+- instalar **Fedimint Lightning Gateway** move `/var/lib/lightningos/apps-data/fedimint/gatewayd` e os arquivos de senha para o novo diretorio do Gateway;
+- se o compose antigo existir, ele e parado antes da migracao.
+
+Se os novos diretorios ja existirem, a migracao automatica nao sobrescreve esses dados.
+
+## Problema comum: LND nao inicia com IP Docker antigo
+
+Erro tipico:
 
 ```text
 listen tcp4 172.19.0.1:10009: bind: cannot assign requested address
 ```
 
-isso indica que ficou uma entrada `rpclisten` apontando para uma bridge Docker que nao existe mais. Isso pode acontecer depois de uma instalacao parcial, reset manual ou remocao de rede Docker.
+Isso indica `rpclisten` antigo no `lnd.conf`, apontando para uma bridge Docker que nao existe mais.
 
-Confirme a linha no `lnd.conf`:
-
-```bash
-sudo grep -nE 'rpclisten=.*10009|tlsextraip=' /data/lnd/lnd.conf
-ip -4 addr | grep 172.19.0.1
-```
-
-Se o IP do erro nao aparecer no `ip -4 addr`, remova apenas as linhas daquele IP:
+Comandos de reparo:
 
 ```bash
 sudo cp /data/lnd/lnd.conf /data/lnd/lnd.conf.bak-fedimint-$(date +%Y%m%d-%H%M%S)
@@ -236,12 +238,4 @@ sudo systemctl restart lnd
 sudo journalctl -u lnd -n 80 --no-pager
 ```
 
-Troque `172.19.0.1` pelo IP exato mostrado no erro. Nao remova `rpclisten=127.0.0.1:10009`.
-
-## Observacoes de seguranca
-
-- Federacao com 1 guardiao e apenas para teste.
-- Para producao, use varios guardioes independentes. Uma federacao com 4 guardioes tolera 1 guardiao offline/malicioso dentro do modelo BFT do Fedimint.
-- Cada guardiao deve guardar seu backup.
-- Nao compartilhe macaroon, senha do gateway ou arquivos de dados entre guardioes.
-- O LND do operador do gateway nao deve ser exposto diretamente aos demais guardioes.
+Nao remova `rpclisten=127.0.0.1:10009`.

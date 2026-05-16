@@ -8,45 +8,86 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func TestFedimintComposeUsesExistingBitcoinAndLnd(t *testing.T) {
-	paths := fedimintPaths{
-		FedimintDataDir: "/var/lib/lightningos/apps-data/fedimint/fedimintd",
-		GatewayDataDir:  "/var/lib/lightningos/apps-data/fedimint/gatewayd",
-	}
-	values := fedimintRuntimeValues{
-		BitcoinRPCURL:         "http://bitcoind:8332",
-		BitcoinRPCUser:        "bitcoin-user",
-		BitcoinRPCPass:        "bitcoin-pass",
-		UseBitcoinCoreNetwork: true,
-		GatewayPasswordHash:   "$2a$10$abcdefghijklmnopqrstuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu",
-		LndRPCAddr:            "https://host.docker.internal:10009",
-		LndTLSCertPath:        "/data/lnd/tls.cert",
-		LndMacaroonPath:       "/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon",
+func TestFedimintGuardianComposeUsesIrohAndEsplora(t *testing.T) {
+	paths := fedimintGuardianPaths{
+		DataDir: "/var/lib/lightningos/apps-data/fedimint-guardian/fedimintd",
 	}
 
-	compose := fedimintComposeContents(paths, values)
+	compose := fedimintGuardianComposeContents(paths)
 
 	for _, want := range []string{
 		"image: fedimint/fedimintd:v0.11.1",
-		"image: fedimint/gatewayd:v0.11.1",
-		"command: gatewayd lnd",
-		"FM_BITCOIND_URL: ${FEDIMINT_BITCOIN_RPC_URL}",
-		"FM_LND_RPC_ADDR: https://host.docker.internal:10009",
-		"- /data/lnd:/data/lnd:ro",
-		"name: bitcoincore_default",
+		"FM_ENABLE_IROH: \"true\"",
+		"FM_ESPLORA_URL: https://mempool.space/api",
+		"- \"8173:8173/tcp\"",
+		"- \"8173:8173/udp\"",
+		"- \"8174:8174/udp\"",
+		"- \"8175:8175/tcp\"",
 	} {
 		if !strings.Contains(compose, want) {
-			t.Fatalf("compose missing %q\n%s", want, compose)
+			t.Fatalf("guardian compose missing %q\n%s", want, compose)
 		}
 	}
-	if strings.Contains(compose, "bitcoind/bitcoin") {
-		t.Fatalf("compose should not install a second bitcoind\n%s", compose)
+	for _, unwanted := range []string{
+		"FM_BITCOIND_URL",
+		"FM_BITCOIND_USERNAME",
+		"FM_BITCOIND_PASSWORD",
+		"FM_LND_RPC_ADDR",
+		"gatewayd",
+		"10010:10010",
+	} {
+		if strings.Contains(compose, unwanted) {
+			t.Fatalf("guardian compose should not contain %q\n%s", unwanted, compose)
+		}
 	}
-	if strings.Contains(compose, "10010:10010") || strings.Contains(compose, "FM_PORT_LDK") {
-		t.Fatalf("LND mode should not expose the LDK lightning port\n%s", compose)
+
+	var parsed map[string]any
+	if err := yaml.Unmarshal([]byte(compose), &parsed); err != nil {
+		t.Fatalf("guardian compose must be valid YAML: %v\n%s", err, compose)
+	}
+}
+
+func TestFedimintGatewayComposeUsesLndIrohAndEsplora(t *testing.T) {
+	paths := fedimintGatewayPaths{
+		DataDir: "/var/lib/lightningos/apps-data/fedimint-gateway/gatewayd",
+	}
+	values := fedimintGatewayRuntimeValues{
+		GatewayPasswordHash: "$2a$10$abcdefghijklmnopqrstuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu",
+		LndRPCAddr:          "https://host.docker.internal:10009",
+		LndTLSCertPath:      "/data/lnd/tls.cert",
+		LndMacaroonPath:     "/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon",
+	}
+
+	compose := fedimintGatewayComposeContents(paths, values)
+
+	for _, want := range []string{
+		"image: fedimint/gatewayd:v0.11.1",
+		"command: gatewayd lnd",
+		"FM_GATEWAY_IROH_LISTEN_ADDR: 0.0.0.0:8177",
+		"FM_ESPLORA_URL: https://mempool.space/api",
+		"FM_LND_RPC_ADDR: https://host.docker.internal:10009",
+		"FM_LND_TLS_CERT: /data/lnd/tls.cert",
+		"FM_LND_MACAROON: /data/lnd/data/chain/bitcoin/mainnet/admin.macaroon",
+		"- /data/lnd:/data/lnd:ro",
+		"- \"8176:8176/tcp\"",
+		"- \"8177:8177/udp\"",
+	} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("gateway compose missing %q\n%s", want, compose)
+		}
+	}
+	for _, unwanted := range []string{
+		"fedimintd",
+		"FM_BITCOIND_URL",
+		"FM_PORT_LDK",
+		"10010:10010",
+	} {
+		if strings.Contains(compose, unwanted) {
+			t.Fatalf("gateway compose should not contain %q\n%s", unwanted, compose)
+		}
 	}
 	if strings.Contains(compose, "%!(") {
-		t.Fatalf("compose has fmt artifact\n%s", compose)
+		t.Fatalf("gateway compose has fmt artifact\n%s", compose)
 	}
 	if !strings.Contains(compose, "FM_GATEWAY_BCRYPT_PASSWORD_HASH: \"$$2a$$10$$") {
 		t.Fatalf("bcrypt hash must escape dollars for compose interpolation\n%s", compose)
@@ -54,26 +95,10 @@ func TestFedimintComposeUsesExistingBitcoinAndLnd(t *testing.T) {
 
 	var parsed map[string]any
 	if err := yaml.Unmarshal([]byte(compose), &parsed); err != nil {
-		t.Fatalf("compose must be valid YAML: %v\n%s", err, compose)
+		t.Fatalf("gateway compose must be valid YAML: %v\n%s", err, compose)
 	}
 	if strings.Contains(compose, "\n/data/lnd/tls.cert\n") {
 		t.Fatalf("compose must not render LND cert path as a standalone YAML line\n%s", compose)
-	}
-}
-
-func TestFedimintComposeOmitsBitcoinCoreNetworkForExternalBitcoin(t *testing.T) {
-	compose := fedimintComposeContents(fedimintPaths{}, fedimintRuntimeValues{
-		BitcoinRPCURL:       "http://host.docker.internal:8332",
-		BitcoinRPCUser:      "bitcoin-user",
-		BitcoinRPCPass:      "bitcoin-pass",
-		GatewayPasswordHash: "$2a$10$abcdefghijklmnopqrstuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu",
-		LndRPCAddr:          "https://host.docker.internal:10009",
-		LndTLSCertPath:      "/data/lnd/tls.cert",
-		LndMacaroonPath:     "/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon",
-	})
-
-	if strings.Contains(compose, "bitcoincore_default") {
-		t.Fatalf("compose should not reference bitcoincore network for external bitcoin\n%s", compose)
 	}
 }
 

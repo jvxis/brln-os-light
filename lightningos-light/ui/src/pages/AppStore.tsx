@@ -64,7 +64,8 @@ const iconMap: Record<string, string> = {
   publicpool: publicPoolIcon,
   electrs: electrsIcon,
   mempool: mempoolIcon,
-  fedimint: fedimintIcon
+  'fedimint-guardian': fedimintIcon,
+  'fedimint-gateway': fedimintIcon
 }
 
 const internalRoutes: Record<string, string> = {
@@ -83,7 +84,9 @@ const statusStyles: Record<string, string> = {
 
 const publicPoolUIPortFallback = 8081
 const publicPoolStratumPort = 3333
-const fedimintGatewayUIPort = 8176
+const fedimintGuardianP2PPort = 8173
+const fedimintGuardianAPIPort = 8174
+const fedimintGatewayIrohPort = 8177
 const APP_STORE_INSTALL_FILTER_KEY = 'app_store_install_filter'
 const bitcoinCoreDefaultDataDir = '/data/bitcoin'
 const elementsDefaultDataDir = '/data/elements'
@@ -442,12 +445,10 @@ export default function AppStore() {
           const openUrl = app.external_url || (app.port ? `http://${host}:${app.port}` : '')
           const publicPoolUrl = openUrl || `http://${host}:${publicPoolUIPortFallback}`
           const publicPoolStratumEndpoint = `${host}:${publicPoolStratumPort}`
-          const fedimintGatewayUrl = `http://${host}:${fedimintGatewayUIPort}`
-          const fedimintGatewayApiUrl = `http://${host}:${fedimintGatewayUIPort}/v1`
           const icon = iconMap[app.id]
           const unavailable = app.available === false
           const unavailableMessage = unavailable ? resolveUnavailableMessage(app) : ''
-          const canCopyAdminPassword = app.id === 'lndg' || app.id === 'fedimint'
+          const canCopyAdminPassword = app.id === 'lndg' || app.id === 'fedimint-gateway'
           return (
             <div key={app.id} className="section-card space-y-4">
               <div className="flex items-start justify-between gap-4">
@@ -470,7 +471,7 @@ export default function AppStore() {
               </div>
 
               <div className="text-xs text-fog/50 space-y-1">
-                {app.port && app.id !== 'fedimint' ? (
+                {app.port ? (
                   <p>{t('appStore.defaultPort', { port: app.port })}</p>
                 ) : internalRoute ? (
                   <p>{t('appStore.defaultAccess', { access: internalRouteLabel })}</p>
@@ -534,11 +535,18 @@ export default function AppStore() {
                     )}
                   </>
                 )}
-                {app.id === 'fedimint' && (
+                {app.id === 'fedimint-guardian' && (
                   <>
                     <p>{t('appStore.fedimintGuardianUiAccess', { url: openUrl })}</p>
-                    <p>{t('appStore.fedimintGatewayUiAccess', { url: fedimintGatewayUrl })}</p>
-                    <p>{t('appStore.fedimintGatewayApiUrl', { url: fedimintGatewayApiUrl })}</p>
+                    <p>{t('appStore.fedimintGuardianP2P', { endpoint: `${host}:${fedimintGuardianP2PPort}` })}</p>
+                    <p>{t('appStore.fedimintGuardianIrohApi', { endpoint: `${host}:${fedimintGuardianAPIPort}/udp` })}</p>
+                  </>
+                )}
+                {app.id === 'fedimint-gateway' && (
+                  <>
+                    <p>{t('appStore.fedimintGatewayUiAccess', { url: openUrl })}</p>
+                    <p>{t('appStore.fedimintGatewayIroh', { endpoint: `${host}:${fedimintGatewayIrohPort}/udp` })}</p>
+                    <p>{t('appStore.fedimintGatewayLndMode')}</p>
                   </>
                 )}
               </div>

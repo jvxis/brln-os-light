@@ -770,7 +770,7 @@ ss -ltn | grep :8443
 - Peerswap instala `peerswapd` + `psweb` (UI em `http://<IP_LAN_DO_SERVIDOR>:1984`) e requer Elements.
 - Elements roda como serviço nativo (Liquid Elements node, RPC em `127.0.0.1:7041`) e pode usar o Bitcoin remoto do clube ou um bitcoind local detectado pelo LND/bitcoin.conf. Na instalação, o Elements pode opcionalmente usar um diretório de dados customizado em um volume já montado; o app não altera esse diretório depois.
 - RoboSats Gateway, Public Pool, Buy DePix e FSwap são gerenciados pelo mesmo fluxo de instalar/iniciar/parar/status da App Store.
-- Fedimint roda `fedimintd` mais `gatewayd lnd`, reaproveitando o Bitcoin RPC configurado e o LND local. Veja o [guia de configuração do Fedimint](27_FEDIMINT_CONFIGURATION_PT_BR.md) ([EN](28_FEDIMINT_CONFIGURATION_EN.md)).
+- Fedimint foi separado em **Fedimint Guardian** (`fedimintd`) e **Fedimint Lightning Gateway** (`gatewayd lnd`). Ambos usam Iroh e `FM_ESPLORA_URL=https://mempool.space/api`; apenas o gateway ajusta acesso ao LND local. Veja o [guia de configuracao do Fedimint](27_FEDIMINT_CONFIGURATION_PT_BR.md) ([EN](28_FEDIMINT_CONFIGURATION_EN.md)).
 
 Notas LNDg:
 - A página de logs do LNDg lê `/var/log/lndg-controller.log` dentro do container. Se estiver vazio, verifique `docker logs lndg-lndg-1`.

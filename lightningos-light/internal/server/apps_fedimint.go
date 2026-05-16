@@ -18,190 +18,353 @@ import (
 )
 
 const (
-	fedimintAppID           = "fedimint"
-	fedimintdImage          = "fedimint/fedimintd:v0.11.1"
-	fedimintGatewayImage    = "fedimint/gatewayd:v0.11.1"
-	fedimintP2PPort         = 8173
-	fedimintAPIPort         = 8174
-	fedimintUIPort          = 8175
-	fedimintGatewayUIPort   = 8176
-	fedimintGatewayIrohPort = 8177
-	fedimintLndTLSCertPath  = "/data/lnd/tls.cert"
-	fedimintNetworkName     = "fedimint_default"
-	fedimintUfwRetries      = 5
+	fedimintLegacyAppID      = "fedimint"
+	fedimintGuardianAppID    = "fedimint-guardian"
+	fedimintGatewayAppID     = "fedimint-gateway"
+	fedimintdImage           = "fedimint/fedimintd:v0.11.1"
+	fedimintGatewayImage     = "fedimint/gatewayd:v0.11.1"
+	fedimintEsploraURL       = "https://mempool.space/api"
+	fedimintP2PPort          = 8173
+	fedimintAPIPort          = 8174
+	fedimintUIPort           = 8175
+	fedimintGatewayUIPort    = 8176
+	fedimintGatewayIrohPort  = 8177
+	fedimintLndTLSCertPath   = "/data/lnd/tls.cert"
+	fedimintGatewayNetwork   = "fedimint-gateway_default"
+	fedimintGuardianNetwork  = "fedimint-guardian_default"
+	fedimintDockerBridgeName = "docker0"
+	fedimintUfwRetries       = 5
 )
 
-type fedimintPaths struct {
+type fedimintGuardianPaths struct {
+	Root        string
+	DataRoot    string
+	DataDir     string
+	ComposePath string
+}
+
+type fedimintGatewayPaths struct {
+	Root              string
+	DataRoot          string
+	DataDir           string
+	ComposePath       string
+	AdminPasswordPath string
+	PasswordHashPath  string
+}
+
+type fedimintLegacyPaths struct {
 	Root                     string
+	DataRoot                 string
 	FedimintDataDir          string
 	GatewayDataDir           string
 	ComposePath              string
-	EnvPath                  string
 	GatewayAdminPasswordPath string
 	GatewayPasswordHashPath  string
 }
 
-type fedimintRuntimeValues struct {
-	BitcoinRPCURL            string
-	BitcoinRPCUser           string
-	BitcoinRPCPass           string
-	UseBitcoinCoreNetwork    bool
-	NeedsLocalRPCBridgeUFW   bool
-	LocalExternalBitcoinPort int
-	GatewayPasswordHash      string
-	LndRPCAddr               string
-	LndTLSCertPath           string
-	LndMacaroonPath          string
+type fedimintGatewayRuntimeValues struct {
+	GatewayPasswordHash string
+	LndRPCAddr          string
+	LndTLSCertPath      string
+	LndMacaroonPath     string
 }
 
-type fedimintApp struct {
+type fedimintGuardianApp struct {
 	server *Server
 }
 
-func newFedimintApp(s *Server) appHandler {
-	return fedimintApp{server: s}
+type fedimintGatewayApp struct {
+	server *Server
 }
 
-func fedimintDefinition() appDefinition {
+func newFedimintGuardianApp(s *Server) appHandler {
+	return fedimintGuardianApp{server: s}
+}
+
+func newFedimintGatewayApp(s *Server) appHandler {
+	return fedimintGatewayApp{server: s}
+}
+
+func fedimintGuardianDefinition() appDefinition {
 	return appDefinition{
-		ID:          fedimintAppID,
-		Name:        "Fedimint",
-		Description: "Run a Fedimint guardian and Lightning gateway using your existing Bitcoin and LND.",
+		ID:          fedimintGuardianAppID,
+		Name:        "Fedimint Guardian",
+		Description: "Run a Fedimint guardian for a solo or multi-guardian federation over Iroh.",
 		Port:        fedimintUIPort,
 	}
 }
 
-func (a fedimintApp) Definition() appDefinition {
-	return fedimintDefinition()
+func fedimintGatewayDefinition() appDefinition {
+	return appDefinition{
+		ID:          fedimintGatewayAppID,
+		Name:        "Fedimint Lightning Gateway",
+		Description: "Connect your local LND to Fedimint federations as an independent Lightning gateway.",
+		Port:        fedimintGatewayUIPort,
+	}
 }
 
-func (a fedimintApp) Info(ctx context.Context) (appInfo, error) {
+func (a fedimintGuardianApp) Definition() appDefinition {
+	return fedimintGuardianDefinition()
+}
+
+func (a fedimintGatewayApp) Definition() appDefinition {
+	return fedimintGatewayDefinition()
+}
+
+func (a fedimintGuardianApp) Info(ctx context.Context) (appInfo, error) {
 	def := a.Definition()
 	info := newAppInfo(def)
-	paths := fedimintAppPaths()
+	paths := fedimintGuardianAppPaths()
 	if !fileExists(paths.ComposePath) {
 		return info, nil
 	}
 	info.Installed = true
-	info.AdminPasswordPath = paths.GatewayAdminPasswordPath
-
-	fedimintdStatus, fedimintdErr := getComposeStatus(ctx, paths.Root, paths.ComposePath, "fedimintd")
-	gatewayStatus, gatewayErr := getComposeStatus(ctx, paths.Root, paths.ComposePath, "gatewayd")
-	if fedimintdErr != nil {
+	status, err := getComposeStatus(ctx, paths.Root, paths.ComposePath, "fedimintd")
+	if err != nil {
 		info.Status = "unknown"
-		return info, fedimintdErr
+		return info, err
 	}
-	if gatewayErr != nil {
-		info.Status = "unknown"
-		return info, gatewayErr
-	}
-	if fedimintdStatus == "running" && gatewayStatus == "running" {
-		info.Status = "running"
-		return info, nil
-	}
-	info.Status = "stopped"
+	info.Status = status
 	return info, nil
 }
 
-func (a fedimintApp) Install(ctx context.Context) error {
-	return a.server.applyFedimint(ctx)
+func (a fedimintGatewayApp) Info(ctx context.Context) (appInfo, error) {
+	def := a.Definition()
+	info := newAppInfo(def)
+	paths := fedimintGatewayAppPaths()
+	if !fileExists(paths.ComposePath) {
+		return info, nil
+	}
+	info.Installed = true
+	info.AdminPasswordPath = paths.AdminPasswordPath
+	status, err := getComposeStatus(ctx, paths.Root, paths.ComposePath, "gatewayd")
+	if err != nil {
+		info.Status = "unknown"
+		return info, err
+	}
+	info.Status = status
+	return info, nil
 }
 
-func (a fedimintApp) Uninstall(ctx context.Context) error {
-	return a.server.uninstallFedimint(ctx)
+func (a fedimintGuardianApp) Install(ctx context.Context) error {
+	return a.server.installFedimintGuardian(ctx)
 }
 
-func (a fedimintApp) Start(ctx context.Context) error {
-	return a.server.applyFedimint(ctx)
+func (a fedimintGatewayApp) Install(ctx context.Context) error {
+	return a.server.installFedimintGateway(ctx)
 }
 
-func (a fedimintApp) Stop(ctx context.Context) error {
-	return a.server.stopFedimint(ctx)
+func (a fedimintGuardianApp) Uninstall(ctx context.Context) error {
+	return a.server.uninstallFedimintGuardian(ctx)
 }
 
-func fedimintAppPaths() fedimintPaths {
-	root := filepath.Join(appsRoot, fedimintAppID)
-	dataRoot := filepath.Join(appsDataRoot, fedimintAppID)
-	return fedimintPaths{
+func (a fedimintGatewayApp) Uninstall(ctx context.Context) error {
+	return a.server.uninstallFedimintGateway(ctx)
+}
+
+func (a fedimintGuardianApp) Start(ctx context.Context) error {
+	return a.server.startFedimintGuardian(ctx)
+}
+
+func (a fedimintGatewayApp) Start(ctx context.Context) error {
+	return a.server.startFedimintGateway(ctx)
+}
+
+func (a fedimintGuardianApp) Stop(ctx context.Context) error {
+	return a.server.stopFedimintGuardian(ctx)
+}
+
+func (a fedimintGatewayApp) Stop(ctx context.Context) error {
+	return a.server.stopFedimintGateway(ctx)
+}
+
+func fedimintGuardianAppPaths() fedimintGuardianPaths {
+	root := filepath.Join(appsRoot, fedimintGuardianAppID)
+	dataRoot := filepath.Join(appsDataRoot, fedimintGuardianAppID)
+	return fedimintGuardianPaths{
+		Root:        root,
+		DataRoot:    dataRoot,
+		DataDir:     filepath.Join(dataRoot, "fedimintd"),
+		ComposePath: filepath.Join(root, "docker-compose.yaml"),
+	}
+}
+
+func fedimintGatewayAppPaths() fedimintGatewayPaths {
+	root := filepath.Join(appsRoot, fedimintGatewayAppID)
+	dataRoot := filepath.Join(appsDataRoot, fedimintGatewayAppID)
+	return fedimintGatewayPaths{
+		Root:              root,
+		DataRoot:          dataRoot,
+		DataDir:           filepath.Join(dataRoot, "gatewayd"),
+		ComposePath:       filepath.Join(root, "docker-compose.yaml"),
+		AdminPasswordPath: filepath.Join(dataRoot, "gateway-admin.txt"),
+		PasswordHashPath:  filepath.Join(dataRoot, "gateway-password-hash.txt"),
+	}
+}
+
+func fedimintLegacyAppPaths() fedimintLegacyPaths {
+	root := filepath.Join(appsRoot, fedimintLegacyAppID)
+	dataRoot := filepath.Join(appsDataRoot, fedimintLegacyAppID)
+	return fedimintLegacyPaths{
 		Root:                     root,
+		DataRoot:                 dataRoot,
 		FedimintDataDir:          filepath.Join(dataRoot, "fedimintd"),
 		GatewayDataDir:           filepath.Join(dataRoot, "gatewayd"),
 		ComposePath:              filepath.Join(root, "docker-compose.yaml"),
-		EnvPath:                  filepath.Join(root, ".env"),
 		GatewayAdminPasswordPath: filepath.Join(dataRoot, "gateway-admin.txt"),
 		GatewayPasswordHashPath:  filepath.Join(dataRoot, "gateway-password-hash.txt"),
 	}
 }
 
-func (s *Server) applyFedimint(ctx context.Context) error {
+func (s *Server) installFedimintGuardian(ctx context.Context) error {
+	return s.startFedimintGuardian(ctx)
+}
+
+func (s *Server) startFedimintGuardian(ctx context.Context) error {
 	if err := ensureDocker(ctx); err != nil {
 		return err
 	}
-	paths := fedimintAppPaths()
-	if err := ensureFedimintPaths(paths); err != nil {
+	if err := stopLegacyFedimintIfPresent(ctx); err != nil {
 		return err
 	}
-	if err := ensureFedimintLndFiles(); err != nil {
+	paths := fedimintGuardianAppPaths()
+	if err := migrateLegacyFedimintGuardian(ctx, paths); err != nil {
 		return err
 	}
-	if err := ensureFedimintImages(ctx); err != nil {
+	if err := ensureFedimintGuardianPaths(paths); err != nil {
 		return err
 	}
-
-	values, err := s.resolveFedimintRuntimeValues(ctx)
-	if err != nil {
+	if err := ensureDockerImage(ctx, fedimintdImage); err != nil {
 		return err
 	}
-	if _, values.GatewayPasswordHash, err = ensureFedimintGatewayCredentials(paths); err != nil {
-		return err
-	}
-
-	if err := ensureFedimintEnv(paths, values); err != nil {
-		return err
-	}
-	if _, err := ensureFileWithChange(paths.ComposePath, fedimintComposeContents(paths, values)); err != nil {
-		return err
-	}
-
-	// Start fedimintd first so Docker creates fedimint_default before we add
-	// the LND listener for this app's bridge. gatewayd starts after LND access
-	// is reconciled.
-	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d", "fedimintd"); err != nil {
-		return err
-	}
-	if err := ensureFedimintLndGrpcAccess(ctx); err != nil {
+	if _, err := ensureFileWithChange(paths.ComposePath, fedimintGuardianComposeContents(paths)); err != nil {
 		return err
 	}
 	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d"); err != nil {
 		return err
 	}
-	if err := ensureFedimintUfwAccess(ctx, values); err != nil && s.logger != nil {
-		s.logger.Printf("fedimint: ufw rule failed: %v", err)
+	if err := ensureFedimintGuardianUfwAccess(ctx); err != nil && s.logger != nil {
+		s.logger.Printf("fedimint guardian: ufw rule failed: %v", err)
 	}
 	return nil
 }
 
-func (s *Server) uninstallFedimint(ctx context.Context) error {
-	paths := fedimintAppPaths()
+func (s *Server) uninstallFedimintGuardian(ctx context.Context) error {
+	paths := fedimintGuardianAppPaths()
 	if fileExists(paths.ComposePath) {
-		_ = runCompose(ctx, paths.Root, paths.ComposePath, "down", "--remove-orphans")
+		_ = runCompose(ctx, paths.Root, paths.ComposePath, "down", "--remove-orphans", "--volumes")
 	}
 	if err := os.RemoveAll(paths.Root); err != nil {
-		return fmt.Errorf("failed to remove app files: %w", err)
+		return fmt.Errorf("failed to remove guardian app files: %w", err)
+	}
+	if err := os.RemoveAll(paths.DataRoot); err != nil {
+		return fmt.Errorf("failed to remove guardian data files: %w", err)
+	}
+	if err := removeDockerImage(ctx, fedimintdImage); err != nil {
+		return err
 	}
 	return nil
 }
 
-func (s *Server) stopFedimint(ctx context.Context) error {
-	paths := fedimintAppPaths()
+func (s *Server) stopFedimintGuardian(ctx context.Context) error {
+	paths := fedimintGuardianAppPaths()
 	if !fileExists(paths.ComposePath) {
-		return errors.New("Fedimint is not installed")
+		return errors.New("Fedimint Guardian is not installed")
 	}
 	return runCompose(ctx, paths.Root, paths.ComposePath, "stop")
 }
 
-func ensureFedimintPaths(paths fedimintPaths) error {
-	for _, dir := range []string{paths.Root, paths.FedimintDataDir, paths.GatewayDataDir, filepath.Dir(paths.GatewayAdminPasswordPath)} {
+func (s *Server) installFedimintGateway(ctx context.Context) error {
+	return s.startFedimintGateway(ctx)
+}
+
+func (s *Server) startFedimintGateway(ctx context.Context) error {
+	if err := ensureDocker(ctx); err != nil {
+		return err
+	}
+	if err := stopLegacyFedimintIfPresent(ctx); err != nil {
+		return err
+	}
+	paths := fedimintGatewayAppPaths()
+	if err := migrateLegacyFedimintGateway(ctx, paths); err != nil {
+		return err
+	}
+	if err := ensureFedimintGatewayPaths(paths); err != nil {
+		return err
+	}
+	if err := ensureFedimintLndFiles(); err != nil {
+		return err
+	}
+	if err := ensureDockerImage(ctx, fedimintGatewayImage); err != nil {
+		return err
+	}
+	_, passwordHash, err := ensureFedimintGatewayCredentials(paths)
+	if err != nil {
+		return err
+	}
+	values := fedimintGatewayRuntimeValues{
+		GatewayPasswordHash: passwordHash,
+		LndRPCAddr:          fedimintLndRPCAddr(s.cfg),
+		LndTLSCertPath:      fedimintLndTLSCertPath,
+		LndMacaroonPath:     lndAdminMacaroonPath,
+	}
+	if _, err := ensureFileWithChange(paths.ComposePath, fedimintGatewayComposeContents(paths, values)); err != nil {
+		return err
+	}
+	if err := ensureFedimintLndGrpcAccess(ctx); err != nil {
+		return err
+	}
+	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "--no-start"); err != nil && s.logger != nil {
+		s.logger.Printf("fedimint gateway: compose up --no-start failed before ufw reconcile: %v", err)
+	}
+	if err := ensureFedimintGatewayUfwAccess(ctx); err != nil && s.logger != nil {
+		s.logger.Printf("fedimint gateway: ufw rule failed: %v", err)
+	}
+	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d"); err != nil {
+		return err
+	}
+	if err := ensureFedimintGatewayUfwAccess(ctx); err != nil && s.logger != nil {
+		s.logger.Printf("fedimint gateway: post-start ufw rule failed: %v", err)
+	}
+	return nil
+}
+
+func (s *Server) uninstallFedimintGateway(ctx context.Context) error {
+	paths := fedimintGatewayAppPaths()
+	if fileExists(paths.ComposePath) {
+		_ = runCompose(ctx, paths.Root, paths.ComposePath, "down", "--remove-orphans", "--volumes")
+	}
+	if err := os.RemoveAll(paths.Root); err != nil {
+		return fmt.Errorf("failed to remove gateway app files: %w", err)
+	}
+	if err := os.RemoveAll(paths.DataRoot); err != nil {
+		return fmt.Errorf("failed to remove gateway data files: %w", err)
+	}
+	if err := removeDockerImage(ctx, fedimintGatewayImage); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Server) stopFedimintGateway(ctx context.Context) error {
+	paths := fedimintGatewayAppPaths()
+	if !fileExists(paths.ComposePath) {
+		return errors.New("Fedimint Lightning Gateway is not installed")
+	}
+	return runCompose(ctx, paths.Root, paths.ComposePath, "stop")
+}
+
+func ensureFedimintGuardianPaths(paths fedimintGuardianPaths) error {
+	for _, dir := range []string{paths.Root, paths.DataDir} {
+		if err := os.MkdirAll(dir, 0750); err != nil {
+			return fmt.Errorf("failed to create %s: %w", dir, err)
+		}
+	}
+	return nil
+}
+
+func ensureFedimintGatewayPaths(paths fedimintGatewayPaths) error {
+	for _, dir := range []string{paths.Root, paths.DataDir, paths.DataRoot} {
 		if err := os.MkdirAll(dir, 0750); err != nil {
 			return fmt.Errorf("failed to create %s: %w", dir, err)
 		}
@@ -219,115 +382,31 @@ func ensureFedimintLndFiles() error {
 	return nil
 }
 
-func ensureFedimintImages(ctx context.Context) error {
-	if err := ensureDockerImage(ctx, fedimintdImage); err != nil {
-		return err
-	}
-	if err := ensureDockerImage(ctx, fedimintGatewayImage); err != nil {
-		return err
-	}
-	return nil
-}
-
-func ensureFedimintGatewayCredentials(paths fedimintPaths) (string, string, error) {
-	password := readSecretFile(paths.GatewayAdminPasswordPath)
+func ensureFedimintGatewayCredentials(paths fedimintGatewayPaths) (string, string, error) {
+	password := readSecretFile(paths.AdminPasswordPath)
 	if password == "" {
 		var err error
 		password, err = randomToken(24)
 		if err != nil {
 			return "", "", fmt.Errorf("failed to generate gateway password: %w", err)
 		}
-		if err := writeFile(paths.GatewayAdminPasswordPath, password+"\n", 0600); err != nil {
+		if err := writeFile(paths.AdminPasswordPath, password+"\n", 0600); err != nil {
 			return "", "", err
 		}
 	}
 
-	hash := readSecretFile(paths.GatewayPasswordHashPath)
+	hash := readSecretFile(paths.PasswordHashPath)
 	if hash == "" {
 		rawHash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		if err != nil {
 			return "", "", fmt.Errorf("failed to hash gateway password: %w", err)
 		}
 		hash = string(rawHash)
-		if err := writeFile(paths.GatewayPasswordHashPath, hash+"\n", 0600); err != nil {
+		if err := writeFile(paths.PasswordHashPath, hash+"\n", 0600); err != nil {
 			return "", "", err
 		}
 	}
 	return password, hash, nil
-}
-
-func (s *Server) resolveFedimintRuntimeValues(ctx context.Context) (fedimintRuntimeValues, error) {
-	values := fedimintRuntimeValues{
-		LndRPCAddr:      fedimintLndRPCAddr(s.cfg),
-		LndTLSCertPath:  fedimintLndTLSCertPath,
-		LndMacaroonPath: lndAdminMacaroonPath,
-	}
-
-	switch readBitcoinSource() {
-	case "local":
-		localCfg, updated, err := readBitcoinLocalRPCConfig(ctx)
-		if err != nil {
-			return fedimintRuntimeValues{}, fmt.Errorf("local bitcoin RPC unavailable: %w", err)
-		}
-		if strings.TrimSpace(localCfg.User) == "" || strings.TrimSpace(localCfg.Pass) == "" {
-			return fedimintRuntimeValues{}, errors.New("local bitcoin RPC credentials missing")
-		}
-		_, port := parseMainchainRPC(localCfg.Host)
-
-		if fileExists(bitcoinCoreAppPaths().ComposePath) {
-			if updated {
-				bitcoinPaths := bitcoinCoreAppPaths()
-				if restartErr := runCompose(ctx, bitcoinPaths.Root, bitcoinPaths.ComposePath, "restart", "bitcoind"); restartErr != nil {
-					return fedimintRuntimeValues{}, fmt.Errorf("failed to restart local bitcoind after RPC allowlist update: %w", restartErr)
-				}
-			}
-			values.BitcoinRPCURL = fedimintHTTPRPCURL("bitcoind", port)
-			values.BitcoinRPCUser = localCfg.User
-			values.BitcoinRPCPass = localCfg.Pass
-			values.UseBitcoinCoreNetwork = true
-			return values, nil
-		}
-
-		values.BitcoinRPCURL = fedimintHTTPRPCURL("host.docker.internal", port)
-		values.BitcoinRPCUser = localCfg.User
-		values.BitcoinRPCPass = localCfg.Pass
-		values.NeedsLocalRPCBridgeUFW = true
-		values.LocalExternalBitcoinPort = port
-		return values, nil
-	case "remote":
-		remoteCfg, err := resolveFedimintRemoteBitcoinRPCConfig(s.cfg)
-		if err != nil {
-			return fedimintRuntimeValues{}, err
-		}
-		host, port := parseMainchainRPC(remoteCfg.Host)
-		values.BitcoinRPCURL = fedimintHTTPRPCURL(host, port)
-		values.BitcoinRPCUser = remoteCfg.User
-		values.BitcoinRPCPass = remoteCfg.Pass
-		return values, nil
-	default:
-		return fedimintRuntimeValues{}, errors.New("bitcoin source is not configured")
-	}
-}
-
-func resolveFedimintRemoteBitcoinRPCConfig(cfg *config.Config) (bitcoinRPCConfig, error) {
-	if remoteCfg, ok := readBitcoinTaggedRPCConfigFromLNDConf("remote"); ok {
-		return remoteCfg, nil
-	}
-	if remoteCfg, ok := readBitcoindRPCConfigFromLNDConf(); ok && !isLocalRPCHost(remoteCfg.Host) {
-		return remoteCfg, nil
-	}
-	if cfg == nil {
-		return bitcoinRPCConfig{}, errors.New("bitcoin remote config unavailable")
-	}
-	user, pass := readBitcoinSecrets()
-	if strings.TrimSpace(user) == "" || strings.TrimSpace(pass) == "" {
-		return bitcoinRPCConfig{}, errors.New("bitcoin remote RPC credentials missing")
-	}
-	return bitcoinRPCConfig{
-		Host: cfg.BitcoinRemote.RPCHost,
-		User: user,
-		Pass: pass,
-	}, nil
 }
 
 func fedimintLndRPCAddr(cfg *config.Config) string {
@@ -339,118 +418,53 @@ func fedimintLndRPCAddr(cfg *config.Config) string {
 	return "https://" + net.JoinHostPort("host.docker.internal", strconv.Itoa(port))
 }
 
-func fedimintHTTPRPCURL(host string, port int) string {
-	trimmed := strings.TrimSpace(host)
-	if trimmed == "" {
-		trimmed = "127.0.0.1"
-	}
-	if port <= 0 {
-		port = 8332
-	}
-	return "http://" + net.JoinHostPort(trimmed, strconv.Itoa(port))
-}
-
-func ensureFedimintEnv(paths fedimintPaths, values fedimintRuntimeValues) error {
-	required := [][2]string{
-		{"FEDIMINT_BITCOIN_RPC_URL", values.BitcoinRPCURL},
-		{"FEDIMINT_BITCOIN_RPC_USER", values.BitcoinRPCUser},
-		{"FEDIMINT_BITCOIN_RPC_PASS", values.BitcoinRPCPass},
-	}
-	if !fileExists(paths.EnvPath) {
-		lines := make([]string, 0, len(required)+1)
-		for _, kv := range required {
-			lines = append(lines, kv[0]+"="+kv[1])
-		}
-		lines = append(lines, "")
-		return writeFile(paths.EnvPath, strings.Join(lines, "\n"), 0600)
-	}
-	for _, kv := range required {
-		exists, value, err := envValueState(paths.EnvPath, kv[0])
-		if err != nil {
-			return err
-		}
-		if !exists {
-			if err := appendEnvLine(paths.EnvPath, kv[0], kv[1]); err != nil {
-				return err
-			}
-			continue
-		}
-		if strings.TrimSpace(value) != kv[1] {
-			if err := setEnvValue(paths.EnvPath, kv[0], kv[1]); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func fedimintComposeContents(paths fedimintPaths, values fedimintRuntimeValues) string {
-	fedimintdNetworks := ""
-	gatewayNetworks := ""
-	extraNetworkDecl := ""
-	if values.UseBitcoinCoreNetwork {
-		fedimintdNetworks = "    networks:\n      - default\n      - bitcoincore\n"
-		gatewayNetworks = "    networks:\n      - default\n      - bitcoincore\n"
-		extraNetworkDecl = "\n  bitcoincore:\n    external: true\n    name: bitcoincore_default\n"
-	}
-
+func fedimintGuardianComposeContents(paths fedimintGuardianPaths) string {
 	return fmt.Sprintf(`services:
   fedimintd:
-    image: %[1]s
+    image: %s
     restart: unless-stopped
-    env_file:
-      - ./.env
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     ports:
-      - "%[6]d:%[6]d/tcp"
-      - "%[6]d:%[6]d/udp"
-      - "%[7]d:%[7]d/udp"
-      - "%[8]d:%[8]d/tcp"
+      - "%d:%d/tcp"
+      - "%d:%d/udp"
+      - "%d:%d/udp"
+      - "%d:%d/tcp"
     volumes:
-      - %[3]s:/data
+      - %s:/data
     environment:
       FM_ENABLE_IROH: "true"
       FM_BITCOIN_NETWORK: bitcoin
-      FM_BITCOIND_URL: ${FEDIMINT_BITCOIN_RPC_URL}
-      FM_BITCOIND_USERNAME: ${FEDIMINT_BITCOIN_RPC_USER}
-      FM_BITCOIND_PASSWORD: ${FEDIMINT_BITCOIN_RPC_PASS}
-      FM_BIND_P2P: 0.0.0.0:%[6]d
-      FM_BIND_API: 0.0.0.0:%[7]d
-      FM_BIND_UI: 0.0.0.0:%[8]d
-%[13]s
+      FM_ESPLORA_URL: %s
+      FM_BIND_P2P: 0.0.0.0:%d
+      FM_BIND_API: 0.0.0.0:%d
+      FM_BIND_UI: 0.0.0.0:%d
+`, fedimintdImage, fedimintP2PPort, fedimintP2PPort, fedimintP2PPort, fedimintP2PPort, fedimintAPIPort, fedimintAPIPort, fedimintUIPort, fedimintUIPort, paths.DataDir, fedimintEsploraURL, fedimintP2PPort, fedimintAPIPort, fedimintUIPort)
+}
+
+func fedimintGatewayComposeContents(paths fedimintGatewayPaths, values fedimintGatewayRuntimeValues) string {
+	return fmt.Sprintf(`services:
   gatewayd:
-    image: %[2]s
+    image: %s
     command: gatewayd lnd
     restart: unless-stopped
-    depends_on:
-      - fedimintd
-    env_file:
-      - ./.env
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "%[9]d:%[9]d/tcp"
-      - "%[10]d:%[10]d/udp"
+      - "%d:%d/tcp"
+      - "%d:%d/udp"
     volumes:
-      - %[4]s:/data
+      - %s:/data
       - /data/lnd:/data/lnd:ro
     environment:
       FM_GATEWAY_DATA_DIR: /data
-      FM_GATEWAY_LISTEN_ADDR: 0.0.0.0:%[9]d
+      FM_GATEWAY_LISTEN_ADDR: 0.0.0.0:%d
       FM_GATEWAY_NETWORK: bitcoin
-      FM_GATEWAY_IROH_LISTEN_ADDR: 0.0.0.0:%[10]d
-      FM_GATEWAY_BCRYPT_PASSWORD_HASH: "%[11]s"
-      FM_BITCOIND_URL: ${FEDIMINT_BITCOIN_RPC_URL}
-      FM_BITCOIND_USERNAME: ${FEDIMINT_BITCOIN_RPC_USER}
-      FM_BITCOIND_PASSWORD: ${FEDIMINT_BITCOIN_RPC_PASS}
-      FM_LND_RPC_ADDR: %[12]s
-      FM_LND_TLS_CERT: %[14]s
-      FM_LND_MACAROON: %[15]s
-%[16]s
-networks:
-  default:
-%[17]s`, fedimintdImage, fedimintGatewayImage, paths.FedimintDataDir, paths.GatewayDataDir, paths.EnvPath, fedimintP2PPort, fedimintAPIPort, fedimintUIPort, fedimintGatewayUIPort, fedimintGatewayIrohPort, escapeComposeDollar(values.GatewayPasswordHash), values.LndRPCAddr, fedimintdNetworks, values.LndTLSCertPath, values.LndMacaroonPath, gatewayNetworks, extraNetworkDecl)
+      FM_GATEWAY_IROH_LISTEN_ADDR: 0.0.0.0:%d
+      FM_GATEWAY_BCRYPT_PASSWORD_HASH: "%s"
+      FM_ESPLORA_URL: %s
+      FM_LND_RPC_ADDR: %s
+      FM_LND_TLS_CERT: %s
+      FM_LND_MACAROON: %s
+`, fedimintGatewayImage, fedimintGatewayUIPort, fedimintGatewayUIPort, fedimintGatewayIrohPort, fedimintGatewayIrohPort, paths.DataDir, fedimintGatewayUIPort, fedimintGatewayIrohPort, escapeComposeDollar(values.GatewayPasswordHash), fedimintEsploraURL, values.LndRPCAddr, values.LndTLSCertPath, values.LndMacaroonPath)
 }
 
 func escapeComposeDollar(value string) string {
@@ -578,19 +592,7 @@ func isStaleDockerGrpcLine(trimmed string, allowedGateways map[string]bool) bool
 	}
 }
 
-func fedimintNetworkGatewayIP(ctx context.Context) (string, error) {
-	out, err := system.RunCommandWithSudo(ctx, "docker", "network", "inspect", fedimintNetworkName, "--format", "{{(index .IPAM.Config 0).Gateway}}")
-	if err != nil {
-		return "", err
-	}
-	ip := strings.TrimSpace(out)
-	if ip == "" || ip == "<no value>" {
-		return "", errors.New("fedimint_default network gateway not found")
-	}
-	return ip, nil
-}
-
-func ensureFedimintUfwAccess(ctx context.Context, values fedimintRuntimeValues) error {
+func ensureFedimintGuardianUfwAccess(ctx context.Context) error {
 	statusOut, err := system.RunCommandWithSudo(ctx, "ufw", "status")
 	if err != nil || !strings.Contains(strings.ToLower(statusOut), "status: active") {
 		return nil
@@ -599,9 +601,25 @@ func ensureFedimintUfwAccess(ctx context.Context, values fedimintRuntimeValues) 
 	var lastErr error
 	for _, rule := range [][3]string{
 		{strconv.Itoa(fedimintP2PPort), "tcp", "guardian p2p tcp"},
-		{strconv.Itoa(fedimintP2PPort), "udp", "guardian p2p udp"},
-		{strconv.Itoa(fedimintAPIPort), "udp", "guardian api udp"},
+		{strconv.Itoa(fedimintP2PPort), "udp", "guardian p2p iroh"},
+		{strconv.Itoa(fedimintAPIPort), "udp", "guardian api iroh"},
 		{strconv.Itoa(fedimintUIPort), "tcp", "guardian ui"},
+	} {
+		if _, err := system.RunCommandWithSudo(ctx, "ufw", "allow", rule[0]+"/"+rule[1]); err != nil {
+			lastErr = fmt.Errorf("%s: %w", rule[2], err)
+		}
+	}
+	return lastErr
+}
+
+func ensureFedimintGatewayUfwAccess(ctx context.Context) error {
+	statusOut, err := system.RunCommandWithSudo(ctx, "ufw", "status")
+	if err != nil || !strings.Contains(strings.ToLower(statusOut), "status: active") {
+		return nil
+	}
+
+	var lastErr error
+	for _, rule := range [][3]string{
 		{strconv.Itoa(fedimintGatewayUIPort), "tcp", "gateway ui"},
 		{strconv.Itoa(fedimintGatewayIrohPort), "udp", "gateway iroh"},
 	} {
@@ -610,22 +628,11 @@ func ensureFedimintUfwAccess(ctx context.Context, values fedimintRuntimeValues) 
 		}
 	}
 
-	bridge, bridgeErr := fedimintBridgeName(ctx)
-	if bridgeErr != nil || bridge == "" {
-		if lastErr != nil {
-			return lastErr
-		}
-		return bridgeErr
-	}
-	if err := allowFedimintBridgePort(ctx, bridge, 10009); err != nil {
+	if err := allowFedimintBridgePort(ctx, fedimintDockerBridgeName, 10009); err != nil {
 		lastErr = err
 	}
-	if values.NeedsLocalRPCBridgeUFW {
-		port := values.LocalExternalBitcoinPort
-		if port <= 0 {
-			port = 8332
-		}
-		if err := allowFedimintBridgePort(ctx, bridge, port); err != nil {
+	if bridge, bridgeErr := fedimintGatewayBridgeName(ctx); bridgeErr == nil && bridge != "" {
+		if err := allowFedimintBridgePort(ctx, bridge, 10009); err != nil {
 			lastErr = err
 		}
 	}
@@ -645,17 +652,119 @@ func allowFedimintBridgePort(ctx context.Context, bridge string, port int) error
 	return fmt.Errorf("failed to apply ufw rule for %s:%d: %w", bridge, port, lastErr)
 }
 
-func fedimintBridgeName(ctx context.Context) (string, error) {
-	out, err := system.RunCommandWithSudo(ctx, "docker", "network", "inspect", fedimintNetworkName, "--format", "{{.Id}}")
+func fedimintGatewayBridgeName(ctx context.Context) (string, error) {
+	return dockerComposeBridgeName(ctx, fedimintGatewayNetwork)
+}
+
+func fedimintGuardianBridgeName(ctx context.Context) (string, error) {
+	return dockerComposeBridgeName(ctx, fedimintGuardianNetwork)
+}
+
+func dockerComposeBridgeName(ctx context.Context, networkName string) (string, error) {
+	out, err := system.RunCommandWithSudo(ctx, "docker", "network", "inspect", networkName, "--format", "{{.Id}}")
 	if err != nil {
 		return "", err
 	}
 	id := strings.TrimSpace(out)
 	if id == "" || id == "<no value>" {
-		return "", errors.New("fedimint_default network id not found")
+		return "", fmt.Errorf("%s network id not found", networkName)
 	}
 	if len(id) > 12 {
 		id = id[:12]
 	}
 	return "br-" + id, nil
+}
+
+func migrateLegacyFedimintGuardian(ctx context.Context, paths fedimintGuardianPaths) error {
+	legacy := fedimintLegacyAppPaths()
+	if !dirExists(legacy.FedimintDataDir) || dirExists(paths.DataDir) {
+		return nil
+	}
+	if err := stopLegacyFedimint(ctx, legacy); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(paths.DataRoot, 0750); err != nil {
+		return fmt.Errorf("failed to create guardian data root: %w", err)
+	}
+	if err := os.Rename(legacy.FedimintDataDir, paths.DataDir); err != nil {
+		return fmt.Errorf("failed to migrate legacy guardian data: %w", err)
+	}
+	cleanupLegacyFedimintDirs(legacy)
+	return nil
+}
+
+func migrateLegacyFedimintGateway(ctx context.Context, paths fedimintGatewayPaths) error {
+	legacy := fedimintLegacyAppPaths()
+	hasLegacyGatewayData := dirExists(legacy.GatewayDataDir)
+	hasLegacyGatewaySecret := fileExists(legacy.GatewayAdminPasswordPath) || fileExists(legacy.GatewayPasswordHashPath)
+	if (!hasLegacyGatewayData && !hasLegacyGatewaySecret) || dirExists(paths.DataDir) {
+		return nil
+	}
+	if err := stopLegacyFedimint(ctx, legacy); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(paths.DataRoot, 0750); err != nil {
+		return fmt.Errorf("failed to create gateway data root: %w", err)
+	}
+	if hasLegacyGatewayData {
+		if err := os.Rename(legacy.GatewayDataDir, paths.DataDir); err != nil {
+			return fmt.Errorf("failed to migrate legacy gateway data: %w", err)
+		}
+	}
+	if fileExists(legacy.GatewayAdminPasswordPath) && !fileExists(paths.AdminPasswordPath) {
+		if err := os.Rename(legacy.GatewayAdminPasswordPath, paths.AdminPasswordPath); err != nil {
+			return fmt.Errorf("failed to migrate legacy gateway admin password: %w", err)
+		}
+	}
+	if fileExists(legacy.GatewayPasswordHashPath) && !fileExists(paths.PasswordHashPath) {
+		if err := os.Rename(legacy.GatewayPasswordHashPath, paths.PasswordHashPath); err != nil {
+			return fmt.Errorf("failed to migrate legacy gateway password hash: %w", err)
+		}
+	}
+	cleanupLegacyFedimintDirs(legacy)
+	return nil
+}
+
+func stopLegacyFedimint(ctx context.Context, legacy fedimintLegacyPaths) error {
+	if fileExists(legacy.ComposePath) {
+		if err := runCompose(ctx, legacy.Root, legacy.ComposePath, "down", "--remove-orphans"); err != nil {
+			return fmt.Errorf("failed to stop legacy Fedimint app: %w", err)
+		}
+	}
+	if err := os.RemoveAll(legacy.Root); err != nil {
+		return fmt.Errorf("failed to remove legacy Fedimint app files: %w", err)
+	}
+	return nil
+}
+
+func stopLegacyFedimintIfPresent(ctx context.Context) error {
+	legacy := fedimintLegacyAppPaths()
+	if !fileExists(legacy.ComposePath) {
+		return nil
+	}
+	return stopLegacyFedimint(ctx, legacy)
+}
+
+func cleanupLegacyFedimintDirs(legacy fedimintLegacyPaths) {
+	_ = os.Remove(legacy.DataRoot)
+}
+
+func removeDockerImage(ctx context.Context, image string) error {
+	out, err := system.RunCommandWithSudo(ctx, "docker", "image", "rm", "-f", image)
+	if err == nil {
+		return nil
+	}
+	msg := strings.TrimSpace(out)
+	if msg == "" {
+		msg = err.Error()
+	}
+	if strings.Contains(strings.ToLower(msg), "no such image") {
+		return nil
+	}
+	return fmt.Errorf("failed to remove docker image %s: %s", image, msg)
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }

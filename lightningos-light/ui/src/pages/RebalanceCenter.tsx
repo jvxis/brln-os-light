@@ -150,6 +150,7 @@ export default function RebalanceCenter() {
   const channelStateVersionRef = useRef(0)
 
   const formatSats = (value: number) => `${formatter.format(Math.round(value))} sats`
+  const formatPpm = (value: number) => `${formatter.format(Math.round(value))} ppm`
   const formatPct = (value: number) => `${pctFormatter.format(value)}%`
   const formatEconRatio = (value: number) => econRatioFormatter.format(Math.round(value * 100) / 100)
   const formatRoi = (value: number) => (value > 0 && value < 0.01 ? '<0.01' : roiFormatter.format(value))
@@ -1534,6 +1535,34 @@ export default function RebalanceCenter() {
               })}
             </p>
             <p className="text-xs text-fog/50">{t('rebalanceCenter.overview.roi', { value: overview.roi_7d.toFixed(2) })}</p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div className="rounded-xl border border-cyan-300/10 bg-cyan-300/5 p-2.5 space-y-1">
+                <p className="text-[10px] uppercase tracking-wide text-fog/60">{t('rebalanceCenter.overview.autopilotRebalanceCostPpm')}</p>
+                <p className="text-sm font-semibold text-fog">{formatPpm(overview.sovereign_rebalance_cost_7d_ppm ?? 0)}</p>
+                <p className="text-xs text-fog/50">
+                  {t('rebalanceCenter.overview.autopilotRebalanceCost', {
+                    cost: formatSats(overview.sovereign_rebalance_cost_7d_sat ?? 0),
+                    amount: formatSats(overview.sovereign_rebalance_amount_7d_sat ?? 0)
+                  })}
+                </p>
+              </div>
+              <div className="rounded-xl border border-emerald-300/10 bg-emerald-300/5 p-2.5 space-y-1">
+                <p className="text-[10px] uppercase tracking-wide text-fog/60">{t('rebalanceCenter.overview.autopilotForwardFeePpm')}</p>
+                <p className="text-sm font-semibold text-fog">{formatPpm(overview.sovereign_forward_fee_7d_ppm ?? 0)}</p>
+                <p className="text-xs text-fog/50">
+                  {t('rebalanceCenter.overview.autopilotForwardFee', {
+                    fee: formatSats(overview.sovereign_forward_fee_7d_sat ?? 0),
+                    amount: formatSats(overview.sovereign_forward_amount_7d_sat ?? 0)
+                  })}
+                </p>
+              </div>
+            </div>
+            <p className="text-xs text-fog/50">
+              {t('rebalanceCenter.overview.autopilotRealized7d', {
+                net: formatSats(overview.sovereign_realized_net_7d_sat ?? 0),
+                sellthrough: formatPct((overview.sovereign_sellthrough_7d ?? 0) * 100)
+              })}
+            </p>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <div className="rounded-xl border border-white/10 bg-white/5 p-2.5 space-y-1">
                 <p className="text-[10px] uppercase tracking-wide text-fog/60">{t('rebalanceCenter.overview.paybackGroupRebalanced')}</p>

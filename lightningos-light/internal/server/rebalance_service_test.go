@@ -2121,6 +2121,96 @@ func TestSovereignUnsoldPaidLiquiditySoftPenaltyAfterHardWindow(t *testing.T) {
 	}
 }
 
+func TestSovereignRealizedEconomicsScoreMultiplierRewardsAndPenalizes(t *testing.T) {
+	good := rebalanceTargetPairStats{
+		RecentSentJobs:         3,
+		RecentSentSat:          3_000_000,
+		RecentRebalanceFeeSat:  900,
+		RecentForwardAmountSat: 2_400_000,
+		RecentForwardFeeSat:    1_200,
+		RecentRealizedNetSat:   300,
+	}
+	if got := sovereignRealizedEconomicsScoreMultiplier(good); got <= 1 {
+		t.Fatalf("expected profitable sell-through to boost score, got %f", got)
+	}
+
+	poor := rebalanceTargetPairStats{
+		RecentSentJobs:         3,
+		RecentSentSat:          3_000_000,
+		RecentRebalanceFeeSat:  900,
+		RecentForwardAmountSat: 90_000,
+		RecentForwardFeeSat:    50,
+		RecentRealizedNetSat:   -850,
+	}
+	if got := sovereignRealizedEconomicsScoreMultiplier(poor); got >= 1 {
+		t.Fatalf("expected poor sell-through/payback to penalize score, got %f", got)
+	}
+
+	sparsePoor := poor
+	sparsePoor.RecentSentJobs = 1
+	if got := sovereignRealizedEconomicsScoreMultiplier(sparsePoor); got <= sovereignRealizedEconomicsScoreMultiplier(poor) {
+		t.Fatalf("expected sparse evidence to be penalized less aggressively, got %f", got)
+	}
+}
+
+func TestApplySovereignRiskAdjustedScoresUsesRealizedEconomics(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	now := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
+	candidates := []rebalanceTarget{
+		{
+			Channel:          RebalanceChannel{ChannelID: 1, PeerAlias: "good"},
+			ExpectedGainSat:  1_000,
+			EstimatedCostSat: 200,
+			BudgetCostSat:    200,
+			ExpectedROI:      5,
+			ExpectedROIValid: true,
+			Score:            800,
+			PairStats: rebalanceTargetPairStats{
+				RecentStatsLoaded:      true,
+				RecentAttempts:         3,
+				RecentSuccesses:        3,
+				RecentSentJobs:         3,
+				RecentSentSat:          3_000_000,
+				RecentRebalanceFeeSat:  900,
+				RecentForwardAmountSat: 3_000_000,
+				RecentForwardFeeSat:    1_200,
+				RecentRealizedNetSat:   300,
+			},
+		},
+		{
+			Channel:          RebalanceChannel{ChannelID: 2, PeerAlias: "poor"},
+			ExpectedGainSat:  1_000,
+			EstimatedCostSat: 200,
+			BudgetCostSat:    200,
+			ExpectedROI:      5,
+			ExpectedROIValid: true,
+			Score:            800,
+			PairStats: rebalanceTargetPairStats{
+				RecentStatsLoaded:      true,
+				RecentAttempts:         3,
+				RecentSuccesses:        3,
+				RecentSentJobs:         3,
+				RecentSentSat:          3_000_000,
+				RecentRebalanceFeeSat:  900,
+				RecentForwardAmountSat: 0,
+				RecentForwardFeeSat:    0,
+				RecentRealizedNetSat:   -900,
+			},
+		},
+	}
+
+	applySovereignRiskAdjustedScores(candidates, cfg, now)
+	if candidates[0].RealizedEconomicsMultiplier <= 1 {
+		t.Fatalf("expected good realized economics multiplier > 1, got %f", candidates[0].RealizedEconomicsMultiplier)
+	}
+	if candidates[1].RealizedEconomicsMultiplier >= 1 {
+		t.Fatalf("expected poor realized economics multiplier < 1, got %f", candidates[1].RealizedEconomicsMultiplier)
+	}
+	if candidates[0].Score <= candidates[1].Score {
+		t.Fatalf("expected realized economics to rank good above poor, got good=%d poor=%d", candidates[0].Score, candidates[1].Score)
+	}
+}
+
 func TestAttributedForwardEconomicsCapsForwardProfitToSentAmount(t *testing.T) {
 	amount, fee, net := attributedForwardEconomics(100_000, 50, 1_000_000, 500)
 	if amount != 100_000 {

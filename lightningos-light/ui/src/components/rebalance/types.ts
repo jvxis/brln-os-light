@@ -86,10 +86,15 @@ export type RebalanceSovereignDecision = {
   recent_rebalance_target_sat?: number
   recent_forwarded_after_sat?: number
   recent_forward_fee_after_sat?: number
+  recent_realized_sent_sat?: number
+  recent_realized_forward_sat?: number
+  recent_realized_fee_sat?: number
+  recent_realized_net_sat?: number
   success_multiplier?: number
   roi_multiplier?: number
   budget_efficiency_multiplier?: number
   unsold_liquidity_multiplier?: number
+  realized_economics_multiplier?: number
 }
 
 export type RebalanceSovereignHistory = {
@@ -159,6 +164,14 @@ export type RebalanceOverview = {
   jobs_without_attempt_7d?: number
   jobs_without_attempt_rate_7d?: number
   roi_7d: number
+  sovereign_rebalance_amount_7d_sat?: number
+  sovereign_rebalance_cost_7d_sat?: number
+  sovereign_rebalance_cost_7d_ppm?: number
+  sovereign_forward_amount_7d_sat?: number
+  sovereign_forward_fee_7d_sat?: number
+  sovereign_forward_fee_7d_ppm?: number
+  sovereign_realized_net_7d_sat?: number
+  sovereign_sellthrough_7d?: number
   attempts_24h?: number
   failed_attempts_24h?: number
   attempt_success_rate_24h?: number

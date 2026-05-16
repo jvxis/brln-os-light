@@ -42,6 +42,7 @@ func TestBuildAndOrderRebalanceCandidatesGolden(t *testing.T) {
 	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
 	cfg := defaultRebalanceConfig()
 	cfg.AutoEnabled = true
+	cfg.GainModelVersion = 1
 	cfg.ROIMin = 0.8
 	cfg.ScanIntervalSec = 15 * 60
 	cfg.MinSplitEnabled = true

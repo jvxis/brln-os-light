@@ -197,12 +197,12 @@ const (
 
 const (
 	sovereignLowSuccessMinAttempts             = 100
-	sovereignLowSuccessRate                    = 0.02
+	sovereignLowSuccessRate                    = 0.01
 	sovereignLowSuccessVeryWeakRate            = 0.005
 	sovereignLowSuccessWeakRate                = 0.01
 	sovereignLowSuccessVeryWeakProfitCostRatio = 3.0
 	sovereignLowSuccessWeakProfitCostRatio     = 1.5
-	sovereignLowSuccessProfitCostRatio         = 1.20
+	sovereignLowSuccessProfitCostRatio         = 1.10
 	// Lifetime empirically-dead guards are only a fallback when recent job
 	// stats were not loaded. Sovereign scans prefer the 7d job window below
 	// so old cumulative pair stats do not permanently ban a recovered target.
@@ -215,11 +215,11 @@ const (
 	sovereignRecentEmpiricalDeadFirst            = 2 * time.Hour
 	sovereignRecentEmpiricalDeadRepeat           = 6 * time.Hour
 	sovereignLowSuccessOpportunityReason         = "low_success_opportunity_below_floor"
-	sovereignBudgetEfficiencyProfitCostRatio     = 0.50
+	sovereignBudgetEfficiencyProfitCostRatio     = 0.20
 	sovereignBudgetEfficiencyHighSuccessRate     = 0.05
 	sovereignBudgetEfficiencyOpportunityReason   = "budget_efficiency_below_floor"
-	sovereignRiskScoreFloor                      = 0.02
-	sovereignRouteDeadSourceShare                = 0.20
+	sovereignRiskScoreFloor                      = 0.03
+	sovereignRouteDeadSourceShare                = 0.10
 	sovereignRouteDeadMediumSourceShare          = 0.35
 	sovereignRouteDeadHighSourceShare            = 0.50
 	sovereignRouteDeadSevereSourceShare          = 0.65
@@ -976,30 +976,30 @@ func defaultRebalanceConfig() RebalanceConfig {
 		AutoEnabled:                           false,
 		SchedulerMode:                         rebalanceSchedulerModeRulesAuto,
 		SovereignCandidateScope:               rebalanceSovereignScopeAutoAndManualRestart,
-		SovereignMaxJobsPerCycle:              2,
-		SovereignMinExpectedProfitSat:         0,
+		SovereignMaxJobsPerCycle:              4,
+		SovereignMinExpectedProfitSat:         10,
 		SovereignLowSuccessMinRate:            sovereignLowSuccessRate,
 		SovereignLowSuccessMinProfitCostRatio: sovereignLowSuccessProfitCostRatio,
 		SovereignBudgetEfficiencyMinRatio:     sovereignBudgetEfficiencyProfitCostRatio,
 		SovereignRouteDeadSourceShare:         sovereignRouteDeadSourceShare,
 		SovereignRiskScoreFloor:               sovereignRiskScoreFloor,
 		ScanIntervalSec:                       900,
-		DeadbandPct:                           5,
-		SourceMinLocalPct:                     35,
+		DeadbandPct:                           3,
+		SourceMinLocalPct:                     15,
 		EconRatio:                             0.6,
 		EconRatioMaxPpm:                       0,
 		FeeLimitPpm:                           0,
 		LostProfit:                            false,
 		FailTolerancePpm:                      500,
 		ROIMin:                                1.1,
-		DailyBudgetPct:                        25,
+		DailyBudgetPct:                        30,
 		BudgetMode:                            rebalanceBudgetModeHybridRevenue,
 		BudgetUnlimited:                       false,
 		BudgetAutoOnly:                        true,
 		ManualReserveEnabled:                  false,
 		ManualReserveMode:                     rebalanceManualReserveModeFixedSat,
 		ManualReserveValue:                    0,
-		MaxConcurrent:                         2,
+		MaxConcurrent:                         4,
 		MinAmountSat:                          50000,
 		MaxAmountSat:                          0,
 		MinSplitEnabled:                       true,
@@ -1012,9 +1012,9 @@ func defaultRebalanceConfig() RebalanceConfig {
 		MppRoundTimeoutSec:                    35,
 		MppAutoOnly:                           true,
 		FeeLadderSteps:                        1,
-		AmountProbeSteps:                      6,
+		AmountProbeSteps:                      8,
 		AmountProbeAdaptive:                   true,
-		AttemptTimeoutSec:                     45,
+		AttemptTimeoutSec:                     60,
 		RebalanceTimeoutSec:                   600,
 		ManualRestartWatch:                    false,
 		CooldownProbeEnabled:                  false,
@@ -1027,10 +1027,10 @@ func defaultRebalanceConfig() RebalanceConfig {
 		CriticalMinSources:                    2,
 		CriticalMinAvailableSats:              0,
 		CriticalCycles:                        3,
-		RebalanceCostFloorPpm:                 250,
+		RebalanceCostFloorPpm:                 150,
 		SourceMinPaybackProgress:              0.95,
 		MissionControlReinforce:               false,
-		GainModelVersion:                      1,
+		GainModelVersion:                      2,
 		VelocityWeight:                        0.7,
 		AutofeeSettlingWindowSec:              7200,
 		AutofeeSettlingMultiplier:             0.5,

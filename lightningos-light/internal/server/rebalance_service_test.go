@@ -31,38 +31,38 @@ func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	if cfg.SovereignCandidateScope != rebalanceSovereignScopeAutoAndManualRestart {
 		t.Fatalf("expected sovereign_candidate_scope default=%s, got %s", rebalanceSovereignScopeAutoAndManualRestart, cfg.SovereignCandidateScope)
 	}
-	if cfg.SovereignMaxJobsPerCycle != 2 {
-		t.Fatalf("expected sovereign_max_jobs_per_cycle default=2, got %d", cfg.SovereignMaxJobsPerCycle)
+	if cfg.SovereignMaxJobsPerCycle != 4 {
+		t.Fatalf("expected sovereign_max_jobs_per_cycle default=4, got %d", cfg.SovereignMaxJobsPerCycle)
 	}
-	if cfg.SovereignMinExpectedProfitSat != 0 {
-		t.Fatalf("expected sovereign_min_expected_profit_sat default=0, got %d", cfg.SovereignMinExpectedProfitSat)
+	if cfg.SovereignMinExpectedProfitSat != 10 {
+		t.Fatalf("expected sovereign_min_expected_profit_sat default=10, got %d", cfg.SovereignMinExpectedProfitSat)
 	}
-	if cfg.SovereignLowSuccessMinRate != 0.02 {
-		t.Fatalf("expected sovereign_low_success_min_rate default=0.02, got %f", cfg.SovereignLowSuccessMinRate)
+	if cfg.SovereignLowSuccessMinRate != 0.01 {
+		t.Fatalf("expected sovereign_low_success_min_rate default=0.01, got %f", cfg.SovereignLowSuccessMinRate)
 	}
-	if cfg.SovereignLowSuccessMinProfitCostRatio != 1.2 {
-		t.Fatalf("expected sovereign_low_success_min_profit_cost_ratio default=1.2, got %f", cfg.SovereignLowSuccessMinProfitCostRatio)
+	if cfg.SovereignLowSuccessMinProfitCostRatio != 1.1 {
+		t.Fatalf("expected sovereign_low_success_min_profit_cost_ratio default=1.1, got %f", cfg.SovereignLowSuccessMinProfitCostRatio)
 	}
-	if cfg.SovereignBudgetEfficiencyMinRatio != 0.5 {
-		t.Fatalf("expected sovereign_budget_efficiency_min_ratio default=0.5, got %f", cfg.SovereignBudgetEfficiencyMinRatio)
+	if cfg.SovereignBudgetEfficiencyMinRatio != 0.2 {
+		t.Fatalf("expected sovereign_budget_efficiency_min_ratio default=0.2, got %f", cfg.SovereignBudgetEfficiencyMinRatio)
 	}
-	if cfg.SovereignRouteDeadSourceShare != 0.2 {
-		t.Fatalf("expected sovereign_route_dead_source_share default=0.2, got %f", cfg.SovereignRouteDeadSourceShare)
+	if cfg.SovereignRouteDeadSourceShare != 0.1 {
+		t.Fatalf("expected sovereign_route_dead_source_share default=0.1, got %f", cfg.SovereignRouteDeadSourceShare)
 	}
-	if cfg.SovereignRiskScoreFloor != 0.02 {
-		t.Fatalf("expected sovereign_risk_score_floor default=0.02, got %f", cfg.SovereignRiskScoreFloor)
+	if cfg.SovereignRiskScoreFloor != 0.03 {
+		t.Fatalf("expected sovereign_risk_score_floor default=0.03, got %f", cfg.SovereignRiskScoreFloor)
 	}
 	if cfg.ScanIntervalSec != 900 {
 		t.Fatalf("expected scan_interval_sec default=900, got %d", cfg.ScanIntervalSec)
 	}
-	if cfg.DeadbandPct != 5 {
-		t.Fatalf("expected deadband default=5, got %f", cfg.DeadbandPct)
+	if cfg.DeadbandPct != 3 {
+		t.Fatalf("expected deadband default=3, got %f", cfg.DeadbandPct)
 	}
-	if cfg.SourceMinLocalPct != 35 {
-		t.Fatalf("expected source_min_local_pct default=35, got %f", cfg.SourceMinLocalPct)
+	if cfg.SourceMinLocalPct != 15 {
+		t.Fatalf("expected source_min_local_pct default=15, got %f", cfg.SourceMinLocalPct)
 	}
-	if cfg.DailyBudgetPct != 25 {
-		t.Fatalf("expected daily_budget_pct default=25, got %f", cfg.DailyBudgetPct)
+	if cfg.DailyBudgetPct != 30 {
+		t.Fatalf("expected daily_budget_pct default=30, got %f", cfg.DailyBudgetPct)
 	}
 	if cfg.BudgetMode != rebalanceBudgetModeHybridRevenue {
 		t.Fatalf("expected budget_mode default=%s, got %s", rebalanceBudgetModeHybridRevenue, cfg.BudgetMode)
@@ -72,6 +72,9 @@ func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	}
 	if !cfg.BudgetAutoOnly {
 		t.Fatalf("expected budget_auto_only default=true")
+	}
+	if cfg.MaxConcurrent != 4 {
+		t.Fatalf("expected max_concurrent default=4, got %d", cfg.MaxConcurrent)
 	}
 	if cfg.MinAmountSat != 50000 {
 		t.Fatalf("expected min_amount_sat default=50000, got %d", cfg.MinAmountSat)
@@ -112,23 +115,23 @@ func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	if cfg.FeeLadderSteps != 1 {
 		t.Fatalf("expected fee_ladder_steps default=1, got %d", cfg.FeeLadderSteps)
 	}
-	if cfg.AmountProbeSteps != 6 {
-		t.Fatalf("expected amount_probe_steps default=6, got %d", cfg.AmountProbeSteps)
+	if cfg.AmountProbeSteps != 8 {
+		t.Fatalf("expected amount_probe_steps default=8, got %d", cfg.AmountProbeSteps)
 	}
-	if cfg.AttemptTimeoutSec != 45 {
-		t.Fatalf("expected attempt_timeout_sec default=45, got %d", cfg.AttemptTimeoutSec)
+	if cfg.AttemptTimeoutSec != 60 {
+		t.Fatalf("expected attempt_timeout_sec default=60, got %d", cfg.AttemptTimeoutSec)
 	}
 	if cfg.UnlockDays != 7 {
 		t.Fatalf("expected unlock_days default=7, got %d", cfg.UnlockDays)
 	}
-	if cfg.RebalanceCostFloorPpm != 250 {
-		t.Fatalf("expected rebalance_cost_floor_ppm default=250, got %d", cfg.RebalanceCostFloorPpm)
+	if cfg.RebalanceCostFloorPpm != 150 {
+		t.Fatalf("expected rebalance_cost_floor_ppm default=150, got %d", cfg.RebalanceCostFloorPpm)
 	}
 	if cfg.SourceMinPaybackProgress != 0.95 {
 		t.Fatalf("expected source_min_payback_progress default=0.95, got %f", cfg.SourceMinPaybackProgress)
 	}
-	if cfg.GainModelVersion != 1 {
-		t.Fatalf("expected gain_model_version default=1, got %d", cfg.GainModelVersion)
+	if cfg.GainModelVersion != 2 {
+		t.Fatalf("expected gain_model_version default=2, got %d", cfg.GainModelVersion)
 	}
 	if cfg.VelocityWeight != 0.7 {
 		t.Fatalf("expected velocity_weight default=0.7, got %f", cfg.VelocityWeight)
@@ -319,8 +322,8 @@ func TestNormalizeRebalanceConfigClampsGainModelAndVelocityWeight(t *testing.T) 
 	cfg.GainModelVersion = -1
 	cfg.VelocityWeight = -0.1
 	got = normalizeRebalanceConfig(cfg)
-	if got.GainModelVersion != 1 {
-		t.Fatalf("expected GainModelVersion fallback to 1, got %d", got.GainModelVersion)
+	if got.GainModelVersion != 2 {
+		t.Fatalf("expected GainModelVersion fallback to 2, got %d", got.GainModelVersion)
 	}
 	if got.VelocityWeight != 0 {
 		t.Fatalf("expected VelocityWeight clamped to 0, got %f", got.VelocityWeight)
@@ -1708,7 +1711,7 @@ func TestExecuteSovereignAutopilotStillSkipsBudgetInefficientLowSuccessCandidate
 		Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "budget-inefficient-low-success:0", PeerAlias: "budget-inefficient-low-success", TargetAmountSat: 1_914_409},
 		ExpectedGainSat:  5_870,
 		EstimatedCostSat: 288,
-		BudgetCostSat:    20_000,
+		BudgetCostSat:    40_000,
 		Score:            5_582,
 		PairStats: rebalanceTargetPairStats{
 			Attempts:  143_853,
@@ -1812,7 +1815,7 @@ func TestExecuteSovereignAutopilotSkipsBudgetInefficientModerateSuccess(t *testi
 			Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "budget-heavy:0", PeerAlias: "budget-heavy", TargetAmountSat: 1_216_284},
 			ExpectedGainSat:  1_447,
 			EstimatedCostSat: 1_081,
-			BudgetCostSat:    1_158,
+			BudgetCostSat:    2_500,
 			Score:            366,
 			PairStats: rebalanceTargetPairStats{
 				Attempts:  100_000,

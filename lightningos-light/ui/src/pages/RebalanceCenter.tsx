@@ -34,19 +34,21 @@ import { getLocale } from '../i18n'
 const REBALANCE_DEFAULT_MIN_PROBE_SAT = 5000
 const REBALANCE_DEFAULT_MIN_EXECUTE_SAT = 10000
 const REBALANCE_DEFAULT_BUDGET_MODE = 'hybrid_revenue'
-const REBALANCE_DEFAULT_GAIN_MODEL_VERSION = 1
+const REBALANCE_DEFAULT_GAIN_MODEL_VERSION = 2
 const REBALANCE_DEFAULT_VELOCITY_WEIGHT = 0.7
 const REBALANCE_DEFAULT_AUTOFEE_SETTLING_WINDOW_SEC = 7200
 const REBALANCE_DEFAULT_AUTOFEE_SETTLING_MULTIPLIER = 0.5
 const REBALANCE_DEFAULT_FRESH_LOCK_HOURS = 6
+const REBALANCE_DEFAULT_AMOUNT_PROBE_STEPS = 8
+const REBALANCE_DEFAULT_ATTEMPT_TIMEOUT_SEC = 60
 const REBALANCE_DEFAULT_SCHEDULER_MODE = 'rules_auto'
 const REBALANCE_DEFAULT_SOVEREIGN_SCOPE = 'auto_and_manual_restart'
-const REBALANCE_DEFAULT_SOVEREIGN_MAX_JOBS = 2
-const REBALANCE_DEFAULT_SOVEREIGN_LOW_SUCCESS_MIN_RATE = 0.02
-const REBALANCE_DEFAULT_SOVEREIGN_LOW_SUCCESS_MIN_PROFIT_COST_RATIO = 1.2
-const REBALANCE_DEFAULT_SOVEREIGN_BUDGET_EFFICIENCY_MIN_RATIO = 0.5
-const REBALANCE_DEFAULT_SOVEREIGN_ROUTE_DEAD_SOURCE_SHARE = 0.2
-const REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR = 0.02
+const REBALANCE_DEFAULT_SOVEREIGN_MAX_JOBS = 4
+const REBALANCE_DEFAULT_SOVEREIGN_LOW_SUCCESS_MIN_RATE = 0.01
+const REBALANCE_DEFAULT_SOVEREIGN_LOW_SUCCESS_MIN_PROFIT_COST_RATIO = 1.1
+const REBALANCE_DEFAULT_SOVEREIGN_BUDGET_EFFICIENCY_MIN_RATIO = 0.2
+const REBALANCE_DEFAULT_SOVEREIGN_ROUTE_DEAD_SOURCE_SHARE = 0.1
+const REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR = 0.03
 const MSPR_DEFAULT_MAX_SHARDS = 6
 const MSPR_MAX_SHARDS_LIMIT = 20
 const MSPR_DEFAULT_PARALLELISM = 3
@@ -182,9 +184,9 @@ export default function RebalanceCenter() {
     manual_reserve_enabled: raw.manual_reserve_enabled ?? false,
     manual_reserve_mode: raw.manual_reserve_mode || 'fixed_sat',
     manual_reserve_value: raw.manual_reserve_value ?? 0,
-    amount_probe_steps: raw.amount_probe_steps || 4,
+    amount_probe_steps: raw.amount_probe_steps || REBALANCE_DEFAULT_AMOUNT_PROBE_STEPS,
     amount_probe_adaptive: raw.amount_probe_adaptive ?? true,
-    attempt_timeout_sec: raw.attempt_timeout_sec || 20,
+    attempt_timeout_sec: raw.attempt_timeout_sec || REBALANCE_DEFAULT_ATTEMPT_TIMEOUT_SEC,
     rebalance_timeout_sec: raw.rebalance_timeout_sec || 600,
     manual_restart_watch: raw.manual_restart_watch ?? false,
     cooldown_probe_enabled: raw.cooldown_probe_enabled ?? false,

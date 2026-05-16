@@ -14,13 +14,14 @@ import (
 )
 
 const (
-	peerswapAppID       = "peerswap"
-	peerswapVersion     = "version_5_0"
-	peerswapUser        = "losop"
-	peerswapServiceName = "lightningos-peerswapd"
-	pswebServiceName    = "lightningos-psweb"
-	pswebPort           = 1984
-	peerswapAssetsArch  = "amd64"
+	peerswapAppID         = "peerswap"
+	peerswapAssetsVersion = "version_5_0"
+	peerswapBundleVersion = "version_5_0_psweb_5_0_4"
+	peerswapUser          = "losop"
+	peerswapServiceName   = "lightningos-peerswapd"
+	pswebServiceName      = "lightningos-psweb"
+	pswebPort             = 1984
+	peerswapAssetsArch    = "amd64"
 )
 
 type peerswapPaths struct {
@@ -163,6 +164,9 @@ func (s *Server) startPeerswap(ctx context.Context) error {
 	if err := ensurePeerswapConfigDir(ctx, paths); err != nil {
 		return err
 	}
+	if err := ensurePeerswapBinaries(ctx, paths); err != nil {
+		return err
+	}
 	if err := ensurePeerswapConfig(ctx, paths); err != nil {
 		return err
 	}
@@ -247,7 +251,7 @@ chmod 750 "%s"
 }
 
 func ensurePeerswapBinaries(ctx context.Context, paths peerswapPaths) error {
-	if readSecretFile(paths.VersionPath) == peerswapVersion &&
+	if readSecretFile(paths.VersionPath) == peerswapBundleVersion &&
 		fileExists(filepath.Join(paths.BinDir, "peerswapd")) &&
 		fileExists(filepath.Join(paths.BinDir, "pscli")) &&
 		fileExists(filepath.Join(paths.BinDir, "psweb")) {
@@ -275,11 +279,11 @@ chown %s:%s "%s" "%s" "%s"
 	if _, err := runSystemd(ctx, "/bin/sh", "-c", script); err != nil {
 		return err
 	}
-	return writeFile(paths.VersionPath, peerswapVersion+"\n", 0640)
+	return writeFile(paths.VersionPath, peerswapBundleVersion+"\n", 0640)
 }
 
 func peerswapAssetsRoot() (string, error) {
-	base := filepath.Join("/opt/lightningos/manager/assets/binaries/peerswap", peerswapVersion, peerswapAssetsArch)
+	base := filepath.Join("/opt/lightningos/manager/assets/binaries/peerswap", peerswapAssetsVersion, peerswapAssetsArch)
 	return base, nil
 }
 
@@ -309,7 +313,7 @@ mkdir -p "%[1]s"
 install -m 0755 "$source/peerswapd" "%[1]s/peerswapd"
 install -m 0755 "$source/pscli" "%[1]s/pscli"
 install -m 0755 "$source/psweb" "%[1]s/psweb"
-`, dest, peerswapVersion, peerswapAssetsArch)
+`, dest, peerswapAssetsVersion, peerswapAssetsArch)
 	if _, err := runSystemd(ctx, "/bin/sh", "-c", script); err != nil {
 		return err
 	}

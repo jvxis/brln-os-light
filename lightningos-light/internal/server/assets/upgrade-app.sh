@@ -239,6 +239,28 @@ EOF
   print_ok "Sudoers refreshed for manager user: ${manager_user}"
 }
 
+stage_peerswap_assets() {
+  local src="$project_dir/assets/binaries/peerswap/version_5_0/amd64"
+  local dest="/opt/lightningos/manager/assets/binaries/peerswap/version_5_0/amd64"
+  local bin=""
+
+  if [[ ! -d "$src" ]]; then
+    print_warn "Peerswap assets not found at $src; skipping"
+    return 0
+  fi
+
+  print_step "Staging Peerswap assets"
+  mkdir -p "$dest"
+  for bin in peerswapd pscli psweb; do
+    if [[ -f "$src/$bin" ]]; then
+      "$INSTALL_BIN" -m 0755 "$src/$bin" "$dest/$bin"
+    else
+      print_warn "Peerswap binary missing: $src/$bin"
+    fi
+  done
+  print_ok "Peerswap assets staged"
+}
+
 print_step "Preparing repository mirror"
 mkdir -p "$(dirname "$mirror_root")" "$worktree_root"
 if [[ -d "$mirror_root" && ! -d "$mirror_root/.git" ]]; then
@@ -307,6 +329,8 @@ print_step "Building UI"
 "$RM_BIN" -rf /opt/lightningos/ui/*
 "$CP_BIN" -a "$project_dir/ui/dist/." /opt/lightningos/ui/
 print_ok "UI installed"
+
+stage_peerswap_assets
 
 print_step "Refreshing manager sudoers"
 configure_manager_sudoers

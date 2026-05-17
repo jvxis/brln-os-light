@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,6 +19,7 @@ const (
 	peerswapAppID         = "peerswap"
 	peerswapAssetsVersion = "version_5_0"
 	peerswapBundleVersion = "version_5_0_psweb_5_0_4"
+	peerswapPSWebSHA256   = "439c5794d9c362bc0ea70bb864122fc30ae46357b37bf776c794902ef717cdd8"
 	peerswapUser          = "losop"
 	peerswapServiceName   = "lightningos-peerswapd"
 	pswebServiceName      = "lightningos-psweb"
@@ -251,10 +254,7 @@ chmod 750 "%s"
 }
 
 func ensurePeerswapBinaries(ctx context.Context, paths peerswapPaths) error {
-	if readSecretFile(paths.VersionPath) == peerswapBundleVersion &&
-		fileExists(filepath.Join(paths.BinDir, "peerswapd")) &&
-		fileExists(filepath.Join(paths.BinDir, "pscli")) &&
-		fileExists(filepath.Join(paths.BinDir, "psweb")) {
+	if peerswapInstalledBinariesCurrent(paths) {
 		return nil
 	}
 	assetsRoot, err := peerswapAssetsRoot()
@@ -262,6 +262,9 @@ func ensurePeerswapBinaries(ctx context.Context, paths peerswapPaths) error {
 		return err
 	}
 	if err := ensurePeerswapAssetStaging(ctx, assetsRoot); err != nil {
+		return err
+	}
+	if err := ensurePeerswapPSWebChecksum(filepath.Join(assetsRoot, "psweb")); err != nil {
 		return err
 	}
 	script := fmt.Sprintf(`set -e
@@ -282,16 +285,28 @@ chown %s:%s "%s" "%s" "%s"
 	return writeFile(paths.VersionPath, peerswapBundleVersion+"\n", 0640)
 }
 
+func peerswapInstalledBinariesCurrent(paths peerswapPaths) bool {
+	if readSecretFile(paths.VersionPath) != peerswapBundleVersion {
+		return false
+	}
+	if !peerswapBinariesExist(paths.BinDir) {
+		return false
+	}
+	ok, err := peerswapFileSHA256Matches(filepath.Join(paths.BinDir, "psweb"), peerswapPSWebSHA256)
+	return err == nil && ok
+}
+
 func peerswapAssetsRoot() (string, error) {
 	base := filepath.Join("/opt/lightningos/manager/assets/binaries/peerswap", peerswapAssetsVersion, peerswapAssetsArch)
 	return base, nil
 }
 
 func ensurePeerswapAssetStaging(ctx context.Context, dest string) error {
-	if fileExists(filepath.Join(dest, "peerswapd")) &&
-		fileExists(filepath.Join(dest, "pscli")) &&
-		fileExists(filepath.Join(dest, "psweb")) {
-		return nil
+	if peerswapBinariesExist(dest) {
+		ok, err := peerswapFileSHA256Matches(filepath.Join(dest, "psweb"), peerswapPSWebSHA256)
+		if err == nil && ok {
+			return nil
+		}
 	}
 	script := fmt.Sprintf(`set -e
 source=""
@@ -305,24 +320,65 @@ for candidate in \
     break
   fi
 done
-if [ -z "$source" ]; then
-  echo "peerswap binaries not found under /home/* or /root"
-  exit 1
+if [ -n "$source" ]; then
+  mkdir -p "%[1]s"
+  install -m 0755 "$source/peerswapd" "%[1]s/peerswapd"
+  install -m 0755 "$source/pscli" "%[1]s/pscli"
+  install -m 0755 "$source/psweb" "%[1]s/psweb"
+  exit 0
 fi
-mkdir -p "%[1]s"
-install -m 0755 "$source/peerswapd" "%[1]s/peerswapd"
-install -m 0755 "$source/pscli" "%[1]s/pscli"
-install -m 0755 "$source/psweb" "%[1]s/psweb"
+if [ -f "%[1]s/peerswapd" ] && [ -f "%[1]s/pscli" ] && [ -f "%[1]s/psweb" ]; then
+  exit 0
+fi
+echo "peerswap binaries not found under /home/*, /root, or %[1]s"
+exit 1
 `, dest, peerswapAssetsVersion, peerswapAssetsArch)
 	if _, err := runSystemd(ctx, "/bin/sh", "-c", script); err != nil {
 		return err
 	}
-	if fileExists(filepath.Join(dest, "peerswapd")) &&
-		fileExists(filepath.Join(dest, "pscli")) &&
-		fileExists(filepath.Join(dest, "psweb")) {
+	if peerswapBinariesExist(dest) {
 		return nil
 	}
 	return fmt.Errorf("peerswap binaries missing in %s", dest)
+}
+
+func peerswapBinariesExist(dir string) bool {
+	return fileExists(filepath.Join(dir, "peerswapd")) &&
+		fileExists(filepath.Join(dir, "pscli")) &&
+		fileExists(filepath.Join(dir, "psweb"))
+}
+
+func ensurePeerswapPSWebChecksum(path string) error {
+	ok, err := peerswapFileSHA256Matches(path, peerswapPSWebSHA256)
+	if err != nil {
+		return fmt.Errorf("failed to verify staged psweb binary: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("staged psweb binary at %s does not match expected psweb 5.0.4; refresh Peerswap assets and start again", path)
+	}
+	return nil
+}
+
+func peerswapFileSHA256Matches(path string, expected string) (bool, error) {
+	actual, err := fileSHA256(path)
+	if err != nil {
+		return false, err
+	}
+	return strings.EqualFold(actual, expected), nil
+}
+
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
 func ensurePeerswapConfig(ctx context.Context, paths peerswapPaths) error {

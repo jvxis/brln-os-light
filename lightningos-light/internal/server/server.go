@@ -42,6 +42,10 @@ type Server struct {
 	reportsInitAt               time.Time
 	reportsWarmupStarted        bool
 	auth                        *AuthService
+	auditLogInitAt              time.Time
+	auditLogMu                  sync.Mutex
+	auditLog                    *AuditService
+	auditLogErr                 string
 	rebalanceInitAt             time.Time
 	rebalance                   *RebalanceService
 	rebalanceErr                string
@@ -154,6 +158,7 @@ func (s *Server) Run() error {
 	s.startAppUpgradeChecker()
 	s.startPublicPoolRuntimeReconciler()
 	s.initNotifications()
+	s.initAuditLog()
 	s.initReports()
 	s.startTelegramNotifications()
 	s.initRebalance()

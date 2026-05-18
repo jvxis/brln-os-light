@@ -179,15 +179,25 @@ func (s *Server) handleUtxoLock(w http.ResponseWriter, r *http.Request) {
 		Error      string `json:"error,omitempty"`
 	}
 	results := make([]leaseResult, 0, len(req.Outpoints))
+	errorCount := 0
 	for _, outpoint := range req.Outpoints {
 		info, err := s.lnd.LeaseOutput(ctx, outpoint, expiry)
 		if err != nil {
+			errorCount++
 			results = append(results, leaseResult{Outpoint: outpoint, Error: lndRPCErrorMessage(err)})
 			continue
 		}
 		results = append(results, leaseResult{Outpoint: info.Outpoint, Expiration: info.Expiration})
 	}
 	s.invalidateUtxoLeaseCache()
+	s.recordAuditEvent(r, "utxo.lock", auditTargetForOutpoints(req.Outpoints), map[string]any{
+		"outpoints":     normalizeOutpointBatch(req.Outpoints),
+		"expiry_sec":    expiry,
+		"status":        auditStatusFromResult(len(results), errorCount),
+		"success_count": len(results) - errorCount,
+		"error_count":   errorCount,
+		"results":       results,
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
 
@@ -214,15 +224,24 @@ func (s *Server) handleUtxoUnlock(w http.ResponseWriter, r *http.Request) {
 		Error    string `json:"error,omitempty"`
 	}
 	results := make([]unlockResult, 0, len(req.Outpoints))
+	errorCount := 0
 	for _, outpoint := range req.Outpoints {
 		err := s.lnd.ReleaseOutput(ctx, outpoint)
 		if err != nil {
+			errorCount++
 			results = append(results, unlockResult{Outpoint: outpoint, Error: lndRPCErrorMessage(err)})
 			continue
 		}
 		results = append(results, unlockResult{Outpoint: outpoint})
 	}
 	s.invalidateUtxoLeaseCache()
+	s.recordAuditEvent(r, "utxo.unlock", auditTargetForOutpoints(req.Outpoints), map[string]any{
+		"outpoints":     normalizeOutpointBatch(req.Outpoints),
+		"status":        auditStatusFromResult(len(results), errorCount),
+		"success_count": len(results) - errorCount,
+		"error_count":   errorCount,
+		"results":       results,
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
 
@@ -386,9 +405,29 @@ func (s *Server) handleUtxoBump(w http.ResponseWriter, r *http.Request) {
 		BudgetSat:   req.BudgetSat,
 		Immediate:   true,
 	}); err != nil {
-		writeError(w, http.StatusInternalServerError, lndRPCErrorMessage(err))
+		msg := lndRPCErrorMessage(err)
+		s.recordAuditEvent(r, "utxo.bump", strings.ToLower(strings.TrimSpace(req.Outpoint)), map[string]any{
+			"outpoint":       strings.ToLower(strings.TrimSpace(req.Outpoint)),
+			"sat_per_vbyte":  req.SatPerVbyte,
+			"target_conf":    req.TargetConf,
+			"budget_sat":     req.BudgetSat,
+			"immediate":      true,
+			"status":         "error",
+			"error":          msg,
+			"reauth_checked": s.auth != nil && s.auth.Enabled(),
+		})
+		writeError(w, http.StatusInternalServerError, msg)
 		return
 	}
+	s.recordAuditEvent(r, "utxo.bump", strings.ToLower(strings.TrimSpace(req.Outpoint)), map[string]any{
+		"outpoint":       strings.ToLower(strings.TrimSpace(req.Outpoint)),
+		"sat_per_vbyte":  req.SatPerVbyte,
+		"target_conf":    req.TargetConf,
+		"budget_sat":     req.BudgetSat,
+		"immediate":      true,
+		"status":         "success",
+		"reauth_checked": s.auth != nil && s.auth.Enabled(),
+	})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

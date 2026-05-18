@@ -65,6 +65,7 @@
 ## Database tables
 - notifications_* (notifications history and config)
 - reports_daily (per day metrics, msat precision)
+- audit_events (session-scoped audit trail for sensitive wallet operations)
 
 ## Scheduler
 - lightningos-reports.timer triggers lightningos-reports.service daily.

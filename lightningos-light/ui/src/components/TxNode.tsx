@@ -1,4 +1,5 @@
 import { Handle, Position, type NodeProps } from 'reactflow'
+import { useTranslation } from 'react-i18next'
 import { PALETTE, barGlow, fillBarGradient } from '../utils/utxoStyles'
 
 export type TxBar = {
@@ -69,16 +70,16 @@ function fmtSats(value: number) {
   return value.toLocaleString()
 }
 
-function fmtRelTime(ts: number) {
+function fmtRelTime(ts: number, t: (key: string, opts?: any) => string) {
   if (!ts || ts <= 0) return ''
   const now = Date.now() / 1000
   const diff = now - ts
-  if (diff < 60) return 'just now'
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
-  if (diff < 30 * 86400) return `${Math.floor(diff / 86400)}d ago`
-  if (diff < 365 * 86400) return `${Math.floor(diff / (30 * 86400))}mo ago`
-  return `${Math.floor(diff / (365 * 86400))}y ago`
+  if (diff < 60) return t('walletFlow.txNode.timeJustNow')
+  if (diff < 3600) return t('walletFlow.txNode.timeMinAgo', { n: Math.floor(diff / 60) })
+  if (diff < 86400) return t('walletFlow.txNode.timeHourAgo', { n: Math.floor(diff / 3600) })
+  if (diff < 30 * 86400) return t('walletFlow.txNode.timeDayAgo', { n: Math.floor(diff / 86400) })
+  if (diff < 365 * 86400) return t('walletFlow.txNode.timeMonthAgo', { n: Math.floor(diff / (30 * 86400)) })
+  return t('walletFlow.txNode.timeYearAgo', { n: Math.floor(diff / (365 * 86400)) })
 }
 
 function fmtAbsDate(ts: number) {
@@ -137,8 +138,12 @@ function barCenterOffsets(bars: TxBar[], min: number, max: number): number[] {
 }
 
 export default function TxNode({ data, selected }: NodeProps<TxNodeData>) {
+  const { t } = useTranslation()
   const shortTxid = `${data.txid.slice(0, 8)}…${data.txid.slice(-6)}`
-  const heightHint = data.blockHeight > 0 ? `h ${data.blockHeight.toLocaleString()}` : 'mempool'
+  const heightHint =
+    data.blockHeight > 0
+      ? t('walletFlow.txNode.heightHint', { height: data.blockHeight.toLocaleString() })
+      : t('walletFlow.txNode.mempool')
 
   const liveCount = data.outputs.filter((o) => o.isCurrentUtxo).length
   const headerBorder = data.isExternal
@@ -167,9 +172,11 @@ export default function TxNode({ data, selected }: NodeProps<TxNodeData>) {
       top: offsetY,
       borderRadius: 1
     }
-    const title = `${bar.amount > 0 ? fmtSats(bar.amount) + ' sat' : 'amount unknown'}${
-      bar.address ? '\n' + bar.address : ''
-    }${bar.isOurs ? '\n(yours)' : ''}`
+    const title = `${
+      bar.amount > 0
+        ? t('walletFlow.txNode.titleAmountSat', { amount: fmtSats(bar.amount) })
+        : t('walletFlow.txNode.titleAmountUnknown')
+    }${bar.address ? '\n' + bar.address : ''}${bar.isOurs ? '\n' + t('walletFlow.txNode.titleYours') : ''}`
 
     return (
       <div
@@ -244,7 +251,7 @@ export default function TxNode({ data, selected }: NodeProps<TxNodeData>) {
         <div
           className={`text-[10px] text-white/35 px-2 ${side === 'out' ? 'text-right' : ''}`}
         >
-          {side === 'in' ? 'no known inputs' : 'no outputs'}
+          {side === 'in' ? t('walletFlow.txNode.noInputs') : t('walletFlow.txNode.noOutputs')}
         </div>
       ) : (
         bars.map((b, i) => renderBar(b, side, offsets[i] ?? 0))
@@ -256,9 +263,15 @@ export default function TxNode({ data, selected }: NodeProps<TxNodeData>) {
             background: 'rgba(148,163,184,0.10)',
             borderRadius: 6
           }}
-          title={`${hiddenCount} bar(s) collapsed${hiddenSat > 0 ? ` · ${fmtSats(hiddenSat)} sat total` : ''}`}
+          title={
+            hiddenSat > 0
+              ? t('walletFlow.txNode.collapsedTooltipWithSats', { count: hiddenCount, sats: fmtSats(hiddenSat) })
+              : t('walletFlow.txNode.collapsedTooltip', { count: hiddenCount })
+          }
         >
-          + {hiddenCount} more {hiddenSat > 0 ? `· ${fmtSats(hiddenSat)} sat` : ''}
+          {hiddenSat > 0
+            ? t('walletFlow.txNode.moreWithSats', { count: hiddenCount, sats: fmtSats(hiddenSat) })
+            : t('walletFlow.txNode.more', { count: hiddenCount })}
           {side === 'in' ? (
             <Handle
               id="in-more"
@@ -314,19 +327,24 @@ export default function TxNode({ data, selected }: NodeProps<TxNodeData>) {
             {shortTxid}
           </div>
           <div className="text-[9px] text-white/55">
-            {data.isExternal ? 'external tx' : heightHint}
-            {data.timestamp > 0 ? ` · ${fmtRelTime(data.timestamp)}` : ''}
-            {data.feeSat > 0 ? ` · fee ${fmtSats(data.feeSat)}s` : ''}
+            {data.isExternal ? t('walletFlow.txNode.externalTx') : heightHint}
+            {data.timestamp > 0 ? ` · ${fmtRelTime(data.timestamp, t)}` : ''}
+            {data.feeSat > 0
+              ? ' · ' + t('walletFlow.txNode.feeHint', { fee: fmtSats(data.feeSat) })
+              : ''}
           </div>
         </div>
         {!data.isExternal && (
           <div className="text-right text-[10px]">
             {liveCount > 0 ? (
               <span className="text-glow">
-                {liveCount} live · {fmtSats(data.outputs.filter((o) => o.isCurrentUtxo).reduce((s, o) => s + o.amount, 0))}s
+                {t('walletFlow.txNode.liveSummary', {
+                  count: liveCount,
+                  sats: fmtSats(data.outputs.filter((o) => o.isCurrentUtxo).reduce((s, o) => s + o.amount, 0))
+                })}
               </span>
             ) : (
-              <span className="text-brass">spent</span>
+              <span className="text-brass">{t('walletFlow.txNode.spent')}</span>
             )}
           </div>
         )}

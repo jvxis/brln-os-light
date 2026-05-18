@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import ReactFlow, {
   Background,
   Controls,
@@ -99,6 +100,7 @@ type WalletFlowViewProps = {
 }
 
 export default function WalletFlowView({ activeSource = '', noTxIndexHint = false }: WalletFlowViewProps = {}) {
+  const { t } = useTranslation()
   const [graph, setGraph] = useState<GraphPayload | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -135,7 +137,7 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
       const res: any = await getProvenanceGraph(params)
       setGraph(res)
     } catch (err: any) {
-      setError(err?.message || 'Failed to load provenance graph.')
+      setError(err?.message || t('walletFlow.errorLoadGraph'))
     } finally {
       setLoading(false)
     }
@@ -169,27 +171,27 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
         ) {
           await load()
           setRefreshStartedAt(null)
-          setActionMsg('Refresh complete.')
+          setActionMsg(t('walletFlow.statusRefreshComplete'))
         }
       } catch {
         // ignore transient errors
       }
     }
     tick()
-    const t = window.setInterval(tick, 2000)
+    const timer = window.setInterval(tick, 2000)
     return () => {
       cancelled = true
-      window.clearInterval(t)
+      window.clearInterval(timer)
     }
   }, [refreshStartedAt])
 
   const triggerRebuild = async (full: boolean) => {
-    setActionMsg(full ? 'Full rebuild started…' : 'Building wallet graph…')
+    setActionMsg(full ? t('walletFlow.statusFullRebuildStarted') : t('walletFlow.statusBuilding'))
     setRefreshStartedAt(new Date().toISOString())
     try {
       await rebuildProvenance(full)
     } catch (err: any) {
-      setActionMsg(err?.message || 'Refresh failed to start.')
+      setActionMsg(err?.message || t('walletFlow.statusRefreshFailed'))
       setRefreshStartedAt(null)
     }
   }
@@ -428,14 +430,17 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
     <section className="space-y-4">
       {noTxIndexHint && (
         <div className="rounded-2xl border border-brass/40 bg-brass/10 px-4 py-3 text-xs text-brass">
-          <b>Tip:</b> Local Bitcoin Core was reachable but has no txindex. Wallet flow is falling back to a public Electrum server, which exposes the txids you ask about to a third party. Add <code>txindex=1</code> to your <code>bitcoin.conf</code> and restart to keep provenance fully local.
+          <b>{t('walletFlow.txIndexHintLead')}</b>{' '}
+          {t('walletFlow.txIndexHintBefore')} <code>txindex=1</code>{' '}
+          {t('walletFlow.txIndexHintMiddle')} <code>bitcoin.conf</code>{' '}
+          {t('walletFlow.txIndexHintAfter')}
         </div>
       )}
       <div className="section-card">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
-              <p className="text-xs uppercase tracking-[0.3em] text-fog/50">UTXO Provenance</p>
+              <p className="text-xs uppercase tracking-[0.3em] text-fog/50">{t('walletFlow.kicker')}</p>
               {activeSource && (
                 <span
                   className={
@@ -446,17 +451,17 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
                   }
                   title={
                     activeSource.startsWith('public:')
-                      ? 'Falling back to a public Electrum server. Txids you query are visible to the operator.'
-                      : `Source: ${activeSource}`
+                      ? t('walletFlow.privacyAmber')
+                      : t('walletFlow.sourceTooltip', { source: activeSource })
                   }
                 >
                   {activeSource}
                 </span>
               )}
             </div>
-            <h2 className="mt-2 text-2xl font-semibold">Wallet flow</h2>
+            <h2 className="mt-2 text-2xl font-semibold">{t('walletFlow.title')}</h2>
             <p className="mt-1 text-sm text-fog/65">
-              Every tx your wallet has touched. Teal = live UTXO ahead. Amber = spent. Grey = external.
+              {t('walletFlow.subtitle')}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -464,15 +469,15 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
               className="input-field text-xs py-1 px-2"
               value={mode}
               onChange={(e) => setMode(e.target.value as typeof mode)}
-              title="What to show in the graph"
+              title={t('walletFlow.modeSelectTooltip')}
             >
-              <option value="live">Live UTXOs only</option>
-              <option value="ours">My transactions</option>
-              <option value="all">Everything (slow)</option>
-              <option value="lineage">Trace lineage from…</option>
+              <option value="live">{t('walletFlow.mode.live')}</option>
+              <option value="ours">{t('walletFlow.mode.ours')}</option>
+              <option value="all">{t('walletFlow.mode.all')}</option>
+              <option value="lineage">{t('walletFlow.mode.lineage')}</option>
             </select>
             <label className="flex items-center gap-1 text-xs text-fog/70">
-              Limit
+              {t('walletFlow.limit')}
               <input
                 className="input-field w-16 text-xs py-1 px-2"
                 inputMode="numeric"
@@ -488,19 +493,19 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
               onClick={() => triggerRebuild(false)}
               disabled={inFlight}
             >
-              {inFlight ? 'Walking history…' : 'Refresh'}
+              {inFlight ? t('walletFlow.refreshing') : t('walletFlow.refresh')}
             </button>
             <button
               className="btn-secondary text-xs px-3 py-2"
               onClick={() => triggerRebuild(true)}
               disabled={inFlight}
-              title="Truncate and re-walk all history"
+              title={t('walletFlow.fullRebuildTooltip')}
             >
-              Full rebuild
+              {t('walletFlow.fullRebuild')}
             </button>
             <button
               className="btn-primary text-xs px-3 py-2"
-              title="Switch to lineage mode and start from your biggest live UTXO"
+              title={t('walletFlow.traceBiggestTooltip')}
               onClick={() => {
                 if (!graph) return
                 let biggestTxid = ''
@@ -518,16 +523,16 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
                 }
               }}
             >
-              Trace biggest
+              {t('walletFlow.traceBiggest')}
             </button>
           </div>
         </div>
         {mode === 'lineage' && (
           <div className="mt-3 flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-ink/40 p-3">
-            <span className="text-xs text-fog/70">Trace from</span>
+            <span className="text-xs text-fog/70">{t('walletFlow.traceFrom')}</span>
             <input
               className="input-field text-xs py-1 px-2 w-72"
-              placeholder="txid or txid:vout (click a node to set)"
+              placeholder={t('walletFlow.pasteHint')}
               value={rootInputDraft || rootTxid}
               onChange={(e) => setRootInputDraft(e.target.value.trim())}
               onKeyDown={(e) => {
@@ -549,10 +554,10 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
                 setRootInputDraft('')
               }}
             >
-              Trace
+              {t('walletFlow.trace')}
             </button>
             <label className="flex items-center gap-1 text-xs text-fog/70">
-              Hops
+              {t('walletFlow.hops')}
               <input
                 className="input-field w-14 text-xs py-1 px-2"
                 inputMode="numeric"
@@ -563,43 +568,45 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
                 }}
               />
             </label>
-            <label className="flex items-center gap-1 text-xs text-fog/70" title="Walk past the wallet boundary via electrs">
+            <label className="flex items-center gap-1 text-xs text-fog/70" title={t('walletFlow.includeExternalTooltip')}>
               <input
                 type="checkbox"
                 checked={includeExternal}
                 onChange={(e) => setIncludeExternal(e.target.checked)}
               />
-              Include external history
+              {t('walletFlow.includeExternal')}
             </label>
             {rootTxid && (
               <span className="text-xs text-fog/55 font-mono">
-                root: {rootTxid.slice(0, 10)}… · {hops} gen back
+                {t('walletFlow.rootSummary', { txidShort: `${rootTxid.slice(0, 10)}…`, hops })}
               </span>
             )}
             {!rootTxid && (
               <span className="text-xs text-fog/55">
-                Paste an outpoint above, or click any node in the graph to set it as root.
+                {t('walletFlow.rootEmptyHint')}
               </span>
             )}
           </div>
         )}
         {(liveStatus || graph?.state) && (
           <p className="mt-3 text-xs text-fog/55">
-            Synced at height {(liveStatus ?? graph?.state)?.last_sync_height} ·{' '}
-            {(liveStatus ?? graph?.state)?.tx_count} txs ·{' '}
-            {(liveStatus ?? graph?.state)?.ours_outputs} live UTXOs ·{' '}
-            {(liveStatus ?? graph?.state)?.last_sync_at &&
-            (liveStatus ?? graph?.state)?.last_sync_at !== '0001-01-01T00:00:00Z'
-              ? new Date(((liveStatus ?? graph?.state) as ProvenanceState).last_sync_at).toLocaleString()
-              : 'never'}
+            {t('walletFlow.syncStatus', {
+              height: (liveStatus ?? graph?.state)?.last_sync_height ?? 0,
+              txCount: (liveStatus ?? graph?.state)?.tx_count ?? 0,
+              liveUtxos: (liveStatus ?? graph?.state)?.ours_outputs ?? 0,
+              when:
+                (liveStatus ?? graph?.state)?.last_sync_at &&
+                (liveStatus ?? graph?.state)?.last_sync_at !== '0001-01-01T00:00:00Z'
+                  ? new Date(((liveStatus ?? graph?.state) as ProvenanceState).last_sync_at).toLocaleString()
+                  : t('walletFlow.never')
+            })}
           </p>
         )}
         {inFlight && (
           <div className="mt-3 flex items-center gap-3 rounded-2xl border border-brass/40 bg-brass/10 px-3 py-2">
             <span className="inline-block h-3 w-3 animate-pulse rounded-full bg-brass" />
             <p className="text-xs text-brass">
-              Walking your wallet history… current count: {liveStatus?.tx_count ?? 0} txs.
-              This can take a minute on first run.
+              {t('walletFlow.walkInProgress', { count: liveStatus?.tx_count ?? 0 })}
             </p>
           </div>
         )}
@@ -615,14 +622,16 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
           <div className="flex h-full items-center justify-center">
             <div className="flex items-center gap-3 text-sm text-fog/70">
               <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-brass border-t-transparent" />
-              Loading…
+              {t('walletFlow.loading')}
             </div>
           </div>
         ) : nodes.length > 500 ? (
           <div className="flex h-full items-center justify-center p-6">
             <div className="max-w-md text-center text-sm text-fog/80 space-y-2">
-              <p className="text-brass font-semibold">{nodes.length} nodes is too many to render safely.</p>
-              <p>Lower the limit (top right) or switch mode to <b>Live UTXOs only</b>.</p>
+              <p className="text-brass font-semibold">{t('walletFlow.tooManyNodes', { count: nodes.length })}</p>
+              <p>
+                {t('walletFlow.tooManyNodesHintBefore')} <b>{t('walletFlow.mode.live')}</b>{t('walletFlow.tooManyNodesHintAfter')}
+              </p>
             </div>
           </div>
         ) : nodes.length === 0 ? (
@@ -632,23 +641,23 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
                 <>
                   <span className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-brass border-t-transparent" />
                   <p className="text-sm text-fog/80">
-                    Building graph from your transaction history…
+                    {t('walletFlow.buildingGraph')}
                   </p>
                   <p className="text-xs text-fog/55">
-                    {liveStatus?.tx_count ?? 0} txs scanned · this can take a minute on first run
+                    {t('walletFlow.txsScannedHint', { count: liveStatus?.tx_count ?? 0 })}
                   </p>
                 </>
               ) : (
                 <>
                   <p className="text-sm text-fog/80">
-                    No graph yet. Click <b>Refresh</b> above to walk your wallet’s transaction history.
+                    {t('walletFlow.emptyStateBefore')} <b>{t('walletFlow.refresh')}</b>{t('walletFlow.emptyStateAfter')}
                   </p>
                   <button
                     type="button"
                     className="btn-primary text-xs px-4 py-2"
                     onClick={() => triggerRebuild(false)}
                   >
-                    Start now
+                    {t('walletFlow.startNow')}
                   </button>
                 </>
               )}
@@ -679,7 +688,7 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
             <div className="flex items-center gap-3 rounded-2xl border border-white/15 bg-slate/85 px-4 py-3 shadow-panel">
               <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-brass border-t-transparent" />
               <span className="text-xs text-fog/85">
-                Refreshing… {liveStatus?.tx_count ?? 0} txs scanned so far
+                {t('walletFlow.refreshingOverlay', { count: liveStatus?.tx_count ?? 0 })}
               </span>
             </div>
           </div>

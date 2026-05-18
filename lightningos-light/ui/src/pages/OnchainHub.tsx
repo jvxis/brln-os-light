@@ -388,7 +388,7 @@ export default function OnchainHub() {
         .then((res: any) => {
           if (cancelled) return
           setWalletFlowAvailable(Boolean(res?.ok))
-          setWalletFlowActiveSource(String(res?.active ?? ''))
+          setWalletFlowActiveSource(String(res?.backend ?? res?.active ?? ''))
           setWalletFlowNoTxIndex(Boolean(res?.no_txindex_hint))
         })
         .catch(() => {
@@ -573,14 +573,14 @@ export default function OnchainHub() {
             className={clsx('btn-secondary text-xs px-4 py-2', activeView === 'hub' && 'bg-white/10')}
             onClick={() => setActiveView('hub')}
           >
-            On-chain
+            {t('onchainHub.utxoMgr.tabHub')}
           </button>
           <button
             type="button"
             className={clsx('btn-secondary text-xs px-4 py-2', activeView === 'walletflow' && 'bg-white/10')}
             onClick={() => setActiveView('walletflow')}
           >
-            Wallet flow
+            {t('onchainHub.utxoMgr.tabWalletFlow')}
           </button>
         </div>
       )}

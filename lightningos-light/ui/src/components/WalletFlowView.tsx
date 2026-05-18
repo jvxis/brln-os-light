@@ -407,6 +407,34 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
       }
     }
 
+    // Global cap on external leaf nodes: rank them by total sat feeding
+    // rendered consumers and keep only the top N. Anything below that gets
+    // dropped along with its edges. Without this an "ours"/"all" graph
+    // ends up with one ancestor box per visible input across dozens of
+    // internal txs — visually overwhelming. Internal txs are never culled
+    // here; the existing keepTxs already protects them.
+    const MAX_EXTERNAL_NODES = 10
+    const externalScore = new Map<string, number>()
+    for (const t of txs) {
+      if (!t.is_external) continue
+      if (!keepTxs.has(t.txid)) continue
+      let total = 0
+      for (const o of outsByProducer.get(t.txid) ?? []) {
+        if (!o.spent_by_txid) continue
+        if (!keepTxs.has(o.spent_by_txid)) continue
+        const tgtVis = visibleInputs.get(o.spent_by_txid)
+        if (!tgtVis || !tgtVis.has(o.spent_in_vin ?? 0)) continue
+        total += o.amount_sat
+      }
+      externalScore.set(t.txid, total)
+    }
+    if (externalScore.size > MAX_EXTERNAL_NODES) {
+      const ranked = Array.from(externalScore.entries()).sort((a, b) => b[1] - a[1])
+      for (const [txid] of ranked.slice(MAX_EXTERNAL_NODES)) {
+        keepTxs.delete(txid)
+      }
+    }
+
     const filteredNodes = rawNodes.filter((n) => keepTxs.has(n.id))
     const filteredEdges = rawEdges.filter((e) => keepTxs.has(e.source) && keepTxs.has(e.target))
 

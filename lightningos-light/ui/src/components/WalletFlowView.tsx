@@ -13,6 +13,7 @@ import 'reactflow/dist/style.css'
 import { getProvenanceGraph, getProvenanceStatus, rebuildProvenance } from '../api'
 import TxNode, {
   MAX_BARS_PER_SIDE,
+  MAX_BARS_PER_SIDE_LEAF,
   TX_NODE_WIDTH,
   barHeightFor,
   computeTxNodeHeight,
@@ -251,12 +252,15 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
       const allIns = (insByConsumer.get(t.txid) ?? []).slice()
 
       // Show the heaviest bars; hide the long tail behind a summary line.
+      // Leaf txs (no known inputs visualized) use the smaller cap so the
+      // external-ancestor column doesn't dominate vertically.
       const sortedIns = allIns.slice().sort((a, b) => b.amount_sat - a.amount_sat)
       const sortedOuts = allOuts.slice().sort((a, b) => b.amount_sat - a.amount_sat)
-      const visibleIns = sortedIns.slice(0, MAX_BARS_PER_SIDE)
-      const visibleOuts = sortedOuts.slice(0, MAX_BARS_PER_SIDE)
-      const hiddenIns = sortedIns.slice(MAX_BARS_PER_SIDE)
-      const hiddenOuts = sortedOuts.slice(MAX_BARS_PER_SIDE)
+      const barCap = allIns.length === 0 ? MAX_BARS_PER_SIDE_LEAF : MAX_BARS_PER_SIDE
+      const visibleIns = sortedIns.slice(0, barCap)
+      const visibleOuts = sortedOuts.slice(0, barCap)
+      const hiddenIns = sortedIns.slice(barCap)
+      const hiddenOuts = sortedOuts.slice(barCap)
 
       const inVis = new Set<number>()
       for (const o of visibleIns) inVis.add(o.spent_in_vin ?? 0)

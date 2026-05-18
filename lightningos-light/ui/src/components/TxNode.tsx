@@ -120,8 +120,11 @@ export function computeTxNodeHeight(data: TxNodeData) {
   return HEADER_HEIGHT + Math.max(inH, outH)
 }
 
-// Max bars rendered per side; the rest get summarized as "+N more".
-export const MAX_BARS_PER_SIDE = 25
+// Max bars rendered per side before collapsing the long tail into "+N more".
+// Leaf txs (no known inputs in the graph) use the smaller cap so external
+// ancestors don't dominate the layout vertically.
+export const MAX_BARS_PER_SIDE = 10
+export const MAX_BARS_PER_SIDE_LEAF = 5
 
 // Compute the y-offset (from top of the bars block) where the *center* of
 // the bar at index `i` sits. Used by edges so handles attach to the bar's

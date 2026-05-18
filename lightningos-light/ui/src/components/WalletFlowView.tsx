@@ -12,8 +12,9 @@ import dagre from 'dagre'
 import 'reactflow/dist/style.css'
 import { getProvenanceGraph, getProvenanceStatus, rebuildProvenance } from '../api'
 import TxNode, {
-  MAX_BARS_PER_SIDE,
-  MAX_BARS_PER_SIDE_LEAF,
+  MAX_INPUT_BARS,
+  MAX_OUTPUT_BARS,
+  MAX_OUTPUT_BARS_LEAF,
   TX_NODE_WIDTH,
   barHeightFor,
   computeTxNodeHeight,
@@ -252,15 +253,18 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
       const allIns = (insByConsumer.get(t.txid) ?? []).slice()
 
       // Show the heaviest bars; hide the long tail behind a summary line.
-      // Leaf txs (no known inputs visualized) use the smaller cap so the
-      // external-ancestor column doesn't dominate vertically.
+      //   - Inputs cap at MAX_INPUT_BARS (=5). Ancestor txs whose only output
+      //     would land on a now-hidden input bar get culled below in keepTxs,
+      //     so the left-column ancestor stack auto-trims to ≤ MAX_INPUT_BARS.
+      //   - Outputs cap at MAX_OUTPUT_BARS (=10) for internal txs, smaller
+      //     for leaf txs so the external-ancestor column doesn't dominate.
       const sortedIns = allIns.slice().sort((a, b) => b.amount_sat - a.amount_sat)
       const sortedOuts = allOuts.slice().sort((a, b) => b.amount_sat - a.amount_sat)
-      const barCap = allIns.length === 0 ? MAX_BARS_PER_SIDE_LEAF : MAX_BARS_PER_SIDE
-      const visibleIns = sortedIns.slice(0, barCap)
-      const visibleOuts = sortedOuts.slice(0, barCap)
-      const hiddenIns = sortedIns.slice(barCap)
-      const hiddenOuts = sortedOuts.slice(barCap)
+      const outputCap = allIns.length === 0 ? MAX_OUTPUT_BARS_LEAF : MAX_OUTPUT_BARS
+      const visibleIns = sortedIns.slice(0, MAX_INPUT_BARS)
+      const visibleOuts = sortedOuts.slice(0, outputCap)
+      const hiddenIns = sortedIns.slice(MAX_INPUT_BARS)
+      const hiddenOuts = sortedOuts.slice(outputCap)
 
       const inVis = new Set<number>()
       for (const o of visibleIns) inVis.add(o.spent_in_vin ?? 0)

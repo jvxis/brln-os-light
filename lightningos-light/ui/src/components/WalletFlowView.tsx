@@ -22,8 +22,9 @@ import TxNode, {
   type TxNodeData
 } from '../components/TxNode'
 import SankeyEdge from '../components/SankeyEdge'
+import AncestorAggregateNode, { ANCESTOR_AGG_WIDTH } from '../components/AncestorAggregateNode'
 
-const NODE_TYPES = { tx: TxNode }
+const NODE_TYPES = { tx: TxNode, ancestorAgg: AncestorAggregateNode }
 const EDGE_TYPES = { sankey: SankeyEdge }
 
 type ProvenanceTx = {
@@ -69,8 +70,13 @@ function layout(nodes: Node[], edges: Edge[]): Node[] {
   g.setDefaultEdgeLabel(() => ({}))
   g.setGraph({ rankdir: 'LR', nodesep: 24, ranksep: 180 })
   const sized = nodes.map((n) => {
-    const h = (n.data as TxNodeData)?.inputs ? computeTxNodeHeight(n.data as TxNodeData) : 80
-    const w = TX_NODE_WIDTH
+    const isAgg = n.type === 'ancestorAgg'
+    const w = isAgg ? ANCESTOR_AGG_WIDTH : TX_NODE_WIDTH
+    const h = isAgg
+      ? 72
+      : (n.data as TxNodeData)?.inputs
+        ? computeTxNodeHeight(n.data as TxNodeData)
+        : 80
     g.setNode(n.id, { width: w, height: h })
     return { ...n, _w: w, _h: h }
   })
@@ -407,36 +413,62 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
       }
     }
 
-    // Global cap on external leaf nodes: rank them by total sat feeding
-    // rendered consumers and keep only the top N. Anything below that gets
-    // dropped along with its edges. Without this an "ours"/"all" graph
-    // ends up with one ancestor box per visible input across dozens of
-    // internal txs — visually overwhelming. Internal txs are never culled
-    // here; the existing keepTxs already protects them.
-    const MAX_EXTERNAL_NODES = 5
-    const externalScore = new Map<string, number>()
+    // Coalesce dropped external ancestors per consumer into one summary
+    // pseudo-node. The existing keepTxs filter already excluded external
+    // txs whose outputs only land on HIDDEN input bars (i.e. inputs past
+    // MAX_INPUT_BARS that got rolled into the consumer's "+N more"
+    // handle). Instead of leaving those silently dropped, we surface
+    // them as a single dashed-border "Ancestors" box per consumer that
+    // pipes one aggregate ribbon into the consumer's in-more handle.
+    const droppedByConsumer = new Map<string, { count: number; totalSat: number; txids: Set<string> }>()
     for (const t of txs) {
       if (!t.is_external) continue
-      if (!keepTxs.has(t.txid)) continue
-      let total = 0
+      if (keepTxs.has(t.txid)) continue
       for (const o of outsByProducer.get(t.txid) ?? []) {
         if (!o.spent_by_txid) continue
         if (!keepTxs.has(o.spent_by_txid)) continue
-        const tgtVis = visibleInputs.get(o.spent_by_txid)
-        if (!tgtVis || !tgtVis.has(o.spent_in_vin ?? 0)) continue
-        total += o.amount_sat
-      }
-      externalScore.set(t.txid, total)
-    }
-    if (externalScore.size > MAX_EXTERNAL_NODES) {
-      const ranked = Array.from(externalScore.entries()).sort((a, b) => b[1] - a[1])
-      for (const [txid] of ranked.slice(MAX_EXTERNAL_NODES)) {
-        keepTxs.delete(txid)
+        const cur = droppedByConsumer.get(o.spent_by_txid) ?? {
+          count: 0,
+          totalSat: 0,
+          txids: new Set<string>()
+        }
+        if (!cur.txids.has(t.txid)) {
+          cur.txids.add(t.txid)
+          cur.count = cur.txids.size
+        }
+        cur.totalSat += o.amount_sat
+        droppedByConsumer.set(o.spent_by_txid, cur)
       }
     }
 
     const filteredNodes = rawNodes.filter((n) => keepTxs.has(n.id))
     const filteredEdges = rawEdges.filter((e) => keepTxs.has(e.source) && keepTxs.has(e.target))
+
+    // Add one ancestor-aggregate pseudo-node per consumer with dropped
+    // externals. Position is filled in by the layout pass below.
+    for (const [consumerTxid, agg] of droppedByConsumer) {
+      if (agg.count === 0) continue
+      const aggId = `agg-anc-${consumerTxid}`
+      filteredNodes.push({
+        id: aggId,
+        type: 'ancestorAgg',
+        data: { count: agg.count, totalSat: agg.totalSat },
+        position: { x: 0, y: 0 }
+      })
+      filteredEdges.push({
+        id: `agg-anc-edge-${consumerTxid}`,
+        source: aggId,
+        sourceHandle: 'out',
+        target: consumerTxid,
+        targetHandle: 'in-more',
+        type: 'sankey',
+        data: {
+          height: barHeightFor(agg.totalSat, minAmt, maxAmt),
+          color: '#b08642',
+          opacity: 0.55
+        }
+      })
+    }
 
     // Drop noise nodes:
     //   - In lineage mode: hide every node with no rendered edges (including

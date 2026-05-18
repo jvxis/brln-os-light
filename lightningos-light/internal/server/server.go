@@ -3,10 +3,14 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"lightningos-light/internal/config"
@@ -21,6 +25,8 @@ import (
 type Server struct {
 	cfg                         *config.Config
 	logger                      *log.Logger
+	shutdownCtx                 context.Context
+	shutdownCancel              context.CancelFunc
 	lnd                         *lndclient.Client
 	networkMapMu                sync.Mutex
 	networkMapGeoCache          map[string]networkMapGeoCacheEntry
@@ -87,6 +93,13 @@ type Server struct {
 	utxoManagerMu               sync.Mutex
 	utxoManager                 *UtxoManagerService
 	utxoManagerErr              string
+	utxoLeaseCacheMu            sync.Mutex
+	utxoLeaseCacheAt            time.Time
+	utxoLeaseCache              map[string]lndclient.LeaseInfo
+	utxoPruneMu                 sync.Mutex
+	utxoPruneLive               []string
+	utxoPruneSeen               bool
+	utxoMaintenanceOnce         sync.Once
 	provenanceInitAt            time.Time
 	provenanceMu                sync.Mutex
 	provenance                  *ProvenanceService
@@ -112,9 +125,12 @@ type Server struct {
 }
 
 func New(cfg *config.Config, logger *log.Logger) *Server {
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
 	srv := &Server{
 		cfg:                cfg,
 		logger:             logger,
+		shutdownCtx:        shutdownCtx,
+		shutdownCancel:     shutdownCancel,
 		lnd:                lndclient.New(cfg, logger),
 		networkMapGeoCache: make(map[string]networkMapGeoCacheEntry),
 		bitcoinActiveCache: make(map[string]cachedBitcoinStatus),
@@ -127,6 +143,12 @@ func New(cfg *config.Config, logger *log.Logger) *Server {
 }
 
 func (s *Server) Run() error {
+	if s.shutdownCancel != nil {
+		defer s.shutdownCancel()
+	}
+	runCtx, stopSignals := signal.NotifyContext(s.shutdownContext(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+
 	s.startAppUpgradeChecker()
 	s.startPublicPoolRuntimeReconciler()
 	s.initNotifications()
@@ -145,6 +167,7 @@ func (s *Server) Run() error {
 	s.initBalancedOpen()
 	s.initCloseManager()
 	s.initUtxoManager()
+	s.startUtxoManagerMaintenance()
 	s.initProvenance()
 	s.initNodeRetirement()
 	s.initSuccession()
@@ -208,7 +231,41 @@ func (s *Server) Run() error {
 	}
 
 	s.logger.Printf("listening on https://%s", addr)
-	return httpServer.ListenAndServeTLS(s.cfg.Server.TLSCert, s.cfg.Server.TLSKey)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- httpServer.ListenAndServeTLS(s.cfg.Server.TLSCert, s.cfg.Server.TLSKey)
+	}()
+
+	select {
+	case err := <-errCh:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		if s.shutdownCancel != nil {
+			s.shutdownCancel()
+		}
+		return err
+	case <-runCtx.Done():
+		if s.shutdownCancel != nil {
+			s.shutdownCancel()
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := httpServer.Shutdown(ctx); err != nil {
+			return err
+		}
+		if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	}
+}
+
+func (s *Server) shutdownContext() context.Context {
+	if s != nil && s.shutdownCtx != nil {
+		return s.shutdownCtx
+	}
+	return context.Background()
 }
 
 func (s *Server) initNotifications() {

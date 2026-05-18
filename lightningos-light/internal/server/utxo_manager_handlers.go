@@ -49,15 +49,15 @@ type EnrichedOnchainUtxo struct {
 }
 
 // enrichOnchainUtxos merges UTXO metadata + lease state onto LND's list. It
-// also opportunistically prunes metadata rows for outpoints that no longer
-// exist in the wallet (auto-prune contract).
+// records the current live set for the background prune loop, keeping the read
+// path focused on enrichment.
 func (s *Server) enrichOnchainUtxos(ctx context.Context, items []lndclient.OnchainUtxo) []EnrichedOnchainUtxo {
 	enriched := make([]EnrichedOnchainUtxo, 0, len(items))
 	for _, item := range items {
 		enriched = append(enriched, EnrichedOnchainUtxo{OnchainUtxo: item})
 	}
 
-	leases, leaseErr := s.lnd.ListLeases(ctx)
+	leases, leaseErr := s.listCachedUtxoLeases(ctx)
 	if leaseErr != nil {
 		s.logger.Printf("utxo manager: list leases failed: %v", leaseErr)
 	} else {
@@ -76,6 +76,12 @@ func (s *Server) enrichOnchainUtxos(ctx context.Context, items []lndclient.Oncha
 		}
 	}
 
+	live := make([]string, 0, len(items))
+	for _, item := range items {
+		live = append(live, item.Outpoint)
+	}
+	s.recordUtxoPruneLive(live)
+
 	svc, _ := s.utxoManagerService()
 	if svc == nil {
 		return enriched
@@ -85,11 +91,6 @@ func (s *Server) enrichOnchainUtxos(ctx context.Context, items []lndclient.Oncha
 	if err != nil {
 		s.logger.Printf("utxo manager: list metadata failed: %v", err)
 		return enriched
-	}
-
-	live := make([]string, 0, len(items))
-	for _, item := range items {
-		live = append(live, item.Outpoint)
 	}
 
 	for i := range enriched {
@@ -102,13 +103,6 @@ func (s *Server) enrichOnchainUtxos(ctx context.Context, items []lndclient.Oncha
 		enriched[i].Tag = meta.Tag
 		enriched[i].Color = meta.Color
 		enriched[i].GroupID = meta.GroupID
-	}
-
-	// Best-effort prune; failures shouldn't block the read path.
-	pruneCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	if err := svc.Prune(pruneCtx, live); err != nil {
-		s.logger.Printf("utxo manager: prune failed: %v", err)
 	}
 
 	return enriched
@@ -193,6 +187,7 @@ func (s *Server) handleUtxoLock(w http.ResponseWriter, r *http.Request) {
 		}
 		results = append(results, leaseResult{Outpoint: info.Outpoint, Expiration: info.Expiration})
 	}
+	s.invalidateUtxoLeaseCache()
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
 
@@ -227,6 +222,7 @@ func (s *Server) handleUtxoUnlock(w http.ResponseWriter, r *http.Request) {
 		}
 		results = append(results, unlockResult{Outpoint: outpoint})
 	}
+	s.invalidateUtxoLeaseCache()
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
 

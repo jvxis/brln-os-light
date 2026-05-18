@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   assignUtxoGroup,
@@ -20,7 +20,8 @@ import UtxoCanvas, { type CanvasGroup, type CanvasUtxo } from '../components/Utx
 import UtxoSpendDialog, { type SpendMode } from '../components/UtxoSpendDialog'
 import UtxoBumpDialog from '../components/UtxoBumpDialog'
 import UtxoOpenChannelDialog from '../components/UtxoOpenChannelDialog'
-import WalletFlowView from '../components/WalletFlowView'
+
+const WalletFlowView = lazy(() => import('../components/WalletFlowView'))
 
 const emptySummary = {
   balances: {
@@ -586,7 +587,18 @@ export default function OnchainHub() {
       )}
 
       {activeView === 'walletflow' && walletFlowAvailable ? (
-        <WalletFlowView activeSource={walletFlowActiveSource} noTxIndexHint={walletFlowNoTxIndex} />
+        <Suspense
+          fallback={
+            <section className="section-card min-h-[420px] flex items-center justify-center">
+              <div className="flex items-center gap-3 text-sm text-fog/70">
+                <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-brass border-t-transparent" />
+                {t('walletFlow.loading')}
+              </div>
+            </section>
+          }
+        >
+          <WalletFlowView activeSource={walletFlowActiveSource} noTxIndexHint={walletFlowNoTxIndex} />
+        </Suspense>
       ) : (
         <>
       <div className="flex gap-2 lg:hidden">

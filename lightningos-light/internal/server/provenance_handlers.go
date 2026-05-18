@@ -160,7 +160,7 @@ func (s *Server) handleProvenanceRebuild(w http.ResponseWriter, r *http.Request)
 	// The walk + electrs enrichment can take a while on big wallets. Cap
 	// generously; the client should poll /api/onchain/provenance/status to
 	// see when the sync_at timestamp moves.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(s.shutdownContext(), 5*time.Minute)
 	go func() {
 		defer cancel()
 		if err := svc.RefreshNow(ctx, fullRebuild); err != nil {

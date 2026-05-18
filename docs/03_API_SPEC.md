@@ -188,6 +188,10 @@ Body:
   "sat_per_vbyte": 5
 }
 
+GET /api/onchain/utxos?limit=500
+- Returns wallet UTXOs enriched with local UTXO Manager metadata and lease state.
+- `limit` caps the response size only. The backend intentionally lists and enriches the full wallet UTXO set before slicing so metadata maintenance sees the complete live outpoint set.
+
 ## Lightning Ops
 
 GET /api/lnops/channels

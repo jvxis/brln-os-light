@@ -107,6 +107,10 @@ func (s *Server) routes() http.Handler {
 		r.Post("/utxos/groups", s.handleUtxoGroupsUpsert)
 		r.Post("/utxos/groups/{id}/assign", s.handleUtxoGroupAssign)
 		r.Delete("/utxos/groups/{id}", s.handleUtxoGroupDelete)
+		r.Get("/provenance", s.handleProvenanceGraph)
+		r.Get("/provenance/status", s.handleProvenanceStatus)
+		r.Get("/provenance/health", s.handleProvenanceHealth)
+		r.Post("/provenance/rebuild", s.handleProvenanceRebuild)
 	})
 
 	r.Route("/api/wallet", func(r chi.Router) {

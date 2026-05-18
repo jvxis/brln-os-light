@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"lightningos-light/internal/config"
+	"lightningos-light/internal/electrs"
 	"lightningos-light/internal/lndclient"
 	"lightningos-light/internal/reports"
 
@@ -86,6 +87,12 @@ type Server struct {
 	utxoManagerMu               sync.Mutex
 	utxoManager                 *UtxoManagerService
 	utxoManagerErr              string
+	provenanceInitAt            time.Time
+	provenanceMu                sync.Mutex
+	provenance                  *ProvenanceService
+	provenanceErr               string
+	provenanceChain             *electrs.ChainedSource
+	provenanceBitcoind          *BitcoinCoreSource
 	nodeRetirementInitAt        time.Time
 	nodeRetirementMu            sync.Mutex
 	nodeRetirement              *NodeRetirementService
@@ -138,6 +145,7 @@ func (s *Server) Run() error {
 	s.initBalancedOpen()
 	s.initCloseManager()
 	s.initUtxoManager()
+	s.initProvenance()
 	s.initNodeRetirement()
 	s.initSuccession()
 	if s.chat != nil {

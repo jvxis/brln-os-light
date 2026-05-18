@@ -17,6 +17,12 @@ const (
 	bitcoinCoreNoTxIndexHintCooldown = 6 * time.Hour
 )
 
+const (
+	provenancePrimaryChain    = "chain"
+	provenancePrimaryBitcoind = "bitcoind"
+	provenancePrimaryElectrs  = "electrs"
+)
+
 // BitcoinCoreSource adapts the local bitcoind getrawtransaction call so the
 // provenance ChainedSource can fall back to it when electrs is unreachable.
 //
@@ -224,16 +230,37 @@ func parsePublicElectrumList(raw string) []string {
 func buildProvenanceSourceChain(publicAllowed bool, bitcoindFallback *BitcoinCoreSource, metrics *ProvenanceMetrics) (*electrs.ChainedSource, []string) {
 	sources := []electrs.TxSource{}
 	notes := []string{}
-
-	if bitcoindFallback != nil {
-		sources = append(sources, bitcoindFallback)
-		notes = append(notes, "local bitcoind (txindex)")
+	primary, invalidPrimary := parseProvenancePrimary(os.Getenv("PROVENANCE_PRIMARY"))
+	if invalidPrimary != "" {
+		notes = append(notes, "ignored invalid PROVENANCE_PRIMARY="+invalidPrimary)
 	}
 
 	local := &electrs.ClientSource{
 		Client: electrs.New(""),
 		Label:  "local electrs",
 	}
+
+	if primary == provenancePrimaryBitcoind {
+		if bitcoindFallback != nil {
+			sources = append(sources, bitcoindFallback)
+			notes = append(notes, "local bitcoind (txindex, forced)")
+		} else {
+			notes = append(notes, "PROVENANCE_PRIMARY=bitcoind requested but bitcoind source is not configured")
+		}
+		return electrs.NewChainedSource(wrapProvenanceSourcesWithMetrics(sources, metrics)), notes
+	}
+
+	if primary == provenancePrimaryElectrs {
+		sources = append(sources, local)
+		notes = append(notes, "local electrs @ "+local.Client.Addr()+" (forced)")
+		return electrs.NewChainedSource(wrapProvenanceSourcesWithMetrics(sources, metrics)), notes
+	}
+
+	if bitcoindFallback != nil {
+		sources = append(sources, bitcoindFallback)
+		notes = append(notes, "local bitcoind (txindex)")
+	}
+
 	sources = append(sources, local)
 	notes = append(notes, "local electrs @ "+local.Client.Addr())
 
@@ -246,4 +273,18 @@ func buildProvenanceSourceChain(publicAllowed bool, bitcoindFallback *BitcoinCor
 	}
 
 	return electrs.NewChainedSource(wrapProvenanceSourcesWithMetrics(sources, metrics)), notes
+}
+
+func parseProvenancePrimary(raw string) (string, string) {
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	switch normalized {
+	case "", provenancePrimaryChain:
+		return provenancePrimaryChain, ""
+	case provenancePrimaryBitcoind, "bitcoin", "bitcoin-core", "core":
+		return provenancePrimaryBitcoind, ""
+	case provenancePrimaryElectrs, "electrum", "local-electrs":
+		return provenancePrimaryElectrs, ""
+	default:
+		return provenancePrimaryChain, normalized
+	}
 }

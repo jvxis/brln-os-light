@@ -762,6 +762,7 @@ The Wallet Flow tab inside On-chain Hub renders a sankey graph of every transact
 > **Privacy warning**: when the chain reaches a public Electrum step, the txids your wallet asks about become visible to the operator. The Wallet Flow tab renders the source badge in amber for that reason. Set `PROVENANCE_PUBLIC_ELECTRUM=disabled` in `/etc/lightningos/secrets.env` if your threat model requires it.
 
 Optional pins in `/etc/lightningos/secrets.env`:
+- `PROVENANCE_PRIMARY=chain|bitcoind|electrs` — choose the provenance source policy. Default `chain` keeps `bitcoind -> electrs -> public`; `bitcoind` and `electrs` force a single local source with no fallback.
 - `ELECTRUM_RPC_ADDR=host:port[:s|:t]` — point at a non-default electrs (e.g. a remote one over Tailscale).
 - `PROVENANCE_PUBLIC_ELECTRUM=disabled` — opt out of the public fallback.
 - `PROVENANCE_PUBLIC_ELECTRUM=host:port[:s|:t][,...]` — replace the default public list.

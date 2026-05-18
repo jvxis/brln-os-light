@@ -1,4 +1,5 @@
 import { Handle, Position, type NodeProps } from 'reactflow'
+import { PALETTE, barGlow, fillBarGradient } from '../utils/utxoStyles'
 
 export type TxBar = {
   // For inputs this is the *vin index*; for outputs it is the vout index.
@@ -59,9 +60,9 @@ function barHeight(amount: number, min: number, max: number) {
 }
 
 function barColor(bar: TxBar, side: 'in' | 'out') {
-  if (!bar.isOurs) return '#475569' // slate-600 — external
-  if (side === 'out' && bar.isCurrentUtxo) return '#14b8a6' // teal — still live
-  return '#f59e0b' // amber — ours moved on
+  if (!bar.isOurs) return PALETTE.external
+  if (side === 'out' && bar.isCurrentUtxo) return PALETTE.oursLive
+  return PALETTE.oursSpent
 }
 
 function fmtSats(value: number) {
@@ -140,7 +141,11 @@ export default function TxNode({ data, selected }: NodeProps<TxNodeData>) {
   const heightHint = data.blockHeight > 0 ? `h ${data.blockHeight.toLocaleString()}` : 'mempool'
 
   const liveCount = data.outputs.filter((o) => o.isCurrentUtxo).length
-  const headerBorder = data.isExternal ? '#475569' : liveCount > 0 ? '#14b8a6' : '#f59e0b'
+  const headerBorder = data.isExternal
+    ? PALETTE.external
+    : liveCount > 0
+    ? PALETTE.oursLive
+    : PALETTE.oursSpent
   const headerGradient = data.isExternal
     ? 'linear-gradient(180deg, rgba(71,85,105,0.20) 0%, rgba(71,85,105,0.06) 100%)'
     : liveCount > 0
@@ -182,8 +187,8 @@ export default function TxNode({ data, selected }: NodeProps<TxNodeData>) {
                 style={{
                   width: 18,
                   height: h,
-                  background: `linear-gradient(180deg, ${color} 0%, ${color}aa 100%)`,
-                  boxShadow: bar.isOurs ? `0 0 0 1px ${color}, 0 0 8px ${color}55` : undefined
+                  background: fillBarGradient(color),
+                  boxShadow: barGlow(color, bar.isOurs)
                 }}
               />
               <div className="flex flex-col leading-tight min-w-0">
@@ -212,8 +217,8 @@ export default function TxNode({ data, selected }: NodeProps<TxNodeData>) {
                 style={{
                   width: 18,
                   height: h,
-                  background: `linear-gradient(180deg, ${color} 0%, ${color}aa 100%)`,
-                  boxShadow: bar.isOurs ? `0 0 0 1px ${color}, 0 0 8px ${color}55` : undefined
+                  background: fillBarGradient(color),
+                  boxShadow: barGlow(color, bar.isOurs)
                 }}
               />
             </div>

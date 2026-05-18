@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -72,26 +73,63 @@ func (s *Server) handleProvenanceGraph(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, graph)
 }
 
-// handleProvenanceHealth reports whether electrs is reachable. The UI uses
-// this to decide whether to render the Wallet Flow page at all.
+// handleProvenanceHealth reports whether any tx source in the provenance
+// chain is reachable. The UI uses `ok` to gate the Wallet Flow tab and
+// `active`/`no_txindex_hint` for the source badge + the one-time txindex
+// banner.
 func (s *Server) handleProvenanceHealth(w http.ResponseWriter, r *http.Request) {
-	client := electrs.New("")
+	s.initProvenance()
+
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
-	info, err := client.Ping(ctx)
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"electrs_available": false,
-			"electrs_addr":      client.Addr(),
-			"error":             err.Error(),
-		})
+
+	chain := s.provenanceChain
+	if chain == nil {
+		// Fall back to the legacy single-client probe so the UI can still
+		// surface electrs status even when init failed partway.
+		client := electrs.New("")
+		if _, err := client.Ping(ctx); err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "electrs_addr": client.Addr(), "error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "electrs_addr": client.Addr(), "active": "local electrs"})
 		return
 	}
+
+	probeTxid := "0000000000000000000000000000000000000000000000000000000000000000"
+	sources := []map[string]any{}
+	anyOk := false
+	activeName := ""
+	for _, src := range chain.Sources() {
+		entry := map[string]any{"name": src.Name()}
+		cctx, ccancel := context.WithTimeout(ctx, 2*time.Second)
+		_, err := src.GetTransaction(cctx, probeTxid)
+		ccancel()
+		if err == nil || !errors.Is(err, electrs.ErrSourceUnavailable) {
+			entry["available"] = true
+			if !anyOk {
+				activeName = src.Name()
+			}
+			anyOk = true
+		} else {
+			entry["available"] = false
+		}
+		sources = append(sources, entry)
+	}
+	if last := chain.LastGood(); last != nil {
+		activeName = last.Name()
+	}
+
+	hint := false
+	if s.provenanceBitcoind != nil {
+		hint = s.provenanceBitcoind.NoTxIndexHint()
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"electrs_available": true,
-		"electrs_addr":      client.Addr(),
-		"electrs_server":    info[0],
-		"electrs_protocol":  info[1],
+		"ok":               anyOk,
+		"active":           activeName,
+		"sources":          sources,
+		"no_txindex_hint":  hint,
 	})
 }
 

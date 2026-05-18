@@ -93,7 +93,12 @@ function fmtSats(value: number) {
   return value.toLocaleString()
 }
 
-export default function WalletFlowView() {
+type WalletFlowViewProps = {
+  activeSource?: string
+  noTxIndexHint?: boolean
+}
+
+export default function WalletFlowView({ activeSource = '', noTxIndexHint = false }: WalletFlowViewProps = {}) {
   const [graph, setGraph] = useState<GraphPayload | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -421,10 +426,34 @@ export default function WalletFlowView() {
 
   return (
     <section className="space-y-4">
+      {noTxIndexHint && (
+        <div className="rounded-2xl border border-brass/40 bg-brass/10 px-4 py-3 text-xs text-brass">
+          <b>Tip:</b> Local Bitcoin Core was reachable but has no txindex. Wallet flow is falling back to a public Electrum server, which exposes the txids you ask about to a third party. Add <code>txindex=1</code> to your <code>bitcoin.conf</code> and restart to keep provenance fully local.
+        </div>
+      )}
       <div className="section-card">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-fog/50">UTXO Provenance</p>
+            <div className="flex items-center gap-2">
+              <p className="text-xs uppercase tracking-[0.3em] text-fog/50">UTXO Provenance</p>
+              {activeSource && (
+                <span
+                  className={
+                    'rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wider ' +
+                    (activeSource.startsWith('public:')
+                      ? 'border-ember/40 bg-ember/10 text-ember'
+                      : 'border-brass/40 bg-brass/10 text-brass')
+                  }
+                  title={
+                    activeSource.startsWith('public:')
+                      ? 'Falling back to a public Electrum server. Txids you query are visible to the operator.'
+                      : `Source: ${activeSource}`
+                  }
+                >
+                  {activeSource}
+                </span>
+              )}
+            </div>
             <h2 className="mt-2 text-2xl font-semibold">Wallet flow</h2>
             <p className="mt-1 text-sm text-fog/65">
               Every tx your wallet has touched. Teal = live UTXO ahead. Amber = spent. Grey = external.

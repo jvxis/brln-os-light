@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"lightningos-light/internal/config"
+	"lightningos-light/internal/electrs"
 	"lightningos-light/internal/lndclient"
 	"lightningos-light/internal/reports"
 
@@ -90,6 +91,8 @@ type Server struct {
 	provenanceMu                sync.Mutex
 	provenance                  *ProvenanceService
 	provenanceErr               string
+	provenanceChain             *electrs.ChainedSource
+	provenanceBitcoind          *BitcoinCoreSource
 	nodeRetirementInitAt        time.Time
 	nodeRetirementMu            sync.Mutex
 	nodeRetirement              *NodeRetirementService

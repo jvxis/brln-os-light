@@ -88,6 +88,8 @@ export default function OnchainHub() {
   const [activePane, setActivePane] = useState<'utxos' | 'txs'>('txs')
   const [activeView, setActiveView] = useState<'hub' | 'walletflow'>('hub')
   const [walletFlowAvailable, setWalletFlowAvailable] = useState<boolean>(false)
+  const [walletFlowActiveSource, setWalletFlowActiveSource] = useState<string>('')
+  const [walletFlowNoTxIndex, setWalletFlowNoTxIndex] = useState<boolean>(false)
   const mountedRef = useRef(true)
 
   const [utxoView, setUtxoView] = useState<'canvas' | 'table'>(() => {
@@ -384,7 +386,10 @@ export default function OnchainHub() {
     const probe = () => {
       getProvenanceHealth()
         .then((res: any) => {
-          if (!cancelled) setWalletFlowAvailable(Boolean(res?.ok))
+          if (cancelled) return
+          setWalletFlowAvailable(Boolean(res?.ok))
+          setWalletFlowActiveSource(String(res?.active ?? ''))
+          setWalletFlowNoTxIndex(Boolean(res?.no_txindex_hint))
         })
         .catch(() => {
           if (!cancelled) setWalletFlowAvailable(false)
@@ -581,7 +586,7 @@ export default function OnchainHub() {
       )}
 
       {activeView === 'walletflow' && walletFlowAvailable ? (
-        <WalletFlowView />
+        <WalletFlowView activeSource={walletFlowActiveSource} noTxIndexHint={walletFlowNoTxIndex} />
       ) : (
         <>
       <div className="flex gap-2 lg:hidden">

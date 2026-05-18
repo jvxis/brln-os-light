@@ -74,13 +74,13 @@ type ProvenanceService struct {
 	db      *pgxpool.Pool
 	logger  *log.Logger
 	lnd     *lndclient.Client
-	electrs *electrs.Client
+	electrs electrs.TxSource
 	mu      sync.Mutex
 	running bool
 }
 
-func NewProvenanceService(db *pgxpool.Pool, logger *log.Logger, lnd *lndclient.Client, e *electrs.Client) *ProvenanceService {
-	return &ProvenanceService{db: db, logger: logger, lnd: lnd, electrs: e}
+func NewProvenanceService(db *pgxpool.Pool, logger *log.Logger, lnd *lndclient.Client, source electrs.TxSource) *ProvenanceService {
+	return &ProvenanceService{db: db, logger: logger, lnd: lnd, electrs: source}
 }
 
 func (s *ProvenanceService) EnsureSchema(ctx context.Context) error {

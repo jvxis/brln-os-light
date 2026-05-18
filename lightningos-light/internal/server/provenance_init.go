@@ -3,9 +3,10 @@ package server
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
-
-	"lightningos-light/internal/electrs"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -44,8 +45,13 @@ func (s *Server) initProvenance() {
 		s.db = pool
 	}
 
-	electrsClient := electrs.New("")
-	svc := NewProvenanceService(pool, s.logger, s.lnd, electrsClient)
+	publicAllowed := detectProvenancePublicAllowed()
+	s.provenanceBitcoind = NewBitcoinCoreSource()
+	chain, notes := buildProvenanceSourceChain(publicAllowed, s.provenanceBitcoind)
+	s.provenanceChain = chain
+	s.logger.Printf("provenance source chain: %s", strings.Join(notes, " → "))
+
+	svc := NewProvenanceService(pool, s.logger, s.lnd, chain)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -62,4 +68,26 @@ func (s *Server) initProvenance() {
 func (s *Server) provenanceService() (*ProvenanceService, string) {
 	s.initProvenance()
 	return s.provenance, s.provenanceErr
+}
+
+// detectProvenancePublicAllowed returns true when the public-Electrum
+// fallback step should be enabled. Public servers are mainnet-only (the
+// only ones we ship defaults for); on any other network the step is a
+// no-op anyway since public mainnet electrs won't know about testnet/
+// signet/regtest txids.
+//
+// Order of resolution:
+//   - PROVENANCE_NETWORK env var (mainnet / testnet / signet / regtest)
+//   - Filesystem hint: /data/lnd/data/chain/bitcoin/<network>/wallet.db
+//   - Default: mainnet
+func detectProvenancePublicAllowed() bool {
+	if v := strings.ToLower(strings.TrimSpace(os.Getenv("PROVENANCE_NETWORK"))); v != "" {
+		return v == "mainnet" || v == "bitcoin"
+	}
+	for _, candidate := range []string{"testnet", "testnet3", "testnet4", "signet", "regtest"} {
+		if _, err := os.Stat(filepath.Join("/data/lnd/data/chain/bitcoin", candidate, "wallet.db")); err == nil {
+			return false
+		}
+	}
+	return true
 }

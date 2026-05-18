@@ -7,6 +7,7 @@ package electrs
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,18 +25,27 @@ const (
 	requestTimeout = 8 * time.Second
 )
 
-// Client is goroutine-safe; it dials lazily and reuses a single TCP connection
-// guarded by a write mutex. Read responses are correlated by request ID.
+// Client is goroutine-safe; it dials lazily and reuses a single connection
+// (TCP or TLS depending on address suffix) guarded by a write mutex. Read
+// responses are correlated by request ID.
 type Client struct {
-	addr   string
-	mu     sync.Mutex
-	conn   net.Conn
-	reader *bufio.Reader
-	nextID atomic.Int64
+	addr    string // host:port, with optional :s (TLS) or :t (TCP) suffix
+	host    string
+	netAddr string // host:port without scheme suffix
+	useTLS  bool
+	mu      sync.Mutex
+	conn    net.Conn
+	reader  *bufio.Reader
+	nextID  atomic.Int64
 }
 
 // New returns a client configured from the ELECTRUM_RPC_ADDR env var, falling
 // back to 127.0.0.1:50001. Pass an explicit override for tests.
+//
+// Address forms:
+//   - host:port      → plain TCP (back-compat)
+//   - host:port:t    → plain TCP (explicit)
+//   - host:port:s    → TLS (standard cert verification)
 func New(overrideAddr string) *Client {
 	addr := strings.TrimSpace(overrideAddr)
 	if addr == "" {
@@ -44,7 +54,26 @@ func New(overrideAddr string) *Client {
 	if addr == "" {
 		addr = defaultAddr
 	}
-	return &Client{addr: addr}
+	host, netAddr, useTLS := parseAddr(addr)
+	return &Client{addr: addr, host: host, netAddr: netAddr, useTLS: useTLS}
+}
+
+// parseAddr splits a host:port[:s|:t] form into (host, "host:port", useTLS).
+func parseAddr(addr string) (host string, netAddr string, useTLS bool) {
+	parts := strings.Split(addr, ":")
+	switch len(parts) {
+	case 2:
+		return parts[0], addr, false
+	case 3:
+		switch strings.ToLower(parts[2]) {
+		case "s", "tls", "ssl":
+			return parts[0], parts[0] + ":" + parts[1], true
+		case "t", "tcp", "":
+			return parts[0], parts[0] + ":" + parts[1], false
+		}
+	}
+	// Fallback: hand it to net.Dialer as-is, no TLS, no host extraction.
+	return addr, addr, false
 }
 
 func (c *Client) Addr() string { return c.addr }
@@ -54,7 +83,13 @@ func (c *Client) dial(ctx context.Context) error {
 		return nil
 	}
 	d := net.Dialer{Timeout: dialTimeout}
-	conn, err := d.DialContext(ctx, "tcp", c.addr)
+	var conn net.Conn
+	var err error
+	if c.useTLS {
+		conn, err = tls.DialWithDialer(&d, "tcp", c.netAddr, &tls.Config{ServerName: c.host})
+	} else {
+		conn, err = d.DialContext(ctx, "tcp", c.netAddr)
+	}
 	if err != nil {
 		return fmt.Errorf("electrs dial %s: %w", c.addr, err)
 	}

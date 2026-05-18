@@ -133,8 +133,6 @@ func (s *Server) handleProvenanceHealth(w http.ResponseWriter, r *http.Request) 
 		hint = s.provenanceBitcoind.NoTxIndexHint()
 	}
 
-	s.logger.Printf("provenance health: ok=%v backend=%q hint=%v sources=%v", anyOk, backendName, hint, sources)
-
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":                anyOk,
 		"backend":           backendName, // preferred field

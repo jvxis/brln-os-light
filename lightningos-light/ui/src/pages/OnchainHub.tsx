@@ -86,7 +86,18 @@ export default function OnchainHub() {
   const [activePane, setActivePane] = useState<'utxos' | 'txs'>('txs')
   const mountedRef = useRef(true)
 
-  const [utxoView, setUtxoView] = useState<'canvas' | 'table'>('canvas')
+  const [utxoView, setUtxoView] = useState<'canvas' | 'table'>(() => {
+    try {
+      const saved = localStorage.getItem('onchainHub.view')
+      if (saved === 'canvas' || saved === 'table') return saved
+    } catch {}
+    return 'table'
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('onchainHub.view', utxoView)
+    } catch {}
+  }, [utxoView])
   const [canvasTopN, setCanvasTopN] = useState<number>(10)
   const [utxoGroups, setUtxoGroups] = useState<CanvasGroup[]>([])
   const [utxoSelected, setUtxoSelected] = useState<Set<string>>(new Set())
@@ -203,14 +214,14 @@ export default function OnchainHub() {
     if (utxoSelected.size !== 1) return
     const outpoint = Array.from(utxoSelected)[0]
     const current = utxos.find((u) => u.outpoint === outpoint)
-    const next = window.prompt('Label for this UTXO (empty to clear):', current?.label || '')
+    const next = window.prompt(t('onchainHub.utxoMgr.promptLabel'), current?.label || '')
     if (next === null) return
     try {
       await upsertUtxoMetadata({ outpoint, label: next })
-      reportAction('Label updated.')
+      reportAction(t('onchainHub.utxoMgr.statusLabelUpdated'))
       await refreshUtxoState()
     } catch (err: any) {
-      reportAction(err?.message || 'Failed to update label.')
+      reportAction(err?.message || t('onchainHub.utxoMgr.errorLabelUpdate'))
     }
   }
 
@@ -218,10 +229,10 @@ export default function OnchainHub() {
     if (utxoSelected.size === 0) return
     try {
       await lockUtxos({ outpoints: Array.from(utxoSelected) })
-      reportAction(`Locked ${utxoSelected.size} UTXO(s).`)
+      reportAction(t('onchainHub.utxoMgr.statusLocked', { count: utxoSelected.size }))
       await refreshUtxoState()
     } catch (err: any) {
-      reportAction(err?.message || 'Failed to lock UTXOs.')
+      reportAction(err?.message || t('onchainHub.utxoMgr.errorLock'))
     }
   }
 
@@ -229,27 +240,32 @@ export default function OnchainHub() {
     if (utxoSelected.size === 0) return
     try {
       await unlockUtxos({ outpoints: Array.from(utxoSelected) })
-      reportAction(`Unlocked ${utxoSelected.size} UTXO(s).`)
+      reportAction(t('onchainHub.utxoMgr.statusUnlocked', { count: utxoSelected.size }))
       await refreshUtxoState()
     } catch (err: any) {
-      reportAction(err?.message || 'Failed to unlock UTXOs.')
+      reportAction(err?.message || t('onchainHub.utxoMgr.errorUnlock'))
     }
   }
 
   const handleGroupSelected = async (name?: string) => {
     if (utxoSelected.size < 2 && !name) return
-    const groupName = name || window.prompt('Name this group:', `Group ${utxoGroups.length + 1}`)
+    const groupName =
+      name ||
+      window.prompt(
+        t('onchainHub.utxoMgr.promptGroupName'),
+        t('onchainHub.utxoMgr.defaultGroupName', { index: utxoGroups.length + 1 })
+      )
     if (!groupName) return
     try {
       await upsertUtxoGroup({
         name: groupName,
         outpoints: Array.from(utxoSelected)
       })
-      reportAction(`Grouped ${utxoSelected.size} UTXO(s).`)
+      reportAction(t('onchainHub.utxoMgr.statusGrouped', { count: utxoSelected.size }))
       clearSelection()
       await refreshUtxoState()
     } catch (err: any) {
-      reportAction(err?.message || 'Failed to create group.')
+      reportAction(err?.message || t('onchainHub.utxoMgr.errorGroupCreate'))
     }
   }
 
@@ -261,7 +277,7 @@ export default function OnchainHub() {
         .filter((id): id is string => Boolean(id))
     )
     if (groupIds.size === 0) {
-      reportAction('Selection has no group to leave.')
+      reportAction(t('onchainHub.utxoMgr.errorNoGroupToLeave'))
       return
     }
     try {
@@ -272,10 +288,10 @@ export default function OnchainHub() {
         if (members.length === 0) continue
         await assignUtxoGroup(gid, { outpoints: members, detach: true })
       }
-      reportAction('Removed from group.')
+      reportAction(t('onchainHub.utxoMgr.statusUngrouped'))
       await refreshUtxoState()
     } catch (err: any) {
-      reportAction(err?.message || 'Failed to ungroup.')
+      reportAction(err?.message || t('onchainHub.utxoMgr.errorUngroup'))
     }
   }
 
@@ -294,7 +310,7 @@ export default function OnchainHub() {
     const outpoint = Array.from(utxoSelected)[0]
     const utxo = utxos.find((u) => u.outpoint === outpoint)
     if (!utxo || utxo.confirmations > 0) {
-      reportAction('Bump only works on a single unconfirmed UTXO.')
+      reportAction(t('onchainHub.utxoMgr.errorBumpNeedsUnconfirmed'))
       return
     }
     setBumpTarget(outpoint)
@@ -308,7 +324,7 @@ export default function OnchainHub() {
   const handleConsolidateAll = () => {
     const spendable = utxos.filter((u) => !u.locked && u.confirmations > 0)
     if (spendable.length < 2) {
-      reportAction('Need at least 2 confirmed unlocked UTXOs to consolidate.')
+      reportAction(t('onchainHub.utxoMgr.errorConsolidateNeedTwo'))
       return
     }
     setUtxoSelected(new Set(spendable.map((u) => u.outpoint)))
@@ -316,13 +332,13 @@ export default function OnchainHub() {
   }
 
   const handleDeleteGroup = async (groupId: string) => {
-    if (!window.confirm('Delete this group? UTXOs stay in your wallet.')) return
+    if (!window.confirm(t('onchainHub.utxoMgr.confirmDeleteGroup'))) return
     try {
       await deleteUtxoGroup(groupId)
-      reportAction('Group deleted.')
+      reportAction(t('onchainHub.utxoMgr.statusGroupDeleted'))
       await refreshUtxoState()
     } catch (err: any) {
-      reportAction(err?.message || 'Failed to delete group.')
+      reportAction(err?.message || t('onchainHub.utxoMgr.errorGroupDelete'))
     }
   }
 
@@ -610,51 +626,52 @@ export default function OnchainHub() {
                 className={clsx('text-xs px-3 py-2', utxoView === 'canvas' ? 'btn-primary' : 'btn-secondary')}
                 onClick={() => setUtxoView('canvas')}
               >
-                Canvas
+                {t('onchainHub.utxoMgr.viewCanvas')}
               </button>
               <button
                 className={clsx('text-xs px-3 py-2', utxoView === 'table' ? 'btn-primary' : 'btn-secondary')}
                 onClick={() => setUtxoView('table')}
               >
-                Table
+                {t('onchainHub.utxoMgr.viewTable')}
               </button>
               {utxoView === 'canvas' && (
                 <label className="flex items-center gap-1 text-xs text-fog/70">
-                  Top
+                  {t('onchainHub.utxoMgr.topLabel')}
                   <input
                     className="input-field w-16 px-2 py-1"
                     inputMode="numeric"
                     value={canvasTopN === 0 ? '' : String(canvasTopN)}
-                    placeholder="all"
+                    placeholder={t('onchainHub.utxoMgr.topPlaceholderAll')}
                     onChange={(e) => {
                       const raw = e.target.value.replace(/[^\d]/g, '')
                       setCanvasTopN(raw ? Math.min(Number(raw), 500) : 0)
                     }}
                   />
-                  by amount
+                  {t('onchainHub.utxoMgr.byAmount')}
                 </label>
               )}
               <button
                 className="btn-secondary text-xs px-3 py-2"
                 onClick={handleConsolidateAll}
-                title="Consolidate all confirmed, unlocked UTXOs"
+                title={t('onchainHub.utxoMgr.consolidateAllTooltip')}
               >
-                Consolidate all
+                {t('onchainHub.utxoMgr.consolidateAll')}
               </button>
             </div>
             {utxoSelected.size > 0 && (
               <div className="flex items-center gap-2 text-xs text-fog/70">
                 <span>
-                  {utxoSelected.size} selected ·{' '}
-                  {formatSats(
-                    Array.from(utxoSelected)
-                      .map((op) => utxos.find((u) => u.outpoint === op)?.amount_sat || 0)
-                      .reduce((a, b) => a + b, 0)
-                  )}{' '}
-                  sats
+                  {t('onchainHub.utxoMgr.selectionSummary', {
+                    count: utxoSelected.size,
+                    sats: formatSats(
+                      Array.from(utxoSelected)
+                        .map((op) => utxos.find((u) => u.outpoint === op)?.amount_sat || 0)
+                        .reduce((a, b) => a + b, 0)
+                    )
+                  })}
                 </span>
                 <button className="btn-secondary text-xs px-2 py-1" onClick={clearSelection}>
-                  Clear
+                  {t('onchainHub.utxoMgr.actionClear')}
                 </button>
               </div>
             )}
@@ -663,43 +680,43 @@ export default function OnchainHub() {
           {utxoSelected.size > 0 && (
             <div className="flex flex-wrap gap-2">
               <button className="btn-primary text-xs px-3 py-2" onClick={handleSendSelected}>
-                Spend…
+                {t('onchainHub.utxoMgr.actionSpend')}
               </button>
               {utxoSelected.size >= 2 && (
                 <button className="btn-primary text-xs px-3 py-2" onClick={handleConsolidateSelected}>
-                  Consolidate
+                  {t('onchainHub.utxoMgr.actionConsolidate')}
                 </button>
               )}
               {utxoSelected.size === 1 && (
                 <button className="btn-secondary text-xs px-3 py-2" onClick={handleRenameSelected}>
-                  Rename
+                  {t('onchainHub.utxoMgr.actionRename')}
                 </button>
               )}
               {utxoSelected.size >= 2 && (
                 <button className="btn-secondary text-xs px-3 py-2" onClick={() => handleGroupSelected()}>
-                  Group
+                  {t('onchainHub.utxoMgr.actionGroup')}
                 </button>
               )}
               <button className="btn-secondary text-xs px-3 py-2" onClick={handleUngroupSelected}>
-                Ungroup
+                {t('onchainHub.utxoMgr.actionUngroup')}
               </button>
               <button className="btn-secondary text-xs px-3 py-2" onClick={handleLockSelected}>
-                Lock
+                {t('onchainHub.utxoMgr.actionLock')}
               </button>
               <button className="btn-secondary text-xs px-3 py-2" onClick={handleUnlockSelected}>
-                Unlock
+                {t('onchainHub.utxoMgr.actionUnlock')}
               </button>
               {utxoSelected.size === 1 && (() => {
                 const sel = Array.from(utxoSelected)[0]
                 const u = utxos.find((x) => x.outpoint === sel)
                 return u && u.confirmations === 0 ? (
                   <button className="btn-secondary text-xs px-3 py-2" onClick={handleBumpSelected}>
-                    Bump fee
+                    {t('onchainHub.utxoMgr.actionBumpFee')}
                   </button>
                 ) : null
               })()}
               <button className="btn-secondary text-xs px-3 py-2" onClick={handleOpenChannelSelected}>
-                Open channel
+                {t('onchainHub.utxoMgr.actionOpenChannel')}
               </button>
             </div>
           )}
@@ -721,7 +738,7 @@ export default function OnchainHub() {
                   {g.name || g.id}
                   <button
                     className="text-fog/50 hover:text-ember"
-                    title="Delete group"
+                    title={t('onchainHub.utxoMgr.deleteGroupTooltip')}
                     onClick={() => handleDeleteGroup(g.id)}
                   >
                     ×
@@ -743,7 +760,11 @@ export default function OnchainHub() {
                   <>
                     {hidden > 0 && (
                       <p className="text-xs text-fog/60 mb-2">
-                        Showing top {limited.length} of {sortedByAmount.length} by amount · {hidden} hidden
+                        {t('onchainHub.utxoMgr.canvasShowingTop', {
+                          shown: limited.length,
+                          total: sortedByAmount.length,
+                          hidden
+                        })}
                       </p>
                     )}
                     <UtxoCanvas
@@ -754,22 +775,25 @@ export default function OnchainHub() {
                   onAssignToGroup={async (groupId, outpoints) => {
                     try {
                       await assignUtxoGroup(groupId, { outpoints })
-                      reportAction('Added to group.')
+                      reportAction(t('onchainHub.utxoMgr.statusAddedToGroup'))
                       await refreshUtxoState()
                     } catch (err: any) {
-                      reportAction(err?.message || 'Failed to assign group.')
+                      reportAction(err?.message || t('onchainHub.utxoMgr.errorGroupAssign'))
                     }
                   }}
                   onCreateGroupWith={async (outpoints, suggested) => {
-                    const name = window.prompt('Name the new group:', suggested || `Group ${utxoGroups.length + 1}`)
+                    const name = window.prompt(
+                      t('onchainHub.utxoMgr.promptNewGroup'),
+                      suggested || t('onchainHub.utxoMgr.defaultGroupName', { index: utxoGroups.length + 1 })
+                    )
                     if (!name) return
                     try {
                       await upsertUtxoGroup({ name, outpoints })
-                      reportAction('Group created.')
+                      reportAction(t('onchainHub.utxoMgr.statusGroupCreated'))
                       clearSelection()
                       await refreshUtxoState()
                     } catch (err: any) {
-                      reportAction(err?.message || 'Failed to create group.')
+                      reportAction(err?.message || t('onchainHub.utxoMgr.errorGroupCreate'))
                     }
                   }}
                   formatSats={formatSats}
@@ -981,7 +1005,7 @@ export default function OnchainHub() {
           onClose={() => setSpendMode(null)}
           onSuccess={(txid) => {
             setSpendMode(null)
-            reportAction(`Broadcast: ${txid}`)
+            reportAction(t('onchainHub.utxoMgr.statusBroadcast', { txid }))
             clearSelection()
             refreshUtxoState()
           }}
@@ -994,7 +1018,7 @@ export default function OnchainHub() {
           onClose={() => setBumpTarget(null)}
           onSuccess={() => {
             setBumpTarget(null)
-            reportAction('Bump submitted.')
+            reportAction(t('onchainHub.utxoMgr.statusBumpSubmitted'))
             refreshUtxoState()
           }}
         />
@@ -1008,7 +1032,7 @@ export default function OnchainHub() {
           onClose={() => setOpenChannelOpen(false)}
           onSuccess={(channelPoint) => {
             setOpenChannelOpen(false)
-            reportAction(`Channel opening: ${channelPoint}`)
+            reportAction(t('onchainHub.utxoMgr.statusChannelOpening', { channelPoint }))
             clearSelection()
             refreshUtxoState()
           }}

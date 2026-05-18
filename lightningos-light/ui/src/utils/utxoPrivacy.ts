@@ -7,7 +7,8 @@ export type UtxoLike = {
 
 export type PrivacyWarning = {
   severity: 'info' | 'warn'
-  message: string
+  key: string
+  params?: Record<string, string | number>
 }
 
 const DUST_VBYTES_PER_INPUT = 68
@@ -26,13 +27,15 @@ export function computePrivacyWarnings(
   if (addresses.size > 1) {
     warnings.push({
       severity: 'warn',
-      message: `Mixing UTXOs from ${addresses.size} addresses will link them on-chain (common-input ownership heuristic).`
+      key: 'onchainHub.privacy.mixedAddresses',
+      params: { count: addresses.size }
     })
   }
   if (addressTypes.size > 1) {
     warnings.push({
       severity: 'warn',
-      message: `Mixing ${addressTypes.size} address types (${Array.from(addressTypes).join(', ')}) reveals coin control.`
+      key: 'onchainHub.privacy.mixedAddressTypes',
+      params: { count: addressTypes.size, types: Array.from(addressTypes).join(', ') }
     })
   }
 
@@ -44,7 +47,12 @@ export function computePrivacyWarnings(
       if (ratio >= DUST_RATIO_THRESHOLD) {
         warnings.push({
           severity: 'warn',
-          message: `Fee (~${approxFee.toLocaleString()} sats) would consume ${(ratio * 100).toFixed(1)}% of the consolidated value at ${options.satPerVbyte} sat/vB. Consider waiting for lower fees.`
+          key: 'onchainHub.privacy.consolidateFeeHeavy',
+          params: {
+            fee: approxFee.toLocaleString(),
+            pct: (ratio * 100).toFixed(1),
+            rate: options.satPerVbyte
+          }
         })
       }
     }

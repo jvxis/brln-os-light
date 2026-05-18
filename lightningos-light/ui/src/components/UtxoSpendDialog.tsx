@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { getWalletAddress, previewOnchainSend, sendOnchain } from '../api'
 import { computePrivacyWarnings, type UtxoLike } from '../utils/utxoPrivacy'
 
@@ -19,6 +20,7 @@ export default function UtxoSpendDialog({
   onClose,
   onSuccess
 }: Props) {
+  const { t } = useTranslation()
   const [address, setAddress] = useState('')
   const [internalAddrLoading, setInternalAddrLoading] = useState(mode === 'consolidate')
   const [internalAddrError, setInternalAddrError] = useState('')
@@ -42,13 +44,13 @@ export default function UtxoSpendDialog({
       .then((res: any) => {
         if (!active) return
         const next = res?.address || res?.addr || ''
-        if (!next) throw new Error('failed to derive internal address')
+        if (!next) throw new Error(t('onchainHub.spend.errorDeriveAddress'))
         setAddress(next)
         setInternalAddrError('')
       })
       .catch((err: any) => {
         if (!active) return
-        setInternalAddrError(err?.message || 'failed to derive internal address')
+        setInternalAddrError(err?.message || t('onchainHub.spend.errorDeriveAddress'))
       })
       .finally(() => {
         if (active) setInternalAddrLoading(false)
@@ -71,25 +73,25 @@ export default function UtxoSpendDialog({
 
   const formattedSelection = useMemo(() => {
     const list = selection.slice(0, 4).map((u) => u.outpoint.slice(0, 12) + '…')
-    if (selection.length > 4) list.push(`+${selection.length - 4} more`)
+    if (selection.length > 4) list.push(t('onchainHub.utxoMgr.moreItems', { count: selection.length - 4 }))
     return list.join(', ')
-  }, [selection])
+  }, [selection, t])
 
   const runPreview = async () => {
     setPreviewError('')
     setPreview(null)
     const rate = Number(satPerVbyte)
     if (!Number.isFinite(rate) || rate <= 0) {
-      setPreviewError('Invalid fee rate.')
+      setPreviewError(t('onchainHub.spend.errorInvalidFeeRate'))
       return
     }
     const amount = sweepAll ? 0 : Number(amountSat)
     if (!sweepAll && (!Number.isFinite(amount) || amount <= 0)) {
-      setPreviewError('Invalid amount.')
+      setPreviewError(t('onchainHub.spend.errorInvalidAmount'))
       return
     }
     if (!address.trim()) {
-      setPreviewError('Destination address required.')
+      setPreviewError(t('onchainHub.spend.errorAddressRequired'))
       return
     }
     setPreviewing(true)
@@ -103,7 +105,7 @@ export default function UtxoSpendDialog({
       })
       setPreview(res)
     } catch (err: any) {
-      setPreviewError(err?.message || 'Preview failed.')
+      setPreviewError(err?.message || t('onchainHub.spend.errorPreviewFailed'))
     } finally {
       setPreviewing(false)
     }
@@ -113,16 +115,16 @@ export default function UtxoSpendDialog({
     setSubmitError('')
     const rate = Number(satPerVbyte)
     if (!Number.isFinite(rate) || rate <= 0) {
-      setSubmitError('Invalid fee rate.')
+      setSubmitError(t('onchainHub.spend.errorInvalidFeeRate'))
       return
     }
     const amount = sweepAll ? 0 : Number(amountSat)
     if (!sweepAll && (!Number.isFinite(amount) || amount <= 0)) {
-      setSubmitError('Invalid amount.')
+      setSubmitError(t('onchainHub.spend.errorInvalidAmount'))
       return
     }
     if (!address.trim()) {
-      setSubmitError('Destination address required.')
+      setSubmitError(t('onchainHub.spend.errorAddressRequired'))
       return
     }
     setSubmitting(true)
@@ -138,11 +140,11 @@ export default function UtxoSpendDialog({
       })
       onSuccess(res?.txid || 'ok')
     } catch (err: any) {
-      const message: string = err?.message || 'Send failed.'
+      const message: string = err?.message || t('onchainHub.spend.errorSendFailed')
       const code: string | undefined = err?.code
       if (code === 'wallet_send_external_reauth_required' || message.toLowerCase().includes('password')) {
         setNeedsPassword(true)
-        setSubmitError('Password confirmation required to send to an external address.')
+        setSubmitError(t('onchainHub.spend.errorReauthRequired'))
       } else {
         setSubmitError(message)
       }
@@ -151,8 +153,8 @@ export default function UtxoSpendDialog({
     }
   }
 
-  const title = mode === 'consolidate' ? 'Consolidate UTXOs' : 'Spend UTXOs'
-  const cta = mode === 'consolidate' ? 'Broadcast consolidate' : 'Broadcast send'
+  const title = mode === 'consolidate' ? t('onchainHub.spend.titleConsolidate') : t('onchainHub.spend.titleSpend')
+  const cta = mode === 'consolidate' ? t('onchainHub.spend.ctaConsolidate') : t('onchainHub.spend.ctaSend')
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
@@ -160,15 +162,15 @@ export default function UtxoSpendDialog({
         type="button"
         className="absolute inset-0 bg-black/75 backdrop-blur-sm"
         onClick={() => (!submitting ? onClose() : undefined)}
-        aria-label="Close"
+        aria-label={t('common.close')}
       />
       <div className="relative z-10 w-full max-w-xl rounded-3xl border border-white/10 bg-slate/95 p-6 shadow-panel">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-fog/50">UTXO Manager</p>
+            <p className="text-xs uppercase tracking-[0.3em] text-fog/50">{t('onchainHub.utxoMgr.kicker')}</p>
             <h2 className="mt-3 text-2xl font-semibold">{title}</h2>
             <p className="mt-2 text-sm text-fog/65">
-              {selection.length} input(s) · {totalSat.toLocaleString()} sats total
+              {t('onchainHub.spend.summary', { count: selection.length, sats: totalSat.toLocaleString() })}
             </p>
             <p className="mt-1 text-xs text-fog/50 break-all">{formattedSelection}</p>
           </div>
@@ -176,6 +178,7 @@ export default function UtxoSpendDialog({
             type="button"
             className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-ink/50 text-fog/70 hover:text-white"
             onClick={() => (!submitting ? onClose() : undefined)}
+            aria-label={t('common.close')}
           >
             ✕
           </button>
@@ -183,15 +186,15 @@ export default function UtxoSpendDialog({
 
         <div className="mt-5 space-y-3">
           <div>
-            <label className="text-xs uppercase tracking-wide text-fog/50">Destination</label>
+            <label className="text-xs uppercase tracking-wide text-fog/50">{t('onchainHub.spend.destination')}</label>
             <input
               className="input-field mt-1"
-              placeholder={mode === 'consolidate' ? 'Internal wallet address (auto)' : 'bc1…'}
+              placeholder={mode === 'consolidate' ? t('onchainHub.spend.placeholderInternalAddress') : t('onchainHub.spend.placeholderExternalAddress')}
               value={address}
               readOnly={mode === 'consolidate'}
               onChange={(e) => setAddress(e.target.value)}
             />
-            {internalAddrLoading && <p className="text-xs text-fog/50 mt-1">Deriving address…</p>}
+            {internalAddrLoading && <p className="text-xs text-fog/50 mt-1">{t('onchainHub.spend.derivingAddress')}</p>}
             {internalAddrError && <p className="text-xs text-ember mt-1">{internalAddrError}</p>}
           </div>
 
@@ -203,11 +206,11 @@ export default function UtxoSpendDialog({
                   checked={sweepAll}
                   onChange={(e) => setSweepAll(e.target.checked)}
                 />
-                Sweep all selected (send everything minus fees)
+                {t('onchainHub.spend.sweepAll')}
               </label>
               {!sweepAll && (
                 <div>
-                  <label className="text-xs uppercase tracking-wide text-fog/50">Amount (sats)</label>
+                  <label className="text-xs uppercase tracking-wide text-fog/50">{t('onchainHub.spend.amountSats')}</label>
                   <input
                     className="input-field mt-1"
                     inputMode="numeric"
@@ -220,7 +223,7 @@ export default function UtxoSpendDialog({
           )}
 
           <div>
-            <label className="text-xs uppercase tracking-wide text-fog/50">Fee rate (sat/vB)</label>
+            <label className="text-xs uppercase tracking-wide text-fog/50">{t('onchainHub.utxoMgr.feeRateLabel')}</label>
             <input
               className="input-field mt-1"
               inputMode="decimal"
@@ -231,10 +234,10 @@ export default function UtxoSpendDialog({
 
           {mode === 'spend' && (
             <div>
-              <label className="text-xs uppercase tracking-wide text-fog/50">Label (optional)</label>
+              <label className="text-xs uppercase tracking-wide text-fog/50">{t('onchainHub.spend.labelOptional')}</label>
               <input
                 className="input-field mt-1"
-                placeholder="On-chain tx label"
+                placeholder={t('onchainHub.spend.labelPlaceholder')}
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
               />
@@ -243,7 +246,7 @@ export default function UtxoSpendDialog({
 
           {needsPassword && (
             <div>
-              <label className="text-xs uppercase tracking-wide text-fog/50">Confirm password</label>
+              <label className="text-xs uppercase tracking-wide text-fog/50">{t('onchainHub.utxoMgr.confirmPassword')}</label>
               <input
                 className="input-field mt-1"
                 type="password"
@@ -255,10 +258,10 @@ export default function UtxoSpendDialog({
 
           {warnings.length > 0 && (
             <div className="rounded-2xl border border-brass/40 bg-brass/10 p-3 text-xs space-y-1">
-              <p className="text-brass font-semibold">Privacy notes</p>
+              <p className="text-brass font-semibold">{t('onchainHub.privacy.notesHeading')}</p>
               {warnings.map((w, i) => (
                 <p key={i} className={w.severity === 'warn' ? 'text-brass' : 'text-fog/70'}>
-                  {w.message}
+                  {t(w.key, w.params)}
                 </p>
               ))}
             </div>
@@ -267,15 +270,15 @@ export default function UtxoSpendDialog({
           {preview && (
             <div className="rounded-2xl border border-white/10 bg-ink/40 p-3 text-xs space-y-1">
               <p>
-                Fee: <span className="text-fog">{Number(preview.fee_sat || 0).toLocaleString()} sats</span>{' '}
-                · Vbytes: {Number(preview.estimated_vbytes || 0).toLocaleString()}
+                {t('onchainHub.spend.previewFeeLabel')}: <span className="text-fog">{t('onchainHub.utxoMgr.satsValue', { value: Number(preview.fee_sat || 0).toLocaleString() })}</span>{' '}
+                · {t('onchainHub.spend.previewVbytesLabel')}: {Number(preview.estimated_vbytes || 0).toLocaleString()}
               </p>
               <p>
-                Recipient: <span className="text-fog">{Number(preview.recipient_amount_sat || 0).toLocaleString()} sats</span>
-                {preview.change_sat ? ` · Change: ${Number(preview.change_sat).toLocaleString()} sats` : ''}
+                {t('onchainHub.spend.previewRecipientLabel')}: <span className="text-fog">{t('onchainHub.utxoMgr.satsValue', { value: Number(preview.recipient_amount_sat || 0).toLocaleString() })}</span>
+                {preview.change_sat ? ` · ${t('onchainHub.spend.previewChangeLabel')}: ${t('onchainHub.utxoMgr.satsValue', { value: Number(preview.change_sat).toLocaleString() })}` : ''}
               </p>
               <p className={preview.enough_funds ? 'text-glow' : 'text-ember'}>
-                {preview.message || (preview.enough_funds ? 'Ready to broadcast.' : 'Inputs insufficient.')}
+                {preview.message || (preview.enough_funds ? t('onchainHub.spend.previewReady') : t('onchainHub.spend.previewInsufficient'))}
               </p>
             </div>
           )}
@@ -291,7 +294,7 @@ export default function UtxoSpendDialog({
             onClick={runPreview}
             disabled={previewing || submitting || internalAddrLoading}
           >
-            {previewing ? 'Previewing…' : 'Preview'}
+            {previewing ? t('onchainHub.utxoMgr.previewing') : t('onchainHub.utxoMgr.preview')}
           </button>
           <button
             type="button"
@@ -299,7 +302,7 @@ export default function UtxoSpendDialog({
             onClick={submit}
             disabled={submitting || internalAddrLoading}
           >
-            {submitting ? 'Broadcasting…' : cta}
+            {submitting ? t('onchainHub.utxoMgr.broadcasting') : cta}
           </button>
         </div>
       </div>

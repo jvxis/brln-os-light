@@ -575,7 +575,7 @@ export const upsertUtxoMetadata = (payload: {
 export const lockUtxos = (payload: { outpoints: string[]; expiry_sec?: number }) =>
   request('/api/onchain/utxos/lock', { method: 'POST', body: JSON.stringify(payload) })
 
-export const bumpUtxoFee = (payload: { outpoint: string; sat_per_vbyte?: number; target_conf?: number; budget_sat?: number }) =>
+export const bumpUtxoFee = (payload: { outpoint: string; sat_per_vbyte?: number; target_conf?: number; budget_sat?: number; confirm_password?: string }) =>
   request('/api/onchain/utxos/bump', { method: 'POST', body: JSON.stringify(payload) })
 
 export const unlockUtxos = (payload: { outpoints: string[] }) =>

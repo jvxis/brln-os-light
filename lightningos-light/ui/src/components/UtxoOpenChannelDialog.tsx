@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { openChannel, previewOpenChannel } from '../api'
 import { computePrivacyWarnings, type UtxoLike } from '../utils/utxoPrivacy'
 
@@ -15,6 +16,7 @@ export default function UtxoOpenChannelDialog({
   onClose,
   onSuccess
 }: Props) {
+  const { t } = useTranslation()
   const totalSat = useMemo(() => selection.reduce((a, u) => a + (u.amount_sat || 0), 0), [selection])
   const [peerAddress, setPeerAddress] = useState('')
   const [localFundingSat, setLocalFundingSat] = useState(String(Math.max(totalSat - 5000, 0)))
@@ -38,11 +40,11 @@ export default function UtxoOpenChannelDialog({
     const push = Number(pushSat)
     const rate = Number(satPerVbyte)
     if (!Number.isFinite(local) || local <= 0) {
-      setPreviewError('Invalid local funding amount.')
+      setPreviewError(t('onchainHub.openChannel.errorInvalidLocalFunding'))
       return
     }
     if (!Number.isFinite(rate) || rate <= 0) {
-      setPreviewError('Invalid fee rate.')
+      setPreviewError(t('onchainHub.openChannel.errorInvalidFeeRate'))
       return
     }
     setPreviewing(true)
@@ -54,7 +56,7 @@ export default function UtxoOpenChannelDialog({
       })
       setPreview(res)
     } catch (err: any) {
-      setPreviewError(err?.message || 'Preview failed.')
+      setPreviewError(err?.message || t('onchainHub.openChannel.errorPreviewFailed'))
     } finally {
       setPreviewing(false)
     }
@@ -64,22 +66,22 @@ export default function UtxoOpenChannelDialog({
     setError('')
     const peer = peerAddress.trim()
     if (!peer) {
-      setError('Peer address required (pubkey@host:port).')
+      setError(t('onchainHub.openChannel.errorPeerRequired'))
       return
     }
     const local = Number(localFundingSat)
     if (!Number.isFinite(local) || local <= 0) {
-      setError('Invalid local funding amount.')
+      setError(t('onchainHub.openChannel.errorInvalidLocalFunding'))
       return
     }
     const push = Number(pushSat) || 0
     if (push > local) {
-      setError('Push amount cannot exceed local funding.')
+      setError(t('onchainHub.openChannel.errorPushExceedsLocal'))
       return
     }
     const rate = Number(satPerVbyte)
     if (!Number.isFinite(rate) || rate <= 0) {
-      setError('Invalid fee rate.')
+      setError(t('onchainHub.openChannel.errorInvalidFeeRate'))
       return
     }
     setSubmitting(true)
@@ -95,7 +97,7 @@ export default function UtxoOpenChannelDialog({
       })
       onSuccess(res?.channel_point || 'ok')
     } catch (err: any) {
-      setError(err?.message || 'Channel open failed.')
+      setError(err?.message || t('onchainHub.openChannel.errorOpenFailed'))
     } finally {
       setSubmitting(false)
     }
@@ -107,21 +109,22 @@ export default function UtxoOpenChannelDialog({
         type="button"
         className="absolute inset-0 bg-black/75 backdrop-blur-sm"
         onClick={() => (!submitting ? onClose() : undefined)}
-        aria-label="Close"
+        aria-label={t('common.close')}
       />
       <div className="relative z-10 w-full max-w-xl rounded-3xl border border-white/10 bg-slate/95 p-6 shadow-panel">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-fog/50">UTXO Manager</p>
-            <h2 className="mt-3 text-2xl font-semibold">Open channel from selection</h2>
+            <p className="text-xs uppercase tracking-[0.3em] text-fog/50">{t('onchainHub.utxoMgr.kicker')}</p>
+            <h2 className="mt-3 text-2xl font-semibold">{t('onchainHub.openChannel.title')}</h2>
             <p className="mt-2 text-sm text-fog/65">
-              {selection.length} input(s) · {totalSat.toLocaleString()} sats total available
+              {t('onchainHub.openChannel.summary', { count: selection.length, sats: totalSat.toLocaleString() })}
             </p>
           </div>
           <button
             type="button"
             className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-ink/50 text-fog/70 hover:text-white"
             onClick={() => (!submitting ? onClose() : undefined)}
+            aria-label={t('common.close')}
           >
             ✕
           </button>
@@ -129,17 +132,17 @@ export default function UtxoOpenChannelDialog({
 
         <div className="mt-5 space-y-3">
           <div>
-            <label className="text-xs uppercase tracking-wide text-fog/50">Peer (pubkey@host:port)</label>
+            <label className="text-xs uppercase tracking-wide text-fog/50">{t('onchainHub.openChannel.peerLabel')}</label>
             <input
               className="input-field mt-1"
-              placeholder="03abc…@1.2.3.4:9735"
+              placeholder={t('onchainHub.openChannel.peerPlaceholder')}
               value={peerAddress}
               onChange={(e) => setPeerAddress(e.target.value)}
             />
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <label className="text-xs uppercase tracking-wide text-fog/50">Local funding (sats)</label>
+              <label className="text-xs uppercase tracking-wide text-fog/50">{t('onchainHub.openChannel.localFunding')}</label>
               <input
                 className="input-field mt-1"
                 inputMode="numeric"
@@ -148,7 +151,7 @@ export default function UtxoOpenChannelDialog({
               />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wide text-fog/50">Push (sats)</label>
+              <label className="text-xs uppercase tracking-wide text-fog/50">{t('onchainHub.openChannel.pushSats')}</label>
               <input
                 className="input-field mt-1"
                 inputMode="numeric"
@@ -159,7 +162,7 @@ export default function UtxoOpenChannelDialog({
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <label className="text-xs uppercase tracking-wide text-fog/50">Fee rate (sat/vB)</label>
+              <label className="text-xs uppercase tracking-wide text-fog/50">{t('onchainHub.utxoMgr.feeRateLabel')}</label>
               <input
                 className="input-field mt-1"
                 inputMode="decimal"
@@ -168,10 +171,10 @@ export default function UtxoOpenChannelDialog({
               />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wide text-fog/50">Close address (optional)</label>
+              <label className="text-xs uppercase tracking-wide text-fog/50">{t('onchainHub.openChannel.closeAddress')}</label>
               <input
                 className="input-field mt-1"
-                placeholder="bc1…"
+                placeholder={t('onchainHub.spend.placeholderExternalAddress')}
                 value={closeAddress}
                 onChange={(e) => setCloseAddress(e.target.value)}
               />
@@ -183,21 +186,21 @@ export default function UtxoOpenChannelDialog({
               checked={isPrivate}
               onChange={(e) => setIsPrivate(e.target.checked)}
             />
-            Private channel (don't gossip)
+            {t('onchainHub.openChannel.privateChannel')}
           </label>
 
           {warnings.length > 0 && (
             <div className="rounded-2xl border border-brass/40 bg-brass/10 p-3 text-xs space-y-1">
-              <p className="text-brass font-semibold">Privacy notes</p>
+              <p className="text-brass font-semibold">{t('onchainHub.privacy.notesHeading')}</p>
               {warnings.map((w, i) => (
-                <p key={i} className="text-brass">{w.message}</p>
+                <p key={i} className="text-brass">{t(w.key, w.params)}</p>
               ))}
             </div>
           )}
 
           {preview && (
             <div className="rounded-2xl border border-white/10 bg-ink/40 p-3 text-xs space-y-1">
-              <p>Estimated funding fee: <span className="text-fog">{Number(preview.fee_sat || 0).toLocaleString()} sats</span></p>
+              <p>{t('onchainHub.openChannel.previewFundingFee')}: <span className="text-fog">{t('onchainHub.utxoMgr.satsValue', { value: Number(preview.fee_sat || 0).toLocaleString() })}</span></p>
               {preview.message && (
                 <p className={preview.enough_funds === false ? 'text-ember' : 'text-fog/70'}>{preview.message}</p>
               )}
@@ -214,7 +217,7 @@ export default function UtxoOpenChannelDialog({
             onClick={runPreview}
             disabled={previewing || submitting}
           >
-            {previewing ? 'Previewing…' : 'Preview'}
+            {previewing ? t('onchainHub.utxoMgr.previewing') : t('onchainHub.utxoMgr.preview')}
           </button>
           <button
             type="button"
@@ -222,7 +225,7 @@ export default function UtxoOpenChannelDialog({
             onClick={submit}
             disabled={submitting}
           >
-            {submitting ? 'Opening…' : 'Open channel'}
+            {submitting ? t('onchainHub.openChannel.submitting') : t('onchainHub.openChannel.cta')}
           </button>
         </div>
       </div>

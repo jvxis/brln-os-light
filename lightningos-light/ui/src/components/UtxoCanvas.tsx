@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   forceCenter,
   forceCollide,
@@ -95,6 +96,7 @@ export default function UtxoCanvas({
   onCreateGroupWith,
   formatSats
 }: Props) {
+  const { t } = useTranslation()
   const groupMap = useMemo(() => new Map(groups.map((g) => [g.id, g])), [groups])
   const { minAmount, maxAmount } = useMemo(() => {
     if (utxos.length === 0) return { minAmount: 0, maxAmount: 0 }
@@ -292,7 +294,7 @@ export default function UtxoCanvas({
   }
 
   if (utxos.length === 0) {
-    return <p className="text-sm text-fog/60">No UTXOs to display.</p>
+    return <p className="text-sm text-fog/60">{t('onchainHub.utxoMgr.canvasEmpty')}</p>
   }
 
   return (
@@ -346,7 +348,7 @@ export default function UtxoCanvas({
               utxo.confirmations === 0 && 'animate-pulse',
               utxo.locked && 'opacity-70'
             )}
-            title={`${utxo.outpoint}\n${utxo.address}\n${utxo.amount_sat.toLocaleString()} sat`}
+            title={`${utxo.outpoint}\n${utxo.address}\n${t('onchainHub.utxoMgr.canvasNodeSats', { amount: utxo.amount_sat.toLocaleString() })}`}
           >
             <div
               className="absolute left-0 right-0 top-0 h-1"
@@ -362,15 +364,15 @@ export default function UtxoCanvas({
                   {utxo.label || groupName || utxo.address_type || ''}
                 </span>
                 <span className="flex items-center gap-1">
-                  {utxo.locked && <span title="locked">🔒</span>}
-                  {utxo.confirmations === 0 && <span title="unconfirmed">⏳</span>}
+                  {utxo.locked && <span title={t('onchainHub.utxoMgr.canvasLocked')}>🔒</span>}
+                  {utxo.confirmations === 0 && <span title={t('onchainHub.utxoMgr.canvasUnconfirmed')}>⏳</span>}
                 </span>
               </div>
               <div className="leading-tight text-right">
                 <div className="font-mono text-[12px] font-semibold text-white whitespace-nowrap">
                   {formatSats(utxo.amount_sat)}
                 </div>
-                <div className="text-[9px] font-mono text-white/55 truncate">{shortAddr || 'sats'}</div>
+                <div className="text-[9px] font-mono text-white/55 truncate">{shortAddr || t('onchainHub.utxoMgr.canvasSatsFallback')}</div>
               </div>
             </div>
           </div>

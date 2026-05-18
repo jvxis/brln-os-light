@@ -2,8 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"os"
 	"strings"
 	"sync"
@@ -14,41 +12,52 @@ import (
 )
 
 const (
-	bitcoinCoreNoTxIndexErrorCode    = -5
 	provenanceSourceCallTimeout      = 8 * time.Second
+	bitcoinCoreReadinessTTL          = 30 * time.Second
 	bitcoinCoreNoTxIndexHintCooldown = 6 * time.Hour
 )
 
 // BitcoinCoreSource adapts the local bitcoind getrawtransaction call so the
 // provenance ChainedSource can fall back to it when electrs is unreachable.
 //
-// Lifecycle:
-//   - The first call lazily resolves the local RPC config; if no config is
-//     available we mark this source unavailable for the rest of the process.
-//   - When Bitcoin Core returns error -5 ("Use -txindex..."), we record the
-//     hint (NoTxIndexHint reports it once for the UI banner) and demote
-//     ourselves to ErrSourceUnavailable so the chain keeps trying.
+// Readiness is gated on the project's existing fullIndexAppAvailability
+// signal — the same check that decides whether to offer Electrs/Mempool
+// apps in the store (local Bitcoin Core + non-pruned + txindex synced).
+// We cache the result for 30 s so we're not paying the cost on every
+// provenance lookup.
+//
+// When the readiness check reports "requires_txindex" we surface
+// NoTxIndexHint() so the UI can show its one-time banner.
 type BitcoinCoreSource struct {
-	mu             sync.Mutex
-	configLoaded   bool
-	configErr      error
-	config         bitcoinRPCConfig
-	noTxIndex      atomic.Bool
-	noTxIndexAt    atomic.Int64 // unix seconds
-	configResolver func(ctx context.Context) (bitcoinRPCConfig, error)
+	readiness         func(ctx context.Context) (ok bool, reason string)
+	mu                sync.Mutex
+	configLoaded      bool
+	configErr         error
+	config            bitcoinRPCConfig
+	configResolver    func(ctx context.Context) (bitcoinRPCConfig, error)
+	readinessExpiresAt time.Time
+	readinessOK       bool
+	readinessReason   string
+	noTxIndex         atomic.Bool
+	noTxIndexAt       atomic.Int64 // unix seconds
 }
 
-func NewBitcoinCoreSource() *BitcoinCoreSource {
+// NewBitcoinCoreSource builds a source backed by the given readiness check.
+// In production wire it to s.fullIndexAppAvailability via a closure so we
+// reuse the project's existing readiness signal.
+func NewBitcoinCoreSource(readiness func(ctx context.Context) (bool, string)) *BitcoinCoreSource {
 	return &BitcoinCoreSource{
+		readiness:      readiness,
 		configResolver: resolveElementsLocalBitcoinRPCConfig,
 	}
 }
 
 func (b *BitcoinCoreSource) Name() string { return "bitcoind" }
 
-// NoTxIndexHint returns true if Bitcoin Core has reported -5 / "txindex"
-// to us in the last 6 hours. The UI uses this to surface a one-time hint
-// banner suggesting the user enable txindex=1 for fully local provenance.
+// NoTxIndexHint returns true if the readiness check has recently reported
+// requires_txindex. The UI uses this to surface a one-time hint banner
+// suggesting the user enable txindex=1 for fully local provenance. The
+// flag resets after 6 h so the banner doesn't reappear forever.
 func (b *BitcoinCoreSource) NoTxIndexHint() bool {
 	if !b.noTxIndex.Load() {
 		return false
@@ -61,7 +70,7 @@ func (b *BitcoinCoreSource) NoTxIndexHint() bool {
 }
 
 func (b *BitcoinCoreSource) GetTransaction(ctx context.Context, txid string) (electrs.VerboseTx, error) {
-	if b.noTxIndex.Load() {
+	if !b.checkReadiness(ctx) {
 		return electrs.VerboseTx{}, electrs.ErrSourceUnavailable
 	}
 	cfg, err := b.loadConfig(ctx)
@@ -73,14 +82,52 @@ func (b *BitcoinCoreSource) GetTransaction(ctx context.Context, txid string) (el
 	defer cancel()
 	tx, err := fetchBitcoinVerboseTransactionRPC(callCtx, cfg.Host, cfg.User, cfg.Pass, txid)
 	if err != nil {
+		// Belt-and-suspenders: readiness should have caught a missing
+		// txindex, but if Core still answers with the hint for a
+		// specific txid, propagate the signal.
 		if isBitcoinNoTxIndexError(err) {
-			b.noTxIndex.Store(true)
-			b.noTxIndexAt.Store(time.Now().Unix())
-			return electrs.VerboseTx{}, electrs.ErrSourceUnavailable
+			b.markNoTxIndex()
 		}
 		return electrs.VerboseTx{}, electrs.ErrSourceUnavailable
 	}
 	return bitcoinVerboseTxToElectrs(tx), nil
+}
+
+// checkReadiness consults the cached readiness verdict, refreshing it after
+// bitcoinCoreReadinessTTL. Returns false if the source is unavailable; sets
+// the NoTxIndexHint when the readiness reason is requires_txindex.
+func (b *BitcoinCoreSource) checkReadiness(ctx context.Context) bool {
+	b.mu.Lock()
+	if time.Now().Before(b.readinessExpiresAt) {
+		ok := b.readinessOK
+		b.mu.Unlock()
+		return ok
+	}
+	check := b.readiness
+	b.mu.Unlock()
+
+	if check == nil {
+		return false
+	}
+	cctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	ok, reason := check(cctx)
+
+	b.mu.Lock()
+	b.readinessOK = ok
+	b.readinessReason = reason
+	b.readinessExpiresAt = time.Now().Add(bitcoinCoreReadinessTTL)
+	b.mu.Unlock()
+
+	if !ok && reason == fullIndexUnavailableTxIndex {
+		b.markNoTxIndex()
+	}
+	return ok
+}
+
+func (b *BitcoinCoreSource) markNoTxIndex() {
+	b.noTxIndex.Store(true)
+	b.noTxIndexAt.Store(time.Now().Unix())
 }
 
 func (b *BitcoinCoreSource) loadConfig(ctx context.Context) (bitcoinRPCConfig, error) {
@@ -98,15 +145,12 @@ func (b *BitcoinCoreSource) loadConfig(ctx context.Context) (bitcoinRPCConfig, e
 
 // isBitcoinNoTxIndexError checks for Bitcoin Core's "use -txindex" hint.
 // fetchBitcoinVerboseTransactionRPC wraps the JSON-RPC error into fmt.Errorf
-// with just the message, so we match on substring. Code -5 alone isn't
-// definitive (it's also returned for invalid txids), so we look for the
-// "txindex" hint specifically.
+// with just the message, so we match on substring.
 func isBitcoinNoTxIndexError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "txindex")
+	return strings.Contains(strings.ToLower(err.Error()), "txindex")
 }
 
 func bitcoinVerboseTxToElectrs(tx bitcoinVerboseTransaction) electrs.VerboseTx {
@@ -164,7 +208,8 @@ func parsePublicElectrumList(raw string) []string {
 // buildProvenanceSourceChain assembles the fallback chain in priority order:
 //
 //  1. Local electrs (ELECTRUM_RPC_ADDR, default 127.0.0.1:50001)
-//  2. Local bitcoind (auto when reachable; demotes itself on txindex absence)
+//  2. Local bitcoind (gated on fullIndexAppAvailability — local Bitcoin
+//     Core + non-pruned + txindex synced)
 //  3. Public Electrum servers (mainnet only — opt out via
 //     PROVENANCE_PUBLIC_ELECTRUM=disabled)
 //
@@ -195,17 +240,3 @@ func buildProvenanceSourceChain(publicAllowed bool, bitcoindFallback *BitcoinCor
 
 	return electrs.NewChainedSource(sources), notes
 }
-
-// rpcErrorJSON gives us a typed view of the bitcoind RPC error envelope so
-// callers outside graph_close_classifier_bitcoin.go can use the code. Kept
-// internal to this file.
-//
-// (Currently unused by the source — message-substring is enough — but kept
-// in case we add stricter checks later.)
-type rpcErrorJSON struct {
-	Code    int             `json:"code"`
-	Message string          `json:"message"`
-	Data    json.RawMessage `json:"data,omitempty"`
-}
-
-var _ = errors.Is // keep imports tidy if file shrinks

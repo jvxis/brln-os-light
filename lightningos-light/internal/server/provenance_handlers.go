@@ -74,9 +74,10 @@ func (s *Server) handleProvenanceGraph(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleProvenanceHealth reports whether any tx source in the provenance
-// chain is reachable. The UI uses `ok` to gate the Wallet Flow tab and
-// `active`/`no_txindex_hint` for the source badge + the one-time txindex
-// banner.
+// chain is reachable. The UI uses `ok` to gate the Wallet Flow tab,
+// `backend` for the source badge, and `no_txindex_hint` for the one-time
+// txindex banner. The legacy fields `active` and `electrs_available` are
+// kept as aliases for one release so older UIs keep working.
 func (s *Server) handleProvenanceHealth(w http.ResponseWriter, r *http.Request) {
 	s.initProvenance()
 
@@ -89,17 +90,28 @@ func (s *Server) handleProvenanceHealth(w http.ResponseWriter, r *http.Request) 
 		// surface electrs status even when init failed partway.
 		client := electrs.New("")
 		if _, err := client.Ping(ctx); err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "electrs_addr": client.Addr(), "error": err.Error()})
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok":                false,
+				"electrs_addr":      client.Addr(),
+				"electrs_available": false,
+				"error":             err.Error(),
+			})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "electrs_addr": client.Addr(), "active": "local electrs"})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":                true,
+			"backend":           "electrs",
+			"active":            "local electrs",
+			"electrs_addr":      client.Addr(),
+			"electrs_available": true,
+		})
 		return
 	}
 
 	probeTxid := "0000000000000000000000000000000000000000000000000000000000000000"
 	sources := []map[string]any{}
 	anyOk := false
-	activeName := ""
+	backendName := ""
 	for _, src := range chain.Sources() {
 		entry := map[string]any{"name": src.Name()}
 		cctx, ccancel := context.WithTimeout(ctx, 2*time.Second)
@@ -108,7 +120,7 @@ func (s *Server) handleProvenanceHealth(w http.ResponseWriter, r *http.Request) 
 		if err == nil || !errors.Is(err, electrs.ErrSourceUnavailable) {
 			entry["available"] = true
 			if !anyOk {
-				activeName = src.Name()
+				backendName = src.Name()
 			}
 			anyOk = true
 		} else {
@@ -117,7 +129,7 @@ func (s *Server) handleProvenanceHealth(w http.ResponseWriter, r *http.Request) 
 		sources = append(sources, entry)
 	}
 	if last := chain.LastGood(); last != nil {
-		activeName = last.Name()
+		backendName = last.Name()
 	}
 
 	hint := false
@@ -126,10 +138,12 @@ func (s *Server) handleProvenanceHealth(w http.ResponseWriter, r *http.Request) 
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":               anyOk,
-		"active":           activeName,
-		"sources":          sources,
-		"no_txindex_hint":  hint,
+		"ok":                anyOk,
+		"backend":           backendName, // preferred field
+		"active":            backendName, // legacy alias; remove after one release
+		"sources":           sources,
+		"no_txindex_hint":   hint,
+		"electrs_available": anyOk, // legacy field for older UIs
 	})
 }
 

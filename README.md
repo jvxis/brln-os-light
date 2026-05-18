@@ -751,6 +751,24 @@ sudo systemctl enable --now lightningos-terminal
 ```
 The Terminal page shows the current password and a copy button.
 
+## Wallet Flow / provenance graph (optional)
+
+The Wallet Flow tab inside On-chain Hub renders a sankey graph of every transaction the wallet has touched. It needs to decode arbitrary txids — non-wallet ancestors and external counterparties — so it picks the first available source from this chain:
+
+1. **Local electrs** — `ELECTRUM_RPC_ADDR` (default `127.0.0.1:50001`). Address forms: `host:port` (plain TCP, default), `host:port:t` (TCP explicit), `host:port:s` (TLS, standard cert verification).
+2. **Local Bitcoin Core** — auto-enabled when the same `fullIndexAppAvailability` check used by Electrs/Mempool apps reports OK (local Bitcoin Core + non-pruned + `txindex=1` synced). Bitcoin Core from the App Store already seeds `txindex=1`. When Core is reachable but txindex isn't ready, the Wallet Flow tab surfaces a one-time banner suggesting `txindex=1` and the chain falls through.
+3. **Public Electrum servers** — mainnet-only, off-by-default-ish. Defaults: `electrum.pagcoin.org:50002:s` and `electrum.br-ln.com:50001:t`. Override with `PROVENANCE_PUBLIC_ELECTRUM=host:port[:s|:t][,host:port[:s|:t]]` or disable entirely with `PROVENANCE_PUBLIC_ELECTRUM=disabled`.
+
+> **Privacy warning**: when the chain reaches a public Electrum step, the txids your wallet asks about become visible to the operator. The Wallet Flow tab renders the source badge in amber for that reason. Set `PROVENANCE_PUBLIC_ELECTRUM=disabled` in `/etc/lightningos/secrets.env` if your threat model requires it.
+
+Optional pins in `/etc/lightningos/secrets.env`:
+- `ELECTRUM_RPC_ADDR=host:port[:s|:t]` — point at a non-default electrs (e.g. a remote one over Tailscale).
+- `PROVENANCE_PUBLIC_ELECTRUM=disabled` — opt out of the public fallback.
+- `PROVENANCE_PUBLIC_ELECTRUM=host:port[:s|:t][,...]` — replace the default public list.
+- `PROVENANCE_NETWORK=mainnet|testnet|signet|regtest` — gates public servers. Auto-detected from `/data/lnd/data/chain/bitcoin/<network>/wallet.db` if unset; public servers are skipped on non-mainnet.
+
+The active backend is reported by `GET /api/onchain/provenance/health` in the `backend` field and rendered as a badge next to the Wallet Flow tab title.
+
 ## Security notes
 - The seed phrase is never stored. It is displayed once in the wizard.
 - RPC credentials are stored only in `/etc/lightningos/secrets.env` (root:lightningos, `chmod 660`).

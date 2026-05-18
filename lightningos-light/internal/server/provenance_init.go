@@ -46,7 +46,10 @@ func (s *Server) initProvenance() {
 	}
 
 	publicAllowed := detectProvenancePublicAllowed()
-	s.provenanceBitcoind = NewBitcoinCoreSource()
+	s.provenanceBitcoind = NewBitcoinCoreSource(func(ctx context.Context) (bool, string) {
+		avail := s.fullIndexAppAvailability(ctx)
+		return avail.Available, avail.Reason
+	})
 	chain, notes := buildProvenanceSourceChain(publicAllowed, s.provenanceBitcoind)
 	s.provenanceChain = chain
 	s.logger.Printf("provenance source chain: %s", strings.Join(notes, " → "))

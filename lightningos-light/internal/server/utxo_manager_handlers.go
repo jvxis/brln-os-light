@@ -16,6 +16,25 @@ const (
 	utxoLeaseMaxExpirySec     uint64 = 365 * 24 * 60 * 60
 )
 
+// auditUtxoLockAction emits an audit log for lock/unlock actions so that
+// silent coin-selection blocks (which could starve autopilot/rebalance) can
+// be traced back to a session. Lock/unlock don't require reauth — they're
+// reversible and don't spend sats — but they are logged.
+func (s *Server) auditUtxoLockAction(r *http.Request, action string, outpoints []string, expirySec uint64) {
+	if s == nil || s.logger == nil {
+		return
+	}
+	user := "anonymous"
+	if session, ok := authSessionFromContext(r.Context()); ok {
+		user = session.ID
+	}
+	if expirySec > 0 {
+		s.logger.Printf("utxo %s by session=%s outpoints=%v expiry_sec=%d", action, user, outpoints, expirySec)
+	} else {
+		s.logger.Printf("utxo %s by session=%s outpoints=%v", action, user, outpoints)
+	}
+}
+
 // EnrichedOnchainUtxo is the wire shape returned by GET /api/onchain/utxos.
 // It joins LND's UTXO data with our local metadata and lease state.
 type EnrichedOnchainUtxo struct {
@@ -155,6 +174,8 @@ func (s *Server) handleUtxoLock(w http.ResponseWriter, r *http.Request) {
 		expiry = utxoLeaseMaxExpirySec
 	}
 
+	s.auditUtxoLockAction(r, "lock", req.Outpoints, expiry)
+
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
@@ -187,6 +208,8 @@ func (s *Server) handleUtxoUnlock(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "outpoints required")
 		return
 	}
+
+	s.auditUtxoLockAction(r, "unlock", req.Outpoints, 0)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
@@ -312,10 +335,11 @@ func (s *Server) handleUtxoGroupAssign(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUtxoBump(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Outpoint    string `json:"outpoint"`
-		SatPerVbyte int64  `json:"sat_per_vbyte"`
-		TargetConf  uint32 `json:"target_conf"`
-		BudgetSat   int64  `json:"budget_sat"`
+		Outpoint        string `json:"outpoint"`
+		SatPerVbyte     int64  `json:"sat_per_vbyte"`
+		TargetConf      uint32 `json:"target_conf"`
+		BudgetSat       int64  `json:"budget_sat"`
+		ConfirmPassword string `json:"confirm_password"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -328,6 +352,32 @@ func (s *Server) handleUtxoBump(w http.ResponseWriter, r *http.Request) {
 	if req.SatPerVbyte <= 0 && req.TargetConf == 0 {
 		writeError(w, http.StatusBadRequest, "sat_per_vbyte or target_conf required")
 		return
+	}
+
+	// CPFP burns sats from the wallet, so it needs the same reauth posture as
+	// /api/wallet/send (external destination). Reuses authScopeWalletSendExternal
+	// so a recent reauth on either path covers both.
+	if s.auth != nil && s.auth.Enabled() {
+		session, ok := authSessionFromContext(r.Context())
+		if !ok {
+			writeErrorCode(w, http.StatusUnauthorized, "auth_required", "authentication required")
+			return
+		}
+		if !s.auth.HasRecentReauth(session.ID, authScopeWalletSendExternal) {
+			confirmPassword := strings.TrimSpace(req.ConfirmPassword)
+			if confirmPassword == "" {
+				writeJSON(w, http.StatusPreconditionRequired, map[string]any{
+					"error":                          "password confirmation required for fee bump",
+					"code":                           "utxo_bump_reauth_required",
+					"requires_password_confirmation": true,
+				})
+				return
+			}
+			if _, err := s.auth.reauth(session.ID, confirmPassword, authScopeWalletSendExternal); err != nil {
+				writeErrorCode(w, http.StatusUnauthorized, "auth_invalid_credentials", "invalid credentials")
+				return
+			}
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)

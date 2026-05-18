@@ -1163,12 +1163,6 @@ func (s *Server) handleCreateWallet(w http.ResponseWriter, r *http.Request) {
 }
 
 func walletExists() bool {
-	// Dev escape hatch: when BRLN_SKIP_WIZARD=1 is set, pretend the wallet is
-	// already initialized so the first-run wizard doesn't gate navigation.
-	// Use this when LND was set up out-of-band (e.g. lnd-recover on testnet).
-	if v := strings.TrimSpace(os.Getenv("BRLN_SKIP_WIZARD")); v == "1" || strings.EqualFold(v, "true") {
-		return true
-	}
 	if walletPasswordAvailable() {
 		return true
 	}

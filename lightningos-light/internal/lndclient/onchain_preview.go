@@ -16,6 +16,7 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 
+	"lightningos-light/lnrpc"
 	"lightningos-light/lnrpc/walletrpc"
 )
 
@@ -55,7 +56,7 @@ type previewInput struct {
 	addressType string
 }
 
-func (c *Client) PreviewOnchainSend(ctx context.Context, address string, amountSat int64, satPerVbyte int64, sweepAll bool) (OnchainSendPreview, error) {
+func (c *Client) PreviewOnchainSend(ctx context.Context, address string, amountSat int64, satPerVbyte int64, sweepAll bool, outpoints []string) (OnchainSendPreview, error) {
 	preview := OnchainSendPreview{
 		Address:            strings.TrimSpace(address),
 		SweepAll:           sweepAll,
@@ -79,6 +80,25 @@ func (c *Client) PreviewOnchainSend(ctx context.Context, address string, amountS
 	if err != nil {
 		return preview, err
 	}
+
+	if filter, hasFilter, err := buildOutpointFilter(outpoints); err != nil {
+		preview.Message = err.Error()
+		return preview, nil
+	} else if hasFilter {
+		filtered := utxos[:0]
+		for _, utxo := range utxos {
+			if _, keep := filter[strings.ToLower(strings.TrimSpace(utxo.Outpoint))]; keep {
+				filtered = append(filtered, utxo)
+			}
+		}
+		if len(filtered) != len(filter) {
+			preview.Message = "one or more selected outpoints are unavailable"
+			preview.SpendableUtxoCount = len(filtered)
+			return preview, nil
+		}
+		utxos = filtered
+	}
+
 	preview.SpendableUtxoCount = len(utxos)
 
 	utxoByOutpoint := make(map[string]OnchainUtxo, len(utxos))
@@ -107,10 +127,10 @@ func (c *Client) PreviewOnchainSend(ctx context.Context, address string, amountS
 		return preview, nil
 	}
 
-	return c.previewFundedSend(ctx, preview, utxoByOutpoint)
+	return c.previewFundedSend(ctx, preview, utxoByOutpoint, utxos)
 }
 
-func (c *Client) previewFundedSend(ctx context.Context, preview OnchainSendPreview, utxoByOutpoint map[string]OnchainUtxo) (OnchainSendPreview, error) {
+func (c *Client) previewFundedSend(ctx context.Context, preview OnchainSendPreview, utxoByOutpoint map[string]OnchainUtxo, candidateUtxos []OnchainUtxo) (OnchainSendPreview, error) {
 	conn, err := c.dial(ctx, true)
 	if err != nil {
 		return preview, err
@@ -118,13 +138,30 @@ func (c *Client) previewFundedSend(ctx context.Context, preview OnchainSendPrevi
 	defer conn.Close()
 
 	client := walletrpc.NewWalletKitClient(conn)
+	template := &walletrpc.TxTemplate{
+		Outputs: map[string]uint64{
+			preview.Address: uint64(preview.RequestedAmountSat),
+		},
+	}
+	// When the caller pinned a UTXO selection, force LND to fund the PSBT
+	// from exactly those inputs. Without this LND would fall back to its own
+	// coin-selection strategy and could pick other UTXOs.
+	if len(candidateUtxos) > 0 && len(candidateUtxos) <= len(utxoByOutpoint) {
+		inputs := make([]*lnrpc.OutPoint, 0, len(candidateUtxos))
+		for _, utxo := range candidateUtxos {
+			point, err := parseOutPoint(utxo.Outpoint)
+			if err != nil {
+				continue
+			}
+			inputs = append(inputs, point)
+		}
+		if len(inputs) > 0 {
+			template.Inputs = inputs
+		}
+	}
 	req := &walletrpc.FundPsbtRequest{
 		Template: &walletrpc.FundPsbtRequest_Raw{
-			Raw: &walletrpc.TxTemplate{
-				Outputs: map[string]uint64{
-					preview.Address: uint64(preview.RequestedAmountSat),
-				},
-			},
+			Raw: template,
 		},
 		Fees: &walletrpc.FundPsbtRequest_SatPerVbyte{
 			SatPerVbyte: uint64(preview.SatPerVbyte),
@@ -357,6 +394,27 @@ func isPreviewSoftFailure(err error) bool {
 		strings.Contains(lower, "dust") ||
 		strings.Contains(lower, "no utxos") ||
 		strings.Contains(lower, "invalid address")
+}
+
+func buildOutpointFilter(outpoints []string) (map[string]struct{}, bool, error) {
+	if len(outpoints) == 0 {
+		return nil, false, nil
+	}
+	filter := make(map[string]struct{}, len(outpoints))
+	for _, raw := range outpoints {
+		trimmed := strings.ToLower(strings.TrimSpace(raw))
+		if trimmed == "" {
+			continue
+		}
+		if _, err := parseOutPoint(trimmed); err != nil {
+			return nil, true, fmt.Errorf("invalid outpoint %q", raw)
+		}
+		filter[trimmed] = struct{}{}
+	}
+	if len(filter) == 0 {
+		return nil, false, nil
+	}
+	return filter, true, nil
 }
 
 func releasePreviewLeases(ctx context.Context, client walletrpc.WalletKitClient, leases []*walletrpc.UtxoLease) {

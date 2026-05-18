@@ -12,8 +12,10 @@
   "dependencies": {
     "@fontsource/space-grotesk": "^5.0.20",
     "@types/d3-force": "^3.0.10",
+    "@types/dagre": "^0.7.54",
     "@types/qrcode": "^1.5.6",
     "d3-force": "^3.0.0",
+    "dagre": "^0.8.5",
     "i18next": "^23.12.1",
     "qr-scanner": "^1.4.2",
     "qrcode": "^1.5.4",
@@ -21,6 +23,7 @@
     "react-dom": "^18.2.0",
     "react-i18next": "^14.1.2",
     "react-simple-maps": "^3.0.0",
+    "reactflow": "^11.11.4",
     "recharts": "^2.12.4",
     "world-atlas": "^2.0.2"
   },

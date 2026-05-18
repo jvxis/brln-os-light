@@ -6,6 +6,7 @@ import {
   getMempoolFees,
   getOnchainTransactions,
   getOnchainUtxos,
+  getProvenanceHealth,
   getWalletSummary,
   listUtxoGroups,
   lockUtxos,
@@ -19,6 +20,7 @@ import UtxoCanvas, { type CanvasGroup, type CanvasUtxo } from '../components/Utx
 import UtxoSpendDialog, { type SpendMode } from '../components/UtxoSpendDialog'
 import UtxoBumpDialog from '../components/UtxoBumpDialog'
 import UtxoOpenChannelDialog from '../components/UtxoOpenChannelDialog'
+import WalletFlowView from '../components/WalletFlowView'
 
 const emptySummary = {
   balances: {
@@ -84,6 +86,8 @@ export default function OnchainHub() {
   const [fees, setFees] = useState<MempoolFeeHint | null>(null)
   const [feesStatus, setFeesStatus] = useState('')
   const [activePane, setActivePane] = useState<'utxos' | 'txs'>('txs')
+  const [activeView, setActiveView] = useState<'hub' | 'walletflow'>('hub')
+  const [walletFlowAvailable, setWalletFlowAvailable] = useState<boolean>(false)
   const mountedRef = useRef(true)
 
   const [utxoView, setUtxoView] = useState<'canvas' | 'table'>(() => {
@@ -376,6 +380,25 @@ export default function OnchainHub() {
   }, [])
 
   useEffect(() => {
+    let cancelled = false
+    const probe = () => {
+      getProvenanceHealth()
+        .then((res: any) => {
+          if (!cancelled) setWalletFlowAvailable(Boolean(res?.ok))
+        })
+        .catch(() => {
+          if (!cancelled) setWalletFlowAvailable(false)
+        })
+    }
+    probe()
+    const timer = window.setInterval(probe, 60000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [])
+
+  useEffect(() => {
     let mounted = true
     getMempoolFees()
       .then((res: any) => {
@@ -538,6 +561,29 @@ export default function OnchainHub() {
         )}
       </div>
 
+      {walletFlowAvailable && (
+        <div className="flex gap-2">
+          <button
+            type="button"
+            className={clsx('btn-secondary text-xs px-4 py-2', activeView === 'hub' && 'bg-white/10')}
+            onClick={() => setActiveView('hub')}
+          >
+            On-chain
+          </button>
+          <button
+            type="button"
+            className={clsx('btn-secondary text-xs px-4 py-2', activeView === 'walletflow' && 'bg-white/10')}
+            onClick={() => setActiveView('walletflow')}
+          >
+            Wallet flow
+          </button>
+        </div>
+      )}
+
+      {activeView === 'walletflow' && walletFlowAvailable ? (
+        <WalletFlowView />
+      ) : (
+        <>
       <div className="flex gap-2 lg:hidden">
         <button
           className={clsx('flex-1 btn-secondary text-xs px-3 py-2', utxoPaneVisible && 'bg-white/10')}
@@ -995,6 +1041,8 @@ export default function OnchainHub() {
           </div>
         </div>
       </div>
+        </>
+      )}
       {spendMode && (
         <UtxoSpendDialog
           mode={spendMode}

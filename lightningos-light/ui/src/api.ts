@@ -578,6 +578,22 @@ export const lockUtxos = (payload: { outpoints: string[]; expiry_sec?: number })
 export const bumpUtxoFee = (payload: { outpoint: string; sat_per_vbyte?: number; target_conf?: number; budget_sat?: number; confirm_password?: string }) =>
   request('/api/onchain/utxos/bump', { method: 'POST', body: JSON.stringify(payload) })
 
+export const getProvenanceGraph = (params?: {
+  mode?: 'live' | 'ours' | 'all' | 'lineage'
+  limit?: number
+  root?: string
+  hops?: number
+  include_external?: boolean
+  max_external?: number
+}) => {
+  const q = buildQuery(params)
+  return request(`/api/onchain/provenance${q}`)
+}
+export const getProvenanceStatus = () => request('/api/onchain/provenance/status')
+export const getProvenanceHealth = () => request('/api/onchain/provenance/health')
+export const rebuildProvenance = (full = false) =>
+  request(`/api/onchain/provenance/rebuild${full ? '?full=true' : ''}`, { method: 'POST' })
+
 export const unlockUtxos = (payload: { outpoints: string[] }) =>
   request('/api/onchain/utxos/unlock', { method: 'POST', body: JSON.stringify(payload) })
 

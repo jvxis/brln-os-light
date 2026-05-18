@@ -45,3 +45,31 @@ func TestAuditStatusFromResult(t *testing.T) {
 		t.Fatalf("expected error, got %q", got)
 	}
 }
+
+func TestParseAuditEventsLimit(t *testing.T) {
+	tests := []struct {
+		raw     string
+		want    int
+		wantErr bool
+	}{
+		{raw: "", want: auditEventsDefaultLimit},
+		{raw: "25", want: 25},
+		{raw: "0", want: auditEventsDefaultLimit},
+		{raw: "999", want: auditEventsMaxLimit},
+		{raw: "-1", wantErr: true},
+		{raw: "bad", wantErr: true},
+	}
+
+	for _, tc := range tests {
+		got, err := parseAuditEventsLimit(tc.raw)
+		if tc.wantErr {
+			if err == nil {
+				t.Fatalf("expected parseAuditEventsLimit(%q) to fail", tc.raw)
+			}
+			continue
+		}
+		if err != nil || got != tc.want {
+			t.Fatalf("parseAuditEventsLimit(%q) = (%d, %v), want (%d, nil)", tc.raw, got, err, tc.want)
+		}
+	}
+}

@@ -11,6 +11,11 @@ import (
 
 const auditInsertTimeout = 3 * time.Second
 
+const (
+	auditEventsDefaultLimit = 100
+	auditEventsMaxLimit     = 500
+)
+
 func (s *Server) recordAuditEvent(r *http.Request, action string, target string, metadata any) {
 	if s == nil {
 		return
@@ -91,4 +96,14 @@ func auditStatusFromResult(total int, errorCount int) string {
 		return "error"
 	}
 	return "partial_error"
+}
+
+func normalizeAuditEventsLimit(limit int) int {
+	if limit <= 0 {
+		return auditEventsDefaultLimit
+	}
+	if limit > auditEventsMaxLimit {
+		return auditEventsMaxLimit
+	}
+	return limit
 }

@@ -53,6 +53,7 @@ func (s *Server) routes() http.Handler {
 	r.Post("/api/wizard/lnd/unlock", s.handleUnlockWallet)
 	r.Post("/api/actions/restart", s.handleRestart)
 	r.Post("/api/actions/system", s.handleSystemAction)
+	r.Get("/api/audit/events", s.handleAuditEventsList)
 	r.Get("/api/logs", s.handleLogs)
 	r.Post("/api/lnd/config", s.handleLNDConfigPost)
 	r.Post("/api/lnd/config/raw", s.handleLNDConfigRaw)

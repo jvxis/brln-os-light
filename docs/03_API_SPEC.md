@@ -149,6 +149,11 @@ Body:
   "service": "lnd"|"lightningos-manager"|"postgresql"
 }
 
+GET /api/audit/events?limit=100&action=utxo.lock
+- Returns recent structured audit events.
+- Optional filters: `action`, `session_id`, `target`.
+- `limit` defaults to 100 and is capped at 500.
+
 GET /api/logs?service=lnd&lines=200
 - Returns a list of log lines.
 - `service=bitcoin` returns local Bitcoin logs from the LightningOS Docker app when installed, otherwise from a local bitcoind systemd unit.

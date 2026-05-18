@@ -196,9 +196,9 @@ export const getWalletActivity = (range: '7d' | '1m' | '1a', limit = 100, offset
 export const getWalletPaymentDetail = (paymentHash: string) =>
   request(`/api/wallet/payments/${encodeURIComponent(paymentHash)}`)
 export const getWalletAddress = () => request('/api/wallet/address', { method: 'POST' })
-export const previewOnchainSend = (payload: { address: string; amount_sat?: number; sat_per_vbyte: number; sweep_all?: boolean }) =>
+export const previewOnchainSend = (payload: { address: string; amount_sat?: number; sat_per_vbyte: number; sweep_all?: boolean; outpoints?: string[] }) =>
   request('/api/wallet/send/preview', { method: 'POST', body: JSON.stringify(payload) })
-export const sendOnchain = (payload: { address: string; amount_sat?: number; sat_per_vbyte?: number; sweep_all?: boolean }) =>
+export const sendOnchain = (payload: { address: string; amount_sat?: number; sat_per_vbyte?: number; sweep_all?: boolean; outpoints?: string[]; label?: string; confirm_password?: string }) =>
   request('/api/wallet/send', { method: 'POST', body: JSON.stringify(payload) })
 export const createInvoice = (payload: {
   amount_sat: number
@@ -430,6 +430,7 @@ export const openChannel = (payload: {
   close_address?: string
   sat_per_vbyte?: number
   private?: boolean
+  outpoints?: string[]
 }) => request('/api/lnops/channel/open', { method: 'POST', body: JSON.stringify(payload) })
 export const openBatchChannels = (payload: {
   channels: Array<{
@@ -558,6 +559,61 @@ export const getOnchainTransactions = (params?: {
   include_unconfirmed?: boolean
   limit?: number
 }) => request(`/api/onchain/transactions${buildQuery(params)}`)
+
+export const upsertUtxoMetadata = (payload: {
+  outpoint: string
+  label?: string
+  tag?: string
+  color?: string
+  group_id?: string
+}) =>
+  request('/api/onchain/utxos/metadata', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })
+
+export const lockUtxos = (payload: { outpoints: string[]; expiry_sec?: number }) =>
+  request('/api/onchain/utxos/lock', { method: 'POST', body: JSON.stringify(payload) })
+
+export const bumpUtxoFee = (payload: { outpoint: string; sat_per_vbyte?: number; target_conf?: number; budget_sat?: number }) =>
+  request('/api/onchain/utxos/bump', { method: 'POST', body: JSON.stringify(payload) })
+
+export const getProvenanceGraph = (params?: {
+  mode?: 'live' | 'ours' | 'all' | 'lineage'
+  limit?: number
+  root?: string
+  hops?: number
+  include_external?: boolean
+  max_external?: number
+}) => {
+  const q = buildQuery(params)
+  return request(`/api/onchain/provenance${q}`)
+}
+export const getProvenanceStatus = () => request('/api/onchain/provenance/status')
+export const getProvenanceHealth = () => request('/api/onchain/provenance/health')
+export const rebuildProvenance = (full = false) =>
+  request(`/api/onchain/provenance/rebuild${full ? '?full=true' : ''}`, { method: 'POST' })
+
+export const unlockUtxos = (payload: { outpoints: string[] }) =>
+  request('/api/onchain/utxos/unlock', { method: 'POST', body: JSON.stringify(payload) })
+
+export const listUtxoGroups = () => request('/api/onchain/utxos/groups')
+
+export const upsertUtxoGroup = (payload: {
+  id?: string
+  name?: string
+  color?: string
+  outpoints?: string[]
+}) => request('/api/onchain/utxos/groups', { method: 'POST', body: JSON.stringify(payload) })
+
+export const assignUtxoGroup = (groupId: string, payload: { outpoints: string[]; detach?: boolean }) =>
+  request(`/api/onchain/utxos/groups/${encodeURIComponent(groupId)}/assign`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })
+
+export const deleteUtxoGroup = (groupId: string) =>
+  request(`/api/onchain/utxos/groups/${encodeURIComponent(groupId)}`, { method: 'DELETE' })
 
 export const getReportsRange = (range: string) =>
   request(`/api/reports/range?range=${encodeURIComponent(range)}`)

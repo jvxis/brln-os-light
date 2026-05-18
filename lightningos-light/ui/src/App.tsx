@@ -14,6 +14,7 @@ import ChannelRanking from './pages/ChannelRanking'
 import ChannelOpenCandidates from './pages/ChannelOpenCandidates'
 import RebalanceCenter from './pages/RebalanceCenter'
 import OnchainHub from './pages/OnchainHub'
+import WalletFlow from './pages/WalletFlow'
 import Chat from './pages/Chat'
 import Disks from './pages/Disks'
 import Logs from './pages/Logs'
@@ -29,7 +30,7 @@ import BuyDepix from './pages/BuyDepix'
 import Shortcuts from './pages/Shortcuts'
 import PayBoleto from './pages/PayBoleto'
 import NodeRetirement from './pages/NodeRetirement'
-import { getAuthState, getBitcoinLocalStatus, getBoletoConfig, getDepixConfig, getLndStatus, getWizardStatus, logoutAuth, type AuthState } from './api'
+import { getAuthState, getBitcoinLocalStatus, getBoletoConfig, getDepixConfig, getLndStatus, getProvenanceHealth, getWizardStatus, logoutAuth, type AuthState } from './api'
 import { defaultPalette, paletteOrder, resolvePalette, resolveTheme, type PaletteKey, type ThemeMode } from './theme'
 
 const readHashRoute = () => {
@@ -146,6 +147,7 @@ export default function App() {
   const [depixEnabled, setDepixEnabled] = useState(false)
   const [boletoEnabled, setBoletoEnabled] = useState(false)
   const [externalBitcoinDetected, setExternalBitcoinDetected] = useState(false)
+  const [electrsAvailable, setElectrsAvailable] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const refreshAuthState = useCallback(async () => {
     try {
@@ -174,6 +176,14 @@ export default function App() {
       setBoletoEnabled(false)
     }
   }, [])
+  const refreshElectrsAvailable = useCallback(async () => {
+    try {
+      const data: any = await getProvenanceHealth()
+      setElectrsAvailable(Boolean(data?.electrs_available))
+    } catch {
+      setElectrsAvailable(false)
+    }
+  }, [])
   const refreshExternalBitcoinDetected = useCallback(async () => {
     try {
       const data: any = await getBitcoinLocalStatus()
@@ -200,6 +210,7 @@ export default function App() {
       { key: 'new-channels', label: t('nav.newChannels'), element: <ChannelOpenCandidates /> },
       { key: 'rebalance-center', label: t('nav.rebalanceCenter'), element: <RebalanceCenter /> },
       { key: 'onchain-hub', label: t('nav.onchainHub'), element: <OnchainHub /> },
+      ...(electrsAvailable ? [{ key: 'wallet-flow', label: 'Wallet flow', element: <WalletFlow /> }] : []),
       { key: 'chat', label: t('nav.chat'), element: <Chat /> },
       {
         key: 'lnd',
@@ -219,7 +230,7 @@ export default function App() {
       { key: 'logs', label: t('nav.logs'), element: <Logs /> },
       { key: 'node-retirement', label: t('nav.nodeRetirement'), element: <NodeRetirement /> }
     ]
-  }, [authState, depixEnabled, boletoEnabled, externalBitcoinDetected, i18n.language, t])
+  }, [authState, depixEnabled, boletoEnabled, electrsAvailable, externalBitcoinDetected, i18n.language, t])
   const baseRouteKeys = useMemo(() => baseRoutes.map((item) => item.key), [baseRoutes])
   const [menuConfig, setMenuConfig] = useState<MenuConfig>(() => normalizeMenuConfig(readMenuConfig(), baseRouteKeys))
 
@@ -285,11 +296,13 @@ export default function App() {
       setDepixEnabled(false)
       setBoletoEnabled(false)
       setExternalBitcoinDetected(false)
+      setElectrsAvailable(false)
       return
     }
 
     const handleAppsChanged = (event: Event) => {
       void refreshExternalBitcoinDetected()
+      void refreshElectrsAvailable()
       const detail = (event as CustomEvent<{ id?: string }>).detail
       if (detail?.id === 'depixbuy') {
         void refreshDepixEnabled()
@@ -302,17 +315,20 @@ export default function App() {
     void refreshDepixEnabled()
     void refreshBoletoEnabled()
     void refreshExternalBitcoinDetected()
+    void refreshElectrsAvailable()
     const timer = window.setInterval(refreshDepixEnabled, 30000)
     const boletoTimer = window.setInterval(refreshBoletoEnabled, 30000)
     const externalBitcoinTimer = window.setInterval(refreshExternalBitcoinDetected, 300000)
+    const electrsTimer = window.setInterval(refreshElectrsAvailable, 60000)
     window.addEventListener('apps:changed', handleAppsChanged as EventListener)
     return () => {
       window.clearInterval(timer)
       window.clearInterval(boletoTimer)
       window.clearInterval(externalBitcoinTimer)
+      window.clearInterval(electrsTimer)
       window.removeEventListener('apps:changed', handleAppsChanged as EventListener)
     }
-  }, [authReady, refreshDepixEnabled, refreshBoletoEnabled, refreshExternalBitcoinDetected])
+  }, [authReady, refreshDepixEnabled, refreshBoletoEnabled, refreshElectrsAvailable, refreshExternalBitcoinDetected])
 
   useEffect(() => {
     setMenuConfig((current) => {

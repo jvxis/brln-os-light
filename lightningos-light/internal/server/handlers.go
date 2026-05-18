@@ -1163,6 +1163,12 @@ func (s *Server) handleCreateWallet(w http.ResponseWriter, r *http.Request) {
 }
 
 func walletExists() bool {
+	// Dev escape hatch: when BRLN_SKIP_WIZARD=1 is set, pretend the wallet is
+	// already initialized so the first-run wizard doesn't gate navigation.
+	// Use this when LND was set up out-of-band (e.g. lnd-recover on testnet).
+	if v := strings.TrimSpace(os.Getenv("BRLN_SKIP_WIZARD")); v == "1" || strings.EqualFold(v, "true") {
+		return true
+	}
 	if walletPasswordAvailable() {
 		return true
 	}
@@ -2481,13 +2487,14 @@ func watchtowerRPCErrorMessage(err error) string {
 
 func (s *Server) handleLNOpenChannel(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PeerAddress     string `json:"peer_address"`
-		Pubkey          string `json:"pubkey"`
-		LocalFundingSat int64  `json:"local_funding_sat"`
-		PushSat         int64  `json:"push_sat"`
-		CloseAddress    string `json:"close_address"`
-		Private         bool   `json:"private"`
-		SatPerVbyte     int64  `json:"sat_per_vbyte"`
+		PeerAddress     string   `json:"peer_address"`
+		Pubkey          string   `json:"pubkey"`
+		LocalFundingSat int64    `json:"local_funding_sat"`
+		PushSat         int64    `json:"push_sat"`
+		CloseAddress    string   `json:"close_address"`
+		Private         bool     `json:"private"`
+		SatPerVbyte     int64    `json:"sat_per_vbyte"`
+		Outpoints       []string `json:"outpoints"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -2539,9 +2546,25 @@ func (s *Server) handleLNOpenChannel(w http.ResponseWriter, r *http.Request) {
 	openCtx, openCancel := context.WithTimeout(r.Context(), lndOpenChannelTimeout)
 	defer openCancel()
 
-	channelPoint, err := s.lnd.OpenChannelWithPush(openCtx, pubkey, req.LocalFundingSat, req.PushSat, req.CloseAddress, req.Private, req.SatPerVbyte)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, lndDetailedErrorMessage(err))
+	var (
+		channelPoint string
+		openErr      error
+	)
+	if len(req.Outpoints) > 0 {
+		channelPoint, openErr = s.lnd.OpenChannelWithOutpoints(openCtx, lndclient.OpenChannelParams{
+			PubkeyHex:       pubkey,
+			LocalFundingSat: req.LocalFundingSat,
+			PushSat:         req.PushSat,
+			CloseAddress:    req.CloseAddress,
+			Private:         req.Private,
+			SatPerVbyte:     req.SatPerVbyte,
+			Outpoints:       req.Outpoints,
+		})
+	} else {
+		channelPoint, openErr = s.lnd.OpenChannelWithPush(openCtx, pubkey, req.LocalFundingSat, req.PushSat, req.CloseAddress, req.Private, req.SatPerVbyte)
+	}
+	if openErr != nil {
+		writeError(w, http.StatusInternalServerError, lndDetailedErrorMessage(openErr))
 		return
 	}
 
@@ -3510,11 +3533,13 @@ func (s *Server) handleOnchainUtxos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if limit > 0 && len(items) > limit {
-		items = items[:limit]
+	enriched := s.enrichOnchainUtxos(ctx, items)
+
+	if limit > 0 && len(enriched) > limit {
+		enriched = enriched[:limit]
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, http.StatusOK, map[string]any{"items": enriched})
 }
 
 func (s *Server) handleOnchainTransactions(w http.ResponseWriter, r *http.Request) {
@@ -4221,11 +4246,13 @@ func requiresWalletSendConfirmation(classification string) bool {
 
 func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Address         string `json:"address"`
-		AmountSat       int64  `json:"amount_sat"`
-		SatPerVbyte     int64  `json:"sat_per_vbyte"`
-		SweepAll        bool   `json:"sweep_all"`
-		ConfirmPassword string `json:"confirm_password"`
+		Address         string   `json:"address"`
+		AmountSat       int64    `json:"amount_sat"`
+		SatPerVbyte     int64    `json:"sat_per_vbyte"`
+		SweepAll        bool     `json:"sweep_all"`
+		Outpoints       []string `json:"outpoints"`
+		Label           string   `json:"label"`
+		ConfirmPassword string   `json:"confirm_password"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -4273,11 +4300,26 @@ func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	txid, err := s.lnd.SendCoins(ctx, address, req.AmountSat, req.SatPerVbyte, req.SweepAll)
-	if err != nil {
-		msg := lndRPCErrorMessage(err)
-		if isTimeoutError(err) {
-			msg = lndStatusMessage(err)
+	var (
+		txid    string
+		sendErr error
+	)
+	if len(req.Outpoints) > 0 || strings.TrimSpace(req.Label) != "" {
+		txid, sendErr = s.lnd.SendCoinsAdvanced(ctx, lndclient.SendCoinsParams{
+			Address:     address,
+			AmountSat:   req.AmountSat,
+			SatPerVbyte: req.SatPerVbyte,
+			SendAll:     req.SweepAll,
+			Outpoints:   req.Outpoints,
+			Label:       req.Label,
+		})
+	} else {
+		txid, sendErr = s.lnd.SendCoins(ctx, address, req.AmountSat, req.SatPerVbyte, req.SweepAll)
+	}
+	if sendErr != nil {
+		msg := lndRPCErrorMessage(sendErr)
+		if isTimeoutError(sendErr) {
+			msg = lndStatusMessage(sendErr)
 		}
 		if msg == "" || msg == "LND error" {
 			msg = "On-chain send failed"
@@ -4291,10 +4333,11 @@ func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleWalletSendPreview(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Address     string `json:"address"`
-		AmountSat   int64  `json:"amount_sat"`
-		SatPerVbyte int64  `json:"sat_per_vbyte"`
-		SweepAll    bool   `json:"sweep_all"`
+		Address     string   `json:"address"`
+		AmountSat   int64    `json:"amount_sat"`
+		SatPerVbyte int64    `json:"sat_per_vbyte"`
+		SweepAll    bool     `json:"sweep_all"`
+		Outpoints   []string `json:"outpoints"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -4304,7 +4347,7 @@ func (s *Server) handleWalletSendPreview(w http.ResponseWriter, r *http.Request)
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 
-	preview, err := s.lnd.PreviewOnchainSend(ctx, req.Address, req.AmountSat, req.SatPerVbyte, req.SweepAll)
+	preview, err := s.lnd.PreviewOnchainSend(ctx, req.Address, req.AmountSat, req.SatPerVbyte, req.SweepAll, req.Outpoints)
 	if err != nil {
 		msg := lndRPCErrorMessage(err)
 		if isTimeoutError(err) {

@@ -115,30 +115,6 @@ Atualizar `README.md` (seção Wallet Flow) para refletir a nova ordem.
 
 ## Fase 3 — Endurecimento de segurança e observabilidade
 
-### 3.1 — Audit log estruturado em Postgres
-
-**Problema:** hoje, lock/unlock/bump logam em `s.logger.Printf` (stdout/journal). Sem queryability, sem histórico durável.
-
-**Onde:** novo `internal/server/audit_service.go` + tabela:
-
-```sql
-create table audit_events (
-  id bigserial primary key,
-  ts timestamptz not null default now(),
-  session_id text not null,
-  action text not null,        -- 'utxo.lock', 'utxo.unlock', 'utxo.bump', etc
-  target text,                 -- outpoint, group_id, etc
-  metadata jsonb,
-  ip text
-);
-create index audit_events_ts_idx on audit_events (ts desc);
-create index audit_events_session_idx on audit_events (session_id, ts desc);
-```
-
-Reaproveitar para outras ações sensíveis (channel close, autopilot toggle, wallet send).
-
-**Esforço:** ~4-6h (service + schema + integração nos 3 handlers iniciais + UI mínima de visualização).
-
 ### 3.3 — Telemetria do source chain
 
 **Onde:** novo `internal/server/provenance_metrics.go`.
@@ -171,7 +147,6 @@ Botão de download no canvas. Útil pra debug e suporte.
 |---|---|---|---|
 | **Imediato** | 1.1 (bitcoind-first), 2.5 (sentinel) | 1 dia | — |
 | **Sprint 1** | 2.1 (cache), 2.2 (cancel), 2.3 (doc), 2.4 (code-split) | 1 semana | — |
-| **Sprint 2** | 3.1 (audit log) | 1 semana | — |
 | **Sprint 3** | 1.3, 3.3 | 1 semana | — |
 | **Quando der** | Fase 4 (polish) | 1 dia por item | — |
 
@@ -191,4 +166,3 @@ Botão de download no canvas. Útil pra debug e suporte.
 
 - Cada item da Fase 1 e 2 cabe numa PR pequena com smoke test isolado.
 - Antes de iniciar Fase 1.1, observar 1 release com a ordem atual em produção pra ter baseline de telemetria.
-- Fase 3.1 (audit log) é a única que toca em outros features (channel close, autopilot) — coordenar com o roadmap geral antes.

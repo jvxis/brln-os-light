@@ -43,6 +43,7 @@
   },
   "nav": {
     "apps": "Apps",
+    "auditLog": "Auditoria",
     "buyDepix": "Compra DePix",
     "payBoleto": "Pagar Boleto",
     "bitcoinLocal": "Bitcoin Local",
@@ -778,6 +779,28 @@
     },
     "subtitle": "Exiba logs recentes dos serviços systemd e apps locais em Docker.",
     "title": "Logs"
+  },
+  "auditLog": {
+    "action": "Ação",
+    "actionPlaceholder": "utxo.lock, utxo.unlock...",
+    "applyFilters": "Aplicar filtros",
+    "empty": "Nenhum evento de auditoria encontrado.",
+    "ip": "IP",
+    "limit": "Limite",
+    "loading": "Carregando eventos de auditoria...",
+    "metadata": "Metadados",
+    "recentEvents": "Eventos recentes",
+    "resultCount": "{{count}} evento(s)",
+    "retention": "Retenção: {{days}} dias",
+    "retentionForever": "Retenção: para sempre",
+    "session": "Sessão",
+    "sessionPlaceholder": "id da sessão",
+    "subtitle": "Ações sensíveis da API gravadas no Postgres.",
+    "target": "Alvo",
+    "targetPlaceholder": "outpoint ou lote",
+    "time": "Hora",
+    "title": "Auditoria",
+    "unavailable": "Auditoria indisponível."
   },
   "terminal": {
     "copyOperatorPassword": "Copiar senha do operador",

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestAuditSessionIDFromAuthContext(t *testing.T) {
@@ -71,6 +72,44 @@ func TestParseAuditEventsLimit(t *testing.T) {
 		if err != nil || got != tc.want {
 			t.Fatalf("parseAuditEventsLimit(%q) = (%d, %v), want (%d, nil)", tc.raw, got, err, tc.want)
 		}
+	}
+}
+
+func TestParseAuditEventsRetentionDays(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want int
+	}{
+		{raw: "", want: auditEventsDefaultRetentionDays},
+		{raw: "365", want: 365},
+		{raw: "0", want: 0},
+		{raw: "forever", want: 0},
+		{raw: "keep_forever", want: 0},
+		{raw: "keep-forever", want: 0},
+		{raw: "-1", want: auditEventsDefaultRetentionDays},
+		{raw: "bad", want: auditEventsDefaultRetentionDays},
+	}
+
+	for _, tc := range tests {
+		if got := parseAuditEventsRetentionDays(tc.raw); got != tc.want {
+			t.Fatalf("parseAuditEventsRetentionDays(%q) = %d, want %d", tc.raw, got, tc.want)
+		}
+	}
+}
+
+func TestAuditEventsRetentionCutoff(t *testing.T) {
+	now := time.Date(2026, 5, 18, 12, 30, 0, 0, time.FixedZone("BRT", -3*60*60))
+	cutoff, ok := auditEventsRetentionCutoff(now, 365)
+	if !ok {
+		t.Fatalf("expected retention cutoff")
+	}
+	want := now.UTC().AddDate(0, 0, -365)
+	if !cutoff.Equal(want) {
+		t.Fatalf("cutoff = %s, want %s", cutoff, want)
+	}
+
+	if _, ok := auditEventsRetentionCutoff(now, 0); ok {
+		t.Fatalf("expected disabled retention for zero days")
 	}
 }
 

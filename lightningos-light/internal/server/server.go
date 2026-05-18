@@ -46,6 +46,7 @@ type Server struct {
 	auditLogMu                  sync.Mutex
 	auditLog                    *AuditService
 	auditLogErr                 string
+	auditRetentionOnce          sync.Once
 	rebalanceInitAt             time.Time
 	rebalance                   *RebalanceService
 	rebalanceErr                string

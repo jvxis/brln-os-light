@@ -37,8 +37,9 @@ func (s *Server) handleAuditEventsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"items": items,
-		"limit": normalizeAuditEventsLimit(limit),
+		"items":          items,
+		"limit":          normalizeAuditEventsLimit(limit),
+		"retention_days": auditEventsRetentionDays(),
 	})
 }
 

@@ -53,6 +53,7 @@ func (s *Server) initAuditLog() {
 
 	s.auditLog = svc
 	s.auditLogErr = ""
+	s.startAuditLogRetention(svc)
 }
 
 func (s *Server) auditLogService() (*AuditService, string) {

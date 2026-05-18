@@ -777,6 +777,8 @@ Daily report rows also include provenance freshness fields when the report is ge
 - RPC credentials are stored only in `/etc/lightningos/secrets.env` (root:lightningos, `chmod 660`).
 - API/UI bind to `0.0.0.0` by default for LAN access. If you want localhost-only, set `server.host: "127.0.0.1"` in `/etc/lightningos/config.yaml`.
 - Set `UTXO_LOCK_REQUIRES_REAUTH=true` to require the same wallet-send reauth scope before UTXO lock/unlock actions. This is optional because lock/unlock are reversible, but useful on shared admin sessions.
+- Sensitive API actions are recorded in Postgres `audit_events` and can be reviewed in the UI under `Audit`.
+- Audit events are pruned after `AUDIT_EVENTS_RETENTION_DAYS` days by default (`365`). Set `AUDIT_EVENTS_RETENTION_DAYS=0` or `forever` in `/etc/lightningos/secrets.env` to keep them indefinitely.
 
 ## Troubleshooting
 If `https://<SERVER_LAN_IP>:8443` is not reachable:

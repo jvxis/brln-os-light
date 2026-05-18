@@ -43,6 +43,7 @@
   },
   "nav": {
     "apps": "Apps",
+    "auditLog": "Audit",
     "buyDepix": "Buy DePix",
     "payBoleto": "Pay Boleto",
     "bitcoinLocal": "Bitcoin Local",
@@ -778,6 +779,28 @@
     },
     "subtitle": "Tail recent logs for systemd services and local Docker apps.",
     "title": "Logs"
+  },
+  "auditLog": {
+    "action": "Action",
+    "actionPlaceholder": "utxo.lock, utxo.unlock...",
+    "applyFilters": "Apply filters",
+    "empty": "No audit events found.",
+    "ip": "IP",
+    "limit": "Limit",
+    "loading": "Loading audit events...",
+    "metadata": "Metadata",
+    "recentEvents": "Recent events",
+    "resultCount": "{{count}} event(s)",
+    "retention": "Retention: {{days}} days",
+    "retentionForever": "Retention: forever",
+    "session": "Session",
+    "sessionPlaceholder": "session id",
+    "subtitle": "Security-sensitive API actions recorded in Postgres.",
+    "target": "Target",
+    "targetPlaceholder": "outpoint or batch",
+    "time": "Time",
+    "title": "Audit log",
+    "unavailable": "Audit log unavailable."
   },
   "terminal": {
     "copyOperatorPassword": "Copy operator password",

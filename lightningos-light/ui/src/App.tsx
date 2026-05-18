@@ -21,6 +21,7 @@ import BitcoinRemote from './pages/BitcoinRemote'
 import BitcoinLocal from './pages/BitcoinLocal'
 import Elements from './pages/Elements'
 import Notifications from './pages/Notifications'
+import AuditLog from './pages/AuditLog'
 import LndConfig from './pages/LndConfig'
 import LndInfo from './pages/LndInfo'
 import AppStore from './pages/AppStore'
@@ -213,6 +214,7 @@ export default function App() {
       { key: 'bitcoin-local', label: t('nav.bitcoinLocal'), element: <BitcoinLocal /> },
       { key: 'elements', label: t('nav.elements'), element: <Elements /> },
       { key: 'notifications', label: t('nav.notifications'), element: <Notifications /> },
+      { key: 'audit-log', label: t('nav.auditLog'), element: <AuditLog /> },
       { key: 'disks', label: t('nav.disks'), element: <Disks /> },
       { key: 'terminal', label: t('nav.terminal'), element: <Terminal /> },
       { key: 'shortcuts', label: t('nav.shortcuts'), element: <Shortcuts /> },

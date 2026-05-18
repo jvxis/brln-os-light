@@ -146,3 +146,17 @@ limit $%d`, strings.Join(where, " and "), len(args))
 	}
 	return items, rows.Err()
 }
+
+func (s *AuditService) PruneBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+	if s == nil || s.db == nil {
+		return 0, ErrAuditDBUnavailable
+	}
+	if cutoff.IsZero() {
+		return 0, nil
+	}
+	tag, err := s.db.Exec(ctx, `delete from audit_events where ts < $1`, cutoff.UTC())
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}

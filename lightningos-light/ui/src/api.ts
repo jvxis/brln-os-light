@@ -520,6 +520,13 @@ export const sendChatMessage = (payload: { peer_pubkey: string; message: string;
 export const getNotifications = (limit = 200) =>
   request(`/api/notifications?limit=${limit}`)
 
+export const getAuditEvents = (params?: {
+  limit?: number
+  action?: string
+  session_id?: string
+  target?: string
+}) => request(`/api/audit/events${buildQuery(params)}`)
+
 export const getTelegramNotifications = () =>
   request('/api/notifications/telegram')
 

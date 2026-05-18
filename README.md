@@ -767,7 +767,7 @@ Optional pins in `/etc/lightningos/secrets.env`:
 - `PROVENANCE_PUBLIC_ELECTRUM=host:port[:s|:t][,...]` — replace the default public list.
 - `PROVENANCE_NETWORK=mainnet|testnet|signet|regtest` — gates public servers. Auto-detected from `/data/lnd/data/chain/bitcoin/<network>/wallet.db` if unset; public servers are skipped on non-mainnet.
 
-The active backend is reported by `GET /api/onchain/provenance/health` in the `backend` field and rendered as a badge next to the Wallet Flow tab title.
+The active backend is reported by `GET /api/onchain/provenance/health` in the `backend` field and rendered as a badge next to the Wallet Flow tab title. Source-chain telemetry is exposed at `GET /api/onchain/provenance/metrics` with per-source-class hits, errors, fallthroughs, and recent p95 latency since process start.
 
 ## Security notes
 - The seed phrase is never stored. It is displayed once in the wizard.

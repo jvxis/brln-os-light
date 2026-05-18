@@ -29,17 +29,17 @@ const (
 // When the readiness check reports "requires_txindex" we surface
 // NoTxIndexHint() so the UI can show its one-time banner.
 type BitcoinCoreSource struct {
-	readiness         func(ctx context.Context) (ok bool, reason string)
-	mu                sync.Mutex
-	configLoaded      bool
-	configErr         error
-	config            bitcoinRPCConfig
-	configResolver    func(ctx context.Context) (bitcoinRPCConfig, error)
+	readiness          func(ctx context.Context) (ok bool, reason string)
+	mu                 sync.Mutex
+	configLoaded       bool
+	configErr          error
+	config             bitcoinRPCConfig
+	configResolver     func(ctx context.Context) (bitcoinRPCConfig, error)
 	readinessExpiresAt time.Time
-	readinessOK       bool
-	readinessReason   string
-	noTxIndex         atomic.Bool
-	noTxIndexAt       atomic.Int64 // unix seconds
+	readinessOK        bool
+	readinessReason    string
+	noTxIndex          atomic.Bool
+	noTxIndexAt        atomic.Int64 // unix seconds
 }
 
 // NewBitcoinCoreSource builds a source backed by the given readiness check.
@@ -221,7 +221,7 @@ func parsePublicElectrumList(raw string) []string {
 //     PROVENANCE_PUBLIC_ELECTRUM=disabled)
 //
 // publicAllowed gates step 3; pass false on non-mainnet networks.
-func buildProvenanceSourceChain(publicAllowed bool, bitcoindFallback *BitcoinCoreSource) (*electrs.ChainedSource, []string) {
+func buildProvenanceSourceChain(publicAllowed bool, bitcoindFallback *BitcoinCoreSource, metrics *ProvenanceMetrics) (*electrs.ChainedSource, []string) {
 	sources := []electrs.TxSource{}
 	notes := []string{}
 
@@ -245,5 +245,5 @@ func buildProvenanceSourceChain(publicAllowed bool, bitcoindFallback *BitcoinCor
 		}
 	}
 
-	return electrs.NewChainedSource(sources), notes
+	return electrs.NewChainedSource(wrapProvenanceSourcesWithMetrics(sources, metrics)), notes
 }

@@ -110,6 +110,7 @@ func (s *Server) routes() http.Handler {
 		r.Get("/provenance", s.handleProvenanceGraph)
 		r.Get("/provenance/status", s.handleProvenanceStatus)
 		r.Get("/provenance/health", s.handleProvenanceHealth)
+		r.Get("/provenance/metrics", s.handleProvenanceMetrics)
 		r.Post("/provenance/rebuild", s.handleProvenanceRebuild)
 	})
 

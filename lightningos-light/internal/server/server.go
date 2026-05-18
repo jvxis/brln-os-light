@@ -106,6 +106,7 @@ type Server struct {
 	provenanceErr               string
 	provenanceChain             *electrs.ChainedSource
 	provenanceBitcoind          *BitcoinCoreSource
+	provenanceMetrics           *ProvenanceMetrics
 	nodeRetirementInitAt        time.Time
 	nodeRetirementMu            sync.Mutex
 	nodeRetirement              *NodeRetirementService
@@ -134,6 +135,7 @@ func New(cfg *config.Config, logger *log.Logger) *Server {
 		lnd:                lndclient.New(cfg, logger),
 		networkMapGeoCache: make(map[string]networkMapGeoCacheEntry),
 		bitcoinActiveCache: make(map[string]cachedBitcoinStatus),
+		provenanceMetrics:  NewProvenanceMetrics(),
 	}
 	srv.auth = NewAuthService(cfg, logger)
 	srv.chat = NewChatService(srv.lnd, logger)

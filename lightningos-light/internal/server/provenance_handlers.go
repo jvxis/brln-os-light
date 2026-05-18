@@ -143,6 +143,14 @@ func (s *Server) handleProvenanceHealth(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+func (s *Server) handleProvenanceMetrics(w http.ResponseWriter, r *http.Request) {
+	metrics := s.provenanceMetrics
+	if metrics == nil {
+		metrics = NewProvenanceMetrics()
+	}
+	writeJSON(w, http.StatusOK, metrics.Snapshot())
+}
+
 func (s *Server) handleProvenanceRebuild(w http.ResponseWriter, r *http.Request) {
 	svc, errMsg := s.provenanceService()
 	if svc == nil {

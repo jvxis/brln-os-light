@@ -50,7 +50,10 @@ func (s *Server) initProvenance() {
 		avail := s.fullIndexAppAvailability(ctx)
 		return avail.Available, avail.Reason
 	})
-	chain, notes := buildProvenanceSourceChain(publicAllowed, s.provenanceBitcoind)
+	if s.provenanceMetrics == nil {
+		s.provenanceMetrics = NewProvenanceMetrics()
+	}
+	chain, notes := buildProvenanceSourceChain(publicAllowed, s.provenanceBitcoind, s.provenanceMetrics)
 	s.provenanceChain = chain
 	s.logger.Printf("provenance source chain: %s", strings.Join(notes, " → "))
 

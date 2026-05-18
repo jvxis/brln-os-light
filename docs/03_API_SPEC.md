@@ -192,6 +192,10 @@ GET /api/onchain/utxos?limit=500
 - Returns wallet UTXOs enriched with local UTXO Manager metadata and lease state.
 - `limit` caps the response size only. The backend intentionally lists and enriches the full wallet UTXO set before slicing so metadata maintenance sees the complete live outpoint set.
 
+GET /api/onchain/provenance/metrics
+- Returns in-memory Wallet Flow source-chain counters since process start.
+- Includes per-source-class calls, hits, errors, unavailable errors, fallthroughs, and recent p95 latency in milliseconds for `bitcoind`, `electrs`, and `public`.
+
 ## Lightning Ops
 
 GET /api/lnops/channels

@@ -159,17 +159,9 @@ Expor em `/api/onchain/provenance/metrics` ou anexar ao daily report.
 
 ## Fase 4 — UX polish (oportunista)
 
-### 4.1 — Tooltip rico no TxNode
-
-Click no nó do WalletFlow → modal com vin/vout completos, fee, vbytes, link `mempool.space` (ou explorer configurado).
-
 ### 4.3 — Exportar lineage como SVG/PNG
 
 Botão de download no canvas. Útil pra debug e suporte.
-
-### 4.4 — i18n sweep final
-
-Varredura de strings hardcoded no `WalletFlowView` (filtros, empty states, badges) — algumas devem ter ficado.
 
 ---
 

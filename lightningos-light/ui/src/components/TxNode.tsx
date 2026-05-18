@@ -210,7 +210,7 @@ export default function TxNode({ data, selected }: NodeProps<TxNodeData>) {
               />
               <div className="flex flex-col leading-tight min-w-0">
                 <span className="text-[10px] font-mono text-white truncate" style={{ maxWidth: 120 }}>
-                  {bar.amount > 0 ? fmtSats(bar.amount) : '—'}
+                  {bar.amount > 0 ? fmtSats(bar.amount) : t('walletFlow.txNode.amountUnknownShort')}
                 </span>
                 <span className="text-[9px] font-mono text-white/45 truncate" style={{ maxWidth: 120 }}>
                   {shortAddr(bar.address)}
@@ -223,7 +223,7 @@ export default function TxNode({ data, selected }: NodeProps<TxNodeData>) {
             <div className="flex items-center justify-end gap-2 pr-2">
               <div className="flex flex-col items-end leading-tight min-w-0">
                 <span className="text-[10px] font-mono text-white truncate" style={{ maxWidth: 120 }}>
-                  {bar.amount > 0 ? fmtSats(bar.amount) : '—'}
+                  {bar.amount > 0 ? fmtSats(bar.amount) : t('walletFlow.txNode.amountUnknownShort')}
                 </span>
                 <span className="text-[9px] font-mono text-white/45 truncate" style={{ maxWidth: 120 }}>
                   {shortAddr(bar.address)}

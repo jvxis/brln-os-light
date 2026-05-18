@@ -20,12 +20,14 @@ export default function AncestorAggregateNode({ data }: { data: AncestorAggregat
       style={{ width: ANCESTOR_AGG_WIDTH }}
     >
       <p className="text-[10px] uppercase tracking-[0.2em] text-brass/80">
-        {t('walletFlow.ancestorAggKicker', { defaultValue: 'Ancestors' })}
+        {t('walletFlow.ancestorAggKicker')}
       </p>
       <p className="mt-1 text-sm font-semibold">
-        {t('walletFlow.ancestorAggCount', { count: data.count, defaultValue: '+{{count}} more' })}
+        {t('walletFlow.ancestorAggCount', { count: data.count })}
       </p>
-      <p className="mt-1 text-xs text-fog/55 font-mono">{sats} sat</p>
+      <p className="mt-1 text-xs text-fog/55 font-mono">
+        {t('walletFlow.satsValue', { sats })}
+      </p>
       <Handle
         id="out"
         type="source"

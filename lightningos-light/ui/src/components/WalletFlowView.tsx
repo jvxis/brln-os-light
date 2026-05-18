@@ -26,6 +26,7 @@ import AncestorAggregateNode, { ANCESTOR_AGG_WIDTH } from '../components/Ancesto
 
 const NODE_TYPES = { tx: TxNode, ancestorAgg: AncestorAggregateNode }
 const EDGE_TYPES = { sankey: SankeyEdge }
+const TX_EXPLORER_BASE = 'https://mempool.space/tx'
 
 type ProvenanceTx = {
   txid: string
@@ -102,6 +103,15 @@ function fmtSats(value: number) {
   return value.toLocaleString()
 }
 
+function fmtTxTime(timestamp: number, fallback: string) {
+  if (!timestamp || timestamp <= 0) return fallback
+  return new Date(timestamp * 1000).toLocaleString()
+}
+
+function txExplorerUrl(txid: string) {
+  return `${TX_EXPLORER_BASE}/${encodeURIComponent(txid)}`
+}
+
 type WalletFlowViewProps = {
   activeSource?: string
   noTxIndexHint?: boolean
@@ -132,6 +142,7 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
   const [hops, setHops] = useState<number>(3)
   const [rootInputDraft, setRootInputDraft] = useState<string>('')
   const [includeExternal, setIncludeExternal] = useState<boolean>(false)
+  const [selectedTxid, setSelectedTxid] = useState<string | null>(null)
 
   const load = async () => {
     setError('')
@@ -506,6 +517,82 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
     return { nodes: layout(finalNodes, finalEdges), edges: finalEdges }
   }, [graph, mode, rootTxid])
 
+  const selectedTxDetails = useMemo(() => {
+    if (!graph || !selectedTxid) return null
+    const tx = (graph.txs ?? []).find((item) => item.txid === selectedTxid)
+    if (!tx) return null
+    const graphOutputs = graph.outputs ?? []
+    const inputs = graphOutputs
+      .filter((item) => item.spent_by_txid === selectedTxid)
+      .slice()
+      .sort((a, b) => (a.spent_in_vin ?? 0) - (b.spent_in_vin ?? 0))
+    const outputs = graphOutputs
+      .filter((item) => item.txid === selectedTxid)
+      .slice()
+      .sort((a, b) => a.vout - b.vout)
+    return { tx, inputs, outputs }
+  }, [graph, selectedTxid])
+
+  useEffect(() => {
+    if (selectedTxid && !selectedTxDetails) setSelectedTxid(null)
+  }, [selectedTxDetails, selectedTxid])
+
+  const renderOutpointRows = (items: ProvenanceOutput[], side: 'input' | 'output') => {
+    if (items.length === 0) {
+      return (
+        <div className="rounded-lg border border-white/10 bg-ink/40 px-3 py-3 text-xs text-fog/55">
+          {side === 'input' ? t('walletFlow.details.noInputs') : t('walletFlow.details.noOutputs')}
+        </div>
+      )
+    }
+    return (
+      <div className="overflow-x-auto rounded-lg border border-white/10">
+        <table className="min-w-full text-left text-xs">
+          <thead className="bg-white/5 text-fog/55">
+            <tr>
+              <th className="px-3 py-2 font-medium">{t('walletFlow.details.index')}</th>
+              <th className="px-3 py-2 font-medium">{t('walletFlow.details.amount')}</th>
+              <th className="px-3 py-2 font-medium">{t('walletFlow.details.owner')}</th>
+              <th className="px-3 py-2 font-medium">{t('walletFlow.details.address')}</th>
+              <th className="px-3 py-2 font-medium">{t('walletFlow.details.status')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item) => {
+              const index = side === 'input' ? item.spent_in_vin ?? 0 : item.vout
+              const status = side === 'input'
+                ? t('walletFlow.details.spendsOutpoint', { outpoint: `${shortTxid(item.txid)}:${item.vout}` })
+                : item.spent_by_txid
+                  ? t('walletFlow.details.spentBy', { txid: shortTxid(item.spent_by_txid) })
+                  : item.is_current_utxo
+                    ? t('walletFlow.details.currentUtxo')
+                    : t('walletFlow.details.unspent')
+              return (
+                <tr key={`${side}-${item.txid}-${item.vout}-${index}`} className="border-t border-white/10">
+                  <td className="px-3 py-2 font-mono text-fog">{index}</td>
+                  <td className="px-3 py-2 font-mono text-fog">
+                    {item.amount_sat > 0
+                      ? t('walletFlow.satsValue', { sats: fmtSats(item.amount_sat) })
+                      : t('walletFlow.details.unknownAmount')}
+                  </td>
+                  <td className="px-3 py-2 text-fog/80">
+                    {item.is_ours ? t('walletFlow.details.yours') : t('walletFlow.details.external')}
+                  </td>
+                  <td className="max-w-[360px] px-3 py-2 font-mono text-fog/70">
+                    <span className="block truncate" title={item.address || undefined}>
+                      {item.address || t('walletFlow.details.unknownAddress')}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-fog/70">{status}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+
   return (
     <section className="space-y-4">
       {noTxIndexHint && (
@@ -764,8 +851,7 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
               fitView
               proOptions={{ hideAttribution: true }}
               onNodeClick={(_, node) => {
-                setMode('lineage')
-                setRootTxid(node.id)
+                if (node.type === 'tx') setSelectedTxid(node.id)
               }}
               nodesDraggable={false}
             >
@@ -785,6 +871,126 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
           </div>
         )}
       </div>
+      {selectedTxDetails && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/80 px-4 py-6 backdrop-blur-sm"
+          onClick={() => setSelectedTxid(null)}
+        >
+          <div
+            className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl border border-white/10 bg-slate shadow-panel"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 px-5 py-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.25em] text-fog/50">
+                  {t('walletFlow.details.kicker')}
+                </p>
+                <h3 className="mt-1 font-mono text-lg font-semibold text-fog">
+                  {shortTxid(selectedTxDetails.tx.txid)}
+                </h3>
+                <p className="mt-1 break-all font-mono text-xs text-fog/55">
+                  {selectedTxDetails.tx.txid}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <a
+                  className="btn-secondary text-xs px-3 py-2"
+                  href={txExplorerUrl(selectedTxDetails.tx.txid)}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {t('walletFlow.details.openExplorer')}
+                </a>
+                <button
+                  className="btn-primary text-xs px-3 py-2"
+                  onClick={() => {
+                    setMode('lineage')
+                    setRootTxid(selectedTxDetails.tx.txid)
+                    setHops(3)
+                    setSelectedTxid(null)
+                  }}
+                >
+                  {t('walletFlow.details.traceLineage')}
+                </button>
+                <button
+                  className="btn-secondary text-xs px-3 py-2"
+                  onClick={() => setSelectedTxid(null)}
+                >
+                  {t('walletFlow.details.close')}
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-5 px-5 py-4">
+              <div className="grid gap-3 md:grid-cols-4">
+                <div className="rounded-lg bg-white/5 px-3 py-3">
+                  <p className="text-[10px] uppercase tracking-wide text-fog/50">{t('walletFlow.details.amount')}</p>
+                  <p className="mt-1 font-mono text-sm text-fog">
+                    {t('walletFlow.satsValue', { sats: fmtSats(selectedTxDetails.tx.amount_sat) })}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-white/5 px-3 py-3">
+                  <p className="text-[10px] uppercase tracking-wide text-fog/50">{t('walletFlow.details.fee')}</p>
+                  <p className="mt-1 font-mono text-sm text-fog">
+                    {selectedTxDetails.tx.fee_sat > 0
+                      ? t('walletFlow.satsValue', { sats: fmtSats(selectedTxDetails.tx.fee_sat) })
+                      : t('walletFlow.details.unknownAmount')}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-white/5 px-3 py-3">
+                  <p className="text-[10px] uppercase tracking-wide text-fog/50">{t('walletFlow.details.block')}</p>
+                  <p className="mt-1 font-mono text-sm text-fog">
+                    {selectedTxDetails.tx.block_height > 0
+                      ? selectedTxDetails.tx.block_height.toLocaleString()
+                      : t('walletFlow.txNode.mempool')}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-white/5 px-3 py-3">
+                  <p className="text-[10px] uppercase tracking-wide text-fog/50">{t('walletFlow.details.time')}</p>
+                  <p className="mt-1 text-sm text-fog">
+                    {fmtTxTime(selectedTxDetails.tx.timestamp, t('walletFlow.details.unknownTime'))}
+                  </p>
+                </div>
+              </div>
+
+              {(selectedTxDetails.tx.label || selectedTxDetails.tx.confirmations > 0 || selectedTxDetails.tx.is_external) && (
+                <div className="flex flex-wrap gap-2 text-xs">
+                  <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-fog/75">
+                    {selectedTxDetails.tx.is_external
+                      ? t('walletFlow.details.externalTx')
+                      : t('walletFlow.details.walletTx')}
+                  </span>
+                  {selectedTxDetails.tx.confirmations > 0 && (
+                    <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-fog/75">
+                      {t('walletFlow.details.confirmations', { count: selectedTxDetails.tx.confirmations })}
+                    </span>
+                  )}
+                  {selectedTxDetails.tx.label && (
+                    <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-fog/75">
+                      {selectedTxDetails.tx.label}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div>
+                  <h4 className="mb-2 text-sm font-semibold text-fog">
+                    {t('walletFlow.details.inputs', { count: selectedTxDetails.inputs.length })}
+                  </h4>
+                  {renderOutpointRows(selectedTxDetails.inputs, 'input')}
+                </div>
+                <div>
+                  <h4 className="mb-2 text-sm font-semibold text-fog">
+                    {t('walletFlow.details.outputs', { count: selectedTxDetails.outputs.length })}
+                  </h4>
+                  {renderOutpointRows(selectedTxDetails.outputs, 'output')}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   )
 }

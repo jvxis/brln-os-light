@@ -413,7 +413,7 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
     // ends up with one ancestor box per visible input across dozens of
     // internal txs — visually overwhelming. Internal txs are never culled
     // here; the existing keepTxs already protects them.
-    const MAX_EXTERNAL_NODES = 10
+    const MAX_EXTERNAL_NODES = 5
     const externalScore = new Map<string, number>()
     for (const t of txs) {
       if (!t.is_external) continue

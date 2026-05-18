@@ -73,3 +73,20 @@ func TestParseAuditEventsLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestUtxoLockRequiresReauthEnv(t *testing.T) {
+	t.Setenv(utxoLockRequiresReauthEnv, "")
+	if utxoLockRequiresReauth() {
+		t.Fatalf("expected empty env to keep reauth disabled")
+	}
+
+	t.Setenv(utxoLockRequiresReauthEnv, "true")
+	if !utxoLockRequiresReauth() {
+		t.Fatalf("expected true env to enable reauth")
+	}
+
+	t.Setenv(utxoLockRequiresReauthEnv, "0")
+	if utxoLockRequiresReauth() {
+		t.Fatalf("expected false-like env to disable reauth")
+	}
+}

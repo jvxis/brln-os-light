@@ -770,10 +770,13 @@ Optional pins in `/etc/lightningos/secrets.env`:
 
 The active backend is reported by `GET /api/onchain/provenance/health` in the `backend` field and rendered as a badge next to the Wallet Flow tab title. Source-chain telemetry is exposed at `GET /api/onchain/provenance/metrics` with per-source-class hits, errors, fallthroughs, and recent p95 latency since process start.
 
+Daily report rows also include provenance freshness fields when the report is generated for the previous local day: `provenance_last_sync_at`, `provenance_last_sync_age_hours`, `provenance_health_alert`, and `provenance_last_error`. The alert flag is raised when provenance has never synced, the last sync is older than 24 hours, or the last sync recorded an error.
+
 ## Security notes
 - The seed phrase is never stored. It is displayed once in the wizard.
 - RPC credentials are stored only in `/etc/lightningos/secrets.env` (root:lightningos, `chmod 660`).
 - API/UI bind to `0.0.0.0` by default for LAN access. If you want localhost-only, set `server.host: "127.0.0.1"` in `/etc/lightningos/config.yaml`.
+- Set `UTXO_LOCK_REQUIRES_REAUTH=true` to require the same wallet-send reauth scope before UTXO lock/unlock actions. This is optional because lock/unlock are reversible, but useful on shared admin sessions.
 
 ## Troubleshooting
 If `https://<SERVER_LAN_IP>:8443` is not reachable:

@@ -234,22 +234,58 @@ export default function OnchainHub() {
 
   const handleLockSelected = async () => {
     if (utxoSelected.size === 0) return
+    const outpoints = Array.from(utxoSelected)
     try {
-      await lockUtxos({ outpoints: Array.from(utxoSelected) })
+      await lockUtxos({ outpoints })
       reportAction(t('onchainHub.utxoMgr.statusLocked', { count: utxoSelected.size }))
       await refreshUtxoState()
     } catch (err: any) {
+      if (err?.code === 'utxo_lock_reauth_required') {
+        const confirmPassword = window.prompt(t('onchainHub.utxoMgr.promptLockPassword'))
+        if (!confirmPassword) {
+          reportAction(t('onchainHub.utxoMgr.errorReauthLockRequired'))
+          return
+        }
+        try {
+          await lockUtxos({ outpoints, confirm_password: confirmPassword })
+          reportAction(t('onchainHub.utxoMgr.statusLocked', { count: utxoSelected.size }))
+          await refreshUtxoState()
+        } catch (retryErr: any) {
+          reportAction(retryErr?.code === 'auth_invalid_credentials'
+            ? t('onchainHub.utxoMgr.errorInvalidPassword')
+            : retryErr?.message || t('onchainHub.utxoMgr.errorLock'))
+        }
+        return
+      }
       reportAction(err?.message || t('onchainHub.utxoMgr.errorLock'))
     }
   }
 
   const handleUnlockSelected = async () => {
     if (utxoSelected.size === 0) return
+    const outpoints = Array.from(utxoSelected)
     try {
-      await unlockUtxos({ outpoints: Array.from(utxoSelected) })
+      await unlockUtxos({ outpoints })
       reportAction(t('onchainHub.utxoMgr.statusUnlocked', { count: utxoSelected.size }))
       await refreshUtxoState()
     } catch (err: any) {
+      if (err?.code === 'utxo_unlock_reauth_required') {
+        const confirmPassword = window.prompt(t('onchainHub.utxoMgr.promptUnlockPassword'))
+        if (!confirmPassword) {
+          reportAction(t('onchainHub.utxoMgr.errorReauthUnlockRequired'))
+          return
+        }
+        try {
+          await unlockUtxos({ outpoints, confirm_password: confirmPassword })
+          reportAction(t('onchainHub.utxoMgr.statusUnlocked', { count: utxoSelected.size }))
+          await refreshUtxoState()
+        } catch (retryErr: any) {
+          reportAction(retryErr?.code === 'auth_invalid_credentials'
+            ? t('onchainHub.utxoMgr.errorInvalidPassword')
+            : retryErr?.message || t('onchainHub.utxoMgr.errorUnlock'))
+        }
+        return
+      }
       reportAction(err?.message || t('onchainHub.utxoMgr.errorUnlock'))
     }
   }

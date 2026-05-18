@@ -34,6 +34,10 @@ type Metrics struct {
 	OnchainBalanceSat          *int64
 	LightningBalanceSat        *int64
 	TotalBalanceSat            *int64
+	ProvenanceLastSyncAt       *time.Time `json:"provenance_last_sync_at,omitempty"`
+	ProvenanceLastSyncAgeHours *float64   `json:"provenance_last_sync_age_hours,omitempty"`
+	ProvenanceHealthAlert      *bool      `json:"provenance_health_alert,omitempty"`
+	ProvenanceLastError        *string    `json:"provenance_last_error,omitempty"`
 }
 
 func (m Metrics) OffchainFeeCostSat() int64 {

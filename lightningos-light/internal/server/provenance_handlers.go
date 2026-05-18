@@ -40,6 +40,11 @@ func (s *Server) handleProvenanceGraph(w http.ResponseWriter, r *http.Request) {
 			opts.Limit = parsed
 		}
 	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("since")); raw != "" {
+		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil && parsed > 0 {
+			opts.SinceUnix = parsed
+		}
+	}
 	if raw := strings.TrimSpace(r.URL.Query().Get("root")); raw != "" {
 		// Accept either "txid" or "txid:vout"; we only need the txid for lineage.
 		if idx := strings.IndexByte(raw, ':'); idx > 0 {

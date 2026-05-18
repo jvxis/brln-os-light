@@ -1699,6 +1699,8 @@
       "broadcasting": "Broadcasting…",
       "satsValue": "{{value}} sats",
       "promptLabel": "Label for this UTXO (empty to clear):",
+      "promptLockPassword": "Confirm admin password to lock the selected UTXOs:",
+      "promptUnlockPassword": "Confirm admin password to unlock the selected UTXOs:",
       "promptGroupName": "Name this group:",
       "promptNewGroup": "Name the new group:",
       "defaultGroupName": "Group {{index}}",
@@ -1717,6 +1719,9 @@
       "errorLabelUpdate": "Failed to update label.",
       "errorLock": "Failed to lock UTXOs.",
       "errorUnlock": "Failed to unlock UTXOs.",
+      "errorReauthLockRequired": "Password confirmation required to lock UTXOs.",
+      "errorReauthUnlockRequired": "Password confirmation required to unlock UTXOs.",
+      "errorInvalidPassword": "Invalid password.",
       "errorGroupCreate": "Failed to create group.",
       "errorGroupAssign": "Failed to assign group.",
       "errorGroupDelete": "Failed to delete group.",
@@ -1800,6 +1805,12 @@
       "lineage": "Trace lineage from…"
     },
     "modeSelectTooltip": "What to show in the graph",
+    "timeWindow": {
+      "30d": "Last 30 days",
+      "90d": "Last 90 days",
+      "all": "All time"
+    },
+    "timeWindowTooltip": "Limit non-lineage graph modes by transaction time",
     "limit": "Limit",
     "refresh": "Refresh",
     "refreshing": "Walking history…",

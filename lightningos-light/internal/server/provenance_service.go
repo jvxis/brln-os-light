@@ -41,14 +41,14 @@ type ProvenanceTx struct {
 // ProvenanceOutput is an output of a tx — and one half of an edge: if
 // SpentByTxid is set, an edge runs from this output to that tx.
 type ProvenanceOutput struct {
-	Txid         string `json:"txid"`
-	Vout         uint32 `json:"vout"`
-	Address      string `json:"address,omitempty"`
-	AmountSat    int64  `json:"amount_sat"`
-	IsOurs       bool   `json:"is_ours"`
-	SpentByTxid  string `json:"spent_by_txid,omitempty"`
-	SpentInVin   *int32 `json:"spent_in_vin,omitempty"`
-	IsCurrentUtxo bool  `json:"is_current_utxo"`
+	Txid          string `json:"txid"`
+	Vout          uint32 `json:"vout"`
+	Address       string `json:"address,omitempty"`
+	AmountSat     int64  `json:"amount_sat"`
+	IsOurs        bool   `json:"is_ours"`
+	SpentByTxid   string `json:"spent_by_txid,omitempty"`
+	SpentInVin    *int32 `json:"spent_in_vin,omitempty"`
+	IsCurrentUtxo bool   `json:"is_current_utxo"`
 }
 
 // ProvenanceState mirrors the single-row state table used to drive
@@ -228,6 +228,7 @@ type LoadGraphOptions struct {
 	Limit           int    // max txs to return (safety cap; 0 = use default)
 	RootTxid        string // for Mode=lineage: walk backwards from this tx
 	Hops            int    // for Mode=lineage: how many generations to include (1-20)
+	SinceUnix       int64  // for non-lineage modes: only return txs at or after this timestamp
 	IncludeExternal bool   // for Mode=lineage: also walk past the wallet boundary via electrs
 	MaxExternalTxs  int    // safety cap on electrs fetches per request (0 = default 500)
 }
@@ -300,13 +301,18 @@ func (s *ProvenanceService) LoadGraph(ctx context.Context, opts LoadGraphOptions
 	default: // "live"
 		txWhere = `txid in (select distinct txid from provenance_output where is_ours = true and spent_by_txid = '')`
 	}
+	queryArgs := []any{limit}
+	if opts.SinceUnix > 0 {
+		txWhere = `(` + txWhere + `) and timestamp >= $2`
+		queryArgs = append(queryArgs, opts.SinceUnix)
+	}
 
 	txRows, err := s.db.Query(ctx, `
 select txid, block_height, confirmations, timestamp, amount_sat, fee_sat, label, is_external, updated_at
 from provenance_tx
 where `+txWhere+`
 order by block_height desc, txid asc
-limit $1`, limit)
+limit $1`, queryArgs...)
 	if err != nil {
 		return graph, err
 	}

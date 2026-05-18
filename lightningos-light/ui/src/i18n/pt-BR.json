@@ -1699,6 +1699,8 @@
       "broadcasting": "Transmitindo…",
       "satsValue": "{{value}} sats",
       "promptLabel": "Rótulo para este UTXO (vazio para limpar):",
+      "promptLockPassword": "Confirme a senha de admin para bloquear os UTXOs selecionados:",
+      "promptUnlockPassword": "Confirme a senha de admin para desbloquear os UTXOs selecionados:",
       "promptGroupName": "Nomeie este grupo:",
       "promptNewGroup": "Nomeie o novo grupo:",
       "defaultGroupName": "Grupo {{index}}",
@@ -1717,6 +1719,9 @@
       "errorLabelUpdate": "Falha ao atualizar o rótulo.",
       "errorLock": "Falha ao bloquear UTXOs.",
       "errorUnlock": "Falha ao desbloquear UTXOs.",
+      "errorReauthLockRequired": "Confirmação de senha obrigatória para bloquear UTXOs.",
+      "errorReauthUnlockRequired": "Confirmação de senha obrigatória para desbloquear UTXOs.",
+      "errorInvalidPassword": "Senha inválida.",
       "errorGroupCreate": "Falha ao criar o grupo.",
       "errorGroupAssign": "Falha ao atribuir ao grupo.",
       "errorGroupDelete": "Falha ao excluir o grupo.",
@@ -1800,6 +1805,12 @@
       "lineage": "Rastrear linhagem de…"
     },
     "modeSelectTooltip": "O que mostrar no gráfico",
+    "timeWindow": {
+      "30d": "Últimos 30 dias",
+      "90d": "Últimos 90 dias",
+      "all": "Todo o histórico"
+    },
+    "timeWindowTooltip": "Limitar modos não-linhagem por data da transação",
     "limit": "Limite",
     "refresh": "Atualizar",
     "refreshing": "Percorrendo histórico…",

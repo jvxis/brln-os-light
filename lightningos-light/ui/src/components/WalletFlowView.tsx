@@ -107,6 +107,14 @@ type WalletFlowViewProps = {
   noTxIndexHint?: boolean
 }
 
+type TimeWindow = '30d' | '90d' | 'all'
+
+function sinceForTimeWindow(window: TimeWindow) {
+  const days = window === '30d' ? 30 : window === '90d' ? 90 : 0
+  if (days <= 0) return undefined
+  return Math.floor(Date.now() / 1000) - days * 24 * 60 * 60
+}
+
 export default function WalletFlowView({ activeSource = '', noTxIndexHint = false }: WalletFlowViewProps = {}) {
   const { t } = useTranslation()
   const [graph, setGraph] = useState<GraphPayload | null>(null)
@@ -118,6 +126,7 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
   const inFlight = Boolean(liveStatus?.in_flight)
   const autoTriggeredRef = useRef(false)
   const [mode, setMode] = useState<'live' | 'ours' | 'all' | 'lineage'>('live')
+  const [timeWindow, setTimeWindow] = useState<TimeWindow>('all')
   const [limit, setLimit] = useState<number>(20)
   const [rootTxid, setRootTxid] = useState<string>('')
   const [hops, setHops] = useState<number>(3)
@@ -128,6 +137,9 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
     setError('')
     try {
       const params: Parameters<typeof getProvenanceGraph>[0] = { mode, limit }
+      if (mode !== 'lineage') {
+        params.since = sinceForTimeWindow(timeWindow)
+      }
       if (mode === 'lineage') {
         if (!rootTxid) {
           setGraph({
@@ -162,7 +174,7 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, limit, rootTxid, hops, includeExternal])
+  }, [mode, timeWindow, limit, rootTxid, hops, includeExternal])
 
   useEffect(() => {
     let cancelled = false
@@ -543,6 +555,17 @@ export default function WalletFlowView({ activeSource = '', noTxIndexHint = fals
               <option value="ours">{t('walletFlow.mode.ours')}</option>
               <option value="all">{t('walletFlow.mode.all')}</option>
               <option value="lineage">{t('walletFlow.mode.lineage')}</option>
+            </select>
+            <select
+              className="input-field text-xs py-1 px-2"
+              value={timeWindow}
+              onChange={(e) => setTimeWindow(e.target.value as TimeWindow)}
+              title={t('walletFlow.timeWindowTooltip')}
+              disabled={mode === 'lineage'}
+            >
+              <option value="30d">{t('walletFlow.timeWindow.30d')}</option>
+              <option value="90d">{t('walletFlow.timeWindow.90d')}</option>
+              <option value="all">{t('walletFlow.timeWindow.all')}</option>
             </select>
             <label className="flex items-center gap-1 text-xs text-fog/70">
               {t('walletFlow.limit')}

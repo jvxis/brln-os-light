@@ -268,29 +268,33 @@ type reportSeriesResponse struct {
 }
 
 type reportSeriesItem struct {
-	Date                       string  `json:"date"`
-	ForwardFeeRevenueSat       float64 `json:"forward_fee_revenue_sats"`
-	RebalanceFeeCostSat        float64 `json:"rebalance_fee_cost_sats"`
-	PaymentFeeCostSat          float64 `json:"payment_fee_cost_sats"`
-	OnchainFeeCostSat          float64 `json:"onchain_fee_cost_sats"`
-	OnchainCoopCloseCostSat    float64 `json:"onchain_coop_close_cost_sats"`
-	OnchainLocalForceCostSat   float64 `json:"onchain_local_force_cost_sats"`
-	OnchainRemoteForceCostSat  float64 `json:"onchain_remote_force_cost_sats"`
-	OffchainFeeCostSat         float64 `json:"offchain_fee_cost_sats"`
-	KeysendReceivedSat         float64 `json:"keysend_received_sats"`
-	KeysendReceivedCount       int64   `json:"keysend_received_count"`
-	TotalFeeCostSat            float64 `json:"total_fee_cost_sats"`
-	TotalFeeCostWithOnchainSat float64 `json:"total_fee_cost_with_onchain_sats"`
-	NetRoutingProfitSat        float64 `json:"net_routing_profit_sats"`
-	NetWithKeysendSat          float64 `json:"net_with_keysend_sats"`
-	ForwardCount               int64   `json:"forward_count"`
-	RebalanceCount             int64   `json:"rebalance_count"`
-	RebalanceVolumeSat         float64 `json:"rebalance_volume_sats"`
-	PaymentCount               int64   `json:"payment_count"`
-	RoutedVolumeSat            float64 `json:"routed_volume_sats"`
-	OnchainBalanceSat          *int64  `json:"onchain_balance_sats"`
-	LightningBalanceSat        *int64  `json:"lightning_balance_sats"`
-	TotalBalanceSat            *int64  `json:"total_balance_sats"`
+	Date                       string     `json:"date"`
+	ForwardFeeRevenueSat       float64    `json:"forward_fee_revenue_sats"`
+	RebalanceFeeCostSat        float64    `json:"rebalance_fee_cost_sats"`
+	PaymentFeeCostSat          float64    `json:"payment_fee_cost_sats"`
+	OnchainFeeCostSat          float64    `json:"onchain_fee_cost_sats"`
+	OnchainCoopCloseCostSat    float64    `json:"onchain_coop_close_cost_sats"`
+	OnchainLocalForceCostSat   float64    `json:"onchain_local_force_cost_sats"`
+	OnchainRemoteForceCostSat  float64    `json:"onchain_remote_force_cost_sats"`
+	OffchainFeeCostSat         float64    `json:"offchain_fee_cost_sats"`
+	KeysendReceivedSat         float64    `json:"keysend_received_sats"`
+	KeysendReceivedCount       int64      `json:"keysend_received_count"`
+	TotalFeeCostSat            float64    `json:"total_fee_cost_sats"`
+	TotalFeeCostWithOnchainSat float64    `json:"total_fee_cost_with_onchain_sats"`
+	NetRoutingProfitSat        float64    `json:"net_routing_profit_sats"`
+	NetWithKeysendSat          float64    `json:"net_with_keysend_sats"`
+	ForwardCount               int64      `json:"forward_count"`
+	RebalanceCount             int64      `json:"rebalance_count"`
+	RebalanceVolumeSat         float64    `json:"rebalance_volume_sats"`
+	PaymentCount               int64      `json:"payment_count"`
+	RoutedVolumeSat            float64    `json:"routed_volume_sats"`
+	OnchainBalanceSat          *int64     `json:"onchain_balance_sats"`
+	LightningBalanceSat        *int64     `json:"lightning_balance_sats"`
+	TotalBalanceSat            *int64     `json:"total_balance_sats"`
+	ProvenanceLastSyncAt       *time.Time `json:"provenance_last_sync_at,omitempty"`
+	ProvenanceLastSyncAgeHours *float64   `json:"provenance_last_sync_age_hours,omitempty"`
+	ProvenanceHealthAlert      *bool      `json:"provenance_health_alert,omitempty"`
+	ProvenanceLastError        *string    `json:"provenance_last_error,omitempty"`
 }
 
 type reportSummaryResponse struct {
@@ -371,6 +375,10 @@ func mapSeries(items []reports.Row) []reportSeriesItem {
 			OnchainBalanceSat:          item.Metrics.OnchainBalanceSat,
 			LightningBalanceSat:        item.Metrics.LightningBalanceSat,
 			TotalBalanceSat:            item.Metrics.TotalBalanceSat,
+			ProvenanceLastSyncAt:       item.Metrics.ProvenanceLastSyncAt,
+			ProvenanceLastSyncAgeHours: item.Metrics.ProvenanceLastSyncAgeHours,
+			ProvenanceHealthAlert:      item.Metrics.ProvenanceHealthAlert,
+			ProvenanceLastError:        item.Metrics.ProvenanceLastError,
 		})
 	}
 	return series

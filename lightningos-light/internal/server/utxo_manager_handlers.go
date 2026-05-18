@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -14,12 +15,13 @@ import (
 const (
 	utxoLeaseDefaultExpirySec uint64 = 30 * 24 * 60 * 60 // 30 days
 	utxoLeaseMaxExpirySec     uint64 = 365 * 24 * 60 * 60
+	utxoLockRequiresReauthEnv        = "UTXO_LOCK_REQUIRES_REAUTH"
 )
 
 // auditUtxoLockAction emits an audit log for lock/unlock actions so that
 // silent coin-selection blocks (which could starve autopilot/rebalance) can
-// be traced back to a session. Lock/unlock don't require reauth — they're
-// reversible and don't spend sats — but they are logged.
+// be traced back to a session. Lock/unlock are logged, and can require a
+// wallet-send reauth when UTXO_LOCK_REQUIRES_REAUTH is enabled.
 func (s *Server) auditUtxoLockAction(r *http.Request, action string, outpoints []string, expirySec uint64) {
 	if s == nil || s.logger == nil {
 		return
@@ -33,6 +35,40 @@ func (s *Server) auditUtxoLockAction(r *http.Request, action string, outpoints [
 	} else {
 		s.logger.Printf("utxo %s by session=%s outpoints=%v", action, user, outpoints)
 	}
+}
+
+func utxoLockRequiresReauth() bool {
+	return parseBoolSetting(os.Getenv(utxoLockRequiresReauthEnv), false)
+}
+
+func (s *Server) requireUtxoLockReauth(w http.ResponseWriter, r *http.Request, confirmPassword string, action string) bool {
+	if !utxoLockRequiresReauth() || s.auth == nil || !s.auth.Enabled() {
+		return true
+	}
+
+	session, ok := authSessionFromContext(r.Context())
+	if !ok {
+		writeErrorCode(w, http.StatusUnauthorized, "auth_required", "authentication required")
+		return false
+	}
+	if s.auth.HasRecentReauth(session.ID, authScopeWalletSendExternal) {
+		return true
+	}
+
+	confirmPassword = strings.TrimSpace(confirmPassword)
+	if confirmPassword == "" {
+		writeJSON(w, http.StatusPreconditionRequired, map[string]any{
+			"error":                          "password confirmation required for UTXO " + action,
+			"code":                           "utxo_" + action + "_reauth_required",
+			"requires_password_confirmation": true,
+		})
+		return false
+	}
+	if _, err := s.auth.reauth(session.ID, confirmPassword, authScopeWalletSendExternal); err != nil {
+		writeErrorCode(w, http.StatusUnauthorized, "auth_invalid_credentials", "invalid credentials")
+		return false
+	}
+	return true
 }
 
 // EnrichedOnchainUtxo is the wire shape returned by GET /api/onchain/utxos.
@@ -149,8 +185,9 @@ func (s *Server) handleUtxoMetadataUpsert(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handleUtxoLock(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Outpoints []string `json:"outpoints"`
-		ExpirySec uint64   `json:"expiry_sec"`
+		Outpoints       []string `json:"outpoints"`
+		ExpirySec       uint64   `json:"expiry_sec"`
+		ConfirmPassword string   `json:"confirm_password"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -166,6 +203,10 @@ func (s *Server) handleUtxoLock(w http.ResponseWriter, r *http.Request) {
 	}
 	if expiry > utxoLeaseMaxExpirySec {
 		expiry = utxoLeaseMaxExpirySec
+	}
+	reauthChecked := utxoLockRequiresReauth() && s.auth != nil && s.auth.Enabled()
+	if !s.requireUtxoLockReauth(w, r, req.ConfirmPassword, "lock") {
+		return
 	}
 
 	s.auditUtxoLockAction(r, "lock", req.Outpoints, expiry)
@@ -191,19 +232,21 @@ func (s *Server) handleUtxoLock(w http.ResponseWriter, r *http.Request) {
 	}
 	s.invalidateUtxoLeaseCache()
 	s.recordAuditEvent(r, "utxo.lock", auditTargetForOutpoints(req.Outpoints), map[string]any{
-		"outpoints":     normalizeOutpointBatch(req.Outpoints),
-		"expiry_sec":    expiry,
-		"status":        auditStatusFromResult(len(results), errorCount),
-		"success_count": len(results) - errorCount,
-		"error_count":   errorCount,
-		"results":       results,
+		"outpoints":      normalizeOutpointBatch(req.Outpoints),
+		"expiry_sec":     expiry,
+		"status":         auditStatusFromResult(len(results), errorCount),
+		"success_count":  len(results) - errorCount,
+		"error_count":    errorCount,
+		"reauth_checked": reauthChecked,
+		"results":        results,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
 
 func (s *Server) handleUtxoUnlock(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Outpoints []string `json:"outpoints"`
+		Outpoints       []string `json:"outpoints"`
+		ConfirmPassword string   `json:"confirm_password"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -211,6 +254,10 @@ func (s *Server) handleUtxoUnlock(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.Outpoints) == 0 {
 		writeError(w, http.StatusBadRequest, "outpoints required")
+		return
+	}
+	reauthChecked := utxoLockRequiresReauth() && s.auth != nil && s.auth.Enabled()
+	if !s.requireUtxoLockReauth(w, r, req.ConfirmPassword, "unlock") {
 		return
 	}
 
@@ -236,11 +283,12 @@ func (s *Server) handleUtxoUnlock(w http.ResponseWriter, r *http.Request) {
 	}
 	s.invalidateUtxoLeaseCache()
 	s.recordAuditEvent(r, "utxo.unlock", auditTargetForOutpoints(req.Outpoints), map[string]any{
-		"outpoints":     normalizeOutpointBatch(req.Outpoints),
-		"status":        auditStatusFromResult(len(results), errorCount),
-		"success_count": len(results) - errorCount,
-		"error_count":   errorCount,
-		"results":       results,
+		"outpoints":      normalizeOutpointBatch(req.Outpoints),
+		"status":         auditStatusFromResult(len(results), errorCount),
+		"success_count":  len(results) - errorCount,
+		"error_count":    errorCount,
+		"reauth_checked": reauthChecked,
+		"results":        results,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }

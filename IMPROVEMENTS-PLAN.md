@@ -42,20 +42,6 @@ Atualizar `README.md` (seção Wallet Flow) para refletir a nova ordem.
 
 **Esforço:** ~30 min + smoke test.
 
-### 1.2 — Marcar app electrs como `legacy` na loja
-
-**Por quê:** com bitcoind cobrindo o caso de uso da feature, electrs vira app de nicho (nodes pruned + electrs remoto, ou usuários que precisam dele pra Sparrow/etc).
-
-**Como:**
-- Adicionar campo `Legacy bool` ao `Definition()` do `appHandler` interface (default `false`).
-- Setar `Legacy: true` em `apps_electrs.go`.
-- UI ([AppStore.tsx](lightningos-light/ui/src/pages/AppStore.tsx)): renderizar badge "Legacy" no card e ordenar legados no fim da lista.
-- Adicionar banner no detalhe: "*Recommended: install Bitcoin Core with `txindex=1` instead — see Wallet Flow docs.*"
-
-**Não remover do código** — manter como opção avançada.
-
-**Esforço:** ~1-2h.
-
 ### 1.3 — Opt-in para `PROVENANCE_PRIMARY`
 
 **Por quê:** operadores avançados podem querer forçar uma source específica (ex: `bitcoind` exclusivo, sem fallback público).
@@ -153,14 +139,6 @@ Reaproveitar para outras ações sensíveis (channel close, autopilot toggle, wa
 
 **Esforço:** ~4-6h (service + schema + integração nos 3 handlers iniciais + UI mínima de visualização).
 
-### 3.2 — Flag opcional `UTXO_LOCK_REQUIRES_REAUTH`
-
-**Por quê:** lock/unlock são reversíveis e não gastam sats — mas operadores paranoicos podem querer reauth mesmo assim (ex: nodes corporativos).
-
-**Como:** env var ou campo em `config.yaml`. Default `false`. Quando `true`, handlers de lock/unlock passam a exigir `confirm_password` igual ao bump.
-
-**Esforço:** ~1h.
-
 ### 3.3 — Telemetria do source chain
 
 **Onde:** novo `internal/server/provenance_metrics.go`.
@@ -177,14 +155,6 @@ Expor em `/api/onchain/provenance/metrics` ou anexar ao daily report.
 
 **Esforço:** ~3h.
 
-### 3.4 — Health check do provenance no daily report
-
-**Onde:** [internal/reports](lightningos-light/internal/reports/).
-
-**O quê:** incluir `provenance.last_sync_age_hours` no relatório diário. Alertar (campo no JSON) se >24h.
-
-**Esforço:** ~1h.
-
 ---
 
 ## Fase 4 — UX polish (oportunista)
@@ -192,10 +162,6 @@ Expor em `/api/onchain/provenance/metrics` ou anexar ao daily report.
 ### 4.1 — Tooltip rico no TxNode
 
 Click no nó do WalletFlow → modal com vin/vout completos, fee, vbytes, link `mempool.space` (ou explorer configurado).
-
-### 4.2 — Filtro de tempo no WalletFlow
-
-"Últimos 30d / 90d / sempre". Hoje o gráfico mostra desde a primeira tx. Wallets antigas ficam densas.
 
 ### 4.3 — Exportar lineage como SVG/PNG
 
@@ -213,8 +179,8 @@ Varredura de strings hardcoded no `WalletFlowView` (filtros, empty states, badge
 |---|---|---|---|
 | **Imediato** | 1.1 (bitcoind-first), 2.5 (sentinel) | 1 dia | — |
 | **Sprint 1** | 2.1 (cache), 2.2 (cancel), 2.3 (doc), 2.4 (code-split) | 1 semana | — |
-| **Sprint 2** | 1.2 (deprecar electrs UI), 3.1 (audit log) | 1 semana | 1.1 deve estar em produção há ≥1 release |
-| **Sprint 3** | 1.3, 3.2, 3.3, 3.4 | 1-2 semanas | — |
+| **Sprint 2** | 3.1 (audit log) | 1 semana | — |
+| **Sprint 3** | 1.3, 3.3 | 1 semana | — |
 | **Quando der** | Fase 4 (polish) | 1 dia por item | — |
 
 ---
@@ -233,5 +199,4 @@ Varredura de strings hardcoded no `WalletFlowView` (filtros, empty states, badge
 
 - Cada item da Fase 1 e 2 cabe numa PR pequena com smoke test isolado.
 - Antes de iniciar Fase 1.1, observar 1 release com a ordem atual em produção pra ter baseline de telemetria.
-- Fase 1.2 (legacy electrs) só faz sentido após Fase 1.1 estabilizar — não inverter ordem.
 - Fase 3.1 (audit log) é a única que toca em outros features (channel close, autopilot) — coordenar com o roadmap geral antes.

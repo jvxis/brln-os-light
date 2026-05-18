@@ -173,6 +173,10 @@ export type ReportSeriesItem = {
   onchain_balance_sats?: number | null
   lightning_balance_sats?: number | null
   total_balance_sats?: number | null
+  provenance_last_sync_at?: string
+  provenance_last_sync_age_hours?: number
+  provenance_health_alert?: boolean
+  provenance_last_error?: string
 }
 
 export type ReportMetrics = {

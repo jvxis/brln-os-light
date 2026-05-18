@@ -49,6 +49,10 @@ create table if not exists reports_daily (
   onchain_balance_sats bigint null,
   lightning_balance_sats bigint null,
   total_balance_sats bigint null,
+  provenance_last_sync_at timestamptz null,
+  provenance_last_sync_age_hours double precision null,
+  provenance_health_alert boolean null,
+  provenance_last_error text null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -93,6 +97,10 @@ alter table reports_daily add column if not exists rebalance_volume_sats bigint 
 alter table reports_daily add column if not exists rebalance_volume_msat bigint not null default 0;
 alter table reports_daily add column if not exists payment_count integer not null default 0;
 alter table reports_daily add column if not exists routed_volume_msat bigint not null default 0;
+alter table reports_daily add column if not exists provenance_last_sync_at timestamptz null;
+alter table reports_daily add column if not exists provenance_last_sync_age_hours double precision null;
+alter table reports_daily add column if not exists provenance_health_alert boolean null;
+alter table reports_daily add column if not exists provenance_last_error text null;
 `)
 	return err
 }
@@ -143,6 +151,10 @@ func buildUpsertDaily(row Row) (string, []any) {
 		nullableInt64(metrics.OnchainBalanceSat),
 		nullableInt64(metrics.LightningBalanceSat),
 		nullableInt64(metrics.TotalBalanceSat),
+		nullableTime(metrics.ProvenanceLastSyncAt),
+		nullableFloat64(metrics.ProvenanceLastSyncAgeHours),
+		nullableBool(metrics.ProvenanceHealthAlert),
+		nullableString(metrics.ProvenanceLastError),
 	}
 
 	query := `
@@ -178,8 +190,12 @@ insert into reports_daily (
   routed_volume_msat,
   onchain_balance_sats,
   lightning_balance_sats,
-  total_balance_sats
-) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)
+  total_balance_sats,
+  provenance_last_sync_at,
+  provenance_last_sync_age_hours,
+  provenance_health_alert,
+  provenance_last_error
+) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36)
 on conflict (report_date) do update set
   forward_fee_revenue_sats = excluded.forward_fee_revenue_sats,
   forward_fee_revenue_msat = excluded.forward_fee_revenue_msat,
@@ -212,6 +228,10 @@ on conflict (report_date) do update set
   onchain_balance_sats = coalesce(excluded.onchain_balance_sats, reports_daily.onchain_balance_sats),
   lightning_balance_sats = coalesce(excluded.lightning_balance_sats, reports_daily.lightning_balance_sats),
   total_balance_sats = coalesce(excluded.total_balance_sats, reports_daily.total_balance_sats),
+  provenance_last_sync_at = coalesce(excluded.provenance_last_sync_at, reports_daily.provenance_last_sync_at),
+  provenance_last_sync_age_hours = coalesce(excluded.provenance_last_sync_age_hours, reports_daily.provenance_last_sync_age_hours),
+  provenance_health_alert = coalesce(excluded.provenance_health_alert, reports_daily.provenance_health_alert),
+  provenance_last_error = coalesce(excluded.provenance_last_error, reports_daily.provenance_last_error),
   updated_at = now()
 `
 
@@ -411,7 +431,11 @@ select report_date,
   routed_volume_msat,
   onchain_balance_sats,
   lightning_balance_sats,
-  total_balance_sats
+  total_balance_sats,
+  provenance_last_sync_at,
+  provenance_last_sync_age_hours,
+  provenance_health_alert,
+  provenance_last_error
 from reports_daily
 where report_date >= $1 and report_date <= $2
 order by report_date asc
@@ -468,7 +492,11 @@ select report_date,
   routed_volume_msat,
   onchain_balance_sats,
   lightning_balance_sats,
-  total_balance_sats
+  total_balance_sats,
+  provenance_last_sync_at,
+  provenance_last_sync_age_hours,
+  provenance_health_alert,
+  provenance_last_error
 from reports_daily
 order by report_date asc
 `)
@@ -689,6 +717,10 @@ func scanRow(scanner rowScanner) (Row, error) {
 	var onchain pgtype.Int8
 	var lightning pgtype.Int8
 	var total pgtype.Int8
+	var provenanceLastSync pgtype.Timestamptz
+	var provenanceAge pgtype.Float8
+	var provenanceAlert pgtype.Bool
+	var provenanceLastError pgtype.Text
 	err := scanner.Scan(
 		&reportDate,
 		&metrics.ForwardFeeRevenueSat,
@@ -722,6 +754,10 @@ func scanRow(scanner rowScanner) (Row, error) {
 		&onchain,
 		&lightning,
 		&total,
+		&provenanceLastSync,
+		&provenanceAge,
+		&provenanceAlert,
+		&provenanceLastError,
 	)
 	if err != nil {
 		return Row{}, err
@@ -738,11 +774,55 @@ func scanRow(scanner rowScanner) (Row, error) {
 		val := total.Int64
 		metrics.TotalBalanceSat = &val
 	}
+	if provenanceLastSync.Valid {
+		val := provenanceLastSync.Time.UTC()
+		metrics.ProvenanceLastSyncAt = &val
+	}
+	if provenanceAge.Valid {
+		val := provenanceAge.Float64
+		metrics.ProvenanceLastSyncAgeHours = &val
+	}
+	if provenanceAlert.Valid {
+		val := provenanceAlert.Bool
+		metrics.ProvenanceHealthAlert = &val
+	}
+	if provenanceLastError.Valid {
+		val := provenanceLastError.String
+		metrics.ProvenanceLastError = &val
+	}
 	fillMsatFromSat(&metrics)
 	return Row{ReportDate: reportDate, Metrics: metrics}, nil
 }
 
 func nullableInt64(value *int64) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func nullableTime(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func nullableFloat64(value *float64) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func nullableBool(value *bool) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func nullableString(value *string) any {
 	if value == nil {
 		return nil
 	}

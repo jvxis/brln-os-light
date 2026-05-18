@@ -78,6 +78,9 @@ func (s *Service) RunDaily(ctx context.Context, reportDate time.Time, loc *time.
 	if shouldAttachBalances(reportDate, loc) {
 		metrics = s.attachBalances(ctx, metrics)
 	}
+	if shouldAttachProvenanceHealth(reportDate, loc) {
+		metrics = s.attachProvenanceHealth(ctx, metrics)
+	}
 
 	row := Row{ReportDate: dateOnly(reportDate, loc), Metrics: metrics}
 	if err := UpsertDaily(ctx, s.db, row); err != nil {
@@ -262,6 +265,10 @@ func shouldAttachBalances(reportDate time.Time, loc *time.Location) bool {
 	return target.Equal(today.AddDate(0, 0, -1))
 }
 
+func shouldAttachProvenanceHealth(reportDate time.Time, loc *time.Location) bool {
+	return shouldAttachBalances(reportDate, loc)
+}
+
 func (s *Service) attachBalances(ctx context.Context, metrics Metrics) Metrics {
 	if s.lnd == nil {
 		return metrics
@@ -285,6 +292,20 @@ func (s *Service) attachBalances(ctx context.Context, metrics Metrics) Metrics {
 	metrics.LightningBalanceSat = &lightning
 	metrics.TotalBalanceSat = &total
 	return metrics
+}
+
+func (s *Service) attachProvenanceHealth(ctx context.Context, metrics Metrics) Metrics {
+	health, ok, err := FetchProvenanceReportHealth(ctx, s.db, time.Now())
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("reports: provenance health unavailable: %v", err)
+		}
+		return metrics
+	}
+	if !ok {
+		return metrics
+	}
+	return metrics.WithProvenanceReportHealth(health)
 }
 
 func (s *Service) computeOutboundTarget(ctx context.Context) (int64, error) {

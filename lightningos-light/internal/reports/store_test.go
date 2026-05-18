@@ -9,6 +9,10 @@ import (
 
 func TestBuildUpsertDaily(t *testing.T) {
 	reportDate := time.Date(2026, 1, 15, 0, 0, 0, 0, time.FixedZone("Local", -3*60*60))
+	provenanceSyncAt := time.Date(2026, 1, 16, 2, 0, 0, 0, time.UTC)
+	provenanceAgeHours := 3.5
+	provenanceAlert := false
+	provenanceLastError := ""
 	row := Row{
 		ReportDate: reportDate,
 		Metrics: Metrics{
@@ -40,6 +44,10 @@ func TestBuildUpsertDaily(t *testing.T) {
 			PaymentCount:               3,
 			RoutedVolumeSat:            18000,
 			RoutedVolumeMsat:           18000000,
+			ProvenanceLastSyncAt:       &provenanceSyncAt,
+			ProvenanceLastSyncAgeHours: &provenanceAgeHours,
+			ProvenanceHealthAlert:      &provenanceAlert,
+			ProvenanceLastError:        &provenanceLastError,
 		},
 	}
 
@@ -59,8 +67,8 @@ func TestBuildUpsertDaily(t *testing.T) {
 	if !strings.Contains(query, "total_balance_sats = coalesce(excluded.total_balance_sats, reports_daily.total_balance_sats)") {
 		t.Fatalf("expected total balance coalesce on upsert")
 	}
-	if len(args) != 32 {
-		t.Fatalf("expected 32 args, got %d", len(args))
+	if len(args) != 36 {
+		t.Fatalf("expected 36 args, got %d", len(args))
 	}
 
 	argDate, ok := args[0].(time.Time)
@@ -100,8 +108,41 @@ func TestBuildUpsertDaily(t *testing.T) {
 		args[28] != int64(18000000) || // routed_volume_msat
 		args[29] != nil || // onchain_balance_sats
 		args[30] != nil || // lightning_balance_sats
-		args[31] != nil { // total_balance_sats
+		args[31] != nil || // total_balance_sats
+		args[32] != provenanceSyncAt || // provenance_last_sync_at
+		args[33] != provenanceAgeHours || // provenance_last_sync_age_hours
+		args[34] != false || // provenance_health_alert
+		args[35] != "" { // provenance_last_error
 		t.Fatalf("unexpected metrics args")
+	}
+}
+
+func TestBuildProvenanceReportHealth(t *testing.T) {
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	syncAt := now.Add(-6 * time.Hour)
+
+	fresh := buildProvenanceReportHealth(&syncAt, "", now)
+	if fresh.Alert {
+		t.Fatalf("fresh sync should not alert")
+	}
+	if fresh.LastSyncAgeHours == nil || *fresh.LastSyncAgeHours != 6 {
+		t.Fatalf("unexpected fresh age: %+v", fresh.LastSyncAgeHours)
+	}
+
+	staleAt := now.Add(-25 * time.Hour)
+	stale := buildProvenanceReportHealth(&staleAt, "", now)
+	if !stale.Alert {
+		t.Fatalf("stale sync should alert")
+	}
+
+	withError := buildProvenanceReportHealth(&syncAt, "  list tx failed  ", now)
+	if !withError.Alert || withError.LastError != "list tx failed" {
+		t.Fatalf("sync error should alert with trimmed error, got %+v", withError)
+	}
+
+	never := buildProvenanceReportHealth(nil, "", now)
+	if !never.Alert || never.LastSyncAgeHours != nil || never.LastSyncAt != nil {
+		t.Fatalf("never synced should alert without age, got %+v", never)
 	}
 }
 

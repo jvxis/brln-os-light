@@ -82,6 +82,10 @@ type Server struct {
 	closeManagerMu              sync.Mutex
 	closeManager                *CloseManagerService
 	closeManagerErr             string
+	utxoManagerInitAt           time.Time
+	utxoManagerMu               sync.Mutex
+	utxoManager                 *UtxoManagerService
+	utxoManagerErr              string
 	nodeRetirementInitAt        time.Time
 	nodeRetirementMu            sync.Mutex
 	nodeRetirement              *NodeRetirementService
@@ -133,6 +137,7 @@ func (s *Server) Run() error {
 	s.initGraphExplorer()
 	s.initBalancedOpen()
 	s.initCloseManager()
+	s.initUtxoManager()
 	s.initNodeRetirement()
 	s.initSuccession()
 	if s.chat != nil {

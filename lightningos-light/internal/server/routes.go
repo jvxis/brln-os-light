@@ -99,6 +99,14 @@ func (s *Server) routes() http.Handler {
 	r.Route("/api/onchain", func(r chi.Router) {
 		r.Get("/utxos", s.handleOnchainUtxos)
 		r.Get("/transactions", s.handleOnchainTransactions)
+		r.Post("/utxos/metadata", s.handleUtxoMetadataUpsert)
+		r.Post("/utxos/lock", s.handleUtxoLock)
+		r.Post("/utxos/unlock", s.handleUtxoUnlock)
+		r.Post("/utxos/bump", s.handleUtxoBump)
+		r.Get("/utxos/groups", s.handleUtxoGroupsList)
+		r.Post("/utxos/groups", s.handleUtxoGroupsUpsert)
+		r.Post("/utxos/groups/{id}/assign", s.handleUtxoGroupAssign)
+		r.Delete("/utxos/groups/{id}", s.handleUtxoGroupDelete)
 	})
 
 	r.Route("/api/wallet", func(r chi.Router) {

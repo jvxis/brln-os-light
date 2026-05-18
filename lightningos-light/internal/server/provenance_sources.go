@@ -54,6 +54,10 @@ func NewBitcoinCoreSource(readiness func(ctx context.Context) (bool, string)) *B
 
 func (b *BitcoinCoreSource) Name() string { return "bitcoind" }
 
+func (b *BitcoinCoreSource) Available(ctx context.Context) bool {
+	return b.checkReadiness(ctx)
+}
+
 // NoTxIndexHint returns true if the readiness check has recently reported
 // requires_txindex. The UI uses this to surface a one-time hint banner
 // suggesting the user enable txindex=1 for fully local provenance. The

@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -108,23 +107,20 @@ func (s *Server) handleProvenanceHealth(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	probeTxid := "0000000000000000000000000000000000000000000000000000000000000000"
 	sources := []map[string]any{}
 	anyOk := false
 	backendName := ""
 	for _, src := range chain.Sources() {
 		entry := map[string]any{"name": src.Name()}
-		cctx, ccancel := context.WithTimeout(ctx, 2*time.Second)
-		_, err := src.GetTransaction(cctx, probeTxid)
+		cctx, ccancel := context.WithTimeout(ctx, 4*time.Second)
+		ok := src.Available(cctx)
 		ccancel()
-		if err == nil || !errors.Is(err, electrs.ErrSourceUnavailable) {
-			entry["available"] = true
+		entry["available"] = ok
+		if ok {
 			if !anyOk {
 				backendName = src.Name()
 			}
 			anyOk = true
-		} else {
-			entry["available"] = false
 		}
 		sources = append(sources, entry)
 	}

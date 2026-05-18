@@ -9,8 +9,14 @@ import (
 
 // TxSource is a verbose-tx-by-txid fetcher. Implementations include the
 // Electrum client in this package and a Bitcoin Core RPC adapter.
+//
+// Available reports whether the source is reachable WITHOUT requiring a
+// real transaction to look up. The health endpoint uses this to decide
+// whether to show the Wallet Flow tab. Implementations should treat
+// network failures, missing config, and readiness failures as `false`.
 type TxSource interface {
 	Name() string
+	Available(ctx context.Context) bool
 	GetTransaction(ctx context.Context, txid string) (VerboseTx, error)
 }
 
@@ -46,6 +52,18 @@ func NewChainedSource(sources []TxSource) *ChainedSource {
 }
 
 func (c *ChainedSource) Name() string { return "chain" }
+
+// Available reports true when any member of the chain is reachable. Used
+// by callers that want a single yes/no — the health endpoint queries per
+// source instead.
+func (c *ChainedSource) Available(ctx context.Context) bool {
+	for _, s := range c.sources {
+		if s.Available(ctx) {
+			return true
+		}
+	}
+	return false
+}
 
 // Sources returns the configured sources in order. Useful for status/UI.
 func (c *ChainedSource) Sources() []TxSource { return c.sources }
@@ -147,6 +165,16 @@ func (s *ClientSource) Name() string {
 		return "electrs:" + s.Client.Addr()
 	}
 	return "electrs"
+}
+
+func (s *ClientSource) Available(ctx context.Context) bool {
+	if s.Client == nil {
+		return false
+	}
+	cctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	_, err := s.Client.Ping(cctx)
+	return err == nil
 }
 
 func (s *ClientSource) GetTransaction(ctx context.Context, txid string) (VerboseTx, error) {

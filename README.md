@@ -755,9 +755,9 @@ The Terminal page shows the current password and a copy button.
 
 The Wallet Flow tab inside On-chain Hub renders a sankey graph of every transaction the wallet has touched. It needs to decode arbitrary txids — non-wallet ancestors and external counterparties — so it picks the first available source from this chain:
 
-1. **Local electrs** — `ELECTRUM_RPC_ADDR` (default `127.0.0.1:50001`). Address forms: `host:port` (plain TCP, default), `host:port:t` (TCP explicit), `host:port:s` (TLS, standard cert verification).
-2. **Local Bitcoin Core** — auto-enabled when the same `fullIndexAppAvailability` check used by Electrs/Mempool apps reports OK (local Bitcoin Core + non-pruned + `txindex=1` synced). Bitcoin Core from the App Store already seeds `txindex=1`. When Core is reachable but txindex isn't ready, the Wallet Flow tab surfaces a one-time banner suggesting `txindex=1` and the chain falls through.
-3. **Public Electrum servers** — mainnet-only, off-by-default-ish. Defaults: `electrum.pagcoin.org:50002:s` and `electrum.br-ln.com:50001:t`. Override with `PROVENANCE_PUBLIC_ELECTRUM=host:port[:s|:t][,host:port[:s|:t]]` or disable entirely with `PROVENANCE_PUBLIC_ELECTRUM=disabled`.
+1. **Local Bitcoin Core** — preferred source. Auto-enabled when the same `fullIndexAppAvailability` check used by the Electrs/Mempool store apps reports OK (local Bitcoin Core + non-pruned + `txindex=1` synced). Bitcoin Core from the App Store already seeds `txindex=1`. When Core is reachable but txindex isn't ready, the Wallet Flow tab surfaces a one-time banner suggesting `txindex=1` and the chain falls through.
+2. **Local electrs** — fallback for installs that already run electrs (e.g. Sparrow) or that keep Bitcoin Core pruned. `ELECTRUM_RPC_ADDR` (default `127.0.0.1:50001`). Address forms: `host:port` (plain TCP, default), `host:port:t` (TCP explicit), `host:port:s` (TLS, standard cert verification).
+3. **Public Electrum servers** — mainnet-only, default-on with two BRLN-operated servers (`electrum.pagcoin.org:50002:s` and `electrum.br-ln.com:50001:t`). Override with `PROVENANCE_PUBLIC_ELECTRUM=host:port[:s|:t][,host:port[:s|:t]]` or disable entirely with `PROVENANCE_PUBLIC_ELECTRUM=disabled`.
 
 > **Privacy warning**: when the chain reaches a public Electrum step, the txids your wallet asks about become visible to the operator. The Wallet Flow tab renders the source badge in amber for that reason. Set `PROVENANCE_PUBLIC_ELECTRUM=disabled` in `/etc/lightningos/secrets.env` if your threat model requires it.
 

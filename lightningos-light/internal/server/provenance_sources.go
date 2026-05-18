@@ -211,9 +211,12 @@ func parsePublicElectrumList(raw string) []string {
 
 // buildProvenanceSourceChain assembles the fallback chain in priority order:
 //
-//  1. Local electrs (ELECTRUM_RPC_ADDR, default 127.0.0.1:50001)
-//  2. Local bitcoind (gated on fullIndexAppAvailability — local Bitcoin
-//     Core + non-pruned + txindex synced)
+//  1. Local bitcoind (gated on fullIndexAppAvailability — local Bitcoin
+//     Core + non-pruned + txindex synced). Preferred because Core is the
+//     project's default node and avoids running a separate electrs daemon.
+//  2. Local electrs (ELECTRUM_RPC_ADDR, default 127.0.0.1:50001) — kept as
+//     a fallback for installs that already run electrs (e.g. Sparrow) or
+//     run Core pruned.
 //  3. Public Electrum servers (mainnet only — opt out via
 //     PROVENANCE_PUBLIC_ELECTRUM=disabled)
 //
@@ -222,17 +225,17 @@ func buildProvenanceSourceChain(publicAllowed bool, bitcoindFallback *BitcoinCor
 	sources := []electrs.TxSource{}
 	notes := []string{}
 
+	if bitcoindFallback != nil {
+		sources = append(sources, bitcoindFallback)
+		notes = append(notes, "local bitcoind (txindex)")
+	}
+
 	local := &electrs.ClientSource{
 		Client: electrs.New(""),
 		Label:  "local electrs",
 	}
 	sources = append(sources, local)
 	notes = append(notes, "local electrs @ "+local.Client.Addr())
-
-	if bitcoindFallback != nil {
-		sources = append(sources, bitcoindFallback)
-		notes = append(notes, "local bitcoind (txindex)")
-	}
 
 	if publicAllowed {
 		for _, addr := range parsePublicElectrumList(os.Getenv("PROVENANCE_PUBLIC_ELECTRUM")) {

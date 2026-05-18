@@ -528,7 +528,7 @@ func markSpentByInputs(ctx context.Context, tx pgx.Tx, t *lnrpc.Transaction) err
 		}
 		// Coinbase inputs use a null prev outpoint (txid=000…000, vout=0xFFFFFFFF).
 		// They don't reference a real prior output, so they're not edges; skip.
-		if prevVout > 0x7FFFFFFF || strings.Trim(prevTxid, "0") == "" {
+		if prevVout == 0xFFFFFFFF || strings.Trim(prevTxid, "0") == "" {
 			continue
 		}
 		// Ensure a placeholder row exists for the prev output so the edge
@@ -674,7 +674,7 @@ func (s *ProvenanceService) walkExternalLineage(ctx context.Context, rootTxid st
 
 			// Queue this tx's own inputs for the next hop.
 			for _, vin := range verbose.Vin {
-				if vin.Txid == "" || vin.Vout > 0x7FFFFFFF {
+				if vin.Txid == "" || vin.Vout == 0xFFFFFFFF {
 					continue
 				}
 				if strings.Trim(vin.Txid, "0") == "" {
@@ -772,7 +772,7 @@ on conflict (txid, vout) do update set
 
 	// Mark this tx as spender of its inputs' prev outputs (placeholder rows).
 	for vinIdx, vin := range v.Vin {
-		if vin.Txid == "" || vin.Vout > 0x7FFFFFFF {
+		if vin.Txid == "" || vin.Vout == 0xFFFFFFFF {
 			continue
 		}
 		if strings.Trim(vin.Txid, "0") == "" {

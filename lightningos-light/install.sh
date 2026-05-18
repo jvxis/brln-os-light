@@ -563,12 +563,24 @@ setup_tor_repo() {
   fi
   curl -fsSL https://deb.torproject.org/torproject.org/A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89.asc \
     | gpg --dearmor \
-    | tee /usr/share/keyrings/tor-archive-keyring.gpg >/dev/null
+    | tee /usr/share/keyrings/deb.torproject.org-keyring.gpg >/dev/null
   cat > /etc/apt/sources.list.d/tor.list <<EOF
-deb     [arch=amd64 signed-by=/usr/share/keyrings/tor-archive-keyring.gpg] https://deb.torproject.org/torproject.org ${codename} main
-deb-src [arch=amd64 signed-by=/usr/share/keyrings/tor-archive-keyring.gpg] https://deb.torproject.org/torproject.org ${codename} main
+deb     [arch=amd64 signed-by=/usr/share/keyrings/deb.torproject.org-keyring.gpg] https://deb.torproject.org/torproject.org ${codename} main
+deb-src [arch=amd64 signed-by=/usr/share/keyrings/deb.torproject.org-keyring.gpg] https://deb.torproject.org/torproject.org ${codename} main
 EOF
   print_ok "Tor repo ready (${codename})"
+}
+
+install_tor_keyring_package_if_available() {
+  if ! apt-cache show deb.torproject.org-keyring >/dev/null 2>&1; then
+    print_warn "Tor keyring package unavailable for this distro; using downloaded Tor keyring"
+    return 0
+  fi
+  if apt_get install -y deb.torproject.org-keyring; then
+    print_ok "Tor keyring package installed"
+    return 0
+  fi
+  print_warn "Tor keyring package install failed; using downloaded Tor keyring"
 }
 
 ensure_user() {
@@ -761,12 +773,14 @@ install_packages() {
   setup_tor_repo
   apt_get update
   resolve_postgres_version
+  print_step "Installing base apt packages"
   apt_get install -y \
     postgresql-common \
     postgresql-client-common \
     postgresql-"${POSTGRES_VERSION}" \
     postgresql-client-"${POSTGRES_VERSION}" \
-    smartmontools curl jq ca-certificates openssl build-essential git sudo tor deb.torproject.org-keyring apt-transport-https tmux
+    smartmontools curl jq ca-certificates openssl build-essential git sudo tor apt-transport-https tmux
+  install_tor_keyring_package_if_available
   print_ok "Base packages installed"
 }
 

@@ -1646,6 +1646,8 @@
     "utxoCount": "UTXOs",
     "avgUtxo": "Média UTXO",
     "loadingSummary": "Carregando resumo...",
+    "layoutSplit": "Mostrar UTXOs e transações lado a lado",
+    "layoutStacked": "Empilhar UTXOs e transações em largura total",
     "utxos": "UTXOs",
     "utxosSubtitle": "Saídas gastáveis e confirmações.",
     "compact": "Compacto",

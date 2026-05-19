@@ -69,6 +69,8 @@ type MempoolFeeHint = {
   hour?: number
 }
 
+type OnchainHubLayout = 'split' | 'stacked'
+
 const explorerBase = 'https://mempool.space'
 
 export default function OnchainHub() {
@@ -92,6 +94,19 @@ export default function OnchainHub() {
   const [walletFlowActiveSource, setWalletFlowActiveSource] = useState<string>('')
   const [walletFlowNoTxIndex, setWalletFlowNoTxIndex] = useState<boolean>(false)
   const mountedRef = useRef(true)
+
+  const [hubLayout, setHubLayout] = useState<OnchainHubLayout>(() => {
+    try {
+      const saved = localStorage.getItem('onchainHub.layout')
+      if (saved === 'split' || saved === 'stacked') return saved
+    } catch {}
+    return 'split'
+  })
+  useEffect(() => {
+    try {
+      localStorage.setItem('onchainHub.layout', hubLayout)
+    } catch {}
+  }, [hubLayout])
 
   const [utxoView, setUtxoView] = useState<'canvas' | 'table'>(() => {
     try {
@@ -541,6 +556,7 @@ export default function OnchainHub() {
 
   const utxoPaneVisible = activePane === 'utxos'
   const txPaneVisible = activePane === 'txs'
+  const hubStacked = hubLayout === 'stacked'
   return (
     <section className="space-y-6">
       <div className="section-card onchain-hero">
@@ -603,8 +619,8 @@ export default function OnchainHub() {
         )}
       </div>
 
-      {walletFlowAvailable && (
-        <div className="flex gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        {walletFlowAvailable && (
           <button
             type="button"
             className={clsx('btn-secondary text-xs px-4 py-2', activeView === 'hub' && 'bg-white/10')}
@@ -612,6 +628,27 @@ export default function OnchainHub() {
           >
             {t('onchainHub.utxoMgr.tabHub')}
           </button>
+        )}
+        <button
+          type="button"
+          className={clsx('btn-secondary px-3 py-2 text-fog/80', hubStacked && 'bg-white/10 text-fog')}
+          onClick={() => setHubLayout(hubStacked ? 'split' : 'stacked')}
+          title={hubStacked ? t('onchainHub.layoutSplit') : t('onchainHub.layoutStacked')}
+          aria-label={hubStacked ? t('onchainHub.layoutSplit') : t('onchainHub.layoutStacked')}
+        >
+          {hubStacked ? (
+            <span className="inline-grid h-4 w-4 grid-rows-2 gap-0.5" aria-hidden="true">
+              <span className="rounded-[2px] border border-current" />
+              <span className="rounded-[2px] border border-current" />
+            </span>
+          ) : (
+            <span className="inline-grid h-4 w-4 grid-cols-[0.8fr_1.2fr] gap-0.5" aria-hidden="true">
+              <span className="rounded-[2px] border border-current" />
+              <span className="rounded-[2px] border border-current" />
+            </span>
+          )}
+        </button>
+        {walletFlowAvailable && (
           <button
             type="button"
             className={clsx('btn-secondary text-xs px-4 py-2', activeView === 'walletflow' && 'bg-white/10')}
@@ -619,8 +656,8 @@ export default function OnchainHub() {
           >
             {t('onchainHub.utxoMgr.tabWalletFlow')}
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
       {activeView === 'walletflow' && walletFlowAvailable ? (
         <Suspense
@@ -652,7 +689,7 @@ export default function OnchainHub() {
         </button>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[1.1fr_1.9fr]">
+      <div className={clsx('grid gap-6', hubStacked ? 'lg:grid-cols-1' : 'lg:grid-cols-[1.1fr_1.9fr]')}>
         <div className={clsx('section-card space-y-4', !utxoPaneVisible && 'hidden lg:block')}>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>

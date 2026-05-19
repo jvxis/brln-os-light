@@ -1646,6 +1646,8 @@
     "utxoCount": "UTXOs",
     "avgUtxo": "Avg UTXO",
     "loadingSummary": "Loading summary...",
+    "layoutSplit": "Show UTXOs and transactions side by side",
+    "layoutStacked": "Stack UTXOs and transactions full width",
     "utxos": "UTXOs",
     "utxosSubtitle": "Spendable outputs and confirmations.",
     "compact": "Compact",

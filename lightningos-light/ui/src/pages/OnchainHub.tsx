@@ -415,62 +415,54 @@ export default function OnchainHub() {
     }
   }
 
+  const loadWalletFlowHealth = async () => {
+    try {
+      const res: any = await getProvenanceHealth()
+      if (!mountedRef.current) return
+      setWalletFlowAvailable(Boolean(res?.ok))
+      setWalletFlowActiveSource(String(res?.backend ?? res?.active ?? ''))
+      setWalletFlowNoTxIndex(Boolean(res?.no_txindex_hint))
+    } catch {
+      if (!mountedRef.current) return
+      setWalletFlowAvailable(false)
+      setWalletFlowActiveSource('')
+      setWalletFlowNoTxIndex(false)
+    }
+  }
+
+  const loadFees = async () => {
+    try {
+      const res: any = await getMempoolFees()
+      if (!mountedRef.current) return
+      const fastest = Number(res?.fastestFee || 0)
+      const hour = Number(res?.hourFee || 0)
+      setFees({ fastest, hour })
+      setFeesStatus('')
+    } catch {
+      if (!mountedRef.current) return
+      setFeesStatus(t('wallet.feeSuggestionsUnavailable'))
+    }
+  }
+
+  const refreshOnchainHub = async () => {
+    setSummaryLoading(true)
+    setUtxoLoading(true)
+    setTxLoading(true)
+    await Promise.all([
+      loadSummary(),
+      loadUtxos(),
+      loadGroups(),
+      loadTxs(),
+      loadWalletFlowHealth(),
+      loadFees()
+    ])
+  }
+
   useEffect(() => {
     mountedRef.current = true
-    loadSummary()
-    loadUtxos()
-    loadGroups()
-    loadTxs()
-    const timer = window.setInterval(() => {
-      loadSummary()
-      loadUtxos()
-      loadGroups()
-      loadTxs()
-    }, 30000)
+    void refreshOnchainHub()
     return () => {
       mountedRef.current = false
-      window.clearInterval(timer)
-    }
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    const probe = () => {
-      getProvenanceHealth()
-        .then((res: any) => {
-          if (cancelled) return
-          setWalletFlowAvailable(Boolean(res?.ok))
-          setWalletFlowActiveSource(String(res?.backend ?? res?.active ?? ''))
-          setWalletFlowNoTxIndex(Boolean(res?.no_txindex_hint))
-        })
-        .catch(() => {
-          if (!cancelled) setWalletFlowAvailable(false)
-        })
-    }
-    probe()
-    const timer = window.setInterval(probe, 60000)
-    return () => {
-      cancelled = true
-      window.clearInterval(timer)
-    }
-  }, [])
-
-  useEffect(() => {
-    let mounted = true
-    getMempoolFees()
-      .then((res: any) => {
-        if (!mounted) return
-        const fastest = Number(res?.fastestFee || 0)
-        const hour = Number(res?.hourFee || 0)
-        setFees({ fastest, hour })
-        setFeesStatus('')
-      })
-      .catch(() => {
-        if (!mounted) return
-        setFeesStatus(t('wallet.feeSuggestionsUnavailable'))
-      })
-    return () => {
-      mounted = false
     }
   }, [])
 
@@ -578,11 +570,7 @@ export default function OnchainHub() {
             <button
               type="button"
               className="btn-secondary text-xs px-3 py-2"
-              onClick={() => {
-                loadSummary()
-                loadUtxos()
-                loadTxs()
-              }}
+              onClick={() => void refreshOnchainHub()}
             >
               {t('common.refresh')}
             </button>

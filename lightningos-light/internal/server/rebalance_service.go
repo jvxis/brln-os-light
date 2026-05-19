@@ -9033,13 +9033,19 @@ func shouldSkipSovereignLowSuccessOpportunity(stats rebalanceTargetPairStats, ex
 		return true
 	}
 	rate, attempts, ok := sovereignLowSuccessGateStats(stats)
+	useEmpiricalDeadBan := !stats.RecentStatsLoaded
+	if !ok && shouldUseSovereignLifetimeLowSuccessBackstop(stats, cfg) {
+		rate, attempts = sovereignHistoricalSuccessRate(stats)
+		ok = true
+		useEmpiricalDeadBan = true
+	}
 	if !ok || rate >= sovereignLowSuccessRateForConfig(cfg) {
 		return false
 	}
-	if !stats.RecentStatsLoaded {
+	if useEmpiricalDeadBan {
 		// Lifetime pair stats remain a fallback for tests and older runtimes,
-		// but production sovereign scans load recent job stats and avoid using
-		// these cumulative counters as a permanent hard ban.
+		// and a backstop when the recent sample is still too small and there is
+		// no recent route/demand signal showing that the target recovered.
 		if stats.Successes == 0 && attempts >= sovereignLowSuccessDeadZeroAttempts {
 			return true
 		}
@@ -9056,6 +9062,30 @@ func shouldSkipSovereignLowSuccessOpportunity(stats rebalanceTargetPairStats, ex
 		return true
 	}
 	return profitCostRatio < sovereignLowSuccessRequiredProfitCostRatio(rate, cfg)
+}
+
+func shouldUseSovereignLifetimeLowSuccessBackstop(stats rebalanceTargetPairStats, cfg RebalanceConfig) bool {
+	if !stats.RecentStatsLoaded || stats.RecentAttempts >= sovereignRecentLowSuccessMinJobs {
+		return false
+	}
+	if sovereignHasRecentPositiveOpportunitySignal(stats) {
+		return false
+	}
+	rate, attempts := sovereignHistoricalSuccessRate(stats)
+	return attempts >= sovereignLowSuccessMinAttempts && rate < sovereignLowSuccessRateForConfig(cfg)
+}
+
+func sovereignHasRecentPositiveOpportunitySignal(stats rebalanceTargetPairStats) bool {
+	if stats.RecentSuccesses > 0 {
+		return true
+	}
+	if stats.RecentForward24hAmountSat > 0 && stats.RecentRealizedNet24hSat > 0 {
+		return true
+	}
+	if stats.RecentForwardAmountSat > 0 && stats.RecentRealizedNetSat > 0 {
+		return true
+	}
+	return stats.RecentForwardSlowAmountSat > 0 && stats.RecentRealizedNetSlowSat > 0
 }
 
 func sovereignLowSuccessGateStats(stats rebalanceTargetPairStats) (float64, int, bool) {

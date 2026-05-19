@@ -1719,7 +1719,7 @@ func TestExecuteSovereignAutopilotSkipsEmpiricallyDeadBelowDeadRate(t *testing.T
 	}
 }
 
-func TestExecuteSovereignAutopilotRecentStatsPreventLifetimeDeadBan(t *testing.T) {
+func TestExecuteSovereignAutopilotRecentPositiveSignalPreventsLifetimeDeadBan(t *testing.T) {
 	svc := NewRebalanceService(nil, nil, nil)
 	cfg := defaultRebalanceConfig()
 	cfg.BudgetUnlimited = true
@@ -1727,25 +1727,60 @@ func TestExecuteSovereignAutopilotRecentStatsPreventLifetimeDeadBan(t *testing.T
 	cfg.SovereignMinExpectedProfitSat = 0
 
 	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{{
-		Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "old-dead-now-unknown:0", PeerAlias: "old-dead-now-unknown", TargetAmountSat: 1_000_000},
+		Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "old-dead-now-selling:0", PeerAlias: "old-dead-now-selling", TargetAmountSat: 1_000_000},
 		ExpectedGainSat:  728,
 		EstimatedCostSat: 74,
 		BudgetCostSat:    74,
 		Score:            654,
 		PairStats: rebalanceTargetPairStats{
-			Attempts:          25_927,
-			Successes:         2,
-			Failures:          25_925,
-			RecentStatsLoaded: true,
+			Attempts:                   25_927,
+			Successes:                  2,
+			Failures:                   25_925,
+			RecentStatsLoaded:          true,
+			RecentForwardSlowAmountSat: 750_000,
+			RecentForwardSlowFeeSat:    1_200,
+			RecentRealizedNetSlowSat:   1_100,
 		},
 	}}}
 
 	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, time.Now(), false)
 	if result.Selected != 1 {
-		t.Fatalf("expected stale lifetime stats not to hard-ban the candidate, got selected=%d decisions=%+v", result.Selected, result.Decisions)
+		t.Fatalf("expected recent positive signal not to hard-ban the candidate, got selected=%d decisions=%+v", result.Selected, result.Decisions)
 	}
 	if !result.Decisions[0].Selected || result.Decisions[0].Reason != "would_queue" {
-		t.Fatalf("expected candidate selected once recent stats are empty, got %+v", result.Decisions[0])
+		t.Fatalf("expected candidate selected once recent demand is positive, got %+v", result.Decisions[0])
+	}
+}
+
+func TestExecuteSovereignAutopilotSkipsLifetimeDeadWhenRecentSampleInsufficient(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = true
+	cfg.SovereignMaxJobsPerCycle = 1
+	cfg.SovereignMinExpectedProfitSat = 50
+
+	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{{
+		Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "rigel:0", PeerAlias: "Rigel", TargetAmountSat: 874_850},
+		ExpectedGainSat:  647,
+		EstimatedCostSat: 549,
+		BudgetCostSat:    549,
+		Score:            1,
+		PairStats: rebalanceTargetPairStats{
+			Attempts:          12_955,
+			Successes:         3,
+			Failures:          12_952,
+			RecentStatsLoaded: true,
+			RecentAttempts:    2,
+			RecentFailures:    2,
+		},
+	}}}
+
+	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, time.Now(), false)
+	if result.Selected != 0 {
+		t.Fatalf("expected lifetime-dead candidate with thin recent sample skipped, got selected=%d decisions=%+v", result.Selected, result.Decisions)
+	}
+	if result.Decisions[0].Reason != sovereignLowSuccessOpportunityReason {
+		t.Fatalf("expected low_success skip reason, got %+v", result.Decisions[0])
 	}
 }
 

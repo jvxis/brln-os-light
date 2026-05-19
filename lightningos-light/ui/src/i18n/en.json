@@ -3217,7 +3217,16 @@
       "cost": "Exp. cost: {{value}}",
       "roi": "ROI: {{value}}",
       "unsoldLiquidity": "Paid liquidity: {{sent}} · sold: {{forwarded}}",
-      "unsoldPayback": "Recovered fee: {{fee}} · score {{multiplier}}"
+      "unsoldPayback": "Recovered fee: {{fee}} · score {{multiplier}}",
+      "targetClass": "Class: {{value}}",
+      "targetClasses": {
+        "fast_seller": "fast seller",
+        "slow_high_margin": "slow high-margin",
+        "cold_or_dead": "cold/route weak",
+        "exploration": "exploration"
+      },
+      "windowNet24h": "24h net: {{value}}",
+      "windowNetSlow": "{{hours}}h net: {{value}}"
     },
     "settings": {
       "title": "Rebalance Settings",
@@ -3256,6 +3265,11 @@
       "sovereignBudgetEfficiencyMinRatio": "Profit/budget floor",
       "sovereignRouteDeadSourceShare": "Route-dead sources (%)",
       "sovereignRiskScoreFloor": "Risk score floor (%)",
+      "sovereignAttributionWindow": "Attribution window (h)",
+      "sovereignSlowSellerWindow": "Slow seller window (h)",
+      "sovereignTargetSourceQuarantine": "Target→source quarantine (h)",
+      "sovereignSourceOpportunityCost": "Protect profitable sources",
+      "sovereignSlowSellerEnabled": "Enable slow sellers",
       "scanInterval": "Scan interval (sec)",
       "dailyBudgetPct": "Daily budget (% of revenue)",
       "budgetMode": "Budget mode",
@@ -3351,6 +3365,11 @@
       "sovereignBudgetEfficiencyMinRatio": "Expected profit divided by the budget cost consumed by the rebalance. Default: 0.2.",
       "sovereignRouteDeadSourceShare": "Share of sources with recent structural failures that marks the target as route-dead. Default: 10%.",
       "sovereignRiskScoreFloor": "Lowest score multiplier for candidates with bad history. Lower values push them further down the ranking. Default: 3%.",
+      "sovereignAttributionWindow": "Main window used to attribute forwards to a rebalance. Use 72h for channels that sell over a few days.",
+      "sovereignSlowSellerWindow": "Long window used to recognize channels that sell slowly but end profitable. Default: 168h.",
+      "sovereignTargetSourceQuarantine": "Hours a recently rebalanced channel cannot be used as a source while paid liquidity is still unrecovered.",
+      "sovereignSourceOpportunityCost": "Avoids draining channels that are also good targets by protecting liquidity near the target outbound.",
+      "sovereignSlowSellerEnabled": "Allows targets with long-window profit to avoid being punished only by weak 24h results.",
       "scanInterval": "How often the auto engine scans channels for opportunities.",
         "dailyBudgetPct": "Daily spend cap as a % of routing revenue used by the selected budget mode.",
       "budgetMode": "Choose whether the daily budget follows only the last 24h revenue or blends 7d average with 24h revenue.",

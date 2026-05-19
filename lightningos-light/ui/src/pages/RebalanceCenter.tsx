@@ -49,6 +49,9 @@ const REBALANCE_DEFAULT_SOVEREIGN_LOW_SUCCESS_MIN_PROFIT_COST_RATIO = 1.1
 const REBALANCE_DEFAULT_SOVEREIGN_BUDGET_EFFICIENCY_MIN_RATIO = 0.2
 const REBALANCE_DEFAULT_SOVEREIGN_ROUTE_DEAD_SOURCE_SHARE = 0.1
 const REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR = 0.03
+const REBALANCE_DEFAULT_SOVEREIGN_ATTRIBUTION_WINDOW_HOURS = 72
+const REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS = 168
+const REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS = 6
 const MSPR_DEFAULT_MAX_SHARDS = 6
 const MSPR_MAX_SHARDS_LIMIT = 20
 const MSPR_DEFAULT_PARALLELISM = 3
@@ -178,6 +181,11 @@ export default function RebalanceCenter() {
     sovereign_budget_efficiency_min_ratio: typeof raw.sovereign_budget_efficiency_min_ratio === 'number' ? raw.sovereign_budget_efficiency_min_ratio : REBALANCE_DEFAULT_SOVEREIGN_BUDGET_EFFICIENCY_MIN_RATIO,
     sovereign_route_dead_source_share: typeof raw.sovereign_route_dead_source_share === 'number' ? raw.sovereign_route_dead_source_share : REBALANCE_DEFAULT_SOVEREIGN_ROUTE_DEAD_SOURCE_SHARE,
     sovereign_risk_score_floor: typeof raw.sovereign_risk_score_floor === 'number' ? raw.sovereign_risk_score_floor : REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR,
+    sovereign_attribution_window_hours: raw.sovereign_attribution_window_hours || REBALANCE_DEFAULT_SOVEREIGN_ATTRIBUTION_WINDOW_HOURS,
+    sovereign_slow_seller_window_hours: raw.sovereign_slow_seller_window_hours || REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS,
+    sovereign_target_source_quarantine_hours: typeof raw.sovereign_target_source_quarantine_hours === 'number' ? raw.sovereign_target_source_quarantine_hours : REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS,
+    sovereign_source_opportunity_cost_enabled: raw.sovereign_source_opportunity_cost_enabled ?? true,
+    sovereign_slow_seller_enabled: raw.sovereign_slow_seller_enabled ?? true,
     budget_mode: raw.budget_mode || REBALANCE_DEFAULT_BUDGET_MODE,
     budget_unlimited: raw.budget_unlimited ?? false,
     budget_auto_only: raw.budget_auto_only ?? false,
@@ -229,6 +237,11 @@ export default function RebalanceCenter() {
       sovereign_budget_efficiency_min_ratio: cfg.sovereign_budget_efficiency_min_ratio,
       sovereign_route_dead_source_share: cfg.sovereign_route_dead_source_share,
       sovereign_risk_score_floor: cfg.sovereign_risk_score_floor,
+      sovereign_attribution_window_hours: cfg.sovereign_attribution_window_hours,
+      sovereign_slow_seller_window_hours: cfg.sovereign_slow_seller_window_hours,
+      sovereign_target_source_quarantine_hours: cfg.sovereign_target_source_quarantine_hours,
+      sovereign_source_opportunity_cost_enabled: cfg.sovereign_source_opportunity_cost_enabled,
+      sovereign_slow_seller_enabled: cfg.sovereign_slow_seller_enabled,
       scan_interval_sec: cfg.scan_interval_sec,
       deadband_pct: cfg.deadband_pct,
       source_min_local_pct: cfg.source_min_local_pct,
@@ -295,7 +308,12 @@ export default function RebalanceCenter() {
       sovereign_low_success_min_profit_cost_ratio: cfg.sovereign_low_success_min_profit_cost_ratio ?? REBALANCE_DEFAULT_SOVEREIGN_LOW_SUCCESS_MIN_PROFIT_COST_RATIO,
       sovereign_budget_efficiency_min_ratio: cfg.sovereign_budget_efficiency_min_ratio ?? REBALANCE_DEFAULT_SOVEREIGN_BUDGET_EFFICIENCY_MIN_RATIO,
       sovereign_route_dead_source_share: cfg.sovereign_route_dead_source_share ?? REBALANCE_DEFAULT_SOVEREIGN_ROUTE_DEAD_SOURCE_SHARE,
-      sovereign_risk_score_floor: cfg.sovereign_risk_score_floor ?? REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR
+      sovereign_risk_score_floor: cfg.sovereign_risk_score_floor ?? REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR,
+      sovereign_attribution_window_hours: cfg.sovereign_attribution_window_hours ?? REBALANCE_DEFAULT_SOVEREIGN_ATTRIBUTION_WINDOW_HOURS,
+      sovereign_slow_seller_window_hours: cfg.sovereign_slow_seller_window_hours ?? REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS,
+      sovereign_target_source_quarantine_hours: cfg.sovereign_target_source_quarantine_hours ?? REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS,
+      sovereign_source_opportunity_cost_enabled: cfg.sovereign_source_opportunity_cost_enabled ?? true,
+      sovereign_slow_seller_enabled: cfg.sovereign_slow_seller_enabled ?? true
     })
   }
   const estimateHistoricalCost = (amountSat: number, feePpm: number) => {
@@ -673,6 +691,11 @@ export default function RebalanceCenter() {
           sovereign_budget_efficiency_min_ratio: Math.max(0, Number(config.sovereign_budget_efficiency_min_ratio) || REBALANCE_DEFAULT_SOVEREIGN_BUDGET_EFFICIENCY_MIN_RATIO),
           sovereign_route_dead_source_share: Math.max(0.01, Math.min(1, Number(config.sovereign_route_dead_source_share) || REBALANCE_DEFAULT_SOVEREIGN_ROUTE_DEAD_SOURCE_SHARE)),
           sovereign_risk_score_floor: Math.max(0.001, Math.min(0.2, Number(config.sovereign_risk_score_floor) || REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR)),
+          sovereign_attribution_window_hours: Math.max(24, Math.min(720, Number(config.sovereign_attribution_window_hours) || REBALANCE_DEFAULT_SOVEREIGN_ATTRIBUTION_WINDOW_HOURS)),
+          sovereign_slow_seller_window_hours: Math.max(24, Math.min(720, Number(config.sovereign_slow_seller_window_hours) || REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS)),
+          sovereign_target_source_quarantine_hours: Math.max(0, Math.min(720, Number(config.sovereign_target_source_quarantine_hours) || REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS)),
+          sovereign_source_opportunity_cost_enabled: config.sovereign_source_opportunity_cost_enabled,
+          sovereign_slow_seller_enabled: config.sovereign_slow_seller_enabled,
           scan_interval_sec: config.scan_interval_sec,
           deadband_pct: config.deadband_pct,
           source_min_local_pct: config.source_min_local_pct,
@@ -753,7 +776,12 @@ export default function RebalanceCenter() {
         sovereign_low_success_min_profit_cost_ratio: Math.max(0, Number(config.sovereign_low_success_min_profit_cost_ratio) || REBALANCE_DEFAULT_SOVEREIGN_LOW_SUCCESS_MIN_PROFIT_COST_RATIO),
         sovereign_budget_efficiency_min_ratio: Math.max(0, Number(config.sovereign_budget_efficiency_min_ratio) || REBALANCE_DEFAULT_SOVEREIGN_BUDGET_EFFICIENCY_MIN_RATIO),
         sovereign_route_dead_source_share: Math.max(0.01, Math.min(1, Number(config.sovereign_route_dead_source_share) || REBALANCE_DEFAULT_SOVEREIGN_ROUTE_DEAD_SOURCE_SHARE)),
-        sovereign_risk_score_floor: Math.max(0.001, Math.min(0.2, Number(config.sovereign_risk_score_floor) || REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR))
+        sovereign_risk_score_floor: Math.max(0.001, Math.min(0.2, Number(config.sovereign_risk_score_floor) || REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR)),
+        sovereign_attribution_window_hours: Math.max(24, Math.min(720, Number(config.sovereign_attribution_window_hours) || REBALANCE_DEFAULT_SOVEREIGN_ATTRIBUTION_WINDOW_HOURS)),
+        sovereign_slow_seller_window_hours: Math.max(24, Math.min(720, Number(config.sovereign_slow_seller_window_hours) || REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS)),
+        sovereign_target_source_quarantine_hours: Math.max(0, Math.min(720, Number(config.sovereign_target_source_quarantine_hours) || REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS)),
+        sovereign_source_opportunity_cost_enabled: config.sovereign_source_opportunity_cost_enabled,
+        sovereign_slow_seller_enabled: config.sovereign_slow_seller_enabled
       })) as RebalanceConfig
       const normalizedSaved = normalizeLoadedConfig(saved)
       setServerConfig(normalizedSaved)
@@ -769,7 +797,12 @@ export default function RebalanceCenter() {
           sovereign_low_success_min_profit_cost_ratio: normalizedSaved.sovereign_low_success_min_profit_cost_ratio,
           sovereign_budget_efficiency_min_ratio: normalizedSaved.sovereign_budget_efficiency_min_ratio,
           sovereign_route_dead_source_share: normalizedSaved.sovereign_route_dead_source_share,
-          sovereign_risk_score_floor: normalizedSaved.sovereign_risk_score_floor
+          sovereign_risk_score_floor: normalizedSaved.sovereign_risk_score_floor,
+          sovereign_attribution_window_hours: normalizedSaved.sovereign_attribution_window_hours,
+          sovereign_slow_seller_window_hours: normalizedSaved.sovereign_slow_seller_window_hours,
+          sovereign_target_source_quarantine_hours: normalizedSaved.sovereign_target_source_quarantine_hours,
+          sovereign_source_opportunity_cost_enabled: normalizedSaved.sovereign_source_opportunity_cost_enabled,
+          sovereign_slow_seller_enabled: normalizedSaved.sovereign_slow_seller_enabled
         }
       })
       setStatus(t('rebalanceCenter.autopilot.saved'))
@@ -1186,22 +1219,48 @@ export default function RebalanceCenter() {
     return entries.map(([reason, count]) => `${formatScanReason(reason)}: ${formatter.format(count)}`).join(', ')
   }
   const renderAutopilotLiquiditySignal = (decision: RebalanceSovereignDecision) => {
-    if (!decision.recent_rebalance_sent_sat) return null
+    if (!decision.recent_rebalance_sent_sat && !decision.target_class) return null
     const multiplier = decision.unsold_liquidity_multiplier
     return (
       <div className="mt-2 grid gap-1 rounded-md border border-amber-300/15 bg-amber-300/5 p-2 text-[11px] text-fog/60 sm:grid-cols-2">
-        <span>
-          {t('rebalanceCenter.autopilot.unsoldLiquidity', {
-            sent: formatSats(decision.recent_rebalance_sent_sat ?? 0),
-            forwarded: formatSats(decision.recent_forwarded_after_sat ?? 0)
-          })}
-        </span>
-        <span>
-          {t('rebalanceCenter.autopilot.unsoldPayback', {
-            fee: formatSats(decision.recent_forward_fee_after_sat ?? 0),
-            multiplier: multiplier && multiplier > 0 && multiplier < 1 ? formatPct(multiplier * 100) : formatPct(100)
-          })}
-        </span>
+        {decision.target_class && (
+          <span>
+            {t('rebalanceCenter.autopilot.targetClass', {
+              value: t(`rebalanceCenter.autopilot.targetClasses.${decision.target_class}`)
+            })}
+          </span>
+        )}
+        {decision.recent_realized_net_24h_sat !== undefined && (
+          <span>
+            {t('rebalanceCenter.autopilot.windowNet24h', {
+              value: formatSats(decision.recent_realized_net_24h_sat ?? 0)
+            })}
+          </span>
+        )}
+        {decision.recent_rebalance_sent_sat ? (
+          <span>
+            {t('rebalanceCenter.autopilot.unsoldLiquidity', {
+              sent: formatSats(decision.recent_rebalance_sent_sat ?? 0),
+              forwarded: formatSats(decision.recent_forwarded_after_sat ?? 0)
+            })}
+          </span>
+        ) : null}
+        {decision.recent_realized_net_slow_sat !== undefined && (
+          <span>
+            {t('rebalanceCenter.autopilot.windowNetSlow', {
+              hours: formatter.format(decision.slow_seller_window_hours ?? REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS),
+              value: formatSats(decision.recent_realized_net_slow_sat ?? 0)
+            })}
+          </span>
+        )}
+        {decision.recent_rebalance_sent_sat ? (
+          <span>
+            {t('rebalanceCenter.autopilot.unsoldPayback', {
+              fee: formatSats(decision.recent_forward_fee_after_sat ?? 0),
+              multiplier: multiplier && multiplier > 0 && multiplier < 1 ? formatPct(multiplier * 100) : formatPct(100)
+            })}
+          </span>
+        ) : null}
       </div>
     )
   }
@@ -2107,6 +2166,69 @@ export default function RebalanceCenter() {
                   onChange={(e) => setConfig({ ...config, sovereign_risk_score_floor: Number(e.target.value) / 100 })}
                 />
               </div>
+              <div className="space-y-2">
+                <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.sovereignAttributionWindow')}>
+                  {t('rebalanceCenter.settings.sovereignAttributionWindow')}
+                </label>
+                <input
+                  className="input-field"
+                  type="number"
+                  min={24}
+                  max={720}
+                  step={24}
+                  disabled={config.scheduler_mode === 'rules_auto'}
+                  value={config.sovereign_attribution_window_hours}
+                  onChange={(e) => setConfig({ ...config, sovereign_attribution_window_hours: Number(e.target.value) })}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.sovereignSlowSellerWindow')}>
+                  {t('rebalanceCenter.settings.sovereignSlowSellerWindow')}
+                </label>
+                <input
+                  className="input-field"
+                  type="number"
+                  min={24}
+                  max={720}
+                  step={24}
+                  disabled={config.scheduler_mode === 'rules_auto'}
+                  value={config.sovereign_slow_seller_window_hours}
+                  onChange={(e) => setConfig({ ...config, sovereign_slow_seller_window_hours: Number(e.target.value) })}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.sovereignTargetSourceQuarantine')}>
+                  {t('rebalanceCenter.settings.sovereignTargetSourceQuarantine')}
+                </label>
+                <input
+                  className="input-field"
+                  type="number"
+                  min={0}
+                  max={720}
+                  step={1}
+                  disabled={config.scheduler_mode === 'rules_auto'}
+                  value={config.sovereign_target_source_quarantine_hours}
+                  onChange={(e) => setConfig({ ...config, sovereign_target_source_quarantine_hours: Number(e.target.value) })}
+                />
+              </div>
+              <label className="checkbox-card min-h-[72px]" title={t('rebalanceCenter.settingsHints.sovereignSourceOpportunityCost')}>
+                <input
+                  type="checkbox"
+                  checked={config.sovereign_source_opportunity_cost_enabled}
+                  disabled={config.scheduler_mode === 'rules_auto'}
+                  onChange={(e) => setConfig({ ...config, sovereign_source_opportunity_cost_enabled: e.target.checked })}
+                />
+                <span>{t('rebalanceCenter.settings.sovereignSourceOpportunityCost')}</span>
+              </label>
+              <label className="checkbox-card min-h-[72px]" title={t('rebalanceCenter.settingsHints.sovereignSlowSellerEnabled')}>
+                <input
+                  type="checkbox"
+                  checked={config.sovereign_slow_seller_enabled}
+                  disabled={config.scheduler_mode === 'rules_auto'}
+                  onChange={(e) => setConfig({ ...config, sovereign_slow_seller_enabled: e.target.checked })}
+                />
+                <span>{t('rebalanceCenter.settings.sovereignSlowSellerEnabled')}</span>
+              </label>
             </div>
           )}
         </div>

@@ -52,6 +52,21 @@ func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	if cfg.SovereignRiskScoreFloor != 0.03 {
 		t.Fatalf("expected sovereign_risk_score_floor default=0.03, got %f", cfg.SovereignRiskScoreFloor)
 	}
+	if cfg.SovereignAttributionWindowHours != 72 {
+		t.Fatalf("expected sovereign_attribution_window_hours default=72, got %d", cfg.SovereignAttributionWindowHours)
+	}
+	if cfg.SovereignSlowSellerWindowHours != 168 {
+		t.Fatalf("expected sovereign_slow_seller_window_hours default=168, got %d", cfg.SovereignSlowSellerWindowHours)
+	}
+	if cfg.SovereignTargetSourceQuarantineHours != 6 {
+		t.Fatalf("expected sovereign_target_source_quarantine_hours default=6, got %d", cfg.SovereignTargetSourceQuarantineHours)
+	}
+	if !cfg.SovereignSourceOpportunityCostEnabled {
+		t.Fatalf("expected sovereign_source_opportunity_cost_enabled default=true")
+	}
+	if !cfg.SovereignSlowSellerEnabled {
+		t.Fatalf("expected sovereign_slow_seller_enabled default=true")
+	}
 	if cfg.ScanIntervalSec != 900 {
 		t.Fatalf("expected scan_interval_sec default=900, got %d", cfg.ScanIntervalSec)
 	}
@@ -162,6 +177,24 @@ func TestNormalizeRebalanceConfigClampsSourceMinPaybackProgress(t *testing.T) {
 	got := normalizeRebalanceConfig(cfg)
 	if got.SourceMinPaybackProgress != 0 {
 		t.Fatalf("expected SourceMinPaybackProgress clamped to 0, got %f", got.SourceMinPaybackProgress)
+	}
+}
+
+func TestNormalizeRebalanceConfigClampsSovereignWindows(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	cfg.SovereignAttributionWindowHours = 12
+	cfg.SovereignSlowSellerWindowHours = 6
+	cfg.SovereignTargetSourceQuarantineHours = 900
+
+	got := normalizeRebalanceConfig(cfg)
+	if got.SovereignAttributionWindowHours != 24 {
+		t.Fatalf("expected attribution window clamped to 24h, got %d", got.SovereignAttributionWindowHours)
+	}
+	if got.SovereignSlowSellerWindowHours != 24 {
+		t.Fatalf("expected slow seller window raised to attribution window, got %d", got.SovereignSlowSellerWindowHours)
+	}
+	if got.SovereignTargetSourceQuarantineHours != sovereignWindowMaxHours {
+		t.Fatalf("expected source quarantine clamped to %d, got %d", sovereignWindowMaxHours, got.SovereignTargetSourceQuarantineHours)
 	}
 }
 
@@ -419,6 +452,9 @@ func TestValidateRebalanceConfigPayloadRejectsInvalidFields(t *testing.T) {
 		{name: "sovereign budget efficiency below range", payload: rebalanceConfigPayload{SovereignBudgetEfficiencyMinRatio: ptrFloat64(-0.1)}},
 		{name: "sovereign route dead share below range", payload: rebalanceConfigPayload{SovereignRouteDeadSourceShare: ptrFloat64(0)}},
 		{name: "sovereign risk floor above range", payload: rebalanceConfigPayload{SovereignRiskScoreFloor: ptrFloat64(0.3)}},
+		{name: "sovereign attribution window below range", payload: rebalanceConfigPayload{SovereignAttributionWindowHours: ptrInt(23)}},
+		{name: "sovereign slow seller window above range", payload: rebalanceConfigPayload{SovereignSlowSellerWindowHours: ptrInt(721)}},
+		{name: "sovereign source quarantine below range", payload: rebalanceConfigPayload{SovereignTargetSourceQuarantineHours: ptrInt(-1)}},
 		{name: "invalid budget mode", payload: rebalanceConfigPayload{BudgetMode: ptrString("invalid")}},
 		{name: "manual reserve pct above range", payload: rebalanceConfigPayload{
 			ManualReserveMode:  ptrString(rebalanceManualReserveModePct),
@@ -487,6 +523,9 @@ func TestApplyRebalanceConfigPayloadOnlyTouchesProvidedFields(t *testing.T) {
 	sovereignBudgetEfficiency := 0.65
 	sovereignRouteDeadShare := 0.25
 	sovereignRiskFloor := 0.015
+	sovereignAttributionWindow := 96
+	sovereignSlowSellerWindow := 192
+	sovereignSourceQuarantine := 8
 	cfg.DelegatedFastPathStrictPayback = true
 
 	got := applyRebalanceConfigPayload(cfg, rebalanceConfigPayload{
@@ -499,6 +538,11 @@ func TestApplyRebalanceConfigPayloadOnlyTouchesProvidedFields(t *testing.T) {
 		SovereignBudgetEfficiencyMinRatio:     &sovereignBudgetEfficiency,
 		SovereignRouteDeadSourceShare:         &sovereignRouteDeadShare,
 		SovereignRiskScoreFloor:               &sovereignRiskFloor,
+		SovereignAttributionWindowHours:       &sovereignAttributionWindow,
+		SovereignSlowSellerWindowHours:        &sovereignSlowSellerWindow,
+		SovereignTargetSourceQuarantineHours:  &sovereignSourceQuarantine,
+		SovereignSourceOpportunityCostEnabled: ptrBool(false),
+		SovereignSlowSellerEnabled:            ptrBool(false),
 		DeadbandPct:                           &deadband,
 		BudgetUnlimited:                       ptrBool(true),
 		BudgetAutoOnly:                        &budgetAutoOnly,
@@ -563,6 +607,21 @@ func TestApplyRebalanceConfigPayloadOnlyTouchesProvidedFields(t *testing.T) {
 	}
 	if got.SovereignRiskScoreFloor != sovereignRiskFloor {
 		t.Fatalf("expected sovereign_risk_score_floor=%f, got %f", sovereignRiskFloor, got.SovereignRiskScoreFloor)
+	}
+	if got.SovereignAttributionWindowHours != sovereignAttributionWindow {
+		t.Fatalf("expected sovereign_attribution_window_hours=%d, got %d", sovereignAttributionWindow, got.SovereignAttributionWindowHours)
+	}
+	if got.SovereignSlowSellerWindowHours != sovereignSlowSellerWindow {
+		t.Fatalf("expected sovereign_slow_seller_window_hours=%d, got %d", sovereignSlowSellerWindow, got.SovereignSlowSellerWindowHours)
+	}
+	if got.SovereignTargetSourceQuarantineHours != sovereignSourceQuarantine {
+		t.Fatalf("expected sovereign_target_source_quarantine_hours=%d, got %d", sovereignSourceQuarantine, got.SovereignTargetSourceQuarantineHours)
+	}
+	if got.SovereignSourceOpportunityCostEnabled {
+		t.Fatalf("expected explicit false sovereign_source_opportunity_cost_enabled to be applied")
+	}
+	if got.SovereignSlowSellerEnabled {
+		t.Fatalf("expected explicit false sovereign_slow_seller_enabled to be applied")
 	}
 	if got.ScanIntervalSec != cfg.ScanIntervalSec {
 		t.Fatalf("expected omitted scan_interval_sec to remain %d, got %d", cfg.ScanIntervalSec, got.ScanIntervalSec)
@@ -2070,6 +2129,7 @@ func TestEstimateSovereignTargetCostUsesBudgetUntilHistoryReliable(t *testing.T)
 }
 
 func TestShouldSkipSovereignUnsoldPaidLiquidity(t *testing.T) {
+	cfg := defaultRebalanceConfig()
 	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
 	stat := sovereignUnsoldLiquidityStat{
 		CompletedAt:      now.Add(-3 * time.Hour),
@@ -2079,29 +2139,30 @@ func TestShouldSkipSovereignUnsoldPaidLiquidity(t *testing.T) {
 		ForwardAmountSat: 50_000,
 		ForwardFeeSat:    100,
 	}
-	if !shouldSkipSovereignUnsoldPaidLiquidity(stat, now) {
+	if !shouldSkipSovereignUnsoldPaidLiquidity(stat, cfg, now) {
 		t.Fatalf("expected unsold paid liquidity to be skipped")
 	}
 
 	stat.ForwardAmountSat = 100_000
-	if shouldSkipSovereignUnsoldPaidLiquidity(stat, now) {
+	if shouldSkipSovereignUnsoldPaidLiquidity(stat, cfg, now) {
 		t.Fatalf("expected enough forwarded liquidity to clear cooldown")
 	}
 
 	stat.ForwardAmountSat = 0
 	stat.ForwardFeeSat = 250
-	if shouldSkipSovereignUnsoldPaidLiquidity(stat, now) {
+	if shouldSkipSovereignUnsoldPaidLiquidity(stat, cfg, now) {
 		t.Fatalf("expected enough fee payback to clear cooldown")
 	}
 
 	stat.ForwardFeeSat = 0
 	stat.CompletedAt = now.Add(-30 * time.Minute)
-	if shouldSkipSovereignUnsoldPaidLiquidity(stat, now) {
+	if shouldSkipSovereignUnsoldPaidLiquidity(stat, cfg, now) {
 		t.Fatalf("expected fresh rebalance to wait for the minimum age before cooldown")
 	}
 }
 
 func TestSovereignUnsoldPaidLiquiditySoftPenaltyAfterHardWindow(t *testing.T) {
+	cfg := defaultRebalanceConfig()
 	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
 	stat := sovereignUnsoldLiquidityStat{
 		CompletedAt:     now.Add(-5 * time.Hour),
@@ -2109,18 +2170,56 @@ func TestSovereignUnsoldPaidLiquiditySoftPenaltyAfterHardWindow(t *testing.T) {
 		SentSat:         500_000,
 		FeePaidSat:      1_000,
 	}
-	if shouldSkipSovereignUnsoldPaidLiquidity(stat, now) {
+	if shouldSkipSovereignUnsoldPaidLiquidity(stat, cfg, now) {
 		t.Fatalf("expected moderate unsold liquidity to become a score penalty after hard window")
 	}
-	multiplier := sovereignUnsoldPaidLiquidityScoreMultiplier(stat, now)
+	multiplier := sovereignUnsoldPaidLiquidityScoreMultiplier(stat, cfg, now)
 	if multiplier <= 0 || multiplier >= 1 {
 		t.Fatalf("expected soft penalty multiplier between 0 and 1, got %f", multiplier)
 	}
 
 	severe := stat
 	severe.SentSat = 900_000
-	if !shouldSkipSovereignUnsoldPaidLiquidity(severe, now) {
+	severe.CompletedAt = now.Add(-80 * time.Hour)
+	if !shouldSkipSovereignUnsoldPaidLiquidity(severe, cfg, now) {
 		t.Fatalf("expected severe large unsold fill with zero sale to remain hard skipped")
+	}
+}
+
+func TestClassifySovereignTargetUsesFastAndSlowSellerWindows(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+
+	slow := rebalanceTargetPairStats{
+		RecentStatsLoaded:          true,
+		RecentAttempts:             2,
+		RecentSentSat:              1_000_000,
+		RecentForward24hAmountSat:  100_000,
+		RecentRealizedNet24hSat:    -200,
+		RecentForwardSlowAmountSat: 650_000,
+		RecentRealizedNetSlowSat:   2_000,
+	}
+	if got := classifySovereignTarget(slow, cfg); got != sovereignTargetClassSlowHighMargin {
+		t.Fatalf("expected slow high-margin class, got %s", got)
+	}
+
+	fast := rebalanceTargetPairStats{
+		RecentStatsLoaded:         true,
+		RecentAttempts:            2,
+		RecentSentSat:             1_000_000,
+		RecentForward24hAmountSat: 600_000,
+		RecentRealizedNet24hSat:   100,
+	}
+	if got := classifySovereignTarget(fast, cfg); got != sovereignTargetClassFastSeller {
+		t.Fatalf("expected fast seller class, got %s", got)
+	}
+
+	cold := rebalanceTargetPairStats{
+		RecentStatsLoaded: true,
+		RecentAttempts:    sovereignRecentEmpiricalDeadMinJobs,
+		RecentFailures:    sovereignRecentEmpiricalDeadMinJobs,
+	}
+	if got := classifySovereignTarget(cold, cfg); got != sovereignTargetClassColdOrDead {
+		t.Fatalf("expected cold/dead class, got %s", got)
 	}
 }
 

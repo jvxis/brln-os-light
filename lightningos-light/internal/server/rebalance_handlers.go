@@ -23,6 +23,11 @@ type rebalanceConfigPayload struct {
 	SovereignBudgetEfficiencyMinRatio     *float64 `json:"sovereign_budget_efficiency_min_ratio,omitempty"`
 	SovereignRouteDeadSourceShare         *float64 `json:"sovereign_route_dead_source_share,omitempty"`
 	SovereignRiskScoreFloor               *float64 `json:"sovereign_risk_score_floor,omitempty"`
+	SovereignAttributionWindowHours       *int     `json:"sovereign_attribution_window_hours,omitempty"`
+	SovereignSlowSellerWindowHours        *int     `json:"sovereign_slow_seller_window_hours,omitempty"`
+	SovereignTargetSourceQuarantineHours  *int     `json:"sovereign_target_source_quarantine_hours,omitempty"`
+	SovereignSourceOpportunityCostEnabled *bool    `json:"sovereign_source_opportunity_cost_enabled,omitempty"`
+	SovereignSlowSellerEnabled            *bool    `json:"sovereign_slow_seller_enabled,omitempty"`
 	ScanIntervalSec                       *int     `json:"scan_interval_sec,omitempty"`
 	DeadbandPct                           *float64 `json:"deadband_pct,omitempty"`
 	SourceMinLocalPct                     *float64 `json:"source_min_local_pct,omitempty"`
@@ -193,6 +198,21 @@ func applyRebalanceConfigPayload(cfg RebalanceConfig, payload rebalanceConfigPay
 	}
 	if payload.SovereignRiskScoreFloor != nil {
 		cfg.SovereignRiskScoreFloor = *payload.SovereignRiskScoreFloor
+	}
+	if payload.SovereignAttributionWindowHours != nil {
+		cfg.SovereignAttributionWindowHours = *payload.SovereignAttributionWindowHours
+	}
+	if payload.SovereignSlowSellerWindowHours != nil {
+		cfg.SovereignSlowSellerWindowHours = *payload.SovereignSlowSellerWindowHours
+	}
+	if payload.SovereignTargetSourceQuarantineHours != nil {
+		cfg.SovereignTargetSourceQuarantineHours = *payload.SovereignTargetSourceQuarantineHours
+	}
+	if payload.SovereignSourceOpportunityCostEnabled != nil {
+		cfg.SovereignSourceOpportunityCostEnabled = *payload.SovereignSourceOpportunityCostEnabled
+	}
+	if payload.SovereignSlowSellerEnabled != nil {
+		cfg.SovereignSlowSellerEnabled = *payload.SovereignSlowSellerEnabled
 	}
 	if payload.ScanIntervalSec != nil {
 		cfg.ScanIntervalSec = *payload.ScanIntervalSec
@@ -385,6 +405,15 @@ func validateRebalanceConfigPayload(payload rebalanceConfigPayload) error {
 		return err
 	}
 	if err := validateOptionalFloat("sovereign_risk_score_floor", payload.SovereignRiskScoreFloor, 0.001, 0.2); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("sovereign_attribution_window_hours", payload.SovereignAttributionWindowHours, 24, sovereignWindowMaxHours); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("sovereign_slow_seller_window_hours", payload.SovereignSlowSellerWindowHours, 24, sovereignWindowMaxHours); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("sovereign_target_source_quarantine_hours", payload.SovereignTargetSourceQuarantineHours, 0, sovereignWindowMaxHours); err != nil {
 		return err
 	}
 	if err := validateOptionalInt("scan_interval_sec", payload.ScanIntervalSec, 1, 0); err != nil {

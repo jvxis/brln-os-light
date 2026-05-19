@@ -3217,7 +3217,16 @@
       "cost": "Custo esp.: {{value}}",
       "roi": "ROI: {{value}}",
       "unsoldLiquidity": "Liquidez paga: {{sent}} · vendido: {{forwarded}}",
-      "unsoldPayback": "Fee recuperada: {{fee}} · score {{multiplier}}"
+      "unsoldPayback": "Fee recuperada: {{fee}} · score {{multiplier}}",
+      "targetClass": "Classe: {{value}}",
+      "targetClasses": {
+        "fast_seller": "venda rápida",
+        "slow_high_margin": "lento com boa margem",
+        "cold_or_dead": "frio/rota ruim",
+        "exploration": "exploração"
+      },
+      "windowNet24h": "Net 24h: {{value}}",
+      "windowNetSlow": "Net {{hours}}h: {{value}}"
     },
     "settings": {
       "title": "Configurações de Rebalance",
@@ -3256,6 +3265,11 @@
       "sovereignBudgetEfficiencyMinRatio": "Piso lucro/budget",
       "sovereignRouteDeadSourceShare": "Route-dead fontes (%)",
       "sovereignRiskScoreFloor": "Piso de score de risco (%)",
+      "sovereignAttributionWindow": "Janela de atribuição (h)",
+      "sovereignSlowSellerWindow": "Janela slow seller (h)",
+      "sovereignTargetSourceQuarantine": "Quarentena target→source (h)",
+      "sovereignSourceOpportunityCost": "Proteger source lucrativa",
+      "sovereignSlowSellerEnabled": "Habilitar slow sellers",
       "scanInterval": "Intervalo de varredura (seg)",
       "dailyBudgetPct": "Orçamento diário (% da receita)",
       "budgetMode": "Modo do orçamento",
@@ -3351,6 +3365,11 @@
       "sovereignBudgetEfficiencyMinRatio": "Lucro esperado dividido pelo custo que o rebalance consome do budget. Padrão: 0,2.",
       "sovereignRouteDeadSourceShare": "Percentual de sources com falha estrutural recente que marca o target como route-dead. Padrão: 10%.",
       "sovereignRiskScoreFloor": "Menor multiplicador de score para candidatos com histórico ruim. Quanto menor, mais eles caem no ranking. Padrão: 3%.",
+      "sovereignAttributionWindow": "Janela principal para atribuir forwards ao rebalance. Use 72h para canais que vendem em alguns dias.",
+      "sovereignSlowSellerWindow": "Janela longa para reconhecer canais que vendem devagar, mas fecham positivo. Padrão: 168h.",
+      "sovereignTargetSourceQuarantine": "Tempo em que um canal recém-rebalanceado não pode virar source enquanto a liquidez paga ainda não foi recuperada.",
+      "sovereignSourceOpportunityCost": "Evita drenar canais que também são bons targets, protegendo a liquidez perto do target outbound.",
+      "sovereignSlowSellerEnabled": "Permite que targets com lucro em janela longa não sejam punidos apenas por 24h fracas.",
       "scanInterval": "Frequência de varredura do modo automático.",
         "dailyBudgetPct": "Teto diário como % da receita de roteamento usada pelo modo de orçamento selecionado.",
       "budgetMode": "Escolhe se o orçamento diário segue só a receita das últimas 24h ou mistura média de 7d com receita de 24h.",

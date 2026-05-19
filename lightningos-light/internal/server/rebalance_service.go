@@ -251,6 +251,18 @@ const (
 )
 
 const (
+	sovereignAttributionWindowDefaultHours      = 72
+	sovereignSlowSellerWindowDefaultHours       = 168
+	sovereignTargetSourceQuarantineDefaultHours = 6
+	sovereignWindowMaxHours                     = 720
+	sovereignSourceOpportunityTargetBufferPct   = 5.0
+	sovereignTargetClassFastSeller              = "fast_seller"
+	sovereignTargetClassSlowHighMargin          = "slow_high_margin"
+	sovereignTargetClassColdOrDead              = "cold_or_dead"
+	sovereignTargetClassExploration             = "exploration"
+)
+
+const (
 	rebalanceManualReserveModeFixedSat = "fixed_sat"
 	rebalanceManualReserveModePct      = "pct"
 )
@@ -266,6 +278,11 @@ type RebalanceConfig struct {
 	SovereignBudgetEfficiencyMinRatio     float64 `json:"sovereign_budget_efficiency_min_ratio"`
 	SovereignRouteDeadSourceShare         float64 `json:"sovereign_route_dead_source_share"`
 	SovereignRiskScoreFloor               float64 `json:"sovereign_risk_score_floor"`
+	SovereignAttributionWindowHours       int     `json:"sovereign_attribution_window_hours"`
+	SovereignSlowSellerWindowHours        int     `json:"sovereign_slow_seller_window_hours"`
+	SovereignTargetSourceQuarantineHours  int     `json:"sovereign_target_source_quarantine_hours"`
+	SovereignSourceOpportunityCostEnabled bool    `json:"sovereign_source_opportunity_cost_enabled"`
+	SovereignSlowSellerEnabled            bool    `json:"sovereign_slow_seller_enabled"`
 	ScanIntervalSec                       int     `json:"scan_interval_sec"`
 	DeadbandPct                           float64 `json:"deadband_pct"`
 	SourceMinLocalPct                     float64 `json:"source_min_local_pct"`
@@ -476,8 +493,17 @@ type RebalanceSovereignDecision struct {
 	RecentStructuralFailures int     `json:"recent_structural_failures"`
 	RecentRebalanceSentSat   int64   `json:"recent_rebalance_sent_sat,omitempty"`
 	RecentRebalanceTargetSat int64   `json:"recent_rebalance_target_sat,omitempty"`
+	TargetClass              string  `json:"target_class,omitempty"`
+	AttributionWindowHours   int     `json:"attribution_window_hours,omitempty"`
+	SlowSellerWindowHours    int     `json:"slow_seller_window_hours,omitempty"`
+	RecentForward24hSat      int64   `json:"recent_forward_24h_sat,omitempty"`
+	RecentForwardFee24hSat   int64   `json:"recent_forward_fee_24h_sat,omitempty"`
+	RecentRealizedNet24hSat  int64   `json:"recent_realized_net_24h_sat,omitempty"`
 	RecentForwardedAfterSat  int64   `json:"recent_forwarded_after_sat,omitempty"`
 	RecentForwardFeeAfterSat int64   `json:"recent_forward_fee_after_sat,omitempty"`
+	RecentForwardSlowSat     int64   `json:"recent_forward_slow_sat,omitempty"`
+	RecentForwardFeeSlowSat  int64   `json:"recent_forward_fee_slow_sat,omitempty"`
+	RecentRealizedNetSlowSat int64   `json:"recent_realized_net_slow_sat,omitempty"`
 	RecentRealizedSentSat    int64   `json:"recent_realized_sent_sat,omitempty"`
 	RecentRealizedForwardSat int64   `json:"recent_realized_forward_sat,omitempty"`
 	RecentRealizedFeeSat     int64   `json:"recent_realized_fee_sat,omitempty"`
@@ -567,6 +593,9 @@ type RebalanceChannel struct {
 	ROIEstimate           float64 `json:"roi_estimate"`
 	ROIEstimateValid      bool    `json:"roi_estimate_valid"`
 	ExcludedAsSource      bool    `json:"excluded_as_source"`
+	SourceQuarantined     bool    `json:"source_quarantined,omitempty"`
+	SourceQuarantineUntil string  `json:"source_quarantine_until,omitempty"`
+	SourceOpportunityCost int64   `json:"source_opportunity_cost_sat,omitempty"`
 }
 
 type RebalancePairStat struct {
@@ -699,27 +728,33 @@ type pairStat struct {
 }
 
 type rebalanceTargetPairStats struct {
-	TargetChannelID          uint64
-	Attempts                 int
-	Successes                int
-	Failures                 int
-	RecentStructuralFailures int
-	PermanentFailScore       float64
-	LastSuccessAt            time.Time
-	LastFailAt               time.Time
-	RecentStatsLoaded        bool
-	RecentAttempts           int
-	RecentSuccesses          int
-	RecentFailures           int
-	RecentAllSourcesFailed   int
-	RecentLastSuccessAt      time.Time
-	RecentLastFailAt         time.Time
-	RecentSentJobs           int
-	RecentSentSat            int64
-	RecentRebalanceFeeSat    int64
-	RecentForwardAmountSat   int64
-	RecentForwardFeeSat      int64
-	RecentRealizedNetSat     int64
+	TargetChannelID            uint64
+	Attempts                   int
+	Successes                  int
+	Failures                   int
+	RecentStructuralFailures   int
+	PermanentFailScore         float64
+	LastSuccessAt              time.Time
+	LastFailAt                 time.Time
+	RecentStatsLoaded          bool
+	RecentAttempts             int
+	RecentSuccesses            int
+	RecentFailures             int
+	RecentAllSourcesFailed     int
+	RecentLastSuccessAt        time.Time
+	RecentLastFailAt           time.Time
+	RecentSentJobs             int
+	RecentSentSat              int64
+	RecentRebalanceFeeSat      int64
+	RecentForward24hAmountSat  int64
+	RecentForward24hFeeSat     int64
+	RecentRealizedNet24hSat    int64
+	RecentForwardAmountSat     int64
+	RecentForwardFeeSat        int64
+	RecentRealizedNetSat       int64
+	RecentForwardSlowAmountSat int64
+	RecentForwardSlowFeeSat    int64
+	RecentRealizedNetSlowSat   int64
 }
 
 type recentCooldownStat struct {
@@ -983,6 +1018,11 @@ func defaultRebalanceConfig() RebalanceConfig {
 		SovereignBudgetEfficiencyMinRatio:     sovereignBudgetEfficiencyProfitCostRatio,
 		SovereignRouteDeadSourceShare:         sovereignRouteDeadSourceShare,
 		SovereignRiskScoreFloor:               sovereignRiskScoreFloor,
+		SovereignAttributionWindowHours:       sovereignAttributionWindowDefaultHours,
+		SovereignSlowSellerWindowHours:        sovereignSlowSellerWindowDefaultHours,
+		SovereignTargetSourceQuarantineHours:  sovereignTargetSourceQuarantineDefaultHours,
+		SovereignSourceOpportunityCostEnabled: true,
+		SovereignSlowSellerEnabled:            true,
 		ScanIntervalSec:                       900,
 		DeadbandPct:                           3,
 		SourceMinLocalPct:                     15,
@@ -1560,6 +1600,30 @@ func normalizeRebalanceConfig(cfg RebalanceConfig) RebalanceConfig {
 	cfg.SovereignBudgetEfficiencyMinRatio = normalizeRatioConfig(cfg.SovereignBudgetEfficiencyMinRatio, def.SovereignBudgetEfficiencyMinRatio, 0)
 	cfg.SovereignRouteDeadSourceShare = normalizeRatioConfig(cfg.SovereignRouteDeadSourceShare, def.SovereignRouteDeadSourceShare, 1)
 	cfg.SovereignRiskScoreFloor = normalizeRatioConfig(cfg.SovereignRiskScoreFloor, def.SovereignRiskScoreFloor, 0.2)
+	if cfg.SovereignAttributionWindowHours <= 0 {
+		cfg.SovereignAttributionWindowHours = def.SovereignAttributionWindowHours
+	}
+	if cfg.SovereignAttributionWindowHours < 24 {
+		cfg.SovereignAttributionWindowHours = 24
+	}
+	if cfg.SovereignAttributionWindowHours > sovereignWindowMaxHours {
+		cfg.SovereignAttributionWindowHours = sovereignWindowMaxHours
+	}
+	if cfg.SovereignSlowSellerWindowHours <= 0 {
+		cfg.SovereignSlowSellerWindowHours = def.SovereignSlowSellerWindowHours
+	}
+	if cfg.SovereignSlowSellerWindowHours < cfg.SovereignAttributionWindowHours {
+		cfg.SovereignSlowSellerWindowHours = cfg.SovereignAttributionWindowHours
+	}
+	if cfg.SovereignSlowSellerWindowHours > sovereignWindowMaxHours {
+		cfg.SovereignSlowSellerWindowHours = sovereignWindowMaxHours
+	}
+	if cfg.SovereignTargetSourceQuarantineHours < 0 {
+		cfg.SovereignTargetSourceQuarantineHours = def.SovereignTargetSourceQuarantineHours
+	}
+	if cfg.SovereignTargetSourceQuarantineHours > sovereignWindowMaxHours {
+		cfg.SovereignTargetSourceQuarantineHours = sovereignWindowMaxHours
+	}
 	if cfg.MinAmountSat < 0 {
 		cfg.MinAmountSat = 0
 	}
@@ -1676,6 +1740,46 @@ func freshPaidLiquidityLockDuration(cfg RebalanceConfig) time.Duration {
 	hours := cfg.FreshPaidLiquidityLockHours
 	if hours <= 0 {
 		hours = freshPaidLiquidityLockDefaultHours
+	}
+	return time.Duration(hours) * time.Hour
+}
+
+func sovereignAttributionWindowHoursForConfig(cfg RebalanceConfig) int {
+	hours := cfg.SovereignAttributionWindowHours
+	if hours <= 0 {
+		hours = sovereignAttributionWindowDefaultHours
+	}
+	if hours < 24 {
+		hours = 24
+	}
+	if hours > sovereignWindowMaxHours {
+		hours = sovereignWindowMaxHours
+	}
+	return hours
+}
+
+func sovereignSlowSellerWindowHoursForConfig(cfg RebalanceConfig) int {
+	attribution := sovereignAttributionWindowHoursForConfig(cfg)
+	hours := cfg.SovereignSlowSellerWindowHours
+	if hours <= 0 {
+		hours = sovereignSlowSellerWindowDefaultHours
+	}
+	if hours < attribution {
+		hours = attribution
+	}
+	if hours > sovereignWindowMaxHours {
+		hours = sovereignWindowMaxHours
+	}
+	return hours
+}
+
+func sovereignTargetSourceQuarantineDuration(cfg RebalanceConfig) time.Duration {
+	hours := cfg.SovereignTargetSourceQuarantineHours
+	if hours < 0 {
+		hours = sovereignTargetSourceQuarantineDefaultHours
+	}
+	if hours > sovereignWindowMaxHours {
+		hours = sovereignWindowMaxHours
 	}
 	return time.Duration(hours) * time.Hour
 }
@@ -2492,10 +2596,10 @@ func (s *RebalanceService) runAutoScan() {
 			}
 		}
 		sovereignPairStats := s.loadPairStatsSummaryForTargets(ctx, sovereignTargetIDs, scanAt)
-		sovereignRecentStats := s.loadRecentSovereignTargetStats(ctx, sovereignTargetIDs, scanAt)
+		sovereignRecentStats := s.loadRecentSovereignTargetStats(ctx, cfg, sovereignTargetIDs, scanAt)
 		mergeRecentSovereignTargetStats(sovereignPairStats, sovereignRecentStats)
 		sovereignStructuralCooldowns := s.loadSovereignTargetStructuralCooldowns(ctx, sovereignTargetIDs, scanAt)
-		sovereignUnsoldLiquidity := s.loadSovereignUnsoldPaidLiquidityStats(ctx, sovereignTargetIDs, scanAt)
+		sovereignUnsoldLiquidity := s.loadSovereignUnsoldPaidLiquidityStats(ctx, cfg, sovereignTargetIDs, scanAt)
 		sovereignPlan := buildAndOrderRebalanceCandidates(rebalanceAutoScanCandidateInput{
 			Channels:                      snapshots,
 			Settings:                      settings,
@@ -2871,8 +2975,17 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 			RecentStructuralFailures:    target.PairStats.RecentStructuralFailures,
 			RecentRebalanceSentSat:      target.UnsoldLiquidity.SentSat,
 			RecentRebalanceTargetSat:    target.UnsoldLiquidity.TargetAmountSat,
+			TargetClass:                 target.TargetClass,
+			AttributionWindowHours:      sovereignAttributionWindowHoursForConfig(cfg),
+			SlowSellerWindowHours:       sovereignSlowSellerWindowHoursForConfig(cfg),
+			RecentForward24hSat:         target.PairStats.RecentForward24hAmountSat,
+			RecentForwardFee24hSat:      target.PairStats.RecentForward24hFeeSat,
+			RecentRealizedNet24hSat:     target.PairStats.RecentRealizedNet24hSat,
 			RecentForwardedAfterSat:     target.UnsoldLiquidity.ForwardAmountSat,
 			RecentForwardFeeAfterSat:    target.UnsoldLiquidity.ForwardFeeSat,
+			RecentForwardSlowSat:        target.PairStats.RecentForwardSlowAmountSat,
+			RecentForwardFeeSlowSat:     target.PairStats.RecentForwardSlowFeeSat,
+			RecentRealizedNetSlowSat:    target.PairStats.RecentRealizedNetSlowSat,
 			RecentRealizedSentSat:       target.PairStats.RecentSentSat,
 			RecentRealizedForwardSat:    target.PairStats.RecentForwardAmountSat,
 			RecentRealizedFeeSat:        target.PairStats.RecentForwardFeeSat,
@@ -2894,7 +3007,7 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 		case shouldSkipSovereignTargetStructuralCooldown(target.StructuralCooldown, scanAt):
 			decision.Reason = sovereignTargetStructuralCooldownReason
 			noteSkip(decision.Reason)
-		case shouldSkipSovereignUnsoldPaidLiquidity(target.UnsoldLiquidity, scanAt):
+		case shouldSkipSovereignUnsoldPaidLiquidity(target.UnsoldLiquidity, cfg, scanAt):
 			decision.Reason = sovereignUnsoldPaidLiquidityReason
 			noteSkip(decision.Reason)
 		case shouldSkipSovereignRouteDeadOpportunity(target.PairStats, expectedProfit, budgetCost, plan.EligibleSources, cfg):
@@ -3233,6 +3346,7 @@ type rebalanceTarget struct {
 	// holds the timestamp of the most recent autofee adjustment.
 	AutofeeDampened   bool
 	AutofeeAdjustedAt time.Time
+	TargetClass       string
 	// Risk-adjusted score multiplier breakdown — populated by
 	// applySovereignRiskAdjustedScores and surfaced on the decision struct.
 	SuccessMultiplier           float64
@@ -3457,6 +3571,7 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 			PairStats:          pairStats,
 			StructuralCooldown: input.SovereignStructuralCooldowns[snapshot.ChannelID],
 			UnsoldLiquidity:    input.SovereignUnsoldLiquidity[snapshot.ChannelID],
+			TargetClass:        classifySovereignTarget(pairStats, input.Cfg),
 		})
 		if !plan.TopScoreSet || score > plan.TopScore {
 			plan.TopScore = score
@@ -3468,7 +3583,7 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 	if input.SovereignRanking {
 		applySovereignRiskAdjustedScores(plan.Candidates, input.Cfg, input.ScanAt)
 		for _, candidate := range plan.Candidates {
-			if candidate.UnsoldLiquidityMultiplier > 0 && candidate.UnsoldLiquidityMultiplier < 1 && !shouldSkipSovereignUnsoldPaidLiquidity(candidate.UnsoldLiquidity, input.ScanAt) {
+			if candidate.UnsoldLiquidityMultiplier > 0 && candidate.UnsoldLiquidityMultiplier < 1 && !shouldSkipSovereignUnsoldPaidLiquidity(candidate.UnsoldLiquidity, input.Cfg, input.ScanAt) {
 				noteSkip(sovereignUnsoldPaidLiquidityPenaltyReason)
 			}
 		}
@@ -4465,6 +4580,9 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 			if iAmt != jAmt {
 				return iAmt > jAmt
 			}
+		}
+		if sources[i].SourceOpportunityCost != sources[j].SourceOpportunityCost {
+			return sources[i].SourceOpportunityCost < sources[j].SourceOpportunityCost
 		}
 		if iSourceCost != jSourceCost {
 			return iSourceCost < jSourceCost
@@ -6573,7 +6691,7 @@ where target_channel_id = any($1::bigint[])
 	return summaries
 }
 
-func (s *RebalanceService) loadRecentSovereignTargetStats(ctx context.Context, targetIDs []uint64, now time.Time) map[uint64]rebalanceTargetPairStats {
+func (s *RebalanceService) loadRecentSovereignTargetStats(ctx context.Context, cfg RebalanceConfig, targetIDs []uint64, now time.Time) map[uint64]rebalanceTargetPairStats {
 	summaries := map[uint64]rebalanceTargetPairStats{}
 	if len(targetIDs) == 0 {
 		return summaries
@@ -6600,7 +6718,14 @@ func (s *RebalanceService) loadRecentSovereignTargetStats(ctx context.Context, t
 	if now.IsZero() {
 		now = time.Now()
 	}
-	since := now.Add(-sovereignRecentTargetStatsWindow)
+	attributionHours := sovereignAttributionWindowHoursForConfig(cfg)
+	slowHours := sovereignSlowSellerWindowHoursForConfig(cfg)
+	recentWindow := sovereignRecentTargetStatsWindow
+	slowWindow := time.Duration(slowHours) * time.Hour
+	if slowWindow > recentWindow {
+		recentWindow = slowWindow
+	}
+	since := now.Add(-recentWindow)
 	rows, err := s.db.Query(ctx, `
 with recent_jobs as (
   select id, target_channel_id, status, reason, completed_at
@@ -6622,13 +6747,17 @@ attempt_totals as (
 forward_totals as (
   select
     r.id,
-    coalesce(sum(n.amount_sat), 0) as forward_amount_sat,
-    coalesce(sum(case when n.fee_msat > 0 then n.fee_msat else n.fee_sat * 1000 end), 0)::bigint as forward_fee_msat
+    coalesce(sum(n.amount_sat) filter (where n.occurred_at < r.completed_at + interval '24 hours'), 0) as forward_24h_amount_sat,
+    coalesce(sum(case when n.fee_msat > 0 then n.fee_msat else n.fee_sat * 1000 end) filter (where n.occurred_at < r.completed_at + interval '24 hours'), 0)::bigint as forward_24h_fee_msat,
+    coalesce(sum(n.amount_sat) filter (where n.occurred_at < r.completed_at + ($3::int * interval '1 hour')), 0) as forward_window_amount_sat,
+    coalesce(sum(case when n.fee_msat > 0 then n.fee_msat else n.fee_sat * 1000 end) filter (where n.occurred_at < r.completed_at + ($3::int * interval '1 hour')), 0)::bigint as forward_window_fee_msat,
+    coalesce(sum(n.amount_sat), 0) as forward_slow_amount_sat,
+    coalesce(sum(case when n.fee_msat > 0 then n.fee_msat else n.fee_sat * 1000 end), 0)::bigint as forward_slow_fee_msat
   from recent_jobs r
   left join notifications n on n.type='forward'
     and n.channel_id = r.target_channel_id
     and n.occurred_at >= r.completed_at
-    and n.occurred_at < r.completed_at + interval '24 hours'
+    and n.occurred_at < r.completed_at + ($4::int * interval '1 hour')
   group by r.id
 ),
 job_raw as (
@@ -6639,8 +6768,12 @@ job_raw as (
     r.completed_at,
     coalesce(a.sent_sat, 0) as sent_sat,
     coalesce(a.fee_paid_sat, 0) as fee_paid_sat,
-    coalesce(f.forward_amount_sat, 0) as forward_amount_sat,
-    coalesce(f.forward_fee_msat, 0) as forward_fee_msat
+    coalesce(f.forward_24h_amount_sat, 0) as forward_24h_amount_sat,
+    coalesce(f.forward_24h_fee_msat, 0) as forward_24h_fee_msat,
+    coalesce(f.forward_window_amount_sat, 0) as forward_window_amount_sat,
+    coalesce(f.forward_window_fee_msat, 0) as forward_window_fee_msat,
+    coalesce(f.forward_slow_amount_sat, 0) as forward_slow_amount_sat,
+    coalesce(f.forward_slow_fee_msat, 0) as forward_slow_fee_msat
   from recent_jobs r
   left join attempt_totals a on a.id = r.id
   left join forward_totals f on f.id = r.id
@@ -6654,15 +6787,35 @@ job_economics as (
     sent_sat,
     fee_paid_sat,
     case
-      when sent_sat <= 0 or forward_amount_sat <= 0 then 0
-      when forward_amount_sat > sent_sat then sent_sat
-      else forward_amount_sat
-    end as attributed_forward_sat,
+      when sent_sat <= 0 or forward_24h_amount_sat <= 0 then 0
+      when forward_24h_amount_sat > sent_sat then sent_sat
+      else forward_24h_amount_sat
+    end as attributed_forward_24h_sat,
     case
-      when sent_sat <= 0 or forward_amount_sat <= 0 or forward_fee_msat <= 0 then 0
-      when forward_amount_sat > sent_sat then (forward_fee_msat * sent_sat) / forward_amount_sat
-      else forward_fee_msat
-    end as attributed_forward_fee_msat
+      when sent_sat <= 0 or forward_24h_amount_sat <= 0 or forward_24h_fee_msat <= 0 then 0
+      when forward_24h_amount_sat > sent_sat then (forward_24h_fee_msat * sent_sat) / forward_24h_amount_sat
+      else forward_24h_fee_msat
+    end as attributed_forward_24h_fee_msat,
+    case
+      when sent_sat <= 0 or forward_window_amount_sat <= 0 then 0
+      when forward_window_amount_sat > sent_sat then sent_sat
+      else forward_window_amount_sat
+    end as attributed_forward_window_sat,
+    case
+      when sent_sat <= 0 or forward_window_amount_sat <= 0 or forward_window_fee_msat <= 0 then 0
+      when forward_window_amount_sat > sent_sat then (forward_window_fee_msat * sent_sat) / forward_window_amount_sat
+      else forward_window_fee_msat
+    end as attributed_forward_window_fee_msat,
+    case
+      when sent_sat <= 0 or forward_slow_amount_sat <= 0 then 0
+      when forward_slow_amount_sat > sent_sat then sent_sat
+      else forward_slow_amount_sat
+    end as attributed_forward_slow_sat,
+    case
+      when sent_sat <= 0 or forward_slow_amount_sat <= 0 or forward_slow_fee_msat <= 0 then 0
+      when forward_slow_amount_sat > sent_sat then (forward_slow_fee_msat * sent_sat) / forward_slow_amount_sat
+      else forward_slow_fee_msat
+    end as attributed_forward_slow_fee_msat
   from job_raw
 )
 select
@@ -6676,11 +6829,15 @@ select
   count(*) filter (where sent_sat > 0) as sent_jobs,
   coalesce(sum(sent_sat), 0) as sent_sat,
   coalesce(sum(fee_paid_sat), 0) as fee_paid_sat,
-  coalesce(sum(attributed_forward_sat), 0) as attributed_forward_sat,
-  coalesce(sum(attributed_forward_fee_msat), 0)::bigint as attributed_forward_fee_msat
+  coalesce(sum(attributed_forward_24h_sat), 0) as attributed_forward_24h_sat,
+  coalesce(sum(attributed_forward_24h_fee_msat), 0)::bigint as attributed_forward_24h_fee_msat,
+  coalesce(sum(attributed_forward_window_sat), 0) as attributed_forward_window_sat,
+  coalesce(sum(attributed_forward_window_fee_msat), 0)::bigint as attributed_forward_window_fee_msat,
+  coalesce(sum(attributed_forward_slow_sat), 0) as attributed_forward_slow_sat,
+  coalesce(sum(attributed_forward_slow_fee_msat), 0)::bigint as attributed_forward_slow_fee_msat
 from job_economics
 group by target_channel_id
-`, ids, since)
+`, ids, since, attributionHours, slowHours)
 	if err != nil {
 		return summaries
 	}
@@ -6696,8 +6853,12 @@ group by target_channel_id
 		var sentJobs int64
 		var sentSat int64
 		var feePaidSat int64
-		var forwardSat int64
-		var forwardFeeMsat int64
+		var forward24hSat int64
+		var forward24hFeeMsat int64
+		var forwardWindowSat int64
+		var forwardWindowFeeMsat int64
+		var forwardSlowSat int64
+		var forwardSlowFeeMsat int64
 		if err := rows.Scan(
 			&targetID,
 			&attempts,
@@ -6709,8 +6870,12 @@ group by target_channel_id
 			&sentJobs,
 			&sentSat,
 			&feePaidSat,
-			&forwardSat,
-			&forwardFeeMsat,
+			&forward24hSat,
+			&forward24hFeeMsat,
+			&forwardWindowSat,
+			&forwardWindowFeeMsat,
+			&forwardSlowSat,
+			&forwardSlowFeeMsat,
 		); err != nil {
 			return summaries
 		}
@@ -6728,10 +6893,18 @@ group by target_channel_id
 		stat.RecentSentJobs = int(sentJobs)
 		stat.RecentSentSat = sentSat
 		stat.RecentRebalanceFeeSat = feePaidSat
-		stat.RecentForwardAmountSat = forwardSat
-		forwardFeeSat := forwardFeeMsat / 1000
-		stat.RecentForwardFeeSat = forwardFeeSat
-		stat.RecentRealizedNetSat = forwardFeeSat - feePaidSat
+		stat.RecentForward24hAmountSat = forward24hSat
+		forward24hFeeSat := forward24hFeeMsat / 1000
+		stat.RecentForward24hFeeSat = forward24hFeeSat
+		stat.RecentRealizedNet24hSat = forward24hFeeSat - feePaidSat
+		stat.RecentForwardAmountSat = forwardWindowSat
+		forwardWindowFeeSat := forwardWindowFeeMsat / 1000
+		stat.RecentForwardFeeSat = forwardWindowFeeSat
+		stat.RecentRealizedNetSat = forwardWindowFeeSat - feePaidSat
+		stat.RecentForwardSlowAmountSat = forwardSlowSat
+		forwardSlowFeeSat := forwardSlowFeeMsat / 1000
+		stat.RecentForwardSlowFeeSat = forwardSlowFeeSat
+		stat.RecentRealizedNetSlowSat = forwardSlowFeeSat - feePaidSat
 		if lastSuccess.Valid {
 			stat.RecentLastSuccessAt = lastSuccess.Time
 		}
@@ -6757,9 +6930,15 @@ func mergeRecentSovereignTargetStats(base map[uint64]rebalanceTargetPairStats, r
 		stat.RecentSentJobs = recentStat.RecentSentJobs
 		stat.RecentSentSat = recentStat.RecentSentSat
 		stat.RecentRebalanceFeeSat = recentStat.RecentRebalanceFeeSat
+		stat.RecentForward24hAmountSat = recentStat.RecentForward24hAmountSat
+		stat.RecentForward24hFeeSat = recentStat.RecentForward24hFeeSat
+		stat.RecentRealizedNet24hSat = recentStat.RecentRealizedNet24hSat
 		stat.RecentForwardAmountSat = recentStat.RecentForwardAmountSat
 		stat.RecentForwardFeeSat = recentStat.RecentForwardFeeSat
 		stat.RecentRealizedNetSat = recentStat.RecentRealizedNetSat
+		stat.RecentForwardSlowAmountSat = recentStat.RecentForwardSlowAmountSat
+		stat.RecentForwardSlowFeeSat = recentStat.RecentForwardSlowFeeSat
+		stat.RecentRealizedNetSlowSat = recentStat.RecentRealizedNetSlowSat
 		base[targetID] = stat
 	}
 }
@@ -7310,7 +7489,7 @@ group by target_channel_id
 	return stats
 }
 
-func (s *RebalanceService) loadSovereignUnsoldPaidLiquidityStats(ctx context.Context, targetIDs []uint64, now time.Time) map[uint64]sovereignUnsoldLiquidityStat {
+func (s *RebalanceService) loadSovereignUnsoldPaidLiquidityStats(ctx context.Context, cfg RebalanceConfig, targetIDs []uint64, now time.Time) map[uint64]sovereignUnsoldLiquidityStat {
 	stats := map[uint64]sovereignUnsoldLiquidityStat{}
 	if s.db == nil || len(targetIDs) == 0 {
 		return stats
@@ -7333,7 +7512,11 @@ func (s *RebalanceService) loadSovereignUnsoldPaidLiquidityStats(ctx context.Con
 	if now.IsZero() {
 		now = time.Now()
 	}
-	since := now.Add(-sovereignUnsoldPaidLiquidityLookback)
+	lookback := time.Duration(sovereignSlowSellerWindowHoursForConfig(cfg)) * time.Hour
+	if lookback < sovereignUnsoldPaidLiquidityLookback {
+		lookback = sovereignUnsoldPaidLiquidityLookback
+	}
+	since := now.Add(-lookback)
 	rows, err := s.db.Query(ctx, `
 with job_stats as (
   select
@@ -7403,7 +7586,7 @@ group by l.target_channel_id, l.completed_at, l.target_amount_sat, l.sent_sat, l
 			ForwardAmountSat: forwardAmountSat,
 			ForwardFeeSat:    forwardFeeMsat / 1000,
 		}
-		if hasSovereignUnsoldPaidLiquidity(stat, now) {
+		if hasSovereignUnsoldPaidLiquidity(stat, cfg, now) {
 			stats[uint64(channelID)] = stat
 		}
 	}
@@ -7882,6 +8065,17 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 	if sourceFloorPct <= 0 || sourceFloorPct > 100 {
 		sourceFloorPct = rebalanceDefaultTargetOutboundPct
 	}
+	sourceOpportunityCost := int64(0)
+	if cfg.SovereignSourceOpportunityCostEnabled && (setting.AutoEnabled || setting.ManualRestartEnabled) {
+		sourceOpportunityCost = revenue7dSat
+		targetSourceFloorPct := target + sovereignSourceOpportunityTargetBufferPct
+		if targetSourceFloorPct > 100 {
+			targetSourceFloorPct = 100
+		}
+		if targetSourceFloorPct > sourceFloorPct {
+			sourceFloorPct = targetSourceFloorPct
+		}
+	}
 	maxSource := int64(float64(ch.LocalBalanceSat) - (float64(ch.CapacitySat) * (sourceFloorPct / 100)))
 	if maxSource < 0 {
 		maxSource = 0
@@ -7906,6 +8100,24 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 	maxSource -= effectiveProtected
 	if maxSource < 0 {
 		maxSource = 0
+	}
+	sourceQuarantined := false
+	sourceQuarantineUntil := ""
+	if protected > 0 {
+		quarantine := sovereignTargetSourceQuarantineDuration(cfg)
+		if quarantine > 0 && !lastRebalance.IsZero() {
+			now := time.Now()
+			until := lastRebalance.Add(quarantine)
+			paybackThreshold := cfg.SourceMinPaybackProgress
+			if paybackThreshold <= 0 {
+				paybackThreshold = defaultRebalanceConfig().SourceMinPaybackProgress
+			}
+			if now.Before(until) && (freshProtected > 0 || paybackProgress < paybackThreshold) {
+				sourceQuarantined = true
+				sourceQuarantineUntil = until.UTC().Format(time.RFC3339)
+				maxSource = 0
+			}
+		}
 	}
 	if maxSource <= 0 || !ch.Active {
 		eligibleSource = false
@@ -7971,6 +8183,9 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		ROIEstimate:            roiEstimate,
 		ROIEstimateValid:       roiEstimateValid,
 		ExcludedAsSource:       excluded,
+		SourceQuarantined:      sourceQuarantined,
+		SourceQuarantineUntil:  sourceQuarantineUntil,
+		SourceOpportunityCost:  sourceOpportunityCost,
 	}
 }
 
@@ -8523,14 +8738,15 @@ func applySovereignRiskAdjustedScores(candidates []rebalanceTarget, cfg Rebalanc
 		successMul := sovereignSuccessScoreMultiplier(candidates[i].PairStats, cfg)
 		roiMul := sovereignROIScoreMultiplier(candidates[i].ExpectedROI, candidates[i].ExpectedROIValid, cfg)
 		budgetMul := sovereignBudgetEfficiencyScoreMultiplier(candidates[i])
-		unsoldMul := sovereignUnsoldPaidLiquidityScoreMultiplier(candidates[i].UnsoldLiquidity, scanAt)
+		unsoldMul := sovereignUnsoldPaidLiquidityScoreMultiplier(candidates[i].UnsoldLiquidity, cfg, scanAt)
 		realizedMul := sovereignRealizedEconomicsScoreMultiplier(candidates[i].PairStats)
+		classMul := sovereignTargetClassScoreMultiplier(candidates[i].TargetClass, cfg)
 		candidates[i].SuccessMultiplier = successMul
 		candidates[i].ROIMultiplier = roiMul
 		candidates[i].BudgetEfficiencyMultiplier = budgetMul
 		candidates[i].UnsoldLiquidityMultiplier = unsoldMul
 		candidates[i].RealizedEconomicsMultiplier = realizedMul
-		multiplier := successMul * roiMul * budgetMul * unsoldMul * realizedMul
+		multiplier := successMul * roiMul * budgetMul * unsoldMul * realizedMul * classMul
 		if math.IsNaN(multiplier) || math.IsInf(multiplier, 0) || multiplier <= 0 {
 			continue
 		}
@@ -8540,6 +8756,41 @@ func applySovereignRiskAdjustedScores(candidates []rebalanceTarget, cfg Rebalanc
 		}
 		candidates[i].Score = score
 	}
+}
+
+func classifySovereignTarget(stats rebalanceTargetPairStats, cfg RebalanceConfig) string {
+	if !stats.RecentStatsLoaded || stats.RecentAttempts == 0 {
+		return sovereignTargetClassExploration
+	}
+	if cfg.SovereignSlowSellerEnabled && stats.RecentSentSat > 0 && stats.RecentRealizedNetSlowSat > 0 {
+		if stats.RecentRealizedNet24hSat < stats.RecentRealizedNetSlowSat || stats.RecentForwardSlowAmountSat > stats.RecentForward24hAmountSat {
+			return sovereignTargetClassSlowHighMargin
+		}
+	}
+	if stats.RecentSentSat > 0 && stats.RecentRealizedNet24hSat >= 0 && stats.RecentForward24hAmountSat*100 >= stats.RecentSentSat*sovereignUnsoldPaidLiquidityMinForwardPct {
+		return sovereignTargetClassFastSeller
+	}
+	if stats.RecentSentSat > 0 && stats.RecentForwardSlowAmountSat == 0 && stats.RecentFailures >= sovereignRecentEmpiricalDeadMinJobs {
+		return sovereignTargetClassColdOrDead
+	}
+	if stats.RecentSuccesses == 0 && stats.RecentFailures >= sovereignRecentEmpiricalDeadMinJobs {
+		return sovereignTargetClassColdOrDead
+	}
+	return sovereignTargetClassExploration
+}
+
+func sovereignTargetClassScoreMultiplier(class string, cfg RebalanceConfig) float64 {
+	switch class {
+	case sovereignTargetClassSlowHighMargin:
+		if cfg.SovereignSlowSellerEnabled {
+			return 1.20
+		}
+	case sovereignTargetClassFastSeller:
+		return 1.10
+	case sovereignTargetClassColdOrDead:
+		return 0.65
+	}
+	return 1
 }
 
 func shouldSkipSovereignLowSuccessOpportunity(stats rebalanceTargetPairStats, expectedProfitSat int64, estimatedCostSat int64, budgetCostSat int64, cfg RebalanceConfig, now time.Time) bool {
@@ -8671,8 +8922,8 @@ func sovereignTargetStructuralCooldownDuration(failures int) time.Duration {
 	return sovereignTargetStructuralCooldownFirst
 }
 
-func shouldSkipSovereignUnsoldPaidLiquidity(stat sovereignUnsoldLiquidityStat, now time.Time) bool {
-	if !hasSovereignUnsoldPaidLiquidity(stat, now) {
+func shouldSkipSovereignUnsoldPaidLiquidity(stat sovereignUnsoldLiquidityStat, cfg RebalanceConfig, now time.Time) bool {
+	if !hasSovereignUnsoldPaidLiquidity(stat, cfg, now) {
 		return false
 	}
 	if now.IsZero() {
@@ -8682,10 +8933,14 @@ func shouldSkipSovereignUnsoldPaidLiquidity(stat sovereignUnsoldLiquidityStat, n
 	if age < sovereignUnsoldPaidLiquidityHardAge {
 		return true
 	}
+	attributionWindow := time.Duration(sovereignAttributionWindowHoursForConfig(cfg)) * time.Hour
+	if age < attributionWindow {
+		return false
+	}
 	return isSevereSovereignUnsoldPaidLiquidity(stat)
 }
 
-func hasSovereignUnsoldPaidLiquidity(stat sovereignUnsoldLiquidityStat, now time.Time) bool {
+func hasSovereignUnsoldPaidLiquidity(stat sovereignUnsoldLiquidityStat, cfg RebalanceConfig, now time.Time) bool {
 	if stat.CompletedAt.IsZero() || stat.SentSat <= 0 {
 		return false
 	}
@@ -8693,7 +8948,11 @@ func hasSovereignUnsoldPaidLiquidity(stat sovereignUnsoldLiquidityStat, now time
 		now = time.Now()
 	}
 	age := now.Sub(stat.CompletedAt)
-	if age < sovereignUnsoldPaidLiquidityMinAge || age > sovereignUnsoldPaidLiquidityLookback {
+	lookback := time.Duration(sovereignSlowSellerWindowHoursForConfig(cfg)) * time.Hour
+	if lookback < sovereignUnsoldPaidLiquidityLookback {
+		lookback = sovereignUnsoldPaidLiquidityLookback
+	}
+	if age < sovereignUnsoldPaidLiquidityMinAge || age > lookback {
 		return false
 	}
 	if stat.ForwardAmountSat*100 >= stat.SentSat*sovereignUnsoldPaidLiquidityMinForwardPct {
@@ -8714,11 +8973,11 @@ func isSevereSovereignUnsoldPaidLiquidity(stat sovereignUnsoldLiquidityStat) boo
 		paybackPct < sovereignUnsoldPaidLiquiditySeverePaybackPct
 }
 
-func sovereignUnsoldPaidLiquidityScoreMultiplier(stat sovereignUnsoldLiquidityStat, now time.Time) float64 {
-	if !hasSovereignUnsoldPaidLiquidity(stat, now) {
+func sovereignUnsoldPaidLiquidityScoreMultiplier(stat sovereignUnsoldLiquidityStat, cfg RebalanceConfig, now time.Time) float64 {
+	if !hasSovereignUnsoldPaidLiquidity(stat, cfg, now) {
 		return 1
 	}
-	if shouldSkipSovereignUnsoldPaidLiquidity(stat, now) {
+	if shouldSkipSovereignUnsoldPaidLiquidity(stat, cfg, now) {
 		return 0.1
 	}
 	if now.IsZero() {
@@ -8740,7 +8999,11 @@ func sovereignUnsoldPaidLiquidityScoreMultiplier(stat sovereignUnsoldLiquiditySt
 	if recovery > 1 {
 		recovery = 1
 	}
-	ageSpan := sovereignUnsoldPaidLiquidityLookback - sovereignUnsoldPaidLiquidityHardAge
+	lookback := time.Duration(sovereignSlowSellerWindowHoursForConfig(cfg)) * time.Hour
+	if lookback < sovereignUnsoldPaidLiquidityLookback {
+		lookback = sovereignUnsoldPaidLiquidityLookback
+	}
+	ageSpan := lookback - sovereignUnsoldPaidLiquidityHardAge
 	ageProgress := 0.0
 	if ageSpan > 0 {
 		ageProgress = float64(age-sovereignUnsoldPaidLiquidityHardAge) / float64(ageSpan)
@@ -9390,6 +9653,11 @@ end $$;
     sovereign_budget_efficiency_min_ratio double precision not null default 0.5,
     sovereign_route_dead_source_share double precision not null default 0.2,
     sovereign_risk_score_floor double precision not null default 0.02,
+    sovereign_attribution_window_hours integer not null default 72,
+    sovereign_slow_seller_window_hours integer not null default 168,
+    sovereign_target_source_quarantine_hours integer not null default 6,
+    sovereign_source_opportunity_cost_enabled boolean not null default true,
+    sovereign_slow_seller_enabled boolean not null default true,
     scan_interval_sec integer not null default 900,
     deadband_pct double precision not null default 5,
     source_min_local_pct double precision not null default 35,
@@ -9461,6 +9729,16 @@ end $$;
     add column if not exists sovereign_route_dead_source_share double precision not null default 0.2;
   alter table rebalance_config
     add column if not exists sovereign_risk_score_floor double precision not null default 0.02;
+  alter table rebalance_config
+    add column if not exists sovereign_attribution_window_hours integer not null default 72;
+  alter table rebalance_config
+    add column if not exists sovereign_slow_seller_window_hours integer not null default 168;
+  alter table rebalance_config
+    add column if not exists sovereign_target_source_quarantine_hours integer not null default 6;
+  alter table rebalance_config
+    add column if not exists sovereign_source_opportunity_cost_enabled boolean not null default true;
+  alter table rebalance_config
+    add column if not exists sovereign_slow_seller_enabled boolean not null default true;
   alter table rebalance_config
     add column if not exists source_min_local_pct double precision not null default 35;
   alter table rebalance_config
@@ -9566,6 +9844,16 @@ end $$;
     alter column sovereign_route_dead_source_share set default 0.2;
   alter table rebalance_config
     alter column sovereign_risk_score_floor set default 0.02;
+  alter table rebalance_config
+    alter column sovereign_attribution_window_hours set default 72;
+  alter table rebalance_config
+    alter column sovereign_slow_seller_window_hours set default 168;
+  alter table rebalance_config
+    alter column sovereign_target_source_quarantine_hours set default 6;
+  alter table rebalance_config
+    alter column sovereign_source_opportunity_cost_enabled set default true;
+  alter table rebalance_config
+    alter column sovereign_slow_seller_enabled set default true;
   alter table rebalance_config
     alter column scan_interval_sec set default 900;
   alter table rebalance_config
@@ -9886,7 +10174,8 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
   select auto_enabled, scheduler_mode, sovereign_candidate_scope, sovereign_max_jobs_per_cycle, sovereign_min_expected_profit_sat, sovereign_low_success_min_rate, sovereign_low_success_min_profit_cost_ratio, sovereign_budget_efficiency_min_ratio, sovereign_route_dead_source_share, sovereign_risk_score_floor, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_unlimited, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags, fresh_paid_liquidity_lock_enabled, fresh_paid_liquidity_lock_hours,
-    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback
+    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback,
+    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled
   from rebalance_config where id=$1`, rebalanceConfigID)
 
 	cfg := defaultRebalanceConfig()
@@ -9954,6 +10243,11 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.AutofeeSettlingMultiplier,
 		&cfg.DelegatedFastPathEnabled,
 		&cfg.DelegatedFastPathStrictPayback,
+		&cfg.SovereignAttributionWindowHours,
+		&cfg.SovereignSlowSellerWindowHours,
+		&cfg.SovereignTargetSourceQuarantineHours,
+		&cfg.SovereignSourceOpportunityCostEnabled,
+		&cfg.SovereignSlowSellerEnabled,
 	)
 	if err != nil {
 		return cfg, err
@@ -9976,8 +10270,9 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     id, auto_enabled, scheduler_mode, sovereign_candidate_scope, sovereign_max_jobs_per_cycle, sovereign_min_expected_profit_sat, sovereign_low_success_min_rate, sovereign_low_success_min_profit_cost_ratio, sovereign_budget_efficiency_min_ratio, sovereign_route_dead_source_share, sovereign_risk_score_floor, scan_interval_sec, deadband_pct, source_min_local_pct, econ_ratio, econ_ratio_max_ppm, fee_limit_ppm, lost_profit, fail_tolerance_ppm, roi_min, daily_budget_pct, budget_mode, budget_unlimited, budget_auto_only, manual_reserve_enabled, manual_reserve_mode, manual_reserve_value,
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags, fresh_paid_liquidity_lock_enabled, fresh_paid_liquidity_lock_hours,
-    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback, updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,now())
+    unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback,
+    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, updated_at
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scheduler_mode = excluded.scheduler_mode,
@@ -10042,9 +10337,14 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     autofee_settling_multiplier = excluded.autofee_settling_multiplier,
     delegated_fast_path_enabled = excluded.delegated_fast_path_enabled,
     delegated_fast_path_strict_payback = excluded.delegated_fast_path_strict_payback,
+    sovereign_attribution_window_hours = excluded.sovereign_attribution_window_hours,
+    sovereign_slow_seller_window_hours = excluded.sovereign_slow_seller_window_hours,
+    sovereign_target_source_quarantine_hours = excluded.sovereign_target_source_quarantine_hours,
+    sovereign_source_opportunity_cost_enabled = excluded.sovereign_source_opportunity_cost_enabled,
+    sovereign_slow_seller_enabled = excluded.sovereign_slow_seller_enabled,
     updated_at = now()
   `, rebalanceConfigID, cfg.AutoEnabled, cfg.SchedulerMode, cfg.SovereignCandidateScope, cfg.SovereignMaxJobsPerCycle, cfg.SovereignMinExpectedProfitSat, cfg.SovereignLowSuccessMinRate, cfg.SovereignLowSuccessMinProfitCostRatio, cfg.SovereignBudgetEfficiencyMinRatio, cfg.SovereignRouteDeadSourceShare, cfg.SovereignRiskScoreFloor, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetUnlimited, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
-		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.FreshPaidLiquidityLockEnabled, cfg.FreshPaidLiquidityLockHours, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback,
+		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.FreshPaidLiquidityLockEnabled, cfg.FreshPaidLiquidityLockHours, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback, cfg.SovereignAttributionWindowHours, cfg.SovereignSlowSellerWindowHours, cfg.SovereignTargetSourceQuarantineHours, cfg.SovereignSourceOpportunityCostEnabled, cfg.SovereignSlowSellerEnabled,
 	)
 	return err
 }
@@ -11279,7 +11579,7 @@ select
 	}, nil
 }
 
-func (s *RebalanceService) fetchSovereignAutopilotEconomics7d(ctx context.Context) (rebalanceAutopilotEconomics7d, error) {
+func (s *RebalanceService) fetchSovereignAutopilotEconomics7d(ctx context.Context, cfg RebalanceConfig) (rebalanceAutopilotEconomics7d, error) {
 	if s.db == nil {
 		return rebalanceAutopilotEconomics7d{}, nil
 	}
@@ -11287,6 +11587,7 @@ func (s *RebalanceService) fetchSovereignAutopilotEconomics7d(ctx context.Contex
 	var costSat int64
 	var forwardSat int64
 	var forwardFeeMsat int64
+	attributionHours := sovereignAttributionWindowHoursForConfig(cfg)
 	err := s.db.QueryRow(ctx, `
 with jobs as (
   select id, target_channel_id, completed_at
@@ -11313,7 +11614,7 @@ forward_totals as (
   left join notifications n on n.type='forward'
     and n.channel_id = j.target_channel_id
     and n.occurred_at >= j.completed_at
-    and n.occurred_at < j.completed_at + interval '24 hours'
+    and n.occurred_at < j.completed_at + ($2::int * interval '1 hour')
   group by j.id
 ),
 job_raw as (
@@ -11348,7 +11649,7 @@ select
   coalesce(sum(attributed_forward_sat), 0) as forward_sat,
   coalesce(sum(attributed_forward_fee_msat), 0)::bigint as forward_fee_msat
 from job_economics
-`, rebalanceSovereignReason).Scan(&sentSat, &costSat, &forwardSat, &forwardFeeMsat)
+`, rebalanceSovereignReason, attributionHours).Scan(&sentSat, &costSat, &forwardSat, &forwardFeeMsat)
 	if err != nil {
 		return rebalanceAutopilotEconomics7d{}, err
 	}
@@ -11816,7 +12117,7 @@ where report_date >= current_date - interval '6 days'
 	if telemetry, err := s.fetchAttemptTelemetry24h(ctx, effectiveMinExecuteSat(cfg)); err == nil {
 		attemptTelemetry = telemetry
 	}
-	if economics, err := s.fetchSovereignAutopilotEconomics7d(ctx); err == nil {
+	if economics, err := s.fetchSovereignAutopilotEconomics7d(ctx, cfg); err == nil {
 		sovereignEconomics7d = economics
 	}
 	fastPathAttempts24h, fastPathSuccesses24h := s.fetchFastPathTelemetry24h(ctx)

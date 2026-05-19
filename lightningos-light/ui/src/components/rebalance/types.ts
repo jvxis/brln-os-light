@@ -9,6 +9,11 @@ export type RebalanceConfig = {
   sovereign_budget_efficiency_min_ratio: number
   sovereign_route_dead_source_share: number
   sovereign_risk_score_floor: number
+  sovereign_attribution_window_hours: number
+  sovereign_slow_seller_window_hours: number
+  sovereign_target_source_quarantine_hours: number
+  sovereign_source_opportunity_cost_enabled: boolean
+  sovereign_slow_seller_enabled: boolean
   scan_interval_sec: number
   deadband_pct: number
   source_min_local_pct: number
@@ -84,8 +89,17 @@ export type RebalanceSovereignDecision = {
   recent_structural_failures?: number
   recent_rebalance_sent_sat?: number
   recent_rebalance_target_sat?: number
+  target_class?: string
+  attribution_window_hours?: number
+  slow_seller_window_hours?: number
+  recent_forward_24h_sat?: number
+  recent_forward_fee_24h_sat?: number
+  recent_realized_net_24h_sat?: number
   recent_forwarded_after_sat?: number
   recent_forward_fee_after_sat?: number
+  recent_forward_slow_sat?: number
+  recent_forward_fee_slow_sat?: number
+  recent_realized_net_slow_sat?: number
   recent_realized_sent_sat?: number
   recent_realized_forward_sat?: number
   recent_realized_fee_sat?: number
@@ -292,6 +306,9 @@ export type RebalanceChannel = {
   roi_estimate: number
   roi_estimate_valid?: boolean
   excluded_as_source: boolean
+  source_quarantined?: boolean
+  source_quarantine_until?: string
+  source_opportunity_cost_sat?: number
 }
 
 export type RebalanceJob = {

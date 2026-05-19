@@ -28,44 +28,45 @@ func TestShouldContinuePaymentsCatchup(t *testing.T) {
 	}
 }
 
-func TestShouldMirrorTelegramActivitySuppressesHistoricalBacklog(t *testing.T) {
-	startedAt := time.Date(2026, time.January, 23, 13, 33, 0, 0, time.UTC)
-	now := startedAt
-	evt := Notification{
-		OccurredAt: startedAt.Add(-10 * time.Minute),
+func TestShouldSuppressHistoricalTelegramRebalanceMirror(t *testing.T) {
+	now := time.Date(2026, time.January, 23, 13, 33, 0, 0, time.UTC)
+	oldRebalance := Notification{
+		OccurredAt: now.Add(-10 * time.Minute),
 		Type:       "rebalance",
 		Action:     "rebalanced",
-		Status:     "SUCCEEDED",
+		Status:     "SETTLED",
 	}
 
-	if shouldMirrorTelegramActivityAt(evt, startedAt, now, true, false, "", "", "", notificationUpsertOptions{}) {
-		t.Fatal("did not expect historical inserted event to mirror to Telegram")
+	if !shouldSuppressHistoricalTelegramRebalanceMirror(oldRebalance, now, true, false, "", "") {
+		t.Fatal("expected old inserted rebalance to be suppressed")
 	}
-	if shouldMirrorTelegramActivityAt(evt, startedAt, now, false, true, "SETTLED", "lightning", "sent", notificationUpsertOptions{}) {
-		t.Fatal("did not expect historical type/action update to mirror to Telegram")
+	if !shouldSuppressHistoricalTelegramRebalanceMirror(oldRebalance, now, false, true, "lightning", "sent") {
+		t.Fatal("expected old lightning-to-rebalance conversion to be suppressed")
 	}
-	if !shouldMirrorTelegramActivityAt(evt, startedAt, now, false, true, "IN_FLIGHT", "rebalance", "rebalanced", notificationUpsertOptions{}) {
-		t.Fatal("expected historical status-only update to mirror to Telegram")
+	if shouldSuppressHistoricalTelegramRebalanceMirror(oldRebalance, now, false, true, "rebalance", "rebalanced") {
+		t.Fatal("did not expect old status-only rebalance update to be suppressed")
 	}
 }
 
-func TestShouldMirrorTelegramActivityAllowsLiveChanges(t *testing.T) {
-	startedAt := time.Date(2026, time.January, 23, 13, 33, 0, 0, time.UTC)
-	now := startedAt
-	evt := Notification{
-		OccurredAt: startedAt.Add(-time.Minute),
+func TestShouldSuppressHistoricalTelegramRebalanceMirrorDoesNotAffectLiveOrForwards(t *testing.T) {
+	now := time.Date(2026, time.January, 23, 13, 33, 0, 0, time.UTC)
+	liveRebalance := Notification{
+		OccurredAt: now.Add(-time.Minute),
 		Type:       "rebalance",
 		Action:     "rebalanced",
-		Status:     "SUCCEEDED",
+		Status:     "SETTLED",
+	}
+	oldForward := Notification{
+		OccurredAt: now.Add(-10 * time.Minute),
+		Type:       "forward",
+		Action:     "forwarded",
+		Status:     "SETTLED",
 	}
 
-	if !shouldMirrorTelegramActivityAt(evt, startedAt, now, true, false, "", "", "", notificationUpsertOptions{}) {
-		t.Fatal("expected live inserted event to mirror to Telegram")
+	if shouldSuppressHistoricalTelegramRebalanceMirror(liveRebalance, now, true, false, "", "") {
+		t.Fatal("did not expect live rebalance to be suppressed")
 	}
-	if !shouldMirrorTelegramActivityAt(evt, startedAt, now, false, true, "IN_FLIGHT", "rebalance", "rebalanced", notificationUpsertOptions{}) {
-		t.Fatal("expected live status update to mirror to Telegram")
-	}
-	if shouldMirrorTelegramActivityAt(evt, startedAt, now, true, false, "", "", "", notificationUpsertOptions{suppressMirror: true}) {
-		t.Fatal("did not expect explicitly suppressed event to mirror to Telegram")
+	if shouldSuppressHistoricalTelegramRebalanceMirror(oldForward, now, true, false, "", "") {
+		t.Fatal("did not expect non-rebalance event to be suppressed")
 	}
 }

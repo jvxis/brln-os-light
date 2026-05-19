@@ -39,7 +39,6 @@ const (
 	telegramActivityMirrorSendTimeout = 1 * time.Second
 	telegramActivityMirrorLiveGrace   = 2 * time.Minute
 	invoiceCatchupLiveGrace           = 2 * time.Minute
-	notificationPaymentLookupLookback = 48 * time.Hour
 )
 
 const (
@@ -739,35 +738,35 @@ limit 1
 
 	n.cleanupIfNeeded()
 	n.broadcast(stored)
-	if shouldMirrorTelegramActivity(stored, n.startedAt, inserted, hadPrev, prevStatus, prevType, prevAction, opts) {
+	shouldMirror := inserted
+	if !shouldMirror && hadPrev {
+		changedStatus := !strings.EqualFold(strings.TrimSpace(prevStatus), strings.TrimSpace(stored.Status))
+		changedType := !strings.EqualFold(strings.TrimSpace(prevType), strings.TrimSpace(stored.Type))
+		changedAction := !strings.EqualFold(strings.TrimSpace(prevAction), strings.TrimSpace(stored.Action))
+		shouldMirror = changedStatus || changedType || changedAction
+	}
+	if shouldMirror && !opts.suppressMirror && !shouldSuppressHistoricalTelegramRebalanceMirror(stored, time.Now().UTC(), inserted, hadPrev, prevType, prevAction) {
 		n.enqueueTelegramActivityMirror(stored)
 	}
 	return stored, nil
 }
 
-func shouldMirrorTelegramActivity(evt Notification, startedAt time.Time, inserted, hadPrev bool, prevStatus, prevType, prevAction string, opts notificationUpsertOptions) bool {
-	return shouldMirrorTelegramActivityAt(evt, startedAt, time.Now().UTC(), inserted, hadPrev, prevStatus, prevType, prevAction, opts)
-}
-
-func shouldMirrorTelegramActivityAt(evt Notification, startedAt, now time.Time, inserted, hadPrev bool, prevStatus, prevType, prevAction string, opts notificationUpsertOptions) bool {
-	if opts.suppressMirror {
+func shouldSuppressHistoricalTelegramRebalanceMirror(evt Notification, now time.Time, inserted, hadPrev bool, prevType, prevAction string) bool {
+	if evt.Type != "rebalance" {
 		return false
 	}
-	isBacklog := notificationIsHistoricalCatchup(startedAt, evt.OccurredAt, telegramActivityMirrorLiveGrace) ||
-		notificationIsHistoricalCatchup(now, evt.OccurredAt, telegramActivityMirrorLiveGrace)
+	if !notificationIsHistoricalCatchup(now, evt.OccurredAt, telegramActivityMirrorLiveGrace) {
+		return false
+	}
 	if inserted {
-		return !isBacklog
+		return true
 	}
 	if !hadPrev {
 		return false
 	}
-	changedStatus := !strings.EqualFold(strings.TrimSpace(prevStatus), strings.TrimSpace(evt.Status))
 	changedType := !strings.EqualFold(strings.TrimSpace(prevType), strings.TrimSpace(evt.Type))
 	changedAction := !strings.EqualFold(strings.TrimSpace(prevAction), strings.TrimSpace(evt.Action))
-	if isBacklog && (changedType || changedAction) {
-		return false
-	}
-	return changedStatus || changedType || changedAction
+	return changedType || changedAction
 }
 
 func notificationIsHistoricalCatchup(startedAt, occurredAt time.Time, grace time.Duration) bool {
@@ -2449,9 +2448,6 @@ func (n *Notifier) lookupPaymentByHash(ctx context.Context, paymentHash string) 
 	if normalized == "" {
 		return nil, nil
 	}
-	if n == nil || n.lnd == nil {
-		return nil, errors.New("lnd unavailable")
-	}
 
 	conn, err := n.lnd.DialLightning(ctx)
 	if err != nil {
@@ -2477,7 +2473,7 @@ func (n *Notifier) lookupPaymentByHash(ctx context.Context, paymentHash string) 
 			return pay, nil
 		}
 	}
-	return n.lnd.LookupPayment(ctx, normalized, notificationPaymentLookupLookback)
+	return nil, nil
 }
 
 func (n *Notifier) rebalanceRouteInfo(ctx context.Context, pay *lnrpc.Payment) *rebalanceRouteInfo {

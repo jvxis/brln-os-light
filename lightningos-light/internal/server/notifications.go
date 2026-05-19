@@ -39,6 +39,7 @@ const (
 	telegramActivityMirrorSendTimeout = 1 * time.Second
 	telegramActivityMirrorLiveGrace   = 2 * time.Minute
 	invoiceCatchupLiveGrace           = 2 * time.Minute
+	notificationPaymentLookupLookback = 48 * time.Hour
 )
 
 const (
@@ -745,14 +746,17 @@ limit 1
 }
 
 func shouldMirrorTelegramActivity(evt Notification, startedAt time.Time, inserted, hadPrev bool, prevStatus, prevType, prevAction string, opts notificationUpsertOptions) bool {
+	return shouldMirrorTelegramActivityAt(evt, startedAt, time.Now().UTC(), inserted, hadPrev, prevStatus, prevType, prevAction, opts)
+}
+
+func shouldMirrorTelegramActivityAt(evt Notification, startedAt, now time.Time, inserted, hadPrev bool, prevStatus, prevType, prevAction string, opts notificationUpsertOptions) bool {
 	if opts.suppressMirror {
 		return false
 	}
-	if notificationIsHistoricalCatchup(startedAt, evt.OccurredAt, telegramActivityMirrorLiveGrace) {
-		return false
-	}
+	isBacklog := notificationIsHistoricalCatchup(startedAt, evt.OccurredAt, telegramActivityMirrorLiveGrace) ||
+		notificationIsHistoricalCatchup(now, evt.OccurredAt, telegramActivityMirrorLiveGrace)
 	if inserted {
-		return true
+		return !isBacklog
 	}
 	if !hadPrev {
 		return false
@@ -760,6 +764,9 @@ func shouldMirrorTelegramActivity(evt Notification, startedAt time.Time, inserte
 	changedStatus := !strings.EqualFold(strings.TrimSpace(prevStatus), strings.TrimSpace(evt.Status))
 	changedType := !strings.EqualFold(strings.TrimSpace(prevType), strings.TrimSpace(evt.Type))
 	changedAction := !strings.EqualFold(strings.TrimSpace(prevAction), strings.TrimSpace(evt.Action))
+	if isBacklog && (changedType || changedAction) {
+		return false
+	}
 	return changedStatus || changedType || changedAction
 }
 
@@ -2442,6 +2449,9 @@ func (n *Notifier) lookupPaymentByHash(ctx context.Context, paymentHash string) 
 	if normalized == "" {
 		return nil, nil
 	}
+	if n == nil || n.lnd == nil {
+		return nil, errors.New("lnd unavailable")
+	}
 
 	conn, err := n.lnd.DialLightning(ctx)
 	if err != nil {
@@ -2467,7 +2477,7 @@ func (n *Notifier) lookupPaymentByHash(ctx context.Context, paymentHash string) 
 			return pay, nil
 		}
 	}
-	return nil, nil
+	return n.lnd.LookupPayment(ctx, normalized, notificationPaymentLookupLookback)
 }
 
 func (n *Notifier) rebalanceRouteInfo(ctx context.Context, pay *lnrpc.Payment) *rebalanceRouteInfo {

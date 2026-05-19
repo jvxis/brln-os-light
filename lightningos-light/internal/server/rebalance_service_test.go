@@ -1231,6 +1231,34 @@ func TestPreferredDelegatedFastPathSourceIDsPrioritizesRecentPairSuccess(t *test
 	}
 }
 
+func TestHasPreferredFastPathRouteProofRequiresRecentUsableSuccess(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	sourceIDs := []uint64{1, 2, 3}
+	pairStats := map[uint64]pairStat{
+		1: {
+			LastSuccessAt: now.Add(-pairSuccessTTL - time.Minute),
+		},
+		2: {
+			LastSuccessAt: now.Add(-10 * time.Minute),
+			LastFailAt:    now.Add(-5 * time.Minute),
+		},
+	}
+	if hasPreferredFastPathRouteProof(pairStats, sourceIDs, now) {
+		t.Fatalf("did not expect stale or superseded pair success to enable preferred fast-path")
+	}
+
+	pairStats[3] = pairStat{
+		LastSuccessAt: now.Add(-10 * time.Minute),
+		LastFailAt:    now.Add(-20 * time.Minute),
+	}
+	if !hasPreferredFastPathRouteProof(pairStats, sourceIDs, now) {
+		t.Fatalf("expected recent pair success to enable preferred fast-path")
+	}
+	if hasPreferredFastPathRouteProof(pairStats, []uint64{1, 2}, now) {
+		t.Fatalf("did not expect route proof from an ineligible source to enable preferred fast-path")
+	}
+}
+
 func TestTargetCooldownProbeHelpers(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	if !shouldRunTargetCooldownProbe(time.Time{}, now) {

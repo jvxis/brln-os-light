@@ -262,7 +262,7 @@ const (
 	sovereignTargetClassExploration             = "exploration"
 	fastPathPreferredMaxSources                 = 8
 	fastPathPreferredMinSources                 = 4
-	fastPathPreferredTimeoutSec                 = int32(45)
+	fastPathPreferredTimeoutSec                 = int32(20)
 )
 
 const (
@@ -2006,6 +2006,38 @@ func preferredFastPathTimeout(totalTimeoutSec int32) int32 {
 	return fastPathPreferredTimeoutSec
 }
 
+func pairStatHasRecentSuccess(stat pairStat, now time.Time) bool {
+	if stat.LastSuccessAt.IsZero() {
+		return false
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if now.Sub(stat.LastSuccessAt) > pairSuccessTTL {
+		return false
+	}
+	return stat.LastFailAt.IsZero() || stat.LastSuccessAt.After(stat.LastFailAt)
+}
+
+func hasPreferredFastPathRouteProof(pairStats map[uint64]pairStat, sourceIDs []uint64, now time.Time) bool {
+	if len(pairStats) == 0 || len(sourceIDs) == 0 {
+		return false
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	for _, sourceID := range sourceIDs {
+		stat, ok := pairStats[sourceID]
+		if !ok {
+			continue
+		}
+		if pairStatHasRecentSuccess(stat, now) && !shouldSkipPairForRecentFailure(stat, now) {
+			return true
+		}
+	}
+	return false
+}
+
 func preferredDelegatedFastPathSourceIDs(sources []RebalanceChannel, sourceAvailable map[uint64]int64, pairStats map[uint64]pairStat, amountSat int64, minExecuteSat int64, strictPayback bool, maxSources int, now time.Time) []uint64 {
 	if maxSources <= 0 || len(sources) == 0 {
 		return nil
@@ -2035,12 +2067,7 @@ func preferredDelegatedFastPathSourceIDs(sources []RebalanceChannel, sourceAvail
 		if !ok {
 			return false, false, 0, 0, 0, 0, 0
 		}
-		hasRecentSuccess := false
-		if !stat.LastSuccessAt.IsZero() && now.Sub(stat.LastSuccessAt) <= pairSuccessTTL {
-			if stat.LastFailAt.IsZero() || stat.LastSuccessAt.After(stat.LastFailAt) {
-				hasRecentSuccess = true
-			}
-		}
+		hasRecentSuccess := pairStatHasRecentSuccess(stat, now)
 		hasRecentFail := shouldSkipPairForRecentFailure(stat, now)
 		permanentFailScore := decayedPermanentFailScore(stat.PermanentFailScore, stat.PermanentFailUpdated, now)
 		successAge := time.Duration(0)
@@ -4159,8 +4186,9 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 
 	preferredCount := preferredFastPathSourceCount(len(sourceIDs), maxParts)
 	preferredIDs := []uint64(nil)
-	if preferredCount > 0 && preferredCount < len(sourceIDs) {
-		preferredIDs = preferredDelegatedFastPathSourceIDs(st.sources, st.sourceAvailable, st.pairStats, st.amount, st.minExecuteSat, cfg.DelegatedFastPathStrictPayback, preferredCount, time.Now())
+	now := time.Now()
+	if preferredCount > 0 && preferredCount < len(sourceIDs) && hasPreferredFastPathRouteProof(st.pairStats, sourceIDs, now) {
+		preferredIDs = preferredDelegatedFastPathSourceIDs(st.sources, st.sourceAvailable, st.pairStats, st.amount, st.minExecuteSat, cfg.DelegatedFastPathStrictPayback, preferredCount, now)
 		if len(preferredIDs) >= len(sourceIDs) {
 			preferredIDs = nil
 		}
@@ -4169,9 +4197,6 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 	if len(preferredIDs) > 0 && preferredTimeoutSec > 0 {
 		preferredInvoice, preferredInvErr := s.lnd.CreateInvoice(ctx, st.amount, "rebalance-fast-path-preferred", expirySec, nil)
 		if preferredInvErr == nil && strings.TrimSpace(preferredInvoice.PaymentRequest) != "" {
-			if timeoutSec > preferredTimeoutSec+30 {
-				broadTimeoutSec = timeoutSec - preferredTimeoutSec
-			}
 			if s.logger != nil {
 				s.logger.Printf("rebalance fast-path preferred: job=%d target=%d amount=%d sources=%d fee_cap_ppm=%d timeout_sec=%d", r.jobID, r.targetChannelID, st.amount, len(preferredIDs), maxFeePpm, preferredTimeoutSec)
 			}
@@ -4243,9 +4268,9 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 		s.logger.Printf("rebalance fast-path broad: job=%d target=%d amount=%d sources=%d fee_cap_ppm=%d timeout_sec=%d", r.jobID, r.targetChannelID, st.amount, len(sourceIDs), maxFeePpm, broadTimeoutSec)
 	}
 
-	// Broad-pass sub-context. When the preferred pass ran first, broadTimeoutSec
-	// is shortened so the combined delegated path still leaves time for the
-	// legacy loop to run RapidFire, partials, and pair-cache learning.
+	// Broad-pass sub-context. The preferred pass is only a short route-proven
+	// shortcut; the broad pass keeps the full fast-path budget so it is not
+	// penalized by a preferred miss.
 	fastPathCtx, fastPathCancel := context.WithTimeout(ctx, time.Duration(broadTimeoutSec+10)*time.Second)
 	defer fastPathCancel()
 
@@ -4275,7 +4300,7 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 		// das tentativas per-source do legacy loop.
 		_ = s.insertAttempt(ctx, r.jobID, 0, 0, st.amount, maxFeePpm, 0, "failed", "", failReason, nil)
 		if s.logger != nil && sendErr != nil {
-			s.logger.Printf("rebalance fast-path failed: job=%d err=%v (falling back to legacy loop)", r.jobID, sendErr)
+			s.logger.Printf("rebalance fast-path broad failed: job=%d err=%v (falling back to legacy loop)", r.jobID, sendErr)
 		}
 		return false
 	}

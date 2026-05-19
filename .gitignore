@@ -4,3 +4,7 @@ CLAUDE.md
 # Local API debug scratch (auth cookies, response dumps)
 .lnos_*.json
 .lnos_*.txt
+
+# Local planning/analysis notes
+IMPROVEMENTS-PLAN.md
+PR2-analysis.md

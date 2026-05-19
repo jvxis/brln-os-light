@@ -25,6 +25,27 @@ func TestUpdatePeerswapConfigUpdatesElementsDataDir(t *testing.T) {
 	}
 }
 
+func TestApplyPeerswapConfigOverridesPreservesBitcoinSwaps(t *testing.T) {
+	values := applyPeerswapConfigOverrides(testPeerswapConfigValues(), "bitcoinswaps=true\n")
+	if values.BitcoinSwaps != "true" {
+		t.Fatalf("expected bitcoinswaps override to be preserved, got %q", values.BitcoinSwaps)
+	}
+
+	updated := updatePeerswapConfig("bitcoinswaps=true\n", values)
+	if !strings.Contains(updated, "bitcoinswaps=true") {
+		t.Fatalf("expected updated peerswap config to keep bitcoinswaps=true:\n%s", updated)
+	}
+
+	cfg := map[string]any{}
+	paths := peerswapPaths{ConfigDir: "/home/losop/.peerswap"}
+	if !updatePSWebConfigMap(cfg, paths, values, bitcoinRPCConfig{}, false) {
+		t.Fatalf("expected psweb config to change")
+	}
+	if cfg["BitcoinSwaps"] != true {
+		t.Fatalf("expected psweb BitcoinSwaps=true, got %#v", cfg["BitcoinSwaps"])
+	}
+}
+
 func TestUpdatePSWebConfigMapNormalizesBitcoinHostAndElementsPaths(t *testing.T) {
 	cfg := map[string]any{
 		"ColorScheme":       "light",

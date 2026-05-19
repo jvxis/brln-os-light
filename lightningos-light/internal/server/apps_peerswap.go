@@ -390,6 +390,9 @@ func ensurePeerswapConfig(ctx context.Context, paths peerswapPaths) error {
 	if err != nil {
 		return err
 	}
+	if raw != "" {
+		values = applyPeerswapConfigOverrides(values, raw)
+	}
 	updated := raw
 	if raw == "" {
 		updated = defaultPeerswapConfig(values)
@@ -482,6 +485,47 @@ func defaultPeerswapConfig(values peerswapConfigValues) string {
 		"",
 	}
 	return strings.Join(lines, "\n")
+}
+
+func applyPeerswapConfigOverrides(values peerswapConfigValues, raw string) peerswapConfigValues {
+	if bitcoinSwaps, ok := readPeerswapConfigBoolString(raw, "bitcoinswaps"); ok {
+		values.BitcoinSwaps = bitcoinSwaps
+	}
+	return values
+}
+
+func readPeerswapConfigBoolString(raw string, targetKey string) (string, bool) {
+	value, ok := readPeerswapConfigValue(raw, targetKey)
+	if !ok {
+		return "", false
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return "", false
+	}
+	if parsed {
+		return "true", true
+	}
+	return "false", true
+}
+
+func readPeerswapConfigValue(raw string, targetKey string) (string, bool) {
+	normalized := strings.ReplaceAll(raw, "\r\n", "\n")
+	for _, line := range strings.Split(normalized, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+			continue
+		}
+		parts := strings.SplitN(trimmed, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		if strings.EqualFold(key, targetKey) {
+			return strings.TrimSpace(parts[1]), true
+		}
+	}
+	return "", false
 }
 
 func updatePeerswapConfig(raw string, values peerswapConfigValues) string {

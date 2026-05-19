@@ -260,6 +260,9 @@ const (
 	sovereignTargetClassSlowHighMargin          = "slow_high_margin"
 	sovereignTargetClassColdOrDead              = "cold_or_dead"
 	sovereignTargetClassExploration             = "exploration"
+	fastPathPreferredMaxSources                 = 8
+	fastPathPreferredMinSources                 = 4
+	fastPathPreferredTimeoutSec                 = int32(45)
 )
 
 const (
@@ -1976,6 +1979,136 @@ func delegatedFastPathSourceIDs(sources []RebalanceChannel, sourceAvailable map[
 	return sourceIDs
 }
 
+func preferredFastPathSourceCount(totalSources int, maxParts uint32) int {
+	if totalSources <= 0 {
+		return 0
+	}
+	count := int(maxParts) + 2
+	if count < fastPathPreferredMinSources {
+		count = fastPathPreferredMinSources
+	}
+	if count > fastPathPreferredMaxSources {
+		count = fastPathPreferredMaxSources
+	}
+	if count > totalSources {
+		count = totalSources
+	}
+	return count
+}
+
+func preferredFastPathTimeout(totalTimeoutSec int32) int32 {
+	if totalTimeoutSec <= 0 {
+		return 0
+	}
+	if totalTimeoutSec < fastPathPreferredTimeoutSec {
+		return totalTimeoutSec
+	}
+	return fastPathPreferredTimeoutSec
+}
+
+func preferredDelegatedFastPathSourceIDs(sources []RebalanceChannel, sourceAvailable map[uint64]int64, pairStats map[uint64]pairStat, amountSat int64, minExecuteSat int64, strictPayback bool, maxSources int, now time.Time) []uint64 {
+	if maxSources <= 0 || len(sources) == 0 {
+		return nil
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	eligible := make([]RebalanceChannel, 0, len(sources))
+	for _, source := range sources {
+		available := sourceAvailable[source.ChannelID]
+		if available <= 0 {
+			continue
+		}
+		if minExecuteSat > 0 && available < minExecuteSat {
+			continue
+		}
+		if strictPayback && amountSat > 0 && available < amountSat {
+			continue
+		}
+		eligible = append(eligible, source)
+	}
+	if len(eligible) == 0 {
+		return nil
+	}
+	sourceRank := func(ch RebalanceChannel) (bool, bool, float64, int64, int64, int, time.Duration) {
+		stat, ok := pairStats[ch.ChannelID]
+		if !ok {
+			return false, false, 0, 0, 0, 0, 0
+		}
+		hasRecentSuccess := false
+		if !stat.LastSuccessAt.IsZero() && now.Sub(stat.LastSuccessAt) <= pairSuccessTTL {
+			if stat.LastFailAt.IsZero() || stat.LastSuccessAt.After(stat.LastFailAt) {
+				hasRecentSuccess = true
+			}
+		}
+		hasRecentFail := shouldSkipPairForRecentFailure(stat, now)
+		permanentFailScore := decayedPermanentFailScore(stat.PermanentFailScore, stat.PermanentFailUpdated, now)
+		successAge := time.Duration(0)
+		if !stat.LastSuccessAt.IsZero() {
+			successAge = now.Sub(stat.LastSuccessAt)
+		}
+		return hasRecentSuccess, hasRecentFail, permanentFailScore, stat.SuccessFeePpm, stat.SuccessAmountSat, stat.SuccessCount, successAge
+	}
+	sort.SliceStable(eligible, func(i, j int) bool {
+		left := eligible[i]
+		right := eligible[j]
+		leftSuccess, leftFail, leftFailScore, leftFee, leftAmount, leftSuccessCount, leftAge := sourceRank(left)
+		rightSuccess, rightFail, rightFailScore, rightFee, rightAmount, rightSuccessCount, rightAge := sourceRank(right)
+		if leftFail != rightFail {
+			return !leftFail
+		}
+		if leftSuccess != rightSuccess {
+			return leftSuccess
+		}
+		if left.SourceOpportunityCost != right.SourceOpportunityCost {
+			return left.SourceOpportunityCost < right.SourceOpportunityCost
+		}
+		leftAvailable := sourceAvailable[left.ChannelID]
+		rightAvailable := sourceAvailable[right.ChannelID]
+		if leftAvailable != rightAvailable {
+			return leftAvailable > rightAvailable
+		}
+		if math.Abs(left.LocalPct-right.LocalPct) > 0.5 {
+			return left.LocalPct > right.LocalPct
+		}
+		if left.DrainRateSatPerHour != right.DrainRateSatPerHour {
+			return left.DrainRateSatPerHour > right.DrainRateSatPerHour
+		}
+		if left.PendingOutgoingHtlcs != right.PendingOutgoingHtlcs {
+			return left.PendingOutgoingHtlcs < right.PendingOutgoingHtlcs
+		}
+		if math.Abs(leftFailScore-rightFailScore) > 0.25 {
+			return leftFailScore < rightFailScore
+		}
+		if leftSuccess && rightSuccess {
+			if leftFee != rightFee {
+				return leftFee < rightFee
+			}
+			if leftSuccessCount != rightSuccessCount {
+				return leftSuccessCount > rightSuccessCount
+			}
+			if leftAge != rightAge {
+				return leftAge < rightAge
+			}
+			if leftAmount != rightAmount {
+				return leftAmount > rightAmount
+			}
+		}
+		if left.OutgoingFeePpm != right.OutgoingFeePpm {
+			return left.OutgoingFeePpm < right.OutgoingFeePpm
+		}
+		return left.ChannelID < right.ChannelID
+	})
+	if len(eligible) > maxSources {
+		eligible = eligible[:maxSources]
+	}
+	out := make([]uint64, 0, len(eligible))
+	for _, source := range eligible {
+		out = append(out, source.ChannelID)
+	}
+	return out
+}
+
 func shouldRunTargetCooldownProbe(lastAutoAt time.Time, now time.Time) bool {
 	return shouldRunTargetCooldownProbeAfter(lastAutoAt, now, targetCooldownProbeInterval)
 }
@@ -3022,7 +3155,7 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 		case expectedProfit < cfg.SovereignMinExpectedProfitSat:
 			decision.Reason = "expected_profit_below_min"
 			noteSkip(decision.Reason)
-		case shouldSkipSovereignBudgetEfficiencyOpportunity(target.PairStats, expectedProfit, budgetCost, cfg):
+		case shouldHardSkipSovereignBudgetEfficiencyOpportunity(target.PairStats, expectedProfit, budgetCost, cfg):
 			decision.Reason = sovereignBudgetEfficiencyOpportunityReason
 			noteSkip(decision.Reason)
 		case s.isChannelBusy(target.Channel.ChannelID):
@@ -3074,7 +3207,7 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 					appendDecision(decision)
 					continue
 				}
-				if shouldSkipSovereignBudgetEfficiencyOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.BudgetCostSat, cfg) {
+				if shouldHardSkipSovereignBudgetEfficiencyOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.BudgetCostSat, cfg) {
 					decision.Reason = sovereignBudgetEfficiencyOpportunityReason
 					noteSkip(decision.Reason)
 					appendDecision(decision)
@@ -3940,7 +4073,7 @@ func (r *rebalanceJobRunner) run() {
 // false e o caller cai no loop tradicional.
 //
 // Bypassa pair-cache (LND nativo decide qual source/rota usar). Mantém o
-// mesmo fee_limit do loop legado. Persiste UMA attempt agregada com
+// mesmo fee_limit do loop legado. Persiste attempts agregadas com
 // payment_hash. Em sucesso, chama recordPairSuccess para a source da rota
 // vencedora — preserva aprendizado por par + reinforce de MC se habilitado.
 func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool {
@@ -4004,11 +4137,6 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 	if expirySec <= 0 {
 		expirySec = 600
 	}
-	invoice, invErr := s.lnd.CreateInvoice(ctx, st.amount, "rebalance-fast-path", expirySec, nil)
-	if invErr != nil || strings.TrimSpace(invoice.PaymentRequest) == "" {
-		return false
-	}
-
 	// Cap de 180s no fast-path: o LND nativo, quando não acha rota, fica
 	// explorando exaustivamente até estourar timeout. Com volume alto (centenas
 	// de fast-paths/dia), 10 min × N falhas concorrentes saturam gRPC e causam
@@ -4026,17 +4154,99 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 		maxParts = uint32(feeCfg.MppMaxShards)
 	}
 
-	if s.logger != nil {
-		s.logger.Printf("rebalance fast-path: job=%d target=%d amount=%d sources=%d fee_cap_ppm=%d timeout_sec=%d", r.jobID, r.targetChannelID, st.amount, len(sourceIDs), maxFeePpm, timeoutSec)
-	}
 	s.markFastPathAttempted(r.jobID)
+	broadTimeoutSec := timeoutSec
 
-	// Sub-context do job ctx: garante que o fast-path NUNCA consuma mais do que
-	// timeoutSec+10s do orçamento total do job. Em falha, o ctx do job ainda
-	// tem ~8 min de saldo para o legacy loop rodar — preservando RapidFire,
-	// partials, e pair-cache learning. Sem isso, fast-path pendurado consumia
-	// o ctx inteiro e o legacy loop não tinha como tentar nada.
-	fastPathCtx, fastPathCancel := context.WithTimeout(ctx, time.Duration(timeoutSec+10)*time.Second)
+	preferredCount := preferredFastPathSourceCount(len(sourceIDs), maxParts)
+	preferredIDs := []uint64(nil)
+	if preferredCount > 0 && preferredCount < len(sourceIDs) {
+		preferredIDs = preferredDelegatedFastPathSourceIDs(st.sources, st.sourceAvailable, st.pairStats, st.amount, st.minExecuteSat, cfg.DelegatedFastPathStrictPayback, preferredCount, time.Now())
+		if len(preferredIDs) >= len(sourceIDs) {
+			preferredIDs = nil
+		}
+	}
+	preferredTimeoutSec := preferredFastPathTimeout(timeoutSec)
+	if len(preferredIDs) > 0 && preferredTimeoutSec > 0 {
+		preferredInvoice, preferredInvErr := s.lnd.CreateInvoice(ctx, st.amount, "rebalance-fast-path-preferred", expirySec, nil)
+		if preferredInvErr == nil && strings.TrimSpace(preferredInvoice.PaymentRequest) != "" {
+			if timeoutSec > preferredTimeoutSec+30 {
+				broadTimeoutSec = timeoutSec - preferredTimeoutSec
+			}
+			if s.logger != nil {
+				s.logger.Printf("rebalance fast-path preferred: job=%d target=%d amount=%d sources=%d fee_cap_ppm=%d timeout_sec=%d", r.jobID, r.targetChannelID, st.amount, len(preferredIDs), maxFeePpm, preferredTimeoutSec)
+			}
+			preferredCtx, preferredCancel := context.WithTimeout(ctx, time.Duration(preferredTimeoutSec+10)*time.Second)
+			preferredPayment, preferredSendErr := s.lnd.SendPaymentMultiSource(
+				preferredCtx,
+				preferredInvoice.PaymentRequest,
+				preferredIDs,
+				targetSnapshot.RemotePubkey,
+				maxFeeMsat,
+				preferredTimeoutSec,
+				maxParts,
+			)
+			preferredCancel()
+			if preferredSendErr == nil && preferredPayment != nil && preferredPayment.Status == lnrpc.Payment_SUCCEEDED {
+				feePaidSat := preferredPayment.FeeSat
+				if feePaidSat == 0 && preferredPayment.FeeMsat > 0 {
+					feePaidSat = preferredPayment.FeeMsat / 1000
+				}
+				sourceUsed := uint64(0)
+				routeHops := []string{}
+				for _, htlc := range preferredPayment.Htlcs {
+					if htlc.Status != lnrpc.HTLCAttempt_SUCCEEDED || htlc.Route == nil || len(htlc.Route.Hops) == 0 {
+						continue
+					}
+					sourceUsed = htlc.Route.Hops[0].ChanId
+					for _, hop := range htlc.Route.Hops {
+						if hop.PubKey != "" {
+							routeHops = append(routeHops, hop.PubKey)
+						}
+					}
+					break
+				}
+				if sourceUsed == 0 && len(preferredIDs) == 1 {
+					sourceUsed = preferredIDs[0]
+				}
+				_ = s.insertAttempt(ctx, r.jobID, 0, sourceUsed, st.amount, maxFeePpm, feePaidSat, "succeeded", preferredInvoice.PaymentHash, "", nil)
+				if sourceUsed != 0 {
+					s.recordPairSuccess(ctx, sourceUsed, r.targetChannelID, st.amount, maxFeePpm, feePaidSat, routeHops)
+					if cfg.MissionControlReinforce && len(routeHops) > 0 {
+						go s.reinforceMissionControl(selfPub, append([]string(nil), routeHops...), st.amount)
+					}
+				}
+				if s.logger != nil {
+					s.logger.Printf("rebalance fast-path preferred succeeded: job=%d source=%d fee_paid=%d hops=%d", r.jobID, sourceUsed, feePaidSat, len(routeHops))
+				}
+				s.finishJob(r.jobID, "succeeded", "delegated-fast-path")
+				return true
+			}
+			failReason := "fast-path preferred: failed"
+			if preferredSendErr != nil {
+				failReason = "fast-path preferred: " + preferredSendErr.Error()
+			} else if preferredPayment != nil && preferredPayment.FailureReason != lnrpc.PaymentFailureReason_FAILURE_REASON_NONE {
+				failReason = "fast-path preferred: " + strings.ToLower(strings.TrimPrefix(preferredPayment.FailureReason.String(), "FAILURE_REASON_"))
+			}
+			_ = s.insertAttempt(ctx, r.jobID, 0, 0, st.amount, maxFeePpm, 0, "failed", preferredInvoice.PaymentHash, failReason, nil)
+			if s.logger != nil && preferredSendErr != nil {
+				s.logger.Printf("rebalance fast-path preferred failed: job=%d err=%v", r.jobID, preferredSendErr)
+			}
+		}
+	}
+
+	invoice, invErr := s.lnd.CreateInvoice(ctx, st.amount, "rebalance-fast-path", expirySec, nil)
+	if invErr != nil || strings.TrimSpace(invoice.PaymentRequest) == "" {
+		return false
+	}
+
+	if s.logger != nil {
+		s.logger.Printf("rebalance fast-path broad: job=%d target=%d amount=%d sources=%d fee_cap_ppm=%d timeout_sec=%d", r.jobID, r.targetChannelID, st.amount, len(sourceIDs), maxFeePpm, broadTimeoutSec)
+	}
+
+	// Broad-pass sub-context. When the preferred pass ran first, broadTimeoutSec
+	// is shortened so the combined delegated path still leaves time for the
+	// legacy loop to run RapidFire, partials, and pair-cache learning.
+	fastPathCtx, fastPathCancel := context.WithTimeout(ctx, time.Duration(broadTimeoutSec+10)*time.Second)
 	defer fastPathCancel()
 
 	payment, sendErr := s.lnd.SendPaymentMultiSource(
@@ -4045,7 +4255,7 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 		sourceIDs,
 		targetSnapshot.RemotePubkey,
 		maxFeeMsat,
-		timeoutSec,
+		broadTimeoutSec,
 		maxParts,
 	)
 	if sendErr != nil || payment == nil || payment.Status != lnrpc.Payment_SUCCEEDED {
@@ -4053,11 +4263,11 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 		// "LND nativo não achou rota agora" é diferente de "esta source falhou".
 		// O legacy loop, se rodar em seguida, registra falhas per-source com
 		// granularidade adequada.
-		failReason := "fast-path: failed"
+		failReason := "fast-path broad: failed"
 		if sendErr != nil {
-			failReason = "fast-path: " + sendErr.Error()
+			failReason = "fast-path broad: " + sendErr.Error()
 		} else if payment != nil && payment.FailureReason != lnrpc.PaymentFailureReason_FAILURE_REASON_NONE {
-			failReason = "fast-path: " + strings.ToLower(strings.TrimPrefix(payment.FailureReason.String(), "FAILURE_REASON_"))
+			failReason = "fast-path broad: " + strings.ToLower(strings.TrimPrefix(payment.FailureReason.String(), "FAILURE_REASON_"))
 		}
 		// Persiste a tentativa do fast-path no histórico (attempt_index=0,
 		// source_channel_id=0 → UI mostra como "Fast-path multi-source").
@@ -4102,7 +4312,7 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 		}
 	}
 	if s.logger != nil {
-		s.logger.Printf("rebalance fast-path succeeded: job=%d source=%d fee_paid=%d hops=%d", r.jobID, sourceUsed, feePaidSat, len(routeHops))
+		s.logger.Printf("rebalance fast-path broad succeeded: job=%d source=%d fee_paid=%d hops=%d", r.jobID, sourceUsed, feePaidSat, len(routeHops))
 	}
 	s.finishJob(r.jobID, "succeeded", "delegated-fast-path")
 	return true
@@ -8881,6 +9091,13 @@ func shouldSkipSovereignBudgetEfficiencyOpportunity(stats rebalanceTargetPairSta
 		return false
 	}
 	return true
+}
+
+func shouldHardSkipSovereignBudgetEfficiencyOpportunity(stats rebalanceTargetPairStats, expectedProfitSat int64, budgetCostSat int64, cfg RebalanceConfig) bool {
+	if cfg.BudgetUnlimited {
+		return false
+	}
+	return shouldSkipSovereignBudgetEfficiencyOpportunity(stats, expectedProfitSat, budgetCostSat, cfg)
 }
 
 func shouldSkipSovereignRouteDeadOpportunity(stats rebalanceTargetPairStats, expectedProfitSat int64, budgetCostSat int64, eligibleSources int, cfg RebalanceConfig) bool {

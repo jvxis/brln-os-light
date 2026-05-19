@@ -1167,6 +1167,70 @@ func TestDelegatedFastPathSourceIDsStrictPaybackRequiresFullAmount(t *testing.T)
 	}
 }
 
+func TestPreferredDelegatedFastPathSourceIDsRanksLowOpportunityFullSources(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	sources := []RebalanceChannel{
+		{ChannelID: 1, PeerAlias: "expensive", LocalPct: 90, MaxSourceSat: 1_000_000, DrainRateSatPerHour: 500, SourceOpportunityCost: 10_000},
+		{ChannelID: 2, PeerAlias: "full", LocalPct: 80, MaxSourceSat: 700_000, DrainRateSatPerHour: 10},
+		{ChannelID: 3, PeerAlias: "moving", LocalPct: 70, MaxSourceSat: 600_000, DrainRateSatPerHour: 1_000},
+		{ChannelID: 4, PeerAlias: "small", LocalPct: 85, MaxSourceSat: 250_000, DrainRateSatPerHour: 2_000},
+	}
+	sourceAvailable := map[uint64]int64{
+		1: 1_000_000,
+		2: 700_000,
+		3: 600_000,
+		4: 250_000,
+	}
+
+	got := preferredDelegatedFastPathSourceIDs(sources, sourceAvailable, nil, 200_000, 10_000, true, 3, now)
+	want := []uint64{2, 3, 4}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d preferred sources, got %+v", len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("unexpected preferred source order: got %+v want %+v", got, want)
+		}
+	}
+}
+
+func TestPreferredDelegatedFastPathSourceIDsPrioritizesRecentPairSuccess(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	sources := []RebalanceChannel{
+		{ChannelID: 1, PeerAlias: "full", LocalPct: 90, MaxSourceSat: 1_000_000},
+		{ChannelID: 2, PeerAlias: "proven", LocalPct: 60, MaxSourceSat: 500_000},
+		{ChannelID: 3, PeerAlias: "failed", LocalPct: 95, MaxSourceSat: 1_200_000},
+	}
+	sourceAvailable := map[uint64]int64{
+		1: 1_000_000,
+		2: 500_000,
+		3: 1_200_000,
+	}
+	pairStats := map[uint64]pairStat{
+		2: {
+			LastSuccessAt:    now.Add(-10 * time.Minute),
+			SuccessAmountSat: 400_000,
+			SuccessFeePpm:    100,
+			SuccessCount:     2,
+		},
+		3: {
+			LastFailAt:     now.Add(-5 * time.Minute),
+			LastFailReason: "unable to find a path to destination",
+		},
+	}
+
+	got := preferredDelegatedFastPathSourceIDs(sources, sourceAvailable, pairStats, 400_000, 10_000, true, 3, now)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 preferred sources, got %+v", got)
+	}
+	if got[0] != 2 {
+		t.Fatalf("expected recent proven source first, got %+v", got)
+	}
+	if got[2] != 3 {
+		t.Fatalf("expected recent failed source last, got %+v", got)
+	}
+}
+
 func TestTargetCooldownProbeHelpers(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	if !shouldRunTargetCooldownProbe(time.Time{}, now) {
@@ -1759,7 +1823,7 @@ func TestExecuteSovereignAutopilotAllowsLowSuccessWhenExpectedCostPremiumIsStron
 	}
 }
 
-func TestExecuteSovereignAutopilotStillSkipsBudgetInefficientLowSuccessCandidate(t *testing.T) {
+func TestExecuteSovereignAutopilotAllowsBudgetInefficientLowSuccessWhenBudgetUnlimited(t *testing.T) {
 	svc := NewRebalanceService(nil, nil, nil)
 	cfg := defaultRebalanceConfig()
 	cfg.BudgetUnlimited = true
@@ -1780,11 +1844,11 @@ func TestExecuteSovereignAutopilotStillSkipsBudgetInefficientLowSuccessCandidate
 	}}}
 
 	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, time.Now(), false)
-	if result.Selected != 0 {
-		t.Fatalf("expected no selected decisions, got %d", result.Selected)
+	if result.Selected != 1 {
+		t.Fatalf("expected budget-inefficient candidate to remain selectable with unlimited budget, got %d", result.Selected)
 	}
-	if result.Decisions[0].Reason != sovereignBudgetEfficiencyOpportunityReason {
-		t.Fatalf("expected budget efficiency skip after low-success premium passes, got %+v", result.Decisions[0])
+	if !result.Decisions[0].Selected || result.Decisions[0].Reason != "would_queue" {
+		t.Fatalf("expected budget efficiency to be a score penalty with unlimited budget, got %+v", result.Decisions[0])
 	}
 }
 
@@ -1862,7 +1926,7 @@ func TestExecuteSovereignAutopilotAllowsLowSuccessBestAvailableBand(t *testing.T
 	}
 }
 
-func TestExecuteSovereignAutopilotSkipsBudgetInefficientModerateSuccess(t *testing.T) {
+func TestExecuteSovereignAutopilotAllowsBudgetInefficientModerateSuccessWhenBudgetUnlimited(t *testing.T) {
 	svc := NewRebalanceService(nil, nil, nil)
 	cfg := defaultRebalanceConfig()
 	cfg.BudgetUnlimited = true
@@ -1900,11 +1964,31 @@ func TestExecuteSovereignAutopilotSkipsBudgetInefficientModerateSuccess(t *testi
 	if result.Selected != 1 {
 		t.Fatalf("expected one selected decision, got %d", result.Selected)
 	}
-	if result.Decisions[0].Reason != sovereignBudgetEfficiencyOpportunityReason {
-		t.Fatalf("expected budget efficiency skip, got %+v", result.Decisions[0])
+	if !result.Decisions[0].Selected || result.Decisions[0].Reason != "would_queue" {
+		t.Fatalf("expected budget-heavy candidate to remain selectable with unlimited budget, got %+v", result.Decisions[0])
 	}
-	if !result.Decisions[1].Selected || result.Decisions[1].Reason != "would_queue" {
-		t.Fatalf("expected efficient candidate selected, got %+v", result.Decisions[1])
+	if result.Decisions[1].Reason != "cycle_limit" {
+		t.Fatalf("expected efficient candidate to be cycle-limited after first selection, got %+v", result.Decisions[1])
+	}
+}
+
+func TestHardBudgetEfficiencySkipStillAppliesWhenBudgetIsLimited(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = false
+	cfg.SovereignBudgetEfficiencyMinRatio = 0.35
+
+	stats := rebalanceTargetPairStats{
+		Attempts:  100_000,
+		Successes: 2_700,
+		Failures:  97_300,
+	}
+	if !shouldHardSkipSovereignBudgetEfficiencyOpportunity(stats, 366, 2_500, cfg) {
+		t.Fatalf("expected budget efficiency hard skip when daily budget is enforced")
+	}
+
+	cfg.BudgetUnlimited = true
+	if shouldHardSkipSovereignBudgetEfficiencyOpportunity(stats, 366, 2_500, cfg) {
+		t.Fatalf("did not expect budget efficiency hard skip with unlimited budget")
 	}
 }
 

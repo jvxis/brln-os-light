@@ -121,6 +121,11 @@ func (s *Server) handleProvenanceHealth(w http.ResponseWriter, r *http.Request) 
 		ok := src.Available(cctx)
 		ccancel()
 		entry["available"] = ok
+		if src == s.provenanceBitcoind {
+			if reason := s.provenanceBitcoind.LastReadinessReason(); reason != "" {
+				entry["reason"] = reason
+			}
+		}
 		if ok {
 			if !anyOk {
 				backendName = src.Name()

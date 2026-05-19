@@ -47,7 +47,7 @@ func (s *Server) initProvenance() {
 
 	publicAllowed := detectProvenancePublicAllowed()
 	s.provenanceBitcoind = NewBitcoinCoreSource(func(ctx context.Context) (bool, string) {
-		avail := s.fullIndexAppAvailability(ctx)
+		avail := s.provenanceBitcoinCoreAvailability(ctx)
 		return avail.Available, avail.Reason
 	})
 	if s.provenanceMetrics == nil {

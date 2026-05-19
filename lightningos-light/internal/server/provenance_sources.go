@@ -79,6 +79,12 @@ func (b *BitcoinCoreSource) NoTxIndexHint() bool {
 	return time.Now().Unix()-last < int64(bitcoinCoreNoTxIndexHintCooldown.Seconds())
 }
 
+func (b *BitcoinCoreSource) LastReadinessReason() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.readinessReason
+}
+
 func (b *BitcoinCoreSource) GetTransaction(ctx context.Context, txid string) (electrs.VerboseTx, error) {
 	if !b.checkReadiness(ctx) {
 		return electrs.VerboseTx{}, electrs.ErrSourceUnavailable

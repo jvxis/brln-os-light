@@ -14,6 +14,7 @@ const (
 	fullIndexUnavailableBitcoinSource = "requires_local_bitcoin_source"
 	fullIndexUnavailableBitcoinApp    = "requires_bitcoin_store"
 	fullIndexUnavailableBitcoinRPC    = "requires_bitcoin_rpc"
+	fullIndexUnavailableBitcoinSync   = "requires_synced_bitcoin"
 	fullIndexUnavailableUnpruned      = "requires_unpruned_bitcoin"
 	fullIndexUnavailableTxIndex       = "requires_txindex"
 )
@@ -120,17 +121,19 @@ func parseBitcoinCoreTxIndexInfo(raw string) (bool, bool, error) {
 		return false, false, nil
 	}
 	payload := bitcoinIndexInfoRPCResponse{}
-	if err := json.Unmarshal([]byte(trimmed), &payload.Result); err == nil && payload.Result != nil {
+	if err := json.Unmarshal([]byte(trimmed), &payload); err == nil && (payload.Result != nil || payload.Error != nil) {
+		if payload.Error != nil {
+			return false, true, errors.New(payload.Error.Message)
+		}
 		tx, ok := payload.Result["txindex"]
 		return ok && tx.Synced, ok, nil
 	}
-	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+
+	result := map[string]bitcoinIndexInfo{}
+	if err := json.Unmarshal([]byte(trimmed), &result); err != nil {
 		return false, true, err
 	}
-	if payload.Error != nil {
-		return false, true, errors.New(payload.Error.Message)
-	}
-	tx, ok := payload.Result["txindex"]
+	tx, ok := result["txindex"]
 	return ok && tx.Synced, ok, nil
 }
 

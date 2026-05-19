@@ -29,6 +29,16 @@ func TestParseBitcoinCoreTxIndexInfoSynced(t *testing.T) {
 	}
 }
 
+func TestParseBitcoinCoreTxIndexInfoRPCEnvelopeSynced(t *testing.T) {
+	ready, known, err := parseBitcoinCoreTxIndexInfo(`{"result":{"txindex":{"synced":true,"best_block_height":892044}}}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !known || !ready {
+		t.Fatalf("expected known and ready, got known=%v ready=%v", known, ready)
+	}
+}
+
 func TestParseBitcoinCoreTxIndexInfoMissing(t *testing.T) {
 	ready, known, err := parseBitcoinCoreTxIndexInfo(`{}`)
 	if err != nil {

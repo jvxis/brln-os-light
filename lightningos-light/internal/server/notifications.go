@@ -37,6 +37,7 @@ const (
 	paymentsPendingMaxAge             = 48 * time.Hour
 	telegramActivityMirrorQueueSize   = 256
 	telegramActivityMirrorSendTimeout = 1 * time.Second
+	telegramActivityMirrorLiveGrace   = 2 * time.Minute
 	invoiceCatchupLiveGrace           = 2 * time.Minute
 )
 
@@ -737,17 +738,29 @@ limit 1
 
 	n.cleanupIfNeeded()
 	n.broadcast(stored)
-	shouldMirror := inserted
-	if !shouldMirror && hadPrev {
-		changedStatus := !strings.EqualFold(strings.TrimSpace(prevStatus), strings.TrimSpace(stored.Status))
-		changedType := !strings.EqualFold(strings.TrimSpace(prevType), strings.TrimSpace(stored.Type))
-		changedAction := !strings.EqualFold(strings.TrimSpace(prevAction), strings.TrimSpace(stored.Action))
-		shouldMirror = changedStatus || changedType || changedAction
-	}
-	if shouldMirror && !opts.suppressMirror {
+	if shouldMirrorTelegramActivity(stored, n.startedAt, inserted, hadPrev, prevStatus, prevType, prevAction, opts) {
 		n.enqueueTelegramActivityMirror(stored)
 	}
 	return stored, nil
+}
+
+func shouldMirrorTelegramActivity(evt Notification, startedAt time.Time, inserted, hadPrev bool, prevStatus, prevType, prevAction string, opts notificationUpsertOptions) bool {
+	if opts.suppressMirror {
+		return false
+	}
+	if notificationIsHistoricalCatchup(startedAt, evt.OccurredAt, telegramActivityMirrorLiveGrace) {
+		return false
+	}
+	if inserted {
+		return true
+	}
+	if !hadPrev {
+		return false
+	}
+	changedStatus := !strings.EqualFold(strings.TrimSpace(prevStatus), strings.TrimSpace(evt.Status))
+	changedType := !strings.EqualFold(strings.TrimSpace(prevType), strings.TrimSpace(evt.Type))
+	changedAction := !strings.EqualFold(strings.TrimSpace(prevAction), strings.TrimSpace(evt.Action))
+	return changedStatus || changedType || changedAction
 }
 
 func notificationIsHistoricalCatchup(startedAt, occurredAt time.Time, grace time.Duration) bool {

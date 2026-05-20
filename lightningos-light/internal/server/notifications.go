@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -204,13 +205,41 @@ func (n *Notifier) Start() {
 	n.refreshTelegramActivityMirrorSettings(settingsCtx)
 	settingsCancel()
 
-	go n.runTelegramActivityMirrorLoop()
-	go n.runInvoices()
-	go n.runPayments()
-	go n.runTransactions()
-	go n.runChannels()
-	go n.runPendingChannels()
-	go n.runForwards()
+	go n.runRecoverable("telegram_activity_mirror", n.runTelegramActivityMirrorLoop)
+	go n.runRecoverable("invoices", n.runInvoices)
+	go n.runRecoverable("payments", n.runPayments)
+	go n.runRecoverable("transactions", n.runTransactions)
+	go n.runRecoverable("channels", n.runChannels)
+	go n.runRecoverable("pending_channels", n.runPendingChannels)
+	go n.runRecoverable("forwards", n.runForwards)
+}
+
+// runRecoverable wraps a notifier loop so that a panic doesn't kill the
+// goroutine silently. Logs the panic with stack trace and restarts the loop
+// after a short delay. Returns when n.stop is closed.
+func (n *Notifier) runRecoverable(name string, body func()) {
+	for {
+		select {
+		case <-n.stop:
+			return
+		default:
+		}
+		func() {
+			defer func() {
+				if r := recover(); r != nil && n.logger != nil {
+					n.logger.Printf("notifications: %s goroutine panicked: %v\n%s", name, r, debug.Stack())
+				}
+			}()
+			body()
+		}()
+		// body() returned (n.stop fired) or panicked. If we panicked, give
+		// dependent services a beat before retrying.
+		select {
+		case <-n.stop:
+			return
+		case <-time.After(5 * time.Second):
+		}
+	}
 }
 
 func bootstrapNotificationsDSN(logger *log.Logger) (string, error) {
@@ -2509,11 +2538,11 @@ func (n *Notifier) lookupPaymentByHash(ctx context.Context, paymentHash string) 
 	// settled/failed payments sit ahead of it in ListPayments — the reason the
 	// previous ListPayments-only implementation lost rebalances on busy nodes
 	// (BoS + RapidFire + manual sends easily push the target hash past any
-	// fixed page size). Returns (nil, nil) when LND doesn't know the hash.
+	// fixed page size). LND's NotFound is authoritative: a hash it doesn't
+	// recognize won't be found by paging either, so skip the fallback to avoid
+	// running a 48h ListPayments sweep per poll per orphaned hash.
 	if pay, err := n.lnd.TrackPaymentSnapshot(ctx, normalized); err == nil {
-		if pay != nil {
-			return pay, nil
-		}
+		return pay, nil
 	} else if n.logger != nil {
 		n.logger.Printf("notifications: TrackPaymentV2 lookup failed for %s, falling back to ListPayments: %v", normalized, err)
 	}

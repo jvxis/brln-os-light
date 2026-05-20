@@ -388,7 +388,8 @@ func (c *Client) LookupPayment(ctx context.Context, paymentHash string, lookback
 // LND keeps an in-memory index keyed by hash, so this is O(1) and avoids the
 // ListPayments paging that becomes unreliable on busy nodes. Reads exactly one
 // update (the current state) and cancels the stream. Returns (nil, nil) when
-// the payment is unknown to LND.
+// the payment is unknown to LND. Caps the operation at 4s internally so a
+// silently-hung stream cannot stall the caller's goroutine indefinitely.
 func (c *Client) TrackPaymentSnapshot(ctx context.Context, paymentHash string) (*lnrpc.Payment, error) {
 	if c == nil {
 		return nil, errors.New("nil lndclient")
@@ -402,17 +403,17 @@ func (c *Client) TrackPaymentSnapshot(ctx context.Context, paymentHash string) (
 		return nil, fmt.Errorf("invalid payment hash: %w", err)
 	}
 
-	conn, err := c.dial(ctx, true)
+	hardCtx, hardCancel := context.WithTimeout(ctx, 4*time.Second)
+	defer hardCancel()
+
+	conn, err := c.dial(hardCtx, true)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
 
 	router := routerrpc.NewRouterClient(conn)
-	streamCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	stream, err := router.TrackPaymentV2(streamCtx, &routerrpc.TrackPaymentRequest{
+	stream, err := router.TrackPaymentV2(hardCtx, &routerrpc.TrackPaymentRequest{
 		PaymentHash:       hashBytes,
 		NoInflightUpdates: false,
 	})

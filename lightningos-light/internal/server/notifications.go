@@ -1422,6 +1422,27 @@ func (n *Notifier) runPayments() {
 		case <-time.After(paymentsPollInterval):
 		}
 
+		// Self-healing sweep: any rebalance/keysend/lightning notification
+		// still sitting at IN_FLIGHT in the DB gets re-queued for the pending
+		// poll. Catches races where the forward scan missed the IN_FLIGHT
+		// transition (cursor already past it) and ensures stuck rows
+		// reconcile within one poll cycle without needing a restart.
+		stuckCtx, stuckCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		nowUnix := time.Now().Unix()
+		stuckAdded := false
+		for _, hash := range n.loadStuckInFlightHashes(stuckCtx) {
+			if _, ok := pending[hash]; !ok {
+				pending[hash] = nowUnix
+				stuckAdded = true
+			}
+		}
+		stuckCancel()
+		if stuckAdded {
+			persistCtx, persistCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			n.storePendingPayments(persistCtx, pending)
+			persistCancel()
+		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		cursorVal, _ := n.getCursor(ctx, "payments_index")
 		cancel()

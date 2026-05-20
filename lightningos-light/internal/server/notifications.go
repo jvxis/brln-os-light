@@ -745,7 +745,7 @@ limit 1
 		changedAction := !strings.EqualFold(strings.TrimSpace(prevAction), strings.TrimSpace(stored.Action))
 		shouldMirror = changedStatus || changedType || changedAction
 	}
-	if shouldMirror && !opts.suppressMirror && !shouldSuppressHistoricalTelegramActivityMirror(stored, time.Now().UTC(), inserted, hadPrev, prevType, prevAction) {
+	if shouldMirror && !opts.suppressMirror && !shouldSuppressHistoricalTelegramActivityMirror(stored, n.startedAt, inserted, hadPrev, prevType, prevAction) {
 		n.enqueueTelegramActivityMirror(stored)
 	}
 	return stored, nil

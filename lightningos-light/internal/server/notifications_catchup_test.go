@@ -28,7 +28,7 @@ func TestShouldContinuePaymentsCatchup(t *testing.T) {
 	}
 }
 
-func TestShouldSuppressHistoricalTelegramRebalanceMirror(t *testing.T) {
+func TestShouldSuppressHistoricalTelegramActivityMirror(t *testing.T) {
 	now := time.Date(2026, time.January, 23, 13, 33, 0, 0, time.UTC)
 	oldRebalance := Notification{
 		OccurredAt: now.Add(-10 * time.Minute),
@@ -36,19 +36,28 @@ func TestShouldSuppressHistoricalTelegramRebalanceMirror(t *testing.T) {
 		Action:     "rebalanced",
 		Status:     "SETTLED",
 	}
+	oldKeysend := Notification{
+		OccurredAt: now.Add(-10 * time.Minute),
+		Type:       "keysend",
+		Action:     "sent",
+		Status:     "SUCCEEDED",
+	}
 
-	if !shouldSuppressHistoricalTelegramRebalanceMirror(oldRebalance, now, true, false, "", "") {
+	if !shouldSuppressHistoricalTelegramActivityMirror(oldRebalance, now, true, false, "", "") {
 		t.Fatal("expected old inserted rebalance to be suppressed")
 	}
-	if !shouldSuppressHistoricalTelegramRebalanceMirror(oldRebalance, now, false, true, "lightning", "sent") {
+	if !shouldSuppressHistoricalTelegramActivityMirror(oldKeysend, now, true, false, "", "") {
+		t.Fatal("expected old inserted keysend to be suppressed")
+	}
+	if !shouldSuppressHistoricalTelegramActivityMirror(oldRebalance, now, false, true, "lightning", "sent") {
 		t.Fatal("expected old lightning-to-rebalance conversion to be suppressed")
 	}
-	if shouldSuppressHistoricalTelegramRebalanceMirror(oldRebalance, now, false, true, "rebalance", "rebalanced") {
+	if shouldSuppressHistoricalTelegramActivityMirror(oldRebalance, now, false, true, "rebalance", "rebalanced") {
 		t.Fatal("did not expect old status-only rebalance update to be suppressed")
 	}
 }
 
-func TestShouldSuppressHistoricalTelegramRebalanceMirrorDoesNotAffectLiveOrForwards(t *testing.T) {
+func TestShouldSuppressHistoricalTelegramActivityMirrorDoesNotAffectLive(t *testing.T) {
 	now := time.Date(2026, time.January, 23, 13, 33, 0, 0, time.UTC)
 	liveRebalance := Notification{
 		OccurredAt: now.Add(-time.Minute),
@@ -63,10 +72,10 @@ func TestShouldSuppressHistoricalTelegramRebalanceMirrorDoesNotAffectLiveOrForwa
 		Status:     "SETTLED",
 	}
 
-	if shouldSuppressHistoricalTelegramRebalanceMirror(liveRebalance, now, true, false, "", "") {
+	if shouldSuppressHistoricalTelegramActivityMirror(liveRebalance, now, true, false, "", "") {
 		t.Fatal("did not expect live rebalance to be suppressed")
 	}
-	if shouldSuppressHistoricalTelegramRebalanceMirror(oldForward, now, true, false, "", "") {
-		t.Fatal("did not expect non-rebalance event to be suppressed")
+	if !shouldSuppressHistoricalTelegramActivityMirror(oldForward, now, true, false, "", "") {
+		t.Fatal("expected old inserted forward to be suppressed")
 	}
 }

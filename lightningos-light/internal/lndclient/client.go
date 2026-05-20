@@ -384,6 +384,54 @@ func (c *Client) LookupPayment(ctx context.Context, paymentHash string, lookback
 	return lookupPaymentWithClient(ctx, client, trimmed, lookback)
 }
 
+// TrackPaymentSnapshot resolves a payment by hash via Router.TrackPaymentV2.
+// LND keeps an in-memory index keyed by hash, so this is O(1) and avoids the
+// ListPayments paging that becomes unreliable on busy nodes. Reads exactly one
+// update (the current state) and cancels the stream. Returns (nil, nil) when
+// the payment is unknown to LND.
+func (c *Client) TrackPaymentSnapshot(ctx context.Context, paymentHash string) (*lnrpc.Payment, error) {
+	if c == nil {
+		return nil, errors.New("nil lndclient")
+	}
+	trimmed := strings.ToLower(strings.TrimSpace(paymentHash))
+	if trimmed == "" {
+		return nil, nil
+	}
+	hashBytes, err := hex.DecodeString(trimmed)
+	if err != nil {
+		return nil, fmt.Errorf("invalid payment hash: %w", err)
+	}
+
+	conn, err := c.dial(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	router := routerrpc.NewRouterClient(conn)
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	stream, err := router.TrackPaymentV2(streamCtx, &routerrpc.TrackPaymentRequest{
+		PaymentHash:       hashBytes,
+		NoInflightUpdates: false,
+	})
+	if err != nil {
+		if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	pay, err := stream.Recv()
+	if err != nil {
+		if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return pay, nil
+}
+
 const failedPaymentsPageSize = 5000
 const failedPaymentsMaxPages = 200000
 

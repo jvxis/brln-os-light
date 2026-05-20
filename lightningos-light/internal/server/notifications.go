@@ -2504,6 +2504,20 @@ func (n *Notifier) lookupPaymentByHash(ctx context.Context, paymentHash string) 
 		return nil, errors.New("lnd unavailable")
 	}
 
+	// Primary path: O(1) lookup via Router.TrackPaymentV2. LND keys payments by
+	// hash in memory, so this resolves any payment regardless of how many
+	// settled/failed payments sit ahead of it in ListPayments — the reason the
+	// previous ListPayments-only implementation lost rebalances on busy nodes
+	// (BoS + RapidFire + manual sends easily push the target hash past any
+	// fixed page size). Returns (nil, nil) when LND doesn't know the hash.
+	if pay, err := n.lnd.TrackPaymentSnapshot(ctx, normalized); err == nil {
+		if pay != nil {
+			return pay, nil
+		}
+	} else if n.logger != nil {
+		n.logger.Printf("notifications: TrackPaymentV2 lookup failed for %s, falling back to ListPayments: %v", normalized, err)
+	}
+
 	conn, err := n.lnd.DialLightning(ctx)
 	if err != nil {
 		return nil, err
@@ -2528,9 +2542,6 @@ func (n *Notifier) lookupPaymentByHash(ctx context.Context, paymentHash string) 
 			return pay, nil
 		}
 	}
-	// Paged fallback covers payments that fell out of the recent ListPayments
-	// window on busy nodes — without it, in-flight rebalances never reconcile
-	// because the pending poll loses the hash after the cursor advances.
 	return n.lnd.LookupPayment(ctx, normalized, paymentsPendingMaxAge)
 }
 

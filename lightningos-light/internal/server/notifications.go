@@ -751,22 +751,13 @@ limit 1
 	return stored, nil
 }
 
-func shouldSuppressHistoricalTelegramActivityMirror(evt Notification, now time.Time, inserted, hadPrev bool, prevType, prevAction string) bool {
-	if !notificationIsHistoricalCatchup(now, evt.OccurredAt, telegramActivityMirrorLiveGrace) {
-		return false
-	}
-	if inserted {
-		return true
-	}
-	if evt.Type != "rebalance" {
-		return false
-	}
-	if !hadPrev {
-		return false
-	}
-	changedType := !strings.EqualFold(strings.TrimSpace(prevType), strings.TrimSpace(evt.Type))
-	changedAction := !strings.EqualFold(strings.TrimSpace(prevAction), strings.TrimSpace(evt.Action))
-	return changedType || changedAction
+func shouldSuppressHistoricalTelegramActivityMirror(evt Notification, startedAt time.Time, _, _ bool, _, _ string) bool {
+	// Any event whose OccurredAt is from before this manager session is
+	// backlog: never mirror to Telegram. Includes both fresh historical
+	// inserts (post-reboot catchup) and status updates on rows that
+	// originated in a previous session. The DB upsert and UI broadcast
+	// still happen — only the Telegram enqueue is gated here.
+	return notificationIsHistoricalCatchup(startedAt, evt.OccurredAt, telegramActivityMirrorLiveGrace)
 }
 
 func notificationIsHistoricalCatchup(startedAt, occurredAt time.Time, grace time.Duration) bool {

@@ -43,6 +43,13 @@ func TestShouldSuppressHistoricalTelegramActivityMirror(t *testing.T) {
 		Status:     "SUCCEEDED",
 	}
 
+	oldLightningSent := Notification{
+		OccurredAt: now.Add(-10 * time.Minute),
+		Type:       "lightning",
+		Action:     "sent",
+		Status:     "SUCCEEDED",
+	}
+
 	if !shouldSuppressHistoricalTelegramActivityMirror(oldRebalance, now, true, false, "", "") {
 		t.Fatal("expected old inserted rebalance to be suppressed")
 	}
@@ -52,8 +59,11 @@ func TestShouldSuppressHistoricalTelegramActivityMirror(t *testing.T) {
 	if !shouldSuppressHistoricalTelegramActivityMirror(oldRebalance, now, false, true, "lightning", "sent") {
 		t.Fatal("expected old lightning-to-rebalance conversion to be suppressed")
 	}
-	if shouldSuppressHistoricalTelegramActivityMirror(oldRebalance, now, false, true, "rebalance", "rebalanced") {
-		t.Fatal("did not expect old status-only rebalance update to be suppressed")
+	if !shouldSuppressHistoricalTelegramActivityMirror(oldRebalance, now, false, true, "rebalance", "rebalanced") {
+		t.Fatal("expected old rebalance reconciled from a previous session to be suppressed")
+	}
+	if !shouldSuppressHistoricalTelegramActivityMirror(oldLightningSent, now, false, true, "lightning", "sent") {
+		t.Fatal("expected old lightning sent reconciliation to be suppressed")
 	}
 }
 

@@ -61,6 +61,9 @@ func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	if cfg.SovereignTargetSourceQuarantineHours != 6 {
 		t.Fatalf("expected sovereign_target_source_quarantine_hours default=6, got %d", cfg.SovereignTargetSourceQuarantineHours)
 	}
+	if cfg.SovereignStructuralCooldownRepeatHours != 6 {
+		t.Fatalf("expected sovereign_structural_cooldown_repeat_hours default=6, got %d", cfg.SovereignStructuralCooldownRepeatHours)
+	}
 	if !cfg.SovereignSourceOpportunityCostEnabled {
 		t.Fatalf("expected sovereign_source_opportunity_cost_enabled default=true")
 	}
@@ -195,6 +198,20 @@ func TestNormalizeRebalanceConfigClampsSovereignWindows(t *testing.T) {
 	}
 	if got.SovereignTargetSourceQuarantineHours != sovereignWindowMaxHours {
 		t.Fatalf("expected source quarantine clamped to %d, got %d", sovereignWindowMaxHours, got.SovereignTargetSourceQuarantineHours)
+	}
+}
+
+func TestNormalizeRebalanceConfigClampsStructuralCooldownRepeat(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	cfg.SovereignStructuralCooldownRepeatHours = 0
+	got := normalizeRebalanceConfig(cfg)
+	if got.SovereignStructuralCooldownRepeatHours != 6 {
+		t.Fatalf("expected zero to fall back to default 6, got %d", got.SovereignStructuralCooldownRepeatHours)
+	}
+	cfg.SovereignStructuralCooldownRepeatHours = 999
+	got = normalizeRebalanceConfig(cfg)
+	if got.SovereignStructuralCooldownRepeatHours != sovereignTargetStructuralCooldownRepeatMaxHours {
+		t.Fatalf("expected structural cooldown repeat clamped to %d, got %d", sovereignTargetStructuralCooldownRepeatMaxHours, got.SovereignStructuralCooldownRepeatHours)
 	}
 }
 
@@ -455,6 +472,8 @@ func TestValidateRebalanceConfigPayloadRejectsInvalidFields(t *testing.T) {
 		{name: "sovereign attribution window below range", payload: rebalanceConfigPayload{SovereignAttributionWindowHours: ptrInt(23)}},
 		{name: "sovereign slow seller window above range", payload: rebalanceConfigPayload{SovereignSlowSellerWindowHours: ptrInt(721)}},
 		{name: "sovereign source quarantine below range", payload: rebalanceConfigPayload{SovereignTargetSourceQuarantineHours: ptrInt(-1)}},
+		{name: "sovereign structural cooldown repeat below range", payload: rebalanceConfigPayload{SovereignStructuralCooldownRepeatHours: ptrInt(0)}},
+		{name: "sovereign structural cooldown repeat above range", payload: rebalanceConfigPayload{SovereignStructuralCooldownRepeatHours: ptrInt(sovereignTargetStructuralCooldownRepeatMaxHours + 1)}},
 		{name: "invalid budget mode", payload: rebalanceConfigPayload{BudgetMode: ptrString("invalid")}},
 		{name: "manual reserve pct above range", payload: rebalanceConfigPayload{
 			ManualReserveMode:  ptrString(rebalanceManualReserveModePct),
@@ -2241,20 +2260,38 @@ func TestExecuteSovereignAutopilotSkipsStructuralCooldownAndContinues(t *testing
 }
 
 func TestSovereignStructuralCooldownDurationProgresses(t *testing.T) {
+	cfg := defaultRebalanceConfig()
 	scanAt := time.Now()
 	firstFailure := sovereignTargetStructuralCooldownStat{
 		Failures:      1,
 		LastFailureAt: scanAt.Add(-3 * time.Hour),
 	}
-	if shouldSkipSovereignTargetStructuralCooldown(firstFailure, scanAt) {
+	if shouldSkipSovereignTargetStructuralCooldown(firstFailure, cfg, scanAt) {
 		t.Fatalf("expected first structural cooldown to expire after 3h")
 	}
 	repeatedFailure := sovereignTargetStructuralCooldownStat{
 		Failures:      2,
 		LastFailureAt: scanAt.Add(-3 * time.Hour),
 	}
-	if !shouldSkipSovereignTargetStructuralCooldown(repeatedFailure, scanAt) {
-		t.Fatalf("expected repeated structural cooldown to remain active after 3h")
+	if !shouldSkipSovereignTargetStructuralCooldown(repeatedFailure, cfg, scanAt) {
+		t.Fatalf("expected repeated structural cooldown to remain active after 3h (default 6h)")
+	}
+}
+
+func TestSovereignStructuralCooldownDurationHonorsConfig(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	cfg.SovereignStructuralCooldownRepeatHours = 2
+	scanAt := time.Now()
+	repeatedFailure := sovereignTargetStructuralCooldownStat{
+		Failures:      2,
+		LastFailureAt: scanAt.Add(-3 * time.Hour),
+	}
+	if shouldSkipSovereignTargetStructuralCooldown(repeatedFailure, cfg, scanAt) {
+		t.Fatalf("expected repeated structural cooldown to expire after 3h when configured to 2h")
+	}
+	cfg.SovereignStructuralCooldownRepeatHours = 0 // 0 falls back to default 6h
+	if !shouldSkipSovereignTargetStructuralCooldown(repeatedFailure, cfg, scanAt) {
+		t.Fatalf("expected zero config to fall back to default 6h")
 	}
 }
 

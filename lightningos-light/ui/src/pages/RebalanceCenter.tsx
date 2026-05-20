@@ -52,6 +52,8 @@ const REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR = 0.03
 const REBALANCE_DEFAULT_SOVEREIGN_ATTRIBUTION_WINDOW_HOURS = 72
 const REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS = 168
 const REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS = 6
+const REBALANCE_DEFAULT_SOVEREIGN_STRUCTURAL_COOLDOWN_REPEAT_HOURS = 6
+const REBALANCE_MAX_SOVEREIGN_STRUCTURAL_COOLDOWN_REPEAT_HOURS = 48
 const MSPR_DEFAULT_MAX_SHARDS = 6
 const MSPR_MAX_SHARDS_LIMIT = 20
 const MSPR_DEFAULT_PARALLELISM = 3
@@ -184,6 +186,7 @@ export default function RebalanceCenter() {
     sovereign_attribution_window_hours: raw.sovereign_attribution_window_hours || REBALANCE_DEFAULT_SOVEREIGN_ATTRIBUTION_WINDOW_HOURS,
     sovereign_slow_seller_window_hours: raw.sovereign_slow_seller_window_hours || REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS,
     sovereign_target_source_quarantine_hours: typeof raw.sovereign_target_source_quarantine_hours === 'number' ? raw.sovereign_target_source_quarantine_hours : REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS,
+    sovereign_structural_cooldown_repeat_hours: typeof raw.sovereign_structural_cooldown_repeat_hours === 'number' && raw.sovereign_structural_cooldown_repeat_hours > 0 ? raw.sovereign_structural_cooldown_repeat_hours : REBALANCE_DEFAULT_SOVEREIGN_STRUCTURAL_COOLDOWN_REPEAT_HOURS,
     sovereign_source_opportunity_cost_enabled: raw.sovereign_source_opportunity_cost_enabled ?? true,
     sovereign_slow_seller_enabled: raw.sovereign_slow_seller_enabled ?? true,
     budget_mode: raw.budget_mode || REBALANCE_DEFAULT_BUDGET_MODE,
@@ -240,6 +243,7 @@ export default function RebalanceCenter() {
       sovereign_attribution_window_hours: cfg.sovereign_attribution_window_hours,
       sovereign_slow_seller_window_hours: cfg.sovereign_slow_seller_window_hours,
       sovereign_target_source_quarantine_hours: cfg.sovereign_target_source_quarantine_hours,
+      sovereign_structural_cooldown_repeat_hours: cfg.sovereign_structural_cooldown_repeat_hours,
       sovereign_source_opportunity_cost_enabled: cfg.sovereign_source_opportunity_cost_enabled,
       sovereign_slow_seller_enabled: cfg.sovereign_slow_seller_enabled,
       scan_interval_sec: cfg.scan_interval_sec,
@@ -312,6 +316,7 @@ export default function RebalanceCenter() {
       sovereign_attribution_window_hours: cfg.sovereign_attribution_window_hours ?? REBALANCE_DEFAULT_SOVEREIGN_ATTRIBUTION_WINDOW_HOURS,
       sovereign_slow_seller_window_hours: cfg.sovereign_slow_seller_window_hours ?? REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS,
       sovereign_target_source_quarantine_hours: cfg.sovereign_target_source_quarantine_hours ?? REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS,
+      sovereign_structural_cooldown_repeat_hours: cfg.sovereign_structural_cooldown_repeat_hours ?? REBALANCE_DEFAULT_SOVEREIGN_STRUCTURAL_COOLDOWN_REPEAT_HOURS,
       sovereign_source_opportunity_cost_enabled: cfg.sovereign_source_opportunity_cost_enabled ?? true,
       sovereign_slow_seller_enabled: cfg.sovereign_slow_seller_enabled ?? true
     })
@@ -694,6 +699,7 @@ export default function RebalanceCenter() {
           sovereign_attribution_window_hours: Math.max(24, Math.min(720, Number(config.sovereign_attribution_window_hours) || REBALANCE_DEFAULT_SOVEREIGN_ATTRIBUTION_WINDOW_HOURS)),
           sovereign_slow_seller_window_hours: Math.max(24, Math.min(720, Number(config.sovereign_slow_seller_window_hours) || REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS)),
           sovereign_target_source_quarantine_hours: Math.max(0, Math.min(720, Number(config.sovereign_target_source_quarantine_hours) || REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS)),
+          sovereign_structural_cooldown_repeat_hours: Math.max(1, Math.min(REBALANCE_MAX_SOVEREIGN_STRUCTURAL_COOLDOWN_REPEAT_HOURS, Number(config.sovereign_structural_cooldown_repeat_hours) || REBALANCE_DEFAULT_SOVEREIGN_STRUCTURAL_COOLDOWN_REPEAT_HOURS)),
           sovereign_source_opportunity_cost_enabled: config.sovereign_source_opportunity_cost_enabled,
           sovereign_slow_seller_enabled: config.sovereign_slow_seller_enabled,
           scan_interval_sec: config.scan_interval_sec,
@@ -780,6 +786,7 @@ export default function RebalanceCenter() {
         sovereign_attribution_window_hours: Math.max(24, Math.min(720, Number(config.sovereign_attribution_window_hours) || REBALANCE_DEFAULT_SOVEREIGN_ATTRIBUTION_WINDOW_HOURS)),
         sovereign_slow_seller_window_hours: Math.max(24, Math.min(720, Number(config.sovereign_slow_seller_window_hours) || REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS)),
         sovereign_target_source_quarantine_hours: Math.max(0, Math.min(720, Number(config.sovereign_target_source_quarantine_hours) || REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS)),
+        sovereign_structural_cooldown_repeat_hours: Math.max(1, Math.min(REBALANCE_MAX_SOVEREIGN_STRUCTURAL_COOLDOWN_REPEAT_HOURS, Number(config.sovereign_structural_cooldown_repeat_hours) || REBALANCE_DEFAULT_SOVEREIGN_STRUCTURAL_COOLDOWN_REPEAT_HOURS)),
         sovereign_source_opportunity_cost_enabled: config.sovereign_source_opportunity_cost_enabled,
         sovereign_slow_seller_enabled: config.sovereign_slow_seller_enabled
       })) as RebalanceConfig
@@ -801,6 +808,7 @@ export default function RebalanceCenter() {
           sovereign_attribution_window_hours: normalizedSaved.sovereign_attribution_window_hours,
           sovereign_slow_seller_window_hours: normalizedSaved.sovereign_slow_seller_window_hours,
           sovereign_target_source_quarantine_hours: normalizedSaved.sovereign_target_source_quarantine_hours,
+          sovereign_structural_cooldown_repeat_hours: normalizedSaved.sovereign_structural_cooldown_repeat_hours,
           sovereign_source_opportunity_cost_enabled: normalizedSaved.sovereign_source_opportunity_cost_enabled,
           sovereign_slow_seller_enabled: normalizedSaved.sovereign_slow_seller_enabled
         }
@@ -2209,6 +2217,21 @@ export default function RebalanceCenter() {
                   disabled={config.scheduler_mode === 'rules_auto'}
                   value={config.sovereign_target_source_quarantine_hours}
                   onChange={(e) => setConfig({ ...config, sovereign_target_source_quarantine_hours: Number(e.target.value) })}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.sovereignStructuralCooldownRepeat')}>
+                  {t('rebalanceCenter.settings.sovereignStructuralCooldownRepeat')}
+                </label>
+                <input
+                  className="input-field"
+                  type="number"
+                  min={1}
+                  max={REBALANCE_MAX_SOVEREIGN_STRUCTURAL_COOLDOWN_REPEAT_HOURS}
+                  step={1}
+                  disabled={config.scheduler_mode === 'rules_auto'}
+                  value={config.sovereign_structural_cooldown_repeat_hours}
+                  onChange={(e) => setConfig({ ...config, sovereign_structural_cooldown_repeat_hours: Number(e.target.value) })}
                 />
               </div>
               <label className="checkbox-card min-h-[72px]" title={t('rebalanceCenter.settingsHints.sovereignSourceOpportunityCost')}>

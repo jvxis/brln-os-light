@@ -12,6 +12,7 @@ export type RebalanceConfig = {
   sovereign_attribution_window_hours: number
   sovereign_slow_seller_window_hours: number
   sovereign_target_source_quarantine_hours: number
+  sovereign_structural_cooldown_repeat_hours: number
   sovereign_source_opportunity_cost_enabled: boolean
   sovereign_slow_seller_enabled: boolean
   scan_interval_sec: number

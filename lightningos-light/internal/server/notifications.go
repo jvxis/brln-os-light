@@ -898,6 +898,38 @@ on conflict (key) do update set value=excluded.value, updated_at=excluded.update
 	return err
 }
 
+func (n *Notifier) loadStuckInFlightHashes(ctx context.Context) []string {
+	if n == nil || n.db == nil {
+		return nil
+	}
+	cutoff := time.Now().Add(-paymentsPendingMaxAge)
+	rows, err := n.db.Query(ctx, `
+select distinct payment_hash from notifications
+where status='IN_FLIGHT'
+  and type in ('rebalance','keysend','lightning')
+  and payment_hash is not null
+  and payment_hash <> ''
+  and occurred_at > $1
+`, cutoff)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var hashes []string
+	for rows.Next() {
+		var hash string
+		if err := rows.Scan(&hash); err != nil {
+			continue
+		}
+		normalized := normalizeHash(hash)
+		if normalized == "" {
+			continue
+		}
+		hashes = append(hashes, normalized)
+	}
+	return hashes
+}
+
 func (n *Notifier) loadPendingPayments(ctx context.Context) map[string]int64 {
 	pending := map[string]int64{}
 	if n == nil || n.db == nil {
@@ -1262,6 +1294,14 @@ func (n *Notifier) runPayments() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		pending = n.loadPendingPayments(ctx)
 		cancel()
+		stuckCtx, stuckCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		nowUnix := time.Now().Unix()
+		for _, hash := range n.loadStuckInFlightHashes(stuckCtx) {
+			if _, ok := pending[hash]; !ok {
+				pending[hash] = nowUnix
+			}
+		}
+		stuckCancel()
 	}
 
 	processPayment := func(pay *lnrpc.Payment, suppressMirror bool) {
@@ -2448,6 +2488,9 @@ func (n *Notifier) lookupPaymentByHash(ctx context.Context, paymentHash string) 
 	if normalized == "" {
 		return nil, nil
 	}
+	if n == nil || n.lnd == nil {
+		return nil, errors.New("lnd unavailable")
+	}
 
 	conn, err := n.lnd.DialLightning(ctx)
 	if err != nil {
@@ -2473,7 +2516,10 @@ func (n *Notifier) lookupPaymentByHash(ctx context.Context, paymentHash string) 
 			return pay, nil
 		}
 	}
-	return nil, nil
+	// Paged fallback covers payments that fell out of the recent ListPayments
+	// window on busy nodes — without it, in-flight rebalances never reconcile
+	// because the pending poll loses the hash after the cursor advances.
+	return n.lnd.LookupPayment(ctx, normalized, paymentsPendingMaxAge)
 }
 
 func (n *Notifier) rebalanceRouteInfo(ctx context.Context, pay *lnrpc.Payment) *rebalanceRouteInfo {

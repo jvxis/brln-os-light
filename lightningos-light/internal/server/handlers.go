@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"lightningos-light/internal/lndclient"
 	"lightningos-light/internal/system"
@@ -289,50 +288,7 @@ func (s *Server) handlePostgres(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 
-	entries := postgresDSNEntries()
-	databases := make([]postgresDatabase, 0, len(entries))
-	version := ""
-
-	for _, entry := range entries {
-		dbName := databaseNameFromDSN(entry.DSN)
-		if dbName == "" {
-			continue
-		}
-		db := postgresDatabase{
-			Name:   dbName,
-			Source: entry.Source,
-		}
-		pool, err := pgxpool.New(ctx, entry.DSN)
-		if err == nil {
-			db.Available = true
-			var sizeBytes int64
-			_ = pool.QueryRow(ctx, "select pg_database_size($1)", dbName).Scan(&sizeBytes)
-			db.SizeMB = sizeBytes / (1024 * 1024)
-
-			var connections int64
-			_ = pool.QueryRow(ctx, "select count(*) from pg_stat_activity where datname=$1", dbName).Scan(&connections)
-			db.Connections = connections
-
-			if version == "" {
-				_ = pool.QueryRow(ctx, "show server_version").Scan(&version)
-			}
-			pool.Close()
-		}
-		databases = append(databases, db)
-	}
-
-	resp := postgresResponse{
-		ServiceActive: system.SystemctlIsActive(ctx, "postgresql"),
-		DBName:        s.cfg.Postgres.DBName,
-		Databases:     databases,
-		Version:       version,
-	}
-
-	if len(databases) > 0 {
-		resp.DBName = databases[0].Name
-		resp.DBSizeMB = databases[0].SizeMB
-		resp.Connections = databases[0].Connections
-	}
+	resp := s.postgresStatus(ctx)
 
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -970,47 +926,7 @@ func (s *Server) handleLNDStatus(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	force, _ := strconv.ParseBool(strings.TrimSpace(r.URL.Query().Get("force")))
 
-	resp := lndStatusResponse{}
-	resp.ServiceActive = system.SystemctlIsActive(ctx, "lnd")
-
-	var status lndclient.Status
-	var err error
-	if force {
-		status, err = s.lnd.GetStatusFresh(ctx)
-	} else {
-		status, err = s.lnd.GetStatus(ctx)
-	}
-	_ = err
-	resp.WalletState = status.WalletState
-	resp.SyncedToChain = status.SyncedToChain
-	resp.SyncedToGraph = status.SyncedToGraph
-	resp.BlockHeight = status.BlockHeight
-	resp.Version = status.Version
-	resp.Pubkey = status.Pubkey
-	resp.URI = status.URI
-	resp.URIs = append([]string(nil), status.URIs...)
-	if len(resp.URIs) == 0 {
-		trimmedURI := strings.TrimSpace(resp.URI)
-		if trimmedURI != "" {
-			resp.URIs = []string{trimmedURI}
-			resp.URI = trimmedURI
-		}
-	} else if strings.TrimSpace(resp.URI) == "" {
-		resp.URI = resp.URIs[0]
-	}
-	resp.InfoKnown = status.InfoKnown
-	resp.InfoStale = status.InfoStale
-	resp.InfoAgeSeconds = status.InfoAgeSeconds
-	resp.DBBackend = detectLNDDBBackend()
-	if resp.DBBackend == "bolt" {
-		if sizeGB, err := lndChannelDBSizeGB(); err == nil {
-			resp.ChannelDBSizeGB = &sizeGB
-		}
-	}
-	resp.Channels.Active = status.ChannelsActive
-	resp.Channels.Inactive = status.ChannelsInactive
-	resp.Balances.OnchainSat = status.OnchainSat
-	resp.Balances.LightningSat = status.LightningSat
+	resp, _ := s.lndStatus(ctx, force)
 
 	writeJSON(w, http.StatusOK, resp)
 }

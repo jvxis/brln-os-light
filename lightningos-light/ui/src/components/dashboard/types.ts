@@ -11,6 +11,30 @@ export type HealthPayload = {
   issues?: HealthIssue[]
 }
 
+export type SystemCheckTone = 'ok' | 'warn' | 'danger' | 'muted' | 'info'
+
+export type SystemCheckItem = {
+  id: string
+  label: string
+  status: SystemCheckTone
+  detail?: string
+  value?: string | number | boolean
+}
+
+export type SystemCheckGroup = {
+  id: string
+  label: string
+  status: SystemCheckTone
+  summary?: string
+  items: SystemCheckItem[]
+}
+
+export type SystemCheckResponse = {
+  status?: string
+  checked_at?: string
+  groups: SystemCheckGroup[]
+}
+
 export type SystemStats = {
   uptime_sec?: number
   cpu_load_1?: number

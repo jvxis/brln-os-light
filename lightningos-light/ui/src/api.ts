@@ -83,6 +83,7 @@ const buildQuery = (params?: Record<string, string | number | boolean | undefine
 }
 
 export const getHealth = () => request('/api/health')
+export const getSystemCheck = () => request('/api/system-check')
 export const getAuthState = async () => {
   const data = await request('/api/auth/state') as AuthState
   if (data?.authenticated && data?.csrf_token) {

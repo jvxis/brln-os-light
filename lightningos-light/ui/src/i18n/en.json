@@ -984,6 +984,27 @@
     "zmqRawBlock": "ZMQ Raw Block",
     "zmqRawTx": "ZMQ Raw Tx"
   },
+  "systemCheck": {
+    "checkedAt": "Checked at {{value}}",
+    "empty": "No system check data available.",
+    "kicker": "System check",
+    "loading": "Loading service status...",
+    "loadFailed": "Failed to load system check.",
+    "openAction": "Open system check",
+    "refreshing": "Refreshing...",
+    "summaryFailing": "{{count}} failing check(s)",
+    "summaryMuted": "No active checks",
+    "summaryOk": "All checks passed",
+    "summaryWarning": "{{count}} warning check(s)",
+    "title": "Node Pulse",
+    "tones": {
+      "danger": "ERR",
+      "info": "INFO",
+      "muted": "n/a",
+      "ok": "OK",
+      "warn": "WARN"
+    }
+  },
   "chat": {
     "chatWith": "Chat with {{peer}}",
     "choosePeer": "Choose an online peer to start.",

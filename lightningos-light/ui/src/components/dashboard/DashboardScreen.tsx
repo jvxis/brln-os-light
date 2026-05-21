@@ -27,6 +27,7 @@ import {
   getReportsSummary,
   getSuccessionConfig,
   getSystem,
+  getSystemCheck,
   restartService,
   runSystemAction,
   startAppUpgrade,
@@ -39,6 +40,7 @@ import NodePulseRow from './NodePulseRow'
 import OperationsOverview from './OperationsOverview'
 import RecentActivityCard from './RecentActivityCard'
 import StatusBadge from './StatusBadge'
+import SystemPulseModal from './SystemPulseModal'
 import { toneFromHealthStatus } from './formatters'
 import type {
   AmbossHealthStatus,
@@ -61,6 +63,7 @@ import type {
   ReportRangeResponse,
   SuccessionConfig,
   SummaryResponse,
+  SystemCheckResponse,
   SystemStats,
   TorPeerCheckerStatus,
   BitcoinStatus,
@@ -98,6 +101,7 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
   const [lndPeers, setLndPeers] = useState<LndPeer[]>([])
   const [lndChannels, setLndChannels] = useState<LndChannel[]>([])
   const [health, setHealth] = useState<HealthPayload | null>(null)
+  const [systemCheck, setSystemCheck] = useState<SystemCheckResponse | null>(null)
   const [reportsLive, setReportsLive] = useState<LiveResponse | null>(null)
   const [reportsRange, setReportsRange] = useState<ReportRangeResponse | null>(null)
   const [reportsSummary, setReportsSummary] = useState<SummaryResponse | null>(null)
@@ -117,6 +121,9 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
   const [pulseStatus, setPulseStatus] = useState<LoadState>('loading')
   const [automationStatus, setAutomationStatus] = useState<LoadState>('loading')
   const [activityStatus, setActivityStatus] = useState<LoadState>('loading')
+  const [systemPulseModalOpen, setSystemPulseModalOpen] = useState(false)
+  const [systemCheckLoading, setSystemCheckLoading] = useState(false)
+  const [systemCheckError, setSystemCheckError] = useState<string | null>(null)
   const [systemAction, setSystemAction] = useState<'restart' | 'shutdown' | null>(null)
   const [systemActionBusy, setSystemActionBusy] = useState(false)
   const [systemActionError, setSystemActionError] = useState<string | null>(null)
@@ -526,6 +533,28 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
     }
   }
 
+  const loadSystemCheck = async () => {
+    setSystemCheckLoading(true)
+    setSystemCheckError(null)
+    try {
+      const payload = await getSystemCheck()
+      setSystemCheck((payload ?? null) as SystemCheckResponse | null)
+    } catch (err) {
+      setSystemCheckError(err instanceof Error ? err.message : t('systemCheck.loadFailed'))
+    } finally {
+      setSystemCheckLoading(false)
+    }
+  }
+
+  const openSystemPulseModal = () => {
+    setSystemPulseModalOpen(true)
+    void loadSystemCheck()
+  }
+
+  const closeSystemPulseModal = () => {
+    setSystemPulseModalOpen(false)
+  }
+
   const openSystemAction = (action: 'restart' | 'shutdown') => {
     setSystemAction(action)
     setSystemActionError(null)
@@ -823,14 +852,22 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
     <section className="space-y-6">
       <div className="section-card">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-          <div className="max-w-4xl">
+          <button
+            type="button"
+            className="max-w-4xl rounded-2xl p-2 text-left transition hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-brass/60"
+            onClick={openSystemPulseModal}
+            aria-haspopup="dialog"
+            aria-expanded={systemPulseModalOpen}
+            aria-label={t('systemCheck.openAction')}
+            title={t('systemCheck.openAction')}
+          >
             <p className="text-sm text-fog/60">{t('dashboard.systemPulse')}</p>
             <div className="mt-2 flex flex-wrap items-center gap-3">
               <h2 className="text-2xl font-semibold">{t('dashboard.nodePulseTitle')}</h2>
               <StatusBadge label={overallStatusLabel} tone={overallTone} size="md" />
             </div>
             <p className="mt-3 text-sm text-fog/65">{topSummary}</p>
-          </div>
+          </button>
           <div className="flex flex-wrap items-center gap-2 xl:justify-end">
             <button
               className={`btn-secondary text-xs px-3 py-2 sm:text-sm sm:px-4 ${(lndRestartBusy || lndRestartLocked) ? 'opacity-60 pointer-events-none' : ''}`}
@@ -988,6 +1025,15 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
 
         <p className="text-xs text-fog/50">{t('appUpgrade.warning')}</p>
       </div>
+
+      <SystemPulseModal
+        open={systemPulseModalOpen}
+        check={systemCheck}
+        loading={systemCheckLoading}
+        error={systemCheckError}
+        onClose={closeSystemPulseModal}
+        onRefresh={() => void loadSystemCheck()}
+      />
 
       {systemAction && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4">

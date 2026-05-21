@@ -26,6 +26,7 @@ func (s *Server) routes() http.Handler {
 	r.Post("/api/auth/change-password", s.auth.HandleChangePassword)
 	r.Post("/api/auth/reauth", s.auth.HandleReauth)
 	r.Get("/api/health", s.handleHealth)
+	r.Get("/api/system-check", s.handleSystemCheck)
 	r.Get("/api/amboss/health", s.handleAmbossHealthGet)
 	r.Post("/api/amboss/health", s.handleAmbossHealthPost)
 	r.Get("/api/system", s.handleSystem)

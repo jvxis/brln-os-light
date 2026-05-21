@@ -991,6 +991,7 @@
     "loading": "Carregando status dos servicos...",
     "loadFailed": "Falha ao carregar o system check.",
     "openAction": "Abrir system check",
+    "recentLogs": "Logs recentes: {{source}}",
     "refreshing": "Atualizando...",
     "summaryFailing": "{{count}} check(s) com falha",
     "summaryMuted": "Sem checks ativos",

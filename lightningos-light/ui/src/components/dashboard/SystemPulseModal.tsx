@@ -143,15 +143,36 @@ export default function SystemPulseModal({
 
                   <div className="mt-4 divide-y divide-white/10">
                     {group.items.map((item) => (
-                      <div key={item.id} className="flex flex-col gap-2 py-3 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-fog/85">{item.label}</p>
-                          {item.detail ? <p className="mt-1 break-words text-xs text-fog/50">{item.detail}</p> : null}
+                      <div key={item.id} className="py-3 first:pt-0 last:pb-0">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-fog/85">{item.label}</p>
+                            {item.detail ? <p className="mt-1 break-words text-xs text-fog/50">{item.detail}</p> : null}
+                          </div>
+                          {item.status !== 'muted' ? (
+                            <StatusBadge
+                              label={t(toneLabelKey(item.status))}
+                              tone={item.status as Tone}
+                            />
+                          ) : null}
                         </div>
-                        <StatusBadge
-                          label={t(toneLabelKey(item.status))}
-                          tone={item.status as Tone}
-                        />
+
+                        {item.diagnostic ? (
+                          <p className="mt-3 rounded-2xl border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                            {item.diagnostic}
+                          </p>
+                        ) : null}
+
+                        {Array.isArray(item.log_tail) && item.log_tail.length > 0 ? (
+                          <details className="mt-3 rounded-2xl border border-white/10 bg-ink/50 p-3" open>
+                            <summary className="cursor-pointer text-xs text-fog/60">
+                              {t('systemCheck.recentLogs', { source: item.log_source || t('common.unknown') })}
+                            </summary>
+                            <div className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-[11px] font-mono leading-relaxed text-fog/65">
+                              {item.log_tail.join('\n')}
+                            </div>
+                          </details>
+                        ) : null}
                       </div>
                     ))}
                   </div>

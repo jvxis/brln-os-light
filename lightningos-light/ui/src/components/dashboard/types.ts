@@ -19,6 +19,9 @@ export type SystemCheckItem = {
   status: SystemCheckTone
   detail?: string
   value?: string | number | boolean
+  diagnostic?: string
+  log_source?: string
+  log_tail?: string[]
 }
 
 export type SystemCheckGroup = {

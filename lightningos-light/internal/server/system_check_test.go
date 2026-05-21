@@ -1,6 +1,9 @@
 package server
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestWorstSystemCheckTone(t *testing.T) {
 	tests := []struct {
@@ -84,5 +87,23 @@ func TestStableID(t *testing.T) {
 	got := stableID("LightningOS", "main db")
 	if got != "lightningos_main_db" {
 		t.Fatalf("stableID() = %q, want lightningos_main_db", got)
+	}
+}
+
+func TestRedactSystemCheckLogLines(t *testing.T) {
+	lines := redactSystemCheckLogLines([]string{
+		"postgres://los:supersecret@127.0.0.1:5432/lightningos",
+		"BITCOIN_RPC_PASS=abc123 token: xyz",
+		"Authorization: Basic dXNlcjpwYXNz",
+	})
+
+	joined := strings.Join(lines, "\n")
+	for _, leaked := range []string{"supersecret", "abc123", "xyz", "dXNlcjpwYXNz"} {
+		if strings.Contains(joined, leaked) {
+			t.Fatalf("redacted logs leaked %q in %q", leaked, joined)
+		}
+	}
+	if !strings.Contains(joined, "[redacted]") {
+		t.Fatalf("expected redaction marker in %q", joined)
 	}
 }

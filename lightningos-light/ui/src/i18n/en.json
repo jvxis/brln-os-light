@@ -991,6 +991,7 @@
     "loading": "Loading service status...",
     "loadFailed": "Failed to load system check.",
     "openAction": "Open system check",
+    "recentLogs": "Recent logs: {{source}}",
     "refreshing": "Refreshing...",
     "summaryFailing": "{{count}} failing check(s)",
     "summaryMuted": "No active checks",

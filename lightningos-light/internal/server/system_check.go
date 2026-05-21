@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,12 +38,23 @@ type systemCheckGroup struct {
 }
 
 type systemCheckItem struct {
-	ID     string          `json:"id"`
-	Label  string          `json:"label"`
-	Status systemCheckTone `json:"status"`
-	Detail string          `json:"detail,omitempty"`
-	Value  any             `json:"value,omitempty"`
+	ID         string          `json:"id"`
+	Label      string          `json:"label"`
+	Status     systemCheckTone `json:"status"`
+	Detail     string          `json:"detail,omitempty"`
+	Value      any             `json:"value,omitempty"`
+	Diagnostic string          `json:"diagnostic,omitempty"`
+	LogSource  string          `json:"log_source,omitempty"`
+	LogTail    []string        `json:"log_tail,omitempty"`
 }
+
+const systemCheckLogLines = 12
+
+var (
+	systemCheckKeyValueSecretPattern = regexp.MustCompile(`(?i)\b([a-z0-9_.-]*(password|passwd|pass|token|secret|macaroon|credential|adminpw)[a-z0-9_.-]*)(\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s,;]+)`)
+	systemCheckURLPasswordPattern    = regexp.MustCompile(`://([^:\s/@]+):([^@\s]+)@`)
+	systemCheckBasicAuthPattern      = regexp.MustCompile(`(?i)\bBasic\s+[A-Za-z0-9+/=._~-]+`)
+)
 
 func (s *Server) handleSystemCheck(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
@@ -134,7 +146,8 @@ func (s *Server) systemCheckApp(ctx context.Context) systemCheckGroup {
 		Value:  terminalEnabled,
 	})
 
-	return newSystemCheckGroup("app", "App", items)
+	group := newSystemCheckGroup("app", "App", items)
+	return s.withSystemCheckDiagnostics(ctx, group)
 }
 
 func (s *Server) systemCheckLND(ctx context.Context) systemCheckGroup {
@@ -213,7 +226,8 @@ func (s *Server) systemCheckLND(ctx context.Context) systemCheckGroup {
 		},
 	)
 
-	return newSystemCheckGroup("lnd", "LND", items)
+	group := newSystemCheckGroup("lnd", "LND", items)
+	return s.withSystemCheckDiagnostics(ctx, group)
 }
 
 func (s *Server) systemCheckBitcoin(ctx context.Context) systemCheckGroup {
@@ -305,7 +319,8 @@ func (s *Server) systemCheckBitcoin(ctx context.Context) systemCheckGroup {
 		})
 	}
 
-	return newSystemCheckGroup("bitcoin", "Bitcoin", items)
+	group := newSystemCheckGroup("bitcoin", "Bitcoin", items)
+	return s.withSystemCheckDiagnostics(ctx, group)
 }
 
 func (s *Server) systemCheckPostgres(ctx context.Context) systemCheckGroup {
@@ -349,7 +364,8 @@ func (s *Server) systemCheckPostgres(ctx context.Context) systemCheckGroup {
 		}
 	}
 
-	return newSystemCheckGroup("postgres", "Postgres", items)
+	group := newSystemCheckGroup("postgres", "Postgres", items)
+	return s.withSystemCheckDiagnostics(ctx, group)
 }
 
 func (s *Server) systemCheckTor(ctx context.Context) systemCheckGroup {
@@ -393,7 +409,8 @@ func (s *Server) systemCheckTor(ctx context.Context) systemCheckGroup {
 		})
 	}
 
-	return newSystemCheckGroup("tor", "Tor", items)
+	group := newSystemCheckGroup("tor", "Tor", items)
+	return s.withSystemCheckDiagnostics(ctx, group)
 }
 
 func (s *Server) systemCheckSystem(ctx context.Context) systemCheckGroup {
@@ -627,4 +644,130 @@ func stableID(parts ...string) string {
 		}
 	}
 	return strings.Trim(b.String(), "_")
+}
+
+func (s *Server) withSystemCheckDiagnostics(ctx context.Context, group systemCheckGroup) systemCheckGroup {
+	cache := map[string]systemCheckLogSnapshot{}
+	for idx := range group.Items {
+		if !systemCheckNeedsDiagnostics(group.Items[idx].Status) {
+			continue
+		}
+		source := s.systemCheckLogSource(ctx, group.ID, group.Items[idx])
+		if source.kind == "" {
+			continue
+		}
+		key := source.kind + ":" + source.name
+		snapshot, ok := cache[key]
+		if !ok {
+			snapshot = s.readSystemCheckLogSnapshot(ctx, source)
+			cache[key] = snapshot
+		}
+		if snapshot.Source != "" {
+			group.Items[idx].LogSource = snapshot.Source
+		}
+		if len(snapshot.Lines) > 0 {
+			group.Items[idx].LogTail = append([]string(nil), snapshot.Lines...)
+		}
+		if snapshot.Err != "" {
+			group.Items[idx].Diagnostic = "Log snapshot unavailable: " + snapshot.Err
+		}
+	}
+	return group
+}
+
+func systemCheckNeedsDiagnostics(status systemCheckTone) bool {
+	return status == systemCheckWarn || status == systemCheckDanger
+}
+
+type systemCheckLogSource struct {
+	kind string
+	name string
+}
+
+type systemCheckLogSnapshot struct {
+	Source string
+	Lines  []string
+	Err    string
+}
+
+func (s *Server) systemCheckLogSource(ctx context.Context, groupID string, item systemCheckItem) systemCheckLogSource {
+	switch groupID {
+	case "app":
+		switch item.ID {
+		case "manager_service":
+			return systemCheckLogSource{kind: "journal", name: "lightningos-manager"}
+		case "reports_timer":
+			return systemCheckLogSource{kind: "journal", name: "lightningos-reports"}
+		case "terminal_service":
+			return systemCheckLogSource{kind: "journal", name: "lightningos-terminal"}
+		}
+	case "lnd":
+		return systemCheckLogSource{kind: "journal", name: "lnd"}
+	case "bitcoin":
+		return systemCheckLogSource{kind: "bitcoin", name: "bitcoin"}
+	case "postgres":
+		return systemCheckLogSource{kind: "journal", name: "postgresql"}
+	case "tor":
+		if service := firstSystemdLogUnit(ctx, []string{"tor@default", "tor"}); service != "" {
+			return systemCheckLogSource{kind: "journal", name: service}
+		}
+	}
+	return systemCheckLogSource{}
+}
+
+func (s *Server) readSystemCheckLogSnapshot(ctx context.Context, source systemCheckLogSource) systemCheckLogSnapshot {
+	logCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+
+	var (
+		lines     []string
+		sourceID  string
+		readError error
+	)
+	switch source.kind {
+	case "bitcoin":
+		lines, sourceID, readError = s.readBitcoinLocalLogLines(logCtx, systemCheckLogLines, "")
+	case "journal":
+		lines, readError = system.JournalTailSince(logCtx, source.name, systemCheckLogLines, "")
+		sourceID = "systemd:" + source.name
+	default:
+		return systemCheckLogSnapshot{}
+	}
+	if readError != nil {
+		return systemCheckLogSnapshot{
+			Source: sourceID,
+			Err:    readError.Error(),
+		}
+	}
+	return systemCheckLogSnapshot{
+		Source: sourceID,
+		Lines:  redactSystemCheckLogLines(lines),
+	}
+}
+
+func firstSystemdLogUnit(ctx context.Context, units []string) string {
+	if unit, ok := firstActiveSystemdUnit(ctx, units); ok {
+		return unit
+	}
+	for _, unit := range units {
+		if systemdUnitLoaded(ctx, unit) {
+			return unit
+		}
+	}
+	return ""
+}
+
+func redactSystemCheckLogLines(lines []string) []string {
+	redacted := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		line = systemCheckURLPasswordPattern.ReplaceAllString(line, `://$1:[redacted]@`)
+		line = systemCheckKeyValueSecretPattern.ReplaceAllString(line, `$1$3[redacted]`)
+		line = systemCheckBasicAuthPattern.ReplaceAllString(line, `Basic [redacted]`)
+		redacted = append(redacted, line)
+	}
+	return redacted
 }

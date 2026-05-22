@@ -141,6 +141,209 @@ body {
   height: 1px;
 }
 
+.pizza-day-badge {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 1.18em;
+  height: 1.18em;
+  margin-left: 0.08em;
+  border-radius: 999px;
+  cursor: help;
+  isolation: isolate;
+  line-height: 1;
+  transform: translateY(0.02em);
+}
+
+.pizza-day-badge::before {
+  content: "";
+  position: absolute;
+  inset: 0.06em;
+  z-index: -1;
+  border-radius: inherit;
+  background:
+    radial-gradient(circle at 38% 32%, rgb(var(--color-brass) / 0.45), transparent 44%),
+    radial-gradient(circle at 70% 66%, rgb(var(--color-ember) / 0.24), transparent 42%);
+  opacity: 0.4;
+  transform: scale(0.92);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.pizza-day-badge:hover::before,
+.pizza-day-badge:focus-visible::before {
+  opacity: 0.8;
+  transform: scale(1.08);
+}
+
+.pizza-day-badge:focus-visible {
+  outline: 2px solid rgb(var(--color-brass) / 0.72);
+  outline-offset: 0.12em;
+}
+
+.pizza-day-badge__emoji {
+  display: inline-block;
+  filter: drop-shadow(0 0 10px rgb(var(--color-brass) / 0.36));
+  transform-origin: 58% 58%;
+}
+
+.pizza-day-badge__tooltip {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 10px);
+  z-index: 40;
+  width: max-content;
+  max-width: min(260px, calc(100vw - 32px));
+  padding: 0.55rem 0.72rem;
+  border: 1px solid rgb(var(--color-brass) / 0.34);
+  border-radius: 8px;
+  background: rgb(var(--color-ink) / 0.96);
+  box-shadow: 0 14px 30px rgba(2, 6, 23, 0.32);
+  color: rgb(var(--color-fog) / 0.9);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.2;
+  opacity: 0;
+  pointer-events: none;
+  text-align: center;
+  transform: translate(-50%, -4px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.pizza-day-badge__tooltip::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -5px;
+  width: 9px;
+  height: 9px;
+  border-left: 1px solid rgb(var(--color-brass) / 0.34);
+  border-top: 1px solid rgb(var(--color-brass) / 0.34);
+  background: inherit;
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.pizza-day-badge:hover .pizza-day-badge__tooltip,
+.pizza-day-badge:focus-visible .pizza-day-badge__tooltip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.pizza-day-badge--today::before {
+  opacity: 0.9;
+  animation: pizza-day-glow 1.9s ease-in-out infinite;
+}
+
+.pizza-day-badge--today .pizza-day-badge__emoji {
+  animation: pizza-day-slice 2.4s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+}
+
+.pizza-day-badge__burst {
+  position: absolute;
+  inset: -0.38em;
+  pointer-events: none;
+}
+
+.pizza-day-badge__burst span {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  color: rgb(var(--color-brass));
+  font-size: 0.34em;
+  font-weight: 700;
+  text-shadow: 0 0 8px rgb(var(--color-brass) / 0.55);
+  opacity: 0;
+  transform: translate(-50%, -50%);
+  animation: pizza-day-spark 2.4s ease-out infinite;
+}
+
+.pizza-day-badge__burst span:nth-child(1) {
+  animation-delay: 0.05s;
+}
+
+.pizza-day-badge__burst span:nth-child(2) {
+  animation-delay: 0.55s;
+  color: rgb(var(--color-glow));
+  text-shadow: 0 0 8px rgb(var(--color-glow) / 0.5);
+}
+
+.pizza-day-badge__burst span:nth-child(3) {
+  animation-delay: 1.05s;
+  color: rgb(var(--color-fog) / 0.84);
+}
+
+@keyframes pizza-day-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(var(--color-brass) / 0.26);
+    transform: scale(0.96);
+  }
+  50% {
+    box-shadow: 0 0 0 0.22em rgb(var(--color-brass) / 0);
+    transform: scale(1.08);
+  }
+}
+
+@keyframes pizza-day-slice {
+  0%,
+  100% {
+    transform: rotate(-4deg) translateY(0);
+  }
+  18% {
+    transform: rotate(10deg) translateY(-0.08em) scale(1.08);
+  }
+  35% {
+    transform: rotate(-8deg) translateY(0.03em);
+  }
+  52% {
+    transform: rotate(4deg) translateY(-0.04em);
+  }
+}
+
+@keyframes pizza-day-spark {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.55);
+  }
+  14% {
+    opacity: 1;
+  }
+  45% {
+    opacity: 0;
+    transform: translate(var(--pizza-day-spark-x, 0.7em), var(--pizza-day-spark-y, -0.65em)) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--pizza-day-spark-x, 0.7em), var(--pizza-day-spark-y, -0.65em)) scale(1);
+  }
+}
+
+.pizza-day-badge__burst span:nth-child(1) {
+  --pizza-day-spark-x: -0.78em;
+  --pizza-day-spark-y: -0.68em;
+}
+
+.pizza-day-badge__burst span:nth-child(2) {
+  --pizza-day-spark-x: 0.74em;
+  --pizza-day-spark-y: -0.58em;
+}
+
+.pizza-day-badge__burst span:nth-child(3) {
+  --pizza-day-spark-x: 0.54em;
+  --pizza-day-spark-y: 0.72em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pizza-day-badge--today::before,
+  .pizza-day-badge--today .pizza-day-badge__emoji,
+  .pizza-day-badge__burst span {
+    animation: none;
+  }
+
+  .pizza-day-badge__burst span {
+    display: none;
+  }
+}
+
 .btn-primary {
   @apply bg-glow text-ink font-semibold px-4 py-2 rounded-full hover:bg-glow/90 transition;
 }

@@ -45,6 +45,9 @@ export default function Topbar({
   const isPortuguese = i18n.language === 'pt-BR'
   const paletteName = t(`topbar.paletteNames.${palette}`)
   const paletteLabel = t('topbar.paletteLabel', { palette: paletteName })
+  const today = new Date()
+  const isPizzaDayMonth = today.getMonth() === 4
+  const isPizzaDay = isPizzaDayMonth && today.getDate() === 22
 
   useEffect(() => {
     let mounted = true
@@ -130,7 +133,31 @@ export default function Topbar({
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
           <p className="text-sm uppercase tracking-[0.3em] text-fog/50">{t('topbar.statusOverview')}</p>
-          <h1 className="text-3xl lg:text-4xl font-semibold">{t('topbar.controlCenter')}</h1>
+          <h1 className="flex flex-wrap items-center gap-x-2 gap-y-1 text-3xl lg:text-4xl font-semibold">
+            <span>{t('topbar.controlCenter')}</span>
+            {isPizzaDayMonth && (
+              <span
+                className={`pizza-day-badge${isPizzaDay ? ' pizza-day-badge--today' : ''}`}
+                tabIndex={0}
+                role="img"
+                aria-label={t('topbar.pizzaDayTooltip')}
+                aria-describedby="pizza-day-tooltip"
+                title={t('topbar.pizzaDayTooltip')}
+              >
+                <span className="pizza-day-badge__emoji" aria-hidden="true">🍕</span>
+                {isPizzaDay && (
+                  <span className="pizza-day-badge__burst" aria-hidden="true">
+                    <span>⚡</span>
+                    <span>₿</span>
+                    <span>22</span>
+                  </span>
+                )}
+                <span id="pizza-day-tooltip" className="pizza-day-badge__tooltip" role="tooltip">
+                  {t('topbar.pizzaDayTooltip')}
+                </span>
+              </span>
+            )}
+          </h1>
           {displayNodeLabel && (
             <p className="mt-2 text-base lg:text-lg font-semibold text-fog/80" title={resolvedNodeLabel}>
               {t('topbar.nodeLabel', { node: displayNodeLabel })}

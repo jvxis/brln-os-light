@@ -368,6 +368,7 @@
     "checkingStatus": "Checking system status...",
     "closeMenu": "Close menu",
     "controlCenter": "LightningOS Control Center",
+    "pizzaDayTooltip": "Pizza Day Month - May 22, 2010",
     "healthCheckFailed": "Health check failed",
     "issueDetected": "Issue detected",
     "mainnetOnly": "Mainnet only",

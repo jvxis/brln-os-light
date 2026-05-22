@@ -2168,7 +2168,7 @@
     "autofeeDiscovery": "Modo discovery",
     "autofeeExplorer": "Modo explorer",
     "autofeeIdleRefresh": "Auto-refresh de canais parados",
-    "autofeeIdleRefreshHint": "No modo Balanceado, canais sem forwards ou rebalances bem-sucedidos em 7 dias recebem um refresh individual usando fallback de 21 dias ou seed.",
+    "autofeeIdleRefreshHint": "No modo Balanceado, canais sem forwards ou rebalances bem-sucedidos em 7 dias recebem um refresh individual usando fallback de 21 dias ou seed; repete so depois de outros 7 dias, exceto se o alvo mudar.",
     "autofeeRevfloor": "Piso de receita",
     "autofeeCircuitBreaker": "Circuit breaker",
     "autofeeExtremeDrain": "Drenagem extrema",

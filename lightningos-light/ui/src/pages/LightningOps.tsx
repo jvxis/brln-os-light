@@ -754,6 +754,7 @@ const autofeeHistoryLimitingTagSet = new Set([
   'cooldown',
   'cooldown-profit',
   'hold-small',
+  'small-delta',
   'same-ppm',
   'no-down-low',
   'no-down-neg-margin',
@@ -789,6 +790,7 @@ const formatAutofeeHistoryTag = (tag: string) => {
   if (tag === 'cooldown') return '⏳ cooldown'
   if (tag === 'cooldown-profit') return '⏳ profit-hold'
   if (tag === 'hold-small') return '🧊 hold-small'
+  if (tag === 'small-delta') return '🧊 small-delta'
   if (tag === 'same-ppm') return '🟰 same-ppm'
   if (tag === 'no-down-low') return '🚫 down-low'
   if (tag === 'no-down-neg-margin') return '🚫 down-neg'
@@ -1971,6 +1973,8 @@ export default function LightningOps() {
         add('🧭skip-cooldown')
       } else if (tag === 'hold-small') {
         add('🧊hold-small')
+      } else if (tag === 'small-delta') {
+        add('🧊small-delta')
       } else if (tag === 'same-ppm') {
         add('🟰same-ppm')
       } else if (tag === 'no-down-low') {

@@ -560,8 +560,100 @@ func TestApplyAutofeeIdleRefreshDecisionHardSetsAndBypassesSkips(t *testing.T) {
 	if !st.LastTs.Equal(now) || st.LastDir != "down" || st.StalledRounds != 0 || st.LastPpm != 650 {
 		t.Fatalf("unexpected state after idle refresh: %+v", st)
 	}
+	if !st.LastIdleRefreshTs.Equal(now) || st.LastIdleRefreshPpm != 650 || st.LastIdleRefreshSrc != "rebalppm21d+10%" {
+		t.Fatalf("unexpected idle refresh state after hard set: %+v", st)
+	}
 	if st.ExplorerState.LastReversalDir != "down" || st.ExplorerState.LastReversalTs != now.Unix() {
 		t.Fatalf("expected reversal metadata to be updated: %+v", st.ExplorerState)
+	}
+}
+
+func TestShouldSkipAutofeeIdleRefreshRepeat(t *testing.T) {
+	now := time.Date(2026, 5, 22, 12, 0, 0, 0, time.UTC)
+	st := &autofeeChannelState{
+		LastIdleRefreshTs:  now.Add(-time.Hour),
+		LastIdleRefreshPpm: 650,
+	}
+	if !shouldSkipAutofeeIdleRefreshRepeat(st, now, 650, 650) {
+		t.Fatalf("expected recent same-ppm idle refresh to be skipped")
+	}
+	if shouldSkipAutofeeIdleRefreshRepeat(st, now, 600, 650) {
+		t.Fatalf("expected local ppm drift to allow idle refresh retry")
+	}
+	if !shouldSkipAutofeeIdleRefreshRepeat(st, now, 649, 650) {
+		t.Fatalf("expected recent same-target small-delta idle refresh to be skipped")
+	}
+	if shouldSkipAutofeeIdleRefreshRepeat(st, now, 650, 700) {
+		t.Fatalf("expected target change to allow idle refresh")
+	}
+	st.LastIdleRefreshTs = now.Add(-time.Duration(autofeeIdleRefreshWindowDays)*24*time.Hour - time.Minute)
+	st.LastIdleRefreshPpm = 650
+	if shouldSkipAutofeeIdleRefreshRepeat(st, now, 650, 650) {
+		t.Fatalf("expected idle refresh to be eligible after the repeat window")
+	}
+}
+
+func TestShouldHoldAutofeeSmallDeltaUsesAbsoluteAndRelativeFloor(t *testing.T) {
+	if got := minAutofeeApplyDeltaPpm(3); got != 5 {
+		t.Fatalf("unexpected tiny ppm min delta: got %d want 5", got)
+	}
+	if got := minAutofeeApplyDeltaPpm(528); got != 6 {
+		t.Fatalf("unexpected mid ppm min delta: got %d want 6", got)
+	}
+	if got := minAutofeeApplyDeltaPpm(1000); got != 10 {
+		t.Fatalf("unexpected high ppm min delta: got %d want 10", got)
+	}
+	if !shouldHoldAutofeeSmallDelta(528, 529) {
+		t.Fatalf("expected 1 ppm move to be held")
+	}
+	if shouldHoldAutofeeSmallDelta(528, 534) {
+		t.Fatalf("expected 6 ppm move to be allowed for 528 ppm")
+	}
+	if !shouldHoldAutofeeSmallDelta(3, 4) {
+		t.Fatalf("expected 1 ppm move to be held even with high relative delta")
+	}
+	if shouldHoldAutofeeSmallDelta(1000, 1010) {
+		t.Fatalf("expected 1%% move to be allowed")
+	}
+}
+
+func TestApplyAutofeeIdleRefreshDecisionHoldsSmallDelta(t *testing.T) {
+	now := time.Date(2026, 5, 22, 12, 0, 0, 0, time.UTC)
+	lastChange := now.Add(-24 * time.Hour)
+	st := &autofeeChannelState{
+		ChannelID:     123,
+		LastPpm:       528,
+		LastTs:        lastChange,
+		LastDir:       "up",
+		StalledRounds: 3,
+	}
+	d := &decision{
+		LocalPpm:            528,
+		NewPpm:              528,
+		Target:              528,
+		Tags:                []string{"neg-margin"},
+		State:               st,
+		InboundDiscount:     0,
+		PrevInboundDiscount: 0,
+	}
+
+	applyAutofeeIdleRefreshDecision(d, now, 529, 529, "seed:amboss")
+
+	if d.Apply {
+		t.Fatalf("did not expect 1 ppm idle refresh delta to apply")
+	}
+	if d.NewPpm != 528 || d.Target != 529 || d.TargetRaw != 529 || d.TargetFinal != 528 {
+		t.Fatalf("unexpected target fields after small-delta hold: %+v", d)
+	}
+	if !containsTag(d.Tags, "idle-refresh") || !containsTag(d.Tags, "idle-refresh:seed:amboss") ||
+		!containsTag(d.Tags, "hold-small") || !containsTag(d.Tags, "small-delta") {
+		t.Fatalf("unexpected tags after small-delta idle refresh: %v", d.Tags)
+	}
+	if !st.LastIdleRefreshTs.Equal(now) || st.LastIdleRefreshPpm != 529 || st.LastIdleRefreshSrc != "seed:amboss" {
+		t.Fatalf("unexpected idle refresh debounce state: %+v", st)
+	}
+	if st.LastPpm != 528 || !st.LastTs.Equal(lastChange) || st.LastDir != "up" || st.StalledRounds != 3 {
+		t.Fatalf("small-delta idle refresh should not mutate outbound apply state: %+v", st)
 	}
 }
 

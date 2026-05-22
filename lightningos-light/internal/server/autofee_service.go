@@ -32,6 +32,8 @@ const (
 	autofeeNativeSeedMinSamples  = 6
 	autofeeIdleRefreshWindowDays = 7
 	autofeeRefreshRebalMarkup    = 0.10
+	autofeeMinApplyDeltaPpm      = 5
+	autofeeMinApplyDeltaFrac     = 0.01
 )
 
 const autofeeRebalanceSettlingWindow = 30 * time.Minute
@@ -1222,6 +1224,9 @@ create table if not exists autofee_state (
   last_outrate_ts timestamptz,
   last_rebal_cost_ppm integer,
   last_rebal_cost_ts timestamptz,
+  last_idle_refresh_ts timestamptz,
+  last_idle_refresh_ppm integer,
+  last_idle_refresh_source text,
   last_ts timestamptz,
   last_dir text,
   low_streak integer not null default 0,
@@ -1329,6 +1334,9 @@ alter table autofee_state add column if not exists stalled_rounds integer not nu
 alter table autofee_state add column if not exists apply_error_streak integer not null default 0;
 alter table autofee_state add column if not exists last_apply_error text;
 alter table autofee_state add column if not exists apply_error_alerted boolean not null default false;
+alter table autofee_state add column if not exists last_idle_refresh_ts timestamptz;
+alter table autofee_state add column if not exists last_idle_refresh_ppm integer;
+alter table autofee_state add column if not exists last_idle_refresh_source text;
 alter table autofee_logs add column if not exists payload jsonb;
 `)
 	if err != nil {
@@ -2919,6 +2927,9 @@ type autofeeChannelState struct {
 	LastOutrateTs       time.Time
 	LastRebalCost       int
 	LastRebalCostTs     time.Time
+	LastIdleRefreshTs   time.Time
+	LastIdleRefreshPpm  int
+	LastIdleRefreshSrc  string
 	LastTs              time.Time
 	LastDir             string
 	LowStreak           int
@@ -4616,6 +4627,41 @@ func shouldAutofeeIdleRefreshChannel(cfg AutofeeConfig, forward7d forwardStat, i
 		!hasAutofeeRebalanceMovement(rebal7d)
 }
 
+func shouldSkipAutofeeIdleRefreshRepeat(st *autofeeChannelState, now time.Time, localPpm int, targetPpm int) bool {
+	if st == nil || targetPpm <= 0 || st.LastIdleRefreshTs.IsZero() {
+		return false
+	}
+	if targetPpm != localPpm && !shouldHoldAutofeeSmallDelta(localPpm, targetPpm) {
+		return false
+	}
+	if st.LastIdleRefreshPpm > 0 && st.LastIdleRefreshPpm != targetPpm {
+		return false
+	}
+	elapsed := now.Sub(st.LastIdleRefreshTs)
+	if elapsed < 0 {
+		return true
+	}
+	return elapsed < time.Duration(autofeeIdleRefreshWindowDays)*24*time.Hour
+}
+
+func minAutofeeApplyDeltaPpm(localPpm int) int {
+	minDelta := autofeeMinApplyDeltaPpm
+	if localPpm > 0 {
+		relDelta := int(math.Ceil(float64(localPpm) * autofeeMinApplyDeltaFrac))
+		if relDelta > minDelta {
+			minDelta = relDelta
+		}
+	}
+	return minDelta
+}
+
+func shouldHoldAutofeeSmallDelta(localPpm int, nextPpm int) bool {
+	if nextPpm == localPpm {
+		return false
+	}
+	return absInt(nextPpm-localPpm) < minAutofeeApplyDeltaPpm(localPpm)
+}
+
 func appendAutofeeTagOnce(tags []string, tag string) []string {
 	tag = strings.TrimSpace(tag)
 	if tag == "" || containsTag(tags, tag) {
@@ -4676,13 +4722,29 @@ func applyAutofeeIdleRefreshDecision(d *decision, now time.Time, targetPpm int, 
 
 	outboundChanged := targetPpm != d.LocalPpm
 	inboundChanged := d.InboundDiscount != d.PrevInboundDiscount
+	smallDeltaHeld := shouldHoldAutofeeSmallDelta(d.LocalPpm, targetPpm)
+	if smallDeltaHeld {
+		d.TargetFinal = d.LocalPpm
+		d.NewPpm = d.LocalPpm
+		d.Tags = appendAutofeeTagOnce(d.Tags, "hold-small")
+		d.Tags = appendAutofeeTagOnce(d.Tags, "small-delta")
+	}
 	d.Apply = outboundChanged || inboundChanged
-	if !outboundChanged {
+	if smallDeltaHeld {
+		d.Apply = inboundChanged
+	} else if !outboundChanged {
 		d.Tags = appendAutofeeTagOnce(d.Tags, "same-ppm")
 	}
 
 	st := d.State
 	if st == nil {
+		return
+	}
+	st.LastIdleRefreshTs = now
+	st.LastIdleRefreshPpm = targetPpm
+	st.LastIdleRefreshSrc = source
+	if smallDeltaHeld {
+		st.LastPpm = d.LocalPpm
 		return
 	}
 	st.LastPpm = targetPpm
@@ -4736,6 +4798,9 @@ func (e *autofeeEngine) maybeApplyIdleRefresh(ctx context.Context, ch lndclient.
 		return d
 	}
 	targetPpm = clampInt(targetPpm, e.cfg.MinPpm, e.cfg.MaxPpm)
+	if shouldSkipAutofeeIdleRefreshRepeat(d.State, e.now, d.LocalPpm, targetPpm) {
+		return d
+	}
 	applyAutofeeIdleRefreshDecision(d, e.now, targetPpm, referencePpm, source)
 	return d
 }
@@ -6532,7 +6597,8 @@ func (e *autofeeEngine) loadState(ctx context.Context) (map[uint64]*autofeeChann
 	items := map[uint64]*autofeeChannelState{}
 	rows, err := e.svc.db.Query(ctx, `
 select channel_id, last_ppm, last_inbound_discount_ppm, last_seed_ppm, last_outrate_ppm, last_outrate_ts,
-  last_rebal_cost_ppm, last_rebal_cost_ts, last_ts, last_dir, low_streak, stalled_rounds, baseline_fwd7d, class_label, class_conf, bias_ema,
+  last_rebal_cost_ppm, last_rebal_cost_ts, last_idle_refresh_ts, last_idle_refresh_ppm, last_idle_refresh_source,
+  last_ts, last_dir, low_streak, stalled_rounds, baseline_fwd7d, class_label, class_conf, bias_ema,
   first_seen_ts, ss_active, ss_ok_since, ss_bad_since, explorer_state,
   apply_error_streak, last_apply_error, apply_error_alerted
 from autofee_state
@@ -6552,6 +6618,9 @@ from autofee_state
 		var lastOutTs pgtype.Timestamptz
 		var lastRebal pgtype.Int4
 		var lastRebalTs pgtype.Timestamptz
+		var lastIdleRefreshTs pgtype.Timestamptz
+		var lastIdleRefreshPpm pgtype.Int4
+		var lastIdleRefreshSource pgtype.Text
 		var lastTs pgtype.Timestamptz
 		var lastDir pgtype.Text
 		var lowStreak int
@@ -6568,7 +6637,8 @@ from autofee_state
 		var applyErrorStreak int
 		var lastApplyError pgtype.Text
 		var applyErrorAlerted bool
-		if err := rows.Scan(&channelID, &lastPpm, &lastInb, &lastSeed, &lastOut, &lastOutTs, &lastRebal, &lastRebalTs, &lastTs, &lastDir,
+		if err := rows.Scan(&channelID, &lastPpm, &lastInb, &lastSeed, &lastOut, &lastOutTs, &lastRebal, &lastRebalTs,
+			&lastIdleRefreshTs, &lastIdleRefreshPpm, &lastIdleRefreshSource, &lastTs, &lastDir,
 			&lowStreak, &stalledRounds, &baseline, &classLabel, &classConf, &biasEma, &firstSeen, &ssActive, &ssOkSince, &ssBadSince, &explorerRaw,
 			&applyErrorStreak, &lastApplyError, &applyErrorAlerted); err != nil {
 			return items, err
@@ -6599,6 +6669,15 @@ from autofee_state
 		}
 		if lastRebalTs.Valid {
 			st.LastRebalCostTs = lastRebalTs.Time
+		}
+		if lastIdleRefreshTs.Valid {
+			st.LastIdleRefreshTs = lastIdleRefreshTs.Time
+		}
+		if lastIdleRefreshPpm.Valid {
+			st.LastIdleRefreshPpm = int(lastIdleRefreshPpm.Int32)
+		}
+		if lastIdleRefreshSource.Valid {
+			st.LastIdleRefreshSrc = lastIdleRefreshSource.String
 		}
 		if lastTs.Valid {
 			st.LastTs = lastTs.Time
@@ -6703,10 +6782,11 @@ func (e *autofeeEngine) persistState(ctx context.Context, st *autofeeChannelStat
 	_, _ = e.svc.db.Exec(ctx, `
 insert into autofee_state (
   channel_id, last_ppm, last_inbound_discount_ppm, last_seed_ppm, last_outrate_ppm, last_outrate_ts,
-  last_rebal_cost_ppm, last_rebal_cost_ts, last_ts, last_dir, low_streak, stalled_rounds, baseline_fwd7d, class_label, class_conf, bias_ema,
+  last_rebal_cost_ppm, last_rebal_cost_ts, last_idle_refresh_ts, last_idle_refresh_ppm, last_idle_refresh_source,
+  last_ts, last_dir, low_streak, stalled_rounds, baseline_fwd7d, class_label, class_conf, bias_ema,
   first_seen_ts, ss_active, ss_ok_since, ss_bad_since, explorer_state,
   apply_error_streak, last_apply_error, apply_error_alerted
-) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
 `+
 		`on conflict (channel_id) do update set
   last_ppm=excluded.last_ppm,
@@ -6716,6 +6796,9 @@ insert into autofee_state (
   last_outrate_ts=excluded.last_outrate_ts,
   last_rebal_cost_ppm=excluded.last_rebal_cost_ppm,
   last_rebal_cost_ts=excluded.last_rebal_cost_ts,
+  last_idle_refresh_ts=excluded.last_idle_refresh_ts,
+  last_idle_refresh_ppm=excluded.last_idle_refresh_ppm,
+  last_idle_refresh_source=excluded.last_idle_refresh_source,
   last_ts=excluded.last_ts,
   last_dir=excluded.last_dir,
   low_streak=excluded.low_streak,
@@ -6734,7 +6817,8 @@ insert into autofee_state (
   apply_error_alerted=excluded.apply_error_alerted
 `, int64(st.ChannelID), nullableInt(int64(st.LastPpm)), nullableInt(int64(st.LastInboundDiscount)),
 		nullableInt(int64(st.LastSeed)), nullableInt(int64(st.LastOutrate)), nullableTime(st.LastOutrateTs),
-		nullableInt(int64(st.LastRebalCost)), nullableTime(st.LastRebalCostTs), nullableTime(st.LastTs),
+		nullableInt(int64(st.LastRebalCost)), nullableTime(st.LastRebalCostTs), nullableTime(st.LastIdleRefreshTs),
+		nullableInt(int64(st.LastIdleRefreshPpm)), nullableString(st.LastIdleRefreshSrc), nullableTime(st.LastTs),
 		nullableString(st.LastDir), st.LowStreak, st.StalledRounds, st.BaselineFwd7d, nullableString(st.ClassLabel), nullableFloat(st.ClassConf),
 		nullableFloat(st.BiasEma), nullableTime(st.FirstSeen), st.SuperSourceActive,
 		nullableTime(st.SuperSourceOkSince), nullableTime(st.SuperSourceBadSince), rawExplorer,
@@ -7085,6 +7169,8 @@ func buildAutofeeChannelLogEntry(d *decision, category string, dryRun bool, err 
 	if !d.Apply {
 		if containsTag(d.Tags, "cooldown") {
 			skipReason = "cooldown"
+		} else if containsTag(d.Tags, "small-delta") {
+			skipReason = "small-delta"
 		} else if containsTag(d.Tags, "hold-small") {
 			skipReason = "hold-small"
 		} else if containsTag(d.Tags, "autofee_settling") {
@@ -9290,6 +9376,11 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			tags = append(tags, reversalTags...)
 		}
 	}
+	if shouldHoldAutofeeSmallDelta(localPpm, finalPpm) {
+		finalPpm = localPpm
+		tags = appendAutofeeTagOnce(tags, "hold-small")
+		tags = appendAutofeeTagOnce(tags, "small-delta")
+	}
 
 	apply := true
 	delta := int(math.Abs(float64(finalPpm - localPpm)))
@@ -10788,6 +10879,7 @@ func containsTag(tags []string, want string) bool {
 
 func hasAutofeeSkipTag(tags []string) bool {
 	return containsTag(tags, "cooldown") ||
+		containsTag(tags, "small-delta") ||
 		containsTag(tags, "hold-small") ||
 		containsTag(tags, "autofee_settling")
 }
@@ -10993,6 +11085,8 @@ func formatAutofeeTags(d *decision) string {
 			add("🧭skip-cooldown")
 		case t == "hold-small":
 			add("🧊hold-small")
+		case t == "small-delta":
+			add("🧊small-delta")
 		case t == "churn-24h-lock":
 			add("🧊churn-24h")
 		case t == "churn-up-lock":

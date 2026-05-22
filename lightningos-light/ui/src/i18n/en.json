@@ -2166,6 +2166,8 @@
     "autofeeInboundPassive": "Inbound passive rebalance",
     "autofeeDiscovery": "Discovery mode",
     "autofeeExplorer": "Explorer mode",
+    "autofeeIdleRefresh": "Auto-refresh idle channels",
+    "autofeeIdleRefreshHint": "In Balanced mode, channels with no forwards or successful rebalances in 7 days get a per-channel refresh using 21-day or seed fallback references.",
     "autofeeRevfloor": "Revenue floor",
     "autofeeCircuitBreaker": "Circuit breaker",
     "autofeeExtremeDrain": "Extreme drain",

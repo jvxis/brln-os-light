@@ -370,6 +370,7 @@ export const updateAutofeeConfig = (payload: {
   inbound_passive_enabled?: boolean
   discovery_enabled?: boolean
   explorer_enabled?: boolean
+  idle_refresh_enabled?: boolean
   super_source_enabled?: boolean
   super_source_base_fee_msat?: number
   revfloor_enabled?: boolean

@@ -495,6 +495,76 @@ func TestSelectAutofeeRefreshReferenceUses21dFallbacks(t *testing.T) {
 	}
 }
 
+func TestShouldAutofeeIdleRefreshChannel(t *testing.T) {
+	cfg := AutofeeConfig{IdleRefreshEnabled: true, OperationMode: autofeeOperationModeBalanced}
+	if !shouldAutofeeIdleRefreshChannel(cfg, forwardStat{}, inboundStat{}, rebalStat{}) {
+		t.Fatalf("expected idle refresh when balanced channel has no 7d movement")
+	}
+	if shouldAutofeeIdleRefreshChannel(AutofeeConfig{IdleRefreshEnabled: false, OperationMode: autofeeOperationModeBalanced}, forwardStat{}, inboundStat{}, rebalStat{}) {
+		t.Fatalf("did not expect idle refresh when disabled")
+	}
+	if shouldAutofeeIdleRefreshChannel(AutofeeConfig{IdleRefreshEnabled: true, OperationMode: autofeeOperationModeMarketRefill}, forwardStat{}, inboundStat{}, rebalStat{}) {
+		t.Fatalf("did not expect idle refresh in market refill mode")
+	}
+	if shouldAutofeeIdleRefreshChannel(cfg, forwardStat{Count: 1}, inboundStat{}, rebalStat{}) {
+		t.Fatalf("did not expect idle refresh with outbound forwards")
+	}
+	if shouldAutofeeIdleRefreshChannel(cfg, forwardStat{}, inboundStat{Count: 1}, rebalStat{}) {
+		t.Fatalf("did not expect idle refresh with inbound forwards")
+	}
+	if shouldAutofeeIdleRefreshChannel(cfg, forwardStat{}, inboundStat{}, rebalStat{Count: 1}) {
+		t.Fatalf("did not expect idle refresh with successful rebalances")
+	}
+}
+
+func TestApplyAutofeeIdleRefreshDecisionHardSetsAndBypassesSkips(t *testing.T) {
+	now := time.Date(2026, 5, 22, 12, 0, 0, 0, time.UTC)
+	st := &autofeeChannelState{
+		ChannelID:     123,
+		LastDir:       "up",
+		StalledRounds: 3,
+	}
+	d := &decision{
+		LocalPpm:            1200,
+		NewPpm:              1100,
+		Target:              900,
+		Floor:               1150,
+		FloorSrc:            "rebal",
+		FloorBasePpm:        1000,
+		FloorBaseSrc:        "rebal",
+		Tags:                []string{"cooldown", "hold-small", "same-ppm", "stepcap", "neg-margin"},
+		State:               st,
+		InboundDiscount:     0,
+		PrevInboundDiscount: 0,
+	}
+
+	applyAutofeeIdleRefreshDecision(d, now, 650, 600, "rebalppm21d+10%")
+
+	if !d.Apply {
+		t.Fatalf("expected idle refresh decision to apply")
+	}
+	if d.NewPpm != 650 || d.Target != 650 || d.TargetRaw != 650 || d.TargetFinal != 650 {
+		t.Fatalf("unexpected target fields after hard set: %+v", d)
+	}
+	if d.Floor != 650 || d.FloorSrc != "idle-refresh" || d.FloorBasePpm != 600 || d.FloorBaseSrc != "rebalppm21d+10%" {
+		t.Fatalf("unexpected floor/reference fields after hard set: %+v", d)
+	}
+	for _, skipped := range []string{"cooldown", "hold-small", "same-ppm", "stepcap"} {
+		if containsTag(d.Tags, skipped) {
+			t.Fatalf("expected %q tag to be removed, tags=%v", skipped, d.Tags)
+		}
+	}
+	if !containsTag(d.Tags, "idle-refresh") || !containsTag(d.Tags, "idle-refresh:rebalppm21d+10%") || !containsTag(d.Tags, "neg-margin") {
+		t.Fatalf("unexpected tags after idle refresh: %v", d.Tags)
+	}
+	if !st.LastTs.Equal(now) || st.LastDir != "down" || st.StalledRounds != 0 || st.LastPpm != 650 {
+		t.Fatalf("unexpected state after idle refresh: %+v", st)
+	}
+	if st.ExplorerState.LastReversalDir != "down" || st.ExplorerState.LastReversalTs != now.Unix() {
+		t.Fatalf("expected reversal metadata to be updated: %+v", st.ExplorerState)
+	}
+}
+
 func TestSelectAutofeeRefreshInboundDiscountBalancedEligible(t *testing.T) {
 	cfg := AutofeeConfig{InboundPassiveEnabled: true}
 	profile := autofeeProfiles["moderate"]

@@ -24,13 +24,14 @@ import (
 )
 
 const (
-	autofeeConfigID             = 1
-	autofeeMinLookbackDays      = 5
-	autofeeMaxLookbackDays      = 21
-	autofeeMinCooldownSec       = 3600
-	autofeeNativeSeedMinDays    = 3
-	autofeeNativeSeedMinSamples = 6
-	autofeeRefreshRebalMarkup   = 0.10
+	autofeeConfigID              = 1
+	autofeeMinLookbackDays       = 5
+	autofeeMaxLookbackDays       = 21
+	autofeeMinCooldownSec        = 3600
+	autofeeNativeSeedMinDays     = 3
+	autofeeNativeSeedMinSamples  = 6
+	autofeeIdleRefreshWindowDays = 7
+	autofeeRefreshRebalMarkup    = 0.10
 )
 
 const autofeeRebalanceSettlingWindow = 30 * time.Minute
@@ -223,6 +224,7 @@ type AutofeeConfig struct {
 	InboundPassiveEnabled                        bool                              `json:"inbound_passive_enabled"`
 	DiscoveryEnabled                             bool                              `json:"discovery_enabled"`
 	ExplorerEnabled                              bool                              `json:"explorer_enabled"`
+	IdleRefreshEnabled                           bool                              `json:"idle_refresh_enabled"`
 	SuperSourceEnabled                           bool                              `json:"super_source_enabled"`
 	SuperSourceBaseFeeMsat                       int                               `json:"super_source_base_fee_msat"`
 	RevfloorEnabled                              bool                              `json:"revfloor_enabled"`
@@ -280,6 +282,7 @@ type AutofeeConfigUpdate struct {
 	InboundPassiveEnabled                        *bool    `json:"inbound_passive_enabled,omitempty"`
 	DiscoveryEnabled                             *bool    `json:"discovery_enabled,omitempty"`
 	ExplorerEnabled                              *bool    `json:"explorer_enabled,omitempty"`
+	IdleRefreshEnabled                           *bool    `json:"idle_refresh_enabled,omitempty"`
 	SuperSourceEnabled                           *bool    `json:"super_source_enabled,omitempty"`
 	SuperSourceBaseFeeMsat                       *int     `json:"super_source_base_fee_msat,omitempty"`
 	RevfloorEnabled                              *bool    `json:"revfloor_enabled,omitempty"`
@@ -1189,6 +1192,7 @@ create table if not exists autofee_config (
   inbound_passive_enabled boolean not null default false,
   discovery_enabled boolean not null default true,
   explorer_enabled boolean not null default true,
+  idle_refresh_enabled boolean not null default false,
   super_source_enabled boolean not null default false,
   super_source_base_fee_msat integer not null default 1000,
   revfloor_enabled boolean not null default true,
@@ -1316,6 +1320,7 @@ alter table autofee_config add column if not exists htlc_min_attempts_60m_overri
 alter table autofee_config add column if not exists htlc_policy_fail_rate_override double precision not null default 0;
 alter table autofee_config add column if not exists htlc_liquidity_fail_rate_override double precision not null default 0;
 alter table autofee_config add column if not exists native_seed_enabled boolean not null default false;
+alter table autofee_config add column if not exists idle_refresh_enabled boolean not null default false;
 alter table autofee_state add column if not exists ss_active boolean;
 alter table autofee_state add column if not exists ss_ok_since timestamptz;
 alter table autofee_state add column if not exists ss_bad_since timestamptz;
@@ -1359,6 +1364,7 @@ func (s *AutofeeService) defaultConfig() AutofeeConfig {
 		InboundPassiveEnabled:           false,
 		DiscoveryEnabled:                true,
 		ExplorerEnabled:                 true,
+		IdleRefreshEnabled:              false,
 		SuperSourceEnabled:              false,
 		SuperSourceBaseFeeMsat:          superSourceBaseFeeMsatDefault,
 		RevfloorEnabled:                 true,
@@ -1413,7 +1419,7 @@ func (s *AutofeeService) GetConfig(ctx context.Context) (AutofeeConfig, error) {
   inbound_discount_reach_out_ratio_override, inbound_discount_min_retained_spread_frac_override, outrate_floor_factor_low_override,
   soften_min_out_ratio_override, soften_max_drop_to_peg_frac_override, htlc_min_attempts_60m_override,
   htlc_policy_fail_rate_override, htlc_liquidity_fail_rate_override,
-  rebal_cost_mode, native_seed_enabled, amboss_enabled, amboss_token, inbound_passive_enabled, discovery_enabled, explorer_enabled,
+  rebal_cost_mode, native_seed_enabled, amboss_enabled, amboss_token, inbound_passive_enabled, discovery_enabled, explorer_enabled, idle_refresh_enabled,
   super_source_enabled, super_source_base_fee_msat, revfloor_enabled, circuit_breaker_enabled, extreme_drain_enabled,
   htlc_signal_enabled, htlc_mode, min_ppm, max_ppm
 from autofee_config where id=$1
@@ -1444,6 +1450,7 @@ from autofee_config where id=$1
 		&cfg.InboundPassiveEnabled,
 		&cfg.DiscoveryEnabled,
 		&cfg.ExplorerEnabled,
+		&cfg.IdleRefreshEnabled,
 		&cfg.SuperSourceEnabled,
 		&cfg.SuperSourceBaseFeeMsat,
 		&cfg.RevfloorEnabled,
@@ -1566,6 +1573,9 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 	}
 	if req.ExplorerEnabled != nil {
 		current.ExplorerEnabled = *req.ExplorerEnabled
+	}
+	if req.IdleRefreshEnabled != nil {
+		current.IdleRefreshEnabled = *req.IdleRefreshEnabled
 	}
 	if req.SuperSourceEnabled != nil {
 		current.SuperSourceEnabled = *req.SuperSourceEnabled
@@ -1726,15 +1736,16 @@ set enabled=$2,
   inbound_passive_enabled=$25,
   discovery_enabled=$26,
   explorer_enabled=$27,
-  super_source_enabled=$28,
-  super_source_base_fee_msat=$29,
-  revfloor_enabled=$30,
-  circuit_breaker_enabled=$31,
-  extreme_drain_enabled=$32,
-  htlc_signal_enabled=$33,
-  htlc_mode=$34,
-  min_ppm=$35,
-  max_ppm=$36,
+  idle_refresh_enabled=$28,
+  super_source_enabled=$29,
+  super_source_base_fee_msat=$30,
+  revfloor_enabled=$31,
+  circuit_breaker_enabled=$32,
+  extreme_drain_enabled=$33,
+  htlc_signal_enabled=$34,
+  htlc_mode=$35,
+  min_ppm=$36,
+  max_ppm=$37,
   updated_at=now()
 where id=$1
 `, autofeeConfigID,
@@ -1764,6 +1775,7 @@ where id=$1
 		current.InboundPassiveEnabled,
 		current.DiscoveryEnabled,
 		current.ExplorerEnabled,
+		current.IdleRefreshEnabled,
 		current.SuperSourceEnabled,
 		current.SuperSourceBaseFeeMsat,
 		current.RevfloorEnabled,
@@ -3444,14 +3456,20 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 	if err != nil {
 		return err
 	}
+	idleRefreshStatsReady := true
 	forwardStats1d, err := e.fetchForwardStats(ctx, 1)
 	if err != nil {
 		return err
 	}
 	forwardStats7d := forwardStats
-	if e.cfg.LookbackDays != 7 {
-		if stats7d, err := e.fetchForwardStats(ctx, 7); err == nil {
+	if e.cfg.LookbackDays != autofeeIdleRefreshWindowDays {
+		if stats7d, err := e.fetchForwardStats(ctx, autofeeIdleRefreshWindowDays); err == nil {
 			forwardStats7d = stats7d
+		} else {
+			idleRefreshStatsReady = false
+			if e.svc.logger != nil {
+				e.svc.logger.Printf("autofee: forwardStats7d unavailable: %v", err)
+			}
 		}
 	}
 	forwardStats21d := map[uint64]forwardStat{}
@@ -3464,9 +3482,42 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 	if err != nil {
 		return err
 	}
+	inboundStats7d := inboundStats
+	if e.cfg.LookbackDays != autofeeIdleRefreshWindowDays {
+		if stats7d, err := e.fetchInboundStats(ctx, autofeeIdleRefreshWindowDays); err == nil {
+			inboundStats7d = stats7d
+		} else {
+			idleRefreshStatsReady = false
+			if e.svc.logger != nil {
+				e.svc.logger.Printf("autofee: inboundStats7d unavailable: %v", err)
+			}
+		}
+	}
 	rebalStats, err := e.fetchRebalanceStats(ctx, e.cfg.LookbackDays)
 	if err != nil {
 		return err
+	}
+	rebalStats7d := rebalStats
+	if e.cfg.LookbackDays != autofeeIdleRefreshWindowDays {
+		if stats7d, err := e.fetchRebalanceStats(ctx, autofeeIdleRefreshWindowDays); err == nil {
+			rebalStats7d = stats7d
+		} else {
+			idleRefreshStatsReady = false
+			if e.svc.logger != nil {
+				e.svc.logger.Printf("autofee: rebalStats7d unavailable: %v", err)
+			}
+		}
+	}
+	rebalMovementStats7d := rebalStats7d.ByChannel
+	if e.cfg.IdleRefreshEnabled && normalizeAutofeeOperationMode(e.cfg.OperationMode) == autofeeOperationModeBalanced {
+		if movementStats, err := e.fetchRebalanceMovementStats(ctx, autofeeIdleRefreshWindowDays); err == nil {
+			rebalMovementStats7d = movementStats
+		} else {
+			idleRefreshStatsReady = false
+			if e.svc.logger != nil {
+				e.svc.logger.Printf("autofee: rebalMovementStats7d unavailable: %v", err)
+			}
+		}
 	}
 	rebalStats21d := rebalStats
 	if stats21d, err := e.fetchRebalanceStats(ctx, 21); err == nil {
@@ -3549,6 +3600,19 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 		}
 		if decision.Alias == "" {
 			decision.Alias = strings.TrimSpace(ch.RemotePubkey)
+		}
+		if idleRefreshStatsReady {
+			decision = e.maybeApplyIdleRefresh(
+				ctx,
+				ch,
+				decision,
+				forwardStats7d[ch.ChannelID],
+				forwardStats21d[ch.ChannelID],
+				inboundStats7d[ch.ChannelID],
+				rebalMovementStats7d[ch.ChannelID],
+				rebalStats7d.ByChannel[ch.ChannelID],
+				rebalStats21d.ByChannel[ch.ChannelID],
+			)
 		}
 		summary.eligible++
 		summary.addTags(decision.Tags)
@@ -4526,6 +4590,154 @@ func selectAutofeeRefreshReference(capacitySat int64, forward7d forwardStat, for
 	}
 
 	return 0, 0, "", false
+}
+
+func hasAutofeeForwardMovement(st forwardStat) bool {
+	return st.Count > 0 || st.AmtMsat > 0 || st.FeeMsat > 0
+}
+
+func hasAutofeeInboundMovement(st inboundStat) bool {
+	return st.Count > 0 || st.AmtMsat > 0
+}
+
+func hasAutofeeRebalanceMovement(st rebalStat) bool {
+	return st.Count > 0 || st.AmtMsat > 0 || st.FeeMsat > 0
+}
+
+func shouldAutofeeIdleRefreshChannel(cfg AutofeeConfig, forward7d forwardStat, inbound7d inboundStat, rebal7d rebalStat) bool {
+	if !cfg.IdleRefreshEnabled {
+		return false
+	}
+	if normalizeAutofeeOperationMode(cfg.OperationMode) != autofeeOperationModeBalanced {
+		return false
+	}
+	return !hasAutofeeForwardMovement(forward7d) &&
+		!hasAutofeeInboundMovement(inbound7d) &&
+		!hasAutofeeRebalanceMovement(rebal7d)
+}
+
+func appendAutofeeTagOnce(tags []string, tag string) []string {
+	tag = strings.TrimSpace(tag)
+	if tag == "" || containsTag(tags, tag) {
+		return tags
+	}
+	return append(tags, tag)
+}
+
+func removeAutofeeTags(tags []string, drop map[string]bool) []string {
+	if len(tags) == 0 || len(drop) == 0 {
+		return tags
+	}
+	out := tags[:0]
+	for _, tag := range tags {
+		if drop[tag] {
+			continue
+		}
+		out = append(out, tag)
+	}
+	return out
+}
+
+func applyAutofeeIdleRefreshDecision(d *decision, now time.Time, targetPpm int, referencePpm int, source string) {
+	if d == nil || targetPpm <= 0 {
+		return
+	}
+	source = strings.TrimSpace(source)
+	if referencePpm <= 0 {
+		referencePpm = targetPpm
+	}
+	d.Tags = removeAutofeeTags(d.Tags, map[string]bool{
+		"autofee_settling": true,
+		"cooldown":         true,
+		"cooldown-profit":  true,
+		"floor-lock":       true,
+		"hold-small":       true,
+		"same-ppm":         true,
+		"stepcap":          true,
+		"stepcap-lock":     true,
+	})
+	d.Tags = appendAutofeeTagOnce(d.Tags, "idle-refresh")
+	if source != "" {
+		d.Tags = appendAutofeeTagOnce(d.Tags, "idle-refresh:"+source)
+	}
+	d.Target = targetPpm
+	d.TargetRaw = targetPpm
+	d.TargetFinal = targetPpm
+	d.NewPpm = targetPpm
+	d.Floor = targetPpm
+	d.FloorSrc = "idle-refresh"
+	d.FloorBasePpm = referencePpm
+	d.FloorBaseSrc = source
+	if strings.HasPrefix(source, "seed:") {
+		d.Seed = referencePpm
+	}
+	d.TargetGapPpm = targetPpm - d.LocalPpm
+	d.TargetGapPct = calcTargetGapPct(d.LocalPpm, targetPpm)
+
+	outboundChanged := targetPpm != d.LocalPpm
+	inboundChanged := d.InboundDiscount != d.PrevInboundDiscount
+	d.Apply = outboundChanged || inboundChanged
+	if !outboundChanged {
+		d.Tags = appendAutofeeTagOnce(d.Tags, "same-ppm")
+	}
+
+	st := d.State
+	if st == nil {
+		return
+	}
+	st.LastPpm = targetPpm
+	if outboundChanged {
+		prevDir := st.LastDir
+		st.LastTs = now
+		if targetPpm > d.LocalPpm {
+			st.LastDir = "up"
+		} else {
+			st.LastDir = "down"
+		}
+		if prevDir != "" && st.LastDir != "" && prevDir != st.LastDir {
+			st.ExplorerState.LastReversalDir = st.LastDir
+			st.ExplorerState.LastReversalTs = now.Unix()
+		}
+		st.StalledRounds = 0
+	} else if d.Target == d.LocalPpm {
+		st.StalledRounds = 0
+	}
+}
+
+func (e *autofeeEngine) maybeApplyIdleRefresh(ctx context.Context, ch lndclient.ChannelInfo, d *decision, forward7d forwardStat, forward21d forwardStat, inbound7d inboundStat, rebalMovement7d rebalStat, rebal7d rebalStat, rebal21d rebalStat) *decision {
+	if d == nil || !shouldAutofeeIdleRefreshChannel(e.cfg, forward7d, inbound7d, rebalMovement7d) {
+		return d
+	}
+	targetPpm, referencePpm, source, ok := selectAutofeeRefreshReference(
+		ch.CapacitySat,
+		forward7d,
+		forward21d,
+		rebal7d,
+		rebal21d,
+		autofeeRefreshRebalMarkup,
+	)
+	if !ok {
+		seedPpm, seedSource, err := e.refreshSeedForChannel(ctx, strings.TrimSpace(ch.RemotePubkey))
+		if err != nil {
+			if e.svc != nil && e.svc.logger != nil {
+				e.svc.logger.Printf("autofee: idle refresh seed unavailable for %s: %v", ch.ChannelPoint, err)
+			}
+			return d
+		}
+		if seedPpm <= 0 {
+			return d
+		}
+		targetPpm = int(math.Round(seedPpm))
+		referencePpm = targetPpm
+		source = seedSource
+		ok = true
+	}
+	if !ok || targetPpm <= 0 {
+		return d
+	}
+	targetPpm = clampInt(targetPpm, e.cfg.MinPpm, e.cfg.MaxPpm)
+	applyAutofeeIdleRefreshDecision(d, e.now, targetPpm, referencePpm, source)
+	return d
 }
 
 func selectAutofeeRefreshInboundDiscount(cfg AutofeeConfig, profile autofeeProfile, rawOutRatio float64, effectiveOutRatio float64, forward1d forwardStat, forward7d forwardStat, capacitySat int64, baseCostPpm int, appliedPpm int) (int, string, bool) {
@@ -6166,6 +6378,48 @@ where type='rebalance' and occurred_at >= now() - ($1 * interval '1 day')
 	}
 	stats.Global.AmtMsat = stats.Global.AmtMsat * 1000
 	return stats, nil
+}
+
+func (e *autofeeEngine) fetchRebalanceMovementStats(ctx context.Context, lookback int) (map[uint64]rebalStat, error) {
+	rows, err := e.svc.db.Query(ctx, `
+select chan_id,
+  coalesce(sum(amount_sat), 0),
+  count(*)::bigint
+from (
+  select coalesce(rebal_target_chan_id, channel_id) as chan_id, amount_sat
+  from notifications
+  where type='rebalance' and occurred_at >= now() - ($1 * interval '1 day')
+    and status in ('SETTLED', 'SUCCEEDED')
+    and coalesce(rebal_target_chan_id, channel_id) is not null
+  union all
+  select rebal_source_chan_id as chan_id, amount_sat
+  from notifications
+  where type='rebalance' and occurred_at >= now() - ($1 * interval '1 day')
+    and status in ('SETTLED', 'SUCCEEDED')
+    and rebal_source_chan_id is not null
+) movement
+where chan_id is not null
+group by chan_id
+`, lookback)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[uint64]rebalStat{}
+	for rows.Next() {
+		var chanID int64
+		var amtSat int64
+		var count int64
+		if err := rows.Scan(&chanID, &amtSat, &count); err != nil {
+			return out, err
+		}
+		if chanID <= 0 {
+			continue
+		}
+		out[uint64(chanID)] = rebalStat{AmtMsat: amtSat * 1000, Count: count}
+	}
+	return out, rows.Err()
 }
 
 func (e *autofeeEngine) fetchRecentRebalanceTouches(ctx context.Context, successWindow time.Duration, weakWindow time.Duration) (map[uint64]recentRebalanceSignal, error) {
@@ -10585,6 +10839,10 @@ func formatAutofeeTags(d *decision) string {
 			add("🧭step-up")
 		case t == "drained-explorer-cap":
 			add("🧭cap")
+		case t == "idle-refresh":
+			add("idle-refresh")
+		case strings.HasPrefix(t, "idle-refresh:"):
+			add(t)
 		case t == "rescue":
 			add("🛟rescue")
 		case t == "rescue-enter":

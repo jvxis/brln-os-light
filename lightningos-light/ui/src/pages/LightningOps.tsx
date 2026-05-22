@@ -476,6 +476,7 @@ type AutofeeConfig = {
     inbound_passive_enabled: boolean
   discovery_enabled: boolean
   explorer_enabled: boolean
+  idle_refresh_enabled: boolean
   super_source_enabled: boolean
   super_source_base_fee_msat: number
   revfloor_enabled: boolean
@@ -772,6 +773,7 @@ const autofeeHistoryRelaxTagSet = new Set([
   'discovery',
   'discovery-hard',
   'explorer',
+  'idle-refresh',
   'cooldown-skip',
   'floor-relax-stall',
   'stall-alert',
@@ -803,6 +805,8 @@ const formatAutofeeHistoryTag = (tag: string) => {
   if (tag === 'discovery') return '🧭 discovery'
   if (tag === 'discovery-hard') return '🧨 harddrop'
   if (tag === 'explorer') return '🧭 explorer'
+  if (tag === 'idle-refresh') return 'idle-refresh'
+  if (tag.startsWith('idle-refresh:')) return tag
   if (tag === 'cooldown-skip') return '🧭 skip-cooldown'
   if (tag === 'floor-relax-stall') return '🧯 floor-relax'
   if (tag === 'reversal-fasttrack') return '↩️ reversal-fasttrack'
@@ -1040,6 +1044,7 @@ export default function LightningOps() {
   const [autofeeInboundPassive, setAutofeeInboundPassive] = useState(false)
   const [autofeeDiscovery, setAutofeeDiscovery] = useState(true)
   const [autofeeExplorer, setAutofeeExplorer] = useState(true)
+  const [autofeeIdleRefresh, setAutofeeIdleRefresh] = useState(false)
   const [autofeeSuperSource, setAutofeeSuperSource] = useState(false)
   const [autofeeSuperSourceBaseFee, setAutofeeSuperSourceBaseFee] = useState('1000')
   const [autofeeRevfloor, setAutofeeRevfloor] = useState(true)
@@ -1578,7 +1583,7 @@ export default function LightningOps() {
         }
         return
       }
-      if (autofeeHistoryRelaxTagSet.has(tag)) {
+      if (autofeeHistoryRelaxTagSet.has(tag) || tag.startsWith('idle-refresh:')) {
         if (!seenRelaxing.has(formatted)) {
           seenRelaxing.add(formatted)
           relaxing.push(formatted)
@@ -2856,6 +2861,7 @@ export default function LightningOps() {
       setAutofeeInboundPassive(Boolean(cfg.inbound_passive_enabled))
       setAutofeeDiscovery(Boolean(cfg.discovery_enabled))
       setAutofeeExplorer(Boolean(cfg.explorer_enabled))
+      setAutofeeIdleRefresh(Boolean(cfg.idle_refresh_enabled))
       setAutofeeSuperSource(Boolean(cfg.super_source_enabled))
       setAutofeeSuperSourceBaseFee(String(cfg.super_source_base_fee_msat ?? 1000))
       setAutofeeRevfloor(cfg.revfloor_enabled !== false)
@@ -4278,6 +4284,7 @@ export default function LightningOps() {
         inbound_passive_enabled: autofeeInboundPassive,
         discovery_enabled: autofeeDiscovery,
         explorer_enabled: autofeeExplorer,
+        idle_refresh_enabled: autofeeIdleRefresh,
         super_source_enabled: autofeeSuperSource,
         super_source_base_fee_msat: superSourceBaseFee,
         revfloor_enabled: autofeeRevfloor,
@@ -5889,6 +5896,10 @@ export default function LightningOps() {
                   <label className="flex items-center gap-2 text-sm text-fog/70">
                     <input type="checkbox" checked={autofeeExplorer} onChange={(e) => setAutofeeExplorer(e.target.checked)} />
                     {t('lightningOps.autofeeExplorer')}
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-fog/70" title={t('lightningOps.autofeeIdleRefreshHint')}>
+                    <input type="checkbox" checked={autofeeIdleRefresh} onChange={(e) => setAutofeeIdleRefresh(e.target.checked)} />
+                    {t('lightningOps.autofeeIdleRefresh')}
                   </label>
                   <label className="flex items-center gap-2 text-sm text-fog/70">
                     <input type="checkbox" checked={autofeeSuperSource} onChange={(e) => setAutofeeSuperSource(e.target.checked)} />
@@ -9148,4 +9159,3 @@ export default function LightningOps() {
     </section>
   )
 }
-

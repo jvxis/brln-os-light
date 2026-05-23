@@ -27,6 +27,7 @@ type rebalanceConfigPayload struct {
 	SovereignSlowSellerWindowHours        *int     `json:"sovereign_slow_seller_window_hours,omitempty"`
 	SovereignTargetSourceQuarantineHours  *int     `json:"sovereign_target_source_quarantine_hours,omitempty"`
 	SovereignStructuralCooldownRepeatHours *int    `json:"sovereign_structural_cooldown_repeat_hours,omitempty"`
+	SovereignExplorationSlotPct           *int     `json:"sovereign_exploration_slot_pct,omitempty"`
 	SovereignSourceOpportunityCostEnabled *bool    `json:"sovereign_source_opportunity_cost_enabled,omitempty"`
 	SovereignSlowSellerEnabled            *bool    `json:"sovereign_slow_seller_enabled,omitempty"`
 	ScanIntervalSec                       *int     `json:"scan_interval_sec,omitempty"`
@@ -211,6 +212,9 @@ func applyRebalanceConfigPayload(cfg RebalanceConfig, payload rebalanceConfigPay
 	}
 	if payload.SovereignStructuralCooldownRepeatHours != nil {
 		cfg.SovereignStructuralCooldownRepeatHours = *payload.SovereignStructuralCooldownRepeatHours
+	}
+	if payload.SovereignExplorationSlotPct != nil {
+		cfg.SovereignExplorationSlotPct = *payload.SovereignExplorationSlotPct
 	}
 	if payload.SovereignSourceOpportunityCostEnabled != nil {
 		cfg.SovereignSourceOpportunityCostEnabled = *payload.SovereignSourceOpportunityCostEnabled
@@ -421,6 +425,9 @@ func validateRebalanceConfigPayload(payload rebalanceConfigPayload) error {
 		return err
 	}
 	if err := validateOptionalInt("sovereign_structural_cooldown_repeat_hours", payload.SovereignStructuralCooldownRepeatHours, 1, sovereignTargetStructuralCooldownRepeatMaxHours); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("sovereign_exploration_slot_pct", payload.SovereignExplorationSlotPct, 0, sovereignExplorationSlotPctMax); err != nil {
 		return err
 	}
 	if err := validateOptionalInt("scan_interval_sec", payload.ScanIntervalSec, 1, 0); err != nil {

@@ -64,6 +64,9 @@ func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	if cfg.SovereignStructuralCooldownRepeatHours != 6 {
 		t.Fatalf("expected sovereign_structural_cooldown_repeat_hours default=6, got %d", cfg.SovereignStructuralCooldownRepeatHours)
 	}
+	if cfg.SovereignExplorationSlotPct != 0 {
+		t.Fatalf("expected sovereign_exploration_slot_pct default=0, got %d", cfg.SovereignExplorationSlotPct)
+	}
 	if !cfg.SovereignSourceOpportunityCostEnabled {
 		t.Fatalf("expected sovereign_source_opportunity_cost_enabled default=true")
 	}
@@ -212,6 +215,82 @@ func TestNormalizeRebalanceConfigClampsStructuralCooldownRepeat(t *testing.T) {
 	got = normalizeRebalanceConfig(cfg)
 	if got.SovereignStructuralCooldownRepeatHours != sovereignTargetStructuralCooldownRepeatMaxHours {
 		t.Fatalf("expected structural cooldown repeat clamped to %d, got %d", sovereignTargetStructuralCooldownRepeatMaxHours, got.SovereignStructuralCooldownRepeatHours)
+	}
+}
+
+func TestNormalizeRebalanceConfigClampsExplorationSlotPct(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	cfg.SovereignExplorationSlotPct = -5
+	got := normalizeRebalanceConfig(cfg)
+	if got.SovereignExplorationSlotPct != 0 {
+		t.Fatalf("expected negative to clamp to 0, got %d", got.SovereignExplorationSlotPct)
+	}
+	cfg.SovereignExplorationSlotPct = 100
+	got = normalizeRebalanceConfig(cfg)
+	if got.SovereignExplorationSlotPct != sovereignExplorationSlotPctMax {
+		t.Fatalf("expected clamp to %d, got %d", sovereignExplorationSlotPctMax, got.SovereignExplorationSlotPct)
+	}
+}
+
+func TestInjectSovereignExplorationSlotsDisabled(t *testing.T) {
+	candidates := []rebalanceTarget{
+		{Score: 100}, {Score: 90}, {Score: 80}, {Score: 70}, {Score: 60},
+	}
+	out := injectSovereignExplorationSlots(candidates, 4, 0)
+	if len(out) != len(candidates) {
+		t.Fatalf("length mismatch: %d vs %d", len(out), len(candidates))
+	}
+	for i := range out {
+		if out[i].Score != candidates[i].Score {
+			t.Fatalf("order changed at %d: %d vs %d", i, out[i].Score, candidates[i].Score)
+		}
+	}
+}
+
+func TestInjectSovereignExplorationSlotsMovesLowScore(t *testing.T) {
+	candidates := make([]rebalanceTarget, 10)
+	for i := range candidates {
+		candidates[i].Score = int64(100 - i*10) // 100,90,80,...,10
+		candidates[i].Channel.ChannelID = uint64(i + 1)
+	}
+	// maxJobs=5, pct=20 → 1 exploration slot. keepTop=4.
+	// Positions 0..3 = top-4 (score 100..70). Position 4 = exploration from
+	// pool [score 60..10]. Positions 5+ = fallback in score order.
+	out := injectSovereignExplorationSlots(candidates, 5, 20)
+	if len(out) != len(candidates) {
+		t.Fatalf("length mismatch: %d vs %d", len(out), len(candidates))
+	}
+	for i := 0; i < 4; i++ {
+		if out[i].Score != candidates[i].Score {
+			t.Fatalf("top-4 changed at %d: %d vs %d", i, out[i].Score, candidates[i].Score)
+		}
+		if out[i].ExplorationSlot {
+			t.Fatalf("top entry %d should not be marked exploration", i)
+		}
+	}
+	if !out[4].ExplorationSlot {
+		t.Fatalf("position 4 should be exploration slot, got score=%d explore=%v", out[4].Score, out[4].ExplorationSlot)
+	}
+	if out[4].Score >= 70 {
+		t.Fatalf("exploration slot should come from lower-score pool (<70), got %d", out[4].Score)
+	}
+	// Tail must keep original score order.
+	for i := 5; i < len(out)-1; i++ {
+		if out[i].Score < out[i+1].Score {
+			t.Fatalf("tail not in descending score order at %d: %d -> %d", i, out[i].Score, out[i+1].Score)
+		}
+	}
+}
+
+func TestInjectSovereignExplorationSlotsPreservesProbes(t *testing.T) {
+	candidates := []rebalanceTarget{
+		{Score: -1, CooldownProbe: true, Channel: RebalanceChannel{ChannelID: 99}},
+		{Score: 100}, {Score: 90}, {Score: 80}, {Score: 70},
+		{Score: 60}, {Score: 50}, {Score: 40}, {Score: 30}, {Score: 20},
+	}
+	out := injectSovereignExplorationSlots(candidates, 5, 20)
+	if !out[0].CooldownProbe || out[0].ExplorationSlot {
+		t.Fatalf("probe must stay first and unmarked, got probe=%v explore=%v", out[0].CooldownProbe, out[0].ExplorationSlot)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"math/rand"
 	"sort"
 	"strings"
 	"sync"
@@ -235,6 +236,7 @@ const (
 	sovereignTargetStructuralCooldownFirst              = 2 * time.Hour
 	sovereignTargetStructuralCooldownRepeatDefaultHours = 6
 	sovereignTargetStructuralCooldownRepeatMaxHours     = 48
+	sovereignExplorationSlotPctMax                      = 50
 	sovereignCostReliableHistoryPct              = int64(100)
 	sovereignCostConservativeBudgetPct           = int64(100)
 	sovereignUnsoldPaidLiquidityReason           = "paid_liquidity_unsold_cooldown"
@@ -286,6 +288,13 @@ type RebalanceConfig struct {
 	SovereignSlowSellerWindowHours        int     `json:"sovereign_slow_seller_window_hours"`
 	SovereignTargetSourceQuarantineHours  int     `json:"sovereign_target_source_quarantine_hours"`
 	SovereignStructuralCooldownRepeatHours int    `json:"sovereign_structural_cooldown_repeat_hours"`
+	// SovereignExplorationSlotPct reserves a fraction of max_jobs_per_cycle
+	// for randomly chosen low-score candidates ("epsilon-greedy"). Default 0
+	// disables exploration. Valid range [0,50]. Implementation: after sorting
+	// candidates by score, the top (max_jobs * (100-pct)/100) keep priority;
+	// the remaining slots are filled by randomly sampling from the lower-score
+	// pool. Lets historically-blocked channels respiratorily get attempts.
+	SovereignExplorationSlotPct           int     `json:"sovereign_exploration_slot_pct"`
 	SovereignSourceOpportunityCostEnabled bool    `json:"sovereign_source_opportunity_cost_enabled"`
 	SovereignSlowSellerEnabled            bool    `json:"sovereign_slow_seller_enabled"`
 	ScanIntervalSec                       int     `json:"scan_interval_sec"`
@@ -521,6 +530,7 @@ type RebalanceSovereignDecision struct {
 	BudgetEfficiencyMultiplier  float64 `json:"budget_efficiency_multiplier,omitempty"`
 	UnsoldLiquidityMultiplier   float64 `json:"unsold_liquidity_multiplier,omitempty"`
 	RealizedEconomicsMultiplier float64 `json:"realized_economics_multiplier,omitempty"`
+	ExplorationSlot             bool    `json:"exploration_slot,omitempty"`
 }
 
 type RebalanceSovereignHistory struct {
@@ -1027,6 +1037,7 @@ func defaultRebalanceConfig() RebalanceConfig {
 		SovereignSlowSellerWindowHours:        sovereignSlowSellerWindowDefaultHours,
 		SovereignTargetSourceQuarantineHours:  sovereignTargetSourceQuarantineDefaultHours,
 		SovereignStructuralCooldownRepeatHours: sovereignTargetStructuralCooldownRepeatDefaultHours,
+		SovereignExplorationSlotPct:           0,
 		SovereignSourceOpportunityCostEnabled: true,
 		SovereignSlowSellerEnabled:            true,
 		ScanIntervalSec:                       900,
@@ -1635,6 +1646,12 @@ func normalizeRebalanceConfig(cfg RebalanceConfig) RebalanceConfig {
 	}
 	if cfg.SovereignStructuralCooldownRepeatHours > sovereignTargetStructuralCooldownRepeatMaxHours {
 		cfg.SovereignStructuralCooldownRepeatHours = sovereignTargetStructuralCooldownRepeatMaxHours
+	}
+	if cfg.SovereignExplorationSlotPct < 0 {
+		cfg.SovereignExplorationSlotPct = 0
+	}
+	if cfg.SovereignExplorationSlotPct > sovereignExplorationSlotPctMax {
+		cfg.SovereignExplorationSlotPct = sovereignExplorationSlotPctMax
 	}
 	if cfg.MinAmountSat < 0 {
 		cfg.MinAmountSat = 0
@@ -3106,7 +3123,15 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 		}
 	}
 
-	for _, target := range plan.Candidates {
+	// Epsilon-greedy exploration: when enabled, reserve a fraction of slots
+	// for randomly chosen low-score candidates. They bypass the score sort
+	// but still go through every gate (cooldown, structural, ROI, etc).
+	candidates := plan.Candidates
+	if cfg.SovereignExplorationSlotPct > 0 && maxJobs > 1 {
+		candidates = injectSovereignExplorationSlots(candidates, maxJobs, cfg.SovereignExplorationSlotPct)
+	}
+
+	for _, target := range candidates {
 		targetCfg := effectiveConfigForTarget(cfg, settings[target.Channel.ChannelID])
 		targetPolicy := lndclient.ChannelPolicySnapshot{
 			FeeRatePpm:  target.Channel.OutgoingFeePpm,
@@ -3164,6 +3189,7 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 			BudgetEfficiencyMultiplier:  target.BudgetEfficiencyMultiplier,
 			UnsoldLiquidityMultiplier:   target.UnsoldLiquidityMultiplier,
 			RealizedEconomicsMultiplier: target.RealizedEconomicsMultiplier,
+			ExplorationSlot:             target.ExplorationSlot,
 		}
 		if target.StructuralCooldown.LastFailureAttempts > decision.RecentStructuralFailures {
 			decision.RecentStructuralFailures = target.StructuralCooldown.LastFailureAttempts
@@ -3524,6 +3550,10 @@ type rebalanceTarget struct {
 	UnsoldLiquidityMultiplier   float64
 	RealizedEconomicsMultiplier float64
 	UnsoldLiquidity             sovereignUnsoldLiquidityStat
+	// ExplorationSlot marks targets promoted via the epsilon-greedy
+	// exploration mechanism. These bypassed the score sort to give a
+	// historically-deprioritized candidate a chance to be tried.
+	ExplorationSlot bool
 }
 
 type rebalanceAutoScanCandidateInput struct {
@@ -9207,6 +9237,85 @@ func sovereignTargetStructuralCooldownDuration(failures int, cfg RebalanceConfig
 	return sovereignTargetStructuralCooldownFirst
 }
 
+// injectSovereignExplorationSlots applies an epsilon-greedy reordering to a
+// score-sorted candidate list. It guarantees that `pct` percent of the top
+// `maxJobs` positions are filled with randomly chosen low-score candidates
+// instead of the deterministic next-best entries. CooldownProbe entries keep
+// their score-driven priority (they have score=-1 and are placed at the head
+// elsewhere in the pipeline). The remaining candidates retain their original
+// score order so that if any of the front entries is gated out, the loop can
+// fall back to the next-best one. Marked candidates have ExplorationSlot=true
+// so telemetry can attribute selections back to the exploration mechanism.
+func injectSovereignExplorationSlots(candidates []rebalanceTarget, maxJobs int, pct int) []rebalanceTarget {
+	if pct <= 0 || maxJobs <= 1 || len(candidates) <= maxJobs {
+		return candidates
+	}
+	if pct > sovereignExplorationSlotPctMax {
+		pct = sovereignExplorationSlotPctMax
+	}
+	// Compute exploration slot count. With pct=12 and maxJobs=8 → 0 (floor),
+	// so round up to ensure at least one when pct > 0.
+	slots := (maxJobs * pct) / 100
+	if slots == 0 {
+		slots = 1
+	}
+	if slots >= maxJobs {
+		slots = maxJobs - 1
+	}
+	keepTop := maxJobs - slots
+	// Separate probes (score=-1) from real candidates: probes always lead.
+	probeCount := 0
+	for _, c := range candidates {
+		if c.CooldownProbe {
+			probeCount++
+			continue
+		}
+		break
+	}
+	if keepTop <= probeCount || keepTop >= len(candidates) {
+		return candidates
+	}
+	probes := candidates[:probeCount]
+	rest := candidates[probeCount:]
+	topCount := keepTop - probeCount
+	if topCount <= 0 || topCount >= len(rest) {
+		return candidates
+	}
+	top := rest[:topCount]
+	pool := rest[topCount:]
+	if len(pool) <= slots {
+		return candidates
+	}
+	// Random shuffle pool to choose `slots` exploration picks.
+	idx := make([]int, len(pool))
+	for i := range idx {
+		idx[i] = i
+	}
+	rand.Shuffle(len(idx), func(i, j int) { idx[i], idx[j] = idx[j], idx[i] })
+	explored := make([]rebalanceTarget, 0, slots)
+	exploredIdx := make(map[int]struct{}, slots)
+	for i := 0; i < slots; i++ {
+		entry := pool[idx[i]]
+		entry.ExplorationSlot = true
+		explored = append(explored, entry)
+		exploredIdx[idx[i]] = struct{}{}
+	}
+	// Tail retains original score order to keep deterministic fallback.
+	tail := make([]rebalanceTarget, 0, len(pool)-slots)
+	for i, t := range pool {
+		if _, ok := exploredIdx[i]; ok {
+			continue
+		}
+		tail = append(tail, t)
+	}
+	out := make([]rebalanceTarget, 0, len(candidates))
+	out = append(out, probes...)
+	out = append(out, top...)
+	out = append(out, explored...)
+	out = append(out, tail...)
+	return out
+}
+
 func shouldSkipSovereignUnsoldPaidLiquidity(stat sovereignUnsoldLiquidityStat, cfg RebalanceConfig, now time.Time) bool {
 	if !hasSovereignUnsoldPaidLiquidity(stat, cfg, now) {
 		return false
@@ -9942,6 +10051,7 @@ end $$;
     sovereign_slow_seller_window_hours integer not null default 168,
     sovereign_target_source_quarantine_hours integer not null default 6,
     sovereign_structural_cooldown_repeat_hours integer not null default 6,
+    sovereign_exploration_slot_pct integer not null default 0,
     sovereign_source_opportunity_cost_enabled boolean not null default true,
     sovereign_slow_seller_enabled boolean not null default true,
     scan_interval_sec integer not null default 900,
@@ -10023,6 +10133,8 @@ end $$;
     add column if not exists sovereign_target_source_quarantine_hours integer not null default 6;
   alter table rebalance_config
     add column if not exists sovereign_structural_cooldown_repeat_hours integer not null default 6;
+  alter table rebalance_config
+    add column if not exists sovereign_exploration_slot_pct integer not null default 0;
   alter table rebalance_config
     add column if not exists sovereign_source_opportunity_cost_enabled boolean not null default true;
   alter table rebalance_config
@@ -10140,6 +10252,8 @@ end $$;
     alter column sovereign_target_source_quarantine_hours set default 6;
   alter table rebalance_config
     alter column sovereign_structural_cooldown_repeat_hours set default 6;
+  alter table rebalance_config
+    alter column sovereign_exploration_slot_pct set default 0;
   alter table rebalance_config
     alter column sovereign_source_opportunity_cost_enabled set default true;
   alter table rebalance_config
@@ -10465,7 +10579,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags, fresh_paid_liquidity_lock_enabled, fresh_paid_liquidity_lock_hours,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback,
-    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled
+    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled
   from rebalance_config where id=$1`, rebalanceConfigID)
 
 	cfg := defaultRebalanceConfig()
@@ -10537,6 +10651,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.SovereignSlowSellerWindowHours,
 		&cfg.SovereignTargetSourceQuarantineHours,
 		&cfg.SovereignStructuralCooldownRepeatHours,
+		&cfg.SovereignExplorationSlotPct,
 		&cfg.SovereignSourceOpportunityCostEnabled,
 		&cfg.SovereignSlowSellerEnabled,
 	)
@@ -10562,8 +10677,8 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags, fresh_paid_liquidity_lock_enabled, fresh_paid_liquidity_lock_hours,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback,
-    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,now())
+    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, updated_at
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scheduler_mode = excluded.scheduler_mode,
@@ -10632,11 +10747,12 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     sovereign_slow_seller_window_hours = excluded.sovereign_slow_seller_window_hours,
     sovereign_target_source_quarantine_hours = excluded.sovereign_target_source_quarantine_hours,
     sovereign_structural_cooldown_repeat_hours = excluded.sovereign_structural_cooldown_repeat_hours,
+    sovereign_exploration_slot_pct = excluded.sovereign_exploration_slot_pct,
     sovereign_source_opportunity_cost_enabled = excluded.sovereign_source_opportunity_cost_enabled,
     sovereign_slow_seller_enabled = excluded.sovereign_slow_seller_enabled,
     updated_at = now()
   `, rebalanceConfigID, cfg.AutoEnabled, cfg.SchedulerMode, cfg.SovereignCandidateScope, cfg.SovereignMaxJobsPerCycle, cfg.SovereignMinExpectedProfitSat, cfg.SovereignLowSuccessMinRate, cfg.SovereignLowSuccessMinProfitCostRatio, cfg.SovereignBudgetEfficiencyMinRatio, cfg.SovereignRouteDeadSourceShare, cfg.SovereignRiskScoreFloor, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetUnlimited, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
-		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.FreshPaidLiquidityLockEnabled, cfg.FreshPaidLiquidityLockHours, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback, cfg.SovereignAttributionWindowHours, cfg.SovereignSlowSellerWindowHours, cfg.SovereignTargetSourceQuarantineHours, cfg.SovereignStructuralCooldownRepeatHours, cfg.SovereignSourceOpportunityCostEnabled, cfg.SovereignSlowSellerEnabled,
+		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.FreshPaidLiquidityLockEnabled, cfg.FreshPaidLiquidityLockHours, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback, cfg.SovereignAttributionWindowHours, cfg.SovereignSlowSellerWindowHours, cfg.SovereignTargetSourceQuarantineHours, cfg.SovereignStructuralCooldownRepeatHours, cfg.SovereignExplorationSlotPct, cfg.SovereignSourceOpportunityCostEnabled, cfg.SovereignSlowSellerEnabled,
 	)
 	return err
 }

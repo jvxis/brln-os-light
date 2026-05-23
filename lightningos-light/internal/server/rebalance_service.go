@@ -9293,12 +9293,14 @@ func sovereignTargetStructuralCooldownDuration(failures int, cfg RebalanceConfig
 // them gate bypass on empirical-history filters (structural_cooldown,
 // low_success, route_dead, paid_liquidity_unsold, budget_efficiency_hard).
 //
-// Scarcity rule: when the non-probe candidate count is small enough that
-// every candidate would be queued anyway (nonProbeCount <= maxJobs), all of
-// them are marked as ExplorationSlot=true. The position order is preserved
-// but every candidate gains the gate bypass, giving chronically deprioritized
-// channels a real chance to re-enter the rotation when there is no scarcity
-// pressure to gatekeep against.
+// Scarcity rule: when the non-probe candidate count is at most twice maxJobs,
+// all candidates are marked as ExplorationSlot=true. The 2× multiplier
+// captures the practical regime where there are "many" candidates on paper
+// but most are blocked by empirical-history gates (structural_cooldown,
+// route_dead, low_success) — without the bypass, only random tail picks
+// would explore, missing high-score blocked candidates at the head. The
+// position order is preserved so the score-based ranking still drives which
+// jobs run within the maxJobs cap.
 //
 // CooldownProbe entries (score=-1) always keep the head positions and are
 // never marked. The non-explored tail retains its score order to act as a
@@ -9329,10 +9331,12 @@ func injectSovereignExplorationSlots(candidates []rebalanceTarget, maxJobs int, 
 		// Need at least 2 non-probes so one can stay "top" and one can explore.
 		return candidates
 	}
-	// Scarcity bypass: when there are at most maxJobs real candidates, all of
-	// them would run this cycle anyway. Mark every non-probe as exploration
-	// so the empirical-history gates do not silently veto the whole batch.
-	if nonProbeCount <= maxJobs {
+	// Scarcity bypass: when there are at most 2× maxJobs real candidates, the
+	// batch is small enough that empirical-history gates would veto too many
+	// top-ranked picks (kappa/CLB-style: high score, blocked by historical
+	// failures). Mark every non-probe as exploration so the ranking — not the
+	// gates — drives which jobs run within the maxJobs cap.
+	if nonProbeCount <= maxJobs*2 {
 		out := make([]rebalanceTarget, 0, len(candidates))
 		out = append(out, candidates[:probeCount]...)
 		for _, c := range candidates[probeCount:] {

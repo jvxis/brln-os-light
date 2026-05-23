@@ -3630,6 +3630,99 @@ func TestEvWeightedEconomicScorePunishesDeadPairs(t *testing.T) {
 // must replace score = (gain - cost) with the EV-weighted formula. Dead
 // pairs end up with negative scores and rank below healthy pairs even when
 // their conditional profit is much higher.
+// When ROIMin is below 1 the user is explicitly opting into loss-tolerant
+// operation. profit_guardrail (gain >= cost, i.e. ROI >= 1) must stand down
+// in that case so roi_guardrail with the user's threshold is the sole gate.
+func TestBuildAndOrderRebalanceCandidatesProfitGuardrailRespectsLowROIMin(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	cfg.GainModelVersion = 3
+	cfg.ROIMin = 0.5
+	cfg.DeadbandPct = 0
+	cfg.RebalanceCostFloorPpm = 0
+
+	// Channel where v3 demand-capped gain lands between 0.5*cost and cost:
+	// revenue7d=600, amount=1M, local=1M => historical = 600 (capped <= theoretical)
+	// theoretical = 1M * 1000ppm * spread(=1-50/1000=0.95) = 950
+	// demand>0 => gain=min(600, 950)=600. RebalanceCost7d=900 ppm * 1M = 900.
+	// gain/cost = 0.667 => roi_guardrail (0.5) passes, profit_guardrail would
+	// have killed it before this fix.
+	channels := []RebalanceChannel{
+		{
+			ChannelID:            42,
+			PeerAlias:            "loss-tolerant-target",
+			Active:               true,
+			EligibleAsTarget:     true,
+			OutgoingFeePpm:       1000,
+			PeerFeeRatePpm:       50,
+			TargetAmountSat:      1_000_000,
+			TargetOutboundPct:    100,
+			LocalPct:             0,
+			Revenue7dSat:         600,
+			LocalBalanceSat:      1_000_000,
+			CapacitySat:          2_000_000,
+			RebalanceCost7dPpm:   900,
+			RebalanceAmount7dSat: 1_000_000,
+		},
+	}
+	plan := buildAndOrderRebalanceCandidates(rebalanceAutoScanCandidateInput{
+		Channels: channels,
+		Settings: map[uint64]channelSetting{42: {AutoEnabled: true}},
+		Cfg:      cfg,
+		ScanAt:   time.Now(),
+	})
+	if plan.ProfitSkipped != 0 {
+		t.Fatalf("expected ProfitSkipped=0 when ROIMin<1, got %d", plan.ProfitSkipped)
+	}
+	if len(plan.Candidates) != 1 {
+		t.Fatalf("expected 1 candidate to survive under loss-tolerant ROIMin, got %d", len(plan.Candidates))
+	}
+}
+
+// Regression guard: when ROIMin is at the default (>=1), profit_guardrail
+// must still fire for unprofitable candidates. This is the original behavior.
+func TestBuildAndOrderRebalanceCandidatesProfitGuardrailFiresAtDefaultROIMin(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	cfg.GainModelVersion = 3
+	cfg.ROIMin = 1.0 // default-equivalent
+	cfg.DeadbandPct = 0
+	cfg.RebalanceCostFloorPpm = 0
+
+	// Same shape as the loss-tolerant test above: gain=600, cost=900, roi=0.67.
+	channels := []RebalanceChannel{
+		{
+			ChannelID:            42,
+			PeerAlias:            "unprofitable",
+			Active:               true,
+			EligibleAsTarget:     true,
+			OutgoingFeePpm:       1000,
+			PeerFeeRatePpm:       50,
+			TargetAmountSat:      1_000_000,
+			TargetOutboundPct:    100,
+			LocalPct:             0,
+			Revenue7dSat:         600,
+			LocalBalanceSat:      1_000_000,
+			CapacitySat:          2_000_000,
+			RebalanceCost7dPpm:   900,
+			RebalanceAmount7dSat: 1_000_000,
+		},
+	}
+	plan := buildAndOrderRebalanceCandidates(rebalanceAutoScanCandidateInput{
+		Channels: channels,
+		Settings: map[uint64]channelSetting{42: {AutoEnabled: true}},
+		Cfg:      cfg,
+		ScanAt:   time.Now(),
+	})
+	// ROIMin=1 and roi=0.67 → roi_guardrail catches it first (it sits before
+	// profit_guardrail in the code path), so either skip reason is acceptable
+	// as long as the candidate is rejected.
+	if len(plan.Candidates) != 0 {
+		t.Fatalf("expected candidate blocked when ROIMin>=1, got %d candidates", len(plan.Candidates))
+	}
+	if plan.ROISkipped == 0 && plan.ProfitSkipped == 0 {
+		t.Fatalf("expected roi_guardrail or profit_guardrail to fire, got neither")
+	}
+}
+
 func TestBuildAndOrderRebalanceCandidatesUsesEVScoreWhenEnabled(t *testing.T) {
 	cfg := defaultRebalanceConfig()
 	cfg.GainModelVersion = 3

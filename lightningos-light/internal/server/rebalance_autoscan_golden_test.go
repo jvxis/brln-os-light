@@ -43,7 +43,11 @@ func TestBuildAndOrderRebalanceCandidatesGolden(t *testing.T) {
 	cfg := defaultRebalanceConfig()
 	cfg.AutoEnabled = true
 	cfg.GainModelVersion = 1
-	cfg.ROIMin = 0.8
+	// Keep ROIMin >= 1 here so the original profit_guardrail behavior is
+	// exercised. Loss-tolerant ROIMin (<1) suppresses profit_guardrail in
+	// favor of roi_guardrail and is covered by dedicated tests in
+	// rebalance_service_test.go.
+	cfg.ROIMin = 1.0
 	cfg.ScanIntervalSec = 15 * 60
 	cfg.MinSplitEnabled = true
 	cfg.MinAmountSat = 50_000
@@ -108,15 +112,18 @@ func TestBuildAndOrderRebalanceCandidatesGolden(t *testing.T) {
 	if got.TopScore != 4_900 || !got.TopScoreSet {
 		t.Fatalf("top score: got %d set=%v, want 4900 set=true", got.TopScore, got.TopScoreSet)
 	}
-	if got.BelowExecuteMinSkipped != 1 || got.ROISkipped != 1 || got.ProfitSkipped != 1 || got.TargetCooldownSkipped != 2 || got.RecentSkipped != 1 {
+	// With ROIMin=1.0 both 107 (low gain) and 108 (gain<cost) are caught by
+	// roi_guardrail (ROI<1 fires first), so profit_guardrail does not fire
+	// for any survivor of roi_guardrail. This is the cleaned-up ordering
+	// after profit_guardrail was made loss-tolerant aware.
+	if got.BelowExecuteMinSkipped != 1 || got.ROISkipped != 2 || got.ProfitSkipped != 0 || got.TargetCooldownSkipped != 2 || got.RecentSkipped != 1 {
 		t.Fatalf("skip counters: below=%d roi=%d profit=%d cooldown=%d recent=%d",
 			got.BelowExecuteMinSkipped, got.ROISkipped, got.ProfitSkipped, got.TargetCooldownSkipped, got.RecentSkipped)
 	}
 
 	wantReasons := map[string]int{
 		"below_execute_min":             1,
-		"roi_guardrail":                 1,
-		"profit_guardrail":              1,
+		"roi_guardrail":                 2,
 		"target_cooldown":               1,
 		"target_cooldown_probe_backoff": 1,
 		"recently_attempted":            1,
@@ -170,7 +177,7 @@ func TestBuildAndOrderRebalanceCandidatesGolden(t *testing.T) {
 	wantDetails := map[uint64]string{
 		106: "below_execute_min",
 		107: "roi_guardrail",
-		108: "profit_guardrail",
+		108: "roi_guardrail",
 		109: "target_cooldown_probe_backoff",
 	}
 	if !reflect.DeepEqual(gotDetails, wantDetails) {

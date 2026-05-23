@@ -3754,7 +3754,13 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 			})
 			continue
 		}
-		if expectedGain > 0 && estimatedCost > 0 && expectedGain < estimatedCost {
+		// profit_guardrail enforces an implicit ROI >= 1 floor (gain >= cost).
+		// When the user has explicitly lowered ROIMin below 1 they opted into
+		// loss-tolerant operation, so this hardcoded gate would contradict
+		// their configured floor — defer to roi_guardrail above. We still fire
+		// when ROIMin is unset (<=0) or >= 1 so default behavior is preserved.
+		lossTolerantROI := input.Cfg.ROIMin > 0 && input.Cfg.ROIMin < 1
+		if !lossTolerantROI && expectedGain > 0 && estimatedCost > 0 && expectedGain < estimatedCost {
 			plan.ProfitSkipped++
 			noteSkip("profit_guardrail")
 			plan.SkippedDetails = append(plan.SkippedDetails, RebalanceSkipDetail{

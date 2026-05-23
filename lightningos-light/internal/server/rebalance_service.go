@@ -3195,20 +3195,25 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 			decision.RecentStructuralFailures = target.StructuralCooldown.LastFailureAttempts
 		}
 
+		// ExplorationSlot bypasses the four empirical-history gates so that a
+		// chronically deprioritized channel can be retried in spite of past
+		// failures. Hard economic and operational gates (profit floor, busy,
+		// budget, cycle limit) still apply. CooldownProbe entries are a
+		// distinct mechanism and remain non-sovereign regardless.
 		switch {
 		case target.CooldownProbe:
 			decision.Reason = "cooldown_probe_not_sovereign"
 			noteSkip(decision.Reason)
-		case shouldSkipSovereignTargetStructuralCooldown(target.StructuralCooldown, cfg, scanAt):
+		case !target.ExplorationSlot && shouldSkipSovereignTargetStructuralCooldown(target.StructuralCooldown, cfg, scanAt):
 			decision.Reason = sovereignTargetStructuralCooldownReason
 			noteSkip(decision.Reason)
-		case shouldSkipSovereignUnsoldPaidLiquidity(target.UnsoldLiquidity, cfg, scanAt):
+		case !target.ExplorationSlot && shouldSkipSovereignUnsoldPaidLiquidity(target.UnsoldLiquidity, cfg, scanAt):
 			decision.Reason = sovereignUnsoldPaidLiquidityReason
 			noteSkip(decision.Reason)
-		case shouldSkipSovereignRouteDeadOpportunity(target.PairStats, expectedProfit, budgetCost, plan.EligibleSources, cfg):
+		case !target.ExplorationSlot && shouldSkipSovereignRouteDeadOpportunity(target.PairStats, expectedProfit, budgetCost, plan.EligibleSources, cfg):
 			decision.Reason = sovereignRouteDeadOpportunityReason
 			noteSkip(decision.Reason)
-		case shouldSkipSovereignLowSuccessOpportunity(target.PairStats, expectedProfit, estimatedCost, budgetCost, cfg, scanAt):
+		case !target.ExplorationSlot && shouldSkipSovereignLowSuccessOpportunity(target.PairStats, expectedProfit, estimatedCost, budgetCost, cfg, scanAt):
 			decision.Reason = sovereignLowSuccessOpportunityReason
 			noteSkip(decision.Reason)
 		case maxJobs > 0 && result.Selected >= maxJobs:
@@ -9237,33 +9242,30 @@ func sovereignTargetStructuralCooldownDuration(failures int, cfg RebalanceConfig
 	return sovereignTargetStructuralCooldownFirst
 }
 
-// injectSovereignExplorationSlots applies an epsilon-greedy reordering to a
-// score-sorted candidate list. It guarantees that `pct` percent of the top
-// `maxJobs` positions are filled with randomly chosen low-score candidates
-// instead of the deterministic next-best entries. CooldownProbe entries keep
-// their score-driven priority (they have score=-1 and are placed at the head
-// elsewhere in the pipeline). The remaining candidates retain their original
-// score order so that if any of the front entries is gated out, the loop can
-// fall back to the next-best one. Marked candidates have ExplorationSlot=true
-// so telemetry can attribute selections back to the exploration mechanism.
+// injectSovereignExplorationSlots applies an epsilon-greedy mark-and-reorder
+// pass to a score-sorted candidate list. Each cycle a fraction (`pct`) of
+// the available slots is dedicated to randomly chosen low-score candidates;
+// they are tagged with ExplorationSlot=true so the sovereign loop can grant
+// them gate bypass on empirical-history filters (structural_cooldown,
+// low_success, route_dead, paid_liquidity_unsold). The marking happens even
+// when len(candidates) <= maxJobs because the bypass — not the position —
+// is what gives chronically deprioritized channels a real second chance.
+// CooldownProbe entries (score=-1) always keep the head positions and are
+// never marked. The non-explored tail retains its score order to act as a
+// deterministic fallback when head candidates are gated out.
 func injectSovereignExplorationSlots(candidates []rebalanceTarget, maxJobs int, pct int) []rebalanceTarget {
-	if pct <= 0 || maxJobs <= 1 || len(candidates) <= maxJobs {
+	if pct <= 0 || maxJobs <= 1 || len(candidates) <= 1 {
 		return candidates
 	}
 	if pct > sovereignExplorationSlotPctMax {
 		pct = sovereignExplorationSlotPctMax
 	}
-	// Compute exploration slot count. With pct=12 and maxJobs=8 → 0 (floor),
-	// so round up to ensure at least one when pct > 0.
+	// Compute exploration slot count. Round up so pct>0 always yields >=1.
 	slots := (maxJobs * pct) / 100
 	if slots == 0 {
 		slots = 1
 	}
-	if slots >= maxJobs {
-		slots = maxJobs - 1
-	}
-	keepTop := maxJobs - slots
-	// Separate probes (score=-1) from real candidates: probes always lead.
+	// Separate probes (score=-1, CooldownProbe) from real candidates.
 	probeCount := 0
 	for _, c := range candidates {
 		if c.CooldownProbe {
@@ -9272,36 +9274,57 @@ func injectSovereignExplorationSlots(candidates []rebalanceTarget, maxJobs int, 
 		}
 		break
 	}
-	if keepTop <= probeCount || keepTop >= len(candidates) {
+	nonProbeCount := len(candidates) - probeCount
+	if nonProbeCount <= 1 {
+		// Need at least 2 non-probes so one can stay "top" and one can explore.
+		return candidates
+	}
+	// Cap slots so at least one non-probe remains as deterministic top pick.
+	if slots >= nonProbeCount {
+		slots = nonProbeCount - 1
+	}
+	if slots <= 0 {
+		return candidates
+	}
+	// Effective max is bounded by both maxJobs and candidate count so the
+	// "top" group does not extend past the list when candidates are scarce.
+	effectiveMax := maxJobs
+	if effectiveMax > probeCount+nonProbeCount {
+		effectiveMax = probeCount + nonProbeCount
+	}
+	keepTop := effectiveMax - slots
+	if keepTop < probeCount+1 {
+		keepTop = probeCount + 1
+	}
+	if keepTop >= len(candidates) {
 		return candidates
 	}
 	probes := candidates[:probeCount]
-	rest := candidates[probeCount:]
-	topCount := keepTop - probeCount
-	if topCount <= 0 || topCount >= len(rest) {
+	top := candidates[probeCount:keepTop]
+	pool := candidates[keepTop:]
+	actualSlots := slots
+	if actualSlots > len(pool) {
+		actualSlots = len(pool)
+	}
+	if actualSlots == 0 {
 		return candidates
 	}
-	top := rest[:topCount]
-	pool := rest[topCount:]
-	if len(pool) <= slots {
-		return candidates
-	}
-	// Random shuffle pool to choose `slots` exploration picks.
+	// Randomly choose actualSlots indexes from pool to mark as exploration.
 	idx := make([]int, len(pool))
 	for i := range idx {
 		idx[i] = i
 	}
 	rand.Shuffle(len(idx), func(i, j int) { idx[i], idx[j] = idx[j], idx[i] })
-	explored := make([]rebalanceTarget, 0, slots)
-	exploredIdx := make(map[int]struct{}, slots)
-	for i := 0; i < slots; i++ {
+	exploredIdx := make(map[int]struct{}, actualSlots)
+	explored := make([]rebalanceTarget, 0, actualSlots)
+	for i := 0; i < actualSlots; i++ {
 		entry := pool[idx[i]]
 		entry.ExplorationSlot = true
 		explored = append(explored, entry)
 		exploredIdx[idx[i]] = struct{}{}
 	}
-	// Tail retains original score order to keep deterministic fallback.
-	tail := make([]rebalanceTarget, 0, len(pool)-slots)
+	// Tail retains original score order so gated-head fallback is deterministic.
+	tail := make([]rebalanceTarget, 0, len(pool)-actualSlots)
 	for i, t := range pool {
 		if _, ok := exploredIdx[i]; ok {
 			continue

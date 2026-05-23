@@ -294,6 +294,108 @@ func TestInjectSovereignExplorationSlotsPreservesProbes(t *testing.T) {
 	}
 }
 
+// When candidates ≤ maxJobs the loop tries all of them regardless of order,
+// but we still mark one as exploration so the gate bypass takes effect.
+// This is the fix for the "5 candidates, 0 selected" scenario where every
+// candidate was blocked by structural_cooldown — without marking nothing
+// would ever bypass.
+func TestInjectSovereignExplorationSlotsMarksWhenBelowMaxJobs(t *testing.T) {
+	candidates := make([]rebalanceTarget, 6)
+	for i := range candidates {
+		candidates[i].Score = int64(100 - i*10)
+		candidates[i].Channel.ChannelID = uint64(i + 1)
+	}
+	// maxJobs=8, len=6 (below max). pct=15 → slots=1.
+	out := injectSovereignExplorationSlots(candidates, 8, 15)
+	if len(out) != len(candidates) {
+		t.Fatalf("length mismatch: %d vs %d", len(out), len(candidates))
+	}
+	marked := 0
+	for _, c := range out {
+		if c.ExplorationSlot {
+			marked++
+		}
+	}
+	if marked != 1 {
+		t.Fatalf("expected exactly 1 candidate marked as exploration, got %d", marked)
+	}
+	if out[0].ExplorationSlot {
+		t.Fatalf("top candidate (score=100) must not be marked")
+	}
+}
+
+// ExplorationSlot=true must let the autopilot skip the structural_cooldown
+// gate. Without the bypass the only candidate is blocked and nothing runs.
+func TestExecuteSovereignAutopilotExplorationBypassesStructuralCooldown(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = true
+	cfg.SovereignMaxJobsPerCycle = 1
+	cfg.SovereignMinExpectedProfitSat = 0
+	scanAt := time.Now()
+
+	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{
+		{
+			Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "exploration:0", PeerAlias: "exploration", TargetAmountSat: 1_000_000},
+			ExpectedGainSat:  5_000,
+			EstimatedCostSat: 500,
+			BudgetCostSat:    1_000,
+			Score:            4_500,
+			ExplorationSlot:  true, // <-- bypass on
+			StructuralCooldown: sovereignTargetStructuralCooldownStat{
+				TargetChannelID:     1,
+				Failures:            2,
+				LastFailureAttempts: 40,
+				LastFailureAt:       scanAt.Add(-30 * time.Minute), // still inside cooldown
+			},
+		},
+	}}
+
+	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, scanAt, false)
+	if result.Selected != 1 {
+		t.Fatalf("expected 1 selected via exploration bypass, got %d (decisions=%+v)", result.Selected, result.Decisions)
+	}
+	if !result.Decisions[0].Selected || !result.Decisions[0].ExplorationSlot {
+		t.Fatalf("expected selected exploration decision, got %+v", result.Decisions[0])
+	}
+}
+
+// Non-exploration candidates still respect structural_cooldown — regression
+// guard so the bypass cannot leak to ordinary decisions.
+func TestExecuteSovereignAutopilotStructuralCooldownStillBlocksNonExploration(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = true
+	cfg.SovereignMaxJobsPerCycle = 1
+	cfg.SovereignMinExpectedProfitSat = 0
+	scanAt := time.Now()
+
+	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{
+		{
+			Channel:          RebalanceChannel{ChannelID: 1, ChannelPoint: "blocked:0", PeerAlias: "blocked", TargetAmountSat: 1_000_000},
+			ExpectedGainSat:  5_000,
+			EstimatedCostSat: 500,
+			BudgetCostSat:    1_000,
+			Score:            4_500,
+			// ExplorationSlot: false (default)
+			StructuralCooldown: sovereignTargetStructuralCooldownStat{
+				TargetChannelID:     1,
+				Failures:            2,
+				LastFailureAttempts: 40,
+				LastFailureAt:       scanAt.Add(-30 * time.Minute),
+			},
+		},
+	}}
+
+	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, scanAt, false)
+	if result.Selected != 0 {
+		t.Fatalf("expected 0 selected (non-exploration cooldown stays), got %d", result.Selected)
+	}
+	if result.Decisions[0].Reason != sovereignTargetStructuralCooldownReason {
+		t.Fatalf("expected structural cooldown reason, got %s", result.Decisions[0].Reason)
+	}
+}
+
 // TestComputeEffectiveProtectedFreshChannel: a channel with no significant
 // historical paid_cost has zero protection regardless of payback progress.
 func TestComputeEffectiveProtectedFreshChannel(t *testing.T) {

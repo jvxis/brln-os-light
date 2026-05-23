@@ -1317,6 +1317,77 @@ func TestHasRebalanceFallbackCandidateSkipsBlockedMppSources(t *testing.T) {
 	}
 }
 
+func TestShouldAbortMppStructuralFallbackRequiresDistinctSources(t *testing.T) {
+	cases := []struct {
+		name                     string
+		succeededShards          int
+		attemptedShards          int
+		structuralFailureShards  int
+		attemptedSources         int
+		structuralFailureSources int
+		want                     bool
+	}{
+		{
+			name:                     "repeated shards from two sources do not abort",
+			attemptedShards:          6,
+			structuralFailureShards:  6,
+			attemptedSources:         2,
+			structuralFailureSources: 2,
+			want:                     false,
+		},
+		{
+			name:                     "three distinct sources do not abort",
+			attemptedShards:          6,
+			structuralFailureShards:  6,
+			attemptedSources:         3,
+			structuralFailureSources: 3,
+			want:                     false,
+		},
+		{
+			name:                     "four distinct structural sources abort",
+			attemptedShards:          6,
+			structuralFailureShards:  6,
+			attemptedSources:         4,
+			structuralFailureSources: 4,
+			want:                     true,
+		},
+		{
+			name:                     "succeeded shard preserves fallback",
+			succeededShards:          1,
+			attemptedShards:          6,
+			structuralFailureShards:  5,
+			attemptedSources:         4,
+			structuralFailureSources: 4,
+			want:                     false,
+		},
+		{
+			name:                     "non structural shard majority preserves fallback",
+			attemptedShards:          10,
+			structuralFailureShards:  6,
+			attemptedSources:         5,
+			structuralFailureSources: 4,
+			want:                     false,
+		},
+		{
+			name:                     "non structural source majority preserves fallback",
+			attemptedShards:          10,
+			structuralFailureShards:  8,
+			attemptedSources:         6,
+			structuralFailureSources: 4,
+			want:                     false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := shouldAbortMppStructuralFallback(tc.succeededShards, tc.attemptedShards, tc.structuralFailureShards, tc.attemptedSources, tc.structuralFailureSources)
+			if got != tc.want {
+				t.Fatalf("shouldAbortMppStructuralFallback()=%v want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestFilterExecutableSourcesSkipsBelowExecuteMinimum(t *testing.T) {
 	sources := []RebalanceChannel{
 		{ChannelID: 1},

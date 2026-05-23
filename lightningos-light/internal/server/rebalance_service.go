@@ -137,11 +137,13 @@ const (
 )
 
 const (
-	// MSPR structural abort only fires after enough parallel shards fail, and
-	// only when most of them look structural. This preserves legacy fallback
-	// when at least one shard succeeded or failures look transient.
-	mppStructuralAbortMinAttempts = 4
-	mppStructuralAbortRatio       = 0.70
+	// MSPR structural abort only fires after enough independent sources fail,
+	// and only when most shards/sources look structural. This preserves legacy
+	// fallback when at least one shard succeeded, failures look transient, or a
+	// few repeated shards against the same source would otherwise dominate.
+	mppStructuralAbortMinAttempts        = 4
+	mppStructuralAbortMinDistinctSources = 4
+	mppStructuralAbortRatio              = 0.70
 )
 
 const (
@@ -1967,6 +1969,21 @@ func hasRebalanceFallbackCandidate(sources []RebalanceChannel, sourceAvailable m
 		return true
 	}
 	return false
+}
+
+func shouldAbortMppStructuralFallback(succeededShards int, attemptedShards int, structuralFailureShards int, attemptedSources int, structuralFailureSources int) bool {
+	if succeededShards > 0 || attemptedShards < mppStructuralAbortMinAttempts {
+		return false
+	}
+	if structuralFailureSources < mppStructuralAbortMinDistinctSources || attemptedSources <= 0 {
+		return false
+	}
+	shardRatio := float64(structuralFailureShards) / float64(attemptedShards)
+	if shardRatio < mppStructuralAbortRatio {
+		return false
+	}
+	sourceRatio := float64(structuralFailureSources) / float64(attemptedSources)
+	return sourceRatio >= mppStructuralAbortRatio
 }
 
 func filterExecutableSources(sources []RebalanceChannel, sourceAvailable map[uint64]int64, minExecuteSat int64) []RebalanceChannel {
@@ -6304,6 +6321,8 @@ func (m *rebalanceMppPrepassContext) run() (bool, bool) {
 	attemptedShards := 0
 	succeededShards := 0
 	structuralFailureShards := 0
+	attemptedSourceIDs := make(map[uint64]struct{}, len(allowedSources))
+	structuralFailureSourceIDs := make(map[uint64]struct{}, len(allowedSources))
 	sourceSuccessRemaining := make(map[uint64]int64, len(allowedSources))
 	for _, source := range allowedSources {
 		sourceSuccessRemaining[source.ChannelID] = source.MaxSourceSat
@@ -6323,6 +6342,9 @@ func (m *rebalanceMppPrepassContext) run() (bool, bool) {
 		}
 		*m.attemptedAny = true
 		attemptedShards++
+		if res.Source.ChannelID != 0 {
+			attemptedSourceIDs[res.Source.ChannelID] = struct{}{}
+		}
 
 		*m.attemptIndex = *m.attemptIndex + 1
 		attemptIndex := *m.attemptIndex
@@ -6362,6 +6384,9 @@ func (m *rebalanceMppPrepassContext) run() (bool, bool) {
 		}
 		if isStructuralRebalanceFailure(failReason) {
 			structuralFailureShards++
+			if res.Source.ChannelID != 0 {
+				structuralFailureSourceIDs[res.Source.ChannelID] = struct{}{}
+			}
 		}
 		shardFailReason := formatMppShardFailReason(failReason)
 		_ = s.insertAttempt(ctx, r.jobID, attemptIndex, res.Source.ChannelID, attemptAmount, res.FeeLimitPpm, 0, "failed", res.PaymentHash, shardFailReason, res.FailureInfo)
@@ -6369,34 +6394,39 @@ func (m *rebalanceMppPrepassContext) run() (bool, bool) {
 		m.noteAutoStructuralFailure(shardFailReason, false)
 	}
 
-	if succeededShards == 0 && attemptedShards >= mppStructuralAbortMinAttempts {
+	if shouldAbortMppStructuralFallback(succeededShards, attemptedShards, structuralFailureShards, len(attemptedSourceIDs), len(structuralFailureSourceIDs)) {
 		structuralRatio := float64(structuralFailureShards) / float64(attemptedShards)
-		if structuralRatio >= mppStructuralAbortRatio {
-			if hasRebalanceFallbackCandidate(st.sources, st.sourceAvailable, st.pairStats, st.currentJobBlockedPairs, st.useRecentFailureCache, st.minExecuteSat, time.Now()) {
-				if s.logger != nil {
-					s.logger.Printf(
-						"rebalance mpp execute: job=%d structural threshold reached; falling back to legacy structural_failures=%d attempted_shards=%d ratio=%.2f",
-						r.jobID,
-						structuralFailureShards,
-						attemptedShards,
-						structuralRatio,
-					)
-				}
-				return false, false
-			}
-			m.noteAutoStructuralFailure("mpp structural failure", false)
-			s.finishJob(r.jobID, "failed", "mpp structural failure")
+		sourceStructuralRatio := float64(len(structuralFailureSourceIDs)) / float64(len(attemptedSourceIDs))
+		if hasRebalanceFallbackCandidate(st.sources, st.sourceAvailable, st.pairStats, st.currentJobBlockedPairs, st.useRecentFailureCache, st.minExecuteSat, time.Now()) {
 			if s.logger != nil {
 				s.logger.Printf(
-					"rebalance mpp execute: job=%d aborting fallback structural_failures=%d attempted_shards=%d ratio=%.2f",
+					"rebalance mpp execute: job=%d structural threshold reached; falling back to legacy structural_failures=%d attempted_shards=%d structural_sources=%d attempted_sources=%d shard_ratio=%.2f source_ratio=%.2f",
 					r.jobID,
 					structuralFailureShards,
 					attemptedShards,
+					len(structuralFailureSourceIDs),
+					len(attemptedSourceIDs),
 					structuralRatio,
+					sourceStructuralRatio,
 				)
 			}
-			return true, false
+			return false, false
 		}
+		m.noteAutoStructuralFailure("mpp structural failure", false)
+		s.finishJob(r.jobID, "failed", "mpp structural failure")
+		if s.logger != nil {
+			s.logger.Printf(
+				"rebalance mpp execute: job=%d aborting fallback structural_failures=%d attempted_shards=%d structural_sources=%d attempted_sources=%d shard_ratio=%.2f source_ratio=%.2f",
+				r.jobID,
+				structuralFailureShards,
+				attemptedShards,
+				len(structuralFailureSourceIDs),
+				len(attemptedSourceIDs),
+				structuralRatio,
+				sourceStructuralRatio,
+			)
+		}
+		return true, false
 	}
 
 	if s.logger != nil {

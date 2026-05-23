@@ -1,7 +1,23 @@
 # Autofee + Rebalance — Backlog estrutural
 
-**Snapshot:** 2026-05-07, version 0.3.24-Beta
+**Snapshot original:** 2026-05-07, version 0.3.24-Beta
+**Última revisão:** 2026-05-23, version 0.4.4-Beta — **backlog FECHADO** (Items 1, 2, 3 em produção; Item 4 era investigação, sem code change esperado).
 **Origem:** análise de desempenho do autofee em prod (jvx-minipc01) cruzada com Rebalance Overhaul Plan (Maio/2026, todas as 8 ondas em produção desde 2026-05-02).
+
+## Estado atual (2026-05-23)
+
+Verificação contra o código atual:
+
+| Item | Status | Onde |
+|---|---|---|
+| **1** HTLC noisy dampening | ✅ em prod | `htlcClassifiedMinRatio=0.05`, `htlcNoisySampleForwardRateMult=1.5`, `htlcNoisySampleForwardCountMult=1.5` em [autofee_service.go:1052-1054](../internal/server/autofee_service.go#L1052-L1054); telemetria `HTLCNoisySampleApplied` em [linha 385](../internal/server/autofee_service.go#L385); aplicação em [linha 4092](../internal/server/autofee_service.go#L4092) |
+| **2** Confidence rebal floor | ✅ em prod | `floorRebalMinSuccessCount=2` em [autofee_service.go:107](../internal/server/autofee_service.go#L107); `hasFloorRebalSignal(rebalAmtSat, capacitySat, successCount)` em [linha 5145](../internal/server/autofee_service.go#L5145); flag `rebalLowConfidence` em [linha 7743](../internal/server/autofee_service.go#L7743) |
+| **3** Stepcap por gap | ✅ em prod | Fields `LargeGapStepCapBoost*` no profile struct em [autofee_service.go:565-568](../internal/server/autofee_service.go#L565-L568); defaults por profile (conservative/moderate/aggressive) em [linhas 712-715, 848-849, ...](../internal/server/autofee_service.go#L712) |
+| **4** Investigação PermanentFailScore | ⚪ N/A | Item era para "medir antes de mudar". Sem code change esperado. |
+
+**Conclusão:** backlog fechado. Esta página vira referência histórica das decisões.
+
+---
 
 ## Contexto observado (revalidar antes de implementar)
 
@@ -27,7 +43,7 @@ Sintomas que motivam os itens abaixo (snapshot de 2026-05-07 21:42Z, run autofee
 
 ## Item 1 — HTLC signal dampening dinâmico por classified ratio
 
-**Status:** NÃO EXISTE (estrutural)
+**Status:** ✅ EM PRODUÇÃO (verificado 2026-05-23 contra código atual)
 **Esforço estimado:** 1-2 dias (lógica + 2-3 testes + golden update)
 **Risco:** baixo — adiciona um fator multiplicativo, não muda decisão de fluxo
 
@@ -89,7 +105,7 @@ Adicionar campo `meta.NoisySampleApplied bool` para diagnóstico, e tag `htlc-no
 
 ## Item 2 — Confidence-weighted rebal floor
 
-**Status:** PARCIAL — volume já é considerado, sucesso/contagem não
+**Status:** ✅ EM PRODUÇÃO (verificado 2026-05-23 contra código atual)
 **Esforço estimado:** 2-3 dias (lógica + persistir stats de count + 4-5 testes)
 **Risco:** médio — mexe em hot path do floor, afeta 41 % dos canais
 
@@ -152,7 +168,7 @@ Comportamento gracefully-degrading: quando `successCount < threshold`, `rebalFlo
 
 ## Item 3 — Stepcap relax por target_gap_pct
 
-**Status:** NÃO EXISTE (estrutural)
+**Status:** ✅ EM PRODUÇÃO (verificado 2026-05-23 contra código atual)
 **Esforço estimado:** 1 dia (lógica + 2 testes)
 **Risco:** baixo — incremental sobre infra existente de stepcap dinâmico
 

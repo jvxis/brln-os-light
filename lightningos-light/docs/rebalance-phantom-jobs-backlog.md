@@ -1,7 +1,20 @@
 # Rebalance — Phantom Jobs (jobs failed sem nenhuma tentativa)
 
-**Snapshot:** 2026-05-07, version 0.3.24-Beta
+**Snapshot original:** 2026-05-07, version 0.3.24-Beta
+**Última revisão:** 2026-05-23, version 0.4.4-Beta — **backlog efetivamente FECHADO** (ver "Estado atual" abaixo).
 **Origem:** análise das últimas falhas em prod identificou que ~37 % dos jobs marcados como `failed` nunca executaram nenhuma tentativa — foram pulados por cache de falha recente.
+
+## Estado atual (2026-05-23)
+
+Validação em prod (80 jobs recentes):
+- **0 jobs com status `skipped`** → Fix A neutralizou o sintoma visível.
+- **Fix A** ✅ implementado em produção.
+- **Fix C** ✅ implementado em produção ([rebalance_service.go:1896-1906](../internal/server/rebalance_service.go#L1896-L1906)).
+- **Fix B** ⚪ não implementado no código, mas **impacto observável é zero**. O watcher ainda pode criar jobs que skipam, mas Fix A elimina a amplificação por restart e na prática nenhum phantom aparece. Manter Fix B como item opcional de polimento (apenas se padrão regredir).
+
+**Conclusão:** backlog fechado. Esta página vira referência histórica.
+
+---
 
 ## Sintoma observado
 
@@ -122,7 +135,7 @@ Não há corrupção de cache: o runner não chega a chamar `recordPairFailure`,
 
 ## Fix B — Pre-check de pair cache no watcher
 
-**Status:** ⏳ PENDENTE
+**Status:** ⚪ NÃO implementado, mas IMPACTO ZERO em prod (validado 2026-05-23 com 80 jobs recentes, 0 phantoms). Fix A já cobre o sintoma visível. Manter como item opcional caso regressão apareça.
 **Esforço estimado:** 1 dia (lógica + 3-4 testes + golden update)
 **Risco:** médio — muda a lista de jobs que entram em queue, pode mascarar caso de "source acabou de sair de cooldown"
 
@@ -175,7 +188,7 @@ Aproveitar a janela do Fix B para:
 
 ## Fix C — Cooldown probe bypassa pair cache
 
-**Status:** ⏳ PENDENTE
+**Status:** ✅ FEITO. `shouldUseRecentFailureCache` ([rebalance_service.go:1896-1906](../internal/server/rebalance_service.go#L1896-L1906)) retorna `false` quando `jobReason == "cooldown-probe"`, conforme o esboço previsto. Probes não respeitam mais o pair cache, podem testar livremente.
 **Esforço estimado:** 2-4 horas (lógica + 2 testes)
 **Risco:** baixo-médio — probes podem gastar mais; mitigado pelo `targetCooldownProbeMaxSources=2`
 
@@ -230,13 +243,10 @@ Esses contadores transformam "cache é conservador" de hipótese em medida.
 ## Ordem sugerida
 
 ```
-[Fix A — rename status]                ← FEITO
-  ↓ (deploy + medir 24h)
-[Fix B — pre-check no watcher]
-  ↓ (deploy + medir jobs_without_attempt_rate)
-[Fix C — probe bypassa cache]
-  ↓ (deploy + medir success rate de probes)
-[Telemetria de cache] (opcional, ~1d)
+[Fix A — rename status]                ← FEITO (em prod)
+[Fix C — probe bypassa cache]          ← FEITO (em prod)
+[Fix B — pre-check no watcher]         ← OPCIONAL (impacto zero hoje)
+[Telemetria de cache]                  ← OPCIONAL (~1d)
 ```
 
 Cada item independente. Fix B e C não dependem entre si. Telemetria pode preceder ou seguir Fix B/C — provavelmente útil ANTES para baseline.

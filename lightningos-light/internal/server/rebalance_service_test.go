@@ -294,22 +294,72 @@ func TestInjectSovereignExplorationSlotsPreservesProbes(t *testing.T) {
 	}
 }
 
-// When candidates ≤ maxJobs the loop tries all of them regardless of order,
-// but we still mark one as exploration so the gate bypass takes effect.
-// This is the fix for the "5 candidates, 0 selected" scenario where every
-// candidate was blocked by structural_cooldown — without marking nothing
-// would ever bypass.
+// Scarcity bypass: when nonProbeCount <= maxJobs every candidate would run
+// this cycle anyway, so we mark all of them as exploration so the gate
+// bypass takes effect for the whole batch. This is the fix for the
+// "5 candidates, 0 selected" scenario where every candidate was blocked by
+// an empirical-history gate (structural_cooldown, low_success,
+// budget_efficiency) — without marking nothing would ever bypass.
 func TestInjectSovereignExplorationSlotsMarksWhenBelowMaxJobs(t *testing.T) {
 	candidates := make([]rebalanceTarget, 6)
 	for i := range candidates {
 		candidates[i].Score = int64(100 - i*10)
 		candidates[i].Channel.ChannelID = uint64(i + 1)
 	}
-	// maxJobs=8, len=6 (below max). pct=15 → slots=1.
+	// maxJobs=8, len=6 (below max). Scarcity bypass → all marked.
 	out := injectSovereignExplorationSlots(candidates, 8, 15)
 	if len(out) != len(candidates) {
 		t.Fatalf("length mismatch: %d vs %d", len(out), len(candidates))
 	}
+	for i, c := range out {
+		if !c.ExplorationSlot {
+			t.Fatalf("expected all candidates marked under scarcity, got unmarked at %d (score=%d)", i, c.Score)
+		}
+	}
+	// Score order is preserved (no random shuffle when all are explored).
+	for i := 0; i < len(out)-1; i++ {
+		if out[i].Score < out[i+1].Score {
+			t.Fatalf("score order disturbed at %d: %d -> %d", i, out[i].Score, out[i+1].Score)
+		}
+	}
+}
+
+// Scarcity bypass must still respect cooldown probe entries (CooldownProbe
+// targets are a distinct mechanism and never receive the exploration mark).
+func TestInjectSovereignExplorationSlotsScarcityKeepsProbesUnmarked(t *testing.T) {
+	candidates := []rebalanceTarget{
+		{Score: -1, CooldownProbe: true, Channel: RebalanceChannel{ChannelID: 99}},
+		{Score: 100, Channel: RebalanceChannel{ChannelID: 1}},
+		{Score: 80, Channel: RebalanceChannel{ChannelID: 2}},
+	}
+	// maxJobs=5, nonProbeCount=2, len=3. Scarcity branch triggers because
+	// 2 <= 5; probe stays first and unmarked, two non-probes get marked.
+	out := injectSovereignExplorationSlots(candidates, 5, 20)
+	if len(out) != 3 {
+		t.Fatalf("length mismatch: %d vs 3", len(out))
+	}
+	if !out[0].CooldownProbe || out[0].ExplorationSlot {
+		t.Fatalf("probe must stay first and unmarked, got probe=%v explore=%v", out[0].CooldownProbe, out[0].ExplorationSlot)
+	}
+	for i := 1; i < len(out); i++ {
+		if !out[i].ExplorationSlot {
+			t.Fatalf("non-probe at %d must be marked under scarcity", i)
+		}
+	}
+}
+
+// Regression guard: when nonProbeCount > maxJobs the scarcity bypass must
+// NOT trigger — only the configured pct slots get marked, top entries stay
+// deterministic, and the random tail behavior is unchanged.
+func TestInjectSovereignExplorationSlotsScarcityNotTriggeredAboveMaxJobs(t *testing.T) {
+	candidates := make([]rebalanceTarget, 10)
+	for i := range candidates {
+		candidates[i].Score = int64(100 - i*10)
+		candidates[i].Channel.ChannelID = uint64(i + 1)
+	}
+	// maxJobs=4, nonProbeCount=10 > maxJobs → scarcity branch must not fire.
+	// pct=25 → slots=1, keepTop=3. Exactly one entry in the tail gets marked.
+	out := injectSovereignExplorationSlots(candidates, 4, 25)
 	marked := 0
 	for _, c := range out {
 		if c.ExplorationSlot {
@@ -317,10 +367,12 @@ func TestInjectSovereignExplorationSlotsMarksWhenBelowMaxJobs(t *testing.T) {
 		}
 	}
 	if marked != 1 {
-		t.Fatalf("expected exactly 1 candidate marked as exploration, got %d", marked)
+		t.Fatalf("expected exactly 1 exploration mark above maxJobs, got %d", marked)
 	}
-	if out[0].ExplorationSlot {
-		t.Fatalf("top candidate (score=100) must not be marked")
+	for i := 0; i < 3; i++ {
+		if out[i].ExplorationSlot {
+			t.Fatalf("top-3 must stay unmarked at %d", i)
+		}
 	}
 }
 
@@ -357,6 +409,72 @@ func TestExecuteSovereignAutopilotExplorationBypassesStructuralCooldown(t *testi
 	}
 	if !result.Decisions[0].Selected || !result.Decisions[0].ExplorationSlot {
 		t.Fatalf("expected selected exploration decision, got %+v", result.Decisions[0])
+	}
+}
+
+// ExplorationSlot=true must also bypass the hard_skip_budget_efficiency
+// gate. With v3 cold-start gains the profit/cost ratio is often below 0.20
+// even for legitimate exploration candidates, so without the bypass the
+// candidate would never reach the default branch. We assert the decision
+// reason is NOT sovereignBudgetEfficiencyOpportunityReason — the candidate
+// may still be blocked downstream by budget-refit math (which is expected
+// when there is no live budget), but it must have crossed the outer gate.
+func TestExecuteSovereignAutopilotExplorationBypassesBudgetEfficiency(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = false // hard-skip is gated on budgeted mode
+	cfg.SovereignMaxJobsPerCycle = 1
+	cfg.SovereignMinExpectedProfitSat = 0
+	scanAt := time.Now()
+
+	// Profit/cost ratio = 50 / 10_000 = 0.005, well below the default 0.20
+	// hard-skip threshold; without the bypass the OUTER gate would fire and
+	// the reason would be sovereignBudgetEfficiencyOpportunityReason.
+	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{
+		{
+			Channel:          RebalanceChannel{ChannelID: 7, ChannelPoint: "explore-budget:0", PeerAlias: "explore-budget", TargetAmountSat: 1_000_000},
+			ExpectedGainSat:  10_050,
+			EstimatedCostSat: 10_000,
+			BudgetCostSat:    10_000,
+			Score:            50,
+			ExplorationSlot:  true,
+		},
+	}}
+
+	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, scanAt, false)
+	if got := result.Decisions[0].Reason; got == sovereignBudgetEfficiencyOpportunityReason {
+		t.Fatalf("exploration candidate hit budget_efficiency gate (expected bypass), reason=%s", got)
+	}
+}
+
+// Regression guard: non-exploration candidates with the same poor profit/cost
+// ratio MUST still be hard-skipped under budgeted mode. This is the safety
+// rail that prevents the bypass from leaking to ordinary decisions.
+func TestExecuteSovereignAutopilotBudgetEfficiencyStillBlocksNonExploration(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = false
+	cfg.SovereignMaxJobsPerCycle = 1
+	cfg.SovereignMinExpectedProfitSat = 0
+	scanAt := time.Now()
+
+	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{
+		{
+			Channel:          RebalanceChannel{ChannelID: 8, ChannelPoint: "blocked-budget:0", PeerAlias: "blocked-budget", TargetAmountSat: 1_000_000},
+			ExpectedGainSat:  10_050,
+			EstimatedCostSat: 10_000,
+			BudgetCostSat:    10_000,
+			Score:            50,
+			// ExplorationSlot: false (default)
+		},
+	}}
+
+	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, scanAt, false)
+	if result.Selected != 0 {
+		t.Fatalf("expected non-exploration to be blocked by budget_efficiency, got %d selected", result.Selected)
+	}
+	if result.Decisions[0].Reason != sovereignBudgetEfficiencyOpportunityReason {
+		t.Fatalf("expected budget_efficiency reason, got %s", result.Decisions[0].Reason)
 	}
 }
 

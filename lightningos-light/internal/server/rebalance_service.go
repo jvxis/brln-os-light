@@ -3212,11 +3212,12 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 			decision.RecentStructuralFailures = target.StructuralCooldown.LastFailureAttempts
 		}
 
-		// ExplorationSlot bypasses the four empirical-history gates so that a
-		// chronically deprioritized channel can be retried in spite of past
-		// failures. Hard economic and operational gates (profit floor, busy,
-		// budget, cycle limit) still apply. CooldownProbe entries are a
-		// distinct mechanism and remain non-sovereign regardless.
+		// ExplorationSlot bypasses every empirical-history gate (including the
+		// budget-efficiency hard skip) so that a chronically deprioritized
+		// channel can be retried in spite of past failures or weak observed
+		// profit/cost ratios. Only hard operational gates (cycle limit, profit
+		// floor, channel busy, budget refit math) still apply. CooldownProbe
+		// entries are a distinct mechanism and remain non-sovereign regardless.
 		switch {
 		case target.CooldownProbe:
 			decision.Reason = "cooldown_probe_not_sovereign"
@@ -3239,7 +3240,7 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 		case expectedProfit < cfg.SovereignMinExpectedProfitSat:
 			decision.Reason = "expected_profit_below_min"
 			noteSkip(decision.Reason)
-		case shouldHardSkipSovereignBudgetEfficiencyOpportunity(target.PairStats, expectedProfit, budgetCost, cfg):
+		case !target.ExplorationSlot && shouldHardSkipSovereignBudgetEfficiencyOpportunity(target.PairStats, expectedProfit, budgetCost, cfg):
 			decision.Reason = sovereignBudgetEfficiencyOpportunityReason
 			noteSkip(decision.Reason)
 		case s.isChannelBusy(target.Channel.ChannelID):
@@ -3291,19 +3292,24 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 					appendDecision(decision)
 					continue
 				}
-				if shouldHardSkipSovereignBudgetEfficiencyOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.BudgetCostSat, cfg) {
+				// Refit reapplies the empirical-history gates because the
+				// resized amount changes expected_profit and budget_cost. Keep
+				// the same ExplorationSlot bypass policy used by the outer
+				// switch so an exploration candidate is not silently re-gated
+				// after a budget-driven resize.
+				if !target.ExplorationSlot && shouldHardSkipSovereignBudgetEfficiencyOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.BudgetCostSat, cfg) {
 					decision.Reason = sovereignBudgetEfficiencyOpportunityReason
 					noteSkip(decision.Reason)
 					appendDecision(decision)
 					continue
 				}
-				if shouldSkipSovereignRouteDeadOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.BudgetCostSat, plan.EligibleSources, cfg) {
+				if !target.ExplorationSlot && shouldSkipSovereignRouteDeadOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.BudgetCostSat, plan.EligibleSources, cfg) {
 					decision.Reason = sovereignRouteDeadOpportunityReason
 					noteSkip(decision.Reason)
 					appendDecision(decision)
 					continue
 				}
-				if shouldSkipSovereignLowSuccessOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.EstimatedCostSat, decision.BudgetCostSat, cfg, scanAt) {
+				if !target.ExplorationSlot && shouldSkipSovereignLowSuccessOpportunity(target.PairStats, decision.ExpectedProfitSat, decision.EstimatedCostSat, decision.BudgetCostSat, cfg, scanAt) {
 					decision.Reason = sovereignLowSuccessOpportunityReason
 					noteSkip(decision.Reason)
 					appendDecision(decision)
@@ -9277,9 +9283,15 @@ func sovereignTargetStructuralCooldownDuration(failures int, cfg RebalanceConfig
 // the available slots is dedicated to randomly chosen low-score candidates;
 // they are tagged with ExplorationSlot=true so the sovereign loop can grant
 // them gate bypass on empirical-history filters (structural_cooldown,
-// low_success, route_dead, paid_liquidity_unsold). The marking happens even
-// when len(candidates) <= maxJobs because the bypass — not the position —
-// is what gives chronically deprioritized channels a real second chance.
+// low_success, route_dead, paid_liquidity_unsold, budget_efficiency_hard).
+//
+// Scarcity rule: when the non-probe candidate count is small enough that
+// every candidate would be queued anyway (nonProbeCount <= maxJobs), all of
+// them are marked as ExplorationSlot=true. The position order is preserved
+// but every candidate gains the gate bypass, giving chronically deprioritized
+// channels a real chance to re-enter the rotation when there is no scarcity
+// pressure to gatekeep against.
+//
 // CooldownProbe entries (score=-1) always keep the head positions and are
 // never marked. The non-explored tail retains its score order to act as a
 // deterministic fallback when head candidates are gated out.
@@ -9308,6 +9320,18 @@ func injectSovereignExplorationSlots(candidates []rebalanceTarget, maxJobs int, 
 	if nonProbeCount <= 1 {
 		// Need at least 2 non-probes so one can stay "top" and one can explore.
 		return candidates
+	}
+	// Scarcity bypass: when there are at most maxJobs real candidates, all of
+	// them would run this cycle anyway. Mark every non-probe as exploration
+	// so the empirical-history gates do not silently veto the whole batch.
+	if nonProbeCount <= maxJobs {
+		out := make([]rebalanceTarget, 0, len(candidates))
+		out = append(out, candidates[:probeCount]...)
+		for _, c := range candidates[probeCount:] {
+			c.ExplorationSlot = true
+			out = append(out, c)
+		}
+		return out
 	}
 	// Cap slots so at least one non-probe remains as deterministic top pick.
 	if slots >= nonProbeCount {

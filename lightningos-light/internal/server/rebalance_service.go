@@ -8957,9 +8957,11 @@ func estimateTargetGainV3(amountSat int64, outgoingFeePpm int64, peerFeeRatePpm 
 	if demand > 0 {
 		gain = math.Min(demand, theoretical)
 	} else {
-		// Cold-start: keep 50% of theoretical to let the autopilot probe new
-		// channels. The roiValid=false multiplier still trims the score.
-		gain = theoretical * 0.5
+		// Cold-start: keep 75% of theoretical so brand-new channels survive the
+		// profit_guardrail (gain < cost) check at Funnel A, which the older 0.5
+		// prior was tripping for channels whose theoretical < 2 × cost. The
+		// roiValid=false multiplier still trims the downstream score.
+		gain = theoretical * 0.75
 	}
 	if gain <= 0 {
 		return 0

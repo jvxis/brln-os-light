@@ -3551,10 +3551,12 @@ func TestEstimateTargetGainV3UsesStrongestDemandSignal(t *testing.T) {
 		t.Fatalf("expected theoretical cap at 400, got %d", gain)
 	}
 
-	// Cold-start: no demand signals → 50% of theoretical = 200.
+	// Cold-start: no demand signals → 75% of theoretical = 300.
+	// Prior was 0.5 (=200); raised to 0.75 to let cold-start channels survive
+	// the profit_guardrail gate at Funnel A.
 	gain = estimateTargetGainV3(amount, outFee, peerFee, 0, amount, amount*2, 0)
-	if gain != 200 {
-		t.Fatalf("expected cold-start 50%% discount = 200, got %d", gain)
+	if gain != 300 {
+		t.Fatalf("expected cold-start 75%% discount = 300, got %d", gain)
 	}
 
 	// Idle channel with neither revenue nor drain rate and no spread → 0.

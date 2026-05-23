@@ -189,6 +189,7 @@ export default function RebalanceCenter() {
     sovereign_target_source_quarantine_hours: typeof raw.sovereign_target_source_quarantine_hours === 'number' ? raw.sovereign_target_source_quarantine_hours : REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS,
     sovereign_structural_cooldown_repeat_hours: typeof raw.sovereign_structural_cooldown_repeat_hours === 'number' && raw.sovereign_structural_cooldown_repeat_hours > 0 ? raw.sovereign_structural_cooldown_repeat_hours : REBALANCE_DEFAULT_SOVEREIGN_STRUCTURAL_COOLDOWN_REPEAT_HOURS,
     sovereign_exploration_slot_pct: typeof raw.sovereign_exploration_slot_pct === 'number' ? raw.sovereign_exploration_slot_pct : 0,
+    sovereign_ev_weighted_scoring: raw.sovereign_ev_weighted_scoring ?? false,
     sovereign_source_opportunity_cost_enabled: raw.sovereign_source_opportunity_cost_enabled ?? true,
     sovereign_slow_seller_enabled: raw.sovereign_slow_seller_enabled ?? true,
     budget_mode: raw.budget_mode || REBALANCE_DEFAULT_BUDGET_MODE,
@@ -247,6 +248,7 @@ export default function RebalanceCenter() {
       sovereign_target_source_quarantine_hours: cfg.sovereign_target_source_quarantine_hours,
       sovereign_structural_cooldown_repeat_hours: cfg.sovereign_structural_cooldown_repeat_hours,
       sovereign_exploration_slot_pct: cfg.sovereign_exploration_slot_pct,
+      sovereign_ev_weighted_scoring: cfg.sovereign_ev_weighted_scoring,
       sovereign_source_opportunity_cost_enabled: cfg.sovereign_source_opportunity_cost_enabled,
       sovereign_slow_seller_enabled: cfg.sovereign_slow_seller_enabled,
       scan_interval_sec: cfg.scan_interval_sec,
@@ -321,6 +323,7 @@ export default function RebalanceCenter() {
       sovereign_target_source_quarantine_hours: cfg.sovereign_target_source_quarantine_hours ?? REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS,
       sovereign_structural_cooldown_repeat_hours: cfg.sovereign_structural_cooldown_repeat_hours ?? REBALANCE_DEFAULT_SOVEREIGN_STRUCTURAL_COOLDOWN_REPEAT_HOURS,
       sovereign_exploration_slot_pct: cfg.sovereign_exploration_slot_pct ?? 0,
+      sovereign_ev_weighted_scoring: cfg.sovereign_ev_weighted_scoring ?? false,
       sovereign_source_opportunity_cost_enabled: cfg.sovereign_source_opportunity_cost_enabled ?? true,
       sovereign_slow_seller_enabled: cfg.sovereign_slow_seller_enabled ?? true
     })
@@ -705,6 +708,7 @@ export default function RebalanceCenter() {
           sovereign_target_source_quarantine_hours: Math.max(0, Math.min(720, Number(config.sovereign_target_source_quarantine_hours) || REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS)),
           sovereign_structural_cooldown_repeat_hours: Math.max(1, Math.min(REBALANCE_MAX_SOVEREIGN_STRUCTURAL_COOLDOWN_REPEAT_HOURS, Number(config.sovereign_structural_cooldown_repeat_hours) || REBALANCE_DEFAULT_SOVEREIGN_STRUCTURAL_COOLDOWN_REPEAT_HOURS)),
           sovereign_exploration_slot_pct: Math.max(0, Math.min(REBALANCE_MAX_SOVEREIGN_EXPLORATION_SLOT_PCT, Number(config.sovereign_exploration_slot_pct) || 0)),
+          sovereign_ev_weighted_scoring: config.sovereign_ev_weighted_scoring,
           sovereign_source_opportunity_cost_enabled: config.sovereign_source_opportunity_cost_enabled,
           sovereign_slow_seller_enabled: config.sovereign_slow_seller_enabled,
           scan_interval_sec: config.scan_interval_sec,
@@ -793,6 +797,7 @@ export default function RebalanceCenter() {
         sovereign_target_source_quarantine_hours: Math.max(0, Math.min(720, Number(config.sovereign_target_source_quarantine_hours) || REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS)),
         sovereign_structural_cooldown_repeat_hours: Math.max(1, Math.min(REBALANCE_MAX_SOVEREIGN_STRUCTURAL_COOLDOWN_REPEAT_HOURS, Number(config.sovereign_structural_cooldown_repeat_hours) || REBALANCE_DEFAULT_SOVEREIGN_STRUCTURAL_COOLDOWN_REPEAT_HOURS)),
         sovereign_exploration_slot_pct: Math.max(0, Math.min(REBALANCE_MAX_SOVEREIGN_EXPLORATION_SLOT_PCT, Number(config.sovereign_exploration_slot_pct) || 0)),
+        sovereign_ev_weighted_scoring: config.sovereign_ev_weighted_scoring,
         sovereign_source_opportunity_cost_enabled: config.sovereign_source_opportunity_cost_enabled,
         sovereign_slow_seller_enabled: config.sovereign_slow_seller_enabled
       })) as RebalanceConfig
@@ -816,6 +821,7 @@ export default function RebalanceCenter() {
           sovereign_target_source_quarantine_hours: normalizedSaved.sovereign_target_source_quarantine_hours,
           sovereign_structural_cooldown_repeat_hours: normalizedSaved.sovereign_structural_cooldown_repeat_hours,
           sovereign_exploration_slot_pct: normalizedSaved.sovereign_exploration_slot_pct,
+          sovereign_ev_weighted_scoring: normalizedSaved.sovereign_ev_weighted_scoring,
           sovereign_source_opportunity_cost_enabled: normalizedSaved.sovereign_source_opportunity_cost_enabled,
           sovereign_slow_seller_enabled: normalizedSaved.sovereign_slow_seller_enabled
         }
@@ -2273,6 +2279,15 @@ export default function RebalanceCenter() {
                   onChange={(e) => setConfig({ ...config, sovereign_slow_seller_enabled: e.target.checked })}
                 />
                 <span>{t('rebalanceCenter.settings.sovereignSlowSellerEnabled')}</span>
+              </label>
+              <label className="checkbox-card min-h-[72px]" title={t('rebalanceCenter.settingsHints.sovereignEvWeightedScoring')}>
+                <input
+                  type="checkbox"
+                  checked={config.sovereign_ev_weighted_scoring}
+                  disabled={config.scheduler_mode === 'rules_auto'}
+                  onChange={(e) => setConfig({ ...config, sovereign_ev_weighted_scoring: e.target.checked })}
+                />
+                <span>{t('rebalanceCenter.settings.sovereignEvWeightedScoring')}</span>
               </label>
             </div>
           )}

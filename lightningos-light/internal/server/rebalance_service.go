@@ -2624,7 +2624,13 @@ func (s *RebalanceService) runManualRestartWatchLoop() {
 
 func (s *RebalanceService) runManualRestartWatch() {
 	cfg, err := s.loadConfig(context.Background())
-	if err != nil || !cfg.ManualRestartWatch {
+	if err != nil {
+		return
+	}
+	// AutoEnabled is the master switch — when off, no automated rebalance
+	// path may create jobs. ManualRestartWatch is a sub-toggle that further
+	// gates the manual-restart loop on top of the master.
+	if !cfg.AutoEnabled || !cfg.ManualRestartWatch {
 		return
 	}
 	if normalizeRebalanceSchedulerMode(cfg.SchedulerMode) == rebalanceSchedulerModeSovereignLive {
@@ -8209,7 +8215,10 @@ func (s *RebalanceService) scheduleManualRestart(info manualRestartInfo) {
 	defer restartCancel()
 
 	cfg, _ = s.loadConfig(restartCtx)
-	if !cfg.ManualRestartWatch {
+	// Master switch (AutoEnabled) gates this scheduled restart too — without
+	// this check, a job that completed before the operator disabled rebalance
+	// would still spawn a follow-up after the cooldown timer.
+	if !cfg.AutoEnabled || !cfg.ManualRestartWatch {
 		return
 	}
 	settings, _ := s.loadChannelSettings(restartCtx)

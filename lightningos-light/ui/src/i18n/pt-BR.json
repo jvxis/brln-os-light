@@ -3226,6 +3226,8 @@
       "summary": "{{mode}} · {{candidates}} candidatos · {{selected}} selecionados · lucro esp. {{profit}}",
       "headerStatus": "{{mode}} ativo",
       "headerSummary": "{{candidates}} candidatos · {{selected}} selecionados",
+      "masterOff": "Rebalance master DESLIGADO",
+      "masterOffHint": "Todos os loops automáticos estão pausados. Religue em Configurações de Operação.",
       "save": "Salvar Autopilot",
       "saving": "Salvando...",
       "saved": "Autopilot salvo.",
@@ -3271,6 +3273,7 @@
         "payback": "Proteção e payback"
       },
       "autoEnabled": "Ativar auto rebalance",
+      "autoEnabledMasterTag": "(master switch)",
       "sovereignTitle": "Sovereign Autopilot",
       "sovereignSubtitle": "Scheduler único para priorizar rebalances por retorno esperado.",
       "sovereignConfigSummary": "{{mode}} · {{scope}} · máx. {{jobs}}",
@@ -3385,7 +3388,7 @@
       "freshPaidLiquidityLockHours": "Horas da trava fresh"
     },
     "settingsHints": {
-      "autoEnabled": "Ativa varreduras e rebalances automáticos.",
+      "autoEnabled": "Master switch de todos os loops de rebalance automático (auto scan, monitor de auto-restart e timers de restart por job). Quando desligado, nenhum job automático é criado — só o botão Manual Rebal In do operador continua funcionando.",
       "schedulerMode": "Escolhe quem enfileira jobs automáticos. No modo live, o autopilot substitui o auto por regras e o manual restart watch automático.",
       "sovereignCandidateScope": "Define se o autopilot considera só canais marcados como auto ou também canais marcados para manual restart.",
       "sovereignMaxJobsPerCycle": "Limite de jobs que o autopilot pode enfileirar em uma varredura.",

@@ -3226,6 +3226,8 @@
       "summary": "{{mode}} · {{candidates}} candidates · {{selected}} selected · exp. profit {{profit}}",
       "headerStatus": "{{mode}} active",
       "headerSummary": "{{candidates}} candidates · {{selected}} selected",
+      "masterOff": "Rebalance master OFF",
+      "masterOffHint": "All auto loops are paused. Re-enable in Operation settings.",
       "save": "Save Autopilot",
       "saving": "Saving...",
       "saved": "Autopilot saved.",
@@ -3271,6 +3273,7 @@
         "payback": "Protection and payback"
       },
       "autoEnabled": "Enable auto rebalance",
+      "autoEnabledMasterTag": "(master switch)",
       "sovereignTitle": "Sovereign Autopilot",
       "sovereignSubtitle": "Single scheduler that prioritizes rebalances by expected return.",
       "sovereignConfigSummary": "{{mode}} · {{scope}} · max {{jobs}}",
@@ -3385,7 +3388,7 @@
       "freshPaidLiquidityLockHours": "Fresh lock hours"
     },
     "settingsHints": {
-      "autoEnabled": "Turns on periodic scans and automatic rebalances.",
+      "autoEnabled": "Master switch for all automatic rebalance loops (auto scan, manual-restart watcher, and per-job restart timers). When off, no automated job creation can happen — only operator-triggered Manual Rebal In still works.",
       "schedulerMode": "Chooses who queues automatic jobs. In live mode, autopilot replaces rules auto and the automatic manual-restart watcher.",
       "sovereignCandidateScope": "Controls whether autopilot considers only auto channels or also channels marked for manual restart.",
       "sovereignMaxJobsPerCycle": "Maximum jobs autopilot may queue in one scan.",

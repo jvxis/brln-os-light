@@ -783,6 +783,11 @@ export default function RebalanceCenter() {
     setStatus('')
     try {
       const saved = (await updateRebalanceConfig({
+        // Master switch and manual-restart toggle persisted from both panels
+        // so flipping them in the operation panel doesn't get silently
+        // unsaved when the operator then clicks Save in the autopilot panel.
+        auto_enabled: config.auto_enabled,
+        manual_restart_watch: config.manual_restart_watch,
         scheduler_mode: config.scheduler_mode,
         sovereign_candidate_scope: config.sovereign_candidate_scope,
         sovereign_max_jobs_per_cycle: Math.max(1, Number(config.sovereign_max_jobs_per_cycle) || REBALANCE_DEFAULT_SOVEREIGN_MAX_JOBS),
@@ -1409,7 +1414,17 @@ export default function RebalanceCenter() {
           <h2 className="text-2xl font-semibold">{t('rebalanceCenter.title')}</h2>
           <p className="text-fog/60">{t('rebalanceCenter.subtitle')}</p>
         </div>
-        {autopilotModeActive && (
+        {overview && overview.auto_enabled === false && (
+          <div className="rounded-lg border border-rose-400/40 bg-rose-400/10 px-3 py-2 text-right">
+            <p className="text-xs uppercase tracking-wide text-rose-200">
+              {t('rebalanceCenter.autopilot.masterOff')}
+            </p>
+            <p className="text-xs text-fog/55">
+              {t('rebalanceCenter.autopilot.masterOffHint')}
+            </p>
+          </div>
+        )}
+        {autopilotModeActive && overview?.auto_enabled !== false && (
           <div className={`rounded-lg border px-3 py-2 text-right ${activeSchedulerMode === 'sovereign_live' ? 'border-emerald-400/30 bg-emerald-400/10' : 'border-cyan-400/25 bg-cyan-400/10'}`}>
             <p className={`text-xs uppercase tracking-wide ${activeSchedulerMode === 'sovereign_live' ? 'text-emerald-200' : 'text-cyan-200'}`}>
               {t('rebalanceCenter.autopilot.headerStatus', {
@@ -2428,7 +2443,7 @@ export default function RebalanceCenter() {
               <SettingsSubcard title={t('rebalanceCenter.settings.groups.operation')}>
                 <div className="grid gap-3 md:grid-cols-2">
                   <label
-                    className="flex items-center gap-2 text-sm text-fog/70"
+                    className={`flex items-center gap-2 text-sm ${config.auto_enabled ? 'text-emerald-200 font-semibold' : 'text-rose-200 font-semibold'}`}
                     title={t('rebalanceCenter.settingsHints.autoEnabled')}
                   >
                     <input
@@ -2437,6 +2452,9 @@ export default function RebalanceCenter() {
                       onChange={(e) => setConfig({ ...config, auto_enabled: e.target.checked })}
                     />
                     {t('rebalanceCenter.settings.autoEnabled')}
+                    <span className="text-[10px] uppercase tracking-wider opacity-75">
+                      {t('rebalanceCenter.settings.autoEnabledMasterTag')}
+                    </span>
                   </label>
                   <div className="space-y-2">
                     <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.scanInterval')}>
@@ -2448,6 +2466,7 @@ export default function RebalanceCenter() {
                       min={30}
                       value={config.scan_interval_sec}
                       onChange={(e) => setConfig({ ...config, scan_interval_sec: Number(e.target.value) })}
+                      disabled={!config.auto_enabled}
                     />
                   </div>
                   <div className="space-y-2">
@@ -2460,13 +2479,18 @@ export default function RebalanceCenter() {
                       min={1}
                       value={config.max_concurrent}
                       onChange={(e) => setConfig({ ...config, max_concurrent: Number(e.target.value) })}
+                      disabled={!config.auto_enabled}
                     />
                   </div>
-                  <label className="flex items-center gap-2 text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.manualRestartWatch')}>
+                  <label
+                    className={`flex items-center gap-2 text-sm ${config.auto_enabled ? 'text-fog/70' : 'text-fog/30'}`}
+                    title={t('rebalanceCenter.settingsHints.manualRestartWatch')}
+                  >
                     <input
                       type="checkbox"
-                      checked={config.manual_restart_watch}
+                      checked={config.manual_restart_watch && config.auto_enabled}
                       onChange={(e) => setConfig({ ...config, manual_restart_watch: e.target.checked })}
+                      disabled={!config.auto_enabled}
                     />
                     {t('rebalanceCenter.settings.manualRestartWatch')}
                   </label>

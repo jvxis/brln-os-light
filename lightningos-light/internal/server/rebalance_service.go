@@ -4993,12 +4993,15 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 	if attemptTimeoutSec <= 0 {
 		attemptTimeoutSec = 60
 	}
+	// Structural-failure backoff pacing only — automatic Mission Control reset
+	// was removed in 0.4.4 because it was canibalizing the delegated fast-path
+	// learning (every 6 structural failures wiped MC, defeating the route
+	// memory the fast-path depends on). Operators still have the manual reset
+	// button (POST /api/rebalance/mission-control/reset). LND's natural decay
+	// (mc_half_life_sec) handles aging penalties on its own.
 	autoStructuralBackoff := time.Duration(0)
 	autoStructuralBase := 1 * time.Second
 	autoStructuralMax := 10 * time.Second
-	autoStructuralCount := 0
-	autoStructuralThreshold := 6
-	autoStructuralResetDone := false
 	ignoredEdgeSet := map[string]struct{}{}
 	ignoredEdges := make([]*lnrpc.EdgeLocator, 0)
 	ignoredPairSet := map[string]struct{}{}
@@ -5020,29 +5023,18 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 		}
 	}
 
-	// Hotfix 6.5: extend the structural-failure counter and MC reset trigger to manual
-	// auto-restart jobs (source=manual, reason=auto-restart). User-triggered
-	// manuals (operator clicking "Manual Rebal In") are intentionally left out
-	// — they should not be able to reset MC as a side effect of diagnostics.
-	jobCountsForMCReset := jobSource == "auto" || isManualRestartJob(jobSource, jobReason, false)
+	// Automatic Mission Control reset was removed in 0.4.4 — it canibalized
+	// the delegated fast-path learning (every 6 structural failures wiped MC,
+	// defeating the route memory the fast-path depends on). The manual reset
+	// endpoint (POST /api/rebalance/mission-control/reset) remains as escape
+	// hatch. Auto and manual-restart jobs still need the backoff sleep below
+	// to pace structural retries within a single job; the reason filter limits
+	// it to those paths.
+	enableStructuralBackoff := jobSource == "auto" || isManualRestartJob(jobSource, jobReason, false)
 
 	noteAutoStructuralFailure := func(reason string, backoff bool) {
-		if !jobCountsForMCReset || !isStructuralRebalanceFailure(reason) {
+		if !enableStructuralBackoff || !isStructuralRebalanceFailure(reason) {
 			return
-		}
-		autoStructuralCount++
-		if !autoStructuralResetDone && autoStructuralCount >= autoStructuralThreshold {
-			resetCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			trigger := jobSource
-			if isManualRestartJob(jobSource, jobReason, false) {
-				trigger = "manual-restart"
-			}
-			done := s.tryResetMissionControl(resetCtx, trigger)
-			cancel()
-			if done {
-				autoStructuralResetDone = true
-				autoStructuralCount = 0
-			}
 		}
 		if !backoff {
 			return
@@ -5059,9 +5051,8 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 	}
 
 	resetAutoStructuralFailure := func() {
-		if jobCountsForMCReset {
+		if enableStructuralBackoff {
 			autoStructuralBackoff = 0
-			autoStructuralCount = 0
 		}
 	}
 

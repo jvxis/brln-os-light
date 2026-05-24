@@ -18,6 +18,10 @@ configs/tls/
 # Logs
 *.log
 
+# Local audit snapshots
+sovereign-audit-*/
+sovereign-audit-current/
+
 # Local dev shell/bootstrap
 .dev-env.local.ps1
 ui/tsconfig.tsbuildinfo

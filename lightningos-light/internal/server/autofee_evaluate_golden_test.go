@@ -241,6 +241,57 @@ func runGoldenScenario(t *testing.T, sc goldenScenario) {
 	}
 }
 
+func TestEvaluateChannelClearsCurrentInboundPolicy(t *testing.T) {
+	cfg := goldenDefaultCfg()
+	cfg.InboundPassiveEnabled = false
+	now := time.Date(2026, 4, 30, 12, 0, 0, 0, time.UTC)
+	engine := newGoldenEngine(t, cfg, goldenDefaultCalib(), now)
+
+	ch := goldenChannel(42, 5_000_000, 2_500_000, 500, true)
+	inboundRate := int64(-10_000)
+	ch.InboundFeeRatePpm = &inboundRate
+	st := &autofeeChannelState{
+		ChannelID:  ch.ChannelID,
+		LastPpm:    500,
+		LastSeed:   500,
+		FirstSeen:  now.Add(-48 * time.Hour),
+		ClassLabel: "sink",
+		ClassConf:  1,
+	}
+
+	decision := engine.evaluateChannel(
+		ch,
+		st,
+		map[uint64]forwardStat{},
+		map[uint64]forwardStat{},
+		map[uint64]forwardStat{},
+		map[uint64]forwardStat{},
+		map[uint64]inboundStat{},
+		rebalStats{ByChannel: map[uint64]rebalStat{}},
+		rebalStats{ByChannel: map[uint64]rebalStat{}},
+		map[uint64]recentRebalanceSignal{},
+		map[uint64]htlcFailureSignal{},
+		0,
+		0,
+		false,
+	)
+	if decision == nil {
+		t.Fatalf("expected decision")
+	}
+	if !decision.Apply {
+		t.Fatalf("expected inbound cleanup to apply")
+	}
+	if decision.NewPpm != 500 {
+		t.Fatalf("expected inbound cleanup not to move outbound ppm, got %d", decision.NewPpm)
+	}
+	if decision.PrevInboundDiscount != 10_000 || decision.InboundDiscount != 0 {
+		t.Fatalf("unexpected inbound cleanup decision: prev=%d target=%d", decision.PrevInboundDiscount, decision.InboundDiscount)
+	}
+	if st.LastInboundDiscount != 0 {
+		t.Fatalf("expected state inbound discount to be cleared, got %d", st.LastInboundDiscount)
+	}
+}
+
 // goldenHasAnyTag matches either an exact tag or a tag that *starts with* the
 // pattern when the pattern ends in "*". This lets us assert "any htlc-liq+...
 // bump" without binding to a specific percentage.

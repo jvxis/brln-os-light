@@ -1956,7 +1956,11 @@ order by channel_id asc
 		if timeLockDelta <= 0 {
 			timeLockDelta = 144
 		}
-		if err := s.lnd.UpdateChannelFees(ctx, channelPoint, false, baseFeeMsat, feeRatePpm, timeLockDelta, inboundEnabled, inboundBaseMsat, inboundFeeRatePpm); err != nil {
+		if !inboundEnabled {
+			inboundBaseMsat = 0
+			inboundFeeRatePpm = 0
+		}
+		if err := s.lnd.UpdateChannelFees(ctx, channelPoint, false, baseFeeMsat, feeRatePpm, timeLockDelta, true, inboundBaseMsat, inboundFeeRatePpm); err != nil {
 			return fmt.Errorf("restore policy %s: %w", channelPoint, err)
 		}
 	}
@@ -3152,8 +3156,6 @@ func (s *AutofeeService) RefreshReferenceFees(ctx context.Context, dryRun bool, 
 		}
 		item.CurrentInboundDiscount = currentInboundDiscountFromPolicy(policy)
 		item.TargetInboundDiscount = item.CurrentInboundDiscount
-		inboundEnabled := policy.InboundBaseMsat != 0 || policy.InboundFeeRatePpm != 0
-		inboundFeeRatePpm := policy.InboundFeeRatePpm
 		if includeInbound {
 			rawOutRatio := 0.5
 			if ch.CapacitySat > 0 {
@@ -3173,12 +3175,6 @@ func (s *AutofeeService) RefreshReferenceFees(ctx context.Context, dryRun bool, 
 			); applyInbound {
 				item.TargetInboundDiscount = targetInboundDiscount
 				item.InboundSource = inboundSource
-				inboundEnabled = targetInboundDiscount > 0
-				if targetInboundDiscount > 0 {
-					inboundFeeRatePpm = int64(-targetInboundDiscount)
-				} else {
-					inboundFeeRatePpm = 0
-				}
 			}
 		}
 		inboundChanged := item.TargetInboundDiscount != item.CurrentInboundDiscount
@@ -3196,6 +3192,7 @@ func (s *AutofeeService) RefreshReferenceFees(ctx context.Context, dryRun bool, 
 			if timeLockDelta <= 0 {
 				timeLockDelta = 144
 			}
+			inboundEnabled, inboundFeeRatePpm := inboundFeeUpdateForDiscount(item.CurrentInboundDiscount, item.TargetInboundDiscount)
 			if err := s.lnd.UpdateChannelFees(
 				ctx,
 				item.ChannelPoint,
@@ -3204,7 +3201,7 @@ func (s *AutofeeService) RefreshReferenceFees(ctx context.Context, dryRun bool, 
 				int64(targetPpm),
 				timeLockDelta,
 				inboundEnabled,
-				policy.InboundBaseMsat,
+				0,
 				inboundFeeRatePpm,
 			); err != nil {
 				item.Error = err.Error()
@@ -4553,10 +4550,24 @@ func applyAutofeeRefreshRebalMarkup(referencePpm int, markupFrac float64) int {
 }
 
 func currentInboundDiscountFromPolicy(policy lndclient.ChannelPolicy) int {
-	if policy.InboundFeeRatePpm >= 0 {
+	return currentInboundDiscountFromRate(policy.InboundFeeRatePpm)
+}
+
+func currentInboundDiscountFromRate(inboundFeeRatePpm int64) int {
+	if inboundFeeRatePpm >= 0 {
 		return 0
 	}
-	return absInt(int(-policy.InboundFeeRatePpm))
+	return absInt(int(-inboundFeeRatePpm))
+}
+
+func inboundFeeUpdateForDiscount(currentDiscount int, targetDiscount int) (bool, int64) {
+	if targetDiscount > 0 {
+		return true, int64(-absInt(targetDiscount))
+	}
+	if currentDiscount != targetDiscount {
+		return true, 0
+	}
+	return false, 0
 }
 
 func selectAutofeeRefreshReference(capacitySat int64, forward7d forwardStat, forward21d forwardStat, rebal7d rebalStat, rebal21d rebalStat, rebalMarkupFrac float64) (int, int, string, bool) {
@@ -4843,7 +4854,7 @@ func selectAutofeeRefreshInboundDiscount(cfg AutofeeConfig, profile autofeeProfi
 		return discount, "market-refill", true
 	default:
 		if !cfg.InboundPassiveEnabled {
-			return 0, "", false
+			return 0, "balanced-disabled", true
 		}
 		inboundDiscountReachOutRatio := profile.InboundDiscountReachOutRatio
 		if inboundDiscountReachOutRatio <= 0 {
@@ -4856,7 +4867,7 @@ func selectAutofeeRefreshInboundDiscount(cfg AutofeeConfig, profile autofeeProfi
 		outPpm7d := ppmMsat(forward7d.FeeMsat, forward7d.AmtMsat)
 		marginPpm7d := outPpm7d - int(math.Ceil(float64(baseCostPpm)*1.10))
 		if rawOutRatio > inboundDiscountReachOutRatio || fwdCount < 5 || marginPpm7d < 200 {
-			return 0, "", false
+			return 0, "balanced-ineligible", true
 		}
 		discount := computeInboundDiscount(
 			true,
@@ -7757,6 +7768,11 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if st == nil {
 		st = &autofeeChannelState{ChannelID: ch.ChannelID}
 	}
+	prevInboundDiscount := st.LastInboundDiscount
+	if ch.InboundFeeRatePpm != nil {
+		prevInboundDiscount = currentInboundDiscountFromRate(*ch.InboundFeeRatePpm)
+		st.LastInboundDiscount = prevInboundDiscount
+	}
 	if st.FirstSeen.IsZero() {
 		freshState := st.LastPpm == 0 &&
 			st.LastInboundDiscount == 0 &&
@@ -9520,9 +9536,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			inboundDiscountMinRetainedSpreadFrac,
 		)
 	}
-	prevInboundDiscount := st.LastInboundDiscount
 	inboundChanged := inboundDiscount != prevInboundDiscount
-	st.LastPpm = finalPpm
 	st.LastInboundDiscount = inboundDiscount
 	if outPpm7d > 0 {
 		st.LastOutrate = outPpm7d
@@ -9589,6 +9603,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if !applyOutbound {
 		effectiveNewPpm = localPpm
 	}
+	st.LastPpm = effectiveNewPpm
 	predictionTarget := target
 	targetDir := 0
 	if target > localPpm {
@@ -9632,10 +9647,10 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		ChannelPoint:            ch.ChannelPoint,
 		Alias:                   strings.TrimSpace(ch.PeerAlias),
 		LocalPpm:                localPpm,
-		NewPpm:                  finalPpm,
+		NewPpm:                  effectiveNewPpm,
 		Target:                  target,
 		TargetRaw:               target,
-		TargetFinal:             finalPpm,
+		TargetFinal:             effectiveNewPpm,
 		Floor:                   floor,
 		FloorSrc:                floorSrc,
 		FloorBasePpm:            floorBasePpm,
@@ -10236,10 +10251,7 @@ func (e *autofeeEngine) applyDecision(ctx context.Context, ch lndclient.ChannelI
 	if ch.BaseFeeMsat != nil {
 		baseFee = *ch.BaseFeeMsat
 	}
-	if d.InboundDiscount > 0 {
-		inboundEnabled = true
-		inboundRate = int64(-absInt(d.InboundDiscount))
-	}
+	inboundEnabled, inboundRate = inboundFeeUpdateForDiscount(d.PrevInboundDiscount, d.InboundDiscount)
 
 	if baseFee == 0 || timeLock == 0 {
 		if policy, ok := e.fetchChannelPolicy(ctx, ch); ok {

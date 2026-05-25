@@ -679,7 +679,7 @@ func TestSelectAutofeeRefreshInboundDiscountBalancedEligible(t *testing.T) {
 	}
 }
 
-func TestSelectAutofeeRefreshInboundDiscountBalancedPreservesIneligible(t *testing.T) {
+func TestSelectAutofeeRefreshInboundDiscountBalancedClearsIneligible(t *testing.T) {
 	cfg := AutofeeConfig{InboundPassiveEnabled: true}
 	profile := autofeeProfiles["moderate"]
 	discount, source, apply := selectAutofeeRefreshInboundDiscount(
@@ -693,8 +693,25 @@ func TestSelectAutofeeRefreshInboundDiscountBalancedPreservesIneligible(t *testi
 		500,
 		1000,
 	)
-	if apply || source != "" || discount != 0 {
-		t.Fatalf("expected ineligible balanced inbound refresh to preserve current setting, apply=%v source=%q discount=%d", apply, source, discount)
+	if !apply || source != "balanced-ineligible" || discount != 0 {
+		t.Fatalf("expected ineligible balanced inbound refresh to clear current setting, apply=%v source=%q discount=%d", apply, source, discount)
+	}
+}
+
+func TestInboundFeeUpdateForDiscountClearsStaleDiscount(t *testing.T) {
+	enabled, rate := inboundFeeUpdateForDiscount(10_000, 0)
+	if !enabled || rate != 0 {
+		t.Fatalf("expected explicit zero inbound update, enabled=%v rate=%d", enabled, rate)
+	}
+
+	enabled, rate = inboundFeeUpdateForDiscount(0, 450)
+	if !enabled || rate != -450 {
+		t.Fatalf("expected negative inbound rate update, enabled=%v rate=%d", enabled, rate)
+	}
+
+	enabled, rate = inboundFeeUpdateForDiscount(0, 0)
+	if enabled || rate != 0 {
+		t.Fatalf("expected no inbound update when already zero, enabled=%v rate=%d", enabled, rate)
 	}
 }
 

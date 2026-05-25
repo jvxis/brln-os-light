@@ -241,7 +241,7 @@ func runGoldenScenario(t *testing.T, sc goldenScenario) {
 	}
 }
 
-func TestEvaluateChannelClearsCurrentInboundPolicy(t *testing.T) {
+func TestEvaluateChannelNormalizesExtremeCurrentInboundPolicy(t *testing.T) {
 	cfg := goldenDefaultCfg()
 	cfg.InboundPassiveEnabled = false
 	now := time.Date(2026, 4, 30, 12, 0, 0, 0, time.UTC)
@@ -279,16 +279,16 @@ func TestEvaluateChannelClearsCurrentInboundPolicy(t *testing.T) {
 		t.Fatalf("expected decision")
 	}
 	if !decision.Apply {
-		t.Fatalf("expected inbound cleanup to apply")
+		t.Fatalf("expected inbound normalization to apply")
 	}
 	if decision.NewPpm != 500 {
-		t.Fatalf("expected inbound cleanup not to move outbound ppm, got %d", decision.NewPpm)
+		t.Fatalf("expected inbound normalization not to move outbound ppm, got %d", decision.NewPpm)
 	}
-	if decision.PrevInboundDiscount != 10_000 || decision.InboundDiscount != 0 {
-		t.Fatalf("unexpected inbound cleanup decision: prev=%d target=%d", decision.PrevInboundDiscount, decision.InboundDiscount)
+	if decision.PrevInboundDiscount != 10_000 || decision.InboundDiscount != 450 {
+		t.Fatalf("unexpected inbound normalization decision: prev=%d target=%d", decision.PrevInboundDiscount, decision.InboundDiscount)
 	}
-	if st.LastInboundDiscount != 0 {
-		t.Fatalf("expected state inbound discount to be cleared, got %d", st.LastInboundDiscount)
+	if st.LastInboundDiscount != 450 {
+		t.Fatalf("expected state inbound discount to be normalized, got %d", st.LastInboundDiscount)
 	}
 }
 

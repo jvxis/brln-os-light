@@ -3175,6 +3175,13 @@ func (s *AutofeeService) RefreshReferenceFees(ctx context.Context, dryRun bool, 
 			); applyInbound {
 				item.TargetInboundDiscount = targetInboundDiscount
 				item.InboundSource = inboundSource
+			} else if normalizedInboundDiscount, normalized := normalizeStaleInboundDiscount(
+				item.CurrentInboundDiscount,
+				targetPpm,
+				inboundDiscountMaxRatioFromConfig(cfg),
+			); normalized {
+				item.TargetInboundDiscount = normalizedInboundDiscount
+				item.InboundSource = "balanced-normalize"
 			}
 		}
 		inboundChanged := item.TargetInboundDiscount != item.CurrentInboundDiscount
@@ -4570,6 +4577,38 @@ func inboundFeeUpdateForDiscount(currentDiscount int, targetDiscount int) (bool,
 	return false, 0
 }
 
+func inboundDiscountMaxRatioFromConfig(cfg AutofeeConfig) float64 {
+	if cfg.InboundDiscountMaxRatioOverride > 0 {
+		return cfg.InboundDiscountMaxRatioOverride
+	}
+	return defaultInboundDiscountMaxRatio
+}
+
+func maxInboundDiscountForAppliedPpm(appliedPpm int, maxRatio float64) int {
+	if appliedPpm <= 0 {
+		return 0
+	}
+	if maxRatio <= 0 {
+		maxRatio = defaultInboundDiscountMaxRatio
+	}
+	return int(math.Ceil(float64(appliedPpm) * maxRatio))
+}
+
+func normalizeStaleInboundDiscount(currentDiscount int, appliedPpm int, maxRatio float64) (int, bool) {
+	currentDiscount = absInt(currentDiscount)
+	if currentDiscount <= 0 {
+		return 0, false
+	}
+	capDiscount := maxInboundDiscountForAppliedPpm(appliedPpm, maxRatio)
+	if capDiscount <= 0 {
+		return 0, true
+	}
+	if currentDiscount > capDiscount {
+		return capDiscount, true
+	}
+	return currentDiscount, false
+}
+
 func selectAutofeeRefreshReference(capacitySat int64, forward7d forwardStat, forward21d forwardStat, rebal7d rebalStat, rebal21d rebalStat, rebalMarkupFrac float64) (int, int, string, bool) {
 	outPpm7d := ppmMsat(forward7d.FeeMsat, forward7d.AmtMsat)
 	rebalPpm7d := ppmMsat(rebal7d.FeeMsat, rebal7d.AmtMsat)
@@ -4854,7 +4893,7 @@ func selectAutofeeRefreshInboundDiscount(cfg AutofeeConfig, profile autofeeProfi
 		return discount, "market-refill", true
 	default:
 		if !cfg.InboundPassiveEnabled {
-			return 0, "balanced-disabled", true
+			return 0, "", false
 		}
 		inboundDiscountReachOutRatio := profile.InboundDiscountReachOutRatio
 		if inboundDiscountReachOutRatio <= 0 {
@@ -4867,7 +4906,7 @@ func selectAutofeeRefreshInboundDiscount(cfg AutofeeConfig, profile autofeeProfi
 		outPpm7d := ppmMsat(forward7d.FeeMsat, forward7d.AmtMsat)
 		marginPpm7d := outPpm7d - int(math.Ceil(float64(baseCostPpm)*1.10))
 		if rawOutRatio > inboundDiscountReachOutRatio || fwdCount < 5 || marginPpm7d < 200 {
-			return 0, "balanced-ineligible", true
+			return 0, "", false
 		}
 		discount := computeInboundDiscount(
 			true,
@@ -9487,10 +9526,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if applyOutbound {
 		appliedPpm = finalPpm
 	}
-	inboundDiscountMaxRatio := defaultInboundDiscountMaxRatio
-	if e.cfg.InboundDiscountMaxRatioOverride > 0 {
-		inboundDiscountMaxRatio = e.cfg.InboundDiscountMaxRatioOverride
-	}
+	inboundDiscountMaxRatio := inboundDiscountMaxRatioFromConfig(e.cfg)
 	inboundDiscountReachOutRatio := e.profile.InboundDiscountReachOutRatio
 	if inboundDiscountReachOutRatio <= 0 {
 		inboundDiscountReachOutRatio = 0.10
@@ -9535,6 +9571,14 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			inboundDiscountReachOutRatio,
 			inboundDiscountMinRetainedSpreadFrac,
 		)
+	}
+	if normalizeAutofeeOperationMode(e.cfg.OperationMode) != autofeeOperationModeMarketRefill && inboundDiscount <= 0 {
+		if normalizedInboundDiscount, normalized := normalizeStaleInboundDiscount(prevInboundDiscount, appliedPpm, inboundDiscountMaxRatio); normalized {
+			inboundDiscount = normalizedInboundDiscount
+			tags = appendAutofeeTagOnce(tags, "inbound-normalize")
+		} else {
+			inboundDiscount = prevInboundDiscount
+		}
 	}
 	inboundChanged := inboundDiscount != prevInboundDiscount
 	st.LastInboundDiscount = inboundDiscount

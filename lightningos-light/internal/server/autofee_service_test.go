@@ -679,7 +679,7 @@ func TestSelectAutofeeRefreshInboundDiscountBalancedEligible(t *testing.T) {
 	}
 }
 
-func TestSelectAutofeeRefreshInboundDiscountBalancedClearsIneligible(t *testing.T) {
+func TestSelectAutofeeRefreshInboundDiscountBalancedPreservesIneligible(t *testing.T) {
 	cfg := AutofeeConfig{InboundPassiveEnabled: true}
 	profile := autofeeProfiles["moderate"]
 	discount, source, apply := selectAutofeeRefreshInboundDiscount(
@@ -693,8 +693,25 @@ func TestSelectAutofeeRefreshInboundDiscountBalancedClearsIneligible(t *testing.
 		500,
 		1000,
 	)
-	if !apply || source != "balanced-ineligible" || discount != 0 {
-		t.Fatalf("expected ineligible balanced inbound refresh to clear current setting, apply=%v source=%q discount=%d", apply, source, discount)
+	if apply || source != "" || discount != 0 {
+		t.Fatalf("expected ineligible balanced inbound refresh to preserve current setting, apply=%v source=%q discount=%d", apply, source, discount)
+	}
+}
+
+func TestNormalizeStaleInboundDiscountCapsExtremeDiscount(t *testing.T) {
+	target, changed := normalizeStaleInboundDiscount(10_000, 2_889, 0.90)
+	if !changed || target != 2601 {
+		t.Fatalf("expected stale inbound discount to be capped at 2601, changed=%v target=%d", changed, target)
+	}
+
+	target, changed = normalizeStaleInboundDiscount(415, 447, 0.90)
+	if !changed || target != 403 {
+		t.Fatalf("expected slightly over-cap discount to be normalized, changed=%v target=%d", changed, target)
+	}
+
+	target, changed = normalizeStaleInboundDiscount(329, 2679, 0.90)
+	if changed || target != 329 {
+		t.Fatalf("expected healthy inbound discount to be preserved, changed=%v target=%d", changed, target)
 	}
 }
 

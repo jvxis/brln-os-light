@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getAppAdminPassword, getAppStorageTargets, getApps, getBitcoinLocalStatus, getBitcoinSource, getElectrsStatus, installApp, resetAppAdmin, startApp, stopApp, uninstallApp, type StorageTarget } from '../api'
+import { getAppAdminPassword, getAppStorageTargets, getApps, getBitcoinLocalStatus, getBitcoinSource, getElectrsStatus, getPeerswapElementsSource, installApp, resetAppAdmin, startApp, stopApp, testPeerswapElementsSource, uninstallApp, type StorageTarget } from '../api'
 import lndgIcon from '../assets/apps/lndg.ico'
 import bitcoincoreIcon from '../assets/apps/bitcoincore.png'
 import elementsIcon from '../assets/apps/elements.png'
@@ -50,7 +50,15 @@ type ElectrsStatus = {
 }
 
 type AppAction = 'install' | 'start' | 'stop' | 'uninstall'
-type InstallPayload = { data_dir?: string; storage_mount?: string }
+type InstallPayload = {
+  data_dir?: string
+  storage_mount?: string
+  elements_mode?: 'local' | 'remote'
+  elements_rpc_url?: string
+  elements_rpc_user?: string
+  elements_rpc_password?: string
+  elements_rpc_wallet?: string
+}
 
 const iconMap: Record<string, string> = {
   lndg: lndgIcon,
@@ -91,6 +99,8 @@ const fedimintGatewayIrohPort = 8177
 const APP_STORE_INSTALL_FILTER_KEY = 'app_store_install_filter'
 const bitcoinCoreDefaultDataDir = '/data/bitcoin'
 const elementsDefaultDataDir = '/data/elements'
+const peerswapDefaultRemoteUrl = 'http://elements.br-ln.com:8086'
+const peerswapDefaultWallet = 'peerswap'
 
 export default function AppStore() {
   const { t } = useTranslation()
@@ -114,6 +124,14 @@ export default function AppStore() {
   const [elementsSelectedMount, setElementsSelectedMount] = useState('')
   const [elementsStorageLoading, setElementsStorageLoading] = useState(false)
   const [elementsStorageError, setElementsStorageError] = useState('')
+  const [peerswapRemoteOpen, setPeerswapRemoteOpen] = useState(false)
+  const [peerswapRemoteUrl, setPeerswapRemoteUrl] = useState(peerswapDefaultRemoteUrl)
+  const [peerswapRemoteUser, setPeerswapRemoteUser] = useState('')
+  const [peerswapRemotePassword, setPeerswapRemotePassword] = useState('')
+  const [peerswapRemoteWallet, setPeerswapRemoteWallet] = useState(peerswapDefaultWallet)
+  const [peerswapRemoteTesting, setPeerswapRemoteTesting] = useState(false)
+  const [peerswapRemoteMessage, setPeerswapRemoteMessage] = useState('')
+  const [peerswapRemoteTested, setPeerswapRemoteTested] = useState(false)
   const [installFilter, setInstallFilter] = useState<InstallFilter>(() => {
     if (typeof window === 'undefined') return 'all'
     const stored = window.localStorage.getItem(APP_STORE_INSTALL_FILTER_KEY)
@@ -251,6 +269,40 @@ export default function AppStore() {
     }
   }, [elementsInstallOpen, elementsUseStorageMount])
 
+  const openPeerswapRemoteInstall = () => {
+    setPeerswapRemoteUrl(peerswapDefaultRemoteUrl)
+    setPeerswapRemoteUser('')
+    setPeerswapRemotePassword('')
+    setPeerswapRemoteWallet(peerswapDefaultWallet)
+    setPeerswapRemoteMessage('')
+    setPeerswapRemoteTested(false)
+    setPeerswapRemoteOpen(true)
+  }
+
+  const peerswapRemotePayload = () => ({
+    mode: 'remote' as const,
+    url: peerswapRemoteUrl.trim(),
+    user: peerswapRemoteUser.trim(),
+    password: peerswapRemotePassword,
+    wallet: peerswapRemoteWallet.trim() || peerswapDefaultWallet
+  })
+
+  const handlePeerswapRemoteTest = async () => {
+    setPeerswapRemoteTesting(true)
+    setPeerswapRemoteMessage('')
+    setPeerswapRemoteTested(false)
+    try {
+      const res = await testPeerswapElementsSource(peerswapRemotePayload())
+      const chain = res?.chain ? ` (${res.chain})` : ''
+      setPeerswapRemoteMessage(`${t('appStore.peerswapRemoteTestOk')}${chain}`)
+      setPeerswapRemoteTested(true)
+    } catch (err) {
+      setPeerswapRemoteMessage(err instanceof Error ? err.message : t('appStore.peerswapRemoteTestFailed'))
+    } finally {
+      setPeerswapRemoteTesting(false)
+    }
+  }
+
   const electrsApp = apps.find((app) => app.id === 'electrs')
   const electrsRunning = Boolean(electrsApp?.installed && electrsApp?.status === 'running')
   useEffect(() => {
@@ -291,6 +343,24 @@ export default function AppStore() {
       setElementsInstallOpen(true)
       return
     }
+    if (id === 'peerswap' && action === 'install' && !payload) {
+      const elementsApp = apps.find((app) => app.id === 'elements')
+      if (elementsApp?.installed && elementsApp.status === 'running') {
+        await handleAction(id, action, { elements_mode: 'local' })
+        return
+      }
+      try {
+        const source = await getPeerswapElementsSource()
+        if (source?.configured && source?.mode === 'remote') {
+          await handleAction(id, action, {})
+          return
+        }
+      } catch {
+        // Fall back to collecting remote credentials below.
+      }
+      openPeerswapRemoteInstall()
+      return
+    }
     setMessage('')
     setBusy((prev) => ({ ...prev, [id]: action }))
     try {
@@ -321,6 +391,18 @@ export default function AppStore() {
     const payload = elementsUseStorageMount ? { storage_mount: elementsSelectedMount } : { data_dir: elementsDefaultDataDir }
     setElementsInstallOpen(false)
     await handleAction('elements', 'install', payload)
+  }
+
+  const handlePeerswapRemoteInstallConfirm = async () => {
+    const payload = peerswapRemotePayload()
+    setPeerswapRemoteOpen(false)
+    await handleAction('peerswap', 'install', {
+      elements_mode: 'remote',
+      elements_rpc_url: payload.url,
+      elements_rpc_user: payload.user,
+      elements_rpc_password: payload.password,
+      elements_rpc_wallet: payload.wallet
+    })
   }
 
   const handleResetAdmin = async (id: string) => {
@@ -792,6 +874,95 @@ export default function AppStore() {
                 type="button"
                 disabled={elementsUseStorageMount && !elementsSelectedMount}
                 onClick={handleElementsInstallConfirm}
+              >
+                {t('appStore.install')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {peerswapRemoteOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="w-full max-w-lg rounded-lg border border-white/10 bg-ink p-5 shadow-xl">
+            <div className="space-y-2">
+              <h3 className="text-lg font-semibold">{t('appStore.peerswapRemoteTitle')}</h3>
+              <p className="text-sm text-fog/60">{t('appStore.peerswapRemoteBody')}</p>
+            </div>
+
+            <div className="mt-5 grid gap-4">
+              <label className="grid gap-2 text-sm">
+                <span className="text-xs uppercase tracking-wide text-fog/50">{t('appStore.peerswapRemoteUrl')}</span>
+                <input
+                  className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-fog outline-none focus:border-brass"
+                  value={peerswapRemoteUrl}
+                  onChange={(event) => {
+                    setPeerswapRemoteUrl(event.target.value)
+                    setPeerswapRemoteTested(false)
+                  }}
+                />
+              </label>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="grid gap-2 text-sm">
+                  <span className="text-xs uppercase tracking-wide text-fog/50">{t('appStore.peerswapRemoteUser')}</span>
+                  <input
+                    className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-fog outline-none focus:border-brass"
+                    value={peerswapRemoteUser}
+                    onChange={(event) => {
+                      setPeerswapRemoteUser(event.target.value)
+                      setPeerswapRemoteTested(false)
+                    }}
+                  />
+                </label>
+                <label className="grid gap-2 text-sm">
+                  <span className="text-xs uppercase tracking-wide text-fog/50">{t('appStore.peerswapRemotePassword')}</span>
+                  <input
+                    className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-fog outline-none focus:border-brass"
+                    type="password"
+                    value={peerswapRemotePassword}
+                    onChange={(event) => {
+                      setPeerswapRemotePassword(event.target.value)
+                      setPeerswapRemoteTested(false)
+                    }}
+                  />
+                </label>
+              </div>
+              <label className="grid gap-2 text-sm">
+                <span className="text-xs uppercase tracking-wide text-fog/50">{t('appStore.peerswapRemoteWallet')}</span>
+                <input
+                  className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-fog outline-none focus:border-brass"
+                  value={peerswapRemoteWallet}
+                  onChange={(event) => {
+                    setPeerswapRemoteWallet(event.target.value)
+                    setPeerswapRemoteTested(false)
+                  }}
+                />
+              </label>
+              <p className="text-xs text-fog/50">{t('appStore.peerswapRemoteSecurity')}</p>
+              {peerswapRemoteMessage && <p className="text-sm text-brass">{peerswapRemoteMessage}</p>}
+            </div>
+
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button
+                className="btn-secondary"
+                type="button"
+                onClick={() => setPeerswapRemoteOpen(false)}
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                className="btn-secondary"
+                type="button"
+                disabled={peerswapRemoteTesting || !peerswapRemoteUrl.trim() || !peerswapRemoteUser.trim() || !peerswapRemotePassword}
+                onClick={handlePeerswapRemoteTest}
+              >
+                {peerswapRemoteTesting ? t('appStore.peerswapRemoteTesting') : t('appStore.peerswapRemoteTest')}
+              </button>
+              <button
+                className="btn-primary"
+                type="button"
+                disabled={!peerswapRemoteUrl.trim() || !peerswapRemoteUser.trim() || !peerswapRemotePassword || peerswapRemoteTesting || !peerswapRemoteTested}
+                onClick={handlePeerswapRemoteInstallConfirm}
               >
                 {t('appStore.install')}
               </button>

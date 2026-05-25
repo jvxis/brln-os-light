@@ -86,6 +86,21 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		return
 	}
+	if appID == peerswapAppID {
+		var req peerswapInstallOptions
+		if r.ContentLength != 0 {
+			if err := readJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+				writeError(w, http.StatusBadRequest, "invalid json")
+				return
+			}
+		}
+		if err := s.installPeerswapWithOptions(r.Context(), req); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
 	if err := app.Install(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

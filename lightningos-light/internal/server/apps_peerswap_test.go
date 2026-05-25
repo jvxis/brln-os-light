@@ -1,6 +1,9 @@
 package server
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -102,6 +105,58 @@ func TestPSWebServiceUsesExplicitDataDirAndUserEnv(t *testing.T) {
 	}
 	if !strings.Contains(raw, "psweb -datadir /home/losop/.peerswap") {
 		t.Fatalf("expected explicit psweb datadir:\n%s", raw)
+	}
+}
+
+func TestPeerswapServiceOmitsElementsDependencyForRemoteSource(t *testing.T) {
+	paths := peerswapPaths{BinDir: "/opt/lightningos/apps/peerswap/bin"}
+	raw := peerswapServiceContents(paths, peerswapElementsModeRemote)
+	if strings.Contains(raw, "lightningos-elements.service") {
+		t.Fatalf("expected remote peerswap service to omit local elements dependency:\n%s", raw)
+	}
+
+	local := peerswapServiceContents(paths, peerswapElementsModeLocal)
+	if !strings.Contains(local, "lightningos-elements.service") {
+		t.Fatalf("expected local peerswap service to depend on elements:\n%s", local)
+	}
+}
+
+func TestNormalizePeerswapRemoteEndpointSplitsHostAndPort(t *testing.T) {
+	endpoint, err := normalizePeerswapRemoteEndpoint("http://elements.br-ln.com:8086/")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if endpoint.URL != "http://elements.br-ln.com:8086" {
+		t.Fatalf("unexpected url: %s", endpoint.URL)
+	}
+	if endpoint.Host != "http://elements.br-ln.com" || endpoint.Port != 8086 {
+		t.Fatalf("unexpected host/port: %s %d", endpoint.Host, endpoint.Port)
+	}
+}
+
+func TestTestPeerswapRemoteElementsRPC(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, pass, ok := r.BasicAuth()
+		if !ok || user != "elements" || pass != "secret" {
+			t.Fatalf("unexpected basic auth user=%q pass=%q ok=%v", user, pass, ok)
+		}
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"result":{"chain":"liquidv1"},"error":null}`))
+	}))
+	defer server.Close()
+
+	chain, err := testPeerswapRemoteElementsRPC(context.Background(), peerswapElementsSource{
+		Mode:     peerswapElementsModeRemote,
+		URL:      server.URL,
+		User:     "elements",
+		Password: "secret",
+		Wallet:   "peerswap",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if chain != "liquidv1" {
+		t.Fatalf("unexpected chain: %s", chain)
 	}
 }
 

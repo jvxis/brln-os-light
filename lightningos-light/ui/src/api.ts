@@ -144,6 +144,18 @@ export const getElementsStatus = () => request('/api/elements/status')
 export const getElementsMainchain = () => request('/api/elements/mainchain')
 export const setElementsMainchain = (payload: { source: 'local' | 'remote' }) =>
   request('/api/elements/mainchain', { method: 'POST', body: JSON.stringify(payload) })
+export type PeerswapElementsSourcePayload = {
+  mode: 'local' | 'remote'
+  url?: string
+  user?: string
+  password?: string
+  wallet?: string
+}
+export const getPeerswapElementsSource = () => request('/api/apps/peerswap/elements-source')
+export const testPeerswapElementsSource = (payload?: PeerswapElementsSourcePayload) =>
+  request('/api/apps/peerswap/elements-source/test', { method: 'POST', body: payload ? JSON.stringify(payload) : undefined })
+export const setPeerswapElementsSource = (payload: PeerswapElementsSourcePayload) =>
+  request('/api/apps/peerswap/elements-source', { method: 'POST', body: JSON.stringify(payload) })
 export const getLndStatus = (force?: boolean) =>
   request(`/api/lnd/status${buildQuery({ force: force ? 1 : undefined })}`)
 export const getLndConfig = () => request('/api/lnd/config')
@@ -794,7 +806,7 @@ export const getAppStorageTargets = (app: string) =>
   request(`/api/apps/storage-targets${buildQuery({ app })}`)
 export const getElectrsStatus = () => request('/api/apps/electrs/status')
 export const getAppAdminPassword = (id: string) => request(`/api/apps/${id}/admin-password`)
-export const installApp = (id: string, payload?: { data_dir?: string; storage_mount?: string }) =>
+export const installApp = (id: string, payload?: { data_dir?: string; storage_mount?: string; elements_mode?: 'local' | 'remote'; elements_rpc_url?: string; elements_rpc_user?: string; elements_rpc_password?: string; elements_rpc_wallet?: string }) =>
   request(`/api/apps/${id}/install`, { method: 'POST', body: JSON.stringify(payload ?? {}) })
 export const uninstallApp = (id: string) => request(`/api/apps/${id}/uninstall`, { method: 'POST' })
 export const startApp = (id: string) => request(`/api/apps/${id}/start`, { method: 'POST' })

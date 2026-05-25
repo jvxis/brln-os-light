@@ -28,15 +28,16 @@ const (
 )
 
 type peerswapPaths struct {
-	Root            string
-	BinDir          string
-	AppDataDir      string
-	ConfigDir       string
-	ConfigPath      string
-	PSWebConfigPath string
-	ServicePath     string
-	WebServicePath  string
-	VersionPath     string
+	Root               string
+	BinDir             string
+	AppDataDir         string
+	ConfigDir          string
+	ConfigPath         string
+	PSWebConfigPath    string
+	ElementsSourcePath string
+	ServicePath        string
+	WebServicePath     string
+	VersionPath        string
 }
 
 type peerswapApp struct {
@@ -64,7 +65,7 @@ func peerswapDefinition() appDefinition {
 	return appDefinition{
 		ID:          peerswapAppID,
 		Name:        "Peerswap",
-		Description: "Peerswap daemon with psweb UI (requires Elements).",
+		Description: "Peerswap daemon with psweb UI (local or remote Elements RPC).",
 		Port:        pswebPort,
 	}
 }
@@ -109,28 +110,37 @@ func (a peerswapApp) Stop(ctx context.Context) error {
 func peerswapAppPaths() peerswapPaths {
 	root := filepath.Join(appsRoot, peerswapAppID)
 	return peerswapPaths{
-		Root:            root,
-		BinDir:          filepath.Join(root, "bin"),
-		AppDataDir:      filepath.Join(appsDataRoot, peerswapAppID),
-		ConfigDir:       filepath.Join("/home", peerswapUser, ".peerswap"),
-		ConfigPath:      filepath.Join("/home", peerswapUser, ".peerswap", "peerswap.conf"),
-		PSWebConfigPath: filepath.Join("/home", peerswapUser, ".peerswap", "pswebconfig.json"),
-		ServicePath:     filepath.Join("/etc/systemd/system", peerswapServiceName+".service"),
-		WebServicePath:  filepath.Join("/etc/systemd/system", pswebServiceName+".service"),
-		VersionPath:     filepath.Join(root, "VERSION"),
+		Root:               root,
+		BinDir:             filepath.Join(root, "bin"),
+		AppDataDir:         filepath.Join(appsDataRoot, peerswapAppID),
+		ConfigDir:          filepath.Join("/home", peerswapUser, ".peerswap"),
+		ConfigPath:         filepath.Join("/home", peerswapUser, ".peerswap", "peerswap.conf"),
+		PSWebConfigPath:    filepath.Join("/home", peerswapUser, ".peerswap", "pswebconfig.json"),
+		ElementsSourcePath: filepath.Join(appsDataRoot, peerswapAppID, "elements_rpc.json"),
+		ServicePath:        filepath.Join("/etc/systemd/system", peerswapServiceName+".service"),
+		WebServicePath:     filepath.Join("/etc/systemd/system", pswebServiceName+".service"),
+		VersionPath:        filepath.Join(root, "VERSION"),
 	}
 }
 
 func (s *Server) installPeerswap(ctx context.Context) error {
-	if err := ensureElementsReady(ctx); err != nil {
-		return err
-	}
+	return s.installPeerswapWithOptions(ctx, peerswapInstallOptions{})
+}
+
+func (s *Server) installPeerswapWithOptions(ctx context.Context, opts peerswapInstallOptions) error {
 	paths := peerswapAppPaths()
 	if err := os.MkdirAll(paths.Root, 0750); err != nil {
 		return fmt.Errorf("failed to create app directory: %w", err)
 	}
 	if err := os.MkdirAll(paths.AppDataDir, 0750); err != nil {
 		return fmt.Errorf("failed to create app data directory: %w", err)
+	}
+	source, err := s.preparePeerswapElementsSourceForInstall(ctx, paths, opts)
+	if err != nil {
+		return err
+	}
+	if err := ensurePeerswapElementsDataDir(ctx); err != nil {
+		return err
 	}
 	if err := ensurePeerswapConfigDir(ctx, paths); err != nil {
 		return err
@@ -141,7 +151,7 @@ func (s *Server) installPeerswap(ctx context.Context) error {
 	if err := ensurePeerswapConfig(ctx, paths); err != nil {
 		return err
 	}
-	if err := ensurePeerswapServices(ctx, paths); err != nil {
+	if err := ensurePeerswapServices(ctx, paths, source.Mode); err != nil {
 		return err
 	}
 	if _, err := runSystemd(ctx, "systemctl", "enable", "--now", peerswapServiceName); err != nil {
@@ -157,12 +167,19 @@ func (s *Server) installPeerswap(ctx context.Context) error {
 }
 
 func (s *Server) startPeerswap(ctx context.Context) error {
-	if err := ensureElementsReady(ctx); err != nil {
-		return err
-	}
 	paths := peerswapAppPaths()
 	if !fileExists(paths.VersionPath) || !fileExists(filepath.Join(paths.BinDir, "peerswapd")) {
 		return errors.New("Peerswap is not installed")
+	}
+	if err := os.MkdirAll(paths.AppDataDir, 0750); err != nil {
+		return fmt.Errorf("failed to create app data directory: %w", err)
+	}
+	source, err := preparePeerswapElementsSourceForStart(ctx, paths)
+	if err != nil {
+		return err
+	}
+	if err := ensurePeerswapElementsDataDir(ctx); err != nil {
+		return err
 	}
 	if err := ensurePeerswapConfigDir(ctx, paths); err != nil {
 		return err
@@ -173,7 +190,7 @@ func (s *Server) startPeerswap(ctx context.Context) error {
 	if err := ensurePeerswapConfig(ctx, paths); err != nil {
 		return err
 	}
-	if err := ensurePeerswapServices(ctx, paths); err != nil {
+	if err := ensurePeerswapServices(ctx, paths, source.Mode); err != nil {
 		return err
 	}
 	if _, err := runSystemd(ctx, "systemctl", "restart", peerswapServiceName); err != nil {
@@ -408,23 +425,43 @@ func ensurePeerswapConfig(ctx context.Context, paths peerswapPaths) error {
 }
 
 func peerswapConfigDefaults(ctx context.Context) (peerswapConfigValues, error) {
-	user, pass, port, err := readElementsRPCConfig(ctx)
+	source, err := resolvePeerswapElementsSourceForConfig(ctx, peerswapAppPaths())
 	if err != nil {
 		return peerswapConfigValues{}, err
 	}
 	elementsPaths := elementsAppPaths()
-	return peerswapConfigValues{
+	values := peerswapConfigValues{
 		LndTLSPath:          "/data/lnd/tls.cert",
 		LndMacaroonPath:     "/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon",
-		ElementsRPCUser:     user,
-		ElementsRPCPass:     pass,
-		ElementsRPCHost:     "http://127.0.0.1",
-		ElementsRPCPort:     port,
-		ElementsRPCWallet:   "peerswap",
+		ElementsRPCWallet:   peerswapSourceWallet(source),
 		ElementsDataDir:     elementsPaths.DataDir,
 		ElementsLiquidSwaps: "true",
 		BitcoinSwaps:        "false",
-	}, nil
+	}
+	if source.Mode == peerswapElementsModeRemote {
+		endpoint, err := normalizePeerswapRemoteEndpoint(source.URL)
+		if err != nil {
+			return peerswapConfigValues{}, err
+		}
+		values.ElementsRPCUser = source.User
+		values.ElementsRPCPass = source.Password
+		values.ElementsRPCHost = endpoint.Host
+		values.ElementsRPCPort = endpoint.Port
+		return values, nil
+	}
+	user, pass, port, err := readElementsRPCConfig(ctx)
+	if err != nil {
+		return peerswapConfigValues{}, err
+	}
+	values.ElementsRPCUser = user
+	values.ElementsRPCPass = pass
+	values.ElementsRPCHost = "http://127.0.0.1"
+	values.ElementsRPCPort = port
+	return values, nil
+}
+
+func ensurePeerswapElementsDataDir(ctx context.Context) error {
+	return ensureElementsDataDir(ctx, elementsAppPaths())
 }
 
 func readElementsRPCConfig(ctx context.Context) (string, string, int, error) {
@@ -726,8 +763,8 @@ func writePSWebConfig(ctx context.Context, paths peerswapPaths, cfg map[string]a
 	return nil
 }
 
-func ensurePeerswapServices(ctx context.Context, paths peerswapPaths) error {
-	svc := peerswapServiceContents(paths)
+func ensurePeerswapServices(ctx context.Context, paths peerswapPaths, elementsMode string) error {
+	svc := peerswapServiceContents(paths, elementsMode)
 	if existing, err := os.ReadFile(paths.ServicePath); err == nil && string(existing) == svc {
 		// no-op
 	} else {
@@ -767,10 +804,18 @@ func ensurePeerswapServices(ctx context.Context, paths peerswapPaths) error {
 	return nil
 }
 
-func peerswapServiceContents(paths peerswapPaths) string {
+func peerswapServiceContents(paths peerswapPaths, elementsModes ...string) string {
+	elementsMode := peerswapElementsModeLocal
+	if len(elementsModes) > 0 && elementsModes[0] != "" {
+		elementsMode = elementsModes[0]
+	}
+	elementsAfter := ""
+	if elementsMode != peerswapElementsModeRemote {
+		elementsAfter = " " + elementsServiceName + ".service"
+	}
 	return fmt.Sprintf(`[Unit]
 Description=LightningOS Peerswap daemon
-After=network-online.target %s
+After=network-online.target%s
 Wants=network-online.target
 
 [Service]
@@ -787,7 +832,7 @@ RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-`, elementsServiceName+".service", peerswapUser, peerswapUser, peerswapUser, peerswapUser, peerswapUser, filepath.Join(paths.BinDir, "peerswapd"))
+`, elementsAfter, peerswapUser, peerswapUser, peerswapUser, peerswapUser, peerswapUser, filepath.Join(paths.BinDir, "peerswapd"))
 }
 
 func pswebServiceContents(paths peerswapPaths) string {

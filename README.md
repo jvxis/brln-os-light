@@ -794,7 +794,7 @@ ss -ltn | grep :8443
 - Mempool runs a self-hosted mempool.space stack on `http://<SERVER_LAN_IP>:8999` and requires Bitcoin Core + Electrs installed and running.
 - LNDg runs in Docker and listens on `http://<SERVER_LAN_IP>:8889`.
 - LNbits runs in Docker and integrates with the local LND connection.
-- Peerswap installs `peerswapd` + `psweb` (UI on `http://<SERVER_LAN_IP>:1984`) and requires Elements.
+- Peerswap installs `peerswapd` + `psweb` (UI on `http://<SERVER_LAN_IP>:1984`) and can use local Elements or a remote Elements RPC endpoint.
 - Elements runs as a native service (Liquid Elements node, RPC on `127.0.0.1:7041`) and can use either the club remote Bitcoin RPC or a local bitcoind detected from LND/bitcoin.conf. During install, Elements can optionally use a custom data directory on a pre-mounted volume; this cannot be changed later by the app.
 - RoboSats Gateway, Public Pool, Buy DePix, and FSwap are managed from the same App Store install/start/stop/status flow.
 - Fedimint is split into **Fedimint Guardian** (`fedimintd`) and **Fedimint Lightning Gateway** (`gatewayd lnd`). Both use Iroh and `FM_ESPLORA_URL=https://mempool.space/api`; only the gateway touches local LND access. See the [Fedimint configuration guide](docs/28_FEDIMINT_CONFIGURATION_EN.md) ([PT-BR](docs/27_FEDIMINT_CONFIGURATION_PT_BR.md)).

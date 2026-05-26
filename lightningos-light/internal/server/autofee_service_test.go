@@ -698,6 +698,28 @@ func TestSelectAutofeeRefreshInboundDiscountBalancedPreservesIneligible(t *testi
 	}
 }
 
+func TestSelectAutofeeRefreshInboundDiscountBalancedLowSampleRecreatesTarget(t *testing.T) {
+	cfg := AutofeeConfig{InboundPassiveEnabled: true}
+	profile := autofeeProfiles["moderate"]
+	discount, source, apply := selectAutofeeRefreshInboundDiscount(
+		cfg,
+		profile,
+		0.08,
+		0.08,
+		forwardStat{},
+		forwardStat{FeeMsat: 500_000, AmtMsat: 1_000_000_000, Count: 1},
+		5_000_000,
+		300,
+		700,
+	)
+	if !apply || source != "balanced-low-sample" {
+		t.Fatalf("expected balanced low-sample inbound refresh to apply, apply=%v source=%q", apply, source)
+	}
+	if discount <= 0 {
+		t.Fatalf("expected positive low-sample inbound discount, got %d", discount)
+	}
+}
+
 func TestNormalizeStaleInboundDiscountCapsExtremeDiscount(t *testing.T) {
 	target, changed := normalizeStaleInboundDiscount(10_000, 2_889, 0.90)
 	if !changed || target != 2601 {

@@ -243,7 +243,7 @@ func runGoldenScenario(t *testing.T, sc goldenScenario) {
 
 func TestEvaluateChannelNormalizesExtremeCurrentInboundPolicy(t *testing.T) {
 	cfg := goldenDefaultCfg()
-	cfg.InboundPassiveEnabled = false
+	cfg.InboundPassiveEnabled = true
 	now := time.Date(2026, 4, 30, 12, 0, 0, 0, time.UTC)
 	engine := newGoldenEngine(t, cfg, goldenDefaultCalib(), now)
 

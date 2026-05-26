@@ -4893,7 +4893,7 @@ func selectAutofeeRefreshInboundDiscount(cfg AutofeeConfig, profile autofeeProfi
 		return discount, "market-refill", true
 	default:
 		if !cfg.InboundPassiveEnabled {
-			return 0, "", false
+			return 0, "balanced-disabled", true
 		}
 		inboundDiscountReachOutRatio := profile.InboundDiscountReachOutRatio
 		if inboundDiscountReachOutRatio <= 0 {
@@ -4905,10 +4905,7 @@ func selectAutofeeRefreshInboundDiscount(cfg AutofeeConfig, profile autofeeProfi
 		fwdCount := int(forward7d.Count)
 		outPpm7d := ppmMsat(forward7d.FeeMsat, forward7d.AmtMsat)
 		marginPpm7d := outPpm7d - int(math.Ceil(float64(baseCostPpm)*1.10))
-		if rawOutRatio > inboundDiscountReachOutRatio || fwdCount < 5 || marginPpm7d < 200 {
-			return 0, "", false
-		}
-		discount := computeInboundDiscount(
+		discount, source := computeBalancedInboundDiscount(
 			true,
 			"sink",
 			rawOutRatio,
@@ -4920,7 +4917,10 @@ func selectAutofeeRefreshInboundDiscount(cfg AutofeeConfig, profile autofeeProfi
 			inboundDiscountReachOutRatio,
 			inboundDiscountMinRetainedSpreadFrac,
 		)
-		return discount, "balanced", true
+		if discount <= 0 {
+			return 0, "", false
+		}
+		return discount, source, true
 	}
 }
 
@@ -9559,7 +9559,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		)
 		tags = append(tags, inboundTags...)
 	} else {
-		inboundDiscount = computeInboundDiscount(
+		var inboundSource string
+		inboundDiscount, inboundSource = computeBalancedInboundDiscount(
 			e.cfg.InboundPassiveEnabled,
 			classLabel,
 			outRatio,
@@ -9571,8 +9572,14 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			inboundDiscountReachOutRatio,
 			inboundDiscountMinRetainedSpreadFrac,
 		)
+		switch inboundSource {
+		case "balanced-low-sample":
+			tags = appendAutofeeTagOnce(tags, "inbound-low-sample")
+		case "balanced":
+			tags = appendAutofeeTagOnce(tags, "inbound-balanced")
+		}
 	}
-	if normalizeAutofeeOperationMode(e.cfg.OperationMode) != autofeeOperationModeMarketRefill && inboundDiscount <= 0 {
+	if normalizeAutofeeOperationMode(e.cfg.OperationMode) != autofeeOperationModeMarketRefill && e.cfg.InboundPassiveEnabled && inboundDiscount <= 0 {
 		if normalizedInboundDiscount, normalized := normalizeStaleInboundDiscount(prevInboundDiscount, appliedPpm, inboundDiscountMaxRatio); normalized {
 			inboundDiscount = normalizedInboundDiscount
 			tags = appendAutofeeTagOnce(tags, "inbound-normalize")
@@ -10680,6 +10687,55 @@ func computeInboundDiscount(enabled bool, classLabel string, outRatio float64, f
 		reachOutRatio = 0.10
 	}
 	if outRatio > reachOutRatio {
+		return 0
+	}
+	if maxRatio <= 0 {
+		maxRatio = defaultInboundDiscountMaxRatio
+	}
+	if retainedSpreadFrac <= 0 {
+		retainedSpreadFrac = 0.12
+	}
+	return computeInboundDiscountBudget(baseCostPpm, appliedPpm, maxRatio, retainedSpreadFrac)
+}
+
+func computeBalancedInboundDiscount(enabled bool, classLabel string, outRatio float64, fwdCount int, marginPpm7d int, baseCostPpm int, appliedPpm int, maxRatio float64, reachOutRatio float64, retainedSpreadFrac float64) (int, string) {
+	discount := computeInboundDiscount(enabled, classLabel, outRatio, fwdCount, marginPpm7d, baseCostPpm, appliedPpm, maxRatio, reachOutRatio, retainedSpreadFrac)
+	if discount > 0 {
+		return discount, "balanced"
+	}
+	if !enabled || !strings.EqualFold(classLabel, "sink") || fwdCount <= 0 || marginPpm7d <= 0 || appliedPpm <= 0 {
+		return 0, ""
+	}
+	if reachOutRatio <= 0 {
+		reachOutRatio = 0.10
+	}
+	if outRatio > reachOutRatio {
+		return 0, ""
+	}
+	if maxRatio <= 0 {
+		maxRatio = defaultInboundDiscountMaxRatio
+	}
+	if retainedSpreadFrac <= 0 {
+		retainedSpreadFrac = 0.12
+	}
+	budget := computeInboundDiscountBudget(baseCostPpm, appliedPpm, maxRatio, retainedSpreadFrac)
+	if budget <= 0 {
+		return 0, ""
+	}
+
+	scale := 0.50
+	if fwdCount >= 3 || marginPpm7d >= 100 {
+		scale = 0.75
+	}
+	discount = int(math.Ceil(float64(budget) * scale))
+	if discount < 25 {
+		return 0, ""
+	}
+	return discount, "balanced-low-sample"
+}
+
+func computeInboundDiscountBudget(baseCostPpm int, appliedPpm int, maxRatio float64, retainedSpreadFrac float64) int {
+	if appliedPpm <= 0 {
 		return 0
 	}
 	if maxRatio <= 0 {

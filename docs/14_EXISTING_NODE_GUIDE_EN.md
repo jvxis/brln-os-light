@@ -1,4 +1,4 @@
-# LightningOS Light - Existing Node Guide (EN)
+# LightningOS - Existing Node Guide (EN)
 
 ## VERY IMPORTANT DISCLAIMER
 **LightningOS WAS NOT DESIGNED FOR EXISTING NODE INSTALLATIONS.**  

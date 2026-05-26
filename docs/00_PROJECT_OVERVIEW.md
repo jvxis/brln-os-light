@@ -1,7 +1,7 @@
-# LightningOS Light - Project Overview
+# LightningOS - Project Overview
 
 ## Goal
-LightningOS Light is a guided control center for running an LND node with a clean web UI, optional apps, and safe defaults.
+LightningOS is a guided control center for running an LND node with a clean web UI, optional apps, and safe defaults.
 
 ## Current scope (v0.2)
 - Native LND install (systemd, no Docker in the core)

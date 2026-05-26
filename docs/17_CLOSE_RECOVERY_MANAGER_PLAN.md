@@ -1,6 +1,6 @@
 # Close Recovery Manager Plan
 
-Este documento define a proposta para introduzir um `Close Recovery Manager` no LightningOS Light. O objetivo e consolidar em uma engine unica toda a logica operacional de fechamento de canais, recovery de `waiting_close`, acompanhamento de HTLCs pendentes, monitoring de outputs timelocked, sweeps pendentes e fee bump de recovery.
+Este documento define a proposta para introduzir um `Close Recovery Manager` no LightningOS. O objetivo e consolidar em uma engine unica toda a logica operacional de fechamento de canais, recovery de `waiting_close`, acompanhamento de HTLCs pendentes, monitoring de outputs timelocked, sweeps pendentes e fee bump de recovery.
 
 ## Motivacao
 

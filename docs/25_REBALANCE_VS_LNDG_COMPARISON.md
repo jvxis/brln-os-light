@@ -1,14 +1,14 @@
 # Rebalance Center vs LNDG — Comparação Funcional Completa
 
-Comparação direta entre o Rebalance Center do LightningOS Light e o rebalancer do [LNDG](https://github.com/cryptosharks131/lndg). Atualizado em 2026-05-08 contra `master` do LNDG.
+Comparação direta entre o Rebalance Center do LightningOS e o rebalancer do [LNDG](https://github.com/cryptosharks131/lndg). Atualizado em 2026-05-08 contra `master` do LNDG.
 
-> **TL;DR (revisado 2026-05-08).** LNDG é uma camada fina sobre o pathfinding do LND, mas essa simplicidade é exatamente sua força em redes onde nosso modelo multi-camada filtra demais. LightningOS Light continua sendo uma plataforma de decisão multi-objetivo (economics, demanda real, aprendizado por par, interlock com AutoFee), mas a partir de **0.3.25-Beta** oferece um modo **`delegated_fast_path_enabled`** que mimica a abordagem do LNDG: uma única chamada `SendPaymentV2(outgoing_chan_ids=[all-eligible])` com MPP, deixando o pathfinder + Mission Control nativos do LND escolherem. Em sucesso, finaliza o job; em falha, cai no loop tradicional. Operadores que reportaram "ligo o LNDG e os rebalances acontecem imediato" devem ligar esse flag.
+> **TL;DR (revisado 2026-05-08).** LNDG é uma camada fina sobre o pathfinding do LND, mas essa simplicidade é exatamente sua força em redes onde nosso modelo multi-camada filtra demais. LightningOS continua sendo uma plataforma de decisão multi-objetivo (economics, demanda real, aprendizado por par, interlock com AutoFee), mas a partir de **0.3.25-Beta** oferece um modo **`delegated_fast_path_enabled`** que mimica a abordagem do LNDG: uma única chamada `SendPaymentV2(outgoing_chan_ids=[all-eligible])` com MPP, deixando o pathfinder + Mission Control nativos do LND escolherem. Em sucesso, finaliza o job; em falha, cai no loop tradicional. Operadores que reportaram "ligo o LNDG e os rebalances acontecem imediato" devem ligar esse flag.
 
 > **Diferença arquitetural que o doc original minimizou:** LNDG passa **TODAS as sources elegíveis ao LND em uma única chamada**; o LND nativo então faz pathfinding multi-source com MPP, retry interno, MC nativo. Nós iteramos source-por-source com `BuildRoute`/`QueryRoutes` + `SendToRoute`. Para self-payment com `allow_self_payment=true`, o LND nativo tem otimizações específicas (anos de tuning Lightning Labs) que nosso modelo per-source explícito não captura. Soma-se a isso filtros pré-attempt empilhados (Política C, ROI guardrail, cost gate 1.4, payback progress) e cooldowns sobrepostos (pair_fail_ttl + permanent_fail_score) que LNDG não tem — combinado, eliminamos candidatos viáveis antes de tentar. Veja o backlog `docs/lndg-parity-investigation.md`.
 
 ## 1. Seleção e priorização de targets
 
-| Critério | LNDG | LightningOS Light |
+| Critério | LNDG | LightningOS |
 |---|---|---|
 | Filtro de targets | `auto_rebalance=True AND inbound_can ≥ 1` | `EligibleAsTarget` (deficit > deadband, outgoing > peer, cost gate 1.4) + `EligibleAsManualTarget` |
 | Critério de ordenação | `ORDER BY -inbound_can` (mais vazio primeiro) | Score econômico = `expectedGain − estimatedCost` com modelo v1 (revenue proporcional) ou **v2** (`amount × outgoing_fee × spreadEffectiveness`) |
@@ -20,7 +20,7 @@ Comparação direta entre o Rebalance Center do LightningOS Light e o rebalancer
 
 ## 2. Seleção e priorização de sources
 
-| Critério | LNDG | LightningOS Light |
+| Critério | LNDG | LightningOS |
 |---|---|---|
 | Filtro | `percent_outbound ≥ ar_out_target` | `EligibleAsSource` (local pct > floor, payback progress, política C) |
 | Estratégia | Lista enviada como `outgoing_chan_ids` ao LND, que escolhe internamente | **Sort multi-critério** por job: ROI estimado, custo histórico, `MaxSourceSat`, `PendingOutgoingHtlcs` (tiebreaker) |
@@ -30,7 +30,7 @@ Comparação direta entre o Rebalance Center do LightningOS Light e o rebalancer
 
 ## 3. Cálculo de fee cap
 
-| Critério | LNDG | LightningOS Light |
+| Critério | LNDG | LightningOS |
 |---|---|---|
 | Modo proporcional | `local_fee × ar_max_cost/100` | `econ_ratio × outgoing_fee_ppm` |
 | Teto absoluto sobre proporcional | `AR-MaxFeeRate` global | `econ_ratio_max_ppm` opcional |
@@ -42,7 +42,7 @@ Comparação direta entre o Rebalance Center do LightningOS Light e o rebalancer
 
 ## 4. Execução da rebalance
 
-| Critério | LNDG | LightningOS Light |
+| Critério | LNDG | LightningOS |
 |---|---|---|
 | Construção da rota | `AddInvoice` + `SendPaymentV2(payment_request)` — LND faz pathfinding | `BuildRoute` (cached) ou `QueryRoutes` + `SendToRoute` — controle total |
 | Fast path | Não | **Wave 4.1**: `BuildRoute(amount, source, cached_hops)` antes de QueryRoutes; sucesso → reusa; falha → fall-through silencioso |
@@ -52,7 +52,7 @@ Comparação direta entre o Rebalance Center do LightningOS Light e o rebalancer
 
 ## 5. Ramp de amount (RapidFire)
 
-| Critério | LNDG | LightningOS Light |
+| Critério | LNDG | LightningOS |
 |---|---|---|
 | Multiplicador na sucesso | × 1.21 (linear) | **× 2** (mais agressivo) |
 | Divisor na falha | / 2 | / 2 |
@@ -64,7 +64,7 @@ Comparação direta entre o Rebalance Center do LightningOS Light e o rebalancer
 
 ## 6. MPP / Multi-shard
 
-| Critério | LNDG | LightningOS Light |
+| Critério | LNDG | LightningOS |
 |---|---|---|
 | Controle | Binário (`max_parts=None` ou `1`) | Configurável: `MppMaxShards`, `MppParallelism`, `MppMinShardSat`, `MppRoundTimeoutSec`, `MppAutoOnly` |
 | Default `MppMinShardSat` | N/A | Proporcional a `MinExecuteSat` quando 0 |
@@ -74,7 +74,7 @@ Comparação direta entre o Rebalance Center do LightningOS Light e o rebalancer
 
 ## 7. Mission Control
 
-| Critério | LNDG | LightningOS Light |
+| Critério | LNDG | LightningOS |
 |---|---|---|
 | Reset | Nunca toca | `tryResetMissionControl(ctx, trigger)` com cooldown global de 5min, dispara em auto + manual restart watch |
 | Reinforce on success | Não | **Wave 4.4**: `ImportMissionControl` async com pares da rota vencedora (opt-in via `MissionControlReinforce`) |
@@ -83,7 +83,7 @@ Comparação direta entre o Rebalance Center do LightningOS Light e o rebalancer
 
 ## 8. Pair history e aprendizado
 
-| Critério | LNDG | LightningOS Light |
+| Critério | LNDG | LightningOS |
 |---|---|---|
 | Stats por par (source, target) | Não | Tabela `rebalance_pair_stats`: success_count, fail_count, last_success_at, last_fail_at, last_fail_reason, success_amount, success_fee_ppm |
 | Cached winning route | Não | **Wave 4.1**: `last_success_route_hops jsonb` por par, reusado via BuildRoute |
@@ -92,7 +92,7 @@ Comparação direta entre o Rebalance Center do LightningOS Light e o rebalancer
 
 ## 9. Cooldowns
 
-| Critério | LNDG | LightningOS Light |
+| Critério | LNDG | LightningOS |
 |---|---|---|
 | Wait period | `AR-WaitPeriod` (default 30min) entre falhas | 4 cooldowns sobrepostos: `target_cooldown`, `target_no_attempt`, `target_failed`, `target_distinct_source` |
 | Per-pair cooldown | Não | TTL por par baseado em `failCount` e `reason` (estrutural vs temporário) |
@@ -100,7 +100,7 @@ Comparação direta entre o Rebalance Center do LightningOS Light e o rebalancer
 
 ## 10. Budget e ROI
 
-| Critério | LNDG | LightningOS Light |
+| Critério | LNDG | LightningOS |
 |---|---|---|
 | Budget diário | Não tem conceito explícito | `daily_budget_pct` (% de revenue 7d ou 24h), modos `revenue_24h_pct` / `hybrid_revenue` |
 | Budget split auto/manual | Não | `BudgetAutoOnly` + `ManualReserveEnabled` + `ManualReserveMode/Value` |
@@ -111,7 +111,7 @@ Comparação direta entre o Rebalance Center do LightningOS Light e o rebalancer
 
 ## 11. AutoFee Interlock
 
-| Critério | LNDG | LightningOS Light |
+| Critério | LNDG | LightningOS |
 |---|---|---|
 | Bidirecional | Não | **6.1 + 6.1b** |
 | AutoFee → Rebalance | N/A (LNDG tem AutoFee no `af.py`, mas sem interlock) | AutoFee skipa canais com rebalance recente (window 30min, tag `autofee_settling`) |
@@ -120,7 +120,7 @@ Comparação direta entre o Rebalance Center do LightningOS Light e o rebalancer
 
 ## 12. Observabilidade
 
-| Critério | LNDG | LightningOS Light |
+| Critério | LNDG | LightningOS |
 |---|---|---|
 | Métricas baseline | Não | Endpoint `/api/rebalance/metrics/baseline?days=N` com aggregate + daily |
 | Cache de métricas | Não | Tabela `rebalance_metrics_daily` populada async no `finishJob` |
@@ -132,7 +132,7 @@ Comparação direta entre o Rebalance Center do LightningOS Light e o rebalancer
 
 ## 13. Concorrência e estado
 
-| Critério | LNDG | LightningOS Light |
+| Critério | LNDG | LightningOS |
 |---|---|---|
 | Max concurrent | Worker pool fixo | `MaxConcurrent` configurável + `resetSemaphore` seguro com jobs em flight |
 | Race em scan | N/A | Wave 2.2 fix: `lastAutoByTarget` + `criticalActive` lidos sob mesmo mutex |
@@ -141,7 +141,7 @@ Comparação direta entre o Rebalance Center do LightningOS Light e o rebalancer
 
 ## 14. Decomposição estrutural
 
-| Critério | LNDG | LightningOS Light |
+| Critério | LNDG | LightningOS |
 |---|---|---|
 | Inner loop modular | Função única | `rebalanceJobRunner` struct + `rebalanceMppPrepassContext` struct |
 | Builder de candidatos | Inline | `buildAndOrderRebalanceCandidates(input) plan` (testable, golden test) |
@@ -150,7 +150,7 @@ Comparação direta entre o Rebalance Center do LightningOS Light e o rebalancer
 
 ## 15. Validação e qualidade
 
-| Critério | LNDG | LightningOS Light |
+| Critério | LNDG | LightningOS |
 |---|---|---|
 | Tests | Limitados | Golden test do auto scan (12 canais, valida ordem + skips), unit tests de scoring/fee/clamps/eligibility |
 | Validação 400 | Mínima | `validateOptionalInt/Int64/Float` em todos os campos de config |
@@ -158,7 +158,7 @@ Comparação direta entre o Rebalance Center do LightningOS Light e o rebalancer
 
 ## 16. Resultados empíricos (referência)
 
-| Métrica | LNDG (típico) | LightningOS Light (2026-05-02 vs baseline 12d) |
+| Métrica | LNDG (típico) | LightningOS (2026-05-02 vs baseline 12d) |
 |---|---|---|
 | success_rate | ~3-8% (operadores reportam) | 1,04% → 3,95% (~4×) |
 | sats movidos / sat gasto | Não publica | 1.866 → **2.986 (+60%)** |

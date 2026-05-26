@@ -1,4 +1,4 @@
-# LND 0.21 e 0.22 — Impacto no LightningOS Light
+# LND 0.21 e 0.22 — Impacto no LightningOS
 
 Documento de referência para os upgrades do LND, mapeando cada mudança contra o código do `brln-os-light` e indicando o que é seguro, o que melhora, e o que precisa ser adaptado.
 

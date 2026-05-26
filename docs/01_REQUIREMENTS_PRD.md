@@ -1,4 +1,4 @@
-# LightningOS Light - PRD (v0.2)
+# LightningOS - PRD (v0.2)
 
 ## Personas
 - P1 Beginner: wants a guided setup without running Bitcoin Core locally.

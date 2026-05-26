@@ -374,7 +374,7 @@
     "mainnetOnly": "Mainnet only",
     "nodeLabel": "Node: {{node}}",
     "openMenu": "Open menu",
-    "productName": "LightningOS Light",
+    "productName": "LightningOS",
     "changePassword": "Change password",
     "statusOverview": "Status overview",
     "statusUnavailable": "Status unavailable",

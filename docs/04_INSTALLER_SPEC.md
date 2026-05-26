@@ -1,7 +1,7 @@
 # Installer Spec (v0.2)
 
 ## Goal
-Install and configure the LightningOS Light stack:
+Install and configure the LightningOS stack:
 - LND (native)
 - Postgres
 - lightningos-manager

@@ -1,4 +1,4 @@
-# LightningOS Light - Guia para Node Existente (PT-BR)
+# LightningOS - Guia para Node Existente (PT-BR)
 
 ## AVISO MUITO IMPORTANTE
 **O LightningOS NAO FOI CONCEBIDO PARA NODES COM INSTALACOES EXISTENTES.**  

@@ -3,7 +3,7 @@
 **Versão:** 0.4.4-Beta
 **Última revisão:** 2026-05-26
 
-Este documento descreve como o módulo de rebalance do LightningOS Light funciona,
+Este documento descreve como o módulo de rebalance do LightningOS funciona,
 quais módulos compõem o sistema, e quando usar cada um. Voltado para o operador
 do nó que precisa decidir como configurar o Rebalance Center sem mergulhar no
 código.

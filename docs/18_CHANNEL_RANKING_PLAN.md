@@ -750,4 +750,4 @@ Se o MVP entregar bem estas tres coisas, ele ja sera muito util:
 - explicar por que cada canal caiu naquele estado;
 - dizer ao operador qual modulo revisar em seguida.
 
-Essa abordagem mantem o escopo sob controle e conversa diretamente com o que o LightningOS Light ja faz melhor: operacao pratica de node.
+Essa abordagem mantem o escopo sob controle e conversa diretamente com o que o LightningOS ja faz melhor: operacao pratica de node.

@@ -1,6 +1,6 @@
-# Installing LightningOS Light on Raspberry Pi 5 — Debian 12 (Bookworm)
+# Installing LightningOS on Raspberry Pi 5 — Debian 12 (Bookworm)
 
-> **Community guide** — Adaptation of the official LightningOS Light installer for
+> **Community guide** — Adaptation of the official LightningOS installer for
 > **Raspberry Pi 5 (8 GB RAM)** running **Debian 12 Bookworm (aarch64)** with an existing Bitcoin Core node.
 >
 > Original project: [https://github.com/jvxis/brln-os-light](https://github.com/jvxis/brln-os-light)
@@ -737,7 +737,7 @@ sudo systemctl restart lnd
 
 Congratulations — you now have a fully operational Lightning node on Raspberry Pi 5 with Debian 12!
 
-Your node is connected to the Bitcoin mainnet, LND is running, and LightningOS Light is
+Your node is connected to the Bitcoin mainnet, LND is running, and LightningOS is
 managing everything through a clean web interface at `https://<YOUR_IP>:8443`.
 
 **What to do next:**
@@ -751,7 +751,7 @@ managing everything through a clean web interface at `https://<YOUR_IP>:8443`.
 ## ⚡ Enjoyed this guide? Send some sats!
 
 This guide was written by the Brazilian Lightning Network community based on real hands-on
-experience installing and running LightningOS Light on a Raspberry Pi 5 with Debian 12.
+experience installing and running LightningOS on a Raspberry Pi 5 with Debian 12.
 
 Hours of trial, error, and troubleshooting went into documenting every quirk so you
 wouldn't have to find them the hard way. If it saved you time, consider sending a small

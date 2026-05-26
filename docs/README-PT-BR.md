@@ -1,10 +1,10 @@
-# LightningOS Light
+# LightningOS
 
 <img width="1920" height="1080" alt="logo" src="https://github.com/user-attachments/assets/504ec23e-31f8-407a-a848-3fa4ce3ec1f9" />
 
 [Clique aqui](https://github.com/jvxis/brln-os-light/blob/main/README.md) para ver a versão em inglês (fonte da verdade).
 
-LightningOS Light é um instalador completo de daemon de nó Lightning, com gerenciador de nó, assistente guiado, dashboard e carteira. O manager serve UI e API via HTTPS em `0.0.0.0:8443` por padrão para acesso em LAN (defina `server.host: "127.0.0.1"` para acesso somente local) e integra com systemd, Postgres, smartctl, Tor/i2pd e LND gRPC.
+LightningOS é um instalador completo de daemon de nó Lightning, com gerenciador de nó, assistente guiado, dashboard e carteira. O manager serve UI e API via HTTPS em `0.0.0.0:8443` por padrão para acesso em LAN (defina `server.host: "127.0.0.1"` para acesso somente local) e integra com systemd, Postgres, smartctl, Tor/i2pd e LND gRPC.
 
 <img width="1494" height="1045" alt="image" src="https://github.com/user-attachments/assets/8fb801c0-4946-48d8-8c24-c36a53d193b3" />
 <img width="1491" height="903" alt="image" src="https://github.com/user-attachments/assets/cfda34d5-bccc-4b18-9970-bad494ae77b3" />
@@ -175,7 +175,7 @@ Notas:
 - `/data/lnd` (diretório de dados LND)
 
 ## Notificações e backups
-LightningOS Light inclui um sistema de notificações em tempo real que rastreia:
+LightningOS inclui um sistema de notificações em tempo real que rastreia:
 - Transações on-chain (recebidas/enviadas)
 - Invoices Lightning (liquidadas) e pagamentos (enviados)
 - Eventos de canal (abertura, fechamento, pendente)
@@ -250,7 +250,7 @@ Endpoints de API:
 - Health checks: opção de follow-bitcoin para fluxos de saúde de LND/nó.
 
 ## Graph Explorer
-Graph Explorer é a camada nativa de inspeção do grafo. Ele monta e mantém um snapshot do grafo a partir do LND e permite inspecionar peers sem sair do LightningOS Light.
+Graph Explorer é a camada nativa de inspeção do grafo. Ele monta e mantém um snapshot do grafo a partir do LND e permite inspecionar peers sem sair do LightningOS.
 
 O que ele oferece:
 - Busca por alias, pubkey, endereço e metadados do grafo.
@@ -732,7 +732,7 @@ Notas operacionais:
 - Em sucessão real, o monitoramento da auto-transferência acompanha envio e confirmações da transação de sweep.
 
 ## Terminal web (opcional)
-LightningOS Light pode expor um terminal web protegido usando GoTTY.
+LightningOS pode expor um terminal web protegido usando GoTTY.
 
 O instalador habilita automaticamente o terminal e gera credencial quando ausente.
 Você pode revisar/sobrescrever em `/etc/lightningos/secrets.env`:

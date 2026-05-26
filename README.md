@@ -1,4 +1,4 @@
-# LightningOS Light
+# LightningOS
 
 <img width="1920" height="1080" alt="BRLN-logo" src="https://github.com/user-attachments/assets/7394bf7b-2515-461a-8b80-7488531c7f40" />
 
@@ -6,7 +6,7 @@
 
 [Click here](https://github.com/jvxis/brln-os-light/blob/main/docs/16_INSTALL_RASPBERRYPI5_DEBIAN12.md) Raspberry Pi 5 + Debian 12
 
-LightningOS Light is a Full Lightning Node Daemon Installer, Lightning node manager with a guided wizard, dashboard, and wallet. The manager serves the UI and API over HTTPS on `0.0.0.0:8443` by default for LAN access (set `server.host: "127.0.0.1"` for local-only) and integrates with systemd, Postgres, smartctl, Tor/i2pd, and LND gRPC.
+LightningOS is a Full Lightning Node Daemon Installer, Lightning node manager with a guided wizard, dashboard, and wallet. The manager serves the UI and API over HTTPS on `0.0.0.0:8443` by default for LAN access (set `server.host: "127.0.0.1"` for local-only) and integrates with systemd, Postgres, smartctl, Tor/i2pd, and LND gRPC.
 <img width="1494" height="1045" alt="image" src="https://github.com/user-attachments/assets/8fb801c0-4946-48d8-8c24-c36a53d193b3" />
 <img width="1491" height="903" alt="image" src="https://github.com/user-attachments/assets/cfda34d5-bccc-4b18-9970-bad494ae77b3" />
 <img width="1576" height="1337" alt="image" src="https://github.com/user-attachments/assets/019cfff2-f354-4c2b-a595-2a15bb228864" />
@@ -178,7 +178,7 @@ Notes:
 - `/data/lnd` (LND data dir)
 
 ## Notifications & backups
-LightningOS Light includes a real-time notifications system that tracks:
+LightningOS includes a real-time notifications system that tracks:
 - On-chain transactions (received/sent)
 - Lightning invoices (settled) and payments (sent)
 - Channel events (open, close, pending)
@@ -253,7 +253,7 @@ API endpoints:
 - Health checks: optional follow-bitcoin checks for LND/node health workflows.
 
 ## Graph Explorer
-Graph Explorer is the native graph-inspection layer. It builds and caches a graph snapshot from LND, then lets the operator inspect peers without leaving LightningOS Light.
+Graph Explorer is the native graph-inspection layer. It builds and caches a graph snapshot from LND, then lets the operator inspect peers without leaving LightningOS.
 
 What it provides:
 - Search by alias, pubkey, address, and graph metadata.
@@ -735,7 +735,7 @@ Operational notes:
 - For live succession runs, auto-transfer monitoring tracks submission and confirmation of the sweep transaction.
 
 ## Web terminal (optional)
-LightningOS Light can expose a protected web terminal using GoTTY.
+LightningOS can expose a protected web terminal using GoTTY.
 
 The installer auto-enables the terminal and generates a credential when it is missing.
 You can review or override in `/etc/lightningos/secrets.env`:

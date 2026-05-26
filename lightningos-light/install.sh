@@ -1568,7 +1568,7 @@ verify_manager_listener() {
 main() {
   show_welcome_and_license
   require_root
-  print_step "LightningOS Light installation starting"
+  print_step "LightningOS installation starting"
   ensure_operator_user
   configure_sudoers
   install_packages

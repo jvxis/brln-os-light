@@ -222,6 +222,9 @@ const (
 	sovereignBudgetEfficiencyHighSuccessRate     = 0.05
 	sovereignBudgetEfficiencyOpportunityReason   = "budget_efficiency_below_floor"
 	sovereignRiskScoreFloor                      = 0.03
+	sovereignGainV3ColdStartPct                  = 0.75
+	sovereignGainV3ColdStartPctMin               = 0.50
+	sovereignGainV3ColdStartPctMax               = 0.95
 	sovereignRouteDeadSourceShare                = 0.10
 	sovereignRouteDeadMediumSourceShare          = 0.35
 	sovereignRouteDeadHighSourceShare            = 0.50
@@ -296,6 +299,12 @@ type RebalanceConfig struct {
 	SovereignBudgetEfficiencyMinRatio     float64 `json:"sovereign_budget_efficiency_min_ratio"`
 	SovereignRouteDeadSourceShare         float64 `json:"sovereign_route_dead_source_share"`
 	SovereignRiskScoreFloor               float64 `json:"sovereign_risk_score_floor"`
+	// SovereignGainV3ColdStartPct (range 0.50–0.95, default 0.75) controla o
+	// prior do estimateTargetGainV3 para targets cold-start (sem revenue7d e
+	// sem drainRate). Valores maiores são mais permissivos (mais candidatos
+	// passam o profit_guardrail) e valores menores são mais conservadores.
+	// Aplicado em todos os call-sites do gain v3.
+	SovereignGainV3ColdStartPct           float64 `json:"sovereign_gain_v3_cold_start_pct"`
 	SovereignAttributionWindowHours       int     `json:"sovereign_attribution_window_hours"`
 	SovereignSlowSellerWindowHours        int     `json:"sovereign_slow_seller_window_hours"`
 	SovereignTargetSourceQuarantineHours  int     `json:"sovereign_target_source_quarantine_hours"`
@@ -1066,6 +1075,7 @@ func defaultRebalanceConfig() RebalanceConfig {
 		SovereignBudgetEfficiencyMinRatio:     sovereignBudgetEfficiencyProfitCostRatio,
 		SovereignRouteDeadSourceShare:         sovereignRouteDeadSourceShare,
 		SovereignRiskScoreFloor:               sovereignRiskScoreFloor,
+		SovereignGainV3ColdStartPct:           sovereignGainV3ColdStartPct,
 		SovereignAttributionWindowHours:       sovereignAttributionWindowDefaultHours,
 		SovereignSlowSellerWindowHours:        sovereignSlowSellerWindowDefaultHours,
 		SovereignTargetSourceQuarantineHours:  sovereignTargetSourceQuarantineDefaultHours,
@@ -1650,6 +1660,9 @@ func normalizeRebalanceConfig(cfg RebalanceConfig) RebalanceConfig {
 	cfg.SovereignBudgetEfficiencyMinRatio = normalizeRatioConfig(cfg.SovereignBudgetEfficiencyMinRatio, def.SovereignBudgetEfficiencyMinRatio, 0)
 	cfg.SovereignRouteDeadSourceShare = normalizeRatioConfig(cfg.SovereignRouteDeadSourceShare, def.SovereignRouteDeadSourceShare, 1)
 	cfg.SovereignRiskScoreFloor = normalizeRatioConfig(cfg.SovereignRiskScoreFloor, def.SovereignRiskScoreFloor, 0.2)
+	if cfg.SovereignGainV3ColdStartPct < sovereignGainV3ColdStartPctMin || cfg.SovereignGainV3ColdStartPct > sovereignGainV3ColdStartPctMax {
+		cfg.SovereignGainV3ColdStartPct = def.SovereignGainV3ColdStartPct
+	}
 	if cfg.SovereignAttributionWindowHours <= 0 {
 		cfg.SovereignAttributionWindowHours = def.SovereignAttributionWindowHours
 	}
@@ -8915,7 +8928,11 @@ func estimateTargetGain(amountSat int64, revenue7dSat int64, localBalanceSat int
 
 func estimateTargetGainForConfig(cfg RebalanceConfig, snapshot RebalanceChannel, amountSat int64) int64 {
 	if cfg.GainModelVersion >= 3 {
-		return estimateTargetGainV3(amountSat, snapshot.OutgoingFeePpm, snapshot.PeerFeeRatePpm, snapshot.Revenue7dSat, snapshot.LocalBalanceSat, snapshot.CapacitySat, snapshot.DrainRateSatPerHour)
+		coldStart := cfg.SovereignGainV3ColdStartPct
+		if coldStart < sovereignGainV3ColdStartPctMin || coldStart > sovereignGainV3ColdStartPctMax {
+			coldStart = sovereignGainV3ColdStartPct
+		}
+		return estimateTargetGainV3(amountSat, snapshot.OutgoingFeePpm, snapshot.PeerFeeRatePpm, snapshot.Revenue7dSat, snapshot.LocalBalanceSat, snapshot.CapacitySat, snapshot.DrainRateSatPerHour, coldStart)
 	}
 	if cfg.GainModelVersion >= 2 {
 		return estimateTargetGainV2(amountSat, snapshot.OutgoingFeePpm, snapshot.PeerFeeRatePpm)
@@ -9000,7 +9017,7 @@ func evWeightedEconomicScore(expectedGainSat int64, estimatedCostSat int64, stat
 	return int64(math.Round(ev))
 }
 
-func estimateTargetGainV3(amountSat int64, outgoingFeePpm int64, peerFeeRatePpm int64, revenue7dSat int64, localBalanceSat int64, capacitySat int64, drainRateSatPerHour int64) int64 {
+func estimateTargetGainV3(amountSat int64, outgoingFeePpm int64, peerFeeRatePpm int64, revenue7dSat int64, localBalanceSat int64, capacitySat int64, drainRateSatPerHour int64, coldStartPct float64) int64 {
 	if amountSat <= 0 || outgoingFeePpm <= 0 {
 		return 0
 	}
@@ -9042,11 +9059,16 @@ func estimateTargetGainV3(amountSat int64, outgoingFeePpm int64, peerFeeRatePpm 
 	if demand > 0 {
 		gain = math.Min(demand, theoretical)
 	} else {
-		// Cold-start: keep 75% of theoretical so brand-new channels survive the
-		// profit_guardrail (gain < cost) check at Funnel A, which the older 0.5
-		// prior was tripping for channels whose theoretical < 2 × cost. The
-		// roiValid=false multiplier still trims the downstream score.
-		gain = theoretical * 0.75
+		// Cold-start: keep coldStartPct of theoretical so brand-new channels
+		// survive the profit_guardrail (gain < cost) check at Funnel A. Default
+		// 0.75 (configurable via sovereign_gain_v3_cold_start_pct, range
+		// 0.50–0.95). The roiValid=false multiplier still trims the downstream
+		// score.
+		pct := coldStartPct
+		if pct < sovereignGainV3ColdStartPctMin || pct > sovereignGainV3ColdStartPctMax {
+			pct = sovereignGainV3ColdStartPct
+		}
+		gain = theoretical * pct
 	}
 	if gain <= 0 {
 		return 0
@@ -9898,15 +9920,14 @@ func sovereignSuccessScoreMultiplier(stats rebalanceTargetPairStats, cfg Rebalan
 			multiplier += math.Min(0.15, (successRate-0.5)*0.3)
 		}
 	}
-	if stats.RecentStructuralFailures >= targetCooldownMinAttempts {
-		multiplier *= 0.05
-	} else if stats.RecentStructuralFailures >= 10 {
-		multiplier *= 0.12
-	} else if stats.RecentStructuralFailures > 0 {
-		pressure := 1 - (float64(stats.RecentStructuralFailures) * 0.10)
-		if pressure < 0.30 {
-			pressure = 0.30
-		}
+	if stats.RecentStructuralFailures > 0 {
+		// R1: curva contínua 1/(1+0.05·N) no lugar do cliff antigo (×0.05 ≥25,
+		// ×0.12 ≥10, pressure linear 1-3). O guard duro continua em
+		// target_structural_cooldown (skip), que não toca a partir desta função.
+		// Aqui é apenas o multiplicador soft do ranking — permite que canais
+		// com falhas isoladas voltem a competir após o cooldown expirar, em vez
+		// de ficarem zerados por horas. Floor mínimo aplicado no clamp final.
+		pressure := 1.0 / (1.0 + 0.05*float64(stats.RecentStructuralFailures))
 		multiplier *= pressure
 	}
 	if stats.PermanentFailScore >= permanentFailScoreSkipThreshold {
@@ -10352,6 +10373,7 @@ end $$;
     sovereign_budget_efficiency_min_ratio double precision not null default 0.5,
     sovereign_route_dead_source_share double precision not null default 0.2,
     sovereign_risk_score_floor double precision not null default 0.02,
+    sovereign_gain_v3_cold_start_pct double precision not null default 0.75,
     sovereign_attribution_window_hours integer not null default 72,
     sovereign_slow_seller_window_hours integer not null default 168,
     sovereign_target_source_quarantine_hours integer not null default 6,
@@ -10430,6 +10452,8 @@ end $$;
     add column if not exists sovereign_route_dead_source_share double precision not null default 0.2;
   alter table rebalance_config
     add column if not exists sovereign_risk_score_floor double precision not null default 0.02;
+  alter table rebalance_config
+    add column if not exists sovereign_gain_v3_cold_start_pct double precision not null default 0.75;
   alter table rebalance_config
     add column if not exists sovereign_attribution_window_hours integer not null default 72;
   alter table rebalance_config
@@ -10549,6 +10573,8 @@ end $$;
     alter column sovereign_route_dead_source_share set default 0.2;
   alter table rebalance_config
     alter column sovereign_risk_score_floor set default 0.02;
+  alter table rebalance_config
+    alter column sovereign_gain_v3_cold_start_pct set default 0.75;
   alter table rebalance_config
     alter column sovereign_attribution_window_hours set default 72;
   alter table rebalance_config
@@ -10884,7 +10910,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags, fresh_paid_liquidity_lock_enabled, fresh_paid_liquidity_lock_hours,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback,
-    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled
+    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct
   from rebalance_config where id=$1`, rebalanceConfigID)
 
 	cfg := defaultRebalanceConfig()
@@ -10959,6 +10985,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.SovereignExplorationSlotPct,
 		&cfg.SovereignSourceOpportunityCostEnabled,
 		&cfg.SovereignSlowSellerEnabled,
+		&cfg.SovereignGainV3ColdStartPct,
 	)
 	if err != nil {
 		return cfg, err
@@ -10982,8 +11009,8 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags, fresh_paid_liquidity_lock_enabled, fresh_paid_liquidity_lock_hours,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback,
-    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,now())
+    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct, updated_at
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scheduler_mode = excluded.scheduler_mode,
@@ -11055,9 +11082,10 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     sovereign_exploration_slot_pct = excluded.sovereign_exploration_slot_pct,
     sovereign_source_opportunity_cost_enabled = excluded.sovereign_source_opportunity_cost_enabled,
     sovereign_slow_seller_enabled = excluded.sovereign_slow_seller_enabled,
+    sovereign_gain_v3_cold_start_pct = excluded.sovereign_gain_v3_cold_start_pct,
     updated_at = now()
   `, rebalanceConfigID, cfg.AutoEnabled, cfg.SchedulerMode, cfg.SovereignCandidateScope, cfg.SovereignMaxJobsPerCycle, cfg.SovereignMinExpectedProfitSat, cfg.SovereignLowSuccessMinRate, cfg.SovereignLowSuccessMinProfitCostRatio, cfg.SovereignBudgetEfficiencyMinRatio, cfg.SovereignRouteDeadSourceShare, cfg.SovereignRiskScoreFloor, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetUnlimited, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
-		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.FreshPaidLiquidityLockEnabled, cfg.FreshPaidLiquidityLockHours, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback, cfg.SovereignAttributionWindowHours, cfg.SovereignSlowSellerWindowHours, cfg.SovereignTargetSourceQuarantineHours, cfg.SovereignStructuralCooldownRepeatHours, cfg.SovereignExplorationSlotPct, cfg.SovereignSourceOpportunityCostEnabled, cfg.SovereignSlowSellerEnabled,
+		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.FreshPaidLiquidityLockEnabled, cfg.FreshPaidLiquidityLockHours, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback, cfg.SovereignAttributionWindowHours, cfg.SovereignSlowSellerWindowHours, cfg.SovereignTargetSourceQuarantineHours, cfg.SovereignStructuralCooldownRepeatHours, cfg.SovereignExplorationSlotPct, cfg.SovereignSourceOpportunityCostEnabled, cfg.SovereignSlowSellerEnabled, cfg.SovereignGainV3ColdStartPct,
 	)
 	return err
 }

@@ -49,6 +49,9 @@ const REBALANCE_DEFAULT_SOVEREIGN_LOW_SUCCESS_MIN_PROFIT_COST_RATIO = 1.1
 const REBALANCE_DEFAULT_SOVEREIGN_BUDGET_EFFICIENCY_MIN_RATIO = 0.2
 const REBALANCE_DEFAULT_SOVEREIGN_ROUTE_DEAD_SOURCE_SHARE = 0.1
 const REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR = 0.03
+const REBALANCE_DEFAULT_SOVEREIGN_GAIN_V3_COLD_START_PCT = 0.75
+const REBALANCE_MIN_SOVEREIGN_GAIN_V3_COLD_START_PCT = 0.5
+const REBALANCE_MAX_SOVEREIGN_GAIN_V3_COLD_START_PCT = 0.95
 const REBALANCE_DEFAULT_SOVEREIGN_ATTRIBUTION_WINDOW_HOURS = 72
 const REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS = 168
 const REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS = 6
@@ -184,6 +187,7 @@ export default function RebalanceCenter() {
     sovereign_budget_efficiency_min_ratio: typeof raw.sovereign_budget_efficiency_min_ratio === 'number' ? raw.sovereign_budget_efficiency_min_ratio : REBALANCE_DEFAULT_SOVEREIGN_BUDGET_EFFICIENCY_MIN_RATIO,
     sovereign_route_dead_source_share: typeof raw.sovereign_route_dead_source_share === 'number' ? raw.sovereign_route_dead_source_share : REBALANCE_DEFAULT_SOVEREIGN_ROUTE_DEAD_SOURCE_SHARE,
     sovereign_risk_score_floor: typeof raw.sovereign_risk_score_floor === 'number' ? raw.sovereign_risk_score_floor : REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR,
+    sovereign_gain_v3_cold_start_pct: typeof raw.sovereign_gain_v3_cold_start_pct === 'number' ? raw.sovereign_gain_v3_cold_start_pct : REBALANCE_DEFAULT_SOVEREIGN_GAIN_V3_COLD_START_PCT,
     sovereign_attribution_window_hours: raw.sovereign_attribution_window_hours || REBALANCE_DEFAULT_SOVEREIGN_ATTRIBUTION_WINDOW_HOURS,
     sovereign_slow_seller_window_hours: raw.sovereign_slow_seller_window_hours || REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS,
     sovereign_target_source_quarantine_hours: typeof raw.sovereign_target_source_quarantine_hours === 'number' ? raw.sovereign_target_source_quarantine_hours : REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS,
@@ -243,6 +247,7 @@ export default function RebalanceCenter() {
       sovereign_budget_efficiency_min_ratio: cfg.sovereign_budget_efficiency_min_ratio,
       sovereign_route_dead_source_share: cfg.sovereign_route_dead_source_share,
       sovereign_risk_score_floor: cfg.sovereign_risk_score_floor,
+      sovereign_gain_v3_cold_start_pct: cfg.sovereign_gain_v3_cold_start_pct,
       sovereign_attribution_window_hours: cfg.sovereign_attribution_window_hours,
       sovereign_slow_seller_window_hours: cfg.sovereign_slow_seller_window_hours,
       sovereign_target_source_quarantine_hours: cfg.sovereign_target_source_quarantine_hours,
@@ -318,6 +323,7 @@ export default function RebalanceCenter() {
       sovereign_budget_efficiency_min_ratio: cfg.sovereign_budget_efficiency_min_ratio ?? REBALANCE_DEFAULT_SOVEREIGN_BUDGET_EFFICIENCY_MIN_RATIO,
       sovereign_route_dead_source_share: cfg.sovereign_route_dead_source_share ?? REBALANCE_DEFAULT_SOVEREIGN_ROUTE_DEAD_SOURCE_SHARE,
       sovereign_risk_score_floor: cfg.sovereign_risk_score_floor ?? REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR,
+      sovereign_gain_v3_cold_start_pct: cfg.sovereign_gain_v3_cold_start_pct ?? REBALANCE_DEFAULT_SOVEREIGN_GAIN_V3_COLD_START_PCT,
       sovereign_attribution_window_hours: cfg.sovereign_attribution_window_hours ?? REBALANCE_DEFAULT_SOVEREIGN_ATTRIBUTION_WINDOW_HOURS,
       sovereign_slow_seller_window_hours: cfg.sovereign_slow_seller_window_hours ?? REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS,
       sovereign_target_source_quarantine_hours: cfg.sovereign_target_source_quarantine_hours ?? REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS,
@@ -703,6 +709,7 @@ export default function RebalanceCenter() {
           sovereign_budget_efficiency_min_ratio: Math.max(0, Number(config.sovereign_budget_efficiency_min_ratio) || REBALANCE_DEFAULT_SOVEREIGN_BUDGET_EFFICIENCY_MIN_RATIO),
           sovereign_route_dead_source_share: Math.max(0.01, Math.min(1, Number(config.sovereign_route_dead_source_share) || REBALANCE_DEFAULT_SOVEREIGN_ROUTE_DEAD_SOURCE_SHARE)),
           sovereign_risk_score_floor: Math.max(0.001, Math.min(0.2, Number(config.sovereign_risk_score_floor) || REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR)),
+          sovereign_gain_v3_cold_start_pct: Math.max(REBALANCE_MIN_SOVEREIGN_GAIN_V3_COLD_START_PCT, Math.min(REBALANCE_MAX_SOVEREIGN_GAIN_V3_COLD_START_PCT, Number(config.sovereign_gain_v3_cold_start_pct) || REBALANCE_DEFAULT_SOVEREIGN_GAIN_V3_COLD_START_PCT)),
           sovereign_attribution_window_hours: Math.max(24, Math.min(720, Number(config.sovereign_attribution_window_hours) || REBALANCE_DEFAULT_SOVEREIGN_ATTRIBUTION_WINDOW_HOURS)),
           sovereign_slow_seller_window_hours: Math.max(24, Math.min(720, Number(config.sovereign_slow_seller_window_hours) || REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS)),
           sovereign_target_source_quarantine_hours: Math.max(0, Math.min(720, Number(config.sovereign_target_source_quarantine_hours) || REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS)),
@@ -797,6 +804,7 @@ export default function RebalanceCenter() {
         sovereign_budget_efficiency_min_ratio: Math.max(0, Number(config.sovereign_budget_efficiency_min_ratio) || REBALANCE_DEFAULT_SOVEREIGN_BUDGET_EFFICIENCY_MIN_RATIO),
         sovereign_route_dead_source_share: Math.max(0.01, Math.min(1, Number(config.sovereign_route_dead_source_share) || REBALANCE_DEFAULT_SOVEREIGN_ROUTE_DEAD_SOURCE_SHARE)),
         sovereign_risk_score_floor: Math.max(0.001, Math.min(0.2, Number(config.sovereign_risk_score_floor) || REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR)),
+        sovereign_gain_v3_cold_start_pct: Math.max(REBALANCE_MIN_SOVEREIGN_GAIN_V3_COLD_START_PCT, Math.min(REBALANCE_MAX_SOVEREIGN_GAIN_V3_COLD_START_PCT, Number(config.sovereign_gain_v3_cold_start_pct) || REBALANCE_DEFAULT_SOVEREIGN_GAIN_V3_COLD_START_PCT)),
         sovereign_attribution_window_hours: Math.max(24, Math.min(720, Number(config.sovereign_attribution_window_hours) || REBALANCE_DEFAULT_SOVEREIGN_ATTRIBUTION_WINDOW_HOURS)),
         sovereign_slow_seller_window_hours: Math.max(24, Math.min(720, Number(config.sovereign_slow_seller_window_hours) || REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS)),
         sovereign_target_source_quarantine_hours: Math.max(0, Math.min(720, Number(config.sovereign_target_source_quarantine_hours) || REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS)),
@@ -821,6 +829,7 @@ export default function RebalanceCenter() {
           sovereign_budget_efficiency_min_ratio: normalizedSaved.sovereign_budget_efficiency_min_ratio,
           sovereign_route_dead_source_share: normalizedSaved.sovereign_route_dead_source_share,
           sovereign_risk_score_floor: normalizedSaved.sovereign_risk_score_floor,
+          sovereign_gain_v3_cold_start_pct: normalizedSaved.sovereign_gain_v3_cold_start_pct,
           sovereign_attribution_window_hours: normalizedSaved.sovereign_attribution_window_hours,
           sovereign_slow_seller_window_hours: normalizedSaved.sovereign_slow_seller_window_hours,
           sovereign_target_source_quarantine_hours: normalizedSaved.sovereign_target_source_quarantine_hours,
@@ -2200,6 +2209,21 @@ export default function RebalanceCenter() {
                   disabled={config.scheduler_mode === 'rules_auto'}
                   value={Number(((config.sovereign_risk_score_floor ?? REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR) * 100).toFixed(3))}
                   onChange={(e) => setConfig({ ...config, sovereign_risk_score_floor: Number(e.target.value) / 100 })}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.sovereignGainV3ColdStartPct')}>
+                  {t('rebalanceCenter.settings.sovereignGainV3ColdStartPct')}
+                </label>
+                <input
+                  className="input-field"
+                  type="number"
+                  min={REBALANCE_MIN_SOVEREIGN_GAIN_V3_COLD_START_PCT * 100}
+                  max={REBALANCE_MAX_SOVEREIGN_GAIN_V3_COLD_START_PCT * 100}
+                  step={1}
+                  disabled={config.scheduler_mode === 'rules_auto' || (config.gain_model_version ?? 2) < 3}
+                  value={Number(((config.sovereign_gain_v3_cold_start_pct ?? REBALANCE_DEFAULT_SOVEREIGN_GAIN_V3_COLD_START_PCT) * 100).toFixed(1))}
+                  onChange={(e) => setConfig({ ...config, sovereign_gain_v3_cold_start_pct: Number(e.target.value) / 100 })}
                 />
               </div>
               <div className="space-y-2">

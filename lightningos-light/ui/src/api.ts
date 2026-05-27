@@ -666,6 +666,7 @@ export const updateRebalanceConfig = (payload: {
   sovereign_budget_efficiency_min_ratio?: number
   sovereign_route_dead_source_share?: number
   sovereign_risk_score_floor?: number
+  sovereign_gain_v3_cold_start_pct?: number
   sovereign_attribution_window_hours?: number
   sovereign_slow_seller_window_hours?: number
   sovereign_target_source_quarantine_hours?: number

@@ -52,6 +52,9 @@ func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	if cfg.SovereignRiskScoreFloor != 0.03 {
 		t.Fatalf("expected sovereign_risk_score_floor default=0.03, got %f", cfg.SovereignRiskScoreFloor)
 	}
+	if cfg.SovereignGainV3ColdStartPct != 0.75 {
+		t.Fatalf("expected sovereign_gain_v3_cold_start_pct default=0.75, got %f", cfg.SovereignGainV3ColdStartPct)
+	}
 	if cfg.SovereignAttributionWindowHours != 72 {
 		t.Fatalf("expected sovereign_attribution_window_hours default=72, got %d", cfg.SovereignAttributionWindowHours)
 	}
@@ -174,6 +177,94 @@ func TestNormalizeRebalanceConfigClampsRebalanceCostFloor(t *testing.T) {
 	got := normalizeRebalanceConfig(cfg)
 	if got.RebalanceCostFloorPpm != 0 {
 		t.Fatalf("expected RebalanceCostFloorPpm clamped to 0, got %d", got.RebalanceCostFloorPpm)
+	}
+}
+
+func TestNormalizeRebalanceConfigClampsGainV3ColdStartPct(t *testing.T) {
+	def := defaultRebalanceConfig()
+	cases := []struct {
+		name string
+		in   float64
+		out  float64
+	}{
+		{"below_range_falls_back_to_default", 0.10, def.SovereignGainV3ColdStartPct},
+		{"above_range_falls_back_to_default", 0.99, def.SovereignGainV3ColdStartPct},
+		{"zero_falls_back_to_default", 0.0, def.SovereignGainV3ColdStartPct},
+		{"min_kept", 0.50, 0.50},
+		{"mid_kept", 0.80, 0.80},
+		{"max_kept", 0.95, 0.95},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := defaultRebalanceConfig()
+			cfg.SovereignGainV3ColdStartPct = tc.in
+			got := normalizeRebalanceConfig(cfg)
+			if got.SovereignGainV3ColdStartPct != tc.out {
+				t.Fatalf("normalize cold-start %f → expected %f, got %f", tc.in, tc.out, got.SovereignGainV3ColdStartPct)
+			}
+		})
+	}
+}
+
+func TestEstimateTargetGainV3RespectsColdStartPct(t *testing.T) {
+	const amount = int64(1_000_000)
+	const outFee = int64(500)
+	const peerFee = int64(100)
+	// theoretical = 1M * 500/1e6 * (1 - 100/500) = 400 sats
+
+	cases := []struct {
+		name     string
+		coldPct  float64
+		expected int64
+	}{
+		{"min_50pct", 0.50, 200},
+		{"default_75pct", 0.75, 300},
+		{"high_90pct", 0.90, 360},
+		{"max_95pct", 0.95, 380},
+		{"out_of_range_falls_back_to_default", 1.5, 300},
+		{"zero_falls_back_to_default", 0.0, 300},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gain := estimateTargetGainV3(amount, outFee, peerFee, 0, amount, amount*2, 0, tc.coldPct)
+			if gain != tc.expected {
+				t.Fatalf("cold-start %f → expected %d sats, got %d", tc.coldPct, tc.expected, gain)
+			}
+		})
+	}
+}
+
+func TestSovereignSuccessScoreMultiplierContinuousCurve(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+
+	// No failures → multiplier mostly drives toward the prior (0.9 cold-start).
+	noFails := sovereignSuccessScoreMultiplier(rebalanceTargetPairStats{}, cfg)
+	if noFails < 0.85 || noFails > 1.0 {
+		t.Fatalf("no-failures expected around 0.9 prior, got %f", noFails)
+	}
+
+	// Curve is monotonically non-increasing in RecentStructuralFailures.
+	last := noFails
+	for _, n := range []int{1, 3, 5, 10, 15, 20, 25, 50, 100} {
+		got := sovereignSuccessScoreMultiplier(rebalanceTargetPairStats{RecentStructuralFailures: n}, cfg)
+		if got > last+1e-9 {
+			t.Fatalf("expected monotonic decay; n=%d got=%f last=%f", n, got, last)
+		}
+		last = got
+	}
+
+	// Floor is enforced — never below SovereignRiskScoreFloor.
+	floor := sovereignRiskScoreFloorForConfig(cfg)
+	worst := sovereignSuccessScoreMultiplier(rebalanceTargetPairStats{RecentStructuralFailures: 1_000_000}, cfg)
+	if worst < floor-1e-9 {
+		t.Fatalf("expected multiplier >= floor=%f, got %f", floor, worst)
+	}
+
+	// The old cliff dropped to 0.05 at >=25 failures; the new curve must stay
+	// above that for moderate counts so penalized channels can keep competing.
+	at25 := sovereignSuccessScoreMultiplier(rebalanceTargetPairStats{RecentStructuralFailures: 25}, cfg)
+	if at25 <= 0.05 {
+		t.Fatalf("expected smoothed curve at 25 failures to stay well above old 0.05 cliff, got %f", at25)
 	}
 }
 
@@ -3780,14 +3871,14 @@ func TestEstimateTargetGainV3UsesStrongestDemandSignal(t *testing.T) {
 
 	// Channel with strong drain rate (saturates amount) and no revenue.
 	// Projected volume = drainRate(10_000) × 168h = 1_680_000 > amount → cap.
-	gain := estimateTargetGainV3(amount, outFee, peerFee, 0, amount, amount*2, 10_000)
+	gain := estimateTargetGainV3(amount, outFee, peerFee, 0, amount, amount*2, 10_000, sovereignGainV3ColdStartPct)
 	if gain != 400 {
 		t.Fatalf("expected 400 sats from saturating drain rate, got %d", gain)
 	}
 
 	// Channel with weak drain rate (only 500 sat/h × 168 = 84_000 of volume).
 	// Projected gain = 84_000 * 500/1e6 * 0.8 = 33.6 → rounds to 34.
-	gain = estimateTargetGainV3(amount, outFee, peerFee, 0, amount, amount*2, 500)
+	gain = estimateTargetGainV3(amount, outFee, peerFee, 0, amount, amount*2, 500, sovereignGainV3ColdStartPct)
 	if gain != 34 {
 		t.Fatalf("expected 34 sats from weak drain projection, got %d", gain)
 	}
@@ -3795,7 +3886,7 @@ func TestEstimateTargetGainV3UsesStrongestDemandSignal(t *testing.T) {
 	// Channel with strong revenue7d (10k sats) and no drain rate signal —
 	// historical wins. historical = 10_000 * (amount/amount) = 10_000, but
 	// capped by theoretical 400.
-	gain = estimateTargetGainV3(amount, outFee, peerFee, 10_000, amount, amount*2, 0)
+	gain = estimateTargetGainV3(amount, outFee, peerFee, 10_000, amount, amount*2, 0, sovereignGainV3ColdStartPct)
 	if gain != 400 {
 		t.Fatalf("expected theoretical cap at 400, got %d", gain)
 	}
@@ -3803,13 +3894,13 @@ func TestEstimateTargetGainV3UsesStrongestDemandSignal(t *testing.T) {
 	// Cold-start: no demand signals → 75% of theoretical = 300.
 	// Prior was 0.5 (=200); raised to 0.75 to let cold-start channels survive
 	// the profit_guardrail gate at Funnel A.
-	gain = estimateTargetGainV3(amount, outFee, peerFee, 0, amount, amount*2, 0)
+	gain = estimateTargetGainV3(amount, outFee, peerFee, 0, amount, amount*2, 0, sovereignGainV3ColdStartPct)
 	if gain != 300 {
 		t.Fatalf("expected cold-start 75%% discount = 300, got %d", gain)
 	}
 
 	// Idle channel with neither revenue nor drain rate and no spread → 0.
-	gain = estimateTargetGainV3(amount, 100, 100, 0, amount, amount*2, 0)
+	gain = estimateTargetGainV3(amount, 100, 100, 0, amount, amount*2, 0, sovereignGainV3ColdStartPct)
 	if gain != 0 {
 		t.Fatalf("expected 0 when spread is non-positive, got %d", gain)
 	}

@@ -2440,6 +2440,13 @@ func shouldCooldownTargetRecentFailures(attemptStat recentCooldownStat, noAttemp
 	return shouldCooldownDistinctSourceFailures(distinctSourceStat, targetDistinctSourceMinFailures, targetDistinctSourceMaxSuccesses, now)
 }
 
+// mppMaxShardSourceSharePct caps the fraction of an MPP plan's shards that
+// can come from a single source. With maxShards=6 and 40% cap, the ceiling
+// is ceil(2.4)=3 — so at least 2 distinct sources are needed to fill the
+// plan when other viable sources exist. Falls back gracefully when only one
+// source has capacity (the cap is relaxed as last resort).
+const mppMaxShardSourceSharePct = 40
+
 func buildMppShadowPlan(targetAmountSat int64, sources []RebalanceChannel, cfg RebalanceConfig) mppShadowPlan {
 	plan := mppShadowPlan{}
 	if targetAmountSat <= 0 {
@@ -2453,6 +2460,14 @@ func buildMppShadowPlan(targetAmountSat int64, sources []RebalanceChannel, cfg R
 	minShardSat := cfg.MppMinShardSat
 	if minShardSat <= 0 {
 		minShardSat = 1
+	}
+
+	// R3: cap per-source share to avoid the pathological case where a single
+	// large source receives every shard. The cap is the ceiling so that even
+	// small maxShards values (2, 3) still force diversity.
+	maxShardsPerSource := (maxShards*mppMaxShardSourceSharePct + 99) / 100
+	if maxShardsPerSource < 1 {
+		maxShardsPerSource = 1
 	}
 
 	capacityLeft := make([]int64, len(sources))
@@ -2469,11 +2484,15 @@ func buildMppShadowPlan(targetAmountSat int64, sources []RebalanceChannel, cfg R
 
 	remaining := targetAmountSat
 	usedSource := make(map[int]bool, len(sources))
+	shardsPerSource := make(map[int]int, len(sources))
 
-	selectSource := func(desired int64, requireDesired bool, preferUnused bool) int {
+	selectSource := func(desired int64, requireDesired bool, preferUnused bool, respectCap bool) int {
 		bestIdx := -1
 		bestCap := int64(0)
 		for i, cap := range capacityLeft {
+			if respectCap && shardsPerSource[i] >= maxShardsPerSource {
+				continue
+			}
 			if preferUnused && usedSource[i] {
 				continue
 			}
@@ -2492,6 +2511,25 @@ func buildMppShadowPlan(targetAmountSat int64, sources []RebalanceChannel, cfg R
 		return bestIdx
 	}
 
+	// pickSource probes the candidate space in priority order, first
+	// respecting the per-source cap and only relaxing it as a last resort.
+	// The respectCap=true pass tries the four (preferUnused × requireDesired)
+	// combinations; if all return -1, the same four are retried with
+	// respectCap=false so the plan still builds when only one source is
+	// viable (e.g. tiny network, recovering from cascading failures).
+	pickSource := func(desired int64) int {
+		for _, respectCap := range []bool{true, false} {
+			for _, preferUnused := range []bool{true, false} {
+				for _, requireDesired := range []bool{true, false} {
+					if idx := selectSource(desired, requireDesired, preferUnused, respectCap); idx >= 0 {
+						return idx
+					}
+				}
+			}
+		}
+		return -1
+	}
+
 	for len(plan.Shards) < maxShards && remaining >= minShardSat {
 		shardsLeft := maxShards - len(plan.Shards)
 		desired := remaining / int64(shardsLeft)
@@ -2505,17 +2543,7 @@ func buildMppShadowPlan(targetAmountSat int64, sources []RebalanceChannel, cfg R
 			desired = remaining
 		}
 
-		chosenIdx := selectSource(desired, true, true)
-		if chosenIdx < 0 {
-			// Prefer source diversity even when the exact desired shard size is unavailable.
-			chosenIdx = selectSource(desired, false, true)
-		}
-		if chosenIdx < 0 {
-			chosenIdx = selectSource(desired, true, false)
-		}
-		if chosenIdx < 0 {
-			chosenIdx = selectSource(desired, false, false)
-		}
+		chosenIdx := pickSource(desired)
 		if chosenIdx < 0 {
 			break
 		}
@@ -2530,6 +2558,7 @@ func buildMppShadowPlan(targetAmountSat int64, sources []RebalanceChannel, cfg R
 			break
 		}
 		usedSource[chosenIdx] = true
+		shardsPerSource[chosenIdx]++
 		capacityLeft[chosenIdx] -= desired
 		remaining -= desired
 		plan.Shards = append(plan.Shards, mppShadowShard{

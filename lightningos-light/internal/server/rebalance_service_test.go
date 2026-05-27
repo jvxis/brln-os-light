@@ -3556,6 +3556,88 @@ func TestBuildMppShadowPlanRespectsShardFloorAndCapacity(t *testing.T) {
 	}
 }
 
+// R3 — dominant single source (huge capacity) should NOT receive all shards
+// when other viable sources exist. The 40% cap forces diversity: with
+// maxShards=6 and cap=40%, no source can take more than ceil(2.4)=3 shards.
+func TestBuildMppShadowPlanCapsDominantSourceShare(t *testing.T) {
+	cfg := RebalanceConfig{
+		MppMaxShards:   6,
+		MppMinShardSat: 50_000,
+	}
+	sources := []RebalanceChannel{
+		{ChannelID: 1, MaxSourceSat: 10_000_000}, // dominant — could carry all
+		{ChannelID: 2, MaxSourceSat: 1_000_000},  // smaller
+		{ChannelID: 3, MaxSourceSat: 1_000_000},
+		{ChannelID: 4, MaxSourceSat: 1_000_000},
+	}
+	plan := buildMppShadowPlan(1_110_000, sources, cfg)
+
+	// With cap=40% (ceil(2.4)=3), source 1 must hold at most 3 of 6 shards.
+	counts := map[uint64]int{}
+	for _, s := range plan.Shards {
+		counts[s.SourceChannelID]++
+	}
+	if counts[1] > 3 {
+		t.Fatalf("dominant source 1 has %d shards (cap=3 with ceil(maxShards × 40%%))", counts[1])
+	}
+	if plan.PlannedSources < 2 {
+		t.Fatalf("expected >= 2 distinct sources in plan, got %d", plan.PlannedSources)
+	}
+	if plan.PlannedShards != cfg.MppMaxShards {
+		t.Fatalf("expected %d shards planned, got %d", cfg.MppMaxShards, plan.PlannedShards)
+	}
+}
+
+// R3 fallback — when only ONE source has any capacity, the cap is relaxed
+// so the plan still builds. Critical to avoid empty plans when network
+// state is degraded.
+func TestBuildMppShadowPlanFallsBackWhenOnlyOneSourceViable(t *testing.T) {
+	cfg := RebalanceConfig{
+		MppMaxShards:   6,
+		MppMinShardSat: 50_000,
+	}
+	sources := []RebalanceChannel{
+		{ChannelID: 1, MaxSourceSat: 10_000_000}, // only viable source
+		{ChannelID: 2, MaxSourceSat: 1_000},      // below minShard
+		{ChannelID: 3, MaxSourceSat: 0},          // empty
+	}
+	plan := buildMppShadowPlan(1_110_000, sources, cfg)
+
+	if plan.PlannedShards == 0 {
+		t.Fatalf("expected plan to be built when only one source is viable, got 0 shards")
+	}
+	// All shards SHOULD be on source 1 (cap relaxed as last resort).
+	counts := map[uint64]int{}
+	for _, s := range plan.Shards {
+		counts[s.SourceChannelID]++
+	}
+	if counts[1] != plan.PlannedShards {
+		t.Fatalf("expected all %d shards on source 1, got %d on source 1", plan.PlannedShards, counts[1])
+	}
+}
+
+// R3 — with maxShards=2 and cap=40%, the ceiling is ceil(0.8)=1, forcing
+// each shard to a distinct source when at least 2 viable sources exist.
+func TestBuildMppShadowPlanForcesDistinctSourcesWhenPossible(t *testing.T) {
+	cfg := RebalanceConfig{
+		MppMaxShards:   2,
+		MppMinShardSat: 10_000,
+	}
+	sources := []RebalanceChannel{
+		{ChannelID: 1, MaxSourceSat: 5_000_000},
+		{ChannelID: 2, MaxSourceSat: 5_000_000},
+	}
+	plan := buildMppShadowPlan(100_000, sources, cfg)
+
+	counts := map[uint64]int{}
+	for _, s := range plan.Shards {
+		counts[s.SourceChannelID]++
+	}
+	if plan.PlannedShards == 2 && (counts[1] != 1 || counts[2] != 1) {
+		t.Fatalf("expected 1 shard per source, got %v", counts)
+	}
+}
+
 func TestBuildMppShadowPlanHandlesInsufficientSourceLiquidity(t *testing.T) {
 	cfg := RebalanceConfig{
 		MppMaxShards:   4,

@@ -236,7 +236,7 @@ func TestInjectSovereignExplorationSlotsDisabled(t *testing.T) {
 	candidates := []rebalanceTarget{
 		{Score: 100}, {Score: 90}, {Score: 80}, {Score: 70}, {Score: 60},
 	}
-	out := injectSovereignExplorationSlots(candidates, 4, 0)
+	out := injectSovereignExplorationSlots(candidates, 4, 0, nil)
 	if len(out) != len(candidates) {
 		t.Fatalf("length mismatch: %d vs %d", len(out), len(candidates))
 	}
@@ -259,7 +259,7 @@ func TestInjectSovereignExplorationSlotsMovesLowScore(t *testing.T) {
 	// maxJobs=5, pct=20 → 1 exploration slot. keepTop=4.
 	// Positions 0..3 = top-4 (score 150..120). Position 4 = exploration from
 	// pool [score 110..10]. Positions 5+ = fallback in score order.
-	out := injectSovereignExplorationSlots(candidates, 5, 20)
+	out := injectSovereignExplorationSlots(candidates, 5, 20, nil)
 	if len(out) != len(candidates) {
 		t.Fatalf("length mismatch: %d vs %d", len(out), len(candidates))
 	}
@@ -294,7 +294,7 @@ func TestInjectSovereignExplorationSlotsPreservesProbes(t *testing.T) {
 		{Score: 100}, {Score: 90}, {Score: 80}, {Score: 70},
 		{Score: 60}, {Score: 50}, {Score: 40}, {Score: 30}, {Score: 20}, {Score: 10},
 	}
-	out := injectSovereignExplorationSlots(candidates, 5, 20)
+	out := injectSovereignExplorationSlots(candidates, 5, 20, nil)
 	if !out[0].CooldownProbe || out[0].ExplorationSlot {
 		t.Fatalf("probe must stay first and unmarked, got probe=%v explore=%v", out[0].CooldownProbe, out[0].ExplorationSlot)
 	}
@@ -315,7 +315,7 @@ func TestInjectSovereignExplorationSlotsMarksWithin2xMaxJobs(t *testing.T) {
 		candidates[i].Channel.ChannelID = uint64(i + 1)
 	}
 	// maxJobs=8, len=6 (below 2*maxJobs=16). Scarcity bypass → all marked.
-	out := injectSovereignExplorationSlots(candidates, 8, 15)
+	out := injectSovereignExplorationSlots(candidates, 8, 15, nil)
 	if len(out) != len(candidates) {
 		t.Fatalf("length mismatch: %d vs %d", len(out), len(candidates))
 	}
@@ -343,7 +343,7 @@ func TestInjectSovereignExplorationSlotsMarksAtScarcityBoundary(t *testing.T) {
 		candidates[i].Score = int64(1000 - i*10)
 		candidates[i].Channel.ChannelID = uint64(i + 1)
 	}
-	out := injectSovereignExplorationSlots(candidates, 8, 30)
+	out := injectSovereignExplorationSlots(candidates, 8, 30, nil)
 	if len(out) != len(candidates) {
 		t.Fatalf("length mismatch: %d vs %d", len(out), len(candidates))
 	}
@@ -374,7 +374,7 @@ func TestInjectSovereignExplorationSlotsScarcityKeepsProbesUnmarked(t *testing.T
 	}
 	// maxJobs=5, nonProbeCount=2, len=3. Scarcity branch triggers because
 	// 2 <= 5; probe stays first and unmarked, two non-probes get marked.
-	out := injectSovereignExplorationSlots(candidates, 5, 20)
+	out := injectSovereignExplorationSlots(candidates, 5, 20, nil)
 	if len(out) != 3 {
 		t.Fatalf("length mismatch: %d vs 3", len(out))
 	}
@@ -399,7 +399,7 @@ func TestInjectSovereignExplorationSlotsScarcityNotTriggeredAboveBoundary(t *tes
 	}
 	// maxJobs=4, 2*maxJobs=8, nonProbeCount=12 > 8 → scarcity must not fire.
 	// pct=25 → slots=1, keepTop=3. Exactly one entry in the tail gets marked.
-	out := injectSovereignExplorationSlots(candidates, 4, 25)
+	out := injectSovereignExplorationSlots(candidates, 4, 25, nil)
 	marked := 0
 	for _, c := range out {
 		if c.ExplorationSlot {
@@ -413,6 +413,133 @@ func TestInjectSovereignExplorationSlotsScarcityNotTriggeredAboveBoundary(t *tes
 		if out[i].ExplorationSlot {
 			t.Fatalf("top-3 must stay unmarked at %d", i)
 		}
+	}
+}
+
+// R5 — burnoutFn must prevent burned-out channels from receiving the
+// ExplorationSlot mark, even in the scarcity branch. The channel stays in
+// the candidate list (so it can compete on score) but loses the gate bypass.
+func TestInjectSovereignExplorationSlotsBurnoutFiltersScarcity(t *testing.T) {
+	candidates := []rebalanceTarget{
+		{Score: 100, Channel: RebalanceChannel{ChannelID: 1}}, // healthy
+		{Score: 90, Channel: RebalanceChannel{ChannelID: 2}},  // burned
+		{Score: 80, Channel: RebalanceChannel{ChannelID: 3}},  // healthy
+		{Score: 70, Channel: RebalanceChannel{ChannelID: 4}},  // burned
+	}
+	burned := map[uint64]bool{2: true, 4: true}
+	burnoutFn := func(channelID uint64) bool { return burned[channelID] }
+	// maxJobs=5, nonProbeCount=4 ≤ 10 → scarcity branch. Burned channels
+	// (2, 4) should NOT get ExplorationSlot.
+	out := injectSovereignExplorationSlots(candidates, 5, 20, burnoutFn)
+	if len(out) != 4 {
+		t.Fatalf("expected 4 candidates returned, got %d", len(out))
+	}
+	for _, c := range out {
+		expectMark := !burned[c.Channel.ChannelID]
+		if c.ExplorationSlot != expectMark {
+			t.Fatalf("channel=%d expected mark=%v got=%v", c.Channel.ChannelID, expectMark, c.ExplorationSlot)
+		}
+	}
+}
+
+// R5 — when nonProbeCount > 2*maxJobs (no scarcity), burned channels in the
+// tail pool are excluded from the random-pick exploration draw.
+func TestInjectSovereignExplorationSlotsBurnoutFiltersTailDraw(t *testing.T) {
+	candidates := make([]rebalanceTarget, 12)
+	for i := range candidates {
+		candidates[i].Score = int64(200 - i*10)
+		candidates[i].Channel.ChannelID = uint64(i + 1)
+	}
+	// Burn every candidate in the pool (positions 3+). pct=25 with maxJobs=4
+	// → slots=1, keepTop=3. The pool would normally draw 1 random; with all
+	// burned, the draw should produce 0 marks.
+	burnoutFn := func(channelID uint64) bool { return channelID >= 4 }
+	out := injectSovereignExplorationSlots(candidates, 4, 25, burnoutFn)
+	for _, c := range out {
+		if c.ExplorationSlot {
+			t.Fatalf("expected no exploration marks when entire pool burned, got channel=%d marked", c.Channel.ChannelID)
+		}
+	}
+	if len(out) != len(candidates) {
+		t.Fatalf("length mismatch: %d vs %d", len(out), len(candidates))
+	}
+}
+
+// R5 — recordExplorationOutcome accumulates failures and activates burnout
+// once threshold is reached. Successes clear the failure window and lift
+// any active burnout.
+func TestExplorationBurnoutThresholdAndReset(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	const channelID uint64 = 42
+	now := time.Now()
+
+	// Not burned with no history.
+	if svc.isInExplorationBurnout(channelID, now) {
+		t.Fatalf("expected not burned at start")
+	}
+
+	// 4 failures: still below threshold (5).
+	for i := 0; i < 4; i++ {
+		svc.recordExplorationOutcome(channelID, false, now.Add(time.Duration(i)*time.Minute))
+	}
+	if svc.isInExplorationBurnout(channelID, now.Add(10*time.Minute)) {
+		t.Fatalf("expected not burned at 4 failures")
+	}
+
+	// 5th failure activates burnout.
+	svc.recordExplorationOutcome(channelID, false, now.Add(5*time.Minute))
+	if !svc.isInExplorationBurnout(channelID, now.Add(10*time.Minute)) {
+		t.Fatalf("expected burned at 5 failures")
+	}
+
+	// Burnout expires after duration.
+	farFuture := now.Add(sovereignExplorationBurnoutDuration + time.Hour)
+	if svc.isInExplorationBurnout(channelID, farFuture) {
+		t.Fatalf("expected burnout to expire after %v", sovereignExplorationBurnoutDuration)
+	}
+}
+
+// R5 — A success during an active burnout window clears the burnout
+// immediately. The channel demonstrated viability and shouldn't stay locked.
+func TestExplorationBurnoutClearedBySuccess(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	const channelID uint64 = 99
+	now := time.Now()
+
+	// Push to burnout.
+	for i := 0; i < sovereignExplorationBurnoutMinAttempts; i++ {
+		svc.recordExplorationOutcome(channelID, false, now.Add(time.Duration(i)*time.Minute))
+	}
+	if !svc.isInExplorationBurnout(channelID, now.Add(10*time.Minute)) {
+		t.Fatalf("expected burnout active after %d failures", sovereignExplorationBurnoutMinAttempts)
+	}
+
+	// Success clears burnout.
+	svc.recordExplorationOutcome(channelID, true, now.Add(20*time.Minute))
+	if svc.isInExplorationBurnout(channelID, now.Add(30*time.Minute)) {
+		t.Fatalf("expected burnout cleared after success")
+	}
+}
+
+// R5 — markExplorationJob + takeExplorationJob round-trip: a job marked as
+// exploration is retrievable once and only once.
+func TestMarkAndTakeExplorationJob(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	svc.markExplorationJob(123, 456)
+
+	channelID, ok := svc.takeExplorationJob(123)
+	if !ok || channelID != 456 {
+		t.Fatalf("expected (456, true), got (%d, %v)", channelID, ok)
+	}
+	// Second take returns false.
+	_, ok = svc.takeExplorationJob(123)
+	if ok {
+		t.Fatalf("expected take to be one-shot")
+	}
+	// Non-existent job returns false.
+	_, ok = svc.takeExplorationJob(999)
+	if ok {
+		t.Fatalf("expected unmarked job to return false")
 	}
 }
 

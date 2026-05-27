@@ -239,6 +239,16 @@ const (
 	sovereignTargetStructuralCooldownRepeatDefaultHours = 6
 	sovereignTargetStructuralCooldownRepeatMaxHours     = 48
 	sovereignExplorationSlotPctMax                      = 50
+
+	// R5 — Exploration burnout: when an exploration-marked job for a given
+	// target accumulates `BurnoutMinAttempts` attempts in `BurnoutWindow`
+	// without any success, the target is excluded from the exploration pool
+	// for `BurnoutDuration`. Any successful exploration job for that target
+	// clears the burnout state.
+	sovereignExplorationBurnoutMinAttempts = 5
+	sovereignExplorationBurnoutWindow      = 24 * time.Hour
+	sovereignExplorationBurnoutDuration    = 12 * time.Hour
+	sovereignExplorationBurnoutReason      = "exploration_burnout"
 	sovereignCostReliableHistoryPct              = int64(100)
 	sovereignCostConservativeBudgetPct           = int64(100)
 	sovereignUnsoldPaidLiquidityReason           = "paid_liquidity_unsold_cooldown"
@@ -1006,6 +1016,25 @@ type RebalanceService struct {
 	chCacheMu      sync.Mutex
 	chCacheData    []lndclient.ChannelInfo
 	chCacheFetchAt time.Time
+
+	// R5 — Exploration burnout (in-memory): tracks recent exploration
+	// attempts per target channel so chronically failing targets stop
+	// burning exploration slots cycle after cycle. State is volatile; on
+	// process restart the system starts fresh, which is acceptable (the
+	// worst case is a known-bad target being tried once more).
+	explorationStatsMu sync.Mutex
+	explorationStats   map[uint64]*explorationStat
+	explorationJobs    map[int64]uint64 // jobID → channelID (only set for exploration-marked jobs)
+}
+
+// explorationStat tracks exploration outcomes for a single target channel in a
+// rolling 24h window. When AttemptsWindow >= burnoutMinAttempts and all of
+// them are failures, the channel enters burnout for burnoutDuration. A
+// success clears the failure window and any active burnout.
+type explorationStat struct {
+	AttemptsWindow []time.Time
+	FailuresWindow []time.Time
+	BurnedUntil    time.Time
 }
 
 func NewRebalanceService(db *pgxpool.Pool, lnd *lndclient.Client, logger *log.Logger) *RebalanceService {
@@ -1020,6 +1049,8 @@ func NewRebalanceService(db *pgxpool.Pool, lnd *lndclient.Client, logger *log.Lo
 		manualRestartCancel: map[uint64]*manualRestartHandle{},
 		lastAutoByTarget:    map[uint64]time.Time{},
 		cooldownProbeSem:    make(chan struct{}, cooldownProbeWorkerSlots),
+		explorationStats:    map[uint64]*explorationStat{},
+		explorationJobs:     map[int64]uint64{},
 	}
 }
 
@@ -3149,9 +3180,14 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 	// Epsilon-greedy exploration: when enabled, reserve a fraction of slots
 	// for randomly chosen low-score candidates. They bypass the score sort
 	// but still go through every gate (cooldown, structural, ROI, etc).
+	// Targets in exploration burnout (R5) are excluded from receiving the
+	// ExplorationSlot mark so we stop burning cycles on dead-end channels.
 	candidates := plan.Candidates
 	if cfg.SovereignExplorationSlotPct > 0 && maxJobs > 1 {
-		candidates = injectSovereignExplorationSlots(candidates, maxJobs, cfg.SovereignExplorationSlotPct)
+		burnoutFn := func(channelID uint64) bool {
+			return s.isInExplorationBurnout(channelID, scanAt)
+		}
+		candidates = injectSovereignExplorationSlots(candidates, maxJobs, cfg.SovereignExplorationSlotPct, burnoutFn)
 	}
 
 	for _, target := range candidates {
@@ -3330,12 +3366,17 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 					BudgetCostSat:     decision.BudgetCostSat,
 					Score:             decision.Score,
 				}
-				_, err := s.startJobWithEconomics(target.Channel.ChannelID, "auto", rebalanceSovereignReason, amountOverride, false, economics)
+				jobID, err := s.startJobWithEconomics(target.Channel.ChannelID, "auto", rebalanceSovereignReason, amountOverride, false, economics)
 				if err != nil {
 					decision.Reason = autoStartErrorReason(err)
 					noteSkip(decision.Reason)
 					appendDecision(decision)
 					continue
+				}
+				// R5: mark exploration-slot jobs so finishJob can record the
+				// outcome to update burnout state.
+				if target.ExplorationSlot {
+					s.markExplorationJob(jobID, target.Channel.ChannelID)
 				}
 				s.mu.Lock()
 				s.lastAutoByTarget[target.Channel.ChannelID] = scanAt
@@ -8088,6 +8129,15 @@ set status=$2, reason=$3, completed_at=$4
 where id=$1`, jobID, status, nullableString(reason), completedAt)
 	s.broadcast(RebalanceEvent{Type: "job", JobID: jobID, Status: status, Message: reason})
 
+	// R5: if this job was created in an exploration slot, record the outcome
+	// against the target channel so the burnout window updates. Partials and
+	// full successes both count as "successful" exploration — they moved
+	// liquidity, which is the whole point.
+	if channelID, ok := s.takeExplorationJob(jobID); ok {
+		succeeded := status == "succeeded" || status == "partial"
+		s.recordExplorationOutcome(channelID, succeeded, completedAt)
+	}
+
 	go func() {
 		snapCtx, snapCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer snapCancel()
@@ -9286,6 +9336,120 @@ func sovereignTargetStructuralCooldownDuration(failures int, cfg RebalanceConfig
 	return sovereignTargetStructuralCooldownFirst
 }
 
+// isInExplorationBurnout reports whether the target channel is currently
+// in exploration burnout (locked out of receiving the ExplorationSlot mark
+// because recent exploration attempts kept failing).
+//
+// Thread-safe; takes the exploration mutex.
+func (s *RebalanceService) isInExplorationBurnout(channelID uint64, now time.Time) bool {
+	if s == nil {
+		return false
+	}
+	s.explorationStatsMu.Lock()
+	defer s.explorationStatsMu.Unlock()
+	stat := s.explorationStats[channelID]
+	if stat == nil || stat.BurnedUntil.IsZero() {
+		return false
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	return now.Before(stat.BurnedUntil)
+}
+
+// recordExplorationOutcome updates the in-memory exploration window for a
+// target channel after one of its exploration-marked jobs finished. When
+// `succeeded` is true, the failure window is cleared and any active burnout
+// is lifted. Otherwise the failure is recorded and burnout is re-evaluated
+// against the threshold.
+//
+// Thread-safe.
+func (s *RebalanceService) recordExplorationOutcome(channelID uint64, succeeded bool, now time.Time) {
+	if s == nil || channelID == 0 {
+		return
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	s.explorationStatsMu.Lock()
+	defer s.explorationStatsMu.Unlock()
+	if s.explorationStats == nil {
+		s.explorationStats = make(map[uint64]*explorationStat)
+	}
+	stat := s.explorationStats[channelID]
+	if stat == nil {
+		stat = &explorationStat{}
+		s.explorationStats[channelID] = stat
+	}
+	cutoff := now.Add(-sovereignExplorationBurnoutWindow)
+	stat.AttemptsWindow = trimTimeWindow(stat.AttemptsWindow, cutoff)
+	stat.FailuresWindow = trimTimeWindow(stat.FailuresWindow, cutoff)
+	stat.AttemptsWindow = append(stat.AttemptsWindow, now)
+	if succeeded {
+		// Any success in the window clears the failure streak and lifts the
+		// active burnout — the channel has demonstrated viability.
+		stat.FailuresWindow = nil
+		stat.BurnedUntil = time.Time{}
+		return
+	}
+	stat.FailuresWindow = append(stat.FailuresWindow, now)
+	if len(stat.FailuresWindow) >= sovereignExplorationBurnoutMinAttempts &&
+		len(stat.FailuresWindow) == len(stat.AttemptsWindow) {
+		stat.BurnedUntil = now.Add(sovereignExplorationBurnoutDuration)
+		if s.logger != nil {
+			s.logger.Printf("rebalance exploration burnout: channel=%d failures=%d window=%dh duration=%dh",
+				channelID, len(stat.FailuresWindow),
+				int(sovereignExplorationBurnoutWindow/time.Hour),
+				int(sovereignExplorationBurnoutDuration/time.Hour))
+		}
+	}
+}
+
+// markExplorationJob remembers that a job was created in the exploration
+// slot so that when it finishes we can call recordExplorationOutcome with
+// the right channelID.
+func (s *RebalanceService) markExplorationJob(jobID int64, channelID uint64) {
+	if s == nil || jobID == 0 || channelID == 0 {
+		return
+	}
+	s.explorationStatsMu.Lock()
+	defer s.explorationStatsMu.Unlock()
+	if s.explorationJobs == nil {
+		s.explorationJobs = make(map[int64]uint64)
+	}
+	s.explorationJobs[jobID] = channelID
+}
+
+// takeExplorationJob looks up and removes the jobID from the exploration
+// tracking map. Returns the channelID and whether the job was exploration.
+func (s *RebalanceService) takeExplorationJob(jobID int64) (uint64, bool) {
+	if s == nil || jobID == 0 {
+		return 0, false
+	}
+	s.explorationStatsMu.Lock()
+	defer s.explorationStatsMu.Unlock()
+	channelID, ok := s.explorationJobs[jobID]
+	if ok {
+		delete(s.explorationJobs, jobID)
+	}
+	return channelID, ok
+}
+
+// trimTimeWindow drops timestamps older than cutoff from a sorted-ish slice.
+// Used by exploration burnout to keep the moving window bounded.
+func trimTimeWindow(window []time.Time, cutoff time.Time) []time.Time {
+	if len(window) == 0 {
+		return window
+	}
+	keep := window[:0]
+	for _, t := range window {
+		if !t.Before(cutoff) {
+			keep = append(keep, t)
+		}
+	}
+	return keep
+}
+
 // injectSovereignExplorationSlots applies an epsilon-greedy mark-and-reorder
 // pass to a score-sorted candidate list. Each cycle a fraction (`pct`) of
 // the available slots is dedicated to randomly chosen low-score candidates;
@@ -9302,10 +9466,16 @@ func sovereignTargetStructuralCooldownDuration(failures int, cfg RebalanceConfig
 // position order is preserved so the score-based ranking still drives which
 // jobs run within the maxJobs cap.
 //
+// Burnout filter: candidates for which `burnoutFn(channelID) == true` are
+// kept in the candidate list (so the score ranking is unaffected) but never
+// receive the ExplorationSlot mark. A burned-out target only goes through
+// if it passes all gates on its own merit — exactly the behavior we want
+// for chronically failing exploration targets.
+//
 // CooldownProbe entries (score=-1) always keep the head positions and are
 // never marked. The non-explored tail retains its score order to act as a
 // deterministic fallback when head candidates are gated out.
-func injectSovereignExplorationSlots(candidates []rebalanceTarget, maxJobs int, pct int) []rebalanceTarget {
+func injectSovereignExplorationSlots(candidates []rebalanceTarget, maxJobs int, pct int, burnoutFn func(uint64) bool) []rebalanceTarget {
 	if pct <= 0 || maxJobs <= 1 || len(candidates) <= 1 {
 		return candidates
 	}
@@ -9331,16 +9501,25 @@ func injectSovereignExplorationSlots(candidates []rebalanceTarget, maxJobs int, 
 		// Need at least 2 non-probes so one can stay "top" and one can explore.
 		return candidates
 	}
+	// Default burnoutFn to "never burned" when caller passes nil (e.g. unit
+	// tests that exercise the pure ranking logic).
+	if burnoutFn == nil {
+		burnoutFn = func(uint64) bool { return false }
+	}
 	// Scarcity bypass: when there are at most 2× maxJobs real candidates, the
 	// batch is small enough that empirical-history gates would veto too many
 	// top-ranked picks (kappa/CLB-style: high score, blocked by historical
 	// failures). Mark every non-probe as exploration so the ranking — not the
-	// gates — drives which jobs run within the maxJobs cap.
+	// gates — drives which jobs run within the maxJobs cap. Burned-out
+	// targets stay in the list but skip the mark — they only proceed on own
+	// merit, ending the cycle-burn pattern.
 	if nonProbeCount <= maxJobs*2 {
 		out := make([]rebalanceTarget, 0, len(candidates))
 		out = append(out, candidates[:probeCount]...)
 		for _, c := range candidates[probeCount:] {
-			c.ExplorationSlot = true
+			if !burnoutFn(c.Channel.ChannelID) {
+				c.ExplorationSlot = true
+			}
 			out = append(out, c)
 		}
 		return out
@@ -9376,11 +9555,19 @@ func injectSovereignExplorationSlots(candidates []rebalanceTarget, maxJobs int, 
 		return candidates
 	}
 	// Randomly choose actualSlots indexes from pool to mark as exploration.
-	idx := make([]int, len(pool))
-	for i := range idx {
-		idx[i] = i
+	// Burned-out targets are skipped here — they may end up in the tail
+	// instead, still ranked by score, but without exploration bypass.
+	idx := make([]int, 0, len(pool))
+	for i, candidate := range pool {
+		if burnoutFn(candidate.Channel.ChannelID) {
+			continue
+		}
+		idx = append(idx, i)
 	}
 	rand.Shuffle(len(idx), func(i, j int) { idx[i], idx[j] = idx[j], idx[i] })
+	if actualSlots > len(idx) {
+		actualSlots = len(idx)
+	}
 	exploredIdx := make(map[int]struct{}, actualSlots)
 	explored := make([]rebalanceTarget, 0, actualSlots)
 	for i := 0; i < actualSlots; i++ {

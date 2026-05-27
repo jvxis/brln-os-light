@@ -1,14 +1,19 @@
-# Rebalance Center — Guia do Operador
+# Rebalance Center — Guia operacional + Backlog
 
-**Versão:** 0.4.4-Beta
+**Versão atual em produção:** 0.4.4-Beta
 **Última revisão:** 2026-05-26
 
-Este documento descreve como o módulo de rebalance do LightningOS funciona,
-quais módulos compõem o sistema, e quando usar cada um. Voltado para o operador
-do nó que precisa decidir como configurar o Rebalance Center sem mergulhar no
-código.
+Documento consolidado em duas partes:
+
+- **[Parte I — Como o Rebalance Center funciona](#parte-i--como-o-rebalance-center-funciona)** —
+  referência operacional para o operador que precisa entender e configurar o
+  sistema sem mergulhar no código
+- **[Parte II — O que ainda falta implementar](#parte-ii--o-que-ainda-falta-implementar)** —
+  backlog priorizado com quick wins primeiro
 
 ---
+
+# Parte I — Como o Rebalance Center funciona
 
 ## 1. Visão geral
 
@@ -26,10 +31,8 @@ Objetivos por ordem de importância (na operação real):
 4. **Reabilitar canais drenados** quando vale a pena economicamente
 
 O sistema oferece **três modos operacionais** que podem ser combinados,
-e suportes auxiliares (fast-path, exploração, scoring) que serão detalhados
-nas seções seguintes.
-
----
+e suportes auxiliares (fast-path, exploração, scoring) detalhados nas seções
+seguintes.
 
 ## 2. Os três modos de operação
 
@@ -123,8 +126,6 @@ runAutoScan                runManualRestartWatch        runAutoScan
 `ManualRestartEnabled` **não bypassa cost gate** (o sovereign aplica em
 todos). Para isso, use o flag per-channel `auto_bypass_cost_gate`.
 
----
-
 ## 3. Master switch
 
 `auto_enabled` é o **master kill switch** de todos os loops automatizados.
@@ -142,12 +143,10 @@ Implementado em três gates ([rebalance_service.go:2710](../internal/server/reba
 A UI mostra "Rebalance master OFF" em vermelho no header quando
 `auto_enabled=false`, e desabilita os controles dependentes.
 
----
-
 ## 4. Funnel A — onde candidatos são filtrados
 
 Antes de chegar ao scoring/ranking, candidatos passam por uma série de filtros.
-A ordem importa porque cada um **eliminação imediata** (`continue`):
+A ordem importa porque cada um é **eliminação imediata** (`continue`):
 
 | # | Filtro | Critério | Skip reason |
 |---|---|---|---|
@@ -171,8 +170,6 @@ canal específico. Útil em três cenários:
 3. **Canal estratégico** — você sabe que vai dar certo, ignora a matemática
 
 A flag NÃO bypassa ROI/profit guardrail nem demais gates downstream.
-
----
 
 ## 5. Modelo de gain (estimateTargetGain)
 
@@ -210,14 +207,13 @@ gain        = theoretical × 0.75              se cold-start (demand = 0)
 
 Combina v1 (sinal de demanda real) com v2 (teto teórico). Em cold-start,
 aplica 75% (de theoretical) para evitar bloquear canais novos no
-profit_guardrail. Configurável via `gain_v3_cold_start` no código.
+profit_guardrail.
 
 **Trade-offs:**
+
 - v2: mais candidatos passam, mas pode encher canais que não vendem
 - v3: filtra canais sem demanda real, pode ser conservador demais em cenários
   de descoberta
-
----
 
 ## 6. Sovereign Autopilot — interno
 
@@ -275,8 +271,6 @@ refit) continuam aplicando.
 
 ### 6.5 Skip reasons no sovereign
 
-Reasons que aparecem no Funnel A + sovereign:
-
 | Reason | Significado | Gate level |
 |---|---|---|
 | `roi_guardrail` | ROI < roi_min | Funnel A |
@@ -292,8 +286,6 @@ Reasons que aparecem no Funnel A + sovereign:
 | `expected_profit_below_min` | profit < min_expected_profit_sat | Hard |
 | `channel_busy` | canal com job em andamento | Hard |
 | `cycle_limit` | já atingiu max_jobs do ciclo | Hard |
-
----
 
 ## 7. Delegated Fast-Path
 
@@ -320,8 +312,6 @@ perde essa otimização.
 - `delegated_fast_path_strict_payback` — exige sources com payback OK
 - `mission_control_reinforce` — escreve a rota vencedora no MC do LND
 
----
-
 ## 8. Mission Control (MC) do LND
 
 A Mission Control é o "cérebro de pathfinding" do LND. Aprende quais rotas
@@ -336,6 +326,7 @@ Penalty(t) = Penalty(0) × 0.5^(t / half_life)
 ```
 
 Valores típicos:
+
 - LND default: 3600s (1 hora)
 - Conservador: 1800s (30 min) — usado se você quer retentar falhas rápido
 - 600s ou menos: muito agressivo, MC quase sem memória
@@ -358,8 +349,6 @@ Existem dois caminhos:
 
 A regra agora: MC só é resetada quando o operador decide.
 
----
-
 ## 9. Loops e cadência
 
 | Loop | Função | Cadência | Master gate |
@@ -371,8 +360,6 @@ A regra agora: MC só é resetada quando o operador decide.
 | `scheduleManualRestart` | Re-agenda após fail/partial | `manualRestartInterval` | `auto_enabled` + `manual_restart_watch` |
 
 Cleanup loops não geram jobs — apenas manutenção de dados.
-
----
 
 ## 10. Parâmetros principais (UI)
 
@@ -419,13 +406,12 @@ Cleanup loops não geram jobs — apenas manutenção de dados.
 - `roi_min` — ROI mínimo (1.0 = break-even; < 1 = aceita loss em ROI)
 - `rebalance_cost_floor_ppm` — floor para `expectedCost` quando não há histórico
 
----
-
 ## 11. Decisões operacionais
 
 ### 11.1 Como tunar para lucro vs movimento
 
 **Foco em lucro** (cost/rev < 80% consistente):
+
 - `roi_min = 1.0` ou maior
 - `sovereign_min_expected_profit_sat = 50+`
 - `sovereign_budget_efficiency_min_ratio = 0.25+`
@@ -433,6 +419,7 @@ Cleanup loops não geram jobs — apenas manutenção de dados.
 - `sovereign_source_opportunity_cost_enabled = true`
 
 **Foco em movimento** (maximizar volume mesmo com prejuízo marginal):
+
 - `roi_min = 0.5`
 - `sovereign_min_expected_profit_sat = 5`
 - `sovereign_budget_efficiency_min_ratio = 0.15`
@@ -468,12 +455,14 @@ Canal aparece mas não é selecionado:
 ### 11.3 Quando ligar `auto_bypass_cost_gate`
 
 **Sim:**
+
 - Canal novo sem `rebal_ppm_7d` histórico (floor 250 ppm bloqueia spreads baixos)
 - Canal com matemática justificável (out_ppm > rebal_ppm) mas econ_ratio
   comendo a margem
 - Canal estratégico que precisa estar líquido
 
 **Não:**
+
 - Canal com `out_ppm < rebal_ppm` consistente (perde dinheiro em rebal)
 - Em vez disso, suba `outFee` (manual ou via autofee)
 
@@ -485,9 +474,7 @@ Canal aparece mas não é selecionado:
 - Transição: rode 6-12h em shadow, compare expected_profit médio e candidate
   count com expectativa antes de flipar para live
 
----
-
-## 12. Anexo — histórico de mudanças relevantes
+## 12. Histórico de mudanças relevantes
 
 | Versão | Mudança |
 |---|---|
@@ -499,24 +486,409 @@ Canal aparece mas não é selecionado:
 | 0.4.3 | Exploration slot (epsilon-greedy), configurable structural cooldown |
 | 0.4.4 | Master switch real (auto_enabled gates todos os loops); MC auto-reset removido; profit_guardrail respeita roi_min; bumped gain v3 cold-start prior to 0.75 |
 
----
-
 ## 13. Arquivos relevantes no código
 
 - `internal/server/rebalance_service.go` — toda a lógica de scheduling, scan,
-  execução, MC, sovereign autopilot (arquivo grande ~13k linhas)
+  execução, MC, sovereign autopilot
 - `internal/server/rebalance_handlers.go` — handlers HTTP
 - `internal/lndclient/rebalance.go` — wrappers gRPC LND
   (incluindo `SendPaymentMultiSource` do fast-path)
 - `ui/src/pages/RebalanceCenter.tsx` — UI inteira do Rebalance Center
 - `ui/src/components/rebalance/` — componentes reusáveis
 
-Para detalhes sobre módulos específicos:
+Docs relacionados:
 
-- `docs/lndg-parity-investigation.md` — por que e como o fast-path existe
-- `docs/sovereign-autopilot-audit.md` — auditoria do sovereign
-- `docs/autofee-backlog.md` — interlock com autofee
-- `docs/rebalance-phantom-jobs-backlog.md` — como o sistema lida com jobs
-  sem attempts
-- `docs/autopilot-autotarget-backlog.md` — proposta de ajuste automático do
-  target_outbound_pct (não implementado)
+- `lndg-parity-investigation.md` — por que e como o fast-path existe
+- `sovereign-autopilot-audit.md` — auditoria do sovereign
+- `autofee-backlog.md` — interlock com autofee (FECHADO)
+- `rebalance-phantom-jobs-backlog.md` — phantom jobs (FECHADO)
+- `autopilot-autotarget-backlog.md` — design do AutoTarget (R0 deste backlog)
+
+---
+
+# Parte II — O que ainda falta implementar
+
+Itens **não implementados** que emergiram durante o ciclo de tuning de Maio/2026.
+Ordenados por **quick wins primeiro**, depois valor estratégico, depois esforço.
+
+## Resumo executivo
+
+| Prioridade | ID | Item | Esforço | Risco |
+|:---:|---|---|:---:|:---:|
+| 🟢 1 | R5 | Exploration burnout (track & stop) | 30min | baixo |
+| 🟢 2 | R7 | UI polish (presets, eligibility tags, hierarquia per-channel) | 2h | zero |
+| 🟢 3 | R2 | `gain_v3_cold_start_pct` configurável | 0.5d | baixo |
+| 🟢 4 | R1 | Suavizar penalidade `successScoreMultiplier × 0.05` | 0.5d | baixo |
+| 🟢 5 | R6 | Telemetria explícita do fast-path | 1d | zero |
+| 🟡 6 | R3 | MPP plan diversification | 1-2d | médio |
+| 🟡 7 | **R0** | **AutoTarget — autopilot calibrando `target_outbound_pct`** | **3d** | **médio** |
+| 🟡 8 | R4 | Source rotation determinística | 2d | médio |
+| 🔴 9 | R8 | AutoFee ↔ Rebalance interlock bidirecional | 2-3d | médio |
+| 🔵 10 | R9 | Wallet Flow Sprint 1 — cache de leases (fora de rebalance) | 2-3h | baixo |
+
+🟢 quick win • 🟡 médio esforço • 🔴 maior esforço • 🔵 fora do escopo rebalance
+
+---
+
+## Quick wins (≤ 1 dia, baixo risco)
+
+### R5 — Exploration burnout (track & stop)
+
+**Esforço:** ~30 min de código + testes
+**Risco:** baixo
+
+**O problema:** `sovereign_exploration_slot_pct = 10` reserva 1 slot por scan
+pra exploração random tail. Mas se o mesmo canal (ex: kappa, RA⚡KO) é
+selecionado pela exploração 5 vezes seguidas e **falha todas**, continua
+sendo candidato a próxima exploração. Resultado: gasto repetido de orçamento
+em canais dead-end.
+
+**Proposta:** track exploration attempts em janela móvel (24h):
+
+```go
+type ExplorationStats struct {
+    Attempts    int
+    Failures    int
+    LastFailAt  time.Time
+}
+
+// Se canal X teve 5+ exploration attempts em 24h e 0 sucessos,
+// remover do pool de exploração por 12h
+if stats.Attempts >= 5 && stats.Failures == stats.Attempts {
+    excludeFromExploration(channelID, 12*time.Hour)
+}
+```
+
+**Tradeoffs:**
+
+- ✅ Para de queimar slots em canais comprovadamente quebrados
+- ✅ Outros canais ganham as oportunidades de exploração
+- ⚠️ Mais state pra manter (DB ou em memória)
+- ⚠️ Canais que se recuperam após o burnout só voltam após 12h
+
+---
+
+### R7 — UI polish
+
+**Esforço:** ~2h
+**Risco:** zero (cosmético)
+
+**O que falta:**
+
+1. **Hierarquia per-channel mais clara**: hoje `auto_enabled`,
+   `manual_restart_enabled`, `auto_bypass_cost_gate` ficam misturados no
+   painel do canal. Idealmente:
+
+   ```
+   [ ] Auto rebalance (per channel)
+       └─ [ ] Bypass cost gate (override)
+   [ ] Manual restart watch (per channel)
+   [ ] Exclude as source
+   ```
+
+2. **Sinalizar eligibility no Channel Ranking**: quando um canal está
+   bloqueado pelo cost gate, mostrar tag visual ("⚠ cost gate") na linha
+   dele com tooltip explicando
+
+3. **Presets no painel Autopilot**: "Modo movimento", "Modo lucro",
+   "Modo conservador" que aplicam combos de knobs com 1 clique
+
+---
+
+### R2 — `gain_v3_cold_start_pct` configurável
+
+**Esforço:** 0.5d (campo + UI + migration + 2 testes)
+**Risco:** baixo
+
+**Histórico:** Em 0.4.4 mudamos o cold-start prior do gain v3 de 0.5 → 0.75
+hardcoded. Resolveu o problema de candidatos zerados pós-removal do auto-reset.
+
+**O que falta:** expor como `sovereign_gain_v3_cold_start_pct` na config
+(range 0.5–0.95, default 0.75). Permite operadores tunarem:
+
+- Mais permissivo (0.85–0.95): mais candidatos passam profit_guardrail
+- Mais conservador (0.5–0.65): menos jobs em canais cold-start
+
+**Implementação:** seguir template de outros knobs `sovereign_*` (Field em
+`RebalanceConfig`, validador, plumbing pra `estimateTargetGainV3`, UI input,
+i18n EN+PT-BR).
+
+---
+
+### R1 — Suavizar `sovereignSuccessScoreMultiplier`
+
+**Esforço:** 0.5d (lógica + 2-3 testes)
+**Risco:** baixo
+
+**O problema:** em [rebalance_service.go:9649-9658](../internal/server/rebalance_service.go#L9649-L9658):
+
+```go
+if stats.RecentStructuralFailures >= targetCooldownMinAttempts {  // 25
+    multiplier *= 0.05   // 95% de penalidade
+} else if stats.RecentStructuralFailures >= 10 {
+    multiplier *= 0.12   // 88% de penalidade
+} else if stats.RecentStructuralFailures > 0 {
+    pressure := 1 - (float64(stats.RecentStructuralFailures) * 0.10)
+    if pressure < 0.30 { pressure = 0.30 }
+    multiplier *= pressure
+}
+```
+
+Penalidade × 0.05 é brutal. Canais com 25+ falhas estruturais ficam com
+score 5% do original. Combinado com a removal do MC auto-reset, uma falha
+estrutural recente vai impactar o canal por horas/dias.
+
+**Proposta:** curva contínua com piso decente:
+
+```go
+multiplier = max(sovereign_risk_score_floor,
+                 1 / (1 + 0.05 * RecentStructuralFailures))
+```
+
+Ou: piso ainda mais permissivo (0.40) para `ExplorationSlot=true`.
+
+**Tradeoffs:**
+
+- ✅ Canais "punidos" voltam a competir no ranking após falhas isoladas
+- ⚠️ Cooldown estrutural (`sovereign_structural_cooldown_repeat_hours`) já
+  cobre a proteção via mecanismo separado — não precisa de multiplicador brutal
+
+---
+
+### R6 — Telemetria explícita do fast-path
+
+**Esforço:** ~1d
+**Risco:** zero (puramente observabilidade)
+
+**O problema:** para saber se o fast-path tá funcionando, hoje só contamos
+`reason="delegated-fast-path"` em jobs sucedidos. Não sabemos:
+
+- Taxa de **tentativa** do fast-path
+- Se ele tá entregando antes do legacy ou fallbackando
+- Histograma de tempo até sucesso
+
+**Proposta:**
+
+```go
+type FastPathTelemetry struct {
+    AttemptsTotal       int64
+    SuccessesTotal      int64
+    SuccessTimeMsHist   []float64  // p50, p95, p99
+    FallthroughToLegacy int64
+    FailReasonCounts    map[string]int64
+}
+```
+
+Endpoint `GET /api/rebalance/fast-path-metrics` retornando agregado das
+últimas N horas. UI: painel pequeno com sucesso% nas últimas 24h.
+
+**Por que importa:** calibrar `mc_half_life_sec`,
+`delegated_fast_path_strict_payback`, detectar regressões quando algum knob
+é mexido.
+
+---
+
+## Médio esforço (1-3 dias, médio risco)
+
+### R3 — MPP plan diversification
+
+**Esforço:** 1-2d
+**Risco:** médio (hot path do MPP)
+
+**O problema:** `buildMppShadowPlan` aloca shards proporcionalmente à
+`MaxSourceSat` de cada source. Quando uma source é dominante (ex: Harry
+Potter com 10M cap vs outras com 1M), o plano coloca quase todos os shards
+nela.
+
+Observado no job #239575: 6 shards, 5 contra Harry Potter, 1 contra Satway.
+Resultado: efetivamente 2 sources distintos tentados, todos falharam.
+
+**Proposta:** função `buildMppShadowPlan` com cap de **% máximo por source**:
+
+```go
+// Nenhuma source pode receber mais de 40% dos shards
+maxShardsPerSource = ceil(plannedShards × 0.4)
+```
+
+**Critério de aceite:** sucesso por source distinta sobe (menos
+"all sources failed" com 1-2 distintas).
+
+---
+
+### R0 — AutoTarget (autopilot calibrando `target_outbound_pct`) ⭐
+
+**Esforço:** ~3 dias
+**Risco:** médio (mexe em parâmetro per-channel que afeta deficit/eligibility)
+**Doc de design:** [autopilot-autotarget-backlog.md](autopilot-autotarget-backlog.md)
+
+**Por que é destacado:** maior ganho operacional estratégico. Hoje
+`target_outbound_pct` é setado manualmente por canal — operadores com 40+
+canais não conseguem calibrar todos. Sessões anteriores provaram empiricamente
+que ajustar esse target (ex: LQWD-France 15→40) muda dramaticamente o success
+rate.
+
+**Conceito:**
+
+```
+AutoTarget : AutoFee :: target_outbound_pct : fee_rate_ppm
+```
+
+Sistema avalia periodicamente cada canal e ajusta target_outbound_pct
+baseado em:
+
+- **Trigger UP** (subir target): `drain_rate_24h` alta + `success_rate` boa
+  + revenue alta + canal esgotou múltiplas vezes em 24h
+- **Trigger DOWN** (descer target): drain caiu pra zero por 24h+, success
+  rate baixa, ou múltiplos structural_cooldown events
+
+**Hysteresis e safeguards:**
+
+- Threshold UP (≥50% success) > DOWN (<25%) — evita flapping
+- Cooldown 6h entre mudanças no mesmo canal
+- Step 5pp, range [10, 70]
+- Per-channel opt-out
+- Nova tabela `rebalance_auto_target_history` pra auditoria
+
+**Schema preview:**
+
+```go
+AutoTargetEnabled               bool    // default false
+AutoTargetMaxPct                int     // default 70
+AutoTargetMinPct                int     // default 10
+AutoTargetStepPct               int     // default 5
+AutoTargetEvalIntervalHours     int     // default 6
+AutoTargetMinDrainRateSatPerHr  int64   // default 5000
+AutoTargetMinRevenue7dSat       int64   // default 500
+AutoTargetUpSuccessThreshold    float64 // default 0.5
+AutoTargetDownSuccessThreshold  float64 // default 0.25
+```
+
+---
+
+### R4 — Source rotation determinística
+
+**Esforço:** 2d
+**Risco:** médio
+
+**O problema:** `pair_failure_cache` tem TTL 5min-30min escalável. Após
+falhas, source fica bloqueada para aquele target. Mas a "saída" do cache só
+acontece naturalmente quando TTL expira. Em cenários onde muitos pairs
+falham simultaneamente, o cache pode bloquear sources inteiras por horas
+mesmo após a condição que causou a falha já ter passado.
+
+**Proposta:** mecanismo de "segunda chance" determinístico:
+
+- A cada N ciclos (ex: 6), revisar todas as sources bloqueadas pelo cache
+- Para sources com mais de M minutos no cache, tentar 1 atempt de probe
+- Se sucede: limpar o cache para aquele pair
+- Se falha: cache renova TTL
+
+**Sobreposição com R0:** AutoTarget também ajuda indiretamente — subindo
+o target_outbound_pct de canais ativos, eles esgotam mais e viram target,
+empurrando sources antigas de volta ao pool.
+
+---
+
+## Maior esforço (3+ dias, médio risco)
+
+### R8 — AutoFee ↔ Rebalance interlock bidirecional
+
+**Esforço:** 2-3d
+**Risco:** médio (toca em duas máquinas de decisão)
+
+**Estado atual:**
+
+- **AutoFee → Rebalance**: já implementado. Quando autofee mexeu fee de um
+  canal, rebalance espera `autofee_settling_window_sec` (2h) e aplica
+  `autofee_settling_multiplier` (0.5) no score
+- **Rebalance → AutoFee**: já implementado (Wave 6.1). AutoFee skipa canais
+  com rebalance recente em janela de 30min
+
+**O que falta:** comunicação bidirecional **inteligente** com *intenção*,
+não só timing. Exemplo:
+
+- AutoFee detecta canal há horas saturado em outbound → notifica rebalance
+  pra priorizar como source
+- Rebalance detecta canal saturado em inbound (vendendo bem) → notifica
+  autofee pra subir a fee mais agressivamente
+
+**Por que importa:** hoje os dois sistemas trabalham com snapshots mas não
+trocam intenção. Pode ocorrer: "autofee sobe fee → rebalance tira target →
+autofee desce fee → rebalance vê deficit → tenta rebalancear canal que
+autofee acabou de descer".
+
+**Implementação:** tabela compartilhada `rebalance_autofee_intent` com:
+
+- Channel ID
+- Direction (pump-target / drain-source / lock-fee-rate)
+- Window válida
+- Justificativa
+
+Cada sistema lê o intent do outro antes de tomar decisão.
+
+---
+
+## Fora do escopo Rebalance
+
+### R9 — Wallet Flow Sprint 1 — cache de leases
+
+**Esforço:** 2-3h
+**Risco:** baixo
+
+**O quê:** cache de `ListLeases` em `enrichOnchainUtxos`
+(`utxo_manager_handlers.go`). Hoje cada GET no `/api/onchain/utxos` chama
+`ListLeases + ListMetadata + Prune` sincronamente. Em wallets grandes,
+latência p95 > 200ms.
+
+**Proposta:**
+
+- TTL ~10s para `ListLeases` (padrão de `bitcoin_status_cache.go`)
+- Mover `Prune` para ticker em background (5-10 min), fora do path crítico
+
+---
+
+## Itens já implementados em 0.4.4-Beta (referência)
+
+Para evitar confusão sobre o que ainda falta:
+
+- ✅ M1 — Hard skip budget_efficiency respeita ExplorationSlot
+- ✅ M2 — Refit re-gating respeita ExplorationSlot
+- ✅ M3 — Scarcity bypass (≤ 2× maxJobs marca todos como exploration)
+- ✅ profit_guardrail respeita roi_min < 1
+- ✅ gain v3 cold-start prior bumped 0.5 → 0.75
+- ✅ Master switch real (auto_enabled gates todos os loops)
+- ✅ MC auto-reset removido (só manual reset agora)
+- ✅ UI: master OFF badge, controles dependentes desabilitam
+- ✅ handleSaveAutopilotConfig inclui auto_enabled e manual_restart_watch
+
+---
+
+## Como retomar este backlog
+
+Em sessão futura:
+
+1. Ler este doc (Parte II)
+2. Verificar via API (`/api/rebalance/sovereign-history`, métricas)
+   se os sintomas que motivaram cada item ainda existem
+3. Escolher próximo item considerando o estado atual do sistema
+4. **Não bundlar mais de 2 itens por commit** — cada um precisa de
+   janela de medição em prod (mínimo 24h) antes do próximo
+
+Antes de implementar qualquer item, abrir o código atual e validar que
+file:line citados ainda batem — esta doc é snapshot do estado 0.4.4-Beta.
+
+**Ordem sugerida de execução considerando quick wins primeiro:**
+
+```
+R5 (30min) → R7 (2h) → R2 (0.5d) → R1 (0.5d) → R6 (1d)
+   └─────────── 2 dias de quick wins acumulados ───────────┘
+                          ↓
+                    R3 (1-2d) → R0 (3d) → R4 (2d)
+                          ↓
+                       R8 (2-3d)
+                          ↓
+                    R9 (paralelo, qualquer hora)
+```
+
+Quick wins primeiro permitem testar mudanças menores em prod antes de
+investir em features maiores como AutoTarget (R0).

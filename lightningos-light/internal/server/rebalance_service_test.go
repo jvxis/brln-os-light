@@ -234,6 +234,33 @@ func TestEstimateTargetGainV3RespectsColdStartPct(t *testing.T) {
 	}
 }
 
+func TestCategorizeFastPathFailReason(t *testing.T) {
+	cases := []struct {
+		raw      string
+		expected string
+	}{
+		{"", "unknown"},
+		{"fast-path broad: rpc error: code = DeadlineExceeded desc = context deadline exceeded", "timeout"},
+		{"fast-path broad: rpc error: code = Unknown desc = unable to find a path to destination", "no_route"},
+		{"fast-path preferred: no_route", "no_route"},
+		{"fast-path broad: insufficient_balance", "insufficient_balance"},
+		{"fast-path broad: fee_insufficient", "fee_cap"},
+		{"fast-path broad: htlc_max_fee_exceeded", "fee_cap"},
+		{"fast-path broad: incorrect_payment_details", "invoice_issue"},
+		{"fast-path broad: invoice expired", "invoice_issue"},
+		{"fast-path broad: lnd unavailable", "rpc_error"},
+		{"some random thing that should not match", "other"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.raw, func(t *testing.T) {
+			got := categorizeFastPathFailReason(tc.raw)
+			if got != tc.expected {
+				t.Fatalf("raw=%q expected category=%s got=%s", tc.raw, tc.expected, got)
+			}
+		})
+	}
+}
+
 func TestSovereignSuccessScoreMultiplierContinuousCurve(t *testing.T) {
 	cfg := defaultRebalanceConfig()
 

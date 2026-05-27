@@ -1865,13 +1865,42 @@ export default function RebalanceCenter() {
                   </>
                 )}
                 {(overview.fast_path_attempts_24h ?? 0) > 0 && (
-                  <p className="text-xs text-mint/80">
-                    {t('rebalanceCenter.overview.fastPath24h', {
-                      attempts: formatter.format(overview.fast_path_attempts_24h ?? 0),
-                      successes: formatter.format(overview.fast_path_successes_24h ?? 0),
-                      rate: formatPct((overview.fast_path_hit_rate_24h ?? 0) * 100)
-                    })}
-                  </p>
+                  <>
+                    <p className="text-xs text-mint/80">
+                      {t('rebalanceCenter.overview.fastPath24h', {
+                        attempts: formatter.format(overview.fast_path_attempts_24h ?? 0),
+                        successes: formatter.format(overview.fast_path_successes_24h ?? 0),
+                        rate: formatPct((overview.fast_path_hit_rate_24h ?? 0) * 100)
+                      })}
+                    </p>
+                    {((overview.fast_path_failures_24h ?? 0) > 0 || (overview.fast_path_fallthroughs_24h ?? 0) > 0) && (
+                      <p className="text-xs text-fog/60">
+                        {t('rebalanceCenter.overview.fastPathFailures24h', {
+                          failures: formatter.format(overview.fast_path_failures_24h ?? 0),
+                          fallthroughs: formatter.format(overview.fast_path_fallthroughs_24h ?? 0)
+                        })}
+                      </p>
+                    )}
+                    {(overview.fast_path_duration_p50_ms ?? 0) > 0 && (
+                      <p className="text-xs text-fog/60">
+                        {t('rebalanceCenter.overview.fastPathDuration24h', {
+                          p50: formatter.format(Math.round((overview.fast_path_duration_p50_ms ?? 0) / 1000)),
+                          p95: formatter.format(Math.round((overview.fast_path_duration_p95_ms ?? 0) / 1000))
+                        })}
+                      </p>
+                    )}
+                    {(overview.fast_path_fail_reasons_24h?.length ?? 0) > 0 && (
+                      <p className="text-xs text-fog/60">
+                        {t('rebalanceCenter.overview.fastPathFailReasons24h')}{' '}
+                        {(overview.fast_path_fail_reasons_24h ?? []).slice(0, 4).map((r, i) => (
+                          <span key={r.category}>
+                            {i > 0 && ', '}
+                            {r.category} ({formatter.format(r.count)})
+                          </span>
+                        ))}
+                      </p>
+                    )}
+                  </>
                 )}
               </MetricDisclosure>
             </div>

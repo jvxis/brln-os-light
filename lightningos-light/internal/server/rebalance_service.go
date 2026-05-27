@@ -464,6 +464,11 @@ type RebalanceOverview struct {
 	FastPathAttempts24h           int64                        `json:"fast_path_attempts_24h"`
 	FastPathSuccesses24h          int64                        `json:"fast_path_successes_24h"`
 	FastPathHitRate24h            float64                      `json:"fast_path_hit_rate_24h"`
+	FastPathFailures24h           int64                        `json:"fast_path_failures_24h"`
+	FastPathFallthroughs24h       int64                        `json:"fast_path_fallthroughs_24h"`
+	FastPathDurationP50Ms         int64                        `json:"fast_path_duration_p50_ms"`
+	FastPathDurationP95Ms         int64                        `json:"fast_path_duration_p95_ms"`
+	FastPathFailReasons24h        []RebalanceFastPathFailReason `json:"fast_path_fail_reasons_24h,omitempty"`
 	PaybackRevenueSat             int64                        `json:"payback_revenue_sat"`
 	PaybackRevenueRebalancedSat   int64                        `json:"payback_revenue_rebalanced_sat"`
 	PaybackCostSat                int64                        `json:"payback_cost_sat"`
@@ -572,6 +577,14 @@ type RebalanceSovereignHistory struct {
 type RebalanceReasonStat struct {
 	Reason string `json:"reason"`
 	Count  int64  `json:"count"`
+}
+
+// RebalanceFastPathFailReason agrupa motivos de falha do delegated fast-path
+// numa categoria normalizada (timeout, no_route, insufficient_balance, etc.)
+// e o respectivo count na janela de 24h.
+type RebalanceFastPathFailReason struct {
+	Category string `json:"category"`
+	Count    int64  `json:"count"`
 }
 
 type RebalanceTargetStat struct {
@@ -12064,24 +12077,130 @@ where completed_at >= now() - interval '24 hours'
 	return count
 }
 
-// fetchFastPathTelemetry24h retorna (attempts, successes) do delegated
-// fast-path nas últimas 24h. attempts conta jobs com fast_path_attempted=true;
-// successes conta o subconjunto que finalizou succeeded com reason
-// 'delegated-fast-path'. hit_rate = successes/attempts é derivado pelo caller.
-func (s *RebalanceService) fetchFastPathTelemetry24h(ctx context.Context) (int64, int64) {
+// fastPathTelemetry24h consolida métricas observacionais do delegated fast-path
+// nas últimas 24h. Calculado on-demand para o overview. Todos os contadores
+// vêm de rebalance_jobs/rebalance_attempts — nenhuma migration necessária.
+type fastPathTelemetry24h struct {
+	Attempts      int64
+	Successes     int64
+	Failures      int64
+	Fallthroughs  int64
+	DurationP50Ms int64
+	DurationP95Ms int64
+	FailReasons   []RebalanceFastPathFailReason
+}
+
+// fetchFastPathTelemetry24h retorna telemetria do delegated fast-path nas
+// últimas 24h. attempts conta jobs com fast_path_attempted=true; successes é
+// o subconjunto que finalizou succeeded com reason 'delegated-fast-path';
+// failures = attempts - successes; fallthroughs conta jobs onde o fast-path
+// falhou E o legacy loop rodou (≥1 attempt com attempt_index>0). Duration
+// p50/p95 vem das attempts succeeded com attempt_index=0. FailReasons agrupa
+// fail_reason de attempts com attempt_index=0 status=failed em buckets
+// normalizados (timeout, no_route, insufficient_balance, htlc_max_fee, other).
+func (s *RebalanceService) fetchFastPathTelemetry24h(ctx context.Context) fastPathTelemetry24h {
+	var out fastPathTelemetry24h
 	if s.db == nil {
-		return 0, 0
+		return out
 	}
-	var attempts int64
-	var successes int64
 	_ = s.db.QueryRow(ctx, `
 select
   coalesce(sum(case when fast_path_attempted then 1 else 0 end), 0) as attempts,
   coalesce(sum(case when fast_path_attempted and status='succeeded' and reason='delegated-fast-path' then 1 else 0 end), 0) as successes
 from rebalance_jobs
 where completed_at >= now() - interval '24 hours'
-`).Scan(&attempts, &successes)
-	return attempts, successes
+`).Scan(&out.Attempts, &out.Successes)
+	if out.Attempts > out.Successes {
+		out.Failures = out.Attempts - out.Successes
+	}
+
+	// Fallthroughs: jobs com fast-path attempt index=0 failed AND attempts > 0
+	// no legacy loop. Indica que o fast-path não economizou tempo nesses jobs.
+	_ = s.db.QueryRow(ctx, `
+select count(distinct a1.job_id)
+from rebalance_attempts a1
+join rebalance_jobs j on j.id = a1.job_id and j.fast_path_attempted = true
+where a1.attempt_index = 0 and a1.status = 'failed'
+  and coalesce(a1.finished_at, a1.started_at) >= now() - interval '24 hours'
+  and exists (
+    select 1 from rebalance_attempts a2
+    where a2.job_id = a1.job_id and a2.attempt_index > 0
+  )
+`).Scan(&out.Fallthroughs)
+
+	// Duration p50/p95 (ms) das fast-path attempts succeeded.
+	var p50, p95 float64
+	_ = s.db.QueryRow(ctx, `
+select
+  coalesce(percentile_cont(0.5) within group (order by extract(epoch from (finished_at - started_at)) * 1000), 0) as p50_ms,
+  coalesce(percentile_cont(0.95) within group (order by extract(epoch from (finished_at - started_at)) * 1000), 0) as p95_ms
+from rebalance_attempts
+where attempt_index = 0 and status = 'succeeded'
+  and started_at is not null and finished_at is not null
+  and finished_at >= now() - interval '24 hours'
+`).Scan(&p50, &p95)
+	out.DurationP50Ms = int64(p50)
+	out.DurationP95Ms = int64(p95)
+
+	// Fail reasons agrupados por categoria normalizada.
+	rows, err := s.db.Query(ctx, `
+select coalesce(fail_reason, ''), count(*)
+from rebalance_attempts
+where attempt_index = 0 and status = 'failed'
+  and coalesce(finished_at, started_at) >= now() - interval '24 hours'
+group by coalesce(fail_reason, '')
+`)
+	if err == nil {
+		defer rows.Close()
+		counts := map[string]int64{}
+		for rows.Next() {
+			var reason string
+			var count int64
+			if err := rows.Scan(&reason, &count); err != nil {
+				break
+			}
+			counts[categorizeFastPathFailReason(reason)] += count
+		}
+		out.FailReasons = make([]RebalanceFastPathFailReason, 0, len(counts))
+		for cat, count := range counts {
+			out.FailReasons = append(out.FailReasons, RebalanceFastPathFailReason{Category: cat, Count: count})
+		}
+		sort.Slice(out.FailReasons, func(i, j int) bool {
+			if out.FailReasons[i].Count != out.FailReasons[j].Count {
+				return out.FailReasons[i].Count > out.FailReasons[j].Count
+			}
+			return out.FailReasons[i].Category < out.FailReasons[j].Category
+		})
+	}
+
+	return out
+}
+
+// categorizeFastPathFailReason agrupa fail_reason cru em buckets úteis pra
+// operação. Detecta os modos comuns do LND nativo no fast-path: deadline
+// exceeded (timeout LND), no_route (pathfinding falhou), insufficient_balance,
+// htlc fee/max (rota encontrada mas custo acima do cap), invoice/payment hash
+// inválido. Tudo o que não se encaixa cai em "other".
+func categorizeFastPathFailReason(reason string) string {
+	if reason == "" {
+		return "unknown"
+	}
+	r := strings.ToLower(reason)
+	switch {
+	case strings.Contains(r, "deadline exceeded") || strings.Contains(r, "context deadline") || strings.Contains(r, "timeout"):
+		return "timeout"
+	case strings.Contains(r, "no_route") || strings.Contains(r, "no route") || strings.Contains(r, "unable to find a path"):
+		return "no_route"
+	case strings.Contains(r, "insufficient_balance") || strings.Contains(r, "insufficient balance"):
+		return "insufficient_balance"
+	case strings.Contains(r, "htlc_max_fee") || strings.Contains(r, "fee insufficient") || strings.Contains(r, "fee_insufficient"):
+		return "fee_cap"
+	case strings.Contains(r, "incorrect_payment_details") || strings.Contains(r, "invoice"):
+		return "invoice_issue"
+	case strings.Contains(r, "lnd unavailable") || strings.Contains(r, "rpc error"):
+		return "rpc_error"
+	}
+	return "other"
 }
 
 func (s *RebalanceService) fetchFailureTelemetry30m(ctx context.Context) ([]RebalanceReasonStat, []RebalanceTargetStat) {
@@ -12861,10 +12980,10 @@ where report_date >= current_date - interval '6 days'
 	if economics, err := s.fetchSovereignAutopilotEconomics7d(ctx, cfg); err == nil {
 		sovereignEconomics7d = economics
 	}
-	fastPathAttempts24h, fastPathSuccesses24h := s.fetchFastPathTelemetry24h(ctx)
+	fastPath := s.fetchFastPathTelemetry24h(ctx)
 	fastPathHitRate24h := 0.0
-	if fastPathAttempts24h > 0 {
-		fastPathHitRate24h = float64(fastPathSuccesses24h) / float64(fastPathAttempts24h)
+	if fastPath.Attempts > 0 {
+		fastPathHitRate24h = float64(fastPath.Successes) / float64(fastPath.Attempts)
 	}
 	if telemetry, err := s.fetchMppShadowTelemetry24h(ctx); err == nil {
 		mppShadowTelemetry = telemetry
@@ -12966,9 +13085,14 @@ where report_date >= current_date - interval '6 days'
 		SuccessBelowMinAttempts24h:    attemptTelemetry.SuccessBelowMinAttempts,
 		SuccessBelowMinAmount24hSat:   attemptTelemetry.SuccessBelowMinAmountSat,
 		SuccessBelowMinRate24h:        attemptTelemetry.SuccessBelowMinRate,
-		FastPathAttempts24h:           fastPathAttempts24h,
-		FastPathSuccesses24h:          fastPathSuccesses24h,
+		FastPathAttempts24h:           fastPath.Attempts,
+		FastPathSuccesses24h:          fastPath.Successes,
 		FastPathHitRate24h:            fastPathHitRate24h,
+		FastPathFailures24h:           fastPath.Failures,
+		FastPathFallthroughs24h:       fastPath.Fallthroughs,
+		FastPathDurationP50Ms:         fastPath.DurationP50Ms,
+		FastPathDurationP95Ms:         fastPath.DurationP95Ms,
+		FastPathFailReasons24h:        fastPath.FailReasons,
 		PaybackRevenueSat:             paybackRevenue,
 		PaybackRevenueRebalancedSat:   paybackRevenueRebalanced,
 		PaybackCostSat:                paybackCost,

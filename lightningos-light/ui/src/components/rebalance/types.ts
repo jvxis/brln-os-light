@@ -204,6 +204,11 @@ export type RebalanceOverview = {
   fast_path_attempts_24h?: number
   fast_path_successes_24h?: number
   fast_path_hit_rate_24h?: number
+  fast_path_failures_24h?: number
+  fast_path_fallthroughs_24h?: number
+  fast_path_duration_p50_ms?: number
+  fast_path_duration_p95_ms?: number
+  fast_path_fail_reasons_24h?: Array<{ category: string; count: number }>
   payback_revenue_sat: number
   payback_revenue_rebalanced_sat: number
   payback_cost_sat: number

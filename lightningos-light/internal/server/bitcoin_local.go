@@ -689,10 +689,18 @@ func applyBitcoinCLINetworkInfoToLocalStatus(status *bitcoinLocalStatus, info bi
 }
 
 func readBitcoinCoreConfig(ctx context.Context, paths bitcoinCorePaths) (string, error) {
+	raw, err := readBitcoinCoreConfigRaw(ctx, paths)
+	if err != nil {
+		return "", err
+	}
+	return sanitizeBitcoinCoreConfig(raw), nil
+}
+
+func readBitcoinCoreConfigRaw(ctx context.Context, paths bitcoinCorePaths) (string, error) {
 	if fileExists(paths.ConfigPath) {
 		raw, err := os.ReadFile(paths.ConfigPath)
 		if err == nil {
-			return sanitizeBitcoinCoreConfig(string(raw)), nil
+			return string(raw), nil
 		}
 	}
 
@@ -700,7 +708,7 @@ func readBitcoinCoreConfig(ctx context.Context, paths bitcoinCorePaths) (string,
 	if err == nil && containerID != "" {
 		out, execErr := system.RunCommandWithSudo(ctx, "docker", "exec", "-i", containerID, "sh", "-c", "cat "+bitcoinCoreConfigPathInContainer)
 		if execErr == nil {
-			return sanitizeBitcoinCoreConfig(out), nil
+			return out, nil
 		}
 	}
 
@@ -723,13 +731,13 @@ func readBitcoinCoreConfig(ctx context.Context, paths bitcoinCorePaths) (string,
 		"cat "+bitcoinCoreConfigPathInContainer,
 	)
 	if err == nil {
-		return sanitizeBitcoinCoreConfig(out), nil
+		return out, nil
 	}
 	if strings.Contains(strings.ToLower(out), "no such file") {
 		if fileExists(paths.SeedConfigPath) {
 			raw, readErr := os.ReadFile(paths.SeedConfigPath)
 			if readErr == nil {
-				return sanitizeBitcoinCoreConfig(string(raw)), nil
+				return string(raw), nil
 			}
 		}
 	}
@@ -887,12 +895,107 @@ func ensureTrailingNewline(value string) string {
 func sanitizeBitcoinCoreConfig(raw string) string {
 	lines := []string{}
 	for _, line := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
-		if looksLikeEntrypointLog(strings.TrimSpace(line)) {
+		trimmed := strings.TrimSpace(line)
+		if looksLikeEntrypointLog(trimmed) {
 			continue
+		}
+		if key, value, ok := bitcoinCoreConfigKeyValue(trimmed); ok && strings.EqualFold(key, "rpcallowip") {
+			if _, valid := normalizeRPCAllowIPValue(value); !valid {
+				continue
+			}
 		}
 		lines = append(lines, line)
 	}
 	return strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"
+}
+
+func bitcoinCoreConfigKeyValue(line string) (string, string, bool) {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+		return "", "", false
+	}
+	parts := strings.SplitN(trimmed, "=", 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), true
+}
+
+func normalizeRPCAllowIPValue(value string) (string, bool) {
+	trimmed := stripInlineConfigComment(strings.TrimSpace(value))
+	if trimmed == "" {
+		return "", false
+	}
+	if strings.Contains(trimmed, "/") {
+		if _, cidr, err := net.ParseCIDR(trimmed); err == nil && cidr != nil {
+			return cidr.String(), true
+		}
+		if normalized, ok := normalizeIPv4DottedMaskCIDR(trimmed); ok {
+			return normalized, true
+		}
+		return "", false
+	}
+	ip := net.ParseIP(trimmed)
+	if ip == nil {
+		return "", false
+	}
+	return ip.String(), true
+}
+
+func stripInlineConfigComment(value string) string {
+	for _, marker := range []string{"#", ";"} {
+		if idx := strings.Index(value, marker); idx > 0 {
+			prev := value[idx-1]
+			if prev == ' ' || prev == '\t' {
+				value = strings.TrimSpace(value[:idx])
+			}
+		}
+	}
+	return strings.TrimSpace(value)
+}
+
+func normalizeIPv4DottedMaskCIDR(value string) (string, bool) {
+	ipPart, maskPart, ok := strings.Cut(value, "/")
+	if !ok {
+		return "", false
+	}
+	ip := net.ParseIP(strings.TrimSpace(ipPart)).To4()
+	maskIP := net.ParseIP(strings.TrimSpace(maskPart)).To4()
+	if ip == nil || maskIP == nil {
+		return "", false
+	}
+	mask := net.IPMask(maskIP)
+	ones, bits := mask.Size()
+	if bits != 32 || ones < 0 {
+		return "", false
+	}
+	network := net.IPNet{IP: ip.Mask(mask), Mask: mask}
+	return network.String(), true
+}
+
+func normalizeBitcoinCoreConfigText(raw string) string {
+	return ensureTrailingNewline(strings.TrimRight(strings.ReplaceAll(raw, "\r\n", "\n"), "\n"))
+}
+
+func rpcAllowLineValue(line string) (string, bool) {
+	key, value, ok := bitcoinCoreConfigKeyValue(line)
+	if !ok || !strings.EqualFold(key, "rpcallowip") {
+		return "", false
+	}
+	return normalizeRPCAllowIPValue(value)
+}
+
+func rpcAllowValueIsCIDR(value string) bool {
+	return strings.Contains(value, "/")
+}
+
+func rpcAllowCIDRContainsIP(cidrValue string, ipValue string) bool {
+	_, cidr, err := net.ParseCIDR(cidrValue)
+	if err != nil || cidr == nil {
+		return false
+	}
+	ip := net.ParseIP(ipValue)
+	return ip != nil && cidr.Contains(ip)
 }
 
 func looksLikeEntrypointLog(line string) bool {
@@ -912,7 +1015,7 @@ func looksLikeEntrypointLog(line string) bool {
 }
 
 func syncBitcoinCoreRPCAllowList(ctx context.Context, paths bitcoinCorePaths) (string, bool, error) {
-	raw, err := readBitcoinCoreConfig(ctx, paths)
+	raw, err := readBitcoinCoreConfigRaw(ctx, paths)
 	if err != nil {
 		return "", false, err
 	}
@@ -948,10 +1051,10 @@ func ensureBitcoinCoreRPCAllowList(raw string, allow []string) (string, bool) {
 		lines = []string{}
 	}
 
-	changed := false
+	changed := normalized != normalizeBitcoinCoreConfigText(raw)
 	for _, entry := range allow {
-		trimmed := strings.TrimSpace(entry)
-		if trimmed == "" {
+		trimmed, valid := normalizeRPCAllowIPValue(entry)
+		if !valid {
 			continue
 		}
 		if rpcAllowListContains(lines, trimmed) {
@@ -968,58 +1071,35 @@ func ensureBitcoinCoreRPCAllowList(raw string, allow []string) (string, bool) {
 }
 
 func rpcAllowListContains(lines []string, value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" {
+	value, valid := normalizeRPCAllowIPValue(value)
+	if !valid {
 		return false
 	}
-	if strings.Contains(value, "/") {
-		_, wantCIDR, err := net.ParseCIDR(value)
-		if err != nil || wantCIDR == nil {
-			return false
-		}
-		want := wantCIDR.String()
+	if rpcAllowValueIsCIDR(value) {
 		for _, line := range lines {
-			trimmed := strings.TrimSpace(line)
-			if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+			candidate, ok := rpcAllowLineValue(line)
+			if !ok || !rpcAllowValueIsCIDR(candidate) {
 				continue
 			}
-			if !strings.HasPrefix(trimmed, "rpcallowip=") {
-				continue
-			}
-			candidate := strings.TrimSpace(strings.TrimPrefix(trimmed, "rpcallowip="))
-			if candidate == "" || !strings.Contains(candidate, "/") {
-				continue
-			}
-			if _, gotCIDR, parseErr := net.ParseCIDR(candidate); parseErr == nil && gotCIDR != nil && gotCIDR.String() == want {
+			if candidate == value {
 				return true
 			}
 		}
 		return false
 	}
 
-	ip := net.ParseIP(value)
-	if ip == nil {
-		return false
-	}
 	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+		candidate, ok := rpcAllowLineValue(line)
+		if !ok {
 			continue
 		}
-		if !strings.HasPrefix(trimmed, "rpcallowip=") {
-			continue
-		}
-		candidate := strings.TrimSpace(strings.TrimPrefix(trimmed, "rpcallowip="))
-		if candidate == "" {
-			continue
-		}
-		if strings.Contains(candidate, "/") {
-			if _, cidr, err := net.ParseCIDR(candidate); err == nil && cidr.Contains(ip) {
+		if rpcAllowValueIsCIDR(candidate) {
+			if rpcAllowCIDRContainsIP(candidate, value) {
 				return true
 			}
 			continue
 		}
-		if net.ParseIP(candidate) != nil && candidate == value {
+		if candidate == value {
 			return true
 		}
 	}

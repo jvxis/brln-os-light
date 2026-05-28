@@ -4757,11 +4757,16 @@ func dockerContainerGateways(ctx context.Context, containerID string) []string {
 	seen := map[string]bool{}
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || seen[trimmed] {
+		ip := net.ParseIP(trimmed)
+		if ip == nil {
 			continue
 		}
-		seen[trimmed] = true
-		gateways = append(gateways, trimmed)
+		normalized := ip.String()
+		if seen[normalized] {
+			continue
+		}
+		seen[normalized] = true
+		gateways = append(gateways, normalized)
 	}
 	return gateways
 }

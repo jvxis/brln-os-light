@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -30,6 +31,31 @@ func TestEnsureBitcoinCoreRPCAllowListAvoidsDuplicateCIDR(t *testing.T) {
 	updated, changed := ensureBitcoinCoreRPCAllowList(raw, []string{"172.23.0.0/16"})
 	if changed {
 		t.Fatalf("expected no change when CIDR already exists, got: %q", updated)
+	}
+}
+
+func TestEnsureBitcoinCoreRPCAllowListSkipsInvalidAllowEntry(t *testing.T) {
+	raw := "server=1\n"
+	updated, changed := ensureBitcoinCoreRPCAllowList(raw, []string{"invalid IP"})
+	if changed {
+		t.Fatalf("expected invalid allow entry to be ignored, got: %q", updated)
+	}
+	if strings.Contains(updated, "invalid IP") {
+		t.Fatalf("expected invalid allow entry to be absent, got: %q", updated)
+	}
+}
+
+func TestEnsureBitcoinCoreRPCAllowListRemovesInvalidExistingAllowIP(t *testing.T) {
+	raw := "server=1\nrpcallowip=invalid IP\nrpcallowip=127.0.0.1\n"
+	updated, changed := ensureBitcoinCoreRPCAllowList(raw, []string{"invalid IP", "127.0.0.1"})
+	if !changed {
+		t.Fatalf("expected invalid existing rpcallowip to be removed")
+	}
+	if strings.Contains(updated, "invalid IP") {
+		t.Fatalf("expected invalid rpcallowip to be removed, got: %q", updated)
+	}
+	if count := strings.Count(updated, "rpcallowip=127.0.0.1"); count != 1 {
+		t.Fatalf("expected one localhost allow entry, got %d in %q", count, updated)
 	}
 }
 

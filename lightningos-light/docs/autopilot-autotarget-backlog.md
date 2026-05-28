@@ -24,11 +24,31 @@ Default: OFF (opt-in via config UI).
 
 ### Trigger UP (subir target_outbound_pct +step)
 
-Condições combinadas:
+**Caminho A — canal com histórico de rebalance** (success_rate disponível):
 1. `drain_rate_24h ≥ auto_target_min_drain_rate` (sat/h) — canal vende ativamente
 2. `success_rate_recent ≥ auto_target_up_success_threshold` (default 0.5) — rota viável
 3. `revenue_7d_sat ≥ auto_target_min_revenue` — vale alocar capital
 4. **Frequency check**: canal esgotou (local_pct < target) ≥ X vezes nas últimas 24h — sinal de subdimensionamento
+
+**Caminho B — drain-first UP (canal sem histórico de rebalance)**:
+
+Necessário porque canais "vendendo bem mas nunca selecionados pelo
+autopilot" não acumulam pair_stats — `success_rate_recent` fica vazio e
+o Caminho A nunca dispara. Esses são exatamente os canais que mais
+precisam de bump no target (estão drenando mas com deficit pequeno
+demais pra atrair o sovereign autopilot).
+
+Condições combinadas (TODAS):
+1. `rebalance_attempts_7d == 0` — canal nunca foi target de rebalance
+2. `drain_rate_24h ≥ auto_target_min_drain_rate × auto_target_drain_first_multiplier`
+   (default multiplier=3 — exige drain bem acima do floor pra ter
+   certeza que vale apostar capital sem histórico de rota)
+3. `revenue_7d_sat ≥ auto_target_min_revenue × 2` — receita robusta o suficiente
+   pra justificar locking de capital sem provar a rota antes
+
+Rationale: 3× drain + 2× revenue funcionam como prior forte de
+"canal real e ativo", substituindo a confiança que viria de
+success_rate_recent.
 
 ### Trigger DOWN (descer target_outbound_pct -step)
 
@@ -60,6 +80,7 @@ AutoTargetMinDrainRateSatPerHr  int64   `json:"auto_target_min_drain_rate_sat_pe
 AutoTargetMinRevenue7dSat       int64   `json:"auto_target_min_revenue_7d_sat"`    // default 500
 AutoTargetUpSuccessThreshold    float64 `json:"auto_target_up_success_threshold"`  // default 0.5
 AutoTargetDownSuccessThreshold  float64 `json:"auto_target_down_success_threshold"` // default 0.25
+AutoTargetDrainFirstMultiplier  float64 `json:"auto_target_drain_first_multiplier"` // default 3.0 — Caminho B (drain-first UP)
 ```
 
 ### channelSetting (per-channel)

@@ -225,6 +225,9 @@ const (
 	sovereignGainV3ColdStartPct                  = 0.75
 	sovereignGainV3ColdStartPctMin               = 0.50
 	sovereignGainV3ColdStartPctMax               = 0.95
+	fastPathMaxTimeoutSecDefault                 = 90
+	fastPathMaxTimeoutSecMin                     = 30
+	fastPathMaxTimeoutSecMax                     = 300
 	sovereignRouteDeadSourceShare                = 0.10
 	sovereignRouteDeadMediumSourceShare          = 0.35
 	sovereignRouteDeadHighSourceShare            = 0.50
@@ -305,6 +308,10 @@ type RebalanceConfig struct {
 	// passam o profit_guardrail) e valores menores são mais conservadores.
 	// Aplicado em todos os call-sites do gain v3.
 	SovereignGainV3ColdStartPct           float64 `json:"sovereign_gain_v3_cold_start_pct"`
+	// FastPathMaxTimeoutSec é o cap em segundos pro delegated fast-path.
+	// Default 90. Range 30-300. Valores menores cortam pathfinding morto
+	// rapidamente; valores maiores deixam o LND explorar MPP mais profundo.
+	FastPathMaxTimeoutSec                 int     `json:"fast_path_max_timeout_sec"`
 	SovereignAttributionWindowHours       int     `json:"sovereign_attribution_window_hours"`
 	SovereignSlowSellerWindowHours        int     `json:"sovereign_slow_seller_window_hours"`
 	SovereignTargetSourceQuarantineHours  int     `json:"sovereign_target_source_quarantine_hours"`
@@ -1089,6 +1096,7 @@ func defaultRebalanceConfig() RebalanceConfig {
 		SovereignRouteDeadSourceShare:         sovereignRouteDeadSourceShare,
 		SovereignRiskScoreFloor:               sovereignRiskScoreFloor,
 		SovereignGainV3ColdStartPct:           sovereignGainV3ColdStartPct,
+		FastPathMaxTimeoutSec:                 fastPathMaxTimeoutSecDefault,
 		SovereignAttributionWindowHours:       sovereignAttributionWindowDefaultHours,
 		SovereignSlowSellerWindowHours:        sovereignSlowSellerWindowDefaultHours,
 		SovereignTargetSourceQuarantineHours:  sovereignTargetSourceQuarantineDefaultHours,
@@ -1675,6 +1683,9 @@ func normalizeRebalanceConfig(cfg RebalanceConfig) RebalanceConfig {
 	cfg.SovereignRiskScoreFloor = normalizeRatioConfig(cfg.SovereignRiskScoreFloor, def.SovereignRiskScoreFloor, 0.2)
 	if cfg.SovereignGainV3ColdStartPct < sovereignGainV3ColdStartPctMin || cfg.SovereignGainV3ColdStartPct > sovereignGainV3ColdStartPctMax {
 		cfg.SovereignGainV3ColdStartPct = def.SovereignGainV3ColdStartPct
+	}
+	if cfg.FastPathMaxTimeoutSec < fastPathMaxTimeoutSecMin || cfg.FastPathMaxTimeoutSec > fastPathMaxTimeoutSecMax {
+		cfg.FastPathMaxTimeoutSec = def.FastPathMaxTimeoutSec
 	}
 	if cfg.SovereignAttributionWindowHours <= 0 {
 		cfg.SovereignAttributionWindowHours = def.SovereignAttributionWindowHours
@@ -4339,15 +4350,15 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 	if expirySec <= 0 {
 		expirySec = 600
 	}
-	// Cap de 180s no fast-path: o LND nativo, quando não acha rota, fica
-	// explorando exaustivamente até estourar timeout. Com volume alto (centenas
-	// de fast-paths/dia), 10 min × N falhas concorrentes saturam gRPC e causam
-	// cascata de "lnd unavailable" em outros jobs (ListChannels também pendura).
-	// 180s permite MPP exploration mais profunda (alguns sucessos demoraram 3-8
-	// min antes da cap) sem deixar gRPC saturar — em falha, ainda sobram ~7 min
-	// do orçamento total do job para o legacy loop fazer RapidFire.
-	const fastPathMaxTimeoutSec = 180
-	timeoutSec := int32(fastPathMaxTimeoutSec)
+	// Cap do fast-path: o LND nativo, quando não acha rota, fica explorando
+	// exaustivamente até estourar timeout. Com volume alto, falhas concorrentes
+	// saturam gRPC (ListChannels também pendura). Telemetria R6 (2026-05-28)
+	// mostrou 60% dos fast-path failures sendo timeout — default baixou de 180
+	// → 90s pra cortar pathfinding morto pela metade. Em sucesso, ainda dá pra
+	// MPP exploration média; em falha, sobra mais tempo do orçamento total do
+	// job para o legacy loop fazer RapidFire. Configurável via UI (range
+	// 30-300s) para operadores que precisem ajustar.
+	timeoutSec := int32(fastPathMaxTimeoutSecForConfig(feeCfg))
 	if rebalTo := int32(feeCfg.RebalanceTimeoutSec); rebalTo > 0 && rebalTo < timeoutSec {
 		timeoutSec = rebalTo
 	}
@@ -9830,6 +9841,14 @@ func sovereignRiskScoreFloorForConfig(cfg RebalanceConfig) float64 {
 	return normalizeRatioConfig(cfg.SovereignRiskScoreFloor, sovereignRiskScoreFloor, 0.2)
 }
 
+func fastPathMaxTimeoutSecForConfig(cfg RebalanceConfig) int {
+	v := cfg.FastPathMaxTimeoutSec
+	if v < fastPathMaxTimeoutSecMin || v > fastPathMaxTimeoutSecMax {
+		return fastPathMaxTimeoutSecDefault
+	}
+	return v
+}
+
 func sovereignLowSuccessRequiredProfitCostRatio(successRate float64, cfg RebalanceConfig) float64 {
 	base := sovereignLowSuccessProfitCostRatioForConfig(cfg)
 	switch {
@@ -10387,6 +10406,7 @@ end $$;
     sovereign_route_dead_source_share double precision not null default 0.2,
     sovereign_risk_score_floor double precision not null default 0.02,
     sovereign_gain_v3_cold_start_pct double precision not null default 0.75,
+    fast_path_max_timeout_sec integer not null default 90,
     sovereign_attribution_window_hours integer not null default 72,
     sovereign_slow_seller_window_hours integer not null default 168,
     sovereign_target_source_quarantine_hours integer not null default 6,
@@ -10467,6 +10487,8 @@ end $$;
     add column if not exists sovereign_risk_score_floor double precision not null default 0.02;
   alter table rebalance_config
     add column if not exists sovereign_gain_v3_cold_start_pct double precision not null default 0.75;
+  alter table rebalance_config
+    add column if not exists fast_path_max_timeout_sec integer not null default 90;
   alter table rebalance_config
     add column if not exists sovereign_attribution_window_hours integer not null default 72;
   alter table rebalance_config
@@ -10588,6 +10610,8 @@ end $$;
     alter column sovereign_risk_score_floor set default 0.02;
   alter table rebalance_config
     alter column sovereign_gain_v3_cold_start_pct set default 0.75;
+  alter table rebalance_config
+    alter column fast_path_max_timeout_sec set default 90;
   alter table rebalance_config
     alter column sovereign_attribution_window_hours set default 72;
   alter table rebalance_config
@@ -10923,7 +10947,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags, fresh_paid_liquidity_lock_enabled, fresh_paid_liquidity_lock_hours,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback,
-    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct
+    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct, fast_path_max_timeout_sec
   from rebalance_config where id=$1`, rebalanceConfigID)
 
 	cfg := defaultRebalanceConfig()
@@ -10999,6 +11023,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.SovereignSourceOpportunityCostEnabled,
 		&cfg.SovereignSlowSellerEnabled,
 		&cfg.SovereignGainV3ColdStartPct,
+		&cfg.FastPathMaxTimeoutSec,
 	)
 	if err != nil {
 		return cfg, err
@@ -11022,8 +11047,8 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags, fresh_paid_liquidity_lock_enabled, fresh_paid_liquidity_lock_hours,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback,
-    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct, updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,now())
+    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct, fast_path_max_timeout_sec, updated_at
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scheduler_mode = excluded.scheduler_mode,
@@ -11096,9 +11121,10 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     sovereign_source_opportunity_cost_enabled = excluded.sovereign_source_opportunity_cost_enabled,
     sovereign_slow_seller_enabled = excluded.sovereign_slow_seller_enabled,
     sovereign_gain_v3_cold_start_pct = excluded.sovereign_gain_v3_cold_start_pct,
+    fast_path_max_timeout_sec = excluded.fast_path_max_timeout_sec,
     updated_at = now()
   `, rebalanceConfigID, cfg.AutoEnabled, cfg.SchedulerMode, cfg.SovereignCandidateScope, cfg.SovereignMaxJobsPerCycle, cfg.SovereignMinExpectedProfitSat, cfg.SovereignLowSuccessMinRate, cfg.SovereignLowSuccessMinProfitCostRatio, cfg.SovereignBudgetEfficiencyMinRatio, cfg.SovereignRouteDeadSourceShare, cfg.SovereignRiskScoreFloor, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetUnlimited, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
-		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.FreshPaidLiquidityLockEnabled, cfg.FreshPaidLiquidityLockHours, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback, cfg.SovereignAttributionWindowHours, cfg.SovereignSlowSellerWindowHours, cfg.SovereignTargetSourceQuarantineHours, cfg.SovereignStructuralCooldownRepeatHours, cfg.SovereignExplorationSlotPct, cfg.SovereignSourceOpportunityCostEnabled, cfg.SovereignSlowSellerEnabled, cfg.SovereignGainV3ColdStartPct,
+		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.FreshPaidLiquidityLockEnabled, cfg.FreshPaidLiquidityLockHours, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback, cfg.SovereignAttributionWindowHours, cfg.SovereignSlowSellerWindowHours, cfg.SovereignTargetSourceQuarantineHours, cfg.SovereignStructuralCooldownRepeatHours, cfg.SovereignExplorationSlotPct, cfg.SovereignSourceOpportunityCostEnabled, cfg.SovereignSlowSellerEnabled, cfg.SovereignGainV3ColdStartPct, cfg.FastPathMaxTimeoutSec,
 	)
 	return err
 }

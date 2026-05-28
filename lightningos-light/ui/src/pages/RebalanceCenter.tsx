@@ -52,6 +52,9 @@ const REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR = 0.03
 const REBALANCE_DEFAULT_SOVEREIGN_GAIN_V3_COLD_START_PCT = 0.75
 const REBALANCE_MIN_SOVEREIGN_GAIN_V3_COLD_START_PCT = 0.5
 const REBALANCE_MAX_SOVEREIGN_GAIN_V3_COLD_START_PCT = 0.95
+const REBALANCE_DEFAULT_FAST_PATH_MAX_TIMEOUT_SEC = 90
+const REBALANCE_MIN_FAST_PATH_MAX_TIMEOUT_SEC = 30
+const REBALANCE_MAX_FAST_PATH_MAX_TIMEOUT_SEC = 300
 const REBALANCE_DEFAULT_SOVEREIGN_ATTRIBUTION_WINDOW_HOURS = 72
 const REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS = 168
 const REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS = 6
@@ -188,6 +191,7 @@ export default function RebalanceCenter() {
     sovereign_route_dead_source_share: typeof raw.sovereign_route_dead_source_share === 'number' ? raw.sovereign_route_dead_source_share : REBALANCE_DEFAULT_SOVEREIGN_ROUTE_DEAD_SOURCE_SHARE,
     sovereign_risk_score_floor: typeof raw.sovereign_risk_score_floor === 'number' ? raw.sovereign_risk_score_floor : REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR,
     sovereign_gain_v3_cold_start_pct: typeof raw.sovereign_gain_v3_cold_start_pct === 'number' ? raw.sovereign_gain_v3_cold_start_pct : REBALANCE_DEFAULT_SOVEREIGN_GAIN_V3_COLD_START_PCT,
+    fast_path_max_timeout_sec: typeof raw.fast_path_max_timeout_sec === 'number' ? raw.fast_path_max_timeout_sec : REBALANCE_DEFAULT_FAST_PATH_MAX_TIMEOUT_SEC,
     sovereign_attribution_window_hours: raw.sovereign_attribution_window_hours || REBALANCE_DEFAULT_SOVEREIGN_ATTRIBUTION_WINDOW_HOURS,
     sovereign_slow_seller_window_hours: raw.sovereign_slow_seller_window_hours || REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS,
     sovereign_target_source_quarantine_hours: typeof raw.sovereign_target_source_quarantine_hours === 'number' ? raw.sovereign_target_source_quarantine_hours : REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS,
@@ -248,6 +252,7 @@ export default function RebalanceCenter() {
       sovereign_route_dead_source_share: cfg.sovereign_route_dead_source_share,
       sovereign_risk_score_floor: cfg.sovereign_risk_score_floor,
       sovereign_gain_v3_cold_start_pct: cfg.sovereign_gain_v3_cold_start_pct,
+      fast_path_max_timeout_sec: cfg.fast_path_max_timeout_sec,
       sovereign_attribution_window_hours: cfg.sovereign_attribution_window_hours,
       sovereign_slow_seller_window_hours: cfg.sovereign_slow_seller_window_hours,
       sovereign_target_source_quarantine_hours: cfg.sovereign_target_source_quarantine_hours,
@@ -324,6 +329,7 @@ export default function RebalanceCenter() {
       sovereign_route_dead_source_share: cfg.sovereign_route_dead_source_share ?? REBALANCE_DEFAULT_SOVEREIGN_ROUTE_DEAD_SOURCE_SHARE,
       sovereign_risk_score_floor: cfg.sovereign_risk_score_floor ?? REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR,
       sovereign_gain_v3_cold_start_pct: cfg.sovereign_gain_v3_cold_start_pct ?? REBALANCE_DEFAULT_SOVEREIGN_GAIN_V3_COLD_START_PCT,
+      fast_path_max_timeout_sec: cfg.fast_path_max_timeout_sec ?? REBALANCE_DEFAULT_FAST_PATH_MAX_TIMEOUT_SEC,
       sovereign_attribution_window_hours: cfg.sovereign_attribution_window_hours ?? REBALANCE_DEFAULT_SOVEREIGN_ATTRIBUTION_WINDOW_HOURS,
       sovereign_slow_seller_window_hours: cfg.sovereign_slow_seller_window_hours ?? REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS,
       sovereign_target_source_quarantine_hours: cfg.sovereign_target_source_quarantine_hours ?? REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS,
@@ -710,6 +716,7 @@ export default function RebalanceCenter() {
           sovereign_route_dead_source_share: Math.max(0.01, Math.min(1, Number(config.sovereign_route_dead_source_share) || REBALANCE_DEFAULT_SOVEREIGN_ROUTE_DEAD_SOURCE_SHARE)),
           sovereign_risk_score_floor: Math.max(0.001, Math.min(0.2, Number(config.sovereign_risk_score_floor) || REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR)),
           sovereign_gain_v3_cold_start_pct: Math.max(REBALANCE_MIN_SOVEREIGN_GAIN_V3_COLD_START_PCT, Math.min(REBALANCE_MAX_SOVEREIGN_GAIN_V3_COLD_START_PCT, Number(config.sovereign_gain_v3_cold_start_pct) || REBALANCE_DEFAULT_SOVEREIGN_GAIN_V3_COLD_START_PCT)),
+          fast_path_max_timeout_sec: Math.max(REBALANCE_MIN_FAST_PATH_MAX_TIMEOUT_SEC, Math.min(REBALANCE_MAX_FAST_PATH_MAX_TIMEOUT_SEC, Number(config.fast_path_max_timeout_sec) || REBALANCE_DEFAULT_FAST_PATH_MAX_TIMEOUT_SEC)),
           sovereign_attribution_window_hours: Math.max(24, Math.min(720, Number(config.sovereign_attribution_window_hours) || REBALANCE_DEFAULT_SOVEREIGN_ATTRIBUTION_WINDOW_HOURS)),
           sovereign_slow_seller_window_hours: Math.max(24, Math.min(720, Number(config.sovereign_slow_seller_window_hours) || REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS)),
           sovereign_target_source_quarantine_hours: Math.max(0, Math.min(720, Number(config.sovereign_target_source_quarantine_hours) || REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS)),
@@ -805,6 +812,7 @@ export default function RebalanceCenter() {
         sovereign_route_dead_source_share: Math.max(0.01, Math.min(1, Number(config.sovereign_route_dead_source_share) || REBALANCE_DEFAULT_SOVEREIGN_ROUTE_DEAD_SOURCE_SHARE)),
         sovereign_risk_score_floor: Math.max(0.001, Math.min(0.2, Number(config.sovereign_risk_score_floor) || REBALANCE_DEFAULT_SOVEREIGN_RISK_SCORE_FLOOR)),
         sovereign_gain_v3_cold_start_pct: Math.max(REBALANCE_MIN_SOVEREIGN_GAIN_V3_COLD_START_PCT, Math.min(REBALANCE_MAX_SOVEREIGN_GAIN_V3_COLD_START_PCT, Number(config.sovereign_gain_v3_cold_start_pct) || REBALANCE_DEFAULT_SOVEREIGN_GAIN_V3_COLD_START_PCT)),
+        fast_path_max_timeout_sec: Math.max(REBALANCE_MIN_FAST_PATH_MAX_TIMEOUT_SEC, Math.min(REBALANCE_MAX_FAST_PATH_MAX_TIMEOUT_SEC, Number(config.fast_path_max_timeout_sec) || REBALANCE_DEFAULT_FAST_PATH_MAX_TIMEOUT_SEC)),
         sovereign_attribution_window_hours: Math.max(24, Math.min(720, Number(config.sovereign_attribution_window_hours) || REBALANCE_DEFAULT_SOVEREIGN_ATTRIBUTION_WINDOW_HOURS)),
         sovereign_slow_seller_window_hours: Math.max(24, Math.min(720, Number(config.sovereign_slow_seller_window_hours) || REBALANCE_DEFAULT_SOVEREIGN_SLOW_SELLER_WINDOW_HOURS)),
         sovereign_target_source_quarantine_hours: Math.max(0, Math.min(720, Number(config.sovereign_target_source_quarantine_hours) || REBALANCE_DEFAULT_SOVEREIGN_SOURCE_QUARANTINE_HOURS)),
@@ -830,6 +838,7 @@ export default function RebalanceCenter() {
           sovereign_route_dead_source_share: normalizedSaved.sovereign_route_dead_source_share,
           sovereign_risk_score_floor: normalizedSaved.sovereign_risk_score_floor,
           sovereign_gain_v3_cold_start_pct: normalizedSaved.sovereign_gain_v3_cold_start_pct,
+          fast_path_max_timeout_sec: normalizedSaved.fast_path_max_timeout_sec,
           sovereign_attribution_window_hours: normalizedSaved.sovereign_attribution_window_hours,
           sovereign_slow_seller_window_hours: normalizedSaved.sovereign_slow_seller_window_hours,
           sovereign_target_source_quarantine_hours: normalizedSaved.sovereign_target_source_quarantine_hours,
@@ -2253,6 +2262,21 @@ export default function RebalanceCenter() {
                   disabled={config.scheduler_mode === 'rules_auto' || (config.gain_model_version ?? 2) < 3}
                   value={Number(((config.sovereign_gain_v3_cold_start_pct ?? REBALANCE_DEFAULT_SOVEREIGN_GAIN_V3_COLD_START_PCT) * 100).toFixed(1))}
                   onChange={(e) => setConfig({ ...config, sovereign_gain_v3_cold_start_pct: Number(e.target.value) / 100 })}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-fog/70" title={t('rebalanceCenter.settingsHints.fastPathMaxTimeoutSec')}>
+                  {t('rebalanceCenter.settings.fastPathMaxTimeoutSec')}
+                </label>
+                <input
+                  className="input-field"
+                  type="number"
+                  min={REBALANCE_MIN_FAST_PATH_MAX_TIMEOUT_SEC}
+                  max={REBALANCE_MAX_FAST_PATH_MAX_TIMEOUT_SEC}
+                  step={5}
+                  disabled={!(config.delegated_fast_path_enabled ?? true)}
+                  value={config.fast_path_max_timeout_sec ?? REBALANCE_DEFAULT_FAST_PATH_MAX_TIMEOUT_SEC}
+                  onChange={(e) => setConfig({ ...config, fast_path_max_timeout_sec: Number(e.target.value) })}
                 />
               </div>
               <div className="space-y-2">

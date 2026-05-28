@@ -55,6 +55,9 @@ func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	if cfg.SovereignGainV3ColdStartPct != 0.75 {
 		t.Fatalf("expected sovereign_gain_v3_cold_start_pct default=0.75, got %f", cfg.SovereignGainV3ColdStartPct)
 	}
+	if cfg.FastPathMaxTimeoutSec != 90 {
+		t.Fatalf("expected fast_path_max_timeout_sec default=90, got %d", cfg.FastPathMaxTimeoutSec)
+	}
 	if cfg.SovereignAttributionWindowHours != 72 {
 		t.Fatalf("expected sovereign_attribution_window_hours default=72, got %d", cfg.SovereignAttributionWindowHours)
 	}
@@ -201,6 +204,33 @@ func TestNormalizeRebalanceConfigClampsGainV3ColdStartPct(t *testing.T) {
 			got := normalizeRebalanceConfig(cfg)
 			if got.SovereignGainV3ColdStartPct != tc.out {
 				t.Fatalf("normalize cold-start %f → expected %f, got %f", tc.in, tc.out, got.SovereignGainV3ColdStartPct)
+			}
+		})
+	}
+}
+
+func TestFastPathMaxTimeoutSecForConfig(t *testing.T) {
+	def := defaultRebalanceConfig()
+	cases := []struct {
+		name string
+		in   int
+		out  int
+	}{
+		{"below_range_falls_back_to_default", 10, def.FastPathMaxTimeoutSec},
+		{"above_range_falls_back_to_default", 600, def.FastPathMaxTimeoutSec},
+		{"zero_falls_back_to_default", 0, def.FastPathMaxTimeoutSec},
+		{"negative_falls_back_to_default", -5, def.FastPathMaxTimeoutSec},
+		{"min_kept", 30, 30},
+		{"mid_kept", 120, 120},
+		{"max_kept", 300, 300},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := defaultRebalanceConfig()
+			cfg.FastPathMaxTimeoutSec = tc.in
+			got := fastPathMaxTimeoutSecForConfig(cfg)
+			if got != tc.out {
+				t.Fatalf("input=%d expected=%d got=%d", tc.in, tc.out, got)
 			}
 		})
 	}

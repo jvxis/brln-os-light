@@ -5258,10 +5258,36 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 		if s.lnd == nil || strings.TrimSpace(paymentHash) == "" {
 			return false, 0
 		}
-		lookupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		pay, err := s.lnd.LookupPayment(lookupCtx, paymentHash, 2*time.Hour)
-		cancel()
-		if err != nil || pay == nil || pay.Status != lnrpc.Payment_SUCCEEDED {
+		// Race observada em prod (2026-05-28): attempt_timeout_sec dispara
+		// segundos depois do LND ter SETTLED o pagamento. LookupPayment no
+		// instante do timeout pode retornar IN_FLIGHT/UNKNOWN/INITIATED porque
+		// o LND ainda está finalizando bookkeeping interno. Sem retry,
+		// marcávamos o attempt como falho, populávamos pair_failure_cache
+		// indevidamente, e perdíamos crédito no ledger/budget. Poll curto
+		// (até reconcileMaxRetries × reconcileRetryDelay) resolve o gap.
+		const reconcileMaxRetries = 3
+		const reconcileRetryDelay = 2 * time.Second
+		var pay *lnrpc.Payment
+		for attempt := 0; attempt <= reconcileMaxRetries; attempt++ {
+			lookupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			p, err := s.lnd.LookupPayment(lookupCtx, paymentHash, 2*time.Hour)
+			cancel()
+			if err == nil && p != nil {
+				switch p.Status {
+				case lnrpc.Payment_SUCCEEDED:
+					pay = p
+				case lnrpc.Payment_FAILED:
+					return false, 0
+				}
+			}
+			if pay != nil {
+				break
+			}
+			if attempt < reconcileMaxRetries {
+				time.Sleep(reconcileRetryDelay)
+			}
+		}
+		if pay == nil {
 			return false, 0
 		}
 		amountSent := pay.ValueSat

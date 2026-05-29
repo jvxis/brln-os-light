@@ -25,6 +25,7 @@ type rebalanceConfigPayload struct {
 	SovereignRiskScoreFloor               *float64 `json:"sovereign_risk_score_floor,omitempty"`
 	SovereignGainV3ColdStartPct           *float64 `json:"sovereign_gain_v3_cold_start_pct,omitempty"`
 	FastPathMaxTimeoutSec                 *int     `json:"fast_path_max_timeout_sec,omitempty"`
+	SovereignTopBucketPct                 *int     `json:"sovereign_top_bucket_pct,omitempty"`
 	SovereignAttributionWindowHours       *int     `json:"sovereign_attribution_window_hours,omitempty"`
 	SovereignSlowSellerWindowHours        *int     `json:"sovereign_slow_seller_window_hours,omitempty"`
 	SovereignTargetSourceQuarantineHours  *int     `json:"sovereign_target_source_quarantine_hours,omitempty"`
@@ -208,6 +209,9 @@ func applyRebalanceConfigPayload(cfg RebalanceConfig, payload rebalanceConfigPay
 	}
 	if payload.FastPathMaxTimeoutSec != nil {
 		cfg.FastPathMaxTimeoutSec = *payload.FastPathMaxTimeoutSec
+	}
+	if payload.SovereignTopBucketPct != nil {
+		cfg.SovereignTopBucketPct = *payload.SovereignTopBucketPct
 	}
 	if payload.SovereignAttributionWindowHours != nil {
 		cfg.SovereignAttributionWindowHours = *payload.SovereignAttributionWindowHours
@@ -427,6 +431,9 @@ func validateRebalanceConfigPayload(payload rebalanceConfigPayload) error {
 		return err
 	}
 	if err := validateOptionalInt("fast_path_max_timeout_sec", payload.FastPathMaxTimeoutSec, fastPathMaxTimeoutSecMin, fastPathMaxTimeoutSecMax); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("sovereign_top_bucket_pct", payload.SovereignTopBucketPct, sovereignTopBucketPctMin, sovereignTopBucketPctMax); err != nil {
 		return err
 	}
 	if err := validateOptionalInt("sovereign_attribution_window_hours", payload.SovereignAttributionWindowHours, 24, sovereignWindowMaxHours); err != nil {

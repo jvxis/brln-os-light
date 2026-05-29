@@ -58,6 +58,9 @@ func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	if cfg.FastPathMaxTimeoutSec != 90 {
 		t.Fatalf("expected fast_path_max_timeout_sec default=90, got %d", cfg.FastPathMaxTimeoutSec)
 	}
+	if cfg.SovereignTopBucketPct != 30 {
+		t.Fatalf("expected sovereign_top_bucket_pct default=30, got %d", cfg.SovereignTopBucketPct)
+	}
 	if cfg.SovereignAttributionWindowHours != 72 {
 		t.Fatalf("expected sovereign_attribution_window_hours default=72, got %d", cfg.SovereignAttributionWindowHours)
 	}
@@ -3904,7 +3907,7 @@ func TestSortRebalanceTargetsHappyPathOrder(t *testing.T) {
 		},
 	}
 
-	sortRebalanceTargets(candidates, 1000, true)
+	sortRebalanceTargets(candidates, 1000, true, 10)
 
 	if candidates[0].Channel.PeerAlias != "stale-top" {
 		t.Fatalf("expected stale-top to win fairness tiebreak, got %q", candidates[0].Channel.PeerAlias)

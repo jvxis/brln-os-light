@@ -140,11 +140,17 @@ func TestBuildAndOrderRebalanceCandidatesGolden(t *testing.T) {
 		probeAmount   int64
 		original      int64
 	}
+	// Com top-bucket default de 30% (sovereign_top_bucket_pct), o threshold
+	// passa de 4900×0.9=4410 para 4900×0.7=3430. Todos os 4 candidatos
+	// (101=4900, 102=4700, 104=4300, 110=3600) entram no bucket → ordenam
+	// por fairness (LastAutoAt). 104 e 110 não têm LastAutoAt registrado
+	// (IsZero) → vão primeiro, tiebreak por score. 102 (-3h) precede 101
+	// (-1h) entre os que têm timestamp.
 	wantCandidates := []wantCandidate{
-		{id: 102, score: 4_700, amountSat: 200_000},
-		{id: 101, score: 4_900, amountSat: 200_000},
 		{id: 104, score: 4_300, amountSat: 200_000},
 		{id: 110, score: 3_600, amountSat: 200_000},
+		{id: 102, score: 4_700, amountSat: 200_000},
+		{id: 101, score: 4_900, amountSat: 200_000},
 		{id: 105, score: -1, cooldownProbe: true, amountSat: 50_000, probeAmount: 50_000, original: 200_000},
 	}
 	if len(got.Candidates) != len(wantCandidates) {

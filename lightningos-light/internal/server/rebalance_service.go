@@ -4387,6 +4387,7 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 				s.logger.Printf("rebalance fast-path preferred: job=%d target=%d amount=%d sources=%d fee_cap_ppm=%d timeout_sec=%d", r.jobID, r.targetChannelID, st.amount, len(preferredIDs), maxFeePpm, preferredTimeoutSec)
 			}
 			preferredCtx, preferredCancel := context.WithTimeout(ctx, time.Duration(preferredTimeoutSec+10)*time.Second)
+			preferredStartedAt := time.Now()
 			preferredPayment, preferredSendErr := s.lnd.SendPaymentMultiSource(
 				preferredCtx,
 				preferredInvoice.PaymentRequest,
@@ -4419,7 +4420,7 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 				if sourceUsed == 0 && len(preferredIDs) == 1 {
 					sourceUsed = preferredIDs[0]
 				}
-				_ = s.insertAttempt(ctx, r.jobID, 0, sourceUsed, st.amount, maxFeePpm, feePaidSat, "succeeded", preferredInvoice.PaymentHash, "", nil)
+				_ = s.insertAttemptWithStart(ctx, r.jobID, 0, sourceUsed, st.amount, maxFeePpm, feePaidSat, "succeeded", preferredInvoice.PaymentHash, "", nil, preferredStartedAt)
 				if sourceUsed != 0 {
 					s.recordPairSuccess(ctx, sourceUsed, r.targetChannelID, st.amount, maxFeePpm, feePaidSat, routeHops)
 					if cfg.MissionControlReinforce && len(routeHops) > 0 {
@@ -4460,6 +4461,7 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 	fastPathCtx, fastPathCancel := context.WithTimeout(ctx, time.Duration(broadTimeoutSec+10)*time.Second)
 	defer fastPathCancel()
 
+	broadStartedAt := time.Now()
 	payment, sendErr := s.lnd.SendPaymentMultiSource(
 		fastPathCtx,
 		invoice.PaymentRequest,
@@ -4515,7 +4517,7 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 
 	// attempt_index=0 indica que esse foi o caminho do fast-path (multi-source).
 	// Legacy attempts começam em 1 e incrementam — fica visualmente separado.
-	_ = s.insertAttempt(ctx, r.jobID, 0, sourceUsed, st.amount, maxFeePpm, feePaidSat, "succeeded", invoice.PaymentHash, "", nil)
+	_ = s.insertAttemptWithStart(ctx, r.jobID, 0, sourceUsed, st.amount, maxFeePpm, feePaidSat, "succeeded", invoice.PaymentHash, "", nil, broadStartedAt)
 	if sourceUsed != 0 {
 		s.recordPairSuccess(ctx, sourceUsed, r.targetChannelID, st.amount, maxFeePpm, feePaidSat, routeHops)
 		if cfg.MissionControlReinforce && len(routeHops) > 0 {
@@ -12897,6 +12899,16 @@ func parseRouteFailure(err error, route *lnrpc.Route) *attemptFailureInfo {
 }
 
 func (s *RebalanceService) insertAttempt(ctx context.Context, jobID int64, idx int, sourceChannelID uint64, amount int64, feePpm int64, feePaidSat int64, status string, paymentHash string, failReason string, fail *attemptFailureInfo) error {
+	return s.insertAttemptWithStart(ctx, jobID, idx, sourceChannelID, amount, feePpm, feePaidSat, status, paymentHash, failReason, fail, time.Time{})
+}
+
+// insertAttemptWithStart é como insertAttempt mas permite especificar quando o
+// attempt começou. Quando startedAt é zero, usa a default `now()` do DB (que
+// na prática iguala finished_at = duração 0 — bug que afetava as percentile_cont
+// queries do R6). Callers que medem latência real (fast-path) capturam o
+// start time antes da chamada de rede e passam aqui pra que finished_at -
+// started_at reflita a duração real do attempt.
+func (s *RebalanceService) insertAttemptWithStart(ctx context.Context, jobID int64, idx int, sourceChannelID uint64, amount int64, feePpm int64, feePaidSat int64, status string, paymentHash string, failReason string, fail *attemptFailureInfo, startedAt time.Time) error {
 	if s.db == nil {
 		return nil
 	}
@@ -12908,11 +12920,19 @@ func (s *RebalanceService) insertAttempt(ctx context.Context, jobID int64, idx i
 			failHopPubkey = fail.HopPubkey
 		}
 	}
-	_, err := s.db.Exec(ctx, `
+	if startedAt.IsZero() {
+		_, err := s.db.Exec(ctx, `
 insert into rebalance_attempts (
   job_id, attempt_index, source_channel_id, amount_sat, fee_limit_ppm, fee_paid_sat, status, payment_hash, fail_reason, fail_source_index, fail_hop_pubkey, finished_at
 ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now())
 `, jobID, idx, int64(sourceChannelID), amount, feePpm, feePaidSat, status, nullableString(paymentHash), nullableString(failReason), failSourceIndex, failHopPubkey)
+		return err
+	}
+	_, err := s.db.Exec(ctx, `
+insert into rebalance_attempts (
+  job_id, attempt_index, source_channel_id, amount_sat, fee_limit_ppm, fee_paid_sat, status, payment_hash, fail_reason, fail_source_index, fail_hop_pubkey, started_at, finished_at
+) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now())
+`, jobID, idx, int64(sourceChannelID), amount, feePpm, feePaidSat, status, nullableString(paymentHash), nullableString(failReason), failSourceIndex, failHopPubkey, startedAt)
 	return err
 }
 

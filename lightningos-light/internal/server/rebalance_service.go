@@ -3358,7 +3358,14 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 		case maxJobs > 0 && result.Selected >= maxJobs:
 			decision.Reason = "cycle_limit"
 			noteSkip(decision.Reason)
-		case expectedProfit < cfg.SovereignMinExpectedProfitSat:
+		// 2026-05-29: exploration_slot bypass para expected_profit_below_min,
+		// guardado por profit >= 0 pra não autorizar jobs em loss garantido.
+		// Sem isso, o knob sovereign_exploration_slot_pct era placebo — os
+		// candidatos low-score que ele queria privilegiar batiam neste gate
+		// antes da lógica de exploration ter efeito visível. Resultado: pool
+		// efetivo travado nos top-score targets, que se queimam em
+		// target_structural_cooldown e somem do scan por 6h.
+		case !(target.ExplorationSlot && expectedProfit >= 0) && expectedProfit < cfg.SovereignMinExpectedProfitSat:
 			decision.Reason = "expected_profit_below_min"
 			noteSkip(decision.Reason)
 		case !target.ExplorationSlot && shouldHardSkipSovereignBudgetEfficiencyOpportunity(target.PairStats, expectedProfit, budgetCost, cfg):
@@ -3407,7 +3414,7 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 				decision.BudgetCostSat = budgetCost
 				decision.ExpectedGainSat = estimateTargetGainForConfig(targetCfg, target.Channel, targetAmount)
 				decision.ExpectedProfitSat = decision.ExpectedGainSat - decision.EstimatedCostSat
-				if decision.ExpectedProfitSat < cfg.SovereignMinExpectedProfitSat {
+				if !(target.ExplorationSlot && decision.ExpectedProfitSat >= 0) && decision.ExpectedProfitSat < cfg.SovereignMinExpectedProfitSat {
 					decision.Reason = "expected_profit_below_min"
 					noteSkip(decision.Reason)
 					appendDecision(decision)

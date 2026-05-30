@@ -6382,7 +6382,7 @@ export default function LightningOps() {
             </div>
           </div>
         {filteredChannels.length ? (
-          <div className="max-h-[70vh] overflow-y-auto pr-2 xl:max-h-[78vh]">
+          <div className="h-[70vh] min-h-[520px] resize-y overflow-y-auto pr-2 xl:h-[78vh] xl:min-h-[640px]">
             <div className="grid gap-3">
               {filteredChannels.map((ch) => {
                 const localDisabled = ch.local_disabled ?? isLocalChanDisabled(ch.chan_status_flags)

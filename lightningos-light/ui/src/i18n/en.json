@@ -3134,12 +3134,17 @@
       "forward": "Forward revenue",
       "rebalance": "Rebalance cost"
     },
-    "controls": {
-      "title": "Autofee Controls",
-      "subtitle": "Tune global policy, movement, seeds, protections, and run actions."
-    },
-    "policies": {
-      "title": "Channel Policies",
+      "controls": {
+        "title": "Autofee Controls",
+        "subtitle": "Tune global policy, movement, seeds, protections, and run actions."
+      },
+      "actions": {
+        "title": "Autofee Actions",
+        "subtitle": "Save the setup or execute a manual Autofee run.",
+        "saveScope": "Save persists every changed field across controls, seeds, protections, and movement."
+      },
+      "policies": {
+        "title": "Channel Policies",
       "subtitle": "Current channel fee policies enriched with latest Autofee movement and 7d economics.",
       "count": "{{count}} channels",
       "peer": "Peer",

@@ -3134,12 +3134,17 @@
       "forward": "Receita de forwards",
       "rebalance": "Custo de rebalance"
     },
-    "controls": {
-      "title": "Controles do Autofee",
-      "subtitle": "Ajuste política global, movimento, seeds, proteções e ações de execução."
-    },
-    "policies": {
-      "title": "Políticas dos Canais",
+      "controls": {
+        "title": "Controles do Autofee",
+        "subtitle": "Ajuste política global, movimento, seeds, proteções e ações de execução."
+      },
+      "actions": {
+        "title": "Ações do Autofee",
+        "subtitle": "Salve o setup ou execute uma rodada manual do Autofee.",
+        "saveScope": "Salvar grava todos os campos alterados em controles, seeds, proteções e movimento."
+      },
+      "policies": {
+        "title": "Políticas dos Canais",
       "subtitle": "Policies atuais dos canais enriquecidas com o último movimento do Autofee e economia 7d.",
       "count": "{{count}} canais",
       "peer": "Peer",

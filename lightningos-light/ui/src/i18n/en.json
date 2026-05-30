@@ -2002,6 +2002,8 @@
   "lightningOps": {
     "active": "Active",
     "addPeer": "Add peer",
+    "lightningToolsTitle": "Lightning Tools",
+    "lightningToolsSubtitle": "Quick access to operational tools for peers, channels, fees, automations, and signing.",
     "ambossHealthDisabled": "Amboss health checks disabled.",
     "ambossHealthEnabled": "Amboss health checks enabled.",
     "ambossHealthInterval": "Interval",

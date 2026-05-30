@@ -835,9 +835,20 @@ const SECTION_HASH_PARAM = 'section'
 const PEERS_SECTION_ID = 'peers-section'
 const CLOSE_RECOVERY_SECTION_ID = 'close-recovery-section'
 const AUTOFEE_SECTION_ID = 'autofee-section'
+const LIGHTNING_TOOLS_SECTION_ID = 'lightning-tools-section'
+const ADD_PEER_TOOL_SECTION_ID = 'add-peer-tool-section'
 const HTLC_MANAGER_SECTION_ID = 'htlc-manager-section'
 const OPEN_CHANNEL_SECTION_ID = 'open-channel-section'
+const CLOSE_CHANNEL_SECTION_ID = 'close-channel-section'
+const UPDATE_FEES_SECTION_ID = 'update-fees-section'
 const BATCH_OPEN_SECTION_ID = 'batch-open-section'
+const BALANCED_OPEN_SECTION_ID = 'balanced-open-section'
+const WATCHTOWER_SECTION_ID = 'watchtower-section'
+const AMBOSS_HEALTH_SECTION_ID = 'amboss-health-section'
+const CHAN_HEAL_SECTION_ID = 'chan-heal-section'
+const TOR_PEER_SECTION_ID = 'tor-peer-section'
+const FAILED_PAYMENTS_CLEANER_SECTION_ID = 'failed-payments-cleaner-section'
+const SIGN_MESSAGE_SECTION_ID = 'sign-message-section'
 const SCB_RECOVERY_CONFIRM_PHRASE = 'I UNDERSTAND FORCE CLOSE'
 const BALANCED_OPEN_FUNDING_VBYTES = 190
 const BALANCED_OPEN_REQUIRED_REMAINING_SAT = 10000
@@ -961,6 +972,10 @@ export default function LightningOps() {
   const [closeRecoveryActionStatusByID, setCloseRecoveryActionStatusByID] = useState<Record<number, string>>({})
   const [channelRankingMap, setChannelRankingMap] = useState<Record<string, ChannelRankingItem>>({})
   const [channelsSubview, setChannelsSubview] = useState<'channels' | 'close_recovery'>('channels')
+  const [lightningToolsOpen, setLightningToolsOpen] = useState(false)
+  const [peersOpen, setPeersOpen] = useState(false)
+  const [closedChannelsOpen, setClosedChannelsOpen] = useState(false)
+  const [scbRecoveryOpen, setScbRecoveryOpen] = useState(false)
   const [closedChannelSearch, setClosedChannelSearch] = useState('')
   const [closedChannelFilter, setClosedChannelFilter] = useState<'all' | 'cooperative' | 'force' | 'breach' | 'other'>('all')
   const [peerListStatus, setPeerListStatus] = useState('')
@@ -3416,14 +3431,15 @@ export default function LightningOps() {
       return
     }
     if (targetSection === 'htlc_manager') {
+      setLightningToolsOpen(true)
       window.setTimeout(() => {
         const target = document.getElementById(HTLC_MANAGER_SECTION_ID)
         if (!target) return
         target.scrollIntoView({ behavior: 'smooth', block: 'start' })
         pendingScrollSectionRef.current = ''
-      }, 50)
+      }, 80)
     }
-  }, [channelsSubview, autofeeOpen])
+  }, [channelsSubview, autofeeOpen, lightningToolsOpen])
 
   const baseFilteredChannels = useMemo(() => {
     let list = channels
@@ -3539,6 +3555,10 @@ export default function LightningOps() {
     const normalizedTarget = targetPeerPubKey.toLowerCase()
     const targetPeer = peers.find((peer) => String(peer.pub_key || '').trim().toLowerCase() === normalizedTarget)
     if (!targetPeer) return
+    if (!peersOpen) {
+      setPeersOpen(true)
+      return
+    }
     const targetElement = document.getElementById(peerCardID(targetPeer.pub_key))
     if (!targetElement) return
     targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -3552,7 +3572,7 @@ export default function LightningOps() {
       setFocusedPeerPubKey((current) => (current === targetPeer.pub_key ? '' : current))
       peerFocusClearTimerRef.current = null
     }, 3200)
-  }, [peers])
+  }, [peers, peersOpen])
 
   const sortClosedChannelsList = (items: ClosedChannel[]) => (
     [...items].sort((a, b) => {
@@ -4830,6 +4850,7 @@ export default function LightningOps() {
 
   const scrollToSectionAndFocus = (sectionID: string, focusTarget?: HTMLInputElement | null) => {
     if (typeof window === 'undefined') return
+    setLightningToolsOpen(true)
     window.setTimeout(() => {
       const target = document.getElementById(sectionID)
       if (target) {
@@ -5515,13 +5536,14 @@ export default function LightningOps() {
   const handlePrepareCloseChannel = (channelPoint: string) => {
     const point = String(channelPoint || '').trim()
     if (!point) return
+    setLightningToolsOpen(true)
     setClosePoint(point)
     setCloseStatus('')
     if (typeof window === 'undefined') return
     window.setTimeout(() => {
       closeCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
       closeSelectRef.current?.focus()
-    }, 0)
+    }, 80)
   }
 
   const handleToggleFCRiskFilter = () => {
@@ -5640,6 +5662,79 @@ export default function LightningOps() {
     }
   }
 
+  const renderToolGlyph = (kind: string) => {
+    let paths: JSX.Element
+    switch (kind) {
+      case 'peer':
+        paths = <><circle cx="8" cy="8" r="3" /><path d="M14 20a6 6 0 0 0-12 0" /><path d="M18 7v6" /><path d="M15 10h6" /></>
+        break
+      case 'open':
+        paths = <><path d="M5 12h14" /><path d="M13 6l6 6-6 6" /><path d="M5 5v14" /></>
+        break
+      case 'close':
+        paths = <><circle cx="12" cy="12" r="8" /><path d="M8 8l8 8" /><path d="M16 8l-8 8" /></>
+        break
+      case 'fees':
+        paths = <><path d="M5 7h14" /><path d="M5 12h14" /><path d="M5 17h14" /><circle cx="9" cy="7" r="1.5" /><circle cx="15" cy="12" r="1.5" /><circle cx="11" cy="17" r="1.5" /></>
+        break
+      case 'batch':
+        paths = <><rect x="4" y="4" width="6" height="6" rx="1" /><rect x="14" y="4" width="6" height="6" rx="1" /><rect x="4" y="14" width="6" height="6" rx="1" /><rect x="14" y="14" width="6" height="6" rx="1" /></>
+        break
+      case 'balance':
+        paths = <><path d="M12 4v16" /><path d="M5 8h14" /><path d="M7 8l-3 5h6l-3-5z" /><path d="M17 8l-3 5h6l-3-5z" /><path d="M8 20h8" /></>
+        break
+      case 'tower':
+        paths = <><path d="M12 3l5 18H7l5-18z" /><path d="M9 12h6" /><path d="M10 8h4" /></>
+        break
+      case 'pulse':
+        paths = <><path d="M4 13h4l2-6 4 10 2-4h4" /><path d="M4 19h16" /></>
+        break
+      case 'heal':
+        paths = <><path d="M12 5v14" /><path d="M5 12h14" /><circle cx="12" cy="12" r="8" /></>
+        break
+      case 'tor':
+        paths = <><circle cx="12" cy="12" r="8" /><path d="M12 4v16" /><path d="M4 12h16" /><path d="M7 7c3 2 7 2 10 0" /><path d="M7 17c3-2 7-2 10 0" /></>
+        break
+      case 'clean':
+        paths = <><path d="M6 19h12" /><path d="M8 15h8" /><path d="M10 5h4l1 10H9l1-10z" /></>
+        break
+      case 'sign':
+        paths = <><path d="M5 19l4-1 9-9-3-3-9 9-1 4z" /><path d="M13 6l3 3" /></>
+        break
+      default:
+        paths = <><circle cx="12" cy="12" r="8" /><path d="M12 8v8" /><path d="M8 12h8" /></>
+    }
+    return (
+      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        {paths}
+      </svg>
+    )
+  }
+
+  const scrollToLightningTool = (sectionID: string, focusTarget?: HTMLElement | null) => {
+    setLightningToolsOpen(true)
+    if (typeof window === 'undefined') return
+    window.setTimeout(() => {
+      const target = document.getElementById(sectionID)
+      target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      focusTarget?.focus()
+    }, 80)
+  }
+
+  const renderToolShortcut = (sectionID: string, label: string, kind: string, focusTarget?: HTMLElement | null) => (
+    <button
+      key={sectionID}
+      type="button"
+      className="inline-flex h-10 items-center gap-2 rounded-full border border-white/10 bg-ink/60 px-3 text-xs text-fog/75 transition hover:border-sky-300/60 hover:text-sky-100"
+      onClick={() => scrollToLightningTool(sectionID, focusTarget)}
+      title={label}
+      aria-label={label}
+    >
+      {renderToolGlyph(kind)}
+      <span className="hidden md:inline">{label}</span>
+    </button>
+  )
+
   return (
     <section className="space-y-6">
       <div className="section-card">
@@ -5670,7 +5765,8 @@ export default function LightningOps() {
         {chanStatusMessage && <p className="mt-2 text-sm text-brass">{chanStatusMessage}</p>}
       </div>
 
-      <div id={AUTOFEE_SECTION_ID} className="section-card space-y-4">
+      <div className="flex flex-col gap-6">
+      <div id={AUTOFEE_SECTION_ID} className="section-card order-2 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-3">
             <h3 className="text-lg font-semibold">{t('lightningOps.channels')}</h3>
@@ -6286,7 +6382,7 @@ export default function LightningOps() {
             </div>
           </div>
         {filteredChannels.length ? (
-          <div className="max-h-[680px] overflow-y-auto pr-2">
+          <div className="max-h-[70vh] overflow-y-auto pr-2 xl:max-h-[78vh]">
             <div className="grid gap-3">
               {filteredChannels.map((ch) => {
                 const localDisabled = ch.local_disabled ?? isLocalChanDisabled(ch.chan_status_flags)
@@ -6997,8 +7093,43 @@ export default function LightningOps() {
         )}
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div id={LIGHTNING_TOOLS_SECTION_ID} className="order-1 space-y-4">
         <div className="section-card space-y-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="text-lg font-semibold">{t('lightningOps.lightningToolsTitle')}</h3>
+              <p className="text-sm text-fog/60">{t('lightningOps.lightningToolsSubtitle')}</p>
+            </div>
+            <button
+              type="button"
+              className="btn-secondary text-xs px-3 py-2"
+              onClick={() => setLightningToolsOpen((open) => !open)}
+              aria-expanded={lightningToolsOpen}
+            >
+              {lightningToolsOpen ? t('common.hide') : t('common.open')}
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {renderToolShortcut(ADD_PEER_TOOL_SECTION_ID, t('lightningOps.addPeer'), 'peer')}
+            {renderToolShortcut(OPEN_CHANNEL_SECTION_ID, t('lightningOps.openChannel'), 'open', openPeerInputRef.current)}
+            {renderToolShortcut(CLOSE_CHANNEL_SECTION_ID, t('lightningOps.closeChannel'), 'close', closeSelectRef.current)}
+            {renderToolShortcut(UPDATE_FEES_SECTION_ID, t('lightningOps.updateFees'), 'fees')}
+            {renderToolShortcut(BATCH_OPEN_SECTION_ID, t('lightningOps.batchOpenTitle'), 'batch', batchPeerInputRef.current)}
+            {renderToolShortcut(BALANCED_OPEN_SECTION_ID, t('lightningOps.balancedOpenTitle'), 'balance')}
+            {renderToolShortcut(WATCHTOWER_SECTION_ID, t('lightningOps.watchtowerTitle'), 'tower')}
+            {renderToolShortcut(HTLC_MANAGER_SECTION_ID, t('lightningOps.htlcManagerTitle'), 'pulse')}
+            {renderToolShortcut(AMBOSS_HEALTH_SECTION_ID, t('lightningOps.ambossHealthTitle'), 'pulse')}
+            {renderToolShortcut(CHAN_HEAL_SECTION_ID, t('lightningOps.chanHealTitle'), 'heal')}
+            {renderToolShortcut(TOR_PEER_SECTION_ID, t('lightningOps.torPeerTitle'), 'tor')}
+            {renderToolShortcut(FAILED_PAYMENTS_CLEANER_SECTION_ID, t('lightningOps.failedPaymentsCleanerTitle'), 'clean')}
+            {renderToolShortcut(SIGN_MESSAGE_SECTION_ID, t('lightningOps.signMessageTitle'), 'sign')}
+          </div>
+        </div>
+
+        {lightningToolsOpen && (
+          <div className="space-y-6">
+      <div className="grid gap-6 lg:grid-cols-2">
+        <div id={ADD_PEER_TOOL_SECTION_ID} className="section-card space-y-4">
           <h3 className="text-lg font-semibold">{t('lightningOps.addPeer')}</h3>
           <input
             className="input-field"
@@ -7184,7 +7315,7 @@ export default function LightningOps() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <div ref={closeCardRef} className="section-card space-y-4">
+        <div id={CLOSE_CHANNEL_SECTION_ID} ref={closeCardRef} className="section-card space-y-4">
           <h3 className="text-lg font-semibold">{t('lightningOps.closeChannel')}</h3>
           <select
             ref={closeSelectRef}
@@ -7282,7 +7413,7 @@ export default function LightningOps() {
           {closeStatus && <p className="text-sm text-brass">{closeStatus}</p>}
         </div>
 
-        <div className="section-card space-y-4">
+        <div id={UPDATE_FEES_SECTION_ID} className="section-card space-y-4">
           <h3 className="text-lg font-semibold">{t('lightningOps.updateFees')}</h3>
           <div className="flex flex-wrap gap-3 text-sm">
             <button
@@ -7552,7 +7683,7 @@ export default function LightningOps() {
         )}
       </div>
 
-      <div className="section-card space-y-4">
+      <div id={BALANCED_OPEN_SECTION_ID} className="section-card space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h3 className="text-lg font-semibold">{t('lightningOps.balancedOpenTitle')}</h3>
@@ -7802,7 +7933,7 @@ export default function LightningOps() {
         )}
       </div>
 
-      <div className="section-card space-y-4">
+      <div id={WATCHTOWER_SECTION_ID} className="section-card space-y-4">
         <div>
           <h3 className="text-lg font-semibold">{t('lightningOps.watchtowerTitle')}</h3>
           <p className="text-sm text-fog/60">{t('lightningOps.watchtowerSubtitle')}</p>
@@ -7844,7 +7975,7 @@ export default function LightningOps() {
         {watchtowerStatus && <p className="text-sm text-brass">{watchtowerStatus}</p>}
       </div>
 
-      <div className="section-card space-y-4">
+      <div id={HTLC_MANAGER_SECTION_ID} className="section-card space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-lg font-semibold">{t('lightningOps.htlcManagerTitle')}</h3>
@@ -8023,7 +8154,7 @@ export default function LightningOps() {
         )}
       </div>
 
-      <div className="section-card space-y-4">
+      <div id={AMBOSS_HEALTH_SECTION_ID} className="section-card space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-lg font-semibold">{t('lightningOps.ambossHealthTitle')}</h3>
@@ -8067,7 +8198,7 @@ export default function LightningOps() {
       )}
     </div>
 
-      <div className="section-card space-y-4">
+      <div id={CHAN_HEAL_SECTION_ID} className="section-card space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-lg font-semibold">{t('lightningOps.chanHealTitle')}</h3>
@@ -8141,7 +8272,7 @@ export default function LightningOps() {
         )}
       </div>
 
-      <div className="section-card space-y-4">
+      <div id={TOR_PEER_SECTION_ID} className="section-card space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-lg font-semibold">{t('lightningOps.torPeerTitle')}</h3>
@@ -8246,7 +8377,7 @@ export default function LightningOps() {
         )}
       </div>
 
-      <div id={HTLC_MANAGER_SECTION_ID} className="section-card space-y-4">
+      <div id={FAILED_PAYMENTS_CLEANER_SECTION_ID} className="section-card space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-lg font-semibold">{t('lightningOps.failedPaymentsCleanerTitle')}</h3>
@@ -8322,7 +8453,7 @@ export default function LightningOps() {
         )}
       </div>
 
-      <div className="section-card space-y-4">
+      <div id={SIGN_MESSAGE_SECTION_ID} className="section-card space-y-4">
         <div>
           <h3 className="text-lg font-semibold">{t('lightningOps.signMessageTitle')}</h3>
           <p className="text-sm text-fog/60">{t('lightningOps.signMessageSubtitle')}</p>
@@ -8373,11 +8504,27 @@ export default function LightningOps() {
         )}
       </div>
 
-      <div id={PEERS_SECTION_ID} className="section-card space-y-4">
+          </div>
+        )}
+      </div>
+
+      <div id={PEERS_SECTION_ID} className="section-card order-3 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 className="text-lg font-semibold">{t('lightningOps.peers')}</h3>
-          <span className="text-xs text-fog/60">{t('lightningOps.connectedPeers', { count: peers.length })}</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-fog/60">{t('lightningOps.connectedPeers', { count: peers.length })}</span>
+            <button
+              type="button"
+              className="btn-secondary text-xs px-3 py-2"
+              onClick={() => setPeersOpen((open) => !open)}
+              aria-expanded={peersOpen}
+            >
+              {peersOpen ? t('common.hide') : t('common.open')}
+            </button>
+          </div>
         </div>
+        {peersOpen && (
+          <>
         {peerActionStatus && <p className="text-sm text-brass">{peerActionStatus}</p>}
         {peerListStatus && <p className="text-sm text-brass">{peerListStatus}</p>}
         {peers.length ? (
@@ -8436,16 +8583,30 @@ export default function LightningOps() {
         ) : (
           <p className="text-sm text-fog/60">{t('lightningOps.noConnectedPeers')}</p>
         )}
+          </>
+        )}
       </div>
 
-      <div className="section-card space-y-4">
+      <div className="section-card order-4 space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h3 className="text-lg font-semibold">{t('lightningOps.closedChannelsTitle')}</h3>
             <p className="text-sm text-fog/60">{t('lightningOps.closedChannelsSubtitle')}</p>
           </div>
-          <span className="text-xs text-fog/60">{t('lightningOps.closedChannelsCount', { count: closedChannels.length })}</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-fog/60">{t('lightningOps.closedChannelsCount', { count: closedChannels.length })}</span>
+            <button
+              type="button"
+              className="btn-secondary text-xs px-3 py-2"
+              onClick={() => setClosedChannelsOpen((open) => !open)}
+              aria-expanded={closedChannelsOpen}
+            >
+              {closedChannelsOpen ? t('common.hide') : t('common.open')}
+            </button>
+          </div>
         </div>
+        {closedChannelsOpen && (
+          <>
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
           <input
             className="input-field lg:flex-1"
@@ -8667,18 +8828,32 @@ export default function LightningOps() {
             {closedChannels.length ? t('lightningOps.closedChannelsNoMatch') : t('lightningOps.closedChannelsEmpty')}
           </p>
         )}
+          </>
+        )}
       </div>
 
       {scbRecoveryAvailable && (
-        <div className="section-card space-y-4 border border-ember/20">
+        <div className="section-card order-5 space-y-4 border border-ember/20">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="text-lg font-semibold">{t('lightningOps.scbRecoveryTitle')}</h3>
               <p className="text-sm text-fog/60">{t('lightningOps.scbRecoverySubtitle')}</p>
             </div>
-            <span className="rounded-full px-3 py-1 text-xs bg-ember/20 text-ember">{t('lightningOps.scbRecoveryWarningTag')}</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full px-3 py-1 text-xs bg-ember/20 text-ember">{t('lightningOps.scbRecoveryWarningTag')}</span>
+              <button
+                type="button"
+                className="btn-secondary text-xs px-3 py-2"
+                onClick={() => setScbRecoveryOpen((open) => !open)}
+                aria-expanded={scbRecoveryOpen}
+              >
+                {scbRecoveryOpen ? t('common.hide') : t('common.open')}
+              </button>
+            </div>
           </div>
 
+          {scbRecoveryOpen && (
+            <>
           <p className="text-xs text-ember">{t('lightningOps.scbRecoveryWarningBody')}</p>
 
           <div className="flex flex-wrap items-center gap-3">
@@ -8743,8 +8918,11 @@ export default function LightningOps() {
           {scbRestoreResult !== null && (
             <p className="text-xs text-fog/60">{t('lightningOps.scbRecoveryResult', { count: scbRestoreResult })}</p>
           )}
+            </>
+          )}
         </div>
       )}
+      </div>
     </section>
   )
 }

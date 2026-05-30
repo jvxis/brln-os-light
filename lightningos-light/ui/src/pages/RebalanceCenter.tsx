@@ -17,6 +17,7 @@ import {
   updateRebalanceExclude
 } from '../api'
 import { MetricDisclosure } from '../components/rebalance/MetricDisclosure'
+import OverviewHero from '../components/rebalance/OverviewHero'
 import { PairStatsPanel } from '../components/rebalance/PairStatsPanel'
 import { SettingsSubcard } from '../components/rebalance/SettingsSubcard'
 import type {
@@ -116,6 +117,7 @@ export default function RebalanceCenter() {
 
   const [config, setConfig] = useState<RebalanceConfig | null>(null)
   const [overview, setOverview] = useState<RebalanceOverview | null>(null)
+  const [classicOverviewOpen, setClassicOverviewOpen] = useState(false)
   const [channels, setChannels] = useState<RebalanceChannel[]>([])
   const [queueJobs, setQueueJobs] = useState<RebalanceJob[]>([])
   const [queueAttempts, setQueueAttempts] = useState<RebalanceAttempt[]>([])
@@ -1471,6 +1473,21 @@ export default function RebalanceCenter() {
       {initialLoading && <p className="text-sm text-fog/60">{t('rebalanceCenter.loading')}</p>}
 
       {overview && (
+        <OverviewHero
+          overview={overview}
+          config={config}
+          t={t}
+          formatSats={formatSats}
+          formatPct={formatPct}
+          formatTimestamp={formatTimestamp}
+          onResetMC={handleResetMissionControl}
+          resetMCDisabled={mcResetBusy}
+          classicOpen={classicOverviewOpen}
+          onToggleClassic={() => setClassicOverviewOpen((prev) => !prev)}
+        />
+      )}
+
+      {overview && classicOverviewOpen && (
         <div className="grid gap-4 lg:grid-cols-4">
             <div className="section-card space-y-2">
               <p className="text-xs uppercase tracking-wide text-fog/60">{t('rebalanceCenter.overview.liveCost')}</p>

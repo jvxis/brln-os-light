@@ -54,6 +54,7 @@
     "elements": "Elements",
     "graphExplorer": "Explorador do Grafo",
     "lightningOps": "Operações Lightning",
+    "feeCenter": "Central de Fees",
     "channelRanking": "Ranking de Canais",
     "newChannels": "Novos Canais",
     "onchainHub": "On-chain Hub",
@@ -3074,6 +3075,84 @@
     "deadline": "Prazo para aposentadoria automática",
     "loading": "Carregando aposentadoria do node...",
     "loadFailed": "Falha ao carregar aposentadoria do node."
+  },
+  "feeCenter": {
+    "title": "Central de Fees",
+    "subtitle": "Controle do Autofee, pressão de política, cobertura de seeds e resultado das taxas.",
+    "loading": "Carregando Central de Fees...",
+    "partialLoadFailed": "Parte dos dados da Central de Fees está indisponível.",
+    "running": "Rodando",
+    "idle": "Ocioso",
+    "enabledIdle": "Ativo",
+    "error": "Erro",
+    "tiles": {
+      "automation": "Automação",
+      "lastRunImpact": "Impacto da última rodada",
+      "policyRange": "Faixa de política",
+      "seedCoverage": "Cobertura de seeds",
+      "policyCoverage": "Cobertura de políticas",
+      "feePressure": "Pressão de fees",
+      "economics7d": "Economia 7d"
+    },
+    "impact": {
+      "title": "Impacto da Última Rodada",
+      "empty": "Nenhuma rodada de Autofee encontrada ainda.",
+      "emptyLane": "Nenhum canal nesta faixa.",
+      "up": "Subiu",
+      "down": "Caiu",
+      "cooldown": "Cooldown",
+      "errors": "Erros",
+      "special": "Especial",
+      "upLane": "Fee Subiu",
+      "downLane": "Fee Caiu",
+      "specialLane": "Inbound / Especial"
+    },
+    "links": {
+      "lightningOps": "Lightning Ops",
+      "rebalance": "Rebalance"
+    },
+    "policy": {
+      "target": "alvo",
+      "floor": "floor",
+      "seed": "seed",
+      "median": "Mediana",
+      "maxSeen": "Máxima vista",
+      "averageWithinMax": "Média dentro do máximo",
+      "targetAligned": "Alinhados ao alvo"
+    },
+    "seed": {
+      "known": "Conhecidos",
+      "native": "Nativo",
+      "amboss": "Amboss",
+      "local": "Local",
+      "fallback": "Fallback"
+    },
+    "pressure": {
+      "none": "Nenhuma tag limitante na última rodada."
+    },
+    "economics": {
+      "forward": "Receita de forwards",
+      "rebalance": "Custo de rebalance"
+    },
+    "controls": {
+      "title": "Controles do Autofee",
+      "subtitle": "Ajuste política global, movimento, seeds, proteções e ações de execução."
+    },
+    "policies": {
+      "title": "Políticas dos Canais",
+      "subtitle": "Policies atuais dos canais enriquecidas com o último movimento do Autofee e economia 7d.",
+      "count": "{{count}} canais",
+      "peer": "Peer",
+      "policy": "Política",
+      "lastMove": "Último movimento",
+      "signals": "Sinais",
+      "links": "Links",
+      "noMove": "Sem movimento na última rodada"
+    },
+    "runLog": {
+      "title": "Log de Execuções",
+      "subtitle": "Saída técnica do Autofee para auditoria e troubleshooting."
+    }
   },
   "rebalanceCenter": {
     "title": "Rebalance Center",

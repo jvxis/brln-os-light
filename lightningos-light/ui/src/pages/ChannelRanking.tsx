@@ -128,6 +128,7 @@ type ChannelRankingFeedback = {
 const CHANNEL_RANKING_ROUTE_KEY = 'channel-ranking'
 const LIGHTNING_OPS_ROUTE_KEY = 'lightning-ops'
 const REBALANCE_ROUTE_KEY = 'rebalance-center'
+const FEE_CENTER_ROUTE_KEY = 'fee-center'
 const GRAPH_EXPLORER_ROUTE_KEY = 'graph-explorer'
 const CHANNEL_HASH_PARAM = 'channel_point'
 const SECTION_HASH_PARAM = 'section'
@@ -276,7 +277,7 @@ export default function ChannelRanking() {
       case 'rebalance':
         return buildHashWithChannelPoint(REBALANCE_ROUTE_KEY, item.channel_point)
       case 'autofee':
-        return buildLightningOpsHash(item.channel_point, 'autofee')
+        return buildHashWithChannelPoint(FEE_CENTER_ROUTE_KEY, item.channel_point)
       case 'close-manager':
         return buildLightningOpsHash(item.channel_point, 'close_recovery')
       case 'htlc-manager':

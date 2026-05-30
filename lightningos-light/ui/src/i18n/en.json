@@ -54,6 +54,7 @@
     "elements": "Elements",
     "graphExplorer": "Graph Explorer",
     "lightningOps": "Lightning Ops",
+    "feeCenter": "Fee Center",
     "channelRanking": "Channel Ranking",
     "newChannels": "New Channels",
     "onchainHub": "On-chain Hub",
@@ -3074,6 +3075,84 @@
     "deadline": "Auto-retirement deadline",
     "loading": "Loading node retirement...",
     "loadFailed": "Failed to load node retirement."
+  },
+  "feeCenter": {
+    "title": "Fee Center",
+    "subtitle": "Autofee control, policy pressure, seed coverage, and fee outcomes.",
+    "loading": "Loading Fee Center...",
+    "partialLoadFailed": "Some Fee Center data is unavailable.",
+    "running": "Running",
+    "idle": "Idle",
+    "enabledIdle": "Enabled",
+    "error": "Error",
+    "tiles": {
+      "automation": "Automation",
+      "lastRunImpact": "Last run impact",
+      "policyRange": "Policy range",
+      "seedCoverage": "Seed coverage",
+      "policyCoverage": "Policy coverage",
+      "feePressure": "Fee pressure",
+      "economics7d": "Economics 7d"
+    },
+    "impact": {
+      "title": "Last Run Impact",
+      "empty": "No Autofee run found yet.",
+      "emptyLane": "No channels in this lane.",
+      "up": "Up",
+      "down": "Down",
+      "cooldown": "Cooldown",
+      "errors": "Errors",
+      "special": "Special",
+      "upLane": "Fee Up",
+      "downLane": "Fee Down",
+      "specialLane": "Inbound / Special"
+    },
+    "links": {
+      "lightningOps": "Lightning Ops",
+      "rebalance": "Rebalance"
+    },
+    "policy": {
+      "target": "target",
+      "floor": "floor",
+      "seed": "seed",
+      "median": "Median",
+      "maxSeen": "Max seen",
+      "averageWithinMax": "Average within max",
+      "targetAligned": "Target aligned"
+    },
+    "seed": {
+      "known": "Known",
+      "native": "Native",
+      "amboss": "Amboss",
+      "local": "Local",
+      "fallback": "Fallback"
+    },
+    "pressure": {
+      "none": "No limiting tags in the latest run."
+    },
+    "economics": {
+      "forward": "Forward revenue",
+      "rebalance": "Rebalance cost"
+    },
+    "controls": {
+      "title": "Autofee Controls",
+      "subtitle": "Tune global policy, movement, seeds, protections, and run actions."
+    },
+    "policies": {
+      "title": "Channel Policies",
+      "subtitle": "Current channel fee policies enriched with latest Autofee movement and 7d economics.",
+      "count": "{{count}} channels",
+      "peer": "Peer",
+      "policy": "Policy",
+      "lastMove": "Last move",
+      "signals": "Signals",
+      "links": "Links",
+      "noMove": "No move in latest run"
+    },
+    "runLog": {
+      "title": "Run Log",
+      "subtitle": "Technical Autofee output for audits and troubleshooting."
+    }
   },
   "rebalanceCenter": {
     "title": "Rebalance Center",

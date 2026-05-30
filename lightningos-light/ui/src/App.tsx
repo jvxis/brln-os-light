@@ -10,6 +10,7 @@ import Wallet from './pages/Wallet'
 import NetworkAtlas from './pages/NetworkAtlas'
 import GraphExplorer from './pages/GraphExplorer'
 import LightningOps from './pages/LightningOps'
+import FeeCenter from './pages/FeeCenter'
 import ChannelRanking from './pages/ChannelRanking'
 import ChannelOpenCandidates from './pages/ChannelOpenCandidates'
 import RebalanceCenter from './pages/RebalanceCenter'
@@ -197,6 +198,7 @@ export default function App() {
       { key: 'network-atlas', label: t('nav.networkAtlas'), element: <NetworkAtlas /> },
       { key: 'graph-explorer', label: t('nav.graphExplorer'), element: <GraphExplorer /> },
       { key: 'lightning-ops', label: t('nav.lightningOps'), element: <LightningOps /> },
+      { key: 'fee-center', label: t('nav.feeCenter'), element: <FeeCenter /> },
       { key: 'channel-ranking', label: t('nav.channelRanking'), element: <ChannelRanking /> },
       { key: 'new-channels', label: t('nav.newChannels'), element: <ChannelOpenCandidates /> },
       { key: 'rebalance-center', label: t('nav.rebalanceCenter'), element: <RebalanceCenter /> },

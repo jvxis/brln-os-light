@@ -3239,7 +3239,11 @@
         "opsFailures30m": "Failures 30m:",
         "opsResetMC": "↻ Reset MC",
         "showClassic": "Show classic detail",
-        "hideClassic": "Hide classic detail"
+        "hideClassic": "Hide classic detail",
+        "showDetails": "Details",
+        "hideDetails": "Hide details",
+        "gaugeTarget": "reference {{value}}%",
+        "roiBreakeven": "break-even 1.0×"
       },
       "overview": {
         "liveCost": "Live cost",

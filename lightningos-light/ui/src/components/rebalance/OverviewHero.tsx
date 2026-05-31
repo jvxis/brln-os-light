@@ -91,12 +91,18 @@ export default function OverviewHero({
   const sellThrough = (overview.sovereign_sellthrough_7d ?? 0) * 100
   const paybackRebal = (overview.payback_progress_rebalanced ?? 0) * 100
 
+  const detailLabels = {
+    showDetailsLabel: t('rebalanceCenter.heroes.showDetails'),
+    hideDetailsLabel: t('rebalanceCenter.heroes.hideDetails'),
+  }
+
   return (
     <div className="space-y-4">
       {/* HERO TILES */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {/* Autopilot */}
         <HeroTile
+          {...detailLabels}
           label={t('rebalanceCenter.heroes.autopilot')}
           value={autoEnabled ? t('common.enabled') : t('common.disabled')}
           tone={autopilotTone}
@@ -134,6 +140,8 @@ export default function OverviewHero({
 
         {/* ROI 7D */}
         <HeroTile
+          {...detailLabels}
+          markerLabel={t('rebalanceCenter.heroes.roiBreakeven')}
           label={t('rebalanceCenter.heroes.roi7d')}
           value={`${roi.toFixed(2)}×`}
           tone={roiTone}
@@ -175,6 +183,8 @@ export default function OverviewHero({
 
         {/* Success 24h */}
         <HeroTile
+          {...detailLabels}
+          markerLabel={t('rebalanceCenter.heroes.gaugeTarget', { value: 25 })}
           label={t('rebalanceCenter.heroes.success24h')}
           value={formatPct(successRate * 100, 1)}
           tone={successTone}
@@ -226,6 +236,7 @@ export default function OverviewHero({
 
         {/* Daily Budget */}
         <HeroTile
+          {...detailLabels}
           label={t('rebalanceCenter.heroes.dailyBudget')}
           value={unlimited ? t('rebalanceCenter.heroes.unlimited') : formatSats(dailyBudget)}
           tone={budgetTone}
@@ -275,6 +286,7 @@ export default function OverviewHero({
             label={t('rebalanceCenter.heroes.gaugeEffectiveness')}
             value={effectiveness}
             target={25}
+            targetLabel={t('rebalanceCenter.heroes.gaugeTarget', { value: 25 })}
             valueLabel={formatPct(effectiveness, 1)}
             tone={effectiveness >= 25 ? 'ok' : effectiveness >= 15 ? 'warn' : 'danger'}
             hint={t('rebalanceCenter.heroes.hintEffectiveness')}
@@ -283,6 +295,7 @@ export default function OverviewHero({
             label={t('rebalanceCenter.heroes.gaugeFastPath')}
             value={fpHitRate * 100}
             target={20}
+            targetLabel={t('rebalanceCenter.heroes.gaugeTarget', { value: 20 })}
             valueLabel={formatPct(fpHitRate * 100, 1)}
             tone={fpHitRate * 100 >= 20 ? 'ok' : fpHitRate * 100 >= 10 ? 'warn' : 'danger'}
             hint={t('rebalanceCenter.heroes.hintFastPath')}
@@ -291,6 +304,7 @@ export default function OverviewHero({
             label={t('rebalanceCenter.heroes.gaugeSellThrough')}
             value={sellThrough}
             target={70}
+            targetLabel={t('rebalanceCenter.heroes.gaugeTarget', { value: 70 })}
             valueLabel={formatPct(sellThrough, 1)}
             tone={sellThrough >= 70 ? 'ok' : sellThrough >= 50 ? 'warn' : 'danger'}
             hint={t('rebalanceCenter.heroes.hintSellThrough')}
@@ -299,6 +313,7 @@ export default function OverviewHero({
             label={t('rebalanceCenter.heroes.gaugePaybackRebal')}
             value={paybackRebal}
             target={100}
+            targetLabel={t('rebalanceCenter.heroes.gaugeTarget', { value: 100 })}
             valueLabel={formatPct(paybackRebal, 1)}
             tone={paybackRebal >= 80 ? 'ok' : paybackRebal >= 50 ? 'warn' : 'danger'}
             hint={t('rebalanceCenter.heroes.hintPaybackRebal')}

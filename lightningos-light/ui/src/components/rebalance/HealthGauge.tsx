@@ -12,6 +12,7 @@ type HealthGaugeProps = {
   label: string
   value: number
   target?: number
+  targetLabel?: string
   max?: number
   valueLabel?: string
   tone?: HeroTone
@@ -22,6 +23,7 @@ export default function HealthGauge({
   label,
   value,
   target,
+  targetLabel,
   max = 100,
   valueLabel,
   tone = 'info',
@@ -44,12 +46,12 @@ export default function HealthGauge({
           <div
             className="absolute top-[-2px] h-3 w-[2px] rounded bg-fog/60"
             style={{ left: `${markerPct}%` }}
-            aria-label={`target ${target}`}
+            aria-label={targetLabel}
           />
         )}
       </div>
-      {typeof target === 'number' && (
-        <p className="text-[10px] text-fog/45">alvo {target}{max === 100 ? '%' : ''}</p>
+      {typeof target === 'number' && targetLabel && (
+        <p className="text-[10px] text-fog/45">{targetLabel}</p>
       )}
     </div>
   )

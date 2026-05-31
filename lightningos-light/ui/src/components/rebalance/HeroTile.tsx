@@ -36,6 +36,9 @@ type HeroTileProps = {
   context?: ReactNode
   details?: ReactNode
   defaultOpen?: boolean
+  markerLabel?: string
+  showDetailsLabel: string
+  hideDetailsLabel: string
 }
 
 export default function HeroTile({
@@ -48,6 +51,9 @@ export default function HeroTile({
   context,
   details,
   defaultOpen = false,
+  markerLabel,
+  showDetailsLabel,
+  hideDetailsLabel,
 }: HeroTileProps) {
   const [open, setOpen] = useState(defaultOpen)
   const showGauge = typeof gaugePct === 'number'
@@ -78,7 +84,7 @@ export default function HeroTile({
               <div
                 className="absolute top-[-2px] h-3 w-[2px] rounded bg-fog/60"
                 style={{ left: `${clampedMarker}%` }}
-                title={`alvo ${clampedMarker.toFixed(0)}%`}
+                title={markerLabel}
               />
             )}
           </div>
@@ -92,7 +98,7 @@ export default function HeroTile({
           className="mt-auto pt-3 self-start text-[11px] uppercase tracking-wide text-fog/55 underline-offset-2 hover:underline"
           aria-expanded={open}
         >
-          {open ? '▴ Ocultar detalhes' : '▾ Detalhes'}
+          {open ? `▴ ${hideDetailsLabel}` : `▾ ${showDetailsLabel}`}
         </button>
       )}
       {hasDetails && open && (

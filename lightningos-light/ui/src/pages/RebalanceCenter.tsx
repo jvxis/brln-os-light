@@ -217,6 +217,7 @@ export default function RebalanceCenter() {
     attempt_timeout_sec: raw.attempt_timeout_sec || REBALANCE_DEFAULT_ATTEMPT_TIMEOUT_SEC,
     rebalance_timeout_sec: raw.rebalance_timeout_sec || 600,
     manual_restart_watch: raw.manual_restart_watch ?? false,
+    manual_restart_ignore_economic_gates: raw.manual_restart_ignore_economic_gates ?? false,
     cooldown_probe_enabled: raw.cooldown_probe_enabled ?? false,
     mc_half_life_sec: raw.mc_half_life_sec || 0,
     fresh_paid_liquidity_lock_enabled: raw.fresh_paid_liquidity_lock_enabled ?? true,
@@ -302,6 +303,7 @@ export default function RebalanceCenter() {
       attempt_timeout_sec: cfg.attempt_timeout_sec,
       rebalance_timeout_sec: cfg.rebalance_timeout_sec,
       manual_restart_watch: cfg.manual_restart_watch,
+      manual_restart_ignore_economic_gates: cfg.manual_restart_ignore_economic_gates,
       cooldown_probe_enabled: cfg.cooldown_probe_enabled,
       mc_half_life_sec: cfg.mc_half_life_sec,
       payback_mode_flags: cfg.payback_mode_flags,
@@ -768,6 +770,7 @@ export default function RebalanceCenter() {
           attempt_timeout_sec: config.attempt_timeout_sec,
           rebalance_timeout_sec: config.rebalance_timeout_sec,
           manual_restart_watch: config.manual_restart_watch,
+          manual_restart_ignore_economic_gates: config.manual_restart_ignore_economic_gates,
           cooldown_probe_enabled: config.cooldown_probe_enabled,
           mc_half_life_sec: config.mc_half_life_sec,
           payback_mode_flags: config.payback_mode_flags,
@@ -811,6 +814,7 @@ export default function RebalanceCenter() {
         // unsaved when the operator then clicks Save in the autopilot panel.
         auto_enabled: config.auto_enabled,
         manual_restart_watch: config.manual_restart_watch,
+        manual_restart_ignore_economic_gates: config.manual_restart_ignore_economic_gates,
         scheduler_mode: config.scheduler_mode,
         sovereign_candidate_scope: config.sovereign_candidate_scope,
         sovereign_max_jobs_per_cycle: Math.max(1, Number(config.sovereign_max_jobs_per_cycle) || REBALANCE_DEFAULT_SOVEREIGN_MAX_JOBS),
@@ -2599,18 +2603,32 @@ export default function RebalanceCenter() {
                       disabled={!config.auto_enabled}
                     />
                   </div>
-                  <label
-                    className={`flex items-center gap-2 text-sm ${config.auto_enabled ? 'text-fog/70' : 'text-fog/30'}`}
-                    title={t('rebalanceCenter.settingsHints.manualRestartWatch')}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={config.manual_restart_watch && config.auto_enabled}
-                      onChange={(e) => setConfig({ ...config, manual_restart_watch: e.target.checked })}
-                      disabled={!config.auto_enabled}
-                    />
-                    {t('rebalanceCenter.settings.manualRestartWatch')}
-                  </label>
+                  <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3 space-y-2">
+                    <label
+                      className={`flex items-center gap-2 text-sm ${config.auto_enabled ? 'text-fog/70' : 'text-fog/30'}`}
+                      title={t('rebalanceCenter.settingsHints.manualRestartWatch')}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={config.manual_restart_watch && config.auto_enabled}
+                        onChange={(e) => setConfig({ ...config, manual_restart_watch: e.target.checked })}
+                        disabled={!config.auto_enabled}
+                      />
+                      {t('rebalanceCenter.settings.manualRestartWatch')}
+                    </label>
+                    <label
+                      className={`flex items-center gap-2 pl-6 text-sm ${config.auto_enabled && config.manual_restart_watch ? 'text-fog/70' : 'text-fog/30'}`}
+                      title={t('rebalanceCenter.settingsHints.manualRestartIgnoreEconomicGates')}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={config.manual_restart_ignore_economic_gates && config.manual_restart_watch && config.auto_enabled}
+                        onChange={(e) => setConfig({ ...config, manual_restart_ignore_economic_gates: e.target.checked })}
+                        disabled={!config.auto_enabled || !config.manual_restart_watch}
+                      />
+                      {t('rebalanceCenter.settings.manualRestartIgnoreEconomicGates')}
+                    </label>
+                  </div>
                 </div>
               </SettingsSubcard>
 
@@ -3505,14 +3523,23 @@ export default function RebalanceCenter() {
                     />
                     {t('rebalanceCenter.channels.useDefaultEconRatio')}
                   </label>
-                  <label className="flex items-center gap-2 text-xs text-amber-100/80" title={t('rebalanceCenter.channelsHints.autoBypassCostGate')}>
-                    <input
-                      type="checkbox"
-                      checked={channelAutoBypassCostGate(ch)}
-                      onChange={(e) => void handleAutoBypassCostGateToggle(ch, e.target.checked)}
-                    />
-                    {t('rebalanceCenter.channels.autoBypassCostGate')}
-                  </label>
+                  {(() => {
+                    const convictionOverrides = Boolean(config?.manual_restart_ignore_economic_gates && ch.manual_restart_enabled)
+                    return (
+                      <label
+                        className={`flex items-center gap-2 text-xs ${convictionOverrides ? 'text-fog/30' : 'text-amber-100/80'}`}
+                        title={convictionOverrides ? t('rebalanceCenter.channelsHints.autoBypassCostGateConviction') : t('rebalanceCenter.channelsHints.autoBypassCostGate')}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={channelAutoBypassCostGate(ch)}
+                          onChange={(e) => void handleAutoBypassCostGateToggle(ch, e.target.checked)}
+                          disabled={convictionOverrides}
+                        />
+                        {t('rebalanceCenter.channels.autoBypassCostGate')}
+                      </label>
+                    )
+                  })()}
                   <div className="text-xs text-fog/50">
                     {t('rebalanceCenter.channels.amount', { value: formatSats(ch.target_amount_sat) })}
                   </div>
@@ -3752,14 +3779,23 @@ export default function RebalanceCenter() {
                         {t('rebalanceCenter.channels.useDefaultEconRatio')}
                       </label>
                     </div>
-                    <label className="mt-1 flex items-center gap-1 whitespace-nowrap text-[11px] text-amber-100/80" title={t('rebalanceCenter.channelsHints.autoBypassCostGate')}>
-                      <input
-                        type="checkbox"
-                        checked={channelAutoBypassCostGate(ch)}
-                        onChange={(e) => void handleAutoBypassCostGateToggle(ch, e.target.checked)}
-                      />
-                      {t('rebalanceCenter.channels.autoBypassCostGate')}
-                    </label>
+                    {(() => {
+                      const convictionOverrides = Boolean(config?.manual_restart_ignore_economic_gates && ch.manual_restart_enabled)
+                      return (
+                        <label
+                          className={`mt-1 flex items-center gap-1 whitespace-nowrap text-[11px] ${convictionOverrides ? 'text-fog/30' : 'text-amber-100/80'}`}
+                          title={convictionOverrides ? t('rebalanceCenter.channelsHints.autoBypassCostGateConviction') : t('rebalanceCenter.channelsHints.autoBypassCostGate')}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={channelAutoBypassCostGate(ch)}
+                            onChange={(e) => void handleAutoBypassCostGateToggle(ch, e.target.checked)}
+                            disabled={convictionOverrides}
+                          />
+                          {t('rebalanceCenter.channels.autoBypassCostGate')}
+                        </label>
+                      )
+                    })()}
                     <div className="text-xs text-fog/50">
                       {t('rebalanceCenter.channels.amount', { value: formatSats(ch.target_amount_sat) })}
                     </div>

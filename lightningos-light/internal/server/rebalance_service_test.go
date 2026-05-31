@@ -1061,6 +1061,45 @@ func TestManualRestartWatchEligibilityHonorsPerChannelCostGateBypass(t *testing.
 	}
 }
 
+// Modo convicção: com manual_restart_ignore_economic_gates ON, o manual
+// restart watch ignora cost gate (EligibleAsTarget) e ROI guardrail — usa
+// só EligibleAsManualTarget. Mantém os limites operacionais (cooldown,
+// budget, fee cap) que estão fora desta função.
+func TestManualRestartWatchEligibilityConvictionMode(t *testing.T) {
+	cfg := defaultRebalanceConfig()
+	cfg.ManualRestartIgnoreEconomicGates = true
+	cfg.ROIMin = 1.4
+
+	// Cost gate falharia (EligibleAsTarget=false) e ROI abaixo do mínimo —
+	// com convicção ON, ambos são ignorados desde que EligibleAsManualTarget.
+	snapshot := RebalanceChannel{
+		EligibleAsTarget:       false,
+		EligibleAsManualTarget: true,
+		ROIEstimateValid:       true,
+		ROIEstimate:            0.5,
+	}
+	ok, reason := manualRestartWatchEligibility(snapshot, cfg)
+	if !ok || reason != "" {
+		t.Fatalf("conviction mode should bypass cost gate + ROI, got ok=%v reason=%q", ok, reason)
+	}
+
+	// Mas a elegibilidade base ainda vale: sem EligibleAsManualTarget, bloqueia.
+	snapshot.EligibleAsManualTarget = false
+	ok, reason = manualRestartWatchEligibility(snapshot, cfg)
+	if ok || reason != "target_not_eligible" {
+		t.Fatalf("conviction mode still requires base eligibility, got ok=%v reason=%q", ok, reason)
+	}
+
+	// Com o flag OFF (default), o comportamento antigo (com guardrails) é
+	// preservado: cost gate bloqueia.
+	cfg.ManualRestartIgnoreEconomicGates = false
+	snapshot = RebalanceChannel{EligibleAsTarget: false, EligibleAsManualTarget: true}
+	ok, reason = manualRestartWatchEligibility(snapshot, cfg)
+	if ok || reason != "target_not_eligible" {
+		t.Fatalf("flag OFF should preserve cost gate, got ok=%v reason=%q", ok, reason)
+	}
+}
+
 func TestValidateRebalanceConfigPayloadAllowsValidPartialPayload(t *testing.T) {
 	payload := rebalanceConfigPayload{
 		SchedulerMode:                         ptrString(rebalanceSchedulerModeSovereignShadow),

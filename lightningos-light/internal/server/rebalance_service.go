@@ -368,6 +368,13 @@ type RebalanceConfig struct {
 	AttemptTimeoutSec                     int     `json:"attempt_timeout_sec"`
 	RebalanceTimeoutSec                   int     `json:"rebalance_timeout_sec"`
 	ManualRestartWatch                    bool    `json:"manual_restart_watch"`
+	// ManualRestartIgnoreEconomicGates ativa o "modo convicção": canais
+	// manual restart passam a ignorar o cost gate (filtro 1.4) e o ROI
+	// guardrail, enchendo persistentemente independente de retorno econômico
+	// imediato. Mantém fee cap (outgoing × econ_ratio), cooldown, budget e
+	// limites operacionais. Default false (preserva o comportamento com
+	// guardrails de quem já usa manual restart).
+	ManualRestartIgnoreEconomicGates      bool    `json:"manual_restart_ignore_economic_gates"`
 	CooldownProbeEnabled                  bool    `json:"cooldown_probe_enabled"`
 	MissionControlHalfLifeSec             int64   `json:"mc_half_life_sec"`
 	PaybackModeFlags                      int     `json:"payback_mode_flags"`
@@ -1148,6 +1155,7 @@ func defaultRebalanceConfig() RebalanceConfig {
 		AttemptTimeoutSec:                     60,
 		RebalanceTimeoutSec:                   600,
 		ManualRestartWatch:                    false,
+		ManualRestartIgnoreEconomicGates:      false,
 		CooldownProbeEnabled:                  false,
 		MissionControlHalfLifeSec:             0,
 		PaybackModeFlags:                      paybackModePayback | paybackModeTime | paybackModeCritical,
@@ -1595,6 +1603,18 @@ func shouldEnforceManualRestartCooldown(source string, reason string) bool {
 }
 
 func manualRestartWatchEligibility(snapshot RebalanceChannel, cfg RebalanceConfig) (bool, string) {
+	// Modo convicção: o operador marcou o canal como manual restart porque
+	// sabe que vale a pena enchê-lo, mesmo sem retorno econômico imediato.
+	// Ignora cost gate (filtro 1.4, embutido em EligibleAsTarget) e ROI
+	// guardrail — usa só a elegibilidade base (active + deficit + outgoing >
+	// peer). Fee cap, cooldown, budget e execute_min seguem aplicados no
+	// runManualRestartWatch / startJob.
+	if cfg.ManualRestartIgnoreEconomicGates {
+		if !snapshot.EligibleAsManualTarget {
+			return false, "target_not_eligible"
+		}
+		return true, ""
+	}
 	if !snapshot.EligibleAsTarget {
 		return false, "target_not_eligible"
 	}
@@ -10493,6 +10513,7 @@ end $$;
     sovereign_gain_v3_cold_start_pct double precision not null default 0.75,
     fast_path_max_timeout_sec integer not null default 90,
     sovereign_top_bucket_pct integer not null default 30,
+    manual_restart_ignore_economic_gates boolean not null default false,
     sovereign_attribution_window_hours integer not null default 72,
     sovereign_slow_seller_window_hours integer not null default 168,
     sovereign_target_source_quarantine_hours integer not null default 6,
@@ -10577,6 +10598,8 @@ end $$;
     add column if not exists fast_path_max_timeout_sec integer not null default 90;
   alter table rebalance_config
     add column if not exists sovereign_top_bucket_pct integer not null default 30;
+  alter table rebalance_config
+    add column if not exists manual_restart_ignore_economic_gates boolean not null default false;
   alter table rebalance_config
     add column if not exists sovereign_attribution_window_hours integer not null default 72;
   alter table rebalance_config
@@ -10702,6 +10725,8 @@ end $$;
     alter column fast_path_max_timeout_sec set default 90;
   alter table rebalance_config
     alter column sovereign_top_bucket_pct set default 30;
+  alter table rebalance_config
+    alter column manual_restart_ignore_economic_gates set default false;
   alter table rebalance_config
     alter column sovereign_attribution_window_hours set default 72;
   alter table rebalance_config
@@ -11037,7 +11062,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags, fresh_paid_liquidity_lock_enabled, fresh_paid_liquidity_lock_hours,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback,
-    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct, fast_path_max_timeout_sec, sovereign_top_bucket_pct
+    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct, fast_path_max_timeout_sec, sovereign_top_bucket_pct, manual_restart_ignore_economic_gates
   from rebalance_config where id=$1`, rebalanceConfigID)
 
 	cfg := defaultRebalanceConfig()
@@ -11115,6 +11140,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.SovereignGainV3ColdStartPct,
 		&cfg.FastPathMaxTimeoutSec,
 		&cfg.SovereignTopBucketPct,
+		&cfg.ManualRestartIgnoreEconomicGates,
 	)
 	if err != nil {
 		return cfg, err
@@ -11138,8 +11164,8 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags, fresh_paid_liquidity_lock_enabled, fresh_paid_liquidity_lock_hours,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback,
-    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct, fast_path_max_timeout_sec, sovereign_top_bucket_pct, updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,$74,now())
+    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct, fast_path_max_timeout_sec, sovereign_top_bucket_pct, manual_restart_ignore_economic_gates, updated_at
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,$74,$75,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scheduler_mode = excluded.scheduler_mode,
@@ -11214,9 +11240,10 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     sovereign_gain_v3_cold_start_pct = excluded.sovereign_gain_v3_cold_start_pct,
     fast_path_max_timeout_sec = excluded.fast_path_max_timeout_sec,
     sovereign_top_bucket_pct = excluded.sovereign_top_bucket_pct,
+    manual_restart_ignore_economic_gates = excluded.manual_restart_ignore_economic_gates,
     updated_at = now()
   `, rebalanceConfigID, cfg.AutoEnabled, cfg.SchedulerMode, cfg.SovereignCandidateScope, cfg.SovereignMaxJobsPerCycle, cfg.SovereignMinExpectedProfitSat, cfg.SovereignLowSuccessMinRate, cfg.SovereignLowSuccessMinProfitCostRatio, cfg.SovereignBudgetEfficiencyMinRatio, cfg.SovereignRouteDeadSourceShare, cfg.SovereignRiskScoreFloor, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetUnlimited, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
-		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.FreshPaidLiquidityLockEnabled, cfg.FreshPaidLiquidityLockHours, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback, cfg.SovereignAttributionWindowHours, cfg.SovereignSlowSellerWindowHours, cfg.SovereignTargetSourceQuarantineHours, cfg.SovereignStructuralCooldownRepeatHours, cfg.SovereignExplorationSlotPct, cfg.SovereignSourceOpportunityCostEnabled, cfg.SovereignSlowSellerEnabled, cfg.SovereignGainV3ColdStartPct, cfg.FastPathMaxTimeoutSec, cfg.SovereignTopBucketPct,
+		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.FreshPaidLiquidityLockEnabled, cfg.FreshPaidLiquidityLockHours, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback, cfg.SovereignAttributionWindowHours, cfg.SovereignSlowSellerWindowHours, cfg.SovereignTargetSourceQuarantineHours, cfg.SovereignStructuralCooldownRepeatHours, cfg.SovereignExplorationSlotPct, cfg.SovereignSourceOpportunityCostEnabled, cfg.SovereignSlowSellerEnabled, cfg.SovereignGainV3ColdStartPct, cfg.FastPathMaxTimeoutSec, cfg.SovereignTopBucketPct, cfg.ManualRestartIgnoreEconomicGates,
 	)
 	return err
 }

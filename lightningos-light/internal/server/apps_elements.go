@@ -412,11 +412,9 @@ func (s *Server) stopElements(ctx context.Context) error {
 
 func (s *Server) uninstallElements(ctx context.Context) error {
 	paths := elementsAppPaths()
-	if fileExists(paths.ServicePath) {
-		_, _ = runSystemd(ctx, "systemctl", "disable", "--now", elementsServiceName)
-		_, _ = runSystemd(ctx, "systemctl", "daemon-reload")
-		_, _ = runSystemd(ctx, "/bin/sh", "-c", "rm -f "+paths.ServicePath)
-	}
+	_, _ = runSystemd(ctx, "systemctl", "disable", "--now", elementsServiceName)
+	_, _ = runSystemd(ctx, "/bin/sh", "-c", "rm -f "+paths.ServicePath+" /etc/systemd/system/elementsd.service /etc/systemd/system/multi-user.target.wants/"+elementsServiceName+".service /etc/systemd/system/multi-user.target.wants/elementsd.service")
+	_, _ = runSystemd(ctx, "systemctl", "daemon-reload")
 	if _, err := runSystemd(ctx, "/bin/sh", "-c", "rm -rf "+paths.Root); err != nil {
 		return fmt.Errorf("failed to remove app files: %w", err)
 	}

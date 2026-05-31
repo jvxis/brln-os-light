@@ -28,6 +28,19 @@ func TestUpdatePeerswapConfigUpdatesElementsDataDir(t *testing.T) {
 	}
 }
 
+func TestUpdatePeerswapConfigUpdatesRemoteWallet(t *testing.T) {
+	values := testPeerswapConfigValues()
+	values.ElementsRPCWallet = "peerswap_02" + strings.Repeat("a", 64)
+	raw := "elementsd.rpcwallet=peerswap\nelementsd.rpchost=http://127.0.0.1\n"
+	updated := updatePeerswapConfig(raw, values)
+	if !strings.Contains(updated, "elementsd.rpcwallet="+values.ElementsRPCWallet) {
+		t.Fatalf("expected derived remote wallet in peerswap config:\n%s", updated)
+	}
+	if strings.Contains(updated, "elementsd.rpcwallet=peerswap\n") {
+		t.Fatalf("expected legacy peerswap wallet to be replaced:\n%s", updated)
+	}
+}
+
 func TestApplyPeerswapConfigOverridesPreservesBitcoinSwaps(t *testing.T) {
 	values := applyPeerswapConfigOverrides(testPeerswapConfigValues(), "bitcoinswaps=true\n")
 	if values.BitcoinSwaps != "true" {

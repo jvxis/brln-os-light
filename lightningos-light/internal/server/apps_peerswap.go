@@ -228,12 +228,10 @@ func ensurePswebUfwAccess(ctx context.Context) error {
 
 func (s *Server) uninstallPeerswap(ctx context.Context) error {
 	paths := peerswapAppPaths()
-	if fileExists(paths.ServicePath) {
-		_, _ = runSystemd(ctx, "systemctl", "disable", "--now", peerswapServiceName)
-		_, _ = runSystemd(ctx, "systemctl", "disable", "--now", pswebServiceName)
-		_, _ = runSystemd(ctx, "systemctl", "daemon-reload")
-		_, _ = runSystemd(ctx, "/bin/sh", "-c", "rm -f "+paths.ServicePath+" "+paths.WebServicePath)
-	}
+	_, _ = runSystemd(ctx, "systemctl", "disable", "--now", peerswapServiceName)
+	_, _ = runSystemd(ctx, "systemctl", "disable", "--now", pswebServiceName)
+	_, _ = runSystemd(ctx, "/bin/sh", "-c", "rm -f "+paths.ServicePath+" "+paths.WebServicePath+" /etc/systemd/system/multi-user.target.wants/"+peerswapServiceName+".service /etc/systemd/system/multi-user.target.wants/"+pswebServiceName+".service")
+	_, _ = runSystemd(ctx, "systemctl", "daemon-reload")
 	if _, err := runSystemd(ctx, "/bin/sh", "-c", "rm -rf "+paths.Root); err != nil {
 		return fmt.Errorf("failed to remove app files: %w", err)
 	}
@@ -425,7 +423,8 @@ func (s *Server) ensurePeerswapConfig(ctx context.Context, paths peerswapPaths) 
 }
 
 func (s *Server) peerswapConfigDefaults(ctx context.Context) (peerswapConfigValues, error) {
-	source, err := s.resolvePeerswapElementsSourceForConfig(ctx, peerswapAppPaths())
+	paths := peerswapAppPaths()
+	source, err := s.resolvePeerswapElementsSourceForConfig(ctx, paths)
 	if err != nil {
 		return peerswapConfigValues{}, err
 	}
@@ -442,6 +441,15 @@ func (s *Server) peerswapConfigDefaults(ctx context.Context) (peerswapConfigValu
 		endpoint, err := normalizePeerswapRemoteEndpoint(source.URL)
 		if err != nil {
 			return peerswapConfigValues{}, err
+		}
+		wallet, err := s.defaultPeerswapRemoteWallet(ctx)
+		if err != nil {
+			return peerswapConfigValues{}, err
+		}
+		values.ElementsRPCWallet = wallet
+		if source.Wallet != wallet {
+			source.Wallet = wallet
+			_ = writePeerswapElementsSource(paths, source)
 		}
 		values.ElementsRPCUser = source.User
 		values.ElementsRPCPass = source.Password

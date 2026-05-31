@@ -767,7 +767,7 @@ ss -ltn | grep :8443
 - Mempool roda uma stack mempool.space local em `http://<IP_LAN_DO_SERVIDOR>:8999` e exige Bitcoin Core + Electrs instalados e rodando.
 - LNDg roda em Docker e escuta em `http://<IP_LAN_DO_SERVIDOR>:8889`.
 - LNbits roda em Docker e integra com a conexão local do LND.
-- Peerswap instala `peerswapd` + `psweb` (UI em `http://<IP_LAN_DO_SERVIDOR>:1984`) e pode usar Elements local ou um endpoint RPC remoto de Elements.
+- Peerswap instala `peerswapd` + `psweb` (UI em `http://<IP_LAN_DO_SERVIDOR>:1984`) e pode usar Elements local ou um endpoint RPC remoto de Elements; no modo remoto, o nome da wallet é derivado do pubkey do node.
 - Elements roda como serviço nativo (Liquid Elements node, RPC em `127.0.0.1:7041`) e pode usar o Bitcoin remoto do clube ou um bitcoind local detectado pelo LND/bitcoin.conf. Na instalação, o Elements pode opcionalmente usar um diretório de dados customizado em um volume já montado; o app não altera esse diretório depois.
 - RoboSats Gateway, Public Pool, Buy DePix e FSwap são gerenciados pelo mesmo fluxo de instalar/iniciar/parar/status da App Store.
 - Fedimint foi separado em **Fedimint Guardian** (`fedimintd`) e **Fedimint Lightning Gateway** (`gatewayd lnd`). Ambos usam Iroh e `FM_ESPLORA_URL=https://mempool.space/api`; apenas o gateway ajusta acesso ao LND local. Veja o [guia de configuracao do Fedimint](27_FEDIMINT_CONFIGURATION_PT_BR.md) ([EN](28_FEDIMINT_CONFIGURATION_EN.md)).

@@ -134,6 +134,18 @@ func TestNormalizePeerswapRemoteEndpointSplitsHostAndPort(t *testing.T) {
 	}
 }
 
+func TestPeerswapRemoteWalletNameFromPubkey(t *testing.T) {
+	pubkey := "02" + strings.Repeat("A", 64)
+	wallet, err := peerswapRemoteWalletNameFromPubkey(pubkey)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected := "peerswap_02" + strings.Repeat("a", 64)
+	if wallet != expected {
+		t.Fatalf("unexpected wallet name: %s", wallet)
+	}
+}
+
 func TestTestPeerswapRemoteElementsRPC(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, pass, ok := r.BasicAuth()

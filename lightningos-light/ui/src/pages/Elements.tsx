@@ -61,7 +61,6 @@ const formatPercent = (value?: number) => {
 }
 
 const peerswapDefaultRemoteUrl = 'http://elements.br-ln.com:8086'
-const peerswapDefaultWallet = 'peerswap'
 
 export default function Elements() {
   const { t, i18n } = useTranslation()
@@ -78,7 +77,6 @@ export default function Elements() {
   const [peerswapRemoteUrl, setPeerswapRemoteUrl] = useState(peerswapDefaultRemoteUrl)
   const [peerswapRemoteUser, setPeerswapRemoteUser] = useState('')
   const [peerswapRemotePassword, setPeerswapRemotePassword] = useState('')
-  const [peerswapRemoteWallet, setPeerswapRemoteWallet] = useState(peerswapDefaultWallet)
 
   const loadStatus = () => {
     getElementsStatus()
@@ -174,7 +172,6 @@ export default function Elements() {
     setPeerswapRemoteUrl(peerswapSource?.mode === 'remote' && peerswapSource.url ? peerswapSource.url : peerswapDefaultRemoteUrl)
     setPeerswapRemoteUser(peerswapSource?.mode === 'remote' && peerswapSource.user ? peerswapSource.user : '')
     setPeerswapRemotePassword('')
-    setPeerswapRemoteWallet(peerswapSource?.wallet || peerswapDefaultWallet)
     setPeerswapSourceMessage('')
     setPeerswapRemoteOpen(true)
   }
@@ -183,8 +180,7 @@ export default function Elements() {
     mode: 'remote' as const,
     url: peerswapRemoteUrl.trim(),
     user: peerswapRemoteUser.trim(),
-    password: peerswapRemotePassword,
-    wallet: peerswapRemoteWallet.trim() || peerswapDefaultWallet
+    password: peerswapRemotePassword
   })
 
   const reloadPeerswapSource = async () => {
@@ -441,14 +437,6 @@ export default function Elements() {
                   />
                 </label>
               </div>
-              <label className="grid gap-2 text-sm">
-                <span className="text-xs uppercase tracking-wide text-fog/50">{t('elements.peerswapRemoteWallet')}</span>
-                <input
-                  className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-fog outline-none focus:border-brass"
-                  value={peerswapRemoteWallet}
-                  onChange={(event) => setPeerswapRemoteWallet(event.target.value)}
-                />
-              </label>
               <p className="text-xs text-fog/50">{t('elements.peerswapRemoteSecurity')}</p>
             </div>
 

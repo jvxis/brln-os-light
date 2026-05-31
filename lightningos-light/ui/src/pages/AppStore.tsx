@@ -57,7 +57,6 @@ type InstallPayload = {
   elements_rpc_url?: string
   elements_rpc_user?: string
   elements_rpc_password?: string
-  elements_rpc_wallet?: string
 }
 
 const iconMap: Record<string, string> = {
@@ -100,7 +99,6 @@ const APP_STORE_INSTALL_FILTER_KEY = 'app_store_install_filter'
 const bitcoinCoreDefaultDataDir = '/data/bitcoin'
 const elementsDefaultDataDir = '/data/elements'
 const peerswapDefaultRemoteUrl = 'http://elements.br-ln.com:8086'
-const peerswapDefaultWallet = 'peerswap'
 
 export default function AppStore() {
   const { t } = useTranslation()
@@ -128,7 +126,6 @@ export default function AppStore() {
   const [peerswapRemoteUrl, setPeerswapRemoteUrl] = useState(peerswapDefaultRemoteUrl)
   const [peerswapRemoteUser, setPeerswapRemoteUser] = useState('')
   const [peerswapRemotePassword, setPeerswapRemotePassword] = useState('')
-  const [peerswapRemoteWallet, setPeerswapRemoteWallet] = useState(peerswapDefaultWallet)
   const [peerswapRemoteTesting, setPeerswapRemoteTesting] = useState(false)
   const [peerswapRemoteMessage, setPeerswapRemoteMessage] = useState('')
   const [peerswapRemoteTested, setPeerswapRemoteTested] = useState(false)
@@ -273,7 +270,6 @@ export default function AppStore() {
     setPeerswapRemoteUrl(peerswapDefaultRemoteUrl)
     setPeerswapRemoteUser('')
     setPeerswapRemotePassword('')
-    setPeerswapRemoteWallet(peerswapDefaultWallet)
     setPeerswapRemoteMessage('')
     setPeerswapRemoteTested(false)
     setPeerswapRemoteOpen(true)
@@ -283,8 +279,7 @@ export default function AppStore() {
     mode: 'remote' as const,
     url: peerswapRemoteUrl.trim(),
     user: peerswapRemoteUser.trim(),
-    password: peerswapRemotePassword,
-    wallet: peerswapRemoteWallet.trim() || peerswapDefaultWallet
+    password: peerswapRemotePassword
   })
 
   const handlePeerswapRemoteTest = async () => {
@@ -400,8 +395,7 @@ export default function AppStore() {
       elements_mode: 'remote',
       elements_rpc_url: payload.url,
       elements_rpc_user: payload.user,
-      elements_rpc_password: payload.password,
-      elements_rpc_wallet: payload.wallet
+      elements_rpc_password: payload.password
     })
   }
 
@@ -927,17 +921,6 @@ export default function AppStore() {
                   />
                 </label>
               </div>
-              <label className="grid gap-2 text-sm">
-                <span className="text-xs uppercase tracking-wide text-fog/50">{t('appStore.peerswapRemoteWallet')}</span>
-                <input
-                  className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-fog outline-none focus:border-brass"
-                  value={peerswapRemoteWallet}
-                  onChange={(event) => {
-                    setPeerswapRemoteWallet(event.target.value)
-                    setPeerswapRemoteTested(false)
-                  }}
-                />
-              </label>
               <p className="text-xs text-fog/50">{t('appStore.peerswapRemoteSecurity')}</p>
               {peerswapRemoteMessage && <p className="text-sm text-brass">{peerswapRemoteMessage}</p>}
             </div>

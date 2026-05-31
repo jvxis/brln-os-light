@@ -148,7 +148,7 @@ func (s *Server) installPeerswapWithOptions(ctx context.Context, opts peerswapIn
 	if err := ensurePeerswapBinaries(ctx, paths); err != nil {
 		return err
 	}
-	if err := ensurePeerswapConfig(ctx, paths); err != nil {
+	if err := s.ensurePeerswapConfig(ctx, paths); err != nil {
 		return err
 	}
 	if err := ensurePeerswapServices(ctx, paths, source.Mode); err != nil {
@@ -174,7 +174,7 @@ func (s *Server) startPeerswap(ctx context.Context) error {
 	if err := os.MkdirAll(paths.AppDataDir, 0750); err != nil {
 		return fmt.Errorf("failed to create app data directory: %w", err)
 	}
-	source, err := preparePeerswapElementsSourceForStart(ctx, paths)
+	source, err := s.preparePeerswapElementsSourceForStart(ctx, paths)
 	if err != nil {
 		return err
 	}
@@ -187,7 +187,7 @@ func (s *Server) startPeerswap(ctx context.Context) error {
 	if err := ensurePeerswapBinaries(ctx, paths); err != nil {
 		return err
 	}
-	if err := ensurePeerswapConfig(ctx, paths); err != nil {
+	if err := s.ensurePeerswapConfig(ctx, paths); err != nil {
 		return err
 	}
 	if err := ensurePeerswapServices(ctx, paths, source.Mode); err != nil {
@@ -398,8 +398,8 @@ func fileSHA256(path string) (string, error) {
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
-func ensurePeerswapConfig(ctx context.Context, paths peerswapPaths) error {
-	values, err := peerswapConfigDefaults(ctx)
+func (s *Server) ensurePeerswapConfig(ctx context.Context, paths peerswapPaths) error {
+	values, err := s.peerswapConfigDefaults(ctx)
 	if err != nil {
 		return err
 	}
@@ -424,8 +424,8 @@ func ensurePeerswapConfig(ctx context.Context, paths peerswapPaths) error {
 	return ensurePSWebConfig(ctx, paths, values)
 }
 
-func peerswapConfigDefaults(ctx context.Context) (peerswapConfigValues, error) {
-	source, err := resolvePeerswapElementsSourceForConfig(ctx, peerswapAppPaths())
+func (s *Server) peerswapConfigDefaults(ctx context.Context) (peerswapConfigValues, error) {
+	source, err := s.resolvePeerswapElementsSourceForConfig(ctx, peerswapAppPaths())
 	if err != nil {
 		return peerswapConfigValues{}, err
 	}

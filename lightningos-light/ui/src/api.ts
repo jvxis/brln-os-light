@@ -810,7 +810,7 @@ export const getAppStorageTargets = (app: string) =>
   request(`/api/apps/storage-targets${buildQuery({ app })}`)
 export const getElectrsStatus = () => request('/api/apps/electrs/status')
 export const getAppAdminPassword = (id: string) => request(`/api/apps/${id}/admin-password`)
-export const installApp = (id: string, payload?: { data_dir?: string; storage_mount?: string; elements_mode?: 'local' | 'remote'; elements_rpc_url?: string; elements_rpc_user?: string; elements_rpc_password?: string; elements_rpc_wallet?: string }) =>
+export const installApp = (id: string, payload?: { data_dir?: string; storage_mount?: string; elements_mode?: 'local' | 'remote'; elements_rpc_url?: string; elements_rpc_user?: string; elements_rpc_password?: string }) =>
   request(`/api/apps/${id}/install`, { method: 'POST', body: JSON.stringify(payload ?? {}) })
 export const uninstallApp = (id: string) => request(`/api/apps/${id}/uninstall`, { method: 'POST' })
 export const startApp = (id: string) => request(`/api/apps/${id}/start`, { method: 'POST' })

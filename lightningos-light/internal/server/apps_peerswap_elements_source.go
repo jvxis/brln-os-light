@@ -19,6 +19,7 @@ const (
 	peerswapElementsModeLocal  = "local"
 	peerswapElementsModeRemote = "remote"
 	peerswapElementsWallet     = "peerswap"
+	peerswapRemoteWalletPrefix = "peerswap_"
 )
 
 var peerswapElementsHTTPClient = &http.Client{Timeout: 8 * time.Second}
@@ -91,6 +92,8 @@ func (s *Server) handlePeerswapElementsSourceGet(w http.ResponseWriter, r *http.
 	localReady, localStatus := peerswapLocalElementsReady(r.Context())
 	if !configured {
 		source = peerswapElementsSource{Mode: peerswapElementsModeLocal, Wallet: peerswapElementsWallet}
+	} else if completed, _, err := s.completePeerswapElementsSource(r.Context(), source); err == nil {
+		source = completed
 	}
 	installed := peerswapInstalled(paths)
 	status := ""
@@ -135,7 +138,7 @@ func (s *Server) handlePeerswapElementsSourcePost(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	source, err := normalizePeerswapElementsSourceRequest(req)
+	source, err := s.normalizePeerswapElementsSourceRequest(r.Context(), req)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -172,7 +175,7 @@ func (s *Server) peerswapElementsSourceFromRequestOrStored(ctx context.Context, 
 		if err := readJSON(r, &req); err != nil {
 			return peerswapElementsSource{}, errors.New("invalid json")
 		}
-		return normalizePeerswapElementsSourceRequest(req)
+		return s.normalizePeerswapElementsSourceRequest(ctx, req)
 	}
 	paths := peerswapAppPaths()
 	source, configured, err := readPeerswapElementsSource(paths)
@@ -180,7 +183,8 @@ func (s *Server) peerswapElementsSourceFromRequestOrStored(ctx context.Context, 
 		return peerswapElementsSource{}, err
 	}
 	if configured {
-		return source, nil
+		completed, _, err := s.completePeerswapElementsSource(ctx, source)
+		return completed, err
 	}
 	if ok, _ := peerswapLocalElementsReady(ctx); ok {
 		return peerswapElementsSource{Mode: peerswapElementsModeLocal, Wallet: peerswapElementsWallet}, nil
@@ -189,7 +193,7 @@ func (s *Server) peerswapElementsSourceFromRequestOrStored(ctx context.Context, 
 }
 
 func (s *Server) preparePeerswapElementsSourceForInstall(ctx context.Context, paths peerswapPaths, opts peerswapInstallOptions) (peerswapElementsSource, error) {
-	source, err := resolvePeerswapElementsSourceForInstall(ctx, paths, opts)
+	source, err := s.resolvePeerswapElementsSourceForInstall(ctx, paths, opts)
 	if err != nil {
 		return peerswapElementsSource{}, err
 	}
@@ -202,7 +206,7 @@ func (s *Server) preparePeerswapElementsSourceForInstall(ctx context.Context, pa
 	return source, nil
 }
 
-func preparePeerswapElementsSourceForStart(ctx context.Context, paths peerswapPaths) (peerswapElementsSource, error) {
+func (s *Server) preparePeerswapElementsSourceForStart(ctx context.Context, paths peerswapPaths) (peerswapElementsSource, error) {
 	source, configured, err := readPeerswapElementsSource(paths)
 	if err != nil {
 		return peerswapElementsSource{}, err
@@ -217,21 +221,31 @@ func preparePeerswapElementsSourceForStart(ctx context.Context, paths peerswapPa
 			return peerswapElementsSource{}, errors.New("Elements local must be running before starting Peerswap, or configure a remote Elements RPC source")
 		}
 	}
+	completed, changed, err := s.completePeerswapElementsSource(ctx, source)
+	if err != nil {
+		return peerswapElementsSource{}, err
+	}
+	source = completed
+	if changed {
+		if err := writePeerswapElementsSource(paths, source); err != nil {
+			return peerswapElementsSource{}, err
+		}
+	}
 	if _, err := testPeerswapElementsSource(ctx, source); err != nil {
 		return peerswapElementsSource{}, err
 	}
 	return source, nil
 }
 
-func resolvePeerswapElementsSourceForInstall(ctx context.Context, paths peerswapPaths, opts peerswapInstallOptions) (peerswapElementsSource, error) {
+func (s *Server) resolvePeerswapElementsSourceForInstall(ctx context.Context, paths peerswapPaths, opts peerswapInstallOptions) (peerswapElementsSource, error) {
 	req := opts.sourceRequest()
 	if strings.TrimSpace(req.Mode) != "" {
-		return normalizePeerswapElementsSourceRequest(req)
+		return s.normalizePeerswapElementsSourceRequest(ctx, req)
 	}
 	if source, configured, err := readPeerswapElementsSource(paths); err != nil {
 		return peerswapElementsSource{}, err
 	} else if configured {
-		return source, nil
+		return s.completeConfiguredPeerswapElementsSource(ctx, source)
 	}
 	if ok, _ := peerswapLocalElementsReady(ctx); ok {
 		return peerswapElementsSource{Mode: peerswapElementsModeLocal, Wallet: peerswapElementsWallet}, nil
@@ -239,11 +253,11 @@ func resolvePeerswapElementsSourceForInstall(ctx context.Context, paths peerswap
 	return peerswapElementsSource{}, errors.New("Elements is required before installing Peerswap. Start local Elements or configure remote Elements RPC")
 }
 
-func resolvePeerswapElementsSourceForConfig(ctx context.Context, paths peerswapPaths) (peerswapElementsSource, error) {
+func (s *Server) resolvePeerswapElementsSourceForConfig(ctx context.Context, paths peerswapPaths) (peerswapElementsSource, error) {
 	if source, configured, err := readPeerswapElementsSource(paths); err != nil {
 		return peerswapElementsSource{}, err
 	} else if configured {
-		return source, nil
+		return s.completeConfiguredPeerswapElementsSource(ctx, source)
 	}
 	if ok, _ := peerswapLocalElementsReady(ctx); ok {
 		return peerswapElementsSource{Mode: peerswapElementsModeLocal, Wallet: peerswapElementsWallet}, nil
@@ -251,7 +265,7 @@ func resolvePeerswapElementsSourceForConfig(ctx context.Context, paths peerswapP
 	return peerswapElementsSource{}, errors.New("Peerswap Elements source is not configured")
 }
 
-func normalizePeerswapElementsSourceRequest(req peerswapElementsSourceRequest) (peerswapElementsSource, error) {
+func (s *Server) normalizePeerswapElementsSourceRequest(ctx context.Context, req peerswapElementsSourceRequest) (peerswapElementsSource, error) {
 	mode := strings.ToLower(strings.TrimSpace(req.Mode))
 	if mode == "" {
 		mode = peerswapElementsModeRemote
@@ -266,12 +280,12 @@ func normalizePeerswapElementsSourceRequest(req peerswapElementsSourceRequest) (
 		}
 		user := strings.TrimSpace(req.User)
 		password := strings.TrimSpace(req.Password)
-		wallet := strings.TrimSpace(req.Wallet)
-		if wallet == "" {
-			wallet = peerswapElementsWallet
-		}
 		if user == "" || password == "" {
 			return peerswapElementsSource{}, errors.New("remote Elements RPC user and password are required")
+		}
+		wallet, err := s.defaultPeerswapRemoteWallet(ctx)
+		if err != nil {
+			return peerswapElementsSource{}, err
 		}
 		return peerswapElementsSource{
 			Mode:     peerswapElementsModeRemote,
@@ -283,6 +297,55 @@ func normalizePeerswapElementsSourceRequest(req peerswapElementsSourceRequest) (
 	default:
 		return peerswapElementsSource{}, errors.New("invalid Elements source mode")
 	}
+}
+
+func (s *Server) completeConfiguredPeerswapElementsSource(ctx context.Context, source peerswapElementsSource) (peerswapElementsSource, error) {
+	completed, _, err := s.completePeerswapElementsSource(ctx, source)
+	return completed, err
+}
+
+func (s *Server) completePeerswapElementsSource(ctx context.Context, source peerswapElementsSource) (peerswapElementsSource, bool, error) {
+	if source.Mode != peerswapElementsModeRemote {
+		if strings.TrimSpace(source.Wallet) == "" {
+			source.Wallet = peerswapElementsWallet
+			return source, true, nil
+		}
+		return source, false, nil
+	}
+	wallet, err := s.defaultPeerswapRemoteWallet(ctx)
+	if err != nil {
+		return peerswapElementsSource{}, false, err
+	}
+	if wallet != source.Wallet {
+		source.Wallet = wallet
+		return source, true, nil
+	}
+	return source, false, nil
+}
+
+func (s *Server) defaultPeerswapRemoteWallet(ctx context.Context) (string, error) {
+	if s == nil || s.lnd == nil {
+		return "", errors.New("LND pubkey is required to derive the remote Peerswap wallet")
+	}
+	pubkey, err := s.lnd.SelfPubkey(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to read LND pubkey for remote Peerswap wallet: %w", err)
+	}
+	return peerswapRemoteWalletNameFromPubkey(pubkey)
+}
+
+func peerswapRemoteWalletNameFromPubkey(pubkey string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(pubkey))
+	if len(normalized) != 66 {
+		return "", errors.New("LND pubkey is required to derive the remote Peerswap wallet")
+	}
+	for _, ch := range normalized {
+		if (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') {
+			continue
+		}
+		return "", errors.New("LND pubkey is required to derive the remote Peerswap wallet")
+	}
+	return peerswapRemoteWalletPrefix + normalized, nil
 }
 
 func normalizePeerswapRemoteEndpoint(raw string) (peerswapRemoteEndpoint, error) {
@@ -447,7 +510,7 @@ func (s *Server) reconfigureInstalledPeerswap(ctx context.Context, paths peerswa
 	if err := ensurePeerswapConfigDir(ctx, paths); err != nil {
 		return err
 	}
-	if err := ensurePeerswapConfig(ctx, paths); err != nil {
+	if err := s.ensurePeerswapConfig(ctx, paths); err != nil {
 		return err
 	}
 	if err := ensurePeerswapServices(ctx, paths, source.Mode); err != nil {

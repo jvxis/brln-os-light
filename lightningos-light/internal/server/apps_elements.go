@@ -17,7 +17,7 @@ import (
 
 const (
 	elementsAppID            = "elements"
-	elementsVersion          = "23.3.1"
+	elementsVersion          = "23.3.3"
 	elementsUser             = "losop"
 	elementsServiceName      = "lightningos-elements"
 	elementsRPCPort          = 7041
@@ -385,6 +385,9 @@ func (s *Server) startElements(ctx context.Context) error {
 		return errors.New("Elements is not installed")
 	}
 	if err := ensureElementsDataDir(ctx, paths); err != nil {
+		return err
+	}
+	if err := ensureElementsBinary(ctx, paths); err != nil {
 		return err
 	}
 	if err := ensureElementsConfig(ctx, paths, s.cfg); err != nil {

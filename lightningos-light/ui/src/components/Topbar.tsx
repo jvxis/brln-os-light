@@ -11,6 +11,189 @@ const statusColors: Record<string, string> = {
   ERR: 'bg-ember/20 text-ember border-ember/40'
 }
 
+const BITCOIN_HEADER_EVENTS = [
+  {
+    key: 'genesis-block',
+    month: 0,
+    day: 3,
+    emoji: '🧱',
+    tooltipKey: 'topbar.bitcoinEvents.genesisBlock',
+    burst: ['0', '₿', '03']
+  },
+  {
+    key: 'first-client',
+    month: 0,
+    day: 9,
+    emoji: '💾',
+    tooltipKey: 'topbar.bitcoinEvents.firstClient',
+    burst: ['v0.1', '⚡', '09']
+  },
+  {
+    key: 'first-transaction',
+    month: 0,
+    day: 12,
+    emoji: '🤝',
+    tooltipKey: 'topbar.bitcoinEvents.firstTransaction',
+    burst: ['10', '₿', '12']
+  },
+  {
+    key: 'lightning-paper',
+    month: 0,
+    day: 14,
+    emoji: '⚡',
+    tooltipKey: 'topbar.bitcoinEvents.lightningPaper',
+    burst: ['LN', 'P2P', '16']
+  },
+  {
+    key: 'p2p-foundation',
+    month: 1,
+    day: 11,
+    emoji: '🌐',
+    tooltipKey: 'topbar.bitcoinEvents.p2pFoundation',
+    burst: ['P2P', '₿', '09']
+  },
+  {
+    key: 'lnd-mainnet-beta',
+    month: 2,
+    day: 15,
+    emoji: '⚡',
+    tooltipKey: 'topbar.bitcoinEvents.lndMainnetBeta',
+    burst: ['lnd', 'β', '18']
+  },
+  {
+    key: 'satoshi-farewell',
+    month: 3,
+    day: 26,
+    emoji: '🕶️',
+    tooltipKey: 'topbar.bitcoinEvents.satoshiFarewell',
+    burst: ['S', '∞', '11']
+  },
+  {
+    key: 'first-lightning-mainnet',
+    month: 4,
+    day: 10,
+    emoji: '⚡',
+    tooltipKey: 'topbar.bitcoinEvents.firstLightningMainnet',
+    burst: ['LN', '₿', '10']
+  },
+  {
+    key: 'pizza-day',
+    month: 4,
+    day: 22,
+    emoji: '🍕',
+    tooltipKey: 'topbar.bitcoinEvents.pizzaDay',
+    burst: ['⚡', '₿', '22']
+  },
+  {
+    key: 'el-salvador-law',
+    month: 5,
+    day: 8,
+    emoji: '📜',
+    tooltipKey: 'topbar.bitcoinEvents.elSalvadorLaw',
+    burst: ['law', '₿', '21']
+  },
+  {
+    key: 'second-halving',
+    month: 6,
+    day: 9,
+    emoji: '¼',
+    tooltipKey: 'topbar.bitcoinEvents.secondHalving',
+    burst: ['25', '12.5', '16']
+  },
+  {
+    key: 'bitcoin-independence',
+    month: 7,
+    day: 1,
+    emoji: '🟧',
+    tooltipKey: 'topbar.bitcoinEvents.bitcoinIndependence',
+    burst: ['UASF', '₿', '01']
+  },
+  {
+    key: 'segwit',
+    month: 7,
+    day: 24,
+    emoji: '🧩',
+    tooltipKey: 'topbar.bitcoinEvents.segwit',
+    burst: ['SW', '⚡', '24']
+  },
+  {
+    key: 'el-salvador',
+    month: 8,
+    day: 7,
+    emoji: '🌋',
+    tooltipKey: 'topbar.bitcoinEvents.elSalvador',
+    burst: ['₿', 'SV', '21']
+  },
+  {
+    key: 'first-price',
+    month: 9,
+    day: 5,
+    emoji: '💱',
+    tooltipKey: 'topbar.bitcoinEvents.firstPrice',
+    burst: ['$', '₿', '09']
+  },
+  {
+    key: 'whitepaper',
+    month: 9,
+    day: 31,
+    emoji: '📄',
+    tooltipKey: 'topbar.bitcoinEvents.whitepaper',
+    burst: ['P2P', '₿', '08']
+  },
+  {
+    key: 'brln-foundation',
+    month: 10,
+    day: 1,
+    emoji: '🇧🇷',
+    tooltipKey: 'topbar.bitcoinEvents.brlnFoundation',
+    burst: ['BR', '⚡', 'LN']
+  },
+  {
+    key: 'taproot',
+    month: 10,
+    day: 14,
+    emoji: '🌱',
+    tooltipKey: 'topbar.bitcoinEvents.taproot',
+    burst: ['TR', '₿', '21']
+  },
+  {
+    key: 'bitcoin-forum',
+    month: 10,
+    day: 22,
+    emoji: '💬',
+    tooltipKey: 'topbar.bitcoinEvents.bitcoinForum',
+    burst: ['talk', '₿', '09']
+  },
+  {
+    key: 'first-halving',
+    month: 10,
+    day: 28,
+    emoji: '½',
+    tooltipKey: 'topbar.bitcoinEvents.firstHalving',
+    burst: ['50', '25', '12']
+  },
+  {
+    key: 'satoshi-last-post',
+    month: 11,
+    day: 12,
+    emoji: '🕯️',
+    tooltipKey: 'topbar.bitcoinEvents.satoshiLastPost',
+    burst: ['S', '₿', '10']
+  }
+] as const
+
+const getActiveBitcoinHeaderEvent = (date: Date) => {
+  const monthEvents = BITCOIN_HEADER_EVENTS
+    .filter((event) => event.month === date.getMonth())
+    .sort((left, right) => left.day - right.day)
+  if (!monthEvents.length) return null
+
+  return monthEvents.reduce(
+    (activeEvent, event) => (date.getDate() >= event.day ? event : activeEvent),
+    monthEvents[0]
+  )
+}
+
 type TopbarProps = {
   onMenuToggle?: () => void
   menuOpen?: boolean
@@ -46,8 +229,12 @@ export default function Topbar({
   const paletteName = t(`topbar.paletteNames.${palette}`)
   const paletteLabel = t('topbar.paletteLabel', { palette: paletteName })
   const today = new Date()
-  const isPizzaDayMonth = today.getMonth() === 4
-  const isPizzaDay = isPizzaDayMonth && today.getDate() === 22
+  const activeBitcoinHeaderEvent = getActiveBitcoinHeaderEvent(today)
+  const isBitcoinEventDay = Boolean(activeBitcoinHeaderEvent && today.getDate() === activeBitcoinHeaderEvent.day)
+  const bitcoinEventTooltip = activeBitcoinHeaderEvent ? t(activeBitcoinHeaderEvent.tooltipKey) : ''
+  const bitcoinEventTooltipID = activeBitcoinHeaderEvent
+    ? `bitcoin-header-event-${activeBitcoinHeaderEvent.key}`
+    : undefined
 
   useEffect(() => {
     let mounted = true
@@ -135,25 +322,25 @@ export default function Topbar({
           <p className="text-sm uppercase tracking-[0.3em] text-fog/50">{t('topbar.statusOverview')}</p>
           <h1 className="flex flex-wrap items-center gap-x-2 gap-y-1 text-3xl lg:text-4xl font-semibold">
             <span>{t('topbar.controlCenter')}</span>
-            {isPizzaDayMonth && (
+            {activeBitcoinHeaderEvent && (
               <span
-                className={`pizza-day-badge${isPizzaDay ? ' pizza-day-badge--today' : ''}`}
+                className={`bitcoin-date-badge bitcoin-date-badge--${activeBitcoinHeaderEvent.key}${isBitcoinEventDay ? ' bitcoin-date-badge--today' : ''}`}
                 tabIndex={0}
                 role="img"
-                aria-label={t('topbar.pizzaDayTooltip')}
-                aria-describedby="pizza-day-tooltip"
-                title={t('topbar.pizzaDayTooltip')}
+                aria-label={bitcoinEventTooltip}
+                aria-describedby={bitcoinEventTooltipID}
+                title={bitcoinEventTooltip}
               >
-                <span className="pizza-day-badge__emoji" aria-hidden="true">🍕</span>
-                {isPizzaDay && (
-                  <span className="pizza-day-badge__burst" aria-hidden="true">
-                    <span>⚡</span>
-                    <span>₿</span>
-                    <span>22</span>
+                <span className="bitcoin-date-badge__emoji" aria-hidden="true">{activeBitcoinHeaderEvent.emoji}</span>
+                {isBitcoinEventDay && (
+                  <span className="bitcoin-date-badge__burst" aria-hidden="true">
+                    {activeBitcoinHeaderEvent.burst.map((item) => (
+                      <span key={item}>{item}</span>
+                    ))}
                   </span>
                 )}
-                <span id="pizza-day-tooltip" className="pizza-day-badge__tooltip" role="tooltip">
-                  {t('topbar.pizzaDayTooltip')}
+                <span id={bitcoinEventTooltipID} className="bitcoin-date-badge__tooltip" role="tooltip">
+                  {bitcoinEventTooltip}
                 </span>
               </span>
             )}

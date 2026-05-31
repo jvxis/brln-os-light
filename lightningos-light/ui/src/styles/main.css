@@ -141,7 +141,9 @@ body {
   height: 1px;
 }
 
-.pizza-day-badge {
+.bitcoin-date-badge {
+  --bitcoin-date-aura-primary: var(--color-brass);
+  --bitcoin-date-aura-secondary: var(--color-ember);
   position: relative;
   display: inline-grid;
   place-items: center;
@@ -155,46 +157,103 @@ body {
   transform: translateY(0.02em);
 }
 
-.pizza-day-badge::before {
+.bitcoin-date-badge--genesis-block {
+  --bitcoin-date-aura-primary: var(--color-glow);
+  --bitcoin-date-aura-secondary: var(--color-brass);
+}
+
+.bitcoin-date-badge--first-client {
+  --bitcoin-date-aura-primary: var(--color-fog);
+  --bitcoin-date-aura-secondary: var(--color-glow);
+}
+
+.bitcoin-date-badge--p2p-foundation {
+  --bitcoin-date-aura-primary: var(--color-glow);
+  --bitcoin-date-aura-secondary: var(--color-fog);
+}
+
+.bitcoin-date-badge--lightning-paper,
+.bitcoin-date-badge--lnd-mainnet-beta,
+.bitcoin-date-badge--first-lightning-mainnet,
+.bitcoin-date-badge--brln-foundation {
+  --bitcoin-date-aura-primary: var(--color-brass);
+  --bitcoin-date-aura-secondary: var(--color-glow);
+}
+
+.bitcoin-date-badge--first-transaction {
+  --bitcoin-date-aura-primary: var(--color-glow);
+  --bitcoin-date-aura-secondary: var(--color-brass);
+}
+
+.bitcoin-date-badge--pizza-day {
+  --bitcoin-date-aura-primary: var(--color-brass);
+  --bitcoin-date-aura-secondary: var(--color-ember);
+}
+
+.bitcoin-date-badge--whitepaper {
+  --bitcoin-date-aura-primary: var(--color-fog);
+  --bitcoin-date-aura-secondary: var(--color-brass);
+}
+
+.bitcoin-date-badge--satoshi-farewell,
+.bitcoin-date-badge--satoshi-last-post,
+.bitcoin-date-badge--bitcoin-independence,
+.bitcoin-date-badge--segwit,
+.bitcoin-date-badge--taproot,
+.bitcoin-date-badge--first-halving,
+.bitcoin-date-badge--second-halving {
+  --bitcoin-date-aura-primary: var(--color-glow);
+  --bitcoin-date-aura-secondary: var(--color-fog);
+}
+
+.bitcoin-date-badge--el-salvador,
+.bitcoin-date-badge--el-salvador-law,
+.bitcoin-date-badge--first-price,
+.bitcoin-date-badge--bitcoin-forum {
+  --bitcoin-date-aura-primary: var(--color-brass);
+  --bitcoin-date-aura-secondary: var(--color-fog);
+}
+
+.bitcoin-date-badge::before {
   content: "";
   position: absolute;
   inset: 0.06em;
   z-index: -1;
   border-radius: inherit;
   background:
-    radial-gradient(circle at 38% 32%, rgb(var(--color-brass) / 0.45), transparent 44%),
-    radial-gradient(circle at 70% 66%, rgb(var(--color-ember) / 0.24), transparent 42%);
-  opacity: 0.4;
+    radial-gradient(circle at 38% 32%, rgb(var(--bitcoin-date-aura-primary) / 0.46), transparent 44%),
+    radial-gradient(circle at 70% 66%, rgb(var(--bitcoin-date-aura-secondary) / 0.25), transparent 42%);
+  opacity: 0.42;
   transform: scale(0.92);
   transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
-.pizza-day-badge:hover::before,
-.pizza-day-badge:focus-visible::before {
-  opacity: 0.8;
+.bitcoin-date-badge:hover::before,
+.bitcoin-date-badge:focus-visible::before {
+  opacity: 0.82;
   transform: scale(1.08);
 }
 
-.pizza-day-badge:focus-visible {
-  outline: 2px solid rgb(var(--color-brass) / 0.72);
+.bitcoin-date-badge:focus-visible {
+  outline: 2px solid rgb(var(--bitcoin-date-aura-primary) / 0.72);
   outline-offset: 0.12em;
 }
 
-.pizza-day-badge__emoji {
+.bitcoin-date-badge__emoji {
   display: inline-block;
-  filter: drop-shadow(0 0 10px rgb(var(--color-brass) / 0.36));
+  filter: drop-shadow(0 0 10px rgb(var(--bitcoin-date-aura-primary) / 0.36));
   transform-origin: 58% 58%;
 }
 
-.pizza-day-badge__tooltip {
+.bitcoin-date-badge__tooltip {
   position: absolute;
   left: 50%;
   top: calc(100% + 10px);
   z-index: 40;
   width: max-content;
-  max-width: min(260px, calc(100vw - 32px));
+  max-width: min(280px, calc(100vw - 32px));
   padding: 0.55rem 0.72rem;
-  border: 1px solid rgb(var(--color-brass) / 0.34);
+  border: 1px solid rgb(var(--bitcoin-date-aura-primary) / 0.34);
   border-radius: 8px;
   background: rgb(var(--color-ink) / 0.96);
   box-shadow: 0 14px 30px rgba(2, 6, 23, 0.32);
@@ -209,81 +268,82 @@ body {
   transition: opacity 0.16s ease, transform 0.16s ease;
 }
 
-.pizza-day-badge__tooltip::before {
+.bitcoin-date-badge__tooltip::before {
   content: "";
   position: absolute;
   left: 50%;
   top: -5px;
   width: 9px;
   height: 9px;
-  border-left: 1px solid rgb(var(--color-brass) / 0.34);
-  border-top: 1px solid rgb(var(--color-brass) / 0.34);
+  border-left: 1px solid rgb(var(--bitcoin-date-aura-primary) / 0.34);
+  border-top: 1px solid rgb(var(--bitcoin-date-aura-primary) / 0.34);
   background: inherit;
   transform: translateX(-50%) rotate(45deg);
 }
 
-.pizza-day-badge:hover .pizza-day-badge__tooltip,
-.pizza-day-badge:focus-visible .pizza-day-badge__tooltip {
+.bitcoin-date-badge:hover .bitcoin-date-badge__tooltip,
+.bitcoin-date-badge:focus-visible .bitcoin-date-badge__tooltip {
   opacity: 1;
   transform: translate(-50%, 0);
 }
 
-.pizza-day-badge--today::before {
+.bitcoin-date-badge--today::before {
   opacity: 0.9;
-  animation: pizza-day-glow 1.9s ease-in-out infinite;
+  animation: bitcoin-date-glow 1.9s ease-in-out infinite;
 }
 
-.pizza-day-badge--today .pizza-day-badge__emoji {
-  animation: pizza-day-slice 2.4s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+.bitcoin-date-badge--today .bitcoin-date-badge__emoji {
+  animation: bitcoin-date-mark 2.4s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
 }
 
-.pizza-day-badge__burst {
+.bitcoin-date-badge__burst {
   position: absolute;
   inset: -0.38em;
   pointer-events: none;
 }
 
-.pizza-day-badge__burst span {
+.bitcoin-date-badge__burst span {
   position: absolute;
   left: 50%;
   top: 50%;
-  color: rgb(var(--color-brass));
-  font-size: 0.34em;
+  color: rgb(var(--bitcoin-date-aura-primary));
+  font-size: 0.32em;
   font-weight: 700;
-  text-shadow: 0 0 8px rgb(var(--color-brass) / 0.55);
+  white-space: nowrap;
+  text-shadow: 0 0 8px rgb(var(--bitcoin-date-aura-primary) / 0.55);
   opacity: 0;
   transform: translate(-50%, -50%);
-  animation: pizza-day-spark 2.4s ease-out infinite;
+  animation: bitcoin-date-spark 2.4s ease-out infinite;
 }
 
-.pizza-day-badge__burst span:nth-child(1) {
+.bitcoin-date-badge__burst span:nth-child(1) {
   animation-delay: 0.05s;
 }
 
-.pizza-day-badge__burst span:nth-child(2) {
+.bitcoin-date-badge__burst span:nth-child(2) {
   animation-delay: 0.55s;
-  color: rgb(var(--color-glow));
-  text-shadow: 0 0 8px rgb(var(--color-glow) / 0.5);
+  color: rgb(var(--bitcoin-date-aura-secondary));
+  text-shadow: 0 0 8px rgb(var(--bitcoin-date-aura-secondary) / 0.5);
 }
 
-.pizza-day-badge__burst span:nth-child(3) {
+.bitcoin-date-badge__burst span:nth-child(3) {
   animation-delay: 1.05s;
   color: rgb(var(--color-fog) / 0.84);
 }
 
-@keyframes pizza-day-glow {
+@keyframes bitcoin-date-glow {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgb(var(--color-brass) / 0.26);
+    box-shadow: 0 0 0 0 rgb(var(--bitcoin-date-aura-primary) / 0.26);
     transform: scale(0.96);
   }
   50% {
-    box-shadow: 0 0 0 0.22em rgb(var(--color-brass) / 0);
+    box-shadow: 0 0 0 0.22em rgb(var(--bitcoin-date-aura-primary) / 0);
     transform: scale(1.08);
   }
 }
 
-@keyframes pizza-day-slice {
+@keyframes bitcoin-date-mark {
   0%,
   100% {
     transform: rotate(-4deg) translateY(0);
@@ -299,7 +359,7 @@ body {
   }
 }
 
-@keyframes pizza-day-spark {
+@keyframes bitcoin-date-spark {
   0% {
     opacity: 0;
     transform: translate(-50%, -50%) scale(0.55);
@@ -309,37 +369,37 @@ body {
   }
   45% {
     opacity: 0;
-    transform: translate(var(--pizza-day-spark-x, 0.7em), var(--pizza-day-spark-y, -0.65em)) scale(1);
+    transform: translate(var(--bitcoin-date-spark-x, 0.7em), var(--bitcoin-date-spark-y, -0.65em)) scale(1);
   }
   100% {
     opacity: 0;
-    transform: translate(var(--pizza-day-spark-x, 0.7em), var(--pizza-day-spark-y, -0.65em)) scale(1);
+    transform: translate(var(--bitcoin-date-spark-x, 0.7em), var(--bitcoin-date-spark-y, -0.65em)) scale(1);
   }
 }
 
-.pizza-day-badge__burst span:nth-child(1) {
-  --pizza-day-spark-x: -0.78em;
-  --pizza-day-spark-y: -0.68em;
+.bitcoin-date-badge__burst span:nth-child(1) {
+  --bitcoin-date-spark-x: -0.78em;
+  --bitcoin-date-spark-y: -0.68em;
 }
 
-.pizza-day-badge__burst span:nth-child(2) {
-  --pizza-day-spark-x: 0.74em;
-  --pizza-day-spark-y: -0.58em;
+.bitcoin-date-badge__burst span:nth-child(2) {
+  --bitcoin-date-spark-x: 0.74em;
+  --bitcoin-date-spark-y: -0.58em;
 }
 
-.pizza-day-badge__burst span:nth-child(3) {
-  --pizza-day-spark-x: 0.54em;
-  --pizza-day-spark-y: 0.72em;
+.bitcoin-date-badge__burst span:nth-child(3) {
+  --bitcoin-date-spark-x: 0.54em;
+  --bitcoin-date-spark-y: 0.72em;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pizza-day-badge--today::before,
-  .pizza-day-badge--today .pizza-day-badge__emoji,
-  .pizza-day-badge__burst span {
+  .bitcoin-date-badge--today::before,
+  .bitcoin-date-badge--today .bitcoin-date-badge__emoji,
+  .bitcoin-date-badge__burst span {
     animation: none;
   }
 
-  .pizza-day-badge__burst span {
+  .bitcoin-date-badge__burst span {
     display: none;
   }
 }

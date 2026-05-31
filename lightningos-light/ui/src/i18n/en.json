@@ -3132,10 +3132,18 @@
     "pressure": {
       "none": "No limiting tags in the latest run."
     },
-    "economics": {
-      "forward": "Forward revenue",
-      "rebalance": "Rebalance cost"
-    },
+      "economics": {
+        "forward": "Forward revenue",
+        "rebalance": "Rebalance cost"
+      },
+      "calib": {
+        "nodeAuto": "Automatic node",
+        "node": "Size",
+        "channels": "Channels",
+        "capacity": "Capacity",
+        "localLiquidity": "Local liquidity",
+        "unavailable": "Node calibration is not available yet."
+      },
       "controls": {
         "title": "Autofee Controls",
         "subtitle": "Tune global policy, movement, seeds, protections, and run actions."

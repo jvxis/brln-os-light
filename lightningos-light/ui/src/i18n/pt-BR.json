@@ -3132,11 +3132,19 @@
     "pressure": {
       "none": "Nenhuma tag limitante na última rodada."
     },
-    "economics": {
-      "forward": "Receita de forwards",
-      "rebalance": "Custo de rebalance"
-    },
-      "controls": {
+      "economics": {
+        "forward": "Receita de forwards",
+        "rebalance": "Custo de rebalance"
+      },
+      "calib": {
+        "nodeAuto": "Node automático",
+        "node": "Tamanho",
+        "channels": "Canais",
+        "capacity": "Capacidade",
+        "localLiquidity": "Liquidez local",
+        "unavailable": "Calibração do node ainda indisponível."
+      },
+        "controls": {
         "title": "Controles do Autofee",
         "subtitle": "Ajuste política global, movimento, seeds, proteções e ações de execução."
       },

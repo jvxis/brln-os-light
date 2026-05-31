@@ -468,6 +468,7 @@ export default function FeeCenter() {
   const latestRun = runs[0]
   const latestSummary = latestRun?.summary
   const latestSeed = latestRun?.seed
+  const latestCalib = latestRun?.calib
   const latestChanged = useMemo(
     () => (latestRun?.channels || []).filter((item) => item.category === 'changed'),
     [latestRun]
@@ -570,6 +571,34 @@ export default function FeeCenter() {
   const formatInt = (value?: number) => Math.round(numberOrZero(value)).toLocaleString(locale)
   const formatPpm = (value?: number) => `${formatInt(value)} ppm`
   const formatSats = (value?: number) => `${formatInt(value)} sats`
+  const formatSatsCompact = (value?: number) => {
+    const sats = numberOrZero(value)
+    if (sats >= 100_000_000) return `${(sats / 100_000_000).toFixed(2)} BTC`
+    if (sats >= 1_000_000) return `${(sats / 1_000_000).toFixed(1)}M sats`
+    if (sats >= 1_000) return `${(sats / 1_000).toFixed(1)}k sats`
+    return `${formatInt(sats)} sats`
+  }
+  const formatCalibNodeClass = (value?: string) => {
+    const normalized = String(value || '').toLowerCase()
+    if (normalized === 'small') return t('lightningOps.autofeeResultsNodeSmall')
+    if (normalized === 'medium') return t('lightningOps.autofeeResultsNodeMedium')
+    if (normalized === 'large') return t('lightningOps.autofeeResultsNodeLarge')
+    if (normalized === 'xl') return t('lightningOps.autofeeResultsNodeXL')
+    return t('common.unknown')
+  }
+  const formatCalibLiquidityClass = (value?: string) => {
+    const normalized = String(value || '').toLowerCase()
+    if (normalized === 'drained') return t('lightningOps.autofeeResultsLiquidityDrained')
+    if (normalized === 'full') return t('lightningOps.autofeeResultsLiquidityFull')
+    if (normalized === 'balanced') return t('lightningOps.autofeeResultsLiquidityBalanced')
+    return t('common.unknown')
+  }
+  const formatRatioPercent = (value?: number) => {
+    const numeric = numberOrZero(value)
+    if (!numeric) return '0%'
+    const pct = numeric > 1 ? numeric : numeric * 100
+    return `${Math.round(pct)}%`
+  }
   const formatDate = (value?: string) => {
     if (!value) return t('common.na')
     const parsed = new Date(value)
@@ -826,7 +855,33 @@ export default function FeeCenter() {
           detail={`${t('lightningOps.autofeeLastRun')}: ${formatDate(status?.last_run_at)}`}
           tone={runTone}
           badgeLabel={status?.last_error ? t('feeCenter.error') : t('common.ok')}
-        />
+        >
+          {latestCalib ? (
+            <div className="rounded-2xl border border-white/10 bg-black/10 p-3 text-xs text-fog/65">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-medium text-fog">{t('feeCenter.calib.nodeAuto')}</span>
+                <StatusBadge
+                  label={formatCalibLiquidityClass(latestCalib.liquidity_class)}
+                  tone={String(latestCalib.liquidity_class || '').toLowerCase() === 'balanced' ? 'ok' : 'warn'}
+                />
+              </div>
+              <div className="mt-2 grid gap-1">
+                <div>
+                  {t('feeCenter.calib.node')}: <span className="text-fog">{formatCalibNodeClass(latestCalib.node_class)}</span>
+                  {' | '}
+                  {t('feeCenter.calib.channels')}: <span className="text-fog">{formatInt(latestCalib.channel_count)}</span>
+                </div>
+                <div>
+                  {t('feeCenter.calib.capacity')}: <span className="text-fog">{formatSatsCompact(latestCalib.total_capacity_sat)}</span>
+                  {' | '}
+                  {t('feeCenter.calib.localLiquidity')}: <span className="text-fog">{formatSatsCompact(latestCalib.local_capacity_sat)} ({formatRatioPercent(latestCalib.local_ratio)})</span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-fog/50">{t('feeCenter.calib.unavailable')}</p>
+          )}
+        </MetricTile>
         <MetricTile
           label={t('feeCenter.tiles.lastRunImpact')}
           value={formatInt(changedTotal)}

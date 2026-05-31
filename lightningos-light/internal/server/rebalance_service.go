@@ -3266,7 +3266,13 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 		burnoutFn := func(channelID uint64) bool {
 			return s.isInExplorationBurnout(channelID, scanAt)
 		}
-		candidates = injectSovereignExplorationSlots(candidates, maxJobs, cfg.SovereignExplorationSlotPct, burnoutFn)
+		// Targets that already reached the structural cooldown threshold must
+		// not receive the exploration mark — otherwise the M3 scarcity bypass
+		// lets them skip target_structural_cooldown indefinitely.
+		structuralFn := func(target rebalanceTarget) bool {
+			return shouldSkipSovereignTargetStructuralCooldown(target.StructuralCooldown, cfg, scanAt)
+		}
+		candidates = injectSovereignExplorationSlots(candidates, maxJobs, cfg.SovereignExplorationSlotPct, burnoutFn, structuralFn)
 	}
 
 	for _, target := range candidates {
@@ -9604,7 +9610,7 @@ func trimTimeWindow(window []time.Time, cutoff time.Time) []time.Time {
 // CooldownProbe entries (score=-1) always keep the head positions and are
 // never marked. The non-explored tail retains its score order to act as a
 // deterministic fallback when head candidates are gated out.
-func injectSovereignExplorationSlots(candidates []rebalanceTarget, maxJobs int, pct int, burnoutFn func(uint64) bool) []rebalanceTarget {
+func injectSovereignExplorationSlots(candidates []rebalanceTarget, maxJobs int, pct int, burnoutFn func(uint64) bool, structuralFn func(rebalanceTarget) bool) []rebalanceTarget {
 	if pct <= 0 || maxJobs <= 1 || len(candidates) <= 1 {
 		return candidates
 	}
@@ -9635,18 +9641,34 @@ func injectSovereignExplorationSlots(candidates []rebalanceTarget, maxJobs int, 
 	if burnoutFn == nil {
 		burnoutFn = func(uint64) bool { return false }
 	}
+	if structuralFn == nil {
+		structuralFn = func(rebalanceTarget) bool { return false }
+	}
+	// excludeFromExploration: targets that must NOT receive the exploration
+	// mark. Two cases, both meaning "let the hard guard act on its own merit":
+	//   - R5 burnout: chronically-failing exploration target.
+	//   - Structural cooldown threshold reached (>= 20 fails / 24h): without
+	//     this, the M3 scarcity bypass below would mark a structurally-dead
+	//     target as exploration and let it skip target_structural_cooldown
+	//     forever (observed in prod 2026-05-31 with flashsats: 28 failures,
+	//     never cooled down because the small candidate pool triggered M3 and
+	//     the occasional partial kept resetting R5). Excluding it here makes
+	//     the structural cooldown bite normally.
+	excludeFromExploration := func(c rebalanceTarget) bool {
+		return burnoutFn(c.Channel.ChannelID) || structuralFn(c)
+	}
 	// Scarcity bypass: when there are at most 2× maxJobs real candidates, the
 	// batch is small enough that empirical-history gates would veto too many
 	// top-ranked picks (kappa/CLB-style: high score, blocked by historical
 	// failures). Mark every non-probe as exploration so the ranking — not the
-	// gates — drives which jobs run within the maxJobs cap. Burned-out
-	// targets stay in the list but skip the mark — they only proceed on own
-	// merit, ending the cycle-burn pattern.
+	// gates — drives which jobs run within the maxJobs cap. Burned-out and
+	// structurally-dead targets stay in the list but skip the mark — they only
+	// proceed on own merit, ending the cycle-burn pattern.
 	if nonProbeCount <= maxJobs*2 {
 		out := make([]rebalanceTarget, 0, len(candidates))
 		out = append(out, candidates[:probeCount]...)
 		for _, c := range candidates[probeCount:] {
-			if !burnoutFn(c.Channel.ChannelID) {
+			if !excludeFromExploration(c) {
 				c.ExplorationSlot = true
 			}
 			out = append(out, c)
@@ -9684,11 +9706,12 @@ func injectSovereignExplorationSlots(candidates []rebalanceTarget, maxJobs int, 
 		return candidates
 	}
 	// Randomly choose actualSlots indexes from pool to mark as exploration.
-	// Burned-out targets are skipped here — they may end up in the tail
-	// instead, still ranked by score, but without exploration bypass.
+	// Burned-out and structurally-dead targets are skipped here — they may end
+	// up in the tail instead, still ranked by score, but without exploration
+	// bypass (so target_structural_cooldown still bites them).
 	idx := make([]int, 0, len(pool))
 	for i, candidate := range pool {
-		if burnoutFn(candidate.Channel.ChannelID) {
+		if excludeFromExploration(candidate) {
 			continue
 		}
 		idx = append(idx, i)

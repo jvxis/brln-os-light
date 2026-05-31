@@ -387,7 +387,7 @@ func TestInjectSovereignExplorationSlotsDisabled(t *testing.T) {
 	candidates := []rebalanceTarget{
 		{Score: 100}, {Score: 90}, {Score: 80}, {Score: 70}, {Score: 60},
 	}
-	out := injectSovereignExplorationSlots(candidates, 4, 0, nil)
+	out := injectSovereignExplorationSlots(candidates, 4, 0, nil, nil)
 	if len(out) != len(candidates) {
 		t.Fatalf("length mismatch: %d vs %d", len(out), len(candidates))
 	}
@@ -410,7 +410,7 @@ func TestInjectSovereignExplorationSlotsMovesLowScore(t *testing.T) {
 	// maxJobs=5, pct=20 → 1 exploration slot. keepTop=4.
 	// Positions 0..3 = top-4 (score 150..120). Position 4 = exploration from
 	// pool [score 110..10]. Positions 5+ = fallback in score order.
-	out := injectSovereignExplorationSlots(candidates, 5, 20, nil)
+	out := injectSovereignExplorationSlots(candidates, 5, 20, nil, nil)
 	if len(out) != len(candidates) {
 		t.Fatalf("length mismatch: %d vs %d", len(out), len(candidates))
 	}
@@ -445,7 +445,7 @@ func TestInjectSovereignExplorationSlotsPreservesProbes(t *testing.T) {
 		{Score: 100}, {Score: 90}, {Score: 80}, {Score: 70},
 		{Score: 60}, {Score: 50}, {Score: 40}, {Score: 30}, {Score: 20}, {Score: 10},
 	}
-	out := injectSovereignExplorationSlots(candidates, 5, 20, nil)
+	out := injectSovereignExplorationSlots(candidates, 5, 20, nil, nil)
 	if !out[0].CooldownProbe || out[0].ExplorationSlot {
 		t.Fatalf("probe must stay first and unmarked, got probe=%v explore=%v", out[0].CooldownProbe, out[0].ExplorationSlot)
 	}
@@ -466,7 +466,7 @@ func TestInjectSovereignExplorationSlotsMarksWithin2xMaxJobs(t *testing.T) {
 		candidates[i].Channel.ChannelID = uint64(i + 1)
 	}
 	// maxJobs=8, len=6 (below 2*maxJobs=16). Scarcity bypass → all marked.
-	out := injectSovereignExplorationSlots(candidates, 8, 15, nil)
+	out := injectSovereignExplorationSlots(candidates, 8, 15, nil, nil)
 	if len(out) != len(candidates) {
 		t.Fatalf("length mismatch: %d vs %d", len(out), len(candidates))
 	}
@@ -494,7 +494,7 @@ func TestInjectSovereignExplorationSlotsMarksAtScarcityBoundary(t *testing.T) {
 		candidates[i].Score = int64(1000 - i*10)
 		candidates[i].Channel.ChannelID = uint64(i + 1)
 	}
-	out := injectSovereignExplorationSlots(candidates, 8, 30, nil)
+	out := injectSovereignExplorationSlots(candidates, 8, 30, nil, nil)
 	if len(out) != len(candidates) {
 		t.Fatalf("length mismatch: %d vs %d", len(out), len(candidates))
 	}
@@ -525,7 +525,7 @@ func TestInjectSovereignExplorationSlotsScarcityKeepsProbesUnmarked(t *testing.T
 	}
 	// maxJobs=5, nonProbeCount=2, len=3. Scarcity branch triggers because
 	// 2 <= 5; probe stays first and unmarked, two non-probes get marked.
-	out := injectSovereignExplorationSlots(candidates, 5, 20, nil)
+	out := injectSovereignExplorationSlots(candidates, 5, 20, nil, nil)
 	if len(out) != 3 {
 		t.Fatalf("length mismatch: %d vs 3", len(out))
 	}
@@ -550,7 +550,7 @@ func TestInjectSovereignExplorationSlotsScarcityNotTriggeredAboveBoundary(t *tes
 	}
 	// maxJobs=4, 2*maxJobs=8, nonProbeCount=12 > 8 → scarcity must not fire.
 	// pct=25 → slots=1, keepTop=3. Exactly one entry in the tail gets marked.
-	out := injectSovereignExplorationSlots(candidates, 4, 25, nil)
+	out := injectSovereignExplorationSlots(candidates, 4, 25, nil, nil)
 	marked := 0
 	for _, c := range out {
 		if c.ExplorationSlot {
@@ -581,12 +581,38 @@ func TestInjectSovereignExplorationSlotsBurnoutFiltersScarcity(t *testing.T) {
 	burnoutFn := func(channelID uint64) bool { return burned[channelID] }
 	// maxJobs=5, nonProbeCount=4 ≤ 10 → scarcity branch. Burned channels
 	// (2, 4) should NOT get ExplorationSlot.
-	out := injectSovereignExplorationSlots(candidates, 5, 20, burnoutFn)
+	out := injectSovereignExplorationSlots(candidates, 5, 20, burnoutFn, nil)
 	if len(out) != 4 {
 		t.Fatalf("expected 4 candidates returned, got %d", len(out))
 	}
 	for _, c := range out {
 		expectMark := !burned[c.Channel.ChannelID]
+		if c.ExplorationSlot != expectMark {
+			t.Fatalf("channel=%d expected mark=%v got=%v", c.Channel.ChannelID, expectMark, c.ExplorationSlot)
+		}
+	}
+}
+
+// 2026-05-31 fix — structuralFn must prevent targets at the structural
+// cooldown threshold from receiving the ExplorationSlot mark in the scarcity
+// branch. Without it, the M3 scarcity bypass lets a structurally-dead target
+// (flashsats: 28 failures) skip target_structural_cooldown forever.
+func TestInjectSovereignExplorationSlotsStructuralFiltersScarcity(t *testing.T) {
+	candidates := []rebalanceTarget{
+		{Score: 100, Channel: RebalanceChannel{ChannelID: 1}}, // healthy
+		{Score: 90, Channel: RebalanceChannel{ChannelID: 2}},  // structurally dead
+		{Score: 80, Channel: RebalanceChannel{ChannelID: 3}},  // healthy
+	}
+	structuralDead := map[uint64]bool{2: true}
+	structuralFn := func(c rebalanceTarget) bool { return structuralDead[c.Channel.ChannelID] }
+	// maxJobs=5, nonProbeCount=3 ≤ 10 → scarcity branch. Channel 2 (structural)
+	// must NOT get ExplorationSlot so target_structural_cooldown can bite it.
+	out := injectSovereignExplorationSlots(candidates, 5, 20, nil, structuralFn)
+	if len(out) != 3 {
+		t.Fatalf("expected 3 candidates returned, got %d", len(out))
+	}
+	for _, c := range out {
+		expectMark := !structuralDead[c.Channel.ChannelID]
 		if c.ExplorationSlot != expectMark {
 			t.Fatalf("channel=%d expected mark=%v got=%v", c.Channel.ChannelID, expectMark, c.ExplorationSlot)
 		}
@@ -605,7 +631,7 @@ func TestInjectSovereignExplorationSlotsBurnoutFiltersTailDraw(t *testing.T) {
 	// → slots=1, keepTop=3. The pool would normally draw 1 random; with all
 	// burned, the draw should produce 0 marks.
 	burnoutFn := func(channelID uint64) bool { return channelID >= 4 }
-	out := injectSovereignExplorationSlots(candidates, 4, 25, burnoutFn)
+	out := injectSovereignExplorationSlots(candidates, 4, 25, burnoutFn, nil)
 	for _, c := range out {
 		if c.ExplorationSlot {
 			t.Fatalf("expected no exploration marks when entire pool burned, got channel=%d marked", c.Channel.ChannelID)

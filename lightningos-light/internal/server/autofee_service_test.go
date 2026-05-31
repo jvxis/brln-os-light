@@ -517,6 +517,25 @@ func TestShouldAutofeeIdleRefreshChannel(t *testing.T) {
 	}
 }
 
+func TestAutofeeChannelEnabledDefaultsToEnabled(t *testing.T) {
+	settings := map[uint64]bool{
+		10: true,
+		11: false,
+	}
+	if !autofeeChannelEnabled(settings, 10) {
+		t.Fatalf("expected explicitly enabled channel to be enabled")
+	}
+	if autofeeChannelEnabled(settings, 11) {
+		t.Fatalf("expected explicitly disabled channel to be disabled")
+	}
+	if !autofeeChannelEnabled(settings, 12) {
+		t.Fatalf("expected missing channel setting to default to enabled")
+	}
+	if autofeeChannelEnabled(settings, 0) {
+		t.Fatalf("expected zero channel id to be disabled")
+	}
+}
+
 func TestApplyAutofeeIdleRefreshDecisionHardSetsAndBypassesSkips(t *testing.T) {
 	now := time.Date(2026, 5, 22, 12, 0, 0, 0, time.UTC)
 	st := &autofeeChannelState{

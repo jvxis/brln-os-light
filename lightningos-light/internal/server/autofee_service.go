@@ -3026,6 +3026,14 @@ func (s *AutofeeService) LoadChannelSettingsDetailed(ctx context.Context) ([]Aut
 	return entries, rows.Err()
 }
 
+func autofeeChannelEnabled(settings map[uint64]bool, channelID uint64) bool {
+	if channelID == 0 {
+		return false
+	}
+	enabled, ok := settings[channelID]
+	return !ok || enabled
+}
+
 func (s *AutofeeService) RefreshReferenceFees(ctx context.Context, dryRun bool, includeInbound bool) (AutofeeRefreshResult, error) {
 	runAt := time.Now().UTC()
 	result := AutofeeRefreshResult{DryRun: dryRun, IncludeInbound: includeInbound, RebalMarkupPct: autofeeRefreshRebalMarkup * 100}
@@ -3047,6 +3055,11 @@ func (s *AutofeeService) RefreshReferenceFees(ctx context.Context, dryRun bool, 
 		return result, err
 	}
 	result.Total = len(channels)
+
+	settings, err := s.LoadChannelSettings(ctx)
+	if err != nil {
+		return result, err
+	}
 
 	forwardStats7d, err := engine.fetchForwardStats(ctx, 7)
 	if err != nil {
@@ -3104,6 +3117,12 @@ func (s *AutofeeService) RefreshReferenceFees(ctx context.Context, dryRun bool, 
 		}
 		if item.ChannelPoint == "" || ch.ChannelID == 0 {
 			item.Reason = "invalid-channel"
+			result.Skipped++
+			result.Items = append(result.Items, item)
+			continue
+		}
+		if !autofeeChannelEnabled(settings, ch.ChannelID) {
+			item.Reason = "autofee-disabled"
 			result.Skipped++
 			result.Items = append(result.Items, item)
 			continue
@@ -3602,8 +3621,7 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 		if ch.ChannelID == 0 {
 			continue
 		}
-		enabled, ok := settings[ch.ChannelID]
-		if ok && !enabled {
+		if !autofeeChannelEnabled(settings, ch.ChannelID) {
 			summary.disabled++
 			continue
 		}

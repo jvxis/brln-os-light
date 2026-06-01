@@ -473,6 +473,12 @@ type RebalanceOverview struct {
 	SovereignForwardFee7dPpm      int64                        `json:"sovereign_forward_fee_7d_ppm"`
 	SovereignRealizedNet7dSat     int64                        `json:"sovereign_realized_net_7d_sat"`
 	SovereignSellThrough7d        float64                      `json:"sovereign_sellthrough_7d"`
+	SovereignForwardAmountSlow7dSat int64                      `json:"sovereign_forward_amount_slow_7d_sat"`
+	SovereignForwardFeeSlow7dSat    int64                      `json:"sovereign_forward_fee_slow_7d_sat"`
+	SovereignRealizedNetSlow7dSat   int64                      `json:"sovereign_realized_net_slow_7d_sat"`
+	SovereignSellThroughSlow7d      float64                    `json:"sovereign_sellthrough_slow_7d"`
+	SovereignSellThroughWindowHours     int                    `json:"sovereign_sellthrough_window_hours"`
+	SovereignSellThroughSlowWindowHours int                    `json:"sovereign_sellthrough_slow_window_hours"`
 	Attempts24h                   int64                        `json:"attempts_24h"`
 	FailedAttempts24h             int64                        `json:"failed_attempts_24h"`
 	SuccessAttempts24h            int64                        `json:"success_attempts_24h"`
@@ -903,11 +909,22 @@ type rebalanceAutopilotEconomics7d struct {
 	RebalanceAmountSat int64
 	RebalanceCostSat   int64
 	RebalanceCostPpm   int64
-	ForwardAmountSat   int64
-	ForwardFeeSat      int64
-	ForwardFeePpm      int64
-	RealizedNetSat     int64
-	SellThrough        float64
+	// "Velocidade" — forward atribuído na janela attribution_window
+	ForwardAmountSat int64
+	ForwardFeeSat    int64
+	ForwardFeePpm    int64
+	RealizedNetSat   int64
+	SellThrough      float64
+	// "Realizado" — forward atribuído na janela slow_seller_window (inclui
+	// slow movers). Mesmo denominador (rebalance 7d), janela maior.
+	ForwardAmountSlowSat int64
+	ForwardFeeSlowSat    int64
+	ForwardFeeSlowPpm    int64
+	RealizedNetSlowSat   int64
+	SellThroughSlow      float64
+	// Janelas usadas (vindas da config/UI), pra label dos indicadores.
+	AttributionWindowHours int
+	SlowSellerWindowHours  int
 }
 
 type mppShadowShard struct {
@@ -12592,7 +12609,15 @@ func (s *RebalanceService) fetchSovereignAutopilotEconomics7d(ctx context.Contex
 	var costSat int64
 	var forwardSat int64
 	var forwardFeeMsat int64
+	var forwardSlowSat int64
+	var forwardSlowFeeMsat int64
+	// Duas janelas, ambas vindas da config (UI): attribution_window mede a
+	// venda "rápida" (velocidade) e slow_seller_window mede a realização
+	// incluindo slow movers. O denominador (rebalance 7d) é o mesmo; muda só
+	// a janela de atribuição do forward. Ver normalizeRebalanceConfig que
+	// garante slow_seller >= attribution.
 	attributionHours := sovereignAttributionWindowHoursForConfig(cfg)
+	slowHours := sovereignSlowSellerWindowHoursForConfig(cfg)
 	err := s.db.QueryRow(ctx, `
 with jobs as (
   select id, target_channel_id, completed_at
@@ -12613,13 +12638,14 @@ attempt_totals as (
 forward_totals as (
   select
     j.id,
-    coalesce(sum(n.amount_sat), 0) as forward_amount_sat,
-    coalesce(sum(case when n.fee_msat > 0 then n.fee_msat else n.fee_sat * 1000 end), 0)::bigint as forward_fee_msat
+    coalesce(sum(n.amount_sat) filter (where n.occurred_at < j.completed_at + ($2::int * interval '1 hour')), 0) as forward_amount_sat,
+    coalesce(sum(case when n.fee_msat > 0 then n.fee_msat else n.fee_sat * 1000 end) filter (where n.occurred_at < j.completed_at + ($2::int * interval '1 hour')), 0)::bigint as forward_fee_msat,
+    coalesce(sum(n.amount_sat) filter (where n.occurred_at < j.completed_at + ($3::int * interval '1 hour')), 0) as forward_slow_amount_sat,
+    coalesce(sum(case when n.fee_msat > 0 then n.fee_msat else n.fee_sat * 1000 end) filter (where n.occurred_at < j.completed_at + ($3::int * interval '1 hour')), 0)::bigint as forward_slow_fee_msat
   from jobs j
   left join notifications n on n.type='forward'
     and n.channel_id = j.target_channel_id
     and n.occurred_at >= j.completed_at
-    and n.occurred_at < j.completed_at + ($2::int * interval '1 hour')
   group by j.id
 ),
 job_raw as (
@@ -12627,7 +12653,9 @@ job_raw as (
     coalesce(a.sent_sat, 0) as sent_sat,
     coalesce(a.fee_paid_sat, 0) as fee_paid_sat,
     coalesce(f.forward_amount_sat, 0) as forward_amount_sat,
-    coalesce(f.forward_fee_msat, 0) as forward_fee_msat
+    coalesce(f.forward_fee_msat, 0) as forward_fee_msat,
+    coalesce(f.forward_slow_amount_sat, 0) as forward_slow_amount_sat,
+    coalesce(f.forward_slow_fee_msat, 0) as forward_slow_fee_msat
   from jobs j
   left join attempt_totals a on a.id = j.id
   left join forward_totals f on f.id = j.id
@@ -12645,31 +12673,51 @@ job_economics as (
       when sent_sat <= 0 or forward_amount_sat <= 0 or forward_fee_msat <= 0 then 0
       when forward_amount_sat > sent_sat then (forward_fee_msat * sent_sat) / forward_amount_sat
       else forward_fee_msat
-    end as attributed_forward_fee_msat
+    end as attributed_forward_fee_msat,
+    case
+      when sent_sat <= 0 or forward_slow_amount_sat <= 0 then 0
+      when forward_slow_amount_sat > sent_sat then sent_sat
+      else forward_slow_amount_sat
+    end as attributed_forward_slow_sat,
+    case
+      when sent_sat <= 0 or forward_slow_amount_sat <= 0 or forward_slow_fee_msat <= 0 then 0
+      when forward_slow_amount_sat > sent_sat then (forward_slow_fee_msat * sent_sat) / forward_slow_amount_sat
+      else forward_slow_fee_msat
+    end as attributed_forward_slow_fee_msat
   from job_raw
 )
 select
   coalesce(sum(sent_sat), 0) as sent_sat,
   coalesce(sum(fee_paid_sat), 0) as cost_sat,
   coalesce(sum(attributed_forward_sat), 0) as forward_sat,
-  coalesce(sum(attributed_forward_fee_msat), 0)::bigint as forward_fee_msat
+  coalesce(sum(attributed_forward_fee_msat), 0)::bigint as forward_fee_msat,
+  coalesce(sum(attributed_forward_slow_sat), 0) as forward_slow_sat,
+  coalesce(sum(attributed_forward_slow_fee_msat), 0)::bigint as forward_slow_fee_msat
 from job_economics
-`, rebalanceSovereignReason, attributionHours).Scan(&sentSat, &costSat, &forwardSat, &forwardFeeMsat)
+`, rebalanceSovereignReason, attributionHours, slowHours).Scan(&sentSat, &costSat, &forwardSat, &forwardFeeMsat, &forwardSlowSat, &forwardSlowFeeMsat)
 	if err != nil {
 		return rebalanceAutopilotEconomics7d{}, err
 	}
 	forwardFeeSat := forwardFeeMsat / 1000
+	forwardSlowFeeSat := forwardSlowFeeMsat / 1000
 	result := rebalanceAutopilotEconomics7d{
-		RebalanceAmountSat: sentSat,
-		RebalanceCostSat:   costSat,
-		RebalanceCostPpm:   satToPpm(costSat, sentSat),
-		ForwardAmountSat:   forwardSat,
-		ForwardFeeSat:      forwardFeeSat,
-		ForwardFeePpm:      satToPpm(forwardFeeSat, forwardSat),
-		RealizedNetSat:     forwardFeeSat - costSat,
+		RebalanceAmountSat:    sentSat,
+		RebalanceCostSat:      costSat,
+		RebalanceCostPpm:      satToPpm(costSat, sentSat),
+		ForwardAmountSat:      forwardSat,
+		ForwardFeeSat:         forwardFeeSat,
+		ForwardFeePpm:         satToPpm(forwardFeeSat, forwardSat),
+		RealizedNetSat:        forwardFeeSat - costSat,
+		ForwardAmountSlowSat:  forwardSlowSat,
+		ForwardFeeSlowSat:     forwardSlowFeeSat,
+		ForwardFeeSlowPpm:     satToPpm(forwardSlowFeeSat, forwardSlowSat),
+		RealizedNetSlowSat:    forwardSlowFeeSat - costSat,
+		AttributionWindowHours: attributionHours,
+		SlowSellerWindowHours:  slowHours,
 	}
 	if sentSat > 0 {
 		result.SellThrough = float64(forwardSat) / float64(sentSat)
+		result.SellThroughSlow = float64(forwardSlowSat) / float64(sentSat)
 	}
 	return result, nil
 }
@@ -13237,6 +13285,12 @@ where report_date >= current_date - interval '6 days'
 		SovereignForwardFee7dPpm:      sovereignEconomics7d.ForwardFeePpm,
 		SovereignRealizedNet7dSat:     sovereignEconomics7d.RealizedNetSat,
 		SovereignSellThrough7d:        sovereignEconomics7d.SellThrough,
+		SovereignForwardAmountSlow7dSat:     sovereignEconomics7d.ForwardAmountSlowSat,
+		SovereignForwardFeeSlow7dSat:        sovereignEconomics7d.ForwardFeeSlowSat,
+		SovereignRealizedNetSlow7dSat:       sovereignEconomics7d.RealizedNetSlowSat,
+		SovereignSellThroughSlow7d:          sovereignEconomics7d.SellThroughSlow,
+		SovereignSellThroughWindowHours:     sovereignEconomics7d.AttributionWindowHours,
+		SovereignSellThroughSlowWindowHours: sovereignEconomics7d.SlowSellerWindowHours,
 		Attempts24h:                   attemptTelemetry.Attempts,
 		FailedAttempts24h:             attemptTelemetry.FailedAttempts,
 		SuccessAttempts24h:            attemptTelemetry.SuccessAttempts,

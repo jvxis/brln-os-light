@@ -89,6 +89,9 @@ export default function OverviewHero({
   // Health gauges
   const effectiveness = (overview.effectiveness_7d ?? 0) * 100
   const sellThrough = (overview.sovereign_sellthrough_7d ?? 0) * 100
+  const sellThroughSlow = (overview.sovereign_sellthrough_slow_7d ?? 0) * 100
+  const sellThroughWindowH = overview.sovereign_sellthrough_window_hours ?? 72
+  const sellThroughSlowWindowH = overview.sovereign_sellthrough_slow_window_hours ?? 168
   const paybackRebal = (overview.payback_progress_rebalanced ?? 0) * 100
 
   const detailLabels = {
@@ -301,13 +304,22 @@ export default function OverviewHero({
             hint={t('rebalanceCenter.heroes.hintFastPath')}
           />
           <HealthGauge
-            label={t('rebalanceCenter.heroes.gaugeSellThrough')}
+            label={t('rebalanceCenter.heroes.gaugeSellThroughFast', { hours: sellThroughWindowH })}
             value={sellThrough}
             target={70}
             targetLabel={t('rebalanceCenter.heroes.gaugeTarget', { value: 70 })}
             valueLabel={formatPct(sellThrough, 1)}
             tone={sellThrough >= 70 ? 'ok' : sellThrough >= 50 ? 'warn' : 'danger'}
-            hint={t('rebalanceCenter.heroes.hintSellThrough')}
+            hint={t('rebalanceCenter.heroes.hintSellThroughFast')}
+          />
+          <HealthGauge
+            label={t('rebalanceCenter.heroes.gaugeSellThroughSlow', { hours: sellThroughSlowWindowH })}
+            value={sellThroughSlow}
+            target={70}
+            targetLabel={t('rebalanceCenter.heroes.gaugeTarget', { value: 70 })}
+            valueLabel={formatPct(sellThroughSlow, 1)}
+            tone={sellThroughSlow >= 70 ? 'ok' : sellThroughSlow >= 50 ? 'warn' : 'danger'}
+            hint={t('rebalanceCenter.heroes.hintSellThroughSlow')}
           />
           <HealthGauge
             label={t('rebalanceCenter.heroes.gaugePaybackRebal')}

@@ -193,6 +193,12 @@ export type RebalanceOverview = {
   sovereign_forward_fee_7d_ppm?: number
   sovereign_realized_net_7d_sat?: number
   sovereign_sellthrough_7d?: number
+  sovereign_forward_amount_slow_7d_sat?: number
+  sovereign_forward_fee_slow_7d_sat?: number
+  sovereign_realized_net_slow_7d_sat?: number
+  sovereign_sellthrough_slow_7d?: number
+  sovereign_sellthrough_window_hours?: number
+  sovereign_sellthrough_slow_window_hours?: number
   attempts_24h?: number
   failed_attempts_24h?: number
   attempt_success_rate_24h?: number

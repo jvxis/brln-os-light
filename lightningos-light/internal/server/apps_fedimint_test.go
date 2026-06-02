@@ -8,17 +8,24 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func TestFedimintGuardianComposeUsesIrohAndEsplora(t *testing.T) {
+func TestFedimintGuardianComposeUsesIrohAndBitcoind(t *testing.T) {
 	paths := fedimintGuardianPaths{
 		DataDir: "/var/lib/lightningos/apps-data/fedimint-guardian/fedimintd",
 	}
+	values := fedimintBitcoinBackendValues{
+		URL:  "http://bitcoin.br-ln.com:8085",
+		User: "bitcoin-user",
+		Pass: "bitcoin-pass",
+	}
 
-	compose := fedimintGuardianComposeContents(paths)
+	compose := fedimintGuardianComposeContents(paths, values)
 
 	for _, want := range []string{
 		"image: fedimint/fedimintd:v0.11.1",
 		"FM_ENABLE_IROH: \"true\"",
-		"FM_ESPLORA_URL: https://mempool.space/api",
+		"FM_BITCOIND_URL: 'http://bitcoin.br-ln.com:8085'",
+		"FM_BITCOIND_USERNAME: 'bitcoin-user'",
+		"FM_BITCOIND_PASSWORD: 'bitcoin-pass'",
 		"- \"8173:8173/tcp\"",
 		"- \"8173:8173/udp\"",
 		"- \"8174:8174/udp\"",
@@ -29,9 +36,7 @@ func TestFedimintGuardianComposeUsesIrohAndEsplora(t *testing.T) {
 		}
 	}
 	for _, unwanted := range []string{
-		"FM_BITCOIND_URL",
-		"FM_BITCOIND_USERNAME",
-		"FM_BITCOIND_PASSWORD",
+		"FM_ESPLORA_URL",
 		"FM_LND_RPC_ADDR",
 		"gatewayd",
 		"10010:10010",
@@ -47,7 +52,37 @@ func TestFedimintGuardianComposeUsesIrohAndEsplora(t *testing.T) {
 	}
 }
 
-func TestFedimintGatewayComposeUsesLndIrohAndEsplora(t *testing.T) {
+func TestFedimintGuardianComposeCanJoinBitcoinCoreNetwork(t *testing.T) {
+	paths := fedimintGuardianPaths{
+		DataDir: "/var/lib/lightningos/apps-data/fedimint-guardian/fedimintd",
+	}
+	values := fedimintBitcoinBackendValues{
+		URL:                   "http://bitcoind:8332",
+		User:                  "lightningos",
+		Pass:                  "pa'ss",
+		UseBitcoinCoreNetwork: true,
+	}
+
+	compose := fedimintGuardianComposeContents(paths, values)
+
+	for _, want := range []string{
+		"FM_BITCOIND_URL: 'http://bitcoind:8332'",
+		"FM_BITCOIND_PASSWORD: 'pa''ss'",
+		"- bitcoincore",
+		"name: bitcoincore_default",
+	} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("guardian compose missing %q\n%s", want, compose)
+		}
+	}
+
+	var parsed map[string]any
+	if err := yaml.Unmarshal([]byte(compose), &parsed); err != nil {
+		t.Fatalf("guardian compose must be valid YAML: %v\n%s", err, compose)
+	}
+}
+
+func TestFedimintGatewayComposeUsesLndIrohAndBitcoind(t *testing.T) {
 	paths := fedimintGatewayPaths{
 		DataDir: "/var/lib/lightningos/apps-data/fedimint-gateway/gatewayd",
 	}
@@ -56,6 +91,11 @@ func TestFedimintGatewayComposeUsesLndIrohAndEsplora(t *testing.T) {
 		LndRPCAddr:          "https://host.docker.internal:10009",
 		LndTLSCertPath:      "/data/lnd/tls.cert",
 		LndMacaroonPath:     "/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon",
+		BitcoinBackend: fedimintBitcoinBackendValues{
+			URL:  "http://bitcoin.br-ln.com:8085",
+			User: "bitcoin-user",
+			Pass: "bitcoin-pass",
+		},
 	}
 
 	compose := fedimintGatewayComposeContents(paths, values)
@@ -64,7 +104,9 @@ func TestFedimintGatewayComposeUsesLndIrohAndEsplora(t *testing.T) {
 		"image: fedimint/gatewayd:v0.11.1",
 		"command: gatewayd lnd",
 		"FM_GATEWAY_IROH_LISTEN_ADDR: 0.0.0.0:8177",
-		"FM_ESPLORA_URL: https://mempool.space/api",
+		"FM_BITCOIND_URL: 'http://bitcoin.br-ln.com:8085'",
+		"FM_BITCOIND_USERNAME: 'bitcoin-user'",
+		"FM_BITCOIND_PASSWORD: 'bitcoin-pass'",
 		"FM_LND_RPC_ADDR: https://host.docker.internal:10009",
 		"FM_LND_TLS_CERT: /data/lnd/tls.cert",
 		"FM_LND_MACAROON: /data/lnd/data/chain/bitcoin/mainnet/admin.macaroon",
@@ -78,7 +120,7 @@ func TestFedimintGatewayComposeUsesLndIrohAndEsplora(t *testing.T) {
 	}
 	for _, unwanted := range []string{
 		"fedimintd",
-		"FM_BITCOIND_URL",
+		"FM_ESPLORA_URL",
 		"FM_PORT_LDK",
 		"10010:10010",
 	} {
@@ -99,6 +141,42 @@ func TestFedimintGatewayComposeUsesLndIrohAndEsplora(t *testing.T) {
 	}
 	if strings.Contains(compose, "\n/data/lnd/tls.cert\n") {
 		t.Fatalf("compose must not render LND cert path as a standalone YAML line\n%s", compose)
+	}
+}
+
+func TestFedimintGatewayComposeCanJoinBitcoinCoreNetwork(t *testing.T) {
+	paths := fedimintGatewayPaths{
+		DataDir: "/var/lib/lightningos/apps-data/fedimint-gateway/gatewayd",
+	}
+	values := fedimintGatewayRuntimeValues{
+		GatewayPasswordHash: "$2a$10$abcdefghijklmnopqrstuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu",
+		LndRPCAddr:          "https://host.docker.internal:10009",
+		LndTLSCertPath:      "/data/lnd/tls.cert",
+		LndMacaroonPath:     "/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon",
+		BitcoinBackend: fedimintBitcoinBackendValues{
+			URL:                   "http://bitcoind:8332",
+			User:                  "lightningos",
+			Pass:                  "pa'ss",
+			UseBitcoinCoreNetwork: true,
+		},
+	}
+
+	compose := fedimintGatewayComposeContents(paths, values)
+
+	for _, want := range []string{
+		"FM_BITCOIND_URL: 'http://bitcoind:8332'",
+		"FM_BITCOIND_PASSWORD: 'pa''ss'",
+		"- bitcoincore",
+		"name: bitcoincore_default",
+	} {
+		if !strings.Contains(compose, want) {
+			t.Fatalf("gateway compose missing %q\n%s", want, compose)
+		}
+	}
+
+	var parsed map[string]any
+	if err := yaml.Unmarshal([]byte(compose), &parsed); err != nil {
+		t.Fatalf("gateway compose must be valid YAML: %v\n%s", err, compose)
 	}
 }
 

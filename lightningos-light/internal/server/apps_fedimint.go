@@ -23,7 +23,6 @@ const (
 	fedimintGatewayAppID     = "fedimint-gateway"
 	fedimintdImage           = "fedimint/fedimintd:v0.11.1"
 	fedimintGatewayImage     = "fedimint/gatewayd:v0.11.1"
-	fedimintEsploraURL       = "https://mempool.space/api"
 	fedimintP2PPort          = 8173
 	fedimintAPIPort          = 8174
 	fedimintUIPort           = 8175
@@ -67,6 +66,16 @@ type fedimintGatewayRuntimeValues struct {
 	LndRPCAddr          string
 	LndTLSCertPath      string
 	LndMacaroonPath     string
+	BitcoinBackend      fedimintBitcoinBackendValues
+}
+
+type fedimintBitcoinBackendValues struct {
+	URL                      string
+	User                     string
+	Pass                     string
+	UseBitcoinCoreNetwork    bool
+	NeedsLocalRPCBridgeUFW   bool
+	LocalExternalBitcoinPort int
 }
 
 type fedimintGuardianApp struct {
@@ -237,11 +246,18 @@ func (s *Server) startFedimintGuardian(ctx context.Context) error {
 	if err := ensureDockerImage(ctx, fedimintdImage); err != nil {
 		return err
 	}
-	if _, err := ensureFileWithChange(paths.ComposePath, fedimintGuardianComposeContents(paths)); err != nil {
+	values, err := s.resolveFedimintBitcoinBackend(ctx, "Fedimint Guardian")
+	if err != nil {
+		return err
+	}
+	if _, err := ensureFileWithChange(paths.ComposePath, fedimintGuardianComposeContents(paths, values)); err != nil {
 		return err
 	}
 	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d"); err != nil {
 		return err
+	}
+	if err := ensureFedimintBitcoinBackendUfwAccess(ctx, values, fedimintGuardianBridgeName); err != nil && s.logger != nil {
+		s.logger.Printf("fedimint guardian: bitcoin rpc ufw rule failed: %v", err)
 	}
 	if err := ensureFedimintGuardianUfwAccess(ctx); err != nil && s.logger != nil {
 		s.logger.Printf("fedimint guardian: ufw rule failed: %v", err)
@@ -302,11 +318,16 @@ func (s *Server) startFedimintGateway(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	bitcoinBackend, err := s.resolveFedimintBitcoinBackend(ctx, "Fedimint Lightning Gateway")
+	if err != nil {
+		return err
+	}
 	values := fedimintGatewayRuntimeValues{
 		GatewayPasswordHash: passwordHash,
 		LndRPCAddr:          fedimintLndRPCAddr(s.cfg),
 		LndTLSCertPath:      fedimintLndTLSCertPath,
 		LndMacaroonPath:     lndAdminMacaroonPath,
+		BitcoinBackend:      bitcoinBackend,
 	}
 	if _, err := ensureFileWithChange(paths.ComposePath, fedimintGatewayComposeContents(paths, values)); err != nil {
 		return err
@@ -320,11 +341,17 @@ func (s *Server) startFedimintGateway(ctx context.Context) error {
 	if err := ensureFedimintGatewayUfwAccess(ctx); err != nil && s.logger != nil {
 		s.logger.Printf("fedimint gateway: ufw rule failed: %v", err)
 	}
+	if err := ensureFedimintBitcoinBackendUfwAccess(ctx, values.BitcoinBackend, fedimintGatewayBridgeName); err != nil && s.logger != nil {
+		s.logger.Printf("fedimint gateway: bitcoin rpc ufw rule failed: %v", err)
+	}
 	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d"); err != nil {
 		return err
 	}
 	if err := ensureFedimintGatewayUfwAccess(ctx); err != nil && s.logger != nil {
 		s.logger.Printf("fedimint gateway: post-start ufw rule failed: %v", err)
+	}
+	if err := ensureFedimintBitcoinBackendUfwAccess(ctx, values.BitcoinBackend, fedimintGatewayBridgeName); err != nil && s.logger != nil {
+		s.logger.Printf("fedimint gateway: post-start bitcoin rpc ufw rule failed: %v", err)
 	}
 	return nil
 }
@@ -418,11 +445,68 @@ func fedimintLndRPCAddr(cfg *config.Config) string {
 	return "https://" + net.JoinHostPort("host.docker.internal", strconv.Itoa(port))
 }
 
-func fedimintGuardianComposeContents(paths fedimintGuardianPaths) string {
+func (s *Server) resolveFedimintBitcoinBackend(ctx context.Context, appName string) (fedimintBitcoinBackendValues, error) {
+	cfg, ok := readBitcoindRPCConfigFromLNDConf()
+	if !ok {
+		return fedimintBitcoinBackendValues{}, fmt.Errorf("bitcoin RPC credentials unavailable: configure bitcoind.rpchost, bitcoind.rpcuser and bitcoind.rpcpass in %s before starting %s", lndConfPath, appName)
+	}
+	bitcoinPaths := bitcoinCoreAppPaths()
+	if isLocalRPCHost(cfg.Host) && fileExists(bitcoinPaths.ComposePath) {
+		if _, changed, err := syncBitcoinCoreRPCAllowList(ctx, bitcoinPaths); err != nil {
+			return fedimintBitcoinBackendValues{}, fmt.Errorf("failed to update local bitcoind RPC allowlist: %w", err)
+		} else if changed {
+			if err := runCompose(ctx, bitcoinPaths.Root, bitcoinPaths.ComposePath, "restart", "bitcoind"); err != nil {
+				return fedimintBitcoinBackendValues{}, fmt.Errorf("failed to restart local bitcoind after RPC allowlist update: %w", err)
+			}
+		}
+	}
+	return fedimintBitcoinBackendFromConfig(cfg), nil
+}
+
+func fedimintBitcoinBackendFromConfig(cfg bitcoinRPCConfig) fedimintBitcoinBackendValues {
+	host, port := parseMainchainRPC(cfg.Host)
+	values := fedimintBitcoinBackendValues{
+		URL:  "http://" + net.JoinHostPort(host, strconv.Itoa(port)),
+		User: cfg.User,
+		Pass: cfg.Pass,
+	}
+	if isLocalRPCHost(cfg.Host) {
+		if fileExists(bitcoinCoreAppPaths().ComposePath) {
+			values.URL = "http://" + net.JoinHostPort("bitcoind", strconv.Itoa(port))
+			values.UseBitcoinCoreNetwork = true
+		} else {
+			values.URL = "http://" + net.JoinHostPort("host.docker.internal", strconv.Itoa(port))
+			values.NeedsLocalRPCBridgeUFW = true
+			values.LocalExternalBitcoinPort = port
+		}
+	}
+	return values
+}
+
+func fedimintBitcoinBackendNetworkBlocks(values fedimintBitcoinBackendValues) (string, string) {
+	if !values.UseBitcoinCoreNetwork {
+		return "", ""
+	}
+	return `    networks:
+      - default
+      - bitcoincore
+`, `
+networks:
+  default:
+  bitcoincore:
+    external: true
+    name: bitcoincore_default
+`
+}
+
+func fedimintGuardianComposeContents(paths fedimintGuardianPaths, values fedimintBitcoinBackendValues) string {
+	extraNetworks, networkDecl := fedimintBitcoinBackendNetworkBlocks(values)
 	return fmt.Sprintf(`services:
   fedimintd:
     image: %s
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "%d:%d/tcp"
       - "%d:%d/udp"
@@ -430,17 +514,24 @@ func fedimintGuardianComposeContents(paths fedimintGuardianPaths) string {
       - "%d:%d/tcp"
     volumes:
       - %s:/data
-    environment:
+%s    environment:
       FM_ENABLE_IROH: "true"
       FM_BITCOIN_NETWORK: bitcoin
-      FM_ESPLORA_URL: %s
+      FM_BITCOIND_URL: %s
+      FM_BITCOIND_USERNAME: %s
+      FM_BITCOIND_PASSWORD: %s
       FM_BIND_P2P: 0.0.0.0:%d
       FM_BIND_API: 0.0.0.0:%d
       FM_BIND_UI: 0.0.0.0:%d
-`, fedimintdImage, fedimintP2PPort, fedimintP2PPort, fedimintP2PPort, fedimintP2PPort, fedimintAPIPort, fedimintAPIPort, fedimintUIPort, fedimintUIPort, paths.DataDir, fedimintEsploraURL, fedimintP2PPort, fedimintAPIPort, fedimintUIPort)
+%s`, fedimintdImage, fedimintP2PPort, fedimintP2PPort, fedimintP2PPort, fedimintP2PPort, fedimintAPIPort, fedimintAPIPort, fedimintUIPort, fedimintUIPort, paths.DataDir, extraNetworks, yamlSingleQuote(values.URL), yamlSingleQuote(values.User), yamlSingleQuote(values.Pass), fedimintP2PPort, fedimintAPIPort, fedimintUIPort, networkDecl)
+}
+
+func yamlSingleQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
 func fedimintGatewayComposeContents(paths fedimintGatewayPaths, values fedimintGatewayRuntimeValues) string {
+	extraNetworks, networkDecl := fedimintBitcoinBackendNetworkBlocks(values.BitcoinBackend)
 	return fmt.Sprintf(`services:
   gatewayd:
     image: %s
@@ -454,17 +545,19 @@ func fedimintGatewayComposeContents(paths fedimintGatewayPaths, values fedimintG
     volumes:
       - %s:/data
       - /data/lnd:/data/lnd:ro
-    environment:
+%s    environment:
       FM_GATEWAY_DATA_DIR: /data
       FM_GATEWAY_LISTEN_ADDR: 0.0.0.0:%d
       FM_GATEWAY_NETWORK: bitcoin
       FM_GATEWAY_IROH_LISTEN_ADDR: 0.0.0.0:%d
       FM_GATEWAY_BCRYPT_PASSWORD_HASH: "%s"
-      FM_ESPLORA_URL: %s
+      FM_BITCOIND_URL: %s
+      FM_BITCOIND_USERNAME: %s
+      FM_BITCOIND_PASSWORD: %s
       FM_LND_RPC_ADDR: %s
       FM_LND_TLS_CERT: %s
       FM_LND_MACAROON: %s
-`, fedimintGatewayImage, fedimintGatewayUIPort, fedimintGatewayUIPort, fedimintGatewayIrohPort, fedimintGatewayIrohPort, paths.DataDir, fedimintGatewayUIPort, fedimintGatewayIrohPort, escapeComposeDollar(values.GatewayPasswordHash), fedimintEsploraURL, values.LndRPCAddr, values.LndTLSCertPath, values.LndMacaroonPath)
+%s`, fedimintGatewayImage, fedimintGatewayUIPort, fedimintGatewayUIPort, fedimintGatewayIrohPort, fedimintGatewayIrohPort, paths.DataDir, extraNetworks, fedimintGatewayUIPort, fedimintGatewayIrohPort, escapeComposeDollar(values.GatewayPasswordHash), yamlSingleQuote(values.BitcoinBackend.URL), yamlSingleQuote(values.BitcoinBackend.User), yamlSingleQuote(values.BitcoinBackend.Pass), values.LndRPCAddr, values.LndTLSCertPath, values.LndMacaroonPath, networkDecl)
 }
 
 func escapeComposeDollar(value string) string {
@@ -633,6 +726,27 @@ func ensureFedimintGatewayUfwAccess(ctx context.Context) error {
 	}
 	if bridge, bridgeErr := fedimintGatewayBridgeName(ctx); bridgeErr == nil && bridge != "" {
 		if err := allowFedimintBridgePort(ctx, bridge, 10009); err != nil {
+			lastErr = err
+		}
+	}
+	return lastErr
+}
+
+func ensureFedimintBitcoinBackendUfwAccess(ctx context.Context, values fedimintBitcoinBackendValues, bridgeName func(context.Context) (string, error)) error {
+	if !values.NeedsLocalRPCBridgeUFW || values.LocalExternalBitcoinPort <= 0 {
+		return nil
+	}
+	statusOut, err := system.RunCommandWithSudo(ctx, "ufw", "status")
+	if err != nil || !strings.Contains(strings.ToLower(statusOut), "status: active") {
+		return nil
+	}
+
+	var lastErr error
+	if err := allowFedimintBridgePort(ctx, fedimintDockerBridgeName, values.LocalExternalBitcoinPort); err != nil {
+		lastErr = err
+	}
+	if bridge, bridgeErr := bridgeName(ctx); bridgeErr == nil && bridge != "" {
+		if err := allowFedimintBridgePort(ctx, bridge, values.LocalExternalBitcoinPort); err != nil {
 			lastErr = err
 		}
 	}

@@ -29,11 +29,15 @@ Configuracao principal:
 ```yaml
 FM_ENABLE_IROH: "true"
 FM_BITCOIN_NETWORK: bitcoin
-FM_ESPLORA_URL: https://mempool.space/api
+FM_BITCOIND_URL: http://<host-bitcoin>:8332
+FM_BITCOIND_USERNAME: <usuario RPC do bitcoind>
+FM_BITCOIND_PASSWORD: <senha RPC do bitcoind>
 FM_BIND_P2P: 0.0.0.0:8173
 FM_BIND_API: 0.0.0.0:8174
 FM_BIND_UI: 0.0.0.0:8175
 ```
+
+O LightningOS le os campos `bitcoind.*` ativos de `/data/lnd/lnd.conf` e usa o mesmo Bitcoin RPC configurado para o LND. Quando esse Bitcoin e o app Bitcoin Core do App Store, o Guardian entra na network Docker `bitcoincore_default` e usa `http://bitcoind:8332`.
 
 ### Fedimint Lightning Gateway
 
@@ -49,7 +53,9 @@ FM_GATEWAY_LISTEN_ADDR: 0.0.0.0:8176
 FM_GATEWAY_NETWORK: bitcoin
 FM_GATEWAY_IROH_LISTEN_ADDR: 0.0.0.0:8177
 FM_GATEWAY_BCRYPT_PASSWORD_HASH: <gerado pelo LightningOS>
-FM_ESPLORA_URL: https://mempool.space/api
+FM_BITCOIND_URL: http://<host-bitcoin>:8332
+FM_BITCOIND_USERNAME: <usuario RPC do bitcoind>
+FM_BITCOIND_PASSWORD: <senha RPC do bitcoind>
 FM_LND_RPC_ADDR: https://host.docker.internal:10009
 FM_LND_TLS_CERT: /data/lnd/tls.cert
 FM_LND_MACAROON: /data/lnd/data/chain/bitcoin/mainnet/admin.macaroon
@@ -57,17 +63,19 @@ FM_LND_MACAROON: /data/lnd/data/chain/bitcoin/mainnet/admin.macaroon
 
 O gateway monta `/data/lnd` como somente leitura.
 
-## Esplora
+## Backend Bitcoin
 
-Os dois apps usam:
+O Guardian e o Gateway usam bitcoind diretamente:
 
 ```text
-https://mempool.space/api
+FM_BITCOIND_URL
+FM_BITCOIND_USERNAME
+FM_BITCOIND_PASSWORD
 ```
 
-Isso evita depender do Bitcoin RPC local dentro da integracao Fedimint.
+Isso evita depender da API publica `mempool.space` para o `fedimintd` e para o `gatewayd`.
 
-Tradeoff: essa opcao e mais simples, mas menos privada e menos autonoma do que usar o proprio bitcoind. Se `mempool.space` ficar indisponivel, limitado ou instavel, o Fedimint pode ser afetado.
+O Gateway tambem monta `/data/lnd` e fala com o LND local para pagamentos Lightning.
 
 ## Portas
 

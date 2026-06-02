@@ -60,6 +60,8 @@ const (
 	defaultMinSoftCeiling               = 100
 	defaultSeedCeilingMult              = 1.50
 	defaultSeedFloorMult                = 1.10
+	defaultSeedShockMinFrac             = 0.35
+	seedShockConfirmRounds              = 2
 	defaultSeedP95Boost                 = 1.15
 	defaultSourceSeedTargetFrac         = 0.55
 	defaultProfitProtectOutRatio        = 0.10
@@ -1220,6 +1222,9 @@ create table if not exists autofee_state (
   last_ppm integer,
   last_inbound_discount_ppm integer,
   last_seed_ppm integer,
+  seed_shock_pending_ppm integer,
+  seed_shock_rounds integer not null default 0,
+  seed_shock_dir text,
   last_outrate_ppm integer,
   last_outrate_ts timestamptz,
   last_rebal_cost_ppm integer,
@@ -1337,6 +1342,9 @@ alter table autofee_state add column if not exists apply_error_alerted boolean n
 alter table autofee_state add column if not exists last_idle_refresh_ts timestamptz;
 alter table autofee_state add column if not exists last_idle_refresh_ppm integer;
 alter table autofee_state add column if not exists last_idle_refresh_source text;
+alter table autofee_state add column if not exists seed_shock_pending_ppm integer;
+alter table autofee_state add column if not exists seed_shock_rounds integer not null default 0;
+alter table autofee_state add column if not exists seed_shock_dir text;
 alter table autofee_logs add column if not exists payload jsonb;
 `)
 	if err != nil {
@@ -2927,6 +2935,9 @@ type autofeeChannelState struct {
 	LastPpm             int
 	LastInboundDiscount int
 	LastSeed            int
+	SeedShockPendingPpm int
+	SeedShockRounds     int
+	SeedShockDir        string
 	LastOutrate         int
 	LastOutrateTs       time.Time
 	LastRebalCost       int
@@ -5947,6 +5958,74 @@ func shouldAllowBootstrapSeedSoftFloor(newInboundBootstrap bool, outRatio float6
 	return outRatio >= minOutRatio
 }
 
+func seedShockMinFrac(profile autofeeProfile) float64 {
+	threshold := defaultSeedShockMinFrac
+	if profile.SeedGuardMaxJump > 0 && profile.SeedGuardMaxJump < threshold {
+		threshold = profile.SeedGuardMaxJump
+	}
+	if threshold <= 0 {
+		return defaultSeedShockMinFrac
+	}
+	return threshold
+}
+
+func resetSeedShock(st *autofeeChannelState) {
+	if st == nil {
+		return
+	}
+	st.SeedShockPendingPpm = 0
+	st.SeedShockRounds = 0
+	st.SeedShockDir = ""
+}
+
+func sameSeedShockCandidate(st *autofeeChannelState, seedPpm int, dir string) bool {
+	if st == nil || st.SeedShockPendingPpm <= 0 || st.SeedShockDir != dir {
+		return false
+	}
+	tolerance := maxInt(10, int(math.Round(float64(seedPpm)*0.05)))
+	return absInt(st.SeedShockPendingPpm-seedPpm) <= tolerance
+}
+
+func applySeedShockGuard(st *autofeeChannelState, profile autofeeProfile, seed float64, tags []string, matureNoLocalSignal bool, hasLocalSignal bool) (float64, []string) {
+	if st == nil || seed <= 0 || st.LastSeed <= 0 {
+		return seed, tags
+	}
+	if !matureNoLocalSignal || hasLocalSignal {
+		resetSeedShock(st)
+		return seed, tags
+	}
+	previousSeed := st.LastSeed
+	shockFrac := math.Abs(seed-float64(previousSeed)) / float64(previousSeed)
+	if shockFrac < seedShockMinFrac(profile) {
+		resetSeedShock(st)
+		return seed, tags
+	}
+
+	seedPpm := int(math.Round(seed))
+	if seedPpm <= 0 {
+		return seed, tags
+	}
+	dir := "down"
+	if seedPpm > previousSeed {
+		dir = "up"
+	}
+	tags = append(tags, "seed:shock-"+dir)
+	if sameSeedShockCandidate(st, seedPpm, dir) {
+		st.SeedShockRounds++
+	} else {
+		st.SeedShockPendingPpm = seedPpm
+		st.SeedShockRounds = 1
+		st.SeedShockDir = dir
+	}
+	if st.SeedShockRounds >= seedShockConfirmRounds {
+		resetSeedShock(st)
+		tags = append(tags, "seed:shock-confirmed")
+		return seed, tags
+	}
+	tags = append(tags, "seed:shock-hold")
+	return float64(previousSeed), tags
+}
+
 func shouldRelaxNegMarginForSeedSoftEnvelope(seedEnvelopeActive bool, tags []string, localPpm int, target int, seed float64, ceilingMult float64) bool {
 	if !seedEnvelopeActive || localPpm <= 0 || target >= localPpm || seed <= 0 {
 		return false
@@ -6680,7 +6759,8 @@ select channel_id, last_ppm, last_inbound_discount_ppm, last_seed_ppm, last_outr
   last_rebal_cost_ppm, last_rebal_cost_ts, last_idle_refresh_ts, last_idle_refresh_ppm, last_idle_refresh_source,
   last_ts, last_dir, low_streak, stalled_rounds, baseline_fwd7d, class_label, class_conf, bias_ema,
   first_seen_ts, ss_active, ss_ok_since, ss_bad_since, explorer_state,
-  apply_error_streak, last_apply_error, apply_error_alerted
+  apply_error_streak, last_apply_error, apply_error_alerted,
+  seed_shock_pending_ppm, seed_shock_rounds, seed_shock_dir
 from autofee_state
 `)
 	if err != nil {
@@ -6694,6 +6774,9 @@ from autofee_state
 		var lastPpm pgtype.Int4
 		var lastInb pgtype.Int4
 		var lastSeed pgtype.Int4
+		var seedShockPending pgtype.Int4
+		var seedShockRounds int
+		var seedShockDir pgtype.Text
 		var lastOut pgtype.Int4
 		var lastOutTs pgtype.Timestamptz
 		var lastRebal pgtype.Int4
@@ -6720,7 +6803,8 @@ from autofee_state
 		if err := rows.Scan(&channelID, &lastPpm, &lastInb, &lastSeed, &lastOut, &lastOutTs, &lastRebal, &lastRebalTs,
 			&lastIdleRefreshTs, &lastIdleRefreshPpm, &lastIdleRefreshSource, &lastTs, &lastDir,
 			&lowStreak, &stalledRounds, &baseline, &classLabel, &classConf, &biasEma, &firstSeen, &ssActive, &ssOkSince, &ssBadSince, &explorerRaw,
-			&applyErrorStreak, &lastApplyError, &applyErrorAlerted); err != nil {
+			&applyErrorStreak, &lastApplyError, &applyErrorAlerted,
+			&seedShockPending, &seedShockRounds, &seedShockDir); err != nil {
 			return items, err
 		}
 		st.ApplyErrorStreak = applyErrorStreak
@@ -6737,6 +6821,13 @@ from autofee_state
 		}
 		if lastSeed.Valid {
 			st.LastSeed = int(lastSeed.Int32)
+		}
+		if seedShockPending.Valid {
+			st.SeedShockPendingPpm = int(seedShockPending.Int32)
+		}
+		st.SeedShockRounds = seedShockRounds
+		if seedShockDir.Valid {
+			st.SeedShockDir = seedShockDir.String
 		}
 		if lastOut.Valid {
 			st.LastOutrate = int(lastOut.Int32)
@@ -6865,13 +6956,17 @@ insert into autofee_state (
   last_rebal_cost_ppm, last_rebal_cost_ts, last_idle_refresh_ts, last_idle_refresh_ppm, last_idle_refresh_source,
   last_ts, last_dir, low_streak, stalled_rounds, baseline_fwd7d, class_label, class_conf, bias_ema,
   first_seen_ts, ss_active, ss_ok_since, ss_bad_since, explorer_state,
-  apply_error_streak, last_apply_error, apply_error_alerted
-) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
+  apply_error_streak, last_apply_error, apply_error_alerted,
+  seed_shock_pending_ppm, seed_shock_rounds, seed_shock_dir
+) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
 `+
 		`on conflict (channel_id) do update set
   last_ppm=excluded.last_ppm,
   last_inbound_discount_ppm=excluded.last_inbound_discount_ppm,
   last_seed_ppm=excluded.last_seed_ppm,
+  seed_shock_pending_ppm=excluded.seed_shock_pending_ppm,
+  seed_shock_rounds=excluded.seed_shock_rounds,
+  seed_shock_dir=excluded.seed_shock_dir,
   last_outrate_ppm=excluded.last_outrate_ppm,
   last_outrate_ts=excluded.last_outrate_ts,
   last_rebal_cost_ppm=excluded.last_rebal_cost_ppm,
@@ -6903,6 +6998,7 @@ insert into autofee_state (
 		nullableFloat(st.BiasEma), nullableTime(st.FirstSeen), st.SuperSourceActive,
 		nullableTime(st.SuperSourceOkSince), nullableTime(st.SuperSourceBadSince), rawExplorer,
 		st.ApplyErrorStreak, nullableString(st.LastApplyError), st.ApplyErrorAlerted,
+		nullableInt(int64(st.SeedShockPendingPpm)), st.SeedShockRounds, nullableString(st.SeedShockDir),
 	)
 }
 
@@ -7981,7 +8077,6 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			seedTags = append(seedTags, seedCapTags...)
 		}
 	}
-	st.LastSeed = int(seed)
 
 	lowOutThresh := e.calib.LowOutThresh
 	lowOutProtectThresh := e.calib.LowOutProtectThresh
@@ -8048,7 +8143,6 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		}
 	}
 
-	target := int(seed)
 	noFlow1d := recentForwards1d == 0 && outAmt1dSat <= 0
 	lowOutSlowUp := false
 
@@ -8184,6 +8278,24 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	observedRebalSignal := !marketRefillMode && (rebal.AmtMsat > 0 || perCost > 0)
 	outrateMemoryActive := hasRecentAutofeeOutrateMemory(st, e.now)
 	rebalMemoryActive := !marketRefillMode && hasRecentAutofeeRebalanceMemory(st, e.now)
+	seedLocalSignal := observedOutSignal ||
+		observedRebalSignal ||
+		outFrom21dFallback ||
+		rebalFrom21dFallback ||
+		slowCycle30dOutApplied ||
+		slowCycle30dRebalApplied ||
+		outrateMemoryActive ||
+		rebalMemoryActive ||
+		recentRebalanceCount > 0 ||
+		recentRebalanceWeakCount > 0 ||
+		htlcPressureSignal ||
+		htlcForwardHot
+	seedMatureNoLocalSignal := !marketRefillMode &&
+		!newInboundBootstrap &&
+		channelAgeHours > float64(bootstrapHours)
+	seed, seedTags = applySeedShockGuard(st, e.profile, seed, seedTags, seedMatureNoLocalSignal, seedLocalSignal)
+	st.LastSeed = int(seed)
+	target := int(seed)
 	freshPressureSignal := hasFreshAutofeePressureSignal(
 		recentForwards1d,
 		outAmt1dSat,
@@ -11394,6 +11506,8 @@ func formatAutofeeTags(d *decision) string {
 			add("⚙️seed-default")
 		case strings.HasPrefix(t, "seed:guard"):
 			add("🛡️seed-guard")
+		case strings.HasPrefix(t, "seed:shock"):
+			add(strings.ReplaceAll(t, "seed:", "seed-"))
 		case strings.HasPrefix(t, "seed:p95cap"):
 			add("🧢seed-p95")
 		case strings.HasPrefix(t, "seed:absmax"), strings.HasPrefix(t, "seed:maxppm"):

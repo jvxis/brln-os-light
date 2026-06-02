@@ -860,6 +860,54 @@ func TestShouldAllowBootstrapSeedSoftFloor(t *testing.T) {
 	}
 }
 
+func TestApplySeedShockGuardHoldsMatureIdleShockUntilConfirmed(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	st := &autofeeChannelState{LastSeed: 400}
+
+	seed, tags := applySeedShockGuard(st, profile, 650, nil, true, false)
+	if seed != 400 {
+		t.Fatalf("expected first seed shock round to hold old seed, got %.0f", seed)
+	}
+	if !containsTag(tags, "seed:shock-up") || !containsTag(tags, "seed:shock-hold") {
+		t.Fatalf("expected shock hold tags, got %v", tags)
+	}
+	if st.SeedShockPendingPpm != 650 || st.SeedShockRounds != 1 || st.SeedShockDir != "up" {
+		t.Fatalf("unexpected pending shock state: %+v", st)
+	}
+
+	seed, tags = applySeedShockGuard(st, profile, 652, nil, true, false)
+	if seed != 652 {
+		t.Fatalf("expected second consistent seed shock round to confirm, got %.0f", seed)
+	}
+	if !containsTag(tags, "seed:shock-up") || !containsTag(tags, "seed:shock-confirmed") {
+		t.Fatalf("expected shock confirmed tags, got %v", tags)
+	}
+	if st.SeedShockPendingPpm != 0 || st.SeedShockRounds != 0 || st.SeedShockDir != "" {
+		t.Fatalf("expected pending shock state to clear after confirmation: %+v", st)
+	}
+}
+
+func TestApplySeedShockGuardBypassesWithLocalSignal(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	st := &autofeeChannelState{
+		LastSeed:            400,
+		SeedShockPendingPpm: 650,
+		SeedShockRounds:     1,
+		SeedShockDir:        "up",
+	}
+
+	seed, tags := applySeedShockGuard(st, profile, 700, nil, true, true)
+	if seed != 700 {
+		t.Fatalf("expected local signal to allow seed shock, got %.0f", seed)
+	}
+	if len(tags) != 0 {
+		t.Fatalf("did not expect shock tags when local signal exists, got %v", tags)
+	}
+	if st.SeedShockPendingPpm != 0 || st.SeedShockRounds != 0 || st.SeedShockDir != "" {
+		t.Fatalf("expected local signal to clear pending shock state: %+v", st)
+	}
+}
+
 func TestShouldRelaxNegMarginForSeedSoftEnvelope(t *testing.T) {
 	if !shouldRelaxNegMarginForSeedSoftEnvelope(true, []string{"seed:soft-ceil"}, 1300, 1100, 760, 1.50) {
 		t.Fatalf("expected neg-margin relaxation when soft ceiling is active")

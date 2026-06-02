@@ -528,7 +528,8 @@ Pipeline de decisao (por canal):
 1. Monta referencias:
 - `out_ppm7d` da janela principal.
 - `rebal_ppm7d` do modo de custo selecionado.
-- Seed (`Amboss` -> fallback para memoria/outrate/default).
+- Quando nao ha referencia utilizavel, `floor_src=min` indica que o piso veio apenas de `min_ppm`.
+- Seed (`native` -> `Amboss` -> fallback para memoria/outrate/default).
 2. Classifica comportamento (`sink`, `source`, `router`, `unknown`) e estado de liquidez.
 3. Calcula target bruto com seed, out ratio, tendencia/margem, pressao HTLC e heuristicas de lucro.
 4. Aplica controles de discovery/explorer/stagnation/profit-protect/locks globais.
@@ -541,7 +542,7 @@ Diagrama do fluxo:
 Novidades importantes no modo `Balanced`:
 - `Cooldown up` dinamico por `outnorm`: canais efetivamente muito drenados conseguem reagir mais rapido sem remover o cooldown por completo.
 - `Drained explorer`: modo exploratorio dedicado a canais muito vazios e sem movimento, com pequenos passos de alta em vez de deixa-los presos em `0 ppm` ou micro-fees.
-- Guardrails do seed: quando existem sinais locais fortes de `out_ppm7d` e `rebal`, o seed da Amboss perde peso e passa a ser capado por perfil.
+- Guardrails do seed: quando existem sinais locais fortes de `out_ppm7d` e `rebal`, o seed perde peso e passa a ser capado por perfil; em canal maduro sem sinal local, shock brusco de seed precisa repetir antes de virar nova ancora.
 - `Rescue`: estado temporario para canais estruturalmente fracos (`close` / `worsening`) que estao travados por `peg`, `floor-lock` ou `global-neg-lock` acima do que o sinal local justifica.
 
 Modo `Market refill`:
@@ -597,7 +598,7 @@ Glossario de tags (Autofee Results):
 - Controles de lucro e margem:
 - `neg-margin`, `negm+X%`, `no-down-low`, `no-down-neg-margin`, `global-neg-lock`, `lock-skip-no-chan-rebal`, `lock-skip-sink-profit`, `profit-protect-lock`, `profit-protect-relax`.
 - Floors/anchors de mercado:
-- `outrate-floor`, `peg`, `peg-grace`, `peg-demand`, `revfloor`, `sink-floor`.
+- `outrate-floor`, `peg`, `peg-grace`, `peg-demand`, `revfloor`, `sink-floor`, `min`.
 - Controles adaptativos:
 - `circuit-breaker`, `extreme-drain`, `extreme-drain-unlock`, `extreme-drain-turbo`.
 - Estagnacao e anti-lock:
@@ -613,7 +614,7 @@ Glossario de tags (Autofee Results):
 - Rescue / liberacao seletiva de piso:
 - `rescue`, `rescue-enter`, `rescue-exit`, `rescue-expired`, `rescue-floor-relax`, `rescue-global-relax`, `rescue-peg-paused`.
 - Seed e origem de fallback:
-- `seed:amboss`, `seed:amboss-missing`, `seed:amboss-empty`, `seed:amboss-error`, `seed:med`, `seed:vol-<n>%`, `seed:ratio<factor>`, `seed:outrate`, `seed:mem`, `seed:default`, `seed:guard`, `seed:p95cap`, `seed:absmax`, `seed:outcap`, `seed:rebalcap`, `seed:rebalfloor`, `out-fallback-21d`, `rebal-fallback-21d`.
+- `seed:native`, `seed:amboss`, `seed:amboss-missing`, `seed:amboss-empty`, `seed:amboss-error`, `seed:med`, `seed:vol-<n>%`, `seed:ratio<factor>`, `seed:outrate`, `seed:mem`, `seed:default`, `seed:guard`, `seed:shock-*`, `seed:p95cap`, `seed:absmax`, `seed:outcap`, `seed:rebalcap`, `seed:rebalfloor`, `out-fallback-21d`, `rebal-fallback-21d`.
 
 Exemplos de leitura:
 - Exemplo A (sink saudavel e lucrativo):

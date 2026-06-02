@@ -59,6 +59,7 @@ Notas:
 - `low-out-noflow-cap`: baixa atividade limita o quanto pode subir.
 - `no-signal-noup`: sem sinal confiavel, sistema evita subir fee "no escuro".
 - `no-signal-floor-relax`: floor relaxado por ausencia de sinal util.
+- `min`: `floor_src` quando nao ha referencia local/externa utilizavel e o piso vem apenas de `min_ppm`.
 - `rebal-floor-low-volume`: floor de rebalance aplicado com aviso de volume baixo.
 - `floor-up-blocked-low-signal`: subida por floor bloqueada por sinal fraco.
 
@@ -142,6 +143,9 @@ Notas:
 - `seed:mem`: seed veio da memoria/historico local.
 - `seed:default`: seed caiu no valor default.
 - `seed:guard`: seed protegido por guardrail.
+- `seed:shock-up` / `seed:shock-down`: seed mudou bruscamente em canal maduro sem sinal local.
+- `seed:shock-hold`: primeira rodada de shock segurou no seed anterior.
+- `seed:shock-confirmed`: shock repetiu em rodadas suficientes e foi aceito como nova referencia.
 - `seed:p95cap`: seed capado por limite estatistico p95.
 - `seed:absmax`: seed limitado por teto absoluto.
 - `seed:outcap`: seed limitado pelo `out_ppm7d`.

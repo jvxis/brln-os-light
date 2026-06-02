@@ -531,7 +531,8 @@ Decision pipeline (per channel):
 1. Build references:
 - `out_ppm7d` from main lookback.
 - `rebal_ppm7d` from selected rebalance cost mode.
-- Seed (`Amboss` -> memory/outrate/default fallbacks).
+- When no usable reference exists, `floor_src=min` means the floor came only from `min_ppm`.
+- Seed (`native` -> `Amboss` -> memory/outrate/default fallbacks).
 2. Classify channel behavior (`sink`, `source`, `router`, `unknown`) and liquidity state.
 3. Compute a raw target using seed, out ratio, trend/margin rules, HTLC pressure, and profitability heuristics.
 4. Apply mode-specific controls (discovery/explorer/stagnation/profit-protect/global locks).
@@ -544,7 +545,7 @@ Flow diagram:
 Balanced mode additions:
 - Dynamic upward cooldown by effective `outnorm`: very drained channels can raise faster without fully bypassing cooldown.
 - `Drained explorer`: a dedicated exploratory mode for very empty and idle channels, using small upward steps instead of leaving them stuck at `0` or micro-fees forever.
-- Seed guardrails: when strong local `7d` outrate/rebalance signals exist, Amboss seed influence is capped by profile so external references do not dominate recent local market data.
+- Seed guardrails: when strong local `7d` outrate/rebalance signals exist, seed influence is capped by profile so external references do not dominate recent local market data; on mature channels without local signal, abrupt seed shocks must repeat before becoming the new anchor.
 - `Rescue`: temporary floor-relax state for structurally weak channels (`close` / `worsening`) that are stuck above local signal due to `peg`, `floor-lock`, or global negative-margin protection.
 
 Market refill mode:
@@ -600,7 +601,7 @@ Tag glossary (Autofee Results):
 - Profit and margin controls:
 - `neg-margin`, `negm+X%`, `no-down-low`, `no-down-neg-margin`, `global-neg-lock`, `lock-skip-no-chan-rebal`, `lock-skip-sink-profit`, `profit-protect-lock`, `profit-protect-relax`.
 - Outrate/floor controls:
-- `outrate-floor`, `peg`, `peg-grace`, `peg-demand`, `revfloor`, `sink-floor`.
+- `outrate-floor`, `peg`, `peg-grace`, `peg-demand`, `revfloor`, `sink-floor`, `min`.
 - Adaptive controls:
 - `circuit-breaker`, `extreme-drain`, `extreme-drain-unlock`, `extreme-drain-turbo`.
 - Stagnation and anti-lock controls:
@@ -616,7 +617,7 @@ Tag glossary (Autofee Results):
 - Rescue / targeted floor release:
 - `rescue`, `rescue-enter`, `rescue-exit`, `rescue-expired`, `rescue-floor-relax`, `rescue-global-relax`, `rescue-peg-paused`.
 - Seed and fallback provenance:
-- `seed:amboss`, `seed:amboss-missing`, `seed:amboss-empty`, `seed:amboss-error`, `seed:med`, `seed:vol-<n>%`, `seed:ratio<factor>`, `seed:outrate`, `seed:mem`, `seed:default`, `seed:guard`, `seed:p95cap`, `seed:absmax`, `seed:outcap`, `seed:rebalcap`, `seed:rebalfloor`, `out-fallback-21d`, `rebal-fallback-21d`.
+- `seed:native`, `seed:amboss`, `seed:amboss-missing`, `seed:amboss-empty`, `seed:amboss-error`, `seed:med`, `seed:vol-<n>%`, `seed:ratio<factor>`, `seed:outrate`, `seed:mem`, `seed:default`, `seed:guard`, `seed:shock-*`, `seed:p95cap`, `seed:absmax`, `seed:outcap`, `seed:rebalcap`, `seed:rebalfloor`, `out-fallback-21d`, `rebal-fallback-21d`.
 
 Reading examples:
 - Example A (healthy profitable sink):

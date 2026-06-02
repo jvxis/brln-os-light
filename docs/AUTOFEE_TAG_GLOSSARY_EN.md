@@ -59,6 +59,7 @@ Notes:
 - `low-out-noflow-cap`: no-flow condition caps upward movement.
 - `no-signal-noup`: no reliable signal, so no blind fee increase.
 - `no-signal-floor-relax`: floor relaxed due to missing quality signal.
+- `min`: `floor_src` used when no usable local/external reference exists and the floor only comes from `min_ppm`.
 - `rebal-floor-low-volume`: rebalance floor applied with low-volume warning.
 - `floor-up-blocked-low-signal`: floor-driven increase blocked due to weak signal.
 
@@ -142,6 +143,9 @@ Notes:
 - `seed:mem`: seed taken from local memory/history.
 - `seed:default`: default seed used.
 - `seed:guard`: seed guardrail applied.
+- `seed:shock-up` / `seed:shock-down`: seed changed abruptly on a mature channel without local signal.
+- `seed:shock-hold`: first shock round held the previous seed.
+- `seed:shock-confirmed`: repeated shock was confirmed and accepted as the new reference.
 - `seed:p95cap`: seed capped by p95 statistical cap.
 - `seed:absmax`: seed capped by absolute maximum.
 - `seed:outcap`: seed capped by `out_ppm7d`.

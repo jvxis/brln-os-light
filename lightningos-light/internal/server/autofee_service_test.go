@@ -188,6 +188,9 @@ func TestFloorSourceFromBaseCost(t *testing.T) {
 	if got := floorSourceFromBaseCost("rebal", false); got != "rebal" {
 		t.Fatalf("unexpected floor source for rebalance fallback: got %q", got)
 	}
+	if got := floorSourceFromBaseCost("min", false); got != "min" {
+		t.Fatalf("unexpected floor source for minimum fallback: got %q", got)
+	}
 	if got := floorSourceFromBaseCost("outrate", true); got != "market" {
 		t.Fatalf("unexpected floor source for market refill mode: got %q", got)
 	}
@@ -517,6 +520,27 @@ func TestShouldAutofeeIdleRefreshChannel(t *testing.T) {
 	}
 }
 
+func TestRefreshSeedForChannelPrefersNative(t *testing.T) {
+	pubkey := "02native"
+	engine := &autofeeEngine{
+		cfg: AutofeeConfig{
+			NativeSeedEnabled: true,
+			AmbossEnabled:     true,
+		},
+		nativeSeedCache: map[string]autofeeSeedResult{
+			pubkey: {Seed: 777, Tags: []string{"seed:native"}, Ok: true},
+		},
+	}
+
+	seed, source, err := engine.refreshSeedForChannel(context.Background(), pubkey)
+	if err != nil {
+		t.Fatalf("unexpected refresh seed error: %v", err)
+	}
+	if seed != 777 || source != "seed:native" {
+		t.Fatalf("expected native refresh seed first, got seed=%.0f source=%q", seed, source)
+	}
+}
+
 func TestAutofeeChannelEnabledDefaultsToEnabled(t *testing.T) {
 	settings := map[uint64]bool{
 		10: true,
@@ -821,6 +845,18 @@ func TestShouldEnableSeedEnvelope(t *testing.T) {
 	}
 	if shouldEnableSeedEnvelope(500, true, true, 0, 0, false, true, false, false, false, false, false) {
 		t.Fatalf("did not expect seed envelope with strong recent signal")
+	}
+}
+
+func TestShouldAllowBootstrapSeedSoftFloor(t *testing.T) {
+	if !shouldAllowBootstrapSeedSoftFloor(true, 0.20, lowOutNoFlowUpperRatio) {
+		t.Fatalf("expected bootstrap channel above threshold to allow seed soft-floor")
+	}
+	if shouldAllowBootstrapSeedSoftFloor(false, 0.20, lowOutNoFlowUpperRatio) {
+		t.Fatalf("did not expect mature non-bootstrap channel to allow seed soft-floor")
+	}
+	if shouldAllowBootstrapSeedSoftFloor(true, 0.10, lowOutNoFlowUpperRatio) {
+		t.Fatalf("did not expect drained bootstrap channel below threshold to allow seed soft-floor")
 	}
 }
 

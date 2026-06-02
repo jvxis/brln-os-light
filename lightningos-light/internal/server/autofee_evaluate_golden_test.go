@@ -425,13 +425,15 @@ func TestEvaluateChannelGolden_NoSignalHoldsAtLocal(t *testing.T) {
 			FirstSeen:     now.Add(-60 * 24 * time.Hour),
 			LastTs:        now.Add(-72 * time.Hour),
 		},
-		forward7d:      forwardStat{},
-		forward1d:      forwardStat{},
-		inbound:        inboundStat{},
-		rebal7d:        rebalStat{},
-		rebalGlobalPpm: 0,
-		expectedTrend:  "flat",
-		requiredTags:   []string{"no-signal-noup"},
+		forward7d:        forwardStat{},
+		forward1d:        forwardStat{},
+		inbound:          inboundStat{},
+		rebal7d:          rebalStat{},
+		rebalGlobalPpm:   0,
+		expectedTrend:    "flat",
+		requiredTags:     []string{"no-signal-noup"},
+		forbiddenTags:    []string{"seed:soft-floor"},
+		expectedFloorSrc: "min",
 	})
 }
 

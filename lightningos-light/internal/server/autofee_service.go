@@ -5937,6 +5937,16 @@ func shouldEnableSeedEnvelope(seed float64, noFlow1d bool, weakRecentFlow bool, 
 	return weakRecentFlow && recentForwards1d <= 1
 }
 
+func shouldAllowBootstrapSeedSoftFloor(newInboundBootstrap bool, outRatio float64, minOutRatio float64) bool {
+	if !newInboundBootstrap {
+		return false
+	}
+	if minOutRatio <= 0 {
+		minOutRatio = lowOutNoFlowUpperRatio
+	}
+	return outRatio >= minOutRatio
+}
+
 func shouldRelaxNegMarginForSeedSoftEnvelope(seedEnvelopeActive bool, tags []string, localPpm int, target int, seed float64, ceilingMult float64) bool {
 	if !seedEnvelopeActive || localPpm <= 0 || target >= localPpm || seed <= 0 {
 		return false
@@ -6236,6 +6246,8 @@ func floorSourceFromBaseCost(src string, marketRefillMode bool) string {
 		return "outrate"
 	case strings.TrimSpace(src) == "seed":
 		return "seed"
+	case strings.TrimSpace(src) == "min":
+		return "min"
 	default:
 		return "rebal"
 	}
@@ -8427,11 +8439,16 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			}
 		}
 	}
-	if baseCostSrc == "" {
-		baseCostSrc = "rebal"
-	}
-	if baseCostPpm < e.cfg.MinPpm {
+	if baseCostPpm <= 0 {
 		baseCostPpm = e.cfg.MinPpm
+		if baseCostSrc == "" || strings.TrimSpace(baseCostSrc) == "rebal-global" {
+			baseCostSrc = "min"
+		}
+	} else if baseCostPpm < e.cfg.MinPpm {
+		baseCostPpm = e.cfg.MinPpm
+	}
+	if baseCostSrc == "" {
+		baseCostSrc = "min"
 	}
 	if shouldPreserveAssistChannelUpwardPressure(assistChannelActive, recentRebalanceCount, htlcLiquidityHot) && target > localPpm {
 		target = localPpm
@@ -8768,7 +8785,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		superSourceActive,
 	)
 	if seedEnvelopeActive {
-		allowSeedFloor := outRatio >= lowOutNoFlowUpperRatio
+		allowSeedFloor := shouldAllowBootstrapSeedSoftFloor(newInboundBootstrap, outRatio, lowOutNoFlowUpperRatio)
 		var seedEnvelopeTags []string
 		target, seedEnvelopeTags = applySeedSoftEnvelope(target, seed, e.profile.SeedFloorMult, e.profile.SeedCeilingMult, allowSeedFloor)
 		tags = append(tags, seedEnvelopeTags...)
@@ -9958,6 +9975,16 @@ func (e *autofeeEngine) refreshSeedForChannel(ctx context.Context, pubkey string
 		return 0, "", nil
 	}
 
+	var nativeErr error
+	if e.cfg.NativeSeedEnabled {
+		seed, _, _, _, ok, err := e.fetchNativeSeed(pubkey)
+		if err != nil {
+			nativeErr = err
+		} else if ok && seed > 0 {
+			return seed, "seed:native", nil
+		}
+	}
+
 	if e.cfg.AmbossEnabled {
 		token, err := e.cachedAmbossToken(ctx)
 		if err != nil {
@@ -9974,14 +10001,8 @@ func (e *autofeeEngine) refreshSeedForChannel(ctx context.Context, pubkey string
 		}
 	}
 
-	if e.cfg.NativeSeedEnabled {
-		seed, _, _, _, ok, err := e.fetchNativeSeed(pubkey)
-		if err != nil {
-			return 0, "", err
-		}
-		if ok && seed > 0 {
-			return seed, "seed:native", nil
-		}
+	if nativeErr != nil {
+		return 0, "", nativeErr
 	}
 
 	return 0, "", nil

@@ -1292,6 +1292,23 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if isFedimintLogService(serviceRaw) {
+		ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+		defer cancel()
+
+		out, source, err := readFedimintComposeLogLines(ctx, serviceRaw, lines, sinceRaw)
+		if err != nil {
+			if errors.Is(err, errFedimintLogServiceNotInstalled) {
+				writeError(w, http.StatusBadRequest, "Fedimint app is not installed")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("log read failed: %v", err))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"service": strings.ToLower(strings.TrimSpace(serviceRaw)), "source": source, "lines": out})
+		return
+	}
+
 	service := mapService(serviceRaw)
 	if service == "" {
 		writeError(w, http.StatusBadRequest, "unsupported service")
@@ -1372,6 +1389,10 @@ func (s *Server) readBitcoinLocalLogLines(ctx context.Context, lines int, since 
 }
 
 func readBitcoinComposeLogLines(ctx context.Context, paths bitcoinCorePaths, lines int, since string) ([]string, error) {
+	return readComposeServiceLogLines(ctx, paths.Root, paths.ComposePath, "bitcoind", lines, since)
+}
+
+func readComposeServiceLogLines(ctx context.Context, root string, composePath string, serviceName string, lines int, since string) ([]string, error) {
 	if lines <= 0 {
 		lines = 200
 	}
@@ -1379,12 +1400,12 @@ func readBitcoinComposeLogLines(ctx context.Context, paths bitcoinCorePaths, lin
 	if err != nil {
 		return nil, err
 	}
-	fullArgs := append(baseArgs, composeBaseArgs(paths.Root, paths.ComposePath)...)
+	fullArgs := append(baseArgs, composeBaseArgs(root, composePath)...)
 	fullArgs = append(fullArgs, "logs", "--no-color", "--tail", strconv.Itoa(lines))
 	if strings.TrimSpace(since) != "" {
 		fullArgs = append(fullArgs, "--since", strings.TrimSpace(since))
 	}
-	fullArgs = append(fullArgs, "bitcoind")
+	fullArgs = append(fullArgs, serviceName)
 
 	out, err := system.RunCommandWithSudo(ctx, cmd, fullArgs...)
 	if err != nil {

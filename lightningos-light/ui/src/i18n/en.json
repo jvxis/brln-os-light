@@ -836,6 +836,8 @@
       "appUpgrade": "App upgrade",
       "manager": "Manager",
       "elements": "Elements",
+      "fedimintGateway": "Fedimint Gateway",
+      "fedimintGuardian": "Fedimint Guardian",
       "peerswapd": "Peerswap",
       "psweb": "Psweb",
       "postgres": "Postgres"

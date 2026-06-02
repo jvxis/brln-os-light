@@ -1,8 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getLogs } from '../api'
+import { getApps, getLogs } from '../api'
 
-const services = [
+type AppInfo = {
+  id: string
+  installed: boolean
+}
+
+const baseServices = [
   { labelKey: 'logs.services.lnd', value: 'lnd' },
   { labelKey: 'logs.services.bitcoin', value: 'bitcoin' },
   { labelKey: 'logs.services.autofee', value: 'autofee' },
@@ -15,6 +20,11 @@ const services = [
   { labelKey: 'logs.services.postgres', value: 'postgresql' }
 ]
 
+const fedimintServices = [
+  { appID: 'fedimint-guardian', labelKey: 'logs.services.fedimintGuardian', value: 'fedimint-guardian' },
+  { appID: 'fedimint-gateway', labelKey: 'logs.services.fedimintGateway', value: 'fedimint-gateway' }
+]
+
 export default function Logs() {
   const { t } = useTranslation()
   const [service, setService] = useState('lnd')
@@ -22,7 +32,42 @@ export default function Logs() {
   const [data, setData] = useState<string[]>([])
   const [status, setStatus] = useState('')
   const [loading, setLoading] = useState(false)
+  const [installedFedimintServices, setInstalledFedimintServices] = useState<typeof fedimintServices>([])
   const logContainerRef = useRef<HTMLDivElement | null>(null)
+  const services = useMemo(
+    () => [...baseServices, ...installedFedimintServices.map(({ labelKey, value }) => ({ labelKey, value }))],
+    [installedFedimintServices]
+  )
+
+  useEffect(() => {
+    let mounted = true
+
+    const loadApps = async () => {
+      try {
+        const apps = await getApps() as AppInfo[]
+        if (!mounted) return
+        const installed = new Set((Array.isArray(apps) ? apps : []).filter((app) => app.installed).map((app) => app.id))
+        setInstalledFedimintServices(fedimintServices.filter((item) => installed.has(item.appID)))
+      } catch {
+        if (mounted) {
+          setInstalledFedimintServices([])
+        }
+      }
+    }
+
+    void loadApps()
+    window.addEventListener('apps:changed', loadApps)
+    return () => {
+      mounted = false
+      window.removeEventListener('apps:changed', loadApps)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!services.some((item) => item.value === service)) {
+      setService('lnd')
+    }
+  }, [service, services])
 
   const load = useCallback(async () => {
     setLoading(true)

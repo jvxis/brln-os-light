@@ -35,6 +35,8 @@ const (
 	fedimintUfwRetries       = 5
 )
 
+var errFedimintLogServiceNotInstalled = errors.New("Fedimint app is not installed")
+
 type fedimintGuardianPaths struct {
 	Root        string
 	DataRoot    string
@@ -528,6 +530,38 @@ func fedimintGuardianComposeContents(paths fedimintGuardianPaths, values fedimin
 
 func yamlSingleQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
+func isFedimintLogService(service string) bool {
+	switch strings.ToLower(strings.TrimSpace(service)) {
+	case fedimintGuardianAppID, "fedimintd":
+		return true
+	case fedimintGatewayAppID, "gatewayd", "fedimint-lightning-gateway":
+		return true
+	default:
+		return false
+	}
+}
+
+func readFedimintComposeLogLines(ctx context.Context, service string, lines int, since string) ([]string, string, error) {
+	switch strings.ToLower(strings.TrimSpace(service)) {
+	case fedimintGuardianAppID, "fedimintd":
+		paths := fedimintGuardianAppPaths()
+		if !fileExists(paths.ComposePath) {
+			return nil, "", errFedimintLogServiceNotInstalled
+		}
+		out, err := readComposeServiceLogLines(ctx, paths.Root, paths.ComposePath, "fedimintd", lines, since)
+		return out, "docker:fedimintd", err
+	case fedimintGatewayAppID, "gatewayd", "fedimint-lightning-gateway":
+		paths := fedimintGatewayAppPaths()
+		if !fileExists(paths.ComposePath) {
+			return nil, "", errFedimintLogServiceNotInstalled
+		}
+		out, err := readComposeServiceLogLines(ctx, paths.Root, paths.ComposePath, "gatewayd", lines, since)
+		return out, "docker:gatewayd", err
+	default:
+		return nil, "", errFedimintLogServiceNotInstalled
+	}
 }
 
 func fedimintGatewayComposeContents(paths fedimintGatewayPaths, values fedimintGatewayRuntimeValues) string {

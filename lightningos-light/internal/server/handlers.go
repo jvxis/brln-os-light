@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -43,6 +44,12 @@ const (
 	batchOpenMaxChannels           = 50
 	pendingOpenBumpReferenceVbytes = int64(110)
 	lndWarmupPeriod                = 90 * time.Second
+)
+
+var (
+	ansiOSCRegexp       = regexp.MustCompile(`\x1b\][^\x07]*(?:\x07|\x1b\\)`)
+	ansiCSIRegexp       = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
+	ansiSingleCharRegex = regexp.MustCompile(`\x1b[@-Z\\-_]`)
 )
 
 type healthIssue struct {
@@ -1288,7 +1295,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("log read failed: %v", err))
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"service": "bitcoin", "source": source, "lines": out})
+		writeJSON(w, http.StatusOK, map[string]any{"service": "bitcoin", "source": source, "lines": sanitizeLogLines(out)})
 		return
 	}
 
@@ -1305,7 +1312,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("log read failed: %v", err))
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"service": strings.ToLower(strings.TrimSpace(serviceRaw)), "source": source, "lines": out})
+		writeJSON(w, http.StatusOK, map[string]any{"service": strings.ToLower(strings.TrimSpace(serviceRaw)), "source": source, "lines": sanitizeLogLines(out)})
 		return
 	}
 
@@ -1333,7 +1340,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("log read failed: %v", err))
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"service": service, "lines": out})
+		writeJSON(w, http.StatusOK, map[string]any{"service": service, "lines": sanitizeLogLines(out)})
 		return
 	}
 
@@ -1343,7 +1350,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"service": service, "lines": out})
+	writeJSON(w, http.StatusOK, map[string]any{"service": service, "lines": sanitizeLogLines(out)})
 }
 
 func isBitcoinLogService(service string) bool {
@@ -1441,12 +1448,43 @@ func splitLogLines(out string) []string {
 	raw := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n")
 	lines := make([]string, 0, len(raw))
 	for _, line := range raw {
-		if strings.TrimSpace(line) == "" {
+		sanitized := sanitizeLogLine(line)
+		if strings.TrimSpace(sanitized) == "" {
 			continue
 		}
-		lines = append(lines, line)
+		lines = append(lines, sanitized)
 	}
 	return lines
+}
+
+func sanitizeLogLines(lines []string) []string {
+	if len(lines) == 0 {
+		return lines
+	}
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		sanitized := sanitizeLogLine(line)
+		if strings.TrimSpace(sanitized) == "" {
+			continue
+		}
+		out = append(out, sanitized)
+	}
+	return out
+}
+
+func sanitizeLogLine(line string) string {
+	line = ansiOSCRegexp.ReplaceAllString(line, "")
+	line = ansiCSIRegexp.ReplaceAllString(line, "")
+	line = ansiSingleCharRegex.ReplaceAllString(line, "")
+	return strings.Map(func(r rune) rune {
+		if r == '\t' {
+			return r
+		}
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, line)
 }
 
 func (s *Server) handleLNDConfigGet(w http.ResponseWriter, r *http.Request) {

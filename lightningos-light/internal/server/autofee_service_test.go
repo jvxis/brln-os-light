@@ -164,7 +164,7 @@ func TestShouldRefreshAutofeeOutrateMemory(t *testing.T) {
 }
 
 func TestBaseCostSourceClassification(t *testing.T) {
-	if !isRebalanceBaseCostSource("rebal") || !isRebalanceBaseCostSource("rebal-global") || !isRebalanceBaseCostSource("rebal-blend") {
+	if !isRebalanceBaseCostSource("rebal") || !isRebalanceBaseCostSource("rebal-global") || !isRebalanceBaseCostSource("rebal-blend") || !isRebalanceBaseCostSource("rebal-recent") {
 		t.Fatalf("expected rebalance-derived sources to be classified as rebalance")
 	}
 	if isRebalanceBaseCostSource("outrate") || isRebalanceBaseCostSource("seed") {
@@ -1087,6 +1087,43 @@ func TestHasFloorRebalSignal(t *testing.T) {
 	}
 	if !hasFloorRebalSignal(1, 0, floorRebalMinSuccessCount) {
 		t.Fatalf("expected true with positive amount when capacity is unknown")
+	}
+}
+
+func TestRecentRebalanceCostFloorUsesSingleLargeSuccess(t *testing.T) {
+	sig := recentRebalanceSignal{
+		Count:   1,
+		AmtSat:  1_390_935,
+		FeeMsat: 3_422_700,
+	}
+	if got := sig.costPpm(); got != 2461 {
+		t.Fatalf("unexpected recent rebalance cost ppm: got %d want 2461", got)
+	}
+	if !hasRecentRebalanceCostFloor(sig, 10_000_000) {
+		t.Fatalf("expected one substantial recent rebalance to activate cost floor")
+	}
+}
+
+func TestRecentRebalanceCostFloorIgnoresTinySuccess(t *testing.T) {
+	sig := recentRebalanceSignal{
+		Count:   1,
+		AmtSat:  10_000,
+		FeeMsat: 50_000,
+	}
+	if hasRecentRebalanceCostFloor(sig, 10_000_000) {
+		t.Fatalf("did not expect tiny recent rebalance to activate cost floor")
+	}
+}
+
+func TestApplyRecentRebalanceCostHardFloor(t *testing.T) {
+	if got, applied := applyRecentRebalanceCostHardFloor(2000, 2461, 10, 4000); got != 2461 || !applied {
+		t.Fatalf("expected recent rebalance cost hard floor, got ppm=%d applied=%v", got, applied)
+	}
+	if got, applied := applyRecentRebalanceCostHardFloor(2600, 2461, 10, 4000); got != 2600 || applied {
+		t.Fatalf("did not expect hard floor when final ppm already covers cost, got ppm=%d applied=%v", got, applied)
+	}
+	if got, applied := applyRecentRebalanceCostHardFloor(2000, 5000, 10, 4000); got != 4000 || !applied {
+		t.Fatalf("expected recent rebalance hard floor to respect max ppm, got ppm=%d applied=%v", got, applied)
 	}
 }
 

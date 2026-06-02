@@ -3956,6 +3956,7 @@ type rebalStats struct {
 type recentRebalanceSignal struct {
 	Count      int
 	AmtSat     int64
+	FeeMsat    int64
 	LastAt     time.Time
 	WeakCount  int
 	WeakAmtSat int64
@@ -3972,6 +3973,10 @@ func (s recentRebalanceSignal) surgeConfirmInputs() (int, int64) {
 	weightedCount := float64(s.Count) + float64(s.WeakCount)*weakRebalanceAttemptCountWeight
 	weightedAmt := float64(s.AmtSat) + float64(s.WeakAmtSat)*weakRebalanceAttemptAmtWeight
 	return int(math.Round(weightedCount)), int64(math.Round(weightedAmt))
+}
+
+func (s recentRebalanceSignal) costPpm() int {
+	return ppmMsat(s.FeeMsat, s.AmtSat*1000)
 }
 
 func (s recentRebalanceSignal) latestAt() time.Time {
@@ -5235,6 +5240,24 @@ func hasFloorRebalSignal(rebalAmtSat int64, capacitySat int64, successCount int6
 	return rebalAmtSat >= minAmtSat
 }
 
+func hasRecentRebalanceCostFloor(sig recentRebalanceSignal, capacitySat int64) bool {
+	if sig.Count <= 0 || sig.AmtSat <= 0 || sig.FeeMsat <= 0 {
+		return false
+	}
+	minAmtSat := minFloorRebalSat(capacitySat)
+	if minAmtSat > 0 && sig.AmtSat < minAmtSat {
+		return false
+	}
+	return sig.costPpm() > 0
+}
+
+func applyRecentRebalanceCostHardFloor(finalPpm int, recentCostPpm int, minPpm int, maxPpm int) (int, bool) {
+	if recentCostPpm <= 0 || finalPpm >= recentCostPpm {
+		return finalPpm, false
+	}
+	return clampInt(recentCostPpm, minPpm, maxPpm), true
+}
+
 func rebalFloorConfidence(successCount int64) float64 {
 	if successCount <= 0 {
 		return 0
@@ -6300,7 +6323,7 @@ func shouldRefreshAutofeeOutrateMemory(outPpm7d int, recentForwards1d int, outAm
 
 func isRebalanceBaseCostSource(src string) bool {
 	switch strings.TrimSpace(src) {
-	case "rebal", "rebal-global", "rebal-21d", "rebal-mem", "rebal-blend":
+	case "rebal", "rebal-global", "rebal-21d", "rebal-mem", "rebal-blend", "rebal-recent":
 		return true
 	default:
 		return false
@@ -6670,6 +6693,7 @@ select
   j.target_channel_id as chan_id,
   count(*)::bigint as success_count,
   coalesce(sum(coalesce(a.amount_sat, 0)), 0)::bigint as success_amt_sat,
+  coalesce(sum(coalesce(a.fee_paid_sat, 0) * 1000), 0)::bigint as success_fee_msat,
   max(coalesce(a.finished_at, a.started_at)) as last_success_at
 from rebalance_attempts a
 join rebalance_jobs j on j.id = a.job_id
@@ -6687,8 +6711,9 @@ group by j.target_channel_id
 		var chanID int64
 		var successCount int64
 		var successAmtSat int64
+		var successFeeMsat int64
 		var lastSuccessAt time.Time
-		if err := successRows.Scan(&chanID, &successCount, &successAmtSat, &lastSuccessAt); err != nil {
+		if err := successRows.Scan(&chanID, &successCount, &successAmtSat, &successFeeMsat, &lastSuccessAt); err != nil {
 			return touches, err
 		}
 		if chanID <= 0 {
@@ -6697,6 +6722,7 @@ group by j.target_channel_id
 		sig := touches[uint64(chanID)]
 		sig.Count += int(successCount)
 		sig.AmtSat += successAmtSat
+		sig.FeeMsat += successFeeMsat
 		if !lastSuccessAt.IsZero() && (sig.LastAt.IsZero() || lastSuccessAt.After(sig.LastAt)) {
 			sig.LastAt = lastSuccessAt
 		}
@@ -8202,12 +8228,18 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	recentRebalanceWeakCount := 0
 	surgeConfirmRebalanceCount := 0
 	surgeConfirmRebalanceAmtSat := int64(0)
+	recentRebalanceCostPpm := 0
+	recentRebalanceCostAt := time.Time{}
 	rebalanceTouch := recentRebalanceSignal{}
 	if recentRebalanceTouches != nil {
 		rebalanceTouch = recentRebalanceTouches[ch.ChannelID]
 		recentRebalanceCount = rebalanceTouch.Count
 		recentRebalanceWeakCount = rebalanceTouch.WeakCount
 		surgeConfirmRebalanceCount, surgeConfirmRebalanceAmtSat = rebalanceTouch.surgeConfirmInputs()
+		if hasRecentRebalanceCostFloor(rebalanceTouch, ch.CapacitySat) {
+			recentRebalanceCostPpm = rebalanceTouch.costPpm()
+			recentRebalanceCostAt = rebalanceTouch.LastAt
+		}
 	}
 	if marketRefillMode {
 		rebalanceTouch = recentRebalanceSignal{}
@@ -8215,6 +8247,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		recentRebalanceWeakCount = 0
 		surgeConfirmRebalanceCount = 0
 		surgeConfirmRebalanceAmtSat = 0
+		recentRebalanceCostPpm = 0
+		recentRebalanceCostAt = time.Time{}
 	}
 	holdUpOnRecentRebalance := false
 	if !marketRefillMode {
@@ -8561,6 +8595,19 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 	if baseCostSrc == "" {
 		baseCostSrc = "min"
+	}
+	if recentRebalanceCostPpm > 0 {
+		if recentRebalanceCostPpm > baseCostPpm {
+			baseCostPpm = recentRebalanceCostPpm
+			baseCostSrc = "rebal-recent"
+			tags = append(tags, "rebal-recent-floor")
+		}
+		st.LastRebalCost = recentRebalanceCostPpm
+		if recentRebalanceCostAt.IsZero() {
+			st.LastRebalCostTs = e.now
+		} else {
+			st.LastRebalCostTs = recentRebalanceCostAt
+		}
 	}
 	if shouldPreserveAssistChannelUpwardPressure(assistChannelActive, recentRebalanceCount, htlcLiquidityHot) && target > localPpm {
 		target = localPpm
@@ -9563,6 +9610,12 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		finalPpm = adjusted
 		tags = append(tags, "htlc-low-sample-downcap")
 	}
+	recentRebalanceHardFloorApplied := false
+	if adjusted, applied := applyRecentRebalanceCostHardFloor(finalPpm, recentRebalanceCostPpm, e.cfg.MinPpm, e.cfg.MaxPpm); applied {
+		finalPpm = adjusted
+		recentRebalanceHardFloorApplied = true
+		tags = appendAutofeeTagOnce(tags, "rebal-recent-hard-floor")
+	}
 	targetGapPpm := target - localPpm
 	targetGapPct := calcTargetGapPct(localPpm, target)
 	reversalConfirmRounds := reversalConfirmRoundsForChannel(e.profile, st, targetGapPct)
@@ -9601,6 +9654,14 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		apply = false
 		tags = append(tags, "hold-small")
 	}
+	if adjusted, applied := applyRecentRebalanceCostHardFloor(finalPpm, recentRebalanceCostPpm, e.cfg.MinPpm, e.cfg.MaxPpm); applied {
+		finalPpm = adjusted
+		apply = true
+		delta = int(math.Abs(float64(finalPpm - localPpm)))
+		floorDrivenStepUp = finalPpm > localPpm && floor > localPpm
+		recentRebalanceHardFloorApplied = true
+		tags = appendAutofeeTagOnce(tags, "rebal-recent-hard-floor")
+	}
 	skipCooldownDown := explorerActive && finalPpm < localPpm && e.profile.ExplorerSkipCooldownDown
 	if skipCooldownDown {
 		tags = append(tags, "cooldown-skip")
@@ -9610,7 +9671,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		bypassUpCooldown := false
 		if finalPpm > localPpm {
 			cooldownHours = float64(maxInt(1, effectiveCooldownUpSecForChannel(e.profile, cooldownUpSec, outRatio, holdUpOnRecentRebalance))) / 3600.0
-			bypassUpCooldown = shouldBypassStrictCooldownUp(
+			bypassUpCooldown = recentRebalanceHardFloorApplied || shouldBypassStrictCooldownUp(
 				e.profile,
 				recentRebalanceCount,
 				htlcLiquidityHot,
@@ -9655,9 +9716,13 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		}
 	}
 	if apply && finalPpm != localPpm && shouldHoldAutofeeForRebalanceSettling(rebalanceTouch, e.now, autofeeRebalanceSettlingWindow) {
-		apply = false
-		if !containsTag(tags, "autofee_settling") {
-			tags = append(tags, "autofee_settling")
+		if recentRebalanceHardFloorApplied && finalPpm > localPpm {
+			tags = appendAutofeeTagOnce(tags, "rebal-recent-settling-bypass")
+		} else {
+			apply = false
+			if !containsTag(tags, "autofee_settling") {
+				tags = append(tags, "autofee_settling")
+			}
 		}
 	}
 
@@ -11242,6 +11307,12 @@ func formatAutofeeTags(d *decision) string {
 			add("⚠️neg-margin")
 		case t == "rebal-recent":
 			add("🔁rebal-recent")
+		case t == "rebal-recent-floor":
+			add("🔁rebal-floor")
+		case t == "rebal-recent-hard-floor":
+			add("🔁rebal-hard-floor")
+		case t == "rebal-recent-settling-bypass":
+			add("🔁rebal-settle-bypass")
 		case t == "rebal-attempt":
 			add("🔁rebal-attempt")
 		case t == "rebal-recent-noup":

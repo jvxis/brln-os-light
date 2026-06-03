@@ -1127,6 +1127,46 @@ func TestApplyRecentRebalanceCostHardFloor(t *testing.T) {
 	}
 }
 
+func TestApplyNegMarginProtectedDownAllowsFloorSafeReduction(t *testing.T) {
+	protected := deriveNegMarginProtectedFloor(2457, 2174, 0, 10, 4000)
+	if protected != 2457 {
+		t.Fatalf("unexpected protected floor: got %d want 2457", protected)
+	}
+
+	target, tag := applyNegMarginProtectedDown(2800, 3417, protected, false)
+	if target != 2800 || tag != "neg-margin-floor-down" {
+		t.Fatalf("expected floor-safe reduction, got target=%d tag=%q", target, tag)
+	}
+}
+
+func TestApplyNegMarginProtectedDownClampsToProtectedFloor(t *testing.T) {
+	target, tag := applyNegMarginProtectedDown(2200, 3417, 2457, false)
+	if target != 2457 || tag != "neg-margin-floor-down" {
+		t.Fatalf("expected reduction to clamp at protected floor, got target=%d tag=%q", target, tag)
+	}
+}
+
+func TestApplyNegMarginProtectedDownBlocksStrongPressure(t *testing.T) {
+	target, tag := applyNegMarginProtectedDown(2800, 3417, 2457, true)
+	if target != 3417 || tag != "no-down-neg-margin" {
+		t.Fatalf("expected strong pressure to block reduction, got target=%d tag=%q", target, tag)
+	}
+}
+
+func TestApplyNegMarginProtectedDownBlocksWithoutHeadroom(t *testing.T) {
+	target, tag := applyNegMarginProtectedDown(2400, 2457, 2457, false)
+	if target != 2457 || tag != "no-down-neg-margin" {
+		t.Fatalf("expected no headroom above protected floor to block reduction, got target=%d tag=%q", target, tag)
+	}
+}
+
+func TestDeriveNegMarginProtectedFloorIncludesRecentCost(t *testing.T) {
+	protected := deriveNegMarginProtectedFloor(2457, 2174, 2461, 10, 4000)
+	if protected != 2461 {
+		t.Fatalf("expected recent cost to raise protected floor, got %d", protected)
+	}
+}
+
 func TestRebalFloorConfidence(t *testing.T) {
 	if got := rebalFloorConfidence(0); got != 0 {
 		t.Fatalf("expected zero confidence without settled rebalances: got %.2f", got)

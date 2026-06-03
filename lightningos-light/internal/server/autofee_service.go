@@ -5258,6 +5258,33 @@ func applyRecentRebalanceCostHardFloor(finalPpm int, recentCostPpm int, minPpm i
 	return clampInt(recentCostPpm, minPpm, maxPpm), true
 }
 
+func deriveNegMarginProtectedFloor(floorPpm int, baseCostPpm int, recentCostPpm int, minPpm int, maxPpm int) int {
+	protected := floorPpm
+	if baseCostPpm > 0 {
+		protected = maxInt(protected, int(math.Ceil(float64(baseCostPpm)*1.10)))
+	}
+	if recentCostPpm > 0 {
+		protected = maxInt(protected, recentCostPpm)
+	}
+	if protected <= 0 {
+		return 0
+	}
+	return clampInt(protected, minPpm, maxPpm)
+}
+
+func applyNegMarginProtectedDown(targetPpm int, localPpm int, protectedFloor int, strongPressure bool) (int, string) {
+	if targetPpm >= localPpm {
+		return targetPpm, ""
+	}
+	if protectedFloor <= 0 || localPpm <= protectedFloor || strongPressure {
+		return localPpm, "no-down-neg-margin"
+	}
+	if targetPpm < protectedFloor {
+		return protectedFloor, "neg-margin-floor-down"
+	}
+	return targetPpm, "neg-margin-floor-down"
+}
+
 func rebalFloorConfidence(successCount int64) float64 {
 	if successCount <= 0 {
 		return 0
@@ -8731,6 +8758,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	applyHTLCPolicyHot := e.cfg.HTLCSignalEnabled && (htlcMode == htlcModePolicyOnly || htlcMode == htlcModeFull)
 	applyHTLCLiquidityHot := e.cfg.HTLCSignalEnabled && htlcMode == htlcModeFull
 	htlcHotSignal := !htlcSampleLow && ((applyHTLCPolicyHot && htlcPolicyHot) || (applyHTLCLiquidityHot && htlcLiquidityHot))
+	negMarginDownStrongPressure := surgeConfirmSignal || surgeRoundConfirmSignal || surgeHoldActive || htlcHotSignal || htlcForwardHot
 	if htlcHotSignal {
 		if applyHTLCPolicyHot && htlcPolicyHot && applyHTLCLiquidityHot && htlcLiquidityHot {
 			if target < localPpm {
@@ -8951,6 +8979,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 	seedSoftNegMarginRelax := shouldRelaxNegMarginForSeedSoftEnvelope(seedEnvelopeActive, tags, localPpm, target, seed, e.profile.SeedCeilingMult)
 
+	negMarginProtectedFloor := deriveNegMarginProtectedFloor(0, baseCostPpm, recentRebalanceCostPpm, e.cfg.MinPpm, e.cfg.MaxPpm)
 	target = clampInt(target, e.cfg.MinPpm, e.cfg.MaxPpm)
 	if marginPpm7d < 0 && target < localPpm {
 		if stagnationActive || highOutStagnationPressure {
@@ -8962,8 +8991,11 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		} else if seedSoftNegMarginRelax {
 			tags = append(tags, "seed:soft-neg-relax")
 		} else {
-			target = localPpm
-			tags = append(tags, "no-down-neg-margin")
+			adjustedTarget, negMarginDownTag := applyNegMarginProtectedDown(target, localPpm, negMarginProtectedFloor, negMarginDownStrongPressure)
+			target = adjustedTarget
+			if negMarginDownTag != "" {
+				tags = appendAutofeeTagOnce(tags, negMarginDownTag)
+			}
 		}
 	}
 	topRevenue := revShare >= 0.20 && outRatio < 0.30
@@ -9445,6 +9477,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		}
 	}
 
+	negMarginProtectedFloor = deriveNegMarginProtectedFloor(floor, baseCostPpm, recentRebalanceCostPpm, e.cfg.MinPpm, e.cfg.MaxPpm)
+
 	// Seed is a reference for target construction, not a hard fee ceiling.
 	finalCandidate := clampInt(maxInt(rawStep, floor), e.cfg.MinPpm, e.cfg.MaxPpm)
 
@@ -9482,8 +9516,16 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		if canRelax {
 			profitProtectRelaxed = true
 		} else {
-			finalPpm = localPpm
-			profitProtectLocked = true
+			adjustedFinal, negMarginDownTag := applyNegMarginProtectedDown(finalPpm, localPpm, negMarginProtectedFloor, negMarginDownStrongPressure)
+			if marginPpm7d < 0 && negMarginDownTag == "neg-margin-floor-down" {
+				finalPpm = adjustedFinal
+				profitProtectRelaxed = true
+				tags = appendAutofeeTagOnce(tags, "profit-protect-floor-down")
+				tags = appendAutofeeTagOnce(tags, negMarginDownTag)
+			} else {
+				finalPpm = localPpm
+				profitProtectLocked = true
+			}
 		}
 		finalPpm = clampInt(finalPpm, e.cfg.MinPpm, e.cfg.MaxPpm)
 	}
@@ -9584,9 +9626,10 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 				tags = append(tags, "rebal-exec-neg-relax")
 			}
 		} else {
-			finalPpm = localPpm
-			if !containsTag(tags, "no-down-neg-margin") {
-				tags = append(tags, "no-down-neg-margin")
+			adjustedFinal, negMarginDownTag := applyNegMarginProtectedDown(finalPpm, localPpm, negMarginProtectedFloor, negMarginDownStrongPressure)
+			finalPpm = adjustedFinal
+			if negMarginDownTag != "" {
+				tags = appendAutofeeTagOnce(tags, negMarginDownTag)
 			}
 		}
 	}
@@ -11511,10 +11554,14 @@ func formatAutofeeTags(d *decision) string {
 			add("🚫down-low")
 		case t == "no-down-neg-margin":
 			add("🚫down-neg")
+		case t == "neg-margin-floor-down":
+			add("neg-floor-down")
 		case t == "profit-protect-lock":
 			add("🛡️profit-lock")
 		case t == "profit-protect-relax":
 			add("🕊️profit-relax")
+		case t == "profit-protect-floor-down":
+			add("profit-floor-down")
 		case t == "super-source":
 			add("🔥super-source")
 		case t == "super-source-like":

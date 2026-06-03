@@ -77,6 +77,55 @@ Isso evita depender da API publica `mempool.space` para o `fedimintd` e para o `
 
 O Gateway tambem monta `/data/lnd` e fala com o LND local para pagamentos Lightning.
 
+### Bitcoin externo ou nao gerenciado pela loja
+
+Quando o backend Bitcoin e o app **Bitcoin Core** da App Store, o LightningOS ajusta o `bitcoin.conf` automaticamente para permitir RPC a partir das redes Docker usadas pelos apps.
+
+Quando o backend Bitcoin vem de uma instalacao existente, systemd, pacote externo ou outro servidor, o LightningOS **nao reescreve** esse `bitcoin.conf`. Nesse caso, o `lnd.conf` pode estar correto, mas o `bitcoind` ainda precisa aceitar RPC vindo dos containers Fedimint.
+
+Se o `bitcoind.rpchost` em `/data/lnd/lnd.conf` aponta para `127.0.0.1` ou `localhost`, o container acessa o host via `host.docker.internal:<porta>`. O `bitcoin.conf` do `bitcoind` externo deve permitir a rede Docker do Guardian e, se usado, do Gateway.
+
+Com os apps Fedimint instalados/iniciados ao menos uma vez, descubra as sub-redes Docker:
+
+```bash
+sudo docker network inspect fedimint-guardian_default -f '{{range .IPAM.Config}}{{println .Subnet}}{{end}}'
+sudo docker network inspect fedimint-gateway_default -f '{{range .IPAM.Config}}{{println .Subnet}}{{end}}'
+```
+
+Descubra tambem o IP gateway da rede Docker. Esse e o IP da bridge no host e normalmente e o melhor valor para `rpcbind` quando o `bitcoind` roda no mesmo servidor:
+
+```bash
+sudo docker network inspect fedimint-guardian_default -f '{{range .IPAM.Config}}{{println .Gateway}}{{end}}'
+sudo docker network inspect fedimint-gateway_default -f '{{range .IPAM.Config}}{{println .Gateway}}{{end}}'
+```
+
+Se quiser ver o IP atual do container, use:
+
+```bash
+sudo docker inspect -f '{{range .NetworkSettings.Networks}}{{println .IPAddress}}{{end}}' fedimint-guardian-fedimintd-1
+sudo docker inspect -f '{{range .NetworkSettings.Networks}}{{println .IPAddress}}{{end}}' fedimint-gateway-gatewayd-1
+```
+
+Prefira usar a **sub-rede** em `rpcallowip`, porque o IP do container pode mudar quando o container for recriado. Use o **gateway** em `rpcbind`, porque ele representa o IP do host naquela rede Docker.
+
+Exemplo de `bitcoin.conf` para um `bitcoind` local externo no mesmo servidor:
+
+```ini
+server=1
+rpcuser=<usuario>
+rpcpassword=<senha>
+rpcbind=127.0.0.1:8332
+rpcbind=<gateway-fedimint-guardian>:8332
+rpcbind=<gateway-fedimint-gateway>:8332
+rpcallowip=127.0.0.1
+rpcallowip=<sub-rede-fedimint-guardian>
+rpcallowip=<sub-rede-fedimint-gateway>
+```
+
+Depois de alterar o `bitcoin.conf`, reinicie o `bitcoind` e recrie os containers Fedimint pelo App Store/LightningOS usando **Stop** e depois **Start**. Evite expor RPC publicamente; use `rpcbind=0.0.0.0:8332` apenas como fallback e mantenha firewall liberando a porta RPC apenas para as redes Docker necessarias.
+
+Para um `bitcoind` em outro servidor, permita no firewall e no `rpcallowip` o IP de origem do servidor LightningOS, ou a rede pela qual os containers saem para esse servidor. Em muitos hosts Docker, conexoes para outro servidor saem NATeadas pelo IP do host LightningOS.
+
 ## Portas
 
 ### Guardian

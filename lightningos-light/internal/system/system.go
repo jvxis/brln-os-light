@@ -367,7 +367,50 @@ func SystemctlRestartNoBlock(ctx context.Context, service string) error {
 	if _, sudoErr = RunCommand(ctx, sudoPath, "-n", systemctl, "restart", "--no-block", service); sudoErr == nil {
 		return nil
 	}
-	return fmt.Errorf("systemctl restart --no-block failed: %w; sudo restart failed: %v", err, sudoErr)
+	if runErr := systemdRunSystemctlRestartNoBlock(ctx, sudoPath, systemctl, service); runErr == nil {
+		return nil
+	} else {
+		return fmt.Errorf("systemctl restart --no-block failed: %w; sudo restart failed: %v; sudo systemd-run restart failed: %v", err, sudoErr, runErr)
+	}
+}
+
+func systemdRunSystemctlRestartNoBlock(ctx context.Context, sudoPath string, systemctl string, service string) error {
+	systemdRunPath, err := exec.LookPath("systemd-run")
+	if err != nil {
+		return err
+	}
+	unit := transientRestartUnitName(service)
+	_, err = RunCommand(
+		ctx,
+		sudoPath,
+		"-n",
+		systemdRunPath,
+		"--quiet",
+		"--collect",
+		"--unit",
+		unit,
+		systemctl,
+		"restart",
+		"--no-block",
+		service,
+	)
+	return err
+}
+
+func transientRestartUnitName(service string) string {
+	var b strings.Builder
+	for _, r := range service {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			b.WriteRune(r)
+			continue
+		}
+		b.WriteByte('-')
+	}
+	name := strings.Trim(b.String(), "-")
+	if name == "" {
+		name = "service"
+	}
+	return fmt.Sprintf("lightningos-restart-%s-%d", name, time.Now().UnixNano())
 }
 
 func SystemctlPower(ctx context.Context, action string) error {

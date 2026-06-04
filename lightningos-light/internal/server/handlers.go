@@ -1187,6 +1187,13 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 		err = system.SystemctlRestart(ctx, service)
 	}
 	if err != nil {
+		if service == "lnd" && s.logger != nil {
+			s.logger.Printf("lnd restart command failed: %v", err)
+		}
+		if service == "lnd" {
+			writeError(w, http.StatusInternalServerError, "lnd restart command failed; check manager sudoers for systemctl restart --no-block lnd")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "restart failed")
 		return
 	}

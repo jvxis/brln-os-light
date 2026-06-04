@@ -9138,6 +9138,25 @@ func evWeightedEconomicScore(expectedGainSat int64, estimatedCostSat int64, stat
 	return int64(math.Round(ev))
 }
 
+// gainV3ObservedVolumeSat estimates how much forward volume we have actually
+// observed for a channel, used as the confidence basis for the demand blend in
+// estimateTargetGainV3. It takes the strongest of two signals, mirroring the
+// demand calculation: volume implied by 7-day fee revenue (revenue ÷ current
+// out-fee rate) and volume implied by the 24h drain rate extrapolated to the
+// same 7-day horizon. Returns 0 when neither signal is present.
+func gainV3ObservedVolumeSat(revenue7dSat int64, outgoingFeePpm int64, drainRateSatPerHour int64) float64 {
+	fromRevenue := 0.0
+	if revenue7dSat > 0 && outgoingFeePpm > 0 {
+		fromRevenue = float64(revenue7dSat) * 1_000_000.0 / float64(outgoingFeePpm)
+	}
+	fromDrain := 0.0
+	if drainRateSatPerHour > 0 {
+		const horizonHours = 24.0 * 7.0
+		fromDrain = float64(drainRateSatPerHour) * horizonHours
+	}
+	return math.Max(fromRevenue, fromDrain)
+}
+
 func estimateTargetGainV3(amountSat int64, outgoingFeePpm int64, peerFeeRatePpm int64, revenue7dSat int64, localBalanceSat int64, capacitySat int64, drainRateSatPerHour int64, coldStartPct float64) int64 {
 	if amountSat <= 0 || outgoingFeePpm <= 0 {
 		return 0
@@ -9175,21 +9194,44 @@ func estimateTargetGainV3(amountSat int64, outgoingFeePpm int64, peerFeeRatePpm 
 		projected = volume * float64(outgoingFeePpm) / 1_000_000.0 * effectiveness
 	}
 
+	pct := coldStartPct
+	if pct < sovereignGainV3ColdStartPctMin || pct > sovereignGainV3ColdStartPctMax {
+		pct = sovereignGainV3ColdStartPct
+	}
+	coldStartGain := theoretical * pct
+
 	demand := math.Max(historical, projected)
 	var gain float64
-	if demand > 0 {
-		gain = math.Min(demand, theoretical)
+	if demand <= 0 {
+		// Cold-start: no observed demand yet. Keep coldStartPct of theoretical so
+		// brand-new channels survive the profit_guardrail (gain < cost) check at
+		// Funnel A. Default 0.75 (configurable via sovereign_gain_v3_cold_start_pct,
+		// range 0.50–0.95). The roiValid=false multiplier still trims the
+		// downstream score.
+		gain = coldStartGain
 	} else {
-		// Cold-start: keep coldStartPct of theoretical so brand-new channels
-		// survive the profit_guardrail (gain < cost) check at Funnel A. Default
-		// 0.75 (configurable via sovereign_gain_v3_cold_start_pct, range
-		// 0.50–0.95). The roiValid=false multiplier still trims the downstream
-		// score.
-		pct := coldStartPct
-		if pct < sovereignGainV3ColdStartPctMin || pct > sovereignGainV3ColdStartPctMax {
-			pct = sovereignGainV3ColdStartPct
+		// Confidence-blended demand. A thin sample — observed forward volume far
+		// below the requested amount — must not score the channel BELOW a
+		// brand-new one. That "cold-start cliff" let a single small forward drop
+		// the estimate under the cold-start prior, so a channel with one sale
+		// scored worse than one with none, and the autopilot could never adopt it
+		// (roi_guardrail filters it at candidate-build time, before exploration
+		// can pick it up).
+		//
+		// confidence = observed volume / requested amount: at conf=1 (we have
+		// already seen at least `amount` of flow) the empirical demand stands on
+		// its own; at conf→0 we fall back to the cold-start prior. Mirrors the
+		// evWeightedSuccessProbability shrinkage. max(demand, …) guarantees a
+		// channel already out-earning the prior is never penalized;
+		// min(theoretical, …) keeps the estimate physically bounded. Lower
+		// sovereign_gain_v3_cold_start_pct to dial the lift down.
+		observed := gainV3ObservedVolumeSat(revenue7dSat, outgoingFeePpm, drainRateSatPerHour)
+		conf := 0.0
+		if amountSat > 0 {
+			conf = math.Min(1.0, observed/float64(amountSat))
 		}
-		gain = theoretical * pct
+		blended := demand*conf + coldStartGain*(1.0-conf)
+		gain = math.Min(theoretical, math.Max(demand, blended))
 	}
 	if gain <= 0 {
 		return 0

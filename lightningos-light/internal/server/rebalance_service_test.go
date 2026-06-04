@@ -4002,10 +4002,15 @@ func TestEstimateTargetGainV3UsesStrongestDemandSignal(t *testing.T) {
 	}
 
 	// Channel with weak drain rate (only 500 sat/h × 168 = 84_000 of volume).
-	// Projected gain = 84_000 * 500/1e6 * 0.8 = 33.6 → rounds to 34.
+	// Raw projected gain = 84_000 * 500/1e6 * 0.8 = 33.6, but observed volume
+	// (84_000) is far below the requested amount (1M) → confidence = 0.084 → the
+	// demand is blended toward the cold-start prior (300):
+	//   blended = 33.6*0.084 + 300*0.916 = 277.6 → rounds to 278.
+	// Pre-blend this returned 34; the lift is the cold-start-cliff fix so a thin
+	// sample is not scored below a brand-new channel.
 	gain = estimateTargetGainV3(amount, outFee, peerFee, 0, amount, amount*2, 500, sovereignGainV3ColdStartPct)
-	if gain != 34 {
-		t.Fatalf("expected 34 sats from weak drain projection, got %d", gain)
+	if gain != 278 {
+		t.Fatalf("expected 278 sats from confidence-blended weak drain, got %d", gain)
 	}
 
 	// Channel with strong revenue7d (10k sats) and no drain rate signal —
@@ -4028,6 +4033,49 @@ func TestEstimateTargetGainV3UsesStrongestDemandSignal(t *testing.T) {
 	gain = estimateTargetGainV3(amount, 100, 100, 0, amount, amount*2, 0, sovereignGainV3ColdStartPct)
 	if gain != 0 {
 		t.Fatalf("expected 0 when spread is non-positive, got %d", gain)
+	}
+}
+
+func TestEstimateTargetGainV3ConfidenceBlendLiftsThinHistory(t *testing.T) {
+	// Models the Corn🌽Sabok cold-start cliff: a newly-opened channel with a
+	// single small forward (revenue7d=182 sats earned forwarding ~438k) while the
+	// autopilot wants to refill a 937k deficit.
+	const amount = int64(937_676)
+	const outFee = int64(415)
+	const peerFee = int64(10)
+	const localBal = int64(62_324)
+	const capacity = int64(4_936_390)
+
+	// Thin history. Pre-fix this returned min(demand=182, theoretical)=182 →
+	// ROI 0.64 → filtered by roi_guardrail before exploration could see it.
+	// Now: observed ≈ 182*1e6/415 = 438_554, conf = 438_554/937_676 = 0.4677,
+	// coldStartGain = theoretical(379.76)*0.75 = 284.82,
+	// blended = 182*0.4677 + 284.82*0.5323 = 236.7 → 237.
+	thin := estimateTargetGainV3(amount, outFee, peerFee, 182, localBal, capacity, 0, sovereignGainV3ColdStartPct)
+	if thin != 237 {
+		t.Fatalf("thin-history blend: expected 237 sats, got %d", thin)
+	}
+	if thin <= 182 {
+		t.Fatalf("thin-history blend must lift above the raw demand floor (182), got %d", thin)
+	}
+
+	// Same channel with zero history (brand new) gets the full cold-start prior.
+	// The blended thin-history value must sit BELOW the brand-new prior (it has a
+	// weak observed signal) yet ABOVE the raw-demand cliff — softening, not
+	// erasing, the empirical reading.
+	fresh := estimateTargetGainV3(amount, outFee, peerFee, 0, localBal, capacity, 0, sovereignGainV3ColdStartPct)
+	if !(thin < fresh) {
+		t.Fatalf("thin-history (%d) should stay below brand-new cold-start (%d)", thin, fresh)
+	}
+
+	// Full confidence: once observed volume reaches the requested amount the
+	// empirical demand stands on its own with no lift toward the prior. A strong
+	// drain rate saturates the amount (10k/h × 168h = 1.68M ≥ 937k) → conf=1 →
+	// gain equals the theoretical cap, identical to pre-fix behavior.
+	saturated := estimateTargetGainV3(amount, outFee, peerFee, 0, localBal, capacity, 10_000, sovereignGainV3ColdStartPct)
+	theo := int64(math.Round(float64(amount) * float64(outFee) / 1_000_000.0 * (1.0 - float64(peerFee)/float64(outFee))))
+	if saturated != theo {
+		t.Fatalf("saturated demand should equal theoretical %d, got %d", theo, saturated)
 	}
 }
 

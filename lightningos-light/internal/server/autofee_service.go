@@ -5285,6 +5285,39 @@ func applyNegMarginProtectedDown(targetPpm int, localPpm int, protectedFloor int
 	return targetPpm, "neg-margin-floor-down"
 }
 
+func applyNoisySurgeFollowUpUpHold(localPpm int, finalPpm int, floorPpm int, lastDir string, lastTs time.Time, now time.Time, followUpWindow time.Duration, htlcSampleLow bool, htlcNoisySample bool, htlcHotSignal bool, htlcForwardHot bool, recentRebalanceCount int, surgeConfirmSignal bool, surgeRoundConfirmSignal bool) (int, bool) {
+	if finalPpm <= localPpm || !surgeConfirmSignal || surgeRoundConfirmSignal {
+		return finalPpm, false
+	}
+	if !(htlcSampleLow || htlcNoisySample) {
+		return finalPpm, false
+	}
+	if htlcHotSignal || htlcForwardHot || recentRebalanceCount > 0 {
+		return finalPpm, false
+	}
+	if strings.TrimSpace(lastDir) != "up" || lastTs.IsZero() {
+		return finalPpm, false
+	}
+	if followUpWindow <= 0 {
+		return finalPpm, false
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	age := now.Sub(lastTs)
+	if age < 0 || age > followUpWindow {
+		return finalPpm, false
+	}
+	heldPpm := localPpm
+	if floorPpm > heldPpm {
+		heldPpm = floorPpm
+	}
+	if heldPpm >= finalPpm {
+		return finalPpm, false
+	}
+	return heldPpm, true
+}
+
 func rebalFloorConfidence(successCount int64) float64 {
 	if successCount <= 0 {
 		return 0
@@ -8289,6 +8322,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	rebalSetting, rebalSettingOk := e.rebalanceConfig[ch.ChannelID]
 	rebalRuntime, rebalRuntimeOk := e.rebalanceRuntime[ch.ChannelID]
 	htlcSampleLow := false
+	htlcNoisySample := false
 	htlcPolicyHot := false
 	htlcLiquidityHot := false
 	htlcForwardHot := false
@@ -8306,6 +8340,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 	if signal, ok := htlcSignals[ch.ChannelID]; ok && signal.Attempts60m > 0 {
 		htlcSampleLow = signal.SampleLow
+		htlcNoisySample = signal.NoisySample
 		htlcPolicyHot = signal.PolicyHot
 		htlcLiquidityHot = signal.LiquidityHot
 		htlcAttempts = signal.Attempts60m
@@ -9491,6 +9526,25 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		finalPpm = floor
 	}
 	finalPpm = clampInt(finalPpm, e.cfg.MinPpm, e.cfg.MaxPpm)
+	if heldPpm, held := applyNoisySurgeFollowUpUpHold(
+		localPpm,
+		finalPpm,
+		floor,
+		st.LastDir,
+		st.LastTs,
+		e.now,
+		time.Duration(maxInt(1, cooldownUpSec))*time.Second,
+		htlcSampleLow,
+		htlcNoisySample,
+		htlcHotSignal,
+		htlcForwardHot,
+		recentRebalanceCount,
+		surgeConfirmSignal,
+		surgeRoundConfirmSignal,
+	); held {
+		finalPpm = heldPpm
+		tags = appendAutofeeTagOnce(tags, "surge-noisy-followup-hold")
+	}
 
 	profitProtectLocked := false
 	profitProtectRelaxed := false
@@ -11428,6 +11482,8 @@ func formatAutofeeTags(d *decision) string {
 			add("large-gap-step")
 		case t == "large-gap-step-boost-strong":
 			add("large-gap-step+")
+		case t == "surge-noisy-followup-hold":
+			add("surge-noisy-hold")
 		case strings.HasPrefix(t, "negm+"):
 			add("💹" + t)
 		case t == "outrate-floor":

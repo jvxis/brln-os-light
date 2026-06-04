@@ -1293,6 +1293,98 @@ func TestApplySurgeConfirmationGate(t *testing.T) {
 	}
 }
 
+func TestApplyNoisySurgeFollowUpUpHoldBlocksSecondNoisyStep(t *testing.T) {
+	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+	got, held := applyNoisySurgeFollowUpUpHold(
+		1904,
+		2322,
+		1717,
+		"up",
+		now.Add(-2*time.Hour),
+		now,
+		3*time.Hour,
+		true,
+		true,
+		false,
+		false,
+		0,
+		true,
+		false,
+	)
+	if got != 1904 || !held {
+		t.Fatalf("expected noisy follow-up surge to hold at local ppm, got %d held=%v", got, held)
+	}
+}
+
+func TestApplyNoisySurgeFollowUpUpHoldAllowsCurrentHTLCHot(t *testing.T) {
+	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+	got, held := applyNoisySurgeFollowUpUpHold(
+		1561,
+		1904,
+		1717,
+		"up",
+		now.Add(-2*time.Hour),
+		now,
+		3*time.Hour,
+		false,
+		true,
+		true,
+		true,
+		0,
+		true,
+		false,
+	)
+	if got != 1904 || held {
+		t.Fatalf("expected current HTLC hot signal to allow step, got %d held=%v", got, held)
+	}
+}
+
+func TestApplyNoisySurgeFollowUpUpHoldAllowsOutsideWindow(t *testing.T) {
+	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+	got, held := applyNoisySurgeFollowUpUpHold(
+		1904,
+		2322,
+		1717,
+		"up",
+		now.Add(-4*time.Hour),
+		now,
+		3*time.Hour,
+		true,
+		true,
+		false,
+		false,
+		0,
+		true,
+		false,
+	)
+	if got != 2322 || held {
+		t.Fatalf("expected noisy follow-up outside window to pass, got %d held=%v", got, held)
+	}
+}
+
+func TestApplyNoisySurgeFollowUpUpHoldAllowsRiseToFloor(t *testing.T) {
+	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+	got, held := applyNoisySurgeFollowUpUpHold(
+		1500,
+		1904,
+		1717,
+		"up",
+		now.Add(-2*time.Hour),
+		now,
+		3*time.Hour,
+		true,
+		true,
+		false,
+		false,
+		0,
+		true,
+		false,
+	)
+	if got != 1717 || !held {
+		t.Fatalf("expected noisy follow-up hold to still allow floor, got %d held=%v", got, held)
+	}
+}
+
 func TestApplyDirectionReversalGuard(t *testing.T) {
 	st := &autofeeChannelState{LastDir: "up"}
 	localPpm := 1000

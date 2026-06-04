@@ -22,9 +22,12 @@ function pickRoiTone(roi: number): HeroTone {
   return 'danger'
 }
 
+// Per-JOB success tone, aligned with the Effectiveness (7d) gauge (target 25%).
+// A job counts as success when it moved liquidity (succeeded/partial). This is
+// the headline rate; the per-attempt route-hit rate is shown un-toned below.
 function pickSuccessTone(rate: number): HeroTone {
-  if (rate >= 0.2) return 'ok'
-  if (rate >= 0.1) return 'warn'
+  if (rate >= 0.25) return 'ok'
+  if (rate >= 0.15) return 'warn'
   return 'danger'
 }
 
@@ -71,11 +74,16 @@ export default function OverviewHero({
   const roiGaugePct = (roiPct / 150) * 100 // normalize to 0-100 for gauge
   const roiMarkerPct = (100 / 150) * 100 // marker at 1.0×
 
-  // Success 24h
+  // Success 24h — headline is the per-JOB rate (jobs that moved liquidity ÷
+  // jobs executed). The per-attempt route-hit rate stays as a secondary,
+  // un-toned line since one job fans out into many route probes.
+  const jobs24h = overview.jobs_24h ?? 0
+  const successJobs24h = overview.success_jobs_24h ?? 0
+  const jobSuccessRate = overview.job_success_rate_24h ?? 0
+  const successTone = pickSuccessTone(jobSuccessRate)
   const attempts24h = overview.attempts_24h ?? 0
   const successes24h = overview.success_attempts_24h ?? 0
-  const successRate = overview.attempt_success_rate_24h ?? 0
-  const successTone = pickSuccessTone(successRate)
+  const attemptRate = overview.attempt_success_rate_24h ?? 0
   const fpHitRate = overview.fast_path_hit_rate_24h ?? 0
 
   // Budget
@@ -184,19 +192,20 @@ export default function OverviewHero({
           }
         />
 
-        {/* Success 24h */}
+        {/* Success 24h — headline per-JOB, route-attempt rate as un-toned subline */}
         <HeroTile
           {...detailLabels}
           markerLabel={t('rebalanceCenter.heroes.gaugeTarget', { value: 25 })}
           label={t('rebalanceCenter.heroes.success24h')}
-          value={formatPct(successRate * 100, 1)}
+          value={formatPct(jobSuccessRate * 100, 1)}
           tone={successTone}
-          badge={t('rebalanceCenter.heroes.attempts', { value: attempts24h })}
-          gaugePct={Math.min(100, successRate * 100 * 2)}
-          gaugeMarker={50}
+          badge={t('rebalanceCenter.heroes.jobs', { value: jobs24h })}
+          gaugePct={Math.min(100, jobSuccessRate * 100)}
+          gaugeMarker={25}
           context={
             <>
-              <p>{t('rebalanceCenter.heroes.successCount', { s: successes24h, n: attempts24h })}</p>
+              <p>{t('rebalanceCenter.heroes.successJobs', { s: successJobs24h, n: jobs24h })}</p>
+              <p className="text-fog/45">{t('rebalanceCenter.heroes.successCount', { s: successes24h, n: attempts24h, rate: formatPct(attemptRate * 100, 1) })}</p>
               {(overview.fast_path_attempts_24h ?? 0) > 0 && (
                 <p>{t('rebalanceCenter.heroes.fastPathHit', {
                   value: formatPct(fpHitRate * 100, 1),

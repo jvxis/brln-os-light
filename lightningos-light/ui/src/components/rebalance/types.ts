@@ -199,6 +199,9 @@ export type RebalanceOverview = {
   sovereign_sellthrough_slow_7d?: number
   sovereign_sellthrough_window_hours?: number
   sovereign_sellthrough_slow_window_hours?: number
+  jobs_24h?: number
+  success_jobs_24h?: number
+  job_success_rate_24h?: number
   attempts_24h?: number
   failed_attempts_24h?: number
   attempt_success_rate_24h?: number

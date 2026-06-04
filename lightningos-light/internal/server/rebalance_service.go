@@ -479,6 +479,9 @@ type RebalanceOverview struct {
 	SovereignSellThroughSlow7d      float64                    `json:"sovereign_sellthrough_slow_7d"`
 	SovereignSellThroughWindowHours     int                    `json:"sovereign_sellthrough_window_hours"`
 	SovereignSellThroughSlowWindowHours int                    `json:"sovereign_sellthrough_slow_window_hours"`
+	Jobs24h                       int64                        `json:"jobs_24h"`
+	SuccessJobs24h                int64                        `json:"success_jobs_24h"`
+	JobSuccessRate24h             float64                      `json:"job_success_rate_24h"`
 	Attempts24h                   int64                        `json:"attempts_24h"`
 	FailedAttempts24h             int64                        `json:"failed_attempts_24h"`
 	SuccessAttempts24h            int64                        `json:"success_attempts_24h"`
@@ -12135,6 +12138,33 @@ where coalesce(finished_at, started_at) >= $1
 	return metrics, nil
 }
 
+// fetchJobTelemetry24h returns the per-JOB success rate over the last 24h: the
+// fraction of executed jobs (status succeeded/partial/failed) that moved
+// liquidity (succeeded/partial = at least one settled attempt). This is the
+// headline "did the rebalance work?" metric, distinct from the per-ATTEMPT
+// route-hit rate in fetchAttemptTelemetry24h (one row per source/amount probe,
+// so naturally low because every failed route try counts).
+func (s *RebalanceService) fetchJobTelemetry24h(ctx context.Context) (jobs int64, successJobs int64, rate float64) {
+	if s.db == nil {
+		return 0, 0, 0
+	}
+	end := time.Now().In(time.Local)
+	start := end.Add(-24 * time.Hour)
+	if err := s.db.QueryRow(ctx, `
+select
+  count(*) filter (where status in ('succeeded','partial','failed')) as jobs,
+  count(*) filter (where status in ('succeeded','partial')) as success_jobs
+from rebalance_jobs
+where completed_at >= $1 and completed_at <= $2
+`, start, end).Scan(&jobs, &successJobs); err != nil {
+		return 0, 0, 0
+	}
+	if jobs > 0 {
+		rate = float64(successJobs) / float64(jobs)
+	}
+	return jobs, successJobs, rate
+}
+
 func (s *RebalanceService) insertMppShadowPlan(ctx context.Context, jobID int64, targetChannelID uint64, jobSource string, cfg RebalanceConfig, targetAmountSat int64, plan mppShadowPlan) error {
 	if s.db == nil || jobID <= 0 {
 		return nil
@@ -13230,6 +13260,7 @@ where report_date >= current_date - interval '6 days'
 	if telemetry, err := s.fetchAttemptTelemetry24h(ctx, effectiveMinExecuteSat(cfg)); err == nil {
 		attemptTelemetry = telemetry
 	}
+	jobs24h, successJobs24h, jobSuccessRate24h := s.fetchJobTelemetry24h(ctx)
 	if economics, err := s.fetchSovereignAutopilotEconomics7d(ctx, cfg); err == nil {
 		sovereignEconomics7d = economics
 	}
@@ -13333,6 +13364,9 @@ where report_date >= current_date - interval '6 days'
 		SovereignSellThroughSlow7d:          sovereignEconomics7d.SellThroughSlow,
 		SovereignSellThroughWindowHours:     sovereignEconomics7d.AttributionWindowHours,
 		SovereignSellThroughSlowWindowHours: sovereignEconomics7d.SlowSellerWindowHours,
+		Jobs24h:                       jobs24h,
+		SuccessJobs24h:                successJobs24h,
+		JobSuccessRate24h:             jobSuccessRate24h,
 		Attempts24h:                   attemptTelemetry.Attempts,
 		FailedAttempts24h:             attemptTelemetry.FailedAttempts,
 		SuccessAttempts24h:            attemptTelemetry.SuccessAttempts,

@@ -21,12 +21,16 @@ func ptrFloat64(v float64) *float64 {
 func ptrString(v string) *string { return &v }
 
 func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
+	// Phase-0 defaults revision (2026-06): new nodes now start on the evolved
+	// sovereign autopilot with the balanced posture discovered in production
+	// (gain_v3, exploration on, cold-start 0.85, roi_min/econ/budget tuned).
+	// AutoEnabled stays false — the operator still has to turn it on.
 	cfg := defaultRebalanceConfig()
 	if cfg.AutoEnabled {
 		t.Fatalf("expected auto mode disabled by default")
 	}
-	if cfg.SchedulerMode != rebalanceSchedulerModeRulesAuto {
-		t.Fatalf("expected scheduler_mode default=%s, got %s", rebalanceSchedulerModeRulesAuto, cfg.SchedulerMode)
+	if cfg.SchedulerMode != rebalanceSchedulerModeSovereignLive {
+		t.Fatalf("expected scheduler_mode default=%s, got %s", rebalanceSchedulerModeSovereignLive, cfg.SchedulerMode)
 	}
 	if cfg.SovereignCandidateScope != rebalanceSovereignScopeAutoAndManualRestart {
 		t.Fatalf("expected sovereign_candidate_scope default=%s, got %s", rebalanceSovereignScopeAutoAndManualRestart, cfg.SovereignCandidateScope)
@@ -52,8 +56,8 @@ func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	if cfg.SovereignRiskScoreFloor != 0.03 {
 		t.Fatalf("expected sovereign_risk_score_floor default=0.03, got %f", cfg.SovereignRiskScoreFloor)
 	}
-	if cfg.SovereignGainV3ColdStartPct != 0.75 {
-		t.Fatalf("expected sovereign_gain_v3_cold_start_pct default=0.75, got %f", cfg.SovereignGainV3ColdStartPct)
+	if cfg.SovereignGainV3ColdStartPct != 0.85 {
+		t.Fatalf("expected sovereign_gain_v3_cold_start_pct default=0.85, got %f", cfg.SovereignGainV3ColdStartPct)
 	}
 	if cfg.FastPathMaxTimeoutSec != 90 {
 		t.Fatalf("expected fast_path_max_timeout_sec default=90, got %d", cfg.FastPathMaxTimeoutSec)
@@ -73,8 +77,8 @@ func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	if cfg.SovereignStructuralCooldownRepeatHours != 6 {
 		t.Fatalf("expected sovereign_structural_cooldown_repeat_hours default=6, got %d", cfg.SovereignStructuralCooldownRepeatHours)
 	}
-	if cfg.SovereignExplorationSlotPct != 0 {
-		t.Fatalf("expected sovereign_exploration_slot_pct default=0, got %d", cfg.SovereignExplorationSlotPct)
+	if cfg.SovereignExplorationSlotPct != 15 {
+		t.Fatalf("expected sovereign_exploration_slot_pct default=15, got %d", cfg.SovereignExplorationSlotPct)
 	}
 	if !cfg.SovereignSourceOpportunityCostEnabled {
 		t.Fatalf("expected sovereign_source_opportunity_cost_enabled default=true")
@@ -91,8 +95,8 @@ func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	if cfg.SourceMinLocalPct != 15 {
 		t.Fatalf("expected source_min_local_pct default=15, got %f", cfg.SourceMinLocalPct)
 	}
-	if cfg.DailyBudgetPct != 30 {
-		t.Fatalf("expected daily_budget_pct default=30, got %f", cfg.DailyBudgetPct)
+	if cfg.DailyBudgetPct != 50 {
+		t.Fatalf("expected daily_budget_pct default=50, got %f", cfg.DailyBudgetPct)
 	}
 	if cfg.BudgetMode != rebalanceBudgetModeHybridRevenue {
 		t.Fatalf("expected budget_mode default=%s, got %s", rebalanceBudgetModeHybridRevenue, cfg.BudgetMode)
@@ -160,8 +164,8 @@ func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	if cfg.SourceMinPaybackProgress != 0.95 {
 		t.Fatalf("expected source_min_payback_progress default=0.95, got %f", cfg.SourceMinPaybackProgress)
 	}
-	if cfg.GainModelVersion != 2 {
-		t.Fatalf("expected gain_model_version default=2, got %d", cfg.GainModelVersion)
+	if cfg.GainModelVersion != 3 {
+		t.Fatalf("expected gain_model_version default=3, got %d", cfg.GainModelVersion)
 	}
 	if cfg.VelocityWeight != 0.7 {
 		t.Fatalf("expected velocity_weight default=0.7, got %f", cfg.VelocityWeight)
@@ -1015,8 +1019,8 @@ func TestNormalizeRebalanceConfigClampsGainModelAndVelocityWeight(t *testing.T) 
 	cfg.GainModelVersion = -1
 	cfg.VelocityWeight = -0.1
 	got = normalizeRebalanceConfig(cfg)
-	if got.GainModelVersion != 2 {
-		t.Fatalf("expected GainModelVersion fallback to 2, got %d", got.GainModelVersion)
+	if got.GainModelVersion != 3 {
+		t.Fatalf("expected GainModelVersion fallback to default 3, got %d", got.GainModelVersion)
 	}
 	if got.VelocityWeight != 0 {
 		t.Fatalf("expected VelocityWeight clamped to 0, got %f", got.VelocityWeight)

@@ -174,6 +174,32 @@ func (s *Server) handleRebalanceConfigPost(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, updated)
 }
 
+// handleRebalanceProfilePost is the header selector action. A named profile
+// (conservative/balanced/aggressive) turns the autopilot ON and applies that
+// posture composed with the node calibration; "custom" freezes the current
+// effective values. The UI confirms with the operator before calling this.
+func (s *Server) handleRebalanceProfilePost(w http.ResponseWriter, r *http.Request) {
+	if s.rebalance == nil {
+		writeError(w, http.StatusServiceUnavailable, "rebalance unavailable")
+		return
+	}
+	var payload struct {
+		Profile string `json:"profile"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid payload")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+	updated, err := s.rebalance.ApplyProfile(ctx, payload.Profile)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
 func applyRebalanceConfigPayload(cfg RebalanceConfig, payload rebalanceConfigPayload) RebalanceConfig {
 	if payload.AutoEnabled != nil {
 		cfg.AutoEnabled = *payload.AutoEnabled

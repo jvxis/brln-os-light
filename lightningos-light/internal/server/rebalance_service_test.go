@@ -143,6 +143,34 @@ func TestApplyRebalanceProfile(t *testing.T) {
 	}
 }
 
+func TestReconcileRebalanceProfileState(t *testing.T) {
+	calib := RebalanceNodeCalibration{NodeClass: "medium", LiquidityClass: "balanced"}
+	base := defaultRebalanceConfig()
+
+	// Autopilot OFF forces custom regardless of the stored profile name.
+	off := base
+	off.AutoEnabled = false
+	off.Profile = rebalanceProfileBalanced
+	if got := reconcileRebalanceProfileState(off, calib); got.Profile != rebalanceProfileCustom {
+		t.Fatalf("autopilot off should force custom, got %s", got.Profile)
+	}
+
+	// A named profile with matching managed knobs (autopilot on) is left intact.
+	on := applyRebalanceProfile(base, rebalanceProfileBalanced, calib)
+	on.AutoEnabled = true
+	on.Profile = rebalanceProfileBalanced
+	if got := reconcileRebalanceProfileState(on, calib); got.Profile != rebalanceProfileBalanced {
+		t.Fatalf("matching balanced should stay, got %s", got.Profile)
+	}
+
+	// Editing a managed knob while on a named profile drops to custom.
+	edited := on
+	edited.ROIMin = 1.07
+	if got := reconcileRebalanceProfileState(edited, calib); got.Profile != rebalanceProfileCustom {
+		t.Fatalf("edited managed knob should become custom, got %s", got.Profile)
+	}
+}
+
 func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	// Phase-0 defaults revision (2026-06): new nodes now start on the evolved
 	// sovereign autopilot with the balanced posture discovered in production

@@ -719,6 +719,61 @@ func effectiveRebalanceConfig(cfg RebalanceConfig, calib RebalanceNodeCalibratio
 	return applyRebalanceProfile(cfg, cfg.Profile, calib)
 }
 
+// reconcileRebalanceProfileState enforces the profile/autopilot state machine on
+// a config about to be persisted: autopilot OFF ⇒ custom; a named profile whose
+// managed knobs no longer match the profile-at-calibration (operator hand-edited
+// a knob) ⇒ custom. A named profile with matching knobs is left intact.
+func reconcileRebalanceProfileState(cfg RebalanceConfig, calib RebalanceNodeCalibration) RebalanceConfig {
+	if !cfg.AutoEnabled {
+		cfg.Profile = rebalanceProfileCustom
+		return cfg
+	}
+	if _, named := rebalanceProfileBases[cfg.Profile]; named {
+		if !rebalanceProfileManagedEqual(cfg, applyRebalanceProfile(cfg, cfg.Profile, calib)) {
+			cfg.Profile = rebalanceProfileCustom
+		}
+	}
+	return cfg
+}
+
+// nodeCalibration computes the live node calibration from the cached channel list.
+// Returns an unknown/balanced default when LND is unavailable.
+func (s *RebalanceService) nodeCalibration(ctx context.Context) RebalanceNodeCalibration {
+	def := RebalanceNodeCalibration{NodeClass: "unknown", LiquidityClass: "balanced"}
+	if s.lnd == nil {
+		return def
+	}
+	channels, err := s.listChannelsCached(ctx)
+	if err != nil {
+		return def
+	}
+	return classifyRebalanceNode(channels)
+}
+
+// ApplyProfile is the selector action. A named profile turns the autopilot ON
+// (sovereign_live) and applies that posture composed with the node calibration;
+// "custom" freezes the current effective values so they stop re-deriving. The
+// autopilot is only toggled on by a named profile — never off here.
+func (s *RebalanceService) ApplyProfile(ctx context.Context, profileName string) (RebalanceConfig, error) {
+	cfg, err := s.loadConfig(ctx)
+	if err != nil {
+		cfg = defaultRebalanceConfig()
+	}
+	calib := s.nodeCalibration(ctx)
+	switch normalizeRebalanceProfile(profileName) {
+	case rebalanceProfileCustom:
+		cfg = effectiveRebalanceConfig(cfg, calib)
+		cfg.Profile = rebalanceProfileCustom
+	default:
+		name := normalizeRebalanceProfile(profileName)
+		cfg.AutoEnabled = true
+		cfg.SchedulerMode = rebalanceSchedulerModeSovereignLive
+		cfg = applyRebalanceProfile(cfg, name, calib)
+		cfg.Profile = name
+	}
+	return s.UpdateConfig(ctx, cfg)
+}
+
 type RebalanceMissionControlState struct {
 	LastMCResetAt               string `json:"last_mc_reset_at,omitempty"`
 	LastMCResetReason           string `json:"last_mc_reset_reason,omitempty"`
@@ -1595,6 +1650,7 @@ func (s *RebalanceService) GetConfig(ctx context.Context) (RebalanceConfig, erro
 func (s *RebalanceService) UpdateConfig(ctx context.Context, updated RebalanceConfig) (RebalanceConfig, error) {
 	prev, _ := s.loadConfig(ctx)
 	updated = normalizeRebalanceConfig(updated)
+	updated = reconcileRebalanceProfileState(updated, s.nodeCalibration(ctx))
 	if err := s.upsertConfig(ctx, updated); err != nil {
 		return RebalanceConfig{}, err
 	}

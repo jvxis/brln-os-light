@@ -3970,8 +3970,15 @@ type recentWeakRebalanceJob struct {
 }
 
 func (s recentRebalanceSignal) surgeConfirmInputs() (int, int64) {
-	weightedCount := float64(s.Count) + float64(s.WeakCount)*weakRebalanceAttemptCountWeight
-	weightedAmt := float64(s.AmtSat) + float64(s.WeakAmtSat)*weakRebalanceAttemptAmtWeight
+	// Success protects cost basis; only unresolved failed campaigns confirm a surge.
+	if s.WeakCount <= 0 {
+		return 0, 0
+	}
+	if s.Count > 0 && !s.LastAt.IsZero() && (s.WeakLastAt.IsZero() || !s.WeakLastAt.After(s.LastAt)) {
+		return 0, 0
+	}
+	weightedCount := float64(s.WeakCount) * weakRebalanceAttemptCountWeight
+	weightedAmt := float64(s.WeakAmtSat) * weakRebalanceAttemptAmtWeight
 	return int(math.Round(weightedCount)), int64(math.Round(weightedAmt))
 }
 
@@ -6819,6 +6826,9 @@ order by j.target_channel_id, coalesce(j.completed_at, j.created_at)
 		if chanID <= 0 || eventTs.IsZero() {
 			continue
 		}
+		if sig, ok := touches[uint64(chanID)]; ok && sig.Count > 0 && !sig.LastAt.IsZero() && !eventTs.After(sig.LastAt) {
+			continue
+		}
 		weakJobs = append(weakJobs, recentWeakRebalanceJob{
 			ChannelID: uint64(chanID),
 			Ts:        eventTs,
@@ -6833,6 +6843,9 @@ order by j.target_channel_id, coalesce(j.completed_at, j.created_at)
 		sig := touches[chanID]
 		sig.WeakCount += weakSig.WeakCount
 		sig.WeakAmtSat += weakSig.WeakAmtSat
+		if !weakSig.WeakLastAt.IsZero() && (sig.WeakLastAt.IsZero() || weakSig.WeakLastAt.After(sig.WeakLastAt)) {
+			sig.WeakLastAt = weakSig.WeakLastAt
+		}
 		touches[chanID] = sig
 	}
 	return touches, nil

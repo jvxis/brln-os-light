@@ -314,10 +314,14 @@ func goldenHasAnyTag(tags []string, pattern string) bool {
 }
 
 func TestEvaluateChannelGolden_DrainedSinkPressuredGoesUp(t *testing.T) {
-	// Sink class with 5% local liquidity, recent flow + recent rebalance touch.
+	// Sink class with 5% local liquidity, recent flow + failed rebalance pressure.
 	// Engine must push fee up to defend liquidity, never down.
 	now := time.Date(2026, 4, 30, 12, 0, 0, 0, time.UTC)
-	rebalanceTouch := recentRebalanceSignal{Count: 2, AmtSat: 200_000}
+	rebalanceTouch := recentRebalanceSignal{
+		WeakCount:  4,
+		WeakAmtSat: 800_000,
+		WeakLastAt: now.Add(-2 * time.Hour),
+	}
 	runGoldenScenario(t, goldenScenario{
 		name:    "drained_sink_pressured_goes_up",
 		channel: goldenChannel(101, 4_000_000, 200_000, 500, true), // 5% out_ratio
@@ -340,7 +344,7 @@ func TestEvaluateChannelGolden_DrainedSinkPressuredGoesUp(t *testing.T) {
 		rebalGlobalPpm: 250,
 		rebalanceTouch: &rebalanceTouch,
 		expectedTrend:  "up",
-		requiredTags:   []string{"trend-up"},
+		requiredTags:   []string{"rebal-attempt", "trend-up"},
 		forbiddenTags:  []string{"no-down-low", "stagnation"},
 	})
 }

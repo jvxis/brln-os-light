@@ -1047,6 +1047,68 @@ func TestHasSurgeConfirmSignal(t *testing.T) {
 	}
 }
 
+func TestRecentRebalanceSignalSurgeConfirmInputsIgnoreSuccess(t *testing.T) {
+	capSat := int64(10_000_000)
+	minAmtSat := minSurgeConfirmRebalSat(capSat)
+	count, amtSat := recentRebalanceSignal{
+		Count:  1,
+		AmtSat: minAmtSat,
+		LastAt: time.Date(2026, 6, 5, 13, 0, 0, 0, time.UTC),
+	}.surgeConfirmInputs()
+
+	if hasSurgeConfirmSignal(count, amtSat, capSat) {
+		t.Fatalf("did not expect successful rebalance to confirm fee surge")
+	}
+}
+
+func TestRecentRebalanceSignalSurgeConfirmInputsUseWeakFailures(t *testing.T) {
+	capSat := int64(10_000_000)
+	minAmtSat := minSurgeConfirmRebalSat(capSat)
+	count, amtSat := recentRebalanceSignal{
+		WeakCount:  2,
+		WeakAmtSat: minAmtSat * 4,
+		WeakLastAt: time.Date(2026, 6, 5, 13, 0, 0, 0, time.UTC),
+	}.surgeConfirmInputs()
+
+	if !hasSurgeConfirmSignal(count, amtSat, capSat) {
+		t.Fatalf("expected repeated failed rebalances to confirm fee surge, count=%d amt=%d", count, amtSat)
+	}
+}
+
+func TestRecentRebalanceSignalSurgeConfirmInputsSuccessClearsOlderWeakFailures(t *testing.T) {
+	capSat := int64(10_000_000)
+	minAmtSat := minSurgeConfirmRebalSat(capSat)
+	count, amtSat := recentRebalanceSignal{
+		Count:      1,
+		AmtSat:     minAmtSat,
+		LastAt:     time.Date(2026, 6, 5, 13, 0, 0, 0, time.UTC),
+		WeakCount:  4,
+		WeakAmtSat: minAmtSat * 8,
+		WeakLastAt: time.Date(2026, 6, 5, 12, 30, 0, 0, time.UTC),
+	}.surgeConfirmInputs()
+
+	if hasSurgeConfirmSignal(count, amtSat, capSat) {
+		t.Fatalf("did not expect weak failures before a successful rebalance to confirm fee surge")
+	}
+}
+
+func TestRecentRebalanceSignalSurgeConfirmInputsAllowWeakFailuresAfterSuccess(t *testing.T) {
+	capSat := int64(10_000_000)
+	minAmtSat := minSurgeConfirmRebalSat(capSat)
+	count, amtSat := recentRebalanceSignal{
+		Count:      1,
+		AmtSat:     minAmtSat,
+		LastAt:     time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC),
+		WeakCount:  2,
+		WeakAmtSat: minAmtSat * 4,
+		WeakLastAt: time.Date(2026, 6, 5, 13, 0, 0, 0, time.UTC),
+	}.surgeConfirmInputs()
+
+	if !hasSurgeConfirmSignal(count, amtSat, capSat) {
+		t.Fatalf("expected weak failures after a successful rebalance to confirm a new fee surge, count=%d amt=%d", count, amtSat)
+	}
+}
+
 func TestMinSurgeConfirmRebalSat(t *testing.T) {
 	capSat := int64(20_000_000)
 	want := int64(300_000) // 1.5% of capacity.

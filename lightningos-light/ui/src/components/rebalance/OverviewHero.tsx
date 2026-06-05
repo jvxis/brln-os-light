@@ -188,11 +188,6 @@ export default function OverviewHero({
               {(overview.sovereign_forward_fee_7d_ppm ?? 0) > 0 && (
                 <p>{t('rebalanceCenter.heroes.forwardFee7dPpm', { value: overview.sovereign_forward_fee_7d_ppm })}</p>
               )}
-              {typeof overview.sovereign_realized_net_7d_sat === 'number' && (
-                <p className={overview.sovereign_realized_net_7d_sat >= 0 ? 'text-emerald-300' : 'text-rose-300'}>
-                  {t('rebalanceCenter.heroes.realized7d', { value: formatSats(overview.sovereign_realized_net_7d_sat ?? 0) })}
-                </p>
-              )}
             </>
           }
           details={
@@ -203,6 +198,9 @@ export default function OverviewHero({
               <p>{t('rebalanceCenter.heroes.forwardAmountSold7d', {
                 value: formatSats(overview.sovereign_forward_amount_7d_sat ?? 0)
               })}</p>
+              {typeof overview.sovereign_realized_net_7d_sat === 'number' && (
+                <p className="text-fog/45">{t('rebalanceCenter.heroes.realized7d', { value: formatSats(overview.sovereign_realized_net_7d_sat ?? 0) })}</p>
+              )}
               <p>{t('rebalanceCenter.heroes.effectiveness7d', {
                 value: formatPct(effectiveness, 1)
               })}</p>

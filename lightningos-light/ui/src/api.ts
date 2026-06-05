@@ -656,6 +656,8 @@ export const updateReportsConfig = (payload: {
 }) => request('/api/reports/config', { method: 'POST', body: JSON.stringify(payload) })
 
 export const getRebalanceConfig = () => request('/api/rebalance/config')
+export const applyRebalanceProfile = (profile: string) =>
+  request('/api/rebalance/profile', { method: 'POST', body: JSON.stringify({ profile }) })
 export const updateRebalanceConfig = (payload: {
   auto_enabled?: boolean
   scheduler_mode?: string

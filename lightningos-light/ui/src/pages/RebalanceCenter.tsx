@@ -14,6 +14,7 @@ import {
   updateRebalanceChannelManualRestart,
   updateRebalanceChannelTarget,
   updateRebalanceConfig,
+  applyRebalanceProfile,
   updateRebalanceExclude
 } from '../api'
 import { MetricDisclosure } from '../components/rebalance/MetricDisclosure'
@@ -803,6 +804,30 @@ export default function RebalanceCenter() {
     }
   }
 
+  // Header profile selector. Display state: autopilot off always reads as custom.
+  // Selecting a named profile turns the autopilot ON and applies that posture;
+  // "custom" freezes the current effective values. Confirm first — it changes
+  // the operator's parameters.
+  const displayProfile = overview?.auto_enabled ? (overview?.profile || 'custom') : 'custom'
+  const handleSelectProfile = async (name: string) => {
+    if (name === displayProfile && name !== 'custom') return
+    const msg = name === 'custom'
+      ? t('rebalanceCenter.profile.confirmCustom')
+      : t('rebalanceCenter.profile.confirmApply', { profile: t(`rebalanceCenter.profile.${name}`) })
+    if (!window.confirm(msg)) return
+    setSaving(true)
+    setStatus('')
+    try {
+      await applyRebalanceProfile(name)
+      await loadAll({ silent: true })
+      setStatus(t('rebalanceCenter.profile.applied', { profile: t(`rebalanceCenter.profile.${name}`) }))
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const handleSaveAutopilotConfig = async () => {
     if (!config) return
     setAutopilotSaving(true)
@@ -1445,6 +1470,30 @@ export default function RebalanceCenter() {
         <div>
           <h2 className="text-2xl font-semibold">{t('rebalanceCenter.title')}</h2>
           <p className="text-fog/60">{t('rebalanceCenter.subtitle')}</p>
+        </div>
+        <div className="flex flex-col items-center gap-1">
+          <span className="text-[10px] uppercase tracking-[0.24em] text-fog/40">{t('rebalanceCenter.profile.label')}</span>
+          <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-black/20 p-1">
+            {(['custom', 'conservative', 'balanced', 'aggressive'] as const).map((name) => {
+              const active = displayProfile === name
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  disabled={saving}
+                  onClick={() => handleSelectProfile(name)}
+                  title={t(`rebalanceCenter.profile.${name}Hint`)}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${
+                    active
+                      ? 'bg-emerald-400/20 text-emerald-100 ring-1 ring-emerald-400/40'
+                      : 'text-fog/55 hover:bg-white/5 hover:text-fog'
+                  }`}
+                >
+                  {t(`rebalanceCenter.profile.${name}`)}
+                </button>
+              )
+            })}
+          </div>
         </div>
         {overview && overview.auto_enabled === false && (
           <div className="rounded-lg border border-rose-400/40 bg-rose-400/10 px-3 py-2 text-right">

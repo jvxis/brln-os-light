@@ -3194,6 +3194,20 @@
   "rebalanceCenter": {
     "title": "Rebalance Center",
     "subtitle": "Custos ao vivo, controle de payback e recuperação automática de liquidez.",
+    "profile": {
+      "label": "Perfil do autopilot",
+      "custom": "Personalizado",
+      "conservative": "Conservador",
+      "balanced": "Balanceado",
+      "aggressive": "Agressivo",
+      "customHint": "Seus próprios valores, congelados — o autopilot não re-deriva.",
+      "conservativeHint": "Lucro primeiro: ROI mais estrito, menos exploração, budget enxuto.",
+      "balancedHint": "A postura padrão validada.",
+      "aggressiveHint": "Movimento primeiro: ROI mais frouxo, mais exploração, budget maior.",
+      "confirmApply": "Aplicar o perfil {{profile}} vai LIGAR o autopilot e alterar seus parâmetros de rebalance (escalados ao seu nó). Continuar?",
+      "confirmCustom": "Congelar os valores efetivos atuais como Personalizado? Eles param de seguir um perfil.",
+      "applied": "Perfil {{profile}} aplicado."
+    },
     "desktopFirst": "Desktop-first",
     "loading": "Carregando Rebalance Center...",
     "loadFailed": "Falha ao carregar o Rebalance Center.",

@@ -3194,6 +3194,20 @@
   "rebalanceCenter": {
     "title": "Rebalance Center",
     "subtitle": "Live costs, payback control, and autonomous liquidity recovery.",
+    "profile": {
+      "label": "Autopilot profile",
+      "custom": "Custom",
+      "conservative": "Conservative",
+      "balanced": "Balanced",
+      "aggressive": "Aggressive",
+      "customHint": "Your own values, frozen — the autopilot does not re-derive them.",
+      "conservativeHint": "Profit-first: stricter ROI, less exploration, leaner budget.",
+      "balancedHint": "The validated default posture.",
+      "aggressiveHint": "Movement-first: looser ROI, more exploration, larger budget.",
+      "confirmApply": "Applying the {{profile}} profile will turn the autopilot ON and change your rebalance parameters (scaled to your node). Continue?",
+      "confirmCustom": "Freeze the current effective values as Custom? They will stop following a profile.",
+      "applied": "{{profile}} profile applied."
+    },
     "desktopFirst": "Desktop-first",
     "loading": "Loading rebalance center...",
     "loadFailed": "Failed to load rebalance center.",

@@ -1,5 +1,6 @@
 export type RebalanceConfig = {
   auto_enabled: boolean
+  profile?: string
   scheduler_mode: string
   sovereign_candidate_scope: string
   sovereign_max_jobs_per_cycle: number
@@ -135,6 +136,7 @@ export type RebalanceSovereignHistory = {
 
 export type RebalanceOverview = {
   auto_enabled: boolean
+  profile?: string
   scheduler_mode?: string
   sovereign_last_decision_at?: string
   sovereign_last_mode?: string

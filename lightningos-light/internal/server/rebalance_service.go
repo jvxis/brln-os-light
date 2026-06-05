@@ -296,6 +296,7 @@ const (
 
 type RebalanceConfig struct {
 	AutoEnabled                           bool    `json:"auto_enabled"`
+	Profile                               string  `json:"profile"`
 	SchedulerMode                         string  `json:"scheduler_mode"`
 	SovereignCandidateScope               string  `json:"sovereign_candidate_scope"`
 	SovereignMaxJobsPerCycle              int     `json:"sovereign_max_jobs_per_cycle"`
@@ -417,6 +418,7 @@ type RebalanceConfig struct {
 
 type RebalanceOverview struct {
 	AutoEnabled                   bool                         `json:"auto_enabled"`
+	Profile                       string                       `json:"profile"`
 	SchedulerMode                 string                       `json:"scheduler_mode"`
 	SovereignLastDecisionAt       string                       `json:"sovereign_last_decision_at,omitempty"`
 	SovereignLastMode             string                       `json:"sovereign_last_mode,omitempty"`
@@ -695,6 +697,26 @@ func detectRebalanceProfile(cfg RebalanceConfig, calib RebalanceNodeCalibration)
 		}
 	}
 	return rebalanceProfileCustom
+}
+
+func normalizeRebalanceProfile(name string) string {
+	switch name {
+	case rebalanceProfileConservative, rebalanceProfileBalanced, rebalanceProfileAggressive, rebalanceProfileCustom:
+		return name
+	default:
+		return rebalanceProfileCustom
+	}
+}
+
+// effectiveRebalanceConfig returns the config the autopilot actually runs on: for
+// a named profile, the profile composed with the live node calibration; for
+// "custom" (or empty/unknown), the stored config unchanged — custom is frozen and
+// never re-derived, so an operator's manual tuning is respected scan to scan.
+func effectiveRebalanceConfig(cfg RebalanceConfig, calib RebalanceNodeCalibration) RebalanceConfig {
+	if _, ok := rebalanceProfileBases[cfg.Profile]; !ok {
+		return cfg
+	}
+	return applyRebalanceProfile(cfg, cfg.Profile, calib)
 }
 
 type RebalanceMissionControlState struct {
@@ -1295,6 +1317,7 @@ func NewRebalanceService(db *pgxpool.Pool, lnd *lndclient.Client, logger *log.Lo
 func defaultRebalanceConfig() RebalanceConfig {
 	return RebalanceConfig{
 		AutoEnabled:                           false,
+		Profile:                               rebalanceProfileBalanced,
 		SchedulerMode:                         rebalanceSchedulerModeSovereignLive,
 		SovereignCandidateScope:               rebalanceSovereignScopeAutoAndManualRestart,
 		SovereignMaxJobsPerCycle:              4,
@@ -1891,6 +1914,7 @@ func normalizeChannelSetting(setting channelSetting) channelSetting {
 
 func normalizeRebalanceConfig(cfg RebalanceConfig) RebalanceConfig {
 	def := defaultRebalanceConfig()
+	cfg.Profile = normalizeRebalanceProfile(cfg.Profile)
 	cfg.SchedulerMode = normalizeRebalanceSchedulerMode(cfg.SchedulerMode)
 	cfg.SovereignCandidateScope = normalizeRebalanceSovereignScope(cfg.SovereignCandidateScope)
 	if cfg.SovereignMaxJobsPerCycle <= 0 {
@@ -3043,6 +3067,15 @@ func (s *RebalanceService) runAutoScan() {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
+	channels, err := s.listChannelsCached(ctx)
+	if err != nil {
+		return
+	}
+	// Phase 2: the effective config is the active profile composed with the live
+	// node calibration. "custom" passes through unchanged (frozen — never
+	// re-derived). Everything downstream runs on the effective config.
+	cfg = effectiveRebalanceConfig(cfg, classifyRebalanceNode(channels))
+
 	if err := s.ensureDailyBudget(ctx, cfg); err != nil && s.logger != nil {
 		s.logger.Printf("rebalance budget ensure failed: %v", err)
 	}
@@ -3053,10 +3086,6 @@ func (s *RebalanceService) runAutoScan() {
 
 	_ = s.applyForwardDeltas(ctx, ledger)
 
-	channels, err := s.listChannelsCached(ctx)
-	if err != nil {
-		return
-	}
 	s.reconcileNewChannelDefaults(ctx, channels, settings, exclusions)
 	scanAt := time.Now()
 	scanStatus := "scanned"
@@ -10737,6 +10766,7 @@ end $$;
     id smallint primary key,
     auto_enabled boolean not null default false,
     scheduler_mode text not null default 'rules_auto',
+    rebalance_profile text not null default 'custom',
     sovereign_candidate_scope text not null default 'auto_and_manual_restart',
     sovereign_max_jobs_per_cycle integer not null default 2,
     sovereign_min_expected_profit_sat bigint not null default 0,
@@ -10811,6 +10841,8 @@ end $$;
 
   alter table rebalance_config
     add column if not exists scheduler_mode text not null default 'rules_auto';
+  alter table rebalance_config
+    add column if not exists rebalance_profile text not null default 'custom';
   alter table rebalance_config
     add column if not exists sovereign_candidate_scope text not null default 'auto_and_manual_restart';
   alter table rebalance_config
@@ -11311,7 +11343,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags, fresh_paid_liquidity_lock_enabled, fresh_paid_liquidity_lock_hours,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback,
-    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct, fast_path_max_timeout_sec, sovereign_top_bucket_pct, manual_restart_ignore_economic_gates
+    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct, fast_path_max_timeout_sec, sovereign_top_bucket_pct, manual_restart_ignore_economic_gates, rebalance_profile
   from rebalance_config where id=$1`, rebalanceConfigID)
 
 	cfg := defaultRebalanceConfig()
@@ -11390,6 +11422,7 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.FastPathMaxTimeoutSec,
 		&cfg.SovereignTopBucketPct,
 		&cfg.ManualRestartIgnoreEconomicGates,
+		&cfg.Profile,
 	)
 	if err != nil {
 		return cfg, err
@@ -11413,8 +11446,8 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags, fresh_paid_liquidity_lock_enabled, fresh_paid_liquidity_lock_hours,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback,
-    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct, fast_path_max_timeout_sec, sovereign_top_bucket_pct, manual_restart_ignore_economic_gates, updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,$74,$75,now())
+    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct, fast_path_max_timeout_sec, sovereign_top_bucket_pct, manual_restart_ignore_economic_gates, rebalance_profile, updated_at
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,$74,$75,$76,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scheduler_mode = excluded.scheduler_mode,
@@ -11490,9 +11523,10 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     fast_path_max_timeout_sec = excluded.fast_path_max_timeout_sec,
     sovereign_top_bucket_pct = excluded.sovereign_top_bucket_pct,
     manual_restart_ignore_economic_gates = excluded.manual_restart_ignore_economic_gates,
+    rebalance_profile = excluded.rebalance_profile,
     updated_at = now()
   `, rebalanceConfigID, cfg.AutoEnabled, cfg.SchedulerMode, cfg.SovereignCandidateScope, cfg.SovereignMaxJobsPerCycle, cfg.SovereignMinExpectedProfitSat, cfg.SovereignLowSuccessMinRate, cfg.SovereignLowSuccessMinProfitCostRatio, cfg.SovereignBudgetEfficiencyMinRatio, cfg.SovereignRouteDeadSourceShare, cfg.SovereignRiskScoreFloor, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetUnlimited, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
-		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.FreshPaidLiquidityLockEnabled, cfg.FreshPaidLiquidityLockHours, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback, cfg.SovereignAttributionWindowHours, cfg.SovereignSlowSellerWindowHours, cfg.SovereignTargetSourceQuarantineHours, cfg.SovereignStructuralCooldownRepeatHours, cfg.SovereignExplorationSlotPct, cfg.SovereignSourceOpportunityCostEnabled, cfg.SovereignSlowSellerEnabled, cfg.SovereignGainV3ColdStartPct, cfg.FastPathMaxTimeoutSec, cfg.SovereignTopBucketPct, cfg.ManualRestartIgnoreEconomicGates,
+		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.FreshPaidLiquidityLockEnabled, cfg.FreshPaidLiquidityLockHours, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback, cfg.SovereignAttributionWindowHours, cfg.SovereignSlowSellerWindowHours, cfg.SovereignTargetSourceQuarantineHours, cfg.SovereignStructuralCooldownRepeatHours, cfg.SovereignExplorationSlotPct, cfg.SovereignSourceOpportunityCostEnabled, cfg.SovereignSlowSellerEnabled, cfg.SovereignGainV3ColdStartPct, cfg.FastPathMaxTimeoutSec, cfg.SovereignTopBucketPct, cfg.ManualRestartIgnoreEconomicGates, cfg.Profile,
 	)
 	return err
 }
@@ -13508,6 +13542,7 @@ where report_date >= current_date - interval '6 days'
 
 	overview := RebalanceOverview{
 		AutoEnabled:                   cfg.AutoEnabled,
+		Profile:                       cfg.Profile,
 		SchedulerMode:                 normalizeRebalanceSchedulerMode(cfg.SchedulerMode),
 		SovereignLastDecisionAt:       lastSovereignDecisionAtText,
 		SovereignLastMode:             lastSovereignMode,

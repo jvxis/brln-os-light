@@ -152,6 +152,9 @@ func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	if cfg.AutoEnabled {
 		t.Fatalf("expected auto mode disabled by default")
 	}
+	if cfg.Profile != rebalanceProfileBalanced {
+		t.Fatalf("expected profile default=balanced, got %s", cfg.Profile)
+	}
 	if cfg.SchedulerMode != rebalanceSchedulerModeSovereignLive {
 		t.Fatalf("expected scheduler_mode default=%s, got %s", rebalanceSchedulerModeSovereignLive, cfg.SchedulerMode)
 	}

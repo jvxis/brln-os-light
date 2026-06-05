@@ -542,6 +542,161 @@ type RebalanceNodeCalibration struct {
 	LocalRatio         float64 `json:"local_ratio"`
 }
 
+// --- Rebalance profiles (Phase 2): posture × node calibration ---
+//
+// A profile is a posture (conservative/balanced/aggressive). applyRebalanceProfile
+// composes that posture with the node calibration (RebalanceNodeCalibration) so
+// the SAME profile yields different knobs on different nodes — mirroring how
+// AutoFee composes its profile with calibrateNode. "custom" is frozen: it is never
+// re-derived (the operator's manual values stand). balanced @ medium/balanced node
+// equals defaultRebalanceConfig(), so a fresh node reads as "balanced".
+const (
+	rebalanceProfileCustom       = "custom"
+	rebalanceProfileConservative = "conservative"
+	rebalanceProfileBalanced     = "balanced"
+	rebalanceProfileAggressive   = "aggressive"
+)
+
+type rebalanceProfileBase struct {
+	// pure posture — node-independent economic risk appetite
+	ROIMin               float64
+	EconRatio            float64
+	ColdStartPct         float64
+	MinExpectedProfitSat int64
+	// node-modulated bases — combined with calibration multipliers below
+	MaxJobsBase            int
+	DailyBudgetPctBase     float64
+	ExplorationSlotPctBase int
+}
+
+var rebalanceProfileBases = map[string]rebalanceProfileBase{
+	rebalanceProfileConservative: {ROIMin: 1.2, EconRatio: 0.6, ColdStartPct: 0.75, MinExpectedProfitSat: 20, MaxJobsBase: 3, DailyBudgetPctBase: 30, ExplorationSlotPctBase: 5},
+	rebalanceProfileBalanced:     {ROIMin: 1.0, EconRatio: 0.7, ColdStartPct: 0.85, MinExpectedProfitSat: 10, MaxJobsBase: 4, DailyBudgetPctBase: 50, ExplorationSlotPctBase: 15},
+	rebalanceProfileAggressive:   {ROIMin: 0.9, EconRatio: 0.8, ColdStartPct: 0.95, MinExpectedProfitSat: 5, MaxJobsBase: 6, DailyBudgetPctBase: 75, ExplorationSlotPctBase: 30},
+}
+
+// rebalanceAmountFloors are the amount-mechanics knobs per node class. They are
+// profile-independent (a small node uses small amounts whatever the posture).
+type rebalanceAmountFloors struct {
+	MinAmountSat   int64
+	MinExecuteSat  int64
+	MinProbeSat    int64
+	MppMinShardSat int64
+}
+
+var rebalanceAmountFloorsByClass = map[string]rebalanceAmountFloors{
+	"small":  {MinAmountSat: 5000, MinExecuteSat: 1000, MinProbeSat: 1000, MppMinShardSat: 1000},
+	"medium": {MinAmountSat: 50000, MinExecuteSat: 10000, MinProbeSat: 5000, MppMinShardSat: 10000},
+	"large":  {MinAmountSat: 100000, MinExecuteSat: 25000, MinProbeSat: 10000, MppMinShardSat: 25000},
+	"xl":     {MinAmountSat: 200000, MinExecuteSat: 50000, MinProbeSat: 20000, MppMinShardSat: 50000},
+}
+
+func rebalanceSizeMultiplier(nodeClass string) float64 {
+	switch nodeClass {
+	case "small":
+		return 0.5
+	case "large":
+		return 1.5
+	case "xl":
+		return 2.0
+	default:
+		return 1.0
+	}
+}
+
+// rebalanceExplorationSizeFactor: smaller nodes explore a little more (fewer
+// routes, more value in probing), bigger nodes a little less.
+func rebalanceExplorationSizeFactor(nodeClass string) float64 {
+	switch nodeClass {
+	case "small":
+		return 1.3
+	case "large":
+		return 0.85
+	case "xl":
+		return 0.7
+	default:
+		return 1.0
+	}
+}
+
+// rebalanceBudgetLiquidityFactor: a drained node needs to rebalance more, a full
+// node less. Mirrors AutoFee's liquidity-class factor pattern.
+func rebalanceBudgetLiquidityFactor(liquidityClass string) float64 {
+	switch liquidityClass {
+	case "drained":
+		return 1.2
+	case "full":
+		return 0.8
+	default:
+		return 1.0
+	}
+}
+
+func rebalanceAmountFloorsForClass(nodeClass string) rebalanceAmountFloors {
+	if f, ok := rebalanceAmountFloorsByClass[nodeClass]; ok {
+		return f
+	}
+	return rebalanceAmountFloorsByClass["medium"]
+}
+
+// applyRebalanceProfile returns cfg with the profile's posture composed with the
+// node calibration. An unknown/custom profile returns cfg unchanged (custom is
+// frozen — never re-derived). Only the managed knobs are touched.
+func applyRebalanceProfile(cfg RebalanceConfig, profileName string, calib RebalanceNodeCalibration) RebalanceConfig {
+	p, ok := rebalanceProfileBases[profileName]
+	if !ok {
+		return cfg
+	}
+	// pure posture
+	cfg.ROIMin = p.ROIMin
+	cfg.EconRatio = p.EconRatio
+	cfg.SovereignGainV3ColdStartPct = p.ColdStartPct
+	cfg.SovereignMinExpectedProfitSat = p.MinExpectedProfitSat
+	// size-modulated concurrency (max_concurrent tracks max_jobs so it never caps)
+	maxJobs := min(max(int(math.Round(float64(p.MaxJobsBase)*rebalanceSizeMultiplier(calib.NodeClass))), 2), 12)
+	cfg.SovereignMaxJobsPerCycle = maxJobs
+	cfg.MaxConcurrent = maxJobs
+	// liquidity-modulated budget
+	cfg.DailyBudgetPct = min(max(p.DailyBudgetPctBase*rebalanceBudgetLiquidityFactor(calib.LiquidityClass), 10.0), 100.0)
+	// size-modulated exploration
+	cfg.SovereignExplorationSlotPct = min(max(int(math.Round(float64(p.ExplorationSlotPctBase)*rebalanceExplorationSizeFactor(calib.NodeClass))), 0), 50)
+	// amount mechanics by node class (profile-independent)
+	floors := rebalanceAmountFloorsForClass(calib.NodeClass)
+	cfg.MinAmountSat = floors.MinAmountSat
+	cfg.MinExecuteSat = floors.MinExecuteSat
+	cfg.MinProbeSat = floors.MinProbeSat
+	cfg.MppMinShardSat = floors.MppMinShardSat
+	return cfg
+}
+
+// rebalanceProfileManagedEqual reports whether two configs agree on every
+// profile-managed knob (used to tell whether a config still matches a profile).
+func rebalanceProfileManagedEqual(a, b RebalanceConfig) bool {
+	return a.ROIMin == b.ROIMin &&
+		a.EconRatio == b.EconRatio &&
+		a.SovereignGainV3ColdStartPct == b.SovereignGainV3ColdStartPct &&
+		a.SovereignMinExpectedProfitSat == b.SovereignMinExpectedProfitSat &&
+		a.SovereignMaxJobsPerCycle == b.SovereignMaxJobsPerCycle &&
+		a.MaxConcurrent == b.MaxConcurrent &&
+		a.DailyBudgetPct == b.DailyBudgetPct &&
+		a.SovereignExplorationSlotPct == b.SovereignExplorationSlotPct &&
+		a.MinAmountSat == b.MinAmountSat &&
+		a.MinExecuteSat == b.MinExecuteSat &&
+		a.MinProbeSat == b.MinProbeSat &&
+		a.MppMinShardSat == b.MppMinShardSat
+}
+
+// detectRebalanceProfile returns the named profile whose composed knobs match cfg
+// at the given calibration, or "custom" when none match (operator deviated).
+func detectRebalanceProfile(cfg RebalanceConfig, calib RebalanceNodeCalibration) string {
+	for _, name := range []string{rebalanceProfileConservative, rebalanceProfileBalanced, rebalanceProfileAggressive} {
+		if rebalanceProfileManagedEqual(cfg, applyRebalanceProfile(cfg, name, calib)) {
+			return name
+		}
+	}
+	return rebalanceProfileCustom
+}
+
 type RebalanceMissionControlState struct {
 	LastMCResetAt               string `json:"last_mc_reset_at,omitempty"`
 	LastMCResetReason           string `json:"last_mc_reset_reason,omitempty"`

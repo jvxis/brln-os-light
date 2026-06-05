@@ -81,6 +81,68 @@ func TestClassifyRebalanceNode(t *testing.T) {
 	}
 }
 
+func TestApplyRebalanceProfile(t *testing.T) {
+	base := defaultRebalanceConfig()
+	medBalanced := RebalanceNodeCalibration{NodeClass: "medium", LiquidityClass: "balanced"}
+	smallDrained := RebalanceNodeCalibration{NodeClass: "small", LiquidityClass: "drained"}
+	largeFull := RebalanceNodeCalibration{NodeClass: "large", LiquidityClass: "full"}
+
+	// balanced @ medium/balanced == current defaults (fresh node reads as balanced).
+	b := applyRebalanceProfile(base, rebalanceProfileBalanced, medBalanced)
+	if b.ROIMin != 1.0 || b.EconRatio != 0.7 || b.SovereignGainV3ColdStartPct != 0.85 || b.SovereignMinExpectedProfitSat != 10 {
+		t.Fatalf("balanced@medium posture mismatch: roi=%v econ=%v cold=%v profit=%d", b.ROIMin, b.EconRatio, b.SovereignGainV3ColdStartPct, b.SovereignMinExpectedProfitSat)
+	}
+	if b.SovereignMaxJobsPerCycle != 4 || b.MaxConcurrent != 4 || b.DailyBudgetPct != 50 || b.SovereignExplorationSlotPct != 15 {
+		t.Fatalf("balanced@medium modulated mismatch: jobs=%d conc=%d budget=%v expl=%d", b.SovereignMaxJobsPerCycle, b.MaxConcurrent, b.DailyBudgetPct, b.SovereignExplorationSlotPct)
+	}
+	if b.MinAmountSat != 50000 || b.MinExecuteSat != 10000 || b.MinProbeSat != 5000 || b.MppMinShardSat != 10000 {
+		t.Fatalf("balanced@medium floors mismatch: amt=%d exec=%d probe=%d shard=%d", b.MinAmountSat, b.MinExecuteSat, b.MinProbeSat, b.MppMinShardSat)
+	}
+
+	// small node → probe/execute/shard floors collapse to 1000; jobs halve.
+	s := applyRebalanceProfile(base, rebalanceProfileAggressive, smallDrained)
+	if s.MinProbeSat != 1000 || s.MinExecuteSat != 1000 || s.MppMinShardSat != 1000 {
+		t.Fatalf("small floors should be 1000: probe=%d exec=%d shard=%d", s.MinProbeSat, s.MinExecuteSat, s.MppMinShardSat)
+	}
+	if s.SovereignMaxJobsPerCycle != 3 { // round(6 * 0.5)
+		t.Fatalf("aggressive@small jobs expected 3, got %d", s.SovereignMaxJobsPerCycle)
+	}
+	if s.DailyBudgetPct != 90 { // 75 * 1.2 (drained)
+		t.Fatalf("aggressive@drained budget expected 90, got %v", s.DailyBudgetPct)
+	}
+	if s.SovereignExplorationSlotPct != 39 { // round(30 * 1.3)
+		t.Fatalf("aggressive@small exploration expected 39, got %d", s.SovereignExplorationSlotPct)
+	}
+
+	// large/full conservative.
+	l := applyRebalanceProfile(base, rebalanceProfileConservative, largeFull)
+	if l.DailyBudgetPct != 24 { // 30 * 0.8 (full)
+		t.Fatalf("conservative@full budget expected 24, got %v", l.DailyBudgetPct)
+	}
+	if l.MinExecuteSat != 25000 {
+		t.Fatalf("large execute floor expected 25000, got %d", l.MinExecuteSat)
+	}
+
+	// custom/unknown → cfg untouched (frozen).
+	u := applyRebalanceProfile(base, rebalanceProfileCustom, medBalanced)
+	if u.ROIMin != base.ROIMin || u.SovereignMaxJobsPerCycle != base.SovereignMaxJobsPerCycle || u.DailyBudgetPct != base.DailyBudgetPct {
+		t.Fatalf("custom must leave cfg unchanged")
+	}
+
+	// detect round-trips, and a manual tweak reads as custom.
+	for _, name := range []string{rebalanceProfileConservative, rebalanceProfileBalanced, rebalanceProfileAggressive} {
+		applied := applyRebalanceProfile(base, name, medBalanced)
+		if got := detectRebalanceProfile(applied, medBalanced); got != name {
+			t.Fatalf("detect round-trip %s -> %s", name, got)
+		}
+	}
+	tweaked := applyRebalanceProfile(base, rebalanceProfileBalanced, medBalanced)
+	tweaked.ROIMin = 1.05
+	if got := detectRebalanceProfile(tweaked, medBalanced); got != rebalanceProfileCustom {
+		t.Fatalf("tweaked config should be custom, got %s", got)
+	}
+}
+
 func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	// Phase-0 defaults revision (2026-06): new nodes now start on the evolved
 	// sovereign autopilot with the balanced posture discovered in production

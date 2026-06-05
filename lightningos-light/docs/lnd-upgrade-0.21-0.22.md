@@ -17,6 +17,7 @@ Nenhum fluxo crítico (abertura, fechamento, pagamento, autofee, rebalance, on-c
 | Depreciação de `sat_per_byte` em `OpenChannel`, `CloseChannel`, `SendCoins`, `SendMany`, `walletrpc.BumpFee` (remoção em 0.22) | Qualquer chamada que ainda use `SatPerByte` no request | ✅ Já usamos `SatPerVbyte` em todo o código não-gerado. Zero ocorrências de `.SatPerByte` fora de `lnrpc/` |
 | `MinCLTVDelta` aumentou de 18 para 24 — invoices com `cltv_expiry_delta` entre 18-23 são rejeitados | `buildCreateInvoiceRequest` ou qualquer ponto que fixe `Invoice.CltvExpiry` baixo | ✅ Não fixamos `CltvExpiry` em `buildCreateInvoiceRequest` (`internal/lndclient/client.go:1158`). O único `FinalCltvDelta` explícito é `144` em `internal/lndclient/rebalance.go:349`, bem acima de 24 |
 | `GetDebugInfo` deixa de retornar log por padrão (precisa `include_log=true`) | Qualquer chamada a `GetDebugInfo` esperando `Log` populado | ✅ Não chamamos `GetDebugInfo` em nenhum ponto (apenas o stub `lnrpc/`) |
+| Remoção de RPCs legados de pagamento e do campo singular `outgoing_chan_id` em `QueryRoutesRequest`/`SendPaymentRequest` | Wallet usando `SendPaymentSync`, keysend usando `SendPaymentSync`, rebalance usando `OutgoingChanId` singular | ✅ Migrado para `routerrpc.SendPaymentV2`, `SendToRouteV2`, `TrackPaymentV2` e `OutgoingChanIds`. Compatível também com LND 0.20.1 |
 
 ### 2. Aditivos com potencial de adoção
 
@@ -130,7 +131,6 @@ Campos que serão removidos:
 ### 3. Não previstas, mas para vigiar nas próximas notas
 
 Campos/RPCs a monitorar nos próximos releases candidates da 0.22:
-- `lnrpc.SendRequest` (legacy `SendPayment` síncrono) — pode receber depreciação adicional, mas já usamos `routerrpc.SendPaymentV2` para todos os fluxos.
 - Campos `fee` (sat) em outros lugares além de `Hop` (ex.: `Payment`, `HTLCAttempt`) — verificar se ganharam aviso de remoção.
 
 ---
@@ -138,7 +138,7 @@ Campos/RPCs a monitorar nos próximos releases candidates da 0.22:
 ## Plano de ação resumido
 
 ### Hoje (LND 0.21 disponível)
-1. Atualizar binário do LND para 0.21 sem alterar código — testar fluxos críticos (open, close, pay, rebalance, autofee) em staging primeiro.
+1. Atualizar binário do LND para 0.21 após a migração dos pagamentos/rotas para V2 — testar fluxos críticos (open, close, pay, keysend, rebalance, autofee) em staging primeiro.
 2. (Opcional, ordem de impacto) Adotar aditivos:
    - `PendingChannels.WaitingCloseChannel.{blocks_til_close_confirmed, close_height}` no Close Manager.
    - `GetInfo.wallet_synced` no health do nó.

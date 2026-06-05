@@ -229,10 +229,12 @@ func (c *Client) QueryRoutes(ctx context.Context, destPubkey string, amtSat int6
     req := &lnrpc.QueryRoutesRequest{
       PubKey: trimmedDest,
       Amt: amtSat,
-      OutgoingChanId: outgoingChanID,
       IgnoredEdges: requestIgnoredEdges,
       IgnoredPairs: ignoredPairs,
       UseMissionControl: true,
+    }
+    if outgoingChanID != 0 {
+      req.OutgoingChanIds = []uint64{outgoingChanID}
     }
     if feeLimitMsat > 0 {
       req.FeeLimit = &lnrpc.FeeLimit{
@@ -427,9 +429,7 @@ func (c *Client) sendPaymentMultiSource(ctx context.Context, paymentRequest stri
     MaxParts: maxParts,
     NoInflightUpdates: true,
   }
-  if len(outgoingChanIDs) == 1 {
-    req.OutgoingChanId = outgoingChanIDs[0]
-  } else if len(outgoingChanIDs) > 1 {
+  if len(outgoingChanIDs) > 0 {
     req.OutgoingChanIds = append([]uint64(nil), outgoingChanIDs...)
   }
   if feeLimitMsat > 0 {

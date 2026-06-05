@@ -1314,13 +1314,6 @@ func (c *Client) PayInvoice(ctx context.Context, paymentRequest string, outgoing
 	}
 	defer conn.Close()
 
-	if len(outgoingChanIDs) == 0 && maxFeeSat <= 0 {
-		client := lnrpc.NewLightningClient(conn)
-		req := &lnrpc.SendRequest{PaymentRequest: paymentRequest}
-		res, err := client.SendPaymentSync(ctx, req)
-		return sendPaymentSyncError(res, err)
-	}
-
 	router := routerrpc.NewRouterClient(conn)
 	feeLimitMsat := defaultRouterPaymentFeeLimitMsat(ctx, c, paymentRequest)
 	if maxFeeSat > 0 {
@@ -1344,25 +1337,8 @@ func (c *Client) PayInvoice(ctx context.Context, paymentRequest string, outgoing
 		return err
 	}
 
-	for {
-		payment, err := stream.Recv()
-		if err != nil {
-			return err
-		}
-		if payment == nil {
-			continue
-		}
-		switch payment.Status {
-		case lnrpc.Payment_SUCCEEDED:
-			return nil
-		case lnrpc.Payment_FAILED:
-			if payment.FailureReason != lnrpc.PaymentFailureReason_FAILURE_REASON_NONE {
-				return fmt.Errorf("payment failed: %s", payment.FailureReason.String())
-			}
-			return errors.New("payment failed")
-		default:
-		}
-	}
+	_, err = waitForRouterPayment(stream)
+	return err
 }
 
 func (c *Client) PayInvoiceWithMPP(ctx context.Context, paymentRequest string, outgoingChanIDs []uint64, maxFeeSat int64, maxParts uint32, maxShardSat int64) error {
@@ -1410,25 +1386,8 @@ func (c *Client) PayInvoiceWithMPP(ctx context.Context, paymentRequest string, o
 		return err
 	}
 
-	for {
-		payment, err := stream.Recv()
-		if err != nil {
-			return err
-		}
-		if payment == nil {
-			continue
-		}
-		switch payment.Status {
-		case lnrpc.Payment_SUCCEEDED:
-			return nil
-		case lnrpc.Payment_FAILED:
-			if payment.FailureReason != lnrpc.PaymentFailureReason_FAILURE_REASON_NONE {
-				return fmt.Errorf("payment failed: %s", payment.FailureReason.String())
-			}
-			return errors.New("payment failed")
-		default:
-		}
-	}
+	_, err = waitForRouterPayment(stream)
+	return err
 }
 
 func (c *Client) PayInvoiceWithValidatedRoute(ctx context.Context, paymentRequest string, outgoingChanIDs []uint64, maxFeeSat int64, numRoutes int32, routeToken string) error {
@@ -1559,16 +1518,26 @@ func routeForInvoicePayment(route *lnrpc.Route, decoded DecodedInvoice, amountMs
 	return cloned, nil
 }
 
-func sendPaymentSyncError(res *lnrpc.SendResponse, err error) error {
-	if err != nil {
-		return err
-	}
-	if res != nil {
-		if msg := strings.TrimSpace(res.PaymentError); msg != "" {
-			return errors.New(msg)
+func waitForRouterPayment(stream routerrpc.Router_SendPaymentV2Client) (*lnrpc.Payment, error) {
+	for {
+		payment, err := stream.Recv()
+		if err != nil {
+			return nil, err
+		}
+		if payment == nil {
+			continue
+		}
+		switch payment.Status {
+		case lnrpc.Payment_SUCCEEDED:
+			return payment, nil
+		case lnrpc.Payment_FAILED:
+			if payment.FailureReason != lnrpc.PaymentFailureReason_FAILURE_REASON_NONE {
+				return payment, fmt.Errorf("payment failed: %s", payment.FailureReason.String())
+			}
+			return payment, errors.New("payment failed")
+		default:
 		}
 	}
-	return nil
 }
 
 func paymentTimeoutSeconds(ctx context.Context, fallback int32) int32 {

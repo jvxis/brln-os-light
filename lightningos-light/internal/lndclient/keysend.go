@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"strings"
 
-	"lightningos-light/lnrpc"
+	"lightningos-light/lnrpc/routerrpc"
 )
 
 const (
@@ -70,7 +70,7 @@ func (c *Client) SendKeysendMessage(ctx context.Context, pubkeyHex string, amoun
 	}
 	defer conn.Close()
 
-	client := lnrpc.NewLightningClient(conn)
+	client := routerrpc.NewRouterClient(conn)
 	records := map[uint64][]byte{
 		KeysendPreimageRecord: preimage,
 		KeysendMessageRecord:  []byte(message),
@@ -82,13 +82,19 @@ func (c *Client) SendKeysendMessage(ctx context.Context, pubkeyHex string, amoun
 		}
 	}
 
-	res, err := client.SendPaymentSync(ctx, &lnrpc.SendRequest{
+	stream, err := client.SendPaymentV2(ctx, &routerrpc.SendPaymentRequest{
 		Dest:              pubkey,
 		Amt:               amountSat,
 		PaymentHash:       hash[:],
 		DestCustomRecords: records,
+		FeeLimitMsat:      defaultRouterPaymentFeeLimitMsatForDecodedInvoice(DecodedInvoice{AmountSat: amountSat}),
+		TimeoutSeconds:    paymentTimeoutSeconds(ctx, 90),
+		NoInflightUpdates: true,
 	})
-	if err := sendPaymentSyncError(res, err); err != nil {
+	if err != nil {
+		return "", err
+	}
+	if _, err := waitForRouterPayment(stream); err != nil {
 		return "", err
 	}
 

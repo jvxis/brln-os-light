@@ -102,6 +102,10 @@ export default function OverviewHero({
   const sellThroughSlowWindowH = overview.sovereign_sellthrough_slow_window_hours ?? 168
   const paybackRebal = (overview.payback_progress_rebalanced ?? 0) * 100
 
+  // Node calibration (Phase 1) — shown in the Autopilot card like the Fee Center.
+  const calib = overview.node_calibration
+  const hasCalib = !!calib && (calib.channel_count ?? 0) > 0 && calib.node_class !== 'unknown'
+
   const detailLabels = {
     showDetailsLabel: t('rebalanceCenter.heroes.showDetails'),
     hideDetailsLabel: t('rebalanceCenter.heroes.hideDetails'),
@@ -127,10 +131,27 @@ export default function OverviewHero({
               {candidates > 0 && (
                 <p>{t('rebalanceCenter.heroes.candidatesSelected', { c: candidates, s: selected })}</p>
               )}
+              {hasCalib && (
+                <p className="text-fog/55">{t('rebalanceCenter.heroes.nodeCalib', {
+                  node: t(`rebalanceCenter.heroes.nodeClass.${calib!.node_class}`, calib!.node_class),
+                  liquidity: t(`rebalanceCenter.heroes.liquidityClass.${calib!.liquidity_class}`, calib!.liquidity_class)
+                })}</p>
+              )}
             </>
           }
           details={
             <>
+              {hasCalib && (
+                <>
+                  <p>{t('rebalanceCenter.heroes.calibChannels', { count: calib!.channel_count })}</p>
+                  <p>{t('rebalanceCenter.heroes.calibCapacity', {
+                    cap: formatSats(calib!.total_capacity_sat),
+                    local: formatSats(calib!.local_capacity_sat),
+                    ratio: formatPct((calib!.local_ratio ?? 0) * 100)
+                  })}</p>
+                  <p>{t('rebalanceCenter.heroes.calibInbound', { value: formatSats(calib!.inbound_capacity_sat) })}</p>
+                </>
+              )}
               <p>{t('rebalanceCenter.heroes.lastDecision', {
                 value: overview.sovereign_last_decision_at ? formatTimestamp(overview.sovereign_last_decision_at) : '—'
               })}</p>

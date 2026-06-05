@@ -240,6 +240,19 @@ export type RebalanceOverview = {
   mpp_structural_abort_jobs_24h?: number
   top_failure_reasons_30m?: RebalanceReasonStat[]
   route_dead_targets_30m?: RebalanceTargetStat[]
+  node_calibration?: RebalanceNodeCalibration
+}
+
+export type RebalanceNodeCalibration = {
+  node_class: string // small | medium | large | xl | unknown
+  liquidity_class: string // drained | balanced | full
+  channel_count: number
+  total_channel_count: number
+  total_capacity_sat: number
+  local_capacity_sat: number
+  inbound_capacity_sat: number
+  avg_capacity_sat: number
+  local_ratio: number
 }
 
 export type RebalanceReasonStat = {

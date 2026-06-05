@@ -20,6 +20,67 @@ func ptrFloat64(v float64) *float64 {
 }
 func ptrString(v string) *string { return &v }
 
+func TestClassifyRebalanceNode(t *testing.T) {
+	mk := func(n int, capSat, localSat int64, active bool) []lndclient.ChannelInfo {
+		out := make([]lndclient.ChannelInfo, n)
+		for i := range out {
+			out[i] = lndclient.ChannelInfo{
+				Active:           active,
+				CapacitySat:      capSat,
+				LocalBalanceSat:  localSat,
+				RemoteBalanceSat: capSat - localSat,
+			}
+		}
+		return out
+	}
+
+	// small: 10 chans × 2M = 20M cap (<50M), balanced (ratio 0.5).
+	c := classifyRebalanceNode(mk(10, 2_000_000, 1_000_000, true))
+	if c.NodeClass != "small" {
+		t.Fatalf("expected small, got %s (cap=%d chans=%d)", c.NodeClass, c.TotalCapacitySat, c.ChannelCount)
+	}
+	if c.LiquidityClass != "balanced" {
+		t.Fatalf("expected balanced, got %s (ratio=%f)", c.LiquidityClass, c.LocalRatio)
+	}
+	if c.ChannelCount != 10 || c.AvgCapacitySat != 2_000_000 || c.InboundCapacitySat != 10_000_000 {
+		t.Fatalf("unexpected totals: chans=%d avg=%d inbound=%d", c.ChannelCount, c.AvgCapacitySat, c.InboundCapacitySat)
+	}
+
+	// medium: 30 chans × 5M = 150M cap (<200M).
+	if c := classifyRebalanceNode(mk(30, 5_000_000, 2_500_000, true)); c.NodeClass != "medium" {
+		t.Fatalf("expected medium, got %s (cap=%d chans=%d)", c.NodeClass, c.TotalCapacitySat, c.ChannelCount)
+	}
+	// large: 100 chans × 5M = 500M cap (≥200M, ≥60 chans, <1.5B).
+	if c := classifyRebalanceNode(mk(100, 5_000_000, 2_500_000, true)); c.NodeClass != "large" {
+		t.Fatalf("expected large, got %s", c.NodeClass)
+	}
+	// xl: 200 chans × 10M = 2B cap (≥1.5B and ≥150 chans).
+	if c := classifyRebalanceNode(mk(200, 10_000_000, 5_000_000, true)); c.NodeClass != "xl" {
+		t.Fatalf("expected xl, got %s", c.NodeClass)
+	}
+
+	// drained: ratio 0.1 (<0.25).
+	if c := classifyRebalanceNode(mk(30, 5_000_000, 500_000, true)); c.LiquidityClass != "drained" {
+		t.Fatalf("expected drained, got %s (ratio=%f)", c.LiquidityClass, c.LocalRatio)
+	}
+	// full: ratio 0.9 (>0.75).
+	if c := classifyRebalanceNode(mk(30, 5_000_000, 4_500_000, true)); c.LiquidityClass != "full" {
+		t.Fatalf("expected full, got %s (ratio=%f)", c.LiquidityClass, c.LocalRatio)
+	}
+
+	// inactive channels excluded from classification but counted in total.
+	all := append(mk(5, 2_000_000, 1_000_000, true), mk(5, 2_000_000, 1_000_000, false)...)
+	c = classifyRebalanceNode(all)
+	if c.ChannelCount != 5 || c.TotalChannelCount != 10 || c.TotalCapacitySat != 10_000_000 {
+		t.Fatalf("inactive handling: active=%d total=%d cap=%d", c.ChannelCount, c.TotalChannelCount, c.TotalCapacitySat)
+	}
+
+	// empty node → unknown / balanced, no divide-by-zero.
+	if c := classifyRebalanceNode(nil); c.NodeClass != "unknown" || c.LiquidityClass != "balanced" || c.LocalRatio != 0 {
+		t.Fatalf("empty node: class=%s liq=%s ratio=%f", c.NodeClass, c.LiquidityClass, c.LocalRatio)
+	}
+}
+
 func TestDefaultRebalanceConfigStarterProfile(t *testing.T) {
 	// Phase-0 defaults revision (2026-06): new nodes now start on the evolved
 	// sovereign autopilot with the balanced posture discovered in production

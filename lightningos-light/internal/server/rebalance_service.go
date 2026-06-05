@@ -522,6 +522,24 @@ type RebalanceOverview struct {
 	MppStructuralAbortJobs24h     int64                        `json:"mpp_structural_abort_jobs_24h"`
 	TopFailureReasons30m          []RebalanceReasonStat        `json:"top_failure_reasons_30m,omitempty"`
 	RouteDeadTargets30m           []RebalanceTargetStat        `json:"route_dead_targets_30m,omitempty"`
+	NodeCalibration               RebalanceNodeCalibration     `json:"node_calibration"`
+}
+
+// RebalanceNodeCalibration classifies the node by size and liquidity, mirroring
+// AutoFee's calibrateNode (autofee_service.go) so both engines share one mental
+// model. Computed over ACTIVE channels only, like AutoFee. Phase 1 of the
+// autopilot-profiles work: this is the foundation that downstream pieces
+// (auto-calibrated telemetry markers, node-scaled knobs) read from.
+type RebalanceNodeCalibration struct {
+	NodeClass          string  `json:"node_class"`      // small | medium | large | xl | unknown
+	LiquidityClass     string  `json:"liquidity_class"` // drained | balanced | full
+	ChannelCount       int     `json:"channel_count"`   // active channels (basis for classification)
+	TotalChannelCount  int     `json:"total_channel_count"`
+	TotalCapacitySat   int64   `json:"total_capacity_sat"`
+	LocalCapacitySat   int64   `json:"local_capacity_sat"`
+	InboundCapacitySat int64   `json:"inbound_capacity_sat"`
+	AvgCapacitySat     int64   `json:"avg_capacity_sat"`
+	LocalRatio         float64 `json:"local_ratio"`
 }
 
 type RebalanceMissionControlState struct {
@@ -13277,8 +13295,9 @@ where report_date >= current_date - interval '6 days'
 
 	eligibleSources := 0
 	targetsNeeding := 0
+	nodeCalib := RebalanceNodeCalibration{NodeClass: "unknown", LiquidityClass: "balanced"}
 	if s.lnd != nil {
-		eligibleSources, targetsNeeding = s.computeEligibilityCounts(ctx, cfg)
+		eligibleSources, targetsNeeding, nodeCalib = s.computeEligibilityCounts(ctx, cfg)
 	}
 
 	s.mu.Lock()
@@ -13409,6 +13428,7 @@ where report_date >= current_date - interval '6 days'
 		MCResetCooldownRemainingSec:   mcState.MCResetCooldownRemainingSec,
 		EligibleSources:               eligibleSources,
 		TargetsNeeding:                targetsNeeding,
+		NodeCalibration:               nodeCalib,
 		MppShadowJobs24h:              mppShadowTelemetry.Jobs,
 		MppShadowPlanReady24h:         mppShadowTelemetry.PlanReadyJobs,
 		MppShadowPlannedSat24h:        mppShadowTelemetry.PlannedSat,
@@ -13474,9 +13494,51 @@ func (s *RebalanceService) Channels(ctx context.Context) ([]RebalanceChannel, er
 	return result, nil
 }
 
-func (s *RebalanceService) computeEligibilityCounts(ctx context.Context, cfg RebalanceConfig) (int, int) {
+// classifyRebalanceNode computes the node size/liquidity calibration over ACTIVE
+// channels, mirroring AutoFee's calibrateNode thresholds (autofee_service.go) so
+// both engines agree on what small/medium/large/xl and drained/balanced/full
+// mean. Pure function for unit testing.
+func classifyRebalanceNode(channels []lndclient.ChannelInfo) RebalanceNodeCalibration {
+	calib := RebalanceNodeCalibration{NodeClass: "unknown", LiquidityClass: "balanced"}
+	calib.TotalChannelCount = len(channels)
+	for _, ch := range channels {
+		if !ch.Active {
+			continue
+		}
+		calib.ChannelCount++
+		calib.TotalCapacitySat += ch.CapacitySat
+		calib.LocalCapacitySat += ch.LocalBalanceSat
+		calib.InboundCapacitySat += ch.RemoteBalanceSat
+	}
+	if calib.ChannelCount > 0 {
+		calib.AvgCapacitySat = int64(math.Round(float64(calib.TotalCapacitySat) / float64(calib.ChannelCount)))
+	}
+	if calib.TotalCapacitySat > 0 {
+		calib.LocalRatio = float64(calib.LocalCapacitySat) / float64(calib.TotalCapacitySat)
+	}
+	if calib.ChannelCount > 0 && calib.TotalCapacitySat > 0 {
+		switch {
+		case calib.TotalCapacitySat < 50_000_000 || calib.ChannelCount < 20:
+			calib.NodeClass = "small"
+		case calib.TotalCapacitySat < 200_000_000 || calib.ChannelCount < 60:
+			calib.NodeClass = "medium"
+		case calib.TotalCapacitySat < 1_500_000_000 || calib.ChannelCount < 150:
+			calib.NodeClass = "large"
+		default:
+			calib.NodeClass = "xl"
+		}
+		if calib.LocalRatio < 0.25 {
+			calib.LiquidityClass = "drained"
+		} else if calib.LocalRatio > 0.75 {
+			calib.LiquidityClass = "full"
+		}
+	}
+	return calib
+}
+
+func (s *RebalanceService) computeEligibilityCounts(ctx context.Context, cfg RebalanceConfig) (int, int, RebalanceNodeCalibration) {
 	if s.lnd == nil {
-		return 0, 0
+		return 0, 0, RebalanceNodeCalibration{NodeClass: "unknown", LiquidityClass: "balanced"}
 	}
 	settings, _ := s.loadChannelSettings(ctx)
 	exclusions, _ := s.loadExclusions(ctx)
@@ -13485,7 +13547,7 @@ func (s *RebalanceService) computeEligibilityCounts(ctx context.Context, cfg Reb
 
 	channels, err := s.lnd.ListChannels(ctx)
 	if err != nil {
-		return 0, 0
+		return 0, 0, RebalanceNodeCalibration{NodeClass: "unknown", LiquidityClass: "balanced"}
 	}
 	s.reconcileNewChannelDefaults(ctx, channels, settings, exclusions)
 	revenueByChannel, _ := s.fetchChannelRevenue7d(ctx)
@@ -13508,7 +13570,7 @@ func (s *RebalanceService) computeEligibilityCounts(ctx context.Context, cfg Reb
 			targetsNeeding++
 		}
 	}
-	return eligibleSources, targetsNeeding
+	return eligibleSources, targetsNeeding, classifyRebalanceNode(channels)
 }
 
 func (s *RebalanceService) loadLastAutoEnqueueTimes(ctx context.Context) map[uint64]time.Time {

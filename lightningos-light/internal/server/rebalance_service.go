@@ -11120,8 +11120,22 @@ alter table if exists rebalance_pair_stats
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(ctx, `insert into rebalance_config (id) values ($1) on conflict (id) do nothing`, rebalanceConfigID)
-	return err
+	// Seed the singleton config row from defaultRebalanceConfig() — the Go
+	// starter profile asserted by TestDefaultRebalanceConfigStarterProfile — when
+	// it does not exist yet, so a fresh node reflects the balanced defaults we
+	// validated in production. The SQL column defaults had drifted from Go over
+	// time (e.g. scheduler_mode, gain_model_version, exploration, budget), so the
+	// old `insert (id) values (1)` seeded a stale config. Using upsertConfig with
+	// an existence guard makes Go the single source of truth and never touches an
+	// already-seeded row, preserving every operator's tuning.
+	var configExists bool
+	if err = s.db.QueryRow(ctx, `select exists(select 1 from rebalance_config where id=$1)`, rebalanceConfigID).Scan(&configExists); err != nil {
+		return err
+	}
+	if !configExists {
+		return s.upsertConfig(ctx, normalizeRebalanceConfig(defaultRebalanceConfig()))
+	}
+	return nil
 }
 
 func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, error) {

@@ -257,6 +257,30 @@ const numberOrZero = (value?: number) => {
   return Number.isFinite(numeric) ? numeric : 0
 }
 
+const hasOwnField = (item: AutofeeResultItem, key: keyof AutofeeResultItem) =>
+  Object.prototype.hasOwnProperty.call(item, key)
+
+const resolveInboundDiscountChange = (item: AutofeeResultItem) => {
+  const hasPrev = hasOwnField(item, 'prev_inbound_discount')
+  const hasInbound = hasOwnField(item, 'inbound_discount')
+  if (hasPrev || hasInbound) {
+    const current = hasPrev ? numberOrZero(item.prev_inbound_discount) : 0
+    const target = hasInbound ? numberOrZero(item.inbound_discount) : 0
+    return { available: true, current, target, changed: current !== target }
+  }
+
+  const hasCurrent = hasOwnField(item, 'current_inbound_discount')
+  const hasTarget = hasOwnField(item, 'target_inbound_discount')
+  if (hasCurrent || hasTarget) {
+    const current = numberOrZero(item.current_inbound_discount)
+    const target = hasTarget ? numberOrZero(item.target_inbound_discount) : current
+    const available = current !== 0 || target !== 0 || String(item.reason || '').toLowerCase().trim() === 'refresh'
+    return { available, current, target, changed: current !== target }
+  }
+
+  return { available: false, current: 0, target: 0, changed: false }
+}
+
 const median = (values: number[]) => {
   const sorted = values.filter(Number.isFinite).sort((a, b) => a - b)
   if (!sorted.length) return 0
@@ -496,7 +520,7 @@ export default function FeeCenter() {
   )
   const specialChanges = useMemo(
     () => (latestRun?.channels || [])
-      .filter((item) => item.new_inbound || numberOrZero(item.inbound_discount) !== numberOrZero(item.prev_inbound_discount) || item.category === 'error' || item.refresh_source)
+      .filter((item) => item.new_inbound || resolveInboundDiscountChange(item).changed || item.category === 'error' || item.refresh_source)
       .slice(0, 12),
     [latestRun]
   )
@@ -570,6 +594,8 @@ export default function FeeCenter() {
 
   const formatInt = (value?: number) => Math.round(numberOrZero(value)).toLocaleString(locale)
   const formatPpm = (value?: number) => `${formatInt(value)} ppm`
+  const formatSignedPpm = (value: number) => `${value > 0 ? '+' : ''}${formatPpm(value)}`
+  const formatInboundFeeFromDiscount = (discount: number) => formatPpm(discount > 0 ? -Math.abs(discount) : 0)
   const formatSats = (value?: number) => `${formatInt(value)} sats`
   const formatSatsCompact = (value?: number) => {
     const sats = numberOrZero(value)
@@ -771,10 +797,11 @@ export default function FeeCenter() {
           const point = item.channel_point || ''
           const local = numberOrZero(item.local_ppm)
           const next = numberOrZero(item.new_ppm)
-          const currentInbound = item.current_inbound_discount ?? item.prev_inbound_discount ?? item.inbound_discount ?? 0
-          const targetInbound = item.target_inbound_discount ?? item.inbound_discount ?? currentInbound
-          const inboundDelta = targetInbound - currentInbound
-          const hasInboundChange = currentInbound !== targetInbound
+          const inboundChange = resolveInboundDiscountChange(item)
+          const currentInboundFee = inboundChange.current > 0 ? -Math.abs(inboundChange.current) : 0
+          const targetInboundFee = inboundChange.target > 0 ? -Math.abs(inboundChange.target) : 0
+          const inboundFeeDelta = targetInboundFee - currentInboundFee
+          const hasInboundChange = inboundChange.changed
           const hasOutgoingChange = local !== next
           const maxScale = Math.max(local, next, numberOrZero(item.target_final ?? item.target), numberOrZero(item.floor), numberOrZero(item.seed), 1)
           return (
@@ -792,11 +819,11 @@ export default function FeeCenter() {
                         <p className="text-rose-200">{item.error || item.skip_reason || t('feeCenter.impact.specialEvent')}</p>
                       ) : hasInboundChange ? (
                         <p className="text-fog/55">
-                          {t('feeCenter.impact.inboundFee')}: <span className="text-fog">{formatPpm(currentInbound)}</span> -&gt;{' '}
-                          <span className="text-sky-200">{formatPpm(targetInbound)}</span>
+                          {t('feeCenter.impact.inboundFee')}: <span className="text-fog">{formatPpm(currentInboundFee)}</span> -&gt;{' '}
+                          <span className="text-sky-200">{formatPpm(targetInboundFee)}</span>
                           {' '}
-                          <span className={inboundDelta < 0 ? 'text-sky-200' : 'text-emerald-200'}>
-                            ({inboundDelta > 0 ? '+' : ''}{formatPpm(inboundDelta)})
+                          <span className={inboundFeeDelta < 0 ? 'text-sky-200' : 'text-emerald-200'}>
+                            ({formatSignedPpm(inboundFeeDelta)})
                           </span>
                         </p>
                       ) : item.new_inbound ? (
@@ -835,8 +862,8 @@ export default function FeeCenter() {
               <div className="mt-3 space-y-2">
                 {mode === 'special' ? (
                   <div className="grid gap-1 text-[11px] text-fog/60">
-                    {hasInboundChange || targetInbound !== 0 ? (
-                      <span>{t('feeCenter.impact.inboundFee')}: {formatPpm(targetInbound)}{item.inbound_source ? ` | ${item.inbound_source}` : ''}</span>
+                    {inboundChange.available ? (
+                      <span>{t('feeCenter.impact.inboundFee')}: {formatInboundFeeFromDiscount(inboundChange.target)}{item.inbound_source ? ` | ${item.inbound_source}` : ''}</span>
                     ) : null}
                     {item.refresh_source ? (
                       <span>{t('lightningOps.autofeeRefreshSource')}: {item.refresh_source}</span>

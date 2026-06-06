@@ -3126,11 +3126,15 @@
       "down": "Down",
       "cooldown": "Cooldown",
       "errors": "Errors",
-      "special": "Special",
-      "upLane": "Fee Up",
-      "downLane": "Fee Down",
-      "specialLane": "Inbound / Special"
-    },
+        "special": "Special",
+        "upLane": "Fee Up",
+        "downLane": "Fee Down",
+        "specialLane": "Inbound / Special",
+        "inboundFee": "Inbound fee",
+        "outgoingFee": "Outgoing fee",
+        "newInbound": "New inbound channel",
+        "specialEvent": "Special event"
+      },
     "links": {
       "lightningOps": "Lightning Ops",
       "rebalance": "Rebalance"

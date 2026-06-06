@@ -760,7 +760,7 @@ export default function FeeCenter() {
     </label>
   )
 
-  const renderImpactLane = (title: string, items: AutofeeResultItem[], tone: Tone) => (
+  const renderImpactLane = (title: string, items: AutofeeResultItem[], tone: Tone, mode: 'policy' | 'special' = 'policy') => (
     <div className="rounded-3xl border border-white/10 bg-ink/50 p-4">
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold text-fog">{title}</h3>
@@ -771,6 +771,11 @@ export default function FeeCenter() {
           const point = item.channel_point || ''
           const local = numberOrZero(item.local_ppm)
           const next = numberOrZero(item.new_ppm)
+          const currentInbound = item.current_inbound_discount ?? item.prev_inbound_discount ?? item.inbound_discount ?? 0
+          const targetInbound = item.target_inbound_discount ?? item.inbound_discount ?? currentInbound
+          const inboundDelta = targetInbound - currentInbound
+          const hasInboundChange = currentInbound !== targetInbound
+          const hasOutgoingChange = local !== next
           const maxScale = Math.max(local, next, numberOrZero(item.target_final ?? item.target), numberOrZero(item.floor), numberOrZero(item.seed), 1)
           return (
             <article
@@ -781,10 +786,40 @@ export default function FeeCenter() {
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-fog [overflow-wrap:anywhere]">{item.alias || item.channel_id || t('common.unknown')}</p>
-                  <p className="mt-1 text-xs text-fog/55">
-                    {formatPpm(local)} -&gt; <span className={next >= local ? 'text-emerald-200' : 'text-amber-200'}>{formatPpm(next)}</span>
-                    {item.delta ? ` (${item.delta > 0 ? '+' : ''}${formatPpm(item.delta)})` : ''}
-                  </p>
+                  {mode === 'special' ? (
+                    <div className="mt-1 space-y-1 text-xs">
+                      {item.category === 'error' ? (
+                        <p className="text-rose-200">{item.error || item.skip_reason || t('feeCenter.impact.specialEvent')}</p>
+                      ) : hasInboundChange ? (
+                        <p className="text-fog/55">
+                          {t('feeCenter.impact.inboundFee')}: <span className="text-fog">{formatPpm(currentInbound)}</span> -&gt;{' '}
+                          <span className="text-sky-200">{formatPpm(targetInbound)}</span>
+                          {' '}
+                          <span className={inboundDelta < 0 ? 'text-sky-200' : 'text-emerald-200'}>
+                            ({inboundDelta > 0 ? '+' : ''}{formatPpm(inboundDelta)})
+                          </span>
+                        </p>
+                      ) : item.new_inbound ? (
+                        <p className="text-sky-200">{t('feeCenter.impact.newInbound')}</p>
+                      ) : item.refresh_source ? (
+                        <p className="text-fog/55">
+                          {t('lightningOps.autofeeRefreshReference')}: <span className="text-sky-200">{formatPpm(item.reference_ppm)}</span>
+                        </p>
+                      ) : (
+                        <p className="text-fog/55">{t('feeCenter.impact.specialEvent')}</p>
+                      )}
+                      {hasOutgoingChange && (
+                        <p className="text-fog/45">
+                          {t('feeCenter.impact.outgoingFee')}: {formatPpm(local)} -&gt; {formatPpm(next)}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="mt-1 text-xs text-fog/55">
+                      {formatPpm(local)} -&gt; <span className={next >= local ? 'text-emerald-200' : 'text-amber-200'}>{formatPpm(next)}</span>
+                      {item.delta ? ` (${item.delta > 0 ? '+' : ''}${formatPpm(item.delta)})` : ''}
+                    </p>
+                  )}
                 </div>
                 {point && (
                   <div className="flex shrink-0 items-center gap-2 text-xs">
@@ -798,19 +833,33 @@ export default function FeeCenter() {
                 )}
               </div>
               <div className="mt-3 space-y-2">
-                <div className="relative h-2 rounded-full bg-white/10">
-                  <div
-                    className={`absolute left-0 top-0 h-2 rounded-full ${tone === 'ok' ? 'bg-emerald-300' : tone === 'warn' ? 'bg-amber-300' : 'bg-sky-300'}`}
-                    style={{ width: `${clamp((next / maxScale) * 100)}%` }}
-                  />
-                  {item.floor ? <span className="absolute top-[-3px] h-4 w-px bg-rose-300" style={{ left: `${clamp((numberOrZero(item.floor) / maxScale) * 100)}%` }} /> : null}
-                  {item.target_final || item.target ? <span className="absolute top-[-3px] h-4 w-px bg-sky-200" style={{ left: `${clamp((numberOrZero(item.target_final ?? item.target) / maxScale) * 100)}%` }} /> : null}
-                </div>
-                <div className="grid gap-1 text-[11px] text-fog/60 sm:grid-cols-3">
-                  <span>{t('feeCenter.policy.target')}: {formatPpm(item.target_final ?? item.target)}</span>
-                  <span>{t('feeCenter.policy.floor')}: {formatPpm(item.floor)}</span>
-                  <span>{t('feeCenter.policy.seed')}: {formatPpm(item.seed)}</span>
-                </div>
+                {mode === 'special' ? (
+                  <div className="grid gap-1 text-[11px] text-fog/60">
+                    {hasInboundChange || targetInbound !== 0 ? (
+                      <span>{t('feeCenter.impact.inboundFee')}: {formatPpm(targetInbound)}{item.inbound_source ? ` | ${item.inbound_source}` : ''}</span>
+                    ) : null}
+                    {item.refresh_source ? (
+                      <span>{t('lightningOps.autofeeRefreshSource')}: {item.refresh_source}</span>
+                    ) : null}
+                    {item.skip_reason ? <span>{item.skip_reason}</span> : null}
+                  </div>
+                ) : (
+                  <>
+                    <div className="relative h-2 rounded-full bg-white/10">
+                      <div
+                        className={`absolute left-0 top-0 h-2 rounded-full ${tone === 'ok' ? 'bg-emerald-300' : tone === 'warn' ? 'bg-amber-300' : 'bg-sky-300'}`}
+                        style={{ width: `${clamp((next / maxScale) * 100)}%` }}
+                      />
+                      {item.floor ? <span className="absolute top-[-3px] h-4 w-px bg-rose-300" style={{ left: `${clamp((numberOrZero(item.floor) / maxScale) * 100)}%` }} /> : null}
+                      {item.target_final || item.target ? <span className="absolute top-[-3px] h-4 w-px bg-sky-200" style={{ left: `${clamp((numberOrZero(item.target_final ?? item.target) / maxScale) * 100)}%` }} /> : null}
+                    </div>
+                    <div className="grid gap-1 text-[11px] text-fog/60 sm:grid-cols-3">
+                      <span>{t('feeCenter.policy.target')}: {formatPpm(item.target_final ?? item.target)}</span>
+                      <span>{t('feeCenter.policy.floor')}: {formatPpm(item.floor)}</span>
+                      <span>{t('feeCenter.policy.seed')}: {formatPpm(item.seed)}</span>
+                    </div>
+                  </>
+                )}
                 {item.tags?.length ? (
                   <div className="flex flex-wrap gap-1.5">
                     {item.tags.slice(0, 5).map((tag) => (
@@ -973,7 +1022,7 @@ export default function FeeCenter() {
         <div className="grid gap-4 xl:grid-cols-3">
           {renderImpactLane(t('feeCenter.impact.upLane'), feeUp, 'ok')}
           {renderImpactLane(t('feeCenter.impact.downLane'), feeDown, 'warn')}
-          {renderImpactLane(t('feeCenter.impact.specialLane'), specialChanges, 'info')}
+          {renderImpactLane(t('feeCenter.impact.specialLane'), specialChanges, 'info', 'special')}
         </div>
       </div>
 

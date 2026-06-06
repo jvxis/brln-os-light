@@ -3126,11 +3126,15 @@
       "down": "Caiu",
       "cooldown": "Cooldown",
       "errors": "Erros",
-      "special": "Especial",
-      "upLane": "Fee Subiu",
-      "downLane": "Fee Caiu",
-      "specialLane": "Inbound / Especial"
-    },
+        "special": "Especial",
+        "upLane": "Fee Subiu",
+        "downLane": "Fee Caiu",
+        "specialLane": "Inbound / Especial",
+        "inboundFee": "Fee inbound",
+        "outgoingFee": "Fee outgoing",
+        "newInbound": "Novo canal inbound",
+        "specialEvent": "Evento especial"
+      },
     "links": {
       "lightningOps": "Lightning Ops",
       "rebalance": "Rebalance"

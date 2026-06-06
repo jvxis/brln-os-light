@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   getAutofeeChannels,
@@ -779,10 +780,26 @@ export default function FeeCenter() {
     }
   }
 
-  const renderToggle = (label: string, checked: boolean, onChange: (next: boolean) => void, disabled = false) => (
+  const withHint = (label: ReactNode, hint?: string) => {
+    if (!hint) return label
+    return (
+      <span className="inline-flex min-w-0 items-center gap-1 align-middle">
+        <span className="min-w-0 [overflow-wrap:anywhere]">{label}</span>
+        <span
+          className="inline-flex h-4 w-4 shrink-0 cursor-help items-center justify-center rounded-full border border-white/20 text-[10px] text-fog/60"
+          title={hint}
+          aria-label={hint}
+        >
+          i
+        </span>
+      </span>
+    )
+  }
+
+  const renderToggle = (label: ReactNode, checked: boolean, onChange: (next: boolean) => void, disabled = false, hint?: string) => (
     <label className="flex min-w-0 items-center gap-2 text-sm text-fog/70">
       <input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
-      <span className="min-w-0 [overflow-wrap:anywhere]">{label}</span>
+      <span className="min-w-0 [overflow-wrap:anywhere]">{withHint(label, hint)}</span>
     </label>
   )
 
@@ -1079,7 +1096,12 @@ export default function FeeCenter() {
                 <div className="grid gap-4 lg:grid-cols-3">
                   {renderToggle(t('lightningOps.autofeeEnabled'), enabled, setEnabled, !config || busy)}
                   <label className="text-sm text-fog/70">
-                    {t('lightningOps.autofeeOperationMode')}
+                    {withHint(
+                      t('lightningOps.autofeeOperationMode'),
+                      operationMode === 'market_refill'
+                        ? t('lightningOps.autofeeOperationModeMarketRefillHint')
+                        : t('lightningOps.autofeeOperationModeBalancedHint')
+                    )}
                     <select className="input-field mt-2" value={operationMode} onChange={(event) => setOperationMode(event.target.value)}>
                       <option value="balanced">{t('lightningOps.autofeeOperationModeBalanced')}</option>
                       <option value="market_refill">{t('lightningOps.autofeeOperationModeMarketRefill')}</option>
@@ -1142,7 +1164,7 @@ export default function FeeCenter() {
                     {renderToggle(t('lightningOps.autofeeInboundPassive'), inboundPassive, setInboundPassive)}
                     {renderToggle(t('lightningOps.autofeeDiscovery'), discovery, setDiscovery)}
                     {renderToggle(t('lightningOps.autofeeExplorer'), explorer, setExplorer)}
-                    {renderToggle(t('lightningOps.autofeeIdleRefresh'), idleRefresh, setIdleRefresh)}
+                    {renderToggle(t('lightningOps.autofeeIdleRefresh'), idleRefresh, setIdleRefresh, false, t('lightningOps.autofeeIdleRefreshHint'))}
                     {renderToggle(t('lightningOps.autofeeSuperSource'), superSource, setSuperSource)}
                   </div>
                   <div className="rounded-2xl border border-white/10 bg-black/10 p-4 space-y-3">
@@ -1172,27 +1194,27 @@ export default function FeeCenter() {
                     onClick={() => setAdvancedOpen((open) => !open)}
                   >
                     <span>
-                      <span className="block text-sm font-medium text-fog">{t('lightningOps.autofeeMovementSettingsTitle')}</span>
+                      <span className="block text-sm font-medium text-fog">{withHint(t('lightningOps.autofeeMovementSettingsTitle'), t('lightningOps.autofeeMovementSettingsHint'))}</span>
                       <span className="mt-1 block text-xs text-fog/60">{t('lightningOps.autofeeMovementSettingsSubtitle')}</span>
                     </span>
                     <span className="btn-secondary text-xs px-3 py-2">{advancedOpen ? t('common.hide') : t('lightningOps.autofeeMovementSettingsButton')}</span>
                   </button>
                   {advancedOpen && (
                     <div className="mt-4 grid gap-4 lg:grid-cols-3">
-                      <label className="text-sm text-fog/70">{t('lightningOps.autofeeCooldownUp')}<input className="input-field mt-2" type="number" min={1} max={12} value={cooldownUp} onChange={(event) => setCooldownUp(event.target.value)} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: activeDefaults ? `${Math.max(1, Math.round((activeDefaults.cooldown_up_sec || 10800) / 3600))}h` : '-' })}</span></label>
-                      <label className="text-sm text-fog/70">{t('lightningOps.autofeeCooldownDown')}<input className="input-field mt-2" type="number" min={1} max={24} value={cooldownDown} onChange={(event) => setCooldownDown(event.target.value)} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: activeDefaults ? `${Math.max(1, Math.round((activeDefaults.cooldown_down_sec || 14400) / 3600))}h` : '-' })}</span></label>
-                      <label className="text-sm text-fog/70">{t('lightningOps.autofeeStepCapOverride')}<input className="input-field mt-2" type="number" min={0} max={30} step="0.1" value={stepCapOverride} onChange={(event) => setStepCapOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: defaultText(activeDefaults?.step_cap) })}</span></label>
-                      <label className="text-sm text-fog/70">{t('lightningOps.autofeeDiscoveryStepCapDownOverride')}<input className="input-field mt-2" type="number" min={0} max={40} step="0.1" value={discoveryStepCapDownOverride} onChange={(event) => setDiscoveryStepCapDownOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: defaultText(activeDefaults?.discovery_step_cap_down) })}</span></label>
-                      <label className="text-sm text-fog/70">{t('lightningOps.autofeeStallFloorRelaxGapFracOverride')}<input className="input-field mt-2" type="number" min={0} max={80} step="1" value={stallFloorRelaxGapFracOverride} onChange={(event) => setStallFloorRelaxGapFracOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: defaultText(activeDefaults?.stall_floor_relax_gap_frac) })}</span></label>
-                      <label className="text-sm text-fog/70">{t('lightningOps.autofeeInboundDiscountMaxRatioOverride')}<input className="input-field mt-2" type="number" min={0} max={100} step="1" value={inboundDiscountMaxRatioOverride} onChange={(event) => setInboundDiscountMaxRatioOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: defaultText(activeDefaults?.inbound_discount_max_ratio) })}</span></label>
-                      <label className="text-sm text-fog/70">{t('lightningOps.autofeeInboundDiscountReachOutRatioOverride')}<input className="input-field mt-2" type="number" min={0} max={50} step="1" value={inboundDiscountReachOutRatioOverride} onChange={(event) => setInboundDiscountReachOutRatioOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: defaultText(activeDefaults?.inbound_discount_reach_out_ratio) })}</span></label>
-                      <label className="text-sm text-fog/70">{t('lightningOps.autofeeInboundDiscountMinRetainedSpreadFracOverride')}<input className="input-field mt-2" type="number" min={0} max={50} step="1" value={inboundDiscountMinRetainedSpreadFracOverride} onChange={(event) => setInboundDiscountMinRetainedSpreadFracOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: defaultText(activeDefaults?.inbound_discount_min_retained_spread_frac) })}</span></label>
-                      <label className="text-sm text-fog/70">{t('lightningOps.autofeeOutrateFloorFactorLowOverride')}<input className="input-field mt-2" type="number" min={0} max={100} step="1" value={outrateFloorFactorLowOverride} onChange={(event) => setOutrateFloorFactorLowOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: defaultText(activeDefaults?.outrate_floor_factor_low) })}</span></label>
-                      <label className="text-sm text-fog/70">{t('lightningOps.autofeeSoftenMinOutRatioOverride')}<input className="input-field mt-2" type="number" min={0} max={95} step="1" value={softenMinOutRatioOverride} onChange={(event) => setSoftenMinOutRatioOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: defaultText(activeDefaults?.soften_min_out_ratio) })}</span></label>
-                      <label className="text-sm text-fog/70">{t('lightningOps.autofeeSoftenMaxDropToPegFracOverride')}<input className="input-field mt-2" type="number" min={0} max={100} step="1" value={softenMaxDropToPegFracOverride} onChange={(event) => setSoftenMaxDropToPegFracOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: defaultText(activeDefaults?.soften_max_drop_to_peg_frac) })}</span></label>
-                      <label className="text-sm text-fog/70">{t('lightningOps.autofeeHtlcMinAttemptsOverride')}<input className="input-field mt-2" type="number" min={0} max={100} step="1" value={htlcMinAttemptsOverride} onChange={(event) => setHtlcMinAttemptsOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: activeDefaults?.htlc_min_attempts_60m ?? '-' })}</span></label>
-                      <label className="text-sm text-fog/70">{t('lightningOps.autofeeHtlcPolicyFailRateOverride')}<input className="input-field mt-2" type="number" min={0} max={90} step="0.1" value={htlcPolicyFailRateOverride} onChange={(event) => setHtlcPolicyFailRateOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: defaultText(activeDefaults?.htlc_policy_fail_rate) })}</span></label>
-                      <label className="text-sm text-fog/70">{t('lightningOps.autofeeHtlcLiquidityFailRateOverride')}<input className="input-field mt-2" type="number" min={0} max={90} step="0.1" value={htlcLiquidityFailRateOverride} onChange={(event) => setHtlcLiquidityFailRateOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: defaultText(activeDefaults?.htlc_liquidity_fail_rate) })}</span></label>
+                      <label className="text-sm text-fog/70">{withHint(t('lightningOps.autofeeCooldownUp'), t('lightningOps.autofeeMovementHintCooldownUp'))}<input className="input-field mt-2" type="number" min={1} max={12} value={cooldownUp} onChange={(event) => setCooldownUp(event.target.value)} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: activeDefaults ? `${Math.max(1, Math.round((activeDefaults.cooldown_up_sec || 10800) / 3600))}h` : '-' })}</span></label>
+                      <label className="text-sm text-fog/70">{withHint(t('lightningOps.autofeeCooldownDown'), t('lightningOps.autofeeMovementHintCooldownDown'))}<input className="input-field mt-2" type="number" min={1} max={24} value={cooldownDown} onChange={(event) => setCooldownDown(event.target.value)} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: activeDefaults ? `${Math.max(1, Math.round((activeDefaults.cooldown_down_sec || 14400) / 3600))}h` : '-' })}</span></label>
+                      <label className="text-sm text-fog/70">{withHint(t('lightningOps.autofeeStepCapOverride'), t('lightningOps.autofeeMovementHintStepCap'))}<input className="input-field mt-2" type="number" min={0} max={30} step="0.1" value={stepCapOverride} onChange={(event) => setStepCapOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: defaultText(activeDefaults?.step_cap) })}</span></label>
+                      <label className="text-sm text-fog/70">{withHint(t('lightningOps.autofeeDiscoveryStepCapDownOverride'), t('lightningOps.autofeeMovementHintDiscoveryDownCap'))}<input className="input-field mt-2" type="number" min={0} max={40} step="0.1" value={discoveryStepCapDownOverride} onChange={(event) => setDiscoveryStepCapDownOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: defaultText(activeDefaults?.discovery_step_cap_down) })}</span></label>
+                      <label className="text-sm text-fog/70">{withHint(t('lightningOps.autofeeStallFloorRelaxGapFracOverride'), t('lightningOps.autofeeMovementHintStallRelaxGap'))}<input className="input-field mt-2" type="number" min={0} max={80} step="1" value={stallFloorRelaxGapFracOverride} onChange={(event) => setStallFloorRelaxGapFracOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: defaultText(activeDefaults?.stall_floor_relax_gap_frac) })}</span></label>
+                      <label className="text-sm text-fog/70">{withHint(t('lightningOps.autofeeInboundDiscountMaxRatioOverride'), t('lightningOps.autofeeMovementHintInboundDiscountMaxRatio'))}<input className="input-field mt-2" type="number" min={0} max={100} step="1" value={inboundDiscountMaxRatioOverride} onChange={(event) => setInboundDiscountMaxRatioOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: defaultText(activeDefaults?.inbound_discount_max_ratio) })}</span></label>
+                      <label className="text-sm text-fog/70">{withHint(t('lightningOps.autofeeInboundDiscountReachOutRatioOverride'), t('lightningOps.autofeeMovementHintInboundDiscountReachOutRatio'))}<input className="input-field mt-2" type="number" min={0} max={50} step="1" value={inboundDiscountReachOutRatioOverride} onChange={(event) => setInboundDiscountReachOutRatioOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: defaultText(activeDefaults?.inbound_discount_reach_out_ratio) })}</span></label>
+                      <label className="text-sm text-fog/70">{withHint(t('lightningOps.autofeeInboundDiscountMinRetainedSpreadFracOverride'), t('lightningOps.autofeeMovementHintInboundDiscountMinRetainedSpread'))}<input className="input-field mt-2" type="number" min={0} max={50} step="1" value={inboundDiscountMinRetainedSpreadFracOverride} onChange={(event) => setInboundDiscountMinRetainedSpreadFracOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: defaultText(activeDefaults?.inbound_discount_min_retained_spread_frac) })}</span></label>
+                      <label className="text-sm text-fog/70">{withHint(t('lightningOps.autofeeOutrateFloorFactorLowOverride'), t('lightningOps.autofeeMovementHintLowFlowFloor'))}<input className="input-field mt-2" type="number" min={0} max={100} step="1" value={outrateFloorFactorLowOverride} onChange={(event) => setOutrateFloorFactorLowOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: defaultText(activeDefaults?.outrate_floor_factor_low) })}</span></label>
+                      <label className="text-sm text-fog/70">{withHint(t('lightningOps.autofeeSoftenMinOutRatioOverride'), t('lightningOps.autofeeMovementHintGlobalLockMinOut'))}<input className="input-field mt-2" type="number" min={0} max={95} step="1" value={softenMinOutRatioOverride} onChange={(event) => setSoftenMinOutRatioOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: defaultText(activeDefaults?.soften_min_out_ratio) })}</span></label>
+                      <label className="text-sm text-fog/70">{withHint(t('lightningOps.autofeeSoftenMaxDropToPegFracOverride'), t('lightningOps.autofeeMovementHintGlobalLockMaxDrop'))}<input className="input-field mt-2" type="number" min={0} max={100} step="1" value={softenMaxDropToPegFracOverride} onChange={(event) => setSoftenMaxDropToPegFracOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: defaultText(activeDefaults?.soften_max_drop_to_peg_frac) })}</span></label>
+                      <label className="text-sm text-fog/70">{withHint(t('lightningOps.autofeeHtlcMinAttemptsOverride'), t('lightningOps.autofeeMovementHintHtlcMinAttempts'))}<input className="input-field mt-2" type="number" min={0} max={100} step="1" value={htlcMinAttemptsOverride} onChange={(event) => setHtlcMinAttemptsOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: activeDefaults?.htlc_min_attempts_60m ?? '-' })}</span></label>
+                      <label className="text-sm text-fog/70">{withHint(t('lightningOps.autofeeHtlcPolicyFailRateOverride'), t('lightningOps.autofeeMovementHintHtlcPolicyFailRate'))}<input className="input-field mt-2" type="number" min={0} max={90} step="0.1" value={htlcPolicyFailRateOverride} onChange={(event) => setHtlcPolicyFailRateOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: defaultText(activeDefaults?.htlc_policy_fail_rate) })}</span></label>
+                      <label className="text-sm text-fog/70">{withHint(t('lightningOps.autofeeHtlcLiquidityFailRateOverride'), t('lightningOps.autofeeMovementHintHtlcLiquidityFailRate'))}<input className="input-field mt-2" type="number" min={0} max={90} step="0.1" value={htlcLiquidityFailRateOverride} onChange={(event) => setHtlcLiquidityFailRateOverride(event.target.value)} placeholder={t('lightningOps.autofeeMovementSettingsAuto')} /><span className="mt-1 block text-[11px] text-fog/55">{t('lightningOps.autofeeMovementDefaultLabel', { value: defaultText(activeDefaults?.htlc_liquidity_fail_rate) })}</span></label>
                     </div>
                   )}
                 </div>
@@ -1205,11 +1227,11 @@ export default function FeeCenter() {
                 </div>
                 <div className="grid gap-4">
                   <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
-                    {renderToggle(t('lightningOps.autofeeNativeSeed'), nativeSeedEnabled, setNativeSeedEnabled)}
+                    {renderToggle(t('lightningOps.autofeeNativeSeed'), nativeSeedEnabled, setNativeSeedEnabled, false, t('lightningOps.autofeeNativeSeedHint'))}
                     <p className="mt-3 text-xs leading-5 text-fog/55">{t('lightningOps.autofeeNativeSeedHint')}</p>
                   </div>
                   <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
-                    {renderToggle(t('lightningOps.autofeeAmboss'), ambossEnabled, setAmbossEnabled)}
+                    {renderToggle(t('lightningOps.autofeeAmboss'), ambossEnabled, setAmbossEnabled, false, t('lightningOps.autofeeAmbossHint'))}
                     <p className="mt-3 text-xs leading-5 text-fog/55">{t('lightningOps.autofeeAmbossHint')}</p>
                     {ambossEnabled && (
                       <label className="mt-4 block text-sm text-fog/70">
@@ -1242,7 +1264,7 @@ export default function FeeCenter() {
         </div>
         <div className="grid gap-4 lg:grid-cols-[1fr_1.5fr]">
           <div className="rounded-2xl border border-white/10 bg-black/10 p-4">
-            {renderToggle(t('lightningOps.autofeeRefreshIncludeInbound'), refreshIncludeInbound, setRefreshIncludeInbound)}
+            {renderToggle(t('lightningOps.autofeeRefreshIncludeInbound'), refreshIncludeInbound, setRefreshIncludeInbound, false, t('lightningOps.autofeeRefreshIncludeInboundHint'))}
           </div>
           <div className="rounded-2xl border border-white/10 bg-black/10 p-4 text-xs text-fog/60">
             <div className="mb-2 text-fog">{t('feeCenter.actions.saveScope')}</div>

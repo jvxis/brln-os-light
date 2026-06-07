@@ -755,6 +755,11 @@ func (s *RebalanceService) nodeCalibration(ctx context.Context) RebalanceNodeCal
 // "custom" freezes the current effective values so they stop re-deriving. The
 // autopilot is only toggled on by a named profile — never off here.
 func (s *RebalanceService) ApplyProfile(ctx context.Context, profileName string) (RebalanceConfig, error) {
+	// Auto-snapshot the current config before switching, so the operator always
+	// has a one-click undo even if they forgot to save manually.
+	if _, err := s.saveConfigSnapshot(ctx, "auto"); err != nil && s.logger != nil {
+		s.logger.Printf("rebalance auto-snapshot before profile apply failed: %v", err)
+	}
 	cfg, err := s.loadConfig(ctx)
 	if err != nil {
 		cfg = defaultRebalanceConfig()
@@ -772,6 +777,120 @@ func (s *RebalanceService) ApplyProfile(ctx context.Context, profileName string)
 		cfg.Profile = name
 	}
 	return s.UpdateConfig(ctx, cfg)
+}
+
+const rebalanceConfigSnapshotLimit = 20
+
+// RebalanceConfigSnapshot is the list/metadata view of a saved config snapshot
+// (the serialized config blob is loaded only on restore).
+type RebalanceConfigSnapshot struct {
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	Kind      string `json:"kind"` // manual | auto
+	Profile   string `json:"profile"`
+	CreatedAt string `json:"created_at"`
+}
+
+func rebalanceSnapshotName(kind, profile string, t time.Time) string {
+	ts := t.In(time.Local).Format("2006-01-02 15:04:05")
+	if kind == "auto" {
+		p := profile
+		if p == "" {
+			p = "config"
+		}
+		return fmt.Sprintf("Auto · %s · %s", p, ts)
+	}
+	return fmt.Sprintf("Snapshot · %s", ts)
+}
+
+// saveConfigSnapshot serializes the current config under an auto-generated unique
+// name. kind is "manual" or "auto" (auto = taken before a profile switch). Prunes
+// to the most recent rebalanceConfigSnapshotLimit.
+func (s *RebalanceService) saveConfigSnapshot(ctx context.Context, kind string) (RebalanceConfigSnapshot, error) {
+	if s.db == nil {
+		return RebalanceConfigSnapshot{}, errors.New("db unavailable")
+	}
+	if kind != "auto" {
+		kind = "manual"
+	}
+	cfg, err := s.loadConfig(ctx)
+	if err != nil {
+		cfg = defaultRebalanceConfig()
+	}
+	blob, err := json.Marshal(cfg)
+	if err != nil {
+		return RebalanceConfigSnapshot{}, err
+	}
+	name := rebalanceSnapshotName(kind, cfg.Profile, time.Now())
+	var snap RebalanceConfigSnapshot
+	var created time.Time
+	if err := s.db.QueryRow(ctx, `
+insert into rebalance_config_snapshots (name, kind, profile, config_json)
+values ($1,$2,$3,$4)
+returning id, name, kind, profile, created_at`, name, kind, cfg.Profile, string(blob)).Scan(&snap.ID, &snap.Name, &snap.Kind, &snap.Profile, &created); err != nil {
+		return RebalanceConfigSnapshot{}, err
+	}
+	snap.CreatedAt = created.UTC().Format(time.RFC3339)
+	s.pruneConfigSnapshots(ctx)
+	return snap, nil
+}
+
+func (s *RebalanceService) pruneConfigSnapshots(ctx context.Context) {
+	if s.db == nil {
+		return
+	}
+	_, _ = s.db.Exec(ctx, `
+delete from rebalance_config_snapshots
+where id not in (
+  select id from rebalance_config_snapshots order by created_at desc limit $1
+)`, rebalanceConfigSnapshotLimit)
+}
+
+func (s *RebalanceService) listConfigSnapshots(ctx context.Context) ([]RebalanceConfigSnapshot, error) {
+	out := []RebalanceConfigSnapshot{}
+	if s.db == nil {
+		return out, nil
+	}
+	rows, err := s.db.Query(ctx, `select id, name, kind, profile, created_at from rebalance_config_snapshots order by created_at desc`)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var snap RebalanceConfigSnapshot
+		var created time.Time
+		if err := rows.Scan(&snap.ID, &snap.Name, &snap.Kind, &snap.Profile, &created); err != nil {
+			return out, err
+		}
+		snap.CreatedAt = created.UTC().Format(time.RFC3339)
+		out = append(out, snap)
+	}
+	return out, rows.Err()
+}
+
+// restoreConfigSnapshot deserializes a snapshot and applies it via UpdateConfig,
+// which re-runs normalization and the profile/autopilot state reconciliation.
+func (s *RebalanceService) restoreConfigSnapshot(ctx context.Context, id int64) (RebalanceConfig, error) {
+	if s.db == nil {
+		return RebalanceConfig{}, errors.New("db unavailable")
+	}
+	var blob string
+	if err := s.db.QueryRow(ctx, `select config_json from rebalance_config_snapshots where id=$1`, id).Scan(&blob); err != nil {
+		return RebalanceConfig{}, err
+	}
+	var cfg RebalanceConfig
+	if err := json.Unmarshal([]byte(blob), &cfg); err != nil {
+		return RebalanceConfig{}, err
+	}
+	return s.UpdateConfig(ctx, cfg)
+}
+
+func (s *RebalanceService) deleteConfigSnapshot(ctx context.Context, id int64) error {
+	if s.db == nil {
+		return errors.New("db unavailable")
+	}
+	_, err := s.db.Exec(ctx, `delete from rebalance_config_snapshots where id=$1`, id)
+	return err
 }
 
 type RebalanceMissionControlState struct {
@@ -11359,6 +11478,15 @@ alter table if exists rebalance_pair_stats
   add column if not exists permanent_fail_score double precision not null default 0;
 alter table if exists rebalance_pair_stats
   add column if not exists permanent_fail_updated_at timestamptz;
+
+create table if not exists rebalance_config_snapshots (
+  id bigserial primary key,
+  name text not null unique,
+  kind text not null default 'manual',
+  profile text not null default '',
+  config_json jsonb not null,
+  created_at timestamptz not null default now()
+);
 `)
 	if err != nil {
 		return err

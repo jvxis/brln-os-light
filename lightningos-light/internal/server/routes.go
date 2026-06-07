@@ -229,6 +229,10 @@ func (s *Server) routes() http.Handler {
 	r.Route("/api/rebalance", func(r chi.Router) {
 		r.Get("/config", s.handleRebalanceConfigGet)
 		r.Post("/config", s.handleRebalanceConfigPost)
+		r.Get("/config/snapshots", s.handleRebalanceConfigSnapshotsGet)
+		r.Post("/config/snapshots", s.handleRebalanceConfigSnapshotSave)
+		r.Post("/config/snapshots/{id}/restore", s.handleRebalanceConfigSnapshotRestore)
+		r.Delete("/config/snapshots/{id}", s.handleRebalanceConfigSnapshotDelete)
 		r.Post("/profile", s.handleRebalanceProfilePost)
 		r.Get("/overview", s.handleRebalanceOverview)
 		r.Get("/channels", s.handleRebalanceChannels)

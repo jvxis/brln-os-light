@@ -2171,6 +2171,7 @@
     "autofeeOperationModeBalancedHint": "Modo padrão com rebalances e o comportamento atual do autofee.",
     "autofeeOperationModeMarketRefillHint": "Modo global de refill de mercado. Desliga os rebalances automáticos e o manual restart watch, enquanto o Autofee aplica o comportamento dedicado de refill.",
     "autofeeProfile": "Perfil",
+    "autofeeProfileCustom": "Custom",
     "autofeeProfileConservative": "Conservador",
     "autofeeProfileModerate": "Moderado",
     "autofeeProfileAggressive": "Agressivo",
@@ -3109,6 +3110,20 @@
     "idle": "Ocioso",
     "enabledIdle": "Ativo",
     "error": "Erro",
+    "profile": {
+      "label": "Perfil do Autofee",
+      "custom": "Custom",
+      "conservative": "Conservador",
+      "moderate": "Moderado",
+      "aggressive": "Agressivo",
+      "customHint": "Mantém os parâmetros salvos sem seguir os defaults de um perfil gerenciado.",
+      "conservativeHint": "Mais cauteloso, com movimentos menores e menos frequentes.",
+      "moderateHint": "Postura equilibrada do Autofee; este é o padrão recomendado.",
+      "aggressiveHint": "Reage mais rápido e aceita movimentos maiores de taxa.",
+      "confirmApply": "Aplicar o perfil {{profile}} vai salvar este perfil e ajustar intervalo/cooldowns pelos defaults do Autofee. Continuar?",
+      "confirmCustom": "Salvar o perfil Custom? Os parâmetros atuais permanecem salvos e deixam de seguir um perfil gerenciado.",
+      "applied": "Perfil {{profile}} aplicado."
+    },
     "tiles": {
       "automation": "Automação",
       "lastRunImpact": "Impacto da última rodada",

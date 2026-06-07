@@ -203,6 +203,10 @@ type PolicyRow = {
 const LIGHTNING_OPS_ROUTE_KEY = 'lightning-ops'
 const REBALANCE_ROUTE_KEY = 'rebalance-center'
 const CHANNEL_HASH_PARAM = 'channel_point'
+const AUTOFEE_PROFILE_OPTIONS = ['custom', 'conservative', 'moderate', 'aggressive'] as const
+const AUTOFEE_MANAGED_PROFILES = ['conservative', 'moderate', 'aggressive'] as const
+
+type AutofeeProfileName = typeof AUTOFEE_PROFILE_OPTIONS[number]
 
 const buildHashWithChannelPoint = (routeKey: string, channelPoint: string) =>
   `#${routeKey}?${CHANNEL_HASH_PARAM}=${encodeURIComponent(channelPoint)}`
@@ -257,6 +261,18 @@ const numberOrZero = (value?: number) => {
   const numeric = Number(value || 0)
   return Number.isFinite(numeric) ? numeric : 0
 }
+
+const normalizeAutofeeProfile = (value?: string): AutofeeProfileName => {
+  const normalized = String(value || '').toLowerCase().trim()
+  if (normalized === 'balanced') return 'moderate'
+  if ((AUTOFEE_PROFILE_OPTIONS as readonly string[]).includes(normalized)) {
+    return normalized as AutofeeProfileName
+  }
+  return 'moderate'
+}
+
+const isManagedAutofeeProfile = (value: string): value is typeof AUTOFEE_MANAGED_PROFILES[number] =>
+  (AUTOFEE_MANAGED_PROFILES as readonly string[]).includes(value)
 
 const hasOwnField = (item: AutofeeResultItem, key: keyof AutofeeResultItem) =>
   Object.prototype.hasOwnProperty.call(item, key)
@@ -345,6 +361,7 @@ export default function FeeCenter() {
   const [resultLines, setResultLines] = useState<string[]>([])
   const [pageStatus, setPageStatus] = useState('')
   const [busy, setBusy] = useState(false)
+  const [profileSaving, setProfileSaving] = useState(false)
   const [focusedChannelPoint, setFocusedChannelPoint] = useState('')
   const [resultsRuns, setResultsRuns] = useState('4')
   const [resultsFrom, setResultsFrom] = useState('')
@@ -395,7 +412,7 @@ export default function FeeCenter() {
     setConfig(cfg)
     setEnabled(Boolean(cfg.enabled))
     setOperationMode((cfg.operation_mode || 'balanced').trim() || 'balanced')
-    setProfile(cfg.profile || 'moderate')
+    setProfile(normalizeAutofeeProfile(cfg.profile))
     setLookback(String(cfg.lookback_days ?? 7))
     setIntervalHours(String(Math.max(1, Math.round((cfg.run_interval_sec || 14400) / 3600))))
     setCooldownUp(String(Math.max(1, Math.round((cfg.cooldown_up_sec || 10800) / 3600))))
@@ -635,6 +652,8 @@ export default function FeeCenter() {
   const formatMode = (value?: string) => value === 'market_refill'
     ? t('lightningOps.autofeeOperationModeMarketRefill')
     : t('lightningOps.autofeeOperationModeBalanced')
+  const displayProfile = normalizeAutofeeProfile(profile)
+  const formatProfile = (value?: string) => t(`feeCenter.profile.${normalizeAutofeeProfile(value)}`)
   const formatReason = (value?: string) => {
     const normalized = String(value || '').toLowerCase().trim()
     if (normalized === 'manual') return t('lightningOps.autofeeResultsReasonManual')
@@ -643,16 +662,73 @@ export default function FeeCenter() {
     return t('lightningOps.autofeeResultsReasonUnknown')
   }
 
-  const activeDefaults = config?.profile_defaults?.[profile]
+  const activeDefaults = isManagedAutofeeProfile(displayProfile) ? config?.profile_defaults?.[displayProfile] : undefined
   const defaultText = (value?: number, percent = true) => {
     if (value === undefined || value === null) return '-'
     return percent ? `${Math.round(value * 1000) / 10}%` : String(value)
+  }
+
+  const applyProfileDefaults = (value: string, cfg = config) => {
+    const normalized = normalizeAutofeeProfile(value)
+    if (!isManagedAutofeeProfile(normalized)) return
+    const defaults = cfg?.profile_defaults?.[normalized]
+    if (!defaults) return
+    setIntervalHours(String(Math.max(1, Math.round((defaults.run_interval_sec || 14400) / 3600))))
+    setCooldownUp(String(Math.max(1, Math.round((defaults.cooldown_up_sec || 10800) / 3600))))
+    setCooldownDown(String(Math.max(1, Math.round((defaults.cooldown_down_sec || 14400) / 3600))))
+  }
+
+  const handleProfileDraftChange = (value: string) => {
+    const nextProfile = normalizeAutofeeProfile(value)
+    setProfile(nextProfile)
+    applyProfileDefaults(nextProfile)
   }
 
   const parsePercentOverride = (raw: string, min: number, max: number) => {
     const value = Number(raw)
     if (!Number.isFinite(value) || value <= 0) return 0
     return Math.max(min, Math.min(max, value)) / 100
+  }
+
+  const handleSelectProfile = async (value: AutofeeProfileName) => {
+    if (!config) {
+      setPageStatus(t('lightningOps.autofeeConfigUnavailable'))
+      return
+    }
+    const nextProfile = normalizeAutofeeProfile(value)
+    if (nextProfile === displayProfile && nextProfile !== 'custom') return
+    const message = nextProfile === 'custom'
+      ? t('feeCenter.profile.confirmCustom')
+      : t('feeCenter.profile.confirmApply', { profile: formatProfile(nextProfile) })
+    if (!window.confirm(message)) return
+
+    setProfileSaving(true)
+    setPageStatus('')
+    try {
+      const payload: {
+        profile: string
+        run_interval_sec?: number
+        cooldown_up_sec?: number
+        cooldown_down_sec?: number
+      } = { profile: nextProfile }
+      if (isManagedAutofeeProfile(nextProfile)) {
+        const defaults = config.profile_defaults?.[nextProfile]
+        if (defaults) {
+          payload.run_interval_sec = defaults.run_interval_sec
+          payload.cooldown_up_sec = defaults.cooldown_up_sec
+          payload.cooldown_down_sec = defaults.cooldown_down_sec
+        }
+      }
+      const nextConfig = await updateAutofeeConfig(payload) as AutofeeConfig
+      applyConfig(nextConfig)
+      const nextStatus = await getAutofeeStatus()
+      setStatus(nextStatus as AutofeeStatus)
+      setPageStatus(t('feeCenter.profile.applied', { profile: formatProfile(nextProfile) }))
+    } catch (err: any) {
+      setPageStatus(err?.message || t('lightningOps.autofeeSaveFailed'))
+    } finally {
+      setProfileSaving(false)
+    }
   }
 
   const handleSave = async () => {
@@ -677,7 +753,7 @@ export default function FeeCenter() {
       const payload: any = {
         enabled,
         operation_mode: operationMode,
-        profile,
+        profile: displayProfile,
         lookback_days: lookbackDays,
         run_interval_sec: intervalSec,
         cooldown_up_sec: cooldownUpSec,
@@ -929,12 +1005,38 @@ export default function FeeCenter() {
             <h2 className="text-2xl font-semibold">{t('feeCenter.title')}</h2>
             <p className="text-fog/60">{t('feeCenter.subtitle')}</p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <StatusBadge label={enabled ? t('common.enabled') : t('common.disabled')} tone={enabled ? 'ok' : 'muted'} size="md" />
-            <StatusBadge label={status?.running ? t('feeCenter.running') : t('feeCenter.idle')} tone={status?.running ? 'ok' : 'muted'} size="md" />
-            <button className="btn-secondary text-xs px-3 py-2" onClick={load} disabled={busy}>
-              {t('common.refresh')}
-            </button>
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex flex-col items-start gap-1 sm:items-center">
+              <span className="text-[10px] uppercase tracking-[0.24em] text-fog/40">{t('feeCenter.profile.label')}</span>
+              <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-black/20 p-1">
+                {AUTOFEE_PROFILE_OPTIONS.map((name) => {
+                  const active = displayProfile === name
+                  return (
+                    <button
+                      key={name}
+                      type="button"
+                      disabled={busy || profileSaving || !config}
+                      onClick={() => handleSelectProfile(name)}
+                      title={t(`feeCenter.profile.${name}Hint`)}
+                      className={`rounded-lg px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 ${
+                        active
+                          ? 'bg-emerald-400/20 text-emerald-100 ring-1 ring-emerald-400/40'
+                          : 'text-fog/55 hover:bg-white/5 hover:text-fog'
+                      }`}
+                    >
+                      {t(`feeCenter.profile.${name}`)}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusBadge label={enabled ? t('common.enabled') : t('common.disabled')} tone={enabled ? 'ok' : 'muted'} size="md" />
+              <StatusBadge label={status?.running ? t('feeCenter.running') : t('feeCenter.idle')} tone={status?.running ? 'ok' : 'muted'} size="md" />
+              <button className="btn-secondary text-xs px-3 py-2" onClick={load} disabled={busy || profileSaving}>
+                {t('common.refresh')}
+              </button>
+            </div>
           </div>
         </div>
         {pageStatus && <p className="mt-4 text-sm text-brass">{pageStatus}</p>}
@@ -944,7 +1046,7 @@ export default function FeeCenter() {
         <MetricTile
           label={t('feeCenter.tiles.automation')}
           value={status?.running ? t('feeCenter.running') : enabled ? t('feeCenter.enabledIdle') : t('common.disabled')}
-          sublabel={`${formatMode(operationMode)} / ${profile}`}
+          sublabel={`${formatMode(operationMode)} / ${formatProfile(displayProfile)}`}
           detail={`${t('lightningOps.autofeeLastRun')}: ${formatDate(status?.last_run_at)}`}
           tone={runTone}
           badgeLabel={status?.last_error ? t('feeCenter.error') : t('common.ok')}
@@ -1084,7 +1186,7 @@ export default function FeeCenter() {
           <span className="flex flex-wrap items-center justify-end gap-2">
             <StatusBadge label={enabled ? t('feeCenter.enabledIdle') : t('common.disabled')} tone={enabled ? 'ok' : 'muted'} />
             <StatusBadge label={formatMode(operationMode)} tone="info" />
-            <StatusBadge label={profile} tone="muted" />
+            <StatusBadge label={formatProfile(displayProfile)} tone="muted" />
             <span className="btn-secondary text-xs px-3 py-2">{setupOpen ? t('common.hide') : t('common.open')}</span>
           </span>
         </button>
@@ -1111,18 +1213,10 @@ export default function FeeCenter() {
                     {t('lightningOps.autofeeProfile')}
                     <select
                       className="input-field mt-2"
-                      value={profile}
-                      onChange={(event) => {
-                        const value = event.target.value
-                        setProfile(value)
-                        const defaults = config?.profile_defaults?.[value]
-                        if (defaults) {
-                          setIntervalHours(String(Math.max(1, Math.round((defaults.run_interval_sec || 14400) / 3600))))
-                          setCooldownUp(String(Math.max(1, Math.round((defaults.cooldown_up_sec || 10800) / 3600))))
-                          setCooldownDown(String(Math.max(1, Math.round((defaults.cooldown_down_sec || 14400) / 3600))))
-                        }
-                      }}
+                      value={displayProfile}
+                      onChange={(event) => handleProfileDraftChange(event.target.value)}
                     >
+                      <option value="custom">{t('lightningOps.autofeeProfileCustom')}</option>
                       <option value="conservative">{t('lightningOps.autofeeProfileConservative')}</option>
                       <option value="moderate">{t('lightningOps.autofeeProfileModerate')}</option>
                       <option value="aggressive">{t('lightningOps.autofeeProfileAggressive')}</option>
@@ -1256,11 +1350,11 @@ export default function FeeCenter() {
           <StatusBadge label={busy ? t('common.running') : t('common.status')} tone={busy ? 'warn' : 'muted'} />
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <button className="btn-primary" onClick={handleSave} disabled={busy || !config}>{t('common.save')}</button>
-          <button className="btn-secondary" onClick={() => handleRefresh(true)} disabled={busy}>{t('lightningOps.autofeeDryRefresh')}</button>
-          <button className="btn-secondary" onClick={() => handleRefresh(false)} disabled={busy}>{t('lightningOps.autofeeRefresh')}</button>
-          <button className="btn-secondary" onClick={() => handleRun(true)} disabled={busy}>{t('lightningOps.autofeeDryRun')}</button>
-          <button className="btn-secondary" onClick={() => handleRun(false)} disabled={busy}>{t('lightningOps.autofeeRunNow')}</button>
+          <button className="btn-primary" onClick={handleSave} disabled={busy || profileSaving || !config}>{t('common.save')}</button>
+          <button className="btn-secondary" onClick={() => handleRefresh(true)} disabled={busy || profileSaving}>{t('lightningOps.autofeeDryRefresh')}</button>
+          <button className="btn-secondary" onClick={() => handleRefresh(false)} disabled={busy || profileSaving}>{t('lightningOps.autofeeRefresh')}</button>
+          <button className="btn-secondary" onClick={() => handleRun(true)} disabled={busy || profileSaving}>{t('lightningOps.autofeeDryRun')}</button>
+          <button className="btn-secondary" onClick={() => handleRun(false)} disabled={busy || profileSaving}>{t('lightningOps.autofeeRunNow')}</button>
         </div>
         <div className="grid gap-4 lg:grid-cols-[1fr_1.5fr]">
           <div className="rounded-2xl border border-white/10 bg-black/10 p-4">

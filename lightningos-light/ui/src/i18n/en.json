@@ -2171,6 +2171,7 @@
     "autofeeOperationModeBalancedHint": "Standard mode with rebalances and the current autofee behavior.",
     "autofeeOperationModeMarketRefillHint": "Global market-refill mode. Disables automatic rebalances and manual restart watch, while Autofee applies the dedicated market-refill behavior.",
     "autofeeProfile": "Profile",
+    "autofeeProfileCustom": "Custom",
     "autofeeProfileConservative": "Conservative",
     "autofeeProfileModerate": "Moderate",
     "autofeeProfileAggressive": "Aggressive",
@@ -3109,6 +3110,20 @@
     "idle": "Idle",
     "enabledIdle": "Enabled",
     "error": "Error",
+    "profile": {
+      "label": "Autofee profile",
+      "custom": "Custom",
+      "conservative": "Conservative",
+      "moderate": "Moderate",
+      "aggressive": "Aggressive",
+      "customHint": "Keeps the saved parameters without following managed profile defaults.",
+      "conservativeHint": "More cautious, with smaller and less frequent fee moves.",
+      "moderateHint": "Balanced Autofee posture; this is the recommended default.",
+      "aggressiveHint": "Reacts faster and allows larger fee moves.",
+      "confirmApply": "Applying the {{profile}} profile will save it and adjust interval/cooldowns to Autofee defaults. Continue?",
+      "confirmCustom": "Save the Custom profile? Current parameters remain saved and stop following a managed profile.",
+      "applied": "{{profile}} profile applied."
+    },
     "tiles": {
       "automation": "Automation",
       "lastRunImpact": "Last run impact",

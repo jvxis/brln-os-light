@@ -49,6 +49,11 @@ const (
 )
 
 const (
+	autofeeProfileCustom  = "custom"
+	autofeeProfileDefault = "moderate"
+)
+
+const (
 	htlcModeObserveOnly = "observe_only"
 	htlcModePolicyOnly  = "policy_only"
 	htlcModeFull        = "full"
@@ -199,6 +204,28 @@ func normalizeAutofeeOperationMode(value string) string {
 	default:
 		return autofeeOperationModeDefault
 	}
+}
+
+func normalizeAutofeeProfile(value string) string {
+	profile := strings.ToLower(strings.TrimSpace(value))
+	if profile == autofeeProfileCustom {
+		return autofeeProfileCustom
+	}
+	if profile == "balanced" {
+		return autofeeProfileDefault
+	}
+	if _, ok := autofeeProfiles[profile]; ok {
+		return profile
+	}
+	return autofeeProfileDefault
+}
+
+func effectiveAutofeeProfileName(value string) string {
+	profile := normalizeAutofeeProfile(value)
+	if profile == autofeeProfileCustom {
+		return autofeeProfileDefault
+	}
+	return profile
 }
 
 type AutofeeConfig struct {
@@ -1363,7 +1390,7 @@ on conflict (id) do nothing
 }
 
 func (s *AutofeeService) defaultConfig() AutofeeConfig {
-	p := autofeeProfiles["moderate"]
+	p := autofeeProfiles[autofeeProfileDefault]
 	return AutofeeConfig{
 		Enabled:                         false,
 		OperationMode:                   autofeeOperationModeDefault,
@@ -1484,9 +1511,7 @@ from autofee_config where id=$1
 		return autofeeConfigWithProfileDefaults(cfg), err
 	}
 	cfg.AmbossTokenSet = ambossToken.Valid && strings.TrimSpace(ambossToken.String) != ""
-	if cfg.Profile == "" {
-		cfg.Profile = "moderate"
-	}
+	cfg.Profile = normalizeAutofeeProfile(cfg.Profile)
 	cfg.OperationMode = normalizeAutofeeOperationMode(cfg.OperationMode)
 	cfg.RebalCostMode = normalizeRebalCostMode(cfg.RebalCostMode)
 	cfg.HTLCMode = normalizeHTLCMode(cfg.HTLCMode)
@@ -1518,11 +1543,8 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 	if req.OperationMode != nil {
 		current.OperationMode = normalizeAutofeeOperationMode(*req.OperationMode)
 	}
-	if req.Profile != nil && strings.TrimSpace(*req.Profile) != "" {
-		current.Profile = strings.ToLower(strings.TrimSpace(*req.Profile))
-		if _, ok := autofeeProfiles[current.Profile]; !ok {
-			current.Profile = "moderate"
-		}
+	if req.Profile != nil {
+		current.Profile = normalizeAutofeeProfile(*req.Profile)
 	}
 	if req.LookbackDays != nil {
 		current.LookbackDays = *req.LookbackDays
@@ -1639,6 +1661,7 @@ func (s *AutofeeService) UpdateConfig(ctx context.Context, req AutofeeConfigUpda
 	current.RebalCostMode = normalizeRebalCostMode(current.RebalCostMode)
 	current.HTLCMode = normalizeHTLCMode(current.HTLCMode)
 	current.OperationMode = normalizeAutofeeOperationMode(current.OperationMode)
+	current.Profile = normalizeAutofeeProfile(current.Profile)
 
 	if current.RunIntervalSec < 3600 {
 		current.RunIntervalSec = 3600
@@ -2780,9 +2803,9 @@ func (s *autofeeRunSummary) addTags(tags []string) {
 }
 
 func newAutofeeEngine(svc *AutofeeService, cfg AutofeeConfig) *autofeeEngine {
-	p := autofeeProfiles[cfg.Profile]
+	p := autofeeProfiles[effectiveAutofeeProfileName(cfg.Profile)]
 	if p.Name == "" {
-		p = autofeeProfiles["moderate"]
+		p = autofeeProfiles[autofeeProfileDefault]
 	}
 	if cfg.StepCapOverride > 0 {
 		p.StepCap = clampFloat(cfg.StepCapOverride, 0.01, 0.30)
@@ -2810,7 +2833,7 @@ func newAutofeeEngine(svc *AutofeeService, cfg AutofeeConfig) *autofeeEngine {
 	}
 	ss := superSourceThresholdsByProfile[p.Name]
 	if ss.OutRatioMin == 0 {
-		ss = superSourceThresholdsByProfile["moderate"]
+		ss = superSourceThresholdsByProfile[autofeeProfileDefault]
 	}
 	return &autofeeEngine{
 		svc:             svc,

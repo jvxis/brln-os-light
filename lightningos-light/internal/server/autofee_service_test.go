@@ -1879,6 +1879,45 @@ func TestAutofeeProfileMovementDefaults(t *testing.T) {
 	}
 }
 
+func TestNormalizeAutofeeProfile(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "empty defaults", raw: "", want: autofeeProfileDefault},
+		{name: "custom persists", raw: " custom ", want: autofeeProfileCustom},
+		{name: "moderate", raw: "Moderate", want: "moderate"},
+		{name: "aggressive", raw: "aggressive", want: "aggressive"},
+		{name: "balanced alias", raw: "balanced", want: autofeeProfileDefault},
+		{name: "unknown defaults", raw: "fast", want: autofeeProfileDefault},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeAutofeeProfile(tt.raw); got != tt.want {
+				t.Fatalf("normalizeAutofeeProfile(%q) = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEffectiveAutofeeProfileName(t *testing.T) {
+	if got := effectiveAutofeeProfileName(autofeeProfileCustom); got != autofeeProfileDefault {
+		t.Fatalf("custom effective profile = %q, want %q", got, autofeeProfileDefault)
+	}
+	if got := effectiveAutofeeProfileName("aggressive"); got != "aggressive" {
+		t.Fatalf("aggressive effective profile = %q, want aggressive", got)
+	}
+}
+
+func TestNewAutofeeEngineCustomUsesDefaultProfile(t *testing.T) {
+	engine := newAutofeeEngine(nil, AutofeeConfig{Profile: autofeeProfileCustom})
+	if engine.profile.Name != autofeeProfileDefault {
+		t.Fatalf("custom engine profile = %q, want %q", engine.profile.Name, autofeeProfileDefault)
+	}
+}
+
 func TestAutofeeConfigWithProfileDefaults(t *testing.T) {
 	cfg := autofeeConfigWithProfileDefaults(AutofeeConfig{Profile: "moderate"})
 	if len(cfg.ProfileDefaults) != len(autofeeProfiles) {

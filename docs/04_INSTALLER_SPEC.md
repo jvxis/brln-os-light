@@ -13,7 +13,7 @@ Install and configure the LightningOS stack:
 - Ubuntu Server 22.04 or 24.04
 
 ## Installer inputs (environment overrides)
-- LND_VERSION (default 0.20.0-beta)
+- LND_VERSION (default 0.21.0-beta)
 - GO_VERSION (default 1.22.7)
 - NODE_VERSION (default current, fallback 20)
 - GOTTY_VERSION (default 1.0.1)

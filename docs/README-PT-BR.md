@@ -56,7 +56,7 @@ O instalador provisiona tudo que é necessário em um Ubuntu limpo:
 - Postgres, smartmontools, curl, jq, ca-certificates, openssl, build tools
 - Tor (ControlPort habilitado) + i2pd habilitado por padrão
 - Go 1.24.12 e a major mais recente do Node.js (fallback para Node.js 20.x se a detecção falhar)
-- Binários do LND (padrão `v0.20.1-beta`)
+- Binários do LND (padrão `v0.21.0-beta`)
 - Binário do LightningOS Manager (compilado localmente)
 - Build da UI (compilada localmente)
 - Serviços systemd e templates de configuração

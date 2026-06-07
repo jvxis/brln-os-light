@@ -658,6 +658,13 @@ export const updateReportsConfig = (payload: {
 export const getRebalanceConfig = () => request('/api/rebalance/config')
 export const applyRebalanceProfile = (profile: string) =>
   request('/api/rebalance/profile', { method: 'POST', body: JSON.stringify({ profile }) })
+export const getRebalanceConfigSnapshots = () => request('/api/rebalance/config/snapshots')
+export const saveRebalanceConfigSnapshot = () =>
+  request('/api/rebalance/config/snapshots', { method: 'POST', body: JSON.stringify({}) })
+export const restoreRebalanceConfigSnapshot = (id: number) =>
+  request(`/api/rebalance/config/snapshots/${id}/restore`, { method: 'POST', body: JSON.stringify({}) })
+export const deleteRebalanceConfigSnapshot = (id: number) =>
+  request(`/api/rebalance/config/snapshots/${id}`, { method: 'DELETE' })
 export const updateRebalanceConfig = (payload: {
   auto_enabled?: boolean
   scheduler_mode?: string

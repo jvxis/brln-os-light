@@ -3232,6 +3232,19 @@
       "confirmCustom": "Freeze the current effective values as Custom? They will stop following a profile.",
       "applied": "{{profile}} profile applied."
     },
+    "snapshots": {
+      "title": "Saved configs",
+      "subtitle": "Snapshot the current config and restore it later — safe to try profiles or custom tweaks.",
+      "saveCurrent": "Save current",
+      "empty": "No saved configs yet.",
+      "restore": "Restore",
+      "delete": "Delete",
+      "saved": "Config snapshot saved.",
+      "restored": "Restored \"{{name}}\".",
+      "confirmRestore": "Restore \"{{name}}\"? This replaces your current rebalance config.",
+      "confirmDelete": "Delete \"{{name}}\"?",
+      "kind": { "manual": "Saved", "auto": "Auto" }
+    },
     "desktopFirst": "Desktop-first",
     "loading": "Loading rebalance center...",
     "loadFailed": "Failed to load rebalance center.",

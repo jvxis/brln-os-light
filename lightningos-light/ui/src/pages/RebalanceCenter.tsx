@@ -15,6 +15,10 @@ import {
   updateRebalanceChannelTarget,
   updateRebalanceConfig,
   applyRebalanceProfile,
+  getRebalanceConfigSnapshots,
+  saveRebalanceConfigSnapshot,
+  restoreRebalanceConfigSnapshot,
+  deleteRebalanceConfigSnapshot,
   updateRebalanceExclude
 } from '../api'
 import { MetricDisclosure } from '../components/rebalance/MetricDisclosure'
@@ -25,6 +29,7 @@ import type {
   RebalanceAttempt,
   RebalanceChannel,
   RebalanceConfig,
+  RebalanceConfigSnapshot,
   RebalanceJob,
   RebalanceOverview,
   RebalancePairStat,
@@ -132,6 +137,8 @@ export default function RebalanceCenter() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [status, setStatus] = useState('')
   const [saving, setSaving] = useState(false)
+  const [snapshots, setSnapshots] = useState<RebalanceConfigSnapshot[]>([])
+  const [snapshotBusy, setSnapshotBusy] = useState(false)
   const [autopilotSaving, setAutopilotSaving] = useState(false)
   const [autoOpen, setAutoOpen] = useState(false)
   const [advancedControlsOpen, setAdvancedControlsOpen] = useState(false)
@@ -698,6 +705,7 @@ export default function RebalanceCenter() {
 
   useEffect(() => {
     void loadAll()
+    void loadSnapshots()
   }, [])
 
   useEffect(() => {
@@ -820,11 +828,63 @@ export default function RebalanceCenter() {
     try {
       await applyRebalanceProfile(name)
       await loadAll({ silent: true })
+      void loadSnapshots()
       setStatus(t('rebalanceCenter.profile.applied', { profile: t(`rebalanceCenter.profile.${name}`) }))
     } catch (err) {
       setStatus(err instanceof Error ? err.message : String(err))
     } finally {
       setSaving(false)
+    }
+  }
+
+  // Config snapshots: save the current config and restore it later, so you can
+  // try profiles / custom tweaks without losing hand-tuning.
+  const loadSnapshots = async () => {
+    try {
+      const res = (await getRebalanceConfigSnapshots()) as { snapshots?: RebalanceConfigSnapshot[] }
+      setSnapshots(res?.snapshots || [])
+    } catch {
+      /* non-fatal */
+    }
+  }
+  const handleSaveSnapshot = async () => {
+    setSnapshotBusy(true)
+    setStatus('')
+    try {
+      await saveRebalanceConfigSnapshot()
+      await loadSnapshots()
+      setStatus(t('rebalanceCenter.snapshots.saved'))
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSnapshotBusy(false)
+    }
+  }
+  const handleRestoreSnapshot = async (snap: RebalanceConfigSnapshot) => {
+    if (!window.confirm(t('rebalanceCenter.snapshots.confirmRestore', { name: snap.name }))) return
+    setSnapshotBusy(true)
+    setStatus('')
+    try {
+      await restoreRebalanceConfigSnapshot(snap.id)
+      await loadAll({ silent: true })
+      void loadSnapshots()
+      setStatus(t('rebalanceCenter.snapshots.restored', { name: snap.name }))
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSnapshotBusy(false)
+    }
+  }
+  const handleDeleteSnapshot = async (snap: RebalanceConfigSnapshot) => {
+    if (!window.confirm(t('rebalanceCenter.snapshots.confirmDelete', { name: snap.name }))) return
+    setSnapshotBusy(true)
+    try {
+      await deleteRebalanceConfigSnapshot(snap.id)
+      await loadSnapshots()
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSnapshotBusy(false)
     }
   }
 
@@ -3406,6 +3466,46 @@ export default function RebalanceCenter() {
             <button className="btn-primary" onClick={handleSaveConfig} disabled={saving}>
               {saving ? t('rebalanceCenter.saving') : t('rebalanceCenter.save')}
             </button>
+          </div>
+        )}
+        {autoOpen && (
+          <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h4 className="text-sm font-semibold">{t('rebalanceCenter.snapshots.title')}</h4>
+                <p className="text-xs text-fog/55">{t('rebalanceCenter.snapshots.subtitle')}</p>
+              </div>
+              <button className="btn-secondary text-xs px-3 py-1" onClick={handleSaveSnapshot} disabled={snapshotBusy}>
+                {t('rebalanceCenter.snapshots.saveCurrent')}
+              </button>
+            </div>
+            {snapshots.length === 0 ? (
+              <p className="text-xs text-fog/45">{t('rebalanceCenter.snapshots.empty')}</p>
+            ) : (
+              <ul className="space-y-1.5">
+                {snapshots.map((snap) => (
+                  <li key={snap.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-black/20 px-3 py-2 text-xs">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${snap.kind === 'auto' ? 'bg-cyan-400/15 text-cyan-200' : 'bg-emerald-400/15 text-emerald-200'}`}>
+                        {t(`rebalanceCenter.snapshots.kind.${snap.kind}`, snap.kind)}
+                      </span>
+                      <span className="text-fog/80">{snap.name}</span>
+                      {snap.profile && (
+                        <span className="text-fog/40">· {t(`rebalanceCenter.profile.${snap.profile}`, snap.profile)}</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <button className="text-emerald-300 hover:text-emerald-200 disabled:opacity-50" onClick={() => handleRestoreSnapshot(snap)} disabled={snapshotBusy}>
+                        {t('rebalanceCenter.snapshots.restore')}
+                      </button>
+                      <button className="text-rose-300/70 hover:text-rose-200 disabled:opacity-50" onClick={() => handleDeleteSnapshot(snap)} disabled={snapshotBusy}>
+                        {t('rebalanceCenter.snapshots.delete')}
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
       </div>

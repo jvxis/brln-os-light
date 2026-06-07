@@ -257,6 +257,14 @@ export type RebalanceNodeCalibration = {
   local_ratio: number
 }
 
+export type RebalanceConfigSnapshot = {
+  id: number
+  name: string
+  kind: string // manual | auto
+  profile: string
+  created_at: string
+}
+
 export type RebalanceReasonStat = {
   reason: string
   count: number

@@ -3232,6 +3232,19 @@
       "confirmCustom": "Congelar os valores efetivos atuais como Personalizado? Eles param de seguir um perfil.",
       "applied": "Perfil {{profile}} aplicado."
     },
+    "snapshots": {
+      "title": "Configs salvas",
+      "subtitle": "Salve a config atual e restaure depois — seguro pra testar perfis ou ajustes custom.",
+      "saveCurrent": "Salvar atual",
+      "empty": "Nenhuma config salva ainda.",
+      "restore": "Restaurar",
+      "delete": "Excluir",
+      "saved": "Config salva.",
+      "restored": "Restaurado \"{{name}}\".",
+      "confirmRestore": "Restaurar \"{{name}}\"? Isso substitui sua config de rebalance atual.",
+      "confirmDelete": "Excluir \"{{name}}\"?",
+      "kind": { "manual": "Salvo", "auto": "Auto" }
+    },
     "desktopFirst": "Desktop-first",
     "loading": "Carregando Rebalance Center...",
     "loadFailed": "Falha ao carregar o Rebalance Center.",

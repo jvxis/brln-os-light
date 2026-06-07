@@ -366,6 +366,7 @@ export default function FeeCenter() {
   const [resultsRuns, setResultsRuns] = useState('4')
   const [resultsFrom, setResultsFrom] = useState('')
   const [resultsTo, setResultsTo] = useState('')
+  const [policySearch, setPolicySearch] = useState('')
   const [logOpen, setLogOpen] = useState(false)
   const [setupOpen, setSetupOpen] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
@@ -523,6 +524,14 @@ export default function FeeCenter() {
     })
     return map
   }, [latestChanged])
+  const latestChangedIndexByKey = useMemo(() => {
+    const map: Record<string, number> = {}
+    latestChanged.forEach((item, index) => {
+      const key = channelKey(item.channel_point, item.channel_id)
+      if (key) map[key] = index
+    })
+    return map
+  }, [latestChanged])
 
   const feeUp = useMemo(
     () => latestChanged
@@ -552,6 +561,36 @@ export default function FeeCenter() {
       }
     })
   }, [channels, channelSettings, latestChangedByKey])
+  const filteredPolicyRows = useMemo(() => {
+    const query = policySearch.trim().toLowerCase()
+    const list = query
+      ? policyRows.filter((row) => {
+        const channelID = normalizeChannelID(row.channel.channel_id_str || row.channel.channel_id)
+        const haystack = [
+          row.channel.peer_alias,
+          row.channel.remote_pubkey,
+          row.channel.channel_point,
+          channelID,
+        ].join(' ').toLowerCase()
+        return haystack.includes(query)
+      })
+      : policyRows
+
+    return [...list].sort((a, b) => {
+      const aKey = channelKey(a.channel.channel_point, a.channel.channel_id_str || a.channel.channel_id)
+      const bKey = channelKey(b.channel.channel_point, b.channel.channel_id_str || b.channel.channel_id)
+      const aIndex = latestChangedIndexByKey[aKey]
+      const bIndex = latestChangedIndexByKey[bKey]
+      const aChanged = aIndex !== undefined
+      const bChanged = bIndex !== undefined
+      if (aChanged && bChanged) return aIndex - bIndex
+      if (aChanged) return -1
+      if (bChanged) return 1
+      const aAlias = (a.channel.peer_alias || a.channel.remote_pubkey || a.channel.channel_point || '').toLowerCase()
+      const bAlias = (b.channel.peer_alias || b.channel.remote_pubkey || b.channel.channel_point || '').toLowerCase()
+      return aAlias.localeCompare(bAlias)
+    })
+  }, [latestChangedIndexByKey, policyRows, policySearch])
 
   useEffect(() => {
     const targetPoint = pendingFocusRef.current
@@ -1378,7 +1417,25 @@ export default function FeeCenter() {
             <h3 className="text-lg font-semibold">{t('feeCenter.policies.title')}</h3>
             <p className="text-sm text-fog/60">{t('feeCenter.policies.subtitle')}</p>
           </div>
-          <StatusBadge label={t('feeCenter.policies.count', { count: policyRows.length })} tone="info" />
+          <StatusBadge
+            label={policySearch.trim()
+              ? t('feeCenter.policies.filteredCount', { visible: filteredPolicyRows.length, total: policyRows.length })
+              : t('feeCenter.policies.count', { count: policyRows.length })}
+            tone="info"
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            className="input-field w-full sm:max-w-md"
+            placeholder={t('feeCenter.policies.searchPlaceholder')}
+            value={policySearch}
+            onChange={(event) => setPolicySearch(event.target.value)}
+          />
+          {policySearch.trim() && (
+            <button className="btn-secondary text-xs px-3 py-2" type="button" onClick={() => setPolicySearch('')}>
+              {t('feeCenter.policies.clearSearch')}
+            </button>
+          )}
         </div>
         <div className="max-h-[560px] overflow-x-auto overflow-y-auto pr-1">
           <table className="w-full min-w-[1040px] text-sm text-fog/75">
@@ -1392,7 +1449,7 @@ export default function FeeCenter() {
               </tr>
             </thead>
             <tbody>
-              {policyRows.map((row) => {
+              {filteredPolicyRows.length ? filteredPolicyRows.map((row) => {
                 const point = row.channel.channel_point
                 const last = row.last
                 return (
@@ -1437,7 +1494,13 @@ export default function FeeCenter() {
                     </td>
                   </tr>
                 )
-              })}
+              }) : (
+                <tr>
+                  <td className="border-t border-white/5 py-6 text-center text-sm text-fog/50" colSpan={5}>
+                    {t('feeCenter.policies.noMatch')}
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

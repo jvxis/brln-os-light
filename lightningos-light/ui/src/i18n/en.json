@@ -3197,15 +3197,19 @@
       },
       "policies": {
         "title": "Channel Policies",
-      "subtitle": "Current channel fee policies enriched with latest Autofee movement and 7d economics.",
-      "count": "{{count}} channels",
-      "peer": "Peer",
-      "policy": "Policy",
-      "lastMove": "Last move",
-      "signals": "Signals",
-      "links": "Links",
-      "noMove": "No move in latest run"
-    },
+        "subtitle": "Current channel fee policies enriched with latest Autofee movement and 7d economics.",
+        "count": "{{count}} channels",
+        "filteredCount": "{{visible}} / {{total}} channels",
+        "searchPlaceholder": "Search alias, pubkey, channel point, or channel id",
+        "clearSearch": "Clear",
+        "peer": "Peer",
+        "policy": "Policy",
+        "lastMove": "Last move",
+        "signals": "Signals",
+        "links": "Links",
+        "noMove": "No move in latest run",
+        "noMatch": "No channels match this search."
+      },
     "runLog": {
       "title": "Run Log",
       "subtitle": "Technical Autofee output for audits and troubleshooting."

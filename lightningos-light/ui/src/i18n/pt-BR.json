@@ -3197,15 +3197,19 @@
       },
       "policies": {
         "title": "Políticas dos Canais",
-      "subtitle": "Policies atuais dos canais enriquecidas com o último movimento do Autofee e economia 7d.",
-      "count": "{{count}} canais",
-      "peer": "Peer",
-      "policy": "Política",
-      "lastMove": "Último movimento",
-      "signals": "Sinais",
-      "links": "Links",
-      "noMove": "Sem movimento na última rodada"
-    },
+        "subtitle": "Policies atuais dos canais enriquecidas com o último movimento do Autofee e economia 7d.",
+        "count": "{{count}} canais",
+        "filteredCount": "{{visible}} / {{total}} canais",
+        "searchPlaceholder": "Buscar alias, pubkey, channel point ou channel id",
+        "clearSearch": "Limpar",
+        "peer": "Peer",
+        "policy": "Política",
+        "lastMove": "Último movimento",
+        "signals": "Sinais",
+        "links": "Links",
+        "noMove": "Sem movimento na última rodada",
+        "noMatch": "Nenhum canal encontrado para essa busca."
+      },
     "runLog": {
       "title": "Log de Execuções",
       "subtitle": "Saída técnica do Autofee para auditoria e troubleshooting."

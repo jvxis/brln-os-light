@@ -538,8 +538,7 @@ export default function FeeCenter() {
   )
   const specialChanges = useMemo(
     () => (latestRun?.channels || [])
-      .filter((item) => item.new_inbound || resolveInboundDiscountChange(item).changed || item.category === 'error' || item.refresh_source)
-      .slice(0, 12),
+      .filter((item) => item.new_inbound || resolveInboundDiscountChange(item).changed || item.category === 'error' || item.refresh_source),
     [latestRun]
   )
 
@@ -889,8 +888,8 @@ export default function FeeCenter() {
         <h3 className="text-sm font-semibold text-fog">{title}</h3>
         <StatusBadge label={items.length} tone={tone} />
       </div>
-      <div className="mt-4 space-y-3">
-        {items.length ? items.slice(0, 8).map((item, index) => {
+      <div className={`mt-4 space-y-3 ${items.length > 3 ? 'max-h-[420px] overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable]' : ''}`}>
+        {items.length ? items.map((item, index) => {
           const point = item.channel_point || ''
           const local = numberOrZero(item.local_ppm)
           const next = numberOrZero(item.new_ppm)

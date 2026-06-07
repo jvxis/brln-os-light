@@ -2185,6 +2185,7 @@
     "autofeeMovementSettingsHint": "Use 0 or empty to keep profile defaults.",
     "autofeeMovementSettingsAuto": "Auto (profile default)",
     "autofeeMovementDefaultLabel": "Profile default: {{value}}",
+    "autofeeMovementEffectiveBaseLabel": "Effective base: {{profile}} ({{value}})",
     "autofeeMovementHintCooldownUp": "Minimum wait before another upward fee move. Higher = slower raises; lower = faster reactions.",
     "autofeeMovementHintCooldownDown": "Minimum wait before another downward fee move. Higher = slower drops; lower = faster fee reductions.",
     "autofeeMovementHintStepCap": "Maximum fee change per round. Higher = more movement per run; lower = smoother adjustments.",

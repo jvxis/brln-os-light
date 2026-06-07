@@ -2185,6 +2185,7 @@
     "autofeeMovementSettingsHint": "Use 0 ou deixe vazio para manter o padrão do perfil.",
     "autofeeMovementSettingsAuto": "Auto (padrão do perfil)",
     "autofeeMovementDefaultLabel": "Padrão do perfil: {{value}}",
+    "autofeeMovementEffectiveBaseLabel": "Base efetiva: {{profile}} ({{value}})",
     "autofeeMovementHintCooldownUp": "Espera mínima antes de nova alta de taxa. Maior = sobe mais devagar; menor = reage mais rápido.",
     "autofeeMovementHintCooldownDown": "Espera mínima antes de nova queda de taxa. Maior = cai mais devagar; menor = reduz taxas mais rápido.",
     "autofeeMovementHintStepCap": "Mudança máxima de fee por rodada. Maior = mais movimento por execução; menor = ajuste mais suave.",

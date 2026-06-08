@@ -1061,6 +1061,15 @@ func TestRecentRebalanceSignalSurgeConfirmInputsIgnoreSuccess(t *testing.T) {
 	}
 }
 
+func TestRebalanceSuccessNoUpSignalWindow(t *testing.T) {
+	if got := rebalanceSuccessNoUpSignalWindow(2 * time.Hour); got != autofeeRebalanceSuccessNoUpWindow {
+		t.Fatalf("expected minimum success no-up window %s, got %s", autofeeRebalanceSuccessNoUpWindow, got)
+	}
+	if got := rebalanceSuccessNoUpSignalWindow(8 * time.Hour); got != 8*time.Hour {
+		t.Fatalf("expected longer success no-up window to be preserved, got %s", got)
+	}
+}
+
 func TestRecentRebalanceSignalSurgeConfirmInputsUseWeakFailures(t *testing.T) {
 	capSat := int64(10_000_000)
 	minAmtSat := minSurgeConfirmRebalSat(capSat)
@@ -1294,6 +1303,50 @@ func TestLargeGapStepCapBoost(t *testing.T) {
 	boost, strong = largeGapStepCapBoost(profile, 1000, 1000)
 	if boost != 0 || strong {
 		t.Fatalf("did not expect boost for stable target: boost=%.2f strong=%v", boost, strong)
+	}
+}
+
+func TestSurgePressureStepCapLimitsLargeGapBoost(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	profile.StepCap = 0.12
+	capFrac := profile.StepCap
+	if boost, _ := largeGapStepCapBoost(profile, 1000, 1800); boost > 0 {
+		capFrac = math.Max(capFrac, profile.StepCap+boost)
+	}
+
+	if !shouldLimitSurgePressureStepUp(false, 1000, 1800, true, true, false, 0, 2) {
+		t.Fatalf("expected confirmed failed-rebalance surge to use gradual cap")
+	}
+	limit := surgePressureStepCapFrac(profile)
+	if capFrac > limit {
+		capFrac = limit
+	}
+
+	if math.Abs(capFrac-surgePressureStepCapMaxFrac) > 0.000001 {
+		t.Fatalf("expected surge cap %.2f, got %.2f", surgePressureStepCapMaxFrac, capFrac)
+	}
+	if got := applyStepCap(1000, 1800, capFrac, 5, 1000); got != 1080 {
+		t.Fatalf("expected 8%% gradual step to 1080 ppm, got %d", got)
+	}
+}
+
+func TestSurgePressureFollowUpUsesSmallCap(t *testing.T) {
+	now := time.Date(2026, 6, 8, 15, 0, 0, 0, time.UTC)
+	st := &autofeeChannelState{
+		LastDir: "up",
+		LastTs:  now.Add(-4 * time.Hour),
+	}
+	profile := autofeeProfiles["moderate"]
+	capFrac := surgePressureStepCapFrac(profile)
+	if shouldUseSurgePressureFollowUpCap(st, now) {
+		capFrac = math.Min(capFrac, surgePressureFollowUpStepCapFrac)
+	}
+
+	if math.Abs(capFrac-surgePressureFollowUpStepCapFrac) > 0.000001 {
+		t.Fatalf("expected follow-up cap %.2f, got %.2f", surgePressureFollowUpStepCapFrac, capFrac)
+	}
+	if got := applyStepCap(3000, 4000, capFrac, 5, 3000); got != 3090 {
+		t.Fatalf("expected 3%% follow-up step to 3090 ppm, got %d", got)
 	}
 }
 

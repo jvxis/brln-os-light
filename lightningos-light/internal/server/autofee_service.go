@@ -110,12 +110,16 @@ const (
 	stagnationExitMinOutCapFrac         = 0.005
 	surgeConfirmMinRounds               = 2
 	surgeConfirmRebalCapFrac            = 0.015
+	surgePressureStepCapMaxFrac         = 0.08
+	surgePressureFollowUpStepCapFrac    = 0.03
+	surgePressureFollowUpWindow         = 12 * time.Hour
 	floorRebalMinCapFrac                = 0.015
 	floorRebalMinSuccessCount           = int64(2)
 	weakRebalanceAttemptCountWeight     = 0.35
 	weakRebalanceAttemptAmtWeight       = 0.25
 	defaultSurgeHoldMaxRounds           = 6
 	defaultSurgeHoldUnlockStepPpm       = 15
+	autofeeRebalanceSuccessNoUpWindow   = 6 * time.Hour
 	defaultBootstrapHours               = 48
 	defaultBootstrapOutRatioMax         = 0.40
 	defaultBootstrapCooldownUpSec       = 3600
@@ -3594,7 +3598,8 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 		e.svc.logger.Printf("autofee: rebalStats21d unavailable: %v", err)
 	}
 	recentRebalanceTouches := map[uint64]recentRebalanceSignal{}
-	if touches, err := e.fetchRecentRebalanceTouches(ctx, e.htlcSignalWindow(), e.rebalanceFailureSignalWindow()); err == nil {
+	recentSuccessWindow := rebalanceSuccessNoUpSignalWindow(e.htlcSignalWindow())
+	if touches, err := e.fetchRecentRebalanceTouches(ctx, recentSuccessWindow, e.rebalanceFailureSignalWindow()); err == nil {
 		recentRebalanceTouches = touches
 	} else if e.svc.logger != nil {
 		e.svc.logger.Printf("autofee: recent rebalance touches unavailable: %v", err)
@@ -4035,6 +4040,13 @@ func shouldHoldAutofeeForRebalanceSettling(sig recentRebalanceSignal, now time.T
 		return true
 	}
 	return now.Sub(latest) <= window
+}
+
+func rebalanceSuccessNoUpSignalWindow(base time.Duration) time.Duration {
+	if base < autofeeRebalanceSuccessNoUpWindow {
+		return autofeeRebalanceSuccessNoUpWindow
+	}
+	return base
 }
 
 func collapseWeakRebalanceCampaigns(jobs []recentWeakRebalanceJob, campaignGap time.Duration) map[uint64]recentRebalanceSignal {
@@ -5446,6 +5458,37 @@ func largeGapStepCapBoost(profile autofeeProfile, localPpm int, targetPpm int) (
 		return 0, false
 	}
 	return boost, strong
+}
+
+func shouldLimitSurgePressureStepUp(marketRefillMode bool, localPpm int, targetPpm int, surgeApplied bool, surgeConfirmSignal bool, surgeRoundConfirmSignal bool, recentSuccessCount int, recentFailCount int) bool {
+	if marketRefillMode || localPpm <= 0 || targetPpm <= localPpm {
+		return false
+	}
+	if surgeApplied && (surgeConfirmSignal || surgeRoundConfirmSignal || recentFailCount > 0) {
+		return true
+	}
+	return recentSuccessCount == 0 && recentFailCount > 0
+}
+
+func surgePressureStepCapFrac(profile autofeeProfile) float64 {
+	capFrac := profile.StepCap
+	if capFrac <= 0 {
+		capFrac = surgePressureStepCapMaxFrac
+	}
+	return math.Min(capFrac, surgePressureStepCapMaxFrac)
+}
+
+func shouldUseSurgePressureFollowUpCap(st *autofeeChannelState, now time.Time) bool {
+	if st == nil || !strings.EqualFold(st.LastDir, "up") || st.LastTs.IsZero() {
+		return false
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if st.LastTs.After(now) {
+		return true
+	}
+	return now.Sub(st.LastTs) <= surgePressureFollowUpWindow
 }
 
 func shouldEmitStallAlert(stalledRounds int, targetGapPct float64) bool {
@@ -9135,6 +9178,17 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		if marketCapFrac, marketCapTags := marketRefillStepCapFrac(e.profile, outRatio); marketCapFrac > capFrac {
 			capFrac = marketCapFrac
 			tags = append(tags, marketCapTags...)
+		}
+	}
+	if shouldLimitSurgePressureStepUp(marketRefillMode, localPpm, target, surgeApplied, surgeConfirmSignal, surgeRoundConfirmSignal, recentRebalanceCount, recentRebalanceWeakCount) {
+		limitCapFrac := surgePressureStepCapFrac(e.profile)
+		if shouldUseSurgePressureFollowUpCap(st, e.now) {
+			limitCapFrac = math.Min(limitCapFrac, surgePressureFollowUpStepCapFrac)
+			tags = appendAutofeeTagOnce(tags, "surge-followup-stepcap")
+		}
+		if limitCapFrac > 0 && capFrac > limitCapFrac {
+			capFrac = limitCapFrac
+			tags = appendAutofeeTagOnce(tags, "surge-stepcap-gradual")
 		}
 	}
 

@@ -357,6 +357,73 @@ func TestEvaluateChannelGolden_OrganicRefillCapsRevfloor(t *testing.T) {
 	}
 }
 
+func TestEvaluateChannelGolden_HighLiquidityOrganicRefillTightensRevfloorCap(t *testing.T) {
+	now := time.Date(2026, 6, 9, 18, 0, 0, 0, time.UTC)
+	cfg := goldenDefaultCfg()
+	calib := goldenDefaultCalib()
+	calib.RevfloorBaseline = 22
+	calib.RevfloorMinAbs = 356
+	engine := newGoldenEngine(t, cfg, calib, now)
+
+	ch := goldenChannel(918, 10_000_000, 9_300_000, 151, true)
+	st := &autofeeChannelState{
+		ChannelID:     ch.ChannelID,
+		LastPpm:       151,
+		LastSeed:      158,
+		BaselineFwd7d: 100,
+		ClassLabel:    "sink",
+		ClassConf:     0.8,
+		BiasEma:       0.7,
+		FirstSeen:     now.Add(-30 * 24 * time.Hour),
+		LastTs:        now.Add(-12 * time.Hour),
+		LastDir:       "down",
+	}
+	forward7d := map[uint64]forwardStat{
+		ch.ChannelID: {FeeMsat: 2_112_000, AmtMsat: 16_000_000_000, Count: 80},
+	}
+	inbound7d := map[uint64]inboundStat{
+		ch.ChannelID: {AmtMsat: 10_000_000_000, Count: 80},
+	}
+	rebalStats7d := rebalStats{ByChannel: map[uint64]rebalStat{
+		ch.ChannelID: {FeeMsat: 83_000, AmtMsat: 1_000_000_000, Count: 1},
+	}}
+	emptyRebal := rebalStats{ByChannel: map[uint64]rebalStat{}}
+
+	d := engine.evaluateChannel(
+		ch,
+		st,
+		forward7d,
+		map[uint64]forwardStat{},
+		forward7d,
+		map[uint64]forwardStat{},
+		inbound7d,
+		inbound7d,
+		rebalStats7d,
+		rebalStats7d,
+		emptyRebal,
+		map[uint64]recentRebalanceSignal{},
+		map[uint64]htlcFailureSignal{},
+		1_000_000_000,
+		0,
+		false,
+	)
+	if d == nil {
+		t.Fatalf("expected decision")
+	}
+	if d.Floor >= calib.RevfloorMinAbs {
+		t.Fatalf("expected high-liquidity organic refill to cap revfloor below %d, got floor=%d floor_src=%s tags=%v", calib.RevfloorMinAbs, d.Floor, d.FloorSrc, d.Tags)
+	}
+	if d.NewPpm >= calib.RevfloorMinAbs {
+		t.Fatalf("expected high-liquidity organic refill to prevent jump to revfloor_min, got new=%d tags=%v", d.NewPpm, d.Tags)
+	}
+	if !goldenHasAnyTag(d.Tags, "revfloor-full-organic-cap") {
+		t.Fatalf("expected high-liquidity organic revfloor cap tag, got %v", d.Tags)
+	}
+	if d.FloorSrc != "revfloor" {
+		t.Fatalf("expected capped revfloor to remain auditable as revfloor, got %q tags=%v", d.FloorSrc, d.Tags)
+	}
+}
+
 // goldenHasAnyTag matches either an exact tag or a tag that *starts with* the
 // pattern when the pattern ends in "*". This lets us assert "any htlc-liq+...
 // bump" without binding to a specific percentage.

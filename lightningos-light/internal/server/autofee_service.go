@@ -155,7 +155,9 @@ const (
 	organicRefillMaxRebalInSat          = 50_000
 	organicRefillRevShareMax            = 0.02
 	organicRefillStrongNegMarginPpm     = -50
+	organicRefillHighOutRatioMin        = 0.80
 	revfloorOrganicLocalRefMult         = 3.00
+	revfloorOrganicHighLiquidityRefMult = 1.35
 	rescueScoreMax                      = 55
 	rescueRevShareMax                   = 0.02
 	rescueMinRounds                     = 3
@@ -4671,7 +4673,7 @@ func revfloorLocalReferencePpm(outPpm7d int, rebalRefPpm int, seed float64) int 
 	return refPpm
 }
 
-func capRevfloorForOrganicRefill(revFloor int, localRefPpm int, minPpm int, maxPpm int, organicRefill bool, revShare float64, marginPpm7d int, recentRebalanceCostPpm int) (int, bool) {
+func capRevfloorForOrganicRefill(revFloor int, localRefPpm int, targetPpm int, minPpm int, maxPpm int, organicRefill bool, highLiquidity bool, revShare float64, marginPpm7d int, recentRebalanceCostPpm int) (int, bool) {
 	if !organicRefill || revFloor <= 0 || localRefPpm <= 0 || recentRebalanceCostPpm > 0 {
 		return revFloor, false
 	}
@@ -4682,7 +4684,14 @@ func capRevfloorForOrganicRefill(revFloor int, localRefPpm int, minPpm int, maxP
 		return revFloor, false
 	}
 
-	capPpm := int(math.Ceil(float64(localRefPpm) * revfloorOrganicLocalRefMult))
+	refMult := revfloorOrganicLocalRefMult
+	if highLiquidity {
+		refMult = revfloorOrganicHighLiquidityRefMult
+	}
+	capPpm := int(math.Ceil(float64(localRefPpm) * refMult))
+	if highLiquidity && targetPpm > capPpm {
+		capPpm = targetPpm
+	}
 	capPpm = clampInt(capPpm, minPpm, maxPpm)
 	if capPpm <= 0 || capPpm >= revFloor {
 		return revFloor, false
@@ -9547,10 +9556,14 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		revFloor = clampInt(revFloor, e.cfg.MinPpm, e.cfg.MaxPpm)
 		if revFloor > floor {
 			localRefPpm := revfloorLocalReferencePpm(outPpm7d, rebalHistoryRefPpm, seed)
-			if cappedRevFloor, capped := capRevfloorForOrganicRefill(revFloor, localRefPpm, e.cfg.MinPpm, e.cfg.MaxPpm, organicRefillActive, revShare, marginPpm7d, recentRebalanceCostPpm); capped {
+			organicHighLiquidity := organicRefillActive && (goodLiquidityHold || outRatio >= organicRefillHighOutRatioMin)
+			if cappedRevFloor, capped := capRevfloorForOrganicRefill(revFloor, localRefPpm, target, e.cfg.MinPpm, e.cfg.MaxPpm, organicRefillActive, organicHighLiquidity, revShare, marginPpm7d, recentRebalanceCostPpm); capped {
 				revFloor = cappedRevFloor
 				tags = appendAutofeeTagOnce(tags, "revfloor-organic-cap")
 				tags = appendAutofeeTagOnce(tags, "revfloor-local-cap")
+				if organicHighLiquidity {
+					tags = appendAutofeeTagOnce(tags, "revfloor-full-organic-cap")
+				}
 			}
 		}
 		if revFloor > floor {
@@ -11676,6 +11689,8 @@ func formatAutofeeTags(d *decision) string {
 			add("revfloor-organic-cap")
 		case t == "revfloor-local-cap":
 			add("revfloor-local-cap")
+		case t == "revfloor-full-organic-cap":
+			add("revfloor-full-organic-cap")
 		case t == "peg":
 			add("📌peg")
 		case t == "peg-grace":

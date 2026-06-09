@@ -1350,6 +1350,31 @@ func TestSurgePressureFollowUpUsesSmallCap(t *testing.T) {
 	}
 }
 
+func TestOrganicAutofeeRefillDetectsForwardInboundWithoutRebalance(t *testing.T) {
+	forwardIn := inboundStat{AmtMsat: 16_700_000_000, Count: 80}
+	forwardOut := forwardStat{AmtMsat: 16_000_000_000, Count: 80}
+	if !hasOrganicAutofeeRefill(forwardIn, forwardOut, rebalStat{}, 10_000_000) {
+		t.Fatalf("expected strong forward inbound with no rebalance to be organic refill")
+	}
+
+	rebalIn := rebalStat{AmtMsat: 2_000_000_000, Count: 1}
+	if hasOrganicAutofeeRefill(forwardIn, forwardOut, rebalIn, 10_000_000) {
+		t.Fatalf("expected large rebalance-in amount to disable organic refill")
+	}
+}
+
+func TestCapRevfloorForOrganicRefillUsesLocalReference(t *testing.T) {
+	capped, applied := capRevfloorForOrganicRefill(338, revfloorLocalReferencePpm(12, 0, 14), 10, 2000, true, 0, -3, 0)
+	if !applied || capped != 42 {
+		t.Fatalf("expected revfloor to cap at local reference x%.0f: capped=%d applied=%v", revfloorOrganicLocalRefMult, capped, applied)
+	}
+
+	unchanged, applied := capRevfloorForOrganicRefill(338, 14, 10, 2000, true, 0, -3, 865)
+	if applied || unchanged != 338 {
+		t.Fatalf("expected recent rebalance cost to preserve revfloor: capped=%d applied=%v", unchanged, applied)
+	}
+}
+
 func TestApplySurgeConfirmationGate(t *testing.T) {
 	st := &autofeeChannelState{}
 

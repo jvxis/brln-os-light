@@ -147,6 +147,15 @@ const (
 	rescueOutrateExitMult               = 1.05
 	rescueTargetOutrateDivergenceFrac   = 0.03
 	rescueSoftRebalFloorMult            = 1.02
+	organicRefillMinInSat               = 100_000
+	organicRefillMinInCapFrac           = 0.002
+	organicRefillMinInCount             = 3
+	organicRefillInOutRatioMin          = 0.50
+	organicRefillMaxRebalInFrac         = 0.10
+	organicRefillMaxRebalInSat          = 50_000
+	organicRefillRevShareMax            = 0.02
+	organicRefillStrongNegMarginPpm     = -50
+	revfloorOrganicLocalRefMult         = 3.00
 	rescueScoreMax                      = 55
 	rescueRevShareMax                   = 0.02
 	rescueMinRounds                     = 3
@@ -3666,7 +3675,7 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 		}
 
 		st := state[ch.ChannelID]
-		decision := e.evaluateChannel(ch, st, forwardStats, forwardStats1d, forwardStats7d, forwardStats21d, inboundStats, rebalStats, rebalStats21d, recentRebalanceTouches, htlcSignals, totalOutFeeMsat, rebalGlobalPpm, negMarginGlobal)
+		decision := e.evaluateChannel(ch, st, forwardStats, forwardStats1d, forwardStats7d, forwardStats21d, inboundStats, inboundStats7d, rebalStats, rebalStats7d, rebalStats21d, recentRebalanceTouches, htlcSignals, totalOutFeeMsat, rebalGlobalPpm, negMarginGlobal)
 		if decision == nil {
 			continue
 		}
@@ -4620,6 +4629,65 @@ func minRebalFallback21dSat(capacitySat int64) int64 {
 
 func hasRebalFallback21dSignal(rebalAmt21dSat int64, capacitySat int64) bool {
 	return rebalAmt21dSat >= minRebalFallback21dSat(capacitySat)
+}
+
+func hasOrganicAutofeeRefill(forwardIn7d inboundStat, forwardOut7d forwardStat, rebalIn7d rebalStat, capacitySat int64) bool {
+	inSat := forwardIn7d.AmtMsat / 1000
+	outSat := forwardOut7d.AmtMsat / 1000
+	if forwardIn7d.Count < organicRefillMinInCount || inSat <= 0 || outSat <= 0 {
+		return false
+	}
+
+	minInSat := int64(organicRefillMinInSat)
+	if capacitySat > 0 {
+		capMin := int64(math.Ceil(float64(capacitySat) * organicRefillMinInCapFrac))
+		if capMin > minInSat {
+			minInSat = capMin
+		}
+	}
+	if inSat < minInSat {
+		return false
+	}
+	if float64(inSat) < float64(outSat)*organicRefillInOutRatioMin {
+		return false
+	}
+
+	maxRebalInSat := int64(organicRefillMaxRebalInSat)
+	if organicRefillMaxRebalInFrac > 0 {
+		fracMax := int64(math.Round(float64(inSat) * organicRefillMaxRebalInFrac))
+		if fracMax > maxRebalInSat {
+			maxRebalInSat = fracMax
+		}
+	}
+	rebalInSat := rebalIn7d.AmtMsat / 1000
+	return rebalInSat <= maxRebalInSat
+}
+
+func revfloorLocalReferencePpm(outPpm7d int, rebalRefPpm int, seed float64) int {
+	refPpm := maxInt(outPpm7d, rebalRefPpm)
+	if seed > 0 {
+		refPpm = maxInt(refPpm, int(math.Round(seed)))
+	}
+	return refPpm
+}
+
+func capRevfloorForOrganicRefill(revFloor int, localRefPpm int, minPpm int, maxPpm int, organicRefill bool, revShare float64, marginPpm7d int, recentRebalanceCostPpm int) (int, bool) {
+	if !organicRefill || revFloor <= 0 || localRefPpm <= 0 || recentRebalanceCostPpm > 0 {
+		return revFloor, false
+	}
+	if revShare > organicRefillRevShareMax {
+		return revFloor, false
+	}
+	if marginPpm7d < organicRefillStrongNegMarginPpm {
+		return revFloor, false
+	}
+
+	capPpm := int(math.Ceil(float64(localRefPpm) * revfloorOrganicLocalRefMult))
+	capPpm = clampInt(capPpm, minPpm, maxPpm)
+	if capPpm <= 0 || capPpm >= revFloor {
+		return revFloor, false
+	}
+	return capPpm, true
 }
 
 func applyAutofeeRefreshRebalMarkup(referencePpm int, markupFrac float64) int {
@@ -8025,7 +8093,7 @@ func formatTelegramAutofeePrediction(code string, cooldownHours int) string {
 
 func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeChannelState, forwardStats map[uint64]forwardStat,
 	forwardStats1d map[uint64]forwardStat, forwardStats7d map[uint64]forwardStat, forwardStats21d map[uint64]forwardStat,
-	inboundStats map[uint64]inboundStat, rebalStats rebalStats, rebalStats21d rebalStats, recentRebalanceTouches map[uint64]recentRebalanceSignal,
+	inboundStats map[uint64]inboundStat, inboundStats7d map[uint64]inboundStat, rebalStats rebalStats, rebalStats7d rebalStats, rebalStats21d rebalStats, recentRebalanceTouches map[uint64]recentRebalanceSignal,
 	htlcSignals map[uint64]htlcFailureSignal, totalOutFeeMsat int64, rebalGlobalPpm int, negMarginGlobal bool) *decision {
 
 	localPpm := 0
@@ -8053,6 +8121,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	fwd7d := forwardStats7d[ch.ChannelID]
 	fwd21d := forwardStats21d[ch.ChannelID]
 	inb := inboundStats[ch.ChannelID]
+	inb7d := inboundStats7d[ch.ChannelID]
 	outPpm7dRaw := ppmMsat(fwd.FeeMsat, fwd.AmtMsat)
 	outPpm7d := outPpm7dRaw
 	outPpm21d := ppmMsat(fwd21d.FeeMsat, fwd21d.AmtMsat)
@@ -8071,6 +8140,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	outAmt1dSat := fwd1d.AmtMsat / 1000
 	outAmt7dSat := fwd7d.AmtMsat / 1000
 	rebal := rebalStats.ByChannel[ch.ChannelID]
+	rebalIn7d := rebalStats7d.ByChannel[ch.ChannelID]
 	rebal21d := rebalStats21d.ByChannel[ch.ChannelID]
 	rebalAmtSat7d := rebal.AmtMsat / 1000
 	perCost := 0
@@ -8846,6 +8916,10 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		tags = append(tags, "no-signal-noup")
 	}
 	marginPpm7d := outPpm7d - int(float64(baseCostPpm)*1.10)
+	organicRefillActive := hasOrganicAutofeeRefill(inb7d, fwd7d, rebalIn7d, ch.CapacitySat)
+	if organicRefillActive {
+		tags = appendAutofeeTagOnce(tags, "organic-refill")
+	}
 	if marginPpm7d < 0 {
 		tags = append(tags, "neg-margin")
 		minFwds := e.profile.NegMarginSurgeMinFwds
@@ -9471,6 +9545,14 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if e.cfg.RevfloorEnabled && !superSourceActive && revfloorBaseline > 0 && st.BaselineFwd7d >= revfloorBaseline {
 		revFloor := int(math.Round(math.Max(float64(seed)*0.40, float64(revfloorMinAbs))))
 		revFloor = clampInt(revFloor, e.cfg.MinPpm, e.cfg.MaxPpm)
+		if revFloor > floor {
+			localRefPpm := revfloorLocalReferencePpm(outPpm7d, rebalHistoryRefPpm, seed)
+			if cappedRevFloor, capped := capRevfloorForOrganicRefill(revFloor, localRefPpm, e.cfg.MinPpm, e.cfg.MaxPpm, organicRefillActive, revShare, marginPpm7d, recentRebalanceCostPpm); capped {
+				revFloor = cappedRevFloor
+				tags = appendAutofeeTagOnce(tags, "revfloor-organic-cap")
+				tags = appendAutofeeTagOnce(tags, "revfloor-local-cap")
+			}
+		}
 		if revFloor > floor {
 			floor = revFloor
 			floorSrc = "revfloor"
@@ -11586,8 +11668,14 @@ func formatAutofeeTags(d *decision) string {
 			add("⚡extreme-unlock")
 		case t == "extreme-drain-turbo":
 			add("🚀extreme-drain+")
+		case t == "organic-refill":
+			add("organic-refill")
 		case t == "revfloor":
 			add("🧱revfloor")
+		case t == "revfloor-organic-cap":
+			add("revfloor-organic-cap")
+		case t == "revfloor-local-cap":
+			add("revfloor-local-cap")
 		case t == "peg":
 			add("📌peg")
 		case t == "peg-grace":

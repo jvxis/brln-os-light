@@ -201,7 +201,7 @@ func runGoldenScenario(t *testing.T, sc goldenScenario) {
 	d := engine.evaluateChannel(
 		sc.channel, sc.state,
 		forward7d, forward1d, forward7d, forward21d,
-		inbound, rebalStats, rebalStats21d, rebalanceTouches,
+		inbound, inbound, rebalStats, rebalStats, rebalStats21d, rebalanceTouches,
 		htlcSignals,
 		sc.totalOutFeeMsat, sc.rebalGlobalPpm, sc.negMarginGlobal,
 	)
@@ -267,6 +267,8 @@ func TestEvaluateChannelNormalizesExtremeCurrentInboundPolicy(t *testing.T) {
 		map[uint64]forwardStat{},
 		map[uint64]forwardStat{},
 		map[uint64]inboundStat{},
+		map[uint64]inboundStat{},
+		rebalStats{ByChannel: map[uint64]rebalStat{}},
 		rebalStats{ByChannel: map[uint64]rebalStat{}},
 		rebalStats{ByChannel: map[uint64]rebalStat{}},
 		map[uint64]recentRebalanceSignal{},
@@ -289,6 +291,69 @@ func TestEvaluateChannelNormalizesExtremeCurrentInboundPolicy(t *testing.T) {
 	}
 	if st.LastInboundDiscount != 450 {
 		t.Fatalf("expected state inbound discount to be normalized, got %d", st.LastInboundDiscount)
+	}
+}
+
+func TestEvaluateChannelGolden_OrganicRefillCapsRevfloor(t *testing.T) {
+	now := time.Date(2026, 6, 9, 15, 20, 0, 0, time.UTC)
+	cfg := goldenDefaultCfg()
+	calib := goldenDefaultCalib()
+	calib.RevfloorBaseline = 22
+	calib.RevfloorMinAbs = 338
+	engine := newGoldenEngine(t, cfg, calib, now)
+
+	ch := goldenChannel(909, 10_000_000, 6_900_000, 10, true)
+	st := &autofeeChannelState{
+		ChannelID:     ch.ChannelID,
+		LastPpm:       10,
+		LastSeed:      14,
+		BaselineFwd7d: 100,
+		ClassLabel:    "router",
+		ClassConf:     0.8,
+		FirstSeen:     now.Add(-30 * 24 * time.Hour),
+		LastTs:        now.Add(-12 * time.Hour),
+		LastDir:       "down",
+	}
+	forward7d := map[uint64]forwardStat{
+		ch.ChannelID: {FeeMsat: 192_000, AmtMsat: 16_000_000_000, Count: 80},
+	}
+	inbound7d := map[uint64]inboundStat{
+		ch.ChannelID: {AmtMsat: 16_700_000_000, Count: 80},
+	}
+	emptyRebal := rebalStats{ByChannel: map[uint64]rebalStat{}}
+
+	d := engine.evaluateChannel(
+		ch,
+		st,
+		forward7d,
+		map[uint64]forwardStat{},
+		forward7d,
+		map[uint64]forwardStat{},
+		inbound7d,
+		inbound7d,
+		emptyRebal,
+		emptyRebal,
+		emptyRebal,
+		map[uint64]recentRebalanceSignal{},
+		map[uint64]htlcFailureSignal{},
+		20_000_000,
+		0,
+		false,
+	)
+	if d == nil {
+		t.Fatalf("expected decision")
+	}
+	if d.Floor >= calib.RevfloorMinAbs {
+		t.Fatalf("expected organic refill to cap revfloor below %d, got floor=%d floor_src=%s tags=%v", calib.RevfloorMinAbs, d.Floor, d.FloorSrc, d.Tags)
+	}
+	if d.NewPpm >= calib.RevfloorMinAbs {
+		t.Fatalf("expected organic refill to prevent jump to revfloor_min, got new=%d tags=%v", d.NewPpm, d.Tags)
+	}
+	if !goldenHasAnyTag(d.Tags, "organic-refill") || !goldenHasAnyTag(d.Tags, "revfloor-organic-cap") {
+		t.Fatalf("expected organic refill cap tags, got %v", d.Tags)
+	}
+	if d.FloorSrc != "revfloor" {
+		t.Fatalf("expected capped revfloor to remain auditable as revfloor, got %q tags=%v", d.FloorSrc, d.Tags)
 	}
 }
 

@@ -216,7 +216,7 @@ export default function BuyDepix() {
     }
     if (!Number.isFinite(grossCents) || grossCents <= 0) return t('depix.amountInvalid')
     const min = config?.min_amount_cents ?? 10000
-    const max = config?.max_amount_cents ?? 200000
+    const max = config?.max_amount_cents ?? 50000
     if (grossCents < min || grossCents > max) {
       return t('depix.amountRange', { min: brl.format(min / 100), max: brl.format(max / 100) })
     }

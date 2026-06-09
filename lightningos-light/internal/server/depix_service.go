@@ -23,7 +23,7 @@ const (
 	depixProviderCreatePath = "/v1/dep_split_lock"
 	depixProviderStatusPath = "/v1/deposits/%s"
 
-	depixDefaultPurpose = "Buy DePix"
+	depixDefaultPurpose        = "Buy DePix"
 	depixTerminalRecheckWindow = 2 * time.Hour
 )
 
@@ -39,23 +39,23 @@ type DepixService struct {
 }
 
 type depixConfig struct {
-	Enabled            bool   `json:"enabled"`
-	Timezone           string `json:"timezone"`
-	MinAmountCents     int64  `json:"min_amount_cents"`
-	MaxAmountCents     int64  `json:"max_amount_cents"`
-	DailyLimitCents    int64  `json:"daily_limit_cents"`
-	DailyUsedCents     int64  `json:"daily_used_cents"`
-	DailyRemainingCents int64 `json:"daily_remaining_cents"`
-	EulenFeeCents      int64  `json:"eulen_fee_cents"`
-	BrlnFeeBPS         int64  `json:"brln_fee_bps"`
-	BrlnFeePercent     string `json:"brln_fee_percent"`
+	Enabled             bool   `json:"enabled"`
+	Timezone            string `json:"timezone"`
+	MinAmountCents      int64  `json:"min_amount_cents"`
+	MaxAmountCents      int64  `json:"max_amount_cents"`
+	DailyLimitCents     int64  `json:"daily_limit_cents"`
+	DailyUsedCents      int64  `json:"daily_used_cents"`
+	DailyRemainingCents int64  `json:"daily_remaining_cents"`
+	EulenFeeCents       int64  `json:"eulen_fee_cents"`
+	BrlnFeeBPS          int64  `json:"brln_fee_bps"`
+	BrlnFeePercent      string `json:"brln_fee_percent"`
 }
 
 type depixCreateRequest struct {
-	UserKey      string `json:"user_key"`
-	Timezone     string `json:"timezone"`
+	UserKey       string `json:"user_key"`
+	Timezone      string `json:"timezone"`
 	LiquidAddress string `json:"liquid_address"`
-	AmountBRL    string `json:"amount_brl"`
+	AmountBRL     string `json:"amount_brl"`
 }
 
 type depixOrder struct {
@@ -146,12 +146,20 @@ create table if not exists depix_settings (
   provider_api_key text not null default '',
   default_timezone text not null default 'America/Sao_Paulo',
   min_amount_cents bigint not null default 10000,
-  max_amount_cents bigint not null default 200000,
-  daily_limit_cents bigint not null default 600000,
+  max_amount_cents bigint not null default 50000,
+  daily_limit_cents bigint not null default 300000,
   eulen_fee_cents bigint not null default 99,
   brln_fee_bps bigint not null default 150,
   updated_at timestamptz not null default now()
 );`); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(ctx, `
+alter table depix_settings
+  alter column max_amount_cents set default 50000,
+  alter column daily_limit_cents set default 300000;
+`); err != nil {
 		return err
 	}
 
@@ -173,8 +181,8 @@ set
   provider_api_key = coalesce(nullif(provider_api_key, ''), $3),
   default_timezone = coalesce(nullif(default_timezone, ''), $4),
   min_amount_cents = case when min_amount_cents <= 0 then $5 else min_amount_cents end,
-  max_amount_cents = case when max_amount_cents <= 0 then $6 else max_amount_cents end,
-  daily_limit_cents = case when daily_limit_cents <= 0 then $7 else daily_limit_cents end,
+  max_amount_cents = case when max_amount_cents <= 0 or max_amount_cents > $6 then $6 else max_amount_cents end,
+  daily_limit_cents = case when daily_limit_cents <= 0 or daily_limit_cents > $7 then $7 else daily_limit_cents end,
   eulen_fee_cents = case when eulen_fee_cents < 0 then $8 else eulen_fee_cents end,
   brln_fee_bps = case when brln_fee_bps <= 0 then $9 else brln_fee_bps end
 where id = $1;
@@ -702,10 +710,10 @@ where id=$1
 	if settings.MinAmountCents <= 0 {
 		settings.MinAmountCents = depixDefaultMinAmountCents
 	}
-	if settings.MaxAmountCents <= 0 {
+	if settings.MaxAmountCents <= 0 || settings.MaxAmountCents > depixDefaultMaxAmountCents {
 		settings.MaxAmountCents = depixDefaultMaxAmountCents
 	}
-	if settings.DailyLimitCents <= 0 {
+	if settings.DailyLimitCents <= 0 || settings.DailyLimitCents > depixDefaultDailyLimitCents {
 		settings.DailyLimitCents = depixDefaultDailyLimitCents
 	}
 	if settings.EulenFeeCents < 0 {

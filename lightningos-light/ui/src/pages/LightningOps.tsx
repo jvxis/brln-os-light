@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { acceptBalancedOpenSession, addLnWatchtower, boostPeers, bumpFeeCloseManagerSession, bumpPendingOpenChannel, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getChannelRankings, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelFees, getLnChannelPeerRecommendations, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, previewBatchOpenChannels, previewOpenChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, recoverCloseManagerSession, refreshAutofeeReferences, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker } from '../api'
 import { getLocale } from '../i18n'
@@ -987,6 +987,7 @@ export default function LightningOps() {
   const [channelRankingMap, setChannelRankingMap] = useState<Record<string, ChannelRankingItem>>({})
   const [channelsSubview, setChannelsSubview] = useState<'channels' | 'close_recovery'>('channels')
   const [channelsViewMode, setChannelsViewMode] = useState<ChannelsViewMode>(() => readChannelsViewMode())
+  const [channelsListHeightPx, setChannelsListHeightPx] = useState<number | null>(null)
   const [lightningToolsOpen, setLightningToolsOpen] = useState(false)
   const [peersOpen, setPeersOpen] = useState(false)
   const [closedChannelsOpen, setClosedChannelsOpen] = useState(false)
@@ -1196,6 +1197,11 @@ export default function LightningOps() {
   const focusClearTimerRef = useRef<number | null>(null)
   const peerFocusClearTimerRef = useRef<number | null>(null)
   const condensedFeeFlashTimersRef = useRef<Record<string, number>>({})
+  const channelsListRef = useRef<HTMLDivElement | null>(null)
+  const channelsListContentRef = useRef<HTMLDivElement | null>(null)
+  const channelsListAutoHeightRef = useRef(0)
+  const channelsListHeightPxRef = useRef<number | null>(null)
+  const channelsListManualResizeRef = useRef(false)
   const [feeStatus, setFeeStatus] = useState('')
 
   const formatPing = (value: number) => {
@@ -3565,6 +3571,66 @@ export default function LightningOps() {
     })
     return sorted
   }, [baseFilteredChannels, channelRankingMap, fcRiskOnly, movementFilter, profitFilter, rankingFilter, sortBy, sortDir])
+
+  const channelsListLayoutKey = useMemo(
+    () => filteredChannels.map((ch) => ch.channel_point).join('|'),
+    [filteredChannels],
+  )
+
+  useEffect(() => {
+    channelsListHeightPxRef.current = channelsListHeightPx
+  }, [channelsListHeightPx])
+
+  useLayoutEffect(() => {
+    channelsListManualResizeRef.current = false
+    const contentEl = channelsListContentRef.current
+    if (channelsSubview !== 'channels' || filteredChannels.length === 0 || !contentEl || typeof window === 'undefined') {
+      channelsListAutoHeightRef.current = 0
+      setChannelsListHeightPx(null)
+      return undefined
+    }
+    const measure = () => {
+      if (channelsListManualResizeRef.current) return
+      const defaultMaxHeight = Math.max(240, Math.floor(window.innerHeight * (window.innerWidth >= 1280 ? 0.78 : 0.7)))
+      const contentHeight = Math.ceil(contentEl.scrollHeight)
+      const nextHeight = Math.min(contentHeight, defaultMaxHeight)
+      channelsListAutoHeightRef.current = nextHeight
+      setChannelsListHeightPx((current) => (
+        current !== null && Math.abs(current - nextHeight) <= 1 ? current : nextHeight
+      ))
+    }
+    measure()
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null
+    observer?.observe(contentEl)
+    window.addEventListener('resize', measure)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [
+    channelsListLayoutKey,
+    channelsSubview,
+    channelsViewMode,
+  ])
+
+  useEffect(() => {
+    const listEl = channelsListRef.current
+    if (channelsSubview !== 'channels' || !listEl || typeof ResizeObserver === 'undefined') return undefined
+    const observer = new ResizeObserver((entries) => {
+      const height = Math.round(entries[0]?.contentRect.height || 0)
+      if (height <= 0) return
+      const autoHeight = channelsListAutoHeightRef.current
+      const currentHeight = channelsListHeightPxRef.current
+      if (Math.abs(height - autoHeight) <= 2) return
+      if (currentHeight !== null && Math.abs(height - currentHeight) <= 2) return
+      channelsListManualResizeRef.current = true
+      channelsListHeightPxRef.current = height
+      setChannelsListHeightPx(height)
+    })
+    observer.observe(listEl)
+    return () => observer.disconnect()
+  }, [channelsListLayoutKey, channelsSubview, channelsViewMode])
+
   useEffect(() => {
     if (typeof window === 'undefined') return
     const targetChannelPoint = pendingScrollChannelRef.current
@@ -5865,6 +5931,8 @@ export default function LightningOps() {
     </button>
   )
 
+  const channelsListHeightStyle = channelsListHeightPx !== null ? { height: `${channelsListHeightPx}px` } : undefined
+
   return (
     <section className="space-y-6">
       <div className="section-card">
@@ -6532,8 +6600,13 @@ export default function LightningOps() {
           </div>
         {filteredChannels.length ? (
           channelsViewMode === 'condensed' ? (
-            <div className="max-h-[70vh] overflow-auto rounded-xl border border-white/10 bg-ink/50 xl:max-h-[78vh]">
-              <table className="w-full min-w-[1180px] text-left text-[11px]">
+            <div
+              ref={channelsListRef}
+              className="resize-y overflow-auto rounded-xl border border-white/10 bg-ink/50"
+              style={channelsListHeightStyle}
+            >
+              <div ref={channelsListContentRef} className="min-w-[1180px]">
+              <table className="w-full text-left text-[11px]">
                 <thead className="sticky top-0 z-10 bg-ink/95 text-[10px] uppercase tracking-wide text-fog/55 backdrop-blur">
                   <tr>
                     <th className="px-3 py-2">{t('lightningOps.condensedChannel')}</th>
@@ -6807,10 +6880,15 @@ export default function LightningOps() {
                   })}
                 </tbody>
               </table>
+              </div>
             </div>
           ) : (
-            <div className="max-h-[70vh] overflow-y-auto pr-2 xl:max-h-[78vh]">
-              <div className="grid gap-3">
+            <div
+              ref={channelsListRef}
+              className="resize-y overflow-auto pr-2"
+              style={channelsListHeightStyle}
+            >
+              <div ref={channelsListContentRef} className="grid gap-3">
               {filteredChannels.map((ch) => {
                 const localDisabled = ch.local_disabled ?? isLocalChanDisabled(ch.chan_status_flags)
                 const statusBusy = chanStatusBusy === ch.channel_point

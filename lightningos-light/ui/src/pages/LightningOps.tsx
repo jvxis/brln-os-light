@@ -6509,15 +6509,13 @@ export default function LightningOps() {
           channelsViewMode === 'condensed' ? (
           <div className="h-[70vh] min-h-[520px] resize-y overflow-y-auto pr-2 xl:h-[78vh] xl:min-h-[640px]">
             <div className="overflow-x-auto rounded-xl border border-white/10 bg-ink/50">
-              <table className="w-full min-w-[1360px] text-left text-[11px]">
+              <table className="w-full min-w-[1180px] text-left text-[11px]">
                 <thead className="sticky top-0 z-10 bg-ink/95 text-[10px] uppercase tracking-wide text-fog/55 backdrop-blur">
                   <tr>
                     <th className="px-3 py-2">{t('lightningOps.condensedChannel')}</th>
-                    <th className="px-3 py-2">{t('lightningOps.outbound')}</th>
-                    <th className="px-3 py-2">{t('lightningOps.capacity')}</th>
-                    <th className="px-3 py-2">{t('lightningOps.inbound')}</th>
+                    <th className="px-3 py-2 text-center">{t('lightningOps.condensedLiquidity')}</th>
                     <th className="px-3 py-2">{t('lightningOps.pendingHtlcsTitle')}</th>
-                    <th className="px-3 py-2">{t('lightningOps.economic7d')}</th>
+                    <th className="px-3 py-2 text-center">{t('lightningOps.economic7d')}</th>
                     <th className="px-3 py-2">{t('lightningOps.outRate')}</th>
                     <th className="px-3 py-2">{t('lightningOps.outBase')}</th>
                     <th className="px-3 py-2">{t('lightningOps.inRate')}</th>
@@ -6557,6 +6555,7 @@ export default function LightningOps() {
                       ? buildHashWithChannelPoint(REBALANCE_ROUTE_KEY, ch.channel_point)
                       : `#${REBALANCE_ROUTE_KEY}`
                     const channelIDValue = channelIDText(ch)
+                    const channelIDCopied = copiedChannelIDKey === (ch.channel_point || channelIDValue)
                     const feeDraft = condensedFeeDrafts[ch.channel_point]
                     const condensedFeeValue = feeDraft ?? (typeof ch.fee_rate_ppm === 'number' ? String(ch.fee_rate_ppm) : '')
                     const condensedFeeBusy = condensedFeeBusyByPoint[ch.channel_point] === true
@@ -6570,44 +6569,58 @@ export default function LightningOps() {
                     return (
                       <Fragment key={ch.channel_point}>
                         <tr id={channelCardID(ch.channel_point)} className={`border-t align-top ${rowTone}`}>
-                          <td className="px-3 py-2">
-                            <div className="max-w-[230px]">
-                              <div className="flex items-center gap-2">
-                                <span className={`h-2 w-2 shrink-0 rounded-full ${ch.active ? 'bg-glow' : isFCRisk ? 'bg-rose-300' : 'bg-ember'}`} />
+                          <td className="px-3 py-2 align-middle">
+                            <div className="max-w-[220px]">
+                              <div className="flex items-center gap-1.5">
                                 <span className="truncate text-xs text-fog" title={ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer')}>
                                   {ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer')}
                                 </span>
-                              </div>
-                              <div className="mt-1 truncate text-[10px] text-fog/45" title={ch.channel_point}>
-                                {channelIDValue || ch.channel_id_str || ch.channel_id || ch.channel_point}
-                              </div>
-                              <div className="mt-1 flex flex-wrap items-center gap-1">
-                                <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${ch.active ? 'bg-glow/15 text-glow' : isFCRisk ? 'bg-rose-500/20 text-rose-100' : 'bg-ember/15 text-ember'}`}>
-                                  {ch.active ? t('common.active') : t('common.inactive')}
-                                </span>
-                                {ch.private && (
-                                  <span className="rounded-full bg-white/5 px-1.5 py-0.5 text-[10px] text-fog/55">{t('lightningOps.privateChannel')}</span>
+                                {channelIDValue && (
+                                  <button
+                                    type="button"
+                                    className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition ${
+                                      channelIDCopied
+                                        ? 'border-glow/60 bg-glow/15 text-glow'
+                                        : 'border-white/10 text-fog/35 hover:border-white/25 hover:text-fog/75'
+                                    }`}
+                                    title={channelIDCopied ? t('common.copied') : t('lightningOps.copyChannelId')}
+                                    aria-label={channelIDCopied ? t('common.copied') : t('lightningOps.copyChannelId')}
+                                    onClick={() => { void handleCopyChannelID(ch) }}
+                                  >
+                                    <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="1.8">
+                                      {channelIDCopied ? (
+                                        <path d="M5 12.5l4 4L19 7" />
+                                      ) : (
+                                        <>
+                                          <path d="M4 7h16" />
+                                          <path d="M4 12h16" />
+                                          <path d="M4 17h16" />
+                                          <path d="M8 4L6 20" />
+                                          <path d="M18 4l-2 16" />
+                                        </>
+                                      )}
+                                    </svg>
+                                  </button>
                                 )}
                               </div>
+                              {peerProfileLinkGroup(ch.remote_pubkey, 'mt-1 flex flex-wrap items-center gap-2')}
                             </div>
                           </td>
-                          <td className="px-3 py-2 whitespace-nowrap">
-                            <div className="text-fog">{formatSatsValue(ch.local_balance_sat)}</div>
-                            <div className="mt-1 flex items-center gap-2">
-                              <div className="h-1.5 w-20 overflow-hidden rounded-full bg-white/10">
-                                <div className="h-full bg-glow/70" style={{ width: `${localPct}%` }} />
+                          <td className="px-3 py-2 align-middle">
+                            <div className="mx-auto w-[230px]">
+                              <div className="flex items-center justify-between gap-3 text-[11px] text-fog">
+                                <span>{formatSatsValue(ch.local_balance_sat)}</span>
+                                <span>{formatSatsValue(ch.remote_balance_sat)}</span>
                               </div>
-                              <span className="text-[10px] text-fog/55">{localPct.toFixed(0)}%</span>
-                            </div>
-                          </td>
-                          <td className="px-3 py-2 whitespace-nowrap text-fog">{formatSatsValue(ch.capacity_sat)}</td>
-                          <td className="px-3 py-2 whitespace-nowrap">
-                            <div className="text-fog">{formatSatsValue(ch.remote_balance_sat)}</div>
-                            <div className="mt-1 flex items-center gap-2">
-                              <div className="h-1.5 w-20 overflow-hidden rounded-full bg-white/10">
-                                <div className="h-full bg-white/35" style={{ width: `${remotePct}%` }} />
+                              <div className="mt-1 flex items-center gap-2">
+                                <span className="w-9 text-right text-[10px] text-glow">{localPct.toFixed(0)}%</span>
+                                <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
+                                  <div className="absolute inset-y-0 left-0 bg-glow/70" style={{ width: `${localPct}%` }} />
+                                  <div className="absolute inset-y-0 right-0 bg-white/35" style={{ width: `${remotePct}%` }} />
+                                </div>
+                                <span className="w-9 text-left text-[10px] text-fog/55">{remotePct.toFixed(0)}%</span>
                               </div>
-                              <span className="text-[10px] text-fog/55">{remotePct.toFixed(0)}%</span>
+                              <div className="mt-1 text-center text-[10px] text-fog/50">{formatSatsValue(ch.capacity_sat)}</div>
                             </div>
                           </td>
                           <td className="px-3 py-2 whitespace-nowrap">
@@ -6625,8 +6638,8 @@ export default function LightningOps() {
                               <div className="text-[10px]">{pendingHtlcCount} HTLC</div>
                             </button>
                           </td>
-                          <td className="px-3 py-2">
-                            <div className="grid min-w-[210px] grid-cols-2 gap-x-3 gap-y-1 text-[10px] text-fog/65">
+                          <td className="px-3 py-2 text-center">
+                            <div className="mx-auto grid min-w-[220px] max-w-[250px] grid-cols-2 gap-x-4 gap-y-1 text-left text-[10px] text-fog/65">
                               <span>{t('lightningOps.outPpm7d')}: <span className="text-fog">{formatPpmValue(ch.out_ppm7d)}</span></span>
                               <span>{t('lightningOps.rebalPpm7d')}: <span className="text-fog">{formatPpmValue(ch.rebal_ppm7d)}</span></span>
                               <span>
@@ -6716,7 +6729,7 @@ export default function LightningOps() {
                         </tr>
                         {pendingHtlcOpen && hasPendingHtlcs && (
                           <tr className={isFCRisk ? 'border-t border-rose-400/25 bg-rose-500/10' : 'border-t border-white/5 bg-ink/70'}>
-                            <td colSpan={13} className="px-3 py-2">
+                            <td colSpan={11} className="px-3 py-2">
                               <div className="overflow-x-auto rounded-lg border border-white/10 bg-black/10 p-2">
                                 <table className="w-full min-w-[560px] text-[11px]">
                                   <thead>

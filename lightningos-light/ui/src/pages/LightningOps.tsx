@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { acceptBalancedOpenSession, addLnWatchtower, boostPeers, bumpFeeCloseManagerSession, bumpPendingOpenChannel, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getChannelRankings, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelFees, getLnChannelPeerRecommendations, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, previewBatchOpenChannels, previewOpenChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, recoverCloseManagerSession, refreshAutofeeReferences, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker } from '../api'
 import { getLocale } from '../i18n'
@@ -24,6 +24,7 @@ type Channel = {
   pending_htlcs?: ChannelPendingHtlc[]
   base_fee_msat?: number
   fee_rate_ppm?: number
+  inbound_base_msat?: number
   inbound_fee_rate_ppm?: number
   peer_fee_rate_ppm?: number
   peer_base_msat?: number
@@ -829,6 +830,8 @@ const LIGHTNING_OPS_ROUTE_KEY = 'lightning-ops'
 const CHANNEL_RANKING_ROUTE_KEY = 'channel-ranking'
 const REBALANCE_ROUTE_KEY = 'rebalance-center'
 const GRAPH_EXPLORER_ROUTE_KEY = 'graph-explorer'
+type ChannelsViewMode = 'full' | 'condensed'
+const CHANNELS_VIEW_MODE_STORAGE_KEY = 'lightningOps.channelsViewMode'
 const CHANNEL_HASH_PARAM = 'channel_point'
 const PEER_HASH_PARAM = 'peer_pubkey'
 const SECTION_HASH_PARAM = 'section'
@@ -857,6 +860,17 @@ const COOP_CLOSE_ESTIMATED_TWO_OUTPUT_VBYTES = 170
 const CLOSE_PREVIEW_DUST_LIMIT_SAT = 546
 const PENDING_OPEN_STUCK_THRESHOLD_SEC = 60 * 60
 const PENDING_OPEN_BUMP_REFERENCE_VBYTES = 110
+
+const readChannelsViewMode = (): ChannelsViewMode => {
+  if (typeof window === 'undefined') return 'full'
+  try {
+    return window.localStorage.getItem(CHANNELS_VIEW_MODE_STORAGE_KEY) === 'condensed'
+      ? 'condensed'
+      : 'full'
+  } catch {
+    return 'full'
+  }
+}
 
 const readHashChannelPoint = (routeKey: string) => {
   if (typeof window === 'undefined') return ''
@@ -972,6 +986,7 @@ export default function LightningOps() {
   const [closeRecoveryActionStatusByID, setCloseRecoveryActionStatusByID] = useState<Record<number, string>>({})
   const [channelRankingMap, setChannelRankingMap] = useState<Record<string, ChannelRankingItem>>({})
   const [channelsSubview, setChannelsSubview] = useState<'channels' | 'close_recovery'>('channels')
+  const [channelsViewMode, setChannelsViewMode] = useState<ChannelsViewMode>(() => readChannelsViewMode())
   const [lightningToolsOpen, setLightningToolsOpen] = useState(false)
   const [peersOpen, setPeersOpen] = useState(false)
   const [closedChannelsOpen, setClosedChannelsOpen] = useState(false)
@@ -1166,6 +1181,9 @@ export default function LightningOps() {
   const [inlineFeeStatus, setInlineFeeStatus] = useState('')
   const [inlineFeeLoading, setInlineFeeLoading] = useState(false)
   const [inlineFeeSaving, setInlineFeeSaving] = useState(false)
+  const [condensedFeeDrafts, setCondensedFeeDrafts] = useState<Record<string, string>>({})
+  const [condensedFeeBusyByPoint, setCondensedFeeBusyByPoint] = useState<Record<string, boolean>>({})
+  const [condensedFeeStatusByPoint, setCondensedFeeStatusByPoint] = useState<Record<string, string>>({})
   const chanHealLastAttemptRef = useRef('')
   const chanHealIntervalDirtyRef = useRef(false)
   const htlcManagerFormDirtyRef = useRef(false)
@@ -2452,6 +2470,15 @@ export default function LightningOps() {
     setAutofeeHistoryLoadingByChannel({})
     setAutofeeHistoryErrorByChannel({})
   }, [autofeeResultItems])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem(CHANNELS_VIEW_MODE_STORAGE_KEY, channelsViewMode)
+    } catch {
+      // Keep the UI usable when browser storage is unavailable.
+    }
+  }, [channelsViewMode])
 
   const blockCadenceAvg = useMemo(() => {
     const buckets = bitcoinLocal?.block_cadence || []
@@ -5387,6 +5414,84 @@ export default function LightningOps() {
     }
   }
 
+  const setCondensedFeeStatusForPoint = (channelPoint: string, message: string) => {
+    setCondensedFeeStatusByPoint((prev) => ({ ...prev, [channelPoint]: message }))
+  }
+
+  const handleCondensedOutRateSave = async (ch: Channel) => {
+    const channelPoint = String(ch.channel_point || '').trim()
+    if (!channelPoint || condensedFeeBusyByPoint[channelPoint]) return
+
+    const rawDraft = condensedFeeDrafts[channelPoint]
+    if (rawDraft === undefined) return
+
+    if (String(rawDraft).trim() === '') {
+      setCondensedFeeStatusForPoint(channelPoint, t('lightningOps.condensedOutRateInvalid'))
+      return
+    }
+    const nextRate = Number(rawDraft)
+    if (!Number.isFinite(nextRate) || nextRate < 0 || !Number.isInteger(nextRate)) {
+      setCondensedFeeStatusForPoint(channelPoint, t('lightningOps.condensedOutRateInvalid'))
+      return
+    }
+
+    const normalizedRate = Math.trunc(nextRate)
+    const currentRate = typeof ch.fee_rate_ppm === 'number' && Number.isFinite(ch.fee_rate_ppm)
+      ? Math.trunc(ch.fee_rate_ppm)
+      : 0
+    if (normalizedRate === currentRate) {
+      setCondensedFeeDrafts((prev) => {
+        const next = { ...prev }
+        delete next[channelPoint]
+        return next
+      })
+      setCondensedFeeStatusForPoint(channelPoint, '')
+      return
+    }
+
+    setCondensedFeeBusyByPoint((prev) => ({ ...prev, [channelPoint]: true }))
+    setCondensedFeeStatusForPoint(channelPoint, t('lightningOps.updatingFees'))
+    try {
+      const policy: any = await getLnChannelFees(channelPoint)
+      const readPolicyInt = (value: unknown, fallback = 0) => {
+        const parsed = Math.trunc(Number(value ?? fallback))
+        return Number.isFinite(parsed) ? parsed : fallback
+      }
+      const baseFeeMsat = Math.max(0, readPolicyInt(policy?.base_fee_msat, ch.base_fee_msat ?? 0))
+      const timeLockDelta = Math.max(0, readPolicyInt(policy?.time_lock_delta, 0))
+      const inboundBaseMsat = readPolicyInt(policy?.inbound_base_msat, ch.inbound_base_msat ?? 0)
+      const inboundFeeRatePpm = readPolicyInt(policy?.inbound_fee_rate_ppm, ch.inbound_fee_rate_ppm ?? 0)
+
+      const res = await updateChannelFees({
+        apply_all: false,
+        channel_point: channelPoint,
+        base_fee_msat: baseFeeMsat,
+        fee_rate_ppm: normalizedRate,
+        time_lock_delta: timeLockDelta,
+        inbound_enabled: true,
+        inbound_base_msat: inboundBaseMsat,
+        inbound_fee_rate_ppm: inboundFeeRatePpm
+      })
+
+      setChannels((prev) => prev.map((item) => (
+        item.channel_point === channelPoint
+          ? { ...item, fee_rate_ppm: normalizedRate, base_fee_msat: baseFeeMsat, inbound_base_msat: inboundBaseMsat, inbound_fee_rate_ppm: inboundFeeRatePpm }
+          : item
+      )))
+      setCondensedFeeDrafts((prev) => {
+        const next = { ...prev }
+        delete next[channelPoint]
+        return next
+      })
+      setCondensedFeeStatusForPoint(channelPoint, res?.warning || t('lightningOps.condensedOutRateSaved'))
+      load()
+    } catch (err: any) {
+      setCondensedFeeStatusForPoint(channelPoint, err?.message || t('lightningOps.feeUpdateFailed'))
+    } finally {
+      setCondensedFeeBusyByPoint((prev) => ({ ...prev, [channelPoint]: false }))
+    }
+  }
+
   const startInlineFeeEdit = async (ch: Channel) => {
     setInlineFeeChannelPoint(ch.channel_point)
     setInlineFeeRatePpm(String(ch.fee_rate_ppm ?? 0))
@@ -6366,6 +6471,25 @@ export default function LightningOps() {
               <button className="btn-secondary text-xs px-3 py-2" onClick={() => setSortDir(sortDir === 'desc' ? 'asc' : 'desc')}>
               {sortDir === 'desc' ? t('lightningOps.sortDesc') : t('lightningOps.sortAsc')}
               </button>
+              <button
+                type="button"
+                className={`inline-flex h-9 w-9 items-center justify-center rounded-full border transition ${
+                  channelsViewMode === 'condensed'
+                    ? 'border-sky-300/70 bg-sky-500/15 text-sky-100'
+                    : 'border-white/15 bg-white/5 text-fog/70 hover:border-white/30 hover:text-fog'
+                }`}
+                onClick={() => setChannelsViewMode((mode) => (mode === 'condensed' ? 'full' : 'condensed'))}
+                title={channelsViewMode === 'condensed' ? t('lightningOps.channelsViewFull') : t('lightningOps.channelsViewCondensed')}
+                aria-label={channelsViewMode === 'condensed' ? t('lightningOps.channelsViewFull') : t('lightningOps.channelsViewCondensed')}
+              >
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M4 6h16" />
+                  <path d="M4 12h16" />
+                  <path d="M4 18h16" />
+                  <path d="M8 4v16" />
+                  <path d="M16 4v16" />
+                </svg>
+              </button>
               <label className="flex items-center gap-2 text-[11px] text-fog/70 sm:text-xs">
                 <input type="checkbox" checked={showPrivate} onChange={(e) => setShowPrivate(e.target.checked)} />
               {t('lightningOps.showPrivate')}
@@ -6382,6 +6506,273 @@ export default function LightningOps() {
             </div>
           </div>
         {filteredChannels.length ? (
+          channelsViewMode === 'condensed' ? (
+          <div className="h-[70vh] min-h-[520px] resize-y overflow-y-auto pr-2 xl:h-[78vh] xl:min-h-[640px]">
+            <div className="overflow-x-auto rounded-xl border border-white/10 bg-ink/50">
+              <table className="w-full min-w-[1360px] text-left text-[11px]">
+                <thead className="sticky top-0 z-10 bg-ink/95 text-[10px] uppercase tracking-wide text-fog/55 backdrop-blur">
+                  <tr>
+                    <th className="px-3 py-2">{t('lightningOps.condensedChannel')}</th>
+                    <th className="px-3 py-2">{t('lightningOps.outbound')}</th>
+                    <th className="px-3 py-2">{t('lightningOps.capacity')}</th>
+                    <th className="px-3 py-2">{t('lightningOps.inbound')}</th>
+                    <th className="px-3 py-2">{t('lightningOps.pendingHtlcsTitle')}</th>
+                    <th className="px-3 py-2">{t('lightningOps.economic7d')}</th>
+                    <th className="px-3 py-2">{t('lightningOps.outRate')}</th>
+                    <th className="px-3 py-2">{t('lightningOps.outBase')}</th>
+                    <th className="px-3 py-2">{t('lightningOps.inRate')}</th>
+                    <th className="px-3 py-2">{t('lightningOps.inBase')}</th>
+                    <th className="px-3 py-2">{t('lightningOps.condensedPeerFee')}</th>
+                    <th className="px-3 py-2 text-center">{t('lightningOps.condensedRebalance')}</th>
+                    <th className="px-3 py-2 text-center">{t('lightningOps.autofeeLabel')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredChannels.map((ch) => {
+                    const localDisabled = ch.local_disabled ?? isLocalChanDisabled(ch.chan_status_flags)
+                    const autofeeHistoryKey = autofeeChannelKey(ch.channel_point, ch.channel_id)
+                    const autofeeChecked = autofeeHistoryKey ? (autofeeSettings[autofeeHistoryKey] ?? true) : true
+                    const visualTotal = (ch.local_balance_sat + ch.remote_balance_sat) > 0
+                      ? (ch.local_balance_sat + ch.remote_balance_sat)
+                      : (ch.capacity_sat > 0 ? ch.capacity_sat : 0)
+                    const localPctRaw = visualTotal > 0 ? (ch.local_balance_sat / visualTotal) * 100 : 0
+                    const remotePctRaw = visualTotal > 0 ? (ch.remote_balance_sat / visualTotal) * 100 : 0
+                    const localPct = Math.max(0, Math.min(100, localPctRaw))
+                    const remotePct = Math.max(0, Math.min(100, remotePctRaw))
+                    const unsettledBalanceSat = typeof ch.unsettled_balance_sat === 'number' && Number.isFinite(ch.unsettled_balance_sat)
+                      ? Math.max(0, Math.round(ch.unsettled_balance_sat))
+                      : 0
+                    const pendingHtlcCount = typeof ch.pending_htlc_count === 'number' && Number.isFinite(ch.pending_htlc_count)
+                      ? Math.max(0, Math.round(ch.pending_htlc_count))
+                      : 0
+                    const pendingHtlcs = Array.isArray(ch.pending_htlcs) ? ch.pending_htlcs : []
+                    const hasPendingHtlcs = pendingHtlcs.length > 0
+                    const pendingHtlcOpen = pendingHtlcOpenChannelPoint === ch.channel_point
+                    const isFCRisk = !ch.active && unsettledBalanceSat > 0
+                    const marginPpm7d = typeof ch.out_ppm7d === 'number' && typeof ch.rebal_ppm7d === 'number'
+                      ? ch.out_ppm7d - ch.rebal_ppm7d
+                      : undefined
+                    const profitMeta = profitBadge(ch.profit_fee_7d_sat)
+                    const rebalanceLink = ch.channel_point
+                      ? buildHashWithChannelPoint(REBALANCE_ROUTE_KEY, ch.channel_point)
+                      : `#${REBALANCE_ROUTE_KEY}`
+                    const channelIDValue = channelIDText(ch)
+                    const feeDraft = condensedFeeDrafts[ch.channel_point]
+                    const condensedFeeValue = feeDraft ?? (typeof ch.fee_rate_ppm === 'number' ? String(ch.fee_rate_ppm) : '')
+                    const condensedFeeBusy = condensedFeeBusyByPoint[ch.channel_point] === true
+                    const condensedFeeStatus = condensedFeeStatusByPoint[ch.channel_point] || ''
+                    const rowTone = isFCRisk
+                      ? 'border-rose-400/25 bg-rose-500/10'
+                      : localDisabled && ch.active
+                        ? 'border-ember/25 bg-ember/10'
+                        : 'border-white/5'
+
+                    return (
+                      <Fragment key={ch.channel_point}>
+                        <tr id={channelCardID(ch.channel_point)} className={`border-t align-top ${rowTone}`}>
+                          <td className="px-3 py-2">
+                            <div className="max-w-[230px]">
+                              <div className="flex items-center gap-2">
+                                <span className={`h-2 w-2 shrink-0 rounded-full ${ch.active ? 'bg-glow' : isFCRisk ? 'bg-rose-300' : 'bg-ember'}`} />
+                                <span className="truncate text-xs text-fog" title={ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer')}>
+                                  {ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer')}
+                                </span>
+                              </div>
+                              <div className="mt-1 truncate text-[10px] text-fog/45" title={ch.channel_point}>
+                                {channelIDValue || ch.channel_id_str || ch.channel_id || ch.channel_point}
+                              </div>
+                              <div className="mt-1 flex flex-wrap items-center gap-1">
+                                <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${ch.active ? 'bg-glow/15 text-glow' : isFCRisk ? 'bg-rose-500/20 text-rose-100' : 'bg-ember/15 text-ember'}`}>
+                                  {ch.active ? t('common.active') : t('common.inactive')}
+                                </span>
+                                {ch.private && (
+                                  <span className="rounded-full bg-white/5 px-1.5 py-0.5 text-[10px] text-fog/55">{t('lightningOps.privateChannel')}</span>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            <div className="text-fog">{formatSatsValue(ch.local_balance_sat)}</div>
+                            <div className="mt-1 flex items-center gap-2">
+                              <div className="h-1.5 w-20 overflow-hidden rounded-full bg-white/10">
+                                <div className="h-full bg-glow/70" style={{ width: `${localPct}%` }} />
+                              </div>
+                              <span className="text-[10px] text-fog/55">{localPct.toFixed(0)}%</span>
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap text-fog">{formatSatsValue(ch.capacity_sat)}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            <div className="text-fog">{formatSatsValue(ch.remote_balance_sat)}</div>
+                            <div className="mt-1 flex items-center gap-2">
+                              <div className="h-1.5 w-20 overflow-hidden rounded-full bg-white/10">
+                                <div className="h-full bg-white/35" style={{ width: `${remotePct}%` }} />
+                              </div>
+                              <span className="text-[10px] text-fog/55">{remotePct.toFixed(0)}%</span>
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            <button
+                              type="button"
+                              className={`text-left ${hasPendingHtlcs ? 'hover:text-white hover:underline underline-offset-2' : 'cursor-default'} ${unsettledBalanceSat > 0 || pendingHtlcCount > 0 ? 'text-brass' : 'text-fog/65'}`}
+                              onClick={() => {
+                                if (!hasPendingHtlcs) return
+                                setPendingHtlcOpenChannelPoint((current) => current === ch.channel_point ? '' : ch.channel_point)
+                              }}
+                              disabled={!hasPendingHtlcs}
+                              aria-expanded={pendingHtlcOpen}
+                            >
+                              <div>{formatSatsValue(unsettledBalanceSat)}</div>
+                              <div className="text-[10px]">{pendingHtlcCount} HTLC</div>
+                            </button>
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="grid min-w-[210px] grid-cols-2 gap-x-3 gap-y-1 text-[10px] text-fog/65">
+                              <span>{t('lightningOps.outPpm7d')}: <span className="text-fog">{formatPpmValue(ch.out_ppm7d)}</span></span>
+                              <span>{t('lightningOps.rebalPpm7d')}: <span className="text-fog">{formatPpmValue(ch.rebal_ppm7d)}</span></span>
+                              <span>
+                                {t('lightningOps.marginPpm7d')}:{' '}
+                                <span className={typeof marginPpm7d === 'number' && marginPpm7d < 0 ? 'text-ember' : 'text-fog'}>
+                                  {typeof marginPpm7d === 'number' ? `${marginPpm7d >= 0 ? '+' : ''}${Math.round(marginPpm7d)}` : '-'}
+                                </span>
+                              </span>
+                              <span>
+                                {t('lightningOps.profit7d')}:{' '}
+                                <span className={typeof ch.profit_fee_7d_sat === 'number' && ch.profit_fee_7d_sat < 0 ? 'text-ember' : 'text-fog'}>
+                                  {formatSatSigned(ch.profit_fee_7d_sat)}
+                                </span>
+                              </span>
+                            </div>
+                            <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] ${profitMeta.className}`}>{profitMeta.label}</span>
+                          </td>
+                          <td className="px-3 py-2">
+                            <input
+                              className="h-8 w-20 rounded-md border border-white/10 bg-ink/80 px-2 text-right text-xs text-fog outline-none transition focus:border-sky-300/70 disabled:opacity-60"
+                              type="number"
+                              min={0}
+                              step={1}
+                              value={condensedFeeValue}
+                              disabled={condensedFeeBusy}
+                              title={t('lightningOps.condensedOutRateEdit')}
+                              aria-label={t('lightningOps.condensedOutRateEdit')}
+                              onChange={(e) => {
+                                const value = e.target.value
+                                setCondensedFeeDrafts((prev) => ({ ...prev, [ch.channel_point]: value }))
+                              }}
+                              onBlur={() => { void handleCondensedOutRateSave(ch) }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault()
+                                  e.currentTarget.blur()
+                                }
+                                if (e.key === 'Escape') {
+                                  e.preventDefault()
+                                  setCondensedFeeDrafts((prev) => {
+                                    const next = { ...prev }
+                                    delete next[ch.channel_point]
+                                    return next
+                                  })
+                                  setCondensedFeeStatusForPoint(ch.channel_point, '')
+                                }
+                              }}
+                            />
+                            {condensedFeeStatus && (
+                              <div className="mt-1 max-w-[120px] whitespace-normal text-[10px] text-brass">{condensedFeeStatus}</div>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap text-fog/75">{typeof ch.base_fee_msat === 'number' ? ch.base_fee_msat.toLocaleString(locale) : '-'}</td>
+                          <td className="px-3 py-2 whitespace-nowrap text-fog/75">{typeof ch.inbound_fee_rate_ppm === 'number' ? `${ch.inbound_fee_rate_ppm} ppm` : '-'}</td>
+                          <td className="px-3 py-2 whitespace-nowrap text-fog/75">{typeof ch.inbound_base_msat === 'number' ? ch.inbound_base_msat.toLocaleString(locale) : '-'}</td>
+                          <td className="px-3 py-2 whitespace-nowrap text-fog/75">
+                            <div>{typeof ch.peer_fee_rate_ppm === 'number' ? `${ch.peer_fee_rate_ppm} ppm` : '-'}</div>
+                            <div className="text-[10px] text-fog/45">{typeof ch.peer_base_msat === 'number' ? `${ch.peer_base_msat.toLocaleString(locale)} msat` : '-'}</div>
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <a
+                              href={rebalanceLink}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/15 text-fog/70 transition hover:border-sky-300/70 hover:text-sky-100"
+                              title={t('lightningOps.openInRebalanceCenter')}
+                              aria-label={t('lightningOps.openInRebalanceCenter')}
+                            >
+                              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                                <path d="M12 4v14" />
+                                <path d="M6 8h12" />
+                                <path d="M8 8l-3 5h6l-3-5z" />
+                                <path d="M16 8l-3 5h6l-3-5z" />
+                                <path d="M8 20h8" />
+                              </svg>
+                            </a>
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <input
+                              type="checkbox"
+                              checked={autofeeChecked}
+                              title={t('lightningOps.autofeeLabel')}
+                              aria-label={t('lightningOps.autofeeLabel')}
+                              onChange={(e) => {
+                                handleAutofeeChannelToggle(ch, e.target.checked)
+                              }}
+                            />
+                          </td>
+                        </tr>
+                        {pendingHtlcOpen && hasPendingHtlcs && (
+                          <tr className={isFCRisk ? 'border-t border-rose-400/25 bg-rose-500/10' : 'border-t border-white/5 bg-ink/70'}>
+                            <td colSpan={13} className="px-3 py-2">
+                              <div className="overflow-x-auto rounded-lg border border-white/10 bg-black/10 p-2">
+                                <table className="w-full min-w-[560px] text-[11px]">
+                                  <thead>
+                                    <tr className={isFCRisk ? 'text-rose-200/80' : 'text-fog/60'}>
+                                      <th className="py-1 pr-3 text-left">{t('lightningOps.pendingHtlcDirection')}</th>
+                                      <th className="py-1 pr-3 text-left">{t('lightningOps.pendingHtlcPeer')}</th>
+                                      <th className="py-1 pr-3 text-left">{t('lightningOps.pendingHtlcAmount')}</th>
+                                      <th className="py-1 text-left">{t('lightningOps.pendingHtlcExpiry')}</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {pendingHtlcs.map((htlc, idx) => {
+                                      const expirationHeight = Number(htlc?.expiration_height || 0)
+                                      const amountSat = Math.max(0, Math.round(Number(htlc?.amount_sat || 0)))
+                                      const blocksToExpiry = channelBlockHeight > 0 && expirationHeight > 0
+                                        ? Math.max(0, expirationHeight - channelBlockHeight)
+                                        : null
+                                      const expiryEta = blocksToExpiry === null ? '' : formatMaturityDuration(estimateMaturitySeconds(blocksToExpiry))
+                                      const peerAlias = typeof htlc?.peer_alias === 'string' ? htlc.peer_alias.trim() : ''
+                                      const forwardingChannelId = typeof htlc?.forwarding_channel_id === 'number' && Number.isFinite(htlc.forwarding_channel_id)
+                                        ? Math.max(0, Math.round(htlc.forwarding_channel_id))
+                                        : 0
+                                      const peerLabel = peerAlias || (forwardingChannelId > 0 ? `chan ${forwardingChannelId}` : t('lightningOps.pendingHtlcPeerUnknown'))
+                                      const rowKey = `${htlc?.htlc_index ?? 'idx'}-${expirationHeight}-${idx}`
+                                      return (
+                                        <tr key={rowKey} className={`align-top ${isFCRisk ? 'text-rose-100' : 'text-fog'}`}>
+                                          <td className="py-1 pr-3 whitespace-nowrap">
+                                            {htlc?.incoming ? t('lightningOps.pendingHtlcIncoming') : t('lightningOps.pendingHtlcOutgoing')}
+                                          </td>
+                                          <td className="py-1 pr-3 whitespace-nowrap">{peerLabel}</td>
+                                          <td className="py-1 pr-3 whitespace-nowrap">{amountSat} sats</td>
+                                          <td className="py-1">
+                                            <div>{t('lightningOps.pendingHtlcExpiryHeight', { value: expirationHeight })}</div>
+                                            {blocksToExpiry !== null && (
+                                              <div className={isFCRisk ? 'text-rose-200/80' : 'text-fog/60'}>
+                                                {t('lightningOps.pendingHtlcExpiryBlocks', { count: blocksToExpiry })} | {t('lightningOps.pendingHtlcExpiryEta', { time: expiryEta })}
+                                              </div>
+                                            )}
+                                          </td>
+                                        </tr>
+                                      )
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          ) : (
           <div className="h-[70vh] min-h-[520px] resize-y overflow-y-auto pr-2 xl:h-[78vh] xl:min-h-[640px]">
             <div className="grid gap-3">
               {filteredChannels.map((ch) => {
@@ -7086,6 +7477,7 @@ export default function LightningOps() {
               })}
             </div>
           </div>
+          )
         ) : (
           <p className="text-sm text-fog/60">{t('lightningOps.noChannelsFound')}</p>
         )}

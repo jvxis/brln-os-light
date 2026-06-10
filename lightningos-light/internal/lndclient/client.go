@@ -4711,6 +4711,7 @@ func (c *Client) ListChannels(ctx context.Context) ([]ChannelInfo, error) {
 		}
 		var baseFeeMsat *int64
 		var feeRatePpm *int64
+		var inboundBaseMsat *int64
 		var inboundFeeRatePpm *int64
 		var peerFeeRatePpm *int64
 		var peerBaseMsat *int64
@@ -4737,9 +4738,11 @@ func (c *Client) ListChannels(ctx context.Context) ([]ChannelInfo, error) {
 			if localPolicy != nil {
 				base := int64(localPolicy.FeeBaseMsat)
 				rate := int64(localPolicy.FeeRateMilliMsat)
+				inboundBase := int64(localPolicy.InboundFeeBaseMsat)
 				inbound := int64(localPolicy.InboundFeeRateMilliMsat)
 				baseFeeMsat = &base
 				feeRatePpm = &rate
+				inboundBaseMsat = &inboundBase
 				inboundFeeRatePpm = &inbound
 				if localPolicy.Disabled {
 					localDisabled = true
@@ -4810,6 +4813,7 @@ func (c *Client) ListChannels(ctx context.Context) ([]ChannelInfo, error) {
 			PendingHtlcs:        pendingHtlcs,
 			BaseFeeMsat:         baseFeeMsat,
 			FeeRatePpm:          feeRatePpm,
+			InboundBaseMsat:     inboundBaseMsat,
 			InboundFeeRatePpm:   inboundFeeRatePpm,
 			PeerFeeRatePpm:      peerFeeRatePpm,
 			PeerBaseMsat:        peerBaseMsat,
@@ -6963,6 +6967,7 @@ type ChannelInfo struct {
 	PendingHtlcs        []ChannelPendingHtlcInfo `json:"pending_htlcs,omitempty"`
 	BaseFeeMsat         *int64                   `json:"base_fee_msat,omitempty"`
 	FeeRatePpm          *int64                   `json:"fee_rate_ppm,omitempty"`
+	InboundBaseMsat     *int64                   `json:"inbound_base_msat,omitempty"`
 	InboundFeeRatePpm   *int64                   `json:"inbound_fee_rate_ppm,omitempty"`
 	PeerFeeRatePpm      *int64                   `json:"peer_fee_rate_ppm,omitempty"`
 	PeerBaseMsat        *int64                   `json:"peer_base_msat,omitempty"`

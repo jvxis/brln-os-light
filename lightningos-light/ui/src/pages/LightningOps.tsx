@@ -1183,7 +1183,7 @@ export default function LightningOps() {
   const [inlineFeeSaving, setInlineFeeSaving] = useState(false)
   const [condensedFeeDrafts, setCondensedFeeDrafts] = useState<Record<string, string>>({})
   const [condensedFeeBusyByPoint, setCondensedFeeBusyByPoint] = useState<Record<string, boolean>>({})
-  const [condensedFeeStatusByPoint, setCondensedFeeStatusByPoint] = useState<Record<string, string>>({})
+  const [condensedFeeFlashByPoint, setCondensedFeeFlashByPoint] = useState<Record<string, 'success' | 'error'>>({})
   const chanHealLastAttemptRef = useRef('')
   const chanHealIntervalDirtyRef = useRef(false)
   const htlcManagerFormDirtyRef = useRef(false)
@@ -1195,6 +1195,7 @@ export default function LightningOps() {
   const pendingScrollSectionRef = useRef('')
   const focusClearTimerRef = useRef<number | null>(null)
   const peerFocusClearTimerRef = useRef<number | null>(null)
+  const condensedFeeFlashTimersRef = useRef<Record<string, number>>({})
   const [feeStatus, setFeeStatus] = useState('')
 
   const formatPing = (value: number) => {
@@ -2479,6 +2480,16 @@ export default function LightningOps() {
       // Keep the UI usable when browser storage is unavailable.
     }
   }, [channelsViewMode])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    return () => {
+      Object.values(condensedFeeFlashTimersRef.current).forEach((timer) => {
+        window.clearTimeout(timer)
+      })
+      condensedFeeFlashTimersRef.current = {}
+    }
+  }, [])
 
   const blockCadenceAvg = useMemo(() => {
     const buckets = bitcoinLocal?.block_cadence || []
@@ -5414,8 +5425,29 @@ export default function LightningOps() {
     }
   }
 
-  const setCondensedFeeStatusForPoint = (channelPoint: string, message: string) => {
-    setCondensedFeeStatusByPoint((prev) => ({ ...prev, [channelPoint]: message }))
+  const clearCondensedFeeDraft = (channelPoint: string) => {
+    setCondensedFeeDrafts((prev) => {
+      const next = { ...prev }
+      delete next[channelPoint]
+      return next
+    })
+  }
+
+  const flashCondensedFeeField = (channelPoint: string, tone: 'success' | 'error') => {
+    setCondensedFeeFlashByPoint((prev) => ({ ...prev, [channelPoint]: tone }))
+    if (typeof window === 'undefined') return
+    const existingTimer = condensedFeeFlashTimersRef.current[channelPoint]
+    if (existingTimer) {
+      window.clearTimeout(existingTimer)
+    }
+    condensedFeeFlashTimersRef.current[channelPoint] = window.setTimeout(() => {
+      setCondensedFeeFlashByPoint((prev) => {
+        const next = { ...prev }
+        delete next[channelPoint]
+        return next
+      })
+      delete condensedFeeFlashTimersRef.current[channelPoint]
+    }, 1600)
   }
 
   const handleCondensedOutRateSave = async (ch: Channel) => {
@@ -5426,12 +5458,14 @@ export default function LightningOps() {
     if (rawDraft === undefined) return
 
     if (String(rawDraft).trim() === '') {
-      setCondensedFeeStatusForPoint(channelPoint, t('lightningOps.condensedOutRateInvalid'))
+      clearCondensedFeeDraft(channelPoint)
+      flashCondensedFeeField(channelPoint, 'error')
       return
     }
     const nextRate = Number(rawDraft)
     if (!Number.isFinite(nextRate) || nextRate < 0 || !Number.isInteger(nextRate)) {
-      setCondensedFeeStatusForPoint(channelPoint, t('lightningOps.condensedOutRateInvalid'))
+      clearCondensedFeeDraft(channelPoint)
+      flashCondensedFeeField(channelPoint, 'error')
       return
     }
 
@@ -5440,17 +5474,11 @@ export default function LightningOps() {
       ? Math.trunc(ch.fee_rate_ppm)
       : 0
     if (normalizedRate === currentRate) {
-      setCondensedFeeDrafts((prev) => {
-        const next = { ...prev }
-        delete next[channelPoint]
-        return next
-      })
-      setCondensedFeeStatusForPoint(channelPoint, '')
+      clearCondensedFeeDraft(channelPoint)
       return
     }
 
     setCondensedFeeBusyByPoint((prev) => ({ ...prev, [channelPoint]: true }))
-    setCondensedFeeStatusForPoint(channelPoint, t('lightningOps.updatingFees'))
     try {
       const policy: any = await getLnChannelFees(channelPoint)
       const readPolicyInt = (value: unknown, fallback = 0) => {
@@ -5462,7 +5490,7 @@ export default function LightningOps() {
       const inboundBaseMsat = readPolicyInt(policy?.inbound_base_msat, ch.inbound_base_msat ?? 0)
       const inboundFeeRatePpm = readPolicyInt(policy?.inbound_fee_rate_ppm, ch.inbound_fee_rate_ppm ?? 0)
 
-      const res = await updateChannelFees({
+      await updateChannelFees({
         apply_all: false,
         channel_point: channelPoint,
         base_fee_msat: baseFeeMsat,
@@ -5478,15 +5506,12 @@ export default function LightningOps() {
           ? { ...item, fee_rate_ppm: normalizedRate, base_fee_msat: baseFeeMsat, inbound_base_msat: inboundBaseMsat, inbound_fee_rate_ppm: inboundFeeRatePpm }
           : item
       )))
-      setCondensedFeeDrafts((prev) => {
-        const next = { ...prev }
-        delete next[channelPoint]
-        return next
-      })
-      setCondensedFeeStatusForPoint(channelPoint, res?.warning || t('lightningOps.condensedOutRateSaved'))
+      clearCondensedFeeDraft(channelPoint)
+      flashCondensedFeeField(channelPoint, 'success')
       load()
-    } catch (err: any) {
-      setCondensedFeeStatusForPoint(channelPoint, err?.message || t('lightningOps.feeUpdateFailed'))
+    } catch {
+      clearCondensedFeeDraft(channelPoint)
+      flashCondensedFeeField(channelPoint, 'error')
     } finally {
       setCondensedFeeBusyByPoint((prev) => ({ ...prev, [channelPoint]: false }))
     }
@@ -6516,11 +6541,11 @@ export default function LightningOps() {
                     <th className="px-3 py-2 text-center">{t('lightningOps.condensedLiquidity')}</th>
                     <th className="px-3 py-2">{t('lightningOps.pendingHtlcsTitle')}</th>
                     <th className="px-3 py-2 text-center">{t('lightningOps.economic7d')}</th>
-                    <th className="px-3 py-2">{t('lightningOps.outRate')}</th>
-                    <th className="px-3 py-2">{t('lightningOps.outBase')}</th>
-                    <th className="px-3 py-2">{t('lightningOps.inRate')}</th>
-                    <th className="px-3 py-2">{t('lightningOps.inBase')}</th>
-                    <th className="px-3 py-2">{t('lightningOps.condensedPeerFee')}</th>
+                    <th className="border-l border-white/5 px-4 py-2 text-center">{t('lightningOps.outRate')}</th>
+                    <th className="px-4 py-2 text-center">{t('lightningOps.outBase')}</th>
+                    <th className="px-4 py-2 text-center">{t('lightningOps.inRate')}</th>
+                    <th className="px-4 py-2 text-center">{t('lightningOps.inBase')}</th>
+                    <th className="px-4 py-2 text-center">{t('lightningOps.condensedPeerFee')}</th>
                     <th className="px-3 py-2 text-center">{t('lightningOps.condensedRebalance')}</th>
                     <th className="px-3 py-2 text-center">{t('lightningOps.autofeeLabel')}</th>
                   </tr>
@@ -6550,7 +6575,6 @@ export default function LightningOps() {
                     const marginPpm7d = typeof ch.out_ppm7d === 'number' && typeof ch.rebal_ppm7d === 'number'
                       ? ch.out_ppm7d - ch.rebal_ppm7d
                       : undefined
-                    const profitMeta = profitBadge(ch.profit_fee_7d_sat)
                     const rebalanceLink = ch.channel_point
                       ? buildHashWithChannelPoint(REBALANCE_ROUTE_KEY, ch.channel_point)
                       : `#${REBALANCE_ROUTE_KEY}`
@@ -6559,7 +6583,12 @@ export default function LightningOps() {
                     const feeDraft = condensedFeeDrafts[ch.channel_point]
                     const condensedFeeValue = feeDraft ?? (typeof ch.fee_rate_ppm === 'number' ? String(ch.fee_rate_ppm) : '')
                     const condensedFeeBusy = condensedFeeBusyByPoint[ch.channel_point] === true
-                    const condensedFeeStatus = condensedFeeStatusByPoint[ch.channel_point] || ''
+                    const condensedFeeFlash = condensedFeeFlashByPoint[ch.channel_point]
+                    const condensedFeeInputClass = condensedFeeFlash === 'success'
+                      ? 'border-emerald-300/70 bg-emerald-500/20 text-emerald-50'
+                      : condensedFeeFlash === 'error'
+                        ? 'border-amber-300/70 bg-amber-500/20 text-amber-50'
+                        : 'border-white/10 bg-ink/80 text-fog'
                     const rowTone = isFCRisk
                       ? 'border-rose-400/25 bg-rose-500/10'
                       : localDisabled && ch.active
@@ -6572,6 +6601,7 @@ export default function LightningOps() {
                           <td className="px-3 py-2 align-middle">
                             <div className="max-w-[220px]">
                               <div className="flex items-center gap-1.5">
+                                <span className={`h-2 w-2 shrink-0 rounded-full ${ch.active ? 'bg-glow' : isFCRisk ? 'bg-rose-300' : 'bg-ember'}`} />
                                 <span className="truncate text-xs text-fog" title={ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer')}>
                                   {ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer')}
                                 </span>
@@ -6655,11 +6685,10 @@ export default function LightningOps() {
                                 </span>
                               </span>
                             </div>
-                            <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] ${profitMeta.className}`}>{profitMeta.label}</span>
                           </td>
-                          <td className="px-3 py-2">
+                          <td className="border-l border-white/5 px-4 py-2 text-center">
                             <input
-                              className="h-8 w-20 rounded-md border border-white/10 bg-ink/80 px-2 text-right text-xs text-fog outline-none transition focus:border-sky-300/70 disabled:opacity-60"
+                              className={`mx-auto h-8 w-24 rounded-md border px-2 text-center text-xs outline-none transition-colors duration-300 focus:border-sky-300/70 disabled:opacity-60 ${condensedFeeInputClass}`}
                               type="number"
                               min={0}
                               step={1}
@@ -6684,18 +6713,14 @@ export default function LightningOps() {
                                     delete next[ch.channel_point]
                                     return next
                                   })
-                                  setCondensedFeeStatusForPoint(ch.channel_point, '')
                                 }
                               }}
                             />
-                            {condensedFeeStatus && (
-                              <div className="mt-1 max-w-[120px] whitespace-normal text-[10px] text-brass">{condensedFeeStatus}</div>
-                            )}
                           </td>
-                          <td className="px-3 py-2 whitespace-nowrap text-fog/75">{typeof ch.base_fee_msat === 'number' ? ch.base_fee_msat.toLocaleString(locale) : '-'}</td>
-                          <td className="px-3 py-2 whitespace-nowrap text-fog/75">{typeof ch.inbound_fee_rate_ppm === 'number' ? `${ch.inbound_fee_rate_ppm} ppm` : '-'}</td>
-                          <td className="px-3 py-2 whitespace-nowrap text-fog/75">{typeof ch.inbound_base_msat === 'number' ? ch.inbound_base_msat.toLocaleString(locale) : '-'}</td>
-                          <td className="px-3 py-2 whitespace-nowrap text-fog/75">
+                          <td className="px-4 py-2 text-center whitespace-nowrap text-fog/75">{typeof ch.base_fee_msat === 'number' ? ch.base_fee_msat.toLocaleString(locale) : '-'}</td>
+                          <td className="px-4 py-2 text-center whitespace-nowrap text-fog/75">{typeof ch.inbound_fee_rate_ppm === 'number' ? `${ch.inbound_fee_rate_ppm} ppm` : '-'}</td>
+                          <td className="px-4 py-2 text-center whitespace-nowrap text-fog/75">{typeof ch.inbound_base_msat === 'number' ? ch.inbound_base_msat.toLocaleString(locale) : '-'}</td>
+                          <td className="px-4 py-2 text-center whitespace-nowrap text-fog/75">
                             <div>{typeof ch.peer_fee_rate_ppm === 'number' ? `${ch.peer_fee_rate_ppm} ppm` : '-'}</div>
                             <div className="text-[10px] text-fog/45">{typeof ch.peer_base_msat === 'number' ? `${ch.peer_base_msat.toLocaleString(locale)} msat` : '-'}</div>
                           </td>

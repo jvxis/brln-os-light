@@ -6532,8 +6532,7 @@ export default function LightningOps() {
           </div>
         {filteredChannels.length ? (
           channelsViewMode === 'condensed' ? (
-          <div className="h-[70vh] min-h-[520px] resize-y overflow-y-auto pr-2 xl:h-[78vh] xl:min-h-[640px]">
-            <div className="overflow-x-auto rounded-xl border border-white/10 bg-ink/50">
+            <div className="max-h-[70vh] overflow-auto rounded-xl border border-white/10 bg-ink/50 xl:max-h-[78vh]">
               <table className="w-full min-w-[1180px] text-left text-[11px]">
                 <thead className="sticky top-0 z-10 bg-ink/95 text-[10px] uppercase tracking-wide text-fog/55 backdrop-blur">
                   <tr>
@@ -6809,10 +6808,9 @@ export default function LightningOps() {
                 </tbody>
               </table>
             </div>
-          </div>
           ) : (
-          <div className="h-[70vh] min-h-[520px] resize-y overflow-y-auto pr-2 xl:h-[78vh] xl:min-h-[640px]">
-            <div className="grid gap-3">
+            <div className="max-h-[70vh] overflow-y-auto pr-2 xl:max-h-[78vh]">
+              <div className="grid gap-3">
               {filteredChannels.map((ch) => {
                 const localDisabled = ch.local_disabled ?? isLocalChanDisabled(ch.chan_status_flags)
                 const statusBusy = chanStatusBusy === ch.channel_point

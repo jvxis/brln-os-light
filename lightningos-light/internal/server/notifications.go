@@ -43,12 +43,14 @@ const (
 )
 
 const (
-	notificationsSecretsPath = "/etc/lightningos/secrets.env"
-	notificationsSecretsDir  = "/etc/lightningos"
-	notificationsDBName      = "lightningos"
-	notificationsDBUser      = "losapp"
-	paymentsPendingCursorKey = "payments_inflight"
-	paymentsPendingMax       = 200
+	notificationsSecretsPath  = "/etc/lightningos/secrets.env"
+	notificationsSecretsDir   = "/etc/lightningos"
+	notificationsDBName       = "lightningos"
+	notificationsDBUser       = "losapp"
+	paymentsPendingCursorKey  = "payments_inflight"
+	paymentsPendingMax        = 200
+	paymentsPendingFastChecks = 4
+	paymentsPendingSlowChecks = 10
 )
 
 var notificationsSecretsMu sync.RWMutex
@@ -131,8 +133,17 @@ type notificationRowScanner interface {
 }
 
 type pendingPaymentEntry struct {
-	Hash     string `json:"hash"`
-	LastSeen int64  `json:"last_seen"`
+	Hash         string `json:"hash"`
+	LastSeen     int64  `json:"last_seen"`
+	PaymentIndex uint64 `json:"payment_index,omitempty"`
+	LastChecked  int64  `json:"last_checked,omitempty"`
+	NextCheck    int64  `json:"next_check,omitempty"`
+	CheckCount   int    `json:"check_count,omitempty"`
+}
+
+type stuckInFlightPayment struct {
+	Hash         string
+	PaymentIndex uint64
 }
 
 type waitingCloseRecoveryInfo struct {
@@ -918,40 +929,110 @@ on conflict (key) do update set value=excluded.value, updated_at=excluded.update
 	return err
 }
 
-func (n *Notifier) loadStuckInFlightHashes(ctx context.Context) []string {
+func normalizePendingPaymentEntry(entry pendingPaymentEntry, now int64) (pendingPaymentEntry, bool) {
+	hash := normalizeHash(entry.Hash)
+	if hash == "" {
+		return pendingPaymentEntry{}, false
+	}
+	entry.Hash = hash
+	if entry.LastSeen <= 0 {
+		entry.LastSeen = now
+	}
+	if entry.LastChecked < 0 {
+		entry.LastChecked = 0
+	}
+	if entry.NextCheck < 0 {
+		entry.NextCheck = 0
+	}
+	if entry.CheckCount < 0 {
+		entry.CheckCount = 0
+	}
+	return entry, true
+}
+
+func pendingPaymentBackoff(checkCount int) time.Duration {
+	switch {
+	case checkCount <= paymentsPendingFastChecks:
+		return paymentsPollInterval
+	case checkCount <= paymentsPendingSlowChecks:
+		return time.Minute
+	default:
+		return 5 * time.Minute
+	}
+}
+
+func markPendingPaymentChecked(entry pendingPaymentEntry, now int64, stillInFlight bool) pendingPaymentEntry {
+	if stillInFlight || entry.LastSeen <= 0 {
+		entry.LastSeen = now
+	}
+	entry.LastChecked = now
+	entry.CheckCount++
+	entry.NextCheck = now + int64(pendingPaymentBackoff(entry.CheckCount)/time.Second)
+	return entry
+}
+
+func observePendingPayment(pending map[string]pendingPaymentEntry, paymentHash string, paymentIndex uint64, now int64) bool {
+	normalized := normalizeHash(paymentHash)
+	if normalized == "" {
+		return false
+	}
+
+	entry := pending[normalized]
+	original := entry
+	entry.Hash = normalized
+	if paymentIndex > 0 && entry.PaymentIndex != paymentIndex {
+		entry.PaymentIndex = paymentIndex
+		entry.LastChecked = 0
+		entry.NextCheck = 0
+		entry.CheckCount = 0
+	}
+	entry = markPendingPaymentChecked(entry, now, true)
+	pending[normalized] = entry
+	return original != entry
+}
+
+func (n *Notifier) loadStuckInFlightPayments(ctx context.Context) []stuckInFlightPayment {
 	if n == nil || n.db == nil {
 		return nil
 	}
 	cutoff := time.Now().Add(-paymentsPendingMaxAge)
 	rows, err := n.db.Query(ctx, `
-select distinct payment_hash from notifications
-where status='IN_FLIGHT'
-  and type in ('rebalance','keysend','lightning')
-  and payment_hash is not null
-  and payment_hash <> ''
-  and occurred_at > $1
+select n.payment_hash, coalesce(max(pra.payment_index), 0)
+from notifications n
+left join payment_route_attempts pra on pra.payment_hash = n.payment_hash
+where n.status='IN_FLIGHT'
+  and n.type in ('rebalance','keysend','lightning')
+  and n.payment_hash is not null
+  and n.payment_hash <> ''
+  and n.occurred_at > $1
+group by n.payment_hash
 `, cutoff)
 	if err != nil {
 		return nil
 	}
 	defer rows.Close()
-	var hashes []string
+	var payments []stuckInFlightPayment
 	for rows.Next() {
 		var hash string
-		if err := rows.Scan(&hash); err != nil {
+		var paymentIndex int64
+		if err := rows.Scan(&hash, &paymentIndex); err != nil {
 			continue
 		}
 		normalized := normalizeHash(hash)
 		if normalized == "" {
 			continue
 		}
-		hashes = append(hashes, normalized)
+		payment := stuckInFlightPayment{Hash: normalized}
+		if paymentIndex > 0 {
+			payment.PaymentIndex = uint64(paymentIndex)
+		}
+		payments = append(payments, payment)
 	}
-	return hashes
+	return payments
 }
 
-func (n *Notifier) loadPendingPayments(ctx context.Context) map[string]int64 {
-	pending := map[string]int64{}
+func (n *Notifier) loadPendingPayments(ctx context.Context) map[string]pendingPaymentEntry {
+	pending := map[string]pendingPaymentEntry{}
 	if n == nil || n.db == nil {
 		return pending
 	}
@@ -964,15 +1045,11 @@ func (n *Notifier) loadPendingPayments(ctx context.Context) map[string]int64 {
 	if err := json.Unmarshal([]byte(raw), &entries); err == nil {
 		now := time.Now().Unix()
 		for _, entry := range entries {
-			hash := normalizeHash(entry.Hash)
-			if hash == "" {
+			normalized, ok := normalizePendingPaymentEntry(entry, now)
+			if !ok {
 				continue
 			}
-			lastSeen := entry.LastSeen
-			if lastSeen <= 0 {
-				lastSeen = now
-			}
-			pending[hash] = lastSeen
+			pending[normalized.Hash] = normalized
 		}
 		return pending
 	}
@@ -988,31 +1065,31 @@ func (n *Notifier) loadPendingPayments(ctx context.Context) map[string]int64 {
 			if lastSeen <= 0 {
 				lastSeen = now
 			}
-			pending[normalized] = lastSeen
+			pending[normalized] = pendingPaymentEntry{Hash: normalized, LastSeen: lastSeen}
 		}
 	}
 	return pending
 }
 
-func (n *Notifier) storePendingPayments(ctx context.Context, pending map[string]int64) {
+func (n *Notifier) storePendingPayments(ctx context.Context, pending map[string]pendingPaymentEntry) {
 	if n == nil || n.db == nil {
 		return
 	}
 	cutoff := time.Now().Add(-paymentsPendingMaxAge).Unix()
 	entries := make([]pendingPaymentEntry, 0, len(pending))
 	now := time.Now().Unix()
-	for hash, lastSeen := range pending {
-		normalized := normalizeHash(hash)
-		if normalized == "" {
+	for hash, entry := range pending {
+		if strings.TrimSpace(entry.Hash) == "" {
+			entry.Hash = hash
+		}
+		normalized, ok := normalizePendingPaymentEntry(entry, now)
+		if !ok {
 			continue
 		}
-		if lastSeen <= 0 {
-			lastSeen = now
-		}
-		if lastSeen < cutoff {
+		if normalized.LastSeen < cutoff {
 			continue
 		}
-		entries = append(entries, pendingPaymentEntry{Hash: normalized, LastSeen: lastSeen})
+		entries = append(entries, normalized)
 	}
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].LastSeen > entries[j].LastSeen
@@ -1309,16 +1386,22 @@ func (n *Notifier) runInvoices() {
 }
 
 func (n *Notifier) runPayments() {
-	pending := map[string]int64{}
+	pending := map[string]pendingPaymentEntry{}
 	if n != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		pending = n.loadPendingPayments(ctx)
 		cancel()
 		stuckCtx, stuckCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		nowUnix := time.Now().Unix()
-		for _, hash := range n.loadStuckInFlightHashes(stuckCtx) {
-			if _, ok := pending[hash]; !ok {
-				pending[hash] = nowUnix
+		for _, stuck := range n.loadStuckInFlightPayments(stuckCtx) {
+			entry, ok := pending[stuck.Hash]
+			if !ok {
+				pending[stuck.Hash] = pendingPaymentEntry{Hash: stuck.Hash, LastSeen: nowUnix, PaymentIndex: stuck.PaymentIndex}
+				continue
+			}
+			if stuck.PaymentIndex > 0 && entry.PaymentIndex == 0 {
+				entry.PaymentIndex = stuck.PaymentIndex
+				pending[stuck.Hash] = entry
 			}
 		}
 		stuckCancel()
@@ -1459,9 +1542,16 @@ func (n *Notifier) runPayments() {
 		stuckCtx, stuckCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		nowUnix := time.Now().Unix()
 		stuckAdded := false
-		for _, hash := range n.loadStuckInFlightHashes(stuckCtx) {
-			if _, ok := pending[hash]; !ok {
-				pending[hash] = nowUnix
+		for _, stuck := range n.loadStuckInFlightPayments(stuckCtx) {
+			entry, ok := pending[stuck.Hash]
+			if !ok {
+				pending[stuck.Hash] = pendingPaymentEntry{Hash: stuck.Hash, LastSeen: nowUnix, PaymentIndex: stuck.PaymentIndex}
+				stuckAdded = true
+				continue
+			}
+			if stuck.PaymentIndex > 0 && entry.PaymentIndex == 0 {
+				entry.PaymentIndex = stuck.PaymentIndex
+				pending[stuck.Hash] = entry
 				stuckAdded = true
 			}
 		}
@@ -1522,8 +1612,7 @@ func (n *Notifier) runPayments() {
 			}
 			status := pay.Status.String()
 			if status == "IN_FLIGHT" {
-				if pending[paymentHash] != now {
-					pending[paymentHash] = now
+				if observePendingPayment(pending, paymentHash, pay.PaymentIndex, now) {
 					pendingDirty = true
 				}
 				continue
@@ -1544,24 +1633,47 @@ func (n *Notifier) runPayments() {
 
 		if len(pending) > 0 {
 			cutoff := time.Now().Add(-paymentsPendingMaxAge).Unix()
-			for hash, lastSeen := range pending {
-				if lastSeen < cutoff {
+			for hash, entry := range pending {
+				if strings.TrimSpace(entry.Hash) == "" {
+					entry.Hash = hash
+				}
+				normalized, ok := normalizePendingPaymentEntry(entry, now)
+				if !ok {
 					delete(pending, hash)
 					pendingDirty = true
 					continue
 				}
+				if normalized.Hash != hash {
+					delete(pending, hash)
+					pending[normalized.Hash] = normalized
+					hash = normalized.Hash
+					pendingDirty = true
+				}
+				if normalized.LastSeen < cutoff {
+					delete(pending, hash)
+					pendingDirty = true
+					continue
+				}
+				if normalized.NextCheck > now {
+					continue
+				}
 				ctxLookup, cancelLookup := context.WithTimeout(context.Background(), 6*time.Second)
-				pay, err := n.lookupPaymentByHash(ctxLookup, hash)
+				pay, err := n.lookupPendingPayment(ctxLookup, normalized)
 				cancelLookup()
 				if err != nil || pay == nil {
+					normalized = markPendingPaymentChecked(normalized, now, false)
+					pending[hash] = normalized
+					pendingDirty = true
 					continue
 				}
 				status := pay.Status.String()
 				if status == "IN_FLIGHT" {
-					if pending[hash] != now {
-						pending[hash] = now
-						pendingDirty = true
+					if pay.PaymentIndex > 0 {
+						normalized.PaymentIndex = pay.PaymentIndex
 					}
+					normalized = markPendingPaymentChecked(normalized, now, true)
+					pending[hash] = normalized
+					pendingDirty = true
 					continue
 				}
 				if status != "SUCCEEDED" && isProbePayment(pay) {
@@ -2524,6 +2636,58 @@ where payment_hash=$1
 	return err
 }
 
+func (n *Notifier) lookupPendingPayment(ctx context.Context, entry pendingPaymentEntry) (*lnrpc.Payment, error) {
+	normalized := normalizeHash(entry.Hash)
+	if normalized == "" {
+		return nil, nil
+	}
+	if entry.PaymentIndex > 0 {
+		if pay, ok, err := n.lookupPaymentByIndex(ctx, normalized, entry.PaymentIndex); err != nil {
+			return nil, err
+		} else if ok {
+			return pay, nil
+		}
+	}
+	return n.lookupPaymentByHash(ctx, normalized)
+}
+
+func (n *Notifier) lookupPaymentByIndex(ctx context.Context, paymentHash string, paymentIndex uint64) (*lnrpc.Payment, bool, error) {
+	normalized := normalizeHash(paymentHash)
+	if normalized == "" || paymentIndex == 0 {
+		return nil, false, nil
+	}
+	if n == nil || n.lnd == nil {
+		return nil, false, errors.New("lnd unavailable")
+	}
+
+	conn, release, err := n.lnd.BorrowLightning(ctx, false)
+	if err != nil {
+		return nil, false, err
+	}
+	defer release()
+
+	client := lnrpc.NewLightningClient(conn)
+	res, err := client.ListPayments(ctx, &lnrpc.ListPaymentsRequest{
+		IncludeIncomplete: true,
+		IndexOffset:       paymentIndex - 1,
+		MaxPayments:       1,
+		Reversed:          false,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+
+	for _, pay := range res.GetPayments() {
+		if pay == nil {
+			continue
+		}
+		if normalizeHash(pay.PaymentHash) == normalized {
+			return pay, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
 func (n *Notifier) lookupPaymentByHash(ctx context.Context, paymentHash string) (*lnrpc.Payment, error) {
 	normalized := normalizeHash(paymentHash)
 	if normalized == "" {
@@ -2533,14 +2697,9 @@ func (n *Notifier) lookupPaymentByHash(ctx context.Context, paymentHash string) 
 		return nil, errors.New("lnd unavailable")
 	}
 
-	// Primary path: O(1) lookup via Router.TrackPaymentV2. LND keys payments by
-	// hash in memory, so this resolves any payment regardless of how many
-	// settled/failed payments sit ahead of it in ListPayments — the reason the
-	// previous ListPayments-only implementation lost rebalances on busy nodes
-	// (BoS + RapidFire + manual sends easily push the target hash past any
-	// fixed page size). LND's NotFound is authoritative: a hash it doesn't
-	// recognize won't be found by paging either, so skip the fallback to avoid
-	// running a 48h ListPayments sweep per poll per orphaned hash.
+	// Fallback path: TrackPaymentV2 resolves by hash without depending on
+	// ListPayments pagination. The pending loop prefers payment_index first so
+	// this stream is not opened on every poll for every pending payment.
 	if pay, err := n.lnd.TrackPaymentSnapshot(ctx, normalized); err == nil {
 		return pay, nil
 	} else if n.logger != nil {

@@ -135,3 +135,75 @@ func TestPaymentRouteTypePriority(t *testing.T) {
 		t.Fatalf("expected probe classification for empty payment request/keysend-free payment, got %q", got)
 	}
 }
+
+func TestPendingPaymentBackoff(t *testing.T) {
+	tests := []struct {
+		checkCount int
+		want       time.Duration
+	}{
+		{checkCount: 0, want: paymentsPollInterval},
+		{checkCount: paymentsPendingFastChecks, want: paymentsPollInterval},
+		{checkCount: paymentsPendingFastChecks + 1, want: time.Minute},
+		{checkCount: paymentsPendingSlowChecks, want: time.Minute},
+		{checkCount: paymentsPendingSlowChecks + 1, want: 5 * time.Minute},
+	}
+
+	for _, tt := range tests {
+		if got := pendingPaymentBackoff(tt.checkCount); got != tt.want {
+			t.Fatalf("backoff(%d): expected %s, got %s", tt.checkCount, tt.want, got)
+		}
+	}
+}
+
+func TestObservePendingPaymentStoresIndexAndSchedulesNextCheck(t *testing.T) {
+	pending := map[string]pendingPaymentEntry{}
+	now := int64(1_700_000_000)
+
+	if !observePendingPayment(pending, "ABC123", 42, now) {
+		t.Fatal("expected new pending payment to be dirty")
+	}
+	entry := pending["abc123"]
+	if entry.Hash != "abc123" {
+		t.Fatalf("expected normalized hash, got %q", entry.Hash)
+	}
+	if entry.PaymentIndex != 42 {
+		t.Fatalf("expected payment index 42, got %d", entry.PaymentIndex)
+	}
+	if entry.LastSeen != now || entry.LastChecked != now {
+		t.Fatalf("expected timestamps to be set to %d, got last_seen=%d last_checked=%d", now, entry.LastSeen, entry.LastChecked)
+	}
+	if entry.CheckCount != 1 {
+		t.Fatalf("expected first check count, got %d", entry.CheckCount)
+	}
+	if entry.NextCheck != now+int64(paymentsPollInterval/time.Second) {
+		t.Fatalf("unexpected next check timestamp: %d", entry.NextCheck)
+	}
+}
+
+func TestObservePendingPaymentResetsBackoffWhenIndexChanges(t *testing.T) {
+	now := int64(1_700_000_000)
+	pending := map[string]pendingPaymentEntry{
+		"abc123": {
+			Hash:         "abc123",
+			LastSeen:     now - 60,
+			PaymentIndex: 41,
+			LastChecked:  now - 30,
+			NextCheck:    now + 300,
+			CheckCount:   12,
+		},
+	}
+
+	if !observePendingPayment(pending, "abc123", 42, now) {
+		t.Fatal("expected changed index to mark pending map dirty")
+	}
+	entry := pending["abc123"]
+	if entry.PaymentIndex != 42 {
+		t.Fatalf("expected updated payment index 42, got %d", entry.PaymentIndex)
+	}
+	if entry.CheckCount != 1 {
+		t.Fatalf("expected backoff to restart after index change, got %d", entry.CheckCount)
+	}
+	if entry.NextCheck != now+int64(paymentsPollInterval/time.Second) {
+		t.Fatalf("expected fast next check after index change, got %d", entry.NextCheck)
+	}
+}

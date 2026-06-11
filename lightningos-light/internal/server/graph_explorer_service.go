@@ -639,6 +639,7 @@ where id = true
 	status.LastSnapshotAt = lastSnapshot
 	status.LastRefillAt = lastRefill
 	status.LastRefillProvider = strings.TrimSpace(lastRefillProvider)
+	status.LastSyncAt = latestGraphExplorerSyncAt(status.LastSyncAt, lastStream, lastReconcile, lastBootstrap)
 
 	err = s.db.QueryRow(ctx, `
 select
@@ -1671,6 +1672,23 @@ func (s *GraphExplorerService) setLastSyncAt(at time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastSyncAt = at
+}
+
+func latestGraphExplorerSyncAt(values ...*time.Time) *time.Time {
+	var latest time.Time
+	for _, value := range values {
+		if value == nil || value.IsZero() {
+			continue
+		}
+		candidate := value.UTC()
+		if latest.IsZero() || candidate.After(latest) {
+			latest = candidate
+		}
+	}
+	if latest.IsZero() {
+		return nil
+	}
+	return &latest
 }
 
 func (s *GraphExplorerService) recordError(err error) {

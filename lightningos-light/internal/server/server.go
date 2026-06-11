@@ -86,6 +86,7 @@ type Server struct {
 	graphExplorerMu             sync.Mutex
 	graphExplorer               *GraphExplorerService
 	graphExplorerErr            string
+	graphExplorerRuntimeActive  bool
 	balancedOpenInitAt          time.Time
 	balancedOpenMu              sync.Mutex
 	balancedOpen                *BalancedOpenService
@@ -209,9 +210,7 @@ func (s *Server) Run() error {
 	if s.channelOpenCandidates != nil {
 		s.channelOpenCandidates.Start()
 	}
-	if s.graphExplorer != nil {
-		s.graphExplorer.Start()
-	}
+	s.enableGraphExplorerRuntime()
 	if s.balancedOpen != nil {
 		s.balancedOpen.Start()
 	}

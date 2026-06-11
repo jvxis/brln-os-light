@@ -283,7 +283,7 @@ func (c *Client) SendToRoute(ctx context.Context, paymentHash string, route *lnr
 		return nil, errors.New("invalid payment hash")
 	}
 
-	conn, release, err := c.borrowConn(ctx, grpcRoleAdminStream)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return nil, err
 	}
@@ -337,11 +337,11 @@ func (c *Client) BuildRoute(ctx context.Context, amountSat int64, outgoingChanID
 		hopBytes = append(hopBytes, b)
 	}
 
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer release()
 
 	router := routerrpc.NewRouterClient(conn)
 	resp, err := router.BuildRoute(ctx, &routerrpc.BuildRouteRequest{
@@ -415,11 +415,11 @@ func (c *Client) sendPaymentMultiSource(ctx context.Context, paymentRequest stri
 		maxParts = 3
 	}
 
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminStream)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer release()
 
 	router := routerrpc.NewRouterClient(conn)
 	req := &routerrpc.SendPaymentRequest{

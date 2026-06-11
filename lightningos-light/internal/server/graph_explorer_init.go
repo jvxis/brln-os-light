@@ -8,11 +8,20 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const graphExplorerInitRetryCooldown = 10 * time.Second
+const (
+	graphExplorerInitRetryCooldown = 10 * time.Second
+	graphExplorerInitSchemaTimeout = 30 * time.Second
+)
 
 func (s *Server) initGraphExplorer() {
 	s.graphExplorerMu.Lock()
-	defer s.graphExplorerMu.Unlock()
+	var startAfterUnlock *GraphExplorerService
+	defer func() {
+		s.graphExplorerMu.Unlock()
+		if startAfterUnlock != nil {
+			startAfterUnlock.Start()
+		}
+	}()
 
 	if s.graphExplorer != nil && s.graphExplorerErr == "" {
 		return
@@ -43,7 +52,7 @@ func (s *Server) initGraphExplorer() {
 	}
 
 	svc := NewGraphExplorerService(pool, s.logger, s.lnd)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), graphExplorerInitSchemaTimeout)
 	defer cancel()
 	if err := svc.EnsureSchema(ctx); err != nil {
 		s.graphExplorerErr = fmt.Sprintf("graph explorer unavailable: failed to init schema: %v", err)
@@ -53,9 +62,33 @@ func (s *Server) initGraphExplorer() {
 
 	s.graphExplorer = svc
 	s.graphExplorerErr = ""
+	if s.graphExplorerRuntimeActive {
+		startAfterUnlock = svc
+	}
 }
 
 func (s *Server) graphExplorerService() (*GraphExplorerService, string) {
 	s.initGraphExplorer()
-	return s.graphExplorer, s.graphExplorerErr
+	s.graphExplorerMu.Lock()
+	svc := s.graphExplorer
+	errMsg := s.graphExplorerErr
+	runtimeActive := s.graphExplorerRuntimeActive
+	s.graphExplorerMu.Unlock()
+	if runtimeActive && svc != nil {
+		svc.Start()
+	}
+	return svc, errMsg
+}
+
+func (s *Server) enableGraphExplorerRuntime() {
+	if s == nil {
+		return
+	}
+	s.graphExplorerMu.Lock()
+	s.graphExplorerRuntimeActive = true
+	svc := s.graphExplorer
+	s.graphExplorerMu.Unlock()
+	if svc != nil {
+		svc.Start()
+	}
 }

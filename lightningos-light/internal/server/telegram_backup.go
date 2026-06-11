@@ -276,11 +276,11 @@ func getNodeAlias(ctx context.Context, lnd *lndclient.Client) string {
 	}
 	infoCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	conn, err := lnd.DialLightning(infoCtx)
+	conn, release, err := lnd.BorrowLightning(infoCtx, false)
 	if err != nil {
 		return ""
 	}
-	defer conn.Close()
+	defer release()
 	client := lnrpc.NewLightningClient(conn)
 	info, err := client.GetInfo(infoCtx, &lnrpc.GetInfoRequest{})
 	if err != nil || info == nil {

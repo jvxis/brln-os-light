@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -28,6 +30,14 @@ type LNDConfig struct {
 	GRPCHost          string `yaml:"grpc_host"`
 	TLSCertPath       string `yaml:"tls_cert_path"`
 	AdminMacaroonPath string `yaml:"admin_macaroon_path"`
+	SharedGRPC        *bool  `yaml:"shared_grpc"`
+}
+
+func (l LNDConfig) SharedGRPCEnabled() bool {
+	if l.SharedGRPC == nil {
+		return true
+	}
+	return *l.SharedGRPC
 }
 
 type BitcoinRemoteConfig struct {
@@ -85,6 +95,13 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.LND.GRPCHost == "" {
 		cfg.LND.GRPCHost = "127.0.0.1:10009"
+	}
+	if raw := strings.TrimSpace(os.Getenv("LND_SHARED_GRPC")); raw != "" {
+		enabled, err := strconv.ParseBool(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid LND_SHARED_GRPC value %q", raw)
+		}
+		cfg.LND.SharedGRPC = &enabled
 	}
 	if cfg.UI.StaticDir == "" {
 		cfg.UI.StaticDir = "/opt/lightningos/ui"

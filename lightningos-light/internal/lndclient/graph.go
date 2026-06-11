@@ -118,11 +118,11 @@ func (s *graphSubscription) Close() error {
 }
 
 func (c *Client) DescribeGraph(ctx context.Context) (GraphSnapshot, error) {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return GraphSnapshot{}, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 	resp, err := client.DescribeGraph(ctx, &lnrpc.ChannelGraphRequest{IncludeUnannounced: false})
@@ -133,21 +133,27 @@ func (c *Client) DescribeGraph(ctx context.Context) (GraphSnapshot, error) {
 }
 
 func (c *Client) SubscribeChannelGraph(ctx context.Context) (GraphSubscription, error) {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminStream)
 	if err != nil {
 		return nil, err
 	}
 
 	client := lnrpc.NewLightningClient(conn)
-	stream, err := client.SubscribeChannelGraph(ctx, &lnrpc.GraphTopologySubscription{})
+	streamCtx, cancel := context.WithCancel(ctx)
+	stream, err := client.SubscribeChannelGraph(streamCtx, &lnrpc.GraphTopologySubscription{})
 	if err != nil {
-		_ = conn.Close()
+		cancel()
+		release()
 		return nil, err
 	}
 
 	return &graphSubscription{
 		stream: stream,
-		close:  conn.Close,
+		close: func() error {
+			cancel()
+			release()
+			return nil
+		},
 	}, nil
 }
 

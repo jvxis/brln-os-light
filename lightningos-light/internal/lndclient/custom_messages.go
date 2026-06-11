@@ -27,11 +27,11 @@ func (c *Client) SendCustomMessage(ctx context.Context, pubkeyHex string, messag
 		return errors.New("invalid pubkey hex")
 	}
 
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 	_, err = client.SendCustomMessage(ctx, &lnrpc.SendCustomMessageRequest{
@@ -50,12 +50,12 @@ func (c *Client) SubscribeCustomMessages(ctx context.Context) (<-chan CustomPeer
 		defer close(msgs)
 		defer close(errs)
 
-		conn, err := c.dial(ctx, true)
+		conn, release, err := c.borrowConn(ctx, grpcRoleAdminStream)
 		if err != nil {
 			errs <- err
 			return
 		}
-		defer conn.Close()
+		defer release()
 
 		client := lnrpc.NewLightningClient(conn)
 		stream, err := client.SubscribeCustomMessages(ctx, &lnrpc.SubscribeCustomMessagesRequest{})

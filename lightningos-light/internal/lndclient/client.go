@@ -66,11 +66,25 @@ type Client struct {
 	channelPendingOpen map[string]time.Time
 	nodeAliasMu        sync.Mutex
 	nodeAliasCache     map[string]nodeAliasCacheEntry
+	grpcMu             sync.Mutex
+	grpcConns          map[grpcConnRole]*grpc.ClientConn
 }
 
 type nodeAliasCacheEntry struct {
 	alias     string
 	expiresAt time.Time
+}
+
+type grpcConnRole string
+
+const (
+	grpcRoleAdminUnary     grpcConnRole = "admin_unary"
+	grpcRoleAdminStream    grpcConnRole = "admin_stream"
+	grpcRoleWalletUnlocker grpcConnRole = "wallet_unlocker"
+)
+
+func (r grpcConnRole) withMacaroon() bool {
+	return r != grpcRoleWalletUnlocker
 }
 
 type DerivedKey struct {
@@ -258,22 +272,22 @@ func (c *Client) LookupNodeAlias(ctx context.Context, pubkey string) string {
 		return alias
 	}
 
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return ""
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 	return c.lookupNodeAliasWithClient(ctx, client, trimmed)
 }
 
 func (c *Client) ResetMissionControl(ctx context.Context) error {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := routerrpc.NewRouterClient(conn)
 	_, err = client.ResetMissionControl(ctx, &routerrpc.ResetMissionControlRequest{})
@@ -298,11 +312,11 @@ func (c *Client) ImportMissionControl(ctx context.Context, updates []MissionCont
 	if len(updates) == 0 {
 		return nil
 	}
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer release()
 	client := routerrpc.NewRouterClient(conn)
 	pairs := make([]*routerrpc.PairHistory, 0, len(updates))
 	for _, u := range updates {
@@ -338,11 +352,11 @@ func (c *Client) ImportMissionControl(ctx context.Context, updates []MissionCont
 }
 
 func (c *Client) UpdateMissionControlHalfLife(ctx context.Context, halfLifeSec int64) error {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer release()
 
 	if halfLifeSec < 0 {
 		halfLifeSec = 0
@@ -374,11 +388,11 @@ func (c *Client) LookupPayment(ctx context.Context, paymentHash string, lookback
 		return nil, nil
 	}
 
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 	return lookupPaymentWithClient(ctx, client, trimmed, lookback)
@@ -406,11 +420,11 @@ func (c *Client) TrackPaymentSnapshot(ctx context.Context, paymentHash string) (
 	hardCtx, hardCancel := context.WithTimeout(ctx, 4*time.Second)
 	defer hardCancel()
 
-	conn, err := c.dial(hardCtx, true)
+	conn, release, err := c.borrowConn(hardCtx, grpcRoleAdminStream)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer release()
 
 	router := routerrpc.NewRouterClient(conn)
 	stream, err := router.TrackPaymentV2(hardCtx, &routerrpc.TrackPaymentRequest{
@@ -437,11 +451,11 @@ const failedPaymentsPageSize = 5000
 const failedPaymentsMaxPages = 200000
 
 func (c *Client) CountFailedPayments(ctx context.Context) (int, error) {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return 0, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 
@@ -520,11 +534,11 @@ func (c *Client) CleanFailedPayments(ctx context.Context) (int, error) {
 }
 
 func (c *Client) DeleteFailedPayments(ctx context.Context) error {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 	_, err = client.DeleteAllPayments(ctx, &lnrpc.DeleteAllPaymentsRequest{
@@ -637,7 +651,7 @@ func (m macaroonCredential) RequireTransportSecurity() bool {
 	return true
 }
 
-func (c *Client) dial(ctx context.Context, withMacaroon bool) (*grpc.ClientConn, error) {
+func (c *Client) dialOptions(withMacaroon bool) ([]grpc.DialOption, error) {
 	tlsCert, err := os.ReadFile(c.cfg.LND.TLSCertPath)
 	if err != nil {
 		return nil, err
@@ -662,11 +676,95 @@ func (c *Client) dial(ctx context.Context, withMacaroon bool) (*grpc.ClientConn,
 		opts = append(opts, grpc.WithPerRPCCredentials(macCred))
 	}
 
+	return opts, nil
+}
+
+func (c *Client) dial(ctx context.Context, withMacaroon bool) (*grpc.ClientConn, error) {
+	opts, err := c.dialOptions(withMacaroon)
+	if err != nil {
+		return nil, err
+	}
 	return grpc.DialContext(ctx, c.cfg.LND.GRPCHost, opts...)
 }
 
 func (c *Client) DialLightning(ctx context.Context) (*grpc.ClientConn, error) {
 	return c.dial(ctx, true)
+}
+
+func (c *Client) BorrowLightning(ctx context.Context, stream bool) (*grpc.ClientConn, func(), error) {
+	role := grpcRoleAdminUnary
+	if stream {
+		role = grpcRoleAdminStream
+	}
+	return c.borrowConn(ctx, role)
+}
+
+func (c *Client) borrowConn(ctx context.Context, role grpcConnRole) (*grpc.ClientConn, func(), error) {
+	if c == nil {
+		return nil, nil, errors.New("nil lndclient")
+	}
+	if c.cfg == nil || !c.cfg.LND.SharedGRPCEnabled() {
+		conn, err := c.dial(ctx, role.withMacaroon())
+		if err != nil {
+			return nil, nil, err
+		}
+		return conn, func() { _ = conn.Close() }, nil
+	}
+
+	conn, err := c.sharedConn(ctx, role)
+	if err != nil {
+		return nil, nil, err
+	}
+	return conn, func() {}, nil
+}
+
+func (c *Client) sharedConn(ctx context.Context, role grpcConnRole) (*grpc.ClientConn, error) {
+	c.grpcMu.Lock()
+	defer c.grpcMu.Unlock()
+
+	if c.grpcConns == nil {
+		c.grpcConns = make(map[grpcConnRole]*grpc.ClientConn)
+	}
+	if conn := c.grpcConns[role]; conn != nil {
+		return conn, nil
+	}
+
+	opts, err := c.dialOptions(role.withMacaroon())
+	if err != nil {
+		return nil, err
+	}
+	conn, err := grpc.DialContext(ctx, c.cfg.LND.GRPCHost, opts...)
+	if err != nil {
+		return nil, err
+	}
+	c.grpcConns[role] = conn
+	if c.logger != nil {
+		c.logger.Printf("lndclient: shared grpc connection opened role=%s host=%s", role, c.cfg.LND.GRPCHost)
+	}
+	return conn, nil
+}
+
+func (c *Client) Close() error {
+	if c == nil {
+		return nil
+	}
+	c.grpcMu.Lock()
+	defer c.grpcMu.Unlock()
+
+	var firstErr error
+	for role, conn := range c.grpcConns {
+		if conn == nil {
+			continue
+		}
+		if err := conn.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		if c.logger != nil {
+			c.logger.Printf("lndclient: shared grpc connection closed role=%s", role)
+		}
+		delete(c.grpcConns, role)
+	}
+	return firstErr
 }
 
 func (c *Client) GetStatus(ctx context.Context) (Status, error) {
@@ -733,11 +831,11 @@ func (c *Client) SyncedToGraph(ctx context.Context) (bool, error) {
 		return false, errors.New("lnd client unavailable")
 	}
 	now := time.Now()
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return false, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 	info, err := client.GetInfo(ctx, &lnrpc.GetInfoRequest{})
@@ -766,11 +864,11 @@ func (c *Client) SyncedToGraph(ctx context.Context) (bool, error) {
 }
 
 func (c *Client) GetBalances(ctx context.Context) (BalanceSummary, error) {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return BalanceSummary{}, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 	summary := BalanceSummary{}
@@ -822,11 +920,11 @@ func (c *Client) GetBalances(ctx context.Context) (BalanceSummary, error) {
 }
 
 func (c *Client) GetWalletBalanceDetails(ctx context.Context) (WalletBalanceDetails, error) {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return WalletBalanceDetails{}, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 	resp, err := client.WalletBalance(ctx, &lnrpc.WalletBalanceRequest{})
@@ -853,11 +951,11 @@ func (c *Client) GetWalletBalanceDetails(ctx context.Context) (WalletBalanceDeta
 }
 
 func (c *Client) DecodeInvoice(ctx context.Context, payReq string) (DecodedInvoice, error) {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return DecodedInvoice{}, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 	decoded, _, err := decodePaymentRequestWithClient(ctx, client, payReq)
@@ -897,11 +995,11 @@ func decodePaymentRequestWithClient(ctx context.Context, client lnrpc.LightningC
 }
 
 func (c *Client) ExportAllChannelBackups(ctx context.Context) ([]byte, error) {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 	resp, err := client.ExportAllChannelBackups(ctx, &lnrpc.ChanBackupExportRequest{})
@@ -966,11 +1064,11 @@ func (c *Client) RestoreChannelBackups(ctx context.Context, backup []byte) (uint
 }
 
 func (c *Client) GetChannelPolicy(ctx context.Context, channelPoint string) (ChannelPolicy, error) {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return ChannelPolicy{}, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 
@@ -1027,11 +1125,11 @@ func (c *Client) GetChannelPolicyByID(ctx context.Context, chanID uint64, remote
 	if chanID == 0 {
 		return ChannelPolicy{}, errors.New("chan_id required")
 	}
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return ChannelPolicy{}, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 	edge, err := client.GetChanInfo(ctx, &lnrpc.ChanInfoRequest{ChanId: chanID})
@@ -1065,11 +1163,11 @@ func (c *Client) GetChannelPolicyByID(ctx context.Context, chanID uint64, remote
 
 func (c *Client) getStatusUncached(ctx context.Context) (Status, error) {
 	now := time.Now()
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return Status{WalletState: "unknown"}, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 
@@ -1268,11 +1366,11 @@ func buildCreateInvoiceRequest(amountSat int64, memo string, expirySeconds int64
 }
 
 func (c *Client) CreateInvoice(ctx context.Context, amountSat int64, memo string, expirySeconds int64, opts *CreateInvoiceOptions) (CreatedInvoice, error) {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return CreatedInvoice{}, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 
@@ -1289,11 +1387,11 @@ func (c *Client) CreateInvoice(ctx context.Context, amountSat int64, memo string
 }
 
 func (c *Client) NewAddress(ctx context.Context) (string, error) {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return "", err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 
@@ -1308,11 +1406,11 @@ func (c *Client) NewAddress(ctx context.Context) (string, error) {
 }
 
 func (c *Client) PayInvoice(ctx context.Context, paymentRequest string, outgoingChanIDs []uint64, maxFeeSat int64) error {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminStream)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer release()
 
 	router := routerrpc.NewRouterClient(conn)
 	feeLimitMsat := defaultRouterPaymentFeeLimitMsat(ctx, c, paymentRequest)
@@ -1347,11 +1445,11 @@ func (c *Client) PayInvoiceWithMPP(ctx context.Context, paymentRequest string, o
 		return errors.New("payment_request required")
 	}
 
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminStream)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer release()
 
 	router := routerrpc.NewRouterClient(conn)
 	feeLimitMsat := defaultRouterPaymentFeeLimitMsat(ctx, c, trimmed)
@@ -1399,11 +1497,11 @@ func (c *Client) PayInvoiceWithValidatedRoute(ctx context.Context, paymentReques
 		numRoutes = 5
 	}
 
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminStream)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer release()
 
 	lightning := lnrpc.NewLightningClient(conn)
 	router := routerrpc.NewRouterClient(conn)
@@ -3219,11 +3317,11 @@ func (c *Client) PreviewPayment(ctx context.Context, paymentRequest string, outg
 		numRoutes = 5
 	}
 
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return PaymentPreview{}, err
 	}
-	defer conn.Close()
+	defer release()
 
 	lightning := lnrpc.NewLightningClient(conn)
 	router := routerrpc.NewRouterClient(conn)
@@ -3336,11 +3434,11 @@ func (c *Client) PaymentDetails(ctx context.Context, paymentHash string, lookbac
 		return PaymentDetails{}, errors.New("payment_hash required")
 	}
 
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return PaymentDetails{}, err
 	}
-	defer conn.Close()
+	defer release()
 
 	lightning := lnrpc.NewLightningClient(conn)
 	pay, err := lookupPaymentWithClient(ctx, lightning, trimmed, lookback)
@@ -3505,11 +3603,11 @@ func payReqFeatureBits(features map[uint32]*lnrpc.Feature) []lnrpc.FeatureBit {
 }
 
 func (c *Client) SendCoins(ctx context.Context, address string, amountSat int64, satPerVbyte int64, sendAll bool) (string, error) {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return "", err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 
@@ -3546,11 +3644,11 @@ func (c *Client) SweepOutpoint(ctx context.Context, txid string, vout uint32, sa
 		return "", "", errors.New("sat_per_vbyte must be zero or positive")
 	}
 
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return "", "", err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 
@@ -3596,11 +3694,11 @@ func (c *Client) ListRecent(ctx context.Context, limit int) ([]RecentActivity, e
 		limit = 20
 	}
 
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 
@@ -3751,11 +3849,11 @@ func (c *Client) ListActivityRange(ctx context.Context, start time.Time, end tim
 		start, end = end, start
 	}
 
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 
@@ -3800,11 +3898,11 @@ func (c *Client) ListOnchainRange(ctx context.Context, start time.Time, end time
 		start, end = end, start
 	}
 
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 	items, err := c.listOnchainRangeWithClient(ctx, client, start, end)
@@ -4359,11 +4457,11 @@ func (c *Client) ListOnchain(ctx context.Context, limit int) ([]RecentActivity, 
 		limit = 20
 	}
 
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 	var startHeight int32
@@ -4443,11 +4541,11 @@ func (c *Client) ListOnchain(ctx context.Context, limit int) ([]RecentActivity, 
 }
 
 func (c *Client) ListOnchainTransactions(ctx context.Context, limit int) ([]OnchainTransaction, error) {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 	req := &lnrpc.GetTransactionsRequest{
@@ -4565,11 +4663,11 @@ func (c *Client) IsOutpointUnspent(ctx context.Context, txid string, vout uint32
 		return false, err
 	}
 
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return false, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 	resp, err := client.ListUnspent(ctx, &lnrpc.ListUnspentRequest{
@@ -4614,11 +4712,11 @@ func (c *Client) FindSpendingTransactionByOutpoint(ctx context.Context, txid str
 		return "", false, err
 	}
 
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return "", false, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 	resp, err := client.GetTransactions(ctx, &lnrpc.GetTransactionsRequest{
@@ -4679,11 +4777,11 @@ func (c *Client) FindSpendingTransactionByOutpoint(ctx context.Context, txid str
 }
 
 func (c *Client) ListChannels(ctx context.Context) ([]ChannelInfo, error) {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 
@@ -4824,11 +4922,11 @@ func (c *Client) ListChannels(ctx context.Context) ([]ChannelInfo, error) {
 }
 
 func (c *Client) ListOpenChannelRefs(ctx context.Context) ([]ChannelRef, error) {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 	resp, err := client.ListChannels(ctx, &lnrpc.ListChannelsRequest{})
@@ -4852,11 +4950,11 @@ func (c *Client) ListOpenChannelRefs(ctx context.Context) ([]ChannelRef, error) 
 }
 
 func (c *Client) ListPendingChannels(ctx context.Context) ([]PendingChannelInfo, error) {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 	resp, err := client.PendingChannels(ctx, &lnrpc.PendingChannelsRequest{})
@@ -5019,11 +5117,11 @@ func (c *Client) ListPendingChannels(ctx context.Context) ([]PendingChannelInfo,
 }
 
 func (c *Client) ListClosedChannels(ctx context.Context) ([]ClosedChannelInfo, error) {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 	resp, err := client.ClosedChannels(ctx, &lnrpc.ClosedChannelsRequest{})
@@ -5096,11 +5194,11 @@ func (c *Client) ListClosedChannels(ctx context.Context) ([]ClosedChannelInfo, e
 }
 
 func (c *Client) ListPeers(ctx context.Context) ([]PeerInfo, error) {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 
@@ -5157,11 +5255,11 @@ func buildPeerInfos(respPeers []*lnrpc.Peer, aliasMap map[string]string) []PeerI
 }
 
 func (c *Client) ListWatchtowers(ctx context.Context, includeSessions bool, excludeExhaustedSessions bool) ([]WatchtowerInfo, error) {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := wtclientrpc.NewWatchtowerClientClient(conn)
 	resp, err := client.ListTowers(ctx, &wtclientrpc.ListTowersRequest{
@@ -5224,11 +5322,11 @@ func (c *Client) AddWatchtower(ctx context.Context, pubkeyHex string, address st
 		return fmt.Errorf("invalid pubkey hex")
 	}
 
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := wtclientrpc.NewWatchtowerClientClient(conn)
 	_, err = client.AddTower(ctx, &wtclientrpc.AddTowerRequest{
@@ -5249,11 +5347,11 @@ func (c *Client) RemoveWatchtower(ctx context.Context, pubkeyHex string, address
 		return fmt.Errorf("invalid pubkey hex")
 	}
 
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := wtclientrpc.NewWatchtowerClientClient(conn)
 	_, err = client.RemoveTower(ctx, &wtclientrpc.RemoveTowerRequest{
@@ -5268,11 +5366,11 @@ func (c *Client) ConnectPeer(ctx context.Context, pubkey string, host string, pe
 }
 
 func (c *Client) ConnectPeerWithTimeout(ctx context.Context, pubkey string, host string, perm bool, timeoutSec uint64) error {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 	if timeoutSec == 0 {
@@ -5307,11 +5405,11 @@ func (c *Client) GetNodeDetails(ctx context.Context, pubkey string) (NodeDetails
 		return NodeDetails{}, errors.New("pubkey required")
 	}
 
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return NodeDetails{}, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 	info, err := client.GetNodeInfo(ctx, &lnrpc.NodeInfoRequest{PubKey: trimmed, IncludeChannels: false})
@@ -5354,11 +5452,11 @@ func (c *Client) GetPeerNeighborRecommendations(ctx context.Context, sourcePubke
 		limit = 20
 	}
 
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return nil, "", err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 	info, err := client.GetNodeInfo(ctx, &lnrpc.NodeInfoRequest{PubKey: trimmed, IncludeChannels: true})
@@ -5937,11 +6035,11 @@ func (c *Client) PublishTransaction(ctx context.Context, txHex string, label str
 		return errors.New("invalid tx hex")
 	}
 
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := walletrpc.NewWalletKitClient(conn)
 	resp, err := client.PublishTransaction(ctx, &walletrpc.Transaction{
@@ -6030,11 +6128,11 @@ func (c *Client) BumpFee(ctx context.Context, params BumpFeeParams) error {
 		return err
 	}
 
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer release()
 
 	req := &walletrpc.BumpFeeRequest{
 		Outpoint:  outpoint,
@@ -6547,11 +6645,11 @@ func (c *Client) UpdateChannelFees(ctx context.Context, channelPoint string, app
 }
 
 func (c *Client) UpdateChannelPolicy(ctx context.Context, params UpdateChannelPolicyParams) error {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer release()
 
 	req := &lnrpc.PolicyUpdateRequest{
 		BaseFeeMsat:   params.BaseFeeMsat,
@@ -6594,11 +6692,11 @@ func (c *Client) UpdateChannelPolicy(ctx context.Context, params UpdateChannelPo
 }
 
 func (c *Client) UpdateChanStatus(ctx context.Context, channelPoint string, enable bool) error {
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer release()
 
 	cp, err := parseChannelPoint(channelPoint)
 	if err != nil {

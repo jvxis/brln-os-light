@@ -64,11 +64,11 @@ func (c *Client) SendKeysendMessage(ctx context.Context, pubkeyHex string, amoun
 	hash := sha256.Sum256(preimage)
 	paymentHash := hex.EncodeToString(hash[:])
 
-	conn, err := c.dial(ctx, true)
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminStream)
 	if err != nil {
 		return "", err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := routerrpc.NewRouterClient(conn)
 	records := map[uint64][]byte{

@@ -209,38 +209,38 @@ const (
 	// Lifetime empirically-dead guards are only a fallback when recent job
 	// stats were not loaded. Sovereign scans prefer the 7d job window below
 	// so old cumulative pair stats do not permanently ban a recovered target.
-	sovereignLowSuccessDeadZeroAttempts          = 200   // 0 successes in N+ attempts → never routed
-	sovereignLowSuccessDeadRate                  = 0.001 // 0.1% — empirically dead at this scale
-	sovereignLowSuccessDeadAttempts              = 1000  // need this many attempts to call it dead
-	sovereignRecentTargetStatsWindow             = 7 * 24 * time.Hour
-	sovereignRecentLowSuccessMinJobs             = 5
-	sovereignRecentEmpiricalDeadMinJobs          = 3
-	sovereignRecentEmpiricalDeadFirst            = 2 * time.Hour
-	sovereignRecentEmpiricalDeadRepeat           = 6 * time.Hour
-	sovereignLowSuccessOpportunityReason         = "low_success_opportunity_below_floor"
-	sovereignBudgetEfficiencyProfitCostRatio     = 0.20
-	sovereignBudgetEfficiencyHighSuccessRate     = 0.05
-	sovereignBudgetEfficiencyOpportunityReason   = "budget_efficiency_below_floor"
-	sovereignRiskScoreFloor                      = 0.03
-	sovereignGainV3ColdStartPct                  = 0.75
-	sovereignGainV3ColdStartPctMin               = 0.50
-	sovereignGainV3ColdStartPctMax               = 0.95
-	fastPathMaxTimeoutSecDefault                 = 90
-	fastPathMaxTimeoutSecMin                     = 30
-	fastPathMaxTimeoutSecMax                     = 300
-	sovereignTopBucketPctDefault                 = 30
-	sovereignTopBucketPctMin                     = 5
-	sovereignTopBucketPctMax                     = 80
-	sovereignRouteDeadSourceShare                = 0.10
-	sovereignRouteDeadMediumSourceShare          = 0.35
-	sovereignRouteDeadHighSourceShare            = 0.50
-	sovereignRouteDeadSevereSourceShare          = 0.65
-	sovereignRouteDeadProfitCostRatio            = 1.5
-	sovereignRouteDeadMediumProfitCostRatio      = 2.0
-	sovereignRouteDeadHighProfitCostRatio        = 3.0
-	sovereignRouteDeadOpportunityReason          = "route_dead_opportunity_below_floor"
-	sovereignRouteDeadFallbackMinFailedSources   = 8
-	sovereignRouteDeadFallbackSevereFailSources  = targetCooldownMinAttempts
+	sovereignLowSuccessDeadZeroAttempts                 = 200   // 0 successes in N+ attempts → never routed
+	sovereignLowSuccessDeadRate                         = 0.001 // 0.1% — empirically dead at this scale
+	sovereignLowSuccessDeadAttempts                     = 1000  // need this many attempts to call it dead
+	sovereignRecentTargetStatsWindow                    = 7 * 24 * time.Hour
+	sovereignRecentLowSuccessMinJobs                    = 5
+	sovereignRecentEmpiricalDeadMinJobs                 = 3
+	sovereignRecentEmpiricalDeadFirst                   = 2 * time.Hour
+	sovereignRecentEmpiricalDeadRepeat                  = 6 * time.Hour
+	sovereignLowSuccessOpportunityReason                = "low_success_opportunity_below_floor"
+	sovereignBudgetEfficiencyProfitCostRatio            = 0.20
+	sovereignBudgetEfficiencyHighSuccessRate            = 0.05
+	sovereignBudgetEfficiencyOpportunityReason          = "budget_efficiency_below_floor"
+	sovereignRiskScoreFloor                             = 0.03
+	sovereignGainV3ColdStartPct                         = 0.75
+	sovereignGainV3ColdStartPctMin                      = 0.50
+	sovereignGainV3ColdStartPctMax                      = 0.95
+	fastPathMaxTimeoutSecDefault                        = 90
+	fastPathMaxTimeoutSecMin                            = 30
+	fastPathMaxTimeoutSecMax                            = 300
+	sovereignTopBucketPctDefault                        = 30
+	sovereignTopBucketPctMin                            = 5
+	sovereignTopBucketPctMax                            = 80
+	sovereignRouteDeadSourceShare                       = 0.10
+	sovereignRouteDeadMediumSourceShare                 = 0.35
+	sovereignRouteDeadHighSourceShare                   = 0.50
+	sovereignRouteDeadSevereSourceShare                 = 0.65
+	sovereignRouteDeadProfitCostRatio                   = 1.5
+	sovereignRouteDeadMediumProfitCostRatio             = 2.0
+	sovereignRouteDeadHighProfitCostRatio               = 3.0
+	sovereignRouteDeadOpportunityReason                 = "route_dead_opportunity_below_floor"
+	sovereignRouteDeadFallbackMinFailedSources          = 8
+	sovereignRouteDeadFallbackSevereFailSources         = targetCooldownMinAttempts
 	sovereignTargetStructuralCooldownReason             = "target_structural_cooldown"
 	sovereignTargetStructuralCooldownMinAttempts        = 20
 	sovereignTargetStructuralCooldownLookback           = 24 * time.Hour
@@ -254,10 +254,10 @@ const (
 	// without any success, the target is excluded from the exploration pool
 	// for `BurnoutDuration`. Any successful exploration job for that target
 	// clears the burnout state.
-	sovereignExplorationBurnoutMinAttempts = 5
-	sovereignExplorationBurnoutWindow      = 24 * time.Hour
-	sovereignExplorationBurnoutDuration    = 12 * time.Hour
-	sovereignExplorationBurnoutReason      = "exploration_burnout"
+	sovereignExplorationBurnoutMinAttempts       = 5
+	sovereignExplorationBurnoutWindow            = 24 * time.Hour
+	sovereignExplorationBurnoutDuration          = 12 * time.Hour
+	sovereignExplorationBurnoutReason            = "exploration_burnout"
 	sovereignCostReliableHistoryPct              = int64(100)
 	sovereignCostConservativeBudgetPct           = int64(100)
 	sovereignUnsoldPaidLiquidityReason           = "paid_liquidity_unsold_cooldown"
@@ -311,21 +311,21 @@ type RebalanceConfig struct {
 	// sem drainRate). Valores maiores são mais permissivos (mais candidatos
 	// passam o profit_guardrail) e valores menores são mais conservadores.
 	// Aplicado em todos os call-sites do gain v3.
-	SovereignGainV3ColdStartPct           float64 `json:"sovereign_gain_v3_cold_start_pct"`
+	SovereignGainV3ColdStartPct float64 `json:"sovereign_gain_v3_cold_start_pct"`
 	// FastPathMaxTimeoutSec é o cap em segundos pro delegated fast-path.
 	// Default 90. Range 30-300. Valores menores cortam pathfinding morto
 	// rapidamente; valores maiores deixam o LND explorar MPP mais profundo.
-	FastPathMaxTimeoutSec                 int     `json:"fast_path_max_timeout_sec"`
+	FastPathMaxTimeoutSec int `json:"fast_path_max_timeout_sec"`
 	// SovereignTopBucketPct controla a largura do top-bucket de scoring que
 	// recebe ordenação por fairness (LastAutoAt). Candidatos com score dentro
 	// de (top × (1 - pct/100)) competem por rotação ao invés de ranking puro
 	// por score. Default 30. Range 5-80. Valores maiores = mais diversidade
 	// (mais candidatos rotacionam); menores = mais rigor por score puro.
-	SovereignTopBucketPct                 int     `json:"sovereign_top_bucket_pct"`
-	SovereignAttributionWindowHours       int     `json:"sovereign_attribution_window_hours"`
-	SovereignSlowSellerWindowHours        int     `json:"sovereign_slow_seller_window_hours"`
-	SovereignTargetSourceQuarantineHours  int     `json:"sovereign_target_source_quarantine_hours"`
-	SovereignStructuralCooldownRepeatHours int    `json:"sovereign_structural_cooldown_repeat_hours"`
+	SovereignTopBucketPct                  int `json:"sovereign_top_bucket_pct"`
+	SovereignAttributionWindowHours        int `json:"sovereign_attribution_window_hours"`
+	SovereignSlowSellerWindowHours         int `json:"sovereign_slow_seller_window_hours"`
+	SovereignTargetSourceQuarantineHours   int `json:"sovereign_target_source_quarantine_hours"`
+	SovereignStructuralCooldownRepeatHours int `json:"sovereign_structural_cooldown_repeat_hours"`
 	// SovereignExplorationSlotPct reserves a fraction of max_jobs_per_cycle
 	// for randomly chosen low-score candidates ("epsilon-greedy"). Default 0
 	// disables exploration. Valid range [0,50]. Implementation: after sorting
@@ -375,22 +375,22 @@ type RebalanceConfig struct {
 	// imediato. Mantém fee cap (outgoing × econ_ratio), cooldown, budget e
 	// limites operacionais. Default false (preserva o comportamento com
 	// guardrails de quem já usa manual restart).
-	ManualRestartIgnoreEconomicGates      bool    `json:"manual_restart_ignore_economic_gates"`
-	CooldownProbeEnabled                  bool    `json:"cooldown_probe_enabled"`
-	MissionControlHalfLifeSec             int64   `json:"mc_half_life_sec"`
-	PaybackModeFlags                      int     `json:"payback_mode_flags"`
-	FreshPaidLiquidityLockEnabled         bool    `json:"fresh_paid_liquidity_lock_enabled"`
-	FreshPaidLiquidityLockHours           int     `json:"fresh_paid_liquidity_lock_hours"`
-	UnlockDays                            int     `json:"unlock_days"`
-	CriticalReleasePct                    float64 `json:"critical_release_pct"`
-	CriticalMinSources                    int     `json:"critical_min_sources"`
-	CriticalMinAvailableSats              int64   `json:"critical_min_available_sats"`
-	CriticalCycles                        int     `json:"critical_cycles"`
-	RebalanceCostFloorPpm                 int64   `json:"rebalance_cost_floor_ppm"`
-	SourceMinPaybackProgress              float64 `json:"source_min_payback_progress"`
-	MissionControlReinforce               bool    `json:"mission_control_reinforce"`
-	GainModelVersion                      int     `json:"gain_model_version"`
-	VelocityWeight                        float64 `json:"velocity_weight"`
+	ManualRestartIgnoreEconomicGates bool    `json:"manual_restart_ignore_economic_gates"`
+	CooldownProbeEnabled             bool    `json:"cooldown_probe_enabled"`
+	MissionControlHalfLifeSec        int64   `json:"mc_half_life_sec"`
+	PaybackModeFlags                 int     `json:"payback_mode_flags"`
+	FreshPaidLiquidityLockEnabled    bool    `json:"fresh_paid_liquidity_lock_enabled"`
+	FreshPaidLiquidityLockHours      int     `json:"fresh_paid_liquidity_lock_hours"`
+	UnlockDays                       int     `json:"unlock_days"`
+	CriticalReleasePct               float64 `json:"critical_release_pct"`
+	CriticalMinSources               int     `json:"critical_min_sources"`
+	CriticalMinAvailableSats         int64   `json:"critical_min_available_sats"`
+	CriticalCycles                   int     `json:"critical_cycles"`
+	RebalanceCostFloorPpm            int64   `json:"rebalance_cost_floor_ppm"`
+	SourceMinPaybackProgress         float64 `json:"source_min_payback_progress"`
+	MissionControlReinforce          bool    `json:"mission_control_reinforce"`
+	GainModelVersion                 int     `json:"gain_model_version"`
+	VelocityWeight                   float64 `json:"velocity_weight"`
 	// SovereignEVWeightedScoring switches the score formula from the legacy
 	// (gain - cost) to EV-weighted (gain × P(success) − cost × P(failure)).
 	// Default OFF: with cumulative pair stats it filters too aggressively
@@ -417,114 +417,114 @@ type RebalanceConfig struct {
 }
 
 type RebalanceOverview struct {
-	AutoEnabled                   bool                         `json:"auto_enabled"`
-	Profile                       string                       `json:"profile"`
-	SchedulerMode                 string                       `json:"scheduler_mode"`
-	SovereignLastDecisionAt       string                       `json:"sovereign_last_decision_at,omitempty"`
-	SovereignLastMode             string                       `json:"sovereign_last_mode,omitempty"`
-	SovereignCandidates           int                          `json:"sovereign_candidates"`
-	SovereignSelected             int                          `json:"sovereign_selected"`
-	SovereignExpectedProfitSat    int64                        `json:"sovereign_expected_profit_sat"`
-	SovereignBudgetRemainingSat   int64                        `json:"sovereign_budget_remaining_sat"`
-	SovereignDecisions            []RebalanceSovereignDecision `json:"sovereign_decisions,omitempty"`
-	SovereignHistory24h           []RebalanceSovereignHistory  `json:"sovereign_history_24h,omitempty"`
-	LastScanAt                    string                       `json:"last_scan_at,omitempty"`
-	LastScanStatus                string                       `json:"last_scan_status,omitempty"`
-	LastScanDetail                string                       `json:"last_scan_detail,omitempty"`
-	LastScanCandidates            int                          `json:"last_scan_candidates"`
-	LastScanRemainingBudgetSat    int64                        `json:"last_scan_remaining_budget_sat"`
-	LastScanReasons               map[string]int               `json:"last_scan_reasons,omitempty"`
-	LastScanTopScoreSat           int64                        `json:"last_scan_top_score_sat"`
-	LastScanProfitSkipped         int                          `json:"last_scan_profit_skipped"`
-	LastScanQueued                int                          `json:"last_scan_queued"`
-	LastScanSkipped               []RebalanceSkipDetail        `json:"last_scan_skipped,omitempty"`
-	LastManualRestartAt           string                       `json:"last_manual_restart_at,omitempty"`
-	LastManualRestartQueued       int                          `json:"last_manual_restart_queued"`
-	LastManualRestartReasons      map[string]int               `json:"last_manual_restart_reasons,omitempty"`
-	LastMCResetAt                 string                       `json:"last_mc_reset_at,omitempty"`
-	LastMCResetReason             string                       `json:"last_mc_reset_reason,omitempty"`
-	MCResetCount                  int64                        `json:"mc_reset_count"`
-	MCResetCooldownSec            int64                        `json:"mc_reset_cooldown_sec"`
-	MCResetCooldownRemainingSec   int64                        `json:"mc_reset_cooldown_remaining_sec,omitempty"`
-	DailyBudgetSat                int64                        `json:"daily_budget_sat"`
-	DailyBudgetBaseSat            int64                        `json:"daily_budget_base_sat"`
-	DailyBudgetShortTermSat       int64                        `json:"daily_budget_short_term_sat"`
-	DailySpentSat                 int64                        `json:"daily_spent_sat"`
-	DailySpentAutoSat             int64                        `json:"daily_spent_auto_sat"`
-	DailySpentManualSat           int64                        `json:"daily_spent_manual_sat"`
-	RemainingTotalSat             int64                        `json:"remaining_total_sat"`
-	RemainingForAutoSat           int64                        `json:"remaining_for_auto_sat"`
-	BudgetUnlimited               bool                         `json:"budget_unlimited"`
-	BudgetAutoOnly                bool                         `json:"budget_auto_only"`
-	ManualReserveEnabled          bool                         `json:"manual_reserve_enabled"`
-	ManualReserveMode             string                       `json:"manual_reserve_mode,omitempty"`
-	ManualReserveValue            float64                      `json:"manual_reserve_value,omitempty"`
-	ManualReserveSat              int64                        `json:"manual_reserve_sat"`
-	ManualReserveRemainingSat     int64                        `json:"manual_reserve_remaining_sat"`
-	LiveCostSat                   int64                        `json:"live_cost_sat"`
-	Effectiveness7d               float64                      `json:"effectiveness_7d"`
-	EffectivenessExecution7d      float64                      `json:"effectiveness_execution_7d"`
-	JobsWithoutAttempt7d          int64                        `json:"jobs_without_attempt_7d"`
-	JobsWithoutAttemptRate7d      float64                      `json:"jobs_without_attempt_rate_7d"`
-	ROI7d                         float64                      `json:"roi_7d"`
-	SovereignRebalanceAmount7dSat int64                        `json:"sovereign_rebalance_amount_7d_sat"`
-	SovereignRebalanceCost7dSat   int64                        `json:"sovereign_rebalance_cost_7d_sat"`
-	SovereignRebalanceCost7dPpm   int64                        `json:"sovereign_rebalance_cost_7d_ppm"`
-	SovereignForwardAmount7dSat   int64                        `json:"sovereign_forward_amount_7d_sat"`
-	SovereignForwardFee7dSat      int64                        `json:"sovereign_forward_fee_7d_sat"`
-	SovereignForwardFee7dPpm      int64                        `json:"sovereign_forward_fee_7d_ppm"`
-	SovereignRealizedNet7dSat     int64                        `json:"sovereign_realized_net_7d_sat"`
-	SovereignSellThrough7d        float64                      `json:"sovereign_sellthrough_7d"`
-	SovereignForwardAmountSlow7dSat int64                      `json:"sovereign_forward_amount_slow_7d_sat"`
-	SovereignForwardFeeSlow7dSat    int64                      `json:"sovereign_forward_fee_slow_7d_sat"`
-	SovereignRealizedNetSlow7dSat   int64                      `json:"sovereign_realized_net_slow_7d_sat"`
-	SovereignSellThroughSlow7d      float64                    `json:"sovereign_sellthrough_slow_7d"`
-	SovereignSellThroughWindowHours     int                    `json:"sovereign_sellthrough_window_hours"`
-	SovereignSellThroughSlowWindowHours int                    `json:"sovereign_sellthrough_slow_window_hours"`
-	Jobs24h                       int64                        `json:"jobs_24h"`
-	SuccessJobs24h                int64                        `json:"success_jobs_24h"`
-	JobSuccessRate24h             float64                      `json:"job_success_rate_24h"`
-	Attempts24h                   int64                        `json:"attempts_24h"`
-	FailedAttempts24h             int64                        `json:"failed_attempts_24h"`
-	SuccessAttempts24h            int64                        `json:"success_attempts_24h"`
-	SuccessAmount24hSat           int64                        `json:"success_amount_24h_sat"`
-	SuccessAvgAmount24hSat        int64                        `json:"success_avg_amount_24h_sat"`
-	AttemptSuccessRate24h         float64                      `json:"attempt_success_rate_24h"`
-	AttemptsPerSuccessAttempt24h  float64                      `json:"attempts_per_success_attempt_24h"`
-	SuccessSatsPerAttempt24h      float64                      `json:"success_sats_per_attempt_24h"`
-	SuccessBelowMinAttempts24h    int64                        `json:"success_below_min_attempts_24h"`
-	SuccessBelowMinAmount24hSat   int64                        `json:"success_below_min_amount_24h_sat"`
-	SuccessBelowMinRate24h        float64                      `json:"success_below_min_rate_24h"`
-	FastPathAttempts24h           int64                        `json:"fast_path_attempts_24h"`
-	FastPathSuccesses24h          int64                        `json:"fast_path_successes_24h"`
-	FastPathHitRate24h            float64                      `json:"fast_path_hit_rate_24h"`
-	FastPathFailures24h           int64                        `json:"fast_path_failures_24h"`
-	FastPathFallthroughs24h       int64                        `json:"fast_path_fallthroughs_24h"`
-	FastPathDurationP50Ms         int64                        `json:"fast_path_duration_p50_ms"`
-	FastPathDurationP95Ms         int64                        `json:"fast_path_duration_p95_ms"`
-	FastPathFailReasons24h        []RebalanceFastPathFailReason `json:"fast_path_fail_reasons_24h,omitempty"`
-	PaybackRevenueSat             int64                        `json:"payback_revenue_sat"`
-	PaybackRevenueRebalancedSat   int64                        `json:"payback_revenue_rebalanced_sat"`
-	PaybackCostSat                int64                        `json:"payback_cost_sat"`
-	PaybackProgress               float64                      `json:"payback_progress"`
-	PaybackProgressRebalanced     float64                      `json:"payback_progress_rebalanced"`
-	EligibleSources               int                          `json:"eligible_sources"`
-	TargetsNeeding                int                          `json:"targets_needing"`
-	MppShadowJobs24h              int64                        `json:"mpp_shadow_jobs_24h"`
-	MppShadowPlanReady24h         int64                        `json:"mpp_shadow_plan_ready_24h"`
-	MppShadowPlannedSat24h        int64                        `json:"mpp_shadow_planned_sat_24h"`
-	MppShadowActualSentSat24h     int64                        `json:"mpp_shadow_actual_sent_sat_24h"`
-	MppShadowInProgressJobs24h    int64                        `json:"mpp_shadow_in_progress_jobs_24h"`
-	MppShadowSuccessJobs24h       int64                        `json:"mpp_shadow_success_jobs_24h"`
-	MppShadowFailedJobs24h        int64                        `json:"mpp_shadow_failed_jobs_24h"`
-	MppShadowPartialJobs24h       int64                        `json:"mpp_shadow_partial_jobs_24h"`
-	MppShadowFloorBlocked24h      int64                        `json:"mpp_shadow_floor_blocked_sources_24h"`
-	MppShadowAvgPlannedShards24h  float64                      `json:"mpp_shadow_avg_planned_shards_24h"`
-	MppShadowAvgActualAttempts24h float64                      `json:"mpp_shadow_avg_actual_attempts_24h"`
-	MppStructuralAbortJobs24h     int64                        `json:"mpp_structural_abort_jobs_24h"`
-	TopFailureReasons30m          []RebalanceReasonStat        `json:"top_failure_reasons_30m,omitempty"`
-	RouteDeadTargets30m           []RebalanceTargetStat        `json:"route_dead_targets_30m,omitempty"`
-	NodeCalibration               RebalanceNodeCalibration     `json:"node_calibration"`
+	AutoEnabled                         bool                          `json:"auto_enabled"`
+	Profile                             string                        `json:"profile"`
+	SchedulerMode                       string                        `json:"scheduler_mode"`
+	SovereignLastDecisionAt             string                        `json:"sovereign_last_decision_at,omitempty"`
+	SovereignLastMode                   string                        `json:"sovereign_last_mode,omitempty"`
+	SovereignCandidates                 int                           `json:"sovereign_candidates"`
+	SovereignSelected                   int                           `json:"sovereign_selected"`
+	SovereignExpectedProfitSat          int64                         `json:"sovereign_expected_profit_sat"`
+	SovereignBudgetRemainingSat         int64                         `json:"sovereign_budget_remaining_sat"`
+	SovereignDecisions                  []RebalanceSovereignDecision  `json:"sovereign_decisions,omitempty"`
+	SovereignHistory24h                 []RebalanceSovereignHistory   `json:"sovereign_history_24h,omitempty"`
+	LastScanAt                          string                        `json:"last_scan_at,omitempty"`
+	LastScanStatus                      string                        `json:"last_scan_status,omitempty"`
+	LastScanDetail                      string                        `json:"last_scan_detail,omitempty"`
+	LastScanCandidates                  int                           `json:"last_scan_candidates"`
+	LastScanRemainingBudgetSat          int64                         `json:"last_scan_remaining_budget_sat"`
+	LastScanReasons                     map[string]int                `json:"last_scan_reasons,omitempty"`
+	LastScanTopScoreSat                 int64                         `json:"last_scan_top_score_sat"`
+	LastScanProfitSkipped               int                           `json:"last_scan_profit_skipped"`
+	LastScanQueued                      int                           `json:"last_scan_queued"`
+	LastScanSkipped                     []RebalanceSkipDetail         `json:"last_scan_skipped,omitempty"`
+	LastManualRestartAt                 string                        `json:"last_manual_restart_at,omitempty"`
+	LastManualRestartQueued             int                           `json:"last_manual_restart_queued"`
+	LastManualRestartReasons            map[string]int                `json:"last_manual_restart_reasons,omitempty"`
+	LastMCResetAt                       string                        `json:"last_mc_reset_at,omitempty"`
+	LastMCResetReason                   string                        `json:"last_mc_reset_reason,omitempty"`
+	MCResetCount                        int64                         `json:"mc_reset_count"`
+	MCResetCooldownSec                  int64                         `json:"mc_reset_cooldown_sec"`
+	MCResetCooldownRemainingSec         int64                         `json:"mc_reset_cooldown_remaining_sec,omitempty"`
+	DailyBudgetSat                      int64                         `json:"daily_budget_sat"`
+	DailyBudgetBaseSat                  int64                         `json:"daily_budget_base_sat"`
+	DailyBudgetShortTermSat             int64                         `json:"daily_budget_short_term_sat"`
+	DailySpentSat                       int64                         `json:"daily_spent_sat"`
+	DailySpentAutoSat                   int64                         `json:"daily_spent_auto_sat"`
+	DailySpentManualSat                 int64                         `json:"daily_spent_manual_sat"`
+	RemainingTotalSat                   int64                         `json:"remaining_total_sat"`
+	RemainingForAutoSat                 int64                         `json:"remaining_for_auto_sat"`
+	BudgetUnlimited                     bool                          `json:"budget_unlimited"`
+	BudgetAutoOnly                      bool                          `json:"budget_auto_only"`
+	ManualReserveEnabled                bool                          `json:"manual_reserve_enabled"`
+	ManualReserveMode                   string                        `json:"manual_reserve_mode,omitempty"`
+	ManualReserveValue                  float64                       `json:"manual_reserve_value,omitempty"`
+	ManualReserveSat                    int64                         `json:"manual_reserve_sat"`
+	ManualReserveRemainingSat           int64                         `json:"manual_reserve_remaining_sat"`
+	LiveCostSat                         int64                         `json:"live_cost_sat"`
+	Effectiveness7d                     float64                       `json:"effectiveness_7d"`
+	EffectivenessExecution7d            float64                       `json:"effectiveness_execution_7d"`
+	JobsWithoutAttempt7d                int64                         `json:"jobs_without_attempt_7d"`
+	JobsWithoutAttemptRate7d            float64                       `json:"jobs_without_attempt_rate_7d"`
+	ROI7d                               float64                       `json:"roi_7d"`
+	SovereignRebalanceAmount7dSat       int64                         `json:"sovereign_rebalance_amount_7d_sat"`
+	SovereignRebalanceCost7dSat         int64                         `json:"sovereign_rebalance_cost_7d_sat"`
+	SovereignRebalanceCost7dPpm         int64                         `json:"sovereign_rebalance_cost_7d_ppm"`
+	SovereignForwardAmount7dSat         int64                         `json:"sovereign_forward_amount_7d_sat"`
+	SovereignForwardFee7dSat            int64                         `json:"sovereign_forward_fee_7d_sat"`
+	SovereignForwardFee7dPpm            int64                         `json:"sovereign_forward_fee_7d_ppm"`
+	SovereignRealizedNet7dSat           int64                         `json:"sovereign_realized_net_7d_sat"`
+	SovereignSellThrough7d              float64                       `json:"sovereign_sellthrough_7d"`
+	SovereignForwardAmountSlow7dSat     int64                         `json:"sovereign_forward_amount_slow_7d_sat"`
+	SovereignForwardFeeSlow7dSat        int64                         `json:"sovereign_forward_fee_slow_7d_sat"`
+	SovereignRealizedNetSlow7dSat       int64                         `json:"sovereign_realized_net_slow_7d_sat"`
+	SovereignSellThroughSlow7d          float64                       `json:"sovereign_sellthrough_slow_7d"`
+	SovereignSellThroughWindowHours     int                           `json:"sovereign_sellthrough_window_hours"`
+	SovereignSellThroughSlowWindowHours int                           `json:"sovereign_sellthrough_slow_window_hours"`
+	Jobs24h                             int64                         `json:"jobs_24h"`
+	SuccessJobs24h                      int64                         `json:"success_jobs_24h"`
+	JobSuccessRate24h                   float64                       `json:"job_success_rate_24h"`
+	Attempts24h                         int64                         `json:"attempts_24h"`
+	FailedAttempts24h                   int64                         `json:"failed_attempts_24h"`
+	SuccessAttempts24h                  int64                         `json:"success_attempts_24h"`
+	SuccessAmount24hSat                 int64                         `json:"success_amount_24h_sat"`
+	SuccessAvgAmount24hSat              int64                         `json:"success_avg_amount_24h_sat"`
+	AttemptSuccessRate24h               float64                       `json:"attempt_success_rate_24h"`
+	AttemptsPerSuccessAttempt24h        float64                       `json:"attempts_per_success_attempt_24h"`
+	SuccessSatsPerAttempt24h            float64                       `json:"success_sats_per_attempt_24h"`
+	SuccessBelowMinAttempts24h          int64                         `json:"success_below_min_attempts_24h"`
+	SuccessBelowMinAmount24hSat         int64                         `json:"success_below_min_amount_24h_sat"`
+	SuccessBelowMinRate24h              float64                       `json:"success_below_min_rate_24h"`
+	FastPathAttempts24h                 int64                         `json:"fast_path_attempts_24h"`
+	FastPathSuccesses24h                int64                         `json:"fast_path_successes_24h"`
+	FastPathHitRate24h                  float64                       `json:"fast_path_hit_rate_24h"`
+	FastPathFailures24h                 int64                         `json:"fast_path_failures_24h"`
+	FastPathFallthroughs24h             int64                         `json:"fast_path_fallthroughs_24h"`
+	FastPathDurationP50Ms               int64                         `json:"fast_path_duration_p50_ms"`
+	FastPathDurationP95Ms               int64                         `json:"fast_path_duration_p95_ms"`
+	FastPathFailReasons24h              []RebalanceFastPathFailReason `json:"fast_path_fail_reasons_24h,omitempty"`
+	PaybackRevenueSat                   int64                         `json:"payback_revenue_sat"`
+	PaybackRevenueRebalancedSat         int64                         `json:"payback_revenue_rebalanced_sat"`
+	PaybackCostSat                      int64                         `json:"payback_cost_sat"`
+	PaybackProgress                     float64                       `json:"payback_progress"`
+	PaybackProgressRebalanced           float64                       `json:"payback_progress_rebalanced"`
+	EligibleSources                     int                           `json:"eligible_sources"`
+	TargetsNeeding                      int                           `json:"targets_needing"`
+	MppShadowJobs24h                    int64                         `json:"mpp_shadow_jobs_24h"`
+	MppShadowPlanReady24h               int64                         `json:"mpp_shadow_plan_ready_24h"`
+	MppShadowPlannedSat24h              int64                         `json:"mpp_shadow_planned_sat_24h"`
+	MppShadowActualSentSat24h           int64                         `json:"mpp_shadow_actual_sent_sat_24h"`
+	MppShadowInProgressJobs24h          int64                         `json:"mpp_shadow_in_progress_jobs_24h"`
+	MppShadowSuccessJobs24h             int64                         `json:"mpp_shadow_success_jobs_24h"`
+	MppShadowFailedJobs24h              int64                         `json:"mpp_shadow_failed_jobs_24h"`
+	MppShadowPartialJobs24h             int64                         `json:"mpp_shadow_partial_jobs_24h"`
+	MppShadowFloorBlocked24h            int64                         `json:"mpp_shadow_floor_blocked_sources_24h"`
+	MppShadowAvgPlannedShards24h        float64                       `json:"mpp_shadow_avg_planned_shards_24h"`
+	MppShadowAvgActualAttempts24h       float64                       `json:"mpp_shadow_avg_actual_attempts_24h"`
+	MppStructuralAbortJobs24h           int64                         `json:"mpp_structural_abort_jobs_24h"`
+	TopFailureReasons30m                []RebalanceReasonStat         `json:"top_failure_reasons_30m,omitempty"`
+	RouteDeadTargets30m                 []RebalanceTargetStat         `json:"route_dead_targets_30m,omitempty"`
+	NodeCalibration                     RebalanceNodeCalibration      `json:"node_calibration"`
 }
 
 // RebalanceNodeCalibration classifies the node by size and liquidity, mirroring
@@ -1490,81 +1490,81 @@ func NewRebalanceService(db *pgxpool.Pool, lnd *lndclient.Client, logger *log.Lo
 
 func defaultRebalanceConfig() RebalanceConfig {
 	return RebalanceConfig{
-		AutoEnabled:                           false,
-		Profile:                               rebalanceProfileBalanced,
-		SchedulerMode:                         rebalanceSchedulerModeSovereignLive,
-		SovereignCandidateScope:               rebalanceSovereignScopeAutoAndManualRestart,
-		SovereignMaxJobsPerCycle:              4,
-		SovereignMinExpectedProfitSat:         10,
-		SovereignLowSuccessMinRate:            sovereignLowSuccessRate,
-		SovereignLowSuccessMinProfitCostRatio: sovereignLowSuccessProfitCostRatio,
-		SovereignBudgetEfficiencyMinRatio:     sovereignBudgetEfficiencyProfitCostRatio,
-		SovereignRouteDeadSourceShare:         sovereignRouteDeadSourceShare,
-		SovereignRiskScoreFloor:               sovereignRiskScoreFloor,
-		SovereignGainV3ColdStartPct:           0.85,
-		FastPathMaxTimeoutSec:                 fastPathMaxTimeoutSecDefault,
-		SovereignTopBucketPct:                 sovereignTopBucketPctDefault,
-		SovereignAttributionWindowHours:       sovereignAttributionWindowDefaultHours,
-		SovereignSlowSellerWindowHours:        sovereignSlowSellerWindowDefaultHours,
-		SovereignTargetSourceQuarantineHours:  sovereignTargetSourceQuarantineDefaultHours,
+		AutoEnabled:                            false,
+		Profile:                                rebalanceProfileBalanced,
+		SchedulerMode:                          rebalanceSchedulerModeSovereignLive,
+		SovereignCandidateScope:                rebalanceSovereignScopeAutoAndManualRestart,
+		SovereignMaxJobsPerCycle:               4,
+		SovereignMinExpectedProfitSat:          10,
+		SovereignLowSuccessMinRate:             sovereignLowSuccessRate,
+		SovereignLowSuccessMinProfitCostRatio:  sovereignLowSuccessProfitCostRatio,
+		SovereignBudgetEfficiencyMinRatio:      sovereignBudgetEfficiencyProfitCostRatio,
+		SovereignRouteDeadSourceShare:          sovereignRouteDeadSourceShare,
+		SovereignRiskScoreFloor:                sovereignRiskScoreFloor,
+		SovereignGainV3ColdStartPct:            0.85,
+		FastPathMaxTimeoutSec:                  fastPathMaxTimeoutSecDefault,
+		SovereignTopBucketPct:                  sovereignTopBucketPctDefault,
+		SovereignAttributionWindowHours:        sovereignAttributionWindowDefaultHours,
+		SovereignSlowSellerWindowHours:         sovereignSlowSellerWindowDefaultHours,
+		SovereignTargetSourceQuarantineHours:   sovereignTargetSourceQuarantineDefaultHours,
 		SovereignStructuralCooldownRepeatHours: sovereignTargetStructuralCooldownRepeatDefaultHours,
-		SovereignExplorationSlotPct:           15,
-		SovereignSourceOpportunityCostEnabled: true,
-		SovereignSlowSellerEnabled:            true,
-		ScanIntervalSec:                       900,
-		DeadbandPct:                           3,
-		SourceMinLocalPct:                     15,
-		EconRatio:                             0.7,
-		EconRatioMaxPpm:                       0,
-		FeeLimitPpm:                           0,
-		LostProfit:                            false,
-		FailTolerancePpm:                      500,
-		ROIMin:                                1.0,
-		DailyBudgetPct:                        50,
-		BudgetMode:                            rebalanceBudgetModeHybridRevenue,
-		BudgetUnlimited:                       false,
-		BudgetAutoOnly:                        true,
-		ManualReserveEnabled:                  false,
-		ManualReserveMode:                     rebalanceManualReserveModeFixedSat,
-		ManualReserveValue:                    0,
-		MaxConcurrent:                         4,
-		MinAmountSat:                          50000,
-		MaxAmountSat:                          0,
-		MinSplitEnabled:                       true,
-		MinProbeSat:                           5000,
-		MinExecuteSat:                         10000,
-		MppEnabled:                            true,
-		MppMaxShards:                          6,
-		MppParallelism:                        3,
-		MppMinShardSat:                        rebalanceDefaultMppMinShardSat,
-		MppRoundTimeoutSec:                    35,
-		MppAutoOnly:                           true,
-		FeeLadderSteps:                        1,
-		AmountProbeSteps:                      8,
-		AmountProbeAdaptive:                   true,
-		AttemptTimeoutSec:                     60,
-		RebalanceTimeoutSec:                   600,
-		ManualRestartWatch:                    false,
-		ManualRestartIgnoreEconomicGates:      false,
-		CooldownProbeEnabled:                  false,
-		MissionControlHalfLifeSec:             0,
-		PaybackModeFlags:                      paybackModePayback | paybackModeTime | paybackModeCritical,
-		FreshPaidLiquidityLockEnabled:         true,
-		FreshPaidLiquidityLockHours:           freshPaidLiquidityLockDefaultHours,
-		UnlockDays:                            7,
-		CriticalReleasePct:                    20,
-		CriticalMinSources:                    2,
-		CriticalMinAvailableSats:              0,
-		CriticalCycles:                        3,
-		RebalanceCostFloorPpm:                 150,
-		SourceMinPaybackProgress:              0.95,
-		MissionControlReinforce:               false,
-		GainModelVersion:                      3,
-		VelocityWeight:                        0.7,
-		AutofeeSettlingWindowSec:              7200,
-		AutofeeSettlingMultiplier:             0.5,
-		DelegatedFastPathEnabled:              true,
-		DelegatedFastPathStrictPayback:        true,
+		SovereignExplorationSlotPct:            15,
+		SovereignSourceOpportunityCostEnabled:  true,
+		SovereignSlowSellerEnabled:             true,
+		ScanIntervalSec:                        900,
+		DeadbandPct:                            3,
+		SourceMinLocalPct:                      15,
+		EconRatio:                              0.7,
+		EconRatioMaxPpm:                        0,
+		FeeLimitPpm:                            0,
+		LostProfit:                             false,
+		FailTolerancePpm:                       500,
+		ROIMin:                                 1.0,
+		DailyBudgetPct:                         50,
+		BudgetMode:                             rebalanceBudgetModeHybridRevenue,
+		BudgetUnlimited:                        false,
+		BudgetAutoOnly:                         true,
+		ManualReserveEnabled:                   false,
+		ManualReserveMode:                      rebalanceManualReserveModeFixedSat,
+		ManualReserveValue:                     0,
+		MaxConcurrent:                          4,
+		MinAmountSat:                           50000,
+		MaxAmountSat:                           0,
+		MinSplitEnabled:                        true,
+		MinProbeSat:                            5000,
+		MinExecuteSat:                          10000,
+		MppEnabled:                             true,
+		MppMaxShards:                           6,
+		MppParallelism:                         3,
+		MppMinShardSat:                         rebalanceDefaultMppMinShardSat,
+		MppRoundTimeoutSec:                     35,
+		MppAutoOnly:                            true,
+		FeeLadderSteps:                         1,
+		AmountProbeSteps:                       8,
+		AmountProbeAdaptive:                    true,
+		AttemptTimeoutSec:                      60,
+		RebalanceTimeoutSec:                    600,
+		ManualRestartWatch:                     false,
+		ManualRestartIgnoreEconomicGates:       false,
+		CooldownProbeEnabled:                   false,
+		MissionControlHalfLifeSec:              0,
+		PaybackModeFlags:                       paybackModePayback | paybackModeTime | paybackModeCritical,
+		FreshPaidLiquidityLockEnabled:          true,
+		FreshPaidLiquidityLockHours:            freshPaidLiquidityLockDefaultHours,
+		UnlockDays:                             7,
+		CriticalReleasePct:                     20,
+		CriticalMinSources:                     2,
+		CriticalMinAvailableSats:               0,
+		CriticalCycles:                         3,
+		RebalanceCostFloorPpm:                  150,
+		SourceMinPaybackProgress:               0.95,
+		MissionControlReinforce:                false,
+		GainModelVersion:                       3,
+		VelocityWeight:                         0.7,
+		AutofeeSettlingWindowSec:               7200,
+		AutofeeSettlingMultiplier:              0.5,
+		DelegatedFastPathEnabled:               true,
+		DelegatedFastPathStrictPayback:         true,
 	}
 }
 
@@ -12067,14 +12067,14 @@ func (s *RebalanceService) fetchChannelDrainRate24h(ctx context.Context) map[uin
 	if s.lnd == nil {
 		return result
 	}
-	conn, err := s.lnd.DialLightning(ctx)
+	conn, release, err := s.lnd.BorrowLightning(ctx, false)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Printf("rebalance drain rate: dial failed: %v", err)
 		}
 		return result
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 	end := time.Now()
@@ -12327,11 +12327,11 @@ func (s *RebalanceService) fetchForwardRevenue24hFromLND(ctx context.Context, st
 	if s.lnd == nil {
 		return 0, errors.New("lnd unavailable")
 	}
-	conn, err := s.lnd.DialLightning(ctx)
+	conn, release, err := s.lnd.BorrowLightning(ctx, false)
 	if err != nil {
 		return 0, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 
@@ -13178,17 +13178,17 @@ from job_economics
 	forwardFeeSat := forwardFeeMsat / 1000
 	forwardSlowFeeSat := forwardSlowFeeMsat / 1000
 	result := rebalanceAutopilotEconomics7d{
-		RebalanceAmountSat:    sentSat,
-		RebalanceCostSat:      costSat,
-		RebalanceCostPpm:      satToPpm(costSat, sentSat),
-		ForwardAmountSat:      forwardSat,
-		ForwardFeeSat:         forwardFeeSat,
-		ForwardFeePpm:         satToPpm(forwardFeeSat, forwardSat),
-		RealizedNetSat:        forwardFeeSat - costSat,
-		ForwardAmountSlowSat:  forwardSlowSat,
-		ForwardFeeSlowSat:     forwardSlowFeeSat,
-		ForwardFeeSlowPpm:     satToPpm(forwardSlowFeeSat, forwardSlowSat),
-		RealizedNetSlowSat:    forwardSlowFeeSat - costSat,
+		RebalanceAmountSat:     sentSat,
+		RebalanceCostSat:       costSat,
+		RebalanceCostPpm:       satToPpm(costSat, sentSat),
+		ForwardAmountSat:       forwardSat,
+		ForwardFeeSat:          forwardFeeSat,
+		ForwardFeePpm:          satToPpm(forwardFeeSat, forwardSat),
+		RealizedNetSat:         forwardFeeSat - costSat,
+		ForwardAmountSlowSat:   forwardSlowSat,
+		ForwardFeeSlowSat:      forwardSlowFeeSat,
+		ForwardFeeSlowPpm:      satToPpm(forwardSlowFeeSat, forwardSlowSat),
+		RealizedNetSlowSat:     forwardSlowFeeSat - costSat,
 		AttributionWindowHours: attributionHours,
 		SlowSellerWindowHours:  slowHours,
 	}
@@ -13725,112 +13725,112 @@ where report_date >= current_date - interval '6 days'
 	}
 
 	overview := RebalanceOverview{
-		AutoEnabled:                   cfg.AutoEnabled,
-		Profile:                       cfg.Profile,
-		SchedulerMode:                 normalizeRebalanceSchedulerMode(cfg.SchedulerMode),
-		SovereignLastDecisionAt:       lastSovereignDecisionAtText,
-		SovereignLastMode:             lastSovereignMode,
-		SovereignCandidates:           lastSovereignCandidates,
-		SovereignSelected:             lastSovereignSelected,
-		SovereignExpectedProfitSat:    lastSovereignExpectedProfitSat,
-		SovereignBudgetRemainingSat:   lastSovereignBudgetRemainingSat,
-		SovereignDecisions:            lastSovereignDecisions,
-		SovereignHistory24h:           sovereignHistory24h,
-		DailyBudgetSat:                budget,
-		DailyBudgetBaseSat:            baseBudget,
-		DailyBudgetShortTermSat:       shortTermBudget,
-		DailySpentSat:                 spent,
-		DailySpentAutoSat:             spentAuto,
-		DailySpentManualSat:           spentManual,
-		RemainingTotalSat:             remainingTotal,
-		RemainingForAutoSat:           remainingForAuto,
-		BudgetUnlimited:               cfg.BudgetUnlimited,
-		BudgetAutoOnly:                cfg.BudgetAutoOnly,
-		ManualReserveEnabled:          cfg.ManualReserveEnabled,
-		ManualReserveMode:             cfg.ManualReserveMode,
-		ManualReserveValue:            cfg.ManualReserveValue,
-		ManualReserveSat:              manualReserveSat,
-		ManualReserveRemainingSat:     manualReserveRemaining,
-		LiveCostSat:                   liveCost,
-		Effectiveness7d:               effectiveness,
-		EffectivenessExecution7d:      effectivenessExecution,
-		JobsWithoutAttempt7d:          jobsWithoutAttemptCount,
-		JobsWithoutAttemptRate7d:      jobsWithoutAttemptRate,
-		ROI7d:                         roi,
-		SovereignRebalanceAmount7dSat: sovereignEconomics7d.RebalanceAmountSat,
-		SovereignRebalanceCost7dSat:   sovereignEconomics7d.RebalanceCostSat,
-		SovereignRebalanceCost7dPpm:   sovereignEconomics7d.RebalanceCostPpm,
-		SovereignForwardAmount7dSat:   sovereignEconomics7d.ForwardAmountSat,
-		SovereignForwardFee7dSat:      sovereignEconomics7d.ForwardFeeSat,
-		SovereignForwardFee7dPpm:      sovereignEconomics7d.ForwardFeePpm,
-		SovereignRealizedNet7dSat:     sovereignEconomics7d.RealizedNetSat,
-		SovereignSellThrough7d:        sovereignEconomics7d.SellThrough,
+		AutoEnabled:                         cfg.AutoEnabled,
+		Profile:                             cfg.Profile,
+		SchedulerMode:                       normalizeRebalanceSchedulerMode(cfg.SchedulerMode),
+		SovereignLastDecisionAt:             lastSovereignDecisionAtText,
+		SovereignLastMode:                   lastSovereignMode,
+		SovereignCandidates:                 lastSovereignCandidates,
+		SovereignSelected:                   lastSovereignSelected,
+		SovereignExpectedProfitSat:          lastSovereignExpectedProfitSat,
+		SovereignBudgetRemainingSat:         lastSovereignBudgetRemainingSat,
+		SovereignDecisions:                  lastSovereignDecisions,
+		SovereignHistory24h:                 sovereignHistory24h,
+		DailyBudgetSat:                      budget,
+		DailyBudgetBaseSat:                  baseBudget,
+		DailyBudgetShortTermSat:             shortTermBudget,
+		DailySpentSat:                       spent,
+		DailySpentAutoSat:                   spentAuto,
+		DailySpentManualSat:                 spentManual,
+		RemainingTotalSat:                   remainingTotal,
+		RemainingForAutoSat:                 remainingForAuto,
+		BudgetUnlimited:                     cfg.BudgetUnlimited,
+		BudgetAutoOnly:                      cfg.BudgetAutoOnly,
+		ManualReserveEnabled:                cfg.ManualReserveEnabled,
+		ManualReserveMode:                   cfg.ManualReserveMode,
+		ManualReserveValue:                  cfg.ManualReserveValue,
+		ManualReserveSat:                    manualReserveSat,
+		ManualReserveRemainingSat:           manualReserveRemaining,
+		LiveCostSat:                         liveCost,
+		Effectiveness7d:                     effectiveness,
+		EffectivenessExecution7d:            effectivenessExecution,
+		JobsWithoutAttempt7d:                jobsWithoutAttemptCount,
+		JobsWithoutAttemptRate7d:            jobsWithoutAttemptRate,
+		ROI7d:                               roi,
+		SovereignRebalanceAmount7dSat:       sovereignEconomics7d.RebalanceAmountSat,
+		SovereignRebalanceCost7dSat:         sovereignEconomics7d.RebalanceCostSat,
+		SovereignRebalanceCost7dPpm:         sovereignEconomics7d.RebalanceCostPpm,
+		SovereignForwardAmount7dSat:         sovereignEconomics7d.ForwardAmountSat,
+		SovereignForwardFee7dSat:            sovereignEconomics7d.ForwardFeeSat,
+		SovereignForwardFee7dPpm:            sovereignEconomics7d.ForwardFeePpm,
+		SovereignRealizedNet7dSat:           sovereignEconomics7d.RealizedNetSat,
+		SovereignSellThrough7d:              sovereignEconomics7d.SellThrough,
 		SovereignForwardAmountSlow7dSat:     sovereignEconomics7d.ForwardAmountSlowSat,
 		SovereignForwardFeeSlow7dSat:        sovereignEconomics7d.ForwardFeeSlowSat,
 		SovereignRealizedNetSlow7dSat:       sovereignEconomics7d.RealizedNetSlowSat,
 		SovereignSellThroughSlow7d:          sovereignEconomics7d.SellThroughSlow,
 		SovereignSellThroughWindowHours:     sovereignEconomics7d.AttributionWindowHours,
 		SovereignSellThroughSlowWindowHours: sovereignEconomics7d.SlowSellerWindowHours,
-		Jobs24h:                       jobs24h,
-		SuccessJobs24h:                successJobs24h,
-		JobSuccessRate24h:             jobSuccessRate24h,
-		Attempts24h:                   attemptTelemetry.Attempts,
-		FailedAttempts24h:             attemptTelemetry.FailedAttempts,
-		SuccessAttempts24h:            attemptTelemetry.SuccessAttempts,
-		SuccessAmount24hSat:           attemptTelemetry.SuccessAmountSat,
-		SuccessAvgAmount24hSat:        attemptTelemetry.SuccessAvgAmountSat,
-		AttemptSuccessRate24h:         attemptTelemetry.AttemptSuccessRate,
-		AttemptsPerSuccessAttempt24h:  attemptTelemetry.AttemptsPerSuccess,
-		SuccessSatsPerAttempt24h:      attemptTelemetry.SuccessSatsPerAttempt,
-		SuccessBelowMinAttempts24h:    attemptTelemetry.SuccessBelowMinAttempts,
-		SuccessBelowMinAmount24hSat:   attemptTelemetry.SuccessBelowMinAmountSat,
-		SuccessBelowMinRate24h:        attemptTelemetry.SuccessBelowMinRate,
-		FastPathAttempts24h:           fastPath.Attempts,
-		FastPathSuccesses24h:          fastPath.Successes,
-		FastPathHitRate24h:            fastPathHitRate24h,
-		FastPathFailures24h:           fastPath.Failures,
-		FastPathFallthroughs24h:       fastPath.Fallthroughs,
-		FastPathDurationP50Ms:         fastPath.DurationP50Ms,
-		FastPathDurationP95Ms:         fastPath.DurationP95Ms,
-		FastPathFailReasons24h:        fastPath.FailReasons,
-		PaybackRevenueSat:             paybackRevenue,
-		PaybackRevenueRebalancedSat:   paybackRevenueRebalanced,
-		PaybackCostSat:                paybackCost,
-		PaybackProgress:               paybackProgress,
-		PaybackProgressRebalanced:     paybackProgressRebalanced,
-		LastScanStatus:                lastScanStatus,
-		LastScanDetail:                lastScanDetail,
-		LastScanCandidates:            lastScanCandidates,
-		LastScanRemainingBudgetSat:    lastScanRemainingBudgetSat,
-		LastScanReasons:               lastScanReasons,
-		LastScanTopScoreSat:           lastScanTopScore,
-		LastScanProfitSkipped:         lastScanProfitSkipped,
-		LastScanQueued:                lastScanQueued,
-		LastScanSkipped:               lastScanSkipped,
-		LastManualRestartQueued:       lastManualRestartQueued,
-		LastManualRestartReasons:      lastManualRestartReasons,
-		LastMCResetAt:                 mcState.LastMCResetAt,
-		LastMCResetReason:             mcState.LastMCResetReason,
-		MCResetCount:                  mcState.MCResetCount,
-		MCResetCooldownSec:            mcState.MCResetCooldownSec,
-		MCResetCooldownRemainingSec:   mcState.MCResetCooldownRemainingSec,
-		EligibleSources:               eligibleSources,
-		TargetsNeeding:                targetsNeeding,
-		NodeCalibration:               nodeCalib,
-		MppShadowJobs24h:              mppShadowTelemetry.Jobs,
-		MppShadowPlanReady24h:         mppShadowTelemetry.PlanReadyJobs,
-		MppShadowPlannedSat24h:        mppShadowTelemetry.PlannedSat,
-		MppShadowActualSentSat24h:     mppShadowTelemetry.ActualSentSat,
-		MppShadowInProgressJobs24h:    mppShadowTelemetry.InProgressJobs,
-		MppShadowSuccessJobs24h:       mppShadowTelemetry.SuccessJobs,
-		MppShadowFailedJobs24h:        mppShadowTelemetry.FailedJobs,
-		MppShadowPartialJobs24h:       mppShadowTelemetry.PartialJobs,
-		MppShadowFloorBlocked24h:      mppShadowTelemetry.FloorBlocked,
-		MppShadowAvgPlannedShards24h:  mppShadowTelemetry.AvgPlannedShards,
-		MppShadowAvgActualAttempts24h: mppShadowTelemetry.AvgActualAttempts,
-		MppStructuralAbortJobs24h:     mppStructuralAbortJobs,
-		TopFailureReasons30m:          topFailureReasons30m,
-		RouteDeadTargets30m:           routeDeadTargets30m,
+		Jobs24h:                             jobs24h,
+		SuccessJobs24h:                      successJobs24h,
+		JobSuccessRate24h:                   jobSuccessRate24h,
+		Attempts24h:                         attemptTelemetry.Attempts,
+		FailedAttempts24h:                   attemptTelemetry.FailedAttempts,
+		SuccessAttempts24h:                  attemptTelemetry.SuccessAttempts,
+		SuccessAmount24hSat:                 attemptTelemetry.SuccessAmountSat,
+		SuccessAvgAmount24hSat:              attemptTelemetry.SuccessAvgAmountSat,
+		AttemptSuccessRate24h:               attemptTelemetry.AttemptSuccessRate,
+		AttemptsPerSuccessAttempt24h:        attemptTelemetry.AttemptsPerSuccess,
+		SuccessSatsPerAttempt24h:            attemptTelemetry.SuccessSatsPerAttempt,
+		SuccessBelowMinAttempts24h:          attemptTelemetry.SuccessBelowMinAttempts,
+		SuccessBelowMinAmount24hSat:         attemptTelemetry.SuccessBelowMinAmountSat,
+		SuccessBelowMinRate24h:              attemptTelemetry.SuccessBelowMinRate,
+		FastPathAttempts24h:                 fastPath.Attempts,
+		FastPathSuccesses24h:                fastPath.Successes,
+		FastPathHitRate24h:                  fastPathHitRate24h,
+		FastPathFailures24h:                 fastPath.Failures,
+		FastPathFallthroughs24h:             fastPath.Fallthroughs,
+		FastPathDurationP50Ms:               fastPath.DurationP50Ms,
+		FastPathDurationP95Ms:               fastPath.DurationP95Ms,
+		FastPathFailReasons24h:              fastPath.FailReasons,
+		PaybackRevenueSat:                   paybackRevenue,
+		PaybackRevenueRebalancedSat:         paybackRevenueRebalanced,
+		PaybackCostSat:                      paybackCost,
+		PaybackProgress:                     paybackProgress,
+		PaybackProgressRebalanced:           paybackProgressRebalanced,
+		LastScanStatus:                      lastScanStatus,
+		LastScanDetail:                      lastScanDetail,
+		LastScanCandidates:                  lastScanCandidates,
+		LastScanRemainingBudgetSat:          lastScanRemainingBudgetSat,
+		LastScanReasons:                     lastScanReasons,
+		LastScanTopScoreSat:                 lastScanTopScore,
+		LastScanProfitSkipped:               lastScanProfitSkipped,
+		LastScanQueued:                      lastScanQueued,
+		LastScanSkipped:                     lastScanSkipped,
+		LastManualRestartQueued:             lastManualRestartQueued,
+		LastManualRestartReasons:            lastManualRestartReasons,
+		LastMCResetAt:                       mcState.LastMCResetAt,
+		LastMCResetReason:                   mcState.LastMCResetReason,
+		MCResetCount:                        mcState.MCResetCount,
+		MCResetCooldownSec:                  mcState.MCResetCooldownSec,
+		MCResetCooldownRemainingSec:         mcState.MCResetCooldownRemainingSec,
+		EligibleSources:                     eligibleSources,
+		TargetsNeeding:                      targetsNeeding,
+		NodeCalibration:                     nodeCalib,
+		MppShadowJobs24h:                    mppShadowTelemetry.Jobs,
+		MppShadowPlanReady24h:               mppShadowTelemetry.PlanReadyJobs,
+		MppShadowPlannedSat24h:              mppShadowTelemetry.PlannedSat,
+		MppShadowActualSentSat24h:           mppShadowTelemetry.ActualSentSat,
+		MppShadowInProgressJobs24h:          mppShadowTelemetry.InProgressJobs,
+		MppShadowSuccessJobs24h:             mppShadowTelemetry.SuccessJobs,
+		MppShadowFailedJobs24h:              mppShadowTelemetry.FailedJobs,
+		MppShadowPartialJobs24h:             mppShadowTelemetry.PartialJobs,
+		MppShadowFloorBlocked24h:            mppShadowTelemetry.FloorBlocked,
+		MppShadowAvgPlannedShards24h:        mppShadowTelemetry.AvgPlannedShards,
+		MppShadowAvgActualAttempts24h:       mppShadowTelemetry.AvgActualAttempts,
+		MppStructuralAbortJobs24h:           mppStructuralAbortJobs,
+		TopFailureReasons30m:                topFailureReasons30m,
+		RouteDeadTargets30m:                 routeDeadTargets30m,
 	}
 	if !lastScan.IsZero() {
 		overview.LastScanAt = lastScan.UTC().Format(time.RFC3339)

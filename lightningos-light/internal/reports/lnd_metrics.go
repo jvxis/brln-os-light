@@ -159,11 +159,11 @@ func ComputeMetrics(ctx context.Context, lnd *lndclient.Client, tr TimeRange, me
 }
 
 func fetchForwardingMetrics(ctx context.Context, lnd *lndclient.Client, startUnix uint64, endUnix uint64) (int64, int64, int64, error) {
-	conn, err := lnd.DialLightning(ctx)
+	conn, release, err := lnd.BorrowLightning(ctx, false)
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 

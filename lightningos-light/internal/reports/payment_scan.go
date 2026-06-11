@@ -86,11 +86,11 @@ func scanOutgoingPayments(ctx context.Context, lnd *lndclient.Client, startUnix 
 		return err
 	}
 
-	conn, err := lnd.DialLightning(ctx)
+	conn, release, err := lnd.BorrowLightning(ctx, false)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer release()
 
 	client := lnrpc.NewLightningClient(conn)
 	decodeCache := map[string]decodedPayReq{}

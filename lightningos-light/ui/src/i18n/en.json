@@ -1,4 +1,27 @@
 ﻿{
+  "dbMaintenance": {
+    "title": "Database maintenance",
+    "kicker": "Postgres • LOS",
+    "openHint": "Open maintenance →",
+    "totalSize": "Total size: {{value}}",
+    "description": "Runs the retention routines the app already schedules (only removes data past its retention window) plus a safe online VACUUM (ANALYZE). Nothing destructive — no VACUUM FULL.",
+    "runCleanup": "Run cleanup",
+    "runVacuum": "VACUUM (ANALYZE)",
+    "cleanupRunning": "Cleaning…",
+    "vacuumRunning": "Running VACUUM…",
+    "cleanupDone": "Cleanup done: {{rows}} rows removed.",
+    "vacuumDone": "VACUUM (ANALYZE) done.",
+    "actionErrors": "{{count}} table(s) with errors.",
+    "colTable": "Table",
+    "colSize": "Size",
+    "colDead": "Dead tuples",
+    "colRetention": "Retention",
+    "noRetention": "—",
+    "loading": "Loading…",
+    "empty": "No tables.",
+    "loadFailed": "Failed to load maintenance.",
+    "actionFailed": "Action failed."
+  },
   "common": {
     "active": "Active",
     "all": "All",

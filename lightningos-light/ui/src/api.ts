@@ -128,6 +128,11 @@ export const updateAmbossHealth = (payload: { enabled: boolean }) =>
 export const getSystem = () => request('/api/system')
 export const getDisk = () => request('/api/disk')
 export const getPostgres = () => request('/api/postgres')
+export const getPostgresMaintenance = () => request('/api/postgres/maintenance')
+export const runPostgresCleanup = () =>
+  request('/api/postgres/maintenance/cleanup', { method: 'POST', body: JSON.stringify({}) })
+export const runPostgresVacuum = () =>
+  request('/api/postgres/maintenance/vacuum', { method: 'POST', body: JSON.stringify({}) })
 export const getBitcoin = () => request('/api/bitcoin')
 export const getBitcoinActive = () => request('/api/bitcoin/active')
 export const getBitcoinSource = () => request('/api/bitcoin/source')

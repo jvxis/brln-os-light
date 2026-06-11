@@ -1,4 +1,27 @@
 ﻿{
+  "dbMaintenance": {
+    "title": "Manutenção do banco",
+    "kicker": "Postgres • LOS",
+    "openHint": "Abrir manutenção →",
+    "totalSize": "Tamanho total: {{value}}",
+    "description": "Roda as rotinas de retenção que o app já executa (apaga só dados além da janela de retenção) e um VACUUM (ANALYZE) online seguro. Nada destrutivo — sem VACUUM FULL.",
+    "runCleanup": "Rodar limpeza",
+    "runVacuum": "VACUUM (ANALYZE)",
+    "cleanupRunning": "Limpando…",
+    "vacuumRunning": "Executando VACUUM…",
+    "cleanupDone": "Limpeza concluída: {{rows}} linhas removidas.",
+    "vacuumDone": "VACUUM (ANALYZE) concluído.",
+    "actionErrors": "{{count}} tabela(s) com erro.",
+    "colTable": "Tabela",
+    "colSize": "Tamanho",
+    "colDead": "Tuplas mortas",
+    "colRetention": "Retenção",
+    "noRetention": "—",
+    "loading": "Carregando…",
+    "empty": "Nenhuma tabela.",
+    "loadFailed": "Falha ao carregar a manutenção.",
+    "actionFailed": "Falha ao executar a ação."
+  },
   "common": {
     "active": "Ativo",
     "all": "Todos",

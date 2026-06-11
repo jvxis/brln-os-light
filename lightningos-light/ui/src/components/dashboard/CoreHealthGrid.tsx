@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { getLocale } from '../../i18n'
 import {
@@ -14,6 +15,7 @@ import {
 import HorizontalBarGauge from './HorizontalBarGauge'
 import StackedRatioBar from './StackedRatioBar'
 import StatusBadge from './StatusBadge'
+import DbMaintenanceModal from './DbMaintenanceModal'
 import type { BitcoinStatus, DiskSmart, LndChannel, LndPeer, LndStatus, PostgresStatus, SystemStats } from './types'
 
 type CoreHealthGridProps = {
@@ -44,6 +46,7 @@ export default function CoreHealthGrid({
 }: CoreHealthGridProps) {
   const { t, i18n } = useTranslation()
   const locale = getLocale(i18n.language)
+  const [maintenanceOpen, setMaintenanceOpen] = useState(false)
 
   const lndUris = (() => {
     const raw: string[] = []
@@ -323,7 +326,13 @@ export default function CoreHealthGrid({
                 connections: postgres.connections,
                 available: postgres.service_active,
               }]).map((database) => (
-                <div key={`${database.name}-${database.source || 'default'}`} className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <div
+                  key={`${database.name}-${database.source || 'default'}`}
+                  className={`rounded-2xl border border-white/10 bg-white/5 p-4 ${database.source === 'lightningos' ? 'cursor-pointer transition hover:border-white/30 hover:bg-white/[0.08]' : ''}`}
+                  onClick={database.source === 'lightningos' ? () => setMaintenanceOpen(true) : undefined}
+                  role={database.source === 'lightningos' ? 'button' : undefined}
+                  tabIndex={database.source === 'lightningos' ? 0 : undefined}
+                >
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-sm font-medium text-fog/85">{database.name || t('common.na')}</p>
                     {database.source ? <StatusBadge label={database.source.toUpperCase()} tone="muted" /> : null}
@@ -342,6 +351,9 @@ export default function CoreHealthGrid({
                       <StatusBadge label={database.available ? t('common.ok') : t('common.fail')} tone={database.available ? 'ok' : 'warn'} />
                     </div>
                   </div>
+                  {database.source === 'lightningos' ? (
+                    <p className="mt-3 text-xs font-medium text-sky-300/80">{t('dbMaintenance.openHint')}</p>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -468,6 +480,8 @@ export default function CoreHealthGrid({
           <p className="mt-4 text-sm text-fog/60">{t('dashboard.noDiskData')}</p>
         )}
       </article>
+
+      <DbMaintenanceModal open={maintenanceOpen} onClose={() => setMaintenanceOpen(false)} />
     </div>
   )
 }

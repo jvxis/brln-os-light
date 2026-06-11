@@ -32,6 +32,16 @@ const (
 	graphExplorerConfigID            = 1
 )
 
+const (
+	// graphExplorerPolicyHistoryRetentionDays bounds how much network-wide
+	// policy history we keep. Nothing reads past this horizon (the fee report
+	// caps at 89d, autofee at 21d), so 90 days keeps every consumer fully fed
+	// while preventing graph_channel_policy_history from growing unbounded.
+	graphExplorerPolicyHistoryRetentionDays = 90
+	graphExplorerPolicyHistoryPruneBatch    = 50000
+	graphExplorerPruneTimeout               = 10 * time.Minute
+)
+
 var (
 	ErrGraphExplorerDBUnavailable  = errors.New("graph explorer db unavailable")
 	ErrGraphExplorerGraphNotSynced = errors.New("lnd graph not synced")
@@ -210,6 +220,7 @@ create table if not exists graph_channel_policy_history (
 create index if not exists graph_channel_policy_history_lookup_idx on graph_channel_policy_history (chan_id, advertising_pubkey, captured_at desc);
 create index if not exists graph_channel_policy_history_advertising_pubkey_idx on graph_channel_policy_history (advertising_pubkey, captured_at desc);
 create index if not exists graph_channel_policy_history_connecting_pubkey_idx on graph_channel_policy_history (connecting_pubkey, captured_at desc);
+create index if not exists graph_channel_policy_history_captured_at_idx on graph_channel_policy_history (captured_at);
 
 create table if not exists graph_close_events (
   id bigserial primary key,
@@ -326,6 +337,42 @@ func (s *GraphExplorerService) refreshBackground() {
 		return
 	}
 	s.clearError()
+
+	pruneCtx, pruneCancel := context.WithTimeout(context.Background(), graphExplorerPruneTimeout)
+	s.prunePolicyHistory(pruneCtx)
+	pruneCancel()
+}
+
+// prunePolicyHistory enforces the 90-day retention horizon on
+// graph_channel_policy_history. It runs on the reconcile cadence (startup + 6h),
+// not on the manual refresh path, so spamming the UI button can't trigger it.
+func (s *GraphExplorerService) prunePolicyHistory(ctx context.Context) {
+	if s == nil || s.db == nil {
+		return
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -graphExplorerPolicyHistoryRetentionDays)
+	// Batched delete so a large backlog never holds a long lock. Each pass
+	// removes up to graphExplorerPolicyHistoryPruneBatch rows; stop once a pass
+	// deletes fewer than a full batch (nothing left past the horizon).
+	for iter := 0; iter < 1000; iter++ {
+		tag, err := s.db.Exec(ctx, `
+delete from graph_channel_policy_history
+where ctid in (
+  select ctid from graph_channel_policy_history
+  where captured_at < $1
+  limit $2
+)
+`, cutoff, graphExplorerPolicyHistoryPruneBatch)
+		if err != nil {
+			if s.logger != nil {
+				s.logger.Printf("graph explorer policy history prune failed: %v", err)
+			}
+			return
+		}
+		if tag.RowsAffected() < int64(graphExplorerPolicyHistoryPruneBatch) {
+			return
+		}
+	}
 }
 
 func (s *GraphExplorerService) runStreamLoop(stopCh <-chan struct{}) {

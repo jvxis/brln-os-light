@@ -16,7 +16,7 @@ import clsx from '../utils/clsx'
 
 type GraphExplorerTab = 'general' | 'channels' | 'closed' | 'fees'
 type GraphExplorerClosedRange = '30d' | '90d' | '1y' | 'all'
-type GraphExplorerFeeRange = '7d' | '30d' | '90d' | '1y' | 'all'
+type GraphExplorerFeeRange = '7d' | '30d' | '90d'
 
 type GraphExplorerStatus = {
   available?: boolean
@@ -1399,7 +1399,7 @@ export default function GraphExplorer() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {(['7d', '30d', '90d', '1y', 'all'] as GraphExplorerFeeRange[]).map((value) => (
+          {(['7d', '30d', '90d'] as GraphExplorerFeeRange[]).map((value) => (
             <button
               key={value}
               type="button"

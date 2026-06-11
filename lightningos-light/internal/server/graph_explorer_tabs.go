@@ -332,6 +332,9 @@ func (s *GraphExplorerService) GetNodeFeeReport(ctx context.Context, pubkey, ran
 	if err != nil {
 		return GraphExplorerNodeFeeReport{}, err
 	}
+	// Policy history older than the retention horizon is pruned, so the
+	// "accumulated since" label must not claim coverage we no longer hold.
+	coverageSince = graphExplorerClampFeeCoverage(coverageSince)
 	rangeSpec := graphExplorerResolveRange(rangeName, "30d", map[string]func(now time.Time) time.Time{
 		"7d":  func(now time.Time) time.Time { return now.AddDate(0, 0, -7) },
 		"30d": func(now time.Time) time.Time { return now.AddDate(0, 0, -30) },
@@ -663,6 +666,14 @@ func graphExplorerHistorySince(rangeSince *time.Time) *time.Time {
 		return &boundedSince
 	}
 	return rangeSince
+}
+
+func graphExplorerClampFeeCoverage(coverageSince *time.Time) *time.Time {
+	retentionFloor := time.Now().UTC().AddDate(0, 0, -graphExplorerPolicyHistoryRetentionDays)
+	if coverageSince == nil || coverageSince.Before(retentionFloor) {
+		return &retentionFloor
+	}
+	return coverageSince
 }
 
 func graphExplorerCorrectedWeightedAvg(weightedAvg, median int64, hadCeilingPolicies bool) int64 {

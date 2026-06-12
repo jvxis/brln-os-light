@@ -399,7 +399,9 @@ func (s *Server) vacuumFullGraphHistory(ctx context.Context) error {
 	if _, err := conn.Conn().PgConn().Exec(ctx, fmt.Sprintf("set lock_timeout = '%ds'", lockSeconds)).ReadAll(); err != nil {
 		return err
 	}
-	defer conn.Conn().PgConn().Exec(context.Background(), "reset lock_timeout").ReadAll()
+	defer func() {
+		_, _ = conn.Conn().PgConn().Exec(context.Background(), "reset lock_timeout").ReadAll()
+	}()
 
 	_, err = conn.Conn().PgConn().Exec(ctx, fmt.Sprintf("vacuum (full, analyze) %s", dbMaintenanceGraphHistoryTable)).ReadAll()
 	return err

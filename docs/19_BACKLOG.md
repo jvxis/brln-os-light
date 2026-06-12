@@ -19,6 +19,7 @@ Current backlog priority order:
 3. channel `parking mode`
 4. ranking-driven per-channel automation policy
 5. rebalance budget redesign with manual reserve
+6. `Graph Explorer` storage limits and existing-node cleanup
 
 ## 1. Autofee Signal Hierarchy And Stability Redesign
 
@@ -980,6 +981,190 @@ The implementation is successful when:
 4. Rebalance Center settings and overview UI
 5. manual restart warning UX
 6. observe behavior for several days before adding any hard manual block
+
+## 6. Graph Explorer Storage Limits And Existing-Node Cleanup
+
+### Goal
+
+Make `Graph Explorer` usable on small nodes without letting public graph policy
+history consume unbounded Postgres storage.
+
+The graph's current state should remain available, while the expensive
+historical data becomes explicitly configurable and cleanable by the operator.
+
+### Current Baseline
+
+Observed on 2026-06-12:
+
+- production node:
+  - `Graph Explorer` total: about `11.93 GB`
+  - `graph_channel_policy_history`: about `10.44 GB`
+  - coverage: about `72.2 days`
+  - projected 90-day graph storage: about `14.5 GB`
+- test node:
+  - `Graph Explorer` total: about `4.30 GB`
+  - `graph_channel_policy_history`: about `4.09 GB`
+  - coverage: about `32.9 days`
+  - projected 90-day graph storage: about `11.4 GB`
+
+The main growth driver is `graph_channel_policy_history`. The stable current
+graph tables are much smaller and should not be pruned as part of history
+retention:
+
+- `graph_nodes`
+- `graph_channels`
+- `graph_channel_policy_current`
+- `graph_close_events`
+
+There is already a `graph_explorer_config.history_retention_days` column, but
+the runtime currently uses the hard-coded
+`graphExplorerPolicyHistoryRetentionDays = 90` constant instead.
+
+### Proposed Model
+
+Add real storage policy controls for `graph_channel_policy_history`:
+
+- `history_retention_days`
+- `history_max_bytes`
+- optional `history_storage_mode`
+  - `days`
+  - `size`
+  - `days_and_size`
+
+Recommended product defaults:
+
+- existing nodes:
+  - keep current effective retention (`90d`)
+  - no size cap by default
+  - do not delete historical rows automatically just because the feature ships
+- new installs:
+  - conservative default such as `30d / 5GB`
+
+Suggested UI presets:
+
+- `Lite`: `7d / 2GB`
+- `Standard`: `30d / 5GB`
+- `Full`: `90d / 15GB`
+- `Custom`
+
+### Cleanup For Existing Nodes
+
+Existing nodes need an explicit path to reduce storage after the operator opts
+in.
+
+Add a `Graph Explorer Storage` action that:
+
+1. Shows current size, current coverage, estimated GB/day, and projected 30/60/90-day storage.
+2. Lets the user choose retention days and/or max GB.
+3. Shows the estimated remaining coverage before applying.
+4. Updates `graph_explorer_config`.
+5. Prunes `graph_channel_policy_history` in batches.
+6. Runs `VACUUM (ANALYZE)` on `graph_channel_policy_history`.
+7. Reports rows removed and effective coverage after cleanup.
+
+Important behavior:
+
+- `cleanup/prune` deletes rows.
+- `VACUUM (ANALYZE)` only marks freed pages reusable by Postgres and refreshes
+  planner stats.
+- It should not be presented as guaranteed physical disk shrink.
+- Physical compaction (`VACUUM FULL`, `pg_repack`, or table rebuild) is an
+  advanced later feature because it can require locks, extra temporary disk, or
+  operational downtime.
+
+### API Scope
+
+Add or extend an endpoint such as:
+
+- `GET /api/lnops/graph-explorer/storage`
+- `POST /api/lnops/graph-explorer/storage`
+- `POST /api/lnops/graph-explorer/storage/cleanup`
+
+The storage response should include:
+
+- current config:
+  - `history_retention_days`
+  - `history_max_bytes`
+- current measurements:
+  - `history_bytes`
+  - `history_rows`
+  - `history_dead_tuples`
+  - `graph_total_bytes`
+  - `coverage_since`
+  - `coverage_days`
+  - `gb_per_day`
+- projections:
+  - `projected_7d_bytes`
+  - `projected_30d_bytes`
+  - `projected_60d_bytes`
+  - `projected_90d_bytes`
+- effective UI state:
+  - `effective_coverage_days`
+  - `is_partial_coverage`
+  - `cleanup_available`
+
+### Prune Rules
+
+Prune should apply only to `graph_channel_policy_history`.
+
+Order:
+
+1. Delete rows older than `history_retention_days`.
+2. If `history_max_bytes > 0` and estimated table size is still above cap,
+   delete oldest rows in batches until the table is under the cap or until the
+   minimum practical coverage floor is reached.
+3. Run `VACUUM (ANALYZE)` after user-triggered cleanup.
+
+The current policy table must never be pruned by this flow:
+
+- `graph_channel_policy_current`
+
+### UI Scope
+
+In `Graph Explorer`, add a storage/settings surface showing:
+
+- current historical coverage
+- current table size
+- recommended preset for this node
+- estimated storage at 7/30/60/90 days
+- selected retention days
+- selected max GB
+- expected remaining coverage after cleanup
+- explicit warning that normal vacuum reuses storage internally but may not
+  shrink the physical database file immediately
+
+Fee report behavior should follow available coverage:
+
+- if the user asks for `90d` but only `32d` exist, show partial coverage instead
+  of pretending the full range is available
+- `General`, `Channels`, and `Closed Channels` should remain available because
+  they do not depend on long policy history
+
+### Suggested Implementation Steps
+
+1. Wire `graph_explorer_config.history_retention_days` into the service instead
+   of using only the hard-coded constant.
+2. Add `history_max_bytes` schema migration and config model.
+3. Add storage stats query for graph tables and history coverage.
+4. Implement configured prune by days.
+5. Implement configured prune by size cap.
+6. Add explicit cleanup endpoint for existing nodes.
+7. Run `VACUUM (ANALYZE)` only after explicit cleanup, not on every background
+   prune.
+8. Add UI presets, estimates, and partial-coverage messaging.
+9. Add tests for config defaults, days prune, size prune, and partial fee-report
+   coverage labels.
+
+### Later Follow-Ups
+
+These are intentionally not part of the first storage-control delivery:
+
+- reduce `graph_nodes` bloat by avoiding JSONB updates when alias/address/features
+  did not change
+- add aggregated daily policy history so long-range reports can survive after
+  raw event history is pruned
+- add advanced physical compaction for operators who need to return disk to the
+  filesystem immediately
 
 ## Non-Goals For Now
 

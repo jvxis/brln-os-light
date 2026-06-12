@@ -1388,19 +1388,34 @@ func TestCapRevfloorForOrganicRefillTightensOnHighLiquidity(t *testing.T) {
 }
 
 func TestCapDetachedRevfloorAllowsLowRecentCostButProtectsHighCost(t *testing.T) {
-	capped, applied := capDetachedRevfloor(333, revfloorLocalReferencePpm(107, 88, 128), 157, 10, 2000, 0.25, 0.01, 6, 92)
+	capped, applied := capDetachedRevfloor(333, revfloorLocalReferencePpm(107, 88, 128), 157, 10, 2000, 0.01, 6, 92)
 	if !applied || capped != 192 {
 		t.Fatalf("expected detached revfloor to cap near local references: capped=%d applied=%v", capped, applied)
 	}
 
-	unchanged, applied := capDetachedRevfloor(333, 128, 157, 10, 2000, 0.25, 0.01, 6, 220)
+	unchanged, applied := capDetachedRevfloor(333, 128, 157, 10, 2000, 0.01, 6, 220)
 	if applied || unchanged != 333 {
 		t.Fatalf("expected high recent cost to preserve revfloor: capped=%d applied=%v", unchanged, applied)
 	}
 
-	unchanged, applied = capDetachedRevfloor(333, 128, 157, 10, 2000, 0.10, 0.01, 6, 92)
-	if applied || unchanged != 333 {
-		t.Fatalf("expected drained channel to preserve revfloor: capped=%d applied=%v", unchanged, applied)
+	capped, applied = capDetachedRevfloor(333, 128, 157, 10, 2000, 0.01, 6, 92)
+	if !applied || capped != 192 {
+		t.Fatalf("expected local references to cap revfloor even when liquidity is low: capped=%d applied=%v", capped, applied)
+	}
+}
+
+func TestReliableRevfloorLocalReferenceRequiresLocalEvidence(t *testing.T) {
+	if !hasReliableRevfloorLocalReference(107, outrateFloorMinFwds, false, 0, false, false, 0) {
+		t.Fatalf("expected sufficient outrate sample to be a reliable revfloor reference")
+	}
+	if hasReliableRevfloorLocalReference(107, outrateFloorMinFwds-1, false, 0, false, false, 0) {
+		t.Fatalf("did not expect low outrate sample to be a reliable revfloor reference")
+	}
+	if !hasReliableRevfloorLocalReference(0, 0, false, 88, true, false, 0) {
+		t.Fatalf("expected floor-quality rebalance signal to be reliable")
+	}
+	if !hasReliableRevfloorLocalReference(0, 0, false, 0, false, false, 92) {
+		t.Fatalf("expected recent rebalance cost to be reliable")
 	}
 }
 

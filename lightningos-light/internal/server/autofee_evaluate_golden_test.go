@@ -488,11 +488,69 @@ func TestEvaluateChannelGolden_DetachedRevfloorCapsLowRecentCost(t *testing.T) {
 	if d.NewPpm >= calib.RevfloorMinAbs {
 		t.Fatalf("expected detached revfloor cap to prevent jump to revfloor_min, got new=%d tags=%v", d.NewPpm, d.Tags)
 	}
-	if !goldenHasAnyTag(d.Tags, "rebal-recent") || !goldenHasAnyTag(d.Tags, "revfloor-detached-cap") {
+	if !goldenHasAnyTag(d.Tags, "rebal-recent") || !goldenHasAnyTag(d.Tags, "revfloor-local-ref") || !goldenHasAnyTag(d.Tags, "revfloor-detached-cap") {
 		t.Fatalf("expected recent rebalance plus detached revfloor cap tags, got %v", d.Tags)
 	}
 	if d.FloorSrc != "revfloor" {
 		t.Fatalf("expected capped revfloor to remain auditable as revfloor, got %q tags=%v", d.FloorSrc, d.Tags)
+	}
+}
+
+func TestEvaluateChannelGolden_RevfloorFallbackWithoutLocalReferences(t *testing.T) {
+	now := time.Date(2026, 6, 12, 10, 0, 0, 0, time.UTC)
+	cfg := goldenDefaultCfg()
+	calib := goldenDefaultCalib()
+	calib.RevfloorBaseline = 22
+	calib.RevfloorMinAbs = 333
+	engine := newGoldenEngine(t, cfg, calib, now)
+
+	ch := goldenChannel(920, 5_000_000, 2_500_000, 120, true)
+	st := &autofeeChannelState{
+		ChannelID:     ch.ChannelID,
+		LastPpm:       120,
+		LastSeed:      128,
+		BaselineFwd7d: 100,
+		ClassLabel:    "sink",
+		ClassConf:     0.8,
+		BiasEma:       0.7,
+		FirstSeen:     now.Add(-30 * 24 * time.Hour),
+		LastTs:        now.Add(-12 * time.Hour),
+		LastDir:       "down",
+	}
+	emptyRebal := rebalStats{ByChannel: map[uint64]rebalStat{}}
+	forward1d := map[uint64]forwardStat{
+		ch.ChannelID: {AmtMsat: 10_000_000, Count: 1},
+	}
+
+	d := engine.evaluateChannel(
+		ch,
+		st,
+		map[uint64]forwardStat{},
+		forward1d,
+		map[uint64]forwardStat{},
+		map[uint64]forwardStat{},
+		map[uint64]inboundStat{},
+		map[uint64]inboundStat{},
+		emptyRebal,
+		emptyRebal,
+		emptyRebal,
+		map[uint64]recentRebalanceSignal{},
+		map[uint64]htlcFailureSignal{},
+		0,
+		0,
+		false,
+	)
+	if d == nil {
+		t.Fatalf("expected decision")
+	}
+	if d.Floor != calib.RevfloorMinAbs {
+		t.Fatalf("expected hard revfloor fallback at %d, got floor=%d floor_src=%s tags=%v", calib.RevfloorMinAbs, d.Floor, d.FloorSrc, d.Tags)
+	}
+	if !goldenHasAnyTag(d.Tags, "revfloor-fallback") || !goldenHasAnyTag(d.Tags, "revfloor") {
+		t.Fatalf("expected revfloor fallback tags, got %v", d.Tags)
+	}
+	if goldenHasAnyTag(d.Tags, "revfloor-local-ref") || goldenHasAnyTag(d.Tags, "revfloor-detached-cap") {
+		t.Fatalf("did not expect local-reference revfloor caps without local references, got %v", d.Tags)
 	}
 }
 

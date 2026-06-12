@@ -132,6 +132,19 @@ func graphExplorerProjectionBytes(bytesPerDay float64, days int) int64 {
 	return int64(math.Round(bytesPerDay * float64(days)))
 }
 
+func graphExplorerCleanupAvailable(coverageDays float64, effectiveDays int, sizingBytes int64, maxBytes int64) bool {
+	if effectiveDays < graphExplorerMinHistoryRetentionDays {
+		effectiveDays = graphExplorerMinHistoryRetentionDays
+	}
+	if coverageDays > float64(effectiveDays)+0.5 {
+		return true
+	}
+	if maxBytes > 0 && sizingBytes > maxBytes && coverageDays > 1 {
+		return true
+	}
+	return false
+}
+
 func (s *GraphExplorerService) loadStorageConfig(ctx context.Context) (GraphExplorerStorageConfig, error) {
 	cfg := defaultGraphExplorerStorageConfig()
 	if s == nil || s.db == nil {
@@ -245,10 +258,7 @@ where relname = 'graph_channel_policy_history'
 	}
 	out.EffectiveRetentionDays = graphExplorerEffectiveHistoryDays(cfg.HistoryRetentionDays, cfg.HistoryMaxBytes, bytesPerDay)
 	out.EstimatedBytesAfterCleanup = graphExplorerProjectionBytes(bytesPerDay, out.EffectiveRetentionDays)
-	out.CleanupAvailable = out.CoverageDays > float64(out.EffectiveRetentionDays)+0.5
-	if cfg.HistoryMaxBytes > 0 && out.HistoryBytes > cfg.HistoryMaxBytes && out.CoverageDays > 1 {
-		out.CleanupAvailable = true
-	}
+	out.CleanupAvailable = graphExplorerCleanupAvailable(out.CoverageDays, out.EffectiveRetentionDays, sizingBytes, cfg.HistoryMaxBytes)
 
 	for _, days := range []int{7, 30, 60, 90} {
 		out.Projections = append(out.Projections, GraphExplorerStorageProjection{

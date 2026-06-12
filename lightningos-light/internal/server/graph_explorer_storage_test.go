@@ -51,6 +51,20 @@ func TestGraphExplorerStorageBytesFromGB(t *testing.T) {
 	}
 }
 
+func TestGraphExplorerCleanupAvailableUsesLiveSizing(t *testing.T) {
+	const gb = int64(1024 * 1024 * 1024)
+
+	if graphExplorerCleanupAvailable(7.1, 7, 1*gb, 2*gb) {
+		t.Fatal("physical bloat alone must not keep logical cleanup available")
+	}
+	if !graphExplorerCleanupAvailable(46, 7, 1*gb, 2*gb) {
+		t.Fatal("coverage older than the effective window should require cleanup")
+	}
+	if !graphExplorerCleanupAvailable(7.1, 7, 3*gb, 2*gb) {
+		t.Fatal("live estimated data above the size cap should require cleanup")
+	}
+}
+
 func TestGraphExplorerHistorySinceUsesEffectiveCoverage(t *testing.T) {
 	now := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
 	rangeSince := now.AddDate(0, 0, -90)

@@ -95,12 +95,36 @@ type retentionRoutine struct {
 	Label  string
 }
 
-func (s *Server) retentionRoutines() []retentionRoutine {
+func (s *Server) graphExplorerMaintenanceRetentionDays(ctx context.Context) int {
+	days := defaultGraphExplorerStorageConfig().HistoryRetentionDays
+	if s == nil || s.db == nil {
+		return days
+	}
+
+	var storedDays int
+	if err := s.db.QueryRow(ctx, `
+select history_retention_days
+from graph_explorer_config
+where id = $1
+`, graphExplorerConfigID).Scan(&storedDays); err != nil {
+		return days
+	}
+	if storedDays < graphExplorerMinHistoryRetentionDays {
+		return graphExplorerMinHistoryRetentionDays
+	}
+	if storedDays > graphExplorerMaxHistoryRetentionDays {
+		return graphExplorerMaxHistoryRetentionDays
+	}
+	return storedDays
+}
+
+func (s *Server) retentionRoutines(ctx context.Context) []retentionRoutine {
 	days := func(n int) func(time.Time) time.Time {
 		return func(now time.Time) time.Time { return now.AddDate(0, 0, -n) }
 	}
+	graphHistoryRetentionDays := s.graphExplorerMaintenanceRetentionDays(ctx)
 	return []retentionRoutine{
-		{"graph_channel_policy_history", "captured_at", days(graphExplorerPolicyHistoryRetentionDays), fmt.Sprintf("%dd", graphExplorerPolicyHistoryRetentionDays)},
+		{"graph_channel_policy_history", "captured_at", days(graphHistoryRetentionDays), fmt.Sprintf("%dd", graphHistoryRetentionDays)},
 		{"notifications", "occurred_at", days(notificationRetentionDays), fmt.Sprintf("%dd", notificationRetentionDays)},
 		{"audit_events", "ts", days(auditEventsRetentionDays()), fmt.Sprintf("%dd", auditEventsRetentionDays())},
 		{"chat_messages", "timestamp", days(chatRetentionDays), fmt.Sprintf("%dd", chatRetentionDays)},
@@ -121,13 +145,14 @@ func (s *Server) dbMaintenanceOverview(ctx context.Context) (dbMaintenanceOvervi
 	}
 
 	if runningStatus, running := s.graphHistoryCompactionRunningStatus(); running {
+		graphHistoryRetentionDays := s.graphExplorerMaintenanceRetentionDays(ctx)
 		overview.GraphHistoryCompaction = runningStatus
 		overview.TotalBytes = s.graphHistoryCompactDatabaseTotalBytes()
 		overview.Tables = []dbTableStat{{
 			Name:           dbMaintenanceGraphHistoryTable,
 			TotalBytes:     runningStatus.PhysicalBytes,
 			HasRetention:   true,
-			RetentionLabel: fmt.Sprintf("%dd", graphExplorerPolicyHistoryRetentionDays),
+			RetentionLabel: fmt.Sprintf("%dd", graphHistoryRetentionDays),
 		}}
 		return overview, nil
 	}
@@ -135,7 +160,7 @@ func (s *Server) dbMaintenanceOverview(ctx context.Context) (dbMaintenanceOvervi
 	_ = s.db.QueryRow(ctx, "select pg_database_size(current_database())").Scan(&overview.TotalBytes)
 
 	retention := make(map[string]string)
-	for _, r := range s.retentionRoutines() {
+	for _, r := range s.retentionRoutines(ctx) {
 		retention[r.Table] = r.Label
 	}
 
@@ -179,7 +204,7 @@ order by pg_total_relation_size(c.oid) desc
 // deletes rows already past their retention window — the same rows the
 // schedulers delete — so it can never remove more than the app already would.
 func (s *Server) runRetentionCleanup(ctx context.Context) []dbMaintenanceActionResult {
-	routines := s.retentionRoutines()
+	routines := s.retentionRoutines(ctx)
 	results := make([]dbMaintenanceActionResult, 0, len(routines))
 	now := time.Now().UTC()
 	for _, r := range routines {
@@ -214,7 +239,7 @@ func (s *Server) batchedRetentionDelete(ctx context.Context, table, column strin
 // runVacuumAnalyze runs an online VACUUM (ANALYZE) — never VACUUM FULL — per
 // retention table to mark freed space reusable and refresh planner stats.
 func (s *Server) runVacuumAnalyze(ctx context.Context) []dbMaintenanceActionResult {
-	routines := s.retentionRoutines()
+	routines := s.retentionRoutines(ctx)
 	conn, err := s.db.Acquire(ctx)
 	if err != nil {
 		return []dbMaintenanceActionResult{{Table: "*", Error: err.Error()}}

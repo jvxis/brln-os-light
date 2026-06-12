@@ -620,6 +620,7 @@ export default function GraphExplorer() {
   const [storageSaving, setStorageSaving] = useState(false)
   const [storageCleaning, setStorageCleaning] = useState(false)
   const [storageMessage, setStorageMessage] = useState('')
+  const [storageExpanded, setStorageExpanded] = useState(false)
   const [currentBlockHeight, setCurrentBlockHeight] = useState(0)
   const [query, setQuery] = useState('')
   const [searchResults, setSearchResults] = useState<GraphExplorerSearchResult[]>([])
@@ -1261,13 +1262,19 @@ export default function GraphExplorer() {
     : computeFeeTrend(currentOutInRatio, ratioBaseline)
 
   const renderStoragePanel = () => (
-    <div className="rounded-[1.5rem] border border-white/10 bg-black/10 p-4">
+    <section className="section-card">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-        <div>
+        <div className="min-w-0">
           <p className="text-sm font-medium text-fog/80">{t('graphExplorer.storage.title')}</p>
           <p className="mt-2 max-w-3xl text-sm text-fog/60">{t('graphExplorer.storage.subtitle')}</p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-medium text-fog/75">
+            {t('graphExplorer.storage.historySize')}: {formatBytes(storage?.history_bytes)}
+          </span>
+          <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-medium text-fog/75">
+            {t('graphExplorer.storage.graphSize')}: {formatBytes(storage?.graph_total_bytes)}
+          </span>
           <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-medium text-fog/75">
             {t('graphExplorer.storage.configuredRetention')}: {storageConfiguredRetentionLabel}
           </span>
@@ -1279,123 +1286,140 @@ export default function GraphExplorer() {
           )}>
             {t('graphExplorer.storage.effectiveRetention')}: {storageEffectiveLabel}
           </span>
+          {storage?.cleanup_available && (
+            <span className="rounded-full border border-amber-400/25 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-100">
+              {t('graphExplorer.storage.cleanupAvailable')}
+            </span>
+          )}
+          <button
+            type="button"
+            className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-fog/75 transition hover:border-sky-300/35 hover:text-fog"
+            onClick={() => setStorageExpanded((current) => !current)}
+            aria-expanded={storageExpanded}
+          >
+            {storageExpanded ? t('graphExplorer.storage.collapse') : t('graphExplorer.storage.expand')}
+          </button>
         </div>
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-          <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.storage.historySize')}</p>
-          <p className="mt-2 text-xl font-semibold text-fog">{formatBytes(storage?.history_bytes)}</p>
-          <p className="mt-1 text-xs text-fog/50">{t('graphExplorer.storage.rows', { value: formatInteger(storage?.history_rows) })}</p>
-        </div>
-        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-          <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.storage.graphSize')}</p>
-          <p className="mt-2 text-xl font-semibold text-fog">{formatBytes(storage?.graph_total_bytes)}</p>
-          <p className="mt-1 text-xs text-fog/50">{t('graphExplorer.storage.sizeCap')}: {storageSizeCapLabel}</p>
-        </div>
-        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-          <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.storage.coverage')}</p>
-          <p className="mt-2 text-xl font-semibold text-fog">{formatDecimal(storage?.coverage_days, 1)}d</p>
-          <p className="mt-1 text-xs text-fog/50">{formatTimestamp(storage?.coverage_since)}</p>
-        </div>
-        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-          <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.storage.rate')}</p>
-          <p className="mt-2 text-xl font-semibold text-fog">{formatBytes(storage?.bytes_per_day)}</p>
-          <p className="mt-1 text-xs text-fog/50">{t('graphExplorer.storage.perDay')}</p>
-        </div>
-        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-          <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.storage.estimatedAfterCleanup')}</p>
-          <p className="mt-2 text-xl font-semibold text-fog">{formatBytes(storage?.estimated_bytes_after_cleanup)}</p>
-          <p className="mt-1 text-xs text-fog/50">{storage?.cleanup_available ? t('graphExplorer.storage.cleanupAvailable') : t('graphExplorer.storage.cleanupNotNeeded')}</p>
-        </div>
-      </div>
+      {storageExpanded && (
+        <>
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.storage.historySize')}</p>
+              <p className="mt-2 text-xl font-semibold text-fog">{formatBytes(storage?.history_bytes)}</p>
+              <p className="mt-1 text-xs text-fog/50">{t('graphExplorer.storage.rows', { value: formatInteger(storage?.history_rows) })}</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.storage.graphSize')}</p>
+              <p className="mt-2 text-xl font-semibold text-fog">{formatBytes(storage?.graph_total_bytes)}</p>
+              <p className="mt-1 text-xs text-fog/50">{t('graphExplorer.storage.sizeCap')}: {storageSizeCapLabel}</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.storage.coverage')}</p>
+              <p className="mt-2 text-xl font-semibold text-fog">{formatDecimal(storage?.coverage_days, 1)}d</p>
+              <p className="mt-1 text-xs text-fog/50">{formatTimestamp(storage?.coverage_since)}</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.storage.rate')}</p>
+              <p className="mt-2 text-xl font-semibold text-fog">{formatBytes(storage?.bytes_per_day)}</p>
+              <p className="mt-1 text-xs text-fog/50">{t('graphExplorer.storage.perDay')}</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.storage.estimatedAfterCleanup')}</p>
+              <p className="mt-2 text-xl font-semibold text-fog">{formatBytes(storage?.estimated_bytes_after_cleanup)}</p>
+              <p className="mt-1 text-xs text-fog/50">{storage?.cleanup_available ? t('graphExplorer.storage.cleanupAvailable') : t('graphExplorer.storage.cleanupNotNeeded')}</p>
+            </div>
+          </div>
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,0.8fr)]">
-        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-          <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.storage.projections')}</p>
-          <div className="mt-3 grid gap-2 sm:grid-cols-4">
-            {[7, 30, 60, 90].map((days) => (
-              <div key={days} className="rounded-xl border border-white/10 bg-black/10 p-3">
-                <p className="text-xs text-fog/50">{t('graphExplorer.storage.daysValue', { count: days })}</p>
-                <p className="mt-1 text-sm font-semibold text-fog">{formatBytes(storageProjectionBytes(days))}</p>
+          <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,0.8fr)]">
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.storage.projections')}</p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-4">
+                {[7, 30, 60, 90].map((days) => (
+                  <div key={days} className="rounded-xl border border-white/10 bg-black/10 p-3">
+                    <p className="text-xs text-fog/50">{t('graphExplorer.storage.daysValue', { count: days })}</p>
+                    <p className="mt-1 text-sm font-semibold text-fog">{formatBytes(storageProjectionBytes(days))}</p>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-          <p className="mt-3 text-xs text-fog/50">{t('graphExplorer.storage.vacuumNote')}</p>
-        </div>
+              <p className="mt-3 text-xs text-fog/50">{t('graphExplorer.storage.vacuumNote')}</p>
+            </div>
 
-        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-          <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.storage.settings')}</p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {GRAPH_STORAGE_PRESETS.map((preset) => (
-              <button
-                key={preset.key}
-                type="button"
-                className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-fog/75 transition hover:border-sky-300/35 hover:text-fog"
-                onClick={() => handleStoragePreset(preset.days, preset.gb)}
-              >
-                {t(`graphExplorer.storage.presets.${preset.key}`)}
-              </button>
-            ))}
+            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.storage.settings')}</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {GRAPH_STORAGE_PRESETS.map((preset) => (
+                  <button
+                    key={preset.key}
+                    type="button"
+                    className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-fog/75 transition hover:border-sky-300/35 hover:text-fog"
+                    onClick={() => handleStoragePreset(preset.days, preset.gb)}
+                  >
+                    {t(`graphExplorer.storage.presets.${preset.key}`)}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <label className="space-y-2">
+                  <span className="text-xs font-medium text-fog/65">{t('graphExplorer.storage.retentionDays')}</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={365}
+                    step={1}
+                    value={storageRetentionDays}
+                    onChange={(event) => setStorageRetentionDays(event.target.value)}
+                    className="w-full rounded-2xl border border-white/10 bg-black/15 px-3 py-2 text-sm text-fog outline-none transition focus:border-sky-300/40"
+                  />
+                </label>
+                <label className="space-y-2">
+                  <span className="text-xs font-medium text-fog/65">{t('graphExplorer.storage.maxGB')}</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.25}
+                    value={storageMaxGB}
+                    onChange={(event) => setStorageMaxGB(event.target.value)}
+                    className="w-full rounded-2xl border border-white/10 bg-black/15 px-3 py-2 text-sm text-fog outline-none transition focus:border-sky-300/40"
+                  />
+                </label>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className={clsx('btn-primary', storageSaving && 'cursor-wait opacity-70')}
+                  onClick={() => void handleSaveStorage()}
+                  disabled={storageSaving || storageCleaning}
+                >
+                  {storageSaving ? t('graphExplorer.storage.saving') : t('graphExplorer.storage.save')}
+                </button>
+                <button
+                  type="button"
+                  className={clsx(
+                    'rounded-full border px-4 py-2 text-sm font-medium transition',
+                    storage?.cleanup_available
+                      ? 'border-amber-400/30 bg-amber-500/10 text-amber-100 hover:border-amber-300/45'
+                      : 'border-white/10 bg-white/[0.04] text-fog/45',
+                    storageCleaning && 'cursor-wait opacity-70'
+                  )}
+                  onClick={() => void handleCleanupStorage()}
+                  disabled={storageCleaning || storageSaving || !storage?.cleanup_available}
+                >
+                  {storageCleaning ? t('graphExplorer.storage.cleaning') : t('graphExplorer.storage.cleanup')}
+                </button>
+              </div>
+            </div>
           </div>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <label className="space-y-2">
-              <span className="text-xs font-medium text-fog/65">{t('graphExplorer.storage.retentionDays')}</span>
-              <input
-                type="number"
-                min={1}
-                max={365}
-                step={1}
-                value={storageRetentionDays}
-                onChange={(event) => setStorageRetentionDays(event.target.value)}
-                className="w-full rounded-2xl border border-white/10 bg-black/15 px-3 py-2 text-sm text-fog outline-none transition focus:border-sky-300/40"
-              />
-            </label>
-            <label className="space-y-2">
-              <span className="text-xs font-medium text-fog/65">{t('graphExplorer.storage.maxGB')}</span>
-              <input
-                type="number"
-                min={0}
-                step={0.25}
-                value={storageMaxGB}
-                onChange={(event) => setStorageMaxGB(event.target.value)}
-                className="w-full rounded-2xl border border-white/10 bg-black/15 px-3 py-2 text-sm text-fog outline-none transition focus:border-sky-300/40"
-              />
-            </label>
-          </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <button
-              type="button"
-              className={clsx('btn-primary', storageSaving && 'cursor-wait opacity-70')}
-              onClick={() => void handleSaveStorage()}
-              disabled={storageSaving || storageCleaning}
-            >
-              {storageSaving ? t('graphExplorer.storage.saving') : t('graphExplorer.storage.save')}
-            </button>
-            <button
-              type="button"
-              className={clsx(
-                'rounded-full border px-4 py-2 text-sm font-medium transition',
-                storage?.cleanup_available
-                  ? 'border-amber-400/30 bg-amber-500/10 text-amber-100 hover:border-amber-300/45'
-                  : 'border-white/10 bg-white/[0.04] text-fog/45',
-                storageCleaning && 'cursor-wait opacity-70'
-              )}
-              onClick={() => void handleCleanupStorage()}
-              disabled={storageCleaning || storageSaving || !storage?.cleanup_available}
-            >
-              {storageCleaning ? t('graphExplorer.storage.cleaning') : t('graphExplorer.storage.cleanup')}
-            </button>
-          </div>
-          {storageMessage && (
-            <p className="mt-3 text-sm text-emerald-100">{storageMessage}</p>
-          )}
-          {storageError && (
-            <p className="mt-3 text-sm text-amber-200">{storageError}</p>
-          )}
-        </div>
-      </div>
-    </div>
+        </>
+      )}
+      {storageMessage && (
+        <p className="mt-3 text-sm text-emerald-100">{storageMessage}</p>
+      )}
+      {storageError && (
+        <p className="mt-3 text-sm text-amber-200">{storageError}</p>
+      )}
+    </section>
   )
 
   const renderGeneralTab = () => (
@@ -1999,7 +2023,6 @@ export default function GraphExplorer() {
             )}
           </div>
         </div>
-        {renderStoragePanel()}
       </section>
 
       <section className="section-card space-y-5">
@@ -2142,6 +2165,8 @@ export default function GraphExplorer() {
           </>
         )}
       </section>
+
+      {renderStoragePanel()}
     </div>
   )
 }

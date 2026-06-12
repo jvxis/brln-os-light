@@ -283,6 +283,8 @@
       "subtitle": "Control how much network-wide policy history is retained locally for graph analytics.",
       "configuredRetention": "Configured",
       "effectiveRetention": "Effective",
+      "expand": "Expand",
+      "collapse": "Collapse",
       "historySize": "Policy history",
       "graphSize": "Graph total",
       "rows": "{{value}} rows",

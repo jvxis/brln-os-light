@@ -283,6 +283,8 @@
       "subtitle": "Controle quanto histórico de policy da rede inteira fica retido localmente para analytics do grafo.",
       "configuredRetention": "Configurado",
       "effectiveRetention": "Efetivo",
+      "expand": "Expandir",
+      "collapse": "Recolher",
       "historySize": "Histórico de policy",
       "graphSize": "Total do grafo",
       "rows": "{{value}} linhas",

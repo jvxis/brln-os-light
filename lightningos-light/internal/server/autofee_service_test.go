@@ -1387,6 +1387,23 @@ func TestCapRevfloorForOrganicRefillTightensOnHighLiquidity(t *testing.T) {
 	}
 }
 
+func TestCapDetachedRevfloorAllowsLowRecentCostButProtectsHighCost(t *testing.T) {
+	capped, applied := capDetachedRevfloor(333, revfloorLocalReferencePpm(107, 88, 128), 157, 10, 2000, 0.25, 0.01, 6, 92)
+	if !applied || capped != 192 {
+		t.Fatalf("expected detached revfloor to cap near local references: capped=%d applied=%v", capped, applied)
+	}
+
+	unchanged, applied := capDetachedRevfloor(333, 128, 157, 10, 2000, 0.25, 0.01, 6, 220)
+	if applied || unchanged != 333 {
+		t.Fatalf("expected high recent cost to preserve revfloor: capped=%d applied=%v", unchanged, applied)
+	}
+
+	unchanged, applied = capDetachedRevfloor(333, 128, 157, 10, 2000, 0.10, 0.01, 6, 92)
+	if applied || unchanged != 333 {
+		t.Fatalf("expected drained channel to preserve revfloor: capped=%d applied=%v", unchanged, applied)
+	}
+}
+
 func TestApplySurgeConfirmationGate(t *testing.T) {
 	st := &autofeeChannelState{}
 

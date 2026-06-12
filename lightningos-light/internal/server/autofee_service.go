@@ -158,6 +158,11 @@ const (
 	organicRefillHighOutRatioMin        = 0.80
 	revfloorOrganicLocalRefMult         = 3.00
 	revfloorOrganicHighLiquidityRefMult = 1.35
+	revfloorDetachedOutRatioMin         = 0.20
+	revfloorDetachedLocalRefMult        = 1.50
+	revfloorDetachedRecentCostMaxMult   = 1.25
+	revfloorDetachedRevShareMax         = 0.02
+	revfloorDetachedStrongNegMarginPpm  = -50
 	rescueScoreMax                      = 55
 	rescueRevShareMax                   = 0.02
 	rescueMinRounds                     = 3
@@ -4691,6 +4696,37 @@ func capRevfloorForOrganicRefill(revFloor int, localRefPpm int, targetPpm int, m
 	capPpm := int(math.Ceil(float64(localRefPpm) * refMult))
 	if highLiquidity && targetPpm > capPpm {
 		capPpm = targetPpm
+	}
+	capPpm = clampInt(capPpm, minPpm, maxPpm)
+	if capPpm <= 0 || capPpm >= revFloor {
+		return revFloor, false
+	}
+	return capPpm, true
+}
+
+func capDetachedRevfloor(revFloor int, localRefPpm int, targetPpm int, minPpm int, maxPpm int, outRatio float64, revShare float64, marginPpm7d int, recentRebalanceCostPpm int) (int, bool) {
+	if revFloor <= 0 || localRefPpm <= 0 || outRatio < revfloorDetachedOutRatioMin {
+		return revFloor, false
+	}
+	if revShare > revfloorDetachedRevShareMax {
+		return revFloor, false
+	}
+	if marginPpm7d < revfloorDetachedStrongNegMarginPpm {
+		return revFloor, false
+	}
+	if recentRebalanceCostPpm > 0 && float64(recentRebalanceCostPpm) > float64(localRefPpm)*revfloorDetachedRecentCostMaxMult {
+		return revFloor, false
+	}
+
+	capPpm := int(math.Ceil(float64(localRefPpm) * revfloorDetachedLocalRefMult))
+	if targetPpm > capPpm {
+		capPpm = targetPpm
+	}
+	if recentRebalanceCostPpm > 0 {
+		recentFloor := int(math.Ceil(float64(recentRebalanceCostPpm) * 1.10))
+		if recentFloor > capPpm {
+			capPpm = recentFloor
+		}
 	}
 	capPpm = clampInt(capPpm, minPpm, maxPpm)
 	if capPpm <= 0 || capPpm >= revFloor {
@@ -9565,6 +9601,11 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 					tags = appendAutofeeTagOnce(tags, "revfloor-full-organic-cap")
 				}
 			}
+			if cappedRevFloor, capped := capDetachedRevfloor(revFloor, localRefPpm, target, e.cfg.MinPpm, e.cfg.MaxPpm, outRatio, revShare, marginPpm7d, recentRebalanceCostPpm); capped {
+				revFloor = cappedRevFloor
+				tags = appendAutofeeTagOnce(tags, "revfloor-detached-cap")
+				tags = appendAutofeeTagOnce(tags, "revfloor-local-cap")
+			}
 		}
 		if revFloor > floor {
 			floor = revFloor
@@ -11691,6 +11732,8 @@ func formatAutofeeTags(d *decision) string {
 			add("revfloor-local-cap")
 		case t == "revfloor-full-organic-cap":
 			add("revfloor-full-organic-cap")
+		case t == "revfloor-detached-cap":
+			add("revfloor-detached-cap")
 		case t == "peg":
 			add("📌peg")
 		case t == "peg-grace":

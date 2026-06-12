@@ -31,6 +31,8 @@ type Server struct {
 	networkMapMu                sync.Mutex
 	networkMapGeoCache          map[string]networkMapGeoCacheEntry
 	db                          *pgxpool.Pool
+	dbMaintenanceMu             sync.Mutex
+	graphHistoryCompact         dbGraphHistoryCompactJob
 	notifier                    *Notifier
 	notifierErr                 string
 	chat                        *ChatService

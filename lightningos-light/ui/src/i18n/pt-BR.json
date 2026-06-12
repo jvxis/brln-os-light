@@ -4,7 +4,7 @@
     "kicker": "Postgres • LOS",
     "openHint": "Abrir manutenção →",
     "totalSize": "Tamanho total: {{value}}",
-    "description": "Roda as rotinas de retenção que o app já executa (apaga só dados além da janela de retenção) e um VACUUM (ANALYZE) online seguro. Nada destrutivo — sem VACUUM FULL.",
+    "description": "Roda as rotinas de retenção que o app já executa e um VACUUM (ANALYZE) online seguro. A compactação física é uma ação avançada separada para o histórico do Graph Explorer.",
     "runCleanup": "Rodar limpeza",
     "runVacuum": "VACUUM (ANALYZE)",
     "cleanupRunning": "Limpando…",
@@ -20,7 +20,37 @@
     "loading": "Carregando…",
     "empty": "Nenhuma tabela.",
     "loadFailed": "Falha ao carregar a manutenção.",
-    "actionFailed": "Falha ao executar a ação."
+    "actionFailed": "Falha ao executar a ação.",
+    "compact": {
+      "title": "Compactação física",
+      "description": "Reescreve o histórico de policy do grafo com VACUUM FULL para devolver espaço apagado ao filesystem. Isso pode travar o histórico do Graph Explorer e usar bastante I/O de disco enquanto executa.",
+      "run": "Compactar histórico do grafo",
+      "running": "Compactando...",
+      "confirm": "Compactar agora o histórico de policy do Graph Explorer? Isso pode travar essa tabela e usar bastante I/O de disco até terminar.",
+      "started": "Compactação física iniciada.",
+      "statusReady": "Pronto",
+      "statusRunning": "Executando",
+      "statusBlocked": "Bloqueado",
+      "physical": "Arquivo físico",
+      "live": "Vivo estimado",
+      "reclaimable": "Recuperável",
+      "cap": "Cap do grafo",
+      "startedAt": "Iniciado em {{value}}.",
+      "done": "Compactação física concluída. Recuperou cerca de {{value}}.",
+      "failed": "Compactação física falhou: {{value}}",
+      "liveExceedsCap": "Os dados vivos estimados ainda estão acima do cap; compactar pode recuperar bloat, mas talvez não deixe o arquivo abaixo do cap.",
+      "lockHint": "Se o PostgreSQL não conseguir obter o lock da tabela em {{seconds}} segundos, o job para e pode ser tentado novamente depois.",
+      "reasons": {
+        "unavailable": "Status de compactação indisponível.",
+        "db_unavailable": "Postgres indisponível.",
+        "compaction_running": "A compactação já está em execução.",
+        "graph_storage_cap_required": "Defina primeiro um cap em GB no Graph Explorer.",
+        "graph_cleanup_required": "Execute primeiro a limpeza de storage do Graph Explorer; ainda há linhas antigas para apagar.",
+        "physical_size_within_cap": "O arquivo físico já está dentro do cap configurado.",
+        "live_size_unknown": "O tamanho vivo estimado está indisponível. Rode VACUUM (ANALYZE) primeiro.",
+        "reclaimable_space_too_small": "O espaço recuperável estimado é pequeno demais para compactação física."
+      }
+    }
   },
   "common": {
     "active": "Ativo",

@@ -4,7 +4,7 @@
     "kicker": "Postgres • LOS",
     "openHint": "Open maintenance →",
     "totalSize": "Total size: {{value}}",
-    "description": "Runs the retention routines the app already schedules (only removes data past its retention window) plus a safe online VACUUM (ANALYZE). Nothing destructive — no VACUUM FULL.",
+    "description": "Runs the retention routines the app already schedules and a safe online VACUUM (ANALYZE). Physical compaction is a separate advanced action for Graph Explorer history.",
     "runCleanup": "Run cleanup",
     "runVacuum": "VACUUM (ANALYZE)",
     "cleanupRunning": "Cleaning…",
@@ -20,7 +20,37 @@
     "loading": "Loading…",
     "empty": "No tables.",
     "loadFailed": "Failed to load maintenance.",
-    "actionFailed": "Action failed."
+    "actionFailed": "Action failed.",
+    "compact": {
+      "title": "Physical compaction",
+      "description": "Rewrites graph policy history with VACUUM FULL to return deleted space to the filesystem. This can lock Graph Explorer history and use heavy disk I/O while it runs.",
+      "run": "Compact graph history",
+      "running": "Compacting...",
+      "confirm": "Compact Graph Explorer policy history now? This may lock that table and use heavy disk I/O until it finishes.",
+      "started": "Physical compaction started.",
+      "statusReady": "Ready",
+      "statusRunning": "Running",
+      "statusBlocked": "Blocked",
+      "physical": "Physical file",
+      "live": "Estimated live",
+      "reclaimable": "Reclaimable",
+      "cap": "Graph cap",
+      "startedAt": "Started at {{value}}.",
+      "done": "Physical compaction finished. Reclaimed about {{value}}.",
+      "failed": "Physical compaction failed: {{value}}",
+      "liveExceedsCap": "Estimated live data is still above the cap; compacting can reclaim bloat but may not bring the file below the cap.",
+      "lockHint": "If PostgreSQL cannot obtain the table lock within {{seconds}} seconds, the job stops and can be retried later.",
+      "reasons": {
+        "unavailable": "Compaction status is unavailable.",
+        "db_unavailable": "Postgres is unavailable.",
+        "compaction_running": "Compaction is already running.",
+        "graph_storage_cap_required": "Set a Graph Explorer GB cap first.",
+        "graph_cleanup_required": "Run Graph Explorer storage cleanup first; old rows are still pending deletion.",
+        "physical_size_within_cap": "The physical file is already within the configured cap.",
+        "live_size_unknown": "Estimated live size is unavailable. Run VACUUM (ANALYZE) first.",
+        "reclaimable_space_too_small": "Estimated reclaimable space is too small for physical compaction."
+      }
+    }
   },
   "common": {
     "active": "Active",

@@ -8,8 +8,13 @@ import (
 )
 
 const (
-	dbMaintenanceCleanupBatch = 50000
-	dbMaintenanceTimeout      = 8 * time.Minute
+	dbMaintenanceCleanupBatch              = 50000
+	dbMaintenanceTimeout                   = 8 * time.Minute
+	dbMaintenanceCompactTimeout            = 2 * time.Hour
+	dbMaintenanceCompactLockTimeout        = 30 * time.Second
+	dbMaintenanceCompactMinReclaimable     = 256 * 1024 * 1024
+	dbMaintenanceCompactMinReclaimableRate = 0.20
+	dbMaintenanceGraphHistoryTable         = "graph_channel_policy_history"
 )
 
 type dbTableStat struct {
@@ -23,9 +28,10 @@ type dbTableStat struct {
 }
 
 type dbMaintenanceOverview struct {
-	Database   string        `json:"database"`
-	TotalBytes int64         `json:"total_bytes"`
-	Tables     []dbTableStat `json:"tables"`
+	Database               string                         `json:"database"`
+	TotalBytes             int64                          `json:"total_bytes"`
+	Tables                 []dbTableStat                  `json:"tables"`
+	GraphHistoryCompaction dbGraphHistoryCompactionStatus `json:"graph_history_compaction"`
 }
 
 type dbMaintenanceActionResult struct {
@@ -36,6 +42,44 @@ type dbMaintenanceActionResult struct {
 
 type dbMaintenanceActionResponse struct {
 	Results []dbMaintenanceActionResult `json:"results"`
+}
+
+type dbGraphHistoryCompactionStatus struct {
+	Table                   string     `json:"table"`
+	Available               bool       `json:"available"`
+	Running                 bool       `json:"running"`
+	Reason                  string     `json:"reason,omitempty"`
+	PhysicalBytes           int64      `json:"physical_bytes"`
+	EstimatedLiveBytes      int64      `json:"estimated_live_bytes"`
+	HistoryMaxBytes         int64      `json:"history_max_bytes"`
+	ReclaimableBytes        int64      `json:"reclaimable_bytes"`
+	ReclaimableRatio        float64    `json:"reclaimable_ratio"`
+	CleanupAvailable        bool       `json:"cleanup_available"`
+	EstimatedLiveExceedsCap bool       `json:"estimated_live_exceeds_cap"`
+	EffectiveRetentionDays  int        `json:"effective_retention_days"`
+	MinReclaimableBytes     int64      `json:"min_reclaimable_bytes"`
+	MinReclaimableRatio     float64    `json:"min_reclaimable_ratio"`
+	LockTimeoutSeconds      int        `json:"lock_timeout_seconds"`
+	StartedAt               *time.Time `json:"started_at,omitempty"`
+	CompletedAt             *time.Time `json:"completed_at,omitempty"`
+	LastError               string     `json:"last_error,omitempty"`
+	PhysicalBytesBefore     int64      `json:"physical_bytes_before,omitempty"`
+	PhysicalBytesAfter      int64      `json:"physical_bytes_after,omitempty"`
+	LastReclaimedBytes      int64      `json:"last_reclaimed_bytes,omitempty"`
+}
+
+type dbGraphHistoryCompactJob struct {
+	Running             bool
+	StartedAt           time.Time
+	CompletedAt         time.Time
+	Error               string
+	PhysicalBytesBefore int64
+	EstimatedLiveBytes  int64
+	HistoryMaxBytes     int64
+	ReclaimableBytes    int64
+	ReclaimableRatio    float64
+	PhysicalBytesAfter  int64
+	ReclaimedBytes      int64
 }
 
 // retentionRoutine mirrors a time-windowed cleanup that already runs on its own
@@ -112,7 +156,11 @@ order by pg_total_relation_size(c.oid) desc
 		}
 		overview.Tables = append(overview.Tables, stat)
 	}
-	return overview, rows.Err()
+	if err := rows.Err(); err != nil {
+		return overview, err
+	}
+	overview.GraphHistoryCompaction = s.graphHistoryCompactionStatus(ctx)
+	return overview, nil
 }
 
 // runRetentionCleanup runs every registered retention prune on demand. It only
@@ -174,6 +222,189 @@ func (s *Server) runVacuumAnalyze(ctx context.Context) []dbMaintenanceActionResu
 	return results
 }
 
+func (s *Server) graphHistoryCompactionStatus(ctx context.Context) dbGraphHistoryCompactionStatus {
+	status := dbGraphHistoryCompactionStatus{
+		Table:               dbMaintenanceGraphHistoryTable,
+		Reason:              "unavailable",
+		MinReclaimableBytes: dbMaintenanceCompactMinReclaimable,
+		MinReclaimableRatio: dbMaintenanceCompactMinReclaimableRate,
+		LockTimeoutSeconds:  int(dbMaintenanceCompactLockTimeout.Seconds()),
+	}
+	if s == nil || s.db == nil {
+		status.Reason = "db_unavailable"
+		return status
+	}
+
+	s.dbMaintenanceMu.Lock()
+	job := s.graphHistoryCompact
+	s.dbMaintenanceMu.Unlock()
+	if job.Running {
+		startedAt := job.StartedAt
+		status.Running = true
+		status.Reason = "compaction_running"
+		status.StartedAt = &startedAt
+		status.PhysicalBytesBefore = job.PhysicalBytesBefore
+		status.PhysicalBytes = job.PhysicalBytesBefore
+		status.EstimatedLiveBytes = job.EstimatedLiveBytes
+		status.HistoryMaxBytes = job.HistoryMaxBytes
+		status.ReclaimableBytes = job.ReclaimableBytes
+		status.ReclaimableRatio = job.ReclaimableRatio
+		return status
+	}
+	if !job.CompletedAt.IsZero() {
+		completedAt := job.CompletedAt
+		status.CompletedAt = &completedAt
+		status.LastError = job.Error
+		status.PhysicalBytesBefore = job.PhysicalBytesBefore
+		status.PhysicalBytesAfter = job.PhysicalBytesAfter
+		status.LastReclaimedBytes = job.ReclaimedBytes
+	}
+
+	svc, errMsg := s.graphExplorerService()
+	if svc == nil {
+		if errMsg != "" {
+			status.Reason = errMsg
+		}
+		return status
+	}
+	graphStatus, err := svc.StorageStatus(ctx)
+	if err != nil {
+		status.Reason = err.Error()
+		return status
+	}
+
+	status.PhysicalBytes = graphStatus.HistoryBytes
+	status.EstimatedLiveBytes = graphStatus.EstimatedLiveHistoryBytes
+	status.HistoryMaxBytes = graphStatus.Config.HistoryMaxBytes
+	status.CleanupAvailable = graphStatus.CleanupAvailable
+	status.EffectiveRetentionDays = graphStatus.EffectiveRetentionDays
+	if status.EstimatedLiveBytes > 0 {
+		status.ReclaimableBytes = status.PhysicalBytes - status.EstimatedLiveBytes
+		if status.ReclaimableBytes < 0 {
+			status.ReclaimableBytes = 0
+		}
+	}
+	if status.PhysicalBytes > 0 {
+		status.ReclaimableRatio = float64(status.ReclaimableBytes) / float64(status.PhysicalBytes)
+	}
+	status.EstimatedLiveExceedsCap = status.HistoryMaxBytes > 0 && status.EstimatedLiveBytes > status.HistoryMaxBytes
+
+	switch {
+	case status.HistoryMaxBytes <= 0:
+		status.Reason = "graph_storage_cap_required"
+	case status.CleanupAvailable:
+		status.Reason = "graph_cleanup_required"
+	case status.PhysicalBytes <= status.HistoryMaxBytes:
+		status.Reason = "physical_size_within_cap"
+	case status.EstimatedLiveBytes <= 0:
+		status.Reason = "live_size_unknown"
+	case status.ReclaimableBytes < dbMaintenanceCompactMinReclaimable && status.ReclaimableRatio < dbMaintenanceCompactMinReclaimableRate:
+		status.Reason = "reclaimable_space_too_small"
+	default:
+		status.Available = true
+		status.Reason = ""
+	}
+
+	return status
+}
+
+func (s *Server) startGraphHistoryPhysicalCompaction(ctx context.Context) (dbGraphHistoryCompactionStatus, error) {
+	status := s.graphHistoryCompactionStatus(ctx)
+	if status.Running {
+		return status, nil
+	}
+	if !status.Available {
+		return status, fmt.Errorf("%s", status.Reason)
+	}
+
+	now := time.Now().UTC()
+	s.dbMaintenanceMu.Lock()
+	if s.graphHistoryCompact.Running {
+		job := s.graphHistoryCompact
+		s.dbMaintenanceMu.Unlock()
+		startedAt := job.StartedAt
+		status.Running = true
+		status.Available = false
+		status.Reason = "compaction_running"
+		status.StartedAt = &startedAt
+		return status, nil
+	}
+	s.graphHistoryCompact = dbGraphHistoryCompactJob{
+		Running:             true,
+		StartedAt:           now,
+		PhysicalBytesBefore: status.PhysicalBytes,
+		EstimatedLiveBytes:  status.EstimatedLiveBytes,
+		HistoryMaxBytes:     status.HistoryMaxBytes,
+		ReclaimableBytes:    status.ReclaimableBytes,
+		ReclaimableRatio:    status.ReclaimableRatio,
+	}
+	s.dbMaintenanceMu.Unlock()
+
+	go s.runGraphHistoryPhysicalCompaction(status)
+
+	status.Running = true
+	status.Available = false
+	status.Reason = "compaction_running"
+	status.StartedAt = &now
+	return status, nil
+}
+
+func (s *Server) runGraphHistoryPhysicalCompaction(before dbGraphHistoryCompactionStatus) {
+	ctx, cancel := context.WithTimeout(context.Background(), dbMaintenanceCompactTimeout)
+	defer cancel()
+
+	err := s.vacuumFullGraphHistory(ctx)
+	var physicalAfter int64
+	if err == nil && s != nil && s.db != nil {
+		measureCtx, measureCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		_ = s.db.QueryRow(measureCtx, `select pg_total_relation_size('graph_channel_policy_history'::regclass)`).Scan(&physicalAfter)
+		measureCancel()
+	}
+
+	completedAt := time.Now().UTC()
+	job := dbGraphHistoryCompactJob{
+		Running:             false,
+		StartedAt:           time.Now().UTC(),
+		CompletedAt:         completedAt,
+		PhysicalBytesBefore: before.PhysicalBytes,
+		PhysicalBytesAfter:  physicalAfter,
+	}
+	if err != nil {
+		job.Error = err.Error()
+	}
+	if before.PhysicalBytes > physicalAfter && physicalAfter > 0 {
+		job.ReclaimedBytes = before.PhysicalBytes - physicalAfter
+	}
+
+	s.dbMaintenanceMu.Lock()
+	previous := s.graphHistoryCompact
+	if !previous.StartedAt.IsZero() {
+		job.StartedAt = previous.StartedAt
+	}
+	s.graphHistoryCompact = job
+	s.dbMaintenanceMu.Unlock()
+}
+
+func (s *Server) vacuumFullGraphHistory(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("db unavailable")
+	}
+	conn, err := s.db.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+
+	lockSeconds := int(dbMaintenanceCompactLockTimeout.Seconds())
+	if _, err := conn.Conn().PgConn().Exec(ctx, fmt.Sprintf("set lock_timeout = '%ds'", lockSeconds)).ReadAll(); err != nil {
+		return err
+	}
+	defer conn.Conn().PgConn().Exec(context.Background(), "reset lock_timeout").ReadAll()
+
+	_, err = conn.Conn().PgConn().Exec(ctx, fmt.Sprintf("vacuum (full, analyze) %s", dbMaintenanceGraphHistoryTable)).ReadAll()
+	return err
+}
+
 func (s *Server) handleDBMaintenanceGet(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
@@ -195,4 +426,15 @@ func (s *Server) handleDBMaintenanceVacuumPost(w http.ResponseWriter, r *http.Re
 	ctx, cancel := context.WithTimeout(context.Background(), dbMaintenanceTimeout)
 	defer cancel()
 	writeJSON(w, http.StatusOK, dbMaintenanceActionResponse{Results: s.runVacuumAnalyze(ctx)})
+}
+
+func (s *Server) handleDBMaintenanceCompactGraphHistoryPost(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	status, err := s.startGraphHistoryPhysicalCompaction(ctx)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, status.Reason)
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
 }

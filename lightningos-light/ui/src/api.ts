@@ -133,6 +133,8 @@ export const runPostgresCleanup = () =>
   request('/api/postgres/maintenance/cleanup', { method: 'POST', body: JSON.stringify({}) })
 export const runPostgresVacuum = () =>
   request('/api/postgres/maintenance/vacuum', { method: 'POST', body: JSON.stringify({}) })
+export const runPostgresGraphHistoryCompact = () =>
+  request('/api/postgres/maintenance/compact-graph-history', { method: 'POST', body: JSON.stringify({}) })
 export const getBitcoin = () => request('/api/bitcoin')
 export const getBitcoinActive = () => request('/api/bitcoin/active')
 export const getBitcoinSource = () => request('/api/bitcoin/source')

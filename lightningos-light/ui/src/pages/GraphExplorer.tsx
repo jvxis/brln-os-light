@@ -2,6 +2,8 @@ import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   APIError,
+  cleanupGraphExplorerStorage,
+  getGraphExplorerStorage,
   getGraphExplorerNodeChannels,
   getGraphExplorerNodeClosed,
   getGraphExplorerNodeFees,
@@ -9,7 +11,8 @@ import {
   getGraphExplorerStatus,
   getLndStatus,
   recomputeGraphExplorer,
-  searchGraphExplorerNodes
+  searchGraphExplorerNodes,
+  updateGraphExplorerStorage
 } from '../api'
 import { getLocale } from '../i18n'
 import clsx from '../utils/clsx'
@@ -27,6 +30,44 @@ type GraphExplorerStatus = {
   node_count?: number
   open_channel_count?: number
   closed_channel_count?: number
+}
+
+type GraphExplorerStorageConfig = {
+  history_retention_days?: number
+  history_max_bytes?: number
+}
+
+type GraphExplorerStorageProjection = {
+  days: number
+  bytes: number
+}
+
+type GraphExplorerStorageStatus = {
+  config?: GraphExplorerStorageConfig
+  graph_total_bytes?: number
+  history_bytes?: number
+  estimated_live_history_bytes?: number
+  history_rows?: number
+  history_dead_tuples?: number
+  history_last_vacuum?: string
+  coverage_since?: string
+  coverage_until?: string
+  coverage_days?: number
+  bytes_per_day?: number
+  gb_per_day?: number
+  effective_retention_days?: number
+  estimated_bytes_after_cleanup?: number
+  cleanup_available?: boolean
+  normal_vacuum_shrinks_disk_files?: boolean
+  projections?: GraphExplorerStorageProjection[]
+}
+
+type GraphExplorerStorageCleanupResult = {
+  rows_removed?: number
+  cutoff_at?: string
+  vacuum_ran?: boolean
+  vacuum_error?: string
+  status?: GraphExplorerStorageStatus
 }
 
 type GraphExplorerSearchResult = {
@@ -170,6 +211,7 @@ type GraphExplorerFeeHistoryPoint = {
 type GraphExplorerFeeResponse = {
   coverage_since?: string
   range?: string
+  partial?: boolean
   outbound?: GraphExplorerFeeSummary
   inbound?: GraphExplorerFeeSummary
   outbound_bins?: GraphExplorerFeeBin[]
@@ -193,6 +235,11 @@ type FeeTrendResult = {
 const FEE_TREND_BASELINE_MIN_DAYS = 3
 const FEE_TREND_BASELINE_WINDOW_DAYS = 7
 const FEE_TREND_BASELINE_MIN_PPM = 25
+const GRAPH_STORAGE_PRESETS = [
+  { key: 'lite', days: 7, gb: 2 },
+  { key: 'standard', days: 30, gb: 5 },
+  { key: 'full', days: 90, gb: 15 }
+] as const
 
 const GRAPH_EXPLORER_ROUTE_KEY = 'graph-explorer'
 const GRAPH_EXPLORER_PUBKEY_PARAM = 'pubkey'
@@ -566,6 +613,13 @@ export default function GraphExplorer() {
   const initialRouteState = readGraphExplorerRouteState()
   const [status, setStatus] = useState<GraphExplorerStatus | null>(null)
   const [statusError, setStatusError] = useState('')
+  const [storage, setStorage] = useState<GraphExplorerStorageStatus | null>(null)
+  const [storageError, setStorageError] = useState('')
+  const [storageRetentionDays, setStorageRetentionDays] = useState('30')
+  const [storageMaxGB, setStorageMaxGB] = useState('5')
+  const [storageSaving, setStorageSaving] = useState(false)
+  const [storageCleaning, setStorageCleaning] = useState(false)
+  const [storageMessage, setStorageMessage] = useState('')
   const [currentBlockHeight, setCurrentBlockHeight] = useState(0)
   const [query, setQuery] = useState('')
   const [searchResults, setSearchResults] = useState<GraphExplorerSearchResult[]>([])
@@ -601,6 +655,20 @@ export default function GraphExplorer() {
 
   const formatInteger = (value?: number) =>
     numberFormatter.format(Math.round(Number(value || 0)))
+
+  const formatDecimal = (value?: number, maximumFractionDigits = 1) =>
+    new Intl.NumberFormat(locale, { maximumFractionDigits }).format(Number(value || 0))
+
+  const formatBytes = (value?: number) => {
+    const bytes = Math.max(0, Number(value || 0))
+    if (bytes >= 1024 * 1024 * 1024) {
+      return `${formatDecimal(bytes / (1024 * 1024 * 1024), 2)} GB`
+    }
+    if (bytes >= 1024 * 1024) {
+      return `${formatDecimal(bytes / (1024 * 1024), 1)} MB`
+    }
+    return `${formatInteger(bytes)} B`
+  }
 
   const formatTimestamp = (value?: string) => {
     if (!value) return t('common.na')
@@ -665,9 +733,10 @@ export default function GraphExplorer() {
 
     const loadStatus = async () => {
       try {
-        const [graphResult, lndResult] = await Promise.allSettled([
+        const [graphResult, lndResult, storageResult] = await Promise.allSettled([
           getGraphExplorerStatus(),
-          getLndStatus()
+          getLndStatus(),
+          getGraphExplorerStorage()
         ])
         if (!active) return
         if (graphResult.status === 'fulfilled') {
@@ -679,6 +748,16 @@ export default function GraphExplorer() {
         if (lndResult.status === 'fulfilled') {
           const lndStatus = lndResult.value as LndStatusResponse
           setCurrentBlockHeight(Math.max(0, Math.round(Number(lndStatus?.block_height || 0))))
+        }
+        if (storageResult.status === 'fulfilled') {
+          const storagePayload = storageResult.value as GraphExplorerStorageStatus
+          setStorage(storagePayload)
+          setStorageError('')
+          setStorageRetentionDays(String(Math.max(1, Math.round(Number(storagePayload?.config?.history_retention_days || 30)))))
+          const maxBytes = Number(storagePayload?.config?.history_max_bytes || 0)
+          setStorageMaxGB(maxBytes > 0 ? String(Math.round((maxBytes / (1024 * 1024 * 1024)) * 100) / 100) : '0')
+        } else {
+          setStorageError((storageResult.reason as any)?.message || t('graphExplorer.storage.loadFailed'))
         }
       } catch (err: any) {
         if (!active) return
@@ -884,6 +963,13 @@ export default function GraphExplorer() {
       } catch {
         // keep previous height on transient failures
       }
+      try {
+        const nextStorage = await getGraphExplorerStorage() as GraphExplorerStorageStatus
+        setStorage(nextStorage)
+        setStorageError('')
+      } catch (err: any) {
+        setStorageError(err?.message || t('graphExplorer.storage.loadFailed'))
+      }
       if (selectedPubkey) {
         const nextGeneral = await getGraphExplorerNodeGeneral(selectedPubkey) as GraphExplorerNodeGeneral
         setGeneral(nextGeneral)
@@ -912,6 +998,68 @@ export default function GraphExplorer() {
       setStatusError(err?.message || t('graphExplorer.refreshFailed'))
     } finally {
       setRefreshing(false)
+    }
+  }
+
+  const handleStoragePreset = (days: number, gb: number) => {
+    setStorageRetentionDays(String(days))
+    setStorageMaxGB(String(gb))
+    setStorageError('')
+    setStorageMessage('')
+  }
+
+  const parseStorageInputs = () => {
+    const retentionDays = Math.round(Number(storageRetentionDays))
+    const maxGB = Number(String(storageMaxGB).trim().replace(',', '.'))
+    if (!Number.isFinite(retentionDays) || retentionDays < 1 || retentionDays > 365) {
+      throw new Error(t('graphExplorer.storage.invalidRetention'))
+    }
+    if (!Number.isFinite(maxGB) || maxGB < 0) {
+      throw new Error(t('graphExplorer.storage.invalidSize'))
+    }
+    return { retentionDays, maxGB }
+  }
+
+  const handleSaveStorage = async () => {
+    setStorageSaving(true)
+    setStorageError('')
+    setStorageMessage('')
+    try {
+      const { retentionDays, maxGB } = parseStorageInputs()
+      const nextStorage = await updateGraphExplorerStorage({
+        history_retention_days: retentionDays,
+        history_max_gb: maxGB
+      }) as GraphExplorerStorageStatus
+      setStorage(nextStorage)
+      setStorageMessage(t('graphExplorer.storage.saved'))
+    } catch (err: any) {
+      setStorageError(err?.message || t('graphExplorer.storage.saveFailed'))
+    } finally {
+      setStorageSaving(false)
+    }
+  }
+
+  const handleCleanupStorage = async () => {
+    if (!window.confirm(t('graphExplorer.storage.confirmCleanup'))) return
+    setStorageCleaning(true)
+    setStorageError('')
+    setStorageMessage('')
+    try {
+      const result = await cleanupGraphExplorerStorage() as GraphExplorerStorageCleanupResult
+      if (result?.status) {
+        setStorage(result.status)
+      } else {
+        const nextStorage = await getGraphExplorerStorage() as GraphExplorerStorageStatus
+        setStorage(nextStorage)
+      }
+      const messageKey = result?.vacuum_error
+        ? 'graphExplorer.storage.cleanupDoneWithVacuumWarning'
+        : 'graphExplorer.storage.cleanupDone'
+      setStorageMessage(t(messageKey, { value: formatInteger(result?.rows_removed) }))
+    } catch (err: any) {
+      setStorageError(err?.message || t('graphExplorer.storage.cleanupFailed'))
+    } finally {
+      setStorageCleaning(false)
     }
   }
 
@@ -957,6 +1105,24 @@ export default function GraphExplorer() {
   const estimatedOldestChannelDate = estimateDateFromBlock(node?.oldest_channel_block)
   const estimatedYoungestChannelDate = estimateDateFromBlock(node?.youngest_channel_block)
   const approximateNodeStartDate = estimatedOldestChannelDate || parseTimestamp(node?.first_seen_at)
+  const storageProjections = Array.isArray(storage?.projections) ? storage.projections : []
+  const storageProjectionBytes = (days: number) =>
+    storageProjections.find((item) => Number(item.days || 0) === days)?.bytes || 0
+  const storageConfiguredRetentionDays = Math.max(0, Math.round(Number(storage?.config?.history_retention_days || 0)))
+  const storageEffectiveRetentionDays = Math.max(0, Math.round(Number(storage?.effective_retention_days || 0)))
+  const storageConfiguredMaxBytes = Math.max(0, Number(storage?.config?.history_max_bytes || 0))
+  const storageSizeCapLabel = storageConfiguredMaxBytes > 0
+    ? formatBytes(storageConfiguredMaxBytes)
+    : t('graphExplorer.storage.noSizeCap')
+  const storageEffectiveLabel = storageEffectiveRetentionDays > 0
+    ? t('graphExplorer.storage.daysValue', { count: storageEffectiveRetentionDays })
+    : t('common.na')
+  const storageConfiguredRetentionLabel = storageConfiguredRetentionDays > 0
+    ? t('graphExplorer.storage.daysValue', { count: storageConfiguredRetentionDays })
+    : t('common.na')
+  const storageLimitedBySize = storageEffectiveRetentionDays > 0 &&
+    storageConfiguredRetentionDays > 0 &&
+    storageEffectiveRetentionDays < storageConfiguredRetentionDays
 
   const metricCards = node
     ? [
@@ -1093,6 +1259,144 @@ export default function GraphExplorer() {
   const outInRatioTrend = ratioBaseline === null
     ? { direction: 'flat' as FeeTrendDirection, deltaPct: 0, available: false }
     : computeFeeTrend(currentOutInRatio, ratioBaseline)
+
+  const renderStoragePanel = () => (
+    <div className="rounded-[1.5rem] border border-white/10 bg-black/10 p-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <p className="text-sm font-medium text-fog/80">{t('graphExplorer.storage.title')}</p>
+          <p className="mt-2 max-w-3xl text-sm text-fog/60">{t('graphExplorer.storage.subtitle')}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-medium text-fog/75">
+            {t('graphExplorer.storage.configuredRetention')}: {storageConfiguredRetentionLabel}
+          </span>
+          <span className={clsx(
+            'rounded-full border px-3 py-1 text-xs font-medium',
+            storageLimitedBySize
+              ? 'border-amber-400/25 bg-amber-500/10 text-amber-100'
+              : 'border-emerald-400/25 bg-emerald-500/10 text-emerald-100'
+          )}>
+            {t('graphExplorer.storage.effectiveRetention')}: {storageEffectiveLabel}
+          </span>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+          <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.storage.historySize')}</p>
+          <p className="mt-2 text-xl font-semibold text-fog">{formatBytes(storage?.history_bytes)}</p>
+          <p className="mt-1 text-xs text-fog/50">{t('graphExplorer.storage.rows', { value: formatInteger(storage?.history_rows) })}</p>
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+          <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.storage.graphSize')}</p>
+          <p className="mt-2 text-xl font-semibold text-fog">{formatBytes(storage?.graph_total_bytes)}</p>
+          <p className="mt-1 text-xs text-fog/50">{t('graphExplorer.storage.sizeCap')}: {storageSizeCapLabel}</p>
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+          <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.storage.coverage')}</p>
+          <p className="mt-2 text-xl font-semibold text-fog">{formatDecimal(storage?.coverage_days, 1)}d</p>
+          <p className="mt-1 text-xs text-fog/50">{formatTimestamp(storage?.coverage_since)}</p>
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+          <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.storage.rate')}</p>
+          <p className="mt-2 text-xl font-semibold text-fog">{formatBytes(storage?.bytes_per_day)}</p>
+          <p className="mt-1 text-xs text-fog/50">{t('graphExplorer.storage.perDay')}</p>
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+          <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.storage.estimatedAfterCleanup')}</p>
+          <p className="mt-2 text-xl font-semibold text-fog">{formatBytes(storage?.estimated_bytes_after_cleanup)}</p>
+          <p className="mt-1 text-xs text-fog/50">{storage?.cleanup_available ? t('graphExplorer.storage.cleanupAvailable') : t('graphExplorer.storage.cleanupNotNeeded')}</p>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,0.8fr)]">
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+          <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.storage.projections')}</p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-4">
+            {[7, 30, 60, 90].map((days) => (
+              <div key={days} className="rounded-xl border border-white/10 bg-black/10 p-3">
+                <p className="text-xs text-fog/50">{t('graphExplorer.storage.daysValue', { count: days })}</p>
+                <p className="mt-1 text-sm font-semibold text-fog">{formatBytes(storageProjectionBytes(days))}</p>
+              </div>
+            ))}
+          </div>
+          <p className="mt-3 text-xs text-fog/50">{t('graphExplorer.storage.vacuumNote')}</p>
+        </div>
+
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+          <p className="text-xs uppercase tracking-[0.18em] text-fog/45">{t('graphExplorer.storage.settings')}</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {GRAPH_STORAGE_PRESETS.map((preset) => (
+              <button
+                key={preset.key}
+                type="button"
+                className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-fog/75 transition hover:border-sky-300/35 hover:text-fog"
+                onClick={() => handleStoragePreset(preset.days, preset.gb)}
+              >
+                {t(`graphExplorer.storage.presets.${preset.key}`)}
+              </button>
+            ))}
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <label className="space-y-2">
+              <span className="text-xs font-medium text-fog/65">{t('graphExplorer.storage.retentionDays')}</span>
+              <input
+                type="number"
+                min={1}
+                max={365}
+                step={1}
+                value={storageRetentionDays}
+                onChange={(event) => setStorageRetentionDays(event.target.value)}
+                className="w-full rounded-2xl border border-white/10 bg-black/15 px-3 py-2 text-sm text-fog outline-none transition focus:border-sky-300/40"
+              />
+            </label>
+            <label className="space-y-2">
+              <span className="text-xs font-medium text-fog/65">{t('graphExplorer.storage.maxGB')}</span>
+              <input
+                type="number"
+                min={0}
+                step={0.25}
+                value={storageMaxGB}
+                onChange={(event) => setStorageMaxGB(event.target.value)}
+                className="w-full rounded-2xl border border-white/10 bg-black/15 px-3 py-2 text-sm text-fog outline-none transition focus:border-sky-300/40"
+              />
+            </label>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              className={clsx('btn-primary', storageSaving && 'cursor-wait opacity-70')}
+              onClick={() => void handleSaveStorage()}
+              disabled={storageSaving || storageCleaning}
+            >
+              {storageSaving ? t('graphExplorer.storage.saving') : t('graphExplorer.storage.save')}
+            </button>
+            <button
+              type="button"
+              className={clsx(
+                'rounded-full border px-4 py-2 text-sm font-medium transition',
+                storage?.cleanup_available
+                  ? 'border-amber-400/30 bg-amber-500/10 text-amber-100 hover:border-amber-300/45'
+                  : 'border-white/10 bg-white/[0.04] text-fog/45',
+                storageCleaning && 'cursor-wait opacity-70'
+              )}
+              onClick={() => void handleCleanupStorage()}
+              disabled={storageCleaning || storageSaving || !storage?.cleanup_available}
+            >
+              {storageCleaning ? t('graphExplorer.storage.cleaning') : t('graphExplorer.storage.cleanup')}
+            </button>
+          </div>
+          {storageMessage && (
+            <p className="mt-3 text-sm text-emerald-100">{storageMessage}</p>
+          )}
+          {storageError && (
+            <p className="mt-3 text-sm text-amber-200">{storageError}</p>
+          )}
+        </div>
+      </div>
+    </div>
+  )
 
   const renderGeneralTab = () => (
     <>
@@ -1397,6 +1701,9 @@ export default function GraphExplorer() {
           <p className="mt-2 text-sm text-fog/60">
             {t('graphExplorer.feeCoverage', { value: formatTimestamp(fees?.coverage_since || coverageSince) })}
           </p>
+          {fees?.partial && (
+            <p className="mt-2 text-xs text-amber-200">{t('graphExplorer.storage.partialFeeCoverage')}</p>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           {(['7d', '30d', '90d'] as GraphExplorerFeeRange[]).map((value) => (
@@ -1692,6 +1999,7 @@ export default function GraphExplorer() {
             )}
           </div>
         </div>
+        {renderStoragePanel()}
       </section>
 
       <section className="section-card space-y-5">

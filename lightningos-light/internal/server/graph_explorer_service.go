@@ -33,13 +33,19 @@ const (
 )
 
 const (
-	// graphExplorerPolicyHistoryRetentionDays bounds how much network-wide
-	// policy history we keep. Nothing reads past this horizon (the fee report
-	// caps at 89d, autofee at 21d), so 90 days keeps every consumer fully fed
-	// while preventing graph_channel_policy_history from growing unbounded.
-	graphExplorerPolicyHistoryRetentionDays = 90
-	graphExplorerPolicyHistoryPruneBatch    = 50000
-	graphExplorerPruneTimeout               = 10 * time.Minute
+	// graphExplorerPolicyHistoryRetentionDays preserves the old 90-day
+	// retention behavior when migrating nodes that already had graph history.
+	// New installs use graphExplorerDefaultHistoryRetentionDays plus the size
+	// cap below, and both values can be changed from the Graph Explorer UI.
+	graphExplorerPolicyHistoryRetentionDays        = 90
+	graphExplorerDefaultHistoryRetentionDays       = 30
+	graphExplorerDefaultHistoryMaxBytes      int64 = 5 * 1024 * 1024 * 1024
+	graphExplorerMinHistoryRetentionDays           = 1
+	graphExplorerMaxHistoryRetentionDays           = 365
+	graphExplorerMinHistoryMaxBytes          int64 = 256 * 1024 * 1024
+	graphExplorerHistoryStorageOverhead            = 4.0
+	graphExplorerPolicyHistoryPruneBatch           = 50000
+	graphExplorerPruneTimeout                      = 10 * time.Minute
 )
 
 var (
@@ -117,15 +123,24 @@ create table if not exists graph_explorer_config (
   enabled boolean not null default true,
   refill_enabled boolean not null default false,
   refill_provider text,
-  history_retention_days integer not null default 365,
+  history_retention_days integer not null default `+fmt.Sprintf("%d", graphExplorerDefaultHistoryRetentionDays)+`,
+  history_max_bytes bigint not null default `+fmt.Sprintf("%d", graphExplorerDefaultHistoryMaxBytes)+`,
   reconcile_interval_sec integer not null default 21600,
   snapshot_interval_sec integer not null default 86400,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+alter table graph_explorer_config add column if not exists history_max_bytes bigint not null default 0;
+alter table graph_explorer_config alter column history_retention_days set default `+fmt.Sprintf("%d", graphExplorerDefaultHistoryRetentionDays)+`;
+alter table graph_explorer_config alter column history_max_bytes set default `+fmt.Sprintf("%d", graphExplorerDefaultHistoryMaxBytes)+`;
 insert into graph_explorer_config (id)
 values (`+fmt.Sprintf("%d", graphExplorerConfigID)+`)
 on conflict (id) do nothing;
+update graph_explorer_config
+set history_retention_days = `+fmt.Sprintf("%d", graphExplorerPolicyHistoryRetentionDays)+`,
+    updated_at = now()
+where id = `+fmt.Sprintf("%d", graphExplorerConfigID)+`
+  and history_retention_days = 365;
 
 create table if not exists graph_sync_state (
   id boolean primary key default true,
@@ -343,35 +358,22 @@ func (s *GraphExplorerService) refreshBackground() {
 	pruneCancel()
 }
 
-// prunePolicyHistory enforces the 90-day retention horizon on
+// prunePolicyHistory enforces the configured retention horizon on
 // graph_channel_policy_history. It runs on the reconcile cadence (startup + 6h),
 // not on the manual refresh path, so spamming the UI button can't trigger it.
 func (s *GraphExplorerService) prunePolicyHistory(ctx context.Context) {
 	if s == nil || s.db == nil {
 		return
 	}
-	cutoff := time.Now().UTC().AddDate(0, 0, -graphExplorerPolicyHistoryRetentionDays)
-	// Batched delete so a large backlog never holds a long lock. Each pass
-	// removes up to graphExplorerPolicyHistoryPruneBatch rows; stop once a pass
-	// deletes fewer than a full batch (nothing left past the horizon).
-	for iter := 0; iter < 1000; iter++ {
-		tag, err := s.db.Exec(ctx, `
-delete from graph_channel_policy_history
-where ctid in (
-  select ctid from graph_channel_policy_history
-  where captured_at < $1
-  limit $2
-)
-`, cutoff, graphExplorerPolicyHistoryPruneBatch)
-		if err != nil {
-			if s.logger != nil {
-				s.logger.Printf("graph explorer policy history prune failed: %v", err)
-			}
-			return
+	result, err := s.CleanupStorage(ctx, false)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("graph explorer policy history prune failed: %v", err)
 		}
-		if tag.RowsAffected() < int64(graphExplorerPolicyHistoryPruneBatch) {
-			return
-		}
+		return
+	}
+	if result.RowsRemoved > 0 && s.logger != nil {
+		s.logger.Printf("graph explorer policy history prune: removed %d rows older than %s", result.RowsRemoved, result.CutoffAt.Format(time.RFC3339))
 	}
 }
 

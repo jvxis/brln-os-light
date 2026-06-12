@@ -246,6 +246,11 @@ export const getNetworkAtlasConfig = () => request('/api/lnops/network-map/confi
 export const updateNetworkAtlasConfig = (payload: { label?: string; lat?: string | null; lon?: string | null }) =>
   request('/api/lnops/network-map/config', { method: 'POST', body: JSON.stringify(payload) })
 export const getGraphExplorerStatus = () => request('/api/lnops/graph-explorer/status')
+export const getGraphExplorerStorage = () => request('/api/lnops/graph-explorer/storage')
+export const updateGraphExplorerStorage = (payload: { history_retention_days?: number; history_max_bytes?: number; history_max_gb?: number }) =>
+  request('/api/lnops/graph-explorer/storage', { method: 'POST', body: JSON.stringify(payload) })
+export const cleanupGraphExplorerStorage = () =>
+  request('/api/lnops/graph-explorer/storage/cleanup', { method: 'POST', body: JSON.stringify({}) })
 export const searchGraphExplorerNodes = (params?: { q?: string; limit?: number }) =>
   request(`/api/lnops/graph-explorer/search${buildQuery(params)}`)
 export const getGraphExplorerNodeGeneral = (pubkey: string) =>

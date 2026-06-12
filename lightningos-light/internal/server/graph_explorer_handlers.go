@@ -68,6 +68,82 @@ func (s *Server) handleGraphExplorerRecomputePost(w http.ResponseWriter, r *http
 	})
 }
 
+func (s *Server) handleGraphExplorerStorageGet(w http.ResponseWriter, r *http.Request) {
+	svc, errMsg := s.graphExplorerService()
+	if svc == nil {
+		msg := strings.TrimSpace(errMsg)
+		if msg == "" {
+			msg = "graph explorer unavailable"
+		}
+		writeError(w, http.StatusServiceUnavailable, msg)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	status, err := svc.StorageStatus(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load graph explorer storage")
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+func (s *Server) handleGraphExplorerStoragePost(w http.ResponseWriter, r *http.Request) {
+	svc, errMsg := s.graphExplorerService()
+	if svc == nil {
+		msg := strings.TrimSpace(errMsg)
+		if msg == "" {
+			msg = "graph explorer unavailable"
+		}
+		writeError(w, http.StatusServiceUnavailable, msg)
+		return
+	}
+
+	var req GraphExplorerStorageUpdateRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	if _, err := svc.UpdateStorageConfig(ctx, req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	status, err := svc.StorageStatus(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load graph explorer storage")
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+func (s *Server) handleGraphExplorerStorageCleanupPost(w http.ResponseWriter, r *http.Request) {
+	svc, errMsg := s.graphExplorerService()
+	if svc == nil {
+		msg := strings.TrimSpace(errMsg)
+		if msg == "" {
+			msg = "graph explorer unavailable"
+		}
+		writeError(w, http.StatusServiceUnavailable, msg)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), graphExplorerPruneTimeout)
+	defer cancel()
+
+	result, err := svc.CleanupStorage(ctx, true)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to cleanup graph explorer storage")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (s *Server) handleGraphExplorerSearchGet(w http.ResponseWriter, r *http.Request) {
 	svc, errMsg := s.graphExplorerService()
 	if svc == nil {

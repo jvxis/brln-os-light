@@ -66,6 +66,7 @@ type GraphExplorerClosedChannel struct {
 type GraphExplorerNodeFeeReport struct {
 	CoverageSince *time.Time                     `json:"coverage_since,omitempty"`
 	Range         string                         `json:"range"`
+	Partial       bool                           `json:"partial"`
 	Outbound      GraphExplorerFeeSummary        `json:"outbound"`
 	Inbound       GraphExplorerFeeSummary        `json:"inbound"`
 	OutboundBins  []GraphExplorerFeeDistribution `json:"outbound_bins"`
@@ -332,9 +333,6 @@ func (s *GraphExplorerService) GetNodeFeeReport(ctx context.Context, pubkey, ran
 	if err != nil {
 		return GraphExplorerNodeFeeReport{}, err
 	}
-	// Policy history older than the retention horizon is pruned, so the
-	// "accumulated since" label must not claim coverage we no longer hold.
-	coverageSince = graphExplorerClampFeeCoverage(coverageSince)
 	rangeSpec := graphExplorerResolveRange(rangeName, "30d", map[string]func(now time.Time) time.Time{
 		"7d":  func(now time.Time) time.Time { return now.AddDate(0, 0, -7) },
 		"30d": func(now time.Time) time.Time { return now.AddDate(0, 0, -30) },
@@ -342,6 +340,17 @@ func (s *GraphExplorerService) GetNodeFeeReport(ctx context.Context, pubkey, ran
 		"1y":  func(now time.Time) time.Time { return now.AddDate(-1, 0, 0) },
 		"all": nil,
 	})
+	storageConfig, err := s.loadStorageConfig(ctx)
+	if err != nil {
+		return GraphExplorerNodeFeeReport{}, err
+	}
+	// Policy history older than the configured horizon can be pruned, so the
+	// "accumulated since" label must not claim coverage we no longer hold.
+	coverageSince = graphExplorerClampFeeCoverage(coverageSince, storageConfig.HistoryRetentionDays)
+	if historySince, err := s.policyHistoryCoverageSince(ctx); err == nil && historySince != nil {
+		coverageSince = latestGraphExplorerTime(coverageSince, historySince)
+	}
+	partialCoverage := rangeSpec.since != nil && coverageSince != nil && coverageSince.After(*rangeSpec.since)
 
 	currentRows, err := s.db.Query(ctx, `
 select
@@ -418,7 +427,7 @@ join graph_channels ch on ch.chan_id = h.chan_id
 where (h.advertising_pubkey = $1 or h.connecting_pubkey = $1)
   and ($2::timestamptz is null or h.captured_at >= $2)
 order by day desc, h.captured_at desc
-`, pubkey, graphExplorerHistorySince(rangeSpec.since))
+`, pubkey, graphExplorerHistorySince(rangeSpec.since, coverageSince))
 	if err != nil {
 		return GraphExplorerNodeFeeReport{}, err
 	}
@@ -470,6 +479,7 @@ order by day desc, h.captured_at desc
 	return GraphExplorerNodeFeeReport{
 		CoverageSince: coverageSince,
 		Range:         rangeSpec.name,
+		Partial:       partialCoverage,
 		Outbound:      summarizeGraphExplorerPolicies(outboundSamples),
 		Inbound:       summarizeGraphExplorerPolicies(inboundSamples),
 		OutboundBins:  graphExplorerDistributePolicies(outboundSamples),
@@ -660,16 +670,21 @@ func graphExplorerBuildFeeHistory(buckets map[string]*graphExplorerFeeHistoryBuc
 	return history
 }
 
-func graphExplorerHistorySince(rangeSince *time.Time) *time.Time {
-	boundedSince := time.Now().UTC().AddDate(0, 0, -89)
-	if rangeSince == nil || rangeSince.Before(boundedSince) {
-		return &boundedSince
+func graphExplorerHistorySince(rangeSince *time.Time, coverageSince *time.Time) *time.Time {
+	if rangeSince == nil {
+		return coverageSince
+	}
+	if coverageSince != nil && rangeSince.Before(*coverageSince) {
+		return coverageSince
 	}
 	return rangeSince
 }
 
-func graphExplorerClampFeeCoverage(coverageSince *time.Time) *time.Time {
-	retentionFloor := time.Now().UTC().AddDate(0, 0, -graphExplorerPolicyHistoryRetentionDays)
+func graphExplorerClampFeeCoverage(coverageSince *time.Time, retentionDays int) *time.Time {
+	if retentionDays < graphExplorerMinHistoryRetentionDays {
+		retentionDays = graphExplorerPolicyHistoryRetentionDays
+	}
+	retentionFloor := time.Now().UTC().AddDate(0, 0, -retentionDays)
 	if coverageSince == nil || coverageSince.Before(retentionFloor) {
 		return &retentionFloor
 	}

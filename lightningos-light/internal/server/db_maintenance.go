@@ -15,6 +15,7 @@ const (
 	dbMaintenanceCompactMinReclaimable     = 256 * 1024 * 1024
 	dbMaintenanceCompactMinReclaimableRate = 0.20
 	dbMaintenanceGraphHistoryTable         = "graph_channel_policy_history"
+	dbMaintenanceDatabaseLabel             = "LightningOS"
 )
 
 type dbTableStat struct {
@@ -78,6 +79,7 @@ type dbGraphHistoryCompactJob struct {
 	HistoryMaxBytes     int64
 	ReclaimableBytes    int64
 	ReclaimableRatio    float64
+	DatabaseTotalBytes  int64
 	PhysicalBytesAfter  int64
 	ReclaimedBytes      int64
 }
@@ -113,13 +115,23 @@ func (s *Server) retentionRoutines() []retentionRoutine {
 // dbMaintenanceOverview reports per-table size/bloat for the connected database
 // (always the LOS database — the pool never touches the LND database).
 func (s *Server) dbMaintenanceOverview(ctx context.Context) (dbMaintenanceOverview, error) {
-	overview := dbMaintenanceOverview{}
+	overview := dbMaintenanceOverview{Database: dbMaintenanceDatabaseLabel}
 	if s == nil || s.db == nil {
 		return overview, fmt.Errorf("db unavailable")
 	}
-	if s.cfg != nil {
-		overview.Database = s.cfg.Postgres.DBName
+
+	if runningStatus, running := s.graphHistoryCompactionRunningStatus(); running {
+		overview.GraphHistoryCompaction = runningStatus
+		overview.TotalBytes = s.graphHistoryCompactDatabaseTotalBytes()
+		overview.Tables = []dbTableStat{{
+			Name:           dbMaintenanceGraphHistoryTable,
+			TotalBytes:     runningStatus.PhysicalBytes,
+			HasRetention:   true,
+			RetentionLabel: fmt.Sprintf("%dd", graphExplorerPolicyHistoryRetentionDays),
+		}}
+		return overview, nil
 	}
+
 	_ = s.db.QueryRow(ctx, "select pg_database_size(current_database())").Scan(&overview.TotalBytes)
 
 	retention := make(map[string]string)
@@ -235,22 +247,13 @@ func (s *Server) graphHistoryCompactionStatus(ctx context.Context) dbGraphHistor
 		return status
 	}
 
+	if runningStatus, running := s.graphHistoryCompactionRunningStatus(); running {
+		return runningStatus
+	}
+
 	s.dbMaintenanceMu.Lock()
 	job := s.graphHistoryCompact
 	s.dbMaintenanceMu.Unlock()
-	if job.Running {
-		startedAt := job.StartedAt
-		status.Running = true
-		status.Reason = "compaction_running"
-		status.StartedAt = &startedAt
-		status.PhysicalBytesBefore = job.PhysicalBytesBefore
-		status.PhysicalBytes = job.PhysicalBytesBefore
-		status.EstimatedLiveBytes = job.EstimatedLiveBytes
-		status.HistoryMaxBytes = job.HistoryMaxBytes
-		status.ReclaimableBytes = job.ReclaimableBytes
-		status.ReclaimableRatio = job.ReclaimableRatio
-		return status
-	}
 	if !job.CompletedAt.IsZero() {
 		completedAt := job.CompletedAt
 		status.CompletedAt = &completedAt
@@ -308,6 +311,46 @@ func (s *Server) graphHistoryCompactionStatus(ctx context.Context) dbGraphHistor
 	return status
 }
 
+func (s *Server) graphHistoryCompactionRunningStatus() (dbGraphHistoryCompactionStatus, bool) {
+	status := dbGraphHistoryCompactionStatus{
+		Table:               dbMaintenanceGraphHistoryTable,
+		Reason:              "compaction_running",
+		MinReclaimableBytes: dbMaintenanceCompactMinReclaimable,
+		MinReclaimableRatio: dbMaintenanceCompactMinReclaimableRate,
+		LockTimeoutSeconds:  int(dbMaintenanceCompactLockTimeout.Seconds()),
+	}
+	if s == nil {
+		return status, false
+	}
+
+	s.dbMaintenanceMu.Lock()
+	job := s.graphHistoryCompact
+	s.dbMaintenanceMu.Unlock()
+	if !job.Running {
+		return status, false
+	}
+
+	startedAt := job.StartedAt
+	status.Running = true
+	status.StartedAt = &startedAt
+	status.PhysicalBytesBefore = job.PhysicalBytesBefore
+	status.PhysicalBytes = job.PhysicalBytesBefore
+	status.EstimatedLiveBytes = job.EstimatedLiveBytes
+	status.HistoryMaxBytes = job.HistoryMaxBytes
+	status.ReclaimableBytes = job.ReclaimableBytes
+	status.ReclaimableRatio = job.ReclaimableRatio
+	return status, true
+}
+
+func (s *Server) graphHistoryCompactDatabaseTotalBytes() int64 {
+	if s == nil {
+		return 0
+	}
+	s.dbMaintenanceMu.Lock()
+	defer s.dbMaintenanceMu.Unlock()
+	return s.graphHistoryCompact.DatabaseTotalBytes
+}
+
 func (s *Server) startGraphHistoryPhysicalCompaction(ctx context.Context) (dbGraphHistoryCompactionStatus, error) {
 	status := s.graphHistoryCompactionStatus(ctx)
 	if status.Running {
@@ -318,6 +361,9 @@ func (s *Server) startGraphHistoryPhysicalCompaction(ctx context.Context) (dbGra
 	}
 
 	now := time.Now().UTC()
+	var databaseTotalBytes int64
+	_ = s.db.QueryRow(ctx, "select pg_database_size(current_database())").Scan(&databaseTotalBytes)
+
 	s.dbMaintenanceMu.Lock()
 	if s.graphHistoryCompact.Running {
 		job := s.graphHistoryCompact
@@ -337,6 +383,7 @@ func (s *Server) startGraphHistoryPhysicalCompaction(ctx context.Context) (dbGra
 		HistoryMaxBytes:     status.HistoryMaxBytes,
 		ReclaimableBytes:    status.ReclaimableBytes,
 		ReclaimableRatio:    status.ReclaimableRatio,
+		DatabaseTotalBytes:  databaseTotalBytes,
 	}
 	s.dbMaintenanceMu.Unlock()
 

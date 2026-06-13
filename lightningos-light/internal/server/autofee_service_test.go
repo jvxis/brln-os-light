@@ -377,6 +377,24 @@ func TestShouldPauseOutratePegHeadroomWhenOutrateAlreadyClearsRebalSpread(t *tes
 	}
 }
 
+func TestHasActionableAutofeeMarginRequiresLocalEvidence(t *testing.T) {
+	if hasActionableAutofeeMargin(0, 0, false, false, false, false, false, false, 0, false, false) {
+		t.Fatalf("did not expect synthetic seed-only margin to be actionable")
+	}
+	if !hasActionableAutofeeMargin(450, 2, true, false, false, false, false, false, 0, false, false) {
+		t.Fatalf("expected observed forward margin to be actionable")
+	}
+	if !hasActionableAutofeeMargin(0, 0, false, false, false, true, false, false, 0, false, false) {
+		t.Fatalf("expected observed rebalance cost margin to be actionable")
+	}
+	if !hasActionableAutofeeMargin(0, 0, false, false, false, false, false, false, 875, false, false) {
+		t.Fatalf("expected recent rebalance cost margin to be actionable")
+	}
+	if !hasActionableAutofeeMargin(390, 0, false, true, false, false, false, false, 0, false, false) {
+		t.Fatalf("expected 21d forward fallback margin to be actionable")
+	}
+}
+
 func TestShouldProtectRebalanceFloorFromStallRelaxOnRebalanceDependentSink(t *testing.T) {
 	ranking := autofeeRankingSnapshot{RebalanceDependence: 70}
 	if !shouldProtectRebalanceFloorFromStallRelax("sink", "rebal", 1716, ranking, true, 1654) {

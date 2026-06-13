@@ -759,6 +759,61 @@ func TestEvaluateChannelGolden_NewInboundBootstrapTagged(t *testing.T) {
 	})
 }
 
+func TestEvaluateChannelGolden_NewInboundSeedOnlyMarginIsSynthetic(t *testing.T) {
+	now := time.Date(2026, 4, 30, 12, 0, 0, 0, time.UTC)
+	htlc := htlcFailureSignal{
+		Attempts60m:          16,
+		LiquidityFails60m:    16,
+		LiquidityFailRate60m: 1,
+		WindowMin:            120,
+		LiquidityHot:         true,
+	}
+	runGoldenScenario(t, goldenScenario{
+		name:    "new_inbound_seed_only_margin_is_synthetic",
+		channel: goldenChannel(206, 10_000_000, 0, 1000, false),
+		state: &autofeeChannelState{
+			ChannelID: 206,
+			LastPpm:   1000,
+			LastSeed:  1125,
+			FirstSeen: now,
+		},
+		forward7d:    forwardStat{},
+		forward1d:    forwardStat{},
+		rebal7d:      rebalStat{},
+		htlcSignal:   &htlc,
+		requiredTags: []string{"new-inbound", "bootstrap", "margin-synthetic", "no-local-margin"},
+		forbiddenTags: []string{
+			"neg-margin",
+			"no-down-neg-margin",
+			"profit-protect-lock",
+		},
+	})
+}
+
+func TestEvaluateChannelGolden_MatureSeedOnlyMarginIsSynthetic(t *testing.T) {
+	now := time.Date(2026, 4, 30, 12, 0, 0, 0, time.UTC)
+	cfgMut := func(c *AutofeeConfig) {
+		c.RebalCostMode = "channel"
+	}
+	runGoldenScenario(t, goldenScenario{
+		name:    "mature_seed_only_margin_is_synthetic",
+		channel: goldenChannel(207, 4_000_000, 2_000_000, 900, true),
+		state: &autofeeChannelState{
+			ChannelID: 207,
+			LastPpm:   900,
+			LastSeed:  450,
+			FirstSeen: now.Add(-45 * 24 * time.Hour),
+			LastTs:    now.Add(-24 * time.Hour),
+		},
+		forward7d:     forwardStat{},
+		forward1d:     forwardStat{},
+		rebal7d:       rebalStat{},
+		cfgMutator:    cfgMut,
+		requiredTags:  []string{"margin-synthetic", "no-local-margin"},
+		forbiddenTags: []string{"neg-margin", "no-down-neg-margin"},
+	})
+}
+
 func TestEvaluateChannelGolden_ProfitProtectLocksDrainedNeg(t *testing.T) {
 	// Sink at 5% out_ratio, neg margin (outrate < 1.10x rebal cost), recent change.
 	// Profit-protect must prevent fee from dropping further.
@@ -790,6 +845,7 @@ func TestEvaluateChannelGolden_ProfitProtectLocksDrainedNeg(t *testing.T) {
 		// At minimum, must not move down: assert NewPpm >= LocalPpm.
 		// We assert a tag from the family of locks rather than the exact one,
 		// since the engine has multiple no-down paths in this state.
+		requiredTags:  []string{"neg-margin"},
 		forbiddenTags: []string{"trend-down"},
 	})
 }

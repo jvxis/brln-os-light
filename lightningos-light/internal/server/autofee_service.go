@@ -5812,6 +5812,28 @@ func shouldPauseOutratePegHeadroom(outPpm7d int, rebalHistoryRefPpm int, marginP
 	return float64(outPpm7d) >= float64(rebalHistoryRefPpm)*(1.0+outratePegRebalSpreadMinFrac)
 }
 
+func hasActionableAutofeeMargin(
+	outPpm7d int,
+	fwdCount int,
+	observedOutSignal bool,
+	outFrom21dFallback bool,
+	outrateMemoryActive bool,
+	observedRebalSignal bool,
+	rebalFrom21dFallback bool,
+	rebalMemoryActive bool,
+	recentRebalanceCostPpm int,
+	slowCycle30dOutApplied bool,
+	slowCycle30dRebalApplied bool,
+) bool {
+	if outPpm7d > 0 && (fwdCount > 0 || observedOutSignal || outFrom21dFallback || outrateMemoryActive || slowCycle30dOutApplied) {
+		return true
+	}
+	if observedRebalSignal || rebalFrom21dFallback || rebalMemoryActive || recentRebalanceCostPpm > 0 || slowCycle30dRebalApplied {
+		return true
+	}
+	return false
+}
+
 func applyOutrateTargetAnchor(profile autofeeProfile, targetPpm int, outPpm7d int, outRatio float64, goodOutRatio float64, fwdCount int) (int, []string) {
 	if targetPpm <= 0 || outPpm7d <= 0 {
 		return targetPpm, nil
@@ -8970,11 +8992,27 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		tags = append(tags, "no-signal-noup")
 	}
 	marginPpm7d := outPpm7d - int(float64(baseCostPpm)*1.10)
+	marginActionable := hasActionableAutofeeMargin(
+		outPpm7d,
+		fwdCount,
+		observedOutSignal,
+		outFrom21dFallback,
+		outrateMemoryActive,
+		observedRebalSignal,
+		rebalFrom21dFallback,
+		rebalMemoryActive,
+		recentRebalanceCostPpm,
+		slowCycle30dOutApplied,
+		slowCycle30dRebalApplied,
+	)
 	organicRefillActive := hasOrganicAutofeeRefill(inb7d, fwd7d, rebalIn7d, ch.CapacitySat)
 	if organicRefillActive {
 		tags = appendAutofeeTagOnce(tags, "organic-refill")
 	}
-	if marginPpm7d < 0 {
+	if marginPpm7d < 0 && !marginActionable {
+		tags = append(tags, "margin-synthetic", "no-local-margin")
+	}
+	if marginActionable && marginPpm7d < 0 {
 		tags = append(tags, "neg-margin")
 		minFwds := e.profile.NegMarginSurgeMinFwds
 		if e.profile.NegMarginSurgeFwdsRatio > 0 {
@@ -9029,7 +9067,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 					target = int(math.Ceil(float64(target) * (1.0 + policyBump)))
 					tags = append(tags, fmt.Sprintf("htlc-policy+%d%%", int(math.Round(policyBump*100))))
 				}
-				if marginPpm7d <= e.profile.HTLCPolicyHotNoDownMarginPpm && target < localPpm {
+				if marginActionable && marginPpm7d <= e.profile.HTLCPolicyHotNoDownMarginPpm && target < localPpm {
 					target = localPpm
 					tags = append(tags, "htlc-policy-nodown")
 				}
@@ -9223,7 +9261,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 
 	negMarginProtectedFloor := deriveNegMarginProtectedFloor(0, baseCostPpm, recentRebalanceCostPpm, e.cfg.MinPpm, e.cfg.MaxPpm)
 	target = clampInt(target, e.cfg.MinPpm, e.cfg.MaxPpm)
-	if marginPpm7d < 0 && target < localPpm {
+	if marginActionable && marginPpm7d < 0 && target < localPpm {
 		if stagnationActive || highOutStagnationPressure {
 			tags = append(tags, "stagnation-neg-override")
 		} else if matureEmptySinkDownAnchorActive {
@@ -9330,14 +9368,14 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			allowSoften := false
 			if globalNegLockSoften {
 				chanOk := outRatio >= softenMinOutRatio
-				if softenRequirePosChanMargin {
+				if softenRequirePosChanMargin && marginActionable {
 					chanOk = chanOk && marginPpm7d >= 0
 				}
 				if chanOk && !discoveryHit {
 					allowSoften = true
 				}
 			}
-			if strings.EqualFold(classLabel, "sink") && marginPpm7d > sinkMinMargin {
+			if strings.EqualFold(classLabel, "sink") && marginActionable && marginPpm7d > sinkMinMargin {
 				lockSkipTag = "lock-skip-sink-profit"
 				capFrac = math.Max(capFrac, e.profile.StepCap)
 			} else if target < localPpm && !discoveryHit {
@@ -9726,6 +9764,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		canRelaxFloor := st.StalledRounds >= stallFloorRelaxMinRounds &&
 			bigGap &&
 			outRatio >= stallFloorRelaxMinOutRatio &&
+			marginActionable &&
 			marginPpm7d >= e.profile.ProfitDownMarginMin
 		if canRelaxFloor {
 			relaxFrac := stallFloorRelaxStepFracBase
@@ -9792,6 +9831,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	profitProtectRelaxed := false
 	if finalPpm < localPpm &&
 		outRatio < profitProtectOutRatio &&
+		marginActionable &&
 		marginPpm7d < profitProtectMarginPpm &&
 		!discoveryHit &&
 		!explorerActive &&
@@ -9912,7 +9952,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 
 	// Final safety lock: never reduce below current ppm while margin is negative.
 	// This runs after all ceilings/floors/step caps to avoid late-stage overrides.
-	if marginPpm7d < 0 && finalPpm < localPpm && !stagnationActive && !highOutStagnationPressure {
+	if marginActionable && marginPpm7d < 0 && finalPpm < localPpm && !stagnationActive && !highOutStagnationPressure {
 		if seedSoftNegMarginRelax {
 			if !containsTag(tags, "seed:soft-neg-relax") {
 				tags = append(tags, "seed:soft-neg-relax")
@@ -10035,7 +10075,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 
 	if finalPpm < localPpm && !e.ignoreCooldown && !skipCooldownDown && !st.LastTs.IsZero() &&
-		marginPpm7d >= e.profile.ProfitDownMarginMin && fwdCount >= e.profile.ProfitDownFwdsMin {
+		marginActionable && marginPpm7d >= e.profile.ProfitDownMarginMin && fwdCount >= e.profile.ProfitDownFwdsMin {
 		hoursSince := e.now.Sub(st.LastTs).Hours()
 		profitCooldown := float64(maxInt(1, cooldownDownSec))/3600.0 + float64(e.profile.ProfitDownExtraHours)
 		if hoursSince < profitCooldown {
@@ -10222,7 +10262,11 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if (targetDir != 0 && finalDir != 0 && targetDir != finalDir) || (targetDir == 0 && finalDir != 0) {
 		predictionTarget = effectiveNewPpm
 	}
-	predictionCode, predictionCooldownHours := buildAutofeePrediction(outRatio, marginPpm7d, predictionTarget, localPpm, effectiveNewPpm, fwdCount, negMarginGlobal, discoveryHit, cooldownRemaining)
+	predictionMarginPpm := marginPpm7d
+	if !marginActionable {
+		predictionMarginPpm = 0
+	}
+	predictionCode, predictionCooldownHours := buildAutofeePrediction(outRatio, predictionMarginPpm, predictionTarget, localPpm, effectiveNewPpm, fwdCount, negMarginGlobal, discoveryHit, cooldownRemaining)
 	logStagnationPhase := 0
 	logStagnationRounds := 0
 	logStagnationCap := 0

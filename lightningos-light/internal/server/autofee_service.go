@@ -6616,6 +6616,15 @@ func isOutrateBaseCostSource(src string) bool {
 	}
 }
 
+func isSeedFloorSource(src string) bool {
+	switch strings.TrimSpace(src) {
+	case "seed", "seed-sink", "seed-soft":
+		return true
+	default:
+		return false
+	}
+}
+
 func floorSourceFromBaseCost(src string, marketRefillMode bool) string {
 	if marketRefillMode {
 		return "market"
@@ -9541,6 +9550,11 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		}
 	} else if goodLiquidityHold && strings.EqualFold(classLabel, "sink") && baseCostPpm > 0 && e.profile.SinkExtraFloorMargin > 0 && !highOutStagnationPressure && !holdMatureEmptySinkUp {
 		tags = append(tags, "sink-floor-paused-goodliq")
+	}
+	if !marginActionable && isSeedFloorSource(floorSrc) && floor > localPpm {
+		floor = localPpm
+		floorSrc = "seed-synthetic"
+		tags = append(tags, "seed-synthetic-floor-relax")
 	}
 	if holdMatureEmptySinkUp && (floorSrc == "rebal" || floorSrc == "rebal-sink") && floor > localPpm {
 		floor = localPpm

@@ -814,6 +814,63 @@ func TestEvaluateChannelGolden_MatureSeedOnlyMarginIsSynthetic(t *testing.T) {
 	})
 }
 
+func TestEvaluateChannelGolden_SeedOnlyFloorDoesNotForceUpMove(t *testing.T) {
+	now := time.Date(2026, 4, 30, 12, 0, 0, 0, time.UTC)
+	cfg := goldenDefaultCfg()
+	cfg.RebalCostMode = "channel"
+	cfg.MaxPpm = 5000
+	engine := newGoldenEngine(t, cfg, goldenDefaultCalib(), now)
+	ch := goldenChannel(208, 4_000_000, 600_000, 160, true)
+	st := &autofeeChannelState{
+		ChannelID: 208,
+		LastPpm:   160,
+		LastSeed:  2731,
+		FirstSeen: now.Add(-120 * 24 * time.Hour),
+		LastTs:    now.Add(-24 * time.Hour),
+	}
+	htlcSignals := map[uint64]htlcFailureSignal{
+		208: {
+			Attempts60m:        16,
+			ForwardFails60m:    16,
+			ForwardFailRate60m: 1,
+			WindowMin:          120,
+			ForwardHot:         true,
+		},
+	}
+	d := engine.evaluateChannel(
+		ch,
+		st,
+		map[uint64]forwardStat{},
+		map[uint64]forwardStat{},
+		map[uint64]forwardStat{},
+		map[uint64]forwardStat{},
+		map[uint64]inboundStat{},
+		map[uint64]inboundStat{},
+		rebalStats{ByChannel: map[uint64]rebalStat{}},
+		rebalStats{ByChannel: map[uint64]rebalStat{}},
+		rebalStats{ByChannel: map[uint64]rebalStat{}},
+		map[uint64]recentRebalanceSignal{},
+		htlcSignals,
+		0,
+		0,
+		false,
+	)
+	if d.NewPpm >= 1000 {
+		t.Fatalf("seed-only synthetic floor forced excessive up move: local=%d new=%d floor=%d floor_src=%s tags=%v", d.LocalPpm, d.NewPpm, d.Floor, d.FloorSrc, d.Tags)
+	}
+	if d.Floor != d.LocalPpm || d.FloorSrc != "seed-synthetic" {
+		t.Fatalf("expected synthetic seed floor relaxed to local, got floor=%d src=%s tags=%v", d.Floor, d.FloorSrc, d.Tags)
+	}
+	for _, tag := range []string{"margin-synthetic", "no-local-margin", "seed-synthetic-floor-relax"} {
+		if !goldenHasAnyTag(d.Tags, tag) {
+			t.Fatalf("expected tag %q, got %v", tag, d.Tags)
+		}
+	}
+	if goldenHasAnyTag(d.Tags, "floor-lock") {
+		t.Fatalf("did not expect seed-only floor-lock, got %v", d.Tags)
+	}
+}
+
 func TestEvaluateChannelGolden_ProfitProtectLocksDrainedNeg(t *testing.T) {
 	// Sink at 5% out_ratio, neg margin (outrate < 1.10x rebal cost), recent change.
 	// Profit-protect must prevent fee from dropping further.

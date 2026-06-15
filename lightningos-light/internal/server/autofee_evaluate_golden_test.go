@@ -543,10 +543,13 @@ func TestEvaluateChannelGolden_RevfloorFallbackWithoutLocalReferences(t *testing
 	if d == nil {
 		t.Fatalf("expected decision")
 	}
-	if d.Floor != calib.RevfloorMinAbs {
-		t.Fatalf("expected hard revfloor fallback at %d, got floor=%d floor_src=%s tags=%v", calib.RevfloorMinAbs, d.Floor, d.FloorSrc, d.Tags)
+	if d.Floor >= calib.RevfloorMinAbs {
+		t.Fatalf("expected advisory revfloor fallback below hard min %d, got floor=%d floor_src=%s tags=%v", calib.RevfloorMinAbs, d.Floor, d.FloorSrc, d.Tags)
 	}
-	if !goldenHasAnyTag(d.Tags, "revfloor-fallback") || !goldenHasAnyTag(d.Tags, "revfloor") {
+	if d.NewPpm >= calib.RevfloorMinAbs {
+		t.Fatalf("expected revfloor fallback not to force jump to %d, got new=%d tags=%v", calib.RevfloorMinAbs, d.NewPpm, d.Tags)
+	}
+	if !goldenHasAnyTag(d.Tags, "revfloor-fallback") || !goldenHasAnyTag(d.Tags, "revfloor-advisory") {
 		t.Fatalf("expected revfloor fallback tags, got %v", d.Tags)
 	}
 	if goldenHasAnyTag(d.Tags, "revfloor-local-ref") || goldenHasAnyTag(d.Tags, "revfloor-detached-cap") {

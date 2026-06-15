@@ -365,6 +365,23 @@ func TestApplyHistoryReferenceUpCapHoldsWhenAlreadyAboveHistory(t *testing.T) {
 	}
 }
 
+func TestSuccessfulRebalanceDoesNotBypassHistoryReferenceUpCap(t *testing.T) {
+	target, final, tags := applyHistoryReferenceUpCap(false, false, 130, 378, 314, 110, 285, 1, false, false)
+	if target != 285 || final != 285 {
+		t.Fatalf("expected successful rebalance not to bypass history cap: target=%d final=%d", target, final)
+	}
+	if len(tags) != 1 || tags[0] != "history-up-cap" {
+		t.Fatalf("unexpected tags: %#v", tags)
+	}
+}
+
+func TestFailedRebalancePressureBypassesHistoryReferenceUpCap(t *testing.T) {
+	target, final, tags := applyHistoryReferenceUpCap(false, false, 130, 378, 314, 110, 285, 0, false, true)
+	if target != 378 || final != 314 || len(tags) != 0 {
+		t.Fatalf("expected surge confirmation to bypass history cap: target=%d final=%d tags=%v", target, final, tags)
+	}
+}
+
 func TestShouldPauseOutratePegHeadroomWhenOutrateAlreadyClearsRebalSpread(t *testing.T) {
 	if !shouldPauseOutratePegHeadroom(1639, 1217, 301) {
 		t.Fatalf("expected peg headroom to pause when outrate already exceeds rebal by 20%%+ with positive margin")
@@ -1383,7 +1400,7 @@ func TestOrganicAutofeeRefillDetectsForwardInboundWithoutRebalance(t *testing.T)
 
 func TestCapRevfloorForOrganicRefillUsesLocalReference(t *testing.T) {
 	capped, applied := capRevfloorForOrganicRefill(338, revfloorLocalReferencePpm(12, 0, 14), 45, 10, 2000, true, false, 0, -3, 0)
-	if !applied || capped != 42 {
+	if !applied || capped != 36 {
 		t.Fatalf("expected revfloor to cap at local reference x%.0f: capped=%d applied=%v", revfloorOrganicLocalRefMult, capped, applied)
 	}
 
@@ -1395,7 +1412,7 @@ func TestCapRevfloorForOrganicRefillUsesLocalReference(t *testing.T) {
 
 func TestCapRevfloorForOrganicRefillTightensOnHighLiquidity(t *testing.T) {
 	capped, applied := capRevfloorForOrganicRefill(356, revfloorLocalReferencePpm(132, 83, 158), 188, 10, 2000, true, true, 0, 41, 0)
-	if !applied || capped != 214 {
+	if !applied || capped != 188 {
 		t.Fatalf("expected high-liquidity organic refill cap at local reference x%.2f: capped=%d applied=%v", revfloorOrganicHighLiquidityRefMult, capped, applied)
 	}
 
@@ -1407,7 +1424,7 @@ func TestCapRevfloorForOrganicRefillTightensOnHighLiquidity(t *testing.T) {
 
 func TestCapDetachedRevfloorAllowsLowRecentCostButProtectsHighCost(t *testing.T) {
 	capped, applied := capDetachedRevfloor(333, revfloorLocalReferencePpm(107, 88, 128), 157, 10, 2000, 0.01, 6, 92)
-	if !applied || capped != 192 {
+	if !applied || capped != 161 {
 		t.Fatalf("expected detached revfloor to cap near local references: capped=%d applied=%v", capped, applied)
 	}
 

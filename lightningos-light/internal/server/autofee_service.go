@@ -4679,11 +4679,10 @@ func hasOrganicAutofeeRefill(forwardIn7d inboundStat, forwardOut7d forwardStat, 
 }
 
 func revfloorLocalReferencePpm(outPpm7d int, rebalRefPpm int, seed float64) int {
-	refPpm := maxInt(outPpm7d, rebalRefPpm)
-	if seed > 0 {
-		refPpm = maxInt(refPpm, int(math.Round(seed)))
-	}
-	return refPpm
+	// Seed is a market reference, not local proof that this channel can sell at
+	// that price. Revfloor local caps must be based on local sale/rebalance data.
+	_ = seed
+	return maxInt(outPpm7d, rebalRefPpm)
 }
 
 func hasReliableRevfloorLocalReference(outPpm7d int, fwdCount int, outFrom21dFallback bool, rebalRefPpm int, rebalFloorSignal bool, rebalFrom21dFallback bool, recentRebalanceCostPpm int) bool {
@@ -5768,7 +5767,10 @@ func capBalancedFloorDrivenUp(profile autofeeProfile, classLabel string, outRati
 }
 
 func hasStrongUpwardPressureSignal(recentRebalanceCount int, htlcLiquidityHot bool, surgeConfirmSignal bool) bool {
-	return recentRebalanceCount > 0 || htlcLiquidityHot || surgeConfirmSignal
+	// Successful rebalances protect cost basis, but they are not demand pressure.
+	// Failed/unresolved campaigns are already represented through surgeConfirmSignal.
+	_ = recentRebalanceCount
+	return htlcLiquidityHot || surgeConfirmSignal
 }
 
 func applyOutnormFallbackUpHold(marketRefillMode bool, newInboundBootstrap bool, localPpm int, targetPpm int, finalPpm int, meta outRatioNormalizationMeta, outFrom21dFallback bool, rebalFrom21dFallback bool, observedOutSignal bool, observedRebalSignal bool, recentRebalanceCount int, htlcLiquidityHot bool, surgeConfirmSignal bool) (int, int, []string) {
@@ -6746,6 +6748,37 @@ func floorSourceFromBaseCost(src string, marketRefillMode bool) string {
 		return "min"
 	default:
 		return "rebal"
+	}
+}
+
+func isHardAutofeeFloorSource(floorSrc string, floorBaseSrc string) bool {
+	floorSrc = strings.TrimSpace(floorSrc)
+	floorBaseSrc = strings.TrimSpace(floorBaseSrc)
+	switch floorSrc {
+	case "rebal", "rebal-sink", "rebal-hold":
+		switch floorBaseSrc {
+		case "rebal", "rebal-blend", "rebal-recent":
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
+}
+
+func shouldStepTowardAdvisoryFloor(floorSrc string, floorBaseSrc string, observedOutSignal bool, observedRebalSignal bool, recentRebalanceWeakCount int, htlcHotSignal bool, htlcForwardHot bool, surgeConfirmSignal bool, surgeRoundConfirmSignal bool) bool {
+	hasPressure := htlcHotSignal || htlcForwardHot || surgeConfirmSignal || surgeRoundConfirmSignal || recentRebalanceWeakCount > 0
+	if !hasPressure {
+		return false
+	}
+	switch strings.TrimSpace(floorSrc) {
+	case "outrate", "outrate-sink", "peg":
+		return observedOutSignal || strings.HasPrefix(strings.TrimSpace(floorBaseSrc), "outrate")
+	case "rebal", "rebal-sink":
+		return observedRebalSignal && strings.TrimSpace(floorBaseSrc) == "rebal"
+	default:
+		return false
 	}
 }
 
@@ -9781,6 +9814,11 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 				}
 			} else {
 				tags = appendAutofeeTagOnce(tags, "revfloor-fallback")
+				fallbackCap := maxInt(localPpm, target)
+				if revFloor > fallbackCap {
+					revFloor = fallbackCap
+					tags = appendAutofeeTagOnce(tags, "revfloor-advisory")
+				}
 			}
 		}
 		if revFloor > floor {
@@ -9950,15 +9988,27 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 
 	negMarginProtectedFloor = deriveNegMarginProtectedFloor(floor, baseCostPpm, recentRebalanceCostPpm, e.cfg.MinPpm, e.cfg.MaxPpm)
 
-	// Seed is a reference for target construction, not a hard fee ceiling.
-	finalCandidate := clampInt(maxInt(rawStep, floor), e.cfg.MinPpm, e.cfg.MaxPpm)
+	hardFloor := isHardAutofeeFloorSource(floorSrc, floorBaseSrc)
+	stepFloor := floor
+	if !hardFloor && floor > localPpm {
+		if shouldStepTowardAdvisoryFloor(floorSrc, floorBaseSrc, observedOutSignal, observedRebalSignal, recentRebalanceWeakCount, htlcHotSignal, htlcForwardHot, surgeConfirmSignal, surgeRoundConfirmSignal) {
+			tags = appendAutofeeTagOnce(tags, "advisory-floor-step")
+		} else {
+			stepFloor = localPpm
+			tags = appendAutofeeTagOnce(tags, "advisory-floor-soft")
+		}
+	}
+
+	// Seed/revfloor/advisory references guide targets; only hard cost floors can
+	// override the final step cap upward.
+	finalCandidate := clampInt(maxInt(rawStep, stepFloor), e.cfg.MinPpm, e.cfg.MaxPpm)
 
 	stepMinFinal := minStepDown
 	if finalCandidate > localPpm {
 		stepMinFinal = minStepUp
 	}
 	finalPpm := applyStepCap(localPpm, finalCandidate, capFrac, stepMinFinal, capRefPpm)
-	if finalPpm < floor {
+	if finalPpm < floor && (hardFloor || floor <= localPpm) {
 		finalPpm = floor
 	}
 	finalPpm = clampInt(finalPpm, e.cfg.MinPpm, e.cfg.MaxPpm)
@@ -11945,6 +11995,8 @@ func formatAutofeeTags(d *decision) string {
 			add("revfloor-local-ref")
 		case t == "revfloor-fallback":
 			add("revfloor-fallback")
+		case t == "revfloor-advisory":
+			add("revfloor-advisory")
 		case t == "revfloor-organic-cap":
 			add("revfloor-organic-cap")
 		case t == "revfloor-local-cap":
@@ -11993,6 +12045,10 @@ func formatAutofeeTags(d *decision) string {
 			add("stale-noflow-small")
 		case t == "advisory-floor-relax":
 			add("advisory-floor-relax")
+		case t == "advisory-floor-soft":
+			add("advisory-floor-soft")
+		case t == "advisory-floor-step":
+			add("advisory-floor-step")
 		case t == "outnorm-small-down-cap":
 			add("outnorm-small-down-cap")
 		case t == "empty-sink-hold":

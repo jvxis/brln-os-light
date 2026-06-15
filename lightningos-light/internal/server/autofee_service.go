@@ -135,6 +135,15 @@ const (
 	stallFloorRelaxMinStepPpm           = 15
 	stallFloorRelaxMaxStepPpm           = 180
 	stallFloorRelaxMinOutRatio          = 0.20
+	staleNoFlowDownMinHours             = 24
+	staleNoFlowSmallDownMinHours        = 96
+	staleNoFlowSmallRawOutRatioMin      = 0.60
+	staleNoFlowSmallEffectiveGoodMult   = 0.70
+	staleNoFlowDownStepFrac             = 0.04
+	staleNoFlowSmallDownStepFrac        = 0.025
+	staleNoFlowDownMinStepPpm           = 15
+	staleNoFlowDownMaxStepPpm           = 60
+	staleNoFlowSmallDownMaxStepPpm      = 20
 	stallAlertMinRounds                 = 2
 	stallAlertGapFrac                   = 0.50
 	floorDrivenSmallUpMinStepPpm        = 10
@@ -6591,6 +6600,105 @@ func shouldHoldSeedDrivenUpOnFullChannel(marketRefillMode bool, rawOutRatio floa
 	return strings.TrimSpace(baseCostSrc) == "seed"
 }
 
+func isStaleNoFlowAdvisoryFloorSource(src string) bool {
+	switch strings.TrimSpace(src) {
+	case "seed", "seed-sink", "seed-soft", "seed-synthetic", "seed-goodliq-hold", "seed-hold", "no-signal":
+		return true
+	default:
+		return false
+	}
+}
+
+func relaxStaleNoFlowAdvisoryFloor(
+	marketRefillMode bool,
+	localPpm int,
+	targetPpm int,
+	floorPpm int,
+	floorSrc string,
+	meta outRatioNormalizationMeta,
+	goodOutRatio float64,
+	noFlow1d bool,
+	outPpm7d int,
+	rebalHistoryRefPpm int,
+	recentRebalanceCount int,
+	recentRebalanceWeakCount int,
+	recentRebalanceCostPpm int,
+	htlcPressureSignal bool,
+	htlcForwardHot bool,
+	newInboundBootstrap bool,
+	channelAgeHours float64,
+	bootstrapHours int,
+	hoursSinceLastChange float64,
+	minPpm int,
+) (int, string, []string) {
+	if marketRefillMode ||
+		localPpm <= minPpm ||
+		targetPpm >= localPpm ||
+		floorPpm < localPpm ||
+		!noFlow1d ||
+		outPpm7d > 0 ||
+		rebalHistoryRefPpm > 0 ||
+		recentRebalanceCount > 0 ||
+		recentRebalanceWeakCount > 0 ||
+		recentRebalanceCostPpm > 0 ||
+		htlcPressureSignal ||
+		htlcForwardHot ||
+		newInboundBootstrap {
+		return floorPpm, floorSrc, nil
+	}
+	if !isStaleNoFlowAdvisoryFloorSource(floorSrc) {
+		return floorPpm, floorSrc, nil
+	}
+	if bootstrapHours <= 0 {
+		bootstrapHours = defaultBootstrapHours
+	}
+	if channelAgeHours <= float64(bootstrapHours) {
+		return floorPpm, floorSrc, nil
+	}
+	if hoursSinceLastChange <= 0 {
+		hoursSinceLastChange = channelAgeHours
+	}
+	if hoursSinceLastChange < 0 {
+		hoursSinceLastChange = 0
+	}
+	if goodOutRatio <= 0 {
+		goodOutRatio = 0.20
+	}
+
+	requiredHours := float64(staleNoFlowDownMinHours)
+	stepFrac := staleNoFlowDownStepFrac
+	maxStep := staleNoFlowDownMaxStepPpm
+	tags := []string{"stale-noflow-down", "advisory-floor-relax"}
+	eligible := meta.Effective >= goodOutRatio
+	if !eligible && meta.OutlierSmall {
+		smallThreshold := goodOutRatio * staleNoFlowSmallEffectiveGoodMult
+		if meta.Raw >= staleNoFlowSmallRawOutRatioMin && meta.Effective >= smallThreshold {
+			eligible = true
+			requiredHours = float64(staleNoFlowSmallDownMinHours)
+			stepFrac = staleNoFlowSmallDownStepFrac
+			maxStep = staleNoFlowSmallDownMaxStepPpm
+			tags = append(tags, "stale-noflow-small-down", "outnorm-small-down-cap")
+		}
+	}
+	if !eligible || hoursSinceLastChange < requiredHours {
+		return floorPpm, floorSrc, nil
+	}
+
+	step := int(math.Round(float64(localPpm) * stepFrac))
+	step = clampInt(step, staleNoFlowDownMinStepPpm, maxStep)
+	relaxed := localPpm - step
+	if targetPpm > relaxed {
+		relaxed = targetPpm
+	}
+	if relaxed < minPpm {
+		relaxed = minPpm
+	}
+	if relaxed >= floorPpm {
+		return floorPpm, floorSrc, nil
+	}
+	return relaxed, "stale-noflow", tags
+}
+
 func shouldRefreshAutofeeOutrateMemory(outPpm7d int, recentForwards1d int, outAmt1dSat int64) bool {
 	if outPpm7d <= 0 {
 		return false
@@ -9766,6 +9874,39 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		floorSrc = "rebal-exec-anchor"
 		tags = append(tags, "rebal-exec-floor-anchor")
 	}
+	hoursSinceLastFeeChange := channelAgeHours
+	if !st.LastTs.IsZero() {
+		hoursSinceLastFeeChange = e.now.Sub(st.LastTs).Hours()
+		if hoursSinceLastFeeChange < 0 {
+			hoursSinceLastFeeChange = 0
+		}
+	}
+	if relaxedFloor, relaxedSrc, relaxTags := relaxStaleNoFlowAdvisoryFloor(
+		marketRefillMode,
+		localPpm,
+		target,
+		floor,
+		floorSrc,
+		outNormMeta,
+		goodOutRatio,
+		noFlow1d,
+		outPpm7d,
+		rebalHistoryRefPpm,
+		recentRebalanceCount,
+		recentRebalanceWeakCount,
+		recentRebalanceCostPpm,
+		htlcPressureSignal,
+		htlcForwardHot,
+		newInboundBootstrap,
+		channelAgeHours,
+		bootstrapHours,
+		hoursSinceLastFeeChange,
+		e.cfg.MinPpm,
+	); len(relaxTags) > 0 {
+		floor = relaxedFloor
+		floorSrc = relaxedSrc
+		tags = append(tags, relaxTags...)
+	}
 	if target < localPpm && floor >= localPpm {
 		stallRelaxGapFrac := e.profile.StallFloorRelaxGapFrac
 		if e.cfg.StallFloorRelaxGapFracOverride > 0 {
@@ -11846,6 +11987,14 @@ func formatAutofeeTags(d *decision) string {
 			add("🐢low-out-up")
 		case t == "low-out-noflow-cap":
 			add("🧯noflow-up-cap")
+		case t == "stale-noflow-down":
+			add("stale-noflow-down")
+		case t == "stale-noflow-small-down":
+			add("stale-noflow-small")
+		case t == "advisory-floor-relax":
+			add("advisory-floor-relax")
+		case t == "outnorm-small-down-cap":
+			add("outnorm-small-down-cap")
 		case t == "empty-sink-hold":
 			add("🧯empty-sink-hold")
 		case t == "empty-sink-hard-hold":

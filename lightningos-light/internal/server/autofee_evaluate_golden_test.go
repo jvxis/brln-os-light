@@ -871,6 +871,133 @@ func TestEvaluateChannelGolden_SeedOnlyFloorDoesNotForceUpMove(t *testing.T) {
 	}
 }
 
+func TestEvaluateChannelGolden_StaleNoFlowEffectiveLiquidityExploresDown(t *testing.T) {
+	now := time.Date(2026, 4, 30, 12, 0, 0, 0, time.UTC)
+	cfg := goldenDefaultCfg()
+	cfg.RebalCostMode = "channel"
+	engine := newGoldenEngine(t, cfg, goldenDefaultCalib(), now)
+	ch := goldenChannel(209, 4_000_000, 1_248_000, 607, true) // effective out_ratio ~= 31%
+	st := &autofeeChannelState{
+		ChannelID: 209,
+		LastPpm:   607,
+		LastSeed:  595,
+		FirstSeen: now.Add(-30 * 24 * time.Hour),
+		LastTs:    now.Add(-30 * time.Hour),
+	}
+	d := engine.evaluateChannel(
+		ch,
+		st,
+		map[uint64]forwardStat{},
+		map[uint64]forwardStat{},
+		map[uint64]forwardStat{},
+		map[uint64]forwardStat{},
+		map[uint64]inboundStat{},
+		map[uint64]inboundStat{},
+		rebalStats{ByChannel: map[uint64]rebalStat{}},
+		rebalStats{ByChannel: map[uint64]rebalStat{}},
+		rebalStats{ByChannel: map[uint64]rebalStat{}},
+		map[uint64]recentRebalanceSignal{},
+		map[uint64]htlcFailureSignal{},
+		0,
+		0,
+		false,
+	)
+	if d.NewPpm >= d.LocalPpm {
+		t.Fatalf("expected stale/no-flow effective-liquidity down exploration, got local=%d new=%d floor=%d src=%s tags=%v", d.LocalPpm, d.NewPpm, d.Floor, d.FloorSrc, d.Tags)
+	}
+	if d.FloorSrc != "stale-noflow" {
+		t.Fatalf("expected stale-noflow floor source, got %s floor=%d tags=%v", d.FloorSrc, d.Floor, d.Tags)
+	}
+	for _, tag := range []string{"stale-noflow-down", "advisory-floor-relax"} {
+		if !goldenHasAnyTag(d.Tags, tag) {
+			t.Fatalf("expected tag %q, got %v", tag, d.Tags)
+		}
+	}
+}
+
+func TestEvaluateChannelGolden_SmallOutnormStaleNoFlowUsesMicroDown(t *testing.T) {
+	now := time.Date(2026, 4, 30, 12, 0, 0, 0, time.UTC)
+	cfg := goldenDefaultCfg()
+	cfg.RebalCostMode = "channel"
+	engine := newGoldenEngine(t, cfg, goldenDefaultCalib(), now)
+	ch := goldenChannel(210, 40_000, 32_516, 645, true) // raw high, effective low because outnorm:small
+	st := &autofeeChannelState{
+		ChannelID: 210,
+		LastPpm:   645,
+		LastSeed:  620,
+		FirstSeen: now.Add(-30 * 24 * time.Hour),
+		LastTs:    now.Add(-106 * time.Hour),
+	}
+	d := engine.evaluateChannel(
+		ch,
+		st,
+		map[uint64]forwardStat{},
+		map[uint64]forwardStat{},
+		map[uint64]forwardStat{},
+		map[uint64]forwardStat{},
+		map[uint64]inboundStat{},
+		map[uint64]inboundStat{},
+		rebalStats{ByChannel: map[uint64]rebalStat{}},
+		rebalStats{ByChannel: map[uint64]rebalStat{}},
+		rebalStats{ByChannel: map[uint64]rebalStat{}},
+		map[uint64]recentRebalanceSignal{},
+		map[uint64]htlcFailureSignal{},
+		0,
+		0,
+		false,
+	)
+	if d.NewPpm >= d.LocalPpm {
+		t.Fatalf("expected small outnorm stale/no-flow micro-down, got local=%d new=%d floor=%d src=%s tags=%v", d.LocalPpm, d.NewPpm, d.Floor, d.FloorSrc, d.Tags)
+	}
+	if d.LocalPpm-d.NewPpm > staleNoFlowSmallDownMaxStepPpm {
+		t.Fatalf("small outnorm down step too large: local=%d new=%d tags=%v", d.LocalPpm, d.NewPpm, d.Tags)
+	}
+	for _, tag := range []string{"stale-noflow-small-down", "outnorm-small-down-cap"} {
+		if !goldenHasAnyTag(d.Tags, tag) {
+			t.Fatalf("expected tag %q, got %v", tag, d.Tags)
+		}
+	}
+}
+
+func TestEvaluateChannelGolden_SmallOutnormRecentNoFlowDoesNotExploreDown(t *testing.T) {
+	now := time.Date(2026, 4, 30, 12, 0, 0, 0, time.UTC)
+	cfg := goldenDefaultCfg()
+	cfg.RebalCostMode = "channel"
+	engine := newGoldenEngine(t, cfg, goldenDefaultCalib(), now)
+	ch := goldenChannel(211, 40_000, 32_516, 645, true)
+	st := &autofeeChannelState{
+		ChannelID: 211,
+		LastPpm:   645,
+		LastSeed:  620,
+		FirstSeen: now.Add(-30 * 24 * time.Hour),
+		LastTs:    now.Add(-72 * time.Hour),
+	}
+	d := engine.evaluateChannel(
+		ch,
+		st,
+		map[uint64]forwardStat{},
+		map[uint64]forwardStat{},
+		map[uint64]forwardStat{},
+		map[uint64]forwardStat{},
+		map[uint64]inboundStat{},
+		map[uint64]inboundStat{},
+		rebalStats{ByChannel: map[uint64]rebalStat{}},
+		rebalStats{ByChannel: map[uint64]rebalStat{}},
+		rebalStats{ByChannel: map[uint64]rebalStat{}},
+		map[uint64]recentRebalanceSignal{},
+		map[uint64]htlcFailureSignal{},
+		0,
+		0,
+		false,
+	)
+	if d.NewPpm != d.LocalPpm {
+		t.Fatalf("expected small outnorm channel to wait longer before exploring down, got local=%d new=%d floor=%d src=%s tags=%v", d.LocalPpm, d.NewPpm, d.Floor, d.FloorSrc, d.Tags)
+	}
+	if goldenHasAnyTag(d.Tags, "stale-noflow-small-down") {
+		t.Fatalf("did not expect small stale/no-flow tag before long stale window, got %v", d.Tags)
+	}
+}
+
 func TestEvaluateChannelGolden_ProfitProtectLocksDrainedNeg(t *testing.T) {
 	// Sink at 5% out_ratio, neg margin (outrate < 1.10x rebal cost), recent change.
 	// Profit-protect must prevent fee from dropping further.

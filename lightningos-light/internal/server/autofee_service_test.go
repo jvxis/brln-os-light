@@ -1437,6 +1437,153 @@ func TestReliableRevfloorLocalReferenceRequiresLocalEvidence(t *testing.T) {
 	}
 }
 
+func TestRelaxStaleNoFlowAdvisoryFloorUsesEffectiveLiquidity(t *testing.T) {
+	meta := outRatioNormalizationMeta{
+		Raw:       0.31,
+		Effective: 0.31,
+	}
+	floor, src, tags := relaxStaleNoFlowAdvisoryFloor(
+		false,
+		607,
+		583,
+		607,
+		"seed-synthetic",
+		meta,
+		0.20,
+		true,
+		0,
+		0,
+		0,
+		0,
+		0,
+		false,
+		false,
+		false,
+		30*24,
+		defaultBootstrapHours,
+		2,
+		10,
+	)
+	if len(tags) > 0 || floor != 607 || src != "seed-synthetic" {
+		t.Fatalf("did not expect recent stale/no-flow relax: floor=%d src=%s tags=%v", floor, src, tags)
+	}
+
+	floor, src, tags = relaxStaleNoFlowAdvisoryFloor(
+		false,
+		607,
+		583,
+		607,
+		"seed-synthetic",
+		meta,
+		0.20,
+		true,
+		0,
+		0,
+		0,
+		0,
+		0,
+		false,
+		false,
+		false,
+		30*24,
+		defaultBootstrapHours,
+		30,
+		10,
+	)
+	if floor != 583 || src != "stale-noflow" || !containsTag(tags, "stale-noflow-down") || !containsTag(tags, "advisory-floor-relax") {
+		t.Fatalf("expected effective-liquidity stale/no-flow floor relax: floor=%d src=%s tags=%v", floor, src, tags)
+	}
+}
+
+func TestRelaxStaleNoFlowAdvisoryFloorSmallOutnormIsSlower(t *testing.T) {
+	meta := outRatioNormalizationMeta{
+		Raw:          0.81,
+		Effective:    0.15,
+		CapRel:       0.01,
+		OutlierSmall: true,
+	}
+	floor, src, tags := relaxStaleNoFlowAdvisoryFloor(
+		false,
+		645,
+		620,
+		645,
+		"seed-synthetic",
+		meta,
+		0.20,
+		true,
+		0,
+		0,
+		0,
+		0,
+		0,
+		false,
+		false,
+		false,
+		30*24,
+		defaultBootstrapHours,
+		72,
+		10,
+	)
+	if len(tags) > 0 || floor != 645 || src != "seed-synthetic" {
+		t.Fatalf("small outnorm channel should require longer stale window: floor=%d src=%s tags=%v", floor, src, tags)
+	}
+
+	floor, src, tags = relaxStaleNoFlowAdvisoryFloor(
+		false,
+		645,
+		620,
+		645,
+		"seed-synthetic",
+		meta,
+		0.20,
+		true,
+		0,
+		0,
+		0,
+		0,
+		0,
+		false,
+		false,
+		false,
+		30*24,
+		defaultBootstrapHours,
+		106,
+		10,
+	)
+	if floor != 629 || src != "stale-noflow" || !containsTag(tags, "stale-noflow-small-down") || !containsTag(tags, "outnorm-small-down-cap") {
+		t.Fatalf("expected capped small-channel relax after long stale window: floor=%d src=%s tags=%v", floor, src, tags)
+	}
+}
+
+func TestRelaxStaleNoFlowAdvisoryFloorKeepsHardCostFloor(t *testing.T) {
+	meta := outRatioNormalizationMeta{Raw: 0.35, Effective: 0.35}
+	floor, src, tags := relaxStaleNoFlowAdvisoryFloor(
+		false,
+		900,
+		820,
+		1000,
+		"rebal-recent",
+		meta,
+		0.20,
+		true,
+		0,
+		0,
+		0,
+		0,
+		865,
+		false,
+		false,
+		false,
+		30*24,
+		defaultBootstrapHours,
+		120,
+		10,
+	)
+	if len(tags) > 0 || floor != 1000 || src != "rebal-recent" {
+		t.Fatalf("hard recent rebalance floor must not relax: floor=%d src=%s tags=%v", floor, src, tags)
+	}
+}
+
 func TestApplySurgeConfirmationGate(t *testing.T) {
 	st := &autofeeChannelState{}
 

@@ -412,10 +412,11 @@ func (s *GraphExplorerService) runStreamLoop(stopCh <-chan struct{}) {
 			s.refreshBackground()
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cleanupStreamCtx := contextWithStopCancel(stopCh)
+
 		sub, err := s.lnd.SubscribeChannelGraph(ctx)
 		if err != nil {
-			cancel()
+			cleanupStreamCtx()
 			s.recordError(err)
 			if s.logger != nil {
 				s.logger.Printf("graph explorer stream connect failed: %v", err)
@@ -429,8 +430,6 @@ func (s *GraphExplorerService) runStreamLoop(stopCh <-chan struct{}) {
 		for {
 			update, recvErr := sub.Recv()
 			if recvErr != nil {
-				_ = sub.Close()
-				cancel()
 				if errors.Is(recvErr, context.Canceled) || errors.Is(recvErr, io.EOF) {
 					break
 				}
@@ -441,9 +440,19 @@ func (s *GraphExplorerService) runStreamLoop(stopCh <-chan struct{}) {
 				break
 			}
 
+			started := time.Now()
 			updateCtx, updateCancel := context.WithTimeout(context.Background(), graphExplorerUpdateTimeout)
 			applyErr := s.applyGraphUpdate(updateCtx, update)
 			updateCancel()
+			if elapsed := time.Since(started); elapsed > 2*time.Second && s.logger != nil {
+				s.logger.Printf(
+					"graph explorer stream apply slow: duration=%s node_updates=%d channel_updates=%d closed_channels=%d",
+					elapsed.Round(time.Millisecond),
+					len(update.NodeUpdates),
+					len(update.ChannelUpdates),
+					len(update.ClosedChannels),
+				)
+			}
 			if applyErr != nil {
 				s.recordError(applyErr)
 				if s.logger != nil {
@@ -453,6 +462,9 @@ func (s *GraphExplorerService) runStreamLoop(stopCh <-chan struct{}) {
 			}
 			s.clearError()
 		}
+
+		_ = sub.Close()
+		cleanupStreamCtx()
 
 		if !sleepWithStop(stopCh, graphExplorerStreamRetryDelay) {
 			return

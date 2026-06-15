@@ -228,7 +228,9 @@ func (c *ChatService) runInvoices() {
 
 		settleIndex := c.loadCursor()
 
-		conn, release, err := c.lnd.BorrowLightning(context.Background(), true)
+		dialCtx, dialCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		conn, release, err := c.lnd.BorrowLightning(dialCtx, true)
+		dialCancel()
 		if err != nil {
 			c.logger.Printf("chat: invoice stream dial failed: %v", err)
 			time.Sleep(5 * time.Second)
@@ -236,11 +238,13 @@ func (c *ChatService) runInvoices() {
 		}
 
 		client := lnrpc.NewLightningClient(conn)
-		stream, err := client.SubscribeInvoices(context.Background(), &lnrpc.InvoiceSubscription{
+		streamCtx, cleanupStreamCtx := contextWithStopCancel(c.stop)
+		stream, err := client.SubscribeInvoices(streamCtx, &lnrpc.InvoiceSubscription{
 			SettleIndex: settleIndex,
 		})
 		if err != nil {
 			c.logger.Printf("chat: invoice stream subscribe failed: %v", err)
+			cleanupStreamCtx()
 			release()
 			time.Sleep(5 * time.Second)
 			continue
@@ -250,6 +254,7 @@ func (c *ChatService) runInvoices() {
 			invoice, err := stream.Recv()
 			if err != nil {
 				c.logger.Printf("chat: invoice stream ended: %v", err)
+				cleanupStreamCtx()
 				release()
 				break
 			}

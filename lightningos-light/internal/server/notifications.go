@@ -1264,7 +1264,9 @@ func (n *Notifier) runInvoices() {
 			}
 		}
 
-		conn, release, err := n.lnd.BorrowLightning(context.Background(), true)
+		dialCtx, dialCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		conn, release, err := n.lnd.BorrowLightning(dialCtx, true)
+		dialCancel()
 		if err != nil {
 			n.logger.Printf("notifications: invoice stream dial failed: %v", err)
 			time.Sleep(5 * time.Second)
@@ -1272,11 +1274,13 @@ func (n *Notifier) runInvoices() {
 		}
 
 		client := lnrpc.NewLightningClient(conn)
-		stream, err := client.SubscribeInvoices(context.Background(), &lnrpc.InvoiceSubscription{
+		streamCtx, cleanupStreamCtx := contextWithStopCancel(n.stop)
+		stream, err := client.SubscribeInvoices(streamCtx, &lnrpc.InvoiceSubscription{
 			SettleIndex: settleIndex,
 		})
 		if err != nil {
 			n.logger.Printf("notifications: invoice stream subscribe failed: %v", err)
+			cleanupStreamCtx()
 			release()
 			time.Sleep(5 * time.Second)
 			continue
@@ -1286,6 +1290,7 @@ func (n *Notifier) runInvoices() {
 			invoice, err := stream.Recv()
 			if err != nil {
 				n.logger.Printf("notifications: invoice stream ended: %v", err)
+				cleanupStreamCtx()
 				release()
 				break
 			}
@@ -1576,20 +1581,23 @@ func (n *Notifier) runPayments() {
 			}
 		}
 
-		conn, release, err := n.lnd.BorrowLightning(context.Background(), false)
+		rpcCtx, rpcCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		conn, release, err := n.lnd.BorrowLightning(rpcCtx, false)
 		if err != nil {
+			rpcCancel()
 			n.logger.Printf("notifications: payments poll dial failed: %v", err)
 			continue
 		}
 
 		client := lnrpc.NewLightningClient(conn)
-		res, err := client.ListPayments(context.Background(), &lnrpc.ListPaymentsRequest{
+		res, err := client.ListPayments(rpcCtx, &lnrpc.ListPaymentsRequest{
 			IncludeIncomplete: true,
 			IndexOffset:       indexOffset,
 			MaxPayments:       paymentsPollPageSize,
 			Reversed:          false,
 		})
 		release()
+		rpcCancel()
 		if err != nil {
 			n.logger.Printf("notifications: payments poll failed: %v", err)
 			continue
@@ -1711,7 +1719,9 @@ func (n *Notifier) runTransactions() {
 		default:
 		}
 
-		conn, release, err := n.lnd.BorrowLightning(context.Background(), true)
+		dialCtx, dialCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		conn, release, err := n.lnd.BorrowLightning(dialCtx, true)
+		dialCancel()
 		if err != nil {
 			n.logger.Printf("notifications: transaction stream dial failed: %v", err)
 			time.Sleep(5 * time.Second)
@@ -1719,9 +1729,11 @@ func (n *Notifier) runTransactions() {
 		}
 
 		client := lnrpc.NewLightningClient(conn)
-		stream, err := client.SubscribeTransactions(context.Background(), &lnrpc.GetTransactionsRequest{})
+		streamCtx, cleanupStreamCtx := contextWithStopCancel(n.stop)
+		stream, err := client.SubscribeTransactions(streamCtx, &lnrpc.GetTransactionsRequest{})
 		if err != nil {
 			n.logger.Printf("notifications: transaction stream subscribe failed: %v", err)
+			cleanupStreamCtx()
 			release()
 			time.Sleep(5 * time.Second)
 			continue
@@ -1731,6 +1743,7 @@ func (n *Notifier) runTransactions() {
 			tx, err := stream.Recv()
 			if err != nil {
 				n.logger.Printf("notifications: transaction stream ended: %v", err)
+				cleanupStreamCtx()
 				release()
 				break
 			}
@@ -1783,7 +1796,9 @@ func (n *Notifier) runChannels() {
 		default:
 		}
 
-		conn, release, err := n.lnd.BorrowLightning(context.Background(), true)
+		dialCtx, dialCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		conn, release, err := n.lnd.BorrowLightning(dialCtx, true)
+		dialCancel()
 		if err != nil {
 			n.logger.Printf("notifications: channel stream dial failed: %v", err)
 			time.Sleep(5 * time.Second)
@@ -1791,9 +1806,11 @@ func (n *Notifier) runChannels() {
 		}
 
 		client := lnrpc.NewLightningClient(conn)
-		stream, err := client.SubscribeChannelEvents(context.Background(), &lnrpc.ChannelEventSubscription{})
+		streamCtx, cleanupStreamCtx := contextWithStopCancel(n.stop)
+		stream, err := client.SubscribeChannelEvents(streamCtx, &lnrpc.ChannelEventSubscription{})
 		if err != nil {
 			n.logger.Printf("notifications: channel stream subscribe failed: %v", err)
+			cleanupStreamCtx()
 			release()
 			time.Sleep(5 * time.Second)
 			continue
@@ -1803,6 +1820,7 @@ func (n *Notifier) runChannels() {
 			update, err := stream.Recv()
 			if err != nil {
 				n.logger.Printf("notifications: channel stream ended: %v", err)
+				cleanupStreamCtx()
 				release()
 				break
 			}
@@ -2244,9 +2262,13 @@ func (n *Notifier) runForwards() {
 			n.logger.Printf("notifications: forwards poll start (after=%d backfill=%t)", after, backfill)
 		}
 
-		channelMap := n.channelMap(context.Background())
+		channelCtx, channelCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		channelMap := n.channelMap(channelCtx)
+		channelCancel()
 
-		conn, release, err := n.lnd.BorrowLightning(context.Background(), false)
+		dialCtx, dialCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		conn, release, err := n.lnd.BorrowLightning(dialCtx, false)
+		dialCancel()
 		if err != nil {
 			n.logger.Printf("notifications: forwards poll dial failed: %v", err)
 			continue

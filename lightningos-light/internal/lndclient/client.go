@@ -562,13 +562,36 @@ type macaroonCredential struct {
 }
 
 type BalanceSummary struct {
-	OnchainSat                 int64
-	LightningSat               int64
-	OnchainConfirmedSat        int64
-	OnchainUnconfirmedSat      int64
-	LightningLocalSat          int64
-	LightningUnsettledLocalSat int64
-	Warnings                   []string
+	OnchainSat                                int64
+	LightningSat                              int64
+	OnchainConfirmedSat                       int64
+	OnchainUnconfirmedSat                     int64
+	LightningLocalSat                         int64
+	LightningUnsettledLocalSat                int64
+	LightningClosingPendingSat                int64
+	LightningClosingPendingCount              int64
+	LightningCoopClosingSat                   int64
+	LightningCoopClosingCount                 int64
+	LightningForceClosingSat                  int64
+	LightningForceClosingCount                int64
+	LightningForceClosingMinBlocksTilMaturity int64
+	LightningForceClosingMaxBlocksTilMaturity int64
+	LightningWaitingCloseSat                  int64
+	LightningWaitingCloseCount                int64
+	Warnings                                  []string
+}
+
+type pendingClosingBalanceTotals struct {
+	ClosingPendingSat                int64
+	ClosingPendingCount              int64
+	CoopClosingSat                   int64
+	CoopClosingCount                 int64
+	ForceClosingSat                  int64
+	ForceClosingCount                int64
+	ForceClosingMinBlocksTilMaturity int64
+	ForceClosingMaxBlocksTilMaturity int64
+	WaitingCloseSat                  int64
+	WaitingCloseCount                int64
 }
 
 type WalletBalanceDetails struct {
@@ -874,6 +897,7 @@ func (c *Client) GetBalances(ctx context.Context) (BalanceSummary, error) {
 	summary := BalanceSummary{}
 	walletOK := false
 	channelOK := false
+	pendingOK := false
 	var firstErr error
 
 	wallet, err := client.WalletBalance(ctx, &lnrpc.WalletBalanceRequest{})
@@ -913,10 +937,107 @@ func (c *Client) GetBalances(ctx context.Context) (BalanceSummary, error) {
 		channelOK = true
 	}
 
-	if !walletOK && !channelOK && firstErr != nil {
+	pending, err := client.PendingChannels(ctx, &lnrpc.PendingChannelsRequest{})
+	if err != nil {
+		if isWalletLocked(err) {
+			return summary, err
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+		summary.Warnings = append(summary.Warnings, "Pending Lightning closing balance unavailable")
+	} else {
+		totals := summarizePendingClosingBalances(pending)
+		summary.LightningClosingPendingSat = totals.ClosingPendingSat
+		summary.LightningClosingPendingCount = totals.ClosingPendingCount
+		summary.LightningCoopClosingSat = totals.CoopClosingSat
+		summary.LightningCoopClosingCount = totals.CoopClosingCount
+		summary.LightningForceClosingSat = totals.ForceClosingSat
+		summary.LightningForceClosingCount = totals.ForceClosingCount
+		summary.LightningForceClosingMinBlocksTilMaturity = totals.ForceClosingMinBlocksTilMaturity
+		summary.LightningForceClosingMaxBlocksTilMaturity = totals.ForceClosingMaxBlocksTilMaturity
+		summary.LightningWaitingCloseSat = totals.WaitingCloseSat
+		summary.LightningWaitingCloseCount = totals.WaitingCloseCount
+		pendingOK = true
+	}
+
+	if !walletOK && !channelOK && !pendingOK && firstErr != nil {
 		return summary, firstErr
 	}
 	return summary, nil
+}
+
+func summarizePendingClosingBalances(resp *lnrpc.PendingChannelsResponse) pendingClosingBalanceTotals {
+	totals := pendingClosingBalanceTotals{}
+	if resp == nil {
+		return totals
+	}
+
+	addClosing := func(amount int64) {
+		if amount < 0 {
+			amount = 0
+		}
+		totals.ClosingPendingSat += amount
+		totals.ClosingPendingCount++
+	}
+
+	for _, item := range resp.GetPendingClosingChannels() {
+		if item == nil || item.GetChannel() == nil {
+			continue
+		}
+		amount := item.GetChannel().GetLocalBalance()
+		if amount < 0 {
+			amount = 0
+		}
+		totals.CoopClosingSat += amount
+		totals.CoopClosingCount++
+		addClosing(amount)
+	}
+
+	for _, item := range resp.GetWaitingCloseChannels() {
+		if item == nil || item.GetChannel() == nil {
+			continue
+		}
+		amount := item.GetLimboBalance()
+		if amount <= 0 {
+			amount = item.GetChannel().GetLocalBalance()
+		}
+		if amount < 0 {
+			amount = 0
+		}
+		totals.WaitingCloseSat += amount
+		totals.WaitingCloseCount++
+		addClosing(amount)
+	}
+
+	for _, item := range resp.GetPendingForceClosingChannels() {
+		if item == nil || item.GetChannel() == nil {
+			continue
+		}
+		amount := item.GetLimboBalance()
+		if amount <= 0 {
+			amount = item.GetChannel().GetLocalBalance() - item.GetRecoveredBalance()
+		}
+		if amount < 0 {
+			amount = 0
+		}
+		totals.ForceClosingSat += amount
+		totals.ForceClosingCount++
+		addClosing(amount)
+
+		blocks := int64(item.GetBlocksTilMaturity())
+		if blocks < 0 {
+			blocks = 0
+		}
+		if totals.ForceClosingCount == 1 || blocks < totals.ForceClosingMinBlocksTilMaturity {
+			totals.ForceClosingMinBlocksTilMaturity = blocks
+		}
+		if blocks > totals.ForceClosingMaxBlocksTilMaturity {
+			totals.ForceClosingMaxBlocksTilMaturity = blocks
+		}
+	}
+
+	return totals
 }
 
 func (c *Client) GetWalletBalanceDetails(ctx context.Context) (WalletBalanceDetails, error) {

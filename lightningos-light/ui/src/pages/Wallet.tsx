@@ -12,7 +12,17 @@ const emptySummary = {
     onchain_confirmed_sat: 0,
     onchain_unconfirmed_sat: 0,
     lightning_local_sat: 0,
-    lightning_unsettled_local_sat: 0
+    lightning_unsettled_local_sat: 0,
+    lightning_closing_pending_sat: 0,
+    lightning_closing_pending_count: 0,
+    lightning_coop_closing_sat: 0,
+    lightning_coop_closing_count: 0,
+    lightning_force_closing_sat: 0,
+    lightning_force_closing_count: 0,
+    lightning_force_closing_min_blocks_til_maturity: 0,
+    lightning_force_closing_max_blocks_til_maturity: 0,
+    lightning_waiting_close_sat: 0,
+    lightning_waiting_close_count: 0
   },
   activity: []
 }
@@ -548,7 +558,14 @@ export default function Wallet() {
   const lightningBalance = summary?.balances?.lightning_sat ?? 0
   const lightningLocalBalance = Number(summary?.balances?.lightning_local_sat ?? lightningBalance)
   const lightningUnsettledLocalBalance = Number(summary?.balances?.lightning_unsettled_local_sat ?? 0)
+  const lightningClosingPendingBalance = Number(summary?.balances?.lightning_closing_pending_sat ?? 0)
+  const lightningForceClosingBalance = Number(summary?.balances?.lightning_force_closing_sat ?? 0)
+  const lightningForceClosingCount = Number(summary?.balances?.lightning_force_closing_count ?? 0)
+  const lightningForceClosingMinBlocks = Number(summary?.balances?.lightning_force_closing_min_blocks_til_maturity ?? 0)
+  const lightningForceClosingMaxBlocks = Number(summary?.balances?.lightning_force_closing_max_blocks_til_maturity ?? 0)
+  const lightningOtherClosingBalance = Math.max(0, lightningClosingPendingBalance - lightningForceClosingBalance)
   const lightningTotalBalance = lightningLocalBalance + lightningUnsettledLocalBalance
+  const lightningAccountingTotalBalance = lightningTotalBalance + lightningClosingPendingBalance
   const activity = activityItems
   const summaryTone = summaryError && summaryError.toLowerCase().includes('timeout')
     ? 'text-brass'
@@ -1598,9 +1615,35 @@ export default function Wallet() {
                 {t('wallet.lightningUnsettled', { amount: formatSats(lightningUnsettledLocalBalance) })}
               </p>
             )}
-            {lightningUnsettledLocalBalance > 0 && (
+            {lightningForceClosingBalance > 0 && (
               <p className="mt-1 text-xs text-fog/50">
-                {t('wallet.lightningTotal', { amount: formatSats(lightningTotalBalance) })}
+                {t('wallet.lightningForceClosing', { amount: formatSats(lightningForceClosingBalance) })}
+              </p>
+            )}
+            {lightningForceClosingBalance > 0 && lightningForceClosingMaxBlocks > 0 && (
+              <p className="mt-1 text-xs text-fog/50">
+                {lightningForceClosingMinBlocks > 0 && lightningForceClosingMinBlocks !== lightningForceClosingMaxBlocks
+                  ? t('wallet.lightningForceClosingBlocksRange', {
+                    channelCount: formatSats(lightningForceClosingCount),
+                    min: formatSats(lightningForceClosingMinBlocks),
+                    max: formatSats(lightningForceClosingMaxBlocks)
+                  })
+                  : t('wallet.lightningForceClosingBlocks', {
+                    channelCount: formatSats(lightningForceClosingCount),
+                    blockCount: formatSats(lightningForceClosingMaxBlocks)
+                  })}
+              </p>
+            )}
+            {lightningOtherClosingBalance > 0 && (
+              <p className="mt-1 text-xs text-fog/50">
+                {t('wallet.lightningClosingPending', { amount: formatSats(lightningOtherClosingBalance) })}
+              </p>
+            )}
+            {(lightningUnsettledLocalBalance > 0 || lightningClosingPendingBalance > 0) && (
+              <p className="mt-1 text-xs text-fog/50">
+                {lightningClosingPendingBalance > 0
+                  ? t('wallet.lightningAccountingTotal', { amount: formatSats(lightningAccountingTotalBalance) })
+                  : t('wallet.lightningTotal', { amount: formatSats(lightningTotalBalance) })}
               </p>
             )}
             <p className="mt-2 text-xs text-fog/50">{t('wallet.lightningHint')}</p>

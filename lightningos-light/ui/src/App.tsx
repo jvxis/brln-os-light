@@ -27,11 +27,10 @@ import LndConfig from './pages/LndConfig'
 import LndInfo from './pages/LndInfo'
 import AppStore from './pages/AppStore'
 import Terminal from './pages/Terminal'
-import BuyDepix from './pages/BuyDepix'
 import Shortcuts from './pages/Shortcuts'
 import PayBoleto from './pages/PayBoleto'
 import NodeRetirement from './pages/NodeRetirement'
-import { getAuthState, getBitcoinLocalStatus, getBoletoConfig, getDepixConfig, getLndStatus, getWizardStatus, logoutAuth, type AuthState } from './api'
+import { getAuthState, getBitcoinLocalStatus, getBoletoConfig, getLndStatus, getWizardStatus, logoutAuth, type AuthState } from './api'
 import { defaultPalette, paletteOrder, resolvePalette, resolveTheme, type PaletteKey, type ThemeMode } from './theme'
 
 const readHashRoute = () => {
@@ -145,7 +144,6 @@ export default function App() {
   const [authError, setAuthError] = useState('')
   const [walletUnlocked, setWalletUnlocked] = useState<boolean | null>(null)
   const [walletExists, setWalletExists] = useState<boolean | null>(null)
-  const [depixEnabled, setDepixEnabled] = useState(false)
   const [boletoEnabled, setBoletoEnabled] = useState(false)
   const [externalBitcoinDetected, setExternalBitcoinDetected] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -158,14 +156,6 @@ export default function App() {
       setAuthError(err?.message || 'Failed to load admin access state')
     } finally {
       setAuthLoading(false)
-    }
-  }, [])
-  const refreshDepixEnabled = useCallback(async () => {
-    try {
-      const data: any = await getDepixConfig()
-      setDepixEnabled(Boolean(data?.enabled))
-    } catch {
-      setDepixEnabled(false)
     }
   }, [])
   const refreshBoletoEnabled = useCallback(async () => {
@@ -185,9 +175,6 @@ export default function App() {
     }
   }, [])
   const baseRoutes = useMemo(() => {
-    const depixRoute = depixEnabled
-      ? [{ key: 'buy-depix', label: t('nav.buyDepix'), element: <BuyDepix /> }]
-      : []
     const boletoRoute = boletoEnabled
       ? [{ key: 'pay-boleto', label: t('nav.payBoleto'), element: <PayBoleto /> }]
       : []
@@ -210,7 +197,6 @@ export default function App() {
         element: externalBitcoinDetected ? <LndInfo /> : <LndConfig />
       },
       { key: 'apps', label: t('nav.apps'), element: <AppStore /> },
-      ...depixRoute,
       ...boletoRoute,
       { key: 'bitcoin', label: t('nav.bitcoinRemote'), element: <BitcoinRemote /> },
       { key: 'bitcoin-local', label: t('nav.bitcoinLocal'), element: <BitcoinLocal /> },
@@ -223,7 +209,7 @@ export default function App() {
       { key: 'logs', label: t('nav.logs'), element: <Logs /> },
       { key: 'node-retirement', label: t('nav.nodeRetirement'), element: <NodeRetirement /> }
     ]
-  }, [authState, depixEnabled, boletoEnabled, externalBitcoinDetected, i18n.language, t])
+  }, [authState, boletoEnabled, externalBitcoinDetected, i18n.language, t])
   const baseRouteKeys = useMemo(() => baseRoutes.map((item) => item.key), [baseRoutes])
   const [menuConfig, setMenuConfig] = useState<MenuConfig>(() => normalizeMenuConfig(readMenuConfig(), baseRouteKeys))
 
@@ -286,7 +272,6 @@ export default function App() {
 
   useEffect(() => {
     if (!authReady) {
-      setDepixEnabled(false)
       setBoletoEnabled(false)
       setExternalBitcoinDetected(false)
       return
@@ -295,28 +280,21 @@ export default function App() {
     const handleAppsChanged = (event: Event) => {
       void refreshExternalBitcoinDetected()
       const detail = (event as CustomEvent<{ id?: string }>).detail
-      if (detail?.id === 'depixbuy') {
-        void refreshDepixEnabled()
-        return
-      }
       if (detail?.id === 'fswap') {
         void refreshBoletoEnabled()
       }
     }
-    void refreshDepixEnabled()
     void refreshBoletoEnabled()
     void refreshExternalBitcoinDetected()
-    const timer = window.setInterval(refreshDepixEnabled, 30000)
     const boletoTimer = window.setInterval(refreshBoletoEnabled, 30000)
     const externalBitcoinTimer = window.setInterval(refreshExternalBitcoinDetected, 300000)
     window.addEventListener('apps:changed', handleAppsChanged as EventListener)
     return () => {
-      window.clearInterval(timer)
       window.clearInterval(boletoTimer)
       window.clearInterval(externalBitcoinTimer)
       window.removeEventListener('apps:changed', handleAppsChanged as EventListener)
     }
-  }, [authReady, refreshDepixEnabled, refreshBoletoEnabled, refreshExternalBitcoinDetected])
+  }, [authReady, refreshBoletoEnabled, refreshExternalBitcoinDetected])
 
   useEffect(() => {
     setMenuConfig((current) => {

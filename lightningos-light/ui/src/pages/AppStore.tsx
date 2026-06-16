@@ -6,7 +6,6 @@ import bitcoincoreIcon from '../assets/apps/bitcoincore.png'
 import elementsIcon from '../assets/apps/elements.png'
 import peerswapIcon from '../assets/apps/peerswap.png'
 import robosatsIcon from '../assets/apps/robosats.svg'
-import depixIcon from '../assets/apps/depix.svg'
 import lnbitsIcon from '../assets/apps/lnbits.svg'
 import fswapIcon from '../assets/apps/fswap.png'
 import publicPoolIcon from '../assets/apps/public-pool.svg'
@@ -65,7 +64,6 @@ const iconMap: Record<string, string> = {
   elements: elementsIcon,
   peerswap: peerswapIcon,
   robosats: robosatsIcon,
-  depixbuy: depixIcon,
   lnbits: lnbitsIcon,
   fswap: fswapIcon,
   publicpool: publicPoolIcon,
@@ -78,7 +76,6 @@ const iconMap: Record<string, string> = {
 const internalRoutes: Record<string, string> = {
   bitcoincore: 'bitcoin-local',
   elements: 'elements',
-  depixbuy: 'buy-depix',
   fswap: 'pay-boleto'
 }
 
@@ -99,6 +96,7 @@ const APP_STORE_INSTALL_FILTER_KEY = 'app_store_install_filter'
 const bitcoinCoreDefaultDataDir = '/data/bitcoin'
 const elementsDefaultDataDir = '/data/elements'
 const peerswapDefaultRemoteUrl = 'http://elements.br-ln.com:8086'
+const hiddenStoreAppIds = new Set(['depixbuy'])
 
 export default function AppStore() {
   const { t } = useTranslation()
@@ -441,9 +439,10 @@ export default function AppStore() {
   }
 
   const host = window.location.hostname
+  const storeApps = apps.filter((app) => !hiddenStoreAppIds.has(app.id))
   const baseVisibleApps = hideBitcoinCore
-    ? apps.filter((app) => app.id !== 'bitcoincore')
-    : apps
+    ? storeApps.filter((app) => app.id !== 'bitcoincore')
+    : storeApps
   const visibleApps = baseVisibleApps.filter((app) => {
     if (installFilter === 'installed') return app.installed
     if (installFilter === 'not_installed') return !app.installed
@@ -514,8 +513,6 @@ export default function AppStore() {
             ? t('nav.bitcoinLocal')
             : app.id === 'elements'
               ? t('nav.elements')
-              : app.id === 'depixbuy'
-                ? t('nav.buyDepix')
               : app.id === 'fswap'
                 ? t('nav.payBoleto')
               : t('appStore.internal')

@@ -17,6 +17,9 @@ func (s *Server) handleAppsList(w http.ResponseWriter, r *http.Request) {
 	resp := make([]appInfo, 0, len(apps))
 	var fullIndexAvailability *fullIndexAppAvailability
 	for _, app := range apps {
+		if isAppHiddenFromStore(app.Definition().ID) {
+			continue
+		}
 		info, infoErr := app.Info(r.Context())
 		if infoErr != nil {
 			if info.ID == "" {
@@ -38,6 +41,15 @@ func (s *Server) handleAppsList(w http.ResponseWriter, r *http.Request) {
 		resp = append(resp, info)
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func isAppHiddenFromStore(id string) bool {
+	switch id {
+	case depixBuyAppID:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {

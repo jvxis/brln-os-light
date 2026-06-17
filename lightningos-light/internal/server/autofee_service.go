@@ -411,6 +411,7 @@ type autofeeRefreshOptions struct {
 	ChannelPoint          string
 	ChannelID             uint64
 	IgnoreChannelDisabled bool
+	SuppressTelegram      bool
 }
 
 type autofeeLogItem struct {
@@ -3156,6 +3157,7 @@ func (s *AutofeeService) RefreshReferenceFeesForChannel(ctx context.Context, dry
 		ChannelPoint:          channelPoint,
 		ChannelID:             channelID,
 		IgnoreChannelDisabled: true,
+		SuppressTelegram:      true,
 	})
 }
 
@@ -3393,7 +3395,7 @@ func (s *AutofeeService) refreshReferenceFees(ctx context.Context, opts autofeeR
 		}
 		logCancel()
 	}
-	if !dryRun {
+	if !dryRun && !opts.SuppressTelegram {
 		s.sendTelegramAutofeeRefreshSummary(cfg, runAt, result)
 	}
 

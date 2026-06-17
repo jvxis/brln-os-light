@@ -1100,6 +1100,8 @@ export default function LightningOps() {
   const [autofeeHistoryByChannel, setAutofeeHistoryByChannel] = useState<Record<string, AutofeeChannelRound[]>>({})
   const [autofeeHistoryLoadingByChannel, setAutofeeHistoryLoadingByChannel] = useState<Record<string, boolean>>({})
   const [autofeeHistoryErrorByChannel, setAutofeeHistoryErrorByChannel] = useState<Record<string, string>>({})
+  const [autofeeRefreshBusyByPoint, setAutofeeRefreshBusyByPoint] = useState<Record<string, boolean>>({})
+  const [autofeeRefreshFlashByPoint, setAutofeeRefreshFlashByPoint] = useState<Record<string, 'success' | 'same' | 'error'>>({})
 
   const [chanStatusBusy, setChanStatusBusy] = useState<string | null>(null)
   const [chanStatusMessage, setChanStatusMessage] = useState('')
@@ -1200,6 +1202,7 @@ export default function LightningOps() {
   const focusClearTimerRef = useRef<number | null>(null)
   const peerFocusClearTimerRef = useRef<number | null>(null)
   const condensedFeeFlashTimersRef = useRef<Record<string, number>>({})
+  const autofeeRefreshFlashTimersRef = useRef<Record<string, number>>({})
   const [feeStatus, setFeeStatus] = useState('')
 
   const formatPing = (value: number) => {
@@ -2492,6 +2495,10 @@ export default function LightningOps() {
         window.clearTimeout(timer)
       })
       condensedFeeFlashTimersRef.current = {}
+      Object.values(autofeeRefreshFlashTimersRef.current).forEach((timer) => {
+        window.clearTimeout(timer)
+      })
+      autofeeRefreshFlashTimersRef.current = {}
     }
   }, [])
 
@@ -4602,6 +4609,120 @@ export default function LightningOps() {
     }
   }
 
+  const flashAutofeeRefreshButton = (channelPoint: string, tone: 'success' | 'same' | 'error') => {
+    setAutofeeRefreshFlashByPoint((prev) => ({ ...prev, [channelPoint]: tone }))
+    if (typeof window === 'undefined') return
+    const existingTimer = autofeeRefreshFlashTimersRef.current[channelPoint]
+    if (existingTimer) {
+      window.clearTimeout(existingTimer)
+    }
+    autofeeRefreshFlashTimersRef.current[channelPoint] = window.setTimeout(() => {
+      setAutofeeRefreshFlashByPoint((prev) => {
+        const next = { ...prev }
+        delete next[channelPoint]
+        return next
+      })
+      delete autofeeRefreshFlashTimersRef.current[channelPoint]
+    }, 2200)
+  }
+
+  const handleAutofeeChannelRefresh = async (ch: Channel) => {
+    const channelPoint = String(ch.channel_point || '').trim()
+    if (!channelPoint || autofeeRefreshBusyByPoint[channelPoint]) return
+
+    const alias = ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer')
+    const channelID = normalizeAutofeeChannelID(ch.channel_id_str)
+    setAutofeeRefreshBusyByPoint((prev) => ({ ...prev, [channelPoint]: true }))
+    setAutofeeMessage(t('lightningOps.autofeeChannelRefreshing', { alias }))
+    try {
+      const payload = await refreshAutofeeReferences({
+        dry_run: false,
+        include_inbound: autofeeRefreshIncludeInbound,
+        channel_point: channelPoint,
+        channel_id_str: channelID || undefined
+      })
+      const rawItems = (payload as any)?.items
+      const item = Array.isArray(rawItems) && rawItems.length ? rawItems[0] : null
+      const updated = Number((payload as any)?.updated || 0)
+      const inboundUpdated = Number((payload as any)?.inbound_updated || 0)
+      const same = Number((payload as any)?.same || 0)
+      const skipped = Number((payload as any)?.skipped || 0)
+      const errors = Number((payload as any)?.errors || 0)
+      const currentPpm = Number(item?.current_ppm ?? ch.fee_rate_ppm ?? 0)
+      const targetPpm = Number(item?.target_ppm ?? currentPpm)
+      const source = String(item?.source || '').trim() || t('common.na')
+      const reason = String(item?.reason || '').trim() || t('common.na')
+
+      if (errors > 0 || item?.error) {
+        flashAutofeeRefreshButton(channelPoint, 'error')
+        setAutofeeMessage(item?.error || t('lightningOps.autofeeChannelRefreshFailed', { alias }))
+      } else if (updated > 0 || item?.changed) {
+        flashAutofeeRefreshButton(channelPoint, 'success')
+        const inboundText = inboundUpdated > 0
+          ? ` ${t('lightningOps.autofeeRefreshInboundDone', { count: inboundUpdated })}`
+          : ''
+        setAutofeeMessage(`${t('lightningOps.autofeeChannelRefreshApplied', { alias, current: currentPpm, target: targetPpm, source })}${inboundText}`)
+      } else if (same > 0 || reason === 'same') {
+        flashAutofeeRefreshButton(channelPoint, 'same')
+        setAutofeeMessage(t('lightningOps.autofeeChannelRefreshSame', { alias, target: targetPpm, source }))
+      } else if (skipped > 0) {
+        flashAutofeeRefreshButton(channelPoint, 'error')
+        setAutofeeMessage(t('lightningOps.autofeeChannelRefreshSkipped', { alias, reason }))
+      } else {
+        flashAutofeeRefreshButton(channelPoint, 'same')
+        setAutofeeMessage(t('lightningOps.autofeeChannelRefreshSame', { alias, target: targetPpm, source }))
+      }
+
+      const channelsPayload = await getLnChannels()
+      applyChannelsPayload(channelsPayload)
+      const results = await getAutofeeResults(buildAutofeeResultsQuery())
+      const resultsPayload = results as any
+      setAutofeeResults(Array.isArray(resultsPayload?.lines) ? resultsPayload.lines : [])
+      setAutofeeResultItems(Array.isArray(resultsPayload?.items) ? resultsPayload.items : [])
+      setAutofeeResultsStatus('')
+    } catch (err: any) {
+      flashAutofeeRefreshButton(channelPoint, 'error')
+      setAutofeeMessage(err?.message || t('lightningOps.autofeeChannelRefreshFailed', { alias }))
+    } finally {
+      setAutofeeRefreshBusyByPoint((prev) => {
+        const next = { ...prev }
+        delete next[channelPoint]
+        return next
+      })
+    }
+  }
+
+  const renderAutofeeChannelRefreshButton = (ch: Channel, compact = false) => {
+    const channelPoint = String(ch.channel_point || '').trim()
+    const busy = channelPoint ? autofeeRefreshBusyByPoint[channelPoint] === true : false
+    const flash = channelPoint ? autofeeRefreshFlashByPoint[channelPoint] : undefined
+    const alias = ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer')
+    const toneClass = busy
+      ? 'border-sky-300/70 bg-sky-500/15 text-sky-100'
+      : flash === 'success'
+        ? 'border-emerald-300/70 bg-emerald-500/20 text-emerald-50'
+        : flash === 'same'
+          ? 'border-brass/70 bg-brass/15 text-brass'
+          : flash === 'error'
+            ? 'border-amber-300/70 bg-amber-500/20 text-amber-50'
+            : 'border-white/15 bg-white/5 text-fog/60 hover:border-sky-300/70 hover:bg-sky-500/10 hover:text-sky-100'
+    return (
+      <button
+        type="button"
+        className={`inline-flex ${compact ? 'h-7 w-7 text-[13px]' : 'h-8 w-8 text-sm'} shrink-0 items-center justify-center rounded-full border font-semibold leading-none transition disabled:cursor-wait disabled:opacity-70 ${toneClass}`}
+        title={t('lightningOps.autofeeChannelRefresh', { alias })}
+        aria-label={t('lightningOps.autofeeChannelRefresh', { alias })}
+        disabled={!channelPoint || busy}
+        onClick={(event) => {
+          event.stopPropagation()
+          void handleAutofeeChannelRefresh(ch)
+        }}
+      >
+        <span className={busy ? 'inline-block animate-spin' : ''} aria-hidden="true">↻</span>
+      </button>
+    )
+  }
+
   const handleToggleFailedPaymentsCleaner = async () => {
     if (failedPaymentsCleanerBusy) return
     const nextEnabled = !failedPaymentsCleaner?.enabled
@@ -6696,21 +6817,24 @@ export default function LightningOps() {
                             </button>
                           </td>
                           <td className="px-3 py-2 text-center">
-                            <div className="mx-auto grid min-w-[220px] max-w-[250px] grid-cols-2 gap-x-4 gap-y-1 text-left text-[10px] text-fog/65">
-                              <span>{t('lightningOps.outPpm7d')}: <span className="text-fog">{formatPpmValue(ch.out_ppm7d)}</span></span>
-                              <span>{t('lightningOps.rebalPpm7d')}: <span className="text-fog">{formatPpmValue(ch.rebal_ppm7d)}</span></span>
-                              <span>
-                                {t('lightningOps.marginPpm7d')}:{' '}
-                                <span className={typeof marginPpm7d === 'number' && marginPpm7d < 0 ? 'text-ember' : 'text-fog'}>
-                                  {typeof marginPpm7d === 'number' ? `${marginPpm7d >= 0 ? '+' : ''}${Math.round(marginPpm7d)}` : '-'}
+                            <div className="mx-auto flex min-w-[250px] max-w-[285px] items-center justify-center gap-2">
+                              <div className="grid flex-1 grid-cols-2 gap-x-4 gap-y-1 text-left text-[10px] text-fog/65">
+                                <span>{t('lightningOps.outPpm7d')}: <span className="text-fog">{formatPpmValue(ch.out_ppm7d)}</span></span>
+                                <span>{t('lightningOps.rebalPpm7d')}: <span className="text-fog">{formatPpmValue(ch.rebal_ppm7d)}</span></span>
+                                <span>
+                                  {t('lightningOps.marginPpm7d')}:{' '}
+                                  <span className={typeof marginPpm7d === 'number' && marginPpm7d < 0 ? 'text-ember' : 'text-fog'}>
+                                    {typeof marginPpm7d === 'number' ? `${marginPpm7d >= 0 ? '+' : ''}${Math.round(marginPpm7d)}` : '-'}
+                                  </span>
                                 </span>
-                              </span>
-                              <span>
-                                {t('lightningOps.profit7d')}:{' '}
-                                <span className={typeof ch.profit_fee_7d_sat === 'number' && ch.profit_fee_7d_sat < 0 ? 'text-ember' : 'text-fog'}>
-                                  {formatSatSigned(ch.profit_fee_7d_sat)}
+                                <span>
+                                  {t('lightningOps.profit7d')}:{' '}
+                                  <span className={typeof ch.profit_fee_7d_sat === 'number' && ch.profit_fee_7d_sat < 0 ? 'text-ember' : 'text-fog'}>
+                                    {formatSatSigned(ch.profit_fee_7d_sat)}
+                                  </span>
                                 </span>
-                              </span>
+                              </div>
+                              {renderAutofeeChannelRefreshButton(ch, true)}
                             </div>
                           </td>
                           <td className="border-l border-white/5 px-4 py-2 text-center">
@@ -7128,7 +7252,10 @@ export default function LightningOps() {
                         </div>
                       </button>
                       <div className="rounded-xl border border-white/10 bg-ink/70 p-2.5">
-                        <p className="text-[10px] uppercase tracking-wide text-fog/60">{t('lightningOps.economic7d')}</p>
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-[10px] uppercase tracking-wide text-fog/60">{t('lightningOps.economic7d')}</p>
+                          {renderAutofeeChannelRefreshButton(ch)}
+                        </div>
                         <div className="mt-1 grid grid-cols-1 gap-y-0.5 text-[11px] sm:grid-cols-3 sm:gap-x-3 sm:gap-y-0">
                           <p className="whitespace-nowrap">
                             <span className="text-fog/50">{t('lightningOps.outPpm7d')}:</span>{' '}

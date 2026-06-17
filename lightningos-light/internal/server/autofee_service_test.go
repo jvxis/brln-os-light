@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"lightningos-light/internal/lndclient"
 )
 
 func TestClassifyHTLCFailurePolicy(t *testing.T) {
@@ -553,6 +555,28 @@ func TestShouldAutofeeIdleRefreshChannel(t *testing.T) {
 	}
 	if shouldAutofeeIdleRefreshChannel(cfg, forwardStat{}, inboundStat{}, rebalStat{Count: 1}) {
 		t.Fatalf("did not expect idle refresh with successful rebalances")
+	}
+}
+
+func TestAutofeeRefreshTargetMatches(t *testing.T) {
+	ch := lndclient.ChannelInfo{
+		ChannelPoint: "ABC:1",
+		ChannelID:    42,
+	}
+	if !autofeeRefreshTargetMatches(ch, "abc:1", 0) {
+		t.Fatalf("expected channel point match to be case-insensitive")
+	}
+	if !autofeeRefreshTargetMatches(ch, "", 42) {
+		t.Fatalf("expected channel id match")
+	}
+	if !autofeeRefreshTargetMatches(ch, "ABC:1", 42) {
+		t.Fatalf("expected combined channel point and id match")
+	}
+	if autofeeRefreshTargetMatches(ch, "ABC:1", 43) {
+		t.Fatalf("did not expect mismatched channel id to match")
+	}
+	if autofeeRefreshTargetMatches(ch, "DEF:1", 42) {
+		t.Fatalf("did not expect mismatched channel point to match")
 	}
 }
 

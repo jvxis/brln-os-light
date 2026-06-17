@@ -262,19 +262,41 @@ func (s *Server) handleAutofeeRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DryRun         bool `json:"dry_run"`
-		IncludeInbound bool `json:"include_inbound"`
+		DryRun         bool   `json:"dry_run"`
+		IncludeInbound bool   `json:"include_inbound"`
+		ChannelPoint   string `json:"channel_point"`
+		ChannelID      uint64 `json:"channel_id"`
+		ChannelIDStr   string `json:"channel_id_str"`
 	}
 	if err := readJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+	channelID := req.ChannelID
+	if raw := strings.TrimSpace(req.ChannelIDStr); raw != "" {
+		parsed, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid channel_id_str")
+			return
+		}
+		channelID = parsed
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
 
-	result, err := svc.RefreshReferenceFees(ctx, req.DryRun, req.IncludeInbound)
+	var result AutofeeRefreshResult
+	var err error
+	if autofeeRefreshTargetSpecified(req.ChannelPoint, channelID) {
+		result, err = svc.RefreshReferenceFeesForChannel(ctx, req.DryRun, req.IncludeInbound, req.ChannelPoint, channelID)
+	} else {
+		result, err = svc.RefreshReferenceFees(ctx, req.DryRun, req.IncludeInbound)
+	}
 	if err != nil {
+		if errors.Is(err, errAutofeeRefreshChannelNotFound) {
+			writeError(w, http.StatusNotFound, "channel not found")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

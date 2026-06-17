@@ -403,6 +403,16 @@ type AutofeeRefreshResult struct {
 	Items          []AutofeeRefreshItem `json:"items,omitempty"`
 }
 
+var errAutofeeRefreshChannelNotFound = errors.New("autofee refresh channel not found")
+
+type autofeeRefreshOptions struct {
+	DryRun                bool
+	IncludeInbound        bool
+	ChannelPoint          string
+	ChannelID             uint64
+	IgnoreChannelDisabled bool
+}
+
 type autofeeLogItem struct {
 	Kind                     string   `json:"kind"`
 	Category                 string   `json:"category,omitempty"`
@@ -3111,8 +3121,49 @@ func autofeeChannelEnabled(settings map[uint64]bool, channelID uint64) bool {
 	return !ok || enabled
 }
 
+func autofeeRefreshTargetSpecified(channelPoint string, channelID uint64) bool {
+	return strings.TrimSpace(channelPoint) != "" || channelID != 0
+}
+
+func autofeeRefreshTargetMatches(ch lndclient.ChannelInfo, channelPoint string, channelID uint64) bool {
+	channelPoint = strings.TrimSpace(channelPoint)
+	if channelPoint == "" && channelID == 0 {
+		return true
+	}
+	if channelPoint != "" && !strings.EqualFold(strings.TrimSpace(ch.ChannelPoint), channelPoint) {
+		return false
+	}
+	if channelID != 0 && ch.ChannelID != channelID {
+		return false
+	}
+	return true
+}
+
 func (s *AutofeeService) RefreshReferenceFees(ctx context.Context, dryRun bool, includeInbound bool) (AutofeeRefreshResult, error) {
+	return s.refreshReferenceFees(ctx, autofeeRefreshOptions{
+		DryRun:         dryRun,
+		IncludeInbound: includeInbound,
+	})
+}
+
+func (s *AutofeeService) RefreshReferenceFeesForChannel(ctx context.Context, dryRun bool, includeInbound bool, channelPoint string, channelID uint64) (AutofeeRefreshResult, error) {
+	if !autofeeRefreshTargetSpecified(channelPoint, channelID) {
+		return AutofeeRefreshResult{DryRun: dryRun, IncludeInbound: includeInbound, RebalMarkupPct: autofeeRefreshRebalMarkup * 100}, errors.New("channel_point or channel_id required")
+	}
+	return s.refreshReferenceFees(ctx, autofeeRefreshOptions{
+		DryRun:                dryRun,
+		IncludeInbound:        includeInbound,
+		ChannelPoint:          channelPoint,
+		ChannelID:             channelID,
+		IgnoreChannelDisabled: true,
+	})
+}
+
+func (s *AutofeeService) refreshReferenceFees(ctx context.Context, opts autofeeRefreshOptions) (AutofeeRefreshResult, error) {
 	runAt := time.Now().UTC()
+	dryRun := opts.DryRun
+	includeInbound := opts.IncludeInbound
+	channelPoint := strings.TrimSpace(opts.ChannelPoint)
 	result := AutofeeRefreshResult{DryRun: dryRun, IncludeInbound: includeInbound, RebalMarkupPct: autofeeRefreshRebalMarkup * 100}
 	if s.db == nil {
 		return result, errors.New("db unavailable")
@@ -3131,7 +3182,19 @@ func (s *AutofeeService) RefreshReferenceFees(ctx context.Context, dryRun bool, 
 	if err != nil {
 		return result, err
 	}
-	result.Total = len(channels)
+	targetChannels := channels
+	if autofeeRefreshTargetSpecified(channelPoint, opts.ChannelID) {
+		targetChannels = make([]lndclient.ChannelInfo, 0, 1)
+		for _, ch := range channels {
+			if autofeeRefreshTargetMatches(ch, channelPoint, opts.ChannelID) {
+				targetChannels = append(targetChannels, ch)
+			}
+		}
+		if len(targetChannels) == 0 {
+			return result, errAutofeeRefreshChannelNotFound
+		}
+	}
+	result.Total = len(targetChannels)
 
 	settings, err := s.LoadChannelSettings(ctx)
 	if err != nil {
@@ -3177,8 +3240,8 @@ func (s *AutofeeService) RefreshReferenceFees(ctx context.Context, dryRun bool, 
 		nodeLocalRatio = float64(totalLocal) / float64(totalCap)
 	}
 
-	result.Items = make([]AutofeeRefreshItem, 0, len(channels))
-	for _, ch := range channels {
+	result.Items = make([]AutofeeRefreshItem, 0, len(targetChannels))
+	for _, ch := range targetChannels {
 		item := AutofeeRefreshItem{
 			ChannelID:              ch.ChannelID,
 			ChannelPoint:           strings.TrimSpace(ch.ChannelPoint),
@@ -3198,7 +3261,7 @@ func (s *AutofeeService) RefreshReferenceFees(ctx context.Context, dryRun bool, 
 			result.Items = append(result.Items, item)
 			continue
 		}
-		if !autofeeChannelEnabled(settings, ch.ChannelID) {
+		if !opts.IgnoreChannelDisabled && !autofeeChannelEnabled(settings, ch.ChannelID) {
 			item.Reason = "autofee-disabled"
 			result.Skipped++
 			result.Items = append(result.Items, item)

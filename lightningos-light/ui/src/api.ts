@@ -415,7 +415,13 @@ export const updateAutofeeChannels = (payload: {
 }) => request('/api/lnops/autofee/channels', { method: 'POST', body: JSON.stringify(payload) })
 export const runAutofee = (payload: { dry_run: boolean }) =>
   request('/api/lnops/autofee/run', { method: 'POST', body: JSON.stringify(payload) })
-export const refreshAutofeeReferences = (payload?: { dry_run?: boolean; include_inbound?: boolean }) =>
+export const refreshAutofeeReferences = (payload?: {
+  dry_run?: boolean
+  include_inbound?: boolean
+  channel_point?: string
+  channel_id?: number
+  channel_id_str?: string
+}) =>
   request('/api/lnops/autofee/refresh', { method: 'POST', body: JSON.stringify(payload ?? {}) })
 export const getAutofeeStatus = () => request('/api/lnops/autofee/status')
 export const getAutofeeResults = (params: number | {

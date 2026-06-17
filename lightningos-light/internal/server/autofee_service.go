@@ -103,6 +103,7 @@ const (
 	highFeePressureStepMaxFrac          = 0.05
 	highFeePressureStepMaxPpm           = 75
 	highFeePressureStepMinPpm           = 15
+	highFeePressureWindowMaxPpm         = 100
 	htlcStrongLiquidityMinFails         = 3
 	htlcStrongLiquidityFailRatio        = 0.20
 	outFallback21dMinFwds               = 5
@@ -2212,7 +2213,8 @@ select
 from autofee_logs
 where occurred_at >= now() - $1::interval
   and coalesce(payload->>'dry_run', 'false') <> 'true'
-  and coalesce(payload->>'kind', '') = 'decision'
+  and coalesce(payload->>'kind', '') in ('decision', 'channel')
+  and coalesce(payload->>'category', 'changed') = 'changed'
   and coalesce(payload->>'channel_id', '') <> ''
   and coalesce(payload->>'local_ppm', '') <> ''
   and coalesce(payload->>'new_ppm', '') <> ''
@@ -2239,10 +2241,12 @@ order by occurred_at asc, seq asc
 		}
 		item := stats[channelID]
 		item.ChangeCount24h++
+		delta := newPpm - localPpm
 		dir := "down"
 		if newPpm > localPpm {
 			dir = "up"
 			item.UpCount24h++
+			item.UpPpm24h += delta
 			if lastDirByChannel[channelID] == "up" {
 				item.ConsecutiveUp24h++
 			} else {
@@ -2250,6 +2254,7 @@ order by occurred_at asc, seq asc
 			}
 		} else {
 			item.DownCount24h++
+			item.DownPpm24h += -delta
 			item.ConsecutiveUp24h = 0
 		}
 		lastDirByChannel[channelID] = dir
@@ -2681,6 +2686,8 @@ type autofeeRecentChangeStats struct {
 	ChangeCount24h   int
 	UpCount24h       int
 	DownCount24h     int
+	UpPpm24h         int
+	DownPpm24h       int
 	ConsecutiveUp24h int
 }
 
@@ -6047,6 +6054,10 @@ func strongHTLCLiquidityPressure(liquidityFails int, attempts int) bool {
 	return float64(liquidityFails)/float64(attempts) >= htlcStrongLiquidityFailRatio
 }
 
+func strongHighFeeUpPressure(recentFailCount int, recentHardFloor bool, htlcLiquidityFails int, htlcAttempts int) bool {
+	return recentFailCount > 0 || recentHardFloor || strongHTLCLiquidityPressure(htlcLiquidityFails, htlcAttempts)
+}
+
 func hasAutofeePressureUpTag(tags []string) bool {
 	for _, tag := range tags {
 		switch {
@@ -6082,6 +6093,27 @@ func capHighFeePressureStepUp(localPpm int, finalPpm int, profitFee7dSat int64, 
 		return finalPpm, nil
 	}
 	return limit, []string{"high-fee-pressure-cap"}
+}
+
+func capHighFeePressureWindowUp(localPpm int, finalPpm int, profitFee7dSat int64, recent autofeeRecentChangeStats, recentFailCount int, recentHardFloor bool, htlcLiquidityFails int, htlcAttempts int, tags []string) (int, []string) {
+	if localPpm < highFeePressureMinPpm || finalPpm <= localPpm || !hasAutofeePressureUpTag(tags) {
+		return finalPpm, nil
+	}
+	if strongHighFeeUpPressure(recentFailCount, recentHardFloor, htlcLiquidityFails, htlcAttempts) {
+		return finalPpm, nil
+	}
+	if profitFee7dSat < 0 {
+		return localPpm, []string{"high-fee-loss-noup"}
+	}
+	remaining := highFeePressureWindowMaxPpm - recent.UpPpm24h
+	if remaining <= 0 {
+		return localPpm, []string{"high-fee-24h-cap"}
+	}
+	limit := localPpm + remaining
+	if finalPpm <= limit {
+		return finalPpm, nil
+	}
+	return limit, []string{"high-fee-24h-cap"}
 }
 
 func shouldBypassStrictCooldownUp(profile autofeeProfile, recentRebalanceCount int, htlcLiquidityHot bool, htlcLiquidityFails int, htlcAttempts int, localPpm int, outPpm7d int, rebalRefPpm int, baseCostPpm int, baseCostSrc string) bool {
@@ -10295,6 +10327,23 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			finalPpm = floor
 		}
 	}
+	if cappedPpm, capTags := capHighFeePressureWindowUp(
+		localPpm,
+		finalPpm,
+		profitFee7dSat,
+		e.recentChanges[ch.ChannelID],
+		recentRebalanceWeakCount,
+		recentRebalanceHardFloorApplied,
+		htlcLiquidityFails,
+		htlcAttempts,
+		tags,
+	); len(capTags) > 0 {
+		finalPpm = cappedPpm
+		tags = append(tags, capTags...)
+		if finalPpm < floor && (hardFloor || floor <= localPpm) {
+			finalPpm = floor
+		}
+	}
 	targetGapPpm := target - localPpm
 	targetGapPct := calcTargetGapPct(localPpm, target)
 	reversalConfirmRounds := reversalConfirmRoundsForChannel(e.profile, st, targetGapPct)
@@ -12255,6 +12304,10 @@ func formatAutofeeTags(d *decision) string {
 			add("⛔stepcap-lock")
 		case t == "high-fee-pressure-cap":
 			add("high-fee-pressure-cap")
+		case t == "high-fee-24h-cap":
+			add("high-fee-24h-cap")
+		case t == "high-fee-loss-noup":
+			add("high-fee-loss-noup")
 		case t == "floor-lock":
 			add("🧱floor-lock")
 		case t == "floor-relax-stall":

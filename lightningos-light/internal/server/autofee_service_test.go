@@ -2148,6 +2148,64 @@ func TestCapHighFeePressureStepUpAllowsStrongPressure(t *testing.T) {
 	}
 }
 
+func TestCapHighFeePressureWindowUpBlocksNegativeProfitWithoutStrongPressure(t *testing.T) {
+	got, tags := capHighFeePressureWindowUp(
+		1710,
+		1785,
+		-1843,
+		autofeeRecentChangeStats{UpPpm24h: 75},
+		0,
+		false,
+		1,
+		18,
+		[]string{"htlc-forward-hot", "large-gap-step-boost"},
+	)
+	if got != 1710 {
+		t.Fatalf("expected weak high-fee loss channel to hold local ppm, got %d", got)
+	}
+	if len(tags) != 1 || tags[0] != "high-fee-loss-noup" {
+		t.Fatalf("unexpected tags: %+v", tags)
+	}
+}
+
+func TestCapHighFeePressureWindowUpLimitsCumulativeHighFeeUps(t *testing.T) {
+	got, tags := capHighFeePressureWindowUp(
+		1710,
+		1810,
+		120,
+		autofeeRecentChangeStats{UpPpm24h: 75},
+		0,
+		false,
+		1,
+		18,
+		[]string{"htlc-forward-hot", "large-gap-step-boost"},
+	)
+	want := 1710 + (highFeePressureWindowMaxPpm - 75)
+	if got != want {
+		t.Fatalf("expected cumulative 24h cap at %d, got %d", want, got)
+	}
+	if len(tags) != 1 || tags[0] != "high-fee-24h-cap" {
+		t.Fatalf("unexpected tags: %+v", tags)
+	}
+}
+
+func TestCapHighFeePressureWindowUpAllowsStrongPressure(t *testing.T) {
+	got, tags := capHighFeePressureWindowUp(
+		1710,
+		1810,
+		-1843,
+		autofeeRecentChangeStats{UpPpm24h: 150},
+		0,
+		false,
+		4,
+		10,
+		[]string{"htlc-liquidity-hot", "htlc-forward-hot"},
+	)
+	if got != 1810 || len(tags) != 0 {
+		t.Fatalf("expected strong liquidity pressure to bypass 24h cap, got ppm=%d tags=%+v", got, tags)
+	}
+}
+
 func TestBuildAutofeeChannelLogEntryIncludesCostBasisAndProfit(t *testing.T) {
 	d := &decision{
 		Alias:          "lnmarkets.com",

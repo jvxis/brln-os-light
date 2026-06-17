@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"strings"
 	"testing"
 	"time"
 )
@@ -2062,17 +2063,118 @@ func TestEffectiveCooldownUpSecForChannelRespectsHoldAndBase(t *testing.T) {
 func TestShouldBypassStrictCooldownUp(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
 
-	if shouldBypassStrictCooldownUp(profile, 0, false, 500, 400, 0, 400, "outrate") {
+	if shouldBypassStrictCooldownUp(profile, 0, false, 0, 0, 500, 400, 0, 400, "outrate") {
 		t.Fatalf("did not expect plain forward activity to bypass strict cooldown")
 	}
-	if !shouldBypassStrictCooldownUp(profile, 0, true, 2000, 400, 0, 400, "outrate") {
-		t.Fatalf("expected liquidity-hot signal to bypass strict cooldown")
+	if shouldBypassStrictCooldownUp(profile, 0, true, 2, 19, 2000, 400, 0, 400, "outrate") {
+		t.Fatalf("did not expect weak liquidity-hot signal to bypass strict cooldown on high-fee channel")
 	}
-	if !shouldBypassStrictCooldownUp(profile, 1, false, 480, 400, 0, 400, "outrate") {
+	if !shouldBypassStrictCooldownUp(profile, 0, true, 4, 10, 2000, 400, 0, 400, "outrate") {
+		t.Fatalf("expected strong liquidity-hot signal to bypass strict cooldown")
+	}
+	if !shouldBypassStrictCooldownUp(profile, 0, true, 1, 10, 500, 400, 0, 400, "outrate") {
+		t.Fatalf("expected low-fee liquidity-hot signal to bypass strict cooldown")
+	}
+	if !shouldBypassStrictCooldownUp(profile, 1, false, 0, 0, 480, 400, 0, 400, "outrate") {
 		t.Fatalf("expected recent rebalance near the historical reference to bypass strict cooldown")
 	}
-	if shouldBypassStrictCooldownUp(profile, 1, false, 930, 409, 430, 430, "rebal") {
+	if shouldBypassStrictCooldownUp(profile, 1, false, 0, 0, 930, 409, 430, 430, "rebal") {
 		t.Fatalf("did not expect detached recent-rebalance channel to bypass strict cooldown")
+	}
+}
+
+func TestShouldSoftenNegMarginSurge(t *testing.T) {
+	if !shouldSoftenNegMarginSurge(1200, 3, 0) {
+		t.Fatalf("expected positive 7d profit with forwards and no failed rebalance pressure to soften neg-margin surge")
+	}
+	if shouldSoftenNegMarginSurge(0, 3, 0) {
+		t.Fatalf("did not expect zero profit to soften neg-margin surge")
+	}
+	if shouldSoftenNegMarginSurge(1200, 0, 0) {
+		t.Fatalf("did not expect no-flow channel to soften neg-margin surge")
+	}
+	if shouldSoftenNegMarginSurge(1200, 3, 1) {
+		t.Fatalf("did not expect failed rebalance pressure to soften neg-margin surge")
+	}
+}
+
+func TestCapHighFeePressureStepUpLimitsProfitableWeakPressure(t *testing.T) {
+	got, tags := capHighFeePressureStepUp(
+		2000,
+		2500,
+		1200,
+		0,
+		false,
+		2,
+		19,
+		[]string{"htlc-liquidity-hot", "surge+20%"},
+	)
+	want := 2000 + highFeePressureStepMaxPpm/2
+	if got != want {
+		t.Fatalf("expected profitable high-fee weak pressure to cap at %d, got %d", want, got)
+	}
+	if len(tags) != 1 || tags[0] != "high-fee-pressure-cap" {
+		t.Fatalf("unexpected cap tags: %+v", tags)
+	}
+}
+
+func TestCapHighFeePressureStepUpAllowsStrongPressure(t *testing.T) {
+	got, tags := capHighFeePressureStepUp(
+		2000,
+		2500,
+		1200,
+		0,
+		false,
+		4,
+		10,
+		[]string{"htlc-liquidity-hot", "surge+20%"},
+	)
+	if got != 2500 || len(tags) != 0 {
+		t.Fatalf("expected strong liquidity pressure to bypass cap, got ppm=%d tags=%+v", got, tags)
+	}
+
+	got, tags = capHighFeePressureStepUp(
+		2000,
+		2500,
+		1200,
+		1,
+		false,
+		2,
+		19,
+		[]string{"htlc-liquidity-hot", "surge+20%"},
+	)
+	if got != 2500 || len(tags) != 0 {
+		t.Fatalf("expected failed rebalance pressure to bypass cap, got ppm=%d tags=%+v", got, tags)
+	}
+}
+
+func TestBuildAutofeeChannelLogEntryIncludesCostBasisAndProfit(t *testing.T) {
+	d := &decision{
+		Alias:          "lnmarkets.com",
+		ChannelID:      42,
+		LocalPpm:       1903,
+		NewPpm:         2226,
+		Target:         2226,
+		TargetRaw:      2226,
+		TargetFinal:    2226,
+		Floor:          1900,
+		Margin:         -249,
+		ProfitFee7dSat: 3517,
+		Tags:           []string{"neg-margin", "profit-positive-neg-margin-soft"},
+	}
+
+	entry := buildAutofeeChannelLogEntry(d, "changed", false, nil)
+	if entry.Payload == nil {
+		t.Fatalf("expected payload")
+	}
+	if entry.Payload.Margin != -249 || entry.Payload.CostBasisMarginPpm != -249 || entry.Payload.ProfitFee7dSat != 3517 {
+		t.Fatalf("unexpected margin/profit payload: %+v", entry.Payload)
+	}
+	if !strings.Contains(entry.Line, "cost_marg_ppm=-249") || !strings.Contains(entry.Line, "profit7d_sat=3517") {
+		t.Fatalf("expected line to expose cost margin and 7d profit, got %q", entry.Line)
+	}
+	if !strings.Contains(formatAutofeeTags(d), "profit-pos-neg-soft") {
+		t.Fatalf("expected formatted softening tag, got %q", formatAutofeeTags(d))
 	}
 }
 

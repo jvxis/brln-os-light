@@ -99,6 +99,12 @@ const (
 	lowOutNoFlowBoostMult               = 1.005
 	lowOutNoFlowUpCapFrac               = 0.03
 	lowOutNoFlowUpperRatio              = 0.15
+	highFeePressureMinPpm               = 1000
+	highFeePressureStepMaxFrac          = 0.05
+	highFeePressureStepMaxPpm           = 75
+	highFeePressureStepMinPpm           = 15
+	htlcStrongLiquidityMinFails         = 3
+	htlcStrongLiquidityFailRatio        = 0.20
 	outFallback21dMinFwds               = 5
 	outFallback21dMinOutSat             = 50000
 	outFallback21dMinOutCapFrac         = 0.005
@@ -492,6 +498,8 @@ type autofeeLogItem struct {
 	FloorBaseSrc             string   `json:"floor_base_src,omitempty"`
 	RebalCostMode            string   `json:"rebal_cost_mode,omitempty"`
 	Margin                   int      `json:"margin,omitempty"`
+	CostBasisMarginPpm       int      `json:"cost_basis_margin_ppm,omitempty"`
+	ProfitFee7dSat           int64    `json:"profit_fee_7d_sat,omitempty"`
 	RevShare                 float64  `json:"rev_share,omitempty"`
 	Tags                     []string `json:"tags,omitempty"`
 	InboundDiscount          int      `json:"inbound_discount,omitempty"`
@@ -6018,8 +6026,69 @@ func strictCooldownBypassDetachedMult(profile autofeeProfile) float64 {
 	}
 }
 
-func shouldBypassStrictCooldownUp(profile autofeeProfile, recentRebalanceCount int, htlcLiquidityHot bool, localPpm int, outPpm7d int, rebalRefPpm int, baseCostPpm int, baseCostSrc string) bool {
+func autofeeProfitFee7dSat(hasRanking bool, ranking autofeeRankingSnapshot, fwd forwardStat, rebal rebalStat) int64 {
+	if hasRanking {
+		return ranking.ProfitFee7dSat
+	}
+	return (fwd.FeeMsat - rebal.FeeMsat) / 1000
+}
+
+func shouldSoftenNegMarginSurge(profitFee7dSat int64, fwdCount int, recentFailCount int) bool {
+	return profitFee7dSat > 0 && fwdCount > 0 && recentFailCount <= 0
+}
+
+func strongHTLCLiquidityPressure(liquidityFails int, attempts int) bool {
+	if liquidityFails < htlcStrongLiquidityMinFails {
+		return false
+	}
+	if attempts <= 0 {
+		return true
+	}
+	return float64(liquidityFails)/float64(attempts) >= htlcStrongLiquidityFailRatio
+}
+
+func hasAutofeePressureUpTag(tags []string) bool {
+	for _, tag := range tags {
+		switch {
+		case tag == "rebal-fail-pressure":
+			return true
+		case strings.HasPrefix(tag, "htlc-liq+") || strings.HasPrefix(tag, "htlc-policy+"):
+			return true
+		case tag == "htlc-liquidity-hot" || tag == "htlc-policy-hot" || tag == "htlc-forward-hot":
+			return true
+		case strings.HasPrefix(tag, "surge+"), strings.HasPrefix(tag, "negm+"):
+			return true
+		case tag == "surge-confirmed" || tag == "surge-confirmed-rounds" || tag == "surge-timeout-release":
+			return true
+		}
+	}
+	return false
+}
+
+func capHighFeePressureStepUp(localPpm int, finalPpm int, profitFee7dSat int64, recentFailCount int, recentHardFloor bool, htlcLiquidityFails int, htlcAttempts int, tags []string) (int, []string) {
+	if localPpm < highFeePressureMinPpm || finalPpm <= localPpm || !hasAutofeePressureUpTag(tags) {
+		return finalPpm, nil
+	}
+	if recentFailCount > 0 || recentHardFloor || strongHTLCLiquidityPressure(htlcLiquidityFails, htlcAttempts) {
+		return finalPpm, nil
+	}
+	step := int(math.Round(float64(localPpm) * highFeePressureStepMaxFrac))
+	step = clampInt(step, highFeePressureStepMinPpm, highFeePressureStepMaxPpm)
+	if profitFee7dSat > 0 {
+		step = minInt(step, maxInt(highFeePressureStepMinPpm, highFeePressureStepMaxPpm/2))
+	}
+	limit := localPpm + step
+	if finalPpm <= limit {
+		return finalPpm, nil
+	}
+	return limit, []string{"high-fee-pressure-cap"}
+}
+
+func shouldBypassStrictCooldownUp(profile autofeeProfile, recentRebalanceCount int, htlcLiquidityHot bool, htlcLiquidityFails int, htlcAttempts int, localPpm int, outPpm7d int, rebalRefPpm int, baseCostPpm int, baseCostSrc string) bool {
 	if htlcLiquidityHot {
+		if localPpm >= highFeePressureMinPpm && !strongHTLCLiquidityPressure(htlcLiquidityFails, htlcAttempts) {
+			return false
+		}
 		return true
 	}
 	if recentRebalanceCount <= 0 {
@@ -7505,6 +7574,7 @@ type decision struct {
 	RebalPpm                int
 	Seed                    int
 	Margin                  int
+	ProfitFee7dSat          int64
 	RevShare                float64
 	ClassLabel              string
 	FwdCount                int
@@ -7746,7 +7816,7 @@ func formatAutofeeDecisionLine(d *decision, dryRun bool, isError bool) (string, 
 	if targetFinal != targetRaw {
 		targetDisplay = fmt.Sprintf("%d→%d", targetRaw, targetFinal)
 	}
-	line := fmt.Sprintf("%s %s: %s%s | alvo %s | out_ratio %.2f | out_ppm7d≈%d | rebal_ppm7d≈%d | seed≈%d | floor≥%d%s | marg≈%d | rev_share≈%.2f | %s",
+	line := fmt.Sprintf("%s %s: %s%s | alvo %s | out_ratio %.2f | out_ppm7d≈%d | rebal_ppm7d≈%d | seed≈%d | floor≥%d%s | cost_marg_ppm=%d | profit7d_sat=%d | rev_share≈%.2f | %s",
 		prefix,
 		alias,
 		action,
@@ -7759,6 +7829,7 @@ func formatAutofeeDecisionLine(d *decision, dryRun bool, isError bool) (string, 
 		d.Floor,
 		floorSrc,
 		d.Margin,
+		d.ProfitFee7dSat,
 		d.RevShare,
 		tagLine,
 	)
@@ -7837,6 +7908,8 @@ func buildAutofeeChannelLogEntry(d *decision, category string, dryRun bool, err 
 		FloorBaseSrc:            d.FloorBaseSrc,
 		RebalCostMode:           d.RebalCostMode,
 		Margin:                  d.Margin,
+		CostBasisMarginPpm:      d.Margin,
+		ProfitFee7dSat:          d.ProfitFee7dSat,
 		RevShare:                d.RevShare,
 		Tags:                    append([]string{}, d.Tags...),
 		InboundDiscount:         d.InboundDiscount,
@@ -8242,7 +8315,7 @@ func buildTelegramAutofeeChangedChannelLineFull(d *decision) string {
 	if tagLine == "" {
 		tagLine = "-"
 	}
-	line := fmt.Sprintf("%s %s: %s%s | target %s | out_ratio %.2f | out_ppm7d≈%d | rebal_ppm7d≈%d | seed≈%d | floor≥%d%s | margin≈%d | rev_share≈%.2f | %s",
+	line := fmt.Sprintf("%s %s: %s%s | target %s | out_ratio %.2f | out_ppm7d≈%d | rebal_ppm7d≈%d | seed≈%d | floor≥%d%s | cost_marg_ppm=%d | profit7d_sat=%d | rev_share≈%.2f | %s",
 		prefix,
 		alias,
 		action,
@@ -8255,6 +8328,7 @@ func buildTelegramAutofeeChangedChannelLineFull(d *decision) string {
 		d.Floor,
 		floorSrc,
 		d.Margin,
+		d.ProfitFee7dSat,
 		d.RevShare,
 		tagLine,
 	)
@@ -8368,6 +8442,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	rebal := rebalStats.ByChannel[ch.ChannelID]
 	rebalIn7d := rebalStats7d.ByChannel[ch.ChannelID]
 	rebal21d := rebalStats21d.ByChannel[ch.ChannelID]
+	profitFee7dSat := autofeeProfitFee7dSat(hasRanking, ranking, fwd, rebal)
 	rebalAmtSat7d := rebal.AmtMsat / 1000
 	perCost := 0
 	perCost21d := 0
@@ -9164,23 +9239,27 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 	if marginActionable && marginPpm7d < 0 {
 		tags = append(tags, "neg-margin")
-		minFwds := e.profile.NegMarginSurgeMinFwds
-		if e.profile.NegMarginSurgeFwdsRatio > 0 {
-			baseFwds := st.BaselineFwd7d
-			if baseFwds <= 0 {
-				baseFwds = fwdCount
+		if shouldSoftenNegMarginSurge(profitFee7dSat, fwdCount, recentRebalanceWeakCount) {
+			tags = append(tags, "profit-positive-neg-margin-soft")
+		} else {
+			minFwds := e.profile.NegMarginSurgeMinFwds
+			if e.profile.NegMarginSurgeFwdsRatio > 0 {
+				baseFwds := st.BaselineFwd7d
+				if baseFwds <= 0 {
+					baseFwds = fwdCount
+				}
+				if baseFwds <= 0 {
+					baseFwds = 1
+				}
+				ratioFwds := int(math.Round(float64(baseFwds) * e.profile.NegMarginSurgeFwdsRatio))
+				if ratioFwds > minFwds {
+					minFwds = ratioFwds
+				}
 			}
-			if baseFwds <= 0 {
-				baseFwds = 1
+			if e.profile.NegMarginSurgeBump > 0 && fwdCount >= minFwds {
+				target = int(math.Ceil(float64(target) * (1.0 + e.profile.NegMarginSurgeBump)))
+				tags = append(tags, fmt.Sprintf("negm+%d%%", int(math.Round(e.profile.NegMarginSurgeBump*100))))
 			}
-			ratioFwds := int(math.Round(float64(baseFwds) * e.profile.NegMarginSurgeFwdsRatio))
-			if ratioFwds > minFwds {
-				minFwds = ratioFwds
-			}
-		}
-		if e.profile.NegMarginSurgeBump > 0 && fwdCount >= minFwds {
-			target = int(math.Ceil(float64(target) * (1.0 + e.profile.NegMarginSurgeBump)))
-			tags = append(tags, fmt.Sprintf("negm+%d%%", int(math.Round(e.profile.NegMarginSurgeBump*100))))
 		}
 	}
 
@@ -10200,6 +10279,22 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		recentRebalanceHardFloorApplied = true
 		tags = appendAutofeeTagOnce(tags, "rebal-recent-hard-floor")
 	}
+	if cappedPpm, capTags := capHighFeePressureStepUp(
+		localPpm,
+		finalPpm,
+		profitFee7dSat,
+		recentRebalanceWeakCount,
+		recentRebalanceHardFloorApplied,
+		htlcLiquidityFails,
+		htlcAttempts,
+		tags,
+	); len(capTags) > 0 {
+		finalPpm = cappedPpm
+		tags = append(tags, capTags...)
+		if finalPpm < floor && (hardFloor || floor <= localPpm) {
+			finalPpm = floor
+		}
+	}
 	targetGapPpm := target - localPpm
 	targetGapPct := calcTargetGapPct(localPpm, target)
 	reversalConfirmRounds := reversalConfirmRoundsForChannel(e.profile, st, targetGapPct)
@@ -10259,6 +10354,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 				e.profile,
 				recentRebalanceCount,
 				htlcLiquidityHot,
+				htlcLiquidityFails,
+				htlcAttempts,
 				localPpm,
 				outPpm7d,
 				rebalHistoryRefPpm,
@@ -10517,6 +10614,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		RebalPpm:                loggedRebalPpm,
 		Seed:                    int(seed),
 		Margin:                  marginPpm7d,
+		ProfitFee7dSat:          profitFee7dSat,
 		RevShare:                revShare,
 		ClassLabel:              classLabel,
 		FwdCount:                fwdCount,
@@ -11893,6 +11991,8 @@ func formatAutofeeTags(d *decision) string {
 			add("💎top-rev")
 		case t == "neg-margin":
 			add("⚠️neg-margin")
+		case t == "profit-positive-neg-margin-soft":
+			add("profit-pos-neg-soft")
 		case t == "rebal-recent":
 			add("🔁rebal-recent")
 		case t == "rebal-recent-floor":
@@ -12153,6 +12253,8 @@ func formatAutofeeTags(d *decision) string {
 			add("⛔stepcap")
 		case t == "stepcap-lock":
 			add("⛔stepcap-lock")
+		case t == "high-fee-pressure-cap":
+			add("high-fee-pressure-cap")
 		case t == "floor-lock":
 			add("🧱floor-lock")
 		case t == "floor-relax-stall":

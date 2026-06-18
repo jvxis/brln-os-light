@@ -104,6 +104,7 @@ const (
 	highFeePressureStepMaxPpm           = 75
 	highFeePressureStepMinPpm           = 15
 	highFeePressureWindowMaxPpm         = 100
+	goodLiquidityOutrateUpCapMult       = 1.15
 	htlcStrongLiquidityMinFails         = 3
 	htlcStrongLiquidityFailRatio        = 0.20
 	outFallback21dMinFwds               = 5
@@ -6109,6 +6110,17 @@ func hasStrongRebalanceFailPressure(tags []string) bool {
 	return containsTag(tags, "rebal-fail-pressure")
 }
 
+func hasGoodLocalLiquidityForAutofeeUp(effectiveOutRatio float64, goodOutRatio float64) bool {
+	if goodOutRatio <= 0 {
+		goodOutRatio = 0.20
+	}
+	return effectiveOutRatio >= goodOutRatio
+}
+
+func shouldGuardGoodLiquidityHTLCUp(effectiveOutRatio float64, goodOutRatio float64, tags []string) bool {
+	return hasGoodLocalLiquidityForAutofeeUp(effectiveOutRatio, goodOutRatio) && !hasStrongRebalanceFailPressure(tags)
+}
+
 func shouldSoftenNegMarginSurge(profitFee7dSat int64, fwdCount int, tags []string) bool {
 	return profitFee7dSat > 0 && fwdCount > 0 && !hasStrongRebalanceFailPressure(tags)
 }
@@ -6123,8 +6135,14 @@ func strongHTLCLiquidityPressure(liquidityFails int, attempts int) bool {
 	return float64(liquidityFails)/float64(attempts) >= htlcStrongLiquidityFailRatio
 }
 
-func strongHighFeeUpPressure(tags []string, recentHardFloor bool, htlcLiquidityFails int, htlcAttempts int) bool {
-	return hasStrongRebalanceFailPressure(tags) || recentHardFloor || strongHTLCLiquidityPressure(htlcLiquidityFails, htlcAttempts)
+func strongHighFeeUpPressure(tags []string, recentHardFloor bool, htlcLiquidityFails int, htlcAttempts int, goodLocalLiquidity bool) bool {
+	if hasStrongRebalanceFailPressure(tags) || recentHardFloor {
+		return true
+	}
+	if goodLocalLiquidity {
+		return false
+	}
+	return strongHTLCLiquidityPressure(htlcLiquidityFails, htlcAttempts)
 }
 
 func hasAutofeePressureUpTag(tags []string) bool {
@@ -6145,11 +6163,11 @@ func hasAutofeePressureUpTag(tags []string) bool {
 	return false
 }
 
-func capHighFeePressureStepUp(localPpm int, finalPpm int, profitFee7dSat int64, _ int, recentHardFloor bool, htlcLiquidityFails int, htlcAttempts int, tags []string) (int, []string) {
+func capHighFeePressureStepUp(localPpm int, finalPpm int, profitFee7dSat int64, _ int, recentHardFloor bool, htlcLiquidityFails int, htlcAttempts int, goodLocalLiquidity bool, tags []string) (int, []string) {
 	if localPpm < highFeePressureMinPpm || finalPpm <= localPpm || !hasAutofeePressureUpTag(tags) {
 		return finalPpm, nil
 	}
-	if strongHighFeeUpPressure(tags, recentHardFloor, htlcLiquidityFails, htlcAttempts) {
+	if strongHighFeeUpPressure(tags, recentHardFloor, htlcLiquidityFails, htlcAttempts, goodLocalLiquidity) {
 		return finalPpm, nil
 	}
 	step := int(math.Round(float64(localPpm) * highFeePressureStepMaxFrac))
@@ -6164,11 +6182,11 @@ func capHighFeePressureStepUp(localPpm int, finalPpm int, profitFee7dSat int64, 
 	return limit, []string{"high-fee-pressure-cap"}
 }
 
-func capHighFeePressureWindowUp(localPpm int, finalPpm int, profitFee7dSat int64, recent autofeeRecentChangeStats, _ int, recentHardFloor bool, htlcLiquidityFails int, htlcAttempts int, tags []string) (int, []string) {
+func capHighFeePressureWindowUp(localPpm int, finalPpm int, profitFee7dSat int64, recent autofeeRecentChangeStats, _ int, recentHardFloor bool, htlcLiquidityFails int, htlcAttempts int, goodLocalLiquidity bool, tags []string) (int, []string) {
 	if localPpm < highFeePressureMinPpm || finalPpm <= localPpm || !hasAutofeePressureUpTag(tags) {
 		return finalPpm, nil
 	}
-	if strongHighFeeUpPressure(tags, recentHardFloor, htlcLiquidityFails, htlcAttempts) {
+	if strongHighFeeUpPressure(tags, recentHardFloor, htlcLiquidityFails, htlcAttempts, goodLocalLiquidity) {
 		return finalPpm, nil
 	}
 	if profitFee7dSat < 0 {
@@ -6185,8 +6203,28 @@ func capHighFeePressureWindowUp(localPpm int, finalPpm int, profitFee7dSat int64
 	return limit, []string{"high-fee-24h-cap"}
 }
 
-func shouldBypassStrictCooldownUp(profile autofeeProfile, recentRebalanceCount int, htlcLiquidityHot bool, htlcLiquidityFails int, htlcAttempts int, localPpm int, outPpm7d int, rebalRefPpm int, baseCostPpm int, baseCostSrc string) bool {
+func capGoodLiquidityDetachedOutrateUp(localPpm int, finalPpm int, outPpm7d int, goodLocalLiquidity bool, recentHardFloor bool, tags []string) (int, []string) {
+	if !goodLocalLiquidity || finalPpm <= localPpm || outPpm7d <= 0 || recentHardFloor || hasStrongRebalanceFailPressure(tags) || !hasAutofeePressureUpTag(tags) {
+		return finalPpm, nil
+	}
+	limit := int(math.Ceil(float64(outPpm7d) * goodLiquidityOutrateUpCapMult))
+	if limit < localPpm {
+		limit = localPpm
+	}
+	if finalPpm <= limit {
+		return finalPpm, nil
+	}
+	return limit, []string{"goodliq-outrate-upcap"}
+}
+
+func shouldBypassStrictCooldownUp(profile autofeeProfile, recentRebalanceCount int, htlcLiquidityHot bool, htlcLiquidityFails int, htlcAttempts int, localPpm int, outPpm7d int, rebalRefPpm int, baseCostPpm int, baseCostSrc string, goodLocalLiquidity bool, tags []string) bool {
 	if htlcLiquidityHot {
+		if hasStrongRebalanceFailPressure(tags) {
+			return true
+		}
+		if goodLocalLiquidity {
+			return false
+		}
 		if localPpm >= highFeePressureMinPpm && !strongHTLCLiquidityPressure(htlcLiquidityFails, htlcAttempts) {
 			return false
 		}
@@ -9368,6 +9406,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	applyHTLCPolicyHot := e.cfg.HTLCSignalEnabled && (htlcMode == htlcModePolicyOnly || htlcMode == htlcModeFull)
 	applyHTLCLiquidityHot := e.cfg.HTLCSignalEnabled && htlcMode == htlcModeFull
 	htlcHotSignal := !htlcSampleLow && ((applyHTLCPolicyHot && htlcPolicyHot) || (applyHTLCLiquidityHot && htlcLiquidityHot))
+	goodLocalLiquidityForUp := hasGoodLocalLiquidityForAutofeeUp(upwardPressureOutRatio, goodOutRatio)
+	goodLiquidityHTLCUpGuard := htlcHotSignal && shouldGuardGoodLiquidityHTLCUp(upwardPressureOutRatio, goodOutRatio, tags)
 	negMarginDownStrongPressure := surgeConfirmSignal || surgeRoundConfirmSignal || surgeHoldActive || htlcHotSignal || htlcForwardHot
 	if htlcHotSignal {
 		if applyHTLCPolicyHot && htlcPolicyHot && applyHTLCLiquidityHot && htlcLiquidityHot {
@@ -9378,9 +9418,11 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		} else {
 			if applyHTLCLiquidityHot && htlcLiquidityHot {
 				liqBump := e.profile.HTLCLiquidityHotBump
-				if liqBump > 0 {
+				if liqBump > 0 && !goodLiquidityHTLCUpGuard {
 					target = int(math.Ceil(float64(target) * (1.0 + liqBump)))
 					tags = append(tags, fmt.Sprintf("htlc-liq+%d%%", int(math.Round(liqBump*100))))
+				} else if liqBump > 0 && goodLiquidityHTLCUpGuard {
+					tags = appendAutofeeTagOnce(tags, "htlc-goodliq-upguard")
 				}
 				liqNoDownOutRatio := e.profile.HTLCLiquidityHotNoDownOutRatio
 				if liqNoDownOutRatio <= 0 {
@@ -9393,9 +9435,11 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			}
 			if applyHTLCPolicyHot && htlcPolicyHot {
 				policyBump := e.profile.HTLCPolicyHotBump
-				if policyBump > 0 {
+				if policyBump > 0 && !goodLiquidityHTLCUpGuard {
 					target = int(math.Ceil(float64(target) * (1.0 + policyBump)))
 					tags = append(tags, fmt.Sprintf("htlc-policy+%d%%", int(math.Round(policyBump*100))))
+				} else if policyBump > 0 && goodLiquidityHTLCUpGuard {
+					tags = appendAutofeeTagOnce(tags, "htlc-goodliq-upguard")
 				}
 				if marginActionable && marginPpm7d <= e.profile.HTLCPolicyHotNoDownMarginPpm && target < localPpm {
 					target = localPpm
@@ -9642,9 +9686,11 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if newInboundBootstrap && bootstrapMinStepUp > minStep {
 		minStep = bootstrapMinStepUp
 	}
-	if htlcHotSignal && target > localPpm && e.profile.HTLCHotStepCapBoost > 0 {
+	if htlcHotSignal && target > localPpm && e.profile.HTLCHotStepCapBoost > 0 && !goodLiquidityHTLCUpGuard {
 		capFrac = math.Max(capFrac, e.profile.StepCap+e.profile.HTLCHotStepCapBoost)
 		tags = append(tags, "htlc-step-boost")
+	} else if htlcHotSignal && target > localPpm && e.profile.HTLCHotStepCapBoost > 0 && goodLiquidityHTLCUpGuard {
+		tags = appendAutofeeTagOnce(tags, "htlc-goodliq-upguard")
 	}
 	if outRatio < 0.03 {
 		capFrac = math.Max(capFrac, 0.10)
@@ -10388,6 +10434,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		recentRebalanceHardFloorApplied,
 		htlcLiquidityFails,
 		htlcAttempts,
+		goodLocalLiquidityForUp,
 		tags,
 	); len(capTags) > 0 {
 		finalPpm = cappedPpm
@@ -10405,6 +10452,21 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		recentRebalanceHardFloorApplied,
 		htlcLiquidityFails,
 		htlcAttempts,
+		goodLocalLiquidityForUp,
+		tags,
+	); len(capTags) > 0 {
+		finalPpm = cappedPpm
+		tags = append(tags, capTags...)
+		if finalPpm < floor && (hardFloor || floor <= localPpm) {
+			finalPpm = floor
+		}
+	}
+	if cappedPpm, capTags := capGoodLiquidityDetachedOutrateUp(
+		localPpm,
+		finalPpm,
+		outPpm7d,
+		goodLocalLiquidityForUp,
+		recentRebalanceHardFloorApplied,
 		tags,
 	); len(capTags) > 0 {
 		finalPpm = cappedPpm
@@ -10479,6 +10541,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 				rebalHistoryRefPpm,
 				baseCostPpm,
 				baseCostSrc,
+				goodLocalLiquidityForUp,
+				tags,
 			)
 		}
 		if !st.LastTs.IsZero() {
@@ -12377,6 +12441,10 @@ func formatAutofeeTags(d *decision) string {
 			add("high-fee-24h-cap")
 		case t == "high-fee-loss-noup":
 			add("high-fee-loss-noup")
+		case t == "goodliq-outrate-upcap":
+			add("goodliq-outrate-upcap")
+		case t == "htlc-goodliq-upguard":
+			add("htlc-goodliq-upguard")
 		case t == "floor-lock":
 			add("🧱floor-lock")
 		case t == "floor-relax-stall":

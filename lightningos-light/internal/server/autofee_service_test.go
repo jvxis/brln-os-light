@@ -2087,22 +2087,28 @@ func TestEffectiveCooldownUpSecForChannelRespectsHoldAndBase(t *testing.T) {
 func TestShouldBypassStrictCooldownUp(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
 
-	if shouldBypassStrictCooldownUp(profile, 0, false, 0, 0, 500, 400, 0, 400, "outrate") {
+	if shouldBypassStrictCooldownUp(profile, 0, false, 0, 0, 500, 400, 0, 400, "outrate", false, nil) {
 		t.Fatalf("did not expect plain forward activity to bypass strict cooldown")
 	}
-	if shouldBypassStrictCooldownUp(profile, 0, true, 2, 19, 2000, 400, 0, 400, "outrate") {
+	if shouldBypassStrictCooldownUp(profile, 0, true, 2, 19, 2000, 400, 0, 400, "outrate", false, nil) {
 		t.Fatalf("did not expect weak liquidity-hot signal to bypass strict cooldown on high-fee channel")
 	}
-	if !shouldBypassStrictCooldownUp(profile, 0, true, 4, 10, 2000, 400, 0, 400, "outrate") {
+	if !shouldBypassStrictCooldownUp(profile, 0, true, 4, 10, 2000, 400, 0, 400, "outrate", false, nil) {
 		t.Fatalf("expected strong liquidity-hot signal to bypass strict cooldown")
 	}
-	if !shouldBypassStrictCooldownUp(profile, 0, true, 1, 10, 500, 400, 0, 400, "outrate") {
+	if shouldBypassStrictCooldownUp(profile, 0, true, 4, 10, 2000, 400, 0, 400, "outrate", true, nil) {
+		t.Fatalf("did not expect strong liquidity-hot signal to bypass strict cooldown with good local liquidity")
+	}
+	if !shouldBypassStrictCooldownUp(profile, 0, true, 4, 10, 2000, 400, 0, 400, "outrate", true, []string{"rebal-fail-pressure"}) {
+		t.Fatalf("expected confirmed rebalance-fail pressure to bypass strict cooldown")
+	}
+	if !shouldBypassStrictCooldownUp(profile, 0, true, 1, 10, 500, 400, 0, 400, "outrate", false, nil) {
 		t.Fatalf("expected low-fee liquidity-hot signal to bypass strict cooldown")
 	}
-	if !shouldBypassStrictCooldownUp(profile, 1, false, 0, 0, 480, 400, 0, 400, "outrate") {
+	if !shouldBypassStrictCooldownUp(profile, 1, false, 0, 0, 480, 400, 0, 400, "outrate", false, nil) {
 		t.Fatalf("expected recent rebalance near the historical reference to bypass strict cooldown")
 	}
-	if shouldBypassStrictCooldownUp(profile, 1, false, 0, 0, 930, 409, 430, 430, "rebal") {
+	if shouldBypassStrictCooldownUp(profile, 1, false, 0, 0, 930, 409, 430, 430, "rebal", false, nil) {
 		t.Fatalf("did not expect detached recent-rebalance channel to bypass strict cooldown")
 	}
 }
@@ -2134,6 +2140,7 @@ func TestCapHighFeePressureStepUpLimitsProfitableWeakPressure(t *testing.T) {
 		false,
 		2,
 		19,
+		false,
 		[]string{"htlc-liquidity-hot", "surge+20%"},
 	)
 	want := 2000 + highFeePressureStepMaxPpm/2
@@ -2154,6 +2161,7 @@ func TestCapHighFeePressureStepUpTreatsWeakRebalanceAttemptAsGradual(t *testing.
 		false,
 		0,
 		29,
+		false,
 		[]string{"rebal-attempt", "htlc-forward-hot", "surge+16%"},
 	)
 	want := 1903 + highFeePressureStepMaxPpm/2
@@ -2174,6 +2182,7 @@ func TestCapHighFeePressureStepUpAllowsStrongPressure(t *testing.T) {
 		false,
 		4,
 		10,
+		false,
 		[]string{"htlc-liquidity-hot", "surge+20%"},
 	)
 	if got != 2500 || len(tags) != 0 {
@@ -2188,6 +2197,7 @@ func TestCapHighFeePressureStepUpAllowsStrongPressure(t *testing.T) {
 		false,
 		2,
 		19,
+		false,
 		[]string{"htlc-liquidity-hot", "surge+20%", "rebal-fail-pressure"},
 	)
 	if got != 2500 || len(tags) != 0 {
@@ -2205,10 +2215,32 @@ func TestCapHighFeePressureWindowUpBlocksNegativeProfitWithoutStrongPressure(t *
 		false,
 		1,
 		18,
+		false,
 		[]string{"htlc-forward-hot", "large-gap-step-boost"},
 	)
 	if got != 1710 {
 		t.Fatalf("expected weak high-fee loss channel to hold local ppm, got %d", got)
+	}
+	if len(tags) != 1 || tags[0] != "high-fee-loss-noup" {
+		t.Fatalf("unexpected tags: %+v", tags)
+	}
+}
+
+func TestCapHighFeePressureWindowUpBlocksLossEvenWithStrongHTLCWhenGoodLiquidity(t *testing.T) {
+	got, tags := capHighFeePressureWindowUp(
+		1925,
+		2010,
+		-709,
+		autofeeRecentChangeStats{},
+		0,
+		false,
+		4,
+		9,
+		true,
+		[]string{"htlc-liquidity-hot", "htlc-forward-hot", "negm+8%", "htlc-liq+5%"},
+	)
+	if got != 1925 {
+		t.Fatalf("expected loss-making high-fee channel with good liquidity to hold local ppm, got %d", got)
 	}
 	if len(tags) != 1 || tags[0] != "high-fee-loss-noup" {
 		t.Fatalf("unexpected tags: %+v", tags)
@@ -2225,6 +2257,7 @@ func TestCapHighFeePressureWindowUpLimitsCumulativeHighFeeUps(t *testing.T) {
 		false,
 		1,
 		18,
+		false,
 		[]string{"htlc-forward-hot", "large-gap-step-boost"},
 	)
 	want := 1710 + (highFeePressureWindowMaxPpm - 75)
@@ -2246,6 +2279,7 @@ func TestCapHighFeePressureWindowUpTreatsWeakRebalanceAttemptAsGradual(t *testin
 		false,
 		0,
 		29,
+		false,
 		[]string{"rebal-attempt", "htlc-forward-hot", "surge+16%"},
 	)
 	want := 1903 + highFeePressureWindowMaxPpm
@@ -2267,6 +2301,7 @@ func TestCapHighFeePressureWindowUpAllowsStrongPressure(t *testing.T) {
 		false,
 		4,
 		10,
+		false,
 		[]string{"htlc-liquidity-hot", "htlc-forward-hot"},
 	)
 	if got != 1810 || len(tags) != 0 {
@@ -2282,10 +2317,58 @@ func TestCapHighFeePressureWindowUpAllowsStrongPressure(t *testing.T) {
 		false,
 		1,
 		18,
+		false,
 		[]string{"rebal-attempt", "htlc-forward-hot", "rebal-fail-pressure"},
 	)
 	if got != 1810 || len(tags) != 0 {
 		t.Fatalf("expected confirmed failed-rebalance pressure to bypass 24h cap, got ppm=%d tags=%+v", got, tags)
+	}
+}
+
+func TestCapGoodLiquidityDetachedOutrateUpLimitsHTLCOnlyJump(t *testing.T) {
+	got, tags := capGoodLiquidityDetachedOutrateUp(
+		366,
+		412,
+		313,
+		true,
+		false,
+		[]string{"htlc-liquidity-hot", "htlc-forward-hot", "trend-up"},
+	)
+	if got != 366 {
+		t.Fatalf("expected good-liquidity htlc-only jump above outrate headroom to hold at local ppm, got %d", got)
+	}
+	if len(tags) != 1 || tags[0] != "goodliq-outrate-upcap" {
+		t.Fatalf("unexpected tags: %+v", tags)
+	}
+
+	got, tags = capGoodLiquidityDetachedOutrateUp(
+		704,
+		823,
+		704,
+		true,
+		false,
+		[]string{"htlc-liquidity-hot", "htlc-forward-hot", "trend-up"},
+	)
+	want := int(math.Ceil(704 * goodLiquidityOutrateUpCapMult))
+	if got != want {
+		t.Fatalf("expected good-liquidity jump to cap at outrate headroom %d, got %d", want, got)
+	}
+	if len(tags) != 1 || tags[0] != "goodliq-outrate-upcap" {
+		t.Fatalf("unexpected tags: %+v", tags)
+	}
+}
+
+func TestCapGoodLiquidityDetachedOutrateUpBypassesOnConfirmedRebalanceFail(t *testing.T) {
+	got, tags := capGoodLiquidityDetachedOutrateUp(
+		366,
+		412,
+		313,
+		true,
+		false,
+		[]string{"htlc-liquidity-hot", "rebal-fail-pressure"},
+	)
+	if got != 412 || len(tags) != 0 {
+		t.Fatalf("expected confirmed rebalance-fail pressure to bypass good-liquidity outrate cap, got ppm=%d tags=%+v", got, tags)
 	}
 }
 

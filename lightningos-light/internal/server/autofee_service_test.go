@@ -2108,17 +2108,20 @@ func TestShouldBypassStrictCooldownUp(t *testing.T) {
 }
 
 func TestShouldSoftenNegMarginSurge(t *testing.T) {
-	if !shouldSoftenNegMarginSurge(1200, 3, 0) {
+	if !shouldSoftenNegMarginSurge(1200, 3, nil) {
 		t.Fatalf("expected positive 7d profit with forwards and no failed rebalance pressure to soften neg-margin surge")
 	}
-	if shouldSoftenNegMarginSurge(0, 3, 0) {
+	if shouldSoftenNegMarginSurge(0, 3, nil) {
 		t.Fatalf("did not expect zero profit to soften neg-margin surge")
 	}
-	if shouldSoftenNegMarginSurge(1200, 0, 0) {
+	if shouldSoftenNegMarginSurge(1200, 0, nil) {
 		t.Fatalf("did not expect no-flow channel to soften neg-margin surge")
 	}
-	if shouldSoftenNegMarginSurge(1200, 3, 1) {
-		t.Fatalf("did not expect failed rebalance pressure to soften neg-margin surge")
+	if !shouldSoftenNegMarginSurge(1200, 3, []string{"rebal-attempt"}) {
+		t.Fatalf("expected weak rebalance attempts to keep profitable neg-margin surge softened")
+	}
+	if shouldSoftenNegMarginSurge(1200, 3, []string{"rebal-fail-pressure"}) {
+		t.Fatalf("did not expect confirmed failed-rebalance pressure to soften neg-margin surge")
 	}
 }
 
@@ -2136,6 +2139,26 @@ func TestCapHighFeePressureStepUpLimitsProfitableWeakPressure(t *testing.T) {
 	want := 2000 + highFeePressureStepMaxPpm/2
 	if got != want {
 		t.Fatalf("expected profitable high-fee weak pressure to cap at %d, got %d", want, got)
+	}
+	if len(tags) != 1 || tags[0] != "high-fee-pressure-cap" {
+		t.Fatalf("unexpected cap tags: %+v", tags)
+	}
+}
+
+func TestCapHighFeePressureStepUpTreatsWeakRebalanceAttemptAsGradual(t *testing.T) {
+	got, tags := capHighFeePressureStepUp(
+		1903,
+		2226,
+		2566,
+		2,
+		false,
+		0,
+		29,
+		[]string{"rebal-attempt", "htlc-forward-hot", "surge+16%"},
+	)
+	want := 1903 + highFeePressureStepMaxPpm/2
+	if got != want {
+		t.Fatalf("expected profitable high-fee weak rebalance attempt to cap at %d, got %d", want, got)
 	}
 	if len(tags) != 1 || tags[0] != "high-fee-pressure-cap" {
 		t.Fatalf("unexpected cap tags: %+v", tags)
@@ -2165,10 +2188,10 @@ func TestCapHighFeePressureStepUpAllowsStrongPressure(t *testing.T) {
 		false,
 		2,
 		19,
-		[]string{"htlc-liquidity-hot", "surge+20%"},
+		[]string{"htlc-liquidity-hot", "surge+20%", "rebal-fail-pressure"},
 	)
 	if got != 2500 || len(tags) != 0 {
-		t.Fatalf("expected failed rebalance pressure to bypass cap, got ppm=%d tags=%+v", got, tags)
+		t.Fatalf("expected confirmed failed-rebalance pressure to bypass cap, got ppm=%d tags=%+v", got, tags)
 	}
 }
 
@@ -2213,6 +2236,27 @@ func TestCapHighFeePressureWindowUpLimitsCumulativeHighFeeUps(t *testing.T) {
 	}
 }
 
+func TestCapHighFeePressureWindowUpTreatsWeakRebalanceAttemptAsGradual(t *testing.T) {
+	got, tags := capHighFeePressureWindowUp(
+		1903,
+		2226,
+		2566,
+		autofeeRecentChangeStats{},
+		2,
+		false,
+		0,
+		29,
+		[]string{"rebal-attempt", "htlc-forward-hot", "surge+16%"},
+	)
+	want := 1903 + highFeePressureWindowMaxPpm
+	if got != want {
+		t.Fatalf("expected weak high-fee rebalance attempt to respect 24h cap at %d, got %d", want, got)
+	}
+	if len(tags) != 1 || tags[0] != "high-fee-24h-cap" {
+		t.Fatalf("unexpected tags: %+v", tags)
+	}
+}
+
 func TestCapHighFeePressureWindowUpAllowsStrongPressure(t *testing.T) {
 	got, tags := capHighFeePressureWindowUp(
 		1710,
@@ -2227,6 +2271,21 @@ func TestCapHighFeePressureWindowUpAllowsStrongPressure(t *testing.T) {
 	)
 	if got != 1810 || len(tags) != 0 {
 		t.Fatalf("expected strong liquidity pressure to bypass 24h cap, got ppm=%d tags=%+v", got, tags)
+	}
+
+	got, tags = capHighFeePressureWindowUp(
+		1710,
+		1810,
+		-1843,
+		autofeeRecentChangeStats{UpPpm24h: 150},
+		2,
+		false,
+		1,
+		18,
+		[]string{"rebal-attempt", "htlc-forward-hot", "rebal-fail-pressure"},
+	)
+	if got != 1810 || len(tags) != 0 {
+		t.Fatalf("expected confirmed failed-rebalance pressure to bypass 24h cap, got ppm=%d tags=%+v", got, tags)
 	}
 }
 

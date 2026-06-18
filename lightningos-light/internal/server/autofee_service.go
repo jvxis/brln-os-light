@@ -6105,8 +6105,12 @@ func autofeeProfitFee7dSat(hasRanking bool, ranking autofeeRankingSnapshot, fwd 
 	return (fwd.FeeMsat - rebal.FeeMsat) / 1000
 }
 
-func shouldSoftenNegMarginSurge(profitFee7dSat int64, fwdCount int, recentFailCount int) bool {
-	return profitFee7dSat > 0 && fwdCount > 0 && recentFailCount <= 0
+func hasStrongRebalanceFailPressure(tags []string) bool {
+	return containsTag(tags, "rebal-fail-pressure")
+}
+
+func shouldSoftenNegMarginSurge(profitFee7dSat int64, fwdCount int, tags []string) bool {
+	return profitFee7dSat > 0 && fwdCount > 0 && !hasStrongRebalanceFailPressure(tags)
 }
 
 func strongHTLCLiquidityPressure(liquidityFails int, attempts int) bool {
@@ -6119,8 +6123,8 @@ func strongHTLCLiquidityPressure(liquidityFails int, attempts int) bool {
 	return float64(liquidityFails)/float64(attempts) >= htlcStrongLiquidityFailRatio
 }
 
-func strongHighFeeUpPressure(recentFailCount int, recentHardFloor bool, htlcLiquidityFails int, htlcAttempts int) bool {
-	return recentFailCount > 0 || recentHardFloor || strongHTLCLiquidityPressure(htlcLiquidityFails, htlcAttempts)
+func strongHighFeeUpPressure(tags []string, recentHardFloor bool, htlcLiquidityFails int, htlcAttempts int) bool {
+	return hasStrongRebalanceFailPressure(tags) || recentHardFloor || strongHTLCLiquidityPressure(htlcLiquidityFails, htlcAttempts)
 }
 
 func hasAutofeePressureUpTag(tags []string) bool {
@@ -6141,11 +6145,11 @@ func hasAutofeePressureUpTag(tags []string) bool {
 	return false
 }
 
-func capHighFeePressureStepUp(localPpm int, finalPpm int, profitFee7dSat int64, recentFailCount int, recentHardFloor bool, htlcLiquidityFails int, htlcAttempts int, tags []string) (int, []string) {
+func capHighFeePressureStepUp(localPpm int, finalPpm int, profitFee7dSat int64, _ int, recentHardFloor bool, htlcLiquidityFails int, htlcAttempts int, tags []string) (int, []string) {
 	if localPpm < highFeePressureMinPpm || finalPpm <= localPpm || !hasAutofeePressureUpTag(tags) {
 		return finalPpm, nil
 	}
-	if recentFailCount > 0 || recentHardFloor || strongHTLCLiquidityPressure(htlcLiquidityFails, htlcAttempts) {
+	if strongHighFeeUpPressure(tags, recentHardFloor, htlcLiquidityFails, htlcAttempts) {
 		return finalPpm, nil
 	}
 	step := int(math.Round(float64(localPpm) * highFeePressureStepMaxFrac))
@@ -6160,11 +6164,11 @@ func capHighFeePressureStepUp(localPpm int, finalPpm int, profitFee7dSat int64, 
 	return limit, []string{"high-fee-pressure-cap"}
 }
 
-func capHighFeePressureWindowUp(localPpm int, finalPpm int, profitFee7dSat int64, recent autofeeRecentChangeStats, recentFailCount int, recentHardFloor bool, htlcLiquidityFails int, htlcAttempts int, tags []string) (int, []string) {
+func capHighFeePressureWindowUp(localPpm int, finalPpm int, profitFee7dSat int64, recent autofeeRecentChangeStats, _ int, recentHardFloor bool, htlcLiquidityFails int, htlcAttempts int, tags []string) (int, []string) {
 	if localPpm < highFeePressureMinPpm || finalPpm <= localPpm || !hasAutofeePressureUpTag(tags) {
 		return finalPpm, nil
 	}
-	if strongHighFeeUpPressure(recentFailCount, recentHardFloor, htlcLiquidityFails, htlcAttempts) {
+	if strongHighFeeUpPressure(tags, recentHardFloor, htlcLiquidityFails, htlcAttempts) {
 		return finalPpm, nil
 	}
 	if profitFee7dSat < 0 {
@@ -9336,7 +9340,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 	if marginActionable && marginPpm7d < 0 {
 		tags = append(tags, "neg-margin")
-		if shouldSoftenNegMarginSurge(profitFee7dSat, fwdCount, recentRebalanceWeakCount) {
+		if shouldSoftenNegMarginSurge(profitFee7dSat, fwdCount, tags) {
 			tags = append(tags, "profit-positive-neg-margin-soft")
 		} else {
 			minFwds := e.profile.NegMarginSurgeMinFwds

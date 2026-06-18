@@ -2330,6 +2330,8 @@ func TestCapGoodLiquidityDetachedOutrateUpLimitsHTLCOnlyJump(t *testing.T) {
 		366,
 		412,
 		313,
+		1000,
+		0.01,
 		true,
 		false,
 		[]string{"htlc-liquidity-hot", "htlc-forward-hot", "trend-up"},
@@ -2345,6 +2347,8 @@ func TestCapGoodLiquidityDetachedOutrateUpLimitsHTLCOnlyJump(t *testing.T) {
 		704,
 		823,
 		704,
+		1000,
+		0.01,
 		true,
 		false,
 		[]string{"htlc-liquidity-hot", "htlc-forward-hot", "trend-up"},
@@ -2358,11 +2362,33 @@ func TestCapGoodLiquidityDetachedOutrateUpLimitsHTLCOnlyJump(t *testing.T) {
 	}
 }
 
+func TestCapGoodLiquidityDetachedOutrateUpUsesTighterCapOnLowRevenue(t *testing.T) {
+	got, tags := capGoodLiquidityDetachedOutrateUp(
+		313,
+		392,
+		313,
+		116,
+		0.002,
+		true,
+		false,
+		[]string{"rescue", "htlc-liquidity-hot", "htlc-forward-hot", "trend-up"},
+	)
+	want := int(math.Ceil(313 * goodLiquidityLowRevOutrateUpCapMult))
+	if got != want {
+		t.Fatalf("expected low-revenue good-liquidity jump to cap at tighter outrate headroom %d, got %d", want, got)
+	}
+	if !containsTag(tags, "goodliq-outrate-upcap") || !containsTag(tags, "goodliq-lowrev-upcap") {
+		t.Fatalf("unexpected tags: %+v", tags)
+	}
+}
+
 func TestCapGoodLiquidityDetachedOutrateUpBypassesOnConfirmedRebalanceFail(t *testing.T) {
 	got, tags := capGoodLiquidityDetachedOutrateUp(
 		366,
 		412,
 		313,
+		-100,
+		0,
 		true,
 		false,
 		[]string{"htlc-liquidity-hot", "rebal-fail-pressure"},

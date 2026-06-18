@@ -104,7 +104,10 @@ const (
 	highFeePressureStepMaxPpm           = 75
 	highFeePressureStepMinPpm           = 15
 	highFeePressureWindowMaxPpm         = 100
-	goodLiquidityOutrateUpCapMult       = 1.15
+	goodLiquidityOutrateUpCapMult       = 1.10
+	goodLiquidityLowRevOutrateUpCapMult = 1.05
+	goodLiquidityLowRevShareMax         = 0.005
+	goodLiquidityLowRevProfitMaxSat     = int64(500)
 	htlcStrongLiquidityMinFails         = 3
 	htlcStrongLiquidityFailRatio        = 0.20
 	outFallback21dMinFwds               = 5
@@ -6203,18 +6206,27 @@ func capHighFeePressureWindowUp(localPpm int, finalPpm int, profitFee7dSat int64
 	return limit, []string{"high-fee-24h-cap"}
 }
 
-func capGoodLiquidityDetachedOutrateUp(localPpm int, finalPpm int, outPpm7d int, goodLocalLiquidity bool, recentHardFloor bool, tags []string) (int, []string) {
+func capGoodLiquidityDetachedOutrateUp(localPpm int, finalPpm int, outPpm7d int, profitFee7dSat int64, revShare float64, goodLocalLiquidity bool, recentHardFloor bool, tags []string) (int, []string) {
 	if !goodLocalLiquidity || finalPpm <= localPpm || outPpm7d <= 0 || recentHardFloor || hasStrongRebalanceFailPressure(tags) || !hasAutofeePressureUpTag(tags) {
 		return finalPpm, nil
 	}
-	limit := int(math.Ceil(float64(outPpm7d) * goodLiquidityOutrateUpCapMult))
+	mult := goodLiquidityOutrateUpCapMult
+	lowRevenueSignal := revShare <= goodLiquidityLowRevShareMax && profitFee7dSat <= goodLiquidityLowRevProfitMaxSat
+	if lowRevenueSignal {
+		mult = goodLiquidityLowRevOutrateUpCapMult
+	}
+	limit := int(math.Ceil(float64(outPpm7d) * mult))
 	if limit < localPpm {
 		limit = localPpm
 	}
 	if finalPpm <= limit {
 		return finalPpm, nil
 	}
-	return limit, []string{"goodliq-outrate-upcap"}
+	capTags := []string{"goodliq-outrate-upcap"}
+	if lowRevenueSignal {
+		capTags = append(capTags, "goodliq-lowrev-upcap")
+	}
+	return limit, capTags
 }
 
 func shouldBypassStrictCooldownUp(profile autofeeProfile, recentRebalanceCount int, htlcLiquidityHot bool, htlcLiquidityFails int, htlcAttempts int, localPpm int, outPpm7d int, rebalRefPpm int, baseCostPpm int, baseCostSrc string, goodLocalLiquidity bool, tags []string) bool {
@@ -10465,6 +10477,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		localPpm,
 		finalPpm,
 		outPpm7d,
+		profitFee7dSat,
+		revShare,
 		goodLocalLiquidityForUp,
 		recentRebalanceHardFloorApplied,
 		tags,
@@ -12443,6 +12457,8 @@ func formatAutofeeTags(d *decision) string {
 			add("high-fee-loss-noup")
 		case t == "goodliq-outrate-upcap":
 			add("goodliq-outrate-upcap")
+		case t == "goodliq-lowrev-upcap":
+			add("goodliq-lowrev-upcap")
 		case t == "htlc-goodliq-upguard":
 			add("htlc-goodliq-upguard")
 		case t == "floor-lock":

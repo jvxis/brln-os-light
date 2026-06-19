@@ -464,6 +464,13 @@ type RebalanceOverview struct {
 	LiveCostSat                         int64                         `json:"live_cost_sat"`
 	Effectiveness7d                     float64                       `json:"effectiveness_7d"`
 	EffectivenessExecution7d            float64                       `json:"effectiveness_execution_7d"`
+	// 30d trailing baselines for the toggleable health-signal gauges
+	// (effectiveness, fast-path, payback). Cached server-side; may be 0 until
+	// the first background recompute completes.
+	Effectiveness30d             float64 `json:"effectiveness_30d"`
+	FastPathHitRate30d           float64 `json:"fast_path_hit_rate_30d"`
+	PaybackProgressRebalanced30d float64 `json:"payback_progress_rebalanced_30d"`
+	HealthSignals30dReady        bool    `json:"health_signals_30d_ready"`
 	JobsWithoutAttempt7d                int64                         `json:"jobs_without_attempt_7d"`
 	JobsWithoutAttemptRate7d            float64                       `json:"jobs_without_attempt_rate_7d"`
 	ROI7d                               float64                       `json:"roi_7d"`
@@ -1441,6 +1448,15 @@ type RebalanceService struct {
 	mcResetCount                    int64
 	drainRateCache                  map[uint64]int64
 	drainRateCacheAt                time.Time
+
+	// Cache da baseline trailing 30d dos health signals (effectiveness,
+	// fast-path hit, payback rebalanced). As agregações de 30d sobre
+	// rebalance_jobs/attempts/notifications são pesadas e a baseline anda
+	// devagar, então é cacheada com refresh em background (nunca bloqueia o
+	// overview): se estiver stale, dispara recompute assíncrono e serve o
+	// valor cacheado (vazio na 1ª chamada, popula no próximo refresh).
+	healthSignals30dCache      rebalanceHealthSignals30d
+	healthSignals30dRefreshing bool
 
 	// Cache curto de ListChannels para evitar saturação de gRPC quando
 	// múltiplos jobs (cooldown-probe burst, auto-restart watch, auto-scan)
@@ -13030,6 +13046,115 @@ group by coalesce(rebal_target_chan_id, channel_id)
 	return costs, rows.Err()
 }
 
+// rebalanceHealthSignals30d holds the 30-day trailing averages of the three
+// health-signal gauges that the UI can toggle to (effectiveness, fast-path hit,
+// payback rebalanced). Sell-through is intentionally excluded — it keeps its
+// fixed 72h/168h attribution windows. Cached because the 30d aggregations are
+// heavy and the baseline drifts slowly.
+type rebalanceHealthSignals30d struct {
+	Effectiveness        float64
+	FastPathHitRate      float64
+	PaybackProgressRebal float64
+	ComputedAt           time.Time
+	Valid                bool
+}
+
+const rebalanceHealthSignals30dTTL = time.Hour
+
+// healthSignals30d returns the cached 30d baseline, kicking off a non-blocking
+// background recompute when the cache is empty or older than the TTL. The
+// overview never blocks on the heavy 30d scan: the first call returns an empty
+// (Valid=false) value and the cache populates on the next refresh.
+func (s *RebalanceService) healthSignals30d() rebalanceHealthSignals30d {
+	s.mu.Lock()
+	cached := s.healthSignals30dCache
+	stale := !cached.Valid || time.Since(cached.ComputedAt) >= rebalanceHealthSignals30dTTL
+	if stale && !s.healthSignals30dRefreshing && s.db != nil {
+		s.healthSignals30dRefreshing = true
+		go s.refreshHealthSignals30d()
+	}
+	s.mu.Unlock()
+	return cached
+}
+
+func (s *RebalanceService) refreshHealthSignals30d() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out := s.computeHealthSignals30d(ctx)
+	s.mu.Lock()
+	if out.Valid {
+		s.healthSignals30dCache = out
+	}
+	s.healthSignals30dRefreshing = false
+	s.mu.Unlock()
+}
+
+// computeHealthSignals30d runs the three 30d-window aggregations. Mirrors the
+// 7d/24h queries used for the live gauges (effectiveness ~13600, fast-path
+// fetchFastPathTelemetry24h, payback fetchPaybackTotals7d) over a 30d window.
+func (s *RebalanceService) computeHealthSignals30d(ctx context.Context) rebalanceHealthSignals30d {
+	out := rebalanceHealthSignals30d{ComputedAt: time.Now()}
+	if s.db == nil {
+		return out
+	}
+	// Effectiveness 30d = jobs succeeded/partial ÷ jobs that had an attempt.
+	var successCount, attemptedCount int64
+	if err := s.db.QueryRow(ctx, `
+with jobs_30d as (
+  select id, status from rebalance_jobs where completed_at >= now() - interval '30 days'
+),
+jobs_with_attempts as (
+  select j.status, exists (select 1 from rebalance_attempts a where a.job_id = j.id) as has_attempt
+  from jobs_30d j
+)
+select
+  coalesce(sum(case when status in ('succeeded','partial') then 1 else 0 end), 0),
+  coalesce(sum(case when has_attempt then 1 else 0 end), 0)
+from jobs_with_attempts
+`).Scan(&successCount, &attemptedCount); err != nil {
+		return out
+	}
+	if attemptedCount > 0 {
+		out.Effectiveness = float64(successCount) / float64(attemptedCount)
+	}
+	// Fast-path hit 30d = delegated fast-path successes ÷ attempts.
+	var fpAttempts, fpSuccesses int64
+	_ = s.db.QueryRow(ctx, `
+select
+  coalesce(sum(case when fast_path_attempted then 1 else 0 end), 0),
+  coalesce(sum(case when fast_path_attempted and status='succeeded' and reason='delegated-fast-path' then 1 else 0 end), 0)
+from rebalance_jobs
+where completed_at >= now() - interval '30 days'
+`).Scan(&fpAttempts, &fpSuccesses)
+	if fpAttempts > 0 {
+		out.FastPathHitRate = float64(fpSuccesses) / float64(fpAttempts)
+	}
+	// Payback rebalanced 30d = forward fees on rebalanced channels ÷ rebalance cost.
+	var revenueRebalancedMsat, costMsat int64
+	_ = s.db.QueryRow(ctx, `
+with rebalance_channels as (
+  select distinct coalesce(rebal_target_chan_id, channel_id) as channel_id
+  from notifications
+  where type='rebalance' and status in ('SETTLED','SUCCEEDED')
+    and occurred_at >= now() - interval '30 days'
+    and coalesce(rebal_target_chan_id, channel_id) is not null
+),
+forward_fees as (
+  select channel_id, case when fee_msat > 0 then fee_msat else fee_sat * 1000 end as fee_msat
+  from notifications
+  where type='forward' and occurred_at >= now() - interval '30 days' and channel_id is not null
+)
+select
+  coalesce((select sum(f.fee_msat) from forward_fees f join rebalance_channels r on r.channel_id = f.channel_id), 0),
+  coalesce((select sum(case when fee_msat > 0 then fee_msat else fee_sat * 1000 end) from notifications where type='rebalance' and status in ('SETTLED','SUCCEEDED') and occurred_at >= now() - interval '30 days'), 0)
+`).Scan(&revenueRebalancedMsat, &costMsat)
+	if costMsat > 0 {
+		out.PaybackProgressRebal = float64(revenueRebalancedMsat) / float64(costMsat)
+	}
+	out.Valid = true
+	return out
+}
+
 func (s *RebalanceService) fetchPaybackTotals7d(ctx context.Context) (paybackTotals7d, error) {
 	if s.db == nil {
 		return paybackTotals7d{}, nil
@@ -13724,6 +13849,8 @@ where report_date >= current_date - interval '6 days'
 		lastSovereignDecisionAtText = lastSovereignDecisionAt.UTC().Format(time.RFC3339)
 	}
 
+	hs30 := s.healthSignals30d()
+
 	overview := RebalanceOverview{
 		AutoEnabled:                         cfg.AutoEnabled,
 		Profile:                             cfg.Profile,
@@ -13754,6 +13881,10 @@ where report_date >= current_date - interval '6 days'
 		LiveCostSat:                         liveCost,
 		Effectiveness7d:                     effectiveness,
 		EffectivenessExecution7d:            effectivenessExecution,
+		Effectiveness30d:                    hs30.Effectiveness,
+		FastPathHitRate30d:                  hs30.FastPathHitRate,
+		PaybackProgressRebalanced30d:        hs30.PaybackProgressRebal,
+		HealthSignals30dReady:               hs30.Valid,
 		JobsWithoutAttempt7d:                jobsWithoutAttemptCount,
 		JobsWithoutAttemptRate7d:            jobsWithoutAttemptRate,
 		ROI7d:                               roi,

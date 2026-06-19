@@ -2306,7 +2306,7 @@ export default function Wallet() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="wallet-activity-detail-title"
-            className="relative z-10 w-full max-w-2xl rounded-3xl border border-white/10 bg-slate/95 p-6 shadow-panel"
+            className="relative z-10 flex max-h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-white/10 bg-slate/95 p-6 shadow-panel"
           >
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -2320,7 +2320,7 @@ export default function Wallet() {
               </button>
             </div>
 
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <div className="mt-5 grid min-h-0 gap-3 overflow-y-auto pr-2 sm:grid-cols-2">
               <div className="rounded-2xl border border-white/10 bg-ink/50 p-4">
                 <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailAmount')}</div>
                 <div className="mt-1 text-base font-semibold">{formatSats(Number(selectedActivity.amount_sat || 0))} sats</div>
@@ -2392,7 +2392,7 @@ export default function Wallet() {
               {Array.isArray(selectedActivity.addresses) && selectedActivity.addresses.length > 0 && (
                 <div className="rounded-2xl border border-white/10 bg-ink/50 p-4 sm:col-span-2">
                   <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailAddresses')}</div>
-                  <div className="mt-1 space-y-2">
+                  <div className="mt-1 max-h-48 space-y-2 overflow-y-auto overscroll-contain pr-2 [scrollbar-gutter:stable]">
                     {selectedActivity.addresses.map((address, idx) => (
                       <div key={`${address}-${idx}`} className="break-all font-mono text-xs text-fog/80">{address}</div>
                     ))}

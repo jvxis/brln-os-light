@@ -2823,6 +2823,7 @@
     "peerDisconnected": "Peer desconectado.",
     "peers": "Peers",
     "pendingChannels": "Canais pendentes",
+    "pendingChannelsSummary": "Pendentes: {{count}} | Capacidade: {{capacity}}",
     "pingLabel": "Ping",
     "pingMs": "{{value}} ms",
     "pingSeconds": "{{value}} s",

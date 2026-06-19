@@ -837,6 +837,7 @@ const PEER_HASH_PARAM = 'peer_pubkey'
 const SECTION_HASH_PARAM = 'section'
 const PEERS_SECTION_ID = 'peers-section'
 const CLOSE_RECOVERY_SECTION_ID = 'close-recovery-section'
+const PENDING_CHANNELS_DETAILS_ID = 'pending-channels-details'
 const AUTOFEE_SECTION_ID = 'autofee-section'
 const LIGHTNING_TOOLS_SECTION_ID = 'lightning-tools-section'
 const ADD_PEER_TOOL_SECTION_ID = 'add-peer-tool-section'
@@ -994,6 +995,7 @@ export default function LightningOps() {
   const [lightningToolsOpen, setLightningToolsOpen] = useState(false)
   const [peersOpen, setPeersOpen] = useState(false)
   const [closedChannelsOpen, setClosedChannelsOpen] = useState(false)
+  const [pendingChannelsOpen, setPendingChannelsOpen] = useState(false)
   const [scbRecoveryOpen, setScbRecoveryOpen] = useState(false)
   const [closedChannelSearch, setClosedChannelSearch] = useState('')
   const [closedChannelFilter, setClosedChannelFilter] = useState<'all' | 'cooperative' | 'force' | 'breach' | 'other'>('all')
@@ -3643,6 +3645,16 @@ export default function LightningOps() {
   )
   const pendingOpen = useMemo(() => pendingChannels.filter((ch) => ch.status === 'opening'), [pendingChannels])
   const pendingClose = useMemo(() => pendingChannels.filter((ch) => ch.status !== 'opening'), [pendingChannels])
+  const pendingOpenCapacitySat = useMemo(
+    () => pendingOpen.reduce((total, ch) => total + Math.max(0, Number(ch.capacity_sat || 0)), 0),
+    [pendingOpen]
+  )
+  const pendingCloseCapacitySat = useMemo(
+    () => pendingClose.reduce((total, ch) => total + Math.max(0, Number(ch.capacity_sat || 0)), 0),
+    [pendingClose]
+  )
+  const pendingTotalCount = pendingOpen.length + pendingClose.length
+  const pendingTotalCapacitySat = pendingOpenCapacitySat + pendingCloseCapacitySat
   const closedChannelsSorted = useMemo(() => sortClosedChannelsList(closedChannels), [closedChannels])
   const closeRecoveryActiveSessions = useMemo(
     () => closeRecoverySessions.filter((item) => item.state !== 'closed_terminal' && item.state !== 'funds_recovered'),
@@ -6103,10 +6115,20 @@ export default function LightningOps() {
           )}
         </div>
 
-        {channelsSubview === 'channels' && (pendingOpen.length > 0 || pendingClose.length > 0) && (
+        {channelsSubview === 'channels' && pendingTotalCount > 0 && (
           <div className="rounded-2xl border border-brass/30 bg-brass/10 p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h4 className="text-sm font-semibold text-brass">{t('lightningOps.pendingChannels')}</h4>
+              <div>
+                <h4 className="text-sm font-semibold text-brass">{t('lightningOps.pendingChannels')}</h4>
+                {!pendingChannelsOpen && (
+                  <p className="mt-1 text-xs text-fog/70">
+                    {t('lightningOps.pendingChannelsSummary', {
+                      count: pendingTotalCount,
+                      capacity: formatSatsValue(pendingTotalCapacitySat)
+                    })}
+                  </p>
+                )}
+              </div>
               <div className="flex flex-wrap items-center gap-2">
                 <p className="text-xs text-brass">
                   {t('lightningOps.opening')}: <span className="text-glow">{pendingOpen.length}</span> | {t('lightningOps.closing')}{' '}
@@ -6117,9 +6139,19 @@ export default function LightningOps() {
                     {t('lightningOps.closeRecoveryOpen')}
                   </button>
                 )}
+                <button
+                  className="btn-secondary text-xs px-3 py-1.5"
+                  type="button"
+                  onClick={() => setPendingChannelsOpen((open) => !open)}
+                  aria-expanded={pendingChannelsOpen}
+                  aria-controls={PENDING_CHANNELS_DETAILS_ID}
+                >
+                  {pendingChannelsOpen ? t('common.hide') : t('common.open')}
+                </button>
               </div>
             </div>
-            <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            {pendingChannelsOpen && (
+              <div id={PENDING_CHANNELS_DETAILS_ID} className="mt-3 grid gap-3 lg:grid-cols-2">
               <div className="rounded-2xl border border-white/10 bg-ink/60 p-4">
                 <div className="flex items-center justify-between gap-2">
                   <h5 className="text-xs font-semibold text-glow uppercase tracking-wide">{t('lightningOps.opening')}</h5>
@@ -6372,6 +6404,7 @@ export default function LightningOps() {
                 )}
               </div>
             </div>
+              )}
           </div>
         )}
 

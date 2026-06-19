@@ -184,6 +184,10 @@ export type RebalanceOverview = {
   live_cost_sat: number
   effectiveness_7d: number
   effectiveness_execution_7d?: number
+  effectiveness_30d?: number
+  fast_path_hit_rate_30d?: number
+  payback_progress_rebalanced_30d?: number
+  health_signals_30d_ready?: boolean
   jobs_without_attempt_7d?: number
   jobs_without_attempt_rate_7d?: number
   roi_7d: number

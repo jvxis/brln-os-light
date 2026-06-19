@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { TFunction } from 'i18next'
 import HeroTile, { type HeroTone } from './HeroTile'
 import HealthGauge from './HealthGauge'
@@ -57,6 +58,13 @@ export default function OverviewHero({
   classicOpen,
   onToggleClassic,
 }: OverviewHeroProps) {
+  // Health Signals window toggle (7d default / 30d trailing baseline). Affects
+  // only the effectiveness, fast-path and payback gauges; sell-through keeps its
+  // fixed 72h/168h windows.
+  const [healthWindow, setHealthWindow] = useState<'7d' | '30d'>('7d')
+  const is30d = healthWindow === '30d'
+  const hs30Ready = overview.health_signals_30d_ready ?? false
+  const hsPending = is30d && !hs30Ready
 
   // Autopilot tile
   const autoEnabled = !!overview.auto_enabled
@@ -100,7 +108,13 @@ export default function OverviewHero({
   const sellThroughSlow = (overview.sovereign_sellthrough_slow_7d ?? 0) * 100
   const sellThroughWindowH = overview.sovereign_sellthrough_window_hours ?? 72
   const sellThroughSlowWindowH = overview.sovereign_sellthrough_slow_window_hours ?? 168
-  const paybackRebal = (overview.payback_progress_rebalanced ?? 0) * 100
+
+  // Windowed values for the toggleable gauges (7d ⇄ 30d). Separate from the
+  // card values above so the toggle only moves the Health Signals panel.
+  const hsEffectiveness = (is30d ? (overview.effectiveness_30d ?? 0) : (overview.effectiveness_7d ?? 0)) * 100
+  const hsFastPath = (is30d ? (overview.fast_path_hit_rate_30d ?? 0) : (overview.fast_path_hit_rate_24h ?? 0)) * 100
+  const hsPayback = (is30d ? (overview.payback_progress_rebalanced_30d ?? 0) : (overview.payback_progress_rebalanced ?? 0)) * 100
+  const hsWindowLabel = is30d ? '30d' : '7d'
 
   // Node calibration (Phase 1) — shown in the Autopilot card like the Fee Center.
   const calib = overview.node_calibration
@@ -309,26 +323,40 @@ export default function OverviewHero({
 
       {/* HEALTH GAUGES */}
       <article className="rounded-3xl border border-white/10 bg-white/[0.02] p-4 shadow-panel">
-        <p className="mb-3 text-[11px] uppercase tracking-[0.24em] text-fog/45">
-          {t('rebalanceCenter.heroes.healthSignals')}
-        </p>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <p className="text-[11px] uppercase tracking-[0.24em] text-fog/45">
+            {t('rebalanceCenter.heroes.healthSignals', { window: hsWindowLabel.toUpperCase() })}
+          </p>
+          <div className="flex items-center gap-1 text-[11px]">
+            {(['7d', '30d'] as const).map((w) => (
+              <button
+                key={w}
+                type="button"
+                onClick={() => setHealthWindow(w)}
+                className={`rounded px-2 py-0.5 transition-colors ${healthWindow === w ? 'bg-emerald-400/20 text-emerald-200' : 'text-fog/45 hover:text-fog/70'}`}
+              >
+                {w}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="grid items-start gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-4">
           <HealthGauge
             label={t('rebalanceCenter.heroes.gaugeEffectiveness')}
-            value={effectiveness}
+            value={hsPending ? 0 : hsEffectiveness}
             target={25}
             targetLabel={t('rebalanceCenter.heroes.gaugeTarget', { value: 25 })}
-            valueLabel={formatPct(effectiveness, 1)}
-            tone={effectiveness >= 25 ? 'ok' : effectiveness >= 15 ? 'warn' : 'danger'}
+            valueLabel={hsPending ? t('rebalanceCenter.heroes.gaugeComputing') : formatPct(hsEffectiveness, 1)}
+            tone={hsPending ? 'warn' : hsEffectiveness >= 25 ? 'ok' : hsEffectiveness >= 15 ? 'warn' : 'danger'}
             hint={t('rebalanceCenter.heroes.hintEffectiveness')}
           />
           <HealthGauge
             label={t('rebalanceCenter.heroes.gaugeFastPath')}
-            value={fpHitRate * 100}
+            value={hsPending ? 0 : hsFastPath}
             target={20}
             targetLabel={t('rebalanceCenter.heroes.gaugeTarget', { value: 20 })}
-            valueLabel={formatPct(fpHitRate * 100, 1)}
-            tone={fpHitRate * 100 >= 20 ? 'ok' : fpHitRate * 100 >= 10 ? 'warn' : 'danger'}
+            valueLabel={hsPending ? t('rebalanceCenter.heroes.gaugeComputing') : formatPct(hsFastPath, 1)}
+            tone={hsPending ? 'warn' : hsFastPath >= 20 ? 'ok' : hsFastPath >= 10 ? 'warn' : 'danger'}
             hint={t('rebalanceCenter.heroes.hintFastPath')}
           />
           <div className="space-y-3">
@@ -353,11 +381,11 @@ export default function OverviewHero({
           </div>
           <HealthGauge
             label={t('rebalanceCenter.heroes.gaugePaybackRebal')}
-            value={paybackRebal}
+            value={hsPending ? 0 : hsPayback}
             target={100}
             targetLabel={t('rebalanceCenter.heroes.gaugeTarget', { value: 100 })}
-            valueLabel={formatPct(paybackRebal, 1)}
-            tone={paybackRebal >= 80 ? 'ok' : paybackRebal >= 50 ? 'warn' : 'danger'}
+            valueLabel={hsPending ? t('rebalanceCenter.heroes.gaugeComputing') : formatPct(hsPayback, 1)}
+            tone={hsPending ? 'warn' : hsPayback >= 80 ? 'ok' : hsPayback >= 50 ? 'warn' : 'danger'}
             hint={t('rebalanceCenter.heroes.hintPaybackRebal')}
           />
         </div>

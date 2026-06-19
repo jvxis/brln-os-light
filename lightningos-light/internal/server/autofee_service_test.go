@@ -536,6 +536,26 @@ func TestSelectAutofeeRefreshReferenceUses21dFallbacks(t *testing.T) {
 	}
 }
 
+func TestApplyAutofeeRefreshSeedFloorProtectsRebalOnlyReference(t *testing.T) {
+	target, ref, source, applied := applyAutofeeRefreshSeedFloor(965, 877, "rebalppm21d+10%", 1462)
+	if !applied {
+		t.Fatalf("expected seed floor to protect rebal-only refresh")
+	}
+	if target != 1170 || ref != 1170 || source != "rebalppm21d+10%+seed-floor" {
+		t.Fatalf("unexpected seed floor refresh: target=%d ref=%d source=%q", target, ref, source)
+	}
+}
+
+func TestApplyAutofeeRefreshSeedFloorSkipsOutrateReference(t *testing.T) {
+	target, ref, source, applied := applyAutofeeRefreshSeedFloor(965, 965, "outppm21d", 1462)
+	if applied {
+		t.Fatalf("did not expect seed floor on outrate refresh")
+	}
+	if target != 965 || ref != 965 || source != "outppm21d" {
+		t.Fatalf("unexpected outrate refresh mutation: target=%d ref=%d source=%q", target, ref, source)
+	}
+}
+
 func TestShouldAutofeeIdleRefreshChannel(t *testing.T) {
 	cfg := AutofeeConfig{IdleRefreshEnabled: true, OperationMode: autofeeOperationModeBalanced}
 	if !shouldAutofeeIdleRefreshChannel(cfg, forwardStat{}, inboundStat{}, rebalStat{}) {
@@ -757,6 +777,19 @@ func TestApplyAutofeeIdleRefreshDecisionHoldsSmallDelta(t *testing.T) {
 	}
 	if st.LastPpm != 528 || !st.LastTs.Equal(lastChange) || st.LastDir != "up" || st.StalledRounds != 3 {
 		t.Fatalf("small-delta idle refresh should not mutate outbound apply state: %+v", st)
+	}
+}
+
+func TestFormatAutofeeOutrateSegmentShowsSyntheticReference(t *testing.T) {
+	d := &decision{
+		OutPpm7d:     635,
+		OutPpm7dRaw:  0,
+		OutPpmSource: "slow-cycle-30d",
+	}
+	got := formatAutofeeOutrateSegment(d)
+	want := "out_ppm7d≈0 | out_ref≈635(slow-cycle-30d)"
+	if got != want {
+		t.Fatalf("unexpected outrate segment: got %q want %q", got, want)
 	}
 }
 
@@ -3079,7 +3112,7 @@ func TestDeriveRebalanceExecutionPolicyBudgetBlockedTarget(t *testing.T) {
 		EligibleAsTarget: true,
 	}
 
-	tags, restrict, _, active := deriveRebalanceExecutionPolicy(
+	tags, restrict, anchor, active := deriveRebalanceExecutionPolicy(
 		profile,
 		runtime,
 		true,
@@ -3100,8 +3133,11 @@ func TestDeriveRebalanceExecutionPolicyBudgetBlockedTarget(t *testing.T) {
 		false,
 		1300,
 	)
-	if !restrict || !active {
-		t.Fatalf("expected budget-blocked sink to activate rebalance execution guard")
+	if !restrict {
+		t.Fatalf("expected budget-blocked sink to restrict upward pressure")
+	}
+	if active || anchor != 0 {
+		t.Fatalf("budget pressure must not create a down anchor, active=%v anchor=%d", active, anchor)
 	}
 	if !containsTag(tags, "rebal-exec-budget") {
 		t.Fatalf("expected rebal-exec-budget tag, got %+v", tags)

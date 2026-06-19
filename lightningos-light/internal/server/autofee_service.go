@@ -32,6 +32,7 @@ const (
 	autofeeNativeSeedMinSamples  = 6
 	autofeeIdleRefreshWindowDays = 7
 	autofeeRefreshRebalMarkup    = 0.10
+	autofeeRefreshRebalSeedFloor = 0.80
 	autofeeMinApplyDeltaPpm      = 5
 	autofeeMinApplyDeltaFrac     = 0.01
 )
@@ -506,6 +507,8 @@ type autofeeLogItem struct {
 	OutRatio                 float64  `json:"out_ratio,omitempty"`
 	OutRatioEffective        float64  `json:"out_ratio_effective,omitempty"`
 	OutPpm7d                 int      `json:"out_ppm7d,omitempty"`
+	OutPpm7dRaw              int      `json:"out_ppm7d_raw,omitempty"`
+	OutPpmSource             string   `json:"out_ppm_source,omitempty"`
 	RebalPpm7d               int      `json:"rebal_ppm7d,omitempty"`
 	Seed                     int      `json:"seed,omitempty"`
 	Floor                    int      `json:"floor,omitempty"`
@@ -3282,6 +3285,13 @@ func (s *AutofeeService) refreshReferenceFees(ctx context.Context, opts autofeeR
 			rebalStats21d.ByChannel[ch.ChannelID],
 			autofeeRefreshRebalMarkup,
 		)
+		if ok && isRebalOnlyAutofeeRefreshSource(source) {
+			if seedPpm, _, seedErr := engine.refreshSeedForChannel(ctx, strings.TrimSpace(ch.RemotePubkey)); seedErr == nil {
+				targetPpm, referencePpm, source, _ = applyAutofeeRefreshSeedFloor(targetPpm, referencePpm, source, seedPpm)
+			} else if s.logger != nil {
+				s.logger.Printf("autofee refresh: seed floor unavailable for %s: %v", item.ChannelPoint, seedErr)
+			}
+		}
 		if !ok {
 			seedPpm, seedSource, seedErr := engine.refreshSeedForChannel(ctx, strings.TrimSpace(ch.RemotePubkey))
 			if seedErr != nil {
@@ -4943,6 +4953,31 @@ func selectAutofeeRefreshReference(capacitySat int64, forward7d forwardStat, for
 	return 0, 0, "", false
 }
 
+func isRebalOnlyAutofeeRefreshSource(source string) bool {
+	source = strings.TrimSpace(source)
+	return strings.HasPrefix(source, "rebalppm")
+}
+
+func applyAutofeeRefreshSeedFloor(targetPpm int, referencePpm int, source string, seedPpm float64) (int, int, string, bool) {
+	if targetPpm <= 0 || seedPpm <= 0 || !isRebalOnlyAutofeeRefreshSource(source) {
+		return targetPpm, referencePpm, source, false
+	}
+	seedFloor := int(math.Round(seedPpm * autofeeRefreshRebalSeedFloor))
+	if seedFloor <= 0 || targetPpm >= seedFloor {
+		return targetPpm, referencePpm, source, false
+	}
+	if referencePpm < seedFloor {
+		referencePpm = seedFloor
+	}
+	source = strings.TrimSpace(source)
+	if source == "" {
+		source = "seed-floor"
+	} else if !strings.Contains(source, "seed-floor") {
+		source += "+seed-floor"
+	}
+	return seedFloor, referencePpm, source, true
+}
+
 func hasAutofeeForwardMovement(st forwardStat) bool {
 	return st.Count > 0 || st.AmtMsat > 0 || st.FeeMsat > 0
 }
@@ -5118,6 +5153,13 @@ func (e *autofeeEngine) maybeApplyIdleRefresh(ctx context.Context, ch lndclient.
 		rebal21d,
 		autofeeRefreshRebalMarkup,
 	)
+	if ok && isRebalOnlyAutofeeRefreshSource(source) {
+		if seedPpm, _, err := e.refreshSeedForChannel(ctx, strings.TrimSpace(ch.RemotePubkey)); err == nil {
+			targetPpm, referencePpm, source, _ = applyAutofeeRefreshSeedFloor(targetPpm, referencePpm, source, seedPpm)
+		} else if e.svc != nil && e.svc.logger != nil {
+			e.svc.logger.Printf("autofee: idle refresh seed floor unavailable for %s: %v", ch.ChannelPoint, err)
+		}
+	}
 	if !ok {
 		seedPpm, seedSource, err := e.refreshSeedForChannel(ctx, strings.TrimSpace(ch.RemotePubkey))
 		if err != nil {
@@ -6726,6 +6768,9 @@ func deriveRebalanceExecutionPolicy(profile autofeeProfile, runtime autofeeRebal
 		return nil, false, 0, false
 	}
 	tags = append(tags, "rebal-exec-"+reason)
+	if reason == "budget" {
+		return tags, true, 0, false
+	}
 
 	anchor, ok := deriveMatureEmptySinkHistoryAnchor(profile, localPpm, outPpm7d, rebalHistoryRefPpm, baseCostPpm, baseCostSrc)
 	if !ok {
@@ -7722,6 +7767,8 @@ type decision struct {
 	OutRatio                float64
 	OutRatioEffective       float64
 	OutPpm7d                int
+	OutPpm7dRaw             int
+	OutPpmSource            string
 	RebalPpm                int
 	Seed                    int
 	Margin                  int
@@ -7888,6 +7935,17 @@ func (d *decision) withError(err error) *decision {
 	return d
 }
 
+func formatAutofeeOutrateSegment(d *decision) string {
+	if d == nil {
+		return "out_ppm7d≈0"
+	}
+	source := strings.TrimSpace(d.OutPpmSource)
+	if source == "" || source == "7d" || d.OutPpm7d == d.OutPpm7dRaw {
+		return fmt.Sprintf("out_ppm7d≈%d", d.OutPpm7d)
+	}
+	return fmt.Sprintf("out_ppm7d≈%d | out_ref≈%d(%s)", maxInt(0, d.OutPpm7dRaw), d.OutPpm7d, source)
+}
+
 func formatAutofeeDecisionLine(d *decision, dryRun bool, isError bool) (string, string) {
 	if d == nil {
 		return "", "kept"
@@ -7967,14 +8025,15 @@ func formatAutofeeDecisionLine(d *decision, dryRun bool, isError bool) (string, 
 	if targetFinal != targetRaw {
 		targetDisplay = fmt.Sprintf("%d→%d", targetRaw, targetFinal)
 	}
-	line := fmt.Sprintf("%s %s: %s%s | alvo %s | out_ratio %.2f | out_ppm7d≈%d | rebal_ppm7d≈%d | seed≈%d | floor≥%d%s | cost_marg_ppm=%d | profit7d_sat=%d | rev_share≈%.2f | %s",
+	outSegment := formatAutofeeOutrateSegment(d)
+	line := fmt.Sprintf("%s %s: %s%s | alvo %s | out_ratio %.2f | %s | rebal_ppm7d≈%d | seed≈%d | floor≥%d%s | cost_marg_ppm=%d | profit7d_sat=%d | rev_share≈%.2f | %s",
 		prefix,
 		alias,
 		action,
 		deltaStr,
 		targetDisplay,
 		d.OutRatio,
-		d.OutPpm7d,
+		outSegment,
 		d.RebalPpm,
 		d.Seed,
 		d.Floor,
@@ -8051,6 +8110,8 @@ func buildAutofeeChannelLogEntry(d *decision, category string, dryRun bool, err 
 		OutRatio:                d.OutRatio,
 		OutRatioEffective:       d.OutRatioEffective,
 		OutPpm7d:                d.OutPpm7d,
+		OutPpm7dRaw:             d.OutPpm7dRaw,
+		OutPpmSource:            d.OutPpmSource,
 		RebalPpm7d:              d.RebalPpm,
 		Seed:                    d.Seed,
 		Floor:                   d.Floor,
@@ -8466,14 +8527,15 @@ func buildTelegramAutofeeChangedChannelLineFull(d *decision) string {
 	if tagLine == "" {
 		tagLine = "-"
 	}
-	line := fmt.Sprintf("%s %s: %s%s | target %s | out_ratio %.2f | out_ppm7d≈%d | rebal_ppm7d≈%d | seed≈%d | floor≥%d%s | cost_marg_ppm=%d | profit7d_sat=%d | rev_share≈%.2f | %s",
+	outSegment := formatAutofeeOutrateSegment(d)
+	line := fmt.Sprintf("%s %s: %s%s | target %s | out_ratio %.2f | %s | rebal_ppm7d≈%d | seed≈%d | floor≥%d%s | cost_marg_ppm=%d | profit7d_sat=%d | rev_share≈%.2f | %s",
 		prefix,
 		alias,
 		action,
 		deltaStr,
 		targetDisplay,
 		d.OutRatio,
-		d.OutPpm7d,
+		outSegment,
 		d.RebalPpm,
 		d.Seed,
 		d.Floor,
@@ -9749,8 +9811,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	globalNegLockApplied := false
 	lockSkipTag := ""
 	if negMarginGlobal && !stagnationActive && !highOutStagnationPressure {
-		hasRecentRebal := !marketRefillMode && (observedRebalSignal || rebalFrom21dFallback || slowCycle30dRebalApplied)
-		hasRecentOutrate := (observedOutSignal && fwdCount >= 4) || outFrom21dFallback || slowCycle30dOutApplied
+		hasRecentRebal := !marketRefillMode && (observedRebalSignal || rebalFrom21dFallback)
+		hasRecentOutrate := (observedOutSignal && fwdCount >= 4) || outFrom21dFallback
 		canLockGlobally := hasRecentRebal || hasRecentOutrate
 		if canLockGlobally {
 			allowSoften := false
@@ -10784,6 +10846,17 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	case !marketRefillMode && normalizeRebalCostMode(e.cfg.RebalCostMode) == "global" && rebalGlobalPpm > 0:
 		loggedRebalPpm = rebalGlobalPpm
 	}
+	outPpmSource := ""
+	switch {
+	case slowCycle30dOutApplied:
+		outPpmSource = "slow-cycle-30d"
+	case outFrom21dFallback && outPpm7dRaw <= 0:
+		outPpmSource = "21d"
+	case outPpm7dRaw > 0:
+		outPpmSource = "7d"
+	case outPpm7d > 0:
+		outPpmSource = "reference"
+	}
 
 	tags = append(tags, seedTags...)
 	return &decision{
@@ -10807,6 +10880,8 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		OutRatio:                rawOutRatio,
 		OutRatioEffective:       outRatio,
 		OutPpm7d:                outPpm7d,
+		OutPpm7dRaw:             outPpm7dRaw,
+		OutPpmSource:            outPpmSource,
 		RebalPpm:                loggedRebalPpm,
 		Seed:                    int(seed),
 		Margin:                  marginPpm7d,

@@ -86,8 +86,15 @@ Se `roi_7d` cair abaixo de 1.0 após ligar D, é sinal de que o fee_limit calcul
 
 ## Próximos passos pendentes
 
-1. **Telemetria de fast-path**: contar quantos jobs sucederam via fast-path vs via legacy fallback. Hoje só temos no log + `reason='delegated-fast-path'` na tabela rebalance_jobs.
-2. **A/B test interno**: deixar metade dos operadores no flag-on e metade off por 7 dias, comparar métricas.
-3. **Reavaliar Política C, ROI guardrail, cost gate 1.4** — se fast-path sucede, alguns desses filtros podem estar sendo conservadores demais. Após dados, revisar thresholds.
-4. **Considerar default flip pra true** após 14 dias de A/B com evidência clara de melhoria.
-5. **Auto-detect**: se `effectiveness_7d` ficar abaixo de threshold por X horas, sugerir ao operador ligar fast-path (notification + link na UI).
+Audit date: 2026-06-20.
+
+Done since this investigation:
+
+1. **Telemetria de fast-path**: 24h attempts/successes/fallthroughs/durations are now exposed through the rebalance overview.
+2. **Default flip**: `delegated_fast_path_enabled` now defaults to `true` in backend schema/config and in the UI fallback.
+
+Still pending:
+
+1. **A/B test interno**: deixar metade dos operadores no flag-on e metade off por 7 dias, comparar métricas.
+2. **Reavaliar Política C, ROI guardrail, cost gate 1.4** — se fast-path sucede, alguns desses filtros podem estar sendo conservadores demais. Após dados, revisar thresholds.
+3. **Auto-detect**: se `effectiveness_7d` ficar abaixo de threshold por X horas, sugerir ao operador ligar fast-path (notification + link na UI).

@@ -2,7 +2,18 @@
 
 ## Status
 
-Proposed.
+Mostly implemented.
+
+Audit date: 2026-06-20.
+
+Implemented: Graph Explorer close-event schema fields, local LND enrichment,
+background classifier loop, on-chain lookup, and native classification for
+common `mutual_close` / `force_close` patterns.
+
+Still open: high-confidence `penalty_close` inference for arbitrary remote
+closures was not found. `penalty_close` is normalized when an authoritative
+source supplies it, but the transaction heuristic path currently appears to
+return only `mutual_close`, `force_close`, or `unknown`.
 
 This document defines the proposal for adding native close-type classification to `Graph Explorer`, using the app's own `LND + bitcoind + Postgres` stack.
 
@@ -62,7 +73,10 @@ This is a strong foundation because the app already stores:
 - `closed_height`
 - `observed_at`
 
-What is missing is the on-chain classification layer.
+At the time this plan was written, the missing piece was the on-chain
+classification layer. The current codebase now has that layer for common
+`mutual_close` / `force_close` patterns; the remaining gap is high-confidence
+remote `penalty_close` inference.
 
 ## Objectives
 

@@ -2,7 +2,14 @@
 
 ## Status
 
-Proposed.
+Implemented.
+
+Audit date: 2026-06-20.
+
+The current codebase has `native_seed_enabled` in Autofee config/backend/UI and
+uses local `Graph Explorer` policy history when coverage is sufficient. The
+implementation derives directly from `graph_channel_policy_history` instead of
+requiring a separate daily rollup table.
 
 This document defines the proposal for adding a `native graph seed` to `Autofee`, built from the app's own `Graph Explorer` dataset.
 
@@ -24,6 +31,10 @@ This creates a clear product opportunity:
 This is a better long-term model than treating `Amboss` as the only market-aware source.
 
 ## Current behavior
+
+Historical note: this section describes the behavior before native graph seed
+shipped. Current behavior includes the `native_seed_enabled` path when enabled,
+with fallback to Amboss/local sources when coverage is weak.
 
 Today, `Autofee` resolves the seed in this order:
 

@@ -2,7 +2,17 @@
 
 ## Status
 
-Proposed.
+Mostly implemented.
+
+Audit date: 2026-06-20.
+
+Implemented: `GraphExplorerService`, local graph persistence, search, node
+General/Channels/Closed/Fee views, status/recompute APIs, storage limits,
+storage cleanup UI, and coverage messaging.
+
+Still open: optional external refill remains a design item. The code exposes
+refill status fields, but no `POST /api/lnops/graph-explorer/refill` route,
+worker, or operator flow was found.
 
 This document defines the proposal for a new module called `Graph Explorer` / `Explorador do Grafo`.
 
@@ -31,7 +41,10 @@ The project already has important building blocks:
 - `Autofee` already stores an optional `Amboss` token and already talks to the Amboss GraphQL API.
 - the app already has a stable `pgx` + Postgres pattern for read-heavy operational features.
 
-What is missing is a dedicated graph intelligence module that treats the public Lightning graph as a first-class dataset.
+At the time this plan was written, the missing piece was a dedicated graph
+intelligence module that treats the public Lightning graph as a first-class
+dataset. The module now exists; the remaining planned gap is optional external
+refill.
 
 Today the operator can inspect:
 

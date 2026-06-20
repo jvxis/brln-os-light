@@ -1,6 +1,7 @@
 # Autopilot — AutoTarget (target_outbound_pct adaptativo)
 
 **Snapshot:** 2026-05-22, version 0.4.3-Beta
+**Status audit:** 2026-06-20 - open; no `auto_target_*` implementation found.
 **Origem:** sessão de tuning do sovereign autopilot. Evidência empírica veio do bump manual de target_outbound_pct em 8 canais (Apr 23 → confirmado em 2026-05-22):
 - LQWD-France (15→40): 2/2 sucessos, +100% rate
 - WoS (20→45): 1 partial em 1.5h pós-bump

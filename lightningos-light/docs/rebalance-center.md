@@ -513,26 +513,27 @@ Ordenados por **quick wins primeiro**, depois valor estratégico, depois esforç
 
 ## Resumo executivo
 
-| Prioridade | ID | Item | Esforço | Risco |
-|:---:|---|---|:---:|:---:|
-| 🟢 1 | R5 | Exploration burnout (track & stop) | 30min | baixo |
-| 🟢 2 | R7 | UI polish (presets, eligibility tags, hierarquia per-channel) | 2h | zero |
-| 🟢 3 | R2 | `gain_v3_cold_start_pct` configurável | 0.5d | baixo |
-| 🟢 4 | R1 | Suavizar penalidade `successScoreMultiplier × 0.05` | 0.5d | baixo |
-| 🟢 5 | R6 | Telemetria explícita do fast-path | 1d | zero |
-| 🟡 6 | R3 | MPP plan diversification | 1-2d | médio |
-| 🟡 7 | **R0** | **AutoTarget — autopilot calibrando `target_outbound_pct`** | **3d** | **médio** |
-| 🟡 8 | R4 | Source rotation determinística | 2d | médio |
-| 🔴 9 | R8 | AutoFee ↔ Rebalance interlock bidirecional | 2-3d | médio |
-| 🔵 10 | R9 | Wallet Flow Sprint 1 — cache de leases (fora de rebalance) | 2-3h | baixo |
+Audit date: 2026-06-20.
 
-🟢 quick win • 🟡 médio esforço • 🔴 maior esforço • 🔵 fora do escopo rebalance
+Use this table as the source of truth for Parte II. Older sections below are
+kept as design history and include per-item status notes.
+
+| Status | ID | Item | Notes |
+|---|---|---|---|
+| Open | R0 | AutoTarget - autopilot calibrando `target_outbound_pct` | No `auto_target_*` config, loop, history, or UI found. |
+| Partial | R4 | Source rotation deterministica | Cooldown probes exist; watcher pre-check, batched pair stats, and pair-cache telemetry still open. |
+| Partial | R7 | UI polish | Per-channel controls and profiles exist; cost-gate eligibility tags/hierarchy still incomplete. |
+| Partial | R8 | AutoFee <-> Rebalance intent interlock | Settling-window interlock exists; shared intent layer is not implemented. |
+| Done | R1, R2, R3, R5, R6, R9 | Implemented or superseded | Keep sections below as historical context. |
 
 ---
 
 ## Quick wins (≤ 1 dia, baixo risco)
 
 ### R5 — Exploration burnout (track & stop)
+
+**Current status (2026-06-20): done.** The service tracks exploration burnout
+and tests cover the behavior. Keep this section as historical context.
 
 **Esforço:** ~30 min de código + testes
 **Risco:** baixo
@@ -570,6 +571,10 @@ if stats.Attempts >= 5 && stats.Failures == stats.Attempts {
 
 ### R7 — UI polish
 
+**Current status (2026-06-20): partially open.** Profiles and per-channel
+controls exist, but the cost-gate eligibility tag and clearer per-channel
+hierarchy are still UI backlog.
+
 **Esforço:** ~2h
 **Risco:** zero (cosmético)
 
@@ -597,6 +602,9 @@ if stats.Attempts >= 5 && stats.Failures == stats.Attempts {
 
 ### R2 — `gain_v3_cold_start_pct` configurável
 
+**Current status (2026-06-20): done.** The field is configurable in backend,
+schema, UI, and tests. Keep this section as historical context.
+
 **Esforço:** 0.5d (campo + UI + migration + 2 testes)
 **Risco:** baixo
 
@@ -616,6 +624,9 @@ i18n EN+PT-BR).
 ---
 
 ### R1 — Suavizar `sovereignSuccessScoreMultiplier`
+
+**Current status (2026-06-20): done.** The multiplier is now a continuous curve
+with tests. Keep this section as historical context.
 
 **Esforço:** 0.5d (lógica + 2-3 testes)
 **Risco:** baixo
@@ -657,6 +668,10 @@ Ou: piso ainda mais permissivo (0.40) para `ExplorationSlot=true`.
 
 ### R6 — Telemetria explícita do fast-path
 
+**Current status (2026-06-20): mostly done.** Fast-path 24h telemetry is exposed
+through the rebalance overview. A separate `/fast-path-metrics` endpoint was not
+found, but the core visibility exists.
+
 **Esforço:** ~1d
 **Risco:** zero (puramente observabilidade)
 
@@ -692,6 +707,9 @@ Endpoint `GET /api/rebalance/fast-path-metrics` retornando agregado das
 
 ### R3 — MPP plan diversification
 
+**Current status (2026-06-20): done.** `buildMppShadowPlan` includes
+diversification behavior and tests. Keep this section as historical context.
+
 **Esforço:** 1-2d
 **Risco:** médio (hot path do MPP)
 
@@ -716,6 +734,9 @@ maxShardsPerSource = ceil(plannedShards × 0.4)
 ---
 
 ### R0 — AutoTarget (autopilot calibrando `target_outbound_pct`) ⭐
+
+**Current status (2026-06-20): open.** No `auto_target_*` config, loop, history
+table, API, or UI was found.
 
 **Esforço:** ~3 dias
 **Risco:** médio (mexe em parâmetro per-channel que afeta deficit/eligibility)
@@ -767,6 +788,11 @@ AutoTargetDownSuccessThreshold  float64 // default 0.25
 
 ### R4 — Source rotation determinística
 
+**Current status (2026-06-20): partially open.** Cooldown probes and recent
+failure-cache bypasses exist, but the deterministic watcher pre-check,
+`loadAllPairStatsForTargets`, `eligibleSourcesFor`, and pair-cache recovery
+telemetry remain open.
+
 **Esforço:** 2d
 **Risco:** médio
 
@@ -792,6 +818,10 @@ empurrando sources antigas de volta ao pool.
 ## Maior esforço (3+ dias, médio risco)
 
 ### R8 — AutoFee ↔ Rebalance interlock bidirecional
+
+**Current status (2026-06-20): partially open.** Timing-based interlock exists
+through Autofee settling windows. The shared intent layer described below is not
+implemented.
 
 **Esforço:** 2-3d
 **Risco:** médio (toca em duas máquinas de decisão)
@@ -831,6 +861,10 @@ Cada sistema lê o intent do outro antes de tomar decisão.
 ## Fora do escopo Rebalance
 
 ### R9 — Wallet Flow Sprint 1 — cache de leases
+
+**Current status (2026-06-20): done.** Lease caching and background prune were
+implemented outside the rebalance service. Keep this section as historical
+context.
 
 **Esforço:** 2-3h
 **Risco:** baixo
@@ -877,18 +911,15 @@ Em sessão futura:
 Antes de implementar qualquer item, abrir o código atual e validar que
 file:line citados ainda batem — esta doc é snapshot do estado 0.4.4-Beta.
 
-**Ordem sugerida de execução considerando quick wins primeiro:**
+**Ordem sugerida de execucao apos audit 2026-06-20:**
 
 ```
-R5 (30min) → R7 (2h) → R2 (0.5d) → R1 (0.5d) → R6 (1d)
-   └─────────── 2 dias de quick wins acumulados ───────────┘
-                          ↓
-                    R3 (1-2d) → R0 (3d) → R4 (2d)
-                          ↓
-                       R8 (2-3d)
-                          ↓
-                    R9 (paralelo, qualquer hora)
+R0 AutoTarget
+  -> R8 intent interlock
+  -> R4 deterministic source rotation / pair-cache telemetry
+  -> R7 remaining UI polish
 ```
 
-Quick wins primeiro permitem testar mudanças menores em prod antes de
-investir em features maiores como AutoTarget (R0).
+R1, R2, R3, R5, R6, and R9 are no longer active backlog items. Before starting
+any remaining item, re-check the code paths and production symptoms that
+motivated it.

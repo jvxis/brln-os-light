@@ -14,6 +14,11 @@ Validação em prod (80 jobs recentes):
 
 **Conclusão:** backlog fechado. Esta página vira referência histórica.
 
+**Audit 2026-06-20:** conclusion still holds. `loadAllPairStatsForTargets`,
+`eligibleSourcesFor`, and `pair_cache_skip_*` telemetry were not found; keep
+Fix B and the metrics section as optional polish only, to revisit if phantom
+jobs regress.
+
 ---
 
 ## Sintoma observado

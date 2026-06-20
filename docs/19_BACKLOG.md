@@ -2,26 +2,46 @@
 
 ## Status
 
-This file tracks open product and Autofee proposals that are not implemented yet.
+Audit date: 2026-06-20.
 
-Implemented items should not remain here.
+This file used to mix active backlog items with implemented design notes. Treat
+the "Active Backlog" list below as the source of truth. Implemented sections are
+kept only as historical design context.
 
-At the time of writing:
+## Active Backlog
 
-- `Channel Ranking` is already implemented
+Current product backlog, after checking the repository against the docs:
 
-## Priorities
+1. `AutoTarget` adaptive `target_outbound_pct`.
+2. `Autofee` dynamic liquidity state.
+3. Channel `parking mode`.
+4. Ranking-driven per-channel automation actions.
+5. `AutoFee` <-> `Rebalance` intent interlock.
+6. `Graph Explorer` optional external refill.
+7. `Graph Close Classifier` high-confidence remote `penalty_close` inference.
+8. Wallet Flow lineage export as SVG/PNG.
+9. Rebalance source-rotation/pair-cache telemetry polish.
 
-Current backlog priority order:
+## Implemented Or No Longer Active Here
 
-1. `Autofee` signal hierarchy and stability redesign
-2. `Autofee` dynamic liquidity state
-3. channel `parking mode`
-4. ranking-driven per-channel automation policy
-5. rebalance budget redesign with manual reserve
-6. `Graph Explorer` storage limits and existing-node cleanup
+These items are implemented enough that they should not drive new work from this
+file:
+
+- `Autofee` signal hierarchy and stability redesign.
+- Rebalance budget redesign with manual reserve.
+- `Graph Explorer` storage limits and existing-node cleanup.
+- `Channel Ranking`.
+- `Close Recovery Manager`.
+- `Graph Explorer` base module.
+- `Autofee` native graph seed.
+- Core `Graph Close Classifier` path, except for the penalty-close gap noted in
+  its dedicated plan.
 
 ## 1. Autofee Signal Hierarchy And Stability Redesign
+
+**Current status (2026-06-20): implemented in code.** Keep this section as
+historical design context. The active Autofee backlog starts at `Autofee Dynamic
+Liquidity State`.
 
 ### Goal
 
@@ -532,6 +552,9 @@ Do not combine multiple milestone behaviors into a single opaque patch.
 
 ## 1. Autofee Dynamic Liquidity State
 
+**Current status (2026-06-20): open.** No explicit `liquidity_state` model was
+found in backend or UI.
+
 ### Goal
 
 Improve Autofee decisions by separating:
@@ -666,6 +689,9 @@ Expected limits:
 
 ## 2. Channel Parking Mode
 
+**Current status (2026-06-20): open.** `Channel Ranking` can mark close
+candidates, but there is no persistent channel parking mode yet.
+
 ### Goal
 
 Create a controlled path for channels that are:
@@ -716,6 +742,10 @@ It also creates a safer middle state before cooperative close.
 
 ## 3. Ranking-Driven Per-Channel Automation Policy
 
+**Current status (2026-06-20): partially implemented.** Recommendations are
+computed and shown in `Channel Ranking`, but there are no one-click automation
+actions yet for parking, removing from rebalance, or removing from Autofee.
+
 ### Goal
 
 Use `Channel Ranking` output to drive actionable automation hints or semi-automatic policies.
@@ -763,6 +793,10 @@ Avoid fully automatic closure in first iteration.
 4. Keep irreversible actions manual.
 
 ## 5. Rebalance Budget Redesign With Manual Reserve
+
+**Current status (2026-06-20): implemented in code.** Rebalance config, backend
+budget accounting, manual reserve fields, and UI controls exist. Keep this
+section as historical design context.
 
 ### Goal
 
@@ -983,6 +1017,10 @@ The implementation is successful when:
 6. observe behavior for several days before adding any hard manual block
 
 ## 6. Graph Explorer Storage Limits And Existing-Node Cleanup
+
+**Current status (2026-06-20): implemented in code.** Storage config, status,
+projections, cleanup, and UI controls exist. Keep this section as historical
+design context.
 
 ### Goal
 

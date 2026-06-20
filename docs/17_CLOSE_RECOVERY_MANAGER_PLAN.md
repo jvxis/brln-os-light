@@ -1,5 +1,16 @@
 # Close Recovery Manager Plan
 
+## Status
+
+Implemented.
+
+Audit date: 2026-06-20.
+
+The current codebase has `CloseManagerService`, persisted close sessions/events,
+status/list/detail/event APIs, recover/force/bump actions, and UI integration in
+`LightningOps`. Keep the rest of this document as design history unless a new
+gap is added explicitly.
+
 Este documento define a proposta para introduzir um `Close Recovery Manager` no LightningOS. O objetivo e consolidar em uma engine unica toda a logica operacional de fechamento de canais, recovery de `waiting_close`, acompanhamento de HTLCs pendentes, monitoring de outputs timelocked, sweeps pendentes e fee bump de recovery.
 
 ## Motivacao

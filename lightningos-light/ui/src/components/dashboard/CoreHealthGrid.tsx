@@ -286,26 +286,30 @@ export default function CoreHealthGrid({
               </div>
 
               {cadenceBuckets.length > 0 && (
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <p className="text-sm font-medium">{t('dashboard.blockCadence')}</p>
-                    <span className="text-xs text-fog/55">{t('dashboard.avgBlocksPerHour', { avg: cadenceAvg.toFixed(1) })}</span>
+                <details className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                  <summary className="cursor-pointer text-sm text-fog/75">
+                    <span className="inline-flex w-[calc(100%-1.25rem)] items-center justify-between gap-3 align-middle">
+                      <span className="font-medium text-fog">{t('dashboard.blockCadence')}</span>
+                      <span className="text-xs text-fog/55">{t('dashboard.avgBlocksPerHour', { avg: cadenceAvg.toFixed(1) })}</span>
+                    </span>
+                  </summary>
+                  <div className="mt-3">
+                    <div className="block-cadence-chart">
+                      {cadenceBuckets.map((bucket, idx) => {
+                        const height = Math.max(8, Math.round((bucket.count / maxCadence) * 100))
+                        return (
+                          <div className="block-cadence-bar" key={`cadence-${idx}`} title={`${bucket.count} blocks`}>
+                            <div className="block-cadence-fill" style={{ height: `${height}%` }} />
+                          </div>
+                        )
+                      })}
+                    </div>
+                    <div className="mt-2 flex items-center justify-between text-xs text-fog/50">
+                      <span>{t('dashboard.blocksPerWindow', { total: cadenceTotal, hours: cadenceHours.toFixed(1) })}</span>
+                      <span>{bitcoin.best_block_time ? formatTimestamp(locale, bitcoin.best_block_time) : '-'}</span>
+                    </div>
                   </div>
-                  <div className="block-cadence-chart">
-                    {cadenceBuckets.map((bucket, idx) => {
-                      const height = Math.max(8, Math.round((bucket.count / maxCadence) * 100))
-                      return (
-                        <div className="block-cadence-bar" key={`cadence-${idx}`} title={`${bucket.count} blocks`}>
-                          <div className="block-cadence-fill" style={{ height: `${height}%` }} />
-                        </div>
-                      )
-                    })}
-                  </div>
-                  <div className="mt-2 flex items-center justify-between text-xs text-fog/50">
-                    <span>{t('dashboard.blocksPerWindow', { total: cadenceTotal, hours: cadenceHours.toFixed(1) })}</span>
-                    <span>{bitcoin.best_block_time ? formatTimestamp(locale, bitcoin.best_block_time) : '-'}</span>
-                  </div>
-                </div>
+                </details>
               )}
 
               <details className="rounded-2xl border border-white/10 bg-white/5 p-4">

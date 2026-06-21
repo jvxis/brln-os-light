@@ -83,6 +83,42 @@ func TestBuildChannelOpenCandidateReasonsIncludesExpectedSignals(t *testing.T) {
 	}
 }
 
+func TestComputeChannelOpenCandidateScorePenalizesFailedAttempts(t *testing.T) {
+	base := &ChannelOpenCandidateItem{
+		PeerPubkey:             "peer-1",
+		RouteHitCount30d:       4,
+		RouteVolumeSat30d:      1_000_000,
+		RouteCostToMsat30d:     300_000,
+		RouteCostPpm30d:        channelOpenCostPpm(300_000, 1_000_000),
+		RebalanceHitCount30d:   2,
+		SharedProblemPeerCount: 2,
+		SharedStrongPeerCount:  1,
+		GraphChannelCount:      18,
+		BestOutboundFeePpm:     150,
+	}
+	withFailures := *base
+	withFailures.FailedAttempts30d = 9
+
+	baseDemand, baseRelief, baseGraph, baseScore, baseConfidence := computeChannelOpenCandidateScore(base)
+	failedDemand, failedRelief, failedGraph, failedScore, failedConfidence := computeChannelOpenCandidateScore(&withFailures)
+
+	if failedScore >= baseScore {
+		t.Fatalf("expected failed-attempt score %d to be below base score %d", failedScore, baseScore)
+	}
+	if failedDemand >= baseDemand {
+		t.Fatalf("expected failed-attempt demand %d to be below base demand %d", failedDemand, baseDemand)
+	}
+	if failedRelief != baseRelief {
+		t.Fatalf("expected relief unaffected by failed attempts, got %d want %d", failedRelief, baseRelief)
+	}
+	if failedGraph != baseGraph {
+		t.Fatalf("expected graph score unaffected by failed attempts, got %d want %d", failedGraph, baseGraph)
+	}
+	if failedConfidence != baseConfidence {
+		t.Fatalf("expected confidence unaffected by failed attempts, got %d want %d", failedConfidence, baseConfidence)
+	}
+}
+
 func TestShouldKeepChannelOpenCandidateRejectsWeakGraphOnlyCandidate(t *testing.T) {
 	item := &ChannelOpenCandidateItem{
 		PeerPubkey:        "peer-graph-only",

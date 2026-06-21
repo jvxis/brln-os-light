@@ -416,15 +416,12 @@ with local_open_peers as (
   select distinct lower(peer_pubkey) as pubkey
   from channel_rankings
   where btrim(coalesce(peer_pubkey, '')) <> ''
-)
-select pubkey, route_hit_count_30d, route_volume_sat_30d, route_cost_to_msat_30d,
-  failed_attempts_30d, payment_hit_count_30d, rebalance_hit_count_30d
-from (
+),
+route_hop_signal as (
   select lower(h.node_pubkey) as pubkey,
     count(*) filter (where a.attempt_status='SUCCEEDED')::int as route_hit_count_30d,
     coalesce(sum(case when a.attempt_status='SUCCEEDED' then h.amt_to_forward_msat / 1000 else 0 end), 0)::bigint as route_volume_sat_30d,
     coalesce(sum(case when a.attempt_status='SUCCEEDED' then h.cost_to_msat else 0 end), 0)::bigint as route_cost_to_msat_30d,
-    count(*) filter (where a.attempt_status='FAILED')::int as failed_attempts_30d,
     count(*) filter (where a.attempt_status='SUCCEEDED' and a.payment_type in ('lightning', 'keysend'))::int as payment_hit_count_30d,
     count(*) filter (where a.attempt_status='SUCCEEDED' and a.payment_type='rebalance')::int as rebalance_hit_count_30d
   from payment_route_hops h
@@ -440,8 +437,36 @@ from (
       select 1 from local_open_peers lop where lop.pubkey = lower(h.node_pubkey)
     )
   group by lower(h.node_pubkey)
-) q
-order by route_cost_to_msat_30d desc, route_volume_sat_30d desc, route_hit_count_30d desc
+),
+rebalance_failed_hop_signal as (
+  select lower(a.fail_hop_pubkey) as pubkey,
+    count(*)::int as failed_attempts_30d
+  from rebalance_attempts a
+  where coalesce(a.finished_at, a.started_at) >= $1
+    and lower(coalesce(a.status, '')) <> 'succeeded'
+    and btrim(coalesce(a.fail_hop_pubkey, '')) <> ''
+    and lower(a.fail_hop_pubkey) <> $2
+    and not exists (
+      select 1 from local_open_peers lop where lop.pubkey = lower(a.fail_hop_pubkey)
+    )
+  group by lower(a.fail_hop_pubkey)
+),
+candidate_pubkeys as (
+  select pubkey from route_hop_signal
+  union
+  select pubkey from rebalance_failed_hop_signal
+)
+select c.pubkey,
+  coalesce(r.route_hit_count_30d, 0) as route_hit_count_30d,
+  coalesce(r.route_volume_sat_30d, 0) as route_volume_sat_30d,
+  coalesce(r.route_cost_to_msat_30d, 0) as route_cost_to_msat_30d,
+  coalesce(f.failed_attempts_30d, 0) as failed_attempts_30d,
+  coalesce(r.payment_hit_count_30d, 0) as payment_hit_count_30d,
+  coalesce(r.rebalance_hit_count_30d, 0) as rebalance_hit_count_30d
+from candidate_pubkeys c
+left join route_hop_signal r on r.pubkey = c.pubkey
+left join rebalance_failed_hop_signal f on f.pubkey = c.pubkey
+order by route_cost_to_msat_30d desc, route_volume_sat_30d desc, route_hit_count_30d desc, failed_attempts_30d desc
 limit $3
 `, since.UTC(), graphExplorerNormalizePubkey(selfPubkey), channelOpenCandidatesRouteSeedLimit)
 	if err != nil {

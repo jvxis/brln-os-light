@@ -6,8 +6,8 @@
   position: relative;
   overflow: hidden;
   border: 1px solid rgb(var(--color-glow) / 0.24);
-  border-radius: 18px;
-  padding: 10px;
+  border-radius: 16px;
+  padding: 8px 10px;
   background:
     linear-gradient(135deg, rgb(var(--color-glow) / 0.12), rgb(var(--color-brass) / 0.08)),
     linear-gradient(180deg, rgb(var(--color-ink) / 0.72), rgb(var(--color-midnight) / 0.48));
@@ -28,7 +28,6 @@
 }
 
 .market-ribbon__header,
-.market-ribbon__quotes,
 .market-tape {
   position: relative;
   z-index: 1;
@@ -39,7 +38,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 8px;
+  margin-bottom: 5px;
 }
 
 .market-ribbon__title,
@@ -66,59 +65,8 @@
   background: rgb(var(--color-brass) / 0.12);
 }
 
-.market-ribbon__quotes {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.market-ribbon__quote {
-  min-width: 0;
-  border: 1px solid rgb(255 255 255 / 0.08);
-  border-radius: 12px;
-  padding: 7px 8px;
-  background: rgb(255 255 255 / 0.055);
-}
-
-.market-ribbon__quote-label,
-.market-ribbon__quote-change {
-  display: block;
-  font-size: 10px;
-}
-
-.market-ribbon__quote-label {
-  color: rgb(var(--color-fog) / 0.54);
-}
-
-.market-ribbon__quote-value {
-  display: block;
-  min-width: 0;
-  margin-top: 2px;
-  overflow: hidden;
-  color: rgb(var(--color-fog) / 0.96);
-  font-size: 14px;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.market-ribbon__quote-change {
-  margin-top: 1px;
-}
-
-.market-ribbon__quote-change--up {
-  color: rgb(var(--color-glow) / 0.94);
-}
-
-.market-ribbon__quote-change--down {
-  color: rgb(var(--color-ember) / 0.9);
-}
-
 .market-tape {
-  margin-top: 8px;
   overflow: hidden;
-  border-top: 1px solid rgb(255 255 255 / 0.08);
-  padding-top: 7px;
   mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
 }
 
@@ -140,7 +88,7 @@
   white-space: nowrap;
   border: 1px solid rgb(255 255 255 / 0.08);
   border-radius: 999px;
-  padding: 4px 9px;
+  padding: 3px 9px;
   color: rgb(var(--color-fog) / 0.72);
   background: rgb(255 255 255 / 0.045);
 }
@@ -180,12 +128,6 @@
   }
   to {
     transform: translateX(-50%);
-  }
-}
-
-@media (max-width: 640px) {
-  .market-ribbon__quotes {
-    grid-template-columns: 1fr;
   }
 }
 

@@ -159,19 +159,6 @@ function MarketTape({ market, locale }: MarketTapeProps) {
         <span className="market-ribbon__title">{t('dashboard.marketTapeTitle')}</span>
         <span className={`market-ribbon__state ${market?.stale || market?.partial ? 'market-ribbon__state--warn' : ''}`}>{statusLabel}</span>
       </div>
-      <div className="market-ribbon__quotes">
-        {priceCards.map((item) => (
-          <div className="market-ribbon__quote" key={item.currency}>
-            <span className="market-ribbon__quote-label">BTC/{item.currency}</span>
-            <span className="market-ribbon__quote-value">{formatCurrency(item.currency, item.value)}</span>
-            {typeof item.change === 'number' ? (
-              <span className={`market-ribbon__quote-change ${item.change >= 0 ? 'market-ribbon__quote-change--up' : 'market-ribbon__quote-change--down'}`}>
-                {formatChange(item.change)}
-              </span>
-            ) : null}
-          </div>
-        ))}
-      </div>
       <div className="market-tape" aria-label={t('dashboard.marketTapeTitle')}>
         <div className="market-tape__track">
           {tickerItems.map((item, idx) => (
@@ -989,7 +976,7 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
             <p className="mt-3 text-sm text-fog/65">{topSummary}</p>
           </button>
           <div className="flex min-w-0 flex-col gap-3 xl:w-[34rem] xl:items-stretch">
-            <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+            <div className="flex flex-wrap items-center gap-2 xl:flex-nowrap xl:justify-end">
               <button
                 className={`btn-secondary text-xs px-3 py-2 sm:text-sm sm:px-4 ${(lndRestartBusy || lndRestartLocked) ? 'opacity-60 pointer-events-none' : ''}`}
                 onClick={() => void restart('lnd')}
@@ -1001,7 +988,7 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
               <button className="btn-secondary text-xs px-3 py-2 sm:text-sm sm:px-4" onClick={() => void restart('lightningos-manager')} type="button">
                 {t('dashboard.restartManager')}
               </button>
-              <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-2 py-1 w-full xl:w-auto">
+              <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-2 py-1 w-full xl:w-auto xl:flex-nowrap">
                 <span className="text-[10px] uppercase tracking-[0.2em] text-fog/50">{t('dashboard.systemActions')}</span>
                 <button
                   className="btn-secondary text-[11px] px-2 py-1 sm:text-xs sm:px-3 sm:py-1.5 text-amber-200 border-amber-400/30"

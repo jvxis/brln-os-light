@@ -965,18 +965,20 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
             <p className="mt-3 text-sm text-fog/65">{topSummary}</p>
           </button>
           <div className="flex min-w-0 flex-col gap-2 xl:w-[44rem] xl:shrink-0 xl:items-stretch">
-            <div className="flex flex-wrap items-center gap-2 xl:flex-nowrap xl:justify-end">
-              <button
-                className={`btn-secondary whitespace-nowrap text-xs px-3 py-2 sm:text-sm sm:px-4 ${(lndRestartBusy || lndRestartLocked) ? 'opacity-60 pointer-events-none' : ''}`}
-                onClick={() => void restart('lnd')}
-                type="button"
-                disabled={lndRestartBusy || lndRestartLocked}
-              >
-                {t('dashboard.restartLnd')}
-              </button>
-              <button className="btn-secondary whitespace-nowrap text-xs px-3 py-2 sm:text-sm sm:px-4" onClick={() => void restart('lightningos-manager')} type="button">
-                {t('dashboard.restartManager')}
-              </button>
+            <div className="flex flex-wrap items-center justify-between gap-2 xl:flex-nowrap">
+              <div className="flex flex-wrap items-center gap-2 xl:flex-nowrap">
+                <button
+                  className={`btn-secondary whitespace-nowrap text-xs px-3 py-2 sm:text-sm sm:px-4 ${(lndRestartBusy || lndRestartLocked) ? 'opacity-60 pointer-events-none' : ''}`}
+                  onClick={() => void restart('lnd')}
+                  type="button"
+                  disabled={lndRestartBusy || lndRestartLocked}
+                >
+                  {t('dashboard.restartLnd')}
+                </button>
+                <button className="btn-secondary whitespace-nowrap text-xs px-3 py-2 sm:text-sm sm:px-4" onClick={() => void restart('lightningos-manager')} type="button">
+                  {t('dashboard.restartManager')}
+                </button>
+              </div>
               <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-2 py-1 w-full xl:w-auto xl:flex-nowrap">
                 <span className="whitespace-nowrap text-[10px] uppercase tracking-[0.2em] text-fog/50">{t('dashboard.systemActions')}</span>
                 <button

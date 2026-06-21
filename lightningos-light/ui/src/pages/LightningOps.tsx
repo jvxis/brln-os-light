@@ -6770,15 +6770,17 @@ export default function LightningOps() {
                       : condensedFeeFlash === 'error'
                         ? 'border-amber-300/70 bg-amber-500/20 text-amber-50'
                         : 'border-white/10 bg-ink/80 text-fog'
+                    const isFocused = focusedChannelPoint === ch.channel_point
                     const rowTone = isFCRisk
                       ? 'border-rose-400/25 bg-rose-500/10'
                       : localDisabled && ch.active
                         ? 'border-ember/25 bg-ember/10'
                         : 'border-white/5'
+                    const rowFocusClass = isFocused ? 'ring-1 ring-inset ring-sky-300/70 bg-sky-500/10' : ''
 
                     return (
                       <Fragment key={ch.channel_point}>
-                        <tr id={channelCardID(ch.channel_point)} className={`border-t align-top ${rowTone}`}>
+                        <tr id={channelCardID(ch.channel_point)} className={`border-t align-top ${rowTone} ${rowFocusClass}`}>
                           <td className="px-3 py-2 align-middle">
                             <div className="max-w-[220px]">
                               <div className="flex items-center gap-1.5">

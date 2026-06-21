@@ -91,6 +91,15 @@ type GraphExplorerNodeAddress = {
   addr?: string
 }
 
+type GraphExplorerLocalChannel = {
+  channel_point?: string
+  channel_id?: number
+  channel_id_str?: string
+  peer_pubkey?: string
+  peer_alias?: string
+  capacity_sat?: number
+}
+
 type GraphExplorerNodeProfile = {
   pubkey: string
   alias?: string
@@ -99,6 +108,8 @@ type GraphExplorerNodeProfile = {
   address_count: number
   clearnet_address_count: number
   onion_address_count: number
+  has_local_open_channel: boolean
+  local_open_channels?: GraphExplorerLocalChannel[]
   channel_count: number
   open_channel_count: number
   peer_count: number
@@ -242,8 +253,14 @@ const GRAPH_STORAGE_PRESETS = [
 ] as const
 
 const GRAPH_EXPLORER_ROUTE_KEY = 'graph-explorer'
+const LIGHTNING_OPS_ROUTE_KEY = 'lightning-ops'
+const REBALANCE_ROUTE_KEY = 'rebalance-center'
 const GRAPH_EXPLORER_PUBKEY_PARAM = 'pubkey'
 const GRAPH_EXPLORER_TAB_PARAM = 'tab'
+const CHANNEL_HASH_PARAM = 'channel_point'
+
+const buildHashWithChannelPoint = (routeKey: string, channelPoint: string) =>
+  `#${routeKey}?${CHANNEL_HASH_PARAM}=${encodeURIComponent(channelPoint)}`
 
 const normalizeGraphExplorerTab = (value?: string): GraphExplorerTab => {
   switch (String(value || '').trim()) {
@@ -1098,6 +1115,12 @@ export default function GraphExplorer() {
   const selectedResultKey = String(node?.pubkey || selectedPubkey || '').trim()
   const shouldShowSearchHint = deferredQuery.trim().length < 2
   const addressList = Array.isArray(node?.addresses) ? node.addresses : []
+  const localOpenChannels = Array.isArray(node?.local_open_channels)
+    ? [...node.local_open_channels]
+        .filter((item) => String(item.channel_point || '').trim())
+        .sort((left, right) => Number(right.capacity_sat || 0) - Number(left.capacity_sat || 0))
+    : []
+  const primaryLocalOpenChannel = localOpenChannels[0] || null
   const channelItems = Array.isArray(channels?.items) ? channels.items : []
   const closedItems = Array.isArray(closed?.items) ? closed.items : []
   const feeHistory = Array.isArray(fees?.history) ? fees.history : []
@@ -2102,6 +2125,32 @@ export default function GraphExplorer() {
                         {t('graphExplorer.header.lastSeen', { value: formatTimestamp(node.last_seen_at) })}
                       </span>
                     </div>
+                    {primaryLocalOpenChannel && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span
+                          className="inline-flex items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-100"
+                          title={primaryLocalOpenChannel.channel_point}
+                        >
+                          <LocalOpenChannelIndicator t={t} />
+                          <span>{t('graphExplorer.localPeerActions')}</span>
+                          {localOpenChannels.length > 1 && (
+                            <span className="text-emerald-100/70">+{localOpenChannels.length - 1}</span>
+                          )}
+                        </span>
+                        <a
+                          href={buildHashWithChannelPoint(LIGHTNING_OPS_ROUTE_KEY, primaryLocalOpenChannel.channel_point || '')}
+                          className="rounded-full border border-sky-300/25 bg-sky-500/10 px-3 py-1 text-xs font-medium text-sky-100 transition hover:border-sky-200/50 hover:text-white"
+                        >
+                          {t('graphExplorer.openInLightningOps')}
+                        </a>
+                        <a
+                          href={buildHashWithChannelPoint(REBALANCE_ROUTE_KEY, primaryLocalOpenChannel.channel_point || '')}
+                          className="rounded-full border border-cyan-300/25 bg-cyan-500/10 px-3 py-1 text-xs font-medium text-cyan-100 transition hover:border-cyan-200/50 hover:text-white"
+                        >
+                          {t('graphExplorer.openInRebalanceCenter')}
+                        </a>
+                      </div>
+                    )}
                   </div>
                 </div>
 

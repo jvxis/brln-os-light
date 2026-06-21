@@ -52,6 +52,8 @@ type GraphExplorerNodeProfile struct {
 	AddressCount          int                          `json:"address_count"`
 	ClearnetAddressCount  int                          `json:"clearnet_address_count"`
 	OnionAddressCount     int                          `json:"onion_address_count"`
+	HasLocalOpenChannel   bool                         `json:"has_local_open_channel"`
+	LocalOpenChannels     []GraphExplorerLocalChannel  `json:"local_open_channels,omitempty"`
 	ChannelCount          int                          `json:"channel_count"`
 	OpenChannelCount      int                          `json:"open_channel_count"`
 	PeerCount             int                          `json:"peer_count"`
@@ -339,6 +341,8 @@ where n.pubkey = $1
 	node.AddressCount = len(addresses)
 	node.ClearnetAddressCount = clearnetCount
 	node.OnionAddressCount = onionCount
+	node.LocalOpenChannels = graphExplorerLocalChannelsForPeer(s.loadLocalOpenChannelLookup(ctx), node.PubKey)
+	node.HasLocalOpenChannel = len(node.LocalOpenChannels) > 0
 
 	result.Source = strings.TrimSpace(source)
 	result.Node = node

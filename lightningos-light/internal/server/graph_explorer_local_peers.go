@@ -11,6 +11,15 @@ import (
 const graphExplorerLocalPeerLoadTimeout = 5 * time.Second
 const graphExplorerLocalClosedLoadTimeout = 8 * time.Second
 
+type GraphExplorerLocalChannel struct {
+	ChannelPoint    string `json:"channel_point"`
+	ChannelID       uint64 `json:"channel_id,omitempty"`
+	ChannelIDString string `json:"channel_id_str,omitempty"`
+	PeerPubKey      string `json:"peer_pubkey,omitempty"`
+	PeerAlias       string `json:"peer_alias,omitempty"`
+	CapacitySat     int64  `json:"capacity_sat,omitempty"`
+}
+
 func (s *GraphExplorerService) loadLocalOpenPeerSet(ctx context.Context) map[string]struct{} {
 	if s == nil || s.lnd == nil {
 		return nil
@@ -34,6 +43,29 @@ func (s *GraphExplorerService) loadLocalOpenPeerSet(ctx context.Context) map[str
 	return graphExplorerBuildLocalOpenPeerSet(channels)
 }
 
+func (s *GraphExplorerService) loadLocalOpenChannelLookup(ctx context.Context) map[string][]GraphExplorerLocalChannel {
+	if s == nil || s.lnd == nil {
+		return nil
+	}
+	loadCtx := ctx
+	cancel := func() {}
+	if ctx == nil {
+		loadCtx, cancel = context.WithTimeout(context.Background(), graphExplorerLocalPeerLoadTimeout)
+	} else {
+		loadCtx, cancel = context.WithTimeout(ctx, graphExplorerLocalPeerLoadTimeout)
+	}
+	defer cancel()
+
+	channels, err := s.lnd.ListChannels(loadCtx)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("graph explorer: local open channel lookup unavailable: %v", err)
+		}
+		return nil
+	}
+	return graphExplorerBuildLocalOpenChannelLookup(channels)
+}
+
 func graphExplorerBuildLocalOpenPeerSet(channels []lndclient.ChannelInfo) map[string]struct{} {
 	if len(channels) == 0 {
 		return map[string]struct{}{}
@@ -47,6 +79,39 @@ func graphExplorerBuildLocalOpenPeerSet(channels []lndclient.ChannelInfo) map[st
 		peers[pubkey] = struct{}{}
 	}
 	return peers
+}
+
+func graphExplorerBuildLocalOpenChannelLookup(channels []lndclient.ChannelInfo) map[string][]GraphExplorerLocalChannel {
+	if len(channels) == 0 {
+		return map[string][]GraphExplorerLocalChannel{}
+	}
+	lookup := make(map[string][]GraphExplorerLocalChannel, len(channels))
+	for _, channel := range channels {
+		pubkey := graphExplorerNormalizePubkey(channel.RemotePubkey)
+		if pubkey == "" {
+			continue
+		}
+		lookup[pubkey] = append(lookup[pubkey], GraphExplorerLocalChannel{
+			ChannelPoint:    strings.TrimSpace(channel.ChannelPoint),
+			ChannelID:       channel.ChannelID,
+			ChannelIDString: strings.TrimSpace(channel.ChannelIDString),
+			PeerPubKey:      pubkey,
+			PeerAlias:       strings.TrimSpace(channel.PeerAlias),
+			CapacitySat:     channel.CapacitySat,
+		})
+	}
+	return lookup
+}
+
+func graphExplorerLocalChannelsForPeer(lookup map[string][]GraphExplorerLocalChannel, pubkey string) []GraphExplorerLocalChannel {
+	if len(lookup) == 0 {
+		return nil
+	}
+	channels := lookup[graphExplorerNormalizePubkey(pubkey)]
+	if len(channels) == 0 {
+		return nil
+	}
+	return append([]GraphExplorerLocalChannel(nil), channels...)
 }
 
 func graphExplorerHasLocalOpenChannel(localOpenPeers map[string]struct{}, pubkey string) bool {

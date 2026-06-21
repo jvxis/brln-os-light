@@ -180,6 +180,30 @@ export type BitcoinStatus = {
   size_on_disk?: number
 }
 
+export type BitcoinMarketPrice = {
+  currency: string
+  value?: number
+  change_24h?: number
+}
+
+export type BitcoinMarketFees = {
+  fastestFee?: number
+  halfHourFee?: number
+  hourFee?: number
+  economyFee?: number
+  minimumFee?: number
+}
+
+export type BitcoinMarketStatus = {
+  prices?: BitcoinMarketPrice[]
+  fees?: BitcoinMarketFees | null
+  updated_at?: string
+  partial?: boolean
+  stale?: boolean
+  price_error?: string
+  fee_error?: string
+}
+
 export type ReportSeriesItem = {
   date: string
   forward_fee_revenue_sats: number

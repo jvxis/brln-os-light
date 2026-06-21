@@ -40,6 +40,7 @@ func (s *Server) routes() http.Handler {
 	r.Get("/api/bitcoin/active", s.handleBitcoinActive)
 	r.Get("/api/bitcoin/source", s.handleBitcoinSourceGet)
 	r.Post("/api/bitcoin/source", s.handleBitcoinSourcePost)
+	r.Get("/api/bitcoin/market", s.handleBitcoinMarket)
 	r.Get("/api/mempool/fees", s.handleMempoolFees)
 	r.Get("/api/bitcoin-local/status", s.handleBitcoinLocalStatus)
 	r.Get("/api/bitcoin-local/config", s.handleBitcoinLocalConfigGet)

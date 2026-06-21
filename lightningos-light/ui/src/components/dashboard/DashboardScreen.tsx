@@ -6,6 +6,7 @@ import {
   getAppUpgradeStatus,
   getAutofeeStatus,
   getBitcoinActive,
+  getBitcoinMarket,
   getCloseManagerStatus,
   getDisk,
   getHealth,
@@ -45,6 +46,7 @@ import { toneFromHealthStatus } from './formatters'
 import type {
   AmbossHealthStatus,
   AutofeeStatus,
+  BitcoinMarketStatus,
   ChanHealStatus,
   CloseRecoveryStatus,
   DiskSmart,
@@ -88,6 +90,102 @@ type LoadState = 'loading' | 'ok' | 'unavailable'
 
 const LND_RESTART_POLL_INTERVAL_MS = 5000
 const LND_RESTART_TIMEOUT_MS = 2 * 60 * 60 * 1000
+const MARKET_REFRESH_INTERVAL_MS = 5 * 60 * 1000
+
+type MarketTapeProps = {
+  market: BitcoinMarketStatus | null
+  locale: string
+}
+
+function MarketTape({ market, locale }: MarketTapeProps) {
+  const { t } = useTranslation()
+  const prices = Array.isArray(market?.prices) ? market.prices : []
+  const fees = market?.fees || null
+  const priceByCurrency = prices.reduce<Record<string, { value?: number; change_24h?: number }>>((acc, price) => {
+    const currency = String(price.currency || '').toUpperCase()
+    if (currency) acc[currency] = price
+    return acc
+  }, {})
+
+  const formatCurrency = (currency: string, value?: number) => {
+    if (typeof value !== 'number' || Number.isNaN(value)) return '-'
+    return new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: 0,
+    }).format(value)
+  }
+  const formatChange = (value?: number) => {
+    if (typeof value !== 'number' || Number.isNaN(value)) return ''
+    const sign = value > 0 ? '+' : ''
+    return `${sign}${new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(value)}%`
+  }
+  const feeLabel = (value?: number) => (typeof value === 'number' && value > 0 ? `${value} sat/vB` : '-')
+  const priceCards = ['USD', 'BRL', 'EUR'].map((currency) => ({
+    currency,
+    value: priceByCurrency[currency]?.value,
+    change: priceByCurrency[currency]?.change_24h,
+  }))
+  const priceTapeItems = priceCards
+    .filter((item) => typeof item.value === 'number')
+    .map((item) => ({
+      label: `BTC/${item.currency}`,
+      value: formatCurrency(item.currency, item.value),
+      detail: formatChange(item.change),
+      tone: (item.change ?? 0) >= 0 ? 'up' : 'down',
+    }))
+  const feeTapeItems = [
+    { label: t('dashboard.marketFeeFastest'), value: feeLabel(fees?.fastestFee), detail: t('dashboard.marketFeeNow'), tone: 'fee' },
+    { label: t('dashboard.marketFeeHalfHour'), value: feeLabel(fees?.halfHourFee), detail: '30m', tone: 'fee' },
+    { label: t('dashboard.marketFeeHour'), value: feeLabel(fees?.hourFee), detail: '1h', tone: 'fee' },
+    { label: t('dashboard.marketFeeEconomy'), value: feeLabel(fees?.economyFee), detail: t('dashboard.marketFeeLow'), tone: 'fee' },
+    { label: t('dashboard.marketFeeMinimum'), value: feeLabel(fees?.minimumFee), detail: t('dashboard.marketFeeFloor'), tone: 'fee' },
+  ].filter((item) => item.value !== '-')
+  const tapeItems = [...priceTapeItems, ...feeTapeItems]
+  const tickerItems = tapeItems.length > 0
+    ? [...tapeItems, ...tapeItems]
+    : [{ label: t('dashboard.marketTapeTitle'), value: t('dashboard.marketUnavailable'), detail: '', tone: 'muted' }]
+  const statusLabel = !market
+    ? t('dashboard.loadingStatus')
+    : market.stale
+      ? t('dashboard.marketStale')
+      : market.partial
+        ? t('dashboard.marketPartial')
+        : t('dashboard.marketLive')
+
+  return (
+    <div className="market-ribbon">
+      <div className="market-ribbon__header">
+        <span className="market-ribbon__title">{t('dashboard.marketTapeTitle')}</span>
+        <span className={`market-ribbon__state ${market?.stale || market?.partial ? 'market-ribbon__state--warn' : ''}`}>{statusLabel}</span>
+      </div>
+      <div className="market-ribbon__quotes">
+        {priceCards.map((item) => (
+          <div className="market-ribbon__quote" key={item.currency}>
+            <span className="market-ribbon__quote-label">BTC/{item.currency}</span>
+            <span className="market-ribbon__quote-value">{formatCurrency(item.currency, item.value)}</span>
+            {typeof item.change === 'number' ? (
+              <span className={`market-ribbon__quote-change ${item.change >= 0 ? 'market-ribbon__quote-change--up' : 'market-ribbon__quote-change--down'}`}>
+                {formatChange(item.change)}
+              </span>
+            ) : null}
+          </div>
+        ))}
+      </div>
+      <div className="market-tape" aria-label={t('dashboard.marketTapeTitle')}>
+        <div className="market-tape__track">
+          {tickerItems.map((item, idx) => (
+            <span className={`market-tape__item market-tape__item--${item.tone}`} key={`${item.label}-${idx}`}>
+              <span className="market-tape__label">{item.label}</span>
+              <span className="market-tape__value">{item.value}</span>
+              {item.detail ? <span className="market-tape__detail">{item.detail}</span> : null}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
 
 export default function DashboardScreen({ authState }: DashboardScreenProps) {
   const { t, i18n } = useTranslation()
@@ -96,6 +194,7 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
   const [system, setSystem] = useState<SystemStats | null>(null)
   const [disk, setDisk] = useState<DiskSmart[]>([])
   const [bitcoin, setBitcoin] = useState<BitcoinStatus | null>(null)
+  const [bitcoinMarket, setBitcoinMarket] = useState<BitcoinMarketStatus | null>(null)
   const [postgres, setPostgres] = useState<PostgresStatus | null>(null)
   const [lnd, setLnd] = useState<LndStatus | null>(null)
   const [lndPeers, setLndPeers] = useState<LndPeer[]>([])
@@ -273,6 +372,27 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
 
     load()
     const timer = setInterval(load, 30000)
+    return () => {
+      mounted = false
+      clearInterval(timer)
+    }
+  }, [])
+
+  useEffect(() => {
+    let mounted = true
+    const load = async () => {
+      try {
+        const data = await getBitcoinMarket()
+        if (!mounted) return
+        setBitcoinMarket((data ?? null) as BitcoinMarketStatus | null)
+      } catch {
+        if (!mounted) return
+        setBitcoinMarket(null)
+      }
+    }
+
+    load()
+    const timer = setInterval(load, MARKET_REFRESH_INTERVAL_MS)
     return () => {
       mounted = false
       clearInterval(timer)
@@ -868,35 +988,38 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
             </div>
             <p className="mt-3 text-sm text-fog/65">{topSummary}</p>
           </button>
-          <div className="flex flex-wrap items-center gap-2 xl:justify-end">
-            <button
-              className={`btn-secondary text-xs px-3 py-2 sm:text-sm sm:px-4 ${(lndRestartBusy || lndRestartLocked) ? 'opacity-60 pointer-events-none' : ''}`}
-              onClick={() => void restart('lnd')}
-              type="button"
-              disabled={lndRestartBusy || lndRestartLocked}
-            >
-              {t('dashboard.restartLnd')}
-            </button>
-            <button className="btn-secondary text-xs px-3 py-2 sm:text-sm sm:px-4" onClick={() => void restart('lightningos-manager')} type="button">
-              {t('dashboard.restartManager')}
-            </button>
-            <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-2 py-1 w-full xl:w-auto">
-              <span className="text-[10px] uppercase tracking-[0.2em] text-fog/50">{t('dashboard.systemActions')}</span>
+          <div className="flex min-w-0 flex-col gap-3 xl:w-[34rem] xl:items-stretch">
+            <div className="flex flex-wrap items-center gap-2 xl:justify-end">
               <button
-                className="btn-secondary text-[11px] px-2 py-1 sm:text-xs sm:px-3 sm:py-1.5 text-amber-200 border-amber-400/30"
-                onClick={() => openSystemAction('restart')}
+                className={`btn-secondary text-xs px-3 py-2 sm:text-sm sm:px-4 ${(lndRestartBusy || lndRestartLocked) ? 'opacity-60 pointer-events-none' : ''}`}
+                onClick={() => void restart('lnd')}
                 type="button"
+                disabled={lndRestartBusy || lndRestartLocked}
               >
-                {t('dashboard.safeRestart')}
+                {t('dashboard.restartLnd')}
               </button>
-              <button
-                className="btn-secondary text-[11px] px-2 py-1 sm:text-xs sm:px-3 sm:py-1.5 text-rose-200 border-rose-400/30"
-                onClick={() => openSystemAction('shutdown')}
-                type="button"
-              >
-                {t('dashboard.safeShutdown')}
+              <button className="btn-secondary text-xs px-3 py-2 sm:text-sm sm:px-4" onClick={() => void restart('lightningos-manager')} type="button">
+                {t('dashboard.restartManager')}
               </button>
+              <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-2 py-1 w-full xl:w-auto">
+                <span className="text-[10px] uppercase tracking-[0.2em] text-fog/50">{t('dashboard.systemActions')}</span>
+                <button
+                  className="btn-secondary text-[11px] px-2 py-1 sm:text-xs sm:px-3 sm:py-1.5 text-amber-200 border-amber-400/30"
+                  onClick={() => openSystemAction('restart')}
+                  type="button"
+                >
+                  {t('dashboard.safeRestart')}
+                </button>
+                <button
+                  className="btn-secondary text-[11px] px-2 py-1 sm:text-xs sm:px-3 sm:py-1.5 text-rose-200 border-rose-400/30"
+                  onClick={() => openSystemAction('shutdown')}
+                  type="button"
+                >
+                  {t('dashboard.safeShutdown')}
+                </button>
+              </div>
             </div>
+            <MarketTape market={bitcoinMarket} locale={locale} />
           </div>
         </div>
       </div>

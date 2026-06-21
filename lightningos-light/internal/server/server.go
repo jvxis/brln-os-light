@@ -131,6 +131,8 @@ type Server struct {
 	bitcoinStatusGroup          singleflight.Group
 	bitcoinActiveCache          map[string]cachedBitcoinStatus
 	bitcoinLocalCache           cachedBitcoinLocalStatus
+	bitcoinMarketMu             sync.Mutex
+	bitcoinMarketCache          cachedBitcoinMarketStatus
 }
 
 func New(cfg *config.Config, logger *log.Logger) *Server {

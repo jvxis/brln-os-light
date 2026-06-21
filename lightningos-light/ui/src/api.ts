@@ -140,6 +140,7 @@ export const getBitcoinActive = () => request('/api/bitcoin/active')
 export const getBitcoinSource = () => request('/api/bitcoin/source')
 export const setBitcoinSource = (payload: { source: 'local' | 'remote'; allow_unsynced?: boolean }) =>
   request('/api/bitcoin/source', { method: 'POST', body: JSON.stringify(payload) })
+export const getBitcoinMarket = () => request('/api/bitcoin/market')
 export const getBitcoinLocalStatus = () => request('/api/bitcoin-local/status')
 export const getBitcoinLocalConfig = () => request('/api/bitcoin-local/config')
 export const updateBitcoinLocalConfig = (payload: {

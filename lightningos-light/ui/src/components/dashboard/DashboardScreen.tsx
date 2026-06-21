@@ -145,20 +145,9 @@ function MarketTape({ market, locale }: MarketTapeProps) {
   const tickerItems = tapeItems.length > 0
     ? [...tapeItems, ...tapeItems]
     : [{ label: t('dashboard.marketTapeTitle'), value: t('dashboard.marketUnavailable'), detail: '', tone: 'muted' }]
-  const statusLabel = !market
-    ? t('dashboard.loadingStatus')
-    : market.stale
-      ? t('dashboard.marketStale')
-      : market.partial
-        ? t('dashboard.marketPartial')
-        : t('dashboard.marketLive')
 
   return (
     <div className="market-ribbon">
-      <div className="market-ribbon__header">
-        <span className="market-ribbon__title">{t('dashboard.marketTapeTitle')}</span>
-        <span className={`market-ribbon__state ${market?.stale || market?.partial ? 'market-ribbon__state--warn' : ''}`}>{statusLabel}</span>
-      </div>
       <div className="market-tape" aria-label={t('dashboard.marketTapeTitle')}>
         <div className="market-tape__track">
           {tickerItems.map((item, idx) => (
@@ -961,7 +950,7 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <button
             type="button"
-            className="max-w-4xl rounded-2xl p-2 text-left transition hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-brass/60"
+            className="max-w-4xl rounded-2xl p-2 text-left transition hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-brass/60 xl:min-w-[18rem] xl:flex-1"
             onClick={openSystemPulseModal}
             aria-haspopup="dialog"
             aria-expanded={systemPulseModalOpen}
@@ -975,30 +964,30 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
             </div>
             <p className="mt-3 text-sm text-fog/65">{topSummary}</p>
           </button>
-          <div className="flex min-w-0 flex-col gap-3 xl:w-[34rem] xl:items-stretch">
+          <div className="flex min-w-0 flex-col gap-2 xl:w-[44rem] xl:shrink-0 xl:items-stretch">
             <div className="flex flex-wrap items-center gap-2 xl:flex-nowrap xl:justify-end">
               <button
-                className={`btn-secondary text-xs px-3 py-2 sm:text-sm sm:px-4 ${(lndRestartBusy || lndRestartLocked) ? 'opacity-60 pointer-events-none' : ''}`}
+                className={`btn-secondary whitespace-nowrap text-xs px-3 py-2 sm:text-sm sm:px-4 ${(lndRestartBusy || lndRestartLocked) ? 'opacity-60 pointer-events-none' : ''}`}
                 onClick={() => void restart('lnd')}
                 type="button"
                 disabled={lndRestartBusy || lndRestartLocked}
               >
                 {t('dashboard.restartLnd')}
               </button>
-              <button className="btn-secondary text-xs px-3 py-2 sm:text-sm sm:px-4" onClick={() => void restart('lightningos-manager')} type="button">
+              <button className="btn-secondary whitespace-nowrap text-xs px-3 py-2 sm:text-sm sm:px-4" onClick={() => void restart('lightningos-manager')} type="button">
                 {t('dashboard.restartManager')}
               </button>
               <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-2 py-1 w-full xl:w-auto xl:flex-nowrap">
-                <span className="text-[10px] uppercase tracking-[0.2em] text-fog/50">{t('dashboard.systemActions')}</span>
+                <span className="whitespace-nowrap text-[10px] uppercase tracking-[0.2em] text-fog/50">{t('dashboard.systemActions')}</span>
                 <button
-                  className="btn-secondary text-[11px] px-2 py-1 sm:text-xs sm:px-3 sm:py-1.5 text-amber-200 border-amber-400/30"
+                  className="btn-secondary whitespace-nowrap text-[11px] px-2 py-1 sm:text-xs sm:px-3 sm:py-1.5 text-amber-200 border-amber-400/30"
                   onClick={() => openSystemAction('restart')}
                   type="button"
                 >
                   {t('dashboard.safeRestart')}
                 </button>
                 <button
-                  className="btn-secondary text-[11px] px-2 py-1 sm:text-xs sm:px-3 sm:py-1.5 text-rose-200 border-rose-400/30"
+                  className="btn-secondary whitespace-nowrap text-[11px] px-2 py-1 sm:text-xs sm:px-3 sm:py-1.5 text-rose-200 border-rose-400/30"
                   onClick={() => openSystemAction('shutdown')}
                   type="button"
                 >

@@ -7,7 +7,7 @@
   overflow: hidden;
   border: 1px solid rgb(var(--color-glow) / 0.24);
   border-radius: 16px;
-  padding: 8px 10px;
+  padding: 7px 10px;
   background:
     linear-gradient(135deg, rgb(var(--color-glow) / 0.12), rgb(var(--color-brass) / 0.08)),
     linear-gradient(180deg, rgb(var(--color-ink) / 0.72), rgb(var(--color-midnight) / 0.48));
@@ -27,42 +27,9 @@
   opacity: 0.28;
 }
 
-.market-ribbon__header,
 .market-tape {
   position: relative;
   z-index: 1;
-}
-
-.market-ribbon__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 5px;
-}
-
-.market-ribbon__title,
-.market-ribbon__state {
-  font-size: 10px;
-  text-transform: uppercase;
-}
-
-.market-ribbon__title {
-  color: rgb(var(--color-fog) / 0.64);
-}
-
-.market-ribbon__state {
-  border: 1px solid rgb(var(--color-glow) / 0.32);
-  border-radius: 999px;
-  padding: 2px 8px;
-  color: rgb(var(--color-glow) / 0.94);
-  background: rgb(var(--color-glow) / 0.12);
-}
-
-.market-ribbon__state--warn {
-  border-color: rgb(var(--color-brass) / 0.36);
-  color: rgb(var(--color-brass) / 0.92);
-  background: rgb(var(--color-brass) / 0.12);
 }
 
 .market-tape {

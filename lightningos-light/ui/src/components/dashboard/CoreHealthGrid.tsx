@@ -8,7 +8,6 @@ import {
   formatPercent,
   formatSats,
   formatTemp,
-  formatTimeAgo,
   formatTimestamp,
   toneFromStatusText,
 } from './formatters'
@@ -16,7 +15,7 @@ import HorizontalBarGauge from './HorizontalBarGauge'
 import StackedRatioBar from './StackedRatioBar'
 import StatusBadge from './StatusBadge'
 import DbMaintenanceModal from './DbMaintenanceModal'
-import type { BitcoinStatus, DiskSmart, LndChannel, LndPeer, LndStatus, PostgresStatus, SystemStats } from './types'
+import type { BitcoinStatus, DiskSmart, LndChannel, LndPeer, LndStatus, PostgresStatus, SystemStats, Tone } from './types'
 
 type CoreHealthGridProps = {
   lnd: LndStatus | null
@@ -65,6 +64,38 @@ export default function CoreHealthGrid({
   const cadenceTotal = cadenceBuckets.reduce((sum, bucket) => sum + bucket.count, 0)
   const cadenceHours = ((bitcoin?.block_cadence_window_sec ?? 600) * Math.max(1, cadenceBuckets.length)) / 3600
   const cadenceAvg = cadenceHours > 0 ? cadenceTotal / cadenceHours : 0
+  const lastBlockTime = typeof bitcoin?.best_block_time === 'number' && bitcoin.best_block_time > 0
+    ? bitcoin.best_block_time * 1000
+    : null
+  const lastBlockAgeSec = lastBlockTime ? Math.max(0, (Date.now() - lastBlockTime) / 1000) : null
+  const formatDuration = (seconds?: number | null) => {
+    if (seconds === null || seconds === undefined) return '-'
+    if (seconds < 60) return `${Math.floor(seconds)}s`
+    const minutes = Math.floor(seconds / 60)
+    if (minutes < 60) return `${minutes}m`
+    const hours = Math.floor(minutes / 60)
+    const remMinutes = minutes % 60
+    if (hours < 24) return remMinutes ? `${hours}h ${remMinutes}m` : `${hours}h`
+    const days = Math.floor(hours / 24)
+    return `${days}d ${hours % 24}h`
+  }
+  const lastBlockAgeLabel = lastBlockAgeSec === null
+    ? '-'
+    : t('bitcoinLocal.timeAgo', { time: formatDuration(lastBlockAgeSec) })
+  const lastBlockBadgeTone: Tone = lastBlockAgeSec === null
+    ? 'muted'
+    : lastBlockAgeSec <= 1200
+      ? 'ok'
+      : lastBlockAgeSec <= 3600
+        ? 'warn'
+        : 'danger'
+  const lastBlockBadgeLabel = lastBlockAgeSec === null
+    ? t('common.unknown')
+    : lastBlockAgeSec <= 1200
+      ? t('common.ok')
+      : lastBlockAgeSec <= 3600
+        ? t('bitcoinLocal.cadenceWarn')
+        : t('bitcoinLocal.cadenceStale')
   const cpuPercent = system?.cpu_percent_avg_30s ?? system?.cpu_percent ?? 0
   const peerAddressHost = (value?: string) => {
     const raw = String(value || '').trim().toLowerCase()
@@ -231,7 +262,7 @@ export default function CoreHealthGrid({
                 value={(bitcoin.verification_progress ?? 0) * 100}
                 max={100}
                 valueLabel={`${formatPercent(locale, (bitcoin.verification_progress ?? 0) * 100, 2)}%`}
-                detail={bitcoin.best_block_time ? `${t('dashboard.lastBlockSeen')}: ${formatTimeAgo(locale, bitcoin.best_block_time)}` : undefined}
+                detail={lastBlockAgeSec !== null ? `${t('dashboard.lastBlockSeen')}: ${lastBlockAgeLabel}` : undefined}
                 tone={bitcoin.rpc_ok ? 'ok' : 'warn'}
               />
 
@@ -294,7 +325,10 @@ export default function CoreHealthGrid({
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-fog/60">{t('dashboard.lastBlockSeen')}</span>
-                    <span>{bitcoin.best_block_time ? formatTimeAgo(locale, bitcoin.best_block_time) : '-'}</span>
+                    <span className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+                      <span className="min-w-0 text-right [overflow-wrap:anywhere]">{lastBlockAgeLabel}</span>
+                      {lastBlockAgeSec !== null ? <StatusBadge label={lastBlockBadgeLabel} tone={lastBlockBadgeTone} /> : null}
+                    </span>
                   </div>
                 </div>
               </details>

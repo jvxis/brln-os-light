@@ -67,6 +67,7 @@ func TestApplyBitcoinCLIChainInfoToLocalStatusKeepsBasicFieldsWithoutNetwork(t *
 		Headers:              124,
 		VerificationProgress: 0.98,
 		InitialBlockDownload: true,
+		BestBlockHash:        "0000local",
 		Pruned:               true,
 		PruneHeight:          100,
 		PruneTargetSize:      200,
@@ -81,51 +82,67 @@ func TestApplyBitcoinCLIChainInfoToLocalStatusKeepsBasicFieldsWithoutNetwork(t *
 	if status.Chain != info.Chain || status.Blocks != info.Blocks || status.Headers != info.Headers {
 		t.Fatalf("expected basic chain fields to be copied: %+v", status)
 	}
+	if status.BestBlockHash != info.BestBlockHash {
+		t.Fatalf("expected best block hash %q, got %q", info.BestBlockHash, status.BestBlockHash)
+	}
 	if status.Version != 0 || status.Subversion != "" || status.Connections != 0 {
 		t.Fatalf("expected network metadata to stay unset without getnetworkinfo: %+v", status)
 	}
 }
 
-func TestApplyBitcoinCLIChainInfoToStatusIncludesPruneFields(t *testing.T) {
-	status := bitcoinStatus{}
-	info := bitcoinCLIChainInfo{
-		Chain:                "main",
-		Blocks:               456,
-		Headers:              456,
+func TestApplyBitcoinLocalStatusToStatusIncludesCadence(t *testing.T) {
+	status := bitcoinStatus{
+		Mode:    "local",
+		RPCHost: "127.0.0.1:8332",
+	}
+	local := bitcoinLocalStatus{
+		Installed:             true,
+		Status:                "running",
+		Source:                "app",
+		DataDir:               "/data/bitcoin",
+		RPCOk:                 true,
+		Connections:           12,
+		Chain:                 "main",
+		Blocks:                954690,
+		Headers:               954690,
+		BestBlockHash:         "0000active",
+		BestBlockTime:         1_780_000_000,
+		BlockCadenceWindowSec: blockCadenceWindowSec,
+		BlockCadence: []blockCadenceBucket{
+			{StartTime: 1_779_992_800, EndTime: 1_779_993_400, Count: 2},
+		},
 		VerificationProgress: 1,
-		InitialBlockDownload: false,
-		BestBlockHash:        "0000abc",
+		Version:              300000,
+		Subversion:           "/Satoshi:30.0.0/",
 		Pruned:               true,
-		PruneHeight:          150,
-		PruneTargetSize:      12_345,
-		SizeOnDisk:           67_890,
+		PruneHeight:          100,
+		PruneTargetSize:      200,
+		SizeOnDisk:           300,
 	}
 
-	applyBitcoinCLIChainInfoToStatus(&status, info)
+	applyBitcoinLocalStatusToStatus(&status, local)
 
-	if !status.Pruned {
-		t.Fatalf("expected pruned=true to be copied to active bitcoin status")
+	if status.Mode != "local" || status.RPCHost != "127.0.0.1:8332" {
+		t.Fatalf("expected active connection fields to be preserved, got %+v", status)
 	}
-	if status.PruneHeight != info.PruneHeight || status.PruneTargetSize != info.PruneTargetSize || status.SizeOnDisk != info.SizeOnDisk {
+	if !status.Installed || status.Status != local.Status || status.Source != local.Source || status.DataDir != local.DataDir {
+		t.Fatalf("expected local metadata to be copied: %+v", status)
+	}
+	if status.BestBlockHash != local.BestBlockHash || status.BestBlockTime != local.BestBlockTime {
+		t.Fatalf("expected best block metadata to be copied: %+v", status)
+	}
+	if status.Connections != local.Connections || status.Version != local.Version || status.Subversion != local.Subversion {
+		t.Fatalf("expected network metadata to be copied: %+v", status)
+	}
+	if !status.Pruned || status.PruneHeight != local.PruneHeight || status.PruneTargetSize != local.PruneTargetSize || status.SizeOnDisk != local.SizeOnDisk {
 		t.Fatalf("expected prune metadata to be copied: %+v", status)
 	}
-}
-
-func TestApplyBitcoinCLINetworkInfoToStatusIncludesConnections(t *testing.T) {
-	status := bitcoinStatus{}
-	info := bitcoinCLINetworkInfo{
-		Version:     300000,
-		Subversion:  "/Satoshi:30.0.0/",
-		Connections: 11,
+	if status.BlockCadenceWindowSec != local.BlockCadenceWindowSec || len(status.BlockCadence) != 1 || status.BlockCadence[0].Count != 2 {
+		t.Fatalf("expected cadence to be copied: %+v", status)
 	}
-
-	applyBitcoinCLINetworkInfoToStatus(&status, info)
-
-	if status.Connections != info.Connections {
-		t.Fatalf("expected connections %d, got %d", info.Connections, status.Connections)
-	}
-	if status.Version != info.Version || status.Subversion != info.Subversion {
-		t.Fatalf("expected network metadata to be copied: %+v", status)
+	local.BlockCadence[0].Count = 99
+	if status.BlockCadence[0].Count != 2 {
+		t.Fatalf("expected cadence slice to be copied defensively, got %+v", status.BlockCadence)
 	}
 }
 

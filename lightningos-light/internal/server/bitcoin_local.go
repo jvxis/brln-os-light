@@ -48,6 +48,7 @@ type bitcoinLocalStatus struct {
 	BlockCadence          []blockCadenceBucket `json:"block_cadence,omitempty"`
 	VerificationProgress  float64              `json:"verification_progress,omitempty"`
 	InitialBlockDownload  bool                 `json:"initial_block_download,omitempty"`
+	BestBlockHash         string               `json:"best_block_hash,omitempty"`
 	Version               int                  `json:"version,omitempty"`
 	Subversion            string               `json:"subversion,omitempty"`
 	Pruned                bool                 `json:"pruned,omitempty"`
@@ -622,6 +623,7 @@ func applyBitcoinInfoToLocalStatus(status *bitcoinLocalStatus, info bitcoinInfo)
 	status.Headers = info.Headers
 	status.VerificationProgress = info.VerificationProgress
 	status.InitialBlockDownload = info.InitialBlockDownload
+	status.BestBlockHash = info.BestBlockHash
 	status.Pruned = info.Pruned
 	status.PruneHeight = info.PruneHeight
 	status.PruneTargetSize = info.PruneTargetSize
@@ -637,30 +639,35 @@ func applyBitcoinNetworkInfoToLocalStatus(status *bitcoinLocalStatus, info bitco
 	status.Connections = info.Connections
 }
 
-func applyBitcoinCLIChainInfoToStatus(status *bitcoinStatus, info bitcoinCLIChainInfo) {
+func applyBitcoinLocalStatusToStatus(status *bitcoinStatus, local bitcoinLocalStatus) {
 	if status == nil {
 		return
 	}
-	status.RPCOk = true
-	status.Chain = info.Chain
-	status.Blocks = info.Blocks
-	status.Headers = info.Headers
-	status.VerificationProgress = info.VerificationProgress
-	status.InitialBlockDownload = info.InitialBlockDownload
-	status.BestBlockHash = info.BestBlockHash
-	status.Pruned = info.Pruned
-	status.PruneHeight = info.PruneHeight
-	status.PruneTargetSize = info.PruneTargetSize
-	status.SizeOnDisk = info.SizeOnDisk
-}
-
-func applyBitcoinCLINetworkInfoToStatus(status *bitcoinStatus, info bitcoinCLINetworkInfo) {
-	if status == nil {
-		return
+	status.Installed = local.Installed
+	status.Status = local.Status
+	status.Source = local.Source
+	status.DataDir = local.DataDir
+	status.RPCOk = local.RPCOk
+	status.Connections = local.Connections
+	status.Version = local.Version
+	status.Subversion = local.Subversion
+	status.Chain = local.Chain
+	status.Blocks = local.Blocks
+	status.Headers = local.Headers
+	status.VerificationProgress = local.VerificationProgress
+	status.InitialBlockDownload = local.InitialBlockDownload
+	status.BestBlockHash = local.BestBlockHash
+	status.BestBlockTime = local.BestBlockTime
+	status.Pruned = local.Pruned
+	status.PruneHeight = local.PruneHeight
+	status.PruneTargetSize = local.PruneTargetSize
+	status.SizeOnDisk = local.SizeOnDisk
+	status.BlockCadenceWindowSec = local.BlockCadenceWindowSec
+	if len(local.BlockCadence) > 0 {
+		status.BlockCadence = append([]blockCadenceBucket(nil), local.BlockCadence...)
+	} else {
+		status.BlockCadence = nil
 	}
-	status.Connections = info.Connections
-	status.Version = info.Version
-	status.Subversion = info.Subversion
 }
 
 func applyBitcoinCLIChainInfoToLocalStatus(status *bitcoinLocalStatus, info bitcoinCLIChainInfo) {
@@ -673,6 +680,7 @@ func applyBitcoinCLIChainInfoToLocalStatus(status *bitcoinLocalStatus, info bitc
 	status.Headers = info.Headers
 	status.VerificationProgress = info.VerificationProgress
 	status.InitialBlockDownload = info.InitialBlockDownload
+	status.BestBlockHash = info.BestBlockHash
 	status.Pruned = info.Pruned
 	status.PruneHeight = info.PruneHeight
 	status.PruneTargetSize = info.PruneTargetSize

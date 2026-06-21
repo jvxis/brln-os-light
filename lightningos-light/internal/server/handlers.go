@@ -329,28 +329,35 @@ func databaseNameFromDSN(raw string) string {
 }
 
 type bitcoinStatus struct {
-	Mode                 string  `json:"mode"`
-	RPCHost              string  `json:"rpchost"`
-	ZMQRawBlock          string  `json:"zmq_rawblock"`
-	ZMQRawTx             string  `json:"zmq_rawtx"`
-	RPCOk                bool    `json:"rpc_ok"`
-	RPCStale             bool    `json:"rpc_stale,omitempty"`
-	RPCLastOKAgeSeconds  int64   `json:"rpc_last_ok_age_seconds,omitempty"`
-	ZMQRawBlockOk        bool    `json:"zmq_rawblock_ok"`
-	ZMQRawTxOk           bool    `json:"zmq_rawtx_ok"`
-	Connections          int     `json:"connections,omitempty"`
-	Version              int     `json:"version,omitempty"`
-	Subversion           string  `json:"subversion,omitempty"`
-	Chain                string  `json:"chain,omitempty"`
-	Blocks               int64   `json:"blocks,omitempty"`
-	Headers              int64   `json:"headers,omitempty"`
-	VerificationProgress float64 `json:"verification_progress,omitempty"`
-	InitialBlockDownload bool    `json:"initial_block_download,omitempty"`
-	BestBlockHash        string  `json:"best_block_hash,omitempty"`
-	Pruned               bool    `json:"pruned,omitempty"`
-	PruneHeight          int64   `json:"prune_height,omitempty"`
-	PruneTargetSize      int64   `json:"prune_target_size,omitempty"`
-	SizeOnDisk           int64   `json:"size_on_disk,omitempty"`
+	Mode                  string               `json:"mode"`
+	RPCHost               string               `json:"rpchost"`
+	ZMQRawBlock           string               `json:"zmq_rawblock"`
+	ZMQRawTx              string               `json:"zmq_rawtx"`
+	RPCOk                 bool                 `json:"rpc_ok"`
+	RPCStale              bool                 `json:"rpc_stale,omitempty"`
+	RPCLastOKAgeSeconds   int64                `json:"rpc_last_ok_age_seconds,omitempty"`
+	Installed             bool                 `json:"installed,omitempty"`
+	Status                string               `json:"status,omitempty"`
+	Source                string               `json:"source,omitempty"`
+	DataDir               string               `json:"data_dir,omitempty"`
+	ZMQRawBlockOk         bool                 `json:"zmq_rawblock_ok"`
+	ZMQRawTxOk            bool                 `json:"zmq_rawtx_ok"`
+	Connections           int                  `json:"connections,omitempty"`
+	Version               int                  `json:"version,omitempty"`
+	Subversion            string               `json:"subversion,omitempty"`
+	Chain                 string               `json:"chain,omitempty"`
+	Blocks                int64                `json:"blocks,omitempty"`
+	Headers               int64                `json:"headers,omitempty"`
+	VerificationProgress  float64              `json:"verification_progress,omitempty"`
+	InitialBlockDownload  bool                 `json:"initial_block_download,omitempty"`
+	BestBlockHash         string               `json:"best_block_hash,omitempty"`
+	BestBlockTime         int64                `json:"best_block_time,omitempty"`
+	Pruned                bool                 `json:"pruned,omitempty"`
+	PruneHeight           int64                `json:"prune_height,omitempty"`
+	PruneTargetSize       int64                `json:"prune_target_size,omitempty"`
+	SizeOnDisk            int64                `json:"size_on_disk,omitempty"`
+	BlockCadenceWindowSec int64                `json:"block_cadence_window_sec,omitempty"`
+	BlockCadence          []blockCadenceBucket `json:"block_cadence,omitempty"`
 }
 
 type mempoolConnectivityNode struct {
@@ -595,29 +602,14 @@ func (s *Server) bitcoinLocalStatusActive(ctx context.Context) (bitcoinStatus, e
 			if strings.TrimSpace(cfg.ZMQTx) != "" {
 				status.ZMQRawTx = cfg.ZMQTx
 			}
-			if strings.TrimSpace(cfg.User) != "" && strings.TrimSpace(cfg.Pass) != "" {
-				info, rpcErr := fetchBitcoinInfo(ctx, cfg.Host, cfg.User, cfg.Pass)
-				if rpcErr == nil {
-					applyBitcoinInfoToStatus(&status, info)
-					if netInfo, ok := fetchBitcoinNetworkInfoBestEffort(ctx, cfg.Host, cfg.User, cfg.Pass); ok {
-						applyBitcoinNetworkInfoToStatus(&status, netInfo)
-					}
-				} else {
-					status.RPCOk = false
-				}
-			}
-		}
-		status.ZMQRawBlockOk = testTCP(status.ZMQRawBlock)
-		status.ZMQRawTxOk = testTCP(status.ZMQRawTx)
-		return status, nil
-	}
-	info, err := fetchBitcoinLocalChainInfo(ctx, paths)
-	if err == nil {
-		applyBitcoinCLIChainInfoToStatus(&status, info)
-		if netInfo, ok := fetchBitcoinLocalNetworkInfoBestEffort(ctx, paths); ok {
-			applyBitcoinCLINetworkInfoToStatus(&status, netInfo)
 		}
 	}
+
+	localStatus, err := s.bitcoinLocalStatusCached(ctx)
+	if err != nil {
+		return status, err
+	}
+	applyBitcoinLocalStatusToStatus(&status, localStatus)
 	status.ZMQRawBlockOk = testTCP(status.ZMQRawBlock)
 	status.ZMQRawTxOk = testTCP(status.ZMQRawTx)
 	return status, nil

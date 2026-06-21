@@ -12,8 +12,8 @@ const (
 	bitcoinStatusCacheErr           = 45 * time.Second
 	bitcoinStatusStaleOKGrace       = 2 * time.Minute
 	bitcoinActiveFetchTimeoutRemote = 4 * time.Second
-	bitcoinActiveFetchTimeoutLocal  = 8 * time.Second
 	bitcoinLocalFetchTimeout        = 10 * time.Second
+	bitcoinActiveFetchTimeoutLocal  = bitcoinLocalFetchTimeout
 )
 
 type cachedBitcoinStatus struct {

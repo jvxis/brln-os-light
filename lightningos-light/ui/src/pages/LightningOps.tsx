@@ -345,6 +345,9 @@ type ChanHealStatus = {
   last_attempt_at?: string
   interval_sec?: number
   last_updated?: number
+  last_reconnect_attempted?: number
+  last_reconnected?: number
+  last_reconnect_failed?: number
 }
 
 type HtlcManagerStatus = {
@@ -3492,14 +3495,8 @@ export default function LightningOps() {
     }
   }, [channelsSubview, autofeeOpen, lightningToolsOpen])
 
-  const baseFilteredChannels = useMemo(() => {
+  const statusFilterBaseChannels = useMemo(() => {
     let list = channels
-    if (filter === 'active') {
-      list = list.filter((ch) => ch.active)
-    }
-    if (filter === 'inactive') {
-      list = list.filter((ch) => !ch.active)
-    }
     if (!showPrivate) {
       list = list.filter((ch) => !ch.private)
     }
@@ -3518,7 +3515,27 @@ export default function LightningOps() {
       list = list.filter((ch) => ch.capacity_sat >= minCap)
     }
     return list
-  }, [channels, filter, minCapacity, search, showPrivate])
+  }, [channels, minCapacity, search, showPrivate])
+
+  const statusCounts = useMemo(() => {
+    const counts = { all: statusFilterBaseChannels.length, active: 0, inactive: 0 }
+    statusFilterBaseChannels.forEach((ch) => {
+      if (ch.active) counts.active += 1
+      else counts.inactive += 1
+    })
+    return counts
+  }, [statusFilterBaseChannels])
+
+  const baseFilteredChannels = useMemo(() => {
+    let list = statusFilterBaseChannels
+    if (filter === 'active') {
+      list = list.filter((ch) => ch.active)
+    }
+    if (filter === 'inactive') {
+      list = list.filter((ch) => !ch.active)
+    }
+    return list
+  }, [filter, statusFilterBaseChannels])
 
   const profitCounts = useMemo(() => {
     const counts = { profitable: 0, neutral: 0, deficit: 0 }
@@ -6077,9 +6094,9 @@ export default function LightningOps() {
           </div>
           {channelsSubview === 'channels' ? (
             <div className="flex flex-wrap items-center gap-2 text-xs">
-              <button className={filter === 'all' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setFilter('all'); setFcRiskOnly(false) }}>{t('common.all')}</button>
-              <button className={filter === 'active' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setFilter('active'); setFcRiskOnly(false) }}>{t('common.active')}</button>
-              <button className={filter === 'inactive' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setFilter('inactive'); setFcRiskOnly(false) }}>{t('common.inactive')}</button>
+              <button className={filter === 'all' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setFilter('all'); setFcRiskOnly(false) }}>{t('common.all')}: {statusCounts.all}</button>
+              <button className={filter === 'active' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setFilter('active'); setFcRiskOnly(false) }}>{t('common.active')}: {statusCounts.active}</button>
+              <button className={filter === 'inactive' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setFilter('inactive'); setFcRiskOnly(false) }}>{t('common.inactive')}: {statusCounts.inactive}</button>
               <button className={profitFilter === 'profitable' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setProfitFilter((prev) => (prev === 'profitable' ? 'all' : 'profitable')); setFcRiskOnly(false) }}>
                 {t('lightningOps.profitPositive')}: {profitCounts.profitable}
               </button>
@@ -8885,6 +8902,15 @@ export default function LightningOps() {
         {chanHeal?.last_ok_at && typeof chanHeal?.last_updated === 'number' && (
           <p className="text-xs text-fog/60">
             {t('lightningOps.chanHealLastUpdated', { count: chanHeal.last_updated })}
+          </p>
+        )}
+        {typeof chanHeal?.last_reconnect_attempted === 'number' && (
+          <p className="text-xs text-fog/60">
+            {t('lightningOps.chanHealLastReconnects', {
+              attempted: chanHeal.last_reconnect_attempted,
+              connected: chanHeal.last_reconnected ?? 0,
+              failed: chanHeal.last_reconnect_failed ?? 0,
+            })}
           </p>
         )}
         {chanHeal?.last_error && (

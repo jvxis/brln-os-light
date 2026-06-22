@@ -2241,6 +2241,7 @@
     "chanHealLastAttempt": "Última tentativa",
     "chanHealLastError": "Último erro",
     "chanHealLastRun": "Última execução",
+    "chanHealLastReconnects": "Última execução tentou reconectar {{attempted}} peer(s): {{connected}} conectado(s), {{failed}} falha(s).",
     "chanHealLastUpdated": "Última execução habilitou {{count}} canal(is).",
     "chanHealLoading": "Carregando auto-reparo de canais...",
     "chanHealSaveFailed": "Falha ao atualizar o auto-reparo de canais.",

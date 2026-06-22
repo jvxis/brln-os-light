@@ -3924,6 +3924,7 @@
         "save": "Salvar",
         "rebalanceIn": "Manual Rebal In",
         "manualRestartBudgetWarning": "Manual restart pode ser bloqueado: custo estimado {{cost}} excede orçamento útil {{budget}}.",
+        "manualRestartBudgetWarningChunk": "Manual restart pode ser bloqueado: mesmo um pedaço de max amount custa {{cost}}, acima do orçamento útil {{budget}} (o reabastecimento roda em pedaços).",
         "bulkAuto": "Auto (todos)",
         "bulkExclude": "Excluir (todos)",
         "auto": "Auto",

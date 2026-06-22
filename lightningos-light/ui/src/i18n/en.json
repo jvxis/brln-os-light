@@ -3924,6 +3924,7 @@
         "save": "Save",
         "rebalanceIn": "Manual Rebal In",
         "manualRestartBudgetWarning": "Manual restart may be blocked: estimated cost {{cost}} exceeds usable budget {{budget}}.",
+        "manualRestartBudgetWarningChunk": "Manual restart may be blocked: even one max-amount chunk costs {{cost}}, above the usable budget {{budget}} (the top-up runs in chunks).",
         "bulkAuto": "Auto all",
         "bulkExclude": "Exclude all",
         "auto": "Auto",

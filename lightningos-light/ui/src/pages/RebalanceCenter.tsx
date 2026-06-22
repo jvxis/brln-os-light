@@ -362,6 +362,19 @@ export default function RebalanceCenter() {
     if (amountSat <= 0 || feePpm <= 0) return 0
     return Math.ceil((amountSat * feePpm) / 1_000_000)
   }
+  // A manual-restart job fills at most one max_amount chunk per run (the backend
+  // caps the spend at max_amount), so the budget warning must reflect the chunk
+  // cost — not the full-deficit cost. `chunked` is true when the deficit is
+  // bigger than one chunk (the top-up happens across successive runs).
+  const manualRestartChunkInfo = (ch: RebalanceChannel) => {
+    const maxAmount = config?.max_amount_sat ?? 0
+    const chunkSat = maxAmount > 0 ? Math.min(ch.target_amount_sat, maxAmount) : ch.target_amount_sat
+    return {
+      chunkSat,
+      chunkCost: estimateHistoricalCost(chunkSat, ch.rebalance_cost_7d_ppm),
+      chunked: maxAmount > 0 && ch.target_amount_sat > maxAmount
+    }
+  }
   const estimateTargetGain = (amountSat: number, revenue7d: number, localBalance: number, capacity: number) => {
     if (amountSat <= 0 || revenue7d <= 0) return 0
     let denom = localBalance > 0 ? localBalance : capacity
@@ -3582,12 +3595,12 @@ export default function RebalanceCenter() {
             const draftEligibleAsTarget = channelDraftEligibleAsTarget(ch)
             const isAutoTarget = draftEligibleAsTarget && ch.auto_enabled && meetsRoi && passesProfit
             const manualRestartSelected = manualRestart[ch.channel_point] === true
+            const { chunkCost: manualRestartChunkCost, chunked: manualRestartChunked } = manualRestartChunkInfo(ch)
             const manualRestartBudgetLow =
               manualRestartBudgetEnforced &&
               manualRestartSelected &&
-              Boolean(scoreMeta) &&
-              (scoreMeta?.estimatedCost ?? 0) > 0 &&
-              (scoreMeta?.estimatedCost ?? 0) > remainingTotalSat
+              manualRestartChunkCost > 0 &&
+              manualRestartChunkCost > remainingTotalSat
             const highlight = isAutoTarget
               ? 'bg-rose-500/10'
               : draftEligibleAsTarget
@@ -3743,10 +3756,12 @@ export default function RebalanceCenter() {
                   >
                     {pairStatsOpen[channelKey(ch)] ? t('common.hide') : t('rebalanceCenter.channels.pairStats')}
                   </button>
-                  {manualRestartBudgetLow && scoreMeta && (
+                  {manualRestartBudgetLow && (
                     <div className="basis-full text-[11px] text-amber-200">
-                      {t('rebalanceCenter.channels.manualRestartBudgetWarning', {
-                        cost: formatSats(scoreMeta.estimatedCost),
+                      {t(manualRestartChunked
+                        ? 'rebalanceCenter.channels.manualRestartBudgetWarningChunk'
+                        : 'rebalanceCenter.channels.manualRestartBudgetWarning', {
+                        cost: formatSats(manualRestartChunkCost),
                         budget: formatSats(remainingTotalSat)
                       })}
                     </div>
@@ -3827,12 +3842,12 @@ export default function RebalanceCenter() {
                 const draftEligibleAsTarget = channelDraftEligibleAsTarget(ch)
                 const isAutoTarget = draftEligibleAsTarget && ch.auto_enabled && meetsRoi && passesProfit
                 const manualRestartSelected = manualRestart[ch.channel_point] === true
+                const { chunkCost: manualRestartChunkCost, chunked: manualRestartChunked } = manualRestartChunkInfo(ch)
                 const manualRestartBudgetLow =
                   manualRestartBudgetEnforced &&
                   manualRestartSelected &&
-                  Boolean(scoreMeta) &&
-                  (scoreMeta?.estimatedCost ?? 0) > 0 &&
-                  (scoreMeta?.estimatedCost ?? 0) > remainingTotalSat
+                  manualRestartChunkCost > 0 &&
+                  manualRestartChunkCost > remainingTotalSat
                 const scoreTitle =
                   scoreMeta
                     ? t('rebalanceCenter.channels.scoreHint', {
@@ -3992,10 +4007,12 @@ export default function RebalanceCenter() {
                         {pairStatsOpen[channelKey(ch)] ? t('common.hide') : t('rebalanceCenter.channels.pairStats')}
                       </button>
                     </div>
-                    {manualRestartBudgetLow && scoreMeta && (
+                    {manualRestartBudgetLow && (
                       <div className="text-xs text-amber-200">
-                        {t('rebalanceCenter.channels.manualRestartBudgetWarning', {
-                          cost: formatSats(scoreMeta.estimatedCost),
+                        {t(manualRestartChunked
+                          ? 'rebalanceCenter.channels.manualRestartBudgetWarningChunk'
+                          : 'rebalanceCenter.channels.manualRestartBudgetWarning', {
+                          cost: formatSats(manualRestartChunkCost),
                           budget: formatSats(remainingTotalSat)
                         })}
                       </div>

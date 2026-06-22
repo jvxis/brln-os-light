@@ -12292,7 +12292,16 @@ func checkManualBudgetAllowance(cfg RebalanceConfig, setting channelSetting, tar
 		FeeRatePpm:  int64Value(target.FeeRatePpm),
 		BaseFeeMsat: int64Value(target.BaseFeeMsat),
 	}
-	estimatedCost := estimateMaxCost(amountSat, targetPolicy, feeCfg)
+	// A single job fills at most one max_amount chunk — runJob caps the spend at
+	// MaxAmountSat — so the budget only needs to cover that chunk, not the whole
+	// deficit. Checking the full deficit wrongly blocked large-deficit channels
+	// (e.g. a 1.1M top-up) when a 300k chunk would comfortably fit the remaining
+	// budget. The deficit is filled across successive runs.
+	chunkSat := amountSat
+	if cfg.MaxAmountSat > 0 && chunkSat > cfg.MaxAmountSat {
+		chunkSat = cfg.MaxAmountSat
+	}
+	estimatedCost := estimateMaxCost(chunkSat, targetPolicy, feeCfg)
 	if estimatedCost > 0 && estimatedCost > remainingTotal {
 		return errManualBudgetInsufficient
 	}

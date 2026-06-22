@@ -2248,7 +2248,7 @@
     "chanHealSaved": "Channel auto-heal settings saved.",
     "chanHealSaving": "Saving channel auto-heal...",
     "chanHealStatusUnavailable": "Channel auto-heal unavailable.",
-    "chanHealSubtitle": "Automatically re-enable locally disabled channels.",
+    "chanHealSubtitle": "Reconnects peers for inactive channels and re-enables locally disabled channels.",
     "chanHealTitle": "Channel auto-heal",
     "signMessageTitle": "Message signatures",
     "signMessageSubtitle": "Sign a message with your node key.",

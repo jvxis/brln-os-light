@@ -2248,7 +2248,7 @@
     "chanHealSaved": "Configurações de auto-reparo salvas.",
     "chanHealSaving": "Salvando auto-reparo de canais...",
     "chanHealStatusUnavailable": "Auto-reparo de canais indisponível.",
-    "chanHealSubtitle": "Reabilita automaticamente canais desativados localmente.",
+    "chanHealSubtitle": "Tenta reconectar peers de canais inativos e reabilita canais desativados localmente.",
     "chanHealTitle": "Auto-reparo de canais",
     "signMessageTitle": "Assinaturas",
     "signMessageSubtitle": "Assine uma mensagem com a chave do seu node.",

@@ -3891,7 +3891,7 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 					BudgetCostSat:     decision.BudgetCostSat,
 					Score:             decision.Score,
 				}
-				jobID, err := s.startJobWithEconomics(target.Channel.ChannelID, "auto", rebalanceSovereignReason, amountOverride, false, economics)
+				jobID, err := s.startJobWithEconomics(target.Channel.ChannelID, "auto", rebalanceSovereignReason, amountOverride, false, false, economics)
 				if err != nil {
 					decision.Reason = autoStartErrorReason(err)
 					noteSkip(decision.Reason)
@@ -4497,10 +4497,21 @@ func filterRecentRebalanceTargets(candidates []rebalanceTarget, cfg RebalanceCon
 }
 
 func (s *RebalanceService) startJob(targetChannelID uint64, source string, reason string, amountOverride int64, manualAutoRestart bool) (int64, error) {
-	return s.startJobWithEconomics(targetChannelID, source, reason, amountOverride, manualAutoRestart, rebalanceJobEconomics{})
+	return s.startJobWithEconomics(targetChannelID, source, reason, amountOverride, manualAutoRestart, false, rebalanceJobEconomics{})
 }
 
-func (s *RebalanceService) startJobWithEconomics(targetChannelID uint64, source string, reason string, amountOverride int64, manualAutoRestart bool, economics rebalanceJobEconomics) (int64, error) {
+// startOperatorJob queues a rebalance explicitly triggered by the operator via
+// the "Manual Rebal In" button. The operator is acting deliberately, so the
+// pre-flight budget and manual-restart cooldown gates are bypassed — the job is
+// simply queued and executed. The channel-busy guard and the per-route fee
+// limit (applied later in runJob) still hold. Only this button path sets
+// operatorInitiated; the manual-restart watch, scheduled restarts, and the
+// auto/rules scan are unaffected.
+func (s *RebalanceService) startOperatorJob(targetChannelID uint64, amountOverride int64, manualAutoRestart bool) (int64, error) {
+	return s.startJobWithEconomics(targetChannelID, "manual", "", amountOverride, manualAutoRestart, true, rebalanceJobEconomics{})
+}
+
+func (s *RebalanceService) startJobWithEconomics(targetChannelID uint64, source string, reason string, amountOverride int64, manualAutoRestart bool, operatorInitiated bool, economics rebalanceJobEconomics) (int64, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -4541,14 +4552,14 @@ func (s *RebalanceService) startJobWithEconomics(targetChannelID uint64, source 
 	if s.isChannelBusy(targetChannelID) {
 		return 0, errors.New("channel busy")
 	}
-	if shouldEnforceManualRestartCooldown(source, reason) {
+	if !operatorInitiated && shouldEnforceManualRestartCooldown(source, reason) {
 		if lastRestartAt, ok := s.lastManualAutoRestartAt(ctx, targetChannelID); ok {
 			if time.Since(lastRestartAt) < manualRestartInterval(cfg) {
 				return 0, errManualRestartCooldown
 			}
 		}
 	}
-	if shouldEnforceManualRestartBudget(cfg, source, reason, manualAutoRestart) {
+	if !operatorInitiated && shouldEnforceManualRestartBudget(cfg, source, reason, manualAutoRestart) {
 		budget, _, spentManual, spentTotal := s.getDailyBudget(ctx)
 		if err := checkManualBudgetAllowance(cfg, setting, target, amount, budget, spentManual, spentTotal); err != nil {
 			return 0, err

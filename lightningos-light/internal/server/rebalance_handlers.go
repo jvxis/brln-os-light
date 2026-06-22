@@ -893,7 +893,10 @@ func (s *Server) handleRebalanceRun(w http.ResponseWriter, r *http.Request) {
 		_ = s.rebalance.SetChannelTarget(ctx, resolvedID, resolvedPoint, *targetPct)
 	}
 	autoRestart := payload.AutoRestart != nil && *payload.AutoRestart
-	jobID, err := s.rebalance.startJob(resolvedID, "manual", "", 0, autoRestart)
+	// Operator-triggered "Manual Rebal In": bypasses budget/cooldown gates (the
+	// operator is acting deliberately) — just queues and executes. The busy
+	// guard and per-route fee limit still apply.
+	jobID, err := s.rebalance.startOperatorJob(resolvedID, 0, autoRestart)
 	if err != nil {
 		switch {
 		case errors.Is(err, errManualRestartCooldown), errors.Is(err, errManualBudgetExhausted), errors.Is(err, errManualBudgetInsufficient):

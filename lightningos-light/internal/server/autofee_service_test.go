@@ -621,6 +621,43 @@ func TestRefreshSeedForChannelPrefersNative(t *testing.T) {
 	}
 }
 
+func TestAutofeeNativeSeedSeriesUsesGraphExplorerCorrectedAverage(t *testing.T) {
+	normalSample := graphExplorerPolicySample{Ppm: 1000, CapacitySat: 1_000}
+	ceilingSample := graphExplorerPolicySample{Ppm: graphExplorerCorrectedCeilingPpm, CapacitySat: 10_000_000}
+	buckets := map[string]*graphExplorerFeeHistoryBucket{}
+	for i := 0; i < 3; i++ {
+		day := time.Date(2026, 6, 20-i, 0, 0, 0, 0, time.UTC)
+		buckets[day.Format("2006-01-02")] = &graphExplorerFeeHistoryBucket{
+			Day:      day,
+			Inbound:  []graphExplorerPolicySample{normalSample, ceilingSample},
+			Outbound: []graphExplorerPolicySample{normalSample},
+		}
+	}
+
+	rawSummary := summarizeGraphExplorerPolicies(buckets["2026-06-20"].Inbound)
+	if rawSummary.WeightedAvgPpm < 900_000 {
+		t.Fatalf("test setup should have a distorted raw weighted average, got %d", rawSummary.WeightedAvgPpm)
+	}
+
+	inboundVals, outboundVals, totalInboundSamples := autofeeNativeSeedSeriesFromBuckets(buckets)
+	if totalInboundSamples != 6 {
+		t.Fatalf("unexpected inbound sample count: got %d want 6", totalInboundSamples)
+	}
+	if len(inboundVals) != 3 || len(outboundVals) != 3 {
+		t.Fatalf("unexpected series sizes: inbound=%v outbound=%v", inboundVals, outboundVals)
+	}
+	for _, got := range inboundVals {
+		if got != 1000 {
+			t.Fatalf("expected corrected inbound seed point to ignore ceiling outlier, got %.0f", got)
+		}
+	}
+	for _, got := range outboundVals {
+		if got != 1000 {
+			t.Fatalf("unexpected outbound seed point: got %.0f want 1000", got)
+		}
+	}
+}
+
 func TestAutofeeChannelEnabledDefaultsToEnabled(t *testing.T) {
 	settings := map[uint64]bool{
 		10: true,

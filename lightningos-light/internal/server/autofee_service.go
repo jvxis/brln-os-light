@@ -11183,24 +11183,18 @@ func (e *autofeeEngine) fetchNativeSeed(pubkey string) (float64, float64, float6
 	since := end.AddDate(0, 0, -maxInt(autofeeMinLookbackDays, e.cfg.LookbackDays))
 	rows, err := e.svc.db.Query(context.Background(), `
 select
-  to_char(date_trunc('day', h.captured_at at time zone 'UTC'), 'YYYY-MM-DD') as day,
-  coalesce(round(
-    sum(case when h.connecting_pubkey = $1 and h.advertising_pubkey <> $1 then h.fee_rate_ppm::numeric * greatest(ch.capacity_sat, 0)::numeric else 0 end)
-    / nullif(sum(case when h.connecting_pubkey = $1 and h.advertising_pubkey <> $1 then greatest(ch.capacity_sat, 0)::numeric else 0 end), 0)
-  ), 0)::bigint as inbound_weighted_avg_ppm,
-  count(*) filter (where h.connecting_pubkey = $1 and h.advertising_pubkey <> $1) as inbound_sample_count,
-  coalesce(round(
-    sum(case when h.advertising_pubkey = $1 then h.fee_rate_ppm::numeric * greatest(ch.capacity_sat, 0)::numeric else 0 end)
-    / nullif(sum(case when h.advertising_pubkey = $1 then greatest(ch.capacity_sat, 0)::numeric else 0 end), 0)
-  ), 0)::bigint as outbound_weighted_avg_ppm,
-  count(*) filter (where h.advertising_pubkey = $1) as outbound_sample_count
+  date_trunc('day', h.captured_at at time zone 'UTC')::date as day,
+  h.advertising_pubkey,
+  h.connecting_pubkey,
+  coalesce(h.fee_rate_ppm, 0),
+  greatest(ch.capacity_sat, 0),
+  coalesce(h.disabled, false)
 from graph_channel_policy_history h
 join graph_channels ch on ch.chan_id = h.chan_id
 where (h.advertising_pubkey = $1 or h.connecting_pubkey = $1)
   and h.captured_at >= $2
   and h.captured_at < $3
-group by 1
-order by 1 desc
+order by day desc, h.captured_at desc
 `, pubkey, since, end)
 	if err != nil {
 		result := autofeeSeedResult{Tags: []string{"seed:native-error"}, Err: err}
@@ -11209,26 +11203,43 @@ order by 1 desc
 	}
 	defer rows.Close()
 
-	inboundVals := make([]float64, 0, maxInt(autofeeMinLookbackDays, e.cfg.LookbackDays))
-	outboundVals := make([]float64, 0, maxInt(autofeeMinLookbackDays, e.cfg.LookbackDays))
-	totalInboundSamples := int64(0)
+	historyBuckets := make(map[string]*graphExplorerFeeHistoryBucket)
 	for rows.Next() {
-		var day string
-		var inboundWeightedAvg int64
-		var inboundSamples int64
-		var outboundWeightedAvg int64
-		var outboundSamples int64
-		if err := rows.Scan(&day, &inboundWeightedAvg, &inboundSamples, &outboundWeightedAvg, &outboundSamples); err != nil {
+		var day time.Time
+		var advertisingPubKey string
+		var connectingPubKey string
+		var ppm int64
+		var capacitySat int64
+		var disabled bool
+		if err := rows.Scan(
+			&day,
+			&advertisingPubKey,
+			&connectingPubKey,
+			&ppm,
+			&capacitySat,
+			&disabled,
+		); err != nil {
 			result := autofeeSeedResult{Tags: []string{"seed:native-error"}, Err: err}
 			e.nativeSeedCache[pubkey] = result
 			return 0, 0, 0, append([]string{}, result.Tags...), false, err
 		}
-		if inboundSamples > 0 {
-			inboundVals = append(inboundVals, float64(inboundWeightedAvg))
-			totalInboundSamples += inboundSamples
+		day = day.UTC()
+		dayKey := day.Format("2006-01-02")
+		bucket := historyBuckets[dayKey]
+		if bucket == nil {
+			bucket = &graphExplorerFeeHistoryBucket{Day: day}
+			historyBuckets[dayKey] = bucket
 		}
-		if outboundSamples > 0 {
-			outboundVals = append(outboundVals, float64(outboundWeightedAvg))
+		sample := graphExplorerPolicySample{
+			Ppm:         ppm,
+			CapacitySat: capacitySat,
+			Disabled:    disabled,
+		}
+		if advertisingPubKey == pubkey {
+			bucket.Outbound = append(bucket.Outbound, sample)
+		}
+		if connectingPubKey == pubkey && advertisingPubKey != pubkey {
+			bucket.Inbound = append(bucket.Inbound, sample)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -11236,6 +11247,7 @@ order by 1 desc
 		e.nativeSeedCache[pubkey] = result
 		return 0, 0, 0, append([]string{}, result.Tags...), false, err
 	}
+	inboundVals, outboundVals, totalInboundSamples := autofeeNativeSeedSeriesFromBuckets(historyBuckets)
 	if len(inboundVals) < autofeeNativeSeedMinDays || totalInboundSamples < autofeeNativeSeedMinSamples {
 		result := autofeeSeedResult{Tags: []string{"seed:native-insufficient"}}
 		e.nativeSeedCache[pubkey] = result
@@ -11252,7 +11264,7 @@ order by 1 desc
 
 	seed := p65
 	peerMarketSkew := 0.0
-	tags := []string{}
+	tags := []string{"seed:native-corrected"}
 
 	incMedian := percentile(append([]float64{}, inboundVals...), 0.50)
 	incMean := averageFloat64(inboundVals)
@@ -11303,6 +11315,37 @@ order by 1 desc
 	}
 	e.nativeSeedCache[pubkey] = result
 	return seed, p95, peerMarketSkew, append([]string{}, tags...), true, nil
+}
+
+func autofeeNativeSeedSeriesFromBuckets(buckets map[string]*graphExplorerFeeHistoryBucket) ([]float64, []float64, int64) {
+	if len(buckets) == 0 {
+		return nil, nil, 0
+	}
+	dayKeys := make([]string, 0, len(buckets))
+	for dayKey := range buckets {
+		dayKeys = append(dayKeys, dayKey)
+	}
+	sort.Slice(dayKeys, func(i, j int) bool { return dayKeys[i] > dayKeys[j] })
+
+	inboundVals := make([]float64, 0, len(dayKeys))
+	outboundVals := make([]float64, 0, len(dayKeys))
+	totalInboundSamples := int64(0)
+	for _, dayKey := range dayKeys {
+		bucket := buckets[dayKey]
+		if bucket == nil {
+			continue
+		}
+		if len(bucket.Inbound) > 0 {
+			inboundSummary := summarizeGraphExplorerPolicies(bucket.Inbound)
+			inboundVals = append(inboundVals, float64(inboundSummary.CorrectedAvgPpm))
+			totalInboundSamples += int64(inboundSummary.ChannelCount)
+		}
+		if len(bucket.Outbound) > 0 {
+			outboundSummary := summarizeGraphExplorerPolicies(bucket.Outbound)
+			outboundVals = append(outboundVals, float64(outboundSummary.CorrectedAvgPpm))
+		}
+	}
+	return inboundVals, outboundVals, totalInboundSamples
 }
 
 type ambossSeriesResp struct {

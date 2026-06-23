@@ -33,6 +33,11 @@ const (
 	autofeeIdleRefreshWindowDays = 7
 	autofeeRefreshRebalMarkup    = 0.10
 	autofeeRefreshRebalSeedFloor = 0.80
+	autofeeRefreshSeedLiqLow     = 0.10
+	autofeeRefreshSeedLiqNeutral = 0.50
+	autofeeRefreshSeedLiqHigh    = 0.90
+	autofeeRefreshSeedLiqPremium = 0.30
+	autofeeRefreshSeedLiqDisc    = 0.20
 	autofeeMinApplyDeltaPpm      = 5
 	autofeeMinApplyDeltaFrac     = 0.01
 )
@@ -3315,6 +3320,22 @@ func (s *AutofeeService) refreshReferenceFees(ctx context.Context, opts autofeeR
 			continue
 		}
 
+		rawOutRatio := 0.5
+		if ch.CapacitySat > 0 {
+			rawOutRatio = float64(ch.LocalBalanceSat) / float64(ch.CapacitySat)
+		}
+		effectiveOutRatio, _ := effectiveChannelOutRatio(rawOutRatio, ch.LocalBalanceSat, ch.CapacitySat, avgCap, nodeLocalRatio)
+		if adjustedTargetPpm, adjustedReferencePpm, adjustedSource, adjusted := applyAutofeeRefreshSeedLiquidityAdjustment(
+			targetPpm,
+			referencePpm,
+			source,
+			effectiveOutRatio,
+		); adjusted {
+			targetPpm = adjustedTargetPpm
+			referencePpm = adjustedReferencePpm
+			source = adjustedSource
+		}
+
 		targetPpm = clampInt(targetPpm, cfg.MinPpm, cfg.MaxPpm)
 		item.TargetPpm = targetPpm
 		item.ReferencePpm = referencePpm
@@ -3332,11 +3353,6 @@ func (s *AutofeeService) refreshReferenceFees(ctx context.Context, opts autofeeR
 		item.CurrentInboundDiscount = currentInboundDiscountFromPolicy(policy)
 		item.TargetInboundDiscount = item.CurrentInboundDiscount
 		if includeInbound {
-			rawOutRatio := 0.5
-			if ch.CapacitySat > 0 {
-				rawOutRatio = float64(ch.LocalBalanceSat) / float64(ch.CapacitySat)
-			}
-			effectiveOutRatio, _ := effectiveChannelOutRatio(rawOutRatio, ch.LocalBalanceSat, ch.CapacitySat, avgCap, nodeLocalRatio)
 			if targetInboundDiscount, inboundSource, applyInbound := selectAutofeeRefreshInboundDiscount(
 				cfg,
 				engine.profile,
@@ -4958,6 +4974,15 @@ func isRebalOnlyAutofeeRefreshSource(source string) bool {
 	return strings.HasPrefix(source, "rebalppm")
 }
 
+func isSeedAutofeeRefreshSource(source string) bool {
+	switch strings.TrimSpace(source) {
+	case "seed:native", "seed:amboss":
+		return true
+	default:
+		return false
+	}
+}
+
 func applyAutofeeRefreshSeedFloor(targetPpm int, referencePpm int, source string, seedPpm float64) (int, int, string, bool) {
 	if targetPpm <= 0 || seedPpm <= 0 || !isRebalOnlyAutofeeRefreshSource(source) {
 		return targetPpm, referencePpm, source, false
@@ -4976,6 +5001,55 @@ func applyAutofeeRefreshSeedFloor(targetPpm int, referencePpm int, source string
 		source += "+seed-floor"
 	}
 	return seedFloor, referencePpm, source, true
+}
+
+func applyAutofeeRefreshSeedLiquidityAdjustment(targetPpm int, referencePpm int, source string, effectiveOutRatio float64) (int, int, string, bool) {
+	if targetPpm <= 0 || !isSeedAutofeeRefreshSource(source) {
+		return targetPpm, referencePpm, source, false
+	}
+	if referencePpm <= 0 {
+		referencePpm = targetPpm
+	}
+	factor, suffix := autofeeRefreshSeedLiquidityFactor(effectiveOutRatio)
+	if math.Abs(factor-1.0) < 0.001 || suffix == "" {
+		return targetPpm, referencePpm, source, false
+	}
+	adjusted := int(math.Round(float64(referencePpm) * factor))
+	if adjusted <= 0 || adjusted == targetPpm {
+		return targetPpm, referencePpm, source, false
+	}
+	source = strings.TrimSpace(source)
+	if source == "" {
+		source = suffix
+	} else if !strings.Contains(source, suffix) {
+		source += "+" + suffix
+	}
+	return adjusted, referencePpm, source, true
+}
+
+func autofeeRefreshSeedLiquidityFactor(effectiveOutRatio float64) (float64, string) {
+	if math.IsNaN(effectiveOutRatio) || math.IsInf(effectiveOutRatio, 0) {
+		return 1.0, ""
+	}
+	effectiveOutRatio = clampFloat(effectiveOutRatio, 0.0, 1.0)
+	switch {
+	case effectiveOutRatio < autofeeRefreshSeedLiqNeutral:
+		span := autofeeRefreshSeedLiqNeutral - autofeeRefreshSeedLiqLow
+		if span <= 0 {
+			return 1.0, ""
+		}
+		t := clampFloat((autofeeRefreshSeedLiqNeutral-effectiveOutRatio)/span, 0.0, 1.0)
+		return 1.0 + autofeeRefreshSeedLiqPremium*t, "liq-low"
+	case effectiveOutRatio > autofeeRefreshSeedLiqNeutral:
+		span := autofeeRefreshSeedLiqHigh - autofeeRefreshSeedLiqNeutral
+		if span <= 0 {
+			return 1.0, ""
+		}
+		t := clampFloat((effectiveOutRatio-autofeeRefreshSeedLiqNeutral)/span, 0.0, 1.0)
+		return 1.0 - autofeeRefreshSeedLiqDisc*t, "liq-high"
+	default:
+		return 1.0, ""
+	}
 }
 
 func hasAutofeeForwardMovement(st forwardStat) bool {
@@ -5178,6 +5252,21 @@ func (e *autofeeEngine) maybeApplyIdleRefresh(ctx context.Context, ch lndclient.
 	}
 	if !ok || targetPpm <= 0 {
 		return d
+	}
+	rawOutRatio := 0.5
+	if ch.CapacitySat > 0 {
+		rawOutRatio = float64(ch.LocalBalanceSat) / float64(ch.CapacitySat)
+	}
+	effectiveOutRatio, _ := effectiveChannelOutRatio(rawOutRatio, ch.LocalBalanceSat, ch.CapacitySat, e.calib.AvgCapacitySat, e.calib.LocalRatio)
+	if adjustedTargetPpm, adjustedReferencePpm, adjustedSource, adjusted := applyAutofeeRefreshSeedLiquidityAdjustment(
+		targetPpm,
+		referencePpm,
+		source,
+		effectiveOutRatio,
+	); adjusted {
+		targetPpm = adjustedTargetPpm
+		referencePpm = adjustedReferencePpm
+		source = adjustedSource
 	}
 	targetPpm = clampInt(targetPpm, e.cfg.MinPpm, e.cfg.MaxPpm)
 	if shouldSkipAutofeeIdleRefreshRepeat(d.State, e.now, d.LocalPpm, targetPpm) {

@@ -556,6 +556,38 @@ func TestApplyAutofeeRefreshSeedFloorSkipsOutrateReference(t *testing.T) {
 	}
 }
 
+func TestApplyAutofeeRefreshSeedLiquidityAdjustmentRaisesDrainedSeed(t *testing.T) {
+	target, ref, source, applied := applyAutofeeRefreshSeedLiquidityAdjustment(1363, 1363, "seed:native", 0.12)
+	if !applied {
+		t.Fatalf("expected drained seed refresh to be adjusted")
+	}
+	if target != 1751 || ref != 1363 || source != "seed:native+liq-low" {
+		t.Fatalf("unexpected drained seed adjustment: target=%d ref=%d source=%q", target, ref, source)
+	}
+}
+
+func TestApplyAutofeeRefreshSeedLiquidityAdjustmentLowersFullSeed(t *testing.T) {
+	target, ref, source, applied := applyAutofeeRefreshSeedLiquidityAdjustment(2000, 2000, "seed:amboss", 0.90)
+	if !applied {
+		t.Fatalf("expected full seed refresh to be adjusted")
+	}
+	if target != 1600 || ref != 2000 || source != "seed:amboss+liq-high" {
+		t.Fatalf("unexpected full seed adjustment: target=%d ref=%d source=%q", target, ref, source)
+	}
+}
+
+func TestApplyAutofeeRefreshSeedLiquidityAdjustmentSkipsNeutralAndLocalRefs(t *testing.T) {
+	target, ref, source, applied := applyAutofeeRefreshSeedLiquidityAdjustment(1500, 1500, "seed:native", 0.50)
+	if applied || target != 1500 || ref != 1500 || source != "seed:native" {
+		t.Fatalf("unexpected neutral seed adjustment: applied=%v target=%d ref=%d source=%q", applied, target, ref, source)
+	}
+
+	target, ref, source, applied = applyAutofeeRefreshSeedLiquidityAdjustment(1500, 1500, "outppm7d", 0.05)
+	if applied || target != 1500 || ref != 1500 || source != "outppm7d" {
+		t.Fatalf("unexpected local reference adjustment: applied=%v target=%d ref=%d source=%q", applied, target, ref, source)
+	}
+}
+
 func TestShouldAutofeeIdleRefreshChannel(t *testing.T) {
 	cfg := AutofeeConfig{IdleRefreshEnabled: true, OperationMode: autofeeOperationModeBalanced}
 	if !shouldAutofeeIdleRefreshChannel(cfg, forwardStat{}, inboundStat{}, rebalStat{}) {

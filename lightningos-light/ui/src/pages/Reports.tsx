@@ -935,8 +935,9 @@ export default function Reports() {
   const summaryDays = summary?.days ?? series.length
   const summaryRevenue = summary?.totals.forward_fee_revenue_sats ?? 0
   const summaryCapitalBase = totalBalanceFromPoint(live)
-  const summaryApy = calculateDisplayApyPct(summaryTotalsNetWithKeysend, summaryRevenue, summaryDays, summaryCapitalBase)
-  const summaryOnchainApy = calculateDisplayApyPct(summaryTotalsNetWithOnchain, summaryRevenue, summaryDays, summaryCapitalBase)
+  const summaryUsesRevenueBaseApy = range === 'prev-year' || range === 'current-year'
+  const summaryApy = calculateDisplayApyPct(summaryTotalsNetWithKeysend, summaryRevenue, summaryDays, summaryCapitalBase, summaryUsesRevenueBaseApy)
+  const summaryOnchainApy = calculateDisplayApyPct(summaryTotalsNetWithOnchain, summaryRevenue, summaryDays, summaryCapitalBase, summaryUsesRevenueBaseApy)
   const summaryAveragesOffchainCost = summary?.averages.offchain_fee_cost_sats ?? summary?.averages.total_fee_cost_sats ?? ((summary?.averages.rebalance_fee_cost_sats ?? 0) + (summary?.averages.payment_fee_cost_sats ?? 0))
   const summaryAveragesOnchainCost = summary?.averages.onchain_fee_cost_sats ?? 0
   const summaryAveragesCostWithOnchain = summary?.averages.total_fee_cost_with_onchain_sats ?? (summaryAveragesOffchainCost + summaryAveragesOnchainCost)

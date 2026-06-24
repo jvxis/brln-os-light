@@ -98,9 +98,11 @@ export const calculateDisplayApyPct = (
   netSats: number,
   revenueSats: number,
   days: number,
-  capitalBaseSats?: number | null
+  capitalBaseSats?: number | null,
+  forceRevenueBase = false
 ) => {
   if (!finiteNumber(days) || days <= 0) return null
+  if (forceRevenueBase) return calculateRevenueApyPct(netSats, revenueSats, 365)
   if (days >= 365) return calculateRevenueApyPct(netSats, revenueSats, days)
   return calculateApyPctFromNet(netSats, days, null, capitalBaseSats)?.apyPct ?? null
 }

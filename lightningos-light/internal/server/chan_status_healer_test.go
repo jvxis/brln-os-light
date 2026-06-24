@@ -85,6 +85,9 @@ func TestChanStatusHealerReconnectsInactiveDisconnectedPeerAndEnablesAfterRefres
 	if snap.LastReconnectAttempted != 1 || snap.LastReconnected != 1 || snap.LastReconnectFailed != 0 {
 		t.Fatalf("unexpected reconnect stats: %+v", snap)
 	}
+	if len(snap.LastReconnectDetails) != 1 || snap.LastReconnectDetails[0].Status != "connected" {
+		t.Fatalf("unexpected reconnect detail: %+v", snap.LastReconnectDetails)
+	}
 	if snap.LastUpdated != 1 || snap.LastError != "" {
 		t.Fatalf("unexpected heal snapshot: %+v", snap)
 	}
@@ -121,7 +124,7 @@ func TestChanStatusHealerReconnectFailureDoesNotBlockActiveEnable(t *testing.T) 
 	fake := &fakeChanStatusLND{
 		channelsSeq: [][]lndclient.ChannelInfo{
 			{
-				{ChannelPoint: "offline:1", RemotePubkey: pubkey, Active: false},
+				{ChannelPoint: "offline:1", RemotePubkey: pubkey, PeerAlias: "Offline Peer", Active: false},
 				{ChannelPoint: "active:1", RemotePubkey: "02aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Active: true, LocalDisabled: true},
 			},
 		},
@@ -143,8 +146,18 @@ func TestChanStatusHealerReconnectFailureDoesNotBlockActiveEnable(t *testing.T) 
 	if snap.LastUpdated != 1 {
 		t.Fatalf("expected one enabled channel despite reconnect failure, got %+v", snap)
 	}
-	if snap.LastError == "" {
-		t.Fatalf("expected reconnect failure to be reported")
+	if snap.LastError != "" {
+		t.Fatalf("expected peer unreachable to stay out of last_error, got %q", snap.LastError)
+	}
+	if snap.Status != "unreachable" {
+		t.Fatalf("expected unreachable status, got %+v", snap)
+	}
+	if len(snap.LastReconnectDetails) != 1 {
+		t.Fatalf("expected one reconnect detail, got %+v", snap.LastReconnectDetails)
+	}
+	detail := snap.LastReconnectDetails[0]
+	if detail.Alias != "Offline Peer" || detail.Status != "no_announced_socket" || len(detail.ChannelPoints) != 1 || detail.ChannelPoints[0] != "offline:1" {
+		t.Fatalf("unexpected reconnect detail: %+v", detail)
 	}
 }
 

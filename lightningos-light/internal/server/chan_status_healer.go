@@ -22,17 +22,30 @@ const (
 )
 
 type chanStatusHealPayload struct {
-	Enabled                bool   `json:"enabled"`
-	Status                 string `json:"status"`
-	IntervalSec            int    `json:"interval_sec"`
-	LastAttemptAt          string `json:"last_attempt_at,omitempty"`
-	LastOkAt               string `json:"last_ok_at,omitempty"`
-	LastError              string `json:"last_error,omitempty"`
-	LastErrorAt            string `json:"last_error_at,omitempty"`
-	LastUpdated            int    `json:"last_updated,omitempty"`
-	LastReconnectAttempted int    `json:"last_reconnect_attempted,omitempty"`
-	LastReconnected        int    `json:"last_reconnected,omitempty"`
-	LastReconnectFailed    int    `json:"last_reconnect_failed,omitempty"`
+	Enabled                bool                      `json:"enabled"`
+	Status                 string                    `json:"status"`
+	IntervalSec            int                       `json:"interval_sec"`
+	LastAttemptAt          string                    `json:"last_attempt_at,omitempty"`
+	LastOkAt               string                    `json:"last_ok_at,omitempty"`
+	LastError              string                    `json:"last_error,omitempty"`
+	LastErrorAt            string                    `json:"last_error_at,omitempty"`
+	LastUpdated            int                       `json:"last_updated,omitempty"`
+	LastReconnectAttempted int                       `json:"last_reconnect_attempted,omitempty"`
+	LastReconnected        int                       `json:"last_reconnected,omitempty"`
+	LastReconnectFailed    int                       `json:"last_reconnect_failed,omitempty"`
+	LastReconnectDetails   []chanHealReconnectDetail `json:"last_reconnect_details,omitempty"`
+}
+
+type chanHealReconnectDetail struct {
+	Alias         string   `json:"alias,omitempty"`
+	Pubkey        string   `json:"pubkey,omitempty"`
+	PubkeyShort   string   `json:"pubkey_short,omitempty"`
+	ChannelPoints []string `json:"channel_points,omitempty"`
+	Status        string   `json:"status,omitempty"`
+	Socket        string   `json:"socket,omitempty"`
+	Sockets       []string `json:"sockets,omitempty"`
+	ErrorSummary  string   `json:"error_summary,omitempty"`
+	RawError      string   `json:"raw_error,omitempty"`
 }
 
 type chanStatusLND interface {
@@ -48,6 +61,7 @@ type chanHealRunStats struct {
 	reconnectAttempted int
 	reconnected        int
 	reconnectFailed    int
+	reconnectDetails   []chanHealReconnectDetail
 }
 
 type ChanStatusHealer struct {
@@ -65,6 +79,7 @@ type ChanStatusHealer struct {
 	lastReconnectAttempted int
 	lastReconnected        int
 	lastReconnectFailed    int
+	lastReconnectDetails   []chanHealReconnectDetail
 	inFlight               bool
 	started                bool
 	stop                   chan struct{}
@@ -163,6 +178,7 @@ func (c *ChanStatusHealer) Snapshot() chanStatusHealPayload {
 	lastReconnectAttempted := c.lastReconnectAttempted
 	lastReconnected := c.lastReconnected
 	lastReconnectFailed := c.lastReconnectFailed
+	lastReconnectDetails := append([]chanHealReconnectDetail{}, c.lastReconnectDetails...)
 	c.mu.Unlock()
 
 	if interval <= 0 {
@@ -183,6 +199,9 @@ func (c *ChanStatusHealer) Snapshot() chanStatusHealPayload {
 			if time.Since(lastOK) > interval*2 {
 				status = "warn"
 			}
+			if lastError == "" && lastReconnectFailed > 0 {
+				status = "unreachable"
+			}
 		}
 	}
 
@@ -194,6 +213,7 @@ func (c *ChanStatusHealer) Snapshot() chanStatusHealPayload {
 		LastReconnectAttempted: lastReconnectAttempted,
 		LastReconnected:        lastReconnected,
 		LastReconnectFailed:    lastReconnectFailed,
+		LastReconnectDetails:   lastReconnectDetails,
 	}
 	if !lastAttempt.IsZero() {
 		payload.LastAttemptAt = lastAttempt.UTC().Format(time.RFC3339)
@@ -320,15 +340,18 @@ func (c *ChanStatusHealer) tick() {
 				}
 				attempted[pubkey] = struct{}{}
 				stats.reconnectAttempted++
-				if err := c.reconnectPeer(pubkey); err != nil {
+				detail, err := c.reconnectPeer(pubkey)
+				detail = mergeChanHealReconnectChannelDetail(detail, ch, channels)
+				if err != nil {
 					stats.reconnectFailed++
-					lastErr = err
+					stats.reconnectDetails = append(stats.reconnectDetails, detail)
 					if c.logger != nil {
-						c.logger.Printf("chan-heal: failed to reconnect %s: %v", shortIdentifier(pubkey), err)
+						c.logger.Printf("chan-heal: peer %s still unreachable after reconnect attempt: %v", shortIdentifier(pubkey), err)
 					}
 					continue
 				}
 				stats.reconnected++
+				stats.reconnectDetails = append(stats.reconnectDetails, detail)
 				connected[pubkey] = struct{}{}
 			}
 		}
@@ -345,6 +368,7 @@ func (c *ChanStatusHealer) tick() {
 			}
 		} else {
 			channels = refreshed
+			stats.reconnectDetails = annotateChanHealReconnectDetails(stats.reconnectDetails, channels)
 		}
 	}
 
@@ -378,33 +402,164 @@ func (c *ChanStatusHealer) tick() {
 	c.recordSuccess(stats)
 }
 
-func (c *ChanStatusHealer) reconnectPeer(pubkey string) error {
+func (c *ChanStatusHealer) reconnectPeer(pubkey string) (chanHealReconnectDetail, error) {
+	detail := chanHealReconnectDetail{
+		Pubkey:      normalizeChanHealPubkey(pubkey),
+		PubkeyShort: shortIdentifier(pubkey),
+	}
 	detailsCtx, detailsCancel := context.WithTimeout(context.Background(), lndRPCTimeout)
 	details, err := c.lnd.GetNodeDetails(detailsCtx, pubkey)
 	detailsCancel()
 	if err != nil {
-		return err
+		detail.Status = "lookup_failed"
+		detail.ErrorSummary = chanHealReconnectErrorSummary(err)
+		detail.RawError = strings.TrimSpace(err.Error())
+		return detail, err
+	}
+	if alias := strings.TrimSpace(details.Alias); alias != "" {
+		detail.Alias = alias
 	}
 
 	sockets := chanHealNodeSockets(details.Addresses)
+	detail.Sockets = append([]string{}, sockets...)
 	if len(sockets) == 0 {
-		return fmt.Errorf("no announced socket for %s", shortIdentifier(pubkey))
+		err := fmt.Errorf("no announced socket for %s", shortIdentifier(pubkey))
+		detail.Status = "no_announced_socket"
+		detail.ErrorSummary = chanHealReconnectErrorSummary(err)
+		detail.RawError = err.Error()
+		return detail, err
 	}
 
 	var lastErr error
 	for _, socket := range sockets {
+		detail.Socket = socket
 		connectCtx, connectCancel := context.WithTimeout(context.Background(), chanHealConnectTimeout)
 		err := c.lnd.ConnectPeerWithTimeout(connectCtx, pubkey, socket, false, uint64(chanHealConnectTimeout/time.Second))
 		connectCancel()
-		if err == nil || isAlreadyConnected(err) {
-			return nil
+		if err == nil {
+			detail.Status = "connected"
+			detail.ErrorSummary = ""
+			detail.RawError = ""
+			return detail, nil
+		}
+		if isAlreadyConnected(err) {
+			detail.Status = "already_connected"
+			detail.ErrorSummary = ""
+			detail.RawError = ""
+			return detail, nil
 		}
 		lastErr = fmt.Errorf("connect via %s failed: %w", socket, err)
 	}
 	if lastErr != nil {
-		return lastErr
+		detail.Status = classifyChanHealReconnectError(lastErr)
+		detail.ErrorSummary = chanHealReconnectErrorSummary(lastErr)
+		detail.RawError = strings.TrimSpace(lastErr.Error())
+		return detail, lastErr
 	}
-	return fmt.Errorf("connect failed for %s", shortIdentifier(pubkey))
+	err = fmt.Errorf("connect failed for %s", shortIdentifier(pubkey))
+	detail.Status = "connect_failed"
+	detail.ErrorSummary = chanHealReconnectErrorSummary(err)
+	detail.RawError = err.Error()
+	return detail, err
+}
+
+func mergeChanHealReconnectChannelDetail(detail chanHealReconnectDetail, ch lndclient.ChannelInfo, channels []lndclient.ChannelInfo) chanHealReconnectDetail {
+	pubkey := normalizeChanHealPubkey(detail.Pubkey)
+	if pubkey == "" {
+		pubkey = normalizeChanHealPubkey(ch.RemotePubkey)
+		detail.Pubkey = pubkey
+		detail.PubkeyShort = shortIdentifier(pubkey)
+	}
+	if strings.TrimSpace(detail.Alias) == "" {
+		detail.Alias = strings.TrimSpace(ch.PeerAlias)
+	}
+	seen := map[string]struct{}{}
+	for _, item := range channels {
+		if normalizeChanHealPubkey(item.RemotePubkey) != pubkey {
+			continue
+		}
+		if alias := strings.TrimSpace(item.PeerAlias); detail.Alias == "" && alias != "" {
+			detail.Alias = alias
+		}
+		point := strings.TrimSpace(item.ChannelPoint)
+		if point == "" {
+			continue
+		}
+		if _, ok := seen[point]; ok {
+			continue
+		}
+		seen[point] = struct{}{}
+		detail.ChannelPoints = append(detail.ChannelPoints, point)
+	}
+	return detail
+}
+
+func annotateChanHealReconnectDetails(details []chanHealReconnectDetail, channels []lndclient.ChannelInfo) []chanHealReconnectDetail {
+	if len(details) == 0 {
+		return details
+	}
+	activeByPubkey := map[string]int{}
+	inactiveByPubkey := map[string]int{}
+	for _, ch := range channels {
+		pubkey := normalizeChanHealPubkey(ch.RemotePubkey)
+		if pubkey == "" {
+			continue
+		}
+		if ch.Active {
+			activeByPubkey[pubkey]++
+			continue
+		}
+		inactiveByPubkey[pubkey]++
+	}
+	out := append([]chanHealReconnectDetail{}, details...)
+	for i := range out {
+		pubkey := normalizeChanHealPubkey(out[i].Pubkey)
+		if pubkey == "" {
+			continue
+		}
+		switch out[i].Status {
+		case "connected", "already_connected":
+			if inactiveByPubkey[pubkey] > 0 && activeByPubkey[pubkey] == 0 {
+				out[i].Status = "connected_channel_inactive"
+				out[i].ErrorSummary = "peer connected, channel still inactive"
+			}
+		}
+	}
+	return out
+}
+
+func classifyChanHealReconnectError(err error) string {
+	msg := strings.ToLower(strings.TrimSpace(fmt.Sprint(err)))
+	switch {
+	case msg == "":
+		return "connect_failed"
+	case strings.Contains(msg, "deadline") || strings.Contains(msg, "timeout") || strings.Contains(msg, "timed out"):
+		return "connect_timeout"
+	case strings.Contains(msg, "no announced socket"):
+		return "no_announced_socket"
+	case strings.Contains(msg, "node not found") || strings.Contains(msg, "not found"):
+		return "lookup_failed"
+	case strings.Contains(msg, "socks") || strings.Contains(msg, "unreachable") || strings.Contains(msg, "connection refused") || strings.Contains(msg, "connect:"):
+		return "still_unreachable"
+	default:
+		return "connect_failed"
+	}
+}
+
+func chanHealReconnectErrorSummary(err error) string {
+	status := classifyChanHealReconnectError(err)
+	switch status {
+	case "connect_timeout":
+		return "connection attempt timed out; peer may be offline or unreachable"
+	case "no_announced_socket":
+		return "peer has no announced socket to reconnect"
+	case "lookup_failed":
+		return "node details lookup failed"
+	case "still_unreachable":
+		return "peer remains unreachable after reconnect attempt"
+	default:
+		return "peer reconnect attempt failed"
+	}
 }
 
 func (c *ChanStatusHealer) recordFailure(err error, stats chanHealRunStats) {
@@ -420,6 +575,7 @@ func (c *ChanStatusHealer) recordFailure(err error, stats chanHealRunStats) {
 	c.lastReconnectAttempted = stats.reconnectAttempted
 	c.lastReconnected = stats.reconnected
 	c.lastReconnectFailed = stats.reconnectFailed
+	c.lastReconnectDetails = append([]chanHealReconnectDetail{}, stats.reconnectDetails...)
 	c.mu.Unlock()
 
 	if c.logger != nil {
@@ -437,6 +593,7 @@ func (c *ChanStatusHealer) recordSuccess(stats chanHealRunStats) {
 	c.lastReconnectAttempted = stats.reconnectAttempted
 	c.lastReconnected = stats.reconnected
 	c.lastReconnectFailed = stats.reconnectFailed
+	c.lastReconnectDetails = append([]chanHealReconnectDetail{}, stats.reconnectDetails...)
 	c.mu.Unlock()
 
 	if hadError && c.logger != nil {

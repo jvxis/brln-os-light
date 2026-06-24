@@ -330,6 +330,22 @@ export type ChanHealStatus = {
   last_attempt_at?: string
   interval_sec?: number
   last_updated?: number
+  last_reconnect_attempted?: number
+  last_reconnected?: number
+  last_reconnect_failed?: number
+  last_reconnect_details?: ChanHealReconnectDetail[]
+}
+
+export type ChanHealReconnectDetail = {
+  alias?: string
+  pubkey?: string
+  pubkey_short?: string
+  channel_points?: string[]
+  status?: string
+  socket?: string
+  sockets?: string[]
+  error_summary?: string
+  raw_error?: string
 }
 
 export type CloseRecoveryStatus = {

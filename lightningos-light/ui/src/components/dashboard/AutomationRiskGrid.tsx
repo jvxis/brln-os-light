@@ -49,6 +49,9 @@ function buildAutomationBadge(t: ReturnType<typeof useTranslation>['t'], enabled
   if (normalized === 'ok') {
     return { label: t('common.ok'), tone: 'ok' as const }
   }
+  if (normalized === 'unreachable') {
+    return { label: t('lightningOps.chanHealUnreachableBadge'), tone: 'warn' as const }
+  }
   if (normalized === 'warn' || hasError) {
     return { label: t('common.fail'), tone: 'warn' as const }
   }
@@ -65,14 +68,17 @@ function AutomationRow({ label, enabled, status, lastOkAt, lastAttemptAt, lastEr
   const { t, i18n } = useTranslation()
   const locale = getLocale(i18n.language)
   const badge = buildAutomationBadge(t, enabled, status, Boolean(lastError))
+  const preferExtra = normalizeStatus(status) === 'unreachable' && extra
   const primaryMeta = lastError
     ? `${t('dashboard.lastErrorLabel')}: ${lastError}`
+    : preferExtra
+      ? extra
     : lastOkAt
       ? `${t('dashboard.lastRunLabel')}: ${formatTimeAgo(locale, lastOkAt)}`
       : lastAttemptAt
         ? `${t('dashboard.lastAttemptLabel')}: ${formatTimeAgo(locale, lastAttemptAt)}`
         : extra || t('common.na')
-  const secondaryMeta = extra && (lastError || lastOkAt || lastAttemptAt) ? extra : ''
+  const secondaryMeta = extra && primaryMeta !== extra && (lastError || lastOkAt || lastAttemptAt) ? extra : ''
 
   return (
     <div className="min-w-0 overflow-hidden rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
@@ -152,6 +158,40 @@ export default function AutomationRiskGrid({
         : t('dashboard.awaitingFirstRunHint')
     }
     return fallback || intervalHint || undefined
+  }
+
+  const chanHealPeerLabel = (detail?: { alias?: string; pubkey_short?: string; pubkey?: string } | null) => {
+    if (!detail) return ''
+    return detail.alias || detail.pubkey_short || (detail.pubkey ? `${detail.pubkey.slice(0, 12)}...` : '')
+  }
+
+  const buildChanHealExtra = () => {
+    const failed = chanHeal?.last_reconnect_failed ?? 0
+    const connected = chanHeal?.last_reconnected ?? 0
+    const details = chanHeal?.last_reconnect_details || []
+    if (failed > 0) {
+      const firstIssue = details.find((detail) => {
+        const status = normalizeStatus(detail.status)
+        return status !== 'connected' && status !== 'already_connected'
+      })
+      return t('lightningOps.chanHealReconnectDashboardUnreachable', {
+        count: failed,
+        peer: chanHealPeerLabel(firstIssue) || t('lightningOps.chanHealReconnectUnknownPeer'),
+      })
+    }
+    const inactiveAfterConnect = details.find((detail) => normalizeStatus(detail.status) === 'connected_channel_inactive')
+    if (inactiveAfterConnect) {
+      return t('lightningOps.chanHealReconnectDashboardChannelInactive', {
+        peer: chanHealPeerLabel(inactiveAfterConnect) || t('lightningOps.chanHealReconnectUnknownPeer'),
+      })
+    }
+    if (connected > 0) {
+      return t('lightningOps.chanHealReconnectDashboardConnected', { count: connected })
+    }
+    if (typeof chanHeal?.last_updated === 'number') {
+      return t('lightningOps.chanHealLastUpdated', { count: chanHeal.last_updated })
+    }
+    return buildAutomationExtra(chanHeal)
   }
 
   return (
@@ -249,12 +289,7 @@ export default function AutomationRiskGrid({
               lastOkAt={chanHeal?.last_ok_at}
               lastAttemptAt={chanHeal?.last_attempt_at}
               lastError={chanHeal?.last_error}
-              extra={buildAutomationExtra(
-                chanHeal,
-                typeof chanHeal?.last_updated === 'number'
-                  ? t('lightningOps.chanHealLastUpdated', { count: chanHeal.last_updated })
-                  : undefined,
-              )}
+              extra={buildChanHealExtra()}
             />
             <AutomationRow
               label={t('lightningOps.htlcManagerTitle')}

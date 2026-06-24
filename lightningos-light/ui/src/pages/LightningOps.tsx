@@ -348,6 +348,19 @@ type ChanHealStatus = {
   last_reconnect_attempted?: number
   last_reconnected?: number
   last_reconnect_failed?: number
+  last_reconnect_details?: ChanHealReconnectDetail[]
+}
+
+type ChanHealReconnectDetail = {
+  alias?: string
+  pubkey?: string
+  pubkey_short?: string
+  channel_points?: string[]
+  status?: string
+  socket?: string
+  sockets?: string[]
+  error_summary?: string
+  raw_error?: string
 }
 
 type HtlcManagerStatus = {
@@ -2567,6 +2580,7 @@ export default function LightningOps() {
   const chanHealTone = (): 'ok' | 'warn' | 'muted' => {
     if (!chanHeal?.enabled) return 'muted'
     if (chanHeal?.status === 'ok') return 'ok'
+    if (chanHeal?.status === 'unreachable') return 'warn'
     if (chanHeal?.status === 'checking') return 'muted'
     return 'warn'
   }
@@ -2612,8 +2626,41 @@ export default function LightningOps() {
   const chanHealBadgeLabel = () => {
     if (!chanHeal?.enabled) return t('common.disabled')
     if (chanHeal?.status === 'ok') return t('common.ok')
+    if (chanHeal?.status === 'unreachable') return t('lightningOps.chanHealUnreachableBadge')
     if (chanHeal?.status === 'checking') return t('common.check')
     return t('common.check')
+  }
+
+  const chanHealReconnectStatusText = (detail: ChanHealReconnectDetail) => {
+    switch (String(detail.status || '').trim()) {
+      case 'connected':
+        return t('lightningOps.chanHealReconnectConnected')
+      case 'already_connected':
+        return t('lightningOps.chanHealReconnectAlreadyConnected')
+      case 'connected_channel_inactive':
+        return t('lightningOps.chanHealReconnectChannelInactive')
+      case 'connect_timeout':
+        return t('lightningOps.chanHealReconnectTimeout')
+      case 'no_announced_socket':
+        return t('lightningOps.chanHealReconnectNoSocket')
+      case 'lookup_failed':
+        return t('lightningOps.chanHealReconnectLookupFailed')
+      case 'still_unreachable':
+        return t('lightningOps.chanHealReconnectStillUnreachable')
+      default:
+        return t('lightningOps.chanHealReconnectFailed')
+    }
+  }
+
+  const chanHealReconnectPeerLabel = (detail: ChanHealReconnectDetail) => {
+    return detail.alias || detail.pubkey_short || (detail.pubkey ? `${detail.pubkey.slice(0, 12)}...` : t('lightningOps.chanHealReconnectUnknownPeer'))
+  }
+
+  const chanHealReconnectChannelsLabel = (points?: string[]) => {
+    const clean = (points || []).map((item) => String(item || '').trim()).filter(Boolean)
+    if (clean.length === 0) return ''
+    if (clean.length === 1) return clean[0]
+    return `${clean[0]} +${clean.length - 1}`
   }
 
   const htlcManagerBadgeLabel = () => {
@@ -8913,6 +8960,38 @@ export default function LightningOps() {
             })}
           </p>
         )}
+        {chanHeal?.last_reconnect_details?.length ? (
+          <div className="space-y-2 border-t border-white/10 pt-3 text-xs">
+            {chanHeal.last_reconnect_details.map((detail, index) => {
+              const channelsLabel = chanHealReconnectChannelsLabel(detail.channel_points)
+              const isHealthy = detail.status === 'connected' || detail.status === 'already_connected'
+              return (
+                <div key={`${detail.pubkey || detail.alias || 'peer'}-${index}`} className="grid gap-1 text-fog/60 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+                  <div className="min-w-0">
+                    <p className="font-medium text-fog [overflow-wrap:anywhere]">
+                      {chanHealReconnectPeerLabel(detail)}
+                      {detail.pubkey_short && detail.alias ? <span className="ml-2 text-fog/45">{detail.pubkey_short}</span> : null}
+                    </p>
+                    <p className={isHealthy ? 'text-emerald-200 [overflow-wrap:anywhere]' : 'text-amber-200 [overflow-wrap:anywhere]'}>
+                      {chanHealReconnectStatusText(detail)}
+                    </p>
+                    {channelsLabel ? (
+                      <p className="text-fog/45 [overflow-wrap:anywhere]">
+                        {t('lightningOps.chanHealReconnectChannels')}: {channelsLabel}
+                      </p>
+                    ) : null}
+                  </div>
+                  {detail.raw_error ? (
+                    <details className="min-w-0 max-w-full text-fog/40 lg:max-w-sm lg:text-right">
+                      <summary className="cursor-pointer select-none text-fog/50">{t('lightningOps.chanHealReconnectTechnical')}</summary>
+                      <p className="mt-1 [overflow-wrap:anywhere]">{detail.raw_error}</p>
+                    </details>
+                  ) : null}
+                </div>
+              )
+            })}
+          </div>
+        ) : null}
         {chanHeal?.last_error && (
           <p className="text-xs text-amber-200">
             {t('lightningOps.chanHealLastError')}: {chanHeal.last_error}

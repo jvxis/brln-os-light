@@ -1356,7 +1356,6 @@
     "keysendCount": "Contagem de Keysend",
     "net": "Líquido",
     "apy": "APY",
-    "apyNetWithKeysend": "APY (líquido + keysend)",
     "netWithKeysend": "Líquido (roteamento + keysend)",
     "netWithOnchain": "Líquido (roteamento + keysend - on-chain)",
     "offchainCost": "Custo offchain",

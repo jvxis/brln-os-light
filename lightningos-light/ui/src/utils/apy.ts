@@ -8,6 +8,7 @@ export type ApyResult = {
   apyPct: number
   averageBalanceSats: number
   sampleCount: number
+  source: 'range-average' | 'fallback'
 }
 
 const finiteNumber = (value: unknown): value is number => (
@@ -62,17 +63,24 @@ export const calculateApyPct = (netSats: number, days: number, averageBalanceSat
 export const calculateApyPctFromNet = (
   netSats: number,
   days: number,
-  points?: ApyBalancePoint[] | null
+  points?: ApyBalancePoint[] | null,
+  fallbackBalanceSats?: number | null
 ): ApyResult | null => {
   const average = averageTotalBalance(points)
-  if (!average) return null
+  const balance = average && average.sampleCount >= 2
+    ? average
+    : finiteNumber(fallbackBalanceSats) && fallbackBalanceSats > 0
+      ? { averageBalanceSats: fallbackBalanceSats, sampleCount: 0 }
+      : null
+  if (!balance) return null
 
-  const apyPct = calculateApyPct(netSats, days, average.averageBalanceSats)
+  const apyPct = calculateApyPct(netSats, days, balance.averageBalanceSats)
   if (apyPct === null) return null
 
   return {
-    ...average,
+    ...balance,
     apyPct,
+    source: average && average.sampleCount >= 2 ? 'range-average' : 'fallback',
   }
 }
 

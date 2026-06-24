@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { getLocale } from '../../i18n'
-import { calculateApyPctFromNet, formatApyPercent } from '../../utils/apy'
+import { calculateApyPctFromNet, formatApyPercent, totalBalanceFromPoint } from '../../utils/apy'
 import { clamp, formatPercent, formatSats, formatSignedSats, metricNetWithKeysend } from './formatters'
 import MetricTile from './MetricTile'
 import StackedRatioBar from './StackedRatioBar'
@@ -35,11 +35,12 @@ export default function NodePulseRow({
   const totalLiquidity = (lnd?.balances?.onchain_sat ?? 0) + (lnd?.balances?.lightning_sat ?? 0)
   const onchainLiquidity = lnd?.balances?.onchain_sat ?? 0
   const lightningLiquidity = lnd?.balances?.lightning_sat ?? 0
+  const fallbackBalance = totalBalanceFromPoint(live) ?? (totalLiquidity > 0 ? totalLiquidity : null)
   const movementPct = movement?.movement_pct ?? 0
   const movementProgress = clamp(movementPct)
   const movementTone = movementPct >= 75 ? 'ok' : movementPct >= 50 ? 'warn' : 'danger'
   const monthDays = summary?.days ?? sparklineSource.length
-  const periodApy = calculateApyPctFromNet(periodNet, monthDays, sparklineSource)
+  const periodApy = calculateApyPctFromNet(periodNet, monthDays, sparklineSource, fallbackBalance)
   const periodTrendDetail = monthDays > 0 ? t('dashboard.monthTrendHint', { count: monthDays }) : undefined
   const netTrendDetail = periodTrendDetail
     ? (

@@ -144,7 +144,7 @@ export default function RecentActivityCard({ notifications }: RecentActivityCard
   }, [notifications, rebalanceHashes])
 
   return (
-    <article className="section-card flex min-h-0 flex-col xl:h-[calc(100vh-6rem)] xl:min-h-[34rem] xl:max-h-[720px]">
+    <article className="section-card flex h-full min-h-0 flex-col overflow-hidden">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs uppercase tracking-[0.24em] text-fog/45">{t('dashboard.activityKicker')}</p>

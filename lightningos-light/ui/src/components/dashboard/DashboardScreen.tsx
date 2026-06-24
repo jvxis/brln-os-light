@@ -1044,7 +1044,7 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
         summary={reportsSummary}
       />
 
-      <div className="grid gap-6 xl:grid-cols-2">
+      <div className="grid items-stretch gap-6 xl:grid-cols-2">
         <AutomationRiskGrid
           rebalance={rebalanceOverview}
           autofee={autofeeStatus}

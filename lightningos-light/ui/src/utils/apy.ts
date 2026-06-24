@@ -93,3 +93,14 @@ export const formatApyPercent = (locale: string, value?: number | null, maximumF
 export const calculateRevenueApyPct = (netSats: number, revenueSats: number, days: number) => (
   calculateApyPct(netSats, days, revenueSats)
 )
+
+export const calculateDisplayApyPct = (
+  netSats: number,
+  revenueSats: number,
+  days: number,
+  capitalBaseSats?: number | null
+) => {
+  if (!finiteNumber(days) || days <= 0) return null
+  if (days >= 365) return calculateRevenueApyPct(netSats, revenueSats, days)
+  return calculateApyPctFromNet(netSats, days, null, capitalBaseSats)?.apyPct ?? null
+}

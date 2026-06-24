@@ -26,7 +26,7 @@ import {
   updateReportsConfig
 } from '../api'
 import { getLocale } from '../i18n'
-import { calculateRevenueApyPct, formatApyPercent } from '../utils/apy'
+import { calculateDisplayApyPct, formatApyPercent, totalBalanceFromPoint } from '../utils/apy'
 
 type ReportSeriesItem = {
   date: string
@@ -934,8 +934,9 @@ export default function Reports() {
   const summaryTotalsNetWithOnchain = summaryTotalsNetWithKeysend - summaryTotalsOnchainCost
   const summaryDays = summary?.days ?? series.length
   const summaryRevenue = summary?.totals.forward_fee_revenue_sats ?? 0
-  const summaryApy = calculateRevenueApyPct(summaryTotalsNetWithKeysend, summaryRevenue, summaryDays)
-  const summaryOnchainApy = calculateRevenueApyPct(summaryTotalsNetWithOnchain, summaryRevenue, summaryDays)
+  const summaryCapitalBase = totalBalanceFromPoint(live)
+  const summaryApy = calculateDisplayApyPct(summaryTotalsNetWithKeysend, summaryRevenue, summaryDays, summaryCapitalBase)
+  const summaryOnchainApy = calculateDisplayApyPct(summaryTotalsNetWithOnchain, summaryRevenue, summaryDays, summaryCapitalBase)
   const summaryAveragesOffchainCost = summary?.averages.offchain_fee_cost_sats ?? summary?.averages.total_fee_cost_sats ?? ((summary?.averages.rebalance_fee_cost_sats ?? 0) + (summary?.averages.payment_fee_cost_sats ?? 0))
   const summaryAveragesOnchainCost = summary?.averages.onchain_fee_cost_sats ?? 0
   const summaryAveragesCostWithOnchain = summary?.averages.total_fee_cost_with_onchain_sats ?? (summaryAveragesOffchainCost + summaryAveragesOnchainCost)

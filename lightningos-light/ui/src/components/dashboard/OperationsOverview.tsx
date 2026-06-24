@@ -10,7 +10,7 @@ import {
   YAxis,
 } from 'recharts'
 import { getLocale } from '../../i18n'
-import { calculateRevenueApyPct, formatApyPercent } from '../../utils/apy'
+import { calculateDisplayApyPct, formatApyPercent, totalBalanceFromPoint } from '../../utils/apy'
 import { formatSats, formatSignedSats, metricOffchainCost, metricTotalCost, metricNetWithKeysend } from './formatters'
 import MetricTile from './MetricTile'
 import type { LiveResponse, ReportRangeResponse, SummaryResponse } from './types'
@@ -45,7 +45,7 @@ export default function OperationsOverview({ live, range, summary }: OperationsO
     : periodSeries.reduce((sum, item) => sum + metricNetWithKeysend(item), 0)
   const periodRevenue = summary?.totals.forward_fee_revenue_sats
     ?? periodSeries.reduce((sum, item) => sum + (item.forward_fee_revenue_sats ?? 0), 0)
-  const periodApy = calculateRevenueApyPct(periodNet, periodRevenue, periodDays)
+  const periodApy = calculateDisplayApyPct(periodNet, periodRevenue, periodDays, totalBalanceFromPoint(live))
 
   const chartData = useMemo<ChartPoint[]>(
     () => (Array.isArray(range?.series) ? [...range.series] : [])

@@ -8977,7 +8977,7 @@ export default function LightningOps() {
           </p>
         )}
         {chanHeal?.last_reconnect_details?.length ? (
-          <div className="space-y-2 border-t border-white/10 pt-3 text-xs">
+          <div className="max-h-[7.5rem] space-y-2 overflow-y-auto border-t border-white/10 pt-3 pr-2 text-xs">
             {chanHeal.last_reconnect_details.map((detail, index) => {
               const channelsLabel = chanHealReconnectChannelsLabel(detail.channel_points)
               const isHealthy = detail.status === 'connected' || detail.status === 'already_connected'

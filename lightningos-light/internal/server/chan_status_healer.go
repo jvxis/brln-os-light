@@ -295,6 +295,10 @@ func (c *ChanStatusHealer) tick() {
 	}
 	c.inFlight = true
 	c.lastAttempt = time.Now().UTC()
+	c.lastReconnectAttempted = 0
+	c.lastReconnected = 0
+	c.lastReconnectFailed = 0
+	c.lastReconnectDetails = nil
 	c.mu.Unlock()
 
 	defer func() {

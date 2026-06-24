@@ -144,7 +144,7 @@ export default function RecentActivityCard({ notifications }: RecentActivityCard
   }, [notifications, rebalanceHashes])
 
   return (
-    <article className="section-card flex h-full min-h-0 flex-col">
+    <article className="section-card flex min-h-0 flex-col xl:h-[calc(100vh-6rem)] xl:min-h-[34rem] xl:max-h-[720px]">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs uppercase tracking-[0.24em] text-fog/45">{t('dashboard.activityKicker')}</p>
@@ -154,7 +154,7 @@ export default function RecentActivityCard({ notifications }: RecentActivityCard
       </div>
 
       {filtered.length > 0 ? (
-        <div className="mt-6 min-h-0 flex-1 overflow-y-auto pr-2">
+        <div className="mt-6 min-h-0 flex-1 overflow-y-auto pr-2 [scrollbar-gutter:stable]">
           <div className="space-y-2 text-sm">
             {filtered.map((item) => {
               const arrow = arrowForDirection(item.direction)

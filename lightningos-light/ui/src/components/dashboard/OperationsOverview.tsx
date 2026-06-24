@@ -10,6 +10,7 @@ import {
   YAxis,
 } from 'recharts'
 import { getLocale } from '../../i18n'
+import { calculateApyPctFromNet, formatApyPercent } from '../../utils/apy'
 import { formatSats, formatSignedSats, metricOffchainCost, metricTotalCost, metricNetWithKeysend } from './formatters'
 import MetricTile from './MetricTile'
 import type { LiveResponse, ReportRangeResponse, SummaryResponse } from './types'
@@ -37,6 +38,12 @@ const tooltipStyle = {
 export default function OperationsOverview({ live, range, summary }: OperationsOverviewProps) {
   const { t, i18n } = useTranslation()
   const locale = getLocale(i18n.language)
+  const periodSeries = Array.isArray(range?.series) ? range.series : []
+  const periodDays = summary?.days ?? periodSeries.length
+  const periodNet = summary?.totals
+    ? metricNetWithKeysend(summary.totals)
+    : periodSeries.reduce((sum, item) => sum + metricNetWithKeysend(item), 0)
+  const periodApy = calculateApyPctFromNet(periodNet, periodDays, periodSeries)
 
   const chartData = useMemo<ChartPoint[]>(
     () => (Array.isArray(range?.series) ? [...range.series] : [])
@@ -159,7 +166,18 @@ export default function OperationsOverview({ live, range, summary }: OperationsO
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
           <div className="rounded-2xl border border-white/10 bg-ink/35 px-4 py-3">
             <p className="text-xs uppercase tracking-wide text-fog/45">{t('dashboard.monthNetTitle')}</p>
-            <p className="mt-2 text-lg font-semibold">{formatSignedSats(locale, metricNetWithKeysend(summary?.totals))} sats</p>
+            <div className="mt-2 flex flex-wrap items-baseline justify-between gap-2">
+              <p className="text-lg font-semibold">{formatSignedSats(locale, metricNetWithKeysend(summary?.totals))} sats</p>
+              {periodApy ? (
+                <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                  periodApy.apyPct < 0
+                    ? 'border-rose-400/25 bg-rose-500/10 text-rose-200'
+                    : 'border-emerald-400/25 bg-emerald-500/10 text-emerald-200'
+                }`}>
+                  {t('reports.apy')} {formatApyPercent(locale, periodApy.apyPct)}
+                </span>
+              ) : null}
+            </div>
           </div>
           <div className="rounded-2xl border border-white/10 bg-ink/35 px-4 py-3">
             <p className="text-xs uppercase tracking-wide text-fog/45">{t('dashboard.monthRevenueTitle')}</p>

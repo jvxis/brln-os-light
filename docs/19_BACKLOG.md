@@ -21,6 +21,331 @@ Current product backlog, after checking the repository against the docs:
 7. `Graph Close Classifier` high-confidence remote `penalty_close` inference.
 8. Wallet Flow lineage export as SVG/PNG.
 9. Rebalance source-rotation/pair-cache telemetry polish.
+10. `Lightning Tools` custom macaroon generator with audit log.
+
+## 10. Lightning Tools Custom Macaroon Generator
+
+### Source
+
+GitHub issue: `jvxis/brln-os-light#24` - `Criacao de Macaroon`.
+
+The issue asks for a ThunderHub-like macaroon creation tool. The concrete use
+case mentioned is generating a base64-encoded macaroon with invoice-related
+permissions for external services such as `pay.br-ln.com`.
+
+### Goal
+
+Add a compact tool under `Lightning Ops > Lightning Tools` that lets an
+authenticated operator generate custom LND macaroons with selected permissions,
+copy/export the result, and audit the action in the existing Audit Log.
+
+The first version should be practical and compact rather than a full ThunderHub
+clone.
+
+### Product Decisions
+
+- The feature belongs in `Lightning Ops > Lightning Tools`, not in the Audit
+  Log screen. The Audit Log should record the action.
+- Generated macaroons are custom LOS-generated artifacts, even when the selected
+  permissions resemble LND's standard invoice/read-only/admin macaroons.
+- Do not name generated files `invoice.macaroon`, `readonly.macaroon`,
+  `admin.macaroon`, or any other standard LND macaroon name.
+- The backend controls the export filename:
+  `los-custom-macaroon-YYYYMMDDTHHMMSSZ-rk<rootKeyId>.macaroon`.
+- The operator should not manually type the filename in the MVP.
+- The default `root_key_id` should be generated automatically, preferably from a
+  UTC timestamp such as Unix milliseconds, and checked against
+  `ListMacaroonIDs` to avoid collisions.
+- The UI may offer presets like `Invoice permissions`, but the exported file
+  remains a custom macaroon.
+- LOS should not persist the generated macaroon to disk.
+- The macaroon secret should be shown only in the immediate response/result
+  surface so the operator can copy or download it.
+
+### Security Requirements
+
+This feature intentionally exports a newly generated secret. Treat it as a
+controlled exception to the general "do not expose macaroons" rule:
+
+- require an authenticated admin session and CSRF protection through the
+  existing middleware
+- require fresh reauthentication before exporting a macaroon
+- add a dedicated reauth scope such as `macaroon_export`
+- accept `confirm_password` on the bake request so the UI can use an inline
+  confirmation flow
+- never log, persist, audit, or return the wallet seed, existing admin macaroon,
+  existing standard LND macaroons, RPC credentials, wallet password, or any
+  unrelated secret
+- never write `macaroon_hex`, `macaroon_base64`, or raw macaroon bytes to the
+  audit log or server logs
+- return the generated macaroon only in the immediate response to the explicit
+  user action
+- clear the UI result when the user leaves or presses a clear action
+
+### Backend Plan
+
+Add a focused LND client module:
+
+- `lightningos-light/internal/lndclient/macaroon.go`
+
+Implement:
+
+- `ListMacaroonPermissions(ctx)` using `lnrpc.Lightning/ListPermissions`
+- `ListMacaroonIDs(ctx)` using `lnrpc.Lightning/ListMacaroonIDs`
+- `BakeCustomMacaroon(ctx, params)` using `lnrpc.Lightning/BakeMacaroon`
+- conversion from LND's returned hex macaroon to base64
+- validation for empty permissions, duplicate permissions, invalid entity/action
+  values, and invalid/generated root key IDs
+
+Suggested internal types:
+
+- `MacaroonPermission`
+  - `Entity string`
+  - `Action string`
+- `BakeCustomMacaroonRequest`
+  - `Permissions []MacaroonPermission`
+  - `RootKeyID uint64`
+  - `AllowExternalPermissions bool`
+- `BakeCustomMacaroonResult`
+  - `FileName string`
+  - `RootKeyID uint64`
+  - `Permissions []MacaroonPermission`
+  - `MacaroonHex string`
+  - `MacaroonBase64 string`
+
+Add server handlers:
+
+- `lightningos-light/internal/server/macaroon_handlers.go`
+- `GET /api/lnops/macaroon/options`
+- `POST /api/lnops/macaroon/bake`
+
+Register routes in:
+
+- `lightningos-light/internal/server/routes.go`
+
+Update auth scope handling in:
+
+- `lightningos-light/internal/server/auth.go`
+
+Suggested scope:
+
+- `authScopeMacaroonExport = "macaroon_export"`
+
+`POST /api/lnops/macaroon/bake` should:
+
+1. read JSON payload
+2. validate preset or explicit permissions
+3. require recent `macaroon_export` reauth, or validate `confirm_password`
+4. generate/validate root key ID
+5. call `BakeMacaroon`
+6. compute the LOS filename
+7. record a safe audit event
+8. return filename, root key ID, permissions, hex, and base64
+
+### API Contract
+
+`GET /api/lnops/macaroon/options`
+
+Returns presets and available permissions. The preset labels are product/UI
+labels and must not imply that LOS is producing LND's standard macaroon files.
+
+Example response:
+
+```json
+{
+  "presets": [
+    {
+      "id": "invoice_permissions",
+      "label": "Invoice permissions",
+      "permissions": [
+        { "entity": "invoice", "action": "read" },
+        { "entity": "invoice", "action": "write" }
+      ]
+    }
+  ],
+  "permissions": [
+    { "entity": "invoice", "action": "read" },
+    { "entity": "invoice", "action": "write" }
+  ]
+}
+```
+
+`POST /api/lnops/macaroon/bake`
+
+Example request:
+
+```json
+{
+  "preset": "invoice_permissions",
+  "permissions": [
+    { "entity": "invoice", "action": "read" },
+    { "entity": "invoice", "action": "write" }
+  ],
+  "confirm_password": "..."
+}
+```
+
+Example response:
+
+```json
+{
+  "file_name": "los-custom-macaroon-20260624T145446Z-rk1750776886123.macaroon",
+  "root_key_id": 1750776886123,
+  "macaroon_hex": "...",
+  "macaroon_base64": "...",
+  "permissions": ["invoice:read", "invoice:write"]
+}
+```
+
+If a fresh password confirmation is required, return a structured error such as:
+
+```json
+{
+  "error": "password confirmation required for macaroon export",
+  "code": "macaroon_export_reauth_required",
+  "requires_password_confirmation": true
+}
+```
+
+### Audit Log Plan
+
+Use the existing audit system and Audit Log page. The feature should record an
+event when a custom macaroon is generated.
+
+Suggested event:
+
+- `action`: `macaroon.bake`
+- `target`: generated LOS filename
+- `metadata`: safe operational facts only
+
+Example metadata:
+
+```json
+{
+  "root_key_id": 1750776886123,
+  "permission_count": 2,
+  "permissions": ["invoice:read", "invoice:write"],
+  "allow_external_permissions": false,
+  "status": "success"
+}
+```
+
+Do not include:
+
+- `macaroon_hex`
+- `macaroon_base64`
+- raw macaroon bytes
+- password or password-derived material
+- existing macaroon paths or contents
+
+The existing `AuditLog.tsx` already renders metadata JSON and supports filtering
+by `action`, so no new Audit Log screen is required for the MVP. A small UI
+polish can later add a documented filter hint for `macaroon.bake`.
+
+### Frontend Plan
+
+Update:
+
+- `lightningos-light/ui/src/api.ts`
+- `lightningos-light/ui/src/pages/LightningOps.tsx`
+- `lightningos-light/ui/src/i18n/pt-BR.json`
+- `lightningos-light/ui/src/i18n/en.json`
+
+Add frontend API helpers:
+
+- `getLnMacaroonOptions()`
+- `bakeLnMacaroon(payload)`
+
+Add Lightning Ops state for:
+
+- macaroon options
+- selected preset
+- selected custom permissions
+- password confirmation
+- busy/status state
+- generated result
+- copy/download state
+
+Add:
+
+- `MACAROON_TOOL_SECTION_ID`
+- a new Lightning Tools shortcut
+- a small inline SVG glyph in `renderToolGlyph`
+- a compact card in the existing Lightning Tools grid
+
+Suggested card structure:
+
+1. Title: `Custom macaroon`
+2. Subtitle: `Generate a custom macaroon with selected LND permissions.`
+3. Preset selector:
+   - `Invoice permissions`
+   - `Read-only permissions`
+   - `Custom`
+4. Permission checkboxes for custom mode.
+5. Password confirmation input.
+6. `Generate macaroon` button.
+7. Result area:
+   - filename
+   - root key ID
+   - selected permissions
+   - copy base64
+   - copy hex
+   - download `.macaroon`
+   - clear result
+
+The card should stay compact and fit the existing two-column Lightning Tools
+layout. Avoid a large ThunderHub-style permissions table in the MVP.
+
+### Suggested Presets
+
+Initial presets should be conservative and easy to understand:
+
+- `invoice_permissions`
+  - `invoice:read`
+  - `invoice:write`
+- `read_only`
+  - only safe read permissions returned by `ListPermissions`, if available
+- `custom`
+  - explicit user-selected permissions
+
+Preset labels should describe permissions, not output filenames.
+
+### Tests
+
+Backend tests:
+
+- permission validation rejects empty permissions
+- permission validation deduplicates or rejects duplicates consistently
+- invalid entities/actions are rejected
+- generated filename follows the LOS naming scheme
+- generated root key ID is positive and collision-safe
+- hex-to-base64 conversion works
+- bake handler requires reauth/password confirmation
+- audit metadata does not contain macaroon values
+
+Frontend verification:
+
+- `npm run build`
+- verify the card renders in Lightning Tools
+- verify custom permissions update the payload
+- verify copy/download buttons use the generated LOS filename
+- verify result can be cleared
+
+Backend verification:
+
+- `go test ./internal/server/...`
+- `go test ./...`
+
+### Phase 2
+
+Possible follow-ups after MVP:
+
+- list root key IDs currently known by LND
+- revoke generated custom macaroons by root key ID using `DeleteMacaroonID`
+- record `macaroon.revoke` audit events
+- surface a filtered Audit Log link from the result card
+- support external permissions only with an explicit advanced warning
+- offer method/RPC-based permission selection using `ListPermissions`
 
 ## Implemented Or No Longer Active Here
 

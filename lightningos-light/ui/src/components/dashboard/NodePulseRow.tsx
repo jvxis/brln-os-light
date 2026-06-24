@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { getLocale } from '../../i18n'
+import { calculateApyPctFromNet, formatApyPercent } from '../../utils/apy'
 import { clamp, formatPercent, formatSats, formatSignedSats, metricNetWithKeysend } from './formatters'
 import MetricTile from './MetricTile'
 import StackedRatioBar from './StackedRatioBar'
@@ -27,6 +28,9 @@ export default function NodePulseRow({
   const revenueTrend = sparklineSource.map((item) => ({ value: item.forward_fee_revenue_sats ?? 0 }))
   const netTrend = sparklineSource.map((item) => ({ value: metricNetWithKeysend(item) }))
   const volumeTrend = sparklineSource.map((item) => ({ value: item.routed_volume_sats ?? 0 }))
+  const periodNet = summary?.totals
+    ? metricNetWithKeysend(summary.totals)
+    : sparklineSource.reduce((sum, item) => sum + metricNetWithKeysend(item), 0)
 
   const totalLiquidity = (lnd?.balances?.onchain_sat ?? 0) + (lnd?.balances?.lightning_sat ?? 0)
   const onchainLiquidity = lnd?.balances?.onchain_sat ?? 0
@@ -35,6 +39,20 @@ export default function NodePulseRow({
   const movementProgress = clamp(movementPct)
   const movementTone = movementPct >= 75 ? 'ok' : movementPct >= 50 ? 'warn' : 'danger'
   const monthDays = summary?.days ?? sparklineSource.length
+  const periodApy = calculateApyPctFromNet(periodNet, monthDays, sparklineSource)
+  const periodTrendDetail = monthDays > 0 ? t('dashboard.monthTrendHint', { count: monthDays }) : undefined
+  const netTrendDetail = periodTrendDetail
+    ? (
+      <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span>{periodTrendDetail}</span>
+        {periodApy ? (
+          <span className={periodApy.apyPct < 0 ? 'text-rose-300' : 'text-emerald-300'}>
+            {t('reports.apy')} {formatApyPercent(locale, periodApy.apyPct)}
+          </span>
+        ) : null}
+      </span>
+    )
+    : undefined
 
   return (
     <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
@@ -51,7 +69,7 @@ export default function NodePulseRow({
         label={t('reports.netWithKeysend')}
         value={`${formatSignedSats(locale, metricNetWithKeysend(live))} sats`}
         sublabel={t('dashboard.todayWindow')}
-        detail={monthDays > 0 ? t('dashboard.monthTrendHint', { count: monthDays }) : undefined}
+        detail={netTrendDetail}
         tone={metricNetWithKeysend(live) >= 0 ? 'ok' : 'danger'}
         trend={netTrend}
       />

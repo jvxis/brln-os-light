@@ -1355,6 +1355,8 @@
     "keysendReceived": "Keysend received",
     "keysendCount": "Keysend count",
     "net": "Net",
+    "apy": "APY",
+    "apyNetWithKeysend": "APY (net + keysend)",
     "netWithKeysend": "Net (routing + keysend)",
     "netWithOnchain": "Net (routing + keysend - on-chain)",
     "offchainCost": "Offchain cost",

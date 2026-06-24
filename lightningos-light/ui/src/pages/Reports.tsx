@@ -26,7 +26,7 @@ import {
   updateReportsConfig
 } from '../api'
 import { getLocale } from '../i18n'
-import { calculateApyPctFromNet, formatApyPercent, totalBalanceFromPoint } from '../utils/apy'
+import { calculateNetRevenueYieldPct, formatApyPercent } from '../utils/apy'
 
 type ReportSeriesItem = {
   date: string
@@ -932,10 +932,8 @@ export default function Reports() {
   const summaryTotalsCostWithOnchain = summary?.totals.total_fee_cost_with_onchain_sats ?? (summaryTotalsOffchainCost + summaryTotalsOnchainCost)
   const summaryTotalsNetWithKeysend = summary?.totals.net_with_keysend_sats ?? ((summary?.totals.net_routing_profit_sats ?? 0) + (summary?.totals.keysend_received_sats ?? 0))
   const summaryTotalsNetWithOnchain = summaryTotalsNetWithKeysend - summaryTotalsOnchainCost
-  const summaryDays = summary?.days ?? series.length
-  const summaryApyFallbackBalance = totalBalanceFromPoint(live)
-  const summaryApy = calculateApyPctFromNet(summaryTotalsNetWithKeysend, summaryDays, series, summaryApyFallbackBalance)
-  const summaryOnchainApy = calculateApyPctFromNet(summaryTotalsNetWithOnchain, summaryDays, series, summaryApyFallbackBalance)
+  const summaryApy = calculateNetRevenueYieldPct(summaryTotalsNetWithKeysend, summary?.totals.forward_fee_revenue_sats ?? 0)
+  const summaryOnchainApy = calculateNetRevenueYieldPct(summaryTotalsNetWithOnchain, summary?.totals.forward_fee_revenue_sats ?? 0)
   const summaryAveragesOffchainCost = summary?.averages.offchain_fee_cost_sats ?? summary?.averages.total_fee_cost_sats ?? ((summary?.averages.rebalance_fee_cost_sats ?? 0) + (summary?.averages.payment_fee_cost_sats ?? 0))
   const summaryAveragesOnchainCost = summary?.averages.onchain_fee_cost_sats ?? 0
   const summaryAveragesCostWithOnchain = summary?.averages.total_fee_cost_with_onchain_sats ?? (summaryAveragesOffchainCost + summaryAveragesOnchainCost)
@@ -1205,17 +1203,17 @@ export default function Reports() {
                 <p className="text-fog">{t('reports.routingNet')} {formatSats(summary.totals.net_routing_profit_sats)}</p>
                 <p className="text-fog/80">
                   {t('reports.netWithKeysend')} {formatSats(summaryTotalsNetWithKeysend)}
-                  {summaryApy ? (
-                    <span className={`ml-2 whitespace-nowrap ${summaryApy.apyPct < 0 ? 'text-rose-400' : 'text-emerald-300'}`}>
-                      {t('reports.apy')} {formatApyPercent(locale, summaryApy.apyPct)}
+                  {summaryApy !== null ? (
+                    <span className={`ml-2 whitespace-nowrap ${summaryApy < 0 ? 'text-rose-400' : 'text-emerald-300'}`}>
+                      {t('reports.apy')} {formatApyPercent(locale, summaryApy)}
                     </span>
                   ) : null}
                 </p>
                 <p className={summaryTotalsNetWithOnchain < 0 ? 'text-rose-400' : 'text-fog/80'}>
                   {t('reports.netWithOnchain')} {formatSats(summaryTotalsNetWithOnchain)}
-                  {summaryOnchainApy ? (
-                    <span className={`ml-2 whitespace-nowrap ${summaryOnchainApy.apyPct < 0 ? 'text-rose-400' : 'text-emerald-300'}`}>
-                      {t('reports.apy')} {formatApyPercent(locale, summaryOnchainApy.apyPct)}
+                  {summaryOnchainApy !== null ? (
+                    <span className={`ml-2 whitespace-nowrap ${summaryOnchainApy < 0 ? 'text-rose-400' : 'text-emerald-300'}`}>
+                      {t('reports.apy')} {formatApyPercent(locale, summaryOnchainApy)}
                     </span>
                   ) : null}
                 </p>

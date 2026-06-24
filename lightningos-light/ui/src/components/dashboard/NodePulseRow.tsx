@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { getLocale } from '../../i18n'
-import { calculateApyPctFromNet, formatApyPercent, totalBalanceFromPoint } from '../../utils/apy'
+import { calculateNetRevenueYieldPct, formatApyPercent } from '../../utils/apy'
 import { clamp, formatPercent, formatSats, formatSignedSats, metricNetWithKeysend } from './formatters'
 import MetricTile from './MetricTile'
 import StackedRatioBar from './StackedRatioBar'
@@ -31,24 +31,25 @@ export default function NodePulseRow({
   const periodNet = summary?.totals
     ? metricNetWithKeysend(summary.totals)
     : sparklineSource.reduce((sum, item) => sum + metricNetWithKeysend(item), 0)
+  const periodRevenue = summary?.totals.forward_fee_revenue_sats
+    ?? sparklineSource.reduce((sum, item) => sum + (item.forward_fee_revenue_sats ?? 0), 0)
 
   const totalLiquidity = (lnd?.balances?.onchain_sat ?? 0) + (lnd?.balances?.lightning_sat ?? 0)
   const onchainLiquidity = lnd?.balances?.onchain_sat ?? 0
   const lightningLiquidity = lnd?.balances?.lightning_sat ?? 0
-  const fallbackBalance = totalBalanceFromPoint(live) ?? (totalLiquidity > 0 ? totalLiquidity : null)
   const movementPct = movement?.movement_pct ?? 0
   const movementProgress = clamp(movementPct)
   const movementTone = movementPct >= 75 ? 'ok' : movementPct >= 50 ? 'warn' : 'danger'
   const monthDays = summary?.days ?? sparklineSource.length
-  const periodApy = calculateApyPctFromNet(periodNet, monthDays, sparklineSource, fallbackBalance)
+  const periodApy = calculateNetRevenueYieldPct(periodNet, periodRevenue)
   const periodTrendDetail = monthDays > 0 ? t('dashboard.monthTrendHint', { count: monthDays }) : undefined
   const netTrendDetail = periodTrendDetail
     ? (
       <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
         <span>{periodTrendDetail}</span>
-        {periodApy ? (
-          <span className={periodApy.apyPct < 0 ? 'text-rose-300' : 'text-emerald-300'}>
-            {t('reports.apy')} {formatApyPercent(locale, periodApy.apyPct)}
+        {periodApy !== null ? (
+          <span className={periodApy < 0 ? 'text-rose-300' : 'text-emerald-300'}>
+            {t('reports.apy')} {formatApyPercent(locale, periodApy)}
           </span>
         ) : null}
       </span>

@@ -10,7 +10,7 @@ import {
   YAxis,
 } from 'recharts'
 import { getLocale } from '../../i18n'
-import { calculateApyPctFromNet, formatApyPercent, totalBalanceFromPoint } from '../../utils/apy'
+import { calculateNetRevenueYieldPct, formatApyPercent } from '../../utils/apy'
 import { formatSats, formatSignedSats, metricOffchainCost, metricTotalCost, metricNetWithKeysend } from './formatters'
 import MetricTile from './MetricTile'
 import type { LiveResponse, ReportRangeResponse, SummaryResponse } from './types'
@@ -39,11 +39,12 @@ export default function OperationsOverview({ live, range, summary }: OperationsO
   const { t, i18n } = useTranslation()
   const locale = getLocale(i18n.language)
   const periodSeries = Array.isArray(range?.series) ? range.series : []
-  const periodDays = summary?.days ?? periodSeries.length
   const periodNet = summary?.totals
     ? metricNetWithKeysend(summary.totals)
     : periodSeries.reduce((sum, item) => sum + metricNetWithKeysend(item), 0)
-  const periodApy = calculateApyPctFromNet(periodNet, periodDays, periodSeries, totalBalanceFromPoint(live))
+  const periodRevenue = summary?.totals.forward_fee_revenue_sats
+    ?? periodSeries.reduce((sum, item) => sum + (item.forward_fee_revenue_sats ?? 0), 0)
+  const periodApy = calculateNetRevenueYieldPct(periodNet, periodRevenue)
 
   const chartData = useMemo<ChartPoint[]>(
     () => (Array.isArray(range?.series) ? [...range.series] : [])
@@ -168,13 +169,13 @@ export default function OperationsOverview({ live, range, summary }: OperationsO
             <p className="text-xs uppercase tracking-wide text-fog/45">{t('dashboard.monthNetTitle')}</p>
             <div className="mt-2 flex flex-wrap items-baseline justify-between gap-2">
               <p className="text-lg font-semibold">{formatSignedSats(locale, metricNetWithKeysend(summary?.totals))} sats</p>
-              {periodApy ? (
+              {periodApy !== null ? (
                 <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
-                  periodApy.apyPct < 0
+                  periodApy < 0
                     ? 'border-rose-400/25 bg-rose-500/10 text-rose-200'
                     : 'border-emerald-400/25 bg-emerald-500/10 text-emerald-200'
                 }`}>
-                  {t('reports.apy')} {formatApyPercent(locale, periodApy.apyPct)}
+                  {t('reports.apy')} {formatApyPercent(locale, periodApy)}
                 </span>
               ) : null}
             </div>

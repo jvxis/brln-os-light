@@ -359,6 +359,15 @@ type ChanHealReconnectDetail = {
   status?: string
   socket?: string
   sockets?: string[]
+  socket_attempts?: ChanHealReconnectSocketAttempt[]
+  error_summary?: string
+  raw_error?: string
+}
+
+type ChanHealReconnectSocketAttempt = {
+  socket?: string
+  network?: string
+  status?: string
   error_summary?: string
   raw_error?: string
 }
@@ -2661,6 +2670,13 @@ export default function LightningOps() {
     if (clean.length === 0) return ''
     if (clean.length === 1) return clean[0]
     return `${clean[0]} +${clean.length - 1}`
+  }
+
+  const chanHealReconnectSocketNetworkLabel = (network?: string) => {
+    const normalized = String(network || '').trim().toLowerCase()
+    if (normalized === 'tor') return t('lightningOps.chanHealReconnectNetworkTor')
+    if (normalized === 'clearnet') return t('lightningOps.chanHealReconnectNetworkClearnet')
+    return t('lightningOps.chanHealReconnectNetworkUnknown')
   }
 
   const htlcManagerBadgeLabel = () => {
@@ -8981,10 +8997,26 @@ export default function LightningOps() {
                       </p>
                     ) : null}
                   </div>
-                  {detail.raw_error ? (
+                  {detail.socket_attempts?.length || detail.raw_error ? (
                     <details className="min-w-0 max-w-full text-fog/40 lg:max-w-sm lg:text-right">
                       <summary className="cursor-pointer select-none text-fog/50">{t('lightningOps.chanHealReconnectTechnical')}</summary>
-                      <p className="mt-1 [overflow-wrap:anywhere]">{detail.raw_error}</p>
+                      {detail.socket_attempts?.length ? (
+                        <div className="mt-1 space-y-1 text-left lg:text-right">
+                          <p className="text-fog/50">{t('lightningOps.chanHealReconnectSocketAttempts')}</p>
+                          {detail.socket_attempts.map((attempt, attemptIndex) => (
+                            <div key={`${attempt.socket || 'socket'}-${attemptIndex}`} className="rounded border border-white/10 bg-white/[0.03] px-2 py-1">
+                              <p className="text-fog/60 [overflow-wrap:anywhere]">
+                                {attemptIndex + 1}. {chanHealReconnectSocketNetworkLabel(attempt.network)}: {attempt.socket || '-'}
+                              </p>
+                              <p className="text-fog/40 [overflow-wrap:anywhere]">
+                                {chanHealReconnectStatusText({ status: attempt.status })}{attempt.raw_error ? ` - ${attempt.raw_error}` : ''}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : detail.raw_error ? (
+                        <p className="mt-1 [overflow-wrap:anywhere]">{detail.raw_error}</p>
+                      ) : null}
                     </details>
                   ) : null}
                 </div>

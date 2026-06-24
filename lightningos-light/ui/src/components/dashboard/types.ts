@@ -344,6 +344,15 @@ export type ChanHealReconnectDetail = {
   status?: string
   socket?: string
   sockets?: string[]
+  socket_attempts?: ChanHealReconnectSocketAttempt[]
+  error_summary?: string
+  raw_error?: string
+}
+
+export type ChanHealReconnectSocketAttempt = {
+  socket?: string
+  network?: string
+  status?: string
   error_summary?: string
   raw_error?: string
 }

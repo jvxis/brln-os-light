@@ -161,6 +161,54 @@ func TestChanStatusHealerReconnectFailureDoesNotBlockActiveEnable(t *testing.T) 
 	}
 }
 
+func TestChanStatusHealerReconnectAttemptsClearnetBeforeTor(t *testing.T) {
+	const pubkey = "038607b58550d272ce8a058b77bc7a00e099687531359074bb600477f6bb7d1764"
+	fake := &fakeChanStatusLND{
+		channelsSeq: [][]lndclient.ChannelInfo{
+			{
+				{ChannelPoint: "offline:1", RemotePubkey: pubkey, PeerAlias: "Dual Stack Peer", Active: false},
+			},
+		},
+		details: map[string]lndclient.NodeDetails{
+			pubkey: {
+				PubKey: pubkey,
+				Addresses: []lndclient.NodeAddress{
+					{Network: "tcp", Addr: "dualpeer.onion:9735"},
+					{Network: "tcp", Addr: "203.0.113.20:9735"},
+				},
+			},
+		},
+		connectErr: context.DeadlineExceeded,
+	}
+
+	healer := &ChanStatusHealer{lnd: fake, enabled: true}
+	healer.tick()
+
+	if len(fake.connectCalls) != 2 {
+		t.Fatalf("expected clearnet and tor reconnect attempts, got %+v", fake.connectCalls)
+	}
+	if fake.connectCalls[0].host != "203.0.113.20:9735" || fake.connectCalls[1].host != "dualpeer.onion:9735" {
+		t.Fatalf("expected clearnet before tor, got %+v", fake.connectCalls)
+	}
+	snap := healer.Snapshot()
+	if len(snap.LastReconnectDetails) != 1 {
+		t.Fatalf("expected one reconnect detail, got %+v", snap.LastReconnectDetails)
+	}
+	attempts := snap.LastReconnectDetails[0].SocketAttempts
+	if len(attempts) != 2 {
+		t.Fatalf("expected two socket attempts, got %+v", attempts)
+	}
+	if attempts[0].Socket != "203.0.113.20:9735" || attempts[0].Network != "clearnet" {
+		t.Fatalf("unexpected first socket attempt: %+v", attempts[0])
+	}
+	if attempts[1].Socket != "dualpeer.onion:9735" || attempts[1].Network != "tor" {
+		t.Fatalf("unexpected second socket attempt: %+v", attempts[1])
+	}
+	if snap.LastReconnectDetails[0].Socket != "dualpeer.onion:9735" {
+		t.Fatalf("expected last attempted socket to remain available for compatibility, got %+v", snap.LastReconnectDetails[0])
+	}
+}
+
 type fakeChanStatusLND struct {
 	channelsSeq       [][]lndclient.ChannelInfo
 	listChannelsCalls int

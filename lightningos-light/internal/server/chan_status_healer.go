@@ -37,15 +37,24 @@ type chanStatusHealPayload struct {
 }
 
 type chanHealReconnectDetail struct {
-	Alias         string   `json:"alias,omitempty"`
-	Pubkey        string   `json:"pubkey,omitempty"`
-	PubkeyShort   string   `json:"pubkey_short,omitempty"`
-	ChannelPoints []string `json:"channel_points,omitempty"`
-	Status        string   `json:"status,omitempty"`
-	Socket        string   `json:"socket,omitempty"`
-	Sockets       []string `json:"sockets,omitempty"`
-	ErrorSummary  string   `json:"error_summary,omitempty"`
-	RawError      string   `json:"raw_error,omitempty"`
+	Alias          string                           `json:"alias,omitempty"`
+	Pubkey         string                           `json:"pubkey,omitempty"`
+	PubkeyShort    string                           `json:"pubkey_short,omitempty"`
+	ChannelPoints  []string                         `json:"channel_points,omitempty"`
+	Status         string                           `json:"status,omitempty"`
+	Socket         string                           `json:"socket,omitempty"`
+	Sockets        []string                         `json:"sockets,omitempty"`
+	SocketAttempts []chanHealReconnectSocketAttempt `json:"socket_attempts,omitempty"`
+	ErrorSummary   string                           `json:"error_summary,omitempty"`
+	RawError       string                           `json:"raw_error,omitempty"`
+}
+
+type chanHealReconnectSocketAttempt struct {
+	Socket       string `json:"socket,omitempty"`
+	Network      string `json:"network,omitempty"`
+	Status       string `json:"status,omitempty"`
+	ErrorSummary string `json:"error_summary,omitempty"`
+	RawError     string `json:"raw_error,omitempty"`
 }
 
 type chanStatusLND interface {
@@ -437,18 +446,35 @@ func (c *ChanStatusHealer) reconnectPeer(pubkey string) (chanHealReconnectDetail
 		err := c.lnd.ConnectPeerWithTimeout(connectCtx, pubkey, socket, false, uint64(chanHealConnectTimeout/time.Second))
 		connectCancel()
 		if err == nil {
+			detail.SocketAttempts = append(detail.SocketAttempts, chanHealReconnectSocketAttempt{
+				Socket:  socket,
+				Network: chanHealSocketNetwork(socket),
+				Status:  "connected",
+			})
 			detail.Status = "connected"
 			detail.ErrorSummary = ""
 			detail.RawError = ""
 			return detail, nil
 		}
 		if isAlreadyConnected(err) {
+			detail.SocketAttempts = append(detail.SocketAttempts, chanHealReconnectSocketAttempt{
+				Socket:  socket,
+				Network: chanHealSocketNetwork(socket),
+				Status:  "already_connected",
+			})
 			detail.Status = "already_connected"
 			detail.ErrorSummary = ""
 			detail.RawError = ""
 			return detail, nil
 		}
 		lastErr = fmt.Errorf("connect via %s failed: %w", socket, err)
+		detail.SocketAttempts = append(detail.SocketAttempts, chanHealReconnectSocketAttempt{
+			Socket:       socket,
+			Network:      chanHealSocketNetwork(socket),
+			Status:       classifyChanHealReconnectError(lastErr),
+			ErrorSummary: chanHealReconnectErrorSummary(lastErr),
+			RawError:     strings.TrimSpace(lastErr.Error()),
+		})
 	}
 	if lastErr != nil {
 		detail.Status = classifyChanHealReconnectError(lastErr)
@@ -656,6 +682,13 @@ func chanHealNodeSockets(addresses []lndclient.NodeAddress) []string {
 		clearnet = append(clearnet, socket)
 	}
 	return append(clearnet, onion...)
+}
+
+func chanHealSocketNetwork(socket string) string {
+	if isOnionSocket(socket) {
+		return "tor"
+	}
+	return "clearnet"
 }
 
 func isChanLocallyDisabled(ch lndclient.ChannelInfo) bool {

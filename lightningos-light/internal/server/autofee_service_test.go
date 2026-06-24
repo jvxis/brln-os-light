@@ -2500,6 +2500,92 @@ func TestCapGoodLiquidityDetachedOutrateUpBypassesOnConfirmedRebalanceFail(t *te
 	}
 }
 
+func TestShouldHoldSeedNoSignalDownOnLowLiquidity(t *testing.T) {
+	if !shouldHoldSeedNoSignalDownOnLowLiquidity(
+		false,
+		1611,
+		1482,
+		0.12,
+		0.20,
+		0,
+		0,
+		0,
+		0,
+		0,
+		false,
+		false,
+		false,
+		"seed",
+		"rescue",
+		[]string{"rescue", "rescue-floor-relax"},
+	) {
+		t.Fatalf("expected low-liquidity seed/rescue down with no local signals to hold")
+	}
+
+	if shouldHoldSeedNoSignalDownOnLowLiquidity(
+		false,
+		323,
+		307,
+		0.41,
+		0.20,
+		0,
+		0,
+		0,
+		0,
+		0,
+		false,
+		false,
+		false,
+		"seed",
+		"seed",
+		nil,
+	) {
+		t.Fatalf("did not expect good-liquidity seed down to hold")
+	}
+
+	if shouldHoldSeedNoSignalDownOnLowLiquidity(
+		false,
+		1502,
+		1382,
+		0.12,
+		0.20,
+		1653,
+		1275,
+		0,
+		0,
+		0,
+		false,
+		false,
+		false,
+		"seed",
+		"rebal",
+		nil,
+	) {
+		t.Fatalf("did not expect local out/rebal signals to be blocked by low-liquidity seed guard")
+	}
+
+	if shouldHoldSeedNoSignalDownOnLowLiquidity(
+		false,
+		500,
+		460,
+		0.08,
+		0.20,
+		0,
+		0,
+		0,
+		0,
+		0,
+		false,
+		true,
+		false,
+		"seed",
+		"seed",
+		[]string{"htlc-forward-hot"},
+	) {
+		t.Fatalf("did not expect HTLC pressure to be blocked by low-liquidity seed guard")
+	}
+}
+
 func TestBuildAutofeeChannelLogEntryIncludesCostBasisAndProfit(t *testing.T) {
 	d := &decision{
 		Alias:          "lnmarkets.com",

@@ -6251,6 +6251,64 @@ func hasGoodLocalLiquidityForAutofeeUp(effectiveOutRatio float64, goodOutRatio f
 	return effectiveOutRatio >= goodOutRatio
 }
 
+func isSeedNoSignalDownSource(baseCostSrc string, floorSrc string, tags []string) bool {
+	switch strings.TrimSpace(baseCostSrc) {
+	case "seed", "seed-mem":
+		return true
+	}
+	switch strings.TrimSpace(floorSrc) {
+	case "seed", "seed-sink", "seed-soft", "seed-synthetic", "seed-goodliq-hold", "seed-hold", "stale-noflow", "rescue", "no-signal":
+		return true
+	}
+	for _, tag := range tags {
+		switch {
+		case tag == "rescue" || strings.HasPrefix(tag, "rescue-r") || tag == "rescue-floor-relax":
+			return true
+		case tag == "stale-noflow-down" || tag == "stale-noflow-small-down":
+			return true
+		case tag == "discovery" || tag == "discovery-hard":
+			return true
+		}
+	}
+	return false
+}
+
+func shouldHoldSeedNoSignalDownOnLowLiquidity(
+	marketRefillMode bool,
+	localPpm int,
+	candidatePpm int,
+	effectiveOutRatio float64,
+	minLiquidityOutRatio float64,
+	outPpm7d int,
+	rebalHistoryRefPpm int,
+	recentRebalanceCount int,
+	recentRebalanceWeakCount int,
+	recentRebalanceCostPpm int,
+	htlcPressureSignal bool,
+	htlcForwardHot bool,
+	newInboundBootstrap bool,
+	baseCostSrc string,
+	floorSrc string,
+	tags []string,
+) bool {
+	if marketRefillMode || localPpm <= 0 || candidatePpm >= localPpm || newInboundBootstrap {
+		return false
+	}
+	if minLiquidityOutRatio <= 0 {
+		minLiquidityOutRatio = 0.20
+	}
+	if effectiveOutRatio >= minLiquidityOutRatio {
+		return false
+	}
+	if outPpm7d > 0 || rebalHistoryRefPpm > 0 || recentRebalanceCount > 0 || recentRebalanceWeakCount > 0 || recentRebalanceCostPpm > 0 {
+		return false
+	}
+	if htlcPressureSignal || htlcForwardHot {
+		return false
+	}
+	return isSeedNoSignalDownSource(baseCostSrc, floorSrc, tags)
+}
+
 func shouldGuardGoodLiquidityHTLCUp(effectiveOutRatio float64, goodOutRatio float64, tags []string) bool {
 	return hasGoodLocalLiquidityForAutofeeUp(effectiveOutRatio, goodOutRatio) && !hasStrongRebalanceFailPressure(tags)
 }
@@ -7937,6 +7995,18 @@ func rescueRecovered(r autofeeRankingSnapshot, localPpm int, target int, outPpm7
 	return localPpm <= exitFloor
 }
 
+func clearAutofeeRescueState(st *autofeeChannelState, now time.Time) {
+	if st == nil {
+		return
+	}
+	es := &st.ExplorerState
+	es.RescueActive = false
+	es.RescueRounds = 0
+	es.RescueRecoverRounds = 0
+	es.RescueStartedTs = 0
+	es.RescueLastExitTs = now.Unix()
+}
+
 func manageRescueState(st *autofeeChannelState, now time.Time, balancedMode bool, ranking autofeeRankingSnapshot, hasRanking bool, localPpm int, target int, outPpm7d int, revShare float64, topRevenue bool, slowCycleProtected bool) (bool, []string) {
 	if st == nil {
 		return false, nil
@@ -7944,11 +8014,7 @@ func manageRescueState(st *autofeeChannelState, now time.Time, balancedMode bool
 	es := &st.ExplorerState
 	if !balancedMode {
 		if es.RescueActive {
-			es.RescueActive = false
-			es.RescueRounds = 0
-			es.RescueRecoverRounds = 0
-			es.RescueStartedTs = 0
-			es.RescueLastExitTs = now.Unix()
+			clearAutofeeRescueState(st, now)
 		}
 		return false, nil
 	}
@@ -7967,11 +8033,7 @@ func manageRescueState(st *autofeeChannelState, now time.Time, balancedMode bool
 			activeHours = now.Sub(time.Unix(es.RescueStartedTs, 0).UTC()).Hours()
 		}
 		if activeHours >= rescueMaxActiveHours {
-			es.RescueActive = false
-			es.RescueLastExitTs = now.Unix()
-			es.RescueStartedTs = 0
-			es.RescueRounds = 0
-			es.RescueRecoverRounds = 0
+			clearAutofeeRescueState(st, now)
 			return false, []string{"rescue-expired"}
 		}
 		if rescueExitReady(*es, now) && (!candidate || rescueRecovered(ranking, localPpm, target, outPpm7d, revShare, topRevenue)) {
@@ -7980,11 +8042,7 @@ func manageRescueState(st *autofeeChannelState, now time.Time, balancedMode bool
 			es.RescueRecoverRounds = 0
 		}
 		if es.RescueRecoverRounds >= rescueExitConfirmRounds {
-			es.RescueActive = false
-			es.RescueLastExitTs = now.Unix()
-			es.RescueStartedTs = 0
-			es.RescueRounds = 0
-			es.RescueRecoverRounds = 0
+			clearAutofeeRescueState(st, now)
 			return false, []string{"rescue-exit"}
 		}
 		return true, []string{"rescue", fmt.Sprintf("rescue-r%d", maxInt(1, es.RescueRounds))}
@@ -9816,19 +9874,51 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		}
 	}
 	topRevenue := revShare >= 0.20 && outRatio < 0.30
-	rescueActive, rescueTags := manageRescueState(
-		st,
-		e.now,
-		!marketRefillMode,
-		ranking,
-		hasRanking,
+	seedDownHoldMinOutRatio := goodOutRatio
+	if outNormMeta.OutlierSmall && outNormMeta.Raw >= staleNoFlowSmallRawOutRatioMin {
+		seedDownHoldMinOutRatio = goodOutRatio * staleNoFlowSmallEffectiveGoodMult
+	}
+	lowLiquiditySeedNoSignalDown := shouldHoldSeedNoSignalDownOnLowLiquidity(
+		marketRefillMode,
 		localPpm,
 		target,
+		outRatio,
+		seedDownHoldMinOutRatio,
 		outPpm7d,
-		revShare,
-		topRevenue,
-		slowCycle30dActive,
+		rebalHistoryRefPpm,
+		recentRebalanceCount,
+		recentRebalanceWeakCount,
+		recentRebalanceCostPpm,
+		htlcPressureSignal,
+		htlcForwardHot,
+		newInboundBootstrap,
+		baseCostSrc,
+		"",
+		tags,
 	)
+	rescueActive := false
+	var rescueTags []string
+	if lowLiquiditySeedNoSignalDown {
+		if st.ExplorerState.RescueActive {
+			clearAutofeeRescueState(st, e.now)
+			rescueTags = append(rescueTags, "rescue-lowliq-exit")
+		}
+		rescueTags = append(rescueTags, "rescue-lowliq-block")
+	} else {
+		rescueActive, rescueTags = manageRescueState(
+			st,
+			e.now,
+			!marketRefillMode,
+			ranking,
+			hasRanking,
+			localPpm,
+			target,
+			outPpm7d,
+			revShare,
+			topRevenue,
+			slowCycle30dActive,
+		)
+	}
 	if len(rescueTags) > 0 {
 		tags = append(tags, rescueTags...)
 	}
@@ -10021,7 +10111,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 
 	rawStep := applyStepCap(localPpm, target, capFrac, stepMin, capRefPpm)
-	if e.cfg.CircuitBreakerEnabled && st.LastDir == "up" && !st.LastTs.IsZero() {
+	if target < localPpm && e.cfg.CircuitBreakerEnabled && st.LastDir == "up" && !st.LastTs.IsZero() {
 		daysSince := e.now.Sub(st.LastTs).Hours() / 24.0
 		if daysSince <= float64(e.profile.CircuitBreakerGraceDays) && st.BaselineFwd7d > 0 {
 			if fwdCount < int(float64(st.BaselineFwd7d)*e.profile.CircuitBreakerDropRatio) {
@@ -10685,6 +10775,31 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		floorDrivenStepUp = finalPpm > localPpm && floor > localPpm
 		recentRebalanceHardFloorApplied = true
 		tags = appendAutofeeTagOnce(tags, "rebal-recent-hard-floor")
+	}
+	if shouldHoldSeedNoSignalDownOnLowLiquidity(
+		marketRefillMode,
+		localPpm,
+		finalPpm,
+		outRatio,
+		seedDownHoldMinOutRatio,
+		outPpm7d,
+		rebalHistoryRefPpm,
+		recentRebalanceCount,
+		recentRebalanceWeakCount,
+		recentRebalanceCostPpm,
+		htlcPressureSignal,
+		htlcForwardHot,
+		newInboundBootstrap,
+		baseCostSrc,
+		floorSrc,
+		tags,
+	) {
+		finalPpm = localPpm
+		target = localPpm
+		apply = false
+		delta = 0
+		floorDrivenStepUp = false
+		tags = appendAutofeeTagOnce(tags, "seed-liq-down-hold")
 	}
 	skipCooldownDown := explorerActive && finalPpm < localPpm && e.profile.ExplorerSkipCooldownDown
 	if skipCooldownDown {
@@ -12368,6 +12483,10 @@ func formatAutofeeTags(d *decision) string {
 			add("🛟global-relax")
 		case t == "rescue-peg-paused":
 			add("🛟peg-paused")
+		case t == "rescue-lowliq-block":
+			add("rescue-lowliq-block")
+		case t == "rescue-lowliq-exit":
+			add("rescue-lowliq-exit")
 		case t == "market-refill-inbound":
 			add("🌊market-refill")
 		case t == "market-refill-up":
@@ -12564,6 +12683,8 @@ func formatAutofeeTags(d *decision) string {
 			add("🧭seed-full-hold")
 		case t == "seed-full-floor-hold":
 			add("🧱seed-full-floor")
+		case t == "seed-liq-down-hold":
+			add("seed-liq-down-hold")
 		case t == "empty-sink-rebal-off":
 			add("🧯empty-sink-rebal-off")
 		case t == "empty-sink-down-anchor":

@@ -59,6 +59,7 @@ Notes:
 - `low-out-noflow-cap`: no-flow condition caps upward movement.
 - `no-signal-noup`: no reliable signal, so no blind fee increase.
 - `no-signal-floor-relax`: floor relaxed due to missing quality signal.
+- `seed-liq-down-hold`: seed/no-signal wanted a reduction, but effective local liquidity was too low to cut blindly.
 - `min`: `floor_src` used when no usable local/external reference exists and the floor only comes from `min_ppm`.
 - `rebal-floor-low-volume`: rebalance floor applied with low-volume warning.
 - `floor-up-blocked-low-signal`: floor-driven increase blocked due to weak signal.
@@ -133,8 +134,12 @@ Notes:
 - `rescue-floor-relax`: floor was relaxed toward a band closer to the local signal.
 - `rescue-global-relax`: global negative-margin lock was partially softened under rescue.
 - `rescue-peg-paused`: peg was prevented from re-arming an upward bias while the channel was still in rescue.
+- `rescue-lowliq-block`: rescue entry was blocked because the channel had low effective local liquidity and no local signal.
+- `rescue-lowliq-exit`: existing rescue state was cleared after the low-liquidity/no-signal guard took priority.
 
 ## Seed and fallback provenance
+- `seed:native`: seed sourced from the local graph reference.
+- `seed:native-corrected`: native seed used Graph Explorer corrected averages, reducing outlier/ceiling distortion.
 - `seed:amboss*`: seed sourced from Amboss (or Amboss fallback status).
 - `seed:med`: seed calibrated to medium profile.
 - `seed:vol-<n>%`: seed adjusted by volatility factor (`n%`).
@@ -151,6 +156,8 @@ Notes:
 - `seed:outcap`: seed capped by `out_ppm7d`.
 - `seed:rebalcap`: seed capped by rebalance reference.
 - `seed:rebalfloor`: seed capped considering the effective rebalance floor.
+- `liq-low`: refresh target was raised above seed because effective local liquidity was low.
+- `liq-high`: refresh target was lowered below seed because effective local liquidity was high.
 - `out-fallback-21d`: outbound fallback data from 21-day window.
 - `rebal-fallback-21d`: rebalance fallback data from 21-day window.
 

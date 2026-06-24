@@ -38,7 +38,7 @@ Estas notas cobrem `0.3.10-Beta` até `0.3.27-Beta`, além da versão atual de d
 - Melhorias na carteira: invoices blinded, leitura de QR para pagamento, preview/probing de rota, recomendação de rota automática, pagamento por rota validada, metadados de rota/pagamento e comportamento mais seguro para invoices com blind paths.
 - Rebalance Center: Auto Pilot fase 1 com modos de scheduler por regras/shadow/live, escopo de candidatos, controles de máximo de jobs e lucro esperado, telemetria de decisão, fila consciente de orçamento e status shadow/live na UI.
 - Execução e guardrails de rebalance: fast path delegado ao LND nativo com strict payback, fast path via `BuildRoute` em rota cacheada, decomposição MPP, modelo de ganho v2 com score de velocidade, reset/reforço de Mission Control, permanent-fail score com decaimento, refactors de cooldown-probe, trava de liquidez paga recente, modos de orçamento ilimitado/auto-only, reserva manual, tempo efetivo de jobs e reorganização da UI.
-- Autofee: defaults de perfil enviados pelo backend, telemetria de refresh/rebalance, thresholds dinâmicos, melhor tratamento de canais em monitor, dampener de settling target, golden tests, correções de market-refill/stall-relax/old-sinks e comportamento mais conservador quando o sinal local é fraco.
+- Autofee: defaults de perfil enviados pelo backend, telemetria de refresh/rebalance, seed nativo corrigido, refresh de seed sensivel a liquidez, thresholds dinâmicos, melhor tratamento de canais em monitor, dampener de settling target, golden tests, correções de market-refill/stall-relax/old-sinks e comportamento mais conservador quando o sinal local é fraco ou ausente.
 - Relatórios, notificações e visibilidade operacional: warm-up de relatório live, API live de movimento, armazenamento de histórico de rota, catch-up mais robusto, ranges históricos em relatórios, melhorias no gráfico de saldos, ano nos tooltips, correções Telegram, APIs locais de peers, logs de Bitcoin Local, cópia de channel ID, histerese de HTLC e mais contexto de pagamento/rota.
 - App Store e instaladores: apps Electrs/Mempool, status/checks de full-index, diretórios customizados para Bitcoin/Elements, detecção de Bitcoin local para Elements, melhorias em Bitcoin Core/RoboSats/LNbits/Public Pool/Peerswap, suporte a Fedimint guardian/gateway, refinamentos de apps Docker, compatibilidade sudoers com Ubuntu 26 e suporte a setup de nó existente com LND usando Postgres mais provisionamento do DB de relatórios/notificações do LightningOS.
 
@@ -243,7 +243,7 @@ Endpoints de API:
 - Novos Canais: candidatos de peers a partir de rotas observadas, atrito local, qualidade do grafo, demanda, alívio e confiança.
 - Ranking de Canais: score por canal, estado recomendado, comparação 7d vs 30d, sinais de top source/sink, recomendações acionáveis e links para Autofee, Rebalance, HTLC Manager, Novos Canais e Gestão de Fechamentos.
 - Rebalance Center: rebalances manuais + automáticos com targeting por score, watchdogs, pre-probing, pisos separados de probe/execução, MSPR, guardrails de ROI, peso por efetividade de origem e auto-restart opcional no modo manual.
-- Autofee: automação de taxas por canal com âncoras de custo, seed Amboss, integração de sinais HTLC, tratamento de canais em monitor, telemetria de refresh, calibração por tamanho/liquidez do nó, scheduler/manual run e histórico detalhado.
+- Autofee: automação de taxas por canal com âncoras de custo, seed nativo corrigido pelo grafo, seed Amboss opcional, integração de sinais HTLC, tratamento de canais em monitor, telemetria de refresh, calibração por tamanho/liquidez do nó, scheduler/manual run e histórico detalhado.
 - Aposentar Node (Node Retirement): fluxo guiado de descomissionamento seguro com linha do tempo de sessão, controle de fechamento cooperativo, tratamento de exceções e reconciliação on-chain.
 - HTLC Manager: telemetria HTLC com histerese usada pelo Autofee e por decisões de liquidez.
 - Channel Auto Heal + Tor peers checker: guardrails operacionais para confiabilidade de peer/canal.
@@ -484,7 +484,7 @@ O Autofee ajusta **outbound fees** por canal com esta prioridade:
 2. Manter movimento do node (evitar liquidez presa).
 3. Manter updates estaveis e explicaveis.
 
-Ele usa historico local de roteamento/rebalance (notificacoes no Postgres), seed opcional da Amboss, sinais HTLC, calibracao por tamanho/liquidez do node e guardrails explicaveis.
+Ele usa historico local de roteamento/rebalance (notificacoes no Postgres), seed nativo do Graph Explorer baseado em medias corrigidas de mercado, seed opcional da Amboss, sinais HTLC, calibracao por tamanho/liquidez do node e guardrails explicaveis.
 
 Parametros da UI:
 - `Enable autofee`: liga/desliga global.
@@ -497,7 +497,7 @@ Parametros da UI:
 - `Cooldown up / down (hours)`: tempo minimo entre aumentos/reducoes.
 - `Min fee (ppm)` e `Max fee (ppm)`: limites rigidos.
 - `Rebalance cost mode`: `Per-channel`, `Global` ou `Blend`.
-- `Amboss fee reference`: seed externo opcional.
+- `Amboss fee reference`: seed externo opcional; o seed nativo do grafo continua sendo a primeira referencia local de mercado quando disponivel.
 - `Inbound passive rebalance`, `Discovery mode`, `Explorer mode`, `Revenue floor`, `Circuit breaker`, `Extreme drain`, `Super source`.
 - `HTLC signal integration` e `HTLC mode` (`observe_only`, `policy_only`, `full`).
 
@@ -529,7 +529,7 @@ Pipeline de decisao (por canal):
 - `out_ppm7d` da janela principal.
 - `rebal_ppm7d` do modo de custo selecionado.
 - Quando nao ha referencia utilizavel, `floor_src=min` indica que o piso veio apenas de `min_ppm`.
-- Seed (`native` -> `Amboss` -> fallback para memoria/outrate/default).
+- Seed (`native` com media corrigida do Graph Explorer -> `Amboss` weighted-corrected mean -> fallback para memoria/outrate/default).
 2. Classifica comportamento (`sink`, `source`, `router`, `unknown`) e estado de liquidez.
 3. Calcula target bruto com seed, out ratio, tendencia/margem, pressao HTLC e heuristicas de lucro.
 4. Aplica controles de discovery/explorer/stagnation/profit-protect/locks globais.
@@ -543,6 +543,8 @@ Novidades importantes no modo `Balanced`:
 - `Cooldown up` dinamico por `outnorm`: canais efetivamente muito drenados conseguem reagir mais rapido sem remover o cooldown por completo.
 - `Drained explorer`: modo exploratorio dedicado a canais muito vazios e sem movimento, com pequenos passos de alta em vez de deixa-los presos em `0 ppm` ou micro-fees.
 - Guardrails do seed: quando existem sinais locais fortes de `out_ppm7d` e `rebal`, o seed perde peso e passa a ser capado por perfil; em canal maduro sem sinal local, shock brusco de seed precisa repetir antes de virar nova ancora.
+- Refresh de seed sensivel a liquidez: o refresh manual/idle mantem o seed bruto em `reference_ppm`, mas ajusta o `target_ppm` acima do seed quando o canal esta efetivamente drenado e abaixo do seed quando esta efetivamente cheio.
+- Quedas por seed/no-signal com baixa liquidez sao seguradas: o Autofee ainda pode reduzir em direcao ao seed quando ha liquidez local util, mas evita entrar em `rescue` ou cortar fee no escuro em canais drenados sem evidencia local de out/rebal/HTLC.
 - `Rescue`: estado temporario para canais estruturalmente fracos (`close` / `worsening`) que estao travados por `peg`, `floor-lock` ou `global-neg-lock` acima do que o sinal local justifica.
 
 Modo `Market refill`:
@@ -569,6 +571,7 @@ Janelas de dados e regras de fallback:
 - volume outbound >= `max(50k sats, 0.5% da capacidade do canal)`.
 - Fallback de rebal 21d exige volume rebalanceado >= `max(30k sats, 0.3% da capacidade)`.
 - Se nao houver sinal valido de out/rebal e o canal estiver ocioso, o Autofee evita subida cega (`no-signal-noup`).
+- Se o unico driver de queda for seed/no-signal e a liquidez local efetiva estiver baixa, o Autofee segura a fee atual em vez de forcar `rescue` ou reducao guiada apenas por seed (`seed-liq-down-hold`).
 
 Comportamento de sinais HTLC:
 - Janela de sinal segue a cadencia: `max(run_interval, 60m)`.
@@ -585,7 +588,7 @@ Calibracao automatica:
 Linhas de Autofee Results:
 - Header: tipo da execucao + timestamp + modo operacional.
 - Summary: contadores de up/down/flat e skips.
-- Seed line: uso de Amboss/fallbacks.
+- Seed line: uso de seed nativo/Amboss/fallbacks.
 - Calibration line: classes do node, low_out, revfloor, fatores globais HTLC.
 - Linha por canal: `set/keep`, `target`, `out_ratio`, `out_ppm7d`, `rebal_ppm7d`, `seed`, `floor`, `margin`, `rev_share`, mudanca do inbound discount, tags, contadores HTLC e forecast.
 
@@ -604,7 +607,7 @@ Glossario de tags (Autofee Results):
 - Estagnacao e anti-lock:
 - `stagnation`, `stagnation-rN`, `stagnation-cap-<ppm>`, `normalize-out`, `normalize-rebal`, `stagnation-floor`, `stagnation-floor-relax`, `stagnation-neg-override`, `stagnation-pressure`, `peg-paused-stagnation`.
 - Low-out e falta de sinal:
-- `low-out-slow-up`, `low-out-noflow-cap`, `no-signal-noup`, `no-signal-floor-relax`.
+- `low-out-slow-up`, `low-out-noflow-cap`, `no-signal-noup`, `no-signal-floor-relax`, `seed-liq-down-hold`.
 - Discovery/explorer:
 - `discovery`, `discovery-hard`, `explorer`, `drained-explorer*`, `surge*`.
 - Sinais HTLC:
@@ -612,9 +615,9 @@ Glossario de tags (Autofee Results):
 - Super-source e inbound:
 - `super-source`, `super-source-like`, `new-inbound`, `bootstrap`, `market-refill*`, `inb-<n>`.
 - Rescue / liberacao seletiva de piso:
-- `rescue`, `rescue-enter`, `rescue-exit`, `rescue-expired`, `rescue-floor-relax`, `rescue-global-relax`, `rescue-peg-paused`.
+- `rescue`, `rescue-enter`, `rescue-exit`, `rescue-expired`, `rescue-floor-relax`, `rescue-global-relax`, `rescue-peg-paused`, `rescue-lowliq-block`, `rescue-lowliq-exit`.
 - Seed e origem de fallback:
-- `seed:native`, `seed:amboss`, `seed:amboss-missing`, `seed:amboss-empty`, `seed:amboss-error`, `seed:med`, `seed:vol-<n>%`, `seed:ratio<factor>`, `seed:outrate`, `seed:mem`, `seed:default`, `seed:guard`, `seed:shock-*`, `seed:p95cap`, `seed:absmax`, `seed:outcap`, `seed:rebalcap`, `seed:rebalfloor`, `out-fallback-21d`, `rebal-fallback-21d`.
+- `seed:native`, `seed:native-corrected`, `seed:amboss`, `seed:amboss-missing`, `seed:amboss-empty`, `seed:amboss-error`, `seed:med`, `seed:vol-<n>%`, `seed:ratio<factor>`, `seed:outrate`, `seed:mem`, `seed:default`, `seed:guard`, `seed:shock-*`, `seed:p95cap`, `seed:absmax`, `seed:outcap`, `seed:rebalcap`, `seed:rebalfloor`, `liq-low`, `liq-high`, `out-fallback-21d`, `rebal-fallback-21d`.
 
 Exemplos de leitura:
 - Exemplo A (sink saudavel e lucrativo):

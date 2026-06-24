@@ -59,6 +59,7 @@ Notas:
 - `low-out-noflow-cap`: baixa atividade limita o quanto pode subir.
 - `no-signal-noup`: sem sinal confiavel, sistema evita subir fee "no escuro".
 - `no-signal-floor-relax`: floor relaxado por ausencia de sinal util.
+- `seed-liq-down-hold`: seed/no-signal pedia reducao, mas a liquidez local efetiva estava baixa demais para cortar no escuro.
 - `min`: `floor_src` quando nao ha referencia local/externa utilizavel e o piso vem apenas de `min_ppm`.
 - `rebal-floor-low-volume`: floor de rebalance aplicado com aviso de volume baixo.
 - `floor-up-blocked-low-signal`: subida por floor bloqueada por sinal fraco.
@@ -133,8 +134,12 @@ Notas:
 - `rescue-floor-relax`: o piso foi relaxado para uma banda mais proxima do sinal local.
 - `rescue-global-relax`: o lock global por margem negativa foi parcialmente suavizado no `rescue`.
 - `rescue-peg-paused`: o `peg` foi impedido de rearmar alta enquanto o canal ainda estava em resgate.
+- `rescue-lowliq-block`: entrada em `rescue` bloqueada porque o canal tinha baixa liquidez local efetiva e nenhum sinal local.
+- `rescue-lowliq-exit`: estado de `rescue` existente foi limpo quando o guard de baixa liquidez/sem sinal passou a dominar.
 
 ## Origem do seed e fallbacks
+- `seed:native`: seed veio da referencia local do grafo.
+- `seed:native-corrected`: seed nativo usou medias corrigidas do Graph Explorer, reduzindo distorcao por outlier/teto.
 - `seed:amboss*`: seed veio da Amboss (ou status de fallback da Amboss).
 - `seed:med`: seed calibrado para perfil medio do canal.
 - `seed:vol-<n>%`: seed ajustado por volatilidade (`n%`).
@@ -151,6 +156,8 @@ Notas:
 - `seed:outcap`: seed limitado pelo `out_ppm7d`.
 - `seed:rebalcap`: seed limitado pela referencia de rebalance.
 - `seed:rebalfloor`: seed limitado levando em conta o floor de rebalance efetivo.
+- `liq-low`: target de refresh foi elevado acima do seed porque a liquidez local efetiva estava baixa.
+- `liq-high`: target de refresh foi reduzido abaixo do seed porque a liquidez local efetiva estava alta.
 - `out-fallback-21d`: fallback de outbound usando janela de 21 dias.
 - `rebal-fallback-21d`: fallback de rebalance usando janela de 21 dias.
 

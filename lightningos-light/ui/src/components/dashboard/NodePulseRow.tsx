@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { getLocale } from '../../i18n'
-import { calculateNetRevenueYieldPct, formatApyPercent } from '../../utils/apy'
+import { calculateRevenueApyPct, formatApyPercent } from '../../utils/apy'
 import { clamp, formatPercent, formatSats, formatSignedSats, metricNetWithKeysend } from './formatters'
 import MetricTile from './MetricTile'
 import StackedRatioBar from './StackedRatioBar'
@@ -41,7 +41,7 @@ export default function NodePulseRow({
   const movementProgress = clamp(movementPct)
   const movementTone = movementPct >= 75 ? 'ok' : movementPct >= 50 ? 'warn' : 'danger'
   const monthDays = summary?.days ?? sparklineSource.length
-  const periodApy = calculateNetRevenueYieldPct(periodNet, periodRevenue)
+  const periodApy = calculateRevenueApyPct(periodNet, periodRevenue, monthDays)
   const periodTrendDetail = monthDays > 0 ? t('dashboard.monthTrendHint', { count: monthDays }) : undefined
   const netTrendDetail = periodTrendDetail
     ? (

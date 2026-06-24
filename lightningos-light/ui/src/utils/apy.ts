@@ -90,8 +90,6 @@ export const formatApyPercent = (locale: string, value?: number | null, maximumF
   return `${sign}${new Intl.NumberFormat(locale, { maximumFractionDigits }).format(value)}%`
 }
 
-export const calculateNetRevenueYieldPct = (netSats: number, revenueSats: number) => {
-  if (!finiteNumber(netSats) || !finiteNumber(revenueSats) || revenueSats <= 0) return null
-  const value = (netSats / revenueSats) * 100
-  return Number.isFinite(value) ? value : null
-}
+export const calculateRevenueApyPct = (netSats: number, revenueSats: number, days: number) => (
+  calculateApyPct(netSats, days, revenueSats)
+)

@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { getLocale } from '../../i18n'
+import DashboardTitleLink from './DashboardTitleLink'
 import { formatPercent, formatSats, formatTimeAgo } from './formatters'
 import HorizontalBarGauge from './HorizontalBarGauge'
 import StatusBadge from './StatusBadge'
@@ -31,6 +32,7 @@ type AutomationRiskGridProps = {
 
 type AutomationRowProps = {
   label: string
+  href?: string
   enabled?: boolean | null
   status?: string | null
   lastOkAt?: string
@@ -64,7 +66,7 @@ function buildAutomationBadge(t: ReturnType<typeof useTranslation>['t'], enabled
   return { label: t('common.na'), tone: 'muted' as const }
 }
 
-function AutomationRow({ label, enabled, status, lastOkAt, lastAttemptAt, lastError, extra }: AutomationRowProps) {
+function AutomationRow({ label, href, enabled, status, lastOkAt, lastAttemptAt, lastError, extra }: AutomationRowProps) {
   const { t, i18n } = useTranslation()
   const locale = getLocale(i18n.language)
   const badge = buildAutomationBadge(t, enabled, status, Boolean(lastError))
@@ -84,7 +86,9 @@ function AutomationRow({ label, enabled, status, lastOkAt, lastAttemptAt, lastEr
     <div className="min-w-0 overflow-hidden rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
       <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
         <div className="min-w-0 flex-1 basis-40">
-          <p className="text-sm font-medium leading-snug text-fog/85 [overflow-wrap:anywhere]">{label}</p>
+          <p className="text-sm font-medium leading-snug text-fog/85 [overflow-wrap:anywhere]">
+            {href ? <DashboardTitleLink href={href}>{label}</DashboardTitleLink> : label}
+          </p>
           <p className="mt-1 text-xs leading-snug text-fog/50 [overflow-wrap:anywhere]">{primaryMeta}</p>
         </div>
         <div className="max-w-full shrink-0">
@@ -102,6 +106,19 @@ const metricGridClass = 'grid gap-3 [grid-template-columns:repeat(auto-fit,minma
 const metricTileClass = 'min-w-0 overflow-hidden rounded-2xl border border-white/10 bg-ink/30 px-3 py-3'
 const metricLabelClass = 'text-xs uppercase leading-snug tracking-[0.04em] text-fog/45 [overflow-wrap:anywhere]'
 const splitRowClass = 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1'
+const lightningOpsSectionHref = (sectionID: string) => `#lightning-ops?section=${encodeURIComponent(sectionID)}`
+const automationLinks = {
+  lightningOps: '#lightning-ops',
+  rebalance: '#rebalance-center',
+  tools: lightningOpsSectionHref('lightning-tools-section'),
+  closeRecovery: lightningOpsSectionHref('close_recovery'),
+  ambossHealth: lightningOpsSectionHref('amboss-health-section'),
+  chanHeal: lightningOpsSectionHref('chan-heal-section'),
+  htlcManager: lightningOpsSectionHref('htlc-manager-section'),
+  torPeer: lightningOpsSectionHref('tor-peer-section'),
+  failedPaymentsCleaner: lightningOpsSectionHref('failed-payments-cleaner-section'),
+  nodeRetirement: '#node-retirement',
+}
 
 export default function AutomationRiskGrid({
   rebalance,
@@ -199,7 +216,9 @@ export default function AutomationRiskGrid({
       <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0">
           <p className="text-xs uppercase tracking-[0.24em] text-fog/45 [overflow-wrap:anywhere]">{t('dashboard.automationKicker')}</p>
-          <h3 className="mt-2 text-xl font-semibold [overflow-wrap:anywhere]">{t('dashboard.automationTitle')}</h3>
+          <h3 className="mt-2 text-xl font-semibold [overflow-wrap:anywhere]">
+            <DashboardTitleLink href={automationLinks.lightningOps}>{t('dashboard.automationTitle')}</DashboardTitleLink>
+          </h3>
           <p className="mt-2 text-sm text-fog/60 [overflow-wrap:anywhere]">{t('dashboard.automationSubtitle')}</p>
         </div>
       </div>
@@ -208,7 +227,9 @@ export default function AutomationRiskGrid({
         <div className={panelClass}>
           <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
             <div className="min-w-0 flex-1 basis-44">
-              <h4 className="text-base font-semibold leading-snug [overflow-wrap:anywhere]">{t('dashboard.rebalanceBudgetTitle')}</h4>
+              <h4 className="text-base font-semibold leading-snug [overflow-wrap:anywhere]">
+                <DashboardTitleLink href={automationLinks.rebalance}>{t('dashboard.rebalanceBudgetTitle')}</DashboardTitleLink>
+              </h4>
               <p className="mt-1 text-sm leading-snug text-fog/60 [overflow-wrap:anywhere]">{t('dashboard.rebalanceBudgetHint')}</p>
             </div>
             <div className="max-w-full shrink-0">
@@ -267,7 +288,9 @@ export default function AutomationRiskGrid({
         <div className={panelClass}>
           <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
             <div className="min-w-0 flex-1">
-              <h4 className="text-base font-semibold leading-snug [overflow-wrap:anywhere]">{t('dashboard.automationsTitle')}</h4>
+              <h4 className="text-base font-semibold leading-snug [overflow-wrap:anywhere]">
+                <DashboardTitleLink href={automationLinks.tools}>{t('dashboard.automationsTitle')}</DashboardTitleLink>
+              </h4>
               <p className="mt-1 text-sm leading-snug text-fog/60 [overflow-wrap:anywhere]">{t('dashboard.automationsHint')}</p>
             </div>
           </div>
@@ -275,6 +298,7 @@ export default function AutomationRiskGrid({
           <div className="mt-4 grid min-w-0 gap-3">
             <AutomationRow
               label={t('lightningOps.ambossHealthTitle')}
+              href={automationLinks.ambossHealth}
               enabled={amboss?.enabled}
               status={amboss?.status}
               lastOkAt={amboss?.last_ok_at}
@@ -284,6 +308,7 @@ export default function AutomationRiskGrid({
             />
             <AutomationRow
               label={t('lightningOps.chanHealTitle')}
+              href={automationLinks.chanHeal}
               enabled={chanHeal?.enabled}
               status={chanHeal?.status}
               lastOkAt={chanHeal?.last_ok_at}
@@ -293,6 +318,7 @@ export default function AutomationRiskGrid({
             />
             <AutomationRow
               label={t('lightningOps.htlcManagerTitle')}
+              href={automationLinks.htlcManager}
               enabled={htlcManager?.enabled}
               status={htlcManager?.status}
               lastOkAt={htlcManager?.last_ok_at}
@@ -305,6 +331,7 @@ export default function AutomationRiskGrid({
             />
             <AutomationRow
               label={t('lightningOps.torPeerTitle')}
+              href={automationLinks.torPeer}
               enabled={torPeerChecker?.enabled}
               status={torPeerChecker?.status}
               lastOkAt={torPeerChecker?.last_ok_at}
@@ -317,6 +344,7 @@ export default function AutomationRiskGrid({
             />
             <AutomationRow
               label={t('lightningOps.failedPaymentsCleanerTitle')}
+              href={automationLinks.failedPaymentsCleaner}
               enabled={failedPaymentsCleaner?.enabled}
               status={failedPaymentsCleaner?.status}
               lastOkAt={failedPaymentsCleaner?.last_ok_at}
@@ -333,7 +361,9 @@ export default function AutomationRiskGrid({
         <div className={panelClass}>
           <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
             <div className="min-w-0 flex-1 basis-44">
-              <h4 className="text-base font-semibold leading-snug [overflow-wrap:anywhere]">{t('dashboard.riskRecoveryTitle')}</h4>
+              <h4 className="text-base font-semibold leading-snug [overflow-wrap:anywhere]">
+                <DashboardTitleLink href={automationLinks.closeRecovery}>{t('dashboard.riskRecoveryTitle')}</DashboardTitleLink>
+              </h4>
               <p className="mt-1 text-sm leading-snug text-fog/60 [overflow-wrap:anywhere]">{t('dashboard.riskRecoveryHint')}</p>
             </div>
             <div className="max-w-full shrink-0">
@@ -358,7 +388,9 @@ export default function AutomationRiskGrid({
 
             <div className="min-w-0 overflow-hidden rounded-2xl border border-white/10 bg-ink/30 px-4 py-3">
               <div className={splitRowClass}>
-                <span className="min-w-0 text-sm text-fog/70 [overflow-wrap:anywhere]">{t('dashboard.nodeRetirementLabel')}</span>
+                <span className="min-w-0 text-sm text-fog/70 [overflow-wrap:anywhere]">
+                  <DashboardTitleLink href={automationLinks.nodeRetirement}>{t('dashboard.nodeRetirementLabel')}</DashboardTitleLink>
+                </span>
                 <div className="max-w-full shrink-0">
                   <StatusBadge
                     label={nodeRetirement?.active ? nodeRetirement.active_state || t('dashboard.activeLabel') : t('common.inactive')}
@@ -375,7 +407,9 @@ export default function AutomationRiskGrid({
 
             <div className="min-w-0 overflow-hidden rounded-2xl border border-white/10 bg-ink/30 px-4 py-3">
               <div className={splitRowClass}>
-                <span className="min-w-0 text-sm text-fog/70 [overflow-wrap:anywhere]">{t('dashboard.successionLabel')}</span>
+                <span className="min-w-0 text-sm text-fog/70 [overflow-wrap:anywhere]">
+                  <DashboardTitleLink href={automationLinks.nodeRetirement}>{t('dashboard.successionLabel')}</DashboardTitleLink>
+                </span>
                 <div className="max-w-full shrink-0">
                   <StatusBadge
                     label={successionConfig?.status || (successionConfig?.enabled ? t('dashboard.armedLabel') : t('common.disabled'))}

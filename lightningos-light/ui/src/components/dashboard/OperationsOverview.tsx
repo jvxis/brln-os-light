@@ -11,6 +11,7 @@ import {
 } from 'recharts'
 import { getLocale } from '../../i18n'
 import { calculateDisplayApyPct, formatApyPercent, totalBalanceFromPoint } from '../../utils/apy'
+import DashboardTitleLink from './DashboardTitleLink'
 import { formatSats, formatSignedSats, metricOffchainCost, metricTotalCost, metricNetWithKeysend } from './formatters'
 import MetricTile from './MetricTile'
 import type { LiveResponse, ReportRangeResponse, SummaryResponse } from './types'
@@ -69,7 +70,9 @@ export default function OperationsOverview({ live, range, summary }: OperationsO
       <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <p className="text-xs uppercase tracking-[0.24em] text-fog/45">{t('dashboard.operationsKicker')}</p>
-          <h3 className="mt-2 text-xl font-semibold">{t('dashboard.operationsTitle')}</h3>
+          <h3 className="mt-2 text-xl font-semibold">
+            <DashboardTitleLink href="#reports">{t('dashboard.operationsTitle')}</DashboardTitleLink>
+          </h3>
           <p className="mt-2 text-sm text-fog/60">{t('dashboard.operationsSubtitle')}</p>
         </div>
         <div className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-fog/70">
@@ -123,7 +126,9 @@ export default function OperationsOverview({ live, range, summary }: OperationsO
       <div className="mt-6 rounded-3xl border border-white/10 bg-white/5 p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h4 className="text-base font-semibold">{t('dashboard.monthTrendTitle')}</h4>
+            <h4 className="text-base font-semibold">
+              <DashboardTitleLink href="#reports">{t('dashboard.monthTrendTitle')}</DashboardTitleLink>
+            </h4>
             <p className="text-sm text-fog/60">{t('dashboard.monthTrendChartHint')}</p>
           </div>
           <div className="grid grid-cols-3 gap-2 text-xs text-fog/60">

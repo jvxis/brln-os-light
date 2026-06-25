@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { getLocale } from '../../i18n'
+import DashboardTitleLink from './DashboardTitleLink'
 import type { NotificationItem } from './types'
 
 type RecentActivityCardProps = {
@@ -148,7 +149,9 @@ export default function RecentActivityCard({ notifications }: RecentActivityCard
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs uppercase tracking-[0.24em] text-fog/45">{t('dashboard.activityKicker')}</p>
-          <h3 className="mt-2 text-xl font-semibold">{t('notifications.recentActivity')}</h3>
+          <h3 className="mt-2 text-xl font-semibold">
+            <DashboardTitleLink href="#notifications">{t('notifications.recentActivity')}</DashboardTitleLink>
+          </h3>
           <p className="mt-2 text-sm text-fog/60">{t('dashboard.activitySubtitle')}</p>
         </div>
       </div>

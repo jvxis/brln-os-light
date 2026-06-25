@@ -878,6 +878,28 @@ const CHAN_HEAL_SECTION_ID = 'chan-heal-section'
 const TOR_PEER_SECTION_ID = 'tor-peer-section'
 const FAILED_PAYMENTS_CLEANER_SECTION_ID = 'failed-payments-cleaner-section'
 const SIGN_MESSAGE_SECTION_ID = 'sign-message-section'
+const LIGHTNING_TOOL_SECTION_IDS = new Set([
+  ADD_PEER_TOOL_SECTION_ID,
+  OPEN_CHANNEL_SECTION_ID,
+  CLOSE_CHANNEL_SECTION_ID,
+  UPDATE_FEES_SECTION_ID,
+  BATCH_OPEN_SECTION_ID,
+  BALANCED_OPEN_SECTION_ID,
+  WATCHTOWER_SECTION_ID,
+  HTLC_MANAGER_SECTION_ID,
+  AMBOSS_HEALTH_SECTION_ID,
+  CHAN_HEAL_SECTION_ID,
+  TOR_PEER_SECTION_ID,
+  FAILED_PAYMENTS_CLEANER_SECTION_ID,
+  SIGN_MESSAGE_SECTION_ID,
+])
+const SCROLLABLE_SECTION_IDS = new Set([
+  PEERS_SECTION_ID,
+  CLOSE_RECOVERY_SECTION_ID,
+  AUTOFEE_SECTION_ID,
+  LIGHTNING_TOOLS_SECTION_ID,
+  ...LIGHTNING_TOOL_SECTION_IDS,
+])
 const SCB_RECOVERY_CONFIRM_PHRASE = 'I UNDERSTAND FORCE CLOSE'
 const BALANCED_OPEN_FUNDING_VBYTES = 190
 const BALANCED_OPEN_REQUIRED_REMAINING_SAT = 10000
@@ -935,6 +957,19 @@ const readHashSection = (routeKey: string) => {
   if (rawHash.slice(0, queryIndex) !== routeKey) return ''
   const params = new URLSearchParams(rawHash.slice(queryIndex + 1))
   return (params.get(SECTION_HASH_PARAM) || '').trim()
+}
+
+const normalizeHashSection = (section: string) => {
+  switch (section) {
+    case 'close_recovery':
+      return CLOSE_RECOVERY_SECTION_ID
+    case 'autofee':
+      return AUTOFEE_SECTION_ID
+    case 'htlc_manager':
+      return HTLC_MANAGER_SECTION_ID
+    default:
+      return SCROLLABLE_SECTION_IDS.has(section) ? section : ''
+  }
 }
 
 const buildHashWithChannelPoint = (routeKey: string, channelPoint: string) =>
@@ -3528,34 +3563,20 @@ export default function LightningOps() {
     if (typeof window === 'undefined') return
     const targetSection = pendingScrollSectionRef.current
     if (!targetSection) return
-    if (targetSection === 'close_recovery') {
+    const targetID = normalizeHashSection(targetSection)
+    if (!targetID) return
+    if (targetID === CLOSE_RECOVERY_SECTION_ID) {
       setChannelsSubview('close_recovery')
-      window.setTimeout(() => {
-        const target = document.getElementById(CLOSE_RECOVERY_SECTION_ID)
-        if (!target) return
-        target.scrollIntoView({ behavior: 'smooth', block: 'start' })
-        pendingScrollSectionRef.current = ''
-      }, 50)
-      return
     }
-    if (targetSection === 'autofee') {
-      window.setTimeout(() => {
-        const target = document.getElementById(AUTOFEE_SECTION_ID)
-        if (!target) return
-        target.scrollIntoView({ behavior: 'smooth', block: 'start' })
-        pendingScrollSectionRef.current = ''
-      }, 50)
-      return
-    }
-    if (targetSection === 'htlc_manager') {
+    if (targetID === LIGHTNING_TOOLS_SECTION_ID || LIGHTNING_TOOL_SECTION_IDS.has(targetID)) {
       setLightningToolsOpen(true)
-      window.setTimeout(() => {
-        const target = document.getElementById(HTLC_MANAGER_SECTION_ID)
-        if (!target) return
-        target.scrollIntoView({ behavior: 'smooth', block: 'start' })
-        pendingScrollSectionRef.current = ''
-      }, 80)
     }
+    window.setTimeout(() => {
+      const target = document.getElementById(targetID)
+      if (!target) return
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      pendingScrollSectionRef.current = ''
+    }, LIGHTNING_TOOL_SECTION_IDS.has(targetID) ? 80 : 50)
   }, [channelsSubview, autofeeOpen, lightningToolsOpen])
 
   const statusFilterBaseChannels = useMemo(() => {

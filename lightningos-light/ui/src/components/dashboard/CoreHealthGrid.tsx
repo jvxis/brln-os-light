@@ -11,6 +11,7 @@ import {
   formatTimestamp,
   toneFromStatusText,
 } from './formatters'
+import DashboardTitleLink from './DashboardTitleLink'
 import HorizontalBarGauge from './HorizontalBarGauge'
 import StackedRatioBar from './StackedRatioBar'
 import StatusBadge from './StatusBadge'
@@ -129,7 +130,9 @@ export default function CoreHealthGrid({
         <article className="section-card">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h3 className="text-lg font-semibold">{t('dashboard.lnd')}</h3>
+              <h3 className="text-lg font-semibold">
+                <DashboardTitleLink href="#lnd">{t('dashboard.lnd')}</DashboardTitleLink>
+              </h3>
               <p className="mt-1 text-sm text-fog/60">{lnd?.version ? `v${lnd.version}` : t('dashboard.loadingLndStatus')}</p>
             </div>
             <StatusBadge
@@ -240,7 +243,11 @@ export default function CoreHealthGrid({
         <article className="section-card">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h3 className="text-lg font-semibold">{isLocalBitcoin ? t('dashboard.bitcoinLocal') : t('dashboard.bitcoinRemote')}</h3>
+              <h3 className="text-lg font-semibold">
+                <DashboardTitleLink href={isLocalBitcoin ? '#bitcoin-local' : '#bitcoin'}>
+                  {isLocalBitcoin ? t('dashboard.bitcoinLocal') : t('dashboard.bitcoinRemote')}
+                </DashboardTitleLink>
+              </h3>
               <p className="mt-1 text-sm text-fog/60">{bitcoin?.rpchost || bitcoin?.data_dir || t('dashboard.loadingBitcoinStatus')}</p>
             </div>
             <StatusBadge
@@ -442,7 +449,9 @@ export default function CoreHealthGrid({
       <article className="section-card">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h3 className="text-lg font-semibold">{t('dashboard.disks')}</h3>
+            <h3 className="text-lg font-semibold">
+              <DashboardTitleLink href="#disks">{t('dashboard.disks')}</DashboardTitleLink>
+            </h3>
             <p className="mt-1 text-sm text-fog/60">{disks.length > 0 ? t('dashboard.diskHealthSummary', { count: disks.length }) : t('dashboard.noDiskData')}</p>
           </div>
         </div>

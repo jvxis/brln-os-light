@@ -28,6 +28,7 @@ type lnChannelDetailResponse struct {
 	Periods             []lnChannelDetailPeriod            `json:"periods"`
 	FeeLogs             []lnChannelDetailFeeLog            `json:"fee_logs"`
 	Routed              []lnChannelDetailForward           `json:"routed"`
+	Rebalances          []lnChannelDetailRebalance         `json:"rebalances"`
 	Sent                []lnChannelDetailPayment           `json:"sent"`
 	Received            []lnChannelDetailPayment           `json:"received"`
 	FailedHTLCs         []lnChannelDetailFailure           `json:"failed_htlcs"`
@@ -103,6 +104,23 @@ type lnChannelDetailForward struct {
 	FeeSat       int64  `json:"fee_sat"`
 	PPM          int    `json:"ppm,omitempty"`
 	Status       string `json:"status,omitempty"`
+}
+
+type lnChannelDetailRebalance struct {
+	OccurredAt      string `json:"occurred_at"`
+	Status          string `json:"status,omitempty"`
+	Direction       string `json:"direction"`
+	SourceChannelID uint64 `json:"source_channel_id,omitempty"`
+	TargetChannelID uint64 `json:"target_channel_id,omitempty"`
+	SourceAlias     string `json:"source_alias,omitempty"`
+	TargetAlias     string `json:"target_alias,omitempty"`
+	SourcePoint     string `json:"source_point,omitempty"`
+	TargetPoint     string `json:"target_point,omitempty"`
+	AmountSat       int64  `json:"amount_sat"`
+	FeeSat          int64  `json:"fee_sat,omitempty"`
+	PPM             int    `json:"ppm,omitempty"`
+	PaymentHash     string `json:"payment_hash,omitempty"`
+	Memo            string `json:"memo,omitempty"`
 }
 
 type lnChannelDetailPayment struct {
@@ -281,6 +299,14 @@ func (s *Server) handleLNChannelDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		detail.Routed = routed
+	}
+	if rebalances, err := s.loadLNChannelDetailRebalances(dbCtx, detail.Channel, aliasByID, limit); err != nil {
+		warnings = append(warnings, "rebalances unavailable")
+		if s.logger != nil {
+			s.logger.Printf("channel detail rebalances failed: %v", err)
+		}
+	} else {
+		detail.Rebalances = rebalances
 	}
 	if sent, err := s.loadLNChannelDetailPayments(dbCtx, detail.Channel, "sent", limit); err != nil {
 		warnings = append(warnings, "sent payments unavailable")
@@ -771,6 +797,67 @@ limit $2
 		row.AmountOutSat = msatToSatCeil(amountOutMsat)
 		row.FeeSat = msatToSatCeil(feeMsat)
 		row.PPM = ppmMsat(feeMsat, amountOutMsat)
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func (s *Server) loadLNChannelDetailRebalances(ctx context.Context, channel lndclient.ChannelInfo, aliasByID map[uint64]string, limit int) ([]lnChannelDetailRebalance, error) {
+	rows, err := s.db.Query(ctx, `
+select occurred_at,
+  coalesce(status, ''),
+  coalesce(rebal_source_chan_id, 0),
+  coalesce(rebal_target_chan_id, channel_id, 0),
+  coalesce(rebal_source_point, ''),
+  coalesce(rebal_target_point, channel_point, ''),
+  coalesce(case when amount_sat > 0 then amount_sat * 1000 when amount_out_msat > 0 then amount_out_msat else 0 end, 0),
+  coalesce(case when fee_msat > 0 then fee_msat else fee_sat * 1000 end, 0),
+  coalesce(payment_hash, ''),
+  coalesce(memo, '')
+from notifications
+where type = 'rebalance'
+  and (
+    rebal_target_chan_id = $1
+    or channel_id = $1
+    or rebal_source_chan_id = $1
+  )
+order by occurred_at desc
+limit $2
+`, int64(channel.ChannelID), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []lnChannelDetailRebalance{}
+	for rows.Next() {
+		var row lnChannelDetailRebalance
+		var occurredAt time.Time
+		var sourceID, targetID int64
+		var amountMsat, feeMsat int64
+		if err := rows.Scan(&occurredAt, &row.Status, &sourceID, &targetID, &row.SourcePoint, &row.TargetPoint, &amountMsat, &feeMsat, &row.PaymentHash, &row.Memo); err != nil {
+			return nil, err
+		}
+		row.OccurredAt = occurredAt.UTC().Format(time.RFC3339)
+		if sourceID > 0 {
+			row.SourceChannelID = uint64(sourceID)
+			row.SourceAlias = aliasByID[row.SourceChannelID]
+		}
+		if targetID > 0 {
+			row.TargetChannelID = uint64(targetID)
+			row.TargetAlias = aliasByID[row.TargetChannelID]
+		}
+		row.AmountSat = msatToSatCeil(amountMsat)
+		row.FeeSat = msatToSatCeil(feeMsat)
+		row.PPM = ppmMsat(feeMsat, amountMsat)
+		switch {
+		case row.TargetChannelID == channel.ChannelID:
+			row.Direction = "in"
+		case row.SourceChannelID == channel.ChannelID:
+			row.Direction = "out"
+		default:
+			row.Direction = "related"
+		}
 		out = append(out, row)
 	}
 	return out, rows.Err()

@@ -149,6 +149,23 @@ type ChannelDetailForward = {
   status?: string
 }
 
+type ChannelDetailRebalance = {
+  occurred_at?: string
+  status?: string
+  direction?: string
+  source_channel_id?: number
+  target_channel_id?: number
+  source_alias?: string
+  target_alias?: string
+  source_point?: string
+  target_point?: string
+  amount_sat?: number
+  fee_sat?: number
+  ppm?: number
+  payment_hash?: string
+  memo?: string
+}
+
 type ChannelDetailPayment = {
   occurred_at?: string
   type?: string
@@ -200,6 +217,7 @@ type ChannelDetailResponse = {
   periods?: ChannelDetailPeriod[]
   fee_logs?: ChannelDetailFeeLog[]
   routed?: ChannelDetailForward[]
+  rebalances?: ChannelDetailRebalance[]
   sent?: ChannelDetailPayment[]
   received?: ChannelDetailPayment[]
   failed_htlcs?: ChannelDetailFailure[]
@@ -332,6 +350,7 @@ export default function ChannelDetailModal({ open, channelPoint, initialChannel,
   const periods = Array.isArray(detail?.periods) ? detail?.periods || [] : []
   const feeLogs = Array.isArray(detail?.fee_logs) ? detail?.fee_logs || [] : []
   const routed = Array.isArray(detail?.routed) ? detail?.routed || [] : []
+  const rebalances = Array.isArray(detail?.rebalances) ? detail?.rebalances || [] : []
   const sent = Array.isArray(detail?.sent) ? detail?.sent || [] : []
   const received = Array.isArray(detail?.received) ? detail?.received || [] : []
   const failedHtlcs = Array.isArray(detail?.failed_htlcs) ? detail?.failed_htlcs || [] : []
@@ -400,6 +419,16 @@ export default function ChannelDetailModal({ open, channelPoint, initialChannel,
     if (normalized === 'local') return t('common.local')
     if (normalized === 'remote' || normalized === 'peer') return t('common.remote')
     return value || t('common.na')
+  }
+  const rebalanceDirectionLabel = (value?: string) => {
+    switch (String(value || '').toLowerCase()) {
+      case 'in':
+        return t('lightningOps.channelDetailRebalanceDirectionIn')
+      case 'out':
+        return t('lightningOps.channelDetailRebalanceDirectionOut')
+      default:
+        return t('lightningOps.channelDetailRebalanceDirectionRelated')
+    }
   }
 
   const loadDetail = async () => {
@@ -472,7 +501,7 @@ export default function ChannelDetailModal({ open, channelPoint, initialChannel,
     { id: 'overview', label: t('lightningOps.channelDetailTabOverview') },
     { id: 'economics', label: t('lightningOps.channelDetailTabEconomics'), count: periods.length + feeLogs.length },
     { id: 'policy', label: t('lightningOps.channelDetailTabPolicy'), count: peerEvents.length },
-    { id: 'activity', label: t('lightningOps.channelDetailTabActivity'), count: routed.length + sent.length + received.length },
+    { id: 'activity', label: t('lightningOps.channelDetailTabActivity'), count: routed.length + rebalances.length + sent.length + received.length },
     { id: 'failures', label: t('lightningOps.channelDetailTabFailures'), count: failedHtlcs.length + pendingHtlcs.length },
     { id: 'notes', label: t('lightningOps.channelDetailTabNotes') },
   ]
@@ -495,7 +524,7 @@ export default function ChannelDetailModal({ open, channelPoint, initialChannel,
   ]
   const settingBadges = [
     { label: t('lightningOps.channelDetailAutofee'), enabled: settings.autofee_enabled, configured: settings.autofee_configured },
-    { label: t('lightningOps.channelDetailRebalance'), enabled: settings.rebalance_auto_enabled, configured: settings.rebalance_configured },
+    { label: t('lightningOps.channelDetailRebalance'), enabled: settings.rebalance_auto_enabled || settings.manual_restart_enabled, configured: settings.rebalance_configured },
     { label: t('lightningOps.channelDetailManualRestart'), enabled: settings.manual_restart_enabled, configured: settings.rebalance_configured },
     { label: t('lightningOps.channelDetailExcludedSource'), enabled: settings.excluded_as_source, configured: settings.excluded_as_source },
     { label: t('lightningOps.channelDetailBypassCostGate'), enabled: settings.auto_bypass_cost_gate, configured: settings.auto_bypass_cost_gate },
@@ -580,8 +609,8 @@ export default function ChannelDetailModal({ open, channelPoint, initialChannel,
               </div>
               <div className="mt-4">
                 <div className="relative h-7 overflow-hidden rounded-full border border-white/10 bg-black/25">
-                  <div className="absolute inset-y-0 left-0 bg-glow/75" style={{ width: `${localPct}%` }} />
-                  <div className="absolute inset-y-0 bg-sky-400/70" style={{ left: `${localPct}%`, width: `${remotePct}%` }} />
+                  <div className="absolute inset-y-0 left-0 bg-glow/90" style={{ width: `${localPct}%` }} />
+                  <div className="absolute inset-y-0 bg-sky-300/35" style={{ left: `${localPct}%`, width: `${remotePct}%` }} />
                   {unsettledPct > 0 && <div className="absolute inset-y-0 right-0 bg-brass/75" style={{ width: `${unsettledPct}%` }} />}
                   {reservePct > 0 && <div className="absolute inset-y-0 left-0 border-r border-white/70 bg-white/20" style={{ width: `${reservePct}%` }} />}
                 </div>
@@ -788,6 +817,39 @@ export default function ChannelDetailModal({ open, channelPoint, initialChannel,
                             <td className="px-3 py-2">{formatSats(item.amount_out_sat)}</td>
                             <td className="px-3 py-2 text-glow">{formatSats(item.fee_sat)}</td>
                             <td className="px-3 py-2">{formatPpm(item.ppm)}</td>
+                            <td className="px-3 py-2 font-mono">{shortMiddle(item.payment_hash, 10, 6) || t('common.na')}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </TablePanel>
+
+                  <TablePanel title={t('lightningOps.channelDetailRebalances')} empty={rebalances.length === 0} emptyLabel={emptyRowsLabel} heightClass="max-h-[250px]">
+                    <table className="min-w-[940px] w-full text-left text-xs">
+                      <thead className="sticky top-0 bg-slate text-fog/60">
+                        <tr>
+                          <th className="px-3 py-2">{t('lightningOps.channelDetailTimestamp')}</th>
+                          <th className="px-3 py-2">{t('lightningOps.channelDetailDirection')}</th>
+                          <th className="px-3 py-2">{t('lightningOps.channelDetailSource')}</th>
+                          <th className="px-3 py-2">{t('lightningOps.channelDetailTarget')}</th>
+                          <th className="px-3 py-2">{t('lightningOps.channelDetailAmount')}</th>
+                          <th className="px-3 py-2">{t('lightningOps.channelDetailCost')}</th>
+                          <th className="px-3 py-2">PPM</th>
+                          <th className="px-3 py-2">{t('lightningOps.channelDetailStatus')}</th>
+                          <th className="px-3 py-2">{t('lightningOps.channelDetailHash')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rebalances.map((item, index) => (
+                          <tr key={`${item.occurred_at || index}-${item.payment_hash || ''}`} className="border-t border-white/5">
+                            <td className="px-3 py-2 whitespace-nowrap">{formatTime(item.occurred_at)}</td>
+                            <td className="px-3 py-2">{rebalanceDirectionLabel(item.direction)}</td>
+                            <td className="px-3 py-2">{item.source_alias || (item.source_channel_id ? numberFormatter.format(item.source_channel_id) : shortMiddle(item.source_point, 10, 6)) || t('common.na')}</td>
+                            <td className="px-3 py-2">{item.target_alias || (item.target_channel_id ? numberFormatter.format(item.target_channel_id) : shortMiddle(item.target_point, 10, 6)) || t('common.na')}</td>
+                            <td className="px-3 py-2">{formatSats(item.amount_sat)}</td>
+                            <td className="px-3 py-2 text-brass">{formatSats(item.fee_sat)}</td>
+                            <td className="px-3 py-2">{formatPpm(item.ppm)}</td>
+                            <td className="px-3 py-2">{item.status || t('common.na')}</td>
                             <td className="px-3 py-2 font-mono">{shortMiddle(item.payment_hash, 10, 6) || t('common.na')}</td>
                           </tr>
                         ))}

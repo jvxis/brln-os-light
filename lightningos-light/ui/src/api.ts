@@ -242,6 +242,10 @@ export const payInvoice = (payload: { payment_request: string; channel_point?: s
 
 export const getLnChannels = () => request('/api/lnops/channels')
 export const getLnPeers = () => request('/api/lnops/peers')
+export const getLnChannelDetail = (channelPoint: string, limit = 30) =>
+  request(`/api/lnops/channel/detail?channel_point=${encodeURIComponent(channelPoint)}&limit=${encodeURIComponent(String(limit))}`)
+export const saveLnChannelNote = (payload: { channel_point: string; note: string }) =>
+  request('/api/lnops/channel/notes', { method: 'POST', body: JSON.stringify(payload) })
 export const getLnChannelPeerRecommendations = (channelPoint: string, limit = 5) =>
   request(`/api/lnops/channel/peer-recommendations?channel_point=${encodeURIComponent(channelPoint)}&limit=${encodeURIComponent(String(limit))}`)
 export const getNetworkAtlasMap = () => request('/api/lnops/network-map')

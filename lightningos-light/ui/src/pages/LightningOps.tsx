@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { acceptBalancedOpenSession, addLnWatchtower, boostPeers, bumpFeeCloseManagerSession, bumpPendingOpenChannel, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getChannelRankings, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelFees, getLnChannelPeerRecommendations, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, previewBatchOpenChannels, previewOpenChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, recoverCloseManagerSession, refreshAutofeeReferences, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker } from '../api'
 import { getLocale } from '../i18n'
+import ChannelDetailModal from '../components/ChannelDetailModal'
 
 type Channel = {
   channel_point: string
@@ -19,6 +20,7 @@ type Channel = {
   capacity_sat: number
   local_balance_sat: number
   remote_balance_sat: number
+  local_chan_reserve_sat?: number
   unsettled_balance_sat?: number
   pending_htlc_count?: number
   pending_htlcs?: ChannelPendingHtlc[]
@@ -1031,6 +1033,7 @@ export default function LightningOps() {
   const [peerRecommendationErrorByChannel, setPeerRecommendationErrorByChannel] = useState<Record<string, string>>({})
   const [peerRecommendationCopiedKey, setPeerRecommendationCopiedKey] = useState('')
   const [copiedChannelIDKey, setCopiedChannelIDKey] = useState('')
+  const [detailChannel, setDetailChannel] = useState<Channel | null>(null)
 
   const [peerAddress, setPeerAddress] = useState('')
   const [peerTemporary, setPeerTemporary] = useState(false)
@@ -4988,6 +4991,10 @@ export default function LightningOps() {
     return Math.trunc(fallback).toString()
   }
 
+  const openChannelDetail = (channel: Channel) => {
+    setDetailChannel(channel)
+  }
+
   const handleCopyChannelID = async (channel: Channel) => {
     const value = channelIDText(channel)
     if (!value) return
@@ -6886,9 +6893,16 @@ export default function LightningOps() {
                             <div className="max-w-[220px]">
                               <div className="flex items-center gap-1.5">
                                 <span className={`h-2 w-2 shrink-0 rounded-full ${ch.active ? 'bg-glow' : isFCRisk ? 'bg-rose-300' : 'bg-ember'}`} />
-                                <span className="truncate text-xs text-fog" title={ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer')}>
+                                <button
+                                  type="button"
+                                  className="min-w-0 truncate text-left text-xs text-fog underline decoration-sky-300/35 underline-offset-4 transition hover:text-sky-100 hover:decoration-sky-200"
+                                  title={ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer')}
+                                  aria-label={t('lightningOps.openChannelDetail', { alias: ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer') })}
+                                  aria-haspopup="dialog"
+                                  onClick={() => openChannelDetail(ch)}
+                                >
                                   {ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer')}
-                                </span>
+                                </button>
                                 {channelIDValue && (
                                   <button
                                     type="button"
@@ -7179,7 +7193,16 @@ export default function LightningOps() {
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <div className="flex flex-wrap items-center gap-1.5">
-                          <p className="text-sm text-fog/60">{ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer')}</p>
+                          <button
+                            type="button"
+                            className="max-w-full truncate text-left text-sm text-fog/70 underline decoration-sky-300/35 underline-offset-4 transition hover:text-sky-100 hover:decoration-sky-200"
+                            title={ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer')}
+                            aria-label={t('lightningOps.openChannelDetail', { alias: ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer') })}
+                            aria-haspopup="dialog"
+                            onClick={() => openChannelDetail(ch)}
+                          >
+                            {ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer')}
+                          </button>
                           {channelIDValue && (
                             <button
                               type="button"
@@ -9703,6 +9726,12 @@ export default function LightningOps() {
         </div>
       )}
       </div>
+      <ChannelDetailModal
+        open={Boolean(detailChannel)}
+        channelPoint={detailChannel?.channel_point || ''}
+        initialChannel={detailChannel}
+        onClose={() => setDetailChannel(null)}
+      />
     </section>
   )
 }

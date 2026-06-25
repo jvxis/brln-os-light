@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { acceptBalancedOpenSession, addLnWatchtower, boostPeers, bumpFeeCloseManagerSession, bumpPendingOpenChannel, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getChannelRankings, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelFees, getLnChannelPeerRecommendations, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, previewBatchOpenChannels, previewOpenChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, recoverCloseManagerSession, refreshAutofeeReferences, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker } from '../api'
+import { acceptBalancedOpenSession, addLnWatchtower, bakeLnMacaroon, boostPeers, bumpFeeCloseManagerSession, bumpPendingOpenChannel, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getChannelRankings, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelFees, getLnChannelPeerRecommendations, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnMacaroonOptions, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, previewBatchOpenChannels, previewOpenChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, recoverCloseManagerSession, refreshAutofeeReferences, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker, type LnMacaroonBakeResult, type LnMacaroonOptions, type LnMacaroonPermission } from '../api'
 import { getLocale } from '../i18n'
 import ChannelDetailModal from '../components/ChannelDetailModal'
 
@@ -880,6 +880,7 @@ const CHAN_HEAL_SECTION_ID = 'chan-heal-section'
 const TOR_PEER_SECTION_ID = 'tor-peer-section'
 const FAILED_PAYMENTS_CLEANER_SECTION_ID = 'failed-payments-cleaner-section'
 const SIGN_MESSAGE_SECTION_ID = 'sign-message-section'
+const MACAROON_TOOL_SECTION_ID = 'macaroon-tool-section'
 const LIGHTNING_TOOL_SECTION_IDS = new Set([
   ADD_PEER_TOOL_SECTION_ID,
   OPEN_CHANNEL_SECTION_ID,
@@ -894,6 +895,7 @@ const LIGHTNING_TOOL_SECTION_IDS = new Set([
   TOR_PEER_SECTION_ID,
   FAILED_PAYMENTS_CLEANER_SECTION_ID,
   SIGN_MESSAGE_SECTION_ID,
+  MACAROON_TOOL_SECTION_ID,
 ])
 const SCROLLABLE_SECTION_IDS = new Set([
   PEERS_SECTION_ID,
@@ -996,6 +998,40 @@ const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
     binary += String.fromCharCode(...chunk)
   }
   return btoa(binary)
+}
+
+const macaroonPermissionKey = (permission: LnMacaroonPermission) =>
+  `${String(permission.entity || '').trim()}:${String(permission.action || '').trim()}`
+
+const permissionFromMacaroonKey = (key: string): LnMacaroonPermission | null => {
+  const idx = key.indexOf(':')
+  if (idx <= 0 || idx >= key.length - 1) return null
+  return {
+    entity: key.slice(0, idx),
+    action: key.slice(idx + 1),
+  }
+}
+
+const macaroonPermissionList = (permissions: LnMacaroonPermission[]) =>
+  permissions.map(macaroonPermissionKey).filter(Boolean)
+
+const macaroonHexToBytes = (hex: string) => {
+  const cleaned = hex.trim()
+  if (!cleaned || cleaned.length % 2 !== 0) return null
+  const bytes = new Uint8Array(cleaned.length / 2)
+  for (let i = 0; i < cleaned.length; i += 2) {
+    const value = Number.parseInt(cleaned.slice(i, i + 2), 16)
+    if (Number.isNaN(value)) return null
+    bytes[i / 2] = value
+  }
+  return bytes
+}
+
+const defaultMacaroonPreset = (options: LnMacaroonOptions | null) => {
+  const ids = options?.presets?.map((preset) => preset.id) || []
+  if (ids.includes('invoice_permissions')) return 'invoice_permissions'
+  if (ids.includes('read_only')) return 'read_only'
+  return ids[0] || 'custom'
 }
 
 const isFCRiskChannel = (ch: Channel) =>
@@ -1101,6 +1137,14 @@ export default function LightningOps() {
   const [signStatus, setSignStatus] = useState('')
   const [signBusy, setSignBusy] = useState(false)
   const [signCopied, setSignCopied] = useState(false)
+  const [macaroonOptions, setMacaroonOptions] = useState<LnMacaroonOptions | null>(null)
+  const [macaroonPreset, setMacaroonPreset] = useState('invoice_permissions')
+  const [macaroonSelectedPermissions, setMacaroonSelectedPermissions] = useState<string[]>([])
+  const [macaroonConfirmPassword, setMacaroonConfirmPassword] = useState('')
+  const [macaroonStatus, setMacaroonStatus] = useState('')
+  const [macaroonBusy, setMacaroonBusy] = useState(false)
+  const [macaroonResult, setMacaroonResult] = useState<LnMacaroonBakeResult | null>(null)
+  const [macaroonCopied, setMacaroonCopied] = useState<'base64' | 'hex' | ''>('')
   const [scbRestoreData, setScbRestoreData] = useState('')
   const [scbRestoreFileName, setScbRestoreFileName] = useState('')
   const [scbRestoreConfirm, setScbRestoreConfirm] = useState(false)
@@ -3548,6 +3592,37 @@ export default function LightningOps() {
       mounted = false
     }
   }, [feeChannelPoint, feeScopeAll])
+
+  useEffect(() => {
+    if (!lightningToolsOpen || macaroonOptions) return
+    let mounted = true
+    setMacaroonStatus(t('lightningOps.macaroonLoading'))
+    getLnMacaroonOptions()
+      .then((options) => {
+        if (!mounted) return
+        setMacaroonOptions(options)
+        setMacaroonPreset((current) => {
+          const ids = options.presets.map((preset) => preset.id)
+          return ids.includes(current) ? current : defaultMacaroonPreset(options)
+        })
+        setMacaroonStatus('')
+      })
+      .catch((err: any) => {
+        if (!mounted) return
+        setMacaroonStatus(err?.message || t('lightningOps.macaroonLoadFailed'))
+      })
+    return () => {
+      mounted = false
+    }
+  }, [lightningToolsOpen, macaroonOptions, t])
+
+  useEffect(() => {
+    if (lightningToolsOpen) return
+    setMacaroonResult(null)
+    setMacaroonCopied('')
+    setMacaroonConfirmPassword('')
+  }, [lightningToolsOpen])
+
   useEffect(() => {
     pendingScrollChannelRef.current = readHashChannelPoint(LIGHTNING_OPS_ROUTE_KEY)
     pendingScrollPeerRef.current = readHashPeerPubKey(LIGHTNING_OPS_ROUTE_KEY)
@@ -4946,6 +5021,108 @@ export default function LightningOps() {
     }
   }
 
+  const selectedMacaroonPreset = useMemo(
+    () => macaroonOptions?.presets.find((preset) => preset.id === macaroonPreset) || null,
+    [macaroonOptions, macaroonPreset]
+  )
+
+  const selectedMacaroonPermissionKeys = useMemo(() => {
+    if (macaroonPreset === 'custom') {
+      return macaroonSelectedPermissions
+    }
+    return selectedMacaroonPreset ? macaroonPermissionList(selectedMacaroonPreset.permissions) : []
+  }, [macaroonPreset, macaroonSelectedPermissions, selectedMacaroonPreset])
+
+  const selectedMacaroonPermissions = useMemo(
+    () => selectedMacaroonPermissionKeys
+      .map(permissionFromMacaroonKey)
+      .filter((permission): permission is LnMacaroonPermission => Boolean(permission)),
+    [selectedMacaroonPermissionKeys]
+  )
+
+  const handleMacaroonPresetChange = (value: string) => {
+    setMacaroonPreset(value)
+    setMacaroonStatus('')
+    setMacaroonResult(null)
+    setMacaroonCopied('')
+  }
+
+  const toggleMacaroonPermission = (permission: LnMacaroonPermission) => {
+    const key = macaroonPermissionKey(permission)
+    setMacaroonSelectedPermissions((current) => (
+      current.includes(key)
+        ? current.filter((item) => item !== key)
+        : [...current, key]
+    ))
+    setMacaroonResult(null)
+    setMacaroonCopied('')
+  }
+
+  const handleBakeMacaroon = async () => {
+    if (macaroonBusy) return
+    if (!selectedMacaroonPermissions.length) {
+      setMacaroonStatus(t('lightningOps.macaroonPermissionsRequired'))
+      return
+    }
+    if (!macaroonConfirmPassword.trim()) {
+      setMacaroonStatus(t('lightningOps.macaroonPasswordRequired'))
+      return
+    }
+    setMacaroonBusy(true)
+    setMacaroonStatus(t('lightningOps.macaroonGenerating'))
+    setMacaroonResult(null)
+    setMacaroonCopied('')
+    try {
+      const result = await bakeLnMacaroon({
+        preset: macaroonPreset,
+        permissions: selectedMacaroonPermissions,
+        confirm_password: macaroonConfirmPassword.trim(),
+      })
+      setMacaroonResult(result)
+      setMacaroonConfirmPassword('')
+      setMacaroonStatus(t('lightningOps.macaroonReady'))
+    } catch (err: any) {
+      setMacaroonStatus(err?.message || t('lightningOps.macaroonGenerateFailed'))
+    } finally {
+      setMacaroonBusy(false)
+    }
+  }
+
+  const handleCopyMacaroon = async (kind: 'base64' | 'hex') => {
+    const value = kind === 'base64' ? macaroonResult?.macaroon_base64 : macaroonResult?.macaroon_hex
+    if (!value) return
+    try {
+      await navigator.clipboard.writeText(value)
+      setMacaroonCopied(kind)
+    } catch {
+      setMacaroonStatus(t('common.copyFailedManual'))
+    }
+  }
+
+  const handleDownloadMacaroon = () => {
+    if (!macaroonResult) return
+    const bytes = macaroonHexToBytes(macaroonResult.macaroon_hex)
+    if (!bytes) {
+      setMacaroonStatus(t('lightningOps.macaroonDownloadFailed'))
+      return
+    }
+    const blob = new Blob([bytes], { type: 'application/octet-stream' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = macaroonResult.file_name || 'los-custom-macaroon.macaroon'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  const clearMacaroonResult = () => {
+    setMacaroonResult(null)
+    setMacaroonCopied('')
+    setMacaroonStatus('')
+  }
+
   const handleSignMessage = async () => {
     if (signBusy) return
     const message = signMessage.trim()
@@ -6086,6 +6263,9 @@ export default function LightningOps() {
         break
       case 'sign':
         paths = <><path d="M5 19l4-1 9-9-3-3-9 9-1 4z" /><path d="M13 6l3 3" /></>
+        break
+      case 'macaroon':
+        paths = <><circle cx="8" cy="8" r="3" /><path d="M10.5 10.5L20 20" /><path d="M15 15l2-2" /><path d="M17 17l2-2" /></>
         break
       default:
         paths = <><circle cx="12" cy="12" r="8" /><path d="M12 8v8" /><path d="M8 12h8" /></>
@@ -7869,6 +8049,7 @@ export default function LightningOps() {
             {renderToolShortcut(TOR_PEER_SECTION_ID, t('lightningOps.torPeerTitle'), 'tor')}
             {renderToolShortcut(FAILED_PAYMENTS_CLEANER_SECTION_ID, t('lightningOps.failedPaymentsCleanerTitle'), 'clean')}
             {renderToolShortcut(SIGN_MESSAGE_SECTION_ID, t('lightningOps.signMessageTitle'), 'sign')}
+            {renderToolShortcut(MACAROON_TOOL_SECTION_ID, t('lightningOps.macaroonTitle'), 'macaroon')}
           </div>
         </div>
 
@@ -9253,6 +9434,135 @@ export default function LightningOps() {
           <p className="text-xs text-amber-200">
             {t('lightningOps.failedPaymentsCleanerLastError')}: {failedPaymentsCleaner.last_error}
           </p>
+        )}
+      </div>
+
+      <div id={MACAROON_TOOL_SECTION_ID} className="section-card space-y-4">
+        <div>
+          <h3 className="text-lg font-semibold">{t('lightningOps.macaroonTitle')}</h3>
+          <p className="text-sm text-fog/60">{t('lightningOps.macaroonSubtitle')}</p>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="space-y-1 text-sm text-fog/70">
+            <span>{t('lightningOps.macaroonPreset')}</span>
+            <select
+              className="input-field"
+              value={macaroonPreset}
+              onChange={(e) => handleMacaroonPresetChange(e.target.value)}
+              disabled={macaroonBusy || !macaroonOptions}
+            >
+              {(macaroonOptions?.presets || [{ id: 'custom', label: t('lightningOps.macaroonPresetCustom'), permissions: [] }]).map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  {preset.id === 'invoice_permissions'
+                    ? t('lightningOps.macaroonPresetInvoice')
+                    : preset.id === 'read_only'
+                    ? t('lightningOps.macaroonPresetReadOnly')
+                    : t('lightningOps.macaroonPresetCustom')}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1 text-sm text-fog/70">
+            <span>{t('lightningOps.macaroonPassword')}</span>
+            <input
+              className="input-field"
+              type="password"
+              value={macaroonConfirmPassword}
+              onChange={(e) => setMacaroonConfirmPassword(e.target.value)}
+              placeholder={t('lightningOps.macaroonPasswordPlaceholder')}
+              autoComplete="current-password"
+            />
+          </label>
+        </div>
+        {macaroonPreset !== 'custom' && selectedMacaroonPermissionKeys.length > 0 && (
+          <div className="flex flex-wrap gap-2 text-xs text-fog/65">
+            {selectedMacaroonPermissionKeys.map((permission) => (
+              <span key={permission} className="rounded-full border border-white/10 px-2 py-1">
+                {permission}
+              </span>
+            ))}
+          </div>
+        )}
+        {macaroonPreset === 'custom' && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm text-fog/70">{t('lightningOps.macaroonCustomPermissions')}</p>
+              <span className="text-xs text-fog/45">
+                {t('lightningOps.macaroonSelectedCount', { count: selectedMacaroonPermissions.length })}
+              </span>
+            </div>
+            <div className="grid max-h-60 gap-2 overflow-y-auto pr-1 text-xs sm:grid-cols-2">
+              {(macaroonOptions?.permissions || []).map((permission) => {
+                const key = macaroonPermissionKey(permission)
+                const checked = macaroonSelectedPermissions.includes(key)
+                return (
+                  <label key={key} className="flex min-w-0 items-center gap-2 rounded border border-white/10 px-2 py-2 text-fog/70">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleMacaroonPermission(permission)}
+                    />
+                    <span className="truncate font-mono">{key}</span>
+                  </label>
+                )
+              })}
+            </div>
+            {macaroonOptions && macaroonOptions.permissions.length === 0 && (
+              <p className="text-xs text-fog/50">{t('lightningOps.macaroonNoPermissions')}</p>
+            )}
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            className="btn-primary disabled:opacity-60 disabled:cursor-not-allowed"
+            type="button"
+            onClick={handleBakeMacaroon}
+            disabled={macaroonBusy || !macaroonOptions || !selectedMacaroonPermissions.length}
+          >
+            {macaroonBusy ? t('lightningOps.macaroonGenerating') : t('lightningOps.macaroonGenerate')}
+          </button>
+          {macaroonStatus && <p className="text-sm text-brass">{macaroonStatus}</p>}
+        </div>
+        {macaroonResult && (
+          <div className="space-y-3 border-t border-white/10 pt-3">
+            <div className="grid gap-2 text-xs text-fog/70 md:grid-cols-2">
+              <div>
+                {t('lightningOps.macaroonFilename')}: <span className="font-mono text-fog break-all">{macaroonResult.file_name}</span>
+              </div>
+              <div>
+                {t('lightningOps.macaroonRootKey')}: <span className="font-mono text-fog">{macaroonResult.root_key_id}</span>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2 text-xs text-fog/65">
+              {macaroonResult.permissions.map((permission) => (
+                <span key={permission} className="rounded-full border border-white/10 px-2 py-1">
+                  {permission}
+                </span>
+              ))}
+            </div>
+            <label className="block space-y-1 text-xs text-fog/60">
+              <span>{t('lightningOps.macaroonBase64')}</span>
+              <textarea className="input-field min-h-[84px] font-mono text-xs" readOnly value={macaroonResult.macaroon_base64} />
+            </label>
+            <label className="block space-y-1 text-xs text-fog/60">
+              <span>{t('lightningOps.macaroonHex')}</span>
+              <textarea className="input-field min-h-[84px] font-mono text-xs" readOnly value={macaroonResult.macaroon_hex} />
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <button className="btn-secondary text-xs px-3 py-2" type="button" onClick={() => handleCopyMacaroon('base64')}>
+                {macaroonCopied === 'base64' ? t('common.copied') : t('lightningOps.macaroonCopyBase64')}
+              </button>
+              <button className="btn-secondary text-xs px-3 py-2" type="button" onClick={() => handleCopyMacaroon('hex')}>
+                {macaroonCopied === 'hex' ? t('common.copied') : t('lightningOps.macaroonCopyHex')}
+              </button>
+              <button className="btn-secondary text-xs px-3 py-2" type="button" onClick={handleDownloadMacaroon}>
+                {t('lightningOps.macaroonDownload')}
+              </button>
+              <button className="btn-secondary text-xs px-3 py-2" type="button" onClick={clearMacaroonResult}>
+                {t('lightningOps.macaroonClear')}
+              </button>
+            </div>
+          </div>
         )}
       </div>
 

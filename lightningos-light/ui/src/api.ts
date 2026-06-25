@@ -301,6 +301,35 @@ export const removeLnWatchtower = (payload: { pubkey: string; address?: string }
   request('/api/lnops/watchtower/remove', { method: 'POST', body: JSON.stringify(payload) })
 export const signLnMessage = (payload: { message: string }) =>
   request('/api/lnops/sign-message', { method: 'POST', body: JSON.stringify(payload) })
+export type LnMacaroonPermission = {
+  entity: string
+  action: string
+}
+export type LnMacaroonPreset = {
+  id: string
+  label: string
+  permissions: LnMacaroonPermission[]
+}
+export type LnMacaroonOptions = {
+  presets: LnMacaroonPreset[]
+  permissions: LnMacaroonPermission[]
+}
+export type BakeLnMacaroonPayload = {
+  preset?: string
+  permissions?: LnMacaroonPermission[]
+  confirm_password?: string
+}
+export type LnMacaroonBakeResult = {
+  file_name: string
+  root_key_id: number
+  macaroon_hex: string
+  macaroon_base64: string
+  permissions: string[]
+}
+export const getLnMacaroonOptions = () =>
+  request('/api/lnops/macaroon/options') as Promise<LnMacaroonOptions>
+export const bakeLnMacaroon = (payload: BakeLnMacaroonPayload) =>
+  request('/api/lnops/macaroon/bake', { method: 'POST', body: JSON.stringify(payload) }) as Promise<LnMacaroonBakeResult>
 export const getLnChanHeal = () => request('/api/lnops/channel/auto-heal')
 export const updateLnChanHeal = (payload: { enabled?: boolean; interval_sec?: number }) =>
   request('/api/lnops/channel/auto-heal', { method: 'POST', body: JSON.stringify(payload) })

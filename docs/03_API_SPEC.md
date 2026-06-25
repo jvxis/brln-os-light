@@ -225,6 +225,23 @@ Body:
   "limit": 25
 }
 
+GET /api/lnops/macaroon/options
+- Returns available LND macaroon permissions and LOS presets for the custom macaroon tool.
+
+POST /api/lnops/macaroon/bake
+Body:
+{
+  "preset": "invoice_permissions",
+  "permissions": [
+    { "entity": "invoices", "action": "read" },
+    { "entity": "invoices", "action": "write" }
+  ],
+  "confirm_password": "..."
+}
+- Requires an authenticated admin session, CSRF, and recent `macaroon_export` reauthentication or inline `confirm_password`.
+- Returns `file_name`, `root_key_id`, selected `permissions`, `macaroon_hex`, and `macaroon_base64`.
+- The generated macaroon is returned only in the immediate response and is not persisted by LOS.
+
 GET /api/lnops/channel/fees?channel_point=txid:index
 
 GET /api/lnops/channel/detail?channel_point=txid:index&limit=30

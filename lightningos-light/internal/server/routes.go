@@ -161,6 +161,8 @@ func (s *Server) routes() http.Handler {
 		r.Get("/closed-channels", s.handleLNClosedChannels)
 		r.Get("/watchtower", s.handleLNWatchtowers)
 		r.Post("/sign-message", s.handleLNSignMessage)
+		r.Get("/macaroon/options", s.handleMacaroonOptions)
+		r.Post("/macaroon/bake", s.handleMacaroonBake)
 		r.Post("/peer", s.handleLNConnectPeer)
 		r.Post("/peer/disconnect", s.handleLNDisconnectPeer)
 		r.Post("/peers/boost", s.handleLNBoostPeers)

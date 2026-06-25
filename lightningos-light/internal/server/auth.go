@@ -46,6 +46,7 @@ const (
 	authSecretRecoveryTokenExpiryKey = "UI_ADMIN_RECOVERY_TOKEN_EXPIRES_AT"
 
 	authScopeWalletSendExternal = "wallet_send_external"
+	authScopeMacaroonExport     = "macaroon_export"
 )
 
 type authContextKey string
@@ -442,7 +443,7 @@ func (a *AuthService) changePassword(sessionID string, currentPassword string, p
 
 func (a *AuthService) reauth(sessionID string, password string, scope string) (time.Time, error) {
 	scope = strings.TrimSpace(scope)
-	if scope != authScopeWalletSendExternal {
+	if !authScopeValid(scope) {
 		return time.Time{}, errInvalidScope
 	}
 	if err := authVerifyPassword(password); err != nil {
@@ -464,6 +465,15 @@ func (a *AuthService) reauth(sessionID string, password string, scope string) (t
 	}
 	session.ReauthScopes[scope] = expiresAt
 	return expiresAt, nil
+}
+
+func authScopeValid(scope string) bool {
+	switch strings.TrimSpace(scope) {
+	case authScopeWalletSendExternal, authScopeMacaroonExport:
+		return true
+	default:
+		return false
+	}
 }
 
 func (a *AuthService) HasRecentReauth(sessionID string, scope string) bool {

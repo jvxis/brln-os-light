@@ -2,7 +2,7 @@
 
 ## Status
 
-Audit date: 2026-06-20.
+Audit date: 2026-06-26.
 
 This file used to mix active backlog items with implemented design notes. Treat
 the "Active Backlog" list below as the source of truth. Implemented sections are
@@ -22,6 +22,7 @@ Current product backlog, after checking the repository against the docs:
 8. Wallet Flow lineage export as SVG/PNG.
 9. Rebalance source-rotation/pair-cache telemetry polish.
 10. `Lightning Tools` custom macaroon generator with audit log.
+11. `Succession` multisig inheritance vault.
 
 ## 10. Lightning Tools Custom Macaroon Generator
 
@@ -346,6 +347,346 @@ Possible follow-ups after MVP:
 - surface a filtered Audit Log link from the result card
 - support external permissions only with an explicit advanced warning
 - offer method/RPC-based permission selection using `ListPermissions`
+
+## 11. Succession Multisig Inheritance Vault
+
+### Source
+
+Product discussion on 2026-06-26.
+
+The current succession mode accepts a single external on-chain destination
+address. The proposed evolution is to let the operator configure a verified
+watch-only multisig vault, for example a 2-of-3 Jade setup shared by the
+operator, spouse, and child, then use that vault as the destination for
+succession-driven node retirement.
+
+### Current Baseline
+
+Existing implementation:
+
+- `SuccessionService` stores proof-of-life state, schedule, dry-run mode,
+  retirement policy, and `destination_address`.
+- When the deadline expires, succession creates a `NodeRetirement` session with
+  `source = succession`.
+- `NodeRetirementService` closes channels, monitors settlement, and then sweeps
+  confirmed LND on-chain wallet funds to `destination_address`.
+- The succession UI is embedded at the bottom of `NodeRetirement.tsx`.
+- Bitcoin Core RPC discovery already exists through `readBitcoinLocalRPCConfig`
+  and JSON-RPC helpers such as `fetchBitcoinRPCParams`.
+
+The right product shape is to keep `NodeRetirement` as the execution engine and
+move succession planning into its own screen. The multisig vault should enrich
+the destination selection; it should not duplicate the retirement state machine.
+
+### Goal
+
+Add a dedicated `Succession` or `Inheritance Vault` screen that lets an
+authenticated operator create or import a 2-of-3 Bitcoin mainnet multisig
+watch-only vault, verify it on hardware wallets, and select it as the default
+destination for succession-triggered retirement sweeps.
+
+The first production version should be a destination and monitoring feature, not
+a spending coordinator. It must never generate, store, log, or return seed
+words, private keys, wallet passwords, macaroons, RPC credentials, or any other
+spend authority.
+
+### Product Decisions
+
+- Create a dedicated Succession page instead of expanding Onchain Hub or Node
+  Retirement.
+- Keep Node Retirement focused on execution: quiesce, drain HTLCs, close
+  channels, monitor on-chain, reconcile.
+- Keep Onchain Hub focused on UTXOs, provenance, and watch-only monitoring.
+- Model the multisig as a descriptor-backed watch-only vault.
+- MVP policy: native SegWit `wsh(sortedmulti(2,...))`, Bitcoin mainnet only.
+- MVP should support import/manual entry of cosigner metadata:
+  - label
+  - hardware wallet model hint
+  - master fingerprint
+  - derivation path
+  - xpub
+- The app may derive receive addresses and import descriptors into Bitcoin Core,
+  but it must not hold private keys.
+- Spending from the vault through PSBT belongs to a later phase.
+
+### UX Plan
+
+Create a new frontend route and nav entry:
+
+- `ui/src/pages/Succession.tsx`
+- nav key: `succession`
+- label: `Succession`
+
+Suggested screen sections:
+
+1. Proof of life
+   - enable/disable succession
+   - dry-run toggle
+   - check period and reminder window
+   - alive confirmation
+   - simulation controls
+   - current status, next check, and deadline
+
+2. Inheritance vault
+   - create/import 2-of-3 vault
+   - cosigner table for three participants
+   - descriptor preview with checksum
+   - first derived address
+   - verification checklist for each Jade/hardware wallet
+   - recovery bundle export
+
+3. Retirement destination
+   - choose legacy external address or active multisig vault
+   - show the next reserved receive address
+   - configure sweep min confirmations and fee rate
+   - configure force-close preapproval policy
+
+4. Operational status
+   - last successful descriptor import
+   - Bitcoin Core watch-only wallet status
+   - latest vault balance/UTXO summary
+   - most recent succession retirement transfer
+
+Move the existing succession controls out of `NodeRetirement.tsx` once the new
+page is available. Node Retirement can keep a compact read-only banner linking
+to the Succession page when `source = succession` sessions exist.
+
+### Backend Plan
+
+Add a focused vault service rather than overloading `SuccessionService`:
+
+- `internal/server/succession_vault_service.go`
+- `internal/server/succession_vault_handlers.go`
+- `internal/server/succession_vault_init.go`
+
+Suggested tables:
+
+- `succession_vaults`
+  - `id`
+  - `vault_id`
+  - `name`
+  - `policy_type`
+  - `threshold`
+  - `cosigner_count`
+  - `descriptor`
+  - `descriptor_checksum`
+  - `external_descriptor`
+  - `internal_descriptor`
+  - `next_receive_index`
+  - `watch_only_wallet`
+  - `status`
+  - `last_import_at`
+  - `created_at`
+  - `updated_at`
+
+- `succession_vault_cosigners`
+  - `id`
+  - `vault_id`
+  - `label`
+  - `hardware_hint`
+  - `fingerprint`
+  - `derivation_path`
+  - `xpub`
+  - `sort_order`
+  - `verified_at`
+  - `created_at`
+  - `updated_at`
+
+- `succession_vault_addresses`
+  - `id`
+  - `vault_id`
+  - `branch`
+  - `address_index`
+  - `address`
+  - `status`
+  - `reserved_for`
+  - `created_at`
+  - `used_at`
+
+Extend `succession_config` with destination metadata:
+
+- `destination_type`: `external_address` or `vault`
+- `destination_vault_id`
+
+Keep `destination_address` for backward compatibility and as a session-level
+resolved address. When a vault is selected, resolve a fresh receive address
+before creating the Node Retirement session and place that concrete address in
+the retirement config JSON.
+
+### Bitcoin Core RPC Scope
+
+Reuse the existing local Bitcoin Core RPC discovery and helper functions:
+
+- `readBitcoinLocalRPCConfig`
+- `fetchBitcoinRPCParams`
+
+Required RPC calls for MVP:
+
+- `getblockchaininfo` to confirm mainnet and sync status
+- `getdescriptorinfo` to normalize descriptor and compute checksum
+- `deriveaddresses` to derive preview/receive addresses
+- `createwallet` for the watch-only wallet if missing
+- `importdescriptors` to import ranged external/internal descriptors
+- `getwalletinfo` for watch-only wallet status
+- `listunspent` or equivalent wallet-scoped calls for balance/UTXO summary
+
+The feature should require a local Bitcoin Core source for descriptor import and
+watch-only monitoring. It can still generate/export a recovery bundle without
+importing if Bitcoin Core is temporarily unavailable, but it must clearly mark
+the vault as not yet watched.
+
+### API Contract
+
+Suggested endpoints:
+
+```text
+GET    /api/lnops/succession/vaults
+POST   /api/lnops/succession/vaults
+GET    /api/lnops/succession/vaults/{id}
+POST   /api/lnops/succession/vaults/{id}/verify-cosigner
+POST   /api/lnops/succession/vaults/{id}/derive-address
+POST   /api/lnops/succession/vaults/{id}/reserve-address
+POST   /api/lnops/succession/vaults/{id}/import-watch-only
+GET    /api/lnops/succession/vaults/{id}/recovery-bundle
+GET    /api/lnops/succession/vaults/{id}/utxos
+```
+
+Update existing config endpoint:
+
+```text
+GET    /api/lnops/succession/config
+POST   /api/lnops/succession/config
+```
+
+New config fields:
+
+```json
+{
+  "destination_type": "vault",
+  "destination_vault_id": "sv_..."
+}
+```
+
+The response may still include `destination_address`, but for vault mode it
+should be the next or currently reserved concrete receive address, not the only
+source of truth.
+
+### Security Requirements
+
+- Never accept, persist, log, or return seed words or private keys.
+- Never log raw descriptors if they are later considered privacy-sensitive in
+  production logs; safe audit events should use vault IDs and fingerprints only.
+- Treat xpubs/descriptors as privacy-sensitive data: return them only to
+  authenticated admin sessions.
+- Require CSRF protection for all mutating calls through existing middleware.
+- Require fresh reauthentication before:
+  - exporting a recovery bundle
+  - replacing an active vault
+  - switching real succession from external address to vault destination
+- Audit safe events:
+  - `succession.vault.create`
+  - `succession.vault.import_watch_only`
+  - `succession.vault.reserve_address`
+  - `succession.config.destination_change`
+- Do not include xpubs, descriptors, RPC credentials, or wallet passwords in
+  audit metadata.
+
+### Integration With Node Retirement
+
+MVP integration should be deliberately narrow:
+
+1. `SuccessionService` loads config when a timeout or simulation triggers.
+2. If `destination_type = vault`, it asks the vault service to reserve the next
+   receive address.
+3. The created `NodeRetirement` session receives the resolved address in
+   `config_json.destination_address`, plus optional metadata:
+   - `destination_type`
+   - `destination_vault_id`
+   - `destination_address_index`
+4. Existing `processSuccessionTransfer` continues to use LND `SendCoins` to
+   sweep to the concrete address.
+5. Reconciliation records transfer status as it does today.
+
+Later, extend `node_retirement_transfers` with:
+
+- `destination_type`
+- `destination_vault_id`
+- `destination_address_index`
+
+Do not block the first version on this migration if the session `config_json`
+captures enough metadata for audit.
+
+### Delivery Phases
+
+Phase 1: UI separation
+
+- Add the Succession page and nav item.
+- Move proof-of-life and policy controls out of Node Retirement.
+- Keep the same existing `/api/lnops/succession/*` config, alive, and simulate
+  endpoints.
+- Leave a compact Node Retirement link/status panel.
+
+Phase 2: vault model and descriptor validation
+
+- Add vault/cosigner/address tables.
+- Validate fingerprints, derivation paths, xpub shape, threshold, and cosigner
+  count.
+- Build deterministic sortedmulti descriptors.
+- Use Bitcoin Core `getdescriptorinfo` and `deriveaddresses` when available.
+- Add backend tests for descriptor construction and validation.
+
+Phase 3: watch-only import
+
+- Create or open the watch-only Bitcoin Core wallet.
+- Import external and internal descriptors with a conservative range.
+- Track import status and first derived addresses.
+- Surface clear unavailable states when local Bitcoin Core is missing,
+  unreachable, pruned, or still syncing.
+
+Phase 4: succession destination integration
+
+- Add `destination_type` and `destination_vault_id` to succession config.
+- Reserve a fresh vault address when creating a succession retirement session.
+- Preserve the resolved address in session config.
+- Add tests covering external-address compatibility and vault address
+  reservation.
+
+Phase 5: Onchain Hub monitoring
+
+- Add a watch-only vault filter/section in Onchain Hub.
+- Show vault balance, UTXOs, receive addresses, and transaction history when
+  Bitcoin Core watch-only status is available.
+
+Phase 6: PSBT coordinator
+
+- Add PSBT creation, import/export, signature collection, finalization, and
+  broadcast for vault spending.
+- Keep this outside the MVP because it is a separate high-risk spending flow.
+
+### Acceptance Criteria
+
+MVP is complete when:
+
+- Operators can configure succession from a dedicated Succession page.
+- Existing proof-of-life scheduling and dry-run behavior still work.
+- Operators can create a 2-of-3 descriptor-backed vault from three cosigners.
+- The app derives at least one receive address and shows verification steps.
+- The recovery bundle exports descriptor metadata without any private material.
+- The vault can be selected as the succession destination.
+- A succession-triggered retirement session resolves and records a concrete
+  vault receive address before running.
+- Existing external-address succession mode remains backward compatible.
+- Backend tests cover descriptor validation, config compatibility, and vault
+  address reservation.
+
+### Non-Goals For MVP
+
+- Generating seeds or private keys.
+- Holding hardware wallet PINs, seeds, or wallet passwords.
+- Spending from the vault.
+- General-purpose multisig wallet management.
+- Support for testnet, signet, Taproot multisig, Miniscript policy editing, or
+  arbitrary M-of-N policies.
 
 ## Implemented Or No Longer Active Here
 

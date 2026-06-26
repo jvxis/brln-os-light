@@ -330,7 +330,16 @@ func getBitcoinLocalCadence(ctx context.Context, paths bitcoinCorePaths, bestHas
 	var buckets []blockCadenceBucket
 	var err error
 	if fileExists(paths.ComposePath) {
-		bestTime, buckets, err = computeBitcoinLocalCadence(ctx, paths, trimmed)
+		computed := false
+		if cfg, ok := readBitcoinConfRPCConfig(paths.ConfigPath); ok {
+			bestTime, buckets, err = computeBitcoinLocalCadenceRPC(ctx, cfg, trimmed)
+			if err == nil {
+				computed = true
+			}
+		}
+		if !computed {
+			bestTime, buckets, err = computeBitcoinLocalCadence(ctx, paths, trimmed)
+		}
 	} else {
 		cfg, _, cfgErr := readBitcoinLocalRPCConfig(ctx)
 		if cfgErr != nil {

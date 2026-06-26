@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  APIError,
   confirmNodeRetirementCoopClose,
   createNodeRetirementSession,
   decideNodeRetirementChannel,
@@ -11,6 +12,7 @@ import {
   getNodeRetirementStatus,
   getSuccessionConfig,
   getTelegramNotifications,
+  reauthAuth,
   successionAlive,
   successionSimulate,
   updateSuccessionConfig,
@@ -99,6 +101,17 @@ type SuccessionConfig = {
 type TelegramNotificationsConfig = {
   activity_mirror_enabled?: boolean
 }
+
+type ReauthScope = 'node_retirement_control' | 'succession_live_control'
+
+type ReauthPrompt = {
+  scope: ReauthScope
+  titleKey: string
+  bodyKey: string
+}
+
+const nodeRetirementControlReauthRequiredCode = 'node_retirement_control_reauth_required'
+const successionLiveControlReauthRequiredCode = 'succession_live_control_reauth_required'
 
 const stepOrder = [
   'snapshot',
@@ -275,9 +288,13 @@ const formatDurationSeconds = (value: number | null) => {
   return `${days}d ${hours % 24}h`
 }
 
+const isReauthRequiredError = (err: unknown, code: string) =>
+  err instanceof APIError && err.status === 428 && err.code === code
+
 export default function NodeRetirement() {
   const { t } = useTranslation()
   const successionFormDirtyRef = useRef(false)
+  const pendingReauthActionRef = useRef<(() => Promise<void>) | null>(null)
   const [loading, setLoading] = useState(true)
   const [status, setStatus] = useState<NodeRetirementStatus | null>(null)
   const [sessions, setSessions] = useState<NodeRetirementSession[]>([])
@@ -295,6 +312,10 @@ export default function NodeRetirement() {
   const [telegramMirrorEnabled, setTelegramMirrorEnabled] = useState(false)
   const [successionStatus, setSuccessionStatus] = useState('')
   const [successionBusy, setSuccessionBusy] = useState(false)
+  const [reauthPrompt, setReauthPrompt] = useState<ReauthPrompt | null>(null)
+  const [reauthPassword, setReauthPassword] = useState('')
+  const [reauthStatus, setReauthStatus] = useState('')
+  const [reauthBusy, setReauthBusy] = useState(false)
   const [successionForm, setSuccessionForm] = useState<SuccessionConfig>({
     enabled: false,
     dry_run: true,
@@ -317,6 +338,67 @@ export default function NodeRetirement() {
   const syncSuccessionForm = (next: SuccessionConfig) => {
     successionFormDirtyRef.current = false
     setSuccessionForm(next)
+  }
+
+  const openReauthPrompt = (prompt: ReauthPrompt, action: () => Promise<void>) => {
+    pendingReauthActionRef.current = action
+    setReauthPrompt(prompt)
+    setReauthPassword('')
+    setReauthStatus('')
+  }
+
+  const openNodeRetirementReauthPrompt = (titleKey: string, bodyKey: string, action: () => Promise<void>) => {
+    openReauthPrompt({
+      scope: 'node_retirement_control',
+      titleKey,
+      bodyKey,
+    }, action)
+  }
+
+  const openSuccessionLiveReauthPrompt = (action: () => Promise<void>) => {
+    openReauthPrompt({
+      scope: 'succession_live_control',
+      titleKey: 'nodeRetirement.reauthSuccessionTitle',
+      bodyKey: 'nodeRetirement.reauthSuccessionBody',
+    }, action)
+  }
+
+  const closeReauthPrompt = () => {
+    if (reauthBusy) return
+    pendingReauthActionRef.current = null
+    setReauthPrompt(null)
+    setReauthPassword('')
+    setReauthStatus('')
+  }
+
+  const handleReauthSubmit = async () => {
+    if (!reauthPrompt) return
+    if (!reauthPassword.trim()) {
+      setReauthStatus(t('nodeRetirement.reauthPasswordRequired'))
+      return
+    }
+    setReauthBusy(true)
+    setReauthStatus('')
+    try {
+      await reauthAuth({
+        password: reauthPassword,
+        scope: reauthPrompt.scope,
+      })
+    } catch (err: any) {
+      setReauthStatus(err?.message || t('nodeRetirement.reauthFailed'))
+      setReauthBusy(false)
+      return
+    }
+
+    const action = pendingReauthActionRef.current
+    pendingReauthActionRef.current = null
+    setReauthPrompt(null)
+    setReauthPassword('')
+    setReauthStatus('')
+    setReauthBusy(false)
+    if (action) {
+      await action()
+    }
   }
 
   const loadAll = async (silent = false, forceSelectActive = false) => {
@@ -587,11 +669,7 @@ export default function NodeRetirement() {
     })
   }, [activeSession])
 
-  const handleCreateSession = async () => {
-    if (!disclaimerAccepted) {
-      setSessionStatus(t('nodeRetirement.disclaimerRequired'))
-      return
-    }
+  const executeCreateSession = async () => {
     setSessionBusy(true)
     setSessionStatus('')
     try {
@@ -604,13 +682,37 @@ export default function NodeRetirement() {
       setDisclaimerAccepted(false)
       await loadAll(true, true)
     } catch (err) {
+      if (isReauthRequiredError(err, nodeRetirementControlReauthRequiredCode)) {
+        openNodeRetirementReauthPrompt(
+          'nodeRetirement.reauthCreateTitle',
+          'nodeRetirement.reauthCreateBody',
+          executeCreateSession
+        )
+        return
+      }
       setSessionStatus(err instanceof Error ? err.message : t('nodeRetirement.createFailed'))
     } finally {
       setSessionBusy(false)
     }
   }
 
-  const handleConfirmCoopClose = async () => {
+  const handleCreateSession = async () => {
+    if (!disclaimerAccepted) {
+      setSessionStatus(t('nodeRetirement.disclaimerRequired'))
+      return
+    }
+    if (!dryRun) {
+      openNodeRetirementReauthPrompt(
+        'nodeRetirement.reauthCreateTitle',
+        'nodeRetirement.reauthCreateBody',
+        executeCreateSession
+      )
+      return
+    }
+    await executeCreateSession()
+  }
+
+  const executeConfirmCoopClose = async () => {
     if (!activeSession) return
     setSessionActionBusy(true)
     setSessionStatus('')
@@ -620,13 +722,35 @@ export default function NodeRetirement() {
       setConfirmCoopOpen(false)
       await loadAll(true)
     } catch (err) {
+      if (isReauthRequiredError(err, nodeRetirementControlReauthRequiredCode)) {
+        openNodeRetirementReauthPrompt(
+          'nodeRetirement.reauthCoopTitle',
+          'nodeRetirement.reauthCoopBody',
+          executeConfirmCoopClose
+        )
+        return
+      }
       setSessionStatus(err instanceof Error ? err.message : t('nodeRetirement.coopConfirmFailed'))
     } finally {
       setSessionActionBusy(false)
     }
   }
 
-  const handleChannelDecision = async (channelPoint: string, decision: 'wait' | 'force_close') => {
+  const handleConfirmCoopClose = async () => {
+    if (!activeSession) return
+    if (!activeSession.dry_run) {
+      setConfirmCoopOpen(false)
+      openNodeRetirementReauthPrompt(
+        'nodeRetirement.reauthCoopTitle',
+        'nodeRetirement.reauthCoopBody',
+        executeConfirmCoopClose
+      )
+      return
+    }
+    await executeConfirmCoopClose()
+  }
+
+  const executeChannelDecision = async (channelPoint: string, decision: 'wait' | 'force_close') => {
     if (!activeSession) return
     setSessionActionBusy(true)
     setSessionStatus('')
@@ -635,23 +759,35 @@ export default function NodeRetirement() {
       setSessionStatus(decision === 'force_close' ? t('nodeRetirement.forceCloseDecisionSaved') : t('nodeRetirement.waitDecisionSaved'))
       await loadAll(true)
     } catch (err) {
+      if (isReauthRequiredError(err, nodeRetirementControlReauthRequiredCode) && decision === 'force_close') {
+        openNodeRetirementReauthPrompt(
+          'nodeRetirement.reauthForceCloseTitle',
+          'nodeRetirement.reauthForceCloseBody',
+          () => executeChannelDecision(channelPoint, decision)
+        )
+        return
+      }
       setSessionStatus(err instanceof Error ? err.message : t('nodeRetirement.decisionFailed'))
     } finally {
       setSessionActionBusy(false)
     }
   }
 
-  const handleSaveSuccession = async () => {
-    setSuccessionStatus('')
-    if (successionForm.enabled && !telegramMirrorEnabled) {
-      setSuccessionStatus(t('nodeRetirement.telegramMirrorRequiredError'))
+  const handleChannelDecision = async (channelPoint: string, decision: 'wait' | 'force_close') => {
+    if (decision === 'force_close' && activeSession && !activeSession.dry_run) {
+      openNodeRetirementReauthPrompt(
+        'nodeRetirement.reauthForceCloseTitle',
+        'nodeRetirement.reauthForceCloseBody',
+        () => executeChannelDecision(channelPoint, decision)
+      )
       return
     }
-    if (successionForm.enabled && !String(successionForm.destination_address || '').trim()) {
-      setSuccessionStatus(t('nodeRetirement.destinationRequiredError'))
-      return
-    }
+    await executeChannelDecision(channelPoint, decision)
+  }
+
+  const executeSaveSuccession = async () => {
     setSuccessionBusy(true)
+    setSuccessionStatus('')
     try {
       const next = await updateSuccessionConfig({
         enabled: successionForm.enabled,
@@ -669,10 +805,31 @@ export default function NodeRetirement() {
       syncSuccessionForm(next as SuccessionConfig)
       setSuccessionStatus(t('nodeRetirement.successionSaved'))
     } catch (err) {
+      if (isReauthRequiredError(err, successionLiveControlReauthRequiredCode)) {
+        openSuccessionLiveReauthPrompt(executeSaveSuccession)
+        return
+      }
       setSuccessionStatus(err instanceof Error ? err.message : t('nodeRetirement.successionSaveFailed'))
     } finally {
       setSuccessionBusy(false)
     }
+  }
+
+  const handleSaveSuccession = async () => {
+    setSuccessionStatus('')
+    if (successionForm.enabled && !telegramMirrorEnabled) {
+      setSuccessionStatus(t('nodeRetirement.telegramMirrorRequiredError'))
+      return
+    }
+    if (successionForm.enabled && !String(successionForm.destination_address || '').trim()) {
+      setSuccessionStatus(t('nodeRetirement.destinationRequiredError'))
+      return
+    }
+    if (successionForm.enabled && !successionForm.dry_run) {
+      openSuccessionLiveReauthPrompt(executeSaveSuccession)
+      return
+    }
+    await executeSaveSuccession()
   }
 
   const handleAlive = async () => {
@@ -1222,6 +1379,41 @@ export default function NodeRetirement() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+      {reauthPrompt && (
+        <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center px-4">
+          <form
+            className="w-full max-w-xl rounded-2xl border border-amber-400/40 bg-ink p-5 space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void handleReauthSubmit()
+            }}
+          >
+            <h4 className="text-lg font-semibold text-amber-100">{t(reauthPrompt.titleKey)}</h4>
+            <p className="text-sm text-fog/80">{t(reauthPrompt.bodyKey)}</p>
+            <label className="block text-sm text-fog/70">
+              {t('nodeRetirement.reauthPasswordLabel')}
+              <input
+                className="input-field mt-1"
+                type="password"
+                autoComplete="current-password"
+                value={reauthPassword}
+                onChange={(event) => setReauthPassword(event.target.value)}
+                placeholder={t('nodeRetirement.reauthPasswordPlaceholder')}
+                autoFocus
+              />
+            </label>
+            {reauthStatus && <p className="text-sm text-brass">{reauthStatus}</p>}
+            <div className="flex gap-2 justify-end">
+              <button className="btn-secondary text-xs px-3 py-2" type="button" onClick={closeReauthPrompt} disabled={reauthBusy}>
+                {t('common.cancel')}
+              </button>
+              <button className="btn-primary text-xs px-3 py-2" type="submit" disabled={reauthBusy}>
+                {reauthBusy ? t('common.saving') : t('nodeRetirement.reauthConfirm')}
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </section>

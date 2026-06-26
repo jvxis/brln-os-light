@@ -13,6 +13,11 @@ Base URL: https://127.0.0.1:8443
   - `POST /api/auth/logout`
   - `POST /api/auth/reauth`
 - Manual external on-chain sends (`POST /api/wallet/send`) require a fresh reauthentication step.
+- Sensitive scopes accepted by `POST /api/auth/reauth` include:
+  - `wallet_send_external`
+  - `macaroon_export`
+  - `node_retirement_control`
+  - `succession_live_control`
 
 ## Error format
 - Non-2xx responses return JSON: `{"error":"message","code":"optional_code"}`
@@ -301,6 +306,62 @@ Body:
   "time_lock_delta": 40,
   "inbound_enabled": false
 }
+
+## Node Retirement and Succession
+
+GET /api/lnops/node-retirement/status
+GET /api/lnops/node-retirement/sessions
+GET /api/lnops/node-retirement/sessions/{id}
+GET /api/lnops/node-retirement/sessions/{id}/events
+GET /api/lnops/node-retirement/sessions/{id}/channels
+GET /api/lnops/node-retirement/sessions/{id}/transfer
+
+POST /api/lnops/node-retirement/sessions
+Body:
+{
+  "source": "manual",
+  "dry_run": false,
+  "disclaimer_accepted": true,
+  "confirm_password": "optional inline reauth"
+}
+- API-created sessions must use `source=manual`; `source=succession` is reserved for the internal succession scheduler.
+- Live sessions (`dry_run=false`) require recent `node_retirement_control` reauthentication or inline `confirm_password`.
+- Missing reauth returns HTTP 428 with `code=node_retirement_control_reauth_required`.
+
+POST /api/lnops/node-retirement/sessions/{id}/confirm-coop
+Body:
+{
+  "confirm_password": "optional inline reauth"
+}
+- Live cooperative close confirmation requires recent `node_retirement_control` reauthentication.
+
+POST /api/lnops/node-retirement/sessions/{id}/decision
+Body:
+{
+  "channel_point": "txid:index",
+  "decision": "wait"|"force_close",
+  "confirm_password": "optional inline reauth"
+}
+- Live `force_close` decisions require recent `node_retirement_control` reauthentication.
+
+GET /api/lnops/succession/status
+GET /api/lnops/succession/config
+
+POST /api/lnops/succession/config
+Body:
+{
+  "enabled": true,
+  "dry_run": false,
+  "destination_address": "bc1...",
+  "confirm_password": "optional inline reauth"
+}
+- Saving a final config with `enabled=true` and `dry_run=false` requires recent `succession_live_control` reauthentication.
+- Missing reauth returns HTTP 428 with `code=succession_live_control_reauth_required`.
+- The automatic succession scheduler can still start its retirement session without an interactive password prompt once live succession has already been armed.
+
+POST /api/lnops/succession/alive
+POST /api/lnops/succession/simulate
+- Do not require live-control reauthentication.
 
 ## App Store
 

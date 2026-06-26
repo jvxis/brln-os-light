@@ -47,6 +47,8 @@ const (
 
 	authScopeWalletSendExternal = "wallet_send_external"
 	authScopeMacaroonExport     = "macaroon_export"
+	authScopeNodeRetirement     = "node_retirement_control"
+	authScopeSuccessionLive     = "succession_live_control"
 )
 
 type authContextKey string
@@ -469,7 +471,7 @@ func (a *AuthService) reauth(sessionID string, password string, scope string) (t
 
 func authScopeValid(scope string) bool {
 	switch strings.TrimSpace(scope) {
-	case authScopeWalletSendExternal, authScopeMacaroonExport:
+	case authScopeWalletSendExternal, authScopeMacaroonExport, authScopeNodeRetirement, authScopeSuccessionLive:
 		return true
 	default:
 		return false

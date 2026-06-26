@@ -12,6 +12,26 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+const nodeRetirementControlReauthRequiredCode = "node_retirement_control_reauth_required"
+
+type nodeRetirementCreateSessionRequest struct {
+	Source             string `json:"source"`
+	DryRun             bool   `json:"dry_run"`
+	DisclaimerAccepted bool   `json:"disclaimer_accepted"`
+	Config             any    `json:"config"`
+	ConfirmPassword    string `json:"confirm_password"`
+}
+
+type nodeRetirementConfirmCoopRequest struct {
+	ConfirmPassword string `json:"confirm_password"`
+}
+
+type nodeRetirementDecisionRequest struct {
+	ChannelPoint    string `json:"channel_point"`
+	Decision        string `json:"decision"`
+	ConfirmPassword string `json:"confirm_password"`
+}
+
 func (s *Server) handleNodeRetirementStatusGet(w http.ResponseWriter, r *http.Request) {
 	svc, errMsg := s.nodeRetirementService()
 	if svc == nil {
@@ -50,15 +70,26 @@ func (s *Server) handleNodeRetirementSessionsPost(w http.ResponseWriter, r *http
 		return
 	}
 
-	var req struct {
-		Source             string `json:"source"`
-		DryRun             bool   `json:"dry_run"`
-		DisclaimerAccepted bool   `json:"disclaimer_accepted"`
-		Config             any    `json:"config"`
-	}
+	var req nodeRetirementCreateSessionRequest
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
+	}
+	if !nodeRetirementAPISourceAllowed(req.Source) {
+		writeError(w, http.StatusBadRequest, "node retirement API sessions must use manual source")
+		return
+	}
+	if nodeRetirementCreateSessionRequiresControlReauth(req) {
+		if !s.requireSensitiveReauth(
+			w,
+			r,
+			authScopeNodeRetirement,
+			req.ConfirmPassword,
+			nodeRetirementControlReauthRequiredCode,
+			"password confirmation required for live node retirement",
+		) {
+			return
+		}
 	}
 
 	configRaw := []byte(`{}`)
@@ -75,7 +106,7 @@ func (s *Server) handleNodeRetirementSessionsPost(w http.ResponseWriter, r *http
 	defer cancel()
 
 	session, err := svc.CreateSession(ctx, NodeRetirementCreateParams{
-		Source:             req.Source,
+		Source:             nodeRetirementSourceManual,
 		DryRun:             req.DryRun,
 		DisclaimerAccepted: req.DisclaimerAccepted,
 		Config:             configRaw,
@@ -249,7 +280,36 @@ func (s *Server) handleNodeRetirementSessionConfirmCoopPost(w http.ResponseWrite
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	session, err := svc.ConfirmCoopClose(ctx, sessionID)
+
+	var req nodeRetirementConfirmCoopRequest
+	if err := readOptionalJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	session, err := svc.GetSession(ctx, sessionID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrNodeRetirementSessionNotFound):
+			writeError(w, http.StatusNotFound, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	if nodeRetirementConfirmCoopRequiresControlReauth(session) {
+		if !s.requireSensitiveReauth(
+			w,
+			r,
+			authScopeNodeRetirement,
+			req.ConfirmPassword,
+			nodeRetirementControlReauthRequiredCode,
+			"password confirmation required for live node retirement",
+		) {
+			return
+		}
+	}
+
+	session, err = svc.ConfirmCoopClose(ctx, sessionID)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrNodeRetirementSessionNotFound):
@@ -280,10 +340,7 @@ func (s *Server) handleNodeRetirementSessionDecisionPost(w http.ResponseWriter, 
 		return
 	}
 
-	var req struct {
-		ChannelPoint string `json:"channel_point"`
-		Decision     string `json:"decision"`
-	}
+	var req nodeRetirementDecisionRequest
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
@@ -291,6 +348,30 @@ func (s *Server) handleNodeRetirementSessionDecisionPost(w http.ResponseWriter, 
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
+
+	session, err := svc.GetSession(ctx, sessionID)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrNodeRetirementSessionNotFound):
+			writeError(w, http.StatusNotFound, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	if nodeRetirementDecisionRequiresControlReauth(session, req.Decision) {
+		if !s.requireSensitiveReauth(
+			w,
+			r,
+			authScopeNodeRetirement,
+			req.ConfirmPassword,
+			nodeRetirementControlReauthRequiredCode,
+			"password confirmation required for live node retirement",
+		) {
+			return
+		}
+	}
+
 	if err := svc.SetChannelDecision(ctx, sessionID, req.ChannelPoint, req.Decision); err != nil {
 		switch {
 		case errors.Is(err, ErrNodeRetirementSessionNotFound), errors.Is(err, ErrNodeRetirementChannelNotFound):
@@ -338,4 +419,21 @@ func (s *Server) handleNodeRetirementSessionTransferGet(w http.ResponseWriter, r
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"item": transfer})
+}
+
+func nodeRetirementAPISourceAllowed(source string) bool {
+	normalized := strings.TrimSpace(strings.ToLower(source))
+	return normalized == "" || normalized == nodeRetirementSourceManual
+}
+
+func nodeRetirementCreateSessionRequiresControlReauth(req nodeRetirementCreateSessionRequest) bool {
+	return !req.DryRun
+}
+
+func nodeRetirementConfirmCoopRequiresControlReauth(session NodeRetirementSession) bool {
+	return !session.DryRun
+}
+
+func nodeRetirementDecisionRequiresControlReauth(session NodeRetirementSession, decision string) bool {
+	return !session.DryRun && strings.TrimSpace(strings.ToLower(decision)) == nodeRetirementDecisionForceClose
 }

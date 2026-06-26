@@ -7,6 +7,22 @@ import (
 	"time"
 )
 
+const successionLiveControlReauthRequiredCode = "succession_live_control_reauth_required"
+
+type successionConfigPostRequest struct {
+	Enabled               *bool   `json:"enabled"`
+	DryRun                *bool   `json:"dry_run"`
+	DestinationAddress    *string `json:"destination_address"`
+	PreapproveFCOffline   *bool   `json:"preapprove_fc_offline"`
+	PreapproveFCStuckHTLC *bool   `json:"preapprove_fc_stuck_htlc"`
+	StuckHTLCThresholdSec *int64  `json:"stuck_htlc_threshold_sec"`
+	SweepMinConfs         *int    `json:"sweep_min_confs"`
+	SweepSatPerVbyte      *int64  `json:"sweep_sat_per_vbyte"`
+	CheckPeriodDays       *int    `json:"check_period_days"`
+	ReminderPeriodDays    *int    `json:"reminder_period_days"`
+	ConfirmPassword       string  `json:"confirm_password"`
+}
+
 func (s *Server) handleSuccessionStatusGet(w http.ResponseWriter, r *http.Request) {
 	svc, errMsg := s.successionService()
 	if svc == nil {
@@ -64,18 +80,7 @@ func (s *Server) handleSuccessionConfigPost(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var req struct {
-		Enabled               *bool   `json:"enabled"`
-		DryRun                *bool   `json:"dry_run"`
-		DestinationAddress    *string `json:"destination_address"`
-		PreapproveFCOffline   *bool   `json:"preapprove_fc_offline"`
-		PreapproveFCStuckHTLC *bool   `json:"preapprove_fc_stuck_htlc"`
-		StuckHTLCThresholdSec *int64  `json:"stuck_htlc_threshold_sec"`
-		SweepMinConfs         *int    `json:"sweep_min_confs"`
-		SweepSatPerVbyte      *int64  `json:"sweep_sat_per_vbyte"`
-		CheckPeriodDays       *int    `json:"check_period_days"`
-		ReminderPeriodDays    *int    `json:"reminder_period_days"`
-	}
+	var req successionConfigPostRequest
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
@@ -83,6 +88,24 @@ func (s *Server) handleSuccessionConfigPost(w http.ResponseWriter, r *http.Reque
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
+
+	current, err := svc.GetConfig(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if successionConfigPostRequiresLiveReauth(current, req) {
+		if !s.requireSensitiveReauth(
+			w,
+			r,
+			authScopeSuccessionLive,
+			req.ConfirmPassword,
+			successionLiveControlReauthRequiredCode,
+			"password confirmation required for live succession mode",
+		) {
+			return
+		}
+	}
 
 	cfg, err := svc.UpdateConfig(ctx, SuccessionConfigUpdate{
 		Enabled:               req.Enabled,
@@ -171,4 +194,16 @@ func (s *Server) handleSuccessionSimulatePost(w http.ResponseWriter, r *http.Req
 	}
 
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func successionConfigPostRequiresLiveReauth(current SuccessionConfig, req successionConfigPostRequest) bool {
+	enabled := current.Enabled
+	dryRun := current.DryRun
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	if req.DryRun != nil {
+		dryRun = *req.DryRun
+	}
+	return enabled && !dryRun
 }

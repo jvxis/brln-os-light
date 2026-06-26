@@ -372,6 +372,7 @@ export const createNodeRetirementSession = (payload: {
   dry_run?: boolean
   disclaimer_accepted?: boolean
   config?: Record<string, any>
+  confirm_password?: string
 }) => request('/api/lnops/node-retirement/sessions', { method: 'POST', body: JSON.stringify(payload) })
 export const getNodeRetirementSession = (sessionID: string) =>
   request(`/api/lnops/node-retirement/sessions/${encodeURIComponent(sessionID)}`)
@@ -381,9 +382,9 @@ export const getNodeRetirementSessionChannels = (sessionID: string) =>
   request(`/api/lnops/node-retirement/sessions/${encodeURIComponent(sessionID)}/channels`)
 export const getNodeRetirementSessionTransfer = (sessionID: string) =>
   request(`/api/lnops/node-retirement/sessions/${encodeURIComponent(sessionID)}/transfer`)
-export const confirmNodeRetirementCoopClose = (sessionID: string) =>
-  request(`/api/lnops/node-retirement/sessions/${encodeURIComponent(sessionID)}/confirm-coop`, { method: 'POST' })
-export const decideNodeRetirementChannel = (sessionID: string, payload: { channel_point: string; decision: 'wait' | 'force_close' }) =>
+export const confirmNodeRetirementCoopClose = (sessionID: string, payload?: { confirm_password?: string }) =>
+  request(`/api/lnops/node-retirement/sessions/${encodeURIComponent(sessionID)}/confirm-coop`, { method: 'POST', body: payload ? JSON.stringify(payload) : undefined })
+export const decideNodeRetirementChannel = (sessionID: string, payload: { channel_point: string; decision: 'wait' | 'force_close'; confirm_password?: string }) =>
   request(`/api/lnops/node-retirement/sessions/${encodeURIComponent(sessionID)}/decision`, { method: 'POST', body: JSON.stringify(payload) })
 export const getSuccessionStatus = () => request('/api/lnops/succession/status')
 export const getSuccessionConfig = () => request('/api/lnops/succession/config')
@@ -398,6 +399,7 @@ export const updateSuccessionConfig = (payload: {
   sweep_sat_per_vbyte?: number
   check_period_days?: number
   reminder_period_days?: number
+  confirm_password?: string
 }) => request('/api/lnops/succession/config', { method: 'POST', body: JSON.stringify(payload) })
 export const successionAlive = (payload: { source?: string }) =>
   request('/api/lnops/succession/alive', { method: 'POST', body: JSON.stringify(payload) })

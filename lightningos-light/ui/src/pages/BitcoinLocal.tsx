@@ -308,6 +308,9 @@ export default function BitcoinLocal() {
   const lastBlockLabel = lastBlockTime
     ? new Date(lastBlockTime).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
     : '-'
+  const lastBlockSeenLabel = lastBlockAgeSec === null
+    ? '-'
+    : t('bitcoinLocal.timeAgo', { time: formatDuration(lastBlockAgeSec) })
   const cadenceTone = lastBlockAgeSec === null
     ? 'muted'
     : lastBlockAgeSec <= 1200
@@ -612,7 +615,7 @@ export default function BitcoinLocal() {
               <div className="grid gap-2 text-sm text-fog/70">
                 <div className="flex items-center justify-between">
                   <span>{t('bitcoinLocal.lastBlockSeen')}</span>
-                  <span className="text-fog">{t('bitcoinLocal.timeAgo', { time: formatDuration(lastBlockAgeSec) })}</span>
+                  <span className="text-fog">{lastBlockSeenLabel}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span>{t('bitcoinLocal.networkBlockTime')}</span>

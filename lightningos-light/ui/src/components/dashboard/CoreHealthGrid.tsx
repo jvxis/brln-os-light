@@ -16,7 +16,7 @@ import HorizontalBarGauge from './HorizontalBarGauge'
 import StackedRatioBar from './StackedRatioBar'
 import StatusBadge from './StatusBadge'
 import DbMaintenanceModal from './DbMaintenanceModal'
-import type { BitcoinStatus, DiskSmart, LndChannel, LndPeer, LndStatus, PostgresStatus, SystemStats, Tone } from './types'
+import type { BitcoinCadenceBucket, BitcoinStatus, DiskSmart, LndChannel, LndPeer, LndStatus, PostgresStatus, SystemStats, Tone } from './types'
 
 type CoreHealthGridProps = {
   lnd: LndStatus | null
@@ -61,9 +61,12 @@ export default function CoreHealthGrid({
 
   const isLocalBitcoin = Boolean(bitcoin && (bitcoin.mode === 'local' || bitcoin.source === 'app' || bitcoin.source === 'external' || bitcoin.installed !== undefined))
   const cadenceBuckets = Array.isArray(bitcoin?.block_cadence) ? bitcoin.block_cadence : []
+  const cadenceVisibleBuckets: BitcoinCadenceBucket[] = cadenceBuckets.length > 0
+    ? cadenceBuckets
+    : Array.from({ length: 12 }).map(() => ({ start_time: 0, end_time: 0, count: 0 }))
   const cadenceWindowSec = bitcoin?.block_cadence_window_sec ?? 600
   const baselineCount = Math.max(1, Math.round(cadenceWindowSec / 600))
-  const maxCadence = Math.max(1, baselineCount, ...cadenceBuckets.map((bucket) => bucket.count))
+  const maxCadence = Math.max(1, baselineCount, ...cadenceVisibleBuckets.map((bucket) => bucket.count))
   const baselinePercent = (baselineCount / maxCadence) * 100
   const cadenceTotal = cadenceBuckets.reduce((sum, bucket) => sum + bucket.count, 0)
   const cadenceHours = (cadenceWindowSec * Math.max(1, cadenceBuckets.length)) / 3600
@@ -301,18 +304,20 @@ export default function CoreHealthGrid({
                 </div>
               </div>
 
-              {cadenceBuckets.length > 0 && (
+              {(cadenceBuckets.length > 0 || isLocalBitcoin) && (
                 <details className="rounded-2xl border border-white/10 bg-white/5 p-4">
                   <summary className="cursor-pointer text-sm text-fog/75">
                     <span className="inline-flex w-[calc(100%-1.25rem)] items-center justify-between gap-3 align-middle">
                       <span className="font-medium text-fog">{t('dashboard.blockCadence')}</span>
-                      <span className="text-xs text-fog/55">{t('dashboard.avgBlocksPerHour', { avg: cadenceAvg.toFixed(1) })}</span>
+                      <span className="text-xs text-fog/55">
+                        {cadenceBuckets.length > 0 ? t('dashboard.avgBlocksPerHour', { avg: cadenceAvg.toFixed(1) }) : t('common.unknown')}
+                      </span>
                     </span>
                   </summary>
                   <div className="mt-3">
                     <div className="block-cadence-chart">
                       <div className="block-cadence-baseline" style={{ bottom: `${baselinePercent}%` }} />
-                      {cadenceBuckets.map((bucket, idx) => {
+                      {cadenceVisibleBuckets.map((bucket, idx) => {
                         const height = bucket.count > 0 ? Math.max(12, Math.round((bucket.count / maxCadence) * 100)) : 6
                         const bucketTone = cadenceBucketTone(bucket.count)
                         return (
@@ -333,7 +338,7 @@ export default function CoreHealthGrid({
                     </div>
                     <div className="mt-2 flex items-center justify-between text-xs text-fog/50">
                       <span>{t('dashboard.blocksPerWindow', { total: cadenceTotal, hours: cadenceHours.toFixed(1) })}</span>
-                      <span>{bitcoin.best_block_time ? formatTimestamp(locale, bitcoin.best_block_time) : '-'}</span>
+                      <span>{cadenceBuckets.length > 0 && bitcoin.best_block_time ? formatTimestamp(locale, bitcoin.best_block_time) : '-'}</span>
                     </div>
                   </div>
                 </details>

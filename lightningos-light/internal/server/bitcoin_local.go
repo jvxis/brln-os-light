@@ -299,7 +299,7 @@ func fetchBitcoinLocalChainInfo(ctx context.Context, paths bitcoinCorePaths) (bi
 }
 
 func fetchBitcoinLocalChainInfoBest(ctx context.Context, paths bitcoinCorePaths) (bitcoinCLIChainInfo, error) {
-	if cfg, ok := readBitcoinConfRPCConfig(paths.ConfigPath); ok {
+	if cfg, ok := readBitcoinCoreAppRPCConfig(ctx, paths); ok {
 		info, err := fetchBitcoinInfo(ctx, cfg.Host, cfg.User, cfg.Pass)
 		if err == nil {
 			return bitcoinInfoToCLIChainInfo(info), nil
@@ -321,13 +321,34 @@ func fetchBitcoinLocalNetworkInfo(ctx context.Context, paths bitcoinCorePaths) (
 }
 
 func fetchBitcoinLocalNetworkInfoBest(ctx context.Context, paths bitcoinCorePaths) (bitcoinCLINetworkInfo, error) {
-	if cfg, ok := readBitcoinConfRPCConfig(paths.ConfigPath); ok {
+	if cfg, ok := readBitcoinCoreAppRPCConfig(ctx, paths); ok {
 		info, err := fetchBitcoinNetworkInfo(ctx, cfg.Host, cfg.User, cfg.Pass)
 		if err == nil {
 			return bitcoinNetworkInfoToCLINetworkInfo(info), nil
 		}
 	}
 	return fetchBitcoinLocalNetworkInfo(ctx, paths)
+}
+
+func readBitcoinCoreAppRPCConfig(ctx context.Context, paths bitcoinCorePaths) (bitcoinRPCConfig, bool) {
+	if !fileExists(paths.ComposePath) {
+		return bitcoinRPCConfig{}, false
+	}
+	raw, err := readBitcoinCoreConfigRaw(ctx, paths)
+	if err != nil {
+		return bitcoinRPCConfig{}, false
+	}
+	user, pass, zmqBlock, zmqTx := parseBitcoinCoreRPCConfig(raw)
+	if user == "" || pass == "" {
+		return bitcoinRPCConfig{}, false
+	}
+	return bitcoinRPCConfig{
+		Host:     "127.0.0.1:8332",
+		User:     user,
+		Pass:     pass,
+		ZMQBlock: normalizeLocalZMQ(zmqBlock, "tcp://127.0.0.1:28332"),
+		ZMQTx:    normalizeLocalZMQ(zmqTx, "tcp://127.0.0.1:28333"),
+	}, true
 }
 
 func bitcoinInfoToCLIChainInfo(info bitcoinInfo) bitcoinCLIChainInfo {
@@ -374,7 +395,7 @@ func getBitcoinLocalCadence(ctx context.Context, paths bitcoinCorePaths, bestHas
 	var err error
 	if fileExists(paths.ComposePath) {
 		computed := false
-		if cfg, ok := readBitcoinConfRPCConfig(paths.ConfigPath); ok {
+		if cfg, ok := readBitcoinCoreAppRPCConfig(ctx, paths); ok {
 			bestTime, buckets, err = computeBitcoinLocalCadenceRPC(ctx, cfg, trimmed)
 			if err == nil {
 				computed = true

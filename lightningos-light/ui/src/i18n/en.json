@@ -2274,6 +2274,8 @@
     "channelDetailChannelNoteSaved": "Channel note saved.",
     "channelDetailChannelNoteSaveFailed": "Failed to save channel note.",
     "channelDetailQuickContext": "Quick context",
+    "channelDetailPreviousChannelNotes": "Previous channel notes",
+    "channelDetailPreviousChannelNotesSubtitle": "Notes from earlier channels recorded for this same peer.",
     "channelDetailAlias": "Alias",
     "lightningToolsTitle": "Lightning Tools",
     "lightningToolsSubtitle": "Quick access to operational tools for peers, channels, fees, automations, and signing.",

@@ -199,6 +199,15 @@ type ChannelDetailPeerEvent = {
   new_value?: string
 }
 
+type ChannelPreviousNote = {
+  channel_point?: string
+  channel_id?: number
+  short_channel_id?: string
+  peer_alias?: string
+  note?: string
+  updated_at?: string
+}
+
 type ChannelDetailCoverage = {
   notifications_since?: string
   notifications_until?: string
@@ -225,6 +234,7 @@ type ChannelDetailResponse = {
   note?: string
   channel_note?: string
   peer_note?: string
+  previous_channel_notes?: ChannelPreviousNote[]
   coverage?: ChannelDetailCoverage
   data_source_warnings?: string[]
   pending_htlcs?: ChannelPendingHtlc[]
@@ -360,6 +370,7 @@ export default function ChannelDetailModal({ open, channelPoint, initialChannel,
   const received = Array.isArray(detail?.received) ? detail?.received || [] : []
   const failedHtlcs = Array.isArray(detail?.failed_htlcs) ? detail?.failed_htlcs || [] : []
   const peerEvents = Array.isArray(detail?.peer_events) ? detail?.peer_events || [] : []
+  const previousChannelNotes = Array.isArray(detail?.previous_channel_notes) ? detail?.previous_channel_notes || [] : []
   const pendingHtlcs = Array.isArray(detail?.pending_htlcs)
     ? detail?.pending_htlcs || []
     : Array.isArray(channel.pending_htlcs)
@@ -512,7 +523,14 @@ export default function ChannelDetailModal({ open, channelPoint, initialChannel,
     setChannelNoteSaving(true)
     setChannelNoteStatus('')
     try {
-      const payload = await saveLnChannelNote({ channel_point: point, note: channelNoteDraft }) as { note?: string; channel_note?: string }
+      const payload = await saveLnChannelNote({
+        channel_point: point,
+        note: channelNoteDraft,
+        remote_pubkey: channel.remote_pubkey || detail?.peer?.pub_key || '',
+        peer_alias: alias,
+        channel_id: channel.channel_id,
+        short_channel_id: shortChannelID,
+      }) as { note?: string; channel_note?: string }
       const savedNote = typeof payload?.channel_note === 'string' ? payload.channel_note : typeof payload?.note === 'string' ? payload.note : channelNoteDraft
       setDetail((current) => current ? { ...current, note: savedNote, channel_note: savedNote } : current)
       setChannelNoteDraft(savedNote)
@@ -1060,16 +1078,40 @@ export default function ChannelDetailModal({ open, channelPoint, initialChannel,
                       {channelNoteStatus && <p className="mt-3 text-sm text-brass">{channelNoteStatus}</p>}
                     </div>
                   </div>
-                  <div className="rounded-2xl border border-white/10 bg-ink/45 p-4">
-                    <h4 className="text-sm font-semibold">{t('lightningOps.channelDetailQuickContext')}</h4>
-                    <dl className="mt-3">
-                      <InfoRow label={t('lightningOps.channelDetailAlias')} value={alias} />
-                      <InfoRow label={t('lightningOps.channelDetailCapacity')} value={formatSats(capacity)} />
-                      <InfoRow label={t('lightningOps.channelDetailLocalBalance')} value={formatSats(localBalance)} />
-                      <InfoRow label={t('lightningOps.channelDetailRemoteBalance')} value={formatSats(remoteBalance)} />
-                      <InfoRow label={t('lightningOps.channelDetailClass')} value={settings.autofee_class_label || channel.class_label || t('common.na')} />
-                      <InfoRow label={t('lightningOps.channelDetailPeerAddress')} value={detail?.peer?.address || t('common.na')} mono />
-                    </dl>
+                  <div className="flex min-h-0 flex-col gap-4 xl:h-[552px]">
+                    <div className="shrink-0 rounded-2xl border border-white/10 bg-ink/45 p-4">
+                      <h4 className="text-sm font-semibold">{t('lightningOps.channelDetailQuickContext')}</h4>
+                      <dl className="mt-3">
+                        <InfoRow label={t('lightningOps.channelDetailAlias')} value={alias} />
+                        <InfoRow label={t('lightningOps.channelDetailCapacity')} value={formatSats(capacity)} />
+                        <InfoRow label={t('lightningOps.channelDetailLocalBalance')} value={formatSats(localBalance)} />
+                        <InfoRow label={t('lightningOps.channelDetailRemoteBalance')} value={formatSats(remoteBalance)} />
+                        <InfoRow label={t('lightningOps.channelDetailClass')} value={settings.autofee_class_label || channel.class_label || t('common.na')} />
+                        <InfoRow label={t('lightningOps.channelDetailPeerAddress')} value={detail?.peer?.address || t('common.na')} mono />
+                      </dl>
+                    </div>
+                    {previousChannelNotes.length > 0 && (
+                      <div className="flex min-h-[220px] flex-1 flex-col overflow-hidden rounded-2xl border border-white/10 bg-ink/45 p-4">
+                        <div className="shrink-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h4 className="text-sm font-semibold">{t('lightningOps.channelDetailPreviousChannelNotes')}</h4>
+                            <Badge tone="muted">{previousChannelNotes.length}</Badge>
+                          </div>
+                          <p className="mt-1 text-xs text-fog/50">{t('lightningOps.channelDetailPreviousChannelNotesSubtitle')}</p>
+                        </div>
+                        <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+                          {previousChannelNotes.map((item, index) => (
+                            <article key={`${item.channel_point || index}-${item.updated_at || ''}`} className="rounded-2xl border border-white/10 bg-black/20 p-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <span className="font-mono text-[11px] text-fog/70">{item.short_channel_id || shortMiddle(item.channel_point, 12, 6) || t('common.na')}</span>
+                                <span className="text-[11px] text-fog/45">{formatTime(item.updated_at)}</span>
+                              </div>
+                              <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-fog/85">{item.note || t('common.na')}</p>
+                            </article>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

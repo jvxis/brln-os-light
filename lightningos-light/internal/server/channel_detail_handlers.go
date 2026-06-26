@@ -18,27 +18,28 @@ const (
 )
 
 type lnChannelDetailResponse struct {
-	Channel             lndclient.ChannelInfo              `json:"channel"`
-	Peer                *lndclient.PeerInfo                `json:"peer,omitempty"`
-	CurrentBlockHeight  int64                              `json:"current_block_height,omitempty"`
-	ShortChannelID      string                             `json:"short_channel_id,omitempty"`
-	OpenBlockHeight     int64                              `json:"open_block_height,omitempty"`
-	OpenedConfirmations int64                              `json:"opened_confirmations,omitempty"`
-	Settings            lnChannelDetailSettings            `json:"settings"`
-	Periods             []lnChannelDetailPeriod            `json:"periods"`
-	FeeLogs             []lnChannelDetailFeeLog            `json:"fee_logs"`
-	Routed              []lnChannelDetailForward           `json:"routed"`
-	Rebalances          []lnChannelDetailRebalance         `json:"rebalances"`
-	Sent                []lnChannelDetailPayment           `json:"sent"`
-	Received            []lnChannelDetailPayment           `json:"received"`
-	FailedHTLCs         []lnChannelDetailFailure           `json:"failed_htlcs"`
-	PeerEvents          []lnChannelDetailPeerEvent         `json:"peer_events"`
-	Note                string                             `json:"note"`
-	ChannelNote         string                             `json:"channel_note"`
-	PeerNote            string                             `json:"peer_note"`
-	Coverage            lnChannelDetailCoverage            `json:"coverage"`
-	DataSourceWarnings  []string                           `json:"data_source_warnings,omitempty"`
-	PendingHTLCs        []lndclient.ChannelPendingHtlcInfo `json:"pending_htlcs,omitempty"`
+	Channel              lndclient.ChannelInfo              `json:"channel"`
+	Peer                 *lndclient.PeerInfo                `json:"peer,omitempty"`
+	CurrentBlockHeight   int64                              `json:"current_block_height,omitempty"`
+	ShortChannelID       string                             `json:"short_channel_id,omitempty"`
+	OpenBlockHeight      int64                              `json:"open_block_height,omitempty"`
+	OpenedConfirmations  int64                              `json:"opened_confirmations,omitempty"`
+	Settings             lnChannelDetailSettings            `json:"settings"`
+	Periods              []lnChannelDetailPeriod            `json:"periods"`
+	FeeLogs              []lnChannelDetailFeeLog            `json:"fee_logs"`
+	Routed               []lnChannelDetailForward           `json:"routed"`
+	Rebalances           []lnChannelDetailRebalance         `json:"rebalances"`
+	Sent                 []lnChannelDetailPayment           `json:"sent"`
+	Received             []lnChannelDetailPayment           `json:"received"`
+	FailedHTLCs          []lnChannelDetailFailure           `json:"failed_htlcs"`
+	PeerEvents           []lnChannelDetailPeerEvent         `json:"peer_events"`
+	Note                 string                             `json:"note"`
+	ChannelNote          string                             `json:"channel_note"`
+	PeerNote             string                             `json:"peer_note"`
+	PreviousChannelNotes []lnChannelPreviousNote            `json:"previous_channel_notes,omitempty"`
+	Coverage             lnChannelDetailCoverage            `json:"coverage"`
+	DataSourceWarnings   []string                           `json:"data_source_warnings,omitempty"`
+	PendingHTLCs         []lndclient.ChannelPendingHtlcInfo `json:"pending_htlcs,omitempty"`
 }
 
 type lnChannelDetailSettings struct {
@@ -158,6 +159,15 @@ type lnChannelDetailPeerEvent struct {
 	NewValue   string `json:"new_value"`
 }
 
+type lnChannelPreviousNote struct {
+	ChannelPoint   string `json:"channel_point"`
+	ChannelID      uint64 `json:"channel_id,omitempty"`
+	ShortChannelID string `json:"short_channel_id,omitempty"`
+	PeerAlias      string `json:"peer_alias,omitempty"`
+	Note           string `json:"note"`
+	UpdatedAt      string `json:"updated_at"`
+}
+
 type lnChannelDetailCoverage struct {
 	NotificationsSince string `json:"notifications_since,omitempty"`
 	NotificationsUntil string `json:"notifications_until,omitempty"`
@@ -175,6 +185,14 @@ create table if not exists ln_channel_notes (
   note text not null default '',
   updated_at timestamptz not null default now()
 );
+
+alter table ln_channel_notes add column if not exists remote_pubkey text;
+alter table ln_channel_notes add column if not exists peer_alias text;
+alter table ln_channel_notes add column if not exists channel_id bigint;
+alter table ln_channel_notes add column if not exists short_channel_id text;
+
+create index if not exists ln_channel_notes_remote_pubkey_idx
+  on ln_channel_notes (remote_pubkey, updated_at desc);
 `)
 	return err
 }
@@ -281,6 +299,9 @@ func (s *Server) handleLNChannelDetail(w http.ResponseWriter, r *http.Request) {
 	if err := s.ensurePeerNotesSchema(dbCtx); err != nil && s.logger != nil {
 		s.logger.Printf("peer notes schema unavailable: %v", err)
 	}
+	if err := s.updateLNChannelNoteMetadata(dbCtx, detail.Channel); err != nil && s.logger != nil {
+		s.logger.Printf("channel note metadata update failed: %v", err)
+	}
 	if err := s.applyLNChannelDetailEnrichment(dbCtx, &detail.Channel); err != nil && s.logger != nil {
 		s.logger.Printf("channel detail live enrichment failed: %v", err)
 	}
@@ -362,6 +383,11 @@ func (s *Server) handleLNChannelDetail(w http.ResponseWriter, r *http.Request) {
 	if note, err := s.loadLNPeerNote(dbCtx, detail.Channel.RemotePubkey); err == nil {
 		detail.PeerNote = note
 	}
+	if notes, err := s.loadLNPreviousChannelNotes(dbCtx, detail.Channel, 20); err == nil {
+		detail.PreviousChannelNotes = notes
+	} else if s.logger != nil {
+		s.logger.Printf("previous channel notes unavailable: %v", err)
+	}
 	if coverage, err := s.loadLNChannelDetailCoverage(dbCtx, detail.Channel.ChannelID); err == nil {
 		detail.Coverage = coverage
 	}
@@ -376,8 +402,12 @@ func (s *Server) handleLNChannelNotesPost(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var req struct {
-		ChannelPoint string `json:"channel_point"`
-		Note         string `json:"note"`
+		ChannelPoint   string `json:"channel_point"`
+		RemotePubkey   string `json:"remote_pubkey"`
+		PeerAlias      string `json:"peer_alias"`
+		ChannelID      uint64 `json:"channel_id"`
+		ShortChannelID string `json:"short_channel_id"`
+		Note           string `json:"note"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -401,12 +431,16 @@ func (s *Server) handleLNChannelNotesPost(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if _, err := s.db.Exec(ctx, `
-insert into ln_channel_notes (channel_point, note, updated_at)
-values ($1, $2, now())
+insert into ln_channel_notes (channel_point, note, remote_pubkey, peer_alias, channel_id, short_channel_id, updated_at)
+values ($1, $2, $3, $4, nullif($5::bigint, 0), $6, now())
 on conflict (channel_point) do update
 set note = excluded.note,
+    remote_pubkey = coalesce(nullif(excluded.remote_pubkey, ''), ln_channel_notes.remote_pubkey),
+    peer_alias = coalesce(nullif(excluded.peer_alias, ''), ln_channel_notes.peer_alias),
+    channel_id = coalesce(excluded.channel_id, ln_channel_notes.channel_id),
+    short_channel_id = coalesce(nullif(excluded.short_channel_id, ''), ln_channel_notes.short_channel_id),
     updated_at = now()
-`, normalizeChannelPoint(channelPoint), note); err != nil {
+`, normalizeChannelPoint(channelPoint), note, normalizeLNPeerNotePubkey(req.RemotePubkey), strings.TrimSpace(req.PeerAlias), int64(req.ChannelID), strings.TrimSpace(req.ShortChannelID)); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1085,6 +1119,21 @@ where channel_point = $1
 	return note, err
 }
 
+func (s *Server) updateLNChannelNoteMetadata(ctx context.Context, channel lndclient.ChannelInfo) error {
+	if s == nil || s.db == nil || strings.TrimSpace(channel.ChannelPoint) == "" {
+		return nil
+	}
+	_, err := s.db.Exec(ctx, `
+update ln_channel_notes
+set remote_pubkey = coalesce(nullif($2, ''), remote_pubkey),
+    peer_alias = coalesce(nullif($3, ''), peer_alias),
+    channel_id = coalesce(nullif($4::bigint, 0), channel_id),
+    short_channel_id = coalesce(nullif($5, ''), short_channel_id)
+where channel_point = $1
+`, normalizeChannelPoint(channel.ChannelPoint), normalizeLNPeerNotePubkey(channel.RemotePubkey), strings.TrimSpace(channel.PeerAlias), int64(channel.ChannelID), formatShortChanID(channel.ChannelID))
+	return err
+}
+
 func (s *Server) loadLNPeerNote(ctx context.Context, remotePubkey string) (string, error) {
 	if s == nil || s.db == nil {
 		return "", nil
@@ -1096,6 +1145,56 @@ from ln_peer_notes
 where remote_pubkey = $1
 `, normalizeLNPeerNotePubkey(remotePubkey)).Scan(&note)
 	return note, err
+}
+
+func (s *Server) loadLNPreviousChannelNotes(ctx context.Context, channel lndclient.ChannelInfo, limit int) ([]lnChannelPreviousNote, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+	remotePubkey := normalizeLNPeerNotePubkey(channel.RemotePubkey)
+	if remotePubkey == "" {
+		return []lnChannelPreviousNote{}, nil
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.db.Query(ctx, `
+select channel_point,
+  coalesce(channel_id, 0),
+  coalesce(short_channel_id, ''),
+  coalesce(peer_alias, ''),
+  note,
+  updated_at
+from ln_channel_notes
+where remote_pubkey = $1
+  and channel_point <> $2
+  and btrim(note) <> ''
+order by updated_at desc
+limit $3
+`, remotePubkey, normalizeChannelPoint(channel.ChannelPoint), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []lnChannelPreviousNote{}
+	for rows.Next() {
+		var row lnChannelPreviousNote
+		var channelID int64
+		var updatedAt time.Time
+		if err := rows.Scan(&row.ChannelPoint, &channelID, &row.ShortChannelID, &row.PeerAlias, &row.Note, &updatedAt); err != nil {
+			return nil, err
+		}
+		if channelID > 0 {
+			row.ChannelID = uint64(channelID)
+			if row.ShortChannelID == "" {
+				row.ShortChannelID = formatShortChanID(row.ChannelID)
+			}
+		}
+		row.UpdatedAt = updatedAt.UTC().Format(time.RFC3339)
+		out = append(out, row)
+	}
+	return out, rows.Err()
 }
 
 func (s *Server) loadLNChannelDetailCoverage(ctx context.Context, channelID uint64) (lnChannelDetailCoverage, error) {

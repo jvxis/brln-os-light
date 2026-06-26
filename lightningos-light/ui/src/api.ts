@@ -244,7 +244,7 @@ export const getLnChannels = () => request('/api/lnops/channels')
 export const getLnPeers = () => request('/api/lnops/peers')
 export const getLnChannelDetail = (channelPoint: string, limit = 30) =>
   request(`/api/lnops/channel/detail?channel_point=${encodeURIComponent(channelPoint)}&limit=${encodeURIComponent(String(limit))}`)
-export const saveLnChannelNote = (payload: { channel_point: string; note: string }) =>
+export const saveLnChannelNote = (payload: { channel_point: string; note: string; remote_pubkey?: string; peer_alias?: string; channel_id?: number; short_channel_id?: string }) =>
   request('/api/lnops/channel/notes', { method: 'POST', body: JSON.stringify(payload) })
 export const saveLnPeerNote = (payload: { remote_pubkey: string; note: string }) =>
   request('/api/lnops/peer/notes', { method: 'POST', body: JSON.stringify(payload) })

@@ -246,6 +246,7 @@ GET /api/lnops/channel/fees?channel_point=txid:index
 
 GET /api/lnops/channel/detail?channel_point=txid:index&limit=30
 - Returns live channel state plus historical per-channel data for the Lightning Ops detail modal: peer status, balances, policy/settings, period economics, fee logs, routed payments, rebalances, sent/received payments, failed HTLCs, peer events, peer/channel notes, and historical coverage.
+- Returns `previous_channel_notes` when older channel notes are available for the same peer.
 - `channel_id` can be used instead of `channel_point`; accepted formats are integer channel id or `blockxtransactionxoutput`.
 - `limit` defaults to 25 and is capped at 100 for list sections.
 
@@ -253,9 +254,14 @@ POST /api/lnops/channel/notes
 Body:
 {
   "channel_point": "txid:index",
+  "remote_pubkey": "02...",
+  "peer_alias": "Peer alias",
+  "channel_id": 1043834558060691457,
+  "short_channel_id": "949362x1404x1",
   "note": "Operator notes for this channel"
 }
 - Stores an operator note for the channel detail modal.
+- Metadata fields are optional but allow closed-channel notes to be shown later as previous notes for the same peer.
 
 POST /api/lnops/peer/notes
 Body:

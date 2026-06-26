@@ -76,6 +76,15 @@ func TestParseLNChannelDetailChannelID(t *testing.T) {
 	}
 }
 
+func TestNormalizeLNPeerNotePubkey(t *testing.T) {
+	t.Parallel()
+
+	got := normalizeLNPeerNotePubkey("  02ABCdef  ")
+	if got != "02abcdef" {
+		t.Fatalf("normalized pubkey = %q, want %q", got, "02abcdef")
+	}
+}
+
 func TestLNApplySevenDayStatsToChannel(t *testing.T) {
 	t.Parallel()
 

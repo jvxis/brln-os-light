@@ -34,6 +34,8 @@ type lnChannelDetailResponse struct {
 	FailedHTLCs         []lnChannelDetailFailure           `json:"failed_htlcs"`
 	PeerEvents          []lnChannelDetailPeerEvent         `json:"peer_events"`
 	Note                string                             `json:"note"`
+	ChannelNote         string                             `json:"channel_note"`
+	PeerNote            string                             `json:"peer_note"`
 	Coverage            lnChannelDetailCoverage            `json:"coverage"`
 	DataSourceWarnings  []string                           `json:"data_source_warnings,omitempty"`
 	PendingHTLCs        []lndclient.ChannelPendingHtlcInfo `json:"pending_htlcs,omitempty"`
@@ -177,6 +179,20 @@ create table if not exists ln_channel_notes (
 	return err
 }
 
+func (s *Server) ensurePeerNotesSchema(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	_, err := s.db.Exec(ctx, `
+create table if not exists ln_peer_notes (
+  remote_pubkey text primary key,
+  note text not null default '',
+  updated_at timestamptz not null default now()
+);
+`)
+	return err
+}
+
 func (s *Server) handleLNChannelDetail(w http.ResponseWriter, r *http.Request) {
 	channelPoint := strings.TrimSpace(r.URL.Query().Get("channel_point"))
 	channelID, channelIDOK := parseLNChannelDetailChannelID(r.URL.Query().Get("channel_id"))
@@ -262,6 +278,9 @@ func (s *Server) handleLNChannelDetail(w http.ResponseWriter, r *http.Request) {
 	if err := s.ensureChannelNotesSchema(dbCtx); err != nil && s.logger != nil {
 		s.logger.Printf("channel notes schema unavailable: %v", err)
 	}
+	if err := s.ensurePeerNotesSchema(dbCtx); err != nil && s.logger != nil {
+		s.logger.Printf("peer notes schema unavailable: %v", err)
+	}
 	if err := s.applyLNChannelDetailEnrichment(dbCtx, &detail.Channel); err != nil && s.logger != nil {
 		s.logger.Printf("channel detail live enrichment failed: %v", err)
 	}
@@ -338,6 +357,10 @@ func (s *Server) handleLNChannelDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	if note, err := s.loadLNChannelNote(dbCtx, detail.Channel.ChannelPoint); err == nil {
 		detail.Note = note
+		detail.ChannelNote = note
+	}
+	if note, err := s.loadLNPeerNote(dbCtx, detail.Channel.RemotePubkey); err == nil {
+		detail.PeerNote = note
 	}
 	if coverage, err := s.loadLNChannelDetailCoverage(dbCtx, detail.Channel.ChannelID); err == nil {
 		detail.Coverage = coverage
@@ -387,7 +410,50 @@ set note = excluded.note,
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "note": note})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "note": note, "channel_note": note})
+}
+
+func (s *Server) handleLNPeerNotesPost(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, http.StatusServiceUnavailable, "db unavailable")
+		return
+	}
+	var req struct {
+		RemotePubkey string `json:"remote_pubkey"`
+		Note         string `json:"note"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	remotePubkey := normalizeLNPeerNotePubkey(req.RemotePubkey)
+	if remotePubkey == "" {
+		writeError(w, http.StatusBadRequest, "remote_pubkey required")
+		return
+	}
+	note := strings.TrimSpace(req.Note)
+	if len([]byte(note)) > lnChannelNoteMaxBytes {
+		writeError(w, http.StatusBadRequest, "note too long")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	if err := s.ensurePeerNotesSchema(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, err := s.db.Exec(ctx, `
+insert into ln_peer_notes (remote_pubkey, note, updated_at)
+values ($1, $2, now())
+on conflict (remote_pubkey) do update
+set note = excluded.note,
+    updated_at = now()
+`, remotePubkey, note); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "peer_note": note})
 }
 
 func parseLNChannelDetailLimit(raw string) (int, error) {
@@ -418,6 +484,10 @@ func parseLNChannelDetailChannelID(raw string) (uint64, bool) {
 		return 0, false
 	}
 	return id, true
+}
+
+func normalizeLNPeerNotePubkey(raw string) string {
+	return strings.ToLower(strings.TrimSpace(raw))
 }
 
 func lnChannelAliasByID(channels []lndclient.ChannelInfo) map[uint64]string {
@@ -1012,6 +1082,19 @@ select note
 from ln_channel_notes
 where channel_point = $1
 `, normalizeChannelPoint(channelPoint)).Scan(&note)
+	return note, err
+}
+
+func (s *Server) loadLNPeerNote(ctx context.Context, remotePubkey string) (string, error) {
+	if s == nil || s.db == nil {
+		return "", nil
+	}
+	var note string
+	err := s.db.QueryRow(ctx, `
+select note
+from ln_peer_notes
+where remote_pubkey = $1
+`, normalizeLNPeerNotePubkey(remotePubkey)).Scan(&note)
 	return note, err
 }
 

@@ -304,6 +304,9 @@ func (s *Server) initNotifications() {
 	if err := s.ensureChannelNotesSchema(ctx); err != nil {
 		s.logger.Printf("channel notes disabled: failed to init schema: %v", err)
 	}
+	if err := s.ensurePeerNotesSchema(ctx); err != nil {
+		s.logger.Printf("peer notes disabled: failed to init schema: %v", err)
+	}
 	if s.chat != nil {
 		chatCtx, chatCancel := context.WithTimeout(context.Background(), 20*time.Second)
 		if err := s.chat.AttachDB(chatCtx, pool); err != nil {

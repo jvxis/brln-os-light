@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getLnChannelDetail, saveLnChannelNote } from '../api'
+import { getLnChannelDetail, saveLnChannelNote, saveLnPeerNote } from '../api'
 import { getLocale } from '../i18n'
 
 export type ChannelDetailInitialChannel = {
@@ -223,6 +223,8 @@ type ChannelDetailResponse = {
   failed_htlcs?: ChannelDetailFailure[]
   peer_events?: ChannelDetailPeerEvent[]
   note?: string
+  channel_note?: string
+  peer_note?: string
   coverage?: ChannelDetailCoverage
   data_source_warnings?: string[]
   pending_htlcs?: ChannelPendingHtlc[]
@@ -341,9 +343,12 @@ export default function ChannelDetailModal({ open, channelPoint, initialChannel,
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [activeTab, setActiveTab] = useState<TabID>('overview')
-  const [noteDraft, setNoteDraft] = useState('')
-  const [noteSaving, setNoteSaving] = useState(false)
-  const [noteStatus, setNoteStatus] = useState('')
+  const [peerNoteDraft, setPeerNoteDraft] = useState('')
+  const [peerNoteSaving, setPeerNoteSaving] = useState(false)
+  const [peerNoteStatus, setPeerNoteStatus] = useState('')
+  const [channelNoteDraft, setChannelNoteDraft] = useState('')
+  const [channelNoteSaving, setChannelNoteSaving] = useState(false)
+  const [channelNoteStatus, setChannelNoteStatus] = useState('')
 
   const channel = detail?.channel || initialChannel || { channel_point: channelPoint }
   const settings = detail?.settings || {}
@@ -439,8 +444,10 @@ export default function ChannelDetailModal({ open, channelPoint, initialChannel,
     try {
       const payload = await getLnChannelDetail(point, DETAIL_LIMIT) as ChannelDetailResponse
       setDetail(payload)
-      setNoteDraft(typeof payload?.note === 'string' ? payload.note : '')
-      setNoteStatus('')
+      setPeerNoteDraft(typeof payload?.peer_note === 'string' ? payload.peer_note : '')
+      setChannelNoteDraft(typeof payload?.channel_note === 'string' ? payload.channel_note : typeof payload?.note === 'string' ? payload.note : '')
+      setPeerNoteStatus('')
+      setChannelNoteStatus('')
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : t('lightningOps.channelDetailLoadFailed'))
     } finally {
@@ -453,8 +460,10 @@ export default function ChannelDetailModal({ open, channelPoint, initialChannel,
     setActiveTab('overview')
     setDetail(null)
     setError('')
-    setNoteStatus('')
-    setNoteDraft('')
+    setPeerNoteStatus('')
+    setChannelNoteStatus('')
+    setPeerNoteDraft('')
+    setChannelNoteDraft('')
     void loadDetail()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, channelPoint])
@@ -479,21 +488,39 @@ export default function ChannelDetailModal({ open, channelPoint, initialChannel,
 
   if (!open) return null
 
-  const saveNote = async () => {
+  const savePeerNote = async () => {
+    const remotePubkey = String(channel.remote_pubkey || detail?.peer?.pub_key || '').trim()
+    if (!remotePubkey) return
+    setPeerNoteSaving(true)
+    setPeerNoteStatus('')
+    try {
+      const payload = await saveLnPeerNote({ remote_pubkey: remotePubkey, note: peerNoteDraft }) as { peer_note?: string }
+      const savedNote = typeof payload?.peer_note === 'string' ? payload.peer_note : peerNoteDraft
+      setDetail((current) => current ? { ...current, peer_note: savedNote } : current)
+      setPeerNoteDraft(savedNote)
+      setPeerNoteStatus(t('lightningOps.channelDetailPeerNoteSaved'))
+    } catch (err: unknown) {
+      setPeerNoteStatus(err instanceof Error ? err.message : t('lightningOps.channelDetailPeerNoteSaveFailed'))
+    } finally {
+      setPeerNoteSaving(false)
+    }
+  }
+
+  const saveChannelNote = async () => {
     const point = String(channel.channel_point || channelPoint || '').trim()
     if (!point) return
-    setNoteSaving(true)
-    setNoteStatus('')
+    setChannelNoteSaving(true)
+    setChannelNoteStatus('')
     try {
-      const payload = await saveLnChannelNote({ channel_point: point, note: noteDraft }) as { note?: string }
-      const savedNote = typeof payload?.note === 'string' ? payload.note : noteDraft
-      setDetail((current) => current ? { ...current, note: savedNote } : current)
-      setNoteDraft(savedNote)
-      setNoteStatus(t('lightningOps.channelDetailNoteSaved'))
+      const payload = await saveLnChannelNote({ channel_point: point, note: channelNoteDraft }) as { note?: string; channel_note?: string }
+      const savedNote = typeof payload?.channel_note === 'string' ? payload.channel_note : typeof payload?.note === 'string' ? payload.note : channelNoteDraft
+      setDetail((current) => current ? { ...current, note: savedNote, channel_note: savedNote } : current)
+      setChannelNoteDraft(savedNote)
+      setChannelNoteStatus(t('lightningOps.channelDetailChannelNoteSaved'))
     } catch (err: unknown) {
-      setNoteStatus(err instanceof Error ? err.message : t('lightningOps.channelDetailNoteSaveFailed'))
+      setChannelNoteStatus(err instanceof Error ? err.message : t('lightningOps.channelDetailChannelNoteSaveFailed'))
     } finally {
-      setNoteSaving(false)
+      setChannelNoteSaving(false)
     }
   }
 
@@ -975,30 +1002,63 @@ export default function ChannelDetailModal({ open, channelPoint, initialChannel,
 
               {activeTab === 'notes' && (
                 <div className="grid gap-4 xl:grid-cols-[1fr_0.8fr]">
-                  <div className="rounded-2xl border border-white/10 bg-ink/45 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <h4 className="text-sm font-semibold">{t('lightningOps.channelDetailNotes')}</h4>
-                        <p className="text-xs text-fog/50">{t('lightningOps.channelDetailNotesSubtitle')}</p>
+                  <div className="space-y-4">
+                    <div className="rounded-2xl border border-white/10 bg-ink/45 p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h4 className="text-sm font-semibold">{t('lightningOps.channelDetailPeerNotes')}</h4>
+                            <Badge tone="blue">{t('lightningOps.channelDetailPeerNoteScope')}</Badge>
+                          </div>
+                          <p className="mt-1 text-xs text-fog/50">{t('lightningOps.channelDetailPeerNotesSubtitle')}</p>
+                        </div>
+                        <button
+                          type="button"
+                          className="inline-flex h-10 items-center gap-2 rounded-full border border-glow/35 bg-glow/10 px-3 text-xs text-glow transition hover:border-glow/60 disabled:cursor-wait disabled:opacity-60"
+                          onClick={() => { void savePeerNote() }}
+                          disabled={peerNoteSaving}
+                        >
+                          <Icon name="save" />
+                          <span>{peerNoteSaving ? t('common.saving') : t('lightningOps.channelDetailSavePeerNote')}</span>
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        className="inline-flex h-10 items-center gap-2 rounded-full border border-glow/35 bg-glow/10 px-3 text-xs text-glow transition hover:border-glow/60 disabled:cursor-wait disabled:opacity-60"
-                        onClick={() => { void saveNote() }}
-                        disabled={noteSaving}
-                      >
-                        <Icon name="save" />
-                        <span>{noteSaving ? t('common.saving') : t('lightningOps.channelDetailSaveNote')}</span>
-                      </button>
+                      <textarea
+                        className="mt-4 h-[180px] w-full resize-none rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-fog outline-none transition placeholder:text-fog/35 focus:border-glow/45"
+                        value={peerNoteDraft}
+                        onChange={(event) => setPeerNoteDraft(event.target.value)}
+                        placeholder={t('lightningOps.channelDetailPeerNotePlaceholder')}
+                        spellCheck={false}
+                      />
+                      {peerNoteStatus && <p className="mt-3 text-sm text-brass">{peerNoteStatus}</p>}
                     </div>
-                    <textarea
-                      className="mt-4 h-[360px] w-full resize-none rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-fog outline-none transition placeholder:text-fog/35 focus:border-glow/45"
-                      value={noteDraft}
-                      onChange={(event) => setNoteDraft(event.target.value)}
-                      placeholder={t('lightningOps.channelDetailNotePlaceholder')}
-                      spellCheck={false}
-                    />
-                    {noteStatus && <p className="mt-3 text-sm text-brass">{noteStatus}</p>}
+                    <div className="rounded-2xl border border-white/10 bg-ink/45 p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h4 className="text-sm font-semibold">{t('lightningOps.channelDetailChannelNotes')}</h4>
+                            <Badge tone="amber">{t('lightningOps.channelDetailChannelNoteScope')}</Badge>
+                          </div>
+                          <p className="mt-1 text-xs text-fog/50">{t('lightningOps.channelDetailChannelNotesSubtitle')}</p>
+                        </div>
+                        <button
+                          type="button"
+                          className="inline-flex h-10 items-center gap-2 rounded-full border border-glow/35 bg-glow/10 px-3 text-xs text-glow transition hover:border-glow/60 disabled:cursor-wait disabled:opacity-60"
+                          onClick={() => { void saveChannelNote() }}
+                          disabled={channelNoteSaving}
+                        >
+                          <Icon name="save" />
+                          <span>{channelNoteSaving ? t('common.saving') : t('lightningOps.channelDetailSaveChannelNote')}</span>
+                        </button>
+                      </div>
+                      <textarea
+                        className="mt-4 h-[180px] w-full resize-none rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-fog outline-none transition placeholder:text-fog/35 focus:border-glow/45"
+                        value={channelNoteDraft}
+                        onChange={(event) => setChannelNoteDraft(event.target.value)}
+                        placeholder={t('lightningOps.channelDetailChannelNotePlaceholder')}
+                        spellCheck={false}
+                      />
+                      {channelNoteStatus && <p className="mt-3 text-sm text-brass">{channelNoteStatus}</p>}
+                    </div>
                   </div>
                   <div className="rounded-2xl border border-white/10 bg-ink/45 p-4">
                     <h4 className="text-sm font-semibold">{t('lightningOps.channelDetailQuickContext')}</h4>

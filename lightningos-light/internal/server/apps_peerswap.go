@@ -18,7 +18,9 @@ import (
 const (
 	peerswapAppID         = "peerswap"
 	peerswapAssetsVersion = "version_5_0"
-	peerswapBundleVersion = "version_5_0_psweb_5_0_4"
+	peerswapBundleVersion = "version_5_0_peerswapd_pscli_20260626_psweb_5_0_4"
+	peerswapdSHA256       = "497e789effc311d4aa01a3924b5734fa681ac5d967851c1a0bf22cdc0efdf1ab"
+	peerswapPSCliSHA256   = "356e8dc077b805335fa30fbafe515b18039dcf79d3bd34f2ce0f6083bed75c7c"
 	peerswapPSWebSHA256   = "439c5794d9c362bc0ea70bb864122fc30ae46357b37bf776c794902ef717cdd8"
 	peerswapUser          = "losop"
 	peerswapServiceName   = "lightningos-peerswapd"
@@ -279,7 +281,7 @@ func ensurePeerswapBinaries(ctx context.Context, paths peerswapPaths) error {
 	if err := ensurePeerswapAssetStaging(ctx, assetsRoot); err != nil {
 		return err
 	}
-	if err := ensurePeerswapPSWebChecksum(filepath.Join(assetsRoot, "psweb")); err != nil {
+	if err := ensurePeerswapBinaryChecksums(assetsRoot); err != nil {
 		return err
 	}
 	script := fmt.Sprintf(`set -e
@@ -307,8 +309,7 @@ func peerswapInstalledBinariesCurrent(paths peerswapPaths) bool {
 	if !peerswapBinariesExist(paths.BinDir) {
 		return false
 	}
-	ok, err := peerswapFileSHA256Matches(filepath.Join(paths.BinDir, "psweb"), peerswapPSWebSHA256)
-	return err == nil && ok
+	return peerswapBinaryChecksumsMatch(paths.BinDir)
 }
 
 func peerswapAssetsRoot() (string, error) {
@@ -318,8 +319,7 @@ func peerswapAssetsRoot() (string, error) {
 
 func ensurePeerswapAssetStaging(ctx context.Context, dest string) error {
 	if peerswapBinariesExist(dest) {
-		ok, err := peerswapFileSHA256Matches(filepath.Join(dest, "psweb"), peerswapPSWebSHA256)
-		if err == nil && ok {
+		if peerswapBinaryChecksumsMatch(dest) {
 			return nil
 		}
 	}
@@ -352,7 +352,7 @@ exit 1
 		return err
 	}
 	if peerswapBinariesExist(dest) {
-		return nil
+		return ensurePeerswapBinaryChecksums(dest)
 	}
 	return fmt.Errorf("peerswap binaries missing in %s", dest)
 }
@@ -363,15 +363,37 @@ func peerswapBinariesExist(dir string) bool {
 		fileExists(filepath.Join(dir, "psweb"))
 }
 
-func ensurePeerswapPSWebChecksum(path string) error {
-	ok, err := peerswapFileSHA256Matches(path, peerswapPSWebSHA256)
-	if err != nil {
-		return fmt.Errorf("failed to verify staged psweb binary: %w", err)
-	}
-	if !ok {
-		return fmt.Errorf("staged psweb binary at %s does not match expected psweb 5.0.4; refresh Peerswap assets and start again", path)
+func ensurePeerswapBinaryChecksums(dir string) error {
+	expected := peerswapBinarySHA256s()
+	for name, sha := range expected {
+		path := filepath.Join(dir, name)
+		ok, err := peerswapFileSHA256Matches(path, sha)
+		if err != nil {
+			return fmt.Errorf("failed to verify staged %s binary: %w", name, err)
+		}
+		if !ok {
+			return fmt.Errorf("staged %s binary at %s does not match expected bundle %s; refresh Peerswap assets and start again", name, path, peerswapBundleVersion)
+		}
 	}
 	return nil
+}
+
+func peerswapBinaryChecksumsMatch(dir string) bool {
+	for name, sha := range peerswapBinarySHA256s() {
+		ok, err := peerswapFileSHA256Matches(filepath.Join(dir, name), sha)
+		if err != nil || !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func peerswapBinarySHA256s() map[string]string {
+	return map[string]string{
+		"peerswapd": peerswapdSHA256,
+		"pscli":     peerswapPSCliSHA256,
+		"psweb":     peerswapPSWebSHA256,
+	}
 }
 
 func peerswapFileSHA256Matches(path string, expected string) (bool, error) {

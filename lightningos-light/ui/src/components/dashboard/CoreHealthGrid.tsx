@@ -61,10 +61,19 @@ export default function CoreHealthGrid({
 
   const isLocalBitcoin = Boolean(bitcoin && (bitcoin.mode === 'local' || bitcoin.source === 'app' || bitcoin.source === 'external' || bitcoin.installed !== undefined))
   const cadenceBuckets = Array.isArray(bitcoin?.block_cadence) ? bitcoin.block_cadence : []
-  const maxCadence = Math.max(1, ...cadenceBuckets.map((bucket) => bucket.count))
+  const cadenceWindowSec = bitcoin?.block_cadence_window_sec ?? 600
+  const baselineCount = Math.max(1, Math.round(cadenceWindowSec / 600))
+  const maxCadence = Math.max(1, baselineCount, ...cadenceBuckets.map((bucket) => bucket.count))
+  const baselinePercent = (baselineCount / maxCadence) * 100
   const cadenceTotal = cadenceBuckets.reduce((sum, bucket) => sum + bucket.count, 0)
-  const cadenceHours = ((bitcoin?.block_cadence_window_sec ?? 600) * Math.max(1, cadenceBuckets.length)) / 3600
+  const cadenceHours = (cadenceWindowSec * Math.max(1, cadenceBuckets.length)) / 3600
   const cadenceAvg = cadenceHours > 0 ? cadenceTotal / cadenceHours : 0
+  const cadenceBucketTone = (count: number) => {
+    if (count <= 0) return 'idle'
+    if (count >= baselineCount * 1.5) return 'hot'
+    if (count >= baselineCount) return 'normal'
+    return 'low'
+  }
   const lastBlockTime = typeof bitcoin?.best_block_time === 'number' && bitcoin.best_block_time > 0
     ? bitcoin.best_block_time * 1000
     : null
@@ -302,11 +311,22 @@ export default function CoreHealthGrid({
                   </summary>
                   <div className="mt-3">
                     <div className="block-cadence-chart">
+                      <div className="block-cadence-baseline" style={{ bottom: `${baselinePercent}%` }} />
                       {cadenceBuckets.map((bucket, idx) => {
-                        const height = Math.max(8, Math.round((bucket.count / maxCadence) * 100))
+                        const height = bucket.count > 0 ? Math.max(12, Math.round((bucket.count / maxCadence) * 100)) : 6
+                        const bucketTone = cadenceBucketTone(bucket.count)
                         return (
-                          <div className="block-cadence-bar" key={`cadence-${idx}`} title={`${bucket.count} blocks`}>
-                            <div className="block-cadence-fill" style={{ height: `${height}%` }} />
+                          <div
+                            className={`block-cadence-bar block-cadence-bar--${bucketTone}`}
+                            key={`cadence-${idx}`}
+                            title={`${bucket.count} ${t('bitcoinLocal.blocksLabel')}`}
+                            style={{
+                              ['--bar-height' as any]: `${height}%`,
+                              ['--bar-index' as any]: idx,
+                              ['--bar-delay' as any]: `${idx * 55}ms`
+                            }}
+                          >
+                            <div className="block-cadence-fill" />
                           </div>
                         )
                       })}

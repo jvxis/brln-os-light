@@ -259,6 +259,17 @@ export default function BitcoinLocal() {
   const rpcBadgeClass = ready
     ? 'bg-emerald-500/15 text-emerald-200 border border-emerald-400/30 px-2 py-0.5 rounded-full text-[11px] uppercase tracking-wide'
     : 'text-fog'
+  const nodeStatusTone = ready
+    ? 'ok'
+    : rpcStale
+      ? 'stale'
+      : rpcFailCount > 0
+        ? 'warn'
+        : syncing
+          ? 'syncing'
+          : 'waiting'
+  const nodeStatusCardClass = `section-card node-status-card node-status-card--${nodeStatusTone}`
+  const peerOrbitCount = Math.min(18, Math.max(6, currentPeers || 0))
 
   const formatAge = (timestamp?: number | null) => {
     if (!timestamp) return ''
@@ -318,6 +329,12 @@ export default function BitcoinLocal() {
       : cadenceTone === 'stale'
         ? t('bitcoinLocal.cadenceStale')
     : t('common.unknown')
+  const cadenceBucketTone = (count: number) => {
+    if (count <= 0) return 'idle'
+    if (count >= baselineCount * 1.5) return 'hot'
+    if (count >= baselineCount) return 'normal'
+    return 'low'
+  }
   const lastSuccessAgeLabel = rpcLastSuccessRef.current
     ? t('bitcoinLocal.lastCapturedAge', { age: formatAge(rpcLastSuccessRef.current) })
     : ''
@@ -438,36 +455,61 @@ export default function BitcoinLocal() {
               </div>
               </div>
 
-              <div className="section-card space-y-4">
-              <h3 className="text-lg font-semibold">{t('bitcoinLocal.nodeStatus')}</h3>
-              <div className="grid gap-3 text-sm text-fog/70">
-                <div className="flex items-center justify-between">
+              <div className={nodeStatusCardClass}>
+              <div className="node-status-header">
+                <h3 className="text-lg font-semibold">{t('bitcoinLocal.nodeStatus')}</h3>
+                <span className={rpcBadgeClass}>{rpcStatusLabel}</span>
+              </div>
+              <div className="node-status-body">
+                <div className="node-status-visual">
+                  <div className="node-status-orb" aria-hidden="true">
+                    <span className="node-status-orb-core" />
+                    {Array.from({ length: peerOrbitCount }).map((_, i) => (
+                      <span
+                        key={`peer-dot-${i}`}
+                        className="node-status-peer-dot"
+                        style={{
+                          ['--dot-index' as any]: i,
+                          ['--dot-total' as any]: peerOrbitCount,
+                          ['--dot-delay' as any]: `${i * 0.12}s`
+                        }}
+                      />
+                    ))}
+                  </div>
+                  <div className="node-status-peer-count">
+                    <strong>{currentPeers || '-'}</strong>
+                    <span>{t('bitcoinLocal.peers')}</span>
+                  </div>
+                </div>
+                <div className="node-status-metrics">
+                <div className="node-status-row">
                   <span>{t('bitcoinLocal.rpcStatus')}</span>
-                  <span className={rpcBadgeClass}>{rpcStatusLabel}</span>
+                  <span className="node-status-value">{rpcStatusLabel}</span>
                 </div>
-                <div className="flex items-center justify-between">
+                <div className="node-status-row">
                   <span>{t('bitcoinLocal.network')}</span>
-                  <span className="text-fog">{status?.chain || '-'}</span>
+                  <span className="node-status-value">{status?.chain || '-'}</span>
                 </div>
-                <div className="flex items-center justify-between">
+                <div className="node-status-row">
                   <span>{t('bitcoinLocal.peers')}</span>
-                  <span className="text-fog">{currentPeers || '-'}</span>
+                  <span className="node-status-value">{currentPeers || '-'}</span>
                 </div>
-                <div className="flex items-center justify-between">
+                <div className="node-status-row">
                   <span>{t('bitcoinLocal.version')}</span>
-                  <span className="text-fog">{status?.subversion || status?.version || '-'}</span>
+                  <span className="node-status-value node-status-value--wide">{status?.subversion || status?.version || '-'}</span>
                 </div>
-                <div className="flex items-center justify-between">
+                <div className="node-status-row">
                   <span>{t('bitcoinLocal.pruned')}</span>
-                  <span className="text-fog">{status?.pruned ? t('common.yes') : t('common.no')}</span>
+                  <span className="node-status-value">{status?.pruned ? t('common.yes') : t('common.no')}</span>
                 </div>
-                <div className="flex items-center justify-between">
+                <div className="node-status-row">
                   <span>{t('bitcoinLocal.pruneTarget')}</span>
-                  <span className="text-fog">{formatGB(status?.prune_target_size)}</span>
+                  <span className="node-status-value">{formatGB(status?.prune_target_size)}</span>
                 </div>
-                <div className="flex items-center justify-between">
+                <div className="node-status-row">
                   <span>{t('bitcoinLocal.dataDir')}</span>
-                  <span className="text-fog">{status?.data_dir || config?.data_dir || '-'}</span>
+                  <span className="node-status-value node-status-value--wide">{status?.data_dir || config?.data_dir || '-'}</span>
+                </div>
                 </div>
               </div>
               <div className="glow-divider" />
@@ -577,10 +619,11 @@ export default function BitcoinLocal() {
                   <span className="text-fog">{lastBlockLabel}</span>
                 </div>
               </div>
-              <div className="block-cadence-chart">
+              <div className={`block-cadence-chart block-cadence-chart--large block-cadence-chart--${cadenceTone}`}>
                 <div className="block-cadence-baseline" style={{ bottom: `${baselinePercent}%` }} />
                 {(cadenceBuckets.length > 0 ? cadenceBuckets : Array.from({ length: 12 }).map(() => ({ start_time: 0, end_time: 0, count: 0 }))).map((bucket, idx) => {
-                  const height = Math.max(8, Math.round((bucket.count / maxCadence) * 100))
+                  const height = bucket.count > 0 ? Math.max(12, Math.round((bucket.count / maxCadence) * 100)) : 6
+                  const bucketTone = cadenceBucketTone(bucket.count)
                   const startLabel = bucket.start_time
                     ? new Date(bucket.start_time * 1000).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
                     : ''
@@ -588,11 +631,20 @@ export default function BitcoinLocal() {
                     ? new Date(bucket.end_time * 1000).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
                     : ''
                   const title = startLabel && endLabel
-                    ? `${startLabel}–${endLabel}: ${bucket.count} ${t('bitcoinLocal.blocksLabel')}`
+                    ? `${startLabel} - ${endLabel}: ${bucket.count} ${t('bitcoinLocal.blocksLabel')}`
                     : `${bucket.count} ${t('bitcoinLocal.blocksLabel')}`
                   return (
-                    <div className="block-cadence-bar" key={`cadence-${idx}`} title={title}>
-                      <div className="block-cadence-fill" style={{ height: `${height}%` }} />
+                    <div
+                      className={`block-cadence-bar block-cadence-bar--${bucketTone}`}
+                      key={`cadence-${idx}`}
+                      title={title}
+                      style={{
+                        ['--bar-height' as any]: `${height}%`,
+                        ['--bar-index' as any]: idx,
+                        ['--bar-delay' as any]: `${idx * 55}ms`
+                      }}
+                    >
+                      <div className="block-cadence-fill" />
                     </div>
                   )
                 })}

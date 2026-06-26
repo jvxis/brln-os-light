@@ -60,10 +60,12 @@ type ChannelMovement7d = {
 type ChannelPendingHtlc = {
   incoming?: boolean
   peer_alias?: string
+  forwarding_channel_alias?: string
   amount_sat?: number
   expiration_height?: number
   htlc_index?: number
   forwarding_channel_id?: number
+  forwarding_channel_short_id?: string
   locked_in?: boolean
 }
 
@@ -400,6 +402,7 @@ export default function ChannelDetailModal({ open, channelPoint, initialChannel,
     : undefined
 
   const formatSats = (value?: number) => `${numberFormatter.format(Math.trunc(Math.max(0, asNumber(value))))} sat`
+  const formatOptionalSats = (value?: number) => (typeof value === 'number' && Number.isFinite(value) ? formatSats(value) : t('common.na'))
   const formatCompactSats = (value?: number) => `${compactFormatter.format(Math.trunc(Math.max(0, asNumber(value))))} sat`
   const formatSignedSats = (value?: number) => {
     if (typeof value !== 'number' || !Number.isFinite(value)) return t('common.na')
@@ -445,6 +448,22 @@ export default function ChannelDetailModal({ open, channelPoint, initialChannel,
       default:
         return t('lightningOps.channelDetailRebalanceDirectionRelated')
     }
+  }
+  const normalizeComparableText = (value?: string) => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  const failureDetailLabel = (item: ChannelDetailFailure) => {
+    const detail = String(item.failure_detail || '').trim()
+    if (!detail) return t('common.na')
+    const failure = String(item.failure_code || '').trim()
+    if (failure && normalizeComparableText(detail) === normalizeComparableText(failure)) return t('common.na')
+    return detail
+  }
+  const pendingForwardingLabel = (item: ChannelPendingHtlc) => {
+    const aliasText = String(item.forwarding_channel_alias || item.peer_alias || '').trim()
+    const shortID = String(item.forwarding_channel_short_id || '').trim()
+    if (aliasText && shortID) return { primary: aliasText, secondary: shortID }
+    if (aliasText) return { primary: aliasText, secondary: '' }
+    if (shortID) return { primary: shortID, secondary: '' }
+    return { primary: t('common.na'), secondary: '' }
   }
 
   const loadDetail = async () => {
@@ -810,7 +829,7 @@ export default function ChannelDetailModal({ open, channelPoint, initialChannel,
                     </dl>
                   </div>
                   <TablePanel title={t('lightningOps.channelDetailPeerEvents')} empty={peerEvents.length === 0} emptyLabel={emptyRowsLabel} heightClass="max-h-[360px]">
-                    <table className="min-w-[680px] w-full text-left text-xs">
+                    <table className="min-w-[920px] w-full text-left text-xs">
                       <thead className="sticky top-0 bg-slate text-fog/60">
                         <tr>
                           <th className="px-3 py-2">{t('lightningOps.channelDetailTimestamp')}</th>
@@ -824,10 +843,10 @@ export default function ChannelDetailModal({ open, channelPoint, initialChannel,
                         {peerEvents.map((event, index) => (
                           <tr key={`${event.occurred_at || index}-${event.setting || ''}`} className="border-t border-white/5">
                             <td className="px-3 py-2 whitespace-nowrap">{formatTime(event.occurred_at)}</td>
-                            <td className="px-3 py-2">{sideLabel(event.side)}</td>
-                            <td className="px-3 py-2">{event.setting || t('common.na')}</td>
-                            <td className="px-3 py-2">{event.old_value || t('common.na')}</td>
-                            <td className="px-3 py-2">{event.new_value || t('common.na')}</td>
+                            <td className="px-3 py-2 whitespace-nowrap">{sideLabel(event.side)}</td>
+                            <td className="px-3 py-2 whitespace-nowrap font-mono text-[11px] text-fog/75">{event.setting || t('common.na')}</td>
+                            <td className="px-3 py-2 whitespace-nowrap">{event.old_value || t('common.na')}</td>
+                            <td className="px-3 py-2 whitespace-nowrap">{event.new_value || t('common.na')}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -959,7 +978,7 @@ export default function ChannelDetailModal({ open, channelPoint, initialChannel,
               {activeTab === 'failures' && (
                 <div className="grid gap-4">
                   <TablePanel title={t('lightningOps.channelDetailFailedHtlcs')} empty={failedHtlcs.length === 0} emptyLabel={emptyRowsLabel} heightClass="max-h-[340px]">
-                    <table className="min-w-[980px] w-full text-left text-xs">
+                    <table className="min-w-[1080px] w-full text-left text-xs">
                       <thead className="sticky top-0 bg-slate text-fog/60">
                         <tr>
                           <th className="px-3 py-2">{t('lightningOps.channelDetailTimestamp')}</th>
@@ -979,10 +998,10 @@ export default function ChannelDetailModal({ open, channelPoint, initialChannel,
                             <td className="px-3 py-2">{item.source || t('common.na')}</td>
                             <td className="px-3 py-2">{item.incoming_alias || item.incoming_channel_id || t('common.na')}</td>
                             <td className="px-3 py-2">{item.outgoing_alias || item.outgoing_channel_id || t('common.na')}</td>
-                            <td className="px-3 py-2">{formatSats(item.amount_sat)}</td>
-                            <td className="px-3 py-2 text-brass">{formatSats(item.potential_fee_sat)}</td>
+                            <td className="px-3 py-2">{formatOptionalSats(item.amount_sat)}</td>
+                            <td className="px-3 py-2 text-brass">{formatOptionalSats(item.potential_fee_sat)}</td>
                             <td className="px-3 py-2">{item.failure_code || t('common.na')}</td>
-                            <td className="px-3 py-2 max-w-[260px] truncate">{item.failure_detail || t('common.na')}</td>
+                            <td className="px-3 py-2 max-w-[320px] truncate">{failureDetailLabel(item)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -994,24 +1013,28 @@ export default function ChannelDetailModal({ open, channelPoint, initialChannel,
                       <thead className="sticky top-0 bg-slate text-fog/60">
                         <tr>
                           <th className="px-3 py-2">{t('lightningOps.channelDetailDirection')}</th>
-                          <th className="px-3 py-2">{t('lightningOps.channelDetailPeerAlias')}</th>
+                          <th className="px-3 py-2">{t('lightningOps.channelDetailForwardingChannel')}</th>
                           <th className="px-3 py-2">{t('lightningOps.channelDetailAmount')}</th>
                           <th className="px-3 py-2">{t('lightningOps.channelDetailExpiration')}</th>
-                          <th className="px-3 py-2">{t('lightningOps.channelDetailForwardingChannel')}</th>
                           <th className="px-3 py-2">{t('lightningOps.channelDetailLocked')}</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {pendingHtlcs.map((item, index) => (
-                          <tr key={`${item.htlc_index || index}-${item.forwarding_channel_id || ''}`} className="border-t border-white/5">
-                            <td className="px-3 py-2">{item.incoming ? t('lightningOps.channelDetailIncoming') : t('lightningOps.channelDetailOutgoing')}</td>
-                            <td className="px-3 py-2">{item.peer_alias || t('common.na')}</td>
-                            <td className="px-3 py-2">{formatSats(item.amount_sat)}</td>
-                            <td className="px-3 py-2">{item.expiration_height ? numberFormatter.format(item.expiration_height) : t('common.na')}</td>
-                            <td className="px-3 py-2">{item.forwarding_channel_id ? numberFormatter.format(item.forwarding_channel_id) : t('common.na')}</td>
-                            <td className="px-3 py-2">{formatBool(item.locked_in)}</td>
-                          </tr>
-                        ))}
+                        {pendingHtlcs.map((item, index) => {
+                          const forwarding = pendingForwardingLabel(item)
+                          return (
+                            <tr key={`${item.htlc_index || index}-${item.forwarding_channel_short_id || item.forwarding_channel_id || ''}`} className="border-t border-white/5">
+                              <td className="px-3 py-2">{item.incoming ? t('lightningOps.channelDetailIncoming') : t('lightningOps.channelDetailOutgoing')}</td>
+                              <td className="px-3 py-2">
+                                <div className="font-medium text-fog">{forwarding.primary}</div>
+                                {forwarding.secondary && <div className="mt-0.5 font-mono text-[11px] text-fog/45">{forwarding.secondary}</div>}
+                              </td>
+                              <td className="px-3 py-2">{formatSats(item.amount_sat)}</td>
+                              <td className="px-3 py-2">{item.expiration_height ? numberFormatter.format(item.expiration_height) : t('common.na')}</td>
+                              <td className="px-3 py-2">{formatBool(item.locked_in)}</td>
+                            </tr>
+                          )
+                        })}
                       </tbody>
                     </table>
                   </TablePanel>

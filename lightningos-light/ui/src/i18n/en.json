@@ -2251,7 +2251,7 @@
     "channelDetailDirection": "Direction",
     "channelDetailPeerAlias": "Peer alias",
     "channelDetailExpiration": "Expiration",
-    "channelDetailForwardingChannel": "Forwarding channel",
+    "channelDetailForwardingChannel": "Forwarding peer",
     "channelDetailLocked": "Locked",
     "channelDetailNotes": "Channel notes",
     "channelDetailNotesSubtitle": "Operator notes are stored locally for this channel point.",

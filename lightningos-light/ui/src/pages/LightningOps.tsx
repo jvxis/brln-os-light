@@ -61,10 +61,12 @@ type ChannelMovement7d = {
 type ChannelPendingHtlc = {
   incoming: boolean
   peer_alias?: string
+  forwarding_channel_alias?: string
   amount_sat: number
   expiration_height: number
   htlc_index?: number
   forwarding_channel_id?: number
+  forwarding_channel_short_id?: string
   locked_in?: boolean
 }
 
@@ -7255,10 +7257,9 @@ export default function LightningOps() {
                                         : null
                                       const expiryEta = blocksToExpiry === null ? '' : formatMaturityDuration(estimateMaturitySeconds(blocksToExpiry))
                                       const peerAlias = typeof htlc?.peer_alias === 'string' ? htlc.peer_alias.trim() : ''
-                                      const forwardingChannelId = typeof htlc?.forwarding_channel_id === 'number' && Number.isFinite(htlc.forwarding_channel_id)
-                                        ? Math.max(0, Math.round(htlc.forwarding_channel_id))
-                                        : 0
-                                      const peerLabel = peerAlias || (forwardingChannelId > 0 ? `chan ${forwardingChannelId}` : t('lightningOps.pendingHtlcPeerUnknown'))
+                                      const forwardingAlias = typeof htlc?.forwarding_channel_alias === 'string' ? htlc.forwarding_channel_alias.trim() : ''
+                                      const forwardingShortId = typeof htlc?.forwarding_channel_short_id === 'string' ? htlc.forwarding_channel_short_id.trim() : ''
+                                      const peerLabel = forwardingAlias || peerAlias || forwardingShortId || t('lightningOps.pendingHtlcPeerUnknown')
                                       const rowKey = `${htlc?.htlc_index ?? 'idx'}-${expirationHeight}-${idx}`
                                       return (
                                         <tr key={rowKey} className={`align-top ${isFCRisk ? 'text-rose-100' : 'text-fog'}`}>
@@ -7796,10 +7797,9 @@ export default function LightningOps() {
                                   : null
                                 const expiryEta = blocksToExpiry === null ? '' : formatMaturityDuration(estimateMaturitySeconds(blocksToExpiry))
                                 const peerAlias = typeof htlc?.peer_alias === 'string' ? htlc.peer_alias.trim() : ''
-                                const forwardingChannelId = typeof htlc?.forwarding_channel_id === 'number' && Number.isFinite(htlc.forwarding_channel_id)
-                                  ? Math.max(0, Math.round(htlc.forwarding_channel_id))
-                                  : 0
-                                const peerLabel = peerAlias || (forwardingChannelId > 0 ? `chan ${forwardingChannelId}` : t('lightningOps.pendingHtlcPeerUnknown'))
+                                const forwardingAlias = typeof htlc?.forwarding_channel_alias === 'string' ? htlc.forwarding_channel_alias.trim() : ''
+                                const forwardingShortId = typeof htlc?.forwarding_channel_short_id === 'string' ? htlc.forwarding_channel_short_id.trim() : ''
+                                const peerLabel = forwardingAlias || peerAlias || forwardingShortId || t('lightningOps.pendingHtlcPeerUnknown')
                                 const rowKey = `${htlc?.htlc_index ?? 'idx'}-${expirationHeight}-${idx}`
                                 return (
                                   <tr key={rowKey} className={`align-top ${isFCRisk ? 'text-rose-100' : 'text-fog'}`}>

@@ -2251,7 +2251,7 @@
     "channelDetailDirection": "Direção",
     "channelDetailPeerAlias": "Alias do peer",
     "channelDetailExpiration": "Expiração",
-    "channelDetailForwardingChannel": "Canal de forward",
+    "channelDetailForwardingChannel": "Peer de forward",
     "channelDetailLocked": "Travado",
     "channelDetailNotes": "Notas do canal",
     "channelDetailNotesSubtitle": "Notas operacionais ficam salvas localmente para este channel point.",

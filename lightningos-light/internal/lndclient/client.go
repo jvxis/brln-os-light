@@ -3057,6 +3057,16 @@ func paymentChannelIDSet(ids []uint64) map[uint64]struct{} {
 	return set
 }
 
+func formatShortChanID(chanID uint64) string {
+	if chanID == 0 {
+		return ""
+	}
+	block := chanID >> 40
+	tx := (chanID >> 16) & 0xFFFFFF
+	out := chanID & 0xFFFF
+	return fmt.Sprintf("%dx%dx%d", block, tx, out)
+}
+
 func paymentPreviewLocalChannel(ctx context.Context, lightning lnrpc.LightningClient, channelID uint64) *lnrpc.Channel {
 	if channelID == 0 {
 		return nil
@@ -4981,14 +4991,17 @@ func (c *Client) ListChannels(ctx context.Context) ([]ChannelInfo, error) {
 				continue
 			}
 			forwardingChannelID := htlc.ForwardingChannel
+			forwardingAlias := channelAliasByID[forwardingChannelID]
 			pendingHtlcs = append(pendingHtlcs, ChannelPendingHtlcInfo{
-				Incoming:            htlc.Incoming,
-				PeerAlias:           channelAliasByID[forwardingChannelID],
-				AmountSat:           htlc.Amount,
-				ExpirationHeight:    htlc.ExpirationHeight,
-				HtlcIndex:           htlc.HtlcIndex,
-				ForwardingChannelID: forwardingChannelID,
-				LockedIn:            htlc.LockedIn,
+				Incoming:                 htlc.Incoming,
+				PeerAlias:                forwardingAlias,
+				ForwardingChannelAlias:   forwardingAlias,
+				AmountSat:                htlc.Amount,
+				ExpirationHeight:         htlc.ExpirationHeight,
+				HtlcIndex:                htlc.HtlcIndex,
+				ForwardingChannelID:      forwardingChannelID,
+				ForwardingChannelShortID: formatShortChanID(forwardingChannelID),
+				LockedIn:                 htlc.LockedIn,
 			})
 		}
 		sort.Slice(pendingHtlcs, func(i, j int) bool {
@@ -7136,13 +7149,15 @@ type Status struct {
 }
 
 type ChannelPendingHtlcInfo struct {
-	Incoming            bool   `json:"incoming"`
-	PeerAlias           string `json:"peer_alias,omitempty"`
-	AmountSat           int64  `json:"amount_sat"`
-	ExpirationHeight    uint32 `json:"expiration_height"`
-	HtlcIndex           uint64 `json:"htlc_index,omitempty"`
-	ForwardingChannelID uint64 `json:"forwarding_channel_id,omitempty"`
-	LockedIn            bool   `json:"locked_in,omitempty"`
+	Incoming                 bool   `json:"incoming"`
+	PeerAlias                string `json:"peer_alias,omitempty"`
+	ForwardingChannelAlias   string `json:"forwarding_channel_alias,omitempty"`
+	AmountSat                int64  `json:"amount_sat"`
+	ExpirationHeight         uint32 `json:"expiration_height"`
+	HtlcIndex                uint64 `json:"htlc_index,omitempty"`
+	ForwardingChannelID      uint64 `json:"forwarding_channel_id,omitempty"`
+	ForwardingChannelShortID string `json:"forwarding_channel_short_id,omitempty"`
+	LockedIn                 bool   `json:"locked_in,omitempty"`
 }
 
 type ChannelMovement7d struct {

@@ -243,7 +243,7 @@ export default function BitcoinLocal() {
   const ready = managedByApp
     ? Boolean(status?.status === 'running' && status?.rpc_ok)
     : Boolean(status?.rpc_ok)
-  const blockCount = 12
+  const blockCount = 18
   const activeBlocks = syncing ? Math.max(1, Math.round((progressValue / 100) * blockCount)) : blockCount
   const sweepDuration = syncing ? Math.max(2.5, 7.5 - progressValue / 15) : 12
   const currentPeers = status?.connections ?? 0
@@ -381,20 +381,34 @@ export default function BitcoinLocal() {
                 <span className="text-xs text-fog/60">{syncing ? t('bitcoinLocal.syncing') : t('common.status')}</span>
               </div>
 
-              <div className="chain-track" style={{ ['--sync-progress' as any]: progressValue / 100 }}>
+              <div
+                className={`chain-track ${syncing ? 'chain-track--syncing' : ready ? 'chain-track--ready' : 'chain-track--waiting'}`}
+                style={{
+                  ['--sync-progress' as any]: progressValue / 100,
+                  ['--sync-block-count' as any]: blockCount
+                }}
+              >
                 <div className="chain-sweep" style={{ animationDuration: `${sweepDuration}s` }} />
-                <div className="absolute inset-0 flex items-center gap-2 px-4">
-                  {Array.from({ length: blockCount }).map((_, i) => {
-                    const isActive = i < activeBlocks
-                    const isPulse = syncing && i === Math.min(activeBlocks, blockCount - 1)
-                    const isFlash = !syncing && i === blockCount - 1 && blockFlash
-                    return (
-                    <div
-                      key={`block-${i}`}
-                      className={`block-cell ${isActive ? 'block-cell--active' : ''} ${isPulse ? 'block-cell--pulse' : ''} ${isFlash ? 'block-cell--flash' : ''}`}
-                      style={{ animationDelay: `${i * 0.12}s` }}
-                    />
-                  )})}
+                <div className="chain-track-glow" />
+                <div className="chain-track-content">
+                  <div className="chain-track-head">
+                    <span className="chain-track-label">{syncing ? t('bitcoinLocal.downloadingBlocks') : t('bitcoinLocal.verificationProgress')}</span>
+                    <span className="chain-track-value">{progress}%</span>
+                  </div>
+                  <div className="chain-block-grid">
+                    {Array.from({ length: blockCount }).map((_, i) => {
+                      const isActive = i < activeBlocks
+                      const isPulse = syncing && i === Math.min(activeBlocks, blockCount - 1)
+                      const isFlash = !syncing && i === blockCount - 1 && blockFlash
+                      return (
+                        <div
+                          key={`block-${i}`}
+                          className={`block-cell ${isActive ? 'block-cell--active' : ''} ${isPulse ? 'block-cell--pulse' : ''} ${isFlash ? 'block-cell--flash' : ''}`}
+                          style={{ animationDelay: `${i * 0.08}s` }}
+                        />
+                      )
+                    })}
+                  </div>
                 </div>
               </div>
 

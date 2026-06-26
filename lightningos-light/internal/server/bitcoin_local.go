@@ -28,7 +28,7 @@ const (
 	blockCadenceCacheTTL             = 60 * time.Second
 	blockCadenceMaxSteps             = 144
 	bitcoinNetworkInfoTimeout        = 2 * time.Second
-	bitcoinCadenceTimeout            = 2 * time.Second
+	bitcoinCadenceTimeout            = 8 * time.Second
 	bitcoinCadenceMinBudget          = 3 * time.Second
 	bitcoinCLIRPCWaitTimeoutSec      = 10
 )
@@ -172,7 +172,7 @@ func (s *Server) bitcoinLocalStatus(ctx context.Context) (bitcoinLocalStatus, er
 		return resp, nil
 	}
 
-	chainInfo, err := fetchBitcoinLocalChainInfo(ctx, paths)
+	chainInfo, err := fetchBitcoinLocalChainInfoBest(ctx, paths)
 	if err != nil {
 		resp.RPCOk = false
 		return resp, nil
@@ -298,6 +298,16 @@ func fetchBitcoinLocalChainInfo(ctx context.Context, paths bitcoinCorePaths) (bi
 	return chainInfo, nil
 }
 
+func fetchBitcoinLocalChainInfoBest(ctx context.Context, paths bitcoinCorePaths) (bitcoinCLIChainInfo, error) {
+	if cfg, ok := readBitcoinConfRPCConfig(paths.ConfigPath); ok {
+		info, err := fetchBitcoinInfo(ctx, cfg.Host, cfg.User, cfg.Pass)
+		if err == nil {
+			return bitcoinInfoToCLIChainInfo(info), nil
+		}
+	}
+	return fetchBitcoinLocalChainInfo(ctx, paths)
+}
+
 func fetchBitcoinLocalNetworkInfo(ctx context.Context, paths bitcoinCorePaths) (bitcoinCLINetworkInfo, error) {
 	netOut, err := execBitcoinCLI(ctx, paths, "getnetworkinfo")
 	if err != nil {
@@ -308,6 +318,39 @@ func fetchBitcoinLocalNetworkInfo(ctx context.Context, paths bitcoinCorePaths) (
 		return bitcoinCLINetworkInfo{}, err
 	}
 	return netInfo, nil
+}
+
+func fetchBitcoinLocalNetworkInfoBest(ctx context.Context, paths bitcoinCorePaths) (bitcoinCLINetworkInfo, error) {
+	if cfg, ok := readBitcoinConfRPCConfig(paths.ConfigPath); ok {
+		info, err := fetchBitcoinNetworkInfo(ctx, cfg.Host, cfg.User, cfg.Pass)
+		if err == nil {
+			return bitcoinNetworkInfoToCLINetworkInfo(info), nil
+		}
+	}
+	return fetchBitcoinLocalNetworkInfo(ctx, paths)
+}
+
+func bitcoinInfoToCLIChainInfo(info bitcoinInfo) bitcoinCLIChainInfo {
+	return bitcoinCLIChainInfo{
+		Chain:                info.Chain,
+		Blocks:               info.Blocks,
+		Headers:              info.Headers,
+		VerificationProgress: info.VerificationProgress,
+		InitialBlockDownload: info.InitialBlockDownload,
+		Pruned:               info.Pruned,
+		PruneHeight:          info.PruneHeight,
+		PruneTargetSize:      info.PruneTargetSize,
+		SizeOnDisk:           info.SizeOnDisk,
+		BestBlockHash:        info.BestBlockHash,
+	}
+}
+
+func bitcoinNetworkInfoToCLINetworkInfo(info bitcoinNetworkInfo) bitcoinCLINetworkInfo {
+	return bitcoinCLINetworkInfo{
+		Version:     info.Version,
+		Subversion:  info.Subversion,
+		Connections: info.Connections,
+	}
 }
 
 func getBitcoinLocalCadence(ctx context.Context, paths bitcoinCorePaths, bestHash string) (int64, []blockCadenceBucket, error) {
@@ -387,8 +430,10 @@ func computeBitcoinLocalCadence(ctx context.Context, paths bitcoinCorePaths, bes
 	}
 
 	current := header
+	complete := false
 	for steps := 0; steps < blockCadenceMaxSteps; steps++ {
 		if current.Time < startTime {
+			complete = true
 			break
 		}
 		idx := int((current.Time - startTime) / windowSec)
@@ -398,14 +443,21 @@ func computeBitcoinLocalCadence(ctx context.Context, paths bitcoinCorePaths, bes
 
 		nextHash := strings.TrimSpace(current.PreviousBlockHash)
 		if nextHash == "" {
+			complete = true
 			break
 		}
 
 		nextHeader, err := fetchBitcoinLocalBlockHeader(ctx, paths, nextHash)
 		if err != nil {
-			break
+			return 0, nil, fmt.Errorf("fetch previous block header failed: %w", err)
 		}
 		current = nextHeader
+	}
+	if !complete && current.Time < startTime {
+		complete = true
+	}
+	if !complete {
+		return 0, nil, errors.New("block cadence scan limit reached before window start")
 	}
 
 	return bestTime, buckets, nil
@@ -435,8 +487,10 @@ func computeBitcoinLocalCadenceRPC(ctx context.Context, cfg bitcoinRPCConfig, be
 	}
 
 	current := header
+	complete := false
 	for steps := 0; steps < blockCadenceMaxSteps; steps++ {
 		if current.Time < startTime {
+			complete = true
 			break
 		}
 		idx := int((current.Time - startTime) / windowSec)
@@ -446,14 +500,21 @@ func computeBitcoinLocalCadenceRPC(ctx context.Context, cfg bitcoinRPCConfig, be
 
 		nextHash := strings.TrimSpace(current.PreviousBlockHash)
 		if nextHash == "" {
+			complete = true
 			break
 		}
 
 		nextHeader, err := fetchBitcoinBlockHeaderRPC(ctx, cfg.Host, cfg.User, cfg.Pass, nextHash)
 		if err != nil {
-			break
+			return 0, nil, fmt.Errorf("fetch previous block header failed: %w", err)
 		}
 		current = nextHeader
+	}
+	if !complete && current.Time < startTime {
+		complete = true
+	}
+	if !complete {
+		return 0, nil, errors.New("block cadence scan limit reached before window start")
 	}
 
 	return bestTime, buckets, nil
@@ -490,7 +551,7 @@ func fetchBitcoinLocalNetworkInfoBestEffort(ctx context.Context, paths bitcoinCo
 	}
 	infoCtx, cancel := context.WithTimeout(ctx, bitcoinNetworkInfoTimeout)
 	defer cancel()
-	info, err := fetchBitcoinLocalNetworkInfo(infoCtx, paths)
+	info, err := fetchBitcoinLocalNetworkInfoBest(infoCtx, paths)
 	if err != nil {
 		return bitcoinCLINetworkInfo{}, false
 	}

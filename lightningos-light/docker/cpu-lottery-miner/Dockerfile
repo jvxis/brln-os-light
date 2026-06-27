@@ -23,7 +23,7 @@
 FROM debian:bookworm-slim AS build
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git ca-certificates build-essential automake autoconf pkg-config \
-        libcurl4-openssl-dev libjansson-dev libssl-dev \
+        libcurl4-openssl-dev libjansson-dev libssl-dev libgmp-dev \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 RUN git clone --depth 1 https://github.com/lucasjones/cpuminer-multi.git .

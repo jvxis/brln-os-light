@@ -12,13 +12,13 @@
 # does for the cniweb image.
 #
 # Build & publish (one-time, on any amd64 host; must be a PUBLIC Docker Hub repo):
-#   docker build -t jvx/cpu-lottery-miner:v1 \
+#   docker build -t jvx1971/cpu-lottery-miner:v1 \
 #     lightningos-light/docker/cpu-lottery-miner
 #   docker login
-#   docker push jvx/cpu-lottery-miner:v1
+#   docker push jvx1971/cpu-lottery-miner:v1
 #
 # Quick local sanity check (should print a hashrate on any amd64):
-#   docker run --rm jvx/cpu-lottery-miner:v1 \
+#   docker run --rm jvx1971/cpu-lottery-miner:v1 \
 #     cpuminer --algo sha256d --benchmark --api-bind 127.0.0.1:4048
 
 FROM debian:bookworm-slim AS build

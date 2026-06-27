@@ -24,7 +24,7 @@ const (
 	// (see docker/cpu-lottery-miner/Dockerfile). It runs on ANY amd64 CPU,
 	// including constrained VMs without AVX, and is the universal fallback.
 	// Published as a public image on Docker Hub so installs pull it automatically.
-	cpuMinerBaselineImage = "jvx/cpu-lottery-miner:v1"
+	cpuMinerBaselineImage = "jvx1971/cpu-lottery-miner:v1"
 )
 
 // cpuMinerFastImages are off-the-shelf cpuminer-opt builds that are much faster

@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
+
+	"lightningos-light/internal/system"
 )
 
 const (
@@ -16,13 +19,20 @@ const (
 	cpuMinerWorkerTag      = "cpu-lottery"
 	cpuMinerDefaultThreads = 1
 	cpuMinerMaxThreads     = 2
+
+	// cpuMinerBaselineImage is our own image, built for a baseline x86-64 target
+	// (see docker/cpu-lottery-miner/Dockerfile). It runs on ANY amd64 CPU,
+	// including constrained VMs without AVX, and is the universal fallback.
+	cpuMinerBaselineImage = "lightningos/cpu-lottery-miner:v1"
 )
 
-// cpuMinerImageCandidates lists amd64 cpuminer-opt images tried in order at
-// install time. The image has an empty ENTRYPOINT with CMD ["cpuminer", ...],
-// so cpuMinerComposeContents passes "cpuminer" as the first command argument.
-// Pinned to a validated digest for supply-chain safety, with the tag as fallback.
-var cpuMinerImageCandidates = []string{
+// cpuMinerFastImages are off-the-shelf cpuminer-opt builds that are much faster
+// but require modern instructions (AVX2/AVX512) and crash with SIGILL on CPUs
+// without them. selectCpuMinerImage only adopts one after probeCpuMinerImage
+// confirms it actually runs on this host. These and the baseline image all have
+// an empty ENTRYPOINT with the binary as "cpuminer" in PATH, so
+// cpuMinerComposeContents passes "cpuminer" as the first command argument.
+var cpuMinerFastImages = []string{
 	"cniweb/cpuminer-opt@sha256:8aba97834d6a6e1946b2a61c8939eee8907b7be97d8e77c1174f66579d5bd90b",
 	"cniweb/cpuminer-opt:latest",
 }
@@ -127,7 +137,7 @@ func (s *Server) installCpuMiner(ctx context.Context) error {
 	if err := ensureCpuMinerPaths(paths); err != nil {
 		return err
 	}
-	image, err := ensureFirstAvailableDockerImage(ctx, cpuMinerImageCandidates)
+	image, err := s.selectCpuMinerImage(ctx)
 	if err != nil {
 		return err
 	}
@@ -200,6 +210,69 @@ func (s *Server) ensureCpuMinerAddress(ctx context.Context, paths cpuMinerPaths)
 	return address, nil
 }
 
+// selectCpuMinerImage picks the fastest cpuminer image that actually runs on
+// this CPU. It only tries the fast (AVX) images when the CPU advertises AVX,
+// and verifies each with a short benchmark (probeCpuMinerImage) so that an
+// AVX2-only CPU never adopts an AVX512 build that would crash. It falls back to
+// our baseline image, which runs on any amd64.
+func (s *Server) selectCpuMinerImage(ctx context.Context) (string, error) {
+	if cpuinfoHasFlag("avx") {
+		for _, image := range cpuMinerFastImages {
+			if err := ensureDockerImage(ctx, image); err != nil {
+				continue
+			}
+			if s.probeCpuMinerImage(ctx, image) {
+				return image, nil
+			}
+			if s.logger != nil {
+				s.logger.Printf("cpuminer: %s not runnable on this CPU, falling back", image)
+			}
+		}
+	}
+	if err := ensureDockerImage(ctx, cpuMinerBaselineImage); err != nil {
+		return "", fmt.Errorf("cpuminer baseline image %s unavailable: %w", cpuMinerBaselineImage, err)
+	}
+	return cpuMinerBaselineImage, nil
+}
+
+// probeCpuMinerImage runs a brief benchmark to confirm the binary executes on
+// this CPU. A SIGILL from a too-modern build makes docker run exit non-zero.
+func (s *Server) probeCpuMinerImage(ctx context.Context, image string) bool {
+	probeCtx, cancel := context.WithTimeout(ctx, 40*time.Second)
+	defer cancel()
+	_, err := system.RunCommandWithSudo(probeCtx, "docker", "run", "--rm", image,
+		"cpuminer", "--algo", "sha256d", "--benchmark", "--time-limit", "2")
+	return err == nil
+}
+
+// cpuinfoHasFlag reports whether /proc/cpuinfo advertises the given CPU flag.
+func cpuinfoHasFlag(flag string) bool {
+	data, err := os.ReadFile("/proc/cpuinfo")
+	if err != nil {
+		return false
+	}
+	return cpuFlagsLineHas(string(data), flag)
+}
+
+func cpuFlagsLineHas(cpuinfo string, flag string) bool {
+	for _, line := range strings.Split(cpuinfo, "\n") {
+		lower := strings.ToLower(strings.TrimSpace(line))
+		if !strings.HasPrefix(lower, "flags") && !strings.HasPrefix(lower, "features") {
+			continue
+		}
+		idx := strings.Index(lower, ":")
+		if idx < 0 {
+			continue
+		}
+		for _, f := range strings.Fields(lower[idx+1:]) {
+			if f == flag {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func cpuMinerComposeContents(image string) string {
 	return fmt.Sprintf(`services:
   cpuminer:
@@ -223,8 +296,6 @@ func cpuMinerComposeContents(image string) string {
       - "x"
       - "--threads"
       - "${THREADS}"
-      - "--cpu-priority"
-      - "0"
       - "--api-bind"
       - "0.0.0.0:%d"
 `, image, cpuMinerAPIPort, cpuMinerAPIPort, publicPoolStratumPort, cpuMinerWorkerTag, cpuMinerAPIPort)

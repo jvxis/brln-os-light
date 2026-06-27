@@ -18,7 +18,7 @@ func TestCpuMinerComposeContents(t *testing.T) {
 		"- \"cpuminer\"",
 		"--algo",
 		"sha256d",
-		"--cpu-priority",
+		"--api-bind",
 	}
 	for _, want := range checks {
 		if !strings.Contains(contents, want) {
@@ -68,6 +68,28 @@ func TestParseCpuMinerSummary(t *testing.T) {
 	}
 	if fields["REJ"] != "1" {
 		t.Fatalf("REJ = %q, want 1", fields["REJ"])
+	}
+}
+
+func TestCpuFlagsLineHas(t *testing.T) {
+	// No AVX (constrained VM like LOS-TEST).
+	noAVX := "processor\t: 0\nflags\t\t: fpu vme sse2 ssse3 sse4_1 sse4_2 aes sha_ni\n"
+	if cpuFlagsLineHas(noAVX, "avx") {
+		t.Fatalf("avx should not be detected on no-AVX cpuinfo")
+	}
+	if !cpuFlagsLineHas(noAVX, "sha_ni") {
+		t.Fatalf("sha_ni should be detected")
+	}
+	// Modern CPU with AVX2 but no AVX512: 'avx' must match, not as a substring of avx512.
+	avx2 := "flags : fpu sse2 avx avx2 fma bmi1 bmi2\n"
+	if !cpuFlagsLineHas(avx2, "avx") {
+		t.Fatalf("avx should be detected")
+	}
+	if !cpuFlagsLineHas(avx2, "avx2") {
+		t.Fatalf("avx2 should be detected")
+	}
+	if cpuFlagsLineHas(avx2, "avx512f") {
+		t.Fatalf("avx512f should not be detected as a substring")
 	}
 }
 

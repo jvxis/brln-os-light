@@ -29,15 +29,18 @@ WORKDIR /src
 RUN git clone --depth 1 https://github.com/lucasjones/cpuminer-multi.git .
 # Generic x86-64 target (SSE2 baseline) for maximum compatibility — speed is
 # irrelevant for a lottery miner; running everywhere is the point.
+# cpuminer-multi produces a binary named "minerd".
 RUN ./autogen.sh \
     && ./configure CFLAGS="-O2 -pipe" \
     && make -j"$(nproc)" \
-    && strip cpuminer
+    && strip minerd
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libcurl4 libjansson4 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=build /src/cpuminer /usr/local/bin/cpuminer
+# Install minerd as "cpuminer" so the app's compose command ("cpuminer ...")
+# works the same as it does for the cniweb/cpuminer-opt image.
+COPY --from=build /src/minerd /usr/local/bin/cpuminer
 WORKDIR /cpuminer
 # No ENTRYPOINT on purpose: the compose command supplies "cpuminer <args>".

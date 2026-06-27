@@ -16,9 +16,9 @@
 #     lightningos-light/docker/cpu-lottery-miner
 #   docker push lightningos/cpu-lottery-miner:v1
 #
-# Quick local sanity check (should print a hashrate and exit 0 on any amd64):
+# Quick local sanity check (should print a hashrate on any amd64):
 #   docker run --rm lightningos/cpu-lottery-miner:v1 \
-#     cpuminer --algo sha256d --benchmark --time-limit 5
+#     cpuminer --algo sha256d --benchmark --api-bind 127.0.0.1:4048
 
 FROM debian:bookworm-slim AS build
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -26,21 +26,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libcurl4-openssl-dev libjansson-dev libssl-dev libgmp-dev \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
-RUN git clone --depth 1 https://github.com/lucasjones/cpuminer-multi.git .
+# tpruvot's fork (not lucasjones') ships the cgminer-style API (--api-bind) the
+# app needs for live stats, and builds its binary already named "cpuminer".
+RUN git clone --depth 1 https://github.com/tpruvot/cpuminer-multi.git .
 # Generic x86-64 target (SSE2 baseline) for maximum compatibility — speed is
 # irrelevant for a lottery miner; running everywhere is the point.
-# cpuminer-multi produces a binary named "minerd".
 RUN ./autogen.sh \
     && ./configure CFLAGS="-O2 -pipe" \
     && make -j"$(nproc)" \
-    && strip minerd
+    && strip cpuminer
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libcurl4 libjansson4 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-# Install minerd as "cpuminer" so the app's compose command ("cpuminer ...")
-# works the same as it does for the cniweb/cpuminer-opt image.
-COPY --from=build /src/minerd /usr/local/bin/cpuminer
+COPY --from=build /src/cpuminer /usr/local/bin/cpuminer
 WORKDIR /cpuminer
 # No ENTRYPOINT on purpose: the compose command supplies "cpuminer <args>".

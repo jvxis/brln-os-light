@@ -15,6 +15,7 @@ func TestCpuMinerComposeContents(t *testing.T) {
 		"${MINING_ADDRESS}.cpu-lottery",
 		`cpus: "${THREADS}"`,
 		"cpu_shares: 128",
+		"- \"cpuminer\"",
 		"--algo",
 		"sha256d",
 		"--cpu-priority",

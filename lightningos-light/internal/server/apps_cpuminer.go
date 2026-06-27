@@ -19,11 +19,12 @@ const (
 )
 
 // cpuMinerImageCandidates lists amd64 cpuminer-opt images tried in order at
-// install time. Pinned tags are preferred for supply-chain safety; validate the
-// chosen image against a live install before shipping.
+// install time. The image has an empty ENTRYPOINT with CMD ["cpuminer", ...],
+// so cpuMinerComposeContents passes "cpuminer" as the first command argument.
+// Pinned to a validated digest for supply-chain safety, with the tag as fallback.
 var cpuMinerImageCandidates = []string{
+	"cniweb/cpuminer-opt@sha256:8aba97834d6a6e1946b2a61c8939eee8907b7be97d8e77c1174f66579d5bd90b",
 	"cniweb/cpuminer-opt:latest",
-	"smolgrrr/cpuminer-opt:latest",
 }
 
 type cpuMinerPaths struct {
@@ -211,6 +212,7 @@ func cpuMinerComposeContents(image string) string {
     cpus: "${THREADS}"
     cpu_shares: 128
     command:
+      - "cpuminer"
       - "--algo"
       - "sha256d"
       - "--url"

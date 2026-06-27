@@ -583,6 +583,8 @@
     "electrsSynced": "Sincronizado no bloco {{height}}",
     "electrsMetricsUnavailable": "Métricas indisponíveis. Reinicie o Electrs para publicar a porta 4224.",
     "cpuMinerHashrate": "Seu hashrate",
+    "cpuMinerDetails": "Detalhes",
+    "cpuMinerHideDetails": "Ocultar",
     "cpuMinerConnecting": "Conectando…",
     "cpuMinerBestTicket": "Seu melhor bilhete",
     "cpuMinerBestTicketHint": "maior dificuldade de share encontrada",

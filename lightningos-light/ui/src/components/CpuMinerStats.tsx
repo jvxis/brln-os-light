@@ -40,6 +40,7 @@ type Props = {
 export default function CpuMinerStats({ running }: Props) {
   const { t } = useTranslation()
   const [status, setStatus] = useState<CpuMinerStatus | null>(null)
+  const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
@@ -84,84 +85,105 @@ export default function CpuMinerStats({ running }: Props) {
   }
 
   return (
-    <div className="mt-1 rounded-2xl border border-brass/20 bg-gradient-to-br from-brass/[0.07] via-transparent to-transparent p-4 space-y-4">
-      {/* Hero: live hashrate + best lottery ticket */}
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="rounded-xl bg-ink/40 border border-white/5 p-3">
-          <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-fog/50">
-            <span className={`h-2 w-2 rounded-full ${warmingUp ? 'bg-amber-400' : 'bg-emerald-400 animate-pulse'}`} />
-            {t('appStore.cpuMinerHashrate')}
-          </div>
-          <div className="mt-1 text-2xl font-semibold text-brass tabular-nums">
+    <div className="mt-1 rounded-2xl border border-brass/20 bg-gradient-to-br from-brass/[0.07] via-transparent to-transparent px-4 py-3">
+      {/* Compact header: hashrate only + expand toggle */}
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center justify-between gap-3 text-left"
+        aria-expanded={expanded}
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          <span className={`h-2 w-2 shrink-0 rounded-full ${warmingUp ? 'bg-amber-400' : 'bg-emerald-400 animate-pulse'}`} />
+          <span className="text-[11px] uppercase tracking-wide text-fog/50">{t('appStore.cpuMinerHashrate')}</span>
+          <span className="truncate text-lg font-semibold text-brass tabular-nums">
             {warmingUp ? t('appStore.cpuMinerConnecting') : formatHashrate(status.hashrate_hs)}
-          </div>
+          </span>
         </div>
-        <div className="rounded-xl bg-ink/40 border border-white/5 p-3">
-          <div className="text-[11px] uppercase tracking-wide text-fog/50">{t('appStore.cpuMinerBestTicket')}</div>
-          <div className="mt-1 text-2xl font-semibold text-fog tabular-nums">{formatDifficulty(status.best_difficulty)}</div>
-          <div className="text-[11px] text-fog/40">{t('appStore.cpuMinerBestTicketHint')}</div>
-        </div>
-      </div>
+        <span className="flex shrink-0 items-center gap-1 text-[11px] text-fog/50 hover:text-fog">
+          {expanded ? t('appStore.cpuMinerHideDetails') : t('appStore.cpuMinerDetails')}
+          <svg
+            viewBox="0 0 24 24"
+            className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            <path d="M6 9l6 6 6-6" />
+          </svg>
+        </span>
+      </button>
 
-      {/* Secondary stats */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <div className="space-y-0.5">
-          <div className="text-[11px] uppercase tracking-wide text-fog/50">{t('appStore.cpuMinerShares')}</div>
-          <div className="text-sm font-medium tabular-nums">
-            <span className="text-emerald-300">{status.shares_accepted.toLocaleString()}</span>
-            <span className="text-fog/30"> / </span>
-            <span className="text-rose-300">{status.shares_rejected.toLocaleString()}</span>
+      {expanded && (
+        <div className="mt-3 space-y-3 border-t border-white/5 pt-3">
+          {/* Best lottery ticket */}
+          <div className="rounded-xl border border-white/5 bg-ink/40 p-3">
+            <div className="text-[11px] uppercase tracking-wide text-fog/50">{t('appStore.cpuMinerBestTicket')}</div>
+            <div className="mt-1 text-2xl font-semibold text-fog tabular-nums">{formatDifficulty(status.best_difficulty)}</div>
+            <div className="text-[11px] text-fog/40">{t('appStore.cpuMinerBestTicketHint')}</div>
           </div>
-          <div className="text-[10px] text-fog/40">{t('appStore.cpuMinerSharesHint')}</div>
-        </div>
-        <div className="space-y-0.5">
-          <div className="text-[11px] uppercase tracking-wide text-fog/50">{t('appStore.cpuMinerPoolHashrate')}</div>
-          <div className="text-sm font-medium tabular-nums text-fog">
-            {status.pool_hashrate_hs > 0 ? formatHashrate(status.pool_hashrate_hs) : '—'}
-          </div>
-        </div>
-        <div className="col-span-2 space-y-1 sm:col-span-1">
-          <div className="flex items-center justify-between text-[11px] uppercase tracking-wide text-fog/50">
-            <span>{t('appStore.cpuMinerCpuUsage')}</span>
-            <span className="tabular-nums text-fog/70">{status.cpu_percent.toFixed(0)}%</span>
-          </div>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/5">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-brass/70 to-brass transition-all duration-500"
-              style={{ width: `${cpuFill}%` }}
-            />
-          </div>
-          <div className="text-[10px] text-fog/40">{t('appStore.cpuMinerThreads', { count: threads })}</div>
-        </div>
-      </div>
 
-      {/* Reward address */}
-      {status.address && (
-        <div className="rounded-xl bg-ink/40 border border-white/5 p-3 space-y-1">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] uppercase tracking-wide text-fog/50">{t('appStore.cpuMinerAddress')}</span>
-            <button
-              className="flex items-center gap-1 text-[11px] text-fog/50 hover:text-fog"
-              onClick={handleCopy}
-              title={t('appStore.cpuMinerCopyAddress')}
-              aria-label={t('appStore.cpuMinerCopyAddress')}
-            >
-              {copied ? (
-                <span className="text-emerald-300">{t('common.copied')}</span>
-              ) : (
-                <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6">
-                  <rect x="9" y="9" width="11" height="11" rx="2" />
-                  <rect x="4" y="4" width="11" height="11" rx="2" />
-                </svg>
-              )}
-            </button>
+          {/* Secondary stats */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="space-y-0.5">
+              <div className="text-[11px] uppercase tracking-wide text-fog/50">{t('appStore.cpuMinerShares')}</div>
+              <div className="text-sm font-medium tabular-nums">
+                <span className="text-emerald-300">{status.shares_accepted.toLocaleString()}</span>
+                <span className="text-fog/30"> / </span>
+                <span className="text-rose-300">{status.shares_rejected.toLocaleString()}</span>
+              </div>
+              <div className="text-[10px] text-fog/40">{t('appStore.cpuMinerSharesHint')}</div>
+            </div>
+            <div className="space-y-0.5">
+              <div className="text-[11px] uppercase tracking-wide text-fog/50">{t('appStore.cpuMinerPoolHashrate')}</div>
+              <div className="text-sm font-medium tabular-nums text-fog">
+                {status.pool_hashrate_hs > 0 ? formatHashrate(status.pool_hashrate_hs) : '—'}
+              </div>
+            </div>
+            <div className="col-span-2 space-y-1 sm:col-span-1">
+              <div className="flex items-center justify-between text-[11px] uppercase tracking-wide text-fog/50">
+                <span>{t('appStore.cpuMinerCpuUsage')}</span>
+                <span className="tabular-nums text-fog/70">{status.cpu_percent.toFixed(0)}%</span>
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/5">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-brass/70 to-brass transition-all duration-500"
+                  style={{ width: `${cpuFill}%` }}
+                />
+              </div>
+              <div className="text-[10px] text-fog/40">{t('appStore.cpuMinerThreads', { count: threads })}</div>
+            </div>
           </div>
-          <div className="font-mono text-[12px] text-brass/90 break-all">{shortenAddress(status.address)}</div>
-          <div className="text-[10px] text-fog/40">{t('appStore.cpuMinerRewardNote')}</div>
+
+          {/* Reward address */}
+          {status.address && (
+            <div className="space-y-1 rounded-xl border border-white/5 bg-ink/40 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] uppercase tracking-wide text-fog/50">{t('appStore.cpuMinerAddress')}</span>
+                <button
+                  className="flex items-center gap-1 text-[11px] text-fog/50 hover:text-fog"
+                  onClick={handleCopy}
+                  title={t('appStore.cpuMinerCopyAddress')}
+                  aria-label={t('appStore.cpuMinerCopyAddress')}
+                >
+                  {copied ? (
+                    <span className="text-emerald-300">{t('common.copied')}</span>
+                  ) : (
+                    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6">
+                      <rect x="9" y="9" width="11" height="11" rx="2" />
+                      <rect x="4" y="4" width="11" height="11" rx="2" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+              <div className="break-all font-mono text-[12px] text-brass/90">{shortenAddress(status.address)}</div>
+              <div className="text-[10px] text-fog/40">{t('appStore.cpuMinerRewardNote')}</div>
+            </div>
+          )}
+
+          <p className="text-[11px] leading-snug text-amber-300/80">⚡ {t('appStore.cpuMinerLotteryWarning')}</p>
         </div>
       )}
-
-      <p className="text-[11px] leading-snug text-amber-300/80">⚡ {t('appStore.cpuMinerLotteryWarning')}</p>
     </div>
   )
 }

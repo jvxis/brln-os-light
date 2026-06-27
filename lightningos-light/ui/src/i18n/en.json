@@ -583,6 +583,8 @@
     "electrsSynced": "Synced at block {{height}}",
     "electrsMetricsUnavailable": "Metrics unavailable. Restart Electrs to publish port 4224.",
     "cpuMinerHashrate": "Your hashrate",
+    "cpuMinerDetails": "Details",
+    "cpuMinerHideDetails": "Hide",
     "cpuMinerConnecting": "Connecting…",
     "cpuMinerBestTicket": "Your best ticket",
     "cpuMinerBestTicketHint": "best share difficulty found",

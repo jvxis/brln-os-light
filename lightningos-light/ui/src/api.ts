@@ -875,6 +875,19 @@ export const getApps = () => request('/api/apps')
 export const getAppStorageTargets = (app: string) =>
   request(`/api/apps/storage-targets${buildQuery({ app })}`)
 export const getElectrsStatus = () => request('/api/apps/electrs/status')
+export type CpuMinerStatus = {
+  installed: boolean
+  running: boolean
+  address: string
+  threads: number
+  hashrate_hs: number
+  shares_accepted: number
+  shares_rejected: number
+  best_difficulty: number
+  pool_hashrate_hs: number
+  cpu_percent: number
+}
+export const getCpuMinerStatus = (): Promise<CpuMinerStatus> => request('/api/apps/cpuminer/status')
 export const getAppAdminPassword = (id: string) => request(`/api/apps/${id}/admin-password`)
 export const installApp = (id: string, payload?: { data_dir?: string; storage_mount?: string; elements_mode?: 'local' | 'remote'; elements_rpc_url?: string; elements_rpc_user?: string; elements_rpc_password?: string }) =>
   request(`/api/apps/${id}/install`, { method: 'POST', body: JSON.stringify(payload ?? {}) })

@@ -18,6 +18,7 @@ func (s *Server) appRegistry() ([]appHandler, error) {
 		newPeerswapApp(s),
 		newRobosatsApp(s),
 		newPublicPoolApp(s),
+		newCpuMinerApp(s),
 		newDepixBuyApp(s),
 		newFswapApp(s),
 	}

@@ -12,6 +12,8 @@ import publicPoolIcon from '../assets/apps/public-pool.svg'
 import electrsIcon from '../assets/apps/electrs.svg'
 import mempoolIcon from '../assets/apps/mempool.svg'
 import fedimintIcon from '../assets/apps/fedimint.svg'
+import cpuLotteryIcon from '../assets/apps/cpu-lottery.svg'
+import CpuMinerStats from '../components/CpuMinerStats'
 
 type AppInfo = {
   id: string
@@ -67,6 +69,7 @@ const iconMap: Record<string, string> = {
   lnbits: lnbitsIcon,
   fswap: fswapIcon,
   publicpool: publicPoolIcon,
+  cpuminer: cpuLotteryIcon,
   electrs: electrsIcon,
   mempool: mempoolIcon,
   'fedimint-guardian': fedimintIcon,
@@ -626,6 +629,10 @@ export default function AppStore() {
                   </>
                 )}
               </div>
+
+              {app.id === 'cpuminer' && app.installed && (
+                <CpuMinerStats running={app.status === 'running'} />
+              )}
 
               <div className="flex flex-wrap items-center gap-3">
                 {!app.installed && (

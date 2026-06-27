@@ -31,8 +31,10 @@ WORKDIR /src
 RUN git clone --depth 1 https://github.com/tpruvot/cpuminer-multi.git .
 # Generic x86-64 target (SSE2 baseline) for maximum compatibility — speed is
 # irrelevant for a lottery miner; running everywhere is the point.
+# LIBS forces libcurl/libcrypto onto the final link line — tpruvot's configure
+# doesn't always add them, which breaks the link with undefined curl_*/SHA* refs.
 RUN ./autogen.sh \
-    && ./configure CFLAGS="-O2 -pipe" \
+    && ./configure CFLAGS="-O2 -pipe" LIBS="-lcurl -lcrypto" \
     && make -j"$(nproc)" \
     && strip cpuminer
 

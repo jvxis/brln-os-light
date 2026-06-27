@@ -880,6 +880,7 @@ export type CpuMinerStatus = {
   running: boolean
   address: string
   threads: number
+  max_threads: number
   hashrate_hs: number
   shares_accepted: number
   shares_rejected: number
@@ -888,6 +889,8 @@ export type CpuMinerStatus = {
   cpu_percent: number
 }
 export const getCpuMinerStatus = (): Promise<CpuMinerStatus> => request('/api/apps/cpuminer/status')
+export const setCpuMinerThreads = (threads: number) =>
+  request('/api/apps/cpuminer/threads', { method: 'POST', body: JSON.stringify({ threads }) })
 export const getAppAdminPassword = (id: string) => request(`/api/apps/${id}/admin-password`)
 export const installApp = (id: string, payload?: { data_dir?: string; storage_mount?: string; elements_mode?: 'local' | 'remote'; elements_rpc_url?: string; elements_rpc_user?: string; elements_rpc_password?: string }) =>
   request(`/api/apps/${id}/install`, { method: 'POST', body: JSON.stringify(payload ?? {}) })

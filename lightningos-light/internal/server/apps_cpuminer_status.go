@@ -18,6 +18,7 @@ type cpuMinerStatus struct {
 	Running        bool    `json:"running"`
 	Address        string  `json:"address"`
 	Threads        int     `json:"threads"`
+	MaxThreads     int     `json:"max_threads"`
 	HashrateHs     float64 `json:"hashrate_hs"`
 	SharesAccepted int64   `json:"shares_accepted"`
 	SharesRejected int64   `json:"shares_rejected"`
@@ -30,6 +31,21 @@ func (s *Server) handleCpuMinerStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.fetchCpuMinerStatus(r.Context()))
 }
 
+func (s *Server) handleCpuMinerThreads(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Threads int `json:"threads"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if err := s.setCpuMinerThreads(r.Context(), req.Threads); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (s *Server) fetchCpuMinerStatus(ctx context.Context) cpuMinerStatus {
 	status := cpuMinerStatus{}
 	paths := cpuMinerAppPaths()
@@ -37,6 +53,7 @@ func (s *Server) fetchCpuMinerStatus(ctx context.Context) cpuMinerStatus {
 		return status
 	}
 	status.Installed = true
+	status.MaxThreads = cpuMinerMaxThreads()
 	status.Address = strings.TrimSpace(readEnvValue(paths.EnvPath, "MINING_ADDRESS"))
 	if threads, err := strconv.Atoi(strings.TrimSpace(readEnvValue(paths.EnvPath, "THREADS"))); err == nil && threads > 0 {
 		status.Threads = threads

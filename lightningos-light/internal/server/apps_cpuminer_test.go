@@ -2,6 +2,7 @@ package server
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -35,14 +36,15 @@ func TestEnsureCpuMinerEnvCreatesAndClamps(t *testing.T) {
 		EnvPath:     filepath.Join(dir, ".env"),
 	}
 
-	if err := ensureCpuMinerEnv(paths, "bc1qexampleaddr", 9); err != nil {
+	wantMax := strconv.Itoa(cpuMinerMaxThreads())
+	if err := ensureCpuMinerEnv(paths, "bc1qexampleaddr", 9999); err != nil {
 		t.Fatalf("ensureCpuMinerEnv create: %v", err)
 	}
 	if got := readEnvValue(paths.EnvPath, "MINING_ADDRESS"); got != "bc1qexampleaddr" {
 		t.Fatalf("MINING_ADDRESS = %q, want bc1qexampleaddr", got)
 	}
-	if got := readEnvValue(paths.EnvPath, "THREADS"); got != "2" {
-		t.Fatalf("THREADS clamp = %q, want 2 (max)", got)
+	if got := readEnvValue(paths.EnvPath, "THREADS"); got != wantMax {
+		t.Fatalf("THREADS clamp = %q, want %q (max)", got, wantMax)
 	}
 
 	// Re-run keeps the address sticky and updates THREADS to the new value.

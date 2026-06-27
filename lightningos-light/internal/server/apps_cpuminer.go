@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -18,7 +19,6 @@ const (
 	cpuMinerAPIPort        = 4048
 	cpuMinerWorkerTag      = "cpu-lottery"
 	cpuMinerDefaultThreads = 1
-	cpuMinerMaxThreads     = 2
 
 	// cpuMinerBaselineImage is our own image, built for a baseline x86-64 target
 	// (see docker/cpu-lottery-miner/Dockerfile). It runs on ANY amd64 CPU,
@@ -301,13 +301,40 @@ func cpuMinerComposeContents(image string) string {
 `, image, cpuMinerAPIPort, cpuMinerAPIPort, publicPoolStratumPort, cpuMinerWorkerTag, cpuMinerAPIPort)
 }
 
-func ensureCpuMinerEnv(paths cpuMinerPaths, address string, threads int) error {
+// cpuMinerMaxThreads caps mining threads at the host core count minus one, so
+// at least one core is always left for LND and the rest of the node.
+func cpuMinerMaxThreads() int {
+	if n := runtime.NumCPU() - 1; n >= 1 {
+		return n
+	}
+	return 1
+}
+
+func clampCpuMinerThreads(threads int) int {
 	if threads < 1 {
-		threads = cpuMinerDefaultThreads
+		return cpuMinerDefaultThreads
 	}
-	if threads > cpuMinerMaxThreads {
-		threads = cpuMinerMaxThreads
+	if max := cpuMinerMaxThreads(); threads > max {
+		return max
 	}
+	return threads
+}
+
+// setCpuMinerThreads updates the thread count and recreates the container so the
+// new value (and matching CPU cap) takes effect.
+func (s *Server) setCpuMinerThreads(ctx context.Context, threads int) error {
+	paths := cpuMinerAppPaths()
+	if !fileExists(paths.ComposePath) {
+		return errors.New("CPU Lottery Miner is not installed")
+	}
+	if err := setEnvValue(paths.EnvPath, "THREADS", strconv.Itoa(clampCpuMinerThreads(threads))); err != nil {
+		return err
+	}
+	return runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d")
+}
+
+func ensureCpuMinerEnv(paths cpuMinerPaths, address string, threads int) error {
+	threads = clampCpuMinerThreads(threads)
 	required := [][2]string{
 		{"MINING_ADDRESS", address},
 		{"THREADS", strconv.Itoa(threads)},

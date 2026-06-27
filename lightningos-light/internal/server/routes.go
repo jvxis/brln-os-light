@@ -78,6 +78,7 @@ func (s *Server) routes() http.Handler {
 	r.Get("/api/apps/{id}/admin-password", s.handleAppAdminPassword)
 	r.Get("/api/apps/electrs/status", s.handleElectrsStatus)
 	r.Get("/api/apps/cpuminer/status", s.handleCpuMinerStatus)
+	r.Post("/api/apps/cpuminer/threads", s.handleCpuMinerThreads)
 	r.Get("/api/notifications", s.handleNotificationsList)
 	r.Get("/api/notifications/stream", s.handleNotificationsStream)
 	r.Get("/api/notifications/telegram", s.handleTelegramNotificationsGet)

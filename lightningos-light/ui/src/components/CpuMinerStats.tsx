@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getCpuMinerStatus, type CpuMinerStatus } from '../api'
+import { getCpuMinerStatus, setCpuMinerThreads, type CpuMinerStatus } from '../api'
 
 function formatHashrate(hs: number): string {
   if (!hs || hs <= 0) return '0 H/s'
@@ -42,6 +42,8 @@ export default function CpuMinerStats({ running }: Props) {
   const [status, setStatus] = useState<CpuMinerStatus | null>(null)
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [applyingThreads, setApplyingThreads] = useState(false)
+  const [pendingThreads, setPendingThreads] = useState<number | null>(null)
 
   useEffect(() => {
     if (!running) {
@@ -69,9 +71,11 @@ export default function CpuMinerStats({ running }: Props) {
   if (!running || !status) return null
 
   const threads = status.threads > 0 ? status.threads : 1
+  const maxThreads = status.max_threads > 0 ? status.max_threads : 1
   const cpuCeiling = threads * 100
   const cpuFill = Math.min(100, Math.max(0, (status.cpu_percent / cpuCeiling) * 100))
   const warmingUp = status.hashrate_hs <= 0
+  const selectedThreads = pendingThreads ?? threads
 
   const handleCopy = async () => {
     if (!status.address) return
@@ -84,13 +88,25 @@ export default function CpuMinerStats({ running }: Props) {
     }
   }
 
+  const handleApplyThreads = async () => {
+    setApplyingThreads(true)
+    try {
+      await setCpuMinerThreads(selectedThreads)
+      setPendingThreads(null)
+    } catch {
+      // Surface nothing inline; the next poll reflects the real state.
+    } finally {
+      setApplyingThreads(false)
+    }
+  }
+
   return (
     <div className="mt-1 rounded-2xl border border-brass/20 bg-gradient-to-br from-brass/[0.07] via-transparent to-transparent px-4 py-3">
-      {/* Compact header: hashrate only + expand toggle */}
+      {/* Compact header: hashrate + shares always visible, plus expand toggle */}
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center justify-between gap-3 text-left"
+        className="flex w-full flex-wrap items-center justify-between gap-x-4 gap-y-1 text-left"
         aria-expanded={expanded}
       >
         <div className="flex min-w-0 items-center gap-2">
@@ -100,18 +116,28 @@ export default function CpuMinerStats({ running }: Props) {
             {warmingUp ? t('appStore.cpuMinerConnecting') : formatHashrate(status.hashrate_hs)}
           </span>
         </div>
-        <span className="flex shrink-0 items-center gap-1 text-[11px] text-fog/50 hover:text-fog">
-          {expanded ? t('appStore.cpuMinerHideDetails') : t('appStore.cpuMinerDetails')}
-          <svg
-            viewBox="0 0 24 24"
-            className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-          >
-            <path d="M6 9l6 6 6-6" />
-          </svg>
-        </span>
+        <div className="flex items-center gap-4">
+          <span className="flex items-center gap-1.5 text-sm">
+            <span className="text-[11px] uppercase tracking-wide text-fog/50">{t('appStore.cpuMinerShares')}</span>
+            <span className="tabular-nums">
+              <span className="text-emerald-300">{status.shares_accepted.toLocaleString()}</span>
+              <span className="text-fog/30"> / </span>
+              <span className="text-rose-300">{status.shares_rejected.toLocaleString()}</span>
+            </span>
+          </span>
+          <span className="flex shrink-0 items-center gap-1 text-[11px] text-fog/50 hover:text-fog">
+            {expanded ? t('appStore.cpuMinerHideDetails') : t('appStore.cpuMinerDetails')}
+            <svg
+              viewBox="0 0 24 24"
+              className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </span>
+        </div>
       </button>
 
       {expanded && (
@@ -124,23 +150,14 @@ export default function CpuMinerStats({ running }: Props) {
           </div>
 
           {/* Secondary stats */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <div className="space-y-0.5">
-              <div className="text-[11px] uppercase tracking-wide text-fog/50">{t('appStore.cpuMinerShares')}</div>
-              <div className="text-sm font-medium tabular-nums">
-                <span className="text-emerald-300">{status.shares_accepted.toLocaleString()}</span>
-                <span className="text-fog/30"> / </span>
-                <span className="text-rose-300">{status.shares_rejected.toLocaleString()}</span>
-              </div>
-              <div className="text-[10px] text-fog/40">{t('appStore.cpuMinerSharesHint')}</div>
-            </div>
+          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-0.5">
               <div className="text-[11px] uppercase tracking-wide text-fog/50">{t('appStore.cpuMinerPoolHashrate')}</div>
               <div className="text-sm font-medium tabular-nums text-fog">
                 {status.pool_hashrate_hs > 0 ? formatHashrate(status.pool_hashrate_hs) : '—'}
               </div>
             </div>
-            <div className="col-span-2 space-y-1 sm:col-span-1">
+            <div className="space-y-1">
               <div className="flex items-center justify-between text-[11px] uppercase tracking-wide text-fog/50">
                 <span>{t('appStore.cpuMinerCpuUsage')}</span>
                 <span className="tabular-nums text-fog/70">{status.cpu_percent.toFixed(0)}%</span>
@@ -151,8 +168,44 @@ export default function CpuMinerStats({ running }: Props) {
                   style={{ width: `${cpuFill}%` }}
                 />
               </div>
-              <div className="text-[10px] text-fog/40">{t('appStore.cpuMinerThreads', { count: threads })}</div>
             </div>
+          </div>
+
+          {/* Threads control */}
+          <div className="space-y-1.5 rounded-xl border border-white/5 bg-ink/40 p-3">
+            <div className="text-[11px] uppercase tracking-wide text-fog/50">{t('appStore.cpuMinerThreadsLabel')}</div>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center rounded-lg border border-white/10">
+                <button
+                  type="button"
+                  className="px-2.5 py-1 text-fog/70 hover:text-fog disabled:opacity-30"
+                  disabled={applyingThreads || selectedThreads <= 1}
+                  onClick={() => setPendingThreads(Math.max(1, selectedThreads - 1))}
+                  aria-label="-"
+                >
+                  −
+                </button>
+                <span className="min-w-[2rem] text-center text-sm font-semibold tabular-nums">{selectedThreads}</span>
+                <button
+                  type="button"
+                  className="px-2.5 py-1 text-fog/70 hover:text-fog disabled:opacity-30"
+                  disabled={applyingThreads || selectedThreads >= maxThreads}
+                  onClick={() => setPendingThreads(Math.min(maxThreads, selectedThreads + 1))}
+                  aria-label="+"
+                >
+                  +
+                </button>
+              </div>
+              <button
+                type="button"
+                className="btn-secondary px-3 py-1 text-sm disabled:opacity-40"
+                disabled={applyingThreads || selectedThreads === threads}
+                onClick={handleApplyThreads}
+              >
+                {applyingThreads ? t('appStore.cpuMinerThreadsApplying') : t('appStore.cpuMinerThreadsApply')}
+              </button>
+            </div>
+            <div className="text-[10px] text-fog/40">{t('appStore.cpuMinerThreadsHint', { max: maxThreads })}</div>
           </div>
 
           {/* Reward address */}

@@ -27,6 +27,8 @@ type AppInfo = {
   available?: boolean
   unavailable_reason?: string
   unavailable_message?: string
+  ufw_active?: boolean
+  ufw_command?: string
 }
 
 type BitcoinLocalStatus = {
@@ -609,6 +611,12 @@ export default function AppStore() {
                         <p className="font-mono text-[11px] text-fog/70">{t('appStore.publicPoolConfServer')}</p>
                         <p className="font-mono text-[11px] text-fog/70">{t('appStore.publicPoolConfRpcBind')}</p>
                         <p className="font-mono text-[11px] text-fog/70">{t('appStore.publicPoolConfRpcAllow')}</p>
+                        {app.ufw_active && app.ufw_command && (
+                          <>
+                            <p className="text-amber-300/80">{t('appStore.publicPoolUfwActive')}</p>
+                            <p className="break-all font-mono text-[11px] text-fog/70">{app.ufw_command}</p>
+                          </>
+                        )}
                       </>
                     )}
                   </>

@@ -1,6 +1,9 @@
 package server
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestPublicPoolDockerRPCURLUsesHostGatewayForLocalBind(t *testing.T) {
 	tests := []struct {
@@ -23,5 +26,19 @@ func TestPublicPoolDockerRPCURLUsesHostGatewayForLocalBind(t *testing.T) {
 				t.Fatalf("expected %q, got %q", tc.want, got)
 			}
 		})
+	}
+}
+
+func TestPublicPoolUfwCommandForBridge(t *testing.T) {
+	if got := publicPoolUfwCommandForBridge("br-abcdef123456", 8332); got != "sudo ufw allow in on br-abcdef123456 to any port 8332 proto tcp" {
+		t.Fatalf("unexpected concrete command: %q", got)
+	}
+
+	fallback := publicPoolUfwCommandForBridge("", 0)
+	if want := "publicpool_default"; !strings.Contains(fallback, want) {
+		t.Fatalf("expected fallback command to inspect %q, got %q", want, fallback)
+	}
+	if want := "to any port 8332 proto tcp"; !strings.Contains(fallback, want) {
+		t.Fatalf("expected fallback command to open default RPC port, got %q", fallback)
 	}
 }

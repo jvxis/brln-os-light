@@ -367,6 +367,7 @@ POST /api/lnops/succession/simulate
 
 GET /api/apps
 - Returns app list with status.
+- Public Pool may include optional `ufw_active` and `ufw_command` fields when UFW is active and the active Bitcoin source is an existing systemd/external local node.
 
 POST /api/apps/{id}/install
 - Installs an app.

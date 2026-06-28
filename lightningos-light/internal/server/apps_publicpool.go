@@ -78,6 +78,7 @@ func (a publicPoolApp) Definition() appDefinition {
 func (a publicPoolApp) Info(ctx context.Context) (appInfo, error) {
 	def := a.Definition()
 	info := newAppInfo(def)
+	a.server.enrichPublicPoolUfwInfo(ctx, &info)
 	paths := publicPoolAppPaths()
 	if !fileExists(paths.ComposePath) {
 		return info, nil
@@ -90,6 +91,23 @@ func (a publicPoolApp) Info(ctx context.Context) (appInfo, error) {
 	}
 	info.Status = status
 	return info, nil
+}
+
+func (s *Server) enrichPublicPoolUfwInfo(ctx context.Context, info *appInfo) {
+	if info == nil || readBitcoinSource() != "local" || fileExists(bitcoinCoreAppPaths().ComposePath) {
+		return
+	}
+	if !ufwActive(ctx) {
+		return
+	}
+	port := 8332
+	if cfg, _, err := readBitcoinLocalRPCConfig(ctx); err == nil {
+		if _, parsedPort := parseMainchainRPC(cfg.Host); parsedPort > 0 {
+			port = parsedPort
+		}
+	}
+	info.UFWActive = true
+	info.UFWCommand = publicPoolUfwCommand(ctx, port)
 }
 
 func (a publicPoolApp) Install(ctx context.Context) error {
@@ -409,8 +427,7 @@ func ensurePublicPoolEnv(paths publicPoolPaths, values publicPoolRuntimeValues) 
 }
 
 func ensurePublicPoolUfwAccess(ctx context.Context, values publicPoolRuntimeValues) error {
-	statusOut, err := system.RunCommandWithSudo(ctx, "ufw", "status")
-	if err != nil || !strings.Contains(strings.ToLower(statusOut), "status: active") {
+	if !ufwActive(ctx) {
 		return nil
 	}
 
@@ -428,6 +445,7 @@ func ensurePublicPoolUfwAccess(ctx context.Context, values publicPoolRuntimeValu
 			port = 8332
 		}
 		var bridge string
+		var err error
 		for attempt := 0; attempt < publicPoolUfwRetries; attempt++ {
 			bridge, err = publicPoolBridgeName(ctx)
 			if err == nil && bridge != "" {
@@ -448,6 +466,11 @@ func ensurePublicPoolUfwAccess(ctx context.Context, values publicPoolRuntimeValu
 		}
 	}
 	return lastErr
+}
+
+func ufwActive(ctx context.Context) bool {
+	statusOut, err := system.RunCommandWithSudo(ctx, "ufw", "status")
+	return err == nil && strings.Contains(strings.ToLower(statusOut), "status: active")
 }
 
 func (s *Server) startPublicPoolRuntimeReconciler() {
@@ -517,4 +540,23 @@ func publicPoolBridgeName(ctx context.Context) (string, error) {
 		id = id[:12]
 	}
 	return "br-" + id, nil
+}
+
+func publicPoolUfwCommand(ctx context.Context, port int) string {
+	bridge := ""
+	if resolved, err := publicPoolBridgeName(ctx); err == nil {
+		bridge = resolved
+	}
+	return publicPoolUfwCommandForBridge(bridge, port)
+}
+
+func publicPoolUfwCommandForBridge(bridge string, port int) string {
+	if port <= 0 {
+		port = 8332
+	}
+	bridge = strings.TrimSpace(bridge)
+	if bridge != "" {
+		return fmt.Sprintf("sudo ufw allow in on %s to any port %d proto tcp", bridge, port)
+	}
+	return fmt.Sprintf("NET_ID=$(sudo docker network inspect publicpool_default --format '{{.Id}}') && BR=\"br-$(printf '%%.12s' \"$NET_ID\")\" && sudo ufw allow in on \"$BR\" to any port %d proto tcp", port)
 }

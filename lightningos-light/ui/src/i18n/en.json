@@ -571,6 +571,7 @@
     "publicPoolConfServer": "server=1",
     "publicPoolConfRpcBind": "rpcbind=0.0.0.0:8332",
     "publicPoolConfRpcAllow": "rpcallowip=172.16.0.0/12",
+    "publicPoolUfwActive": "UFW active: after install/start, if Bitcoin RPC does not connect, allow the Public Pool Docker bridge:",
     "fedimintGuardianUiAccess": "Guardian UI: {{url}}",
     "fedimintGuardianP2P": "Guardian P2P/Iroh port: {{port}} TCP/UDP",
     "fedimintGuardianIrohApi": "Guardian API/Iroh UDP port: {{port}}",

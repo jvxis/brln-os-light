@@ -27,6 +27,8 @@ type appInfo struct {
 	Available          bool   `json:"available"`
 	UnavailableReason  string `json:"unavailable_reason,omitempty"`
 	UnavailableMessage string `json:"unavailable_message,omitempty"`
+	UFWActive          bool   `json:"ufw_active,omitempty"`
+	UFWCommand         string `json:"ufw_command,omitempty"`
 }
 
 type appHandler interface {

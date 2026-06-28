@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -235,7 +236,7 @@ func (s *Server) resolvePublicPoolRuntimeValues(ctx context.Context) (publicPool
 	if strings.TrimSpace(localCfg.User) == "" || strings.TrimSpace(localCfg.Pass) == "" {
 		return publicPoolRuntimeValues{}, errors.New("local bitcoin RPC credentials missing")
 	}
-	_, localPort := parseMainchainRPC(localCfg.Host)
+	localHost, localPort := parseMainchainRPC(localCfg.Host)
 
 	if fileExists(bitcoinCoreAppPaths().ComposePath) {
 		if localCfgUpdated {
@@ -254,7 +255,7 @@ func (s *Server) resolvePublicPoolRuntimeValues(ctx context.Context) (publicPool
 	}
 
 	values.BitcoinMode = "local_external"
-	values.BitcoinRPCURL = "http://host.docker.internal"
+	values.BitcoinRPCURL = publicPoolDockerRPCURL(localHost)
 	values.BitcoinRPCPort = localPort
 	values.BitcoinRPCUser = localCfg.User
 	values.BitcoinRPCPass = localCfg.Pass
@@ -290,6 +291,19 @@ func toHTTPRPCURL(host string) string {
 		trimmed = "[" + trimmed + "]"
 	}
 	return "http://" + trimmed
+}
+
+func publicPoolDockerRPCURL(host string) string {
+	trimmed := strings.TrimSpace(host)
+	lower := strings.ToLower(trimmed)
+	if lower == "" || lower == "localhost" {
+		return "http://host.docker.internal"
+	}
+	ip := net.ParseIP(strings.Trim(trimmed, "[]"))
+	if ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
+		return "http://host.docker.internal"
+	}
+	return toHTTPRPCURL(trimmed)
 }
 
 func publicPoolComposeContents(paths publicPoolPaths, values publicPoolRuntimeValues) string {

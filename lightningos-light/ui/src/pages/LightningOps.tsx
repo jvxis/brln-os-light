@@ -6314,6 +6314,8 @@ export default function LightningOps() {
     if (!point) return
     setLightningToolsOpen(true)
     setClosePoint(point)
+    setCloseForce(false)
+    setCloseFeeMode('auto')
     setCloseStatus('')
     if (typeof window === 'undefined') return
     window.setTimeout(() => {
@@ -8354,6 +8356,7 @@ export default function LightningOps() {
                             <button
                               className="btn-secondary text-xs px-3 py-2"
                               type="button"
+                              title={t('lightningOps.channelDbImpactPrepareCloseHint')}
                               onClick={() => handlePrepareCloseChannel(selectedChannelDBImpactItems[0].channel_point)}
                             >
                               {t('lightningOps.channelDbImpactPrepareClose')}
@@ -8384,8 +8387,8 @@ export default function LightningOps() {
                               <th className="px-3 py-3 text-right">{t('lightningOps.channelDbImpactColUpdates')}</th>
                               <th className="px-3 py-3">{t('lightningOps.channelDbImpactColShare')}</th>
                               <th className="px-3 py-3 text-right">{t('lightningOps.channelDbImpactColEstimate')}</th>
-                              <th className="px-3 py-3 text-right">{t('lightningOps.channelDbImpactColPace')}</th>
-                              <th className="px-3 py-3">{t('lightningOps.channelDbImpactColAction')}</th>
+                              <th className="px-3 py-3 text-center">{t('lightningOps.channelDbImpactColPace')}</th>
+                              <th className="px-3 py-3 text-center">{t('lightningOps.channelDbImpactColAction')}</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -8436,14 +8439,14 @@ export default function LightningOps() {
                                   <td className="px-3 py-3 text-right align-top">
                                     <div className="font-medium text-fog">{formatChannelDBSize(item.estimated_db_gb)}</div>
                                   </td>
-                                  <td className="px-3 py-3 text-right align-top">
+                                  <td className="px-3 py-3 text-center align-top">
                                     <div className="text-fog">{t('lightningOps.channelDbImpactPerDay', { value: formatChannelDBNumber(item.updates_per_day, 0) })}</div>
                                     <div className="text-[11px] text-fog/45">
                                       {t('lightningOps.channelDbImpactPerMillionSat', { value: formatChannelDBNumber(item.updates_per_million_sat, 0) })}
                                     </div>
                                   </td>
-                                  <td className="px-3 py-3 align-top">
-                                    <div className="flex flex-wrap gap-2">
+                                  <td className="px-3 py-3 text-center align-top">
+                                    <div className="flex flex-wrap justify-center gap-2">
                                       <button
                                         className="btn-secondary text-xs px-3 py-1.5"
                                         type="button"
@@ -8454,6 +8457,7 @@ export default function LightningOps() {
                                       <button
                                         className="btn-secondary text-xs px-3 py-1.5"
                                         type="button"
+                                        title={t('lightningOps.channelDbImpactPrepareCloseHint')}
                                         onClick={() => handlePrepareCloseChannel(item.channel_point)}
                                       >
                                         {t('lightningOps.channelDbImpactPrepareClose')}

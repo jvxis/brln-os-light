@@ -2322,6 +2322,7 @@
     "channelDbImpactSelectionEstimate": "DB est.: {{value}}",
     "channelDbImpactSelectionCapacity": "Capacidade: {{value}}",
     "channelDbImpactPrepareClose": "Preparar fechamento",
+    "channelDbImpactPrepareCloseHint": "Seleciona este canal no tool de fechamento existente. Ele não fecha o canal sozinho.",
     "channelDbImpactClearSelection": "Limpar seleção",
     "channelDbImpactEstimateNote": "O impacto por canal é estimado pela participação do canal em num_updates do LND; o BoltDB não expõe bytes exatos por canal via RPC.",
     "channelDbImpactColChannel": "Canal",

@@ -2322,6 +2322,7 @@
     "channelDbImpactSelectionEstimate": "Est. DB: {{value}}",
     "channelDbImpactSelectionCapacity": "Capacity: {{value}}",
     "channelDbImpactPrepareClose": "Prepare close",
+    "channelDbImpactPrepareCloseHint": "Selects this channel in the existing close-channel tool. It does not close the channel by itself.",
     "channelDbImpactClearSelection": "Clear selection",
     "channelDbImpactEstimateNote": "Per-channel database impact is estimated from each channel's share of LND num_updates; BoltDB does not expose exact bytes per channel over RPC.",
     "channelDbImpactColChannel": "Channel",

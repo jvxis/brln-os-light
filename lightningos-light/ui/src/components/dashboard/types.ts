@@ -292,6 +292,7 @@ export type RebalanceOverview = {
   last_manual_restart_reasons?: Record<string, number>
   daily_budget_sat?: number
   daily_spent_sat?: number
+  budget_unlimited?: boolean
   remaining_total_sat?: number
   remaining_for_auto_sat?: number
   live_cost_sat?: number

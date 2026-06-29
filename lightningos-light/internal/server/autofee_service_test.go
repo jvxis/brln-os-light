@@ -1393,10 +1393,93 @@ func TestApplyNegMarginProtectedDownBlocksWithoutHeadroom(t *testing.T) {
 	}
 }
 
+func TestApplyStaleNegMarginDownDecayAllowsSmallStepWithGoodLiquidity(t *testing.T) {
+	got, tags := applyStaleNegMarginDownDecay(
+		false,
+		1635,
+		1000,
+		1635,
+		0,
+		outRatioNormalizationMeta{Raw: 0.29, Effective: 0.29},
+		0.20,
+		true,
+		-1600,
+		false,
+		0,
+		0,
+		0,
+		false,
+		false,
+		false,
+		48,
+		10,
+	)
+	if got != 1575 {
+		t.Fatalf("expected one capped stale decay step, got %d", got)
+	}
+	if !containsTag(tags, "neg-margin-stale-down") || !containsTag(tags, "stale-cost-down") {
+		t.Fatalf("expected stale decay tags, got %+v", tags)
+	}
+}
+
+func TestApplyStaleNegMarginDownDecayBlocksPressureAndRecentFill(t *testing.T) {
+	meta := outRatioNormalizationMeta{Raw: 0.29, Effective: 0.29}
+	if got, tags := applyStaleNegMarginDownDecay(false, 1635, 1000, 1635, 0, meta, 0.20, true, -1600, false, 1, 0, 0, false, false, false, 48, 10); got != 1000 || len(tags) != 0 {
+		t.Fatalf("expected relevant fill to block stale decay, got %d tags=%+v", got, tags)
+	}
+	if got, tags := applyStaleNegMarginDownDecay(false, 1635, 1000, 1635, 0, meta, 0.20, true, -1600, false, 0, 2, 0, false, false, false, 48, 10); got != 1000 || len(tags) != 0 {
+		t.Fatalf("expected failed pressure to block stale decay, got %d tags=%+v", got, tags)
+	}
+	if got, tags := applyStaleNegMarginDownDecay(false, 1635, 1000, 1635, 0, meta, 0.20, true, -1600, false, 0, 0, 900, false, false, false, 48, 10); got != 1000 || len(tags) != 0 {
+		t.Fatalf("expected recent cost floor to block stale decay, got %d tags=%+v", got, tags)
+	}
+}
+
 func TestDeriveNegMarginProtectedFloorIncludesRecentCost(t *testing.T) {
 	protected := deriveNegMarginProtectedFloor(2457, 2174, 2461, 10, 4000)
 	if protected != 2461 {
 		t.Fatalf("expected recent cost to raise protected floor, got %d", protected)
+	}
+}
+
+func TestRelevantRecentRebalanceFill(t *testing.T) {
+	if isRelevantRecentRebalanceFill(67_258, 300_000, 10_000_000) {
+		t.Fatalf("did not expect a small partial fill to be relevant")
+	}
+	if !isRelevantRecentRebalanceFill(160_000, 300_000, 10_000_000) {
+		t.Fatalf("expected fill above half target to be relevant")
+	}
+	if !isRelevantRecentRebalanceFill(120_000, 1_000_000, 10_000_000) {
+		t.Fatalf("expected fill above one percent capacity to be relevant")
+	}
+	if !isRelevantRecentRebalanceFill(300_000, 0, 0) {
+		t.Fatalf("expected large fill with missing target/capacity to be relevant")
+	}
+}
+
+func TestRecentRebalanceSignalSmallPartialDoesNotSuppressWeakPressure(t *testing.T) {
+	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+	sig := recentRebalanceSignal{
+		Count:            1,
+		AmtSat:           67_258,
+		FeeMsat:          80_000,
+		LastAt:           now,
+		RelevanceChecked: true,
+		WeakCount:        3,
+		WeakAmtSat:       900_000,
+		WeakLastAt:       now.Add(-30 * time.Minute),
+	}
+	count, amt := sig.surgeConfirmInputs()
+	if count <= 0 || amt <= 0 {
+		t.Fatalf("expected weak pressure to survive small partial fill, got count=%d amt=%d", count, amt)
+	}
+
+	sig.RelevantCount = 1
+	sig.RelevantAmtSat = 300_000
+	sig.RelevantLastAt = now
+	count, amt = sig.surgeConfirmInputs()
+	if count != 0 || amt != 0 {
+		t.Fatalf("expected relevant fill to suppress older weak pressure, got count=%d amt=%d", count, amt)
 	}
 }
 
@@ -1986,6 +2069,21 @@ func TestReversalConfirmRoundsForChannel(t *testing.T) {
 	}
 	if got := reversalConfirmRoundsForChannel(profile, st, profile.ReversalFastTrackGapFrac*100.0); got != profile.ReversalConfirmMinRounds-1 {
 		t.Fatalf("unexpected rounds at fast-track threshold: got %d want %d", got, profile.ReversalConfirmMinRounds-1)
+	}
+}
+
+func TestShouldFastTrackDrainedFailedUpReversal(t *testing.T) {
+	if !shouldFastTrackDrainedFailedUpReversal(0.05, 0.10, 171, 275, 0, 2, true, false, 60) {
+		t.Fatalf("expected drained failed channel with confirmed surge pressure to fast-track upward reversal")
+	}
+	if shouldFastTrackDrainedFailedUpReversal(0.05, 0.10, 171, 275, 1, 2, true, false, 60) {
+		t.Fatalf("did not expect fast-track after a relevant recent fill")
+	}
+	if shouldFastTrackDrainedFailedUpReversal(0.15, 0.10, 171, 275, 0, 2, true, false, 60) {
+		t.Fatalf("did not expect fast-track when channel is not drained")
+	}
+	if shouldFastTrackDrainedFailedUpReversal(0.05, 0.10, 171, 275, 0, 1, true, false, 60) {
+		t.Fatalf("did not expect fast-track without repeated failed rebalance pressure")
 	}
 }
 

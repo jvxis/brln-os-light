@@ -138,6 +138,9 @@ export default function AutomationRiskGrid({
 
   const dailyBudget = rebalance?.daily_budget_sat ?? 0
   const dailySpent = rebalance?.daily_spent_sat ?? 0
+  const remainingTotal = rebalance?.remaining_total_sat ?? 0
+  const remainingForAuto = rebalance?.remaining_for_auto_sat ?? remainingTotal
+  const autoBudgetExhausted = Boolean(rebalance?.auto_enabled) && !rebalance?.budget_unlimited && dailyBudget > 0 && remainingForAuto <= 0
   const budgetUsage = dailyBudget > 0 ? (dailySpent / dailyBudget) * 100 : 0
   const actionRequiredCount = closeManager?.action_required_count ?? 0
   const roi7d = typeof rebalance?.roi_7d === 'number' ? ratioFormatter.format(rebalance.roi_7d) : '-'
@@ -268,8 +271,17 @@ export default function AutomationRiskGrid({
             <div className="min-w-0 overflow-hidden rounded-2xl border border-white/10 bg-ink/30 px-4 py-3 text-sm">
               <div className={splitRowClass}>
                 <span className="min-w-0 text-fog/60 [overflow-wrap:anywhere]">{t('dashboard.remainingBudgetLabel')}</span>
-                <span className="min-w-0 text-right [overflow-wrap:anywhere]">{formatSats(locale, rebalance?.remaining_total_sat ?? 0)} sats</span>
+                <span className="min-w-0 text-right [overflow-wrap:anywhere]">{formatSats(locale, remainingTotal)} sats</span>
               </div>
+              <div className={`mt-2 ${splitRowClass}`}>
+                <span className="min-w-0 text-fog/60 [overflow-wrap:anywhere]">{t('dashboard.remainingAutoBudgetLabel')}</span>
+                <span className={`min-w-0 text-right [overflow-wrap:anywhere] ${autoBudgetExhausted ? 'text-amber-200' : ''}`}>
+                  {formatSats(locale, remainingForAuto)} sats
+                </span>
+              </div>
+              {autoBudgetExhausted && (
+                <p className="mt-2 text-xs leading-snug text-amber-200 [overflow-wrap:anywhere]">{t('dashboard.autoBudgetExhaustedHint')}</p>
+              )}
               <div className={`mt-2 ${splitRowClass}`}>
                 <span className="min-w-0 text-fog/60 [overflow-wrap:anywhere]">{t('dashboard.autofeeStatusLabel')}</span>
                 <div className="max-w-full shrink-0">

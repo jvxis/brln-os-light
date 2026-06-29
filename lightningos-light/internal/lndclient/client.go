@@ -5029,6 +5029,7 @@ func (c *Client) ListChannels(ctx context.Context) ([]ChannelInfo, error) {
 			ChannelIDString:     strconv.FormatUint(ch.ChanId, 10),
 			RemotePubkey:        ch.RemotePubkey,
 			PeerAlias:           ch.PeerAlias,
+			NumUpdates:          ch.GetNumUpdates(),
 			Initiator:           ch.Initiator,
 			Active:              ch.Active,
 			InactiveSinceUnix:   inactiveSinceUnix,
@@ -5049,6 +5050,43 @@ func (c *Client) ListChannels(ctx context.Context) ([]ChannelInfo, error) {
 			InboundFeeRatePpm:   inboundFeeRatePpm,
 			PeerFeeRatePpm:      peerFeeRatePpm,
 			PeerBaseMsat:        peerBaseMsat,
+		})
+	}
+
+	return channels, nil
+}
+
+func (c *Client) ListChannelUpdateStats(ctx context.Context) ([]ChannelInfo, error) {
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	client := lnrpc.NewLightningClient(conn)
+	resp, err := client.ListChannels(ctx, &lnrpc.ListChannelsRequest{PeerAliasLookup: true})
+	if err != nil {
+		return nil, err
+	}
+
+	channels := make([]ChannelInfo, 0, len(resp.Channels))
+	for _, ch := range resp.Channels {
+		if ch == nil {
+			continue
+		}
+		channels = append(channels, ChannelInfo{
+			ChannelPoint:     ch.ChannelPoint,
+			ChannelID:        ch.ChanId,
+			ChannelIDString:  strconv.FormatUint(ch.ChanId, 10),
+			RemotePubkey:     ch.RemotePubkey,
+			PeerAlias:        ch.PeerAlias,
+			NumUpdates:       ch.GetNumUpdates(),
+			Initiator:        ch.Initiator,
+			Active:           ch.Active,
+			Private:          ch.Private,
+			CapacitySat:      ch.Capacity,
+			LocalBalanceSat:  ch.LocalBalance,
+			RemoteBalanceSat: ch.RemoteBalance,
 		})
 	}
 
@@ -7185,6 +7223,7 @@ type ChannelInfo struct {
 	ChannelIDString     string                   `json:"channel_id_str"`
 	RemotePubkey        string                   `json:"remote_pubkey"`
 	PeerAlias           string                   `json:"peer_alias"`
+	NumUpdates          uint64                   `json:"num_updates"`
 	Initiator           bool                     `json:"initiator"`
 	Active              bool                     `json:"active"`
 	InactiveSinceUnix   int64                    `json:"inactive_since_unix,omitempty"`

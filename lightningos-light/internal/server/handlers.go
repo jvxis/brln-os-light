@@ -980,11 +980,19 @@ func detectLNDDBBackend() string {
 }
 
 func lndChannelDBSizeGB() (float64, error) {
+	sizeBytes, err := lndChannelDBSizeBytes()
+	if err != nil {
+		return 0, err
+	}
+	return float64(sizeBytes) / (1000.0 * 1000.0 * 1000.0), nil
+}
+
+func lndChannelDBSizeBytes() (int64, error) {
 	info, err := os.Stat(lndChannelDBPath)
 	if err != nil {
 		return 0, err
 	}
-	return float64(info.Size()) / (1000.0 * 1000.0 * 1000.0), nil
+	return info.Size(), nil
 }
 
 func (s *Server) handleWizardStatus(w http.ResponseWriter, r *http.Request) {

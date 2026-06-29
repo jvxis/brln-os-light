@@ -211,6 +211,41 @@ GET /api/onchain/provenance/metrics
 GET /api/lnops/channels
 - Channel rows with pending HTLCs may include `forwarding_channel_alias` and `forwarding_channel_short_id` in each pending HTLC entry, alongside the existing numeric `forwarding_channel_id`.
 
+GET /api/lnops/channel-db-impact
+- Returns a channel.db maintenance report for nodes using LND's Bolt channel database.
+- For Postgres-backed LND nodes, returns HTTP 200 with `available=false` and `db_backend="postgres"`.
+- Uses LND `ListChannels.num_updates` to rank open channels by update count, update share, estimated channel.db footprint, updates/day, and updates per 1M sats capacity.
+- `estimated_db_bytes` and `estimated_db_gb` are proportional estimates based on each channel's share of total updates and the physical `channel.db` size. LND/BoltDB do not expose exact bytes per channel over RPC.
+- Response shape:
+{
+  "available": true,
+  "db_backend": "bolt",
+  "size_available": true,
+  "channel_db_size_bytes": 11400000000,
+  "channel_db_size_gb": 11.4,
+  "total_updates": 232000000,
+  "total_channels": 42,
+  "top10_updates": 146000000,
+  "top10_share_pct": 62.9,
+  "channels": [
+    {
+      "channel_point": "txid:index",
+      "channel_id": 1043834558060691457,
+      "channel_id_str": "1043834558060691457",
+      "short_channel_id": "949362x1404x1",
+      "peer_alias": "Peer alias",
+      "remote_pubkey": "02...",
+      "capacity_sat": 5000000,
+      "num_updates": 42800000,
+      "share_pct": 18.45,
+      "estimated_db_gb": 2.1,
+      "updates_per_day": 58000,
+      "updates_per_million_sat": 8560000,
+      "recommendation": "critical"
+    }
+  ]
+}
+
 GET /api/lnops/peers
 
 POST /api/lnops/peer

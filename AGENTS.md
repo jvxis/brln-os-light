@@ -214,6 +214,7 @@ POST   /api/onchain/provenance/rebuild
 
 ```text
 GET    /api/lnops/channels
+GET    /api/lnops/channel-db-impact
 GET    /api/lnops/peers
 GET    /api/lnops/closed-channels
 GET    /api/lnops/watchtower

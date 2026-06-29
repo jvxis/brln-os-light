@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { acceptBalancedOpenSession, addLnWatchtower, bakeLnMacaroon, boostPeers, bumpFeeCloseManagerSession, bumpPendingOpenChannel, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getChannelRankings, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelFees, getLnChannelPeerRecommendations, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnMacaroonOptions, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, previewBatchOpenChannels, previewOpenChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, recoverCloseManagerSession, refreshAutofeeReferences, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker, type LnMacaroonBakeResult, type LnMacaroonOptions, type LnMacaroonPermission } from '../api'
+import { acceptBalancedOpenSession, addLnWatchtower, bakeLnMacaroon, boostPeers, bumpFeeCloseManagerSession, bumpPendingOpenChannel, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getChannelRankings, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelDBImpact, getLnChannelFees, getLnChannelPeerRecommendations, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnMacaroonOptions, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, previewBatchOpenChannels, previewOpenChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, recoverCloseManagerSession, refreshAutofeeReferences, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker, type LnMacaroonBakeResult, type LnMacaroonOptions, type LnMacaroonPermission } from '../api'
 import { getLocale } from '../i18n'
 import ChannelDetailModal from '../components/ChannelDetailModal'
 
@@ -171,6 +171,45 @@ type ChannelRankingItem = {
   channel_point: string
   score: number
   state: 'expand' | 'maintain' | 'monitor' | 'close'
+}
+
+type ChannelDBImpactItem = {
+  channel_point: string
+  channel_id: number
+  channel_id_str?: string
+  short_channel_id?: string
+  remote_pubkey: string
+  peer_alias?: string
+  active: boolean
+  private: boolean
+  capacity_sat: number
+  local_balance_sat: number
+  remote_balance_sat: number
+  open_block_height?: number
+  age_days?: number
+  num_updates: number
+  share_pct: number
+  estimated_db_bytes?: number
+  estimated_db_gb?: number
+  updates_per_day?: number
+  updates_per_million_sat?: number
+  recommendation: 'critical' | 'review' | 'monitor' | string
+}
+
+type ChannelDBImpactResponse = {
+  available: boolean
+  db_backend: string
+  size_available: boolean
+  channel_db_size_bytes?: number
+  channel_db_size_gb?: number
+  total_updates: number
+  total_channels: number
+  top10_updates: number
+  top10_share_pct: number
+  generated_at?: string
+  estimation_note?: string
+  message?: string
+  channels?: ChannelDBImpactItem[]
 }
 
 type Peer = {
@@ -869,6 +908,7 @@ const CLOSE_RECOVERY_SECTION_ID = 'close-recovery-section'
 const PENDING_CHANNELS_DETAILS_ID = 'pending-channels-details'
 const AUTOFEE_SECTION_ID = 'autofee-section'
 const LIGHTNING_TOOLS_SECTION_ID = 'lightning-tools-section'
+const CHANNEL_DB_TOOL_SECTION_ID = 'channel-db-tool-section'
 const ADD_PEER_TOOL_SECTION_ID = 'add-peer-tool-section'
 const HTLC_MANAGER_SECTION_ID = 'htlc-manager-section'
 const OPEN_CHANNEL_SECTION_ID = 'open-channel-section'
@@ -884,6 +924,7 @@ const FAILED_PAYMENTS_CLEANER_SECTION_ID = 'failed-payments-cleaner-section'
 const SIGN_MESSAGE_SECTION_ID = 'sign-message-section'
 const MACAROON_TOOL_SECTION_ID = 'macaroon-tool-section'
 const LIGHTNING_TOOL_SECTION_IDS = new Set([
+  CHANNEL_DB_TOOL_SECTION_ID,
   ADD_PEER_TOOL_SECTION_ID,
   OPEN_CHANNEL_SECTION_ID,
   CLOSE_CHANNEL_SECTION_ID,
@@ -1106,6 +1147,10 @@ export default function LightningOps() {
   const [watchtowerAddress, setWatchtowerAddress] = useState('')
   const [watchtowerStatus, setWatchtowerStatus] = useState('')
   const [watchtowerBusy, setWatchtowerBusy] = useState(false)
+  const [channelDBImpact, setChannelDBImpact] = useState<ChannelDBImpactResponse | null>(null)
+  const [channelDBImpactStatus, setChannelDBImpactStatus] = useState('')
+  const [channelDBImpactLoading, setChannelDBImpactLoading] = useState(false)
+  const [channelDBImpactSelected, setChannelDBImpactSelected] = useState<Record<string, boolean>>({})
 
   const [amboss, setAmboss] = useState<AmbossHealthStatus | null>(null)
   const [ambossStatus, setAmbossStatus] = useState('')
@@ -1486,6 +1531,51 @@ export default function LightningOps() {
   const formatSatsValue = (value?: number) => {
     const sats = Math.max(0, Math.trunc(Number(value || 0)))
     return `${sats.toLocaleString()} ${t('lightningOps.autofeeResultsSats')}`
+  }
+
+  const formatChannelDBNumber = (value?: number, digits = 0) => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return '-'
+    return value.toLocaleString(locale, { maximumFractionDigits: digits })
+  }
+
+  const formatChannelDBCompact = (value?: number) => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return '-'
+    return new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 1 }).format(value)
+  }
+
+  const formatChannelDBPct = (value?: number) => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return '-'
+    return `${value.toLocaleString(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`
+  }
+
+  const formatChannelDBSize = (value?: number) => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return '-'
+    if (value >= 1) {
+      return `${value.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} GB`
+    }
+    return `${(value * 1000).toLocaleString(locale, { maximumFractionDigits: 0 })} MB`
+  }
+
+  const channelDBRecommendationLabel = (value?: string) => {
+    switch (String(value || '').trim()) {
+      case 'critical':
+        return t('lightningOps.channelDbImpactRecommendationCritical')
+      case 'review':
+        return t('lightningOps.channelDbImpactRecommendationReview')
+      default:
+        return t('lightningOps.channelDbImpactRecommendationMonitor')
+    }
+  }
+
+  const channelDBRecommendationClass = (value?: string) => {
+    switch (String(value || '').trim()) {
+      case 'critical':
+        return 'border-rose-400/35 bg-rose-500/15 text-rose-100'
+      case 'review':
+        return 'border-amber-300/35 bg-amber-500/15 text-amber-100'
+      default:
+        return 'border-sky-300/30 bg-sky-500/10 text-sky-100'
+    }
   }
 
   const normalizeClosedChannelType = (value?: string) => {
@@ -2905,6 +2995,32 @@ export default function LightningOps() {
     }
   }
 
+  const refreshChannelDBImpact = async (opts?: { quiet?: boolean }) => {
+    const quiet = Boolean(opts?.quiet)
+    if (!quiet) {
+      setChannelDBImpactStatus(t('lightningOps.channelDbImpactLoading'))
+    }
+    setChannelDBImpactLoading(true)
+    try {
+      const res = await getLnChannelDBImpact() as ChannelDBImpactResponse
+      setChannelDBImpact(res)
+      setChannelDBImpactSelected((prev) => {
+        const available = new Set((res.channels || []).map((item) => item.channel_point))
+        return Object.fromEntries(Object.entries(prev).filter(([point, selected]) => selected && available.has(point)))
+      })
+      if (!quiet) {
+        setChannelDBImpactStatus(res.message
+          ? (res.available ? t('lightningOps.channelDbImpactPartialMessage') : t('lightningOps.channelDbImpactUnavailableStatus'))
+          : '')
+      }
+    } catch (err: any) {
+      setChannelDBImpact(null)
+      setChannelDBImpactStatus(err?.message || t('lightningOps.channelDbImpactLoadFailed'))
+    } finally {
+      setChannelDBImpactLoading(false)
+    }
+  }
+
   const load = async () => {
     setStatus(t('lightningOps.loadingChannels'))
     setPeerListStatus(t('lightningOps.loadingPeers'))
@@ -3617,6 +3733,11 @@ export default function LightningOps() {
       mounted = false
     }
   }, [lightningToolsOpen, macaroonOptions, t])
+
+  useEffect(() => {
+    if (!lightningToolsOpen || channelDBImpact || channelDBImpactLoading) return
+    void refreshChannelDBImpact({ quiet: true })
+  }, [lightningToolsOpen, channelDBImpact, channelDBImpactLoading])
 
   useEffect(() => {
     if (lightningToolsOpen) return
@@ -6098,6 +6219,96 @@ export default function LightningOps() {
     }
   }, [selectedCloseChannel, closeForce, closeFeeRate, closeFeeHint, closeFeeMode])
 
+  const channelDBImpactChannels = useMemo(
+    () => Array.isArray(channelDBImpact?.channels) ? channelDBImpact.channels : [],
+    [channelDBImpact],
+  )
+
+  const selectedChannelDBImpactItems = useMemo(
+    () => channelDBImpactChannels.filter((item) => channelDBImpactSelected[item.channel_point]),
+    [channelDBImpactChannels, channelDBImpactSelected],
+  )
+
+  const channelDBImpactSelectedSummary = useMemo(() => {
+    const updates = selectedChannelDBImpactItems.reduce((sum, item) => sum + Number(item.num_updates || 0), 0)
+    const sharePct = selectedChannelDBImpactItems.reduce((sum, item) => sum + Number(item.share_pct || 0), 0)
+    const capacitySat = selectedChannelDBImpactItems.reduce((sum, item) => sum + Number(item.capacity_sat || 0), 0)
+    const estimatedGBItems = selectedChannelDBImpactItems
+      .map((item) => item.estimated_db_gb)
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+    const estimatedGB = estimatedGBItems.length
+      ? estimatedGBItems.reduce((sum, value) => sum + value, 0)
+      : undefined
+    return {
+      count: selectedChannelDBImpactItems.length,
+      updates,
+      sharePct,
+      capacitySat,
+      estimatedGB,
+    }
+  }, [selectedChannelDBImpactItems])
+
+  const toggleChannelDBImpactSelection = (channelPoint: string) => {
+    const point = String(channelPoint || '').trim()
+    if (!point) return
+    setChannelDBImpactSelected((prev) => ({
+      ...prev,
+      [point]: !prev[point],
+    }))
+  }
+
+  const handleOpenChannelDBImpactDetail = (item: ChannelDBImpactItem) => {
+    const existing = channels.find((ch) => ch.channel_point === item.channel_point)
+    setDetailChannel(existing || {
+      channel_point: item.channel_point,
+      channel_id: item.channel_id,
+      channel_id_str: item.channel_id_str,
+      remote_pubkey: item.remote_pubkey,
+      peer_alias: item.peer_alias || '',
+      active: item.active,
+      private: item.private,
+      capacity_sat: item.capacity_sat,
+      local_balance_sat: item.local_balance_sat,
+      remote_balance_sat: item.remote_balance_sat,
+    })
+  }
+
+  const handleExportChannelDBImpact = () => {
+    if (!channelDBImpactChannels.length) return
+    const escapeCSV = (value: unknown) => {
+      const raw = String(value ?? '')
+      if (/[",\n\r]/.test(raw)) {
+        return `"${raw.replace(/"/g, '""')}"`
+      }
+      return raw
+    }
+    const rows = [
+      ['peer_alias', 'remote_pubkey', 'channel_point', 'channel_id', 'short_channel_id', 'capacity_sat', 'num_updates', 'share_pct', 'estimated_db_gb', 'updates_per_day', 'updates_per_million_sat', 'recommendation'],
+      ...channelDBImpactChannels.map((item) => [
+        item.peer_alias || '',
+        item.remote_pubkey,
+        item.channel_point,
+        item.channel_id_str || item.channel_id,
+        item.short_channel_id || '',
+        item.capacity_sat,
+        item.num_updates,
+        item.share_pct,
+        item.estimated_db_gb ?? '',
+        item.updates_per_day ?? '',
+        item.updates_per_million_sat ?? '',
+        item.recommendation,
+      ]),
+    ]
+    const csv = rows.map((row) => row.map(escapeCSV).join(',')).join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'channel-db-impact.csv'
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
   const handlePrepareCloseChannel = (channelPoint: string) => {
     const point = String(channelPoint || '').trim()
     if (!point) return
@@ -6268,6 +6479,9 @@ export default function LightningOps() {
         break
       case 'macaroon':
         paths = <><circle cx="8" cy="8" r="3" /><path d="M10.5 10.5L20 20" /><path d="M15 15l2-2" /><path d="M17 17l2-2" /></>
+        break
+      case 'database':
+        paths = <><ellipse cx="12" cy="5" rx="7" ry="3" /><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5" /><path d="M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" /><path d="M8 14h8" /></>
         break
       default:
         paths = <><circle cx="12" cy="12" r="8" /><path d="M12 8v8" /><path d="M8 12h8" /></>
@@ -8036,6 +8250,7 @@ export default function LightningOps() {
             </button>
           </div>
           <div className="flex flex-wrap gap-2">
+            {renderToolShortcut(CHANNEL_DB_TOOL_SECTION_ID, t('lightningOps.channelDbImpactTitle'), 'database')}
             {renderToolShortcut(ADD_PEER_TOOL_SECTION_ID, t('lightningOps.addPeer'), 'peer')}
             {renderToolShortcut(OPEN_CHANNEL_SECTION_ID, t('lightningOps.openChannel'), 'open', openPeerInputRef.current)}
             {renderToolShortcut(CLOSE_CHANNEL_SECTION_ID, t('lightningOps.closeChannel'), 'close', closeSelectRef.current)}
@@ -8055,6 +8270,212 @@ export default function LightningOps() {
 
         {lightningToolsOpen && (
           <div className="space-y-6">
+            <div id={CHANNEL_DB_TOOL_SECTION_ID} className="section-card space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-semibold">{t('lightningOps.channelDbImpactTitle')}</h3>
+                  <p className="text-sm text-fog/60">{t('lightningOps.channelDbImpactSubtitle')}</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    className="btn-secondary text-xs px-3 py-2"
+                    type="button"
+                    onClick={() => refreshChannelDBImpact()}
+                    disabled={channelDBImpactLoading}
+                  >
+                    {channelDBImpactLoading ? t('lightningOps.channelDbImpactLoadingShort') : t('common.refresh')}
+                  </button>
+                  <button
+                    className="btn-secondary text-xs px-3 py-2"
+                    type="button"
+                    onClick={handleExportChannelDBImpact}
+                    disabled={!channelDBImpactChannels.length}
+                  >
+                    {t('lightningOps.channelDbImpactExport')}
+                  </button>
+                </div>
+              </div>
+
+              {channelDBImpactStatus && (
+                <p className={`text-sm ${channelDBImpact?.available === false ? 'text-amber-200' : 'text-brass'}`}>
+                  {channelDBImpactStatus}
+                </p>
+              )}
+
+              {channelDBImpactLoading && !channelDBImpact ? (
+                <p className="text-sm text-fog/60">{t('lightningOps.channelDbImpactLoading')}</p>
+              ) : channelDBImpact && !channelDBImpact.available ? (
+                <div className="rounded-2xl border border-amber-300/20 bg-amber-500/10 p-4 text-sm text-amber-100">
+                  <p className="font-semibold">{t('lightningOps.channelDbImpactUnavailableTitle')}</p>
+                  <p className="mt-1 text-amber-100/75">
+                    {t('lightningOps.channelDbImpactUnavailableBody', { backend: channelDBImpact.db_backend || t('common.unknown') })}
+                  </p>
+                </div>
+              ) : channelDBImpact ? (
+                <>
+                  <div className="grid gap-3 md:grid-cols-4">
+                    <div className="rounded-2xl border border-white/10 bg-ink/60 p-3">
+                      <p className="text-[11px] uppercase tracking-wide text-fog/45">{t('lightningOps.channelDbImpactDbSize')}</p>
+                      <p className="mt-1 text-xl font-semibold text-fog">{formatChannelDBSize(channelDBImpact.channel_db_size_gb)}</p>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-ink/60 p-3">
+                      <p className="text-[11px] uppercase tracking-wide text-fog/45">{t('lightningOps.channelDbImpactTotalUpdates')}</p>
+                      <p className="mt-1 text-xl font-semibold text-fog">{formatChannelDBCompact(channelDBImpact.total_updates)}</p>
+                      <p className="text-xs text-fog/50">{formatChannelDBNumber(channelDBImpact.total_updates)}</p>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-ink/60 p-3">
+                      <p className="text-[11px] uppercase tracking-wide text-fog/45">{t('lightningOps.channelDbImpactTop10')}</p>
+                      <p className="mt-1 text-xl font-semibold text-fog">{formatChannelDBPct(channelDBImpact.top10_share_pct)}</p>
+                      <p className="text-xs text-fog/50">{t('lightningOps.channelDbImpactTop10Updates', { value: formatChannelDBCompact(channelDBImpact.top10_updates) })}</p>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-ink/60 p-3">
+                      <p className="text-[11px] uppercase tracking-wide text-fog/45">{t('lightningOps.channelDbImpactChannels')}</p>
+                      <p className="mt-1 text-xl font-semibold text-fog">{formatChannelDBNumber(channelDBImpact.total_channels)}</p>
+                      <p className="text-xs text-fog/50">{t('lightningOps.channelDbImpactSortedHint')}</p>
+                    </div>
+                  </div>
+
+                  {channelDBImpactSelectedSummary.count > 0 && (
+                    <div className="rounded-2xl border border-sky-300/20 bg-sky-500/10 p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-sky-100">
+                            {t('lightningOps.channelDbImpactSelectionTitle', { count: channelDBImpactSelectedSummary.count })}
+                          </p>
+                          <div className="mt-2 grid gap-2 text-xs text-sky-100/75 sm:grid-cols-4">
+                            <span>{t('lightningOps.channelDbImpactSelectionUpdates', { value: formatChannelDBNumber(channelDBImpactSelectedSummary.updates) })}</span>
+                            <span>{t('lightningOps.channelDbImpactSelectionShare', { value: formatChannelDBPct(channelDBImpactSelectedSummary.sharePct) })}</span>
+                            <span>{t('lightningOps.channelDbImpactSelectionEstimate', { value: formatChannelDBSize(channelDBImpactSelectedSummary.estimatedGB) })}</span>
+                            <span>{t('lightningOps.channelDbImpactSelectionCapacity', { value: formatSatsValue(channelDBImpactSelectedSummary.capacitySat) })}</span>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {selectedChannelDBImpactItems.length === 1 && (
+                            <button
+                              className="btn-secondary text-xs px-3 py-2"
+                              type="button"
+                              onClick={() => handlePrepareCloseChannel(selectedChannelDBImpactItems[0].channel_point)}
+                            >
+                              {t('lightningOps.channelDbImpactPrepareClose')}
+                            </button>
+                          )}
+                          <button
+                            className="btn-secondary text-xs px-3 py-2"
+                            type="button"
+                            onClick={() => setChannelDBImpactSelected({})}
+                          >
+                            {t('lightningOps.channelDbImpactClearSelection')}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <p className="text-xs text-fog/50">{channelDBImpact.estimation_note || t('lightningOps.channelDbImpactEstimateNote')}</p>
+
+                  {channelDBImpactChannels.length > 0 ? (
+                    <div className="overflow-hidden rounded-2xl border border-white/10 bg-ink/60">
+                      <div className="max-h-[520px] overflow-auto">
+                        <table className="w-full min-w-[980px] text-left text-xs text-fog/80">
+                          <thead className="sticky top-0 z-10 bg-ink text-fog/55">
+                            <tr>
+                              <th className="w-10 px-3 py-3"></th>
+                              <th className="px-3 py-3">{t('lightningOps.channelDbImpactColChannel')}</th>
+                              <th className="px-3 py-3 text-right">{t('lightningOps.channelDbImpactColUpdates')}</th>
+                              <th className="px-3 py-3">{t('lightningOps.channelDbImpactColShare')}</th>
+                              <th className="px-3 py-3 text-right">{t('lightningOps.channelDbImpactColEstimate')}</th>
+                              <th className="px-3 py-3 text-right">{t('lightningOps.channelDbImpactColPace')}</th>
+                              <th className="px-3 py-3">{t('lightningOps.channelDbImpactColAction')}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {channelDBImpactChannels.map((item) => {
+                              const peerLabel = item.peer_alias || item.remote_pubkey?.slice(0, 16) || t('lightningOps.unknownPeer')
+                              const selected = channelDBImpactSelected[item.channel_point] === true
+                              const shareWidth = item.share_pct > 0 ? Math.max(2, Math.min(100, item.share_pct)) : 0
+                              return (
+                                <tr key={item.channel_point || String(item.channel_id)} className={`border-t border-white/5 ${selected ? 'bg-sky-500/10' : ''}`}>
+                                  <td className="px-3 py-3 align-top">
+                                    <input
+                                      type="checkbox"
+                                      checked={selected}
+                                      onChange={() => toggleChannelDBImpactSelection(item.channel_point)}
+                                      aria-label={t('lightningOps.channelDbImpactSelectChannel', { channel: peerLabel })}
+                                    />
+                                  </td>
+                                  <td className="px-3 py-3 align-top">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="font-medium text-fog">{peerLabel}</span>
+                                      <span className={`rounded-full border px-2 py-0.5 text-[10px] ${channelDBRecommendationClass(item.recommendation)}`}>
+                                        {channelDBRecommendationLabel(item.recommendation)}
+                                      </span>
+                                      <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[10px] text-fog/55">
+                                        {item.active ? t('common.active') : t('common.inactive')}
+                                      </span>
+                                      {item.private && (
+                                        <span className="rounded-full border border-amber-300/20 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-100">
+                                          {t('lightningOps.privateChannel')}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="mt-1 break-all font-mono text-[11px] text-fog/45">{item.channel_point}</div>
+                                    <div className="mt-1 text-[11px] text-fog/50">
+                                      {item.short_channel_id || item.channel_id_str || item.channel_id} · {formatSatsValue(item.capacity_sat)}
+                                    </div>
+                                  </td>
+                                  <td className="px-3 py-3 text-right align-top">
+                                    <div className="font-medium text-fog">{formatChannelDBNumber(item.num_updates)}</div>
+                                    <div className="text-[11px] text-fog/45">{formatChannelDBCompact(item.num_updates)}</div>
+                                  </td>
+                                  <td className="px-3 py-3 align-top">
+                                    <div className="h-2 w-44 overflow-hidden rounded-full bg-white/10">
+                                      <div className="h-full rounded-full bg-sky-300" style={{ width: `${shareWidth}%` }} />
+                                    </div>
+                                    <div className="mt-1 text-[11px] text-fog/60">{formatChannelDBPct(item.share_pct)}</div>
+                                  </td>
+                                  <td className="px-3 py-3 text-right align-top">
+                                    <div className="font-medium text-fog">{formatChannelDBSize(item.estimated_db_gb)}</div>
+                                  </td>
+                                  <td className="px-3 py-3 text-right align-top">
+                                    <div className="text-fog">{t('lightningOps.channelDbImpactPerDay', { value: formatChannelDBNumber(item.updates_per_day, 0) })}</div>
+                                    <div className="text-[11px] text-fog/45">
+                                      {t('lightningOps.channelDbImpactPerMillionSat', { value: formatChannelDBNumber(item.updates_per_million_sat, 0) })}
+                                    </div>
+                                  </td>
+                                  <td className="px-3 py-3 align-top">
+                                    <div className="flex flex-wrap gap-2">
+                                      <button
+                                        className="btn-secondary text-xs px-3 py-1.5"
+                                        type="button"
+                                        onClick={() => handleOpenChannelDBImpactDetail(item)}
+                                      >
+                                        {t('lightningOps.channelDbImpactDetails')}
+                                      </button>
+                                      <button
+                                        className="btn-secondary text-xs px-3 py-1.5"
+                                        type="button"
+                                        onClick={() => handlePrepareCloseChannel(item.channel_point)}
+                                      >
+                                        {t('lightningOps.channelDbImpactPrepareClose')}
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-fog/60">{t('lightningOps.channelDbImpactEmpty')}</p>
+                  )}
+                </>
+              ) : (
+                <p className="text-sm text-fog/60">{t('lightningOps.channelDbImpactOpenHint')}</p>
+              )}
+            </div>
+
       <div className="grid gap-6 lg:grid-cols-2">
         <div id={ADD_PEER_TOOL_SECTION_ID} className="section-card space-y-4">
           <h3 className="text-lg font-semibold">{t('lightningOps.addPeer')}</h3>

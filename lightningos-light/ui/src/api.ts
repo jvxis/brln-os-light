@@ -241,6 +241,7 @@ export const payInvoice = (payload: { payment_request: string; channel_point?: s
   request('/api/wallet/pay', { method: 'POST', body: JSON.stringify(payload) })
 
 export const getLnChannels = () => request('/api/lnops/channels')
+export const getLnChannelDBImpact = () => request('/api/lnops/channel-db-impact')
 export const getLnPeers = () => request('/api/lnops/peers')
 export const getLnChannelDetail = (channelPoint: string, limit = 30) =>
   request(`/api/lnops/channel/detail?channel_point=${encodeURIComponent(channelPoint)}&limit=${encodeURIComponent(String(limit))}`)

@@ -7315,6 +7315,30 @@ func isHardAutofeeFloorSource(floorSrc string, floorBaseSrc string) bool {
 	}
 }
 
+func shouldSoftenHistoricalRebalanceFloor(marketRefillMode bool, floorSrc string, floorBaseSrc string, localPpm int, targetPpm int, floorPpm int, outPpm7d int, goodLocalLiquidity bool, observedOutSignal bool, recentRebalanceCostPpm int, recentRebalanceWeakCount int, tags []string) bool {
+	if marketRefillMode || localPpm <= 0 || floorPpm <= localPpm || targetPpm > localPpm {
+		return false
+	}
+	if !goodLocalLiquidity || outPpm7d <= 0 || !observedOutSignal {
+		return false
+	}
+	if recentRebalanceCostPpm > 0 || recentRebalanceWeakCount > 0 || hasStrongRebalanceFailPressure(tags) {
+		return false
+	}
+
+	switch strings.TrimSpace(floorSrc) {
+	case "rebal", "rebal-sink":
+	default:
+		return false
+	}
+	switch strings.TrimSpace(floorBaseSrc) {
+	case "rebal", "rebal-blend":
+		return true
+	default:
+		return false
+	}
+}
+
 func shouldStepTowardAdvisoryFloor(floorSrc string, floorBaseSrc string, observedOutSignal bool, observedRebalSignal bool, recentRebalanceWeakCount int, htlcHotSignal bool, htlcForwardHot bool, surgeConfirmSignal bool, surgeRoundConfirmSignal bool) bool {
 	hasPressure := htlcHotSignal || htlcForwardHot || surgeConfirmSignal || surgeRoundConfirmSignal || recentRebalanceWeakCount > 0
 	if !hasPressure {
@@ -10651,6 +10675,23 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	negMarginProtectedFloor = deriveNegMarginProtectedFloor(floor, baseCostPpm, recentRebalanceCostPpm, e.cfg.MinPpm, e.cfg.MaxPpm)
 
 	hardFloor := isHardAutofeeFloorSource(floorSrc, floorBaseSrc)
+	if hardFloor && shouldSoftenHistoricalRebalanceFloor(
+		marketRefillMode,
+		floorSrc,
+		floorBaseSrc,
+		localPpm,
+		target,
+		floor,
+		outPpm7d,
+		goodLocalLiquidityForUp,
+		observedOutSignal,
+		recentRebalanceCostPpm,
+		recentRebalanceWeakCount,
+		tags,
+	) {
+		hardFloor = false
+		tags = appendAutofeeTagOnce(tags, "rebal-floor-advisory-goodliq")
+	}
 	stepFloor := floor
 	if !hardFloor && floor > localPpm {
 		if shouldStepTowardAdvisoryFloor(floorSrc, floorBaseSrc, observedOutSignal, observedRebalSignal, recentRebalanceWeakCount, htlcHotSignal, htlcForwardHot, surgeConfirmSignal, surgeRoundConfirmSignal) {
@@ -12966,6 +13007,8 @@ func formatAutofeeTags(d *decision) string {
 			add("rebal-floor-low-conf")
 		case t == "rebal-floor-low-volume":
 			add("🧪rebal-low-volume")
+		case t == "rebal-floor-advisory-goodliq":
+			add("rebal-floor-advisory-goodliq")
 		case t == "floor-up-blocked-low-signal":
 			add("🛑floor-up-low-signal")
 		case t == "balanced-floor-up-cap":

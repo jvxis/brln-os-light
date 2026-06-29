@@ -199,6 +199,39 @@ func TestFloorSourceFromBaseCost(t *testing.T) {
 	}
 }
 
+func TestShouldSoftenHistoricalRebalanceFloorForGoodLiquidity(t *testing.T) {
+	if !shouldSoftenHistoricalRebalanceFloor(false, "rebal", "rebal", 444, 444, 1166, 371, true, true, 0, 0, []string{"htlc-forward-hot"}) {
+		t.Fatalf("expected historical rebal floor to become advisory with good liquidity and local outrate")
+	}
+}
+
+func TestShouldSoftenHistoricalRebalanceFloorKeepsHardSignals(t *testing.T) {
+	tests := []struct {
+		name                   string
+		floorBaseSrc           string
+		recentRebalanceCostPpm int
+		recentRebalanceWeak    int
+		tags                   []string
+		observedOutSignal      bool
+		goodLocalLiquidity     bool
+		wantSoften             bool
+	}{
+		{name: "recent cost stays hard", floorBaseSrc: "rebal-recent", recentRebalanceCostPpm: 2461, observedOutSignal: true, goodLocalLiquidity: true},
+		{name: "failed rebalance pressure stays hard", floorBaseSrc: "rebal", recentRebalanceWeak: 3, tags: []string{"rebal-fail-pressure"}, observedOutSignal: true, goodLocalLiquidity: true},
+		{name: "missing local outrate stays hard", floorBaseSrc: "rebal", observedOutSignal: false, goodLocalLiquidity: true},
+		{name: "low liquidity stays hard", floorBaseSrc: "rebal", observedOutSignal: true, goodLocalLiquidity: false},
+		{name: "historical blended cost softens", floorBaseSrc: "rebal-blend", observedOutSignal: true, goodLocalLiquidity: true, wantSoften: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := shouldSoftenHistoricalRebalanceFloor(false, "rebal", tc.floorBaseSrc, 444, 444, 1166, 371, tc.goodLocalLiquidity, tc.observedOutSignal, tc.recentRebalanceCostPpm, tc.recentRebalanceWeak, tc.tags)
+			if got != tc.wantSoften {
+				t.Fatalf("shouldSoftenHistoricalRebalanceFloor = %v, want %v", got, tc.wantSoften)
+			}
+		})
+	}
+}
+
 func TestFormatAutofeeFloorSourceIncludesBaseDetail(t *testing.T) {
 	tests := []struct {
 		name         string

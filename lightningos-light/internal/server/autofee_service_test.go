@@ -2236,6 +2236,25 @@ func TestShouldApplyFailedRebalancePressure(t *testing.T) {
 	}
 }
 
+func TestShouldBypassAutofeeSettlingForDrainedFailedRebalanceUp(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	if !shouldBypassAutofeeSettlingForDrainedFailedRebalanceUp(0.05, profile.LowOutProtectThresh, 400, 480, 0, 3, true, false, 20) {
+		t.Fatalf("expected drained failed-rebalance up pressure to bypass settling")
+	}
+	if shouldBypassAutofeeSettlingForDrainedFailedRebalanceUp(0.05, profile.LowOutProtectThresh, 400, 480, 1, 3, true, false, 20) {
+		t.Fatalf("did not expect bypass when a relevant rebalance succeeded")
+	}
+	if shouldBypassAutofeeSettlingForDrainedFailedRebalanceUp(0.25, profile.LowOutProtectThresh, 400, 480, 0, 3, true, false, 20) {
+		t.Fatalf("did not expect bypass for non-drained channel")
+	}
+	if shouldBypassAutofeeSettlingForDrainedFailedRebalanceUp(0.05, profile.LowOutProtectThresh, 400, 430, 0, 3, true, false, 7.5) {
+		t.Fatalf("did not expect bypass for small upward gap")
+	}
+	if shouldBypassAutofeeSettlingForDrainedFailedRebalanceUp(0.05, profile.LowOutProtectThresh, 400, 480, 0, 1, true, false, 20) {
+		t.Fatalf("did not expect bypass without repeated failed rebalance pressure")
+	}
+}
+
 func TestApplyFailedRebalancePressure(t *testing.T) {
 	profile := autofeeProfiles["moderate"]
 	target, tags := applyFailedRebalancePressure(profile, 1000, 940, profile.RebalFailUpMinAttempts, true, false)

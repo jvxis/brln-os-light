@@ -5924,6 +5924,20 @@ func shouldFastTrackDrainedFailedUpReversal(outRatio float64, lowOutProtectThres
 	return targetGapPct >= 10
 }
 
+func shouldBypassAutofeeSettlingForDrainedFailedRebalanceUp(outRatio float64, lowOutProtectThresh float64, localPpm int, nextPpm int, recentRelevantRebalanceCount int, recentWeakRebalanceCount int, surgeConfirmSignal bool, surgeRoundConfirmSignal bool, targetGapPct float64) bool {
+	return shouldFastTrackDrainedFailedUpReversal(
+		outRatio,
+		lowOutProtectThresh,
+		localPpm,
+		nextPpm,
+		recentRelevantRebalanceCount,
+		recentWeakRebalanceCount,
+		surgeConfirmSignal,
+		surgeRoundConfirmSignal,
+		targetGapPct,
+	)
+}
+
 func hasAntiFlipStrongSignal(tags []string) bool {
 	for _, tag := range tags {
 		switch tag {
@@ -11115,6 +11129,18 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if apply && finalPpm != localPpm && shouldHoldAutofeeForRebalanceSettling(rebalanceTouch, e.now, autofeeRebalanceSettlingWindow) {
 		if recentRebalanceHardFloorApplied && finalPpm > localPpm {
 			tags = appendAutofeeTagOnce(tags, "rebal-recent-settling-bypass")
+		} else if shouldBypassAutofeeSettlingForDrainedFailedRebalanceUp(
+			outRatio,
+			lowOutProtectThresh,
+			localPpm,
+			finalPpm,
+			recentRebalanceRelevantCount,
+			recentRebalanceWeakCount,
+			surgeConfirmSignal,
+			surgeRoundConfirmSignal,
+			targetGapPct,
+		) {
+			tags = appendAutofeeTagOnce(tags, "rebal-fail-settling-bypass")
 		} else {
 			apply = false
 			if !containsTag(tags, "autofee_settling") {
@@ -12779,6 +12805,8 @@ func formatAutofeeTags(d *decision) string {
 			add("🔁rebal-hard-floor")
 		case t == "rebal-recent-settling-bypass":
 			add("🔁rebal-settle-bypass")
+		case t == "rebal-fail-settling-bypass":
+			add("rebal-fail-settle-bypass")
 		case t == "rebal-attempt":
 			add("🔁rebal-attempt")
 		case t == "rebal-recent-noup":

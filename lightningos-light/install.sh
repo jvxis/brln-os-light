@@ -5,7 +5,7 @@ set -o errtrace
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR"
 
-LND_VERSION="${LND_VERSION:-0.21.0-beta}"
+LND_VERSION="${LND_VERSION:-0.21.1-beta}"
 LND_URL_DEFAULT="https://github.com/lightningnetwork/lnd/releases/download/v${LND_VERSION}/lnd-linux-amd64-v${LND_VERSION}.tar.gz"
 LND_URL="${LND_URL:-$LND_URL_DEFAULT}"
 

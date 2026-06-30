@@ -61,7 +61,7 @@ The installer provisions everything needed on a clean Ubuntu box:
 - Postgres, smartmontools, curl, jq, ca-certificates, openssl, build tools
 - Tor (ControlPort enabled) + i2pd enabled by default
 - Go 1.24.12 and the latest Node.js major (falls back to Node.js 20.x if resolution fails)
-- LND binaries (default `v0.21.0-beta`)
+- LND binaries (default `v0.21.1-beta`)
 - LightningOS Manager binary (compiled locally)
 - UI build (compiled locally)
 - systemd services and config templates

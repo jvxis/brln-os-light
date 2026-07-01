@@ -3075,6 +3075,34 @@ func TestApplySeedSignalCapsModerate(t *testing.T) {
 	}
 }
 
+func TestApplySeedSignalCapsUsesOutrateMemory(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+
+	seed, tags := applySeedSignalCapsWithSources(profile, 815, 261, "outrate-mem", 0, "", 0)
+	want := 261.0 * profile.SeedOutrateCapMult
+	if math.Abs(seed-want) > 0.001 {
+		t.Fatalf("expected mature seed to be capped by outrate memory: got %.1f want %.1f", seed, want)
+	}
+	if !containsTag(tags, "seed:outmemcap") {
+		t.Fatalf("expected seed:outmemcap tag, got %+v", tags)
+	}
+}
+
+func TestShouldMuteHTLCForwardHotUpwardPressure(t *testing.T) {
+	if !shouldMuteHTLCForwardHotUpwardPressure(false, true, false, false, 0.88, 0.30, false, false, 0, 0) {
+		t.Fatalf("expected HTLC forward-only pressure to be muted on good-liquidity channel without local signals")
+	}
+	if shouldMuteHTLCForwardHotUpwardPressure(false, true, false, false, 0.88, 0.30, true, false, 0, 0) {
+		t.Fatalf("did not expect mute when observed outbound flow exists")
+	}
+	if shouldMuteHTLCForwardHotUpwardPressure(false, true, false, false, 0.12, 0.30, false, false, 0, 0) {
+		t.Fatalf("did not expect mute on low-liquidity channel")
+	}
+	if shouldMuteHTLCForwardHotUpwardPressure(false, true, true, false, 0.88, 0.30, false, false, 0, 0) {
+		t.Fatalf("did not expect mute when policy/liquidity HTLC pressure exists")
+	}
+}
+
 func TestApplySeedSignalCapsAggressive(t *testing.T) {
 	profile := autofeeProfiles["aggressive"]
 

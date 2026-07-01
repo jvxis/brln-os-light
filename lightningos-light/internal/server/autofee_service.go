@@ -6176,25 +6176,47 @@ func applyOutrateTargetAnchor(profile autofeeProfile, targetPpm int, outPpm7d in
 	return targetPpm, nil
 }
 
-func applySeedSignalCaps(profile autofeeProfile, seed float64, outPpm7d int, rebalPpm7d int, rebalFloorPpm int) (float64, []string) {
+func seedOutCapTag(source string) string {
+	switch strings.TrimSpace(source) {
+	case "outrate-mem":
+		return "seed:outmemcap"
+	case "outrate-21d":
+		return "seed:out21dcap"
+	default:
+		return "seed:outcap"
+	}
+}
+
+func seedRebalCapTag(source string) string {
+	switch strings.TrimSpace(source) {
+	case "rebal-mem":
+		return "seed:rebmemcap"
+	case "rebal-21d":
+		return "seed:reb21dcap"
+	default:
+		return "seed:rebalcap"
+	}
+}
+
+func applySeedSignalCapsWithSources(profile autofeeProfile, seed float64, outPpm int, outSource string, rebalPpm int, rebalSource string, rebalFloorPpm int) (float64, []string) {
 	if seed <= 0 {
 		return seed, nil
 	}
 	maxAllowed := 0.0
 	tags := []string{}
-	if outPpm7d > 0 {
+	if outPpm > 0 {
 		mult := profile.SeedOutrateCapMult
 		if mult <= 0 {
 			mult = 1.35
 		}
-		maxAllowed = math.Max(maxAllowed, float64(outPpm7d)*mult)
+		maxAllowed = math.Max(maxAllowed, float64(outPpm)*mult)
 	}
-	if rebalPpm7d > 0 {
+	if rebalPpm > 0 {
 		mult := profile.SeedRebalCapMult
 		if mult <= 0 {
 			mult = 1.25
 		}
-		rebalRef := rebalPpm7d
+		rebalRef := rebalPpm
 		if rebalFloorPpm > rebalRef {
 			rebalRef = rebalFloorPpm
 			tags = append(tags, "seed:rebalfloor")
@@ -6202,15 +6224,43 @@ func applySeedSignalCaps(profile autofeeProfile, seed float64, outPpm7d int, reb
 		maxAllowed = math.Max(maxAllowed, float64(rebalRef)*mult)
 	}
 	if maxAllowed > 0 && seed > maxAllowed {
-		if outPpm7d > 0 {
-			tags = append(tags, "seed:outcap")
+		if outPpm > 0 {
+			tags = append(tags, seedOutCapTag(outSource))
 		}
-		if rebalPpm7d > 0 {
-			tags = append(tags, "seed:rebalcap")
+		if rebalPpm > 0 {
+			tags = append(tags, seedRebalCapTag(rebalSource))
 		}
 		seed = maxAllowed
 	}
 	return seed, tags
+}
+
+func applySeedSignalCaps(profile autofeeProfile, seed float64, outPpm7d int, rebalPpm7d int, rebalFloorPpm int) (float64, []string) {
+	return applySeedSignalCapsWithSources(profile, seed, outPpm7d, "outrate", rebalPpm7d, "rebal", rebalFloorPpm)
+}
+
+func rebalSeedFloorFromCost(costPpm int, classLabel string, profile autofeeProfile, highOutStagnationPressure bool) int {
+	if costPpm <= 0 {
+		return 0
+	}
+	floor := int(math.Ceil(float64(costPpm) * 1.10))
+	if strings.EqualFold(classLabel, "sink") && profile.SinkExtraFloorMargin > 0 && !highOutStagnationPressure {
+		floor = maxInt(floor, int(math.Ceil(float64(costPpm)*(1.10+profile.SinkExtraFloorMargin))))
+	}
+	return floor
+}
+
+func shouldMuteHTLCForwardHotUpwardPressure(marketRefillMode bool, htlcForwardHot bool, htlcPressureSignal bool, newInboundBootstrap bool, outRatio float64, goodOutRatio float64, observedOutSignal bool, observedRebalSignal bool, recentRebalanceCount int, recentRebalanceWeakCount int) bool {
+	if marketRefillMode || !htlcForwardHot || htlcPressureSignal || newInboundBootstrap {
+		return false
+	}
+	if observedOutSignal || observedRebalSignal || recentRebalanceCount > 0 || recentRebalanceWeakCount > 0 {
+		return false
+	}
+	if goodOutRatio <= 0 {
+		goodOutRatio = 0.20
+	}
+	return outRatio >= goodOutRatio
 }
 
 func shouldApplyFailedRebalancePressure(profile autofeeProfile, outRatio float64, lowOutProtectThresh float64, recentSuccessCount int, recentFailCount int) bool {
@@ -9101,10 +9151,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 
 	rebalSeedFloorPpm := 0
 	if perCost > 0 {
-		rebalSeedFloorPpm = int(math.Ceil(float64(perCost) * 1.10))
-		if strings.EqualFold(classLabel, "sink") && e.profile.SinkExtraFloorMargin > 0 && !highOutStagnationPressure {
-			rebalSeedFloorPpm = maxInt(rebalSeedFloorPpm, int(math.Ceil(float64(perCost)*(1.10+e.profile.SinkExtraFloorMargin))))
-		}
+		rebalSeedFloorPpm = rebalSeedFloorFromCost(perCost, classLabel, e.profile, highOutStagnationPressure)
 	}
 
 	superSourceActive := false
@@ -9157,7 +9204,30 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 	if e.cfg.OperationMode == autofeeOperationModeBalanced {
 		var seedCapTags []string
-		seed, seedCapTags = applySeedSignalCaps(e.profile, seed, outPpm7d, perCost, rebalSeedFloorPpm)
+		seedOutCapPpm := outPpm7d
+		seedOutCapSource := "outrate"
+		if outFrom21dFallback {
+			seedOutCapSource = "outrate-21d"
+		}
+		if seedOutCapPpm <= 0 && hasRecentAutofeeOutrateMemory(st, e.now) {
+			seedOutCapPpm = st.LastOutrate
+			seedOutCapSource = "outrate-mem"
+		}
+		seedRebalCapPpm := perCost
+		seedRebalCapSource := "rebal"
+		if seedRebalCapPpm <= 0 && rebalFrom21dFallback && perCost21d > 0 {
+			seedRebalCapPpm = perCost21d
+			seedRebalCapSource = "rebal-21d"
+		}
+		if seedRebalCapPpm <= 0 && hasRecentAutofeeRebalanceMemory(st, e.now) {
+			seedRebalCapPpm = st.LastRebalCost
+			seedRebalCapSource = "rebal-mem"
+		}
+		seedRebalFloorPpm := rebalSeedFloorPpm
+		if seedRebalFloorPpm <= 0 && seedRebalCapPpm > 0 {
+			seedRebalFloorPpm = rebalSeedFloorFromCost(seedRebalCapPpm, classLabel, e.profile, highOutStagnationPressure)
+		}
+		seed, seedCapTags = applySeedSignalCapsWithSources(e.profile, seed, seedOutCapPpm, seedOutCapSource, seedRebalCapPpm, seedRebalCapSource, seedRebalFloorPpm)
 		if len(seedCapTags) > 0 {
 			seedTags = append(seedTags, seedCapTags...)
 		}
@@ -9377,6 +9447,22 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	htlcPressureSignal := !htlcSampleLow && (htlcPolicyHot || htlcLiquidityHot)
 	observedOutSignal := fwdCount > 0 || outAmtSat > 0 || outPpm7dRaw > 0
 	observedRebalSignal := !marketRefillMode && (rebal.AmtMsat > 0 || perCost > 0)
+	htlcForwardHotPressure := htlcForwardHot
+	if shouldMuteHTLCForwardHotUpwardPressure(
+		marketRefillMode,
+		htlcForwardHot,
+		htlcPressureSignal,
+		newInboundBootstrap,
+		outRatio,
+		goodOutRatio,
+		observedOutSignal,
+		observedRebalSignal,
+		recentRebalanceCount,
+		recentRebalanceWeakCount,
+	) {
+		htlcForwardHotPressure = false
+		tags = appendAutofeeTagOnce(tags, "htlc-forward-hot-muted")
+	}
 	outrateMemoryActive := hasRecentAutofeeOutrateMemory(st, e.now)
 	rebalMemoryActive := !marketRefillMode && hasRecentAutofeeRebalanceMemory(st, e.now)
 	seedLocalSignal := observedOutSignal ||
@@ -9390,7 +9476,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		recentRebalanceCount > 0 ||
 		recentRebalanceWeakCount > 0 ||
 		htlcPressureSignal ||
-		htlcForwardHot
+		htlcForwardHotPressure
 	seedMatureNoLocalSignal := !marketRefillMode &&
 		!newInboundBootstrap &&
 		channelAgeHours > float64(bootstrapHours)
@@ -9403,7 +9489,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		recentRebalanceRelevantCount,
 		recentRebalanceWeakCount,
 		htlcPressureSignal,
-		htlcForwardHot,
+		htlcForwardHotPressure,
 		newInboundBootstrap,
 	) || observedOutSignal || observedRebalSignal
 	if freshPressureSignal {
@@ -9464,7 +9550,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		recentRebalanceRelevantCount,
 		recentRebalanceWeakCount,
 		htlcPressureSignal,
-		htlcForwardHot,
+		htlcForwardHotPressure,
 	)
 	surgeApplied := false
 	if outRatio < 0.10 && !holdMatureEmptySinkUp {
@@ -9484,7 +9570,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	if htlcWindowMin > 0 {
 		surgeConfirmAttemptsMin = scaleHTLCThresholdByWindow(surgeConfirmAttemptsMin, htlcWindowMin, surgeConfirmAttemptsMin)
 	}
-	surgeRoundConfirmSignal := htlcForwardHot && htlcAttempts >= surgeConfirmAttemptsMin
+	surgeRoundConfirmSignal := htlcForwardHotPressure && htlcAttempts >= surgeConfirmAttemptsMin
 	target, surgeGateTag := applySurgeConfirmationGate(st, localPpm, target, surgeApplied, surgeConfirmSignal, surgeRoundConfirmSignal)
 	surgeHoldActive := surgeGateTag == "surge-hold" || surgeGateTag == "surge-hold-flow"
 	if surgeGateTag != "" {
@@ -9702,7 +9788,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			recentRebalanceCount,
 			recentRebalanceWeakCount,
 			htlcPressureSignal,
-			htlcForwardHot,
+			htlcForwardHotPressure,
 			localPpm,
 		)
 		if len(rebalExecTags) > 0 {
@@ -9749,7 +9835,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		recentRebalanceCount,
 		recentRebalanceWeakCount,
 		htlcPressureSignal,
-		htlcForwardHot,
+		htlcForwardHotPressure,
 		newInboundBootstrap,
 		observedOutSignal,
 		observedRebalSignal,
@@ -9764,7 +9850,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		recentRebalanceCount == 0 &&
 		recentRebalanceWeakCount == 0 &&
 		!htlcPressureSignal &&
-		!htlcForwardHot &&
+		!htlcForwardHotPressure &&
 		!hasOutSignal &&
 		!hasRebalSignal {
 		target = localPpm
@@ -9824,7 +9910,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	htlcHotSignal := !htlcSampleLow && ((applyHTLCPolicyHot && htlcPolicyHot) || (applyHTLCLiquidityHot && htlcLiquidityHot))
 	goodLocalLiquidityForUp := hasGoodLocalLiquidityForAutofeeUp(upwardPressureOutRatio, goodOutRatio)
 	goodLiquidityHTLCUpGuard := htlcHotSignal && shouldGuardGoodLiquidityHTLCUp(upwardPressureOutRatio, goodOutRatio, tags)
-	negMarginDownStrongPressure := surgeConfirmSignal || surgeRoundConfirmSignal || surgeHoldActive || htlcHotSignal || htlcForwardHot
+	negMarginDownStrongPressure := surgeConfirmSignal || surgeRoundConfirmSignal || surgeHoldActive || htlcHotSignal || htlcForwardHotPressure
 	if htlcHotSignal {
 		if applyHTLCPolicyHot && htlcPolicyHot && applyHTLCLiquidityHot && htlcLiquidityHot {
 			if target < localPpm {
@@ -10083,7 +10169,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 				recentRebalanceWeakCount,
 				recentRebalanceCostPpm,
 				htlcPressureSignal,
-				htlcForwardHot,
+				htlcForwardHotPressure,
 				newInboundBootstrap,
 				hoursSinceLastFeeChange,
 				e.cfg.MinPpm,
@@ -10118,7 +10204,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		recentRebalanceWeakCount,
 		recentRebalanceCostPpm,
 		htlcPressureSignal,
-		htlcForwardHot,
+		htlcForwardHotPressure,
 		newInboundBootstrap,
 		baseCostSrc,
 		"",
@@ -10634,7 +10720,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		recentRebalanceWeakCount,
 		recentRebalanceCostPpm,
 		htlcPressureSignal,
-		htlcForwardHot,
+		htlcForwardHotPressure,
 		newInboundBootstrap,
 		channelAgeHours,
 		bootstrapHours,
@@ -10708,7 +10794,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 	}
 	stepFloor := floor
 	if !hardFloor && floor > localPpm {
-		if shouldStepTowardAdvisoryFloor(floorSrc, floorBaseSrc, observedOutSignal, observedRebalSignal, recentRebalanceWeakCount, htlcHotSignal, htlcForwardHot, surgeConfirmSignal, surgeRoundConfirmSignal) {
+		if shouldStepTowardAdvisoryFloor(floorSrc, floorBaseSrc, observedOutSignal, observedRebalSignal, recentRebalanceWeakCount, htlcHotSignal, htlcForwardHotPressure, surgeConfirmSignal, surgeRoundConfirmSignal) {
 			tags = appendAutofeeTagOnce(tags, "advisory-floor-step")
 		} else {
 			stepFloor = localPpm
@@ -10740,7 +10826,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		htlcSampleLow,
 		htlcNoisySample,
 		htlcHotSignal,
-		htlcForwardHot,
+		htlcForwardHotPressure,
 		recentRebalanceCount,
 		surgeConfirmSignal,
 		surgeRoundConfirmSignal,
@@ -10834,7 +10920,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		}
 	}
 	weakDemandSignal := !surgeConfirmSignal &&
-		!(htlcForwardHot && htlcAttempts >= surgeConfirmAttemptsMin) &&
+		!(htlcForwardHotPressure && htlcAttempts >= surgeConfirmAttemptsMin) &&
 		!htlcHotSignal &&
 		fwdCount < 4
 	if floorDrivenUp && weakDemandSignal {
@@ -10899,7 +10985,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 				recentRebalanceWeakCount,
 				recentRebalanceCostPpm,
 				htlcPressureSignal,
-				htlcForwardHot,
+				htlcForwardHotPressure,
 				newInboundBootstrap,
 				hoursSinceLastFeeChange,
 				e.cfg.MinPpm,
@@ -11056,7 +11142,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		recentRebalanceWeakCount,
 		recentRebalanceCostPpm,
 		htlcPressureSignal,
-		htlcForwardHot,
+		htlcForwardHotPressure,
 		newInboundBootstrap,
 		baseCostSrc,
 		floorSrc,
@@ -12857,6 +12943,8 @@ func formatAutofeeTags(d *decision) string {
 			add("💧liq-hot")
 		case t == "htlc-forward-hot":
 			add("🧵forward-hot")
+		case t == "htlc-forward-hot-muted":
+			add("htlc-forward-muted")
 		case t == "htlc-sample-low":
 			add("📉htlc-low-sample")
 		case t == "htlc-noisy-sample":
@@ -13133,6 +13221,14 @@ func formatAutofeeTags(d *decision) string {
 			add(strings.ReplaceAll(t, "seed:", "seed-"))
 		case strings.HasPrefix(t, "seed:p95cap"):
 			add("🧢seed-p95")
+		case strings.HasPrefix(t, "seed:outmemcap"):
+			add("seed-outmemcap")
+		case strings.HasPrefix(t, "seed:rebmemcap"):
+			add("seed-rebmemcap")
+		case strings.HasPrefix(t, "seed:out21dcap"):
+			add("seed-out21dcap")
+		case strings.HasPrefix(t, "seed:reb21dcap"):
+			add("seed-reb21dcap")
 		case strings.HasPrefix(t, "seed:absmax"), strings.HasPrefix(t, "seed:maxppm"):
 			add("🧱seed-cap")
 		case strings.HasPrefix(t, "seed:soft-ceil"):

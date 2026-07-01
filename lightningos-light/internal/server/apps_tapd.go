@@ -90,6 +90,11 @@ func (a tapdApp) Definition() appDefinition {
 func (a tapdApp) Info(ctx context.Context) (appInfo, error) {
 	def := a.Definition()
 	info := newAppInfo(def)
+	if holder := a.server.htlcInterceptorConflict(ctx); holder != "" {
+		info.Available = false
+		info.UnavailableReason = tapdInterceptorConflictReason
+		info.UnavailableMessage = tapdInterceptorConflictMessage(holder)
+	}
 	paths := tapdAppPaths()
 	if !fileExists(paths.ComposePath) {
 		return info, nil
@@ -132,6 +137,9 @@ func tapdAppPaths() tapdPaths {
 }
 
 func (s *Server) installTapd(ctx context.Context) error {
+	if holder := s.htlcInterceptorConflict(ctx); holder != "" {
+		return errors.New(tapdInterceptorConflictMessage(holder))
+	}
 	if err := ensureDocker(ctx); err != nil {
 		return err
 	}
@@ -177,6 +185,9 @@ func (s *Server) uninstallTapd(ctx context.Context) error {
 }
 
 func (s *Server) startTapd(ctx context.Context) error {
+	if holder := s.htlcInterceptorConflict(ctx); holder != "" {
+		return errors.New(tapdInterceptorConflictMessage(holder))
+	}
 	paths := tapdAppPaths()
 	if !fileExists(paths.ComposePath) {
 		return errors.New("Taproot Assets is not installed")
@@ -325,6 +336,28 @@ func tapdComposeContents(paths tapdPaths) string {
       - /data/lnd:/root/.lnd:ro
       - %s:%s:rw
 `, tapdImage, tapdDirInContainer, paths.DataDir, tapdDirInContainer)
+}
+
+const tapdInterceptorConflictReason = "requires_htlc_interceptor"
+
+// htlcInterceptorConflict returns the display name of a running app that already
+// holds LND's single HTLC interceptor, or "" if none. tapd's RFQ subsystem
+// always registers that interceptor (there is no tapd flag to disable it), and
+// LND grants it to only one client at a time — so tapd cannot run alongside such
+// an app. Currently the only store app that holds it is the Fedimint Lightning
+// Gateway (`gatewayd lnd`). Extend this as more interceptor apps are added.
+func (s *Server) htlcInterceptorConflict(ctx context.Context) string {
+	gw := fedimintGatewayAppPaths()
+	if fileExists(gw.ComposePath) {
+		if status, err := getComposeStatus(ctx, gw.Root, gw.ComposePath, "gatewayd"); err == nil && status == "running" {
+			return "Fedimint Lightning Gateway"
+		}
+	}
+	return ""
+}
+
+func tapdInterceptorConflictMessage(holder string) string {
+	return fmt.Sprintf("%s is using LND's HTLC interceptor, which tapd also requires. LND allows only one at a time — stop %s before installing or starting Taproot Assets.", holder, holder)
 }
 
 // tapcli runs a tapcli command inside the running tapd container and returns its

@@ -640,6 +640,7 @@
       "requiresBitcoinRpc": "Bitcoin Core status could not be verified. Start Bitcoin Core and try again.",
       "requiresBitcoinStore": "Install Bitcoin Core from the App Store before installing this app.",
       "requiresLocalBitcoinSource": "This app requires Bitcoin Core from the App Store as the active Bitcoin source.",
+      "requiresHtlcInterceptor": "The Fedimint Lightning Gateway is using LND's HTLC interceptor, which tapd also needs. LND allows only one — stop the Fedimint Gateway before installing or starting Taproot Assets.",
       "requiresTxIndex": "This app requires txindex=1 before installing.",
       "requiresUnprunedBitcoin": "This app requires Bitcoin Core without pruning. Disable pruning before installing."
     }

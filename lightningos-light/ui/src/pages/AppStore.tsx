@@ -171,6 +171,8 @@ export default function AppStore() {
         return t('appStore.unavailable.requiresUnprunedBitcoin')
       case 'requires_txindex':
         return t('appStore.unavailable.requiresTxIndex')
+      case 'requires_htlc_interceptor':
+        return t('appStore.unavailable.requiresHtlcInterceptor')
       default:
         return app.unavailable_message || ''
     }

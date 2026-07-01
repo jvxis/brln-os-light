@@ -129,11 +129,11 @@ export default function TaprootAssets() {
           <div className="grid gap-6 lg:grid-cols-2">
             <div className="section-card space-y-2">
               <h3 className="text-lg font-semibold">{t('tapd.sectionStatus')}</h3>
-              <pre className="text-xs text-fog/70 overflow-auto max-h-64 whitespace-pre-wrap">{pretty(info)}</pre>
+              <pre className="text-xs text-fog/70 overflow-auto max-h-64 whitespace-pre-wrap break-all">{pretty(info)}</pre>
             </div>
             <div className="section-card space-y-2">
               <h3 className="text-lg font-semibold">{t('tapd.sectionBalances')}</h3>
-              <pre className="text-xs text-fog/70 overflow-auto max-h-64 whitespace-pre-wrap">{pretty(balances)}</pre>
+              <pre className="text-xs text-fog/70 overflow-auto max-h-64 whitespace-pre-wrap break-all">{pretty(balances)}</pre>
             </div>
           </div>
 
@@ -268,7 +268,7 @@ export default function TaprootAssets() {
               <h3 className={`text-lg font-semibold ${result.ok ? '' : 'text-rose-300'}`}>
                 {result.ok ? t('tapd.result') : t('tapd.error')}
               </h3>
-              <pre className="text-xs text-fog/70 overflow-auto max-h-96 whitespace-pre-wrap">{pretty(result.data)}</pre>
+              <pre className="text-xs text-fog/70 overflow-auto max-h-96 whitespace-pre-wrap break-all">{pretty(result.data)}</pre>
             </div>
           )}
         </>

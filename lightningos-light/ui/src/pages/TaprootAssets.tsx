@@ -104,6 +104,7 @@ export default function TaprootAssets() {
   const [mintSupply, setMintSupply] = useState('')
   const [mintDecimals, setMintDecimals] = useState('')
   const [mintGrouped, setMintGrouped] = useState(true)
+  const [mintReissueKey, setMintReissueKey] = useState('')
   const [mintMeta, setMintMeta] = useState('')
   // Send
   const [sendAddr, setSendAddr] = useState('')
@@ -329,8 +330,28 @@ export default function TaprootAssets() {
                 <label className="text-xs uppercase tracking-wide text-fog/60">{t('tapd.decimalDisplay')}</label>
                 <input className="input-field mt-2" value={mintDecimals} onChange={(e) => setMintDecimals(e.target.value)} inputMode="numeric" placeholder="0" />
               </div>
-              <label className="flex items-center gap-2 text-sm text-fog/70">
-                <input type="checkbox" checked={mintGrouped} onChange={(e) => setMintGrouped(e.target.checked)} />
+              {assetOptions.some((o) => o.groupKey) && (
+                <div>
+                  <label className="text-xs uppercase tracking-wide text-fog/60">{t('tapd.reissueGroup')}</label>
+                  <select
+                    className="input-field mt-2"
+                    value={mintReissueKey}
+                    onChange={(e) => {
+                      const gk = e.target.value
+                      setMintReissueKey(gk)
+                      const opt = assetOptions.find((o) => o.groupKey === gk)
+                      if (opt) setMintName(opt.label)
+                    }}
+                  >
+                    <option value="">{t('tapd.reissueNew')}</option>
+                    {assetOptions.filter((o) => o.groupKey).map((o) => (
+                      <option key={o.key} value={o.groupKey}>{o.label}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <label className={`flex items-center gap-2 text-sm ${mintReissueKey ? 'text-fog/30' : 'text-fog/70'}`}>
+                <input type="checkbox" checked={mintGrouped} disabled={Boolean(mintReissueKey)} onChange={(e) => setMintGrouped(e.target.checked)} />
                 {t('tapd.grouped')}
               </label>
               <div>
@@ -345,7 +366,8 @@ export default function TaprootAssets() {
                     name: mintName.trim(),
                     supply: Number(mintSupply) || 0,
                     decimal_display: Number(mintDecimals) || 0,
-                    grouped: mintGrouped,
+                    grouped: mintReissueKey ? false : mintGrouped,
+                    group_key: mintReissueKey || undefined,
                     meta: mintMeta.trim() || undefined
                   }))}
                 >

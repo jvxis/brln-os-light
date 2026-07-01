@@ -107,6 +107,7 @@ func (s *Server) handleTapdMint(w http.ResponseWriter, r *http.Request) {
 		Supply         uint64 `json:"supply"`
 		DecimalDisplay uint32 `json:"decimal_display"`
 		Grouped        bool   `json:"grouped"`
+		GroupKey       string `json:"group_key"`
 		Meta           string `json:"meta"`
 	}
 	if err := readJSON(r, &req); err != nil {
@@ -131,7 +132,11 @@ func (s *Server) handleTapdMint(w http.ResponseWriter, r *http.Request) {
 	if req.DecimalDisplay > 0 {
 		args = append(args, "--decimal_display", strconv.FormatUint(uint64(req.DecimalDisplay), 10))
 	}
-	if req.Grouped {
+	// Reissue into an existing group when group_key is given; otherwise start a
+	// new reissuable group if requested.
+	if gk := strings.TrimSpace(req.GroupKey); gk != "" {
+		args = append(args, "--group_key", gk)
+	} else if req.Grouped {
 		args = append(args, "--new_grouped_asset")
 	}
 	if meta := strings.TrimSpace(req.Meta); meta != "" {

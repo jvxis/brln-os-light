@@ -901,7 +901,7 @@ export const newTapdAddress = (payload: { asset_id?: string; group_key?: string;
   request('/api/apps/tapd/address', { method: 'POST', body: JSON.stringify(payload) })
 export const tapdUniverseSync = (payload: { universe_host: string; group_key?: string; asset_id?: string }) =>
   request('/api/apps/tapd/universe-sync', { method: 'POST', body: JSON.stringify(payload) })
-export const tapdMint = (payload: { name: string; supply: number; decimal_display?: number; grouped?: boolean; meta?: string }) =>
+export const tapdMint = (payload: { name: string; supply: number; decimal_display?: number; grouped?: boolean; group_key?: string; meta?: string }) =>
   request('/api/apps/tapd/mint', { method: 'POST', body: JSON.stringify(payload) })
 export const tapdMintFinalize = () => request('/api/apps/tapd/mint-finalize', { method: 'POST' })
 export const tapdSend = (payload: { addr: string }) =>

@@ -50,6 +50,34 @@ function parseAssetOptions(balances: unknown): AssetOption[] {
   return out
 }
 
+// One row per held asset (no dedupe by group), for the friendly balances table.
+type balanceEntryFull = balanceEntry & { asset_type?: string }
+type AssetRow = { name: string; balance: string; assetId: string; groupKey: string; assetType: string }
+
+function parseAssetRows(balances: unknown): AssetRow[] {
+  const ab = (balances as { asset_balances?: Record<string, balanceEntryFull> } | null)?.asset_balances
+  if (!ab || typeof ab !== 'object') return []
+  const rows: AssetRow[] = []
+  for (const [id, entry] of Object.entries(ab)) {
+    const gen = entry?.asset_genesis || {}
+    const assetId = gen.asset_id || id
+    rows.push({
+      name: gen.name || `${assetId.slice(0, 12)}…`,
+      balance: entry?.balance || '0',
+      assetId,
+      groupKey: entry?.group_key || '',
+      assetType: entry?.asset_type || ''
+    })
+  }
+  return rows.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+function shortHex(hex: string): string {
+  if (!hex) return '—'
+  if (hex.length <= 16) return hex
+  return `${hex.slice(0, 8)}…${hex.slice(-6)}`
+}
+
 // Taproot Assets (tapd) — standalone, on-chain only (Camada 1). Lightning
 // transfers / redeem-to-sats require the community edge node (Fase 2).
 export default function TaprootAssets() {
@@ -81,6 +109,11 @@ export default function TaprootAssets() {
   const [sendAddr, setSendAddr] = useState('')
 
   const assetOptions = useMemo(() => parseAssetOptions(balances), [balances])
+  const assetRows = useMemo(() => parseAssetRows(balances), [balances])
+
+  const copy = useCallback((value: string) => {
+    if (value) void navigator.clipboard?.writeText(value)
+  }, [])
 
   const loadDaemon = useCallback(async () => {
     try {
@@ -162,9 +195,38 @@ export default function TaprootAssets() {
               <h3 className="text-lg font-semibold">{t('tapd.sectionStatus')}</h3>
               <pre className="text-xs text-fog/70 overflow-auto max-h-64 whitespace-pre-wrap break-all">{pretty(info)}</pre>
             </div>
-            <div className="section-card space-y-2">
+            <div className="section-card space-y-3">
               <h3 className="text-lg font-semibold">{t('tapd.sectionBalances')}</h3>
-              <pre className="text-xs text-fog/70 overflow-auto max-h-64 whitespace-pre-wrap break-all">{pretty(balances)}</pre>
+              {assetRows.length === 0 ? (
+                <p className="text-sm text-fog/60">{t('tapd.noAssets')}</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-xs uppercase tracking-wide text-fog/50">
+                        <th className="py-1 pr-3">{t('tapd.asset')}</th>
+                        <th className="py-1 pr-3 text-right">{t('tapd.colBalance')}</th>
+                        <th className="py-1 pr-3">{t('tapd.assetId')}</th>
+                        <th className="py-1">{t('tapd.groupKey')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {assetRows.map((row) => (
+                        <tr key={row.assetId} className="border-t border-white/5">
+                          <td className="py-2 pr-3 font-medium">{row.name}</td>
+                          <td className="py-2 pr-3 text-right tabular-nums">{Number(row.balance).toLocaleString()}</td>
+                          <td className="py-2 pr-3">
+                            <button className="font-mono text-xs text-fog/70 hover:text-fog" title={`${row.assetId}\n${t('tapd.copy')}`} onClick={() => copy(row.assetId)}>{shortHex(row.assetId)}</button>
+                          </td>
+                          <td className="py-2">
+                            <button className="font-mono text-xs text-fog/70 hover:text-fog" title={row.groupKey ? `${row.groupKey}\n${t('tapd.copy')}` : '—'} onClick={() => copy(row.groupKey)}>{shortHex(row.groupKey)}</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
 

@@ -21,6 +21,7 @@ func (s *Server) appRegistry() ([]appHandler, error) {
 		newCpuMinerApp(s),
 		newDepixBuyApp(s),
 		newFswapApp(s),
+		newTapdApp(s),
 	}
 	if err := validateAppRegistry(apps); err != nil {
 		return nil, err

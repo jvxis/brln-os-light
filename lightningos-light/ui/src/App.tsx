@@ -30,6 +30,7 @@ import Terminal from './pages/Terminal'
 import Shortcuts from './pages/Shortcuts'
 import PayBoleto from './pages/PayBoleto'
 import NodeRetirement from './pages/NodeRetirement'
+import TaprootAssets from './pages/TaprootAssets'
 import { getAuthState, getBitcoinLocalStatus, getBoletoConfig, getLndStatus, getWizardStatus, logoutAuth, type AuthState } from './api'
 import { defaultPalette, paletteOrder, resolvePalette, resolveTheme, type PaletteKey, type ThemeMode } from './theme'
 
@@ -201,6 +202,7 @@ export default function App() {
       { key: 'bitcoin', label: t('nav.bitcoinRemote'), element: <BitcoinRemote /> },
       { key: 'bitcoin-local', label: t('nav.bitcoinLocal'), element: <BitcoinLocal /> },
       { key: 'elements', label: t('nav.elements'), element: <Elements /> },
+      { key: 'taproot-assets', label: t('nav.taprootAssets'), element: <TaprootAssets /> },
       { key: 'notifications', label: t('nav.notifications'), element: <Notifications /> },
       { key: 'audit-log', label: t('nav.auditLog'), element: <AuditLog /> },
       { key: 'disks', label: t('nav.disks'), element: <Disks /> },

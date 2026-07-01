@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Taproot Assets">
+  <defs>
+    <linearGradient id="ta-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7b3fe4"/>
+      <stop offset="1" stop-color="#3f8ee4"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#ta-bg)"/>
+  <path d="M20 22h24" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/>
+  <path d="M32 22v22" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="32" cy="46" r="5" fill="#ffffff"/>
+  <circle cx="20" cy="22" r="4" fill="#ffd34d"/>
+  <circle cx="44" cy="22" r="4" fill="#ffd34d"/>
+</svg>

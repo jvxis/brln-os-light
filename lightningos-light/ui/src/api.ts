@@ -892,6 +892,20 @@ export type CpuMinerStatus = {
 export const getCpuMinerStatus = (): Promise<CpuMinerStatus> => request('/api/apps/cpuminer/status')
 export const setCpuMinerThreads = (threads: number) =>
   request('/api/apps/cpuminer/threads', { method: 'POST', body: JSON.stringify({ threads }) })
+
+// Taproot Assets (tapd) — standalone, on-chain only. All calls forward the raw
+// tapcli JSON output, so return types are intentionally loose.
+export const getTapdInfo = () => request('/api/apps/tapd/info')
+export const getTapdAssets = () => request('/api/apps/tapd/assets')
+export const newTapdAddress = (payload: { asset_id?: string; group_key?: string; amount: number }) =>
+  request('/api/apps/tapd/address', { method: 'POST', body: JSON.stringify(payload) })
+export const tapdUniverseSync = (payload: { universe_host: string; group_key?: string; asset_id?: string }) =>
+  request('/api/apps/tapd/universe-sync', { method: 'POST', body: JSON.stringify(payload) })
+export const tapdMint = (payload: { name: string; supply: number; decimal_display?: number; grouped?: boolean; meta?: string }) =>
+  request('/api/apps/tapd/mint', { method: 'POST', body: JSON.stringify(payload) })
+export const tapdMintFinalize = () => request('/api/apps/tapd/mint-finalize', { method: 'POST' })
+export const tapdSend = (payload: { addr: string }) =>
+  request('/api/apps/tapd/send', { method: 'POST', body: JSON.stringify(payload) })
 export const getAppAdminPassword = (id: string) => request(`/api/apps/${id}/admin-password`)
 export const installApp = (id: string, payload?: { data_dir?: string; storage_mount?: string; elements_mode?: 'local' | 'remote'; elements_rpc_url?: string; elements_rpc_user?: string; elements_rpc_password?: string }) =>
   request(`/api/apps/${id}/install`, { method: 'POST', body: JSON.stringify(payload ?? {}) })

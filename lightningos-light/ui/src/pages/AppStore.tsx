@@ -13,6 +13,7 @@ import electrsIcon from '../assets/apps/electrs.svg'
 import mempoolIcon from '../assets/apps/mempool.svg'
 import fedimintIcon from '../assets/apps/fedimint.svg'
 import cpuLotteryIcon from '../assets/apps/cpu-lottery.svg'
+import taprootAssetsIcon from '../assets/apps/taproot-assets.svg'
 import CpuMinerStats from '../components/CpuMinerStats'
 
 type AppInfo = {
@@ -75,13 +76,15 @@ const iconMap: Record<string, string> = {
   electrs: electrsIcon,
   mempool: mempoolIcon,
   'fedimint-guardian': fedimintIcon,
-  'fedimint-gateway': fedimintIcon
+  'fedimint-gateway': fedimintIcon,
+  tapd: taprootAssetsIcon
 }
 
 const internalRoutes: Record<string, string> = {
   bitcoincore: 'bitcoin-local',
   elements: 'elements',
-  fswap: 'pay-boleto'
+  fswap: 'pay-boleto',
+  tapd: 'taproot-assets'
 }
 
 const statusStyles: Record<string, string> = {
@@ -520,6 +523,8 @@ export default function AppStore() {
               ? t('nav.elements')
               : app.id === 'fswap'
                 ? t('nav.payBoleto')
+              : app.id === 'tapd'
+                ? t('nav.taprootAssets')
               : t('appStore.internal')
           const openUrl = app.external_url || (app.port ? `http://${host}:${app.port}` : '')
           const publicPoolUrl = openUrl || `http://${host}:${publicPoolUIPortFallback}`

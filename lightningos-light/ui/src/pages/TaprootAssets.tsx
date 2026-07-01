@@ -97,7 +97,7 @@ export default function TaprootAssets() {
   const [rcvSelectedKey, setRcvSelectedKey] = useState('')
   const [rcvManual, setRcvManual] = useState(false)
   // Universe
-  const [uniHost, setUniHost] = useState('')
+  const [uniHost, setUniHost] = useState('universe.lightning.finance:10029')
   const [uniGroupKey, setUniGroupKey] = useState('')
   // Mint
   const [mintName, setMintName] = useState('')

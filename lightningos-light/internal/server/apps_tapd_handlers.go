@@ -1,11 +1,17 @@
 package server
 
 import (
+	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // HTTP handlers for the Taproot Assets (tapd) app. They are thin wrappers that
@@ -176,4 +182,121 @@ func (s *Server) handleTapdSend(w http.ResponseWriter, r *http.Request) {
 // exist yet. Return 501 so the UI can present it as "coming soon".
 func (s *Server) handleTapdRedeem(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusNotImplemented, "Redeem to sats requires the community edge node (Fase 2) and is not available yet")
+}
+
+// tapdDiscoverAsset is one entry from a universe's public REST roots catalog.
+type tapdDiscoverAsset struct {
+	Name      string `json:"name"`
+	AssetID   string `json:"asset_id"`
+	GroupKey  string `json:"group_key"`
+	ProofType string `json:"proof_type"`
+	Supply    string `json:"supply"`
+}
+
+type universeRootsResp struct {
+	UniverseRoots map[string]struct {
+		ID struct {
+			AssetID   string `json:"asset_id"`
+			GroupKey  string `json:"group_key"`
+			ProofType string `json:"proof_type"`
+		} `json:"id"`
+		AssetName string `json:"asset_name"`
+		MssmtRoot struct {
+			RootSum string `json:"root_sum"`
+		} `json:"mssmt_root"`
+	} `json:"universe_roots"`
+}
+
+// handleTapdDiscover fetches a universe's public REST catalog
+// (https://<host>/v1/taproot-assets/universe/roots) and returns a compact asset
+// list so users can browse and then targeted-sync an asset. The tapcli/gRPC
+// full-sync does NOT return the whole catalog, but this read endpoint does.
+func (s *Server) handleTapdDiscover(w http.ResponseWriter, r *http.Request) {
+	host := strings.TrimSpace(r.URL.Query().Get("host"))
+	if host == "" {
+		writeError(w, http.StatusBadRequest, "host is required")
+		return
+	}
+	// Accept a bare hostname[:port] and build the fixed roots path ourselves, to
+	// keep the request surface limited.
+	if strings.ContainsAny(host, " /\\?#") || strings.Contains(host, "://") {
+		writeError(w, http.StatusBadRequest, "invalid host")
+		return
+	}
+	endpoint := "https://" + host + "/v1/taproot-assets/universe/roots"
+
+	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("universe returned status %d", resp.StatusCode))
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	var parsed universeRootsResp
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		writeError(w, http.StatusBadGateway, "failed to parse universe response")
+		return
+	}
+	assets := make([]tapdDiscoverAsset, 0, len(parsed.UniverseRoots))
+	for _, root := range parsed.UniverseRoots {
+		assets = append(assets, tapdDiscoverAsset{
+			Name:      root.AssetName,
+			AssetID:   normalizeUniverseID(root.ID.AssetID),
+			GroupKey:  normalizeUniverseID(root.ID.GroupKey),
+			ProofType: root.ID.ProofType,
+			Supply:    root.MssmtRoot.RootSum,
+		})
+	}
+	sort.Slice(assets, func(i, j int) bool { return assets[i].Name < assets[j].Name })
+	total := len(assets)
+	const maxAssets = 400
+	if len(assets) > maxAssets {
+		assets = assets[:maxAssets]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"assets": assets, "total": total})
+}
+
+// normalizeUniverseID returns a lowercase hex string for a universe id field,
+// which the REST gateway may encode as hex or base64.
+func normalizeUniverseID(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if len(s)%2 == 0 && isHexString(s) {
+		return strings.ToLower(s)
+	}
+	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
+		if b, err := enc.DecodeString(s); err == nil && (len(b) == 32 || len(b) == 33) {
+			return hex.EncodeToString(b)
+		}
+	}
+	return s
+}
+
+func isHexString(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }

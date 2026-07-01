@@ -83,6 +83,7 @@ func (s *Server) routes() http.Handler {
 	r.Get("/api/apps/tapd/assets", s.handleTapdAssets)
 	r.Post("/api/apps/tapd/address", s.handleTapdAddress)
 	r.Post("/api/apps/tapd/universe-sync", s.handleTapdUniverseSync)
+	r.Get("/api/apps/tapd/discover", s.handleTapdDiscover)
 	r.Post("/api/apps/tapd/mint", s.handleTapdMint)
 	r.Post("/api/apps/tapd/mint-finalize", s.handleTapdMintFinalize)
 	r.Post("/api/apps/tapd/send", s.handleTapdSend)

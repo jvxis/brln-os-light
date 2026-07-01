@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import {
   getApps,
   getTapdAssets,
+  getTapdDiscover,
   getTapdInfo,
   newTapdAddress,
   tapdMint,
@@ -78,6 +79,8 @@ function shortHex(hex: string): string {
   return `${hex.slice(0, 8)}…${hex.slice(-6)}`
 }
 
+type DiscoverAsset = { name: string; asset_id: string; group_key: string; proof_type: string; supply: string }
+
 // Taproot Assets (tapd) — standalone, on-chain only (Camada 1). Lightning
 // transfers / redeem-to-sats require the community edge node (Fase 2).
 export default function TaprootAssets() {
@@ -108,6 +111,12 @@ export default function TaprootAssets() {
   const [mintMeta, setMintMeta] = useState('')
   // Send
   const [sendAddr, setSendAddr] = useState('')
+  // Discover
+  const [discHost, setDiscHost] = useState('universe.lightning.finance')
+  const [discAssets, setDiscAssets] = useState<DiscoverAsset[]>([])
+  const [discTotal, setDiscTotal] = useState(0)
+  const [discBusy, setDiscBusy] = useState(false)
+  const [discError, setDiscError] = useState('')
 
   const assetOptions = useMemo(() => parseAssetOptions(balances), [balances])
   const assetRows = useMemo(() => parseAssetRows(balances), [balances])
@@ -115,6 +124,22 @@ export default function TaprootAssets() {
   const copy = useCallback((value: string) => {
     if (value) void navigator.clipboard?.writeText(value)
   }, [])
+
+  const fetchDiscover = useCallback(async () => {
+    setDiscBusy(true)
+    setDiscError('')
+    try {
+      const res = (await getTapdDiscover(discHost.trim())) as { assets?: DiscoverAsset[]; total?: number }
+      setDiscAssets(res.assets || [])
+      setDiscTotal(res.total || 0)
+    } catch (err) {
+      setDiscError(err instanceof Error ? err.message : String(err))
+      setDiscAssets([])
+      setDiscTotal(0)
+    } finally {
+      setDiscBusy(false)
+    }
+  }, [discHost])
 
   const loadDaemon = useCallback(async () => {
     try {
@@ -398,6 +423,65 @@ export default function TaprootAssets() {
                 {t('tapd.send')}
               </button>
             </div>
+          </div>
+
+          {/* Discover assets from a universe REST catalog */}
+          <div className="section-card space-y-3">
+            <h3 className="text-lg font-semibold">{t('tapd.sectionDiscover')}</h3>
+            <p className="text-sm text-fog/60">{t('tapd.discoverHint')}</p>
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="flex-1 min-w-[240px]">
+                <label className="text-xs uppercase tracking-wide text-fog/60">{t('tapd.universeHost')}</label>
+                <input className="input-field mt-2" value={discHost} onChange={(e) => setDiscHost(e.target.value)} placeholder="universe.lightning.finance" />
+              </div>
+              <button className="btn-primary" onClick={() => void fetchDiscover()} disabled={discBusy}>{t('tapd.fetch')}</button>
+            </div>
+            {discError && <p className="text-rose-300 text-sm break-all">{discError}</p>}
+            {discAssets.length > 0 && (
+              <>
+                <p className="text-xs text-fog/50">{t('tapd.discoverCount', { shown: discAssets.length, total: discTotal })}</p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-xs uppercase tracking-wide text-fog/50">
+                        <th className="py-1 pr-3">{t('tapd.asset')}</th>
+                        <th className="py-1 pr-3 text-right">{t('tapd.colSupply')}</th>
+                        <th className="py-1 pr-3">{t('tapd.assetId')}</th>
+                        <th className="py-1 pr-3">{t('tapd.groupKey')}</th>
+                        <th className="py-1"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {discAssets.map((a, i) => (
+                        <tr key={`${a.asset_id}-${i}`} className="border-t border-white/5">
+                          <td className="py-2 pr-3 font-medium">{a.name || '—'}</td>
+                          <td className="py-2 pr-3 text-right tabular-nums">{a.supply ? Number(a.supply).toLocaleString() : '—'}</td>
+                          <td className="py-2 pr-3">
+                            <button className="font-mono text-xs text-fog/70 hover:text-fog" title={`${a.asset_id}\n${t('tapd.copy')}`} onClick={() => copy(a.asset_id)}>{shortHex(a.asset_id)}</button>
+                          </td>
+                          <td className="py-2 pr-3">
+                            <button className="font-mono text-xs text-fog/70 hover:text-fog" title={a.group_key ? `${a.group_key}\n${t('tapd.copy')}` : '—'} onClick={() => copy(a.group_key)}>{shortHex(a.group_key)}</button>
+                          </td>
+                          <td className="py-2">
+                            <button
+                              className="btn-secondary text-xs"
+                              disabled={busy === 'universe'}
+                              onClick={() => void run('universe', () => tapdUniverseSync({
+                                universe_host: `${discHost.trim().replace(/:\d+$/, '')}:10029`,
+                                group_key: a.group_key || undefined,
+                                asset_id: a.group_key ? undefined : a.asset_id
+                              }))}
+                            >
+                              {t('tapd.syncUniverse')}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
           </div>
 
           {/* Redeem — Fase 2 */}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   getApps,
@@ -23,6 +23,33 @@ function pretty(value: unknown): string {
   }
 }
 
+// A held asset the user can pick by name (fills asset_id/group_key under the
+// hood). Taproot Assets are addressed by their 32-byte asset_id or 33-byte
+// group_key, never by name (names are not unique), so the picker maps the
+// human-readable name to the real identifier.
+type AssetOption = { key: string; label: string; assetId: string; groupKey: string; balance: string }
+
+type assetGenesis = { name?: string; asset_id?: string }
+type balanceEntry = { asset_genesis?: assetGenesis; group_key?: string; balance?: string }
+type balancesShape = { asset_balances?: Record<string, balanceEntry> }
+
+function parseAssetOptions(balances: unknown): AssetOption[] {
+  const ab = (balances as balancesShape | null)?.asset_balances
+  if (!ab || typeof ab !== 'object') return []
+  const out: AssetOption[] = []
+  const seen = new Set<string>()
+  for (const [id, entry] of Object.entries(ab)) {
+    const gen = entry?.asset_genesis || {}
+    const assetId = gen.asset_id || id
+    const groupKey = entry?.group_key || ''
+    const key = groupKey || assetId
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push({ key, label: gen.name || `${assetId.slice(0, 12)}…`, assetId, groupKey, balance: entry?.balance || '' })
+  }
+  return out
+}
+
 // Taproot Assets (tapd) — standalone, on-chain only (Camada 1). Lightning
 // transfers / redeem-to-sats require the community edge node (Fase 2).
 export default function TaprootAssets() {
@@ -39,6 +66,8 @@ export default function TaprootAssets() {
   const [rcvAssetId, setRcvAssetId] = useState('')
   const [rcvGroupKey, setRcvGroupKey] = useState('')
   const [rcvAmount, setRcvAmount] = useState('')
+  const [rcvSelectedKey, setRcvSelectedKey] = useState('')
+  const [rcvManual, setRcvManual] = useState(false)
   // Universe
   const [uniHost, setUniHost] = useState('')
   const [uniGroupKey, setUniGroupKey] = useState('')
@@ -50,6 +79,8 @@ export default function TaprootAssets() {
   const [mintMeta, setMintMeta] = useState('')
   // Send
   const [sendAddr, setSendAddr] = useState('')
+
+  const assetOptions = useMemo(() => parseAssetOptions(balances), [balances])
 
   const loadDaemon = useCallback(async () => {
     try {
@@ -141,14 +172,34 @@ export default function TaprootAssets() {
             {/* Receive */}
             <div className="section-card space-y-4">
               <h3 className="text-lg font-semibold">{t('tapd.sectionReceive')}</h3>
-              <div>
-                <label className="text-xs uppercase tracking-wide text-fog/60">{t('tapd.assetId')}</label>
-                <input className="input-field mt-2" value={rcvAssetId} onChange={(e) => setRcvAssetId(e.target.value)} placeholder="hex asset_id" />
-              </div>
-              <div>
-                <label className="text-xs uppercase tracking-wide text-fog/60">{t('tapd.groupKey')}</label>
-                <input className="input-field mt-2" value={rcvGroupKey} onChange={(e) => setRcvGroupKey(e.target.value)} placeholder="hex group_key" />
-              </div>
+              {assetOptions.length > 0 && !rcvManual ? (
+                <div>
+                  <label className="text-xs uppercase tracking-wide text-fog/60">{t('tapd.asset')}</label>
+                  <select className="input-field mt-2" value={rcvSelectedKey} onChange={(e) => setRcvSelectedKey(e.target.value)}>
+                    <option value="">{t('tapd.selectAsset')}</option>
+                    {assetOptions.map((o) => (
+                      <option key={o.key} value={o.key}>{o.label}{o.balance ? ` — ${o.balance}` : ''}</option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="text-xs uppercase tracking-wide text-fog/60">{t('tapd.assetId')}</label>
+                    <input className="input-field mt-2" value={rcvAssetId} onChange={(e) => setRcvAssetId(e.target.value)} placeholder="hex asset_id" />
+                  </div>
+                  <div>
+                    <label className="text-xs uppercase tracking-wide text-fog/60">{t('tapd.groupKey')}</label>
+                    <input className="input-field mt-2" value={rcvGroupKey} onChange={(e) => setRcvGroupKey(e.target.value)} placeholder="hex group_key" />
+                  </div>
+                </>
+              )}
+              {assetOptions.length > 0 && (
+                <label className="flex items-center gap-2 text-sm text-fog/70">
+                  <input type="checkbox" checked={rcvManual} onChange={(e) => setRcvManual(e.target.checked)} />
+                  {t('tapd.manualAsset')}
+                </label>
+              )}
               <div>
                 <label className="text-xs uppercase tracking-wide text-fog/60">{t('tapd.amount')}</label>
                 <input className="input-field mt-2" value={rcvAmount} onChange={(e) => setRcvAmount(e.target.value)} inputMode="numeric" />
@@ -156,11 +207,22 @@ export default function TaprootAssets() {
               <button
                 className="btn-primary"
                 disabled={busy === 'address'}
-                onClick={() => void run('address', () => newTapdAddress({
-                  asset_id: rcvAssetId.trim() || undefined,
-                  group_key: rcvGroupKey.trim() || undefined,
-                  amount: Number(rcvAmount) || 0
-                }))}
+                onClick={() => void run('address', () => {
+                  let assetId = rcvAssetId.trim()
+                  let groupKey = rcvGroupKey.trim()
+                  if (!rcvManual && rcvSelectedKey) {
+                    const opt = assetOptions.find((o) => o.key === rcvSelectedKey)
+                    if (opt) {
+                      assetId = opt.assetId
+                      groupKey = opt.groupKey
+                    }
+                  }
+                  return newTapdAddress({
+                    asset_id: groupKey ? undefined : (assetId || undefined),
+                    group_key: groupKey || undefined,
+                    amount: Number(rcvAmount) || 0
+                  })
+                })}
               >
                 {t('tapd.generateAddress')}
               </button>

@@ -138,10 +138,11 @@ func (s *Server) handleTapdMint(w http.ResponseWriter, r *http.Request) {
 	if req.DecimalDisplay > 0 {
 		args = append(args, "--decimal_display", strconv.FormatUint(uint64(req.DecimalDisplay), 10))
 	}
-	// Reissue into an existing group when group_key is given; otherwise start a
-	// new reissuable group if requested.
+	// Reissue into an existing group when group_key is given. tapd requires
+	// --grouped_asset alongside --group_key ("must set grouped asset to mint into
+	// a specific group"). Otherwise start a new reissuable group if requested.
 	if gk := strings.TrimSpace(req.GroupKey); gk != "" {
-		args = append(args, "--group_key", gk)
+		args = append(args, "--grouped_asset", "--group_key", gk)
 	} else if req.Grouped {
 		args = append(args, "--new_grouped_asset")
 	}

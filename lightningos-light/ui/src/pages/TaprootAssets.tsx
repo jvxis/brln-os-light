@@ -110,6 +110,8 @@ const KNOWN_ASSETS: { name: string; host: string; groupKey: string }[] = [
   }
 ]
 
+const BRLN_ASSET = KNOWN_ASSETS.find((a) => a.name === 'BRLN')
+
 // Taproot Assets (tapd) — standalone, on-chain only (Camada 1). Lightning
 // transfers / redeem-to-sats require the community edge node (Fase 2).
 export default function TaprootAssets() {
@@ -304,7 +306,22 @@ export default function TaprootAssets() {
                 <button className="text-fog/50 hover:text-fog" onClick={dismissGuide} aria-label={t('tapd.dismiss')}>✕</button>
               </div>
               <ol className="list-decimal list-inside space-y-1 text-sm text-fog/70">
-                <li>{t('tapd.step1')}</li>
+                <li>
+                  {t('tapd.step1')}{' '}
+                  {BRLN_ASSET && (
+                    <button
+                      className="text-brass underline underline-offset-2 hover:text-brass/80 disabled:opacity-50"
+                      disabled={busy === 'universe'}
+                      onClick={() => {
+                        setUniHost(BRLN_ASSET.host)
+                        setUniGroupKey(BRLN_ASSET.groupKey)
+                        void run('universe', () => tapdUniverseSync({ universe_host: BRLN_ASSET.host, group_key: BRLN_ASSET.groupKey }))
+                      }}
+                    >
+                      {t('tapd.syncBrlnNow')}
+                    </button>
+                  )}
+                </li>
                 <li>{t('tapd.step2')}</li>
                 <li>{t('tapd.step3')}</li>
               </ol>

@@ -2866,6 +2866,8 @@
     "feeRate": "Fee rate (sat/vB)",
     "closeLowFeeWarning": "Aviso: fechamento cooperativo com 1 sat/vB pode travar. Considere 2+ sat/vB ou force close se ficar preso.",
     "closeFeeManualHint": "A taxa manual do fechamento cooperativo agora é tratada como teto aceito pela app. Se a negociação exigir mais, o fechamento falha e você pode tentar uma taxa maior ou deixar em automático.",
+    "closePeerFundedTitle": "O peer abriu este canal — sua taxa pode não ser respeitada",
+    "closePeerFundedBody": "Num fechamento cooperativo, quem paga a taxa on-chain é o funder (quem abriu o canal). Este canal foi financiado pelo peer, então o LND negocia a taxa do lado dele e o seu valor entra apenas como teto — a taxa final pode ficar bem abaixo (o que é comum quando a mempool está vazia). Para controlar a taxa de verdade, use force close (custa mais e tem timelock).",
     "feeRatePpm": "Fee rate (ppm)",
     "feeSuggestionsUnavailable": "Sugestões de fee rate indisponíveis.",
     "feeUpdateFailed": "Falha ao atualizar fees.",

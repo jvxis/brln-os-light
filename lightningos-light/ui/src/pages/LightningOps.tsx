@@ -8704,6 +8704,12 @@ export default function LightningOps() {
               </button>
             </div>
           )}
+          {!closeForce && selectedCloseChannel && selectedCloseChannel.initiator === false && (
+            <div className="rounded-2xl border border-amber-400/30 bg-amber-500/10 p-3 space-y-1">
+              <p className="text-xs font-semibold text-brass">{t('lightningOps.closePeerFundedTitle')}</p>
+              <p className="text-xs text-fog/80">{t('lightningOps.closePeerFundedBody')}</p>
+            </div>
+          )}
           {!closeForce && closeFeeMode === 'auto' && (
             <p className="text-xs text-fog/55">{t('lightningOps.closeFeeAutoHint')}</p>
           )}

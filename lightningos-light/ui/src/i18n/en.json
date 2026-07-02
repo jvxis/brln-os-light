@@ -2866,6 +2866,8 @@
     "feeRate": "Fee rate (sat/vB)",
     "closeLowFeeWarning": "Warning: cooperative close with 1 sat/vB can stall. Consider 2+ sat/vB or force close if stuck.",
     "closeFeeManualHint": "A manual cooperative close fee is now treated as the app's hard cap. If negotiation needs more, the close fails and you can retry with a higher fee or leave it on auto.",
+    "closePeerFundedTitle": "The peer opened this channel — your fee may not be honored",
+    "closePeerFundedBody": "In a cooperative close the channel funder pays the on-chain fee. This channel was funded by the peer, so LND negotiates the rate on their side and your setting is only an upper cap — the final fee can land well below it (it often does when the mempool is quiet). To fully control the fee, use force close instead (higher cost and a timelock).",
     "feeRatePpm": "Fee rate (ppm)",
     "feeSuggestionsUnavailable": "Fee suggestions unavailable.",
     "feeUpdateFailed": "Fee update failed.",

@@ -440,9 +440,9 @@ export default function TaprootAssets() {
             {discAssets.length > 0 && (
               <>
                 <p className="text-xs text-fog/50">{t('tapd.discoverCount', { shown: discAssets.length, total: discTotal })}</p>
-                <div className="overflow-x-auto">
+                <div className="overflow-auto max-h-[32rem] rounded-lg border border-white/5">
                   <table className="w-full text-sm">
-                    <thead>
+                    <thead className="sticky top-0 bg-ink/90 backdrop-blur">
                       <tr className="text-left text-xs uppercase tracking-wide text-fog/50">
                         <th className="py-1 pr-3">{t('tapd.asset')}</th>
                         <th className="py-1 pr-3 text-right">{t('tapd.colSupply')}</th>

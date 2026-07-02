@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import QRCode from 'qrcode'
 import {
   getApps,
   getTapdAssets,
@@ -99,6 +100,8 @@ export default function TaprootAssets() {
   const [rcvAmount, setRcvAmount] = useState('')
   const [rcvSelectedKey, setRcvSelectedKey] = useState('')
   const [rcvManual, setRcvManual] = useState(false)
+  const [receiveAddress, setReceiveAddress] = useState('')
+  const [receiveQr, setReceiveQr] = useState<string | null>(null)
   // Universe
   const [uniHost, setUniHost] = useState('universe.lightning.finance:10029')
   const [uniGroupKey, setUniGroupKey] = useState('')
@@ -124,6 +127,46 @@ export default function TaprootAssets() {
   const copy = useCallback((value: string) => {
     if (value) void navigator.clipboard?.writeText(value)
   }, [])
+
+  const generateReceiveAddress = useCallback(async () => {
+    let assetId = rcvAssetId.trim()
+    let groupKey = rcvGroupKey.trim()
+    if (!rcvManual && rcvSelectedKey) {
+      const opt = assetOptions.find((o) => o.key === rcvSelectedKey)
+      if (opt) {
+        assetId = opt.assetId
+        groupKey = opt.groupKey
+      }
+    }
+    setBusy('address')
+    setResult(null)
+    try {
+      const res = (await newTapdAddress({
+        asset_id: groupKey ? undefined : (assetId || undefined),
+        group_key: groupKey || undefined,
+        amount: Number(rcvAmount) || 0
+      })) as { encoded?: string }
+      if (res?.encoded) {
+        setReceiveAddress(res.encoded)
+      } else {
+        setReceiveAddress('')
+        setResult({ ok: true, data: res })
+      }
+    } catch (err) {
+      setReceiveAddress('')
+      setResult({ ok: false, data: err instanceof Error ? err.message : String(err) })
+    } finally {
+      setBusy('')
+    }
+  }, [rcvManual, rcvSelectedKey, rcvAssetId, rcvGroupKey, rcvAmount, assetOptions])
+
+  useEffect(() => {
+    if (!receiveAddress) {
+      setReceiveQr(null)
+      return
+    }
+    QRCode.toDataURL(receiveAddress, { width: 220, margin: 1 }).then(setReceiveQr).catch(() => setReceiveQr(null))
+  }, [receiveAddress])
 
   const fetchDiscover = useCallback(async () => {
     setDiscBusy(true)
@@ -292,28 +335,19 @@ export default function TaprootAssets() {
                 <label className="text-xs uppercase tracking-wide text-fog/60">{t('tapd.amount')}</label>
                 <input className="input-field mt-2" value={rcvAmount} onChange={(e) => setRcvAmount(e.target.value)} inputMode="numeric" />
               </div>
-              <button
-                className="btn-primary"
-                disabled={busy === 'address'}
-                onClick={() => void run('address', () => {
-                  let assetId = rcvAssetId.trim()
-                  let groupKey = rcvGroupKey.trim()
-                  if (!rcvManual && rcvSelectedKey) {
-                    const opt = assetOptions.find((o) => o.key === rcvSelectedKey)
-                    if (opt) {
-                      assetId = opt.assetId
-                      groupKey = opt.groupKey
-                    }
-                  }
-                  return newTapdAddress({
-                    asset_id: groupKey ? undefined : (assetId || undefined),
-                    group_key: groupKey || undefined,
-                    amount: Number(rcvAmount) || 0
-                  })
-                })}
-              >
+              <button className="btn-primary" disabled={busy === 'address'} onClick={() => void generateReceiveAddress()}>
                 {t('tapd.generateAddress')}
               </button>
+              {receiveAddress && (
+                <div className="rounded-2xl border border-white/10 bg-ink/40 p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs uppercase tracking-wide text-fog/60">{t('tapd.receiveAddress')}</span>
+                    <button className="btn-secondary text-xs" onClick={() => copy(receiveAddress)}>{t('tapd.copy')}</button>
+                  </div>
+                  {receiveQr && <img src={receiveQr} alt="QR" className="mx-auto rounded-lg bg-white p-2" width={200} height={200} />}
+                  <p className="font-mono text-xs text-fog/70 break-all">{receiveAddress}</p>
+                </div>
+              )}
             </div>
 
             {/* Send */}

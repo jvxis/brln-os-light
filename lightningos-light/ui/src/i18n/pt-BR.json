@@ -908,6 +908,7 @@
     "meta": "Metadados (JSON, opcional)",
     "addr": "Endereço Taproot Assets",
     "generateAddress": "Gerar endereço",
+    "receiveAddress": "Endereço de recebimento",
     "syncUniverse": "Sincronizar",
     "prepareMint": "Preparar emissão",
     "finalizeMint": "Finalizar (broadcast)",

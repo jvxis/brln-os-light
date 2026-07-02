@@ -908,6 +908,7 @@
     "meta": "Metadata (JSON, optional)",
     "addr": "Taproot Assets address",
     "generateAddress": "Generate address",
+    "receiveAddress": "Receive address",
     "syncUniverse": "Sync",
     "prepareMint": "Prepare mint",
     "finalizeMint": "Finalize (broadcast)",

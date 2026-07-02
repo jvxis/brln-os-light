@@ -316,27 +316,19 @@ export default function TaprootAssets() {
               </button>
             </div>
 
-            {/* Universe sync */}
+            {/* Send */}
             <div className="section-card space-y-4">
-              <h3 className="text-lg font-semibold">{t('tapd.sectionUniverse')}</h3>
-              <p className="text-sm text-fog/60">{t('tapd.universeHint')}</p>
+              <h3 className="text-lg font-semibold">{t('tapd.sectionSend')}</h3>
               <div>
-                <label className="text-xs uppercase tracking-wide text-fog/60">{t('tapd.universeHost')}</label>
-                <input className="input-field mt-2" value={uniHost} onChange={(e) => setUniHost(e.target.value)} placeholder="universe.example.com:10029" />
-              </div>
-              <div>
-                <label className="text-xs uppercase tracking-wide text-fog/60">{t('tapd.groupKey')}</label>
-                <input className="input-field mt-2" value={uniGroupKey} onChange={(e) => setUniGroupKey(e.target.value)} placeholder="hex group_key (optional)" />
+                <label className="text-xs uppercase tracking-wide text-fog/60">{t('tapd.addr')}</label>
+                <input className="input-field mt-2" value={sendAddr} onChange={(e) => setSendAddr(e.target.value)} placeholder="tap1..." />
               </div>
               <button
                 className="btn-primary"
-                disabled={busy === 'universe'}
-                onClick={() => void run('universe', () => tapdUniverseSync({
-                  universe_host: uniHost.trim(),
-                  group_key: uniGroupKey.trim() || undefined
-                }))}
+                disabled={busy === 'send'}
+                onClick={() => void run('send', () => tapdSend({ addr: sendAddr.trim() }))}
               >
-                {t('tapd.syncUniverse')}
+                {t('tapd.send')}
               </button>
             </div>
 
@@ -408,19 +400,27 @@ export default function TaprootAssets() {
               </div>
             </div>
 
-            {/* Send */}
+            {/* Universe sync */}
             <div className="section-card space-y-4">
-              <h3 className="text-lg font-semibold">{t('tapd.sectionSend')}</h3>
+              <h3 className="text-lg font-semibold">{t('tapd.sectionUniverse')}</h3>
+              <p className="text-sm text-fog/60">{t('tapd.universeHint')}</p>
               <div>
-                <label className="text-xs uppercase tracking-wide text-fog/60">{t('tapd.addr')}</label>
-                <input className="input-field mt-2" value={sendAddr} onChange={(e) => setSendAddr(e.target.value)} placeholder="tap1..." />
+                <label className="text-xs uppercase tracking-wide text-fog/60">{t('tapd.universeHost')}</label>
+                <input className="input-field mt-2" value={uniHost} onChange={(e) => setUniHost(e.target.value)} placeholder="universe.example.com:10029" />
+              </div>
+              <div>
+                <label className="text-xs uppercase tracking-wide text-fog/60">{t('tapd.groupKey')}</label>
+                <input className="input-field mt-2" value={uniGroupKey} onChange={(e) => setUniGroupKey(e.target.value)} placeholder="hex group_key (optional)" />
               </div>
               <button
                 className="btn-primary"
-                disabled={busy === 'send'}
-                onClick={() => void run('send', () => tapdSend({ addr: sendAddr.trim() }))}
+                disabled={busy === 'universe'}
+                onClick={() => void run('universe', () => tapdUniverseSync({
+                  universe_host: uniHost.trim(),
+                  group_key: uniGroupKey.trim() || undefined
+                }))}
               >
-                {t('tapd.send')}
+                {t('tapd.syncUniverse')}
               </button>
             </div>
           </div>

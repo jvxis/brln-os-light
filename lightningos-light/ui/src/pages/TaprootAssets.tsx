@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import QRCode from 'qrcode'
 import {
   getApps,
+  getMempoolFees,
   getTapdAssets,
   getTapdDiscover,
   getTapdInfo,
@@ -142,8 +143,10 @@ export default function TaprootAssets() {
   const [mintGrouped, setMintGrouped] = useState(true)
   const [mintReissueKey, setMintReissueKey] = useState('')
   const [mintMeta, setMintMeta] = useState('')
+  const [mintFee, setMintFee] = useState('')
   // Send
   const [sendAddr, setSendAddr] = useState('')
+  const [sendFee, setSendFee] = useState('')
   // Discover
   const [discHost, setDiscHost] = useState('universe.lightning.finance')
   const [discAssets, setDiscAssets] = useState<DiscoverAsset[]>([])
@@ -213,6 +216,23 @@ export default function TaprootAssets() {
     }
     QRCode.toDataURL(receiveAddress, { width: 220, margin: 1 }).then(setReceiveQr).catch(() => setReceiveQr(null))
   }, [receiveAddress])
+
+  // Prefill mint/send fee with the fastest mempool rate (same source as the rest
+  // of the LOS on-chain flows), leaving user edits untouched.
+  useEffect(() => {
+    let mounted = true
+    getMempoolFees()
+      .then((res: { fastestFee?: number }) => {
+        if (!mounted) return
+        const fastest = Number(res?.fastestFee || 0)
+        if (fastest > 0) {
+          setMintFee((prev) => prev || String(fastest))
+          setSendFee((prev) => prev || String(fastest))
+        }
+      })
+      .catch(() => { /* leave empty → tapd uses LND's estimate */ })
+    return () => { mounted = false }
+  }, [])
 
   const fetchDiscover = useCallback(async () => {
     setDiscBusy(true)
@@ -455,10 +475,14 @@ export default function TaprootAssets() {
                 <label className="text-xs uppercase tracking-wide text-fog/60">{t('tapd.addr')}</label>
                 <input className="input-field mt-2" value={sendAddr} onChange={(e) => setSendAddr(e.target.value)} placeholder="tap1..." />
               </div>
+              <div>
+                <label className="text-xs uppercase tracking-wide text-fog/60">{t('tapd.feeRate')}</label>
+                <input className="input-field mt-2" value={sendFee} onChange={(e) => setSendFee(e.target.value)} inputMode="numeric" placeholder={t('tapd.feeAuto')} />
+              </div>
               <button
                 className="btn-primary"
                 disabled={busy === 'send'}
-                onClick={() => void run('send', () => tapdSend({ addr: sendAddr.trim() }))}
+                onClick={() => void run('send', () => tapdSend({ addr: sendAddr.trim(), fee_rate: Number(sendFee) || undefined }))}
               >
                 {t('tapd.send')}
               </button>
@@ -507,6 +531,10 @@ export default function TaprootAssets() {
                 <label className="text-xs uppercase tracking-wide text-fog/60">{t('tapd.meta')}</label>
                 <input className="input-field mt-2" value={mintMeta} onChange={(e) => setMintMeta(e.target.value)} placeholder='{"about":"BRLN points"}' />
               </div>
+              <div>
+                <label className="text-xs uppercase tracking-wide text-fog/60">{t('tapd.feeRate')}</label>
+                <input className="input-field mt-2" value={mintFee} onChange={(e) => setMintFee(e.target.value)} inputMode="numeric" placeholder={t('tapd.feeAuto')} />
+              </div>
               <div className="flex gap-2">
                 <button
                   className="btn-secondary"
@@ -525,7 +553,7 @@ export default function TaprootAssets() {
                 <button
                   className="btn-primary"
                   disabled={busy === 'mint-finalize'}
-                  onClick={() => void run('mint-finalize', () => tapdMintFinalize())}
+                  onClick={() => void run('mint-finalize', () => tapdMintFinalize({ fee_rate: Number(mintFee) || undefined }))}
                 >
                   {t('tapd.finalizeMint')}
                 </button>

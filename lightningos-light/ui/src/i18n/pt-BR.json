@@ -912,6 +912,8 @@
     "name": "Nome",
     "supply": "Supply",
     "decimalDisplay": "Casas decimais",
+    "feeRate": "Taxa (sat/vB)",
+    "feeAuto": "auto (estimativa do LND)",
     "grouped": "Novo grupo reemitível (cria group key)",
     "reissueGroup": "Reemitir em grupo existente",
     "reissueNew": "Novo asset (não reemitir)",

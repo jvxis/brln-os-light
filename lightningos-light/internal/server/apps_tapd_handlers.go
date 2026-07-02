@@ -155,14 +155,24 @@ func (s *Server) handleTapdMint(w http.ResponseWriter, r *http.Request) {
 
 // handleTapdMintFinalize broadcasts the staged mint batch on-chain. Kept
 // separate from staging so the user reviews before the irreversible broadcast.
+// Optional fee_rate (sat/vByte) overrides LND's fee estimate.
 func (s *Server) handleTapdMintFinalize(w http.ResponseWriter, r *http.Request) {
-	out, err := s.tapcli(r.Context(), "assets", "mint", "finalize")
+	var req struct {
+		FeeRate uint32 `json:"fee_rate"`
+	}
+	_ = readJSON(r, &req) // body optional
+	args := []string{"assets", "mint", "finalize"}
+	if req.FeeRate > 0 {
+		args = append(args, "--fee_rate", strconv.FormatUint(uint64(req.FeeRate), 10))
+	}
+	out, err := s.tapcli(r.Context(), args...)
 	writeTapcli(w, out, err)
 }
 
 func (s *Server) handleTapdSend(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Addr string `json:"addr"`
+		Addr    string `json:"addr"`
+		FeeRate uint32 `json:"fee_rate"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -174,7 +184,11 @@ func (s *Server) handleTapdSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A Taproot Assets address already encodes the amount, so `--addr` is enough.
-	out, err := s.tapcli(r.Context(), "assets", "send", "--addr", addr)
+	args := []string{"assets", "send", "--addr", addr}
+	if req.FeeRate > 0 {
+		args = append(args, "--fee_rate", strconv.FormatUint(uint64(req.FeeRate), 10))
+	}
+	out, err := s.tapcli(r.Context(), args...)
 	writeTapcli(w, out, err)
 }
 

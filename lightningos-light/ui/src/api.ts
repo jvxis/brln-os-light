@@ -904,8 +904,9 @@ export const tapdUniverseSync = (payload: { universe_host: string; group_key?: s
 export const getTapdDiscover = (host: string) => request(`/api/apps/tapd/discover${buildQuery({ host })}`)
 export const tapdMint = (payload: { name: string; supply: number; decimal_display?: number; grouped?: boolean; group_key?: string; meta?: string }) =>
   request('/api/apps/tapd/mint', { method: 'POST', body: JSON.stringify(payload) })
-export const tapdMintFinalize = () => request('/api/apps/tapd/mint-finalize', { method: 'POST' })
-export const tapdSend = (payload: { addr: string }) =>
+export const tapdMintFinalize = (payload?: { fee_rate?: number }) =>
+  request('/api/apps/tapd/mint-finalize', { method: 'POST', body: JSON.stringify(payload || {}) })
+export const tapdSend = (payload: { addr: string; fee_rate?: number }) =>
   request('/api/apps/tapd/send', { method: 'POST', body: JSON.stringify(payload) })
 export const getAppAdminPassword = (id: string) => request(`/api/apps/${id}/admin-password`)
 export const installApp = (id: string, payload?: { data_dir?: string; storage_mount?: string; elements_mode?: 'local' | 'remote'; elements_rpc_url?: string; elements_rpc_user?: string; elements_rpc_password?: string }) =>

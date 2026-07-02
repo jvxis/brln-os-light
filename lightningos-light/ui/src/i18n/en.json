@@ -1524,6 +1524,7 @@
     "activityDetailMemo": "Memo",
     "activityDetailNetwork": "Network",
     "activityDetailOccurredAt": "Occurred at",
+    "activityDetailOpenTx": "Open transaction in mempool",
     "activityDetailPaymentHash": "Payment hash",
     "activityDetailRoute": "Route",
     "activityDetailRouteMeta": "{{hops}} hops | fee {{fee}} sats",

@@ -183,6 +183,12 @@ type WalletPaymentDetail = {
 
 const walletActivityPageSize = 100
 
+const mempoolTxUrl = (txid?: string) => {
+  const trimmed = String(txid || '').trim()
+  if (!trimmed) return ''
+  return `https://mempool.space/tx/${encodeURIComponent(trimmed)}`
+}
+
 export default function Wallet() {
   const { t, i18n } = useTranslation()
   const locale = getLocale(i18n.language)
@@ -1406,6 +1412,10 @@ export default function Wallet() {
     setMobileQrScannerOpen(false)
   }
 
+  const selectedActivityTxUrl = selectedActivity && activityNetwork(selectedActivity) === 'onchain'
+    ? mempoolTxUrl(selectedActivity.txid)
+    : ''
+
   return (
     <section className="space-y-6">
       <div className="section-card">
@@ -2344,7 +2354,19 @@ export default function Wallet() {
               {selectedActivity.txid && (
                 <div className="rounded-2xl border border-white/10 bg-ink/50 p-4 sm:col-span-2">
                   <div className="text-xs uppercase tracking-wide text-fog/50">{t('wallet.activityDetailTxid')}</div>
-                  <div className="mt-1 break-all font-mono text-xs text-fog/80">{selectedActivity.txid}</div>
+                  {selectedActivityTxUrl ? (
+                    <a
+                      className="mt-1 block break-all font-mono text-xs text-emerald-200 underline-offset-2 hover:text-emerald-100 hover:underline"
+                      href={selectedActivityTxUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={t('wallet.activityDetailOpenTx')}
+                    >
+                      {selectedActivity.txid}
+                    </a>
+                  ) : (
+                    <div className="mt-1 break-all font-mono text-xs text-fog/80">{selectedActivity.txid}</div>
+                  )}
                 </div>
               )}
               {typeof selectedActivity.confirmations === 'number' && (

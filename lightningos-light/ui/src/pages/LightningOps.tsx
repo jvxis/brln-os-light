@@ -953,6 +953,7 @@ const BALANCED_OPEN_REQUIRED_REMAINING_SAT = 10000
 const COOP_CLOSE_ESTIMATED_ONE_OUTPUT_VBYTES = 140
 const COOP_CLOSE_ESTIMATED_TWO_OUTPUT_VBYTES = 170
 const CLOSE_PREVIEW_DUST_LIMIT_SAT = 546
+const PEER_RECENT_ERROR_WINDOW_SEC = 30 * 60
 const PENDING_OPEN_STUCK_THRESHOLD_SEC = 60 * 60
 const PENDING_OPEN_BUMP_REFERENCE_VBYTES = 110
 
@@ -1120,6 +1121,7 @@ export default function LightningOps() {
   const [boostStatus, setBoostStatus] = useState('')
   const [boostRunning, setBoostRunning] = useState(false)
   const [peers, setPeers] = useState<Peer[]>([])
+  const [peerSearch, setPeerSearch] = useState('')
   const [closedChannels, setClosedChannels] = useState<ClosedChannel[]>([])
   const [closedChannelStatus, setClosedChannelStatus] = useState('')
   const [closeRecoveryStatusData, setCloseRecoveryStatusData] = useState<CloseRecoveryStatus | null>(null)
@@ -4481,6 +4483,17 @@ export default function LightningOps() {
     return map
   }, [peers])
 
+  const filteredPeers = useMemo(() => {
+    const query = peerSearch.trim().toLowerCase()
+    if (!query) return peers
+    return peers.filter((peer) => {
+      const haystack = [peer.alias, peer.pub_key, peer.address]
+        .map((value) => String(value || '').toLowerCase())
+        .join(' ')
+      return haystack.includes(query)
+    })
+  }, [peers, peerSearch])
+
   const parseBatchPeerAddress = (raw: string): { pubkey: string; host?: string; error?: string } => {
     const value = raw.trim()
     if (!value) {
@@ -5581,14 +5594,32 @@ export default function LightningOps() {
           return
         }
         setBatchStatus(t('lightningOps.batchOpenConnectingPeer'))
+        let connected = false
         try {
           await connectPeer({ address: `${pubkey}@${parsed.host}`, perm: false })
+          connected = true
         } catch (err: any) {
           const msg = String(err?.message || '').toLowerCase()
-          const alreadyConnected = msg.includes('already connected') || msg.includes('already have a connection')
-          if (!alreadyConnected) {
-            throw err
+          connected = msg.includes('already connected') || msg.includes('already have a connection')
+        }
+        if (!connected) {
+          // The connect attempt failed or timed out (some nodes, e.g. exchange/swap
+          // peers, drop idle connections). Re-check the live peer list before giving
+          // up — the peer may already be connected from the Connect Peer button.
+          try {
+            const res: any = await getLnPeers()
+            const livePeers: Peer[] = Array.isArray(res?.peers) ? res.peers : []
+            if (Array.isArray(res?.peers)) setPeers(livePeers)
+            connected = livePeers.some(
+              (peer) => String(peer?.pub_key || '').trim().toLowerCase() === pubkeyKey,
+            )
+          } catch {
+            /* keep connected=false */
           }
+        }
+        if (!connected) {
+          setBatchStatus(t('lightningOps.batchOpenPeerNotConnected'))
+          return
         }
       }
 
@@ -10071,10 +10102,19 @@ export default function LightningOps() {
           <>
         {peerActionStatus && <p className="text-sm text-brass">{peerActionStatus}</p>}
         {peerListStatus && <p className="text-sm text-brass">{peerListStatus}</p>}
+        {peers.length > 0 && (
+          <input
+            className="input-field"
+            placeholder={t('lightningOps.peersSearchPlaceholder')}
+            value={peerSearch}
+            onChange={(e) => setPeerSearch(e.target.value)}
+          />
+        )}
         {peers.length ? (
+          filteredPeers.length ? (
           <div className="max-h-[520px] overflow-y-auto pr-2">
             <div className="grid gap-3">
-              {peers.map((peer) => {
+              {filteredPeers.map((peer) => {
                 const isFocusedPeer = focusedPeerPubKey === peer.pub_key
                 const peerCardClass = isFocusedPeer
                   ? 'rounded-2xl border border-sky-300/70 bg-sky-500/10 p-4 ring-1 ring-sky-300/70'
@@ -10112,7 +10152,7 @@ export default function LightningOps() {
                       <p className="mt-2 text-xs text-fog/50">{t('lightningOps.syncLabel', { value: peer.sync_type })}</p>
                     )}
                     {peer.last_error && (
-                      <p className="mt-2 text-xs text-ember">
+                      <p className={`mt-2 text-xs ${peer.last_error_time && Date.now() / 1000 - peer.last_error_time < PEER_RECENT_ERROR_WINDOW_SEC ? 'text-ember' : 'text-fog/45'}`}>
                         {t('lightningOps.lastError', {
                           age: peer.last_error_time ? ` (${formatAge(peer.last_error_time)})` : '',
                           error: peer.last_error
@@ -10124,6 +10164,9 @@ export default function LightningOps() {
               })}
             </div>
           </div>
+          ) : (
+            <p className="text-sm text-fog/60">{t('lightningOps.peersNoMatches')}</p>
+          )
         ) : (
           <p className="text-sm text-fog/60">{t('lightningOps.noConnectedPeers')}</p>
         )}

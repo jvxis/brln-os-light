@@ -909,6 +909,8 @@
     "addr": "Taproot Assets address",
     "generateAddress": "Generate address",
     "receiveAddress": "Receive address",
+    "quickSync": "Shortcuts",
+    "syncKnown": "Sync {{name}}",
     "syncUniverse": "Sync",
     "prepareMint": "Prepare mint",
     "finalizeMint": "Finalize (broadcast)",

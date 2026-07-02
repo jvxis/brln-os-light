@@ -909,6 +909,8 @@
     "addr": "Endereço Taproot Assets",
     "generateAddress": "Gerar endereço",
     "receiveAddress": "Endereço de recebimento",
+    "quickSync": "Atalhos",
+    "syncKnown": "Sincronizar {{name}}",
     "syncUniverse": "Sincronizar",
     "prepareMint": "Preparar emissão",
     "finalizeMint": "Finalizar (broadcast)",

@@ -82,6 +82,18 @@ function shortHex(hex: string): string {
 
 type DiscoverAsset = { name: string; asset_id: string; group_key: string; proof_type: string; supply: string }
 
+// One-click sync shortcuts for known community assets, shown at the bottom of the
+// Sync Universe card. NOTE: the BRLN entry currently points at the TEST mint on
+// the public Lightning Labs universe — update host/groupKey to the production
+// BRLN community universe once the central node is live.
+const KNOWN_ASSETS: { name: string; host: string; groupKey: string }[] = [
+  {
+    name: 'BRLN',
+    host: 'universe.lightning.finance:10029',
+    groupKey: '02e4826c1b3e869a0d5e71b0d458eef31c5c907b3aed40b4a19f8a0bf3bbd2b83c'
+  }
+]
+
 // Taproot Assets (tapd) — standalone, on-chain only (Camada 1). Lightning
 // transfers / redeem-to-sats require the community edge node (Fase 2).
 export default function TaprootAssets() {
@@ -456,6 +468,27 @@ export default function TaprootAssets() {
               >
                 {t('tapd.syncUniverse')}
               </button>
+              {KNOWN_ASSETS.length > 0 && (
+                <div className="pt-3 border-t border-white/5 space-y-2">
+                  <span className="text-xs uppercase tracking-wide text-fog/50">{t('tapd.quickSync')}</span>
+                  <div className="flex flex-wrap gap-2">
+                    {KNOWN_ASSETS.map((a) => (
+                      <button
+                        key={a.groupKey}
+                        className="btn-secondary text-xs"
+                        disabled={busy === 'universe'}
+                        onClick={() => {
+                          setUniHost(a.host)
+                          setUniGroupKey(a.groupKey)
+                          void run('universe', () => tapdUniverseSync({ universe_host: a.host, group_key: a.groupKey }))
+                        }}
+                      >
+                        {t('tapd.syncKnown', { name: a.name })}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

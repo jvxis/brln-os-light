@@ -80,6 +80,22 @@ function shortHex(hex: string): string {
   return `${hex.slice(0, 8)}…${hex.slice(-6)}`
 }
 
+type DaemonInfo = { version: string; lndVersion: string; network: string; blockHeight: string; synced: boolean; alias: string }
+
+function parseInfo(info: unknown): DaemonInfo | null {
+  if (!info || typeof info !== 'object') return null
+  const o = info as Record<string, unknown>
+  const str = (v: unknown) => (typeof v === 'string' ? v : v == null ? '' : String(v))
+  return {
+    version: str(o.version).split(' ')[0],
+    lndVersion: str(o.lnd_version).split(' ')[0],
+    network: str(o.network),
+    blockHeight: str(o.block_height),
+    synced: o.sync_to_chain === true,
+    alias: str(o.node_alias)
+  }
+}
+
 type DiscoverAsset = { name: string; asset_id: string; group_key: string; proof_type: string; supply: string }
 
 // One-click sync shortcuts for known community assets, shown at the bottom of the
@@ -135,6 +151,22 @@ export default function TaprootAssets() {
 
   const assetOptions = useMemo(() => parseAssetOptions(balances), [balances])
   const assetRows = useMemo(() => parseAssetRows(balances), [balances])
+  const daemonInfo = useMemo(() => parseInfo(info), [info])
+  const [showGuide, setShowGuide] = useState(() => {
+    try {
+      return window.localStorage.getItem('tapd_guide_dismissed') !== '1'
+    } catch {
+      return true
+    }
+  })
+  const dismissGuide = useCallback(() => {
+    try {
+      window.localStorage.setItem('tapd_guide_dismissed', '1')
+    } catch {
+      // ignore storage errors
+    }
+    setShowGuide(false)
+  }, [])
 
   const copy = useCallback((value: string) => {
     if (value) void navigator.clipboard?.writeText(value)
@@ -265,6 +297,19 @@ export default function TaprootAssets() {
 
       {!loading && installed && running && (
         <>
+          {showGuide && (
+            <div className="section-card space-y-2 border border-brass/30">
+              <div className="flex items-start justify-between gap-2">
+                <h3 className="text-lg font-semibold">{t('tapd.gettingStartedTitle')}</h3>
+                <button className="text-fog/50 hover:text-fog" onClick={dismissGuide} aria-label={t('tapd.dismiss')}>✕</button>
+              </div>
+              <ol className="list-decimal list-inside space-y-1 text-sm text-fog/70">
+                <li>{t('tapd.step1')}</li>
+                <li>{t('tapd.step2')}</li>
+                <li>{t('tapd.step3')}</li>
+              </ol>
+            </div>
+          )}
           <div className="flex justify-end">
             <button className="btn-secondary" onClick={() => void load()} disabled={Boolean(busy)}>
               {t('tapd.refresh')}
@@ -272,9 +317,33 @@ export default function TaprootAssets() {
           </div>
 
           <div className="grid gap-6 lg:grid-cols-2">
-            <div className="section-card space-y-2">
+            <div className="section-card space-y-3">
               <h3 className="text-lg font-semibold">{t('tapd.sectionStatus')}</h3>
-              <pre className="text-xs text-fog/70 overflow-auto max-h-64 whitespace-pre-wrap break-all">{pretty(info)}</pre>
+              {daemonInfo ? (
+                <div className="space-y-2 text-sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`h-2 w-2 rounded-full ${daemonInfo.synced ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                    <span className={daemonInfo.synced ? 'text-emerald-200' : 'text-amber-200'}>
+                      {daemonInfo.synced ? t('tapd.synced') : t('tapd.syncing')}
+                    </span>
+                    {daemonInfo.blockHeight && (
+                      <span className="text-fog/50">· {t('tapd.block')} {Number(daemonInfo.blockHeight).toLocaleString()}</span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-fog/60">
+                    {daemonInfo.version && <span>tapd {daemonInfo.version}</span>}
+                    {daemonInfo.lndVersion && <span>lnd {daemonInfo.lndVersion}</span>}
+                    {daemonInfo.network && <span>{daemonInfo.network}</span>}
+                    {daemonInfo.alias && <span>{daemonInfo.alias}</span>}
+                  </div>
+                  <details className="text-xs text-fog/50">
+                    <summary className="cursor-pointer hover:text-fog/70">{t('tapd.details')}</summary>
+                    <pre className="mt-2 overflow-auto max-h-64 whitespace-pre-wrap break-all">{pretty(info)}</pre>
+                  </details>
+                </div>
+              ) : (
+                <p className="text-sm text-fog/50">{t('tapd.loading')}</p>
+              )}
             </div>
             <div className="section-card space-y-3">
               <h3 className="text-lg font-semibold">{t('tapd.sectionBalances')}</h3>

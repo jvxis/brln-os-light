@@ -1,6 +1,11 @@
 package server
 
-import "testing"
+import (
+	"context"
+	"testing"
+
+	"lightningos-light/internal/lndclient"
+)
 
 func TestComputeChannelOpenCandidateScorePrefersStrongerEvidence(t *testing.T) {
 	strong := &ChannelOpenCandidateItem{
@@ -150,4 +155,82 @@ func TestShouldKeepChannelOpenCandidateKeepsDirectDemandCandidate(t *testing.T) 
 	if !shouldKeepChannelOpenCandidate(item, true) {
 		t.Fatalf("expected direct-demand candidate to be kept")
 	}
+}
+
+func TestFilterChannelOpenCandidatesForLocalPeersRemovesOpenAndPendingPeers(t *testing.T) {
+	localPeers := map[string]struct{}{
+		"02open":    {},
+		"03pending": {},
+	}
+	items := []ChannelOpenCandidateItem{
+		{PeerPubkey: "02OPEN", Score: 90},
+		{PeerPubkey: "03pending", Score: 80},
+		{PeerPubkey: "02keep", Score: 70},
+	}
+
+	filtered := filterChannelOpenCandidatesForLocalPeers(items, localPeers)
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 candidate after local peer filter, got %d: %+v", len(filtered), filtered)
+	}
+	if filtered[0].PeerPubkey != "02keep" {
+		t.Fatalf("unexpected remaining candidate: %+v", filtered[0])
+	}
+}
+
+func TestDeleteChannelOpenCandidatesForLocalPeersRemovesMapEntries(t *testing.T) {
+	items := map[string]*ChannelOpenCandidateItem{
+		"02open": {PeerPubkey: "02open"},
+		"02keep": {PeerPubkey: "02keep"},
+	}
+
+	deleteChannelOpenCandidatesForLocalPeers(items, map[string]struct{}{"02open": {}})
+	if _, ok := items["02open"]; ok {
+		t.Fatalf("expected local peer candidate to be deleted")
+	}
+	if _, ok := items["02keep"]; !ok {
+		t.Fatalf("expected non-local candidate to remain")
+	}
+}
+
+func TestLoadLocalChannelPeerSetIncludesOpenAndPendingChannels(t *testing.T) {
+	svc := &ChannelOpenCandidatesService{
+		lnd: &fakeChannelOpenCandidatesLND{
+			channels: []lndclient.ChannelInfo{
+				{RemotePubkey: "02OPEN"},
+				{RemotePubkey: ""},
+			},
+			pending: []lndclient.PendingChannelInfo{
+				{RemotePubkey: "03Pending", Status: "opening"},
+			},
+		},
+	}
+
+	peers := svc.loadLocalChannelPeerSet(context.Background())
+	if _, ok := peers["02open"]; !ok {
+		t.Fatalf("expected open channel peer in local set: %+v", peers)
+	}
+	if _, ok := peers["03pending"]; !ok {
+		t.Fatalf("expected pending channel peer in local set: %+v", peers)
+	}
+}
+
+type fakeChannelOpenCandidatesLND struct {
+	channels []lndclient.ChannelInfo
+	pending  []lndclient.PendingChannelInfo
+}
+
+func (f *fakeChannelOpenCandidatesLND) CachedPubkey() string {
+	return ""
+}
+
+func (f *fakeChannelOpenCandidatesLND) GetStatus(ctx context.Context) (lndclient.Status, error) {
+	return lndclient.Status{}, nil
+}
+
+func (f *fakeChannelOpenCandidatesLND) ListChannels(ctx context.Context) ([]lndclient.ChannelInfo, error) {
+	return f.channels, nil
+}
+
+func (f *fakeChannelOpenCandidatesLND) ListPendingChannels(ctx context.Context) ([]lndclient.PendingChannelInfo, error) {
+	return f.pending, nil
 }

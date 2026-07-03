@@ -17,14 +17,15 @@ import (
 )
 
 const (
-	channelOpenCandidatesCheckInterval  = 1 * time.Hour
-	channelOpenCandidatesRefreshMaxAge  = 24 * time.Hour
-	channelOpenCandidatesRefreshTimeout = 75 * time.Second
-	channelOpenCandidatesRouteLookback  = 30 * 24 * time.Hour
-	channelOpenCandidatesPersistLimit   = 40
-	channelOpenCandidatesRouteSeedLimit = 160
-	channelOpenCandidatesProblemLimit   = 140
-	channelOpenCandidatesStrongLimit    = 100
+	channelOpenCandidatesCheckInterval        = 1 * time.Hour
+	channelOpenCandidatesRefreshMaxAge        = 24 * time.Hour
+	channelOpenCandidatesRefreshTimeout       = 75 * time.Second
+	channelOpenCandidatesRouteLookback        = 30 * 24 * time.Hour
+	channelOpenCandidatesPersistLimit         = 40
+	channelOpenCandidatesRouteSeedLimit       = 160
+	channelOpenCandidatesProblemLimit         = 140
+	channelOpenCandidatesStrongLimit          = 100
+	channelOpenCandidatesLocalPeerLoadTimeout = 5 * time.Second
 )
 
 var ErrChannelOpenCandidatesDBUnavailable = errors.New("channel open candidates db unavailable")
@@ -70,7 +71,7 @@ type ChannelOpenCandidateStatus struct {
 type ChannelOpenCandidatesService struct {
 	db     *pgxpool.Pool
 	logger *log.Logger
-	lnd    *lndclient.Client
+	lnd    channelOpenCandidatesLND
 
 	syncMu sync.Mutex
 	mu     sync.Mutex
@@ -78,6 +79,13 @@ type ChannelOpenCandidatesService struct {
 	lastSyncAt time.Time
 	stopCh     chan struct{}
 	doneCh     chan struct{}
+}
+
+type channelOpenCandidatesLND interface {
+	CachedPubkey() string
+	GetStatus(ctx context.Context) (lndclient.Status, error)
+	ListChannels(ctx context.Context) ([]lndclient.ChannelInfo, error)
+	ListPendingChannels(ctx context.Context) ([]lndclient.PendingChannelInfo, error)
 }
 
 type channelOpenRouteSignal struct {
@@ -111,10 +119,14 @@ type channelOpenRouteCoverage struct {
 }
 
 func NewChannelOpenCandidatesService(db *pgxpool.Pool, logger *log.Logger, lnd *lndclient.Client) *ChannelOpenCandidatesService {
+	var lndAPI channelOpenCandidatesLND
+	if lnd != nil {
+		lndAPI = lnd
+	}
 	return &ChannelOpenCandidatesService{
 		db:     db,
 		logger: logger,
-		lnd:    lnd,
+		lnd:    lndAPI,
 	}
 }
 
@@ -307,14 +319,22 @@ select peer_pubkey, coalesce(peer_alias, ''), route_hit_count_30d, route_volume_
   score, confidence, reasons_json, computed_at
 from channel_open_candidates
 order by score desc, confidence desc, route_cost_to_msat_30d desc, route_volume_sat_30d desc, peer_pubkey asc
-limit $1
-`, limit)
+limit 200
+`)
 	if err != nil {
 		return nil, ChannelOpenCandidateStatus{}, err
 	}
 	defer rows.Close()
 	items, err := scanChannelOpenCandidateItems(rows)
-	return items, status, err
+	if err != nil {
+		return nil, ChannelOpenCandidateStatus{}, err
+	}
+	items = filterChannelOpenCandidatesForLocalPeers(items, s.loadLocalChannelPeerSet(ctx))
+	status.CandidateCount = len(items)
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	return items, status, nil
 }
 
 func (s *ChannelOpenCandidatesService) buildCandidates(ctx context.Context, computedAt time.Time) ([]ChannelOpenCandidateItem, error) {
@@ -323,16 +343,20 @@ func (s *ChannelOpenCandidatesService) buildCandidates(ctx context.Context, comp
 	if err != nil {
 		return nil, err
 	}
+	localChannelPeers := s.loadLocalChannelPeerSet(ctx)
+	filterChannelOpenRouteSignalsForLocalPeers(routeSignals, localChannelPeers)
 	routeCoverage := summarizeChannelOpenRouteCoverage(routeSignals)
 	strictAdjacencyOnly := routeCoverage.DirectEvidenceNodes < 8 || routeCoverage.SuccessfulHits < 20
 	problemSignals, err := s.fetchNeighborSignals(ctx, selfPubkey, false)
 	if err != nil {
 		return nil, err
 	}
+	filterChannelOpenNeighborSignalsForLocalPeers(problemSignals, localChannelPeers)
 	strongSignals, err := s.fetchNeighborSignals(ctx, selfPubkey, true)
 	if err != nil {
 		return nil, err
 	}
+	filterChannelOpenNeighborSignalsForLocalPeers(strongSignals, localChannelPeers)
 
 	itemsByPubkey := make(map[string]*ChannelOpenCandidateItem)
 	for pubkey, signal := range routeSignals {
@@ -355,6 +379,10 @@ func (s *ChannelOpenCandidatesService) buildCandidates(ctx context.Context, comp
 		item.SharedStrongCapacitySat = signal.SharedCapacitySat
 	}
 
+	if len(itemsByPubkey) == 0 {
+		return nil, nil
+	}
+	deleteChannelOpenCandidatesForLocalPeers(itemsByPubkey, localChannelPeers)
 	if len(itemsByPubkey) == 0 {
 		return nil, nil
 	}
@@ -408,6 +436,103 @@ func ensureChannelOpenCandidate(items map[string]*ChannelOpenCandidateItem, pubk
 	item := &ChannelOpenCandidateItem{PeerPubkey: key}
 	items[key] = item
 	return item
+}
+
+func (s *ChannelOpenCandidatesService) loadLocalChannelPeerSet(ctx context.Context) map[string]struct{} {
+	if s == nil || s.lnd == nil {
+		return nil
+	}
+	loadCtx := ctx
+	cancel := func() {}
+	if ctx == nil {
+		loadCtx, cancel = context.WithTimeout(context.Background(), channelOpenCandidatesLocalPeerLoadTimeout)
+	} else {
+		loadCtx, cancel = context.WithTimeout(ctx, channelOpenCandidatesLocalPeerLoadTimeout)
+	}
+	defer cancel()
+
+	peers := map[string]struct{}{}
+	if channels, err := s.lnd.ListChannels(loadCtx); err == nil {
+		addChannelOpenCandidateOpenPeers(peers, channels)
+	} else if s.logger != nil {
+		s.logger.Printf("channel open candidates: local open channel peer set unavailable: %v", err)
+	}
+	if pending, err := s.lnd.ListPendingChannels(loadCtx); err == nil {
+		addChannelOpenCandidatePendingPeers(peers, pending)
+	} else if loadCtx.Err() == nil && s.logger != nil {
+		s.logger.Printf("channel open candidates: local pending channel peer set unavailable: %v", err)
+	}
+	if len(peers) == 0 {
+		return nil
+	}
+	return peers
+}
+
+func addChannelOpenCandidateOpenPeers(peers map[string]struct{}, channels []lndclient.ChannelInfo) {
+	for _, channel := range channels {
+		pubkey := graphExplorerNormalizePubkey(channel.RemotePubkey)
+		if pubkey == "" {
+			continue
+		}
+		peers[pubkey] = struct{}{}
+	}
+}
+
+func addChannelOpenCandidatePendingPeers(peers map[string]struct{}, channels []lndclient.PendingChannelInfo) {
+	for _, channel := range channels {
+		pubkey := graphExplorerNormalizePubkey(channel.RemotePubkey)
+		if pubkey == "" {
+			continue
+		}
+		peers[pubkey] = struct{}{}
+	}
+}
+
+func filterChannelOpenCandidatesForLocalPeers(items []ChannelOpenCandidateItem, localPeers map[string]struct{}) []ChannelOpenCandidateItem {
+	if len(items) == 0 || len(localPeers) == 0 {
+		return items
+	}
+	filtered := items[:0]
+	for _, item := range items {
+		if _, ok := localPeers[graphExplorerNormalizePubkey(item.PeerPubkey)]; ok {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
+}
+
+func filterChannelOpenRouteSignalsForLocalPeers(signals map[string]channelOpenRouteSignal, localPeers map[string]struct{}) {
+	if len(signals) == 0 || len(localPeers) == 0 {
+		return
+	}
+	for pubkey := range signals {
+		if _, ok := localPeers[graphExplorerNormalizePubkey(pubkey)]; ok {
+			delete(signals, pubkey)
+		}
+	}
+}
+
+func filterChannelOpenNeighborSignalsForLocalPeers(signals map[string]channelOpenNeighborSignal, localPeers map[string]struct{}) {
+	if len(signals) == 0 || len(localPeers) == 0 {
+		return
+	}
+	for pubkey := range signals {
+		if _, ok := localPeers[graphExplorerNormalizePubkey(pubkey)]; ok {
+			delete(signals, pubkey)
+		}
+	}
+}
+
+func deleteChannelOpenCandidatesForLocalPeers(items map[string]*ChannelOpenCandidateItem, localPeers map[string]struct{}) {
+	if len(items) == 0 || len(localPeers) == 0 {
+		return
+	}
+	for pubkey := range items {
+		if _, ok := localPeers[graphExplorerNormalizePubkey(pubkey)]; ok {
+			delete(items, pubkey)
+		}
+	}
 }
 
 func (s *ChannelOpenCandidatesService) fetchRouteSignals(ctx context.Context, since time.Time, selfPubkey string) (map[string]channelOpenRouteSignal, error) {

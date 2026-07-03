@@ -32,13 +32,29 @@ func writeTapcli(w http.ResponseWriter, out string, err error) {
 		writeError(w, http.StatusBadGateway, msg)
 		return
 	}
-	if json.Valid([]byte(trimmed)) {
+	// The docker CLI may prepend a warning line to stdout (e.g. "WARNING: Error
+	// loading config file: ... .docker/config.json: permission denied") on nodes
+	// with stale permissions. Strip anything before the first JSON delimiter so
+	// the real tapcli JSON still parses.
+	clean := extractJSON(trimmed)
+	if json.Valid([]byte(clean)) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, trimmed)
+		_, _ = io.WriteString(w, clean)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"output": trimmed})
+}
+
+// extractJSON returns the substring starting at the first '{' or '[' so leading
+// non-JSON noise (docker CLI warnings) does not break parsing. Returns the input
+// unchanged when there is no such delimiter or nothing precedes it.
+func extractJSON(s string) string {
+	i := strings.IndexAny(s, "{[")
+	if i <= 0 {
+		return s
+	}
+	return s[i:]
 }
 
 func (s *Server) handleTapdInfo(w http.ResponseWriter, r *http.Request) {

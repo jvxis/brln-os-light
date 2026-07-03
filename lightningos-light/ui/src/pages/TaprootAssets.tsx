@@ -155,6 +155,16 @@ export default function TaprootAssets() {
   const [discError, setDiscError] = useState('')
 
   const assetOptions = useMemo(() => parseAssetOptions(balances), [balances])
+  // Receive picker also offers known community assets (e.g. BRLN) the user has
+  // synced but does not hold yet, so they can generate a receive address by name
+  // without pasting the group_key.
+  const receiveOptions = useMemo(() => {
+    const held = new Set(assetOptions.map((o) => o.key))
+    const known: AssetOption[] = KNOWN_ASSETS
+      .filter((k) => k.groupKey && !held.has(k.groupKey))
+      .map((k) => ({ key: k.groupKey, label: k.name, assetId: '', groupKey: k.groupKey, balance: '' }))
+    return [...assetOptions, ...known]
+  }, [assetOptions])
   const assetRows = useMemo(() => parseAssetRows(balances), [balances])
   const daemonInfo = useMemo(() => parseInfo(info), [info])
   const [showGuide, setShowGuide] = useState(() => {
@@ -181,7 +191,7 @@ export default function TaprootAssets() {
     let assetId = rcvAssetId.trim()
     let groupKey = rcvGroupKey.trim()
     if (!rcvManual && rcvSelectedKey) {
-      const opt = assetOptions.find((o) => o.key === rcvSelectedKey)
+      const opt = receiveOptions.find((o) => o.key === rcvSelectedKey)
       if (opt) {
         assetId = opt.assetId
         groupKey = opt.groupKey
@@ -207,7 +217,7 @@ export default function TaprootAssets() {
     } finally {
       setBusy('')
     }
-  }, [rcvManual, rcvSelectedKey, rcvAssetId, rcvGroupKey, rcvAmount, assetOptions])
+  }, [rcvManual, rcvSelectedKey, rcvAssetId, rcvGroupKey, rcvAmount, receiveOptions])
 
   useEffect(() => {
     if (!receiveAddress) {
@@ -421,12 +431,12 @@ export default function TaprootAssets() {
             {/* Receive */}
             <div className="section-card space-y-4">
               <h3 className="text-lg font-semibold">{t('tapd.sectionReceive')}</h3>
-              {assetOptions.length > 0 && !rcvManual ? (
+              {receiveOptions.length > 0 && !rcvManual ? (
                 <div>
                   <label className="text-xs uppercase tracking-wide text-fog/60">{t('tapd.asset')}</label>
                   <select className="input-field mt-2" value={rcvSelectedKey} onChange={(e) => setRcvSelectedKey(e.target.value)}>
                     <option value="">{t('tapd.selectAsset')}</option>
-                    {assetOptions.map((o) => (
+                    {receiveOptions.map((o) => (
                       <option key={o.key} value={o.key}>{o.label}{o.balance ? ` — ${o.balance}` : ''}</option>
                     ))}
                   </select>
@@ -443,7 +453,7 @@ export default function TaprootAssets() {
                   </div>
                 </>
               )}
-              {assetOptions.length > 0 && (
+              {receiveOptions.length > 0 && (
                 <label className="flex items-center gap-2 text-sm text-fog/70">
                   <input type="checkbox" checked={rcvManual} onChange={(e) => setRcvManual(e.target.checked)} />
                   {t('tapd.manualAsset')}

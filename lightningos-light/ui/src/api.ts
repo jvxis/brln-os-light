@@ -906,6 +906,8 @@ export const tapdMint = (payload: { name: string; supply: number; decimal_displa
   request('/api/apps/tapd/mint', { method: 'POST', body: JSON.stringify(payload) })
 export const tapdMintFinalize = (payload?: { fee_rate?: number }) =>
   request('/api/apps/tapd/mint-finalize', { method: 'POST', body: JSON.stringify(payload || {}) })
+export const tapdDecodeAddr = (payload: { addr: string }) =>
+  request('/api/apps/tapd/decode-addr', { method: 'POST', body: JSON.stringify(payload) })
 export const tapdSend = (payload: { addr: string; fee_rate?: number }) =>
   request('/api/apps/tapd/send', { method: 'POST', body: JSON.stringify(payload) })
 export const getAppAdminPassword = (id: string) => request(`/api/apps/${id}/admin-password`)

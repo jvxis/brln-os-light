@@ -927,6 +927,10 @@
     "prepareMint": "Preparar emissão",
     "finalizeMint": "Finalizar (broadcast)",
     "send": "Enviar",
+    "preview": "Pré-visualizar",
+    "previewAsset": "Asset",
+    "previewAmount": "Quantidade",
+    "previewFeeEst": "Custo on-chain estimado",
     "redeemPhase2": "Disponível na Fase 2 — requer o nó edge (litd) da comunidade que converte o asset em sats via RFQ.",
     "result": "Resultado",
     "error": "Erro"

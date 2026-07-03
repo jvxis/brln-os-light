@@ -8,6 +8,7 @@ import {
   getTapdDiscover,
   getTapdInfo,
   newTapdAddress,
+  tapdDecodeAddr,
   tapdMint,
   tapdMintFinalize,
   tapdSend,
@@ -173,6 +174,8 @@ export default function TaprootAssets() {
   // Send
   const [sendAddr, setSendAddr] = useState('')
   const [sendFee, setSendFee] = useState('')
+  const [sendPreview, setSendPreview] = useState<{ asset_id?: string; group_key?: string; amount?: string } | null>(null)
+  const [previewBusy, setPreviewBusy] = useState(false)
   // Discover
   const [discHost, setDiscHost] = useState('universe.lightning.finance')
   const [discAssets, setDiscAssets] = useState<DiscoverAsset[]>([])
@@ -259,6 +262,21 @@ export default function TaprootAssets() {
       setBusy('')
     }
   }, [rcvManual, rcvSelectedKey, rcvAssetId, rcvGroupKey, rcvAmount, receiveOptions])
+
+  const previewSend = useCallback(async () => {
+    const addr = sendAddr.trim()
+    if (!addr) return
+    setPreviewBusy(true)
+    setSendPreview(null)
+    try {
+      const data = (await tapdDecodeAddr({ addr })) as { asset_id?: string; group_key?: string; amount?: string }
+      setSendPreview(data)
+    } catch (err) {
+      setResult({ ok: false, data: err instanceof Error ? err.message : String(err) })
+    } finally {
+      setPreviewBusy(false)
+    }
+  }, [sendAddr])
 
   useEffect(() => {
     if (!receiveAddress) {
@@ -376,6 +394,13 @@ export default function TaprootAssets() {
       setBusy('')
     }
   }, [loadDaemon])
+
+  const sendPreviewLabel = sendPreview
+    ? (receiveOptions.find((o) => (!!sendPreview.group_key && o.groupKey === sendPreview.group_key) || (!!sendPreview.asset_id && o.assetId === sendPreview.asset_id))?.label
+      || shortHex(sendPreview.group_key || sendPreview.asset_id || ''))
+    : ''
+  const sendRate = Number(sendFee) || 0
+  const sendFeeEstimate = sendRate > 0 ? `~${(sendRate * 200).toLocaleString()} sats (${sendRate} sat/vB × ~200 vB)` : t('tapd.feeAuto')
 
   return (
     <div className="space-y-6">
@@ -557,19 +582,31 @@ export default function TaprootAssets() {
               <h3 className="text-lg font-semibold">{t('tapd.sectionSend')}</h3>
               <div>
                 <label className="text-xs uppercase tracking-wide text-fog/60">{t('tapd.addr')}</label>
-                <input className="input-field mt-2" value={sendAddr} onChange={(e) => setSendAddr(e.target.value)} placeholder="tap1..." />
+                <input className="input-field mt-2" value={sendAddr} onChange={(e) => { setSendAddr(e.target.value); setSendPreview(null) }} placeholder="tap1..." />
               </div>
               <div>
                 <label className="text-xs uppercase tracking-wide text-fog/60">{t('tapd.feeRate')}</label>
                 <input className="input-field mt-2" value={sendFee} onChange={(e) => setSendFee(e.target.value)} inputMode="numeric" placeholder={t('tapd.feeAuto')} />
               </div>
-              <button
-                className="btn-primary"
-                disabled={busy === 'send'}
-                onClick={() => void run('send', () => tapdSend({ addr: sendAddr.trim(), fee_rate: Number(sendFee) || undefined }))}
-              >
-                {t('tapd.send')}
-              </button>
+              {sendPreview && (
+                <div className="rounded-2xl border border-white/10 bg-ink/40 p-4 text-sm space-y-1">
+                  <p className="text-fog/70">{t('tapd.previewAsset')}: <span className="text-fog">{sendPreviewLabel}</span></p>
+                  <p className="text-fog/70">{t('tapd.previewAmount')}: <span className="text-fog tabular-nums">{sendPreview.amount ? Number(sendPreview.amount).toLocaleString() : '—'}</span></p>
+                  <p className="text-fog/70">{t('tapd.previewFeeEst')}: <span className="text-fog">{sendFeeEstimate}</span></p>
+                </div>
+              )}
+              <div className="flex gap-2">
+                <button className="btn-secondary" disabled={previewBusy || !sendAddr.trim()} onClick={() => void previewSend()}>
+                  {t('tapd.preview')}
+                </button>
+                <button
+                  className="btn-primary"
+                  disabled={busy === 'send'}
+                  onClick={() => void run('send', () => tapdSend({ addr: sendAddr.trim(), fee_rate: Number(sendFee) || undefined }))}
+                >
+                  {t('tapd.send')}
+                </button>
+              </div>
             </div>
 
             {/* Mint */}

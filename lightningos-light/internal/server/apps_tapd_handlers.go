@@ -208,6 +208,25 @@ func (s *Server) handleTapdSend(w http.ResponseWriter, r *http.Request) {
 	writeTapcli(w, out, err)
 }
 
+// handleTapdDecodeAddr decodes a Taproot Assets address (asset_id, group_key,
+// amount, …) without sending, for a pre-send preview.
+func (s *Server) handleTapdDecodeAddr(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Addr string `json:"addr"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	addr := strings.TrimSpace(req.Addr)
+	if addr == "" {
+		writeError(w, http.StatusBadRequest, "addr is required")
+		return
+	}
+	out, err := s.tapcli(r.Context(), "addrs", "decode", "--addr", addr)
+	writeTapcli(w, out, err)
+}
+
 // handleTapdRedeem is the Fase 2 integration point: redeeming asset points for
 // sats over Lightning requires the community edge node (litd), which does not
 // exist yet. Return 501 so the UI can present it as "coming soon".

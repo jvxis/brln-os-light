@@ -1748,6 +1748,13 @@ func (n *Notifier) runTransactions() {
 				break
 			}
 
+			// Skip Taproot Assets anchor transactions (mint/send). They are not
+			// sat payments — their outputs are dust anchors, so they otherwise show
+			// up as confusing "on-chain send" alerts with a nonsensical fee %.
+			if isTapdAnchorTx(tx.Label) {
+				continue
+			}
+
 			amount := tx.Amount
 			direction := "in"
 			action := "receive"
@@ -1786,6 +1793,23 @@ func (n *Notifier) runTransactions() {
 
 		time.Sleep(2 * time.Second)
 	}
+}
+
+// isTapdAnchorTx reports whether an LND transaction label marks it as a Taproot
+// Assets anchor tx (asset mint or send), so on-chain notifications can skip it.
+// tapd labels sends like "rpcsendasset-TapAddr{...}"; matching is broad and
+// case-insensitive to also catch mint/batch labels.
+func isTapdAnchorTx(label string) bool {
+	l := strings.ToLower(strings.TrimSpace(label))
+	if l == "" {
+		return false
+	}
+	for _, marker := range []string{"rpcsendasset", "tapaddr", "tapd", "taproot-asset", "asset-mint", "mintingbatch"} {
+		if strings.Contains(l, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (n *Notifier) runChannels() {

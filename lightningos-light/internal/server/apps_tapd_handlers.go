@@ -179,7 +179,7 @@ func (s *Server) handleTapdMintFinalize(w http.ResponseWriter, r *http.Request) 
 	_ = readJSON(r, &req) // body optional
 	args := []string{"assets", "mint", "finalize"}
 	if req.FeeRate > 0 {
-		args = append(args, "--fee_rate", strconv.FormatUint(uint64(req.FeeRate), 10))
+		args = append(args, "--sat_per_vbyte", strconv.FormatUint(uint64(req.FeeRate), 10))
 	}
 	out, err := s.tapcli(r.Context(), args...)
 	writeTapcli(w, out, err)
@@ -202,7 +202,7 @@ func (s *Server) handleTapdSend(w http.ResponseWriter, r *http.Request) {
 	// A Taproot Assets address already encodes the amount, so `--addr` is enough.
 	args := []string{"assets", "send", "--addr", addr}
 	if req.FeeRate > 0 {
-		args = append(args, "--fee_rate", strconv.FormatUint(uint64(req.FeeRate), 10))
+		args = append(args, "--sat_per_vbyte", strconv.FormatUint(uint64(req.FeeRate), 10))
 	}
 	out, err := s.tapcli(r.Context(), args...)
 	writeTapcli(w, out, err)

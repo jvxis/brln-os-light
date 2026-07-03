@@ -23,6 +23,7 @@ type AppInfo = {
   installed: boolean
   status: string
   port?: number
+  scheme?: string
   external_url?: string
   admin_password_path?: string
   available?: boolean
@@ -528,7 +529,7 @@ export default function AppStore() {
               : app.id === 'tapd'
                 ? t('nav.taprootAssets')
               : t('appStore.internal')
-          const openUrl = app.external_url || (app.port ? `http://${host}:${app.port}` : '')
+          const openUrl = app.external_url || (app.port ? `${app.scheme || 'http'}://${host}:${app.port}` : '')
           const publicPoolUrl = openUrl || `http://${host}:${publicPoolUIPortFallback}`
           const publicPoolStratumEndpoint = `${host}:${publicPoolStratumPort}`
           const fedimintGatewayApiUrl = `http://${host}:${fedimintGatewayUIPort}/v1`

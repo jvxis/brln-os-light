@@ -198,8 +198,11 @@ export default function Sidebar({ routes, allRoutes, menuConfig, onMenuConfigCha
       )}
     >
       <div className="flex items-center justify-between lg:justify-start gap-3">
-        <div className="h-10 w-10 rounded-2xl bg-glow/20 border border-glow/30 grid place-items-center text-glow font-semibold">
-          Lo
+        <div className="h-10 w-10 rounded-2xl bg-glow/20 border border-glow/30 flex items-center justify-center gap-0.5 text-glow font-semibold">
+          <svg className="h-2.5 w-2.5 shrink-0" viewBox="0 0 64 64" fill="currentColor" aria-hidden="true">
+            <path d="M34 10 27 21h5.1l-2.4 7L38 16.7h-5.2L34 10z" />
+          </svg>
+          <span className="text-[0.8rem] leading-none font-bold">Los</span>
         </div>
         <div className="flex-1">
           <p className="text-lg font-semibold">{t('topbar.productName')}</p>

@@ -23,6 +23,7 @@ Current product backlog, after checking the repository against the docs:
 9. Rebalance source-rotation/pair-cache telemetry polish.
 10. `Lightning Tools` custom macaroon generator with audit log.
 11. `Succession` multisig inheritance vault.
+12. `Boltz Client` Lightning-to-on-chain reverse swaps with explicit fee preview.
 
 ## 10. Lightning Tools Custom Macaroon Generator
 
@@ -687,6 +688,319 @@ MVP is complete when:
 - General-purpose multisig wallet management.
 - Support for testnet, signet, Taproot multisig, Miniscript policy editing, or
   arbitrary M-of-N policies.
+
+## 12. Boltz Client Lightning-To-On-Chain Reverse Swaps
+
+### Source
+
+Product discussion on 2026-07-07.
+
+The operator wants LightningOS users to use Boltz services for one focused swap
+type only: move sats from the node's Lightning balance to a Bitcoin on-chain
+address. ThunderHub and the Boltz Web App were considered, but the preferred
+product direction is a native LightningOS flow backed by Boltz Client
+(`boltzd`).
+
+Relevant upstream references:
+
+- https://github.com/BoltzExchange/boltz-client
+- https://client.docs.boltz.exchange/
+- https://client.docs.boltz.exchange/grpc.html
+- https://github.com/BoltzExchange/boltz-client/blob/master/pkg/boltzrpc/boltzrpc.proto
+
+### Goal
+
+Add a first-class `Swap Out` flow that lets an authenticated operator convert
+Lightning funds from the local LND node into Bitcoin on-chain funds via Boltz
+reverse swaps.
+
+The MVP must support only:
+
+- swap direction: `Lightning -> Bitcoin on-chain`
+- Boltz Client method: `CreateReverseSwap`
+- swap type: `REVERSE`
+- pair: `BTC/BTC`
+- default confirmation policy: `accept_zero_conf = false`
+
+Do not expose normal swaps, chain swaps, Liquid swaps, autoswap, Boltz Pro, or
+ThunderHub as part of this MVP.
+
+### Product Decisions
+
+- Install `boltzd` as an App Store-managed daemon named `Boltz Client`.
+- Provide the actual user workflow inside LightningOS, not inside a third-party
+  UI.
+- The App Store entry may have no public app port. Its primary action should
+  deep-link to the native `Swap Out` page once installed and running.
+- Backend Go talks to `boltzd`; the browser never calls `boltzd` directly.
+- Bind Boltz Client's REST/gRPC listener to localhost or an internal-only
+  network surface. Do not expose port `9002` or `9003` on the LAN.
+- Pin the Docker image version after verifying a current stable tag.
+- Store Boltz Client data under:
+  `/var/lib/lightningos/apps-data/boltz-client`.
+- Keep the swap mnemonic and Boltz Client database inside the app data
+  directory. The UI must warn operators that this data is part of swap recovery
+  material and should be backed up.
+
+### Fee Transparency Requirement
+
+The preview and confirmation screens must show fees as separate line items.
+This is a core product requirement, not UI polish.
+
+Required confirmation breakdown:
+
+```text
+You send via Lightning:        100,000 sats
+Boltz service fee:                 500 sats
+On-chain miner fee estimate:     1,200 sats
+Lightning routing fee limit:       250 sats
+Estimated on-chain receive:     98,300 sats
+```
+
+Behavior rules:
+
+- Label the Boltz fee explicitly as `Boltz service fee`.
+- Label the miner fee separately as an on-chain fee estimate.
+- Label routing fee as a maximum or limit because the final route fee can vary.
+- Show total estimated fees.
+- Show the final estimated receive amount.
+- If the quote changes between preview and confirmation, block execution and
+  require a new preview.
+- Use the upstream `accepted_pair`/quote acceptance mechanism when creating the
+  reverse swap so the executed swap cannot silently use materially different
+  fees than the user approved.
+- Audit the approved fee breakdown without logging invoices, preimages, private
+  keys, macaroons, redeem scripts, swap mnemonic, or other secrets.
+
+### Backend Plan
+
+Add a Boltz Client App Store handler:
+
+- `lightningos-light/internal/server/apps_boltz_client.go`
+
+Responsibilities:
+
+- ensure Docker is available
+- create app root and data directories
+- generate `boltz.toml`
+- configure `network = "mainnet"` and `node = "lnd"`
+- configure LND host as `host.docker.internal:10009`
+- mount/copy only the LND certificate and macaroon material required by
+  `boltzd`
+- reuse or generalize the existing Docker-to-LND gRPC access logic currently
+  used by LNDg
+- start/stop/uninstall the `boltzd` container
+- report installed/running status to the App Store
+
+Add a focused swap service:
+
+- `lightningos-light/internal/server/boltz_swap_service.go`
+- `lightningos-light/internal/server/boltz_swap_handlers.go`
+- optional init file if lazy initialization follows existing local patterns
+
+The service should wrap only the required Boltz Client calls:
+
+- `GetInfo`
+- `GetSwapQuote`
+- `CreateReverseSwap`
+- `ListSwaps`
+- `GetSwapInfo`
+- `GetSwapInfoStream` or polling-based status, depending on implementation
+  cost
+
+Initial endpoints:
+
+- `GET /api/boltz/status`
+- `POST /api/boltz/reverse/quote`
+- `POST /api/boltz/reverse`
+- `GET /api/boltz/swaps`
+- `GET /api/boltz/swaps/{id}`
+
+Register routes in:
+
+- `lightningos-light/internal/server/routes.go`
+
+Update API helpers in:
+
+- `lightningos-light/ui/src/api.ts`
+
+Update public API documentation in:
+
+- `docs/03_API_SPEC.md`
+
+### Suggested API Contract
+
+`POST /api/boltz/reverse/quote`
+
+Example request:
+
+```json
+{
+  "amount_sat": 100000,
+  "destination_address": "bc1q...",
+  "routing_fee_limit_ppm": 2500
+}
+```
+
+Example response:
+
+```json
+{
+  "amount_sat": 100000,
+  "destination_address": "bc1q...",
+  "boltz_service_fee_sat": 500,
+  "onchain_miner_fee_sat": 1200,
+  "routing_fee_limit_sat": 250,
+  "estimated_receive_sat": 98300,
+  "total_estimated_fee_sat": 1950,
+  "limits": {
+    "minimal_sat": 50000,
+    "maximal_sat": 10000000
+  },
+  "quote_id": "opaque-local-quote-id",
+  "quote_expires_at": "2026-07-07T15:30:00Z"
+}
+```
+
+`POST /api/boltz/reverse`
+
+Example request:
+
+```json
+{
+  "quote_id": "opaque-local-quote-id",
+  "amount_sat": 100000,
+  "destination_address": "bc1q...",
+  "routing_fee_limit_ppm": 2500,
+  "confirm_fee_breakdown": true
+}
+```
+
+Example response:
+
+```json
+{
+  "swap_id": "boltz-swap-id",
+  "status": "pending",
+  "amount_sat": 100000,
+  "estimated_receive_sat": 98300,
+  "boltz_service_fee_sat": 500,
+  "onchain_miner_fee_sat": 1200,
+  "routing_fee_limit_sat": 250
+}
+```
+
+### Frontend Plan
+
+Add a native page, for example:
+
+- `lightningos-light/ui/src/pages/BoltzSwap.tsx`
+
+Suggested UI sections:
+
+1. Swap form
+   - amount in sats
+   - destination address
+   - option to generate/use a new LightningOS on-chain wallet address
+   - routing fee limit control with a conservative default
+
+2. Fee preview
+   - Boltz service fee
+   - on-chain miner fee estimate
+   - Lightning routing fee limit
+   - total estimated fees
+   - estimated receive amount
+
+3. Confirmation
+   - explicit acknowledgement of the fee breakdown
+   - clear note that the on-chain transaction depends on Bitcoin network fees
+   - clear note that routing fee is capped and actual fee may be lower
+
+4. Swap status
+   - swap id
+   - state/status
+   - paid/claim txid when available
+   - destination address
+   - final fee values when known
+
+5. History
+   - recent reverse swaps
+   - filter by pending/success/failed/refunded
+
+### Security Requirements
+
+- Require authenticated admin session and CSRF protection.
+- Require fresh reauthentication before creating a reverse swap, similar in
+  spirit to external on-chain sends.
+- Do not return or log:
+  - LND macaroons
+  - Boltz Client admin macaroon/password
+  - swap mnemonic
+  - preimage
+  - private key
+  - redeem script
+  - raw invoice when avoidable
+- API responses should expose only operational data needed by the UI:
+  amounts, fee breakdown, status, destination address, txids, and timestamps.
+- Audit events should include safe metadata:
+  - amount
+  - destination address fingerprint or full address only if already standard for
+    comparable send flows
+  - Boltz service fee
+  - on-chain fee estimate
+  - routing fee limit
+  - swap id after creation
+- Never expose Boltz Client REST/gRPC directly to the LAN.
+- Treat app data as recovery-sensitive because it contains Boltz Client's swap
+  database and mnemonic.
+
+### Tests
+
+Backend tests:
+
+- App registry accepts `boltz-client`.
+- Generated compose and `boltz.toml` contain mainnet/LND/reverse-swap-safe
+  defaults.
+- Quote handler rejects invalid amounts and invalid destination addresses.
+- Quote response separates Boltz service fee, on-chain miner fee, routing fee
+  limit, total fees, and estimated receive amount.
+- Create handler rejects expired or mismatched quote approvals.
+- Create handler calls only reverse swap paths.
+- Create handler requires fresh reauthentication.
+- API responses and audit events do not contain secrets.
+
+Frontend verification:
+
+- fee preview clearly displays each fee line item
+- confirmation cannot proceed without a fresh quote
+- quote changes force the user back to preview
+- status/history views do not expose secrets
+- `npm run build`
+
+Backend verification:
+
+- `go test ./internal/server/...`
+- `go test ./...`
+
+### Acceptance Criteria
+
+- A user can install and start Boltz Client from the App Store.
+- A user can open the native `Swap Out` page from LightningOS.
+- A user can preview a Lightning-to-on-chain reverse swap before execution.
+- The preview explicitly shows the Boltz service fee as its own line item.
+- The user can execute only after confirming the fee breakdown.
+- The created swap is tracked in LightningOS status/history.
+- No normal swap, Liquid swap, chain swap, or autoswap control is exposed in the
+  MVP UI.
+
+### Later Follow-Ups
+
+- Streaming status updates instead of polling.
+- Advanced zero-conf option for small swaps, disabled by default.
+- Fee policy presets for routing fee limit.
+- Backup/export guidance for Boltz Client swap mnemonic and database.
+- Operator-configurable Boltz API endpoint for advanced users.
+- Optional support for other swap types after separate product approval.
 
 ## Implemented Or No Longer Active Here
 

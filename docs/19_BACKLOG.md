@@ -2,30 +2,71 @@
 
 ## Status
 
-Audit date: 2026-06-26.
+Audit date: 2026-07-07.
 
 This file used to mix active backlog items with implemented design notes. Treat
-the "Active Backlog" list below as the source of truth. Implemented sections are
-kept only as historical design context.
+the "Active Backlog" list below as the source of truth. Status labels are based
+on a repository audit, not only on the age of the design notes. Implemented
+sections are kept only as historical design context.
 
 ## Active Backlog
 
 Current product backlog, after checking the repository against the docs:
 
-1. `AutoTarget` adaptive `target_outbound_pct`.
-2. `Autofee` dynamic liquidity state.
-3. Channel `parking mode`.
-4. Ranking-driven per-channel automation actions.
-5. `AutoFee` <-> `Rebalance` intent interlock.
-6. `Graph Explorer` optional external refill.
-7. `Graph Close Classifier` high-confidence remote `penalty_close` inference.
-8. Wallet Flow lineage export as SVG/PNG.
-9. Rebalance source-rotation/pair-cache telemetry polish.
-10. `Lightning Tools` custom macaroon generator with audit log.
-11. `Succession` multisig inheritance vault.
-12. `Boltz Client` Lightning-to-on-chain reverse swaps with explicit fee preview.
+1. **Open** - `AutoTarget` adaptive `target_outbound_pct`. No `auto_target_*`
+   config, loop, history table, or UI controls were found in code; existing
+   `AutoTarget` naming is only target-selection/cost-gate logic for the
+   rebalance autopilot.
+2. **Partial** - `Autofee` dynamic liquidity state. Dynamic thresholds,
+   `class_label`, node `liquidity_class`, ranking gates, and rebalance-execution
+   gates exist, but no explicit `liquidity_state` runtime/API/UI model was
+   found.
+3. **Open** - Channel `parking mode`. `Channel Ranking` can mark close
+   candidates, but there is no persistent `parked`/`automation_mode` state that
+   excludes a channel from Autofee/Rebalance with review metadata.
+4. **Partial** - Ranking-driven per-channel automation actions. Ranking
+   recommendations are computed, persisted, and rendered, but there are no
+   one-click actions for parking, removing from rebalance, or removing from
+   Autofee.
+5. **Partial** - `AutoFee` <-> `Rebalance` intent interlock. Settling-window
+   interlocks exist, but the shared intent layer described in the backlog is
+   not implemented.
+6. **Partial** - `Graph Explorer` optional external refill. Schema/status fields
+   for refill exist, including Amboss-token availability, but no refill worker,
+   operator config API, or UI control was found.
+7. **Open** - `Graph Close Classifier` high-confidence remote `penalty_close`
+   inference. The core classifier handles LND/local and bitcoind mutual/force
+   classification, but no high-confidence remote penalty-close heuristic was
+   found.
+8. **Open** - Wallet Flow lineage export as SVG/PNG. Lineage mode exists, but
+   no SVG/PNG export control or serialization flow was found.
+9. **Partial** - Rebalance source-rotation/pair-cache telemetry polish. Pair
+   stats, route-hop display, and cooldown-probe cache bypass exist; watcher
+   pre-check extraction, full batched pair-cache lookup for that path, and
+   `pair_cache_skip_*` recovery telemetry remain open.
+10. **Open** - `Succession` multisig inheritance vault. Existing succession
+    covers proof-of-life and external-address retirement only; no vault service,
+    dedicated Succession page, descriptor import, or vault endpoints were found.
+11. **Open** - `Boltz Client` Lightning-to-on-chain reverse swaps with explicit
+    fee preview. No Boltz app handler, swap service, routes, API helpers, or UI
+    page were found.
+
+## Implemented Since Last Audit
+
+- `Lightning Tools` custom macaroon generator with audit log. Implemented in
+  `internal/lndclient/macaroon.go`, `internal/server/macaroon_handlers.go`,
+  `internal/server/routes.go`, `internal/server/auth.go`, `ui/src/api.ts`, and
+  `ui/src/pages/LightningOps.tsx`, with focused backend tests and API spec
+  entries.
 
 ## 10. Lightning Tools Custom Macaroon Generator
+
+**Current status (2026-07-07): implemented in code; no longer active backlog.**
+The MVP flow exists end to end: LND permission listing, root-key collision
+check, custom bake, base64 conversion, reauth scope `macaroon_export`, safe
+audit event `macaroon.bake`, API helpers, Lightning Tools UI card, copy/download
+actions, and focused tests. Phase 2 revoke/list-root-key work remains a possible
+future follow-up, but it is not part of the active MVP backlog.
 
 ### Source
 
@@ -350,6 +391,12 @@ Possible follow-ups after MVP:
 - offer method/RPC-based permission selection using `ListPermissions`
 
 ## 11. Succession Multisig Inheritance Vault
+
+**Current status (2026-07-07): open.** Existing succession code covers
+proof-of-life scheduling, simulation, live reauth, Telegram guardrails, and
+external-address node-retirement transfer. No descriptor-backed vault service,
+dedicated Succession page, watch-only wallet import, or vault destination
+endpoints were found.
 
 ### Source
 
@@ -691,6 +738,10 @@ MVP is complete when:
 
 ## 12. Boltz Client Lightning-To-On-Chain Reverse Swaps
 
+**Current status (2026-07-07): open.** No Boltz Client App Store handler,
+`boltzd` management, swap service, reverse-swap API routes, frontend API helpers,
+or native Swap Out page were found.
+
 ### Source
 
 Product discussion on 2026-07-07.
@@ -1007,6 +1058,7 @@ Backend verification:
 These items are implemented enough that they should not drive new work from this
 file:
 
+- `Lightning Tools` custom macaroon generator with audit log.
 - `Autofee` signal hierarchy and stability redesign.
 - Rebalance budget redesign with manual reserve.
 - `Graph Explorer` storage limits and existing-node cleanup.
@@ -1530,10 +1582,17 @@ Each milestone should be:
 
 Do not combine multiple milestone behaviors into a single opaque patch.
 
+## Active Detailed Proposals
+
+The sections below remain active or partially active. Older implemented
+sections above are retained only for historical context.
+
 ## 1. Autofee Dynamic Liquidity State
 
-**Current status (2026-06-20): open.** No explicit `liquidity_state` model was
-found in backend or UI.
+**Current status (2026-07-07): partially implemented.** `class_label`, node
+`liquidity_class`, dynamic low-out thresholds, ranking-aware gates, and
+rebalance-execution gates exist in Autofee. No explicit `liquidity_state`
+runtime/API/UI model was found, so the core backlog item remains open.
 
 ### Goal
 
@@ -1669,8 +1728,9 @@ Expected limits:
 
 ## 2. Channel Parking Mode
 
-**Current status (2026-06-20): open.** `Channel Ranking` can mark close
-candidates, but there is no persistent channel parking mode yet.
+**Current status (2026-07-07): open.** `Channel Ranking` can mark close
+candidates and emit recommendations, but there is no persistent channel parking
+mode yet.
 
 ### Goal
 
@@ -1722,9 +1782,10 @@ It also creates a safer middle state before cooperative close.
 
 ## 3. Ranking-Driven Per-Channel Automation Policy
 
-**Current status (2026-06-20): partially implemented.** Recommendations are
-computed and shown in `Channel Ranking`, but there are no one-click automation
-actions yet for parking, removing from rebalance, or removing from Autofee.
+**Current status (2026-07-07): partially implemented.** Recommendations are
+computed, persisted, and shown in `Channel Ranking`, but there are no one-click
+automation actions yet for parking, removing from rebalance, or removing from
+Autofee.
 
 ### Goal
 

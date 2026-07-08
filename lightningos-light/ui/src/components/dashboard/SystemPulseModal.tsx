@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { getLocale } from '../../i18n'
 import StatusBadge from './StatusBadge'
 import { formatTimestamp, toneFromHealthStatus } from './formatters'
-import type { SystemCheckGroup, SystemCheckResponse, SystemCheckTone, Tone } from './types'
+import type { SystemCheckGroup, SystemCheckItem, SystemCheckResponse, SystemCheckTone, Tone } from './types'
 
 type SystemPulseModalProps = {
   open: boolean
@@ -31,6 +31,59 @@ const toneLabelKey = (tone?: SystemCheckTone) => {
 
 const countItemsByTone = (group: SystemCheckGroup, tone: SystemCheckTone) =>
   Array.isArray(group.items) ? group.items.filter((item) => item.status === tone).length : 0
+
+const groupLevelLogGroups = new Set(['lnd', 'bitcoin', 'postgres', 'tor'])
+
+type LogPanel = {
+  key: string
+  source?: string
+  lines: string[]
+  itemIds: string[]
+  groupLevel: boolean
+}
+
+const itemLogKey = (item: SystemCheckItem) => {
+  if (!Array.isArray(item.log_tail) || item.log_tail.length === 0) return ''
+  return item.log_source ? `source:${item.log_source}` : `tail:${item.log_tail.join('\n')}`
+}
+
+const groupLogPanels = (group: SystemCheckGroup): LogPanel[] => {
+  const panels = new Map<string, Omit<LogPanel, 'groupLevel'>>()
+  const items = Array.isArray(group.items) ? group.items : []
+  for (const item of items) {
+    const key = itemLogKey(item)
+    if (!key || !Array.isArray(item.log_tail) || item.log_tail.length === 0) continue
+    const existing = panels.get(key)
+    if (existing) {
+      existing.itemIds.push(item.id)
+      continue
+    }
+    panels.set(key, {
+      key,
+      source: item.log_source,
+      lines: item.log_tail,
+      itemIds: [item.id],
+    })
+  }
+
+  return Array.from(panels.values()).map((panel) => ({
+    ...panel,
+    groupLevel: groupLevelLogGroups.has(group.id) || panel.itemIds.length > 1,
+  }))
+}
+
+function LogDetails({ title, lines, className = 'mt-3' }: { title: string; lines: string[]; className?: string }) {
+  return (
+    <details className={`${className} rounded-2xl border border-white/10 bg-ink/50 p-3`} open>
+      <summary className="cursor-pointer text-xs text-fog/60">
+        {title}
+      </summary>
+      <div className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-[11px] font-mono leading-relaxed text-fog/65">
+        {lines.join('\n')}
+      </div>
+    </details>
+  )
+}
 
 export default function SystemPulseModal({
   open,
@@ -120,64 +173,77 @@ export default function SystemPulseModal({
 
           {groups.length > 0 ? (
             <div className="grid gap-4 lg:grid-cols-2">
-              {groups.map((group) => (
-                <article key={group.id} className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h3 className="text-lg font-semibold">{group.label}</h3>
-                      <p className="mt-1 text-sm text-fog/55">
-                        {group.status === 'danger'
-                          ? t('systemCheck.summaryFailing', { count: countItemsByTone(group, 'danger') })
-                          : group.status === 'warn'
-                            ? t('systemCheck.summaryWarning', { count: countItemsByTone(group, 'warn') })
-                            : group.status === 'ok'
-                              ? t('systemCheck.summaryOk')
-                              : t('systemCheck.summaryMuted')}
-                      </p>
-                    </div>
-                    <StatusBadge
-                      label={t(toneLabelKey(group.status))}
-                      tone={group.status as Tone}
-                    />
-                  </div>
-
-                  <div className="mt-4 divide-y divide-white/10">
-                    {group.items.map((item) => (
-                      <div key={item.id} className="py-3 first:pt-0 last:pb-0">
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-fog/85">{item.label}</p>
-                            {item.detail ? <p className="mt-1 break-words text-xs text-fog/50">{item.detail}</p> : null}
-                          </div>
-                          {item.status !== 'muted' ? (
-                            <StatusBadge
-                              label={t(toneLabelKey(item.status))}
-                              tone={item.status as Tone}
-                            />
-                          ) : null}
-                        </div>
-
-                        {item.diagnostic ? (
-                          <p className="mt-3 rounded-2xl border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
-                            {item.diagnostic}
-                          </p>
-                        ) : null}
-
-                        {Array.isArray(item.log_tail) && item.log_tail.length > 0 ? (
-                          <details className="mt-3 rounded-2xl border border-white/10 bg-ink/50 p-3" open>
-                            <summary className="cursor-pointer text-xs text-fog/60">
-                              {t('systemCheck.recentLogs', { source: item.log_source || t('common.unknown') })}
-                            </summary>
-                            <div className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-[11px] font-mono leading-relaxed text-fog/65">
-                              {item.log_tail.join('\n')}
-                            </div>
-                          </details>
-                        ) : null}
+              {groups.map((group) => {
+                const logPanels = groupLogPanels(group)
+                const groupLevelLogKeys = new Set(logPanels.filter((panel) => panel.groupLevel).map((panel) => panel.key))
+                return (
+                  <article key={group.id} className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="text-lg font-semibold">{group.label}</h3>
+                        <p className="mt-1 text-sm text-fog/55">
+                          {group.status === 'danger'
+                            ? t('systemCheck.summaryFailing', { count: countItemsByTone(group, 'danger') })
+                            : group.status === 'warn'
+                              ? t('systemCheck.summaryWarning', { count: countItemsByTone(group, 'warn') })
+                              : group.status === 'ok'
+                                ? t('systemCheck.summaryOk')
+                                : t('systemCheck.summaryMuted')}
+                        </p>
                       </div>
+                      <StatusBadge
+                        label={t(toneLabelKey(group.status))}
+                        tone={group.status as Tone}
+                      />
+                    </div>
+
+                    <div className="mt-4 divide-y divide-white/10">
+                      {group.items.map((item) => {
+                        const logKey = itemLogKey(item)
+                        const showInlineLog = logKey !== '' && !groupLevelLogKeys.has(logKey)
+                        return (
+                          <div key={item.id} className="py-3 first:pt-0 last:pb-0">
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium text-fog/85">{item.label}</p>
+                                {item.detail ? <p className="mt-1 break-words text-xs text-fog/50">{item.detail}</p> : null}
+                              </div>
+                              {item.status !== 'muted' ? (
+                                <StatusBadge
+                                  label={t(toneLabelKey(item.status))}
+                                  tone={item.status as Tone}
+                                />
+                              ) : null}
+                            </div>
+
+                            {item.diagnostic ? (
+                              <p className="mt-3 rounded-2xl border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                                {item.diagnostic}
+                              </p>
+                            ) : null}
+
+                            {showInlineLog && Array.isArray(item.log_tail) && item.log_tail.length > 0 ? (
+                              <LogDetails
+                                title={t('systemCheck.recentLogs', { source: item.log_source || t('common.unknown') })}
+                                lines={item.log_tail}
+                              />
+                            ) : null}
+                          </div>
+                        )
+                      })}
+                    </div>
+
+                    {logPanels.filter((panel) => panel.groupLevel).map((panel) => (
+                      <LogDetails
+                        key={panel.key}
+                        title={t('systemCheck.recentLogs', { source: panel.source || t('common.unknown') })}
+                        lines={panel.lines}
+                        className="mt-4"
+                      />
                     ))}
-                  </div>
-                </article>
-              ))}
+                  </article>
+                )
+              })}
             </div>
           ) : !loading ? (
             <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-5 text-sm text-fog/65">

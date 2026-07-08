@@ -1449,7 +1449,10 @@ insert into autofee_config (id, native_seed_enabled)
 values ($1, true)
 on conflict (id) do nothing
 `, autofeeConfigID)
-	return err
+	if err != nil {
+		return err
+	}
+	return ensureChannelAutomationSchema(ctx, s.db)
 }
 
 func (s *AutofeeService) defaultConfig() AutofeeConfig {
@@ -2087,7 +2090,19 @@ func (s *AutofeeService) LoadChannelSettings(ctx context.Context) (map[uint64]bo
 		}
 		settings[uint64(channelID)] = enabled
 	}
-	return settings, rows.Err()
+	if err := rows.Err(); err != nil {
+		return settings, err
+	}
+	policies, err := loadChannelAutomationPolicies(ctx, s.db)
+	if err != nil {
+		return settings, err
+	}
+	for channelID, policy := range policies {
+		if isChannelAutomationParked(policy.Mode) {
+			settings[channelID] = false
+		}
+	}
+	return settings, nil
 }
 
 func (s *AutofeeService) loadRebalanceChannelSettings(ctx context.Context) (map[uint64]autofeeRebalanceChannelSetting, error) {
@@ -2132,6 +2147,15 @@ func (s *AutofeeService) SetChannelEnabled(ctx context.Context, channelID uint64
 	if channelID == 0 && trimmedPoint == "" {
 		return errors.New("channel_id or channel_point required")
 	}
+	if enabled {
+		policy, ok, err := loadChannelAutomationPolicy(ctx, s.db, channelID)
+		if err != nil {
+			return err
+		}
+		if ok && isChannelAutomationParked(policy.Mode) {
+			return errChannelAutomationParked
+		}
+	}
 	_, err := s.db.Exec(ctx, `
 insert into autofee_channel_settings (channel_id, channel_point, enabled, updated_at)
 values ($1, $2, $3, now())
@@ -2164,17 +2188,31 @@ func (s *AutofeeService) SetAllChannelsEnabled(ctx context.Context, enabled bool
 	if err != nil {
 		return err
 	}
+	policies, err := loadChannelAutomationPolicies(ctx, s.db)
+	if err != nil {
+		return err
+	}
 	batch := &pgx.Batch{}
+	queued := 0
 	for _, ch := range channels {
+		if enabled {
+			if policy, ok := policies[ch.ChannelID]; ok && isChannelAutomationParked(policy.Mode) {
+				continue
+			}
+		}
 		batch.Queue(`
 insert into autofee_channel_settings (channel_id, channel_point, enabled, updated_at)
 values ($1, $2, $3, now())
 on conflict (channel_id) do update set enabled=excluded.enabled, channel_point=excluded.channel_point, updated_at=excluded.updated_at
 `, int64(ch.ChannelID), ch.ChannelPoint, enabled)
+		queued++
+	}
+	if queued == 0 {
+		return nil
 	}
 	br := s.db.SendBatch(ctx, batch)
 	defer br.Close()
-	for range channels {
+	for i := 0; i < queued; i++ {
 		if _, err := br.Exec(); err != nil {
 			return err
 		}

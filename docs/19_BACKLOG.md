@@ -21,13 +21,13 @@ Current product backlog, after checking the repository against the docs:
    `class_label`, node `liquidity_class`, ranking gates, and rebalance-execution
    gates exist, but no explicit `liquidity_state` runtime/API/UI model was
    found.
-3. **Open** - Channel `parking mode`. `Channel Ranking` can mark close
-   candidates, but there is no persistent `parked`/`automation_mode` state that
-   excludes a channel from Autofee/Rebalance with review metadata.
+3. **Implemented 2026-07-08** - Channel `parking mode`. The code now persists
+   `parked`/`automation_mode`, review metadata, fixed fee metadata, and excludes
+   parked channels from Autofee/Rebalance automation.
 4. **Partial** - Ranking-driven per-channel automation actions. Ranking
-   recommendations are computed, persisted, and rendered, but there are no
-   one-click actions for parking, removing from rebalance, or removing from
-   Autofee.
+   recommendations are computed, persisted, and rendered. The ranking detail
+   panel now has a one-click parking/unparking action; standalone one-click
+   remove-from-rebalance/remove-from-Autofee actions remain open.
 5. **Partial** - `AutoFee` <-> `Rebalance` intent interlock. Settling-window
    interlocks exist, but the shared intent layer described in the backlog is
    not implemented.
@@ -58,6 +58,10 @@ Current product backlog, after checking the repository against the docs:
   `internal/server/routes.go`, `internal/server/auth.go`, `ui/src/api.ts`, and
   `ui/src/pages/LightningOps.tsx`, with focused backend tests and API spec
   entries.
+- Channel `parking mode` with a persisted `channel_automation_policies` table,
+  `POST /api/lnops/channel/automation`, backend gates for Autofee/Rebalance,
+  Channel Ranking action UI, Rebalance Center parked badges/disabled controls,
+  API spec updates, and build/test validation.
 
 ## 10. Lightning Tools Custom Macaroon Generator
 
@@ -1728,9 +1732,11 @@ Expected limits:
 
 ## 2. Channel Parking Mode
 
-**Current status (2026-07-07): open.** `Channel Ranking` can mark close
-candidates and emit recommendations, but there is no persistent channel parking
-mode yet.
+**Current status (2026-07-08): implemented in code; no longer active backlog.**
+`Channel Ranking` can place a channel in `parked` mode through the detail panel.
+The backend persists the policy, captures prior Autofee/Rebalance/source states,
+and disables Autofee, rebalance auto, manual restart, and source usage while
+parked.
 
 ### Goal
 
@@ -1782,10 +1788,10 @@ It also creates a safer middle state before cooperative close.
 
 ## 3. Ranking-Driven Per-Channel Automation Policy
 
-**Current status (2026-07-07): partially implemented.** Recommendations are
-computed, persisted, and shown in `Channel Ranking`, but there are no one-click
-automation actions yet for parking, removing from rebalance, or removing from
-Autofee.
+**Current status (2026-07-08): partially implemented.** Recommendations are
+computed, persisted, and shown in `Channel Ranking`. One-click parking/unparking
+is implemented in the ranking detail panel. Standalone one-click actions for
+removing from rebalance or removing from Autofee outside parking remain open.
 
 ### Goal
 

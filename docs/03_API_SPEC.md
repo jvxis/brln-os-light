@@ -306,6 +306,23 @@ Body:
 - Stores an operator note for the channel detail modal.
 - Metadata fields are optional but allow closed-channel notes to be shown later as previous notes for the same peer.
 
+POST /api/lnops/channel/automation
+Body:
+{
+  "channel_id": 1043834558060691457,
+  "channel_point": "txid:index",
+  "automation_mode": "parked",
+  "fixed_fee_ppm": 250,
+  "review_at": "2026-08-01",
+  "automation_note": "Review after observation window",
+  "restore_previous": false
+}
+- Sets the per-channel automation policy. `automation_mode` accepts `normal`, `parked`, or `close_candidate`.
+- `channel_id` or `channel_point` must identify an open channel; both may be supplied.
+- Parking a channel disables Autofee for that channel, disables rebalance auto and manual restart, and excludes the channel as a rebalance source.
+- Unparking with `restore_previous=false` keeps Autofee and rebalance automations disabled until the operator explicitly enables them again.
+- Returns `{ "ok": true, "policy": ... }`.
+
 POST /api/lnops/peer/notes
 Body:
 {

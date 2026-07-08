@@ -247,6 +247,16 @@ export const getLnChannelDetail = (channelPoint: string, limit = 30) =>
   request(`/api/lnops/channel/detail?channel_point=${encodeURIComponent(channelPoint)}&limit=${encodeURIComponent(String(limit))}`)
 export const saveLnChannelNote = (payload: { channel_point: string; note: string; remote_pubkey?: string; peer_alias?: string; channel_id?: number; short_channel_id?: string }) =>
   request('/api/lnops/channel/notes', { method: 'POST', body: JSON.stringify(payload) })
+export const updateLnChannelAutomation = (payload: {
+  channel_id?: number
+  channel_point: string
+  automation_mode: 'normal' | 'parked' | 'close_candidate'
+  fixed_fee_ppm?: number | null
+  review_at?: string
+  automation_note?: string
+  restore_previous?: boolean
+}) =>
+  request('/api/lnops/channel/automation', { method: 'POST', body: JSON.stringify(payload) })
 export const saveLnPeerNote = (payload: { remote_pubkey: string; note: string }) =>
   request('/api/lnops/peer/notes', { method: 'POST', body: JSON.stringify(payload) })
 export const getLnChannelPeerRecommendations = (channelPoint: string, limit = 5) =>

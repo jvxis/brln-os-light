@@ -417,60 +417,60 @@ type RebalanceConfig struct {
 }
 
 type RebalanceOverview struct {
-	AutoEnabled                         bool                          `json:"auto_enabled"`
-	Profile                             string                        `json:"profile"`
-	SchedulerMode                       string                        `json:"scheduler_mode"`
-	SovereignLastDecisionAt             string                        `json:"sovereign_last_decision_at,omitempty"`
-	SovereignLastMode                   string                        `json:"sovereign_last_mode,omitempty"`
-	SovereignCandidates                 int                           `json:"sovereign_candidates"`
-	SovereignSelected                   int                           `json:"sovereign_selected"`
-	SovereignExpectedProfitSat          int64                         `json:"sovereign_expected_profit_sat"`
-	SovereignBudgetRemainingSat         int64                         `json:"sovereign_budget_remaining_sat"`
-	SovereignDecisions                  []RebalanceSovereignDecision  `json:"sovereign_decisions,omitempty"`
-	SovereignHistory24h                 []RebalanceSovereignHistory   `json:"sovereign_history_24h,omitempty"`
-	LastScanAt                          string                        `json:"last_scan_at,omitempty"`
-	LastScanStatus                      string                        `json:"last_scan_status,omitempty"`
-	LastScanDetail                      string                        `json:"last_scan_detail,omitempty"`
-	LastScanCandidates                  int                           `json:"last_scan_candidates"`
-	LastScanRemainingBudgetSat          int64                         `json:"last_scan_remaining_budget_sat"`
-	LastScanReasons                     map[string]int                `json:"last_scan_reasons,omitempty"`
-	LastScanTopScoreSat                 int64                         `json:"last_scan_top_score_sat"`
-	LastScanProfitSkipped               int                           `json:"last_scan_profit_skipped"`
-	LastScanQueued                      int                           `json:"last_scan_queued"`
-	LastScanSkipped                     []RebalanceSkipDetail         `json:"last_scan_skipped,omitempty"`
-	LastManualRestartAt                 string                        `json:"last_manual_restart_at,omitempty"`
-	LastManualRestartQueued             int                           `json:"last_manual_restart_queued"`
-	LastManualRestartReasons            map[string]int                `json:"last_manual_restart_reasons,omitempty"`
-	LastMCResetAt                       string                        `json:"last_mc_reset_at,omitempty"`
-	LastMCResetReason                   string                        `json:"last_mc_reset_reason,omitempty"`
-	MCResetCount                        int64                         `json:"mc_reset_count"`
-	MCResetCooldownSec                  int64                         `json:"mc_reset_cooldown_sec"`
-	MCResetCooldownRemainingSec         int64                         `json:"mc_reset_cooldown_remaining_sec,omitempty"`
-	DailyBudgetSat                      int64                         `json:"daily_budget_sat"`
-	DailyBudgetBaseSat                  int64                         `json:"daily_budget_base_sat"`
-	DailyBudgetShortTermSat             int64                         `json:"daily_budget_short_term_sat"`
-	DailySpentSat                       int64                         `json:"daily_spent_sat"`
-	DailySpentAutoSat                   int64                         `json:"daily_spent_auto_sat"`
-	DailySpentManualSat                 int64                         `json:"daily_spent_manual_sat"`
-	RemainingTotalSat                   int64                         `json:"remaining_total_sat"`
-	RemainingForAutoSat                 int64                         `json:"remaining_for_auto_sat"`
-	BudgetUnlimited                     bool                          `json:"budget_unlimited"`
-	BudgetAutoOnly                      bool                          `json:"budget_auto_only"`
-	ManualReserveEnabled                bool                          `json:"manual_reserve_enabled"`
-	ManualReserveMode                   string                        `json:"manual_reserve_mode,omitempty"`
-	ManualReserveValue                  float64                       `json:"manual_reserve_value,omitempty"`
-	ManualReserveSat                    int64                         `json:"manual_reserve_sat"`
-	ManualReserveRemainingSat           int64                         `json:"manual_reserve_remaining_sat"`
-	LiveCostSat                         int64                         `json:"live_cost_sat"`
-	Effectiveness7d                     float64                       `json:"effectiveness_7d"`
-	EffectivenessExecution7d            float64                       `json:"effectiveness_execution_7d"`
+	AutoEnabled                 bool                         `json:"auto_enabled"`
+	Profile                     string                       `json:"profile"`
+	SchedulerMode               string                       `json:"scheduler_mode"`
+	SovereignLastDecisionAt     string                       `json:"sovereign_last_decision_at,omitempty"`
+	SovereignLastMode           string                       `json:"sovereign_last_mode,omitempty"`
+	SovereignCandidates         int                          `json:"sovereign_candidates"`
+	SovereignSelected           int                          `json:"sovereign_selected"`
+	SovereignExpectedProfitSat  int64                        `json:"sovereign_expected_profit_sat"`
+	SovereignBudgetRemainingSat int64                        `json:"sovereign_budget_remaining_sat"`
+	SovereignDecisions          []RebalanceSovereignDecision `json:"sovereign_decisions,omitempty"`
+	SovereignHistory24h         []RebalanceSovereignHistory  `json:"sovereign_history_24h,omitempty"`
+	LastScanAt                  string                       `json:"last_scan_at,omitempty"`
+	LastScanStatus              string                       `json:"last_scan_status,omitempty"`
+	LastScanDetail              string                       `json:"last_scan_detail,omitempty"`
+	LastScanCandidates          int                          `json:"last_scan_candidates"`
+	LastScanRemainingBudgetSat  int64                        `json:"last_scan_remaining_budget_sat"`
+	LastScanReasons             map[string]int               `json:"last_scan_reasons,omitempty"`
+	LastScanTopScoreSat         int64                        `json:"last_scan_top_score_sat"`
+	LastScanProfitSkipped       int                          `json:"last_scan_profit_skipped"`
+	LastScanQueued              int                          `json:"last_scan_queued"`
+	LastScanSkipped             []RebalanceSkipDetail        `json:"last_scan_skipped,omitempty"`
+	LastManualRestartAt         string                       `json:"last_manual_restart_at,omitempty"`
+	LastManualRestartQueued     int                          `json:"last_manual_restart_queued"`
+	LastManualRestartReasons    map[string]int               `json:"last_manual_restart_reasons,omitempty"`
+	LastMCResetAt               string                       `json:"last_mc_reset_at,omitempty"`
+	LastMCResetReason           string                       `json:"last_mc_reset_reason,omitempty"`
+	MCResetCount                int64                        `json:"mc_reset_count"`
+	MCResetCooldownSec          int64                        `json:"mc_reset_cooldown_sec"`
+	MCResetCooldownRemainingSec int64                        `json:"mc_reset_cooldown_remaining_sec,omitempty"`
+	DailyBudgetSat              int64                        `json:"daily_budget_sat"`
+	DailyBudgetBaseSat          int64                        `json:"daily_budget_base_sat"`
+	DailyBudgetShortTermSat     int64                        `json:"daily_budget_short_term_sat"`
+	DailySpentSat               int64                        `json:"daily_spent_sat"`
+	DailySpentAutoSat           int64                        `json:"daily_spent_auto_sat"`
+	DailySpentManualSat         int64                        `json:"daily_spent_manual_sat"`
+	RemainingTotalSat           int64                        `json:"remaining_total_sat"`
+	RemainingForAutoSat         int64                        `json:"remaining_for_auto_sat"`
+	BudgetUnlimited             bool                         `json:"budget_unlimited"`
+	BudgetAutoOnly              bool                         `json:"budget_auto_only"`
+	ManualReserveEnabled        bool                         `json:"manual_reserve_enabled"`
+	ManualReserveMode           string                       `json:"manual_reserve_mode,omitempty"`
+	ManualReserveValue          float64                      `json:"manual_reserve_value,omitempty"`
+	ManualReserveSat            int64                        `json:"manual_reserve_sat"`
+	ManualReserveRemainingSat   int64                        `json:"manual_reserve_remaining_sat"`
+	LiveCostSat                 int64                        `json:"live_cost_sat"`
+	Effectiveness7d             float64                      `json:"effectiveness_7d"`
+	EffectivenessExecution7d    float64                      `json:"effectiveness_execution_7d"`
 	// 30d trailing baselines for the toggleable health-signal gauges
 	// (effectiveness, fast-path, payback). Cached server-side; may be 0 until
 	// the first background recompute completes.
-	Effectiveness30d             float64 `json:"effectiveness_30d"`
-	FastPathHitRate30d           float64 `json:"fast_path_hit_rate_30d"`
-	PaybackProgressRebalanced30d float64 `json:"payback_progress_rebalanced_30d"`
-	HealthSignals30dReady        bool    `json:"health_signals_30d_ready"`
+	Effectiveness30d                    float64                       `json:"effectiveness_30d"`
+	FastPathHitRate30d                  float64                       `json:"fast_path_hit_rate_30d"`
+	PaybackProgressRebalanced30d        float64                       `json:"payback_progress_rebalanced_30d"`
+	HealthSignals30dReady               bool                          `json:"health_signals_30d_ready"`
 	JobsWithoutAttempt7d                int64                         `json:"jobs_without_attempt_7d"`
 	JobsWithoutAttemptRate7d            float64                       `json:"jobs_without_attempt_rate_7d"`
 	ROI7d                               float64                       `json:"roi_7d"`
@@ -1025,6 +1025,11 @@ type RebalanceChannel struct {
 	TargetAmountSat        int64    `json:"target_amount_sat"`
 	AutoEnabled            bool     `json:"auto_enabled"`
 	ManualRestartEnabled   bool     `json:"manual_restart_enabled"`
+	AutomationMode         string   `json:"automation_mode,omitempty"`
+	FixedFeePPM            *int64   `json:"fixed_fee_ppm,omitempty"`
+	ReviewAt               string   `json:"review_at,omitempty"`
+	AutomationNote         string   `json:"automation_note,omitempty"`
+	ParkedAt               string   `json:"parked_at,omitempty"`
 	UseDefaultEconRatio    bool     `json:"use_default_econ_ratio"`
 	EconRatioOverride      *float64 `json:"econ_ratio_override,omitempty"`
 	AutoBypassCostGate     bool     `json:"auto_bypass_cost_gate"`
@@ -1142,6 +1147,11 @@ type channelSetting struct {
 	TargetOutboundPct    float64
 	AutoEnabled          bool
 	ManualRestartEnabled bool
+	AutomationMode       string
+	FixedFeePPM          *int64
+	ReviewAt             string
+	AutomationNote       string
+	ParkedAt             string
 	UseDefaultEconRatio  bool
 	EconRatioOverride    float64
 	EconRatioOverrideSet bool
@@ -2082,6 +2092,14 @@ func (s *RebalanceService) loadRecentTargetCooldownSet(ctx context.Context, wind
 }
 
 func normalizeChannelSetting(setting channelSetting) channelSetting {
+	setting.AutomationMode = normalizeChannelAutomationMode(setting.AutomationMode)
+	if setting.AutomationMode == "" {
+		setting.AutomationMode = channelAutomationModeNormal
+	}
+	if isChannelAutomationParked(setting.AutomationMode) {
+		setting.AutoEnabled = false
+		setting.ManualRestartEnabled = false
+	}
 	if setting.TargetOutboundPct <= 0 || setting.TargetOutboundPct > 100 {
 		setting.TargetOutboundPct = rebalanceDefaultTargetOutboundPct
 	}
@@ -4539,6 +4557,9 @@ func (s *RebalanceService) startJobWithEconomics(targetChannelID uint64, source 
 
 	settings, _ := s.loadChannelSettings(ctx)
 	setting := normalizeChannelSetting(settings[targetChannelID])
+	if isChannelAutomationParked(setting.AutomationMode) {
+		return 0, errChannelAutomationParked
+	}
 	targetPct := setting.TargetOutboundPct
 	deficit := computeDeficitAmount(target, targetPct)
 	if deficit <= 0 {
@@ -5097,6 +5118,10 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 
 	settings, _ := s.loadChannelSettings(ctx)
 	targetSetting := normalizeChannelSetting(settings[targetChannelID])
+	if isChannelAutomationParked(targetSetting.AutomationMode) {
+		s.finishJob(jobID, "skipped", "channel parked")
+		return
+	}
 	feeCfg := effectiveConfigForTarget(cfg, targetSetting)
 	minExecuteSat = effectiveMinExecuteSat(feeCfg)
 	minProbeSat = effectiveMinProbeSat(feeCfg)
@@ -8910,6 +8935,7 @@ where id=$1 and status in ('running','queued')`, jobID)
 
 func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg RebalanceConfig, criticalActive bool, ch lndclient.ChannelInfo, setting channelSetting, ledger *channelLedger, revenue7dSat int64, cost7d rebalanceCost7dStat, drainRateSatPerHour int64, excluded bool) RebalanceChannel {
 	setting = normalizeChannelSetting(setting)
+	parked := isChannelAutomationParked(setting.AutomationMode)
 	capacity := float64(ch.CapacitySat)
 	localPct := 0.0
 	remotePct := 0.0
@@ -8990,7 +9016,7 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 	// economic filter and the ROI guardrail — those are auto/auto-restart
 	// only — so the UI should not disable the "Manual Rebal In" button just
 	// because EligibleAsTarget is false.
-	eligibleManualTarget := ch.Active && deficitPct > cfg.DeadbandPct && outgoingFee > peerFeeRate
+	eligibleManualTarget := ch.Active && !parked && deficitPct > cfg.DeadbandPct && outgoingFee > peerFeeRate
 	if eligibleManualTarget {
 		// Wave 1.4: require effective spread to clear the expected rebalance
 		// cost (historical 7d ppm, or cfg.RebalanceCostFloorPpm fallback).
@@ -9060,7 +9086,7 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 			}
 		}
 	}
-	if maxSource <= 0 || !ch.Active {
+	if maxSource <= 0 || !ch.Active || parked {
 		eligibleSource = false
 	}
 
@@ -9103,6 +9129,11 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		TargetAmountSat:        targetAmount,
 		AutoEnabled:            setting.AutoEnabled,
 		ManualRestartEnabled:   setting.ManualRestartEnabled,
+		AutomationMode:         setting.AutomationMode,
+		FixedFeePPM:            setting.FixedFeePPM,
+		ReviewAt:               setting.ReviewAt,
+		AutomationNote:         setting.AutomationNote,
+		ParkedAt:               setting.ParkedAt,
 		UseDefaultEconRatio:    setting.UseDefaultEconRatio,
 		EconRatioOverride:      econRatioOverride,
 		AutoBypassCostGate:     setting.AutoBypassCostGate,
@@ -11530,6 +11561,9 @@ create table if not exists rebalance_config_snapshots (
 	if err = s.db.QueryRow(ctx, `select exists(select 1 from rebalance_config where id=$1)`, rebalanceConfigID).Scan(&configExists); err != nil {
 		return err
 	}
+	if err := ensureChannelAutomationSchema(ctx, s.db); err != nil {
+		return err
+	}
 	if !configExists {
 		return s.upsertConfig(ctx, normalizeRebalanceConfig(defaultRebalanceConfig()))
 	}
@@ -11739,7 +11773,10 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
   `, rebalanceConfigID, cfg.AutoEnabled, cfg.SchedulerMode, cfg.SovereignCandidateScope, cfg.SovereignMaxJobsPerCycle, cfg.SovereignMinExpectedProfitSat, cfg.SovereignLowSuccessMinRate, cfg.SovereignLowSuccessMinProfitCostRatio, cfg.SovereignBudgetEfficiencyMinRatio, cfg.SovereignRouteDeadSourceShare, cfg.SovereignRiskScoreFloor, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetUnlimited, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
 		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.FreshPaidLiquidityLockEnabled, cfg.FreshPaidLiquidityLockHours, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback, cfg.SovereignAttributionWindowHours, cfg.SovereignSlowSellerWindowHours, cfg.SovereignTargetSourceQuarantineHours, cfg.SovereignStructuralCooldownRepeatHours, cfg.SovereignExplorationSlotPct, cfg.SovereignSourceOpportunityCostEnabled, cfg.SovereignSlowSellerEnabled, cfg.SovereignGainV3ColdStartPct, cfg.FastPathMaxTimeoutSec, cfg.SovereignTopBucketPct, cfg.ManualRestartIgnoreEconomicGates, cfg.Profile,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *RebalanceService) loadChannelSettings(ctx context.Context) (map[uint64]channelSetting, error) {
@@ -11768,7 +11805,31 @@ select channel_id, channel_point, target_outbound_pct, auto_enabled, manual_rest
 		setting.ChannelID = uint64(channelID)
 		settings[setting.ChannelID] = normalizeChannelSetting(setting)
 	}
-	return settings, rows.Err()
+	if err := rows.Err(); err != nil {
+		return settings, err
+	}
+	policies, err := loadChannelAutomationPolicies(ctx, s.db)
+	if err != nil {
+		return settings, err
+	}
+	for channelID, policy := range policies {
+		setting := settings[channelID]
+		setting.ChannelID = channelID
+		if strings.TrimSpace(setting.ChannelPoint) == "" {
+			setting.ChannelPoint = policy.ChannelPoint
+		}
+		setting.AutomationMode = policy.Mode
+		setting.FixedFeePPM = policy.FixedFeePPM
+		setting.AutomationNote = policy.Note
+		if policy.ReviewAt != nil {
+			setting.ReviewAt = policy.ReviewAt.UTC().Format(time.RFC3339)
+		}
+		if policy.ParkedAt != nil {
+			setting.ParkedAt = policy.ParkedAt.UTC().Format(time.RFC3339)
+		}
+		settings[channelID] = normalizeChannelSetting(setting)
+	}
+	return settings, nil
 }
 
 func (s *RebalanceService) loadNewChannelExclusionSeeded(ctx context.Context) (bool, error) {
@@ -11815,7 +11876,19 @@ func (s *RebalanceService) loadExclusions(ctx context.Context) (map[uint64]bool,
 		}
 		excluded[uint64(channelID)] = true
 	}
-	return excluded, rows.Err()
+	if err := rows.Err(); err != nil {
+		return excluded, err
+	}
+	policies, err := loadChannelAutomationPolicies(ctx, s.db)
+	if err != nil {
+		return excluded, err
+	}
+	for channelID, policy := range policies {
+		if isChannelAutomationParked(policy.Mode) {
+			excluded[channelID] = true
+		}
+	}
+	return excluded, nil
 }
 
 func newFreshPaidLiquidityTracker(ttl time.Duration) *freshPaidLiquidityTracker {
@@ -14668,6 +14741,15 @@ func (s *RebalanceService) SetChannelAuto(ctx context.Context, channelID uint64,
 		return errors.New("db unavailable")
 	}
 	if autoEnabled {
+		policy, ok, err := loadChannelAutomationPolicy(ctx, s.db, channelID)
+		if err != nil {
+			return err
+		}
+		if ok && isChannelAutomationParked(policy.Mode) {
+			return errChannelAutomationParked
+		}
+	}
+	if autoEnabled {
 		s.cancelManualRestart(channelID)
 	}
 	_, err := s.db.Exec(ctx, `
@@ -14685,6 +14767,15 @@ func (s *RebalanceService) SetChannelAuto(ctx context.Context, channelID uint64,
 func (s *RebalanceService) SetChannelManualRestart(ctx context.Context, channelID uint64, channelPoint string, enabled bool) error {
 	if s.db == nil {
 		return errors.New("db unavailable")
+	}
+	if enabled {
+		policy, ok, err := loadChannelAutomationPolicy(ctx, s.db, channelID)
+		if err != nil {
+			return err
+		}
+		if ok && isChannelAutomationParked(policy.Mode) {
+			return errChannelAutomationParked
+		}
 	}
 	if !enabled {
 		s.cancelManualRestart(channelID)
@@ -14704,6 +14795,15 @@ func (s *RebalanceService) SetChannelManualRestart(ctx context.Context, channelI
 func (s *RebalanceService) SetSourceExcluded(ctx context.Context, channelID uint64, channelPoint string, excluded bool) error {
 	if s.db == nil {
 		return errors.New("db unavailable")
+	}
+	if !excluded {
+		policy, ok, err := loadChannelAutomationPolicy(ctx, s.db, channelID)
+		if err != nil {
+			return err
+		}
+		if ok && isChannelAutomationParked(policy.Mode) {
+			return errChannelAutomationParked
+		}
 	}
 	if excluded {
 		_, err := s.db.Exec(ctx, `

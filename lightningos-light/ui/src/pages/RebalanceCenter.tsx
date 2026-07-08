@@ -624,12 +624,14 @@ export default function RebalanceCenter() {
   const parseLocaleDecimal = (raw: string) => Number(raw.replace(/\s/g, '').replace(',', '.'))
   const channelKey = (channel: Pick<RebalanceChannel, 'channel_id' | 'channel_point'>) =>
     channel.channel_point || String(channel.channel_id)
+  const channelParked = (channel: Pick<RebalanceChannel, 'automation_mode'>) =>
+    String(channel.automation_mode || 'normal').trim() === 'parked'
   const channelUseDefaultEconRatio = (channel: RebalanceChannel) =>
     editUseDefaultEconRatio[channelKey(channel)] ?? channel.use_default_econ_ratio
   const channelAutoBypassCostGate = (channel: RebalanceChannel) =>
     editAutoBypassCostGate[channelKey(channel)] ?? Boolean(channel.auto_bypass_cost_gate)
   const channelDraftEligibleAsTarget = (channel: RebalanceChannel) =>
-    channel.eligible_as_target || (channelAutoBypassCostGate(channel) && channel.eligible_as_manual_target)
+    !channelParked(channel) && (channel.eligible_as_target || (channelAutoBypassCostGate(channel) && channel.eligible_as_manual_target))
   const channelEconRatioInput = (channel: RebalanceChannel) => {
     if (channelUseDefaultEconRatio(channel)) {
       return formatEconRatio(config?.econ_ratio ?? 0)
@@ -989,6 +991,10 @@ export default function RebalanceCenter() {
   }
 
   const handleToggleChannelAuto = async (channel: RebalanceChannel, enabled: boolean) => {
+    if (enabled && channelParked(channel)) {
+      setStatus(t('channelRanking.automationParkedDetail'))
+      return
+    }
     bumpChannelStateVersion()
     const previous = channel.auto_enabled
     const previousManual = manualRestart[channel.channel_point] === true
@@ -1023,11 +1029,13 @@ export default function RebalanceCenter() {
 
   const handleBulkAuto = async (enabled: boolean) => {
     if (sortedChannels.length === 0) return
+    const targetChannels = enabled ? sortedChannels.filter((channel) => !channelParked(channel)) : sortedChannels
+    if (targetChannels.length === 0) return
     setStatus('')
     bumpChannelStateVersion()
     try {
       await Promise.all(
-        sortedChannels.map((channel) =>
+        targetChannels.map((channel) =>
           updateRebalanceChannelAuto({
             channel_point: channel.channel_point,
             auto_enabled: enabled
@@ -1042,11 +1050,13 @@ export default function RebalanceCenter() {
 
   const handleBulkExclude = async (excluded: boolean) => {
     if (sortedChannels.length === 0) return
+    const targetChannels = excluded ? sortedChannels : sortedChannels.filter((channel) => !channelParked(channel))
+    if (targetChannels.length === 0) return
     setStatus('')
     bumpChannelStateVersion()
     try {
       await Promise.all(
-        sortedChannels.map((channel) =>
+        targetChannels.map((channel) =>
           updateRebalanceExclude({
             channel_point: channel.channel_point,
             excluded
@@ -1060,6 +1070,10 @@ export default function RebalanceCenter() {
   }
 
   const handleExcludeSource = async (channel: RebalanceChannel, excluded: boolean) => {
+    if (!excluded && channelParked(channel)) {
+      setStatus(t('channelRanking.automationParkedDetail'))
+      return
+    }
     bumpChannelStateVersion()
     const previous = channel.excluded_as_source
     setChannels((prev) => prev.map((ch) => (isSameChannel(ch, channel) ? { ...ch, excluded_as_source: excluded } : ch)))
@@ -1143,6 +1157,10 @@ export default function RebalanceCenter() {
   }
 
   const handleRunRebalance = async (channel: RebalanceChannel) => {
+    if (channelParked(channel)) {
+      setStatus(t('channelRanking.automationParkedDetail'))
+      return
+    }
     const nextValue = editTargets[channelKey(channel)]
     const parsed = nextValue ? Number(nextValue) : channel.target_outbound_pct
     const autoRestart = manualRestart[channel.channel_point] === true
@@ -1188,6 +1206,10 @@ export default function RebalanceCenter() {
   }
 
   const handleManualRestartToggle = async (channel: RebalanceChannel, enabled: boolean) => {
+    if (enabled && channelParked(channel)) {
+      setStatus(t('channelRanking.automationParkedDetail'))
+      return
+    }
     bumpChannelStateVersion()
     const key = channel.channel_point
     const previous = manualRestart[key] === true
@@ -3627,6 +3649,11 @@ export default function RebalanceCenter() {
                   {ch.peer_alias || ch.remote_pubkey}
                 </a>
                 <div className="text-[11px] text-fog/50 break-all">{ch.channel_point}</div>
+                {channelParked(ch) && (
+                  <div className="mt-2 inline-flex rounded-full border border-amber-300/40 bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-100">
+                    {t('channelRanking.automationModes.parked')}
+                  </div>
+                )}
 
                 <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
                   <div>
@@ -3747,6 +3774,7 @@ export default function RebalanceCenter() {
                       type="checkbox"
                       checked={manualRestartSelected}
                       onChange={(e) => handleManualRestartToggle(ch, e.target.checked)}
+                      disabled={channelParked(ch)}
                     />
                   </label>
                   <button
@@ -3774,6 +3802,7 @@ export default function RebalanceCenter() {
                       type="checkbox"
                       checked={ch.auto_enabled}
                       onChange={(e) => handleToggleChannelAuto(ch, e.target.checked)}
+                      disabled={channelParked(ch)}
                     />
                     {t('rebalanceCenter.channels.auto')}
                   </label>
@@ -3782,6 +3811,7 @@ export default function RebalanceCenter() {
                       type="checkbox"
                       checked={ch.excluded_as_source}
                       onChange={(e) => handleExcludeSource(ch, e.target.checked)}
+                      disabled={channelParked(ch)}
                     />
                     {t('rebalanceCenter.channels.excludeSource')}
                   </label>
@@ -3883,6 +3913,11 @@ export default function RebalanceCenter() {
                         {ch.peer_alias || ch.remote_pubkey}
                       </a>
                       <div className="text-xs text-fog/50">{ch.channel_point}</div>
+                      {channelParked(ch) && (
+                        <div className="mt-1 inline-flex rounded-full border border-amber-300/40 bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-100">
+                          {t('channelRanking.automationModes.parked')}
+                        </div>
+                      )}
                       {scoreMeta && (
                         <div className="text-xs text-fog/40 opacity-0 transition group-hover:opacity-100">
                           {t('rebalanceCenter.channels.scoreLabel')}: {formatSats(scoreMeta.score)}
@@ -3997,6 +4032,7 @@ export default function RebalanceCenter() {
                           type="checkbox"
                           checked={manualRestartSelected}
                           onChange={(e) => handleManualRestartToggle(ch, e.target.checked)}
+                          disabled={channelParked(ch)}
                         />
                       </div>
                       <button
@@ -4021,9 +4057,10 @@ export default function RebalanceCenter() {
                       <label className="flex items-center gap-2" title={t('rebalanceCenter.channelsHints.auto')}>
                         <input
                           type="checkbox"
-                        checked={ch.auto_enabled}
-                        onChange={(e) => handleToggleChannelAuto(ch, e.target.checked)}
-                      />
+                          checked={ch.auto_enabled}
+                          onChange={(e) => handleToggleChannelAuto(ch, e.target.checked)}
+                          disabled={channelParked(ch)}
+                        />
                         {t('rebalanceCenter.channels.auto')}
                       </label>
                       <label className="flex items-center gap-2" title={t('rebalanceCenter.channelsHints.excludeSource')}>
@@ -4031,6 +4068,7 @@ export default function RebalanceCenter() {
                           type="checkbox"
                           checked={ch.excluded_as_source}
                           onChange={(e) => handleExcludeSource(ch, e.target.checked)}
+                          disabled={channelParked(ch)}
                         />
                         {t('rebalanceCenter.channels.excludeSource')}
                       </label>

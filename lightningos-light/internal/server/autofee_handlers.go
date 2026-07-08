@@ -215,6 +215,10 @@ func (s *Server) handleAutofeeChannelsPost(w http.ResponseWriter, r *http.Reques
 		channelID = *req.ChannelID
 	}
 	if err := svc.SetChannelEnabled(ctx, channelID, req.ChannelPoint, *req.Enabled); err != nil {
+		if errors.Is(err, errChannelAutomationParked) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

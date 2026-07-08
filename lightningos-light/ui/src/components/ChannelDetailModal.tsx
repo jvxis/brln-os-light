@@ -96,6 +96,11 @@ type ChannelDetailSettings = {
   rebalance_configured?: boolean
   rebalance_auto_enabled?: boolean
   manual_restart_enabled?: boolean
+  automation_mode?: 'normal' | 'parked' | 'close_candidate'
+  fixed_fee_ppm?: number
+  review_at?: string
+  automation_note?: string
+  parked_at?: string
   target_outbound_pct?: number
   use_default_econ_ratio?: boolean
   econ_ratio_override?: number
@@ -587,6 +592,9 @@ export default function ChannelDetailModal({ open, channelPoint, initialChannel,
     { label: t('lightningOps.channelDetailLocalDisabled'), value: formatBool(channel.local_disabled) },
   ]
   const settingBadges = [
+    ...(settings.automation_mode === 'parked'
+      ? [{ label: t('channelRanking.automationModes.parked'), enabled: true, configured: true }]
+      : []),
     { label: t('lightningOps.channelDetailAutofee'), enabled: settings.autofee_enabled, configured: settings.autofee_configured },
     { label: t('lightningOps.channelDetailRebalance'), enabled: settings.rebalance_auto_enabled || settings.manual_restart_enabled, configured: settings.rebalance_configured },
     { label: t('lightningOps.channelDetailManualRestart'), enabled: settings.manual_restart_enabled, configured: settings.rebalance_configured },

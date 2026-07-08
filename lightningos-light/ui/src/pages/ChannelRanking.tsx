@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getChannelRanking, getChannelRankings, recomputeChannelRankings } from '../api'
+import { getChannelRanking, getChannelRankings, recomputeChannelRankings, updateLnChannelAutomation } from '../api'
 import { getLocale } from '../i18n'
 
 type ChannelRankingReason = {
@@ -72,6 +72,11 @@ type ChannelRankingItem = {
   state: 'expand' | 'maintain' | 'monitor' | 'close'
   reasons?: ChannelRankingReason[]
   recommendations?: ChannelRankingRecommendation[]
+  automation_mode?: 'normal' | 'parked' | 'close_candidate'
+  fixed_fee_ppm?: number
+  review_at?: string
+  automation_note?: string
+  parked_at?: string
   computed_at?: string
 }
 
@@ -201,6 +206,11 @@ export default function ChannelRanking() {
   const [detailTopForwardOutSinks, setDetailTopForwardOutSinks] = useState<ChannelRankingFlowCounterparty[]>([])
   const [detailFeedback, setDetailFeedback] = useState<ChannelRankingFeedback | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [automationBusy, setAutomationBusy] = useState(false)
+  const [automationStatus, setAutomationStatus] = useState('')
+  const [parkFixedFeePpm, setParkFixedFeePpm] = useState('')
+  const [parkReviewAt, setParkReviewAt] = useState('')
+  const [parkNote, setParkNote] = useState('')
   const pendingScrollChannelRef = useRef('')
   const focusClearTimerRef = useRef<number | null>(null)
 
@@ -235,6 +245,25 @@ export default function ChannelRanking() {
         return 'border-rose-400/30 bg-rose-500/15 text-rose-100'
       default:
         return 'border-white/10 bg-white/[0.03] text-fog/70'
+    }
+  }
+
+  const automationMode = (item?: ChannelRankingItem | null) =>
+    String(item?.automation_mode || 'normal').trim() || 'normal'
+
+  const automationLabel = (item?: ChannelRankingItem | null) =>
+    t(`channelRanking.automationModes.${automationMode(item)}` as any, {
+      defaultValue: automationMode(item)
+    })
+
+  const automationBadgeClass = (item?: ChannelRankingItem | null) => {
+    switch (automationMode(item)) {
+      case 'parked':
+        return 'border-amber-300/40 bg-amber-500/15 text-amber-100'
+      case 'close_candidate':
+        return 'border-rose-400/35 bg-rose-500/15 text-rose-100'
+      default:
+        return 'border-white/10 bg-white/5 text-fog/75'
     }
   }
 
@@ -284,6 +313,42 @@ export default function ChannelRanking() {
         return buildLightningOpsHash(item.channel_point, 'htlc_manager')
       default:
         return buildLightningOpsHash(item.channel_point)
+    }
+  }
+
+  const handleAutomationSubmit = async (item: ChannelRankingItem, nextMode: 'normal' | 'parked') => {
+    setAutomationStatus('')
+    const fixedFeeRaw = parkFixedFeePpm.trim()
+    let fixedFee: number | undefined
+    if (fixedFeeRaw) {
+      const parsedFixedFee = Number(fixedFeeRaw)
+      if (!Number.isFinite(parsedFixedFee) || parsedFixedFee < 0) {
+        setAutomationStatus(t('channelRanking.automationInvalidFixedFee'))
+        return
+      }
+      fixedFee = parsedFixedFee
+    }
+    setAutomationBusy(true)
+    try {
+      await updateLnChannelAutomation({
+        channel_id: item.channel_id,
+        channel_point: item.channel_point,
+        automation_mode: nextMode,
+        fixed_fee_ppm: nextMode === 'parked' && typeof fixedFee === 'number' ? Math.round(fixedFee) : undefined,
+        review_at: nextMode === 'parked' ? parkReviewAt.trim() : '',
+        automation_note: nextMode === 'parked' ? parkNote.trim() : ''
+      })
+      setAutomationStatus(t(nextMode === 'parked' ? 'channelRanking.automationParkedSaved' : 'channelRanking.automationUnparkedSaved'))
+      if (nextMode === 'normal') {
+        setParkFixedFeePpm('')
+        setParkReviewAt('')
+        setParkNote('')
+      }
+      await load()
+    } catch (err: any) {
+      setAutomationStatus(err?.message || t('channelRanking.automationUpdateFailed'))
+    } finally {
+      setAutomationBusy(false)
     }
   }
 
@@ -429,6 +494,15 @@ export default function ChannelRanking() {
   }, [items, selectedChannelPoint, sortedItems])
 
   const selectedDetail = detailItem && detailItem.channel_point === selectedChannelPoint ? detailItem : selectedItem
+  const selectedAutomationMode = automationMode(selectedDetail)
+  const selectedIsParked = selectedAutomationMode === 'parked'
+
+  useEffect(() => {
+    setAutomationStatus('')
+    setParkFixedFeePpm(selectedDetail?.fixed_fee_ppm !== undefined ? String(selectedDetail.fixed_fee_ppm) : '')
+    setParkReviewAt(selectedDetail?.review_at ? String(selectedDetail.review_at).slice(0, 10) : '')
+    setParkNote(selectedDetail?.automation_note || '')
+  }, [selectedDetail?.automation_note, selectedDetail?.channel_point, selectedDetail?.fixed_fee_ppm, selectedDetail?.review_at])
 
   const displayedDetailHistory = useMemo(() => {
     if (!Array.isArray(detailHistory) || detailHistory.length === 0) return []
@@ -718,6 +792,11 @@ export default function ChannelRanking() {
                           <span className={`rounded-full border px-2.5 py-1 text-[11px] ${trendBadgeClass(item.trend_direction)}`}>
                             {trendLabel(item.trend_direction)}
                           </span>
+                          {automationMode(item) !== 'normal' && (
+                            <span className={`rounded-full border px-2.5 py-1 text-[11px] ${automationBadgeClass(item)}`}>
+                              {automationLabel(item)}
+                            </span>
+                          )}
                           <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-fog/75">
                             {t('channelRanking.scoreShort', { value: numberFormatter.format(item.score) })}
                           </span>
@@ -777,6 +856,11 @@ export default function ChannelRanking() {
                   <span className={`rounded-full border px-3 py-1 text-xs ${trendBadgeClass(selectedDetail.trend_direction)}`}>
                     {trendLabel(selectedDetail.trend_direction)}
                   </span>
+                  {selectedAutomationMode !== 'normal' && (
+                    <span className={`rounded-full border px-3 py-1 text-xs ${automationBadgeClass(selectedDetail)}`}>
+                      {automationLabel(selectedDetail)}
+                    </span>
+                  )}
                   <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-fog/75">
                     {t('channelRanking.score', { value: numberFormatter.format(selectedDetail.score) })}
                   </span>
@@ -796,6 +880,79 @@ export default function ChannelRanking() {
                   {selectedDetail.peer_alias || selectedDetail.peer_pubkey || selectedDetail.channel_point}
                 </div>
                 <div className="break-all text-xs text-fog/55">{selectedDetail.channel_point}</div>
+              </div>
+
+              <div className={`rounded-2xl border p-3 ${selectedIsParked ? 'border-amber-300/30 bg-amber-500/10' : 'border-white/10 bg-white/[0.03]'}`}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium text-fog">{t('channelRanking.automationPolicyTitle')}</div>
+                    <div className="mt-1 text-xs text-fog/60">
+                      {selectedIsParked ? t('channelRanking.automationParkedDetail') : t('channelRanking.automationNormalDetail')}
+                    </div>
+                  </div>
+                  <span className={`rounded-full border px-3 py-1 text-xs ${automationBadgeClass(selectedDetail)}`}>
+                    {automationLabel(selectedDetail)}
+                  </span>
+                </div>
+                <div className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                  <label className="text-fog/70">
+                    {t('channelRanking.automationFixedFeeLabel')}
+                    <input
+                      className="input-field mt-1"
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={parkFixedFeePpm}
+                      onChange={(event) => setParkFixedFeePpm(event.target.value)}
+                      disabled={selectedIsParked || automationBusy}
+                      placeholder={t('channelRanking.automationFixedFeePlaceholder')}
+                    />
+                  </label>
+                  <label className="text-fog/70">
+                    {t('channelRanking.automationReviewAtLabel')}
+                    <input
+                      className="input-field mt-1"
+                      type="date"
+                      value={parkReviewAt}
+                      onChange={(event) => setParkReviewAt(event.target.value)}
+                      disabled={selectedIsParked || automationBusy}
+                    />
+                  </label>
+                  <label className="text-fog/70 sm:col-span-2">
+                    {t('channelRanking.automationNoteLabel')}
+                    <textarea
+                      className="input-field mt-1 min-h-[4.5rem] resize-y"
+                      value={parkNote}
+                      onChange={(event) => setParkNote(event.target.value)}
+                      disabled={selectedIsParked || automationBusy}
+                      placeholder={t('channelRanking.automationNotePlaceholder')}
+                    />
+                  </label>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                  <div className="text-xs text-fog/55">
+                    {selectedIsParked && selectedDetail.parked_at
+                      ? t('channelRanking.automationParkedAt', { value: formatTimestamp(selectedDetail.parked_at) })
+                      : t('channelRanking.automationSideEffects')}
+                  </div>
+                  <button
+                    type="button"
+                    className={selectedIsParked ? 'btn-secondary' : 'btn-primary'}
+                    disabled={automationBusy}
+                    onClick={() => void handleAutomationSubmit(selectedDetail, selectedIsParked ? 'normal' : 'parked')}
+                  >
+                    {automationBusy
+                      ? t('common.saving')
+                      : selectedIsParked
+                        ? t('channelRanking.automationUnparkAction')
+                        : t('channelRanking.automationParkAction')}
+                  </button>
+                </div>
+                {automationStatus && (
+                  <div className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-xs text-fog/75">
+                    {automationStatus}
+                  </div>
+                )}
               </div>
 
               <div className="grid gap-3 text-sm sm:grid-cols-2">

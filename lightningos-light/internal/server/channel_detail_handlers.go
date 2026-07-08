@@ -54,6 +54,11 @@ type lnChannelDetailSettings struct {
 	RebalanceConfigured   bool     `json:"rebalance_configured"`
 	RebalanceAutoEnabled  bool     `json:"rebalance_auto_enabled"`
 	ManualRestartEnabled  bool     `json:"manual_restart_enabled"`
+	AutomationMode        string   `json:"automation_mode,omitempty"`
+	FixedFeePPM           *int64   `json:"fixed_fee_ppm,omitempty"`
+	ReviewAt              string   `json:"review_at,omitempty"`
+	AutomationNote        string   `json:"automation_note,omitempty"`
+	ParkedAt              string   `json:"parked_at,omitempty"`
 	TargetOutboundPct     float64  `json:"target_outbound_pct,omitempty"`
 	UseDefaultEconRatio   bool     `json:"use_default_econ_ratio"`
 	EconRatioOverride     *float64 `json:"econ_ratio_override,omitempty"`
@@ -595,6 +600,7 @@ where channel_id = $1
 func (s *Server) loadLNChannelDetailSettings(ctx context.Context, channel lndclient.ChannelInfo) (lnChannelDetailSettings, error) {
 	settings := lnChannelDetailSettings{
 		AutofeeEnabled:      true,
+		AutomationMode:      channelAutomationModeNormal,
 		UseDefaultEconRatio: true,
 	}
 	var autofeeEnabled bool
@@ -656,6 +662,25 @@ where channel_id = $1
 	err = s.db.QueryRow(ctx, `select exists(select 1 from rebalance_source_exclusions where channel_id = $1)`, int64(channel.ChannelID)).Scan(&excluded)
 	if err == nil {
 		settings.ExcludedAsSource = excluded
+	}
+	if err := ensureChannelAutomationSchema(ctx, s.db); err == nil {
+		if policy, ok, err := loadChannelAutomationPolicy(ctx, s.db, channel.ChannelID); err == nil && ok {
+			settings.AutomationMode = policy.Mode
+			settings.FixedFeePPM = policy.FixedFeePPM
+			settings.AutomationNote = policy.Note
+			if policy.ReviewAt != nil {
+				settings.ReviewAt = policy.ReviewAt.UTC().Format(time.RFC3339)
+			}
+			if policy.ParkedAt != nil {
+				settings.ParkedAt = policy.ParkedAt.UTC().Format(time.RFC3339)
+			}
+			if isChannelAutomationParked(policy.Mode) {
+				settings.AutofeeEnabled = false
+				settings.RebalanceAutoEnabled = false
+				settings.ManualRestartEnabled = false
+				settings.ExcludedAsSource = true
+			}
+		}
 	}
 	if settings.AutofeeClassLabel == "" {
 		settings.AutofeeClassLabel = channel.ClassLabel

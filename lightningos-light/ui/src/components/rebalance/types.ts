@@ -334,6 +334,11 @@ export type RebalanceChannel = {
   target_amount_sat: number
   auto_enabled: boolean
   manual_restart_enabled: boolean
+  automation_mode?: 'normal' | 'parked' | 'close_candidate'
+  fixed_fee_ppm?: number
+  review_at?: string
+  automation_note?: string
+  parked_at?: string
   use_default_econ_ratio: boolean
   econ_ratio_override?: number
   auto_bypass_cost_gate?: boolean

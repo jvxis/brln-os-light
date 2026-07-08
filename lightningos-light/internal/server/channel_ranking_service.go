@@ -147,6 +147,11 @@ type ChannelRankingItem struct {
 	Reasons                  []ChannelRankingReason         `json:"reasons,omitempty"`
 	Recommendations          []ChannelRankingRecommendation `json:"recommendations,omitempty"`
 	CloseCandidate           bool                           `json:"close_candidate,omitempty"`
+	AutomationMode           string                         `json:"automation_mode,omitempty"`
+	FixedFeePPM              *int64                         `json:"fixed_fee_ppm,omitempty"`
+	ReviewAt                 *time.Time                     `json:"review_at,omitempty"`
+	AutomationNote           string                         `json:"automation_note,omitempty"`
+	ParkedAt                 *time.Time                     `json:"parked_at,omitempty"`
 	ComputedAt               time.Time                      `json:"computed_at"`
 }
 
@@ -332,7 +337,10 @@ alter table channel_rankings add column if not exists forward_in_amount_sat_7d b
 alter table channel_rankings add column if not exists forward_out_count_7d integer not null default 0;
 alter table channel_rankings add column if not exists forward_out_amount_sat_7d bigint not null default 0;
 `)
-	return err
+	if err != nil {
+		return err
+	}
+	return ensureChannelAutomationSchema(ctx, s.db)
 }
 
 func (s *ChannelRankingService) Start() {
@@ -1841,6 +1849,9 @@ limit $1
 	if err != nil {
 		return nil, ChannelRankingStatus{}, err
 	}
+	if err := s.applyAutomationPolicies(ctx, items); err != nil {
+		return nil, ChannelRankingStatus{}, err
+	}
 	status, err := s.Status(ctx)
 	if err != nil {
 		return nil, ChannelRankingStatus{}, err
@@ -1877,10 +1888,38 @@ limit 1
 	if err != nil {
 		return nil, err
 	}
+	if err := s.applyAutomationPolicies(ctx, items); err != nil {
+		return nil, err
+	}
 	if len(items) == 0 {
 		return nil, errors.New("channel ranking not found")
 	}
 	return &items[0], nil
+}
+
+func (s *ChannelRankingService) applyAutomationPolicies(ctx context.Context, items []ChannelRankingItem) error {
+	if s == nil || s.db == nil || len(items) == 0 {
+		return nil
+	}
+	policies, err := loadChannelAutomationPolicies(ctx, s.db)
+	if err != nil {
+		return err
+	}
+	for idx := range items {
+		item := &items[idx]
+		item.AutomationMode = channelAutomationModeNormal
+		if policy, ok := policies[uint64(item.ChannelID)]; ok {
+			item.AutomationMode = policy.Mode
+			item.FixedFeePPM = policy.FixedFeePPM
+			item.ReviewAt = policy.ReviewAt
+			item.AutomationNote = policy.Note
+			item.ParkedAt = policy.ParkedAt
+			if policy.Mode == channelAutomationModeCloseCandidate {
+				item.CloseCandidate = true
+			}
+		}
+	}
+	return nil
 }
 
 func (s *ChannelRankingService) GetDetail(ctx context.Context, channelPoint string) (*ChannelRankingDetail, error) {

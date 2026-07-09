@@ -652,10 +652,43 @@ order by count(*) desc
 		return
 	}
 
+	byLiquidityState := []aggRow{}
+	liquidityRows, err := s.db.Query(ctx, `
+select coalesce(nullif(liquidity_state, ''), 'unknown'),
+  count(*)::bigint,
+  coalesce(avg(fwd_count_24h_after), 0)::float8,
+  coalesce(avg(fwd_amt_msat_24h_after), 0)::float8,
+  coalesce(avg(fwd_fee_msat_24h_after), 0)::float8,
+  coalesce(avg(new_ppm - prev_ppm), 0)::float8
+from autofee_outcomes
+where decided_at >= $1 and decided_at <= $2
+  and measurement_status='measured'
+group by coalesce(nullif(liquidity_state, ''), 'unknown')
+order by count(*) desc
+`, since, until)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for liquidityRows.Next() {
+		var row aggRow
+		if err := liquidityRows.Scan(&row.Key, &row.Count, &row.AvgFwd24h, &row.AvgAmtMsat24h, &row.AvgFeeMsat24h, &row.AvgPpmDelta); err != nil {
+			liquidityRows.Close()
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		byLiquidityState = append(byLiquidityState, row)
+	}
+	liquidityRows.Close()
+	if err := liquidityRows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	listRows, err := s.db.Query(ctx, `
 select id, run_id, channel_id, channel_point, kind, decided_at,
   prev_ppm, new_ppm, target_ppm, floor_ppm, floor_src,
-  class_label, tags,
+  class_label, liquidity_state, tags,
   out_ratio_pre, out_ppm7d_pre, margin_ppm7d_pre, fwd_count_7d_pre,
   measured_at, measurement_status, measurement_error,
   fwd_count_24h_after, fwd_amt_msat_24h_after, fwd_fee_msat_24h_after,
@@ -687,6 +720,7 @@ limit $4
 			floorPpm        *int
 			floorSrc        *string
 			classLabel      *string
+			liquidityState  *string
 			tagsRaw         []byte
 			outRatioPre     *float64
 			outPpm7dPre     *int
@@ -704,7 +738,7 @@ limit $4
 		if err := listRows.Scan(
 			&id, &runID, &channelID, &channelPoint, &kind, &decidedAt,
 			&prevPpm, &newPpm, &targetPpm, &floorPpm, &floorSrc,
-			&classLabel, &tagsRaw,
+			&classLabel, &liquidityState, &tagsRaw,
 			&outRatioPre, &outPpm7dPre, &marginPpm7dPre, &fwdCount7dPre,
 			&measuredAt, &status, &measurementErr,
 			&fwdCount24h, &fwdAmtMsat24h, &fwdFeeMsat24h,
@@ -730,6 +764,7 @@ limit $4
 			"floor_ppm":           floorPpm,
 			"floor_src":           floorSrc,
 			"class_label":         classLabel,
+			"liquidity_state":     liquidityState,
 			"tags":                tagsJSON,
 			"out_ratio_pre":       outRatioPre,
 			"out_ppm7d_pre":       outPpm7dPre,
@@ -754,13 +789,14 @@ limit $4
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"since":    since.Format(time.RFC3339),
-		"until":    until.Format(time.RFC3339),
-		"window":   "24h",
-		"totals":   totals,
-		"by_tag":   byTag,
-		"by_class": byClass,
-		"items":    items,
+		"since":              since.Format(time.RFC3339),
+		"until":              until.Format(time.RFC3339),
+		"window":             "24h",
+		"totals":             totals,
+		"by_tag":             byTag,
+		"by_class":           byClass,
+		"by_liquidity_state": byLiquidityState,
+		"items":              items,
 	})
 }
 

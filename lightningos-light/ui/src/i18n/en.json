@@ -4343,6 +4343,12 @@
       "forwardAfter6hFee": "Fee after 6h: {{value}}"
     }
   },
+  "liquidityStates": {
+    "offerReady": "offer-ready",
+    "low": "low",
+    "drained": "drained",
+    "extremeDrained": "extreme-drained"
+  },
   "channelRanking": {
     "title": "Channel Ranking",
     "subtitle": "Rank open channels by score, recommended state, and operational signals.",
@@ -4428,6 +4434,9 @@
     "remoteBalance": "Remote balance: {{value}}",
     "localBalancePct": "Local: {{value}}",
     "remoteBalancePct": "Remote: {{value}}",
+    "liquidityStateLabel": "Liquidity state: {{value}}",
+    "autofeeOutRatioEffective": "Autofee effective out: {{value}}",
+    "liquidityStateAt": "Liquidity state at: {{value}}",
     "pendingHtlcCount": "Pending HTLCs: {{value}}",
     "inactiveDuration": "Inactive for: {{value}}",
     "peerStabilityScore30d": "Peer stability 30d: {{value}}",

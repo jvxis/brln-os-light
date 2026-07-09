@@ -1158,6 +1158,44 @@ func TestEffectiveLowOutThresholdsFallbackAndClamp(t *testing.T) {
 	}
 }
 
+func TestDeriveChannelLiquidityStateBands(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	low, protect, _ := effectiveLowOutThresholds(profile.LowOutThresh, profile.LowOutProtectThresh, "balanced", 0.50)
+
+	tests := []struct {
+		name  string
+		ratio float64
+		want  string
+	}{
+		{name: "offer ready", ratio: 0.30, want: autofeeLiquidityStateOfferReady},
+		{name: "low", ratio: 0.09, want: autofeeLiquidityStateLow},
+		{name: "drained", ratio: 0.03, want: autofeeLiquidityStateDrained},
+		{name: "extreme drained", ratio: 0.005, want: autofeeLiquidityStateExtremeDrained},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := deriveChannelLiquidityState(tt.ratio, low, protect, profile)
+			if got != tt.want {
+				t.Fatalf("deriveChannelLiquidityState(%.3f)=%s want %s", tt.ratio, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDeriveChannelLiquidityStateUsesCalibratedLowThreshold(t *testing.T) {
+	profile := autofeeProfiles["moderate"]
+	drainedLow, drainedProtect, _ := effectiveLowOutThresholds(profile.LowOutThresh, profile.LowOutProtectThresh, "drained", 0.05)
+	fullLow, fullProtect, _ := effectiveLowOutThresholds(profile.LowOutThresh, profile.LowOutProtectThresh, "full", 0.85)
+
+	if got := deriveChannelLiquidityState(0.09, drainedLow, drainedProtect, profile); got != autofeeLiquidityStateLow {
+		t.Fatalf("expected drained-node calibration to mark 9%% as low, got %s", got)
+	}
+	if got := deriveChannelLiquidityState(0.09, fullLow, fullProtect, profile); got != autofeeLiquidityStateOfferReady {
+		t.Fatalf("expected full-node calibration to keep 9%% offer-ready, got %s", got)
+	}
+}
+
 func TestComputeInboundDiscountUsesAppliedOutboundCap(t *testing.T) {
 	got := computeInboundDiscount(true, "sink", 0.05, 6, 300, 10, 1000, 0.95, 0.10, 0.01)
 	if got != 950 {

@@ -72,6 +72,9 @@ type ChannelRankingItem = {
   state: 'expand' | 'maintain' | 'monitor' | 'close'
   reasons?: ChannelRankingReason[]
   recommendations?: ChannelRankingRecommendation[]
+  liquidity_state?: 'offer-ready' | 'low' | 'drained' | 'extreme-drained'
+  liquidity_state_at?: string
+  autofee_out_ratio_effective?: number
   automation_mode?: 'normal' | 'parked' | 'close_candidate'
   fixed_fee_ppm?: number
   review_at?: string
@@ -232,6 +235,31 @@ export default function ChannelRanking() {
     }
   }
 
+  const normalizeLiquidityState = (value?: string) => String(value || '').trim().toLowerCase()
+
+  const liquidityStateLabel = (value?: string) => {
+    const normalized = normalizeLiquidityState(value)
+    if (normalized === 'offer-ready') return t('liquidityStates.offerReady', { defaultValue: 'offer-ready' })
+    if (normalized === 'low') return t('liquidityStates.low', { defaultValue: 'low' })
+    if (normalized === 'drained') return t('liquidityStates.drained', { defaultValue: 'drained' })
+    if (normalized === 'extreme-drained') return t('liquidityStates.extremeDrained', { defaultValue: 'extreme-drained' })
+    return t('common.unknown')
+  }
+
+  const liquidityStateBadgeClass = (value?: string) => {
+    switch (normalizeLiquidityState(value)) {
+      case 'offer-ready':
+        return 'border-emerald-400/30 bg-emerald-500/15 text-emerald-200'
+      case 'low':
+        return 'border-amber-300/30 bg-amber-500/15 text-amber-100'
+      case 'drained':
+      case 'extreme-drained':
+        return 'border-rose-400/35 bg-rose-500/15 text-rose-100'
+      default:
+        return 'border-white/10 bg-white/5 text-fog/75'
+    }
+  }
+
   const trendLabel = (value?: string) =>
     t(`channelRanking.trends.${String(value || '').trim() || 'stable'}` as any, {
       defaultValue: t('channelRanking.trends.stable')
@@ -269,6 +297,7 @@ export default function ChannelRanking() {
 
   const formatSats = (value?: number) => `${numberFormatter.format(Math.round(Number(value || 0)))} sats`
   const formatPct = (value?: number) => `${pctFormatter.format(clamp(Number(value || 0), 0, 100))}%`
+  const formatRatioPct = (value?: number) => `${pctFormatter.format(clamp(Number(value || 0) * 100, 0, 100))}%`
   const formatTimestamp = (value?: string) => {
     if (!value) return t('common.na')
     const parsed = new Date(value)
@@ -792,6 +821,11 @@ export default function ChannelRanking() {
                           <span className={`rounded-full border px-2.5 py-1 text-[11px] ${trendBadgeClass(item.trend_direction)}`}>
                             {trendLabel(item.trend_direction)}
                           </span>
+                          {item.liquidity_state && (
+                            <span className={`rounded-full border px-2.5 py-1 text-[11px] ${liquidityStateBadgeClass(item.liquidity_state)}`}>
+                              {liquidityStateLabel(item.liquidity_state)}
+                            </span>
+                          )}
                           {automationMode(item) !== 'normal' && (
                             <span className={`rounded-full border px-2.5 py-1 text-[11px] ${automationBadgeClass(item)}`}>
                               {automationLabel(item)}
@@ -856,6 +890,11 @@ export default function ChannelRanking() {
                   <span className={`rounded-full border px-3 py-1 text-xs ${trendBadgeClass(selectedDetail.trend_direction)}`}>
                     {trendLabel(selectedDetail.trend_direction)}
                   </span>
+                  {selectedDetail.liquidity_state && (
+                    <span className={`rounded-full border px-3 py-1 text-xs ${liquidityStateBadgeClass(selectedDetail.liquidity_state)}`}>
+                      {liquidityStateLabel(selectedDetail.liquidity_state)}
+                    </span>
+                  )}
                   {selectedAutomationMode !== 'normal' && (
                     <span className={`rounded-full border px-3 py-1 text-xs ${automationBadgeClass(selectedDetail)}`}>
                       {automationLabel(selectedDetail)}
@@ -964,6 +1003,15 @@ export default function ChannelRanking() {
                     <div>{t('channelRanking.remoteBalance', { value: formatSats(selectedDetail.remote_balance_sat) })}</div>
                     <div>{t('channelRanking.localBalancePct', { value: formatPct(selectedDetail.local_balance_pct) })}</div>
                     <div>{t('channelRanking.remoteBalancePct', { value: formatPct(selectedDetail.remote_balance_pct) })}</div>
+                    {selectedDetail.liquidity_state && (
+                      <div>{t('channelRanking.liquidityStateLabel', { value: liquidityStateLabel(selectedDetail.liquidity_state) })}</div>
+                    )}
+                    {typeof selectedDetail.autofee_out_ratio_effective === 'number' && (
+                      <div>{t('channelRanking.autofeeOutRatioEffective', { value: formatRatioPct(selectedDetail.autofee_out_ratio_effective) })}</div>
+                    )}
+                    {selectedDetail.liquidity_state_at && (
+                      <div>{t('channelRanking.liquidityStateAt', { value: formatTimestamp(selectedDetail.liquidity_state_at) })}</div>
+                    )}
                     <div>{t('channelRanking.pendingHtlcCount', { value: numberFormatter.format(selectedDetail.pending_htlc_count || 0) })}</div>
                     <div>{t('channelRanking.inactiveDuration', { value: formatDuration(selectedDetail.inactive_duration_sec) })}</div>
                     <div>{t('channelRanking.peerStabilityScore30d', { value: numberFormatter.format(selectedDetail.peer_stability_score_30d || 0) })}</div>

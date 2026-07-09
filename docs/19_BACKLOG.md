@@ -17,10 +17,9 @@ Current product backlog, after checking the repository against the docs:
    config, loop, history table, or UI controls were found in code; existing
    `AutoTarget` naming is only target-selection/cost-gate logic for the
    rebalance autopilot.
-2. **Partial** - `Autofee` dynamic liquidity state. Dynamic thresholds,
-   `class_label`, node `liquidity_class`, ranking gates, and rebalance-execution
-   gates exist, but no explicit `liquidity_state` runtime/API/UI model was
-   found.
+2. **Implemented 2026-07-09** - `Autofee` dynamic liquidity state. Autofee now
+   derives per-channel `liquidity_state`, includes it in structured results and
+   outcomes, and exposes it as badges in Fee Center and Channel Ranking.
 3. **Implemented 2026-07-08** - Channel `parking mode`. The code now persists
    `parked`/`automation_mode`, review metadata, fixed fee metadata, and excludes
    parked channels from Autofee/Rebalance automation.
@@ -1588,15 +1587,18 @@ Do not combine multiple milestone behaviors into a single opaque patch.
 
 ## Active Detailed Proposals
 
-The sections below remain active or partially active. Older implemented
-sections above are retained only for historical context.
+The sections below include active, partially active, and recently implemented
+details. Older implemented sections above are retained only for historical
+context.
 
 ## 1. Autofee Dynamic Liquidity State
 
-**Current status (2026-07-07): partially implemented.** `class_label`, node
+**Current status (2026-07-09): implemented.** `class_label`, node
 `liquidity_class`, dynamic low-out thresholds, ranking-aware gates, and
-rebalance-execution gates exist in Autofee. No explicit `liquidity_state`
-runtime/API/UI model was found, so the core backlog item remains open.
+rebalance-execution gates exist in Autofee. Autofee now derives explicit
+per-channel `liquidity_state = offer-ready/low/drained/extreme-drained`, stores
+it in structured Autofee payloads and outcomes, and surfaces the badge in Fee
+Center and Channel Ranking.
 
 ### Goal
 

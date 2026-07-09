@@ -147,6 +147,9 @@ type ChannelRankingItem struct {
 	Reasons                  []ChannelRankingReason         `json:"reasons,omitempty"`
 	Recommendations          []ChannelRankingRecommendation `json:"recommendations,omitempty"`
 	CloseCandidate           bool                           `json:"close_candidate,omitempty"`
+	LiquidityState           string                         `json:"liquidity_state,omitempty"`
+	LiquidityStateAt         *time.Time                     `json:"liquidity_state_at,omitempty"`
+	AutofeeOutRatioEffective *float64                       `json:"autofee_out_ratio_effective,omitempty"`
 	AutomationMode           string                         `json:"automation_mode,omitempty"`
 	FixedFeePPM              *int64                         `json:"fixed_fee_ppm,omitempty"`
 	ReviewAt                 *time.Time                     `json:"review_at,omitempty"`
@@ -1852,6 +1855,9 @@ limit $1
 	if err := s.applyAutomationPolicies(ctx, items); err != nil {
 		return nil, ChannelRankingStatus{}, err
 	}
+	if err := s.applyAutofeeLiquiditySnapshots(ctx, items); err != nil && s.logger != nil {
+		s.logger.Printf("channel ranking autofee liquidity snapshot failed: %v", err)
+	}
 	status, err := s.Status(ctx)
 	if err != nil {
 		return nil, ChannelRankingStatus{}, err
@@ -1891,6 +1897,9 @@ limit 1
 	if err := s.applyAutomationPolicies(ctx, items); err != nil {
 		return nil, err
 	}
+	if err := s.applyAutofeeLiquiditySnapshots(ctx, items); err != nil && s.logger != nil {
+		s.logger.Printf("channel ranking autofee liquidity snapshot failed: %v", err)
+	}
 	if len(items) == 0 {
 		return nil, errors.New("channel ranking not found")
 	}
@@ -1917,6 +1926,89 @@ func (s *ChannelRankingService) applyAutomationPolicies(ctx context.Context, ite
 			if policy.Mode == channelAutomationModeCloseCandidate {
 				item.CloseCandidate = true
 			}
+		}
+	}
+	return nil
+}
+
+type channelRankingAutofeeLiquiditySnapshot struct {
+	LiquidityState           string
+	LiquidityStateAt         time.Time
+	AutofeeOutRatioEffective *float64
+}
+
+func (s *ChannelRankingService) applyAutofeeLiquiditySnapshots(ctx context.Context, items []ChannelRankingItem) error {
+	if s == nil || s.db == nil || len(items) == 0 {
+		return nil
+	}
+	points := make([]string, 0, len(items))
+	for _, item := range items {
+		point := strings.TrimSpace(item.ChannelPoint)
+		if point != "" {
+			points = append(points, point)
+		}
+	}
+	if len(points) == 0 {
+		return nil
+	}
+
+	rows, err := s.db.Query(ctx, `
+with latest as (
+  select distinct on (payload->>'channel_point')
+    payload->>'channel_point' as channel_point,
+    payload->>'liquidity_state' as liquidity_state,
+    nullif(payload->>'out_ratio_effective', '')::double precision as out_ratio_effective,
+    occurred_at
+  from autofee_logs
+  where payload is not null
+    and coalesce(payload->>'kind', '') = 'channel'
+    and coalesce(payload->>'liquidity_state', '') <> ''
+    and payload->>'channel_point' = any($1)
+  order by payload->>'channel_point', occurred_at desc, id desc
+)
+select channel_point, liquidity_state, out_ratio_effective, occurred_at
+from latest
+`, points)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	snapshots := make(map[string]channelRankingAutofeeLiquiditySnapshot)
+	for rows.Next() {
+		var (
+			channelPoint string
+			stateRaw     string
+			outRatio     sql.NullFloat64
+			observedAt   time.Time
+		)
+		if err := rows.Scan(&channelPoint, &stateRaw, &outRatio, &observedAt); err != nil {
+			return err
+		}
+		state := normalizeAutofeeLiquidityState(stateRaw)
+		if state == "" {
+			continue
+		}
+		snapshot := channelRankingAutofeeLiquiditySnapshot{
+			LiquidityState:   state,
+			LiquidityStateAt: observedAt.UTC(),
+		}
+		if outRatio.Valid {
+			value := outRatio.Float64
+			snapshot.AutofeeOutRatioEffective = &value
+		}
+		snapshots[strings.TrimSpace(channelPoint)] = snapshot
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for idx := range items {
+		item := &items[idx]
+		if snapshot, ok := snapshots[strings.TrimSpace(item.ChannelPoint)]; ok {
+			item.LiquidityState = snapshot.LiquidityState
+			stateAt := snapshot.LiquidityStateAt
+			item.LiquidityStateAt = &stateAt
+			item.AutofeeOutRatioEffective = snapshot.AutofeeOutRatioEffective
 		}
 	}
 	return nil

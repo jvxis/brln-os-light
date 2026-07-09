@@ -55,6 +55,13 @@ const (
 )
 
 const (
+	autofeeLiquidityStateOfferReady     = "offer-ready"
+	autofeeLiquidityStateLow            = "low"
+	autofeeLiquidityStateDrained        = "drained"
+	autofeeLiquidityStateExtremeDrained = "extreme-drained"
+)
+
+const (
 	autofeeProfileCustom  = "custom"
 	autofeeProfileDefault = "moderate"
 )
@@ -532,6 +539,7 @@ type autofeeLogItem struct {
 	InboundDiscount          int      `json:"inbound_discount,omitempty"`
 	PrevInboundDiscount      int      `json:"prev_inbound_discount,omitempty"`
 	ClassLabel               string   `json:"class_label,omitempty"`
+	LiquidityState           string   `json:"liquidity_state,omitempty"`
 	SkipReason               string   `json:"skip_reason,omitempty"`
 	Error                    string   `json:"error,omitempty"`
 	Delta                    int      `json:"delta,omitempty"`
@@ -1376,6 +1384,7 @@ create table if not exists autofee_outcomes (
   floor_ppm integer,
   floor_src text,
   class_label text,
+  liquidity_state text,
   tags jsonb not null default '[]'::jsonb,
   out_ratio_pre real,
   out_ppm7d_pre integer,
@@ -1436,6 +1445,7 @@ alter table autofee_state add column if not exists seed_shock_pending_ppm intege
 alter table autofee_state add column if not exists seed_shock_rounds integer not null default 0;
 alter table autofee_state add column if not exists seed_shock_dir text;
 alter table autofee_logs add column if not exists payload jsonb;
+alter table autofee_outcomes add column if not exists liquidity_state text;
 `)
 	if err != nil {
 		return err
@@ -4693,6 +4703,63 @@ func effectiveLowOutThresholds(baseLow float64, baseProtect float64, liquidityCl
 		protect = lowOutThreshMax
 	}
 	return lowOut, protect, factor
+}
+
+func normalizeAutofeeLiquidityState(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case autofeeLiquidityStateOfferReady:
+		return autofeeLiquidityStateOfferReady
+	case autofeeLiquidityStateLow:
+		return autofeeLiquidityStateLow
+	case autofeeLiquidityStateDrained:
+		return autofeeLiquidityStateDrained
+	case autofeeLiquidityStateExtremeDrained:
+		return autofeeLiquidityStateExtremeDrained
+	default:
+		return ""
+	}
+}
+
+func deriveChannelLiquidityState(effectiveOutRatio float64, lowOutThresh float64, lowOutProtectThresh float64, profile autofeeProfile) string {
+	ratio := clampFloat(effectiveOutRatio, 0.0, 1.0)
+
+	lowMax := math.Max(lowOutThresh, lowOutProtectThresh)
+	if lowMax <= 0 {
+		lowMax = defaultLowOutProtectThresh
+	}
+
+	drainedMax := profile.ExtremeDrainOutMax
+	if drainedMax <= 0 {
+		drainedMax = profile.CooldownUpDrainedOutRatioMax
+	}
+	if drainedMax <= 0 {
+		drainedMax = lowMax * 0.50
+	}
+	if drainedMax > lowMax {
+		drainedMax = lowMax
+	}
+
+	extremeMax := profile.ExtremeDrainTurboOutMax
+	if extremeMax <= 0 {
+		extremeMax = profile.CooldownUpExtremeOutRatioMax
+	}
+	if extremeMax <= 0 {
+		extremeMax = drainedMax * 0.25
+	}
+	if extremeMax > drainedMax {
+		extremeMax = drainedMax
+	}
+
+	switch {
+	case ratio <= extremeMax:
+		return autofeeLiquidityStateExtremeDrained
+	case ratio <= drainedMax:
+		return autofeeLiquidityStateDrained
+	case ratio <= lowMax:
+		return autofeeLiquidityStateLow
+	default:
+		return autofeeLiquidityStateOfferReady
+	}
 }
 
 type outRatioNormalizationMeta struct {
@@ -8199,6 +8266,7 @@ type decision struct {
 	ProfitFee7dSat          int64
 	RevShare                float64
 	ClassLabel              string
+	LiquidityState          string
 	FwdCount                int
 	NegMarginGlobal         bool
 	PredictionCode          string
@@ -8551,6 +8619,7 @@ func buildAutofeeChannelLogEntry(d *decision, category string, dryRun bool, err 
 		InboundDiscount:         d.InboundDiscount,
 		PrevInboundDiscount:     d.PrevInboundDiscount,
 		ClassLabel:              d.ClassLabel,
+		LiquidityState:          d.LiquidityState,
 		SkipReason:              skipReason,
 		Delta:                   delta,
 		DeltaPct:                deltaPct,
@@ -9281,6 +9350,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			e.calib.LocalRatio,
 		)
 	}
+	liquidityState := deriveChannelLiquidityState(outRatio, lowOutThresh, lowOutProtectThresh, e.profile)
 	sinkMinMargin := e.profile.SinkMinMargin
 	if sinkMinMargin <= 0 {
 		sinkMinMargin = defaultSinkMinMargin
@@ -11496,6 +11566,7 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		ProfitFee7dSat:          profitFee7dSat,
 		RevShare:                revShare,
 		ClassLabel:              classLabel,
+		LiquidityState:          liquidityState,
 		FwdCount:                fwdCount,
 		NegMarginGlobal:         negMarginGlobal,
 		PredictionCode:          predictionCode,
@@ -12268,14 +12339,14 @@ func (e *autofeeEngine) recordOutcome(ctx context.Context, runID string, d *deci
 insert into autofee_outcomes (
   run_id, channel_id, channel_point, kind, decided_at,
   prev_ppm, new_ppm, target_ppm, floor_ppm, floor_src,
-  class_label, tags,
+  class_label, liquidity_state, tags,
   out_ratio_pre, out_ppm7d_pre, margin_ppm7d_pre, fwd_count_7d_pre
-) values ($1,$2,$3,'outbound',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+) values ($1,$2,$3,'outbound',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 on conflict (run_id, channel_id, kind) do nothing
 `,
 			runID, int64(d.ChannelID), d.ChannelPoint, decidedAt,
 			d.LocalPpm, d.NewPpm, d.Target, d.Floor, d.FloorSrc,
-			d.ClassLabel, tagsJSON,
+			d.ClassLabel, d.LiquidityState, tagsJSON,
 			float32(d.OutRatio), d.OutPpm7d, d.Margin, d.FwdCount,
 		); err != nil && e.svc.logger != nil {
 			e.svc.logger.Printf("autofee: outcome insert (outbound) failed: %v", err)
@@ -12287,14 +12358,14 @@ on conflict (run_id, channel_id, kind) do nothing
 insert into autofee_outcomes (
   run_id, channel_id, channel_point, kind, decided_at,
   prev_ppm, new_ppm,
-  class_label, tags,
+  class_label, liquidity_state, tags,
   out_ratio_pre, out_ppm7d_pre, margin_ppm7d_pre, fwd_count_7d_pre
-) values ($1,$2,$3,'inbound',$4,$5,$6,$7,$8,$9,$10,$11,$12)
+) values ($1,$2,$3,'inbound',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 on conflict (run_id, channel_id, kind) do nothing
 `,
 			runID, int64(d.ChannelID), d.ChannelPoint, decidedAt,
 			d.PrevInboundDiscount, d.InboundDiscount,
-			d.ClassLabel, tagsJSON,
+			d.ClassLabel, d.LiquidityState, tagsJSON,
 			float32(d.OutRatio), d.OutPpm7d, d.Margin, d.FwdCount,
 		); err != nil && e.svc.logger != nil {
 			e.svc.logger.Printf("autofee: outcome insert (inbound) failed: %v", err)

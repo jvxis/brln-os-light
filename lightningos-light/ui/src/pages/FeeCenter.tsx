@@ -150,6 +150,7 @@ type AutofeeResultItem = {
   inbound_discount?: number
   prev_inbound_discount?: number
   class_label?: string
+  liquidity_state?: string
   skip_reason?: string
   error?: string
   delta?: number
@@ -675,6 +676,22 @@ export default function FeeCenter() {
     if (normalized === 'balanced') return t('lightningOps.autofeeResultsLiquidityBalanced')
     return t('common.unknown')
   }
+  const normalizeLiquidityState = (value?: string) => String(value || '').trim().toLowerCase()
+  const formatLiquidityState = (value?: string) => {
+    const normalized = normalizeLiquidityState(value)
+    if (normalized === 'offer-ready') return t('liquidityStates.offerReady', { defaultValue: 'offer-ready' })
+    if (normalized === 'low') return t('liquidityStates.low', { defaultValue: 'low' })
+    if (normalized === 'drained') return t('liquidityStates.drained', { defaultValue: 'drained' })
+    if (normalized === 'extreme-drained') return t('liquidityStates.extremeDrained', { defaultValue: 'extreme-drained' })
+    return t('common.unknown')
+  }
+  const liquidityStateTone = (value?: string): Tone => {
+    const normalized = normalizeLiquidityState(value)
+    if (normalized === 'offer-ready') return 'ok'
+    if (normalized === 'low') return 'warn'
+    if (normalized === 'drained' || normalized === 'extreme-drained') return 'danger'
+    return 'muted'
+  }
   const formatRatioPercent = (value?: number) => {
     const numeric = numberOrZero(value)
     if (!numeric) return '0%'
@@ -1022,6 +1039,12 @@ export default function FeeCenter() {
                     </div>
                   </>
                 )}
+                {item.liquidity_state ? (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <StatusBadge label={formatLiquidityState(item.liquidity_state)} tone={liquidityStateTone(item.liquidity_state)} />
+                    {item.class_label ? <StatusBadge label={item.class_label} tone="muted" /> : null}
+                  </div>
+                ) : null}
                 {item.tags?.length ? (
                   <div className="flex flex-wrap gap-1.5">
                     {item.tags.slice(0, 5).map((tag) => (
@@ -1460,6 +1483,9 @@ export default function FeeCenter() {
                       <div className="mt-1 flex flex-wrap gap-2">
                         <StatusBadge label={row.enabled ? t('common.enabled') : t('common.disabled')} tone={row.enabled ? 'ok' : 'muted'} />
                         <StatusBadge label={row.channel.active ? t('common.active') : t('common.inactive')} tone={row.channel.active ? 'ok' : 'warn'} />
+                        {last?.liquidity_state ? (
+                          <StatusBadge label={formatLiquidityState(last.liquidity_state)} tone={liquidityStateTone(last.liquidity_state)} />
+                        ) : null}
                       </div>
                     </td>
                     <td className="py-3 pr-4 text-xs">

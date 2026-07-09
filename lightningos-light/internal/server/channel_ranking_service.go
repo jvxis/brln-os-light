@@ -24,6 +24,8 @@ const (
 	channelRankingHTLCLiquidityHigh30d       = 150
 	channelRankingHTLCLinkHigh30d            = 200
 	channelRankingFull7dObservationSamples   = 7 * 24
+	channelRankingIdle7dPenalty              = 40
+	channelRankingIdle7dScoreCap             = 23
 	channelRankingRebalanceNoPaybackPenalty  = 30
 	channelRankingRebalanceNoPaybackScoreCap = 23
 	channelRankingIdle30dPenalty             = 40
@@ -1000,11 +1002,13 @@ func buildChannelRankingItem(
 	}
 	rebalanceDependenceScore := computeRebalanceDependenceScore(forward30d, rebal30d)
 	full7dObservation := channelRankingHasFull7dObservation(peerAggregate.SampleCount)
+	noEconomicMovement7d := full7dObservation && channelRankingNoEconomicMovement(forward7d, assisted7d, rebal7d)
 	rebalanceNoPayback := full7dObservation && channelRankingRebalanceNoPaybackAfter7d(forward7d, assisted7d, rebal7d, rebal30d, effectiveProfitSat30d)
 	full30dObservation := channelRankingHasFull30dObservation(peerAggregate.SampleCount)
 	noEconomicMovement30d := full30dObservation && channelRankingNoEconomicMovement30d(forward30d, assisted30d, rebal30d)
 	rebalanceOnly30d := full30dObservation && channelRankingRebalanceOnly30d(forward30d, assisted30d, rebal30d)
 	score7d := computeChannelRankingScore(ch, capacity, localPct, effectiveForward7d, rebal7d, effectiveProfitSat7d, peerAggregate.Score30d, htlcAggregate, rebalanceDependenceScore)
+	score7d = applyIdle7dPenalty(score7d, noEconomicMovement7d)
 	score7d = applyRebalanceNoPaybackPenalty(score7d, rebalanceNoPayback)
 	score7d = applyIdle30dPenalty(score7d, noEconomicMovement30d || rebalanceOnly30d)
 	score30d := computeChannelRankingScore(ch, capacity, localPct, effectiveForward30d, rebal30d, effectiveProfitSat30d, peerAggregate.Score30d, htlcAggregate, rebalanceDependenceScore)
@@ -1137,10 +1141,21 @@ func applyRebalanceNoPaybackPenalty(score int, noPayback bool) int {
 	return clampInt(score-channelRankingRebalanceNoPaybackPenalty, 0, channelRankingRebalanceNoPaybackScoreCap)
 }
 
+func applyIdle7dPenalty(score int, noEconomicMovement bool) int {
+	if !noEconomicMovement {
+		return score
+	}
+	return clampInt(score-channelRankingIdle7dPenalty, 0, channelRankingIdle7dScoreCap)
+}
+
 func channelRankingNoEconomicMovement30d(forward30d channelTrafficStat, assisted30d channelTrafficStat, rebal30d channelTrafficStat) bool {
-	return !channelTrafficHasMovement(forward30d) &&
-		!channelTrafficHasMovement(assisted30d) &&
-		!channelTrafficHasMovement(rebal30d)
+	return channelRankingNoEconomicMovement(forward30d, assisted30d, rebal30d)
+}
+
+func channelRankingNoEconomicMovement(forward channelTrafficStat, assisted channelTrafficStat, rebal channelTrafficStat) bool {
+	return !channelTrafficHasMovement(forward) &&
+		!channelTrafficHasMovement(assisted) &&
+		!channelTrafficHasMovement(rebal)
 }
 
 func channelRankingHasFull7dObservation(peerSampleCount30d int) bool {

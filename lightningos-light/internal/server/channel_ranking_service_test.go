@@ -539,6 +539,54 @@ func TestBuildChannelRankingItemDoesNotCloseIdleChannelWithoutFull30dObservation
 	}
 }
 
+func TestBuildChannelRankingItemPenalizesIdleChannelAfterFull7dObservation(t *testing.T) {
+	now := time.Date(2026, 7, 9, 10, 53, 0, 0, time.UTC)
+	ch := lndclient.ChannelInfo{
+		ChannelPoint:     "647b200627ed2715a7ffa2f26de82caf05137847c60dfad50fa059333dbf0215:0",
+		ChannelID:        6472006272715,
+		RemotePubkey:     "02joyeuxnoeuel",
+		PeerAlias:        "JoyeuxNoeuel",
+		Active:           true,
+		CapacitySat:      15_000_000,
+		LocalBalanceSat:  150_936,
+		RemoteBalanceSat: 14_848_119,
+	}
+
+	item := buildChannelRankingItem(
+		now,
+		ch,
+		"",
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		channelTrafficStat{},
+		lndclient.ChannelMovement7d{},
+		channelPeerAggregate{Score30d: 52, SampleCount: 698},
+		channelHTLCAggregate{},
+	)
+
+	if item.Score7d != 10 {
+		t.Fatalf("expected 7d idle penalty to keep score at 10, got %d", item.Score7d)
+	}
+	if item.Score30d != 50 {
+		t.Fatalf("expected unpenalized 30d comparison score 50 before full 30d observation, got %d", item.Score30d)
+	}
+	if item.State != "monitor" {
+		t.Fatalf("expected idle 7d channel to stay monitor instead of maintain, got %s", item.State)
+	}
+	if item.CloseCandidate {
+		t.Fatalf("did not expect 7d idle channel to become close candidate before full 30d observation")
+	}
+	if !hasChannelRankingReason(item.Reasons, "low_usage") {
+		t.Fatalf("expected low_usage reason after full 7d observation")
+	}
+	if hasChannelRankingReason(item.Reasons, "no_economic_movement_30d") {
+		t.Fatalf("did not expect 30d idle reason before full 30d observation")
+	}
+}
+
 func TestBuildChannelRankingItemTreatsRebalanceOnly30dAsCloseCandidate(t *testing.T) {
 	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
 	ch := lndclient.ChannelInfo{

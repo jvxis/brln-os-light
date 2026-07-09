@@ -1323,6 +1323,16 @@ export default function RebalanceCenter() {
       setStatus(err instanceof Error ? err.message : t('rebalanceCenter.saveFailed'))
     }
   }
+  // Map channel_point -> peer alias for the AutoTarget history panel. Keyed by
+  // channel_point (string) not channel_id, because uint64 channel IDs lose
+  // precision when parsed as JS numbers.
+  const aliasByChannelPoint = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const ch of channels) {
+      if (ch.channel_point && ch.peer_alias) map.set(ch.channel_point, ch.peer_alias)
+    }
+    return map
+  }, [channels])
   const profitSkipDetails = useMemo(() => {
     if (!overview?.last_scan_skipped) return []
     return overview.last_scan_skipped.filter((item) => item.reason === 'profit_guardrail')
@@ -2769,7 +2779,7 @@ export default function RebalanceCenter() {
                               return (
                                 <tr key={item.id} className="border-t border-white/5">
                                   <td className="p-2 text-fog/60">{new Date(item.decided_at).toLocaleString(getLocale())}</td>
-                                  <td className="p-2 text-fog/80">{item.channel_point ? item.channel_point.slice(0, 12) : item.channel_id}</td>
+                                  <td className="p-2 text-fog/80" title={item.channel_point}>{(item.channel_point && aliasByChannelPoint.get(item.channel_point)) || (item.channel_point ? item.channel_point.slice(0, 12) : String(item.channel_id))}</td>
                                   <td className={`p-2 font-medium ${dirClass}`}>{item.direction}{item.applied ? '' : ' *'}</td>
                                   <td className="p-2 text-fog/70">{item.prev_target_pct}% → {item.new_target_pct}%</td>
                                   <td className="p-2 text-fog/50">{reason}</td>

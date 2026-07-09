@@ -135,6 +135,15 @@ func decideAutoTargetAdjustment(sig autoTargetSignals, cfg RebalanceConfig) auto
 	case sig.StructuralFails24h >= 2:
 		downReason = "structural_cooldowns"
 	}
+	// Do not demote a channel that is still earning. A quiet 24h drain window on a
+	// bursty seller (WoS, exchanges, kappa) is not a reason to lower its target —
+	// only demote channels that are BOTH idle AND unprofitable. This preserves the
+	// original "fill-and-hold" intent (filled but not selling => low revenue => still
+	// demoted) while sparing real earners that just had a lull.
+	if downReason != "" && sig.Revenue7dSat >= cfg.AutoTargetMinRevenue7dSat {
+		dec.Reason = "earning_hold"
+		return dec
+	}
 	if downReason != "" {
 		newT := cur - step
 		if newT < minPct {

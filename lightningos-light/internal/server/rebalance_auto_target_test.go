@@ -74,7 +74,7 @@ func TestDecideAutoTargetAdjustment(t *testing.T) {
 			wantDir: autoTargetNoop, wantNew: 45, wantReason: "hold",
 		},
 		{
-			name: "DOWN drain stalled",
+			name: "DOWN drain stalled (idle and unprofitable)",
 			sig: autoTargetSignals{
 				CurrentTargetPct: 30, CapacitySat: 3_000_000, DrainRateSatPerHr: 500, // < 5000/4
 				Revenue7dSat: 100, SuccessRate: 0, Attempts: 0, StructuralFails24h: 0,
@@ -83,19 +83,37 @@ func TestDecideAutoTargetAdjustment(t *testing.T) {
 			wantDir: autoTargetDown, wantNew: 25, wantReason: "drain_stalled",
 		},
 		{
-			name: "DOWN low success on a draining candidate",
+			name: "earning channel held despite a quiet drain window",
+			sig: autoTargetSignals{
+				CurrentTargetPct: 45, CapacitySat: 10_000_000, DrainRateSatPerHr: 0, // stalled
+				Revenue7dSat: 1861, SuccessRate: 0, Attempts: 0, StructuralFails24h: 0,
+				IsRoundCandidate: false,
+			},
+			wantDir: autoTargetNoop, wantNew: 45, wantReason: "earning_hold",
+		},
+		{
+			name: "high earner with hard routes is not demoted",
+			sig: autoTargetSignals{
+				CurrentTargetPct: 40, CapacitySat: 5_000_000, DrainRateSatPerHr: 3000,
+				Revenue7dSat: 11927, SuccessRate: 0.1, Attempts: 8, StructuralFails24h: 0,
+				IsRoundCandidate: false,
+			},
+			wantDir: autoTargetNoop, wantNew: 40, wantReason: "earning_hold",
+		},
+		{
+			name: "DOWN low success on an unprofitable draining candidate",
 			sig: autoTargetSignals{
 				CurrentTargetPct: 45, CapacitySat: 3_000_000, DrainRateSatPerHr: 60000,
-				Revenue7dSat: 9000, SuccessRate: 0.1, Attempts: 8, StructuralFails24h: 0,
+				Revenue7dSat: 120, SuccessRate: 0.1, Attempts: 8, StructuralFails24h: 0,
 				IsRoundCandidate: true,
 			},
 			wantDir: autoTargetDown, wantNew: 40, wantReason: "low_success",
 		},
 		{
-			name: "DOWN structural cooldowns",
+			name: "DOWN structural cooldowns (unprofitable)",
 			sig: autoTargetSignals{
 				CurrentTargetPct: 40, CapacitySat: 3_000_000, DrainRateSatPerHr: 30000,
-				Revenue7dSat: 2000, SuccessRate: 0, Attempts: 0, StructuralFails24h: 3,
+				Revenue7dSat: 0, SuccessRate: 0, Attempts: 0, StructuralFails24h: 3,
 				IsRoundCandidate: false,
 			},
 			wantDir: autoTargetDown, wantNew: 35, wantReason: "structural_cooldowns",

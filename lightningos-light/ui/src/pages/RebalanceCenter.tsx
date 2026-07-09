@@ -2683,31 +2683,31 @@ export default function RebalanceCenter() {
                   return (
                     <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-5">
                       <div className="space-y-2">
-                        <label className="text-sm text-fog/70">{t('rebalanceCenter.autoTarget.maxPct')}</label>
+                        <label className="text-sm text-fog/70" title={t('rebalanceCenter.autoTarget.maxPctHint')}>{t('rebalanceCenter.autoTarget.maxPct')}</label>
                         <input className="input-field" type="number" min={10} max={90} step={1} disabled={atDisabled}
                           value={config.auto_target_max_pct ?? 50}
                           onChange={(e) => setConfig({ ...config, auto_target_max_pct: Number(e.target.value) })} />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-sm text-fog/70">{t('rebalanceCenter.autoTarget.minPct')}</label>
+                        <label className="text-sm text-fog/70" title={t('rebalanceCenter.autoTarget.minPctHint')}>{t('rebalanceCenter.autoTarget.minPct')}</label>
                         <input className="input-field" type="number" min={1} max={89} step={1} disabled={atDisabled}
                           value={config.auto_target_min_pct ?? 10}
                           onChange={(e) => setConfig({ ...config, auto_target_min_pct: Number(e.target.value) })} />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-sm text-fog/70">{t('rebalanceCenter.autoTarget.stepPct')}</label>
+                        <label className="text-sm text-fog/70" title={t('rebalanceCenter.autoTarget.stepPctHint')}>{t('rebalanceCenter.autoTarget.stepPct')}</label>
                         <input className="input-field" type="number" min={1} max={25} step={1} disabled={atDisabled}
                           value={config.auto_target_step_pct ?? 5}
                           onChange={(e) => setConfig({ ...config, auto_target_step_pct: Number(e.target.value) })} />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-sm text-fog/70">{t('rebalanceCenter.autoTarget.evalIntervalHours')}</label>
+                        <label className="text-sm text-fog/70" title={t('rebalanceCenter.autoTarget.evalIntervalHoursHint')}>{t('rebalanceCenter.autoTarget.evalIntervalHours')}</label>
                         <input className="input-field" type="number" min={1} max={168} step={1} disabled={atDisabled}
                           value={config.auto_target_eval_interval_hours ?? 6}
                           onChange={(e) => setConfig({ ...config, auto_target_eval_interval_hours: Number(e.target.value) })} />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-sm text-fog/70">{t('rebalanceCenter.autoTarget.maxUpsPerCycle')}</label>
+                        <label className="text-sm text-fog/70" title={t('rebalanceCenter.autoTarget.maxUpsPerCycleHint')}>{t('rebalanceCenter.autoTarget.maxUpsPerCycle')}</label>
                         <input className="input-field" type="number" min={1} max={50} step={1} disabled={atDisabled}
                           value={config.auto_target_max_ups_per_cycle ?? 3}
                           onChange={(e) => setConfig({ ...config, auto_target_max_ups_per_cycle: Number(e.target.value) })} />
@@ -2719,31 +2719,31 @@ export default function RebalanceCenter() {
                           onChange={(e) => setConfig({ ...config, auto_target_max_local_sat: Number(e.target.value) })} />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-sm text-fog/70">{t('rebalanceCenter.autoTarget.minDrainRate')}</label>
+                        <label className="text-sm text-fog/70" title={t('rebalanceCenter.autoTarget.minDrainRateHint')}>{t('rebalanceCenter.autoTarget.minDrainRate')}</label>
                         <input className="input-field" type="number" min={0} step={500} disabled={atDisabled}
                           value={config.auto_target_min_drain_rate_sat_per_hr ?? 5000}
                           onChange={(e) => setConfig({ ...config, auto_target_min_drain_rate_sat_per_hr: Number(e.target.value) })} />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-sm text-fog/70">{t('rebalanceCenter.autoTarget.minRevenue')}</label>
+                        <label className="text-sm text-fog/70" title={t('rebalanceCenter.autoTarget.minRevenueHint')}>{t('rebalanceCenter.autoTarget.minRevenue')}</label>
                         <input className="input-field" type="number" min={0} step={100} disabled={atDisabled}
                           value={config.auto_target_min_revenue_7d_sat ?? 500}
                           onChange={(e) => setConfig({ ...config, auto_target_min_revenue_7d_sat: Number(e.target.value) })} />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-sm text-fog/70">{t('rebalanceCenter.autoTarget.upSuccess')}</label>
+                        <label className="text-sm text-fog/70" title={t('rebalanceCenter.autoTarget.upSuccessHint')}>{t('rebalanceCenter.autoTarget.upSuccess')}</label>
                         <input className="input-field" type="number" min={1} max={100} step={1} disabled={atDisabled}
                           value={Number((((config.auto_target_up_success_threshold ?? 0.5)) * 100).toFixed(0))}
                           onChange={(e) => setConfig({ ...config, auto_target_up_success_threshold: Number(e.target.value) / 100 })} />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-sm text-fog/70">{t('rebalanceCenter.autoTarget.downSuccess')}</label>
+                        <label className="text-sm text-fog/70" title={t('rebalanceCenter.autoTarget.downSuccessHint')}>{t('rebalanceCenter.autoTarget.downSuccess')}</label>
                         <input className="input-field" type="number" min={1} max={100} step={1} disabled={atDisabled}
                           value={Number((((config.auto_target_down_success_threshold ?? 0.25)) * 100).toFixed(0))}
                           onChange={(e) => setConfig({ ...config, auto_target_down_success_threshold: Number(e.target.value) / 100 })} />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-sm text-fog/70">{t('rebalanceCenter.autoTarget.drainFirstMultiplier')}</label>
+                        <label className="text-sm text-fog/70" title={t('rebalanceCenter.autoTarget.drainFirstMultiplierHint')}>{t('rebalanceCenter.autoTarget.drainFirstMultiplier')}</label>
                         <input className="input-field" type="number" min={1} max={20} step={0.5} disabled={atDisabled}
                           value={config.auto_target_drain_first_multiplier ?? 3}
                           onChange={(e) => setConfig({ ...config, auto_target_drain_first_multiplier: Number(e.target.value) })} />
@@ -4062,7 +4062,7 @@ export default function RebalanceCenter() {
                 <th className="pb-2 pl-4 text-center" title={t('rebalanceCenter.channelsHints.timeToPayback')}>
                   {t('rebalanceCenter.channels.timeToPayback')}
                 </th>
-                <th className="pb-2">
+                <th className="pb-2 pl-6">
                   <div className="flex flex-col gap-2">
                     <span>{t('rebalanceCenter.channels.actions')}</span>
                     <label className="flex items-center gap-2 text-xs text-fog/70">
@@ -4179,7 +4179,7 @@ export default function RebalanceCenter() {
                       />
                       <span className="text-xs text-fog/60">%</span>
                       <input
-                        className="input-field h-8 w-10 px-1 py-1 text-xs"
+                        className="input-field ml-3 h-8 w-10 px-1 py-1 text-xs"
                         type="text"
                         inputMode="decimal"
                         title={t('rebalanceCenter.channelsHints.econRatio')}
@@ -4230,7 +4230,7 @@ export default function RebalanceCenter() {
                   <td className="py-3 pl-4 text-center text-xs text-fog/60" title={t('rebalanceCenter.channelsHints.timeToPayback')}>
                     {formatTimeToPayback(ch)}
                   </td>
-                  <td className="py-3 space-y-2">
+                  <td className="py-3 pl-6 space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <button
                         className="btn-secondary text-xs px-3 py-1"

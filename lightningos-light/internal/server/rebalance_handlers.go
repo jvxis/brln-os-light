@@ -90,6 +90,18 @@ type rebalanceConfigPayload struct {
 	AutofeeSettlingMultiplier              *float64 `json:"autofee_settling_multiplier,omitempty"`
 	DelegatedFastPathEnabled               *bool    `json:"delegated_fast_path_enabled,omitempty"`
 	DelegatedFastPathStrictPayback         *bool    `json:"delegated_fast_path_strict_payback,omitempty"`
+	AutoTargetEnabled                      *bool    `json:"auto_target_enabled,omitempty"`
+	AutoTargetMaxPct                       *int     `json:"auto_target_max_pct,omitempty"`
+	AutoTargetMinPct                       *int     `json:"auto_target_min_pct,omitempty"`
+	AutoTargetStepPct                      *int     `json:"auto_target_step_pct,omitempty"`
+	AutoTargetEvalIntervalHours            *int     `json:"auto_target_eval_interval_hours,omitempty"`
+	AutoTargetMaxUpsPerCycle               *int     `json:"auto_target_max_ups_per_cycle,omitempty"`
+	AutoTargetMaxLocalSat                  *int64   `json:"auto_target_max_local_sat,omitempty"`
+	AutoTargetMinDrainRateSatPerHr         *int64   `json:"auto_target_min_drain_rate_sat_per_hr,omitempty"`
+	AutoTargetMinRevenue7dSat              *int64   `json:"auto_target_min_revenue_7d_sat,omitempty"`
+	AutoTargetUpSuccessThreshold           *float64 `json:"auto_target_up_success_threshold,omitempty"`
+	AutoTargetDownSuccessThreshold         *float64 `json:"auto_target_down_success_threshold,omitempty"`
+	AutoTargetDrainFirstMultiplier         *float64 `json:"auto_target_drain_first_multiplier,omitempty"`
 }
 
 type rebalanceRunPayload struct {
@@ -124,6 +136,12 @@ type rebalanceExcludePayload struct {
 	ChannelID    uint64 `json:"channel_id"`
 	ChannelPoint string `json:"channel_point"`
 	Excluded     bool   `json:"excluded"`
+}
+
+type rebalanceChannelAutoTargetPayload struct {
+	ChannelID    uint64 `json:"channel_id"`
+	ChannelPoint string `json:"channel_point"`
+	Managed      bool   `json:"managed"`
 }
 
 type rebalanceStopPayload struct {
@@ -500,6 +518,42 @@ func applyRebalanceConfigPayload(cfg RebalanceConfig, payload rebalanceConfigPay
 	if payload.DelegatedFastPathStrictPayback != nil {
 		cfg.DelegatedFastPathStrictPayback = *payload.DelegatedFastPathStrictPayback
 	}
+	if payload.AutoTargetEnabled != nil {
+		cfg.AutoTargetEnabled = *payload.AutoTargetEnabled
+	}
+	if payload.AutoTargetMaxPct != nil {
+		cfg.AutoTargetMaxPct = *payload.AutoTargetMaxPct
+	}
+	if payload.AutoTargetMinPct != nil {
+		cfg.AutoTargetMinPct = *payload.AutoTargetMinPct
+	}
+	if payload.AutoTargetStepPct != nil {
+		cfg.AutoTargetStepPct = *payload.AutoTargetStepPct
+	}
+	if payload.AutoTargetEvalIntervalHours != nil {
+		cfg.AutoTargetEvalIntervalHours = *payload.AutoTargetEvalIntervalHours
+	}
+	if payload.AutoTargetMaxUpsPerCycle != nil {
+		cfg.AutoTargetMaxUpsPerCycle = *payload.AutoTargetMaxUpsPerCycle
+	}
+	if payload.AutoTargetMaxLocalSat != nil {
+		cfg.AutoTargetMaxLocalSat = *payload.AutoTargetMaxLocalSat
+	}
+	if payload.AutoTargetMinDrainRateSatPerHr != nil {
+		cfg.AutoTargetMinDrainRateSatPerHr = *payload.AutoTargetMinDrainRateSatPerHr
+	}
+	if payload.AutoTargetMinRevenue7dSat != nil {
+		cfg.AutoTargetMinRevenue7dSat = *payload.AutoTargetMinRevenue7dSat
+	}
+	if payload.AutoTargetUpSuccessThreshold != nil {
+		cfg.AutoTargetUpSuccessThreshold = *payload.AutoTargetUpSuccessThreshold
+	}
+	if payload.AutoTargetDownSuccessThreshold != nil {
+		cfg.AutoTargetDownSuccessThreshold = *payload.AutoTargetDownSuccessThreshold
+	}
+	if payload.AutoTargetDrainFirstMultiplier != nil {
+		cfg.AutoTargetDrainFirstMultiplier = *payload.AutoTargetDrainFirstMultiplier
+	}
 	return cfg
 }
 
@@ -676,6 +730,45 @@ func validateRebalanceConfigPayload(payload rebalanceConfigPayload) error {
 	}
 	if err := validateOptionalFloat("autofee_settling_multiplier", payload.AutofeeSettlingMultiplier, 0, 1); err != nil {
 		return err
+	}
+	if err := validateOptionalInt("auto_target_max_pct", payload.AutoTargetMaxPct, 10, 90); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("auto_target_min_pct", payload.AutoTargetMinPct, 1, 89); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("auto_target_step_pct", payload.AutoTargetStepPct, 1, 25); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("auto_target_eval_interval_hours", payload.AutoTargetEvalIntervalHours, 1, 168); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("auto_target_max_ups_per_cycle", payload.AutoTargetMaxUpsPerCycle, 1, 50); err != nil {
+		return err
+	}
+	if err := validateOptionalInt64("auto_target_max_local_sat", payload.AutoTargetMaxLocalSat, 1, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalInt64("auto_target_min_drain_rate_sat_per_hr", payload.AutoTargetMinDrainRateSatPerHr, 0, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalInt64("auto_target_min_revenue_7d_sat", payload.AutoTargetMinRevenue7dSat, 0, 0); err != nil {
+		return err
+	}
+	if err := validateOptionalFloat("auto_target_up_success_threshold", payload.AutoTargetUpSuccessThreshold, 0.01, 1); err != nil {
+		return err
+	}
+	if err := validateOptionalFloat("auto_target_down_success_threshold", payload.AutoTargetDownSuccessThreshold, 0.01, 1); err != nil {
+		return err
+	}
+	if err := validateOptionalFloat("auto_target_drain_first_multiplier", payload.AutoTargetDrainFirstMultiplier, 1, 20); err != nil {
+		return err
+	}
+	if payload.AutoTargetMinPct != nil && payload.AutoTargetMaxPct != nil && *payload.AutoTargetMinPct >= *payload.AutoTargetMaxPct {
+		return errors.New("auto_target_min_pct must be < auto_target_max_pct")
+	}
+	if payload.AutoTargetDownSuccessThreshold != nil && payload.AutoTargetUpSuccessThreshold != nil && *payload.AutoTargetDownSuccessThreshold >= *payload.AutoTargetUpSuccessThreshold {
+		return errors.New("auto_target_down_success_threshold must be < auto_target_up_success_threshold")
 	}
 	return nil
 }
@@ -863,6 +956,39 @@ func (s *Server) handleRebalanceSovereignHistory(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, map[string]any{"history": history})
 }
 
+func (s *Server) handleRebalanceAutoTargetHistory(w http.ResponseWriter, r *http.Request) {
+	if s.rebalance == nil {
+		writeError(w, http.StatusServiceUnavailable, "rebalance unavailable")
+		return
+	}
+	limit := 0
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			limit = parsed
+		}
+	}
+	var channelID uint64
+	if raw := r.URL.Query().Get("channel_id"); raw != "" {
+		if parsed, err := strconv.ParseUint(raw, 10, 64); err == nil {
+			channelID = parsed
+		}
+	}
+	var since time.Time
+	if raw := r.URL.Query().Get("since"); raw != "" {
+		if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
+			since = parsed
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
+	defer cancel()
+	items, err := s.rebalance.AutoTargetHistory(ctx, channelID, limit, since)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
 func (s *Server) handleRebalanceRun(w http.ResponseWriter, r *http.Request) {
 	if s.rebalance == nil {
 		writeError(w, http.StatusServiceUnavailable, "rebalance unavailable")
@@ -993,6 +1119,34 @@ func (s *Server) handleRebalanceChannelAuto(w http.ResponseWriter, r *http.Reque
 			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleRebalanceChannelAutoTargetManaged(w http.ResponseWriter, r *http.Request) {
+	if s.rebalance == nil {
+		writeError(w, http.StatusServiceUnavailable, "rebalance unavailable")
+		return
+	}
+	var payload rebalanceChannelAutoTargetPayload
+	if err := readJSON(r, &payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if payload.ChannelID == 0 && strings.TrimSpace(payload.ChannelPoint) == "" {
+		writeError(w, http.StatusBadRequest, "channel_id or channel_point required")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	defer cancel()
+	resolvedID, resolvedPoint, err := s.rebalance.ResolveChannel(ctx, payload.ChannelID, payload.ChannelPoint)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.rebalance.SetChannelAutoTargetManaged(ctx, resolvedID, resolvedPoint, payload.Managed); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

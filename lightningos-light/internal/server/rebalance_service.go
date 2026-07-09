@@ -414,6 +414,28 @@ type RebalanceConfig struct {
 	// protected liquidity. This gives the LND-native pathfinder a safe
 	// per-source envelope even though SendPaymentV2 has no per-source cap.
 	DelegatedFastPathStrictPayback bool `json:"delegated_fast_path_strict_payback"`
+	// AutoTarget: loop opt-in que roda DENTRO do ciclo do autopilot
+	// (evaluateAutoTarget, chamado por runAutoScan) e ajusta o
+	// target_outbound_pct por canal. UP nos canais que estão vendendo bem e
+	// rápido — sempre entre os candidatos selecionados da rodada, que são
+	// supply-limited por construção (abaixo do target e drenando). DOWN nos
+	// canais managed que pararam de vender (encheu-e-segurou). Consciente de
+	// capacidade (cap absoluto de liquidez local por canal, pra canal gigante
+	// não receber target desproporcional) e de budget (throttle de UPs por
+	// ciclo). Default OFF; toda decisão (up/down/noop) vai pra
+	// rebalance_auto_target_history.
+	AutoTargetEnabled              bool    `json:"auto_target_enabled"`
+	AutoTargetMaxPct               int     `json:"auto_target_max_pct"`
+	AutoTargetMinPct               int     `json:"auto_target_min_pct"`
+	AutoTargetStepPct              int     `json:"auto_target_step_pct"`
+	AutoTargetEvalIntervalHours    int     `json:"auto_target_eval_interval_hours"`
+	AutoTargetMaxUpsPerCycle       int     `json:"auto_target_max_ups_per_cycle"`
+	AutoTargetMaxLocalSat          int64   `json:"auto_target_max_local_sat"`
+	AutoTargetMinDrainRateSatPerHr int64   `json:"auto_target_min_drain_rate_sat_per_hr"`
+	AutoTargetMinRevenue7dSat      int64   `json:"auto_target_min_revenue_7d_sat"`
+	AutoTargetUpSuccessThreshold   float64 `json:"auto_target_up_success_threshold"`
+	AutoTargetDownSuccessThreshold float64 `json:"auto_target_down_success_threshold"`
+	AutoTargetDrainFirstMultiplier float64 `json:"auto_target_drain_first_multiplier"`
 }
 
 type RebalanceOverview struct {
@@ -1025,6 +1047,7 @@ type RebalanceChannel struct {
 	TargetAmountSat        int64    `json:"target_amount_sat"`
 	AutoEnabled            bool     `json:"auto_enabled"`
 	ManualRestartEnabled   bool     `json:"manual_restart_enabled"`
+	AutoTargetManaged      bool     `json:"auto_target_managed"`
 	AutomationMode         string   `json:"automation_mode,omitempty"`
 	FixedFeePPM            *int64   `json:"fixed_fee_ppm,omitempty"`
 	ReviewAt               string   `json:"review_at,omitempty"`
@@ -1156,6 +1179,11 @@ type channelSetting struct {
 	EconRatioOverride    float64
 	EconRatioOverrideSet bool
 	AutoBypassCostGate   bool
+	// AutoTargetManaged: quando true (default), o AutoTarget pode ajustar o
+	// target_outbound_pct deste canal. Opt-out per-channel. A coluna
+	// auto_target_managed tem default true no schema; upserts das outras
+	// automações não a tocam.
+	AutoTargetManaged bool
 }
 
 type channelLedger struct {
@@ -1591,6 +1619,18 @@ func defaultRebalanceConfig() RebalanceConfig {
 		AutofeeSettlingMultiplier:              0.5,
 		DelegatedFastPathEnabled:               true,
 		DelegatedFastPathStrictPayback:         true,
+		AutoTargetEnabled:                      false,
+		AutoTargetMaxPct:                       50,
+		AutoTargetMinPct:                       10,
+		AutoTargetStepPct:                      5,
+		AutoTargetEvalIntervalHours:            6,
+		AutoTargetMaxUpsPerCycle:               3,
+		AutoTargetMaxLocalSat:                  5_000_000,
+		AutoTargetMinDrainRateSatPerHr:         5000,
+		AutoTargetMinRevenue7dSat:              500,
+		AutoTargetUpSuccessThreshold:           0.5,
+		AutoTargetDownSuccessThreshold:         0.25,
+		AutoTargetDrainFirstMultiplier:         3.0,
 	}
 }
 
@@ -1715,6 +1755,15 @@ where last_success_at is null
 	}
 	if s.logger != nil && tag.RowsAffected() > 0 {
 		s.logger.Printf("rebalance pair_stats cleanup: removed %d stale rows (cutoff=%s)", tag.RowsAffected(), cutoff.Format(time.RFC3339))
+	}
+	// Retention for AutoTarget decision history (keep the audit table lean).
+	atCutoff := time.Now().Add(-autoTargetHistoryRetention)
+	if atTag, atErr := s.db.Exec(ctx, `delete from rebalance_auto_target_history where decided_at < $1`, atCutoff); atErr != nil {
+		if s.logger != nil {
+			s.logger.Printf("rebalance auto_target_history cleanup failed: %v", atErr)
+		}
+	} else if s.logger != nil && atTag.RowsAffected() > 0 {
+		s.logger.Printf("rebalance auto_target_history cleanup: removed %d rows older than %s", atTag.RowsAffected(), atCutoff.Format(time.RFC3339))
 	}
 }
 
@@ -2255,6 +2304,54 @@ func normalizeRebalanceConfig(cfg RebalanceConfig) RebalanceConfig {
 	}
 	if cfg.AutofeeSettlingMultiplier > 1 {
 		cfg.AutofeeSettlingMultiplier = 1
+	}
+	// AutoTarget clamps. Keep the band sane and preserve hysteresis (down < up).
+	if cfg.AutoTargetMaxPct < 10 || cfg.AutoTargetMaxPct > 90 {
+		cfg.AutoTargetMaxPct = def.AutoTargetMaxPct
+	}
+	if cfg.AutoTargetMinPct < 1 {
+		cfg.AutoTargetMinPct = def.AutoTargetMinPct
+	}
+	if cfg.AutoTargetMinPct >= cfg.AutoTargetMaxPct {
+		cfg.AutoTargetMinPct = cfg.AutoTargetMaxPct / 2
+		if cfg.AutoTargetMinPct < 1 {
+			cfg.AutoTargetMinPct = 1
+		}
+	}
+	if cfg.AutoTargetStepPct < 1 || cfg.AutoTargetStepPct > 25 {
+		cfg.AutoTargetStepPct = def.AutoTargetStepPct
+	}
+	if cfg.AutoTargetEvalIntervalHours <= 0 {
+		cfg.AutoTargetEvalIntervalHours = def.AutoTargetEvalIntervalHours
+	}
+	if cfg.AutoTargetEvalIntervalHours > 168 {
+		cfg.AutoTargetEvalIntervalHours = 168
+	}
+	if cfg.AutoTargetMaxUpsPerCycle <= 0 {
+		cfg.AutoTargetMaxUpsPerCycle = def.AutoTargetMaxUpsPerCycle
+	}
+	if cfg.AutoTargetMaxUpsPerCycle > 50 {
+		cfg.AutoTargetMaxUpsPerCycle = 50
+	}
+	if cfg.AutoTargetMaxLocalSat <= 0 {
+		cfg.AutoTargetMaxLocalSat = def.AutoTargetMaxLocalSat
+	}
+	if cfg.AutoTargetMinDrainRateSatPerHr < 0 {
+		cfg.AutoTargetMinDrainRateSatPerHr = def.AutoTargetMinDrainRateSatPerHr
+	}
+	if cfg.AutoTargetMinRevenue7dSat < 0 {
+		cfg.AutoTargetMinRevenue7dSat = 0
+	}
+	cfg.AutoTargetUpSuccessThreshold = normalizeRatioConfig(cfg.AutoTargetUpSuccessThreshold, def.AutoTargetUpSuccessThreshold, 1)
+	cfg.AutoTargetDownSuccessThreshold = normalizeRatioConfig(cfg.AutoTargetDownSuccessThreshold, def.AutoTargetDownSuccessThreshold, 1)
+	if cfg.AutoTargetDownSuccessThreshold >= cfg.AutoTargetUpSuccessThreshold {
+		cfg.AutoTargetDownSuccessThreshold = cfg.AutoTargetUpSuccessThreshold / 2
+	}
+	if math.IsNaN(cfg.AutoTargetDrainFirstMultiplier) || math.IsInf(cfg.AutoTargetDrainFirstMultiplier, 0) || cfg.AutoTargetDrainFirstMultiplier <= 0 {
+		cfg.AutoTargetDrainFirstMultiplier = def.AutoTargetDrainFirstMultiplier
+	}
+	if cfg.AutoTargetDrainFirstMultiplier > 20 {
+		cfg.AutoTargetDrainFirstMultiplier = 20
 	}
 	return cfg
 }
@@ -3388,6 +3485,13 @@ func (s *RebalanceService) runAutoScan() {
 			TargetDistinctSourceCooldowns: targetCooldowns.DistinctSource,
 			AutofeeRecentAdjustments:      autofeeAdjustments,
 		})
+		// AutoTarget runs together with the round's candidates (opt-in): it can
+		// raise the target of the strong sellers among them (supply-limited by
+		// construction) and lower channels that stopped selling. Reuses the
+		// snapshots, pair stats and structural cooldowns already loaded above.
+		if cfg.AutoTargetEnabled {
+			s.evaluateAutoTarget(ctx, cfg, scanAt, snapshots, settings, sovereignPlan.Candidates, sovereignPairStats, sovereignStructuralCooldowns)
+		}
 		sovereignResult := s.executeSovereignAutopilot(ctx, cfg, settings, sovereignPlan, scanAt, schedulerMode == rebalanceSchedulerModeSovereignLive)
 		s.recordSovereignAutopilot(ctx, scanAt, schedulerMode, sovereignResult)
 		if schedulerMode == rebalanceSchedulerModeSovereignLive {
@@ -9129,6 +9233,7 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 		TargetAmountSat:        targetAmount,
 		AutoEnabled:            setting.AutoEnabled,
 		ManualRestartEnabled:   setting.ManualRestartEnabled,
+		AutoTargetManaged:      setting.AutoTargetManaged,
 		AutomationMode:         setting.AutomationMode,
 		FixedFeePPM:            setting.FixedFeePPM,
 		ReviewAt:               setting.ReviewAt,
@@ -11295,6 +11400,30 @@ end $$;
     alter column fresh_paid_liquidity_lock_hours set default 6;
   alter table rebalance_config
     alter column cooldown_probe_enabled set default false;
+  alter table rebalance_config
+    add column if not exists auto_target_enabled boolean not null default false;
+  alter table rebalance_config
+    add column if not exists auto_target_max_pct integer not null default 50;
+  alter table rebalance_config
+    add column if not exists auto_target_min_pct integer not null default 10;
+  alter table rebalance_config
+    add column if not exists auto_target_step_pct integer not null default 5;
+  alter table rebalance_config
+    add column if not exists auto_target_eval_interval_hours integer not null default 6;
+  alter table rebalance_config
+    add column if not exists auto_target_max_ups_per_cycle integer not null default 3;
+  alter table rebalance_config
+    add column if not exists auto_target_max_local_sat bigint not null default 5000000;
+  alter table rebalance_config
+    add column if not exists auto_target_min_drain_rate_sat_per_hr bigint not null default 5000;
+  alter table rebalance_config
+    add column if not exists auto_target_min_revenue_7d_sat bigint not null default 500;
+  alter table rebalance_config
+    add column if not exists auto_target_up_success_threshold double precision not null default 0.5;
+  alter table rebalance_config
+    add column if not exists auto_target_down_success_threshold double precision not null default 0.25;
+  alter table rebalance_config
+    add column if not exists auto_target_drain_first_multiplier double precision not null default 3.0;
 
   alter table if exists rebalance_channel_settings
     add column if not exists manual_restart_enabled boolean not null default false;
@@ -11304,6 +11433,8 @@ end $$;
     add column if not exists econ_ratio_override double precision;
   alter table if exists rebalance_channel_settings
     add column if not exists auto_bypass_cost_gate boolean not null default false;
+  alter table if exists rebalance_channel_settings
+    add column if not exists auto_target_managed boolean not null default true;
 
 create table if not exists rebalance_channel_settings (
   channel_id bigint primary key,
@@ -11314,6 +11445,7 @@ create table if not exists rebalance_channel_settings (
   use_default_econ_ratio boolean not null default true,
   econ_ratio_override double precision,
   auto_bypass_cost_gate boolean not null default false,
+  auto_target_managed boolean not null default true,
   updated_at timestamptz not null default now()
 );
 
@@ -11500,6 +11632,20 @@ create table if not exists rebalance_sovereign_history (
   created_at timestamptz not null default now()
 );
 
+create table if not exists rebalance_auto_target_history (
+  id bigserial primary key,
+  channel_id bigint not null,
+  channel_point text,
+  decided_at timestamptz not null default now(),
+  prev_target_pct integer,
+  new_target_pct integer,
+  direction text,
+  applied boolean not null default false,
+  trigger_signals jsonb not null default '{}'::jsonb,
+  measurement_window_hours integer,
+  created_at timestamptz not null default now()
+);
+
 create table if not exists rebalance_budget_daily (
   day date primary key,
   budget_sat bigint not null,
@@ -11527,6 +11673,7 @@ create index if not exists rebalance_pair_stats_success_idx on rebalance_pair_st
 create index if not exists rebalance_scan_skips_scan_idx on rebalance_scan_skips (scan_at desc);
 create index if not exists rebalance_scan_skips_reason_idx on rebalance_scan_skips (reason, scan_at desc);
 create index if not exists rebalance_sovereign_history_scan_idx on rebalance_sovereign_history (scan_at desc);
+create index if not exists rebalance_auto_target_history_ch_idx on rebalance_auto_target_history (channel_id, decided_at desc);
 create index if not exists notifications_channel_id_idx on notifications (channel_id);
 create index if not exists notifications_channel_occurred_idx on notifications (channel_id, occurred_at desc);
 
@@ -11588,7 +11735,8 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags, fresh_paid_liquidity_lock_enabled, fresh_paid_liquidity_lock_hours,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback,
-    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct, fast_path_max_timeout_sec, sovereign_top_bucket_pct, manual_restart_ignore_economic_gates, rebalance_profile
+    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct, fast_path_max_timeout_sec, sovereign_top_bucket_pct, manual_restart_ignore_economic_gates, rebalance_profile,
+    auto_target_enabled, auto_target_max_pct, auto_target_min_pct, auto_target_step_pct, auto_target_eval_interval_hours, auto_target_max_ups_per_cycle, auto_target_max_local_sat, auto_target_min_drain_rate_sat_per_hr, auto_target_min_revenue_7d_sat, auto_target_up_success_threshold, auto_target_down_success_threshold, auto_target_drain_first_multiplier
   from rebalance_config where id=$1`, rebalanceConfigID)
 
 	cfg := defaultRebalanceConfig()
@@ -11668,6 +11816,18 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.SovereignTopBucketPct,
 		&cfg.ManualRestartIgnoreEconomicGates,
 		&cfg.Profile,
+		&cfg.AutoTargetEnabled,
+		&cfg.AutoTargetMaxPct,
+		&cfg.AutoTargetMinPct,
+		&cfg.AutoTargetStepPct,
+		&cfg.AutoTargetEvalIntervalHours,
+		&cfg.AutoTargetMaxUpsPerCycle,
+		&cfg.AutoTargetMaxLocalSat,
+		&cfg.AutoTargetMinDrainRateSatPerHr,
+		&cfg.AutoTargetMinRevenue7dSat,
+		&cfg.AutoTargetUpSuccessThreshold,
+		&cfg.AutoTargetDownSuccessThreshold,
+		&cfg.AutoTargetDrainFirstMultiplier,
 	)
 	if err != nil {
 		return cfg, err
@@ -11691,8 +11851,10 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     max_concurrent, min_amount_sat, max_amount_sat, min_split_enabled, min_probe_sat, min_execute_sat, mpp_enabled, mpp_max_shards, mpp_parallelism, mpp_min_shard_sat, mpp_round_timeout_sec, mpp_auto_only,
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags, fresh_paid_liquidity_lock_enabled, fresh_paid_liquidity_lock_hours,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback,
-    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct, fast_path_max_timeout_sec, sovereign_top_bucket_pct, manual_restart_ignore_economic_gates, rebalance_profile, updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,$74,$75,$76,now())
+    sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct, fast_path_max_timeout_sec, sovereign_top_bucket_pct, manual_restart_ignore_economic_gates, rebalance_profile,
+    auto_target_enabled, auto_target_max_pct, auto_target_min_pct, auto_target_step_pct, auto_target_eval_interval_hours, auto_target_max_ups_per_cycle, auto_target_max_local_sat, auto_target_min_drain_rate_sat_per_hr, auto_target_min_revenue_7d_sat, auto_target_up_success_threshold, auto_target_down_success_threshold, auto_target_drain_first_multiplier,
+    updated_at
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,$74,$75,$76,$77,$78,$79,$80,$81,$82,$83,$84,$85,$86,$87,$88,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scheduler_mode = excluded.scheduler_mode,
@@ -11769,9 +11931,22 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     sovereign_top_bucket_pct = excluded.sovereign_top_bucket_pct,
     manual_restart_ignore_economic_gates = excluded.manual_restart_ignore_economic_gates,
     rebalance_profile = excluded.rebalance_profile,
+    auto_target_enabled = excluded.auto_target_enabled,
+    auto_target_max_pct = excluded.auto_target_max_pct,
+    auto_target_min_pct = excluded.auto_target_min_pct,
+    auto_target_step_pct = excluded.auto_target_step_pct,
+    auto_target_eval_interval_hours = excluded.auto_target_eval_interval_hours,
+    auto_target_max_ups_per_cycle = excluded.auto_target_max_ups_per_cycle,
+    auto_target_max_local_sat = excluded.auto_target_max_local_sat,
+    auto_target_min_drain_rate_sat_per_hr = excluded.auto_target_min_drain_rate_sat_per_hr,
+    auto_target_min_revenue_7d_sat = excluded.auto_target_min_revenue_7d_sat,
+    auto_target_up_success_threshold = excluded.auto_target_up_success_threshold,
+    auto_target_down_success_threshold = excluded.auto_target_down_success_threshold,
+    auto_target_drain_first_multiplier = excluded.auto_target_drain_first_multiplier,
     updated_at = now()
   `, rebalanceConfigID, cfg.AutoEnabled, cfg.SchedulerMode, cfg.SovereignCandidateScope, cfg.SovereignMaxJobsPerCycle, cfg.SovereignMinExpectedProfitSat, cfg.SovereignLowSuccessMinRate, cfg.SovereignLowSuccessMinProfitCostRatio, cfg.SovereignBudgetEfficiencyMinRatio, cfg.SovereignRouteDeadSourceShare, cfg.SovereignRiskScoreFloor, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetUnlimited, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
 		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.FreshPaidLiquidityLockEnabled, cfg.FreshPaidLiquidityLockHours, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback, cfg.SovereignAttributionWindowHours, cfg.SovereignSlowSellerWindowHours, cfg.SovereignTargetSourceQuarantineHours, cfg.SovereignStructuralCooldownRepeatHours, cfg.SovereignExplorationSlotPct, cfg.SovereignSourceOpportunityCostEnabled, cfg.SovereignSlowSellerEnabled, cfg.SovereignGainV3ColdStartPct, cfg.FastPathMaxTimeoutSec, cfg.SovereignTopBucketPct, cfg.ManualRestartIgnoreEconomicGates, cfg.Profile,
+		cfg.AutoTargetEnabled, cfg.AutoTargetMaxPct, cfg.AutoTargetMinPct, cfg.AutoTargetStepPct, cfg.AutoTargetEvalIntervalHours, cfg.AutoTargetMaxUpsPerCycle, cfg.AutoTargetMaxLocalSat, cfg.AutoTargetMinDrainRateSatPerHr, cfg.AutoTargetMinRevenue7dSat, cfg.AutoTargetUpSuccessThreshold, cfg.AutoTargetDownSuccessThreshold, cfg.AutoTargetDrainFirstMultiplier,
 	)
 	if err != nil {
 		return err
@@ -11785,7 +11960,7 @@ func (s *RebalanceService) loadChannelSettings(ctx context.Context) (map[uint64]
 		return settings, nil
 	}
 	rows, err := s.db.Query(ctx, `
-select channel_id, channel_point, target_outbound_pct, auto_enabled, manual_restart_enabled, use_default_econ_ratio, econ_ratio_override, auto_bypass_cost_gate from rebalance_channel_settings
+select channel_id, channel_point, target_outbound_pct, auto_enabled, manual_restart_enabled, use_default_econ_ratio, econ_ratio_override, auto_bypass_cost_gate, auto_target_managed from rebalance_channel_settings
 `)
 	if err != nil {
 		return settings, err
@@ -11795,7 +11970,7 @@ select channel_id, channel_point, target_outbound_pct, auto_enabled, manual_rest
 		var channelID int64
 		var setting channelSetting
 		var econRatioOverride pgtype.Float8
-		if err := rows.Scan(&channelID, &setting.ChannelPoint, &setting.TargetOutboundPct, &setting.AutoEnabled, &setting.ManualRestartEnabled, &setting.UseDefaultEconRatio, &econRatioOverride, &setting.AutoBypassCostGate); err != nil {
+		if err := rows.Scan(&channelID, &setting.ChannelPoint, &setting.TargetOutboundPct, &setting.AutoEnabled, &setting.ManualRestartEnabled, &setting.UseDefaultEconRatio, &econRatioOverride, &setting.AutoBypassCostGate, &setting.AutoTargetManaged); err != nil {
 			return settings, err
 		}
 		if econRatioOverride.Valid {
@@ -14789,6 +14964,24 @@ func (s *RebalanceService) SetChannelManualRestart(ctx context.Context, channelI
      manual_restart_enabled=excluded.manual_restart_enabled,
      updated_at=now()
   `, int64(channelID), channelPoint, rebalanceDefaultTargetOutboundPct, enabled)
+	return err
+}
+
+// SetChannelAutoTargetManaged toggles whether AutoTarget may adjust this
+// channel's target_outbound_pct. Only touches auto_target_managed; other
+// automation flags are preserved.
+func (s *RebalanceService) SetChannelAutoTargetManaged(ctx context.Context, channelID uint64, channelPoint string, managed bool) error {
+	if s.db == nil {
+		return errors.New("db unavailable")
+	}
+	_, err := s.db.Exec(ctx, `
+  insert into rebalance_channel_settings (channel_id, channel_point, target_outbound_pct, auto_target_managed, updated_at)
+  values ($1,$2,$3,$4,now())
+   on conflict (channel_id) do update set
+     channel_point=case when excluded.channel_point <> '' then excluded.channel_point else rebalance_channel_settings.channel_point end,
+     auto_target_managed=excluded.auto_target_managed,
+     updated_at=now()
+  `, int64(channelID), strings.TrimSpace(channelPoint), rebalanceDefaultTargetOutboundPct, managed)
 	return err
 }
 

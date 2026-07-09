@@ -11,9 +11,11 @@ import {
   resetRebalanceMissionControl,
   runRebalance,
   updateRebalanceChannelAuto,
+  updateRebalanceChannelAutoTarget,
   updateRebalanceChannelManualRestart,
   updateRebalanceChannelTarget,
   updateRebalanceConfig,
+  getRebalanceAutoTargetHistory,
   applyRebalanceProfile,
   getRebalanceConfigSnapshots,
   saveRebalanceConfigSnapshot,
@@ -27,6 +29,7 @@ import { PairStatsPanel } from '../components/rebalance/PairStatsPanel'
 import { SettingsSubcard } from '../components/rebalance/SettingsSubcard'
 import type {
   RebalanceAttempt,
+  RebalanceAutoTargetHistoryItem,
   RebalanceChannel,
   RebalanceConfig,
   RebalanceConfigSnapshot,
@@ -159,6 +162,9 @@ export default function RebalanceCenter() {
   const [failureTelemetryOpen, setFailureTelemetryOpen] = useState(false)
   const [autopilotDecisionsOpen, setAutopilotDecisionsOpen] = useState(false)
   const [autopilotConfigOpen, setAutopilotConfigOpen] = useState(false)
+  const [autoTargetHistory, setAutoTargetHistory] = useState<RebalanceAutoTargetHistoryItem[]>([])
+  const [autoTargetHistoryOpen, setAutoTargetHistoryOpen] = useState(false)
+  const [autoTargetHistoryLoading, setAutoTargetHistoryLoading] = useState(false)
   const [pairStatsOpen, setPairStatsOpen] = useState<Record<string, boolean>>({})
   const [pairStatsByChannel, setPairStatsByChannel] = useState<Record<string, RebalancePairStat[]>>({})
   const [pairStatsLoading, setPairStatsLoading] = useState<Record<string, boolean>>({})
@@ -244,7 +250,19 @@ export default function RebalanceCenter() {
     autofee_settling_window_sec: typeof raw.autofee_settling_window_sec === 'number' ? raw.autofee_settling_window_sec : REBALANCE_DEFAULT_AUTOFEE_SETTLING_WINDOW_SEC,
     autofee_settling_multiplier: typeof raw.autofee_settling_multiplier === 'number' ? raw.autofee_settling_multiplier : REBALANCE_DEFAULT_AUTOFEE_SETTLING_MULTIPLIER,
     delegated_fast_path_enabled: raw.delegated_fast_path_enabled ?? true,
-    delegated_fast_path_strict_payback: raw.delegated_fast_path_strict_payback ?? true
+    delegated_fast_path_strict_payback: raw.delegated_fast_path_strict_payback ?? true,
+    auto_target_enabled: raw.auto_target_enabled ?? false,
+    auto_target_max_pct: typeof raw.auto_target_max_pct === 'number' ? raw.auto_target_max_pct : 50,
+    auto_target_min_pct: typeof raw.auto_target_min_pct === 'number' ? raw.auto_target_min_pct : 10,
+    auto_target_step_pct: typeof raw.auto_target_step_pct === 'number' ? raw.auto_target_step_pct : 5,
+    auto_target_eval_interval_hours: typeof raw.auto_target_eval_interval_hours === 'number' ? raw.auto_target_eval_interval_hours : 6,
+    auto_target_max_ups_per_cycle: typeof raw.auto_target_max_ups_per_cycle === 'number' ? raw.auto_target_max_ups_per_cycle : 3,
+    auto_target_max_local_sat: typeof raw.auto_target_max_local_sat === 'number' ? raw.auto_target_max_local_sat : 5_000_000,
+    auto_target_min_drain_rate_sat_per_hr: typeof raw.auto_target_min_drain_rate_sat_per_hr === 'number' ? raw.auto_target_min_drain_rate_sat_per_hr : 5000,
+    auto_target_min_revenue_7d_sat: typeof raw.auto_target_min_revenue_7d_sat === 'number' ? raw.auto_target_min_revenue_7d_sat : 500,
+    auto_target_up_success_threshold: typeof raw.auto_target_up_success_threshold === 'number' ? raw.auto_target_up_success_threshold : 0.5,
+    auto_target_down_success_threshold: typeof raw.auto_target_down_success_threshold === 'number' ? raw.auto_target_down_success_threshold : 0.25,
+    auto_target_drain_first_multiplier: typeof raw.auto_target_drain_first_multiplier === 'number' ? raw.auto_target_drain_first_multiplier : 3
   })
   const formatTimeToPayback = (channel: RebalanceChannel) => {
     if (!channel.time_to_payback_valid) return t('rebalanceCenter.channels.timeToPaybackNA')
@@ -355,7 +373,19 @@ export default function RebalanceCenter() {
       sovereign_exploration_slot_pct: cfg.sovereign_exploration_slot_pct ?? 0,
       sovereign_ev_weighted_scoring: cfg.sovereign_ev_weighted_scoring ?? false,
       sovereign_source_opportunity_cost_enabled: cfg.sovereign_source_opportunity_cost_enabled ?? true,
-      sovereign_slow_seller_enabled: cfg.sovereign_slow_seller_enabled ?? true
+      sovereign_slow_seller_enabled: cfg.sovereign_slow_seller_enabled ?? true,
+      auto_target_enabled: cfg.auto_target_enabled ?? false,
+      auto_target_max_pct: cfg.auto_target_max_pct ?? 50,
+      auto_target_min_pct: cfg.auto_target_min_pct ?? 10,
+      auto_target_step_pct: cfg.auto_target_step_pct ?? 5,
+      auto_target_eval_interval_hours: cfg.auto_target_eval_interval_hours ?? 6,
+      auto_target_max_ups_per_cycle: cfg.auto_target_max_ups_per_cycle ?? 3,
+      auto_target_max_local_sat: cfg.auto_target_max_local_sat ?? 5_000_000,
+      auto_target_min_drain_rate_sat_per_hr: cfg.auto_target_min_drain_rate_sat_per_hr ?? 5000,
+      auto_target_min_revenue_7d_sat: cfg.auto_target_min_revenue_7d_sat ?? 500,
+      auto_target_up_success_threshold: cfg.auto_target_up_success_threshold ?? 0.5,
+      auto_target_down_success_threshold: cfg.auto_target_down_success_threshold ?? 0.25,
+      auto_target_drain_first_multiplier: cfg.auto_target_drain_first_multiplier ?? 3
     })
   }
   const estimateHistoricalCost = (amountSat: number, feePpm: number) => {
@@ -933,7 +963,19 @@ export default function RebalanceCenter() {
         sovereign_exploration_slot_pct: Math.max(0, Math.min(REBALANCE_MAX_SOVEREIGN_EXPLORATION_SLOT_PCT, Number(config.sovereign_exploration_slot_pct) || 0)),
         sovereign_ev_weighted_scoring: config.sovereign_ev_weighted_scoring,
         sovereign_source_opportunity_cost_enabled: config.sovereign_source_opportunity_cost_enabled,
-        sovereign_slow_seller_enabled: config.sovereign_slow_seller_enabled
+        sovereign_slow_seller_enabled: config.sovereign_slow_seller_enabled,
+        auto_target_enabled: config.auto_target_enabled,
+        auto_target_max_pct: Math.max(10, Math.min(90, Number(config.auto_target_max_pct) || 50)),
+        auto_target_min_pct: Math.max(1, Math.min(89, Number(config.auto_target_min_pct) || 10)),
+        auto_target_step_pct: Math.max(1, Math.min(25, Number(config.auto_target_step_pct) || 5)),
+        auto_target_eval_interval_hours: Math.max(1, Math.min(168, Number(config.auto_target_eval_interval_hours) || 6)),
+        auto_target_max_ups_per_cycle: Math.max(1, Math.min(50, Number(config.auto_target_max_ups_per_cycle) || 3)),
+        auto_target_max_local_sat: Math.max(1, Number(config.auto_target_max_local_sat) || 5_000_000),
+        auto_target_min_drain_rate_sat_per_hr: Math.max(0, Number(config.auto_target_min_drain_rate_sat_per_hr) || 5000),
+        auto_target_min_revenue_7d_sat: Math.max(0, Number(config.auto_target_min_revenue_7d_sat) || 500),
+        auto_target_up_success_threshold: Math.max(0.01, Math.min(1, Number(config.auto_target_up_success_threshold) || 0.5)),
+        auto_target_down_success_threshold: Math.max(0.01, Math.min(1, Number(config.auto_target_down_success_threshold) || 0.25)),
+        auto_target_drain_first_multiplier: Math.max(1, Math.min(20, Number(config.auto_target_drain_first_multiplier) || 3))
       })) as RebalanceConfig
       const normalizedSaved = normalizeLoadedConfig(saved)
       setServerConfig(normalizedSaved)
@@ -960,7 +1002,19 @@ export default function RebalanceCenter() {
           sovereign_exploration_slot_pct: normalizedSaved.sovereign_exploration_slot_pct,
           sovereign_ev_weighted_scoring: normalizedSaved.sovereign_ev_weighted_scoring,
           sovereign_source_opportunity_cost_enabled: normalizedSaved.sovereign_source_opportunity_cost_enabled,
-          sovereign_slow_seller_enabled: normalizedSaved.sovereign_slow_seller_enabled
+          sovereign_slow_seller_enabled: normalizedSaved.sovereign_slow_seller_enabled,
+          auto_target_enabled: normalizedSaved.auto_target_enabled,
+          auto_target_max_pct: normalizedSaved.auto_target_max_pct,
+          auto_target_min_pct: normalizedSaved.auto_target_min_pct,
+          auto_target_step_pct: normalizedSaved.auto_target_step_pct,
+          auto_target_eval_interval_hours: normalizedSaved.auto_target_eval_interval_hours,
+          auto_target_max_ups_per_cycle: normalizedSaved.auto_target_max_ups_per_cycle,
+          auto_target_max_local_sat: normalizedSaved.auto_target_max_local_sat,
+          auto_target_min_drain_rate_sat_per_hr: normalizedSaved.auto_target_min_drain_rate_sat_per_hr,
+          auto_target_min_revenue_7d_sat: normalizedSaved.auto_target_min_revenue_7d_sat,
+          auto_target_up_success_threshold: normalizedSaved.auto_target_up_success_threshold,
+          auto_target_down_success_threshold: normalizedSaved.auto_target_down_success_threshold,
+          auto_target_drain_first_multiplier: normalizedSaved.auto_target_drain_first_multiplier
         }
       })
       setStatus(t('rebalanceCenter.autopilot.saved'))
@@ -969,6 +1023,35 @@ export default function RebalanceCenter() {
       setStatus(err instanceof Error ? err.message : t('rebalanceCenter.autopilot.saveFailed'))
     } finally {
       setAutopilotSaving(false)
+    }
+  }
+
+  const loadAutoTargetHistory = async () => {
+    setAutoTargetHistoryLoading(true)
+    try {
+      const res = (await getRebalanceAutoTargetHistory({ limit: 50 })) as { items?: RebalanceAutoTargetHistoryItem[] }
+      setAutoTargetHistory(Array.isArray(res?.items) ? res.items : [])
+    } catch {
+      setAutoTargetHistory([])
+    } finally {
+      setAutoTargetHistoryLoading(false)
+    }
+  }
+
+  const handleToggleAutoTargetHistory = () => {
+    setAutoTargetHistoryOpen((open) => {
+      const next = !open
+      if (next) void loadAutoTargetHistory()
+      return next
+    })
+  }
+
+  const handleSaveChannelAutoTargetManaged = async (channel: RebalanceChannel, managed: boolean) => {
+    try {
+      await updateRebalanceChannelAutoTarget({ channel_id: channel.channel_id, channel_point: channel.channel_point, managed })
+      void loadAll({ silent: true })
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : t('rebalanceCenter.autoTarget.managedFailed'))
     }
   }
 
@@ -2569,6 +2652,137 @@ export default function RebalanceCenter() {
                 />
                 <span>{t('rebalanceCenter.settings.sovereignEvWeightedScoring')}</span>
               </label>
+              <div className="space-y-3 rounded-lg border border-white/10 bg-white/5 p-3 md:col-span-3 xl:col-span-5">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-medium text-fog">{t('rebalanceCenter.autoTarget.title')}</p>
+                    <p className="text-xs text-fog/60">{t('rebalanceCenter.autoTarget.subtitle')}</p>
+                  </div>
+                  <label className="checkbox-card min-h-0 px-3 py-2" title={t('rebalanceCenter.autoTarget.enableHint')}>
+                    <input
+                      type="checkbox"
+                      checked={config.auto_target_enabled ?? false}
+                      disabled={config.scheduler_mode === 'rules_auto'}
+                      onChange={(e) => setConfig({ ...config, auto_target_enabled: e.target.checked })}
+                    />
+                    <span>{t('rebalanceCenter.autoTarget.enable')}</span>
+                  </label>
+                </div>
+                {(() => {
+                  const atDisabled = config.scheduler_mode === 'rules_auto' || !(config.auto_target_enabled ?? false)
+                  return (
+                    <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-5">
+                      <div className="space-y-2">
+                        <label className="text-sm text-fog/70">{t('rebalanceCenter.autoTarget.maxPct')}</label>
+                        <input className="input-field" type="number" min={10} max={90} step={1} disabled={atDisabled}
+                          value={config.auto_target_max_pct ?? 50}
+                          onChange={(e) => setConfig({ ...config, auto_target_max_pct: Number(e.target.value) })} />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm text-fog/70">{t('rebalanceCenter.autoTarget.minPct')}</label>
+                        <input className="input-field" type="number" min={1} max={89} step={1} disabled={atDisabled}
+                          value={config.auto_target_min_pct ?? 10}
+                          onChange={(e) => setConfig({ ...config, auto_target_min_pct: Number(e.target.value) })} />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm text-fog/70">{t('rebalanceCenter.autoTarget.stepPct')}</label>
+                        <input className="input-field" type="number" min={1} max={25} step={1} disabled={atDisabled}
+                          value={config.auto_target_step_pct ?? 5}
+                          onChange={(e) => setConfig({ ...config, auto_target_step_pct: Number(e.target.value) })} />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm text-fog/70">{t('rebalanceCenter.autoTarget.evalIntervalHours')}</label>
+                        <input className="input-field" type="number" min={1} max={168} step={1} disabled={atDisabled}
+                          value={config.auto_target_eval_interval_hours ?? 6}
+                          onChange={(e) => setConfig({ ...config, auto_target_eval_interval_hours: Number(e.target.value) })} />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm text-fog/70">{t('rebalanceCenter.autoTarget.maxUpsPerCycle')}</label>
+                        <input className="input-field" type="number" min={1} max={50} step={1} disabled={atDisabled}
+                          value={config.auto_target_max_ups_per_cycle ?? 3}
+                          onChange={(e) => setConfig({ ...config, auto_target_max_ups_per_cycle: Number(e.target.value) })} />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm text-fog/70" title={t('rebalanceCenter.autoTarget.maxLocalSatHint')}>{t('rebalanceCenter.autoTarget.maxLocalSat')}</label>
+                        <input className="input-field" type="number" min={1} step={100000} disabled={atDisabled}
+                          value={config.auto_target_max_local_sat ?? 5000000}
+                          onChange={(e) => setConfig({ ...config, auto_target_max_local_sat: Number(e.target.value) })} />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm text-fog/70">{t('rebalanceCenter.autoTarget.minDrainRate')}</label>
+                        <input className="input-field" type="number" min={0} step={500} disabled={atDisabled}
+                          value={config.auto_target_min_drain_rate_sat_per_hr ?? 5000}
+                          onChange={(e) => setConfig({ ...config, auto_target_min_drain_rate_sat_per_hr: Number(e.target.value) })} />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm text-fog/70">{t('rebalanceCenter.autoTarget.minRevenue')}</label>
+                        <input className="input-field" type="number" min={0} step={100} disabled={atDisabled}
+                          value={config.auto_target_min_revenue_7d_sat ?? 500}
+                          onChange={(e) => setConfig({ ...config, auto_target_min_revenue_7d_sat: Number(e.target.value) })} />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm text-fog/70">{t('rebalanceCenter.autoTarget.upSuccess')}</label>
+                        <input className="input-field" type="number" min={1} max={100} step={1} disabled={atDisabled}
+                          value={Number((((config.auto_target_up_success_threshold ?? 0.5)) * 100).toFixed(0))}
+                          onChange={(e) => setConfig({ ...config, auto_target_up_success_threshold: Number(e.target.value) / 100 })} />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm text-fog/70">{t('rebalanceCenter.autoTarget.downSuccess')}</label>
+                        <input className="input-field" type="number" min={1} max={100} step={1} disabled={atDisabled}
+                          value={Number((((config.auto_target_down_success_threshold ?? 0.25)) * 100).toFixed(0))}
+                          onChange={(e) => setConfig({ ...config, auto_target_down_success_threshold: Number(e.target.value) / 100 })} />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm text-fog/70">{t('rebalanceCenter.autoTarget.drainFirstMultiplier')}</label>
+                        <input className="input-field" type="number" min={1} max={20} step={0.5} disabled={atDisabled}
+                          value={config.auto_target_drain_first_multiplier ?? 3}
+                          onChange={(e) => setConfig({ ...config, auto_target_drain_first_multiplier: Number(e.target.value) })} />
+                      </div>
+                    </div>
+                  )
+                })()}
+                <div className="space-y-2">
+                  <button type="button" className="text-xs text-brand hover:underline" onClick={handleToggleAutoTargetHistory}>
+                    {autoTargetHistoryOpen ? t('rebalanceCenter.autoTarget.hideHistory') : t('rebalanceCenter.autoTarget.showHistory')}
+                  </button>
+                  {autoTargetHistoryOpen && (
+                    <div className="max-h-64 overflow-auto rounded-lg border border-white/10">
+                      {autoTargetHistoryLoading ? (
+                        <p className="p-3 text-xs text-fog/50">{t('rebalanceCenter.autoTarget.historyLoading')}</p>
+                      ) : autoTargetHistory.length === 0 ? (
+                        <p className="p-3 text-xs text-fog/50">{t('rebalanceCenter.autoTarget.historyEmpty')}</p>
+                      ) : (
+                        <table className="w-full text-left text-xs">
+                          <thead className="text-fog/50">
+                            <tr>
+                              <th className="p-2">{t('rebalanceCenter.autoTarget.colWhen')}</th>
+                              <th className="p-2">{t('rebalanceCenter.autoTarget.colChannel')}</th>
+                              <th className="p-2">{t('rebalanceCenter.autoTarget.colDirection')}</th>
+                              <th className="p-2">{t('rebalanceCenter.autoTarget.colChange')}</th>
+                              <th className="p-2">{t('rebalanceCenter.autoTarget.colReason')}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {autoTargetHistory.map((item) => {
+                              const reason = typeof item.trigger_signals?.reason === 'string' ? (item.trigger_signals?.reason as string) : ''
+                              const dirClass = item.direction === 'up' ? 'text-emerald-400' : item.direction === 'down' ? 'text-amber-400' : 'text-fog/50'
+                              return (
+                                <tr key={item.id} className="border-t border-white/5">
+                                  <td className="p-2 text-fog/60">{new Date(item.decided_at).toLocaleString(getLocale())}</td>
+                                  <td className="p-2 text-fog/80">{item.channel_point ? item.channel_point.slice(0, 12) : item.channel_id}</td>
+                                  <td className={`p-2 font-medium ${dirClass}`}>{item.direction}{item.applied ? '' : ' *'}</td>
+                                  <td className="p-2 text-fog/70">{item.prev_target_pct}% → {item.new_target_pct}%</td>
+                                  <td className="p-2 text-fog/50">{reason}</td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -4072,6 +4286,17 @@ export default function RebalanceCenter() {
                         />
                         {t('rebalanceCenter.channels.excludeSource')}
                       </label>
+                      {config?.auto_target_enabled && (
+                        <label className="flex items-center gap-2" title={t('rebalanceCenter.autoTarget.enableHint')}>
+                          <input
+                            type="checkbox"
+                            checked={ch.auto_target_managed ?? true}
+                            onChange={(e) => handleSaveChannelAutoTargetManaged(ch, e.target.checked)}
+                            disabled={channelParked(ch)}
+                          />
+                          {t('rebalanceCenter.autoTarget.managed')}
+                        </label>
+                      )}
                     </div>
                     <div className="text-xs text-fog/50">
                       {scoreMeta && expectedRoiValid

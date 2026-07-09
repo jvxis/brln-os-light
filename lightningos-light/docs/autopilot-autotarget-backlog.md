@@ -2,6 +2,28 @@
 
 **Snapshot:** 2026-05-22, version 0.4.3-Beta
 **Status audit:** 2026-06-20 - open; no `auto_target_*` implementation found.
+**IMPLEMENTADO 2026-07-09.** Ver `internal/server/rebalance_auto_target.go`.
+
+## Desvios do design original (decididos com o operador)
+
+O que foi construído difere deste doc em pontos importantes — este doc fica como
+contexto histórico; a implementação é a fonte da verdade:
+
+- **Sem loop separado.** Em vez de `runAutoTargetLoop` horário, a avaliação
+  (`evaluateAutoTarget`) roda DENTRO do ciclo do autopilot (`runAutoScan`), sobre
+  os candidatos já selecionados da rodada. Um candidato é supply-limited por
+  construção (está abaixo do target e drenando), o que elimina de graça o erro
+  de jun/2026 (subir target de canal demand-limited).
+- **Teto 50%** (`auto_target_max_pct` default 50), não 70.
+- **Consciente de capacidade.** `auto_target_max_local_sat` (cap absoluto de
+  liquidez local) encolhe o teto efetivo % em canais grandes, para não setar
+  target absoluto desproporcional. Mais throttle de UPs por ciclo
+  (`auto_target_max_ups_per_cycle`) para não estourar budget.
+- **Override manual = re-decide no próximo tick** (sem hold).
+- **Sem auto-exclusão por target alto**; opt-out per-channel via
+  `auto_target_managed` (default true).
+- Toda decisão up/down (e UP throttled) grava em `rebalance_auto_target_history`
+  (retenção 90d); holds simples não gravam (mantém a tabela enxuta).
 **Origem:** sessão de tuning do sovereign autopilot. Evidência empírica veio do bump manual de target_outbound_pct em 8 canais (Apr 23 → confirmado em 2026-05-22):
 - LQWD-France (15→40): 2/2 sucessos, +100% rate
 - WoS (20→45): 1 partial em 1.5h pós-bump

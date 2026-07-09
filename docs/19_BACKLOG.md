@@ -13,10 +13,16 @@ sections are kept only as historical design context.
 
 Current product backlog, after checking the repository against the docs:
 
-1. **Open** - `AutoTarget` adaptive `target_outbound_pct`. No `auto_target_*`
-   config, loop, history table, or UI controls were found in code; existing
-   `AutoTarget` naming is only target-selection/cost-gate logic for the
-   rebalance autopilot.
+1. **Implemented 2026-07-09** - `AutoTarget` adaptive `target_outbound_pct`.
+   Opt-in (`auto_target_enabled`, default OFF) evaluation that runs inside the
+   autopilot cycle (`runAutoScan`, not a separate loop) over the round's selected
+   candidates: it raises the target of channels selling fast and viably
+   (supply-limited by construction) and lowers channels that stopped selling.
+   Capacity-aware (absolute `auto_target_max_local_sat` cap) and budget-aware
+   (per-cycle UP throttle), max 50%. Decisions persist to
+   `rebalance_auto_target_history`; per-channel opt-out via `auto_target_managed`.
+   Config + activity UI in Rebalance Center; endpoint
+   `GET /api/rebalance/auto-target/history`.
 2. **Implemented 2026-07-09** - `Autofee` dynamic liquidity state. Autofee now
    derives per-channel `liquidity_state`, includes it in structured results and
    outcomes, and exposes it as badges in Fee Center and Channel Ranking.
@@ -52,6 +58,15 @@ Current product backlog, after checking the repository against the docs:
 
 ## Implemented Since Last Audit
 
+- `AutoTarget` adaptive `target_outbound_pct` (autopilot). New
+  `internal/server/rebalance_auto_target.go` (`decideAutoTargetAdjustment` pure
+  core + `evaluateAutoTarget` hooked into `runAutoScan`), `RebalanceConfig`
+  `auto_target_*` fields + columns + clamps, `auto_target_managed` per-channel
+  setting, `rebalance_auto_target_history` table with 90d retention, handlers
+  `GET /api/rebalance/auto-target/history` and
+  `POST /api/rebalance/channel/auto-target`, Rebalance Center config card +
+  activity panel + per-channel toggle, EN/PT-BR i18n, and focused tests
+  (`rebalance_auto_target_test.go`).
 - `Lightning Tools` custom macaroon generator with audit log. Implemented in
   `internal/lndclient/macaroon.go`, `internal/server/macaroon_handlers.go`,
   `internal/server/routes.go`, `internal/server/auth.go`, `ui/src/api.ts`, and

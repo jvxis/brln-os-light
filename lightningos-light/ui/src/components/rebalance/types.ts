@@ -75,6 +75,31 @@ export type RebalanceConfig = {
   autofee_settling_multiplier: number
   delegated_fast_path_enabled: boolean
   delegated_fast_path_strict_payback: boolean
+  auto_target_enabled: boolean
+  auto_target_max_pct: number
+  auto_target_min_pct: number
+  auto_target_step_pct: number
+  auto_target_eval_interval_hours: number
+  auto_target_max_ups_per_cycle: number
+  auto_target_max_local_sat: number
+  auto_target_min_drain_rate_sat_per_hr: number
+  auto_target_min_revenue_7d_sat: number
+  auto_target_up_success_threshold: number
+  auto_target_down_success_threshold: number
+  auto_target_drain_first_multiplier: number
+}
+
+export type RebalanceAutoTargetHistoryItem = {
+  id: number
+  channel_id: number
+  channel_point?: string
+  decided_at: string
+  prev_target_pct: number
+  new_target_pct: number
+  direction: string
+  applied: boolean
+  trigger_signals?: Record<string, unknown>
+  measurement_window_hours: number
 }
 
 export type RebalanceSovereignDecision = {
@@ -334,6 +359,7 @@ export type RebalanceChannel = {
   target_amount_sat: number
   auto_enabled: boolean
   manual_restart_enabled: boolean
+  auto_target_managed?: boolean
   automation_mode?: 'normal' | 'parked' | 'close_candidate'
   fixed_fee_ppm?: number
   review_at?: string

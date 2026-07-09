@@ -808,6 +808,18 @@ export const updateRebalanceConfig = (payload: {
   autofee_settling_multiplier?: number
   delegated_fast_path_enabled?: boolean
   delegated_fast_path_strict_payback?: boolean
+  auto_target_enabled?: boolean
+  auto_target_max_pct?: number
+  auto_target_min_pct?: number
+  auto_target_step_pct?: number
+  auto_target_eval_interval_hours?: number
+  auto_target_max_ups_per_cycle?: number
+  auto_target_max_local_sat?: number
+  auto_target_min_drain_rate_sat_per_hr?: number
+  auto_target_min_revenue_7d_sat?: number
+  auto_target_up_success_threshold?: number
+  auto_target_down_success_threshold?: number
+  auto_target_drain_first_multiplier?: number
 }) => request('/api/rebalance/config', { method: 'POST', body: JSON.stringify(payload) })
 export const getRebalanceOverview = () => request('/api/rebalance/overview')
 export const getRebalanceChannels = () => request('/api/rebalance/channels')
@@ -822,6 +834,14 @@ export const getRebalanceSovereignHistory = (limit = 0, includeDecisions = false
   if (includeDecisions) params.set('include_decisions', '1')
   const query = params.toString()
   return request(query ? `/api/rebalance/sovereign-history?${query}` : '/api/rebalance/sovereign-history')
+}
+export const getRebalanceAutoTargetHistory = (opts: { channelId?: number; limit?: number; since?: string } = {}) => {
+  const params = new URLSearchParams()
+  if (opts.channelId) params.set('channel_id', String(opts.channelId))
+  if (opts.limit && opts.limit > 0) params.set('limit', String(opts.limit))
+  if (opts.since) params.set('since', opts.since)
+  const query = params.toString()
+  return request(query ? `/api/rebalance/auto-target/history?${query}` : '/api/rebalance/auto-target/history')
 }
 export const resetRebalanceMissionControl = () =>
   request('/api/rebalance/mission-control/reset', { method: 'POST', body: JSON.stringify({}) })
@@ -845,6 +865,8 @@ export const updateRebalanceChannelTarget = (payload: {
   request('/api/rebalance/channel/target', { method: 'POST', body: JSON.stringify(payload) })
 export const updateRebalanceChannelAuto = (payload: { channel_id?: number; channel_point: string; auto_enabled: boolean }) =>
   request('/api/rebalance/channel/auto', { method: 'POST', body: JSON.stringify(payload) })
+export const updateRebalanceChannelAutoTarget = (payload: { channel_id?: number; channel_point: string; managed: boolean }) =>
+  request('/api/rebalance/channel/auto-target', { method: 'POST', body: JSON.stringify(payload) })
 export const updateRebalanceChannelManualRestart = (payload: { channel_id?: number; channel_point: string; enabled: boolean }) =>
   request('/api/rebalance/channel/manual-restart', { method: 'POST', body: JSON.stringify(payload) })
 export const updateRebalanceExclude = (payload: { channel_id?: number; channel_point: string; excluded: boolean }) =>

@@ -55,6 +55,11 @@ Current product backlog, after checking the repository against the docs:
 11. **Open** - `Boltz Client` Lightning-to-on-chain reverse swaps with explicit
     fee preview. No Boltz app handler, swap service, routes, API helpers, or UI
     page were found.
+12. **Open (separate repo)** - `BRLN Lightning edge node` (Taproot Assets over
+    Lightning / Fase 2). The on-chain `tapd` App Store app (Camada 1) is
+    implemented in this repo; distributing/spending the BRLN asset over Lightning
+    needs `litd` integrated + an edge node (RFQ, price oracle, redemption to
+    sats) and is a separate project. Tracked in section 13.
 
 ## Implemented Since Last Audit
 
@@ -1070,6 +1075,82 @@ Backend verification:
 - Backup/export guidance for Boltz Client swap mnemonic and database.
 - Operator-configurable Boltz API endpoint for advanced users.
 - Optional support for other swap types after separate product approval.
+
+## 13. BRLN Lightning Edge Node (Taproot Assets over Lightning)
+
+**Current status (2026-07-03): open — separate repository.** Camada 1 (the
+standalone on-chain `tapd` App Store app) is implemented and in active on-chain
+testing in this repo (`apps_tapd.go`, `apps_tapd_handlers.go`, the Taproot
+Assets page). This section tracks Fase 2 (Camada 2): moving the BRLN asset over
+Lightning. It will be built in a **separate repository**, not brln-os-light.
+
+### Source
+
+Product discussion 2026-07-01 to 2026-07-03 (Taproot Assets investigation +
+on-chain testing with community users).
+
+### Why it is separate
+
+A Taproot Asset can only ride Lightning inside **asset channels**, which require
+the LND `aux` components injected in-process — i.e. **`litd` integrated mode**
+(`lnd`+`tapd`+`litd` one binary). That conflicts with the LOS native `lnd`
+(systemd) and with the single-HTLC-interceptor limit (already blocks running the
+standalone `tapd` app alongside the Fedimint Gateway). So the edge node is a
+**dedicated node**, not the LOS-managed one.
+
+### Goal
+
+Let BRLN circulate and be spent over Lightning: instant, near-zero-fee, and
+convertible to/from sats so any user with a plain `lnd` can redeem value — the
+"Redeem to sats" hook already present (returns 501) in the tapd app UI.
+
+### Architecture
+
+- **Dedicated `litd` integrated node** (`github.com/lightninglabs/lightning-terminal`;
+  current release bundles `lnd v0.21.1-beta` + `tapd v0.8.0` — matches this
+  ecosystem, so BRLN interop is guaranteed). `lnd.conf`:
+  `protocol.simple-taproot-chans=true`, `simple-taproot-overlay-chans=true`,
+  `rpcmiddleware.enable=true`; `lnd-mode=integrated` + `taproot-assets-mode=integrated`.
+  Can reuse Postgres (litd has native SQL backend now).
+- **Edge topology:** the edge opens **asset channels** (BRLN) with litd peers and
+  **normal BTC channels** with the wider LN — including a plain BTC channel to
+  the LOS community node, which stays plain `lnd` and acts as the sat-routing
+  backbone. **No asset channel to the community node** (plain lnd can't hold
+  one).
+- **RFQ + price oracle** convert BRLN <-> sat at the edge; needs a hedging policy
+  for the shifting BRLN/sat balance.
+
+### Two consumption flavors
+
+- **Hold BRLN over LN (niche):** the user also runs `litd` + an asset channel.
+  Not mass-market (litd + channel per user; one on-chain funding tx each).
+- **Redeem value as sats (mass):** a plain-`lnd` user receives **sats** (the edge
+  converts BRLN->sat via RFQ). Reaches everyone; they get sats, not the token.
+
+### Economic model / backing (decide BEFORE building the edge)
+
+The protocol gives **no backing and no price** — BRLN's value = the issuer's
+redemption commitment + reserves. "How many sats" = the oracle rate the issuer
+**honors**; the lastro is the **sat reserve** held to buy BRLN back (in practice
+the edge's sat liquidity). Three models:
+
+1. **Gamified points** — no redemption, no backing/price (no edge needed).
+2. **Redeemable points** — fixed rate + matched sat reserve. Golden rule:
+   BRLN issued <= sat reserve / rate. Recommended for loyalty.
+3. **Stablecoin** — pegged to BRL/USD, reserves = supply (heavy, Tether-like;
+   avoid).
+
+### On-chain cost context (why Lightning matters)
+
+Every on-chain asset transfer anchors ~1000 sats of Bitcoin dust per output +
+miner fee (Taproot Assets design; dust follows the asset, recoverable). Fine for
+airdrops/proof; costly at scale — Lightning removes per-transfer dust/fee.
+
+### Non-goals here
+
+Building this in brln-os-light. The LOS side only needs the Fase 2 hook: the
+`POST /api/apps/tapd/redeem` endpoint + the "Redeem to sats" button call the
+edge's redemption service once it exists.
 
 ## Implemented Or No Longer Active Here
 

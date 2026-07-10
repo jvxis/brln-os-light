@@ -143,7 +143,9 @@ func torUpgradeStatus(ctx context.Context) torUpgradeStatusResponse {
 		resp.Version = extractTorVersion(resp.InstalledPackageVersion)
 	}
 
-	policyOut, policyErr := system.RunCommand(ctx, "apt-cache", "policy", "tor")
+	// apt-cache localizes field names such as "Candidate". Keep its output
+	// stable so candidate detection does not depend on the host locale.
+	policyOut, policyErr := system.RunCommand(ctx, "env", "LC_ALL=C", "LANG=C", "apt-cache", "policy", "tor")
 	if policyErr == nil {
 		resp.CandidatePackageVersion = aptPolicyCandidate(policyOut)
 		resp.CandidateVersion = extractTorVersion(resp.CandidatePackageVersion)
@@ -185,6 +187,8 @@ func torUpgradeStatus(ctx context.Context) torUpgradeStatusResponse {
 	}
 	if policyErr != nil {
 		errorsFound = append(errorsFound, "APT candidate could not be resolved")
+	} else if resp.CandidatePackageVersion == "" {
+		errorsFound = append(errorsFound, "APT did not provide a Tor candidate; refresh package metadata and verify the Tor repository")
 	}
 	resp.Error = strings.Join(errorsFound, "; ")
 	return resp

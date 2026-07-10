@@ -1938,6 +1938,7 @@
     "repositoryMissing": "The official Tor Project repository is not configured. The upgrade flow can configure it before checking the latest version.",
     "updateAvailable": "A newer Tor version is available.",
     "upToDate": "Tor is on the latest version offered by the official repository.",
+    "candidateUnavailable": "The latest Tor version could not be determined from APT.",
     "inProgress": "Tor upgrade in progress.",
     "upgrade": "Upgrade Tor",
     "upgrading": "Upgrading...",

@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# apt-cache output is parsed below. Force stable field names regardless of the
+# locale configured on the node (for example, Candidate instead of Candidato).
+export LC_ALL=C
+export LANG=C
+
 TOR_REPO_URL="https://deb.torproject.org/torproject.org"
 TOR_REPO_KEY_URL="${TOR_REPO_URL}/A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89.asc"
 TOR_KEYRING="/usr/share/keyrings/deb.torproject.org-keyring.gpg"

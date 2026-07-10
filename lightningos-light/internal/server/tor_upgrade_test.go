@@ -1,6 +1,9 @@
 package server
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestExtractTorVersion(t *testing.T) {
 	tests := map[string]string{
@@ -63,5 +66,13 @@ func TestAptPolicyCandidate(t *testing.T) {
 	}
 	if got := aptPolicyCandidate("Candidate: (none)\n"); got != "" {
 		t.Fatalf("aptPolicyCandidate(none) = %q", got)
+	}
+}
+
+func TestTorUpgradeScriptForcesStableAptLocale(t *testing.T) {
+	for _, declaration := range []string{"export LC_ALL=C", "export LANG=C"} {
+		if !strings.Contains(embeddedTorUpgradeScript, declaration) {
+			t.Fatalf("Tor upgrade script must contain %q", declaration)
+		}
 	}
 }

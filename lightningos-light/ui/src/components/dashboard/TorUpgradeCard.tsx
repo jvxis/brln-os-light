@@ -157,6 +157,7 @@ export default function TorUpgradeCard() {
     if (!status) return t('torUpgrade.statusPending')
     if (status?.running) return t('torUpgrade.inProgress')
     if (!status?.repository_official) return t('torUpgrade.repositoryMissing')
+    if (!status?.candidate_version) return t('torUpgrade.candidateUnavailable')
     if (status?.update_available) return t('torUpgrade.updateAvailable')
     return t('torUpgrade.upToDate')
   }, [status, t])

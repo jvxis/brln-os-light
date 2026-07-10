@@ -420,6 +420,7 @@ POST /api/lnops/succession/simulate
 GET /api/apps
 - Returns app list with status.
 - Public Pool may include optional `ufw_active` and `ufw_command` fields when UFW is active and the active Bitcoin source is an existing systemd/external local node.
+- `bark-wallet` reports `scheme=https`, port `4004`, and the path of its generated UI login password. Its Bark daemon and API are not published on the host.
 
 POST /api/apps/{id}/install
 - Installs an app.
@@ -434,10 +435,12 @@ POST /api/apps/{id}/install
 POST /api/apps/{id}/start
 POST /api/apps/{id}/stop
 POST /api/apps/{id}/uninstall
+- Uninstalling `bark-wallet` removes its containers and app definition but intentionally preserves `/var/lib/lightningos/apps-data/bark-wallet` so wallet/off-chain state is not destroyed by the generic App Store action.
 
 POST /api/apps/{id}/reset-admin
 GET /api/apps/{id}/admin-password
-- Only supported for LNDg today.
+- Password read is supported for LNDg, Fedimint Gateway, and Bark Wallet.
+- Password reset is supported for LNDg and Bark Wallet. Resetting Bark Wallet invalidates existing UI sessions without changing wallet data.
 
 ## Notifications
 

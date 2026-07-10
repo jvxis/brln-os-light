@@ -49,6 +49,16 @@ func TestValidateAppRegistry(t *testing.T) {
 	})
 }
 
+func TestValidateAppRegistryConfiguredApps(t *testing.T) {
+	apps, err := (&Server{}).appRegistry()
+	if err != nil {
+		t.Fatalf("configured app registry is invalid: %v", err)
+	}
+	if len(apps) == 0 {
+		t.Fatalf("configured app registry is empty")
+	}
+}
+
 func TestIsAppHiddenFromStore(t *testing.T) {
 	if !isAppHiddenFromStore(depixBuyAppID) {
 		t.Fatalf("expected %s to be hidden from store", depixBuyAppID)

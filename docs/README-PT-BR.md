@@ -25,7 +25,7 @@ LightningOS é um instalador completo de daemon de nó Lightning, com gerenciado
 - Notificações em tempo real (on-chain, Lightning, canais, forwards, rebalances)
 - Notificações Telegram: backups SCB, resumos financeiros, comandos sob demanda `/scb` e `/balances`
 - Relatórios diários de roteamento (timer + backfill + API live + API live de movimento)
-- App Store: Bitcoin Core, Electrs, Mempool, LNDg, LNbits, Elements, Peerswap (psweb), RoboSats Gateway, Public Pool, Buy DePix, FSwap, Fedimint
+- App Store: Bitcoin Core, Bark Wallet, Electrs, Mempool, LNDg, LNbits, Elements, Peerswap (psweb), RoboSats Gateway, Public Pool, Buy DePix, FSwap, Fedimint
 - Gestão de Bitcoin Local (status + config) e visualizador de logs
 
 ## Novidades desde a atualização 0.3.9 do README
@@ -765,8 +765,9 @@ journalctl -u lightningos-manager -n 200 --no-pager
 ss -ltn | grep :8443
 ```
 
-### App Store (Bitcoin Core, Electrs, Mempool, LNDg, LNbits, Elements, Peerswap, RoboSats, Public Pool, Buy DePix, FSwap, Fedimint)
+### App Store (Bitcoin Core, Bark Wallet, Electrs, Mempool, LNDg, LNbits, Elements, Peerswap, RoboSats, Public Pool, Buy DePix, FSwap, Fedimint)
 - Bitcoin Core roda via Docker e usa `/data/bitcoin` por padrão. Na instalação, ele pode opcionalmente usar um diretório de blockchain customizado em um volume já montado; o app não altera esse diretório depois.
+- Bark Wallet roda a interface oficial da Second em `https://<IP_LAN_DO_SERVIDOR>:4004`, com login gerado pelo LightningOS. Ela usa o operador Bark mainnet da Second para pagamentos Ark/Lightning/on-chain, não acessa o LND local e preserva os dados da carteira quando o card é desinstalado.
 - Electrs roda via Docker, indexa o Bitcoin Core local, expõe Electrum TCP na porta `50001` e publica métricas em `127.0.0.1:4224`.
 - Mempool roda uma stack mempool.space local em `http://<IP_LAN_DO_SERVIDOR>:8999` e exige Bitcoin Core + Electrs instalados e rodando.
 - LNDg roda em Docker e escuta em `http://<IP_LAN_DO_SERVIDOR>:8889`.

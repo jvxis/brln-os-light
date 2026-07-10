@@ -204,11 +204,17 @@ func (s *Server) handleAppResetAdmin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing app id")
 		return
 	}
-	if appID != "lndg" {
+	if appID != "lndg" && appID != barkWalletAppID {
 		writeError(w, http.StatusBadRequest, "reset not supported for this app")
 		return
 	}
-	if err := s.resetLndgAdminPassword(r.Context()); err != nil {
+	var err error
+	if appID == barkWalletAppID {
+		err = s.resetBarkWalletAdminPassword(r.Context())
+	} else {
+		err = s.resetLndgAdminPassword(r.Context())
+	}
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -225,7 +231,7 @@ func (s *Server) handleAppAdminPassword(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "missing app id")
 		return
 	}
-	if appID != "lndg" && appID != fedimintGatewayAppID {
+	if appID != "lndg" && appID != fedimintGatewayAppID && appID != barkWalletAppID {
 		writeError(w, http.StatusBadRequest, "admin password not available for this app")
 		return
 	}
@@ -237,8 +243,10 @@ func (s *Server) handleAppAdminPassword(w http.ResponseWriter, r *http.Request) 
 		if password == "" {
 			password = readEnvValue(paths.EnvPath, "LNDG_ADMIN_PASSWORD")
 		}
-	} else {
+	} else if appID == fedimintGatewayAppID {
 		password = readSecretFile(fedimintGatewayAppPaths().AdminPasswordPath)
+	} else {
+		password = readSecretFile(barkWalletAppPaths().AdminPasswordPath)
 	}
 	if password == "" {
 		writeError(w, http.StatusNotFound, "admin password unavailable")

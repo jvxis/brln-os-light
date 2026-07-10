@@ -14,6 +14,7 @@ import mempoolIcon from '../assets/apps/mempool.svg'
 import fedimintIcon from '../assets/apps/fedimint.svg'
 import cpuLotteryIcon from '../assets/apps/cpu-lottery.svg'
 import taprootAssetsIcon from '../assets/apps/taproot-assets.svg'
+import barkWalletIcon from '../assets/apps/bark-wallet.svg'
 import CpuMinerStats from '../components/CpuMinerStats'
 
 type AppInfo = {
@@ -78,7 +79,8 @@ const iconMap: Record<string, string> = {
   mempool: mempoolIcon,
   'fedimint-guardian': fedimintIcon,
   'fedimint-gateway': fedimintIcon,
-  tapd: taprootAssetsIcon
+  tapd: taprootAssetsIcon,
+  'bark-wallet': barkWalletIcon
 }
 
 const internalRoutes: Record<string, string> = {
@@ -136,6 +138,7 @@ export default function AppStore() {
   const [peerswapRemoteTesting, setPeerswapRemoteTesting] = useState(false)
   const [peerswapRemoteMessage, setPeerswapRemoteMessage] = useState('')
   const [peerswapRemoteTested, setPeerswapRemoteTested] = useState(false)
+  const [barkWalletInstallOpen, setBarkWalletInstallOpen] = useState(false)
   const [installFilter, setInstallFilter] = useState<InstallFilter>(() => {
     if (typeof window === 'undefined') return 'all'
     const stored = window.localStorage.getItem(APP_STORE_INSTALL_FILTER_KEY)
@@ -333,6 +336,10 @@ export default function AppStore() {
   }, [electrsRunning])
 
   const handleAction = async (id: string, action: AppAction, payload?: InstallPayload) => {
+    if (id === 'bark-wallet' && action === 'install' && !payload) {
+      setBarkWalletInstallOpen(true)
+      return
+    }
     if (id === 'bitcoincore' && action === 'install' && !payload) {
       setBitcoinCoreUseStorageMount(false)
       setBitcoinCoreSelectedMount('')
@@ -408,12 +415,17 @@ export default function AppStore() {
     })
   }
 
+  const handleBarkWalletInstallConfirm = async () => {
+    setBarkWalletInstallOpen(false)
+    await handleAction('bark-wallet', 'install', {})
+  }
+
   const handleResetAdmin = async (id: string) => {
     setMessage('')
     setBusy((prev) => ({ ...prev, [id]: 'reset-admin' }))
     try {
       await resetAppAdmin(id)
-      setMessage(t('appStore.resetStoredPasswordMessage'))
+      setMessage(id === 'bark-wallet' ? t('appStore.adminPasswordResetMessage') : t('appStore.resetStoredPasswordMessage'))
       loadApps()
     } catch (err) {
       setMessage(err instanceof Error ? err.message : t('appStore.resetFailed'))
@@ -516,8 +528,9 @@ export default function AppStore() {
           const busyAction = busy[app.id]
           const isBusy = Boolean(busyAction)
           const isResetting = busyAction === 'reset-admin'
-          const canResetAdmin = app.id === 'lndg' && app.status === 'running'
-          const resetTitle = canResetAdmin ? t('appStore.resetStoredPassword') : t('appStore.startLndgToReset')
+          const supportsAdminReset = app.id === 'lndg' || app.id === 'bark-wallet'
+          const canResetAdmin = supportsAdminReset && app.status === 'running'
+          const resetTitle = canResetAdmin ? t('appStore.resetStoredPassword') : t('appStore.startAppToReset')
           const statusStyle = statusStyles[app.status] || statusStyles.unknown
           const internalRoute = internalRoutes[app.id]
           const internalRouteLabel = app.id === 'bitcoincore'
@@ -536,20 +549,33 @@ export default function AppStore() {
           const icon = iconMap[app.id]
           const unavailable = app.available === false
           const unavailableMessage = unavailable ? resolveUnavailableMessage(app) : ''
-          const canCopyAdminPassword = app.id === 'lndg' || app.id === 'fedimint-gateway'
+          const canCopyAdminPassword = app.id === 'lndg' || app.id === 'fedimint-gateway' || app.id === 'bark-wallet'
           return (
             <div key={app.id} className="section-card space-y-4">
               <div className="flex items-start justify-between gap-4">
                 <div className="flex items-start gap-4">
                   <div className="h-12 w-12 rounded-2xl bg-transparent flex items-center justify-center overflow-hidden">
                     {icon ? (
-                      <img src={icon} alt={`${app.name} icon`} className={`h-12 w-12 rounded-2xl ${app.id === 'electrs' ? 'object-contain' : 'object-cover'}`} />
+                      <img
+                        src={icon}
+                        alt={`${app.name} icon`}
+                        className={`h-12 w-12 rounded-2xl ${app.id === 'bark-wallet' ? 'bg-white p-2 object-contain' : app.id === 'electrs' ? 'object-contain' : 'object-cover'}`}
+                      />
                     ) : (
                       <span className="text-xs text-fog/50">{t('appStore.appBadge')}</span>
                     )}
                   </div>
                   <div>
-                    <h3 className="text-lg font-semibold">{app.name}</h3>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-lg font-semibold">{app.name}</h3>
+                      {app.id === 'bark-wallet' && (
+                        <>
+                          <span className="rounded-full border border-amber-400/30 bg-amber-500/15 px-2 py-0.5 text-[10px] uppercase tracking-wide text-amber-200">{t('appStore.barkWalletBeta')}</span>
+                          <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-fog/70">{t('appStore.barkWalletMainnet')}</span>
+                          <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-fog/70">{t('appStore.barkWalletSecond')}</span>
+                        </>
+                      )}
+                    </div>
                     <p className="text-sm text-fog/60">{app.description}</p>
                   </div>
                 </div>
@@ -644,6 +670,13 @@ export default function AppStore() {
                     <p>{t('appStore.fedimintGatewayLndMode')}</p>
                   </>
                 )}
+                {app.id === 'bark-wallet' && (
+                  <>
+                    <p>{t('appStore.barkWalletExternalOperator')}</p>
+                    <p>{t('appStore.barkWalletNoLocalLnd')}</p>
+                    <p>{t('appStore.barkWalletDataPreserved')}</p>
+                  </>
+                )}
               </div>
 
               {app.id === 'cpuminer' && app.installed && (
@@ -668,7 +701,7 @@ export default function AppStore() {
                         {t('common.open')}
                       </a>
                     )}
-                    {app.id === 'lndg' && (
+                    {supportsAdminReset && (
                       <button
                         className="btn-secondary"
                         disabled={isBusy || !canResetAdmin}
@@ -691,7 +724,7 @@ export default function AppStore() {
                     <button className="btn-primary" disabled={isBusy || unavailable} title={unavailable ? unavailableMessage : undefined} onClick={() => handleAction(app.id, 'start')}>
                       {isBusy ? t('appStore.starting') : t('common.start')}
                     </button>
-                    {app.id === 'lndg' && (
+                    {supportsAdminReset && (
                       <button
                         className="btn-secondary"
                         disabled={isBusy || !canResetAdmin}
@@ -718,6 +751,40 @@ export default function AppStore() {
       )}
       {!loading && apps.length > 0 && visibleApps.length === 0 && (
         <p className="text-fog/60">{t('appStore.noAppsForFilter')}</p>
+      )}
+
+      {barkWalletInstallOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="w-full max-w-lg rounded-lg border border-white/10 bg-ink p-5 shadow-xl">
+            <div className="space-y-2">
+              <div className="flex items-center gap-3">
+                <img src={barkWalletIcon} alt="" className="h-10 w-10 rounded-xl bg-white p-1.5" />
+                <div>
+                  <h3 className="text-lg font-semibold">{t('appStore.barkWalletInstallTitle')}</h3>
+                  <p className="text-xs uppercase tracking-wide text-amber-200">{t('appStore.barkWalletInstallBadge')}</p>
+                </div>
+              </div>
+              <p className="text-sm text-fog/60">{t('appStore.barkWalletInstallBody')}</p>
+            </div>
+
+            <div className="mt-5 space-y-3 rounded-lg border border-white/10 bg-black/20 p-4 text-sm text-fog/80">
+              <p>• {t('appStore.barkWalletInstallMainnet')}</p>
+              <p>• {t('appStore.barkWalletInstallExternal')}</p>
+              <p>• {t('appStore.barkWalletInstallNoLnd')}</p>
+              <p>• {t('appStore.barkWalletInstallHotWallet')}</p>
+              <p>• {t('appStore.barkWalletInstallBackup')}</p>
+            </div>
+
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button className="btn-secondary" type="button" onClick={() => setBarkWalletInstallOpen(false)}>
+                {t('common.cancel')}
+              </button>
+              <button className="btn-primary" type="button" onClick={handleBarkWalletInstallConfirm}>
+                {t('appStore.install')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {bitcoinCoreInstallOpen && (

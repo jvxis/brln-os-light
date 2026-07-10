@@ -5,6 +5,7 @@ The App Store is a built-in catalog of optional services. Apps are defined in co
 
 ## Current apps
 - bitcoincore: Local Bitcoin Core node (Docker)
+- bark-wallet: Self-custodial Bark/Ark, Lightning, and on-chain wallet using the public Second operator (Docker, HTTPS)
 - lndg: LNDg analytics dashboard (Docker)
 - elements: Elements/Liquid node (native binary)
 - peerswap: Peerswap daemon + psweb UI (native binaries)
@@ -45,6 +46,9 @@ Docker apps:
 - Start: docker compose up -d
 - Stop: docker compose stop
 - Uninstall: docker compose down and remove app files (Bitcoin Core does not delete the selected blockchain directory)
+
+Wallet exception:
+- Bark Wallet uninstall removes `/var/lib/lightningos/apps/bark-wallet` but preserves `/var/lib/lightningos/apps-data/bark-wallet` by design. Seed material and off-chain wallet state must only be deleted through an explicit wallet-deletion flow.
 
 Native apps:
 - Installed: binary + systemd unit exist

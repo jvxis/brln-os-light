@@ -175,6 +175,10 @@ export const getAppUpgradeStatus = (force?: boolean) =>
   request(`/api/app/upgrade/status${buildQuery({ force: force ? 1 : undefined })}`)
 export const startAppUpgrade = (payload?: { target_version?: string }) =>
   request('/api/app/upgrade/start', { method: 'POST', body: JSON.stringify(payload ?? {}) })
+export const getTorUpgradeStatus = (force?: boolean) =>
+  request(`/api/tor/upgrade/status${buildQuery({ force: force ? 1 : undefined })}`)
+export const startTorUpgrade = () =>
+  request('/api/tor/upgrade/start', { method: 'POST', body: JSON.stringify({}) })
 export const getWizardStatus = () => request('/api/wizard/status')
 
 export const postBitcoinRemote = (payload: { rpcuser: string; rpcpass: string }) =>

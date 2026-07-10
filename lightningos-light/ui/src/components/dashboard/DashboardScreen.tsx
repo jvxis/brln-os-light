@@ -42,6 +42,7 @@ import OperationsOverview from './OperationsOverview'
 import RecentActivityCard from './RecentActivityCard'
 import StatusBadge from './StatusBadge'
 import SystemPulseModal from './SystemPulseModal'
+import TorUpgradeCard from './TorUpgradeCard'
 import { toneFromHealthStatus } from './formatters'
 import type {
   AmbossHealthStatus,
@@ -1059,6 +1060,8 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
         />
         <RecentActivityCard notifications={notifications} />
       </div>
+
+      <TorUpgradeCard />
 
       <div className="section-card space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-4">

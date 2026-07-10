@@ -1257,6 +1257,8 @@ func mapService(name string) string {
 		return lndUpgradeUnitName
 	case "app-upgrade", "lightningos-app-upgrade":
 		return appUpgradeUnitName
+	case "tor-upgrade", "lightningos-tor-upgrade":
+		return torUpgradeUnitName
 	case "postgresql":
 		return "postgresql"
 	default:

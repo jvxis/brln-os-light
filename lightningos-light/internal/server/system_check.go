@@ -380,6 +380,32 @@ func (s *Server) systemCheckTor(ctx context.Context) systemCheckGroup {
 		boolSystemCheckItem("control_port", "Control 9051", testTCP("127.0.0.1:9051"), systemCheckWarn, "listening", "not listening"),
 	}
 
+	upgrade := torUpgradeStatus(ctx)
+	versionTone := systemCheckOK
+	versionDetail := upgrade.Version
+	versionDiagnostic := ""
+	if versionDetail == "" {
+		versionTone = systemCheckMuted
+		versionDetail = "unavailable"
+	} else if !upgrade.RepositoryOfficial {
+		versionTone = systemCheckWarn
+		versionDiagnostic = "Official Tor Project repository is not configured; the available candidate may be stale."
+	} else if upgrade.UpdateAvailable {
+		versionTone = systemCheckWarn
+		versionDetail = fmt.Sprintf("%s (latest %s)", upgrade.Version, upgrade.CandidateVersion)
+		versionDiagnostic = "A newer Tor package is available from the official repository."
+	} else if upgrade.CandidateVersion != "" {
+		versionDetail = fmt.Sprintf("%s (current)", upgrade.Version)
+	}
+	items = append(items, systemCheckItem{
+		ID:         "version",
+		Label:      "Version",
+		Status:     versionTone,
+		Detail:     versionDetail,
+		Diagnostic: versionDiagnostic,
+		Value:      upgrade.Version,
+	})
+
 	svc, errMsg := s.torPeerCheckerService()
 	if svc == nil {
 		items = append(items, systemCheckItem{

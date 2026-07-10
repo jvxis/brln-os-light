@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+export LC_ALL=C
 
 # apt-cache output is parsed below. Force stable field names regardless of the
 # locale configured on the node (for example, Candidate instead of Candidato).
@@ -31,6 +32,14 @@ die() {
   echo "[ERROR] $1" >&2
   exit 1
 }
+
+on_error() {
+  local code=$?
+  echo "[ERROR] Tor update failed with exit code ${code} while running: ${BASH_COMMAND}" >&2
+  exit "$code"
+}
+
+trap on_error ERR
 
 usage() {
   cat <<'EOF'
@@ -157,13 +166,15 @@ installed_package_version() {
 }
 
 candidate_package_version() {
-  apt-cache policy tor 2>/dev/null | awk '/Candidate:/ {print $2; exit}'
+  apt-cache policy tor | awk '
+    $1 ~ /^Candidate:$/ { candidate = $2 }
+    END { if (candidate) print candidate }
+  '
 }
 
 runtime_tor_version() {
   tor --version 2>/dev/null \
-    | sed -n 's/^Tor version \([^ .][^ ]*\)\.$/\1/p' \
-    | head -n1
+    | sed -n 's/^Tor version \([^ .][^ ]*\)\.$/\1/p'
 }
 
 detect_tor_unit() {

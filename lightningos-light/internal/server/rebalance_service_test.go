@@ -980,6 +980,41 @@ func TestExecuteSovereignAutopilotBudgetEfficiencyStillBlocksNonExploration(t *t
 	}
 }
 
+// Regression guard: a candidate whose deficit is larger than max_amount must be
+// evaluated/queued at the max_amount chunk (runJob caps the spend), not the full
+// deficit. Before the fix the sovereign scan used the full deficit for the
+// decision amount, budget check and remaining decrement — inflating cost for
+// large-deficit sellers and tripping budget_too_low. Here we assert the decision
+// amount is capped at max_amount.
+func TestExecuteSovereignAutopilotCapsDecisionAmountAtMaxAmount(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = true
+	cfg.MaxAmountSat = 300_000
+	cfg.SovereignMaxJobsPerCycle = 1
+	cfg.SovereignMinExpectedProfitSat = 0
+	scanAt := time.Now()
+
+	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{
+		{
+			Channel:          RebalanceChannel{ChannelID: 42, ChannelPoint: "big-deficit:0", PeerAlias: "big-deficit", TargetAmountSat: 4_000_000},
+			ExpectedGainSat:  5_000,
+			EstimatedCostSat: 400,
+			BudgetCostSat:    400,
+			Score:            5_000,
+			ExplorationSlot:  true, // bypass empirical-history gates so it reaches selection
+		},
+	}}
+
+	result := svc.executeSovereignAutopilot(context.Background(), cfg, nil, plan, scanAt, false)
+	if len(result.Decisions) == 0 {
+		t.Fatalf("expected a decision, got none")
+	}
+	if got := result.Decisions[0].AmountSat; got != cfg.MaxAmountSat {
+		t.Fatalf("expected decision amount capped at max_amount %d, got %d", cfg.MaxAmountSat, got)
+	}
+}
+
 // Non-exploration candidates still respect structural_cooldown — regression
 // guard so the bypass cannot leak to ordinary decisions.
 func TestExecuteSovereignAutopilotStructuralCooldownStillBlocksNonExploration(t *testing.T) {

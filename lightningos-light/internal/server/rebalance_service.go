@@ -3873,6 +3873,13 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 			BaseFeeMsat: target.Channel.OutgoingBaseMsat,
 		}
 		targetAmount := target.Channel.TargetAmountSat
+		// Cap at max_amount so the decision amount, the budget-refit ceiling and
+		// the fallback cost estimates match the real per-job chunk. The candidate
+		// economics (EstimatedCostSat/BudgetCostSat/ExpectedGainSat) are already
+		// computed on this chunk in buildAndOrderRebalanceCandidates.
+		if cfg.MaxAmountSat > 0 && targetAmount > cfg.MaxAmountSat {
+			targetAmount = cfg.MaxAmountSat
+		}
 		estimatedCost := target.EstimatedCostSat
 		if estimatedCost <= 0 {
 			estimatedCost = estimateMaxCost(targetAmount, targetPolicy, targetCfg)
@@ -4380,6 +4387,15 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 
 		targetCfg := effectiveConfigForTarget(input.Cfg, setting)
 		targetAmount := snapshot.TargetAmountSat
+		// A job fills at most one max_amount chunk (runJob caps the spend), so
+		// evaluate the candidate economics (cost, budget, gain, ROI, score) at that
+		// chunk — not the full deficit. Full-deficit economics inflated cost/budget
+		// (tripping budget_too_low and over-deducting the scan's remaining budget)
+		// and, via gain demand-limiting, thinned the margin for large-deficit
+		// sellers. The deficit is filled across successive scans.
+		if input.Cfg.MaxAmountSat > 0 && targetAmount > input.Cfg.MaxAmountSat {
+			targetAmount = input.Cfg.MaxAmountSat
+		}
 		minExecuteSat := effectiveMinExecuteSat(targetCfg)
 		targetAttemptCooldown := input.TargetCooldowns[snapshot.ChannelID]
 		targetNoAttemptCooldown := input.TargetNoAttemptCooldowns[snapshot.ChannelID]

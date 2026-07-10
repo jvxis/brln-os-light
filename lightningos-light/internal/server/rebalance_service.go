@@ -3661,6 +3661,14 @@ func (s *RebalanceService) runAutoScan() {
 			continue
 		}
 		targetAmount := target.Channel.TargetAmountSat
+		// A single job fills at most one max_amount chunk (runJob caps the spend),
+		// so evaluate the budget against that chunk — not the full deficit. Using
+		// the full deficit inflated the cost (e.g. a 4.4M-deficit target → ~5.3k
+		// est vs ~364 real for a 300k job), wrongly tripping budget_too_low AND
+		// over-deducting the scan's remaining budget from later candidates.
+		if cfg.MaxAmountSat > 0 && targetAmount > cfg.MaxAmountSat {
+			targetAmount = cfg.MaxAmountSat
+		}
 		estimatedCost := estimateMaxCost(targetAmount, targetPolicy, targetCfg)
 		amountOverride := int64(0)
 		reason := ""

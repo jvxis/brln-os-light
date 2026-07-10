@@ -1059,10 +1059,21 @@ export default function RebalanceCenter() {
   }
 
   const handleSaveChannelAutoTargetManaged = async (channel: RebalanceChannel, managed: boolean) => {
+    // Optimistic: flip the checkbox immediately (like the Auto/Exclude toggles) so
+    // it doesn't appear frozen while the POST resolves the channel via LND and the
+    // full reload runs. Revert on failure.
+    const previous = channel.auto_target_managed ?? true
+    bumpChannelStateVersion()
+    setChannels((prev) =>
+      prev.map((ch) => (isSameChannel(ch, channel) ? { ...ch, auto_target_managed: managed } : ch))
+    )
     try {
       await updateRebalanceChannelAutoTarget({ channel_id: channel.channel_id, channel_point: channel.channel_point, managed })
       void loadAll({ silent: true })
     } catch (err) {
+      setChannels((prev) =>
+        prev.map((ch) => (isSameChannel(ch, channel) ? { ...ch, auto_target_managed: previous } : ch))
+      )
       setStatus(err instanceof Error ? err.message : t('rebalanceCenter.autoTarget.managedFailed'))
     }
   }

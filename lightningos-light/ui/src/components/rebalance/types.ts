@@ -87,6 +87,9 @@ export type RebalanceConfig = {
   auto_target_up_success_threshold: number
   auto_target_down_success_threshold: number
   auto_target_drain_first_multiplier: number
+  auto_target_up_sellthrough_factor: number
+  auto_target_down_sellthrough_factor: number
+  auto_target_max_downs_per_cycle: number
 }
 
 export type RebalanceAutoTargetHistoryItem = {

@@ -4,6 +4,27 @@
 **Status audit:** 2026-06-20 - open; no `auto_target_*` implementation found.
 **IMPLEMENTADO 2026-07-09.** Ver `internal/server/rebalance_auto_target.go`.
 
+## v2 (2026-07-10) — dirigido por sell-through, calibrado ao nó
+
+O v1 (limiares absolutos: `success ≥ 0.5`, `drain ≥ 5000`) provou ser uma catraca
+de mão única num nó de rota difícil: em prod fez 94 decisões, TODAS DOWN, 0 UP,
+achatando 77/97 canais ao piso. Causa: o gate de success era inalcançável (68% das
+falhas de rebalance são "no route") e o drain-stall fixo disparava em ~70% dos
+canais. Diagnóstico confirmou config íntegro e success rate dentro da faixa
+histórica — o problema era só a calibração do AutoTarget.
+
+Correção (v2): trocar `success_rate` por **sell-through** (forward vendido ÷
+rebalanceado) como sinal primário, com limiares **relativos ao baseline do nó**
+(`autoTargetNodeBaseline`), espelhando `effectiveRebalanceConfig`/native seed.
+- **UP** = candidato drenado + `sell_through ≥ baseline × up_factor` (1.1) + revenue
+  ≥ min (reason `sells_above_node`); ou drain-first sem histórico. Success vira só
+  checagem de rota-morta. Deixa kappa (rota difícil, alto sell-through) subir.
+- **DOWN** = só canais que absorveram rebalance (`sent > 0`) e não venderam
+  (`sell_through < baseline × down_factor` 0.5) e não faturam (reason `fill_and_hold`).
+  Canal sem histórico não é tocado → acaba o achatamento.
+- Throttle novo `max_downs_per_cycle` (5). Sell-through por canal via `group by
+  target_channel_id` na query de economics. Continua opt-in.
+
 ## Desvios do design original (decididos com o operador)
 
 O que foi construído difere deste doc em pontos importantes — este doc fica como

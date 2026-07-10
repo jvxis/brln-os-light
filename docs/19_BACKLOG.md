@@ -71,7 +71,11 @@ Current product backlog, after checking the repository against the docs:
   `GET /api/rebalance/auto-target/history` and
   `POST /api/rebalance/channel/auto-target`, Rebalance Center config card +
   activity panel + per-channel toggle, EN/PT-BR i18n, and focused tests
-  (`rebalance_auto_target_test.go`).
+  (`rebalance_auto_target_test.go`). **v2 (2026-07-10):** signals rebuilt around
+  per-channel sell-through (`loadChannelSellThrough7d`) with thresholds relative
+  to a node baseline (`autoTargetNodeBaseline`), replacing the absolute
+  success/drain gates that made v1 a one-way demoter in production; adds a
+  `max_downs_per_cycle` throttle. Still opt-in.
 - `Lightning Tools` custom macaroon generator with audit log. Implemented in
   `internal/lndclient/macaroon.go`, `internal/server/macaroon_handlers.go`,
   `internal/server/routes.go`, `internal/server/auth.go`, `ui/src/api.ts`, and

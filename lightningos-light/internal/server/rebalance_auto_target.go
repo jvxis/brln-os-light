@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"time"
 )
 
@@ -37,20 +38,48 @@ const (
 
 	// autoTargetHistoryRetention bounds how long AutoTarget decision rows are kept.
 	autoTargetHistoryRetention = 90 * 24 * time.Hour
+
+	// autoTargetDeadRouteAttempts: at/above this many recent attempts with zero
+	// success, a target is treated as unrefillable and skipped for UP — raising a
+	// target we literally cannot fill is pointless. Set above 0 success so a
+	// hard-to-refill-but-earning channel (kappa) still qualifies.
+	autoTargetDeadRouteAttempts = 8
 )
+
+// channelSellThrough is the per-target rebalance economics over the attribution
+// window: how much was rebalanced in (SentSat), how much of that liquidity was
+// forwarded back out (ForwardSat), and the resulting sell-through ratio. It
+// answers "does the liquidity I put here actually sell?".
+type channelSellThrough struct {
+	SentSat       int64
+	ForwardSat    int64
+	ForwardFeeSat int64
+	SellThrough   float64
+}
+
+// autoTargetNodeBaseline holds the node's own reference points, so AutoTarget
+// thresholds are relative to THIS node instead of absolute constants that don't
+// fit a hard-routing node. Computed each scan.
+type autoTargetNodeBaseline struct {
+	SellThrough        float64 // node-wide forward/sent
+	MedianRevenue7dSat int64
+	DrainP70           int64
+}
 
 // autoTargetSignals is the per-channel input to the pure decision function. All
 // fields come from signals already computed during the autopilot scan.
 type autoTargetSignals struct {
-	ChannelID          uint64
-	CurrentTargetPct   float64
-	CapacitySat        int64
-	DrainRateSatPerHr  int64
-	Revenue7dSat       int64
-	SuccessRate        float64 // recent historical success rate for this target
-	Attempts           int     // recent rebalance attempts (0 => no route history)
-	StructuralFails24h int
-	IsRoundCandidate   bool // selected as a candidate this round => supply-limited
+	ChannelID         uint64
+	CurrentTargetPct  float64
+	CapacitySat       int64
+	DrainRateSatPerHr int64
+	Revenue7dSat      int64
+	SuccessRate       float64 // recent historical success rate for this target
+	Attempts          int     // recent rebalance attempts (0 => no route history)
+	SellThrough       float64 // forward/sent over the attribution window
+	HasHistory        bool    // has rebalance history (SentSat > 0) => sell-through is meaningful
+	NodeSellThrough   float64 // baseline snapshot, for audit
+	IsRoundCandidate  bool    // selected as a candidate this round => supply-limited
 }
 
 func (sig autoTargetSignals) currentInt() int {
@@ -84,32 +113,43 @@ func autoTargetEffectiveMaxPct(cfg RebalanceConfig, capacitySat int64) int {
 }
 
 // decideAutoTargetAdjustment is the pure decision core (no I/O), so it can be
-// unit-tested exhaustively. UP requires the channel to be a supply-limited round
-// candidate with strong seller signals; DOWN fires for stalled/poor-route
-// channels. Hysteresis (UpSuccessThreshold > DownSuccessThreshold) leaves a
-// neutral hold band that prevents flapping.
-func decideAutoTargetAdjustment(sig autoTargetSignals, cfg RebalanceConfig) autoTargetDecision {
+// unit-tested exhaustively. Signals are driven by SELL-THROUGH relative to the
+// node's own baseline — not absolute success/drain constants, which don't fit a
+// hard-routing node and turned v1 into a one-way demoter.
+//
+//   - UP raises the target of a supply-limited round candidate that sells its
+//     liquidity BETTER than the node's typical channel (sell_through above
+//     baseline × up_factor) and earns. This lets a hard-to-refill but high-earning
+//     channel (kappa) rise even though its rebalance success rate is low.
+//   - DOWN lowers ONLY channels that absorbed rebalance capital and did not sell
+//     it back (has history, low revenue, sell_through below baseline × down_factor)
+//     — true fill-and-hold waste. Channels never rebalanced are left alone, which
+//     stops the node-wide flattening a quiet drain window used to cause.
+//
+// Hysteresis (up_factor > down_factor) leaves a neutral hold band.
+func decideAutoTargetAdjustment(sig autoTargetSignals, baseline autoTargetNodeBaseline, cfg RebalanceConfig) autoTargetDecision {
 	step := cfg.AutoTargetStepPct
 	cur := sig.currentInt()
 	effMax := autoTargetEffectiveMaxPct(cfg, sig.CapacitySat)
 	minPct := cfg.AutoTargetMinPct
 	dec := autoTargetDecision{Direction: autoTargetNoop, NewTarget: cur, EffectiveMaxPct: effMax, Reason: "hold"}
 
-	// UP eligibility: only supply-limited round candidates that are selling fast.
+	upThresh := baseline.SellThrough * cfg.AutoTargetUpSellThroughFactor
+	downThresh := baseline.SellThrough * cfg.AutoTargetDownSellThroughFactor
+	deadRoute := sig.Attempts >= autoTargetDeadRouteAttempts && sig.SuccessRate <= 0
+
+	// UP: only supply-limited round candidates that earn and sell above baseline.
 	upReason := ""
-	if sig.IsRoundCandidate &&
-		sig.DrainRateSatPerHr >= cfg.AutoTargetMinDrainRateSatPerHr &&
-		sig.StructuralFails24h == 0 {
+	if sig.IsRoundCandidate && sig.Revenue7dSat >= cfg.AutoTargetMinRevenue7dSat && !deadRoute {
 		switch {
-		case sig.Attempts > 0 &&
-			sig.SuccessRate >= cfg.AutoTargetUpSuccessThreshold &&
-			sig.Revenue7dSat >= cfg.AutoTargetMinRevenue7dSat:
-			upReason = "sells_fast_viable"
-		case sig.Attempts == 0 &&
-			sig.DrainRateSatPerHr >= int64(float64(cfg.AutoTargetMinDrainRateSatPerHr)*cfg.AutoTargetDrainFirstMultiplier) &&
-			sig.Revenue7dSat >= cfg.AutoTargetMinRevenue7dSat*2:
-			// drain-first: no route history yet, so require a much stronger drain
-			// and revenue prior before betting capital on the channel.
+		case sig.HasHistory && baseline.SellThrough > 0 && sig.SellThrough >= upThresh:
+			upReason = "sells_above_node"
+		case !sig.HasHistory &&
+			baseline.MedianRevenue7dSat > 0 &&
+			sig.Revenue7dSat >= int64(float64(baseline.MedianRevenue7dSat)*cfg.AutoTargetDrainFirstMultiplier) &&
+			baseline.DrainP70 > 0 && sig.DrainRateSatPerHr >= baseline.DrainP70:
+			// drain-first: no rebalance history yet, so bootstrap only a strong
+			// above-node earner that is actively draining.
 			upReason = "drain_first"
 		}
 	}
@@ -125,32 +165,19 @@ func decideAutoTargetAdjustment(sig autoTargetSignals, cfg RebalanceConfig) auto
 		return dec
 	}
 
-	// DOWN: stopped selling / poor routes / forcing too hard.
-	downReason := ""
-	switch {
-	case sig.DrainRateSatPerHr < cfg.AutoTargetMinDrainRateSatPerHr/4:
-		downReason = "drain_stalled"
-	case sig.Attempts > 0 && sig.SuccessRate < cfg.AutoTargetDownSuccessThreshold:
-		downReason = "low_success"
-	case sig.StructuralFails24h >= 2:
-		downReason = "structural_cooldowns"
-	}
-	// Do not demote a channel that is still earning. A quiet 24h drain window on a
-	// bursty seller (WoS, exchanges, kappa) is not a reason to lower its target —
-	// only demote channels that are BOTH idle AND unprofitable. This preserves the
-	// original "fill-and-hold" intent (filled but not selling => low revenue => still
-	// demoted) while sparing real earners that just had a lull.
-	if downReason != "" && sig.Revenue7dSat >= cfg.AutoTargetMinRevenue7dSat {
-		dec.Reason = "earning_hold"
-		return dec
-	}
-	if downReason != "" {
+	// DOWN: only channels that absorbed rebalance capital and did not sell it back.
+	// The Revenue < min gate is the earning-hold: a channel still earning is never
+	// auto-demoted, even on low sell-through.
+	if sig.HasHistory &&
+		sig.Revenue7dSat < cfg.AutoTargetMinRevenue7dSat &&
+		baseline.SellThrough > 0 &&
+		sig.SellThrough < downThresh {
 		newT := cur - step
 		if newT < minPct {
 			newT = minPct
 		}
 		if newT < cur {
-			return autoTargetDecision{Direction: autoTargetDown, Delta: newT - cur, NewTarget: newT, EffectiveMaxPct: effMax, Reason: downReason}
+			return autoTargetDecision{Direction: autoTargetDown, Delta: newT - cur, NewTarget: newT, EffectiveMaxPct: effMax, Reason: "fill_and_hold"}
 		}
 		dec.Reason = "at_min"
 		return dec
@@ -177,6 +204,12 @@ func (s *RebalanceService) evaluateAutoTarget(
 	if !cfg.AutoTargetEnabled {
 		return
 	}
+	sellThrough, nodeSellThrough := s.loadChannelSellThrough7d(ctx, cfg)
+	baseline := autoTargetNodeBaseline{
+		SellThrough:        nodeSellThrough,
+		MedianRevenue7dSat: autoTargetMedianRevenue(snapshots),
+		DrainP70:           autoTargetDrainPercentile(snapshots, 70),
+	}
 	snapByID := make(map[uint64]RebalanceChannel, len(snapshots))
 	for _, snap := range snapshots {
 		snapByID[snap.ChannelID] = snap
@@ -184,6 +217,7 @@ func (s *RebalanceService) evaluateAutoTarget(
 	lastDecided := s.loadAutoTargetLastDecided(ctx)
 	interval := time.Duration(cfg.AutoTargetEvalIntervalHours) * time.Hour
 	upsRemaining := cfg.AutoTargetMaxUpsPerCycle
+	downsRemaining := cfg.AutoTargetMaxDownsPerCycle
 	processed := make(map[uint64]bool, len(snapshots))
 
 	handle := func(snap RebalanceChannel, isCandidate bool) {
@@ -198,28 +232,27 @@ func (s *RebalanceService) evaluateAutoTarget(
 			return
 		}
 		rate, attempts := sovereignHistoricalSuccessRate(pairStats[snap.ChannelID])
+		st := sellThrough[snap.ChannelID]
 		sig := autoTargetSignals{
-			ChannelID:          snap.ChannelID,
-			CurrentTargetPct:   snap.TargetOutboundPct,
-			CapacitySat:        snap.CapacitySat,
-			DrainRateSatPerHr:  snap.DrainRateSatPerHour,
-			Revenue7dSat:       snap.Revenue7dSat,
-			SuccessRate:        rate,
-			Attempts:           attempts,
-			StructuralFails24h: structuralCooldowns[snap.ChannelID].Failures,
-			IsRoundCandidate:   isCandidate,
+			ChannelID:         snap.ChannelID,
+			CurrentTargetPct:  snap.TargetOutboundPct,
+			CapacitySat:       snap.CapacitySat,
+			DrainRateSatPerHr: snap.DrainRateSatPerHour,
+			Revenue7dSat:      snap.Revenue7dSat,
+			SuccessRate:       rate,
+			Attempts:          attempts,
+			SellThrough:       st.SellThrough,
+			HasHistory:        st.SentSat > 0,
+			NodeSellThrough:   nodeSellThrough,
+			IsRoundCandidate:  isCandidate,
 		}
-		dec := decideAutoTargetAdjustment(sig, cfg)
+		dec := decideAutoTargetAdjustment(sig, baseline, cfg)
 		switch dec.Direction {
 		case autoTargetUp:
 			if upsRemaining <= 0 {
-				// Wanted to raise but the per-cycle throttle is spent. Record the
-				// intent (not applied, so it does not start a cooldown) and move on.
 				s.persistAutoTargetDecision(ctx, snap, sig, cfg, autoTargetDecision{
-					Direction:       autoTargetNoop,
-					NewTarget:       sig.currentInt(),
-					EffectiveMaxPct: dec.EffectiveMaxPct,
-					Reason:          "ups_throttled",
+					Direction: autoTargetNoop, NewTarget: sig.currentInt(),
+					EffectiveMaxPct: dec.EffectiveMaxPct, Reason: "ups_throttled",
 				}, false)
 				return
 			}
@@ -228,7 +261,15 @@ func (s *RebalanceService) evaluateAutoTarget(
 				s.persistAutoTargetDecision(ctx, snap, sig, cfg, dec, true)
 			}
 		case autoTargetDown:
+			if downsRemaining <= 0 {
+				s.persistAutoTargetDecision(ctx, snap, sig, cfg, autoTargetDecision{
+					Direction: autoTargetNoop, NewTarget: sig.currentInt(),
+					EffectiveMaxPct: dec.EffectiveMaxPct, Reason: "downs_throttled",
+				}, false)
+				return
+			}
 			if s.applyAutoTarget(ctx, snap, dec) {
+				downsRemaining--
 				s.persistAutoTargetDecision(ctx, snap, sig, cfg, dec, true)
 			}
 		default:
@@ -255,6 +296,135 @@ func (s *RebalanceService) evaluateAutoTarget(
 		processed[snap.ChannelID] = true
 		handle(snap, false)
 	}
+}
+
+// autoTargetMedianRevenue returns the median Revenue7dSat across active channels.
+func autoTargetMedianRevenue(snaps []RebalanceChannel) int64 {
+	vals := make([]int64, 0, len(snaps))
+	for _, s := range snaps {
+		if s.Active {
+			vals = append(vals, s.Revenue7dSat)
+		}
+	}
+	if len(vals) == 0 {
+		return 0
+	}
+	sort.Slice(vals, func(i, j int) bool { return vals[i] < vals[j] })
+	return vals[len(vals)/2]
+}
+
+// autoTargetDrainPercentile returns the p-th percentile of drain rate across
+// actively-draining channels (drain > 0), so "actively draining" is relative to
+// this node rather than a fixed constant.
+func autoTargetDrainPercentile(snaps []RebalanceChannel, p int) int64 {
+	vals := make([]int64, 0, len(snaps))
+	for _, s := range snaps {
+		if s.Active && s.DrainRateSatPerHour > 0 {
+			vals = append(vals, s.DrainRateSatPerHour)
+		}
+	}
+	if len(vals) == 0 {
+		return 0
+	}
+	sort.Slice(vals, func(i, j int) bool { return vals[i] < vals[j] })
+	idx := (p * len(vals)) / 100
+	if idx >= len(vals) {
+		idx = len(vals) - 1
+	}
+	return vals[idx]
+}
+
+// loadChannelSellThrough7d returns per-target sell-through (attributed forward
+// volume / rebalanced volume) over the sovereign attribution window, plus the
+// node-wide sell-through baseline. Mirrors fetchSovereignAutopilotEconomics7d but
+// grouped by target_channel_id.
+func (s *RebalanceService) loadChannelSellThrough7d(ctx context.Context, cfg RebalanceConfig) (map[uint64]channelSellThrough, float64) {
+	out := map[uint64]channelSellThrough{}
+	if s.db == nil {
+		return out, 0
+	}
+	attributionHours := sovereignAttributionWindowHoursForConfig(cfg)
+	rows, err := s.db.Query(ctx, `
+with jobs as (
+  select id, target_channel_id, completed_at
+  from rebalance_jobs
+  where trigger_reason = $1
+    and completed_at is not null
+    and completed_at >= now() - interval '7 days'
+),
+attempt_totals as (
+  select j.id,
+    coalesce(sum(a.amount_sat) filter (where a.status='succeeded'), 0) as sent_sat
+  from jobs j
+  left join rebalance_attempts a on a.job_id = j.id
+  group by j.id
+),
+forward_totals as (
+  select j.id,
+    coalesce(sum(n.amount_sat) filter (where n.occurred_at < j.completed_at + ($2::int * interval '1 hour')), 0) as forward_amount_sat,
+    coalesce(sum(case when n.fee_msat > 0 then n.fee_msat else n.fee_sat * 1000 end) filter (where n.occurred_at < j.completed_at + ($2::int * interval '1 hour')), 0)::bigint as forward_fee_msat
+  from jobs j
+  left join notifications n on n.type='forward'
+    and n.channel_id = j.target_channel_id
+    and n.occurred_at >= j.completed_at
+  group by j.id
+),
+job_raw as (
+  select j.target_channel_id,
+    coalesce(a.sent_sat, 0) as sent_sat,
+    coalesce(f.forward_amount_sat, 0) as forward_amount_sat,
+    coalesce(f.forward_fee_msat, 0) as forward_fee_msat
+  from jobs j
+  left join attempt_totals a on a.id = j.id
+  left join forward_totals f on f.id = j.id
+),
+job_economics as (
+  select target_channel_id,
+    sent_sat,
+    case
+      when sent_sat <= 0 or forward_amount_sat <= 0 then 0
+      when forward_amount_sat > sent_sat then sent_sat
+      else forward_amount_sat
+    end as attributed_forward_sat,
+    case
+      when sent_sat <= 0 or forward_amount_sat <= 0 or forward_fee_msat <= 0 then 0
+      when forward_amount_sat > sent_sat then (forward_fee_msat * sent_sat) / forward_amount_sat
+      else forward_fee_msat
+    end as attributed_forward_fee_msat
+  from job_raw
+)
+select target_channel_id,
+  coalesce(sum(sent_sat), 0) as sent_sat,
+  coalesce(sum(attributed_forward_sat), 0) as forward_sat,
+  coalesce(sum(attributed_forward_fee_msat), 0)::bigint as forward_fee_msat
+from job_economics
+group by target_channel_id`, rebalanceSovereignReason, attributionHours)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("auto-target sell-through load failed: %v", err)
+		}
+		return out, 0
+	}
+	defer rows.Close()
+	var totalSent, totalForward int64
+	for rows.Next() {
+		var chID, sent, fwd, fwdFeeMsat int64
+		if err := rows.Scan(&chID, &sent, &fwd, &fwdFeeMsat); err != nil {
+			return out, 0
+		}
+		st := channelSellThrough{SentSat: sent, ForwardSat: fwd, ForwardFeeSat: fwdFeeMsat / 1000}
+		if sent > 0 {
+			st.SellThrough = float64(fwd) / float64(sent)
+		}
+		out[uint64(chID)] = st
+		totalSent += sent
+		totalForward += fwd
+	}
+	node := 0.0
+	if totalSent > 0 {
+		node = float64(totalForward) / float64(totalSent)
+	}
+	return out, node
 }
 
 func (s *RebalanceService) applyAutoTarget(ctx context.Context, snap RebalanceChannel, dec autoTargetDecision) bool {
@@ -305,7 +475,9 @@ func (s *RebalanceService) persistAutoTargetDecision(ctx context.Context, snap R
 		"success_rate":          sig.SuccessRate,
 		"attempts":              sig.Attempts,
 		"revenue_7d_sat":        sig.Revenue7dSat,
-		"structural_fails_24h":  sig.StructuralFails24h,
+		"sell_through":          sig.SellThrough,
+		"has_history":           sig.HasHistory,
+		"node_sell_through":     sig.NodeSellThrough,
 		"is_round_candidate":    sig.IsRoundCandidate,
 		"effective_max_pct":     dec.EffectiveMaxPct,
 		"capacity_sat":          sig.CapacitySat,

@@ -436,6 +436,12 @@ type RebalanceConfig struct {
 	AutoTargetUpSuccessThreshold   float64 `json:"auto_target_up_success_threshold"`
 	AutoTargetDownSuccessThreshold float64 `json:"auto_target_down_success_threshold"`
 	AutoTargetDrainFirstMultiplier float64 `json:"auto_target_drain_first_multiplier"`
+	// v2 sell-through-driven calibration: thresholds are relative to the node's
+	// own sell-through baseline. UP when a channel sells above baseline×up_factor;
+	// DOWN when it absorbs rebalance capital but sells below baseline×down_factor.
+	AutoTargetUpSellThroughFactor   float64 `json:"auto_target_up_sellthrough_factor"`
+	AutoTargetDownSellThroughFactor float64 `json:"auto_target_down_sellthrough_factor"`
+	AutoTargetMaxDownsPerCycle      int     `json:"auto_target_max_downs_per_cycle"`
 }
 
 type RebalanceOverview struct {
@@ -1631,6 +1637,9 @@ func defaultRebalanceConfig() RebalanceConfig {
 		AutoTargetUpSuccessThreshold:           0.5,
 		AutoTargetDownSuccessThreshold:         0.25,
 		AutoTargetDrainFirstMultiplier:         3.0,
+		AutoTargetUpSellThroughFactor:          1.1,
+		AutoTargetDownSellThroughFactor:        0.5,
+		AutoTargetMaxDownsPerCycle:             5,
 	}
 }
 
@@ -2352,6 +2361,25 @@ func normalizeRebalanceConfig(cfg RebalanceConfig) RebalanceConfig {
 	}
 	if cfg.AutoTargetDrainFirstMultiplier > 20 {
 		cfg.AutoTargetDrainFirstMultiplier = 20
+	}
+	if math.IsNaN(cfg.AutoTargetUpSellThroughFactor) || math.IsInf(cfg.AutoTargetUpSellThroughFactor, 0) || cfg.AutoTargetUpSellThroughFactor <= 0 {
+		cfg.AutoTargetUpSellThroughFactor = def.AutoTargetUpSellThroughFactor
+	}
+	if cfg.AutoTargetUpSellThroughFactor > 5 {
+		cfg.AutoTargetUpSellThroughFactor = 5
+	}
+	if math.IsNaN(cfg.AutoTargetDownSellThroughFactor) || math.IsInf(cfg.AutoTargetDownSellThroughFactor, 0) || cfg.AutoTargetDownSellThroughFactor <= 0 {
+		cfg.AutoTargetDownSellThroughFactor = def.AutoTargetDownSellThroughFactor
+	}
+	// Preserve hysteresis: down factor must stay below up factor.
+	if cfg.AutoTargetDownSellThroughFactor >= cfg.AutoTargetUpSellThroughFactor {
+		cfg.AutoTargetDownSellThroughFactor = cfg.AutoTargetUpSellThroughFactor / 2
+	}
+	if cfg.AutoTargetMaxDownsPerCycle <= 0 {
+		cfg.AutoTargetMaxDownsPerCycle = def.AutoTargetMaxDownsPerCycle
+	}
+	if cfg.AutoTargetMaxDownsPerCycle > 50 {
+		cfg.AutoTargetMaxDownsPerCycle = 50
 	}
 	return cfg
 }
@@ -11424,6 +11452,12 @@ end $$;
     add column if not exists auto_target_down_success_threshold double precision not null default 0.25;
   alter table rebalance_config
     add column if not exists auto_target_drain_first_multiplier double precision not null default 3.0;
+  alter table rebalance_config
+    add column if not exists auto_target_up_sellthrough_factor double precision not null default 1.1;
+  alter table rebalance_config
+    add column if not exists auto_target_down_sellthrough_factor double precision not null default 0.5;
+  alter table rebalance_config
+    add column if not exists auto_target_max_downs_per_cycle integer not null default 5;
 
   alter table if exists rebalance_channel_settings
     add column if not exists manual_restart_enabled boolean not null default false;
@@ -11736,7 +11770,8 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
     fee_ladder_steps, amount_probe_steps, amount_probe_adaptive, attempt_timeout_sec, rebalance_timeout_sec, manual_restart_watch, cooldown_probe_enabled, mc_half_life_sec, payback_mode_flags, fresh_paid_liquidity_lock_enabled, fresh_paid_liquidity_lock_hours,
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback,
     sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct, fast_path_max_timeout_sec, sovereign_top_bucket_pct, manual_restart_ignore_economic_gates, rebalance_profile,
-    auto_target_enabled, auto_target_max_pct, auto_target_min_pct, auto_target_step_pct, auto_target_eval_interval_hours, auto_target_max_ups_per_cycle, auto_target_max_local_sat, auto_target_min_drain_rate_sat_per_hr, auto_target_min_revenue_7d_sat, auto_target_up_success_threshold, auto_target_down_success_threshold, auto_target_drain_first_multiplier
+    auto_target_enabled, auto_target_max_pct, auto_target_min_pct, auto_target_step_pct, auto_target_eval_interval_hours, auto_target_max_ups_per_cycle, auto_target_max_local_sat, auto_target_min_drain_rate_sat_per_hr, auto_target_min_revenue_7d_sat, auto_target_up_success_threshold, auto_target_down_success_threshold, auto_target_drain_first_multiplier,
+    auto_target_up_sellthrough_factor, auto_target_down_sellthrough_factor, auto_target_max_downs_per_cycle
   from rebalance_config where id=$1`, rebalanceConfigID)
 
 	cfg := defaultRebalanceConfig()
@@ -11828,6 +11863,9 @@ func (s *RebalanceService) loadConfig(ctx context.Context) (RebalanceConfig, err
 		&cfg.AutoTargetUpSuccessThreshold,
 		&cfg.AutoTargetDownSuccessThreshold,
 		&cfg.AutoTargetDrainFirstMultiplier,
+		&cfg.AutoTargetUpSellThroughFactor,
+		&cfg.AutoTargetDownSellThroughFactor,
+		&cfg.AutoTargetMaxDownsPerCycle,
 	)
 	if err != nil {
 		return cfg, err
@@ -11853,8 +11891,9 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     unlock_days, critical_release_pct, critical_min_sources, critical_min_available_sats, critical_cycles, rebalance_cost_floor_ppm, source_min_payback_progress, mission_control_reinforce, gain_model_version, velocity_weight, autofee_settling_window_sec, autofee_settling_multiplier, delegated_fast_path_enabled, delegated_fast_path_strict_payback,
     sovereign_attribution_window_hours, sovereign_slow_seller_window_hours, sovereign_target_source_quarantine_hours, sovereign_structural_cooldown_repeat_hours, sovereign_exploration_slot_pct, sovereign_source_opportunity_cost_enabled, sovereign_slow_seller_enabled, sovereign_gain_v3_cold_start_pct, fast_path_max_timeout_sec, sovereign_top_bucket_pct, manual_restart_ignore_economic_gates, rebalance_profile,
     auto_target_enabled, auto_target_max_pct, auto_target_min_pct, auto_target_step_pct, auto_target_eval_interval_hours, auto_target_max_ups_per_cycle, auto_target_max_local_sat, auto_target_min_drain_rate_sat_per_hr, auto_target_min_revenue_7d_sat, auto_target_up_success_threshold, auto_target_down_success_threshold, auto_target_drain_first_multiplier,
+    auto_target_up_sellthrough_factor, auto_target_down_sellthrough_factor, auto_target_max_downs_per_cycle,
     updated_at
-  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,$74,$75,$76,$77,$78,$79,$80,$81,$82,$83,$84,$85,$86,$87,$88,now())
+  ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,$55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69,$70,$71,$72,$73,$74,$75,$76,$77,$78,$79,$80,$81,$82,$83,$84,$85,$86,$87,$88,$89,$90,$91,now())
    on conflict (id) do update set
     auto_enabled = excluded.auto_enabled,
     scheduler_mode = excluded.scheduler_mode,
@@ -11943,10 +11982,14 @@ func (s *RebalanceService) upsertConfig(ctx context.Context, cfg RebalanceConfig
     auto_target_up_success_threshold = excluded.auto_target_up_success_threshold,
     auto_target_down_success_threshold = excluded.auto_target_down_success_threshold,
     auto_target_drain_first_multiplier = excluded.auto_target_drain_first_multiplier,
+    auto_target_up_sellthrough_factor = excluded.auto_target_up_sellthrough_factor,
+    auto_target_down_sellthrough_factor = excluded.auto_target_down_sellthrough_factor,
+    auto_target_max_downs_per_cycle = excluded.auto_target_max_downs_per_cycle,
     updated_at = now()
   `, rebalanceConfigID, cfg.AutoEnabled, cfg.SchedulerMode, cfg.SovereignCandidateScope, cfg.SovereignMaxJobsPerCycle, cfg.SovereignMinExpectedProfitSat, cfg.SovereignLowSuccessMinRate, cfg.SovereignLowSuccessMinProfitCostRatio, cfg.SovereignBudgetEfficiencyMinRatio, cfg.SovereignRouteDeadSourceShare, cfg.SovereignRiskScoreFloor, cfg.ScanIntervalSec, cfg.DeadbandPct, cfg.SourceMinLocalPct, cfg.EconRatio, cfg.EconRatioMaxPpm, cfg.FeeLimitPpm, cfg.LostProfit, cfg.FailTolerancePpm, cfg.ROIMin, cfg.DailyBudgetPct, cfg.BudgetMode, cfg.BudgetUnlimited, cfg.BudgetAutoOnly, cfg.ManualReserveEnabled, cfg.ManualReserveMode, cfg.ManualReserveValue, cfg.MaxConcurrent,
 		cfg.MinAmountSat, cfg.MaxAmountSat, cfg.MinSplitEnabled, cfg.MinProbeSat, cfg.MinExecuteSat, cfg.MppEnabled, cfg.MppMaxShards, cfg.MppParallelism, cfg.MppMinShardSat, cfg.MppRoundTimeoutSec, cfg.MppAutoOnly, cfg.FeeLadderSteps, cfg.AmountProbeSteps, cfg.AmountProbeAdaptive, cfg.AttemptTimeoutSec, cfg.RebalanceTimeoutSec, cfg.ManualRestartWatch, cfg.CooldownProbeEnabled, cfg.MissionControlHalfLifeSec, cfg.PaybackModeFlags, cfg.FreshPaidLiquidityLockEnabled, cfg.FreshPaidLiquidityLockHours, cfg.UnlockDays, cfg.CriticalReleasePct, cfg.CriticalMinSources, cfg.CriticalMinAvailableSats, cfg.CriticalCycles, cfg.RebalanceCostFloorPpm, cfg.SourceMinPaybackProgress, cfg.MissionControlReinforce, cfg.GainModelVersion, cfg.VelocityWeight, cfg.AutofeeSettlingWindowSec, cfg.AutofeeSettlingMultiplier, cfg.DelegatedFastPathEnabled, cfg.DelegatedFastPathStrictPayback, cfg.SovereignAttributionWindowHours, cfg.SovereignSlowSellerWindowHours, cfg.SovereignTargetSourceQuarantineHours, cfg.SovereignStructuralCooldownRepeatHours, cfg.SovereignExplorationSlotPct, cfg.SovereignSourceOpportunityCostEnabled, cfg.SovereignSlowSellerEnabled, cfg.SovereignGainV3ColdStartPct, cfg.FastPathMaxTimeoutSec, cfg.SovereignTopBucketPct, cfg.ManualRestartIgnoreEconomicGates, cfg.Profile,
 		cfg.AutoTargetEnabled, cfg.AutoTargetMaxPct, cfg.AutoTargetMinPct, cfg.AutoTargetStepPct, cfg.AutoTargetEvalIntervalHours, cfg.AutoTargetMaxUpsPerCycle, cfg.AutoTargetMaxLocalSat, cfg.AutoTargetMinDrainRateSatPerHr, cfg.AutoTargetMinRevenue7dSat, cfg.AutoTargetUpSuccessThreshold, cfg.AutoTargetDownSuccessThreshold, cfg.AutoTargetDrainFirstMultiplier,
+		cfg.AutoTargetUpSellThroughFactor, cfg.AutoTargetDownSellThroughFactor, cfg.AutoTargetMaxDownsPerCycle,
 	)
 	if err != nil {
 		return err

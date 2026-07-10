@@ -102,6 +102,9 @@ type rebalanceConfigPayload struct {
 	AutoTargetUpSuccessThreshold           *float64 `json:"auto_target_up_success_threshold,omitempty"`
 	AutoTargetDownSuccessThreshold         *float64 `json:"auto_target_down_success_threshold,omitempty"`
 	AutoTargetDrainFirstMultiplier         *float64 `json:"auto_target_drain_first_multiplier,omitempty"`
+	AutoTargetUpSellThroughFactor          *float64 `json:"auto_target_up_sellthrough_factor,omitempty"`
+	AutoTargetDownSellThroughFactor        *float64 `json:"auto_target_down_sellthrough_factor,omitempty"`
+	AutoTargetMaxDownsPerCycle             *int     `json:"auto_target_max_downs_per_cycle,omitempty"`
 }
 
 type rebalanceRunPayload struct {
@@ -554,6 +557,15 @@ func applyRebalanceConfigPayload(cfg RebalanceConfig, payload rebalanceConfigPay
 	if payload.AutoTargetDrainFirstMultiplier != nil {
 		cfg.AutoTargetDrainFirstMultiplier = *payload.AutoTargetDrainFirstMultiplier
 	}
+	if payload.AutoTargetUpSellThroughFactor != nil {
+		cfg.AutoTargetUpSellThroughFactor = *payload.AutoTargetUpSellThroughFactor
+	}
+	if payload.AutoTargetDownSellThroughFactor != nil {
+		cfg.AutoTargetDownSellThroughFactor = *payload.AutoTargetDownSellThroughFactor
+	}
+	if payload.AutoTargetMaxDownsPerCycle != nil {
+		cfg.AutoTargetMaxDownsPerCycle = *payload.AutoTargetMaxDownsPerCycle
+	}
 	return cfg
 }
 
@@ -764,8 +776,20 @@ func validateRebalanceConfigPayload(payload rebalanceConfigPayload) error {
 	if err := validateOptionalFloat("auto_target_drain_first_multiplier", payload.AutoTargetDrainFirstMultiplier, 1, 20); err != nil {
 		return err
 	}
+	if err := validateOptionalFloat("auto_target_up_sellthrough_factor", payload.AutoTargetUpSellThroughFactor, 0.1, 5); err != nil {
+		return err
+	}
+	if err := validateOptionalFloat("auto_target_down_sellthrough_factor", payload.AutoTargetDownSellThroughFactor, 0.05, 5); err != nil {
+		return err
+	}
+	if err := validateOptionalInt("auto_target_max_downs_per_cycle", payload.AutoTargetMaxDownsPerCycle, 1, 50); err != nil {
+		return err
+	}
 	if payload.AutoTargetMinPct != nil && payload.AutoTargetMaxPct != nil && *payload.AutoTargetMinPct >= *payload.AutoTargetMaxPct {
 		return errors.New("auto_target_min_pct must be < auto_target_max_pct")
+	}
+	if payload.AutoTargetDownSellThroughFactor != nil && payload.AutoTargetUpSellThroughFactor != nil && *payload.AutoTargetDownSellThroughFactor >= *payload.AutoTargetUpSellThroughFactor {
+		return errors.New("auto_target_down_sellthrough_factor must be < auto_target_up_sellthrough_factor")
 	}
 	if payload.AutoTargetDownSuccessThreshold != nil && payload.AutoTargetUpSuccessThreshold != nil && *payload.AutoTargetDownSuccessThreshold >= *payload.AutoTargetUpSuccessThreshold {
 		return errors.New("auto_target_down_success_threshold must be < auto_target_up_success_threshold")

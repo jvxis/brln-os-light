@@ -262,7 +262,10 @@ export default function RebalanceCenter() {
     auto_target_min_revenue_7d_sat: typeof raw.auto_target_min_revenue_7d_sat === 'number' ? raw.auto_target_min_revenue_7d_sat : 500,
     auto_target_up_success_threshold: typeof raw.auto_target_up_success_threshold === 'number' ? raw.auto_target_up_success_threshold : 0.5,
     auto_target_down_success_threshold: typeof raw.auto_target_down_success_threshold === 'number' ? raw.auto_target_down_success_threshold : 0.25,
-    auto_target_drain_first_multiplier: typeof raw.auto_target_drain_first_multiplier === 'number' ? raw.auto_target_drain_first_multiplier : 3
+    auto_target_drain_first_multiplier: typeof raw.auto_target_drain_first_multiplier === 'number' ? raw.auto_target_drain_first_multiplier : 3,
+    auto_target_up_sellthrough_factor: typeof raw.auto_target_up_sellthrough_factor === 'number' ? raw.auto_target_up_sellthrough_factor : 1.1,
+    auto_target_down_sellthrough_factor: typeof raw.auto_target_down_sellthrough_factor === 'number' ? raw.auto_target_down_sellthrough_factor : 0.5,
+    auto_target_max_downs_per_cycle: typeof raw.auto_target_max_downs_per_cycle === 'number' ? raw.auto_target_max_downs_per_cycle : 5
   })
   const formatTimeToPayback = (channel: RebalanceChannel) => {
     if (!channel.time_to_payback_valid) return t('rebalanceCenter.channels.timeToPaybackNA')
@@ -385,7 +388,10 @@ export default function RebalanceCenter() {
       auto_target_min_revenue_7d_sat: cfg.auto_target_min_revenue_7d_sat ?? 500,
       auto_target_up_success_threshold: cfg.auto_target_up_success_threshold ?? 0.5,
       auto_target_down_success_threshold: cfg.auto_target_down_success_threshold ?? 0.25,
-      auto_target_drain_first_multiplier: cfg.auto_target_drain_first_multiplier ?? 3
+      auto_target_drain_first_multiplier: cfg.auto_target_drain_first_multiplier ?? 3,
+      auto_target_up_sellthrough_factor: cfg.auto_target_up_sellthrough_factor ?? 1.1,
+      auto_target_down_sellthrough_factor: cfg.auto_target_down_sellthrough_factor ?? 0.5,
+      auto_target_max_downs_per_cycle: cfg.auto_target_max_downs_per_cycle ?? 5
     })
   }
   const estimateHistoricalCost = (amountSat: number, feePpm: number) => {
@@ -975,7 +981,10 @@ export default function RebalanceCenter() {
         auto_target_min_revenue_7d_sat: Math.max(0, Number(config.auto_target_min_revenue_7d_sat) || 500),
         auto_target_up_success_threshold: Math.max(0.01, Math.min(1, Number(config.auto_target_up_success_threshold) || 0.5)),
         auto_target_down_success_threshold: Math.max(0.01, Math.min(1, Number(config.auto_target_down_success_threshold) || 0.25)),
-        auto_target_drain_first_multiplier: Math.max(1, Math.min(20, Number(config.auto_target_drain_first_multiplier) || 3))
+        auto_target_drain_first_multiplier: Math.max(1, Math.min(20, Number(config.auto_target_drain_first_multiplier) || 3)),
+        auto_target_up_sellthrough_factor: Math.max(0.1, Math.min(5, Number(config.auto_target_up_sellthrough_factor) || 1.1)),
+        auto_target_down_sellthrough_factor: Math.max(0.05, Math.min(5, Number(config.auto_target_down_sellthrough_factor) || 0.5)),
+        auto_target_max_downs_per_cycle: Math.max(1, Math.min(50, Number(config.auto_target_max_downs_per_cycle) || 5))
       })) as RebalanceConfig
       const normalizedSaved = normalizeLoadedConfig(saved)
       setServerConfig(normalizedSaved)
@@ -1014,7 +1023,10 @@ export default function RebalanceCenter() {
           auto_target_min_revenue_7d_sat: normalizedSaved.auto_target_min_revenue_7d_sat,
           auto_target_up_success_threshold: normalizedSaved.auto_target_up_success_threshold,
           auto_target_down_success_threshold: normalizedSaved.auto_target_down_success_threshold,
-          auto_target_drain_first_multiplier: normalizedSaved.auto_target_drain_first_multiplier
+          auto_target_drain_first_multiplier: normalizedSaved.auto_target_drain_first_multiplier,
+          auto_target_up_sellthrough_factor: normalizedSaved.auto_target_up_sellthrough_factor,
+          auto_target_down_sellthrough_factor: normalizedSaved.auto_target_down_sellthrough_factor,
+          auto_target_max_downs_per_cycle: normalizedSaved.auto_target_max_downs_per_cycle
         }
       })
       setStatus(t('rebalanceCenter.autopilot.saved'))
@@ -2713,16 +2725,16 @@ export default function RebalanceCenter() {
                           onChange={(e) => setConfig({ ...config, auto_target_max_ups_per_cycle: Number(e.target.value) })} />
                       </div>
                       <div className="space-y-2">
+                        <label className="text-sm text-fog/70" title={t('rebalanceCenter.autoTarget.maxDownsPerCycleHint')}>{t('rebalanceCenter.autoTarget.maxDownsPerCycle')}</label>
+                        <input className="input-field" type="number" min={1} max={50} step={1} disabled={atDisabled}
+                          value={config.auto_target_max_downs_per_cycle ?? 5}
+                          onChange={(e) => setConfig({ ...config, auto_target_max_downs_per_cycle: Number(e.target.value) })} />
+                      </div>
+                      <div className="space-y-2">
                         <label className="text-sm text-fog/70" title={t('rebalanceCenter.autoTarget.maxLocalSatHint')}>{t('rebalanceCenter.autoTarget.maxLocalSat')}</label>
                         <input className="input-field" type="number" min={1} step={100000} disabled={atDisabled}
                           value={config.auto_target_max_local_sat ?? 5000000}
                           onChange={(e) => setConfig({ ...config, auto_target_max_local_sat: Number(e.target.value) })} />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm text-fog/70" title={t('rebalanceCenter.autoTarget.minDrainRateHint')}>{t('rebalanceCenter.autoTarget.minDrainRate')}</label>
-                        <input className="input-field" type="number" min={0} step={500} disabled={atDisabled}
-                          value={config.auto_target_min_drain_rate_sat_per_hr ?? 5000}
-                          onChange={(e) => setConfig({ ...config, auto_target_min_drain_rate_sat_per_hr: Number(e.target.value) })} />
                       </div>
                       <div className="space-y-2">
                         <label className="text-sm text-fog/70" title={t('rebalanceCenter.autoTarget.minRevenueHint')}>{t('rebalanceCenter.autoTarget.minRevenue')}</label>
@@ -2731,16 +2743,16 @@ export default function RebalanceCenter() {
                           onChange={(e) => setConfig({ ...config, auto_target_min_revenue_7d_sat: Number(e.target.value) })} />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-sm text-fog/70" title={t('rebalanceCenter.autoTarget.upSuccessHint')}>{t('rebalanceCenter.autoTarget.upSuccess')}</label>
-                        <input className="input-field" type="number" min={1} max={100} step={1} disabled={atDisabled}
-                          value={Number((((config.auto_target_up_success_threshold ?? 0.5)) * 100).toFixed(0))}
-                          onChange={(e) => setConfig({ ...config, auto_target_up_success_threshold: Number(e.target.value) / 100 })} />
+                        <label className="text-sm text-fog/70" title={t('rebalanceCenter.autoTarget.upSellThroughFactorHint')}>{t('rebalanceCenter.autoTarget.upSellThroughFactor')}</label>
+                        <input className="input-field" type="number" min={0.1} max={5} step={0.05} disabled={atDisabled}
+                          value={config.auto_target_up_sellthrough_factor ?? 1.1}
+                          onChange={(e) => setConfig({ ...config, auto_target_up_sellthrough_factor: Number(e.target.value) })} />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-sm text-fog/70" title={t('rebalanceCenter.autoTarget.downSuccessHint')}>{t('rebalanceCenter.autoTarget.downSuccess')}</label>
-                        <input className="input-field" type="number" min={1} max={100} step={1} disabled={atDisabled}
-                          value={Number((((config.auto_target_down_success_threshold ?? 0.25)) * 100).toFixed(0))}
-                          onChange={(e) => setConfig({ ...config, auto_target_down_success_threshold: Number(e.target.value) / 100 })} />
+                        <label className="text-sm text-fog/70" title={t('rebalanceCenter.autoTarget.downSellThroughFactorHint')}>{t('rebalanceCenter.autoTarget.downSellThroughFactor')}</label>
+                        <input className="input-field" type="number" min={0.05} max={5} step={0.05} disabled={atDisabled}
+                          value={config.auto_target_down_sellthrough_factor ?? 0.5}
+                          onChange={(e) => setConfig({ ...config, auto_target_down_sellthrough_factor: Number(e.target.value) })} />
                       </div>
                       <div className="space-y-2">
                         <label className="text-sm text-fog/70" title={t('rebalanceCenter.autoTarget.drainFirstMultiplierHint')}>{t('rebalanceCenter.autoTarget.drainFirstMultiplier')}</label>

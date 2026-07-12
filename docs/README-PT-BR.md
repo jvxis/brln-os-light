@@ -19,28 +19,27 @@ LightningOS é um instalador completo de daemon de nó Lightning, com gerenciado
 - A seed phrase nunca é persistida nem registrada em logs
 - Assistente para credenciais RPC do Bitcoin, seed/carteira nativa e primeiro cadastro de admin
 - Dashboard redesenhado com pulso do node, saúde do core, risco das automações, atividade recente e painéis de receita
-- Suite Lightning Ops: peers/canais, Graph Explorer, Novos Canais, Rebalance Center, Autofee, Ranking de Canais, Aposentar Node, sinais HTLC e Channel Auto Heal
+- Suíte Lightning Ops: peers/canais, Network Atlas, Graph Explorer, Novos Canais, Rebalance Center, Autofee, Ranking de Canais, Aposentar Node, sinais HTLC e Channel Auto Heal
 - Carteira com leitura de QR de invoice, invoices blinded, preview/probing de rotas, pagamento por rota validada e detalhes de pagamento
 - Chat Keysend: 1 sat por mensagem + taxas de roteamento, indicadores de não lidas, retenção de 30 dias
 - Notificações em tempo real (on-chain, Lightning, canais, forwards, rebalances)
 - Notificações Telegram: backups SCB, resumos financeiros, comandos sob demanda `/scb` e `/balances`
 - Relatórios diários de roteamento (timer + backfill + API live + API live de movimento)
-- App Store: Bitcoin Core, Bark Wallet, Electrs, Mempool, LNDg, LNbits, Elements, Peerswap (psweb), RoboSats Gateway, Public Pool, Buy DePix, FSwap, Fedimint
-- Gestão de Bitcoin Local (status + config) e visualizador de logs
+- On-chain Hub com coin control, labels/grupos/travas de UTXO, bump de taxa, detalhes de transações e grafo de proveniência Wallet Flow
+- App Store com 16 apps/serviços registrados, checks de dependências, dados persistentes e instalação de Docker sob demanda
+- Interface dedicada para Taproot Assets com descoberta, sync de universe, mint/reissue, recebimento, preview de envio, envio e resgate
+- Gestão de Bitcoin Local, Elements, LND, Tor, discos, manutenção do banco, auditoria, terminal, atalhos e logs
 
-## Novidades desde a atualização 0.3.9 do README
-Estas notas cobrem `0.3.10-Beta` até `0.3.27-Beta`, além da versão atual de desenvolvimento `0.4.0-Beta` em `ui/public/version.txt`.
-
-- Acesso admin e cadastro inicial: setup de primeiro acesso, tokens locais de setup/recovery, fluxo para habilitar login em instalações antigas, restart mais seguro do manager em mudanças de autenticação e nova UI de enrollment.
-- Graph Explorer: snapshot nativo do grafo, busca de nodes, abas de visão geral/canais/fechados/fees, reconciliação de peers locais, enriquecimento de origem de fechamento, distribuições de fee, tetos de policy, recompute e correções posteriores de Graph/Lightning Ops.
-- Módulo Novos Canais: candidatos a peer com base em rotas observadas, rotas falhas, atrito operacional local, qualidade do grafo, demanda, alívio, confiança, evidência de rota/custo em 30 dias e ajustes de layout mobile.
-- Dashboard e System Pulse: componentes extraídos, cards mais ricos de LND/sistema, painéis de receita e atividade recente, saúde do core, risco das automações, pulso do node, checks de Bitcoin, correções no card de automação e flows de restart do LND mais seguros com contexto de journal.
-- Melhorias na carteira: invoices blinded, leitura de QR para pagamento, preview/probing de rota, recomendação de rota automática, pagamento por rota validada, metadados de rota/pagamento e comportamento mais seguro para invoices com blind paths.
-- Rebalance Center: Auto Pilot fase 1 com modos de scheduler por regras/shadow/live, escopo de candidatos, controles de máximo de jobs e lucro esperado, telemetria de decisão, fila consciente de orçamento e status shadow/live na UI.
-- Execução e guardrails de rebalance: fast path delegado ao LND nativo com strict payback, fast path via `BuildRoute` em rota cacheada, decomposição MPP, modelo de ganho v2 com score de velocidade, reset/reforço de Mission Control, permanent-fail score com decaimento, refactors de cooldown-probe, trava de liquidez paga recente, modos de orçamento ilimitado/auto-only, reserva manual, tempo efetivo de jobs e reorganização da UI.
-- Autofee: defaults de perfil enviados pelo backend, telemetria de refresh/rebalance, seed nativo corrigido, refresh de seed sensivel a liquidez, thresholds dinâmicos, melhor tratamento de canais em monitor, dampener de settling target, golden tests, correções de market-refill/stall-relax/old-sinks e comportamento mais conservador quando o sinal local é fraco ou ausente.
-- Relatórios, notificações e visibilidade operacional: warm-up de relatório live, API live de movimento, armazenamento de histórico de rota, catch-up mais robusto, ranges históricos em relatórios, melhorias no gráfico de saldos, ano nos tooltips, correções Telegram, APIs locais de peers, logs de Bitcoin Local, cópia de channel ID, histerese de HTLC e mais contexto de pagamento/rota.
-- App Store e instaladores: apps Electrs/Mempool, status/checks de full-index, diretórios customizados para Bitcoin/Elements, detecção de Bitcoin local para Elements, melhorias em Bitcoin Core/RoboSats/LNbits/Public Pool/Peerswap, suporte a Fedimint guardian/gateway, refinamentos de apps Docker, compatibilidade sudoers com Ubuntu 26 e suporte a setup de nó existente com LND usando Postgres mais provisionamento do DB de relatórios/notificações do LightningOS.
+## Visão geral das funcionalidades
+- **Setup e administração seguros:** cadastro guiado no primeiro acesso, tokens locais de setup/recovery, habilitação opcional de login para instalações antigas, sessões em cookies HTTP-only, proteção CSRF, reautenticação recente para envios on-chain externos e trilha de auditoria para ações sensíveis.
+- **Dashboard e operações de sistema:** pulso do node, saúde de Bitcoin/LND/sistema, liquidez, atividade recente, receita, risco das automações, mercado/fees, ações seguras de serviço, contexto do journal, manutenção do Postgres, saúde dos discos e upgrades do app, LND e Tor.
+- **Carteira e operações on-chain:** invoices, leitura de QR, invoices blinded, decode de pagamentos, preview/probing de rota, pagamento por rota automática ou validada, MPP, detalhes de pagamento, geração de endereços, preview de envio externo, coin control, metadados, grupos de UTXO, lock/unlock e bump de taxa.
+- **Inteligência de rede:** Network Atlas, Graph Explorer nativo com cache, busca de nodes e histórico de policies, enriquecimento de canais fechados, recomendações de peers, Novos Canais com score baseado em evidência local de 30 dias e Ranking por sinais econômicos e operacionais.
+- **Automação de liquidez:** rebalances manuais e automáticos, scheduler Sovereign em shadow/live, fast paths, pre-probing, MPP/MSPR, orçamentos, guardrails de ROI/payback, proteção de fontes, controles de Mission Control, AutoTarget v2 adaptativo e históricos auditáveis de decisões/resultados.
+- **Automação de fees:** Autofee explicável por canal com seeds do grafo nativo e Amboss opcional, estados dinâmicos de liquidez, pressão HTLC, floors de rentabilidade, calibração por porte do node, modos Balanced/Market Refill, medição de outcomes e tags/histórico detalhados.
+- **Ciclo de vida e segurança dos canais:** controles de peers/canais, abertura em lote, previews e recuperação de fechamento, modo Parked, Auto Heal, verificação de peers Tor, HTLC Manager, limpeza de pagamentos falhos, watchtowers, Balanced Open, Aposentar Node e dead-man switch opcional do Modo de Sucessão.
+- **Observabilidade e comunicação:** notificações live, backups SCB e resumos via Telegram, relatórios e backfills de roteamento, APIs de movimento/live, chat Keysend, eventos de auditoria, logs de serviços e terminal web opcional protegido.
+- **Ecossistema Bitcoin e Liquid:** Bitcoin Core remoto ou local, Elements com seleção de mainchain local/remota, Peerswap, fallbacks de proveniência do Wallet Flow, Taproot Assets e apps de carteira, mineração, federação, analytics, pagamentos e infraestrutura self-hosted.
 
 ## Estrutura do repositório
 - `cmd/lightningos-manager`: backend Go (API + UI estática)
@@ -56,7 +55,7 @@ O instalador provisiona tudo que é necessário em um Ubuntu limpo:
 - Postgres, smartmontools, curl, jq, ca-certificates, openssl, build tools
 - Tor (ControlPort habilitado) + i2pd habilitado por padrão
 - Go 1.24.12 e a major mais recente do Node.js (fallback para Node.js 20.x se a detecção falhar)
-- Binários do LND (padrão `v0.21.0-beta`)
+- Binários do LND (padrão `v0.21.1-beta`)
 - Binário do LightningOS Manager (compilado localmente)
 - Build da UI (compilada localmente)
 - Serviços systemd e templates de configuração
@@ -238,12 +237,14 @@ Endpoints de API:
 - `GET /api/reports/movement/live` (janela live de movimento/rebalance do dia atual)
 
 ## Lightning Ops (mapa de funcionalidades)
-- Gestão de canais: controles de peer/canal, atualizações de policy e refinamentos de card/saldo de canal.
+- Network Atlas: mapa live da rede com apresentação configurável e contexto de nodes/canais.
+- Gestão de canais: busca de peers/canais, conexão/desconexão e boost, assistência para abertura em lote, updates de policy/status, abas detalhadas de economia/atividade/falhas, watchtowers, assinatura e restore de SCB.
 - Graph Explorer: snapshot nativo do grafo, busca de nodes, abas geral/canais/fechados/fees, reconciliação de peers locais e histórico de policy de fees.
 - Novos Canais: candidatos de peers a partir de rotas observadas, atrito local, qualidade do grafo, demanda, alívio e confiança.
-- Ranking de Canais: score por canal, estado recomendado, comparação 7d vs 30d, sinais de top source/sink, recomendações acionáveis e links para Autofee, Rebalance, HTLC Manager, Novos Canais e Gestão de Fechamentos.
-- Rebalance Center: rebalances manuais + automáticos com targeting por score, watchdogs, pre-probing, pisos separados de probe/execução, MSPR, guardrails de ROI, peso por efetividade de origem e auto-restart opcional no modo manual.
-- Autofee: automação de taxas por canal com âncoras de custo, seed nativo corrigido pelo grafo, seed Amboss opcional, integração de sinais HTLC, tratamento de canais em monitor, telemetria de refresh, calibração por tamanho/liquidez do nó, scheduler/manual run e histórico detalhado.
+- Ranking de Canais: score por canal, estado recomendado, comparação 7d vs 30d, estado dinâmico de liquidez, modo Parked, sinais de top source/sink, recomendações acionáveis e deep links para outras operações.
+- Rebalance Center: rebalances manuais/automáticos e Sovereign shadow/live com targeting por score, AutoTarget v2 adaptativo, watchdogs, pre-probing, pisos separados de probe/execução, MSPR, guardrails de ROI/payback, peso por efetividade de source e auto-restart manual opcional.
+- Autofee: automação de fees por canal com âncoras de custo, seed nativo corrigido pelo grafo, Amboss opcional, estado dinâmico de liquidez, sinais HTLC, telemetria de refresh, calibração por tamanho/liquidez do node, scheduler/manual run, outcomes e histórico detalhado.
+- Abertura/fechamento de canais: previews individuais e em lote, bump de fee de pending open, caminhos coop/force-close, avisos para canais financiados pelo peer, recuperação pelo Close Manager e sessões Balanced Open.
 - Aposentar Node (Node Retirement): fluxo guiado de descomissionamento seguro com linha do tempo de sessão, controle de fechamento cooperativo, tratamento de exceções e reconciliação on-chain.
 - HTLC Manager: telemetria HTLC com histerese usada pelo Autofee e por decisões de liquidez.
 - Channel Auto Heal + Tor peers checker: guardrails operacionais para confiabilidade de peer/canal.
@@ -342,6 +343,11 @@ Estados recomendados:
 - `Monitorar`: existe ineficiência ou instabilidade, mas ainda não há evidência suficiente para fechamento imediato
 - `Fechar`: fraqueza persistente, risco ou custo de oportunidade alto o suficiente para preparar uma saída ordenada
 
+Modo de automação do canal:
+- Um canal pode ser colocado em modo `Parked` pelo Ranking de Canais, com fee outbound fixa opcional, data de revisão e nota do operador.
+- O estacionamento suspende Autofee e a participação em rebalance automático/manual-restart, exclui o canal como source e impede novos jobs de rebalance para ele.
+- Ao retornar o canal para `Normal`, o LightningOS restaura as configurações de automação capturadas no estacionamento.
+
 Como ler a página:
 - Lista de ranking: compare os canais por score ou ordene por resultado líquido, eficiência de capital, custo de rebalance, estabilidade do peer, falhas HTLC, dependência de rebalance ou risco operacional
 - Painel de detalhe: inspecione o canal selecionado com:
@@ -390,6 +396,9 @@ Comportamento principal:
 - Métricas baseline ficam em `/api/rebalance/metrics/baseline?days=1`; use 24h para comparação rápida e 7d para decisão mais confiável.
 - Manual Restart Watch respeita `EligibleAsTarget`; ele tenta novamente jobs manuais com auto-restart depois do intervalo/cooldown e só ignora o cost gate quando `Bypass cost gate` está habilitado no canal.
 - **Pre-probing** de rota roda antes do envio, buscando o maior valor viável na rota.
+- **Scheduler Sovereign:** o Auto Pilot pode rodar em shadow para revisar decisões ou em live para executar. Escopo de candidatos, jobs por ciclo, lucro mínimo esperado, tratamento de slow sellers, quarentena por risco de rota, custo de oportunidade das sources, parcela de exploração e score ponderado por EV são configuráveis e gravados no histórico Sovereign.
+- **AutoTarget v2:** nos canais que aderem ao gerenciamento, o autopilot ajusta `target_outbound_pct` gradualmente dentro dos limites configurados. As decisões combinam sell-through, drain rate, saldo local, receita de 7 dias, sucesso de rebalance, thresholds calibrados ao node e limites de subidas/descidas por ciclo; toda mudança ou manutenção entra no histórico AutoTarget.
+- O `Máximo (sats)` configurado também limita a economia do scan Sovereign e o valor gasto pelo job escolhido, mantendo o mesmo teto no score e na execução.
 
 Channel Workbench:
 - Define percentual-alvo de outbound por canal.
@@ -535,6 +544,8 @@ Pipeline de decisao (por canal):
 4. Aplica controles de discovery/explorer/stagnation/profit-protect/locks globais.
 5. Monta pilha de floor (`rebal`, `rebal-sink`, `outrate`, `peg`, `revfloor`, `stagnation`, `no-signal`).
 6. Aplica step cap e cooldown, e decide `apply` ou `keep`.
+
+O estado dinâmico de liquidez é persistido junto aos outcomes do Autofee e aparece no Fee Center e no Ranking de Canais. Assim, a revisão do operador e a medição posterior do resultado usam o estado que existia quando a decisão de fee foi tomada.
 
 Diagrama do fluxo:
 - `docs/AUTOFEE_FLOW_DIAGRAM_PT_BR.md`
@@ -752,10 +763,40 @@ sudo systemctl enable --now lightningos-terminal
 ```
 A página Terminal mostra a senha atual e botão de cópia.
 
+## Taproot Assets (experimental)
+
+Ao instalar **Taproot Assets (tapd)**, o LightningOS libera uma página dedicada apoiada pelo daemon oficial e pela conexão com o LND local. A integração atual é mainnet, alpha e somente on-chain.
+
+- Exibe status amigável do daemon e saldos de ativos.
+- Descobre ativos em um catálogo de universe ou sincroniza manualmente um universe host.
+- Inclui atalho de sync do BRLN e oferece ativos conhecidos/sincronizados no seletor de recebimento.
+- Faz mint de novo ativo, reissue em grupo existente e permite escolher fee em sat/vbyte sugerida pelo mempool.
+- Gera endereço de recebimento com QR, decodifica endereços, mostra preview de valor/custo on-chain estimado, envia e resgata.
+- O LightningOS ignora transações-âncora do Taproot Assets nas notificações genéricas de envio on-chain para evitar alertas enganosos.
+- O `tapd` standalone e o Fedimint Lightning Gateway são mutuamente exclusivos porque ambos precisam do interceptor HTLC do LND. Pare/desinstale um antes de instalar o outro.
+
+Transferências Lightning de Taproot Assets não estão habilitadas nesse modo standalone; elas dependem do trabalho separado do edge node comunitário.
+
+## Wallet Flow / grafo de proveniência (opcional)
+
+A aba Wallet Flow do On-chain Hub renderiza um grafo Sankey das transações tocadas pela carteira, incluindo ancestrais e contrapartes externas. Para decodificar txids arbitrários, o backend usa a primeira fonte disponível nesta ordem:
+
+1. **Bitcoin Core local** — fonte preferencial quando está sincronizado, não podado e com `txindex=1` pronto.
+2. **Electrs local** — fallback configurável por `ELECTRUM_RPC_ADDR` (padrão `127.0.0.1:50001`).
+3. **Servidores Electrum públicos** — fallback mainnet habilitado por padrão e configurável por `PROVENANCE_PUBLIC_ELECTRUM`.
+
+> **Aviso de privacidade:** ao usar o fallback público, o operador Electrum pode observar os txids consultados. Defina `PROVENANCE_PUBLIC_ELECTRUM=disabled` em `/etc/lightningos/secrets.env` para desativá-lo.
+
+Use `PROVENANCE_PRIMARY=chain|bitcoind|electrs` para manter a cadeia padrão ou fixar uma única fonte local. A UI mostra a fonte ativa, saúde e freshness; a API de métricas expõe hits, erros, fallthroughs e latência por classe de fonte. O Wallet Flow também oferece rebuild, status e telemetria, e os relatórios diários incluem alerta quando a proveniência está ausente, atrasada ou com erro.
+
 ## Notas de segurança
 - A seed phrase nunca é armazenada. Ela é mostrada uma vez no assistente.
 - Credenciais RPC são armazenadas apenas em `/etc/lightningos/secrets.env` (root:lightningos, `chmod 660`).
 - API/UI bindam em `0.0.0.0` por padrão para acesso LAN. Para localhost-only, defina `server.host: "127.0.0.1"` em `/etc/lightningos/config.yaml`.
+- Defina `UTXO_LOCK_REQUIRES_REAUTH=true` para exigir o mesmo escopo de reautenticação de envio da carteira antes de lock/unlock de UTXO.
+- Ações sensíveis da API são gravadas em `audit_events` no Postgres e podem ser revisadas na página Auditoria.
+- Eventos de auditoria são removidos após `AUDIT_EVENTS_RETENTION_DAYS` dias (padrão `365`). Use `0` ou `forever` para mantê-los indefinidamente.
+- O fallback Electrum público amplia a cobertura do Wallet Flow, mas revela os txids consultados ao servidor escolhido; desative-o se isso não atender ao seu modelo de privacidade.
 
 ## Troubleshooting
 Se `https://<IP_LAN_DO_SERVIDOR>:8443` não estiver acessível:
@@ -765,17 +806,30 @@ journalctl -u lightningos-manager -n 200 --no-pager
 ss -ltn | grep :8443
 ```
 
-### App Store (Bitcoin Core, Bark Wallet, Electrs, Mempool, LNDg, LNbits, Elements, Peerswap, RoboSats, Public Pool, Buy DePix, FSwap, Fedimint)
-- Bitcoin Core roda via Docker e usa `/data/bitcoin` por padrão. Na instalação, ele pode opcionalmente usar um diretório de blockchain customizado em um volume já montado; o app não altera esse diretório depois.
-- Bark Wallet roda a interface oficial da Second em `https://<IP_LAN_DO_SERVIDOR>:4004`, com login gerado pelo LightningOS. Ela usa o operador Bark mainnet da Second para pagamentos Ark/Lightning/on-chain, não acessa o LND local e preserva os dados da carteira quando o card é desinstalado.
-- Electrs roda via Docker, indexa o Bitcoin Core local, expõe Electrum TCP na porta `50001` e publica métricas em `127.0.0.1:4224`.
-- Mempool roda uma stack mempool.space local em `http://<IP_LAN_DO_SERVIDOR>:8999` e exige Bitcoin Core + Electrs instalados e rodando.
-- LNDg roda em Docker e escuta em `http://<IP_LAN_DO_SERVIDOR>:8889`.
-- LNbits roda em Docker e integra com a conexão local do LND.
-- Peerswap instala `peerswapd` + `psweb` (UI em `http://<IP_LAN_DO_SERVIDOR>:1984`) e pode usar Elements local ou um endpoint RPC remoto de Elements; no modo remoto, o nome da wallet é derivado do pubkey do node.
-- Elements roda como serviço nativo (Liquid Elements node, RPC em `127.0.0.1:7041`) e pode usar o Bitcoin remoto do clube ou um bitcoind local detectado pelo LND/bitcoin.conf. Na instalação, o Elements pode opcionalmente usar um diretório de dados customizado em um volume já montado; o app não altera esse diretório depois.
-- RoboSats Gateway, Public Pool, Buy DePix e FSwap são gerenciados pelo mesmo fluxo de instalar/iniciar/parar/status da App Store.
-- Fedimint foi separado em **Fedimint Guardian** (`fedimintd`) e **Fedimint Lightning Gateway** (`gatewayd lnd`). Ambos usam Iroh e leem o backend `bitcoind.*` ativo de `/data/lnd/lnd.conf`; o gateway tambem ajusta acesso ao LND local. Veja o [guia de configuracao do Fedimint](27_FEDIMINT_CONFIGURATION_PT_BR.md) ([EN](28_FEDIMINT_CONFIGURATION_EN.md)).
+### Catálogo da App Store
+
+O registro do backend expõe atualmente 16 apps/serviços. Os arquivos dos apps são gerenciados pelo LightningOS, os dados persistentes ficam separados e o Docker só é instalado quando um app precisa dele.
+
+| App | Finalidade e integração atual |
+| --- | --- |
+| **Bitcoin Core** | Node mainnet local em Docker. Usa `/data/bitcoin` por padrão, aceita storage customizado já montado na instalação e configura `txindex=1` para consumidores de índice completo. |
+| **Bark Wallet** | Carteira self-custodial beta para Ark, Lightning e on-chain, servida via HTTPS local com login gerenciado pelo LightningOS. Usa o operador Ark mainnet público da Second, não usa o LND local e preserva os dados ao desinstalar. |
+| **Electrs** | Indexador Electrum para o Bitcoin Core local com índice completo; expõe TCP `50001`, métricas locais em `127.0.0.1:4224` e progresso de indexação/sync na loja. |
+| **Mempool** | Stack mempool.space self-hosted na porta `8999`; exige Bitcoin Core e Electrs locais instalados, rodando e prontos. |
+| **Fedimint Guardian** | `fedimintd` para federações solo ou multi-guardian via Iroh, usando o backend Bitcoin ativo. |
+| **Fedimint Lightning Gateway** | Gateway independente `gatewayd lnd` que conecta o LND local a federações Fedimint via Iroh. Não pode rodar junto com Taproot Assets standalone porque ambos precisam do interceptor HTLC do LND. |
+| **LNDg** | Analytics e automação avançados para LND em Docker, na porta `8889`, com credenciais admin gerenciadas e integração ao LND local. |
+| **LNbits** | Plataforma de contas/carteiras Lightning e extensões financiada pelo LND local. |
+| **Elements** | Serviço Liquid Elements nativo com RPC em `127.0.0.1:7041`, mainchain Bitcoin local/remota selecionável, detecção do node local e diretório de dados customizado opcional em volume já montado. |
+| **Peerswap** | `peerswapd` nativo com `psweb` na porta `1984`; usa Elements local ou uma fonte RPC remota testada, com wallet específica do node no modo remoto. |
+| **RoboSats Gateway** | Cliente RoboSats self-hosted para negociação P2P de Bitcoin via Tor, fixado em release testada e exposto pelo proxy HTTPS do LightningOS. |
+| **Public Pool** | Backend e UI self-hosted de pool para solo mining com suporte a Bitcoin RPC local ou remoto. |
+| **CPU Lottery Miner** | Minerador solo opcional por CPU contra o Public Pool local. A quantidade de threads é ajustável na UI e eventual recompensa vai diretamente para o endereço da carteira LND. |
+| **Buy DePix** | Checkout integrado de PIX para DePix com criação de cotação/pedido, acompanhamento de status e página dedicada. |
+| **FSwap** | Pagamento de boletos e contas brasileiras com sats do node Lightning local pelo fluxo dedicado Pagar Boleto. |
+| **Taproot Assets (tapd)** | `tapd` oficial standalone conectado ao LND local para descoberta on-chain, sync de universe, mint/reissue, recebimento, preview/envio e resgate de ativos. Alpha experimental em mainnet; transferências Lightning de ativos dependem do trabalho separado do edge node comunitário. |
+
+Os detalhes do Fedimint estão no [guia de configuração](27_FEDIMINT_CONFIGURATION_PT_BR.md) ([EN](28_FEDIMINT_CONFIGURATION_EN.md)).
 
 Notas LNDg:
 - A página de logs do LNDg lê `/var/log/lndg-controller.log` dentro do container. Se estiver vazio, verifique `docker logs lndg-lndg-1`.

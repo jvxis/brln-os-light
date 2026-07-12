@@ -24,28 +24,27 @@ LightningOS is a Full Lightning Node Daemon Installer, Lightning node manager wi
 - Seed phrase is never persisted or logged
 - Wizard for Bitcoin RPC credentials, native seed/wallet setup, and first admin enrollment
 - Redesigned dashboard with node pulse, core health, automation risk, recent activity, and revenue panels
-- Lightning Ops suite: peers/channels, Graph Explorer, New Channels, Rebalance Center, Autofee, Channel Ranking, Node Retirement, HTLC signals, and Channel Auto Heal
+- Lightning Ops suite: peers/channels, Network Atlas, Graph Explorer, New Channels, Rebalance Center, Autofee, Channel Ranking, Node Retirement, HTLC signals, and Channel Auto Heal
 - Wallet with QR invoice scanning, blinded invoice support, route preview/probing, validated-route payments, and payment detail views
 - Keysend Chat: 1 sat per message + routing fees, unread indicators, 30-day retention
 - Real-time notifications (on-chain, Lightning, channels, forwards, rebalances)
 - Telegram notifications: SCB backups, financial summaries, on-demand `/scb` and `/balances`
 - Daily routing reports (timer + backfill + live API + movement live API)
-- App Store: Bitcoin Core, Electrs, Mempool, LNDg, LNbits, Elements, Peerswap (psweb), RoboSats Gateway, Public Pool, Buy DePix, FSwap, Fedimint
-- Bitcoin Local management (status + config) and logs viewer
+- On-chain Hub with coin control, UTXO labels/groups/locks, fee bumping, transaction details, and Wallet Flow provenance graph
+- App Store with 16 registered apps/services, dependency checks, persistent data, and on-demand Docker installation
+- Dedicated Taproot Assets interface for asset discovery, universe sync, mint/reissue, receive, send preview, send, and redeem
+- Bitcoin Local, Elements, LND, Tor, disk, database maintenance, audit, terminal, shortcut, and log management
 
-## New since the 0.3.9 README update
-These notes cover `0.3.10-Beta` through `0.3.27-Beta`, plus the current `0.4.0-Beta` development version in `ui/public/version.txt`.
-
-- Admin access and enrollment: first-run setup, local setup/recovery tokens, legacy-login enable flow, safer manager restart handling, and the newer enrollment UI.
-- Graph Explorer: native graph snapshot, node search, node/channel/closed-channel/fee tabs, local-peer reconciliation, close-source enrichment, fee distributions, policy ceilings, recompute controls, and follow-up Graph/Lightning Ops fixes.
-- New Channels recommendation module: candidate peers from observed routes, failed routes, local operational pain, graph quality, demand, relief, confidence, 30-day route/cost evidence, and mobile layout refinements.
-- Dashboard and system pulse: extracted dashboard components, richer LND/system cards, revenue and recent activity panels, core health, automation risk, node pulse, Bitcoin checks, automation-card fixes, and safer LND restart flows with journal context.
-- Wallet upgrades: blinded invoices, QR invoice scanning, route preview/probing, automatic-route recommendations, validated-route payment execution, payment detail/route metadata, and safer behavior for blind-path invoices.
-- Rebalance Center: Auto Pilot phase 1 with rules/shadow/live scheduler modes, candidate scope, max-jobs and expected-profit controls, decision telemetry, budget-aware queueing, and shadow/live status in the UI.
-- Rebalance execution and guardrails: native LND delegated fast path with strict payback, cached `BuildRoute` fast path, MPP decomposition, v2 gain model with velocity scoring, Mission Control reset/reinforcement, decaying permanent-fail scores, cooldown-probe refactors, fresh paid liquidity lock, unlimited/auto-only budget modes, manual reserve, effective job timing, and UI reorganization.
-- Autofee upgrades: backend-supplied profile defaults, refresh/rebalance telemetry, native corrected seed references, liquidity-aware seed refresh, dynamic thresholds, stronger inbound/monitor-state handling, settling-target dampening, golden tests, market-refill fixes, stall relaxation fixes, old-sink handling, and more conservative behavior around weak or missing local signals.
-- Reports, notifications, and ops visibility: live report warm-up, movement live API, route-history storage, improved catch-up behavior, historical report ranges, balances chart improvements, year tooltips, Telegram notification fixes, local peer APIs, Bitcoin Local logs, channel-ID copy, HTLC hysteresis, and richer payment/route context.
-- App Store and installers: Electrs/Mempool apps, full-index dependency checks/status, custom Bitcoin/Elements data directories, local Bitcoin detection for Elements, improved Bitcoin Core/RoboSats/LNbits/Public Pool/Peerswap handling, Fedimint guardian/gateway support, Docker app refinements, Ubuntu 26 sudoers compatibility, and existing-node setup support for LND backed by Postgres plus LightningOS reports/notifications DB provisioning.
+## Feature overview
+- **Secure setup and administration:** guided first-run enrollment, local setup/recovery tokens, optional login enablement for legacy installs, secure HTTP-only sessions, CSRF protection, fresh reauthentication for external on-chain sends, and an audit trail for sensitive actions.
+- **Dashboard and system operations:** node pulse, Bitcoin/LND/system health, liquidity, recent activity, revenue, automation risk, market/fee panels, safer service actions, journal context, Postgres maintenance, disk health, and application/LND/Tor upgrade workflows.
+- **Wallet and on-chain operations:** invoices, QR scanning, blinded invoices, payment decoding, route preview/probing, automatic or validated-route payment, MPP, payment details, address generation, external-send preview, coin control, metadata, UTXO groups, lock/unlock, and fee bumping.
+- **Network intelligence:** Network Atlas, cached native Graph Explorer, node search and policy history, closed-channel enrichment, peer recommendations, New Channels scoring from 30-day local evidence, and per-channel ranking with economic and operational signals.
+- **Liquidity automation:** manual and automatic rebalancing, Sovereign shadow/live scheduler, fast paths, pre-probing, MPP/MSPR, budgets, ROI/payback guardrails, source protection, Mission Control controls, adaptive AutoTarget v2, and auditable decision/outcome history.
+- **Fee automation:** explainable per-channel Autofee with native graph and optional Amboss seeds, dynamic liquidity states, HTLC pressure, profitability floors, node-size calibration, Balanced/Market Refill modes, outcome measurement, and detailed tags/history.
+- **Channel lifecycle and safety:** peer/channel controls, batch opens, close previews and recovery, channel Parked mode, Auto Heal, Tor peer checks, HTLC Manager, failed-payment cleanup, watchtower management, Balanced Open, Node Retirement, and optional Succession dead-man switch.
+- **Observability and communication:** live notifications, Telegram SCB backups and summaries, routing reports and backfills, movement/live APIs, Keysend chat, audit events, service logs, and a protected optional web terminal.
+- **Bitcoin and Liquid ecosystem:** remote or local Bitcoin Core, Elements with local/remote mainchain selection, Peerswap, Wallet Flow provenance fallbacks, Taproot Assets, and applications for wallets, mining, federation, analytics, payments, and self-hosted infrastructure.
 
 ## Repository layout
 - `cmd/lightningos-manager`: Go backend (API + static UI)
@@ -243,12 +242,14 @@ API endpoints:
 - `GET /api/reports/live` (today 00:00 local → now, cached ~60s)
 
 ## Lightning Ops (feature map)
-- Channel management: peer/channel controls, policy updates, and channel card/balance refinements.
+- Network Atlas: live network-map view with configurable presentation and node/channel context.
+- Channel management: searchable peers/channels, connect/disconnect and boost flows, batch-open assistance, policy/status updates, detailed economics/activity/failure tabs, watchtowers, signing, and SCB restore.
 - Graph Explorer: native network graph snapshot, node search, general/channel/closed/fee tabs, local-peer reconciliation, and fee-policy history.
 - New Channels: peer candidates built from observed routes, local pain, graph quality, demand, relief, and confidence.
-- Channel Ranking: per-channel score, recommended state, 7d vs 30d comparison, top source/sink signals, actionable recommendations, and links into Autofee, Rebalance, HTLC Manager, New Channels, and Close Manager.
-- Rebalance Center: manual + auto rebalances with score-based targeting, watchdogs, pre-probing, split probe/execute floors, MSPR, ROI guardrails, source-effectiveness weighting, and optional manual auto-restart.
-- Autofee: per-channel fee automation with cost anchors, native corrected graph seeding, optional Amboss seeding, HTLC signal integration, monitor-state handling, refresh telemetry, calibration by node size/liquidity, scheduler/manual runs, and detailed run history.
+- Channel Ranking: per-channel score, recommended state, 7d vs 30d comparison, dynamic liquidity state, Parked mode, top source/sink signals, actionable recommendations, and deep links into other operations.
+- Rebalance Center: manual/automatic and Sovereign shadow/live rebalances with score-based targeting, adaptive AutoTarget v2, watchdogs, pre-probing, split probe/execute floors, MSPR, ROI/payback guardrails, source-effectiveness weighting, and optional manual auto-restart.
+- Autofee: per-channel fee automation with cost anchors, native corrected graph seeding, optional Amboss seeding, dynamic liquidity state, HTLC signals, refresh telemetry, calibration by node size/liquidity, scheduler/manual runs, outcomes, and detailed history.
+- Channel opening/closing: single and batch open previews, pending-open fee bump, cooperative/force-close paths, peer-funded warnings, Close Manager recovery, and Balanced Open sessions.
 - Node Retirement: guided safe node decommission workflow with session timeline, cooperative close controls, exception handling, and on-chain reconciliation.
 - HTLC Manager: hysteresis-based HTLC telemetry used by Autofee and liquidity decisions.
 - Channel Auto Heal + Tor peers checker: operational guardrails for peer/channel reliability.
@@ -347,6 +348,11 @@ Recommended states:
 - `Monitor`: something is inefficient or unstable, but there is not enough evidence yet for immediate close
 - `Close`: persistent weakness, risk, or opportunity cost is high enough that preparing an exit is reasonable
 
+Channel automation mode:
+- A channel can be placed in `Parked` mode from Channel Ranking, with an optional fixed outbound fee, review date, and operator note.
+- Parking suspends Autofee and automatic/manual-restart rebalance participation, excludes the channel as a rebalance source, and prevents new rebalance jobs for it.
+- Returning the channel to `Normal` restores the automation settings captured when it was parked.
+
 How to read the page:
 - Ranking list: compare channels by score or sort by net result, capital efficiency, rebalance cost, peer stability, HTLC failures, rebalance dependence, or operational risk
 - Detail panel: inspect the selected channel with:
@@ -395,6 +401,9 @@ Key behavior:
 - Baseline metrics are available at `/api/rebalance/metrics/baseline?days=1`; use 24h for a quick comparison and 7d for a stronger decision.
 - Manual Restart Watch respects `EligibleAsTarget`; it retries manual auto-restart jobs after interval/cooldown and only ignores the cost gate when `Bypass cost gate` is enabled for that channel.
 - Route **pre-probing** runs before sending, searching for the largest feasible amount on the route.
+- **Sovereign scheduler:** the Auto Pilot can run in shadow mode for decision review or live mode for execution. Candidate scope, jobs per cycle, minimum expected profit, slow-seller handling, route-risk quarantine, source opportunity cost, exploration share, and EV-weighted scoring are configurable and recorded in Sovereign history.
+- **AutoTarget v2:** for channels opted into management, the autopilot adjusts `target_outbound_pct` gradually within configured bounds. Decisions combine sell-through, drain rate, local balance, 7-day revenue, rebalance success, node-calibrated thresholds, and per-cycle up/down limits; every change or hold is written to AutoTarget history.
+- The configured `Maximum (sats)` also caps Sovereign scan economics and the amount a selected job can spend, so candidate scoring and execution use the same ceiling.
 
 Channel Workbench:
 - Set per-channel target outbound percentage.
@@ -540,6 +549,8 @@ Decision pipeline (per channel):
 4. Apply mode-specific controls (discovery/explorer/stagnation/profit-protect/global locks).
 5. Build floor stack (`rebal`, `rebal-sink`, `outrate`, `peg`, `revfloor`, `stagnation`, `no-signal`).
 6. Apply step caps and cooldown, then decide `apply` vs `keep`.
+
+Dynamic liquidity state is persisted with Autofee outcomes and surfaced in Fee Center and Channel Ranking, so operator reviews and later outcome measurements use the state that existed when the fee decision was made.
 
 Flow diagram:
 - `docs/AUTOFEE_FLOW_DIAGRAM_EN.md`
@@ -757,6 +768,20 @@ sudo systemctl enable --now lightningos-terminal
 ```
 The Terminal page shows the current password and a copy button.
 
+## Taproot Assets (experimental)
+
+Installing **Taproot Assets (tapd)** adds a dedicated page backed by the official daemon and the local LND connection. The current integration is mainnet, alpha, and on-chain only.
+
+- View daemon status and friendly asset balances.
+- Discover assets from a universe catalog or sync a universe host manually.
+- Use the BRLN one-click sync shortcut and include known/synced assets in the receive picker.
+- Mint a new asset, reissue into an existing group, and choose a mempool-based sat/vbyte fee rate.
+- Generate a receive address with QR code, decode addresses, preview amount/estimated on-chain cost, send, and redeem.
+- LightningOS suppresses Taproot Assets anchor transactions from generic on-chain-send notifications to avoid misleading alerts.
+- Standalone `tapd` and Fedimint Lightning Gateway are mutually exclusive because both require LND's HTLC interceptor. Stop/uninstall one before installing the other.
+
+Lightning transfers of Taproot Assets are not enabled in this standalone mode; they depend on the separate community edge-node work.
+
 ## Wallet Flow / provenance graph (optional)
 
 The Wallet Flow tab inside On-chain Hub renders a sankey graph of every transaction the wallet has touched. It needs to decode arbitrary txids — non-wallet ancestors and external counterparties — so it picks the first available source from this chain:
@@ -785,6 +810,7 @@ Daily report rows also include provenance freshness fields when the report is ge
 - Set `UTXO_LOCK_REQUIRES_REAUTH=true` to require the same wallet-send reauth scope before UTXO lock/unlock actions. This is optional because lock/unlock are reversible, but useful on shared admin sessions.
 - Sensitive API actions are recorded in Postgres `audit_events` and can be reviewed in the UI under `Audit`.
 - Audit events are pruned after `AUDIT_EVENTS_RETENTION_DAYS` days by default (`365`). Set `AUDIT_EVENTS_RETENTION_DAYS=0` or `forever` in `/etc/lightningos/secrets.env` to keep them indefinitely.
+- Public Electrum fallback improves Wallet Flow coverage but reveals queried txids to the selected server; disable it when that does not fit your privacy model.
 
 ## Troubleshooting
 If `https://<SERVER_LAN_IP>:8443` is not reachable:
@@ -794,16 +820,30 @@ journalctl -u lightningos-manager -n 200 --no-pager
 ss -ltn | grep :8443
 ```
 
-### App Store (Bitcoin Core, Electrs, Mempool, LNDg, LNbits, Elements, Peerswap, RoboSats, Public Pool, Buy DePix, FSwap, Fedimint)
-- Bitcoin Core runs via Docker and defaults to data in `/data/bitcoin`. During install, it can optionally use a custom blockchain directory on a pre-mounted volume; this cannot be changed later by the app.
-- Electrs runs via Docker, indexes the local Bitcoin Core node, exposes Electrum TCP on port `50001`, and publishes metrics on `127.0.0.1:4224`.
-- Mempool runs a self-hosted mempool.space stack on `http://<SERVER_LAN_IP>:8999` and requires Bitcoin Core + Electrs installed and running.
-- LNDg runs in Docker and listens on `http://<SERVER_LAN_IP>:8889`.
-- LNbits runs in Docker and integrates with the local LND connection.
-- Peerswap installs `peerswapd` + `psweb` (UI on `http://<SERVER_LAN_IP>:1984`) and can use local Elements or a remote Elements RPC endpoint; remote mode derives a unique wallet name from the node pubkey.
-- Elements runs as a native service (Liquid Elements node, RPC on `127.0.0.1:7041`) and can use either the club remote Bitcoin RPC or a local bitcoind detected from LND/bitcoin.conf. During install, Elements can optionally use a custom data directory on a pre-mounted volume; this cannot be changed later by the app.
-- RoboSats Gateway, Public Pool, Buy DePix, and FSwap are managed from the same App Store install/start/stop/status flow.
-- Fedimint is split into **Fedimint Guardian** (`fedimintd`) and **Fedimint Lightning Gateway** (`gatewayd lnd`). Both use Iroh and read the active `bitcoind.*` backend from `/data/lnd/lnd.conf`; the gateway also touches local LND access. See the [Fedimint configuration guide](docs/28_FEDIMINT_CONFIGURATION_EN.md) ([PT-BR](docs/27_FEDIMINT_CONFIGURATION_PT_BR.md)).
+### App Store catalog
+
+The backend registry currently exposes 16 apps/services. App files are managed by LightningOS, persistent data is kept separately, and Docker is installed only when an app needs it.
+
+| App | Purpose and current integration |
+| --- | --- |
+| **Bitcoin Core** | Local mainnet node in Docker. Defaults to `/data/bitcoin`, supports a pre-mounted custom storage target at install time, and seeds `txindex=1` for full-index consumers. |
+| **Bark Wallet** | Beta self-custodial Ark, Lightning, and on-chain wallet served over local HTTPS with LightningOS-managed login. Uses Second's public mainnet Ark operator, does not use local LND, and preserves wallet data on uninstall. |
+| **Electrs** | Electrum indexer for local full-index Bitcoin Core; exposes TCP `50001`, local metrics on `127.0.0.1:4224`, and indexing/sync progress in the store. |
+| **Mempool** | Self-hosted mempool.space stack on port `8999`; requires local Bitcoin Core and Electrs installed, running, and ready. |
+| **Fedimint Guardian** | `fedimintd` for solo or multi-guardian federations over Iroh, using the active Bitcoin backend. |
+| **Fedimint Lightning Gateway** | Independent `gatewayd lnd` gateway that connects local LND to Fedimint federations over Iroh. It cannot run together with standalone Taproot Assets because both require the LND HTLC interceptor. |
+| **LNDg** | Advanced LND analytics and automation in Docker, available on port `8889`, with managed admin credentials and local LND integration. |
+| **LNbits** | Lightning accounts/wallet and extension platform funded by local LND. |
+| **Elements** | Native Liquid Elements service with RPC on `127.0.0.1:7041`, selectable local/remote Bitcoin mainchain, local-node detection, and an optional pre-mounted custom data directory. |
+| **Peerswap** | Native `peerswapd` plus `psweb` on port `1984`; uses either local Elements or a tested remote Elements RPC source, with a node-specific wallet in remote mode. |
+| **RoboSats Gateway** | Self-hosted RoboSats client for P2P Bitcoin trading over Tor, pinned to a tested release and exposed through the LightningOS HTTPS proxy. |
+| **Public Pool** | Self-hosted solo-mining pool backend and web UI with local or remote Bitcoin RPC support. |
+| **CPU Lottery Miner** | Optional solo CPU miner against the local Public Pool. Thread count is adjustable from the UI and any block reward goes directly to the LND wallet address. |
+| **Buy DePix** | Integrated PIX-to-DePix checkout with quote/order creation, status tracking, and a dedicated UI page. |
+| **FSwap** | Pays Brazilian boletos and bills with sats from the local Lightning node through the dedicated Pay Boleto flow. |
+| **Taproot Assets (tapd)** | Official standalone `tapd` connected to local LND for on-chain asset discovery, universe sync, mint/reissue, receive, send preview/send, and redeem. Experimental mainnet alpha; Lightning asset transfers require the separate community edge-node work. |
+
+Fedimint details are documented in the [Fedimint configuration guide](docs/28_FEDIMINT_CONFIGURATION_EN.md) ([PT-BR](docs/27_FEDIMINT_CONFIGURATION_PT_BR.md)).
 
 LNDg notes:
 - The LNDg logs page reads `/var/log/lndg-controller.log` inside the container. If it is empty, check `docker logs lndg-lndg-1`.

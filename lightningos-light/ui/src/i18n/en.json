@@ -4764,6 +4764,7 @@
     "producingSignals": "Currently publishing {{count}} refill signals",
     "producingFloors": "Currently publishing {{count}} protected fee floors",
     "influencedLastScan": "Changed last scan",
+    "influencedDecision": "Influenced a decision",
     "signalOnly": "Signal available",
     "outboundLiquidity": "Outbound liquidity",
     "liquidityState": "State: {{value}}",
@@ -4779,6 +4780,25 @@
       "recently_attempted": "Blocked by the recent-attempt cooldown.",
       "channel_busy": "Blocked because this channel already had active work.",
       "selected": "Selected for execution."
+    },
+    "intentHelp": {
+      "title": "What is happening with {{alias}}?",
+      "kinds": {
+        "refill_target": "AutoFee detected that this channel is drained and published a request for Rebalance to consider replenishing its outbound liquidity.",
+        "protect_fee_floor": "A recent successful rebalance created a temporary cost-protection floor so AutoFee does not immediately lower this channel's fee below the recovered cost basis. Upward fee moves remain allowed."
+      },
+      "refillInfluenced": "In the latest known evaluation, the Rebalance score changed from {{before}} to {{after}} sats. {{reason}}",
+      "waitingRebalanceScan": "The signal is ready, but there is no Rebalance decision snapshot after the manager restart yet. The next scan will show whether it changes the ranking.",
+      "refillNotChanged": "The signal was available but did not produce a measurable ranking change. {{reason}}",
+      "floorInfluenced": "AutoFee consumed the protection while evaluating a downward fee move: {{before}} → {{after}} ppm.",
+      "waitingAutofeeDecision": "The floor is active, but AutoFee has not yet recorded a downward decision that needed this protection.",
+      "stillSubjectToGates": "The candidate still has to pass profit, ROI, budget, cooldown, source, and concurrency gates.",
+      "noMeasurableDelta": "The confidence-adjusted multiplier may have rounded to the same score, or the candidate remained outside the applicable decision set.",
+      "modes": {
+        "off": "The interlock is off, so this signal is stored but cannot change an automation decision.",
+        "shadow": "Shadow mode calculates and records the hypothetical effect without changing the real decision.",
+        "enforce": "Enforce mode allows the signal to influence the consumer, but never bypasses that consumer's existing safety gates."
+      }
     },
     "kinds": {
       "refill_target": "Refill target",

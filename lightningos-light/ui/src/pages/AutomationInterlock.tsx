@@ -121,6 +121,27 @@ function ImpactStage({ icon, value, label, hint, tone }: { icon: ReactNode; valu
   )
 }
 
+function InfoTooltip({ title, text }: { title: string; text: string }) {
+  return (
+    <span className="group relative inline-flex">
+      <button
+        type="button"
+        className="grid h-5 w-5 place-items-center rounded-full border border-cyan-300/20 bg-cyan-300/[0.07] text-[11px] font-semibold text-cyan-100/75 transition hover:border-cyan-300/40 hover:text-cyan-50 focus:outline-none focus:ring-2 focus:ring-cyan-300/30"
+        aria-label={`${title}. ${text}`}
+      >
+        i
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute left-0 top-full z-40 mt-2 w-72 max-w-[75vw] rounded-xl border border-cyan-300/20 bg-[#0b1322] p-3 text-left opacity-0 shadow-2xl shadow-black/50 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+      >
+        <span className="block text-xs font-semibold text-cyan-100">{title}</span>
+        <span className="mt-1.5 block text-[11px] leading-relaxed text-fog/70">{text}</span>
+      </span>
+    </span>
+  )
+}
+
 export default function AutomationInterlock() {
   const { t, i18n } = useTranslation()
   const locale = getLocale(i18n.language)
@@ -301,6 +322,12 @@ export default function AutomationInterlock() {
   const effectByIntentID = new Map<number, AutomationIntentEvent>()
   scoreEffectEvents.forEach((event) => {
     if (event.intent_id && !effectByIntentID.has(event.intent_id)) effectByIntentID.set(event.intent_id, event)
+  })
+  const appliedByIntentID = new Map<number, AutomationIntentEvent>()
+  history.forEach((event) => {
+    if (event.event_type === 'applied' && event.intent_id && !appliedByIntentID.has(event.intent_id)) {
+      appliedByIntentID.set(event.intent_id, event)
+    }
   })
 
   const formatDate = (value?: string) => {
@@ -524,6 +551,7 @@ export default function AutomationInterlock() {
                 const alias = aliasForIntent(intent)
                 const decision = decisionForIntent(intent)
                 const persistedEffect = effectByIntentID.get(intent.id)
+                const appliedEffect = appliedByIntentID.get(intent.id)
                 const outRatio = Math.max(0, Math.min(1, Number(intent.evidence?.out_ratio || 0)))
                 const localPpm = Number(intent.evidence?.local_ppm)
                 const targetPpm = Number(intent.evidence?.target_ppm)
@@ -531,6 +559,32 @@ export default function AutomationInterlock() {
                 const scoreBefore = decision?.intent_score_before ?? metadataNumber(persistedEffect?.metadata, 'score_before') ?? 0
                 const scoreAfter = decision?.intent_score_after ?? metadataNumber(persistedEffect?.metadata, 'score_after') ?? 0
                 const effectReason = decision?.reason || metadataString(persistedEffect?.metadata, 'reason')
+                const floorBefore = metadataNumber(appliedEffect?.metadata, 'ppm_before')
+                const floorAfter = metadataNumber(appliedEffect?.metadata, 'ppm_after')
+                const intentInfluenced = scoreChanged || (intent.kind === 'protect_fee_floor' && Boolean(appliedEffect))
+                const stateExplanation = intent.kind === 'refill_target'
+                  ? scoreChanged
+                    ? t('automationInterlock.intentHelp.refillInfluenced', {
+                        before: integerFormatter.format(scoreBefore),
+                        after: integerFormatter.format(scoreAfter),
+                        reason: effectReason ? reasonLabel(effectReason) : t('automationInterlock.intentHelp.stillSubjectToGates')
+                      })
+                    : !hasImpactSnapshot
+                      ? t('automationInterlock.intentHelp.waitingRebalanceScan')
+                      : t('automationInterlock.intentHelp.refillNotChanged', {
+                          reason: effectReason ? reasonLabel(effectReason) : t('automationInterlock.intentHelp.noMeasurableDelta')
+                        })
+                  : appliedEffect
+                    ? t('automationInterlock.intentHelp.floorInfluenced', {
+                        before: floorBefore == null ? t('common.na') : integerFormatter.format(floorBefore),
+                        after: floorAfter == null ? t('common.na') : integerFormatter.format(floorAfter)
+                      })
+                    : t('automationInterlock.intentHelp.waitingAutofeeDecision')
+                const intentExplanation = [
+                  t(`automationInterlock.intentHelp.kinds.${intent.kind}`),
+                  stateExplanation,
+                  t(`automationInterlock.intentHelp.modes.${config?.mode || 'off'}`)
+                ].join(' ')
                 return (
                   <article key={intent.id} className="rounded-2xl border border-white/10 bg-black/15 p-4 transition hover:border-cyan-300/20 hover:bg-white/[0.025]">
                     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -539,9 +593,13 @@ export default function AutomationInterlock() {
                           <span className={`rounded-full border px-2 py-0.5 text-[10px] ${kindTone(intent.kind)}`}>
                             {t(`automationInterlock.kinds.${intent.kind}`)}
                           </span>
-                          <span className={`rounded-full border px-2 py-0.5 text-[10px] ${scoreChanged ? 'border-violet-400/25 bg-violet-400/10 text-violet-100' : 'border-white/10 bg-white/5 text-fog/50'}`}>
-                            {scoreChanged ? t('automationInterlock.influencedLastScan') : t('automationInterlock.signalOnly')}
+                          <span className={`rounded-full border px-2 py-0.5 text-[10px] ${intentInfluenced ? 'border-violet-400/25 bg-violet-400/10 text-violet-100' : 'border-white/10 bg-white/5 text-fog/50'}`}>
+                            {intentInfluenced ? t('automationInterlock.influencedDecision') : t('automationInterlock.signalOnly')}
                           </span>
+                          <InfoTooltip
+                            title={t('automationInterlock.intentHelp.title', { alias })}
+                            text={intentExplanation}
+                          />
                         </div>
                         <a
                           href={intent.channel_point ? `#rebalance-center?channel_point=${encodeURIComponent(intent.channel_point)}` : '#rebalance-center'}

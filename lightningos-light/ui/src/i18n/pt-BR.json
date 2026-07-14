@@ -4764,6 +4764,7 @@
     "producingSignals": "Publicando atualmente {{count}} sinais de refill",
     "producingFloors": "Publicando atualmente {{count}} pisos de fee protegidos",
     "influencedLastScan": "Alterou o último scan",
+    "influencedDecision": "Influenciou uma decisão",
     "signalOnly": "Sinal disponível",
     "outboundLiquidity": "Liquidez outbound",
     "liquidityState": "Estado: {{value}}",
@@ -4779,6 +4780,25 @@
       "recently_attempted": "Bloqueado pelo cooldown de tentativa recente.",
       "channel_busy": "Bloqueado porque o canal já possuía trabalho ativo.",
       "selected": "Selecionado para execução."
+    },
+    "intentHelp": {
+      "title": "O que está acontecendo com {{alias}}?",
+      "kinds": {
+        "refill_target": "O AutoFee detectou que este canal está drenado e publicou um pedido para o Rebalance considerar a reposição da liquidez outbound.",
+        "protect_fee_floor": "Um rebalance recente bem-sucedido criou um piso temporário de proteção de custo para o AutoFee não reduzir imediatamente a fee deste canal abaixo da base de custo recuperada. Aumentos de fee continuam permitidos."
+      },
+      "refillInfluenced": "Na avaliação mais recente conhecida, o score do Rebalance mudou de {{before}} para {{after}} sats. {{reason}}",
+      "waitingRebalanceScan": "O sinal está pronto, mas ainda não existe um snapshot de decisões do Rebalance após o restart do manager. O próximo scan mostrará se ele altera o ranking.",
+      "refillNotChanged": "O sinal estava disponível, mas não produziu uma alteração mensurável no ranking. {{reason}}",
+      "floorInfluenced": "O AutoFee consumiu a proteção ao avaliar uma redução da fee: {{before}} → {{after}} ppm.",
+      "waitingAutofeeDecision": "O piso está ativo, mas o AutoFee ainda não registrou uma decisão de redução que precisasse dessa proteção.",
+      "stillSubjectToGates": "O candidato ainda precisa passar pelos gates de lucro, ROI, orçamento, cooldown, fontes e concorrência.",
+      "noMeasurableDelta": "O multiplicador ajustado pela confiança pode ter arredondado para o mesmo score, ou o candidato permaneceu fora do conjunto de decisões aplicável.",
+      "modes": {
+        "off": "O interlock está desligado; o sinal é armazenado, mas não pode alterar uma decisão das automações.",
+        "shadow": "O modo Shadow calcula e registra o efeito hipotético sem alterar a decisão real.",
+        "enforce": "O modo Ativo permite que o sinal influencie o consumidor, mas nunca ignora os gates de segurança já existentes nele."
+      }
     },
     "kinds": {
       "refill_target": "Alvo de refill",

@@ -100,7 +100,13 @@ const metadataNumber = (metadata: Record<string, unknown> | undefined, key: stri
   return Number.isFinite(value) ? value : undefined
 }
 
-function ImpactStage({ icon, value, label, hint, tone }: { icon: ReactNode; value: number; label: string; hint: string; tone: string }) {
+const metadataBoolean = (metadata: Record<string, unknown> | undefined, key: string) =>
+  typeof metadata?.[key] === 'boolean' ? metadata[key] as boolean : undefined
+
+const metadataString = (metadata: Record<string, unknown> | undefined, key: string) =>
+  typeof metadata?.[key] === 'string' ? metadata[key] as string : undefined
+
+function ImpactStage({ icon, value, label, hint, tone }: { icon: ReactNode; value: number | string; label: string; hint: string; tone: string }) {
   return (
     <div className={`min-w-0 flex-1 rounded-2xl border p-4 ${tone}`}>
       <div className="flex items-center gap-3">
@@ -252,10 +258,50 @@ export default function AutomationInterlock() {
   const influencedDecisions = decisions.filter((decision) => Boolean(decision.intent_kind))
   const simulatedDecisions = influencedDecisions.filter((decision) => decision.intent_shadow)
   const selectedInfluenced = influencedDecisions.filter((decision) => decision.intent_applied && decision.selected)
-  const totalScoreDelta = influencedDecisions.reduce(
+  const liveScoreDelta = influencedDecisions.reduce(
     (sum, decision) => sum + Number(decision.intent_score_after || 0) - Number(decision.intent_score_before || 0),
     0
   )
+  const liveScanAt = rebalance?.last_scan_at || rebalance?.sovereign_last_decision_at
+  const hasLiveDecisionSnapshot = Boolean(liveScanAt && rebalance?.sovereign_decisions)
+  const scoreEffectEvents = history.filter((event) =>
+    event.event_type === 'applied' &&
+    event.consumer === 'rebalance' &&
+    metadataNumber(event.metadata, 'score_before') != null &&
+    metadataNumber(event.metadata, 'score_after') != null
+  )
+  const latestEffectAt = scoreEffectEvents[0]?.occurred_at
+  const persistedEffectEvents = latestEffectAt
+    ? scoreEffectEvents.filter((event) => event.occurred_at === latestEffectAt)
+    : []
+  const hasPersistedEffectSnapshot = !hasLiveDecisionSnapshot && persistedEffectEvents.length > 0
+  const hasImpactSnapshot = hasLiveDecisionSnapshot || hasPersistedEffectSnapshot
+  const persistedSelectionKnown = persistedEffectEvents.length > 0 &&
+    persistedEffectEvents.every((event) => metadataBoolean(event.metadata, 'selected') != null)
+  const persistedSelected = persistedEffectEvents.filter((event) =>
+    metadataBoolean(event.metadata, 'selected') === true && metadataString(event.metadata, 'mode') === 'enforce'
+  ).length
+  const persistedScoreDelta = persistedEffectEvents.reduce((sum, event) =>
+    sum + Number(metadataNumber(event.metadata, 'score_after') || 0) - Number(metadataNumber(event.metadata, 'score_before') || 0), 0)
+  const impactInfluenced = hasLiveDecisionSnapshot ? influencedDecisions.length : persistedEffectEvents.length
+  const impactSelected: number | undefined = hasLiveDecisionSnapshot
+    ? selectedInfluenced.length
+    : persistedSelectionKnown ? persistedSelected : undefined
+  const totalScoreDelta = hasLiveDecisionSnapshot ? liveScoreDelta : persistedScoreDelta
+  const impactSimulated = hasLiveDecisionSnapshot
+    ? simulatedDecisions.length === influencedDecisions.length && influencedDecisions.length > 0
+    : persistedEffectEvents.length > 0 && persistedEffectEvents.every((event) => metadataBoolean(event.metadata, 'shadow') === true)
+  const latestPersistedScan = rebalance?.sovereign_history_24h?.[0]
+  const impactDate = hasLiveDecisionSnapshot
+    ? liveScanAt
+    : hasPersistedEffectSnapshot ? latestEffectAt : latestPersistedScan?.scan_at
+  const impactStatus = hasLiveDecisionSnapshot
+    ? rebalance?.last_scan_status || rebalance?.sovereign_last_mode || t('common.unknown')
+    : hasPersistedEffectSnapshot ? t('automationInterlock.persistedImpact') : t('automationInterlock.snapshotUnavailable')
+  const effectByIntentID = new Map<number, AutomationIntentEvent>()
+  scoreEffectEvents.forEach((event) => {
+    if (event.intent_id && !effectByIntentID.has(event.intent_id)) effectByIntentID.set(event.intent_id, event)
+  })
 
   const formatDate = (value?: string) => {
     if (!value) return t('common.na')
@@ -322,13 +368,15 @@ export default function AutomationInterlock() {
             </div>
             <p className="mt-1 text-sm text-fog/60">
               {t('automationInterlock.lastScanMeta', {
-                date: formatDate(rebalance?.last_scan_at || rebalance?.sovereign_last_decision_at),
-                status: rebalance?.last_scan_status || t('common.unknown')
+                date: formatDate(impactDate),
+                status: impactStatus
               })}
             </p>
           </div>
-          <span className={`rounded-full border px-3 py-1 text-xs ${selectedInfluenced.length > 0 ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-100' : 'border-amber-400/30 bg-amber-400/10 text-amber-100'}`}>
-            {selectedInfluenced.length > 0 ? t('automationInterlock.executionAffected') : t('automationInterlock.noExecutionAffected')}
+          <span className={`rounded-full border px-3 py-1 text-xs ${hasImpactSnapshot && Number(impactSelected || 0) > 0 ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-100' : 'border-amber-400/30 bg-amber-400/10 text-amber-100'}`}>
+            {!hasImpactSnapshot
+              ? t('automationInterlock.awaitingScan')
+              : Number(impactSelected || 0) > 0 ? t('automationInterlock.executionAffected') : t('automationInterlock.noExecutionAffected')}
           </span>
         </div>
 
@@ -343,15 +391,17 @@ export default function AutomationInterlock() {
           <Arrow />
           <ImpactStage
             icon={<ScoreIcon />}
-            value={influencedDecisions.length}
-            label={simulatedDecisions.length === influencedDecisions.length && influencedDecisions.length > 0 ? t('automationInterlock.scoresSimulated') : t('automationInterlock.scoresChanged')}
-            hint={t('automationInterlock.scoresChangedHint', { delta: integerFormatter.format(totalScoreDelta) })}
+            value={hasImpactSnapshot ? impactInfluenced : '—'}
+            label={impactSimulated ? t('automationInterlock.scoresSimulated') : t('automationInterlock.scoresChanged')}
+            hint={hasImpactSnapshot
+              ? t('automationInterlock.scoresChangedHint', { delta: integerFormatter.format(totalScoreDelta) })
+              : t('automationInterlock.awaitingScanHint')}
             tone="border-violet-400/25 bg-violet-400/[0.07] text-violet-100"
           />
           <Arrow />
           <ImpactStage
             icon={<QueueIcon />}
-            value={selectedInfluenced.length}
+            value={hasImpactSnapshot && impactSelected != null ? impactSelected : '—'}
             label={t('automationInterlock.selectedAfterGates')}
             hint={t('automationInterlock.selectedAfterGatesHint')}
             tone="border-emerald-400/25 bg-emerald-400/[0.07] text-emerald-100"
@@ -362,16 +412,22 @@ export default function AutomationInterlock() {
           <ShieldIcon className="mt-0.5 h-5 w-5 shrink-0 text-amber-200" />
           <div>
             <div className="text-sm font-medium text-fog">
-              {t('automationInterlock.impactSummary', {
-                active: intents.length,
-                influenced: influencedDecisions.length,
-                selected: selectedInfluenced.length
-              })}
+              {hasImpactSnapshot
+                ? t('automationInterlock.impactSummary', {
+                    active: intents.length,
+                    influenced: impactInfluenced,
+                    selected: impactSelected == null ? '—' : impactSelected
+                  })
+                : t('automationInterlock.impactUnavailableSummary', { active: intents.length })}
             </div>
             <p className="mt-1 text-xs leading-relaxed text-fog/55">
-              {selectedInfluenced.length === 0
-                ? t('automationInterlock.guardrailsHeld')
-                : t('automationInterlock.guardrailsSelected', { count: selectedInfluenced.length })}
+              {!hasImpactSnapshot
+                ? t('automationInterlock.impactUnavailableHint')
+                : impactSelected == null
+                  ? t('automationInterlock.persistedSelectionUnknown')
+                  : impactSelected === 0
+                    ? t('automationInterlock.guardrailsHeld')
+                    : t('automationInterlock.guardrailsSelected', { count: impactSelected })}
             </p>
           </div>
         </div>
@@ -467,10 +523,14 @@ export default function AutomationInterlock() {
               {intents.map((intent) => {
                 const alias = aliasForIntent(intent)
                 const decision = decisionForIntent(intent)
+                const persistedEffect = effectByIntentID.get(intent.id)
                 const outRatio = Math.max(0, Math.min(1, Number(intent.evidence?.out_ratio || 0)))
                 const localPpm = Number(intent.evidence?.local_ppm)
                 const targetPpm = Number(intent.evidence?.target_ppm)
-                const scoreChanged = Boolean(decision?.intent_kind)
+                const scoreChanged = Boolean(decision?.intent_kind || persistedEffect)
+                const scoreBefore = decision?.intent_score_before ?? metadataNumber(persistedEffect?.metadata, 'score_before') ?? 0
+                const scoreAfter = decision?.intent_score_after ?? metadataNumber(persistedEffect?.metadata, 'score_after') ?? 0
+                const effectReason = decision?.reason || metadataString(persistedEffect?.metadata, 'reason')
                 return (
                   <article key={intent.id} className="rounded-2xl border border-white/10 bg-black/15 p-4 transition hover:border-cyan-300/20 hover:bg-white/[0.025]">
                     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -528,14 +588,14 @@ export default function AutomationInterlock() {
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <span>{t('automationInterlock.scoreEffect')}</span>
                           <span className="font-semibold">
-                            {integerFormatter.format(Number(decision?.intent_score_before || 0))} → {integerFormatter.format(Number(decision?.intent_score_after || 0))} sats
+                            {integerFormatter.format(scoreBefore)} → {integerFormatter.format(scoreAfter)} sats
                           </span>
                         </div>
                       ) : (
-                        <span>{reasonLabel(decision?.reason)}</span>
+                        <span>{reasonLabel(effectReason)}</span>
                       )}
-                      {scoreChanged && decision?.reason && (
-                        <div className="mt-1 text-[10px] opacity-60">{reasonLabel(decision.reason)}</div>
+                      {scoreChanged && effectReason && (
+                        <div className="mt-1 text-[10px] opacity-60">{reasonLabel(effectReason)}</div>
                       )}
                     </div>
                   </article>

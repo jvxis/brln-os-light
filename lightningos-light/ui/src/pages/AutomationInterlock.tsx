@@ -281,7 +281,7 @@ export default function AutomationInterlock() {
   const decisionForIntent = (intent: AutomationIntent) =>
     decisionByKey.get(String(intent.channel_point || '').trim()) || decisionByKey.get(intentKey(intent))
   const reasonLabel = (reason?: string) => reason
-    ? t(`automationInterlock.blockReasons.${reason}`, { defaultValue: reason.replaceAll('_', ' ') })
+    ? t(`automationInterlock.blockReasons.${reason}`, { defaultValue: reason.replace(/_/g, ' ') })
     : t('automationInterlock.awaitingEvaluation')
 
   if (loading && !config) {

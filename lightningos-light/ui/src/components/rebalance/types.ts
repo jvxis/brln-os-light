@@ -145,6 +145,13 @@ export type RebalanceSovereignDecision = {
   budget_efficiency_multiplier?: number
   unsold_liquidity_multiplier?: number
   realized_economics_multiplier?: number
+	intent_kind?: string
+	intent_reason?: string
+	intent_confidence?: number
+	intent_applied?: boolean
+	intent_shadow?: boolean
+	intent_score_before?: number
+	intent_score_after?: number
 }
 
 export type RebalanceSovereignHistory = {

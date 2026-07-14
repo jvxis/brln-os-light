@@ -21,8 +21,11 @@ import {
   saveRebalanceConfigSnapshot,
   restoreRebalanceConfigSnapshot,
   deleteRebalanceConfigSnapshot,
-  updateRebalanceExclude
+  updateRebalanceExclude,
+  getAutomationIntentConfig,
+  getAutomationIntents
 } from '../api'
+import type { AutomationIntent, AutomationIntentConfig } from '../api'
 import { MetricDisclosure } from '../components/rebalance/MetricDisclosure'
 import OverviewHero from '../components/rebalance/OverviewHero'
 import { PairStatsPanel } from '../components/rebalance/PairStatsPanel'
@@ -139,6 +142,8 @@ export default function RebalanceCenter() {
   const [initialLoading, setInitialLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [status, setStatus] = useState('')
+  const [intentConfig, setIntentConfig] = useState<AutomationIntentConfig | null>(null)
+  const [activeIntents, setActiveIntents] = useState<AutomationIntent[]>([])
   const [saving, setSaving] = useState(false)
   const [snapshots, setSnapshots] = useState<RebalanceConfigSnapshot[]>([])
   const [snapshotBusy, setSnapshotBusy] = useState(false)
@@ -709,12 +714,14 @@ export default function RebalanceCenter() {
       } else if (!silent) {
         setIsRefreshing(true)
       }
-        const [cfg, ovw, ch, queue, hist] = await Promise.all([
+        const [cfg, ovw, ch, queue, hist, interlockCfg, intents] = await Promise.all([
           getRebalanceConfig(),
           getRebalanceOverview(),
           getRebalanceChannels(),
           getRebalanceQueue(),
-          getRebalanceHistory()
+          getRebalanceHistory(),
+          getAutomationIntentConfig().catch(() => null),
+          getAutomationIntents(true).catch(() => ({ items: [] }))
         ])
         const normalizedConfig = normalizeLoadedConfig(cfg as RebalanceConfig)
         setServerConfig(normalizedConfig)
@@ -737,6 +744,8 @@ export default function RebalanceCenter() {
       setQueueAttempts(Array.isArray((queue as any)?.attempts) ? (queue as any).attempts : [])
       setHistoryJobs(Array.isArray((hist as any)?.jobs) ? (hist as any).jobs : [])
       setHistoryAttempts(Array.isArray((hist as any)?.attempts) ? (hist as any).attempts : [])
+      setIntentConfig(interlockCfg)
+      setActiveIntents(Array.isArray(intents?.items) ? intents.items : [])
     } catch (err) {
       setStatus(err instanceof Error ? err.message : t('rebalanceCenter.loadFailed'))
     } finally {
@@ -1513,10 +1522,19 @@ export default function RebalanceCenter() {
     return entries.map(([reason, count]) => `${formatScanReason(reason)}: ${formatter.format(count)}`).join(', ')
   }
   const renderAutopilotLiquiditySignal = (decision: RebalanceSovereignDecision) => {
-    if (!decision.recent_rebalance_sent_sat && !decision.target_class) return null
+    if (!decision.recent_rebalance_sent_sat && !decision.target_class && !decision.intent_kind) return null
     const multiplier = decision.unsold_liquidity_multiplier
     return (
       <div className="mt-2 grid gap-1 rounded-md border border-amber-300/15 bg-amber-300/5 p-2 text-[11px] text-fog/60 sm:grid-cols-2">
+        {decision.intent_kind && (
+          <span className="text-cyan-100">
+            {t('automationInterlock.decisionEffect', {
+              mode: decision.intent_shadow ? t('automationInterlock.modes.shadow') : t('automationInterlock.modes.enforce'),
+              before: formatter.format(decision.intent_score_before ?? decision.score),
+              after: formatter.format(decision.intent_score_after ?? decision.score)
+            })}
+          </span>
+        )}
         {decision.target_class && (
           <span>
             {t('rebalanceCenter.autopilot.targetClass', {
@@ -1735,6 +1753,24 @@ export default function RebalanceCenter() {
 
       {status && <p className="text-sm text-brass">{status}</p>}
       {initialLoading && <p className="text-sm text-fog/60">{t('rebalanceCenter.loading')}</p>}
+
+      {intentConfig && (
+        <div className="section-card flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-base font-semibold text-fog">{t('automationInterlock.title')}</h3>
+              <span className={`rounded-full border px-2 py-0.5 text-[11px] ${intentConfig.mode === 'enforce' ? 'border-emerald-400/35 bg-emerald-400/10 text-emerald-100' : intentConfig.mode === 'shadow' ? 'border-cyan-400/35 bg-cyan-400/10 text-cyan-100' : 'border-white/10 bg-white/5 text-fog/55'}`}>
+                {t(`automationInterlock.modes.${intentConfig.mode}`)}
+              </span>
+            </div>
+            <p className="mt-1 text-sm text-fog/60">{t('automationInterlock.subtitle')}</p>
+            <p className="mt-1 text-xs text-fog/45">{t('automationInterlock.activeCount', { count: activeIntents.length })}</p>
+          </div>
+          <a href="#automation-interlock" className="btn-secondary text-xs">
+            {t('automationInterlock.openCenter')}
+          </a>
+        </div>
+      )}
 
       {overview && (
         <OverviewHero

@@ -52,6 +52,7 @@ type Server struct {
 	rebalanceInitAt             time.Time
 	rebalance                   *RebalanceService
 	rebalanceErr                string
+	automationIntents           *AutomationIntentService
 	htlcManagerInitAt           time.Time
 	htlcManagerMu               sync.Mutex
 	htlcManager                 *HtlcManager

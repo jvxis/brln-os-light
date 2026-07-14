@@ -523,7 +523,7 @@ kept as design history and include per-item status notes.
 | Open | R0 | AutoTarget - autopilot calibrando `target_outbound_pct` | No `auto_target_*` config, loop, history, or UI found. |
 | Partial | R4 | Source rotation deterministica | Cooldown probes exist; watcher pre-check, batched pair stats, and pair-cache telemetry still open. |
 | Partial | R7 | UI polish | Per-channel controls and profiles exist; cost-gate eligibility tags/hierarchy still incomplete. |
-| Partial | R8 | AutoFee <-> Rebalance intent interlock | Settling-window interlock exists; shared intent layer is not implemented. |
+| Partial | R8 | AutoFee <-> Rebalance intent interlock | MVP shared intent layer and dedicated Automation Interlock UI are implemented; source preference and explicit upward fee pressure remain open. |
 | Done | R1, R2, R3, R5, R6, R9 | Implemented or superseded | Keep sections below as historical context. |
 
 ---
@@ -819,9 +819,14 @@ empurrando sources antigas de volta ao pool.
 
 ### R8 — AutoFee ↔ Rebalance interlock bidirecional
 
-**Current status (2026-06-20): partially open.** Timing-based interlock exists
-through Autofee settling windows. The shared intent layer described below is not
-implemented.
+**Current status (2026-07-14): MVP implemented, phase 2 open.** Timing-based
+settling remains as a fallback. The shared layer now supports persisted,
+expiring `refill_target` and `protect_fee_floor` intents with
+`off`/`shadow`/`enforce` rollout modes. Both Rules Auto and Sovereign consume the
+same target intent after eligibility/economic gates and before final ordering.
+Source preference and explicit upward fee-pressure intents remain phase-2 work.
+Operational control and intent history live in the dedicated **Automation
+Interlock** page; Rebalance Center keeps only a contextual mode/count summary.
 
 **Esforço:** 2-3d
 **Risco:** médio (toca em duas máquinas de decisão)

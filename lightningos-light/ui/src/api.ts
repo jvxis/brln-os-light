@@ -727,6 +727,56 @@ export const updateReportsConfig = (payload: {
 }) => request('/api/reports/config', { method: 'POST', body: JSON.stringify(payload) })
 
 export const getRebalanceConfig = () => request('/api/rebalance/config')
+export type AutomationIntentConfig = {
+  mode: 'off' | 'shadow' | 'enforce'
+  refill_target_ttl_sec: number
+  protect_fee_floor_ttl_sec: number
+  refill_score_multiplier: number
+  min_confidence: number
+  history_retention_days: number
+}
+
+export type AutomationIntent = {
+  id: number
+  channel_id: number
+  channel_point?: string
+  producer: 'autofee' | 'rebalance'
+  consumer: 'autofee' | 'rebalance'
+  kind: 'refill_target' | 'protect_fee_floor'
+  confidence: number
+  reason_code: string
+  evidence?: Record<string, unknown>
+  score_multiplier?: number
+  fee_floor_ppm?: number
+  producer_profile?: string
+  producer_node_class?: string
+  producer_liquidity_class?: string
+  active: boolean
+  first_seen_at: string
+  last_seen_at: string
+  expires_at: string
+}
+
+export type AutomationIntentEvent = {
+  id: number
+  intent_id?: number
+  channel_id: number
+  producer: 'autofee' | 'rebalance'
+  consumer: 'autofee' | 'rebalance'
+  kind: 'refill_target' | 'protect_fee_floor'
+  event_type: 'published' | 'applied' | 'resolved' | string
+  metadata?: Record<string, unknown>
+  occurred_at: string
+}
+
+export const getAutomationIntentConfig = () =>
+  request('/api/lnops/automation-intents/config') as Promise<AutomationIntentConfig>
+export const updateAutomationIntentConfig = (payload: Partial<Pick<AutomationIntentConfig, 'mode' | 'refill_score_multiplier' | 'min_confidence'>>) =>
+  request('/api/lnops/automation-intents/config', { method: 'POST', body: JSON.stringify(payload) }) as Promise<AutomationIntentConfig>
+export const getAutomationIntents = (active = true) =>
+  request(`/api/lnops/automation-intents?active=${active}`) as Promise<{ items: AutomationIntent[] }>
+export const getAutomationIntentHistory = (limit = 200) =>
+  request(`/api/lnops/automation-intents/history?limit=${Math.max(1, Math.min(1000, Math.round(limit)))}`) as Promise<{ items: AutomationIntentEvent[] }>
 export const applyRebalanceProfile = (profile: string) =>
   request('/api/rebalance/profile', { method: 'POST', body: JSON.stringify({ profile }) })
 export const getRebalanceConfigSnapshots = () => request('/api/rebalance/config/snapshots')

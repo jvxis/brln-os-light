@@ -14,6 +14,7 @@ import FeeCenter from './pages/FeeCenter'
 import ChannelRanking from './pages/ChannelRanking'
 import ChannelOpenCandidates from './pages/ChannelOpenCandidates'
 import RebalanceCenter from './pages/RebalanceCenter'
+import AutomationInterlock from './pages/AutomationInterlock'
 import OnchainHub from './pages/OnchainHub'
 import Chat from './pages/Chat'
 import Disks from './pages/Disks'
@@ -187,9 +188,10 @@ export default function App() {
       { key: 'graph-explorer', label: t('nav.graphExplorer'), element: <GraphExplorer /> },
       { key: 'lightning-ops', label: t('nav.lightningOps'), element: <LightningOps /> },
       { key: 'fee-center', label: t('nav.feeCenter'), element: <FeeCenter /> },
+      { key: 'rebalance-center', label: t('nav.rebalanceCenter'), element: <RebalanceCenter /> },
+      { key: 'automation-interlock', label: t('nav.automationInterlock'), element: <AutomationInterlock /> },
       { key: 'channel-ranking', label: t('nav.channelRanking'), element: <ChannelRanking /> },
       { key: 'new-channels', label: t('nav.newChannels'), element: <ChannelOpenCandidates /> },
-      { key: 'rebalance-center', label: t('nav.rebalanceCenter'), element: <RebalanceCenter /> },
       { key: 'onchain-hub', label: t('nav.onchainHub'), element: <OnchainHub /> },
       { key: 'chat', label: t('nav.chat'), element: <Chat /> },
       {

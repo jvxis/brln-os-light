@@ -33,9 +33,16 @@ Current product backlog, after checking the repository against the docs:
    recommendations are computed, persisted, and rendered. The ranking detail
    panel now has a one-click parking/unparking action; standalone one-click
    remove-from-rebalance/remove-from-Autofee actions remain open.
-5. **Partial** - `AutoFee` <-> `Rebalance` intent interlock. Settling-window
-   interlocks exist, but the shared intent layer described in the backlog is
-   not implemented.
+5. **Partial (MVP implemented 2026-07-14)** - `AutoFee` <-> `Rebalance` intent
+   interlock. The shared layer now persists profile-aware, expiring intents and
+   supports `off`/`shadow`/`enforce`: AutoFee publishes `refill_target` for
+   drained eligible channels, both Rules Auto and Sovereign consume it without
+   bypassing existing gates, and successful rebalances publish a directional
+   `protect_fee_floor` consumed by AutoFee. Settling windows remain as fallback.
+   A dedicated Automation Interlock page exposes rollout mode, profiles,
+   calibration provenance, active intents, bounded tuning, and event history.
+   Source preference and explicit rebalance-to-AutoFee upward-pressure intents
+   remain phase-2 work.
 6. **Partial** - `Graph Explorer` optional external refill. Schema/status fields
    for refill exist, including Amboss-token availability, but no refill worker,
    operator config API, or UI control was found.

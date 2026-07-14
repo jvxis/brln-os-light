@@ -1212,6 +1212,7 @@ type AutofeeService struct {
 	lnd                *lndclient.Client
 	notifier           *Notifier
 	rebalance          *RebalanceService
+	automationIntents  *AutomationIntentService
 	htlcFailedProvider htlcFailedProvider
 	logger             loggerLike
 
@@ -2720,24 +2721,26 @@ func (s *AutofeeService) setLastError(err error) {
 // ===== Engine =====
 
 type autofeeEngine struct {
-	svc              *AutofeeService
-	cfg              AutofeeConfig
-	profile          autofeeProfile
-	superSource      superSourceThresholds
-	ignoreCooldown   bool
-	calib            autofeeCalibration
-	ranking          map[string]autofeeRankingSnapshot
-	rebalanceConfig  map[uint64]autofeeRebalanceChannelSetting
-	rebalanceRuntime map[uint64]autofeeRebalanceRuntimeSnapshot
-	rebalanceROIMin  float64
-	rebalanceStatus  string
-	recentChanges    map[uint64]autofeeRecentChangeStats
-	now              time.Time
-	nativeSeedCache  map[string]autofeeSeedResult
-	policyCache      map[string]lndclient.ChannelPolicy
-	ambossToken      string
-	ambossTokenErr   error
-	ambossTokenLoad  bool
+	svc                    *AutofeeService
+	cfg                    AutofeeConfig
+	profile                autofeeProfile
+	superSource            superSourceThresholds
+	ignoreCooldown         bool
+	calib                  autofeeCalibration
+	ranking                map[string]autofeeRankingSnapshot
+	rebalanceConfig        map[uint64]autofeeRebalanceChannelSetting
+	rebalanceRuntime       map[uint64]autofeeRebalanceRuntimeSnapshot
+	rebalanceROIMin        float64
+	rebalanceStatus        string
+	automationIntentConfig AutomationIntentConfig
+	automationIntents      map[uint64][]AutomationIntent
+	recentChanges          map[uint64]autofeeRecentChangeStats
+	now                    time.Time
+	nativeSeedCache        map[string]autofeeSeedResult
+	policyCache            map[string]lndclient.ChannelPolicy
+	ambossToken            string
+	ambossTokenErr         error
+	ambossTokenLoad        bool
 }
 
 type autofeeRebalanceChannelSetting struct {
@@ -3663,6 +3666,21 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 	if err != nil {
 		return err
 	}
+	e.automationIntentConfig = defaultAutomationIntentConfig()
+	if e.svc.automationIntents != nil {
+		if intentCfg, intentErr := e.svc.automationIntents.GetConfig(ctx); intentErr == nil {
+			e.automationIntentConfig = intentCfg
+			if intentCfg.Mode != automationIntentModeOff {
+				if intents, loadErr := e.svc.automationIntents.ActiveForConsumer(ctx, automationIntentProducerAutofee, e.now); loadErr == nil {
+					e.automationIntents = intents
+				} else if e.svc.logger != nil {
+					e.svc.logger.Printf("autofee: automation intents unavailable: %v", loadErr)
+				}
+			}
+		} else if e.svc.logger != nil {
+			e.svc.logger.Printf("autofee: automation intent config unavailable: %v", intentErr)
+		}
+	}
 	if snapshots, err := e.loadChannelRankingSnapshots(ctx); err == nil {
 		e.ranking = snapshots
 	} else if e.svc.logger != nil {
@@ -3837,6 +3855,7 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 	skippedLines := []autofeeLogEntry{}
 	errorLines := []autofeeLogEntry{}
 	explorerLines := []autofeeLogEntry{}
+	desiredRefillIntents := []AutomationIntent{}
 	for _, ch := range channels {
 		if !ch.Active {
 			summary.inactive++
@@ -3873,6 +3892,21 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 		}
 		summary.eligible++
 		summary.addTags(decision.Tags)
+		if !dryRun && e.automationIntentConfig.Mode != automationIntentModeOff {
+			if intent, ok := e.deriveRefillTargetIntent(ch, decision, runID); ok {
+				desiredRefillIntents = append(desiredRefillIntents, intent)
+			}
+		}
+		if decision.AutomationIntent != nil && e.svc.automationIntents != nil {
+			_ = e.svc.automationIntents.RecordApplied(ctx, *decision.AutomationIntent, map[string]any{
+				"mode":       e.automationIntentConfig.Mode,
+				"shadow":     decision.IntentShadow,
+				"ppm_before": decision.IntentEffectBefore,
+				"ppm_after":  decision.IntentEffectAfter,
+				"profile":    e.profile.Name,
+				"node_class": e.calib.NodeClass,
+			}, e.now)
+		}
 		if decision.SuperSourceActive {
 			summary.superSource++
 		}
@@ -3949,6 +3983,13 @@ func (e *autofeeEngine) Execute(ctx context.Context, dryRun bool, reason string)
 					},
 				})
 			}
+		}
+	}
+	if !dryRun && e.svc.automationIntents != nil && e.automationIntentConfig.Mode != automationIntentModeOff {
+		if err := e.svc.automationIntents.SyncProducerKind(ctx,
+			automationIntentProducerAutofee, automationIntentProducerRebalance,
+			automationIntentKindRefillTarget, runID, e.now, desiredRefillIntents); err != nil && e.svc.logger != nil {
+			e.svc.logger.Printf("autofee: refill target intent sync failed: %v", err)
 		}
 	}
 
@@ -4250,6 +4291,104 @@ func shouldHoldAutofeeForRebalanceSettling(sig recentRebalanceSignal, now time.T
 		return true
 	}
 	return now.Sub(latest) <= window
+}
+
+func selectProtectFeeFloorIntent(intents []AutomationIntent, minConfidence float64) *AutomationIntent {
+	var selected *AutomationIntent
+	for i := range intents {
+		intent := &intents[i]
+		if intent.Kind != automationIntentKindProtectFeeFloor || intent.FeeFloorPPM <= 0 || intent.Confidence < minConfidence {
+			continue
+		}
+		if selected == nil || intent.FeeFloorPPM > selected.FeeFloorPPM ||
+			(intent.FeeFloorPPM == selected.FeeFloorPPM && intent.Confidence > selected.Confidence) {
+			copyIntent := *intent
+			selected = &copyIntent
+		}
+	}
+	return selected
+}
+
+func applyProtectFeeFloorIntent(localPpm, finalPpm int, apply bool, intents []AutomationIntent, cfg AutomationIntentConfig, minPpm, maxPpm int) (int, bool, *AutomationIntent, bool) {
+	if !apply || finalPpm >= localPpm || normalizeAutomationIntentMode(cfg.Mode) == automationIntentModeOff {
+		return finalPpm, apply, nil, false
+	}
+	intent := selectProtectFeeFloorIntent(intents, cfg.MinConfidence)
+	if intent == nil || int64(finalPpm) >= intent.FeeFloorPPM {
+		return finalPpm, apply, nil, false
+	}
+	adjusted := clampInt(int(intent.FeeFloorPPM), minPpm, maxPpm)
+	if adjusted > localPpm {
+		adjusted = localPpm
+	}
+	if cfg.Mode == automationIntentModeShadow {
+		return adjusted, apply, intent, true
+	}
+	return adjusted, adjusted != localPpm, intent, false
+}
+
+func (e *autofeeEngine) deriveRefillTargetIntent(ch lndclient.ChannelInfo, d *decision, runID string) (AutomationIntent, bool) {
+	if d == nil || ch.ChannelID == 0 || e.automationIntentConfig.Mode == automationIntentModeOff {
+		return AutomationIntent{}, false
+	}
+	state := strings.ToLower(strings.TrimSpace(d.LiquidityState))
+	if state != "drained" && state != "extreme-drained" {
+		return AutomationIntent{}, false
+	}
+	runtime, ok := e.rebalanceRuntime[ch.ChannelID]
+	if !ok || !runtime.EligibleAsTarget || (!runtime.AutoEnabled && !runtime.ManualRestartEnabled) {
+		return AutomationIntent{}, false
+	}
+	confidence := 0.78
+	if state == "extreme-drained" {
+		confidence = 0.90
+	}
+	if d.FwdCount > 0 {
+		confidence += 0.05
+	}
+	if d.NewPpm > d.LocalPpm || d.Target > d.LocalPpm {
+		confidence += 0.05
+	}
+	if confidence > 1 {
+		confidence = 1
+	}
+	if confidence < e.automationIntentConfig.MinConfidence {
+		return AutomationIntent{}, false
+	}
+	ttl := time.Duration(e.automationIntentConfig.RefillTargetTTLSec) * time.Second
+	if ttl <= 0 {
+		ttl = 6 * time.Hour
+	}
+	reasonCode := "autofee_drained_target"
+	if state == "extreme-drained" {
+		reasonCode = "autofee_extreme_drained_target"
+	}
+	return AutomationIntent{
+		ChannelID:              ch.ChannelID,
+		ChannelPoint:           ch.ChannelPoint,
+		Producer:               automationIntentProducerAutofee,
+		Consumer:               automationIntentProducerRebalance,
+		Kind:                   automationIntentKindRefillTarget,
+		Confidence:             confidence,
+		ReasonCode:             reasonCode,
+		ScoreMultiplier:        e.automationIntentConfig.RefillScoreMultiplier,
+		SourceRunID:            runID,
+		ProducerProfile:        e.profile.Name,
+		ProducerNodeClass:      e.calib.NodeClass,
+		ProducerLiquidityClass: e.calib.LiquidityClass,
+		ExpiresAt:              e.now.Add(ttl),
+		Evidence: map[string]any{
+			"liquidity_state":     d.LiquidityState,
+			"out_ratio":           d.OutRatio,
+			"out_ratio_effective": d.OutRatioEffective,
+			"local_ppm":           d.LocalPpm,
+			"target_ppm":          d.Target,
+			"decision_ppm":        d.NewPpm,
+			"forward_count":       d.FwdCount,
+			"rebalance_roi":       runtime.ROIEstimate,
+			"rebalance_roi_valid": runtime.ROIEstimateValid,
+		},
+	}, true
 }
 
 func rebalanceSuccessNoUpSignalWindow(base time.Duration) time.Duration {
@@ -8287,6 +8426,10 @@ type decision struct {
 	TargetGapPpm            int
 	TargetGapPct            float64
 	Apply                   bool
+	AutomationIntent        *AutomationIntent
+	IntentShadow            bool
+	IntentEffectBefore      int
+	IntentEffectAfter       int
 	Error                   error
 	State                   *autofeeChannelState
 }
@@ -11314,6 +11457,26 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 			}
 		}
 	}
+	var appliedAutomationIntent *AutomationIntent
+	intentShadow := false
+	intentEffectBefore := finalPpm
+	intentEffectAfter := finalPpm
+	if adjustedPpm, adjustedApply, intent, shadow := applyProtectFeeFloorIntent(
+		localPpm, finalPpm, apply, e.automationIntents[ch.ChannelID], e.automationIntentConfig, e.cfg.MinPpm, e.cfg.MaxPpm,
+	); intent != nil {
+		intentEffectBefore = finalPpm
+		intentEffectAfter = adjustedPpm
+		intentShadow = shadow
+		if shadow {
+			tags = appendAutofeeTagOnce(tags, "intent-protect-fee-shadow")
+		} else {
+			finalPpm = adjustedPpm
+			apply = adjustedApply
+			tags = appendAutofeeTagOnce(tags, "intent-protect-fee-floor")
+		}
+		intentCopy := *intent
+		appliedAutomationIntent = &intentCopy
+	}
 	if apply && finalPpm != localPpm {
 		if churnTags := shouldHoldForAutofeeChurn(e.profile, e.recentChanges[ch.ChannelID], localPpm, finalPpm, recentRebalanceCount, htlcLiquidityHot); len(churnTags) > 0 {
 			apply = false
@@ -11587,6 +11750,10 @@ func (e *autofeeEngine) evaluateChannel(ch lndclient.ChannelInfo, st *autofeeCha
 		TargetGapPpm:            targetGapPpm,
 		TargetGapPct:            targetGapPct,
 		Apply:                   effectiveApply,
+		AutomationIntent:        appliedAutomationIntent,
+		IntentShadow:            intentShadow,
+		IntentEffectBefore:      intentEffectBefore,
+		IntentEffectAfter:       intentEffectAfter,
 		State:                   st,
 	}
 }

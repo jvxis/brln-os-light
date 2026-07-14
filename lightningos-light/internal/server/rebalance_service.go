@@ -993,6 +993,13 @@ type RebalanceSovereignDecision struct {
 	UnsoldLiquidityMultiplier   float64 `json:"unsold_liquidity_multiplier,omitempty"`
 	RealizedEconomicsMultiplier float64 `json:"realized_economics_multiplier,omitempty"`
 	ExplorationSlot             bool    `json:"exploration_slot,omitempty"`
+	IntentKind                  string  `json:"intent_kind,omitempty"`
+	IntentReason                string  `json:"intent_reason,omitempty"`
+	IntentConfidence            float64 `json:"intent_confidence,omitempty"`
+	IntentApplied               bool    `json:"intent_applied,omitempty"`
+	IntentShadow                bool    `json:"intent_shadow,omitempty"`
+	IntentScoreBefore           int64   `json:"intent_score_before,omitempty"`
+	IntentScoreAfter            int64   `json:"intent_score_after,omitempty"`
 }
 
 type RebalanceSovereignHistory struct {
@@ -1444,9 +1451,10 @@ type manualRestartHandle struct {
 }
 
 type RebalanceService struct {
-	db     *pgxpool.Pool
-	lnd    *lndclient.Client
-	logger *log.Logger
+	db                *pgxpool.Pool
+	lnd               *lndclient.Client
+	logger            *log.Logger
+	automationIntents *AutomationIntentService
 
 	mu                              sync.Mutex
 	started                         bool
@@ -3456,6 +3464,22 @@ func (s *RebalanceService) runAutoScan() {
 	costByChannel, _ := s.fetchChannelRebalanceCost7d(ctx)
 	drainRateByChannel := s.fetchChannelDrainRate24h(ctx)
 	autofeeAdjustments := s.fetchRecentAutofeeAdjustments(ctx, scanAt, time.Duration(cfg.AutofeeSettlingWindowSec)*time.Second)
+	intentCfg := defaultAutomationIntentConfig()
+	automationIntents := map[uint64][]AutomationIntent{}
+	if s.automationIntents != nil {
+		if loadedCfg, intentErr := s.automationIntents.GetConfig(ctx); intentErr == nil {
+			intentCfg = loadedCfg
+			if intentCfg.Mode != automationIntentModeOff {
+				if loaded, loadErr := s.automationIntents.ActiveForConsumer(ctx, automationIntentProducerRebalance, scanAt); loadErr == nil {
+					automationIntents = loaded
+				} else if s.logger != nil {
+					s.logger.Printf("rebalance automation intents fetch failed: %v", loadErr)
+				}
+			}
+		} else if s.logger != nil {
+			s.logger.Printf("rebalance automation intent config fetch failed: %v", intentErr)
+		}
+	}
 	lastAutoByTarget := s.loadLastAutoEnqueueTimes(ctx)
 	targetCooldowns := s.loadRecentTargetCooldownSet(ctx, defaultRecentTargetCooldownWindows(scanAt))
 
@@ -3512,6 +3536,8 @@ func (s *RebalanceService) runAutoScan() {
 			TargetFailedCooldowns:         targetCooldowns.Failed,
 			TargetDistinctSourceCooldowns: targetCooldowns.DistinctSource,
 			AutofeeRecentAdjustments:      autofeeAdjustments,
+			AutomationIntentConfig:        intentCfg,
+			AutomationIntents:             automationIntents,
 		})
 		// AutoTarget runs together with the round's candidates (opt-in): it can
 		// raise the target of the strong sellers among them (supply-limited by
@@ -3544,6 +3570,8 @@ func (s *RebalanceService) runAutoScan() {
 		TargetFailedCooldowns:         targetCooldowns.Failed,
 		TargetDistinctSourceCooldowns: targetCooldowns.DistinctSource,
 		AutofeeRecentAdjustments:      autofeeAdjustments,
+		AutomationIntentConfig:        intentCfg,
+		AutomationIntents:             automationIntents,
 	})
 	candidates := candidatePlan.Candidates
 	eligibleSources := candidatePlan.EligibleSources
@@ -3912,6 +3940,10 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 			RecentRebalanceSentSat:      target.UnsoldLiquidity.SentSat,
 			RecentRebalanceTargetSat:    target.UnsoldLiquidity.TargetAmountSat,
 			TargetClass:                 target.TargetClass,
+			IntentApplied:               target.IntentApplied,
+			IntentShadow:                target.IntentShadow,
+			IntentScoreBefore:           target.IntentScoreBefore,
+			IntentScoreAfter:            target.IntentScoreAfter,
 			AttributionWindowHours:      sovereignAttributionWindowHoursForConfig(cfg),
 			SlowSellerWindowHours:       sovereignSlowSellerWindowHoursForConfig(cfg),
 			RecentForward24hSat:         target.PairStats.RecentForward24hAmountSat,
@@ -3932,6 +3964,11 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 			UnsoldLiquidityMultiplier:   target.UnsoldLiquidityMultiplier,
 			RealizedEconomicsMultiplier: target.RealizedEconomicsMultiplier,
 			ExplorationSlot:             target.ExplorationSlot,
+		}
+		if target.AutomationIntent != nil {
+			decision.IntentKind = target.AutomationIntent.Kind
+			decision.IntentReason = target.AutomationIntent.ReasonCode
+			decision.IntentConfidence = target.AutomationIntent.Confidence
 		}
 		if target.StructuralCooldown.LastFailureAttempts > decision.RecentStructuralFailures {
 			decision.RecentStructuralFailures = target.StructuralCooldown.LastFailureAttempts
@@ -4318,7 +4355,12 @@ type rebalanceTarget struct {
 	// ExplorationSlot marks targets promoted via the epsilon-greedy
 	// exploration mechanism. These bypassed the score sort to give a
 	// historically-deprioritized candidate a chance to be tried.
-	ExplorationSlot bool
+	ExplorationSlot   bool
+	AutomationIntent  *AutomationIntent
+	IntentApplied     bool
+	IntentShadow      bool
+	IntentScoreBefore int64
+	IntentScoreAfter  int64
 }
 
 type rebalanceAutoScanCandidateInput struct {
@@ -4341,6 +4383,8 @@ type rebalanceAutoScanCandidateInput struct {
 	// Targets ajustados dentro de cfg.AutofeeSettlingWindowSec têm o score
 	// multiplicado por cfg.AutofeeSettlingMultiplier (despriorização, não skip).
 	AutofeeRecentAdjustments map[uint64]time.Time
+	AutomationIntentConfig   AutomationIntentConfig
+	AutomationIntents        map[uint64][]AutomationIntent
 }
 
 type rebalanceAutoScanCandidatePlan struct {
@@ -4567,6 +4611,7 @@ func buildAndOrderRebalanceCandidates(input rebalanceAutoScanCandidateInput) reb
 			}
 		}
 	}
+	applyRefillTargetIntents(plan.Candidates, input.AutomationIntents, input.AutomationIntentConfig, input.Cfg.Profile)
 	plan.AutofeeDampened = applyAutofeeSettlingPenalty(plan.Candidates, input.AutofeeRecentAdjustments, input.Cfg, input.ScanAt)
 	if plan.AutofeeDampened > 0 {
 		noteSkip("autofee_settling_target") // observability counter; candidate still queued
@@ -8879,6 +8924,9 @@ update rebalance_jobs
 set status=$2, reason=$3, completed_at=$4
 where id=$1`, jobID, status, nullableString(reason), completedAt)
 	s.broadcast(RebalanceEvent{Type: "job", JobID: jobID, Status: status, Message: reason})
+	if status == "succeeded" || status == "partial" {
+		go s.publishProtectFeeFloorIntent(jobID, status, completedAt)
+	}
 
 	// R5: if this job was created in an exploration slot, record the outcome
 	// against the target channel so the burnout window updates. Partials and
@@ -8898,6 +8946,85 @@ where id=$1`, jobID, status, nullableString(reason), completedAt)
 	info, ok := s.takeManualRestart(jobID)
 	if ok && s.shouldManualRestart(status, reason) {
 		go s.scheduleManualRestart(info)
+	}
+}
+
+func (s *RebalanceService) publishProtectFeeFloorIntent(jobID int64, status string, completedAt time.Time) {
+	if s == nil || s.db == nil || s.automationIntents == nil || jobID <= 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cfg, err := s.automationIntents.GetConfig(ctx)
+	if err != nil || cfg.Mode == automationIntentModeOff {
+		return
+	}
+	var channelID int64
+	var channelPoint, source string
+	var targetAmountSat int64
+	var movedSat, feePaidSat int64
+	err = s.db.QueryRow(ctx, `
+select j.target_channel_id, j.target_channel_point, j.source, j.target_amount_sat,
+       coalesce(sum(a.amount_sat) filter (where a.status='succeeded'), 0),
+       coalesce(sum(a.fee_paid_sat) filter (where a.status='succeeded'), 0)
+from rebalance_jobs j
+left join rebalance_attempts a on a.job_id=j.id
+where j.id=$1
+group by j.target_channel_id, j.target_channel_point, j.source, j.target_amount_sat
+`, jobID).Scan(&channelID, &channelPoint, &source, &targetAmountSat, &movedSat, &feePaidSat)
+	if err != nil || channelID == 0 || movedSat <= 0 || feePaidSat <= 0 {
+		return
+	}
+	if movedSat < recentRebalanceRelevantAbsSat && (targetAmountSat <= 0 || float64(movedSat) < float64(targetAmountSat)*recentRebalanceRelevantTargetFrac) {
+		return
+	}
+	costPPM := (feePaidSat*1_000_000 + movedSat - 1) / movedSat
+	if costPPM <= 0 {
+		return
+	}
+	confidence := 0.90
+	if status == "partial" {
+		confidence = 0.80
+	}
+	if confidence < cfg.MinConfidence {
+		return
+	}
+	ttl := time.Duration(cfg.ProtectFeeFloorTTLSec) * time.Second
+	if ttl <= 0 {
+		ttl = 6 * time.Hour
+	}
+	rebalanceCfg, _ := s.GetConfig(ctx)
+	nodeCalibration := RebalanceNodeCalibration{NodeClass: "unknown", LiquidityClass: "balanced"}
+	if channels, channelsErr := s.listChannelsCached(ctx); channelsErr == nil {
+		nodeCalibration = classifyRebalanceNode(channels)
+	}
+	intent := AutomationIntent{
+		ChannelID:              uint64(channelID),
+		ChannelPoint:           channelPoint,
+		Producer:               automationIntentProducerRebalance,
+		Consumer:               automationIntentProducerAutofee,
+		Kind:                   automationIntentKindProtectFeeFloor,
+		Confidence:             confidence,
+		ReasonCode:             "rebalance_paid_liquidity",
+		FeeFloorPPM:            costPPM,
+		SourceRunID:            fmt.Sprintf("job-%d", jobID),
+		SourceJobID:            jobID,
+		ProducerProfile:        rebalanceCfg.Profile,
+		ProducerNodeClass:      nodeCalibration.NodeClass,
+		ProducerLiquidityClass: nodeCalibration.LiquidityClass,
+		ExpiresAt:              completedAt.Add(ttl),
+		Evidence: map[string]any{
+			"job_status":        status,
+			"job_source":        source,
+			"moved_sat":         movedSat,
+			"fee_paid_sat":      feePaidSat,
+			"cost_ppm":          costPPM,
+			"target_amount_sat": targetAmountSat,
+			"node_local_ratio":  nodeCalibration.LocalRatio,
+		},
+	}
+	if err := s.automationIntents.UpsertIntent(ctx, intent, completedAt); err != nil && s.logger != nil {
+		s.logger.Printf("rebalance protect fee floor intent publish failed: %v", err)
 	}
 }
 
@@ -10884,6 +11011,84 @@ func applyAutofeeSettlingPenalty(candidates []rebalanceTarget, adjustments map[u
 		dampened++
 	}
 	return dampened
+}
+
+func selectRefillTargetIntent(intents []AutomationIntent, minConfidence float64) *AutomationIntent {
+	var selected *AutomationIntent
+	for i := range intents {
+		intent := &intents[i]
+		if intent.Kind != automationIntentKindRefillTarget || intent.Confidence < minConfidence {
+			continue
+		}
+		if selected == nil || intent.Confidence > selected.Confidence {
+			copyIntent := *intent
+			selected = &copyIntent
+		}
+	}
+	return selected
+}
+
+func refillIntentProfileMultiplier(base float64, profile string) float64 {
+	if math.IsNaN(base) || math.IsInf(base, 0) || base < 1 {
+		return 1
+	}
+	if base > 1.5 {
+		base = 1.5
+	}
+	delta := base - 1
+	switch normalizeRebalanceProfile(profile) {
+	case rebalanceProfileConservative:
+		delta *= 0.5
+	case rebalanceProfileAggressive:
+		delta *= 1.5
+		if delta > 0.5 {
+			delta = 0.5
+		}
+	}
+	return 1 + delta
+}
+
+func applyRefillTargetIntents(candidates []rebalanceTarget, intents map[uint64][]AutomationIntent, cfg AutomationIntentConfig, profile string) int {
+	mode := normalizeAutomationIntentMode(cfg.Mode)
+	if mode == automationIntentModeOff || len(candidates) == 0 || len(intents) == 0 {
+		return 0
+	}
+	baseMultiplier := refillIntentProfileMultiplier(cfg.RefillScoreMultiplier, profile)
+	applied := 0
+	for i := range candidates {
+		if candidates[i].CooldownProbe {
+			continue
+		}
+		intent := selectRefillTargetIntent(intents[candidates[i].Channel.ChannelID], cfg.MinConfidence)
+		if intent == nil {
+			continue
+		}
+		multiplier := 1 + ((baseMultiplier - 1) * intent.Confidence)
+		before := candidates[i].Score
+		after := before
+		if before > 0 {
+			after = int64(math.Round(float64(before) * multiplier))
+		} else if before < 0 {
+			// Loss-tolerant profiles can admit negative scores. Move those toward
+			// zero instead of multiplying the loss and accidentally deprioritizing
+			// the channel the intent is meant to favor.
+			after = int64(math.Round(float64(before) / multiplier))
+		}
+		if after == before {
+			continue
+		}
+		intentCopy := *intent
+		candidates[i].AutomationIntent = &intentCopy
+		candidates[i].IntentScoreBefore = before
+		candidates[i].IntentScoreAfter = after
+		candidates[i].IntentShadow = mode == automationIntentModeShadow
+		candidates[i].IntentApplied = mode == automationIntentModeEnforce
+		if mode == automationIntentModeEnforce {
+			candidates[i].Score = after
+		}
+		applied++
+	}
+	return applied
 }
 
 func buildScanDetail(reasons map[string]int, remaining int64, candidates int, queued int) string {

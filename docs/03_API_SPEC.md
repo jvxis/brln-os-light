@@ -332,6 +332,31 @@ Body:
 - `channel_id` or `channel_point` must identify an open channel; both may be supplied.
 - Parking a channel disables Autofee for that channel, disables rebalance auto and manual restart, and excludes the channel as a rebalance source.
 - Unparking with `restore_previous=false` keeps Autofee and rebalance automations disabled until the operator explicitly enables them again.
+
+### AutoFee/Rebalance automation intents
+
+GET /api/lnops/automation-intents/config
+- Returns the shared interlock mode (`off`, `shadow`, or `enforce`), intent TTLs,
+  refill score multiplier, minimum confidence, and history retention.
+
+POST /api/lnops/automation-intents/config
+Body:
+```json
+{
+  "mode": "shadow",
+  "refill_score_multiplier": 1.2,
+  "min_confidence": 0.7
+}
+```
+- Updates the operator-controlled rollout mode and bounded scoring parameters.
+- `shadow` records the hypothetical effect without changing AutoFee or Rebalance decisions.
+
+GET /api/lnops/automation-intents?active=true&consumer=rebalance&kind=refill_target&limit=200
+- Lists current intents and their producer profile/node calibration provenance.
+- Supported kinds in the MVP are `refill_target` and `protect_fee_floor`.
+
+GET /api/lnops/automation-intents/history?limit=200
+- Lists publish, resolve, and apply events without credentials or payment secrets.
 - Returns `{ "ok": true, "policy": ... }`.
 
 POST /api/lnops/peer/notes

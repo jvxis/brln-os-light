@@ -739,6 +739,7 @@ export type AutomationIntentConfig = {
 export type AutomationIntent = {
   id: number
   channel_id: number
+  channel_id_str?: string
   channel_point?: string
   producer: 'autofee' | 'rebalance'
   consumer: 'autofee' | 'rebalance'
@@ -761,6 +762,7 @@ export type AutomationIntentEvent = {
   id: number
   intent_id?: number
   channel_id: number
+  channel_id_str?: string
   producer: 'autofee' | 'rebalance'
   consumer: 'autofee' | 'rebalance'
   kind: 'refill_target' | 'protect_fee_floor'

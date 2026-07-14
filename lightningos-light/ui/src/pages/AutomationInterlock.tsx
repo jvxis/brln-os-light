@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   getAutofeeConfig,
@@ -6,11 +6,12 @@ import {
   getAutomationIntentConfig,
   getAutomationIntentHistory,
   getAutomationIntents,
+  getLnChannels,
   getRebalanceOverview,
   updateAutomationIntentConfig
 } from '../api'
 import type { AutomationIntent, AutomationIntentConfig, AutomationIntentEvent } from '../api'
-import type { RebalanceOverview } from '../components/rebalance/types'
+import type { RebalanceOverview, RebalanceSovereignDecision } from '../components/rebalance/types'
 import { getLocale } from '../i18n'
 
 type AutomationMode = AutomationIntentConfig['mode']
@@ -27,6 +28,50 @@ type AutofeeStatus = {
   last_error?: string
 }
 
+type ChannelSummary = {
+  channel_point: string
+  channel_id?: number
+  channel_id_str?: string
+  peer_alias?: string
+  remote_pubkey?: string
+}
+
+type IconProps = { className?: string }
+
+const SignalIcon = ({ className = 'h-5 w-5' }: IconProps) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+    <circle cx="12" cy="12" r="2" />
+    <path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.5 5.5a9.2 9.2 0 0 0 0 13M18.5 5.5a9.2 9.2 0 0 1 0 13" />
+  </svg>
+)
+
+const ScoreIcon = ({ className = 'h-5 w-5' }: IconProps) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+    <path d="M4 18V9M10 18V5M16 18v-7M22 18H2" />
+    <path d="m15 7 3-3 3 3M18 4v7" />
+  </svg>
+)
+
+const QueueIcon = ({ className = 'h-5 w-5' }: IconProps) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+    <path d="M5 5h14v14H5zM8 9h8M8 12h8M8 15h5" />
+  </svg>
+)
+
+const ShieldIcon = ({ className = 'h-5 w-5' }: IconProps) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+    <path d="M12 3 5 6v5c0 4.6 2.8 8.2 7 10 4.2-1.8 7-5.4 7-10V6l-7-3Z" />
+    <path d="m9 12 2 2 4-4" />
+  </svg>
+)
+
+const Arrow = () => (
+  <div className="hidden items-center text-fog/25 md:flex" aria-hidden="true">
+    <div className="h-px w-8 bg-current" />
+    <div className="-ml-1 h-2 w-2 rotate-45 border-r border-t border-current" />
+  </div>
+)
+
 const modeTone = (mode: AutomationMode) => {
   if (mode === 'enforce') return 'border-emerald-400/35 bg-emerald-400/10 text-emerald-100'
   if (mode === 'shadow') return 'border-cyan-400/35 bg-cyan-400/10 text-cyan-100'
@@ -38,18 +83,52 @@ const kindTone = (kind: AutomationIntent['kind']) =>
     ? 'border-cyan-400/30 bg-cyan-400/10 text-cyan-100'
     : 'border-amber-400/30 bg-amber-400/10 text-amber-100'
 
+const intentKey = (intent: Pick<AutomationIntent, 'channel_point' | 'channel_id_str' | 'channel_id'>) =>
+  String(intent.channel_point || intent.channel_id_str || intent.channel_id || '').trim()
+
+const decisionKey = (decision: RebalanceSovereignDecision) =>
+  String(decision.channel_point || decision.channel_id || '').trim()
+
+const shortChannelPoint = (value?: string) => {
+  const text = String(value || '').trim()
+  if (text.length <= 28) return text
+  return `${text.slice(0, 14)}…${text.slice(-8)}`
+}
+
+const metadataNumber = (metadata: Record<string, unknown> | undefined, key: string) => {
+  const value = Number(metadata?.[key])
+  return Number.isFinite(value) ? value : undefined
+}
+
+function ImpactStage({ icon, value, label, hint, tone }: { icon: ReactNode; value: number; label: string; hint: string; tone: string }) {
+  return (
+    <div className={`min-w-0 flex-1 rounded-2xl border p-4 ${tone}`}>
+      <div className="flex items-center gap-3">
+        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-current/20 bg-black/15">{icon}</div>
+        <div>
+          <div className="text-2xl font-semibold leading-none">{value}</div>
+          <div className="mt-1 text-xs font-medium">{label}</div>
+        </div>
+      </div>
+      <p className="mt-3 text-[11px] leading-relaxed opacity-70">{hint}</p>
+    </div>
+  )
+}
+
 export default function AutomationInterlock() {
   const { t, i18n } = useTranslation()
   const locale = getLocale(i18n.language)
   const numberFormatter = useMemo(() => new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }), [locale])
+  const integerFormatter = useMemo(() => new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }), [locale])
   const dateFormatter = useMemo(
     () => new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }),
     [locale]
   )
 
   const [config, setConfig] = useState<AutomationIntentConfig | null>(null)
-  const [intents, setIntents] = useState<AutomationIntent[]>([])
+  const [allIntents, setAllIntents] = useState<AutomationIntent[]>([])
   const [history, setHistory] = useState<AutomationIntentEvent[]>([])
+  const [channels, setChannels] = useState<ChannelSummary[]>([])
   const [autofee, setAutofee] = useState<AutofeeSummary | null>(null)
   const [autofeeStatus, setAutofeeStatus] = useState<AutofeeStatus | null>(null)
   const [rebalance, setRebalance] = useState<RebalanceOverview | null>(null)
@@ -71,21 +150,26 @@ export default function AutomationInterlock() {
     else setLoading(true)
     const results = await Promise.allSettled([
       getAutomationIntentConfig(),
-      getAutomationIntents(true),
+      getAutomationIntents(false),
       getAutomationIntentHistory(200),
+      getLnChannels(),
       getAutofeeConfig(),
       getAutofeeStatus(),
       getRebalanceOverview()
     ])
-    const [configResult, intentsResult, historyResult, autofeeResult, autofeeStatusResult, rebalanceResult] = results
+    const [configResult, intentsResult, historyResult, channelsResult, autofeeResult, autofeeStatusResult, rebalanceResult] = results
     if (configResult.status === 'fulfilled') {
       applyConfig(configResult.value)
       setMessage('')
     } else {
       setMessage(configResult.reason instanceof Error ? configResult.reason.message : t('automationInterlock.loadFailed'))
     }
-    if (intentsResult.status === 'fulfilled') setIntents(intentsResult.value.items || [])
+    if (intentsResult.status === 'fulfilled') setAllIntents(intentsResult.value.items || [])
     if (historyResult.status === 'fulfilled') setHistory(historyResult.value.items || [])
+    if (channelsResult.status === 'fulfilled') {
+      const payload = channelsResult.value as { channels?: ChannelSummary[] }
+      setChannels(Array.isArray(payload?.channels) ? payload.channels : [])
+    }
     if (autofeeResult.status === 'fulfilled') setAutofee(autofeeResult.value as AutofeeSummary)
     if (autofeeStatusResult.status === 'fulfilled') setAutofeeStatus(autofeeStatusResult.value as AutofeeStatus)
     if (rebalanceResult.status === 'fulfilled') setRebalance(rebalanceResult.value as RebalanceOverview)
@@ -134,11 +218,44 @@ export default function AutomationInterlock() {
     }
   }
 
+  const intents = useMemo(() => {
+    const now = Date.now()
+    return allIntents.filter((item) => item.active && new Date(item.expires_at).getTime() > now)
+  }, [allIntents])
   const refillIntents = intents.filter((item) => item.kind === 'refill_target')
   const floorIntents = intents.filter((item) => item.kind === 'protect_fee_floor')
   const averageConfidence = intents.length
     ? intents.reduce((sum, item) => sum + Number(item.confidence || 0), 0) / intents.length
     : 0
+
+  const channelByPoint = useMemo(
+    () => new Map(channels.map((channel) => [String(channel.channel_point || '').trim(), channel])),
+    [channels]
+  )
+  const channelByID = useMemo(() => {
+    const result = new Map<string, ChannelSummary>()
+    channels.forEach((channel) => {
+      const exact = String(channel.channel_id_str || '').trim()
+      if (exact) result.set(exact, channel)
+      const numeric = String(channel.channel_id || '').trim()
+      if (numeric) result.set(numeric, channel)
+    })
+    return result
+  }, [channels])
+  const intentByID = useMemo(() => new Map(allIntents.map((intent) => [intent.id, intent])), [allIntents])
+  const decisions = rebalance?.sovereign_decisions || []
+  const decisionByKey = useMemo(() => {
+    const result = new Map<string, RebalanceSovereignDecision>()
+    decisions.forEach((decision) => result.set(decisionKey(decision), decision))
+    return result
+  }, [decisions])
+  const influencedDecisions = decisions.filter((decision) => Boolean(decision.intent_kind))
+  const simulatedDecisions = influencedDecisions.filter((decision) => decision.intent_shadow)
+  const selectedInfluenced = influencedDecisions.filter((decision) => decision.intent_applied && decision.selected)
+  const totalScoreDelta = influencedDecisions.reduce(
+    (sum, decision) => sum + Number(decision.intent_score_after || 0) - Number(decision.intent_score_before || 0),
+    0
+  )
 
   const formatDate = (value?: string) => {
     if (!value) return t('common.na')
@@ -150,6 +267,22 @@ export default function AutomationInterlock() {
     const hours = Math.round(Number(seconds || 0) / 3600)
     return t('automationInterlock.hours', { count: hours })
   }
+  const aliasForIntent = (intent: AutomationIntent) => {
+    const channel = channelByPoint.get(String(intent.channel_point || '').trim()) ||
+      channelByID.get(String(intent.channel_id_str || intent.channel_id || '').trim())
+    return channel?.peer_alias || channel?.remote_pubkey || t('automationInterlock.unknownChannel')
+  }
+  const aliasForEvent = (event: AutomationIntentEvent) => {
+    const intent = event.intent_id ? intentByID.get(event.intent_id) : undefined
+    if (intent) return aliasForIntent(intent)
+    const channel = channelByID.get(String(event.channel_id_str || event.channel_id || '').trim())
+    return channel?.peer_alias || channel?.remote_pubkey || t('automationInterlock.unknownChannel')
+  }
+  const decisionForIntent = (intent: AutomationIntent) =>
+    decisionByKey.get(String(intent.channel_point || '').trim()) || decisionByKey.get(intentKey(intent))
+  const reasonLabel = (reason?: string) => reason
+    ? t(`automationInterlock.blockReasons.${reason}`, { defaultValue: reason.replaceAll('_', ' ') })
+    : t('automationInterlock.awaitingEvaluation')
 
   if (loading && !config) {
     return <p className="text-sm text-fog/70">{t('automationInterlock.loading')}</p>
@@ -180,8 +313,72 @@ export default function AutomationInterlock() {
         </div>
       )}
 
+      <section className="overflow-hidden rounded-3xl border border-cyan-300/15 bg-gradient-to-br from-cyan-400/[0.08] via-ink/80 to-emerald-400/[0.05] p-5 sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-cyan-100">
+              <SignalIcon />
+              <h3 className="text-lg font-semibold">{t('automationInterlock.lastScanImpact')}</h3>
+            </div>
+            <p className="mt-1 text-sm text-fog/60">
+              {t('automationInterlock.lastScanMeta', {
+                date: formatDate(rebalance?.last_scan_at || rebalance?.sovereign_last_decision_at),
+                status: rebalance?.last_scan_status || t('common.unknown')
+              })}
+            </p>
+          </div>
+          <span className={`rounded-full border px-3 py-1 text-xs ${selectedInfluenced.length > 0 ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-100' : 'border-amber-400/30 bg-amber-400/10 text-amber-100'}`}>
+            {selectedInfluenced.length > 0 ? t('automationInterlock.executionAffected') : t('automationInterlock.noExecutionAffected')}
+          </span>
+        </div>
+
+        <div className="mt-5 flex flex-col gap-3 md:flex-row md:items-stretch">
+          <ImpactStage
+            icon={<SignalIcon />}
+            value={intents.length}
+            label={t('automationInterlock.signalsAvailable')}
+            hint={t('automationInterlock.signalsAvailableHint')}
+            tone="border-cyan-400/25 bg-cyan-400/[0.07] text-cyan-100"
+          />
+          <Arrow />
+          <ImpactStage
+            icon={<ScoreIcon />}
+            value={influencedDecisions.length}
+            label={simulatedDecisions.length === influencedDecisions.length && influencedDecisions.length > 0 ? t('automationInterlock.scoresSimulated') : t('automationInterlock.scoresChanged')}
+            hint={t('automationInterlock.scoresChangedHint', { delta: integerFormatter.format(totalScoreDelta) })}
+            tone="border-violet-400/25 bg-violet-400/[0.07] text-violet-100"
+          />
+          <Arrow />
+          <ImpactStage
+            icon={<QueueIcon />}
+            value={selectedInfluenced.length}
+            label={t('automationInterlock.selectedAfterGates')}
+            hint={t('automationInterlock.selectedAfterGatesHint')}
+            tone="border-emerald-400/25 bg-emerald-400/[0.07] text-emerald-100"
+          />
+        </div>
+
+        <div className="mt-4 flex items-start gap-3 rounded-2xl border border-white/10 bg-black/20 p-4">
+          <ShieldIcon className="mt-0.5 h-5 w-5 shrink-0 text-amber-200" />
+          <div>
+            <div className="text-sm font-medium text-fog">
+              {t('automationInterlock.impactSummary', {
+                active: intents.length,
+                influenced: influencedDecisions.length,
+                selected: selectedInfluenced.length
+              })}
+            </div>
+            <p className="mt-1 text-xs leading-relaxed text-fog/55">
+              {selectedInfluenced.length === 0
+                ? t('automationInterlock.guardrailsHeld')
+                : t('automationInterlock.guardrailsSelected', { count: selectedInfluenced.length })}
+            </p>
+          </div>
+        </div>
+      </section>
+
       {config && (
-        <div className="section-card space-y-4">
+        <section className="section-card space-y-4">
           <div>
             <h3 className="text-base font-semibold text-fog">{t('automationInterlock.operatingMode')}</h3>
             <p className="mt-1 text-sm text-fog/60">{t('automationInterlock.operatingModeHint')}</p>
@@ -200,95 +397,199 @@ export default function AutomationInterlock() {
               </button>
             ))}
           </div>
-        </div>
+        </section>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {[
-          [t('automationInterlock.activeIntents'), intents.length],
-          [t('automationInterlock.refillTargets'), refillIntents.length],
-          [t('automationInterlock.feeFloors'), floorIntents.length],
-          [t('automationInterlock.averageConfidence'), formatPercent(averageConfidence)]
-        ].map(([label, value]) => (
-          <div key={String(label)} className="rounded-2xl border border-white/10 bg-ink/60 p-4">
-            <div className="text-xs uppercase tracking-[0.16em] text-fog/45">{label}</div>
-            <div className="mt-2 text-2xl font-semibold text-fog">{value}</div>
-          </div>
-        ))}
-      </div>
-
       <div className="grid gap-4 xl:grid-cols-2">
-        <div className="section-card space-y-4">
-          <div className="flex items-start justify-between gap-3">
+        <section className="section-card relative overflow-hidden space-y-4">
+          <div className="absolute -right-7 -top-7 h-28 w-28 rounded-full bg-cyan-400/5 blur-2xl" />
+          <div className="relative flex items-start justify-between gap-3">
             <div>
               <h3 className="font-semibold text-fog">{t('automationInterlock.autofeeToRebalance')}</h3>
               <p className="mt-1 text-xs text-fog/55">{t('automationInterlock.autofeeToRebalanceHint')}</p>
             </div>
             <a href="#fee-center" className="text-xs text-cyan-200 hover:text-cyan-100">{t('nav.feeCenter')}</a>
           </div>
-          <div className="grid grid-cols-2 gap-3 text-sm">
+          <div className="relative grid grid-cols-2 gap-3 text-sm">
             <div><span className="text-fog/45">{t('automationInterlock.profile')}</span><div>{autofee?.profile || t('common.unknown')}</div></div>
             <div><span className="text-fog/45">{t('automationInterlock.status')}</span><div>{autofee?.enabled ? t('common.enabled') : t('common.inactive')}</div></div>
             <div><span className="text-fog/45">{t('automationInterlock.operationMode')}</span><div>{autofee?.operation_mode || t('common.unknown')}</div></div>
             <div><span className="text-fog/45">{t('automationInterlock.lastRun')}</span><div>{formatDate(autofeeStatus?.last_run_at)}</div></div>
           </div>
-        </div>
+          <div className="relative flex items-center gap-2 rounded-xl border border-cyan-400/15 bg-cyan-400/5 px-3 py-2 text-xs text-cyan-100/75">
+            <SignalIcon className="h-4 w-4" />
+            {t('automationInterlock.producingSignals', { count: refillIntents.length })}
+          </div>
+        </section>
 
-        <div className="section-card space-y-4">
-          <div className="flex items-start justify-between gap-3">
+        <section className="section-card relative overflow-hidden space-y-4">
+          <div className="absolute -right-7 -top-7 h-28 w-28 rounded-full bg-amber-400/5 blur-2xl" />
+          <div className="relative flex items-start justify-between gap-3">
             <div>
               <h3 className="font-semibold text-fog">{t('automationInterlock.rebalanceToAutofee')}</h3>
               <p className="mt-1 text-xs text-fog/55">{t('automationInterlock.rebalanceToAutofeeHint')}</p>
             </div>
             <a href="#rebalance-center" className="text-xs text-cyan-200 hover:text-cyan-100">{t('nav.rebalanceCenter')}</a>
           </div>
-          <div className="grid grid-cols-2 gap-3 text-sm">
+          <div className="relative grid grid-cols-2 gap-3 text-sm">
             <div><span className="text-fog/45">{t('automationInterlock.profile')}</span><div>{rebalance?.profile || t('common.unknown')}</div></div>
             <div><span className="text-fog/45">{t('automationInterlock.status')}</span><div>{rebalance?.auto_enabled ? t('common.enabled') : t('common.inactive')}</div></div>
             <div><span className="text-fog/45">{t('automationInterlock.scheduler')}</span><div>{rebalance?.scheduler_mode || t('common.unknown')}</div></div>
             <div><span className="text-fog/45">{t('automationInterlock.nodeClass')}</span><div>{rebalance?.node_calibration?.node_class || t('common.unknown')}</div></div>
           </div>
-        </div>
+          <div className="relative flex items-center gap-2 rounded-xl border border-amber-400/15 bg-amber-400/5 px-3 py-2 text-xs text-amber-100/75">
+            <ShieldIcon className="h-4 w-4" />
+            {t('automationInterlock.producingFloors', { count: floorIntents.length })}
+          </div>
+        </section>
       </div>
 
-      <div className="section-card space-y-4">
-        <div>
-          <h3 className="font-semibold text-fog">{t('automationInterlock.activeTitle')}</h3>
-          <p className="mt-1 text-xs text-fog/55">{t('automationInterlock.provenanceHint')}</p>
+      <section className="section-card space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="font-semibold text-fog">{t('automationInterlock.activeTitle')}</h3>
+            <p className="mt-1 text-xs text-fog/55">{t('automationInterlock.provenanceHint')}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-fog/60">
+              {t('automationInterlock.activeCount', { count: intents.length })}
+            </span>
+            <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-fog/60">
+              {t('automationInterlock.averageConfidenceValue', { value: formatPercent(averageConfidence) })}
+            </span>
+          </div>
         </div>
         {intents.length === 0 ? (
           <p className="text-sm text-fog/60">{t('automationInterlock.noActive')}</p>
         ) : (
-          <div className="grid gap-3 xl:grid-cols-2">
-            {intents.map((intent) => (
-              <article key={intent.id} className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <span className={`rounded-full border px-2 py-0.5 text-[11px] ${kindTone(intent.kind)}`}>
-                      {t(`automationInterlock.kinds.${intent.kind}`)}
-                    </span>
-                    <div className="mt-2 text-sm font-medium text-fog">
-                      {t('automationInterlock.channel', { value: intent.channel_point || intent.channel_id })}
+          <div className="max-h-[38rem] overflow-y-scroll overscroll-contain pr-2">
+            <div className="grid gap-3 xl:grid-cols-2">
+              {intents.map((intent) => {
+                const alias = aliasForIntent(intent)
+                const decision = decisionForIntent(intent)
+                const outRatio = Math.max(0, Math.min(1, Number(intent.evidence?.out_ratio || 0)))
+                const localPpm = Number(intent.evidence?.local_ppm)
+                const targetPpm = Number(intent.evidence?.target_ppm)
+                const scoreChanged = Boolean(decision?.intent_kind)
+                return (
+                  <article key={intent.id} className="rounded-2xl border border-white/10 bg-black/15 p-4 transition hover:border-cyan-300/20 hover:bg-white/[0.025]">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={`rounded-full border px-2 py-0.5 text-[10px] ${kindTone(intent.kind)}`}>
+                            {t(`automationInterlock.kinds.${intent.kind}`)}
+                          </span>
+                          <span className={`rounded-full border px-2 py-0.5 text-[10px] ${scoreChanged ? 'border-violet-400/25 bg-violet-400/10 text-violet-100' : 'border-white/10 bg-white/5 text-fog/50'}`}>
+                            {scoreChanged ? t('automationInterlock.influencedLastScan') : t('automationInterlock.signalOnly')}
+                          </span>
+                        </div>
+                        <a
+                          href={intent.channel_point ? `#rebalance-center?channel_point=${encodeURIComponent(intent.channel_point)}` : '#rebalance-center'}
+                          className="mt-2 block truncate text-sm font-semibold text-fog hover:text-cyan-100"
+                          title={alias}
+                        >
+                          {alias}
+                        </a>
+                        <div className="mt-0.5 text-[10px] text-fog/35" title={intent.channel_point || intent.channel_id_str}>
+                          {shortChannelPoint(intent.channel_point) || intent.channel_id_str || t('common.unknown')}
+                        </div>
+                      </div>
+                      <div className="text-right text-[11px] text-fog/50">
+                        <div>{t('automationInterlock.confidence', { value: formatPercent(intent.confidence) })}</div>
+                        <div>{t('automationInterlock.expires', { value: formatDate(intent.expires_at) })}</div>
+                      </div>
                     </div>
-                  </div>
-                  <div className="text-right text-xs text-fog/55">
-                    <div>{t('automationInterlock.confidence', { value: formatPercent(intent.confidence) })}</div>
-                    <div>{t('automationInterlock.expires', { value: formatDate(intent.expires_at) })}</div>
-                  </div>
-                </div>
-                <div className="mt-3 grid gap-2 text-xs text-fog/60 sm:grid-cols-2">
-                  <div>{t('automationInterlock.flow', { producer: intent.producer, consumer: intent.consumer })}</div>
-                  <div>{t('automationInterlock.reason', { value: intent.reason_code })}</div>
-                  <div>{t('automationInterlock.producerProfile', { value: intent.producer_profile || t('common.unknown') })}</div>
-                  <div>{t('automationInterlock.calibration', { node: intent.producer_node_class || t('common.unknown'), liquidity: intent.producer_liquidity_class || t('common.unknown') })}</div>
-                  {intent.score_multiplier != null && <div>{t('automationInterlock.scoreMultiplier', { value: numberFormatter.format(intent.score_multiplier) })}</div>}
-                  {intent.fee_floor_ppm != null && <div>{t('automationInterlock.feeFloor', { value: numberFormatter.format(intent.fee_floor_ppm) })}</div>}
-                </div>
-              </article>
-            ))}
+
+                    {intent.kind === 'refill_target' && (
+                      <div className="mt-3 rounded-xl border border-white/5 bg-white/[0.025] p-3">
+                        <div className="flex items-center justify-between text-[11px] text-fog/55">
+                          <span>{t('automationInterlock.outboundLiquidity')}</span>
+                          <span className="font-medium text-fog">{formatPercent(outRatio)}</span>
+                        </div>
+                        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/5">
+                          <div className="h-full rounded-full bg-gradient-to-r from-rose-400 to-amber-300" style={{ width: `${Math.max(2, outRatio * 100)}%` }} />
+                        </div>
+                        <div className="mt-2 flex flex-wrap justify-between gap-2 text-[10px] text-fog/45">
+                          <span>{t('automationInterlock.liquidityState', { value: String(intent.evidence?.liquidity_state || t('common.unknown')) })}</span>
+                          {Number.isFinite(localPpm) && Number.isFinite(targetPpm) && (
+                            <span>{t('automationInterlock.feeMovement', { before: localPpm, after: targetPpm })}</span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="mt-3 grid gap-2 text-[11px] text-fog/55 sm:grid-cols-2">
+                      <div>{t('automationInterlock.producerProfile', { value: intent.producer_profile || t('common.unknown') })}</div>
+                      <div>{t('automationInterlock.calibration', { node: intent.producer_node_class || t('common.unknown'), liquidity: intent.producer_liquidity_class || t('common.unknown') })}</div>
+                    </div>
+
+                    <div className={`mt-3 rounded-xl border px-3 py-2 text-xs ${scoreChanged ? 'border-violet-400/20 bg-violet-400/[0.07] text-violet-100' : 'border-white/5 bg-white/[0.02] text-fog/55'}`}>
+                      {scoreChanged ? (
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span>{t('automationInterlock.scoreEffect')}</span>
+                          <span className="font-semibold">
+                            {integerFormatter.format(Number(decision?.intent_score_before || 0))} → {integerFormatter.format(Number(decision?.intent_score_after || 0))} sats
+                          </span>
+                        </div>
+                      ) : (
+                        <span>{reasonLabel(decision?.reason)}</span>
+                      )}
+                      {scoreChanged && decision?.reason && (
+                        <div className="mt-1 text-[10px] opacity-60">{reasonLabel(decision.reason)}</div>
+                      )}
+                    </div>
+                  </article>
+                )
+              })}
+            </div>
           </div>
         )}
-      </div>
+      </section>
+
+      <section className="section-card space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="font-semibold text-fog">{t('automationInterlock.historyTitle')}</h3>
+            <p className="mt-1 text-xs text-fog/55">{t('automationInterlock.historyHint')}</p>
+          </div>
+          <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-fog/60">
+            {t('automationInterlock.eventsCount', { count: history.length })}
+          </span>
+        </div>
+        {history.length === 0 ? (
+          <p className="text-sm text-fog/60">{t('automationInterlock.noHistory')}</p>
+        ) : (
+          <div className="h-[28rem] overflow-y-scroll overscroll-contain pr-2">
+            <div className="relative space-y-1 before:absolute before:bottom-3 before:left-[0.45rem] before:top-3 before:w-px before:bg-white/10">
+              {history.map((event) => {
+                const before = metadataNumber(event.metadata, 'score_before') ?? metadataNumber(event.metadata, 'ppm_before')
+                const after = metadataNumber(event.metadata, 'score_after') ?? metadataNumber(event.metadata, 'ppm_after')
+                return (
+                  <div key={event.id} className="relative grid gap-2 py-3 pl-7 text-xs sm:grid-cols-[10rem_1fr_auto] sm:items-center">
+                    <span className={`absolute left-0 top-[1.1rem] h-4 w-4 rounded-full border-4 border-ink ${event.event_type === 'applied' ? 'bg-violet-300' : event.event_type === 'resolved' ? 'bg-fog/40' : 'bg-cyan-300'}`} />
+                    <span className="text-fog/40">{formatDate(event.occurred_at)}</span>
+                    <div className="min-w-0">
+                      <div className="truncate text-fog/75">
+                        <span className="font-medium text-fog">{aliasForEvent(event)}</span>
+                        {' · '}{t(`automationInterlock.events.${event.event_type}`, { defaultValue: event.event_type })}
+                        {' · '}{t(`automationInterlock.kinds.${event.kind}`)}
+                      </div>
+                      <div className="mt-0.5 text-[10px] text-fog/35">
+                        {event.channel_id_str || String(event.channel_id || '')}
+                      </div>
+                    </div>
+                    <div className="text-right text-fog/40">
+                      {before != null && after != null
+                        ? <span className="text-violet-200">{integerFormatter.format(before)} → {integerFormatter.format(after)}</span>
+                        : <span>{event.producer} → {event.consumer}</span>}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </section>
 
       {config && (
         <details className="section-card group">
@@ -309,32 +610,6 @@ export default function AutomationInterlock() {
           <button type="button" className="btn-primary mt-4" disabled={saving} onClick={() => void saveAdvanced()}>{t('common.save')}</button>
         </details>
       )}
-
-      <div className="section-card space-y-4">
-        <div>
-          <h3 className="font-semibold text-fog">{t('automationInterlock.historyTitle')}</h3>
-          <p className="mt-1 text-xs text-fog/55">{t('automationInterlock.historyHint')}</p>
-        </div>
-        {history.length === 0 ? (
-          <p className="text-sm text-fog/60">{t('automationInterlock.noHistory')}</p>
-        ) : (
-          <div className="max-h-[32rem] divide-y divide-white/5 overflow-y-auto">
-            {history.map((event) => (
-              <div key={event.id} className="grid gap-1 py-3 text-xs sm:grid-cols-[9rem_1fr_auto] sm:items-center">
-                <span className="text-fog/45">{formatDate(event.occurred_at)}</span>
-                <span className="text-fog/70">
-                  {t('automationInterlock.historyEvent', {
-                    event: t(`automationInterlock.events.${event.event_type}`, { defaultValue: event.event_type }),
-                    kind: t(`automationInterlock.kinds.${event.kind}`),
-                    channel: event.channel_id
-                  })}
-                </span>
-                <span className="text-fog/45">{event.producer} → {event.consumer}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
     </section>
   )
 }

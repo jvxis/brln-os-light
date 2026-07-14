@@ -353,10 +353,13 @@ Body:
 
 GET /api/lnops/automation-intents?active=true&consumer=rebalance&kind=refill_target&limit=200
 - Lists current intents and their producer profile/node calibration provenance.
+- Includes `channel_id_str` so clients can preserve the full unsigned Lightning channel ID without JavaScript number rounding.
 - Supported kinds in the MVP are `refill_target` and `protect_fee_floor`.
 
 GET /api/lnops/automation-intents/history?limit=200
 - Lists publish, resolve, and apply events without credentials or payment secrets.
+- Events also include the exact `channel_id_str` representation.
+- An `applied` event means the intent influenced a consumer decision (for example, a score or fee-floor calculation); it does not by itself mean a rebalance job was queued or completed.
 - Returns `{ "ok": true, "policy": ... }`.
 
 POST /api/lnops/peer/notes

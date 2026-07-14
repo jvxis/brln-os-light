@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,6 +44,7 @@ type AutomationIntentConfigUpdate struct {
 type AutomationIntent struct {
 	ID                     int64          `json:"id"`
 	ChannelID              uint64         `json:"channel_id"`
+	ChannelIDStr           string         `json:"channel_id_str,omitempty"`
 	ChannelPoint           string         `json:"channel_point,omitempty"`
 	Producer               string         `json:"producer"`
 	Consumer               string         `json:"consumer"`
@@ -65,15 +67,16 @@ type AutomationIntent struct {
 }
 
 type AutomationIntentEvent struct {
-	ID         int64          `json:"id"`
-	IntentID   int64          `json:"intent_id,omitempty"`
-	ChannelID  uint64         `json:"channel_id"`
-	Producer   string         `json:"producer"`
-	Consumer   string         `json:"consumer"`
-	Kind       string         `json:"kind"`
-	EventType  string         `json:"event_type"`
-	Metadata   map[string]any `json:"metadata,omitempty"`
-	OccurredAt time.Time      `json:"occurred_at"`
+	ID           int64          `json:"id"`
+	IntentID     int64          `json:"intent_id,omitempty"`
+	ChannelID    uint64         `json:"channel_id"`
+	ChannelIDStr string         `json:"channel_id_str,omitempty"`
+	Producer     string         `json:"producer"`
+	Consumer     string         `json:"consumer"`
+	Kind         string         `json:"kind"`
+	EventType    string         `json:"event_type"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
+	OccurredAt   time.Time      `json:"occurred_at"`
 }
 
 type AutomationIntentService struct {
@@ -455,6 +458,7 @@ limit $5
 		}
 		if channelID != 0 {
 			item.ChannelID = uint64(channelID)
+			item.ChannelIDStr = strconv.FormatUint(item.ChannelID, 10)
 		}
 		_ = json.Unmarshal(evidenceRaw, &item.Evidence)
 		out = append(out, item)
@@ -504,6 +508,7 @@ limit $1`, limit)
 		}
 		if channelID != 0 {
 			item.ChannelID = uint64(channelID)
+			item.ChannelIDStr = strconv.FormatUint(item.ChannelID, 10)
 		}
 		_ = json.Unmarshal(metadataRaw, &item.Metadata)
 		out = append(out, item)

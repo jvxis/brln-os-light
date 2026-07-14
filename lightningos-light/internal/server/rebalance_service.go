@@ -3547,6 +3547,7 @@ func (s *RebalanceService) runAutoScan() {
 			s.evaluateAutoTarget(ctx, cfg, scanAt, snapshots, settings, sovereignPlan.Candidates, sovereignPairStats, sovereignStructuralCooldowns)
 		}
 		sovereignResult := s.executeSovereignAutopilot(ctx, cfg, settings, sovereignPlan, scanAt, schedulerMode == rebalanceSchedulerModeSovereignLive)
+		s.recordRebalanceIntentEffects(ctx, sovereignPlan, cfg, scanAt, schedulerMode, sovereignResult.Decisions)
 		s.recordSovereignAutopilot(ctx, scanAt, schedulerMode, sovereignResult)
 		if schedulerMode == rebalanceSchedulerModeSovereignLive {
 			scanStatus = sovereignResult.Status
@@ -3573,6 +3574,7 @@ func (s *RebalanceService) runAutoScan() {
 		AutomationIntentConfig:        intentCfg,
 		AutomationIntents:             automationIntents,
 	})
+	s.recordRebalanceIntentEffects(ctx, candidatePlan, cfg, scanAt, rebalanceSchedulerModeRulesAuto, nil)
 	candidates := candidatePlan.Candidates
 	eligibleSources := candidatePlan.EligibleSources
 	totalAvailable := candidatePlan.TotalAvailable
@@ -11089,6 +11091,42 @@ func applyRefillTargetIntents(candidates []rebalanceTarget, intents map[uint64][
 		applied++
 	}
 	return applied
+}
+
+func (s *RebalanceService) recordRebalanceIntentEffects(ctx context.Context, plan rebalanceAutoScanCandidatePlan, cfg RebalanceConfig, scanAt time.Time, decisionPath string, decisions []RebalanceSovereignDecision) {
+	if s == nil || s.automationIntents == nil {
+		return
+	}
+	byChannel := make(map[uint64]RebalanceSovereignDecision, len(decisions))
+	for _, decision := range decisions {
+		byChannel[decision.ChannelID] = decision
+	}
+	for _, candidate := range plan.Candidates {
+		if candidate.AutomationIntent == nil {
+			continue
+		}
+		mode := automationIntentModeEnforce
+		if candidate.IntentShadow {
+			mode = automationIntentModeShadow
+		}
+		metadata := map[string]any{
+			"mode":           mode,
+			"shadow":         candidate.IntentShadow,
+			"score_before":   candidate.IntentScoreBefore,
+			"score_after":    candidate.IntentScoreAfter,
+			"score_delta":    candidate.IntentScoreAfter - candidate.IntentScoreBefore,
+			"profile":        cfg.Profile,
+			"scheduler_mode": decisionPath,
+			"peer_alias":     candidate.Channel.PeerAlias,
+		}
+		if decision, ok := byChannel[candidate.Channel.ChannelID]; ok {
+			metadata["selected"] = decision.Selected
+			metadata["reason"] = decision.Reason
+		}
+		if err := s.automationIntents.RecordApplied(ctx, *candidate.AutomationIntent, metadata, scanAt); err != nil && s.logger != nil {
+			s.logger.Printf("rebalance automation intent effect record failed: %v", err)
+		}
+	}
 }
 
 func buildScanDetail(reasons map[string]int, remaining int64, candidates int, queued int) string {

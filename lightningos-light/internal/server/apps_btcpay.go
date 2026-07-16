@@ -190,6 +190,15 @@ func (s *Server) applyBtcpay(ctx context.Context) error {
 		return err
 	}
 
+	// Init scripts under /docker-entrypoint-initdb.d only run while postgres is
+	// creating an empty data directory. Repair an already-initialized pgdata
+	// volume that is missing NBXplorer's database before starting dependants.
+	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d", "btcpay-db"); err != nil {
+		return err
+	}
+	if err := ensureBtcpayNbxplorerDatabase(ctx, system.RunCommandWithSudo); err != nil {
+		return err
+	}
 	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d"); err != nil {
 		return err
 	}
@@ -468,6 +477,63 @@ func btcpayDbInitContents() string {
 	return `CREATE DATABASE nbxplorer TEMPLATE 'template0' LC_CTYPE 'C' LC_COLLATE 'C' ENCODING 'UTF8';
 GRANT ALL PRIVILEGES ON DATABASE nbxplorer TO btcpay;
 `
+}
+
+type btcpayCommandRunner func(context.Context, string, ...string) (string, error)
+
+// ensureBtcpayNbxplorerDatabase makes postgres initialization idempotent. The
+// official postgres entrypoint deliberately ignores init scripts once pgdata
+// exists, so this also repairs installs left half-initialized by an earlier
+// failed attempt.
+func ensureBtcpayNbxplorerDatabase(ctx context.Context, run btcpayCommandRunner) error {
+	var readinessOutput string
+	for attempt := 0; attempt < 30; attempt++ {
+		out, err := run(ctx, "docker", "exec", "btcpay-db", "pg_isready", "-U", "btcpay", "-d", "btcpayserver")
+		readinessOutput = strings.TrimSpace(out)
+		if err == nil {
+			break
+		}
+		if attempt == 29 {
+			if readinessOutput == "" {
+				readinessOutput = err.Error()
+			}
+			return fmt.Errorf("BTCPay postgres did not become ready: %s", readinessOutput)
+		}
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+
+	out, err := run(
+		ctx,
+		"docker", "exec", "btcpay-db",
+		"psql", "-U", "btcpay", "-d", "btcpayserver", "-tAc",
+		"SELECT 1 FROM pg_database WHERE datname = 'nbxplorer'",
+	)
+	if err != nil {
+		return fmt.Errorf("failed to check the NBXplorer database: %w", err)
+	}
+	if strings.TrimSpace(out) == "1" {
+		return nil
+	}
+
+	if out, err = run(
+		ctx,
+		"docker", "exec", "btcpay-db",
+		"createdb", "-U", "btcpay", "--owner=btcpay", "--template=template0",
+		"--encoding=UTF8", "--lc-collate=C", "--lc-ctype=C", "nbxplorer",
+	); err != nil {
+		detail := strings.TrimSpace(out)
+		if detail != "" {
+			return fmt.Errorf("failed to create the NBXplorer database: %s: %w", detail, err)
+		}
+		return fmt.Errorf("failed to create the NBXplorer database: %w", err)
+	}
+	return nil
 }
 
 func btcpayLightningConnectionString() string {

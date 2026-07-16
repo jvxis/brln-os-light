@@ -15,6 +15,7 @@ func (s *Server) appRegistry() ([]appHandler, error) {
 		newFedimintGatewayApp(s),
 		newLndgApp(s),
 		newLnbitsApp(s),
+		newBtcpayApp(s),
 		newElementsApp(s),
 		newPeerswapApp(s),
 		newRobosatsApp(s),

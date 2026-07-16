@@ -15,6 +15,7 @@ import fedimintIcon from '../assets/apps/fedimint.svg'
 import cpuLotteryIcon from '../assets/apps/cpu-lottery.svg'
 import taprootAssetsIcon from '../assets/apps/taproot-assets.svg'
 import barkWalletIcon from '../assets/apps/bark-wallet.svg'
+import btcpayIcon from '../assets/apps/btcpay.svg'
 import CpuMinerStats from '../components/CpuMinerStats'
 
 type AppInfo = {
@@ -80,7 +81,8 @@ const iconMap: Record<string, string> = {
   'fedimint-guardian': fedimintIcon,
   'fedimint-gateway': fedimintIcon,
   tapd: taprootAssetsIcon,
-  'bark-wallet': barkWalletIcon
+  'bark-wallet': barkWalletIcon,
+  btcpay: btcpayIcon
 }
 
 const internalRoutes: Record<string, string> = {

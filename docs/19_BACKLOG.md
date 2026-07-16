@@ -67,12 +67,12 @@ Current product backlog, after checking the repository against the docs:
     implemented in this repo; distributing/spending the BRLN asset over Lightning
     needs `litd` integrated + an edge node (RFQ, price oracle, redemption to
     sats) and is a separate project. Tracked in section 13.
-13. **Open (study done 2026-07-16)** - `BTCPay Server` App Store app. Payment
-    processor (invoices, POS, payment buttons) reusing the node's existing
-    Bitcoin source (local app/systemd or remote) through NBXplorer and the
-    existing native LND through `type=lnd-rest`. Explicitly must NOT deploy the
-    official `btcpayserver-docker` stack (it ships and overwrites its own
-    bitcoind + LND). Detailed integration study in section 14.
+13. **Implemented 2026-07-16 (pending production validation)** - `BTCPay
+    Server` App Store app. `apps_btcpay.go` deploys btcpayserver + nbxplorer +
+    postgres via own compose, reusing the existing Bitcoin source (app network
+    join / host.docker.internal / remote host) through NBXplorer and the
+    native LND via `type=lnd-rest` with a dedicated baked macaroon (never
+    admin). Install-time RPC + P2P probes. Integration study in section 14.
 
 ## Implemented Since Last Audit
 
@@ -1171,8 +1171,11 @@ edge's redemption service once it exists.
 
 ## 14. BTCPay Server (App Store)
 
-**Current status (2026-07-16): open — integration study complete, no code.**
-No `apps_btcpay.go` handler, registry entry, or UI icon exists yet.
+**Current status (2026-07-16): implemented — pending production validation.**
+`apps_btcpay.go` (handler, bitcoin wiring per source, LND macaroon bake +
+tls.cert copy, compose generation), registry entry, App Store icon, and
+focused tests (`apps_btcpay_test.go`) are in the tree. Not yet validated on a
+live node; the section below is the design reference.
 
 ### Source
 

@@ -67,6 +67,12 @@ Current product backlog, after checking the repository against the docs:
     implemented in this repo; distributing/spending the BRLN asset over Lightning
     needs `litd` integrated + an edge node (RFQ, price oracle, redemption to
     sats) and is a separate project. Tracked in section 13.
+13. **Open (study done 2026-07-16)** - `BTCPay Server` App Store app. Payment
+    processor (invoices, POS, payment buttons) reusing the node's existing
+    Bitcoin source (local app/systemd or remote) through NBXplorer and the
+    existing native LND through `type=lnd-rest`. Explicitly must NOT deploy the
+    official `btcpayserver-docker` stack (it ships and overwrites its own
+    bitcoind + LND). Detailed integration study in section 14.
 
 ## Implemented Since Last Audit
 
@@ -1162,6 +1168,265 @@ airdrops/proof; costly at scale — Lightning removes per-transfer dust/fee.
 Building this in brln-os-light. The LOS side only needs the Fase 2 hook: the
 `POST /api/apps/tapd/redeem` endpoint + the "Redeem to sats" button call the
 edge's redemption service once it exists.
+
+## 14. BTCPay Server (App Store)
+
+**Current status (2026-07-16): open — integration study complete, no code.**
+No `apps_btcpay.go` handler, registry entry, or UI icon exists yet.
+
+### Source
+
+Product discussion on 2026-07-16. The operator wants BTCPay Server available in
+the App Store, with a hard constraint: it must reuse the node's existing
+Bitcoin source (local via App Store Docker or systemd/external, or remote) and
+the existing native LND, never deploying a duplicate bitcoind or LND.
+
+Upstream references:
+
+- https://github.com/btcpayserver/btcpayserver
+- https://docs.btcpayserver.org/
+- https://github.com/dgarage/NBXplorer
+- https://github.com/btcpayserver/btcpayserver-docker (reference only, NOT used)
+- https://docs.btcpayserver.org/Deployment/ManualDeploymentExtended/
+
+### Key Findings From The Study
+
+1. **The official Docker deployment is unusable for LOS.** The
+   `btcpayserver-docker` generator ships its own bitcoind + LND fragments,
+   regenerates and overwrites configs on every start, and upstream explicitly
+   says pointing it at an existing node is unsupported/undocumented. The
+   correct shape for LOS is a hand-written compose (LNDg pattern) with exactly
+   three containers: `btcpayserver`, `nbxplorer`, `postgres`.
+2. **BTCPay never talks to bitcoind directly.** All chain access goes through
+   **NBXplorer**, a minimal UTXO tracker. NBXplorer needs from bitcoind:
+   - JSON-RPC (broadcast, fee estimation, chain info) — `rpcuser`/`rpcpassword`
+     supported (`NBXPLORER_BTCRPCUSER` / `NBXPLORER_BTCRPCPASSWORD` /
+     `NBXPLORER_BTCRPCURL`), cookie not required;
+   - a **P2P connection** (`NBXPLORER_BTCNODEENDPOINT=host:8333`) to hear new
+     blocks/transactions in real time. **ZMQ is NOT used** — good news for the
+     remote case;
+   - **no `txindex`**, and **pruned nodes work** (it indexes only tracked
+     derivation schemes from `startheight` = tip at first run, so a fresh
+     install on a synced node is ready in seconds);
+   - Bitcoin Core >= 24.0.
+3. **Whitelisting is a recommendation, not a hard requirement.** Upstream
+   recommends `whitelist=<nbxplorer-ip>` on the bitcoin node so the P2P slot is
+   guaranteed and own-broadcasts always relay. Without it (shared remote node
+   case) NBXplorer connects as a normal peer — functional, slightly degraded
+   guarantees. LOS should verify P2P reachability at install and warn instead
+   of blocking.
+4. **BTCPay connects to LND via REST only.** `BTCPayServer.Lightning` supports
+   LND exclusively through `type=lnd-rest` (no internal lnd-grpc). Connection
+   string shape:
+   `type=lnd-rest;server=https://host.docker.internal:8080/;macaroonfilepath=...;certfilepath=...`
+   The invoice macaroon is NOT enough (BTCPay calls `GetInfo` to check sync
+   before creating invoices). Officially documented minimal bake:
+   `lncli bakemacaroon address:read address:write info:read invoices:read invoices:write onchain:read`.
+   LOS already has `BakeCustomMacaroon` (Lightning Tools) — we can bake a
+   dedicated `btcpay` macaroon instead of handing over `admin.macaroon`.
+5. **Two PostgreSQL databases** (`btcpayserver`, `nbxplorer`), Postgres v13+.
+   BTCPay reads NBXplorer's DB directly (`BTCPAY_EXPLORERPOSTGRES`) in addition
+   to its HTTP API. NBXplorer's own API is authenticated by a cookie file that
+   BTCPay reads via a shared volume mounted at `/root/.nbxplorer`.
+6. **Current stable images (pin them):** `btcpayserver/btcpayserver:2.4.0`,
+   `nicolasdorier/nbxplorer:2.6.8`, `postgres:16`. BTCPay images are
+   multi-arch (amd64/arm64 — fits the RPi5 target).
+7. **On-chain store wallet is independent of LND.** BTCPay tracks a per-store
+   derivation scheme (xpub) via NBXplorer, or can generate its own hot wallet
+   (seed stored inside the BTCPay data dir). It does not and should not reuse
+   the LND on-chain wallet. Default guidance: watch-only xpub; hot wallet at
+   the operator's own risk.
+
+### Goal
+
+Install BTCPay Server from the App Store as a payment processor (invoices,
+Point of Sale, payment buttons, Greenfield API) that:
+
+- uses the existing Bitcoin source in all three LOS scenarios (App Store
+  Docker bitcoind, external/systemd bitcoind, remote node) with zero node
+  duplication;
+- uses the existing native LND over REST as the server-level "internal
+  lightning node" so stores can enable Lightning with one click;
+- keeps NBXplorer and Postgres strictly internal (no LAN exposure).
+
+### Product Decisions
+
+- Hand-written `docker-compose.yaml` with `btcpayserver` + `nbxplorer` +
+  dedicated `postgres:16` (LNDg pattern), pinned image tags. Never the
+  official generator.
+- App ID `btcpay`, UI port `23000` (free: 8889 LNDg, 5000 LNbits, 8999
+  mempool, 8081 publicpool, 12596 robosats, 8175/8176 fedimint, 4004 bark).
+- Data under `/var/lib/lightningos/apps-data/btcpay/{data,nbxplorer,pgdata}`;
+  secrets in app `.env` (0600), passwords generated with `randomToken` and
+  persisted like LNDg's.
+- LND access via a **dedicated baked macaroon** (permission list above) stored
+  at `.../btcpay/lnd/btcpay.macaroon` (0600) and mounted read-only, plus
+  `/data/lnd/tls.cert` read-only. Fall back to mounting `/data/lnd:ro`
+  (LNDg/LNbits precedent) only if baking fails.
+- `BTCPAY_BTCLIGHTNING` set at server level so the LOS LND is the "internal
+  node" offered to every store.
+- NBXplorer and Postgres use compose `expose` only — never `ports`.
+- MVP is LAN HTTP like LNDg (BTCPay warns about insecure access but works).
+  Public exposure (domain + HTTPS, Tor) is a follow-up, not MVP.
+
+### Bitcoin Source Wiring (the core of the integration)
+
+Resolve the source at install/start time with the existing helpers
+(`resolveBitcoinSource`, `readBitcoinLocalRPCConfig`,
+`readBitcoinCoreAppRPCConfig`, remote creds from lnd.conf/secrets):
+
+1. **Local, App Store bitcoind (`source=app`)** — join the Bitcoin Core app's
+   compose network (mempool app precedent: external network attach). Wire:
+   - `NBXPLORER_BTCRPCURL=http://bitcoind:8332/`
+   - `NBXPLORER_BTCNODEENDPOINT=bitcoind:8333`
+   - creds from `parseBitcoinCoreRPCConfig`.
+   Extend the existing `syncBitcoinCoreRPCAllowList` mechanism with a sibling
+   `whitelist=<compose CIDR>` sync (reuse `dockerContainerCIDRs`) so NBXplorer
+   is whitelisted.
+2. **Local, external/systemd bitcoind (`source=external`)** — RPC via
+   `host.docker.internal` using creds from `readBitcoinLocalRPCConfig`
+   (bitcoin.conf candidates / lnd.conf `[local]` tag):
+   - `NBXPLORER_BTCRPCURL=http://host.docker.internal:8332/`
+   - `NBXPLORER_BTCNODEENDPOINT=host.docker.internal:8333`
+   Requires `rpcallowip=<docker gateway>` + ideally `whitelist=<gateway>` in
+   the host bitcoin.conf. LOS does not manage that file — detect, attempt the
+   RPC, and surface a precise UI instruction when refused instead of editing
+   the operator's config silently.
+3. **Remote node (`source=remote`, LOS default bitcoin.br-ln.com)** — RPC
+   creds from lnd.conf/secrets:
+   - `NBXPLORER_BTCRPCURL=http(s)://<remote-host>:8332/`
+   - `NBXPLORER_BTCNODEENDPOINT=<remote-host>:8333`
+   No whitelist possible on a shared community node — acceptable (see finding
+   3). Install-time checks: RPC `getblockchaininfo` must succeed and a TCP
+   dial to `<remote-host>:8333` must connect; on P2P failure, block install
+   with a clear "remote node P2P unreachable" error since NBXplorer cannot
+   follow the chain without it.
+
+ZMQ is not needed in any scenario. Pruned local nodes are supported as-is.
+
+### LND Wiring
+
+Reuse the LNbits REST-access machinery (`updateLndRestOptions`:
+`restlisten=<gateway>:8080`, `tlsextraip=<gateway>`,
+`tlsextradomain=host.docker.internal`, cert regen + lnd restart). Then:
+
+```
+BTCPAY_BTCLIGHTNING: "type=lnd-rest;server=https://host.docker.internal:8080/;macaroonfilepath=/etc/lnd/btcpay.macaroon;certfilepath=/etc/lnd/tls.cert"
+```
+
+Bake the dedicated macaroon at install via the existing
+`lndclient.BakeCustomMacaroon` path with exactly:
+`address:read address:write info:read invoices:read invoices:write onchain:read`.
+Do not log or return it; write it straight to the app data dir.
+
+TLS cert handling: LND REST is HTTPS with a self-signed cert, so the
+connection string must carry `certfilepath` (or `certthumbprint`) — never
+`allowinsecure`. Do NOT bind-mount `/data/lnd/tls.cert` directly (single-file
+mounts pin the inode; the container keeps the stale cert when LND regenerates
+it) and do NOT mount `/data/lnd` wholesale (exposes `admin.macaroon`,
+defeating the dedicated macaroon). Instead, **copy `tls.cert` into the app
+data dir on install/start** (the start flow already re-wires env + restarts
+containers) and mount `<data>/lnd/tls.cert:ro`. Alternative:
+`certthumbprint=<sha256>` computed at start, which needs no cert mount at all.
+
+### Compose Sketch
+
+```yaml
+services:
+  btcpay-db:
+    image: postgres:16
+    # init script creates DBs: btcpayserver, nbxplorer (LC_CTYPE 'C')
+  nbxplorer:
+    image: nicolasdorier/nbxplorer:2.6.8
+    environment:
+      NBXPLORER_NETWORK: mainnet
+      NBXPLORER_CHAINS: btc
+      NBXPLORER_BIND: 0.0.0.0:32838
+      NBXPLORER_BTCRPCURL: <per bitcoin source>
+      NBXPLORER_BTCRPCUSER / NBXPLORER_BTCRPCPASSWORD: <per source>
+      NBXPLORER_BTCNODEENDPOINT: <per source>
+      NBXPLORER_POSTGRES: ...Database=nbxplorer
+    expose: ["32838"]          # never published to host
+    volumes:
+      - <data>/nbxplorer:/datadir
+  btcpayserver:
+    image: btcpayserver/btcpayserver:2.4.0
+    environment:
+      BTCPAY_NETWORK: mainnet
+      BTCPAY_CHAINS: btc
+      BTCPAY_BIND: 0.0.0.0:23000
+      BTCPAY_ROOTPATH: /
+      BTCPAY_BTCEXPLORERURL: http://nbxplorer:32838/
+      BTCPAY_POSTGRES: ...Database=btcpayserver
+      BTCPAY_EXPLORERPOSTGRES: ...Database=nbxplorer
+      BTCPAY_BTCLIGHTNING: <lnd-rest string above>
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    ports: ["23000:23000"]
+    volumes:
+      - <data>/data:/datadir
+      - <data>/nbxplorer:/root/.nbxplorer:ro   # NBXplorer API cookie
+      # copies refreshed by install/start, NOT direct /data/lnd mounts
+      - <data>/lnd/tls.cert:/etc/lnd/tls.cert:ro
+      - <data>/lnd/btcpay.macaroon:/etc/lnd/btcpay.macaroon:ro
+```
+
+### Backend Plan
+
+- `internal/server/apps_btcpay.go` implementing `appHandler` (`Definition`,
+  `Info` via `getComposeStatus`, `Install`, `Uninstall`, `Start`, `Stop`),
+  registered in `apps_registry.go`; icon in `ui/src/pages/AppStore.tsx`;
+  validate with `TestValidateAppRegistry`.
+- Install flow: `ensureDocker` → resolve bitcoin source + run readiness checks
+  (`bitcoinLocalReady`-style RPC probe, remote P2P dial) → bake LND macaroon →
+  ensure REST access (LNbits helper) → write `.env`/compose → `up -d`.
+- Start flow re-runs source resolution so a `local`↔`remote` switch after
+  install re-wires NBXplorer automatically (env rewrite + container restart).
+- UFW: allow `23000/tcp` like other UI apps.
+
+### Security Requirements
+
+- Never mount `admin.macaroon` when the dedicated bake succeeds; never expose
+  any macaroon, RPC credential, or Postgres password via API or logs.
+- NBXplorer (`32838`) and Postgres must not be reachable from the LAN.
+- First-run race: BTCPay's first registered user becomes server admin. After
+  `Install`, the UI must tell the operator to open BTCPay and register
+  immediately (same class of warning as LNDg admin password surfacing).
+- Uninstall warning: the BTCPay data dir may contain **store hot-wallet
+  seeds** and invoice history. Uninstall removes the app root (compose) but
+  must warn before/if removing `apps-data/btcpay`.
+- Store wallet guidance in UI copy: prefer watch-only xpub; a BTCPay hot
+  wallet keeps its seed inside the app data dir, outside LOS's "seed is never
+  persisted" guarantee.
+
+### Tests
+
+- Registry accepts `btcpay` (`TestValidateAppRegistry`).
+- Compose/env generation per bitcoin source (`app`, `external`, `remote`):
+  correct `NBXPLORER_BTCRPCURL`/`BTCNODEENDPOINT`/creds for each; table test.
+- Generated `BTCPAY_BTCLIGHTNING` string shape (https + macaroonfilepath +
+  certfilepath; no `allowinsecure` since TLS cert is mounted).
+- Whitelist/rpcallowip sync helper idempotence (local app case).
+- Macaroon bake permission list matches the documented minimal set.
+- No secret material in `Info()` responses or logs.
+- `npm run build` + `go test ./internal/server/...`.
+
+### Acceptance Criteria
+
+- Install/start/stop/uninstall from the App Store on all three bitcoin
+  sources without touching the existing bitcoind or deploying a new one.
+- No second LND: Lightning invoices settle through the node's existing LND.
+- NBXplorer synced ("ready") within minutes on an already-synced node.
+- A store can be created, an on-chain xpub wallet attached, and both an
+  on-chain and a Lightning invoice paid end to end.
+- NBXplorer/Postgres unreachable from the LAN; only `23000` is exposed.
+
+### Later Follow-Ups
+
+- Public exposure: domain + HTTPS (Caddy proxy precedent from RoboSats) or
+  Tor/BTCPay behind a tunnel, for real ecommerce checkout + webhooks.
+- LOS-native status card via the Greenfield API (server info, store count).
+- Optional plugins (POS app is built-in; others via BTCPay plugin system).
+- Backup guidance for the BTCPay data dir (hot wallet seeds, store configs).
 
 ## Implemented Or No Longer Active Here
 

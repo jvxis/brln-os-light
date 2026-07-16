@@ -561,7 +561,7 @@ export default function AppStore() {
                       <img
                         src={icon}
                         alt={`${app.name} icon`}
-                        className={`h-12 w-12 rounded-2xl ${app.id === 'bark-wallet' ? 'bg-white p-2 object-contain' : app.id === 'electrs' ? 'object-contain' : 'object-cover'}`}
+                        className={`h-12 w-12 rounded-2xl ${app.id === 'bark-wallet' ? 'bg-white p-2 object-contain' : app.id === 'electrs' || app.id === 'btcpay' ? 'object-contain' : 'object-cover'}`}
                       />
                     ) : (
                       <span className="text-xs text-fog/50">{t('appStore.appBadge')}</span>

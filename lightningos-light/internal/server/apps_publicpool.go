@@ -53,6 +53,7 @@ type publicPoolRuntimeValues struct {
 	BitcoinRPCPort           int
 	BitcoinRPCUser           string
 	BitcoinRPCPass           string
+	BitcoinZMQHost           string
 	UseBitcoinCoreNetwork    bool
 	NeedsLocalRPCBridgeUFW   bool
 	LocalExternalBitcoinPort int
@@ -244,6 +245,7 @@ func (s *Server) resolvePublicPoolRuntimeValues(ctx context.Context) (publicPool
 		values.BitcoinRPCPort = port
 		values.BitcoinRPCUser = user
 		values.BitcoinRPCPass = pass
+		values.BitcoinZMQHost = normalizePublicPoolZMQHost(s.cfg.BitcoinRemote.ZMQRawBlock)
 		return values, nil
 	}
 
@@ -268,6 +270,7 @@ func (s *Server) resolvePublicPoolRuntimeValues(ctx context.Context) (publicPool
 		values.BitcoinRPCPort = localPort
 		values.BitcoinRPCUser = localCfg.User
 		values.BitcoinRPCPass = localCfg.Pass
+		values.BitcoinZMQHost = publicPoolDockerZMQHost(localCfg.ZMQBlock, "bitcoind")
 		values.UseBitcoinCoreNetwork = true
 		return values, nil
 	}
@@ -277,6 +280,7 @@ func (s *Server) resolvePublicPoolRuntimeValues(ctx context.Context) (publicPool
 	values.BitcoinRPCPort = localPort
 	values.BitcoinRPCUser = localCfg.User
 	values.BitcoinRPCPass = localCfg.Pass
+	values.BitcoinZMQHost = publicPoolExternalZMQHost(localCfg.ZMQBlock)
 	values.NeedsLocalRPCBridgeUFW = true
 	values.LocalExternalBitcoinPort = localPort
 	return values, nil
@@ -322,6 +326,57 @@ func publicPoolDockerRPCURL(host string) string {
 		return "http://host.docker.internal"
 	}
 	return toHTTPRPCURL(trimmed)
+}
+
+func normalizePublicPoolZMQHost(endpoint string) string {
+	trimmed := strings.TrimSpace(endpoint)
+	if trimmed == "" {
+		return ""
+	}
+	if !strings.HasPrefix(strings.ToLower(trimmed), "tcp://") {
+		return "tcp://" + trimmed
+	}
+	return trimmed
+}
+
+func publicPoolDockerZMQHost(endpoint string, dockerHost string) string {
+	normalized := normalizePublicPoolZMQHost(endpoint)
+	if normalized == "" {
+		return ""
+	}
+	host, port, err := net.SplitHostPort(strings.TrimPrefix(normalized, "tcp://"))
+	if err != nil || strings.TrimSpace(port) == "" {
+		return ""
+	}
+	host = strings.Trim(host, "[]")
+	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
+		host = strings.TrimSpace(dockerHost)
+	} else if strings.EqualFold(host, "localhost") {
+		host = strings.TrimSpace(dockerHost)
+	}
+	if host == "" {
+		return ""
+	}
+	return "tcp://" + net.JoinHostPort(host, port)
+}
+
+func publicPoolExternalZMQHost(endpoint string) string {
+	normalized := normalizePublicPoolZMQHost(endpoint)
+	if normalized == "" {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(strings.TrimPrefix(normalized, "tcp://"))
+	if err != nil {
+		return ""
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return ""
+	}
+	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
+		return ""
+	}
+	return normalized
 }
 
 func publicPoolComposeContents(paths publicPoolPaths, values publicPoolRuntimeValues) string {
@@ -392,6 +447,7 @@ func ensurePublicPoolEnv(paths publicPoolPaths, values publicPoolRuntimeValues) 
 		{"BITCOIN_RPC_PASSWORD", values.BitcoinRPCPass},
 		{"BITCOIN_RPC_PORT", strconv.Itoa(values.BitcoinRPCPort)},
 		{"BITCOIN_RPC_TIMEOUT", "10000"},
+		{"BITCOIN_ZMQ_HOST", values.BitcoinZMQHost},
 		{"API_PORT", strconv.Itoa(publicPoolAPIPort)},
 		{"STRATUM_PORT", strconv.Itoa(publicPoolStratumPort)},
 		{"NETWORK", publicPoolDefaultNet},

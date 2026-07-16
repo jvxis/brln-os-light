@@ -1290,6 +1290,21 @@ escape_pg_password() {
   printf '%s' "$1" | sed "s/'/''/g"
 }
 
+urlencode_dsn_component() {
+  local LC_ALL=C
+  local raw="$1"
+  local out=""
+  local i c
+  for (( i = 0; i < ${#raw}; i++ )); do
+    c="${raw:$i:1}"
+    case "$c" in
+      [A-Za-z0-9.~_-]) out+="$c" ;;
+      *) printf -v out '%s%%%02X' "$out" "'$c" ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+
 build_postgres_dsn_from_admin() {
   local admin_dsn="${1:-}"
   local user="$2"
@@ -1386,8 +1401,8 @@ provision_notifications_db() {
   ensure_pg_role "$NOTIFICATIONS_APP_USER" "" "$app_pass_esc" "$admin_dsn" || return 1
   ensure_pg_database "$NOTIFICATIONS_DB_NAME" "$NOTIFICATIONS_APP_USER" "$admin_dsn" || return 1
 
-  set_env_value "NOTIFICATIONS_PG_DSN" "$(build_postgres_dsn_from_admin "$admin_dsn" "$NOTIFICATIONS_APP_USER" "$app_pass" "$NOTIFICATIONS_DB_NAME")"
-  set_env_value "NOTIFICATIONS_PG_ADMIN_DSN" "$(build_postgres_dsn_from_admin "$admin_dsn" "$NOTIFICATIONS_ADMIN_USER" "$admin_pass" "postgres")"
+  set_env_value "NOTIFICATIONS_PG_DSN" "$(build_postgres_dsn_from_admin "$admin_dsn" "$NOTIFICATIONS_APP_USER" "$(urlencode_dsn_component "$app_pass")" "$NOTIFICATIONS_DB_NAME")"
+  set_env_value "NOTIFICATIONS_PG_ADMIN_DSN" "$(build_postgres_dsn_from_admin "$admin_dsn" "$NOTIFICATIONS_ADMIN_USER" "$(urlencode_dsn_component "$admin_pass")" "postgres")"
   print_ok "Notifications database ready (${NOTIFICATIONS_DB_NAME})"
 }
 

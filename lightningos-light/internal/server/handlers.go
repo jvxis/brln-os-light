@@ -75,7 +75,12 @@ type waitingCloseRecoveryResponse struct {
 
 type pendingChannelResponse struct {
 	lndclient.PendingChannelInfo
-	WaitingCloseRecovery *waitingCloseRecoveryResponse `json:"waiting_close_recovery,omitempty"`
+	WaitingCloseRecovery              *waitingCloseRecoveryResponse `json:"waiting_close_recovery,omitempty"`
+	FundingTxStatus                   string                        `json:"funding_tx_status,omitempty"`
+	FundingTxFeeSat                   int64                         `json:"funding_tx_fee_sat,omitempty"`
+	FundingTxVsize                    float64                       `json:"funding_tx_vsize,omitempty"`
+	FundingTxEffectiveFeeRateSatVbyte float64                       `json:"funding_tx_effective_fee_rate_sat_vb,omitempty"`
+	FundingTxRBF                      *bool                         `json:"funding_tx_rbf,omitempty"`
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -1730,6 +1735,10 @@ func (s *Server) handleLNChannels(w http.ResponseWriter, r *http.Request) {
 			channels[i].ProfitFee7dSat = &profitSat
 		}
 	}
+
+	fundingTxCtx, fundingTxCancel := context.WithTimeout(r.Context(), 4*time.Second)
+	enrichPendingOpenFundingTransactions(fundingTxCtx, pendingResp)
+	fundingTxCancel()
 
 	active := 0
 	inactive := 0

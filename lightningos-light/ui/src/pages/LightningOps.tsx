@@ -85,7 +85,13 @@ type PendingChannel = {
   confirmation_height?: number
   opening_since_unix?: number
   opening_duration_sec?: number
+  funding_initiator?: 'local' | 'remote' | 'both' | 'unknown'
   funding_fee_rate_sat_vb?: number
+  funding_tx_status?: 'mempool' | 'confirmed' | 'not_found' | 'unavailable'
+  funding_tx_fee_sat?: number
+  funding_tx_vsize?: number
+  funding_tx_effective_fee_rate_sat_vb?: number
+  funding_tx_rbf?: boolean
   funding_bump_checked?: boolean
   funding_bump_eligible?: boolean
   funding_bump_outpoint?: string
@@ -4131,6 +4137,34 @@ export default function LightningOps() {
     }
   }
 
+  const pendingOpenFundingInitiatorLabel = (initiator?: PendingChannel['funding_initiator']) => {
+    switch (initiator) {
+      case 'local':
+        return t('lightningOps.pendingOpenInitiatorLocal')
+      case 'remote':
+        return t('lightningOps.pendingOpenInitiatorRemote')
+      case 'both':
+        return t('lightningOps.pendingOpenInitiatorBoth')
+      case 'unknown':
+      default:
+        return t('lightningOps.pendingOpenInitiatorUnknown')
+    }
+  }
+
+  const pendingOpenFundingTxStatusLabel = (status?: PendingChannel['funding_tx_status']) => {
+    switch (status) {
+      case 'mempool':
+        return t('lightningOps.pendingOpenFundingTxMempool')
+      case 'confirmed':
+        return t('lightningOps.pendingOpenFundingTxConfirmed')
+      case 'not_found':
+        return t('lightningOps.pendingOpenFundingTxNotFound')
+      case 'unavailable':
+      default:
+        return t('lightningOps.pendingOpenFundingTxUnavailable')
+    }
+  }
+
   const waitingCloseRecoveryResultLabel = (result?: string) => {
     const normalized = String(result || '').trim()
     switch (normalized) {
@@ -6708,6 +6742,19 @@ export default function LightningOps() {
                       const bumpEligible = ch.funding_bump_eligible === true
                       const bumpAmountSat = Math.max(0, Number(ch.funding_bump_amount_sat || 0))
                       const currentFundingFeeRate = Math.max(0, Math.trunc(Number(ch.funding_fee_rate_sat_vb || 0)))
+                      const remoteFunded = ch.funding_initiator === 'remote'
+                      const effectiveFundingFeeRate = Math.max(0, Number(ch.funding_tx_effective_fee_rate_sat_vb || 0))
+                      const effectiveFundingFeeRateLabel = effectiveFundingFeeRate.toLocaleString(locale, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })
+                      const economyFeeReference = Math.max(0, Math.trunc(Number(openFeeHint?.economy || 0)))
+                      const hourFeeReference = Math.max(0, Math.trunc(Number(openFeeHint?.hour || 0)))
+                      const fundingTxAwaitingConfirmation = ch.funding_tx_status === 'mempool'
+                      const effectiveFeeBelowHourReference = fundingTxAwaitingConfirmation
+                        && effectiveFundingFeeRate > 0
+                        && hourFeeReference > 0
+                        && effectiveFundingFeeRate < hourFeeReference
                       const bumpStatus = pendingOpenBumpStatusByPoint[ch.channel_point] || ''
                       const bumpBusy = pendingOpenBumpBusyByPoint[ch.channel_point] === true
                       return (
@@ -6743,24 +6790,53 @@ export default function LightningOps() {
                             {openingObserved && (
                               <div>{t('lightningOps.pendingOpenObservedFor', { value: openingObserved })}</div>
                             )}
+                            {ch.funding_initiator && (
+                              <div>{t('lightningOps.pendingOpenInitiator', { value: pendingOpenFundingInitiatorLabel(ch.funding_initiator) })}</div>
+                            )}
                           </div>
                           {stuckOpening && (
                             <div className="mt-3 rounded-xl border border-amber-300/35 bg-amber-500/10 p-3 space-y-1">
                               <div className="flex flex-wrap items-center justify-between gap-2">
-                                <p className="text-[11px] font-semibold text-amber-100">{t('lightningOps.pendingOpenStuckTitle')}</p>
+                                <p className="text-[11px] font-semibold text-amber-100">
+                                  {t(remoteFunded ? 'lightningOps.pendingOpenRemoteStuckTitle' : 'lightningOps.pendingOpenStuckTitle')}
+                                </p>
                                 <span className="rounded-full border border-amber-300/35 px-2 py-0.5 text-[10px] text-amber-100">
-                                  {t('lightningOps.pendingOpenStuckBadge')}
+                                  {t(remoteFunded ? 'lightningOps.pendingOpenRemoteStuckBadge' : 'lightningOps.pendingOpenStuckBadge')}
                                 </span>
                               </div>
-                              <p className="text-[11px] text-amber-200/90">{t('lightningOps.pendingOpenStuckBody')}</p>
+                              <p className="text-[11px] text-amber-200/90">
+                                {t(remoteFunded ? 'lightningOps.pendingOpenRemoteStuckBody' : 'lightningOps.pendingOpenStuckBody')}
+                              </p>
                               {openingObserved && (
                                 <p className="text-[11px] text-fog/70">{t('lightningOps.pendingOpenObservedFor', { value: openingObserved })}</p>
                               )}
-                              <p className="text-[11px] text-fog/70">{t('lightningOps.pendingOpenMonitorMempool')}</p>
-                              {currentFundingFeeRate > 0 && (
+                              {ch.funding_tx_status && (
+                                <p className="text-[11px] text-fog/70">{pendingOpenFundingTxStatusLabel(ch.funding_tx_status)}</p>
+                              )}
+                              {effectiveFundingFeeRate > 0 && (
+                                <p className="text-[11px] text-fog/70">
+                                  {t('lightningOps.pendingOpenEffectiveFundingFee', { value: effectiveFundingFeeRateLabel })}
+                                </p>
+                              )}
+                              {fundingTxAwaitingConfirmation && economyFeeReference > 0 && hourFeeReference > 0 && (
+                                <p className="text-[11px] text-fog/70">
+                                  {t('lightningOps.pendingOpenMempoolFeeReference', { economy: economyFeeReference, hour: hourFeeReference })}
+                                </p>
+                              )}
+                              {effectiveFeeBelowHourReference && (
+                                <p className="text-[11px] text-amber-200/90">
+                                  {t('lightningOps.pendingOpenFeeBelowReference', { value: effectiveFundingFeeRateLabel, hour: hourFeeReference })}
+                                </p>
+                              )}
+                              {!remoteFunded && (
+                                <p className="text-[11px] text-fog/70">{t('lightningOps.pendingOpenMonitorMempool')}</p>
+                              )}
+                              {!remoteFunded && currentFundingFeeRate > 0 && (
                                 <p className="text-[11px] text-fog/70">{t('lightningOps.pendingOpenBumpCurrentFee', { value: currentFundingFeeRate })}</p>
                               )}
-                              {bumpChecked ? (
+                              {remoteFunded ? (
+                                <p className="text-[11px] text-fog/70">{t('lightningOps.pendingOpenRemoteBumpOwner')}</p>
+                              ) : bumpChecked ? (
                                 bumpEligible ? (
                                   <div className="rounded-lg border border-emerald-300/25 bg-emerald-500/10 p-2">
                                     <p className="text-[11px] font-medium text-emerald-100">{t('lightningOps.pendingOpenBumpEligibleTitle')}</p>

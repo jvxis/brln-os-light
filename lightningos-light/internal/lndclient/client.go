@@ -5210,6 +5210,7 @@ func (c *Client) ListPendingChannels(ctx context.Context) ([]PendingChannelInfo,
 			ChannelPoint:             ch.ChannelPoint,
 			RemotePubkey:             ch.RemoteNodePub,
 			PeerAlias:                resolveAlias(ch.RemoteNodePub),
+			FundingInitiator:         pendingChannelInitiator(ch.GetInitiator()),
 			CapacitySat:              ch.Capacity,
 			LocalBalanceSat:          ch.LocalBalance,
 			RemoteBalanceSat:         ch.RemoteBalance,
@@ -7436,6 +7437,19 @@ func satPerVbyteFromSatPerKw(value int64) int64 {
 	return (value + 249) / 250
 }
 
+func pendingChannelInitiator(value lnrpc.Initiator) string {
+	switch value {
+	case lnrpc.Initiator_INITIATOR_LOCAL:
+		return "local"
+	case lnrpc.Initiator_INITIATOR_REMOTE:
+		return "remote"
+	case lnrpc.Initiator_INITIATOR_BOTH:
+		return "both"
+	default:
+		return "unknown"
+	}
+}
+
 func (c *Client) snapshotInactiveSince(channels []*lnrpc.Channel, now time.Time) map[string]time.Time {
 	c.channelStateMu.Lock()
 	defer c.channelStateMu.Unlock()
@@ -7576,6 +7590,7 @@ type PendingChannelInfo struct {
 	ChannelPoint             string `json:"channel_point"`
 	RemotePubkey             string `json:"remote_pubkey"`
 	PeerAlias                string `json:"peer_alias,omitempty"`
+	FundingInitiator         string `json:"funding_initiator,omitempty"`
 	CapacitySat              int64  `json:"capacity_sat"`
 	LocalBalanceSat          int64  `json:"local_balance_sat"`
 	RemoteBalanceSat         int64  `json:"remote_balance_sat"`

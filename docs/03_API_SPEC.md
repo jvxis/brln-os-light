@@ -221,6 +221,8 @@ GET /api/onchain/provenance/metrics
 
 GET /api/lnops/channels
 - Channel rows with pending HTLCs may include `forwarding_channel_alias` and `forwarding_channel_short_id` in each pending HTLC entry, alongside the existing numeric `forwarding_channel_id`.
+- Pending opening rows include `funding_initiator` (`local`, `remote`, `both`, or `unknown`). When the public transaction lookup is attempted, they also include `funding_tx_status` (`mempool`, `confirmed`, `not_found`, or `unavailable`) and may include `funding_tx_fee_sat`, `funding_tx_vsize`, `funding_tx_effective_fee_rate_sat_vb`, and `funding_tx_rbf`.
+- `funding_tx_effective_fee_rate_sat_vb` is calculated from the observed funding transaction fee and weight. It is distinct from `funding_fee_rate_sat_vb`, which is the LND funding/commitment fee reference used by the existing bump workflow.
 
 GET /api/lnops/channel-db-impact
 - Returns a channel.db maintenance report for nodes using LND's Bolt channel database.

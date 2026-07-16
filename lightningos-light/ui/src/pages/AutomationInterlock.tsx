@@ -7,8 +7,10 @@ import {
   getAutomationIntentHistory,
   getAutomationIntents,
   getLnChannels,
+  getRebalanceConfig,
   getRebalanceOverview,
-  updateAutomationIntentConfig
+  updateAutomationIntentConfig,
+  updateRebalanceConfig
 } from '../api'
 import type { AutomationIntent, AutomationIntentConfig, AutomationIntentEvent } from '../api'
 import type { RebalanceOverview, RebalanceSovereignDecision } from '../components/rebalance/types'
@@ -26,6 +28,11 @@ type AutofeeStatus = {
   running?: boolean
   last_run_at?: string
   last_error?: string
+}
+
+type RebalanceInterlockConfig = {
+  autofee_settling_window_sec?: number
+  autofee_settling_multiplier?: number
 }
 
 type ChannelSummary = {
@@ -159,8 +166,11 @@ export default function AutomationInterlock() {
   const [autofee, setAutofee] = useState<AutofeeSummary | null>(null)
   const [autofeeStatus, setAutofeeStatus] = useState<AutofeeStatus | null>(null)
   const [rebalance, setRebalance] = useState<RebalanceOverview | null>(null)
+  const [rebalanceConfig, setRebalanceConfig] = useState<RebalanceInterlockConfig | null>(null)
   const [multiplier, setMultiplier] = useState('1.2')
   const [minConfidence, setMinConfidence] = useState('0.7')
+  const [settlingMultiplier, setSettlingMultiplier] = useState('0.5')
+  const [settlingWindowHours, setSettlingWindowHours] = useState('2')
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -170,6 +180,12 @@ export default function AutomationInterlock() {
     setConfig(next)
     setMultiplier(String(next.refill_score_multiplier))
     setMinConfidence(String(next.min_confidence))
+  }
+
+  const applyRebalanceConfig = (next: RebalanceInterlockConfig) => {
+    setRebalanceConfig(next)
+    setSettlingMultiplier(String(next.autofee_settling_multiplier ?? 0.5))
+    setSettlingWindowHours(String(Number(next.autofee_settling_window_sec ?? 7200) / 3600))
   }
 
   const load = async (silent = false) => {
@@ -182,9 +198,10 @@ export default function AutomationInterlock() {
       getLnChannels(),
       getAutofeeConfig(),
       getAutofeeStatus(),
+      getRebalanceConfig(),
       getRebalanceOverview()
     ])
-    const [configResult, intentsResult, historyResult, channelsResult, autofeeResult, autofeeStatusResult, rebalanceResult] = results
+    const [configResult, intentsResult, historyResult, channelsResult, autofeeResult, autofeeStatusResult, rebalanceConfigResult, rebalanceResult] = results
     if (configResult.status === 'fulfilled') {
       applyConfig(configResult.value)
       setMessage('')
@@ -199,6 +216,7 @@ export default function AutomationInterlock() {
     }
     if (autofeeResult.status === 'fulfilled') setAutofee(autofeeResult.value as AutofeeSummary)
     if (autofeeStatusResult.status === 'fulfilled') setAutofeeStatus(autofeeStatusResult.value as AutofeeStatus)
+    if (rebalanceConfigResult.status === 'fulfilled') applyRebalanceConfig(rebalanceConfigResult.value as RebalanceInterlockConfig)
     if (rebalanceResult.status === 'fulfilled') setRebalance(rebalanceResult.value as RebalanceOverview)
     setLoading(false)
     setRefreshing(false)
@@ -225,20 +243,37 @@ export default function AutomationInterlock() {
   const saveAdvanced = async () => {
     const nextMultiplier = Number(multiplier)
     const nextConfidence = Number(minConfidence)
+    const nextSettlingMultiplier = Number(settlingMultiplier)
+    const nextSettlingWindowHours = Number(settlingWindowHours)
     if (!Number.isFinite(nextMultiplier) || nextMultiplier < 1 || nextMultiplier > 1.5 ||
-        !Number.isFinite(nextConfidence) || nextConfidence < 0.5 || nextConfidence > 1) {
+        !Number.isFinite(nextConfidence) || nextConfidence < 0.5 || nextConfidence > 1 ||
+        !Number.isFinite(nextSettlingMultiplier) || nextSettlingMultiplier <= 0 || nextSettlingMultiplier > 1 ||
+        !Number.isFinite(nextSettlingWindowHours) || nextSettlingWindowHours < 0) {
       setMessage(t('automationInterlock.invalidSettings'))
+      return
+    }
+    if (!rebalanceConfig) {
+      setMessage(t('automationInterlock.rebalanceConfigUnavailable'))
       return
     }
     setSaving(true)
     setMessage('')
     try {
-      applyConfig(await updateAutomationIntentConfig({
-        refill_score_multiplier: nextMultiplier,
-        min_confidence: nextConfidence
-      }))
+      const [nextIntentConfig, nextRebalanceConfig] = await Promise.all([
+        updateAutomationIntentConfig({
+          refill_score_multiplier: nextMultiplier,
+          min_confidence: nextConfidence
+        }),
+        updateRebalanceConfig({
+          autofee_settling_multiplier: nextSettlingMultiplier,
+          autofee_settling_window_sec: Math.round(nextSettlingWindowHours * 3600)
+        })
+      ])
+      applyConfig(nextIntentConfig)
+      applyRebalanceConfig(nextRebalanceConfig as RebalanceInterlockConfig)
       setMessage(t('automationInterlock.settingsSaved'))
     } catch (err) {
+      await load(true)
       setMessage(err instanceof Error ? err.message : t('automationInterlock.saveFailed'))
     } finally {
       setSaving(false)
@@ -356,6 +391,21 @@ export default function AutomationInterlock() {
   const reasonLabel = (reason?: string) => reason
     ? t(`automationInterlock.blockReasons.${reason}`, { defaultValue: reason.replace(/_/g, ' ') })
     : t('automationInterlock.awaitingEvaluation')
+
+  const parsedMultiplier = Number(multiplier)
+  const parsedConfidence = Number(minConfidence)
+  const parsedSettlingMultiplier = Number(settlingMultiplier)
+  const parsedSettlingWindowHours = Number(settlingWindowHours)
+  const calibrationPreviewReady = [parsedMultiplier, parsedConfidence, parsedSettlingMultiplier, parsedSettlingWindowHours]
+    .every(Number.isFinite)
+  const admittedMultiplier = calibrationPreviewReady
+    ? 1 + ((parsedMultiplier - 1) * parsedConfidence)
+    : 0
+  const settlingEnabled = calibrationPreviewReady && parsedSettlingWindowHours > 0 && parsedSettlingMultiplier < 1
+  const combinedMultiplier = settlingEnabled ? admittedMultiplier * parsedSettlingMultiplier : admittedMultiplier
+  const combinedTone = combinedMultiplier < 1
+    ? 'border-amber-300/25 bg-amber-300/[0.07] text-amber-100'
+    : 'border-emerald-300/25 bg-emerald-300/[0.07] text-emerald-100'
 
   if (loading && !config) {
     return <p className="text-sm text-fog/70">{t('automationInterlock.loading')}</p>
@@ -713,19 +763,89 @@ export default function AutomationInterlock() {
         <details className="section-card group">
           <summary className="cursor-pointer list-none font-semibold text-fog">{t('automationInterlock.advanced')}</summary>
           <p className="mt-2 text-xs text-fog/55">{t('automationInterlock.advancedHint')}</p>
-          <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <label className="space-y-1 text-xs text-fog/60">
-              <span>{t('automationInterlock.refillMultiplier')}</span>
-              <input className="input-field w-full" type="number" min="1" max="1.5" step="0.05" value={multiplier} onChange={(event) => setMultiplier(event.target.value)} />
-            </label>
-            <label className="space-y-1 text-xs text-fog/60">
-              <span>{t('automationInterlock.minConfidence')}</span>
-              <input className="input-field w-full" type="number" min="0.5" max="1" step="0.05" value={minConfidence} onChange={(event) => setMinConfidence(event.target.value)} />
-            </label>
-            <div className="text-xs text-fog/60"><span>{t('automationInterlock.refillTtl')}</span><div className="mt-2 text-sm text-fog">{formatDuration(config.refill_target_ttl_sec)}</div></div>
-            <div className="text-xs text-fog/60"><span>{t('automationInterlock.floorTtl')}</span><div className="mt-2 text-sm text-fog">{formatDuration(config.protect_fee_floor_ttl_sec)}</div></div>
+          {calibrationPreviewReady && (
+            <div className={`mt-4 rounded-2xl border p-4 ${combinedTone}`}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.14em] opacity-65">{t('automationInterlock.combinedEffect')}</div>
+                  <div className="mt-1 text-sm font-medium">
+                    {t('automationInterlock.combinedFormula', {
+                      intent: numberFormatter.format(admittedMultiplier),
+                      settling: numberFormatter.format(settlingEnabled ? parsedSettlingMultiplier : 1),
+                      combined: numberFormatter.format(combinedMultiplier)
+                    })}
+                  </div>
+                </div>
+                <span className="rounded-full border border-current/20 bg-black/10 px-3 py-1 text-xs font-semibold">
+                  {combinedMultiplier < 1
+                    ? t('automationInterlock.netDemotion')
+                    : t('automationInterlock.netPriority')}
+                </span>
+              </div>
+              <p className="mt-2 text-[11px] leading-relaxed opacity-70">
+                {settlingEnabled
+                  ? t('automationInterlock.combinedEffectHint', { hours: numberFormatter.format(parsedSettlingWindowHours) })
+                  : t('automationInterlock.settlingDisabledHint')}
+              </p>
+            </div>
+          )}
+
+          <div className="mt-4 grid gap-4 xl:grid-cols-2">
+            <section className="rounded-2xl border border-cyan-300/15 bg-cyan-300/[0.035] p-4">
+              <h4 className="text-sm font-semibold text-cyan-100">{t('automationInterlock.intentAdmission')}</h4>
+              <p className="mt-1 text-[11px] leading-relaxed text-fog/50">{t('automationInterlock.intentAdmissionHint')}</p>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <label className="space-y-1 text-xs text-fog/60">
+                  <span>{t('automationInterlock.refillMultiplier')}</span>
+                  <code className="block text-[10px] text-fog/35">refill_score_multiplier</code>
+                  <input className="input-field w-full" type="number" min="1" max="1.5" step="0.05" value={multiplier} disabled={saving} onChange={(event) => setMultiplier(event.target.value)} />
+                </label>
+                <label className="space-y-1 text-xs text-fog/60">
+                  <span>{t('automationInterlock.minConfidence')}</span>
+                  <code className="block text-[10px] text-fog/35">min_confidence</code>
+                  <input className="input-field w-full" type="number" min="0.5" max="1" step="0.05" value={minConfidence} disabled={saving} onChange={(event) => setMinConfidence(event.target.value)} />
+                </label>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-amber-300/15 bg-amber-300/[0.035] p-4">
+              <h4 className="text-sm font-semibold text-amber-100">{t('automationInterlock.settlingGuardrail')}</h4>
+              <p className="mt-1 text-[11px] leading-relaxed text-fog/50">{t('automationInterlock.settlingGuardrailHint')}</p>
+              {!rebalanceConfig && <p className="mt-2 text-[11px] text-amber-200">{t('automationInterlock.rebalanceConfigUnavailable')}</p>}
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <label className="space-y-1 text-xs text-fog/60">
+                  <span>{t('automationInterlock.settlingMultiplier')}</span>
+                  <code className="block text-[10px] text-fog/35">autofee_settling_multiplier</code>
+                  <input className="input-field w-full" type="number" min="0.05" max="1" step="0.05" value={settlingMultiplier} disabled={saving || !rebalanceConfig} onChange={(event) => setSettlingMultiplier(event.target.value)} />
+                </label>
+                <label className="space-y-1 text-xs text-fog/60">
+                  <span>{t('automationInterlock.settlingWindow')}</span>
+                  <code className="block text-[10px] text-fog/35">autofee_settling_window_sec</code>
+                  <input className="input-field w-full" type="number" min="0" step="0.5" value={settlingWindowHours} disabled={saving || !rebalanceConfig} onChange={(event) => setSettlingWindowHours(event.target.value)} />
+                </label>
+              </div>
+            </section>
           </div>
-          <button type="button" className="btn-primary mt-4" disabled={saving} onClick={() => void saveAdvanced()}>{t('common.save')}</button>
+
+          <section className="mt-4 rounded-2xl border border-white/[0.07] bg-black/10 p-4">
+            <h4 className="text-sm font-semibold text-fog">{t('automationInterlock.operationalWindows')}</h4>
+            <p className="mt-1 text-[11px] text-fog/45">{t('automationInterlock.operationalWindowsHint')}</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-xl border border-white/[0.06] bg-white/[0.025] px-3 py-2 text-xs text-fog/60">
+                <span>{t('automationInterlock.refillTtl')}</span>
+                <div className="mt-1 text-sm font-medium text-fog">{formatDuration(config.refill_target_ttl_sec)}</div>
+              </div>
+              <div className="rounded-xl border border-white/[0.06] bg-white/[0.025] px-3 py-2 text-xs text-fog/60">
+                <span>{t('automationInterlock.floorTtl')}</span>
+                <div className="mt-1 text-sm font-medium text-fog">{formatDuration(config.protect_fee_floor_ttl_sec)}</div>
+              </div>
+            </div>
+          </section>
+
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <button type="button" className="btn-primary" disabled={saving || !rebalanceConfig} onClick={() => void saveAdvanced()}>{t('common.save')}</button>
+            <span className="text-[11px] text-fog/45">{t('automationInterlock.saveCalibrationHint')}</span>
+          </div>
         </details>
       )}
     </section>

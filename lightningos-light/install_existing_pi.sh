@@ -247,6 +247,22 @@ ensure_secrets_file() {
   fi
 }
 
+ensure_default_bitcoin_source() {
+  local btc_conf="$1"
+  local current
+  current=$(read_env_value "BITCOIN_SOURCE")
+  if [[ -n "$current" ]]; then
+    print_ok "Bitcoin source already configured (${current})"
+    return 0
+  fi
+  if [[ -f "$btc_conf" ]]; then
+    set_env_value "BITCOIN_SOURCE" "local"
+    print_ok "Bitcoin source set to local (existing node)"
+  else
+    print_warn "bitcoin.conf not found; bitcoin source left unset (UI defaults to remote)"
+  fi
+}
+
 ensure_dirs() {
   print_step "Preparing directories"
   mkdir -p /etc/lightningos /etc/lightningos/tls /opt/lightningos/manager /opt/lightningos/ui \
@@ -1449,6 +1465,7 @@ main() {
 
   ensure_dirs
   ensure_secrets_file
+  ensure_default_bitcoin_source "$btc_conf"
   ensure_lightningos_user
   ensure_operator_user
 

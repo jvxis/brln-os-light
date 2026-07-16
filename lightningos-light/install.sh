@@ -442,22 +442,25 @@ resolve_node_version() {
   if [[ "$NODE_VERSION" =~ ^[0-9]+$ ]]; then
     return 0
   fi
-  if command -v jq >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
-    local major
+  local major=""
+  if command -v curl >/dev/null 2>&1; then
     major=$(curl -fsSL https://nodejs.org/dist/index.json \
-      | jq -r '.[].version' \
-      | sed 's/^v//' \
-      | cut -d. -f1 \
+      | grep -oE '"version":"v[0-9]+' \
+      | grep -oE '[0-9]+' \
       | sort -nr \
       | head -n1)
-    if [[ -n "$major" ]]; then
+  fi
+  while [[ -n "$major" && "$major" -ge 20 ]]; do
+    if curl -fsIL -o /dev/null "https://deb.nodesource.com/setup_${major}.x"; then
       NODE_VERSION="$major"
       print_ok "Using Node.js ${NODE_VERSION}.x"
       return 0
     fi
-  fi
-  print_warn "Could not resolve latest Node.js version; falling back to 20"
-  NODE_VERSION="20"
+    print_warn "NodeSource has no setup for Node.js ${major}.x; trying $((major - 1)).x"
+    major=$((major - 1))
+  done
+  print_warn "Could not resolve latest Node.js version; falling back to 22"
+  NODE_VERSION="22"
 }
 
 wait_for_apt_locks() {

@@ -9,8 +9,8 @@ LND_VERSION="${LND_VERSION:-0.21.1-beta}"
 LND_URL_DEFAULT="https://github.com/lightningnetwork/lnd/releases/download/v${LND_VERSION}/lnd-linux-amd64-v${LND_VERSION}.tar.gz"
 LND_URL="${LND_URL:-$LND_URL_DEFAULT}"
 
-GOTTY_VERSION="${GOTTY_VERSION:-1.0.1}"
-GOTTY_URL_DEFAULT="https://github.com/yudai/gotty/releases/download/v${GOTTY_VERSION}/gotty_linux_amd64.tar.gz"
+GOTTY_VERSION="${GOTTY_VERSION:-1.8.0}"
+GOTTY_URL_DEFAULT="https://github.com/sorenisanerd/gotty/releases/download/v${GOTTY_VERSION}/gotty_v${GOTTY_VERSION}_linux_amd64.tar.gz"
 GOTTY_URL="${GOTTY_URL:-$GOTTY_URL_DEFAULT}"
 
 GO_VERSION="${GO_VERSION:-1.24.12}"

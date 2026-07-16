@@ -8,7 +8,9 @@ REPO_ROOT="$SCRIPT_DIR"
 GO_VERSION="${GO_VERSION:-1.24.12}"
 GO_TARBALL_URL="https://go.dev/dl/go${GO_VERSION}.linux-arm64.tar.gz"
 NODE_VERSION="${NODE_VERSION:-current}"
-GOTTY_VERSION="${GOTTY_VERSION:-1.0.1}"
+GOTTY_VERSION="${GOTTY_VERSION:-1.8.0}"
+GOTTY_URL_DEFAULT="https://github.com/sorenisanerd/gotty/releases/download/v${GOTTY_VERSION}/gotty_v${GOTTY_VERSION}_linux_arm64.tar.gz"
+GOTTY_URL="${GOTTY_URL:-$GOTTY_URL_DEFAULT}"
 POSTGRES_VERSION="${POSTGRES_VERSION:-latest}"
 LND_FIX_PERMS_SCRIPT="/usr/local/sbin/lightningos-fix-lnd-perms"
 LND_UPGRADE_SCRIPT="/usr/local/sbin/lightningos-upgrade-lnd"
@@ -399,43 +401,18 @@ detect_go_binary() {
 }
 
 install_gotty() {
-  print_step "Installing GoTTY ${GOTTY_VERSION} (local build)"
+  print_step "Installing GoTTY ${GOTTY_VERSION}"
   if command -v gotty >/dev/null 2>&1; then
     if gotty --version 2>/dev/null | grep -q "${GOTTY_VERSION}"; then
       print_ok "GoTTY already installed"
       return
     fi
   fi
-
-  local go_bin
-  go_bin=$(detect_go_binary || true)
-  if [[ -n "$go_bin" ]]; then
-    local current major minor
-    current=$("$go_bin" version | awk '{print $3}' | sed 's/go//')
-    major=$(echo "$current" | cut -d. -f1)
-    minor=$(echo "$current" | cut -d. -f2)
-    if [[ "$major" -lt 1 || ( "$major" -eq 1 && "$minor" -lt 24 ) ]]; then
-      install_go
-    else
-      export PATH="$(dirname "$go_bin"):$PATH"
-    fi
-  else
-    install_go
-  fi
-  export PATH="/usr/local/go/bin:$PATH"
-
   local tmp
   tmp=$(mktemp -d)
-  (
-    cd "$tmp"
-    GOBIN="$tmp/bin" GOFLAGS="-mod=mod" go install "github.com/yudai/gotty@v${GOTTY_VERSION}"
-  )
-  if [[ ! -x "$tmp/bin/gotty" ]]; then
-    print_warn "GoTTY build did not produce a binary"
-    rm -rf "$tmp"
-    exit 1
-  fi
-  install -m 0755 "$tmp/bin/gotty" /usr/local/bin/gotty
+  curl -fsSL "$GOTTY_URL" -o "$tmp/gotty.tar.gz"
+  tar -xzf "$tmp/gotty.tar.gz" -C "$tmp"
+  install -m 0755 "$tmp/gotty" /usr/local/bin/gotty
   rm -rf "$tmp"
   print_ok "GoTTY installed"
 }

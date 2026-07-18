@@ -6143,9 +6143,10 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 			return false, false, 0, false, nil, 0
 		}
 		var lastErr error
-		routes = filterRebalanceRoutesForTarget(routes, targetChannelID)
+		candidateRoutes := routes
+		routes = filterRebalanceRoutesForTarget(candidateRoutes, targetChannelID)
 		if len(routes) == 0 {
-			lastErr = rebalanceRouteTargetMismatchError(nil, targetChannelID)
+			lastErr = rebalanceRoutesTargetMismatchError(candidateRoutes, targetChannelID)
 		}
 		var lastRouteFeeMsat int64
 		var lastPaymentHash string
@@ -7376,7 +7377,7 @@ func (m *rebalanceMppPrepassContext) attemptShard(roundCtx context.Context, sour
 		}
 	}
 	if route == nil {
-		result.FailReason = rebalanceRouteTargetMismatchError(nil, r.targetChannelID).Error()
+		result.FailReason = rebalanceRoutesTargetMismatchError(routes, r.targetChannelID).Error()
 		return result
 	}
 
@@ -7601,7 +7602,37 @@ func rebalanceRouteTargetMismatchError(route *lnrpc.Route, targetChannelID uint6
 			actualChannelID = lastHop.ChanId
 		}
 	}
-	return fmt.Errorf("route target channel mismatch: got %d, want %d", actualChannelID, targetChannelID)
+	if actualChannelID == 0 {
+		return fmt.Errorf("route target channel mismatch: no candidate route ended in requested channel %d", targetChannelID)
+	}
+	return fmt.Errorf("route target channel mismatch: candidate route ended in channel %d, want %d", actualChannelID, targetChannelID)
+}
+
+func rebalanceRoutesTargetMismatchError(routes []*lnrpc.Route, targetChannelID uint64) error {
+	seen := make(map[uint64]struct{}, len(routes))
+	actualChannelIDs := make([]uint64, 0, len(routes))
+	for _, route := range routes {
+		if route == nil || len(route.Hops) == 0 {
+			continue
+		}
+		lastHop := route.Hops[len(route.Hops)-1]
+		if lastHop == nil || lastHop.ChanId == 0 {
+			continue
+		}
+		if _, ok := seen[lastHop.ChanId]; ok {
+			continue
+		}
+		seen[lastHop.ChanId] = struct{}{}
+		actualChannelIDs = append(actualChannelIDs, lastHop.ChanId)
+	}
+	if len(actualChannelIDs) == 0 {
+		return rebalanceRouteTargetMismatchError(nil, targetChannelID)
+	}
+	sort.Slice(actualChannelIDs, func(i, j int) bool { return actualChannelIDs[i] < actualChannelIDs[j] })
+	if len(actualChannelIDs) == 1 {
+		return fmt.Errorf("route target channel mismatch: candidate route ended in channel %d, want %d", actualChannelIDs[0], targetChannelID)
+	}
+	return fmt.Errorf("route target channel mismatch: candidate routes ended in channels %v, want %d", actualChannelIDs, targetChannelID)
 }
 
 func compareHops(hop1 *lnrpc.Hop, hop2 *lnrpc.Hop) bool {

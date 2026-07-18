@@ -121,6 +121,26 @@ func TestFilterRebalanceRoutesForExactTargetChannel(t *testing.T) {
 	}
 }
 
+func TestRebalanceRoutesTargetMismatchErrorListsRejectedChannels(t *testing.T) {
+	routes := []*lnrpc.Route{
+		{Hops: []*lnrpc.Hop{{ChanId: 100}, {ChanId: 20}}},
+		{Hops: []*lnrpc.Hop{{ChanId: 101}, {ChanId: 7}}},
+		{Hops: []*lnrpc.Hop{{ChanId: 102}, {ChanId: 20}}},
+		nil,
+	}
+	want := "route target channel mismatch: candidate routes ended in channels [7 20], want 50"
+	if got := rebalanceRoutesTargetMismatchError(routes, 50).Error(); got != want {
+		t.Fatalf("unexpected mismatch detail: got %q, want %q", got, want)
+	}
+}
+
+func TestRebalanceRoutesTargetMismatchErrorExplainsMissingCandidate(t *testing.T) {
+	want := "route target channel mismatch: no candidate route ended in requested channel 50"
+	if got := rebalanceRoutesTargetMismatchError([]*lnrpc.Route{nil, {}}, 50).Error(); got != want {
+		t.Fatalf("unexpected empty-candidate detail: got %q, want %q", got, want)
+	}
+}
+
 func TestApplyRebalanceProfile(t *testing.T) {
 	base := defaultRebalanceConfig()
 	medBalanced := RebalanceNodeCalibration{NodeClass: "medium", LiquidityClass: "balanced"}

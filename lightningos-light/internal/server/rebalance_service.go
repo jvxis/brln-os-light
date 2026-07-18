@@ -248,6 +248,12 @@ const (
 	sovereignTargetStructuralCooldownRepeatDefaultHours = 6
 	sovereignTargetStructuralCooldownRepeatMaxHours     = 48
 	sovereignExplorationSlotPctMax                      = 50
+	// Outbound urgency is an ordering concern, not a gate bypass. Eligible
+	// targets below these local-liquidity thresholds are evaluated before the
+	// regular score-ranked pool while still respecting every economic and
+	// operational guard in the sovereign loop.
+	sovereignCriticalOutboundPct = 1.5
+	sovereignHighOutboundPct     = 5.0
 
 	// R5 — Exploration burnout: when an exploration-marked job for a given
 	// target accumulates `BurnoutMinAttempts` attempts in `BurnoutWindow`
@@ -4662,6 +4668,15 @@ func sortRebalanceTargets(candidates []rebalanceTarget, topScore int64, topScore
 		if a.CooldownProbe != b.CooldownProbe {
 			return !a.CooldownProbe
 		}
+		// A nearly empty target needs liquidity before a merely profitable one,
+		// otherwise max_amount chunking makes a 1% and a 20% outbound channel
+		// look economically identical. Urgency only changes ordering; all gates
+		// in executeSovereignAutopilot still apply.
+		aUrgency := sovereignOutboundUrgency(a.Channel)
+		bUrgency := sovereignOutboundUrgency(b.Channel)
+		if aUrgency != bUrgency {
+			return aUrgency > bUrgency
+		}
 		aBucket := inTopBucket(a.Score)
 		bBucket := inTopBucket(b.Score)
 		if aBucket != bBucket {
@@ -4690,6 +4705,27 @@ func sortRebalanceTargets(candidates []rebalanceTarget, topScore int64, topScore
 		}
 		return a.Channel.ChannelID < b.Channel.ChannelID
 	})
+}
+
+const (
+	sovereignOutboundUrgencyNormal = iota
+	sovereignOutboundUrgencyHigh
+	sovereignOutboundUrgencyCritical
+)
+
+func sovereignOutboundUrgency(channel RebalanceChannel) int {
+	// Capacity is required to distinguish a real 0% outbound target from a
+	// zero-value/test snapshot that does not carry channel liquidity data.
+	if channel.CapacitySat <= 0 {
+		return sovereignOutboundUrgencyNormal
+	}
+	if channel.LocalPct < sovereignCriticalOutboundPct {
+		return sovereignOutboundUrgencyCritical
+	}
+	if channel.LocalPct < sovereignHighOutboundPct {
+		return sovereignOutboundUrgencyHigh
+	}
+	return sovereignOutboundUrgencyNormal
 }
 
 func filterRecentRebalanceTargets(candidates []rebalanceTarget, cfg RebalanceConfig, scanAt time.Time) ([]rebalanceTarget, int) {
@@ -10594,6 +10630,17 @@ func injectSovereignExplorationSlots(candidates []rebalanceTarget, maxJobs int, 
 	keepTop := effectiveMax - slots
 	if keepTop < probeCount+1 {
 		keepTop = probeCount + 1
+	}
+	// Do not let a random exploration slot displace a critical/high-outbound
+	// target. sortRebalanceTargets places urgent targets at the front, so keep
+	// the entire urgent prefix deterministic. Exploration remains immediately
+	// behind it as a fallback when an urgent target is rejected by later gates.
+	urgentEnd := probeCount
+	for urgentEnd < len(candidates) && sovereignOutboundUrgency(candidates[urgentEnd].Channel) > sovereignOutboundUrgencyNormal {
+		urgentEnd++
+	}
+	if keepTop < urgentEnd {
+		keepTop = urgentEnd
 	}
 	if keepTop >= len(candidates) {
 		return candidates

@@ -4238,6 +4238,73 @@ func TestSortRebalanceTargetsHappyPathOrder(t *testing.T) {
 	}
 }
 
+func TestSovereignOutboundUrgencyThresholds(t *testing.T) {
+	tests := []struct {
+		name     string
+		localPct float64
+		want     int
+	}{
+		{name: "below critical", localPct: 1.49, want: sovereignOutboundUrgencyCritical},
+		{name: "critical boundary is high", localPct: 1.5, want: sovereignOutboundUrgencyHigh},
+		{name: "below high", localPct: 4.99, want: sovereignOutboundUrgencyHigh},
+		{name: "high boundary is normal", localPct: 5, want: sovereignOutboundUrgencyNormal},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sovereignOutboundUrgency(RebalanceChannel{CapacitySat: 1_000_000, LocalPct: tt.localPct})
+			if got != tt.want {
+				t.Fatalf("local_pct=%v: expected urgency %d, got %d", tt.localPct, tt.want, got)
+			}
+		})
+	}
+}
+
+func TestSortRebalanceTargetsPrioritizesOutboundUrgencyBeforeScore(t *testing.T) {
+	candidates := []rebalanceTarget{
+		{Channel: RebalanceChannel{ChannelID: 1, CapacitySat: 1_000_000, LocalPct: 20}, Score: 1_000},
+		{Channel: RebalanceChannel{ChannelID: 2, CapacitySat: 1_000_000, LocalPct: 4.9}, Score: 100},
+		{Channel: RebalanceChannel{ChannelID: 3, CapacitySat: 1_000_000, LocalPct: 1.4}, Score: 10},
+	}
+
+	sortRebalanceTargets(candidates, 1_000, true, 10)
+
+	if candidates[0].Channel.ChannelID != 3 || candidates[1].Channel.ChannelID != 2 || candidates[2].Channel.ChannelID != 1 {
+		t.Fatalf("expected critical, high, normal order; got channels %d, %d, %d",
+			candidates[0].Channel.ChannelID, candidates[1].Channel.ChannelID, candidates[2].Channel.ChannelID)
+	}
+}
+
+func TestInjectSovereignExplorationSlotsDoesNotDisplaceUrgentTargets(t *testing.T) {
+	candidates := make([]rebalanceTarget, 15)
+	for i := range candidates {
+		candidates[i] = rebalanceTarget{
+			Channel: RebalanceChannel{ChannelID: uint64(i + 1), CapacitySat: 1_000_000, LocalPct: 20},
+			Score:   int64(150 - i*10),
+		}
+	}
+	// Five urgent targets fill maxJobs=5. The configured exploration slot must
+	// follow them, so it can only run as fallback if a later gate rejects one.
+	for i := 0; i < 2; i++ {
+		candidates[i].Channel.LocalPct = 1.4
+	}
+	for i := 2; i < 5; i++ {
+		candidates[i].Channel.LocalPct = 4.9
+	}
+
+	out := injectSovereignExplorationSlots(candidates, 5, 20, nil, nil)
+	for i := 0; i < 5; i++ {
+		if sovereignOutboundUrgency(out[i].Channel) == sovereignOutboundUrgencyNormal {
+			t.Fatalf("normal target displaced urgent target at position %d", i)
+		}
+		if out[i].ExplorationSlot {
+			t.Fatalf("urgent target at position %d must remain deterministic", i)
+		}
+	}
+	if len(out) <= 5 || !out[5].ExplorationSlot {
+		t.Fatalf("expected exploration fallback immediately after urgent prefix")
+	}
+}
+
 // estimateTargetGainV3 must use the strongest demand signal (historical
 // revenue vs projected throughput) and cap by the theoretical max.
 func TestEstimateTargetGainV3UsesStrongestDemandSignal(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"lightningos-light/internal/lndclient"
+	"lightningos-light/lnrpc"
 )
 
 func ptrInt64(v int64) *int64 { return &v }
@@ -78,6 +79,45 @@ func TestClassifyRebalanceNode(t *testing.T) {
 	// empty node → unknown / balanced, no divide-by-zero.
 	if c := classifyRebalanceNode(nil); c.NodeClass != "unknown" || c.LiquidityClass != "balanced" || c.LocalRatio != 0 {
 		t.Fatalf("empty node: class=%s liq=%s ratio=%f", c.NodeClass, c.LiquidityClass, c.LocalRatio)
+	}
+}
+
+func TestRebalancePeerHasParallelChannels(t *testing.T) {
+	target := RebalanceChannel{ChannelID: 50, RemotePubkey: "03abcdef"}
+	channels := []RebalanceChannel{
+		target,
+		{ChannelID: 7, RemotePubkey: "03ABCDEF"},
+		{ChannelID: 20, RemotePubkey: "02different"},
+	}
+	if !rebalancePeerHasParallelChannels(target, channels) {
+		t.Fatalf("expected sibling channel with the same peer pubkey to disable delegated fast-path")
+	}
+
+	if rebalancePeerHasParallelChannels(target, []RebalanceChannel{target, {ChannelID: 20, RemotePubkey: "02different"}}) {
+		t.Fatalf("did not expect unrelated peer channel to count as parallel")
+	}
+}
+
+func TestFilterRebalanceRoutesForExactTargetChannel(t *testing.T) {
+	correct := &lnrpc.Route{Hops: []*lnrpc.Hop{
+		{ChanId: 100, PubKey: "source-peer"},
+		{ChanId: 50, PubKey: "target-peer"},
+	}}
+	sibling := &lnrpc.Route{Hops: []*lnrpc.Hop{
+		{ChanId: 100, PubKey: "source-peer"},
+		{ChanId: 7, PubKey: "target-peer"},
+	}}
+	targetOnlyEarlier := &lnrpc.Route{Hops: []*lnrpc.Hop{
+		{ChanId: 50, PubKey: "middle-peer"},
+		{ChanId: 7, PubKey: "target-peer"},
+	}}
+
+	filtered := filterRebalanceRoutesForTarget([]*lnrpc.Route{nil, sibling, correct, targetOnlyEarlier}, 50)
+	if len(filtered) != 1 || filtered[0] != correct {
+		t.Fatalf("expected only the route whose final ChanId is the requested target, got %#v", filtered)
+	}
+	if rebalanceRouteTargetsChannel(sibling, 50) {
+		t.Fatalf("expected sibling BFX channel route to be rejected")
 	}
 }
 

@@ -3940,6 +3940,9 @@ func TestShouldUseRecentFailureCacheIncludesManualAutoRestart(t *testing.T) {
 	if shouldUseRecentFailureCache("auto", targetCooldownProbeReason) {
 		t.Fatalf("expected cooldown probes to bypass recent failure cache")
 	}
+	if shouldUseRecentFailureCache("auto", rebalanceGuaranteedReason) {
+		t.Fatalf("expected guaranteed slots to match one-shot manual jobs and bypass recent failure cache")
+	}
 	if !shouldUseRecentFailureCache("manual", "auto-restart") {
 		t.Fatalf("expected manual auto-restart jobs to use recent failure cache")
 	}
@@ -4302,6 +4305,91 @@ func TestInjectSovereignExplorationSlotsDoesNotDisplaceUrgentTargets(t *testing.
 	}
 	if len(out) <= 5 || !out[5].ExplorationSlot {
 		t.Fatalf("expected exploration fallback immediately after urgent prefix")
+	}
+}
+
+func TestOrderGuaranteedRebalanceTargetsUsesExactChannelIDAndFairness(t *testing.T) {
+	now := time.Now()
+	channels := []RebalanceChannel{
+		{
+			ChannelID:                  884138190664040449,
+			ChannelIDStr:               "884138190664040449",
+			RemotePubkey:               "same-bfx-peer",
+			CapacitySat:                7_000_000,
+			LocalPct:                   4,
+			GuaranteedRebalanceEnabled: true,
+			EligibleAsManualTarget:     true,
+		},
+		{
+			ChannelID:                  1005750773843558400,
+			ChannelIDStr:               "1005750773843558400",
+			RemotePubkey:               "same-bfx-peer",
+			CapacitySat:                50_000_000,
+			LocalPct:                   4,
+			GuaranteedRebalanceEnabled: true,
+			EligibleAsManualTarget:     true,
+		},
+		{
+			ChannelID:                  982701711585312771,
+			ChannelIDStr:               "982701711585312771",
+			RemotePubkey:               "same-bfx-peer",
+			CapacitySat:                20_000_000,
+			LocalPct:                   1.4,
+			GuaranteedRebalanceEnabled: true,
+			EligibleAsManualTarget:     true,
+		},
+	}
+	last := map[uint64]time.Time{
+		884138190664040449:  now.Add(-24 * time.Hour),
+		1005750773843558400: now.Add(-48 * time.Hour),
+	}
+
+	ordered := orderGuaranteedRebalanceTargets(channels, last)
+	if len(ordered) != 3 {
+		t.Fatalf("expected 3 exact parallel channels, got %d", len(ordered))
+	}
+	if ordered[0].ChannelID != 982701711585312771 {
+		t.Fatalf("critical channel must come first, got %d", ordered[0].ChannelID)
+	}
+	if ordered[1].ChannelID != 1005750773843558400 {
+		t.Fatalf("oldest high-urgency channel must come second, got %d", ordered[1].ChannelID)
+	}
+	if ordered[1].ChannelIDStr != "1005750773843558400" {
+		t.Fatalf("channel ID string lost precision: %q", ordered[1].ChannelIDStr)
+	}
+}
+
+func TestOrderGuaranteedRebalanceTargetsRequiresOptInAndManualEligibility(t *testing.T) {
+	channels := []RebalanceChannel{
+		{ChannelID: 1, CapacitySat: 1_000_000, LocalPct: 1, GuaranteedRebalanceEnabled: false, EligibleAsManualTarget: true},
+		{ChannelID: 2, CapacitySat: 1_000_000, LocalPct: 1, GuaranteedRebalanceEnabled: true, EligibleAsManualTarget: false},
+		{ChannelID: 3, CapacitySat: 1_000_000, LocalPct: 4, GuaranteedRebalanceEnabled: true, EligibleAsManualTarget: true},
+	}
+	ordered := orderGuaranteedRebalanceTargets(channels, nil)
+	if len(ordered) != 1 || ordered[0].ChannelID != 3 {
+		t.Fatalf("expected only opted-in eligible channel 3, got %+v", ordered)
+	}
+}
+
+func TestExecuteSovereignAutopilotReservedSlotCountsTowardCycleLimit(t *testing.T) {
+	svc := NewRebalanceService(nil, nil, nil)
+	cfg := defaultRebalanceConfig()
+	cfg.BudgetUnlimited = true
+	cfg.SovereignMaxJobsPerCycle = 1
+	plan := rebalanceAutoScanCandidatePlan{Candidates: []rebalanceTarget{{
+		Channel:          RebalanceChannel{ChannelID: 7, ChannelPoint: "regular:0", TargetAmountSat: 100_000},
+		ExpectedGainSat:  1_000,
+		EstimatedCostSat: 100,
+		BudgetCostSat:    100,
+		Score:            900,
+	}}}
+
+	result := svc.executeSovereignAutopilotWithReservedSlot(context.Background(), cfg, nil, plan, time.Now(), false, 1, 100)
+	if result.Selected != 0 {
+		t.Fatalf("guaranteed slot must consume the only cycle slot, selected=%d", result.Selected)
+	}
+	if len(result.Decisions) != 1 || result.Decisions[0].Reason != "cycle_limit" {
+		t.Fatalf("expected regular target blocked by cycle_limit, got %+v", result.Decisions)
 	}
 }
 

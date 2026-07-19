@@ -134,7 +134,21 @@ Quando `false`:
 - `runAutoScan` retorna imediatamente
 - `runManualRestartWatch` retorna imediatamente
 - `scheduleManualRestart` timers retornam imediatamente
-- Apenas operações iniciadas pelo operador (botão "Manual Rebal In") rodam
+- Apenas operações iniciadas pelo operador (botão "Rebal In") rodam
+
+### Vaga garantida por canal
+
+O checkbox `Garantir vaga` adiciona o `channel_id` exato a uma fila de
+convicção do operador. No início de cada auto scan, antes de `rules_auto` ou
+Sovereign, no máximo um canal marcado e abaixo do alvo é enfileirado. Canais
+críticos (`outbound < 1,5%`) vêm antes dos altos (`outbound < 5%`); dentro da
+mesma faixa vence o que está há mais tempo sem job automático.
+
+Essa fila ignora score e filtros econômicos/históricos, mas continua sujeita
+ao budget automático, fee cap, canal ocupado, déficit/mínimo executável e
+viabilidade operacional de sources/rota. O ID também é exposto como
+`channel_id_str` para não perder precisão no JavaScript e manter separados
+canais paralelos do mesmo peer.
 
 Implementado em três gates ([rebalance_service.go:2710](../internal/server/rebalance_service.go#L2710),
 [rebalance_service.go:2627](../internal/server/rebalance_service.go#L2627),

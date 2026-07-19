@@ -12,6 +12,7 @@ import {
   runRebalance,
   updateRebalanceChannelAuto,
   updateRebalanceChannelAutoTarget,
+  updateRebalanceChannelGuaranteed,
   updateRebalanceChannelManualRestart,
   updateRebalanceChannelTarget,
   updateRebalanceConfig,
@@ -116,6 +117,7 @@ export default function RebalanceCenter() {
   const { t, i18n } = useTranslation()
   const locale = getLocale(i18n.language)
   const formatter = useMemo(() => new Intl.NumberFormat(locale), [locale])
+  const compactFormatter = useMemo(() => new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 1 }), [locale])
   const pctFormatter = useMemo(() => new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }), [locale])
   const econRatioFormatter = useMemo(() => new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }), [locale])
   const roiFormatter = useMemo(
@@ -188,6 +190,7 @@ export default function RebalanceCenter() {
   const channelStateVersionRef = useRef(0)
 
   const formatSats = (value: number) => `${formatter.format(Math.round(value))} sats`
+  const formatCapacity = (value: number) => `${compactFormatter.format(Math.round(value))} sats`
   const formatPpm = (value: number) => `${formatter.format(Math.round(value))} ppm`
   const formatPct = (value: number) => `${pctFormatter.format(value)}%`
   const formatEconRatio = (value: number) => econRatioFormatter.format(Math.round(value * 100) / 100)
@@ -1138,6 +1141,31 @@ export default function RebalanceCenter() {
         )
       )
       setManualRestart((prev) => ({ ...prev, [channel.channel_point]: previousManual }))
+      setStatus(err instanceof Error ? err.message : t('rebalanceCenter.saveFailed'))
+    }
+  }
+
+  const handleToggleChannelGuaranteed = async (channel: RebalanceChannel, enabled: boolean) => {
+    if (enabled && channelParked(channel)) {
+      setStatus(t('channelRanking.automationParkedDetail'))
+      return
+    }
+    const previous = Boolean(channel.guaranteed_rebalance_enabled)
+    bumpChannelStateVersion()
+    setChannels((current) => current.map((item) =>
+      isSameChannel(item, channel) ? { ...item, guaranteed_rebalance_enabled: enabled } : item
+    ))
+    try {
+      await updateRebalanceChannelGuaranteed({
+        channel_id_str: channel.channel_id_str,
+        channel_point: channel.channel_point,
+        enabled
+      })
+      void loadAll({ silent: true })
+    } catch (err) {
+      setChannels((current) => current.map((item) =>
+        isSameChannel(item, channel) ? { ...item, guaranteed_rebalance_enabled: previous } : item
+      ))
       setStatus(err instanceof Error ? err.message : t('rebalanceCenter.saveFailed'))
     }
   }
@@ -3924,13 +3952,18 @@ export default function RebalanceCenter() {
                 id={mobileChannelCardID(ch.channel_point)}
                 className={`rounded-2xl border border-white/10 bg-ink/50 p-3 ${highlight} ${isFocused ? 'ring-1 ring-sky-300/70 bg-sky-500/10' : ''}`}
               >
-                <a
-                  className="text-sm font-semibold text-fog hover:text-white hover:underline underline-offset-2"
-                  href={lightningOpsLink}
-                  title={t('rebalanceCenter.channels.openInLightningOps')}
-                >
-                  {ch.peer_alias || ch.remote_pubkey}
-                </a>
+                <div className="flex flex-wrap items-center gap-2">
+                  <a
+                    className="text-sm font-semibold text-fog hover:text-white hover:underline underline-offset-2"
+                    href={lightningOpsLink}
+                    title={t('rebalanceCenter.channels.openInLightningOps')}
+                  >
+                    {ch.peer_alias || ch.remote_pubkey}
+                  </a>
+                  <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-fog/60" title={`channel_id ${ch.channel_id_str}`}>
+                    {formatCapacity(ch.capacity_sat)}
+                  </span>
+                </div>
                 <div className="text-[11px] text-fog/50 break-all">{ch.channel_point}</div>
                 {channelParked(ch) && (
                   <div className="mt-2 inline-flex rounded-full border border-amber-300/40 bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-100">
@@ -4080,6 +4113,15 @@ export default function RebalanceCenter() {
                 </div>
 
                 <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
+                  <label className="flex items-center gap-2 text-amber-100" title={t('rebalanceCenter.channelsHints.guaranteedRebalance')}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(ch.guaranteed_rebalance_enabled)}
+                      onChange={(e) => void handleToggleChannelGuaranteed(ch, e.target.checked)}
+                      disabled={channelParked(ch)}
+                    />
+                    {t('rebalanceCenter.channels.guaranteedRebalance')}
+                  </label>
                   <label className="flex items-center gap-2" title={t('rebalanceCenter.channelsHints.auto')}>
                     <input
                       type="checkbox"
@@ -4188,13 +4230,18 @@ export default function RebalanceCenter() {
                     className={`border-t border-white/5 group ${highlight} ${isFocused ? 'bg-sky-500/20' : ''}`}
                   >
                     <td className="py-3" title={scoreTitle}>
-                      <a
-                        className="text-fog hover:text-white hover:underline underline-offset-2"
-                        href={lightningOpsLink}
-                        title={t('rebalanceCenter.channels.openInLightningOps')}
-                      >
-                        {ch.peer_alias || ch.remote_pubkey}
-                      </a>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <a
+                          className="text-fog hover:text-white hover:underline underline-offset-2"
+                          href={lightningOpsLink}
+                          title={t('rebalanceCenter.channels.openInLightningOps')}
+                        >
+                          {ch.peer_alias || ch.remote_pubkey}
+                        </a>
+                        <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-fog/60" title={`channel_id ${ch.channel_id_str}`}>
+                          {formatCapacity(ch.capacity_sat)}
+                        </span>
+                      </div>
                       <div className="text-xs text-fog/50">{ch.channel_point}</div>
                       {channelParked(ch) && (
                         <div className="mt-1 inline-flex rounded-full border border-amber-300/40 bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-100">
@@ -4337,6 +4384,15 @@ export default function RebalanceCenter() {
                       </div>
                     )}
                     <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <label className="flex items-center gap-2 text-amber-100" title={t('rebalanceCenter.channelsHints.guaranteedRebalance')}>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(ch.guaranteed_rebalance_enabled)}
+                          onChange={(e) => void handleToggleChannelGuaranteed(ch, e.target.checked)}
+                          disabled={channelParked(ch)}
+                        />
+                        {t('rebalanceCenter.channels.guaranteedRebalance')}
+                      </label>
                       <label className="flex items-center gap-2" title={t('rebalanceCenter.channelsHints.auto')}>
                         <input
                           type="checkbox"

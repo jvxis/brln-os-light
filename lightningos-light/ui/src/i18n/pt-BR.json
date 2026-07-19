@@ -4378,12 +4378,13 @@
         "autoBypassCostGate": "Ignorar gate de custo",
         "payback": "Payback {{value}}%",
         "save": "Salvar",
-        "rebalanceIn": "Manual Rebal In",
+        "rebalanceIn": "Rebal In",
         "manualRestartBudgetWarning": "Manual restart pode ser bloqueado: custo estimado {{cost}} excede orçamento útil {{budget}}.",
         "manualRestartBudgetWarningChunk": "Manual restart pode ser bloqueado: mesmo um pedaço de max amount custa {{cost}}, acima do orçamento útil {{budget}} (o reabastecimento roda em pedaços).",
         "bulkAuto": "Auto (todos)",
         "bulkExclude": "Excluir (todos)",
         "auto": "Auto",
+        "guaranteedRebalance": "Garantir vaga",
         "excludeSource": "Excluir fonte",
         "roiEstimate": "ROI est. {{value}}",
         "roiEstimateNA": "ROI est. ind",
@@ -4415,6 +4416,7 @@
       "timeToPayback": "Tempo estimado para a receita recente pagar o custo de rebalance ainda em aberto deste canal.",
       "pairStats": "Mostra o historico de sources usadas quando este canal foi o target do rebalance. Rebalances em que este canal foi source aparecem no painel do canal alvo.",
       "auto": "Permitir que o modo automático aumente a liquidez local deste canal.",
+      "guaranteedRebalance": "Adiciona este canal exato ao grupo garantido. A cada rodada, um canal marcado e abaixo do alvo entra antes do scheduler, ignorando score e gates estratégicos, mas respeitando orçamento e proteções operacionais. O channel ID exato mantém separados canais paralelos do mesmo peer.",
       "excludeSource": "Nunca usar este canal como fonte de rebalance."
     },
     "queue": {

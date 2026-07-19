@@ -509,6 +509,14 @@ GET /api/reports/summary?range=d-1|month|3m|6m|12m|all
 GET /api/reports/live
 - Metrics from today 00:00 local time to now.
 
+## Rebalance channel automation
+
+POST /api/rebalance/channel/guaranteed
+- Adds or removes one exact LND channel from the scheduler-independent guaranteed rebalance pool.
+- Body: `{"channel_id_str":"1005750773843558400","channel_point":"txid:index","enabled":true}`.
+- `channel_id_str` is used to preserve uint64 precision in browser clients and is validated against `channel_point`.
+- At most one eligible pool member is queued per automatic scan before the selected scheduler. The job bypasses score and strategic/history gates, but retains the automatic budget, fee cap, channel-busy, target-deficit, and route/source safety checks.
+
 ## Terminal
 
 GET /api/terminal/status

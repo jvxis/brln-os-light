@@ -280,6 +280,7 @@ func (s *Server) routes() http.Handler {
 		r.Post("/channel/target", s.handleRebalanceChannelTarget)
 		r.Post("/channel/auto", s.handleRebalanceChannelAuto)
 		r.Post("/channel/auto-target", s.handleRebalanceChannelAutoTargetManaged)
+		r.Post("/channel/guaranteed", s.handleRebalanceChannelGuaranteed)
 		r.Post("/channel/manual-restart", s.handleRebalanceChannelManualRestart)
 		r.Post("/channel/exclude", s.handleRebalanceExclude)
 		r.Get("/metrics/baseline", s.handleRebalanceMetricsBaseline)

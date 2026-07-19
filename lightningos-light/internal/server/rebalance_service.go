@@ -10,6 +10,7 @@ import (
 	"math"
 	"math/rand"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -195,7 +196,8 @@ const (
 	rebalanceSovereignScopeAutoOnly             = "auto_only"
 	rebalanceSovereignScopeAutoAndManualRestart = "auto_and_manual_restart"
 
-	rebalanceSovereignReason = "sovereign-autopilot"
+	rebalanceSovereignReason  = "sovereign-autopilot"
+	rebalanceGuaranteedReason = "operator-guaranteed-slot"
 )
 
 const (
@@ -1046,39 +1048,41 @@ type RebalanceTargetStat struct {
 }
 
 type RebalanceChannel struct {
-	ChannelID              uint64   `json:"channel_id"`
-	ChannelPoint           string   `json:"channel_point"`
-	PeerAlias              string   `json:"peer_alias"`
-	RemotePubkey           string   `json:"remote_pubkey"`
-	Active                 bool     `json:"active"`
-	Private                bool     `json:"private"`
-	CapacitySat            int64    `json:"capacity_sat"`
-	LocalBalanceSat        int64    `json:"local_balance_sat"`
-	RemoteBalanceSat       int64    `json:"remote_balance_sat"`
-	LocalPct               float64  `json:"local_pct"`
-	RemotePct              float64  `json:"remote_pct"`
-	OutgoingFeePpm         int64    `json:"outgoing_fee_ppm"`
-	OutgoingBaseMsat       int64    `json:"outgoing_base_msat"`
-	PeerFeeRatePpm         int64    `json:"peer_fee_rate_ppm"`
-	PeerBaseMsat           int64    `json:"peer_base_msat"`
-	SpreadPpm              int64    `json:"spread_ppm"`
-	TargetOutboundPct      float64  `json:"target_outbound_pct"`
-	TargetAmountSat        int64    `json:"target_amount_sat"`
-	AutoEnabled            bool     `json:"auto_enabled"`
-	ManualRestartEnabled   bool     `json:"manual_restart_enabled"`
-	AutoTargetManaged      bool     `json:"auto_target_managed"`
-	AutomationMode         string   `json:"automation_mode,omitempty"`
-	FixedFeePPM            *int64   `json:"fixed_fee_ppm,omitempty"`
-	ReviewAt               string   `json:"review_at,omitempty"`
-	AutomationNote         string   `json:"automation_note,omitempty"`
-	ParkedAt               string   `json:"parked_at,omitempty"`
-	UseDefaultEconRatio    bool     `json:"use_default_econ_ratio"`
-	EconRatioOverride      *float64 `json:"econ_ratio_override,omitempty"`
-	AutoBypassCostGate     bool     `json:"auto_bypass_cost_gate"`
-	EligibleAsTarget       bool     `json:"eligible_as_target"`
-	EligibleAsManualTarget bool     `json:"eligible_as_manual_target"`
-	EligibleAsSource       bool     `json:"eligible_as_source"`
-	ProtectedLiquiditySat  int64    `json:"protected_liquidity_sat"`
+	ChannelID                  uint64   `json:"channel_id"`
+	ChannelIDStr               string   `json:"channel_id_str"`
+	ChannelPoint               string   `json:"channel_point"`
+	PeerAlias                  string   `json:"peer_alias"`
+	RemotePubkey               string   `json:"remote_pubkey"`
+	Active                     bool     `json:"active"`
+	Private                    bool     `json:"private"`
+	CapacitySat                int64    `json:"capacity_sat"`
+	LocalBalanceSat            int64    `json:"local_balance_sat"`
+	RemoteBalanceSat           int64    `json:"remote_balance_sat"`
+	LocalPct                   float64  `json:"local_pct"`
+	RemotePct                  float64  `json:"remote_pct"`
+	OutgoingFeePpm             int64    `json:"outgoing_fee_ppm"`
+	OutgoingBaseMsat           int64    `json:"outgoing_base_msat"`
+	PeerFeeRatePpm             int64    `json:"peer_fee_rate_ppm"`
+	PeerBaseMsat               int64    `json:"peer_base_msat"`
+	SpreadPpm                  int64    `json:"spread_ppm"`
+	TargetOutboundPct          float64  `json:"target_outbound_pct"`
+	TargetAmountSat            int64    `json:"target_amount_sat"`
+	AutoEnabled                bool     `json:"auto_enabled"`
+	ManualRestartEnabled       bool     `json:"manual_restart_enabled"`
+	GuaranteedRebalanceEnabled bool     `json:"guaranteed_rebalance_enabled"`
+	AutoTargetManaged          bool     `json:"auto_target_managed"`
+	AutomationMode             string   `json:"automation_mode,omitempty"`
+	FixedFeePPM                *int64   `json:"fixed_fee_ppm,omitempty"`
+	ReviewAt                   string   `json:"review_at,omitempty"`
+	AutomationNote             string   `json:"automation_note,omitempty"`
+	ParkedAt                   string   `json:"parked_at,omitempty"`
+	UseDefaultEconRatio        bool     `json:"use_default_econ_ratio"`
+	EconRatioOverride          *float64 `json:"econ_ratio_override,omitempty"`
+	AutoBypassCostGate         bool     `json:"auto_bypass_cost_gate"`
+	EligibleAsTarget           bool     `json:"eligible_as_target"`
+	EligibleAsManualTarget     bool     `json:"eligible_as_manual_target"`
+	EligibleAsSource           bool     `json:"eligible_as_source"`
+	ProtectedLiquiditySat      int64    `json:"protected_liquidity_sat"`
 	// EffectiveProtectedSat é a porção de paid_liquidity_sat que está
 	// efetivamente travada agora pela Política C v2 (linear em payback_progress).
 	// Diferente de ProtectedLiquiditySat (lifetime aportado), esse valor reflete
@@ -1184,20 +1188,21 @@ type RebalanceEvent struct {
 }
 
 type channelSetting struct {
-	ChannelID            uint64
-	ChannelPoint         string
-	TargetOutboundPct    float64
-	AutoEnabled          bool
-	ManualRestartEnabled bool
-	AutomationMode       string
-	FixedFeePPM          *int64
-	ReviewAt             string
-	AutomationNote       string
-	ParkedAt             string
-	UseDefaultEconRatio  bool
-	EconRatioOverride    float64
-	EconRatioOverrideSet bool
-	AutoBypassCostGate   bool
+	ChannelID                  uint64
+	ChannelPoint               string
+	TargetOutboundPct          float64
+	AutoEnabled                bool
+	ManualRestartEnabled       bool
+	GuaranteedRebalanceEnabled bool
+	AutomationMode             string
+	FixedFeePPM                *int64
+	ReviewAt                   string
+	AutomationNote             string
+	ParkedAt                   string
+	UseDefaultEconRatio        bool
+	EconRatioOverride          float64
+	EconRatioOverrideSet       bool
+	AutoBypassCostGate         bool
 	// AutoTargetManaged: quando true (default), o AutoTarget pode ajustar o
 	// target_outbound_pct deste canal. Opt-out per-channel. A coluna
 	// auto_target_managed tem default true no schema; upserts das outras
@@ -2561,7 +2566,7 @@ func isTargetCooldownProbeJob(jobSource string, jobReason string) bool {
 
 func shouldUseRecentFailureCache(jobSource string, jobReason string) bool {
 	jobReason = strings.TrimSpace(strings.ToLower(jobReason))
-	if jobReason == targetCooldownProbeReason {
+	if jobReason == targetCooldownProbeReason || jobReason == rebalanceGuaranteedReason {
 		return false
 	}
 	jobSource = strings.TrimSpace(strings.ToLower(jobSource))
@@ -2569,6 +2574,133 @@ func shouldUseRecentFailureCache(jobSource string, jobReason string) bool {
 		return true
 	}
 	return jobSource == "manual" && jobReason == "auto-restart"
+}
+
+type guaranteedRebalanceSlotResult struct {
+	Queued        bool
+	ChannelID     uint64
+	BudgetCostSat int64
+	SkipReason    string
+}
+
+func orderGuaranteedRebalanceTargets(channels []RebalanceChannel, lastAutoByTarget map[uint64]time.Time) []RebalanceChannel {
+	targets := make([]RebalanceChannel, 0)
+	for _, channel := range channels {
+		if !channel.GuaranteedRebalanceEnabled || !channel.EligibleAsManualTarget {
+			continue
+		}
+		targets = append(targets, channel)
+	}
+	sort.SliceStable(targets, func(i, j int) bool {
+		a := targets[i]
+		b := targets[j]
+		aUrgency := sovereignOutboundUrgency(a)
+		bUrgency := sovereignOutboundUrgency(b)
+		if aUrgency != bUrgency {
+			return aUrgency > bUrgency
+		}
+		aLast := lastAutoByTarget[a.ChannelID]
+		bLast := lastAutoByTarget[b.ChannelID]
+		if aLast.IsZero() != bLast.IsZero() {
+			return aLast.IsZero()
+		}
+		if !aLast.IsZero() && !aLast.Equal(bLast) {
+			return aLast.Before(bLast)
+		}
+		if a.LocalPct != b.LocalPct {
+			return a.LocalPct < b.LocalPct
+		}
+		return a.ChannelID < b.ChannelID
+	})
+	return targets
+}
+
+// queueGuaranteedRebalanceSlot reserves at most one automatic job for the
+// operator-selected pool before either scheduler evaluates its normal plan.
+// It intentionally bypasses score/history/economic filters, while retaining
+// the manual-target safety checks, channel-busy guard, fee cap and auto budget.
+func (s *RebalanceService) queueGuaranteedRebalanceSlot(ctx context.Context, cfg RebalanceConfig, channels []RebalanceChannel, settings map[uint64]channelSetting, lastAutoByTarget map[uint64]time.Time, scanAt time.Time) guaranteedRebalanceSlotResult {
+	result := guaranteedRebalanceSlotResult{}
+	targets := orderGuaranteedRebalanceTargets(channels, lastAutoByTarget)
+	if len(targets) == 0 {
+		return result
+	}
+
+	budget, spentAuto, _, spentTotal := s.getDailyBudget(ctx)
+	manualReserveSat := computeManualReserveSat(cfg, budget)
+	remaining := computeRemainingForAuto(budget, spentAuto, spentTotal, manualReserveSat, cfg.BudgetAutoOnly)
+	budgetEnforced := shouldEnforceAutoBudget(cfg)
+	if budgetEnforced && remaining <= 0 {
+		result.SkipReason = "guaranteed_budget_exhausted"
+		return result
+	}
+
+	for _, target := range targets {
+		if s.isChannelBusy(target.ChannelID) {
+			result.SkipReason = "guaranteed_channel_busy"
+			continue
+		}
+		targetCfg := effectiveConfigForTarget(cfg, settings[target.ChannelID])
+		amount := target.TargetAmountSat
+		if targetCfg.MaxAmountSat > 0 && amount > targetCfg.MaxAmountSat {
+			amount = targetCfg.MaxAmountSat
+		}
+		minExecuteSat := effectiveMinExecuteSat(targetCfg)
+		if amount <= 0 || (minExecuteSat > 0 && amount < minExecuteSat) {
+			result.SkipReason = "guaranteed_below_execute_min"
+			continue
+		}
+		policy := lndclient.ChannelPolicySnapshot{
+			FeeRatePpm:  target.OutgoingFeePpm,
+			BaseFeeMsat: target.OutgoingBaseMsat,
+		}
+		maxFeeMsat, err := calcFeeLimitMsat(amount*1000, policy, nil, targetCfg)
+		if err != nil || maxFeeMsat <= 0 {
+			result.SkipReason = "guaranteed_fee_cap_zero"
+			continue
+		}
+		maxFeePpm := feeMsatToPpm(maxFeeMsat, amount)
+		budgetCost := estimateMaxCost(amount, policy, targetCfg)
+		if budgetEnforced && budgetCost > remaining {
+			fitAmount := int64(0)
+			if maxFeePpm > 0 {
+				fitAmount = (remaining * 1_000_000) / maxFeePpm
+			}
+			if fitAmount > amount {
+				fitAmount = amount
+			}
+			if fitAmount <= 0 || (minExecuteSat > 0 && fitAmount < minExecuteSat) {
+				result.SkipReason = "guaranteed_budget_below_min"
+				continue
+			}
+			amount = fitAmount
+			budgetCost = estimateMaxCost(amount, policy, targetCfg)
+			if budgetCost > remaining {
+				result.SkipReason = "guaranteed_budget_too_low"
+				continue
+			}
+		}
+
+		economics := rebalanceJobEconomics{
+			EstimatedCostSat: budgetCost,
+			BudgetCostSat:    budgetCost,
+		}
+		_, err = s.startJobWithEconomics(target.ChannelID, "auto", rebalanceGuaranteedReason, amount, false, false, economics)
+		if err != nil {
+			result.SkipReason = "guaranteed_start_error"
+			continue
+		}
+		lastAutoByTarget[target.ChannelID] = scanAt
+		s.mu.Lock()
+		s.lastAutoByTarget[target.ChannelID] = scanAt
+		s.mu.Unlock()
+		result.Queued = true
+		result.ChannelID = target.ChannelID
+		result.BudgetCostSat = budgetCost
+		result.SkipReason = ""
+		return result
+	}
+	return result
 }
 
 func normalizedPairFailReason(reason string) string {
@@ -3444,8 +3576,14 @@ func (s *RebalanceService) runAutoScan() {
 	profitSkipped := 0
 	topScore := int64(0)
 	queuedCount := 0
+	guaranteedSlot := guaranteedRebalanceSlotResult{}
 	skippedDetails := []RebalanceSkipDetail{}
 	defer func() {
+		if guaranteedSlot.Queued {
+			scanReasons["guaranteed_slot_queued"]++
+		} else if guaranteedSlot.SkipReason != "" {
+			scanReasons[guaranteedSlot.SkipReason]++
+		}
 		limitedSkipped := limitRebalanceSkipDetails(skippedDetails, scanSkipDetailLimit)
 		s.mu.Lock()
 		s.lastScan = scanAt
@@ -3507,6 +3645,10 @@ func (s *RebalanceService) runAutoScan() {
 		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
 		snapshots = append(snapshots, snapshot)
 	}
+	guaranteedSlot = s.queueGuaranteedRebalanceSlot(ctx, cfg, snapshots, settings, lastAutoByTarget, scanAt)
+	if guaranteedSlot.Queued {
+		queuedCount = 1
+	}
 	schedulerMode := normalizeRebalanceSchedulerMode(cfg.SchedulerMode)
 	if isSovereignSchedulerMode(schedulerMode) {
 		sovereignTargetIDs := make([]uint64, 0, len(snapshots))
@@ -3552,7 +3694,11 @@ func (s *RebalanceService) runAutoScan() {
 		if cfg.AutoTargetEnabled {
 			s.evaluateAutoTarget(ctx, cfg, scanAt, snapshots, settings, sovereignPlan.Candidates, sovereignPairStats, sovereignStructuralCooldowns)
 		}
-		sovereignResult := s.executeSovereignAutopilot(ctx, cfg, settings, sovereignPlan, scanAt, schedulerMode == rebalanceSchedulerModeSovereignLive)
+		reservedSlots := 0
+		if guaranteedSlot.Queued {
+			reservedSlots = 1
+		}
+		sovereignResult := s.executeSovereignAutopilotWithReservedSlot(ctx, cfg, settings, sovereignPlan, scanAt, schedulerMode == rebalanceSchedulerModeSovereignLive, reservedSlots, guaranteedSlot.BudgetCostSat)
 		s.recordRebalanceIntentEffects(ctx, sovereignPlan, cfg, scanAt, schedulerMode, sovereignResult.Decisions)
 		s.recordSovereignAutopilot(ctx, scanAt, schedulerMode, sovereignResult)
 		if schedulerMode == rebalanceSchedulerModeSovereignLive {
@@ -3562,7 +3708,10 @@ func (s *RebalanceService) runAutoScan() {
 			scanRemainingBudget = sovereignResult.BudgetRemainingSat
 			scanReasons = copyReasonCounts(sovereignResult.SkipReasons)
 			topScore = sovereignPlan.TopScore
-			queuedCount = sovereignResult.Selected
+			queuedCount = sovereignResult.Selected + reservedSlots
+			if guaranteedSlot.Queued && sovereignResult.Selected == 0 {
+				scanStatus = "queued"
+			}
 			return
 		}
 	}
@@ -3597,7 +3746,11 @@ func (s *RebalanceService) runAutoScan() {
 		s.mu.Lock()
 		s.criticalMissCount++
 		s.mu.Unlock()
-		scanStatus = "no_sources"
+		if guaranteedSlot.Queued {
+			scanStatus = "queued"
+		} else {
+			scanStatus = "no_sources"
+		}
 		return
 	}
 
@@ -3614,7 +3767,10 @@ func (s *RebalanceService) runAutoScan() {
 		if targetCooldownSkipped > 0 {
 			scanReasons["target_cooldown"] = targetCooldownSkipped
 		}
-		if profitSkipped > 0 {
+		if guaranteedSlot.Queued {
+			scanStatus = "queued"
+			scanCandidates = 1
+		} else if profitSkipped > 0 {
 			scanStatus = "profit_guardrail"
 			if s.logger != nil {
 				s.logger.Printf("rebalance scan: profit guardrail skipped all targets (skipped=%d, roi_skipped=%d)", profitSkipped, roiSkipped)
@@ -3632,12 +3788,22 @@ func (s *RebalanceService) runAutoScan() {
 	budget, spentAuto, _, spentTotal := s.getDailyBudget(ctx)
 	manualReserveSat := computeManualReserveSat(cfg, budget)
 	remaining := computeRemainingForAuto(budget, spentAuto, spentTotal, manualReserveSat, cfg.BudgetAutoOnly)
+	if guaranteedSlot.BudgetCostSat > 0 {
+		remaining -= guaranteedSlot.BudgetCostSat
+		if remaining < 0 {
+			remaining = 0
+		}
+	}
 	budgetEnforced := shouldEnforceAutoBudget(cfg)
 	if budgetEnforced && remaining == 0 {
 		scanCandidates = len(candidates)
 		scanRemainingBudget = 0
 		scanReasons = map[string]int{"budget_too_low": len(candidates)}
-		scanStatus = "budget_exhausted"
+		if guaranteedSlot.Queued {
+			scanStatus = "queued"
+		} else {
+			scanStatus = "budget_exhausted"
+		}
 		return
 	}
 
@@ -3846,6 +4012,10 @@ type sovereignAutopilotResult struct {
 }
 
 func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg RebalanceConfig, settings map[uint64]channelSetting, plan rebalanceAutoScanCandidatePlan, scanAt time.Time, live bool) sovereignAutopilotResult {
+	return s.executeSovereignAutopilotWithReservedSlot(ctx, cfg, settings, plan, scanAt, live, 0, 0)
+}
+
+func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context.Context, cfg RebalanceConfig, settings map[uint64]channelSetting, plan rebalanceAutoScanCandidatePlan, scanAt time.Time, live bool, reservedSlots int, reservedBudgetCostSat int64) sovereignAutopilotResult {
 	result := sovereignAutopilotResult{
 		Candidates:  len(plan.Candidates),
 		Decisions:   []RebalanceSovereignDecision{},
@@ -3863,6 +4033,12 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 
 	budget, _, _, spentTotal := s.getDailyBudget(ctx)
 	remaining := computeRemainingTotalBudget(budget, spentTotal)
+	if reservedBudgetCostSat > 0 {
+		remaining -= reservedBudgetCostSat
+		if remaining < 0 {
+			remaining = 0
+		}
+	}
 	budgetEnforced := !cfg.BudgetUnlimited
 	result.BudgetRemainingSat = remaining
 	if budgetEnforced && remaining == 0 {
@@ -3876,6 +4052,12 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 	}
 	if maxJobs > cfg.MaxConcurrent && cfg.MaxConcurrent > 0 {
 		maxJobs = cfg.MaxConcurrent
+	}
+	if reservedSlots > 0 {
+		maxJobs -= reservedSlots
+		if maxJobs < 0 {
+			maxJobs = 0
+		}
 	}
 	appendDecision := func(decision RebalanceSovereignDecision) {
 		if decision.Selected || len(result.Decisions) < scanSkipDetailLimit {
@@ -4004,7 +4186,7 @@ func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg Re
 		case !target.ExplorationSlot && shouldSkipSovereignLowSuccessOpportunity(target.PairStats, expectedProfit, estimatedCost, budgetCost, cfg, scanAt):
 			decision.Reason = sovereignLowSuccessOpportunityReason
 			noteSkip(decision.Reason)
-		case maxJobs > 0 && result.Selected >= maxJobs:
+		case result.Selected >= maxJobs:
 			decision.Reason = "cycle_limit"
 			noteSkip(decision.Reason)
 		// 2026-05-29: exploration_slot bypass para expected_profit_below_min,
@@ -9514,56 +9696,58 @@ func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg Rebalan
 	}
 
 	return RebalanceChannel{
-		ChannelID:              ch.ChannelID,
-		ChannelPoint:           ch.ChannelPoint,
-		PeerAlias:              ch.PeerAlias,
-		RemotePubkey:           ch.RemotePubkey,
-		Active:                 ch.Active,
-		Private:                ch.Private,
-		CapacitySat:            ch.CapacitySat,
-		LocalBalanceSat:        ch.LocalBalanceSat,
-		RemoteBalanceSat:       ch.RemoteBalanceSat,
-		LocalPct:               localPct,
-		RemotePct:              remotePct,
-		OutgoingFeePpm:         outgoingFee,
-		OutgoingBaseMsat:       outgoingBaseMsat,
-		PeerFeeRatePpm:         peerFeeRate,
-		PeerBaseMsat:           peerBaseMsat,
-		SpreadPpm:              spread,
-		TargetOutboundPct:      target,
-		TargetAmountSat:        targetAmount,
-		AutoEnabled:            setting.AutoEnabled,
-		ManualRestartEnabled:   setting.ManualRestartEnabled,
-		AutoTargetManaged:      setting.AutoTargetManaged,
-		AutomationMode:         setting.AutomationMode,
-		FixedFeePPM:            setting.FixedFeePPM,
-		ReviewAt:               setting.ReviewAt,
-		AutomationNote:         setting.AutomationNote,
-		ParkedAt:               setting.ParkedAt,
-		UseDefaultEconRatio:    setting.UseDefaultEconRatio,
-		EconRatioOverride:      econRatioOverride,
-		AutoBypassCostGate:     setting.AutoBypassCostGate,
-		EligibleAsTarget:       eligibleTarget,
-		EligibleAsManualTarget: eligibleManualTarget,
-		EligibleAsSource:       eligibleSource && !excluded,
-		ProtectedLiquiditySat:  protected,
-		EffectiveProtectedSat:  effectiveProtected,
-		PaybackProgress:        paybackProgress,
-		TimeToPaybackHours:     timeToPaybackHours,
-		TimeToPaybackValid:     timeToPaybackValid,
-		MaxSourceSat:           maxSource,
-		Revenue7dSat:           revenue7dSat,
-		DrainRateSatPerHour:    drainRateSatPerHour,
-		PendingOutgoingHtlcs:   pendingOutgoing,
-		RebalanceCost7dSat:     cost7d.FeeSat,
-		RebalanceCost7dPpm:     cost7d.FeePpm,
-		RebalanceAmount7dSat:   cost7d.AmountSat,
-		ROIEstimate:            roiEstimate,
-		ROIEstimateValid:       roiEstimateValid,
-		ExcludedAsSource:       excluded,
-		SourceQuarantined:      sourceQuarantined,
-		SourceQuarantineUntil:  sourceQuarantineUntil,
-		SourceOpportunityCost:  sourceOpportunityCost,
+		ChannelID:                  ch.ChannelID,
+		ChannelIDStr:               strconv.FormatUint(ch.ChannelID, 10),
+		ChannelPoint:               ch.ChannelPoint,
+		PeerAlias:                  ch.PeerAlias,
+		RemotePubkey:               ch.RemotePubkey,
+		Active:                     ch.Active,
+		Private:                    ch.Private,
+		CapacitySat:                ch.CapacitySat,
+		LocalBalanceSat:            ch.LocalBalanceSat,
+		RemoteBalanceSat:           ch.RemoteBalanceSat,
+		LocalPct:                   localPct,
+		RemotePct:                  remotePct,
+		OutgoingFeePpm:             outgoingFee,
+		OutgoingBaseMsat:           outgoingBaseMsat,
+		PeerFeeRatePpm:             peerFeeRate,
+		PeerBaseMsat:               peerBaseMsat,
+		SpreadPpm:                  spread,
+		TargetOutboundPct:          target,
+		TargetAmountSat:            targetAmount,
+		AutoEnabled:                setting.AutoEnabled,
+		ManualRestartEnabled:       setting.ManualRestartEnabled,
+		GuaranteedRebalanceEnabled: setting.GuaranteedRebalanceEnabled,
+		AutoTargetManaged:          setting.AutoTargetManaged,
+		AutomationMode:             setting.AutomationMode,
+		FixedFeePPM:                setting.FixedFeePPM,
+		ReviewAt:                   setting.ReviewAt,
+		AutomationNote:             setting.AutomationNote,
+		ParkedAt:                   setting.ParkedAt,
+		UseDefaultEconRatio:        setting.UseDefaultEconRatio,
+		EconRatioOverride:          econRatioOverride,
+		AutoBypassCostGate:         setting.AutoBypassCostGate,
+		EligibleAsTarget:           eligibleTarget,
+		EligibleAsManualTarget:     eligibleManualTarget,
+		EligibleAsSource:           eligibleSource && !excluded,
+		ProtectedLiquiditySat:      protected,
+		EffectiveProtectedSat:      effectiveProtected,
+		PaybackProgress:            paybackProgress,
+		TimeToPaybackHours:         timeToPaybackHours,
+		TimeToPaybackValid:         timeToPaybackValid,
+		MaxSourceSat:               maxSource,
+		Revenue7dSat:               revenue7dSat,
+		DrainRateSatPerHour:        drainRateSatPerHour,
+		PendingOutgoingHtlcs:       pendingOutgoing,
+		RebalanceCost7dSat:         cost7d.FeeSat,
+		RebalanceCost7dPpm:         cost7d.FeePpm,
+		RebalanceAmount7dSat:       cost7d.AmountSat,
+		ROIEstimate:                roiEstimate,
+		ROIEstimateValid:           roiEstimateValid,
+		ExcludedAsSource:           excluded,
+		SourceQuarantined:          sourceQuarantined,
+		SourceQuarantineUntil:      sourceQuarantineUntil,
+		SourceOpportunityCost:      sourceOpportunityCost,
 	}
 }
 
@@ -11883,6 +12067,8 @@ end $$;
     add column if not exists auto_bypass_cost_gate boolean not null default false;
   alter table if exists rebalance_channel_settings
     add column if not exists auto_target_managed boolean not null default true;
+  alter table if exists rebalance_channel_settings
+    add column if not exists guaranteed_rebalance_enabled boolean not null default false;
 
 create table if not exists rebalance_channel_settings (
   channel_id bigint primary key,
@@ -11890,6 +12076,7 @@ create table if not exists rebalance_channel_settings (
   target_outbound_pct double precision not null default 50,
   auto_enabled boolean not null default false,
   manual_restart_enabled boolean not null default false,
+  guaranteed_rebalance_enabled boolean not null default false,
   use_default_econ_ratio boolean not null default true,
   econ_ratio_override double precision,
   auto_bypass_cost_gate boolean not null default false,
@@ -12417,7 +12604,7 @@ func (s *RebalanceService) loadChannelSettings(ctx context.Context) (map[uint64]
 		return settings, nil
 	}
 	rows, err := s.db.Query(ctx, `
-select channel_id, channel_point, target_outbound_pct, auto_enabled, manual_restart_enabled, use_default_econ_ratio, econ_ratio_override, auto_bypass_cost_gate, auto_target_managed from rebalance_channel_settings
+select channel_id, channel_point, target_outbound_pct, auto_enabled, manual_restart_enabled, use_default_econ_ratio, econ_ratio_override, auto_bypass_cost_gate, auto_target_managed, guaranteed_rebalance_enabled from rebalance_channel_settings
 `)
 	if err != nil {
 		return settings, err
@@ -12427,7 +12614,7 @@ select channel_id, channel_point, target_outbound_pct, auto_enabled, manual_rest
 		var channelID int64
 		var setting channelSetting
 		var econRatioOverride pgtype.Float8
-		if err := rows.Scan(&channelID, &setting.ChannelPoint, &setting.TargetOutboundPct, &setting.AutoEnabled, &setting.ManualRestartEnabled, &setting.UseDefaultEconRatio, &econRatioOverride, &setting.AutoBypassCostGate, &setting.AutoTargetManaged); err != nil {
+		if err := rows.Scan(&channelID, &setting.ChannelPoint, &setting.TargetOutboundPct, &setting.AutoEnabled, &setting.ManualRestartEnabled, &setting.UseDefaultEconRatio, &econRatioOverride, &setting.AutoBypassCostGate, &setting.AutoTargetManaged, &setting.GuaranteedRebalanceEnabled); err != nil {
 			return settings, err
 		}
 		if econRatioOverride.Valid {
@@ -15439,6 +15626,36 @@ func (s *RebalanceService) SetChannelAutoTargetManaged(ctx context.Context, chan
      auto_target_managed=excluded.auto_target_managed,
      updated_at=now()
   `, int64(channelID), strings.TrimSpace(channelPoint), rebalanceDefaultTargetOutboundPct, managed)
+	return err
+}
+
+// SetChannelGuaranteedRebalance controls membership in the operator's
+// scheduler-independent guaranteed pool. The exact LND channel ID is the
+// primary key, keeping parallel channels to the same peer independent.
+func (s *RebalanceService) SetChannelGuaranteedRebalance(ctx context.Context, channelID uint64, channelPoint string, enabled bool) error {
+	if s.db == nil {
+		return errors.New("db unavailable")
+	}
+	if channelID == 0 {
+		return errors.New("channel_id required")
+	}
+	if enabled {
+		policy, ok, err := loadChannelAutomationPolicy(ctx, s.db, channelID)
+		if err != nil {
+			return err
+		}
+		if ok && isChannelAutomationParked(policy.Mode) {
+			return errChannelAutomationParked
+		}
+	}
+	_, err := s.db.Exec(ctx, `
+  insert into rebalance_channel_settings (channel_id, channel_point, target_outbound_pct, guaranteed_rebalance_enabled, updated_at)
+  values ($1,$2,$3,$4,now())
+   on conflict (channel_id) do update set
+     channel_point=case when excluded.channel_point <> '' then excluded.channel_point else rebalance_channel_settings.channel_point end,
+     guaranteed_rebalance_enabled=excluded.guaranteed_rebalance_enabled,
+     updated_at=now()
+  `, int64(channelID), strings.TrimSpace(channelPoint), rebalanceDefaultTargetOutboundPct, enabled)
 	return err
 }
 

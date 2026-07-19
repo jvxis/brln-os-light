@@ -350,6 +350,7 @@ export type RebalancePairStat = {
 
 export type RebalanceChannel = {
   channel_id: number
+  channel_id_str: string
   channel_point: string
   peer_alias: string
   remote_pubkey: string
@@ -369,6 +370,7 @@ export type RebalanceChannel = {
   target_amount_sat: number
   auto_enabled: boolean
   manual_restart_enabled: boolean
+  guaranteed_rebalance_enabled: boolean
   auto_target_managed?: boolean
   automation_mode?: 'normal' | 'parked' | 'close_candidate'
   fixed_fee_ppm?: number

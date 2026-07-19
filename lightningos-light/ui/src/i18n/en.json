@@ -4378,12 +4378,13 @@
         "autoBypassCostGate": "Bypass cost gate",
         "payback": "Payback {{value}}%",
         "save": "Save",
-        "rebalanceIn": "Manual Rebal In",
+        "rebalanceIn": "Rebal In",
         "manualRestartBudgetWarning": "Manual restart may be blocked: estimated cost {{cost}} exceeds usable budget {{budget}}.",
         "manualRestartBudgetWarningChunk": "Manual restart may be blocked: even one max-amount chunk costs {{cost}}, above the usable budget {{budget}} (the top-up runs in chunks).",
         "bulkAuto": "Auto all",
         "bulkExclude": "Exclude all",
         "auto": "Auto",
+        "guaranteedRebalance": "Guarantee slot",
         "excludeSource": "Exclude source",
         "roiEstimate": "ROI est. {{value}}",
         "roiEstimateNA": "ROI est. n/a",
@@ -4415,6 +4416,7 @@
       "timeToPayback": "Estimated time for recent revenue to pay back this channel's remaining rebalance cost.",
       "pairStats": "Shows source history used when this channel was the rebalance target. Rebalances where this channel was the source appear in the target channel's panel.",
       "auto": "Allow auto mode to rebalance in this channel.",
+      "guaranteedRebalance": "Adds this exact channel to the guaranteed pool. Each cycle, one selected channel below target runs before the scheduler, bypassing score and strategic gates while still respecting budget and operational protections. Exact channel ID keeps parallel channels to the same peer independent.",
       "excludeSource": "Never use this channel as a source for rebalances."
     },
     "queue": {

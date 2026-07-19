@@ -129,6 +129,13 @@ type rebalanceChannelAutoPayload struct {
 	AutoEnabled  bool   `json:"auto_enabled"`
 }
 
+type rebalanceChannelGuaranteedPayload struct {
+	ChannelID    uint64 `json:"channel_id"`
+	ChannelIDStr string `json:"channel_id_str"`
+	ChannelPoint string `json:"channel_point"`
+	Enabled      bool   `json:"enabled"`
+}
+
 type rebalanceChannelManualRestartPayload struct {
 	ChannelID    uint64 `json:"channel_id"`
 	ChannelPoint string `json:"channel_point"`
@@ -1171,6 +1178,51 @@ func (s *Server) handleRebalanceChannelAutoTargetManaged(w http.ResponseWriter, 
 		return
 	}
 	if err := s.rebalance.SetChannelAutoTargetManaged(ctx, resolvedID, resolvedPoint, payload.Managed); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleRebalanceChannelGuaranteed(w http.ResponseWriter, r *http.Request) {
+	if s.rebalance == nil {
+		writeError(w, http.StatusServiceUnavailable, "rebalance unavailable")
+		return
+	}
+	var payload rebalanceChannelGuaranteedPayload
+	if err := readJSON(r, &payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	channelID := payload.ChannelID
+	if raw := strings.TrimSpace(payload.ChannelIDStr); raw != "" {
+		parsed, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil || parsed == 0 {
+			writeError(w, http.StatusBadRequest, "channel_id_str must be a positive uint64")
+			return
+		}
+		channelID = parsed
+	}
+	if channelID == 0 {
+		writeError(w, http.StatusBadRequest, "channel_id or channel_id_str required")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	defer cancel()
+	resolvedID, resolvedPoint, err := s.rebalance.ResolveChannel(ctx, channelID, payload.ChannelPoint)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if resolvedID != channelID {
+		writeError(w, http.StatusBadRequest, "channel_id does not match channel_point")
+		return
+	}
+	if err := s.rebalance.SetChannelGuaranteedRebalance(ctx, resolvedID, resolvedPoint, payload.Enabled); err != nil {
+		if errors.Is(err, errChannelAutomationParked) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -58,7 +59,6 @@ func TestLoopServiceHardening(t *testing.T) {
 	for _, expected := range []string{
 		"User=lightningos-loop", "Group=lightningos-loop", "NoNewPrivileges=true",
 		"PrivateDevices=true", "ProtectSystem=full", "ProtectHome=true", "ReadWritePaths=", "UMask=0027",
-		"ExecStartPost=/bin/sh -c", paths.ClientTLSCert, paths.ClientMacaroon,
 	} {
 		if !strings.Contains(service, expected) {
 			t.Fatalf("service missing %q", expected)
@@ -78,18 +78,38 @@ func TestLoopAPIUsesManagerReadableClientMaterial(t *testing.T) {
 		!strings.HasPrefix(paths.ClientMacaroon, paths.Root+string(filepath.Separator)) {
 		t.Fatal("manager client material must stay inside the Loop app directory")
 	}
-	syncScript := loopClientMaterialSyncScript(paths, false)
-	for _, expected := range []string{"mkdir -p", paths.ClientDir, "chmod 2750", paths.ClientTLSCert, paths.ClientMacaroon, "chmod 0640"} {
+	syncScript := loopClientMaterialSyncScript(paths, "1001")
+	for _, expected := range []string{"test ! -L", "install -d", paths.ClientDir, paths.ClientTLSCert, paths.ClientMacaroon, "-g 1001", "-m 0640"} {
 		if !strings.Contains(syncScript, expected) {
 			t.Fatalf("client material sync missing %q", expected)
 		}
 	}
-	if strings.Contains(syncScript, "sleep 0.2") {
-		t.Fatal("on-demand client material repair must not wait when daemon material is absent")
+	for _, forbidden := range []string{"/data/lnd", "systemctl", "postgres", "bitcoin", "rm -", "chown -R", "usermod"} {
+		if strings.Contains(syncScript, forbidden) {
+			t.Fatalf("client material repair contains out-of-scope operation %q", forbidden)
+		}
 	}
-	waitScript := loopClientMaterialSyncScript(paths, true)
-	if !strings.Contains(waitScript, "sleep 0.2") || !strings.Contains(waitScript, `while [ "$i" -lt 100 ]`) {
-		t.Fatal("service startup must wait briefly for daemon client material")
+}
+
+func TestValidateLoopDaemonMaterial(t *testing.T) {
+	dir := t.TempDir()
+	valid := filepath.Join(dir, "tls.cert")
+	if err := os.WriteFile(valid, []byte("certificate"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateLoopDaemonMaterial(valid, "API certificate"); err != nil {
+		t.Fatalf("valid material rejected: %v", err)
+	}
+	empty := filepath.Join(dir, "empty.macaroon")
+	if err := os.WriteFile(empty, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateLoopDaemonMaterial(empty, "API macaroon"); err == nil || !strings.Contains(err.Error(), "is empty") {
+		t.Fatalf("expected explicit empty material error, got %v", err)
+	}
+	missing := filepath.Join(dir, "missing")
+	if err := validateLoopDaemonMaterial(missing, "API certificate"); err == nil || !strings.Contains(err.Error(), "is unavailable") {
+		t.Fatalf("expected explicit missing material error, got %v", err)
 	}
 }
 

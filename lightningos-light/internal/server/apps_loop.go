@@ -453,7 +453,6 @@ func normalizeLoopManagerGroupID(value string) (string, error) {
 }
 
 func loopServiceContents(paths loopPaths) string {
-	clientMaterialScript := loopClientMaterialSyncScript(paths, true)
 	return fmt.Sprintf(`[Unit]
 Description=LightningOS Lightning Loop daemon
 After=network-online.target lnd.service
@@ -465,7 +464,6 @@ User=%s
 Group=%s
 Environment=HOME=%s
 ExecStart=%s --configfile=%s
-ExecStartPost=/bin/sh -c %s
 Restart=on-failure
 RestartSec=5
 UMask=0027
@@ -478,40 +476,23 @@ ReadWritePaths=%s
 
 [Install]
 WantedBy=multi-user.target
-`, loopUser, loopUser, paths.DataDir, paths.LoopdPath, paths.ConfigPath, shellQuote(clientMaterialScript), paths.DataDir)
+`, loopUser, loopUser, paths.DataDir, paths.LoopdPath, paths.ConfigPath, paths.DataDir)
 }
 
-func loopClientMaterialSyncScript(paths loopPaths, wait bool) string {
-	waitScript := ""
-	if wait {
-		waitScript = fmt.Sprintf(`i=0
-while [ "$i" -lt 100 ]; do
-  if [ -s %s ] && [ -s %s ]; then
-    break
-  fi
-  i=$((i + 1))
-  sleep 0.2
-done
-`, shellQuote(paths.LoopTLSCert), shellQuote(paths.LoopMacaroon))
-	}
+func loopClientMaterialSyncScript(paths loopPaths, managerGroupID string) string {
 	return fmt.Sprintf(`set -eu
-%s
 test -s %s
 test -s %s
-mkdir -p %s
-chmod 2750 %s
-cp %s %s.tmp
-cp %s %s.tmp
-chmod 0640 %s.tmp %s.tmp
-mv -f %s.tmp %s
-mv -f %s.tmp %s
-`, waitScript, shellQuote(paths.LoopTLSCert), shellQuote(paths.LoopMacaroon),
-		shellQuote(paths.ClientDir), shellQuote(paths.ClientDir),
-		shellQuote(paths.LoopTLSCert), shellQuote(paths.ClientTLSCert),
-		shellQuote(paths.LoopMacaroon), shellQuote(paths.ClientMacaroon),
-		shellQuote(paths.ClientTLSCert), shellQuote(paths.ClientMacaroon),
-		shellQuote(paths.ClientTLSCert), shellQuote(paths.ClientTLSCert),
-		shellQuote(paths.ClientMacaroon), shellQuote(paths.ClientMacaroon))
+test ! -L %s
+test ! -L %s
+install -d -o %s -g %s -m 2750 %s
+install -o %s -g %s -m 0640 %s %s
+install -o %s -g %s -m 0640 %s %s
+`, shellQuote(paths.LoopTLSCert), shellQuote(paths.LoopMacaroon),
+		shellQuote(paths.LoopTLSCert), shellQuote(paths.LoopMacaroon),
+		shellQuote(loopUser), managerGroupID, shellQuote(paths.ClientDir),
+		shellQuote(loopUser), managerGroupID, shellQuote(paths.LoopTLSCert), shellQuote(paths.ClientTLSCert),
+		shellQuote(loopUser), managerGroupID, shellQuote(paths.LoopMacaroon), shellQuote(paths.ClientMacaroon))
 }
 
 func ensureLoopClientMaterial(ctx context.Context, paths loopPaths) error {
@@ -520,11 +501,19 @@ func ensureLoopClientMaterial(ctx context.Context, paths loopPaths) error {
 	if certErr == nil && len(cert) > 0 && macaroonErr == nil && len(macaroon) > 0 {
 		return nil
 	}
+	if err := validateLoopDaemonMaterial(paths.LoopTLSCert, "API certificate"); err != nil {
+		return err
+	}
+	if err := validateLoopDaemonMaterial(paths.LoopMacaroon, "API macaroon"); err != nil {
+		return err
+	}
+	managerGroupID, err := loopManagerGroupID()
+	if err != nil {
+		return err
+	}
 	if _, err := runSystemd(
 		ctx,
-		"--uid="+loopUser,
-		"--gid="+loopUser,
-		"/bin/sh", "-c", loopClientMaterialSyncScript(paths, false),
+		"/bin/sh", "-c", loopClientMaterialSyncScript(paths, managerGroupID),
 	); err != nil {
 		return fmt.Errorf("failed to prepare manager access to the Lightning Loop API: %w", err)
 	}
@@ -541,6 +530,23 @@ func ensureLoopClientMaterial(ctx context.Context, paths loopPaths) error {
 	}
 	if len(macaroon) == 0 {
 		return errors.New("Lightning Loop API macaroon remains empty after repair")
+	}
+	return nil
+}
+
+func validateLoopDaemonMaterial(path, label string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("Lightning Loop daemon %s is unavailable at %s: %w", label, path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("Lightning Loop daemon %s must not be a symbolic link: %s", label, path)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("Lightning Loop daemon %s is not a regular file: %s", label, path)
+	}
+	if info.Size() == 0 {
+		return fmt.Errorf("Lightning Loop daemon %s is empty: %s", label, path)
 	}
 	return nil
 }

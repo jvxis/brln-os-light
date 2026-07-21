@@ -175,6 +175,13 @@
     "state": "Estado",
     "cost": "Custo",
     "started": "Iniciado",
+    "stateInitiated": "Iniciado",
+    "stateHtlcPublished": "HTLC publicado",
+    "statePreimageRevealed": "Preimage revelada",
+    "stateInvoiceSettled": "Pagamento liquidado",
+    "stateSuccess": "Concluído",
+    "stateFailed": "Falhou",
+    "pendingSwapHint": "Operação protegida em andamento.",
     "reauthTitle": "Confirmar swap com senha",
     "reauthBody": "Esta ação movimenta fundos. Confirme sua senha de administrador para continuar."
   },

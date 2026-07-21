@@ -175,6 +175,13 @@
     "state": "State",
     "cost": "Cost",
     "started": "Started",
+    "stateInitiated": "Initiated",
+    "stateHtlcPublished": "HTLC published",
+    "statePreimageRevealed": "Preimage revealed",
+    "stateInvoiceSettled": "Payment settled",
+    "stateSuccess": "Completed",
+    "stateFailed": "Failed",
+    "pendingSwapHint": "Protected operation in progress.",
     "reauthTitle": "Confirm swap with password",
     "reauthBody": "This action moves funds. Confirm your administrator password to continue."
   },

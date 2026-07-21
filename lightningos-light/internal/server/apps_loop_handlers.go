@@ -428,17 +428,23 @@ func loopSwapPayload(req loopSwapRequest, quote loopQuoteResponse) (map[string]a
 
 func (s *Server) loopdRequest(ctx context.Context, method, endpoint string, body any, target any) error {
 	paths := loopAppPaths()
-	certPEM, err := os.ReadFile(paths.LoopTLSCert)
+	if err := ensureLoopClientMaterial(ctx, paths); err != nil {
+		return err
+	}
+	certPEM, err := os.ReadFile(paths.ClientTLSCert)
 	if err != nil {
-		return fmt.Errorf("Lightning Loop API certificate is unavailable")
+		return fmt.Errorf("Lightning Loop API certificate is unavailable to the manager: %w", err)
 	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(certPEM) {
 		return errors.New("Lightning Loop API certificate is invalid")
 	}
-	macaroon, err := os.ReadFile(paths.LoopMacaroon)
+	macaroon, err := os.ReadFile(paths.ClientMacaroon)
 	if err != nil || len(macaroon) == 0 {
-		return errors.New("Lightning Loop API macaroon is unavailable")
+		if err != nil {
+			return fmt.Errorf("Lightning Loop API macaroon is unavailable to the manager: %w", err)
+		}
+		return errors.New("Lightning Loop API macaroon is empty")
 	}
 	var reader io.Reader
 	if body != nil {

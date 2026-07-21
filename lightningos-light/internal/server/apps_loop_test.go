@@ -1,6 +1,7 @@
 package server
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -52,10 +53,12 @@ func TestLoopConfigIsMainnetAndLoopbackOnly(t *testing.T) {
 }
 
 func TestLoopServiceHardening(t *testing.T) {
-	service := loopServiceContents(loopAppPaths())
+	paths := loopAppPaths()
+	service := loopServiceContents(paths)
 	for _, expected := range []string{
 		"User=lightningos-loop", "Group=lightningos-loop", "NoNewPrivileges=true",
-		"PrivateDevices=true", "ProtectSystem=full", "ProtectHome=true", "ReadWritePaths=",
+		"PrivateDevices=true", "ProtectSystem=full", "ProtectHome=true", "ReadWritePaths=", "UMask=0027",
+		"ExecStartPost=/bin/sh -c", paths.ClientTLSCert, paths.ClientMacaroon,
 	} {
 		if !strings.Contains(service, expected) {
 			t.Fatalf("service missing %q", expected)
@@ -63,6 +66,30 @@ func TestLoopServiceHardening(t *testing.T) {
 	}
 	if strings.Contains(service, "SupplementaryGroups=lnd") {
 		t.Fatal("Loop service must not require the conventional lnd group on existing-node installs")
+	}
+}
+
+func TestLoopAPIUsesManagerReadableClientMaterial(t *testing.T) {
+	paths := loopAppPaths()
+	if paths.ClientTLSCert == paths.LoopTLSCert || paths.ClientMacaroon == paths.LoopMacaroon {
+		t.Fatal("manager client material must be separate from daemon-owned credentials")
+	}
+	if !strings.HasPrefix(paths.ClientTLSCert, paths.Root+string(filepath.Separator)) ||
+		!strings.HasPrefix(paths.ClientMacaroon, paths.Root+string(filepath.Separator)) {
+		t.Fatal("manager client material must stay inside the Loop app directory")
+	}
+	syncScript := loopClientMaterialSyncScript(paths, false)
+	for _, expected := range []string{"mkdir -p", paths.ClientDir, "chmod 2750", paths.ClientTLSCert, paths.ClientMacaroon, "chmod 0640"} {
+		if !strings.Contains(syncScript, expected) {
+			t.Fatalf("client material sync missing %q", expected)
+		}
+	}
+	if strings.Contains(syncScript, "sleep 0.2") {
+		t.Fatal("on-demand client material repair must not wait when daemon material is absent")
+	}
+	waitScript := loopClientMaterialSyncScript(paths, true)
+	if !strings.Contains(waitScript, "sleep 0.2") || !strings.Contains(waitScript, `while [ "$i" -lt 100 ]`) {
+		t.Fatal("service startup must wait briefly for daemon client material")
 	}
 }
 

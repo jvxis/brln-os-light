@@ -28,6 +28,7 @@ const (
 type loopPaths struct {
 	Root            string
 	BinDir          string
+	ClientDir       string
 	DataDir         string
 	LNDDir          string
 	LoopdPath       string
@@ -40,6 +41,8 @@ type loopPaths struct {
 	LoopMacaroon    string
 	LoopTLSCert     string
 	LoopTLSKey      string
+	ClientMacaroon  string
+	ClientTLSCert   string
 }
 
 type loopApp struct{ server *Server }
@@ -83,6 +86,7 @@ func loopAppPaths() loopPaths {
 	return loopPaths{
 		Root:            root,
 		BinDir:          filepath.Join(root, "bin"),
+		ClientDir:       filepath.Join(root, "client"),
 		DataDir:         data,
 		LNDDir:          filepath.Join(data, "lnd"),
 		LoopdPath:       filepath.Join(root, "bin", "loopd"),
@@ -95,6 +99,8 @@ func loopAppPaths() loopPaths {
 		LoopMacaroon:    filepath.Join(data, "mainnet", "loop.macaroon"),
 		LoopTLSCert:     filepath.Join(data, "tls.cert"),
 		LoopTLSKey:      filepath.Join(data, "tls.key"),
+		ClientMacaroon:  filepath.Join(root, "client", "loop.macaroon"),
+		ClientTLSCert:   filepath.Join(root, "client", "tls.cert"),
 	}
 }
 
@@ -237,13 +243,13 @@ fi
 if ! id -u %s >/dev/null 2>&1; then
   useradd --system --gid %s --home-dir %s --no-create-home --shell /usr/sbin/nologin %s
 fi
-mkdir -p %s %s %s %s
+mkdir -p %s %s %s %s %s
 chown -R %s:%s %s %s
-chmod 2750 %s %s %s %s
+chmod 2750 %s %s %s %s %s
 `, shellQuote(loopUser), shellQuote(loopUser), shellQuote(loopUser), shellQuote(loopUser), shellQuote(paths.DataDir), shellQuote(loopUser),
-		shellQuote(paths.Root), shellQuote(paths.BinDir), shellQuote(paths.DataDir), shellQuote(paths.LNDDir),
+		shellQuote(paths.Root), shellQuote(paths.BinDir), shellQuote(paths.ClientDir), shellQuote(paths.DataDir), shellQuote(paths.LNDDir),
 		loopUser, managerGroupID, shellQuote(paths.Root), shellQuote(paths.DataDir),
-		shellQuote(paths.Root), shellQuote(paths.BinDir), shellQuote(paths.DataDir), shellQuote(paths.LNDDir))
+		shellQuote(paths.Root), shellQuote(paths.BinDir), shellQuote(paths.ClientDir), shellQuote(paths.DataDir), shellQuote(paths.LNDDir))
 }
 
 func ensureLoopBinary(ctx context.Context, paths loopPaths) error {
@@ -447,6 +453,7 @@ func normalizeLoopManagerGroupID(value string) (string, error) {
 }
 
 func loopServiceContents(paths loopPaths) string {
+	clientMaterialScript := loopClientMaterialSyncScript(paths, true)
 	return fmt.Sprintf(`[Unit]
 Description=LightningOS Lightning Loop daemon
 After=network-online.target lnd.service
@@ -458,8 +465,10 @@ User=%s
 Group=%s
 Environment=HOME=%s
 ExecStart=%s --configfile=%s
+ExecStartPost=/bin/sh -c %s
 Restart=on-failure
 RestartSec=5
+UMask=0027
 PrivateTmp=true
 PrivateDevices=true
 NoNewPrivileges=true
@@ -469,7 +478,71 @@ ReadWritePaths=%s
 
 [Install]
 WantedBy=multi-user.target
-`, loopUser, loopUser, paths.DataDir, paths.LoopdPath, paths.ConfigPath, paths.DataDir)
+`, loopUser, loopUser, paths.DataDir, paths.LoopdPath, paths.ConfigPath, shellQuote(clientMaterialScript), paths.DataDir)
+}
+
+func loopClientMaterialSyncScript(paths loopPaths, wait bool) string {
+	waitScript := ""
+	if wait {
+		waitScript = fmt.Sprintf(`i=0
+while [ "$i" -lt 100 ]; do
+  if [ -s %s ] && [ -s %s ]; then
+    break
+  fi
+  i=$((i + 1))
+  sleep 0.2
+done
+`, shellQuote(paths.LoopTLSCert), shellQuote(paths.LoopMacaroon))
+	}
+	return fmt.Sprintf(`set -eu
+%s
+test -s %s
+test -s %s
+mkdir -p %s
+chmod 2750 %s
+cp %s %s.tmp
+cp %s %s.tmp
+chmod 0640 %s.tmp %s.tmp
+mv -f %s.tmp %s
+mv -f %s.tmp %s
+`, waitScript, shellQuote(paths.LoopTLSCert), shellQuote(paths.LoopMacaroon),
+		shellQuote(paths.ClientDir), shellQuote(paths.ClientDir),
+		shellQuote(paths.LoopTLSCert), shellQuote(paths.ClientTLSCert),
+		shellQuote(paths.LoopMacaroon), shellQuote(paths.ClientMacaroon),
+		shellQuote(paths.ClientTLSCert), shellQuote(paths.ClientMacaroon),
+		shellQuote(paths.ClientTLSCert), shellQuote(paths.ClientTLSCert),
+		shellQuote(paths.ClientMacaroon), shellQuote(paths.ClientMacaroon))
+}
+
+func ensureLoopClientMaterial(ctx context.Context, paths loopPaths) error {
+	cert, certErr := os.ReadFile(paths.ClientTLSCert)
+	macaroon, macaroonErr := os.ReadFile(paths.ClientMacaroon)
+	if certErr == nil && len(cert) > 0 && macaroonErr == nil && len(macaroon) > 0 {
+		return nil
+	}
+	if _, err := runSystemd(
+		ctx,
+		"--uid="+loopUser,
+		"--gid="+loopUser,
+		"/bin/sh", "-c", loopClientMaterialSyncScript(paths, false),
+	); err != nil {
+		return fmt.Errorf("failed to prepare manager access to the Lightning Loop API: %w", err)
+	}
+	cert, certErr = os.ReadFile(paths.ClientTLSCert)
+	macaroon, macaroonErr = os.ReadFile(paths.ClientMacaroon)
+	if certErr != nil {
+		return fmt.Errorf("Lightning Loop API certificate remains unreadable after repair: %w", certErr)
+	}
+	if len(cert) == 0 {
+		return errors.New("Lightning Loop API certificate remains empty after repair")
+	}
+	if macaroonErr != nil {
+		return fmt.Errorf("Lightning Loop API macaroon remains unreadable after repair: %w", macaroonErr)
+	}
+	if len(macaroon) == 0 {
+		return errors.New("Lightning Loop API macaroon remains empty after repair")
+	}
+	return nil
 }
 
 func isPendingLoopState(state string) bool {

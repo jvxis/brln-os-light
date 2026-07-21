@@ -233,7 +233,22 @@ export default function LightningLoop() {
 
   if (loading) return <LoadingState />
 
-  if (!status?.installed) {
+  if (!status) {
+    return (
+      <div className="space-y-6">
+        <LoopHero direction={direction} status={null} onDirection={setDirection} t={t} compact />
+        <div className="section-card mx-auto max-w-3xl text-center">
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-rose-400/25 bg-rose-400/10 text-rose-200"><InfoIcon /></div>
+          <h3 className="text-xl font-semibold">{t('lightningLoop.statusUnavailableTitle')}</h3>
+          <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-fog/65">{t('lightningLoop.statusUnavailableBody')}</p>
+          {message && <p className="mx-auto mt-3 max-w-xl rounded-xl border border-white/10 bg-ink/35 px-3 py-2 font-mono text-xs text-rose-200/80">{message}</p>}
+          <button className="btn-primary mt-5" type="button" onClick={() => void load()}>{t('lightningLoop.tryAgain')}</button>
+        </div>
+      </div>
+    )
+  }
+
+  if (!status.installed) {
     return (
       <div className="space-y-6">
         <LoopHero direction={direction} status={status} onDirection={setDirection} t={t} compact />

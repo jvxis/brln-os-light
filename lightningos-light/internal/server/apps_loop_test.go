@@ -59,6 +59,7 @@ func TestLoopServiceHardening(t *testing.T) {
 	for _, expected := range []string{
 		"User=lightningos-loop", "Group=lightningos-loop", "NoNewPrivileges=true",
 		"PrivateDevices=true", "ProtectSystem=full", "ProtectHome=true", "ReadWritePaths=", "UMask=0027",
+		"ExecStartPost=/bin/sh -c", paths.ClientTLSCert, paths.ClientMacaroon,
 	} {
 		if !strings.Contains(service, expected) {
 			t.Fatalf("service missing %q", expected)
@@ -66,6 +67,25 @@ func TestLoopServiceHardening(t *testing.T) {
 	}
 	if strings.Contains(service, "SupplementaryGroups=lnd") {
 		t.Fatal("Loop service must not require the conventional lnd group on existing-node installs")
+	}
+}
+
+func TestParseLoopSystemdStateRejectsRestartLoop(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		output string
+		want   string
+	}{
+		{name: "healthy", output: "ActiveState=active\nSubState=running\n", want: "running"},
+		{name: "restart loop", output: "ActiveState=activating\nSubState=auto-restart\n", want: "stopped"},
+		{name: "failed", output: "ActiveState=failed\nSubState=failed\n", want: "stopped"},
+		{name: "unknown", output: "ActiveState=maintenance\nSubState=dead\n", want: "unknown"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := parseLoopSystemdState(test.output); got != test.want {
+				t.Fatalf("parseLoopSystemdState() = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 
@@ -78,11 +98,18 @@ func TestLoopAPIUsesManagerReadableClientMaterial(t *testing.T) {
 		!strings.HasPrefix(paths.ClientMacaroon, paths.Root+string(filepath.Separator)) {
 		t.Fatal("manager client material must stay inside the Loop app directory")
 	}
-	syncScript := loopClientMaterialSyncScript(paths, "1001")
-	for _, expected := range []string{"test ! -L", "install -d", paths.ClientDir, paths.ClientTLSCert, paths.ClientMacaroon, "-g 1001", "-m 0640"} {
+	syncScript := loopClientMaterialSyncScript(paths, false)
+	for _, expected := range []string{"test ! -L", "mkdir -p", paths.ClientDir, paths.ClientTLSCert, paths.ClientMacaroon, "chmod 0640"} {
 		if !strings.Contains(syncScript, expected) {
 			t.Fatalf("client material sync missing %q", expected)
 		}
+	}
+	if strings.Contains(syncScript, "sleep 0.2") {
+		t.Fatal("on-demand client material repair must not wait when daemon material is absent")
+	}
+	waitScript := loopClientMaterialSyncScript(paths, true)
+	if !strings.Contains(waitScript, "sleep 0.2") || !strings.Contains(waitScript, `while [ "$i" -lt 100 ]`) {
+		t.Fatal("service startup must wait briefly for daemon client material")
 	}
 	for _, forbidden := range []string{"/data/lnd", "systemctl", "postgres", "bitcoin", "rm -", "chown -R", "usermod"} {
 		if strings.Contains(syncScript, forbidden) {
@@ -122,6 +149,7 @@ func TestLoopDirectorySetupProvisionsDedicatedServiceAccount(t *testing.T) {
 		"id -u 'lightningos-loop'",
 		"useradd --system --gid 'lightningos-loop'",
 		"--no-create-home --shell /usr/sbin/nologin 'lightningos-loop'",
+		"setfacl -m u:'lightningos-loop':--x '/var/lib/lightningos'",
 		"chown -R lightningos-loop:1001",
 	} {
 		if !strings.Contains(script, expected) {
@@ -130,6 +158,9 @@ func TestLoopDirectorySetupProvisionsDedicatedServiceAccount(t *testing.T) {
 	}
 	if strings.Contains(script, "losop") {
 		t.Fatal("Loop daemon setup must not depend on the terminal operator")
+	}
+	if strings.Contains(script, "chmod 751 '/var/lib/lightningos'") || strings.Contains(script, "chown lightningos-loop '/var/lib/lightningos'") {
+		t.Fatal("Loop setup must not broaden global state-directory permissions or ownership")
 	}
 }
 

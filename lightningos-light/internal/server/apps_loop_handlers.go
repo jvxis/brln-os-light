@@ -140,7 +140,7 @@ func (s *Server) handleLoopStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, response)
 		return
 	}
-	state, err := serviceActiveState(r.Context(), loopServiceName)
+	state, err := loopDisplayServiceState(r.Context())
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "failed to read Lightning Loop service status")
 		return

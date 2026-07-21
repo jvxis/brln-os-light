@@ -20,6 +20,7 @@ const (
 	loopAppID       = "loop"
 	loopVersion     = "v0.33.3-beta"
 	loopUser        = "lightningos-loop"
+	loopStateRoot   = "/var/lib/lightningos"
 	loopServiceName = "lightningos-loopd"
 	loopRPCPort     = 11010
 	loopRESTPort    = 18081
@@ -66,13 +67,42 @@ func (a loopApp) Info(ctx context.Context) (appInfo, error) {
 		return info, nil
 	}
 	info.Installed = true
-	status, err := serviceActiveState(ctx, loopServiceName)
+	status, err := loopDisplayServiceState(ctx)
 	if err != nil {
 		info.Status = "unknown"
 		return info, err
 	}
 	info.Status = status
 	return info, nil
+}
+
+func loopDisplayServiceState(ctx context.Context) (string, error) {
+	out, err := runSystemd(
+		ctx, "systemctl", "show", loopServiceName,
+		"--property=ActiveState", "--property=SubState", "--no-pager",
+	)
+	if err != nil {
+		return "unknown", err
+	}
+	return parseLoopSystemdState(out), nil
+}
+
+func parseLoopSystemdState(output string) string {
+	values := make(map[string]string)
+	for _, line := range strings.Split(output, "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if ok {
+			values[key] = strings.TrimSpace(value)
+		}
+	}
+	if values["ActiveState"] == "active" && values["SubState"] == "running" {
+		return "running"
+	}
+	if values["ActiveState"] == "inactive" || values["ActiveState"] == "failed" ||
+		values["ActiveState"] == "activating" || values["ActiveState"] == "deactivating" {
+		return "stopped"
+	}
+	return "unknown"
 }
 
 func (a loopApp) Install(ctx context.Context) error   { return a.server.installLoop(ctx) }
@@ -214,6 +244,10 @@ func (s *Server) uninstallLoop(ctx context.Context) error {
 	if _, err := runSystemd(ctx, "/bin/sh", "-c", "rm -rf "+shellQuote(paths.Root)); err != nil {
 		return fmt.Errorf("failed to remove Lightning Loop app files: %w", err)
 	}
+	_, _ = runSystemd(ctx, "/bin/sh", "-c", fmt.Sprintf(
+		"if command -v setfacl >/dev/null 2>&1; then setfacl -x u:%s %s 2>/dev/null || true; fi",
+		shellQuote(loopUser), shellQuote(loopStateRoot),
+	))
 	// Swap history, the loop database, TLS material, and the dedicated LND
 	// macaroon deliberately remain in apps-data for a safe reinstall/recovery.
 	return nil
@@ -243,10 +277,16 @@ fi
 if ! id -u %s >/dev/null 2>&1; then
   useradd --system --gid %s --home-dir %s --no-create-home --shell /usr/sbin/nologin %s
 fi
+if ! command -v setfacl >/dev/null 2>&1; then
+  echo "setfacl is required to grant the isolated Loop service traverse-only access" >&2
+  exit 1
+fi
+setfacl -m u:%s:--x %s
 mkdir -p %s %s %s %s %s
 chown -R %s:%s %s %s
 chmod 2750 %s %s %s %s %s
 `, shellQuote(loopUser), shellQuote(loopUser), shellQuote(loopUser), shellQuote(loopUser), shellQuote(paths.DataDir), shellQuote(loopUser),
+		shellQuote(loopUser), shellQuote(loopStateRoot),
 		shellQuote(paths.Root), shellQuote(paths.BinDir), shellQuote(paths.ClientDir), shellQuote(paths.DataDir), shellQuote(paths.LNDDir),
 		loopUser, managerGroupID, shellQuote(paths.Root), shellQuote(paths.DataDir),
 		shellQuote(paths.Root), shellQuote(paths.BinDir), shellQuote(paths.ClientDir), shellQuote(paths.DataDir), shellQuote(paths.LNDDir))
@@ -453,6 +493,7 @@ func normalizeLoopManagerGroupID(value string) (string, error) {
 }
 
 func loopServiceContents(paths loopPaths) string {
+	clientMaterialScript := loopClientMaterialSyncScript(paths, true)
 	return fmt.Sprintf(`[Unit]
 Description=LightningOS Lightning Loop daemon
 After=network-online.target lnd.service
@@ -464,6 +505,7 @@ User=%s
 Group=%s
 Environment=HOME=%s
 ExecStart=%s --configfile=%s
+ExecStartPost=/bin/sh -c %s
 Restart=on-failure
 RestartSec=5
 UMask=0027
@@ -476,23 +518,43 @@ ReadWritePaths=%s
 
 [Install]
 WantedBy=multi-user.target
-`, loopUser, loopUser, paths.DataDir, paths.LoopdPath, paths.ConfigPath, paths.DataDir)
+`, loopUser, loopUser, paths.DataDir, paths.LoopdPath, paths.ConfigPath, shellQuote(clientMaterialScript), paths.DataDir)
 }
 
-func loopClientMaterialSyncScript(paths loopPaths, managerGroupID string) string {
+func loopClientMaterialSyncScript(paths loopPaths, wait bool) string {
+	waitScript := ""
+	if wait {
+		waitScript = fmt.Sprintf(`i=0
+while [ "$i" -lt 100 ]; do
+  if [ -s %s ] && [ -s %s ]; then
+    break
+  fi
+  i=$((i + 1))
+  sleep 0.2
+done
+`, shellQuote(paths.LoopTLSCert), shellQuote(paths.LoopMacaroon))
+	}
 	return fmt.Sprintf(`set -eu
+%s
 test -s %s
 test -s %s
 test ! -L %s
 test ! -L %s
-install -d -o %s -g %s -m 2750 %s
-install -o %s -g %s -m 0640 %s %s
-install -o %s -g %s -m 0640 %s %s
-`, shellQuote(paths.LoopTLSCert), shellQuote(paths.LoopMacaroon),
+mkdir -p %s
+chmod 2750 %s
+cp %s %s.tmp
+cp %s %s.tmp
+chmod 0640 %s.tmp %s.tmp
+mv -f %s.tmp %s
+mv -f %s.tmp %s
+`, waitScript, shellQuote(paths.LoopTLSCert), shellQuote(paths.LoopMacaroon),
 		shellQuote(paths.LoopTLSCert), shellQuote(paths.LoopMacaroon),
-		shellQuote(loopUser), managerGroupID, shellQuote(paths.ClientDir),
-		shellQuote(loopUser), managerGroupID, shellQuote(paths.LoopTLSCert), shellQuote(paths.ClientTLSCert),
-		shellQuote(loopUser), managerGroupID, shellQuote(paths.LoopMacaroon), shellQuote(paths.ClientMacaroon))
+		shellQuote(paths.ClientDir), shellQuote(paths.ClientDir),
+		shellQuote(paths.LoopTLSCert), shellQuote(paths.ClientTLSCert),
+		shellQuote(paths.LoopMacaroon), shellQuote(paths.ClientMacaroon),
+		shellQuote(paths.ClientTLSCert), shellQuote(paths.ClientMacaroon),
+		shellQuote(paths.ClientTLSCert), shellQuote(paths.ClientTLSCert),
+		shellQuote(paths.ClientMacaroon), shellQuote(paths.ClientMacaroon))
 }
 
 func ensureLoopClientMaterial(ctx context.Context, paths loopPaths) error {
@@ -507,13 +569,11 @@ func ensureLoopClientMaterial(ctx context.Context, paths loopPaths) error {
 	if err := validateLoopDaemonMaterial(paths.LoopMacaroon, "API macaroon"); err != nil {
 		return err
 	}
-	managerGroupID, err := loopManagerGroupID()
-	if err != nil {
-		return err
-	}
 	if _, err := runSystemd(
 		ctx,
-		"/bin/sh", "-c", loopClientMaterialSyncScript(paths, managerGroupID),
+		"--uid="+loopUser,
+		"--gid="+loopUser,
+		"/bin/sh", "-c", loopClientMaterialSyncScript(paths, false),
 	); err != nil {
 		return fmt.Errorf("failed to prepare manager access to the Lightning Loop API: %w", err)
 	}

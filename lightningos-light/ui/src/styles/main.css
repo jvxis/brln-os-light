@@ -955,6 +955,44 @@ html[data-theme="light"] [class~="text-fog/80"] {
   }
 }
 
+.loop-hero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 78% 20%, rgb(var(--color-glow) / 0.16), transparent 34%),
+    radial-gradient(circle at 14% 120%, rgb(var(--color-brass) / 0.15), transparent 38%),
+    linear-gradient(135deg, rgb(var(--color-slate) / 0.94), rgb(var(--color-ink) / 0.8));
+}
+
+.loop-hero::before {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  content: '';
+  opacity: 0.13;
+  background-image:
+    linear-gradient(rgb(var(--color-fog) / 0.18) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--color-fog) / 0.18) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: linear-gradient(to right, transparent, black 48%, black);
+}
+
+.loop-hero::after {
+  position: absolute;
+  right: -7rem;
+  top: -11rem;
+  z-index: -1;
+  width: 28rem;
+  height: 28rem;
+  content: '';
+  border: 1px solid rgb(var(--color-glow) / 0.13);
+  border-radius: 9999px;
+  box-shadow:
+    0 0 0 4rem rgb(var(--color-glow) / 0.025),
+    0 0 0 8rem rgb(var(--color-glow) / 0.018);
+}
+
 .node-status-card {
   position: relative;
   overflow: hidden;

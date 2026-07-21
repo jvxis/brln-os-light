@@ -73,6 +73,12 @@ Current product backlog, after checking the repository against the docs:
     join / host.docker.internal / remote host) through NBXplorer and the
     native LND via `type=lnd-rest` with a dedicated baked macaroon (never
     admin). Install-time RPC + P2P probes. Integration study in section 14.
+14. **Evaluate (research only, 2026-07-21)** - `Wavelength` v0.1 as a future
+    optional Ark/Lightning wallet or replacement for the existing Bark Wallet.
+    It does not improve channel management, routing, Autofee, or Rebalance.
+    The preferred future shape is a native `waved` sidecar connected to the
+    existing LND with a dedicated scoped macaroon, not the browser WASM SDK in
+    the main SPA. Do not ship on mainnet yet; see section 15.
 
 ## Implemented Since Last Audit
 
@@ -1430,6 +1436,148 @@ services:
 - LOS-native status card via the Greenfield API (server info, store count).
 - Optional plugins (POS app is built-in; others via BTCPay plugin system).
 - Backup guidance for the BTCPay data dir (hot wallet seeds, store configs).
+
+## 15. Evaluate Wavelength As An Optional Ark/Lightning Wallet
+
+**Current status (2026-07-21): evaluate / research only. Do not implement in
+the core wallet or enable on mainnet yet.**
+
+### Source And Release Snapshot
+
+- Product/docs: <https://wavelength.lightning.engineering/>
+- Daemon: <https://github.com/lightninglabs/wavelength>
+- TypeScript/React SDK: <https://github.com/lightninglabs/wavelength-sdk>
+- First public release evaluated: `v0.1.0`, published 2026-07-21.
+- License: MIT.
+- Release artifacts include Linux AMD64, ARM64, and ARMv7 binaries, which are
+  compatible with the main LightningOS deployment architectures.
+
+Wavelength is a self-custodial wallet stack combining an Ark client, an
+on-chain wallet, and Lightning-to-Ark atomic swaps. Lightning send and receive
+use an external swap server; the client does not open channels or route the
+payment through the operator's local LND channels.
+
+The project explicitly states that RPC surfaces, CLI commands, and the on-disk
+schema may still change across minor releases. Mainnet has no public SDK preset,
+requires manual endpoints plus `allowMainnet`, and the hosted mainnet service is
+currently gated by an identity-pubkey allowlist.
+
+### Evaluation Summary
+
+Wavelength has potential value for LightningOS, but not as a node-management
+feature:
+
+- **No direct value for routing operations.** It does not improve channel
+  liquidity, inbound capacity, Rebalance, Autofee, channel ranking, or routing
+  revenue. Its Lightning rail is a client payment swap backed by Ark balance.
+- **High overlap with Bark Wallet.** LightningOS already ships Bark Wallet as
+  an optional self-custodial Ark, Lightning, and on-chain wallet using Second's
+  public operator. Shipping both would create two independent wallets with
+  different operators, balances, state, recovery paths, and support burden.
+- **Potential future advantage over Bark.** The standalone `waved` daemon can
+  use `--wallet.type=lnd` for signing, key derivation, and chain access through
+  the existing node. This is a more natural LightningOS integration point than
+  a completely separate Docker wallet.
+- **Useful future mobile path.** The web, React Native, Android, and iOS SDKs
+  could be relevant if LightningOS later expands from a LAN/VPN node control
+  center into an end-user spending wallet. That is not the current product
+  scope.
+- **MCP is not a near-term reason to integrate.** `wavecli mcp serve` can expose
+  wallet operations to agents, but autonomous fund movement would require a
+  separate threat model, spending limits, approval policy, and audit design.
+
+### Why The Browser SDK Is Not The Preferred Integration
+
+The React SDK is technically compatible with the current React/Vite frontend,
+but its runtime and custody model are a poor fit for the current application:
+
+- Wallet and swap state live per browser origin/device in OPFS-backed SQLite,
+  rather than centrally on the LightningOS node.
+- Production worker mode requires `SharedArrayBuffer` and COOP/COEP response
+  headers. The current UI is one SPA served through a catch-all route, so
+  isolating only the wallet surface would require a dedicated route or origin
+  and compatibility testing with existing embeds and external resources.
+- Passkey wallets are bound to a stable relying-party hostname. LightningOS is
+  commonly accessed through LAN IPs, local hostnames, VPN names, and locally
+  issued certificates, which makes passkey portability and recovery harder.
+- The first WASM runtime archive is large (about 38 MB compressed).
+- The browser/mobile start contract intentionally does not expose the LND
+  wallet backend. Direct reuse of the local LND requires the standalone daemon
+  and its API instead.
+
+If a browser wallet is ever pursued, it should be a distinct product surface
+with a stable HTTPS origin, explicit backup UX, and a clear distinction between
+browser-held Ark funds and the node's LND wallet.
+
+### Preferred Architecture If Re-Evaluated
+
+Use Wavelength as an optional native sidecar, not as code embedded in the main
+SPA:
+
+1. Install a pinned and signature/checksum-verified `waved` release for the
+   detected architecture.
+2. Run it as a dedicated systemd service with its RPC bound to loopback only.
+3. Configure `--wallet.type=lnd` against the existing local LND.
+4. Bake a dedicated least-privilege macaroon after enumerating and testing the
+   exact RPC permissions. Do not give the service the existing
+   `admin.macaroon`, even though the initial upstream installation guide uses
+   it in examples.
+5. Add a narrow Go adapter in the manager for status, balance, deposit,
+   receive, prepared send/fee preview, activity, refund/recovery state, exit
+   preview, and exit status.
+6. Present Ark/Wavelength balance separately from on-chain LND balance and
+   Lightning channel balance. Never imply that Ark funds are channel funds.
+7. Preserve daemon state on uninstall until an explicit destructive wallet
+   deletion flow is confirmed, following the same safety principle used for
+   Bark Wallet.
+
+This should initially be an experimental App Store or feature-flagged service,
+not part of the mandatory LightningOS installation.
+
+### Blockers And Evaluation Gates
+
+Do not approve a production implementation until all of these are resolved:
+
+- At least one follow-up release demonstrates a stable upgrade and database
+  migration path beyond the initial `v0.1.0` release.
+- Mainnet endpoint discovery, allowlist onboarding, operator fees, limits,
+  availability expectations, and support model are documented well enough for
+  an operator-facing product.
+- A custom scoped LND macaroon is proven sufficient; use of `admin.macaroon` is
+  a release blocker.
+- Seed/state backup and recovery are tested for the chosen LND-backed daemon
+  mode, including recovery after loss of the Wavelength database.
+- Stuck swaps, automatic refunds, operator downtime, and unilateral exits are
+  tested with clear UI states and bounded fee previews.
+- The security review covers daemon RPC authentication, local file
+  permissions, logs, upgrade verification, operator trust assumptions, and
+  denial-of-service/resource limits.
+- A product decision is made to replace Bark Wallet or keep only one Ark wallet
+  enabled by default. Do not create two indistinguishable Ark wallet choices.
+
+### Suggested Signet PoC
+
+If the evaluation gates justify hands-on testing, use signet only and cap funds
+at disposable test amounts. The PoC should prove:
+
+- install/start/stop/restart on Linux AMD64 and ARM64
+- connection to the local LND using a dedicated scoped macaroon
+- Ark boarding and separate balance reporting
+- Lightning receive and prepared-send fee/quote flow
+- successful send plus an expired/stuck-swap refund path
+- daemon crash/restart persistence during an in-flight operation
+- cooperative leave and unilateral-exit preview/status
+- recovery from documented backups on a clean data directory
+- no public daemon RPC, no secret leakage in logs/API, and no admin macaroon
+
+### Non-Goals For This Evaluation
+
+- Replacing the existing LND wallet page.
+- Treating Wavelength as a channel liquidity or rebalance tool.
+- Shipping mainnet support from `v0.1.0`.
+- Embedding the WASM runtime in the current SPA before a dedicated-origin and
+  multi-device recovery design exists.
+- Enabling agent/MCP spending without a separate approved security design.
 
 ## Implemented Or No Longer Active Here
 

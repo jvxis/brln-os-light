@@ -22,6 +22,18 @@ func TestLoopAssetForArch(t *testing.T) {
 	}
 }
 
+func TestNormalizeLoopManagerGroupID(t *testing.T) {
+	groupID, err := normalizeLoopManagerGroupID(" 1001 ")
+	if err != nil || groupID != "1001" {
+		t.Fatalf("unexpected normalized group ID %q: %v", groupID, err)
+	}
+	for _, value := range []string{"", "lightningos", "1001;touch /tmp/pwned", "-1"} {
+		if _, err := normalizeLoopManagerGroupID(value); err == nil {
+			t.Fatalf("expected invalid group ID %q to fail", value)
+		}
+	}
+}
+
 func TestLoopConfigIsMainnetAndLoopbackOnly(t *testing.T) {
 	config := loopConfigContents(loopAppPaths())
 	for _, expected := range []string{

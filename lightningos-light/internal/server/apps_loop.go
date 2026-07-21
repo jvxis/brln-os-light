@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -212,13 +214,17 @@ func (s *Server) uninstallLoop(ctx context.Context) error {
 }
 
 func ensureLoopDirectories(ctx context.Context, paths loopPaths) error {
+	managerGroupID, err := loopManagerGroupID()
+	if err != nil {
+		return err
+	}
 	script := fmt.Sprintf(`set -e
 mkdir -p %s %s %s %s
 chown -R %s:%s %s %s
-chmod 750 %s %s %s
+chmod 2750 %s %s %s %s
 `, shellQuote(paths.Root), shellQuote(paths.BinDir), shellQuote(paths.DataDir), shellQuote(paths.LNDDir),
-		loopUser, loopUser, shellQuote(paths.Root), shellQuote(paths.DataDir),
-		shellQuote(paths.Root), shellQuote(paths.DataDir), shellQuote(paths.LNDDir))
+		loopUser, managerGroupID, shellQuote(paths.Root), shellQuote(paths.DataDir),
+		shellQuote(paths.Root), shellQuote(paths.BinDir), shellQuote(paths.DataDir), shellQuote(paths.LNDDir))
 	if _, err := runSystemd(ctx, "/bin/sh", "-c", script); err != nil {
 		return fmt.Errorf("failed to prepare Lightning Loop directories: %w", err)
 	}
@@ -253,7 +259,14 @@ chown %s:%s %s %s
 	if _, err := runSystemd(ctx, "/bin/sh", "-c", script); err != nil {
 		return fmt.Errorf("failed to install verified Lightning Loop binaries: %w", err)
 	}
-	return writeFile(paths.VersionPath, loopVersion+"\n", 0640)
+	managerGroupID, err := loopManagerGroupID()
+	if err != nil {
+		return err
+	}
+	return installLoopOwnedFile(
+		ctx, paths.VersionPath, []byte(loopVersion+"\n"), 0640,
+		loopUser, managerGroupID,
+	)
 }
 
 func (s *Server) ensureLoopLNDMaterial(ctx context.Context, paths loopPaths) error {
@@ -264,7 +277,14 @@ func (s *Server) ensureLoopLNDMaterial(ctx context.Context, paths loopPaths) err
 	if len(cert) == 0 {
 		return errors.New("LND TLS certificate is empty")
 	}
-	if err := os.WriteFile(paths.LNDTLSCertPath, cert, 0640); err != nil {
+	managerGroupID, err := loopManagerGroupID()
+	if err != nil {
+		return err
+	}
+	if err := installLoopOwnedFile(
+		ctx, paths.LNDTLSCertPath, cert, 0640, loopUser,
+		managerGroupID,
+	); err != nil {
 		return fmt.Errorf("failed to copy LND TLS certificate: %w", err)
 	}
 	if !fileExists(paths.LNDMacaroonPath) {
@@ -291,15 +311,12 @@ func (s *Server) ensureLoopLNDMaterial(ctx context.Context, paths loopPaths) err
 		if err != nil || len(raw) == 0 {
 			return errors.New("invalid LND macaroon response")
 		}
-		if err := os.WriteFile(paths.LNDMacaroonPath, raw, 0600); err != nil {
+		if err := installLoopOwnedFile(
+			ctx, paths.LNDMacaroonPath, raw, 0600, loopUser,
+			managerGroupID,
+		); err != nil {
 			return fmt.Errorf("failed to write Lightning Loop LND macaroon: %w", err)
 		}
-	}
-	script := fmt.Sprintf("chown %s:%s %s %s && chmod 0640 %s && chmod 0600 %s",
-		loopUser, loopUser, shellQuote(paths.LNDTLSCertPath), shellQuote(paths.LNDMacaroonPath),
-		shellQuote(paths.LNDTLSCertPath), shellQuote(paths.LNDMacaroonPath))
-	if _, err := runSystemd(ctx, "/bin/sh", "-c", script); err != nil {
-		return fmt.Errorf("failed to secure Lightning Loop LND credentials: %w", err)
 	}
 	return nil
 }
@@ -318,11 +335,15 @@ func loopMacaroonPermissions() []lndclient.MacaroonPermission {
 }
 
 func ensureLoopConfig(ctx context.Context, paths loopPaths) error {
-	if err := writeFile(paths.ConfigPath, loopConfigContents(paths), 0600); err != nil {
-		return fmt.Errorf("failed to write loopd.conf: %w", err)
+	managerGroupID, err := loopManagerGroupID()
+	if err != nil {
+		return err
 	}
-	if _, err := runSystemd(ctx, "chown", loopUser+":"+loopUser, paths.ConfigPath); err != nil {
-		return fmt.Errorf("failed to secure loopd.conf ownership: %w", err)
+	if err := installLoopOwnedFile(
+		ctx, paths.ConfigPath, []byte(loopConfigContents(paths)), 0640,
+		loopUser, managerGroupID,
+	); err != nil {
+		return fmt.Errorf("failed to write loopd.conf: %w", err)
 	}
 	return nil
 }
@@ -349,18 +370,65 @@ func ensureLoopService(ctx context.Context, paths loopPaths) error {
 	if existing, err := os.ReadFile(paths.ServicePath); err == nil && string(existing) == contents {
 		return nil
 	}
-	tmpPath := filepath.Join(paths.Root, "loopd.service.tmp")
-	if err := writeFile(tmpPath, contents, 0644); err != nil {
-		return err
-	}
-	defer os.Remove(tmpPath)
-	if _, err := runSystemd(ctx, "/bin/sh", "-c", "install -m 0644 "+shellQuote(tmpPath)+" "+shellQuote(paths.ServicePath)); err != nil {
+	if err := installLoopOwnedFile(
+		ctx, paths.ServicePath, []byte(contents), 0644, "root", "root",
+	); err != nil {
 		return fmt.Errorf("failed to install Lightning Loop service: %w", err)
 	}
 	if _, err := runSystemd(ctx, "systemctl", "daemon-reload"); err != nil {
 		return err
 	}
 	return nil
+}
+
+// installLoopOwnedFile stages bytes in /var/lib/lightningos, which is writable
+// by the unprivileged manager, then uses the existing systemd-run privilege
+// boundary to install the final file with explicit ownership and mode. Loop's
+// directories belong to the service user, so direct os.WriteFile calls from
+// lightningos-manager would fail after the first ownership handoff.
+func installLoopOwnedFile(ctx context.Context, destination string, content []byte, mode os.FileMode, owner, group string) error {
+	stagingDir := filepath.Dir(appsRoot)
+	tmp, err := os.CreateTemp(stagingDir, ".loop-install-*")
+	if err != nil {
+		return fmt.Errorf("failed to stage %s: %w", destination, err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(0600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(content); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("failed to stage %s: %w", destination, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("failed to stage %s: %w", destination, err)
+	}
+	modeValue := fmt.Sprintf("%04o", mode.Perm())
+	if _, err := runSystemd(
+		ctx, "install", "-o", owner, "-g", group, "-m", modeValue,
+		tmpPath, destination,
+	); err != nil {
+		return fmt.Errorf("failed to install %s: %w", destination, err)
+	}
+	return nil
+}
+
+func loopManagerGroupID() (string, error) {
+	current, err := user.Current()
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve LightningOS manager group: %w", err)
+	}
+	return normalizeLoopManagerGroupID(current.Gid)
+}
+
+func normalizeLoopManagerGroupID(value string) (string, error) {
+	groupID := strings.TrimSpace(value)
+	if _, err := strconv.ParseUint(groupID, 10, 32); err != nil {
+		return "", fmt.Errorf("invalid LightningOS manager group ID %q", groupID)
+	}
+	return groupID, nil
 }
 
 func loopServiceContents(paths loopPaths) string {

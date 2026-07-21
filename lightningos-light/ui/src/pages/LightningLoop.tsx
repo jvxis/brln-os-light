@@ -515,7 +515,7 @@ function QuotePanel({ quote, direction, maxMinerFee, setMaxMinerFee, riskAccepte
       </div>
       <Field label={t('lightningLoop.maxMiner')} hint={t('lightningLoop.maxMinerWarning')}><input className="input-field" type="number" min={quote.onchain_fee_sat} required value={maxMinerFee} onChange={(event) => setMaxMinerFee(event.target.value)} /></Field>
       <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.025] p-3 text-xs leading-5 text-fog/65"><input className="mt-1 accent-amber-400" type="checkbox" checked={riskAccepted} onChange={(event) => setRiskAccepted(event.target.checked)} /><span>{t('lightningLoop.confirmRisk')}</span></label>
-      <button className="btn-primary w-full justify-center" type="button" disabled={busy || !riskAccepted || Number(maxMinerFee) < quote.onchain_fee_sat} onClick={execute}>{busy ? t('common.loading') : t('lightningLoop.execute')}</button>
+      <button className="btn-primary w-full justify-center" type="button" disabled={busy || !riskAccepted || Number(maxMinerFee) < quote.onchain_fee_sat} onClick={() => execute()}>{busy ? t('common.loading') : t('lightningLoop.execute')}</button>
     </div>
   )
 }

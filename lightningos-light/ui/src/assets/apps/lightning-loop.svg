@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="Lightning Loop">
+  <defs>
+    <linearGradient id="bg" x1="12" y1="8" x2="84" y2="88" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6D5CE7"/>
+      <stop offset="1" stop-color="#32297D"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="88" height="88" rx="23" fill="url(#bg)"/>
+  <path d="M74 36A29 29 0 0 0 25 25" fill="none" stroke="#FFF" stroke-width="7" stroke-linecap="round"/>
+  <path d="m19 16 2 17 17-2" fill="none" stroke="#FFF" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M22 60a29 29 0 0 0 49 11" fill="none" stroke="#F7C948" stroke-width="7" stroke-linecap="round"/>
+  <path d="m77 80-2-17-17 2" fill="none" stroke="#F7C948" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M53 23 35 52h14l-6 22 19-31H48z" fill="#FFF" stroke="#32297D" stroke-width="2" stroke-linejoin="round"/>
+</svg>

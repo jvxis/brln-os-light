@@ -477,6 +477,23 @@ POST /api/apps/{id}/start
 POST /api/apps/{id}/stop
 POST /api/apps/{id}/uninstall
 - Uninstalling `bark-wallet` removes its containers and app definition but intentionally preserves `/var/lib/lightningos/apps-data/bark-wallet` so wallet/off-chain state is not destroyed by the generic App Store action.
+- `loop` is optional. Stop and uninstall are rejected while any Loop swap is pending. Uninstall preserves `/var/lib/lightningos/apps-data/loop` for recovery and history.
+
+GET /api/apps/loop/status
+- Returns installed/running state, safe daemon version/network fields, server terms, and pending swap count. It never returns TLS or macaroon paths.
+
+GET /api/apps/loop/swaps?limit=100
+- Returns normalized Loop In/Out history. Channel IDs are strings to preserve uint64 precision.
+
+POST /api/apps/loop/quote
+- Body: `direction` (`out` or `in`), `amount_sat`, optional `conf_target`, `last_hop_pubkey`, `fast`, and `routing_fee_limit_ppm`.
+- Returns separate server, on-chain, and routing estimates plus a recommended miner-fee ceiling.
+
+POST /api/apps/loop/swap
+- Starts a manual swap only after obtaining a fresh quote and verifying the approved fee ceilings.
+- Loop Out also requires `outgoing_channel_ids` as strings. An optional `destination_address` may be supplied; otherwise Loop uses the local LND wallet.
+- Requires recent `loop_swap` reauthentication when login protection is enabled. Missing reauth returns HTTP 428 with `code=loop_swap_reauth_required`.
+- Autoloop is intentionally not exposed or enabled.
 
 POST /api/apps/{id}/reset-admin
 GET /api/apps/{id}/admin-password

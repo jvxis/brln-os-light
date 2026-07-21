@@ -1003,6 +1003,80 @@ export const tapdDecodeAddr = (payload: { addr: string }) =>
   request('/api/apps/tapd/decode-addr', { method: 'POST', body: JSON.stringify(payload) })
 export const tapdSend = (payload: { addr: string; fee_rate?: number }) =>
   request('/api/apps/tapd/send', { method: 'POST', body: JSON.stringify(payload) })
+
+export type LoopTerms = {
+  loop_out_min_sat: number
+  loop_out_max_sat: number
+  loop_in_min_sat: number
+  loop_in_max_sat: number
+}
+
+export type LoopStatus = {
+  installed: boolean
+  running: boolean
+  version?: string
+  network?: string
+  pending_count: number
+  terms?: LoopTerms
+  autoloop_enabled: boolean
+}
+
+export type LoopQuotePayload = {
+  direction: 'out' | 'in'
+  amount_sat: number
+  conf_target?: number
+  last_hop_pubkey?: string
+  fast?: boolean
+  routing_fee_limit_ppm?: number
+}
+
+export type LoopQuote = {
+  direction: 'out' | 'in'
+  amount_sat: number
+  conf_target: number
+  swap_fee_sat: number
+  onchain_fee_sat: number
+  prepay_amount_sat?: number
+  routing_fee_limit_sat?: number
+  prepay_routing_limit_sat?: number
+  estimated_fee_sat: number
+  recommended_max_miner_fee_sat: number
+  cltv_delta: number
+  expires_at: string
+}
+
+export type LoopSwap = {
+  id: string
+  type: string
+  state: string
+  failure_reason?: string
+  amount_sat: number
+  initiation_time: number
+  last_update_time: number
+  cost_server_sat: number
+  cost_onchain_sat: number
+  cost_offchain_sat: number
+  outgoing_channel_ids?: string[]
+  label?: string
+}
+
+export type LoopSwapPayload = LoopQuotePayload & {
+  destination_address?: string
+  outgoing_channel_ids?: string[]
+  approved_swap_fee_sat: number
+  approved_onchain_fee_sat: number
+  approved_routing_fee_limit_sat: number
+  max_miner_fee_sat: number
+  confirm_password?: string
+}
+
+export const getLoopStatus = (): Promise<LoopStatus> => request('/api/apps/loop/status')
+export const getLoopSwaps = (limit = 100): Promise<{ swaps: LoopSwap[] }> =>
+  request(`/api/apps/loop/swaps${buildQuery({ limit })}`)
+export const getLoopQuote = (payload: LoopQuotePayload): Promise<LoopQuote> =>
+  request('/api/apps/loop/quote', { method: 'POST', body: JSON.stringify(payload) })
+export const startLoopSwap = (payload: LoopSwapPayload) =>
+  request('/api/apps/loop/swap', { method: 'POST', body: JSON.stringify(payload) })
 export const getAppAdminPassword = (id: string) => request(`/api/apps/${id}/admin-password`)
 export const installApp = (id: string, payload?: { data_dir?: string; storage_mount?: string; elements_mode?: 'local' | 'remote'; elements_rpc_url?: string; elements_rpc_user?: string; elements_rpc_password?: string }) =>
   request(`/api/apps/${id}/install`, { method: 'POST', body: JSON.stringify(payload ?? {}) })

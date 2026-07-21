@@ -9,6 +9,7 @@ The App Store is a built-in catalog of optional services. Apps are defined in co
 - lndg: LNDg analytics dashboard (Docker)
 - elements: Elements/Liquid node (native binary)
 - peerswap: Peerswap daemon + psweb UI (native binaries)
+- loop: Lightning Labs loopd + loop CLI (native binaries, manual swaps only)
 
 ## App model
 Apps are defined in Go via the appHandler interface:
@@ -55,6 +56,13 @@ Native apps:
 - Status: derived from systemctl is-active
 - Start/Stop: systemctl start/stop
 - Uninstall: disable systemd unit and remove app files (data dir policy varies per app; Elements does not delete the selected data directory)
+
+Lightning Loop safety policy:
+- The app is optional and is never installed as part of the LightningOS core.
+- RPC and REST bind to loopback only; the manager uses Loop's TLS certificate and macaroon locally.
+- loopd receives a dedicated LND macaroon rather than `admin.macaroon`.
+- Quotes are mandatory before execution, live swaps require fresh UI reauthentication, and Autoloop is disabled.
+- Stop/uninstall are blocked while a swap is pending. Uninstall removes binaries and the unit but retains Loop's database and credentials for recovery.
 
 ## Helpers you should reuse
 - ensureDocker(ctx): installs docker and compose when needed

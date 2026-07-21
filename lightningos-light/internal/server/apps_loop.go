@@ -19,7 +19,7 @@ import (
 const (
 	loopAppID       = "loop"
 	loopVersion     = "v0.33.3-beta"
-	loopUser        = "losop"
+	loopUser        = "lightningos-loop"
 	loopServiceName = "lightningos-loopd"
 	loopRPCPort     = 11010
 	loopRESTPort    = 18081
@@ -218,17 +218,32 @@ func ensureLoopDirectories(ctx context.Context, paths loopPaths) error {
 	if err != nil {
 		return err
 	}
-	script := fmt.Sprintf(`set -e
+	script := loopDirectorySetupScript(paths, managerGroupID)
+	if _, err := runSystemd(ctx, "/bin/sh", "-c", script); err != nil {
+		return fmt.Errorf("failed to prepare Lightning Loop service account and directories: %w", err)
+	}
+	return nil
+}
+
+// loopDirectorySetupScript deliberately provisions a dedicated daemon user at
+// app-install time. Existing-node installations may not have the optional
+// terminal operator (historically named losop), and a daemon must not depend on
+// or run as a human login account in either installation mode.
+func loopDirectorySetupScript(paths loopPaths, managerGroupID string) string {
+	return fmt.Sprintf(`set -eu
+if ! getent group %s >/dev/null 2>&1; then
+  groupadd --system %s
+fi
+if ! id -u %s >/dev/null 2>&1; then
+  useradd --system --gid %s --home-dir %s --no-create-home --shell /usr/sbin/nologin %s
+fi
 mkdir -p %s %s %s %s
 chown -R %s:%s %s %s
 chmod 2750 %s %s %s %s
-`, shellQuote(paths.Root), shellQuote(paths.BinDir), shellQuote(paths.DataDir), shellQuote(paths.LNDDir),
+`, shellQuote(loopUser), shellQuote(loopUser), shellQuote(loopUser), shellQuote(loopUser), shellQuote(paths.DataDir), shellQuote(loopUser),
+		shellQuote(paths.Root), shellQuote(paths.BinDir), shellQuote(paths.DataDir), shellQuote(paths.LNDDir),
 		loopUser, managerGroupID, shellQuote(paths.Root), shellQuote(paths.DataDir),
 		shellQuote(paths.Root), shellQuote(paths.BinDir), shellQuote(paths.DataDir), shellQuote(paths.LNDDir))
-	if _, err := runSystemd(ctx, "/bin/sh", "-c", script); err != nil {
-		return fmt.Errorf("failed to prepare Lightning Loop directories: %w", err)
-	}
-	return nil
 }
 
 func ensureLoopBinary(ctx context.Context, paths loopPaths) error {
@@ -441,8 +456,7 @@ Wants=network-online.target
 Type=simple
 User=%s
 Group=%s
-SupplementaryGroups=lnd
-Environment=HOME=/home/%s
+Environment=HOME=%s
 ExecStart=%s --configfile=%s
 Restart=on-failure
 RestartSec=5
@@ -455,7 +469,7 @@ ReadWritePaths=%s
 
 [Install]
 WantedBy=multi-user.target
-`, loopUser, loopUser, loopUser, paths.LoopdPath, paths.ConfigPath, paths.DataDir)
+`, loopUser, loopUser, paths.DataDir, paths.LoopdPath, paths.ConfigPath, paths.DataDir)
 }
 
 func isPendingLoopState(state string) bool {

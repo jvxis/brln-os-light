@@ -54,12 +54,35 @@ func TestLoopConfigIsMainnetAndLoopbackOnly(t *testing.T) {
 func TestLoopServiceHardening(t *testing.T) {
 	service := loopServiceContents(loopAppPaths())
 	for _, expected := range []string{
-		"User=losop", "SupplementaryGroups=lnd", "NoNewPrivileges=true",
+		"User=lightningos-loop", "Group=lightningos-loop", "NoNewPrivileges=true",
 		"PrivateDevices=true", "ProtectSystem=full", "ProtectHome=true", "ReadWritePaths=",
 	} {
 		if !strings.Contains(service, expected) {
 			t.Fatalf("service missing %q", expected)
 		}
+	}
+	if strings.Contains(service, "SupplementaryGroups=lnd") {
+		t.Fatal("Loop service must not require the conventional lnd group on existing-node installs")
+	}
+}
+
+func TestLoopDirectorySetupProvisionsDedicatedServiceAccount(t *testing.T) {
+	paths := loopAppPaths()
+	script := loopDirectorySetupScript(paths, "1001")
+	for _, expected := range []string{
+		"getent group 'lightningos-loop'",
+		"groupadd --system 'lightningos-loop'",
+		"id -u 'lightningos-loop'",
+		"useradd --system --gid 'lightningos-loop'",
+		"--no-create-home --shell /usr/sbin/nologin 'lightningos-loop'",
+		"chown -R lightningos-loop:1001",
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("directory setup missing %q:\n%s", expected, script)
+		}
+	}
+	if strings.Contains(script, "losop") {
+		t.Fatal("Loop daemon setup must not depend on the terminal operator")
 	}
 }
 

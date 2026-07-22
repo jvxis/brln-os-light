@@ -1431,6 +1431,7 @@
     "thresholdDetail": "The proposal threshold is {{value}} signaling blocks in one 2,016-block period.",
     "phaseLabel": "Scheduled phase",
     "blocksToMandatory": "Blocks to mandatory signaling",
+    "mandatoryIn": "Mandatory in blocks",
     "lastComparison": "Last comparison",
     "internalSource": "Internal calculation",
     "publicSource": "Public BIP 110 monitor",
@@ -1448,7 +1449,7 @@
     "risk": {
       "normal": "Normal",
       "watch": "Watch",
-      "elevated": "Elevated",
+      "elevated": "Mandatory window nearing",
       "high": "High risk",
       "unknown": "Unknown"
     },

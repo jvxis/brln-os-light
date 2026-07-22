@@ -76,32 +76,57 @@ export default function BIP110MonitorCard({ status, loading }: BIP110MonitorCard
   const comparisonStatus = status?.comparison?.status || 'unavailable'
 
   return (
-    <article className="section-card">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="max-w-3xl">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-xs uppercase tracking-[0.28em] text-sky-300/80">{t('bip110.kicker')}</p>
+    <details className="section-card group">
+      <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <span className="text-xs uppercase tracking-[0.24em] text-sky-300/80">{t('bip110.kicker')}</span>
+            <h3 className="font-semibold">{t('bip110.title')}</h3>
             <StatusBadge label={t('bip110.informational')} tone="info" />
           </div>
-          <h3 className="mt-3 text-xl font-semibold">{t('bip110.title')}</h3>
-          <p className="mt-2 text-sm text-fog/65">{t('bip110.subtitle')}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge
+              label={status ? t(`bip110.risk.${status.risk_level}`) : t('common.unavailable')}
+              tone={tone}
+            />
+            <StatusBadge
+              label={t(`bip110.comparison.${comparisonStatus}`)}
+              tone={comparisonTone(comparisonStatus)}
+            />
+            <span className="ml-1 text-sm text-fog/55 transition-transform group-open:rotate-180" aria-hidden="true">⌄</span>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <StatusBadge
-            label={status ? t(`bip110.risk.${status.risk_level}`) : t('common.unavailable')}
-            tone={tone}
-            size="md"
-          />
-          <StatusBadge
-            label={t(`bip110.comparison.${comparisonStatus}`)}
-            tone={comparisonTone(comparisonStatus)}
-            size="md"
-          />
-        </div>
-      </div>
 
-      {status ? (
-        <div className="mt-6 space-y-5">
+        <div className="mt-3 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-[1.25fr_1fr_1fr_1.35fr_auto] lg:items-center">
+          {status ? (
+            <>
+              <div className="min-w-0 truncate">
+                <span className="text-fog/50">{t('bip110.phaseLabel')}:</span>{' '}
+                <span className="font-medium text-fog/90">{t(`bip110.phase.${status.phase}`)}</span>
+              </div>
+              <div className="min-w-0 truncate">
+                <span className="text-fog/50">{t('bip110.signalingRate')}:</span>{' '}
+                <span className="font-medium text-fog/90">{formatPercent(locale, signalPct, 2)}% / {formatPercent(locale, status.threshold_pct, 0)}%</span>
+              </div>
+              <div className="min-w-0 truncate">
+                <span className="text-fog/50">{t('bip110.mandatoryIn')}:</span>{' '}
+                <span className="font-medium text-fog/90">{formatSats(locale, status.blocks_to_mandatory)}</span>
+              </div>
+              <div className="min-w-0 truncate">
+                <span className="text-fog/50">{t('bip110.lastComparison')}:</span>{' '}
+                <span className="font-medium text-fog/90">{formatTimestamp(locale, status.checked_at)}</span>
+              </div>
+              <span className="text-right text-xs font-medium text-sky-300">{t('bip110.moreDetails')}</span>
+            </>
+          ) : (
+            <p className="text-fog/60 sm:col-span-2 lg:col-span-5">{loading ? t('bip110.loading') : t('bip110.unavailable')}</p>
+          )}
+        </div>
+      </summary>
+
+      {status && (
+        <div className="mt-5 space-y-5 border-t border-white/10 pt-5">
+          <p className="text-sm text-fog/65">{t('bip110.subtitle')}</p>
           <HorizontalBarGauge
             label={t('bip110.thresholdProgress')}
             value={signalPct}
@@ -111,29 +136,12 @@ export default function BIP110MonitorCard({ status, loading }: BIP110MonitorCard
             tone={tone}
           />
 
-          <div className="grid gap-3 lg:grid-cols-3">
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <p className="text-sm text-fog/55">{t('bip110.phaseLabel')}</p>
-              <p className="mt-2 font-semibold">{t(`bip110.phase.${status.phase}`)}</p>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <p className="text-sm text-fog/55">{t('bip110.blocksToMandatory')}</p>
-              <p className="mt-2 font-semibold">{formatSats(locale, status.blocks_to_mandatory)}</p>
-              <p className="mt-1 text-xs text-fog/45">#{formatSats(locale, status.mandatory_start_height)}</p>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <p className="text-sm text-fog/55">{t('bip110.lastComparison')}</p>
-              <p className="mt-2 font-semibold">{formatTimestamp(locale, status.checked_at)}</p>
-            </div>
-          </div>
-
           <div className="grid gap-4 lg:grid-cols-2">
             <SourcePanel label={t('bip110.internalSource')} source={status.internal} locale={locale} />
             <SourcePanel label={t('bip110.publicSource')} source={status.public} locale={locale} />
           </div>
 
-          <details className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <summary className="cursor-pointer text-sm text-fog/75">{t('bip110.moreDetails')}</summary>
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
             <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
               <div><span className="text-fog/50">{t('bip110.backend')}:</span> <span className="[overflow-wrap:anywhere]">{status.internal.subversion || status.internal.source}</span></div>
               <div><span className="text-fog/50">{t('bip110.lockIn')}:</span> #{formatSats(locale, status.lock_in_height)}</div>
@@ -146,11 +154,9 @@ export default function BIP110MonitorCard({ status, loading }: BIP110MonitorCard
             <a className="mt-3 inline-flex text-xs font-medium text-sky-300 hover:text-sky-200" href="https://bip110monitor.com/" target="_blank" rel="noreferrer">
               {t('bip110.openPublicMonitor')}
             </a>
-          </details>
+          </div>
         </div>
-      ) : (
-        <p className="mt-5 text-sm text-fog/60">{loading ? t('bip110.loading') : t('bip110.unavailable')}</p>
       )}
-    </article>
+    </details>
   )
 }

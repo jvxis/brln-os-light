@@ -1431,6 +1431,7 @@
     "thresholdDetail": "O limiar da proposta é de {{value}} blocos sinalizando em um período de 2.016 blocos.",
     "phaseLabel": "Fase programada",
     "blocksToMandatory": "Blocos até a sinalização obrigatória",
+    "mandatoryIn": "Obrigatória em blocos",
     "lastComparison": "Última comparação",
     "internalSource": "Cálculo interno",
     "publicSource": "Monitor público do BIP 110",
@@ -1448,7 +1449,7 @@
     "risk": {
       "normal": "Normal",
       "watch": "Observar",
-      "elevated": "Elevado",
+      "elevated": "Janela obrigatória próxima",
       "high": "Risco alto",
       "unknown": "Desconhecido"
     },

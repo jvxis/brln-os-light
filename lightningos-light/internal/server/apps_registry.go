@@ -25,6 +25,7 @@ func (s *Server) appRegistry() ([]appHandler, error) {
 		newFswapApp(s),
 		newTapdApp(s),
 		newLoopApp(s),
+		newLoopOutBRLNApp(s),
 	}
 	if err := validateAppRegistry(apps); err != nil {
 		return nil, err

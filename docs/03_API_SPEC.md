@@ -483,6 +483,7 @@ POST /api/apps/{id}/stop
 POST /api/apps/{id}/uninstall
 - Uninstalling `bark-wallet` removes its containers and app definition but intentionally preserves `/var/lib/lightningos/apps-data/bark-wallet` so wallet/off-chain state is not destroyed by the generic App Store action.
 - `loop` is optional. Stop and uninstall are rejected while any Loop swap is pending. Uninstall preserves `/var/lib/lightningos/apps-data/loop` for recovery and history.
+- `loopout-brln` is a native internal app. Stop or uninstall pauses its active job after the current attempt and preserves PostgreSQL history.
 
 GET /api/apps/loop/status
 - Returns installed/running state, safe daemon version/network fields, server terms, and pending swap count. It never returns TLS or macaroon paths.
@@ -499,6 +500,30 @@ POST /api/apps/loop/swap
 - Loop Out also requires `outgoing_channel_ids` as strings. An optional `destination_address` may be supplied; otherwise Loop uses the local LND wallet.
 - Requires recent `loop_swap` reauthentication when login protection is enabled. Missing reauth returns HTTP 428 with `code=loop_swap_reauth_required`.
 - Autoloop is intentionally not exposed or enabled.
+
+GET /api/apps/loopout-brln/status
+- Returns install/enable state and the current non-terminal job, if any.
+
+POST /api/apps/loopout-brln/preview
+- Validates the Lightning Address and execution limits without requesting a payable invoice or sending an HTLC.
+- Body fields: `lightning_address`, `total_sat`, `tranche_sat`, `interval_seconds`, `timeout_seconds`, `max_fee_ppm` (1–1,000,000), `min_local_percent`, optional `comment`, and optional `selected_channel_ids` as decimal strings.
+- The preview also checks the provider's per-payment minimum/maximum and comment policy for both the regular tranche and the final reduced tranche.
+- Returns payment count, final tranche, maximum aggregate fee budget, safely drainable liquidity, warnings, and per-channel projections.
+
+GET  /api/apps/loopout-brln/jobs?limit=50
+POST /api/apps/loopout-brln/jobs
+- Creates one background job at a time. Creation requires recent `loopout_brln` reauthentication when login protection is enabled; missing reauth returns HTTP 428 with `code=loopout_brln_reauth_required`.
+- A fresh LNURL-pay invoice is requested for each attempt. Its exact msat amount is verified before sending.
+
+GET  /api/apps/loopout-brln/jobs/{id}
+- Returns the job, individual payment attempts, and the app-local event timeline.
+
+POST /api/apps/loopout-brln/jobs/{id}/pause
+POST /api/apps/loopout-brln/jobs/{id}/resume
+POST /api/apps/loopout-brln/jobs/{id}/cancel
+- Pause and cancel take effect before a new payment begins or immediately after the current in-flight payment reaches a terminal LND state.
+- Resume requires recent `loopout_brln` reauthentication.
+- The app does not emit global or Telegram-specific notifications; successful payments continue to appear through the existing LND payment notification flow.
 
 POST /api/apps/{id}/reset-admin
 GET /api/apps/{id}/admin-password

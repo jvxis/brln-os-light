@@ -69,6 +69,10 @@ type Server struct {
 	depixMu                     sync.Mutex
 	depix                       *DepixService
 	depixErr                    string
+	loopOutBRLNInitAt           time.Time
+	loopOutBRLNMu               sync.Mutex
+	loopOutBRLN                 *LoopOutBRLNService
+	loopOutBRLNErr              string
 	autofeeInitAt               time.Time
 	autofeeMu                   sync.Mutex
 	autofee                     *AutofeeService
@@ -175,6 +179,7 @@ func (s *Server) Run() error {
 	s.initFailedPaymentsCleaner()
 	s.initTorPeerChecker()
 	s.initDepix()
+	s.initLoopOutBRLN()
 	s.initAutofee()
 	s.initShortcuts()
 	s.initChannelRanking()
@@ -210,6 +215,9 @@ func (s *Server) Run() error {
 	}
 	if s.autofee != nil {
 		s.autofee.Start()
+	}
+	if s.loopOutBRLN != nil {
+		s.loopOutBRLN.Start(runCtx)
 	}
 	if s.channelRanking != nil {
 		s.channelRanking.Start()

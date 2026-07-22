@@ -12,7 +12,7 @@ LightningOS is a guided control center for running an LND node with a clean web 
 - Lightning Ops (channels, peers, fees, open or close)
 - Reports (daily table plus live results)
 - Notifications (history plus optional Telegram backup)
-- App Store (Docker based optional apps)
+- App Store (optional native and Docker-based apps)
 - Terminal (GoTTY) optional
 
 ## Principles

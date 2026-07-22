@@ -33,6 +33,7 @@ import PayBoleto from './pages/PayBoleto'
 import NodeRetirement from './pages/NodeRetirement'
 import TaprootAssets from './pages/TaprootAssets'
 import LightningLoop from './pages/LightningLoop'
+import LoopOutBRLN from './pages/LoopOutBRLN'
 import { getAuthState, getBitcoinLocalStatus, getBoletoConfig, getLndStatus, getWizardStatus, logoutAuth, type AuthState } from './api'
 import { defaultPalette, paletteOrder, resolvePalette, resolveTheme, type PaletteKey, type ThemeMode } from './theme'
 
@@ -207,6 +208,7 @@ export default function App() {
       { key: 'elements', label: t('nav.elements'), element: <Elements /> },
       { key: 'taproot-assets', label: t('nav.taprootAssets'), element: <TaprootAssets /> },
       { key: 'lightning-loop', label: t('nav.lightningLoop'), element: <LightningLoop /> },
+      { key: 'loop-out-brln', label: t('nav.loopOutBrln'), element: <LoopOutBRLN /> },
       { key: 'notifications', label: t('nav.notifications'), element: <Notifications /> },
       { key: 'audit-log', label: t('nav.auditLog'), element: <AuditLog /> },
       { key: 'disks', label: t('nav.disks'), element: <Disks /> },

@@ -5,7 +5,7 @@
 - HTTPS server on port 8443.
 - Serves the React SPA and a REST API.
 - Talks to systemd, LND gRPC, Bitcoin RPC and ZMQ, and Postgres.
-- Manages optional Docker apps and reports jobs.
+- Manages optional native/Docker apps and report jobs.
 
 2) UI (React + Tailwind)
 - Single page app served by the manager.
@@ -26,7 +26,7 @@
 - Writes to reports_daily (UPSERT).
 - Live reports are computed on demand with a short TTL cache.
 
-6) App Store (Docker based)
+6) App Store (native and Docker-based apps)
 - Optional apps managed by the manager with docker compose.
 - App files in /var/lib/lightningos/apps.
 - App data in /var/lib/lightningos/apps-data.

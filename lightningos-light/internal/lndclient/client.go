@@ -447,6 +447,66 @@ func (c *Client) TrackPaymentSnapshot(ctx context.Context, paymentHash string) (
 	return pay, nil
 }
 
+// TrackPaymentDetails returns the current Router payment snapshot in the
+// compact shape used by long-running manager jobs. The boolean is false when
+// LND does not know the payment hash.
+func (c *Client) TrackPaymentDetails(ctx context.Context, paymentHash string) (PaymentDetails, bool, error) {
+	pay, err := c.TrackPaymentSnapshot(ctx, paymentHash)
+	if err != nil {
+		return PaymentDetails{}, false, err
+	}
+	if pay == nil {
+		return PaymentDetails{}, false, nil
+	}
+	details := PaymentDetails{
+		PaymentHash:    strings.ToLower(strings.TrimSpace(pay.PaymentHash)),
+		PaymentRequest: strings.TrimSpace(pay.PaymentRequest),
+		Status:         strings.TrimSpace(pay.Status.String()),
+		ValueSat:       pay.ValueSat,
+		ValueMsat:      pay.ValueMsat,
+		FeeSat:         pay.FeeSat,
+		FeeMsat:        pay.FeeMsat,
+		CreatedAt:      recentPaymentTimestamp(pay),
+	}
+	if details.FeeSat <= 0 {
+		details.FeeSat = msatToSatCeil(details.FeeMsat)
+	}
+	if route := recentRouteFromPayment(pay); route != nil {
+		summary := PaymentRouteSummary{
+			RouteKey:      routeKey(route),
+			TotalAmtSat:   route.TotalAmt,
+			TotalAmtMsat:  route.TotalAmtMsat,
+			TotalFeesSat:  route.TotalFees,
+			TotalFeesMsat: route.TotalFeesMsat,
+			TotalTimeLock: route.TotalTimeLock,
+			HopCount:      len(route.Hops),
+		}
+		if summary.TotalFeesMsat <= 0 {
+			summary.TotalFeesMsat = routeTotalFeeMsat(route)
+		}
+		if summary.TotalFeesMsat > 0 {
+			summary.TotalFeesSat = msatToSatCeil(summary.TotalFeesMsat)
+		}
+		for _, hop := range route.Hops {
+			if hop == nil {
+				continue
+			}
+			summary.Hops = append(summary.Hops, PaymentRouteHop{
+				PubKey:             strings.TrimSpace(hop.PubKey),
+				ChannelID:          hop.ChanId,
+				ChannelCapacitySat: hop.ChanCapacity,
+				AmtToForwardSat:    hop.AmtToForward,
+				AmtToForwardMsat:   hop.AmtToForwardMsat,
+				FeeSat:             hop.Fee,
+				FeeMsat:            hop.FeeMsat,
+				Expiry:             hop.Expiry,
+			})
+		}
+		details.Route = &summary
+	}
+	return details, true, nil
+}
+
 const failedPaymentsPageSize = 5000
 const failedPaymentsMaxPages = 200000
 

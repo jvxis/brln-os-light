@@ -394,6 +394,14 @@ POST   /api/apps/{id}/stop
 POST   /api/apps/{id}/reset-admin
 GET    /api/apps/{id}/admin-password
 GET    /api/apps/electrs/status
+GET    /api/apps/loopout-brln/status
+POST   /api/apps/loopout-brln/preview
+GET    /api/apps/loopout-brln/jobs
+POST   /api/apps/loopout-brln/jobs
+GET    /api/apps/loopout-brln/jobs/{id}
+POST   /api/apps/loopout-brln/jobs/{id}/pause
+POST   /api/apps/loopout-brln/jobs/{id}/resume
+POST   /api/apps/loopout-brln/jobs/{id}/cancel
 ```
 
 ### Notifications

@@ -1084,6 +1084,128 @@ export const getLoopQuote = (payload: LoopQuotePayload): Promise<LoopQuote> =>
   request('/api/apps/loop/quote', { method: 'POST', body: JSON.stringify(payload) })
 export const startLoopSwap = (payload: LoopSwapPayload) =>
   request('/api/apps/loop/swap', { method: 'POST', body: JSON.stringify(payload) })
+
+export type LoopOutBRLNRequest = {
+  lightning_address: string
+  total_sat: number
+  tranche_sat: number
+  interval_seconds: number
+  timeout_seconds: number
+  max_fee_ppm: number
+  min_local_percent: number
+  comment?: string
+  selected_channel_ids?: string[]
+  confirm_password?: string
+}
+
+export type LoopOutBRLNChannelPreview = {
+  channel_id: string
+  channel_point: string
+  peer_alias: string
+  remote_pubkey: string
+  capacity_sat: number
+  local_balance_sat: number
+  local_percent: number
+  reserve_target_sat: number
+  drainable_sat: number
+  eligible_first: boolean
+  reason?: string
+}
+
+export type LoopOutBRLNPreview = {
+  lightning_address: string
+  total_sat: number
+  tranche_sat: number
+  last_tranche_sat: number
+  estimated_parts: number
+  max_fee_total_sat: number
+  total_drainable_sat: number
+  can_start: boolean
+  warnings?: string[]
+  channels: LoopOutBRLNChannelPreview[]
+}
+
+export type LoopOutBRLNJob = {
+  id: number
+  lightning_address: string
+  total_sat: number
+  tranche_sat: number
+  interval_seconds: number
+  timeout_seconds: number
+  max_fee_ppm: number
+  min_local_percent: number
+  comment?: string
+  selected_channel_ids?: string[]
+  status: string
+  sent_sat: number
+  fee_sat: number
+  attempt_count: number
+  retry_round: number
+  last_error?: string
+  next_attempt_at: string
+  created_at: string
+  updated_at: string
+  started_at?: string
+  completed_at?: string
+}
+
+export type LoopOutBRLNPayment = {
+  id: number
+  job_id: number
+  sequence_no: number
+  retry_round: number
+  attempt_no: number
+  amount_sat: number
+  payment_hash?: string
+  status: string
+  fee_sat: number
+  fee_msat: number
+  channel_id?: string
+  channel_point?: string
+  channel_alias?: string
+  failure_reason?: string
+  created_at: string
+  updated_at: string
+  completed_at?: string
+}
+
+export type LoopOutBRLNEvent = {
+  id: number
+  job_id: number
+  kind: string
+  level: string
+  message: string
+  metadata?: Record<string, unknown>
+  created_at: string
+}
+
+export type LoopOutBRLNStatus = {
+  installed: boolean
+  enabled: boolean
+  active_job?: LoopOutBRLNJob
+}
+
+export type LoopOutBRLNJobDetail = {
+  job: LoopOutBRLNJob
+  payments: LoopOutBRLNPayment[]
+  events: LoopOutBRLNEvent[]
+}
+
+export const getLoopOutBRLNStatus = (): Promise<LoopOutBRLNStatus> => request('/api/apps/loopout-brln/status')
+export const previewLoopOutBRLN = (payload: LoopOutBRLNRequest): Promise<LoopOutBRLNPreview> =>
+  request('/api/apps/loopout-brln/preview', { method: 'POST', body: JSON.stringify(payload) })
+export const getLoopOutBRLNJobs = (limit = 50): Promise<{ jobs: LoopOutBRLNJob[] }> =>
+  request(`/api/apps/loopout-brln/jobs${buildQuery({ limit })}`)
+export const getLoopOutBRLNJob = (id: number): Promise<LoopOutBRLNJobDetail> =>
+  request(`/api/apps/loopout-brln/jobs/${id}`)
+export const createLoopOutBRLNJob = (payload: LoopOutBRLNRequest): Promise<LoopOutBRLNJob> =>
+  request('/api/apps/loopout-brln/jobs', { method: 'POST', body: JSON.stringify(payload) })
+export const pauseLoopOutBRLNJob = (id: number): Promise<LoopOutBRLNJob> =>
+  request(`/api/apps/loopout-brln/jobs/${id}/pause`, { method: 'POST', body: JSON.stringify({}) })
+export const resumeLoopOutBRLNJob = (id: number, confirmPassword?: string): Promise<LoopOutBRLNJob> =>
+  request(`/api/apps/loopout-brln/jobs/${id}/resume`, { method: 'POST', body: JSON.stringify({ confirm_password: confirmPassword || '' }) })
+export const cancelLoopOutBRLNJob = (id: number): Promise<LoopOutBRLNJob> =>
+  request(`/api/apps/loopout-brln/jobs/${id}/cancel`, { method: 'POST', body: JSON.stringify({}) })
 export const getAppAdminPassword = (id: string) => request(`/api/apps/${id}/admin-password`)
 export const installApp = (id: string, payload?: { data_dir?: string; storage_mount?: string; elements_mode?: 'local' | 'remote'; elements_rpc_url?: string; elements_rpc_user?: string; elements_rpc_password?: string }) =>
   request(`/api/apps/${id}/install`, { method: 'POST', body: JSON.stringify(payload ?? {}) })

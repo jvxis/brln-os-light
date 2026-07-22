@@ -31,7 +31,7 @@ LightningOS is a Full Lightning Node Daemon Installer, Lightning node manager wi
 - Telegram notifications: SCB backups, financial summaries, on-demand `/scb` and `/balances`
 - Daily routing reports (timer + backfill + live API + movement live API)
 - On-chain Hub with coin control, UTXO labels/groups/locks, fee bumping, transaction details, and Wallet Flow provenance graph
-- App Store with 16 registered apps/services, dependency checks, persistent data, and on-demand Docker installation
+- App Store with 19 registered apps/services, dependency checks, persistent data, native integrations, and on-demand Docker installation
 - Dedicated Taproot Assets interface for asset discovery, universe sync, mint/reissue, receive, send preview, send, and redeem
 - Bitcoin Local, Elements, LND, Tor, disk, database maintenance, audit, terminal, shortcut, and log management
 
@@ -822,7 +822,7 @@ ss -ltn | grep :8443
 
 ### App Store catalog
 
-The backend registry currently exposes 16 apps/services. App files are managed by LightningOS, persistent data is kept separately, and Docker is installed only when an app needs it.
+The backend registry currently exposes 19 apps/services. App files are managed by LightningOS, persistent data is kept separately, and Docker is installed only when an app needs it.
 
 | App | Purpose and current integration |
 | --- | --- |
@@ -834,6 +834,7 @@ The backend registry currently exposes 16 apps/services. App files are managed b
 | **Fedimint Lightning Gateway** | Independent `gatewayd lnd` gateway that connects local LND to Fedimint federations over Iroh. It cannot run together with standalone Taproot Assets because both require the LND HTLC interceptor. |
 | **LNDg** | Advanced LND analytics and automation in Docker, available on port `8889`, with managed admin credentials and local LND integration. |
 | **LNbits** | Lightning accounts/wallet and extension platform funded by local LND. |
+| **BTCPay Server** | Self-hosted Bitcoin and Lightning payment processor integrated with the local node stack. |
 | **Elements** | Native Liquid Elements service with RPC on `127.0.0.1:7041`, selectable local/remote Bitcoin mainchain, local-node detection, and an optional pre-mounted custom data directory. |
 | **Peerswap** | Native `peerswapd` plus `psweb` on port `1984`; uses either local Elements or a tested remote Elements RPC source, with a node-specific wallet in remote mode. |
 | **RoboSats Gateway** | Self-hosted RoboSats client for P2P Bitcoin trading over Tor, pinned to a tested release and exposed through the LightningOS HTTPS proxy. |
@@ -842,6 +843,8 @@ The backend registry currently exposes 16 apps/services. App files are managed b
 | **Buy DePix** | Integrated PIX-to-DePix checkout with quote/order creation, status tracking, and a dedicated UI page. |
 | **FSwap** | Pays Brazilian boletos and bills with sats from the local Lightning node through the dedicated Pay Boleto flow. |
 | **Taproot Assets (tapd)** | Official standalone `tapd` connected to local LND for on-chain asset discovery, universe sync, mint/reissue, receive, send preview/send, and redeem. Experimental mainnet alpha; Lightning asset transfers require the separate community edge-node work. |
+| **Lightning Loop** | Official Lightning Labs swap client with LightningOS-managed installation and local LND integration. |
+| **Loop Out BR⚡LN** | Native outbound-liquidity workflow that splits a target into controlled Lightning Address payments, preserves a configurable local-balance floor, and keeps job, payment, and event history in LightningOS. |
 
 Fedimint details are documented in the [Fedimint configuration guide](docs/28_FEDIMINT_CONFIGURATION_EN.md) ([PT-BR](docs/27_FEDIMINT_CONFIGURATION_PT_BR.md)).
 

@@ -17,6 +17,7 @@ import taprootAssetsIcon from '../assets/apps/taproot-assets.svg'
 import barkWalletIcon from '../assets/apps/bark-wallet.svg'
 import btcpayIcon from '../assets/apps/btcpay.svg'
 import loopIcon from '../assets/apps/lightning-loop.svg'
+import loopOutBRLNIcon from '../assets/apps/loopout-brln.png'
 import CpuMinerStats from '../components/CpuMinerStats'
 
 type AppInfo = {
@@ -84,7 +85,8 @@ const iconMap: Record<string, string> = {
   tapd: taprootAssetsIcon,
   'bark-wallet': barkWalletIcon,
   btcpay: btcpayIcon,
-  loop: loopIcon
+  loop: loopIcon,
+  'loopout-brln': loopOutBRLNIcon
 }
 
 const internalRoutes: Record<string, string> = {
@@ -92,7 +94,8 @@ const internalRoutes: Record<string, string> = {
   elements: 'elements',
   fswap: 'pay-boleto',
   tapd: 'taproot-assets',
-  loop: 'lightning-loop'
+  loop: 'lightning-loop',
+  'loopout-brln': 'loop-out-brln'
 }
 
 const statusStyles: Record<string, string> = {
@@ -546,6 +549,10 @@ export default function AppStore() {
                 ? t('nav.payBoleto')
               : app.id === 'tapd'
                 ? t('nav.taprootAssets')
+              : app.id === 'loop'
+                ? t('nav.lightningLoop')
+              : app.id === 'loopout-brln'
+                ? t('nav.loopOutBrln')
               : t('appStore.internal')
           const openUrl = app.external_url || (app.port ? `${app.scheme || 'http'}://${host}:${app.port}` : '')
           const publicPoolUrl = openUrl || `http://${host}:${publicPoolUIPortFallback}`

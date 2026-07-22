@@ -134,6 +134,7 @@ type Server struct {
 	bitcoinLocalCache           cachedBitcoinLocalStatus
 	bitcoinMarketMu             sync.Mutex
 	bitcoinMarketCache          cachedBitcoinMarketStatus
+	bip110Monitor               *bip110MonitorService
 }
 
 func New(cfg *config.Config, logger *log.Logger) *Server {
@@ -152,6 +153,7 @@ func New(cfg *config.Config, logger *log.Logger) *Server {
 	srv.chat = NewChatService(srv.lnd, logger)
 	srv.amboss = NewAmbossHealthChecker(srv.lnd, logger)
 	srv.chanHealer = NewChanStatusHealer(srv.lnd, logger)
+	srv.bip110Monitor = newBIP110MonitorService(srv)
 	return srv
 }
 

@@ -1416,6 +1416,57 @@
     "zmqRawBlock": "ZMQ RAW BLOCK",
     "zmqRawTx": "ZMQ RAW TX"
   },
+  "bip110": {
+    "kicker": "MONITOR DE CONSENSO",
+    "informational": "Somente informativo",
+    "title": "Monitor do BIP 110",
+    "subtitle": "Compara a sinalização calculada pelo backend Bitcoin ativo com o monitor público do BIP 110. Nunca altera a configuração do node ou do LND.",
+    "available": "Disponível",
+    "tip": "Ponta",
+    "period": "Período",
+    "signalingBlocks": "Blocos sinalizando",
+    "signalingRate": "Taxa de sinalização",
+    "sourceUnavailable": "Esta fonte está temporariamente indisponível.",
+    "thresholdProgress": "Sinalização dos mineradores até o lock-in",
+    "thresholdDetail": "O limiar da proposta é de {{value}} blocos sinalizando em um período de 2.016 blocos.",
+    "phaseLabel": "Fase programada",
+    "blocksToMandatory": "Blocos até a sinalização obrigatória",
+    "lastComparison": "Última comparação",
+    "internalSource": "Cálculo interno",
+    "publicSource": "Monitor público do BIP 110",
+    "moreDetails": "Detalhes da comparação",
+    "backend": "Backend ativo",
+    "lockIn": "Lock-in forçado",
+    "activation": "Ativação forçada",
+    "tipDelta": "Diferença entre pontas",
+    "signalDelta": "Diferença na contagem de sinais",
+    "publicUpdated": "Fonte pública atualizada",
+    "disclaimer": "Monitoramento somente informativo. A API pública não expõe hashes de blocos; portanto, a concordância valida as contagens de sinalização, mas não prova sozinha que não existe uma divisão de cadeia.",
+    "openPublicMonitor": "Abrir monitor público do BIP 110",
+    "loading": "Carregando a comparação interna e pública do BIP 110...",
+    "unavailable": "A comparação do BIP 110 está indisponível.",
+    "risk": {
+      "normal": "Normal",
+      "watch": "Observar",
+      "elevated": "Elevado",
+      "high": "Risco alto",
+      "unknown": "Desconhecido"
+    },
+    "comparison": {
+      "matched": "Fontes conferem",
+      "tip_mismatch": "Pontas diferentes",
+      "signal_mismatch": "Sinais diferentes",
+      "unavailable": "Comparação indisponível"
+    },
+    "phase": {
+      "unknown": "Desconhecida",
+      "voluntary_signaling": "Sinalização voluntária",
+      "mandatory_signaling": "Sinalização obrigatória",
+      "locked_in": "Lock-in concluído",
+      "active_window": "Regras temporárias ativas",
+      "scheduled_window_complete": "Janela programada concluída"
+    }
+  },
   "systemCheck": {
     "checkedAt": "Checado em {{value}}",
     "empty": "Nenhum dado de system check disponivel.",

@@ -1416,6 +1416,57 @@
     "zmqRawBlock": "ZMQ Raw Block",
     "zmqRawTx": "ZMQ Raw Tx"
   },
+  "bip110": {
+    "kicker": "CONSENSUS WATCH",
+    "informational": "Informational only",
+    "title": "BIP 110 monitor",
+    "subtitle": "Compares signaling calculated by the active Bitcoin backend with the public BIP 110 monitor. It never changes node or LND configuration.",
+    "available": "Available",
+    "tip": "Tip",
+    "period": "Period",
+    "signalingBlocks": "Signaling blocks",
+    "signalingRate": "Signaling rate",
+    "sourceUnavailable": "This source is temporarily unavailable.",
+    "thresholdProgress": "Miner signaling toward lock-in",
+    "thresholdDetail": "The proposal threshold is {{value}} signaling blocks in one 2,016-block period.",
+    "phaseLabel": "Scheduled phase",
+    "blocksToMandatory": "Blocks to mandatory signaling",
+    "lastComparison": "Last comparison",
+    "internalSource": "Internal calculation",
+    "publicSource": "Public BIP 110 monitor",
+    "moreDetails": "Comparison details",
+    "backend": "Active backend",
+    "lockIn": "Forced lock-in",
+    "activation": "Forced activation",
+    "tipDelta": "Tip difference",
+    "signalDelta": "Signal count difference",
+    "publicUpdated": "Public source updated",
+    "disclaimer": "Informational monitoring only. The public API does not expose block hashes, so agreement here validates signaling counts but does not by itself prove that no chain split exists.",
+    "openPublicMonitor": "Open public BIP 110 monitor",
+    "loading": "Loading the internal and public BIP 110 comparison...",
+    "unavailable": "The BIP 110 comparison is unavailable.",
+    "risk": {
+      "normal": "Normal",
+      "watch": "Watch",
+      "elevated": "Elevated",
+      "high": "High risk",
+      "unknown": "Unknown"
+    },
+    "comparison": {
+      "matched": "Sources match",
+      "tip_mismatch": "Tips differ",
+      "signal_mismatch": "Signals differ",
+      "unavailable": "Comparison unavailable"
+    },
+    "phase": {
+      "unknown": "Unknown",
+      "voluntary_signaling": "Voluntary signaling",
+      "mandatory_signaling": "Mandatory signaling",
+      "locked_in": "Locked in",
+      "active_window": "Temporary rules active",
+      "scheduled_window_complete": "Scheduled window complete"
+    }
+  },
   "systemCheck": {
     "checkedAt": "Checked at {{value}}",
     "empty": "No system check data available.",

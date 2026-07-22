@@ -44,6 +44,11 @@ GET /api/bitcoin
 GET /api/bitcoin/active
 - Returns active source (remote or local) with status.
 
+GET /api/bitcoin/bip110
+- Informational BIP 110 monitor. Calculates bit-4 signaling from the active `bitcoind`, fetches `https://bip110monitor.com/api`, and compares both sources at the same sampled height when possible.
+- Returns the scheduled phase and milestones, internal and public samples, comparison status, and an informational risk level.
+- Never changes the Bitcoin backend, LND configuration, channel state, or service state.
+
 GET /api/bitcoin/source
 - Returns {"source":"remote"|"local"}.
 

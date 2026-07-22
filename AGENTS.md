@@ -143,6 +143,7 @@ GET    /api/logs
 ```text
 GET    /api/bitcoin
 GET    /api/bitcoin/active
+GET    /api/bitcoin/bip110
 GET    /api/bitcoin/source
 POST   /api/bitcoin/source
 GET    /api/bitcoin/market

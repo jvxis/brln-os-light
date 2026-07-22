@@ -1506,6 +1506,7 @@ type RebalanceService struct {
 	manualRestart                   map[int64]manualRestartInfo
 	manualRestartCancel             map[uint64]*manualRestartHandle
 	lastAutoByTarget                map[uint64]time.Time
+	lastGuaranteedByTarget          map[uint64]time.Time
 	lastMCResetAt                   time.Time
 	lastMCResetReason               string
 	mcResetCount                    int64
@@ -1552,18 +1553,19 @@ type explorationStat struct {
 
 func NewRebalanceService(db *pgxpool.Pool, lnd *lndclient.Client, logger *log.Logger) *RebalanceService {
 	return &RebalanceService{
-		db:                  db,
-		lnd:                 lnd,
-		logger:              logger,
-		subs:                map[chan RebalanceEvent]struct{}{},
-		channelLocks:        map[uint64]bool{},
-		jobCancel:           map[int64]context.CancelFunc{},
-		manualRestart:       map[int64]manualRestartInfo{},
-		manualRestartCancel: map[uint64]*manualRestartHandle{},
-		lastAutoByTarget:    map[uint64]time.Time{},
-		cooldownProbeSem:    make(chan struct{}, cooldownProbeWorkerSlots),
-		explorationStats:    map[uint64]*explorationStat{},
-		explorationJobs:     map[int64]uint64{},
+		db:                     db,
+		lnd:                    lnd,
+		logger:                 logger,
+		subs:                   map[chan RebalanceEvent]struct{}{},
+		channelLocks:           map[uint64]bool{},
+		jobCancel:              map[int64]context.CancelFunc{},
+		manualRestart:          map[int64]manualRestartInfo{},
+		manualRestartCancel:    map[uint64]*manualRestartHandle{},
+		lastAutoByTarget:       map[uint64]time.Time{},
+		lastGuaranteedByTarget: map[uint64]time.Time{},
+		cooldownProbeSem:       make(chan struct{}, cooldownProbeWorkerSlots),
+		explorationStats:       map[uint64]*explorationStat{},
+		explorationJobs:        map[int64]uint64{},
 	}
 }
 
@@ -2583,7 +2585,7 @@ type guaranteedRebalanceSlotResult struct {
 	SkipReason    string
 }
 
-func orderGuaranteedRebalanceTargets(channels []RebalanceChannel, lastAutoByTarget map[uint64]time.Time) []RebalanceChannel {
+func orderGuaranteedRebalanceTargets(channels []RebalanceChannel, lastGuaranteedByTarget map[uint64]time.Time) []RebalanceChannel {
 	targets := make([]RebalanceChannel, 0)
 	for _, channel := range channels {
 		if !channel.GuaranteedRebalanceEnabled || !channel.EligibleAsManualTarget {
@@ -2594,18 +2596,18 @@ func orderGuaranteedRebalanceTargets(channels []RebalanceChannel, lastAutoByTarg
 	sort.SliceStable(targets, func(i, j int) bool {
 		a := targets[i]
 		b := targets[j]
-		aUrgency := sovereignOutboundUrgency(a)
-		bUrgency := sovereignOutboundUrgency(b)
-		if aUrgency != bUrgency {
-			return aUrgency > bUrgency
-		}
-		aLast := lastAutoByTarget[a.ChannelID]
-		bLast := lastAutoByTarget[b.ChannelID]
+		aLast := lastGuaranteedByTarget[a.ChannelID]
+		bLast := lastGuaranteedByTarget[b.ChannelID]
 		if aLast.IsZero() != bLast.IsZero() {
 			return aLast.IsZero()
 		}
 		if !aLast.IsZero() && !aLast.Equal(bLast) {
 			return aLast.Before(bLast)
+		}
+		aUrgency := sovereignOutboundUrgency(a)
+		bUrgency := sovereignOutboundUrgency(b)
+		if aUrgency != bUrgency {
+			return aUrgency > bUrgency
 		}
 		if a.LocalPct != b.LocalPct {
 			return a.LocalPct < b.LocalPct
@@ -2619,9 +2621,9 @@ func orderGuaranteedRebalanceTargets(channels []RebalanceChannel, lastAutoByTarg
 // operator-selected pool before either scheduler evaluates its normal plan.
 // It intentionally bypasses score/history/economic filters, while retaining
 // the manual-target safety checks, channel-busy guard, fee cap and auto budget.
-func (s *RebalanceService) queueGuaranteedRebalanceSlot(ctx context.Context, cfg RebalanceConfig, channels []RebalanceChannel, settings map[uint64]channelSetting, lastAutoByTarget map[uint64]time.Time, scanAt time.Time) guaranteedRebalanceSlotResult {
+func (s *RebalanceService) queueGuaranteedRebalanceSlot(ctx context.Context, cfg RebalanceConfig, channels []RebalanceChannel, settings map[uint64]channelSetting, lastAutoByTarget map[uint64]time.Time, lastGuaranteedByTarget map[uint64]time.Time, scanAt time.Time) guaranteedRebalanceSlotResult {
 	result := guaranteedRebalanceSlotResult{}
-	targets := orderGuaranteedRebalanceTargets(channels, lastAutoByTarget)
+	targets := orderGuaranteedRebalanceTargets(channels, lastGuaranteedByTarget)
 	if len(targets) == 0 {
 		return result
 	}
@@ -2691,8 +2693,10 @@ func (s *RebalanceService) queueGuaranteedRebalanceSlot(ctx context.Context, cfg
 			continue
 		}
 		lastAutoByTarget[target.ChannelID] = scanAt
+		lastGuaranteedByTarget[target.ChannelID] = scanAt
 		s.mu.Lock()
 		s.lastAutoByTarget[target.ChannelID] = scanAt
+		s.lastGuaranteedByTarget[target.ChannelID] = scanAt
 		s.mu.Unlock()
 		result.Queued = true
 		result.ChannelID = target.ChannelID
@@ -3625,15 +3629,21 @@ func (s *RebalanceService) runAutoScan() {
 		}
 	}
 	lastAutoByTarget := s.loadLastAutoEnqueueTimes(ctx)
+	lastGuaranteedByTarget := s.loadLastGuaranteedEnqueueTimes(ctx)
 	targetCooldowns := s.loadRecentTargetCooldownSet(ctx, defaultRecentTargetCooldownWindows(scanAt))
 
-	// Wave 2.2: merge in-memory lastAutoByTarget and read criticalActive under
-	// a single mutex session so other goroutines cannot mutate them between
-	// the two reads.
+	// Merge the in-memory auto and guaranteed-slot clocks and read
+	// criticalActive under one mutex session so other goroutines cannot mutate
+	// them between the reads.
 	s.mu.Lock()
 	for channelID, last := range s.lastAutoByTarget {
 		if existing, ok := lastAutoByTarget[channelID]; !ok || last.After(existing) {
 			lastAutoByTarget[channelID] = last
+		}
+	}
+	for channelID, last := range s.lastGuaranteedByTarget {
+		if existing, ok := lastGuaranteedByTarget[channelID]; !ok || last.After(existing) {
+			lastGuaranteedByTarget[channelID] = last
 		}
 	}
 	criticalActive := cfg.CriticalCycles > 0 && s.criticalMissCount >= cfg.CriticalCycles
@@ -3645,7 +3655,7 @@ func (s *RebalanceService) runAutoScan() {
 		snapshot := s.buildChannelSnapshot(ctx, cfg, criticalActive, ch, setting, ledger[ch.ChannelID], revenueByChannel[ch.ChannelID], costByChannel[ch.ChannelID], drainRateByChannel[ch.ChannelID], exclusions[ch.ChannelID])
 		snapshots = append(snapshots, snapshot)
 	}
-	guaranteedSlot = s.queueGuaranteedRebalanceSlot(ctx, cfg, snapshots, settings, lastAutoByTarget, scanAt)
+	guaranteedSlot = s.queueGuaranteedRebalanceSlot(ctx, cfg, snapshots, settings, lastAutoByTarget, lastGuaranteedByTarget, scanAt)
 	if guaranteedSlot.Queued {
 		queuedCount = 1
 	}
@@ -15015,6 +15025,35 @@ from rebalance_jobs
 where source='auto'
 group by target_channel_id
 `)
+	if err != nil {
+		return result
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var channelID int64
+		var last time.Time
+		if err := rows.Scan(&channelID, &last); err != nil {
+			return result
+		}
+		if channelID > 0 {
+			result[uint64(channelID)] = last
+		}
+	}
+	return result
+}
+
+func (s *RebalanceService) loadLastGuaranteedEnqueueTimes(ctx context.Context) map[uint64]time.Time {
+	result := map[uint64]time.Time{}
+	if s.db == nil {
+		return result
+	}
+	rows, err := s.db.Query(ctx, `
+select target_channel_id, max(created_at)
+from rebalance_jobs
+where source='auto'
+  and coalesce(trigger_reason, reason, '')=$1
+group by target_channel_id
+`, rebalanceGuaranteedReason)
 	if err != nil {
 		return result
 	}

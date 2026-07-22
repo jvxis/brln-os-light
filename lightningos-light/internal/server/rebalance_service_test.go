@@ -4308,7 +4308,7 @@ func TestInjectSovereignExplorationSlotsDoesNotDisplaceUrgentTargets(t *testing.
 	}
 }
 
-func TestOrderGuaranteedRebalanceTargetsUsesExactChannelIDAndFairness(t *testing.T) {
+func TestOrderGuaranteedRebalanceTargetsUsesExactChannelIDAndRoundRobin(t *testing.T) {
 	now := time.Now()
 	channels := []RebalanceChannel{
 		{
@@ -4342,20 +4342,56 @@ func TestOrderGuaranteedRebalanceTargetsUsesExactChannelIDAndFairness(t *testing
 	last := map[uint64]time.Time{
 		884138190664040449:  now.Add(-24 * time.Hour),
 		1005750773843558400: now.Add(-48 * time.Hour),
+		982701711585312771:  now.Add(-1 * time.Hour),
 	}
 
 	ordered := orderGuaranteedRebalanceTargets(channels, last)
 	if len(ordered) != 3 {
 		t.Fatalf("expected 3 exact parallel channels, got %d", len(ordered))
 	}
-	if ordered[0].ChannelID != 982701711585312771 {
-		t.Fatalf("critical channel must come first, got %d", ordered[0].ChannelID)
+	if ordered[0].ChannelID != 1005750773843558400 {
+		t.Fatalf("oldest guaranteed selection must come first, got %d", ordered[0].ChannelID)
 	}
-	if ordered[1].ChannelID != 1005750773843558400 {
-		t.Fatalf("oldest high-urgency channel must come second, got %d", ordered[1].ChannelID)
+	if ordered[1].ChannelID != 884138190664040449 {
+		t.Fatalf("second-oldest guaranteed selection must come second, got %d", ordered[1].ChannelID)
 	}
-	if ordered[1].ChannelIDStr != "1005750773843558400" {
-		t.Fatalf("channel ID string lost precision: %q", ordered[1].ChannelIDStr)
+	if ordered[0].ChannelIDStr != "1005750773843558400" {
+		t.Fatalf("channel ID string lost precision: %q", ordered[0].ChannelIDStr)
+	}
+	if ordered[2].ChannelID != 982701711585312771 {
+		t.Fatalf("recent critical channel must not bypass older channels, got %d", ordered[2].ChannelID)
+	}
+}
+
+func TestOrderGuaranteedRebalanceTargetsUsesUrgencyOnlyAsTieBreaker(t *testing.T) {
+	channels := []RebalanceChannel{
+		{ChannelID: 1, CapacitySat: 1_000_000, LocalPct: 20, GuaranteedRebalanceEnabled: true, EligibleAsManualTarget: true},
+		{ChannelID: 2, CapacitySat: 1_000_000, LocalPct: 4, GuaranteedRebalanceEnabled: true, EligibleAsManualTarget: true},
+		{ChannelID: 3, CapacitySat: 1_000_000, LocalPct: 1.4, GuaranteedRebalanceEnabled: true, EligibleAsManualTarget: true},
+	}
+
+	ordered := orderGuaranteedRebalanceTargets(channels, nil)
+	if len(ordered) != 3 || ordered[0].ChannelID != 3 || ordered[1].ChannelID != 2 || ordered[2].ChannelID != 1 {
+		t.Fatalf("expected urgency to break equal never-selected timestamps, got %+v", ordered)
+	}
+}
+
+func TestOrderGuaranteedRebalanceTargetsRotatesAllChannelsBeforeRepeating(t *testing.T) {
+	channels := []RebalanceChannel{
+		{ChannelID: 1, CapacitySat: 1_000_000, LocalPct: 20, GuaranteedRebalanceEnabled: true, EligibleAsManualTarget: true},
+		{ChannelID: 2, CapacitySat: 1_000_000, LocalPct: 4, GuaranteedRebalanceEnabled: true, EligibleAsManualTarget: true},
+		{ChannelID: 3, CapacitySat: 1_000_000, LocalPct: 1.4, GuaranteedRebalanceEnabled: true, EligibleAsManualTarget: true},
+	}
+	last := map[uint64]time.Time{}
+	start := time.Date(2026, time.July, 22, 12, 0, 0, 0, time.UTC)
+	want := []uint64{3, 2, 1, 3, 2, 1}
+
+	for i, wantID := range want {
+		ordered := orderGuaranteedRebalanceTargets(channels, last)
+		if len(ordered) != 3 || ordered[0].ChannelID != wantID {
+			t.Fatalf("round %d: expected channel %d, got %+v", i+1, wantID, ordered)
+		}
+		last[ordered[0].ChannelID] = start.Add(time.Duration(i) * time.Minute)
 	}
 }
 

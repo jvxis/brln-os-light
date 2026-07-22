@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -60,6 +61,8 @@ type loopQuoteResponse struct {
 	PrepayRoutingLimitSat  int64  `json:"prepay_routing_limit_sat,omitempty"`
 	EstimatedFeeSat        int64  `json:"estimated_fee_sat"`
 	RoutingEstimate        bool   `json:"routing_estimate_available"`
+	RoutingEstimateSource  string `json:"routing_estimate_source,omitempty"`
+	RoutingEstimateSamples int    `json:"routing_estimate_samples,omitempty"`
 	EstimatedRoutingFeeSat int64  `json:"estimated_routing_fee_sat,omitempty"`
 	EstimatedAllInFeeSat   int64  `json:"estimated_all_in_fee_sat,omitempty"`
 	RecommendedMaxMinerSat int64  `json:"recommended_max_miner_fee_sat"`
@@ -401,27 +404,104 @@ func (s *Server) estimateLoopOutRouting(ctx context.Context, quote *loopQuoteRes
 		return
 	}
 	destination, err := decodeLoopPaymentDestination(encodedDestination)
-	if err != nil {
-		return
-	}
-	routingCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
-	defer cancel()
-	mainPaymentSat := quote.AmountSat + quote.SwapFeeSat - quote.PrepayAmountSat
-	mainEstimate, err := s.lnd.EstimateRouteFeeToNode(routingCtx, destination, mainPaymentSat, outgoingChannelIDs)
-	if err != nil {
-		return
-	}
-	routingFeeSat := mainEstimate.FeeSat
-	if quote.PrepayAmountSat > 0 {
-		prepayEstimate, err := s.lnd.EstimateRouteFeeToNode(routingCtx, destination, quote.PrepayAmountSat, outgoingChannelIDs)
-		if err != nil {
-			return
+	if err == nil {
+		routingCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
+		defer cancel()
+		mainPaymentSat := quote.AmountSat + quote.SwapFeeSat - quote.PrepayAmountSat
+		mainEstimate, mainErr := s.lnd.EstimateRouteFeeToNode(routingCtx, destination, mainPaymentSat, outgoingChannelIDs)
+		if mainErr == nil {
+			routingFeeSat := mainEstimate.FeeSat
+			prepayAvailable := true
+			if quote.PrepayAmountSat > 0 {
+				prepayEstimate, prepayErr := s.lnd.EstimateRouteFeeToNode(routingCtx, destination, quote.PrepayAmountSat, outgoingChannelIDs)
+				if prepayErr != nil {
+					prepayAvailable = false
+				} else {
+					routingFeeSat += prepayEstimate.FeeSat
+				}
+			}
+			if prepayAvailable {
+				setLoopRoutingEstimate(quote, routingFeeSat, "graph", 0)
+				return
+			}
 		}
-		routingFeeSat += prepayEstimate.FeeSat
+	}
+
+	// Loop's quote destination may be unannounced and only become routable
+	// once the real invoices add their route hints. In that case, use exact
+	// channel-set history as an explicitly empirical estimate.
+	swaps, err := s.fetchLoopSwaps(ctx, 100, false)
+	if err != nil {
+		return
+	}
+	routingFeeSat, samples, ok := historicalLoopRoutingEstimate(swaps, quote.AmountSat, outgoingChannelIDs)
+	if !ok {
+		return
+	}
+	setLoopRoutingEstimate(quote, routingFeeSat, "history", samples)
+}
+
+func setLoopRoutingEstimate(quote *loopQuoteResponse, routingFeeSat int64, source string, samples int) {
+	if quote == nil || routingFeeSat < 0 {
+		return
 	}
 	quote.RoutingEstimate = true
+	quote.RoutingEstimateSource = source
+	quote.RoutingEstimateSamples = samples
 	quote.EstimatedRoutingFeeSat = routingFeeSat
 	quote.EstimatedAllInFeeSat = quote.EstimatedFeeSat + routingFeeSat
+}
+
+func historicalLoopRoutingEstimate(swaps []loopSwapStatus, amountSat int64, outgoingChannelIDs []uint64) (int64, int, bool) {
+	if amountSat <= 0 || len(outgoingChannelIDs) == 0 {
+		return 0, 0, false
+	}
+	estimates := make([]int64, 0, 5)
+	for _, swap := range swaps {
+		if !strings.Contains(strings.ToUpper(swap.Type), "OUT") || !strings.EqualFold(strings.TrimSpace(swap.State), "SUCCESS") || swap.AmountSat <= 0 || swap.CostOffchainSat < 0 {
+			continue
+		}
+		if !sameLoopChannelSet(swap.OutgoingChannelIDs, outgoingChannelIDs) {
+			continue
+		}
+		estimate := int64(math.Round(float64(swap.CostOffchainSat) * float64(amountSat) / float64(swap.AmountSat)))
+		if estimate < 0 {
+			continue
+		}
+		estimates = append(estimates, estimate)
+		if len(estimates) == 5 {
+			break
+		}
+	}
+	if len(estimates) == 0 {
+		return 0, 0, false
+	}
+	sort.Slice(estimates, func(i, j int) bool { return estimates[i] < estimates[j] })
+	middle := len(estimates) / 2
+	estimate := estimates[middle]
+	if len(estimates)%2 == 0 {
+		estimate = int64(math.Round(float64(estimates[middle-1]+estimates[middle]) / 2))
+	}
+	return estimate, len(estimates), true
+}
+
+func sameLoopChannelSet(historical []string, selected []uint64) bool {
+	if len(historical) != len(selected) {
+		return false
+	}
+	historicalIDs, err := parseLoopOutgoingChannelIDs(historical)
+	if err != nil {
+		return false
+	}
+	sort.Slice(historicalIDs, func(i, j int) bool { return historicalIDs[i] < historicalIDs[j] })
+	selectedIDs := append([]uint64(nil), selected...)
+	sort.Slice(selectedIDs, func(i, j int) bool { return selectedIDs[i] < selectedIDs[j] })
+	for i := range historicalIDs {
+		if historicalIDs[i] != selectedIDs[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func decodeLoopPaymentDestination(encoded string) (string, error) {

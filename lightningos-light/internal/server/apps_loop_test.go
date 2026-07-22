@@ -244,3 +244,19 @@ func TestParseLoopOutgoingChannelIDsPreservesUint64(t *testing.T) {
 		}
 	}
 }
+
+func TestHistoricalLoopRoutingEstimateUsesExactChannelSet(t *testing.T) {
+	swaps := []loopSwapStatus{
+		{Type: "LOOP_OUT", State: "SUCCESS", AmountSat: 250000, CostOffchainSat: 661, OutgoingChannelIDs: []string{"42", "7"}},
+		{Type: "LOOP_OUT", State: "SUCCESS", AmountSat: 500000, CostOffchainSat: 1400, OutgoingChannelIDs: []string{"7", "42"}},
+		{Type: "LOOP_OUT", State: "SUCCESS", AmountSat: 250000, CostOffchainSat: 1, OutgoingChannelIDs: []string{"99"}},
+		{Type: "LOOP_OUT", State: "FAILED", AmountSat: 250000, CostOffchainSat: 2, OutgoingChannelIDs: []string{"7", "42"}},
+	}
+	estimate, samples, ok := historicalLoopRoutingEstimate(swaps, 250000, []uint64{42, 7})
+	if !ok || samples != 2 || estimate != 681 {
+		t.Fatalf("unexpected historical estimate: fee=%d samples=%d available=%v", estimate, samples, ok)
+	}
+	if _, _, ok := historicalLoopRoutingEstimate(swaps, 250000, []uint64{100}); ok {
+		t.Fatal("estimate must not borrow history from a different channel set")
+	}
+}

@@ -487,7 +487,7 @@ GET /api/apps/loop/swaps?limit=100
 
 POST /api/apps/loop/quote
 - Body: `direction` (`out` or `in`), `amount_sat`, optional `conf_target`, `last_hop_pubkey`, `fast`, `routing_fee_limit_ppm`, and Loop Out `outgoing_channel_ids` as strings.
-- Returns separate server and on-chain estimates plus a recommended miner-fee ceiling. For Loop Out, it also attempts a read-only LND route estimate for the quoted server destination and selected channels. `routing_estimate_available=false` means no graph-only estimate was possible; the routing fee ceiling remains available and enforced.
+- Returns separate server and on-chain estimates plus a recommended miner-fee ceiling. For Loop Out, it first attempts a read-only LND route estimate for the quoted server destination and selected channels. If the destination is not present in the public graph, successful swaps with the exact same channel set provide an empirical median estimate (`routing_estimate_source=history`). `routing_estimate_available=false` means neither source was available; the routing fee ceiling remains available and enforced.
 
 POST /api/apps/loop/swap
 - Starts a manual swap only after obtaining a fresh quote and verifying the approved fee ceilings.

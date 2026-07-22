@@ -1042,6 +1042,8 @@ export type LoopQuote = {
   prepay_routing_limit_sat?: number
   estimated_fee_sat: number
   routing_estimate_available: boolean
+  routing_estimate_source?: 'graph' | 'history'
+  routing_estimate_samples?: number
   estimated_routing_fee_sat?: number
   estimated_all_in_fee_sat?: number
   recommended_max_miner_fee_sat: number

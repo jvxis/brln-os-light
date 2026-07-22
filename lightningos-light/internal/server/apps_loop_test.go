@@ -260,3 +260,12 @@ func TestHistoricalLoopRoutingEstimateUsesExactChannelSet(t *testing.T) {
 		t.Fatal("estimate must not borrow history from a different channel set")
 	}
 }
+
+func TestLoopTimestampSeconds(t *testing.T) {
+	if got := loopTimestampSeconds(1_784_676_948_792_349_541); got != 1_784_676_948 {
+		t.Fatalf("nanosecond timestamp converted to %d", got)
+	}
+	if got := loopTimestampSeconds(1_784_676_948); got != 1_784_676_948 {
+		t.Fatalf("second timestamp converted to %d", got)
+	}
+}

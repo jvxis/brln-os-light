@@ -476,3 +476,23 @@ func TestSelectMPPLikelyRoutesCoversAmount(t *testing.T) {
 		t.Fatalf("first selected fee = %d, want cheapest likely route first", got)
 	}
 }
+
+func TestClosestInvoiceRouteTemplatesMatchesAmounts(t *testing.T) {
+	t.Parallel()
+
+	templates := []DecodedInvoice{
+		{AmountSat: 220_297, Memo: "main"},
+		{AmountSat: 30_000, Memo: "prepay"},
+		{AmountSat: 1, Memo: "unrelated"},
+	}
+	selected := closestInvoiceRouteTemplates(templates, []int64{30_000, 220_300})
+	if len(selected) != 2 {
+		t.Fatalf("selected %d templates, want 2", len(selected))
+	}
+	if selected[0].Memo != "prepay" || selected[1].Memo != "main" {
+		t.Fatalf("unexpected template selection: %#v", selected)
+	}
+	if got := closestInvoiceRouteTemplates(templates[:1], []int64{30_000, 220_300}); got != nil {
+		t.Fatalf("expected insufficient templates to return nil, got %#v", got)
+	}
+}

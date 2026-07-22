@@ -428,17 +428,56 @@ func (s *Server) estimateLoopOutRouting(ctx context.Context, quote *loopQuoteRes
 	}
 
 	// Loop's quote destination may be unannounced and only become routable
-	// once the real invoices add their route hints. In that case, use exact
-	// channel-set history as an explicitly empirical estimate.
+	// once the real invoices add their private route hints.
 	swaps, err := s.fetchLoopSwaps(ctx, 100, false)
 	if err != nil {
 		return
 	}
+	if err == nil && destination != "" {
+		mainPaymentSat := quote.AmountSat + quote.SwapFeeSat - quote.PrepayAmountSat
+		targetAmounts := []int64{mainPaymentSat}
+		if quote.PrepayAmountSat > 0 {
+			targetAmounts = []int64{quote.PrepayAmountSat, mainPaymentSat}
+		}
+		attempts := 0
+		for _, swap := range swaps {
+			if !strings.Contains(strings.ToUpper(swap.Type), "OUT") || !strings.EqualFold(strings.TrimSpace(swap.State), "SUCCESS") {
+				continue
+			}
+			startedAt := loopTimestampSeconds(swap.InitiationTime)
+			if startedAt <= 0 {
+				continue
+			}
+			attempts++
+			estimate, estimateErr := s.lnd.EstimateRouteFeesFromSettledInvoices(
+				ctx, destination, time.Unix(startedAt-10, 0),
+				time.Unix(startedAt+120, 0), targetAmounts,
+				outgoingChannelIDs,
+			)
+			if estimateErr == nil {
+				setLoopRoutingEstimate(quote, estimate.FeeSat, "invoice_routes", estimate.InvoiceCount)
+				return
+			}
+			if attempts == 2 {
+				break
+			}
+		}
+	}
+
+	// If route templates are unavailable, use exact channel-set history as an
+	// explicitly empirical final estimate.
 	routingFeeSat, samples, ok := historicalLoopRoutingEstimate(swaps, quote.AmountSat, outgoingChannelIDs)
 	if !ok {
 		return
 	}
 	setLoopRoutingEstimate(quote, routingFeeSat, "history", samples)
+}
+
+func loopTimestampSeconds(value int64) int64 {
+	if value > 10_000_000_000_000 {
+		return value / int64(time.Second)
+	}
+	return value
 }
 
 func setLoopRoutingEstimate(quote *loopQuoteResponse, routingFeeSat int64, source string, samples int) {

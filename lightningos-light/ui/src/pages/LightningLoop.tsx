@@ -31,6 +31,14 @@ type LoopChannel = {
   remote_balance_sat: number
 }
 
+type LoopInDestination = {
+  pubkey: string
+  alias: string
+  channelIDs: string[]
+  localBalanceSat: number
+  remoteBalanceSat: number
+}
+
 type FeePulse = {
   fastest: number
   hour: number
@@ -116,6 +124,7 @@ export default function LightningLoop() {
 
   useEffect(() => {
     setConfTarget(direction === 'out' ? '9' : '6')
+    setChannelSearch('')
     setQuote(null)
     setRiskAccepted(false)
   }, [direction])
@@ -133,6 +142,43 @@ export default function LightningLoop() {
       channelID(channel).includes(query))
   }, [channelSearch, eligibleChannels])
 
+  const loopInDestinations = useMemo(() => {
+    const destinations = new Map<string, LoopInDestination>()
+    for (const channel of nodeChannels) {
+      const pubkey = String(channel.remote_pubkey || '').trim()
+      if (!channel.active || !pubkey) continue
+      const existing = destinations.get(pubkey)
+      if (existing) {
+        existing.localBalanceSat += Math.max(0, channel.local_balance_sat || 0)
+        existing.remoteBalanceSat += Math.max(0, channel.remote_balance_sat || 0)
+        const id = channelID(channel)
+        if (id) existing.channelIDs.push(id)
+        if (!existing.alias && channel.peer_alias) existing.alias = channel.peer_alias
+        continue
+      }
+      const id = channelID(channel)
+      destinations.set(pubkey, {
+        pubkey,
+        alias: channel.peer_alias || '',
+        channelIDs: id ? [id] : [],
+        localBalanceSat: Math.max(0, channel.local_balance_sat || 0),
+        remoteBalanceSat: Math.max(0, channel.remote_balance_sat || 0)
+      })
+    }
+    return Array.from(destinations.values()).sort((a, b) => b.remoteBalanceSat - a.remoteBalanceSat)
+  }, [nodeChannels])
+
+  const visibleLoopInDestinations = useMemo(() => {
+    const query = channelSearch.trim().toLowerCase()
+    if (!query) return loopInDestinations
+    return loopInDestinations.filter((destinationOption) =>
+      destinationOption.alias.toLowerCase().includes(query) ||
+      destinationOption.pubkey.toLowerCase().includes(query) ||
+      destinationOption.channelIDs.some((id) => id.includes(query)))
+  }, [channelSearch, loopInDestinations])
+
+  const selectedLoopInDestination = useMemo(() => loopInDestinations.find((destinationOption) => destinationOption.pubkey === lastHop.trim()), [lastHop, loopInDestinations])
+
   const selectedChannels = useMemo(() => eligibleChannels.filter((channel) => selectedChannelIDs.has(channelID(channel))), [eligibleChannels, selectedChannelIDs])
   const pendingSwaps = useMemo(() => swaps.filter((swap) => isPendingState(swap.state)), [swaps])
   const selectedLocal = useMemo(() => selectedChannels.reduce((sum, channel) => sum + channel.local_balance_sat, 0), [selectedChannels])
@@ -140,7 +186,10 @@ export default function LightningLoop() {
   const min = direction === 'out' ? status?.terms?.loop_out_min_sat : status?.terms?.loop_in_min_sat
   const max = direction === 'out' ? status?.terms?.loop_out_max_sat : status?.terms?.loop_in_max_sat
   const amountIsValid = amount > 0 && (!min || amount >= min) && (!max || amount <= max)
-  const liquidityIsValid = direction === 'in' || (selectedChannelIDs.size > 0 && selectedLocal >= amount)
+  const selectedLoopInDestinationIsInsufficient = Boolean(selectedLoopInDestination && amount > 0 && selectedLoopInDestination.remoteBalanceSat < amount)
+  const liquidityIsValid = direction === 'in'
+    ? !selectedLoopInDestinationIsInsufficient
+    : selectedChannelIDs.size > 0 && selectedLocal >= amount
 
   const requestPayload = useMemo<LoopQuotePayload>(() => ({
     direction,
@@ -367,6 +416,42 @@ export default function LightningLoop() {
                 </div>
               )}
 
+              {direction === 'in' && (
+                <div className="border-t border-white/10 pt-7">
+                  <SectionHeading number="03" title={t('lightningLoop.selectDestination')} description={t('lightningLoop.destinationChannelHelp')} />
+                  <button type="button" onClick={() => { setLastHop(''); clearQuote() }} className={`mt-4 flex w-full items-center justify-between gap-4 rounded-2xl border p-4 text-left transition ${!lastHop.trim() ? 'border-glow/50 bg-glow/10 shadow-[inset_0_0_0_1px_rgba(34,211,238,.05)]' : 'border-white/10 bg-white/[0.025] hover:border-white/20 hover:bg-white/[0.045]'}`}>
+                    <span className="flex min-w-0 items-center gap-3">
+                      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border ${!lastHop.trim() ? 'border-glow/30 bg-glow/15 text-glow' : 'border-white/10 bg-white/5 text-fog/45'}`}><RouteIcon /></span>
+                      <span className="min-w-0"><strong className="block text-sm">{t('lightningLoop.automaticDestination')}</strong><span className="mt-1 block text-xs leading-5 text-fog/50">{t('lightningLoop.automaticDestinationHint')}</span></span>
+                    </span>
+                    <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${!lastHop.trim() ? 'border-glow bg-glow text-ink' : 'border-white/20 text-transparent'}`}><CheckIcon /></span>
+                  </button>
+
+                  {loopInDestinations.length > 4 && <input className="input-field mt-3 py-2.5 text-sm" value={channelSearch} onChange={(event) => setChannelSearch(event.target.value)} placeholder={t('lightningLoop.searchDestinations')} />}
+                  <div className="mt-3 grid max-h-[390px] gap-2 overflow-y-auto pr-1 lg:grid-cols-2">
+                    {visibleLoopInDestinations.map((destinationOption) => {
+                      const selected = lastHop.trim() === destinationOption.pubkey
+                      const insufficient = amount > 0 && destinationOption.remoteBalanceSat < amount
+                      const total = Math.max(1, destinationOption.localBalanceSat + destinationOption.remoteBalanceSat)
+                      const remotePercent = Math.min(100, Math.max(0, destinationOption.remoteBalanceSat / total * 100))
+                      return (
+                        <button key={destinationOption.pubkey} type="button" disabled={insufficient} onClick={() => { setLastHop(destinationOption.pubkey); clearQuote() }} className={`group rounded-2xl border p-4 text-left transition ${selected ? 'border-glow/55 bg-glow/10 shadow-[0_0_0_1px_rgba(34,211,238,.06)]' : insufficient ? 'cursor-not-allowed border-white/[0.06] bg-white/[0.015] opacity-45' : 'border-white/10 bg-white/[0.025] hover:border-white/20 hover:bg-white/[0.045]'}`}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0"><p className="truncate text-sm font-semibold">{destinationOption.alias || shorten(destinationOption.pubkey)}</p><p className="mt-1 truncate font-mono text-[10px] text-fog/38">{shorten(destinationOption.pubkey)}</p></div>
+                            <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition ${selected ? 'border-glow bg-glow text-ink' : 'border-white/20 text-transparent group-hover:border-white/40'}`}><CheckIcon /></span>
+                          </div>
+                          <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/5"><div className="h-full rounded-full bg-glow" style={{ width: `${remotePercent}%` }} /></div>
+                          <div className="mt-2 flex items-start justify-between gap-2 text-[11px]"><span className="text-glow">{t('lightningLoop.inboundAvailable')} {compactSats(destinationOption.remoteBalanceSat)}</span><span className="text-right text-fog/38">{t('lightningLoop.channelCount', { count: destinationOption.channelIDs.length })}</span></div>
+                          {insufficient && <p className="mt-2 text-[10px] text-amber-200/80">{t('lightningLoop.insufficientInboundDestination')}</p>}
+                        </button>
+                      )
+                    })}
+                    {visibleLoopInDestinations.length === 0 && <div className="rounded-2xl border border-dashed border-white/10 p-6 text-center text-sm text-fog/50 lg:col-span-2">{t('lightningLoop.noLoopInDestinations')}</div>}
+                  </div>
+                  {selectedLoopInDestinationIsInsufficient && <p className="mt-3 text-xs text-amber-200">{t('lightningLoop.selectDestinationWithLiquidity')}</p>}
+                </div>
+              )}
+
               <details className="group border-t border-white/10 pt-6">
                 <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-semibold">
                   <span className="flex items-center gap-2"><SettingsIcon /> {t('lightningLoop.advanced')}</span>
@@ -390,9 +475,10 @@ export default function LightningLoop() {
 
               <div className="mt-6 rounded-2xl border border-white/10 bg-ink/35 p-4">
                 <FlowSummary direction={direction} />
-                <div className="mt-5 grid grid-cols-2 gap-3 border-t border-white/10 pt-4 text-sm">
+                <div className={`mt-5 grid gap-3 border-t border-white/10 pt-4 text-sm ${direction === 'in' ? 'grid-cols-3' : 'grid-cols-2'}`}>
                   <div><p className="text-[10px] uppercase tracking-wider text-fog/40">{t('lightningLoop.amount')}</p><p className="mt-1 font-semibold tabular-nums">{amount > 0 ? sats(amount) : '—'}</p></div>
-                  <div><p className="text-[10px] uppercase tracking-wider text-fog/40">{direction === 'out' ? t('lightningLoop.channelsSelected') : t('lightningLoop.confirmations')}</p><p className="mt-1 font-semibold">{direction === 'out' ? selectedChannelIDs.size : confTarget}</p></div>
+                  <div><p className="text-[10px] uppercase tracking-wider text-fog/40">{direction === 'out' ? t('lightningLoop.channelsSelected') : t('lightningLoop.loopInDestination')}</p><p className="mt-1 truncate font-semibold">{direction === 'out' ? selectedChannelIDs.size : selectedLoopInDestination?.alias || (lastHop.trim() ? shorten(lastHop.trim()) : t('lightningLoop.automaticShort'))}</p></div>
+                  {direction === 'in' && <div><p className="text-[10px] uppercase tracking-wider text-fog/40">{t('lightningLoop.confirmations')}</p><p className="mt-1 font-semibold">{confTarget}</p></div>}
                 </div>
               </div>
 
@@ -405,6 +491,7 @@ export default function LightningLoop() {
                   </div>
                   <button className="btn-primary mt-4 w-full justify-center" type="submit" disabled={busy || !amountIsValid || !liquidityIsValid}>{busy ? t('common.loading') : t('lightningLoop.getQuote')}</button>
                   {!liquidityIsValid && direction === 'out' && amount > 0 && <p className="mt-2 text-center text-[11px] text-amber-200/80">{t('lightningLoop.selectEnoughFirst')}</p>}
+                  {!liquidityIsValid && direction === 'in' && amount > 0 && <p className="mt-2 text-center text-[11px] text-amber-200/80">{t('lightningLoop.selectDestinationWithLiquidity')}</p>}
                 </div>
               ) : (
                 <QuotePanel quote={quote} direction={direction} maxMinerFee={maxMinerFee} setMaxMinerFee={setMaxMinerFee} riskAccepted={riskAccepted} setRiskAccepted={setRiskAccepted} busy={busy} execute={execute} sats={sats} t={t} />
@@ -491,7 +578,7 @@ function FlowSummary({ direction, large = false }: { direction: Direction; large
     <div className={`grid grid-cols-[auto_1fr_auto_1fr_auto] items-center ${large ? 'gap-3' : 'gap-2'}`}>
       <FlowNode label="Lightning" tone="brass"><LightningIcon /></FlowNode>
       <FlowLine reverse={direction === 'in'} tone="brass" />
-      <div className={`${large ? 'h-14 w-14' : 'h-11 w-11'} flex items-center justify-center rounded-2xl border border-white/15 bg-white/10 text-fog shadow-[0_0_30px_rgba(255,255,255,.06)]`}><LoopMark /></div>
+      <div className={`${large ? 'h-12 w-12' : 'h-10 w-10'} flex items-center justify-center rounded-full border border-white/10 bg-white/[0.035] text-fog/70`}><LoopMark /></div>
       <FlowLine reverse={direction === 'in'} tone="glow" />
       <FlowNode label="Bitcoin" tone="glow"><BitcoinIcon /></FlowNode>
     </div>
@@ -503,7 +590,7 @@ function FlowNode({ label, tone, children }: { label: string; tone: 'brass' | 'g
 }
 
 function FlowLine({ reverse, tone }: { reverse: boolean; tone: 'brass' | 'glow' }) {
-  return <div className={`relative h-px ${tone === 'brass' ? 'bg-gradient-to-r from-brass/15 to-brass/80 text-brass' : 'bg-gradient-to-r from-glow/15 to-glow/80 text-glow'} ${reverse ? 'rotate-180' : ''}`}><span className="absolute right-0 top-1/2 -translate-y-1/2 text-[10px]">›</span></div>
+  return <div className={`relative h-px ${tone === 'brass' ? 'bg-gradient-to-r from-brass/15 to-brass/80 text-brass' : 'bg-gradient-to-r from-glow/15 to-glow/80 text-glow'} ${reverse ? 'rotate-180' : ''}`}><svg aria-hidden="true" className="absolute -right-0.5 top-1/2 h-2.5 w-2.5 -translate-y-1/2" viewBox="0 0 10 10" fill="none"><path d="m3 2 3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg></div>
 }
 
 function Metric({ icon, label, value, hint, accent }: { icon: ReactNode; label: string; value: string; hint: string; accent: 'brass' | 'glow' }) {
@@ -529,20 +616,27 @@ function QuotePanel({ quote, direction, maxMinerFee, setMaxMinerFee, riskAccepte
   const estimatedRouting = Math.max(0, quote.estimated_routing_fee_sat || 0)
   const chartTotal = Math.max(1, service + chain + estimatedRouting)
   const estimatedAllIn = quote.routing_estimate_available ? Math.max(0, quote.estimated_all_in_fee_sat || service + chain + estimatedRouting) : service + chain
+  const servicePPM = quote.amount_sat > 0 ? Math.round(service * 1_000_000 / quote.amount_sat) : 0
+  const chainPPM = quote.amount_sat > 0 ? Math.round(chain * 1_000_000 / quote.amount_sat) : 0
   const estimatedRoutingPPM = quote.amount_sat > 0 ? Math.round(estimatedRouting * 1_000_000 / quote.amount_sat) : 0
   const estimatedAllInPPM = quote.amount_sat > 0 ? Math.round(estimatedAllIn * 1_000_000 / quote.amount_sat) : 0
+  const routingBudgetPPM = quote.amount_sat > 0 ? Math.round(routing * 1_000_000 / quote.amount_sat) : 0
   const reservedAllIn = service + chain + routing
   const reservedAllInPPM = quote.amount_sat > 0 ? Math.round(reservedAllIn * 1_000_000 / quote.amount_sat) : 0
+  const routingOverBudget = Math.max(0, estimatedRouting - routing)
   const estimateHint = quote.routing_estimate_source === 'history'
     ? t('lightningLoop.routingHistoryHint', { count: quote.routing_estimate_samples || 1 })
-    : t('lightningLoop.routingEstimateHint')
+    : quote.routing_estimate_source === 'invoice_routes'
+      ? t('lightningLoop.routingInvoiceHint', { count: quote.routing_estimate_samples || 2 })
+      : t('lightningLoop.routingEstimateHint')
   return (
     <div className="mt-5 space-y-4">
       <div className="rounded-2xl border border-brass/25 bg-brass/[0.07] p-4">
-        <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] uppercase tracking-wider text-fog/45">{t(quote.routing_estimate_available ? 'lightningLoop.estimatedAllIn' : 'lightningLoop.beforeRouting')}</p><p className="mt-1 text-2xl font-semibold tabular-nums">{sats(estimatedAllIn)}</p>{quote.routing_estimate_available && <p className="mt-0.5 text-[11px] tabular-nums text-fog/45">{estimatedAllInPPM.toLocaleString()} ppm</p>}</div><span className={`rounded-full border px-2 py-1 text-[9px] font-semibold uppercase tracking-wider ${quote.routing_estimate_available ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200' : 'border-amber-400/25 bg-amber-400/10 text-amber-200'}`}>{t(quote.routing_estimate_available ? 'lightningLoop.liveQuote' : 'lightningLoop.partialQuote')}</span></div>
+        <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] uppercase tracking-wider text-fog/45">{t(quote.routing_estimate_available ? 'lightningLoop.estimatedAllIn' : 'lightningLoop.totalEstimateUnavailable')}</p>{quote.routing_estimate_available ? <><p className="mt-1 text-2xl font-semibold tabular-nums">{sats(estimatedAllIn)}</p><p className="mt-0.5 text-[11px] tabular-nums text-fog/45">{estimatedAllInPPM.toLocaleString()} ppm</p></> : <p className="mt-1 text-2xl font-semibold text-fog/35">—</p>}</div><span className={`rounded-full border px-2 py-1 text-[9px] font-semibold uppercase tracking-wider ${quote.routing_estimate_available ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200' : 'border-amber-400/25 bg-amber-400/10 text-amber-200'}`}>{t(quote.routing_estimate_available ? 'lightningLoop.liveQuote' : 'lightningLoop.partialQuote')}</span></div>
         <div className="mt-4 flex h-2 overflow-hidden rounded-full bg-white/5"><span className="bg-brass" style={{ width: `${(service / chartTotal) * 100}%` }} /><span className="bg-glow" style={{ width: `${(chain / chartTotal) * 100}%` }} />{quote.routing_estimate_available && <span className="bg-emerald-400" style={{ width: `${(estimatedRouting / chartTotal) * 100}%` }} />}</div>
-        <div className="mt-3 space-y-2 text-xs"><div className="flex justify-between"><span className="flex items-center gap-2 text-fog/55"><i className="h-1.5 w-1.5 rounded-full bg-brass" />{t('lightningLoop.serviceFee')}</span><strong>{sats(service)}</strong></div><div className="flex justify-between"><span className="flex items-center gap-2 text-fog/55"><i className="h-1.5 w-1.5 rounded-full bg-glow" />{t('lightningLoop.onchainEstimate')}</span><strong>{sats(chain)}</strong></div>{direction === 'out' && quote.routing_estimate_available && <div className="flex justify-between"><span className="flex items-center gap-2 text-fog/55"><i className="h-1.5 w-1.5 rounded-full bg-emerald-400" />{t('lightningLoop.routingEstimate')}</span><strong className="text-right"><span className="block">{sats(estimatedRouting)}</span><span className="block text-[10px] font-normal text-fog/40">{estimatedRoutingPPM.toLocaleString()} ppm</span></strong></div>}{direction === 'out' && <div className="flex justify-between border-t border-white/10 pt-2"><span className="text-fog/55">{t('lightningLoop.routingBudget')}</span><strong>{sats(routing)}</strong></div>}</div>
+        <div className="mt-3 space-y-2 text-xs"><div className="flex justify-between"><span className="flex items-center gap-2 text-fog/55"><i className="h-1.5 w-1.5 rounded-full bg-brass" />{t('lightningLoop.serviceFee')}</span><strong className="text-right"><span className="block">{sats(service)}</span><span className="block text-[10px] font-normal text-fog/40">{servicePPM.toLocaleString()} ppm</span></strong></div><div className="flex justify-between"><span className="flex items-center gap-2 text-fog/55"><i className="h-1.5 w-1.5 rounded-full bg-glow" />{t('lightningLoop.onchainEstimate')}</span><strong className="text-right"><span className="block">{sats(chain)}</span><span className="block text-[10px] font-normal text-fog/40">{chainPPM.toLocaleString()} ppm</span></strong></div>{direction === 'out' && quote.routing_estimate_available && <div className="flex justify-between"><span className="flex items-center gap-2 text-fog/55"><i className="h-1.5 w-1.5 rounded-full bg-emerald-400" />{t('lightningLoop.routingEstimate')}</span><strong className="text-right"><span className="block">{sats(estimatedRouting)}</span><span className="block text-[10px] font-normal text-fog/40">{estimatedRoutingPPM.toLocaleString()} ppm</span></strong></div>}{direction === 'out' && <div className="flex justify-between border-t border-white/10 pt-2"><span className="text-fog/55">{t('lightningLoop.routingBudget')}</span><strong className="text-right"><span className="block">{sats(routing)}</span><span className="block text-[10px] font-normal text-fog/40">{routingBudgetPPM.toLocaleString()} ppm</span></strong></div>}</div>
         {direction === 'out' && quote.routing_estimate_available && <p className="mt-3 text-[10px] leading-4 text-fog/40">{estimateHint}</p>}
+        {direction === 'out' && quote.routing_estimate_available && routingOverBudget > 0 && <p className="mt-3 rounded-xl border border-amber-400/25 bg-amber-400/[0.07] p-3 text-[10px] leading-4 text-amber-100/80">{t('lightningLoop.routingOverBudget', { value: sats(routingOverBudget) })}</p>}
         {direction === 'out' && !quote.routing_estimate_available && <div className="mt-3 rounded-xl border border-amber-400/20 bg-amber-400/[0.06] p-3"><p className="text-[10px] leading-4 text-amber-100/70">{t('lightningLoop.routingEstimateUnavailable')}</p><p className="mt-1.5 text-[11px] font-semibold tabular-nums text-amber-100">{t('lightningLoop.withRoutingReserve', { value: sats(reservedAllIn), ppm: reservedAllInPPM.toLocaleString() })}</p></div>}
         <p className="mt-3 text-[10px] text-fog/40">{t('lightningLoop.expires')}: {new Date(quote.expires_at).toLocaleTimeString()}</p>
       </div>
@@ -613,8 +707,9 @@ function LoadingState() {
 const shorten = (value: string) => value ? `${value.slice(0, 8)}…${value.slice(-6)}` : '—'
 
 function LightningIcon() { return <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none"><path d="m13.2 2-8 11h6l-.4 9 8-12h-6.1l.5-8Z" fill="currentColor" /></svg> }
-function BitcoinIcon() { return <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none"><path d="M9.2 4.5h4.2c2.4 0 3.9 1.1 3.9 3 0 1.3-.7 2.3-1.9 2.8 1.6.4 2.6 1.6 2.6 3.4 0 2.3-1.8 3.8-4.7 3.8H8.2m2-15v19m4-19v3m0 12v4M6 6h3m-3 12h3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /><path d="M10 8h3.3c1.2 0 1.9.6 1.9 1.6s-.7 1.7-2 1.7H10m0 0h3.7c1.4 0 2.2.7 2.2 1.9s-.8 1.9-2.3 1.9H10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg> }
-function LoopMark() { return <svg aria-hidden="true" className="h-6 w-6" viewBox="0 0 24 24" fill="none"><path d="M6.5 7.7A7.4 7.4 0 0 1 19 9l1.7-.1-2.3 3-2.6-2.7 1.3-.1A5.5 5.5 0 0 0 7.9 9M17.5 16.3A7.4 7.4 0 0 1 5 15l-1.7.1 2.3-3 2.6 2.7-1.3.1a5.5 5.5 0 0 0 9.2.1" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg> }
+function BitcoinIcon() { return <span aria-hidden="true" className="block text-[20px] font-semibold leading-none">₿</span> }
+function LoopMark() { return <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none"><path d="M5 8h13m0 0-3-3m3 3-3 3M19 16H6m0 0 3 3m-3-3 3-3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg> }
+function RouteIcon() { return <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none"><circle cx="6" cy="17" r="2" stroke="currentColor" strokeWidth="1.7" /><circle cx="18" cy="7" r="2" stroke="currentColor" strokeWidth="1.7" /><path d="M8 17h2.5c4.5 0 2-10 5.5-10" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeDasharray="2.2 2.2" /></svg> }
 function PulseIcon() { return <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none"><path d="M3 12h4l2-6 4 12 2-6h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg> }
 function FeeIcon() { return <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none"><path d="M4 17.5V14m5 3.5V10m5 7.5V7m5 10.5V3.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg> }
 function InfoIcon() { return <svg aria-hidden="true" className="h-4 w-4" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.8" /><path d="M12 10v6m0-9h.01" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg> }

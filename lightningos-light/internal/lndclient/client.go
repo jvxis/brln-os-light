@@ -3418,6 +3418,14 @@ type RouteFeeEstimate struct {
 	HopCount int
 }
 
+// HistoricalInvoiceRouteFeeEstimate is a query-only route estimate built
+// from route hints in previously settled invoices to the same destination.
+type HistoricalInvoiceRouteFeeEstimate struct {
+	FeeSat       int64
+	FeeMsat      int64
+	InvoiceCount int
+}
+
 // EstimateRouteFeeToNode asks LND for the cheapest route it currently knows
 // to a public node. Unlike PreviewPayment, this method never probes or sends a
 // payment and can therefore be used before an invoice exists.
@@ -3479,6 +3487,120 @@ func (c *Client) EstimateRouteFeeToNode(ctx context.Context, destination string,
 		FeeMsat:  feeMsat,
 		HopCount: len(selected.Hops),
 	}, nil
+}
+
+// EstimateRouteFeesFromSettledInvoices reuses private route hints from
+// settled invoices to the same destination. It only calls QueryRoutes: no
+// HTLC is sent and no payment is attempted. targetAmountsSat are paired with
+// the closest historical invoice templates, allowing callers to estimate a
+// current main payment and prepayment through a newly selected first channel.
+func (c *Client) EstimateRouteFeesFromSettledInvoices(ctx context.Context, destination string, windowStart, windowEnd time.Time, targetAmountsSat []int64, outgoingChanIDs []uint64) (HistoricalInvoiceRouteFeeEstimate, error) {
+	destination = strings.ToLower(strings.TrimSpace(destination))
+	rawDestination, err := hex.DecodeString(destination)
+	if err != nil || len(rawDestination) != 33 {
+		return HistoricalInvoiceRouteFeeEstimate{}, errors.New("destination must be a 33-byte compressed public key")
+	}
+	if windowStart.IsZero() || windowEnd.IsZero() || !windowEnd.After(windowStart) {
+		return HistoricalInvoiceRouteFeeEstimate{}, errors.New("valid payment history window required")
+	}
+	targets := make([]int64, 0, len(targetAmountsSat))
+	for _, amountSat := range targetAmountsSat {
+		if amountSat > 0 {
+			targets = append(targets, amountSat)
+		}
+	}
+	if len(targets) == 0 {
+		return HistoricalInvoiceRouteFeeEstimate{}, errors.New("at least one target amount required")
+	}
+	for _, channelID := range outgoingChanIDs {
+		if channelID == 0 {
+			return HistoricalInvoiceRouteFeeEstimate{}, errors.New("outgoing channel IDs must be positive")
+		}
+	}
+
+	queryCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	conn, release, err := c.borrowConn(queryCtx, grpcRoleAdminUnary)
+	if err != nil {
+		return HistoricalInvoiceRouteFeeEstimate{}, err
+	}
+	defer release()
+	lightning := lnrpc.NewLightningClient(conn)
+	paymentHistory, err := lightning.ListPayments(queryCtx, &lnrpc.ListPaymentsRequest{
+		IncludeIncomplete: false,
+		MaxPayments:       100,
+		CreationDateStart: uint64(windowStart.Unix()),
+		CreationDateEnd:   uint64(windowEnd.Unix()),
+	})
+	if err != nil {
+		return HistoricalInvoiceRouteFeeEstimate{}, err
+	}
+
+	templates := make([]DecodedInvoice, 0, len(targets))
+	if paymentHistory != nil {
+		for _, payment := range paymentHistory.Payments {
+			if payment == nil || payment.Status != lnrpc.Payment_SUCCEEDED || strings.TrimSpace(payment.PaymentRequest) == "" {
+				continue
+			}
+			decoded, _, decodeErr := decodePaymentRequestWithClient(queryCtx, lightning, payment.PaymentRequest)
+			if decodeErr != nil || !strings.EqualFold(strings.TrimSpace(decoded.Destination), destination) || decoded.AmountSat <= 0 {
+				continue
+			}
+			templates = append(templates, decoded)
+		}
+	}
+	selectedTemplates := closestInvoiceRouteTemplates(templates, targets)
+	if len(selectedTemplates) != len(targets) {
+		return HistoricalInvoiceRouteFeeEstimate{}, errors.New("settled Loop invoice route hints are unavailable")
+	}
+
+	var totalFeeMsat int64
+	for i, targetAmountSat := range targets {
+		routes, routeErr := c.previewPaymentRouteCandidates(
+			queryCtx, lightning, selectedTemplates[i], targetAmountSat*1000,
+			outgoingChanIDs, 3,
+		)
+		if routeErr != nil || len(routes) == 0 {
+			if routeErr != nil {
+				return HistoricalInvoiceRouteFeeEstimate{}, routeErr
+			}
+			return HistoricalInvoiceRouteFeeEstimate{}, errors.New("LND did not find a route using the settled invoice hints")
+		}
+		totalFeeMsat += routeTotalFeeMsat(routes[0])
+	}
+	return HistoricalInvoiceRouteFeeEstimate{
+		FeeSat:       msatToSatCeil(totalFeeMsat),
+		FeeMsat:      totalFeeMsat,
+		InvoiceCount: len(selectedTemplates),
+	}, nil
+}
+
+func closestInvoiceRouteTemplates(templates []DecodedInvoice, targets []int64) []DecodedInvoice {
+	if len(templates) < len(targets) || len(targets) == 0 {
+		return nil
+	}
+	remaining := append([]DecodedInvoice(nil), templates...)
+	selected := make([]DecodedInvoice, 0, len(targets))
+	for _, target := range targets {
+		bestIndex := -1
+		var bestDistance int64
+		for i, template := range remaining {
+			distance := template.AmountSat - target
+			if distance < 0 {
+				distance = -distance
+			}
+			if bestIndex == -1 || distance < bestDistance {
+				bestIndex = i
+				bestDistance = distance
+			}
+		}
+		if bestIndex < 0 {
+			return nil
+		}
+		selected = append(selected, remaining[bestIndex])
+		remaining = append(remaining[:bestIndex], remaining[bestIndex+1:]...)
+	}
+	return selected
 }
 
 type PaymentPreview struct {

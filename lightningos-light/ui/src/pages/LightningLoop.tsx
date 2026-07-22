@@ -399,14 +399,15 @@ export default function LightningLoop() {
                       const selected = selectedChannelIDs.has(id)
                       const capacity = Math.max(channel.capacity_sat, channel.local_balance_sat + channel.remote_balance_sat, 1)
                       const localPercent = Math.min(100, Math.max(0, (channel.local_balance_sat / capacity) * 100))
+                      const remotePercent = Math.min(100, Math.max(0, (channel.remote_balance_sat / capacity) * 100))
                       return (
                         <button key={channel.channel_point || id} type="button" onClick={() => toggleChannel(id)} className={`group rounded-2xl border p-4 text-left transition ${selected ? 'border-brass/55 bg-brass/10 shadow-[0_0_0_1px_rgba(245,158,11,.08)]' : 'border-white/10 bg-white/[0.025] hover:border-white/20 hover:bg-white/[0.045]'}`}>
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0"><p className="truncate text-sm font-semibold">{channel.peer_alias || shorten(channel.remote_pubkey)}</p><p className="mt-1 truncate font-mono text-[10px] text-fog/38">{id}</p></div>
                             <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition ${selected ? 'border-brass bg-brass text-ink' : 'border-white/20 text-transparent group-hover:border-white/40'}`}><CheckIcon /></span>
                           </div>
-                          <div className="mt-4 flex h-1.5 overflow-hidden rounded-full bg-glow/30"><span className="bg-brass" style={{ width: `${localPercent}%` }} /></div>
-                          <div className="mt-2 flex justify-between text-[11px]"><span className="text-brass">{t('lightningLoop.local')} {compactSats(channel.local_balance_sat)}</span><span className="text-glow">{t('lightningLoop.remote')} {compactSats(channel.remote_balance_sat)}</span></div>
+                          <div className="relative mt-4 h-1.5 overflow-hidden rounded-full bg-white/10"><span className="absolute inset-y-0 left-0 bg-glow/70" style={{ width: `${localPercent}%` }} /><span className="absolute inset-y-0 right-0 bg-white/35" style={{ width: `${remotePercent}%` }} /></div>
+                          <div className="mt-2 flex justify-between text-[11px]"><span className="text-glow">{t('lightningLoop.local')} {compactSats(channel.local_balance_sat)}</span><span className="text-fog/55">{t('lightningLoop.remote')} {compactSats(channel.remote_balance_sat)}</span></div>
                         </button>
                       )
                     })}
@@ -434,14 +435,15 @@ export default function LightningLoop() {
                       const insufficient = amount > 0 && destinationOption.remoteBalanceSat < amount
                       const total = Math.max(1, destinationOption.localBalanceSat + destinationOption.remoteBalanceSat)
                       const remotePercent = Math.min(100, Math.max(0, destinationOption.remoteBalanceSat / total * 100))
+                      const localPercent = Math.min(100, Math.max(0, destinationOption.localBalanceSat / total * 100))
                       return (
                         <button key={destinationOption.pubkey} type="button" disabled={insufficient} onClick={() => { setLastHop(destinationOption.pubkey); clearQuote() }} className={`group rounded-2xl border p-4 text-left transition ${selected ? 'border-glow/55 bg-glow/10 shadow-[0_0_0_1px_rgba(34,211,238,.06)]' : insufficient ? 'cursor-not-allowed border-white/[0.06] bg-white/[0.015] opacity-45' : 'border-white/10 bg-white/[0.025] hover:border-white/20 hover:bg-white/[0.045]'}`}>
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0"><p className="truncate text-sm font-semibold">{destinationOption.alias || shorten(destinationOption.pubkey)}</p><p className="mt-1 truncate font-mono text-[10px] text-fog/38">{shorten(destinationOption.pubkey)}</p></div>
                             <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition ${selected ? 'border-glow bg-glow text-ink' : 'border-white/20 text-transparent group-hover:border-white/40'}`}><CheckIcon /></span>
                           </div>
-                          <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/5"><div className="h-full rounded-full bg-glow" style={{ width: `${remotePercent}%` }} /></div>
-                          <div className="mt-2 flex items-start justify-between gap-2 text-[11px]"><span className="text-glow">{t('lightningLoop.inboundAvailable')} {compactSats(destinationOption.remoteBalanceSat)}</span><span className="text-right text-fog/38">{t('lightningLoop.channelCount', { count: destinationOption.channelIDs.length })}</span></div>
+                          <div className="relative mt-4 h-1.5 overflow-hidden rounded-full bg-white/10"><div className="absolute inset-y-0 left-0 bg-glow/70" style={{ width: `${localPercent}%` }} /><div className="absolute inset-y-0 right-0 bg-white/35" style={{ width: `${remotePercent}%` }} /></div>
+                          <div className="mt-2 flex items-start justify-between gap-2 text-[11px]"><span className="text-fog/55">{t('lightningLoop.inboundAvailable')} {compactSats(destinationOption.remoteBalanceSat)}</span><span className="text-right text-fog/38">{t('lightningLoop.channelCount', { count: destinationOption.channelIDs.length })}</span></div>
                           {insufficient && <p className="mt-2 text-[10px] text-amber-200/80">{t('lightningLoop.insufficientInboundDestination')}</p>}
                         </button>
                       )
@@ -489,7 +491,7 @@ export default function LightningLoop() {
                     <p className="mt-3 text-sm font-medium">{t('lightningLoop.waitingQuote')}</p>
                     <p className="mt-1 text-xs leading-5 text-fog/45">{t('lightningLoop.waitingQuoteBody')}</p>
                   </div>
-                  <button className="btn-primary mt-4 w-full justify-center" type="submit" disabled={busy || !amountIsValid || !liquidityIsValid}>{busy ? t('common.loading') : t('lightningLoop.getQuote')}</button>
+                  <button className="btn-primary mt-4 w-full justify-center" type="submit" disabled={busy || !amountIsValid || !liquidityIsValid}>{busy ? t('lightningLoop.loading') : t('lightningLoop.getQuote')}</button>
                   {!liquidityIsValid && direction === 'out' && amount > 0 && <p className="mt-2 text-center text-[11px] text-amber-200/80">{t('lightningLoop.selectEnoughFirst')}</p>}
                   {!liquidityIsValid && direction === 'in' && amount > 0 && <p className="mt-2 text-center text-[11px] text-amber-200/80">{t('lightningLoop.selectDestinationWithLiquidity')}</p>}
                 </div>
@@ -614,7 +616,6 @@ function QuotePanel({ quote, direction, maxMinerFee, setMaxMinerFee, riskAccepte
   const chain = Math.max(0, quote.onchain_fee_sat || 0)
   const routing = (quote.routing_fee_limit_sat || 0) + (quote.prepay_routing_limit_sat || 0)
   const estimatedRouting = Math.max(0, quote.estimated_routing_fee_sat || 0)
-  const chartTotal = Math.max(1, service + chain + estimatedRouting)
   const estimatedAllIn = quote.routing_estimate_available ? Math.max(0, quote.estimated_all_in_fee_sat || service + chain + estimatedRouting) : service + chain
   const servicePPM = quote.amount_sat > 0 ? Math.round(service * 1_000_000 / quote.amount_sat) : 0
   const chainPPM = quote.amount_sat > 0 ? Math.round(chain * 1_000_000 / quote.amount_sat) : 0
@@ -623,6 +624,10 @@ function QuotePanel({ quote, direction, maxMinerFee, setMaxMinerFee, riskAccepte
   const routingBudgetPPM = quote.amount_sat > 0 ? Math.round(routing * 1_000_000 / quote.amount_sat) : 0
   const reservedAllIn = service + chain + routing
   const reservedAllInPPM = quote.amount_sat > 0 ? Math.round(reservedAllIn * 1_000_000 / quote.amount_sat) : 0
+  const headlineTotal = direction === 'out' ? reservedAllIn : estimatedAllIn
+  const headlinePPM = direction === 'out' ? reservedAllInPPM : estimatedAllInPPM
+  const chartRouting = direction === 'out' ? routing : estimatedRouting
+  const chartTotal = Math.max(1, service + chain + chartRouting)
   const routingOverBudget = Math.max(0, estimatedRouting - routing)
   const estimateHint = quote.routing_estimate_source === 'history'
     ? t('lightningLoop.routingHistoryHint', { count: quote.routing_estimate_samples || 1 })
@@ -632,17 +637,26 @@ function QuotePanel({ quote, direction, maxMinerFee, setMaxMinerFee, riskAccepte
   return (
     <div className="mt-5 space-y-4">
       <div className="rounded-2xl border border-brass/25 bg-brass/[0.07] p-4">
-        <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] uppercase tracking-wider text-fog/45">{t(quote.routing_estimate_available ? 'lightningLoop.estimatedAllIn' : 'lightningLoop.totalEstimateUnavailable')}</p>{quote.routing_estimate_available ? <><p className="mt-1 text-2xl font-semibold tabular-nums">{sats(estimatedAllIn)}</p><p className="mt-0.5 text-[11px] tabular-nums text-fog/45">{estimatedAllInPPM.toLocaleString()} ppm</p></> : <p className="mt-1 text-2xl font-semibold text-fog/35">—</p>}</div><span className={`rounded-full border px-2 py-1 text-[9px] font-semibold uppercase tracking-wider ${quote.routing_estimate_available ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200' : 'border-amber-400/25 bg-amber-400/10 text-amber-200'}`}>{t(quote.routing_estimate_available ? 'lightningLoop.liveQuote' : 'lightningLoop.partialQuote')}</span></div>
-        <div className="mt-4 flex h-2 overflow-hidden rounded-full bg-white/5"><span className="bg-brass" style={{ width: `${(service / chartTotal) * 100}%` }} /><span className="bg-glow" style={{ width: `${(chain / chartTotal) * 100}%` }} />{quote.routing_estimate_available && <span className="bg-emerald-400" style={{ width: `${(estimatedRouting / chartTotal) * 100}%` }} />}</div>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-fog/45">{t(direction === 'out' ? 'lightningLoop.maximumEstimatedCost' : 'lightningLoop.estimatedAllIn')}</p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums">{sats(headlineTotal)}</p>
+            <p className="mt-0.5 text-[11px] tabular-nums text-fog/45">{headlinePPM.toLocaleString()} ppm</p>
+            {direction === 'out' && quote.routing_estimate_available && <p className="mt-1 text-[10px] tabular-nums text-fog/45">{t('lightningLoop.currentRouteTotal', { value: sats(estimatedAllIn), ppm: estimatedAllInPPM.toLocaleString() })}</p>}
+          </div>
+          <span className={`rounded-full border px-2 py-1 text-[9px] font-semibold uppercase tracking-wider ${quote.routing_estimate_available ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200' : 'border-amber-400/25 bg-amber-400/10 text-amber-200'}`}>{t(quote.routing_estimate_available ? 'lightningLoop.liveQuote' : 'lightningLoop.partialQuote')}</span>
+        </div>
+        <div className="mt-4 flex h-2 overflow-hidden rounded-full bg-white/5"><span className="bg-brass" style={{ width: `${(service / chartTotal) * 100}%` }} /><span className="bg-glow" style={{ width: `${(chain / chartTotal) * 100}%` }} />{chartRouting > 0 && <span className="bg-white/35" style={{ width: `${(chartRouting / chartTotal) * 100}%` }} />}</div>
         <div className="mt-3 space-y-2 text-xs"><div className="flex justify-between"><span className="flex items-center gap-2 text-fog/55"><i className="h-1.5 w-1.5 rounded-full bg-brass" />{t('lightningLoop.serviceFee')}</span><strong className="text-right"><span className="block">{sats(service)}</span><span className="block text-[10px] font-normal text-fog/40">{servicePPM.toLocaleString()} ppm</span></strong></div><div className="flex justify-between"><span className="flex items-center gap-2 text-fog/55"><i className="h-1.5 w-1.5 rounded-full bg-glow" />{t('lightningLoop.onchainEstimate')}</span><strong className="text-right"><span className="block">{sats(chain)}</span><span className="block text-[10px] font-normal text-fog/40">{chainPPM.toLocaleString()} ppm</span></strong></div>{direction === 'out' && quote.routing_estimate_available && <div className="flex justify-between"><span className="flex items-center gap-2 text-fog/55"><i className="h-1.5 w-1.5 rounded-full bg-emerald-400" />{t('lightningLoop.routingEstimate')}</span><strong className="text-right"><span className="block">{sats(estimatedRouting)}</span><span className="block text-[10px] font-normal text-fog/40">{estimatedRoutingPPM.toLocaleString()} ppm</span></strong></div>}{direction === 'out' && <div className="flex justify-between border-t border-white/10 pt-2"><span className="text-fog/55">{t('lightningLoop.routingBudget')}</span><strong className="text-right"><span className="block">{sats(routing)}</span><span className="block text-[10px] font-normal text-fog/40">{routingBudgetPPM.toLocaleString()} ppm</span></strong></div>}</div>
-        {direction === 'out' && quote.routing_estimate_available && <p className="mt-3 text-[10px] leading-4 text-fog/40">{estimateHint}</p>}
+        {direction === 'out' && <p className="mt-3 text-[10px] leading-4 text-fog/45">{t('lightningLoop.maximumCostHint')}</p>}
+        {direction === 'out' && quote.routing_estimate_available && <p className="mt-2 text-[10px] leading-4 text-fog/40">{estimateHint}</p>}
         {direction === 'out' && quote.routing_estimate_available && routingOverBudget > 0 && <p className="mt-3 rounded-xl border border-amber-400/25 bg-amber-400/[0.07] p-3 text-[10px] leading-4 text-amber-100/80">{t('lightningLoop.routingOverBudget', { value: sats(routingOverBudget) })}</p>}
-        {direction === 'out' && !quote.routing_estimate_available && <div className="mt-3 rounded-xl border border-amber-400/20 bg-amber-400/[0.06] p-3"><p className="text-[10px] leading-4 text-amber-100/70">{t('lightningLoop.routingEstimateUnavailable')}</p><p className="mt-1.5 text-[11px] font-semibold tabular-nums text-amber-100">{t('lightningLoop.withRoutingReserve', { value: sats(reservedAllIn), ppm: reservedAllInPPM.toLocaleString() })}</p></div>}
+        {direction === 'out' && !quote.routing_estimate_available && <div className="mt-3 rounded-xl border border-amber-400/20 bg-amber-400/[0.06] p-3"><p className="text-[10px] leading-4 text-amber-100/70">{t('lightningLoop.routingEstimateUnavailable')}</p></div>}
         <p className="mt-3 text-[10px] text-fog/40">{t('lightningLoop.expires')}: {new Date(quote.expires_at).toLocaleTimeString()}</p>
       </div>
       <Field label={t('lightningLoop.maxMiner')} hint={t('lightningLoop.maxMinerWarning')}><input className="input-field" type="number" min={quote.onchain_fee_sat} required value={maxMinerFee} onChange={(event) => setMaxMinerFee(event.target.value)} /></Field>
       <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.025] p-3 text-xs leading-5 text-fog/65"><input className="mt-1 accent-amber-400" type="checkbox" checked={riskAccepted} onChange={(event) => setRiskAccepted(event.target.checked)} /><span>{t('lightningLoop.confirmRisk')}</span></label>
-      <button className="btn-primary w-full justify-center" type="button" disabled={busy || !riskAccepted || Number(maxMinerFee) < quote.onchain_fee_sat} onClick={() => execute()}>{busy ? t('common.loading') : t('lightningLoop.execute')}</button>
+      <button className="btn-primary w-full justify-center" type="button" disabled={busy || !riskAccepted || Number(maxMinerFee) < quote.onchain_fee_sat} onClick={() => execute()}>{busy ? t('lightningLoop.loading') : t('lightningLoop.execute')}</button>
     </div>
   )
 }

@@ -486,8 +486,8 @@ GET /api/apps/loop/swaps?limit=100
 - Returns normalized Loop In/Out history. Channel IDs are strings to preserve uint64 precision.
 
 POST /api/apps/loop/quote
-- Body: `direction` (`out` or `in`), `amount_sat`, optional `conf_target`, `last_hop_pubkey`, `fast`, and `routing_fee_limit_ppm`.
-- Returns separate server, on-chain, and routing estimates plus a recommended miner-fee ceiling.
+- Body: `direction` (`out` or `in`), `amount_sat`, optional `conf_target`, `last_hop_pubkey`, `fast`, `routing_fee_limit_ppm`, and Loop Out `outgoing_channel_ids` as strings.
+- Returns separate server and on-chain estimates plus a recommended miner-fee ceiling. For Loop Out, it also attempts a read-only LND route estimate for the quoted server destination and selected channels. `routing_estimate_available=false` means no graph-only estimate was possible; the routing fee ceiling remains available and enforced.
 
 POST /api/apps/loop/swap
 - Starts a manual swap only after obtaining a fresh quote and verifying the approved fee ceilings.

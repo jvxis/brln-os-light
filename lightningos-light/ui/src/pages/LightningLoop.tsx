@@ -147,9 +147,10 @@ export default function LightningLoop() {
     amount_sat: Number(amountSat),
     conf_target: Number(confTarget),
     routing_fee_limit_ppm: Number(routingPPM),
+    outgoing_channel_ids: direction === 'out' ? Array.from(selectedChannelIDs) : undefined,
     last_hop_pubkey: direction === 'in' ? lastHop.trim() : undefined,
     fast: direction === 'out' ? fast : false
-  }), [amountSat, confTarget, direction, fast, lastHop, routingPPM])
+  }), [amountSat, confTarget, direction, fast, lastHop, routingPPM, selectedChannelIDs])
 
   const clearQuote = () => {
     setQuote(null)
@@ -524,14 +525,19 @@ function Field({ label, hint, className = '', children }: { label: string; hint?
 function QuotePanel({ quote, direction, maxMinerFee, setMaxMinerFee, riskAccepted, setRiskAccepted, busy, execute, sats, t }: { quote: LoopQuote; direction: Direction; maxMinerFee: string; setMaxMinerFee: (value: string) => void; riskAccepted: boolean; setRiskAccepted: (value: boolean) => void; busy: boolean; execute: () => void; sats: (value?: number) => string; t: any }) {
   const service = Math.max(0, quote.swap_fee_sat || 0)
   const chain = Math.max(0, quote.onchain_fee_sat || 0)
-  const total = Math.max(1, service + chain)
   const routing = (quote.routing_fee_limit_sat || 0) + (quote.prepay_routing_limit_sat || 0)
+  const estimatedRouting = Math.max(0, quote.estimated_routing_fee_sat || 0)
+  const chartTotal = Math.max(1, service + chain + estimatedRouting)
+  const estimatedAllIn = quote.routing_estimate_available ? Math.max(0, quote.estimated_all_in_fee_sat || service + chain + estimatedRouting) : service + chain
+  const estimatedRoutingPPM = quote.amount_sat > 0 ? Math.round(estimatedRouting * 1_000_000 / quote.amount_sat) : 0
+  const estimatedAllInPPM = quote.amount_sat > 0 ? Math.round(estimatedAllIn * 1_000_000 / quote.amount_sat) : 0
   return (
     <div className="mt-5 space-y-4">
       <div className="rounded-2xl border border-brass/25 bg-brass/[0.07] p-4">
-        <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] uppercase tracking-wider text-fog/45">{t('lightningLoop.estimatedTotal')}</p><p className="mt-1 text-2xl font-semibold tabular-nums">{sats(quote.estimated_fee_sat)}</p></div><span className="rounded-full border border-emerald-400/25 bg-emerald-400/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-emerald-200">{t('lightningLoop.liveQuote')}</span></div>
-        <div className="mt-4 flex h-2 overflow-hidden rounded-full bg-white/5"><span className="bg-brass" style={{ width: `${(service / total) * 100}%` }} /><span className="bg-glow" style={{ width: `${(chain / total) * 100}%` }} /></div>
-        <div className="mt-3 space-y-2 text-xs"><div className="flex justify-between"><span className="flex items-center gap-2 text-fog/55"><i className="h-1.5 w-1.5 rounded-full bg-brass" />{t('lightningLoop.serviceFee')}</span><strong>{sats(service)}</strong></div><div className="flex justify-between"><span className="flex items-center gap-2 text-fog/55"><i className="h-1.5 w-1.5 rounded-full bg-glow" />{t('lightningLoop.onchainEstimate')}</span><strong>{sats(chain)}</strong></div>{direction === 'out' && <div className="flex justify-between border-t border-white/10 pt-2"><span className="text-fog/55">{t('lightningLoop.routingBudget')}</span><strong>{sats(routing)}</strong></div>}</div>
+        <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] uppercase tracking-wider text-fog/45">{t(quote.routing_estimate_available ? 'lightningLoop.estimatedAllIn' : 'lightningLoop.estimatedTotal')}</p><p className="mt-1 text-2xl font-semibold tabular-nums">{sats(estimatedAllIn)}</p>{quote.routing_estimate_available && <p className="mt-0.5 text-[11px] tabular-nums text-fog/45">{estimatedAllInPPM.toLocaleString()} ppm</p>}</div><span className="rounded-full border border-emerald-400/25 bg-emerald-400/10 px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-emerald-200">{t('lightningLoop.liveQuote')}</span></div>
+        <div className="mt-4 flex h-2 overflow-hidden rounded-full bg-white/5"><span className="bg-brass" style={{ width: `${(service / chartTotal) * 100}%` }} /><span className="bg-glow" style={{ width: `${(chain / chartTotal) * 100}%` }} />{quote.routing_estimate_available && <span className="bg-emerald-400" style={{ width: `${(estimatedRouting / chartTotal) * 100}%` }} />}</div>
+        <div className="mt-3 space-y-2 text-xs"><div className="flex justify-between"><span className="flex items-center gap-2 text-fog/55"><i className="h-1.5 w-1.5 rounded-full bg-brass" />{t('lightningLoop.serviceFee')}</span><strong>{sats(service)}</strong></div><div className="flex justify-between"><span className="flex items-center gap-2 text-fog/55"><i className="h-1.5 w-1.5 rounded-full bg-glow" />{t('lightningLoop.onchainEstimate')}</span><strong>{sats(chain)}</strong></div>{direction === 'out' && quote.routing_estimate_available && <div className="flex justify-between"><span className="flex items-center gap-2 text-fog/55"><i className="h-1.5 w-1.5 rounded-full bg-emerald-400" />{t('lightningLoop.routingEstimate')}</span><strong className="text-right"><span className="block">{sats(estimatedRouting)}</span><span className="block text-[10px] font-normal text-fog/40">{estimatedRoutingPPM.toLocaleString()} ppm</span></strong></div>}{direction === 'out' && <div className="flex justify-between border-t border-white/10 pt-2"><span className="text-fog/55">{t('lightningLoop.routingBudget')}</span><strong>{sats(routing)}</strong></div>}</div>
+        {direction === 'out' && <p className="mt-3 text-[10px] leading-4 text-fog/40">{t(quote.routing_estimate_available ? 'lightningLoop.routingEstimateHint' : 'lightningLoop.routingEstimateUnavailable')}</p>}
         <p className="mt-3 text-[10px] text-fog/40">{t('lightningLoop.expires')}: {new Date(quote.expires_at).toLocaleTimeString()}</p>
       </div>
       <Field label={t('lightningLoop.maxMiner')} hint={t('lightningLoop.maxMinerWarning')}><input className="input-field" type="number" min={quote.onchain_fee_sat} required value={maxMinerFee} onChange={(event) => setMaxMinerFee(event.target.value)} /></Field>

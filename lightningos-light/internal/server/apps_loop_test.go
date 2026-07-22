@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -197,7 +198,8 @@ func TestLoopSwapPayloadPreservesChannelID(t *testing.T) {
 		PrepayRoutingLimitSat: 11, ExpiresAt: "2030-01-01T00:00:00Z",
 	}
 	payload, err := loopSwapPayload(loopSwapRequest{
-		OutgoingChannelIDs: []string{"1005750773843558400"}, MaxMinerFeeSat: 50000,
+		loopQuoteRequest: loopQuoteRequest{OutgoingChannelIDs: []string{"1005750773843558400"}},
+		MaxMinerFeeSat:   50000,
 	}, quote)
 	if err != nil {
 		t.Fatal(err)
@@ -205,5 +207,40 @@ func TestLoopSwapPayloadPreservesChannelID(t *testing.T) {
 	channels, ok := payload["outgoing_chan_set"].([]string)
 	if !ok || len(channels) != 1 || channels[0] != "1005750773843558400" {
 		t.Fatalf("channel ID lost precision: %#v", payload["outgoing_chan_set"])
+	}
+}
+
+func TestDecodeLoopPaymentDestination(t *testing.T) {
+	raw := make([]byte, 33)
+	raw[0] = 2
+	for i := 1; i < len(raw); i++ {
+		raw[i] = byte(i)
+	}
+	destination, err := decodeLoopPaymentDestination(base64.StdEncoding.EncodeToString(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(destination) != 66 || !strings.HasPrefix(destination, "02") {
+		t.Fatalf("unexpected destination %q", destination)
+	}
+	for _, invalid := range []string{"", "not-base64", base64.StdEncoding.EncodeToString(raw[:32])} {
+		if _, err := decodeLoopPaymentDestination(invalid); err == nil {
+			t.Fatalf("expected invalid destination %q to fail", invalid)
+		}
+	}
+}
+
+func TestParseLoopOutgoingChannelIDsPreservesUint64(t *testing.T) {
+	channels, err := parseLoopOutgoingChannelIDs([]string{"1005750773843558400", "42"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(channels) != 2 || channels[0] != 1005750773843558400 || channels[1] != 42 {
+		t.Fatalf("unexpected channels: %#v", channels)
+	}
+	for _, invalid := range [][]string{{"0"}, {"-1"}, {"channel"}} {
+		if _, err := parseLoopOutgoingChannelIDs(invalid); err == nil {
+			t.Fatalf("expected invalid channels %#v to fail", invalid)
+		}
 	}
 }

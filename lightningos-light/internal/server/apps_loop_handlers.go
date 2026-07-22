@@ -40,12 +40,13 @@ type loopTerms struct {
 }
 
 type loopQuoteRequest struct {
-	Direction          string `json:"direction"`
-	AmountSat          int64  `json:"amount_sat"`
-	ConfTarget         int32  `json:"conf_target"`
-	LastHopPubkey      string `json:"last_hop_pubkey"`
-	Fast               bool   `json:"fast"`
-	RoutingFeeLimitPPM int64  `json:"routing_fee_limit_ppm"`
+	Direction          string   `json:"direction"`
+	AmountSat          int64    `json:"amount_sat"`
+	ConfTarget         int32    `json:"conf_target"`
+	LastHopPubkey      string   `json:"last_hop_pubkey"`
+	Fast               bool     `json:"fast"`
+	RoutingFeeLimitPPM int64    `json:"routing_fee_limit_ppm"`
+	OutgoingChannelIDs []string `json:"outgoing_channel_ids"`
 }
 
 type loopQuoteResponse struct {
@@ -58,6 +59,9 @@ type loopQuoteResponse struct {
 	RoutingFeeLimitSat     int64  `json:"routing_fee_limit_sat,omitempty"`
 	PrepayRoutingLimitSat  int64  `json:"prepay_routing_limit_sat,omitempty"`
 	EstimatedFeeSat        int64  `json:"estimated_fee_sat"`
+	RoutingEstimate        bool   `json:"routing_estimate_available"`
+	EstimatedRoutingFeeSat int64  `json:"estimated_routing_fee_sat,omitempty"`
+	EstimatedAllInFeeSat   int64  `json:"estimated_all_in_fee_sat,omitempty"`
 	RecommendedMaxMinerSat int64  `json:"recommended_max_miner_fee_sat"`
 	CLTVDelta              int32  `json:"cltv_delta"`
 	ExpiresAt              string `json:"expires_at"`
@@ -65,13 +69,12 @@ type loopQuoteResponse struct {
 
 type loopSwapRequest struct {
 	loopQuoteRequest
-	DestinationAddress         string   `json:"destination_address"`
-	OutgoingChannelIDs         []string `json:"outgoing_channel_ids"`
-	ApprovedSwapFeeSat         int64    `json:"approved_swap_fee_sat"`
-	ApprovedOnchainFeeSat      int64    `json:"approved_onchain_fee_sat"`
-	ApprovedRoutingFeeLimitSat int64    `json:"approved_routing_fee_limit_sat"`
-	MaxMinerFeeSat             int64    `json:"max_miner_fee_sat"`
-	ConfirmPassword            string   `json:"confirm_password"`
+	DestinationAddress         string `json:"destination_address"`
+	ApprovedSwapFeeSat         int64  `json:"approved_swap_fee_sat"`
+	ApprovedOnchainFeeSat      int64  `json:"approved_onchain_fee_sat"`
+	ApprovedRoutingFeeLimitSat int64  `json:"approved_routing_fee_limit_sat"`
+	MaxMinerFeeSat             int64  `json:"max_miner_fee_sat"`
+	ConfirmPassword            string `json:"confirm_password"`
 }
 
 type loopSwapStatus struct {
@@ -122,6 +125,7 @@ type loopRawOutQuote struct {
 	SwapFeeSat      string `json:"swap_fee_sat"`
 	PrepayAmountSat string `json:"prepay_amt_sat"`
 	MinerFeeSat     string `json:"htlc_sweep_fee_sat"`
+	SwapPaymentDest string `json:"swap_payment_dest"`
 	CLTVDelta       int32  `json:"cltv_delta"`
 	ConfTarget      int32  `json:"conf_target"`
 }
@@ -214,7 +218,11 @@ func (s *Server) handleLoopSwap(w http.ResponseWriter, r *http.Request) {
 		loopSwapReauthRequiredCode, "password confirmation required before starting a Lightning Loop swap") {
 		return
 	}
-	quote, err := s.fetchLoopQuote(r.Context(), req.loopQuoteRequest)
+	// The execution check only needs a fresh Loop fee quote. Route discovery
+	// was already presented during review and must not delay swap initiation.
+	quoteRequest := req.loopQuoteRequest
+	quoteRequest.OutgoingChannelIDs = nil
+	quote, err := s.fetchLoopQuote(r.Context(), quoteRequest)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -345,6 +353,10 @@ func (s *Server) fetchLoopQuote(ctx context.Context, req loopQuoteRequest) (loop
 	query.Set("swap_publication_deadline", strconv.FormatInt(expires.Unix(), 10))
 	quote := loopQuoteResponse{Direction: direction, AmountSat: req.AmountSat, ConfTarget: req.ConfTarget, ExpiresAt: expires.Format(time.RFC3339)}
 	if direction == "out" {
+		outgoingChannelIDs, err := parseLoopOutgoingChannelIDs(req.OutgoingChannelIDs)
+		if err != nil {
+			return loopQuoteResponse{}, err
+		}
 		var raw loopRawOutQuote
 		endpoint := "/v1/loop/out/quote/" + strconv.FormatInt(req.AmountSat, 10) + "?" + query.Encode()
 		if err := s.loopdRequest(ctx, http.MethodGet, endpoint, nil, &raw); err != nil {
@@ -358,6 +370,7 @@ func (s *Server) fetchLoopQuote(ctx context.Context, req loopQuoteRequest) (loop
 		quote.PrepayRoutingLimitSat = ppmFee(quote.PrepayAmountSat, req.RoutingFeeLimitPPM)
 		quote.EstimatedFeeSat = quote.SwapFeeSat + quote.OnchainFeeSat
 		quote.RecommendedMaxMinerSat = saturatingMultiply(quote.OnchainFeeSat, 250)
+		s.estimateLoopOutRouting(ctx, &quote, raw.SwapPaymentDest, outgoingChannelIDs)
 	} else {
 		if pubkey := strings.TrimSpace(req.LastHopPubkey); pubkey != "" {
 			rawPubkey, err := hex.DecodeString(pubkey)
@@ -383,6 +396,61 @@ func (s *Server) fetchLoopQuote(ctx context.Context, req loopQuoteRequest) (loop
 	return quote, nil
 }
 
+func (s *Server) estimateLoopOutRouting(ctx context.Context, quote *loopQuoteResponse, encodedDestination string, outgoingChannelIDs []uint64) {
+	if quote == nil || s.lnd == nil || len(outgoingChannelIDs) == 0 {
+		return
+	}
+	destination, err := decodeLoopPaymentDestination(encodedDestination)
+	if err != nil {
+		return
+	}
+	routingCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
+	defer cancel()
+	mainPaymentSat := quote.AmountSat + quote.SwapFeeSat - quote.PrepayAmountSat
+	mainEstimate, err := s.lnd.EstimateRouteFeeToNode(routingCtx, destination, mainPaymentSat, outgoingChannelIDs)
+	if err != nil {
+		return
+	}
+	routingFeeSat := mainEstimate.FeeSat
+	if quote.PrepayAmountSat > 0 {
+		prepayEstimate, err := s.lnd.EstimateRouteFeeToNode(routingCtx, destination, quote.PrepayAmountSat, outgoingChannelIDs)
+		if err != nil {
+			return
+		}
+		routingFeeSat += prepayEstimate.FeeSat
+	}
+	quote.RoutingEstimate = true
+	quote.EstimatedRoutingFeeSat = routingFeeSat
+	quote.EstimatedAllInFeeSat = quote.EstimatedFeeSat + routingFeeSat
+}
+
+func decodeLoopPaymentDestination(encoded string) (string, error) {
+	encoded = strings.TrimSpace(encoded)
+	if encoded == "" {
+		return "", errors.New("Loop quote did not include a payment destination")
+	}
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		raw, err = base64.RawStdEncoding.DecodeString(encoded)
+	}
+	if err != nil || len(raw) != 33 {
+		return "", errors.New("Loop quote returned an invalid payment destination")
+	}
+	return hex.EncodeToString(raw), nil
+}
+
+func parseLoopOutgoingChannelIDs(values []string) ([]uint64, error) {
+	channels := make([]uint64, 0, len(values))
+	for _, value := range values {
+		channelID, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
+		if err != nil || channelID == 0 {
+			return nil, errors.New("outgoing_channel_ids must be positive")
+		}
+		channels = append(channels, channelID)
+	}
+	return channels, nil
+}
+
 func loopSwapPayload(req loopSwapRequest, quote loopQuoteResponse) (map[string]any, error) {
 	payload := map[string]any{
 		"amt": strconv.FormatInt(quote.AmountSat, 10), "max_swap_fee": strconv.FormatInt(quote.SwapFeeSat, 10),
@@ -400,13 +468,13 @@ func loopSwapPayload(req loopSwapRequest, quote loopQuoteResponse) (map[string]a
 	if len(req.OutgoingChannelIDs) == 0 {
 		return nil, errors.New("at least one outgoing_channel_id is required for Loop Out")
 	}
-	channels := make([]string, 0, len(req.OutgoingChannelIDs))
-	for _, channelID := range req.OutgoingChannelIDs {
-		parsed, err := strconv.ParseUint(strings.TrimSpace(channelID), 10, 64)
-		if err != nil || parsed == 0 {
-			return nil, errors.New("outgoing_channel_ids must be positive")
-		}
-		channels = append(channels, strconv.FormatUint(parsed, 10))
+	parsedChannels, err := parseLoopOutgoingChannelIDs(req.OutgoingChannelIDs)
+	if err != nil {
+		return nil, err
+	}
+	channels := make([]string, 0, len(parsedChannels))
+	for _, channelID := range parsedChannels {
+		channels = append(channels, strconv.FormatUint(channelID, 10))
 	}
 	payload["outgoing_chan_set"] = channels
 	payload["max_swap_routing_fee"] = strconv.FormatInt(quote.RoutingFeeLimitSat, 10)

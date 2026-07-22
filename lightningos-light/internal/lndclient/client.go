@@ -3409,6 +3409,78 @@ type PaymentProbeEstimate struct {
 	FailureReason string `json:"failure_reason,omitempty"`
 }
 
+// RouteFeeEstimate is a graph-only estimate for a payment to a node. It does
+// not probe liquidity or require an invoice, so callers must treat it as an
+// indication rather than a guaranteed payment cost.
+type RouteFeeEstimate struct {
+	FeeSat   int64
+	FeeMsat  int64
+	HopCount int
+}
+
+// EstimateRouteFeeToNode asks LND for the cheapest route it currently knows
+// to a public node. Unlike PreviewPayment, this method never probes or sends a
+// payment and can therefore be used before an invoice exists.
+func (c *Client) EstimateRouteFeeToNode(ctx context.Context, destination string, amountSat int64, outgoingChanIDs []uint64) (RouteFeeEstimate, error) {
+	destination = strings.TrimSpace(destination)
+	rawDestination, err := hex.DecodeString(destination)
+	if err != nil || len(rawDestination) != 33 {
+		return RouteFeeEstimate{}, errors.New("destination must be a 33-byte compressed public key")
+	}
+	if amountSat <= 0 {
+		return RouteFeeEstimate{}, errors.New("amount must be positive")
+	}
+	for _, channelID := range outgoingChanIDs {
+		if channelID == 0 {
+			return RouteFeeEstimate{}, errors.New("outgoing channel IDs must be positive")
+		}
+	}
+
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	conn, release, err := c.borrowConn(queryCtx, grpcRoleAdminUnary)
+	if err != nil {
+		return RouteFeeEstimate{}, err
+	}
+	defer release()
+
+	response, err := lnrpc.NewLightningClient(conn).QueryRoutes(queryCtx, &lnrpc.QueryRoutesRequest{
+		PubKey:            destination,
+		Amt:               amountSat,
+		OutgoingChanIds:   append([]uint64(nil), outgoingChanIDs...),
+		UseMissionControl: true,
+		TimePref:          0,
+		FeeLimit: &lnrpc.FeeLimit{
+			Limit: &lnrpc.FeeLimit_FixedMsat{FixedMsat: math.MaxInt64},
+		},
+	})
+	if err != nil {
+		return RouteFeeEstimate{}, err
+	}
+	if response == nil || len(response.Routes) == 0 {
+		return RouteFeeEstimate{}, errors.New("LND did not find a route")
+	}
+
+	var selected *lnrpc.Route
+	for _, route := range response.Routes {
+		if route == nil {
+			continue
+		}
+		if selected == nil || routeTotalFeeMsat(route) < routeTotalFeeMsat(selected) {
+			selected = route
+		}
+	}
+	if selected == nil {
+		return RouteFeeEstimate{}, errors.New("LND returned no usable route")
+	}
+	feeMsat := routeTotalFeeMsat(selected)
+	return RouteFeeEstimate{
+		FeeSat:   msatToSatCeil(feeMsat),
+		FeeMsat:  feeMsat,
+		HopCount: len(selected.Hops),
+	}, nil
+}
+
 type PaymentPreview struct {
 	PaymentRequest      string                        `json:"payment_request,omitempty"`
 	AmountSat           int64                         `json:"amount_sat,omitempty"`

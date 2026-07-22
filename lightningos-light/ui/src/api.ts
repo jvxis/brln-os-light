@@ -1028,6 +1028,7 @@ export type LoopQuotePayload = {
   last_hop_pubkey?: string
   fast?: boolean
   routing_fee_limit_ppm?: number
+  outgoing_channel_ids?: string[]
 }
 
 export type LoopQuote = {
@@ -1040,6 +1041,9 @@ export type LoopQuote = {
   routing_fee_limit_sat?: number
   prepay_routing_limit_sat?: number
   estimated_fee_sat: number
+  routing_estimate_available: boolean
+  estimated_routing_fee_sat?: number
+  estimated_all_in_fee_sat?: number
   recommended_max_miner_fee_sat: number
   cltv_delta: number
   expires_at: string

@@ -134,6 +134,7 @@ export default function LightningLoop() {
   }, [channelSearch, eligibleChannels])
 
   const selectedChannels = useMemo(() => eligibleChannels.filter((channel) => selectedChannelIDs.has(channelID(channel))), [eligibleChannels, selectedChannelIDs])
+  const pendingSwaps = useMemo(() => swaps.filter((swap) => isPendingState(swap.state)), [swaps])
   const selectedLocal = useMemo(() => selectedChannels.reduce((sum, channel) => sum + channel.local_balance_sat, 0), [selectedChannels])
   const amount = Number(amountSat || 0)
   const min = direction === 'out' ? status?.terms?.loop_out_min_sat : status?.terms?.loop_in_min_sat
@@ -295,6 +296,12 @@ export default function LightningLoop() {
             <Metric icon={<BitcoinIcon />} label="Loop In" value={`${compactSats(status.terms?.loop_in_min_sat)} — ${compactSats(status.terms?.loop_in_max_sat)}`} hint={t('lightningLoop.outboundResult')} accent="glow" />
             <Metric icon={<FeeIcon />} label={t('lightningLoop.networkFees')} value={feePulse?.fastest ? `${feePulse.fastest} sat/vB` : '—'} hint={feePulse?.hour ? t('lightningLoop.hourFee', { value: feePulse.hour }) : t('common.unavailable')} accent="brass" />
           </div>
+
+          {pendingSwaps.length > 0 && (
+            <div className="space-y-3">
+              {pendingSwaps.map((swap) => <SwapProgressCard key={swap.id} swap={swap} sats={sats} swapTime={swapTime} t={t} />)}
+            </div>
+          )}
 
           <form className="grid items-start gap-5 xl:grid-cols-[minmax(0,1.55fr)_minmax(340px,.8fr)]" onSubmit={requestQuote}>
             <div className="section-card space-y-7">
@@ -529,6 +536,59 @@ function QuotePanel({ quote, direction, maxMinerFee, setMaxMinerFee, riskAccepte
       <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.025] p-3 text-xs leading-5 text-fog/65"><input className="mt-1 accent-amber-400" type="checkbox" checked={riskAccepted} onChange={(event) => setRiskAccepted(event.target.checked)} /><span>{t('lightningLoop.confirmRisk')}</span></label>
       <button className="btn-primary w-full justify-center" type="button" disabled={busy || !riskAccepted || Number(maxMinerFee) < quote.onchain_fee_sat} onClick={() => execute()}>{busy ? t('common.loading') : t('lightningLoop.execute')}</button>
     </div>
+  )
+}
+
+function SwapProgressCard({ swap, sats, swapTime, t }: { swap: LoopSwap; sats: (value?: number) => string; swapTime: (value: number) => string; t: any }) {
+  const state = String(swap.state || '').toUpperCase()
+  const out = String(swap.type || '').toUpperCase().includes('OUT')
+  const stages = out ? [
+    { label: t('lightningLoop.outProgressAccepted'), detail: t('lightningLoop.outProgressAcceptedDetail') },
+    { label: t('lightningLoop.outProgressHtlc'), detail: t('lightningLoop.outProgressHtlcDetail') },
+    { label: t('lightningLoop.outProgressSweep'), detail: t('lightningLoop.outProgressSweepDetail') },
+    { label: t('lightningLoop.progressComplete'), detail: t('lightningLoop.outProgressCompleteDetail') }
+  ] : [
+    { label: t('lightningLoop.inProgressPreparing'), detail: t('lightningLoop.inProgressPreparingDetail') },
+    { label: t('lightningLoop.inProgressHtlc'), detail: t('lightningLoop.inProgressHtlcDetail') },
+    { label: t('lightningLoop.inProgressPayment'), detail: t('lightningLoop.inProgressPaymentDetail') },
+    { label: t('lightningLoop.progressComplete'), detail: t('lightningLoop.inProgressCompleteDetail') }
+  ]
+  const stageIndex = out
+    ? ({ INITIATED: 1, PREIMAGE_REVEALED: 2, SUCCESS: 3 }[state] ?? 0)
+    : ({ INITIATED: 0, HTLC_PUBLISHED: 1, INVOICE_SETTLED: 2, SUCCESS: 3 }[state] ?? 0)
+  const startedMs = swap.initiation_time > 10_000_000_000_000 ? Math.floor(swap.initiation_time / 1_000_000) : swap.initiation_time * 1000
+  const elapsedMinutes = Math.max(0, Math.floor((Date.now() - startedMs) / 60_000))
+  const elapsed = elapsedMinutes < 60
+    ? t('lightningLoop.elapsedMinutes', { count: elapsedMinutes })
+    : t('lightningLoop.elapsedHours', { hours: Math.floor(elapsedMinutes / 60), minutes: elapsedMinutes % 60 })
+  const progress = (stageIndex / (stages.length - 1)) * 100
+
+  return (
+    <section className="overflow-hidden rounded-3xl border border-amber-400/25 bg-gradient-to-br from-amber-400/[0.09] via-ink/55 to-glow/[0.05] shadow-panel">
+      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-white/10 px-5 py-4 sm:px-6">
+        <div className="flex items-start gap-3">
+          <span className="relative mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-amber-400/30 bg-amber-400/10 text-amber-200">
+            <span className="absolute inset-0 animate-ping rounded-2xl border border-amber-300/20" />
+            {out ? <LightningIcon /> : <BitcoinIcon />}
+          </span>
+          <div><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-200/70">{t('lightningLoop.activeOperation')}</p><h3 className="mt-1 text-lg font-semibold">{out ? 'Loop Out' : 'Loop In'} · {sats(swap.amount_sat)}</h3><p className="mt-1 text-xs text-fog/45">{t('lightningLoop.startedAt', { value: swapTime(swap.initiation_time) })}</p></div>
+        </div>
+        <div className="text-left sm:text-right"><span className="inline-flex items-center gap-2 rounded-full border border-amber-400/25 bg-amber-400/10 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-amber-200"><i className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-300" />{t('lightningLoop.progressStage', { current: stageIndex + 1, total: stages.length })}</span><p className="mt-1.5 text-xs tabular-nums text-fog/45">{elapsed}</p></div>
+      </div>
+      <div className="px-5 py-5 sm:px-6">
+        <div className="relative">
+          <div className="absolute left-[6%] right-[6%] top-3 h-0.5 bg-white/10"><div className="h-full bg-gradient-to-r from-emerald-400 to-amber-300 transition-all duration-700" style={{ width: `${progress}%` }} /></div>
+          <div className="relative grid grid-cols-4 gap-2">
+            {stages.map((stage, index) => {
+              const done = index < stageIndex
+              const current = index === stageIndex
+              return <div className="min-w-0 text-center" key={stage.label}><span className={`mx-auto flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-bold ${done ? 'border-emerald-400 bg-emerald-400 text-ink' : current ? 'border-amber-300 bg-amber-300 text-ink shadow-[0_0_18px_rgba(252,211,77,.45)]' : 'border-white/15 bg-ink text-fog/30'}`}>{done ? '✓' : index + 1}</span><p className={`mt-2 truncate text-[10px] font-medium sm:text-xs ${current ? 'text-amber-100' : done ? 'text-emerald-200/70' : 'text-fog/30'}`}>{stage.label}</p></div>
+            })}
+          </div>
+        </div>
+        <div className="mt-5 flex items-start gap-3 rounded-2xl border border-white/10 bg-ink/45 p-4"><span className="mt-1 h-2 w-2 shrink-0 animate-pulse rounded-full bg-amber-300" /><div><p className="text-sm font-semibold text-amber-100">{stages[stageIndex].label}</p><p className="mt-1 text-xs leading-5 text-fog/60">{stages[stageIndex].detail}</p><p className="mt-2 text-[10px] uppercase tracking-wider text-fog/35">{t('lightningLoop.lastLoopEvent', { value: swapTime(swap.last_update_time) })} · {t('lightningLoop.autoRefresh')}</p></div></div>
+      </div>
+    </section>
   )
 }
 

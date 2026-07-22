@@ -92,9 +92,9 @@ type bip110Comparison struct {
 	Matches             bool    `json:"matches"`
 	Status              string  `json:"status"`
 	SamePeriod          bool    `json:"same_period"`
-	TipDelta            int64   `json:"tip_delta,omitempty"`
-	SignalingCountDelta int     `json:"signaling_count_delta,omitempty"`
-	PctDelta            float64 `json:"pct_delta,omitempty"`
+	TipDelta            int64   `json:"tip_delta"`
+	SignalingCountDelta int     `json:"signaling_count_delta"`
+	PctDelta            float64 `json:"pct_delta"`
 }
 
 type bip110MonitorStatus struct {

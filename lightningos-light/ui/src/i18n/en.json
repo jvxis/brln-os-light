@@ -147,6 +147,7 @@
     "selectDestinationWithLiquidity": "Choose a destination with enough remote liquidity or use automatic routing.",
     "selectedLiquidity": "Selected local liquidity",
     "autoSelect": "Smart select",
+    "setAmountFirst": "Set a valid amount before using Smart select.",
     "clear": "Clear",
     "searchChannels": "Search by peer, pubkey, or channel ID",
     "noEligibleChannels": "No active channel is available for this swap.",

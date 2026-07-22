@@ -147,6 +147,7 @@
     "selectDestinationWithLiquidity": "Escolha um destino com liquidez remota suficiente ou use o roteamento automático.",
     "selectedLiquidity": "Liquidez local selecionada",
     "autoSelect": "Seleção inteligente",
+    "setAmountFirst": "Defina um valor válido antes de usar a seleção inteligente.",
     "clear": "Limpar",
     "searchChannels": "Buscar por peer, pubkey ou ID do canal",
     "noEligibleChannels": "Nenhum canal ativo disponível para este swap.",

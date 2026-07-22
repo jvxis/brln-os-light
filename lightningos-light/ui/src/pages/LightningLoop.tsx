@@ -45,6 +45,8 @@ type FeePulse = {
 }
 
 const channelID = (channel: LoopChannel) => String(channel.channel_id_str || channel.channel_id || '').trim()
+const channelLocalBalance = (channel: LoopChannel) => Math.max(0, Number(channel.local_balance_sat) || 0)
+const channelRemoteBalance = (channel: LoopChannel) => Math.max(0, Number(channel.remote_balance_sat) || 0)
 const isPendingState = (state: string) => !['SUCCESS', 'FAILED'].includes(String(state || '').toUpperCase())
 const loopStateKeys: Record<string, string> = {
   INITIATED: 'lightningLoop.stateInitiated',
@@ -131,7 +133,7 @@ export default function LightningLoop() {
 
   const eligibleChannels = useMemo(() => nodeChannels
     .filter((channel) => channel.active && channelID(channel))
-    .sort((a, b) => b.local_balance_sat - a.local_balance_sat), [nodeChannels])
+    .sort((a, b) => channelLocalBalance(b) - channelLocalBalance(a)), [nodeChannels])
 
   const visibleChannels = useMemo(() => {
     const query = channelSearch.trim().toLowerCase()
@@ -181,7 +183,7 @@ export default function LightningLoop() {
 
   const selectedChannels = useMemo(() => eligibleChannels.filter((channel) => selectedChannelIDs.has(channelID(channel))), [eligibleChannels, selectedChannelIDs])
   const pendingSwaps = useMemo(() => swaps.filter((swap) => isPendingState(swap.state)), [swaps])
-  const selectedLocal = useMemo(() => selectedChannels.reduce((sum, channel) => sum + channel.local_balance_sat, 0), [selectedChannels])
+  const selectedLocal = useMemo(() => selectedChannels.reduce((sum, channel) => sum + channelLocalBalance(channel), 0), [selectedChannels])
   const amount = Number(amountSat || 0)
   const min = direction === 'out' ? status?.terms?.loop_out_min_sat : status?.terms?.loop_in_min_sat
   const max = direction === 'out' ? status?.terms?.loop_out_max_sat : status?.terms?.loop_in_max_sat
@@ -216,13 +218,15 @@ export default function LightningLoop() {
   }
 
   const autoSelectChannels = () => {
+    if (!amountIsValid) return
     const next = new Set<string>()
     let available = 0
     for (const channel of eligibleChannels) {
-      if (channel.local_balance_sat <= 0) continue
+      const localBalance = channelLocalBalance(channel)
+      if (localBalance <= 0) continue
       next.add(channelID(channel))
-      available += channel.local_balance_sat
-      if (amount > 0 && available >= amount) break
+      available += localBalance
+      if (available >= amount) break
     }
     setSelectedChannelIDs(next)
     clearQuote()
@@ -383,7 +387,7 @@ export default function LightningLoop() {
                         <p className={`mt-1 text-lg font-semibold tabular-nums ${amount > 0 && selectedLocal < amount ? 'text-amber-200' : 'text-fog'}`}>{sats(selectedLocal)} <span className="text-sm font-normal text-fog/40">/ {amount > 0 ? sats(amount) : '—'}</span></p>
                       </div>
                       <div className="flex gap-2">
-                        <button className="btn-secondary px-3 py-2 text-xs" type="button" onClick={autoSelectChannels}>{t('lightningLoop.autoSelect')}</button>
+                        <button className="btn-secondary px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40" type="button" disabled={!amountIsValid} title={!amountIsValid ? t('lightningLoop.setAmountFirst') : undefined} onClick={autoSelectChannels}>{t('lightningLoop.autoSelect')}</button>
                         {selectedChannelIDs.size > 0 && <button className="rounded-xl px-3 py-2 text-xs text-fog/55 hover:bg-white/5 hover:text-fog" type="button" onClick={() => { setSelectedChannelIDs(new Set()); clearQuote() }}>{t('lightningLoop.clear')}</button>}
                       </div>
                     </div>
@@ -397,9 +401,11 @@ export default function LightningLoop() {
                     {visibleChannels.map((channel) => {
                       const id = channelID(channel)
                       const selected = selectedChannelIDs.has(id)
-                      const capacity = Math.max(channel.capacity_sat, channel.local_balance_sat + channel.remote_balance_sat, 1)
-                      const localPercent = Math.min(100, Math.max(0, (channel.local_balance_sat / capacity) * 100))
-                      const remotePercent = Math.min(100, Math.max(0, (channel.remote_balance_sat / capacity) * 100))
+                      const localBalance = channelLocalBalance(channel)
+                      const remoteBalance = channelRemoteBalance(channel)
+                      const capacity = Math.max(Number(channel.capacity_sat) || 0, localBalance + remoteBalance, 1)
+                      const localPercent = Math.min(100, Math.max(0, (localBalance / capacity) * 100))
+                      const remotePercent = Math.min(100, Math.max(0, (remoteBalance / capacity) * 100))
                       return (
                         <button key={channel.channel_point || id} type="button" onClick={() => toggleChannel(id)} className={`group rounded-2xl border p-4 text-left transition ${selected ? 'border-brass/55 bg-brass/10 shadow-[0_0_0_1px_rgba(245,158,11,.08)]' : 'border-white/10 bg-white/[0.025] hover:border-white/20 hover:bg-white/[0.045]'}`}>
                           <div className="flex items-start justify-between gap-3">
@@ -407,7 +413,7 @@ export default function LightningLoop() {
                             <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition ${selected ? 'border-brass bg-brass text-ink' : 'border-white/20 text-transparent group-hover:border-white/40'}`}><CheckIcon /></span>
                           </div>
                           <div className="relative mt-4 h-1.5 overflow-hidden rounded-full bg-white/10"><span className="absolute inset-y-0 left-0 bg-glow/70" style={{ width: `${localPercent}%` }} /><span className="absolute inset-y-0 right-0 bg-white/35" style={{ width: `${remotePercent}%` }} /></div>
-                          <div className="mt-2 flex justify-between text-[11px]"><span className="text-glow">{t('lightningLoop.local')} {compactSats(channel.local_balance_sat)}</span><span className="text-fog/55">{t('lightningLoop.remote')} {compactSats(channel.remote_balance_sat)}</span></div>
+                          <div className="mt-2 flex justify-between text-[11px]"><span className="text-glow">{t('lightningLoop.local')} {compactSats(localBalance)}</span><span className="text-fog/55">{t('lightningLoop.remote')} {compactSats(remoteBalance)}</span></div>
                         </button>
                       )
                     })}

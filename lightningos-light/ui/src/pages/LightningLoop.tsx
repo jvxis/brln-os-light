@@ -430,11 +430,13 @@ export default function LightningLoop() {
                   const stateLabel = loopStateKeys[normalizedState] ? t(loopStateKeys[normalizedState]) : normalizedState.split('_').join(' ')
                   const failureReason = ['FAILURE_REASON_NONE', 'NONE'].includes(normalizedFailure) ? '' : swap.failure_reason
                   const out = String(swap.type).toUpperCase().includes('OUT')
+                  const totalCost = swap.cost_server_sat + swap.cost_onchain_sat + swap.cost_offchain_sat
+                  const costPPM = swap.amount_sat > 0 ? Math.round((totalCost * 1_000_000) / swap.amount_sat) : 0
                   return (
                     <div className="grid gap-4 px-5 py-4 transition hover:bg-white/[0.025] sm:grid-cols-[minmax(220px,1.2fr)_1fr_1fr_auto] sm:items-center sm:px-6" key={swap.id}>
                       <div className="flex items-center gap-3"><span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border ${out ? 'border-brass/25 bg-brass/10 text-brass' : 'border-glow/25 bg-glow/10 text-glow'}`}>{out ? <LightningIcon /> : <BitcoinIcon />}</span><div><p className="text-sm font-semibold">{out ? 'Loop Out' : 'Loop In'}</p><p className="mt-0.5 text-xs text-fog/40">{swapTime(swap.initiation_time)}</p></div></div>
                       <div><p className="text-[10px] uppercase tracking-wider text-fog/35">{t('lightningLoop.amount')}</p><p className="mt-1 text-sm font-semibold tabular-nums">{sats(swap.amount_sat)}</p></div>
-                      <div><p className="text-[10px] uppercase tracking-wider text-fog/35">{t('lightningLoop.cost')}</p><p className="mt-1 text-sm tabular-nums">{sats(swap.cost_server_sat + swap.cost_onchain_sat + swap.cost_offchain_sat)}</p></div>
+                      <div><p className="text-[10px] uppercase tracking-wider text-fog/35">{t('lightningLoop.cost')}</p><p className="mt-1 text-sm tabular-nums">{sats(totalCost)}</p><p className="mt-0.5 text-[11px] tabular-nums text-fog/40">{costPPM.toLocaleString(locale)} ppm</p></div>
                       <div className="sm:text-right"><span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider ${pending ? 'border-amber-400/25 bg-amber-400/10 text-amber-200' : success ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200' : 'border-rose-400/25 bg-rose-400/10 text-rose-200'}`}>{stateLabel}</span>{pending && <p className="mt-1 max-w-xs text-xs text-fog/45">{t('lightningLoop.pendingSwapHint')}</p>}{failureReason && <p className="mt-1 max-w-xs text-xs text-rose-200/70">{failureReason}</p>}</div>
                     </div>
                   )

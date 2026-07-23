@@ -81,6 +81,10 @@ type Server struct {
 	shortcutsMu                 sync.Mutex
 	shortcuts                   *ShortcutsService
 	shortcutsErr                string
+	uiPreferencesInitAt         time.Time
+	uiPreferencesMu             sync.Mutex
+	uiPreferences               *UIPreferencesService
+	uiPreferencesErr            string
 	channelRankingInitAt        time.Time
 	channelRankingMu            sync.Mutex
 	channelRanking              *ChannelRankingService
@@ -182,6 +186,7 @@ func (s *Server) Run() error {
 	s.initLoopOutBRLN()
 	s.initAutofee()
 	s.initShortcuts()
+	s.initUIPreferences()
 	s.initChannelRanking()
 	s.initChannelOpenCandidates()
 	s.initGraphExplorer()

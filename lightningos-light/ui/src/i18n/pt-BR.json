@@ -818,7 +818,7 @@
   "sidebar": {
     "closeMenu": "Fechar menu",
     "editMenu": "Editar menu",
-    "editMenuHint": "Reordene favoritos e oculte itens.",
+    "editMenuHint": "Reordene favoritos e oculte itens. As preferências são compartilhadas entre navegadores.",
     "favorites": "Favoritos",
     "favoritesEmpty": "Sem favoritos ainda.",
     "allItems": "Todos os itens",
@@ -830,7 +830,20 @@
     "showItem": "Mostrar",
     "resetMenu": "Restaurar padrão",
     "poweredBy": "Powered By BR⚡LN",
-    "versionLabel": "Versão:"
+    "versionLabel": "Versão:",
+    "groups": {
+      "main": "Principal",
+      "lightning": "Lightning",
+      "network": "Rede e análises",
+      "apps": "Apps e liquidez",
+      "node": "Nó e blockchains",
+      "system": "Sistema"
+    },
+    "sync": {
+      "syncing": "Sincronizando preferências…",
+      "synced": "Preferências sincronizadas neste node.",
+      "local": "Salvo neste navegador; sincronização pendente."
+    }
   },
   "appStore": {
     "actionFailed": "Falha na ação.",

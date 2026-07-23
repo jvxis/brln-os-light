@@ -416,6 +416,13 @@ POST   /api/notifications/backup/telegram
 POST   /api/notifications/backup/telegram/test
 ```
 
+### UI Preferences
+
+```text
+GET    /api/ui/preferences/menu
+PUT    /api/ui/preferences/menu
+```
+
 ### Chat
 
 ```text

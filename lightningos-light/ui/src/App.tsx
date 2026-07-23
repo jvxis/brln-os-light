@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import AuthScreen from './components/AuthScreen'
 import Sidebar from './components/Sidebar'
@@ -34,7 +34,17 @@ import NodeRetirement from './pages/NodeRetirement'
 import TaprootAssets from './pages/TaprootAssets'
 import LightningLoop from './pages/LightningLoop'
 import LoopOutBRLN from './pages/LoopOutBRLN'
-import { getAuthState, getBitcoinLocalStatus, getBoletoConfig, getLndStatus, getWizardStatus, logoutAuth, type AuthState } from './api'
+import {
+  getAuthState,
+  getBitcoinLocalStatus,
+  getBoletoConfig,
+  getLndStatus,
+  getMenuPreferences,
+  getWizardStatus,
+  logoutAuth,
+  updateMenuPreferences,
+  type AuthState
+} from './api'
 import { defaultPalette, paletteOrder, resolvePalette, resolveTheme, type PaletteKey, type ThemeMode } from './theme'
 
 const readHashRoute = () => {
@@ -62,7 +72,10 @@ type RouteItem = {
   key: string
   label: string
   element: JSX.Element
+  group?: MenuGroupKey
 }
+
+type MenuGroupKey = 'lightning' | 'network' | 'apps' | 'node' | 'system'
 
 type MenuConfig = {
   favorites: string[]
@@ -70,6 +83,8 @@ type MenuConfig = {
 }
 
 const MENU_CONFIG_KEY = 'los-menu-config'
+const MENU_CONFIG_VERSION = 1
+const OPTIONAL_MENU_ROUTE_KEYS = ['pay-boleto']
 
 const readMenuConfig = (): MenuConfig | null => {
   try {
@@ -180,46 +195,58 @@ export default function App() {
   }, [])
   const baseRoutes = useMemo(() => {
     const boletoRoute = boletoEnabled
-      ? [{ key: 'pay-boleto', label: t('nav.payBoleto'), element: <PayBoleto /> }]
+      ? [{ key: 'pay-boleto', label: t('nav.payBoleto'), element: <PayBoleto />, group: 'apps' as const }]
       : []
     return [
       { key: 'dashboard', label: t('nav.dashboard'), element: <Dashboard authState={authState} /> },
-      { key: 'reports', label: t('nav.reports'), element: <Reports /> },
+      { key: 'reports', label: t('nav.reports'), element: <Reports />, group: 'network' as const },
       { key: 'wallet', label: t('nav.wallet'), element: <Wallet /> },
-      { key: 'network-atlas', label: t('nav.networkAtlas'), element: <NetworkAtlas /> },
-      { key: 'graph-explorer', label: t('nav.graphExplorer'), element: <GraphExplorer /> },
-      { key: 'lightning-ops', label: t('nav.lightningOps'), element: <LightningOps /> },
-      { key: 'fee-center', label: t('nav.feeCenter'), element: <FeeCenter /> },
-      { key: 'rebalance-center', label: t('nav.rebalanceCenter'), element: <RebalanceCenter /> },
-      { key: 'automation-interlock', label: t('nav.automationInterlock'), element: <AutomationInterlock /> },
-      { key: 'channel-ranking', label: t('nav.channelRanking'), element: <ChannelRanking /> },
-      { key: 'new-channels', label: t('nav.newChannels'), element: <ChannelOpenCandidates /> },
-      { key: 'onchain-hub', label: t('nav.onchainHub'), element: <OnchainHub /> },
+      { key: 'network-atlas', label: t('nav.networkAtlas'), element: <NetworkAtlas />, group: 'network' as const },
+      { key: 'graph-explorer', label: t('nav.graphExplorer'), element: <GraphExplorer />, group: 'network' as const },
+      { key: 'lightning-ops', label: t('nav.lightningOps'), element: <LightningOps />, group: 'lightning' as const },
+      { key: 'fee-center', label: t('nav.feeCenter'), element: <FeeCenter />, group: 'lightning' as const },
+      { key: 'rebalance-center', label: t('nav.rebalanceCenter'), element: <RebalanceCenter />, group: 'lightning' as const },
+      { key: 'automation-interlock', label: t('nav.automationInterlock'), element: <AutomationInterlock />, group: 'lightning' as const },
+      { key: 'channel-ranking', label: t('nav.channelRanking'), element: <ChannelRanking />, group: 'lightning' as const },
+      { key: 'new-channels', label: t('nav.newChannels'), element: <ChannelOpenCandidates />, group: 'lightning' as const },
+      { key: 'onchain-hub', label: t('nav.onchainHub'), element: <OnchainHub />, group: 'network' as const },
       { key: 'chat', label: t('nav.chat'), element: <Chat /> },
       {
         key: 'lnd',
         label: externalBitcoinDetected ? t('nav.lndInfo') : t('nav.lndConfig'),
-        element: externalBitcoinDetected ? <LndInfo /> : <LndConfig />
+        element: externalBitcoinDetected ? <LndInfo /> : <LndConfig />,
+        group: 'node' as const
       },
-      { key: 'apps', label: t('nav.apps'), element: <AppStore /> },
+      { key: 'apps', label: t('nav.apps'), element: <AppStore />, group: 'apps' as const },
       ...boletoRoute,
-      { key: 'bitcoin', label: t('nav.bitcoinRemote'), element: <BitcoinRemote /> },
-      { key: 'bitcoin-local', label: t('nav.bitcoinLocal'), element: <BitcoinLocal /> },
-      { key: 'elements', label: t('nav.elements'), element: <Elements /> },
-      { key: 'taproot-assets', label: t('nav.taprootAssets'), element: <TaprootAssets /> },
-      { key: 'lightning-loop', label: t('nav.lightningLoop'), element: <LightningLoop /> },
-      { key: 'loop-out-brln', label: t('nav.loopOutBrln'), element: <LoopOutBRLN /> },
-      { key: 'notifications', label: t('nav.notifications'), element: <Notifications /> },
-      { key: 'audit-log', label: t('nav.auditLog'), element: <AuditLog /> },
-      { key: 'disks', label: t('nav.disks'), element: <Disks /> },
-      { key: 'terminal', label: t('nav.terminal'), element: <Terminal /> },
-      { key: 'shortcuts', label: t('nav.shortcuts'), element: <Shortcuts /> },
-      { key: 'logs', label: t('nav.logs'), element: <Logs /> },
-      { key: 'node-retirement', label: t('nav.nodeRetirement'), element: <NodeRetirement /> }
+      { key: 'bitcoin', label: t('nav.bitcoinRemote'), element: <BitcoinRemote />, group: 'node' as const },
+      { key: 'bitcoin-local', label: t('nav.bitcoinLocal'), element: <BitcoinLocal />, group: 'node' as const },
+      { key: 'elements', label: t('nav.elements'), element: <Elements />, group: 'node' as const },
+      { key: 'taproot-assets', label: t('nav.taprootAssets'), element: <TaprootAssets />, group: 'apps' as const },
+      { key: 'lightning-loop', label: t('nav.lightningLoop'), element: <LightningLoop />, group: 'apps' as const },
+      { key: 'loop-out-brln', label: t('nav.loopOutBrln'), element: <LoopOutBRLN />, group: 'apps' as const },
+      { key: 'notifications', label: t('nav.notifications'), element: <Notifications />, group: 'system' as const },
+      { key: 'audit-log', label: t('nav.auditLog'), element: <AuditLog />, group: 'system' as const },
+      { key: 'disks', label: t('nav.disks'), element: <Disks />, group: 'system' as const },
+      { key: 'terminal', label: t('nav.terminal'), element: <Terminal />, group: 'system' as const },
+      { key: 'shortcuts', label: t('nav.shortcuts'), element: <Shortcuts />, group: 'system' as const },
+      { key: 'logs', label: t('nav.logs'), element: <Logs />, group: 'system' as const },
+      { key: 'node-retirement', label: t('nav.nodeRetirement'), element: <NodeRetirement />, group: 'system' as const }
     ]
   }, [authState, boletoEnabled, externalBitcoinDetected, i18n.language, t])
   const baseRouteKeys = useMemo(() => baseRoutes.map((item) => item.key), [baseRoutes])
-  const [menuConfig, setMenuConfig] = useState<MenuConfig>(() => normalizeMenuConfig(readMenuConfig(), baseRouteKeys))
+  const menuPreferenceKeysRef = useRef<string[]>([])
+  if (menuPreferenceKeysRef.current.length === 0) {
+    menuPreferenceKeysRef.current = uniqueKeys([...baseRouteKeys, ...OPTIONAL_MENU_ROUTE_KEYS])
+  }
+  const [initialLocalMenuConfig] = useState<MenuConfig | null>(() => readMenuConfig())
+  const [menuConfig, setMenuConfig] = useState<MenuConfig>(() =>
+    normalizeMenuConfig(initialLocalMenuConfig, menuPreferenceKeysRef.current)
+  )
+  const [menuSyncState, setMenuSyncState] = useState<'syncing' | 'synced' | 'local'>('syncing')
+  const menuPreferencesLoadedRef = useRef(false)
+  const menuEditRevisionRef = useRef(0)
+  const menuSaveRequestRef = useRef(0)
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
@@ -243,6 +270,50 @@ export default function App() {
   }, [refreshAuthState])
 
   const authReady = !authLoading && (authState?.enabled !== true || authState?.authenticated === true)
+
+  useEffect(() => {
+    if (!authReady) {
+      menuPreferencesLoadedRef.current = false
+      return
+    }
+    if (menuPreferencesLoadedRef.current) {
+      return
+    }
+    menuPreferencesLoadedRef.current = true
+
+    let active = true
+    const startingRevision = menuEditRevisionRef.current
+    const loadMenuPreferences = async () => {
+      setMenuSyncState('syncing')
+      try {
+        const remote = await getMenuPreferences()
+        if (!active || menuEditRevisionRef.current !== startingRevision) return
+        if (remote.exists) {
+          const normalized = normalizeMenuConfig(remote, menuPreferenceKeysRef.current)
+          setMenuConfig(normalized)
+          setMenuSyncState('synced')
+          return
+        }
+
+        const initial = normalizeMenuConfig(initialLocalMenuConfig, menuPreferenceKeysRef.current)
+        await updateMenuPreferences({
+          version: MENU_CONFIG_VERSION,
+          favorites: initial.favorites,
+          hidden: initial.hidden
+        })
+        if (!active || menuEditRevisionRef.current !== startingRevision) return
+        setMenuConfig(initial)
+        setMenuSyncState('synced')
+      } catch {
+        if (!active || menuEditRevisionRef.current !== startingRevision) return
+        setMenuSyncState('local')
+      }
+    }
+    void loadMenuPreferences()
+    return () => {
+      active = false
+    }
+  }, [authReady, initialLocalMenuConfig])
 
   useEffect(() => {
     if (!authReady) {
@@ -306,7 +377,7 @@ export default function App() {
 
   useEffect(() => {
     setMenuConfig((current) => {
-      const normalized = normalizeMenuConfig(current, baseRouteKeys)
+      const normalized = normalizeMenuConfig(current, menuPreferenceKeysRef.current)
       return sameMenuConfig(current, normalized) ? current : normalized
     })
   }, [baseRouteKeys])
@@ -387,6 +458,30 @@ export default function App() {
     setMenuOpen(false)
   }, [refreshAuthState])
 
+  const handleMenuConfigChange = useCallback((next: MenuConfig) => {
+    const normalized = normalizeMenuConfig(next, menuPreferenceKeysRef.current)
+    menuEditRevisionRef.current += 1
+    menuSaveRequestRef.current += 1
+    const requestID = menuSaveRequestRef.current
+    setMenuConfig(normalized)
+    setMenuSyncState('syncing')
+    void updateMenuPreferences({
+      version: MENU_CONFIG_VERSION,
+      favorites: normalized.favorites,
+      hidden: normalized.hidden
+    })
+      .then(() => {
+        if (menuSaveRequestRef.current === requestID) {
+          setMenuSyncState('synced')
+        }
+      })
+      .catch(() => {
+        if (menuSaveRequestRef.current === requestID) {
+          setMenuSyncState('local')
+        }
+      })
+  }, [])
+
   if (authLoading || authState == null) {
     return (
       <div className="min-h-screen px-6 py-10 lg:px-12">
@@ -420,7 +515,8 @@ export default function App() {
           routes={sidebarRoutes}
           allRoutes={baseRoutes}
           menuConfig={menuConfig}
-          onMenuConfigChange={(next) => setMenuConfig(normalizeMenuConfig(next, baseRouteKeys))}
+          onMenuConfigChange={handleMenuConfigChange}
+          syncState={menuSyncState}
           current={current.key}
           open={menuOpen}
           onClose={() => setMenuOpen(false)}

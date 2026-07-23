@@ -132,6 +132,8 @@ func (s *Server) routes() http.Handler {
 	r.Get("/api/shortcuts", s.handleShortcutsGet)
 	r.Post("/api/shortcuts", s.handleShortcutsPost)
 	r.Delete("/api/shortcuts/{id}", s.handleShortcutsDelete)
+	r.Get("/api/ui/preferences/menu", s.handleMenuPreferencesGet)
+	r.Put("/api/ui/preferences/menu", s.handleMenuPreferencesPut)
 
 	r.Route("/api/onchain", func(r chi.Router) {
 		r.Get("/utxos", s.handleOnchainUtxos)

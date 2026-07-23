@@ -22,6 +22,23 @@ Base URL: https://127.0.0.1:8443
 ## Error format
 - Non-2xx responses return JSON: `{"error":"message","code":"optional_code"}`
 
+## UI preferences
+
+GET /api/ui/preferences/menu
+- Returns the node-wide menu preferences used by every authenticated browser.
+- `exists=false` indicates that no preference has been saved yet.
+
+PUT /api/ui/preferences/menu
+Body:
+{
+  "version": 1,
+  "favorites": ["dashboard", "wallet", "fee-center"],
+  "hidden": ["terminal", "logs"]
+}
+- Route keys are stored instead of translated labels.
+- Hidden items are removed from favorites during normalization.
+- Preferences are persisted in PostgreSQL. Browser storage remains a fallback when the service is unavailable.
+
 ## Health and system
 
 GET /api/health

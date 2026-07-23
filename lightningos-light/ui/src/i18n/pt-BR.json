@@ -208,6 +208,7 @@
     "timeline": "Timeline de atividade",
     "selectHistory": "Selecione um loop para consultar pagamentos e timeline.",
     "security": "Operação protegida",
+    "password": "Senha",
     "confirmTitle": "Confirme com sua senha",
     "confirmBody": "Esta autorização pode movimentar fundos em background. Revise o destino e os limites antes de continuar.",
     "confirm": "Autorizar",

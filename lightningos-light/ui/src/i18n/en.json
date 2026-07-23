@@ -208,6 +208,7 @@
     "timeline": "Activity timeline",
     "selectHistory": "Select a loop to inspect its payments and timeline.",
     "security": "Protected operation",
+    "password": "Password",
     "confirmTitle": "Confirm with your password",
     "confirmBody": "This authorizes an operation that can move funds in the background. Review the destination and limits before continuing.",
     "confirm": "Authorize",

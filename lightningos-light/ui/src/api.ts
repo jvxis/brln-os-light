@@ -1140,6 +1140,13 @@ export type LoopOutBRLNPreview = {
   channels: LoopOutBRLNChannelPreview[]
 }
 
+export type LoopOutBRLNAddressValidation = {
+  lightning_address: string
+  min_sendable_msat: number
+  max_sendable_msat: number
+  comment_allowed: number
+}
+
 export type LoopOutBRLNJob = {
   id: number
   lightning_address: string
@@ -1207,6 +1214,12 @@ export type LoopOutBRLNJobDetail = {
 }
 
 export const getLoopOutBRLNStatus = (): Promise<LoopOutBRLNStatus> => request('/api/apps/loopout-brln/status')
+export const validateLoopOutBRLNAddress = (lightningAddress: string, signal?: AbortSignal): Promise<LoopOutBRLNAddressValidation> =>
+  request('/api/apps/loopout-brln/lightning-address/validate', {
+    method: 'POST',
+    body: JSON.stringify({ lightning_address: lightningAddress }),
+    signal
+  })
 export const previewLoopOutBRLN = (payload: LoopOutBRLNRequest): Promise<LoopOutBRLNPreview> =>
   request('/api/apps/loopout-brln/preview', { method: 'POST', body: JSON.stringify(payload) })
 export const getLoopOutBRLNJobs = (limit = 50): Promise<{ jobs: LoopOutBRLNJob[] }> =>

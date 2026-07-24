@@ -37,6 +37,36 @@ func (s *Server) handleLoopOutBRLNStatus(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, status)
 }
 
+func (s *Server) handleLoopOutBRLNValidateAddress(w http.ResponseWriter, r *http.Request) {
+	svc := s.requireLoopOutBRLNService(w)
+	if svc == nil {
+		return
+	}
+	var req struct {
+		LightningAddress string `json:"lightning_address"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	address := strings.ToLower(strings.TrimSpace(req.LightningAddress))
+	if _, _, err := splitLightningAddress(address); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	payInfo, err := inspectLightningAddress(r.Context(), address)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, LoopOutBRLNAddressValidation{
+		LightningAddress: address,
+		MinSendableMsat:  payInfo.MinSendable,
+		MaxSendableMsat:  payInfo.MaxSendable,
+		CommentAllowed:   payInfo.CommentAllowed,
+	})
+}
+
 func (s *Server) handleLoopOutBRLNPreview(w http.ResponseWriter, r *http.Request) {
 	svc := s.requireLoopOutBRLNService(w)
 	if svc == nil {

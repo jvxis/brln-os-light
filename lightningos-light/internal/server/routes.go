@@ -97,6 +97,7 @@ func (s *Server) routes() http.Handler {
 	r.Post("/api/apps/loop/quote", s.handleLoopQuote)
 	r.Post("/api/apps/loop/swap", s.handleLoopSwap)
 	r.Get("/api/apps/loopout-brln/status", s.handleLoopOutBRLNStatus)
+	r.Post("/api/apps/loopout-brln/lightning-address/validate", s.handleLoopOutBRLNValidateAddress)
 	r.Post("/api/apps/loopout-brln/preview", s.handleLoopOutBRLNPreview)
 	r.Get("/api/apps/loopout-brln/jobs", s.handleLoopOutBRLNJobs)
 	r.Post("/api/apps/loopout-brln/jobs", s.handleLoopOutBRLNCreateJob)

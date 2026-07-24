@@ -11,6 +11,7 @@ import {
   pauseLoopOutBRLNJob,
   previewLoopOutBRLN,
   resumeLoopOutBRLNJob,
+  validateLoopOutBRLNAddress,
   type LoopOutBRLNJob,
   type LoopOutBRLNJobDetail,
   type LoopOutBRLNPreview,
@@ -33,9 +34,15 @@ type SourceChannel = {
 }
 
 type ReauthAction = { kind: 'create' } | { kind: 'resume'; jobID: number }
+type AddressCheck = {
+  state: 'idle' | 'checking' | 'valid' | 'invalid'
+  address: string
+  reason?: string
+}
 
 const terminalStatuses = new Set(['completed', 'cancelled', 'failed'])
 const activeStatuses = new Set(['running', 'waiting_liquidity', 'pause_requested', 'cancel_requested'])
+const lightningAddressPattern = /^[^@\s]+@[^@\s]+$/
 const channelID = (channel: SourceChannel) => String(channel.channel_id_str || channel.channel_id || '').trim()
 const compactSats = (value: number) => {
   const amount = Math.max(0, Number(value) || 0)
@@ -63,6 +70,7 @@ export default function LoopOutBRLN() {
   const [sourceMode, setSourceMode] = useState<'auto' | 'manual'>('auto')
   const [selectedChannels, setSelectedChannels] = useState<Set<string>>(new Set())
   const [address, setAddress] = useState('')
+  const [addressCheck, setAddressCheck] = useState<AddressCheck>({ state: 'idle', address: '' })
   const [totalSat, setTotalSat] = useState('')
   const [trancheSat, setTrancheSat] = useState('100000')
   const [intervalSeconds, setIntervalSeconds] = useState('15')
@@ -110,6 +118,33 @@ export default function LoopOutBRLN() {
     return () => window.clearInterval(timer)
   }, [load])
 
+  useEffect(() => {
+    const normalized = address.trim().toLowerCase()
+    setAddressCheck({ state: 'idle', address: normalized })
+    if (!normalized) return
+
+    const controller = new AbortController()
+    const timer = window.setTimeout(async () => {
+      if (!lightningAddressPattern.test(normalized)) {
+        setAddressCheck({ state: 'invalid', address: normalized, reason: 'format' })
+        return
+      }
+      setAddressCheck({ state: 'checking', address: normalized })
+      try {
+        const result = await validateLoopOutBRLNAddress(normalized, controller.signal)
+        setAddressCheck({ state: 'valid', address: result.lightning_address })
+      } catch (err: any) {
+        if (err?.name === 'AbortError') return
+        setAddressCheck({ state: 'invalid', address: normalized, reason: err?.message || '' })
+      }
+    }, 600)
+
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+    }
+  }, [address])
+
   const requestPayload = useMemo<LoopOutBRLNRequest>(() => ({
     lightning_address: address.trim(),
     total_sat: Number(totalSat),
@@ -122,7 +157,9 @@ export default function LoopOutBRLN() {
     selected_channel_ids: sourceMode === 'manual' ? Array.from(selectedChannels) : undefined
   }), [address, comment, intervalSeconds, maxFeePPM, minLocalPercent, selectedChannels, sourceMode, timeoutSeconds, totalSat, trancheSat])
 
-  const formValid = requestPayload.lightning_address.includes('@') && requestPayload.total_sat > 0 &&
+  const addressReady = addressCheck.state === 'valid' && addressCheck.address === requestPayload.lightning_address.toLowerCase()
+  const addressCheckState = addressCheck.address === requestPayload.lightning_address.toLowerCase() ? addressCheck.state : 'idle'
+  const formValid = addressReady && requestPayload.total_sat > 0 &&
     requestPayload.tranche_sat > 0 && requestPayload.tranche_sat <= requestPayload.total_sat &&
     Number.isSafeInteger(requestPayload.total_sat) && Number.isSafeInteger(requestPayload.tranche_sat) &&
     requestPayload.max_fee_ppm >= 1 && requestPayload.max_fee_ppm <= 1_000_000 &&
@@ -310,9 +347,32 @@ export default function LoopOutBRLN() {
               <SectionHeading number="01" icon={<WalletIcon />} title={t('loopOutBrln.destinationStep')} description={t('loopOutBrln.lightningAddressHint')} />
               <div className="relative mt-4">
                 <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-fog/35"><AtIcon /></span>
-                <input className="input-field pl-12 pr-12 text-base font-medium" value={address} onChange={(e) => { setAddress(e.target.value); clearPreview() }} placeholder="name@example.com" autoComplete="off" spellCheck={false} />
-                <span className={`pointer-events-none absolute right-4 top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-full ${address.includes('@') ? 'bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,.55)]' : 'bg-white/15'}`} />
+                <input
+                  className={`input-field !pl-12 !pr-12 text-base font-medium transition-colors ${addressCheckState === 'valid' ? '!border-emerald-400/35' : addressCheckState === 'invalid' ? '!border-rose-400/35' : ''}`}
+                  value={address}
+                  onChange={(e) => { setAddress(e.target.value); clearPreview() }}
+                  placeholder="name@example.com"
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-describedby="loopout-address-status"
+                  aria-invalid={addressCheckState === 'invalid'}
+                />
+                <span className="pointer-events-none absolute right-4 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center">
+                  {addressCheckState === 'checking' && <span className="h-4 w-4 animate-spin rounded-full border-2 border-glow/25 border-t-glow" />}
+                  {addressCheckState === 'valid' && <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-400 text-ink shadow-[0_0_12px_rgba(52,211,153,.45)]"><CheckIcon /></span>}
+                  {addressCheckState === 'invalid' && <span className="flex h-5 w-5 items-center justify-center rounded-full bg-rose-400 text-[13px] font-bold leading-none text-ink shadow-[0_0_12px_rgba(251,113,133,.35)]">×</span>}
+                  {addressCheckState === 'idle' && <span className="h-2.5 w-2.5 rounded-full bg-white/15" />}
+                </span>
               </div>
+              {addressCheckState !== 'idle' && <p id="loopout-address-status" className={`mt-2 flex items-center gap-2 text-xs ${addressCheckState === 'valid' ? 'text-emerald-300/80' : addressCheckState === 'invalid' ? 'text-rose-300/80' : 'text-glow/70'}`} role={addressCheckState === 'invalid' ? 'alert' : 'status'}>
+                {addressCheckState === 'checking'
+                  ? t('loopOutBrln.addressChecking')
+                  : addressCheckState === 'valid'
+                    ? t('loopOutBrln.addressValid')
+                    : addressCheck.reason === 'format'
+                      ? t('loopOutBrln.addressInvalidFormat')
+                      : t('loopOutBrln.addressInvalid', { reason: addressCheck.reason || t('loopOutBrln.addressUnavailable') })}
+              </p>}
             </section>
 
             <section className="border-t border-white/10 pt-7">
@@ -374,7 +434,7 @@ export default function LoopOutBRLN() {
             </details>
           </div>
 
-          <ReviewPanel preview={preview} request={requestPayload} sats={sats} t={t} busy={busy} formValid={formValid} hasActiveJob={Boolean(activeJob)} sourceMode={sourceMode} selectedCount={selectedChannels.size} draftParts={draftParts} draftLast={draftLast} onStart={() => void createJob()} />
+          <ReviewPanel preview={preview} request={requestPayload} sats={sats} t={t} busy={busy} formValid={formValid} addressReady={addressReady} addressState={addressCheckState} hasActiveJob={Boolean(activeJob)} sourceMode={sourceMode} selectedCount={selectedChannels.size} draftParts={draftParts} draftLast={draftLast} onStart={() => void createJob()} />
         </form>
       )}
 
@@ -468,8 +528,8 @@ function ActiveJobCard({ job, sats, progress, busy, t, onAction }: { job: LoopOu
   </div>
 }
 
-function ReviewPanel({ preview, request, sats, t, busy, formValid, hasActiveJob, sourceMode, selectedCount, draftParts, draftLast, onStart }: { preview: LoopOutBRLNPreview | null; request: LoopOutBRLNRequest; sats: (n?: number) => string; t: any; busy: string; formValid: boolean; hasActiveJob: boolean; sourceMode: 'auto' | 'manual'; selectedCount: number; draftParts: number; draftLast: number; onStart: () => void }) {
-  const destinationReady = request.lightning_address.includes('@')
+function ReviewPanel({ preview, request, sats, t, busy, formValid, addressReady, addressState, hasActiveJob, sourceMode, selectedCount, draftParts, draftLast, onStart }: { preview: LoopOutBRLNPreview | null; request: LoopOutBRLNRequest; sats: (n?: number) => string; t: any; busy: string; formValid: boolean; addressReady: boolean; addressState: AddressCheck['state']; hasActiveJob: boolean; sourceMode: 'auto' | 'manual'; selectedCount: number; draftParts: number; draftLast: number; onStart: () => void }) {
+  const destinationReady = addressReady
   const amountReady = request.total_sat > 0 && request.tranche_sat > 0 && request.tranche_sat <= request.total_sat
   const sourcesReady = sourceMode === 'auto' || selectedCount > 0
   const requiredLiquidity = preview ? preview.total_sat + preview.max_fee_total_sat : 0
@@ -491,7 +551,7 @@ function ReviewPanel({ preview, request, sats, t, busy, formValid, hasActiveJob,
     <div className="space-y-5 p-5 sm:p-6">
       {!preview ? <>
         <div className="space-y-2">
-          <PlanCheck ready={destinationReady} label={t('loopOutBrln.checkDestination')} detail={destinationReady ? request.lightning_address : t('loopOutBrln.checkDestinationMissing')} />
+          <PlanCheck ready={destinationReady} label={t('loopOutBrln.checkDestination')} detail={destinationReady ? request.lightning_address : addressState === 'checking' ? t('loopOutBrln.addressChecking') : addressState === 'invalid' ? t('loopOutBrln.addressInvalidShort') : t('loopOutBrln.checkDestinationMissing')} />
           <PlanCheck ready={amountReady} label={t('loopOutBrln.checkAmounts')} detail={amountReady ? t('loopOutBrln.paymentCount', { count: draftParts }) : t('loopOutBrln.checkAmountsMissing')} />
           <PlanCheck ready={request.max_fee_ppm >= 1 && request.min_local_percent >= 0} label={t('loopOutBrln.checkGuards')} detail={`${request.min_local_percent || 0}% · ${(request.max_fee_ppm || 0).toLocaleString()} PPM`} />
           <PlanCheck ready={sourcesReady} label={t('loopOutBrln.checkSources')} detail={sourceMode === 'auto' ? t('loopOutBrln.automaticSelection') : t('loopOutBrln.selectedCount', { count: selectedCount })} />

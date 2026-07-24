@@ -521,6 +521,11 @@ POST /api/apps/loop/swap
 GET /api/apps/loopout-brln/status
 - Returns install/enable state and the current non-terminal job, if any.
 
+POST /api/apps/loopout-brln/lightning-address/validate
+- Body: `lightning_address`.
+- Resolves the provider's public LNURL-pay metadata endpoint and validates its `payRequest`, HTTPS callback, and payment range without requesting an invoice or sending a payment.
+- Returns the normalized address, provider minimum/maximum in msat, and comment allowance.
+
 POST /api/apps/loopout-brln/preview
 - Validates the Lightning Address and execution limits without requesting a payable invoice or sending an HTLC.
 - Body fields: `lightning_address`, `total_sat`, `tranche_sat`, `interval_seconds`, `timeout_seconds`, `max_fee_ppm` (1–1,000,000), `min_local_percent`, optional `comment`, and optional `selected_channel_ids` as decimal strings.

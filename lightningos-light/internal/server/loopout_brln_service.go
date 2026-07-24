@@ -96,6 +96,13 @@ type LoopOutBRLNPreview struct {
 	Channels          []LoopOutBRLNChannelPreview `json:"channels"`
 }
 
+type LoopOutBRLNAddressValidation struct {
+	LightningAddress string `json:"lightning_address"`
+	MinSendableMsat  int64  `json:"min_sendable_msat"`
+	MaxSendableMsat  int64  `json:"max_sendable_msat"`
+	CommentAllowed   int    `json:"comment_allowed"`
+}
+
 type LoopOutBRLNJob struct {
 	ID                 int64      `json:"id"`
 	LightningAddress   string     `json:"lightning_address"`

@@ -180,7 +180,23 @@ func inspectLightningAddress(ctx context.Context, address string) (lnurlPayRespo
 	if _, err := validateLNURLCallback(payResp.Callback); err != nil {
 		return lnurlPayResponse{}, err
 	}
+	if err := validateLNURLPayDescriptor(payResp); err != nil {
+		return lnurlPayResponse{}, err
+	}
 	return payResp, nil
+}
+
+func validateLNURLPayDescriptor(payResp lnurlPayResponse) error {
+	if payResp.MinSendable <= 0 {
+		return errors.New("lnurlp response has an invalid minimum amount")
+	}
+	if payResp.MaxSendable <= 0 {
+		return errors.New("lnurlp response has an invalid maximum amount")
+	}
+	if payResp.MinSendable > payResp.MaxSendable {
+		return errors.New("lnurlp response has an invalid payment range")
+	}
+	return nil
 }
 
 func resolveLightningAddress(ctx context.Context, address string, amountSat int64, comment string) (string, error) {

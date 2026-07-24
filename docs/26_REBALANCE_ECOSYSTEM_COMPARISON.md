@@ -134,7 +134,7 @@ Comparação direta entre o Rebalance Center do LightningOS e os três principai
 |---|---|---|---|---|
 | Bidirecional | Não (LNDG tem AutoFee mas sem interlock) | N/A | N/A | **6.1 + 6.1b** |
 | AutoFee → Rebalance | N/A | N/A | N/A | AutoFee skipa canais com rebalance recente (window 30min, tag `autofee_settling`) |
-| Rebalance → AutoFee | Não | N/A | N/A | Rebalance multiplica score × `AutofeeSettlingMultiplier` (default 0.5) quando AutoFee ajustou nas últimas N segundos |
+| Rebalance → AutoFee | Não | N/A | N/A | Rebalance multiplica score × `AutofeeSettlingMultiplier` (default 0.75) quando AutoFee ajustou nas últimas N segundos |
 | Reason exposto na UI | N/A | N/A | N/A | `autofee_settling_target` no skip reasons map |
 
 ## 13. Observabilidade

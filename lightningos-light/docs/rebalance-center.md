@@ -849,7 +849,7 @@ Interlock** page; Rebalance Center keeps only a contextual mode/count summary.
 
 - **AutoFee → Rebalance**: já implementado. Quando autofee mexeu fee de um
   canal, rebalance espera `autofee_settling_window_sec` (2h) e aplica
-  `autofee_settling_multiplier` (0.5) no score
+  `autofee_settling_multiplier` (0.75) no score
 - **Rebalance → AutoFee**: já implementado (Wave 6.1). AutoFee skipa canais
   com rebalance recente em janela de 30min
 

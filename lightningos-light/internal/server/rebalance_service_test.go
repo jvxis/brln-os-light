@@ -1686,8 +1686,8 @@ func TestDefaultRebalanceConfigIncludesAutofeeSettlingDefaults(t *testing.T) {
 	if cfg.AutofeeSettlingWindowSec != 7200 {
 		t.Fatalf("expected default window 7200, got %d", cfg.AutofeeSettlingWindowSec)
 	}
-	if cfg.AutofeeSettlingMultiplier != 0.5 {
-		t.Fatalf("expected default multiplier 0.5, got %f", cfg.AutofeeSettlingMultiplier)
+	if cfg.AutofeeSettlingMultiplier != 0.75 {
+		t.Fatalf("expected default multiplier 0.75, got %f", cfg.AutofeeSettlingMultiplier)
 	}
 }
 

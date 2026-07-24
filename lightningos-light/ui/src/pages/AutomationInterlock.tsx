@@ -169,7 +169,7 @@ export default function AutomationInterlock() {
   const [rebalanceConfig, setRebalanceConfig] = useState<RebalanceInterlockConfig | null>(null)
   const [multiplier, setMultiplier] = useState('1.2')
   const [minConfidence, setMinConfidence] = useState('0.7')
-  const [settlingMultiplier, setSettlingMultiplier] = useState('0.5')
+  const [settlingMultiplier, setSettlingMultiplier] = useState('0.75')
   const [settlingWindowHours, setSettlingWindowHours] = useState('2')
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -184,7 +184,7 @@ export default function AutomationInterlock() {
 
   const applyRebalanceConfig = (next: RebalanceInterlockConfig) => {
     setRebalanceConfig(next)
-    setSettlingMultiplier(String(next.autofee_settling_multiplier ?? 0.5))
+    setSettlingMultiplier(String(next.autofee_settling_multiplier ?? 0.75))
     setSettlingWindowHours(String(Number(next.autofee_settling_window_sec ?? 7200) / 3600))
   }
 

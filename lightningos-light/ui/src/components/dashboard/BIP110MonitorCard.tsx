@@ -3,11 +3,55 @@ import { getLocale } from '../../i18n'
 import { formatPercent, formatSats, formatTimestamp } from './formatters'
 import HorizontalBarGauge from './HorizontalBarGauge'
 import StatusBadge from './StatusBadge'
-import type { BIP110MonitorStatus, BIP110SourceStatus, Tone } from './types'
+import type { BIP110MonitorStatus, BIP110SourceStatus, BitcoinStatus, Tone } from './types'
 
 type BIP110MonitorCardProps = {
   status: BIP110MonitorStatus | null
+  bitcoin: BitcoinStatus | null
   loading: boolean
+}
+
+const BIP110_AVERAGE_BLOCK_INTERVAL_MS = 10 * 60 * 1000
+
+type MandatorySignalingEstimate = {
+  estimatedAt: string
+  cadenceBlocksPerHour: number | null
+  cadenceHours: number | null
+}
+
+const estimateMandatorySignalingAt = (
+  checkedAt: string,
+  blocksToMandatory: number,
+  bitcoin: BitcoinStatus | null,
+): MandatorySignalingEstimate | null => {
+  if (!Number.isFinite(blocksToMandatory) || blocksToMandatory <= 0) return null
+  const checkedAtMs = new Date(checkedAt).getTime()
+  if (!Number.isFinite(checkedAtMs)) return null
+
+  const cadenceBuckets = Array.isArray(bitcoin?.block_cadence) ? bitcoin.block_cadence : []
+  const cadenceWindowSec = bitcoin?.block_cadence_window_sec ?? 600
+  const cadenceHours = cadenceWindowSec > 0 && cadenceBuckets.length > 0
+    ? (cadenceWindowSec * cadenceBuckets.length) / 3600
+    : 0
+  const cadenceTotal = cadenceBuckets.reduce((sum, bucket) => sum + bucket.count, 0)
+  const cadenceBlocksPerHour = bitcoin?.rpc_ok !== false
+    && bitcoin?.rpc_stale !== true
+    && bitcoin?.initial_block_download !== true
+    && cadenceHours > 0
+    && cadenceTotal > 0
+    ? cadenceTotal / cadenceHours
+    : null
+  const blockIntervalMs = cadenceBlocksPerHour
+    ? (60 * 60 * 1000) / cadenceBlocksPerHour
+    : BIP110_AVERAGE_BLOCK_INTERVAL_MS
+  const estimatedAt = new Date(checkedAtMs + blocksToMandatory * blockIntervalMs)
+  if (!Number.isFinite(estimatedAt.getTime())) return null
+
+  return {
+    estimatedAt: estimatedAt.toISOString(),
+    cadenceBlocksPerHour,
+    cadenceHours: cadenceBlocksPerHour ? cadenceHours : null,
+  }
 }
 
 const riskTone = (risk?: string): Tone => {
@@ -67,13 +111,22 @@ function SourcePanel({ label, source, locale }: SourcePanelProps) {
   )
 }
 
-export default function BIP110MonitorCard({ status, loading }: BIP110MonitorCardProps) {
+export default function BIP110MonitorCard({ status, bitcoin, loading }: BIP110MonitorCardProps) {
   const { t, i18n } = useTranslation()
   const locale = getLocale(i18n.language)
   const displaySource = status?.internal?.available ? status.internal : status?.public
   const signalPct = displaySource?.pct ?? 0
   const tone = riskTone(status?.risk_level)
   const comparisonStatus = status?.comparison?.status || 'unavailable'
+  const mandatorySignalingEta = status
+    ? estimateMandatorySignalingAt(status.checked_at, status.blocks_to_mandatory, bitcoin)
+    : null
+  const mandatorySignalingEtaBasis = mandatorySignalingEta?.cadenceBlocksPerHour
+    ? t('bip110.etaBasisObserved', {
+        rate: formatPercent(locale, mandatorySignalingEta.cadenceBlocksPerHour, 1),
+        hours: formatPercent(locale, mandatorySignalingEta.cadenceHours, 1),
+      })
+    : t('bip110.etaBasisFallback')
 
   return (
     <details className="section-card group">
@@ -97,7 +150,7 @@ export default function BIP110MonitorCard({ status, loading }: BIP110MonitorCard
           </div>
         </div>
 
-        <div className="mt-3 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-[1.25fr_1fr_1fr_1.35fr_auto] lg:items-center">
+        <div className="mt-3 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-[1.15fr_.9fr_1.45fr_1.2fr_auto] lg:items-center">
           {status ? (
             <>
               <div className="min-w-0 truncate">
@@ -108,9 +161,25 @@ export default function BIP110MonitorCard({ status, loading }: BIP110MonitorCard
                 <span className="text-fog/50">{t('bip110.signalingRate')}:</span>{' '}
                 <span className="font-medium text-fog/90">{formatPercent(locale, signalPct, 2)}% / {formatPercent(locale, status.threshold_pct, 0)}%</span>
               </div>
-              <div className="min-w-0 truncate">
-                <span className="text-fog/50">{t('bip110.mandatoryIn')}:</span>{' '}
-                <span className="font-medium text-fog/90">{formatSats(locale, status.blocks_to_mandatory)}</span>
+              <div className="min-w-0">
+                <div className="truncate">
+                  <span className="text-fog/50">{t('bip110.mandatoryIn')}:</span>{' '}
+                  <span className="font-medium text-fog/90">
+                    {t('bip110.blockCount', { value: formatSats(locale, status.blocks_to_mandatory) })}
+                  </span>
+                </div>
+                {mandatorySignalingEta && (
+                  <div className="truncate text-xs text-amber-200/80" title={mandatorySignalingEtaBasis}>
+                    {mandatorySignalingEta.cadenceBlocksPerHour
+                      ? t('bip110.mandatoryEtaObserved', {
+                          date: formatTimestamp(locale, mandatorySignalingEta.estimatedAt),
+                          rate: formatPercent(locale, mandatorySignalingEta.cadenceBlocksPerHour, 1),
+                        })
+                      : t('bip110.mandatoryEta', {
+                          date: formatTimestamp(locale, mandatorySignalingEta.estimatedAt),
+                        })}
+                  </div>
+                )}
               </div>
               <div className="min-w-0 truncate">
                 <span className="text-fog/50">{t('bip110.lastComparison')}:</span>{' '}

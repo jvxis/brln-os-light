@@ -1058,7 +1058,7 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
         lnd={lnd}
       />
 
-      <BIP110MonitorCard status={bip110Status} loading={bip110Loading} />
+      <BIP110MonitorCard status={bip110Status} bitcoin={bitcoin} loading={bip110Loading} />
 
       <CoreHealthGrid
         lnd={lnd}

@@ -967,7 +967,7 @@ ensure_group_exists() {
 }
 
 service_exists() {
-  systemctl list-unit-files --type=service --no-pager 2>/dev/null | awk '{print $1}' | grep -qx "${1}.service"
+  [[ "$(systemctl show -p LoadState --value "${1}.service" 2>/dev/null || true)" == "loaded" ]]
 }
 
 ensure_ufw_manager_port() {

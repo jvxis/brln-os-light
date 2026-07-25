@@ -2583,6 +2583,7 @@ type guaranteedRebalanceSlotResult struct {
 	ChannelID     uint64
 	BudgetCostSat int64
 	SkipReason    string
+	Decision      RebalanceSovereignDecision
 }
 
 func orderGuaranteedRebalanceTargets(channels []RebalanceChannel, lastGuaranteedByTarget map[uint64]time.Time) []RebalanceChannel {
@@ -2683,9 +2684,14 @@ func (s *RebalanceService) queueGuaranteedRebalanceSlot(ctx context.Context, cfg
 			}
 		}
 
+		expectedGain := estimateTargetGainForConfig(targetCfg, target, amount)
+		expectedProfit := expectedGain - budgetCost
+		expectedROI, expectedROIValid := estimateTargetROI(expectedGain, budgetCost, amount, target.OutgoingFeePpm, target.PeerFeeRatePpm)
 		economics := rebalanceJobEconomics{
-			EstimatedCostSat: budgetCost,
-			BudgetCostSat:    budgetCost,
+			ExpectedGainSat:   expectedGain,
+			EstimatedCostSat:  budgetCost,
+			ExpectedProfitSat: expectedProfit,
+			BudgetCostSat:     budgetCost,
 		}
 		_, err = s.startJobWithEconomics(target.ChannelID, "auto", rebalanceGuaranteedReason, amount, false, false, economics)
 		if err != nil {
@@ -2702,6 +2708,20 @@ func (s *RebalanceService) queueGuaranteedRebalanceSlot(ctx context.Context, cfg
 		result.ChannelID = target.ChannelID
 		result.BudgetCostSat = budgetCost
 		result.SkipReason = ""
+		result.Decision = RebalanceSovereignDecision{
+			ChannelID:         target.ChannelID,
+			ChannelPoint:      target.ChannelPoint,
+			PeerAlias:         target.PeerAlias,
+			Selected:          true,
+			Reason:            "guaranteed_slot_queued",
+			AmountSat:         amount,
+			ExpectedGainSat:   expectedGain,
+			EstimatedCostSat:  budgetCost,
+			ExpectedProfitSat: expectedProfit,
+			ExpectedROI:       expectedROI,
+			ExpectedROIValid:  expectedROIValid,
+			BudgetCostSat:     budgetCost,
+		}
 		return result
 	}
 	return result
@@ -3584,7 +3604,9 @@ func (s *RebalanceService) runAutoScan() {
 	skippedDetails := []RebalanceSkipDetail{}
 	defer func() {
 		if guaranteedSlot.Queued {
-			scanReasons["guaranteed_slot_queued"]++
+			if scanReasons["guaranteed_slot_queued"] == 0 {
+				scanReasons["guaranteed_slot_queued"] = 1
+			}
 		} else if guaranteedSlot.SkipReason != "" {
 			scanReasons[guaranteedSlot.SkipReason]++
 		}
@@ -3709,6 +3731,7 @@ func (s *RebalanceService) runAutoScan() {
 			reservedSlots = 1
 		}
 		sovereignResult := s.executeSovereignAutopilotWithReservedSlot(ctx, cfg, settings, sovereignPlan, scanAt, schedulerMode == rebalanceSchedulerModeSovereignLive, reservedSlots, guaranteedSlot.BudgetCostSat)
+		sovereignResult = includeGuaranteedRebalanceSlot(sovereignResult, guaranteedSlot)
 		s.recordRebalanceIntentEffects(ctx, sovereignPlan, cfg, scanAt, schedulerMode, sovereignResult.Decisions)
 		s.recordSovereignAutopilot(ctx, scanAt, schedulerMode, sovereignResult)
 		if schedulerMode == rebalanceSchedulerModeSovereignLive {
@@ -3718,10 +3741,7 @@ func (s *RebalanceService) runAutoScan() {
 			scanRemainingBudget = sovereignResult.BudgetRemainingSat
 			scanReasons = copyReasonCounts(sovereignResult.SkipReasons)
 			topScore = sovereignPlan.TopScore
-			queuedCount = sovereignResult.Selected + reservedSlots
-			if guaranteedSlot.Queued && sovereignResult.Selected == 0 {
-				scanStatus = "queued"
-			}
+			queuedCount = sovereignResult.Selected
 			return
 		}
 	}
@@ -4019,6 +4039,25 @@ type sovereignAutopilotResult struct {
 	SkipReasons        map[string]int
 	Status             string
 	Detail             string
+}
+
+func includeGuaranteedRebalanceSlot(result sovereignAutopilotResult, slot guaranteedRebalanceSlotResult) sovereignAutopilotResult {
+	if !slot.Queued {
+		return result
+	}
+	result.Candidates++
+	result.Selected++
+	result.ExpectedProfitSat += slot.Decision.ExpectedProfitSat
+	result.Decisions = append([]RebalanceSovereignDecision{slot.Decision}, result.Decisions...)
+	if result.SkipReasons == nil {
+		result.SkipReasons = map[string]int{}
+	}
+	result.SkipReasons["guaranteed_slot_queued"] = 1
+	if result.Status != "sovereign_shadow" {
+		result.Status = "queued"
+	}
+	result.Detail = buildScanDetail(result.SkipReasons, result.BudgetRemainingSat, result.Candidates, result.Selected)
+	return result
 }
 
 func (s *RebalanceService) executeSovereignAutopilot(ctx context.Context, cfg RebalanceConfig, settings map[uint64]channelSetting, plan rebalanceAutoScanCandidatePlan, scanAt time.Time, live bool) sovereignAutopilotResult {
@@ -11479,6 +11518,7 @@ func buildScanDetail(reasons map[string]int, remaining int64, candidates int, qu
 		label string
 	}
 	ordered := []reasonEntry{
+		{key: "guaranteed_slot_queued", label: "guaranteed slot queued"},
 		{key: "channel_busy", label: "channel busy"},
 		{key: "target_already_balanced", label: "target already balanced"},
 		{key: "recently_attempted", label: "recently attempted"},
@@ -12276,6 +12316,57 @@ create table if not exists rebalance_sovereign_history (
   detail text not null default '',
   created_at timestamptz not null default now()
 );
+
+-- Reconcile history written before guaranteed-slot jobs were included in the
+-- autopilot totals. A job belongs to the latest scan that started before it,
+-- and guaranteed selection happens near the beginning of the 20-second scan.
+-- The reason marker makes this migration idempotent and distinguishes rows
+-- written by the corrected runtime path.
+with guaranteed_history as (
+  select distinct on (h.id)
+    h.id as history_id,
+    j.target_channel_id,
+    j.target_channel_point,
+    j.target_amount_sat,
+    j.sovereign_expected_gain_sat,
+    j.sovereign_estimated_cost_sat,
+    j.sovereign_expected_profit_sat,
+    j.sovereign_budget_cost_sat
+  from rebalance_sovereign_history h
+  join rebalance_jobs j
+    on j.created_at >= h.scan_at
+   and j.created_at < h.scan_at + interval '30 seconds'
+   and coalesce(j.trigger_reason, j.reason, '')='operator-guaranteed-slot'
+  where not (h.skip_reasons ? 'guaranteed_slot_queued')
+    and not exists (
+      select 1
+      from rebalance_sovereign_history next_h
+      where next_h.scan_at > h.scan_at
+        and next_h.scan_at <= j.created_at
+    )
+  order by h.id, j.created_at
+)
+update rebalance_sovereign_history h
+set candidates=h.candidates + 1,
+    selected=h.selected + 1,
+    expected_profit_sat=h.expected_profit_sat + g.sovereign_expected_profit_sat,
+    status=case when h.mode='sovereign_live' then 'queued' else h.status end,
+    skip_reasons=jsonb_set(h.skip_reasons, '{guaranteed_slot_queued}', '1'::jsonb, true),
+    decisions=jsonb_build_array(jsonb_build_object(
+      'channel_id', g.target_channel_id,
+      'channel_point', g.target_channel_point,
+      'selected', true,
+      'reason', 'guaranteed_slot_queued',
+      'amount_sat', g.target_amount_sat,
+      'expected_gain_sat', g.sovereign_expected_gain_sat,
+      'estimated_cost_sat', g.sovereign_estimated_cost_sat,
+      'expected_profit_sat', g.sovereign_expected_profit_sat,
+      'expected_roi', 0,
+      'expected_roi_valid', false,
+      'budget_cost_sat', g.sovereign_budget_cost_sat
+    )) || h.decisions
+from guaranteed_history g
+where h.id=g.history_id;
 
 create table if not exists rebalance_auto_target_history (
   id bigserial primary key,
@@ -14766,6 +14857,20 @@ where report_date >= current_date - interval '6 days'
 		}
 	}
 	sovereignHistory24h := s.loadSovereignAutopilotHistory(ctx, time.Now().Add(-24*time.Hour), 288, false)
+	if lastSovereignDecisionAt.IsZero() && len(sovereignHistory24h) > 0 {
+		latest := sovereignHistory24h[0]
+		if parsed, err := time.Parse(time.RFC3339, latest.ScanAt); err == nil {
+			lastSovereignDecisionAt = parsed
+		}
+		lastSovereignMode = latest.Mode
+		lastSovereignCandidates = latest.Candidates
+		lastSovereignSelected = latest.Selected
+		lastSovereignExpectedProfitSat = latest.ExpectedProfitSat
+		lastSovereignBudgetRemainingSat = latest.BudgetRemainingSat
+		if withDecisions := s.loadSovereignAutopilotHistory(ctx, time.Now().Add(-24*time.Hour), 1, true); len(withDecisions) > 0 {
+			lastSovereignDecisions = withDecisions[0].Decisions
+		}
+	}
 	lastSovereignDecisionAtText := ""
 	if !lastSovereignDecisionAt.IsZero() {
 		lastSovereignDecisionAtText = lastSovereignDecisionAt.UTC().Format(time.RFC3339)

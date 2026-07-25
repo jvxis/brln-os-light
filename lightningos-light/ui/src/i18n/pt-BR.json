@@ -4299,6 +4299,7 @@
       "scanReasonBudgetLow": "orçamento muito baixo",
       "scanReasonTargetNotFound": "target não encontrado",
       "scanReasonStartError": "erro ao iniciar",
+      "scanReasonGuaranteedSlotQueued": "vaga garantida enfileirada",
       "lastManualRestartQueued": "Manual restart watch enfileirou: {{count}}",
       "manualRestartReasons": "Motivos do manual restart watch: {{value}}.",
       "budgetPaused": {

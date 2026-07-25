@@ -1480,6 +1480,8 @@ export default function RebalanceCenter() {
         return t('rebalanceCenter.overview.scanReasonWouldQueue')
       case 'queued':
         return t('rebalanceCenter.overview.scanDetailQueued')
+      case 'guaranteed_slot_queued':
+        return t('rebalanceCenter.overview.scanReasonGuaranteedSlotQueued')
       default:
         return reason
     }
@@ -1534,6 +1536,8 @@ export default function RebalanceCenter() {
         return t('rebalanceCenter.overview.scanReasonRouteDeadOpportunity')
       case 'sovereign_live':
         return t('rebalanceCenter.overview.scanReasonSovereignLive')
+      case 'guaranteed_slot_queued':
+        return t('rebalanceCenter.overview.scanReasonGuaranteedSlotQueued')
       case 'target_not_found':
         return t('rebalanceCenter.overview.scanReasonTargetNotFound')
       case 'start_error':

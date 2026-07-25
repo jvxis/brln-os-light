@@ -4299,6 +4299,7 @@
         "scanReasonBudgetLow": "budget too low",
         "scanReasonTargetNotFound": "target not found",
         "scanReasonStartError": "start error",
+        "scanReasonGuaranteedSlotQueued": "guaranteed slot queued",
         "lastManualRestartQueued": "Manual restart watch queued: {{count}}",
         "manualRestartReasons": "Manual restart watch reasons: {{value}}.",
         "budgetPaused": {

@@ -4429,6 +4429,74 @@ func TestExecuteSovereignAutopilotReservedSlotCountsTowardCycleLimit(t *testing.
 	}
 }
 
+func TestIncludeGuaranteedRebalanceSlotCountsWholeAutopilotRound(t *testing.T) {
+	regularDecision := RebalanceSovereignDecision{
+		ChannelID:    7,
+		ChannelPoint: "regular:0",
+		Reason:       "target_structural_cooldown",
+	}
+	result := sovereignAutopilotResult{
+		Candidates:         5,
+		Selected:           0,
+		ExpectedProfitSat:  3,
+		BudgetRemainingSat: 244,
+		Decisions:          []RebalanceSovereignDecision{regularDecision},
+		SkipReasons:        map[string]int{"target_structural_cooldown": 1},
+		Status:             "no_queue",
+	}
+	guaranteedDecision := RebalanceSovereignDecision{
+		ChannelID:         9,
+		ChannelPoint:      "guaranteed:0",
+		Selected:          true,
+		Reason:            "guaranteed_slot_queued",
+		ExpectedProfitSat: 7,
+	}
+
+	got := includeGuaranteedRebalanceSlot(result, guaranteedRebalanceSlotResult{
+		Queued:   true,
+		Decision: guaranteedDecision,
+	})
+
+	if got.Candidates != 6 || got.Selected != 1 {
+		t.Fatalf("expected full round totals 1/6, got %d/%d", got.Selected, got.Candidates)
+	}
+	if got.ExpectedProfitSat != 10 {
+		t.Fatalf("expected guaranteed profit in round total, got %d", got.ExpectedProfitSat)
+	}
+	if got.Status != "queued" {
+		t.Fatalf("expected queued status, got %q", got.Status)
+	}
+	if got.SkipReasons["guaranteed_slot_queued"] != 1 {
+		t.Fatalf("expected guaranteed selection marker, got %+v", got.SkipReasons)
+	}
+	if len(got.Decisions) != 2 || got.Decisions[0].ChannelID != guaranteedDecision.ChannelID || !got.Decisions[0].Selected {
+		t.Fatalf("expected guaranteed decision first in the round, got %+v", got.Decisions)
+	}
+	if !strings.Contains(got.Detail, "Queued 1 job(s). Candidates after guardrails: 6.") {
+		t.Fatalf("expected corrected totals in detail, got %q", got.Detail)
+	}
+}
+
+func TestIncludeGuaranteedRebalanceSlotPreservesShadowStatus(t *testing.T) {
+	result := sovereignAutopilotResult{
+		SkipReasons: map[string]int{},
+		Status:      "sovereign_shadow",
+	}
+	got := includeGuaranteedRebalanceSlot(result, guaranteedRebalanceSlotResult{
+		Queued: true,
+		Decision: RebalanceSovereignDecision{
+			Selected: true,
+			Reason:   "guaranteed_slot_queued",
+		},
+	})
+	if got.Status != "sovereign_shadow" {
+		t.Fatalf("expected shadow status to remain explicit, got %q", got.Status)
+	}
+	if got.Candidates != 1 || got.Selected != 1 {
+		t.Fatalf("expected guaranteed slot in shadow round totals, got %d/%d", got.Selected, got.Candidates)
+	}
+}
+
 // estimateTargetGainV3 must use the strongest demand signal (historical
 // revenue vs projected throughput) and cap by the theoretical max.
 func TestEstimateTargetGainV3UsesStrongestDemandSignal(t *testing.T) {

@@ -528,13 +528,14 @@ POST /api/apps/loopout-brln/lightning-address/validate
 
 POST /api/apps/loopout-brln/preview
 - Validates the Lightning Address and execution limits without requesting a payable invoice or sending an HTLC.
-- Body fields: `lightning_address`, `total_sat`, `tranche_sat`, `interval_seconds`, `timeout_seconds`, `max_fee_ppm` (1–1,000,000), `min_local_percent`, optional `comment`, and optional `selected_channel_ids` as decimal strings.
+- Body fields: `lightning_address`, `total_sat`, `tranche_sat`, `interval_seconds`, `timeout_seconds`, `max_fee_ppm` (1–1,000,000), `min_local_percent`, optional `comment`, optional `selected_channel_ids` as decimal strings, and optional `suppress_failed_telegram`.
 - The preview also checks the provider's per-payment minimum/maximum and comment policy for both the regular tranche and the final reduced tranche.
 - Returns payment count, final tranche, maximum aggregate fee budget, safely drainable liquidity, warnings, and per-channel projections.
 
 GET  /api/apps/loopout-brln/jobs?limit=50
 POST /api/apps/loopout-brln/jobs
 - Creates one background job at a time. Creation requires recent `loopout_brln` reauthentication when login protection is enabled; missing reauth returns HTTP 428 with `code=loopout_brln_reauth_required`.
+- When `suppress_failed_telegram=true`, failed LND attempts belonging to the job remain in app history but are excluded from the Telegram activity mirror. Successful payment notifications are unchanged.
 - A fresh LNURL-pay invoice is requested for each attempt. Its exact msat amount is verified before sending.
 
 GET  /api/apps/loopout-brln/jobs/{id}

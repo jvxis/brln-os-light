@@ -57,16 +57,17 @@ type loopOutBRLNLND interface {
 }
 
 type LoopOutBRLNRequest struct {
-	LightningAddress   string   `json:"lightning_address"`
-	TotalSat           int64    `json:"total_sat"`
-	TrancheSat         int64    `json:"tranche_sat"`
-	IntervalSeconds    int      `json:"interval_seconds"`
-	TimeoutSeconds     int      `json:"timeout_seconds"`
-	MaxFeePPM          int64    `json:"max_fee_ppm"`
-	MinLocalPercent    float64  `json:"min_local_percent"`
-	Comment            string   `json:"comment,omitempty"`
-	SelectedChannelIDs []string `json:"selected_channel_ids,omitempty"`
-	ConfirmPassword    string   `json:"confirm_password,omitempty"`
+	LightningAddress       string   `json:"lightning_address"`
+	TotalSat               int64    `json:"total_sat"`
+	TrancheSat             int64    `json:"tranche_sat"`
+	IntervalSeconds        int      `json:"interval_seconds"`
+	TimeoutSeconds         int      `json:"timeout_seconds"`
+	MaxFeePPM              int64    `json:"max_fee_ppm"`
+	MinLocalPercent        float64  `json:"min_local_percent"`
+	Comment                string   `json:"comment,omitempty"`
+	SelectedChannelIDs     []string `json:"selected_channel_ids,omitempty"`
+	SuppressFailedTelegram bool     `json:"suppress_failed_telegram,omitempty"`
+	ConfirmPassword        string   `json:"confirm_password,omitempty"`
 }
 
 type LoopOutBRLNChannelPreview struct {
@@ -104,27 +105,28 @@ type LoopOutBRLNAddressValidation struct {
 }
 
 type LoopOutBRLNJob struct {
-	ID                 int64      `json:"id"`
-	LightningAddress   string     `json:"lightning_address"`
-	TotalSat           int64      `json:"total_sat"`
-	TrancheSat         int64      `json:"tranche_sat"`
-	IntervalSeconds    int        `json:"interval_seconds"`
-	TimeoutSeconds     int        `json:"timeout_seconds"`
-	MaxFeePPM          int64      `json:"max_fee_ppm"`
-	MinLocalPercent    float64    `json:"min_local_percent"`
-	Comment            string     `json:"comment,omitempty"`
-	SelectedChannelIDs []string   `json:"selected_channel_ids,omitempty"`
-	Status             string     `json:"status"`
-	SentSat            int64      `json:"sent_sat"`
-	FeeSat             int64      `json:"fee_sat"`
-	AttemptCount       int        `json:"attempt_count"`
-	RetryRound         int        `json:"retry_round"`
-	LastError          string     `json:"last_error,omitempty"`
-	NextAttemptAt      time.Time  `json:"next_attempt_at"`
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
-	StartedAt          *time.Time `json:"started_at,omitempty"`
-	CompletedAt        *time.Time `json:"completed_at,omitempty"`
+	ID                     int64      `json:"id"`
+	LightningAddress       string     `json:"lightning_address"`
+	TotalSat               int64      `json:"total_sat"`
+	TrancheSat             int64      `json:"tranche_sat"`
+	IntervalSeconds        int        `json:"interval_seconds"`
+	TimeoutSeconds         int        `json:"timeout_seconds"`
+	MaxFeePPM              int64      `json:"max_fee_ppm"`
+	MinLocalPercent        float64    `json:"min_local_percent"`
+	Comment                string     `json:"comment,omitempty"`
+	SelectedChannelIDs     []string   `json:"selected_channel_ids,omitempty"`
+	SuppressFailedTelegram bool       `json:"suppress_failed_telegram"`
+	Status                 string     `json:"status"`
+	SentSat                int64      `json:"sent_sat"`
+	FeeSat                 int64      `json:"fee_sat"`
+	AttemptCount           int        `json:"attempt_count"`
+	RetryRound             int        `json:"retry_round"`
+	LastError              string     `json:"last_error,omitempty"`
+	NextAttemptAt          time.Time  `json:"next_attempt_at"`
+	CreatedAt              time.Time  `json:"created_at"`
+	UpdatedAt              time.Time  `json:"updated_at"`
+	StartedAt              *time.Time `json:"started_at,omitempty"`
+	CompletedAt            *time.Time `json:"completed_at,omitempty"`
 }
 
 type LoopOutBRLNPayment struct {
@@ -212,6 +214,7 @@ create table if not exists loopout_brln_jobs (
   min_local_percent double precision not null default 60,
   comment text not null default '',
   selected_channel_ids jsonb not null default '[]'::jsonb,
+  suppress_failed_telegram boolean not null default false,
   status text not null,
   sent_sat bigint not null default 0,
   fee_sat bigint not null default 0,
@@ -224,6 +227,8 @@ create table if not exists loopout_brln_jobs (
   started_at timestamptz,
   completed_at timestamptz
 );
+alter table loopout_brln_jobs
+  add column if not exists suppress_failed_telegram boolean not null default false;
 
 create table if not exists loopout_brln_payments (
   id bigserial primary key,
@@ -550,10 +555,10 @@ func (s *LoopOutBRLNService) CreateJob(ctx context.Context, raw LoopOutBRLNReque
 	err = tx.QueryRow(ctx, `
 insert into loopout_brln_jobs (
   lightning_address,total_sat,tranche_sat,interval_seconds,timeout_seconds,max_fee_ppm,
-  min_local_percent,comment,selected_channel_ids,status,started_at,next_attempt_at
-) values ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,'running',now(),now()) returning id`,
+  min_local_percent,comment,selected_channel_ids,suppress_failed_telegram,status,started_at,next_attempt_at
+) values ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,'running',now(),now()) returning id`,
 		req.LightningAddress, req.TotalSat, req.TrancheSat, req.IntervalSeconds, req.TimeoutSeconds,
-		req.MaxFeePPM, req.MinLocalPercent, req.Comment, string(selectedRaw)).Scan(&id)
+		req.MaxFeePPM, req.MinLocalPercent, req.Comment, string(selectedRaw), req.SuppressFailedTelegram).Scan(&id)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "loopout_brln_one_active_job_idx") {
 			return LoopOutBRLNJob{}, errors.New("another Loop Out BRLN job is still active")
@@ -562,6 +567,7 @@ insert into loopout_brln_jobs (
 	}
 	if err := insertLoopOutBRLNEvent(ctx, tx, id, "created", "info", "Loop created and approved", map[string]any{
 		"total_sat": req.TotalSat, "tranche_sat": req.TrancheSat, "max_fee_ppm": req.MaxFeePPM,
+		"suppress_failed_telegram": req.SuppressFailedTelegram,
 	}); err != nil {
 		return LoopOutBRLNJob{}, err
 	}
@@ -591,7 +597,7 @@ func (s *LoopOutBRLNService) Status(ctx context.Context) (LoopOutBRLNStatus, err
 func (s *LoopOutBRLNService) activeJob(ctx context.Context) (LoopOutBRLNJob, error) {
 	return scanLoopOutBRLNJob(s.db.QueryRow(ctx, `
 select id,lightning_address,total_sat,tranche_sat,interval_seconds,timeout_seconds,max_fee_ppm,
- min_local_percent,comment,selected_channel_ids,status,sent_sat,fee_sat,attempt_count,retry_round,
+ min_local_percent,comment,selected_channel_ids,suppress_failed_telegram,status,sent_sat,fee_sat,attempt_count,retry_round,
  last_error,next_attempt_at,created_at,updated_at,started_at,completed_at
 from loopout_brln_jobs where status = any($1) order by id desc limit 1`, loopOutBRLNActiveStatuses))
 }
@@ -602,7 +608,7 @@ func (s *LoopOutBRLNService) GetJob(ctx context.Context, id int64) (LoopOutBRLNJ
 	}
 	return scanLoopOutBRLNJob(s.db.QueryRow(ctx, `
 select id,lightning_address,total_sat,tranche_sat,interval_seconds,timeout_seconds,max_fee_ppm,
- min_local_percent,comment,selected_channel_ids,status,sent_sat,fee_sat,attempt_count,retry_round,
+ min_local_percent,comment,selected_channel_ids,suppress_failed_telegram,status,sent_sat,fee_sat,attempt_count,retry_round,
  last_error,next_attempt_at,created_at,updated_at,started_at,completed_at
 from loopout_brln_jobs where id=$1`, id))
 }
@@ -613,7 +619,8 @@ func scanLoopOutBRLNJob(row loopOutBRLNRow) (LoopOutBRLNJob, error) {
 	var job LoopOutBRLNJob
 	var selectedRaw []byte
 	err := row.Scan(&job.ID, &job.LightningAddress, &job.TotalSat, &job.TrancheSat, &job.IntervalSeconds,
-		&job.TimeoutSeconds, &job.MaxFeePPM, &job.MinLocalPercent, &job.Comment, &selectedRaw, &job.Status,
+		&job.TimeoutSeconds, &job.MaxFeePPM, &job.MinLocalPercent, &job.Comment, &selectedRaw,
+		&job.SuppressFailedTelegram, &job.Status,
 		&job.SentSat, &job.FeeSat, &job.AttemptCount, &job.RetryRound, &job.LastError, &job.NextAttemptAt,
 		&job.CreatedAt, &job.UpdatedAt, &job.StartedAt, &job.CompletedAt)
 	if err != nil {
@@ -629,7 +636,7 @@ func (s *LoopOutBRLNService) ListJobs(ctx context.Context, limit int) ([]LoopOut
 	}
 	rows, err := s.db.Query(ctx, `
 select id,lightning_address,total_sat,tranche_sat,interval_seconds,timeout_seconds,max_fee_ppm,
- min_local_percent,comment,selected_channel_ids,status,sent_sat,fee_sat,attempt_count,retry_round,
+ min_local_percent,comment,selected_channel_ids,suppress_failed_telegram,status,sent_sat,fee_sat,attempt_count,retry_round,
  last_error,next_attempt_at,created_at,updated_at,started_at,completed_at
 from loopout_brln_jobs order by id desc limit $1`, limit)
 	if err != nil {
@@ -873,7 +880,7 @@ func (s *LoopOutBRLNService) processOnce(ctx context.Context) error {
 func (s *LoopOutBRLNService) nextDueJob(ctx context.Context) (LoopOutBRLNJob, error) {
 	return scanLoopOutBRLNJob(s.db.QueryRow(ctx, `
 select id,lightning_address,total_sat,tranche_sat,interval_seconds,timeout_seconds,max_fee_ppm,
- min_local_percent,comment,selected_channel_ids,status,sent_sat,fee_sat,attempt_count,retry_round,
+ min_local_percent,comment,selected_channel_ids,suppress_failed_telegram,status,sent_sat,fee_sat,attempt_count,retry_round,
  last_error,next_attempt_at,created_at,updated_at,started_at,completed_at
 from loopout_brln_jobs
 where status in ('running','waiting_liquidity','pause_requested','cancel_requested')
@@ -1126,7 +1133,7 @@ func (s *LoopOutBRLNService) finalizeSuccess(ctx context.Context, job LoopOutBRL
 	defer tx.Rollback(ctx)
 	current, err := scanLoopOutBRLNJob(tx.QueryRow(ctx, `
 select id,lightning_address,total_sat,tranche_sat,interval_seconds,timeout_seconds,max_fee_ppm,
- min_local_percent,comment,selected_channel_ids,status,sent_sat,fee_sat,attempt_count,retry_round,
+ min_local_percent,comment,selected_channel_ids,suppress_failed_telegram,status,sent_sat,fee_sat,attempt_count,retry_round,
  last_error,next_attempt_at,created_at,updated_at,started_at,completed_at
 from loopout_brln_jobs where id=$1 for update`, job.ID))
 	if err != nil {

@@ -157,7 +157,7 @@ func (s *Server) handleLoopOutBRLNCreateJob(w http.ResponseWriter, r *http.Reque
 	s.recordAuditEvent(r, "loopout_brln.job.start", strconv.FormatInt(job.ID, 10), map[string]any{
 		"lightning_address": job.LightningAddress,
 		"total_sat":         job.TotalSat, "tranche_sat": job.TrancheSat, "max_fee_ppm": job.MaxFeePPM,
-		"min_local_percent": job.MinLocalPercent,
+		"min_local_percent": job.MinLocalPercent, "suppress_failed_telegram": job.SuppressFailedTelegram,
 	})
 	writeJSON(w, http.StatusAccepted, job)
 }

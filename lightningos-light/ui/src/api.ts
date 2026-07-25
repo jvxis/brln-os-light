@@ -1110,6 +1110,7 @@ export type LoopOutBRLNRequest = {
   min_local_percent: number
   comment?: string
   selected_channel_ids?: string[]
+  suppress_failed_telegram?: boolean
   confirm_password?: string
 }
 
@@ -1158,6 +1159,7 @@ export type LoopOutBRLNJob = {
   min_local_percent: number
   comment?: string
   selected_channel_ids?: string[]
+  suppress_failed_telegram: boolean
   status: string
   sent_sat: number
   fee_sat: number

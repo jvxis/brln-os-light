@@ -72,12 +72,13 @@ export default function LoopOutBRLN() {
   const [address, setAddress] = useState('')
   const [addressCheck, setAddressCheck] = useState<AddressCheck>({ state: 'idle', address: '' })
   const [totalSat, setTotalSat] = useState('')
-  const [trancheSat, setTrancheSat] = useState('100000')
+  const [trancheSat, setTrancheSat] = useState('50000')
   const [intervalSeconds, setIntervalSeconds] = useState('15')
   const [timeoutSeconds, setTimeoutSeconds] = useState('120')
   const [maxFeePPM, setMaxFeePPM] = useState('2500')
   const [minLocalPercent, setMinLocalPercent] = useState('60')
   const [comment, setComment] = useState('')
+  const [suppressFailedTelegram, setSuppressFailedTelegram] = useState(true)
   const [channelSearch, setChannelSearch] = useState('')
   const [reauthAction, setReauthAction] = useState<ReauthAction | null>(null)
   const [password, setPassword] = useState('')
@@ -154,8 +155,9 @@ export default function LoopOutBRLN() {
     max_fee_ppm: Number(maxFeePPM),
     min_local_percent: Number(minLocalPercent),
     comment: comment.trim(),
-    selected_channel_ids: sourceMode === 'manual' ? Array.from(selectedChannels) : undefined
-  }), [address, comment, intervalSeconds, maxFeePPM, minLocalPercent, selectedChannels, sourceMode, timeoutSeconds, totalSat, trancheSat])
+    selected_channel_ids: sourceMode === 'manual' ? Array.from(selectedChannels) : undefined,
+    suppress_failed_telegram: suppressFailedTelegram
+  }), [address, comment, intervalSeconds, maxFeePPM, minLocalPercent, selectedChannels, sourceMode, suppressFailedTelegram, timeoutSeconds, totalSat, trancheSat])
 
   const addressReady = addressCheck.state === 'valid' && addressCheck.address === requestPayload.lightning_address.toLowerCase()
   const addressCheckState = addressCheck.address === requestPayload.lightning_address.toLowerCase() ? addressCheck.state : 'idle'
@@ -383,7 +385,7 @@ export default function LoopOutBRLN() {
               </div>
               <div className="mt-4 grid gap-3 rounded-2xl border border-white/10 bg-ink/30 p-4 sm:grid-cols-[1fr_auto] sm:items-center">
                 <div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl border border-glow/20 bg-glow/10 text-glow"><SplitIcon /></span><div><p className="text-sm font-medium">{draftParts ? t('loopOutBrln.paymentCount', { count: draftParts }) : t('loopOutBrln.awaitingAmount')}</p><p className="mt-1 text-xs text-fog/45">{draftParts ? t('loopOutBrln.lastDraftPayment', { amount: sats(draftLast) }) : t('loopOutBrln.planUpdatesLive')}</p></div></div>
-                <div className="flex flex-wrap gap-1.5">{[50_000, 100_000, 250_000].map((value) => <button key={value} type="button" onClick={() => { setTrancheSat(String(value)); clearPreview() }} className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-medium transition ${Number(trancheSat) === value ? 'border-brass/50 bg-brass/12 text-brass' : 'border-white/10 text-fog/45 hover:border-white/25 hover:text-fog'}`}>{compactSats(value)}</button>)}</div>
+                <div className="flex flex-wrap gap-1.5">{[25_000, 50_000, 100_000, 250_000].map((value) => <button key={value} type="button" onClick={() => { setTrancheSat(String(value)); clearPreview() }} className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-medium transition ${Number(trancheSat) === value ? 'border-brass/50 bg-brass/12 text-brass' : 'border-white/10 text-fog/45 hover:border-white/25 hover:text-fog'}`}>{compactSats(value)}</button>)}</div>
               </div>
             </section>
 
@@ -430,6 +432,11 @@ export default function LoopOutBRLN() {
                 <Field label={t('loopOutBrln.interval')}><input className="input-field" type="number" min="0" max="86400" value={intervalSeconds} onChange={(e) => { setIntervalSeconds(e.target.value); clearPreview() }} /></Field>
                 <Field label={t('loopOutBrln.timeout')}><input className="input-field" type="number" min="30" max="600" value={timeoutSeconds} onChange={(e) => { setTimeoutSeconds(e.target.value); clearPreview() }} /></Field>
                 <Field className="sm:col-span-2" label={t('loopOutBrln.comment')} hint={t('loopOutBrln.commentHint')}><input className="input-field" maxLength={512} value={comment} onChange={(e) => { setComment(e.target.value); clearPreview() }} /></Field>
+                <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-white/10 bg-ink/35 p-4 sm:col-span-2">
+                  <input className="peer sr-only" type="checkbox" checked={suppressFailedTelegram} onChange={(e) => { setSuppressFailedTelegram(e.target.checked); clearPreview() }} />
+                  <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition peer-focus-visible:ring-2 peer-focus-visible:ring-glow/60 ${suppressFailedTelegram ? 'border-glow bg-glow text-ink' : 'border-white/20 bg-white/5 text-transparent'}`}><CheckIcon /></span>
+                  <span><span className="block text-sm font-medium">{t('loopOutBrln.suppressFailedTelegram')}</span><span className="mt-1 block text-xs leading-5 text-fog/45">{t('loopOutBrln.suppressFailedTelegramHint')}</span></span>
+                </label>
               </div>
             </details>
           </div>
@@ -563,7 +570,7 @@ function ReviewPanel({ preview, request, sats, t, busy, formValid, addressReady,
         <div className="flex items-center justify-between"><span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider ${preview.can_start ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200' : 'border-amber-400/25 bg-amber-400/10 text-amber-200'}`}><i className={`h-1.5 w-1.5 rounded-full ${preview.can_start ? 'bg-emerald-300' : 'bg-amber-300'}`} />{preview.can_start ? t('loopOutBrln.ready') : t('loopOutBrln.needsAttention')}</span><span className="text-[10px] text-fog/35">{t('loopOutBrln.validatedNow')}</span></div>
         <div className="grid grid-cols-2 gap-3"><Metric label={t('loopOutBrln.payments')} value={String(preview.estimated_parts)} /><Metric label={t('loopOutBrln.maxFees')} value={sats(preview.max_fee_total_sat)} /><Metric label={t('loopOutBrln.lastPayment')} value={sats(preview.last_tranche_sat)} /><Metric label={t('loopOutBrln.drainable')} value={sats(preview.total_drainable_sat)} /></div>
         <div className="rounded-2xl border border-white/10 bg-black/15 p-4"><div className="flex justify-between text-xs"><span className="text-fog/50">{t('loopOutBrln.liquidityCoverage')}</span><strong className={coverage >= 100 ? 'text-emerald-300' : 'text-amber-200'}>{coverage.toFixed(0)}%</strong></div><div className="mt-3 h-2 overflow-hidden rounded-full bg-white/5"><div className={`h-full rounded-full transition-all ${coverage >= 100 ? 'bg-gradient-to-r from-emerald-400 to-glow' : 'bg-gradient-to-r from-amber-500 to-amber-300'}`} style={{ width: `${coverage}%` }} /></div><div className="mt-3 flex justify-between text-[10px] text-fog/35"><span>{t('loopOutBrln.required')}: {sats(requiredLiquidity)}</span><span>{t('loopOutBrln.safeToMove')}: {sats(preview.total_drainable_sat)}</span></div></div>
-        <div className="rounded-2xl border border-white/10 bg-black/15 p-4"><div className="flex justify-between text-xs text-fog/50"><span>{t('loopOutBrln.feeBudget')}</span><strong className="text-fog">{request.max_fee_ppm.toLocaleString()} PPM</strong></div><div className="mt-2 flex justify-between text-xs text-fog/50"><span>{t('loopOutBrln.liquidityFloor')}</span><strong className="text-fog">{request.min_local_percent}%</strong></div><div className="mt-2 flex justify-between text-xs text-fog/50"><span>{t('loopOutBrln.interval')}</span><strong className="text-fog">{request.interval_seconds}s</strong></div></div>
+        <div className="rounded-2xl border border-white/10 bg-black/15 p-4"><div className="flex justify-between text-xs text-fog/50"><span>{t('loopOutBrln.feeBudget')}</span><strong className="text-fog">{request.max_fee_ppm.toLocaleString()} PPM</strong></div><div className="mt-2 flex justify-between text-xs text-fog/50"><span>{t('loopOutBrln.liquidityFloor')}</span><strong className="text-fog">{request.min_local_percent}%</strong></div><div className="mt-2 flex justify-between text-xs text-fog/50"><span>{t('loopOutBrln.interval')}</span><strong className="text-fog">{request.interval_seconds}s</strong></div><div className="mt-2 flex justify-between gap-3 text-xs text-fog/50"><span>{t('loopOutBrln.failedTelegram')}</span><strong className="text-right text-fog">{request.suppress_failed_telegram ? t('loopOutBrln.failedTelegramSuppressed') : t('loopOutBrln.failedTelegramEnabled')}</strong></div></div>
         {(preview.warnings || []).map((warning) => <p key={warning} className="rounded-xl border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-100/80">{t(`loopOutBrln.warnings.${warning}`, { defaultValue: warning })}</p>)}
         <p className="flex items-start gap-2 text-[11px] leading-5 text-fog/40"><ShieldIcon /><span>{t('loopOutBrln.approvalNotice')}</span></p>
         <button className="btn-primary w-full justify-center py-3" type="button" disabled={!preview.can_start || Boolean(busy) || hasActiveJob} onClick={onStart}>{busy === 'create' ? t('loopOutBrln.starting') : t('loopOutBrln.start')}</button>

@@ -76,6 +76,28 @@ func TestTelegramActivityMirrorMessageKeepsSucceededLightningSent(t *testing.T) 
 	}
 }
 
+func TestLoopOutFailedPaymentTelegramCandidate(t *testing.T) {
+	failed := Notification{
+		Type:        "lightning",
+		Direction:   "out",
+		Status:      "FAILED",
+		PaymentHash: strings.Repeat("ab", 32),
+	}
+	if !isLoopOutFailedPaymentTelegramCandidate(failed) {
+		t.Fatal("expected failed outgoing Lightning payment to be eligible for Loop Out filtering")
+	}
+	for _, evt := range []Notification{
+		{Type: "lightning", Direction: "out", Status: "SUCCEEDED", PaymentHash: failed.PaymentHash},
+		{Type: "lightning", Direction: "in", Status: "FAILED", PaymentHash: failed.PaymentHash},
+		{Type: "keysend", Direction: "out", Status: "FAILED", PaymentHash: failed.PaymentHash},
+		{Type: "lightning", Direction: "out", Status: "FAILED"},
+	} {
+		if isLoopOutFailedPaymentTelegramCandidate(evt) {
+			t.Fatalf("unexpected candidate: %#v", evt)
+		}
+	}
+}
+
 func TestTelegramActivityMirrorMessageIncludesKeysendMessage(t *testing.T) {
 	msg := telegramActivityMirrorMessage(Notification{
 		Type:         "keysend",

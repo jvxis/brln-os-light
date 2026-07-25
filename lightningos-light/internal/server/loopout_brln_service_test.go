@@ -67,7 +67,7 @@ func TestNormalizeLoopOutBRLNRequest(t *testing.T) {
 	req, err := normalizeLoopOutBRLNRequest(LoopOutBRLNRequest{
 		LightningAddress: " Alice@Example.com ", TotalSat: 200_000, TrancheSat: 100_000,
 		IntervalSeconds: 15, MaxFeePPM: 2_500, MinLocalPercent: 60,
-		SelectedChannelIDs: []string{"2", "2", "3"},
+		SelectedChannelIDs: []string{"2", "2", "3"}, SuppressFailedTelegram: true,
 	})
 	if err != nil {
 		t.Fatalf("normalize: %v", err)
@@ -77,6 +77,9 @@ func TestNormalizeLoopOutBRLNRequest(t *testing.T) {
 	}
 	if len(req.SelectedChannelIDs) != 2 {
 		t.Fatalf("selected ids not deduplicated: %#v", req.SelectedChannelIDs)
+	}
+	if !req.SuppressFailedTelegram {
+		t.Fatal("telegram failure suppression was not preserved")
 	}
 }
 

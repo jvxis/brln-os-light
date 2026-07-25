@@ -848,6 +848,28 @@ func (n *Notifier) enqueueTelegramActivityMirror(evt Notification) {
 	}
 }
 
+func isLoopOutFailedPaymentTelegramCandidate(evt Notification) bool {
+	return strings.EqualFold(strings.TrimSpace(evt.Type), "lightning") &&
+		strings.EqualFold(strings.TrimSpace(evt.Direction), "out") &&
+		strings.EqualFold(strings.TrimSpace(evt.Status), "FAILED") &&
+		normalizeHash(evt.PaymentHash) != ""
+}
+
+func (n *Notifier) shouldSuppressLoopOutFailedPaymentTelegram(ctx context.Context, evt Notification) bool {
+	if n == nil || n.db == nil || !isLoopOutFailedPaymentTelegramCandidate(evt) {
+		return false
+	}
+	var suppress bool
+	err := n.db.QueryRow(ctx, `
+select exists (
+  select 1
+  from loopout_brln_payments p
+  join loopout_brln_jobs j on j.id=p.job_id
+  where p.payment_hash=$1 and j.suppress_failed_telegram
+)`, normalizeHash(evt.PaymentHash)).Scan(&suppress)
+	return err == nil && suppress
+}
+
 func (n *Notifier) runTelegramActivityMirrorLoop() {
 	if n == nil || n.telegramMirrorQueue == nil {
 		return
@@ -858,6 +880,12 @@ func (n *Notifier) runTelegramActivityMirrorLoop() {
 			return
 		case evt := <-n.telegramMirrorQueue:
 			if !n.telegramActivityMirrorEnabled.Load() {
+				continue
+			}
+			filterCtx, filterCancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+			suppress := n.shouldSuppressLoopOutFailedPaymentTelegram(filterCtx, evt)
+			filterCancel()
+			if suppress {
 				continue
 			}
 			cfg := readTelegramBackupConfig()

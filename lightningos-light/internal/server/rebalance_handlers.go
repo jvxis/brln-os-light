@@ -1073,7 +1073,7 @@ func (s *Server) handleRebalanceRun(w http.ResponseWriter, r *http.Request) {
 	// Operator-triggered "Manual Rebal In": bypasses budget/cooldown gates (the
 	// operator is acting deliberately) — just queues and executes. The busy
 	// guard and per-route fee limit still apply.
-	jobID, err := s.rebalance.startOperatorJob(resolvedID, payload.AmountSat, payload.FeeLimitPpm, autoRestart)
+	jobID, err := s.rebalance.startOperatorJob(resolvedID, preview.TargetOutboundPct, payload.AmountSat, payload.FeeLimitPpm, autoRestart)
 	if err != nil {
 		switch {
 		case errors.Is(err, errChannelAutomationParked), errors.Is(err, errManualRestartCooldown), errors.Is(err, errManualBudgetExhausted), errors.Is(err, errManualBudgetInsufficient):

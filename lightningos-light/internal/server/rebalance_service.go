@@ -5018,7 +5018,7 @@ func buildOperatorRebalancePreview(target lndclient.ChannelInfo, targetPct float
 		return preview, errors.New("target_outbound_pct must be 1-100")
 	}
 	deficit := computeDeficitAmount(target, targetPct)
-	if deficit <= 0 {
+	if deficit <= 0 && amountOverride == nil {
 		return preview, errors.New("target already within range")
 	}
 	preview.DeficitSat = deficit
@@ -5034,9 +5034,22 @@ func buildOperatorRebalancePreview(target lndclient.ChannelInfo, targetPct float
 			return preview, errors.New("amount_sat must be greater than zero")
 		}
 		amount = *amountOverride
-		if amount > deficit {
-			amount = deficit
+		maxInboundSat := target.CapacitySat - target.LocalBalanceSat
+		if maxInboundSat <= 0 {
+			return preview, errors.New("target has no inbound capacity")
+		}
+		if amount > maxInboundSat {
+			amount = maxInboundSat
 			preview.AmountClamped = true
+		}
+		if amount > deficit {
+			// An explicit operator amount is allowed to extend beyond the
+			// channel's persisted target. The higher percentage is temporary
+			// and belongs only to this job; the saved target is not changed.
+			targetPct = float64(target.LocalBalanceSat+amount) / float64(target.CapacitySat) * 100
+			preview.TargetOutboundPct = targetPct
+			deficit = amount
+			preview.DeficitSat = deficit
 		}
 	}
 
@@ -5061,11 +5074,17 @@ func buildOperatorRebalancePreview(target lndclient.ChannelInfo, targetPct float
 		FeeRatePpm:  outgoingFeePpm,
 		BaseFeeMsat: outgoingBaseMsat,
 	}
-	defaultFeeMsat, err := calcFeeLimitMsat(defaultAmount*1000, policy, nil, feeCfg)
+	defaultFeeAmount := defaultAmount
+	if defaultFeeAmount <= 0 {
+		// Above the persisted target there is no natural default amount. The
+		// explicit amount is still the basis for the default fee calculation.
+		defaultFeeAmount = amount
+	}
+	defaultFeeMsat, err := calcFeeLimitMsat(defaultFeeAmount*1000, policy, nil, feeCfg)
 	if err != nil {
 		return preview, err
 	}
-	preview.DefaultFeeLimitPpm = feeMsatToPpm(defaultFeeMsat, defaultAmount)
+	preview.DefaultFeeLimitPpm = feeMsatToPpm(defaultFeeMsat, defaultFeeAmount)
 	effectiveFeeMsat, err := calcFeeLimitMsat(amount*1000, policy, nil, feeCfg)
 	if err != nil {
 		return preview, err
@@ -5127,6 +5146,8 @@ type operatorRebalanceOverrides struct {
 	AmountSet         bool
 	FeeLimitSet       bool
 	FeeLimitPpm       int64
+	TargetPctSet      bool
+	TargetPct         float64
 }
 
 func (s *RebalanceService) startJob(targetChannelID uint64, source string, reason string, amountOverride int64, manualAutoRestart bool) (int64, error) {
@@ -5140,11 +5161,13 @@ func (s *RebalanceService) startJob(targetChannelID uint64, source string, reaso
 // limit (applied later in runJob) still hold. Only this button path sets
 // operatorInitiated; the manual-restart watch, scheduled restarts, and the
 // auto/rules scan are unaffected.
-func (s *RebalanceService) startOperatorJob(targetChannelID uint64, amountOverride *int64, feeLimitPpm *int64, manualAutoRestart bool) (int64, error) {
+func (s *RebalanceService) startOperatorJob(targetChannelID uint64, targetPct float64, amountOverride *int64, feeLimitPpm *int64, manualAutoRestart bool) (int64, error) {
 	overrides := operatorRebalanceOverrides{
 		OperatorInitiated: true,
 		AmountSet:         amountOverride != nil,
 		FeeLimitSet:       feeLimitPpm != nil,
+		TargetPctSet:      true,
+		TargetPct:         targetPct,
 	}
 	var amount int64
 	if amountOverride != nil {
@@ -5188,6 +5211,9 @@ func (s *RebalanceService) startJobWithEconomics(targetChannelID uint64, source 
 		return 0, errChannelAutomationParked
 	}
 	targetPct := setting.TargetOutboundPct
+	if overrides.TargetPctSet {
+		targetPct = overrides.TargetPct
+	}
 	deficit := computeDeficitAmount(target, targetPct)
 	if deficit <= 0 {
 		return 0, errors.New("target already within range")

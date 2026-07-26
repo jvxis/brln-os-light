@@ -262,7 +262,7 @@ export function RebalanceInAction({
           className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-transparent text-fog/40 transition hover:bg-white/5 hover:text-cyan-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/60 disabled:cursor-not-allowed disabled:opacity-30"
           type="button"
           onClick={openCustom}
-          disabled={disabled || running}
+          disabled={running}
           title={t('rebalanceCenter.channels.rebalanceOptions')}
           aria-haspopup="dialog"
           aria-expanded={open}

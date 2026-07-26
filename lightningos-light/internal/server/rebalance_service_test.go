@@ -71,10 +71,45 @@ func TestBuildOperatorRebalancePreviewDefaultsAndOverrides(t *testing.T) {
 	amount = 200_000
 	got, err = buildOperatorRebalancePreview(target, 10, cfg, setting, &amount, nil)
 	if err != nil {
-		t.Fatalf("clamped preview: %v", err)
+		t.Fatalf("extended target preview: %v", err)
 	}
-	if got.EffectiveAmountSat != 100_000 || !got.AmountClamped {
-		t.Fatalf("expected amount clamped to deficit: %+v", got)
+	if got.EffectiveAmountSat != 200_000 || got.TargetOutboundPct != 20 || got.AmountClamped {
+		t.Fatalf("expected explicit amount to extend the temporary target: %+v", got)
+	}
+}
+
+func TestBuildOperatorRebalancePreviewAllowsExplicitAmountAboveTarget(t *testing.T) {
+	feeRate := int64(500)
+	target := lndclient.ChannelInfo{
+		ChannelID:        44,
+		CapacitySat:      1_000_000,
+		LocalBalanceSat:  200_000,
+		RemoteBalanceSat: 800_000,
+		FeeRatePpm:       &feeRate,
+	}
+	cfg := RebalanceConfig{
+		EconRatio:       0.8,
+		MaxAmountSat:    50_000,
+		MinSplitEnabled: true,
+		MinExecuteSat:   5_000,
+	}
+	setting := channelSetting{TargetOutboundPct: 10, UseDefaultEconRatio: true}
+	amount := int64(25_000)
+
+	got, err := buildOperatorRebalancePreview(target, 10, cfg, setting, &amount, nil)
+	if err != nil {
+		t.Fatalf("preview above persisted target: %v", err)
+	}
+	if got.DeficitSat != 25_000 || got.EffectiveAmountSat != 25_000 || got.TargetOutboundPct != 22.5 {
+		t.Fatalf("unexpected temporary target preview: %+v", got)
+	}
+	if got.DefaultAmountSat != 0 || got.DefaultFeeLimitPpm != 400 {
+		t.Fatalf("unexpected defaults above persisted target: %+v", got)
+	}
+
+	_, err = buildOperatorRebalancePreview(target, 10, cfg, setting, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "target already within range") {
+		t.Fatalf("expected default action to remain target-bound, got %v", err)
 	}
 }
 

@@ -30,6 +30,8 @@ import type { AutomationIntent, AutomationIntentConfig } from '../api'
 import { MetricDisclosure } from '../components/rebalance/MetricDisclosure'
 import OverviewHero from '../components/rebalance/OverviewHero'
 import { PairStatsPanel } from '../components/rebalance/PairStatsPanel'
+import { RebalanceInAction } from '../components/rebalance/RebalanceInAction'
+import type { RebalanceInOverrides } from '../components/rebalance/RebalanceInAction'
 import { SettingsSubcard } from '../components/rebalance/SettingsSubcard'
 import type {
   RebalanceAttempt,
@@ -1299,21 +1301,25 @@ export default function RebalanceCenter() {
     }
   }
 
-  const handleRunRebalance = async (channel: RebalanceChannel) => {
+  const handleRunRebalance = async (channel: RebalanceChannel, overrides?: RebalanceInOverrides) => {
     if (channelParked(channel)) {
       setStatus(t('channelRanking.automationParkedDetail'))
-      return
+      return false
     }
     const nextValue = editTargets[channelKey(channel)]
     const parsed = nextValue ? Number(nextValue) : channel.target_outbound_pct
-    const autoRestart = manualRestart[channel.channel_point] === true
+    const hasOverrides = overrides?.amountSat !== undefined || overrides?.feeLimitPpm !== undefined
+    const autoRestart = !hasOverrides && manualRestart[channel.channel_point] === true
     try {
       await runRebalance({
         channel_point: channel.channel_point,
         target_outbound_pct: parsed,
-        auto_restart: autoRestart
+        auto_restart: autoRestart,
+        amount_sat: overrides?.amountSat,
+        fee_limit_ppm: overrides?.feeLimitPpm
       })
       void loadAll({ silent: true })
+      return true
     } catch (err) {
       const message = err instanceof Error ? err.message : ''
       if (message.includes('manual budget exhausted')) {
@@ -1325,6 +1331,7 @@ export default function RebalanceCenter() {
       } else {
         setStatus(message || t('rebalanceCenter.runFailed'))
       }
+      return false
     }
   }
 
@@ -4080,14 +4087,13 @@ export default function RebalanceCenter() {
                   >
                     {t('rebalanceCenter.channels.save')}
                   </button>
-                  <button
-                    className="btn-primary text-xs px-3 py-1"
-                    onClick={() => handleRunRebalance(ch)}
+                  <RebalanceInAction
+                    channelPoint={ch.channel_point}
+                    peerAlias={ch.peer_alias}
+                    targetOutboundPct={editTargets[channelKey(ch)] ? Number(editTargets[channelKey(ch)]) : ch.target_outbound_pct}
                     disabled={!ch.eligible_as_manual_target}
-                    title={t('rebalanceCenter.channelsHints.rebalanceIn')}
-                  >
-                    {t('rebalanceCenter.channels.rebalanceIn')}
-                  </button>
+                    onRun={(overrides) => handleRunRebalance(ch, overrides)}
+                  />
                   <label className="flex items-center gap-1 text-[11px] text-fog/60" title={t('rebalanceCenter.channelsHints.rebalanceRestart')}>
                     <span>⟳</span>
                     <input
@@ -4349,14 +4355,13 @@ export default function RebalanceCenter() {
                       >
                         {t('rebalanceCenter.channels.save')}
                       </button>
-                      <button
-                        className="btn-primary text-xs px-3 py-1"
-                        onClick={() => handleRunRebalance(ch)}
+                      <RebalanceInAction
+                        channelPoint={ch.channel_point}
+                        peerAlias={ch.peer_alias}
+                        targetOutboundPct={editTargets[channelKey(ch)] ? Number(editTargets[channelKey(ch)]) : ch.target_outbound_pct}
                         disabled={!ch.eligible_as_manual_target}
-                        title={t('rebalanceCenter.channelsHints.rebalanceIn')}
-                      >
-                        {t('rebalanceCenter.channels.rebalanceIn')}
-                      </button>
+                        onRun={(overrides) => handleRunRebalance(ch, overrides)}
+                      />
                       <div
                         className="flex flex-col items-center gap-1 text-[10px] text-fog/60"
                         title={t('rebalanceCenter.channelsHints.rebalanceRestart')}

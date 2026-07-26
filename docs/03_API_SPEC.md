@@ -581,6 +581,18 @@ GET /api/reports/live
 
 ## Rebalance channel automation
 
+POST /api/rebalance/run/preview
+- Resolves the effective amount and fee cap for an operator-triggered Manual Rebal In without creating a job.
+- Body: `{"channel_point":"txid:index","target_outbound_pct":10,"amount_sat":10000,"fee_limit_ppm":1200}`.
+- `amount_sat` and `fee_limit_ppm` are optional. Omitted values use the channel deficit capped by global `max_amount_sat`, and the configured fee-limit/economic-ratio calculation respectively.
+- Returns the defaults, effective values, maximum fee in sats, and warnings when the one-job amount exceeds global `max_amount_sat`, is clamped to the live deficit, or the fee cap exceeds the channel outgoing fee.
+
+POST /api/rebalance/run
+- Starts an operator-triggered Manual Rebal In.
+- Accepts the same optional `amount_sat` and `fee_limit_ppm` fields as the preview endpoint. Explicit values override global amount/fee mechanics for this job only and do not persist to the channel, Rebalance config, or AutoFee.
+- Without overrides, behavior remains unchanged: the job uses the current deficit capped by `max_amount_sat` and derives its fee cap from `fee_limit_ppm` or outgoing policy × effective economic ratio.
+- One-job overrides cannot be combined with `auto_restart`.
+
 POST /api/rebalance/channel/guaranteed
 - Adds or removes one exact LND channel from the scheduler-independent guaranteed rebalance pool.
 - Body: `{"channel_id_str":"1005750773843558400","channel_point":"txid:index","enabled":true}`.

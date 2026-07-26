@@ -920,12 +920,39 @@ export const getRebalanceAutoTargetHistory = (opts: { channelId?: number; limit?
 }
 export const resetRebalanceMissionControl = () =>
   request('/api/rebalance/mission-control/reset', { method: 'POST', body: JSON.stringify({}) })
-export const runRebalance = (payload: {
+export type RebalanceRunPayload = {
   channel_id?: number
   channel_point: string
   target_outbound_pct?: number
   auto_restart?: boolean
-}) =>
+  amount_sat?: number
+  fee_limit_ppm?: number
+}
+
+export type RebalanceRunPreview = {
+  channel_id: number
+  channel_point: string
+  peer_alias?: string
+  target_outbound_pct: number
+  deficit_sat: number
+  effective_amount_sat: number
+  default_amount_sat: number
+  effective_fee_limit_ppm: number
+  default_fee_limit_ppm: number
+  outgoing_fee_ppm: number
+  max_fee_sat: number
+  config_max_amount_sat: number
+  uses_default_amount: boolean
+  uses_default_fee: boolean
+  amount_overrides_config: boolean
+  amount_clamped: boolean
+  fee_exceeds_outgoing: boolean
+}
+
+export const previewRebalance = (payload: RebalanceRunPayload) =>
+  request('/api/rebalance/run/preview', { method: 'POST', body: JSON.stringify(payload) }) as Promise<RebalanceRunPreview>
+
+export const runRebalance = (payload: RebalanceRunPayload) =>
   request('/api/rebalance/run', { method: 'POST', body: JSON.stringify(payload) })
 export const stopRebalance = (payload: { job_id: number }) =>
   request('/api/rebalance/stop', { method: 'POST', body: JSON.stringify(payload) })

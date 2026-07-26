@@ -290,6 +290,7 @@ func (s *Server) routes() http.Handler {
 		r.Get("/history", s.handleRebalanceHistory)
 		r.Get("/sovereign-history", s.handleRebalanceSovereignHistory)
 		r.Get("/auto-target/history", s.handleRebalanceAutoTargetHistory)
+		r.Post("/run/preview", s.handleRebalanceRunPreview)
 		r.Post("/run", s.handleRebalanceRun)
 		r.Post("/stop", s.handleRebalanceStop)
 		r.Post("/mission-control/reset", s.handleRebalanceMissionControlReset)

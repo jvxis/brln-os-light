@@ -112,6 +112,8 @@ type rebalanceRunPayload struct {
 	ChannelPoint      string   `json:"channel_point"`
 	TargetOutboundPct *float64 `json:"target_outbound_pct,omitempty"`
 	AutoRestart       *bool    `json:"auto_restart,omitempty"`
+	AmountSat         *int64   `json:"amount_sat,omitempty"`
+	FeeLimitPpm       *int64   `json:"fee_limit_ppm,omitempty"`
 }
 
 type rebalanceChannelTargetPayload struct {
@@ -1034,6 +1036,10 @@ func (s *Server) handleRebalanceRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "channel_id or channel_point required")
 		return
 	}
+	if err := validateRebalanceRunOverrides(payload); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
 	defer cancel()
 	resolvedID, resolvedPoint, err := s.rebalance.ResolveChannel(ctx, payload.ChannelID, payload.ChannelPoint)
@@ -1047,13 +1053,27 @@ func (s *Server) handleRebalanceRun(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "target_outbound_pct must be 1-100")
 			return
 		}
-		_ = s.rebalance.SetChannelTarget(ctx, resolvedID, resolvedPoint, *targetPct)
 	}
 	autoRestart := payload.AutoRestart != nil && *payload.AutoRestart
+	if autoRestart && (payload.AmountSat != nil || payload.FeeLimitPpm != nil) {
+		writeError(w, http.StatusBadRequest, "auto_restart cannot be combined with one-job overrides")
+		return
+	}
+	preview, err := s.rebalance.PreviewOperatorJob(ctx, resolvedID, targetPct, payload.AmountSat, payload.FeeLimitPpm)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if targetPct != nil {
+		if err := s.rebalance.SetChannelTarget(ctx, resolvedID, resolvedPoint, *targetPct); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	// Operator-triggered "Manual Rebal In": bypasses budget/cooldown gates (the
 	// operator is acting deliberately) — just queues and executes. The busy
 	// guard and per-route fee limit still apply.
-	jobID, err := s.rebalance.startOperatorJob(resolvedID, 0, autoRestart)
+	jobID, err := s.rebalance.startOperatorJob(resolvedID, payload.AmountSat, payload.FeeLimitPpm, autoRestart)
 	if err != nil {
 		switch {
 		case errors.Is(err, errChannelAutomationParked), errors.Is(err, errManualRestartCooldown), errors.Is(err, errManualBudgetExhausted), errors.Is(err, errManualBudgetInsufficient):
@@ -1063,7 +1083,54 @@ func (s *Server) handleRebalanceRun(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"job_id": jobID})
+	writeJSON(w, http.StatusOK, map[string]any{"job_id": jobID, "preview": preview})
+}
+
+func (s *Server) handleRebalanceRunPreview(w http.ResponseWriter, r *http.Request) {
+	if s.rebalance == nil {
+		writeError(w, http.StatusServiceUnavailable, "rebalance unavailable")
+		return
+	}
+	var payload rebalanceRunPayload
+	if err := readJSON(r, &payload); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if payload.ChannelID == 0 && strings.TrimSpace(payload.ChannelPoint) == "" {
+		writeError(w, http.StatusBadRequest, "channel_id or channel_point required")
+		return
+	}
+	if payload.TargetOutboundPct != nil && (*payload.TargetOutboundPct <= 0 || *payload.TargetOutboundPct > 100) {
+		writeError(w, http.StatusBadRequest, "target_outbound_pct must be 1-100")
+		return
+	}
+	if err := validateRebalanceRunOverrides(payload); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
+	defer cancel()
+	resolvedID, _, err := s.rebalance.ResolveChannel(ctx, payload.ChannelID, payload.ChannelPoint)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	preview, err := s.rebalance.PreviewOperatorJob(ctx, resolvedID, payload.TargetOutboundPct, payload.AmountSat, payload.FeeLimitPpm)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, preview)
+}
+
+func validateRebalanceRunOverrides(payload rebalanceRunPayload) error {
+	if payload.AmountSat != nil && *payload.AmountSat <= 0 {
+		return errors.New("amount_sat must be greater than zero")
+	}
+	if payload.FeeLimitPpm != nil && (*payload.FeeLimitPpm <= 0 || *payload.FeeLimitPpm > 10_000) {
+		return errors.New("fee_limit_ppm must be between 1 and 10000")
+	}
+	return nil
 }
 
 func (s *Server) handleRebalanceStop(w http.ResponseWriter, r *http.Request) {

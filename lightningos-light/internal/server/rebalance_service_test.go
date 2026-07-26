@@ -21,6 +21,83 @@ func ptrFloat64(v float64) *float64 {
 }
 func ptrString(v string) *string { return &v }
 
+func TestBuildOperatorRebalancePreviewDefaultsAndOverrides(t *testing.T) {
+	feeRate := int64(1000)
+	baseFee := int64(1000)
+	target := lndclient.ChannelInfo{
+		ChannelID:       42,
+		ChannelPoint:    "txid:0",
+		PeerAlias:       "probe-peer",
+		CapacitySat:     1_000_000,
+		LocalBalanceSat: 0,
+		FeeRatePpm:      &feeRate,
+		BaseFeeMsat:     &baseFee,
+	}
+	cfg := RebalanceConfig{
+		EconRatio:       0.8,
+		MaxAmountSat:    50_000,
+		MinSplitEnabled: true,
+		MinExecuteSat:   10_000,
+	}
+	setting := channelSetting{TargetOutboundPct: 10, UseDefaultEconRatio: true}
+
+	got, err := buildOperatorRebalancePreview(target, 10, cfg, setting, nil, nil)
+	if err != nil {
+		t.Fatalf("default preview: %v", err)
+	}
+	if got.DeficitSat != 100_000 || got.DefaultAmountSat != 50_000 || got.EffectiveAmountSat != 50_000 {
+		t.Fatalf("unexpected default amounts: %+v", got)
+	}
+	if got.DefaultFeeLimitPpm != 800 || got.EffectiveFeeLimitPpm != 800 {
+		t.Fatalf("unexpected default fee: %+v", got)
+	}
+	if !got.UsesDefaultAmount || !got.UsesDefaultFee || got.AmountOverridesConfig {
+		t.Fatalf("unexpected default flags: %+v", got)
+	}
+
+	amount := int64(75_000)
+	fee := int64(1_500)
+	got, err = buildOperatorRebalancePreview(target, 10, cfg, setting, &amount, &fee)
+	if err != nil {
+		t.Fatalf("custom preview: %v", err)
+	}
+	if got.EffectiveAmountSat != 75_000 || got.EffectiveFeeLimitPpm != 1_500 || got.MaxFeeSat != 113 {
+		t.Fatalf("unexpected custom preview: %+v", got)
+	}
+	if got.UsesDefaultAmount || got.UsesDefaultFee || !got.AmountOverridesConfig || !got.FeeExceedsOutgoing {
+		t.Fatalf("unexpected custom flags: %+v", got)
+	}
+
+	amount = 200_000
+	got, err = buildOperatorRebalancePreview(target, 10, cfg, setting, &amount, nil)
+	if err != nil {
+		t.Fatalf("clamped preview: %v", err)
+	}
+	if got.EffectiveAmountSat != 100_000 || !got.AmountClamped {
+		t.Fatalf("expected amount clamped to deficit: %+v", got)
+	}
+}
+
+func TestBuildOperatorRebalancePreviewRejectsBelowExecuteMinimum(t *testing.T) {
+	feeRate := int64(500)
+	target := lndclient.ChannelInfo{
+		ChannelID:       43,
+		CapacitySat:     1_000_000,
+		LocalBalanceSat: 0,
+		FeeRatePpm:      &feeRate,
+	}
+	cfg := RebalanceConfig{
+		EconRatio:       0.8,
+		MinSplitEnabled: true,
+		MinExecuteSat:   10_000,
+	}
+	amount := int64(5_000)
+	_, err := buildOperatorRebalancePreview(target, 10, cfg, channelSetting{UseDefaultEconRatio: true}, &amount, nil)
+	if err == nil || !strings.Contains(err.Error(), "at least 10000") {
+		t.Fatalf("expected minimum amount error, got %v", err)
+	}
+}
+
 func TestClassifyRebalanceNode(t *testing.T) {
 	mk := func(n int, capSat, localSat int64, active bool) []lndclient.ChannelInfo {
 		out := make([]lndclient.ChannelInfo, n)

@@ -1164,6 +1164,26 @@ type RebalanceJob struct {
 	RealizedNet24hSat             int64   `json:"realized_net_24h_sat,omitempty"`
 }
 
+type RebalanceRunPreview struct {
+	ChannelID             uint64  `json:"channel_id"`
+	ChannelPoint          string  `json:"channel_point"`
+	PeerAlias             string  `json:"peer_alias,omitempty"`
+	TargetOutboundPct     float64 `json:"target_outbound_pct"`
+	DeficitSat            int64   `json:"deficit_sat"`
+	EffectiveAmountSat    int64   `json:"effective_amount_sat"`
+	DefaultAmountSat      int64   `json:"default_amount_sat"`
+	EffectiveFeeLimitPpm  int64   `json:"effective_fee_limit_ppm"`
+	DefaultFeeLimitPpm    int64   `json:"default_fee_limit_ppm"`
+	OutgoingFeePpm        int64   `json:"outgoing_fee_ppm"`
+	MaxFeeSat             int64   `json:"max_fee_sat"`
+	ConfigMaxAmountSat    int64   `json:"config_max_amount_sat"`
+	UsesDefaultAmount     bool    `json:"uses_default_amount"`
+	UsesDefaultFee        bool    `json:"uses_default_fee"`
+	AmountOverridesConfig bool    `json:"amount_overrides_config"`
+	AmountClamped         bool    `json:"amount_clamped"`
+	FeeExceedsOutgoing    bool    `json:"fee_exceeds_outgoing"`
+}
+
 type RebalanceAttempt struct {
 	ID              int64  `json:"id"`
 	JobID           int64  `json:"job_id"`
@@ -2693,7 +2713,7 @@ func (s *RebalanceService) queueGuaranteedRebalanceSlot(ctx context.Context, cfg
 			ExpectedProfitSat: expectedProfit,
 			BudgetCostSat:     budgetCost,
 		}
-		_, err = s.startJobWithEconomics(target.ChannelID, "auto", rebalanceGuaranteedReason, amount, false, false, economics)
+		_, err = s.startJobWithEconomics(target.ChannelID, "auto", rebalanceGuaranteedReason, amount, false, false, economics, operatorRebalanceOverrides{})
 		if err != nil {
 			result.SkipReason = "guaranteed_start_error"
 			continue
@@ -4332,7 +4352,7 @@ func (s *RebalanceService) executeSovereignAutopilotWithReservedSlot(ctx context
 					BudgetCostSat:     decision.BudgetCostSat,
 					Score:             decision.Score,
 				}
-				jobID, err := s.startJobWithEconomics(target.Channel.ChannelID, "auto", rebalanceSovereignReason, amountOverride, false, false, economics)
+				jobID, err := s.startJobWithEconomics(target.Channel.ChannelID, "auto", rebalanceSovereignReason, amountOverride, false, false, economics, operatorRebalanceOverrides{})
 				if err != nil {
 					decision.Reason = autoStartErrorReason(err)
 					noteSkip(decision.Reason)
@@ -4984,8 +5004,132 @@ func filterRecentRebalanceTargets(candidates []rebalanceTarget, cfg RebalanceCon
 	return candidates, 0
 }
 
+func buildOperatorRebalancePreview(target lndclient.ChannelInfo, targetPct float64, cfg RebalanceConfig, setting channelSetting, amountOverride *int64, feeLimitOverride *int64) (RebalanceRunPreview, error) {
+	preview := RebalanceRunPreview{
+		ChannelID:          target.ChannelID,
+		ChannelPoint:       target.ChannelPoint,
+		PeerAlias:          target.PeerAlias,
+		TargetOutboundPct:  targetPct,
+		ConfigMaxAmountSat: cfg.MaxAmountSat,
+		UsesDefaultAmount:  amountOverride == nil,
+		UsesDefaultFee:     feeLimitOverride == nil,
+	}
+	if targetPct <= 0 || targetPct > 100 {
+		return preview, errors.New("target_outbound_pct must be 1-100")
+	}
+	deficit := computeDeficitAmount(target, targetPct)
+	if deficit <= 0 {
+		return preview, errors.New("target already within range")
+	}
+	preview.DeficitSat = deficit
+
+	defaultAmount := deficit
+	if cfg.MaxAmountSat > 0 && defaultAmount > cfg.MaxAmountSat {
+		defaultAmount = cfg.MaxAmountSat
+	}
+	preview.DefaultAmountSat = defaultAmount
+	amount := defaultAmount
+	if amountOverride != nil {
+		if *amountOverride <= 0 {
+			return preview, errors.New("amount_sat must be greater than zero")
+		}
+		amount = *amountOverride
+		if amount > deficit {
+			amount = deficit
+			preview.AmountClamped = true
+		}
+	}
+
+	feeCfg := effectiveConfigForTarget(cfg, setting)
+	minExecuteSat := effectiveMinExecuteSat(feeCfg)
+	if minExecuteSat > 0 && amount < minExecuteSat {
+		return preview, fmt.Errorf("amount_sat must be at least %d", minExecuteSat)
+	}
+	preview.EffectiveAmountSat = amount
+	preview.AmountOverridesConfig = amountOverride != nil && cfg.MaxAmountSat > 0 && amount > cfg.MaxAmountSat
+
+	var outgoingFeePpm int64
+	if target.FeeRatePpm != nil {
+		outgoingFeePpm = *target.FeeRatePpm
+	}
+	var outgoingBaseMsat int64
+	if target.BaseFeeMsat != nil {
+		outgoingBaseMsat = *target.BaseFeeMsat
+	}
+	preview.OutgoingFeePpm = outgoingFeePpm
+	policy := lndclient.ChannelPolicySnapshot{
+		FeeRatePpm:  outgoingFeePpm,
+		BaseFeeMsat: outgoingBaseMsat,
+	}
+	defaultFeeMsat, err := calcFeeLimitMsat(defaultAmount*1000, policy, nil, feeCfg)
+	if err != nil {
+		return preview, err
+	}
+	preview.DefaultFeeLimitPpm = feeMsatToPpm(defaultFeeMsat, defaultAmount)
+	effectiveFeeMsat, err := calcFeeLimitMsat(amount*1000, policy, nil, feeCfg)
+	if err != nil {
+		return preview, err
+	}
+	effectiveFeePpm := feeMsatToPpm(effectiveFeeMsat, amount)
+	if feeLimitOverride != nil {
+		if *feeLimitOverride <= 0 || *feeLimitOverride > 10_000 {
+			return preview, errors.New("fee_limit_ppm must be between 1 and 10000")
+		}
+		effectiveFeePpm = *feeLimitOverride
+	}
+	if effectiveFeePpm <= 0 {
+		return preview, errors.New("effective fee limit is zero")
+	}
+	preview.EffectiveFeeLimitPpm = effectiveFeePpm
+	preview.FeeExceedsOutgoing = effectiveFeePpm > outgoingFeePpm
+	preview.MaxFeeSat = (amount*effectiveFeePpm + 999_999) / 1_000_000
+	return preview, nil
+}
+
+func (s *RebalanceService) PreviewOperatorJob(ctx context.Context, targetChannelID uint64, targetPctOverride *float64, amountOverride *int64, feeLimitOverride *int64) (RebalanceRunPreview, error) {
+	cfg, err := s.loadConfig(ctx)
+	if err != nil {
+		return RebalanceRunPreview{}, err
+	}
+	channels, err := s.listChannelsCached(ctx)
+	if err != nil {
+		return RebalanceRunPreview{}, err
+	}
+	var target lndclient.ChannelInfo
+	found := false
+	for _, ch := range channels {
+		if ch.ChannelID == targetChannelID {
+			target = ch
+			found = true
+			break
+		}
+	}
+	if !found {
+		return RebalanceRunPreview{}, errors.New("target channel not found")
+	}
+	settings, err := s.loadChannelSettings(ctx)
+	if err != nil {
+		return RebalanceRunPreview{}, err
+	}
+	setting := normalizeChannelSetting(settings[targetChannelID])
+	if isChannelAutomationParked(setting.AutomationMode) {
+		return RebalanceRunPreview{}, errChannelAutomationParked
+	}
+	targetPct := setting.TargetOutboundPct
+	if targetPctOverride != nil {
+		targetPct = *targetPctOverride
+	}
+	return buildOperatorRebalancePreview(target, targetPct, cfg, setting, amountOverride, feeLimitOverride)
+}
+
+type operatorRebalanceOverrides struct {
+	AmountSet   bool
+	FeeLimitSet bool
+	FeeLimitPpm int64
+}
+
 func (s *RebalanceService) startJob(targetChannelID uint64, source string, reason string, amountOverride int64, manualAutoRestart bool) (int64, error) {
-	return s.startJobWithEconomics(targetChannelID, source, reason, amountOverride, manualAutoRestart, false, rebalanceJobEconomics{})
+	return s.startJobWithEconomics(targetChannelID, source, reason, amountOverride, manualAutoRestart, false, rebalanceJobEconomics{}, operatorRebalanceOverrides{})
 }
 
 // startOperatorJob queues a rebalance explicitly triggered by the operator via
@@ -4995,11 +5139,22 @@ func (s *RebalanceService) startJob(targetChannelID uint64, source string, reaso
 // limit (applied later in runJob) still hold. Only this button path sets
 // operatorInitiated; the manual-restart watch, scheduled restarts, and the
 // auto/rules scan are unaffected.
-func (s *RebalanceService) startOperatorJob(targetChannelID uint64, amountOverride int64, manualAutoRestart bool) (int64, error) {
-	return s.startJobWithEconomics(targetChannelID, "manual", "", amountOverride, manualAutoRestart, true, rebalanceJobEconomics{})
+func (s *RebalanceService) startOperatorJob(targetChannelID uint64, amountOverride *int64, feeLimitPpm *int64, manualAutoRestart bool) (int64, error) {
+	overrides := operatorRebalanceOverrides{
+		AmountSet:   amountOverride != nil,
+		FeeLimitSet: feeLimitPpm != nil,
+	}
+	var amount int64
+	if amountOverride != nil {
+		amount = *amountOverride
+	}
+	if feeLimitPpm != nil {
+		overrides.FeeLimitPpm = *feeLimitPpm
+	}
+	return s.startJobWithEconomics(targetChannelID, "manual", "", amount, manualAutoRestart, true, rebalanceJobEconomics{}, overrides)
 }
 
-func (s *RebalanceService) startJobWithEconomics(targetChannelID uint64, source string, reason string, amountOverride int64, manualAutoRestart bool, operatorInitiated bool, economics rebalanceJobEconomics) (int64, error) {
+func (s *RebalanceService) startJobWithEconomics(targetChannelID uint64, source string, reason string, amountOverride int64, manualAutoRestart bool, operatorInitiated bool, economics rebalanceJobEconomics, overrides operatorRebalanceOverrides) (int64, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -5073,7 +5228,7 @@ func (s *RebalanceService) startJobWithEconomics(targetChannelID uint64, source 
 		s.mu.Unlock()
 	}
 
-	go s.runJob(jobID, targetChannelID, amount, targetPct, source, reason)
+	go s.runJob(jobID, targetChannelID, amount, targetPct, source, reason, overrides)
 	return jobID, nil
 }
 
@@ -5085,6 +5240,7 @@ type rebalanceJobRunner struct {
 	targetPct       float64
 	jobSource       string
 	jobReason       string
+	overrides       operatorRebalanceOverrides
 }
 
 type rebalanceJobRunState struct {
@@ -5159,7 +5315,7 @@ type rebalanceMppPrepassContext struct {
 	applySuccess               func(int64, int64, *int64, *int64) bool
 }
 
-func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount int64, targetPct float64, jobSource string, jobReason string) {
+func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount int64, targetPct float64, jobSource string, jobReason string, overrides operatorRebalanceOverrides) {
 	runner := rebalanceJobRunner{
 		service:         s,
 		jobID:           jobID,
@@ -5168,6 +5324,7 @@ func (s *RebalanceService) runJob(jobID int64, targetChannelID uint64, amount in
 		targetPct:       targetPct,
 		jobSource:       jobSource,
 		jobReason:       jobReason,
+		overrides:       overrides,
 	}
 	runner.run()
 }
@@ -5590,7 +5747,7 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 		s.finishJob(jobID, "skipped", "amount below minimum")
 		return
 	}
-	if cfg.MaxAmountSat > 0 && amount > cfg.MaxAmountSat {
+	if !r.overrides.AmountSet && cfg.MaxAmountSat > 0 && amount > cfg.MaxAmountSat {
 		amount = cfg.MaxAmountSat
 	}
 
@@ -5601,6 +5758,9 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 		return
 	}
 	feeCfg := effectiveConfigForTarget(cfg, targetSetting)
+	if r.overrides.FeeLimitSet {
+		feeCfg.FeeLimitPpm = r.overrides.FeeLimitPpm
+	}
 	minExecuteSat = effectiveMinExecuteSat(feeCfg)
 	minProbeSat = effectiveMinProbeSat(feeCfg)
 	startAmountSat := effectiveStartAmountSat(feeCfg)
@@ -5648,7 +5808,7 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 			if amount <= 0 || amount > deficitAmount {
 				amount = deficitAmount
 			}
-			if cfg.MaxAmountSat > 0 && amount > cfg.MaxAmountSat {
+			if !r.overrides.AmountSet && cfg.MaxAmountSat > 0 && amount > cfg.MaxAmountSat {
 				amount = cfg.MaxAmountSat
 			}
 			snapshot.TargetAmountSat = amount

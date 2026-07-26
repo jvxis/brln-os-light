@@ -181,10 +181,12 @@ func (s *Server) installCpuMiner(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, err := ensureFileWithChange(paths.ComposePath, cpuMinerComposeContents(image)); err != nil {
+	if err := ensureCpuMinerCompose(paths); err != nil {
 		return err
 	}
-	if err := writeCpuMinerEnv(paths, s.loadCpuMinerConfig(ctx, paths, address)); err != nil {
+	cfg := s.loadCpuMinerConfig(ctx, paths, address)
+	cfg.Image = image
+	if err := writeCpuMinerEnv(paths, cfg); err != nil {
 		return err
 	}
 	return runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d")
@@ -309,10 +311,10 @@ func cpuFlagsLineHas(cpuinfo string, flag string) bool {
 	return false
 }
 
-func cpuMinerComposeContents(image string) string {
+func cpuMinerComposeContents() string {
 	return fmt.Sprintf(`services:
   cpuminer:
-    image: %s
+    image: ${CPUMINER_IMAGE}
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -334,7 +336,37 @@ func cpuMinerComposeContents(image string) string {
       - "${THREADS}"
       - "--api-bind"
       - "0.0.0.0:%d"
-`, image, cpuMinerAPIPort, cpuMinerAPIPort, cpuMinerAPIPort)
+`, cpuMinerAPIPort, cpuMinerAPIPort, cpuMinerAPIPort)
+}
+
+// ensureCpuMinerCompose (re)writes the compose file from the current template.
+// Called on every install/config/threads change so an install created by an
+// older build (with a stale, hardcoded compose) self-heals to the latest
+// template on the next apply — no reinstall needed.
+func ensureCpuMinerCompose(paths cpuMinerPaths) error {
+	_, err := ensureFileWithChange(paths.ComposePath, cpuMinerComposeContents())
+	return err
+}
+
+// cpuMinerResolveImage returns the image to run: the value stored in .env, or
+// (migrating an older install) the image hardcoded in the existing compose
+// file, falling back to the baseline image.
+func cpuMinerResolveImage(paths cpuMinerPaths) string {
+	if v := strings.TrimSpace(readEnvValue(paths.EnvPath, "CPUMINER_IMAGE")); v != "" {
+		return v
+	}
+	if data, err := os.ReadFile(paths.ComposePath); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "image:") {
+				img := strings.TrimSpace(strings.TrimPrefix(trimmed, "image:"))
+				if img != "" && !strings.Contains(img, "${") {
+					return img
+				}
+			}
+		}
+	}
+	return cpuMinerBaselineImage
 }
 
 // cpuMinerMaxThreads caps mining threads at the host core count minus one, so
@@ -366,10 +398,17 @@ func (s *Server) setCpuMinerThreads(ctx context.Context, threads int) error {
 	if err := setEnvValue(paths.EnvPath, "THREADS", strconv.Itoa(clampCpuMinerThreads(threads))); err != nil {
 		return err
 	}
+	if err := setEnvValue(paths.EnvPath, "CPUMINER_IMAGE", cpuMinerResolveImage(paths)); err != nil {
+		return err
+	}
+	if err := ensureCpuMinerCompose(paths); err != nil {
+		return err
+	}
 	return runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d")
 }
 
 type cpuMinerConfig struct {
+	Image   string
 	Address string
 	Worker  string
 	Pool    cpuMinerPool
@@ -378,6 +417,7 @@ type cpuMinerConfig struct {
 
 func writeCpuMinerEnv(paths cpuMinerPaths, cfg cpuMinerConfig) error {
 	kv := [][2]string{
+		{"CPUMINER_IMAGE", cfg.Image},
 		{"POOL_MODE", cfg.Pool.Mode},
 		{"STRATUM_HOST", cfg.Pool.StratumHost},
 		{"STRATUM_PORT", strconv.Itoa(cfg.Pool.StratumPort)},
@@ -464,7 +504,16 @@ func (s *Server) setCpuMinerConfig(ctx context.Context, poolMode, address, worke
 		threads = t
 	}
 
-	cfg := cpuMinerConfig{Address: resolvedAddress, Worker: worker, Pool: pool, Threads: threads}
+	cfg := cpuMinerConfig{
+		Image:   cpuMinerResolveImage(paths),
+		Address: resolvedAddress,
+		Worker:  worker,
+		Pool:    pool,
+		Threads: threads,
+	}
+	if err := ensureCpuMinerCompose(paths); err != nil {
+		return err
+	}
 	if err := writeCpuMinerEnv(paths, cfg); err != nil {
 		return err
 	}

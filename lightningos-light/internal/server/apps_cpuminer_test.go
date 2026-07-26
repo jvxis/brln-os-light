@@ -8,9 +8,9 @@ import (
 )
 
 func TestCpuMinerComposeContents(t *testing.T) {
-	contents := cpuMinerComposeContents("cniweb/cpuminer-opt:latest")
+	contents := cpuMinerComposeContents()
 	checks := []string{
-		"image: cniweb/cpuminer-opt:latest",
+		"image: ${CPUMINER_IMAGE}",
 		"127.0.0.1:4048:4048",
 		"stratum+tcp://${STRATUM_HOST}:${STRATUM_PORT}",
 		"${MINING_ADDRESS}.${WORKER_NAME}",

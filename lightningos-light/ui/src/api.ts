@@ -1016,6 +1016,9 @@ export type CpuMinerStatus = {
   installed: boolean
   running: boolean
   address: string
+  worker: string
+  pool_mode: string
+  pool_label: string
   threads: number
   max_threads: number
   hashrate_hs: number
@@ -1028,6 +1031,12 @@ export type CpuMinerStatus = {
 export const getCpuMinerStatus = (): Promise<CpuMinerStatus> => request('/api/apps/cpuminer/status')
 export const setCpuMinerThreads = (threads: number) =>
   request('/api/apps/cpuminer/threads', { method: 'POST', body: JSON.stringify({ threads }) })
+export const setCpuMinerConfig = (payload: {
+  pool_mode: string
+  address?: string
+  worker?: string
+  use_node_address?: boolean
+}) => request('/api/apps/cpuminer/config', { method: 'POST', body: JSON.stringify(payload) })
 
 // Taproot Assets (tapd) — standalone, on-chain only. All calls forward the raw
 // tapcli JSON output, so return types are intentionally loose.

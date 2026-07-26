@@ -82,6 +82,7 @@ func (s *Server) routes() http.Handler {
 	r.Get("/api/apps/electrs/status", s.handleElectrsStatus)
 	r.Get("/api/apps/cpuminer/status", s.handleCpuMinerStatus)
 	r.Post("/api/apps/cpuminer/threads", s.handleCpuMinerThreads)
+	r.Post("/api/apps/cpuminer/config", s.handleCpuMinerConfig)
 	r.Get("/api/apps/tapd/info", s.handleTapdInfo)
 	r.Get("/api/apps/tapd/assets", s.handleTapdAssets)
 	r.Post("/api/apps/tapd/address", s.handleTapdAddress)

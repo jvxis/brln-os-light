@@ -25,7 +25,51 @@ const (
 	// including constrained VMs without AVX, and is the universal fallback.
 	// Published as a public image on Docker Hub so installs pull it automatically.
 	cpuMinerBaselineImage = "jvx1971/cpu-lottery-miner:v1"
+
+	// Pool targets the miner can point its stratum connection at.
+	cpuMinerPoolLocal = "local" // the Public Pool app running on this machine
+	cpuMinerPoolBRLN  = "brln"  // the BR-LN hosted pool (btcpool.br-ln.com)
+
+	cpuMinerBRLNStratumHost = "btcpool.br-ln.com"
+	cpuMinerBRLNStratumPort = 3332
+	cpuMinerBRLNStatsBase   = "https://btcpool.br-ln.com"
+
+	cpuMinerLocalStratumHost = "host.docker.internal"
 )
+
+// cpuMinerPool describes a resolved stratum target and where to read pool-side
+// stats (best difficulty / pool hashrate). StatsBase is empty when no pool API
+// is reachable.
+type cpuMinerPool struct {
+	Mode        string
+	StratumHost string
+	StratumPort int
+	StatsBase   string
+}
+
+func cpuMinerPoolLabel(mode string) string {
+	if mode == cpuMinerPoolBRLN {
+		return "BR-LN (" + cpuMinerBRLNStratumHost + ")"
+	}
+	return "Local Public Pool"
+}
+
+func cpuMinerPoolPreset(mode string) cpuMinerPool {
+	if mode == cpuMinerPoolBRLN {
+		return cpuMinerPool{
+			Mode:        cpuMinerPoolBRLN,
+			StratumHost: cpuMinerBRLNStratumHost,
+			StratumPort: cpuMinerBRLNStratumPort,
+			StatsBase:   cpuMinerBRLNStatsBase,
+		}
+	}
+	return cpuMinerPool{
+		Mode:        cpuMinerPoolLocal,
+		StratumHost: cpuMinerLocalStratumHost,
+		StratumPort: publicPoolStratumPort,
+		StatsBase:   "http://127.0.0.1:" + strconv.Itoa(publicPoolAPIPort),
+	}
+}
 
 // cpuMinerFastImages are off-the-shelf cpuminer-opt builds that are much faster
 // but require modern instructions (AVX2/AVX512) and crash with SIGILL on CPUs
@@ -56,7 +100,7 @@ func cpuMinerDefinition() appDefinition {
 	return appDefinition{
 		ID:          cpuMinerAppID,
 		Name:        "CPU Lottery Miner",
-		Description: "Solo-mine Bitcoin with spare CPU against your local Public Pool. Pure lottery, rewards go straight to your LND wallet.",
+		Description: "Solo-mine Bitcoin with spare CPU against the BR-LN pool or your local Public Pool. Pure lottery, rewards go straight to your wallet.",
 		Port:        0,
 	}
 }
@@ -69,11 +113,8 @@ func (a cpuMinerApp) Info(ctx context.Context) (appInfo, error) {
 	def := a.Definition()
 	info := newAppInfo(def)
 
-	available, reason, message := a.server.cpuMinerAvailability(ctx)
-	info.Available = available
-	info.UnavailableReason = reason
-	info.UnavailableMessage = message
-
+	// Always available: it can mine on the BR-LN pool without any local
+	// dependency; the local Public Pool is just one of the selectable targets.
 	paths := cpuMinerAppPaths()
 	if !fileExists(paths.ComposePath) {
 		return info, nil
@@ -113,24 +154,18 @@ func cpuMinerAppPaths() cpuMinerPaths {
 	}
 }
 
-// cpuMinerAvailability gates the app on a running local Public Pool, which is
-// the stratum target the miner connects to.
-func (s *Server) cpuMinerAvailability(ctx context.Context) (bool, string, string) {
+// publicPoolRunning reports whether the local Public Pool app is up, so the
+// miner can default to (and validate) the local stratum target.
+func (s *Server) publicPoolRunning(ctx context.Context) bool {
 	poolPaths := publicPoolAppPaths()
 	if !fileExists(poolPaths.ComposePath) {
-		return false, "requires_public_pool", "Install and start Public Pool from the App Store before installing CPU Lottery Miner."
+		return false
 	}
 	status, err := getComposeStatus(ctx, poolPaths.Root, poolPaths.ComposePath, "public-pool")
-	if err != nil || status != "running" {
-		return false, "requires_public_pool_running", "Start Public Pool before using CPU Lottery Miner."
-	}
-	return true, "", ""
+	return err == nil && status == "running"
 }
 
 func (s *Server) installCpuMiner(ctx context.Context) error {
-	if available, _, message := s.cpuMinerAvailability(ctx); !available {
-		return errors.New(message)
-	}
 	if err := ensureDocker(ctx); err != nil {
 		return err
 	}
@@ -149,7 +184,7 @@ func (s *Server) installCpuMiner(ctx context.Context) error {
 	if _, err := ensureFileWithChange(paths.ComposePath, cpuMinerComposeContents(image)); err != nil {
 		return err
 	}
-	if err := ensureCpuMinerEnv(paths, address, cpuMinerDefaultThreads); err != nil {
+	if err := writeCpuMinerEnv(paths, s.loadCpuMinerConfig(ctx, paths, address)); err != nil {
 		return err
 	}
 	return runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d")
@@ -290,16 +325,16 @@ func cpuMinerComposeContents(image string) string {
       - "--algo"
       - "sha256d"
       - "--url"
-      - "stratum+tcp://host.docker.internal:%d"
+      - "stratum+tcp://${STRATUM_HOST}:${STRATUM_PORT}"
       - "--user"
-      - "${MINING_ADDRESS}.%s"
+      - "${MINING_ADDRESS}.${WORKER_NAME}"
       - "--pass"
       - "x"
       - "--threads"
       - "${THREADS}"
       - "--api-bind"
       - "0.0.0.0:%d"
-`, image, cpuMinerAPIPort, cpuMinerAPIPort, publicPoolStratumPort, cpuMinerWorkerTag, cpuMinerAPIPort)
+`, image, cpuMinerAPIPort, cpuMinerAPIPort, cpuMinerAPIPort)
 }
 
 // cpuMinerMaxThreads caps mining threads at the host core count minus one, so
@@ -334,36 +369,145 @@ func (s *Server) setCpuMinerThreads(ctx context.Context, threads int) error {
 	return runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d")
 }
 
-func ensureCpuMinerEnv(paths cpuMinerPaths, address string, threads int) error {
-	threads = clampCpuMinerThreads(threads)
-	required := [][2]string{
-		{"MINING_ADDRESS", address},
-		{"THREADS", strconv.Itoa(threads)},
+type cpuMinerConfig struct {
+	Address string
+	Worker  string
+	Pool    cpuMinerPool
+	Threads int
+}
+
+func writeCpuMinerEnv(paths cpuMinerPaths, cfg cpuMinerConfig) error {
+	kv := [][2]string{
+		{"POOL_MODE", cfg.Pool.Mode},
+		{"STRATUM_HOST", cfg.Pool.StratumHost},
+		{"STRATUM_PORT", strconv.Itoa(cfg.Pool.StratumPort)},
+		{"MINING_ADDRESS", cfg.Address},
+		{"WORKER_NAME", sanitizeCpuMinerWorker(cfg.Worker)},
+		{"THREADS", strconv.Itoa(clampCpuMinerThreads(cfg.Threads))},
 	}
 	if !fileExists(paths.EnvPath) {
-		lines := make([]string, 0, len(required)+1)
-		for _, kv := range required {
-			lines = append(lines, kv[0]+"="+kv[1])
+		lines := make([]string, 0, len(kv)+1)
+		for _, p := range kv {
+			lines = append(lines, p[0]+"="+p[1])
 		}
 		lines = append(lines, "")
 		return writeFile(paths.EnvPath, strings.Join(lines, "\n"), 0600)
 	}
-	for _, kv := range required {
-		exists, value, err := envValueState(paths.EnvPath, kv[0])
-		if err != nil {
+	for _, p := range kv {
+		if err := setEnvValue(paths.EnvPath, p[0], p[1]); err != nil {
 			return err
 		}
-		if !exists {
-			if err := appendEnvLine(paths.EnvPath, kv[0], kv[1]); err != nil {
-				return err
-			}
-			continue
+	}
+	return nil
+}
+
+// loadCpuMinerConfig reads the current config from .env, filling missing fields
+// with defaults: local pool when Public Pool is running (else the BR-LN pool),
+// the default worker tag, and a single thread.
+func (s *Server) loadCpuMinerConfig(ctx context.Context, paths cpuMinerPaths, address string) cpuMinerConfig {
+	cfg := cpuMinerConfig{Address: address, Worker: cpuMinerWorkerTag, Threads: cpuMinerDefaultThreads}
+
+	switch strings.TrimSpace(readEnvValue(paths.EnvPath, "POOL_MODE")) {
+	case cpuMinerPoolBRLN:
+		cfg.Pool = cpuMinerPoolPreset(cpuMinerPoolBRLN)
+	case cpuMinerPoolLocal:
+		cfg.Pool = cpuMinerPoolPreset(cpuMinerPoolLocal)
+	default:
+		if s.publicPoolRunning(ctx) {
+			cfg.Pool = cpuMinerPoolPreset(cpuMinerPoolLocal)
+		} else {
+			cfg.Pool = cpuMinerPoolPreset(cpuMinerPoolBRLN)
 		}
-		// MINING_ADDRESS is sticky once set; only refresh THREADS if it drifts.
-		if kv[0] == "THREADS" && strings.TrimSpace(value) != kv[1] {
-			if err := setEnvValue(paths.EnvPath, kv[0], kv[1]); err != nil {
-				return err
-			}
+	}
+	if w := strings.TrimSpace(readEnvValue(paths.EnvPath, "WORKER_NAME")); w != "" {
+		cfg.Worker = w
+	}
+	if t, err := strconv.Atoi(strings.TrimSpace(readEnvValue(paths.EnvPath, "THREADS"))); err == nil && t > 0 {
+		cfg.Threads = t
+	}
+	return cfg
+}
+
+// setCpuMinerConfig applies a pool/address/worker change and recreates the
+// container. Threads are preserved (managed by setCpuMinerThreads).
+func (s *Server) setCpuMinerConfig(ctx context.Context, poolMode, address, worker string, useNodeAddress bool) error {
+	paths := cpuMinerAppPaths()
+	if !fileExists(paths.ComposePath) {
+		return errors.New("CPU Lottery Miner is not installed")
+	}
+
+	pool := cpuMinerPoolPreset(poolMode)
+	if pool.Mode == cpuMinerPoolLocal && !s.publicPoolRunning(ctx) {
+		return errors.New("Start the Public Pool app to mine on the local pool, or pick the BR-LN pool.")
+	}
+
+	resolvedAddress := strings.TrimSpace(address)
+	if useNodeAddress {
+		if s.lnd == nil {
+			return errors.New("LND is unavailable to generate a mining address")
+		}
+		generated, err := s.lnd.NewAddress(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to generate mining address: %w", err)
+		}
+		resolvedAddress = strings.TrimSpace(generated)
+	}
+	if resolvedAddress == "" {
+		resolvedAddress = strings.TrimSpace(readEnvValue(paths.EnvPath, "MINING_ADDRESS"))
+	}
+	if err := validateCpuMinerAddress(resolvedAddress); err != nil {
+		return err
+	}
+
+	threads := cpuMinerDefaultThreads
+	if t, err := strconv.Atoi(strings.TrimSpace(readEnvValue(paths.EnvPath, "THREADS"))); err == nil && t > 0 {
+		threads = t
+	}
+
+	cfg := cpuMinerConfig{Address: resolvedAddress, Worker: worker, Pool: pool, Threads: threads}
+	if err := writeCpuMinerEnv(paths, cfg); err != nil {
+		return err
+	}
+	return runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d")
+}
+
+// sanitizeCpuMinerWorker keeps the worker name to characters a stratum user
+// string tolerates (no dots — those separate address and worker — no spaces).
+func sanitizeCpuMinerWorker(worker string) string {
+	var b strings.Builder
+	for _, r := range strings.TrimSpace(worker) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		}
+	}
+	out := b.String()
+	if out == "" {
+		return cpuMinerWorkerTag
+	}
+	if len(out) > 32 {
+		return out[:32]
+	}
+	return out
+}
+
+// validateCpuMinerAddress does a light sanity check on a mainnet Bitcoin
+// address; the pool is the ultimate authority, but this catches obvious typos.
+func validateCpuMinerAddress(address string) error {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return errors.New("mining address is empty")
+	}
+	if len(address) < 14 || len(address) > 100 {
+		return errors.New("mining address has an invalid length")
+	}
+	lower := strings.ToLower(address)
+	if !(strings.HasPrefix(lower, "bc1") || strings.HasPrefix(address, "1") || strings.HasPrefix(address, "3")) {
+		return errors.New("mining address must be a mainnet Bitcoin address (bc1…, 1… or 3…)")
+	}
+	for _, r := range address {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+			return errors.New("mining address contains invalid characters")
 		}
 	}
 	return nil

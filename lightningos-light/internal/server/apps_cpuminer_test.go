@@ -12,8 +12,8 @@ func TestCpuMinerComposeContents(t *testing.T) {
 	checks := []string{
 		"image: cniweb/cpuminer-opt:latest",
 		"127.0.0.1:4048:4048",
-		"stratum+tcp://host.docker.internal:3333",
-		"${MINING_ADDRESS}.cpu-lottery",
+		"stratum+tcp://${STRATUM_HOST}:${STRATUM_PORT}",
+		"${MINING_ADDRESS}.${WORKER_NAME}",
 		`cpus: "${THREADS}"`,
 		"cpu_shares: 128",
 		"- \"cpuminer\"",
@@ -28,7 +28,7 @@ func TestCpuMinerComposeContents(t *testing.T) {
 	}
 }
 
-func TestEnsureCpuMinerEnvCreatesAndClamps(t *testing.T) {
+func TestWriteCpuMinerEnv(t *testing.T) {
 	dir := t.TempDir()
 	paths := cpuMinerPaths{
 		Root:        dir,
@@ -36,26 +36,74 @@ func TestEnsureCpuMinerEnvCreatesAndClamps(t *testing.T) {
 		EnvPath:     filepath.Join(dir, ".env"),
 	}
 
-	wantMax := strconv.Itoa(cpuMinerMaxThreads())
-	if err := ensureCpuMinerEnv(paths, "bc1qexampleaddr", 9999); err != nil {
-		t.Fatalf("ensureCpuMinerEnv create: %v", err)
+	// BR-LN pool, clamped threads, sanitized worker.
+	if err := writeCpuMinerEnv(paths, cpuMinerConfig{
+		Address: "bc1qexampleaddr",
+		Worker:  "my rig.01",
+		Pool:    cpuMinerPoolPreset(cpuMinerPoolBRLN),
+		Threads: 9999,
+	}); err != nil {
+		t.Fatalf("writeCpuMinerEnv create: %v", err)
 	}
-	if got := readEnvValue(paths.EnvPath, "MINING_ADDRESS"); got != "bc1qexampleaddr" {
-		t.Fatalf("MINING_ADDRESS = %q, want bc1qexampleaddr", got)
+	if got := readEnvValue(paths.EnvPath, "POOL_MODE"); got != "brln" {
+		t.Fatalf("POOL_MODE = %q, want brln", got)
 	}
-	if got := readEnvValue(paths.EnvPath, "THREADS"); got != wantMax {
-		t.Fatalf("THREADS clamp = %q, want %q (max)", got, wantMax)
+	if got := readEnvValue(paths.EnvPath, "STRATUM_HOST"); got != cpuMinerBRLNStratumHost {
+		t.Fatalf("STRATUM_HOST = %q, want %q", got, cpuMinerBRLNStratumHost)
+	}
+	if got := readEnvValue(paths.EnvPath, "STRATUM_PORT"); got != "3332" {
+		t.Fatalf("STRATUM_PORT = %q, want 3332", got)
+	}
+	if got := readEnvValue(paths.EnvPath, "WORKER_NAME"); got != "myrig01" {
+		t.Fatalf("WORKER_NAME = %q, want myrig01 (sanitized)", got)
+	}
+	if got := readEnvValue(paths.EnvPath, "THREADS"); got != strconv.Itoa(cpuMinerMaxThreads()) {
+		t.Fatalf("THREADS = %q, want clamp to max %d", got, cpuMinerMaxThreads())
 	}
 
-	// Re-run keeps the address sticky and updates THREADS to the new value.
-	if err := ensureCpuMinerEnv(paths, "bc1qDIFFERENT", 1); err != nil {
-		t.Fatalf("ensureCpuMinerEnv update: %v", err)
+	// Overwrite to local pool.
+	if err := writeCpuMinerEnv(paths, cpuMinerConfig{
+		Address: "bc1qexampleaddr",
+		Worker:  "cpu-lottery",
+		Pool:    cpuMinerPoolPreset(cpuMinerPoolLocal),
+		Threads: 1,
+	}); err != nil {
+		t.Fatalf("writeCpuMinerEnv update: %v", err)
 	}
-	if got := readEnvValue(paths.EnvPath, "MINING_ADDRESS"); got != "bc1qexampleaddr" {
-		t.Fatalf("MINING_ADDRESS changed to %q, expected sticky bc1qexampleaddr", got)
+	if got := readEnvValue(paths.EnvPath, "POOL_MODE"); got != "local" {
+		t.Fatalf("POOL_MODE = %q, want local", got)
 	}
-	if got := readEnvValue(paths.EnvPath, "THREADS"); got != "1" {
-		t.Fatalf("THREADS update = %q, want 1", got)
+	if got := readEnvValue(paths.EnvPath, "STRATUM_HOST"); got != cpuMinerLocalStratumHost {
+		t.Fatalf("STRATUM_HOST = %q, want %q", got, cpuMinerLocalStratumHost)
+	}
+}
+
+func TestValidateCpuMinerAddress(t *testing.T) {
+	valid := []string{"bc1qexampleaddr0000", "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2", "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy"}
+	for _, a := range valid {
+		if err := validateCpuMinerAddress(a); err != nil {
+			t.Fatalf("validateCpuMinerAddress(%q) = %v, want nil", a, err)
+		}
+	}
+	invalid := []string{"", "short", "xyz1qnotbitcoin000000", "bc1q bad space 0000"}
+	for _, a := range invalid {
+		if err := validateCpuMinerAddress(a); err == nil {
+			t.Fatalf("validateCpuMinerAddress(%q) = nil, want error", a)
+		}
+	}
+}
+
+func TestSanitizeCpuMinerWorker(t *testing.T) {
+	cases := map[string]string{
+		"cpu-lottery": "cpu-lottery",
+		"my rig.01":   "myrig01",
+		"":            cpuMinerWorkerTag,
+		"@@@":         cpuMinerWorkerTag,
+	}
+	for in, want := range cases {
+		if got := sanitizeCpuMinerWorker(in); got != want {
+			t.Fatalf("sanitizeCpuMinerWorker(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 

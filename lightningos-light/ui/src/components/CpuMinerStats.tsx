@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getCpuMinerStatus, setCpuMinerThreads, type CpuMinerStatus } from '../api'
+import { getCpuMinerStatus, setCpuMinerThreads, setCpuMinerConfig, type CpuMinerStatus } from '../api'
 
 function formatHashrate(hs: number): string {
   if (!hs || hs <= 0) return '0 H/s'
@@ -28,11 +28,6 @@ function formatDifficulty(d: number): string {
   return `${value.toFixed(decimals)}${units[i]}`
 }
 
-function shortenAddress(addr: string): string {
-  if (!addr || addr.length <= 18) return addr
-  return `${addr.slice(0, 10)}…${addr.slice(-6)}`
-}
-
 type Props = {
   running: boolean
 }
@@ -44,6 +39,15 @@ export default function CpuMinerStats({ running }: Props) {
   const [copied, setCopied] = useState(false)
   const [applyingThreads, setApplyingThreads] = useState(false)
   const [pendingThreads, setPendingThreads] = useState<number | null>(null)
+
+  // Editable config (pool / address / worker). Kept in sync with the server
+  // until the user touches a field (cfgDirty), so polling doesn't clobber edits.
+  const [cfgDirty, setCfgDirty] = useState(false)
+  const [cfgPool, setCfgPool] = useState('local')
+  const [cfgAddress, setCfgAddress] = useState('')
+  const [cfgWorker, setCfgWorker] = useState('')
+  const [applyingConfig, setApplyingConfig] = useState(false)
+  const [cfgError, setCfgError] = useState('')
 
   useEffect(() => {
     if (!running) {
@@ -68,6 +72,13 @@ export default function CpuMinerStats({ running }: Props) {
     }
   }, [running])
 
+  useEffect(() => {
+    if (!status || cfgDirty) return
+    setCfgPool(status.pool_mode || 'local')
+    setCfgAddress(status.address || '')
+    setCfgWorker(status.worker || '')
+  }, [status, cfgDirty])
+
   if (!running || !status) return null
 
   const threads = status.threads > 0 ? status.threads : 1
@@ -78,9 +89,9 @@ export default function CpuMinerStats({ running }: Props) {
   const selectedThreads = pendingThreads ?? threads
 
   const handleCopy = async () => {
-    if (!status.address) return
+    if (!cfgAddress) return
     try {
-      await navigator.clipboard.writeText(status.address)
+      await navigator.clipboard.writeText(cfgAddress)
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1500)
     } catch {
@@ -94,11 +105,34 @@ export default function CpuMinerStats({ running }: Props) {
       await setCpuMinerThreads(selectedThreads)
       setPendingThreads(null)
     } catch {
-      // Surface nothing inline; the next poll reflects the real state.
+      // The next poll reflects the real state.
     } finally {
       setApplyingThreads(false)
     }
   }
+
+  const applyConfig = async (useNodeAddress: boolean) => {
+    setApplyingConfig(true)
+    setCfgError('')
+    try {
+      await setCpuMinerConfig({
+        pool_mode: cfgPool,
+        address: useNodeAddress ? undefined : cfgAddress.trim(),
+        worker: cfgWorker.trim(),
+        use_node_address: useNodeAddress,
+      })
+      setCfgDirty(false)
+    } catch (err) {
+      setCfgError(err instanceof Error ? err.message : t('appStore.cpuMinerConfigError'))
+    } finally {
+      setApplyingConfig(false)
+    }
+  }
+
+  const poolOptions = [
+    { mode: 'brln', label: 'BR-LN' },
+    { mode: 'local', label: t('appStore.cpuMinerPoolLocalShort') },
+  ]
 
   return (
     <div className="mt-1 rounded-2xl border border-brass/20 bg-gradient-to-br from-brass/[0.07] via-transparent to-transparent px-4 py-3">
@@ -149,7 +183,7 @@ export default function CpuMinerStats({ running }: Props) {
             <div className="text-[11px] text-fog/40">{t('appStore.cpuMinerBestTicketHint')}</div>
           </div>
 
-          {/* Secondary stats */}
+          {/* Pool hashrate + CPU usage */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-0.5">
               <div className="text-[11px] uppercase tracking-wide text-fog/50">{t('appStore.cpuMinerPoolHashrate')}</div>
@@ -208,31 +242,96 @@ export default function CpuMinerStats({ running }: Props) {
             <div className="text-[10px] text-fog/40">{t('appStore.cpuMinerThreadsHint', { max: maxThreads })}</div>
           </div>
 
-          {/* Reward address */}
-          {status.address && (
-            <div className="space-y-1 rounded-xl border border-white/5 bg-ink/40 p-3">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] uppercase tracking-wide text-fog/50">{t('appStore.cpuMinerAddress')}</span>
+          {/* Pool / address / worker config */}
+          <div className="space-y-3 rounded-xl border border-white/5 bg-ink/40 p-3">
+            <div className="text-[11px] uppercase tracking-wide text-fog/50">{t('appStore.cpuMinerPoolLabel')}</div>
+            <div className="flex gap-2">
+              {poolOptions.map((opt) => (
                 <button
-                  className="flex items-center gap-1 text-[11px] text-fog/50 hover:text-fog"
-                  onClick={handleCopy}
-                  title={t('appStore.cpuMinerCopyAddress')}
-                  aria-label={t('appStore.cpuMinerCopyAddress')}
+                  key={opt.mode}
+                  type="button"
+                  className={`flex-1 rounded-lg border px-3 py-1.5 text-sm transition-colors ${
+                    cfgPool === opt.mode
+                      ? 'border-brass/50 bg-brass/15 text-brass'
+                      : 'border-white/10 text-fog/60 hover:text-fog'
+                  }`}
+                  onClick={() => {
+                    setCfgPool(opt.mode)
+                    setCfgDirty(true)
+                  }}
                 >
-                  {copied ? (
-                    <span className="text-emerald-300">{t('common.copied')}</span>
-                  ) : (
-                    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6">
-                      <rect x="9" y="9" width="11" height="11" rx="2" />
-                      <rect x="4" y="4" width="11" height="11" rx="2" />
-                    </svg>
-                  )}
+                  {opt.label}
                 </button>
+              ))}
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] uppercase tracking-wide text-fog/50">{t('appStore.cpuMinerAddress')}</span>
+                <div className="flex items-center gap-3 text-[11px]">
+                  <button
+                    className="flex items-center gap-1 text-fog/50 hover:text-fog"
+                    onClick={handleCopy}
+                    title={t('appStore.cpuMinerCopyAddress')}
+                    aria-label={t('appStore.cpuMinerCopyAddress')}
+                  >
+                    {copied ? (
+                      <span className="text-emerald-300">{t('common.copied')}</span>
+                    ) : (
+                      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.6">
+                        <rect x="9" y="9" width="11" height="11" rx="2" />
+                        <rect x="4" y="4" width="11" height="11" rx="2" />
+                      </svg>
+                    )}
+                  </button>
+                  <button
+                    className="text-fog/50 hover:text-fog disabled:opacity-40"
+                    disabled={applyingConfig}
+                    onClick={() => applyConfig(true)}
+                    title={t('appStore.cpuMinerUseNodeAddress')}
+                  >
+                    {t('appStore.cpuMinerUseNodeAddress')}
+                  </button>
+                </div>
               </div>
-              <div className="break-all font-mono text-[12px] text-brass/90">{shortenAddress(status.address)}</div>
+              <input
+                type="text"
+                spellCheck={false}
+                className="w-full rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5 font-mono text-[12px] text-brass/90 focus:border-brass/40 focus:outline-none"
+                value={cfgAddress}
+                onChange={(e) => {
+                  setCfgAddress(e.target.value)
+                  setCfgDirty(true)
+                }}
+              />
               <div className="text-[10px] text-fog/40">{t('appStore.cpuMinerRewardNote')}</div>
             </div>
-          )}
+
+            <div className="space-y-1">
+              <span className="text-[11px] uppercase tracking-wide text-fog/50">{t('appStore.cpuMinerWorkerLabel')}</span>
+              <input
+                type="text"
+                spellCheck={false}
+                className="w-full rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5 text-sm focus:border-brass/40 focus:outline-none"
+                value={cfgWorker}
+                onChange={(e) => {
+                  setCfgWorker(e.target.value)
+                  setCfgDirty(true)
+                }}
+              />
+            </div>
+
+            {cfgError && <p className="text-[11px] text-rose-300">{cfgError}</p>}
+
+            <button
+              type="button"
+              className="btn-secondary px-3 py-1 text-sm disabled:opacity-40"
+              disabled={applyingConfig || !cfgDirty}
+              onClick={() => applyConfig(false)}
+            >
+              {applyingConfig ? t('appStore.cpuMinerThreadsApplying') : t('appStore.cpuMinerConfigApply')}
+            </button>
+          </div>
 
           <p className="text-[11px] leading-snug text-amber-300/80">⚡ {t('appStore.cpuMinerLotteryWarning')}</p>
         </div>

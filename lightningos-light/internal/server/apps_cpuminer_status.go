@@ -17,6 +17,9 @@ type cpuMinerStatus struct {
 	Installed      bool    `json:"installed"`
 	Running        bool    `json:"running"`
 	Address        string  `json:"address"`
+	Worker         string  `json:"worker"`
+	PoolMode       string  `json:"pool_mode"`
+	PoolLabel      string  `json:"pool_label"`
 	Threads        int     `json:"threads"`
 	MaxThreads     int     `json:"max_threads"`
 	HashrateHs     float64 `json:"hashrate_hs"`
@@ -46,6 +49,24 @@ func (s *Server) handleCpuMinerThreads(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+func (s *Server) handleCpuMinerConfig(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		PoolMode       string `json:"pool_mode"`
+		Address        string `json:"address"`
+		Worker         string `json:"worker"`
+		UseNodeAddress bool   `json:"use_node_address"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if err := s.setCpuMinerConfig(r.Context(), req.PoolMode, req.Address, req.Worker, req.UseNodeAddress); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (s *Server) fetchCpuMinerStatus(ctx context.Context) cpuMinerStatus {
 	status := cpuMinerStatus{}
 	paths := cpuMinerAppPaths()
@@ -55,6 +76,14 @@ func (s *Server) fetchCpuMinerStatus(ctx context.Context) cpuMinerStatus {
 	status.Installed = true
 	status.MaxThreads = cpuMinerMaxThreads()
 	status.Address = strings.TrimSpace(readEnvValue(paths.EnvPath, "MINING_ADDRESS"))
+	status.Worker = strings.TrimSpace(readEnvValue(paths.EnvPath, "WORKER_NAME"))
+	poolMode := strings.TrimSpace(readEnvValue(paths.EnvPath, "POOL_MODE"))
+	if poolMode == "" {
+		poolMode = cpuMinerPoolLocal
+	}
+	status.PoolMode = poolMode
+	status.PoolLabel = cpuMinerPoolLabel(poolMode)
+	pool := cpuMinerPoolPreset(poolMode)
 	if threads, err := strconv.Atoi(strings.TrimSpace(readEnvValue(paths.EnvPath, "THREADS"))); err == nil && threads > 0 {
 		status.Threads = threads
 	}
@@ -73,12 +102,14 @@ func (s *Server) fetchCpuMinerStatus(ctx context.Context) cpuMinerStatus {
 
 	status.CPUPercent = cpuMinerCPUPercent(ctx, paths)
 
-	if status.Address != "" {
-		if bestDiff, ok := fetchPoolBestDifficulty(ctx, status.Address); ok {
-			status.BestDifficulty = bestDiff
+	if pool.StatsBase != "" {
+		if status.Address != "" {
+			if bestDiff, ok := fetchPoolBestDifficulty(ctx, pool.StatsBase, status.Address); ok {
+				status.BestDifficulty = bestDiff
+			}
 		}
+		status.PoolHashrateHs = fetchPoolHashrate(ctx, pool.StatsBase)
 	}
-	status.PoolHashrateHs = fetchPoolHashrate(ctx)
 
 	return status
 }
@@ -153,8 +184,8 @@ func cpuMinerCPUPercent(ctx context.Context, paths cpuMinerPaths) float64 {
 
 // fetchPoolBestDifficulty reads the best share difficulty Public Pool has seen
 // for our payout address — the playful "lottery ticket" metric.
-func fetchPoolBestDifficulty(ctx context.Context, address string) (float64, bool) {
-	body, ok := poolAPIGet(ctx, "http://127.0.0.1:"+strconv.Itoa(publicPoolAPIPort)+"/api/client/"+address)
+func fetchPoolBestDifficulty(ctx context.Context, base string, address string) (float64, bool) {
+	body, ok := poolAPIGet(ctx, base+"/api/client/"+address)
 	if !ok {
 		return 0, false
 	}
@@ -182,9 +213,9 @@ func fetchPoolBestDifficulty(ctx context.Context, address string) (float64, bool
 // fetchPoolHashrate attempts to read the aggregate pool hashrate. The Public
 // Pool fork exposes this loosely, so we parse tolerantly and return 0 when the
 // endpoint or field is absent (the UI simply hides it then).
-func fetchPoolHashrate(ctx context.Context) float64 {
+func fetchPoolHashrate(ctx context.Context, base string) float64 {
 	for _, path := range []string{"/api/pool", "/api/info", "/api/network/info"} {
-		body, ok := poolAPIGet(ctx, "http://127.0.0.1:"+strconv.Itoa(publicPoolAPIPort)+path)
+		body, ok := poolAPIGet(ctx, base+path)
 		if !ok {
 			continue
 		}

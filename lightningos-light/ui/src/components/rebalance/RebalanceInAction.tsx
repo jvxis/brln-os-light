@@ -248,9 +248,9 @@ export function RebalanceInAction({
 
   return (
     <>
-      <span className="inline-flex items-stretch">
+      <span className="inline-flex items-center gap-1">
         <button
-          className="btn-primary rounded-r-none px-3 py-1 text-xs"
+          className="btn-primary px-3 py-1 text-xs"
           type="button"
           onClick={() => void handleDefaultRun()}
           disabled={disabled || running}
@@ -259,15 +259,21 @@ export function RebalanceInAction({
           {t('rebalanceCenter.channels.rebalanceIn')}
         </button>
         <button
-          className="btn-primary -ml-px rounded-l-none border-l border-white/20 px-2 py-1 text-xs"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-transparent text-fog/40 transition hover:bg-white/5 hover:text-cyan-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/60 disabled:cursor-not-allowed disabled:opacity-30"
           type="button"
           onClick={openCustom}
           disabled={disabled || running}
           title={t('rebalanceCenter.channels.rebalanceOptions')}
           aria-haspopup="dialog"
           aria-expanded={open}
+          aria-label={t('rebalanceCenter.channels.rebalanceOptions')}
         >
-          ▾
+          <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M3 5h7m3 0h4M3 10h2m3 0h9M3 15h8m3 0h3" strokeLinecap="round" />
+            <circle cx="11.5" cy="5" r="1.5" />
+            <circle cx="6.5" cy="10" r="1.5" />
+            <circle cx="12.5" cy="15" r="1.5" />
+          </svg>
         </button>
       </span>
       {dialog}

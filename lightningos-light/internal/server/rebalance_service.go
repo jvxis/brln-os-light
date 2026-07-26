@@ -5445,14 +5445,6 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 	if strings.TrimSpace(targetSnapshot.RemotePubkey) == "" {
 		return false
 	}
-	// SendPaymentV2 can constrain the last peer, but not the exact incoming
-	// channel. When that peer has parallel channels, LND may settle through a
-	// sibling channel and make the job/ledger disagree with the actual route.
-	// Fall back to the route-based path, which validates the final ChanId.
-	if st.targetHasParallelPeer {
-		return false
-	}
-
 	// Coletar sources com capacidade suficiente. Em modo strict-payback, uma
 	// source só entra se puder cobrir o valor inteiro dentro do MaxSourceSat já
 	// descontado pela proteção de payback; o LND nativo não aceita cap por
@@ -5501,6 +5493,11 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 
 	s.markFastPathAttempted(r.jobID)
 	broadTimeoutSec := timeoutSec
+	invoiceOpts, fastPathLastHop := delegatedFastPathTargetConstraints(
+		st.targetHasParallelPeer,
+		r.targetChannelID,
+		targetSnapshot.RemotePubkey,
+	)
 
 	preferredCount := preferredFastPathSourceCount(len(sourceIDs), maxParts)
 	preferredIDs := []uint64(nil)
@@ -5513,7 +5510,7 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 	}
 	preferredTimeoutSec := preferredFastPathTimeout(timeoutSec)
 	if len(preferredIDs) > 0 && preferredTimeoutSec > 0 {
-		preferredInvoice, preferredInvErr := s.lnd.CreateInvoice(ctx, st.amount, "rebalance-fast-path-preferred", expirySec, nil)
+		preferredInvoice, preferredInvErr := s.lnd.CreateInvoice(ctx, st.amount, "rebalance-fast-path-preferred", expirySec, invoiceOpts)
 		if preferredInvErr == nil && strings.TrimSpace(preferredInvoice.PaymentRequest) != "" {
 			if s.logger != nil {
 				s.logger.Printf("rebalance fast-path preferred: job=%d target=%d amount=%d sources=%d fee_cap_ppm=%d timeout_sec=%d", r.jobID, r.targetChannelID, st.amount, len(preferredIDs), maxFeePpm, preferredTimeoutSec)
@@ -5524,7 +5521,7 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 				preferredCtx,
 				preferredInvoice.PaymentRequest,
 				preferredIDs,
-				targetSnapshot.RemotePubkey,
+				fastPathLastHop,
 				maxFeeMsat,
 				preferredTimeoutSec,
 				maxParts,
@@ -5578,7 +5575,7 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 		}
 	}
 
-	invoice, invErr := s.lnd.CreateInvoice(ctx, st.amount, "rebalance-fast-path", expirySec, nil)
+	invoice, invErr := s.lnd.CreateInvoice(ctx, st.amount, "rebalance-fast-path", expirySec, invoiceOpts)
 	if invErr != nil || strings.TrimSpace(invoice.PaymentRequest) == "" {
 		return false
 	}
@@ -5598,7 +5595,7 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 		fastPathCtx,
 		invoice.PaymentRequest,
 		sourceIDs,
-		targetSnapshot.RemotePubkey,
+		fastPathLastHop,
 		maxFeeMsat,
 		broadTimeoutSec,
 		maxParts,
@@ -5661,6 +5658,25 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 	}
 	s.finishJob(r.jobID, "succeeded", "delegated-fast-path")
 	return true
+}
+
+// delegatedFastPathTargetConstraints keeps the regular last-peer constraint
+// for a single channel. When the peer has parallel channels, the last peer is
+// ambiguous, so the invoice itself carries a blinded path restricted to the
+// requested incoming channel. SendPaymentV2 then receives no competing
+// LastHopPubkey constraint and follows the exact incoming edge encoded by LND.
+//
+// If the delegated payment cannot use that blinded path, runDelegatedFastPath
+// returns false as usual and the caller continues with the source-by-source
+// legacy loop.
+func delegatedFastPathTargetConstraints(hasParallelPeer bool, targetChannelID uint64, remotePubkey string) (*lndclient.CreateInvoiceOptions, string) {
+	if hasParallelPeer && targetChannelID != 0 {
+		return &lndclient.CreateInvoiceOptions{
+			IsBlinded:          true,
+			IncomingChannelIDs: []uint64{targetChannelID},
+		}, ""
+	}
+	return nil, strings.TrimSpace(remotePubkey)
 }
 
 func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {

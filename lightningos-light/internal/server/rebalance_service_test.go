@@ -167,11 +167,37 @@ func TestRebalancePeerHasParallelChannels(t *testing.T) {
 		{ChannelID: 20, RemotePubkey: "02different"},
 	}
 	if !rebalancePeerHasParallelChannels(target, channels) {
-		t.Fatalf("expected sibling channel with the same peer pubkey to disable delegated fast-path")
+		t.Fatalf("expected sibling channel with the same peer pubkey to require an exact-channel delegated path")
 	}
 
 	if rebalancePeerHasParallelChannels(target, []RebalanceChannel{target, {ChannelID: 20, RemotePubkey: "02different"}}) {
 		t.Fatalf("did not expect unrelated peer channel to count as parallel")
+	}
+}
+
+func TestDelegatedFastPathTargetConstraints(t *testing.T) {
+	opts, lastHop := delegatedFastPathTargetConstraints(false, 50, " 03abcdef ")
+	if opts != nil {
+		t.Fatalf("single-channel target unexpectedly created blinded options: %+v", opts)
+	}
+	if lastHop != "03abcdef" {
+		t.Fatalf("single-channel last hop = %q, want trimmed peer pubkey", lastHop)
+	}
+
+	opts, lastHop = delegatedFastPathTargetConstraints(true, 50, "03abcdef")
+	if opts == nil || !opts.IsBlinded {
+		t.Fatalf("parallel target must use a blinded invoice: %+v", opts)
+	}
+	if len(opts.IncomingChannelIDs) != 1 || opts.IncomingChannelIDs[0] != 50 {
+		t.Fatalf("parallel target incoming channels = %v, want [50]", opts.IncomingChannelIDs)
+	}
+	if lastHop != "" {
+		t.Fatalf("parallel target must not combine blinded path with last hop, got %q", lastHop)
+	}
+
+	opts, lastHop = delegatedFastPathTargetConstraints(true, 0, "03abcdef")
+	if opts != nil || lastHop != "03abcdef" {
+		t.Fatalf("zero target channel must fall back to last-hop constraint: opts=%+v lastHop=%q", opts, lastHop)
 	}
 }
 

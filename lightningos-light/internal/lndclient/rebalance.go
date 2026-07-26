@@ -195,6 +195,26 @@ func (c *Client) QueryRoute(ctx context.Context, destPubkey string, amtSat int64
 }
 
 func (c *Client) QueryRoutes(ctx context.Context, destPubkey string, amtSat int64, outgoingChanID uint64, lastHopPubkey string, feeLimitMsat int64, numRoutes int32, ignoredEdges []*lnrpc.EdgeLocator, ignoredPairs []*lnrpc.NodePair) ([]*lnrpc.Route, error) {
+	return c.queryRoutes(ctx, destPubkey, amtSat, outgoingChanID, lastHopPubkey, 0, feeLimitMsat, numRoutes, ignoredEdges, ignoredPairs)
+}
+
+// QueryRoutesToChannel is the exact-channel variant used by circular
+// rebalances. LastHopPubkey constrains the final peer, but it is not enough
+// when that peer has parallel channels with us. In that case QueryRoutes may
+// keep returning the cheapest sibling channel.
+//
+// The implementation below rejects a sibling only by its final edge and asks
+// LND again. Keeping the shared prefix eligible is important: excluding every
+// edge of the mismatched route can make the valid parallel channel
+// unreachable even though only the final edge was wrong.
+func (c *Client) QueryRoutesToChannel(ctx context.Context, destPubkey string, amtSat int64, outgoingChanID uint64, lastHopPubkey string, targetChanID uint64, feeLimitMsat int64, numRoutes int32, ignoredEdges []*lnrpc.EdgeLocator, ignoredPairs []*lnrpc.NodePair) ([]*lnrpc.Route, error) {
+	if targetChanID == 0 {
+		return nil, errors.New("target channel required")
+	}
+	return c.queryRoutes(ctx, destPubkey, amtSat, outgoingChanID, lastHopPubkey, targetChanID, feeLimitMsat, numRoutes, ignoredEdges, ignoredPairs)
+}
+
+func (c *Client) queryRoutes(ctx context.Context, destPubkey string, amtSat int64, outgoingChanID uint64, lastHopPubkey string, targetChanID uint64, feeLimitMsat int64, numRoutes int32, ignoredEdges []*lnrpc.EdgeLocator, ignoredPairs []*lnrpc.NodePair) ([]*lnrpc.Route, error) {
 	trimmedDest := strings.TrimSpace(destPubkey)
 	if trimmedDest == "" {
 		return nil, errors.New("dest pubkey required")
@@ -215,13 +235,21 @@ func (c *Client) QueryRoutes(ctx context.Context, destPubkey string, amtSat int6
 	client := lnrpc.NewLightningClient(conn)
 
 	routes := make([]*lnrpc.Route, 0, numRoutes)
+	mismatchedRoutes := make([]*lnrpc.Route, 0)
 	baseIgnoredEdges := make([]*lnrpc.EdgeLocator, 0, len(ignoredEdges))
 	if len(ignoredEdges) > 0 {
 		baseIgnoredEdges = append(baseIgnoredEdges, ignoredEdges...)
 	}
 	ignoredByRoute := make([]*lnrpc.EdgeLocator, 0)
 
-	for i := int32(0); i < numRoutes; i++ {
+	maxQueries := numRoutes
+	if targetChanID != 0 {
+		// A peer can have many parallel channels. The caller is asking for
+		// numRoutes valid routes, so sibling-channel rejections must not consume
+		// that budget. Keep a hard bound to avoid pathological RPC loops.
+		maxQueries += 32
+	}
+	for i := int32(0); i < maxQueries && int32(len(routes)) < numRoutes; i++ {
 		requestIgnoredEdges := baseIgnoredEdges
 		if len(ignoredByRoute) > 0 {
 			requestIgnoredEdges = append(requestIgnoredEdges, ignoredByRoute...)
@@ -260,11 +288,25 @@ func (c *Client) QueryRoutes(ctx context.Context, destPubkey string, amtSat int6
 			break
 		}
 		route := resp.Routes[0]
+		if targetChanID != 0 && !routeEndsInChannel(route, targetChanID) {
+			mismatchedRoutes = append(mismatchedRoutes, route)
+			lastEdge := routeLastEdgeLocators(route)
+			if len(lastEdge) == 0 {
+				break
+			}
+			ignoredByRoute = append(ignoredByRoute, lastEdge...)
+			continue
+		}
 		routes = append(routes, route)
 		ignoredByRoute = append(ignoredByRoute, routeToEdgeLocators(route)...)
 	}
 
 	if len(routes) == 0 {
+		if len(mismatchedRoutes) > 0 {
+			// Preserve the candidates so the service can report the exact
+			// requested/actual channel mismatch instead of a generic no-route.
+			return mismatchedRoutes, nil
+		}
 		return nil, errors.New("no route")
 	}
 	return routes, nil
@@ -383,6 +425,28 @@ func routeToEdgeLocators(route *lnrpc.Route) []*lnrpc.EdgeLocator {
 		})
 	}
 	return edges
+}
+
+func routeEndsInChannel(route *lnrpc.Route, channelID uint64) bool {
+	if route == nil || channelID == 0 || len(route.Hops) == 0 {
+		return false
+	}
+	lastHop := route.Hops[len(route.Hops)-1]
+	return lastHop != nil && lastHop.ChanId == channelID
+}
+
+func routeLastEdgeLocators(route *lnrpc.Route) []*lnrpc.EdgeLocator {
+	if route == nil || len(route.Hops) == 0 {
+		return nil
+	}
+	lastHop := route.Hops[len(route.Hops)-1]
+	if lastHop == nil || lastHop.ChanId == 0 {
+		return nil
+	}
+	return []*lnrpc.EdgeLocator{
+		{ChannelId: lastHop.ChanId, DirectionReverse: false},
+		{ChannelId: lastHop.ChanId, DirectionReverse: true},
+	}
 }
 
 func (c *Client) SendPaymentWithConstraints(ctx context.Context, paymentRequest string, outgoingChanID uint64, lastHopPubkey string, feeLimitMsat int64, timeoutSec int32, maxParts uint32) (*lnrpc.Payment, error) {

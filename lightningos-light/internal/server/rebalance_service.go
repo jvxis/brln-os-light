@@ -6538,7 +6538,7 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 			}
 		}
 
-		routes, err := s.lnd.QueryRoutes(attemptCtx, selfPubkey, amountTry, source.ChannelID, targetSnapshot.RemotePubkey, feeLimitMsat, 5, ignoredEdges, ignoredPairs)
+		routes, err := s.lnd.QueryRoutesToChannel(attemptCtx, selfPubkey, amountTry, source.ChannelID, targetSnapshot.RemotePubkey, targetChannelID, feeLimitMsat, 5, ignoredEdges, ignoredPairs)
 		routeMaxSat := int64(0)
 		if err != nil {
 			cancelAttempt()
@@ -7780,7 +7780,7 @@ func (m *rebalanceMppPrepassContext) attemptShard(roundCtx context.Context, sour
 	defer cancelAttempt()
 
 	ignoredEdgeSnapshot, ignoredPairSnapshot := m.snapshotIgnoredRoutes()
-	routes, err := s.lnd.QueryRoutes(attemptCtx, m.selfPubkey, amountTry, source.ChannelID, st.targetSnapshot.RemotePubkey, feeLimitMsat, 3, ignoredEdgeSnapshot, ignoredPairSnapshot)
+	routes, err := s.lnd.QueryRoutesToChannel(attemptCtx, m.selfPubkey, amountTry, source.ChannelID, st.targetSnapshot.RemotePubkey, r.targetChannelID, feeLimitMsat, 3, ignoredEdgeSnapshot, ignoredPairSnapshot)
 	if err != nil {
 		if ctx.Err() != nil {
 			result.Fatal = true

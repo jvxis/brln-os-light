@@ -98,6 +98,31 @@ func TestBuildOperatorRebalancePreviewRejectsBelowExecuteMinimum(t *testing.T) {
 	}
 }
 
+func TestRebalanceTargetEligibleForOperatorBypassesEconomicGatesOnly(t *testing.T) {
+	cfg := RebalanceConfig{DeadbandPct: 3}
+	target := RebalanceChannel{
+		Active:            true,
+		LocalPct:          7.1,
+		TargetOutboundPct: 10,
+		OutgoingFeePpm:    100,
+		PeerFeeRatePpm:    200,
+	}
+	if rebalanceTargetEligibleForJob(target, cfg, 10_000, false) {
+		t.Fatal("automatic target must still obey deadband and spread gates")
+	}
+	if !rebalanceTargetEligibleForJob(target, cfg, 10_000, true) {
+		t.Fatal("operator target should bypass automatic economic gates")
+	}
+	target.Active = false
+	if rebalanceTargetEligibleForJob(target, cfg, 10_000, true) {
+		t.Fatal("operator target must still be active")
+	}
+	target.Active = true
+	if rebalanceTargetEligibleForJob(target, cfg, 0, true) {
+		t.Fatal("operator target must still have a positive deficit")
+	}
+}
+
 func TestClassifyRebalanceNode(t *testing.T) {
 	mk := func(n int, capSat, localSat int64, active bool) []lndclient.ChannelInfo {
 		out := make([]lndclient.ChannelInfo, n)
@@ -175,32 +200,6 @@ func TestRebalancePeerHasParallelChannels(t *testing.T) {
 	}
 }
 
-func TestDelegatedFastPathTargetConstraints(t *testing.T) {
-	opts, lastHop := delegatedFastPathTargetConstraints(false, 50, " 03abcdef ")
-	if opts != nil {
-		t.Fatalf("single-channel target unexpectedly created blinded options: %+v", opts)
-	}
-	if lastHop != "03abcdef" {
-		t.Fatalf("single-channel last hop = %q, want trimmed peer pubkey", lastHop)
-	}
-
-	opts, lastHop = delegatedFastPathTargetConstraints(true, 50, "03abcdef")
-	if opts == nil || !opts.IsBlinded {
-		t.Fatalf("parallel target must use a blinded invoice: %+v", opts)
-	}
-	if len(opts.IncomingChannelIDs) != 1 || opts.IncomingChannelIDs[0] != 50 {
-		t.Fatalf("parallel target incoming channels = %v, want [50]", opts.IncomingChannelIDs)
-	}
-	if lastHop != "" {
-		t.Fatalf("parallel target must not combine blinded path with last hop, got %q", lastHop)
-	}
-
-	opts, lastHop = delegatedFastPathTargetConstraints(true, 0, "03abcdef")
-	if opts != nil || lastHop != "03abcdef" {
-		t.Fatalf("zero target channel must fall back to last-hop constraint: opts=%+v lastHop=%q", opts, lastHop)
-	}
-}
-
 func TestFilterRebalanceRoutesForExactTargetChannel(t *testing.T) {
 	correct := &lnrpc.Route{Hops: []*lnrpc.Hop{
 		{ChanId: 100, PubKey: "source-peer"},
@@ -221,6 +220,47 @@ func TestFilterRebalanceRoutesForExactTargetChannel(t *testing.T) {
 	}
 	if rebalanceRouteTargetsChannel(sibling, 50) {
 		t.Fatalf("expected sibling BFX channel route to be rejected")
+	}
+}
+
+func TestEquivalentParallelIncomingPolicies(t *testing.T) {
+	base := lndclient.ChannelPolicies{
+		ChannelID:    7,
+		LocalPubkey:  "02LOCAL",
+		RemotePubkey: "03PEER",
+		Local: lndclient.ChannelPolicySnapshot{
+			InboundFeeRatePpm: -100,
+			InboundBaseMsat:   -10,
+		},
+		Remote: lndclient.ChannelPolicySnapshot{
+			FeeRatePpm:    31,
+			BaseFeeMsat:   1000,
+			TimeLockDelta: 40,
+		},
+	}
+	target := base
+	target.ChannelID = 50
+	target.LocalPubkey = "02local"
+	target.RemotePubkey = "03peer"
+	if !equivalentParallelIncomingPolicies(base, target) {
+		t.Fatal("same peer and incoming policy should be safe to retarget")
+	}
+
+	target.Remote.FeeRatePpm++
+	if equivalentParallelIncomingPolicies(base, target) {
+		t.Fatal("different remote fee must not be retargeted")
+	}
+	target = base
+	target.ChannelID = 50
+	target.Local.InboundFeeRatePpm--
+	if equivalentParallelIncomingPolicies(base, target) {
+		t.Fatal("different local inbound fee must not be retargeted")
+	}
+	target = base
+	target.ChannelID = 50
+	target.RemotePubkey = "03other"
+	if equivalentParallelIncomingPolicies(base, target) {
+		t.Fatal("different peer must not be retargeted")
 	}
 }
 

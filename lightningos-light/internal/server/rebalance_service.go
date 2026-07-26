@@ -5123,9 +5123,10 @@ func (s *RebalanceService) PreviewOperatorJob(ctx context.Context, targetChannel
 }
 
 type operatorRebalanceOverrides struct {
-	AmountSet   bool
-	FeeLimitSet bool
-	FeeLimitPpm int64
+	OperatorInitiated bool
+	AmountSet         bool
+	FeeLimitSet       bool
+	FeeLimitPpm       int64
 }
 
 func (s *RebalanceService) startJob(targetChannelID uint64, source string, reason string, amountOverride int64, manualAutoRestart bool) (int64, error) {
@@ -5141,8 +5142,9 @@ func (s *RebalanceService) startJob(targetChannelID uint64, source string, reaso
 // auto/rules scan are unaffected.
 func (s *RebalanceService) startOperatorJob(targetChannelID uint64, amountOverride *int64, feeLimitPpm *int64, manualAutoRestart bool) (int64, error) {
 	overrides := operatorRebalanceOverrides{
-		AmountSet:   amountOverride != nil,
-		FeeLimitSet: feeLimitPpm != nil,
+		OperatorInitiated: true,
+		AmountSet:         amountOverride != nil,
+		FeeLimitSet:       feeLimitPpm != nil,
 	}
 	var amount int64
 	if amountOverride != nil {
@@ -5445,6 +5447,14 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 	if strings.TrimSpace(targetSnapshot.RemotePubkey) == "" {
 		return false
 	}
+	// SendPaymentV2 constrains the last peer, not the exact incoming channel.
+	// Blinded self-payment paths also proved ambiguous with parallel channels
+	// in production, settling through the sibling while reporting success for
+	// the requested target. Use the route-based fallback below, which can
+	// explicitly retarget an equivalent final edge and validates the ChanId.
+	if st.targetHasParallelPeer {
+		return false
+	}
 	// Coletar sources com capacidade suficiente. Em modo strict-payback, uma
 	// source só entra se puder cobrir o valor inteiro dentro do MaxSourceSat já
 	// descontado pela proteção de payback; o LND nativo não aceita cap por
@@ -5493,11 +5503,6 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 
 	s.markFastPathAttempted(r.jobID)
 	broadTimeoutSec := timeoutSec
-	invoiceOpts, fastPathLastHop := delegatedFastPathTargetConstraints(
-		st.targetHasParallelPeer,
-		r.targetChannelID,
-		targetSnapshot.RemotePubkey,
-	)
 
 	preferredCount := preferredFastPathSourceCount(len(sourceIDs), maxParts)
 	preferredIDs := []uint64(nil)
@@ -5510,7 +5515,7 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 	}
 	preferredTimeoutSec := preferredFastPathTimeout(timeoutSec)
 	if len(preferredIDs) > 0 && preferredTimeoutSec > 0 {
-		preferredInvoice, preferredInvErr := s.lnd.CreateInvoice(ctx, st.amount, "rebalance-fast-path-preferred", expirySec, invoiceOpts)
+		preferredInvoice, preferredInvErr := s.lnd.CreateInvoice(ctx, st.amount, "rebalance-fast-path-preferred", expirySec, nil)
 		if preferredInvErr == nil && strings.TrimSpace(preferredInvoice.PaymentRequest) != "" {
 			if s.logger != nil {
 				s.logger.Printf("rebalance fast-path preferred: job=%d target=%d amount=%d sources=%d fee_cap_ppm=%d timeout_sec=%d", r.jobID, r.targetChannelID, st.amount, len(preferredIDs), maxFeePpm, preferredTimeoutSec)
@@ -5521,7 +5526,7 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 				preferredCtx,
 				preferredInvoice.PaymentRequest,
 				preferredIDs,
-				fastPathLastHop,
+				targetSnapshot.RemotePubkey,
 				maxFeeMsat,
 				preferredTimeoutSec,
 				maxParts,
@@ -5575,7 +5580,7 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 		}
 	}
 
-	invoice, invErr := s.lnd.CreateInvoice(ctx, st.amount, "rebalance-fast-path", expirySec, invoiceOpts)
+	invoice, invErr := s.lnd.CreateInvoice(ctx, st.amount, "rebalance-fast-path", expirySec, nil)
 	if invErr != nil || strings.TrimSpace(invoice.PaymentRequest) == "" {
 		return false
 	}
@@ -5595,7 +5600,7 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 		fastPathCtx,
 		invoice.PaymentRequest,
 		sourceIDs,
-		fastPathLastHop,
+		targetSnapshot.RemotePubkey,
 		maxFeeMsat,
 		broadTimeoutSec,
 		maxParts,
@@ -5658,25 +5663,6 @@ func (r *rebalanceJobRunner) runDelegatedFastPath(st *rebalanceJobRunState) bool
 	}
 	s.finishJob(r.jobID, "succeeded", "delegated-fast-path")
 	return true
-}
-
-// delegatedFastPathTargetConstraints keeps the regular last-peer constraint
-// for a single channel. When the peer has parallel channels, the last peer is
-// ambiguous, so the invoice itself carries a blinded path restricted to the
-// requested incoming channel. SendPaymentV2 then receives no competing
-// LastHopPubkey constraint and follows the exact incoming edge encoded by LND.
-//
-// If the delegated payment cannot use that blinded path, runDelegatedFastPath
-// returns false as usual and the caller continues with the source-by-source
-// legacy loop.
-func delegatedFastPathTargetConstraints(hasParallelPeer bool, targetChannelID uint64, remotePubkey string) (*lndclient.CreateInvoiceOptions, string) {
-	if hasParallelPeer && targetChannelID != 0 {
-		return &lndclient.CreateInvoiceOptions{
-			IsBlinded:          true,
-			IncomingChannelIDs: []uint64{targetChannelID},
-		}, ""
-	}
-	return nil, strings.TrimSpace(remotePubkey)
 }
 
 func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
@@ -5828,8 +5814,7 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 				amount = cfg.MaxAmountSat
 			}
 			snapshot.TargetAmountSat = amount
-			deficitPct := snapshot.TargetOutboundPct - snapshot.LocalPct
-			snapshot.EligibleAsTarget = snapshot.Active && deficitPct > cfg.DeadbandPct && snapshot.OutgoingFeePpm > snapshot.PeerFeeRatePpm
+			snapshot.EligibleAsTarget = rebalanceTargetEligibleForJob(snapshot, cfg, deficitAmount, r.overrides.OperatorInitiated)
 		}
 		channelSnapshots = append(channelSnapshots, snapshot)
 	}
@@ -5973,6 +5958,20 @@ func (r *rebalanceJobRunner) prepare(st *rebalanceJobRunState) {
 	st.currentJobBlockedPairs = map[uint64]struct{}{}
 	st.ready = true
 	return
+}
+
+func rebalanceTargetEligibleForJob(snapshot RebalanceChannel, cfg RebalanceConfig, deficitAmount int64, operatorInitiated bool) bool {
+	if !snapshot.Active || deficitAmount <= 0 {
+		return false
+	}
+	// A deliberate Manual Rebal In already carries explicit operator intent
+	// and its own per-job fee cap. It may therefore refill a channel inside the
+	// automatic deadband or with a temporarily negative spread.
+	if operatorInitiated {
+		return true
+	}
+	deficitPct := snapshot.TargetOutboundPct - snapshot.LocalPct
+	return deficitPct > cfg.DeadbandPct && snapshot.OutgoingFeePpm > snapshot.PeerFeeRatePpm
 }
 
 func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
@@ -6587,7 +6586,7 @@ func (r *rebalanceJobRunner) runLegacyLoop(st *rebalanceJobRunState) {
 		}
 		var lastErr error
 		candidateRoutes := routes
-		routes = filterRebalanceRoutesForTarget(candidateRoutes, targetChannelID)
+		routes, _ = s.normalizeRebalanceRoutesForTarget(attemptCtx, candidateRoutes, targetChannelID)
 		if len(routes) == 0 {
 			lastErr = rebalanceRoutesTargetMismatchError(candidateRoutes, targetChannelID)
 		}
@@ -7814,8 +7813,9 @@ func (m *rebalanceMppPrepassContext) attemptShard(roundCtx context.Context, sour
 
 	var route *lnrpc.Route
 	for _, candidate := range routes {
-		if rebalanceRouteTargetsChannel(candidate, r.targetChannelID) {
-			route = candidate
+		normalized, normalizeErr := s.normalizeRebalanceRouteTarget(attemptCtx, candidate, r.targetChannelID)
+		if normalizeErr == nil {
+			route = normalized
 			break
 		}
 	}
@@ -8014,10 +8014,7 @@ func (s *RebalanceService) rebuildRouteForTargetAmount(ctx context.Context, rout
 	if err != nil {
 		return nil, err
 	}
-	if !rebalanceRouteTargetsChannel(rebuilt, targetChannelID) {
-		return nil, rebalanceRouteTargetMismatchError(rebuilt, targetChannelID)
-	}
-	return rebuilt, nil
+	return s.normalizeRebalanceRouteTarget(ctx, rebuilt, targetChannelID)
 }
 
 func rebalanceRouteTargetsChannel(route *lnrpc.Route, targetChannelID uint64) bool {
@@ -8036,6 +8033,71 @@ func filterRebalanceRoutesForTarget(routes []*lnrpc.Route, targetChannelID uint6
 		}
 	}
 	return filtered
+}
+
+// normalizeRebalanceRouteTarget accepts an already exact route, or retargets
+// only its final edge when LND selected a sibling channel to the same peer and
+// both incoming policies are equivalent. In that safe case all amounts, fees
+// and timelocks computed by QueryRoutes remain valid; changing ChanId makes
+// the onion explicitly instruct the last peer to forward over the requested
+// channel. Different policies are never rewritten.
+func (s *RebalanceService) normalizeRebalanceRouteTarget(ctx context.Context, route *lnrpc.Route, targetChannelID uint64) (*lnrpc.Route, error) {
+	if rebalanceRouteTargetsChannel(route, targetChannelID) {
+		return route, nil
+	}
+	if s == nil || s.lnd == nil {
+		return nil, rebalanceRouteTargetMismatchError(route, targetChannelID)
+	}
+	if route == nil || len(route.Hops) == 0 || route.Hops[len(route.Hops)-1] == nil {
+		return nil, rebalanceRouteTargetMismatchError(route, targetChannelID)
+	}
+	actualChannelID := route.Hops[len(route.Hops)-1].ChanId
+	if actualChannelID == 0 || targetChannelID == 0 {
+		return nil, rebalanceRouteTargetMismatchError(route, targetChannelID)
+	}
+
+	actualPolicies, err := s.lnd.GetChannelPolicies(ctx, actualChannelID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: sibling policy unavailable: %v", rebalanceRouteTargetMismatchError(route, targetChannelID), err)
+	}
+	targetPolicies, err := s.lnd.GetChannelPolicies(ctx, targetChannelID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: target policy unavailable: %v", rebalanceRouteTargetMismatchError(route, targetChannelID), err)
+	}
+	if !equivalentParallelIncomingPolicies(actualPolicies, targetPolicies) {
+		return nil, fmt.Errorf("%w: parallel incoming policies differ", rebalanceRouteTargetMismatchError(route, targetChannelID))
+	}
+
+	route.Hops[len(route.Hops)-1].ChanId = targetChannelID
+	return route, nil
+}
+
+func (s *RebalanceService) normalizeRebalanceRoutesForTarget(ctx context.Context, routes []*lnrpc.Route, targetChannelID uint64) ([]*lnrpc.Route, error) {
+	normalized := make([]*lnrpc.Route, 0, len(routes))
+	var lastErr error
+	for _, route := range routes {
+		candidate, err := s.normalizeRebalanceRouteTarget(ctx, route, targetChannelID)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		normalized = append(normalized, candidate)
+	}
+	return normalized, lastErr
+}
+
+func equivalentParallelIncomingPolicies(actual lndclient.ChannelPolicies, target lndclient.ChannelPolicies) bool {
+	if actual.ChannelID == 0 || target.ChannelID == 0 ||
+		!strings.EqualFold(strings.TrimSpace(actual.LocalPubkey), strings.TrimSpace(target.LocalPubkey)) ||
+		!strings.EqualFold(strings.TrimSpace(actual.RemotePubkey), strings.TrimSpace(target.RemotePubkey)) {
+		return false
+	}
+	return actual.Remote.FeeRatePpm == target.Remote.FeeRatePpm &&
+		actual.Remote.BaseFeeMsat == target.Remote.BaseFeeMsat &&
+		actual.Remote.TimeLockDelta == target.Remote.TimeLockDelta &&
+		actual.Remote.Disabled == target.Remote.Disabled &&
+		actual.Local.InboundFeeRatePpm == target.Local.InboundFeeRatePpm &&
+		actual.Local.InboundBaseMsat == target.Local.InboundBaseMsat
 }
 
 func rebalanceRouteTargetMismatchError(route *lnrpc.Route, targetChannelID uint64) error {

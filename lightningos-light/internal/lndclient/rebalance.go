@@ -236,6 +236,15 @@ func (c *Client) queryRoutes(ctx context.Context, destPubkey string, amtSat int6
 
 	routes := make([]*lnrpc.Route, 0, numRoutes)
 	mismatchedRoutes := make([]*lnrpc.Route, 0)
+	var targetRouteHints []*lnrpc.RouteHint
+	if targetChanID != 0 {
+		// LastHopPubkey only constrains the peer. Supplying the requested
+		// channel as a route hint also makes the exact final edge available
+		// when its public policy is absent/stale in the pathfinder.
+		if edge, edgeErr := client.GetChanInfo(ctx, &lnrpc.ChanInfoRequest{ChanId: targetChanID}); edgeErr == nil {
+			targetRouteHints = exactTargetRouteHints(edge, lastHopPubkey, trimmedDest)
+		}
+	}
 	baseIgnoredEdges := make([]*lnrpc.EdgeLocator, 0, len(ignoredEdges))
 	if len(ignoredEdges) > 0 {
 		baseIgnoredEdges = append(baseIgnoredEdges, ignoredEdges...)
@@ -260,6 +269,7 @@ func (c *Client) queryRoutes(ctx context.Context, destPubkey string, amtSat int6
 			IgnoredEdges:      requestIgnoredEdges,
 			IgnoredPairs:      ignoredPairs,
 			UseMissionControl: true,
+			RouteHints:        targetRouteHints,
 		}
 		if outgoingChanID != 0 {
 			req.OutgoingChanIds = []uint64{outgoingChanID}
@@ -447,6 +457,51 @@ func routeLastEdgeLocators(route *lnrpc.Route) []*lnrpc.EdgeLocator {
 		{ChannelId: lastHop.ChanId, DirectionReverse: false},
 		{ChannelId: lastHop.ChanId, DirectionReverse: true},
 	}
+}
+
+func exactTargetRouteHints(edge *lnrpc.ChannelEdge, lastHopPubkey string, destPubkey string) []*lnrpc.RouteHint {
+	if edge == nil || edge.ChannelId == 0 {
+		return nil
+	}
+	lastHopPubkey = strings.TrimSpace(lastHopPubkey)
+	destPubkey = strings.TrimSpace(destPubkey)
+	if lastHopPubkey == "" || destPubkey == "" {
+		return nil
+	}
+
+	var policy *lnrpc.RoutingPolicy
+	switch {
+	case strings.EqualFold(edge.Node1Pub, lastHopPubkey) && strings.EqualFold(edge.Node2Pub, destPubkey):
+		policy = edge.Node1Policy
+	case strings.EqualFold(edge.Node2Pub, lastHopPubkey) && strings.EqualFold(edge.Node1Pub, destPubkey):
+		policy = edge.Node2Policy
+	default:
+		return nil
+	}
+	if policy == nil {
+		return nil
+	}
+
+	return []*lnrpc.RouteHint{{
+		HopHints: []*lnrpc.HopHint{{
+			NodeId:                    lastHopPubkey,
+			ChanId:                    edge.ChannelId,
+			FeeBaseMsat:               clampRouteHintUint32(policy.FeeBaseMsat),
+			FeeProportionalMillionths: clampRouteHintUint32(policy.FeeRateMilliMsat),
+			CltvExpiryDelta:           policy.TimeLockDelta,
+		}},
+	}}
+}
+
+func clampRouteHintUint32(value int64) uint32 {
+	if value <= 0 {
+		return 0
+	}
+	const maxUint32 = int64(^uint32(0))
+	if value > maxUint32 {
+		return uint32(maxUint32)
+	}
+	return uint32(value)
 }
 
 func (c *Client) SendPaymentWithConstraints(ctx context.Context, paymentRequest string, outgoingChanID uint64, lastHopPubkey string, feeLimitMsat int64, timeoutSec int32, maxParts uint32) (*lnrpc.Payment, error) {

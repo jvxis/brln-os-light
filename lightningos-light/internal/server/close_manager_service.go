@@ -19,6 +19,9 @@ import (
 
 const (
 	closeManagerPollInterval       = 45 * time.Second
+	closeManagerIdlePollInterval   = 5 * time.Minute
+	closeManagerReadinessTimeout   = 3 * time.Second
+	closeManagerSlowRefresh        = 5 * time.Second
 	closeManagerRefreshMinAge      = 15 * time.Second
 	closeManagerDefaultListLimit   = 100
 	closeManagerMaxListLimit       = 500
@@ -161,16 +164,61 @@ func (s *CloseManagerService) Start() {
 }
 
 func (s *CloseManagerService) runLoop() {
-	ticker := time.NewTicker(closeManagerPollInterval)
-	defer ticker.Stop()
+	timer := time.NewTimer(closeManagerPollInterval)
+	defer timer.Stop()
 	for {
+		<-timer.C
+
+		readyCtx, readyCancel := context.WithTimeout(context.Background(), closeManagerReadinessTimeout)
+		synced, readyErr := s.lnd.SyncedToGraph(readyCtx)
+		readyCancel()
+		if readyErr != nil || !synced {
+			timer.Reset(closeManagerPollInterval)
+			continue
+		}
+
+		refreshStartedAt := time.Now()
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		if err := s.RefreshNow(ctx); err != nil && s.logger != nil {
-			s.logger.Printf("close manager refresh failed: %v", err)
+		refreshErr := s.RefreshNow(ctx)
+		if refreshErr != nil && s.logger != nil {
+			s.logger.Printf("close manager refresh failed: %v", refreshErr)
 		}
 		cancel()
-		<-ticker.C
+		refreshDuration := time.Since(refreshStartedAt)
+
+		stateCtx, stateCancel := context.WithTimeout(context.Background(), closeManagerReadinessTimeout)
+		hasActive, stateErr := s.hasActiveSessions(stateCtx)
+		stateCancel()
+		if stateErr != nil && s.logger != nil {
+			s.logger.Printf("close manager active-session check failed: %v", stateErr)
+		}
+		timer.Reset(closeManagerNextPollInterval(hasActive, stateErr, refreshErr, refreshDuration))
 	}
+}
+
+func (s *CloseManagerService) hasActiveSessions(ctx context.Context) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, ErrCloseManagerDBUnavailable
+	}
+	var active bool
+	err := s.db.QueryRow(ctx, `
+select exists (
+  select 1
+  from close_sessions
+  where state not in ($1, $2)
+)
+`, closeManagerStateFundsRecovered, closeManagerStateClosedTerminal).Scan(&active)
+	return active, err
+}
+
+func closeManagerNextPollInterval(hasActive bool, stateErr error, refreshErr error, refreshDuration time.Duration) time.Duration {
+	if refreshErr != nil || refreshDuration >= closeManagerSlowRefresh {
+		return closeManagerIdlePollInterval
+	}
+	if hasActive || stateErr != nil {
+		return closeManagerPollInterval
+	}
+	return closeManagerIdlePollInterval
 }
 
 func (s *CloseManagerService) EnsureSchema(ctx context.Context) error {

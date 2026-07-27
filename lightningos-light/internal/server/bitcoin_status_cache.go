@@ -173,6 +173,11 @@ func (s *Server) bitcoinActiveStatusCached(ctx context.Context) (bitcoinStatus, 
 		return status, err
 	})
 
+	staleNow := time.Now()
+	if status, fetchedAt, ok := s.staleBitcoinActiveStatus(source, staleNow); ok {
+		return markBitcoinStatusStale(status, fetchedAt, staleNow), nil
+	}
+
 	select {
 	case <-ctx.Done():
 		if status, err, ok := s.cachedBitcoinActiveStatus(source, time.Now()); ok {

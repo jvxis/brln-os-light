@@ -55,6 +55,7 @@ type Client struct {
 	statusCache        Status
 	statusErr          error
 	statusNextFetch    time.Time
+	statusRefreshing   bool
 	infoCache          infoSnapshot
 	infoCacheAt        time.Time
 	infoCacheValid     bool
@@ -171,6 +172,7 @@ const (
 	statusCacheOK                = 30 * time.Second
 	statusCacheErr               = 45 * time.Second
 	statusCacheTimeout           = 60 * time.Second
+	statusRefreshTimeout         = 15 * time.Second
 	maxGRPCMsgSize               = 32 * 1024 * 1024
 	defaultConnectPeerTimeoutSec = uint64(8)
 	nodeAliasCacheTTL            = 30 * time.Minute
@@ -853,9 +855,17 @@ func (c *Client) Close() error {
 func (c *Client) GetStatus(ctx context.Context) (Status, error) {
 	now := time.Now()
 	c.statusMu.Lock()
-	if c.statusCached && now.Before(c.statusNextFetch) {
+	if c.statusCached {
 		status := c.statusCache
 		err := c.statusErr
+		if now.Before(c.statusNextFetch) {
+			c.statusMu.Unlock()
+			return status, err
+		}
+		if !c.statusRefreshing {
+			c.statusRefreshing = true
+			go c.refreshStatusCache()
+		}
 		c.statusMu.Unlock()
 		return status, err
 	}
@@ -864,6 +874,19 @@ func (c *Client) GetStatus(ctx context.Context) (Status, error) {
 	status, err := c.getStatusUncached(ctx)
 	c.storeStatusCache(status, err)
 	return status, err
+}
+
+func (c *Client) refreshStatusCache() {
+	defer func() {
+		c.statusMu.Lock()
+		c.statusRefreshing = false
+		c.statusMu.Unlock()
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), statusRefreshTimeout)
+	defer cancel()
+	status, err := c.getStatusUncached(ctx)
+	c.storeStatusCache(status, err)
 }
 
 func (c *Client) GetStatusFresh(ctx context.Context) (Status, error) {

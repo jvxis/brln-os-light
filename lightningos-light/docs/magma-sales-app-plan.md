@@ -1,6 +1,6 @@
 # Magma Inbound Sales — Plano do App
 
-Status: **planejamento** (nenhum código escrito)
+Status: **Fases 0, 1 e 2 entregues** (0.4.27 Beta) — Fases 3 e 4 pendentes
 Data: 2026-07-28
 Base: script Python `amboss_channel_open_bot` do autor (Telegram + lncli + bos)
 
@@ -713,7 +713,7 @@ script está certo e é a referência (seção 2.3).
 |------|---------|-----------------|
 | **0** | **Concluída.** Schema via introspection (2.1) + 85 ordens reais analisadas (2.2). Restam 3 pendências menores que não bloqueiam | nenhum |
 | **1** | App no store + poller + tabela de ordens + página de listagem + alertas Telegram. **Modo monitor apenas.** Sem trabalho de credencial — token já existe | nenhum |
-| **2** | Modo `assisted`: botão "Aceitar ordem" (invoice + sellerAcceptOrder) e botão "Abrir canal" com preview de fee/UTXO; confirmação automática do channel point; reconciliação e `needs_attention` | controlado, 1 clique por passo |
+| **2** | **Entregue.** Modo `assisted` com aceitar/recusar/abrir por clique, preview de fee antes de financiar, confirmação automática do channel point, reconciliação e `needs_attention`. Ver seção 14 | controlado, 1 clique por passo |
 | **3** | Modo `auto`: policy engine completo, guardas de orçamento, limites diários, backoff de fee | automatizado |
 | **4** | Proteção de compromisso no Close Manager + política de Autofee, gestão da oferta pela UI, comando `/magma` no Telegram, relatório de P&L da venda | — |
 
@@ -778,3 +778,78 @@ com teste contra stub.
 
 Fixtures salvas a partir das respostas reais alimentam os testes da Fase 1. Não há mais
 bloqueio para começar a implementação.
+
+---
+
+## 14. Fase 2 — o que foi implementado
+
+Modo `assisted`, opt-in. O app continua instalando em `monitor`; trocar de modo é um
+clique consciente, e `requireAssistedMode` barra qualquer chamada direta às rotas de ação
+enquanto o modo for `monitor`.
+
+### Máquina de estados local (`magma_orders.local_state`)
+
+```
+observed → accepting → accepted → opening → open_broadcast → confirming → confirmed
+observed → rejected
+qualquer → needs_attention
+```
+
+O `local_state` é deliberadamente separado do `magma_status`. O buraco entre os dois é
+exatamente onde dinheiro some, então toda transição que move fundos é **gravada antes de
+ser tentada**.
+
+### As três garantias que sustentam o resto
+
+**1. Write-ahead antes de gastar.** `local_state` vira `opening` e o `attempt_count`
+incrementa *antes* do `OpenChannelWithOutpoints`. Se o processo morrer no meio, a ordem
+nunca parece intocada na volta.
+
+**2. Nenhum caminho volta para um estado financiável depois de uma falha de abertura.**
+Se o `OpenChannel` retorna erro, a ordem vai para `needs_attention`, não para `accepted` —
+o erro pode ter chegado *depois* do broadcast. Só a reconciliação, que pergunta ao nó,
+decide o que aconteceu de fato.
+
+**3. Decisão sempre em cima do estado vivo.** `AcceptOrder` e `OpenChannelForOrder`
+re-consultam a ordem na Amboss antes de agir (`liveOrder`). O snapshot local pode estar
+um intervalo de poll atrasado, e aceitar uma ordem que o comprador já retirou é evitável.
+
+Some-se a isso a checagem de token com folga de 24h antes de financiar
+(`magmaTokenSafetyWindow`) e a busca por canal pré-existente ao mesmo comprador com o
+mesmo tamanho (`existingChannelFor`), que impede financiar duas vezes numa retentativa.
+
+### Reconciliação — o substituto dos arquivos de lock
+
+`reconcileExecution` roda a cada poll (só em modo assistido) sobre as ordens em
+`opening`, `open_broadcast` e `confirming`:
+
+- `confirming` → reenvia `sellerAddTransaction`;
+- `open_broadcast` → resolve o `channel_point` pelo txid e confirma;
+- `opening` → **pergunta ao nó** se já existe canal para aquele comprador com aquele
+  tamanho; se existe, adota o outpoint e retoma a confirmação.
+
+É a diferença central para o script: lá, um erro nesse ponto cria um arquivo de log que
+trava *todas* as ordens futuras até alguém apagar na mão. Aqui cada ordem é retomada
+sozinha, e uma ordem travada não contamina as outras.
+
+### Preview antes de financiar
+
+`OpenChannelPreview` junta as fees recomendadas do mempool, o custo estimado via
+`PreviewOpenChannel`, o saldo disponível e o **percentual da venda que a fee on-chain
+consome** — com aviso a partir de 50% e alerta explícito quando a fee passa da receita
+inteira. `can_open` só fica verdadeiro sem nenhum bloqueio: estado local certo, status da
+Amboss certo, saldo suficiente e token com folga.
+
+### Recusa ativa
+
+`sellerRejectOrder` está exposto como botão "Recusar", com a explicação na própria UI de
+por que recusar é melhor que ignorar. O script nunca recusa nada, e `SELLER_FAILED_TO_REACT`
+é falha registrada na conta.
+
+### O que continua fora
+
+Nada é automático: não há policy engine, não há decisão sem clique. Isso é a Fase 3.
+Também seguem fora a proteção do compromisso no Close Manager e o clamp de fee do
+Autofee (Fase 4) — ou seja, **um canal vendido hoje ainda pode ser fechado por outra
+automação antes do prazo, ou ter a fee elevada acima do teto contratual**. Enquanto a
+Fase 4 não sai, isso é vigilância manual.

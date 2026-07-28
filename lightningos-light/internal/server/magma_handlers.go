@@ -89,6 +89,104 @@ func (s *Server) handleMagmaSettingsPost(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, settings)
 }
 
+// magmaActionStatus maps service errors onto HTTP codes. State conflicts are 409
+// rather than 400: the request was well formed, the order simply moved on.
+func magmaActionStatus(err error) int {
+	switch {
+	case errors.Is(err, errMagmaUnauthorized):
+		return http.StatusUnauthorized
+	case errors.Is(err, errMagmaNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, errMagmaWrongState):
+		return http.StatusConflict
+	default:
+		return http.StatusBadRequest
+	}
+}
+
+func (s *Server) handleMagmaAcceptOrder(w http.ResponseWriter, r *http.Request) {
+	svc := s.requireMagmaService(w)
+	if svc == nil {
+		return
+	}
+	orderID := strings.TrimSpace(chi.URLParam(r, "id"))
+	if orderID == "" {
+		writeError(w, http.StatusBadRequest, "order id required")
+		return
+	}
+	order, err := svc.AcceptOrder(r.Context(), orderID)
+	if err != nil {
+		writeError(w, magmaActionStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, order)
+}
+
+func (s *Server) handleMagmaRejectOrder(w http.ResponseWriter, r *http.Request) {
+	svc := s.requireMagmaService(w)
+	if svc == nil {
+		return
+	}
+	orderID := strings.TrimSpace(chi.URLParam(r, "id"))
+	if orderID == "" {
+		writeError(w, http.StatusBadRequest, "order id required")
+		return
+	}
+	order, err := svc.RejectOrder(r.Context(), orderID)
+	if err != nil {
+		writeError(w, magmaActionStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, order)
+}
+
+func (s *Server) handleMagmaOpenPreview(w http.ResponseWriter, r *http.Request) {
+	svc := s.requireMagmaService(w)
+	if svc == nil {
+		return
+	}
+	orderID := strings.TrimSpace(chi.URLParam(r, "id"))
+	if orderID == "" {
+		writeError(w, http.StatusBadRequest, "order id required")
+		return
+	}
+	var satPerVbyte int64
+	if raw := strings.TrimSpace(r.URL.Query().Get("sat_per_vbyte")); raw != "" {
+		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			satPerVbyte = parsed
+		}
+	}
+	preview, err := svc.OpenChannelPreview(r.Context(), orderID, satPerVbyte)
+	if err != nil {
+		writeError(w, magmaActionStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, preview)
+}
+
+func (s *Server) handleMagmaOpenChannel(w http.ResponseWriter, r *http.Request) {
+	svc := s.requireMagmaService(w)
+	if svc == nil {
+		return
+	}
+	orderID := strings.TrimSpace(chi.URLParam(r, "id"))
+	if orderID == "" {
+		writeError(w, http.StatusBadRequest, "order id required")
+		return
+	}
+	var req MagmaOpenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	order, err := svc.OpenChannelForOrder(r.Context(), orderID, req)
+	if err != nil {
+		writeError(w, magmaActionStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, order)
+}
+
 func (s *Server) handleMagmaRefresh(w http.ResponseWriter, r *http.Request) {
 	svc := s.requireMagmaService(w)
 	if svc == nil {

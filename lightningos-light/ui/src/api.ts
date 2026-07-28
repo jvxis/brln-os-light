@@ -1301,6 +1301,9 @@ export type MagmaOrder = {
   cancellation_reason?: string
   seller_close_side?: string
   buyer_close_side?: string
+  local_state?: string
+  funding_txid?: string
+  last_error?: string
 }
 
 export type MagmaSettings = {
@@ -1345,12 +1348,44 @@ export type MagmaOrderEvent = {
   created_at: string
 }
 
+export type MagmaOpenPreview = {
+  order_id: string
+  size_sat: number
+  revenue_sat: number
+  sat_per_vbyte: number
+  fastest_sat_per_vb?: number
+  half_hour_sat_per_vb?: number
+  hour_sat_per_vb?: number
+  estimated_fee_sat: number
+  total_debit_sat: number
+  spendable_sat: number
+  enough_funds: boolean
+  fee_share_of_revenue_pct: number
+  net_revenue_sat: number
+  can_open: boolean
+  warnings?: string[]
+  blockers?: string[]
+}
+
+export const getMagmaOpenPreview = (id: string, satPerVbyte?: number): Promise<MagmaOpenPreview> =>
+  request(`/api/apps/magma-sales/orders/${encodeURIComponent(id)}/open-preview${buildQuery({ sat_per_vbyte: satPerVbyte })}`)
+export const acceptMagmaOrder = (id: string): Promise<MagmaOrder> =>
+  request(`/api/apps/magma-sales/orders/${encodeURIComponent(id)}/accept`, { method: 'POST', body: JSON.stringify({}) })
+export const rejectMagmaOrder = (id: string): Promise<MagmaOrder> =>
+  request(`/api/apps/magma-sales/orders/${encodeURIComponent(id)}/reject`, { method: 'POST', body: JSON.stringify({}) })
+export const openMagmaChannel = (id: string, satPerVbyte: number): Promise<MagmaOrder> =>
+  request(`/api/apps/magma-sales/orders/${encodeURIComponent(id)}/open`, {
+    method: 'POST',
+    body: JSON.stringify({ sat_per_vbyte: satPerVbyte })
+  })
+
 export const getMagmaOverview = (): Promise<MagmaOverview> => request('/api/apps/magma-sales/overview')
 export const refreshMagma = (): Promise<MagmaOverview> =>
   request('/api/apps/magma-sales/refresh', { method: 'POST', body: JSON.stringify({}) })
 export const getMagmaOrderEvents = (id: string): Promise<{ events: MagmaOrderEvent[] }> =>
   request(`/api/apps/magma-sales/orders/${encodeURIComponent(id)}/events`)
 export const updateMagmaSettings = (payload: {
+  mode?: 'monitor' | 'assisted'
   poll_interval_sec?: number
   notify_telegram?: boolean
 }): Promise<MagmaSettings> =>

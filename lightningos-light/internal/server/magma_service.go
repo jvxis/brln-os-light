@@ -18,6 +18,9 @@ import (
 
 const (
 	magmaModeMonitor = "monitor"
+	// magmaModeAssisted enables the per-order buttons. Every action still needs an
+	// explicit click; nothing here acts on its own. Full automation is a later phase.
+	magmaModeAssisted = "assisted"
 
 	magmaDefaultPollInterval = 90 * time.Second
 	magmaMinPollInterval     = 30
@@ -89,6 +92,7 @@ type MagmaOrderEvent struct {
 
 type MagmaService struct {
 	db     *pgxpool.Pool
+	lnd    magmaLND
 	amboss *magmaAmbossClient
 	logger *log.Logger
 	wake   chan struct{}
@@ -101,9 +105,10 @@ type MagmaService struct {
 	lastMarket    *MagmaMarketSummary
 }
 
-func NewMagmaService(db *pgxpool.Pool, logger *log.Logger) *MagmaService {
+func NewMagmaService(db *pgxpool.Pool, lnd magmaLND, logger *log.Logger) *MagmaService {
 	return &MagmaService{
 		db:     db,
+		lnd:    lnd,
 		amboss: newMagmaAmbossClient(),
 		logger: logger,
 		wake:   make(chan struct{}, 1),
@@ -171,7 +176,15 @@ create table if not exists magma_order_events (
   created_at timestamptz not null default now()
 );
 
+alter table magma_orders
+  add column if not exists invoice_payment_request text not null default '',
+  add column if not exists invoice_hash text not null default '',
+  add column if not exists funding_txid text not null default '',
+  add column if not exists attempt_count integer not null default 0,
+  add column if not exists last_error text not null default '';
+
 create index if not exists magma_orders_status_idx on magma_orders (magma_status);
+create index if not exists magma_orders_local_state_idx on magma_orders (local_state);
 create index if not exists magma_orders_updated_idx on magma_orders (updated_at desc);
 create index if not exists magma_order_events_order_idx on magma_order_events (order_id, id desc);
 `)
@@ -229,8 +242,9 @@ from magma_settings where id=1
 
 // MagmaSettingsUpdate carries only the fields Phase 1 lets the operator change.
 type MagmaSettingsUpdate struct {
-	PollIntervalSec *int  `json:"poll_interval_sec,omitempty"`
-	NotifyTelegram  *bool `json:"notify_telegram,omitempty"`
+	Mode            *string `json:"mode,omitempty"`
+	PollIntervalSec *int    `json:"poll_interval_sec,omitempty"`
+	NotifyTelegram  *bool   `json:"notify_telegram,omitempty"`
 }
 
 func (s *MagmaService) UpdateSettings(ctx context.Context, update MagmaSettingsUpdate) (MagmaSettings, error) {
@@ -248,9 +262,18 @@ func (s *MagmaService) UpdateSettings(ctx context.Context, update MagmaSettingsU
 	if update.NotifyTelegram != nil {
 		current.NotifyTelegram = *update.NotifyTelegram
 	}
+	if update.Mode != nil {
+		mode := strings.TrimSpace(*update.Mode)
+		// Only the two implemented modes. Rejecting anything else keeps a future
+		// "auto" value from silently behaving like assisted.
+		if mode != magmaModeMonitor && mode != magmaModeAssisted {
+			return MagmaSettings{}, fmt.Errorf("mode must be %q or %q", magmaModeMonitor, magmaModeAssisted)
+		}
+		current.Mode = mode
+	}
 	if _, err := s.db.Exec(ctx, `
-update magma_settings set poll_interval_sec=$1, notify_telegram=$2, updated_at=now() where id=1
-`, current.PollIntervalSec, current.NotifyTelegram); err != nil {
+update magma_settings set mode=$1, poll_interval_sec=$2, notify_telegram=$3, updated_at=now() where id=1
+`, current.Mode, current.PollIntervalSec, current.NotifyTelegram); err != nil {
 		return MagmaSettings{}, err
 	}
 	s.signal()
@@ -395,6 +418,12 @@ func (s *MagmaService) SyncOnce(ctx context.Context) error {
 			return err
 		}
 	}
+	// Resume anything interrupted between steps. Runs after the upsert so it works
+	// from the freshest view, and only in assisted mode: monitor mode must never
+	// touch Amboss with a mutation.
+	if settings.Mode == magmaModeAssisted {
+		s.reconcileExecution(ctx, token)
+	}
 	s.recordSyncResult(&summary, nil)
 	return nil
 }
@@ -456,7 +485,11 @@ on conflict (order_id) do update set
   payment_status=excluded.payment_status,
   payment_hash=excluded.payment_hash,
   channel_scid=excluded.channel_scid,
-  channel_point=excluded.channel_point,
+  -- Amboss only reports transaction_id once it has registered the sale. Copying
+  -- a blank over a channel point we set ourselves during the open would lose the
+  -- outpoint we still have to confirm.
+  channel_point=case when excluded.channel_point <> '' then excluded.channel_point
+                     else magma_orders.channel_point end,
   cancellation_reason=excluded.cancellation_reason,
   seller_close_side=excluded.seller_close_side,
   buyer_close_side=excluded.buyer_close_side,
@@ -631,7 +664,7 @@ select order_id, buyer_pubkey, offer_id, size_sat, revenue_sat, buyer_pays_sat, 
        commitment_blocks, blocks_until_can_be_closed, closed_blocks_before_min, fee_above_cap_seconds,
        magma_status, payment_status, payment_hash, channel_scid, channel_point,
        cancellation_reason, seller_close_side, buyer_close_side, is_automated, chat_enabled,
-       order_created_at, order_updated_at
+       order_created_at, order_updated_at, local_state, funding_txid, last_error
 from magma_orders
 order by coalesce(order_created_at, first_seen_at) desc
 limit $1
@@ -653,6 +686,7 @@ limit $1
 			&order.ChannelPoint, &order.CancellationReason, &order.SellerCloseSide,
 			&order.BuyerCloseSide, &order.IsAutomated, &order.ChatEnabled,
 			&order.CreatedAt, &order.UpdatedAt,
+			&order.LocalState, &order.FundingTxid, &order.LastError,
 		); err != nil {
 			return nil, err
 		}

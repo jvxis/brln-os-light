@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getMagmaOverview, refreshMagma, updateMagmaSettings } from '../api'
-import type { MagmaOrder, MagmaOverview } from '../api'
+import {
+  acceptMagmaOrder,
+  getMagmaOpenPreview,
+  getMagmaOverview,
+  openMagmaChannel,
+  refreshMagma,
+  rejectMagmaOrder,
+  updateMagmaSettings
+} from '../api'
+import type { MagmaOpenPreview, MagmaOrder, MagmaOverview } from '../api'
 import { getLocale } from '../i18n'
 
 const BLOCKS_PER_DAY = 144
@@ -98,8 +106,19 @@ export default function MagmaSales() {
       .finally(() => setBusy(false))
   }
 
+  const handleToggleMode = () => {
+    if (!overview) return
+    const next = overview.settings.mode === 'assisted' ? 'monitor' : 'assisted'
+    setBusy(true)
+    updateMagmaSettings({ mode: next })
+      .then((settings) => setOverview({ ...overview, settings }))
+      .catch((err) => setMessage(err instanceof Error ? err.message : t('magma.settingsFailed')))
+      .finally(() => setBusy(false))
+  }
+
   const orders = overview?.orders ?? []
   const actionNeeded = overview?.action_needed ?? []
+  const assisted = overview?.settings.mode === 'assisted'
 
   const stats = useMemo(() => {
     const sold = orders.filter((order) => order.channel_point)
@@ -122,16 +141,27 @@ export default function MagmaSales() {
             <p className="text-sm text-fog/60">{t('magma.subtitle')}</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-wide text-fog/70">
-              {t('magma.modeMonitor')}
+            <span
+              className={`rounded-full px-3 py-1 text-xs uppercase tracking-wide ${
+                assisted
+                  ? 'border border-amber-400/30 bg-amber-500/15 text-amber-200'
+                  : 'border border-white/10 bg-white/5 text-fog/70'
+              }`}
+            >
+              {assisted ? t('magma.modeAssisted') : t('magma.modeMonitor')}
             </span>
+            <button className="btn-secondary" onClick={handleToggleMode} disabled={busy || !settings}>
+              {assisted ? t('magma.switchToMonitor') : t('magma.switchToAssisted')}
+            </button>
             <button className="btn-secondary" onClick={handleRefresh} disabled={busy}>
               {busy ? t('magma.refreshing') : t('magma.refresh')}
             </button>
           </div>
         </div>
 
-        <p className="text-sm text-fog/70">{t('magma.monitorNotice')}</p>
+        <p className="text-sm text-fog/70">
+          {assisted ? t('magma.assistedNotice') : t('magma.monitorNotice')}
+        </p>
 
         {token && !token.configured && (
           <div className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
@@ -224,6 +254,10 @@ export default function MagmaSales() {
                     {t('magma.colCommitment')}: {formatDays(order.commitment_blocks)}
                   </span>
                 </div>
+                {order.last_error && (
+                  <p className="mt-2 text-rose-200">{order.last_error}</p>
+                )}
+                {assisted && <MagmaOrderActions order={order} locale={locale} onDone={load} />}
               </div>
             ))}
           </div>
@@ -235,9 +269,9 @@ export default function MagmaSales() {
         {orders.length === 0 ? (
           <p className="text-sm text-fog/60">{t('magma.noOrders')}</p>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="max-h-[32rem] overflow-x-auto overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable]">
             <table className="w-full min-w-[900px] text-left text-sm">
-              <thead className="text-xs uppercase tracking-wide text-fog/50">
+              <thead className="sticky top-0 z-10 bg-slate text-xs uppercase tracking-wide text-fog/50 shadow-[0_1px_0_rgba(255,255,255,.08)]">
                 <tr>
                   <th className="py-2 pr-4">{t('magma.colDate')}</th>
                   <th className="py-2 pr-4">{t('magma.colStatus')}</th>
@@ -306,6 +340,155 @@ export default function MagmaSales() {
         )}
       </section>
     </div>
+  )
+}
+
+// Per-order actions, only rendered in assisted mode. Accepting costs nothing but
+// an unpaid invoice; opening spends on-chain and is gated behind an explicit
+// preview so the operator sees the fee before committing.
+function MagmaOrderActions({
+  order,
+  locale,
+  onDone
+}: {
+  order: MagmaOrder
+  locale: string
+  onDone: () => void
+}) {
+  const { t } = useTranslation()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [preview, setPreview] = useState<MagmaOpenPreview | null>(null)
+  const [satPerVbyte, setSatPerVbyte] = useState<number | ''>('')
+  const [confirmingOpen, setConfirmingOpen] = useState(false)
+
+  const state = order.local_state || 'observed'
+  const run = (action: () => Promise<unknown>) => {
+    setBusy(true)
+    setError('')
+    action()
+      .then(() => onDone())
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBusy(false))
+  }
+
+  const loadPreview = (rate?: number) => {
+    setBusy(true)
+    setError('')
+    getMagmaOpenPreview(order.id, rate)
+      .then((data) => {
+        setPreview(data)
+        if (satPerVbyte === '') setSatPerVbyte(data.sat_per_vbyte)
+        setConfirmingOpen(true)
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBusy(false))
+  }
+
+  if (order.status === 'WAITING_FOR_SELLER_APPROVAL' && state === 'observed') {
+    return (
+      <div className="mt-3 space-y-2">
+        <div className="flex flex-wrap gap-2">
+          <button className="btn-primary" disabled={busy} onClick={() => run(() => acceptMagmaOrder(order.id))}>
+            {busy ? t('magma.working') : t('magma.acceptOrder')}
+          </button>
+          <button className="btn-secondary" disabled={busy} onClick={() => run(() => rejectMagmaOrder(order.id))}>
+            {t('magma.rejectOrder')}
+          </button>
+        </div>
+        <p className="text-xs text-fog/50">{t('magma.rejectHint')}</p>
+        {error && <p className="text-xs text-rose-200">{error}</p>}
+      </div>
+    )
+  }
+
+  if (order.status === 'WAITING_FOR_CHANNEL_OPEN' && state === 'accepted') {
+    return (
+      <div className="mt-3 space-y-3">
+        {!confirmingOpen ? (
+          <button className="btn-primary" disabled={busy} onClick={() => loadPreview()}>
+            {busy ? t('magma.working') : t('magma.reviewOpen')}
+          </button>
+        ) : (
+          <div className="space-y-2 rounded-lg border border-white/10 bg-white/5 px-3 py-3">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <label className="text-fog/60">{t('magma.feeRate')}</label>
+              <input
+                className="input-field w-24"
+                type="number"
+                min={1}
+                value={satPerVbyte}
+                onChange={(event) => setSatPerVbyte(event.target.value === '' ? '' : Number(event.target.value))}
+              />
+              <span className="text-fog/50">sat/vB</span>
+              <button
+                className="btn-secondary"
+                disabled={busy || satPerVbyte === ''}
+                onClick={() => loadPreview(Number(satPerVbyte))}
+              >
+                {t('magma.recalculate')}
+              </button>
+              {preview?.fastest_sat_per_vb ? (
+                <span className="text-fog/50">
+                  {t('magma.mempoolHint', {
+                    fastest: preview.fastest_sat_per_vb,
+                    halfHour: preview.half_hour_sat_per_vb ?? 0,
+                    hour: preview.hour_sat_per_vb ?? 0
+                  })}
+                </span>
+              ) : null}
+            </div>
+            {preview && (
+              <div className="grid gap-1 text-xs text-fog/70 md:grid-cols-2">
+                <span>
+                  {t('magma.previewFee')}: {formatSats(preview.estimated_fee_sat, locale)}
+                </span>
+                <span>
+                  {t('magma.previewNet')}: {formatSats(preview.net_revenue_sat, locale)} (
+                  {preview.fee_share_of_revenue_pct}% {t('magma.previewFeeShare')})
+                </span>
+                <span>
+                  {t('magma.previewDebit')}: {formatSats(preview.total_debit_sat, locale)}
+                </span>
+                <span>
+                  {t('magma.previewSpendable')}: {formatSats(preview.spendable_sat, locale)}
+                </span>
+              </div>
+            )}
+            {preview?.warnings?.map((warning) => (
+              <p key={warning} className="text-xs text-amber-200">
+                {warning}
+              </p>
+            ))}
+            {preview?.blockers?.map((blocker) => (
+              <p key={blocker} className="text-xs text-rose-200">
+                {blocker}
+              </p>
+            ))}
+            <div className="flex flex-wrap gap-2">
+              <button
+                className="btn-primary"
+                disabled={busy || !preview?.can_open || satPerVbyte === ''}
+                onClick={() => run(() => openMagmaChannel(order.id, Number(satPerVbyte)))}
+              >
+                {busy ? t('magma.working') : t('magma.confirmOpen')}
+              </button>
+              <button className="btn-secondary" disabled={busy} onClick={() => setConfirmingOpen(false)}>
+                {t('common.cancel')}
+              </button>
+            </div>
+            <p className="text-xs text-fog/50">{t('magma.openIrreversibleHint')}</p>
+          </div>
+        )}
+        {error && <p className="text-xs text-rose-200">{error}</p>}
+      </div>
+    )
+  }
+
+  return (
+    <p className="mt-3 text-xs text-fog/50">
+      {t('magma.localState')}: {state}
+    </p>
   )
 }
 

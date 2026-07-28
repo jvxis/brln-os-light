@@ -153,6 +153,12 @@ type MagmaOrder struct {
 	CancellationReason     string     `json:"cancellation_reason,omitempty"`
 	SellerCloseSide        string     `json:"seller_close_side,omitempty"`
 	BuyerCloseSide         string     `json:"buyer_close_side,omitempty"`
+
+	// Locally tracked execution state. Zero on orders straight off the API; filled
+	// in when the order is read back through ListOrders.
+	LocalState  string `json:"local_state,omitempty"`
+	FundingTxid string `json:"funding_txid,omitempty"`
+	LastError   string `json:"last_error,omitempty"`
 }
 
 // PricePerDayPPM normalizes the sale price over the commitment window. A 180-day
@@ -425,6 +431,178 @@ func (c *magmaAmbossClient) SellerOrders(ctx context.Context, token string) ([]M
 		orders = append(orders, normalized)
 	}
 	return orders, nil
+}
+
+// The three seller mutations. Signatures and argument names follow the bot that
+// has been running these against the live API, so the variable names below are
+// deliberately verbatim rather than tidied up.
+const (
+	magmaAcceptOrderMutation = `mutation AcceptOrder($sellerAcceptOrderId: String!, $request: String!) {
+  sellerAcceptOrder(id: $sellerAcceptOrderId, request: $request)
+}`
+	magmaRejectOrderMutation = `mutation RejectOrder($sellerRejectOrderId: String!) {
+  sellerRejectOrder(id: $sellerRejectOrderId)
+}`
+	magmaAddTransactionMutation = `mutation AddTransaction($sellerAddTransactionId: String!, $transaction: String!) {
+  sellerAddTransaction(id: $sellerAddTransactionId, transaction: $transaction)
+}`
+)
+
+// AcceptOrder hands Amboss the bolt11 invoice the buyer must pay. The mutation
+// argument is named "request" and it takes the payment request, not the hash.
+func (c *magmaAmbossClient) AcceptOrder(ctx context.Context, token, orderID, paymentRequest string) error {
+	orderID = strings.TrimSpace(orderID)
+	paymentRequest = strings.TrimSpace(paymentRequest)
+	if orderID == "" {
+		return errors.New("order id required")
+	}
+	if paymentRequest == "" {
+		return errors.New("payment request required")
+	}
+	var result struct {
+		SellerAcceptOrder any `json:"sellerAcceptOrder"`
+	}
+	if err := c.do(ctx, token, magmaAcceptOrderMutation, map[string]any{
+		"sellerAcceptOrderId": orderID,
+		"request":             paymentRequest,
+	}, &result); err != nil {
+		return err
+	}
+	if !magmaMutationSucceeded(result.SellerAcceptOrder) {
+		return fmt.Errorf("Amboss did not accept the invoice for order %s", orderID)
+	}
+	return nil
+}
+
+// RejectOrder declines an order explicitly. Letting an unwanted order lapse is
+// not free: Amboss records SELLER_FAILED_TO_REACT against the account.
+func (c *magmaAmbossClient) RejectOrder(ctx context.Context, token, orderID string) error {
+	orderID = strings.TrimSpace(orderID)
+	if orderID == "" {
+		return errors.New("order id required")
+	}
+	var result struct {
+		SellerRejectOrder any `json:"sellerRejectOrder"`
+	}
+	if err := c.do(ctx, token, magmaRejectOrderMutation, map[string]any{
+		"sellerRejectOrderId": orderID,
+	}, &result); err != nil {
+		return err
+	}
+	if !magmaMutationSucceeded(result.SellerRejectOrder) {
+		return fmt.Errorf("Amboss did not register the rejection of order %s", orderID)
+	}
+	return nil
+}
+
+// AddTransaction confirms the funding outpoint. It takes the full channel point
+// (txid:vout): real orders carry both :0 and :1, so the vout is not decorative.
+func (c *magmaAmbossClient) AddTransaction(ctx context.Context, token, orderID, channelPoint string) error {
+	orderID = strings.TrimSpace(orderID)
+	channelPoint = strings.TrimSpace(channelPoint)
+	if orderID == "" {
+		return errors.New("order id required")
+	}
+	if !magmaLooksLikeChannelPoint(channelPoint) {
+		return fmt.Errorf("channel point must be txid:vout, got %q", channelPoint)
+	}
+	var result struct {
+		SellerAddTransaction any `json:"sellerAddTransaction"`
+	}
+	if err := c.do(ctx, token, magmaAddTransactionMutation, map[string]any{
+		"sellerAddTransactionId": orderID,
+		"transaction":            channelPoint,
+	}, &result); err != nil {
+		return err
+	}
+	if !magmaMutationSucceeded(result.SellerAddTransaction) {
+		return fmt.Errorf("Amboss did not register the channel point for order %s", orderID)
+	}
+	return nil
+}
+
+// magmaMutationSucceeded reads the scalar these mutations return. Amboss answers
+// with a bare boolean or string rather than an object, and a false there is a
+// real failure even though the HTTP call and the errors[] array both look clean.
+func magmaMutationSucceeded(value any) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		return trimmed != "" && !strings.EqualFold(trimmed, "false")
+	case float64:
+		return typed != 0
+	case nil:
+		return false
+	default:
+		return true
+	}
+}
+
+// magmaLooksLikeChannelPoint guards the single most expensive mistake available
+// here: confirming a malformed or bare-txid outpoint after the channel is
+// already funded.
+func magmaLooksLikeChannelPoint(value string) bool {
+	txid, vout, found := strings.Cut(strings.TrimSpace(value), ":")
+	if !found || len(txid) != 64 {
+		return false
+	}
+	for _, char := range txid {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", char) {
+			return false
+		}
+	}
+	if vout == "" {
+		return false
+	}
+	if _, err := strconv.ParseUint(vout, 10, 32); err != nil {
+		return false
+	}
+	return true
+}
+
+const magmaNodeAddressesQuery = `query MagmaNodeAddresses($pubkey: String!) {
+  getNode(pubkey: $pubkey) {
+    graph_info {
+      node {
+        addresses {
+          addr
+        }
+      }
+    }
+  }
+}`
+
+// NodeAddresses is the fallback path for connecting to a buyer our own graph has
+// not seen yet.
+func (c *magmaAmbossClient) NodeAddresses(ctx context.Context, token, pubkey string) ([]string, error) {
+	pubkey = strings.TrimSpace(pubkey)
+	if pubkey == "" {
+		return nil, errors.New("pubkey required")
+	}
+	var result struct {
+		GetNode struct {
+			GraphInfo struct {
+				Node struct {
+					Addresses []struct {
+						Addr string `json:"addr"`
+					} `json:"addresses"`
+				} `json:"node"`
+			} `json:"graph_info"`
+		} `json:"getNode"`
+	}
+	if err := c.do(ctx, token, magmaNodeAddressesQuery, map[string]any{"pubkey": pubkey}, &result); err != nil {
+		return nil, err
+	}
+	addresses := make([]string, 0, len(result.GetNode.GraphInfo.Node.Addresses))
+	for _, item := range result.GetNode.GraphInfo.Node.Addresses {
+		addr := strings.TrimSpace(item.Addr)
+		if addr != "" {
+			addresses = append(addresses, addr)
+		}
+	}
+	return addresses, nil
 }
 
 // magmaTokenExpiry decodes the exp claim when the token is a JWT. Amboss issues

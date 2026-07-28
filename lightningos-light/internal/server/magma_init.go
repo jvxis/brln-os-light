@@ -36,7 +36,7 @@ func (s *Server) initMagma() {
 		}
 		s.db = pool
 	}
-	svc := NewMagmaService(pool, s.logger)
+	svc := NewMagmaService(pool, s.lnd, s.logger)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := svc.EnsureSchema(ctx); err != nil {

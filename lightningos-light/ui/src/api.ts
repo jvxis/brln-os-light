@@ -1272,6 +1272,90 @@ export const resumeLoopOutBRLNJob = (id: number, confirmPassword?: string): Prom
   request(`/api/apps/loopout-brln/jobs/${id}/resume`, { method: 'POST', body: JSON.stringify({ confirm_password: confirmPassword || '' }) })
 export const cancelLoopOutBRLNJob = (id: number): Promise<LoopOutBRLNJob> =>
   request(`/api/apps/loopout-brln/jobs/${id}/cancel`, { method: 'POST', body: JSON.stringify({}) })
+export type MagmaOrder = {
+  id: string
+  status: string
+  buyer_pubkey: string
+  offer_id: string
+  size_sat: number
+  revenue_sat: number
+  buyer_pays_sat: number
+  amboss_fee_ppm: number
+  price_fixed_sat: number
+  price_variable_sat: number
+  price_ppm: number
+  fee_rate_cap_ppm: number
+  base_fee_cap_sat: number
+  commitment_blocks: number
+  blocks_until_can_be_closed?: number
+  closed_blocks_before_min?: number
+  fee_above_cap_seconds?: number
+  payment_status?: string
+  payment_hash?: string
+  channel_scid?: string
+  channel_point?: string
+  created_at?: string
+  updated_at?: string
+  is_automated: boolean
+  chat_enabled: boolean
+  cancellation_reason?: string
+  seller_close_side?: string
+  buyer_close_side?: string
+}
+
+export type MagmaSettings = {
+  installed: boolean
+  enabled: boolean
+  mode: string
+  poll_interval_sec: number
+  notify_telegram: boolean
+}
+
+export type MagmaTokenState = {
+  configured: boolean
+  expires_at?: string
+  days_to_expiry?: number
+  expired: boolean
+  expiring_soon: boolean
+}
+
+export type MagmaMarketSummary = {
+  enabled: boolean
+  has_active_offers: boolean
+  pending_seller_orders: number
+  pending_buyer_orders: number
+}
+
+export type MagmaOverview = {
+  settings: MagmaSettings
+  token: MagmaTokenState
+  market?: MagmaMarketSummary
+  orders: MagmaOrder[]
+  action_needed?: MagmaOrder[]
+  last_sync_at?: string
+  last_sync_error?: string
+}
+
+export type MagmaOrderEvent = {
+  id: number
+  order_id: string
+  kind: string
+  level: string
+  message: string
+  created_at: string
+}
+
+export const getMagmaOverview = (): Promise<MagmaOverview> => request('/api/apps/magma-sales/overview')
+export const refreshMagma = (): Promise<MagmaOverview> =>
+  request('/api/apps/magma-sales/refresh', { method: 'POST', body: JSON.stringify({}) })
+export const getMagmaOrderEvents = (id: string): Promise<{ events: MagmaOrderEvent[] }> =>
+  request(`/api/apps/magma-sales/orders/${encodeURIComponent(id)}/events`)
+export const updateMagmaSettings = (payload: {
+  poll_interval_sec?: number
+  notify_telegram?: boolean
+}): Promise<MagmaSettings> =>
+  request('/api/apps/magma-sales/settings', { method: 'POST', body: JSON.stringify(payload) })
+
 export const getAppAdminPassword = (id: string) => request(`/api/apps/${id}/admin-password`)
 export const installApp = (id: string, payload?: { data_dir?: string; storage_mount?: string; elements_mode?: 'local' | 'remote'; elements_rpc_url?: string; elements_rpc_user?: string; elements_rpc_password?: string }) =>
   request(`/api/apps/${id}/install`, { method: 'POST', body: JSON.stringify(payload ?? {}) })

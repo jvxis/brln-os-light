@@ -18,6 +18,7 @@ import barkWalletIcon from '../assets/apps/bark-wallet.svg'
 import btcpayIcon from '../assets/apps/btcpay.svg'
 import loopIcon from '../assets/apps/lightning-loop.svg'
 import loopOutBRLNIcon from '../assets/apps/loopout-brln.png'
+import magmaSalesIcon from '../assets/apps/magma-sales.svg'
 import CpuMinerStats from '../components/CpuMinerStats'
 
 type AppInfo = {
@@ -86,7 +87,8 @@ const iconMap: Record<string, string> = {
   'bark-wallet': barkWalletIcon,
   btcpay: btcpayIcon,
   loop: loopIcon,
-  'loopout-brln': loopOutBRLNIcon
+  'loopout-brln': loopOutBRLNIcon,
+  'magma-sales': magmaSalesIcon
 }
 
 const internalRoutes: Record<string, string> = {
@@ -95,7 +97,8 @@ const internalRoutes: Record<string, string> = {
   fswap: 'pay-boleto',
   tapd: 'taproot-assets',
   loop: 'lightning-loop',
-  'loopout-brln': 'loop-out-brln'
+  'loopout-brln': 'loop-out-brln',
+  'magma-sales': 'magma-sales'
 }
 
 const statusStyles: Record<string, string> = {
@@ -553,6 +556,8 @@ export default function AppStore() {
                 ? t('nav.lightningLoop')
               : app.id === 'loopout-brln'
                 ? t('nav.loopOutBrln')
+              : app.id === 'magma-sales'
+                ? t('nav.magmaSales')
               : t('appStore.internal')
           const openUrl = app.external_url || (app.port ? `${app.scheme || 'http'}://${host}:${app.port}` : '')
           const publicPoolUrl = openUrl || `http://${host}:${publicPoolUIPortFallback}`

@@ -73,6 +73,10 @@ type Server struct {
 	loopOutBRLNMu               sync.Mutex
 	loopOutBRLN                 *LoopOutBRLNService
 	loopOutBRLNErr              string
+	magmaInitAt                 time.Time
+	magmaMu                     sync.Mutex
+	magma                       *MagmaService
+	magmaErr                    string
 	autofeeInitAt               time.Time
 	autofeeMu                   sync.Mutex
 	autofee                     *AutofeeService
@@ -184,6 +188,7 @@ func (s *Server) Run() error {
 	s.initTorPeerChecker()
 	s.initDepix()
 	s.initLoopOutBRLN()
+	s.initMagma()
 	s.initAutofee()
 	s.initShortcuts()
 	s.initUIPreferences()
@@ -223,6 +228,9 @@ func (s *Server) Run() error {
 	}
 	if s.loopOutBRLN != nil {
 		s.loopOutBRLN.Start(runCtx)
+	}
+	if s.magma != nil {
+		s.magma.Start(runCtx)
 	}
 	if s.channelRanking != nil {
 		s.channelRanking.Start()

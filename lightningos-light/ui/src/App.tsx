@@ -34,6 +34,7 @@ import NodeRetirement from './pages/NodeRetirement'
 import TaprootAssets from './pages/TaprootAssets'
 import LightningLoop from './pages/LightningLoop'
 import LoopOutBRLN from './pages/LoopOutBRLN'
+import MagmaSales from './pages/MagmaSales'
 import {
   getAuthState,
   getBitcoinLocalStatus,
@@ -225,6 +226,7 @@ export default function App() {
       { key: 'taproot-assets', label: t('nav.taprootAssets'), element: <TaprootAssets />, group: 'apps' as const },
       { key: 'lightning-loop', label: t('nav.lightningLoop'), element: <LightningLoop />, group: 'apps' as const },
       { key: 'loop-out-brln', label: t('nav.loopOutBrln'), element: <LoopOutBRLN />, group: 'apps' as const },
+      { key: 'magma-sales', label: t('nav.magmaSales'), element: <MagmaSales />, group: 'apps' as const },
       { key: 'notifications', label: t('nav.notifications'), element: <Notifications />, group: 'system' as const },
       { key: 'audit-log', label: t('nav.auditLog'), element: <AuditLog />, group: 'system' as const },
       { key: 'disks', label: t('nav.disks'), element: <Disks />, group: 'system' as const },

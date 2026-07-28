@@ -26,6 +26,7 @@ func (s *Server) appRegistry() ([]appHandler, error) {
 		newTapdApp(s),
 		newLoopApp(s),
 		newLoopOutBRLNApp(s),
+		newMagmaApp(s),
 	}
 	if err := validateAppRegistry(apps); err != nil {
 		return nil, err

@@ -53,6 +53,14 @@ const formatDateTime = (value: string | undefined, locale: string) => {
   return parsed.toLocaleString(locale)
 }
 
+// The three positions of the mode switch, ordered by how much the app is allowed
+// to do. The active tint escalates with that: neutral, amber, red.
+const magmaModes = [
+  { value: 'monitor' as const, labelKey: 'magma.modeMonitorShort', activeClass: 'bg-white/15 text-fog' },
+  { value: 'assisted' as const, labelKey: 'magma.modeAssistedShort', activeClass: 'bg-amber-500/25 text-amber-100' },
+  { value: 'auto' as const, labelKey: 'magma.modeAutoShort', activeClass: 'bg-rose-500/25 text-rose-100' }
+]
+
 // Price alone hides the deal: the same ppm over 180 days is a very different
 // trade than over 7. Commitment length is the most common size in real orders.
 const pricePerDayPPM = (order: MagmaOrder) => {
@@ -165,27 +173,39 @@ export default function MagmaSales() {
             <p className="text-sm text-fog/60">{t('magma.subtitle')}</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <span
-              className={`rounded-full px-3 py-1 text-xs uppercase tracking-wide ${
+            {/* The switch is the mode indicator as well as the control: the active
+                segment is tinted by how much the mode is allowed to do, which is
+                why there is no separate badge repeating it. */}
+            <div
+              role="radiogroup"
+              aria-label={t('magma.modeLabel')}
+              className={`inline-flex items-center rounded-full border p-1 transition-colors ${
                 auto
-                  ? 'border border-rose-400/30 bg-rose-500/15 text-rose-200'
+                  ? 'border-rose-400/30 bg-rose-500/10'
                   : assisted
-                    ? 'border border-amber-400/30 bg-amber-500/15 text-amber-200'
-                    : 'border border-white/10 bg-white/5 text-fog/70'
+                    ? 'border-amber-400/30 bg-amber-500/10'
+                    : 'border-white/10 bg-white/5'
               }`}
             >
-              {auto ? t('magma.modeAuto') : assisted ? t('magma.modeAssisted') : t('magma.modeMonitor')}
-            </span>
-            <select
-              className="input-field"
-              value={mode}
-              disabled={busy || !settings}
-              onChange={(event) => handleChangeMode(event.target.value as 'monitor' | 'assisted' | 'auto')}
-            >
-              <option value="monitor">{t('magma.modeMonitor')}</option>
-              <option value="assisted">{t('magma.modeAssisted')}</option>
-              <option value="auto">{t('magma.modeAuto')}</option>
-            </select>
+              {magmaModes.map((option) => {
+                const active = mode === option.value
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    disabled={busy || !settings}
+                    onClick={() => handleChangeMode(option.value)}
+                    className={`rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition-colors disabled:opacity-50 ${
+                      active ? option.activeClass : 'text-fog/45 hover:text-fog/80'
+                    }`}
+                  >
+                    {t(option.labelKey)}
+                  </button>
+                )
+              })}
+            </div>
             <button className="btn-secondary" onClick={handleRefresh} disabled={busy}>
               {busy ? t('magma.refreshing') : t('magma.refresh')}
             </button>

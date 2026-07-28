@@ -99,6 +99,10 @@
   "magma": {
     "title": "Magma Inbound Sales",
     "subtitle": "Watches your Amboss Magma sell orders and tells you when a buyer is waiting on you.",
+    "modeLabel": "Operating mode",
+    "modeMonitorShort": "Monitor",
+    "modeAssistedShort": "Assisted",
+    "modeAutoShort": "Automatic",
     "modeMonitor": "Monitor only",
     "modeAssisted": "Assisted",
     "switchToAssisted": "Enable assisted mode",

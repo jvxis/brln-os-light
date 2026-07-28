@@ -99,6 +99,10 @@
   "magma": {
     "title": "Magma Inbound Sales",
     "subtitle": "Acompanha suas ordens de venda no Magma da Amboss e avisa quando um comprador está esperando por você.",
+    "modeLabel": "Modo de operação",
+    "modeMonitorShort": "Monitorar",
+    "modeAssistedShort": "Assistido",
+    "modeAutoShort": "Automático",
     "modeMonitor": "Somente monitorar",
     "modeAssisted": "Assistido",
     "switchToAssisted": "Ativar modo assistido",

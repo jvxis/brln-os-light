@@ -187,6 +187,31 @@ func (s *Server) handleMagmaOpenChannel(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, order)
 }
 
+func (s *Server) handleMagmaPolicyPost(w http.ResponseWriter, r *http.Request) {
+	svc := s.requireMagmaService(w)
+	if svc == nil {
+		return
+	}
+	// Decoding onto the stored policy means an omitted field keeps its current
+	// value instead of silently resetting to the zero value, which for a ceiling
+	// would mean "no limit".
+	policy, err := svc.PolicyForUpdate(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := json.NewDecoder(r.Body).Decode(&policy); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	saved, err := svc.UpdatePolicy(r.Context(), policy)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, saved)
+}
+
 func (s *Server) handleMagmaRefresh(w http.ResponseWriter, r *http.Request) {
 	svc := s.requireMagmaService(w)
 	if svc == nil {

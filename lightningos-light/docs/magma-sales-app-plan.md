@@ -1,6 +1,6 @@
 # Magma Inbound Sales — Plano do App
 
-Status: **Fases 0, 1 e 2 entregues** (0.4.27 Beta) — Fases 3 e 4 pendentes
+Status: **Fases 0 a 4 entregues** (0.4.27 Beta)
 Data: 2026-07-28
 Base: script Python `amboss_channel_open_bot` do autor (Telegram + lncli + bos)
 
@@ -714,8 +714,8 @@ script está certo e é a referência (seção 2.3).
 | **0** | **Concluída.** Schema via introspection (2.1) + 85 ordens reais analisadas (2.2). Restam 3 pendências menores que não bloqueiam | nenhum |
 | **1** | App no store + poller + tabela de ordens + página de listagem + alertas Telegram. **Modo monitor apenas.** Sem trabalho de credencial — token já existe | nenhum |
 | **2** | **Entregue.** Modo `assisted` com aceitar/recusar/abrir por clique, preview de fee antes de financiar, confirmação automática do channel point, reconciliação e `needs_attention`. Ver seção 14 | controlado, 1 clique por passo |
-| **3** | Modo `auto`: policy engine completo, guardas de orçamento, limites diários, backoff de fee | automatizado |
-| **4** | Proteção de compromisso no Close Manager + política de Autofee, gestão da oferta pela UI, comando `/magma` no Telegram, relatório de P&L da venda | — |
+| **3** | **Entregue.** Modo `auto`: policy engine, guardas de orçamento, limites diários, deferral por fee. Ver seção 15 | automatizado |
+| **4** | **Entregue em parte.** Fee guard do canal vendido (seção 15). Proteção contra fechamento **descartada** a pedido do operador. Gestão de oferta e P&L seguem abertos | — |
 
 Cada fase é entregável e commitável sozinha, direto na main no padrão
 `0.4.X Beta - Magma Sales - <descrição>`.
@@ -853,3 +853,77 @@ Também seguem fora a proteção do compromisso no Close Manager e o clamp de fe
 Autofee (Fase 4) — ou seja, **um canal vendido hoje ainda pode ser fechado por outra
 automação antes do prazo, ou ter a fee elevada acima do teto contratual**. Enquanto a
 Fase 4 não sai, isso é vigilância manual.
+
+---
+
+## 15. Fases 3 e 4 — o que foi implementado
+
+### Fee guard do canal vendido (o que sobrou da Fase 4)
+
+Ao confirmar a venda, o canal é **tirado do Autofee** (`autofee_channel_settings.enabled
+= false`) pela duração do compromisso, e a fee de nascença é corrigida uma única vez se
+já furar os tetos da ordem.
+
+Duas decisões aqui merecem registro:
+
+**Por que tirar do Autofee em vez de aplicar clamp dentro dele.** Clamp significaria
+confiar que toda mudança futura do Autofee continue honrando um contrato do qual ele não
+sabe nada. Tirar o canal é grosseiro, mas é verificável.
+
+**Por que o gatilho real é a base fee, não a fee rate.** Com o template do projeto
+(`bitcoin.feerate=1`, `bitcoin.basefee=1000` msat) a fee rate nunca chega perto de
+qualquer teto observado — mas `locked_base_fee_cap` é **0 em 47 das 85 ordens reais**,
+contra 1 sat de default. Ou seja, mais da metade dos canais nasceria violando. O check da
+fee rate segue existindo porque o `lnd.conf` é editável pela UI.
+
+A aplicação é retentada pelo poller a partir de estado persistido (`fee_guard_applied`),
+porque logo após a abertura o canal ainda não tem short channel id e o guard não tem como
+pegar de primeira. Na liberação a linha em `autofee_channel_settings` é **removida**, não
+setada para `true`: devolve o canal ao default do nó em vez de fixar uma opinião que este
+app não deveria manter depois que a obrigação acabou.
+
+**Fora de escopo por decisão do operador:** proteção contra fechamento antecipado. Os
+dados apoiam — 23 dos 68 fechamentos foram pelo comprador, e o operador considera o resto
+responsabilidade dele.
+
+### Policy engine (Fase 3)
+
+`evaluateMagmaOrder` é uma função pura sobre `magmaPolicyInputs`, então a lógica que gasta
+dinheiro sozinha é testável sem nó e sem API. O centro dela é uma distinção:
+
+| Classe | O que é | Ação |
+|---|---|---|
+| **Permanente** | Os termos são ruins: preço, tamanho, prazo, teto de fee | `sellerRejectOrder` |
+| **Temporária** | Os termos são bons, nós não estamos prontos: saldo, fee alta, limite diário | Adia, nunca recusa |
+
+Errar essa fronteira é caro nos dois sentidos. Recusar por um pico de mempool queima uma
+venda que estaria boa uma hora depois; adiar termos estruturalmente ruins deixa a ordem
+expirar em `SELLER_FAILED_TO_REACT`. Há teste garantindo que termos ruins recusam **mesmo
+com a carteira vazia** — senão a ordem ficaria adiada até expirar.
+
+Defaults ancorados na distribuição real observada (preços 1500–11000 ppm, tamanhos
+1M–6M sats, 180 dias como prazo mais comum), não em chute:
+
+```
+min_price_ppm 2000      min_price_ppm_per_day 25    min_fee_rate_cap_ppm 100
+min_revenue_sat 5000    max_onchain_cost_pct 50     min_onchain_reserve_sat 100k
+max_concurrent_opens 2  max_daily_orders 5          max_daily_size_sat 20M
+```
+
+`min_fee_rate_cap_ppm` merece destaque: vender inbound barato **e** ficar preso a um teto
+de routing fee ruim é o pior negócio disponível, e é invisível para quem só olha o preço
+da ordem.
+
+**Uma ação por ciclo.** `runAutoMode` financia no máximo um canal e aceita no máximo uma
+ordem por passagem, priorizando as já pagas. Uma policy mal configurada custa um canal
+até o operador ver o resultado, não a carteira inteira.
+
+Adiamentos só são registrados quando o motivo muda (`recordDeferral`), senão um poll de
+90s escreveria "waiting for funds" para sempre.
+
+### Risco residual
+
+Modo automático gasta on-chain sem confirmação por ordem. As proteções são a reserva
+mínima, os limites diários, o teto de concorrência e o de custo on-chain — todos
+configuráveis, o que significa que também são todos desativáveis. O `select` de modo pede
+confirmação explícita mostrando a policy vigente antes de ligar.

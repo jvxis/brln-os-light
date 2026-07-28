@@ -103,10 +103,12 @@ update magma_orders set local_state=$2, last_error=$3, updated_at=now() where or
 	return err
 }
 
-// requireAssistedMode keeps every fund-moving path behind an explicit mode. The
-// app ships in monitor mode, so a fresh install cannot act even if an endpoint
-// is called directly.
-func (s *MagmaService) requireAssistedMode(ctx context.Context) error {
+// requireActionMode keeps every fund-moving path behind an explicit mode. The app
+// ships in monitor mode, so a fresh install cannot act even if an endpoint is
+// called directly. Both assisted (operator clicks) and auto (policy decides) are
+// allowed through here; the difference is who pulls the trigger, not what the
+// action is permitted to do.
+func (s *MagmaService) requireActionMode(ctx context.Context) error {
 	settings, err := s.Settings(ctx)
 	if err != nil {
 		return err
@@ -114,8 +116,8 @@ func (s *MagmaService) requireAssistedMode(ctx context.Context) error {
 	if !settings.Installed || !settings.Enabled {
 		return errors.New("Magma Inbound Sales is not running")
 	}
-	if settings.Mode != magmaModeAssisted {
-		return errors.New("switch Magma Inbound Sales to assisted mode to act on orders")
+	if settings.Mode != magmaModeAssisted && settings.Mode != magmaModeAuto {
+		return errors.New("switch Magma Inbound Sales to assisted or auto mode to act on orders")
 	}
 	return nil
 }
@@ -240,7 +242,7 @@ func (s *MagmaService) AcceptOrder(ctx context.Context, orderID string) (MagmaOr
 	s.workMu.Lock()
 	defer s.workMu.Unlock()
 
-	if err := s.requireAssistedMode(ctx); err != nil {
+	if err := s.requireActionMode(ctx); err != nil {
 		return MagmaOrder{}, err
 	}
 	if s.lnd == nil {
@@ -318,7 +320,7 @@ func (s *MagmaService) RejectOrder(ctx context.Context, orderID string) (MagmaOr
 	s.workMu.Lock()
 	defer s.workMu.Unlock()
 
-	if err := s.requireAssistedMode(ctx); err != nil {
+	if err := s.requireActionMode(ctx); err != nil {
 		return MagmaOrder{}, err
 	}
 	token, err := s.usableToken(ctx)
@@ -457,7 +459,7 @@ func (s *MagmaService) OpenChannelForOrder(ctx context.Context, orderID string, 
 	s.workMu.Lock()
 	defer s.workMu.Unlock()
 
-	if err := s.requireAssistedMode(ctx); err != nil {
+	if err := s.requireActionMode(ctx); err != nil {
 		return MagmaOrder{}, err
 	}
 	if s.lnd == nil {

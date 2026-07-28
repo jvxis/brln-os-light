@@ -1336,6 +1336,26 @@ export type MagmaCapacity = {
   available_sat: number
 }
 
+export type MagmaPolicy = {
+  min_revenue_sat: number
+  min_price_ppm: number
+  min_price_ppm_per_day: number
+  min_fee_rate_cap_ppm: number
+  min_channel_size_sat: number
+  max_channel_size_sat: number
+  max_commitment_days: number
+  max_sat_per_vbyte: number
+  max_onchain_cost_pct: number
+  min_onchain_reserve_sat: number
+  max_concurrent_opens: number
+  max_daily_orders: number
+  max_daily_size_sat: number
+  auto_reject_declined: boolean
+}
+
+export const updateMagmaPolicy = (payload: Partial<MagmaPolicy>): Promise<MagmaPolicy> =>
+  request('/api/apps/magma-sales/policy', { method: 'POST', body: JSON.stringify(payload) })
+
 export type MagmaOverview = {
   settings: MagmaSettings
   token: MagmaTokenState
@@ -1344,6 +1364,8 @@ export type MagmaOverview = {
   action_needed?: MagmaOrder[]
   capacity?: MagmaCapacity
   token_warning?: string
+  policy?: MagmaPolicy
+  policy_summary?: string
   last_sync_at?: string
   last_sync_error?: string
 }
@@ -1394,7 +1416,7 @@ export const refreshMagma = (): Promise<MagmaOverview> =>
 export const getMagmaOrderEvents = (id: string): Promise<{ events: MagmaOrderEvent[] }> =>
   request(`/api/apps/magma-sales/orders/${encodeURIComponent(id)}/events`)
 export const updateMagmaSettings = (payload: {
-  mode?: 'monitor' | 'assisted'
+  mode?: 'monitor' | 'assisted' | 'auto'
   poll_interval_sec?: number
   notify_telegram?: boolean
 }): Promise<MagmaSettings> =>

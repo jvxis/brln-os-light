@@ -19,8 +19,10 @@ import (
 const (
 	magmaModeMonitor = "monitor"
 	// magmaModeAssisted enables the per-order buttons. Every action still needs an
-	// explicit click; nothing here acts on its own. Full automation is a later phase.
+	// explicit click; nothing here acts on its own.
 	magmaModeAssisted = "assisted"
+	// magmaModeAuto lets the policy engine accept, reject and fund on its own.
+	magmaModeAuto = "auto"
 
 	magmaDefaultPollInterval = 90 * time.Second
 	magmaMinPollInterval     = 30
@@ -77,6 +79,8 @@ type MagmaOverview struct {
 	ActionNeeded  []MagmaOrder        `json:"action_needed"`
 	Capacity      *MagmaCapacity      `json:"capacity,omitempty"`
 	TokenWarning  string              `json:"token_warning,omitempty"`
+	Policy        *MagmaPolicy        `json:"policy,omitempty"`
+	PolicySummary string              `json:"policy_summary,omitempty"`
 	LastSyncAt    *time.Time          `json:"last_sync_at,omitempty"`
 	LastSyncError string              `json:"last_sync_error,omitempty"`
 }
@@ -131,6 +135,21 @@ create table if not exists magma_settings (
   notify_telegram boolean not null default true,
   updated_at timestamptz not null default now()
 );
+alter table magma_settings
+  add column if not exists min_revenue_sat bigint not null default 5000,
+  add column if not exists min_price_ppm bigint not null default 2000,
+  add column if not exists min_price_ppm_per_day bigint not null default 25,
+  add column if not exists min_fee_rate_cap_ppm bigint not null default 100,
+  add column if not exists min_channel_size_sat bigint not null default 1000000,
+  add column if not exists max_channel_size_sat bigint not null default 10000000,
+  add column if not exists max_commitment_days bigint not null default 180,
+  add column if not exists max_sat_per_vbyte bigint not null default 50,
+  add column if not exists max_onchain_cost_pct bigint not null default 50,
+  add column if not exists min_onchain_reserve_sat bigint not null default 100000,
+  add column if not exists max_concurrent_opens integer not null default 2,
+  add column if not exists max_daily_orders integer not null default 5,
+  add column if not exists max_daily_size_sat bigint not null default 20000000,
+  add column if not exists auto_reject_declined boolean not null default true;
 insert into magma_settings (id) values (1) on conflict (id) do nothing;
 
 create table if not exists magma_orders (
@@ -183,7 +202,8 @@ alter table magma_orders
   add column if not exists invoice_hash text not null default '',
   add column if not exists funding_txid text not null default '',
   add column if not exists attempt_count integer not null default 0,
-  add column if not exists last_error text not null default '';
+  add column if not exists last_error text not null default '',
+  add column if not exists fee_guard_applied boolean not null default false;
 
 create index if not exists magma_orders_status_idx on magma_orders (magma_status);
 create index if not exists magma_orders_local_state_idx on magma_orders (local_state);
@@ -266,10 +286,9 @@ func (s *MagmaService) UpdateSettings(ctx context.Context, update MagmaSettingsU
 	}
 	if update.Mode != nil {
 		mode := strings.TrimSpace(*update.Mode)
-		// Only the two implemented modes. Rejecting anything else keeps a future
-		// "auto" value from silently behaving like assisted.
-		if mode != magmaModeMonitor && mode != magmaModeAssisted {
-			return MagmaSettings{}, fmt.Errorf("mode must be %q or %q", magmaModeMonitor, magmaModeAssisted)
+		if mode != magmaModeMonitor && mode != magmaModeAssisted && mode != magmaModeAuto {
+			return MagmaSettings{}, fmt.Errorf("mode must be %q, %q or %q",
+				magmaModeMonitor, magmaModeAssisted, magmaModeAuto)
 		}
 		current.Mode = mode
 	}
@@ -423,8 +442,17 @@ func (s *MagmaService) SyncOnce(ctx context.Context) error {
 	// Resume anything interrupted between steps. Runs after the upsert so it works
 	// from the freshest view, and only in assisted mode: monitor mode must never
 	// touch Amboss with a mutation.
-	if settings.Mode == magmaModeAssisted {
+	if settings.Mode == magmaModeAssisted || settings.Mode == magmaModeAuto {
 		s.reconcileExecution(ctx, token)
+		// Applying and releasing the fee guard are retried from persisted state:
+		// right after the open the channel has no short channel id yet, so the
+		// guard cannot land on the first try.
+		s.syncFeeGuards(ctx)
+	}
+	// Auto mode runs last, after reconciliation has settled anything in flight, so
+	// the policy never decides against a half-finished picture.
+	if settings.Mode == magmaModeAuto {
+		s.runAutoMode(ctx, token)
 	}
 	s.recordSyncResult(&summary, nil)
 	return nil
@@ -652,6 +680,10 @@ func (s *MagmaService) Overview(ctx context.Context) (MagmaOverview, error) {
 	}
 	if token, err := s.token(ctx); err == nil {
 		overview.TokenWarning = magmaTokenExpiryWarning(token, time.Now())
+	}
+	if policy, err := s.loadPolicy(ctx); err == nil {
+		overview.Policy = &policy
+		overview.PolicySummary = magmaPolicySummary(policy)
 	}
 	s.stateMu.RLock()
 	if !s.lastSyncAt.IsZero() {

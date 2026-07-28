@@ -106,14 +106,17 @@ export default function MagmaSales() {
       .finally(() => setBusy(false))
   }
 
-  const handleToggleMode = () => {
-    if (!overview) return
-    const next = overview.settings.mode === 'assisted' ? 'monitor' : 'assisted'
-    // Enabling assisted mode is the point where this app becomes able to spend, so
-    // the two things that decide whether a sale can actually be honoured — token
-    // validity and free on-chain balance — are stated up front.
-    if (next === 'assisted') {
-      const notes = [t('magma.enableAssistedConfirm')]
+  const handleChangeMode = (next: 'monitor' | 'assisted' | 'auto') => {
+    if (!overview || next === overview.settings.mode) return
+    // Leaving monitor mode is the point where this app becomes able to spend, so
+    // the things that decide whether a sale can actually be honoured — token
+    // validity, free on-chain balance, and in auto mode the policy itself — are
+    // stated up front rather than discovered later.
+    if (next !== 'monitor') {
+      const notes = [next === 'auto' ? t('magma.enableAutoConfirm') : t('magma.enableAssistedConfirm')]
+      if (next === 'auto' && overview.policy_summary) {
+        notes.push(t('magma.policyPrefix') + ' ' + overview.policy_summary)
+      }
       if (overview.token_warning) notes.push(overview.token_warning)
       if (overview.capacity) {
         notes.push(
@@ -134,7 +137,12 @@ export default function MagmaSales() {
 
   const orders = overview?.orders ?? []
   const actionNeeded = overview?.action_needed ?? []
-  const assisted = overview?.settings.mode === 'assisted'
+  const mode = overview?.settings.mode ?? 'monitor'
+  const auto = mode === 'auto'
+  // Assisted is the only mode with per-order buttons: in auto the engine owns the
+  // decisions, and a manual click racing it would fight the policy.
+  const assisted = mode === 'assisted'
+  const canAct = assisted || auto
 
   const stats = useMemo(() => {
     const sold = orders.filter((order) => order.channel_point)
@@ -159,16 +167,25 @@ export default function MagmaSales() {
           <div className="flex flex-wrap items-center gap-3">
             <span
               className={`rounded-full px-3 py-1 text-xs uppercase tracking-wide ${
-                assisted
-                  ? 'border border-amber-400/30 bg-amber-500/15 text-amber-200'
-                  : 'border border-white/10 bg-white/5 text-fog/70'
+                auto
+                  ? 'border border-rose-400/30 bg-rose-500/15 text-rose-200'
+                  : assisted
+                    ? 'border border-amber-400/30 bg-amber-500/15 text-amber-200'
+                    : 'border border-white/10 bg-white/5 text-fog/70'
               }`}
             >
-              {assisted ? t('magma.modeAssisted') : t('magma.modeMonitor')}
+              {auto ? t('magma.modeAuto') : assisted ? t('magma.modeAssisted') : t('magma.modeMonitor')}
             </span>
-            <button className="btn-secondary" onClick={handleToggleMode} disabled={busy || !settings}>
-              {assisted ? t('magma.switchToMonitor') : t('magma.switchToAssisted')}
-            </button>
+            <select
+              className="input-field"
+              value={mode}
+              disabled={busy || !settings}
+              onChange={(event) => handleChangeMode(event.target.value as 'monitor' | 'assisted' | 'auto')}
+            >
+              <option value="monitor">{t('magma.modeMonitor')}</option>
+              <option value="assisted">{t('magma.modeAssisted')}</option>
+              <option value="auto">{t('magma.modeAuto')}</option>
+            </select>
             <button className="btn-secondary" onClick={handleRefresh} disabled={busy}>
               {busy ? t('magma.refreshing') : t('magma.refresh')}
             </button>
@@ -176,8 +193,13 @@ export default function MagmaSales() {
         </div>
 
         <p className="text-sm text-fog/70">
-          {assisted ? t('magma.assistedNotice') : t('magma.monitorNotice')}
+          {auto ? t('magma.autoNotice') : assisted ? t('magma.assistedNotice') : t('magma.monitorNotice')}
         </p>
+        {auto && overview?.policy_summary && (
+          <p className="text-xs text-fog/50">
+            {t('magma.policyPrefix')} {overview.policy_summary}
+          </p>
+        )}
 
         {token && !token.configured && (
           <div className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
@@ -199,7 +221,7 @@ export default function MagmaSales() {
             {overview.token_warning}
           </div>
         )}
-        {assisted && overview?.capacity && (
+        {canAct && overview?.capacity && (
           <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-sm text-fog/70">
             <span className="font-semibold text-fog">{t('magma.capacityTitle')}</span>{' '}
             {t('magma.capacityBody', {

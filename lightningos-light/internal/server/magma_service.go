@@ -75,6 +75,8 @@ type MagmaOverview struct {
 	Market        *MagmaMarketSummary `json:"market,omitempty"`
 	Orders        []MagmaOrder        `json:"orders"`
 	ActionNeeded  []MagmaOrder        `json:"action_needed"`
+	Capacity      *MagmaCapacity      `json:"capacity,omitempty"`
+	TokenWarning  string              `json:"token_warning,omitempty"`
 	LastSyncAt    *time.Time          `json:"last_sync_at,omitempty"`
 	LastSyncError string              `json:"last_sync_error,omitempty"`
 }
@@ -642,6 +644,14 @@ func (s *MagmaService) Overview(ctx context.Context) (MagmaOverview, error) {
 		if _, actionable := magmaActionableStatuses[order.Status]; actionable {
 			overview.ActionNeeded = append(overview.ActionNeeded, order)
 		}
+	}
+	// Capacity drives the accept decision, so the operator sees it before clicking
+	// rather than discovering the shortfall after the buyer has already paid.
+	if capacity, err := s.Capacity(ctx); err == nil {
+		overview.Capacity = &capacity
+	}
+	if token, err := s.token(ctx); err == nil {
+		overview.TokenWarning = magmaTokenExpiryWarning(token, time.Now())
 	}
 	s.stateMu.RLock()
 	if !s.lastSyncAt.IsZero() {

@@ -109,6 +109,22 @@ export default function MagmaSales() {
   const handleToggleMode = () => {
     if (!overview) return
     const next = overview.settings.mode === 'assisted' ? 'monitor' : 'assisted'
+    // Enabling assisted mode is the point where this app becomes able to spend, so
+    // the two things that decide whether a sale can actually be honoured — token
+    // validity and free on-chain balance — are stated up front.
+    if (next === 'assisted') {
+      const notes = [t('magma.enableAssistedConfirm')]
+      if (overview.token_warning) notes.push(overview.token_warning)
+      if (overview.capacity) {
+        notes.push(
+          t('magma.capacityBody', {
+            available: overview.capacity.available_sat.toLocaleString(locale),
+            confirmed: overview.capacity.confirmed_sat.toLocaleString(locale)
+          })
+        )
+      }
+      if (!window.confirm(notes.join('\n\n'))) return
+    }
     setBusy(true)
     updateMagmaSettings({ mode: next })
       .then((settings) => setOverview({ ...overview, settings }))
@@ -176,6 +192,28 @@ export default function MagmaSales() {
         {token?.expiring_soon && !token.expired && (
           <div className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
             {t('magma.tokenExpiringSoon', { days: token.days_to_expiry ?? 0 })}
+          </div>
+        )}
+        {overview?.token_warning && !token?.expired && (
+          <div className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+            {overview.token_warning}
+          </div>
+        )}
+        {assisted && overview?.capacity && (
+          <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-sm text-fog/70">
+            <span className="font-semibold text-fog">{t('magma.capacityTitle')}</span>{' '}
+            {t('magma.capacityBody', {
+              available: overview.capacity.available_sat.toLocaleString(locale),
+              confirmed: overview.capacity.confirmed_sat.toLocaleString(locale)
+            })}
+            {overview.capacity.committed_sat > 0 && (
+              <span className="block text-xs text-amber-200">
+                {t('magma.capacityCommitted', {
+                  committed: overview.capacity.committed_sat.toLocaleString(locale),
+                  count: overview.capacity.committed_orders
+                })}
+              </span>
+            )}
           </div>
         )}
         {overview?.last_sync_error && (

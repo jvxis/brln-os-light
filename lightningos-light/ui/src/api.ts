@@ -1329,12 +1329,21 @@ export type MagmaMarketSummary = {
   pending_buyer_orders: number
 }
 
+export type MagmaCapacity = {
+  confirmed_sat: number
+  committed_sat: number
+  committed_orders: number
+  available_sat: number
+}
+
 export type MagmaOverview = {
   settings: MagmaSettings
   token: MagmaTokenState
   market?: MagmaMarketSummary
   orders: MagmaOrder[]
   action_needed?: MagmaOrder[]
+  capacity?: MagmaCapacity
+  token_warning?: string
   last_sync_at?: string
   last_sync_error?: string
 }

@@ -29,17 +29,25 @@ const (
 	// so the invoice has to outlive the whole open-and-confirm cycle.
 	magmaInvoiceExpirySeconds = 180000
 
-	// magmaTokenSafetyWindow is how much token validity must remain before we are
-	// willing to fund a channel. Losing the token between OpenChannel and
-	// sellerAddTransaction leaves capital committed against an unconfirmed sale,
-	// which is the one failure here with no cheap recovery.
+	// magmaTokenSafetyWindow is when we start warning that the token is about to
+	// expire. It is a warning, not a gate: if the token dies between OpenChannel
+	// and sellerAddTransaction the order parks in `confirming`, and
+	// reconcileExecution retries the confirmation on every poll once the token is
+	// renewed. The sale is recoverable, so blocking the open would cost more than
+	// it protects.
 	magmaTokenSafetyWindow = 24 * time.Hour
+
+	// magmaOpenFeeReserveSat is a rough on-chain fee cushion held back when
+	// deciding whether a new order can be honoured. It only needs to be the right
+	// order of magnitude: the exact fee is computed in the open preview.
+	magmaOpenFeeReserveSat = 5000
 )
 
 // magmaLND is the slice of the LND client this app needs. Keeping it narrow lets
 // the execution paths be tested without a node.
 type magmaLND interface {
 	CreateInvoice(ctx context.Context, amountSat int64, memo string, expirySeconds int64, opts *lndclient.CreateInvoiceOptions) (lndclient.CreatedInvoice, error)
+	GetBalances(ctx context.Context) (lndclient.BalanceSummary, error)
 	GetNodeDetails(ctx context.Context, pubkey string) (lndclient.NodeDetails, error)
 	ConnectPeerWithTimeout(ctx context.Context, pubkey string, host string, perm bool, timeoutSec uint64) error
 	OpenChannelWithOutpoints(ctx context.Context, params lndclient.OpenChannelParams) (string, error)
@@ -112,23 +120,24 @@ func (s *MagmaService) requireAssistedMode(ctx context.Context) error {
 	return nil
 }
 
-// usableToken returns the token only when it has enough life left for the whole
-// operation. requireSafetyWindow is set for anything that funds a channel.
-func (s *MagmaService) usableToken(ctx context.Context, requireSafetyWindow bool) (string, error) {
+// usableToken returns the token when it is present and not already expired.
+// Imminent expiry is surfaced as a warning by magmaTokenExpiryWarning instead of
+// blocking, because an unconfirmed sale is recoverable once the token is renewed.
+func (s *MagmaService) usableToken(ctx context.Context) (string, error) {
 	token, err := s.token(ctx)
 	if err != nil {
 		return "", err
 	}
-	if err := magmaTokenUsable(token, time.Now(), requireSafetyWindow); err != nil {
+	if err := magmaTokenUsable(token, time.Now()); err != nil {
 		return "", err
 	}
 	return token, nil
 }
 
-// magmaTokenUsable is the credential gate, kept pure so the rule that protects
-// funds is directly testable. An opaque (non-JWT) token has no readable expiry
-// and is allowed through: we cannot prove it is stale.
-func magmaTokenUsable(token string, now time.Time, requireSafetyWindow bool) error {
+// magmaTokenUsable is the credential gate, kept pure so it is directly testable.
+// An opaque (non-JWT) token has no readable expiry and is allowed through: we
+// cannot prove it is stale.
+func magmaTokenUsable(token string, now time.Time) error {
 	if strings.TrimSpace(token) == "" {
 		return errors.New("Amboss API token is not configured in the Fee Center")
 	}
@@ -139,13 +148,89 @@ func magmaTokenUsable(token string, now time.Time, requireSafetyWindow bool) err
 	if !now.Before(expiry) {
 		return errors.New("the Amboss API token has expired; renew it in the Fee Center")
 	}
-	if requireSafetyWindow && expiry.Sub(now) < magmaTokenSafetyWindow {
-		return fmt.Errorf(
-			"the Amboss API token expires in under %d hours; renew it before opening a channel, "+
-				"otherwise the sale cannot be confirmed after the funds are committed",
-			int(magmaTokenSafetyWindow.Hours()))
-	}
 	return nil
+}
+
+// magmaTokenExpiryWarning reports an imminent expiry as advice rather than a
+// blocker. A token that dies mid-sale parks the order in `confirming` and
+// reconcileExecution finishes it once the token is renewed.
+func magmaTokenExpiryWarning(token string, now time.Time) string {
+	expiry, ok := magmaTokenExpiry(token)
+	if !ok || !now.Before(expiry) {
+		return ""
+	}
+	remaining := expiry.Sub(now)
+	if remaining >= magmaTokenSafetyWindow {
+		return ""
+	}
+	return fmt.Sprintf(
+		"the Amboss API token expires in about %d hours. The channel open still works, "+
+			"but the sale will only be confirmed to Amboss after you renew the token in the Fee Center",
+		int(remaining.Hours()))
+}
+
+// MagmaCapacity is the on-chain picture behind an accept decision.
+type MagmaCapacity struct {
+	ConfirmedSat  int64 `json:"confirmed_sat"`
+	CommittedSat  int64 `json:"committed_sat"`
+	CommittedJobs int   `json:"committed_orders"`
+	AvailableSat  int64 `json:"available_sat"`
+}
+
+// magmaCommittedStates are the orders where we already owe the buyer a channel:
+// the invoice is out, or the funding is mid-flight. Their size is spoken for even
+// though it has not left the wallet yet.
+var magmaCommittedStates = []string{magmaStateAccepting, magmaStateAccepted, magmaStateOpening}
+
+// Capacity reports how much on-chain balance is genuinely free for a new sale.
+//
+// The subtlety is that accepting an order is a promise, not a spend. Two orders
+// arriving minutes apart can each fit the wallet on their own and not fit
+// together; checking only the raw balance would accept both and then fail to open
+// the second, which Amboss records as SELLER_FAILED_TO_OPEN_CHANNEL.
+func (s *MagmaService) Capacity(ctx context.Context) (MagmaCapacity, error) {
+	if s.lnd == nil {
+		return MagmaCapacity{}, errMagmaNoLND
+	}
+	balances, err := s.lnd.GetBalances(ctx)
+	if err != nil {
+		return MagmaCapacity{}, err
+	}
+	capacity := MagmaCapacity{ConfirmedSat: balances.OnchainConfirmedSat}
+	if err := s.db.QueryRow(ctx, `
+select coalesce(sum(size_sat),0), count(*) from magma_orders where local_state = any($1)
+`, magmaCommittedStates).Scan(&capacity.CommittedSat, &capacity.CommittedJobs); err != nil {
+		return MagmaCapacity{}, err
+	}
+	capacity.AvailableSat = capacity.ConfirmedSat - capacity.CommittedSat
+	if capacity.AvailableSat < 0 {
+		capacity.AvailableSat = 0
+	}
+	return capacity, nil
+}
+
+// ensureCapacityFor refuses an order the wallet cannot honour once every already
+// promised channel is accounted for.
+func (s *MagmaService) ensureCapacityFor(ctx context.Context, sizeSat int64) error {
+	capacity, err := s.Capacity(ctx)
+	if err != nil {
+		return fmt.Errorf("could not verify the on-chain balance before accepting: %w", err)
+	}
+	needed := sizeSat + magmaOpenFeeReserveSat
+	if capacity.AvailableSat >= needed {
+		return nil
+	}
+	if capacity.CommittedSat > 0 {
+		return fmt.Errorf(
+			"not enough confirmed on-chain balance to honour this order: it needs ~%s sat, "+
+				"and only %s sat of the %s sat confirmed balance is free "+
+				"(%s sat is already promised to %d order(s) awaiting a channel open)",
+			formatInt(needed), formatInt(capacity.AvailableSat), formatInt(capacity.ConfirmedSat),
+			formatInt(capacity.CommittedSat), capacity.CommittedJobs)
+	}
+	return fmt.Errorf(
+		"not enough confirmed on-chain balance to honour this order: it needs ~%s sat, confirmed balance is %s sat",
+		formatInt(needed), formatInt(capacity.ConfirmedSat))
 }
 
 // AcceptOrder creates the invoice and hands it to Amboss. It deliberately
@@ -161,7 +246,7 @@ func (s *MagmaService) AcceptOrder(ctx context.Context, orderID string) (MagmaOr
 	if s.lnd == nil {
 		return MagmaOrder{}, errMagmaNoLND
 	}
-	token, err := s.usableToken(ctx, false)
+	token, err := s.usableToken(ctx)
 	if err != nil {
 		return MagmaOrder{}, err
 	}
@@ -182,6 +267,13 @@ func (s *MagmaService) AcceptOrder(ctx context.Context, orderID string) (MagmaOr
 	}
 	if live.RevenueSat <= 0 {
 		return MagmaOrder{}, errors.New("Amboss reported a non-positive invoice amount")
+	}
+
+	// Balance is verified here, not at open time. Accepting is a promise: once the
+	// buyer pays the invoice we are committed to funding the channel, and finding
+	// out then that the wallet is short earns a SELLER_FAILED_TO_OPEN_CHANNEL.
+	if err := s.ensureCapacityFor(ctx, live.SizeSat); err != nil {
+		return MagmaOrder{}, err
 	}
 
 	// Write-ahead: if the invoice is created but sellerAcceptOrder never returns,
@@ -229,7 +321,7 @@ func (s *MagmaService) RejectOrder(ctx context.Context, orderID string) (MagmaOr
 	if err := s.requireAssistedMode(ctx); err != nil {
 		return MagmaOrder{}, err
 	}
-	token, err := s.usableToken(ctx, false)
+	token, err := s.usableToken(ctx)
 	if err != nil {
 		return MagmaOrder{}, err
 	}
@@ -340,8 +432,14 @@ func (s *MagmaService) OpenChannelPreview(ctx context.Context, orderID string, s
 		preview.Blockers = append(preview.Blockers, fmt.Sprintf(
 			"Amboss reports %s; the buyer payment must land first", record.MagmaStatus))
 	}
-	if _, err := s.usableToken(ctx, true); err != nil {
-		preview.Blockers = append(preview.Blockers, err.Error())
+	// An expired token blocks (the confirmation would fail outright); one that is
+	// merely close to expiry only warns, because the confirmation is retried by
+	// reconcileExecution once it is renewed.
+	if token, err := s.token(ctx); err != nil || magmaTokenUsable(token, time.Now()) != nil {
+		preview.Blockers = append(preview.Blockers,
+			"the Amboss API token is missing or expired; renew it in the Fee Center")
+	} else if warning := magmaTokenExpiryWarning(token, time.Now()); warning != "" {
+		preview.Warnings = append(preview.Warnings, warning)
 	}
 	preview.CanOpen = len(preview.Blockers) == 0
 	return preview, nil
@@ -368,7 +466,7 @@ func (s *MagmaService) OpenChannelForOrder(ctx context.Context, orderID string, 
 	if req.SatPerVbyte <= 0 {
 		return MagmaOrder{}, errors.New("sat_per_vbyte must be positive")
 	}
-	token, err := s.usableToken(ctx, true)
+	token, err := s.usableToken(ctx)
 	if err != nil {
 		return MagmaOrder{}, err
 	}

@@ -25,58 +25,30 @@ func magmaTestJWT(t *testing.T, expiry time.Time) string {
 	return "header." + base64.RawURLEncoding.EncodeToString(payload) + ".signature"
 }
 
-// The worst outcome available in this app is a token dying between OpenChannel
-// and sellerAddTransaction: the funds are committed but the sale cannot be
-// confirmed. Funding therefore demands a comfortable margin, while read-only
-// calls only need the token to still be valid.
-func TestMagmaTokenUsableGuardsChannelFunding(t *testing.T) {
+// Only a missing or already-expired token blocks. An imminent expiry does not:
+// if the token dies between OpenChannel and sellerAddTransaction the order parks
+// in `confirming` and reconcileExecution finishes it once the token is renewed,
+// so refusing to open would cost a sale to prevent a recoverable delay.
+func TestMagmaTokenUsable(t *testing.T) {
 	now := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
 	cases := []struct {
-		name                string
-		token               string
-		requireSafetyWindow bool
-		wantErr             bool
-		wantErrContains     string
+		name            string
+		token           string
+		wantErr         bool
+		wantErrContains string
 	}{
-		{
-			name:    "empty token",
-			token:   "   ",
-			wantErr: true, wantErrContains: "not configured",
-		},
-		{
-			name:    "expired token blocks even read-only calls",
-			token:   magmaTestJWT(t, now.Add(-time.Minute)),
-			wantErr: true, wantErrContains: "expired",
-		},
-		{
-			name:                "expiring in 2h blocks funding",
-			token:               magmaTestJWT(t, now.Add(2*time.Hour)),
-			requireSafetyWindow: true,
-			wantErr:             true, wantErrContains: "before opening a channel",
-		},
-		{
-			// Still fine for reads: accepting an order commits no funds, and the
-			// invoice can simply go unpaid.
-			name:                "expiring in 2h still allows read-only work",
-			token:               magmaTestJWT(t, now.Add(2*time.Hour)),
-			requireSafetyWindow: false,
-		},
-		{
-			name:                "comfortable margin allows funding",
-			token:               magmaTestJWT(t, now.Add(72*time.Hour)),
-			requireSafetyWindow: true,
-		},
-		{
-			// An opaque API key carries no readable expiry; refusing it would
-			// break a perfectly valid credential.
-			name:                "opaque non-JWT token is allowed",
-			token:               "plain-api-key",
-			requireSafetyWindow: true,
-		},
+		{name: "empty token", token: "   ", wantErr: true, wantErrContains: "not configured"},
+		{name: "expired token", token: magmaTestJWT(t, now.Add(-time.Minute)),
+			wantErr: true, wantErrContains: "expired"},
+		{name: "expiring in 2h is still usable", token: magmaTestJWT(t, now.Add(2*time.Hour))},
+		{name: "comfortable margin", token: magmaTestJWT(t, now.Add(72*time.Hour))},
+		// An opaque API key carries no readable expiry; refusing it would break a
+		// perfectly valid credential.
+		{name: "opaque non-JWT token", token: "plain-api-key"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := magmaTokenUsable(tc.token, now, tc.requireSafetyWindow)
+			err := magmaTokenUsable(tc.token, now)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatal("expected an error")
@@ -90,6 +62,22 @@ func TestMagmaTokenUsableGuardsChannelFunding(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+func TestMagmaTokenExpiryWarning(t *testing.T) {
+	now := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
+	if warning := magmaTokenExpiryWarning(magmaTestJWT(t, now.Add(6*time.Hour)), now); warning == "" {
+		t.Fatal("a token expiring in 6h must warn")
+	}
+	if warning := magmaTokenExpiryWarning(magmaTestJWT(t, now.Add(72*time.Hour)), now); warning != "" {
+		t.Fatalf("a token with 72h left must stay quiet, got %q", warning)
+	}
+	if warning := magmaTokenExpiryWarning("plain-api-key", now); warning != "" {
+		t.Fatalf("an opaque token has no expiry to warn about, got %q", warning)
+	}
+	if warning := magmaTokenExpiryWarning(magmaTestJWT(t, now.Add(-time.Hour)), now); warning != "" {
+		t.Fatalf("an already-expired token is a blocker, not a warning, got %q", warning)
 	}
 }
 

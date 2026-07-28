@@ -21,7 +21,6 @@ const (
 	closeManagerPollInterval       = 45 * time.Second
 	closeManagerIdlePollInterval   = 5 * time.Minute
 	closeManagerReadinessTimeout   = 3 * time.Second
-	closeManagerSlowRefresh        = 5 * time.Second
 	closeManagerRefreshMinAge      = 15 * time.Second
 	closeManagerDefaultListLimit   = 100
 	closeManagerMaxListLimit       = 500
@@ -177,14 +176,12 @@ func (s *CloseManagerService) runLoop() {
 			continue
 		}
 
-		refreshStartedAt := time.Now()
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		refreshErr := s.RefreshNow(ctx)
 		if refreshErr != nil && s.logger != nil {
 			s.logger.Printf("close manager refresh failed: %v", refreshErr)
 		}
 		cancel()
-		refreshDuration := time.Since(refreshStartedAt)
 
 		stateCtx, stateCancel := context.WithTimeout(context.Background(), closeManagerReadinessTimeout)
 		hasActive, stateErr := s.hasActiveSessions(stateCtx)
@@ -192,7 +189,7 @@ func (s *CloseManagerService) runLoop() {
 		if stateErr != nil && s.logger != nil {
 			s.logger.Printf("close manager active-session check failed: %v", stateErr)
 		}
-		timer.Reset(closeManagerNextPollInterval(hasActive, stateErr, refreshErr, refreshDuration))
+		timer.Reset(closeManagerNextPollInterval(hasActive, stateErr))
 	}
 }
 
@@ -211,10 +208,7 @@ select exists (
 	return active, err
 }
 
-func closeManagerNextPollInterval(hasActive bool, stateErr error, refreshErr error, refreshDuration time.Duration) time.Duration {
-	if refreshErr != nil || refreshDuration >= closeManagerSlowRefresh {
-		return closeManagerIdlePollInterval
-	}
+func closeManagerNextPollInterval(hasActive bool, stateErr error) time.Duration {
 	if hasActive || stateErr != nil {
 		return closeManagerPollInterval
 	}

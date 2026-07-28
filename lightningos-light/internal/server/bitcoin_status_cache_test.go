@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -80,4 +82,129 @@ func TestMarkBitcoinStatusStaleAnnotatesLastOKAge(t *testing.T) {
 	if status.RPCLastOKAgeSeconds != 75 {
 		t.Fatalf("expected last OK age 75, got %d", status.RPCLastOKAgeSeconds)
 	}
+}
+
+func TestBitcoinActiveStatusCachedKeepsHealthyStatusDuringBackgroundRefresh(t *testing.T) {
+	now := time.Now()
+	s := &Server{
+		bitcoinActiveCache: map[string]cachedBitcoinStatus{
+			"remote": {
+				value: bitcoinStatus{
+					RPCOk:  true,
+					Chain:  "main",
+					Blocks: 900000,
+				},
+				expiresAt: now.Add(-time.Second),
+				fetchedAt: now.Add(-31 * time.Second),
+			},
+		},
+	}
+	refreshStarted := make(chan struct{})
+	releaseRefresh := make(chan struct{})
+
+	status, err := s.bitcoinActiveStatusCachedWithFetch(
+		context.Background(),
+		"remote",
+		func(ctx context.Context) (bitcoinStatus, error) {
+			close(refreshStarted)
+			select {
+			case <-releaseRefresh:
+				return bitcoinStatus{RPCOk: true, Chain: "main", Blocks: 900001}, nil
+			case <-ctx.Done():
+				return bitcoinStatus{}, ctx.Err()
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error while refresh is in flight: %v", err)
+	}
+	if !status.RPCOk || status.RPCStale {
+		t.Fatalf("healthy cached status must stay healthy during refresh, got %+v", status)
+	}
+
+	select {
+	case <-refreshStarted:
+	case <-time.After(time.Second):
+		t.Fatal("background refresh did not start")
+	}
+	close(releaseRefresh)
+
+	refreshed := waitForCachedBitcoinStatus(t, s, "remote", func(status bitcoinStatus) bool {
+		return status.Blocks == 900001
+	})
+	if !refreshed.RPCOk || refreshed.RPCStale {
+		t.Fatalf("successful refresh must store a healthy status, got %+v", refreshed)
+	}
+}
+
+func TestBitcoinActiveStatusCachedMarksStaleAfterBackgroundRefreshFailure(t *testing.T) {
+	now := time.Now()
+	s := &Server{
+		bitcoinActiveCache: map[string]cachedBitcoinStatus{
+			"remote": {
+				value: bitcoinStatus{
+					RPCOk:  true,
+					Chain:  "main",
+					Blocks: 900000,
+				},
+				expiresAt: now.Add(-time.Second),
+				fetchedAt: now.Add(-31 * time.Second),
+			},
+		},
+	}
+	refreshStarted := make(chan struct{})
+	releaseRefresh := make(chan struct{})
+
+	status, err := s.bitcoinActiveStatusCachedWithFetch(
+		context.Background(),
+		"remote",
+		func(ctx context.Context) (bitcoinStatus, error) {
+			close(refreshStarted)
+			select {
+			case <-releaseRefresh:
+				return bitcoinStatus{}, errors.New("rpc unavailable")
+			case <-ctx.Done():
+				return bitcoinStatus{}, ctx.Err()
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error while refresh is in flight: %v", err)
+	}
+	if !status.RPCOk || status.RPCStale {
+		t.Fatalf("refresh in flight must not preemptively mark status stale, got %+v", status)
+	}
+
+	select {
+	case <-refreshStarted:
+	case <-time.After(time.Second):
+		t.Fatal("background refresh did not start")
+	}
+	close(releaseRefresh)
+
+	stale := waitForCachedBitcoinStatus(t, s, "remote", func(status bitcoinStatus) bool {
+		return status.RPCStale
+	})
+	if !stale.RPCOk {
+		t.Fatalf("failed refresh must preserve the last known healthy result, got %+v", stale)
+	}
+}
+
+func waitForCachedBitcoinStatus(
+	t *testing.T,
+	s *Server,
+	source string,
+	match func(bitcoinStatus) bool,
+) bitcoinStatus {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		status, err, ok := s.cachedBitcoinActiveStatus(source, time.Now())
+		if ok && err == nil && match(status) {
+			return status
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for cached Bitcoin status")
+	return bitcoinStatus{}
 }

@@ -56,6 +56,8 @@ type Client struct {
 	statusErr          error
 	statusNextFetch    time.Time
 	statusRefreshing   bool
+	statusFetchSeq     uint64
+	statusStoredSeq    uint64
 	infoCache          infoSnapshot
 	infoCacheAt        time.Time
 	infoCacheValid     bool
@@ -862,21 +864,27 @@ func (c *Client) GetStatus(ctx context.Context) (Status, error) {
 			c.statusMu.Unlock()
 			return status, err
 		}
+		var refreshSeq uint64
 		if !c.statusRefreshing {
 			c.statusRefreshing = true
-			go c.refreshStatusCache()
+			c.statusFetchSeq++
+			refreshSeq = c.statusFetchSeq
 		}
 		c.statusMu.Unlock()
+		if refreshSeq != 0 {
+			go c.refreshStatusCache(refreshSeq)
+		}
 		return status, err
 	}
 	c.statusMu.Unlock()
 
+	fetchSeq := c.beginStatusFetch()
 	status, err := c.getStatusUncached(ctx)
-	c.storeStatusCache(status, err)
+	c.storeStatusCache(fetchSeq, status, err)
 	return status, err
 }
 
-func (c *Client) refreshStatusCache() {
+func (c *Client) refreshStatusCache(fetchSeq uint64) {
 	defer func() {
 		c.statusMu.Lock()
 		c.statusRefreshing = false
@@ -886,24 +894,35 @@ func (c *Client) refreshStatusCache() {
 	ctx, cancel := context.WithTimeout(context.Background(), statusRefreshTimeout)
 	defer cancel()
 	status, err := c.getStatusUncached(ctx)
-	c.storeStatusCache(status, err)
+	c.storeStatusCache(fetchSeq, status, err)
 }
 
 func (c *Client) GetStatusFresh(ctx context.Context) (Status, error) {
+	fetchSeq := c.beginStatusFetch()
 	status, err := c.getStatusUncached(ctx)
-	c.storeStatusCache(status, err)
+	c.storeStatusCache(fetchSeq, status, err)
 	return status, err
 }
 
 func (c *Client) InvalidateStatusCache() {
 	c.statusMu.Lock()
+	c.statusFetchSeq++
+	c.statusStoredSeq = c.statusFetchSeq
 	c.statusCached = false
 	c.statusErr = nil
 	c.statusNextFetch = time.Time{}
 	c.statusMu.Unlock()
 }
 
-func (c *Client) storeStatusCache(status Status, err error) {
+func (c *Client) beginStatusFetch() uint64 {
+	c.statusMu.Lock()
+	c.statusFetchSeq++
+	fetchSeq := c.statusFetchSeq
+	c.statusMu.Unlock()
+	return fetchSeq
+}
+
+func (c *Client) storeStatusCache(fetchSeq uint64, status Status, err error) {
 	ttl := statusCacheOK
 	if err != nil {
 		ttl = statusCacheErr
@@ -913,6 +932,11 @@ func (c *Client) storeStatusCache(status Status, err error) {
 	}
 
 	c.statusMu.Lock()
+	if fetchSeq < c.statusStoredSeq {
+		c.statusMu.Unlock()
+		return
+	}
+	c.statusStoredSeq = fetchSeq
 	c.statusCache = status
 	c.statusErr = err
 	c.statusCached = true

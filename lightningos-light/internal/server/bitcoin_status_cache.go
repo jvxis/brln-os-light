@@ -124,6 +124,19 @@ func markBitcoinStatusStale(status bitcoinStatus, fetchedAt, now time.Time) bitc
 
 func (s *Server) bitcoinActiveStatusCached(ctx context.Context) (bitcoinStatus, error) {
 	source := readBitcoinSource()
+	return s.bitcoinActiveStatusCachedWithFetch(ctx, source, func(fetchCtx context.Context) (bitcoinStatus, error) {
+		if source == "local" {
+			return s.bitcoinLocalStatusActive(fetchCtx)
+		}
+		return s.bitcoinStatus(fetchCtx)
+	})
+}
+
+func (s *Server) bitcoinActiveStatusCachedWithFetch(
+	ctx context.Context,
+	source string,
+	fetch func(context.Context) (bitcoinStatus, error),
+) (bitcoinStatus, error) {
 	now := time.Now()
 
 	if status, err, ok := s.cachedBitcoinActiveStatus(source, now); ok {
@@ -139,15 +152,7 @@ func (s *Server) bitcoinActiveStatusCached(ctx context.Context) (bitcoinStatus, 
 		fetchCtx, cancel := context.WithTimeout(context.Background(), bitcoinActiveFetchTimeout(source))
 		defer cancel()
 
-		var (
-			status bitcoinStatus
-			err    error
-		)
-		if source == "local" {
-			status, err = s.bitcoinLocalStatusActive(fetchCtx)
-		} else {
-			status, err = s.bitcoinStatus(fetchCtx)
-		}
+		status, err := fetch(fetchCtx)
 
 		now = time.Now()
 		statusFetchedAt := time.Time{}
@@ -174,8 +179,11 @@ func (s *Server) bitcoinActiveStatusCached(ctx context.Context) (bitcoinStatus, 
 	})
 
 	staleNow := time.Now()
-	if status, fetchedAt, ok := s.staleBitcoinActiveStatus(source, staleNow); ok {
-		return markBitcoinStatusStale(status, fetchedAt, staleNow), nil
+	if status, _, ok := s.staleBitcoinActiveStatus(source, staleNow); ok {
+		// An expired healthy result is still valid while its background refresh
+		// is in flight. Mark it stale only after that refresh actually fails or
+		// exceeds the refresh timeout.
+		return status, nil
 	}
 
 	select {

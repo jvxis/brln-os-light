@@ -7,9 +7,10 @@ import {
   openMagmaChannel,
   refreshMagma,
   rejectMagmaOrder,
+  updateMagmaPolicy,
   updateMagmaSettings
 } from '../api'
-import type { MagmaOpenPreview, MagmaOrder, MagmaOverview } from '../api'
+import type { MagmaOpenPreview, MagmaOrder, MagmaOverview, MagmaPolicy } from '../api'
 import { getLocale } from '../i18n'
 
 const BLOCKS_PER_DAY = 144
@@ -77,6 +78,8 @@ export default function MagmaSales() {
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [pendingMode, setPendingMode] = useState<'assisted' | 'auto' | null>(null)
+  const [policyOpen, setPolicyOpen] = useState(false)
 
   const load = () => {
     getMagmaOverview()
@@ -114,28 +117,21 @@ export default function MagmaSales() {
       .finally(() => setBusy(false))
   }
 
+  // Leaving monitor mode is the point where this app becomes able to spend, so it
+  // goes through a modal that states what changes and what the wallet can back.
+  // Dropping straight back to monitor is always safe and needs no ceremony.
   const handleChangeMode = (next: 'monitor' | 'assisted' | 'auto') => {
     if (!overview || next === overview.settings.mode) return
-    // Leaving monitor mode is the point where this app becomes able to spend, so
-    // the things that decide whether a sale can actually be honoured — token
-    // validity, free on-chain balance, and in auto mode the policy itself — are
-    // stated up front rather than discovered later.
-    if (next !== 'monitor') {
-      const notes = [next === 'auto' ? t('magma.enableAutoConfirm') : t('magma.enableAssistedConfirm')]
-      if (next === 'auto' && overview.policy_summary) {
-        notes.push(t('magma.policyPrefix') + ' ' + overview.policy_summary)
-      }
-      if (overview.token_warning) notes.push(overview.token_warning)
-      if (overview.capacity) {
-        notes.push(
-          t('magma.capacityBody', {
-            available: overview.capacity.available_sat.toLocaleString(locale),
-            confirmed: overview.capacity.confirmed_sat.toLocaleString(locale)
-          })
-        )
-      }
-      if (!window.confirm(notes.join('\n\n'))) return
+    if (next === 'monitor') {
+      commitMode(next)
+      return
     }
+    setPendingMode(next)
+  }
+
+  const commitMode = (next: 'monitor' | 'assisted' | 'auto') => {
+    if (!overview) return
+    setPendingMode(null)
     setBusy(true)
     updateMagmaSettings({ mode: next })
       .then((settings) => setOverview({ ...overview, settings }))
@@ -215,10 +211,18 @@ export default function MagmaSales() {
         <p className="text-sm text-fog/70">
           {auto ? t('magma.autoNotice') : assisted ? t('magma.assistedNotice') : t('magma.monitorNotice')}
         </p>
-        {auto && overview?.policy_summary && (
-          <p className="text-xs text-fog/50">
-            {t('magma.policyPrefix')} {overview.policy_summary}
-          </p>
+        {/* Shown in assisted mode too, so the policy can be reviewed and tuned
+            before automatic mode is switched on rather than after it starts
+            spending. */}
+        {canAct && overview?.policy_summary && (
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="text-xs text-fog/50">
+              {auto ? t('magma.policyPrefix') : t('magma.policyPreviewPrefix')} {overview.policy_summary}
+            </p>
+            <button className="btn-secondary text-xs px-3 py-1.5" onClick={() => setPolicyOpen(true)}>
+              {t('magma.editPolicy')}
+            </button>
+          </div>
         )}
 
         {token && !token.configured && (
@@ -419,6 +423,197 @@ export default function MagmaSales() {
           />
         )}
       </section>
+
+      {pendingMode && (
+        <MagmaModeConfirm
+          mode={pendingMode}
+          overview={overview}
+          locale={locale}
+          onCancel={() => setPendingMode(null)}
+          onConfirm={() => commitMode(pendingMode)}
+        />
+      )}
+
+      {policyOpen && overview?.policy && (
+        <MagmaPolicyDialog
+          initial={overview.policy}
+          onClose={() => setPolicyOpen(false)}
+          onSaved={(policy) => {
+            setOverview({ ...overview, policy })
+            setPolicyOpen(false)
+            load()
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+// MagmaModeConfirm replaces a browser confirm() so the consequences of leaving
+// monitor mode can be laid out properly: what the mode may do, what the policy
+// currently accepts, and whether the wallet and token can actually back it.
+function MagmaModeConfirm({
+  mode,
+  overview,
+  locale,
+  onCancel,
+  onConfirm
+}: {
+  mode: 'assisted' | 'auto'
+  overview: MagmaOverview | null
+  locale: string
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  const { t } = useTranslation()
+  const isAuto = mode === 'auto'
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+      <div className="w-full max-w-lg rounded-lg border border-white/10 bg-ink p-5 shadow-xl">
+        <div className="space-y-2">
+          <h3 className="text-lg font-semibold text-fog">
+            {isAuto ? t('magma.modeAuto') : t('magma.modeAssisted')}
+          </h3>
+          <p className="text-sm text-fog/70">
+            {isAuto ? t('magma.enableAutoConfirm') : t('magma.enableAssistedConfirm')}
+          </p>
+        </div>
+
+        <div className="mt-4 space-y-3 text-sm">
+          {isAuto && overview?.policy_summary && (
+            <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-fog/70">
+              <span className="text-xs uppercase tracking-wide text-fog/45">
+                {t('magma.policyPrefix')}
+              </span>
+              <p className="mt-1">{overview.policy_summary}</p>
+            </div>
+          )}
+          {overview?.capacity && (
+            <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-fog/70">
+              <span className="text-xs uppercase tracking-wide text-fog/45">
+                {t('magma.capacityTitle')}
+              </span>
+              <p className="mt-1">
+                {t('magma.capacityBody', {
+                  available: overview.capacity.available_sat.toLocaleString(locale),
+                  confirmed: overview.capacity.confirmed_sat.toLocaleString(locale)
+                })}
+              </p>
+            </div>
+          )}
+          {overview?.token_warning && (
+            <p className="rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-amber-100">
+              {overview.token_warning}
+            </p>
+          )}
+        </div>
+
+        <div className="mt-5 flex flex-wrap justify-end gap-3">
+          <button className="btn-secondary" onClick={onCancel}>
+            {t('common.cancel')}
+          </button>
+          <button className="btn-primary" onClick={onConfirm}>
+            {isAuto ? t('magma.confirmEnableAuto') : t('magma.confirmEnableAssisted')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// magmaPolicyFields drives the editor. Keeping it declarative means a new policy
+// knob is one entry here plus its label, instead of another hand-written input.
+const magmaPolicyFields: { key: keyof MagmaPolicy; labelKey: string; hintKey?: string }[] = [
+  { key: 'min_channel_size_sat', labelKey: 'magma.policyMinSize' },
+  { key: 'max_channel_size_sat', labelKey: 'magma.policyMaxSize' },
+  { key: 'min_revenue_sat', labelKey: 'magma.policyMinRevenue' },
+  { key: 'min_price_ppm', labelKey: 'magma.policyMinPrice' },
+  { key: 'min_price_ppm_per_day', labelKey: 'magma.policyMinPricePerDay', hintKey: 'magma.policyMinPricePerDayHint' },
+  { key: 'min_fee_rate_cap_ppm', labelKey: 'magma.policyMinFeeCap', hintKey: 'magma.policyMinFeeCapHint' },
+  { key: 'max_commitment_days', labelKey: 'magma.policyMaxCommitment' },
+  { key: 'max_sat_per_vbyte', labelKey: 'magma.policyMaxFeeRate' },
+  { key: 'max_onchain_cost_pct', labelKey: 'magma.policyMaxCostPct', hintKey: 'magma.policyMaxCostPctHint' },
+  { key: 'min_onchain_reserve_sat', labelKey: 'magma.policyReserve', hintKey: 'magma.policyReserveHint' },
+  { key: 'max_concurrent_opens', labelKey: 'magma.policyMaxConcurrent' },
+  { key: 'max_daily_orders', labelKey: 'magma.policyMaxDailyOrders' },
+  { key: 'max_daily_size_sat', labelKey: 'magma.policyMaxDailySize' }
+]
+
+function MagmaPolicyDialog({
+  initial,
+  onClose,
+  onSaved
+}: {
+  initial: MagmaPolicy
+  onClose: () => void
+  onSaved: (policy: MagmaPolicy) => void
+}) {
+  const { t } = useTranslation()
+  const [draft, setDraft] = useState<MagmaPolicy>(initial)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const setField = (key: keyof MagmaPolicy, raw: string) => {
+    const value = raw === '' ? 0 : Number(raw)
+    if (Number.isNaN(value) || value < 0) return
+    setDraft({ ...draft, [key]: value })
+  }
+
+  const save = () => {
+    setBusy(true)
+    setError('')
+    updateMagmaPolicy(draft)
+      .then((policy) => onSaved(policy))
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBusy(false))
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-8">
+      <div className="max-h-full w-full max-w-2xl overflow-y-auto rounded-lg border border-white/10 bg-ink p-5 shadow-xl">
+        <div className="space-y-2">
+          <h3 className="text-lg font-semibold text-fog">{t('magma.policyTitle')}</h3>
+          <p className="text-sm text-fog/60">{t('magma.policyBody')}</p>
+        </div>
+
+        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          {magmaPolicyFields.map((field) => (
+            <label key={field.key} className="grid gap-1 text-sm">
+              <span className="text-xs uppercase tracking-wide text-fog/50">{t(field.labelKey)}</span>
+              <input
+                className="input-field"
+                type="number"
+                min={0}
+                value={draft[field.key] as number}
+                onChange={(event) => setField(field.key, event.target.value)}
+              />
+              {field.hintKey && <span className="text-xs text-fog/45">{t(field.hintKey)}</span>}
+            </label>
+          ))}
+        </div>
+
+        <label className="mt-4 flex items-center gap-2 text-sm text-fog/70">
+          <input
+            type="checkbox"
+            checked={draft.auto_reject_declined}
+            onChange={(event) => setDraft({ ...draft, auto_reject_declined: event.target.checked })}
+          />
+          {t('magma.policyAutoReject')}
+        </label>
+        <p className="mt-1 text-xs text-fog/45">{t('magma.policyAutoRejectHint')}</p>
+
+        <p className="mt-4 text-xs text-fog/45">{t('magma.policyZeroHint')}</p>
+        {error && <p className="mt-3 text-sm text-rose-200">{error}</p>}
+
+        <div className="mt-5 flex flex-wrap justify-end gap-3">
+          <button className="btn-secondary" onClick={onClose} disabled={busy}>
+            {t('common.cancel')}
+          </button>
+          <button className="btn-primary" onClick={save} disabled={busy}>
+            {busy ? t('magma.working') : t('common.save')}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

@@ -519,7 +519,10 @@ where order_id=$1
 		"Opening a %s sat channel to %s at %d sat/vB",
 		formatInt(live.SizeSat), magmaShortPubkey(live.BuyerPubkey), req.SatPerVbyte), nil)
 
-	fundingTxid, err := s.lnd.OpenChannelWithOutpoints(ctx, lndclient.OpenChannelParams{
+	// OpenChannelWithOutpoints returns the full channel point (txid:vout), not a
+	// bare txid. Storing it as a txid makes every later lookup miss, because the
+	// searches append their own ":vout".
+	openedPoint, err := s.lnd.OpenChannelWithOutpoints(ctx, lndclient.OpenChannelParams{
 		PubkeyHex:       live.BuyerPubkey,
 		LocalFundingSat: live.SizeSat,
 		SatPerVbyte:     req.SatPerVbyte,
@@ -535,6 +538,7 @@ where order_id=$1
 		return MagmaOrder{}, fmt.Errorf("failed to open the channel: %w", err)
 	}
 
+	fundingTxid := magmaTxidFromPoint(openedPoint)
 	if _, err := s.db.Exec(ctx, `
 update magma_orders set local_state=$2, funding_txid=$3, updated_at=now() where order_id=$1
 `, record.OrderID, magmaStateOpenBroadcast, fundingTxid); err != nil {
@@ -594,7 +598,9 @@ func (s *MagmaService) findChannelPoint(ctx context.Context, fundingTxid string)
 	if s.lnd == nil {
 		return "", errMagmaNoLND
 	}
-	txid := strings.TrimSpace(fundingTxid)
+	// Tolerates being handed a full channel point. Rows written before this was
+	// understood store txid:vout here, and they must still reconcile.
+	txid := magmaTxidFromPoint(fundingTxid)
 	if txid == "" {
 		return "", errors.New("funding txid required")
 	}
@@ -617,6 +623,17 @@ func (s *MagmaService) findChannelPoint(ctx context.Context, fundingTxid string)
 		}
 	}
 	return "", nil
+}
+
+// magmaTxidFromPoint returns the transaction id from either a bare txid or a
+// full channel point. LND's open call returns the latter, and the two are easy
+// to confuse because both are "the thing identifying the funding".
+func magmaTxidFromPoint(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if txid, _, found := strings.Cut(trimmed, ":"); found {
+		return strings.TrimSpace(txid)
+	}
+	return trimmed
 }
 
 // existingChannelFor reports a channel to the buyer that already matches this
@@ -802,7 +819,7 @@ where local_state in ($1,$2,$3)
 			if _, err := s.db.Exec(ctx, `
 update magma_orders set local_state=$2, channel_point=$3, funding_txid=$4, updated_at=now()
 where order_id=$1
-`, row.orderID, magmaStateConfirming, point, strings.SplitN(point, ":", 2)[0]); err != nil {
+`, row.orderID, magmaStateConfirming, point, magmaTxidFromPoint(point)); err != nil {
 				continue
 			}
 			s.appendEvent(ctx, row.orderID, "reconciled", "warning", fmt.Sprintf(

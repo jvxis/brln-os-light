@@ -586,6 +586,15 @@ update magma_orders set local_state=$2, channel_point=$3, updated_at=now() where
 		return err
 	}
 	if err := s.amboss.AddTransaction(ctx, token, orderID, channelPoint); err != nil {
+		// Right after the broadcast, Amboss usually has not seen the transaction
+		// yet and answers that the output does not exist. That is propagation, not
+		// a wrong outpoint: the reconciliation retries and it lands within a cycle
+		// or two. Alerting on it trains the operator to ignore real alerts.
+		if magmaErrorIsPropagationRace(err) {
+			s.appendEvent(ctx, orderID, "confirm_pending", "info", fmt.Sprintf(
+				"Amboss has not seen funding transaction %s yet; retrying", fundingTxid), nil)
+			return err
+		}
 		s.failOrder(ctx, orderID, magmaStateConfirming,
 			fmt.Sprintf("failed to confirm the channel point to Amboss: %v", err))
 		return err
@@ -637,6 +646,20 @@ func (s *MagmaService) findChannelPoint(ctx context.Context, fundingTxid string)
 		}
 	}
 	return "", nil
+}
+
+// magmaErrorIsPropagationRace recognises Amboss complaining about a transaction
+// or output it cannot see yet. Observed verbatim in production two seconds after
+// a broadcast: "Output 1 not found in transaction", which resolved on its own
+// ninety seconds later with the very same channel point.
+func magmaErrorIsPropagationRace(err error) bool {
+	if err == nil {
+		return false
+	}
+	lowered := strings.ToLower(err.Error())
+	return strings.Contains(lowered, "not found in transaction") ||
+		strings.Contains(lowered, "transaction not found") ||
+		strings.Contains(lowered, "output not found")
 }
 
 // magmaTxidFromPoint returns the transaction id from either a bare txid or a

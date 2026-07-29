@@ -624,10 +624,22 @@ function MagmaBackfillDialog({
   const [error, setError] = useState('')
 
   useEffect(() => {
+    let active = true
     previewMagmaBackfill()
-      .then((data) => setReport(data))
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-      .finally(() => setBusy(false))
+      .then((data) => {
+        if (active) setReport(data)
+      })
+      .catch((err) => {
+        if (active) setError(err instanceof Error ? err.message : String(err))
+      })
+      .finally(() => {
+        if (active) setBusy(false)
+      })
+    // Guards against a result landing after the operator closed the dialog, which
+    // would otherwise reopen state on an unmounted component.
+    return () => {
+      active = false
+    }
   }, [])
 
   const apply = () => {
@@ -711,7 +723,10 @@ function MagmaBackfillDialog({
         )}
 
         <div className="mt-5 flex flex-wrap justify-end gap-3">
-          <button className="btn-secondary" onClick={onClose} disabled={busy}>
+          {/* Never disabled: the scan walks every invoice on the node and can take
+              a while, and a dialog with no way out is worse than a stale one. It
+              aborts the request on the way out. */}
+          <button className="btn-secondary" onClick={onClose}>
             {report?.applied ? t('common.close') : t('common.cancel')}
           </button>
           {canApply && (

@@ -4,9 +4,26 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+func TestPeerswapBundleChecksumsMatchPackagedAssets(t *testing.T) {
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("failed to locate peerswap test source")
+	}
+	assetDir := filepath.Join(
+		filepath.Dir(testFile),
+		"..", "..", "assets", "binaries", "peerswap",
+		peerswapAssetsVersion, peerswapAssetsArch,
+	)
+	if err := ensurePeerswapBinaryChecksums(assetDir); err != nil {
+		t.Fatalf("packaged Peerswap assets do not match compiled bundle metadata: %v", err)
+	}
+}
 
 func TestDefaultPeerswapConfigIncludesElementsDataDir(t *testing.T) {
 	values := testPeerswapConfigValues()

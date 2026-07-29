@@ -114,6 +114,11 @@ type MagmaService struct {
 	lastSyncAt    time.Time
 	lastSyncError string
 	lastMarket    *MagmaMarketSummary
+	// Gate for the expensive order listing. In memory on purpose: after a restart
+	// the baseline is gone and the next tick fetches, which is the safe default.
+	fetchBaseline     bool
+	lastPendingOrders int64
+	lastOrderFetchAt  time.Time
 }
 
 func NewMagmaService(db *pgxpool.Pool, lnd magmaLND, logger *log.Logger) *MagmaService {
@@ -445,11 +450,29 @@ func (s *MagmaService) SyncOnce(ctx context.Context) error {
 		return err
 	}
 
+	// The full order list is the expensive call and it grows with sales history;
+	// pending_seller_orders is a scalar that moves whenever an order needs us.
+	// Skipping the list when nothing can have changed turns most ticks into one
+	// cheap query.
+	if !s.needsOrderFetch(ctx, summary) {
+		// Local upkeep still runs: it reads the database, not Amboss, and a
+		// pending fee guard or an unresolved funding fee must not wait for the
+		// next order to show up.
+		if settings, err := s.Settings(ctx); err == nil &&
+			(settings.Mode == magmaModeAssisted || settings.Mode == magmaModeAuto) {
+			s.syncFeeGuards(ctx)
+			s.resolveOnchainCosts(ctx)
+		}
+		s.recordSyncResult(&summary, nil)
+		return nil
+	}
+
 	orders, err := s.amboss.SellerOrders(ctx, token)
 	if err != nil {
 		s.recordSyncResult(&summary, err)
 		return err
 	}
+	s.noteOrderFetch(summary.PendingSellerOrders)
 
 	settings, err := s.Settings(ctx)
 	if err != nil {
@@ -481,6 +504,75 @@ func (s *MagmaService) SyncOnce(ctx context.Context) error {
 	}
 	s.recordSyncResult(&summary, nil)
 	return nil
+}
+
+// magmaTerminalStatuses are the Amboss states an order never leaves. While any
+// order sits outside this set, its status is still worth re-reading even when no
+// new order is waiting on us — the real sale went from SELLER_SENT_TRANSACTION to
+// settled payment with the pending counter at zero the whole time.
+var magmaTerminalStatuses = map[string]bool{
+	"CHANNEL_MONITORING_FINISHED":   true,
+	"BUYER_REJECTED":                true,
+	"BUYER_FAILED_TO_PAY":           true,
+	"SELLER_REJECTED":               true,
+	"SELLER_FAILED_TO_REACT":        true,
+	"SELLER_FAILED_TO_OPEN_CHANNEL": true,
+	"SELLER_FAILED_TO_SEND_SWAP":    true,
+	"INVALID_CHANNEL_OPENING":       true,
+	"ADMIN_CLOSED":                  true,
+}
+
+// magmaFullFetchMaxInterval bounds how long the cheap path can run on its own.
+// The counter is a signal, not a guarantee; this makes a missed signal cost
+// minutes rather than forever.
+const magmaFullFetchMaxInterval = 15 * time.Minute
+
+// needsOrderFetch decides whether this tick has to pull the whole order list.
+// It errs towards fetching: skipping wrongly means missing a sale, while
+// fetching wrongly only costs one query.
+func (s *MagmaService) needsOrderFetch(ctx context.Context, summary MagmaMarketSummary) bool {
+	s.stateMu.RLock()
+	hasBaseline := s.fetchBaseline
+	lastPending := s.lastPendingOrders
+	lastFetch := s.lastOrderFetchAt
+	s.stateMu.RUnlock()
+
+	switch {
+	case !hasBaseline:
+		return true
+	case summary.PendingSellerOrders > 0:
+		return true
+	case summary.PendingSellerOrders != lastPending:
+		return true
+	case time.Since(lastFetch) >= magmaFullFetchMaxInterval:
+		return true
+	}
+	return s.hasOrdersInFlight(ctx)
+}
+
+// hasOrdersInFlight reports whether any locally known order is still moving on
+// the Amboss side.
+func (s *MagmaService) hasOrdersInFlight(ctx context.Context) bool {
+	terminal := make([]string, 0, len(magmaTerminalStatuses))
+	for status := range magmaTerminalStatuses {
+		terminal = append(terminal, status)
+	}
+	var count int
+	if err := s.db.QueryRow(ctx, `
+select count(*) from magma_orders where magma_status <> '' and not (magma_status = any($1))
+`, terminal).Scan(&count); err != nil {
+		// Unknown means fetch: a database hiccup must not silence the poller.
+		return true
+	}
+	return count > 0
+}
+
+func (s *MagmaService) noteOrderFetch(pending int64) {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	s.fetchBaseline = true
+	s.lastPendingOrders = pending
+	s.lastOrderFetchAt = time.Now()
 }
 
 func (s *MagmaService) recordSyncResult(summary *MagmaMarketSummary, err error) {

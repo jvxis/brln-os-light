@@ -108,7 +108,10 @@ where funding_txid <> '' and onchain_fee_sat is null
 	for rows.Next() {
 		var orderID, txid string
 		if err := rows.Scan(&orderID, &txid); err == nil {
-			pending[orderID] = strings.ToLower(strings.TrimSpace(txid))
+			// Normalized because rows written before the open call's return value
+			// was understood hold a full channel point here, and the wallet
+			// transaction list is keyed by bare txid.
+			pending[orderID] = strings.ToLower(magmaTxidFromPoint(txid))
 		}
 	}
 	rows.Close()

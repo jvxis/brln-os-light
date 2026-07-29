@@ -144,9 +144,11 @@ getUser.market {
 }
 ```
 
-`pending_seller_orders` é um contador escalar. **O poller consulta ele primeiro e só
-busca a lista completa quando muda.** Isso derruba muito o custo do polling de 90s.
-`OrderList` não tem paginação — só `list`.
+`pending_seller_orders` é um contador escalar, e o poller usa ele para evitar a lista
+completa. Mas o contador sozinho não basta: a venda real de 2026-07-29 passou de
+`SELLER_SENT_TRANSACTION` até a liquidação da HODL com o contador em **zero** o tempo
+todo. Então a lista também é buscada enquanto existir ordem local em status não-terminal,
+mais um refresh de segurança a cada 15 min. `OrderList` não tem paginação — só `list`.
 
 #### `OfferType` (para a Fase 4)
 

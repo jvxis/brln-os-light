@@ -864,18 +864,38 @@ function MagmaOfferDialog({
       .finally(() => setBusy(false))
   }
 
-  const numberField = (key: keyof MagmaOffer, labelKey: string, hintKey?: string) => (
-    <label className="grid gap-1 text-sm">
+  // Every cell has the same shape: label then input, with no per-field hint inside.
+  // Hints used to live here, which made a cell with one three rows tall and a cell
+  // without two; the grid stretched them to different heights and that is why the
+  // inputs never lined up. The explanations moved to the section headers.
+  const numberField = (key: keyof MagmaOffer, labelKey: string, suffix?: string) => (
+    <label className="grid gap-1.5 text-sm">
       <span className="text-xs uppercase tracking-wide text-fog/50">{t(labelKey)}</span>
-      <input
-        className="input-field"
-        type="number"
-        min={0}
-        value={draft[key] as number}
-        onChange={(event) => setNum(key, event.target.value)}
-      />
-      {hintKey && <span className="text-xs text-fog/45">{t(hintKey)}</span>}
+      <div className="relative">
+        <input
+          className="input-field w-full"
+          type="number"
+          min={0}
+          value={draft[key] as number}
+          onChange={(event) => setNum(key, event.target.value)}
+        />
+        {suffix && (
+          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-fog/40">
+            {suffix}
+          </span>
+        )}
+      </div>
     </label>
+  )
+
+  const section = (titleKey: string, hintKey: string, children: JSX.Element) => (
+    <div className="space-y-3 rounded-lg border border-white/10 bg-white/[0.02] px-4 py-3">
+      <div>
+        <p className="text-sm font-semibold text-fog">{t(titleKey)}</p>
+        <p className="text-xs text-fog/50">{t(hintKey)}</p>
+      </div>
+      {children}
+    </div>
   )
 
   return (
@@ -888,110 +908,136 @@ function MagmaOfferDialog({
           <p className="text-sm text-fog/60">{t('magma.offerBody')}</p>
         </div>
 
-        <div className="mt-5 grid gap-4 sm:grid-cols-2">
-          {numberField('total_size_sat', 'magma.offerTotalSize', 'magma.offerTotalSizeHint')}
-          <label className="grid gap-1 text-sm">
-            <span className="text-xs uppercase tracking-wide text-fog/50">{t('magma.offerDuration')}</span>
-            <select
-              className="input-field"
-              value={draft.min_block_length}
-              onChange={(event) => setDraft({ ...draft, min_block_length: Number(event.target.value) })}
-            >
-              {magmaDurations.map((option) => (
-                <option key={option.blocks} value={option.blocks}>
-                  {t(option.labelKey)}
-                </option>
-              ))}
-            </select>
-          </label>
-          {numberField('min_size_sat', 'magma.offerMinSize')}
-          {numberField('max_size_sat', 'magma.offerMaxSize', 'magma.offerMaxSizeHint')}
-          {numberField('fee_rate_ppm', 'magma.offerFeeRate', 'magma.offerFeeRateHint')}
-          {numberField('base_fee_sat', 'magma.offerBaseFee')}
-          {numberField('fee_rate_cap_ppm', 'magma.offerFeeRateCap', 'magma.offerCapHint')}
-          {numberField('base_fee_cap_sat', 'magma.offerBaseFeeCap')}
-        </div>
-
-        <div className="mt-5 space-y-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-xs uppercase tracking-wide text-fog/50">{t('magma.offerConditions')}</span>
-            <button
-              className="btn-secondary text-xs px-2 py-1"
-              onClick={() =>
-                setDraft({
-                  ...draft,
-                  conditions: [
-                    ...conditions,
-                    { condition: options.conditions[0] ?? '', operator: 'GREATER_THAN', value: '' }
-                  ]
-                })
-              }
-            >
-              {t('magma.offerAddCondition')}
-            </button>
-          </div>
-          <p className="text-xs text-fog/45">{t('magma.offerConditionsHint')}</p>
-          {conditions.length === 0 && (
-            <p className="text-sm text-fog/50">{t('magma.offerNoConditions')}</p>
+        <div className="mt-5 space-y-3">
+          {section(
+            'magma.offerSectionLiquidity',
+            'magma.offerSectionLiquidityHint',
+            <div className="grid items-start gap-4 sm:grid-cols-3">
+              {numberField('total_size_sat', 'magma.offerTotalSize', 'sat')}
+              {numberField('min_size_sat', 'magma.offerMinSize', 'sat')}
+              {numberField('max_size_sat', 'magma.offerMaxSize', 'sat')}
+            </div>
           )}
-          {conditions.map((condition, index) => (
-            <div key={index} className="flex flex-wrap items-center gap-2">
-              <select
-                className="input-field flex-1"
-                value={condition.condition}
-                onChange={(event) => setCondition(index, { condition: event.target.value })}
-              >
-                {options.conditions.map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
-              <select
-                className="input-field"
-                value={condition.operator}
-                onChange={(event) => setCondition(index, { operator: event.target.value })}
-              >
-                {options.operators.map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
-              <input
-                className="input-field w-32"
-                value={condition.value}
-                placeholder={t('magma.offerConditionValue')}
-                onChange={(event) => setCondition(index, { value: event.target.value })}
-              />
+
+          {section(
+            'magma.offerSectionPrice',
+            'magma.offerSectionPriceHint',
+            <div className="grid items-start gap-4 sm:grid-cols-2">
+              {numberField('fee_rate_ppm', 'magma.offerFeeRate', 'ppm')}
+              {numberField('base_fee_sat', 'magma.offerBaseFee', 'sat')}
+            </div>
+          )}
+
+          {section(
+            'magma.offerSectionPromises',
+            'magma.offerSectionPromisesHint',
+            <div className="grid items-start gap-4 sm:grid-cols-3">
+              <label className="grid gap-1.5 text-sm">
+                <span className="text-xs uppercase tracking-wide text-fog/50">
+                  {t('magma.offerDuration')}
+                </span>
+                <select
+                  className="input-field w-full"
+                  value={draft.min_block_length}
+                  onChange={(event) =>
+                    setDraft({ ...draft, min_block_length: Number(event.target.value) })
+                  }
+                >
+                  {magmaDurations.map((option) => (
+                    <option key={option.blocks} value={option.blocks}>
+                      {t(option.labelKey)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {numberField('fee_rate_cap_ppm', 'magma.offerFeeRateCap', 'ppm')}
+              {numberField('base_fee_cap_sat', 'magma.offerBaseFeeCap', 'sat')}
+            </div>
+          )}
+
+          {section(
+            'magma.offerConditions',
+            'magma.offerConditionsHint',
+            <div className="space-y-2">
+              {conditions.length === 0 && (
+                <p className="text-sm text-fog/50">{t('magma.offerNoConditions')}</p>
+              )}
+              {conditions.map((condition, index) => (
+                <div key={index} className="flex flex-wrap items-center gap-2">
+                  <select
+                    className="input-field min-w-[10rem] flex-1"
+                    value={condition.condition}
+                    onChange={(event) => setCondition(index, { condition: event.target.value })}
+                  >
+                    {options.conditions.map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    className="input-field min-w-[9rem]"
+                    value={condition.operator}
+                    onChange={(event) => setCondition(index, { operator: event.target.value })}
+                  >
+                    {options.operators.map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    className="input-field w-28"
+                    value={condition.value}
+                    placeholder={t('magma.offerConditionValue')}
+                    onChange={(event) => setCondition(index, { value: event.target.value })}
+                  />
+                  <button
+                    className="btn-secondary px-2 py-1 text-xs"
+                    onClick={() =>
+                      setDraft({
+                        ...draft,
+                        conditions: conditions.filter((_, position) => position !== index)
+                      })
+                    }
+                  >
+                    {t('magma.offerRemoveCondition')}
+                  </button>
+                </div>
+              ))}
               <button
-                className="btn-secondary text-xs px-2 py-1"
+                className="btn-secondary px-2 py-1 text-xs"
                 onClick={() =>
                   setDraft({
                     ...draft,
-                    conditions: conditions.filter((_, position) => position !== index)
+                    conditions: [
+                      ...conditions,
+                      { condition: options.conditions[0] ?? '', operator: 'GREATER_THAN', value: '' }
+                    ]
                   })
                 }
               >
-                {t('magma.offerRemoveCondition')}
+                {t('magma.offerAddCondition')}
               </button>
             </div>
-          ))}
+          )}
         </div>
 
         {error && <p className="mt-4 text-sm text-rose-200">{error}</p>}
 
-        <div className="mt-5 flex flex-wrap justify-end gap-3">
-          <button className="btn-secondary" onClick={onClose}>
-            {t('common.cancel')}
-          </button>
-          <button className="btn-primary" onClick={save} disabled={busy}>
-            {busy ? t('magma.working') : t('common.save')}
-          </button>
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs text-fog/45">
+            {t('magma.offerPublishHint', { size: draft.total_size_sat.toLocaleString(locale) })}
+          </p>
+          <div className="flex flex-wrap gap-3">
+            <button className="btn-secondary" onClick={onClose}>
+              {t('common.cancel')}
+            </button>
+            <button className="btn-primary" onClick={save} disabled={busy}>
+              {busy ? t('magma.working') : t('common.save')}
+            </button>
+          </div>
         </div>
-        <p className="mt-2 text-right text-xs text-fog/45">
-          {t('magma.offerPublishHint', { size: draft.total_size_sat.toLocaleString(locale) })}
-        </p>
       </div>
     </div>
   )

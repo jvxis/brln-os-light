@@ -16,8 +16,10 @@ func magmaDefinition() appDefinition {
 	return appDefinition{
 		ID:   magmaAppID,
 		Name: "Magma Inbound Sales",
-		Description: "Monitors your Amboss Magma sell orders and alerts when a buyer is waiting on you. " +
-			"Read-only: it never accepts orders or opens channels.",
+		Description: "Sells inbound liquidity on the Amboss Magma marketplace: publish offers, " +
+			"track orders, and accept and fund them by hand or by policy. " +
+			"Installs in monitor mode, which only watches and alerts; accepting orders and " +
+			"opening channels needs assisted or automatic mode.",
 		Port: 0,
 	}
 }

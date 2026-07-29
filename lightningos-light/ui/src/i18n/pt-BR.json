@@ -98,7 +98,7 @@
   },
   "magma": {
     "title": "Magma Inbound Sales",
-    "subtitle": "Acompanha suas ordens de venda no Magma da Amboss e avisa quando um comprador está esperando por você.",
+    "subtitle": "Venda liquidez inbound no Magma da Amboss: publique ofertas, acompanhe ordens, e aceite e financie no clique ou por policy.",
     "modeLabel": "Modo de operação",
     "modeMonitorShort": "Monitorar",
     "modeOffShort": "Desligado",
@@ -106,7 +106,7 @@
     "modeAssistedShort": "Assistido",
     "modeAutoShort": "Automático",
     "modeAssisted": "Assistido",
-    "monitorNotice": "Este app é somente leitura: ele nunca aceita ordens, nunca abre canais e nunca envia nada para a Amboss.",
+    "monitorNotice": "Modo monitor: as ordens são apenas acompanhadas e alertadas. Nada é aceito e nenhum canal é aberto. As ofertas continuam editáveis.",
     "assistedNotice": "Modo assistido: cada ação exige um clique explícito. Nada é aceito ou financiado automaticamente.",
     "working": "Processando…",
     "acceptOrder": "Aceitar ordem",

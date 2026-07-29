@@ -98,7 +98,7 @@
   },
   "magma": {
     "title": "Magma Inbound Sales",
-    "subtitle": "Watches your Amboss Magma sell orders and tells you when a buyer is waiting on you.",
+    "subtitle": "Sell inbound liquidity on Amboss Magma: publish offers, track orders, and accept and fund them by hand or by policy.",
     "modeLabel": "Operating mode",
     "modeMonitorShort": "Monitor",
     "modeOffShort": "Off",
@@ -106,7 +106,7 @@
     "modeAssistedShort": "Assisted",
     "modeAutoShort": "Automatic",
     "modeAssisted": "Assisted",
-    "monitorNotice": "This app is read-only: it never accepts orders, never opens channels and never sends anything to Amboss.",
+    "monitorNotice": "Monitor mode: orders are only watched and alerted on. Nothing is accepted and no channel is opened. Offers can still be edited.",
     "assistedNotice": "Assisted mode: each action needs an explicit click. Nothing is accepted or funded automatically.",
     "working": "Working…",
     "acceptOrder": "Accept order",

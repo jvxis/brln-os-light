@@ -1420,6 +1420,7 @@ export type MagmaOffersView = {
   conflicts?: Record<string, MagmaOfferConflict[]>
   condition_options: string[]
   operator_options: string[]
+  mode_warning?: string
 }
 
 export const getMagmaOffers = (): Promise<MagmaOffersView> =>

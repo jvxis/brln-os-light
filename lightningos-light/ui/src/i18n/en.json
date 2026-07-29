@@ -144,6 +144,7 @@
     "pnlTitle": "Sales profit and loss",
     "activityTitle": "Activity",
     "offersTitle": "Offers",
+    "offersCount": "{{active}} active of {{total}}",
     "offersBody": "What you advertise on Magma. Amboss enforces these bounds, so no order can arrive outside them.",
     "offersNone": "No offers yet.",
     "offerCreate": "New offer",

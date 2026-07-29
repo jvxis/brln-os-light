@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -31,6 +32,47 @@ type MagmaOffersView struct {
 	// cannot drift from what Amboss accepts.
 	ConditionOptions []string `json:"condition_options"`
 	OperatorOptions  []string `json:"operator_options"`
+	// ModeWarning fires when offers are live but the app is not set up to answer
+	// the orders they generate.
+	ModeWarning string `json:"mode_warning,omitempty"`
+}
+
+func (s *MagmaService) requireInstalled(ctx context.Context) error {
+	settings, err := s.Settings(ctx)
+	if err != nil {
+		return err
+	}
+	if !settings.Installed {
+		return errors.New("Magma Inbound Sales is not installed")
+	}
+	return nil
+}
+
+func (s *MagmaService) magmaOfferModeWarning(ctx context.Context, offers []MagmaOffer) string {
+	enabled := 0
+	for _, offer := range offers {
+		if offer.Status == "ENABLED" {
+			enabled++
+		}
+	}
+	if enabled == 0 {
+		return ""
+	}
+	settings, err := s.Settings(ctx)
+	if err != nil {
+		return ""
+	}
+	switch {
+	case !settings.Enabled:
+		return fmt.Sprintf(
+			"%d offer(s) are live on Amboss while this app is off. Orders will arrive and nothing here will notice them; an order left unanswered is recorded against your account.",
+			enabled)
+	case settings.Mode == magmaModeMonitor:
+		return fmt.Sprintf(
+			"%d offer(s) are live on Amboss. In monitor mode you are alerted but nothing is accepted automatically, so each order needs you to act in time.",
+			enabled)
+	}
+	return ""
 }
 
 func magmaOfferConditionOptions() []string {
@@ -136,6 +178,11 @@ func (s *MagmaService) ListOffers(ctx context.Context) (MagmaOffersView, error) 
 	if err != nil {
 		return view, nil
 	}
+	// An enabled offer produces orders whether or not anything is watching. In
+	// off or monitor mode nobody reacts, and an unanswered order becomes
+	// SELLER_FAILED_TO_REACT on the account.
+	view.ModeWarning = s.magmaOfferModeWarning(ctx, offers)
+
 	conflicts := make(map[string][]MagmaOfferConflict)
 	for _, offer := range offers {
 		// Disabled offers cannot produce orders, so a mismatch there is noise.
@@ -154,9 +201,10 @@ func (s *MagmaService) ListOffers(ctx context.Context) (MagmaOffersView, error) 
 
 // SaveOffer creates or updates depending on whether an id is present.
 func (s *MagmaService) SaveOffer(ctx context.Context, offer MagmaOffer) (MagmaOffersView, error) {
-	// Offers are published to a marketplace, so they sit behind the same mode gate
-	// as the fund-moving actions rather than being editable from monitor mode.
-	if err := s.requireActionMode(ctx); err != nil {
+	// Editing an offer spends nothing, so it is allowed in every mode - it is
+	// configuration, not execution. The risk of an enabled offer with nobody
+	// reacting is surfaced as a warning instead (see magmaOfferModeWarning).
+	if err := s.requireInstalled(ctx); err != nil {
 		return MagmaOffersView{}, err
 	}
 	token, err := s.usableToken(ctx)
@@ -175,7 +223,7 @@ func (s *MagmaService) SaveOffer(ctx context.Context, offer MagmaOffer) (MagmaOf
 }
 
 func (s *MagmaService) ToggleOffer(ctx context.Context, offerID string) (MagmaOffersView, error) {
-	if err := s.requireActionMode(ctx); err != nil {
+	if err := s.requireInstalled(ctx); err != nil {
 		return MagmaOffersView{}, err
 	}
 	token, err := s.usableToken(ctx)

@@ -8,14 +8,20 @@ import {
   openMagmaChannel,
   previewMagmaBackfill,
   getMagmaEvents,
+  getMagmaOffers,
   refreshMagma,
   rejectMagmaOrder,
+  saveMagmaOffer,
+  toggleMagmaOffer,
   updateMagmaPolicy,
   updateMagmaSettings
 } from '../api'
 import type {
   MagmaBackfillReport,
   MagmaOpenPreview,
+  MagmaOffer,
+  MagmaOfferCondition,
+  MagmaOffersView,
   MagmaOrder,
   MagmaOrderEvent,
   MagmaOverview,
@@ -117,6 +123,10 @@ export default function MagmaSales() {
   const [policyOpen, setPolicyOpen] = useState(false)
   const [backfillOpen, setBackfillOpen] = useState(false)
   const [events, setEvents] = useState<MagmaOrderEvent[]>([])
+  const [offers, setOffers] = useState<MagmaOffersView | null>(null)
+  const [offersError, setOffersError] = useState('')
+  const [offerOpen, setOfferOpen] = useState(false)
+  const [offerDraft, setOfferDraft] = useState<MagmaOffer | null>(null)
 
   const load = () => {
     getMagmaOverview()
@@ -131,6 +141,24 @@ export default function MagmaSales() {
     getMagmaEvents(60)
       .then((data) => setEvents(data.events ?? []))
       .catch(() => undefined)
+    // Offers come from Amboss, so this is the one panel that can fail while the
+    // rest of the page is fine. Its error is shown in place, not page-wide.
+    getMagmaOffers()
+      .then((data) => {
+        setOffers(data)
+        setOffersError('')
+      })
+      .catch((err) => setOffersError(err instanceof Error ? err.message : String(err)))
+  }
+
+  const handleToggleOffer = (offerID: string) => {
+    if (!offerID) return
+    setBusy(true)
+    setOffersError('')
+    toggleMagmaOffer(offerID)
+      .then((view) => setOffers(view))
+      .catch((err) => setOffersError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBusy(false))
   }
 
   useEffect(() => {
@@ -541,6 +569,126 @@ export default function MagmaSales() {
         )}
       </section>
 
+      {canAct && (
+        <section className="section-card space-y-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="text-base font-semibold text-fog">{t('magma.offersTitle')}</h3>
+              <p className="text-sm text-fog/60">{t('magma.offersBody')}</p>
+            </div>
+            <button
+              className="btn-secondary"
+              onClick={() => {
+                setOfferDraft(null)
+                setOfferOpen(true)
+              }}
+            >
+              {t('magma.offerCreate')}
+            </button>
+          </div>
+
+          {offersError && <p className="text-sm text-rose-200">{offersError}</p>}
+          {offers && offers.offers.length === 0 && (
+            <p className="text-sm text-fog/50">{t('magma.offersNone')}</p>
+          )}
+
+          <div className="grid gap-2">
+            {(offers?.offers ?? [])
+              .slice()
+              .sort((a, b) => (a.status === 'ENABLED' ? -1 : 0) - (b.status === 'ENABLED' ? -1 : 0))
+              .map((offer) => {
+                const conflicts = offers?.conflicts?.[offer.id ?? ''] ?? []
+                const enabled = offer.status === 'ENABLED'
+                return (
+                  <div
+                    key={offer.id}
+                    className={`rounded-lg border px-4 py-3 text-sm ${
+                      enabled ? 'border-emerald-400/25 bg-emerald-500/5' : 'border-white/10 bg-white/5'
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${
+                          enabled ? 'bg-emerald-500/20 text-emerald-200' : 'bg-white/10 text-fog/50'
+                        }`}
+                      >
+                        {enabled ? t('magma.offerEnabled') : t('magma.offerDisabled')}
+                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          className="btn-secondary text-xs px-2 py-1"
+                          onClick={() => {
+                            setOfferDraft(offer)
+                            setOfferOpen(true)
+                          }}
+                        >
+                          {t('magma.offerEdit')}
+                        </button>
+                        <button
+                          className="btn-secondary text-xs px-2 py-1"
+                          disabled={busy}
+                          onClick={() => handleToggleOffer(offer.id ?? '')}
+                        >
+                          {enabled ? t('magma.offerDisable') : t('magma.offerEnable')}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="mt-2 grid gap-1 text-fog/70 md:grid-cols-2">
+                      <span>
+                        {t('magma.offerMinSize')} – {t('magma.offerMaxSize')}:{' '}
+                        {formatSats(offer.min_size_sat, locale)} –{' '}
+                        {formatSats(offer.max_size_sat || offer.total_size_sat, locale)}
+                      </span>
+                      <span>
+                        {t('magma.offerTotalSize')}: {formatSats(offer.total_size_sat, locale)}
+                      </span>
+                      <span>
+                        {t('magma.offerFeeRate')}: {offer.fee_rate_ppm.toLocaleString(locale)} ppm +{' '}
+                        {formatSats(offer.base_fee_sat, locale)}
+                      </span>
+                      <span>
+                        {t('magma.offerDuration')}: {formatDays(offer.min_block_length)}
+                      </span>
+                      <span>
+                        {t('magma.offerFeeRateCap')}: {offer.fee_rate_cap_ppm.toLocaleString(locale)} ppm /{' '}
+                        {t('magma.offerBaseFeeCap')} {offer.base_fee_cap_sat}
+                      </span>
+                      {(offer.conditions?.length ?? 0) > 0 && (
+                        <span>
+                          {t('magma.offerConditions')}:{' '}
+                          {offer.conditions?.map((c) => `${c.condition} ${c.operator} ${c.value}`).join(' · ')}
+                        </span>
+                      )}
+                    </div>
+                    {conflicts.map((conflict) => (
+                      <p
+                        key={conflict.message}
+                        className={`mt-2 text-xs ${conflict.blocking ? 'text-rose-200' : 'text-amber-200'}`}
+                      >
+                        {conflict.blocking ? '⛔ ' : '⚠️ '}
+                        {conflict.message}
+                      </p>
+                    ))}
+                  </div>
+                )
+              })}
+          </div>
+        </section>
+      )}
+
+      {offerOpen && offers && (
+        <MagmaOfferDialog
+          initial={offerDraft}
+          options={{ conditions: offers.condition_options, operators: offers.operator_options }}
+          locale={locale}
+          onClose={() => setOfferOpen(false)}
+          onSaved={(view) => {
+            setOffers(view)
+            setOfferOpen(false)
+          }}
+        />
+      )}
+
       {/* Auto mode decides between page loads, and a deferral reason is cleared by
           the next transition. Without this timeline the operator opens the app and
           sees only the current state, with no record of how it got there. */}
@@ -625,6 +773,205 @@ export default function MagmaSales() {
           }}
         />
       )}
+    </div>
+  )
+}
+
+// Channel durations Amboss offers, in blocks. Fixed list because the API accepts
+// arbitrary block counts but the marketplace advertises these.
+const magmaDurations = [
+  { blocks: 1008, labelKey: 'magma.duration1w' },
+  { blocks: 4320, labelKey: 'magma.duration1m' },
+  { blocks: 8640, labelKey: 'magma.duration2m' },
+  { blocks: 12960, labelKey: 'magma.duration3m' },
+  { blocks: 25920, labelKey: 'magma.duration6m' }
+]
+
+const emptyOffer = (): MagmaOffer => ({
+  total_size_sat: 0,
+  min_size_sat: 0,
+  max_size_sat: 0,
+  fee_rate_ppm: 0,
+  base_fee_sat: 0,
+  fee_rate_cap_ppm: 0,
+  base_fee_cap_sat: 0,
+  min_block_length: 4320,
+  conditions: []
+})
+
+// MagmaOfferDialog mirrors the Amboss sell form. Its job beyond editing is to
+// name the contradictions with the global policy: a policy tighter than the offer
+// accepts nothing, and neither screen shows that on its own.
+function MagmaOfferDialog({
+  initial,
+  options,
+  locale,
+  onClose,
+  onSaved
+}: {
+  initial: MagmaOffer | null
+  options: { conditions: string[]; operators: string[] }
+  locale: string
+  onClose: () => void
+  onSaved: (view: MagmaOffersView) => void
+}) {
+  const { t } = useTranslation()
+  const [draft, setDraft] = useState<MagmaOffer>(initial ?? emptyOffer())
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const setNum = (key: keyof MagmaOffer, raw: string) => {
+    const value = raw === '' ? 0 : Number(raw)
+    if (Number.isNaN(value) || value < 0) return
+    setDraft({ ...draft, [key]: value })
+  }
+
+  const conditions = draft.conditions ?? []
+  const setCondition = (index: number, patch: Partial<MagmaOfferCondition>) => {
+    const next = conditions.map((item, position) =>
+      position === index ? { ...item, ...patch } : item
+    )
+    setDraft({ ...draft, conditions: next })
+  }
+
+  const save = () => {
+    setBusy(true)
+    setError('')
+    saveMagmaOffer(draft)
+      .then((view) => onSaved(view))
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBusy(false))
+  }
+
+  const numberField = (key: keyof MagmaOffer, labelKey: string, hintKey?: string) => (
+    <label className="grid gap-1 text-sm">
+      <span className="text-xs uppercase tracking-wide text-fog/50">{t(labelKey)}</span>
+      <input
+        className="input-field"
+        type="number"
+        min={0}
+        value={draft[key] as number}
+        onChange={(event) => setNum(key, event.target.value)}
+      />
+      {hintKey && <span className="text-xs text-fog/45">{t(hintKey)}</span>}
+    </label>
+  )
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-8">
+      <div className="max-h-full w-full max-w-2xl overflow-y-auto rounded-lg border border-white/10 bg-ink p-5 shadow-xl">
+        <div className="space-y-2">
+          <h3 className="text-lg font-semibold text-fog">
+            {draft.id ? t('magma.offerEditTitle') : t('magma.offerCreateTitle')}
+          </h3>
+          <p className="text-sm text-fog/60">{t('magma.offerBody')}</p>
+        </div>
+
+        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          {numberField('total_size_sat', 'magma.offerTotalSize', 'magma.offerTotalSizeHint')}
+          <label className="grid gap-1 text-sm">
+            <span className="text-xs uppercase tracking-wide text-fog/50">{t('magma.offerDuration')}</span>
+            <select
+              className="input-field"
+              value={draft.min_block_length}
+              onChange={(event) => setDraft({ ...draft, min_block_length: Number(event.target.value) })}
+            >
+              {magmaDurations.map((option) => (
+                <option key={option.blocks} value={option.blocks}>
+                  {t(option.labelKey)}
+                </option>
+              ))}
+            </select>
+          </label>
+          {numberField('min_size_sat', 'magma.offerMinSize')}
+          {numberField('max_size_sat', 'magma.offerMaxSize', 'magma.offerMaxSizeHint')}
+          {numberField('fee_rate_ppm', 'magma.offerFeeRate', 'magma.offerFeeRateHint')}
+          {numberField('base_fee_sat', 'magma.offerBaseFee')}
+          {numberField('fee_rate_cap_ppm', 'magma.offerFeeRateCap', 'magma.offerCapHint')}
+          {numberField('base_fee_cap_sat', 'magma.offerBaseFeeCap')}
+        </div>
+
+        <div className="mt-5 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs uppercase tracking-wide text-fog/50">{t('magma.offerConditions')}</span>
+            <button
+              className="btn-secondary text-xs px-2 py-1"
+              onClick={() =>
+                setDraft({
+                  ...draft,
+                  conditions: [
+                    ...conditions,
+                    { condition: options.conditions[0] ?? '', operator: 'GREATER_THAN', value: '' }
+                  ]
+                })
+              }
+            >
+              {t('magma.offerAddCondition')}
+            </button>
+          </div>
+          <p className="text-xs text-fog/45">{t('magma.offerConditionsHint')}</p>
+          {conditions.length === 0 && (
+            <p className="text-sm text-fog/50">{t('magma.offerNoConditions')}</p>
+          )}
+          {conditions.map((condition, index) => (
+            <div key={index} className="flex flex-wrap items-center gap-2">
+              <select
+                className="input-field flex-1"
+                value={condition.condition}
+                onChange={(event) => setCondition(index, { condition: event.target.value })}
+              >
+                {options.conditions.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="input-field"
+                value={condition.operator}
+                onChange={(event) => setCondition(index, { operator: event.target.value })}
+              >
+                {options.operators.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+              <input
+                className="input-field w-32"
+                value={condition.value}
+                placeholder={t('magma.offerConditionValue')}
+                onChange={(event) => setCondition(index, { value: event.target.value })}
+              />
+              <button
+                className="btn-secondary text-xs px-2 py-1"
+                onClick={() =>
+                  setDraft({
+                    ...draft,
+                    conditions: conditions.filter((_, position) => position !== index)
+                  })
+                }
+              >
+                {t('magma.offerRemoveCondition')}
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {error && <p className="mt-4 text-sm text-rose-200">{error}</p>}
+
+        <div className="mt-5 flex flex-wrap justify-end gap-3">
+          <button className="btn-secondary" onClick={onClose}>
+            {t('common.cancel')}
+          </button>
+          <button className="btn-primary" onClick={save} disabled={busy}>
+            {busy ? t('magma.working') : t('common.save')}
+          </button>
+        </div>
+        <p className="mt-2 text-right text-xs text-fog/45">
+          {t('magma.offerPublishHint', { size: draft.total_size_sat.toLocaleString(locale) })}
+        </p>
+      </div>
     </div>
   )
 }

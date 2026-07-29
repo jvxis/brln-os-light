@@ -608,6 +608,260 @@ func (c *magmaAmbossClient) NodeAddresses(ctx context.Context, token, pubkey str
 	return addresses, nil
 }
 
+// MagmaOfferCondition filters who may buy, enforced by Amboss before the order
+// is created. That is strictly better than our policy rejecting it afterwards:
+// a rejection costs a sellerRejectOrder and stays on the account, while a
+// condition means the order never arrives.
+type MagmaOfferCondition struct {
+	Condition string `json:"condition"`
+	Operator  string `json:"operator"`
+	Value     string `json:"value"`
+}
+
+// MagmaOffer mirrors the Amboss sell-offer form.
+type MagmaOffer struct {
+	ID             string                `json:"id,omitempty"`
+	Status         string                `json:"status,omitempty"`
+	Side           string                `json:"side,omitempty"`
+	TotalSizeSat   int64                 `json:"total_size_sat"`
+	MinSizeSat     int64                 `json:"min_size_sat"`
+	MaxSizeSat     int64                 `json:"max_size_sat"`
+	FeeRatePPM     int64                 `json:"fee_rate_ppm"`
+	BaseFeeSat     int64                 `json:"base_fee_sat"`
+	FeeRateCapPPM  int64                 `json:"fee_rate_cap_ppm"`
+	BaseFeeCapSat  int64                 `json:"base_fee_cap_sat"`
+	MinBlockLength int64                 `json:"min_block_length"`
+	Conditions     []MagmaOfferCondition `json:"conditions,omitempty"`
+	SellerScore    string                `json:"seller_score,omitempty"`
+}
+
+// magmaOfferConditionValues and magmaOfferOperatorValues are the enums the API
+// accepts. Validated locally so a typo fails here instead of arriving as an
+// opaque GraphQL error after the operator hit save.
+var magmaOfferConditionValues = map[string]bool{
+	"NODE_CAPACITY": true, "NODE_CHANNELS": true, "NODE_SOCKETS": true,
+	"PARALLEL_CHANNELS": true, "TERMINAL_WEB_RANK": true,
+}
+
+var magmaOfferOperatorValues = map[string]bool{
+	"CONTAINS": true, "DOES_NOT_CONTAIN": true, "EQUAL_TO": true,
+	"GREATER_THAN": true, "GREATER_THAN_OR_EQUAL_TO": true,
+	"LESS_THAN": true, "LESS_THAN_OR_EQUAL_TO": true, "NOT_EQUAL_TO": true,
+}
+
+func (o MagmaOffer) validate() error {
+	if o.TotalSizeSat <= 0 {
+		return errors.New("total size must be positive")
+	}
+	if o.MinSizeSat <= 0 {
+		return errors.New("minimum channel size must be positive")
+	}
+	if o.MaxSizeSat > 0 && o.MaxSizeSat < o.MinSizeSat {
+		return errors.New("maximum channel size cannot be below the minimum")
+	}
+	if o.MinSizeSat > o.TotalSizeSat {
+		return errors.New("minimum channel size cannot exceed the total size on offer")
+	}
+	if o.MinBlockLength <= 0 {
+		return errors.New("channel duration must be positive")
+	}
+	for _, condition := range o.Conditions {
+		if !magmaOfferConditionValues[condition.Condition] {
+			return fmt.Errorf("unknown buyer condition %q", condition.Condition)
+		}
+		if !magmaOfferOperatorValues[condition.Operator] {
+			return fmt.Errorf("unknown condition operator %q", condition.Operator)
+		}
+		if strings.TrimSpace(condition.Value) == "" {
+			return fmt.Errorf("condition %s needs a value", condition.Condition)
+		}
+	}
+	return nil
+}
+
+// offerInput builds the mutation payload. Amboss types every amount as Float.
+func (o MagmaOffer) offerInput() map[string]any {
+	input := map[string]any{
+		"total_size":       o.TotalSizeSat,
+		"min_size":         o.MinSizeSat,
+		"min_block_length": o.MinBlockLength,
+		"fee_rate":         o.FeeRatePPM,
+		"base_fee":         o.BaseFeeSat,
+		"fee_rate_cap":     o.FeeRateCapPPM,
+		"base_fee_cap":     o.BaseFeeCapSat,
+	}
+	if o.MaxSizeSat > 0 {
+		input["max_size"] = o.MaxSizeSat
+	}
+	conditions := make([]map[string]any, 0, len(o.Conditions))
+	for _, condition := range o.Conditions {
+		conditions = append(conditions, map[string]any{
+			"condition": condition.Condition,
+			"operator":  condition.Operator,
+			"value":     strings.TrimSpace(condition.Value),
+		})
+	}
+	// Always sent, so clearing every condition actually clears them instead of
+	// leaving the previous set in place.
+	input["conditions"] = conditions
+	return input
+}
+
+const magmaOffersQuery = `query MagmaOffers {
+  getUser {
+    market {
+      offers {
+        list {
+          id
+          status
+          side
+          total_size
+          min_size
+          max_size
+          fee_rate
+          base_fee
+          fee_rate_cap
+          base_fee_cap
+          min_block_length
+          seller_score
+          conditions { condition operator value }
+        }
+      }
+    }
+  }
+}`
+
+func (c *magmaAmbossClient) Offers(ctx context.Context, token string) ([]MagmaOffer, error) {
+	var result struct {
+		GetUser struct {
+			Market struct {
+				Offers struct {
+					List []struct {
+						ID             string      `json:"id"`
+						Status         string      `json:"status"`
+						Side           string      `json:"side"`
+						TotalSize      magmaNumber `json:"total_size"`
+						MinSize        magmaNumber `json:"min_size"`
+						MaxSize        magmaNumber `json:"max_size"`
+						FeeRate        magmaNumber `json:"fee_rate"`
+						BaseFee        magmaNumber `json:"base_fee"`
+						FeeRateCap     magmaNumber `json:"fee_rate_cap"`
+						BaseFeeCap     magmaNumber `json:"base_fee_cap"`
+						MinBlockLength magmaNumber `json:"min_block_length"`
+						SellerScore    string      `json:"seller_score"`
+						Conditions     []struct {
+							Condition string `json:"condition"`
+							Operator  string `json:"operator"`
+							Value     string `json:"value"`
+						} `json:"conditions"`
+					} `json:"list"`
+				} `json:"offers"`
+			} `json:"market"`
+		} `json:"getUser"`
+	}
+	if err := c.do(ctx, token, magmaOffersQuery, nil, &result); err != nil {
+		return nil, err
+	}
+	raw := result.GetUser.Market.Offers.List
+	offers := make([]MagmaOffer, 0, len(raw))
+	for _, item := range raw {
+		offer := MagmaOffer{
+			ID:             strings.TrimSpace(item.ID),
+			Status:         strings.TrimSpace(item.Status),
+			Side:           strings.TrimSpace(item.Side),
+			TotalSizeSat:   item.TotalSize.Value,
+			MinSizeSat:     item.MinSize.Value,
+			MaxSizeSat:     item.MaxSize.Value,
+			FeeRatePPM:     item.FeeRate.Value,
+			BaseFeeSat:     item.BaseFee.Value,
+			FeeRateCapPPM:  item.FeeRateCap.Value,
+			BaseFeeCapSat:  item.BaseFeeCap.Value,
+			MinBlockLength: item.MinBlockLength.Value,
+			SellerScore:    strings.TrimSpace(item.SellerScore),
+		}
+		for _, condition := range item.Conditions {
+			offer.Conditions = append(offer.Conditions, MagmaOfferCondition{
+				Condition: condition.Condition,
+				Operator:  condition.Operator,
+				Value:     condition.Value,
+			})
+		}
+		offers = append(offers, offer)
+	}
+	return offers, nil
+}
+
+const (
+	magmaCreateOfferMutation = `mutation CreateOffer($input: CreateOffer!) {
+  createOffer(input: $input)
+}`
+	magmaUpdateOfferMutation = `mutation UpdateOffer($input: UpdateOffer!) {
+  updateOffer(input: $input)
+}`
+	magmaToggleOfferMutation = `mutation ToggleOffer($id: String!) {
+  toggleOffer(id: $id)
+}`
+)
+
+func (c *magmaAmbossClient) CreateOffer(ctx context.Context, token string, offer MagmaOffer) error {
+	if err := offer.validate(); err != nil {
+		return err
+	}
+	input := offer.offerInput()
+	input["offer_side"] = "SELL"
+	input["offer_type"] = "CHANNEL"
+	var result struct {
+		CreateOffer any `json:"createOffer"`
+	}
+	if err := c.do(ctx, token, magmaCreateOfferMutation, map[string]any{"input": input}, &result); err != nil {
+		return err
+	}
+	if !magmaMutationSucceeded(result.CreateOffer) {
+		return errors.New("Amboss did not create the offer")
+	}
+	return nil
+}
+
+func (c *magmaAmbossClient) UpdateOffer(ctx context.Context, token string, offer MagmaOffer) error {
+	if strings.TrimSpace(offer.ID) == "" {
+		return errors.New("offer id required")
+	}
+	if err := offer.validate(); err != nil {
+		return err
+	}
+	input := offer.offerInput()
+	input["offer"] = strings.TrimSpace(offer.ID)
+	var result struct {
+		UpdateOffer any `json:"updateOffer"`
+	}
+	if err := c.do(ctx, token, magmaUpdateOfferMutation, map[string]any{"input": input}, &result); err != nil {
+		return err
+	}
+	if !magmaMutationSucceeded(result.UpdateOffer) {
+		return errors.New("Amboss did not update the offer")
+	}
+	return nil
+}
+
+// ToggleOffer flips enabled/disabled. Amboss exposes no explicit setter, so the
+// caller must read the current status to know what a toggle will do.
+func (c *magmaAmbossClient) ToggleOffer(ctx context.Context, token, offerID string) error {
+	offerID = strings.TrimSpace(offerID)
+	if offerID == "" {
+		return errors.New("offer id required")
+	}
+	var result struct {
+		ToggleOffer any `json:"toggleOffer"`
+	}
+	if err := c.do(ctx, token, magmaToggleOfferMutation, map[string]any{"id": offerID}, &result); err != nil {
+		return err
+	}
+	if !magmaMutationSucceeded(result.ToggleOffer) {
+		return errors.New("Amboss did not toggle the offer")
+	}
+	return nil
+}
+
 // magmaTokenExpiry decodes the exp claim when the token is a JWT. Amboss issues
 // JWTs (iss: amboss.tech) that expire, so a token that works today can stop
 // working mid-sale without anything else changing. Tokens that are not JWTs are

@@ -1,0 +1,190 @@
+package server
+
+import (
+	"context"
+	"fmt"
+)
+
+// Offer management. The offer is what buyers see and what Amboss enforces; the
+// policy is what this node can execute right now. They overlap, and the overlap
+// is where a silent misconfiguration lives: a policy tighter than the offer
+// accepts nothing, and nothing in either screen says so on its own.
+//
+// The policy deliberately stays global. Per-offer economics would duplicate what
+// each order already carries: Amboss freezes the offer's terms into the order as
+// locked_fee_rate, locked_min_block_length and locked_fee_rate_cap. And the
+// operational limits — on-chain reserve, daily caps, concurrent opens — belong to
+// the node, not to any single offer.
+
+// MagmaOfferConflict is one way the offer and the policy disagree.
+type MagmaOfferConflict struct {
+	// Blocking means no order from this offer could ever be accepted in auto mode.
+	Blocking bool   `json:"blocking"`
+	Message  string `json:"message"`
+}
+
+// MagmaOffersView is what the offers screen renders.
+type MagmaOffersView struct {
+	Offers    []MagmaOffer                    `json:"offers"`
+	Conflicts map[string][]MagmaOfferConflict `json:"conflicts,omitempty"`
+	// ConditionOptions and OperatorOptions come from the API enums so the form
+	// cannot drift from what Amboss accepts.
+	ConditionOptions []string `json:"condition_options"`
+	OperatorOptions  []string `json:"operator_options"`
+}
+
+func magmaOfferConditionOptions() []string {
+	return []string{"NODE_CAPACITY", "NODE_CHANNELS", "NODE_SOCKETS", "PARALLEL_CHANNELS", "TERMINAL_WEB_RANK"}
+}
+
+func magmaOfferOperatorOptions() []string {
+	return []string{
+		"EQUAL_TO", "NOT_EQUAL_TO", "GREATER_THAN", "GREATER_THAN_OR_EQUAL_TO",
+		"LESS_THAN", "LESS_THAN_OR_EQUAL_TO", "CONTAINS", "DOES_NOT_CONTAIN",
+	}
+}
+
+// magmaOfferConflicts compares one offer against the global policy. It reports
+// rather than reconciles: auto-syncing would silently overwrite a limit the
+// operator set on purpose, and the useful part is naming the contradiction.
+func magmaOfferConflicts(offer MagmaOffer, policy MagmaPolicy) []MagmaOfferConflict {
+	conflicts := make([]MagmaOfferConflict, 0, 4)
+
+	// Size: the offer's smallest channel must fit inside the policy window,
+	// otherwise every order it produces is rejected on arrival.
+	if policy.MaxChannelSizeSat > 0 && offer.MinSizeSat > policy.MaxChannelSizeSat {
+		conflicts = append(conflicts, MagmaOfferConflict{Blocking: true, Message: fmt.Sprintf(
+			"the smallest channel this offer sells (%s sat) is above the policy maximum of %s sat, so every order would be rejected",
+			formatInt(offer.MinSizeSat), formatInt(policy.MaxChannelSizeSat))})
+	}
+	effectiveMax := offer.MaxSizeSat
+	if effectiveMax == 0 {
+		effectiveMax = offer.TotalSizeSat
+	}
+	if policy.MinChannelSizeSat > 0 && effectiveMax < policy.MinChannelSizeSat {
+		conflicts = append(conflicts, MagmaOfferConflict{Blocking: true, Message: fmt.Sprintf(
+			"the largest channel this offer sells (%s sat) is below the policy minimum of %s sat, so every order would be rejected",
+			formatInt(effectiveMax), formatInt(policy.MinChannelSizeSat))})
+	}
+	// A partial overlap still sells, just not across the whole advertised range.
+	if policy.MinChannelSizeSat > 0 && offer.MinSizeSat < policy.MinChannelSizeSat &&
+		effectiveMax >= policy.MinChannelSizeSat {
+		conflicts = append(conflicts, MagmaOfferConflict{Message: fmt.Sprintf(
+			"orders below %s sat are advertised but the policy would reject them",
+			formatInt(policy.MinChannelSizeSat))})
+	}
+	if policy.MaxChannelSizeSat > 0 && effectiveMax > policy.MaxChannelSizeSat &&
+		offer.MinSizeSat <= policy.MaxChannelSizeSat {
+		conflicts = append(conflicts, MagmaOfferConflict{Message: fmt.Sprintf(
+			"orders above %s sat are advertised but the policy would reject them",
+			formatInt(policy.MaxChannelSizeSat))})
+	}
+
+	// Duration, price and the routing ceiling: the offer fixes these, so a policy
+	// floor above them rejects everything this offer can produce.
+	if policy.MaxCommitmentDays > 0 && offer.MinBlockLength > policy.MaxCommitmentDays*144 {
+		conflicts = append(conflicts, MagmaOfferConflict{Blocking: true, Message: fmt.Sprintf(
+			"the offer commits the channel for %d days, above the policy maximum of %d",
+			offer.MinBlockLength/144, policy.MaxCommitmentDays)})
+	}
+	if policy.MinPricePPM > 0 && offer.FeeRatePPM > 0 && offer.FeeRatePPM < policy.MinPricePPM {
+		conflicts = append(conflicts, MagmaOfferConflict{Blocking: true, Message: fmt.Sprintf(
+			"the offer prices at %d ppm, below the policy minimum of %d ppm",
+			offer.FeeRatePPM, policy.MinPricePPM)})
+	}
+	if policy.MinPricePPMPerDay > 0 && offer.MinBlockLength > 0 && offer.FeeRatePPM > 0 {
+		perDay := float64(offer.FeeRatePPM) / (float64(offer.MinBlockLength) / 144.0)
+		if perDay < float64(policy.MinPricePPMPerDay) {
+			conflicts = append(conflicts, MagmaOfferConflict{Blocking: true, Message: fmt.Sprintf(
+				"the offer works out to %.1f ppm/day, below the policy minimum of %d",
+				perDay, policy.MinPricePPMPerDay)})
+		}
+	}
+	if policy.MinFeeRateCapPPM > 0 && offer.FeeRateCapPPM > 0 &&
+		offer.FeeRateCapPPM < policy.MinFeeRateCapPPM {
+		conflicts = append(conflicts, MagmaOfferConflict{Blocking: true, Message: fmt.Sprintf(
+			"the offer caps our routing fee at %d ppm, below the policy minimum of %d ppm",
+			offer.FeeRateCapPPM, policy.MinFeeRateCapPPM)})
+	}
+
+	// Stock the wallet cannot back is not a policy conflict, but it is the same
+	// class of surprise: advertised and undeliverable.
+	if policy.MaxDailySizeSat > 0 && offer.MinSizeSat > policy.MaxDailySizeSat {
+		conflicts = append(conflicts, MagmaOfferConflict{Blocking: true, Message: fmt.Sprintf(
+			"a single channel from this offer (%s sat) exceeds the policy daily cap of %s sat",
+			formatInt(offer.MinSizeSat), formatInt(policy.MaxDailySizeSat))})
+	}
+	return conflicts
+}
+
+func (s *MagmaService) ListOffers(ctx context.Context) (MagmaOffersView, error) {
+	view := MagmaOffersView{
+		ConditionOptions: magmaOfferConditionOptions(),
+		OperatorOptions:  magmaOfferOperatorOptions(),
+	}
+	token, err := s.usableToken(ctx)
+	if err != nil {
+		return view, err
+	}
+	offers, err := s.amboss.Offers(ctx, token)
+	if err != nil {
+		return view, err
+	}
+	view.Offers = offers
+
+	policy, err := s.loadPolicy(ctx)
+	if err != nil {
+		return view, nil
+	}
+	conflicts := make(map[string][]MagmaOfferConflict)
+	for _, offer := range offers {
+		// Disabled offers cannot produce orders, so a mismatch there is noise.
+		if offer.Status != "ENABLED" {
+			continue
+		}
+		if found := magmaOfferConflicts(offer, policy); len(found) > 0 {
+			conflicts[offer.ID] = found
+		}
+	}
+	if len(conflicts) > 0 {
+		view.Conflicts = conflicts
+	}
+	return view, nil
+}
+
+// SaveOffer creates or updates depending on whether an id is present.
+func (s *MagmaService) SaveOffer(ctx context.Context, offer MagmaOffer) (MagmaOffersView, error) {
+	// Offers are published to a marketplace, so they sit behind the same mode gate
+	// as the fund-moving actions rather than being editable from monitor mode.
+	if err := s.requireActionMode(ctx); err != nil {
+		return MagmaOffersView{}, err
+	}
+	token, err := s.usableToken(ctx)
+	if err != nil {
+		return MagmaOffersView{}, err
+	}
+	if offer.ID == "" {
+		if err := s.amboss.CreateOffer(ctx, token, offer); err != nil {
+			return MagmaOffersView{}, err
+		}
+	} else if err := s.amboss.UpdateOffer(ctx, token, offer); err != nil {
+		return MagmaOffersView{}, err
+	}
+	s.signal()
+	return s.ListOffers(ctx)
+}
+
+func (s *MagmaService) ToggleOffer(ctx context.Context, offerID string) (MagmaOffersView, error) {
+	if err := s.requireActionMode(ctx); err != nil {
+		return MagmaOffersView{}, err
+	}
+	token, err := s.usableToken(ctx)
+	if err != nil {
+		return MagmaOffersView{}, err
+	}
+	if err := s.amboss.ToggleOffer(ctx, token, offerID); err != nil {
+		return MagmaOffersView{}, err
+	}
+	s.signal()
+	return s.ListOffers(ctx)
+}

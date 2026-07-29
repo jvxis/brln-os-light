@@ -259,6 +259,55 @@ func (s *Server) handleMagmaBackfillApply(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, report)
 }
 
+func (s *Server) handleMagmaOffersGet(w http.ResponseWriter, r *http.Request) {
+	svc := s.requireMagmaService(w)
+	if svc == nil {
+		return
+	}
+	view, err := svc.ListOffers(r.Context())
+	if err != nil {
+		writeError(w, magmaActionStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
+}
+
+func (s *Server) handleMagmaOfferSave(w http.ResponseWriter, r *http.Request) {
+	svc := s.requireMagmaService(w)
+	if svc == nil {
+		return
+	}
+	var offer MagmaOffer
+	if err := json.NewDecoder(r.Body).Decode(&offer); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	view, err := svc.SaveOffer(r.Context(), offer)
+	if err != nil {
+		writeError(w, magmaActionStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
+}
+
+func (s *Server) handleMagmaOfferToggle(w http.ResponseWriter, r *http.Request) {
+	svc := s.requireMagmaService(w)
+	if svc == nil {
+		return
+	}
+	offerID := strings.TrimSpace(chi.URLParam(r, "id"))
+	if offerID == "" {
+		writeError(w, http.StatusBadRequest, "offer id required")
+		return
+	}
+	view, err := svc.ToggleOffer(r.Context(), offerID)
+	if err != nil {
+		writeError(w, magmaActionStatus(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
+}
+
 func (s *Server) handleMagmaRefresh(w http.ResponseWriter, r *http.Request) {
 	svc := s.requireMagmaService(w)
 	if svc == nil {

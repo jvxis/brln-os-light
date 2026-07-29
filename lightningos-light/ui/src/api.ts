@@ -1388,6 +1388,50 @@ export const previewMagmaBackfill = (): Promise<MagmaBackfillReport> =>
 export const applyMagmaBackfill = (): Promise<MagmaBackfillReport> =>
   request('/api/apps/magma-sales/backfill', { method: 'POST', body: JSON.stringify({}) })
 
+export type MagmaOfferCondition = {
+  condition: string
+  operator: string
+  value: string
+}
+
+export type MagmaOffer = {
+  id?: string
+  status?: string
+  side?: string
+  total_size_sat: number
+  min_size_sat: number
+  max_size_sat: number
+  fee_rate_ppm: number
+  base_fee_sat: number
+  fee_rate_cap_ppm: number
+  base_fee_cap_sat: number
+  min_block_length: number
+  conditions?: MagmaOfferCondition[]
+  seller_score?: string
+}
+
+export type MagmaOfferConflict = {
+  blocking: boolean
+  message: string
+}
+
+export type MagmaOffersView = {
+  offers: MagmaOffer[]
+  conflicts?: Record<string, MagmaOfferConflict[]>
+  condition_options: string[]
+  operator_options: string[]
+}
+
+export const getMagmaOffers = (): Promise<MagmaOffersView> =>
+  request('/api/apps/magma-sales/offers')
+export const saveMagmaOffer = (offer: MagmaOffer): Promise<MagmaOffersView> =>
+  request('/api/apps/magma-sales/offers', { method: 'POST', body: JSON.stringify(offer) })
+export const toggleMagmaOffer = (id: string): Promise<MagmaOffersView> =>
+  request(`/api/apps/magma-sales/offers/${encodeURIComponent(id)}/toggle`, {
+    method: 'POST',
+    body: JSON.stringify({})
+  })
+
 export type MagmaOverview = {
   settings: MagmaSettings
   token: MagmaTokenState

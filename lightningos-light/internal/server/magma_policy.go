@@ -373,7 +373,7 @@ order by coalesce(order_created_at, first_seen_at) asc
 			s.appendEvent(ctx, orderID, "auto_rejected", "info",
 				"auto mode rejected: "+decision.Reason, nil)
 			s.notifyTelegram(ctx, order, fmt.Sprintf(
-				"Ordem %s recusada automaticamente: %s", orderID, decision.Reason))
+				"Order %s rejected automatically: %s", orderID, decision.Reason))
 		default:
 			s.recordDeferral(ctx, orderID, decision.Reason)
 		}

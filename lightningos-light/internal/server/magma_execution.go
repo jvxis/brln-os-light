@@ -316,7 +316,7 @@ update magma_orders set invoice_payment_request=$2, invoice_hash=$3, updated_at=
 		fmt.Sprintf("Invoice for %s sats sent to Amboss; waiting for the buyer to pay",
 			formatInt(live.RevenueSat)), map[string]any{"payment_hash": invoice.PaymentHash})
 	s.notifyTelegram(ctx, live, fmt.Sprintf(
-		"Ordem %s aceita. Invoice de %s sats enviada, aguardando pagamento do comprador.",
+		"Order %s accepted. Invoice for %s sats sent, waiting for the buyer to pay.",
 		live.ID, formatInt(live.RevenueSat)))
 	return s.orderByID(ctx, record.OrderID)
 }
@@ -586,7 +586,7 @@ update magma_orders set local_state=$2, channel_point=$3, updated_at=now() where
 		sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
 		defer cancel()
 		_ = sendTelegramMessage(sendCtx, cfg.BotToken, cfg.ChatID,
-			fmt.Sprintf("⚡ Magma\nVenda concluída. Canal %s confirmado à Amboss para a ordem %s.",
+			fmt.Sprintf("⚡ Magma\nSale complete. Channel %s confirmed to Amboss for order %s.",
 				channelPoint, orderID))
 	}
 	return nil
@@ -722,7 +722,7 @@ func (s *MagmaService) failOrder(ctx context.Context, orderID, state, message st
 	sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
 	defer cancel()
 	_ = sendTelegramMessage(sendCtx, cfg.BotToken, cfg.ChatID,
-		fmt.Sprintf("⚠️ Magma\nOrdem %s: %s", orderID, message))
+		fmt.Sprintf("⚠️ Magma\nOrder %s: %s", orderID, message))
 }
 
 // liveOrder re-reads a single order straight from Amboss. Fund-moving decisions

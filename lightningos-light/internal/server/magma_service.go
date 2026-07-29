@@ -644,13 +644,14 @@ func (s *MagmaService) notifyTelegram(ctx context.Context, order MagmaOrder, mes
 	if !cfg.configured() {
 		return
 	}
+	// Telegram output is English throughout, matching the rest of the bot.
 	text := "⚡ Magma\n" + message
 	if order.CommitmentBlocks > 0 {
-		text += fmt.Sprintf("\nCompromisso: %s blocos (~%.0f dias)",
+		text += fmt.Sprintf("\nCommitment: %s blocks (~%.0f days)",
 			formatInt(order.CommitmentBlocks), float64(order.CommitmentBlocks)/144.0)
 	}
 	if order.FeeRateCapPPM > 0 {
-		text += fmt.Sprintf("\nTeto de fee: %s ppm / base %s sat",
+		text += fmt.Sprintf("\nFee ceiling: %s ppm / base %s sat",
 			formatInt(order.FeeRateCapPPM), formatInt(order.BaseFeeCapSat))
 	}
 	sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)

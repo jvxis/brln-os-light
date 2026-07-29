@@ -379,7 +379,15 @@ func (s *MagmaService) Start(ctx context.Context) {
 	if s == nil {
 		return
 	}
-	s.start.Do(func() { go s.run(ctx) })
+	// Logged because a poller that never started looks exactly like a healthy
+	// one: the API answers, the settings read fine, and nothing errors. The only
+	// symptom is that last_sync_at stays empty.
+	s.start.Do(func() {
+		if s.logger != nil {
+			s.logger.Printf("magma: poller started")
+		}
+		go s.run(ctx)
+	})
 }
 
 func (s *MagmaService) signal() {

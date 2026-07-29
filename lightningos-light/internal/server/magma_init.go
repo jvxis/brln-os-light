@@ -45,6 +45,14 @@ func (s *Server) initMagma() {
 	}
 	s.magma = svc
 	s.magmaErr = ""
+
+	// Start the poller here rather than only from the server's startup block.
+	// That block runs once and skips the app when this init failed at boot — a
+	// Postgres that is a second late is enough. The next HTTP request then
+	// re-inits successfully and everything looks healthy while the worker was
+	// never launched, which reads as "the poller is dead" with no error anywhere.
+	// Start is a sync.Once, so calling it from both places is harmless.
+	svc.Start(s.shutdownContext())
 }
 
 func (s *Server) magmaService() (*MagmaService, string) {

@@ -3439,7 +3439,7 @@
     "closingChannel": "Fechando canal...",
     "closingTx": "Closing tx: {{txid}}",
     "closeManualFeeRequired": "Informe uma fee manual ou volte para Automático.",
-    "confirmationsLabel": "Confirmações: {{count}}",
+    "confirmationsLabel": "Confirmações restantes: {{count}}",
     "connectPeer": "Conectar peer",
     "connectedPeers": "Conectados: {{count}}",
     "connectingPeer": "Conectando...",

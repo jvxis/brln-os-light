@@ -3439,7 +3439,7 @@
     "closingChannel": "Closing channel...",
     "closingTx": "Closing tx: {{txid}}",
     "closeManualFeeRequired": "Enter a manual fee rate or switch back to Auto.",
-    "confirmationsLabel": "Confirmations: {{count}}",
+    "confirmationsLabel": "Confirmations remaining: {{count}}",
     "connectPeer": "Connect peer",
     "connectedPeers": "Connected: {{count}}",
     "connectingPeer": "Connecting...",

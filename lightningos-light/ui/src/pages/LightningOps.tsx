@@ -4087,6 +4087,8 @@ export default function LightningOps() {
   const isPendingOpenStuck = (ch: PendingChannel) => {
     if ((ch.status || '').trim().toLowerCase() !== 'opening') return false
     if (typeof ch.opening_duration_sec !== 'number' || ch.opening_duration_sec < PENDING_OPEN_STUCK_THRESHOLD_SEC) return false
+    if (typeof ch.confirmation_height === 'number' && ch.confirmation_height > 0) return false
+    if (ch.funding_tx_status === 'confirmed') return false
     if (typeof ch.confirmations_until_active === 'number' && ch.confirmations_until_active <= 0) return false
     return channelPointTxid(ch.channel_point).length > 0
   }

@@ -1408,6 +1408,9 @@ export type MagmaOffer = {
   min_block_length: number
   conditions?: MagmaOfferCondition[]
   seller_score?: string
+  fixed_fee_mode: 'manual' | 'automatic'
+  onchain_priority?: string
+  onchain_multiplier?: number
 }
 
 export type MagmaOfferConflict = {

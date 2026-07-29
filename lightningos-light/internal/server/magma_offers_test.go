@@ -73,6 +73,85 @@ func TestMagmaOfferValidate(t *testing.T) {
 	}
 }
 
+// Manual and automatic are mutually exclusive on the wire, mirroring the form.
+// These two fields were missing from the first version of offerInput: since an
+// update sends the whole offer, omitting them would have quietly reset an
+// automatic offer to a manual fee of whatever base_fee happened to hold — and 34
+// of 35 real offers on this account are automatic.
+func TestMagmaOfferInputFixedFeeMode(t *testing.T) {
+	base := MagmaOffer{TotalSizeSat: 2_000_000, MinSizeSat: 1_000_000, MinBlockLength: 4320}
+
+	t.Run("automatic sends priority and multiplier, not the number", func(t *testing.T) {
+		offer := base
+		offer.FixedFeeMode = magmaFixedFeeAutomatic
+		offer.OnchainPriority = "HIGH"
+		offer.OnchainMultiplier = 2
+		offer.BaseFeeSat = 1136 // whatever Amboss last computed
+		input := offer.offerInput()
+		if input["onchain_priority"] != "HIGH" || input["onchain_multiplier"] != int64(2) {
+			t.Fatalf("automatic must carry priority and multiplier: %#v", input)
+		}
+		if _, present := input["base_fee"]; present {
+			t.Fatal("a computed base fee must not be sent back as a manual one")
+		}
+		if err := offer.validate(); err != nil {
+			t.Fatalf("valid automatic offer rejected: %v", err)
+		}
+	})
+
+	t.Run("manual sends the number, not priority", func(t *testing.T) {
+		offer := base
+		offer.FixedFeeMode = magmaFixedFeeManual
+		offer.BaseFeeSat = 568
+		input := offer.offerInput()
+		if input["base_fee"] != int64(568) {
+			t.Fatalf("manual must carry the fixed fee: %#v", input["base_fee"])
+		}
+		for _, key := range []string{"onchain_priority", "onchain_multiplier"} {
+			if _, present := input[key]; present {
+				t.Fatalf("%s must be absent in manual mode", key)
+			}
+		}
+	})
+
+	t.Run("automatic rejects a bad priority or multiplier", func(t *testing.T) {
+		for _, tc := range []struct {
+			name       string
+			priority   string
+			multiplier int64
+			expect     string
+		}{
+			{"unknown priority", "URGENT", 2, "unknown mempool priority"},
+			{"multiplier below range", "HIGH", 0, "between 1 and 5"},
+			{"multiplier above range", "HIGH", 6, "between 1 and 5"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				offer := base
+				offer.FixedFeeMode = magmaFixedFeeAutomatic
+				offer.OnchainPriority = tc.priority
+				offer.OnchainMultiplier = tc.multiplier
+				err := offer.validate()
+				if err == nil {
+					t.Fatal("expected a validation error")
+				}
+				if !strings.Contains(err.Error(), tc.expect) {
+					t.Fatalf("error %q does not mention %q", err, tc.expect)
+				}
+			})
+		}
+	})
+
+	// Manual mode must not be validated against the automatic enums.
+	t.Run("manual ignores priority validation", func(t *testing.T) {
+		offer := base
+		offer.FixedFeeMode = magmaFixedFeeManual
+		offer.OnchainPriority = "GARBAGE"
+		if err := offer.validate(); err != nil {
+			t.Fatalf("manual mode should not check the priority: %v", err)
+		}
+	})
+}
+
 // Conditions are always sent, including empty, so clearing them in the form
 // actually clears them instead of leaving the previous set live on Amboss.
 func TestMagmaOfferInputAlwaysSendsConditions(t *testing.T) {

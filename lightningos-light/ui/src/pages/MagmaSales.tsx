@@ -547,7 +547,10 @@ export default function MagmaSales() {
                         <span className="text-fog/45"> · {t('magma.offerTotalSize').toLowerCase()} {formatSats(offer.total_size_sat, locale)}</span>
                       </span>
                       <span>
-                        {offer.fee_rate_ppm.toLocaleString(locale)} ppm + {formatSats(offer.base_fee_sat, locale)}
+                        {offer.fee_rate_ppm.toLocaleString(locale)} ppm +{' '}
+                        {offer.fixed_fee_mode === 'automatic'
+                          ? `${offer.onchain_priority ?? 'HIGH'} ${offer.onchain_multiplier ?? 2}x`
+                          : formatSats(offer.base_fee_sat, locale)}
                         <span className="text-fog/45"> · {formatDays(offer.min_block_length)}</span>
                       </span>
                       <span className="text-fog/60">
@@ -808,6 +811,8 @@ const magmaDurations = [
   { blocks: 25920, labelKey: 'magma.duration6m' }
 ]
 
+// Automatic is the default because it is what protects the margin: the fixed fee
+// tracks the mempool instead of the sale becoming unprofitable when fees spike.
 const emptyOffer = (): MagmaOffer => ({
   total_size_sat: 0,
   min_size_sat: 0,
@@ -817,8 +822,20 @@ const emptyOffer = (): MagmaOffer => ({
   fee_rate_cap_ppm: 0,
   base_fee_cap_sat: 0,
   min_block_length: 4320,
-  conditions: []
+  conditions: [],
+  fixed_fee_mode: 'automatic',
+  onchain_priority: 'HIGH',
+  onchain_multiplier: 2
 })
+
+// The multiplier is how many on-chain transactions the fixed fee should cover.
+const magmaMultipliers = [
+  { value: 1, labelKey: 'magma.offerMultiplier1' },
+  { value: 2, labelKey: 'magma.offerMultiplier2' },
+  { value: 3, labelKey: 'magma.offerMultiplier3' },
+  { value: 4, labelKey: 'magma.offerMultiplier4' },
+  { value: 5, labelKey: 'magma.offerMultiplier5' }
+]
 
 // MagmaOfferDialog mirrors the Amboss sell form. Its job beyond editing is to
 // name the contradictions with the global policy: a policy tighter than the offer
@@ -922,9 +939,75 @@ function MagmaOfferDialog({
           {section(
             'magma.offerSectionPrice',
             'magma.offerSectionPriceHint',
-            <div className="grid items-start gap-4 sm:grid-cols-2">
-              {numberField('fee_rate_ppm', 'magma.offerFeeRate', 'ppm')}
-              {numberField('base_fee_sat', 'magma.offerBaseFee', 'sat')}
+            <div className="space-y-3">
+              <div className="grid items-start gap-4 sm:grid-cols-2">
+                {numberField('fee_rate_ppm', 'magma.offerFeeRate', 'ppm')}
+                <label className="grid gap-1.5 text-sm">
+                  <span className="text-xs uppercase tracking-wide text-fog/50">
+                    {t('magma.offerFixedFeeMode')}
+                  </span>
+                  <select
+                    className="input-field w-full"
+                    value={draft.fixed_fee_mode}
+                    onChange={(event) =>
+                      setDraft({
+                        ...draft,
+                        fixed_fee_mode: event.target.value as 'manual' | 'automatic',
+                        onchain_priority: draft.onchain_priority || 'HIGH',
+                        onchain_multiplier: draft.onchain_multiplier || 2
+                      })
+                    }
+                  >
+                    <option value="automatic">{t('magma.offerFixedFeeAutomatic')}</option>
+                    <option value="manual">{t('magma.offerFixedFeeManual')}</option>
+                  </select>
+                </label>
+              </div>
+              {draft.fixed_fee_mode === 'manual' ? (
+                <div className="grid items-start gap-4 sm:grid-cols-2">
+                  {numberField('base_fee_sat', 'magma.offerBaseFee', 'sat')}
+                </div>
+              ) : (
+                <div className="grid items-start gap-4 sm:grid-cols-2">
+                  <label className="grid gap-1.5 text-sm">
+                    <span className="text-xs uppercase tracking-wide text-fog/50">
+                      {t('magma.offerPriority')}
+                    </span>
+                    <select
+                      className="input-field w-full"
+                      value={draft.onchain_priority || 'HIGH'}
+                      onChange={(event) => setDraft({ ...draft, onchain_priority: event.target.value })}
+                    >
+                      <option value="HIGH">{t('magma.offerPriorityHigh')}</option>
+                      <option value="MEDIUM">{t('magma.offerPriorityMedium')}</option>
+                      <option value="LOW">{t('magma.offerPriorityLow')}</option>
+                    </select>
+                  </label>
+                  <label className="grid gap-1.5 text-sm">
+                    <span className="text-xs uppercase tracking-wide text-fog/50">
+                      {t('magma.offerMultiplier')}
+                    </span>
+                    <select
+                      className="input-field w-full"
+                      value={draft.onchain_multiplier || 2}
+                      onChange={(event) =>
+                        setDraft({ ...draft, onchain_multiplier: Number(event.target.value) })
+                      }
+                    >
+                      {magmaMultipliers.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {t(option.labelKey)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              )}
+              <p className="text-xs text-fog/45">
+                {draft.fixed_fee_mode === 'manual'
+                  ? t('magma.offerFixedFeeManualHint')
+                  : t('magma.offerFixedFeeAutomaticHint')}
+              </p>
             </div>
           )}
 

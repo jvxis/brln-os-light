@@ -633,7 +633,23 @@ type MagmaOffer struct {
 	MinBlockLength int64                 `json:"min_block_length"`
 	Conditions     []MagmaOfferCondition `json:"conditions,omitempty"`
 	SellerScore    string                `json:"seller_score,omitempty"`
+
+	// The fixed fee is either a number the seller picks, or one Amboss derives
+	// from the mempool. Automatic is priority x multiplier, where the multiplier
+	// is how many on-chain transactions the sale should cover (2x = open + close).
+	// Automatic is what protects the margin when fees spike: the price rises with
+	// the mempool instead of the sale becoming unprofitable.
+	FixedFeeMode      string `json:"fixed_fee_mode"`
+	OnchainPriority   string `json:"onchain_priority,omitempty"`
+	OnchainMultiplier int64  `json:"onchain_multiplier,omitempty"`
 }
+
+const (
+	magmaFixedFeeManual    = "manual"
+	magmaFixedFeeAutomatic = "automatic"
+)
+
+var magmaOnchainPriorityValues = map[string]bool{"HIGH": true, "MEDIUM": true, "LOW": true}
 
 // magmaOfferConditionValues and magmaOfferOperatorValues are the enums the API
 // accepts. Validated locally so a typo fails here instead of arriving as an
@@ -665,6 +681,14 @@ func (o MagmaOffer) validate() error {
 	if o.MinBlockLength <= 0 {
 		return errors.New("channel duration must be positive")
 	}
+	if o.FixedFeeMode == magmaFixedFeeAutomatic {
+		if !magmaOnchainPriorityValues[o.OnchainPriority] {
+			return fmt.Errorf("unknown mempool priority %q", o.OnchainPriority)
+		}
+		if o.OnchainMultiplier < 1 || o.OnchainMultiplier > 5 {
+			return errors.New("the fee multiplier must be between 1 and 5")
+		}
+	}
 	for _, condition := range o.Conditions {
 		if !magmaOfferConditionValues[condition.Condition] {
 			return fmt.Errorf("unknown buyer condition %q", condition.Condition)
@@ -686,9 +710,21 @@ func (o MagmaOffer) offerInput() map[string]any {
 		"min_size":         o.MinSizeSat,
 		"min_block_length": o.MinBlockLength,
 		"fee_rate":         o.FeeRatePPM,
-		"base_fee":         o.BaseFeeSat,
 		"fee_rate_cap":     o.FeeRateCapPPM,
 		"base_fee_cap":     o.BaseFeeCapSat,
+	}
+	// Mutually exclusive, mirroring the form: a manual fixed fee is a number, an
+	// automatic one is a mempool priority and a multiplier. Sending both would
+	// leave it ambiguous which one Amboss should honour.
+	//
+	// These two fields were missing from the first version of this call. Because
+	// an update sends the whole offer, omitting them would have quietly reset an
+	// automatic offer to a manual fee of whatever base_fee happened to hold.
+	if o.FixedFeeMode == magmaFixedFeeAutomatic {
+		input["onchain_priority"] = o.OnchainPriority
+		input["onchain_multiplier"] = o.OnchainMultiplier
+	} else {
+		input["base_fee"] = o.BaseFeeSat
 	}
 	if o.MaxSizeSat > 0 {
 		input["max_size"] = o.MaxSizeSat
@@ -724,6 +760,8 @@ const magmaOffersQuery = `query MagmaOffers {
           base_fee_cap
           min_block_length
           seller_score
+          onchain_priority
+          onchain_multiplier
           conditions { condition operator value }
         }
       }
@@ -737,19 +775,21 @@ func (c *magmaAmbossClient) Offers(ctx context.Context, token string) ([]MagmaOf
 			Market struct {
 				Offers struct {
 					List []struct {
-						ID             string      `json:"id"`
-						Status         string      `json:"status"`
-						Side           string      `json:"side"`
-						TotalSize      magmaNumber `json:"total_size"`
-						MinSize        magmaNumber `json:"min_size"`
-						MaxSize        magmaNumber `json:"max_size"`
-						FeeRate        magmaNumber `json:"fee_rate"`
-						BaseFee        magmaNumber `json:"base_fee"`
-						FeeRateCap     magmaNumber `json:"fee_rate_cap"`
-						BaseFeeCap     magmaNumber `json:"base_fee_cap"`
-						MinBlockLength magmaNumber `json:"min_block_length"`
-						SellerScore    string      `json:"seller_score"`
-						Conditions     []struct {
+						ID                string      `json:"id"`
+						Status            string      `json:"status"`
+						Side              string      `json:"side"`
+						TotalSize         magmaNumber `json:"total_size"`
+						MinSize           magmaNumber `json:"min_size"`
+						MaxSize           magmaNumber `json:"max_size"`
+						FeeRate           magmaNumber `json:"fee_rate"`
+						BaseFee           magmaNumber `json:"base_fee"`
+						FeeRateCap        magmaNumber `json:"fee_rate_cap"`
+						BaseFeeCap        magmaNumber `json:"base_fee_cap"`
+						MinBlockLength    magmaNumber `json:"min_block_length"`
+						SellerScore       string      `json:"seller_score"`
+						OnchainPriority   string      `json:"onchain_priority"`
+						OnchainMultiplier magmaNumber `json:"onchain_multiplier"`
+						Conditions        []struct {
 							Condition string `json:"condition"`
 							Operator  string `json:"operator"`
 							Value     string `json:"value"`
@@ -766,18 +806,27 @@ func (c *magmaAmbossClient) Offers(ctx context.Context, token string) ([]MagmaOf
 	offers := make([]MagmaOffer, 0, len(raw))
 	for _, item := range raw {
 		offer := MagmaOffer{
-			ID:             strings.TrimSpace(item.ID),
-			Status:         strings.TrimSpace(item.Status),
-			Side:           strings.TrimSpace(item.Side),
-			TotalSizeSat:   item.TotalSize.Value,
-			MinSizeSat:     item.MinSize.Value,
-			MaxSizeSat:     item.MaxSize.Value,
-			FeeRatePPM:     item.FeeRate.Value,
-			BaseFeeSat:     item.BaseFee.Value,
-			FeeRateCapPPM:  item.FeeRateCap.Value,
-			BaseFeeCapSat:  item.BaseFeeCap.Value,
-			MinBlockLength: item.MinBlockLength.Value,
-			SellerScore:    strings.TrimSpace(item.SellerScore),
+			ID:                strings.TrimSpace(item.ID),
+			Status:            strings.TrimSpace(item.Status),
+			Side:              strings.TrimSpace(item.Side),
+			TotalSizeSat:      item.TotalSize.Value,
+			MinSizeSat:        item.MinSize.Value,
+			MaxSizeSat:        item.MaxSize.Value,
+			FeeRatePPM:        item.FeeRate.Value,
+			BaseFeeSat:        item.BaseFee.Value,
+			FeeRateCapPPM:     item.FeeRateCap.Value,
+			BaseFeeCapSat:     item.BaseFeeCap.Value,
+			MinBlockLength:    item.MinBlockLength.Value,
+			SellerScore:       strings.TrimSpace(item.SellerScore),
+			OnchainPriority:   strings.TrimSpace(item.OnchainPriority),
+			OnchainMultiplier: item.OnchainMultiplier.Value,
+		}
+		// A stored priority is what marks the offer as automatic; Amboss keeps a
+		// computed base_fee alongside it, so base_fee alone cannot tell them apart.
+		if offer.OnchainPriority != "" {
+			offer.FixedFeeMode = magmaFixedFeeAutomatic
+		} else {
+			offer.FixedFeeMode = magmaFixedFeeManual
 		}
 		for _, condition := range item.Conditions {
 			offer.Conditions = append(offer.Conditions, MagmaOfferCondition{

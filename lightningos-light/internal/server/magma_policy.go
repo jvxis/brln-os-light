@@ -232,12 +232,16 @@ where id=1
 func (s *MagmaService) dailyUsage(ctx context.Context) (int, int64, error) {
 	var count int
 	var size int64
+	// Counted from the append-only event trail, not from magma_orders.updated_at.
+	// Every sync rewrites updated_at on every row, so a row-timestamp filter would
+	// re-count yesterday's sales today — and keep re-counting them, until the
+	// daily cap was permanently exhausted and auto mode stopped accepting anything.
 	err := s.db.QueryRow(ctx, `
-select count(*), coalesce(sum(size_sat),0)
-from magma_orders
-where local_state <> $1 and local_state <> $2
-  and updated_at >= date_trunc('day', now())
-`, magmaStateObserved, magmaStateRejected).Scan(&count, &size)
+select count(*), coalesce(sum(o.size_sat), 0)
+from magma_order_events e
+join magma_orders o on o.order_id = e.order_id
+where e.kind = 'accepted' and e.created_at >= date_trunc('day', now())
+`).Scan(&count, &size)
 	return count, size, err
 }
 

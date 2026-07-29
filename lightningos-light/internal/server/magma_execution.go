@@ -247,7 +247,13 @@ func (s *MagmaService) ensureCapacityFor(ctx context.Context, sizeSat int64) err
 func (s *MagmaService) AcceptOrder(ctx context.Context, orderID string) (MagmaOrder, error) {
 	s.workMu.Lock()
 	defer s.workMu.Unlock()
+	return s.acceptOrderLocked(ctx, orderID)
+}
 
+// acceptOrderLocked requires the caller to hold workMu. Auto mode runs inside
+// SyncOnce, which already holds it, and Go mutexes are not reentrant: calling
+// the public method from there deadlocks the poller against itself.
+func (s *MagmaService) acceptOrderLocked(ctx context.Context, orderID string) (MagmaOrder, error) {
 	if err := s.requireActionMode(ctx); err != nil {
 		return MagmaOrder{}, err
 	}
@@ -325,7 +331,11 @@ update magma_orders set invoice_payment_request=$2, invoice_hash=$3, updated_at=
 func (s *MagmaService) RejectOrder(ctx context.Context, orderID string) (MagmaOrder, error) {
 	s.workMu.Lock()
 	defer s.workMu.Unlock()
+	return s.rejectOrderLocked(ctx, orderID)
+}
 
+// rejectOrderLocked requires the caller to hold workMu.
+func (s *MagmaService) rejectOrderLocked(ctx context.Context, orderID string) (MagmaOrder, error) {
 	if err := s.requireActionMode(ctx); err != nil {
 		return MagmaOrder{}, err
 	}
@@ -464,7 +474,11 @@ type MagmaOpenRequest struct {
 func (s *MagmaService) OpenChannelForOrder(ctx context.Context, orderID string, req MagmaOpenRequest) (MagmaOrder, error) {
 	s.workMu.Lock()
 	defer s.workMu.Unlock()
+	return s.openChannelForOrderLocked(ctx, orderID, req)
+}
 
+// openChannelForOrderLocked requires the caller to hold workMu.
+func (s *MagmaService) openChannelForOrderLocked(ctx context.Context, orderID string, req MagmaOpenRequest) (MagmaOrder, error) {
 	if err := s.requireActionMode(ctx); err != nil {
 		return MagmaOrder{}, err
 	}

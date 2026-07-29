@@ -302,7 +302,7 @@ order by coalesce(order_created_at, first_seen_at) asc limit 1
 			preview.FeeShareOfRevenue, policy.MaxOnchainCostPct), nil)
 		return false
 	}
-	if _, err := s.OpenChannelForOrder(ctx, orderID, MagmaOpenRequest{SatPerVbyte: preview.SatPerVbyte}); err != nil {
+	if _, err := s.openChannelForOrderLocked(ctx, orderID, MagmaOpenRequest{SatPerVbyte: preview.SatPerVbyte}); err != nil {
 		if s.logger != nil {
 			s.logger.Printf("magma: auto open failed for %s: %v", orderID, err)
 		}
@@ -358,7 +358,7 @@ order by coalesce(order_created_at, first_seen_at) asc
 		decision := evaluateMagmaOrder(policy, inputs)
 		switch {
 		case decision.Accept:
-			if _, err := s.AcceptOrder(ctx, orderID); err != nil {
+			if _, err := s.acceptOrderLocked(ctx, orderID); err != nil {
 				s.appendEvent(ctx, orderID, "auto_error", "warning",
 					fmt.Sprintf("auto accept failed: %v", err), nil)
 				return
@@ -369,7 +369,7 @@ order by coalesce(order_created_at, first_seen_at) asc
 			// wallet before the operator sees the first result.
 			return
 		case decision.Reject && policy.AutoRejectDeclined:
-			if _, err := s.RejectOrder(ctx, orderID); err != nil {
+			if _, err := s.rejectOrderLocked(ctx, orderID); err != nil {
 				s.appendEvent(ctx, orderID, "auto_error", "warning",
 					fmt.Sprintf("auto reject failed: %v", err), nil)
 				continue

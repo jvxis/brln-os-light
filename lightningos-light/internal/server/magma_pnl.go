@@ -90,6 +90,63 @@ where revenue_settled_at is null and local_state = any($1)
 	return result, nil
 }
 
+// magmaAliasesPerCycle bounds the gRPC calls one cycle will make. The first sync
+// on an established seller has dozens of unknown buyers, and resolving them all
+// at once would hammer LND for something purely cosmetic.
+const magmaAliasesPerCycle = 15
+
+// resolveBuyerAliases fills in the buyer alias from our own graph. The Amboss
+// order carries only the pubkey, and a pubkey tells the operator nothing about
+// who they just sold a channel to.
+//
+// A null column means "never attempted"; an empty string means "attempted and
+// unknown", so a buyer missing from the graph is not retried on every cycle
+// forever. We are peered with the buyer after the sale, so the alias normally
+// arrives on the first try.
+func (s *MagmaService) resolveBuyerAliases(ctx context.Context) {
+	if s.lnd == nil {
+		return
+	}
+	rows, err := s.db.Query(ctx, `
+select order_id, buyer_pubkey from magma_orders
+where buyer_alias is null and buyer_pubkey <> ''
+order by coalesce(order_created_at, first_seen_at) desc
+limit $1
+`, magmaAliasesPerCycle)
+	if err != nil {
+		return
+	}
+	type target struct{ orderID, pubkey string }
+	targets := make([]target, 0, magmaAliasesPerCycle)
+	for rows.Next() {
+		var item target
+		if err := rows.Scan(&item.orderID, &item.pubkey); err == nil {
+			targets = append(targets, item)
+		}
+	}
+	rows.Close()
+
+	// One lookup per distinct pubkey: the same buyer often has several orders.
+	aliasByPubkey := make(map[string]string, len(targets))
+	for _, item := range targets {
+		if _, seen := aliasByPubkey[item.pubkey]; seen {
+			continue
+		}
+		alias := ""
+		if details, err := s.lnd.GetNodeDetails(ctx, item.pubkey); err == nil {
+			alias = strings.TrimSpace(details.Alias)
+		}
+		aliasByPubkey[item.pubkey] = alias
+	}
+	for _, item := range targets {
+		if _, err := s.db.Exec(ctx,
+			`update magma_orders set buyer_alias=$2 where order_id=$1 and buyer_alias is null`,
+			item.orderID, aliasByPubkey[item.pubkey]); err != nil {
+			return
+		}
+	}
+}
+
 // resolveOnchainCosts fills in the mining fee of each sale's funding
 // transaction. Run from the poller because a freshly broadcast open does not
 // appear in the wallet transaction list immediately.

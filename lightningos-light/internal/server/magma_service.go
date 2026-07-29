@@ -32,9 +32,9 @@ const (
 	// magmaCycleTimeout bounds one poll cycle. Generous enough for a real cycle
 	// (two Amboss calls plus LND work), short enough that a stall self-heals
 	// instead of parking the poller for good.
-	magmaCycleTimeout = 4 * time.Minute
-	magmaMinPollInterval     = 30
-	magmaMaxPollInterval     = 3600
+	magmaCycleTimeout    = 4 * time.Minute
+	magmaMinPollInterval = 30
+	magmaMaxPollInterval = 3600
 
 	// magmaTokenExpiryWarnDays is when we start warning. Phase 1 only reports it;
 	// later phases must refuse to open a channel inside this window, because a
@@ -236,7 +236,8 @@ alter table magma_orders
   add column if not exists last_error text not null default '',
   add column if not exists fee_guard_applied boolean not null default false,
   add column if not exists revenue_settled_at timestamptz,
-  add column if not exists onchain_fee_sat bigint;
+  add column if not exists onchain_fee_sat bigint,
+  add column if not exists buyer_alias text;
 
 create index if not exists magma_orders_revenue_settled_idx
   on magma_orders (revenue_settled_at) where revenue_settled_at is not null;
@@ -542,6 +543,7 @@ func (s *MagmaService) syncLocked(ctx context.Context) error {
 			s.syncFeeGuards(ctx)
 			s.resolveOnchainCosts(ctx)
 		}
+		s.resolveBuyerAliases(ctx)
 		s.recordSyncResult(&summary, nil)
 		return nil
 	}
@@ -576,6 +578,9 @@ func (s *MagmaService) syncLocked(ctx context.Context) error {
 		// broadcast, so this is retried rather than read inline at open time.
 		s.resolveOnchainCosts(ctx)
 	}
+	// Aliases are cosmetic, so they are resolved in every mode - including
+	// monitor, where the whole point is reading the order book.
+	s.resolveBuyerAliases(ctx)
 	// Auto mode runs last, after reconciliation has settled anything in flight, so
 	// the policy never decides against a half-finished picture.
 	if settings.Mode == magmaModeAuto {
@@ -944,7 +949,8 @@ select order_id, buyer_pubkey, offer_id, size_sat, revenue_sat, buyer_pays_sat, 
        commitment_blocks, blocks_until_can_be_closed, closed_blocks_before_min, fee_above_cap_seconds,
        magma_status, payment_status, payment_hash, channel_scid, channel_point,
        cancellation_reason, seller_close_side, buyer_close_side, is_automated, chat_enabled,
-       order_created_at, order_updated_at, local_state, funding_txid, last_error
+       order_created_at, order_updated_at, local_state, funding_txid, last_error,
+       coalesce(buyer_alias, '')
 from magma_orders
 order by coalesce(order_created_at, first_seen_at) desc
 limit $1
@@ -966,7 +972,7 @@ limit $1
 			&order.ChannelPoint, &order.CancellationReason, &order.SellerCloseSide,
 			&order.BuyerCloseSide, &order.IsAutomated, &order.ChatEnabled,
 			&order.CreatedAt, &order.UpdatedAt,
-			&order.LocalState, &order.FundingTxid, &order.LastError,
+			&order.LocalState, &order.FundingTxid, &order.LastError, &order.BuyerAlias,
 		); err != nil {
 			return nil, err
 		}

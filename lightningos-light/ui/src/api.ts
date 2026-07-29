@@ -1276,6 +1276,7 @@ export type MagmaOrder = {
   id: string
   status: string
   buyer_pubkey: string
+  buyer_alias?: string
   offer_id: string
   size_sat: number
   revenue_sat: number

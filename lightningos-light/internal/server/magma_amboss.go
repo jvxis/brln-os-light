@@ -125,9 +125,12 @@ type magmaRawOrder struct {
 // LockedBaseFeeCap are the *routing fee ceiling* the channel must respect for
 // the commitment window. Similar names, opposite meanings.
 type MagmaOrder struct {
-	ID                     string     `json:"id"`
-	Status                 string     `json:"status"`
-	BuyerPubkey            string     `json:"buyer_pubkey"`
+	ID          string `json:"id"`
+	Status      string `json:"status"`
+	BuyerPubkey string `json:"buyer_pubkey"`
+	// BuyerAlias is resolved from our own graph and cached locally; the API does
+	// not carry it.
+	BuyerAlias             string     `json:"buyer_alias,omitempty"`
 	OfferID                string     `json:"offer_id"`
 	SizeSat                int64      `json:"size_sat"`
 	RevenueSat             int64      `json:"revenue_sat"`

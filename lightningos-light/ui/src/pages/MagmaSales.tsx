@@ -57,6 +57,26 @@ const shortPubkey = (pubkey: string) => {
   return `${pubkey.slice(0, 8)}…${pubkey.slice(-8)}`
 }
 
+// Deep link into the graph explorer, which reads the pubkey from the hash query.
+const graphExplorerHref = (pubkey: string) =>
+  `#graph-explorer?pubkey=${encodeURIComponent(pubkey)}`
+
+// A pubkey says nothing about who the buyer is, so the alias leads when we have
+// it and the short pubkey stays as the fallback and the tooltip.
+function BuyerLink({ order }: { order: MagmaOrder }) {
+  if (!order.buyer_pubkey) return <span className="text-fog/50">-</span>
+  const label = order.buyer_alias?.trim() || shortPubkey(order.buyer_pubkey)
+  return (
+    <a
+      className="text-glow hover:underline"
+      href={graphExplorerHref(order.buyer_pubkey)}
+      title={order.buyer_pubkey}
+    >
+      {label}
+    </a>
+  )
+}
+
 const formatDateTime = (value: string | undefined, locale: string) => {
   if (!value) return '-'
   const parsed = new Date(value)
@@ -427,7 +447,7 @@ export default function MagmaSales() {
                     {t('magma.colRevenue')}: {formatSats(order.revenue_sat, locale)}
                   </span>
                   <span>
-                    {t('magma.colBuyer')}: {shortPubkey(order.buyer_pubkey)}
+                    {t('magma.colBuyer')}: <BuyerLink order={order} />
                   </span>
                   <span>
                     {t('magma.colCommitment')}: {formatDays(order.commitment_blocks)}
@@ -502,7 +522,9 @@ export default function MagmaSales() {
                           base {order.base_fee_cap_sat} sat
                         </span>
                       </td>
-                      <td className="py-2 pr-4 whitespace-nowrap">{shortPubkey(order.buyer_pubkey)}</td>
+                      <td className="py-2 pr-4 whitespace-nowrap" onClick={(event) => event.stopPropagation()}>
+                        <BuyerLink order={order} />
+                      </td>
                     </tr>
                   )
                 })}
@@ -1079,7 +1101,14 @@ function MagmaOrderDetail({
       </div>
       <div className="mt-3 grid gap-2 text-fog/70 md:grid-cols-2">
         <span>
-          {t('magma.detailBuyer')}: <span className="break-all">{order.buyer_pubkey || '-'}</span>
+          {t('magma.detailBuyer')}:{' '}
+          {order.buyer_alias?.trim() ? `${order.buyer_alias} · ` : ''}
+          <a
+            className="break-all text-glow hover:underline"
+            href={graphExplorerHref(order.buyer_pubkey)}
+          >
+            {order.buyer_pubkey || '-'}
+          </a>
         </span>
         <span>
           {t('magma.detailPaymentStatus')}: {order.payment_status || '-'}

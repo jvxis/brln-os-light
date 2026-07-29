@@ -48,6 +48,11 @@ func TestBuildUpsertDaily(t *testing.T) {
 			ProvenanceLastSyncAgeHours: &provenanceAgeHours,
 			ProvenanceHealthAlert:      &provenanceAlert,
 			ProvenanceLastError:        &provenanceLastError,
+			SalesRevenueSat:            3566,
+			SalesRevenueMsat:           3566000,
+			SalesCount:                 1,
+			NetTotalSat:                4416,
+			NetTotalMsat:               4416000,
 		},
 	}
 
@@ -67,8 +72,11 @@ func TestBuildUpsertDaily(t *testing.T) {
 	if !strings.Contains(query, "total_balance_sats = coalesce(excluded.total_balance_sats, reports_daily.total_balance_sats)") {
 		t.Fatalf("expected total balance coalesce on upsert")
 	}
-	if len(args) != 36 {
-		t.Fatalf("expected 36 args, got %d", len(args))
+	if !strings.Contains(query, "sales_revenue_sats = excluded.sales_revenue_sats") {
+		t.Fatalf("expected channel sale revenue on upsert")
+	}
+	if len(args) != 41 {
+		t.Fatalf("expected 41 args, got %d", len(args))
 	}
 
 	argDate, ok := args[0].(time.Time)
@@ -112,7 +120,12 @@ func TestBuildUpsertDaily(t *testing.T) {
 		args[32] != provenanceSyncAt || // provenance_last_sync_at
 		args[33] != provenanceAgeHours || // provenance_last_sync_age_hours
 		args[34] != false || // provenance_health_alert
-		args[35] != "" { // provenance_last_error
+		args[35] != "" || // provenance_last_error
+		args[36] != int64(3566) || // sales_revenue_sats
+		args[37] != int64(3566000) || // sales_revenue_msat
+		args[38] != int64(1) || // sales_count
+		args[39] != int64(4416) || // net_total_sats
+		args[40] != int64(4416000) { // net_total_msat
 		t.Fatalf("unexpected metrics args")
 	}
 }

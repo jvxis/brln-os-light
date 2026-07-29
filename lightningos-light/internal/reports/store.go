@@ -101,6 +101,11 @@ alter table reports_daily add column if not exists provenance_last_sync_at times
 alter table reports_daily add column if not exists provenance_last_sync_age_hours double precision null;
 alter table reports_daily add column if not exists provenance_health_alert boolean null;
 alter table reports_daily add column if not exists provenance_last_error text null;
+alter table reports_daily add column if not exists sales_revenue_sats bigint not null default 0;
+alter table reports_daily add column if not exists sales_revenue_msat bigint not null default 0;
+alter table reports_daily add column if not exists sales_count integer not null default 0;
+alter table reports_daily add column if not exists net_total_sats bigint not null default 0;
+alter table reports_daily add column if not exists net_total_msat bigint not null default 0;
 `)
 	return err
 }
@@ -155,6 +160,11 @@ func buildUpsertDaily(row Row) (string, []any) {
 		nullableFloat64(metrics.ProvenanceLastSyncAgeHours),
 		nullableBool(metrics.ProvenanceHealthAlert),
 		nullableString(metrics.ProvenanceLastError),
+		metrics.SalesRevenueSat,
+		metrics.SalesRevenueMsat,
+		metrics.SalesCount,
+		metrics.NetTotalSat,
+		metrics.NetTotalMsat,
 	}
 
 	query := `
@@ -194,8 +204,13 @@ insert into reports_daily (
   provenance_last_sync_at,
   provenance_last_sync_age_hours,
   provenance_health_alert,
-  provenance_last_error
-) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36)
+  provenance_last_error,
+  sales_revenue_sats,
+  sales_revenue_msat,
+  sales_count,
+  net_total_sats,
+  net_total_msat
+) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41)
 on conflict (report_date) do update set
   forward_fee_revenue_sats = excluded.forward_fee_revenue_sats,
   forward_fee_revenue_msat = excluded.forward_fee_revenue_msat,
@@ -232,6 +247,11 @@ on conflict (report_date) do update set
   provenance_last_sync_age_hours = coalesce(excluded.provenance_last_sync_age_hours, reports_daily.provenance_last_sync_age_hours),
   provenance_health_alert = coalesce(excluded.provenance_health_alert, reports_daily.provenance_health_alert),
   provenance_last_error = coalesce(excluded.provenance_last_error, reports_daily.provenance_last_error),
+  sales_revenue_sats = excluded.sales_revenue_sats,
+  sales_revenue_msat = excluded.sales_revenue_msat,
+  sales_count = excluded.sales_count,
+  net_total_sats = excluded.net_total_sats,
+  net_total_msat = excluded.net_total_msat,
   updated_at = now()
 `
 
@@ -435,7 +455,12 @@ select report_date,
   provenance_last_sync_at,
   provenance_last_sync_age_hours,
   provenance_health_alert,
-  provenance_last_error
+  provenance_last_error,
+  sales_revenue_sats,
+  sales_revenue_msat,
+  sales_count,
+  net_total_sats,
+  net_total_msat
 from reports_daily
 where report_date >= $1 and report_date <= $2
 order by report_date asc
@@ -496,7 +521,12 @@ select report_date,
   provenance_last_sync_at,
   provenance_last_sync_age_hours,
   provenance_health_alert,
-  provenance_last_error
+  provenance_last_error,
+  sales_revenue_sats,
+  sales_revenue_msat,
+  sales_count,
+  net_total_sats,
+  net_total_msat
 from reports_daily
 order by report_date asc
 `)
@@ -758,6 +788,11 @@ func scanRow(scanner rowScanner) (Row, error) {
 		&provenanceAge,
 		&provenanceAlert,
 		&provenanceLastError,
+		&metrics.SalesRevenueSat,
+		&metrics.SalesRevenueMsat,
+		&metrics.SalesCount,
+		&metrics.NetTotalSat,
+		&metrics.NetTotalMsat,
 	)
 	if err != nil {
 		return Row{}, err

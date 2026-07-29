@@ -306,6 +306,62 @@ export default function MagmaSales() {
         </div>
       </section>
 
+      {overview?.pnl && (overview.pnl.sales_count > 0 || overview.pnl.pending_count > 0) && (
+        <section className="section-card space-y-3">
+          <div>
+            <h3 className="text-base font-semibold text-fog">{t('magma.pnlTitle')}</h3>
+            <p className="text-sm text-fog/60">{t('magma.pnlBody')}</p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3">
+              <p className="text-xs uppercase tracking-wide text-fog/50">{t('magma.pnlRevenue')}</p>
+              <p className="text-xl font-semibold text-emerald-200">
+                {formatSats(overview.pnl.revenue_sat, locale)}
+              </p>
+              <p className="text-xs text-fog/50">
+                {t('magma.pnlSalesCount', { count: overview.pnl.sales_count })}
+              </p>
+            </div>
+            <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3">
+              <p className="text-xs uppercase tracking-wide text-fog/50">{t('magma.pnlOnchain')}</p>
+              <p className="text-xl font-semibold text-amber-200">
+                −{formatSats(overview.pnl.onchain_cost_sat, locale)}
+              </p>
+              {overview.pnl.onchain_cost_resolved < overview.pnl.sales_count && (
+                <p className="text-xs text-fog/50">
+                  {t('magma.pnlOnchainPartial', {
+                    resolved: overview.pnl.onchain_cost_resolved,
+                    total: overview.pnl.sales_count
+                  })}
+                </p>
+              )}
+            </div>
+            <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3">
+              <p className="text-xs uppercase tracking-wide text-fog/50">{t('magma.pnlNet')}</p>
+              <p
+                className={`text-xl font-semibold ${
+                  overview.pnl.net_sat >= 0 ? 'text-emerald-200' : 'text-rose-200'
+                }`}
+              >
+                {formatSats(overview.pnl.net_sat, locale)}
+              </p>
+            </div>
+            <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3">
+              <p className="text-xs uppercase tracking-wide text-fog/50">{t('magma.pnlPending')}</p>
+              <p className="text-xl font-semibold text-fog">
+                {formatSats(overview.pnl.pending_revenue_sat, locale)}
+              </p>
+              <p className="text-xs text-fog/50">
+                {t('magma.pnlPendingCount', { count: overview.pnl.pending_count })}
+              </p>
+            </div>
+          </div>
+          {/* Stated explicitly because the same fee appears in both places and it
+              would otherwise read as a discrepancy. */}
+          <p className="text-xs text-fog/45">{t('magma.pnlReportsNote')}</p>
+        </section>
+      )}
+
       {actionNeeded.length > 0 && (
         <section className="section-card space-y-3">
           <h3 className="text-base font-semibold text-fog">

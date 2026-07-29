@@ -152,6 +152,8 @@ func ComputeMetrics(ctx context.Context, lnd *lndclient.Client, tr TimeRange, me
 		RebalanceVolumeSat:         rebalanceVolumeMsat / 1000,
 		RebalanceVolumeMsat:        rebalanceVolumeMsat,
 		PaymentCount:               paymentCount,
+		NetTotalSat:                netWithKeysendMsat / 1000,
+		NetTotalMsat:               netWithKeysendMsat,
 		RoutedVolumeSat:            routedVolumeMsat / 1000,
 		RoutedVolumeMsat:           routedVolumeMsat,
 	}

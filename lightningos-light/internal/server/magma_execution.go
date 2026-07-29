@@ -56,6 +56,12 @@ type magmaLND interface {
 	ListChannels(ctx context.Context) ([]lndclient.ChannelInfo, error)
 }
 
+// magmaOnchainTxLister is split out because only the P&L needs it; keeping it
+// optional means the core execution paths stay testable with a smaller fake.
+type magmaOnchainTxLister interface {
+	ListOnchainTransactions(ctx context.Context, limit int) ([]lndclient.OnchainTransaction, error)
+}
+
 var (
 	errMagmaNoLND      = errors.New("LND client unavailable")
 	errMagmaNotFound   = errors.New("order not found")

@@ -39,6 +39,9 @@ type ReportSeriesItem = {
   onchain_remote_force_cost_sats?: number
   offchain_fee_cost_sats?: number
   keysend_received_sats?: number
+  sales_revenue_sats?: number
+  sales_count?: number
+  net_total_sats?: number
   keysend_received_count?: number
   total_fee_cost_sats?: number
   total_fee_cost_with_onchain_sats?: number
@@ -68,6 +71,9 @@ type ReportMetrics = {
   onchain_remote_force_cost_sats?: number
   offchain_fee_cost_sats?: number
   keysend_received_sats?: number
+  sales_revenue_sats?: number
+  sales_count?: number
+  net_total_sats?: number
   keysend_received_count?: number
   total_fee_cost_sats?: number
   total_fee_cost_with_onchain_sats?: number
@@ -927,6 +933,7 @@ export default function Reports() {
   const liveTotalCostWithOnchain = live?.total_fee_cost_with_onchain_sats ?? (liveOffchainCost + liveOnchainCost)
   const liveKeysendReceived = live?.keysend_received_sats ?? 0
   const liveNetWithKeysend = live?.net_with_keysend_sats ?? ((live?.net_routing_profit_sats ?? 0) + liveKeysendReceived)
+  const liveSalesRevenue = live?.sales_revenue_sats ?? 0
   const summaryTotalsOffchainCost = summary?.totals.offchain_fee_cost_sats ?? summary?.totals.total_fee_cost_sats ?? ((summary?.totals.rebalance_fee_cost_sats ?? 0) + (summary?.totals.payment_fee_cost_sats ?? 0))
   const summaryTotalsOnchainCost = summary?.totals.onchain_fee_cost_sats ?? 0
   const summaryTotalsCostWithOnchain = summary?.totals.total_fee_cost_with_onchain_sats ?? (summaryTotalsOffchainCost + summaryTotalsOnchainCost)
@@ -1057,6 +1064,17 @@ export default function Reports() {
                   <p className="text-xs uppercase tracking-wide text-fog/60">{t('reports.keysendReceived')}</p>
                   <p className="text-lg font-semibold" style={{ color: COLORS.keysend }}>{formatSats(liveKeysendReceived)}</p>
                 </div>
+                {/* Only rendered once a channel sale has actually settled, so a
+                    node without the Magma app sees the page exactly as before. */}
+                {liveSalesRevenue > 0 && (
+                  <div className="rounded-2xl bg-white/5 p-4">
+                    <p className="text-xs uppercase tracking-wide text-fog/60">{t('reports.salesRevenue')}</p>
+                    <p className="text-lg font-semibold text-emerald-200">{formatSats(liveSalesRevenue)}</p>
+                    <p className="text-xs text-fog/60">
+                      {t('reports.salesCount', { count: live.sales_count ?? 0 })}
+                    </p>
+                  </div>
+                )}
                 <div className="rounded-2xl bg-white/5 p-4">
                   <p className="text-xs uppercase tracking-wide text-fog/60">{t('reports.routingNet')}</p>
                   <p className="text-lg font-semibold text-fog">{formatSats(live.net_routing_profit_sats)}</p>

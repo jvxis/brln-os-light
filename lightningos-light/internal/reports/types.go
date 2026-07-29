@@ -20,10 +20,19 @@ type Metrics struct {
 	KeysendReceivedSat         int64
 	KeysendReceivedMsat        int64
 	KeysendReceivedCount       int64
-	NetRoutingProfitSat        int64
-	NetRoutingProfitMsat       int64
-	NetWithKeysendSat          int64
-	NetWithKeysendMsat         int64
+	// Channel sales (Magma). Revenue only: the funding transaction fee is
+	// already inside OnchainFeeCost, so counting it here too would double it.
+	SalesRevenueSat      int64
+	SalesRevenueMsat     int64
+	SalesCount           int64
+	NetRoutingProfitSat  int64
+	NetRoutingProfitMsat int64
+	NetWithKeysendSat    int64
+	NetWithKeysendMsat   int64
+	// NetTotal adds every non-routing income stream on top of the routing net.
+	// NetRoutingProfit keeps meaning routing alone.
+	NetTotalSat                int64
+	NetTotalMsat               int64
 	ForwardCount               int64
 	RebalanceCount             int64
 	RebalanceVolumeSat         int64
@@ -46,6 +55,21 @@ func (m Metrics) OffchainFeeCostSat() int64 {
 
 func (m Metrics) OffchainFeeCostMsat() int64 {
 	return m.RebalanceFeeCostMsat + m.PaymentFeeCostMsat
+}
+
+// WithMagmaSales folds a channel-sale contribution into the metrics and keeps
+// the derived net figures consistent.
+func (m Metrics) WithMagmaSales(sales MagmaSalesRevenue) Metrics {
+	m.SalesRevenueMsat = sales.RevenueMsat
+	m.SalesRevenueSat = sales.RevenueMsat / 1000
+	m.SalesCount = sales.Count
+	return m.withNetTotal()
+}
+
+func (m Metrics) withNetTotal() Metrics {
+	m.NetTotalMsat = m.NetRoutingProfitMsat + m.KeysendReceivedMsat + m.SalesRevenueMsat
+	m.NetTotalSat = m.NetTotalMsat / 1000
+	return m
 }
 
 func (m Metrics) TotalFeeCostSat() int64 {

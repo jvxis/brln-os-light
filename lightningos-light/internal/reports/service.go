@@ -81,6 +81,7 @@ func (s *Service) RunDaily(ctx context.Context, reportDate time.Time, loc *time.
 	if shouldAttachProvenanceHealth(reportDate, loc) {
 		metrics = s.attachProvenanceHealth(ctx, metrics)
 	}
+	metrics = s.attachMagmaSales(ctx, metrics, tr)
 
 	row := Row{ReportDate: dateOnly(reportDate, loc), Metrics: metrics}
 	if err := UpsertDaily(ctx, s.db, row); err != nil {
@@ -308,6 +309,23 @@ func (s *Service) attachProvenanceHealth(ctx context.Context, metrics Metrics) M
 	return metrics.WithProvenanceReportHealth(health)
 }
 
+// attachMagmaSales folds in channel-sale revenue when the Magma app is
+// installed. When it is absent the metrics are returned untouched, so a node
+// without the app reports exactly what it did before.
+func (s *Service) attachMagmaSales(ctx context.Context, metrics Metrics, tr TimeRange) Metrics {
+	sales, ok, err := FetchMagmaSalesRevenue(ctx, s.db, tr.StartUTC, tr.EndUTC)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("reports: magma sales revenue unavailable: %v", err)
+		}
+		return metrics
+	}
+	if !ok {
+		return metrics
+	}
+	return metrics.WithMagmaSales(sales)
+}
+
 func (s *Service) computeOutboundTarget(ctx context.Context) (int64, error) {
 	if s.lnd == nil {
 		return 0, nil
@@ -412,6 +430,7 @@ func (s *Service) computeLiveSnapshot(ctx context.Context, now time.Time, loc *t
 		return liveSnapshot{}, err
 	}
 	metrics = s.attachBalances(ctx, metrics)
+	metrics = s.attachMagmaSales(ctx, metrics, tr)
 
 	builtAt := time.Now()
 	return liveSnapshot{

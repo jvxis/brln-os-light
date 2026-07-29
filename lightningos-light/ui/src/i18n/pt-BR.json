@@ -1,4 +1,4 @@
-﻿{
+{
   "dbMaintenance": {
     "title": "Manutenção do banco",
     "kicker": "Postgres • LOS",
@@ -125,6 +125,16 @@
     "previewSpendable": "Saldo disponível",
     "openIrreversibleHint": "Isto transmite uma transação de funding. A taxa on-chain é paga por você e não tem volta.",
     "localState": "Estado local",
+    "pnlTitle": "Resultado das vendas",
+    "pnlBody": "Receita contada só quando o pagamento do comprador entra, menos a taxa de mineração de cada transação de abertura.",
+    "pnlRevenue": "Receita realizada",
+    "pnlSalesCount": "{{count}} venda(s) paga(s)",
+    "pnlOnchain": "Custo on-chain",
+    "pnlOnchainPartial": "taxa apurada em {{resolved}} de {{total}} vendas",
+    "pnlNet": "Resultado líquido",
+    "pnlPending": "Prometido, ainda não pago",
+    "pnlPendingCount": "{{count}} ordem(ns) aceita(s)",
+    "pnlReportsNote": "Nos Relatórios, esta receita é somada aos totais diários. O custo on-chain não é somado lá pelo Magma porque a varredura on-chain genérica já o contabiliza.",
     "enableAssistedConfirm": "O modo assistido permite que este app crie invoices e abra canais quando você clicar. Cada ação ainda exige confirmação explícita.",
     "modeAuto": "Automático",
     "autoNotice": "Modo automático: a policy aceita, recusa e financia ordens sozinha, uma ordem por ciclo. Revise os limites abaixo antes de deixar rodando.",
@@ -1951,6 +1961,8 @@
     "movementProgress": "Movimento {{routed}} / {{target}} ({{percent}}%)",
     "movementProgressUnavailable": "Meta de movimento indisponível para este período.",
     "keysendReceived": "Keysend recebido",
+    "salesRevenue": "Vendas de canal",
+    "salesCount": "{{count}} venda(s)",
     "keysendCount": "Contagem de Keysend",
     "net": "Líquido",
     "apy": "APY",

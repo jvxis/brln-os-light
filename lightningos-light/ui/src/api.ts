@@ -1356,6 +1356,17 @@ export type MagmaPolicy = {
 export const updateMagmaPolicy = (payload: Partial<MagmaPolicy>): Promise<MagmaPolicy> =>
   request('/api/apps/magma-sales/policy', { method: 'POST', body: JSON.stringify(payload) })
 
+export type MagmaPnL = {
+  sales_count: number
+  revenue_sat: number
+  onchain_cost_sat: number
+  onchain_cost_resolved: number
+  net_sat: number
+  pending_revenue_sat: number
+  pending_count: number
+  onchain_cost_already_in_reports: boolean
+}
+
 export type MagmaOverview = {
   settings: MagmaSettings
   token: MagmaTokenState
@@ -1366,6 +1377,7 @@ export type MagmaOverview = {
   token_warning?: string
   policy?: MagmaPolicy
   policy_summary?: string
+  pnl?: MagmaPnL
   last_sync_at?: string
   last_sync_error?: string
 }

@@ -1,4 +1,4 @@
-﻿{
+{
   "dbMaintenance": {
     "title": "Database maintenance",
     "kicker": "Postgres • LOS",
@@ -125,6 +125,16 @@
     "previewSpendable": "Spendable balance",
     "openIrreversibleHint": "This broadcasts a funding transaction. The on-chain fee is paid by you and cannot be undone.",
     "localState": "Local state",
+    "pnlTitle": "Sales profit and loss",
+    "pnlBody": "Revenue counted only once the buyer's payment lands, minus the mining fee of each funding transaction.",
+    "pnlRevenue": "Revenue realised",
+    "pnlSalesCount": "{{count}} sale(s) paid",
+    "pnlOnchain": "On-chain cost",
+    "pnlOnchainPartial": "fee resolved for {{resolved}} of {{total}} sales",
+    "pnlNet": "Net result",
+    "pnlPending": "Promised, not yet paid",
+    "pnlPendingCount": "{{count}} order(s) accepted",
+    "pnlReportsNote": "In Reports, this revenue is added to the daily totals. The on-chain cost is not added there by Magma because the generic on-chain scan already counts it.",
     "enableAssistedConfirm": "Assisted mode lets this app create invoices and open channels when you click. Each action still needs an explicit confirmation.",
     "modeAuto": "Automatic",
     "autoNotice": "Automatic mode: the policy accepts, rejects and funds orders on its own, one order per cycle. Review the limits below before leaving it running.",
@@ -1951,6 +1961,8 @@
     "movementProgress": "Movement {{routed}} / {{target}} ({{percent}}%)",
     "movementProgressUnavailable": "Movement target unavailable for this range.",
     "keysendReceived": "Keysend received",
+    "salesRevenue": "Channel sales",
+    "salesCount": "{{count}} sale(s)",
     "keysendCount": "Keysend count",
     "net": "Net",
     "apy": "APY",

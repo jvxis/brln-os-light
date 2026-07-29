@@ -24,6 +24,10 @@ const (
 	// magmaModeAuto lets the policy engine accept, reject and fund on its own.
 	magmaModeAuto = "auto"
 
+	// magmaPaymentSuccessful is the Amboss payment status that means the buyer
+	// paid and the revenue is ours.
+	magmaPaymentSuccessful = "SUCCESSFUL_PAYMENT"
+
 	magmaDefaultPollInterval = 90 * time.Second
 	magmaMinPollInterval     = 30
 	magmaMaxPollInterval     = 3600
@@ -81,6 +85,7 @@ type MagmaOverview struct {
 	TokenWarning  string              `json:"token_warning,omitempty"`
 	Policy        *MagmaPolicy        `json:"policy,omitempty"`
 	PolicySummary string              `json:"policy_summary,omitempty"`
+	PnL           *MagmaPnL           `json:"pnl,omitempty"`
 	LastSyncAt    *time.Time          `json:"last_sync_at,omitempty"`
 	LastSyncError string              `json:"last_sync_error,omitempty"`
 }
@@ -203,7 +208,12 @@ alter table magma_orders
   add column if not exists funding_txid text not null default '',
   add column if not exists attempt_count integer not null default 0,
   add column if not exists last_error text not null default '',
-  add column if not exists fee_guard_applied boolean not null default false;
+  add column if not exists fee_guard_applied boolean not null default false,
+  add column if not exists revenue_settled_at timestamptz,
+  add column if not exists onchain_fee_sat bigint;
+
+create index if not exists magma_orders_revenue_settled_idx
+  on magma_orders (revenue_settled_at) where revenue_settled_at is not null;
 
 create index if not exists magma_orders_status_idx on magma_orders (magma_status);
 create index if not exists magma_orders_local_state_idx on magma_orders (local_state);
@@ -448,6 +458,9 @@ func (s *MagmaService) SyncOnce(ctx context.Context) error {
 		// right after the open the channel has no short channel id yet, so the
 		// guard cannot land on the first try.
 		s.syncFeeGuards(ctx)
+		// Funding fees land in the wallet transaction list a moment after the
+		// broadcast, so this is retried rather than read inline at open time.
+		s.resolveOnchainCosts(ctx)
 	}
 	// Auto mode runs last, after reconciliation has settled anything in flight, so
 	// the policy never decides against a half-finished picture.
@@ -475,10 +488,10 @@ func (s *MagmaService) recordSyncResult(summary *MagmaMarketSummary, err error) 
 // upsertOrder writes the order snapshot and emits an event only when the Amboss
 // status actually changed, so a 90s poll does not produce a 90s alert stream.
 func (s *MagmaService) upsertOrder(ctx context.Context, order MagmaOrder, notifyTelegram bool) error {
-	var previousStatus, notifiedStatus string
+	var previousStatus, notifiedStatus, previousPaymentStatus string
 	err := s.db.QueryRow(ctx,
-		`select magma_status, notified_status from magma_orders where order_id=$1`, order.ID,
-	).Scan(&previousStatus, &notifiedStatus)
+		`select magma_status, notified_status, payment_status from magma_orders where order_id=$1`, order.ID,
+	).Scan(&previousStatus, &notifiedStatus, &previousPaymentStatus)
 	isNew := errors.Is(err, pgx.ErrNoRows)
 	if err != nil && !isNew {
 		return err
@@ -538,6 +551,22 @@ on conflict (order_id) do update set
 		order.IsAutomated, order.ChatEnabled, order.CreatedAt, order.UpdatedAt,
 	); err != nil {
 		return err
+	}
+
+	// Stamp the moment the sale is paid, but only on a transition we actually
+	// observed. A first sync imports years of already-settled orders; stamping
+	// those would inject their whole revenue history into today's report.
+	if !isNew &&
+		previousPaymentStatus != magmaPaymentSuccessful &&
+		order.PaymentStatus == magmaPaymentSuccessful {
+		if _, err := s.db.Exec(ctx, `
+update magma_orders set revenue_settled_at=now()
+where order_id=$1 and revenue_settled_at is null
+`, order.ID); err != nil {
+			return err
+		}
+		s.appendEvent(ctx, order.ID, "revenue_settled", "info", fmt.Sprintf(
+			"Buyer payment confirmed: %s sats", formatInt(order.RevenueSat)), nil)
 	}
 
 	if !isNew && previousStatus == order.Status {
@@ -684,6 +713,9 @@ func (s *MagmaService) Overview(ctx context.Context) (MagmaOverview, error) {
 	if policy, err := s.loadPolicy(ctx); err == nil {
 		overview.Policy = &policy
 		overview.PolicySummary = magmaPolicySummary(policy)
+	}
+	if pnl, err := s.PnL(ctx, time.Time{}); err == nil {
+		overview.PnL = &pnl
 	}
 	s.stateMu.RLock()
 	if !s.lastSyncAt.IsZero() {

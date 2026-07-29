@@ -283,6 +283,9 @@ type reportSeriesItem struct {
 	TotalFeeCostWithOnchainSat float64    `json:"total_fee_cost_with_onchain_sats"`
 	NetRoutingProfitSat        float64    `json:"net_routing_profit_sats"`
 	NetWithKeysendSat          float64    `json:"net_with_keysend_sats"`
+	SalesRevenueSat            float64    `json:"sales_revenue_sats"`
+	SalesCount                 int64      `json:"sales_count"`
+	NetTotalSat                float64    `json:"net_total_sats"`
 	ForwardCount               int64      `json:"forward_count"`
 	RebalanceCount             int64      `json:"rebalance_count"`
 	RebalanceVolumeSat         float64    `json:"rebalance_volume_sats"`
@@ -335,6 +338,9 @@ type reportMetricsPayload struct {
 	TotalFeeCostWithOnchainSat float64 `json:"total_fee_cost_with_onchain_sats"`
 	NetRoutingProfitSat        float64 `json:"net_routing_profit_sats"`
 	NetWithKeysendSat          float64 `json:"net_with_keysend_sats"`
+	SalesRevenueSat            float64 `json:"sales_revenue_sats"`
+	SalesCount                 int64   `json:"sales_count"`
+	NetTotalSat                float64 `json:"net_total_sats"`
 	ForwardCount               int64   `json:"forward_count"`
 	RebalanceCount             int64   `json:"rebalance_count"`
 	RebalanceVolumeSat         float64 `json:"rebalance_volume_sats"`
@@ -367,6 +373,9 @@ func mapSeries(items []reports.Row) []reportSeriesItem {
 			TotalFeeCostWithOnchainSat: totalFeeCostWithOnchainSats(item.Metrics),
 			NetRoutingProfitSat:        metricSats(item.Metrics.NetRoutingProfitMsat, item.Metrics.NetRoutingProfitSat),
 			NetWithKeysendSat:          metricSats(item.Metrics.NetWithKeysendMsat, item.Metrics.NetWithKeysendSat),
+			SalesRevenueSat:            metricSats(item.Metrics.SalesRevenueMsat, item.Metrics.SalesRevenueSat),
+			SalesCount:                 item.Metrics.SalesCount,
+			NetTotalSat:                metricSats(item.Metrics.NetTotalMsat, item.Metrics.NetTotalSat),
 			ForwardCount:               item.Metrics.ForwardCount,
 			RebalanceCount:             item.Metrics.RebalanceCount,
 			RebalanceVolumeSat:         metricSats(item.Metrics.RebalanceVolumeMsat, item.Metrics.RebalanceVolumeSat),
@@ -400,6 +409,9 @@ func metricsPayload(metrics reports.Metrics) reportMetricsPayload {
 		TotalFeeCostWithOnchainSat: totalFeeCostWithOnchainSats(metrics),
 		NetRoutingProfitSat:        metricSats(metrics.NetRoutingProfitMsat, metrics.NetRoutingProfitSat),
 		NetWithKeysendSat:          metricSats(metrics.NetWithKeysendMsat, metrics.NetWithKeysendSat),
+		SalesRevenueSat:            metricSats(metrics.SalesRevenueMsat, metrics.SalesRevenueSat),
+		SalesCount:                 metrics.SalesCount,
+		NetTotalSat:                metricSats(metrics.NetTotalMsat, metrics.NetTotalSat),
 		ForwardCount:               metrics.ForwardCount,
 		RebalanceCount:             metrics.RebalanceCount,
 		RebalanceVolumeSat:         metricSats(metrics.RebalanceVolumeMsat, metrics.RebalanceVolumeSat),

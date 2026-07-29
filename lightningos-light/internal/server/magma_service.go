@@ -29,6 +29,10 @@ const (
 	magmaPaymentSuccessful = "SUCCESSFUL_PAYMENT"
 
 	magmaDefaultPollInterval = 90 * time.Second
+	// magmaCycleTimeout bounds one poll cycle. Generous enough for a real cycle
+	// (two Amboss calls plus LND work), short enough that a stall self-heals
+	// instead of parking the poller for good.
+	magmaCycleTimeout = 4 * time.Minute
 	magmaMinPollInterval     = 30
 	magmaMaxPollInterval     = 3600
 
@@ -88,6 +92,16 @@ type MagmaOverview struct {
 	PnL           *MagmaPnL           `json:"pnl,omitempty"`
 	LastSyncAt    *time.Time          `json:"last_sync_at,omitempty"`
 	LastSyncError string              `json:"last_sync_error,omitempty"`
+	Poller        MagmaPollerHealth   `json:"poller"`
+}
+
+// MagmaPollerHealth makes a dead worker visible. Without it the only symptom is
+// an empty last sync, which reads as "quiet" rather than "broken".
+type MagmaPollerHealth struct {
+	Started          bool       `json:"started"`
+	LastTickAt       *time.Time `json:"last_tick_at,omitempty"`
+	LastTickNote     string     `json:"last_tick_note,omitempty"`
+	ConsecutiveFails int        `json:"consecutive_failures"`
 }
 
 // MagmaOrderEvent is the append-only audit trail per order.
@@ -119,6 +133,13 @@ type MagmaService struct {
 	fetchBaseline     bool
 	lastPendingOrders int64
 	lastOrderFetchAt  time.Time
+	// Poller health. lastTickAt moves on every cycle, including skipped and
+	// failed ones, so "the worker is alive" is observable separately from
+	// "the last sync succeeded".
+	pollerStarted    bool
+	lastTickAt       time.Time
+	lastTickNote     string
+	consecutiveFails int
 }
 
 func NewMagmaService(db *pgxpool.Pool, lnd magmaLND, logger *log.Logger) *MagmaService {
@@ -383,6 +404,9 @@ func (s *MagmaService) Start(ctx context.Context) {
 	// one: the API answers, the settings read fine, and nothing errors. The only
 	// symptom is that last_sync_at stays empty.
 	s.start.Do(func() {
+		s.stateMu.Lock()
+		s.pollerStarted = true
+		s.stateMu.Unlock()
 		if s.logger != nil {
 			s.logger.Printf("magma: poller started")
 		}
@@ -414,10 +438,53 @@ func (s *MagmaService) run(ctx context.Context) {
 			}
 		}
 		interval := s.pollInterval(ctx)
-		if err := s.SyncOnce(ctx); err != nil && !errors.Is(err, context.Canceled) && s.logger != nil {
+		s.tick(ctx)
+		timer.Reset(interval)
+	}
+}
+
+// tick runs one poll cycle so that no single bad cycle can stop the poller.
+//
+// Three things have already gone wrong here in production, and each is guarded:
+// the worker never started, it deadlocked on its own mutex, and a silent early
+// return left no trace. A dead poller is the worst failure this app has, because
+// everything else keeps looking healthy while orders quietly expire.
+func (s *MagmaService) tick(ctx context.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			// A panic in this goroutine would otherwise take the whole manager
+			// down, or at best kill the poller for good.
+			s.noteTick(fmt.Sprintf("panic: %v", r))
+			if s.logger != nil {
+				s.logger.Printf("magma: poller recovered from panic: %v", r)
+			}
+		}
+	}()
+
+	// Never block on the mutex. If an operator action is mid-flight, skipping
+	// this cycle costs 90 seconds; queueing behind a stuck holder costs every
+	// cycle from here on.
+	if !s.workMu.TryLock() {
+		s.noteTick("skipped: another operation is in progress")
+		return
+	}
+	defer s.workMu.Unlock()
+
+	// Bounds a cycle that stalls inside a slow external call.
+	cycleCtx, cancel := context.WithTimeout(ctx, magmaCycleTimeout)
+	defer cancel()
+
+	err := s.syncLocked(cycleCtx)
+	switch {
+	case err == nil:
+		s.noteTick("")
+	case errors.Is(err, context.Canceled):
+		s.noteTick("cancelled")
+	default:
+		s.noteTick(err.Error())
+		if s.logger != nil {
 			s.logger.Printf("magma: sync failed: %v", err)
 		}
-		timer.Reset(interval)
 	}
 }
 
@@ -434,7 +501,11 @@ func (s *MagmaService) pollInterval(ctx context.Context) time.Duration {
 func (s *MagmaService) SyncOnce(ctx context.Context) error {
 	s.workMu.Lock()
 	defer s.workMu.Unlock()
+	return s.syncLocked(ctx)
+}
 
+// syncLocked requires the caller to hold workMu.
+func (s *MagmaService) syncLocked(ctx context.Context) error {
 	installed, enabled, err := s.AppState(ctx)
 	if err != nil {
 		return err
@@ -573,6 +644,19 @@ select count(*) from magma_orders where magma_status <> '' and not (magma_status
 		return true
 	}
 	return count > 0
+}
+
+// noteTick records that a cycle ran, whatever its outcome.
+func (s *MagmaService) noteTick(note string) {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	s.lastTickAt = time.Now().UTC()
+	s.lastTickNote = note
+	if note == "" {
+		s.consecutiveFails = 0
+		return
+	}
+	s.consecutiveFails++
 }
 
 func (s *MagmaService) noteOrderFetch(pending int64) {
@@ -837,6 +921,15 @@ func (s *MagmaService) Overview(ctx context.Context) (MagmaOverview, error) {
 	}
 	overview.LastSyncError = s.lastSyncError
 	overview.Market = s.lastMarket
+	overview.Poller = MagmaPollerHealth{
+		Started:          s.pollerStarted,
+		LastTickNote:     s.lastTickNote,
+		ConsecutiveFails: s.consecutiveFails,
+	}
+	if !s.lastTickAt.IsZero() {
+		tickedAt := s.lastTickAt
+		overview.Poller.LastTickAt = &tickedAt
+	}
 	s.stateMu.RUnlock()
 	return overview, nil
 }

@@ -237,6 +237,11 @@ export default function Reports() {
   const [series, setSeries] = useState<ReportSeriesItem[]>([])
   const [summary, setSummary] = useState<SummaryResponse | null>(null)
   const [live, setLive] = useState<LiveResponse | null>(null)
+  // Inclusion toggles for the non-routing lines. Default on, so the page opens
+  // showing everything the node actually earned and spent.
+  const [includeKeysend, setIncludeKeysend] = useState(true)
+  const [includeSales, setIncludeSales] = useState(true)
+  const [includePaymentCost, setIncludePaymentCost] = useState(true)
   const [movementLive, setMovementLive] = useState<MovementLiveResponse | null>(null)
   const [movementLoading, setMovementLoading] = useState(true)
   const [movementError, setMovementError] = useState('')
@@ -934,10 +939,31 @@ export default function Reports() {
   const liveKeysendReceived = live?.keysend_received_sats ?? 0
   const liveNetWithKeysend = live?.net_with_keysend_sats ?? ((live?.net_routing_profit_sats ?? 0) + liveKeysendReceived)
   const liveSalesRevenue = live?.sales_revenue_sats ?? 0
+  // The three toggles let the operator read the report as pure routing, or with
+  // the non-routing income and the payment cost folded in. All on by default:
+  // the honest view is the complete one.
+  const liveOtherRevenue =
+    (includeKeysend ? liveKeysendReceived : 0) + (includeSales ? liveSalesRevenue : 0)
+  // Routing net already has the payment cost subtracted, so excluding it means
+  // adding it back rather than skipping a subtraction.
+  const liveNetWithExtras =
+    (live?.net_routing_profit_sats ?? 0) +
+    liveOtherRevenue +
+    (includePaymentCost ? 0 : livePaymentCost)
   const summaryTotalsOffchainCost = summary?.totals.offchain_fee_cost_sats ?? summary?.totals.total_fee_cost_sats ?? ((summary?.totals.rebalance_fee_cost_sats ?? 0) + (summary?.totals.payment_fee_cost_sats ?? 0))
   const summaryTotalsOnchainCost = summary?.totals.onchain_fee_cost_sats ?? 0
   const summaryTotalsCostWithOnchain = summary?.totals.total_fee_cost_with_onchain_sats ?? (summaryTotalsOffchainCost + summaryTotalsOnchainCost)
-  const summaryTotalsNetWithKeysend = summary?.totals.net_with_keysend_sats ?? ((summary?.totals.net_routing_profit_sats ?? 0) + (summary?.totals.keysend_received_sats ?? 0))
+  // Built from the parts rather than from the stored net so the inclusion
+  // toggles apply to history the same way they apply to the live window.
+  const summaryTotalsKeysend = summary?.totals.keysend_received_sats ?? 0
+  const summaryTotalsSales = summary?.totals.sales_revenue_sats ?? 0
+  const summaryTotalsPaymentCost = summary?.totals.payment_fee_cost_sats ?? 0
+  const summaryTotalsOtherRevenue =
+    (includeKeysend ? summaryTotalsKeysend : 0) + (includeSales ? summaryTotalsSales : 0)
+  const summaryTotalsNetWithKeysend =
+    (summary?.totals.net_routing_profit_sats ?? 0) +
+    summaryTotalsOtherRevenue +
+    (includePaymentCost ? 0 : summaryTotalsPaymentCost)
   const summaryTotalsNetWithOnchain = summaryTotalsNetWithKeysend - summaryTotalsOnchainCost
   const summaryDays = summary?.days ?? series.length
   const summaryRevenue = summary?.totals.forward_fee_revenue_sats ?? 0
@@ -948,7 +974,13 @@ export default function Reports() {
   const summaryAveragesOffchainCost = summary?.averages.offchain_fee_cost_sats ?? summary?.averages.total_fee_cost_sats ?? ((summary?.averages.rebalance_fee_cost_sats ?? 0) + (summary?.averages.payment_fee_cost_sats ?? 0))
   const summaryAveragesOnchainCost = summary?.averages.onchain_fee_cost_sats ?? 0
   const summaryAveragesCostWithOnchain = summary?.averages.total_fee_cost_with_onchain_sats ?? (summaryAveragesOffchainCost + summaryAveragesOnchainCost)
-  const summaryAveragesNetWithKeysend = summary?.averages.net_with_keysend_sats ?? ((summary?.averages.net_routing_profit_sats ?? 0) + (summary?.averages.keysend_received_sats ?? 0))
+  const summaryAveragesOtherRevenue =
+    (includeKeysend ? summary?.averages.keysend_received_sats ?? 0 : 0) +
+    (includeSales ? summary?.averages.sales_revenue_sats ?? 0 : 0)
+  const summaryAveragesNetWithKeysend =
+    (summary?.averages.net_routing_profit_sats ?? 0) +
+    summaryAveragesOtherRevenue +
+    (includePaymentCost ? 0 : summary?.averages.payment_fee_cost_sats ?? 0)
   const summaryAveragesNetWithOnchain = summaryAveragesNetWithKeysend - summaryAveragesOnchainCost
   const currentMonthInput = formatInputMonth(new Date())
   const currentMonthNumber = currentMonthInput.slice(5)
@@ -1060,27 +1092,50 @@ export default function Reports() {
                     </p>
                   </div>
                 </div>
+                {/* Keysend and channel sales share one card: both are income the
+                    node earns without routing, and splitting them into separate
+                    tiles crowded the row for two numbers that are usually small. */}
                 <div className="rounded-2xl bg-white/5 p-4">
-                  <p className="text-xs uppercase tracking-wide text-fog/60">{t('reports.keysendReceived')}</p>
-                  <p className="text-lg font-semibold" style={{ color: COLORS.keysend }}>{formatSats(liveKeysendReceived)}</p>
-                </div>
-                {/* Only rendered once a channel sale has actually settled, so a
-                    node without the Magma app sees the page exactly as before. */}
-                {liveSalesRevenue > 0 && (
-                  <div className="rounded-2xl bg-white/5 p-4">
-                    <p className="text-xs uppercase tracking-wide text-fog/60">{t('reports.salesRevenue')}</p>
-                    <p className="text-lg font-semibold text-emerald-200">{formatSats(liveSalesRevenue)}</p>
-                    <p className="text-xs text-fog/60">
-                      {t('reports.salesCount', { count: live.sales_count ?? 0 })}
-                    </p>
+                  <p className="text-xs uppercase tracking-wide text-fog/60">{t('reports.otherRevenue')}</p>
+                  <p className="text-lg font-semibold" style={{ color: COLORS.keysend }}>
+                    {formatSats(liveOtherRevenue)}
+                  </p>
+                  <div className="mt-1 space-y-1 text-xs text-fog/60">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={includeKeysend}
+                        onChange={(event) => setIncludeKeysend(event.target.checked)}
+                      />
+                      {t('reports.keysendReceived')}: {formatSats(liveKeysendReceived)}
+                    </label>
+                    {(liveSalesRevenue > 0 || (live.sales_count ?? 0) > 0) && (
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={includeSales}
+                          onChange={(event) => setIncludeSales(event.target.checked)}
+                        />
+                        {t('reports.salesRevenue')}: {formatSats(liveSalesRevenue)} (
+                        {t('reports.salesCount', { count: live.sales_count ?? 0 })})
+                      </label>
+                    )}
                   </div>
-                )}
+                </div>
                 <div className="rounded-2xl bg-white/5 p-4">
                   <p className="text-xs uppercase tracking-wide text-fog/60">{t('reports.routingNet')}</p>
                   <p className="text-lg font-semibold text-fog">{formatSats(live.net_routing_profit_sats)}</p>
                   <p className="text-xs text-fog/60">
-                    {t('reports.netWithKeysend')} {formatSats(liveNetWithKeysend)}
+                    {t('reports.netWithExtras')} {formatSats(liveNetWithExtras)}
                   </p>
+                  <label className="mt-1 flex items-center gap-2 text-xs text-fog/60">
+                    <input
+                      type="checkbox"
+                      checked={includePaymentCost}
+                      onChange={(event) => setIncludePaymentCost(event.target.checked)}
+                    />
+                    {t('reports.includePaymentCost')}: −{formatSats(livePaymentCost)}
+                  </label>
                 </div>
               </div>
               <div className="grid gap-3 sm:grid-cols-4 text-sm text-fog/70">
@@ -1221,10 +1276,18 @@ export default function Reports() {
                 <p className="text-fog">{t('reports.totalCostWithOnchain')} {formatSats(summaryTotalsCostWithOnchain)}</p>
                 <p className="text-fog/80">{t('reports.rebalances')} {formatSats(summary.totals.rebalance_fee_cost_sats ?? 0)}</p>
                 <p className="text-fog/80">{t('reports.payments')} {formatSats(summary.totals.payment_fee_cost_sats ?? 0)}</p>
-                <p style={{ color: COLORS.keysend }}>{t('reports.keysendReceived')} {formatSats(summary.totals.keysend_received_sats ?? 0)}</p>
+                <p style={{ color: COLORS.keysend }}>{t('reports.keysendReceived')} {formatSats(summaryTotalsKeysend)}</p>
+                {summaryTotalsSales > 0 && (
+                  <p className="text-emerald-300">
+                    {t('reports.salesRevenue')} {formatSats(summaryTotalsSales)}
+                    <span className="ml-2 text-xs text-fog/50">
+                      {t('reports.salesCount', { count: summary.totals.sales_count ?? 0 })}
+                    </span>
+                  </p>
+                )}
                 <p className="text-fog">{t('reports.routingNet')} {formatSats(summary.totals.net_routing_profit_sats)}</p>
                 <p className="text-fog/80">
-                  {t('reports.netWithKeysend')} {formatSats(summaryTotalsNetWithKeysend)}
+                  {t('reports.netWithExtras')} {formatSats(summaryTotalsNetWithKeysend)}
                   {summaryApy !== null ? (
                     <span className={`ml-2 whitespace-nowrap ${summaryApy < 0 ? 'text-rose-400' : 'text-emerald-300'}`}>
                       {t('reports.apy')} {formatApyPercent(locale, summaryApy)}
@@ -1249,8 +1312,13 @@ export default function Reports() {
                 <p className="text-fog/80">{t('reports.rebalances')} {formatSats(summary.averages.rebalance_fee_cost_sats ?? 0)}</p>
                 <p className="text-fog/80">{t('reports.payments')} {formatSats(summary.averages.payment_fee_cost_sats ?? 0)}</p>
                 <p style={{ color: COLORS.keysend }}>{t('reports.keysendReceived')} {formatSats(summary.averages.keysend_received_sats ?? 0)}</p>
+                {(summary.averages.sales_revenue_sats ?? 0) > 0 && (
+                  <p className="text-emerald-300">
+                    {t('reports.salesRevenue')} {formatSats(summary.averages.sales_revenue_sats ?? 0)}
+                  </p>
+                )}
                 <p className="text-fog">{t('reports.routingNet')} {formatSats(summary.averages.net_routing_profit_sats)}</p>
-                <p className="text-fog/80">{t('reports.netWithKeysend')} {formatSats(summaryAveragesNetWithKeysend)}</p>
+                <p className="text-fog/80">{t('reports.netWithExtras')} {formatSats(summaryAveragesNetWithKeysend)}</p>
                 <p className={summaryAveragesNetWithOnchain < 0 ? 'text-rose-400' : 'text-fog/80'}>
                   {t('reports.netWithOnchain')} {formatSats(summaryAveragesNetWithOnchain)}
                 </p>

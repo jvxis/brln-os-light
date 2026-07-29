@@ -582,7 +582,12 @@ select
   coalesce(sum(rebalance_volume_msat), 0),
   coalesce(sum(payment_count), 0),
   coalesce(sum(routed_volume_sats), 0),
-  coalesce(sum(routed_volume_msat), 0)
+  coalesce(sum(routed_volume_msat), 0),
+  coalesce(sum(sales_revenue_sats), 0),
+  coalesce(sum(sales_revenue_msat), 0),
+  coalesce(sum(sales_count), 0),
+  coalesce(sum(net_total_sats), 0),
+  coalesce(sum(net_total_msat), 0)
 from reports_daily
 where report_date >= $1 and report_date <= $2
 `, normalizeReportDate(startDate), normalizeReportDate(endDate)).Scan(
@@ -615,6 +620,11 @@ where report_date >= $1 and report_date <= $2
 		&totals.PaymentCount,
 		&totals.RoutedVolumeSat,
 		&totals.RoutedVolumeMsat,
+		&totals.SalesRevenueSat,
+		&totals.SalesRevenueMsat,
+		&totals.SalesCount,
+		&totals.NetTotalSat,
+		&totals.NetTotalMsat,
 	)
 	if err != nil {
 		return Summary{}, err
@@ -660,7 +670,12 @@ select
   coalesce(sum(rebalance_volume_msat), 0),
   coalesce(sum(payment_count), 0),
   coalesce(sum(routed_volume_sats), 0),
-  coalesce(sum(routed_volume_msat), 0)
+  coalesce(sum(routed_volume_msat), 0),
+  coalesce(sum(sales_revenue_sats), 0),
+  coalesce(sum(sales_revenue_msat), 0),
+  coalesce(sum(sales_count), 0),
+  coalesce(sum(net_total_sats), 0),
+  coalesce(sum(net_total_msat), 0)
 from reports_daily
 `).Scan(
 		&days,
@@ -692,6 +707,11 @@ from reports_daily
 		&totals.PaymentCount,
 		&totals.RoutedVolumeSat,
 		&totals.RoutedVolumeMsat,
+		&totals.SalesRevenueSat,
+		&totals.SalesRevenueMsat,
+		&totals.SalesCount,
+		&totals.NetTotalSat,
+		&totals.NetTotalMsat,
 	)
 	if err != nil {
 		return Summary{}, err
@@ -734,6 +754,11 @@ func averageMetrics(totals Metrics, days int64) Metrics {
 		PaymentCount:               totals.PaymentCount / days,
 		RoutedVolumeSat:            totals.RoutedVolumeSat / days,
 		RoutedVolumeMsat:           totals.RoutedVolumeMsat / days,
+		SalesRevenueSat:            totals.SalesRevenueSat / days,
+		SalesRevenueMsat:           totals.SalesRevenueMsat / days,
+		SalesCount:                 totals.SalesCount / days,
+		NetTotalSat:                totals.NetTotalSat / days,
+		NetTotalMsat:               totals.NetTotalMsat / days,
 	}
 }
 

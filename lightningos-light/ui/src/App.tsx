@@ -38,6 +38,7 @@ import MagmaSales from './pages/MagmaSales'
 import {
   getAuthState,
   getBitcoinLocalStatus,
+  getBitcoinSource,
   getBoletoConfig,
   getLndStatus,
   getMenuPreferences,
@@ -188,8 +189,11 @@ export default function App() {
   }, [])
   const refreshExternalBitcoinDetected = useCallback(async () => {
     try {
-      const data: any = await getBitcoinLocalStatus()
-      setExternalBitcoinDetected(data?.source === 'external')
+      const [localStatus, sourceStatus]: any[] = await Promise.all([
+        getBitcoinLocalStatus(),
+        getBitcoinSource()
+      ])
+      setExternalBitcoinDetected(sourceStatus?.source === 'local' && localStatus?.source === 'external')
     } catch {
       // keep previous state on transient failures
     }

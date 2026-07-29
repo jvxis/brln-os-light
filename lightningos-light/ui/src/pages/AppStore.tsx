@@ -211,7 +211,7 @@ export default function AppStore() {
       getBitcoinSource().catch(() => ({ source: 'remote' } as BitcoinSourceStatus))
     ])
       .then(([localStatus, sourceStatus]) => {
-        setHideBitcoinCore(localStatus?.source === 'external')
+        setHideBitcoinCore(sourceStatus?.source === 'local' && localStatus?.source === 'external')
         if (sourceStatus?.source !== 'local') {
           setBitcoinMode('remote')
           return
@@ -390,6 +390,7 @@ export default function AppStore() {
       if (action === 'start') await startApp(id)
       if (action === 'stop') await stopApp(id)
       if (action === 'uninstall') await uninstallApp(id)
+      if (action === 'uninstall' && installFilter === 'installed') setInstallFilter('all')
       window.dispatchEvent(new CustomEvent('apps:changed', { detail: { id, action } }))
       loadApps()
     } catch (err) {

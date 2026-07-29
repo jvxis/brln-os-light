@@ -2,13 +2,15 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   createWalletSeed,
+  getAppStorageTargets,
   initWallet,
   postBitcoinRemote,
   unlockWallet,
   getBitcoin,
   getBitcoinLocalStatus,
   installApp,
-  setBitcoinSource
+  setBitcoinSource,
+  type StorageTarget
 } from '../api'
 
 type BitcoinPath = 'club' | 'local' | null
@@ -24,6 +26,12 @@ export default function Wizard() {
   const [zmqTx, setZmqTx] = useState('')
   const [localStatus, setLocalStatus] = useState<any>(null)
   const [localInstalling, setLocalInstalling] = useState(false)
+  const [localCommitted, setLocalCommitted] = useState(false)
+  const [localUseStorageMount, setLocalUseStorageMount] = useState(false)
+  const [localStorageTargets, setLocalStorageTargets] = useState<StorageTarget[]>([])
+  const [localSelectedMount, setLocalSelectedMount] = useState('')
+  const [localStorageLoading, setLocalStorageLoading] = useState(false)
+  const [localStorageError, setLocalStorageError] = useState('')
   const [walletMode, setWalletMode] = useState<'create' | 'import'>('create')
   const [walletPassword, setWalletPassword] = useState('')
   const [walletPasswordConfirm, setWalletPasswordConfirm] = useState('')
@@ -95,6 +103,32 @@ export default function Wizard() {
     return t('wizard.rpcOk')
   }
 
+  const loadLocalStorageTargets = async () => {
+    setLocalStorageLoading(true)
+    setLocalStorageError('')
+    try {
+      const data: { targets?: StorageTarget[] } = await getAppStorageTargets('bitcoincore')
+      const targets = data?.targets || []
+      setLocalStorageTargets(targets)
+      setLocalSelectedMount((current) => {
+        if (current && targets.some((target) => target.eligible && target.mount === current)) return current
+        return targets.find((target) => target.eligible)?.mount || ''
+      })
+    } catch (err) {
+      setLocalStorageTargets([])
+      setLocalSelectedMount('')
+      setLocalStorageError(err instanceof Error ? err.message : t('appStore.storageLoadFailed'))
+    } finally {
+      setLocalStorageLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (step === 1 && btcPath === 'local' && localUseStorageMount) {
+      void loadLocalStorageTargets()
+    }
+  }, [step, btcPath, localUseStorageMount])
+
   const handleBitcoin = async () => {
     setStatus(t('wizard.testingConnection'))
     setStatusTone('warn')
@@ -117,30 +151,51 @@ export default function Wizard() {
     }
   }
 
-  const handlePickLocal = async () => {
+  const handlePickLocal = () => {
     setBtcPath('local')
+    setLocalCommitted(false)
+    setStatus('')
+    setStatusTone('neutral')
+  }
+
+  const selectLocalBitcoinSource = async () => {
+    await setBitcoinSource({ source: 'local', allow_unsynced: true })
+    setLocalCommitted(true)
+    setStatus(t('wizard.localCommitted'))
+    setStatusTone('success')
+  }
+
+  const handleInstallLocal = async () => {
+    setStatus(t('wizard.localPreparing'))
+    setStatusTone('warn')
+    setLocalInstalling(true)
+    try {
+      const payload = localUseStorageMount ? { storage_mount: localSelectedMount } : {}
+      await installApp('bitcoincore', payload)
+      await selectLocalBitcoinSource()
+      const updated: any = await getBitcoinLocalStatus().catch(() => null)
+      if (updated) setLocalStatus(updated)
+    } catch (err: any) {
+      setStatus(err?.message || t('wizard.localFailed'))
+      setStatusTone('error')
+    } finally {
+      setLocalInstalling(false)
+    }
+  }
+
+  const handleUseInstalledLocal = async () => {
     setStatus(t('wizard.localPreparing'))
     setStatusTone('warn')
     try {
-      const current: any = await getBitcoinLocalStatus().catch(() => null)
-      if (!current?.installed) {
-        setLocalInstalling(true)
-        await installApp('bitcoincore')
-      }
-      setLocalInstalling(false)
-      await setBitcoinSource({ source: 'local', allow_unsynced: true })
-      const updated: any = await getBitcoinLocalStatus().catch(() => null)
-      if (updated) setLocalStatus(updated)
-      setStatus(t('wizard.localCommitted'))
-      setStatusTone('success')
+      await selectLocalBitcoinSource()
     } catch (err: any) {
-      setLocalInstalling(false)
       setStatus(err?.message || t('wizard.localFailed'))
       setStatusTone('error')
     }
   }
 
   const handleContinueLocal = () => {
+    if (!localCommitted) return
     setStatus('')
     setStatusTone('neutral')
     next()
@@ -217,6 +272,18 @@ export default function Wizard() {
       setStatusTone('error')
     }
   }
+
+  const eligibleLocalStorageTargets = localStorageTargets.filter((target) => target.eligible)
+  const selectedLocalStorageTarget = eligibleLocalStorageTargets.find((target) => target.mount === localSelectedMount)
+  const formatStorageGB = (value?: number) => {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '-'
+    return value >= 100 ? value.toFixed(0) : value.toFixed(1)
+  }
+  const storageTargetLabel = (target: StorageTarget) => t('appStore.storageTargetOption', {
+    mount: target.mount,
+    free: formatStorageGB(target.free_gb),
+    fstype: target.fstype || target.source || 'fs'
+  })
 
   return (
     <section className="space-y-6">
@@ -352,7 +419,7 @@ export default function Wizard() {
         <div className="section-card space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-semibold">{t('wizard.step1LocalTitle')}</h3>
-            <button className="text-xs text-fog/60 underline underline-offset-4" onClick={() => { setBtcPath(null); setLocalStatus(null) }}>
+            <button className="text-xs text-fog/60 underline underline-offset-4" onClick={() => { setBtcPath(null); setLocalStatus(null); setLocalCommitted(false) }}>
               {t('wizard.back')}
             </button>
           </div>
@@ -374,11 +441,84 @@ export default function Wizard() {
               </div>
             </div>
           )}
-          <p className="text-xs text-fog/60">{t('wizard.localSyncNote')}</p>
+          {!localStatus?.installed && (
+            <div className="space-y-4 rounded-lg border border-white/10 bg-black/20 p-4">
+              <label className="flex items-start gap-3 text-sm text-fog/80">
+                <input
+                  className="mt-1"
+                  type="checkbox"
+                  checked={localUseStorageMount}
+                  onChange={(event) => {
+                    setLocalUseStorageMount(event.target.checked)
+                    if (!event.target.checked) setLocalSelectedMount('')
+                  }}
+                />
+                <span>{t('appStore.bitcoinCoreUseStorageMount')}</span>
+              </label>
+
+              {localUseStorageMount ? (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <label className="text-xs uppercase tracking-wide text-fog/50" htmlFor="wizard-bitcoin-storage-mount">
+                      {t('appStore.storageVolumeLabel')}
+                    </label>
+                    <button className="text-xs text-fog/60 hover:text-fog" type="button" onClick={loadLocalStorageTargets}>
+                      {t('common.refresh')}
+                    </button>
+                  </div>
+                  {localStorageLoading ? (
+                    <p className="text-sm text-fog/60">{t('appStore.storageLoadingVolumes')}</p>
+                  ) : (
+                    <select
+                      id="wizard-bitcoin-storage-mount"
+                      className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-fog outline-none focus:border-brass disabled:opacity-60"
+                      value={localSelectedMount}
+                      disabled={eligibleLocalStorageTargets.length === 0}
+                      onChange={(event) => setLocalSelectedMount(event.target.value)}
+                    >
+                      {eligibleLocalStorageTargets.map((target) => (
+                        <option key={target.mount} value={target.mount}>
+                          {storageTargetLabel(target)}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {localStorageError && <p className="text-xs text-rose-300">{localStorageError}</p>}
+                  {!localStorageLoading && !localStorageError && eligibleLocalStorageTargets.length === 0 && (
+                    <p className="text-xs text-amber-300/80">{t('appStore.storageNoEligibleVolumes')}</p>
+                  )}
+                  {selectedLocalStorageTarget && (
+                    <p className="break-all rounded-md border border-white/10 bg-black/20 px-3 py-2 font-mono text-xs text-fog/70">
+                      {t('appStore.storageSelectedPath', { path: selectedLocalStorageTarget.suggested_path })}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="break-all rounded-md border border-white/10 bg-black/20 px-3 py-2 font-mono text-xs text-fog/70">
+                  {t('appStore.storageDefaultPath', { path: '/data/bitcoin' })}
+                </p>
+              )}
+
+              <button
+                className="btn-primary"
+                type="button"
+                disabled={localInstalling || (localUseStorageMount && !localSelectedMount)}
+                onClick={handleInstallLocal}
+              >
+                {t('wizard.installLocalNow')}
+              </button>
+            </div>
+          )}
+          {localStatus?.installed && !localCommitted && (
+            <button className="btn-primary" type="button" onClick={handleUseInstalledLocal}>
+              {t('wizard.useInstalledLocal')}
+            </button>
+          )}
+          {localStatus?.installed && <p className="text-xs text-fog/60">{t('wizard.localSyncNote')}</p>}
           <button
             className="btn-primary"
             onClick={handleContinueLocal}
-            disabled={!localStatus?.installed}
+            disabled={!localStatus?.installed || !localCommitted}
           >
             {t('wizard.continueToWallet')}
           </button>

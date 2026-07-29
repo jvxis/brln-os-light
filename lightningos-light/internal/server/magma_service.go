@@ -978,6 +978,38 @@ limit $1
 	return orders, nil
 }
 
+// ListRecentEvents returns the newest events across every order. Auto mode makes
+// its decisions between page loads, so without a visible timeline the operator
+// opens the app and finds only the current state, with no record of why it got
+// there — a deferral reason lives in last_error and is cleared by the next
+// transition.
+func (s *MagmaService) ListRecentEvents(ctx context.Context, limit int) ([]MagmaOrderEvent, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 60
+	}
+	rows, err := s.db.Query(ctx, `
+select id, order_id, kind, level, message, metadata, created_at
+from magma_order_events
+order by id desc
+limit $1
+`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	events := make([]MagmaOrderEvent, 0, limit)
+	for rows.Next() {
+		var event MagmaOrderEvent
+		if err := rows.Scan(&event.ID, &event.OrderID, &event.Kind, &event.Level,
+			&event.Message, &event.Metadata, &event.CreatedAt); err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	return events, rows.Err()
+}
+
 func (s *MagmaService) ListOrderEvents(ctx context.Context, orderID string, limit int) ([]MagmaOrderEvent, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50

@@ -1445,6 +1445,8 @@ export const openMagmaChannel = (id: string, satPerVbyte: number): Promise<Magma
 export const getMagmaOverview = (): Promise<MagmaOverview> => request('/api/apps/magma-sales/overview')
 export const refreshMagma = (): Promise<MagmaOverview> =>
   request('/api/apps/magma-sales/refresh', { method: 'POST', body: JSON.stringify({}) })
+export const getMagmaEvents = (limit = 60): Promise<{ events: MagmaOrderEvent[] }> =>
+  request(`/api/apps/magma-sales/events${buildQuery({ limit })}`)
 export const getMagmaOrderEvents = (id: string): Promise<{ events: MagmaOrderEvent[] }> =>
   request(`/api/apps/magma-sales/orders/${encodeURIComponent(id)}/events`)
 export const updateMagmaSettings = (payload: {

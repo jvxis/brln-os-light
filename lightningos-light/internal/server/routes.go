@@ -108,6 +108,7 @@ func (s *Server) routes() http.Handler {
 	r.Post("/api/apps/loopout-brln/jobs/{id}/cancel", s.handleLoopOutBRLNCancelJob)
 	r.Get("/api/apps/magma-sales/overview", s.handleMagmaOverview)
 	r.Get("/api/apps/magma-sales/orders", s.handleMagmaOrders)
+	r.Get("/api/apps/magma-sales/events", s.handleMagmaEvents)
 	r.Get("/api/apps/magma-sales/orders/{id}/events", s.handleMagmaOrderEvents)
 	r.Post("/api/apps/magma-sales/settings", s.handleMagmaSettingsPost)
 	r.Post("/api/apps/magma-sales/policy", s.handleMagmaPolicyPost)

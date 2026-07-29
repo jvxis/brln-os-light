@@ -142,6 +142,8 @@
     "backfillApplied": "{{count}} sale(s) dated.",
     "backfillRerunHint": "Run this on the node to recompute the affected daily reports:",
     "pnlTitle": "Sales profit and loss",
+    "activityTitle": "Activity",
+    "activityBody": "What the app has been doing, including decisions taken between page loads.",
     "pnlBody": "Revenue counted only once the buyer's payment lands, minus the mining fee of each funding transaction.",
     "pnlRevenue": "Revenue realised",
     "pnlSalesCount": "{{count}} sale(s) paid",

@@ -7,6 +7,7 @@ import {
   getMagmaOverview,
   openMagmaChannel,
   previewMagmaBackfill,
+  getMagmaEvents,
   refreshMagma,
   rejectMagmaOrder,
   updateMagmaPolicy,
@@ -16,6 +17,7 @@ import type {
   MagmaBackfillReport,
   MagmaOpenPreview,
   MagmaOrder,
+  MagmaOrderEvent,
   MagmaOverview,
   MagmaPolicy
 } from '../api'
@@ -94,6 +96,7 @@ export default function MagmaSales() {
   const [pendingMode, setPendingMode] = useState<'assisted' | 'auto' | null>(null)
   const [policyOpen, setPolicyOpen] = useState(false)
   const [backfillOpen, setBackfillOpen] = useState(false)
+  const [events, setEvents] = useState<MagmaOrderEvent[]>([])
 
   const load = () => {
     getMagmaOverview()
@@ -104,6 +107,10 @@ export default function MagmaSales() {
       .catch((err) => {
         setMessage(err instanceof Error ? err.message : t('magma.loadFailed'))
       })
+    // Failing to load the timeline must not blank the page; it is context, not state.
+    getMagmaEvents(60)
+      .then((data) => setEvents(data.events ?? []))
+      .catch(() => undefined)
   }
 
   useEffect(() => {
@@ -511,6 +518,49 @@ export default function MagmaSales() {
           />
         )}
       </section>
+
+      {/* Auto mode decides between page loads, and a deferral reason is cleared by
+          the next transition. Without this timeline the operator opens the app and
+          sees only the current state, with no record of how it got there. */}
+      {events.length > 0 && (
+        <section className="section-card space-y-3">
+          <div>
+            <h3 className="text-base font-semibold text-fog">{t('magma.activityTitle')}</h3>
+            <p className="text-sm text-fog/60">{t('magma.activityBody')}</p>
+          </div>
+          <div className="max-h-[24rem] space-y-1 overflow-y-auto pr-1 [scrollbar-gutter:stable]">
+            {events.map((event) => (
+              <div
+                key={event.id}
+                className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-white/5 py-1.5 text-sm last:border-0"
+              >
+                <span className="whitespace-nowrap font-mono text-xs text-fog/45">
+                  {formatDateTime(event.created_at, locale)}
+                </span>
+                <span
+                  className={`whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${
+                    event.level === 'error'
+                      ? 'bg-rose-500/20 text-rose-200'
+                      : event.level === 'warning'
+                        ? 'bg-amber-500/20 text-amber-200'
+                        : 'bg-white/10 text-fog/60'
+                  }`}
+                >
+                  {event.kind}
+                </span>
+                <span className="min-w-0 flex-1 text-fog/80">{event.message}</span>
+                <button
+                  className="whitespace-nowrap font-mono text-xs text-fog/40 hover:text-fog/70"
+                  onClick={() => setExpanded(event.order_id)}
+                  title={event.order_id}
+                >
+                  {event.order_id.slice(0, 8)}
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Historical repair. Kept out of the way because it is a one-off: sales
           closed before this app existed carry no settle date, so their revenue is

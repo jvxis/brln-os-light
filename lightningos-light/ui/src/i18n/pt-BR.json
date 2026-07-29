@@ -142,6 +142,8 @@
     "backfillApplied": "{{count}} venda(s) datada(s).",
     "backfillRerunHint": "Rode isto no nó para recalcular os relatórios diários afetados:",
     "pnlTitle": "Resultado das vendas",
+    "activityTitle": "Atividade",
+    "activityBody": "O que o app vem fazendo, incluindo decisões tomadas entre um acesso e outro.",
     "pnlBody": "Receita contada só quando o pagamento do comprador entra, menos a taxa de mineração de cada transação de abertura.",
     "pnlRevenue": "Receita realizada",
     "pnlSalesCount": "{{count}} venda(s) paga(s)",

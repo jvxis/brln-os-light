@@ -101,6 +101,8 @@
     "subtitle": "Acompanha suas ordens de venda no Magma da Amboss e avisa quando um comprador está esperando por você.",
     "modeLabel": "Modo de operação",
     "modeMonitorShort": "Monitorar",
+    "modeOffShort": "Desligado",
+    "offNotice": "Monitoramento desligado. O app continua instalado e mantém o histórico, mas não consulta a Amboss e não vai perceber uma ordem nova.",
     "modeAssistedShort": "Assistido",
     "modeAutoShort": "Automático",
     "modeMonitor": "Somente monitorar",

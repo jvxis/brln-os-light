@@ -101,6 +101,8 @@
     "subtitle": "Watches your Amboss Magma sell orders and tells you when a buyer is waiting on you.",
     "modeLabel": "Operating mode",
     "modeMonitorShort": "Monitor",
+    "modeOffShort": "Off",
+    "offNotice": "Monitoring is off. The app stays installed and keeps its history, but it does not poll Amboss and will not notice a new order.",
     "modeAssistedShort": "Assisted",
     "modeAutoShort": "Automatic",
     "modeMonitor": "Monitor only",

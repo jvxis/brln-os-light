@@ -274,9 +274,13 @@ from magma_settings where id=1
 
 // MagmaSettingsUpdate carries only the fields Phase 1 lets the operator change.
 type MagmaSettingsUpdate struct {
-	Mode            *string `json:"mode,omitempty"`
-	PollIntervalSec *int    `json:"poll_interval_sec,omitempty"`
-	NotifyTelegram  *bool   `json:"notify_telegram,omitempty"`
+	Mode *string `json:"mode,omitempty"`
+	// Enabled is the switch's Off position. It maps onto the app's existing
+	// enabled flag rather than adding a fourth mode: two ways to be idle would
+	// mean two things to check when the poller looks asleep.
+	Enabled         *bool `json:"enabled,omitempty"`
+	PollIntervalSec *int  `json:"poll_interval_sec,omitempty"`
+	NotifyTelegram  *bool `json:"notify_telegram,omitempty"`
 }
 
 func (s *MagmaService) UpdateSettings(ctx context.Context, update MagmaSettingsUpdate) (MagmaSettings, error) {
@@ -306,6 +310,14 @@ func (s *MagmaService) UpdateSettings(ctx context.Context, update MagmaSettingsU
 update magma_settings set mode=$1, poll_interval_sec=$2, notify_telegram=$3, updated_at=now() where id=1
 `, current.Mode, current.PollIntervalSec, current.NotifyTelegram); err != nil {
 		return MagmaSettings{}, err
+	}
+	if update.Enabled != nil && *update.Enabled != current.Enabled {
+		// Reuses the app lifecycle so the App Store card and this switch never
+		// disagree about whether the app is running.
+		if err := s.SetAppEnabled(ctx, *update.Enabled); err != nil {
+			return MagmaSettings{}, err
+		}
+		current.Enabled = *update.Enabled
 	}
 	s.signal()
 	return current, nil

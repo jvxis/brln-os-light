@@ -1449,6 +1449,7 @@ export const getMagmaOrderEvents = (id: string): Promise<{ events: MagmaOrderEve
   request(`/api/apps/magma-sales/orders/${encodeURIComponent(id)}/events`)
 export const updateMagmaSettings = (payload: {
   mode?: 'monitor' | 'assisted' | 'auto'
+  enabled?: boolean
   poll_interval_sec?: number
   notify_telegram?: boolean
 }): Promise<MagmaSettings> =>

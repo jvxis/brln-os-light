@@ -62,13 +62,18 @@ const formatDateTime = (value: string | undefined, locale: string) => {
   return parsed.toLocaleString(locale)
 }
 
-// The three positions of the mode switch, ordered by how much the app is allowed
-// to do. The active tint escalates with that: neutral, amber, red.
+// The four positions of the mode switch, ordered by how much the app is allowed
+// to do. The active tint escalates with that: off, neutral, amber, red.
+// "off" is not a stored mode — it maps onto the app's enabled flag, so the
+// switch and the App Store card can never disagree about what is running.
 const magmaModes = [
+  { value: 'off' as const, labelKey: 'magma.modeOffShort', activeClass: 'bg-white/10 text-fog/70' },
   { value: 'monitor' as const, labelKey: 'magma.modeMonitorShort', activeClass: 'bg-white/15 text-fog' },
   { value: 'assisted' as const, labelKey: 'magma.modeAssistedShort', activeClass: 'bg-amber-500/25 text-amber-100' },
   { value: 'auto' as const, labelKey: 'magma.modeAutoShort', activeClass: 'bg-rose-500/25 text-rose-100' }
 ]
+
+type MagmaSwitchPosition = 'off' | 'monitor' | 'assisted' | 'auto'
 
 // Price alone hides the deal: the same ppm over 180 days is a very different
 // trade than over 7. Commitment length is the most common size in real orders.
@@ -129,20 +134,26 @@ export default function MagmaSales() {
   // Leaving monitor mode is the point where this app becomes able to spend, so it
   // goes through a modal that states what changes and what the wallet can back.
   // Dropping straight back to monitor is always safe and needs no ceremony.
-  const handleChangeMode = (next: 'monitor' | 'assisted' | 'auto') => {
-    if (!overview || next === overview.settings.mode) return
-    if (next === 'monitor') {
+  const handleChangeMode = (next: MagmaSwitchPosition) => {
+    if (!overview || next === position) return
+    // Off and monitor only ever reduce what the app may do, so they apply
+    // straight away. The two that can spend go through the confirmation.
+    if (next === 'off' || next === 'monitor') {
       commitMode(next)
       return
     }
     setPendingMode(next)
   }
 
-  const commitMode = (next: 'monitor' | 'assisted' | 'auto') => {
+  const commitMode = (next: MagmaSwitchPosition) => {
     if (!overview) return
     setPendingMode(null)
     setBusy(true)
-    updateMagmaSettings({ mode: next })
+    const payload =
+      next === 'off'
+        ? { enabled: false }
+        : { enabled: true, mode: next as 'monitor' | 'assisted' | 'auto' }
+    updateMagmaSettings(payload)
       .then((settings) => setOverview({ ...overview, settings }))
       .catch((err) => setMessage(err instanceof Error ? err.message : t('magma.settingsFailed')))
       .finally(() => setBusy(false))
@@ -151,10 +162,14 @@ export default function MagmaSales() {
   const orders = overview?.orders ?? []
   const actionNeeded = overview?.action_needed ?? []
   const mode = overview?.settings.mode ?? 'monitor'
-  const auto = mode === 'auto'
+  // The switch shows Off whenever the app is stopped, whatever mode is stored —
+  // that stored mode is what it returns to when switched back on.
+  const off = overview ? !overview.settings.enabled : false
+  const position: MagmaSwitchPosition = off ? 'off' : (mode as MagmaSwitchPosition)
+  const auto = !off && mode === 'auto'
   // Assisted is the only mode with per-order buttons: in auto the engine owns the
   // decisions, and a manual click racing it would fight the policy.
-  const assisted = mode === 'assisted'
+  const assisted = !off && mode === 'assisted'
   const canAct = assisted || auto
 
   const stats = useMemo(() => {
@@ -189,11 +204,13 @@ export default function MagmaSales() {
                   ? 'border-rose-400/30 bg-rose-500/10'
                   : assisted
                     ? 'border-amber-400/30 bg-amber-500/10'
-                    : 'border-white/10 bg-white/5'
+                    : off
+                      ? 'border-white/5 bg-white/[0.02]'
+                      : 'border-white/10 bg-white/5'
               }`}
             >
               {magmaModes.map((option) => {
-                const active = mode === option.value
+                const active = position === option.value
                 return (
                   <button
                     key={option.value}
@@ -218,7 +235,13 @@ export default function MagmaSales() {
         </div>
 
         <p className="text-sm text-fog/70">
-          {auto ? t('magma.autoNotice') : assisted ? t('magma.assistedNotice') : t('magma.monitorNotice')}
+          {off
+            ? t('magma.offNotice')
+            : auto
+              ? t('magma.autoNotice')
+              : assisted
+                ? t('magma.assistedNotice')
+                : t('magma.monitorNotice')}
         </p>
         {/* Shown in assisted mode too, so the policy can be reviewed and tuned
             before automatic mode is switched on rather than after it starts

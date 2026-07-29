@@ -212,6 +212,34 @@ func (s *Server) handleMagmaPolicyPost(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, saved)
 }
 
+// Backfill is split into a GET that only reports and a POST that writes, so
+// looking is never one typo away from changing historical revenue.
+func (s *Server) handleMagmaBackfillPreview(w http.ResponseWriter, r *http.Request) {
+	svc := s.requireMagmaService(w)
+	if svc == nil {
+		return
+	}
+	report, err := svc.BackfillRevenue(r.Context(), false)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
+func (s *Server) handleMagmaBackfillApply(w http.ResponseWriter, r *http.Request) {
+	svc := s.requireMagmaService(w)
+	if svc == nil {
+		return
+	}
+	report, err := svc.BackfillRevenue(r.Context(), true)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
+
 func (s *Server) handleMagmaRefresh(w http.ResponseWriter, r *http.Request) {
 	svc := s.requireMagmaService(w)
 	if svc == nil {

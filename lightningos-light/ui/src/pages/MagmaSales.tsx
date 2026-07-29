@@ -2,15 +2,23 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   acceptMagmaOrder,
+  applyMagmaBackfill,
   getMagmaOpenPreview,
   getMagmaOverview,
   openMagmaChannel,
+  previewMagmaBackfill,
   refreshMagma,
   rejectMagmaOrder,
   updateMagmaPolicy,
   updateMagmaSettings
 } from '../api'
-import type { MagmaOpenPreview, MagmaOrder, MagmaOverview, MagmaPolicy } from '../api'
+import type {
+  MagmaBackfillReport,
+  MagmaOpenPreview,
+  MagmaOrder,
+  MagmaOverview,
+  MagmaPolicy
+} from '../api'
 import { getLocale } from '../i18n'
 
 const BLOCKS_PER_DAY = 144
@@ -80,6 +88,7 @@ export default function MagmaSales() {
   const [expanded, setExpanded] = useState<string | null>(null)
   const [pendingMode, setPendingMode] = useState<'assisted' | 'auto' | null>(null)
   const [policyOpen, setPolicyOpen] = useState(false)
+  const [backfillOpen, setBackfillOpen] = useState(false)
 
   const load = () => {
     getMagmaOverview()
@@ -480,6 +489,26 @@ export default function MagmaSales() {
         )}
       </section>
 
+      {/* Historical repair. Kept out of the way because it is a one-off: sales
+          closed before this app existed carry no settle date, so their revenue is
+          missing from past reports while their channel-open fee was always
+          counted. */}
+      {orders.length > 0 && (
+        <section className="section-card space-y-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="text-base font-semibold text-fog">{t('magma.backfillTitle')}</h3>
+              <p className="text-sm text-fog/60">{t('magma.backfillBody')}</p>
+            </div>
+            <button className="btn-secondary" onClick={() => setBackfillOpen(true)}>
+              {t('magma.backfillCheck')}
+            </button>
+          </div>
+        </section>
+      )}
+
+      {backfillOpen && <MagmaBackfillDialog locale={locale} onClose={() => setBackfillOpen(false)} onApplied={load} />}
+
       {pendingMode && (
         <MagmaModeConfirm
           mode={pendingMode}
@@ -501,6 +530,124 @@ export default function MagmaSales() {
           }}
         />
       )}
+    </div>
+  )
+}
+
+// MagmaBackfillDialog always previews before it can write. The preview runs on
+// open, and the apply button only exists once there is something to apply.
+function MagmaBackfillDialog({
+  locale,
+  onClose,
+  onApplied
+}: {
+  locale: string
+  onClose: () => void
+  onApplied: () => void
+}) {
+  const { t } = useTranslation()
+  const [report, setReport] = useState<MagmaBackfillReport | null>(null)
+  const [busy, setBusy] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    previewMagmaBackfill()
+      .then((data) => setReport(data))
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBusy(false))
+  }, [])
+
+  const apply = () => {
+    setBusy(true)
+    setError('')
+    applyMagmaBackfill()
+      .then((data) => {
+        setReport(data)
+        onApplied()
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBusy(false))
+  }
+
+  const canApply = Boolean(report && !report.applied && report.matched_orders > 0)
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-8">
+      <div className="max-h-full w-full max-w-lg overflow-y-auto rounded-lg border border-white/10 bg-ink p-5 shadow-xl">
+        <h3 className="text-lg font-semibold text-fog">{t('magma.backfillTitle')}</h3>
+
+        {busy && !report && <p className="mt-4 text-sm text-fog/60">{t('magma.backfillScanning')}</p>}
+        {error && <p className="mt-4 text-sm text-rose-200">{error}</p>}
+
+        {report && (
+          <div className="mt-4 space-y-3 text-sm">
+            <div className="grid gap-2 text-fog/70">
+              <span>
+                {t('magma.backfillInvoicesFound')}: <strong className="text-fog">{report.invoices_found}</strong>
+              </span>
+              <span>
+                {t('magma.backfillMatched')}: <strong className="text-fog">{report.matched_orders}</strong>
+              </span>
+              {report.already_stamped > 0 && (
+                <span>
+                  {t('magma.backfillAlready')}: {report.already_stamped}
+                </span>
+              )}
+              {report.matched_orders > 0 && (
+                <span>
+                  {t('magma.backfillRevenue')}:{' '}
+                  <strong className="text-emerald-200">{formatSats(report.revenue_sat, locale)}</strong>
+                </span>
+              )}
+              {report.reports_rerun_from && (
+                <span>
+                  {t('magma.backfillWindow')}: {report.reports_rerun_from} → {report.reports_rerun_to}
+                </span>
+              )}
+            </div>
+
+            {report.notes?.map((note) => (
+              <p key={note} className="text-xs text-amber-200">
+                {note}
+              </p>
+            ))}
+
+            {report.invoices_found === 0 && (
+              <p className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-fog/70">
+                {t('magma.backfillNothingFound')}
+              </p>
+            )}
+
+            {report.applied ? (
+              <div className="rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-emerald-100">
+                <p>{t('magma.backfillApplied', { count: report.stamped })}</p>
+                {report.reports_rerun_from && (
+                  <>
+                    <p className="mt-2 text-xs">{t('magma.backfillRerunHint')}</p>
+                    <code className="mt-1 block break-all rounded bg-black/30 px-2 py-1 text-xs">
+                      lightningos-manager reports-backfill --config /etc/lightningos/config.yaml --from{' '}
+                      {report.reports_rerun_from} --to {report.reports_rerun_to}
+                    </code>
+                  </>
+                )}
+              </div>
+            ) : (
+              canApply && <p className="text-xs text-fog/50">{t('magma.backfillApplyHint')}</p>
+            )}
+          </div>
+        )}
+
+        <div className="mt-5 flex flex-wrap justify-end gap-3">
+          <button className="btn-secondary" onClick={onClose} disabled={busy}>
+            {report?.applied ? t('common.close') : t('common.cancel')}
+          </button>
+          {canApply && (
+            <button className="btn-primary" onClick={apply} disabled={busy}>
+              {busy ? t('magma.working') : t('magma.backfillApply')}
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

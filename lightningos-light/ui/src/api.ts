@@ -1367,6 +1367,26 @@ export type MagmaPnL = {
   onchain_cost_already_in_reports: boolean
 }
 
+export type MagmaBackfillReport = {
+  invoices_found: number
+  matched_orders: number
+  already_stamped: number
+  unmatched_invoices: number
+  revenue_sat: number
+  oldest_settled_at?: string
+  newest_settled_at?: string
+  applied: boolean
+  stamped: number
+  reports_rerun_from?: string
+  reports_rerun_to?: string
+  notes?: string[]
+}
+
+export const previewMagmaBackfill = (): Promise<MagmaBackfillReport> =>
+  request('/api/apps/magma-sales/backfill')
+export const applyMagmaBackfill = (): Promise<MagmaBackfillReport> =>
+  request('/api/apps/magma-sales/backfill', { method: 'POST', body: JSON.stringify({}) })
+
 export type MagmaOverview = {
   settings: MagmaSettings
   token: MagmaTokenState

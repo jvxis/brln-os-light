@@ -521,6 +521,19 @@ POST /api/apps/loop/swap
 GET /api/apps/loopout-brln/status
 - Returns install/enable state and the current non-terminal job, if any.
 
+GET /api/apps/loopout-brln/strike/status
+- Returns only whether a Strike API key is configured. The key is never returned.
+
+POST /api/apps/loopout-brln/strike/connect
+- Body: `api_key`, `confirm_password`.
+- Validates the key against the Strike balances endpoint before storing it in the node secrets file.
+- Requires recent `loopout_brln` reauthentication.
+
+POST /api/apps/loopout-brln/strike/disconnect
+- Body: `confirm_password`.
+- Removes the stored key. Disconnection is rejected while an automatic Strike return is authorized or an on-chain return is active.
+- Requires recent `loopout_brln` reauthentication.
+
 POST /api/apps/loopout-brln/lightning-address/validate
 - Body: `lightning_address`.
 - Resolves the provider's public LNURL-pay metadata endpoint and validates its `payRequest`, HTTPS callback, and payment range without requesting an invoice or sending a payment.
@@ -528,6 +541,7 @@ POST /api/apps/loopout-brln/lightning-address/validate
 
 POST /api/apps/loopout-brln/preview
 - Validates the Lightning Address and execution limits without requesting a payable invoice or sending an HTLC.
+- Optional `strike_return_enabled=true` is accepted only for an exact `@strike.me` destination and requires a configured Strike connection before job creation.
 - Body fields: `lightning_address`, `total_sat`, `tranche_sat`, `interval_seconds`, `timeout_seconds`, `max_fee_ppm` (1–1,000,000), `min_local_percent`, optional `comment`, optional `selected_channel_ids` as decimal strings, and optional `suppress_failed_telegram`.
 - The preview also checks the provider's per-payment minimum/maximum and comment policy for both the regular tranche and the final reduced tranche.
 - Returns payment count, final tranche, maximum aggregate fee budget, safely drainable liquidity, warnings, and per-channel projections.
@@ -539,7 +553,7 @@ POST /api/apps/loopout-brln/jobs
 - A fresh LNURL-pay invoice is requested for each attempt. Its exact msat amount is verified before sending.
 
 GET  /api/apps/loopout-brln/jobs/{id}
-- Returns the job, individual payment attempts, and the app-local event timeline.
+- Returns the job, individual payment attempts, the app-local event timeline, and the associated Strike on-chain return when present.
 
 POST /api/apps/loopout-brln/jobs/{id}/pause
 POST /api/apps/loopout-brln/jobs/{id}/resume
@@ -547,6 +561,13 @@ POST /api/apps/loopout-brln/jobs/{id}/cancel
 - Pause and cancel take effect before a new payment begins or immediately after the current in-flight payment reaches a terminal LND state.
 - Resume requires recent `loopout_brln` reauthentication.
 - The app does not emit global or Telegram-specific notifications; successful payments continue to appear through the existing LND payment notification flow.
+
+POST /api/apps/loopout-brln/jobs/{id}/strike-return
+- Body: `confirm_password`.
+- Queues a manual return for the successfully sent amount of a completed or cancelled `@strike.me` loop.
+- The backend creates a fresh LND wallet address, verifies the available BTC balance, requires Strike's `tier_free` and a zero-fee quote, then executes and reconciles the payment until confirmed.
+- The operation is idempotent per job and never sweeps unrelated Strike funds or falls back to a paid tier.
+- Requires recent `loopout_brln` reauthentication.
 
 POST /api/apps/{id}/reset-admin
 GET /api/apps/{id}/admin-password

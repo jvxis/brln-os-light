@@ -37,6 +37,95 @@ func (s *Server) handleLoopOutBRLNStatus(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, status)
 }
 
+func (s *Server) handleLoopOutBRLNStrikeStatus(w http.ResponseWriter, r *http.Request) {
+	svc := s.requireLoopOutBRLNService(w)
+	if svc == nil {
+		return
+	}
+	_, err := svc.strikeAPIKey()
+	writeJSON(w, http.StatusOK, map[string]bool{"configured": err == nil})
+}
+
+func (s *Server) handleLoopOutBRLNStrikeConnect(w http.ResponseWriter, r *http.Request) {
+	svc := s.requireLoopOutBRLNService(w)
+	if svc == nil {
+		return
+	}
+	var req struct {
+		APIKey          string `json:"api_key"`
+		ConfirmPassword string `json:"confirm_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	if !s.requireSensitiveReauth(w, r, authScopeLoopOutBRLN, req.ConfirmPassword,
+		loopOutBRLNReauthRequiredCode, "password confirmation required before connecting Strike") {
+		return
+	}
+	req.APIKey = strings.TrimSpace(req.APIKey)
+	if req.APIKey == "" || strings.ContainsAny(req.APIKey, "\r\n") {
+		writeError(w, http.StatusBadRequest, "a valid Strike API key is required")
+		return
+	}
+	client := newLoopOutBRLNStrikeClient(req.APIKey)
+	if _, err := client.balances(r.Context()); err != nil {
+		writeError(w, http.StatusBadRequest, "could not connect to Strike; verify the API key and balances scope")
+		return
+	}
+	if err := ensureSecretsDir(); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to prepare secure credential storage")
+		return
+	}
+	if err := writeEnvFileValue(secretsPath, loopOutBRLNStrikeAPIKeyEnv, req.APIKey); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to store Strike credential")
+		return
+	}
+	s.recordAuditEvent(r, "loopout_brln.strike.connect", "strike", nil)
+	writeJSON(w, http.StatusOK, map[string]bool{"configured": true})
+}
+
+func (s *Server) handleLoopOutBRLNStrikeDisconnect(w http.ResponseWriter, r *http.Request) {
+	svc := s.requireLoopOutBRLNService(w)
+	if svc == nil {
+		return
+	}
+	var req struct {
+		ConfirmPassword string `json:"confirm_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	if !s.requireSensitiveReauth(w, r, authScopeLoopOutBRLN, req.ConfirmPassword,
+		loopOutBRLNReauthRequiredCode, "password confirmation required before disconnecting Strike") {
+		return
+	}
+	var active bool
+	if err := svc.db.QueryRow(r.Context(), `
+select exists(select 1 from loopout_brln_strike_returns
+ where status in ('pending','preparing','quoted','submitted','waiting_balance'))
+or exists(select 1 from loopout_brln_jobs
+ where strike_return_enabled and status in ('running','waiting_liquidity','pause_requested','paused','cancel_requested'))`).Scan(&active); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to inspect active Strike returns")
+		return
+	}
+	if active {
+		writeError(w, http.StatusConflict, "wait for the active Strike return before disconnecting the account")
+		return
+	}
+	if err := ensureSecretsDir(); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to prepare secure credential storage")
+		return
+	}
+	if err := writeEnvFileValue(secretsPath, loopOutBRLNStrikeAPIKeyEnv, ""); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to remove Strike credential")
+		return
+	}
+	s.recordAuditEvent(r, "loopout_brln.strike.disconnect", "strike", nil)
+	writeJSON(w, http.StatusOK, map[string]bool{"configured": false})
+}
+
 func (s *Server) handleLoopOutBRLNValidateAddress(w http.ResponseWriter, r *http.Request) {
 	svc := s.requireLoopOutBRLNService(w)
 	if svc == nil {
@@ -158,6 +247,7 @@ func (s *Server) handleLoopOutBRLNCreateJob(w http.ResponseWriter, r *http.Reque
 		"lightning_address": job.LightningAddress,
 		"total_sat":         job.TotalSat, "tranche_sat": job.TrancheSat, "max_fee_ppm": job.MaxFeePPM,
 		"min_local_percent": job.MinLocalPercent, "suppress_failed_telegram": job.SuppressFailedTelegram,
+		"strike_return_enabled": job.StrikeReturnEnabled,
 	})
 	writeJSON(w, http.StatusAccepted, job)
 }
@@ -215,6 +305,38 @@ func (s *Server) handleLoopOutBRLNResumeJob(w http.ResponseWriter, r *http.Reque
 
 func (s *Server) handleLoopOutBRLNCancelJob(w http.ResponseWriter, r *http.Request) {
 	s.handleLoopOutBRLNJobAction(w, r, "cancel")
+}
+
+func (s *Server) handleLoopOutBRLNStrikeReturn(w http.ResponseWriter, r *http.Request) {
+	svc := s.requireLoopOutBRLNService(w)
+	if svc == nil {
+		return
+	}
+	id, err := parseLoopOutBRLNJobID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var req struct {
+		ConfirmPassword string `json:"confirm_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	if !s.requireSensitiveReauth(w, r, authScopeLoopOutBRLN, req.ConfirmPassword,
+		loopOutBRLNReauthRequiredCode, "password confirmation required before returning funds from Strike") {
+		return
+	}
+	item, err := svc.RequestStrikeReturn(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	s.recordAuditEvent(r, "loopout_brln.strike.return", strconv.FormatInt(id, 10), map[string]any{
+		"amount_sat": item.AmountSat, "automatic": item.Automatic,
+	})
+	writeJSON(w, http.StatusAccepted, item)
 }
 
 func (s *Server) handleLoopOutBRLNJobAction(w http.ResponseWriter, r *http.Request, action string) {

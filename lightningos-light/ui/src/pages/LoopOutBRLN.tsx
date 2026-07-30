@@ -3,13 +3,17 @@ import { useTranslation } from 'react-i18next'
 import {
   APIError,
   cancelLoopOutBRLNJob,
+  connectLoopOutBRLNStrike,
   createLoopOutBRLNJob,
+  disconnectLoopOutBRLNStrike,
   getLnChannels,
   getLoopOutBRLNJob,
   getLoopOutBRLNJobs,
   getLoopOutBRLNStatus,
+  getLoopOutBRLNStrikeStatus,
   pauseLoopOutBRLNJob,
   previewLoopOutBRLN,
+  requestLoopOutBRLNStrikeReturn,
   resumeLoopOutBRLNJob,
   validateLoopOutBRLNAddress,
   type LoopOutBRLNJob,
@@ -33,7 +37,12 @@ type SourceChannel = {
   local_chan_reserve_sat?: number
 }
 
-type ReauthAction = { kind: 'create' } | { kind: 'resume'; jobID: number }
+type ReauthAction =
+  | { kind: 'create' }
+  | { kind: 'resume'; jobID: number }
+  | { kind: 'strike_connect' }
+  | { kind: 'strike_disconnect' }
+  | { kind: 'strike_return'; jobID: number }
 type AddressCheck = {
   state: 'idle' | 'checking' | 'valid' | 'invalid'
   address: string
@@ -43,6 +52,10 @@ type AddressCheck = {
 const terminalStatuses = new Set(['completed', 'cancelled', 'failed'])
 const activeStatuses = new Set(['running', 'waiting_liquidity', 'pause_requested', 'cancel_requested'])
 const lightningAddressPattern = /^[^@\s]+@[^@\s]+$/
+const isStrikeAddress = (value: string) => {
+  const [name, domain, extra] = value.trim().toLowerCase().split('@')
+  return Boolean(name && domain === 'strike.me' && !extra)
+}
 const channelID = (channel: SourceChannel) => String(channel.channel_id_str || channel.channel_id || '').trim()
 const compactSats = (value: number) => {
   const amount = Math.max(0, Number(value) || 0)
@@ -58,6 +71,7 @@ export default function LoopOutBRLN() {
   const sats = useCallback((value?: number) => `${Math.max(0, Number(value) || 0).toLocaleString(locale)} sat`, [locale])
   const dateTime = useCallback((value?: string) => value ? new Date(value).toLocaleString(locale) : '—', [locale])
   const [status, setStatus] = useState<Awaited<ReturnType<typeof getLoopOutBRLNStatus>> | null>(null)
+  const [strikeStatus, setStrikeStatus] = useState<Awaited<ReturnType<typeof getLoopOutBRLNStrikeStatus>>>({ configured: false })
   const [jobs, setJobs] = useState<LoopOutBRLNJob[]>([])
   const [detail, setDetail] = useState<LoopOutBRLNJobDetail | null>(null)
   const [channels, setChannels] = useState<SourceChannel[]>([])
@@ -79,6 +93,8 @@ export default function LoopOutBRLN() {
   const [minLocalPercent, setMinLocalPercent] = useState('60')
   const [comment, setComment] = useState('')
   const [suppressFailedTelegram, setSuppressFailedTelegram] = useState(true)
+  const [strikeReturnEnabled, setStrikeReturnEnabled] = useState(false)
+  const [strikeAPIKey, setStrikeAPIKey] = useState('')
   const [channelSearch, setChannelSearch] = useState('')
   const [reauthAction, setReauthAction] = useState<ReauthAction | null>(null)
   const [password, setPassword] = useState('')
@@ -87,12 +103,14 @@ export default function LoopOutBRLN() {
 
   const load = useCallback(async (silent = false) => {
     try {
-      const [nextStatus, history, channelResult] = await Promise.all([
+      const [nextStatus, nextStrikeStatus, history, channelResult] = await Promise.all([
         getLoopOutBRLNStatus(),
+        getLoopOutBRLNStrikeStatus().catch(() => ({ configured: false })),
         getLoopOutBRLNJobs(50),
         getLnChannels().catch(() => ({ channels: [] }))
       ])
       setStatus(nextStatus)
+      setStrikeStatus(nextStrikeStatus)
       setJobs(history.jobs || [])
       const raw = channelResult as any
       setChannels(Array.isArray(raw?.channels) ? raw.channels : [])
@@ -152,6 +170,10 @@ export default function LoopOutBRLN() {
     }
   }, [address])
 
+  useEffect(() => {
+    if (!isStrikeAddress(address)) setStrikeReturnEnabled(false)
+  }, [address])
+
   const requestPayload = useMemo<LoopOutBRLNRequest>(() => ({
     lightning_address: address.trim(),
     total_sat: Number(totalSat),
@@ -162,8 +184,9 @@ export default function LoopOutBRLN() {
     min_local_percent: Number(minLocalPercent),
     comment: comment.trim(),
     selected_channel_ids: sourceMode === 'manual' ? Array.from(selectedChannels) : undefined,
-    suppress_failed_telegram: suppressFailedTelegram
-  }), [address, comment, intervalSeconds, maxFeePPM, minLocalPercent, selectedChannels, sourceMode, suppressFailedTelegram, timeoutSeconds, totalSat, trancheSat])
+    suppress_failed_telegram: suppressFailedTelegram,
+    strike_return_enabled: isStrikeAddress(address) && strikeReturnEnabled
+  }), [address, comment, intervalSeconds, maxFeePPM, minLocalPercent, selectedChannels, sourceMode, strikeReturnEnabled, suppressFailedTelegram, timeoutSeconds, totalSat, trancheSat])
 
   const addressReady = addressCheck.state === 'valid' && addressCheck.address === requestPayload.lightning_address.toLowerCase()
   const addressCheckState = addressCheck.address === requestPayload.lightning_address.toLowerCase() ? addressCheck.state : 'idle'
@@ -172,6 +195,7 @@ export default function LoopOutBRLN() {
     Number.isSafeInteger(requestPayload.total_sat) && Number.isSafeInteger(requestPayload.tranche_sat) &&
     requestPayload.max_fee_ppm >= 1 && requestPayload.max_fee_ppm <= 1_000_000 &&
     requestPayload.min_local_percent >= 0 && requestPayload.min_local_percent < 100 &&
+    (!requestPayload.strike_return_enabled || strikeStatus.configured) &&
     (sourceMode === 'auto' || selectedChannels.size > 0)
 
   const visibleChannels = useMemo(() => {
@@ -289,11 +313,78 @@ export default function LoopOutBRLN() {
     }
   }
 
+  const connectStrike = async (confirmPassword?: string) => {
+    if (!strikeAPIKey.trim()) return
+    setBusy('strike-connect')
+    setMessage('')
+    try {
+      const next = await connectLoopOutBRLNStrike(strikeAPIKey.trim(), confirmPassword)
+      setStrikeStatus(next)
+      setStrikeAPIKey('')
+      setReauthAction(null)
+      setPassword('')
+      setMessage(t('loopOutBrln.strikeConnected'))
+    } catch (err: any) {
+      if (err instanceof APIError && err.code === 'loopout_brln_reauth_required') {
+        setReauthAction({ kind: 'strike_connect' })
+      } else {
+        setMessage(err?.message || t('loopOutBrln.strikeConnectFailed'))
+      }
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const disconnectStrike = async (confirmPassword?: string) => {
+    setBusy('strike-disconnect')
+    setMessage('')
+    try {
+      const next = await disconnectLoopOutBRLNStrike(confirmPassword)
+      setStrikeStatus(next)
+      setStrikeReturnEnabled(false)
+      setPreview(null)
+      setReauthAction(null)
+      setPassword('')
+      setMessage(t('loopOutBrln.strikeDisconnected'))
+    } catch (err: any) {
+      if (err instanceof APIError && err.code === 'loopout_brln_reauth_required') {
+        setReauthAction({ kind: 'strike_disconnect' })
+      } else {
+        setMessage(err?.message || t('loopOutBrln.strikeDisconnectFailed'))
+      }
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const requestStrikeReturn = async (jobID: number, confirmPassword?: string) => {
+    setBusy('strike-return')
+    setMessage('')
+    try {
+      await requestLoopOutBRLNStrikeReturn(jobID, confirmPassword)
+      setReauthAction(null)
+      setPassword('')
+      setMessage(t('loopOutBrln.strikeReturnQueued'))
+      await load(true)
+    } catch (err: any) {
+      if (err instanceof APIError && err.code === 'loopout_brln_reauth_required') {
+        setReauthAction({ kind: 'strike_return', jobID })
+      } else {
+        setMessage(err?.message || t('loopOutBrln.strikeReturnFailed'))
+      }
+    } finally {
+      setBusy('')
+    }
+  }
+
   const submitPassword = async (event: FormEvent) => {
     event.preventDefault()
     if (!password.trim() || !reauthAction) return
     if (reauthAction.kind === 'create') await createJob(password)
-    else await jobAction('resume', reauthAction.jobID, password)
+    else if (reauthAction.kind === 'resume') await jobAction('resume', reauthAction.jobID, password)
+    else if (reauthAction.kind === 'strike_connect') await connectStrike(password)
+    else if (reauthAction.kind === 'strike_disconnect') await disconnectStrike(password)
+    else await requestStrikeReturn(reauthAction.jobID, password)
   }
 
   const selectJob = async (id: number) => {
@@ -383,6 +474,33 @@ export default function LoopOutBRLN() {
                       ? t('loopOutBrln.addressInvalidFormat')
                       : t('loopOutBrln.addressInvalid', { reason: addressCheck.reason || t('loopOutBrln.addressUnavailable') })}
               </p>}
+              {isStrikeAddress(address) && addressCheckState === 'valid' && (
+                <div className="mt-4 rounded-2xl border border-brass/20 bg-gradient-to-br from-brass/[0.09] to-black/10 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="flex gap-3">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-brass/25 bg-brass/10 text-brass"><ReturnIcon /></span>
+                      <div><p className="text-sm font-semibold">{t('loopOutBrln.strikeReturnTitle')}</p><p className="mt-1 max-w-xl text-xs leading-5 text-fog/50">{t('loopOutBrln.strikeReturnDescription')}</p></div>
+                    </div>
+                    {strikeStatus.configured && <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-200"><i className="h-1.5 w-1.5 rounded-full bg-emerald-300" />{t('loopOutBrln.strikeConnectedBadge')}</span>}
+                  </div>
+                  {strikeStatus.configured ? (
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/15 p-3">
+                      <label className="flex cursor-pointer items-start gap-3">
+                        <input className="peer sr-only" type="checkbox" checked={strikeReturnEnabled} onChange={(e) => { setStrikeReturnEnabled(e.target.checked); clearPreview() }} />
+                        <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition peer-focus-visible:ring-2 peer-focus-visible:ring-glow/60 ${strikeReturnEnabled ? 'border-glow bg-glow text-ink' : 'border-white/20 bg-white/5 text-transparent'}`}><CheckIcon /></span>
+                        <span><span className="block text-sm font-medium">{t('loopOutBrln.strikeReturnAutomatic')}</span><span className="mt-1 block text-xs leading-5 text-fog/45">{t('loopOutBrln.strikeReturnAutomaticHint')}</span></span>
+                      </label>
+                      <button className="text-xs text-fog/40 transition hover:text-rose-200" type="button" disabled={Boolean(busy)} onClick={() => void disconnectStrike()}>{t('loopOutBrln.strikeDisconnect')}</button>
+                    </div>
+                  ) : (
+                    <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
+                      <input className="input-field font-mono text-xs" type="password" value={strikeAPIKey} onChange={(e) => setStrikeAPIKey(e.target.value)} placeholder={t('loopOutBrln.strikeAPIKey')} autoComplete="off" />
+                      <button className="btn-secondary justify-center" type="button" disabled={!strikeAPIKey.trim() || Boolean(busy)} onClick={() => void connectStrike()}>{busy === 'strike-connect' ? t('loopOutBrln.strikeConnecting') : t('loopOutBrln.strikeConnect')}</button>
+                      <p className="text-[11px] leading-5 text-fog/40 sm:col-span-2">{t('loopOutBrln.strikeScopesHint')}</p>
+                    </div>
+                  )}
+                </div>
+              )}
             </section>
 
             <section className="border-t border-white/10 pt-7">
@@ -464,7 +582,7 @@ export default function LoopOutBRLN() {
               <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/5"><div className="h-full rounded-full bg-brass" style={{ width: `${Math.min(100, job.sent_sat * 100 / Math.max(1, job.total_sat))}%` }} /></div>
             </button>)}
           </div>
-          <JobDetail detail={detail} busy={busy} sats={sats} dateTime={dateTime} progress={progress} effectivePPM={effectivePPM} t={t} onAction={jobAction} />
+          <JobDetail detail={detail} busy={busy} sats={sats} dateTime={dateTime} progress={progress} effectivePPM={effectivePPM} strikeConfigured={strikeStatus.configured} t={t} onAction={jobAction} onStrikeReturn={requestStrikeReturn} />
         </div>
       )}
 
@@ -570,6 +688,7 @@ function ReviewPanel({ preview, request, sats, t, busy, formValid, addressReady,
           <PlanCheck ready={amountReady} label={t('loopOutBrln.checkAmounts')} detail={amountReady ? t('loopOutBrln.paymentCount', { count: draftParts }) : t('loopOutBrln.checkAmountsMissing')} />
           <PlanCheck ready={request.max_fee_ppm >= 1 && request.min_local_percent >= 0} label={t('loopOutBrln.checkGuards')} detail={`${request.min_local_percent || 0}% · ${(request.max_fee_ppm || 0).toLocaleString()} PPM`} />
           <PlanCheck ready={sourcesReady} label={t('loopOutBrln.checkSources')} detail={sourceMode === 'auto' ? t('loopOutBrln.automaticSelection') : t('loopOutBrln.selectedCount', { count: selectedCount })} />
+          {isStrikeAddress(request.lightning_address) && <PlanCheck ready={Boolean(request.strike_return_enabled)} label={t('loopOutBrln.strikeReturnPlan')} detail={request.strike_return_enabled ? t('loopOutBrln.strikeReturnFreeTier') : t('loopOutBrln.strikeReturnManualLater')} />}
         </div>
         <div className="rounded-2xl border border-dashed border-white/10 px-4 py-4 text-center"><p className="text-sm font-medium">{t('loopOutBrln.reviewEmptyTitle')}</p><p className="mt-1 text-xs leading-5 text-fog/40">{t('loopOutBrln.reviewEmptyBody')}</p></div>
         <button className="btn-primary w-full justify-center py-3" type="submit" disabled={!formValid || Boolean(busy) || hasActiveJob}>{busy === 'preview' ? t('loopOutBrln.validating') : t('loopOutBrln.review')}</button>
@@ -578,7 +697,7 @@ function ReviewPanel({ preview, request, sats, t, busy, formValid, addressReady,
         <div className="flex items-center justify-between"><span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider ${preview.can_start ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200' : 'border-amber-400/25 bg-amber-400/10 text-amber-200'}`}><i className={`h-1.5 w-1.5 rounded-full ${preview.can_start ? 'bg-emerald-300' : 'bg-amber-300'}`} />{preview.can_start ? t('loopOutBrln.ready') : t('loopOutBrln.needsAttention')}</span><span className="text-[10px] text-fog/35">{t('loopOutBrln.validatedNow')}</span></div>
         <div className="grid grid-cols-2 gap-3"><Metric label={t('loopOutBrln.payments')} value={String(preview.estimated_parts)} /><Metric label={t('loopOutBrln.maxFees')} value={sats(preview.max_fee_total_sat)} /><Metric label={t('loopOutBrln.lastPayment')} value={sats(preview.last_tranche_sat)} /><Metric label={t('loopOutBrln.drainable')} value={sats(preview.total_drainable_sat)} /></div>
         <div className="rounded-2xl border border-white/10 bg-black/15 p-4"><div className="flex justify-between text-xs"><span className="text-fog/50">{t('loopOutBrln.liquidityCoverage')}</span><strong className={coverage >= 100 ? 'text-emerald-300' : 'text-amber-200'}>{coverage.toFixed(0)}%</strong></div><div className="mt-3 h-2 overflow-hidden rounded-full bg-white/5"><div className={`h-full rounded-full transition-all ${coverage >= 100 ? 'bg-gradient-to-r from-emerald-400 to-glow' : 'bg-gradient-to-r from-amber-500 to-amber-300'}`} style={{ width: `${coverage}%` }} /></div><div className="mt-3 flex justify-between text-[10px] text-fog/35"><span>{t('loopOutBrln.required')}: {sats(requiredLiquidity)}</span><span>{t('loopOutBrln.safeToMove')}: {sats(preview.total_drainable_sat)}</span></div></div>
-        <div className="rounded-2xl border border-white/10 bg-black/15 p-4"><div className="flex justify-between text-xs text-fog/50"><span>{t('loopOutBrln.feeBudget')}</span><strong className="text-fog">{request.max_fee_ppm.toLocaleString()} PPM</strong></div><div className="mt-2 flex justify-between text-xs text-fog/50"><span>{t('loopOutBrln.liquidityFloor')}</span><strong className="text-fog">{request.min_local_percent}%</strong></div><div className="mt-2 flex justify-between text-xs text-fog/50"><span>{t('loopOutBrln.interval')}</span><strong className="text-fog">{request.interval_seconds}s</strong></div><div className="mt-2 flex justify-between gap-3 text-xs text-fog/50"><span>{t('loopOutBrln.failedTelegram')}</span><strong className="text-right text-fog">{request.suppress_failed_telegram ? t('loopOutBrln.failedTelegramSuppressed') : t('loopOutBrln.failedTelegramEnabled')}</strong></div></div>
+        <div className="rounded-2xl border border-white/10 bg-black/15 p-4"><div className="flex justify-between text-xs text-fog/50"><span>{t('loopOutBrln.feeBudget')}</span><strong className="text-fog">{request.max_fee_ppm.toLocaleString()} PPM</strong></div><div className="mt-2 flex justify-between text-xs text-fog/50"><span>{t('loopOutBrln.liquidityFloor')}</span><strong className="text-fog">{request.min_local_percent}%</strong></div><div className="mt-2 flex justify-between text-xs text-fog/50"><span>{t('loopOutBrln.interval')}</span><strong className="text-fog">{request.interval_seconds}s</strong></div><div className="mt-2 flex justify-between gap-3 text-xs text-fog/50"><span>{t('loopOutBrln.failedTelegram')}</span><strong className="text-right text-fog">{request.suppress_failed_telegram ? t('loopOutBrln.failedTelegramSuppressed') : t('loopOutBrln.failedTelegramEnabled')}</strong></div>{isStrikeAddress(request.lightning_address) && <div className="mt-2 flex justify-between gap-3 text-xs text-fog/50"><span>{t('loopOutBrln.strikeReturnPlan')}</span><strong className="text-right text-fog">{request.strike_return_enabled ? t('loopOutBrln.automatic') : t('loopOutBrln.manual')}</strong></div>}</div>
         {(preview.warnings || []).map((warning) => <p key={warning} className="rounded-xl border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-100/80">{t(`loopOutBrln.warnings.${warning}`, { defaultValue: warning })}</p>)}
         <p className="flex items-start gap-2 text-[11px] leading-5 text-fog/40"><ShieldIcon /><span>{t('loopOutBrln.approvalNotice')}</span></p>
         <button className="btn-primary w-full justify-center py-3" type="button" disabled={!preview.can_start || Boolean(busy) || hasActiveJob} onClick={onStart}>{busy === 'create' ? t('loopOutBrln.starting') : t('loopOutBrln.start')}</button>
@@ -593,15 +712,33 @@ function PlanCheck({ ready, label, detail }: { ready: boolean; label: string; de
 
 function Metric({ label, value }: { label: string; value: string }) { return <div className="rounded-2xl border border-white/10 bg-black/15 p-3"><p className="text-[10px] uppercase tracking-wide text-fog/40">{label}</p><p className="mt-1 break-all text-sm font-semibold">{value}</p></div> }
 
-function JobDetail({ detail, busy, sats, dateTime, progress, effectivePPM, t, onAction }: { detail: LoopOutBRLNJobDetail | null; busy: string; sats: (n?: number) => string; dateTime: (v?: string) => string; progress: number; effectivePPM: number; t: any; onAction: (action: 'pause' | 'resume' | 'cancel', id: number) => Promise<void> }) {
+function JobDetail({ detail, busy, sats, dateTime, progress, effectivePPM, strikeConfigured, t, onAction, onStrikeReturn }: { detail: LoopOutBRLNJobDetail | null; busy: string; sats: (n?: number) => string; dateTime: (v?: string) => string; progress: number; effectivePPM: number; strikeConfigured: boolean; t: any; onAction: (action: 'pause' | 'resume' | 'cancel', id: number) => Promise<void>; onStrikeReturn: (id: number) => Promise<void> }) {
   if (!detail) return <div className="section-card text-center text-sm text-fog/55">{busy === 'detail' ? t('common.loading') : t('loopOutBrln.selectHistory')}</div>
-  const { job, payments, events } = detail
+  const { job, payments, events, strike_return: strikeReturn } = detail
+  const strikeDestination = isStrikeAddress(job.lightning_address)
+  const canRequestStrikeReturn = strikeDestination && ['completed', 'cancelled'].includes(job.status) && job.sent_sat > 0 && !strikeReturn && strikeConfigured
   return <div className="space-y-6">
     <div className="section-card space-y-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex flex-wrap items-center gap-2"><h2 className="text-2xl font-semibold">{job.lightning_address}</h2><StatusBadge status={job.status} t={t} /></div><p className="mt-1 text-xs text-fog/45">#{job.id} · {dateTime(job.created_at)}</p></div><div className="flex gap-2">{activeStatuses.has(job.status) && !['pause_requested', 'cancel_requested'].includes(job.status) && <button className="btn-secondary" disabled={Boolean(busy)} onClick={() => void onAction('pause', job.id)}>{t('common.pause')}</button>}{job.status === 'paused' && <button className="btn-primary" disabled={Boolean(busy)} onClick={() => void onAction('resume', job.id)}>{t('common.resume')}</button>}{!terminalStatuses.has(job.status) && job.status !== 'cancel_requested' && <button className="btn-secondary text-rose-200" disabled={Boolean(busy)} onClick={() => void onAction('cancel', job.id)}>{t('common.cancel')}</button>}</div></div>
       <div><div className="mb-2 flex justify-between text-xs text-fog/55"><span>{sats(job.sent_sat)} / {sats(job.total_sat)}</span><span>{progress.toFixed(1)}%</span></div><div className="h-2 overflow-hidden rounded-full bg-white/5"><div className="h-full rounded-full bg-gradient-to-r from-brass to-amber-300" style={{ width: `${progress}%` }} /></div></div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><Metric label={t('loopOutBrln.sent')} value={sats(job.sent_sat)} /><Metric label={t('loopOutBrln.remaining')} value={sats(Math.max(0, job.total_sat - job.sent_sat))} /><Metric label={t('loopOutBrln.fees')} value={sats(job.fee_sat)} /><Metric label={t('loopOutBrln.effectivePPM')} value={effectivePPM.toLocaleString()} /></div>
       {job.last_error && <p className="rounded-xl border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100/80">{job.last_error}</p>}
     </div>
+    {strikeDestination && <div className="section-card">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex gap-3"><span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-brass/25 bg-brass/10 text-brass"><ReturnIcon /></span><div><div className="flex flex-wrap items-center gap-2"><h3 className="text-lg font-semibold">{t('loopOutBrln.strikeReturnHistoryTitle')}</h3>{strikeReturn && <StatusBadge status={strikeReturn.status} t={t} />}</div><p className="mt-1 text-xs leading-5 text-fog/45">{job.strike_return_enabled ? t('loopOutBrln.strikeReturnWasAutomatic') : t('loopOutBrln.strikeReturnWasManual')}</p></div></div>
+        {canRequestStrikeReturn && <button className="btn-primary" type="button" disabled={Boolean(busy)} onClick={() => void onStrikeReturn(job.id)}>{busy === 'strike-return' ? t('loopOutBrln.strikeReturnStarting') : t('loopOutBrln.strikeReturnNow')}</button>}
+      </div>
+      {!strikeConfigured && !strikeReturn && terminalStatuses.has(job.status) && <p className="mt-4 rounded-xl border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100/80">{t('loopOutBrln.strikeConnectToReturn')}</p>}
+      {!strikeReturn && job.strike_return_enabled && !terminalStatuses.has(job.status) && <p className="mt-4 rounded-xl border border-glow/15 bg-glow/[0.06] px-3 py-2 text-xs text-glow/75">{t('loopOutBrln.strikeReturnAfterCompletion')}</p>}
+      {strikeReturn && <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Metric label={t('loopOutBrln.amount')} value={sats(strikeReturn.amount_sat)} />
+        <Metric label={t('loopOutBrln.fees')} value={sats(strikeReturn.fee_sat)} />
+        <Metric label={t('loopOutBrln.strikeDeliveryEstimate')} value={strikeReturn.estimated_delivery_minutes ? t('loopOutBrln.strikeMinutes', { count: strikeReturn.estimated_delivery_minutes }) : '—'} />
+        <Metric label="TXID" value={strikeReturn.txid || '—'} />
+      </div>}
+      {strikeReturn?.btc_address && <div className="mt-3 rounded-xl border border-white/10 bg-black/15 px-3 py-2"><p className="text-[10px] uppercase tracking-wide text-fog/35">{t('loopOutBrln.strikeNodeAddress')}</p><p className="mt-1 break-all font-mono text-xs text-fog/65">{strikeReturn.btc_address}</p></div>}
+      {strikeReturn?.last_error && <p className="mt-3 rounded-xl border border-rose-400/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-100/80">{strikeReturn.last_error}</p>}
+    </div>}
     <div className="section-card overflow-hidden">
       <div className="mb-4 flex items-center justify-between gap-3"><h3 className="text-lg font-semibold">{t('loopOutBrln.payments')}</h3><span className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[10px] tabular-nums text-fog/45">{payments.length}</span></div>
       <div className="max-h-[480px] overflow-auto pr-1">
@@ -635,4 +772,5 @@ function TargetIcon() { return <svg aria-hidden="true" className="h-4 w-4" viewB
 function HistoryIcon() { return <svg aria-hidden="true" className="h-4 w-4" viewBox="0 0 24 24" fill="none"><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.5M4 4v4.5h4.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /><path d="M12 8v4l3 2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg> }
 function LiquidityIcon() { return <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none"><path d="M12 3c3.5 4.2 6 7 6 10.4a6 6 0 1 1-12 0C6 10 8.5 7.2 12 3Z" stroke="currentColor" strokeWidth="1.7" /><path d="M9.5 15.5c.8 1 1.7 1.5 3 1.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg> }
 function RouteIcon() { return <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none"><circle cx="6" cy="17" r="2" stroke="currentColor" strokeWidth="1.7" /><circle cx="18" cy="7" r="2" stroke="currentColor" strokeWidth="1.7" /><path d="M8 17h2.5c4.5 0 2-10 5.5-10" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeDasharray="2.2 2.2" /></svg> }
+function ReturnIcon() { return <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none"><path d="M19 7H9a5 5 0 0 0-5 5v1a5 5 0 0 0 5 5h8" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /><path d="m15 4 4 3-4 3M9 15l-3 3 3 3" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg> }
 function NodeIcon() { return <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.7" /><circle cx="12" cy="3.5" r="1.5" fill="currentColor" /><circle cx="4.5" cy="17" r="1.5" fill="currentColor" /><circle cx="19.5" cy="17" r="1.5" fill="currentColor" /><path d="M12 9V5m-2.5 9-3.6 2m8.6-2 3.6 2" stroke="currentColor" strokeWidth="1.5" /></svg> }

@@ -1147,6 +1147,7 @@ export type LoopOutBRLNRequest = {
   comment?: string
   selected_channel_ids?: string[]
   suppress_failed_telegram?: boolean
+  strike_return_enabled?: boolean
   confirm_password?: string
 }
 
@@ -1196,6 +1197,7 @@ export type LoopOutBRLNJob = {
   comment?: string
   selected_channel_ids?: string[]
   suppress_failed_telegram: boolean
+  strike_return_enabled: boolean
   status: string
   sent_sat: number
   fee_sat: number
@@ -1249,9 +1251,45 @@ export type LoopOutBRLNJobDetail = {
   job: LoopOutBRLNJob
   payments: LoopOutBRLNPayment[]
   events: LoopOutBRLNEvent[]
+  strike_return?: LoopOutBRLNStrikeReturn
+}
+
+export type LoopOutBRLNStrikeReturn = {
+  id: number
+  job_id: number
+  automatic: boolean
+  status: string
+  amount_sat: number
+  btc_address?: string
+  quote_id?: string
+  payment_id?: string
+  txid?: string
+  fee_sat: number
+  estimated_delivery_minutes: number
+  last_error?: string
+  next_check_at: string
+  created_at: string
+  updated_at: string
+  completed_at?: string
+}
+
+export type LoopOutBRLNStrikeStatus = {
+  configured: boolean
 }
 
 export const getLoopOutBRLNStatus = (): Promise<LoopOutBRLNStatus> => request('/api/apps/loopout-brln/status')
+export const getLoopOutBRLNStrikeStatus = (): Promise<LoopOutBRLNStrikeStatus> =>
+  request('/api/apps/loopout-brln/strike/status')
+export const connectLoopOutBRLNStrike = (apiKey: string, confirmPassword?: string): Promise<LoopOutBRLNStrikeStatus> =>
+  request('/api/apps/loopout-brln/strike/connect', {
+    method: 'POST',
+    body: JSON.stringify({ api_key: apiKey, confirm_password: confirmPassword || '' })
+  })
+export const disconnectLoopOutBRLNStrike = (confirmPassword?: string): Promise<LoopOutBRLNStrikeStatus> =>
+  request('/api/apps/loopout-brln/strike/disconnect', {
+    method: 'POST',
+    body: JSON.stringify({ confirm_password: confirmPassword || '' })
+  })
 export const validateLoopOutBRLNAddress = (lightningAddress: string, signal?: AbortSignal): Promise<LoopOutBRLNAddressValidation> =>
   request('/api/apps/loopout-brln/lightning-address/validate', {
     method: 'POST',
@@ -1272,6 +1310,11 @@ export const resumeLoopOutBRLNJob = (id: number, confirmPassword?: string): Prom
   request(`/api/apps/loopout-brln/jobs/${id}/resume`, { method: 'POST', body: JSON.stringify({ confirm_password: confirmPassword || '' }) })
 export const cancelLoopOutBRLNJob = (id: number): Promise<LoopOutBRLNJob> =>
   request(`/api/apps/loopout-brln/jobs/${id}/cancel`, { method: 'POST', body: JSON.stringify({}) })
+export const requestLoopOutBRLNStrikeReturn = (id: number, confirmPassword?: string): Promise<LoopOutBRLNStrikeReturn> =>
+  request(`/api/apps/loopout-brln/jobs/${id}/strike-return`, {
+    method: 'POST',
+    body: JSON.stringify({ confirm_password: confirmPassword || '' })
+  })
 export type MagmaOrder = {
   id: string
   status: string

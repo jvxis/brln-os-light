@@ -479,7 +479,7 @@ export default function LoopOutBRLN() {
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="flex gap-3">
                       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-brass/25 bg-brass/10 text-brass"><ReturnIcon /></span>
-                      <div><p className="text-sm font-semibold">{t('loopOutBrln.strikeReturnTitle')}</p><p className="mt-1 max-w-xl text-xs leading-5 text-fog/50">{t('loopOutBrln.strikeReturnDescription')}</p></div>
+                      <div><p className="text-sm font-semibold">{strikeStatus.configured ? t('loopOutBrln.strikeReturnTitle') : t('loopOutBrln.strikeConnectTitle')}</p><p className="mt-1 max-w-xl text-sm leading-6 text-fog/65">{t('loopOutBrln.strikeReturnDescription')}</p></div>
                     </div>
                     {strikeStatus.configured && <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-200"><i className="h-1.5 w-1.5 rounded-full bg-emerald-300" />{t('loopOutBrln.strikeConnectedBadge')}</span>}
                   </div>
@@ -496,7 +496,10 @@ export default function LoopOutBRLN() {
                     <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
                       <input className="input-field font-mono text-xs" type="password" value={strikeAPIKey} onChange={(e) => setStrikeAPIKey(e.target.value)} placeholder={t('loopOutBrln.strikeAPIKey')} autoComplete="off" />
                       <button className="btn-secondary justify-center" type="button" disabled={!strikeAPIKey.trim() || Boolean(busy)} onClick={() => void connectStrike()}>{busy === 'strike-connect' ? t('loopOutBrln.strikeConnecting') : t('loopOutBrln.strikeConnect')}</button>
-                      <p className="text-[11px] leading-5 text-fog/40 sm:col-span-2">{t('loopOutBrln.strikeScopesHint')}</p>
+                      <div className="space-y-1.5 text-xs leading-5 text-fog/65 sm:col-span-2">
+                        <p>{t('loopOutBrln.strikeScopesHint')}</p>
+                        <a className="inline-flex text-glow/80 transition hover:text-glow" href="https://docs.strike.me/api-keys/overview/" target="_blank" rel="noreferrer">{t('loopOutBrln.strikeKeyHelp')} ↗</a>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -582,7 +585,7 @@ export default function LoopOutBRLN() {
               <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/5"><div className="h-full rounded-full bg-brass" style={{ width: `${Math.min(100, job.sent_sat * 100 / Math.max(1, job.total_sat))}%` }} /></div>
             </button>)}
           </div>
-          <JobDetail detail={detail} busy={busy} sats={sats} dateTime={dateTime} progress={progress} effectivePPM={effectivePPM} strikeConfigured={strikeStatus.configured} t={t} onAction={jobAction} onStrikeReturn={requestStrikeReturn} />
+          <JobDetail detail={detail} busy={busy} sats={sats} dateTime={dateTime} progress={progress} effectivePPM={effectivePPM} strikeConfigured={strikeStatus.configured} strikeAPIKey={strikeAPIKey} t={t} onStrikeAPIKey={setStrikeAPIKey} onConnectStrike={connectStrike} onAction={jobAction} onStrikeReturn={requestStrikeReturn} />
         </div>
       )}
 
@@ -712,7 +715,7 @@ function PlanCheck({ ready, label, detail }: { ready: boolean; label: string; de
 
 function Metric({ label, value }: { label: string; value: string }) { return <div className="rounded-2xl border border-white/10 bg-black/15 p-3"><p className="text-[10px] uppercase tracking-wide text-fog/40">{label}</p><p className="mt-1 break-all text-sm font-semibold">{value}</p></div> }
 
-function JobDetail({ detail, busy, sats, dateTime, progress, effectivePPM, strikeConfigured, t, onAction, onStrikeReturn }: { detail: LoopOutBRLNJobDetail | null; busy: string; sats: (n?: number) => string; dateTime: (v?: string) => string; progress: number; effectivePPM: number; strikeConfigured: boolean; t: any; onAction: (action: 'pause' | 'resume' | 'cancel', id: number) => Promise<void>; onStrikeReturn: (id: number) => Promise<void> }) {
+function JobDetail({ detail, busy, sats, dateTime, progress, effectivePPM, strikeConfigured, strikeAPIKey, t, onStrikeAPIKey, onConnectStrike, onAction, onStrikeReturn }: { detail: LoopOutBRLNJobDetail | null; busy: string; sats: (n?: number) => string; dateTime: (v?: string) => string; progress: number; effectivePPM: number; strikeConfigured: boolean; strikeAPIKey: string; t: any; onStrikeAPIKey: (value: string) => void; onConnectStrike: (password?: string) => Promise<void>; onAction: (action: 'pause' | 'resume' | 'cancel', id: number) => Promise<void>; onStrikeReturn: (id: number) => Promise<void> }) {
   if (!detail) return <div className="section-card text-center text-sm text-fog/55">{busy === 'detail' ? t('common.loading') : t('loopOutBrln.selectHistory')}</div>
   const { job, payments, events, strike_return: strikeReturn } = detail
   const strikeDestination = isStrikeAddress(job.lightning_address)
@@ -728,7 +731,18 @@ function JobDetail({ detail, busy, sats, dateTime, progress, effectivePPM, strik
         <div className="flex gap-3"><span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-brass/25 bg-brass/10 text-brass"><ReturnIcon /></span><div><div className="flex flex-wrap items-center gap-2"><h3 className="text-lg font-semibold">{t('loopOutBrln.strikeReturnHistoryTitle')}</h3>{strikeReturn && <StatusBadge status={strikeReturn.status} t={t} />}</div><p className="mt-1 text-xs leading-5 text-fog/45">{job.strike_return_enabled ? t('loopOutBrln.strikeReturnWasAutomatic') : t('loopOutBrln.strikeReturnWasManual')}</p></div></div>
         {canRequestStrikeReturn && <button className="btn-primary" type="button" disabled={Boolean(busy)} onClick={() => void onStrikeReturn(job.id)}>{busy === 'strike-return' ? t('loopOutBrln.strikeReturnStarting') : t('loopOutBrln.strikeReturnNow')}</button>}
       </div>
-      {!strikeConfigured && !strikeReturn && terminalStatuses.has(job.status) && <p className="mt-4 rounded-xl border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-100/80">{t('loopOutBrln.strikeConnectToReturn')}</p>}
+      {!strikeConfigured && !strikeReturn && ['completed', 'cancelled'].includes(job.status) && <div className="mt-5 rounded-2xl border border-brass/20 bg-brass/[0.06] p-4">
+        <p className="text-sm font-semibold">{t('loopOutBrln.strikeHistoryConnectTitle')}</p>
+        <p className="mt-1 text-sm leading-6 text-fog/65">{t('loopOutBrln.strikeHistoryConnectDescription')}</p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
+          <input className="input-field font-mono text-xs" type="password" value={strikeAPIKey} onChange={(event) => onStrikeAPIKey(event.target.value)} placeholder={t('loopOutBrln.strikeAPIKey')} autoComplete="off" />
+          <button className="btn-primary justify-center" type="button" disabled={!strikeAPIKey.trim() || Boolean(busy)} onClick={() => void onConnectStrike()}>{busy === 'strike-connect' ? t('loopOutBrln.strikeConnecting') : t('loopOutBrln.strikeConnect')}</button>
+        </div>
+        <div className="mt-3 space-y-1.5 text-xs leading-5 text-fog/65">
+          <p>{t('loopOutBrln.strikeScopesHint')}</p>
+          <a className="inline-flex text-glow/80 transition hover:text-glow" href="https://docs.strike.me/api-keys/overview/" target="_blank" rel="noreferrer">{t('loopOutBrln.strikeKeyHelp')} ↗</a>
+        </div>
+      </div>}
       {!strikeReturn && job.strike_return_enabled && !terminalStatuses.has(job.status) && <p className="mt-4 rounded-xl border border-glow/15 bg-glow/[0.06] px-3 py-2 text-xs text-glow/75">{t('loopOutBrln.strikeReturnAfterCompletion')}</p>}
       {strikeReturn && <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Metric label={t('loopOutBrln.amount')} value={sats(strikeReturn.amount_sat)} />

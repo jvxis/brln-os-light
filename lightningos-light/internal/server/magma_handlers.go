@@ -53,6 +53,22 @@ func (s *Server) handleMagmaOrders(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"orders": orders})
 }
 
+// Commitments are read by the channel list, which must not fail when the Magma
+// app is absent or unhealthy: an empty list simply means no badge.
+func (s *Server) handleMagmaCommitments(w http.ResponseWriter, r *http.Request) {
+	svc, _ := s.magmaService()
+	if svc == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"commitments": []MagmaChannelCommitment{}})
+		return
+	}
+	items, err := svc.ActiveCommitments(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"commitments": []MagmaChannelCommitment{}})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"commitments": items})
+}
+
 func (s *Server) handleMagmaEvents(w http.ResponseWriter, r *http.Request) {
 	svc := s.requireMagmaService(w)
 	if svc == nil {

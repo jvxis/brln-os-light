@@ -9,15 +9,18 @@ import (
 	"lightningos-light/internal/lndclient"
 )
 
-// A sold channel carries two obligations for the length of the commitment:
-// it must stay reachable at a routing fee no higher than the caps frozen into the
-// order (locked_fee_rate_cap / locked_base_fee_cap), and Amboss measures every
-// second spent above them in fee_above_cap_seconds.
+// A sold channel carries a contractual fee ceiling until its commitment ends,
+// and Amboss measures every second spent above it in fee_above_cap_seconds.
 //
-// The protection here is deliberately blunt: take the channel out of Autofee for
-// the commitment window, and fix the birth fee once if the node defaults already
-// breach the caps. Leaving it inside Autofee with a clamp would mean trusting
-// every future Autofee change to keep honouring a contract it knows nothing about.
+// The channel stays inside Autofee and is held under that ceiling by a clamp in
+// applyChannelFeesWithRetry, the single point where a fee reaches LND. An earlier
+// version removed the channel from Autofee instead; that honoured the contract
+// but froze the fee at whatever it was on the day of the open, forfeiting the
+// routing income the buyer paid to unlock. Clamping keeps both: Autofee prices
+// freely underneath the ceiling, and the ceiling is never crossed.
+//
+// What remains here is the one-shot correction at confirmation time, for the case
+// where the node's own defaults already breach the caps before Autofee ever runs.
 
 // magmaFeeGuardLND is the extra LND surface the guard needs.
 type magmaFeeGuardLND interface {
@@ -51,19 +54,15 @@ select channel_point, fee_rate_cap_ppm, base_fee_cap_sat from magma_orders where
 		return
 	}
 
-	if err := s.disableAutofeeForChannel(ctx, channelID, channelPoint); err != nil {
-		s.appendEvent(ctx, orderID, "fee_guard", "warning",
-			fmt.Sprintf("could not take channel %s out of Autofee: %v", channelPoint, err), nil)
-		return
-	}
-
 	changed, detail, err := s.enforceFeeCaps(ctx, channelPoint, feeRateCapPPM, baseFeeCapSat)
 	if err != nil {
 		s.appendEvent(ctx, orderID, "fee_guard", "warning",
 			fmt.Sprintf("could not verify the fee caps on %s: %v", channelPoint, err), nil)
 		return
 	}
-	message := fmt.Sprintf("Channel %s removed from Autofee for the commitment window", channelPoint)
+	message := fmt.Sprintf(
+		"Channel %s is under commitment: Autofee may price it, capped at %d ppm / %d sat base",
+		channelPoint, feeRateCapPPM, baseFeeCapSat)
 	if changed {
 		message += "; " + detail
 	}
@@ -95,35 +94,16 @@ func (s *MagmaService) releaseFeeGuard(ctx context.Context, orderID string) {
 	if err != nil || channelID == 0 {
 		return
 	}
-	// Delete rather than set enabled=true: removing the row restores whatever the
-	// node-wide default is, instead of pinning an opinion this app should not hold
-	// once the obligation is over.
-	if _, err := s.db.Exec(ctx,
-		`delete from autofee_channel_settings where channel_id=$1`, int64(channelID)); err != nil {
-		if s.logger != nil {
-			s.logger.Printf("magma: failed to release fee guard for %s: %v", channelPoint, err)
-		}
-		return
-	}
+	// Nothing to hand back: the channel never left Autofee. The clamp simply stops
+	// applying once the commitment leaves the active set.
+	_ = channelID
 	s.appendEvent(ctx, orderID, "fee_guard", "info", fmt.Sprintf(
-		"Commitment finished; channel %s handed back to Autofee", channelPoint), nil)
+		"Commitment finished; the fee ceiling no longer applies to channel %s", channelPoint), nil)
 	if _, err := s.db.Exec(ctx,
 		`update magma_orders set fee_guard_applied=false, updated_at=now() where order_id=$1`,
 		orderID); err != nil && s.logger != nil {
 		s.logger.Printf("magma: failed to clear fee guard for order %s: %v", orderID, err)
 	}
-}
-
-// disableAutofeeForChannel writes straight into autofee_channel_settings. A
-// channel with no row there is treated as enabled by Autofee, so a freshly opened
-// sale would be picked up on the next run unless an explicit row says otherwise.
-func (s *MagmaService) disableAutofeeForChannel(ctx context.Context, channelID uint64, channelPoint string) error {
-	_, err := s.db.Exec(ctx, `
-insert into autofee_channel_settings (channel_id, channel_point, enabled, updated_at)
-values ($1, $2, false, now())
-on conflict (channel_id) do update set enabled=false, channel_point=excluded.channel_point, updated_at=now()
-`, int64(channelID), channelPoint)
-	return err
 }
 
 // enforceFeeCaps lowers the outbound fee when the node defaults already breach the

@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { acceptBalancedOpenSession, addLnWatchtower, bakeLnMacaroon, boostPeers, bumpFeeCloseManagerSession, bumpPendingOpenChannel, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getChannelRankings, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelDBImpact, getLnChannelFees, getLnChannelPeerRecommendations, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnMacaroonOptions, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMempoolFees, openBatchChannels, openChannel, previewBatchOpenChannels, previewOpenChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, recoverCloseManagerSession, refreshAutofeeReferences, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker, type LnMacaroonBakeResult, type LnMacaroonOptions, type LnMacaroonPermission } from '../api'
+import { acceptBalancedOpenSession, addLnWatchtower, bakeLnMacaroon, boostPeers, bumpFeeCloseManagerSession, bumpPendingOpenChannel, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getChannelRankings, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelDBImpact, getLnChannelFees, getLnChannelPeerRecommendations, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnMacaroonOptions, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMagmaCommitments, getMempoolFees, openBatchChannels, openChannel, previewBatchOpenChannels, previewOpenChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, recoverCloseManagerSession, refreshAutofeeReferences, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker, type MagmaChannelCommitment, type LnMacaroonBakeResult, type LnMacaroonOptions, type LnMacaroonPermission } from '../api'
 import { getLocale } from '../i18n'
 import ChannelDetailModal from '../components/ChannelDetailModal'
 
@@ -1212,6 +1212,9 @@ export default function LightningOps() {
   const [autofeeConfig, setAutofeeConfig] = useState<AutofeeConfig | null>(null)
   const [autofeeStatus, setAutofeeStatus] = useState<AutofeeStatus | null>(null)
   const [autofeeSettings, setAutofeeSettings] = useState<Record<string, boolean>>({})
+  // Sold channels still under an Amboss commitment. Keyed by lowercased channel
+  // point, which is the one identifier available before the channel confirms.
+  const [magmaCommitments, setMagmaCommitments] = useState<Record<string, MagmaChannelCommitment>>({})
   const [autofeeBusy, setAutofeeBusy] = useState(false)
   const [autofeeMessage, setAutofeeMessage] = useState('')
   const [autofeeEnabled, setAutofeeEnabled] = useState(false)
@@ -2687,6 +2690,81 @@ export default function LightningOps() {
     setAutofeeHistoryLoadingByChannel({})
     setAutofeeHistoryErrorByChannel({})
   }, [autofeeResultItems])
+
+  // Commitments change only when a sale opens or finishes, so a slow refresh is
+  // plenty. Failures are silent by design: the badge is extra information, and
+  // the endpoint answers with an empty list when Magma is not installed.
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const res = await getMagmaCommitments()
+        if (cancelled) return
+        const next: Record<string, MagmaChannelCommitment> = {}
+        for (const item of res?.commitments || []) {
+          const key = (item.channel_point || '').trim().toLowerCase()
+          if (key) next[key] = item
+        }
+        setMagmaCommitments(next)
+      } catch {
+        if (!cancelled) setMagmaCommitments({})
+      }
+    }
+    void load()
+    const timer = window.setInterval(() => { void load() }, 120000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [])
+
+  const magmaCommitmentFor = (channelPoint: string): MagmaChannelCommitment | undefined =>
+    magmaCommitments[(channelPoint || '').trim().toLowerCase()]
+
+  const magmaCommitmentText = (commitment: MagmaChannelCommitment) => {
+    const blocks = commitment.blocks_remaining
+    // Amboss counts the commitment in blocks; operators think in days.
+    const remaining = typeof blocks === 'number' && blocks > 0
+      ? t('lightningOps.magmaCommitmentRemaining', { days: Math.max(1, Math.ceil(blocks / 144)) })
+      : t('lightningOps.magmaCommitmentUnknown')
+    const ceiling = t('lightningOps.magmaFeeCeiling', {
+      rate: commitment.fee_rate_cap_ppm,
+      base: commitment.base_fee_cap_sat
+    })
+    return { remaining, ceiling, title: [t('lightningOps.magmaSoldTitle'), remaining, ceiling].join(' - ') }
+  }
+
+  // A sold channel must stay open until its commitment ends, and its fee is held
+  // under the ceiling the buyer paid for. Neither fact is visible from the
+  // channel itself, and this list is where closing and repricing get decided.
+  const magmaCommitmentBadge = (channelPoint: string, compact: boolean) => {
+    const commitment = magmaCommitmentFor(channelPoint)
+    if (!commitment) return null
+    const { title } = magmaCommitmentText(commitment)
+    return (
+      <span
+        className={`inline-flex shrink-0 items-center gap-1 rounded-full border border-orange-300/50 bg-orange-500/15 text-orange-100 ${
+          compact ? 'px-1.5 py-0 text-[10px]' : 'px-2 py-0.5 text-[10px]'
+        }`}
+        title={title}
+        aria-label={title}
+      >
+        <span aria-hidden>&#128293;</span>
+        {!compact && <span>{t('lightningOps.magmaSold')}</span>}
+      </span>
+    )
+  }
+
+  const magmaCommitmentNote = (channelPoint: string) => {
+    const commitment = magmaCommitmentFor(channelPoint)
+    if (!commitment) return null
+    const { remaining, ceiling } = magmaCommitmentText(commitment)
+    return (
+      <p className="mt-0.5 text-[11px] text-orange-200/80">
+        {t('lightningOps.magmaSoldTitle')} &middot; {remaining} &middot; {ceiling} &middot; {t('lightningOps.magmaAutofeeCapped')}
+      </p>
+    )
+  }
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -7410,6 +7488,7 @@ export default function LightningOps() {
                                 >
                                   {ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer')}
                                 </button>
+                                {magmaCommitmentBadge(ch.channel_point, true)}
                                 {channelIDValue && (
                                   <button
                                     type="button"
@@ -7709,6 +7788,7 @@ export default function LightningOps() {
                           >
                             {ch.peer_alias || ch.remote_pubkey || t('lightningOps.unknownPeer')}
                           </button>
+                          {magmaCommitmentBadge(ch.channel_point, false)}
                           {channelIDValue && (
                             <button
                               type="button"
@@ -7738,6 +7818,7 @@ export default function LightningOps() {
                           )}
                         </div>
                         {peerProfileLinkGroup(ch.remote_pubkey)}
+                        {magmaCommitmentNote(ch.channel_point)}
                         <div className="mt-0.5 flex flex-wrap items-center gap-2">
                           <p className="min-w-0 break-all text-xs text-fog/50">
                             {t('lightningOps.pointCapacityWithOpener', { point: ch.channel_point, capacity: ch.capacity_sat, opener })}

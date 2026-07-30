@@ -109,6 +109,7 @@ func (s *Server) routes() http.Handler {
 	r.Get("/api/apps/magma-sales/overview", s.handleMagmaOverview)
 	r.Get("/api/apps/magma-sales/orders", s.handleMagmaOrders)
 	r.Get("/api/apps/magma-sales/events", s.handleMagmaEvents)
+	r.Get("/api/apps/magma-sales/commitments", s.handleMagmaCommitments)
 	r.Get("/api/apps/magma-sales/offers", s.handleMagmaOffersGet)
 	r.Post("/api/apps/magma-sales/offers", s.handleMagmaOfferSave)
 	r.Post("/api/apps/magma-sales/offers/{id}/toggle", s.handleMagmaOfferToggle)

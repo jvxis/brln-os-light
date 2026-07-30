@@ -1436,6 +1436,26 @@ export const toggleMagmaOffer = (id: string): Promise<MagmaOffersView> =>
     body: JSON.stringify({})
   })
 
+export type MagmaChannelCommitment = {
+  order_id: string
+  channel_point: string
+  channel_scid?: string
+  buyer_alias?: string
+  buyer_pubkey?: string
+  size_sat: number
+  revenue_sat: number
+  fee_rate_cap_ppm: number
+  base_fee_cap_sat: number
+  blocks_remaining?: number
+  commitment_blocks: number
+  magma_status: string
+}
+
+// Always answers, with an empty list when the app is absent: the channel list
+// must render whether or not Magma is installed.
+export const getMagmaCommitments = (): Promise<{ commitments: MagmaChannelCommitment[] }> =>
+  request('/api/apps/magma-sales/commitments')
+
 export type MagmaOverview = {
   settings: MagmaSettings
   token: MagmaTokenState

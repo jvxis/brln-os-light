@@ -12391,6 +12391,21 @@ func (e *autofeeEngine) applyChannelFeesWithRetry(ctx context.Context, ch lndcli
 	if e.svc == nil || e.svc.lnd == nil {
 		return errors.New("lnd unavailable")
 	}
+	// A channel sold on Magma carries a contractual fee ceiling until its
+	// commitment ends, and Amboss measures every second spent above it. Autofee
+	// prices freely underneath that ceiling; this is the last gate before the
+	// value reaches LND, so no pricing path can bypass it. Channels with no
+	// commitment pass through untouched.
+	if clampedBase, clampedRate, clamped := magmaClampChannelFees(
+		ch.ChannelID, ch.ChannelPoint, baseFee, feeRate,
+	); clamped {
+		if e.svc.logger != nil {
+			e.svc.logger.Printf(
+				"autofee: %s held at the Magma fee ceiling: rate %d->%d ppm, base %d->%d msat",
+				ch.ChannelPoint, feeRate, clampedRate, baseFee, clampedBase)
+		}
+		baseFee, feeRate = clampedBase, clampedRate
+	}
 	backoffs := []time.Duration{200 * time.Millisecond, 600 * time.Millisecond}
 	var lastErr error
 	for attempt := 0; attempt <= len(backoffs); attempt++ {

@@ -544,6 +544,7 @@ func (s *MagmaService) syncLocked(ctx context.Context) error {
 			s.resolveOnchainCosts(ctx)
 		}
 		s.resolveBuyerAliases(ctx)
+		s.refreshCommitmentCache(ctx)
 		s.recordSyncResult(&summary, nil)
 		return nil
 	}
@@ -581,6 +582,9 @@ func (s *MagmaService) syncLocked(ctx context.Context) error {
 	// Aliases are cosmetic, so they are resolved in every mode - including
 	// monitor, where the whole point is reading the order book.
 	s.resolveBuyerAliases(ctx)
+	// Refreshed in every mode: Autofee consults this cache on its own schedule,
+	// and the channel list shows the badge regardless of what Magma may do.
+	s.refreshCommitmentCache(ctx)
 	// Auto mode runs last, after reconciliation has settled anything in flight, so
 	// the policy never decides against a half-finished picture.
 	if settings.Mode == magmaModeAuto {

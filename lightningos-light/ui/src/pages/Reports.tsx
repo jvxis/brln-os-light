@@ -145,6 +145,7 @@ type ChartDataPoint = {
   net: number
   netRouting: number
   keysend: number
+  sales: number
   revenue: number
   rebalanceCost: number
   paymentCost: number
@@ -696,9 +697,13 @@ export default function Reports() {
   const rawChartData = useMemo(() => {
     const mapped = series.map((item) => ({
       date: item.date,
-      net: item.net_with_keysend_sats ?? item.net_routing_profit_sats,
+      // Recomposed below from the parts, so the inclusion toggles change the
+      // series the same way they change the totals. Reading the stored net would
+      // make the chart disagree with the numbers right above it.
+      net: item.net_routing_profit_sats,
       netRouting: item.net_routing_profit_sats,
       keysend: item.keysend_received_sats ?? 0,
+      sales: item.sales_revenue_sats ?? 0,
       revenue: item.forward_fee_revenue_sats,
       rebalanceCost: item.rebalance_fee_cost_sats ?? 0,
       paymentCost: item.payment_fee_cost_sats ?? 0,
@@ -719,6 +724,25 @@ export default function Reports() {
 
   const showYearInChartLabels = range === 'all'
 
+  // One definition of "net" for the whole page: routing, plus the non-routing
+  // income that is switched on, plus the payment cost added back when it is
+  // switched off (routing net already has it subtracted).
+  // Spelled out so the chart never claims to show something it does not: the
+  // title used to say "routing + keysend" no matter which toggles were on.
+  const netChartTitle = (() => {
+    const parts = [t('reports.netPartRouting')]
+    if (includeKeysend) parts.push(t('reports.netPartKeysend'))
+    if (includeSales) parts.push(t('reports.netPartSales'))
+    const base = `${t('reports.net')} (${parts.join(' + ')})`
+    return includePaymentCost ? base : `${base} · ${t('reports.netPartNoPaymentCost')}`
+  })()
+
+  const composeNet = (item: { netRouting: number; keysend: number; sales: number; paymentCost: number }) =>
+    item.netRouting +
+    (includeKeysend ? item.keysend : 0) +
+    (includeSales ? item.sales : 0) +
+    (includePaymentCost ? 0 : item.paymentCost)
+
   const chartData = useMemo<ChartDataPoint[]>(() => {
     if (rawChartData.length === 0) {
       return []
@@ -726,6 +750,7 @@ export default function Reports() {
     if (chartGranularity === 'day') {
       return rawChartData.map((item) => ({
         ...item,
+        net: composeNet(item),
         startDate: item.date,
         endDate: item.date,
         label: formatRangeLabel(item.date, item.date, 'day', showYearInChartLabels)
@@ -754,9 +779,9 @@ export default function Reports() {
         continue
       }
 
-      current.net += item.net
       current.netRouting += item.netRouting
       current.keysend += item.keysend
+      current.sales += item.sales
       current.revenue += item.revenue
       current.rebalanceCost += item.rebalanceCost
       current.paymentCost += item.paymentCost
@@ -778,10 +803,13 @@ export default function Reports() {
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([key, item]) => ({
         ...item,
+        // Recomposed after the parts are summed, not accumulated: summing a net
+        // that was already composed per day would apply the toggles twice.
+        net: composeNet(item),
         date: key,
         label: formatRangeLabel(item.startDate, item.endDate, chartGranularity, showYearInChartLabels)
       }))
-  }, [chartGranularity, locale, rawChartData, showYearInChartLabels])
+  }, [chartGranularity, locale, rawChartData, showYearInChartLabels, includeKeysend, includeSales, includePaymentCost])
 
   const cumulativeCostData = useMemo(() => {
     let cumulativeRevenue = 0
@@ -866,9 +894,16 @@ export default function Reports() {
     if (!live) return []
     const revenueValue = parseChartNumber(live.forward_fee_revenue_sats)
     const rebalanceCostValue = parseChartNumber(live.rebalance_fee_cost_sats ?? 0)
-    const paymentCostValue = parseChartNumber(live.payment_fee_cost_sats ?? 0)
-    const keysendValue = parseChartNumber(live.keysend_received_sats ?? 0)
-    const netRoutingValue = parseChartNumber(live.net_routing_profit_sats ?? 0)
+    // Zeroed rather than filtered so the bar simply disappears from the cost
+    // column while the other series keep their positions.
+    const paymentCostValue = includePaymentCost
+      ? parseChartNumber(live.payment_fee_cost_sats ?? 0)
+      : 0
+    const keysendValue = includeKeysend ? parseChartNumber(live.keysend_received_sats ?? 0) : 0
+    const salesValue = includeSales ? parseChartNumber(live.sales_revenue_sats ?? 0) : 0
+    const netRoutingValue =
+      parseChartNumber(live.net_routing_profit_sats ?? 0) +
+      (includePaymentCost ? 0 : parseChartNumber(live.payment_fee_cost_sats ?? 0))
     return [
       { name: t('reports.revenue'), revenue: revenueValue, rebalanceCost: 0, paymentCost: 0, netRouting: 0, keysendInNet: 0, netRoutingColor: undefined },
       { name: t('reports.cost'), revenue: 0, rebalanceCost: rebalanceCostValue, paymentCost: paymentCostValue, netRouting: 0, keysendInNet: 0, netRoutingColor: undefined },
@@ -877,12 +912,12 @@ export default function Reports() {
         revenue: 0,
         rebalanceCost: 0,
         paymentCost: 0,
-        keysendInNet: keysendValue,
+        keysendInNet: keysendValue + salesValue,
         netRouting: netRoutingValue,
         netRoutingColor: netRoutingValue < 0 ? COLORS.netNegative : COLORS.net
       }
     ]
-  }, [live, t])
+  }, [live, t, includeKeysend, includeSales, includePaymentCost])
 
   const balancePoints = useMemo(
     () => chartData
@@ -1085,12 +1120,20 @@ export default function Reports() {
                 </div>
                 <div className="rounded-2xl bg-white/5 p-4">
                   <p className="text-xs uppercase tracking-wide text-fog/60">{t('reports.totalCostWithOnchain')}</p>
-                  <div className="flex items-baseline justify-between gap-3">
-                    <p className="text-lg font-semibold text-fog">{formatSats(liveTotalCostWithOnchain)}</p>
-                    <p className="text-xs text-fog/60">
-                      {t('reports.offchainCost')} {formatSats(liveOffchainCost)} | {t('reports.onchainCost')} {formatSats(liveOnchainCost)}
-                    </p>
-                  </div>
+                  <p className="text-lg font-semibold text-fog">{formatSats(liveTotalCostWithOnchain)}</p>
+                  <p className="mt-1 text-xs text-fog/60">
+                    {t('reports.offchainCost')} {formatSats(liveOffchainCost)} | {t('reports.onchainCost')}{' '}
+                    {formatSats(liveOnchainCost)}
+                  </p>
+                  {/* The toggle lives here because it is a cost line, not a net one. */}
+                  <label className="mt-1 flex items-center gap-2 text-xs text-fog/60">
+                    <input
+                      type="checkbox"
+                      checked={includePaymentCost}
+                      onChange={(event) => setIncludePaymentCost(event.target.checked)}
+                    />
+                    {t('reports.includePaymentCost')}: {formatSats(livePaymentCost)}
+                  </label>
                 </div>
                 {/* Keysend and channel sales share one card: both are income the
                     node earns without routing, and splitting them into separate
@@ -1128,14 +1171,6 @@ export default function Reports() {
                   <p className="text-xs text-fog/60">
                     {t('reports.netWithExtras')} {formatSats(liveNetWithExtras)}
                   </p>
-                  <label className="mt-1 flex items-center gap-2 text-xs text-fog/60">
-                    <input
-                      type="checkbox"
-                      checked={includePaymentCost}
-                      onChange={(event) => setIncludePaymentCost(event.target.checked)}
-                    />
-                    {t('reports.includePaymentCost')}: −{formatSats(livePaymentCost)}
-                  </label>
                 </div>
               </div>
               <div className="grid gap-3 sm:grid-cols-4 text-sm text-fog/70">
@@ -1445,7 +1480,7 @@ export default function Reports() {
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="section-card space-y-4">
           <div className="flex items-center justify-between gap-3">
-            <h3 className="text-lg font-semibold">{t('reports.netWithKeysend')}</h3>
+            <h3 className="text-lg font-semibold">{netChartTitle}</h3>
             {renderGranularityToggle()}
           </div>
           {renderChartStatus(chartData.length > 0) ?? (

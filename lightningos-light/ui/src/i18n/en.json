@@ -64,6 +64,7 @@
     "copied": "Copied",
     "copyFailed": "Copy failed.",
     "copyFailedManual": "Copy failed. Select and copy manually.",
+    "loading": "Loading…",
     "disabled": "Disabled",
     "enabled": "Enabled",
     "fail": "FAIL",

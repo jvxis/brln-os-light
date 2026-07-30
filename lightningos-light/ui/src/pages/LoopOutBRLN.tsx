@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react'
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   APIError,
@@ -82,9 +82,10 @@ export default function LoopOutBRLN() {
   const [channelSearch, setChannelSearch] = useState('')
   const [reauthAction, setReauthAction] = useState<ReauthAction | null>(null)
   const [password, setPassword] = useState('')
+  const selectedJobIDRef = useRef<number | null>(null)
+  const translationRef = useRef(t)
 
   const load = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true)
     try {
       const [nextStatus, history, channelResult] = await Promise.all([
         getLoopOutBRLNStatus(),
@@ -95,11 +96,12 @@ export default function LoopOutBRLN() {
       setJobs(history.jobs || [])
       const raw = channelResult as any
       setChannels(Array.isArray(raw?.channels) ? raw.channels : [])
-      const focusID = selectedJobID || nextStatus.active_job?.id || history.jobs?.[0]?.id
+      const focusID = selectedJobIDRef.current || nextStatus.active_job?.id || history.jobs?.[0]?.id
       if (focusID) {
         const nextDetail = await getLoopOutBRLNJob(focusID).catch(() => null)
         if (nextDetail) {
           setDetail(nextDetail)
+          selectedJobIDRef.current = focusID
           setSelectedJobID(focusID)
         }
       } else {
@@ -107,11 +109,15 @@ export default function LoopOutBRLN() {
       }
       if (!silent) setMessage('')
     } catch (err: any) {
-      if (!silent) setMessage(err?.message || t('loopOutBrln.loadFailed'))
+      if (!silent) setMessage(err?.message || translationRef.current('loopOutBrln.loadFailed'))
     } finally {
       if (!silent) setLoading(false)
     }
-  }, [selectedJobID, t])
+  }, [])
+
+  useEffect(() => {
+    translationRef.current = t
+  }, [t])
 
   useEffect(() => {
     void load()
@@ -245,6 +251,7 @@ export default function LoopOutBRLN() {
       const created = await createLoopOutBRLNJob({ ...requestPayload, confirm_password: confirmPassword })
       setReauthAction(null)
       setPassword('')
+      selectedJobIDRef.current = created.id
       setSelectedJobID(created.id)
       setPreview(null)
       setTab('history')
@@ -290,6 +297,7 @@ export default function LoopOutBRLN() {
   }
 
   const selectJob = async (id: number) => {
+    selectedJobIDRef.current = id
     setSelectedJobID(id)
     setBusy('detail')
     try {

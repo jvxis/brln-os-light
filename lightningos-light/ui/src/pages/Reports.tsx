@@ -974,6 +974,14 @@ export default function Reports() {
   const liveKeysendReceived = live?.keysend_received_sats ?? 0
   const liveNetWithKeysend = live?.net_with_keysend_sats ?? ((live?.net_routing_profit_sats ?? 0) + liveKeysendReceived)
   const liveSalesRevenue = live?.sales_revenue_sats ?? 0
+  // The toggle drives the historical totals too, so its visibility cannot depend
+  // on the live window alone: on a day with no sale the control would vanish
+  // while still silently including past sales in the range below.
+  const hasSalesData =
+    liveSalesRevenue > 0 ||
+    (live?.sales_count ?? 0) > 0 ||
+    (summary?.totals.sales_revenue_sats ?? 0) > 0 ||
+    (summary?.totals.sales_count ?? 0) > 0
   // The three toggles let the operator read the report as pure routing, or with
   // the non-routing income and the payment cost folded in. All on by default:
   // the honest view is the complete one.
@@ -1152,7 +1160,7 @@ export default function Reports() {
                       />
                       {t('reports.keysendReceived')}: {formatSats(liveKeysendReceived)}
                     </label>
-                    {(liveSalesRevenue > 0 || (live.sales_count ?? 0) > 0) && (
+                    {hasSalesData && (
                       <label className="flex items-center gap-2">
                         <input
                           type="checkbox"

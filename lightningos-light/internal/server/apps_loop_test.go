@@ -60,7 +60,7 @@ func TestLoopServiceHardening(t *testing.T) {
 	for _, expected := range []string{
 		"User=lightningos-loop", "Group=lightningos-loop", "NoNewPrivileges=true",
 		"PrivateDevices=true", "ProtectSystem=full", "ProtectHome=true", "ReadWritePaths=", "UMask=0027",
-		"ExecStartPost=/bin/sh -c", paths.ClientTLSCert, paths.ClientMacaroon,
+		"ExecStartPost=" + paths.ClientSyncPath + " --wait",
 	} {
 		if !strings.Contains(service, expected) {
 			t.Fatalf("service missing %q", expected)
@@ -68,6 +68,15 @@ func TestLoopServiceHardening(t *testing.T) {
 	}
 	if strings.Contains(service, "SupplementaryGroups=lnd") {
 		t.Fatal("Loop service must not require the conventional lnd group on existing-node installs")
+	}
+	for _, line := range strings.Split(service, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "[") || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !strings.Contains(line, "=") {
+			t.Fatalf("service contains an invalid physical line without a directive assignment: %q", line)
+		}
 	}
 }
 
@@ -99,18 +108,15 @@ func TestLoopAPIUsesManagerReadableClientMaterial(t *testing.T) {
 		!strings.HasPrefix(paths.ClientMacaroon, paths.Root+string(filepath.Separator)) {
 		t.Fatal("manager client material must stay inside the Loop app directory")
 	}
-	syncScript := loopClientMaterialSyncScript(paths, false)
+	syncScript := loopClientMaterialSyncScript(paths)
 	for _, expected := range []string{"test ! -L", "mkdir -p", paths.ClientDir, paths.ClientTLSCert, paths.ClientMacaroon, "chmod 0640"} {
 		if !strings.Contains(syncScript, expected) {
 			t.Fatalf("client material sync missing %q", expected)
 		}
 	}
-	if strings.Contains(syncScript, "sleep 0.2") {
-		t.Fatal("on-demand client material repair must not wait when daemon material is absent")
-	}
-	waitScript := loopClientMaterialSyncScript(paths, true)
-	if !strings.Contains(waitScript, "sleep 0.2") || !strings.Contains(waitScript, `while [ "$i" -lt 100 ]`) {
-		t.Fatal("service startup must wait briefly for daemon client material")
+	if !strings.Contains(syncScript, `if [ "${1:-}" = "--wait" ]`) ||
+		!strings.Contains(syncScript, "sleep 0.2") || !strings.Contains(syncScript, `while [ "$i" -lt 100 ]`) {
+		t.Fatal("client helper must wait for daemon material only when called with --wait")
 	}
 	for _, forbidden := range []string{"/data/lnd", "systemctl", "postgres", "bitcoin", "rm -", "chown -R", "usermod"} {
 		if strings.Contains(syncScript, forbidden) {

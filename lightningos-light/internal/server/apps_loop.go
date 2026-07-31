@@ -44,6 +44,7 @@ type loopPaths struct {
 	LoopTLSKey      string
 	ClientMacaroon  string
 	ClientTLSCert   string
+	ClientSyncPath  string
 }
 
 type loopApp struct{ server *Server }
@@ -131,6 +132,7 @@ func loopAppPaths() loopPaths {
 		LoopTLSKey:      filepath.Join(data, "tls.key"),
 		ClientMacaroon:  filepath.Join(root, "client", "loop.macaroon"),
 		ClientTLSCert:   filepath.Join(root, "client", "tls.cert"),
+		ClientSyncPath:  filepath.Join(root, "bin", "sync-client-material"),
 	}
 }
 
@@ -436,6 +438,9 @@ lnd.tlspath=%s
 }
 
 func ensureLoopService(ctx context.Context, paths loopPaths) error {
+	if err := ensureLoopClientSyncHelper(ctx, paths); err != nil {
+		return err
+	}
 	contents := loopServiceContents(paths)
 	if existing, err := os.ReadFile(paths.ServicePath); err == nil && string(existing) == contents {
 		return nil
@@ -444,6 +449,9 @@ func ensureLoopService(ctx context.Context, paths loopPaths) error {
 		ctx, paths.ServicePath, []byte(contents), 0644, "root", "root",
 	); err != nil {
 		return fmt.Errorf("failed to install Lightning Loop service: %w", err)
+	}
+	if _, err := runSystemd(ctx, "systemd-analyze", "verify", paths.ServicePath); err != nil {
+		return fmt.Errorf("Lightning Loop service failed systemd validation: %w", err)
 	}
 	if _, err := runSystemd(ctx, "systemctl", "daemon-reload"); err != nil {
 		return err
@@ -502,7 +510,6 @@ func normalizeLoopManagerGroupID(value string) (string, error) {
 }
 
 func loopServiceContents(paths loopPaths) string {
-	clientMaterialScript := loopClientMaterialSyncScript(paths, true)
 	return fmt.Sprintf(`[Unit]
 Description=LightningOS Lightning Loop daemon
 After=network-online.target lnd.service
@@ -514,7 +521,7 @@ User=%s
 Group=%s
 Environment=HOME=%s
 ExecStart=%s --configfile=%s
-ExecStartPost=/bin/sh -c %s
+ExecStartPost=%s --wait
 Restart=on-failure
 RestartSec=5
 UMask=0027
@@ -527,13 +534,14 @@ ReadWritePaths=%s
 
 [Install]
 WantedBy=multi-user.target
-`, loopUser, loopUser, paths.DataDir, paths.LoopdPath, paths.ConfigPath, shellQuote(clientMaterialScript), paths.DataDir)
+`, loopUser, loopUser, paths.DataDir, paths.LoopdPath, paths.ConfigPath, paths.ClientSyncPath, paths.DataDir)
 }
 
-func loopClientMaterialSyncScript(paths loopPaths, wait bool) string {
-	waitScript := ""
-	if wait {
-		waitScript = fmt.Sprintf(`i=0
+func loopClientMaterialSyncScript(paths loopPaths) string {
+	return fmt.Sprintf(`#!/bin/sh
+set -eu
+if [ "${1:-}" = "--wait" ]; then
+  i=0
 while [ "$i" -lt 100 ]; do
   if [ -s %s ] && [ -s %s ]; then
     break
@@ -541,10 +549,7 @@ while [ "$i" -lt 100 ]; do
   i=$((i + 1))
   sleep 0.2
 done
-`, shellQuote(paths.LoopTLSCert), shellQuote(paths.LoopMacaroon))
-	}
-	return fmt.Sprintf(`set -eu
-%s
+fi
 test -s %s
 test -s %s
 test ! -L %s
@@ -556,7 +561,8 @@ cp %s %s.tmp
 chmod 0640 %s.tmp %s.tmp
 mv -f %s.tmp %s
 mv -f %s.tmp %s
-`, waitScript, shellQuote(paths.LoopTLSCert), shellQuote(paths.LoopMacaroon),
+`, shellQuote(paths.LoopTLSCert), shellQuote(paths.LoopMacaroon),
+		shellQuote(paths.LoopTLSCert), shellQuote(paths.LoopMacaroon),
 		shellQuote(paths.LoopTLSCert), shellQuote(paths.LoopMacaroon),
 		shellQuote(paths.ClientDir), shellQuote(paths.ClientDir),
 		shellQuote(paths.LoopTLSCert), shellQuote(paths.ClientTLSCert),
@@ -564,6 +570,23 @@ mv -f %s.tmp %s
 		shellQuote(paths.ClientTLSCert), shellQuote(paths.ClientMacaroon),
 		shellQuote(paths.ClientTLSCert), shellQuote(paths.ClientTLSCert),
 		shellQuote(paths.ClientMacaroon), shellQuote(paths.ClientMacaroon))
+}
+
+func ensureLoopClientSyncHelper(ctx context.Context, paths loopPaths) error {
+	contents := loopClientMaterialSyncScript(paths)
+	if existing, err := os.ReadFile(paths.ClientSyncPath); err == nil && string(existing) == contents {
+		return nil
+	}
+	managerGroupID, err := loopManagerGroupID()
+	if err != nil {
+		return err
+	}
+	if err := installLoopOwnedFile(
+		ctx, paths.ClientSyncPath, []byte(contents), 0750, loopUser, managerGroupID,
+	); err != nil {
+		return fmt.Errorf("failed to install Lightning Loop client material helper: %w", err)
+	}
+	return nil
 }
 
 func ensureLoopClientMaterial(ctx context.Context, paths loopPaths) error {
@@ -578,11 +601,14 @@ func ensureLoopClientMaterial(ctx context.Context, paths loopPaths) error {
 	if err := validateLoopDaemonMaterial(paths.LoopMacaroon, "API macaroon"); err != nil {
 		return err
 	}
+	if err := ensureLoopClientSyncHelper(ctx, paths); err != nil {
+		return err
+	}
 	if _, err := runSystemd(
 		ctx,
 		"--uid="+loopUser,
 		"--gid="+loopUser,
-		"/bin/sh", "-c", loopClientMaterialSyncScript(paths, false),
+		paths.ClientSyncPath,
 	); err != nil {
 		return fmt.Errorf("failed to prepare manager access to the Lightning Loop API: %w", err)
 	}

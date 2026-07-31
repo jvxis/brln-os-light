@@ -522,6 +522,9 @@ func normalizeLoopManagerGroupID(value string) (string, error) {
 }
 
 func loopServiceContents(paths loopPaths) string {
+	// Client TLS and macaroon copies are refreshed lazily by loopdRequest.
+	// Keeping that work out of ExecStartPost prevents a slow first start from
+	// being killed just because Loop has not generated its API material yet.
 	return fmt.Sprintf(`[Unit]
 Description=LightningOS Lightning Loop daemon
 After=network-online.target lnd.service
@@ -533,7 +536,6 @@ User=%s
 Group=%s
 Environment=HOME=%s
 ExecStart=%s --configfile=%s
-ExecStartPost=%s --wait
 Restart=on-failure
 RestartSec=5
 UMask=0027
@@ -546,22 +548,12 @@ ReadWritePaths=%s
 
 [Install]
 WantedBy=multi-user.target
-`, loopUser, loopUser, paths.DataDir, paths.LoopdPath, paths.ConfigPath, paths.ClientSyncPath, paths.DataDir)
+`, loopUser, loopUser, paths.DataDir, paths.LoopdPath, paths.ConfigPath, paths.DataDir)
 }
 
 func loopClientMaterialSyncScript(paths loopPaths) string {
 	return fmt.Sprintf(`#!/bin/sh
 set -eu
-if [ "${1:-}" = "--wait" ]; then
-  i=0
-while [ "$i" -lt 100 ]; do
-  if [ -s %s ] && [ -s %s ]; then
-    break
-  fi
-  i=$((i + 1))
-  sleep 0.2
-done
-fi
 if [ ! -s %s ]; then
   echo "Lightning Loop did not create its API TLS certificate; inspect loopd.log" >&2
   exit 1
@@ -580,7 +572,6 @@ chmod 0640 %s.tmp %s.tmp
 mv -f %s.tmp %s
 mv -f %s.tmp %s
 `, shellQuote(paths.LoopTLSCert), shellQuote(paths.LoopMacaroon),
-		shellQuote(paths.LoopTLSCert), shellQuote(paths.LoopMacaroon),
 		shellQuote(paths.LoopTLSCert), shellQuote(paths.LoopMacaroon),
 		shellQuote(paths.ClientDir), shellQuote(paths.ClientDir),
 		shellQuote(paths.LoopTLSCert), shellQuote(paths.ClientTLSCert),

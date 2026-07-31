@@ -65,7 +65,6 @@ func TestLoopServiceHardening(t *testing.T) {
 	for _, expected := range []string{
 		"User=lightningos-loop", "Group=lightningos-loop", "NoNewPrivileges=true",
 		"PrivateDevices=true", "ProtectSystem=full", "ProtectHome=true", "ReadWritePaths=", "UMask=0027",
-		"ExecStartPost=" + paths.ClientSyncPath + " --wait",
 	} {
 		if !strings.Contains(service, expected) {
 			t.Fatalf("service missing %q", expected)
@@ -73,6 +72,9 @@ func TestLoopServiceHardening(t *testing.T) {
 	}
 	if strings.Contains(service, "SupplementaryGroups=lnd") {
 		t.Fatal("Loop service must not require the conventional lnd group on existing-node installs")
+	}
+	if strings.Contains(service, "ExecStartPost=") {
+		t.Fatal("Loop startup must not fail while waiting for API client material")
 	}
 	for _, line := range strings.Split(service, "\n") {
 		line = strings.TrimSpace(line)
@@ -119,9 +121,8 @@ func TestLoopAPIUsesManagerReadableClientMaterial(t *testing.T) {
 			t.Fatalf("client material sync missing %q", expected)
 		}
 	}
-	if !strings.Contains(syncScript, `if [ "${1:-}" = "--wait" ]`) ||
-		!strings.Contains(syncScript, "sleep 0.2") || !strings.Contains(syncScript, `while [ "$i" -lt 100 ]`) {
-		t.Fatal("client helper must wait for daemon material only when called with --wait")
+	if strings.Contains(syncScript, "sleep 0.2") || strings.Contains(syncScript, `while [ "$i"`) {
+		t.Fatal("client material repair must not impose a startup deadline on the daemon")
 	}
 	for _, forbidden := range []string{"/data/lnd", "systemctl", "postgres", "bitcoin", "rm -", "chown -R", "usermod"} {
 		if strings.Contains(syncScript, forbidden) {

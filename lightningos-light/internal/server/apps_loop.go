@@ -188,6 +188,9 @@ func (s *Server) installLoop(ctx context.Context) error {
 	if _, err := runSystemd(ctx, "systemctl", "enable", "--now", loopServiceName); err != nil {
 		return loopServiceStartError(ctx, paths, err)
 	}
+	if err := waitForLoopServiceStable(ctx); err != nil {
+		return loopServiceStartError(ctx, paths, err)
+	}
 	return nil
 }
 
@@ -209,6 +212,9 @@ func (s *Server) startLoop(ctx context.Context) error {
 		return err
 	}
 	if _, err := runSystemd(ctx, "systemctl", "restart", loopServiceName); err != nil {
+		return loopServiceStartError(ctx, paths, err)
+	}
+	if err := waitForLoopServiceStable(ctx); err != nil {
 		return loopServiceStartError(ctx, paths, err)
 	}
 	return nil
@@ -241,10 +247,16 @@ func (s *Server) uninstallLoop(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to verify Lightning Loop status: %w", err)
 	}
-	if status != "running" && loopPersistentSwapStateExists(paths) {
+	hasPersistentSwapState := loopPersistentSwapStateExists(paths)
+	verifyPendingSwaps, blockUninstall := loopUninstallSafetyDecision(status, hasPersistentSwapState)
+	if blockUninstall {
 		return errors.New("start Lightning Loop before uninstalling so pending swaps can be verified")
 	}
-	if status == "running" {
+	// A daemon can be reported as active while it is still waiting for LND
+	// and has not created its API certificate or swap database. With no
+	// persistent swap state there is nothing to verify, so a failed or partial
+	// first installation must remain removable.
+	if verifyPendingSwaps {
 		if err := s.ensureNoPendingLoopSwaps(ctx, "uninstall"); err != nil {
 			return err
 		}
@@ -256,8 +268,8 @@ func (s *Server) uninstallLoop(ctx context.Context) error {
 		return fmt.Errorf("failed to remove Lightning Loop app files: %w", err)
 	}
 	_, _ = runSystemd(ctx, "/bin/sh", "-c", fmt.Sprintf(
-		"if command -v setfacl >/dev/null 2>&1; then setfacl -x u:%s %s 2>/dev/null || true; fi",
-		shellQuote(loopUser), shellQuote(loopStateRoot),
+		"if command -v setfacl >/dev/null 2>&1; then setfacl -x u:%s %s %s %s 2>/dev/null || true; fi",
+		shellQuote(loopUser), shellQuote(loopStateRoot), shellQuote(appsRoot), shellQuote(appsDataRoot),
 	))
 	// Swap history, the loop database, TLS material, and the dedicated LND
 	// macaroon deliberately remain in apps-data for a safe reinstall/recovery.
@@ -265,6 +277,14 @@ func (s *Server) uninstallLoop(ctx context.Context) error {
 }
 
 func ensureLoopDirectories(ctx context.Context, paths loopPaths) error {
+	// These shared parents must remain manager-owned, otherwise installing
+	// Loop as the first App Store app could prevent later unprivileged app
+	// installs. The daemon receives traverse-only ACLs below.
+	for _, parent := range []string{appsRoot, appsDataRoot} {
+		if err := os.MkdirAll(parent, 0750); err != nil {
+			return fmt.Errorf("failed to prepare LightningOS app parent %s: %w", parent, err)
+		}
+	}
 	managerGroupID, err := loopManagerGroupID()
 	if err != nil {
 		return err
@@ -301,12 +321,12 @@ if ! command -v setfacl >/dev/null 2>&1; then
   echo "setfacl is required to grant the isolated Loop service traverse-only access; install the acl package" >&2
   exit 1
 fi
-setfacl -m u:%s:--x %s
+setfacl -m u:%s:--x %s %s %s
 mkdir -p %s %s %s %s %s
 chown -R %s:%s %s %s
 chmod 2750 %s %s %s %s %s
 `, shellQuote(loopUser), shellQuote(loopUser), shellQuote(loopUser), shellQuote(loopUser), shellQuote(paths.DataDir), shellQuote(loopUser),
-		shellQuote(loopUser), shellQuote(loopStateRoot),
+		shellQuote(loopUser), shellQuote(loopStateRoot), shellQuote(appsRoot), shellQuote(appsDataRoot),
 		shellQuote(paths.Root), shellQuote(paths.BinDir), shellQuote(paths.ClientDir), shellQuote(paths.DataDir), shellQuote(paths.LNDDir),
 		loopUser, managerGroupID, shellQuote(paths.Root), shellQuote(paths.DataDir),
 		shellQuote(paths.Root), shellQuote(paths.BinDir), shellQuote(paths.ClientDir), shellQuote(paths.DataDir), shellQuote(paths.LNDDir))
@@ -594,12 +614,66 @@ func loopPersistentSwapStateExists(paths loopPaths) bool {
 	return false
 }
 
+func loopUninstallSafetyDecision(status string, hasPersistentSwapState bool) (verify, block bool) {
+	if !hasPersistentSwapState {
+		return false, false
+	}
+	if status != "running" {
+		return false, true
+	}
+	return true, false
+}
+
 func loopServiceStartError(ctx context.Context, paths loopPaths, cause error) error {
 	details := readLoopFailureDetails(ctx, paths)
 	if details == "" {
 		return fmt.Errorf("failed to start Lightning Loop: %w", cause)
 	}
 	return fmt.Errorf("failed to start Lightning Loop: %w; recent loopd log: %s", cause, details)
+}
+
+func waitForLoopServiceStable(ctx context.Context) error {
+	const (
+		maxChecks     = 10
+		stableChecks  = 3
+		checkInterval = 200 * time.Millisecond
+	)
+	consecutiveRunning := 0
+	lastState := "unknown"
+	var lastErr error
+	for check := 0; check < maxChecks; check++ {
+		state, err := loopDisplayServiceState(ctx)
+		if err != nil {
+			lastErr = err
+			consecutiveRunning = 0
+		} else {
+			lastState = state
+			if state == "running" {
+				consecutiveRunning++
+				if consecutiveRunning >= stableChecks {
+					return nil
+				}
+			} else {
+				consecutiveRunning = 0
+			}
+		}
+		if check == maxChecks-1 {
+			break
+		}
+		timer := time.NewTimer(checkInterval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	if lastErr != nil {
+		return fmt.Errorf("Lightning Loop service status could not be confirmed: %w", lastErr)
+	}
+	return fmt.Errorf("Lightning Loop service did not remain active (last state: %s)", lastState)
 }
 
 func readLoopFailureDetails(ctx context.Context, paths loopPaths) string {

@@ -157,6 +157,28 @@ func TestLoopPersistentSwapStateDetection(t *testing.T) {
 	}
 }
 
+func TestLoopUninstallSafetyDecision(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		status     string
+		persistent bool
+		verify     bool
+		block      bool
+	}{
+		{name: "partial active install", status: "running"},
+		{name: "partial stopped install", status: "stopped"},
+		{name: "active install with state", status: "running", persistent: true, verify: true},
+		{name: "stopped install with state", status: "stopped", persistent: true, block: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			verify, block := loopUninstallSafetyDecision(test.status, test.persistent)
+			if verify != test.verify || block != test.block {
+				t.Fatalf("decision = verify %v, block %v; want verify %v, block %v", verify, block, test.verify, test.block)
+			}
+		})
+	}
+}
+
 func TestCompactLoopFailureLog(t *testing.T) {
 	raw := "ignored\n\nfirst useful error\nsecond useful error\núltimo erro\x00\n"
 	got := compactLoopFailureLog(raw, 2, 200)
@@ -204,7 +226,7 @@ func TestLoopDirectorySetupProvisionsDedicatedServiceAccount(t *testing.T) {
 		"useradd --system --gid 'lightningos-loop'",
 		"--no-create-home --shell /usr/sbin/nologin 'lightningos-loop'",
 		"DEBIAN_FRONTEND=noninteractive apt-get install -y acl",
-		"setfacl -m u:'lightningos-loop':--x '/var/lib/lightningos'",
+		"setfacl -m u:'lightningos-loop':--x '/var/lib/lightningos' '/var/lib/lightningos/apps' '/var/lib/lightningos/apps-data'",
 		"chown -R lightningos-loop:1001",
 	} {
 		if !strings.Contains(script, expected) {

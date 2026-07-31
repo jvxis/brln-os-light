@@ -20,18 +20,17 @@ Pode ser necessario realizar varios ajustes manuais e adaptacoes que nao estao t
 - Usuario admin com links simbolicos /home/admin/.lnd -> /data/lnd e /home/admin/.bitcoin -> /data/bitcoin.
 - Alternativa: usuarios lnd e bitcoin com dados em /data, e o admin nos grupos lnd e bitcoin.
 
-## Clonar repositorio
+## Instalacao da ultima release publicada
 ```bash
 git clone https://github.com/jvxis/brln-os-light
 cd brln-os-light/lightningos-light
-```
-
-## Instalacao guiada (opcional)
-Se voce ja tem LND e Bitcoin Core rodando, pode usar o instalador guiado:
-```bash
 sudo ./install_existing.sh
 ```
-Ele pergunta sobre Go/npm (necessarios para build), Postgres, terminal e ajustes basicos.
+
+O proprio `install_existing.sh` identifica a ultima release publicada do LightningOS e instala sua tag exata. Para desenvolvimento ou instalacao offline do checkout local exato, use `sudo LIGHTNINGOS_INSTALL_SOURCE=checkout ./install_existing.sh`.
+
+## Instalacao guiada
+O `install_existing.sh` pergunta sobre Go/npm (necessarios para build), Postgres, terminal e ajustes basicos.
 Quando voce optar por Postgres, o script cria os usuarios e o banco do LightningOS e preenche o secrets.env automaticamente.
 Se o LND ja usa Postgres, o script nao instala um novo servidor Postgres por padrao: ele tenta usar o servico local existente e, se nao houver acesso administrativo local, pede um `NOTIFICATIONS_PG_ADMIN_DSN` para criar apenas o banco `lightningos` no servidor existente.
 Quando encontra `db.postgres.dsn` no `lnd.conf`, o script tambem preenche `LND_PG_DSN` se o valor em `secrets.env` ainda estiver no placeholder.
@@ -40,7 +39,7 @@ O script tambem cria/atualiza os services do systemd com estes usuarios:
 - lightningos-reports: usa o mesmo usuario/grupo (`lightningos`).
 - lightningos-terminal: roda como `lightningos`.
 Para SupplementaryGroups, o script so adiciona grupos que existem no host.
-O script pode recompilar e reinstalar manager/UI a partir do checkout local (prompts com default `y`), entao confirme branch/tag antes de rodar para evitar voltar para versao antiga.
+O script recompila e reinstala manager/UI a partir da release publicada selecionada (prompts com default `y`).
 
 Checklist rapido (pos-instalacao):
 - Verifique o manager:
@@ -164,7 +163,7 @@ curl -k https://127.0.0.1:8443/api/health
 ## Troubleshooting rapido
 - `sudo: a password is required` ao usar `sudo -n`: sudoers do `lightningos` invalido ou incompleto.
 - `docker-compose failed ... sudo failed`: normalmente mesmo problema de sudoers, ou Docker inativo.
-- Versao da app voltou para antiga apos `install_existing.sh`: checkout local estava em branch/tag antiga e UI/manager foram recompilados com default `y`.
+- Versao da app voltou para antiga: confirme se `LIGHTNINGOS_INSTALL_SOURCE=checkout` foi usado ou se o repositorio veio de um origin diferente do oficial.
 - App mostra Bitcoin como `remote`/`ERR` mesmo com bitcoind local: confirme no `/data/lnd/lnd.conf` uma secao ativa `[Bitcoind]` com RPC local (linhas nao comentadas), por exemplo:
 ```ini
 [Bitcoind]

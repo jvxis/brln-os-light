@@ -278,7 +278,16 @@ if ! id -u %s >/dev/null 2>&1; then
   useradd --system --gid %s --home-dir %s --no-create-home --shell /usr/sbin/nologin %s
 fi
 if ! command -v setfacl >/dev/null 2>&1; then
-  echo "setfacl is required to grant the isolated Loop service traverse-only access" >&2
+  if command -v apt-get >/dev/null 2>&1; then
+    echo "Installing acl package required by Lightning Loop" >&2
+    DEBIAN_FRONTEND=noninteractive apt-get install -y acl >/dev/null 2>&1 || {
+      apt-get update
+      DEBIAN_FRONTEND=noninteractive apt-get install -y acl
+    }
+  fi
+fi
+if ! command -v setfacl >/dev/null 2>&1; then
+  echo "setfacl is required to grant the isolated Loop service traverse-only access; install the acl package" >&2
   exit 1
 fi
 setfacl -m u:%s:--x %s

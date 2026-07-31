@@ -66,7 +66,7 @@ The installer provisions everything needed on a clean Ubuntu box:
 - systemd services and config templates
 - self-signed TLS cert
 
-Usage:
+The familiar installer entry point automatically switches to the latest published LightningOS release before installation:
 ```bash
 git clone https://github.com/jvxis/brln-os-light
 cd brln-os-light/lightningos-light
@@ -79,8 +79,10 @@ cd lightningos-light
 sudo ./install.sh
 ```
 
+For development or an offline install of the exact local checkout, use `sudo LIGHTNINGOS_INSTALL_SOURCE=checkout ./install.sh`.
+
 ### Install via curl (bootstrap)
-This pulls the repo (or runs `git pull` if it already exists), then runs `lightningos-light/install.sh`.
+This resolves the latest published LightningOS release, checks out its exact tag, then runs `lightningos-light/install.sh`.
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstrap.sh | sudo ACCEPT_MIT_LICENSE=1 bash
 ```
@@ -90,8 +92,14 @@ Optional overrides:
 # Use a different clone location
 curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstrap.sh | sudo BRLN_DIR=/opt/brln-os-light bash
 
-# Pin a branch/tag
-curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstrap.sh | sudo BRLN_BRANCH=main bash
+# Pin a branch/tag instead of the latest published release
+curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstrap.sh | sudo BRLN_REF=main bash
+
+# Install on an existing x86_64/amd64 node
+curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstrap.sh | sudo BRLN_INSTALLER=install_existing.sh bash
+
+# Install on an existing Raspberry Pi 4 (arm64) node
+curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstrap.sh | sudo BRLN_INSTALLER=install_existing_pi.sh bash
 
 # Use a different repo URL
 curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstrap.sh | sudo REPO_URL=https://github.com/jvxis/brln-os-light bash
@@ -117,7 +125,7 @@ Follow the Existing Node Guide instead:
 - PT-BR: `docs/13_EXISTING_NODE_GUIDE_PT_BR.md`
 - EN: `docs/14_EXISTING_NODE_GUIDE_EN.md`
 
-Run the installer that matches your environment:
+Run the installer that matches your environment; each script automatically selects the latest published LightningOS release:
 ```bash
 cd lightningos-light
 

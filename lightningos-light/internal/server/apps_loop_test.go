@@ -150,6 +150,7 @@ func TestLoopDirectorySetupProvisionsDedicatedServiceAccount(t *testing.T) {
 		"id -u 'lightningos-loop'",
 		"useradd --system --gid 'lightningos-loop'",
 		"--no-create-home --shell /usr/sbin/nologin 'lightningos-loop'",
+		"DEBIAN_FRONTEND=noninteractive apt-get install -y acl",
 		"setfacl -m u:'lightningos-loop':--x '/var/lib/lightningos'",
 		"chown -R lightningos-loop:1001",
 	} {

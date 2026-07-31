@@ -5,6 +5,11 @@ set -o errtrace
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR"
 
+if [[ -f "$REPO_ROOT/scripts/install-release-bootstrap.sh" ]]; then
+  source "$REPO_ROOT/scripts/install-release-bootstrap.sh"
+  lightningos_bootstrap_latest_release "install.sh" "$@"
+fi
+
 LND_VERSION="${LND_VERSION:-0.21.1-beta}"
 LND_URL_DEFAULT="https://github.com/lightningnetwork/lnd/releases/download/v${LND_VERSION}/lnd-linux-amd64-v${LND_VERSION}.tar.gz"
 LND_URL="${LND_URL:-$LND_URL_DEFAULT}"
@@ -782,7 +787,7 @@ install_packages() {
     postgresql-client-common \
     postgresql-"${POSTGRES_VERSION}" \
     postgresql-client-"${POSTGRES_VERSION}" \
-    smartmontools curl jq ca-certificates openssl build-essential git sudo tor apt-transport-https tmux
+    smartmontools acl curl jq ca-certificates openssl build-essential git sudo tor apt-transport-https tmux
   install_tor_keyring_package_if_available
   print_ok "Base packages installed"
 }

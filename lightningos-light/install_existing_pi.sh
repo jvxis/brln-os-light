@@ -5,6 +5,11 @@ set -o errtrace
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR"
 
+if [[ -f "$REPO_ROOT/scripts/install-release-bootstrap.sh" ]]; then
+  source "$REPO_ROOT/scripts/install-release-bootstrap.sh"
+  lightningos_bootstrap_latest_release "install_existing_pi.sh" "$@"
+fi
+
 GO_VERSION="${GO_VERSION:-1.24.12}"
 GO_TARBALL_URL="https://go.dev/dl/go${GO_VERSION}.linux-arm64.tar.gz"
 NODE_VERSION="${NODE_VERSION:-current}"
@@ -449,6 +454,21 @@ ensure_smartmontools() {
   apt-get update
   apt-get install -y smartmontools >/dev/null
   print_ok "smartmontools installed"
+}
+
+ensure_acl_support() {
+  if command -v setfacl >/dev/null 2>&1; then
+    print_ok "Filesystem ACL support already installed"
+    return 0
+  fi
+  if ! command -v apt-get >/dev/null 2>&1; then
+    print_warn "apt-get not found; install the acl package before installing Lightning Loop"
+    return 1
+  fi
+  print_step "Installing filesystem ACL support"
+  apt-get update
+  apt-get install -y acl >/dev/null
+  print_ok "Filesystem ACL support installed"
 }
 
 sudoers_no_requiretty_line() {
@@ -1448,6 +1468,7 @@ main() {
   require_root
   require_pi_arm64
   print_step "LightningOS existing node setup"
+  ensure_acl_support || print_warn "Lightning Loop installation will require the acl package"
 
   local lnd_dir
   local bitcoin_dir

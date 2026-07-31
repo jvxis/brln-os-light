@@ -61,7 +61,7 @@ O instalador provisiona tudo que é necessário em um Ubuntu limpo:
 - Serviços systemd e templates de configuração
 - Certificado TLS autoassinado
 
-Uso:
+O instalador conhecido pelos usuarios muda automaticamente para a ultima release publicada do LightningOS antes da instalacao:
 ```bash
 git clone https://github.com/jvxis/brln-os-light
 cd brln-os-light/lightningos-light
@@ -74,8 +74,10 @@ cd lightningos-light
 sudo ./install.sh
 ```
 
+Para desenvolvimento ou instalacao offline do checkout local exato, use `sudo LIGHTNINGOS_INSTALL_SOURCE=checkout ./install.sh`.
+
 ### Instalação via curl (bootstrap)
-Isso baixa o repo (ou executa `git pull` se já existir) e depois roda `lightningos-light/install.sh`.
+Isso identifica a ultima release publicada do LightningOS, faz checkout da tag exata e depois roda `lightningos-light/install.sh`.
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstrap.sh | sudo ACCEPT_MIT_LICENSE=1 bash
 ```
@@ -85,8 +87,14 @@ Overrides opcionais:
 # Usar outro caminho de clone
 curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstrap.sh | sudo BRLN_DIR=/opt/brln-os-light bash
 
-# Fixar branch/tag
-curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstrap.sh | sudo BRLN_BRANCH=main bash
+# Fixar branch/tag em vez da ultima release publicada
+curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstrap.sh | sudo BRLN_REF=main bash
+
+# Instalar em node existente x86_64/amd64
+curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstrap.sh | sudo BRLN_INSTALLER=install_existing.sh bash
+
+# Instalar em node existente Raspberry Pi 4 (arm64)
+curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstrap.sh | sudo BRLN_INSTALLER=install_existing_pi.sh bash
 
 # Usar outra URL de repositório
 curl -fsSL https://raw.githubusercontent.com/jvxis/brln-os-light/main/lo_bootstrap.sh | sudo REPO_URL=https://github.com/jvxis/brln-os-light bash
@@ -112,7 +120,7 @@ Siga o guia de Nó Existente:
 - PT-BR: `docs/13_EXISTING_NODE_GUIDE_PT_BR.md`
 - EN: `docs/14_EXISTING_NODE_GUIDE_EN.md`
 
-Rode o instalador correspondente ao seu ambiente:
+Execute o instalador correspondente ao seu ambiente; cada script seleciona automaticamente a ultima release publicada do LightningOS:
 ```bash
 cd lightningos-light
 

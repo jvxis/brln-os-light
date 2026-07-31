@@ -47,7 +47,15 @@ import {
   updateMenuPreferences,
   type AuthState
 } from './api'
-import { defaultPalette, paletteOrder, resolvePalette, resolveTheme, type PaletteKey, type ThemeMode } from './theme'
+import {
+  defaultPalette,
+  isTerminalPalette,
+  paletteOrder,
+  resolvePalette,
+  resolveTheme,
+  type PaletteKey,
+  type ThemeMode
+} from './theme'
 
 const readHashRoute = () => {
   const rawHash = window.location.hash.startsWith('#')
@@ -158,8 +166,11 @@ const applyMenuConfig = (routes: RouteItem[], config: MenuConfig) => {
 export default function App() {
   const { t, i18n } = useTranslation()
   const route = useHashRoute()
-  const [theme, setTheme] = useState<ThemeMode>(() => resolveTheme(window.localStorage.getItem('los-theme')))
-  const [palette, setPalette] = useState<PaletteKey>(() => resolvePalette(window.localStorage.getItem('los-palette')))
+  const [initialPalette] = useState<PaletteKey>(() => resolvePalette(window.localStorage.getItem('los-palette')))
+  const [palette, setPalette] = useState<PaletteKey>(initialPalette)
+  const [theme, setTheme] = useState<ThemeMode>(() => (
+    isTerminalPalette(initialPalette) ? 'dark' : resolveTheme(window.localStorage.getItem('los-theme'))
+  ))
   const [authState, setAuthState] = useState<AuthState | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [authError, setAuthError] = useState('')
@@ -451,7 +462,11 @@ export default function App() {
       if (index === -1) {
         return defaultPalette
       }
-      return paletteOrder[(index + 1) % paletteOrder.length]
+      const next = paletteOrder[(index + 1) % paletteOrder.length]
+      if (isTerminalPalette(next)) {
+        setTheme('dark')
+      }
+      return next
     })
   }
 
@@ -533,7 +548,11 @@ export default function App() {
             menuOpen={menuOpen}
             theme={theme}
             palette={palette}
-            onThemeToggle={() => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
+            onThemeToggle={() => {
+              if (!isTerminalPalette(palette)) {
+                setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))
+              }
+            }}
             onPaletteToggle={handlePaletteToggle}
             authState={authState}
             onAuthUpdated={setAuthState}

@@ -9,6 +9,9 @@ export type PaletteKey =
   | 'aurora'
   | 'ember'
   | 'slate'
+  | 'phosphor-white'
+  | 'phosphor-amber'
+  | 'phosphor-green'
 
 export const paletteOrder: PaletteKey[] = [
   'teal',
@@ -18,12 +21,23 @@ export const paletteOrder: PaletteKey[] = [
   'forest',
   'aurora',
   'ember',
-  'slate'
+  'slate',
+  'phosphor-white',
+  'phosphor-amber',
+  'phosphor-green'
+]
+
+export const terminalPalettes: PaletteKey[] = [
+  'phosphor-white',
+  'phosphor-amber',
+  'phosphor-green'
 ]
 
 export const defaultPalette: PaletteKey = 'teal'
 
 export const resolveTheme = (value: string | null): ThemeMode => (value === 'light' ? 'light' : 'dark')
+
+export const isTerminalPalette = (value: PaletteKey): boolean => terminalPalettes.includes(value)
 
 export const resolvePalette = (value: string | null): PaletteKey => {
   if (value && paletteOrder.includes(value as PaletteKey)) {

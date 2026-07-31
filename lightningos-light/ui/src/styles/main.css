@@ -232,12 +232,236 @@ html[data-palette="slate"] {
   --palette-secondary: 148 163 184;
 }
 
+html[data-palette="phosphor-white"] {
+  --palette-primary: 226 236 240;
+  --palette-secondary: 255 184 77;
+  --color-ember: 255 95 82;
+}
+
+html[data-palette="phosphor-amber"] {
+  --palette-primary: 255 183 77;
+  --palette-secondary: 255 236 160;
+  --color-ember: 255 110 90;
+}
+
+html[data-palette="phosphor-green"] {
+  --palette-primary: 130 255 160;
+  --palette-secondary: 255 230 120;
+  --color-ember: 255 120 100;
+}
+
+/* Miner Watch CRT style. These palettes intentionally share one structural
+   treatment and differ only by phosphor color. Keeping the treatment behind
+   data-palette makes it optional and preserves every existing LOS theme. */
+html[data-palette^="phosphor-"] {
+  color-scheme: dark;
+  --color-ink: 6 8 9;
+  --color-slate: 13 16 18;
+  --color-fog: var(--palette-primary);
+  --color-glow: var(--palette-primary);
+  --color-midnight: 20 24 26;
+  --color-brass: var(--palette-secondary);
+  --shadow-panel: inset 0 0 24px rgb(var(--palette-primary) / 0.045), 0 6px 26px rgb(0 0 0 / 0.58);
+  --page-bg: radial-gradient(120% 100% at 50% 45%, rgb(var(--palette-primary) / 0.045), transparent 55%),
+    radial-gradient(130% 110% at 50% 50%, transparent 58%, rgb(0 0 0 / 0.76) 100%),
+    linear-gradient(180deg, #060809 0%, #080a0b 55%, #050607 100%);
+  --toggle-track: rgb(var(--palette-primary) / 0.08);
+  --toggle-thumb: linear-gradient(135deg, rgb(var(--palette-primary)), rgb(var(--palette-primary) / 0.58));
+  --atlas-shell-bg: linear-gradient(180deg, rgb(var(--palette-primary) / 0.025), transparent), rgb(6 8 9 / 0.98);
+  --atlas-shell-border: rgb(var(--palette-primary) / 0.28);
+  --atlas-panel-bg: rgb(var(--palette-primary) / 0.025);
+  --atlas-panel-border: rgb(var(--palette-primary) / 0.2);
+  --atlas-muted-text: rgb(var(--palette-primary) / 0.5);
+  --atlas-pill-bg: rgb(var(--palette-primary) / 0.055);
+  --atlas-pill-bg-hover: rgb(var(--palette-primary) / 0.1);
+  --atlas-pill-border: rgb(var(--palette-primary) / 0.24);
+  --atlas-pill-border-hover: rgb(var(--palette-primary) / 0.55);
+  --atlas-pill-text: rgb(var(--palette-primary) / 0.82);
+  --atlas-map-card-bg: rgb(8 11 12 / 0.98);
+  --atlas-stage-divider: rgb(var(--palette-primary) / 0.12);
+  --atlas-stage-bg: radial-gradient(circle at 50% 50%, rgb(var(--palette-primary) / 0.055), transparent 42%), #060809;
+  --atlas-stage-control-bg: rgb(13 16 18 / 0.92);
+  --atlas-stage-control-bg-hover: rgb(var(--palette-primary) / 0.1);
+  --atlas-stage-control-border: rgb(var(--palette-primary) / 0.24);
+  --atlas-stage-control-border-hover: rgb(var(--palette-primary) / 0.5);
+  --atlas-stage-control-text: rgb(var(--palette-primary) / 0.9);
+  --atlas-sphere-stroke: rgb(var(--palette-primary) / 0.18);
+  --atlas-country-fill: rgb(var(--palette-primary) / 0.14);
+  --atlas-country-stroke: rgb(var(--palette-primary) / 0.28);
+  --atlas-empty-bg: rgb(6 8 9 / 0.96);
+  --atlas-note-text: rgb(var(--palette-primary) / 0.52);
+}
+
 body {
   font-family: 'Space Grotesk', sans-serif;
   background: var(--page-bg);
   color: rgb(var(--color-fog));
   min-height: 100vh;
   transition: background 0.4s ease, color 0.3s ease;
+}
+
+html[data-palette^="phosphor-"] body {
+  font-family: ui-monospace, "Cascadia Mono", "IBM Plex Mono", Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  text-shadow: 0 0 6px rgb(var(--palette-primary) / 0.28);
+}
+
+html[data-palette^="phosphor-"] body::before,
+html[data-palette^="phosphor-"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  pointer-events: none;
+}
+
+html[data-palette^="phosphor-"] body::before {
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent 2px,
+      rgb(0 0 0 / 0.2) 3px,
+      rgb(0 0 0 / 0.2) 4px
+    ),
+    radial-gradient(130% 110% at 50% 50%, transparent 58%, rgb(0 0 0 / 0.5) 100%);
+  mix-blend-mode: multiply;
+}
+
+html[data-palette^="phosphor-"] body::after {
+  inset: auto 0;
+  top: 0;
+  height: 26vh;
+  z-index: 99;
+  background: linear-gradient(to bottom, transparent, rgb(var(--palette-primary) / 0.025), transparent);
+  animation: los-crt-sweep 9s linear infinite;
+}
+
+@keyframes los-crt-sweep {
+  from { transform: translateY(-30vh); }
+  to { transform: translateY(115vh); }
+}
+
+html[data-palette^="phosphor-"] h1,
+html[data-palette^="phosphor-"] h2,
+html[data-palette^="phosphor-"] h3,
+html[data-palette^="phosphor-"] h4 {
+  letter-spacing: 0.045em;
+  text-shadow: 0 0 10px rgb(var(--palette-primary) / 0.42);
+}
+
+html[data-palette^="phosphor-"] button,
+html[data-palette^="phosphor-"] input,
+html[data-palette^="phosphor-"] select,
+html[data-palette^="phosphor-"] textarea {
+  font-family: inherit;
+}
+
+html[data-palette^="phosphor-"] .section-card {
+  border-radius: 2px;
+  border-color: rgb(var(--palette-primary) / 0.28);
+  background:
+    linear-gradient(180deg, rgb(var(--palette-primary) / 0.035), rgb(var(--palette-primary) / 0.012)),
+    rgb(var(--color-slate));
+  box-shadow: var(--shadow-panel);
+}
+
+html[data-palette^="phosphor-"] .market-ribbon {
+  border-radius: 2px;
+  border-color: rgb(var(--palette-primary) / 0.28);
+  background: linear-gradient(180deg, rgb(var(--palette-primary) / 0.035), transparent), rgb(var(--color-slate));
+  box-shadow: var(--shadow-panel);
+}
+
+html[data-palette^="phosphor-"] .btn-primary {
+  border-radius: 2px;
+  border: 1px solid rgb(var(--palette-primary) / 0.85);
+  background: rgb(var(--palette-primary));
+  color: rgb(var(--color-ink));
+  text-shadow: none;
+  box-shadow: 0 0 10px rgb(var(--palette-primary) / 0.25);
+}
+
+html[data-palette^="phosphor-"] .btn-primary:hover {
+  background: rgb(var(--palette-primary) / 0.82);
+}
+
+html[data-palette^="phosphor-"] .btn-secondary {
+  border-radius: 2px;
+  border-color: rgb(var(--palette-primary) / 0.42);
+  color: rgb(var(--palette-primary) / 0.86);
+}
+
+html[data-palette^="phosphor-"] .btn-secondary:hover {
+  border-color: rgb(var(--palette-primary) / 0.82);
+  background: rgb(var(--palette-primary) / 0.08);
+}
+
+html[data-palette^="phosphor-"] .input-field,
+html[data-palette^="phosphor-"] input,
+html[data-palette^="phosphor-"] select,
+html[data-palette^="phosphor-"] textarea {
+  border-radius: 2px;
+  border-color: rgb(var(--palette-primary) / 0.3);
+  background: rgb(var(--palette-primary) / 0.055);
+  color: rgb(var(--palette-primary));
+}
+
+html[data-palette^="phosphor-"] .input-field:focus,
+html[data-palette^="phosphor-"] input:focus,
+html[data-palette^="phosphor-"] select:focus,
+html[data-palette^="phosphor-"] textarea:focus {
+  border-color: rgb(var(--palette-primary) / 0.82);
+  box-shadow: inset 0 0 12px rgb(var(--palette-primary) / 0.12);
+}
+
+html[data-palette^="phosphor-"] select option {
+  background: rgb(var(--color-slate));
+  color: rgb(var(--palette-primary));
+}
+
+html[data-palette^="phosphor-"] [class~="rounded-3xl"],
+html[data-palette^="phosphor-"] [class~="rounded-2xl"],
+html[data-palette^="phosphor-"] [class~="rounded-xl"],
+html[data-palette^="phosphor-"] [class~="rounded-lg"],
+html[data-palette^="phosphor-"] [class~="rounded-full"] {
+  border-radius: 2px !important;
+}
+
+html[data-palette^="phosphor-"] [class~="border-white/10"] { border-color: rgb(var(--palette-primary) / 0.16); }
+html[data-palette^="phosphor-"] [class~="border-white/15"] { border-color: rgb(var(--palette-primary) / 0.22); }
+html[data-palette^="phosphor-"] [class~="border-white/20"] { border-color: rgb(var(--palette-primary) / 0.28); }
+html[data-palette^="phosphor-"] [class~="border-white/40"] { border-color: rgb(var(--palette-primary) / 0.5); }
+html[data-palette^="phosphor-"] [class~="bg-white/5"] { background-color: rgb(var(--palette-primary) / 0.04); }
+html[data-palette^="phosphor-"] [class~="bg-white/10"] { background-color: rgb(var(--palette-primary) / 0.08); }
+html[data-palette^="phosphor-"] [class~="hover:bg-white/5"]:hover { background-color: rgb(var(--palette-primary) / 0.07); }
+html[data-palette^="phosphor-"] [class~="hover:border-white/40"]:hover { border-color: rgb(var(--palette-primary) / 0.5); }
+html[data-palette^="phosphor-"] .text-white,
+html[data-palette^="phosphor-"] [class~="hover:text-white"]:hover { color: rgb(var(--palette-primary)); }
+
+html[data-palette^="phosphor-"] .glow-divider {
+  background: linear-gradient(90deg, transparent, rgb(var(--palette-primary) / 0.7), transparent);
+}
+
+html[data-palette^="phosphor-"] .theme-toggle {
+  border-radius: 2px;
+}
+
+html[data-palette^="phosphor-"] ::-webkit-scrollbar { width: 10px; height: 10px; }
+html[data-palette^="phosphor-"] ::-webkit-scrollbar-track { background: rgb(var(--palette-primary) / 0.045); }
+html[data-palette^="phosphor-"] ::-webkit-scrollbar-thumb { background: rgb(var(--palette-primary) / 0.25); }
+html[data-palette^="phosphor-"] ::-webkit-scrollbar-thumb:hover { background: rgb(var(--palette-primary) / 0.42); }
+
+html[data-palette^="phosphor-"] .recharts-cartesian-grid line { stroke: rgb(var(--palette-primary) / 0.12); }
+html[data-palette^="phosphor-"] .recharts-text { fill: rgb(var(--palette-primary) / 0.55); }
+html[data-palette^="phosphor-"] .recharts-curve.recharts-tooltip-cursor { stroke: rgb(var(--palette-primary) / 0.4); }
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-palette^="phosphor-"] body::after {
+    display: none;
+    animation: none;
+  }
 }
 
 .section-card {

@@ -1043,6 +1043,7 @@
     "statusUnavailable": "Status indisponível",
     "switchToDark": "Mudar para tema escuro",
     "switchToLight": "Mudar para tema claro",
+    "terminalDarkOnly": "O estilo Miner Watch usa exclusivamente o tema escuro",
     "switchPalette": "Trocar paleta",
     "paletteLabel": "Paleta: {{palette}}",
     "paletteNames": {
@@ -1053,7 +1054,10 @@
       "forest": "Floresta",
       "aurora": "Aurora",
       "ember": "Brasa",
-      "slate": "Ardosia"
+      "slate": "Ardosia",
+      "phosphor-white": "Miner Watch · P4 Branco",
+      "phosphor-amber": "Miner Watch · P3 Âmbar",
+      "phosphor-green": "Miner Watch · P1 Verde"
     },
     "systemLabel": "SISTEMA",
     "toggleLanguage": "Alternar idioma"

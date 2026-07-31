@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { getHealth, getLndConfig, getLndStatus, type AuthState } from '../api'
 import { setLanguage } from '../i18n'
-import type { PaletteKey, ThemeMode } from '../theme'
+import { isTerminalPalette, type PaletteKey, type ThemeMode } from '../theme'
 import AccountSecurityModal from './AccountSecurityModal'
 
 const statusColors: Record<string, string> = {
@@ -228,6 +228,7 @@ export default function Topbar({
   const isPortuguese = i18n.language === 'pt-BR'
   const paletteName = t(`topbar.paletteNames.${palette}`)
   const paletteLabel = t('topbar.paletteLabel', { palette: paletteName })
+  const terminalPalette = isTerminalPalette(palette)
   const today = new Date()
   const activeBitcoinHeaderEvent = getActiveBitcoinHeaderEvent(today)
   const isBitcoinEventDay = Boolean(activeBitcoinHeaderEvent && today.getDate() === activeBitcoinHeaderEvent.day)
@@ -383,11 +384,16 @@ export default function Topbar({
           </button>
           <button
             type="button"
-            className="theme-toggle"
+            className={`theme-toggle ${terminalPalette ? 'cursor-not-allowed opacity-50' : ''}`}
             onClick={onThemeToggle}
-            aria-label={theme === 'dark' ? t('topbar.switchToLight') : t('topbar.switchToDark')}
+            aria-label={terminalPalette
+              ? t('topbar.terminalDarkOnly')
+              : theme === 'dark' ? t('topbar.switchToLight') : t('topbar.switchToDark')}
             aria-pressed={theme === 'light'}
-            title={theme === 'dark' ? t('topbar.switchToLight') : t('topbar.switchToDark')}
+            title={terminalPalette
+              ? t('topbar.terminalDarkOnly')
+              : theme === 'dark' ? t('topbar.switchToLight') : t('topbar.switchToDark')}
+            disabled={terminalPalette}
           >
             <span className="theme-toggle__icon theme-toggle__icon--moon">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">

@@ -261,6 +261,52 @@ stage_peerswap_assets() {
   print_ok "Peerswap assets staged"
 }
 
+refresh_terminal_helper() {
+  local src="$project_dir/internal/server/assets/lightningos-terminal.sh"
+  if [[ ! -f "$src" ]]; then
+    print_warn "Terminal helper not found at $src; skipping"
+    return 0
+  fi
+
+  print_step "Refreshing terminal helper"
+  "$INSTALL_BIN" -m 0755 "$src" /usr/local/sbin/lightningos-terminal
+  if "$SYSTEMCTL_BIN" is-active --quiet lightningos-terminal; then
+    "$SYSTEMCTL_BIN" restart lightningos-terminal
+  fi
+  print_ok "Terminal helper refreshed"
+}
+
+configure_lnd_restart_policy() {
+  if ! "$SYSTEMCTL_BIN" show lnd.service >/dev/null 2>&1; then
+    print_warn "lnd.service not found; skipping restart policy"
+    return 0
+  fi
+
+  print_step "Configuring LND restart policy"
+  local dropin_dir="/etc/systemd/system/lnd.service.d"
+  mkdir -p "$dropin_dir"
+  printf '%s\n' '[Service]' 'Restart=always' 'RestartSec=60' >"$dropin_dir/20-lightningos-restart.conf"
+  "$SYSTEMCTL_BIN" daemon-reload
+  print_ok "LND will restart after PostgreSQL or other unexpected interruptions"
+}
+
+configure_manager_firewall() {
+  local src="$project_dir/internal/server/assets/lightningos-manager-firewall.sh"
+  if [[ ! -f "$src" ]]; then
+    print_warn "Manager firewall helper not found at $src; skipping"
+    return 0
+  fi
+
+  print_step "Restricting manager firewall access"
+  "$INSTALL_BIN" -m 0755 "$src" /usr/local/sbin/lightningos-manager-firewall
+  if /usr/local/sbin/lightningos-manager-firewall; then
+    touch /var/lib/lightningos/system-integrations-20260731-v1
+    chmod 0644 /var/lib/lightningos/system-integrations-20260731-v1
+  else
+    print_warn "Manager firewall configuration could not be updated"
+  fi
+}
+
 print_step "Preparing repository mirror"
 mkdir -p "$(dirname "$mirror_root")" "$worktree_root"
 if [[ -d "$mirror_root" && ! -d "$mirror_root/.git" ]]; then
@@ -331,6 +377,9 @@ print_step "Building UI"
 print_ok "UI installed"
 
 stage_peerswap_assets
+refresh_terminal_helper
+configure_lnd_restart_policy
+configure_manager_firewall
 
 print_step "Refreshing manager sudoers"
 configure_manager_sudoers

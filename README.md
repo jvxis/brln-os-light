@@ -81,6 +81,8 @@ sudo ./install.sh
 
 For development or an offline install of the exact local checkout, use `sudo LIGHTNINGOS_INSTALL_SOURCE=checkout ./install.sh`.
 
+When UFW is active, the installer asks which local IPv4 network may access the manager (for example, `192.168.1.0/24`). It removes the old public `8443/tcp` rule and also allows access through `tailscale0` when Tailscale is available.
+
 ### Install via curl (bootstrap)
 This resolves the latest published LightningOS release, checks out its exact tag, then runs `lightningos-light/install.sh`.
 ```bash

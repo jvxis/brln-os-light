@@ -31,6 +31,7 @@ O proprio `install_existing.sh` identifica a ultima release publicada do Lightni
 
 ## Instalacao guiada
 O `install_existing.sh` pergunta sobre Go/npm (necessarios para build), Postgres, terminal e ajustes basicos.
+Quando o UFW esta ativo, ele tambem sugere a rede IPv4 local permitida (por exemplo, `192.168.1.0/24`), remove a regra publica antiga da porta 8443 e libera separadamente a interface `tailscale0` quando ela existe.
 Quando voce optar por Postgres, o script cria os usuarios e o banco do LightningOS e preenche o secrets.env automaticamente.
 Se o LND ja usa Postgres, o script nao instala um novo servidor Postgres por padrao: ele tenta usar o servico local existente e, se nao houver acesso administrativo local, pede um `NOTIFICATIONS_PG_ADMIN_DSN` para criar apenas o banco `lightningos` no servidor existente.
 Quando encontra `db.postgres.dsn` no `lnd.conf`, o script tambem preenche `LND_PG_DSN` se o valor em `secrets.env` ainda estiver no placeholder.

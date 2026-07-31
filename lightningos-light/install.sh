@@ -34,6 +34,8 @@ LND_FIX_PERMS_SCRIPT="/usr/local/sbin/lightningos-fix-lnd-perms"
 LND_UPGRADE_SCRIPT="/usr/local/sbin/lightningos-upgrade-lnd"
 APP_UPGRADE_SCRIPT="/usr/local/sbin/lightningos-upgrade-app"
 TERMINAL_SCRIPT="/usr/local/sbin/lightningos-terminal"
+MANAGER_FIREWALL_SCRIPT="/usr/local/sbin/lightningos-manager-firewall"
+SYSTEM_INTEGRATIONS_MARKER="/var/lib/lightningos/system-integrations-20260731-v1"
 TERMINAL_OPERATOR_USER="${TERMINAL_OPERATOR_USER:-losop}"
 MANAGER_BIN="/opt/lightningos/manager/lightningos-manager"
 
@@ -931,12 +933,19 @@ install_helper_scripts() {
     print_warn "Missing helper script: $src"
   fi
 
-  local terminal_src="$REPO_ROOT/scripts/lightningos-terminal.sh"
+  local terminal_src="$REPO_ROOT/internal/server/assets/lightningos-terminal.sh"
   if [[ -f "$terminal_src" ]]; then
     mkdir -p "$(dirname "$TERMINAL_SCRIPT")"
     install -m 0755 "$terminal_src" "$TERMINAL_SCRIPT"
   else
     print_warn "Missing helper script: $terminal_src"
+  fi
+
+  local firewall_src="$REPO_ROOT/internal/server/assets/lightningos-manager-firewall.sh"
+  if [[ -f "$firewall_src" ]]; then
+    install -m 0755 "$firewall_src" "$MANAGER_FIREWALL_SCRIPT"
+  else
+    print_warn "Missing helper script: $firewall_src"
   fi
 
   local upgrade_src="$REPO_ROOT/scripts/upgrade-lnd.sh"
@@ -1469,7 +1478,14 @@ install_systemd() {
   else
     systemctl disable --now lightningos-terminal >/dev/null 2>&1 || true
   fi
-  ensure_ufw_manager_port
+  if [[ -x "$MANAGER_FIREWALL_SCRIPT" ]]; then
+    if "$MANAGER_FIREWALL_SCRIPT" --interactive; then
+      touch "$SYSTEM_INTEGRATIONS_MARKER"
+      chmod 0644 "$SYSTEM_INTEGRATIONS_MARKER"
+    else
+      print_warn "Failed to configure restricted access to port 8443"
+    fi
+  fi
   print_ok "Services enabled"
 }
 
@@ -1516,21 +1532,6 @@ service_status_summary() {
       print_warn "$svc is not active"
     fi
   done
-}
-
-ensure_ufw_manager_port() {
-  if ! command -v ufw >/dev/null 2>&1; then
-    return 0
-  fi
-  local status
-  status=$(LC_ALL=C ufw status 2>/dev/null || true)
-  if ! echo "$status" | grep -qiE '^status:[[:space:]]+active'; then
-    return 0
-  fi
-  if echo "$status" | grep -Eq '(^|[[:space:]])8443(/tcp)?([[:space:]]|$)'; then
-    return 0
-  fi
-  ufw allow 8443/tcp || print_warn "Failed to open UFW port 8443/tcp"
 }
 
 show_manager_logs() {

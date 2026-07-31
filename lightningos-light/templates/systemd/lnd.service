@@ -8,7 +8,7 @@ ExecStart=/usr/local/bin/lnd --lnddir=/home/lnd/.lnd
 ExecStop=/usr/local/bin/lncli stop
 
 # Process management
-Restart=on-failure
+Restart=always
 RestartSec=60
 Type=notify
 TimeoutStartSec=1200

@@ -31,6 +31,7 @@ The `install_existing.sh` script resolves the latest published LightningOS relea
 
 ## Guided install
 The `install_existing.sh` installer asks about Go/npm (required for build), Postgres, terminal, and basic setup.
+When UFW is active, it also suggests the allowed local IPv4 network (for example, `192.168.1.0/24`), removes the old public port 8443 rule, and separately allows the `tailscale0` interface when present.
 If you opt into Postgres, the script creates the LightningOS roles/DB and fills secrets.env automatically.
 If LND already uses Postgres, the script does not install a new Postgres server by default: it tries the existing local service and, when local admin access is unavailable, asks for `NOTIFICATIONS_PG_ADMIN_DSN` so it can create only the `lightningos` database on the existing server.
 When it finds `db.postgres.dsn` in `lnd.conf`, the script also fills `LND_PG_DSN` if `secrets.env` still has the placeholder value.

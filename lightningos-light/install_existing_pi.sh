@@ -20,6 +20,8 @@ POSTGRES_VERSION="${POSTGRES_VERSION:-latest}"
 LND_FIX_PERMS_SCRIPT="/usr/local/sbin/lightningos-fix-lnd-perms"
 LND_UPGRADE_SCRIPT="/usr/local/sbin/lightningos-upgrade-lnd"
 APP_UPGRADE_SCRIPT="/usr/local/sbin/lightningos-upgrade-app"
+MANAGER_FIREWALL_SCRIPT="/usr/local/sbin/lightningos-manager-firewall"
+SYSTEM_INTEGRATIONS_MARKER="/var/lib/lightningos/system-integrations-20260731-v1"
 TERMINAL_OPERATOR_USER="${TERMINAL_OPERATOR_USER:-losop}"
 
 CURRENT_STEP=""
@@ -860,12 +862,27 @@ ensure_terminal_service() {
 }
 
 ensure_terminal_helper() {
-  local src="$REPO_ROOT/scripts/lightningos-terminal.sh"
+  local src="$REPO_ROOT/internal/server/assets/lightningos-terminal.sh"
   if [[ -f "$src" ]]; then
     install -m 0755 "$src" /usr/local/sbin/lightningos-terminal
     print_ok "Terminal helper installed"
   else
     print_warn "Missing helper script: $src"
+  fi
+}
+
+ensure_manager_firewall() {
+  local src="$REPO_ROOT/internal/server/assets/lightningos-manager-firewall.sh"
+  if [[ ! -f "$src" ]]; then
+    print_warn "Missing helper script: $src"
+    return 0
+  fi
+  install -m 0755 "$src" "$MANAGER_FIREWALL_SCRIPT"
+  if "$MANAGER_FIREWALL_SCRIPT" --interactive; then
+    touch "$SYSTEM_INTEGRATIONS_MARKER"
+    chmod 0644 "$SYSTEM_INTEGRATIONS_MARKER"
+  else
+    print_warn "Failed to configure restricted access to port 8443"
   fi
 }
 
@@ -990,21 +1007,6 @@ service_exists() {
   [[ "$(systemctl show -p LoadState --value "${1}.service" 2>/dev/null || true)" == "loaded" ]]
 }
 
-ensure_ufw_manager_port() {
-  if ! command -v ufw >/dev/null 2>&1; then
-    return 0
-  fi
-  local status
-  status=$(LC_ALL=C ufw status 2>/dev/null || true)
-  if ! echo "$status" | grep -qiE '^status:[[:space:]]+active'; then
-    return 0
-  fi
-  if echo "$status" | grep -Eq '(^|[[:space:]])8443(/tcp)?([[:space:]]|$)'; then
-    return 0
-  fi
-  ufw allow 8443/tcp || print_warn "Failed to open UFW port 8443/tcp"
-}
-
 detect_first_service() {
   local svc
   for svc in "$@"; do
@@ -1062,6 +1064,14 @@ detect_core_service_users() {
     BITCOIN_USER=$(detect_service_user "$BITCOIN_SERVICE" || true)
     BITCOIN_GROUP=$(detect_service_group "$BITCOIN_SERVICE" "$BITCOIN_USER" || true)
   fi
+}
+
+ensure_lnd_restart_policy() {
+  [[ -n "$LND_SERVICE" ]] || return 0
+  local dropin_dir="/etc/systemd/system/${LND_SERVICE}.service.d"
+  mkdir -p "$dropin_dir"
+  printf '%s\n' '[Service]' 'Restart=always' 'RestartSec=60' >"$dropin_dir/20-lightningos-restart.conf"
+  print_ok "LND restart policy set to always for ${LND_SERVICE}.service"
 }
 
 fix_lnd_permissions() {
@@ -1516,6 +1526,7 @@ main() {
   fi
 
   detect_core_service_users
+  ensure_lnd_restart_policy
   if [[ -n "$LND_USER" ]]; then
     print_ok "Detected LND service user: ${LND_USER}"
   else
@@ -1663,7 +1674,7 @@ main() {
     fi
   fi
 
-  ensure_ufw_manager_port
+  ensure_manager_firewall
 
   print_step "Done"
   echo "Log: ${LOG_FILE}"

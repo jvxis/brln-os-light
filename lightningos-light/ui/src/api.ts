@@ -655,6 +655,9 @@ export const testTelegramBackup = () =>
 
 export const getTerminalStatus = () => request('/api/terminal/status')
 
+export const rotateTerminalCredential = (payload: { confirm_password?: string } = {}) =>
+  request('/api/terminal/credential/rotate', { method: 'POST', body: JSON.stringify(payload) })
+
 export const getOnchainUtxos = (params?: {
   min_conf?: number
   max_conf?: number

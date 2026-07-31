@@ -2,8 +2,9 @@
 set -Eeuo pipefail
 
 terminal_src="$1"
-firewall_src="$2"
-marker_path="$3"
+terminal_password_src="$2"
+firewall_src="$3"
+marker_path="$4"
 
 terminal_changed=0
 if ! cmp -s "$terminal_src" /usr/local/sbin/lightningos-terminal 2>/dev/null; then
@@ -12,6 +13,7 @@ if ! cmp -s "$terminal_src" /usr/local/sbin/lightningos-terminal 2>/dev/null; th
 fi
 
 install -m 0755 "$firewall_src" /usr/local/sbin/lightningos-manager-firewall
+install -m 0755 "$terminal_password_src" /usr/local/sbin/lightningos-terminal-password
 
 if systemctl show lnd.service >/dev/null 2>&1; then
   dropin_dir="/etc/systemd/system/lnd.service.d"

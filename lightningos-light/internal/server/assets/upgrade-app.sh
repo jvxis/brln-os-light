@@ -263,6 +263,7 @@ stage_peerswap_assets() {
 
 refresh_terminal_helper() {
   local src="$project_dir/internal/server/assets/lightningos-terminal.sh"
+  local password_src="$project_dir/internal/server/assets/lightningos-terminal-password.sh"
   if [[ ! -f "$src" ]]; then
     print_warn "Terminal helper not found at $src; skipping"
     return 0
@@ -270,6 +271,11 @@ refresh_terminal_helper() {
 
   print_step "Refreshing terminal helper"
   "$INSTALL_BIN" -m 0755 "$src" /usr/local/sbin/lightningos-terminal
+  if [[ -f "$password_src" ]]; then
+    "$INSTALL_BIN" -m 0755 "$password_src" /usr/local/sbin/lightningos-terminal-password
+  else
+    print_warn "Terminal password helper not found at $password_src"
+  fi
   if "$SYSTEMCTL_BIN" is-active --quiet lightningos-terminal; then
     "$SYSTEMCTL_BIN" restart lightningos-terminal
   fi

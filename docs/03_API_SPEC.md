@@ -623,4 +623,10 @@ POST /api/rebalance/channel/guaranteed
 ## Terminal
 
 GET /api/terminal/status
-- Returns whether the web terminal is enabled.
+- Returns whether the web terminal is enabled, whether a credential is configured, the write mode, port and operator username.
+- It never returns the GoTTY Basic credential or the Linux operator password.
+
+POST /api/terminal/credential/rotate
+- Requires login protection and a recent reauthentication with scope `terminal_credential`.
+- Generates a new GoTTY/Linux operator credential, restarts `lightningos-terminal.service`, and returns the password once with `Cache-Control: no-store`.
+- Response: `{"operator_user":"losop","password":"...","restart_pending":false}`. The password cannot be retrieved after this response.

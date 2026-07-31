@@ -51,6 +51,7 @@ const (
 	authScopeSuccessionLive     = "succession_live_control"
 	authScopeLoopSwap           = "loop_swap"
 	authScopeLoopOutBRLN        = "loopout_brln"
+	authScopeTerminalCredential = "terminal_credential"
 )
 
 type authContextKey string
@@ -473,7 +474,7 @@ func (a *AuthService) reauth(sessionID string, password string, scope string) (t
 
 func authScopeValid(scope string) bool {
 	switch strings.TrimSpace(scope) {
-	case authScopeWalletSendExternal, authScopeMacaroonExport, authScopeNodeRetirement, authScopeSuccessionLive, authScopeLoopSwap, authScopeLoopOutBRLN:
+	case authScopeWalletSendExternal, authScopeMacaroonExport, authScopeNodeRetirement, authScopeSuccessionLive, authScopeLoopSwap, authScopeLoopOutBRLN, authScopeTerminalCredential:
 		return true
 	default:
 		return false

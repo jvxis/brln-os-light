@@ -34,8 +34,9 @@ LND_FIX_PERMS_SCRIPT="/usr/local/sbin/lightningos-fix-lnd-perms"
 LND_UPGRADE_SCRIPT="/usr/local/sbin/lightningos-upgrade-lnd"
 APP_UPGRADE_SCRIPT="/usr/local/sbin/lightningos-upgrade-app"
 TERMINAL_SCRIPT="/usr/local/sbin/lightningos-terminal"
+TERMINAL_PASSWORD_SCRIPT="/usr/local/sbin/lightningos-terminal-password"
 MANAGER_FIREWALL_SCRIPT="/usr/local/sbin/lightningos-manager-firewall"
-SYSTEM_INTEGRATIONS_MARKER="/var/lib/lightningos/system-integrations-20260731-v1"
+SYSTEM_INTEGRATIONS_MARKER="/var/lib/lightningos/system-integrations-20260731-v2"
 TERMINAL_OPERATOR_USER="${TERMINAL_OPERATOR_USER:-losop}"
 MANAGER_BIN="/opt/lightningos/manager/lightningos-manager"
 
@@ -939,6 +940,13 @@ install_helper_scripts() {
     install -m 0755 "$terminal_src" "$TERMINAL_SCRIPT"
   else
     print_warn "Missing helper script: $terminal_src"
+  fi
+
+  local terminal_password_src="$REPO_ROOT/internal/server/assets/lightningos-terminal-password.sh"
+  if [[ -f "$terminal_password_src" ]]; then
+    install -m 0755 "$terminal_password_src" "$TERMINAL_PASSWORD_SCRIPT"
+  else
+    print_warn "Missing helper script: $terminal_password_src"
   fi
 
   local firewall_src="$REPO_ROOT/internal/server/assets/lightningos-manager-firewall.sh"

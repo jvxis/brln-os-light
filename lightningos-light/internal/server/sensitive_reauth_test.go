@@ -13,6 +13,8 @@ func TestAuthScopeValidSensitiveControls(t *testing.T) {
 		authScopeNodeRetirement,
 		authScopeSuccessionLive,
 		authScopeLoopSwap,
+		authScopeLoopOutBRLN,
+		authScopeTerminalCredential,
 	} {
 		t.Run(scope, func(t *testing.T) {
 			if !authScopeValid(scope) {

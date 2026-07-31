@@ -45,6 +45,9 @@ type loopPaths struct {
 	ClientMacaroon  string
 	ClientTLSCert   string
 	ClientSyncPath  string
+	LoopDBPath      string
+	LegacyLoopDB    string
+	LoopLogPath     string
 }
 
 type loopApp struct{ server *Server }
@@ -114,6 +117,7 @@ func (a loopApp) Stop(ctx context.Context) error      { return a.server.stopLoop
 func loopAppPaths() loopPaths {
 	root := filepath.Join(appsRoot, loopAppID)
 	data := filepath.Join(appsDataRoot, loopAppID)
+	networkData := filepath.Join(data, "mainnet")
 	return loopPaths{
 		Root:            root,
 		BinDir:          filepath.Join(root, "bin"),
@@ -133,6 +137,9 @@ func loopAppPaths() loopPaths {
 		ClientMacaroon:  filepath.Join(root, "client", "loop.macaroon"),
 		ClientTLSCert:   filepath.Join(root, "client", "tls.cert"),
 		ClientSyncPath:  filepath.Join(root, "bin", "sync-client-material"),
+		LoopDBPath:      filepath.Join(networkData, "loop_sqlite.db"),
+		LegacyLoopDB:    filepath.Join(networkData, "loop.db"),
+		LoopLogPath:     filepath.Join(data, "logs", "mainnet", "loopd.log"),
 	}
 }
 
@@ -179,7 +186,7 @@ func (s *Server) installLoop(ctx context.Context) error {
 		return err
 	}
 	if _, err := runSystemd(ctx, "systemctl", "enable", "--now", loopServiceName); err != nil {
-		return fmt.Errorf("failed to start Lightning Loop: %w", err)
+		return loopServiceStartError(ctx, paths, err)
 	}
 	return nil
 }
@@ -202,7 +209,7 @@ func (s *Server) startLoop(ctx context.Context) error {
 		return err
 	}
 	if _, err := runSystemd(ctx, "systemctl", "restart", loopServiceName); err != nil {
-		return fmt.Errorf("failed to start Lightning Loop: %w", err)
+		return loopServiceStartError(ctx, paths, err)
 	}
 	return nil
 }
@@ -234,11 +241,13 @@ func (s *Server) uninstallLoop(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to verify Lightning Loop status: %w", err)
 	}
-	if status != "running" {
+	if status != "running" && loopPersistentSwapStateExists(paths) {
 		return errors.New("start Lightning Loop before uninstalling so pending swaps can be verified")
 	}
-	if err := s.ensureNoPendingLoopSwaps(ctx, "uninstall"); err != nil {
-		return err
+	if status == "running" {
+		if err := s.ensureNoPendingLoopSwaps(ctx, "uninstall"); err != nil {
+			return err
+		}
 	}
 	_, _ = runSystemd(ctx, "systemctl", "disable", "--now", loopServiceName)
 	_, _ = runSystemd(ctx, "/bin/sh", "-c", "rm -f "+shellQuote(paths.ServicePath)+" "+shellQuote("/etc/systemd/system/multi-user.target.wants/"+loopServiceName+".service"))
@@ -421,7 +430,8 @@ func ensureLoopConfig(ctx context.Context, paths loopPaths) error {
 }
 
 func loopConfigContents(paths loopPaths) string {
-	return fmt.Sprintf(`network=mainnet
+	return fmt.Sprintf(`[Application Options]
+network=mainnet
 rpclisten=127.0.0.1:%d
 restlisten=127.0.0.1:%d
 datadir=%s
@@ -429,6 +439,8 @@ logdir=%s
 tlscertpath=%s
 tlskeypath=%s
 macaroonpath=%s
+
+[lnd]
 lnd.host=127.0.0.1:10009
 lnd.macaroonpath=%s
 lnd.tlspath=%s
@@ -550,8 +562,14 @@ while [ "$i" -lt 100 ]; do
   sleep 0.2
 done
 fi
-test -s %s
-test -s %s
+if [ ! -s %s ]; then
+  echo "Lightning Loop did not create its API TLS certificate; inspect loopd.log" >&2
+  exit 1
+fi
+if [ ! -s %s ]; then
+  echo "Lightning Loop did not create its API macaroon; inspect loopd.log" >&2
+  exit 1
+fi
 test ! -L %s
 test ! -L %s
 mkdir -p %s
@@ -570,6 +588,64 @@ mv -f %s.tmp %s
 		shellQuote(paths.ClientTLSCert), shellQuote(paths.ClientMacaroon),
 		shellQuote(paths.ClientTLSCert), shellQuote(paths.ClientTLSCert),
 		shellQuote(paths.ClientMacaroon), shellQuote(paths.ClientMacaroon))
+}
+
+func loopPersistentSwapStateExists(paths loopPaths) bool {
+	for _, path := range []string{
+		paths.LoopDBPath,
+		paths.LoopDBPath + "-wal",
+		paths.LegacyLoopDB,
+	} {
+		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() && info.Size() > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func loopServiceStartError(ctx context.Context, paths loopPaths, cause error) error {
+	details := readLoopFailureDetails(ctx, paths)
+	if details == "" {
+		return fmt.Errorf("failed to start Lightning Loop: %w", cause)
+	}
+	return fmt.Errorf("failed to start Lightning Loop: %w; recent loopd log: %s", cause, details)
+}
+
+func readLoopFailureDetails(ctx context.Context, paths loopPaths) string {
+	if raw, err := os.ReadFile(paths.LoopLogPath); err == nil {
+		if details := compactLoopFailureLog(string(raw), 12, 3500); details != "" {
+			return details
+		}
+	}
+	out, err := runSystemd(
+		ctx, "journalctl", "-u", loopServiceName, "-n", "30",
+		"--no-pager", "-o", "cat",
+	)
+	if err != nil {
+		return ""
+	}
+	return compactLoopFailureLog(out, 12, 3500)
+}
+
+func compactLoopFailureLog(raw string, maxLines, maxChars int) string {
+	raw = strings.ToValidUTF8(strings.ReplaceAll(raw, "\x00", ""), "?")
+	lines := strings.Split(raw, "\n")
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			filtered = append(filtered, line)
+		}
+	}
+	if maxLines > 0 && len(filtered) > maxLines {
+		filtered = filtered[len(filtered)-maxLines:]
+	}
+	result := strings.Join(filtered, " | ")
+	runes := []rune(result)
+	if maxChars > 0 && len(runes) > maxChars {
+		result = "..." + string(runes[len(runes)-maxChars:])
+	}
+	return result
 }
 
 func ensureLoopClientSyncHelper(ctx context.Context, paths loopPaths) error {

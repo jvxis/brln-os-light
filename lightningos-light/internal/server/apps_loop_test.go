@@ -40,12 +40,17 @@ func TestNormalizeLoopManagerGroupID(t *testing.T) {
 func TestLoopConfigIsMainnetAndLoopbackOnly(t *testing.T) {
 	config := loopConfigContents(loopAppPaths())
 	for _, expected := range []string{
-		"network=mainnet", "rpclisten=127.0.0.1:11010", "restlisten=127.0.0.1:18081",
+		"[Application Options]", "network=mainnet", "rpclisten=127.0.0.1:11010", "restlisten=127.0.0.1:18081",
+		"[lnd]",
 		"lnd.host=127.0.0.1:10009", "lnd.macaroonpath=", "lnd.tlspath=",
 	} {
 		if !strings.Contains(config, expected) {
 			t.Fatalf("config missing %q", expected)
 		}
+	}
+	if strings.Index(config, "[Application Options]") > strings.Index(config, "network=mainnet") ||
+		strings.Index(config, "[lnd]") > strings.Index(config, "lnd.host=") {
+		t.Fatal("Loop config options must be placed under their upstream INI sections")
 	}
 	for _, forbidden := range []string{"0.0.0.0", "admin.macaroon", "autoloop"} {
 		if strings.Contains(strings.ToLower(config), forbidden) {
@@ -122,6 +127,47 @@ func TestLoopAPIUsesManagerReadableClientMaterial(t *testing.T) {
 		if strings.Contains(syncScript, forbidden) {
 			t.Fatalf("client material repair contains out-of-scope operation %q", forbidden)
 		}
+	}
+}
+
+func TestLoopPersistentSwapStateDetection(t *testing.T) {
+	dir := t.TempDir()
+	paths := loopPaths{
+		LoopDBPath:   filepath.Join(dir, "mainnet", "loop_sqlite.db"),
+		LegacyLoopDB: filepath.Join(dir, "mainnet", "loop.db"),
+	}
+	if loopPersistentSwapStateExists(paths) {
+		t.Fatal("missing databases must be treated as a never-initialized installation")
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.LoopDBPath), 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.LoopDBPath, nil, 0640); err != nil {
+		t.Fatal(err)
+	}
+	if loopPersistentSwapStateExists(paths) {
+		t.Fatal("an empty database must not block cleanup of a failed initialization")
+	}
+	if err := os.WriteFile(paths.LoopDBPath+"-wal", []byte("pending state"), 0640); err != nil {
+		t.Fatal(err)
+	}
+	if !loopPersistentSwapStateExists(paths) {
+		t.Fatal("a non-empty SQLite WAL must preserve the pending-swap safety block")
+	}
+}
+
+func TestCompactLoopFailureLog(t *testing.T) {
+	raw := "ignored\n\nfirst useful error\nsecond useful error\núltimo erro\x00\n"
+	got := compactLoopFailureLog(raw, 2, 200)
+	if strings.Contains(got, "ignored") || strings.Contains(got, "first useful") {
+		t.Fatalf("expected only the last two non-empty lines, got %q", got)
+	}
+	if !strings.Contains(got, "second useful error | último erro") {
+		t.Fatalf("unexpected compact log %q", got)
+	}
+	short := compactLoopFailureLog("abcdef", 5, 3)
+	if short != "...def" {
+		t.Fatalf("unexpected character limit result %q", short)
 	}
 }
 

@@ -67,6 +67,10 @@ func (s *Server) handleAppInstall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "app not found")
 		return
 	}
+	if err := ensureAppStorageRoots(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if appID == bitcoinCoreAppID {
 		var req bitcoinCoreInstallOptions
 		if r.ContentLength != 0 {

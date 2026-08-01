@@ -274,8 +274,9 @@ ensure_default_bitcoin_source() {
 ensure_dirs() {
   print_step "Preparing directories"
   mkdir -p /etc/lightningos /etc/lightningos/tls /opt/lightningos/manager /opt/lightningos/ui \
-    /var/lib/lightningos /var/log/lightningos
-  chmod 750 /etc/lightningos /etc/lightningos/tls /var/lib/lightningos
+    /var/lib/lightningos/apps /var/lib/lightningos/apps-data /var/log/lightningos
+  chmod 750 /etc/lightningos /etc/lightningos/tls /var/lib/lightningos \
+    /var/lib/lightningos/apps /var/lib/lightningos/apps-data
   print_ok "Directories ready"
 }
 
@@ -952,9 +953,9 @@ ensure_lightningos_user() {
   if ! id lightningos >/dev/null 2>&1; then
     useradd --system --home /var/lib/lightningos --shell /usr/sbin/nologin -g lightningos lightningos
   fi
-  mkdir -p /var/lib/lightningos
-  chown lightningos:lightningos /var/lib/lightningos
-  chmod 750 /var/lib/lightningos
+  mkdir -p /var/lib/lightningos/apps /var/lib/lightningos/apps-data
+  chown lightningos:lightningos /var/lib/lightningos /var/lib/lightningos/apps /var/lib/lightningos/apps-data
+  chmod 750 /var/lib/lightningos /var/lib/lightningos/apps /var/lib/lightningos/apps-data
 }
 
 ensure_group_membership() {

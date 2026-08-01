@@ -918,9 +918,10 @@ install_gotty() {
 
 ensure_dirs() {
   print_step "Preparing directories"
-  mkdir -p /etc/lightningos /etc/lightningos/tls /opt/lightningos/manager /opt/lightningos/ui /var/lib/lightningos /var/log/lightningos /var/log/lnd
+  mkdir -p /etc/lightningos /etc/lightningos/tls /opt/lightningos/manager /opt/lightningos/ui \
+    /var/lib/lightningos/apps /var/lib/lightningos/apps-data /var/log/lightningos /var/log/lnd
   chmod 750 /etc/lightningos
-  chmod 750 /var/lib/lightningos
+  chmod 750 /var/lib/lightningos /var/lib/lightningos/apps /var/lib/lightningos/apps-data
   print_ok "Directories ready"
 }
 

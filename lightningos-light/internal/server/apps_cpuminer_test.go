@@ -121,6 +121,71 @@ func TestParseCpuMinerSummary(t *testing.T) {
 	}
 }
 
+func TestParseDockerCPUPercent(t *testing.T) {
+	tests := []struct {
+		name string
+		out  string
+		want float64
+		ok   bool
+	}{
+		{name: "plain", out: "198.42%\n", want: 198.42, ok: true},
+		{name: "decimal comma", out: "12,50%\n", want: 12.5, ok: true},
+		{name: "compose warning", out: "warning: legacy compose format\n87.25%\n", want: 87.25, ok: true},
+		{name: "missing", out: "--", ok: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := parseDockerCPUPercent(tc.out)
+			if ok != tc.ok || got != tc.want {
+				t.Fatalf("parseDockerCPUPercent(%q) = (%v, %v), want (%v, %v)", tc.out, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+func TestNormalizeHostCPUPercent(t *testing.T) {
+	tests := []struct {
+		name    string
+		perCore float64
+		cpus    int
+		want    float64
+	}{
+		{name: "two threads on sixteen CPUs", perCore: 200, cpus: 16, want: 12.5},
+		{name: "one full node", perCore: 1600, cpus: 16, want: 100},
+		{name: "clamp scheduler overhead", perCore: 1700, cpus: 16, want: 100},
+		{name: "invalid CPU count", perCore: 100, cpus: 0, want: 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := normalizeHostCPUPercent(tc.perCore, tc.cpus); got != tc.want {
+				t.Fatalf("normalizeHostCPUPercent(%v, %d) = %v, want %v", tc.perCore, tc.cpus, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseComposeContainerIDIgnoresWarnings(t *testing.T) {
+	id := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	out := "time=2026-08-01T12:00:00Z level=warning msg=legacy\n" + id + "\n"
+	if got := parseComposeContainerID(out); got != id {
+		t.Fatalf("parseComposeContainerID() = %q, want %q", got, id)
+	}
+	if got := parseComposeContainerID("warning only\n"); got != "" {
+		t.Fatalf("parseComposeContainerID(warning) = %q, want empty", got)
+	}
+}
+
+func TestParseContainerCPUCounter(t *testing.T) {
+	v2 := containerCPUCounter{path: "/sys/fs/cgroup/cpu.stat"}
+	if got, ok := parseContainerCPUCounter("usage_usec 123456\nuser_usec 120000\nsystem_usec 3456\n", v2); !ok || got != 123456 {
+		t.Fatalf("cgroup v2 counter = (%d, %v), want (123456, true)", got, ok)
+	}
+	v1 := containerCPUCounter{path: "/sys/fs/cgroup/cpuacct/cpuacct.usage"}
+	if got, ok := parseContainerCPUCounter("987654321\n", v1); !ok || got != 987654321 {
+		t.Fatalf("cgroup v1 counter = (%d, %v), want (987654321, true)", got, ok)
+	}
+}
+
 func TestCpuFlagsLineHas(t *testing.T) {
 	// No AVX (constrained VM like LOS-TEST).
 	noAVX := "processor\t: 0\nflags\t\t: fpu vme sse2 ssse3 sse4_1 sse4_2 aes sha_ni\n"

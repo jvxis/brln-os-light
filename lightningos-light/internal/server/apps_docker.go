@@ -178,7 +178,32 @@ func composeContainerID(ctx context.Context, appRoot string, composePath string,
   if err != nil {
     return "", err
   }
-  return strings.TrimSpace(out), nil
+  return parseComposeContainerID(out), nil
+}
+
+// parseComposeContainerID ignores warnings emitted by Compose on stderr.
+// RunCommandWithSudo intentionally combines stdout and stderr, so returning the
+// entire output can turn a valid ID plus a warning into an invalid Docker
+// container argument.
+func parseComposeContainerID(out string) string {
+  id := ""
+  for _, line := range strings.Split(out, "\n") {
+    candidate := strings.TrimSpace(line)
+    if len(candidate) < 12 || len(candidate) > 64 {
+      continue
+    }
+    valid := true
+    for _, r := range candidate {
+      if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+        valid = false
+        break
+      }
+    }
+    if valid {
+      id = candidate
+    }
+  }
+  return id
 }
 
 type composeRelease struct {

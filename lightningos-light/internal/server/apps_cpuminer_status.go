@@ -6,6 +6,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +24,7 @@ type cpuMinerStatus struct {
 	PoolLabel      string  `json:"pool_label"`
 	Threads        int     `json:"threads"`
 	MaxThreads     int     `json:"max_threads"`
+	HostCPUCount   int     `json:"host_cpu_count"`
 	HashrateHs     float64 `json:"hashrate_hs"`
 	SharesAccepted int64   `json:"shares_accepted"`
 	SharesRejected int64   `json:"shares_rejected"`
@@ -68,7 +71,7 @@ func (s *Server) handleCpuMinerConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) fetchCpuMinerStatus(ctx context.Context) cpuMinerStatus {
-	status := cpuMinerStatus{}
+	status := cpuMinerStatus{HostCPUCount: runtime.NumCPU()}
 	paths := cpuMinerAppPaths()
 	if !fileExists(paths.ComposePath) {
 		return status
@@ -171,15 +174,106 @@ func cpuMinerCPUPercent(ctx context.Context, paths cpuMinerPaths) float64 {
 		return 0
 	}
 	out, err := system.RunCommandWithSudo(ctx, "docker", "stats", "--no-stream", "--format", "{{.CPUPerc}}", id)
-	if err != nil {
+	if err == nil {
+		if value, ok := parseDockerCPUPercent(out); ok && value > 0 {
+			return normalizeHostCPUPercent(value, runtime.NumCPU())
+		}
+	}
+	if value, ok := sampleContainerCgroupCPUPercent(ctx, id); ok {
+		return normalizeHostCPUPercent(value, runtime.NumCPU())
+	}
+	return 0
+}
+
+// normalizeHostCPUPercent converts Docker's per-core percentage into the
+// fraction of the node's total logical CPU capacity. For example, two fully
+// busy mining threads on a 16-CPU node are reported as 12.5%, not 200%.
+func normalizeHostCPUPercent(perCorePercent float64, hostCPUCount int) float64 {
+	if perCorePercent <= 0 || hostCPUCount <= 0 {
 		return 0
 	}
-	trimmed := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(out), "%"))
-	value, err := strconv.ParseFloat(trimmed, 64)
-	if err != nil {
-		return 0
+	value := perCorePercent / float64(hostCPUCount)
+	if value > 100 {
+		return 100
 	}
 	return value
+}
+
+var dockerCPUPercentPattern = regexp.MustCompile(`([0-9]+(?:[.,][0-9]+)?)[[:space:]]*%`)
+
+func parseDockerCPUPercent(out string) (float64, bool) {
+	matches := dockerCPUPercentPattern.FindAllStringSubmatch(out, -1)
+	if len(matches) == 0 {
+		return 0, false
+	}
+	raw := strings.ReplaceAll(matches[len(matches)-1][1], ",", ".")
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil || value < 0 {
+		return 0, false
+	}
+	return value, true
+}
+
+type containerCPUCounter struct {
+	path string
+	unit time.Duration
+}
+
+var containerCPUCounterCandidates = []containerCPUCounter{
+	{path: "/sys/fs/cgroup/cpu.stat", unit: time.Microsecond},
+	{path: "/sys/fs/cgroup/cpuacct/cpuacct.usage", unit: time.Nanosecond},
+}
+
+// sampleContainerCgroupCPUPercent is a fallback for hosts where docker stats
+// returns 0 or an output format the CLI parser cannot consume. This function
+// returns Docker's raw per-core percentage; cpuMinerCPUPercent normalizes it to
+// the node's total logical CPU capacity before exposing it through the API.
+func sampleContainerCgroupCPUPercent(ctx context.Context, id string) (float64, bool) {
+	for _, counter := range containerCPUCounterCandidates {
+		first, ok := readContainerCPUCounter(ctx, id, counter)
+		if !ok {
+			continue
+		}
+		started := time.Now()
+		timer := time.NewTimer(250 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return 0, false
+		case <-timer.C:
+		}
+		second, ok := readContainerCPUCounter(ctx, id, counter)
+		elapsed := time.Since(started)
+		if !ok || second < first || elapsed <= 0 {
+			return 0, false
+		}
+		used := time.Duration(second-first) * counter.unit
+		return (float64(used) / float64(elapsed)) * 100, true
+	}
+	return 0, false
+}
+
+func readContainerCPUCounter(ctx context.Context, id string, counter containerCPUCounter) (uint64, bool) {
+	out, err := system.RunCommandWithSudo(ctx, "docker", "exec", id, "cat", counter.path)
+	if err != nil {
+		return 0, false
+	}
+	return parseContainerCPUCounter(out, counter)
+}
+
+func parseContainerCPUCounter(out string, counter containerCPUCounter) (uint64, bool) {
+	if strings.HasSuffix(counter.path, "cpu.stat") {
+		for _, line := range strings.Split(out, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) == 2 && fields[0] == "usage_usec" {
+				value, err := strconv.ParseUint(fields[1], 10, 64)
+				return value, err == nil
+			}
+		}
+		return 0, false
+	}
+	value, err := strconv.ParseUint(strings.TrimSpace(out), 10, 64)
+	return value, err == nil
 }
 
 // fetchPoolBestDifficulty reads the best share difficulty Public Pool has seen

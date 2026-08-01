@@ -502,6 +502,11 @@ POST /api/apps/{id}/uninstall
 - `loop` is optional. Stop and uninstall are rejected while any Loop swap is pending. Uninstall preserves `/var/lib/lightningos/apps-data/loop` for recovery and history.
 - `loopout-brln` is a native internal app. Stop or uninstall pauses its active job after the current attempt and preserves PostgreSQL history.
 
+GET /api/apps/cpuminer/status
+- Returns CPU miner configuration and runtime statistics.
+- `cpu_percent` is the miner's share of the node's total logical CPU capacity, from 0 to 100. For example, two fully occupied threads on a 16-CPU node report approximately `12.5`.
+- `host_cpu_count` reports the logical CPU count used for that normalization. `threads` and `max_threads` describe the miner allocation limits.
+
 GET /api/apps/loop/status
 - Returns installed/running state, safe daemon version/network fields, server terms, and pending swap count. It never returns TLS or macaroon paths.
 

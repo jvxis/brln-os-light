@@ -1024,6 +1024,7 @@ export type CpuMinerStatus = {
   pool_label: string
   threads: number
   max_threads: number
+  host_cpu_count: number
   hashrate_hs: number
   shares_accepted: number
   shares_rejected: number

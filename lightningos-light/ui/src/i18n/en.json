@@ -1165,7 +1165,7 @@
     "cpuMinerShares": "Shares",
     "cpuMinerSharesHint": "accepted / rejected",
     "cpuMinerPoolHashrate": "Pool hashrate",
-    "cpuMinerCpuUsage": "CPU usage",
+    "cpuMinerCpuUsage": "Node CPU usage",
     "cpuMinerThreads": "{{count}} thread",
     "cpuMinerThreads_other": "{{count}} threads",
     "cpuMinerThreadsLabel": "Threads / CPU cores",

@@ -1165,7 +1165,7 @@
     "cpuMinerShares": "Shares",
     "cpuMinerSharesHint": "aceitas / rejeitadas",
     "cpuMinerPoolHashrate": "Hashrate da pool",
-    "cpuMinerCpuUsage": "Uso de CPU",
+    "cpuMinerCpuUsage": "Uso da CPU do nó",
     "cpuMinerThreads": "{{count}} thread",
     "cpuMinerThreads_other": "{{count}} threads",
     "cpuMinerThreadsLabel": "Threads / núcleos de CPU",

@@ -83,8 +83,7 @@ export default function CpuMinerStats({ running }: Props) {
 
   const threads = status.threads > 0 ? status.threads : 1
   const maxThreads = status.max_threads > 0 ? status.max_threads : 1
-  const cpuCeiling = threads * 100
-  const cpuFill = Math.min(100, Math.max(0, (status.cpu_percent / cpuCeiling) * 100))
+  const cpuFill = Math.min(100, Math.max(0, status.cpu_percent))
   const warmingUp = status.hashrate_hs <= 0
   const selectedThreads = pendingThreads ?? threads
 
@@ -194,7 +193,7 @@ export default function CpuMinerStats({ running }: Props) {
             <div className="space-y-1">
               <div className="flex items-center justify-between text-[11px] uppercase tracking-wide text-fog/50">
                 <span>{t('appStore.cpuMinerCpuUsage')}</span>
-                <span className="tabular-nums text-fog/70">{status.cpu_percent.toFixed(0)}%</span>
+                <span className="tabular-nums text-fog/70">{status.cpu_percent.toFixed(1)}%</span>
               </div>
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/5">
                 <div

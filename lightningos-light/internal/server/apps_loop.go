@@ -296,6 +296,24 @@ func ensureLoopDirectories(ctx context.Context, paths loopPaths) error {
 	return nil
 }
 
+// ensureLoopRuntimePermissions repairs installations affected by older
+// installers that recursively reassigned /var/lib/lightningos to the manager.
+// It runs once per manager process, before the first Loop API request, and
+// restores the isolated daemon's ownership without deleting or recreating any
+// wallet, swap, macaroon, or L402 token state.
+func (s *Server) ensureLoopRuntimePermissions(ctx context.Context, paths loopPaths) error {
+	s.loopPermissionsMu.Lock()
+	defer s.loopPermissionsMu.Unlock()
+	if s.loopPermissionsReady {
+		return nil
+	}
+	if err := ensureLoopDirectories(ctx, paths); err != nil {
+		return fmt.Errorf("failed to repair Lightning Loop data permissions: %w", err)
+	}
+	s.loopPermissionsReady = true
+	return nil
+}
+
 // loopDirectorySetupScript deliberately provisions a dedicated daemon user at
 // app-install time. Existing-node installations may not have the optional
 // terminal operator (historically named losop), and a daemon must not depend on

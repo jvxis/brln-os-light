@@ -18,7 +18,8 @@ const lightningOSStateRoot = "/var/lib/lightningos"
 // The transient root command is deliberately restricted to fixed paths and to
 // the manager process's own numeric uid/gid; no request data reaches it.
 func ensureAppStorageRoots(ctx context.Context) error {
-	if err := ensureWritableDirectories(appsRoot, appsDataRoot); err == nil {
+	repairPaths := appStoragePathsNeedingRepair(lightningOSStateRoot, appsRoot, appsDataRoot)
+	if len(repairPaths) == 0 {
 		return nil
 	}
 
@@ -26,13 +27,32 @@ func ensureAppStorageRoots(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to resolve manager identity: %w", err)
 	}
-	if _, err := runSystemd(ctx, appStorageInstallArgs(uid, gid)...); err != nil {
+	if _, err := runSystemd(ctx, appStorageInstallArgs(uid, gid, repairPaths...)...); err != nil {
 		return fmt.Errorf("failed to prepare app storage permissions: %w", err)
+	}
+	// install -d may update modes on ACL-bearing shared parents. If Loop is
+	// already installed, immediately restore its traverse ACLs and isolated
+	// subtree ownership before another app installation continues.
+	loopPaths := loopAppPaths()
+	if fileExists(loopPaths.LoopdPath) {
+		if err := ensureLoopDirectories(ctx, loopPaths); err != nil {
+			return fmt.Errorf("failed to restore Lightning Loop permissions: %w", err)
+		}
 	}
 	if err := ensureWritableDirectories(appsRoot, appsDataRoot); err != nil {
 		return fmt.Errorf("app storage is still not writable after permission repair: %w", err)
 	}
 	return nil
+}
+
+func appStoragePathsNeedingRepair(paths ...string) []string {
+	repair := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if err := ensureWritableDirectories(path); err != nil {
+			repair = append(repair, path)
+		}
+	}
+	return repair
 }
 
 func ensureWritableDirectories(paths ...string) error {
@@ -67,16 +87,14 @@ func currentNumericIdentity() (int, int, error) {
 	return uid, gid, nil
 }
 
-func appStorageInstallArgs(uid, gid int) []string {
-	return []string{
+func appStorageInstallArgs(uid, gid int, paths ...string) []string {
+	args := []string{
 		"/usr/bin/install",
 		"-d",
 		"-m", "0750",
 		"-o", strconv.Itoa(uid),
 		"-g", strconv.Itoa(gid),
 		"--",
-		lightningOSStateRoot,
-		appsRoot,
-		appsDataRoot,
 	}
+	return append(args, paths...)
 }

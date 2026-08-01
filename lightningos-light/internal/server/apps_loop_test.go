@@ -241,6 +241,31 @@ func TestLoopDirectorySetupProvisionsDedicatedServiceAccount(t *testing.T) {
 	}
 }
 
+func TestInstallersPreserveIsolatedAppOwnership(t *testing.T) {
+	installers := []string{"install.sh", "install_existing.sh", "install_existing_pi.sh"}
+	for _, name := range installers {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join("..", "..", name)
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read %s: %v", path, err)
+			}
+			contents := string(raw)
+			for _, forbidden := range []string{
+				"chown -R lightningos:lightningos /var/lib/lightningos",
+				"chown -R \"$user:$group\" /var/lib/lightningos",
+			} {
+				if strings.Contains(contents, forbidden) {
+					t.Fatalf("%s recursively takes ownership of isolated app state: %q", name, forbidden)
+				}
+			}
+			if !strings.Contains(contents, "/var/lib/lightningos/apps-data") {
+				t.Fatalf("%s does not provision the shared apps-data root", name)
+			}
+		})
+	}
+}
+
 func TestLoopMacaroonIsDedicatedWithoutMacaroonAdmin(t *testing.T) {
 	permissions := loopMacaroonPermissions()
 	if len(permissions) == 0 {

@@ -73,6 +73,8 @@ type Server struct {
 	loopOutBRLNMu               sync.Mutex
 	loopOutBRLN                 *LoopOutBRLNService
 	loopOutBRLNErr              string
+	loopPermissionsMu           sync.Mutex
+	loopPermissionsReady        bool
 	magmaInitAt                 time.Time
 	magmaMu                     sync.Mutex
 	magma                       *MagmaService

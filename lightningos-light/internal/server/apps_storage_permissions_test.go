@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-func TestAppStorageInstallArgsUsesFixedPathsAndManagerIdentity(t *testing.T) {
-	got := appStorageInstallArgs(123, 456)
+func TestAppStorageInstallArgsUsesOnlyRequestedPathsAndManagerIdentity(t *testing.T) {
+	got := appStorageInstallArgs(123, 456, appsRoot)
 	want := []string{
 		"/usr/bin/install",
 		"-d",
@@ -16,9 +16,7 @@ func TestAppStorageInstallArgsUsesFixedPathsAndManagerIdentity(t *testing.T) {
 		"-o", "123",
 		"-g", "456",
 		"--",
-		"/var/lib/lightningos",
 		"/var/lib/lightningos/apps",
-		"/var/lib/lightningos/apps-data",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("appStorageInstallArgs() = %#v, want %#v", got, want)

@@ -918,10 +918,10 @@ install_gotty() {
 
 ensure_dirs() {
   print_step "Preparing directories"
-  mkdir -p /etc/lightningos /etc/lightningos/tls /opt/lightningos/manager /opt/lightningos/ui \
-    /var/lib/lightningos/apps /var/lib/lightningos/apps-data /var/log/lightningos /var/log/lnd
+  mkdir -p /etc/lightningos /etc/lightningos/tls /opt/lightningos/manager /opt/lightningos/ui /var/log/lightningos /var/log/lnd
+  mkdir -p -m 0750 /var/lib/lightningos
+  mkdir -p -m 0750 /var/lib/lightningos/apps /var/lib/lightningos/apps-data
   chmod 750 /etc/lightningos
-  chmod 750 /var/lib/lightningos /var/lib/lightningos/apps /var/lib/lightningos/apps-data
   print_ok "Directories ready"
 }
 
@@ -1028,7 +1028,12 @@ fix_permissions() {
       chmod 750 "$dir"
     fi
   done
-  chown -R lightningos:lightningos /var/lib/lightningos /var/log/lightningos
+  # App subtrees may belong to isolated service accounts such as
+  # lightningos-loop. Only reconcile the shared roots here; recursively taking
+  # ownership of apps-data breaks private 0600 daemon files (for example Loop's
+  # L402 token store).
+  chown lightningos:lightningos /var/lib/lightningos /var/lib/lightningos/apps /var/lib/lightningos/apps-data
+  chown -R lightningos:lightningos /var/log/lightningos
   print_ok "Permissions updated"
 }
 

@@ -615,6 +615,9 @@ func loopSwapPayload(req loopSwapRequest, quote loopQuoteResponse) (map[string]a
 
 func (s *Server) loopdRequest(ctx context.Context, method, endpoint string, body any, target any) error {
 	paths := loopAppPaths()
+	if err := s.ensureLoopRuntimePermissions(ctx, paths); err != nil {
+		return err
+	}
 	if err := ensureLoopClientMaterial(ctx, paths); err != nil {
 		return err
 	}

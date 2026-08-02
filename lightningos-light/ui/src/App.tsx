@@ -25,7 +25,6 @@ import Elements from './pages/Elements'
 import Notifications from './pages/Notifications'
 import AuditLog from './pages/AuditLog'
 import LndConfig from './pages/LndConfig'
-import LndInfo from './pages/LndInfo'
 import AppStore from './pages/AppStore'
 import Terminal from './pages/Terminal'
 import Shortcuts from './pages/Shortcuts'
@@ -257,8 +256,8 @@ export default function App() {
       { key: 'chat', label: t('nav.chat'), element: <Chat /> },
       {
         key: 'lnd',
-        label: externalBitcoinDetected ? t('nav.lndInfo') : t('nav.lndConfig'),
-        element: externalBitcoinDetected ? <LndInfo /> : <LndConfig />,
+        label: t('nav.lndConfig'),
+        element: <LndConfig externalBitcoinDetected={externalBitcoinDetected} />,
         group: 'node' as const
       },
       { key: 'apps', label: t('nav.apps'), element: <AppStore />, group: 'apps' as const },

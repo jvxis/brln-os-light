@@ -15,7 +15,11 @@ type BitcoinLocalStatus = {
 const LND_ALIAS_MAX_BYTES = 32
 type LndNetworkMode = 'private' | 'hybrid' | 'custom'
 
-export default function LndConfig() {
+type LndConfigProps = {
+  externalBitcoinDetected?: boolean
+}
+
+export default function LndConfig({ externalBitcoinDetected = false }: LndConfigProps) {
   const { t } = useTranslation()
   const [config, setConfig] = useState<any>(null)
   const [alias, setAlias] = useState('')
@@ -267,7 +271,7 @@ export default function LndConfig() {
   }, [bitcoinLocalStatus])
 
   const localToggleBlocked = bitcoinSource === 'remote' && !localReady
-  const toggleDisabled = sourceBusy || localToggleBlocked
+  const toggleDisabled = sourceBusy || localToggleBlocked || externalBitcoinDetected
 
   const loadUpgradeStatus = async (force = false, silent = false) => {
     if (!force && upgradeChecking) return
@@ -315,7 +319,7 @@ export default function LndConfig() {
   const showConfirmUpgrade = Boolean(upgrade?.update_available) && !upgradeComplete
 
   const startUpgrade = async () => {
-    if (!upgrade?.latest_version || upgradeBusy) return
+    if (externalBitcoinDetected || !upgrade?.latest_version || upgradeBusy) return
     if (isRcVersion(upgrade.latest_version) && !upgradeRcConfirm) {
       setUpgradeRcConfirm(true)
       return
@@ -422,7 +426,7 @@ export default function LndConfig() {
   }
 
   const handleToggleSource = async () => {
-    if (sourceBusy || localToggleBlocked) return
+    if (externalBitcoinDetected || sourceBusy || localToggleBlocked) return
     const next = bitcoinSource === 'remote' ? 'local' : 'remote'
     const targetLabel = next === 'local' ? t('common.local') : t('common.remote')
     setSourceBusy(true)
@@ -439,7 +443,7 @@ export default function LndConfig() {
   }
 
   return (
-    <section className="space-y-6">
+    <section className="flex flex-col gap-6">
       <div className="section-card">
         <div className="flex items-start justify-between gap-6">
           <div>
@@ -449,29 +453,40 @@ export default function LndConfig() {
           </div>
           <div className="flex flex-col items-end gap-2">
             <span className="text-xs text-fog/60">{t('lndConfig.bitcoinSource')}</span>
-            <button
-              className={`relative flex h-9 w-32 items-center rounded-full border border-white/10 bg-ink/60 px-2 transition ${toggleDisabled ? 'opacity-70 cursor-not-allowed' : 'hover:border-white/30'}`}
-              onClick={handleToggleSource}
-              type="button"
-              disabled={toggleDisabled}
-              aria-label={t('lndConfig.toggleBitcoinSource')}
-              title={localToggleBlocked ? t('lndConfig.localBitcoinRequired') : undefined}
-            >
-              <span
-                className={`absolute top-1 h-7 w-14 rounded-full bg-glow shadow transition-all ${bitcoinSource === 'local' ? 'left-[68px]' : 'left-[6px]'}`}
-              />
-              <span className={`relative z-10 flex-1 text-center text-xs ${bitcoinSource === 'remote' ? 'text-ink' : 'text-fog/60'}`}>{t('common.remote')}</span>
-              <span className={`relative z-10 flex-1 text-center text-xs ${bitcoinSource === 'local' ? 'text-ink' : 'text-fog/60'}`}>{t('common.local')}</span>
-            </button>
-            {localToggleBlocked && (
+            {externalBitcoinDetected ? (
+              <span className="rounded-full border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-200">
+                {t('lndConfig.externalBitcoinSource')}
+              </span>
+            ) : (
+              <button
+                className={`relative flex h-9 w-32 items-center rounded-full border border-white/10 bg-ink/60 px-2 transition ${toggleDisabled ? 'opacity-70 cursor-not-allowed' : 'hover:border-white/30'}`}
+                onClick={handleToggleSource}
+                type="button"
+                disabled={toggleDisabled}
+                aria-label={t('lndConfig.toggleBitcoinSource')}
+                title={localToggleBlocked ? t('lndConfig.localBitcoinRequired') : undefined}
+              >
+                <span
+                  className={`absolute top-1 h-7 w-14 rounded-full bg-glow shadow transition-all ${bitcoinSource === 'local' ? 'left-[68px]' : 'left-[6px]'}`}
+                />
+                <span className={`relative z-10 flex-1 text-center text-xs ${bitcoinSource === 'remote' ? 'text-ink' : 'text-fog/60'}`}>{t('common.remote')}</span>
+                <span className={`relative z-10 flex-1 text-center text-xs ${bitcoinSource === 'local' ? 'text-ink' : 'text-fog/60'}`}>{t('common.local')}</span>
+              </button>
+            )}
+            {!externalBitcoinDetected && localToggleBlocked && (
               <span className="text-xs text-brass">{t('lndConfig.localBitcoinRequired')}</span>
             )}
           </div>
         </div>
+        {externalBitcoinDetected && (
+          <p className="mt-4 rounded-xl border border-cyan-400/20 bg-cyan-500/5 px-4 py-3 text-sm text-cyan-100/80">
+            {t('lndConfig.existingNodeEditingNotice')}
+          </p>
+        )}
         {status && <p className="text-sm text-brass mt-4">{status}</p>}
       </div>
 
-      <div className="section-card space-y-5">
+      <div className="section-card order-3 space-y-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h3 className="text-lg font-semibold">{t('lndConfig.networkPrivacy')}</h3>
@@ -588,7 +603,7 @@ export default function LndConfig() {
         </div>
       </div>
 
-      <div className="section-card space-y-4">
+      <div className="section-card order-1 space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-semibold">{t('lndConfig.basicSettings')}</h3>
           <button className="btn-secondary" onClick={() => setAdvanced((v) => !v)}>
@@ -672,14 +687,14 @@ export default function LndConfig() {
       </div>
 
       {advanced && (
-        <div className="section-card space-y-4">
+        <div className="section-card order-2 space-y-4">
           <h3 className="text-lg font-semibold">{t('lndConfig.advancedEditor')}</h3>
           <textarea className="input-field min-h-[180px]" value={raw} onChange={(e) => setRaw(e.target.value)} />
           <button className="btn-secondary" onClick={handleSaveRaw}>{t('lndConfig.applyAdvanced')}</button>
         </div>
       )}
 
-      <div className="section-card space-y-4">
+      <div className="section-card order-4 space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h3 className="text-lg font-semibold">{t('lndUpgrade.title')}</h3>
@@ -737,7 +752,7 @@ export default function LndConfig() {
           <button
             className="btn-primary"
             onClick={openUpgradeModal}
-            disabled={!upgrade?.update_available || upgrade?.running}
+            disabled={externalBitcoinDetected || !upgrade?.update_available || upgrade?.running}
           >
             {upgrade?.running ? t('lndUpgrade.upgrading') : t('lndUpgrade.upgrade')}
           </button>
@@ -749,9 +764,12 @@ export default function LndConfig() {
         </div>
 
         <p className="text-xs text-fog/50">{t('lndUpgrade.warning')}</p>
+        {externalBitcoinDetected && (
+          <p className="text-xs text-cyan-200">{t('lndConfig.externalUpgradeProtected')}</p>
+        )}
       </div>
 
-      {!config && <p className="text-fog/60">{t('lndConfig.loadingConfig')}</p>}
+      {!config && <p className="order-5 text-fog/60">{t('lndConfig.loadingConfig')}</p>}
 
       {upgradeModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4">

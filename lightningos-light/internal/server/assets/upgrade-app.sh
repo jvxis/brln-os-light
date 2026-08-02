@@ -200,12 +200,17 @@ configure_manager_sudoers() {
   local system_alias=""
   local app_alias=""
   local no_requiretty_line=""
+  local lnd_service="lnd"
 
   if [[ "$manager_user" != "lightningos" ]]; then
     sudoers_path="/etc/sudoers.d/lightningos-${manager_user}"
   fi
 
   system_cmds="${SYSTEMCTL_BIN} restart lnd, ${SYSTEMCTL_BIN} restart --no-block lnd, ${SYSTEMCTL_BIN} restart lightningos-manager, ${SYSTEMCTL_BIN} restart postgresql, ${SYSTEMCTL_BIN} is-active lightningos-lnd-upgrade, ${SYSTEMCTL_BIN} is-active lightningos-app-upgrade, ${SYSTEMCTL_BIN} reboot, ${SYSTEMCTL_BIN} poweroff, /usr/local/sbin/lightningos-fix-lnd-perms, /usr/local/sbin/lightningos-upgrade-lnd, /usr/local/sbin/lightningos-upgrade-app, ${TEE_BIN} /etc/lightningos/config.yaml, ${SMARTCTL_BIN} *"
+  if ! "$SYSTEMCTL_BIN" is-active --quiet lnd && "$SYSTEMCTL_BIN" is-active --quiet lnd@default; then
+    lnd_service="lnd@default"
+    system_cmds+=", ${SYSTEMCTL_BIN} restart ${lnd_service}, ${SYSTEMCTL_BIN} restart --no-block ${lnd_service}"
+  fi
 
   [[ -n "${APT_GET_BIN:-}" ]] && app_cmds+=("${APT_GET_BIN} *")
   [[ -n "${APT_BIN:-}" ]] && app_cmds+=("${APT_BIN} *")

@@ -579,8 +579,12 @@ configure_sudoers() {
     print_warn "systemctl not found; skipping sudoers setup"
     return
   fi
-  local system_cmds
+  local system_cmds lnd_service
+  lnd_service="${LND_SERVICE:-lnd}"
   system_cmds="${systemctl_path} restart lnd, ${systemctl_path} restart --no-block lnd, ${systemctl_path} restart lightningos-manager, ${systemctl_path} restart postgresql, ${systemctl_path} is-active lightningos-lnd-upgrade, ${systemctl_path} is-active lightningos-app-upgrade, ${systemctl_path} reboot, ${systemctl_path} poweroff, ${LND_FIX_PERMS_SCRIPT}, ${LND_UPGRADE_SCRIPT}, ${APP_UPGRADE_SCRIPT}, ${smartctl_path} *, ${tee_path} /etc/lightningos/config.yaml"
+  if [[ "$lnd_service" != "lnd" ]]; then
+    system_cmds+=", ${systemctl_path} restart ${lnd_service}, ${systemctl_path} restart --no-block ${lnd_service}"
+  fi
   local app_cmds=()
   [[ -n "$apt_get_path" ]] && app_cmds+=("${apt_get_path} *")
   [[ -n "$apt_path" ]] && app_cmds+=("${apt_path} *")

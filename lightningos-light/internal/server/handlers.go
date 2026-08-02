@@ -528,7 +528,7 @@ func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	if err := system.SystemctlRestart(ctx, "lnd"); err != nil {
+	if err := restartLNDService(ctx); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			s.markLNDRestart()
 			writeJSON(w, http.StatusOK, map[string]any{
@@ -1056,7 +1056,7 @@ func (s *Server) handleWizardBitcoinRemote(w http.ResponseWriter, r *http.Reques
 
 	_ = storeBitcoinSource("remote")
 
-	_ = system.SystemctlRestart(ctx, "lnd")
+	_ = restartLNDService(ctx)
 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "info": info})
 }
@@ -3409,11 +3409,14 @@ func (s *Server) handleLNDConfigPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.ApplyNow {
-		ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
-		if system.SystemctlRestart(ctx, "lnd") == nil {
-			s.markLNDRestart()
+		if err := restartLNDService(ctx); err != nil {
+			_ = os.WriteFile(lndConfPath, raw, 0660)
+			writeError(w, http.StatusInternalServerError, "lnd restart failed, rollback applied")
+			return
 		}
+		s.markLNDRestart()
 	}
 
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -3443,27 +3446,26 @@ func (s *Server) handleLNDConfigRaw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	warning := ""
 	if req.ApplyNow {
-		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
-		if err := system.SystemctlRestart(ctx, "lnd"); err != nil {
-			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-				warning = "LND restart is taking longer than expected. Check status in a moment."
-			} else {
-				_ = os.WriteFile(lndConfPath, prev, 0660)
-				writeError(w, http.StatusInternalServerError, "lnd restart failed, rollback applied")
-				return
-			}
+		if err := restartLNDService(ctx); err != nil {
+			_ = os.WriteFile(lndConfPath, prev, 0660)
+			writeError(w, http.StatusInternalServerError, "lnd restart failed, rollback applied")
+			return
 		}
 		s.markLNDRestart()
 	}
 
-	resp := map[string]any{"ok": true}
-	if warning != "" {
-		resp["warning"] = warning
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func restartLNDService(ctx context.Context) error {
+	service := "lnd"
+	if !system.SystemctlIsActive(ctx, service) && system.SystemctlIsActive(ctx, "lnd@default") {
+		service = "lnd@default"
 	}
-	writeJSON(w, http.StatusOK, resp)
+	return system.SystemctlRestartNoBlock(ctx, service)
 }
 
 type lndOptionUpdate struct {

@@ -275,6 +275,8 @@ export default function Wizard() {
 
   const eligibleLocalStorageTargets = localStorageTargets.filter((target) => target.eligible)
   const selectedLocalStorageTarget = eligibleLocalStorageTargets.find((target) => target.mount === localSelectedMount)
+  const hasGeneratedSeed = seedWords.length > 0
+  const canInitializeNewWallet = hasGeneratedSeed && ackSeed
   const formatStorageGB = (value?: number) => {
     if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '-'
     return value >= 100 ? value.toFixed(0) : value.toFixed(1)
@@ -540,8 +542,12 @@ export default function Wizard() {
 
           {walletMode === 'create' ? (
             <div className="space-y-3">
-              <button className="btn-secondary" onClick={handleGenerateSeed}>{t('wizard.generateSeed')}</button>
-              {seedWords.length > 0 && (
+              {!hasGeneratedSeed && (
+                <button className="btn-primary" type="button" autoFocus onClick={handleGenerateSeed}>
+                  {t('wizard.generateSeed')}
+                </button>
+              )}
+              {hasGeneratedSeed && (
                 <div className="bg-ink/50 rounded-2xl p-4 text-sm">
                   <p className="text-brass text-xs uppercase">{t('wizard.seedWordsTitle')}</p>
                   <div className="mt-2 flex flex-wrap gap-2">
@@ -555,12 +561,16 @@ export default function Wizard() {
                   </label>
                 </div>
               )}
-              <button className="btn-primary" onClick={handleInitWallet}>{t('wizard.initializeWallet')}</button>
+              {canInitializeNewWallet && (
+                <button className="btn-primary" type="button" autoFocus onClick={handleInitWallet}>
+                  {t('wizard.initializeWallet')}
+                </button>
+              )}
             </div>
           ) : (
             <div className="space-y-3">
               <textarea className="input-field min-h-[120px]" placeholder={t('wizard.pasteSeedWords')} value={seedInput} onChange={(e) => setSeedInput(e.target.value)} />
-              <button className="btn-primary" onClick={handleInitWallet}>{t('wizard.importAndInitialize')}</button>
+              <button className="btn-primary" type="button" onClick={handleInitWallet}>{t('wizard.importAndInitialize')}</button>
             </div>
           )}
         </div>

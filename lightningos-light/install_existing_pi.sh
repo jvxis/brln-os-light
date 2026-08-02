@@ -890,7 +890,8 @@ ensure_manager_firewall() {
     return 0
   fi
   install -m 0755 "$src" "$MANAGER_FIREWALL_SCRIPT"
-  if "$MANAGER_FIREWALL_SCRIPT" --interactive; then
+  # Reuse the configured LAN CIDR or accept the detected one automatically.
+  if "$MANAGER_FIREWALL_SCRIPT"; then
     touch "$SYSTEM_INTEGRATIONS_MARKER"
     chmod 0644 "$SYSTEM_INTEGRATIONS_MARKER"
   else

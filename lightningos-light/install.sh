@@ -1493,7 +1493,9 @@ install_systemd() {
     systemctl disable --now lightningos-terminal >/dev/null 2>&1 || true
   fi
   if [[ -x "$MANAGER_FIREWALL_SCRIPT" ]]; then
-    if "$MANAGER_FIREWALL_SCRIPT" --interactive; then
+    # The helper detects the LAN CIDR (or reuses the saved value). Keep the
+    # installer unattended instead of asking the operator to confirm it.
+    if "$MANAGER_FIREWALL_SCRIPT"; then
       touch "$SYSTEM_INTEGRATIONS_MARKER"
       chmod 0644 "$SYSTEM_INTEGRATIONS_MARKER"
     else

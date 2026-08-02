@@ -40,6 +40,7 @@ import {
   getBitcoinLocalStatus,
   getBitcoinSource,
   getBoletoConfig,
+  getApps,
   getLndStatus,
   getMenuPreferences,
   getWizardStatus,
@@ -94,7 +95,7 @@ type MenuConfig = {
 
 const MENU_CONFIG_KEY = 'los-menu-config'
 const MENU_CONFIG_VERSION = 1
-const OPTIONAL_MENU_ROUTE_KEYS = ['pay-boleto']
+const OPTIONAL_MENU_ROUTE_KEYS = ['pay-boleto', 'taproot-assets', 'lightning-loop', 'loop-out-brln', 'magma-sales']
 
 const readMenuConfig = (): MenuConfig | null => {
   try {
@@ -177,6 +178,7 @@ export default function App() {
   const [walletUnlocked, setWalletUnlocked] = useState<boolean | null>(null)
   const [walletExists, setWalletExists] = useState<boolean | null>(null)
   const [boletoEnabled, setBoletoEnabled] = useState(false)
+  const [installedAppIDs, setInstalledAppIDs] = useState<Set<string>>(() => new Set())
   const [externalBitcoinDetected, setExternalBitcoinDetected] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const refreshAuthState = useCallback(async () => {
@@ -198,6 +200,18 @@ export default function App() {
       setBoletoEnabled(false)
     }
   }, [])
+  const refreshInstalledApps = useCallback(async () => {
+    try {
+      const apps: Array<{ id?: string; installed?: boolean }> = await getApps()
+      setInstalledAppIDs(new Set(
+        (Array.isArray(apps) ? apps : [])
+          .filter((app) => app?.installed && typeof app.id === 'string')
+          .map((app) => app.id as string)
+      ))
+    } catch {
+      // Keep the previous menu on transient App Store failures.
+    }
+  }, [])
   const refreshExternalBitcoinDetected = useCallback(async () => {
     try {
       const [localStatus, sourceStatus]: any[] = await Promise.all([
@@ -213,6 +227,20 @@ export default function App() {
     const boletoRoute = boletoEnabled
       ? [{ key: 'pay-boleto', label: t('nav.payBoleto'), element: <PayBoleto />, group: 'apps' as const }]
       : []
+    const installedAppRoutes = [
+      ...(installedAppIDs.has('tapd')
+        ? [{ key: 'taproot-assets', label: t('nav.taprootAssets'), element: <TaprootAssets />, group: 'apps' as const }]
+        : []),
+      ...(installedAppIDs.has('loop')
+        ? [{ key: 'lightning-loop', label: t('nav.lightningLoop'), element: <LightningLoop />, group: 'apps' as const }]
+        : []),
+      ...(installedAppIDs.has('loopout-brln')
+        ? [{ key: 'loop-out-brln', label: t('nav.loopOutBrln'), element: <LoopOutBRLN />, group: 'apps' as const }]
+        : []),
+      ...(installedAppIDs.has('magma-sales')
+        ? [{ key: 'magma-sales', label: t('nav.magmaSales'), element: <MagmaSales />, group: 'apps' as const }]
+        : [])
+    ]
     return [
       { key: 'dashboard', label: t('nav.dashboard'), element: <Dashboard authState={authState} /> },
       { key: 'reports', label: t('nav.reports'), element: <Reports />, group: 'network' as const },
@@ -238,10 +266,7 @@ export default function App() {
       { key: 'bitcoin', label: t('nav.bitcoinRemote'), element: <BitcoinRemote />, group: 'node' as const },
       { key: 'bitcoin-local', label: t('nav.bitcoinLocal'), element: <BitcoinLocal />, group: 'node' as const },
       { key: 'elements', label: t('nav.elements'), element: <Elements />, group: 'node' as const },
-      { key: 'taproot-assets', label: t('nav.taprootAssets'), element: <TaprootAssets />, group: 'apps' as const },
-      { key: 'lightning-loop', label: t('nav.lightningLoop'), element: <LightningLoop />, group: 'apps' as const },
-      { key: 'loop-out-brln', label: t('nav.loopOutBrln'), element: <LoopOutBRLN />, group: 'apps' as const },
-      { key: 'magma-sales', label: t('nav.magmaSales'), element: <MagmaSales />, group: 'apps' as const },
+      ...installedAppRoutes,
       { key: 'notifications', label: t('nav.notifications'), element: <Notifications />, group: 'system' as const },
       { key: 'audit-log', label: t('nav.auditLog'), element: <AuditLog />, group: 'system' as const },
       { key: 'disks', label: t('nav.disks'), element: <Disks />, group: 'system' as const },
@@ -250,7 +275,7 @@ export default function App() {
       { key: 'logs', label: t('nav.logs'), element: <Logs />, group: 'system' as const },
       { key: 'node-retirement', label: t('nav.nodeRetirement'), element: <NodeRetirement />, group: 'system' as const }
     ]
-  }, [authState, boletoEnabled, externalBitcoinDetected, i18n.language, t])
+  }, [authState, boletoEnabled, externalBitcoinDetected, i18n.language, installedAppIDs, t])
   const baseRouteKeys = useMemo(() => baseRoutes.map((item) => item.key), [baseRoutes])
   const menuPreferenceKeysRef = useRef<string[]>([])
   if (menuPreferenceKeysRef.current.length === 0) {
@@ -369,11 +394,13 @@ export default function App() {
   useEffect(() => {
     if (!authReady) {
       setBoletoEnabled(false)
+      setInstalledAppIDs(new Set())
       setExternalBitcoinDetected(false)
       return
     }
 
     const handleAppsChanged = (event: Event) => {
+      void refreshInstalledApps()
       void refreshExternalBitcoinDetected()
       const detail = (event as CustomEvent<{ id?: string }>).detail
       if (detail?.id === 'fswap') {
@@ -381,16 +408,19 @@ export default function App() {
       }
     }
     void refreshBoletoEnabled()
+    void refreshInstalledApps()
     void refreshExternalBitcoinDetected()
     const boletoTimer = window.setInterval(refreshBoletoEnabled, 30000)
+    const installedAppsTimer = window.setInterval(refreshInstalledApps, 30000)
     const externalBitcoinTimer = window.setInterval(refreshExternalBitcoinDetected, 300000)
     window.addEventListener('apps:changed', handleAppsChanged as EventListener)
     return () => {
       window.clearInterval(boletoTimer)
+      window.clearInterval(installedAppsTimer)
       window.clearInterval(externalBitcoinTimer)
       window.removeEventListener('apps:changed', handleAppsChanged as EventListener)
     }
-  }, [authReady, refreshBoletoEnabled, refreshExternalBitcoinDetected])
+  }, [authReady, refreshBoletoEnabled, refreshExternalBitcoinDetected, refreshInstalledApps])
 
   useEffect(() => {
     setMenuConfig((current) => {

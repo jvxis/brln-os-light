@@ -148,6 +148,9 @@ type Server struct {
 	bitcoinLocalCache           cachedBitcoinLocalStatus
 	bitcoinMarketMu             sync.Mutex
 	bitcoinMarketCache          cachedBitcoinMarketStatus
+	lndGraphProgressMu          sync.Mutex
+	lndGraphProgressCache       lndGraphProgressCache
+	lndGraphProgressRefreshing  bool
 	bip110Monitor               *bip110MonitorService
 }
 

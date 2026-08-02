@@ -901,20 +901,21 @@ func splitHostPort(input string) (string, string, error) {
 }
 
 type lndStatusResponse struct {
-	ServiceActive   bool     `json:"service_active"`
-	WalletState     string   `json:"wallet_state"`
-	SyncedToChain   bool     `json:"synced_to_chain"`
-	SyncedToGraph   bool     `json:"synced_to_graph"`
-	BlockHeight     int64    `json:"block_height"`
-	Version         string   `json:"version"`
-	Pubkey          string   `json:"pubkey"`
-	URI             string   `json:"uri"`
-	URIs            []string `json:"uris,omitempty"`
-	InfoKnown       bool     `json:"info_known"`
-	InfoStale       bool     `json:"info_stale"`
-	InfoAgeSeconds  int64    `json:"info_age_seconds"`
-	DBBackend       string   `json:"db_backend"`
-	ChannelDBSizeGB *float64 `json:"channel_db_size_gb,omitempty"`
+	ServiceActive   bool                  `json:"service_active"`
+	WalletState     string                `json:"wallet_state"`
+	SyncedToChain   bool                  `json:"synced_to_chain"`
+	SyncedToGraph   bool                  `json:"synced_to_graph"`
+	BlockHeight     int64                 `json:"block_height"`
+	Version         string                `json:"version"`
+	Pubkey          string                `json:"pubkey"`
+	URI             string                `json:"uri"`
+	URIs            []string              `json:"uris,omitempty"`
+	InfoKnown       bool                  `json:"info_known"`
+	InfoStale       bool                  `json:"info_stale"`
+	InfoAgeSeconds  int64                 `json:"info_age_seconds"`
+	DBBackend       string                `json:"db_backend"`
+	ChannelDBSizeGB *float64              `json:"channel_db_size_gb,omitempty"`
+	GraphSync       *lndGraphSyncProgress `json:"graph_sync,omitempty"`
 	Channels        struct {
 		Active   int `json:"active"`
 		Inactive int `json:"inactive"`

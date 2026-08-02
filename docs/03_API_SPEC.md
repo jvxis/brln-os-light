@@ -114,6 +114,8 @@ GET /api/mempool/fees
 
 GET /api/lnd/status
 - LND state, sync, channels, balances.
+- While the graph is syncing, `graph_sync` may include a lightweight journal-derived estimate with `progress_percent`, `known_channels`, `total_channels`, `remaining_channels`, and `approximate`.
+- The graph estimate is cached and does not call `DescribeGraph` or walk the LND database.
 
 GET /api/lnd/config
 - Supported settings, current values, detected network mode, and raw lnd.conf.

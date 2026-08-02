@@ -104,6 +104,13 @@ export type LndStatus = {
   info_age_seconds?: number
   db_backend?: string
   channel_db_size_gb?: number
+  graph_sync?: {
+    progress_percent?: number
+    known_channels?: number
+    total_channels?: number
+    remaining_channels?: number
+    approximate?: boolean
+  }
   channels?: {
     active?: number
     inactive?: number

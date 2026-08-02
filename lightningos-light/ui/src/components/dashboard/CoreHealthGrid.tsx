@@ -126,6 +126,11 @@ export default function CoreHealthGrid({
   const inboundLiquiditySat = lndChannels.reduce((sum, channel) => sum + Math.max(0, Number(channel.remote_balance_sat || 0)), 0)
   const totalLiquiditySat = outboundLiquiditySat + inboundLiquiditySat
   const outboundSharePct = totalLiquiditySat > 0 ? (outboundLiquiditySat / totalLiquiditySat) * 100 : 0
+  const graphSyncTotal = Math.max(0, Number(lnd?.graph_sync?.total_channels || 0))
+  const graphSyncKnown = Math.min(graphSyncTotal, Math.max(0, Number(lnd?.graph_sync?.known_channels || 0)))
+  const graphSyncPercent = Math.min(100, Math.max(0, Number(lnd?.graph_sync?.progress_percent || 0)))
+  const graphSyncVisible = Boolean(lnd && !lnd.synced_to_graph && graphSyncTotal > 0)
+  const graphSyncPercentLabel = graphSyncPercent.toLocaleString(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })
 
   const copyToClipboard = async (value: string) => {
     if (!value) return
@@ -160,8 +165,31 @@ export default function CoreHealthGrid({
                   <p className="text-xs uppercase tracking-wide text-fog/45">{t('dashboard.synced')}</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <StatusBadge label={t('dashboard.chain')} tone={lnd.synced_to_chain ? 'ok' : 'warn'} />
-                    <StatusBadge label={t('dashboard.graph')} tone={lnd.synced_to_graph ? 'ok' : 'warn'} />
+                    <StatusBadge
+                      label={graphSyncVisible ? `${t('dashboard.graph')} ${graphSyncPercentLabel}%` : t('dashboard.graph')}
+                      tone={lnd.synced_to_graph ? 'ok' : 'warn'}
+                    />
                   </div>
+                  {graphSyncVisible && (
+                    <div className="mt-4">
+                      <div className="flex items-center justify-between gap-3 text-xs">
+                        <span className="text-fog/55">{t('dashboard.graphSyncProgress')}</span>
+                        <span className="font-medium text-amber-200">~{graphSyncPercentLabel}%</span>
+                      </div>
+                      <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/8">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-amber-500 to-brass transition-[width] duration-700"
+                          style={{ width: `${graphSyncPercent}%` }}
+                        />
+                      </div>
+                      <p className="mt-2 text-[11px] leading-4 text-fog/45">
+                        {t('dashboard.graphChannelsProgress', {
+                          known: formatSats(locale, graphSyncKnown),
+                          total: formatSats(locale, graphSyncTotal),
+                        })}
+                      </p>
+                    </div>
+                  )}
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
                   <p className="text-xs uppercase tracking-wide text-fog/45">{t('dashboard.connectedPeersLabel')}</p>

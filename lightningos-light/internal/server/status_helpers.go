@@ -65,7 +65,8 @@ func (s *Server) postgresStatus(ctx context.Context) postgresResponse {
 
 func (s *Server) lndStatus(ctx context.Context, force bool) (lndStatusResponse, error) {
 	resp := lndStatusResponse{}
-	resp.ServiceActive = system.SystemctlIsActive(ctx, "lnd")
+	service := activeLNDService(ctx)
+	resp.ServiceActive = service != ""
 	if s == nil || s.lnd == nil {
 		return resp, errors.New("lnd client unavailable")
 	}
@@ -106,6 +107,7 @@ func (s *Server) lndStatus(ctx context.Context, force bool) (lndStatusResponse, 
 	resp.Channels.Inactive = status.ChannelsInactive
 	resp.Balances.OnchainSat = status.OnchainSat
 	resp.Balances.LightningSat = status.LightningSat
+	resp.GraphSync = s.graphSyncProgress(service, resp.SyncedToGraph)
 
 	return resp, err
 }

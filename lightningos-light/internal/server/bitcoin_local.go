@@ -32,6 +32,7 @@ const (
 	bitcoinCadenceTimeout            = 8 * time.Second
 	bitcoinCadenceMinBudget          = 3 * time.Second
 	bitcoinCLIRPCWaitTimeoutSec      = 10
+	bitcoinCLIRPCClientTimeoutSec    = 8
 )
 
 type bitcoinLocalStatus struct {
@@ -88,6 +89,13 @@ type bitcoinCLINetworkInfo struct {
 	Version     int    `json:"version"`
 	Subversion  string `json:"subversion"`
 	Connections int    `json:"connections"`
+}
+
+type bitcoinLogTip struct {
+	Hash     string
+	Height   int64
+	Time     int64
+	Progress float64
 }
 
 type blockCadenceBucket struct {
@@ -173,9 +181,13 @@ func (s *Server) bitcoinLocalStatus(ctx context.Context) (bitcoinLocalStatus, er
 		return resp, nil
 	}
 
+	logTip, logTipOK := fetchBitcoinLocalLogTip(ctx, paths)
 	chainInfo, err := fetchBitcoinLocalChainInfoBest(ctx, paths)
 	if err != nil {
 		resp.RPCOk = false
+		if logTipOK {
+			applyBitcoinLogTipToLocalStatus(&resp, logTip)
+		}
 		return resp, nil
 	}
 
@@ -705,9 +717,79 @@ func bitcoinCLIExecArgs(containerID string, args ...string) []string {
 		"bitcoin-cli",
 		"-datadir=" + bitcoinCoreDataDirInContainer,
 		"-conf=" + bitcoinCoreConfigPathInContainer,
+		fmt.Sprintf("-rpcclienttimeout=%d", bitcoinCLIRPCClientTimeoutSec),
 		"-rpcwait",
 		fmt.Sprintf("-rpcwaittimeout=%d", bitcoinCLIRPCWaitTimeoutSec),
 	}, args...)
+}
+
+func fetchBitcoinLocalLogTip(ctx context.Context, paths bitcoinCorePaths) (bitcoinLogTip, bool) {
+	containerID, err := composeContainerID(ctx, paths.Root, paths.ComposePath, "bitcoind")
+	if err != nil || containerID == "" {
+		return bitcoinLogTip{}, false
+	}
+	out, err := system.RunCommandWithSudo(ctx, "docker", "logs", "--tail", "500", containerID)
+	if err != nil {
+		return bitcoinLogTip{}, false
+	}
+	return parseBitcoinLogTip(out)
+}
+
+func parseBitcoinLogTip(raw string) (bitcoinLogTip, bool) {
+	var latest bitcoinLogTip
+	found := false
+	for _, line := range strings.Split(raw, "\n") {
+		if !strings.Contains(line, "UpdateTip: new best=") {
+			continue
+		}
+		hash, hashOK := bitcoinLogValue(line, "new best=", " ")
+		heightRaw, heightOK := bitcoinLogValue(line, "height=", " ")
+		dateRaw, dateOK := bitcoinLogValue(line, "date='", "'")
+		progressRaw, progressOK := bitcoinLogValue(line, "progress=", " ")
+		if !hashOK || !heightOK || !dateOK || !progressOK {
+			continue
+		}
+		height, heightErr := strconv.ParseInt(heightRaw, 10, 64)
+		progress, progressErr := strconv.ParseFloat(progressRaw, 64)
+		blockTime, timeErr := time.Parse(time.RFC3339, dateRaw)
+		if heightErr != nil || progressErr != nil || timeErr != nil || height < 0 || progress < 0 || progress > 1 {
+			continue
+		}
+		latest = bitcoinLogTip{
+			Hash:     hash,
+			Height:   height,
+			Time:     blockTime.Unix(),
+			Progress: progress,
+		}
+		found = true
+	}
+	return latest, found
+}
+
+func bitcoinLogValue(line string, prefix string, terminator string) (string, bool) {
+	start := strings.Index(line, prefix)
+	if start < 0 {
+		return "", false
+	}
+	value := line[start+len(prefix):]
+	end := strings.Index(value, terminator)
+	if end < 0 {
+		return "", false
+	}
+	value = strings.TrimSpace(value[:end])
+	return value, value != ""
+}
+
+func applyBitcoinLogTipToLocalStatus(status *bitcoinLocalStatus, tip bitcoinLogTip) {
+	if status == nil {
+		return
+	}
+	status.Chain = "main"
+	status.Blocks = tip.Height
+	status.BestBlockHash = tip.Hash
+	status.BestBlockTime = tip.Time
+	status.VerificationProgress = tip.Progress
+	status.InitialBlockDownload = tip.Progress < 0.999999
 }
 
 func applyBitcoinInfoToLocalStatus(status *bitcoinLocalStatus, info bitcoinInfo) {

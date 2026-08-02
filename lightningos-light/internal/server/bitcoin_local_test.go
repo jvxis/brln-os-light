@@ -96,12 +96,54 @@ func TestBitcoinCLIExecArgsUseContainerDataDir(t *testing.T) {
 		"bitcoin-container",
 		"-datadir=" + bitcoinCoreDataDirInContainer,
 		"-conf=" + bitcoinCoreConfigPathInContainer,
+		"-rpcclienttimeout=8",
 		"getblockchaininfo",
 	}
 	for _, want := range wants {
 		if !stringInSlice(want, args) {
 			t.Fatalf("expected bitcoin-cli arguments to contain %q, got %#v", want, args)
 		}
+	}
+}
+
+func TestParseBitcoinLogTipUsesLatestValidUpdate(t *testing.T) {
+	raw := `2026-08-02T15:41:53Z UpdateTip: new best=00000000000000000001aaaa height=939713 version=0x1 date='2026-03-07T12:36:32Z' progress=0.950235 cache=3.8MiB
+malformed UpdateTip: new best=broken height=nope date='bad' progress=two
+2026-08-02T15:42:14Z UpdateTip: new best=00000000000000000002bbbb height=939714 version=0x2 date='2026-03-07T12:41:24Z' progress=0.950236 cache=4.8MiB`
+
+	tip, ok := parseBitcoinLogTip(raw)
+	if !ok {
+		t.Fatalf("expected a valid UpdateTip entry")
+	}
+	if tip.Hash != "00000000000000000002bbbb" || tip.Height != 939714 || tip.Progress != 0.950236 {
+		t.Fatalf("unexpected parsed tip: %+v", tip)
+	}
+	wantTime, err := time.Parse(time.RFC3339, "2026-03-07T12:41:24Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tip.Time != wantTime.Unix() {
+		t.Fatalf("tip time = %d, want %d", tip.Time, wantTime.Unix())
+	}
+}
+
+func TestApplyBitcoinLogTipKeepsRPCUnavailable(t *testing.T) {
+	status := bitcoinLocalStatus{RPCOk: false}
+	applyBitcoinLogTipToLocalStatus(&status, bitcoinLogTip{
+		Hash:     "0000fallback",
+		Height:   939714,
+		Time:     1_772_887_284,
+		Progress: 0.950236,
+	})
+
+	if status.RPCOk {
+		t.Fatalf("log fallback must not report RPC as available")
+	}
+	if status.Blocks != 939714 || status.Headers != 0 || status.BestBlockHash != "0000fallback" {
+		t.Fatalf("unexpected fallback status: %+v", status)
+	}
+	if !status.InitialBlockDownload || status.VerificationProgress != 0.950236 {
+		t.Fatalf("expected fallback sync progress, got %+v", status)
 	}
 }
 

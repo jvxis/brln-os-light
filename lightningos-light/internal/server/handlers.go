@@ -4425,9 +4425,15 @@ type bitcoinInfo struct {
 }
 
 type bitcoinNetworkInfo struct {
-	Version     int    `json:"version"`
-	Subversion  string `json:"subversion"`
-	Connections int    `json:"connections"`
+	Version        int                          `json:"version"`
+	Subversion     string                       `json:"subversion"`
+	Connections    int                          `json:"connections"`
+	LocalAddresses []bitcoinNetworkLocalAddress `json:"localaddresses"`
+}
+
+type bitcoinNetworkLocalAddress struct {
+	Address string `json:"address"`
+	Port    int    `json:"port"`
 }
 
 type bitcoinRPCResponse struct {

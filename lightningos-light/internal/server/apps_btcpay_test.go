@@ -3,8 +3,11 @@ package server
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestBtcpayDefinition(t *testing.T) {
@@ -18,7 +21,13 @@ func TestBtcpayDefinition(t *testing.T) {
 }
 
 func TestBuildBtcpayRemoteWiring(t *testing.T) {
-	wiring, err := buildBtcpayRemoteWiring("bitcoin.br-ln.com:8085", "user", "pass")
+	onion := strings.Repeat("a", 56) + ".onion"
+	wiring, err := buildBtcpayRemoteWiring(
+		"bitcoin.br-ln.com:8085",
+		"user",
+		"pass",
+		[]bitcoinNetworkLocalAddress{{Address: onion, Port: 8333}},
+	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -28,11 +37,14 @@ func TestBuildBtcpayRemoteWiring(t *testing.T) {
 	if wiring.RPCURL != "http://bitcoin.br-ln.com:8085/" {
 		t.Fatalf("unexpected rpc url: %s", wiring.RPCURL)
 	}
-	if wiring.NodeEndpoint != "bitcoin.br-ln.com:8333" {
+	if wiring.NodeEndpoint != onion+":8333" {
 		t.Fatalf("unexpected node endpoint: %s", wiring.NodeEndpoint)
 	}
-	if wiring.ProbeP2P != "bitcoin.br-ln.com:8333" {
-		t.Fatalf("unexpected p2p probe: %s", wiring.ProbeP2P)
+	if wiring.ProbeP2P != "" {
+		t.Fatalf("onion P2P must not be probed without Tor: %s", wiring.ProbeP2P)
+	}
+	if !wiring.UseTorProxy {
+		t.Fatal("remote onion wiring must enable the Tor proxy")
 	}
 	if wiring.JoinBitcoinNetwork {
 		t.Fatal("remote wiring must not join the bitcoincore network")
@@ -40,21 +52,39 @@ func TestBuildBtcpayRemoteWiring(t *testing.T) {
 }
 
 func TestBuildBtcpayRemoteWiringHTTPS(t *testing.T) {
-	wiring, err := buildBtcpayRemoteWiring("https://bitcoin.example.com:8332", "user", "pass")
+	wiring, err := buildBtcpayRemoteWiring("https://bitcoin.example.com:8332", "user", "pass", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if wiring.RPCURL != "https://bitcoin.example.com:8332/" {
 		t.Fatalf("expected https scheme preserved, got: %s", wiring.RPCURL)
 	}
+	if wiring.NodeEndpoint != "bitcoin.example.com:8333" || wiring.ProbeP2P != "bitcoin.example.com:8333" {
+		t.Fatalf("expected clearnet P2P fallback, got node=%s probe=%s", wiring.NodeEndpoint, wiring.ProbeP2P)
+	}
+	if wiring.UseTorProxy {
+		t.Fatal("clearnet fallback must not enable Tor")
+	}
 }
 
 func TestBuildBtcpayRemoteWiringMissingCredentials(t *testing.T) {
-	if _, err := buildBtcpayRemoteWiring("bitcoin.br-ln.com:8085", "", ""); err == nil {
+	if _, err := buildBtcpayRemoteWiring("bitcoin.br-ln.com:8085", "", "", nil); err == nil {
 		t.Fatal("expected error for missing credentials")
 	}
-	if _, err := buildBtcpayRemoteWiring("", "user", "pass"); err == nil {
+	if _, err := buildBtcpayRemoteWiring("", "user", "pass", nil); err == nil {
 		t.Fatal("expected error for missing host")
+	}
+}
+
+func TestSelectBtcpayOnionEndpointRejectsInvalidAddresses(t *testing.T) {
+	addresses := []bitcoinNetworkLocalAddress{
+		{Address: "short.onion", Port: 8333},
+		{Address: strings.Repeat("a", 56) + ".onion", Port: 0},
+		{Address: strings.Repeat("1", 56) + ".onion", Port: 8333},
+		{Address: "203.0.113.10", Port: 8333},
+	}
+	if endpoint, ok := selectBtcpayOnionEndpoint(addresses); ok {
+		t.Fatalf("invalid onion address selected: %s", endpoint)
 	}
 }
 
@@ -105,17 +135,22 @@ func TestBtcpayMacaroonPermissions(t *testing.T) {
 
 func TestBtcpayComposeContentsRemoteSource(t *testing.T) {
 	paths := btcpayAppPaths()
-	wiring := btcpayBitcoinWiring{Source: "remote"}
+	wiring := btcpayBitcoinWiring{Source: "remote", UseTorProxy: true}
 	compose := btcpayComposeContents(paths, wiring)
+	assertValidBtcpayComposeYAML(t, compose)
 
 	for _, required := range []string{
 		btcpayImage,
 		btcpayNbxplorerImage,
 		btcpayPostgresImage,
+		btcpayTorImage,
 		"NBXPLORER_NETWORK: mainnet",
 		"NBXPLORER_CHAINS: btc",
 		"NBXPLORER_BTCRPCURL: ${NBXPLORER_BTCRPCURL}",
 		"NBXPLORER_BTCNODEENDPOINT: ${NBXPLORER_BTCNODEENDPOINT}",
+		"NBXPLORER_SOCKSENDPOINT: ${NBXPLORER_SOCKSENDPOINT}",
+		"container_name: btcpay-tor",
+		"- tor",
 		"BTCPAY_NETWORK: mainnet",
 		"BTCPAY_CHAINS: btc",
 		"BTCPAY_BTCEXPLORERURL: http://nbxplorer:32838/",
@@ -139,12 +174,16 @@ func TestBtcpayComposeContentsRemoteSource(t *testing.T) {
 	if strings.Contains(compose, "ZMQ") || strings.Contains(compose, "zmqpub") {
 		t.Fatal("BTCPay stack must not require ZMQ")
 	}
+	if strings.Contains(compose, "9050:9050") {
+		t.Fatal("the BTCPay Tor SOCKS port must remain internal")
+	}
 }
 
 func TestBtcpayComposeContentsAppSource(t *testing.T) {
 	paths := btcpayAppPaths()
 	wiring := btcpayBitcoinWiring{Source: "app", JoinBitcoinNetwork: true}
 	compose := btcpayComposeContents(paths, wiring)
+	assertValidBtcpayComposeYAML(t, compose)
 
 	for _, required := range []string{
 		"bitcoincore_default",
@@ -154,6 +193,41 @@ func TestBtcpayComposeContentsAppSource(t *testing.T) {
 		if !strings.Contains(compose, required) {
 			t.Fatalf("app-source compose missing %q", required)
 		}
+	}
+	if strings.Contains(compose, "btcpay-tor") || strings.Contains(compose, "NBXPLORER_SOCKSENDPOINT") {
+		t.Fatal("local Bitcoin source must not start the BTCPay Tor proxy")
+	}
+}
+
+func assertValidBtcpayComposeYAML(t *testing.T, compose string) {
+	t.Helper()
+	var parsed map[string]any
+	if err := yaml.Unmarshal([]byte(compose), &parsed); err != nil {
+		t.Fatalf("invalid generated compose YAML: %v\n%s", err, compose)
+	}
+	if _, ok := parsed["services"]; !ok {
+		t.Fatal("generated compose YAML has no services section")
+	}
+}
+
+func TestEnsureBtcpayEnvIncludesTorSocksEndpoint(t *testing.T) {
+	paths := btcpayPaths{EnvPath: t.TempDir() + "/.env"}
+	wiring := btcpayBitcoinWiring{
+		RPCURL:       "http://bitcoin.example:8085/",
+		RPCUser:      "user",
+		RPCPass:      "pass",
+		NodeEndpoint: strings.Repeat("a", 56) + ".onion:8333",
+		UseTorProxy:  true,
+	}
+	if err := ensureBtcpayEnv(paths, wiring, "db-pass"); err != nil {
+		t.Fatalf("ensure env: %v", err)
+	}
+	raw, err := os.ReadFile(paths.EnvPath)
+	if err != nil {
+		t.Fatalf("read env: %v", err)
+	}
+	if !strings.Contains(string(raw), "NBXPLORER_SOCKSENDPOINT="+btcpayTorSOCKSEndpoint) {
+		t.Fatalf("Tor SOCKS endpoint missing from env: %s", raw)
 	}
 }
 

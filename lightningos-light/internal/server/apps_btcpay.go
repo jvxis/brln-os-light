@@ -5,8 +5,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,13 +22,15 @@ import (
 // ships its own bitcoind + LND. This compose reuses the node's existing
 // Bitcoin source and the native LND over REST (see docs/19_BACKLOG.md §14).
 const (
-	btcpayAppID           = "btcpay"
-	btcpayImage           = "btcpayserver/btcpayserver:2.4.0"
-	btcpayNbxplorerImage  = "nicolasdorier/nbxplorer:2.6.8"
-	btcpayPostgresImage   = "postgres:16"
-	btcpayPort            = 23000
-	btcpayNbxplorerPort   = 32838
-	btcpayLndTLSWaitSteps = 15
+	btcpayAppID            = "btcpay"
+	btcpayImage            = "btcpayserver/btcpayserver:2.4.0"
+	btcpayNbxplorerImage   = "nicolasdorier/nbxplorer:2.6.8"
+	btcpayPostgresImage    = "postgres:16"
+	btcpayTorImage         = robosatsTorImage
+	btcpayPort             = 23000
+	btcpayNbxplorerPort    = 32838
+	btcpayLndTLSWaitSteps  = 15
+	btcpayTorSOCKSEndpoint = "tor:9050"
 )
 
 type btcpayPaths struct {
@@ -55,6 +59,7 @@ type btcpayBitcoinWiring struct {
 	ProbeRPCHost       string
 	ProbeP2P           string
 	JoinBitcoinNetwork bool
+	UseTorProxy        bool
 }
 
 type btcpayApp struct {
@@ -175,6 +180,11 @@ func (s *Server) applyBtcpay(ctx context.Context) error {
 	if err := ensureDockerImage(ctx, btcpayPostgresImage); err != nil {
 		return err
 	}
+	if wiring.UseTorProxy {
+		if err := ensureDockerImage(ctx, btcpayTorImage); err != nil {
+			return err
+		}
+	}
 
 	dbPassword, err := ensureBtcpayDbPassword(paths)
 	if err != nil {
@@ -232,7 +242,7 @@ func (s *Server) resolveBtcpayBitcoinWiring(ctx context.Context) (btcpayBitcoinW
 		if source == "local" {
 			wiring, err = s.resolveBtcpayLocalWiring(ctx)
 		} else {
-			wiring, err = s.resolveBtcpayRemoteWiring()
+			wiring, err = s.resolveBtcpayRemoteWiring(ctx)
 		}
 		if err == nil {
 			return wiring, nil
@@ -285,15 +295,19 @@ func (s *Server) resolveBtcpayLocalWiring(ctx context.Context) (btcpayBitcoinWir
 	}, nil
 }
 
-func (s *Server) resolveBtcpayRemoteWiring() (btcpayBitcoinWiring, error) {
+func (s *Server) resolveBtcpayRemoteWiring(ctx context.Context) (btcpayBitcoinWiring, error) {
 	if s.cfg == nil {
 		return btcpayBitcoinWiring{}, errors.New("config unavailable")
 	}
 	user, pass := readBitcoinSecrets()
-	return buildBtcpayRemoteWiring(s.cfg.BitcoinRemote.RPCHost, user, pass)
+	networkInfo, err := fetchBitcoinNetworkInfo(ctx, s.cfg.BitcoinRemote.RPCHost, user, pass)
+	if err != nil {
+		return btcpayBitcoinWiring{}, fmt.Errorf("failed to discover the remote Bitcoin P2P endpoint: %w", err)
+	}
+	return buildBtcpayRemoteWiring(s.cfg.BitcoinRemote.RPCHost, user, pass, networkInfo.LocalAddresses)
 }
 
-func buildBtcpayRemoteWiring(rpcHost, user, pass string) (btcpayBitcoinWiring, error) {
+func buildBtcpayRemoteWiring(rpcHost, user, pass string, localAddresses []bitcoinNetworkLocalAddress) (btcpayBitcoinWiring, error) {
 	raw := strings.TrimSpace(rpcHost)
 	if raw == "" {
 		return btcpayBitcoinWiring{}, errors.New("bitcoin remote RPC host missing")
@@ -306,15 +320,42 @@ func buildBtcpayRemoteWiring(rpcHost, user, pass string) (btcpayBitcoinWiring, e
 		scheme = "https"
 	}
 	host, port := parseMainchainRPC(raw)
-	return btcpayBitcoinWiring{
+	wiring := btcpayBitcoinWiring{
 		Source:       "remote",
 		RPCURL:       fmt.Sprintf("%s://%s:%d/", scheme, host, port),
 		RPCUser:      user,
 		RPCPass:      pass,
-		NodeEndpoint: fmt.Sprintf("%s:8333", host),
 		ProbeRPCHost: raw,
-		ProbeP2P:     fmt.Sprintf("%s:8333", host),
-	}, nil
+	}
+	if onionEndpoint, ok := selectBtcpayOnionEndpoint(localAddresses); ok {
+		wiring.NodeEndpoint = onionEndpoint
+		wiring.UseTorProxy = true
+		return wiring, nil
+	}
+	wiring.NodeEndpoint = net.JoinHostPort(host, "8333")
+	wiring.ProbeP2P = wiring.NodeEndpoint
+	return wiring, nil
+}
+
+func selectBtcpayOnionEndpoint(localAddresses []bitcoinNetworkLocalAddress) (string, bool) {
+	for _, candidate := range localAddresses {
+		host := strings.ToLower(strings.TrimSpace(candidate.Address))
+		label := strings.TrimSuffix(host, ".onion")
+		if label == host || len(label) != 56 || candidate.Port < 1 || candidate.Port > 65535 {
+			continue
+		}
+		valid := true
+		for _, char := range label {
+			if (char < 'a' || char > 'z') && (char < '2' || char > '7') {
+				valid = false
+				break
+			}
+		}
+		if valid {
+			return net.JoinHostPort(host, strconv.Itoa(candidate.Port)), true
+		}
+	}
+	return "", false
 }
 
 // probeBtcpayBitcoin verifies the wiring is actually usable before touching
@@ -324,7 +365,7 @@ func probeBtcpayBitcoin(ctx context.Context, wiring btcpayBitcoinWiring) error {
 	if _, err := fetchBitcoinInfo(ctx, wiring.ProbeRPCHost, wiring.RPCUser, wiring.RPCPass); err != nil {
 		return fmt.Errorf("bitcoin RPC check failed (%s source, %s): %w", wiring.Source, wiring.ProbeRPCHost, err)
 	}
-	if wiring.ProbeP2P != "" && !testTCP(wiring.ProbeP2P) {
+	if !wiring.UseTorProxy && wiring.ProbeP2P != "" && !testTCP(wiring.ProbeP2P) {
 		return fmt.Errorf("bitcoin P2P port unreachable (%s source, %s): NBXplorer needs the node's P2P port to follow the chain", wiring.Source, wiring.ProbeP2P)
 	}
 	return nil
@@ -443,6 +484,9 @@ func ensureBtcpayEnv(paths btcpayPaths, wiring btcpayBitcoinWiring, dbPassword s
 		{"NBXPLORER_BTCRPCPASSWORD", wiring.RPCPass},
 		{"NBXPLORER_BTCNODEENDPOINT", wiring.NodeEndpoint},
 	}
+	if wiring.UseTorProxy {
+		required = append(required, [2]string{"NBXPLORER_SOCKSENDPOINT", btcpayTorSOCKSEndpoint})
+	}
 	if !fileExists(paths.EnvPath) {
 		lines := make([]string, 0, len(required)+1)
 		for _, kv := range required {
@@ -543,14 +587,36 @@ func btcpayLightningConnectionString() string {
 // btcpayComposeContents builds the compose file. NBXplorer and postgres are
 // expose-only (never published on the host); only the BTCPay UI port is
 // published. When the bitcoin source is the Bitcoin Core app, nbxplorer joins
-// that app's external network to reach bitcoind:8332/8333 directly.
+// that app's external network to reach bitcoind:8332/8333 directly. Remote
+// Onion nodes get an isolated Tor service on the internal compose network.
 func btcpayComposeContents(paths btcpayPaths, wiring btcpayBitcoinWiring) string {
 	nbxNetworks := ""
+	torService := ""
+	torDependency := ""
+	torEnvironment := ""
+	torVolumes := ""
 	networksBlock := fmt.Sprintf(`
 networks:
   default:
     name: %s_default
 `, btcpayAppID)
+	if wiring.UseTorProxy {
+		torService = fmt.Sprintf(`  tor:
+    image: %s
+    container_name: btcpay-tor
+    restart: unless-stopped
+    volumes:
+      - btcpay-tor-data:/var/lib/tor
+      - btcpay-tor-log:/var/log/tor
+
+`, btcpayTorImage)
+		torDependency = "      - tor\n"
+		torEnvironment = "      NBXPLORER_SOCKSENDPOINT: ${NBXPLORER_SOCKSENDPOINT}\n"
+		torVolumes = `volumes:
+  btcpay-tor-data:
+  btcpay-tor-log:
+`
+	}
 	if wiring.JoinBitcoinNetwork {
 		nbxNetworks = `    networks:
       - default
@@ -566,6 +632,7 @@ networks:
 `, btcpayAppID)
 	}
 	return fmt.Sprintf(`services:
+%[14]s
   btcpay-db:
     image: %[1]s
     container_name: btcpay-db
@@ -586,7 +653,7 @@ networks:
     restart: unless-stopped
     depends_on:
       - btcpay-db
-    environment:
+%[15]s    environment:
       NBXPLORER_NETWORK: mainnet
       NBXPLORER_CHAINS: btc
       NBXPLORER_BIND: 0.0.0.0:%[5]d
@@ -596,7 +663,7 @@ networks:
       NBXPLORER_BTCRPCUSER: ${NBXPLORER_BTCRPCUSER}
       NBXPLORER_BTCRPCPASSWORD: ${NBXPLORER_BTCRPCPASSWORD}
       NBXPLORER_BTCNODEENDPOINT: ${NBXPLORER_BTCNODEENDPOINT}
-      NBXPLORER_POSTGRES: User ID=btcpay;Password=${BTCPAY_DB_PASSWORD};Host=btcpay-db;Port=5432;Application Name=nbxplorer;MaxPoolSize=20;Database=nbxplorer
+%[16]s      NBXPLORER_POSTGRES: User ID=btcpay;Password=${BTCPAY_DB_PASSWORD};Host=btcpay-db;Port=5432;Application Name=nbxplorer;MaxPoolSize=20;Database=nbxplorer
     expose:
       - "%[5]d"
     extra_hosts:
@@ -628,7 +695,7 @@ networks:
       - %[11]s:/datadir
       - %[6]s:/root/.nbxplorer:ro
       - %[12]s:/etc/lnd:ro
-%[13]s`,
+%[17]s%[13]s`,
 		btcpayPostgresImage,
 		paths.PgDir,
 		paths.DbInitPath,
@@ -642,6 +709,10 @@ networks:
 		paths.DataDir,
 		paths.LndDir,
 		networksBlock,
+		torService,
+		torDependency,
+		torEnvironment,
+		torVolumes,
 	)
 }
 

@@ -3902,6 +3902,7 @@
     "peerAddressRequired": "Peer address required.",
     "peerConnectFailed": "Peer connection failed.",
     "peerConnected": "Peer connected.",
+    "peerAlreadyConnected": "Peer is already connected.",
     "peerDisconnected": "Peer disconnected.",
     "peers": "Peers",
     "pendingChannels": "Pending channels",

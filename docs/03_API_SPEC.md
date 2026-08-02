@@ -297,6 +297,7 @@ Body:
   "address": "pubkey@host:port",
   "perm": true
 }
+- Returns `{ "ok": true, "already_connected": false }`. Connecting an already-connected peer is idempotent and returns `already_connected: true` instead of an error.
 
 POST /api/lnops/peer/disconnect
 Body:

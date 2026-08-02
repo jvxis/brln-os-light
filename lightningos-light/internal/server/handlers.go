@@ -2200,12 +2200,19 @@ func (s *Server) handleLNConnectPeer(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), lndConnectTimeout)
 	defer cancel()
 
+	alreadyConnected := false
 	if err := s.lnd.ConnectPeerWithTimeout(ctx, pubkey, host, perm, uint64(lndConnectTimeout/time.Second)); err != nil {
-		writeError(w, http.StatusInternalServerError, peerConnectErrorMessage(err))
-		return
+		if !isAlreadyConnected(err) {
+			writeError(w, http.StatusInternalServerError, peerConnectErrorMessage(err))
+			return
+		}
+		alreadyConnected = true
 	}
 
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]bool{
+		"ok":                true,
+		"already_connected": alreadyConnected,
+	})
 }
 
 func (s *Server) handleLNDisconnectPeer(w http.ResponseWriter, r *http.Request) {

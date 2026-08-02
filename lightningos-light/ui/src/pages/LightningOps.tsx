@@ -4686,8 +4686,12 @@ export default function LightningOps() {
   const handleConnectPeer = async () => {
     setPeerStatus(t('lightningOps.connectingPeer'))
     try {
-      await connectPeer({ address: peerAddress, perm: !peerTemporary })
-      setPeerStatus(t('lightningOps.peerConnected'))
+      const result: any = await connectPeer({ address: peerAddress, perm: !peerTemporary })
+      setPeerStatus(
+        result?.already_connected
+          ? t('lightningOps.peerAlreadyConnected')
+          : t('lightningOps.peerConnected')
+      )
       setPeerAddress('')
       setPeerTemporary(false)
       load()
@@ -8671,7 +8675,7 @@ export default function LightningOps() {
             </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <div id={ADD_PEER_TOOL_SECTION_ID} className="section-card space-y-4">
+        <div id={ADD_PEER_TOOL_SECTION_ID} className="section-card min-w-0 space-y-4">
           <h3 className="text-lg font-semibold">{t('lightningOps.addPeer')}</h3>
           <input
             className="input-field"
@@ -8698,11 +8702,11 @@ export default function LightningOps() {
               {boostRunning ? t('lightningOps.boosting') : t('lightningOps.boostPeers')}
             </button>
           </div>
-          {peerStatus && <p className="text-sm text-brass">{peerStatus}</p>}
-          {boostStatus && <p className="text-sm text-brass">{boostStatus}</p>}
+          {peerStatus && <p className="whitespace-pre-wrap text-sm text-brass [overflow-wrap:anywhere]">{peerStatus}</p>}
+          {boostStatus && <p className="whitespace-pre-wrap text-sm text-brass [overflow-wrap:anywhere]">{boostStatus}</p>}
         </div>
 
-        <div id={OPEN_CHANNEL_SECTION_ID} className="section-card space-y-4">
+        <div id={OPEN_CHANNEL_SECTION_ID} className="section-card min-w-0 space-y-4">
           <h3 className="text-lg font-semibold">{t('lightningOps.openChannel')}</h3>
           <input
             ref={openPeerInputRef}

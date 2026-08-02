@@ -12,6 +12,8 @@ type BitcoinLocalStatus = {
   initial_block_download?: boolean
 }
 
+const LND_ALIAS_MAX_BYTES = 32
+
 export default function LndConfig() {
   const { t } = useTranslation()
   const [config, setConfig] = useState<any>(null)
@@ -39,6 +41,8 @@ export default function LndConfig() {
   const [upgradeRcConfirm, setUpgradeRcConfirm] = useState(false)
   const [upgradeStartedVersion, setUpgradeStartedVersion] = useState('')
   const [upgradeLogSince, setUpgradeLogSince] = useState('')
+  const aliasByteLength = useMemo(() => new TextEncoder().encode(alias).length, [alias])
+  const aliasTooLong = aliasByteLength > LND_ALIAS_MAX_BYTES
 
   const findLastMatchIndex = (lines: string[], pattern: string) => {
     for (let i = lines.length - 1; i >= 0; i -= 1) {
@@ -309,6 +313,10 @@ export default function LndConfig() {
   }
 
   const handleSave = async () => {
+    if (aliasTooLong) {
+      setStatus(t('lndConfig.aliasTooLong', { count: aliasByteLength, max: LND_ALIAS_MAX_BYTES }))
+      return
+    }
     if (!isHexColor(color)) {
       setStatus(t('lndConfig.colorInvalid'))
       return
@@ -323,8 +331,8 @@ export default function LndConfig() {
         apply_now: true
       })
       setStatus(t('lndConfig.savedApplied'))
-    } catch {
-      setStatus(t('lndConfig.saveFailed'))
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : t('lndConfig.saveFailed'))
     }
   }
 
@@ -406,8 +414,20 @@ export default function LndConfig() {
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="space-y-2">
             <label className="text-sm text-fog/70">{t('lndConfig.alias')}</label>
-            <input className="input-field" placeholder={t('lndConfig.nodeName')} value={alias} onChange={(e) => setAlias(e.target.value)} />
-            <p className="text-xs text-fog/50">{t('lndConfig.aliasHint')}</p>
+            <input
+              className="input-field"
+              placeholder={t('lndConfig.nodeName')}
+              value={alias}
+              maxLength={LND_ALIAS_MAX_BYTES}
+              aria-invalid={aliasTooLong}
+              onChange={(e) => setAlias(e.target.value)}
+            />
+            <div className="flex items-center justify-between gap-3 text-xs">
+              <p className="text-fog/50">{t('lndConfig.aliasHint')}</p>
+              <span className={aliasTooLong ? 'text-rose-300' : 'text-fog/50'}>
+                {t('lndConfig.aliasByteCount', { count: aliasByteLength, max: LND_ALIAS_MAX_BYTES })}
+              </span>
+            </div>
           </div>
           <div className="space-y-2">
             <label className="text-sm text-fog/70">{t('lndConfig.nodeColor')}</label>

@@ -3295,7 +3295,7 @@ func (s *Server) handleLNDConfigPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(req.Alias) > 32 {
-		writeError(w, http.StatusBadRequest, "alias too long")
+		writeError(w, http.StatusBadRequest, "alias must be at most 32 bytes")
 		return
 	}
 	if strings.TrimSpace(req.Color) != "" && !isHexColor(req.Color) {

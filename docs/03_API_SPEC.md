@@ -116,7 +116,10 @@ GET /api/lnd/status
 - LND state, sync, channels, balances.
 
 GET /api/lnd/config
-- Supported settings, current values, and raw lnd.conf.
+- Supported settings, current values, detected network mode, and raw lnd.conf.
+- `current.network_mode` is `private`, `hybrid`, or `custom`.
+- `private` routes clearnet and onion peers through Tor with stream isolation.
+- `hybrid` routes onion peers through Tor and connects to clearnet peers directly.
 
 POST /api/lnd/config
 Body:
@@ -125,8 +128,13 @@ Body:
   "color": "#ff9900",
   "min_channel_size_sat": 20000,
   "max_channel_size_sat": 5000000,
+  "network_mode": "private"|"hybrid",
+  "graph_sync_peers": 5,
+  "disconnect_unresponsive_peers": true,
   "apply_now": true
 }
+- All configuration fields except `apply_now` are optional, so basic and network settings can be updated independently.
+- Rejects incompatible Tor settings, including stream isolation combined with direct clearnet proxy bypass.
 
 POST /api/lnd/config/raw
 Body:

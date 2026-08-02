@@ -1508,16 +1508,25 @@ func (s *Server) handleLNDConfigGet(w http.ResponseWriter, r *http.Request) {
 
 	resp := map[string]any{
 		"supported": map[string]bool{
-			"alias":                true,
-			"color":                true,
-			"min_channel_size_sat": true,
-			"max_channel_size_sat": true,
+			"alias":                         true,
+			"color":                         true,
+			"min_channel_size_sat":          true,
+			"max_channel_size_sat":          true,
+			"network_mode":                  true,
+			"graph_sync_peers":              true,
+			"disconnect_unresponsive_peers": true,
 		},
 		"current": map[string]any{
-			"alias":                current.Alias,
-			"color":                current.Color,
-			"min_channel_size_sat": current.MinChanSize,
-			"max_channel_size_sat": current.MaxChanSize,
+			"alias":                               current.Alias,
+			"color":                               current.Color,
+			"min_channel_size_sat":                current.MinChanSize,
+			"max_channel_size_sat":                current.MaxChanSize,
+			"network_mode":                        current.networkMode(),
+			"graph_sync_peers":                    current.GraphSyncPeers,
+			"disconnect_unresponsive_peers":       !current.NoDisconnectOnPongFailure,
+			"tor_active":                          current.TorActive,
+			"tor_skip_proxy_for_clearnet_targets": current.TorSkipProxyForClearnet,
+			"tor_stream_isolation":                current.TorStreamIsolation,
 		},
 		"raw_user_conf": string(raw),
 	}
@@ -3232,14 +3241,21 @@ func chatSendErrorCode(detail string) string {
 }
 
 type lndUserConf struct {
-	Alias       string
-	Color       string
-	MinChanSize int64
-	MaxChanSize int64
+	Alias                     string
+	Color                     string
+	MinChanSize               int64
+	MaxChanSize               int64
+	GraphSyncPeers            int
+	NoDisconnectOnPongFailure bool
+	TorActive                 bool
+	TorSkipProxyForClearnet   bool
+	TorStreamIsolation        bool
 }
 
 func parseLNDUserConf(raw string) lndUserConf {
-	conf := lndUserConf{}
+	// These are LND's effective defaults when an option is absent. Keeping the
+	// defaults here makes older installations readable without rewriting them.
+	conf := lndUserConf{GraphSyncPeers: 3}
 	section := ""
 	for _, line := range strings.Split(raw, "\n") {
 		line = strings.TrimSpace(line)
@@ -3247,59 +3263,97 @@ func parseLNDUserConf(raw string) lndUserConf {
 			continue
 		}
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-			section = strings.Trim(line, "[]")
-			continue
-		}
-		if section != "Application Options" {
+			section = strings.ToLower(strings.TrimSpace(strings.Trim(line, "[]")))
 			continue
 		}
 		parts := strings.SplitN(line, "=", 2)
 		if len(parts) != 2 {
 			continue
 		}
-		key := strings.TrimSpace(parts[0])
+		key := strings.ToLower(strings.TrimSpace(parts[0]))
 		value := strings.TrimSpace(parts[1])
-		switch key {
-		case "alias":
-			conf.Alias = value
-		case "color":
-			conf.Color = value
-		case "minchansize":
-			conf.MinChanSize, _ = strconv.ParseInt(value, 10, 64)
-		case "maxchansize":
-			conf.MaxChanSize, _ = strconv.ParseInt(value, 10, 64)
+		switch section {
+		case "application options":
+			switch key {
+			case "alias":
+				conf.Alias = value
+			case "color":
+				conf.Color = value
+			case "minchansize":
+				conf.MinChanSize, _ = strconv.ParseInt(value, 10, 64)
+			case "maxchansize":
+				conf.MaxChanSize, _ = strconv.ParseInt(value, 10, 64)
+			case "numgraphsyncpeers":
+				conf.GraphSyncPeers, _ = strconv.Atoi(value)
+			case "no-disconnect-on-pong-failure":
+				conf.NoDisconnectOnPongFailure, _ = strconv.ParseBool(value)
+			}
+		case "tor":
+			switch key {
+			case "tor.active", "active":
+				conf.TorActive, _ = strconv.ParseBool(value)
+			case "tor.skip-proxy-for-clearnet-targets", "skip-proxy-for-clearnet-targets":
+				conf.TorSkipProxyForClearnet, _ = strconv.ParseBool(value)
+			case "tor.streamisolation", "streamisolation":
+				conf.TorStreamIsolation, _ = strconv.ParseBool(value)
+			}
 		}
 	}
 	return conf
 }
 
+func (c lndUserConf) networkMode() string {
+	if c.TorActive && !c.TorSkipProxyForClearnet && c.TorStreamIsolation {
+		return "private"
+	}
+	if c.TorActive && c.TorSkipProxyForClearnet && !c.TorStreamIsolation {
+		return "hybrid"
+	}
+	return "custom"
+}
+
+func validateLNDNetworkCombination(raw string) error {
+	conf := parseLNDUserConf(raw)
+	if conf.TorSkipProxyForClearnet && conf.TorStreamIsolation {
+		return errors.New("Tor stream isolation must be disabled when clearnet targets skip the Tor proxy")
+	}
+	return nil
+}
+
 func (s *Server) handleLNDConfigPost(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Alias             string `json:"alias"`
-		Color             string `json:"color"`
-		MinChannelSizeSat int64  `json:"min_channel_size_sat"`
-		MaxChannelSizeSat int64  `json:"max_channel_size_sat"`
-		ApplyNow          bool   `json:"apply_now"`
+		Alias                       *string `json:"alias"`
+		Color                       *string `json:"color"`
+		MinChannelSizeSat           *int64  `json:"min_channel_size_sat"`
+		MaxChannelSizeSat           *int64  `json:"max_channel_size_sat"`
+		NetworkMode                 *string `json:"network_mode"`
+		GraphSyncPeers              *int    `json:"graph_sync_peers"`
+		DisconnectUnresponsivePeers *bool   `json:"disconnect_unresponsive_peers"`
+		ApplyNow                    bool    `json:"apply_now"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
 
-	if req.MinChannelSizeSat < 0 || req.MaxChannelSizeSat < 0 {
+	if req.MinChannelSizeSat != nil && *req.MinChannelSizeSat < 0 || req.MaxChannelSizeSat != nil && *req.MaxChannelSizeSat < 0 {
 		writeError(w, http.StatusBadRequest, "channel sizes must be positive")
 		return
 	}
-	if req.MinChannelSizeSat > 0 && req.MaxChannelSizeSat > 0 && req.MinChannelSizeSat >= req.MaxChannelSizeSat {
-		writeError(w, http.StatusBadRequest, "min channel must be lower than max")
-		return
-	}
-	if len(req.Alias) > 32 {
+	if req.Alias != nil && len(*req.Alias) > 32 {
 		writeError(w, http.StatusBadRequest, "alias must be at most 32 bytes")
 		return
 	}
-	if strings.TrimSpace(req.Color) != "" && !isHexColor(req.Color) {
+	if req.Color != nil && strings.TrimSpace(*req.Color) != "" && !isHexColor(*req.Color) {
 		writeError(w, http.StatusBadRequest, "color must be hex (#RRGGBB)")
+		return
+	}
+	if req.NetworkMode != nil && *req.NetworkMode != "private" && *req.NetworkMode != "hybrid" {
+		writeError(w, http.StatusBadRequest, "network mode must be private or hybrid")
+		return
+	}
+	if req.GraphSyncPeers != nil && (*req.GraphSyncPeers < 1 || *req.GraphSyncPeers > 100) {
+		writeError(w, http.StatusBadRequest, "graph sync peers must be between 1 and 100")
 		return
 	}
 
@@ -3308,7 +3362,37 @@ func (s *Server) handleLNDConfigPost(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to read lnd.conf")
 		return
 	}
-	updated := updateLNDConfOptions(string(raw), req.Alias, req.Color, req.MinChannelSizeSat, req.MaxChannelSizeSat)
+	current := parseLNDUserConf(string(raw))
+	alias := current.Alias
+	color := current.Color
+	minChanSize := current.MinChanSize
+	maxChanSize := current.MaxChanSize
+	if req.Alias != nil {
+		alias = *req.Alias
+	}
+	if req.Color != nil {
+		color = *req.Color
+	}
+	if req.MinChannelSizeSat != nil {
+		minChanSize = *req.MinChannelSizeSat
+	}
+	if req.MaxChannelSizeSat != nil {
+		maxChanSize = *req.MaxChannelSizeSat
+	}
+	if minChanSize > 0 && maxChanSize > 0 && minChanSize >= maxChanSize {
+		writeError(w, http.StatusBadRequest, "min channel must be lower than max")
+		return
+	}
+
+	updated := string(raw)
+	if req.Alias != nil || req.Color != nil || req.MinChannelSizeSat != nil || req.MaxChannelSizeSat != nil {
+		updated = updateLNDConfOptions(updated, alias, color, minChanSize, maxChanSize)
+	}
+	updated = updateLNDNetworkOptions(updated, req.NetworkMode, req.GraphSyncPeers, req.DisconnectUnresponsivePeers)
+	if err := validateLNDNetworkCombination(updated); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if walletPasswordAvailable() {
 		updated = ensureUnlockLines(updated)
 	}
@@ -3343,6 +3427,10 @@ func (s *Server) handleLNDConfigRaw(w http.ResponseWriter, r *http.Request) {
 	if walletPasswordAvailable() {
 		updated = ensureUnlockLines(updated)
 	}
+	if err := validateLNDNetworkCombination(updated); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err := os.WriteFile(lndConfPath, []byte(updated), 0660); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to write lnd.conf")
 		return
@@ -3375,6 +3463,120 @@ type lndOptionUpdate struct {
 	value  string
 	remove bool
 	seen   bool
+}
+
+type lndSectionOption struct {
+	key   string
+	value string
+}
+
+func updateLNDNetworkOptions(raw string, mode *string, graphSyncPeers *int, disconnectUnresponsivePeers *bool) string {
+	updated := raw
+	applicationOptions := make([]lndSectionOption, 0, 2)
+	if graphSyncPeers != nil {
+		applicationOptions = append(applicationOptions, lndSectionOption{
+			key:   "numgraphsyncpeers",
+			value: strconv.Itoa(*graphSyncPeers),
+		})
+	}
+	if disconnectUnresponsivePeers != nil {
+		applicationOptions = append(applicationOptions, lndSectionOption{
+			key:   "no-disconnect-on-pong-failure",
+			value: strconv.FormatBool(!*disconnectUnresponsivePeers),
+		})
+	}
+	if len(applicationOptions) > 0 {
+		updated = updateLNDSectionOptions(updated, "Application Options", applicationOptions)
+	}
+
+	if mode != nil {
+		torOptions := []lndSectionOption{{key: "tor.active", value: "true"}}
+		switch *mode {
+		case "private":
+			torOptions = append(torOptions,
+				lndSectionOption{key: "tor.skip-proxy-for-clearnet-targets", value: "false"},
+				lndSectionOption{key: "tor.streamisolation", value: "true"},
+			)
+		case "hybrid":
+			torOptions = append(torOptions,
+				lndSectionOption{key: "tor.skip-proxy-for-clearnet-targets", value: "true"},
+				lndSectionOption{key: "tor.streamisolation", value: "false"},
+			)
+		}
+		updated = updateLNDSectionOptions(updated, "tor", torOptions)
+	}
+
+	return updated
+}
+
+func updateLNDSectionOptions(raw string, sectionName string, options []lndSectionOption) string {
+	if len(options) == 0 {
+		return raw
+	}
+
+	lines := strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n")
+	start := -1
+	end := len(lines)
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "[") || !strings.HasSuffix(trimmed, "]") {
+			continue
+		}
+		name := strings.TrimSpace(strings.Trim(trimmed, "[]"))
+		if strings.EqualFold(name, sectionName) {
+			start = i
+			continue
+		}
+		if start != -1 && i > start {
+			end = i
+			break
+		}
+	}
+
+	if start == -1 {
+		if len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) != "" {
+			lines = append(lines, "")
+		}
+		lines = append(lines, "["+sectionName+"]")
+		start = len(lines) - 1
+		end = len(lines)
+	}
+
+	seen := make(map[string]bool, len(options))
+	values := make(map[string]string, len(options))
+	for _, option := range options {
+		values[strings.ToLower(option.key)] = option.value
+	}
+	for i := start + 1; i < end; i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+			continue
+		}
+		parts := strings.SplitN(trimmed, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(parts[0]))
+		value, ok := values[key]
+		if !ok {
+			continue
+		}
+		lines[i] = fmt.Sprintf("%s=%s", strings.TrimSpace(parts[0]), value)
+		seen[key] = true
+	}
+
+	extra := make([]string, 0, len(options))
+	for _, option := range options {
+		if seen[strings.ToLower(option.key)] {
+			continue
+		}
+		extra = append(extra, fmt.Sprintf("%s=%s", option.key, option.value))
+	}
+	if len(extra) > 0 {
+		lines = append(lines[:end], append(extra, lines[end:]...)...)
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 func updateLNDConfOptions(raw string, alias string, color string, minChanSize int64, maxChanSize int64) string {

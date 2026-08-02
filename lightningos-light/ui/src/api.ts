@@ -219,10 +219,13 @@ export const getLogs = (service: string, lines: number, since?: string) =>
   request(`/api/logs${buildQuery({ service, lines, since })}`)
 
 export const updateLndConfig = (payload: {
-  alias: string
-  color: string
-  min_channel_size_sat: number
-  max_channel_size_sat: number
+  alias?: string
+  color?: string
+  min_channel_size_sat?: number
+  max_channel_size_sat?: number
+  network_mode?: 'private' | 'hybrid'
+  graph_sync_peers?: number
+  disconnect_unresponsive_peers?: boolean
   apply_now: boolean
 }) => request('/api/lnd/config', { method: 'POST', body: JSON.stringify(payload) })
 

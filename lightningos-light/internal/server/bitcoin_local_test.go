@@ -90,6 +90,21 @@ func TestApplyBitcoinCLIChainInfoToLocalStatusKeepsBasicFieldsWithoutNetwork(t *
 	}
 }
 
+func TestBitcoinCLIExecArgsUseContainerDataDir(t *testing.T) {
+	args := bitcoinCLIExecArgs("bitcoin-container", "getblockchaininfo")
+	wants := []string{
+		"bitcoin-container",
+		"-datadir=" + bitcoinCoreDataDirInContainer,
+		"-conf=" + bitcoinCoreConfigPathInContainer,
+		"getblockchaininfo",
+	}
+	for _, want := range wants {
+		if !stringInSlice(want, args) {
+			t.Fatalf("expected bitcoin-cli arguments to contain %q, got %#v", want, args)
+		}
+	}
+}
+
 func TestApplyBitcoinLocalStatusToStatusIncludesCadence(t *testing.T) {
 	status := bitcoinStatus{
 		Mode:    "local",

@@ -22,7 +22,8 @@ import (
 
 const (
 	bitcoinCoreMinPruneMiB           = 550
-	bitcoinCoreConfigPathInContainer = "/home/bitcoin/.bitcoin/bitcoin.conf"
+	bitcoinCoreDataDirInContainer    = "/home/bitcoin/.bitcoin"
+	bitcoinCoreConfigPathInContainer = bitcoinCoreDataDirInContainer + "/bitcoin.conf"
 	blockCadenceWindowSec            = 600
 	blockCadenceBucketCount          = 12
 	blockCadenceCacheTTL             = 60 * time.Second
@@ -690,18 +691,23 @@ func execBitcoinCLI(ctx context.Context, paths bitcoinCorePaths, args ...string)
 	if containerID == "" {
 		return "", errors.New("bitcoind container not running")
 	}
-	cliArgs := append([]string{
-		"exec", "-i", containerID,
-		"bitcoin-cli",
-		"-conf=" + bitcoinCoreConfigPathInContainer,
-		"-rpcwait",
-		fmt.Sprintf("-rpcwaittimeout=%d", bitcoinCLIRPCWaitTimeoutSec),
-	}, args...)
+	cliArgs := bitcoinCLIExecArgs(containerID, args...)
 	out, err := system.RunCommandWithSudo(ctx, "docker", cliArgs...)
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(out), nil
+}
+
+func bitcoinCLIExecArgs(containerID string, args ...string) []string {
+	return append([]string{
+		"exec", "-i", containerID,
+		"bitcoin-cli",
+		"-datadir=" + bitcoinCoreDataDirInContainer,
+		"-conf=" + bitcoinCoreConfigPathInContainer,
+		"-rpcwait",
+		fmt.Sprintf("-rpcwaittimeout=%d", bitcoinCLIRPCWaitTimeoutSec),
+	}, args...)
 }
 
 func applyBitcoinInfoToLocalStatus(status *bitcoinLocalStatus, info bitcoinInfo) {

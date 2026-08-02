@@ -1,6 +1,9 @@
 package server
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestParseLNDGraphProgress(t *testing.T) {
 	lines := []string{
@@ -83,5 +86,42 @@ func TestParseLNDGraphProgressComplete(t *testing.T) {
 func TestParseLNDGraphProgressWithoutMarkers(t *testing.T) {
 	if progress, ok := parseLNDGraphProgress([]string{"unrelated log"}); ok || progress != nil {
 		t.Fatalf("expected no progress, got %+v", progress)
+	}
+}
+
+func TestApplyGraphProgressRate(t *testing.T) {
+	now := time.Now()
+	progress := &lndGraphSyncProgress{
+		KnownChannels:     4500,
+		TotalChannels:     39000,
+		RemainingChannels: 34500,
+	}
+	samples := []lndGraphProgressSample{
+		{CheckedAt: now.Add(-10 * time.Minute), KnownChannels: 4000},
+		{CheckedAt: now, KnownChannels: 4500},
+	}
+
+	applyGraphProgressRate(progress, samples)
+
+	if progress.ChannelsPerHour != 3000 {
+		t.Fatalf("expected 3000 channels/hour, got %.0f", progress.ChannelsPerHour)
+	}
+	if progress.ETASeconds != 41400 {
+		t.Fatalf("expected 41400 seconds ETA, got %d", progress.ETASeconds)
+	}
+}
+
+func TestApplyGraphProgressRateNeedsStableSample(t *testing.T) {
+	now := time.Now()
+	progress := &lndGraphSyncProgress{RemainingChannels: 1000}
+	samples := []lndGraphProgressSample{
+		{CheckedAt: now.Add(-time.Minute), KnownChannels: 100},
+		{CheckedAt: now, KnownChannels: 200},
+	}
+
+	applyGraphProgressRate(progress, samples)
+
+	if progress.ChannelsPerHour != 0 || progress.ETASeconds != 0 {
+		t.Fatalf("expected no rate from short sample, got %+v", progress)
 	}
 }

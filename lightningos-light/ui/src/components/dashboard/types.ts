@@ -109,6 +109,8 @@ export type LndStatus = {
     known_channels?: number
     total_channels?: number
     remaining_channels?: number
+    channels_per_hour?: number
+    eta_seconds?: number
     approximate?: boolean
   }
   channels?: {

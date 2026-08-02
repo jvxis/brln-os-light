@@ -16,6 +16,8 @@ const (
 	lndGraphProgressCacheTTL = 30 * time.Second
 	lndGraphProgressTimeout  = 2 * time.Second
 	lndGraphProgressLogLimit = 1000
+	lndGraphRateWindow       = 15 * time.Minute
+	lndGraphRateMinSample    = 2 * time.Minute
 )
 
 var (
@@ -35,7 +37,14 @@ type lndGraphSyncProgress struct {
 	KnownChannels     int64   `json:"known_channels,omitempty"`
 	TotalChannels     int64   `json:"total_channels,omitempty"`
 	RemainingChannels int64   `json:"remaining_channels,omitempty"`
+	ChannelsPerHour   float64 `json:"channels_per_hour,omitempty"`
+	ETASeconds        int64   `json:"eta_seconds,omitempty"`
 	Approximate       bool    `json:"approximate"`
+}
+
+type lndGraphProgressSample struct {
+	CheckedAt     time.Time
+	KnownChannels int64
 }
 
 type lndGraphProgressCache struct {
@@ -43,6 +52,7 @@ type lndGraphProgressCache struct {
 	Invocation string
 	CheckedAt  time.Time
 	Progress   *lndGraphSyncProgress
+	Samples    []lndGraphProgressSample
 }
 
 func activeLNDService(ctx context.Context) string {
@@ -134,12 +144,64 @@ func (s *Server) refreshLNDGraphProgress(service string) {
 		progress = cloneLNDGraphProgress(cache.Progress)
 	}
 
+	samples := []lndGraphProgressSample(nil)
+	if ok {
+		if cache.Service == service && cache.Invocation == invocation {
+			samples = cache.Samples
+		}
+		samples = graphProgressSamples(samples, progress.KnownChannels, now)
+		applyGraphProgressRate(progress, samples)
+	}
+
 	s.lndGraphProgressCache = lndGraphProgressCache{
 		Service:    service,
 		Invocation: invocation,
 		CheckedAt:  now,
 		Progress:   progress,
+		Samples:    samples,
 	}
+}
+
+func graphProgressSamples(samples []lndGraphProgressSample, known int64, now time.Time) []lndGraphProgressSample {
+	cutoff := now.Add(-lndGraphRateWindow)
+	kept := make([]lndGraphProgressSample, 0, len(samples)+1)
+	for _, sample := range samples {
+		if !sample.CheckedAt.Before(cutoff) && sample.KnownChannels <= known {
+			kept = append(kept, sample)
+		}
+	}
+	kept = append(kept, lndGraphProgressSample{
+		CheckedAt:     now,
+		KnownChannels: known,
+	})
+	return kept
+}
+
+func applyGraphProgressRate(progress *lndGraphSyncProgress, samples []lndGraphProgressSample) {
+	if progress == nil {
+		return
+	}
+	progress.ChannelsPerHour = 0
+	progress.ETASeconds = 0
+	if progress.RemainingChannels <= 0 || len(samples) < 2 {
+		return
+	}
+	first := samples[0]
+	last := samples[len(samples)-1]
+	elapsed := last.CheckedAt.Sub(first.CheckedAt)
+	delta := last.KnownChannels - first.KnownChannels
+	if elapsed < lndGraphRateMinSample || delta <= 0 {
+		return
+	}
+
+	rate := float64(delta) / elapsed.Hours()
+	progress.ChannelsPerHour = math.Round(rate)
+	if progress.ChannelsPerHour <= 0 {
+		return
+	}
+	progress.ETASeconds = int64(math.Ceil(
+		float64(progress.RemainingChannels) / progress.ChannelsPerHour * 3600,
+	))
 }
 
 func lndServiceInvocation(ctx context.Context, service string) (string, error) {

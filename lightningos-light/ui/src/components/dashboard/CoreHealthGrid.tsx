@@ -35,6 +35,15 @@ const toneFromSmartStatus = (value?: string) => {
   return 'danger' as const
 }
 
+const formatGraphEta = (locale: string, seconds: number) => {
+  const hours = Math.max(1, Math.ceil(seconds / 3600))
+  if (hours < 24) {
+    return new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(hours) + 'h'
+  }
+  const days = Math.ceil(hours / 24)
+  return new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(days) + 'd'
+}
+
 export default function CoreHealthGrid({
   lnd,
   lndPeers,
@@ -129,6 +138,8 @@ export default function CoreHealthGrid({
   const graphSyncTotal = Math.max(0, Number(lnd?.graph_sync?.total_channels || 0))
   const graphSyncKnown = Math.min(graphSyncTotal, Math.max(0, Number(lnd?.graph_sync?.known_channels || 0)))
   const graphSyncPercent = Math.min(100, Math.max(0, Number(lnd?.graph_sync?.progress_percent || 0)))
+  const graphSyncRate = Math.max(0, Number(lnd?.graph_sync?.channels_per_hour || 0))
+  const graphSyncEtaSeconds = Math.max(0, Number(lnd?.graph_sync?.eta_seconds || 0))
   const graphSyncVisible = Boolean(lnd && !lnd.synced_to_graph && graphSyncTotal > 0)
   const graphSyncPercentLabel = graphSyncPercent.toLocaleString(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })
 
@@ -188,6 +199,18 @@ export default function CoreHealthGrid({
                           total: formatSats(locale, graphSyncTotal),
                         })}
                       </p>
+                      {graphSyncRate > 0 && graphSyncEtaSeconds > 0 ? (
+                        <p className="mt-1 text-[11px] leading-4 text-fog/55">
+                          {t('dashboard.graphSyncRateEta', {
+                            rate: formatSats(locale, Math.round(graphSyncRate)),
+                            eta: formatGraphEta(locale, graphSyncEtaSeconds),
+                          })}
+                        </p>
+                      ) : (
+                        <p className="mt-1 text-[11px] leading-4 text-fog/40">
+                          {t('dashboard.graphSyncRateCalculating')}
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>

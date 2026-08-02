@@ -28,9 +28,10 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
   const [minChan, setMinChan] = useState('')
   const [maxChan, setMaxChan] = useState('')
   const [networkMode, setNetworkMode] = useState<LndNetworkMode>('custom')
-  const [graphSyncPeers, setGraphSyncPeers] = useState('5')
+  const [graphSyncPeers, setGraphSyncPeers] = useState('3')
   const [disconnectUnresponsivePeers, setDisconnectUnresponsivePeers] = useState(true)
   const [syncedToGraph, setSyncedToGraph] = useState<boolean | null>(null)
+  const [graphSyncProgress, setGraphSyncProgress] = useState<number | null>(null)
   const [networkBusy, setNetworkBusy] = useState(false)
   const [raw, setRaw] = useState('')
   const [advanced, setAdvanced] = useState(false)
@@ -96,7 +97,7 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
       const nextMode = data.current.network_mode
       setNetworkMode(nextMode === 'private' || nextMode === 'hybrid' ? nextMode : 'custom')
       const nextGraphSyncPeers = Number(data.current.graph_sync_peers || 0)
-      setGraphSyncPeers(nextGraphSyncPeers > 0 ? nextGraphSyncPeers.toString() : '5')
+      setGraphSyncPeers(nextGraphSyncPeers > 0 ? nextGraphSyncPeers.toString() : '3')
       setDisconnectUnresponsivePeers(data.current.disconnect_unresponsive_peers !== false)
       setRaw(data.raw_user_conf || '')
     }).catch(() => null)
@@ -119,9 +120,14 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
               ? data.synced_to_graph
               : null
           )
+          const progress = Number(data?.graph_sync?.progress_percent)
+          setGraphSyncProgress(Number.isFinite(progress) ? Math.min(100, Math.max(0, progress)) : null)
         })
         .catch(() => {
-          if (mounted) setSyncedToGraph(null)
+          if (mounted) {
+            setSyncedToGraph(null)
+            setGraphSyncProgress(null)
+          }
         })
     }
     loadGraphStatus()
@@ -425,6 +431,13 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
     }
   }
 
+  const handleSelectSafeBootstrap = () => {
+    setNetworkMode('hybrid')
+    setGraphSyncPeers('1')
+    setDisconnectUnresponsivePeers(true)
+    setStatus(t('lndConfig.safeBootstrapSelected'))
+  }
+
   const handleToggleSource = async () => {
     if (externalBitcoinDetected || sourceBusy || localToggleBlocked) return
     const next = bitcoinSource === 'remote' ? 'local' : 'remote'
@@ -502,10 +515,25 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
             {syncedToGraph === true
               ? t('lndConfig.graphSynced')
               : syncedToGraph === false
-                ? t('lndConfig.graphSyncing')
+                ? graphSyncProgress !== null
+                  ? t('lndConfig.graphSyncingProgress', { progress: graphSyncProgress.toFixed(1) })
+                  : t('lndConfig.graphSyncing')
                 : t('lndConfig.graphUnknown')}
           </span>
         </div>
+
+        {syncedToGraph === false && (
+          <div className="flex flex-col gap-4 rounded-2xl border border-cyan-400/25 bg-cyan-500/5 p-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-sm font-medium text-cyan-100">{t('lndConfig.safeBootstrapTitle')}</p>
+              <p className="mt-1 text-xs leading-5 text-cyan-100/65">{t('lndConfig.safeBootstrapDescription')}</p>
+              <p className="mt-1 text-[11px] leading-4 text-fog/45">{t('lndConfig.safeBootstrapValidation')}</p>
+            </div>
+            <button className="btn-secondary shrink-0" type="button" onClick={handleSelectSafeBootstrap}>
+              {t('lndConfig.selectSafeBootstrap')}
+            </button>
+          </div>
+        )}
 
         <div className="grid gap-4 lg:grid-cols-2" role="radiogroup" aria-label={t('lndConfig.networkPrivacy')}>
           <button

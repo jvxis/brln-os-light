@@ -114,8 +114,9 @@ GET /api/mempool/fees
 
 GET /api/lnd/status
 - LND state, sync, channels, balances.
-- While the graph is syncing, `graph_sync` may include a lightweight journal-derived estimate with `progress_percent`, `known_channels`, `total_channels`, `remaining_channels`, and `approximate`.
+- While the graph is syncing, `graph_sync` may include a lightweight journal-derived estimate with `progress_percent`, `known_channels`, `total_channels`, `remaining_channels`, `channels_per_hour`, `eta_seconds`, and `approximate`.
 - The graph estimate is cached and does not call `DescribeGraph` or walk the LND database.
+- Rate and ETA appear after at least two minutes of progress samples and use a rolling 15-minute window.
 
 GET /api/lnd/config
 - Supported settings, current values, detected network mode, and raw lnd.conf.
@@ -131,7 +132,7 @@ Body:
   "min_channel_size_sat": 20000,
   "max_channel_size_sat": 5000000,
   "network_mode": "private"|"hybrid",
-  "graph_sync_peers": 5,
+  "graph_sync_peers": 1,
   "disconnect_unresponsive_peers": true,
   "apply_now": true
 }

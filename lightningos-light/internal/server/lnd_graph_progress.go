@@ -55,6 +55,29 @@ func activeLNDService(ctx context.Context) string {
 	return ""
 }
 
+func (s *Server) startLNDGraphProgressWarmup() {
+	if s == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(s.shutdownContext(), lndGraphProgressTimeout)
+		service := activeLNDService(ctx)
+		cancel()
+		if service == "" {
+			return
+		}
+
+		s.lndGraphProgressMu.Lock()
+		if s.lndGraphProgressRefreshing {
+			s.lndGraphProgressMu.Unlock()
+			return
+		}
+		s.lndGraphProgressRefreshing = true
+		s.lndGraphProgressMu.Unlock()
+		s.refreshLNDGraphProgress(service)
+	}()
+}
+
 func (s *Server) graphSyncProgress(service string, synced bool) *lndGraphSyncProgress {
 	if synced {
 		return &lndGraphSyncProgress{ProgressPercent: 100}

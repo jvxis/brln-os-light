@@ -182,6 +182,7 @@ func (s *Server) Run() error {
 	defer stopSignals()
 
 	s.startSystemIntegrationReconciler()
+	s.startLNDGraphProgressWarmup()
 	s.startAppUpgradeChecker()
 	s.startPublicPoolRuntimeReconciler()
 	s.initNotifications()

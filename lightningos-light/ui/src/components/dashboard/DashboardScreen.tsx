@@ -308,14 +308,13 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
   useEffect(() => {
     let mounted = true
     const load = async () => {
-      const [systemRes, diskRes, bitcoinRes, postgresRes, lndRes, lndPeersRes, lndChannelsRes] = await Promise.allSettled([
+      const [systemRes, diskRes, bitcoinRes, postgresRes, lndRes, lndPeersRes] = await Promise.allSettled([
         getSystem(),
         getDisk(),
         getBitcoinActive(),
         getPostgres(),
         getLndStatus(),
         getLnPeers(),
-        getLnChannels(),
       ])
       if (!mounted) return
 
@@ -337,17 +336,29 @@ export default function DashboardScreen({ authState }: DashboardScreenProps) {
         fulfilled += 1
       }
       if (lndRes.status === 'fulfilled') {
-        setLnd((lndRes.value ?? null) as LndStatus | null)
+        const nextLnd = (lndRes.value ?? null) as LndStatus | null
+        setLnd(nextLnd)
         fulfilled += 1
+
+        const channelCount = Math.max(0, Number(nextLnd?.channels?.active || 0))
+          + Math.max(0, Number(nextLnd?.channels?.inactive || 0))
+          + Math.max(0, Number(nextLnd?.channels?.pending || 0))
+        if (channelCount > 0) {
+          try {
+            const channelsPayload = await getLnChannels() as { channels?: LndChannel[] } | null
+            if (mounted) {
+              setLndChannels(Array.isArray(channelsPayload?.channels) ? channelsPayload.channels : [])
+            }
+          } catch {
+            // Preserve the last good channel detail snapshot while LND is busy.
+          }
+        } else {
+          setLndChannels([])
+        }
       }
       if (lndPeersRes.status === 'fulfilled') {
         const peersPayload = lndPeersRes.value as { peers?: LndPeer[] } | null
         setLndPeers(Array.isArray(peersPayload?.peers) ? peersPayload.peers : [])
-        fulfilled += 1
-      }
-      if (lndChannelsRes.status === 'fulfilled') {
-        const channelsPayload = lndChannelsRes.value as { channels?: LndChannel[] } | null
-        setLndChannels(Array.isArray(channelsPayload?.channels) ? channelsPayload.channels : [])
         fulfilled += 1
       }
       setCoreStatus(fulfilled > 0 ? 'ok' : 'unavailable')

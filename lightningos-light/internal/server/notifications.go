@@ -34,6 +34,7 @@ const (
 	paymentsPollPageSize              = 200
 	forwardsPollInterval              = 30 * time.Second
 	pendingChannelsPollInterval       = 30 * time.Second
+	notificationIdlePollInterval      = 5 * time.Minute
 	waitingCloseRecoveryRetryInterval = 5 * time.Minute
 	paymentsPendingMaxAge             = 48 * time.Hour
 	telegramActivityMirrorQueueSize   = 256
@@ -1561,10 +1562,21 @@ func (n *Notifier) runPayments() {
 	}
 
 	for {
+		pollInterval := paymentsPollInterval
+		idle := false
+		if len(pending) == 0 && n != nil && n.lnd != nil {
+			idle = lndRuntimeHasNoChannels(n.lnd.CachedRuntimeInfo())
+			if idle {
+				pollInterval = notificationIdlePollInterval
+			}
+		}
 		select {
 		case <-n.stop:
 			return
-		case <-time.After(paymentsPollInterval):
+		case <-time.After(pollInterval):
+		}
+		if idle && len(pending) == 0 && lndRuntimeHasNoChannels(n.lnd.CachedRuntimeInfo()) {
+			continue
 		}
 
 		// Self-healing sweep: any rebalance/keysend/lightning notification
@@ -1895,10 +1907,18 @@ func (n *Notifier) runChannels() {
 
 func (n *Notifier) runPendingChannels() {
 	for {
+		pollInterval := pendingChannelsPollInterval
+		idle := n != nil && n.lnd != nil && lndRuntimeHasNoChannels(n.lnd.CachedRuntimeInfo())
+		if idle {
+			pollInterval = notificationIdlePollInterval
+		}
 		select {
 		case <-n.stop:
 			return
-		case <-time.After(pendingChannelsPollInterval):
+		case <-time.After(pollInterval):
+		}
+		if idle && lndRuntimeHasNoChannels(n.lnd.CachedRuntimeInfo()) {
+			continue
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
@@ -2270,10 +2290,25 @@ func (n *Notifier) runForwards() {
 		strings.EqualFold(strings.TrimSpace(os.Getenv("NOTIFICATIONS_FORWARDS_BACKFILL")), "true")
 
 	for {
+		pollInterval := forwardsPollInterval
+		idle := false
+		if n != nil && n.lnd != nil {
+			info := n.lnd.CachedRuntimeInfo()
+			idle = info.Known && info.NumActiveChannels < 2 && info.NumPendingChannels == 0
+			if idle {
+				pollInterval = notificationIdlePollInterval
+			}
+		}
 		select {
 		case <-n.stop:
 			return
-		case <-time.After(forwardsPollInterval):
+		case <-time.After(pollInterval):
+		}
+		if idle {
+			info := n.lnd.CachedRuntimeInfo()
+			if info.Known && info.NumActiveChannels < 2 && info.NumPendingChannels == 0 {
+				continue
+			}
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

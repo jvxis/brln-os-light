@@ -220,6 +220,12 @@ func (s *ChannelOpenCandidatesService) refreshIfStaleBackground() {
 	if s == nil || s.db == nil {
 		return
 	}
+	if runtimeProvider, ok := s.lnd.(interface{ CachedRuntimeInfo() lndclient.RuntimeInfo }); ok {
+		info := runtimeProvider.CachedRuntimeInfo()
+		if !info.Known || !info.SyncedToGraph {
+			return
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), channelOpenCandidatesRefreshTimeout)
 	defer cancel()
 	if err := s.RefreshIfStale(ctx, channelOpenCandidatesRefreshMaxAge); err != nil && s.logger != nil {

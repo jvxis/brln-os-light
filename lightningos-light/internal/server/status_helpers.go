@@ -105,6 +105,8 @@ func (s *Server) lndStatus(ctx context.Context, force bool) (lndStatusResponse, 
 	}
 	resp.Channels.Active = status.ChannelsActive
 	resp.Channels.Inactive = status.ChannelsInactive
+	resp.Channels.Pending = status.ChannelsPending
+	resp.Peers.Connected = status.PeersConnected
 	resp.Balances.OnchainSat = status.OnchainSat
 	resp.Balances.LightningSat = status.LightningSat
 	resp.GraphSync = s.graphSyncProgress(service, resp.SyncedToGraph)

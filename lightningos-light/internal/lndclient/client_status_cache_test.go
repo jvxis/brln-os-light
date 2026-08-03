@@ -97,3 +97,52 @@ func TestInvalidateStatusCacheRejectsInflightFetchCompletion(t *testing.T) {
 		t.Fatal("in-flight fetch repopulated an explicitly invalidated cache")
 	}
 }
+
+func TestCachedRuntimeInfoCarriesChannelFootprint(t *testing.T) {
+	now := time.Now()
+	client := &Client{
+		infoCacheValid: true,
+		infoCacheAt:    now,
+		infoCache: infoSnapshot{
+			SyncedToChain:       true,
+			SyncedToGraph:       false,
+			BlockHeight:         900123,
+			NumActiveChannels:   2,
+			NumInactiveChannels: 1,
+			NumPendingChannels:  3,
+			NumPeers:             4,
+		},
+	}
+
+	info := client.CachedRuntimeInfo()
+	if !info.Known || info.Stale {
+		t.Fatalf("unexpected readiness flags: %+v", info)
+	}
+	if info.NumActiveChannels != 2 || info.NumInactiveChannels != 1 ||
+		info.NumPendingChannels != 3 || info.NumPeers != 4 {
+		t.Fatalf("unexpected channel footprint: %+v", info)
+	}
+}
+
+func TestRuntimeInfoFailureUsesBoundedBackoffAndPreservesSnapshot(t *testing.T) {
+	client := &Client{
+		infoCacheValid: true,
+		infoCacheAt:    time.Now(),
+		infoCache:      infoSnapshot{SyncedToChain: true, BlockHeight: 900123},
+	}
+
+	for i := 0; i < 10; i++ {
+		client.recordRuntimeInfoFailure(errors.New("timeout"))
+	}
+	info := client.CachedRuntimeInfo()
+	if !info.Known || !info.Stale || info.BlockHeight != 900123 {
+		t.Fatalf("failed probe should preserve a stale snapshot: %+v", info)
+	}
+
+	client.statusMu.Lock()
+	delay := time.Until(client.infoNextProbe)
+	client.statusMu.Unlock()
+	if delay < runtimeInfoBackoffMax-time.Second || delay > runtimeInfoBackoffMax+time.Second {
+		t.Fatalf("backoff = %s, want approximately %s", delay, runtimeInfoBackoffMax)
+	}
+}

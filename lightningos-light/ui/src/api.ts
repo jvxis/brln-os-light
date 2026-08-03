@@ -1,6 +1,10 @@
 const base = ''
 
 let csrfToken = ''
+let lndStatusInFlight: Promise<any> | null = null
+let lndStatusCached: any = null
+let lndStatusCachedAt = 0
+const lndStatusClientCacheMs = 1500
 
 export class APIError extends Error {
   status: number
@@ -180,8 +184,26 @@ export const testPeerswapElementsSource = (payload?: PeerswapElementsSourcePaylo
   request('/api/apps/peerswap/elements-source/test', { method: 'POST', body: payload ? JSON.stringify(payload) : undefined })
 export const setPeerswapElementsSource = (payload: PeerswapElementsSourcePayload) =>
   request('/api/apps/peerswap/elements-source', { method: 'POST', body: JSON.stringify(payload) })
-export const getLndStatus = (force?: boolean) =>
-  request(`/api/lnd/status${buildQuery({ force: force ? 1 : undefined })}`)
+export const getLndStatus = (force?: boolean) => {
+  if (force) {
+    return request(`/api/lnd/status${buildQuery({ force: 1 })}`)
+  }
+  const now = Date.now()
+  if (lndStatusCached !== null && now - lndStatusCachedAt < lndStatusClientCacheMs) {
+    return Promise.resolve(lndStatusCached)
+  }
+  if (lndStatusInFlight) return lndStatusInFlight
+  lndStatusInFlight = request('/api/lnd/status')
+    .then((value) => {
+      lndStatusCached = value
+      lndStatusCachedAt = Date.now()
+      return value
+    })
+    .finally(() => {
+      lndStatusInFlight = null
+    })
+  return lndStatusInFlight
+}
 export const getLndConfig = () => request('/api/lnd/config')
 export const getLndUpgradeStatus = (force?: boolean) =>
   request(`/api/lnd/upgrade/status${buildQuery({ force: force ? 1 : undefined })}`)

@@ -27,6 +27,7 @@ import (
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
+	"golang.org/x/sync/singleflight"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -61,6 +62,10 @@ type Client struct {
 	infoCache          infoSnapshot
 	infoCacheAt        time.Time
 	infoCacheValid     bool
+	infoNextProbe      time.Time
+	infoProbeFailures  int
+	infoProbeErr       error
+	infoProbeGroup     singleflight.Group
 	walletAddressesMu  sync.Mutex
 	walletAddresses    map[string]struct{}
 	walletAddressesAt  time.Time
@@ -175,6 +180,9 @@ const (
 	statusCacheErr               = 45 * time.Second
 	statusCacheTimeout           = 60 * time.Second
 	statusRefreshTimeout         = 15 * time.Second
+	runtimeInfoSyncingTTL        = 30 * time.Second
+	runtimeInfoReadyTTL          = 60 * time.Second
+	runtimeInfoBackoffMax        = 5 * time.Minute
 	maxGRPCMsgSize               = 32 * 1024 * 1024
 	defaultConnectPeerTimeoutSec = uint64(8)
 	nodeAliasCacheTTL            = 30 * time.Minute
@@ -693,13 +701,38 @@ type UpdateChannelPolicyParams struct {
 }
 
 type infoSnapshot struct {
-	SyncedToChain bool
-	SyncedToGraph bool
-	BlockHeight   int64
-	Version       string
-	Pubkey        string
-	URI           string
-	URIs          []string
+	SyncedToChain       bool
+	SyncedToGraph       bool
+	BlockHeight         int64
+	Version             string
+	Pubkey              string
+	URI                 string
+	URIs                []string
+	NumPendingChannels  int
+	NumActiveChannels   int
+	NumInactiveChannels int
+	NumPeers            int
+}
+
+// RuntimeInfo is the inexpensive, shared readiness view used by background
+// services. It is sourced from GetInfo only; callers that need channel,
+// wallet, or payment details must request those explicitly.
+type RuntimeInfo struct {
+	Known               bool
+	Stale               bool
+	Age                 time.Duration
+	SyncedToChain       bool
+	SyncedToGraph       bool
+	BlockHeight         int64
+	Version             string
+	Pubkey              string
+	URI                 string
+	URIs                []string
+	NumPendingChannels  int
+	NumActiveChannels   int
+	NumInactiveChannels int
+	NumPeers            int
+	LastError           string
 }
 
 type DecodedInvoice struct {
@@ -898,6 +931,9 @@ func (c *Client) refreshStatusCache(fetchSeq uint64) {
 }
 
 func (c *Client) GetStatusFresh(ctx context.Context) (Status, error) {
+	probeCtx, probeCancel := context.WithTimeout(ctx, 5*time.Second)
+	_, _ = c.RuntimeInfo(probeCtx, true)
+	probeCancel()
 	fetchSeq := c.beginStatusFetch()
 	status, err := c.getStatusUncached(ctx)
 	c.storeStatusCache(fetchSeq, status, err)
@@ -911,6 +947,7 @@ func (c *Client) InvalidateStatusCache() {
 	c.statusCached = false
 	c.statusErr = nil
 	c.statusNextFetch = time.Time{}
+	c.infoNextProbe = time.Time{}
 	c.statusMu.Unlock()
 }
 
@@ -956,40 +993,172 @@ func (c *Client) CachedPubkey() string {
 	return cached.Pubkey
 }
 
-func (c *Client) SyncedToGraph(ctx context.Context) (bool, error) {
+// CachedRuntimeInfo returns the latest GetInfo snapshot without performing an
+// RPC. Unknown is returned until the first successful probe.
+func (c *Client) CachedRuntimeInfo() RuntimeInfo {
 	if c == nil {
-		return false, errors.New("lnd client unavailable")
+		return RuntimeInfo{}
+	}
+	c.statusMu.Lock()
+	defer c.statusMu.Unlock()
+	return c.runtimeInfoLocked(time.Now())
+}
+
+// RuntimeInfo returns a shared GetInfo snapshot. Concurrent callers collapse
+// into one request and failures use exponential backoff, preventing every
+// background worker from probing an already busy LND independently.
+func (c *Client) RuntimeInfo(ctx context.Context, force bool) (RuntimeInfo, error) {
+	if c == nil {
+		return RuntimeInfo{}, errors.New("lnd client unavailable")
 	}
 	now := time.Now()
-	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
-	if err != nil {
-		return false, err
-	}
-	defer release()
-
-	client := lnrpc.NewLightningClient(conn)
-	info, err := client.GetInfo(ctx, &lnrpc.GetInfoRequest{})
-	if err != nil {
-		return false, err
-	}
-
-	uris := uniqueStrings(info.Uris)
 	c.statusMu.Lock()
-	c.infoCache = infoSnapshot{
-		SyncedToChain: info.SyncedToChain,
-		SyncedToGraph: info.SyncedToGraph,
-		BlockHeight:   int64(info.BlockHeight),
-		Version:       info.Version,
-		Pubkey:        info.IdentityPubkey,
-		URIs:          append([]string(nil), uris...),
+	cached := c.runtimeInfoLocked(now)
+	nextProbe := c.infoNextProbe
+	probeErr := c.infoProbeErr
+	c.statusMu.Unlock()
+	if !force && !nextProbe.IsZero() && now.Before(nextProbe) {
+		if cached.Known {
+			return cached, nil
+		}
+		if probeErr != nil {
+			return cached, probeErr
+		}
+	}
+
+	value, err, _ := c.infoProbeGroup.Do("getinfo", func() (any, error) {
+		now := time.Now()
+		c.statusMu.Lock()
+		cached := c.runtimeInfoLocked(now)
+		nextProbe := c.infoNextProbe
+		probeErr := c.infoProbeErr
+		c.statusMu.Unlock()
+		if !force && !nextProbe.IsZero() && now.Before(nextProbe) {
+			if cached.Known {
+				return cached, nil
+			}
+			return cached, probeErr
+		}
+
+		conn, release, dialErr := c.borrowConn(ctx, grpcRoleAdminUnary)
+		if dialErr != nil {
+			c.recordRuntimeInfoFailure(dialErr)
+			return c.CachedRuntimeInfo(), dialErr
+		}
+		defer release()
+
+		client := lnrpc.NewLightningClient(conn)
+		info, rpcErr := client.GetInfo(ctx, &lnrpc.GetInfoRequest{})
+		if rpcErr != nil {
+			c.recordRuntimeInfoFailure(rpcErr)
+			return c.CachedRuntimeInfo(), rpcErr
+		}
+		return c.storeRuntimeInfo(info), nil
+	})
+	if value == nil {
+		return c.CachedRuntimeInfo(), err
+	}
+	info, _ := value.(RuntimeInfo)
+	return info, err
+}
+
+func (c *Client) runtimeInfoLocked(now time.Time) RuntimeInfo {
+	if !c.infoCacheValid {
+		info := RuntimeInfo{}
+		if c.infoProbeErr != nil {
+			info.LastError = c.infoProbeErr.Error()
+		}
+		return info
+	}
+	age := now.Sub(c.infoCacheAt)
+	if age < 0 {
+		age = 0
+	}
+	return RuntimeInfo{
+		Known:               true,
+		Stale:               c.infoProbeErr != nil || age > runtimeInfoReadyTTL,
+		Age:                 age,
+		SyncedToChain:       c.infoCache.SyncedToChain,
+		SyncedToGraph:       c.infoCache.SyncedToGraph,
+		BlockHeight:         c.infoCache.BlockHeight,
+		Version:             c.infoCache.Version,
+		Pubkey:              c.infoCache.Pubkey,
+		URI:                 c.infoCache.URI,
+		URIs:                append([]string(nil), c.infoCache.URIs...),
+		NumPendingChannels:  c.infoCache.NumPendingChannels,
+		NumActiveChannels:   c.infoCache.NumActiveChannels,
+		NumInactiveChannels: c.infoCache.NumInactiveChannels,
+		NumPeers:            c.infoCache.NumPeers,
+		LastError:           errorString(c.infoProbeErr),
+	}
+}
+
+func (c *Client) storeRuntimeInfo(info *lnrpc.GetInfoResponse) RuntimeInfo {
+	now := time.Now()
+	uris := uniqueStrings(info.GetUris())
+	snapshot := infoSnapshot{
+		SyncedToChain:       info.GetSyncedToChain(),
+		SyncedToGraph:       info.GetSyncedToGraph(),
+		BlockHeight:         int64(info.GetBlockHeight()),
+		Version:             info.GetVersion(),
+		Pubkey:              info.GetIdentityPubkey(),
+		URIs:                append([]string(nil), uris...),
+		NumPendingChannels:  int(info.GetNumPendingChannels()),
+		NumActiveChannels:   int(info.GetNumActiveChannels()),
+		NumInactiveChannels: int(info.GetNumInactiveChannels()),
+		NumPeers:            int(info.GetNumPeers()),
 	}
 	if len(uris) > 0 {
-		c.infoCache.URI = uris[0]
+		snapshot.URI = uris[0]
 	}
+	ttl := runtimeInfoSyncingTTL
+	if snapshot.SyncedToChain && snapshot.SyncedToGraph {
+		ttl = runtimeInfoReadyTTL
+	}
+	c.statusMu.Lock()
+	c.infoCache = snapshot
 	c.infoCacheAt = now
 	c.infoCacheValid = true
+	c.infoProbeFailures = 0
+	c.infoProbeErr = nil
+	c.infoNextProbe = now.Add(ttl)
+	result := c.runtimeInfoLocked(now)
 	c.statusMu.Unlock()
+	return result
+}
 
+func (c *Client) recordRuntimeInfoFailure(err error) {
+	if err == nil {
+		return
+	}
+	now := time.Now()
+	c.statusMu.Lock()
+	c.infoProbeFailures++
+	failures := c.infoProbeFailures
+	backoff := runtimeInfoSyncingTTL
+	for i := 1; i < failures && backoff < runtimeInfoBackoffMax; i++ {
+		backoff *= 2
+	}
+	if backoff > runtimeInfoBackoffMax {
+		backoff = runtimeInfoBackoffMax
+	}
+	c.infoProbeErr = err
+	c.infoNextProbe = now.Add(backoff)
+	c.statusMu.Unlock()
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func (c *Client) SyncedToGraph(ctx context.Context) (bool, error) {
+	info, err := c.RuntimeInfo(ctx, false)
+	if err != nil && !info.Known {
+		return false, err
+	}
 	return info.SyncedToGraph, nil
 }
 
@@ -1390,107 +1559,69 @@ func (c *Client) GetChannelPolicyByID(ctx context.Context, chanID uint64, remote
 }
 
 func (c *Client) getStatusUncached(ctx context.Context) (Status, error) {
-	now := time.Now()
-	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
-	if err != nil {
-		return Status{WalletState: "unknown"}, err
-	}
-	defer release()
-
-	client := lnrpc.NewLightningClient(conn)
-
 	status := Status{WalletState: "unknown"}
 	var primaryErr error
-	var cachedInfo infoSnapshot
-	var cachedAt time.Time
-	var cachedValid bool
-
-	c.statusMu.Lock()
-	cachedInfo = c.infoCache
-	cachedAt = c.infoCacheAt
-	cachedValid = c.infoCacheValid
-	c.statusMu.Unlock()
-
 	infoCtx, infoCancel := context.WithTimeout(ctx, 5*time.Second)
-	info, err := client.GetInfo(infoCtx, &lnrpc.GetInfoRequest{})
+	info, err := c.RuntimeInfo(infoCtx, false)
 	infoCancel()
-	if err != nil {
+	if err != nil && !info.Known {
 		primaryErr = err
 		if isWalletLocked(err) {
 			status.WalletState = "locked"
 		}
-	} else {
-		uris := uniqueStrings(info.Uris)
+	}
+	if info.Known {
 		status.ServiceActive = true
 		status.WalletState = "unlocked"
 		status.SyncedToChain = info.SyncedToChain
 		status.SyncedToGraph = info.SyncedToGraph
-		status.BlockHeight = int64(info.BlockHeight)
+		status.BlockHeight = info.BlockHeight
 		status.Version = info.Version
-		status.Pubkey = info.IdentityPubkey
+		status.Pubkey = info.Pubkey
 		status.InfoKnown = true
-		status.InfoStale = false
-		status.InfoAgeSeconds = 0
-		status.URIs = uris
-		if len(uris) > 0 {
-			status.URI = uris[0]
+		status.InfoStale = info.Stale
+		status.InfoAgeSeconds = int64(info.Age.Seconds())
+		status.URI = info.URI
+		status.URIs = append([]string(nil), info.URIs...)
+		status.ChannelsActive = info.NumActiveChannels
+		status.ChannelsInactive = info.NumInactiveChannels
+		status.ChannelsPending = info.NumPendingChannels
+		status.PeersConnected = info.NumPeers
+		if err != nil {
+			primaryErr = err
 		}
-
-		c.statusMu.Lock()
-		c.infoCache = infoSnapshot{
-			SyncedToChain: status.SyncedToChain,
-			SyncedToGraph: status.SyncedToGraph,
-			BlockHeight:   status.BlockHeight,
-			Version:       status.Version,
-			Pubkey:        status.Pubkey,
-			URI:           status.URI,
-			URIs:          append([]string(nil), status.URIs...),
-		}
-		c.infoCacheAt = now
-		c.infoCacheValid = true
-		c.statusMu.Unlock()
 	}
 
-	if !status.InfoKnown && cachedValid {
-		status.SyncedToChain = cachedInfo.SyncedToChain
-		status.SyncedToGraph = cachedInfo.SyncedToGraph
-		status.BlockHeight = cachedInfo.BlockHeight
-		status.Version = cachedInfo.Version
-		status.Pubkey = cachedInfo.Pubkey
-		status.URIs = uniqueStrings(cachedInfo.URIs)
-		if len(status.URIs) == 0 {
-			trimmedURI := strings.TrimSpace(cachedInfo.URI)
-			if trimmedURI != "" {
-				status.URIs = []string{trimmedURI}
-			}
-		}
-		if len(status.URIs) > 0 {
-			status.URI = status.URIs[0]
-		} else {
-			status.URI = strings.TrimSpace(cachedInfo.URI)
-		}
-		status.InfoKnown = true
-		status.InfoStale = true
-		status.InfoAgeSeconds = int64(now.Sub(cachedAt).Seconds())
+	// During chain/graph bootstrap the readiness probe is the only periodic
+	// unary RPC. Detailed balance/channel calls resume automatically when LND
+	// reports itself ready.
+	if !info.Known || !info.SyncedToChain || !info.SyncedToGraph || info.Stale {
+		return status, primaryErr
 	}
 
-	channelsCtx, channelsCancel := context.WithTimeout(ctx, 5*time.Second)
-	channels, err := client.ListChannels(channelsCtx, &lnrpc.ListChannelsRequest{})
-	channelsCancel()
-	if err == nil {
-		active := 0
-		inactive := 0
-		for _, ch := range channels.Channels {
-			if ch.Active {
-				active++
-			} else {
-				inactive++
+	conn, release, err := c.borrowConn(ctx, grpcRoleAdminUnary)
+	if err != nil {
+		return status, err
+	}
+	defer release()
+	client := lnrpc.NewLightningClient(conn)
+
+	if info.NumActiveChannels+info.NumInactiveChannels > 0 {
+		channelsCtx, channelsCancel := context.WithTimeout(ctx, 5*time.Second)
+		channels, channelsErr := client.ListChannels(channelsCtx, &lnrpc.ListChannelsRequest{})
+		channelsCancel()
+		if channelsErr == nil {
+			active := 0
+			inactive := 0
+			for _, ch := range channels.Channels {
+				if ch.Active {
+					active++
+				} else {
+					inactive++
+				}
 			}
-		}
-		status.ChannelsActive = active
-		status.ChannelsInactive = inactive
-		if status.WalletState == "unknown" {
-			status.WalletState = "unlocked"
+			status.ChannelsActive = active
+			status.ChannelsInactive = inactive
 		}
 	}
 
@@ -1504,13 +1635,12 @@ func (c *Client) getStatusUncached(ctx context.Context) (Status, error) {
 		}
 	}
 
-	channelBalCtx, channelBalCancel := context.WithTimeout(ctx, 5*time.Second)
-	channelBal, err := client.ChannelBalance(channelBalCtx, &lnrpc.ChannelBalanceRequest{})
-	channelBalCancel()
-	if err == nil {
-		status.LightningSat = channelBal.Balance
-		if status.WalletState == "unknown" {
-			status.WalletState = "unlocked"
+	if info.NumActiveChannels+info.NumInactiveChannels > 0 {
+		channelBalCtx, channelBalCancel := context.WithTimeout(ctx, 5*time.Second)
+		channelBal, channelBalErr := client.ChannelBalance(channelBalCtx, &lnrpc.ChannelBalanceRequest{})
+		channelBalCancel()
+		if channelBalErr == nil {
+			status.LightningSat = channelBal.Balance
 		}
 	}
 
@@ -7484,6 +7614,8 @@ type Status struct {
 	InfoAgeSeconds   int64
 	ChannelsActive   int
 	ChannelsInactive int
+	ChannelsPending  int
+	PeersConnected   int
 	OnchainSat       int64
 	LightningSat     int64
 }

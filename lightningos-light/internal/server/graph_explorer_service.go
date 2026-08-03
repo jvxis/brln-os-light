@@ -312,10 +312,13 @@ func (s *GraphExplorerService) runStartupRefresh(stopCh <-chan struct{}) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	warmState := s.hasWarmState(ctx)
 	cancel()
-	if warmState {
-		if !sleepWithStop(stopCh, graphExplorerStartupRefreshDelay) {
-			return
-		}
+	if !warmState {
+		// The stream loop owns the initial bootstrap so it can subscribe before
+		// DescribeGraph and close the snapshot/stream handoff gap.
+		return
+	}
+	if !sleepWithStop(stopCh, graphExplorerStartupRefreshDelay) {
+		return
 	}
 
 	s.refreshBackground()
@@ -405,13 +408,6 @@ func (s *GraphExplorerService) runStreamLoop(stopCh <-chan struct{}) {
 			}
 			continue
 		}
-		coverageCtx, coverageCancel := context.WithTimeout(context.Background(), graphExplorerGraphReadyTimeout)
-		hasCoverage := s.hasNativeCoverage(coverageCtx)
-		coverageCancel()
-		if !hasCoverage {
-			s.refreshBackground()
-		}
-
 		ctx, cleanupStreamCtx := contextWithStopCancel(stopCh)
 
 		sub, err := s.lnd.SubscribeChannelGraph(ctx)
@@ -425,6 +421,30 @@ func (s *GraphExplorerService) runStreamLoop(stopCh <-chan struct{}) {
 				return
 			}
 			continue
+		}
+
+		coverageCtx, coverageCancel := context.WithTimeout(context.Background(), graphExplorerGraphReadyTimeout)
+		hasCoverage := s.hasNativeCoverage(coverageCtx)
+		coverageCancel()
+		if !hasCoverage {
+			// Subscribe first. gRPC will retain subsequent topology updates while
+			// the full snapshot is committed, and Recv below applies them after it.
+			bootstrapCtx, bootstrapCancel := context.WithTimeout(context.Background(), graphExplorerRefreshTimeout)
+			bootstrapErr := s.Refresh(bootstrapCtx)
+			bootstrapCancel()
+			if bootstrapErr != nil {
+				_ = sub.Close()
+				cleanupStreamCtx()
+				s.recordError(bootstrapErr)
+				if s.logger != nil {
+					s.logger.Printf("graph explorer bootstrap failed: %v", bootstrapErr)
+				}
+				if !sleepWithStop(stopCh, graphExplorerStreamRetryDelay) {
+					return
+				}
+				continue
+			}
+			s.clearError()
 		}
 
 		for {
@@ -690,18 +710,23 @@ func (s *GraphExplorerService) hasNativeCoverage(ctx context.Context) bool {
 		return false
 	}
 
-	var ready bool
+	var firstCoverageAt *time.Time
+	var lastBootstrapAt *time.Time
 	if err := s.db.QueryRow(ctx, `
-select first_native_coverage_at is not null
+select first_native_coverage_at, last_bootstrap_at
 from graph_sync_state
 where id = true
-`).Scan(&ready); err != nil {
+`).Scan(&firstCoverageAt, &lastBootstrapAt); err != nil {
 		if s.logger != nil {
 			s.logger.Printf("graph explorer native coverage check failed: %v", err)
 		}
 		return false
 	}
-	return ready
+	return graphExplorerCoverageComplete(firstCoverageAt, lastBootstrapAt)
+}
+
+func graphExplorerCoverageComplete(firstCoverageAt, lastBootstrapAt *time.Time) bool {
+	return firstCoverageAt != nil && lastBootstrapAt != nil
 }
 
 func (s *GraphExplorerService) requireNativeGraphReady(ctx context.Context) error {
@@ -1269,10 +1294,9 @@ on conflict (id) do update set
 
 func upsertGraphSyncStateStream(ctx context.Context, tx pgx.Tx, observedAt time.Time) error {
 	_, err := tx.Exec(ctx, `
-insert into graph_sync_state (id, first_native_coverage_at, last_stream_event_at, updated_at)
-values (true, $1, $1, now())
+insert into graph_sync_state (id, last_stream_event_at, updated_at)
+values (true, $1, now())
 on conflict (id) do update set
-  first_native_coverage_at = coalesce(graph_sync_state.first_native_coverage_at, excluded.first_native_coverage_at),
   last_stream_event_at = excluded.last_stream_event_at,
   updated_at = now()
 `, observedAt)

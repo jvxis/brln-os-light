@@ -35,10 +35,6 @@ func (s *Server) handleCloseManagerStatusGet(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	ctx := r.Context()
-	if err := svc.RefreshIfStale(ctx, closeManagerRefreshMinAge); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
 	status, err := svc.GetStatus(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -54,10 +50,6 @@ func (s *Server) handleCloseManagerSessionsGet(w http.ResponseWriter, r *http.Re
 		return
 	}
 	ctx := r.Context()
-	if err := svc.RefreshIfStale(ctx, closeManagerRefreshMinAge); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
 	limit := closeManagerDefaultListLimit
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil {
@@ -80,10 +72,6 @@ func (s *Server) handleCloseManagerSessionGet(w http.ResponseWriter, r *http.Req
 		return
 	}
 	ctx := r.Context()
-	if err := svc.RefreshIfStale(ctx, closeManagerRefreshMinAge); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil || id <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid close session id")

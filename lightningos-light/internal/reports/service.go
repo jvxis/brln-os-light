@@ -2,6 +2,7 @@ package reports
 
 import (
 	"context"
+	"errors"
 	"log"
 	"strconv"
 	"sync"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+var ErrLNDAnalyticsDeferred = errors.New("lnd analytics deferred until rpc and graph are ready")
 
 const (
 	defaultLiveTTL                  = 60 * time.Second
@@ -228,6 +231,9 @@ func (s *Service) CaptureMovementTargetForDate(ctx context.Context, reportDate t
 	if s.lnd == nil {
 		return 0, nil
 	}
+	if !s.lndAnalyticsReady() {
+		return 0, ErrLNDAnalyticsDeferred
+	}
 	if loc == nil {
 		loc = time.Local
 	}
@@ -416,6 +422,9 @@ func (s *Service) computeLiveSnapshot(ctx context.Context, now time.Time, loc *t
 	if loc == nil {
 		loc = time.Local
 	}
+	if !s.lndAnalyticsReady() {
+		return liveSnapshot{}, ErrLNDAnalyticsDeferred
+	}
 
 	tr := BuildTimeRangeForLookback(now, loc, lookbackHours)
 	onchainOverride := OnchainOverride{}
@@ -441,6 +450,14 @@ func (s *Service) computeLiveSnapshot(ctx context.Context, now time.Time, loc *t
 		Metrics:       metrics,
 		LookbackHours: lookbackHours,
 	}, nil
+}
+
+func (s *Service) lndAnalyticsReady() bool {
+	if s == nil || s.lnd == nil {
+		return false
+	}
+	info := s.lnd.CachedRuntimeInfo()
+	return info.Known && !info.Stale && info.SyncedToChain && info.SyncedToGraph
 }
 
 func (s *Service) usablePersistedLiveSnapshot(_ context.Context, now time.Time, requestRange TimeRange, loc *time.Location, lookbackHours int) (liveSnapshot, bool) {

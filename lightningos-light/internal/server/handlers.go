@@ -919,7 +919,11 @@ type lndStatusResponse struct {
 	Channels        struct {
 		Active   int `json:"active"`
 		Inactive int `json:"inactive"`
+		Pending  int `json:"pending"`
 	} `json:"channels"`
+	Peers struct {
+		Connected int `json:"connected"`
+	} `json:"peers"`
 	Balances struct {
 		OnchainSat   int64 `json:"onchain_sat"`
 		LightningSat int64 `json:"lightning_sat"`

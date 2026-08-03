@@ -116,6 +116,10 @@ export type LndStatus = {
   channels?: {
     active?: number
     inactive?: number
+    pending?: number
+  }
+  peers?: {
+    connected?: number
   }
   balances?: {
     onchain_sat?: number

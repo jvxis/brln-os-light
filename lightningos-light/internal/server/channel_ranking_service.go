@@ -387,6 +387,10 @@ func (s *ChannelRankingService) refreshBackground() {
 	if s == nil || s.db == nil || s.lnd == nil {
 		return
 	}
+	info := s.lnd.CachedRuntimeInfo()
+	if !info.Known || !info.SyncedToGraph || lndRuntimeHasNoChannels(info) {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if err := s.Refresh(ctx); err != nil && s.logger != nil {

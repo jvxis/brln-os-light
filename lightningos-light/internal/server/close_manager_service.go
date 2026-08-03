@@ -168,12 +168,26 @@ func (s *CloseManagerService) runLoop() {
 	for {
 		<-timer.C
 
-		readyCtx, readyCancel := context.WithTimeout(context.Background(), closeManagerReadinessTimeout)
-		synced, readyErr := s.lnd.SyncedToGraph(readyCtx)
-		readyCancel()
-		if readyErr != nil || !synced {
+		stateCtx, stateCancel := context.WithTimeout(context.Background(), closeManagerReadinessTimeout)
+		hasActive, stateErr := s.hasActiveSessions(stateCtx)
+		stateCancel()
+		if stateErr != nil {
+			if s.logger != nil {
+				s.logger.Printf("close manager active-session check failed: %v", stateErr)
+			}
 			timer.Reset(closeManagerPollInterval)
 			continue
+		}
+
+		// Active recovery sessions are critical and must continue even while the
+		// graph is syncing. Without an active session, avoid a full five-RPC
+		// reconciliation on nodes known to have no channels.
+		if !hasActive {
+			info := s.lnd.CachedRuntimeInfo()
+			if !info.Known || !info.SyncedToGraph || lndRuntimeHasNoChannels(info) {
+				timer.Reset(closeManagerIdlePollInterval)
+				continue
+			}
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -183,12 +197,6 @@ func (s *CloseManagerService) runLoop() {
 		}
 		cancel()
 
-		stateCtx, stateCancel := context.WithTimeout(context.Background(), closeManagerReadinessTimeout)
-		hasActive, stateErr := s.hasActiveSessions(stateCtx)
-		stateCancel()
-		if stateErr != nil && s.logger != nil {
-			s.logger.Printf("close manager active-session check failed: %v", stateErr)
-		}
 		timer.Reset(closeManagerNextPollInterval(hasActive, stateErr))
 	}
 }

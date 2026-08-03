@@ -1357,8 +1357,8 @@ const magmaPolicyFields: { key: keyof MagmaPolicy; labelKey: string; hintKey?: s
   { key: 'max_onchain_cost_pct', labelKey: 'magma.policyMaxCostPct', hintKey: 'magma.policyMaxCostPctHint' },
   { key: 'min_onchain_reserve_sat', labelKey: 'magma.policyReserve', hintKey: 'magma.policyReserveHint' },
   { key: 'max_concurrent_opens', labelKey: 'magma.policyMaxConcurrent' },
-  { key: 'max_daily_orders', labelKey: 'magma.policyMaxDailyOrders' },
-  { key: 'max_daily_size_sat', labelKey: 'magma.policyMaxDailySize' }
+  { key: 'max_daily_orders', labelKey: 'magma.policyMaxDailyOrders', hintKey: 'magma.policyDailyOffHint' },
+  { key: 'max_daily_size_sat', labelKey: 'magma.policyMaxDailySize', hintKey: 'magma.policyDailyOffHint' }
 ]
 
 function MagmaPolicyDialog({

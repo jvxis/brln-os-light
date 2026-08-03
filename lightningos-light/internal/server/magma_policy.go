@@ -527,10 +527,42 @@ func magmaPolicyWarnings(policy MagmaPolicy) []string {
 // magmaPolicySummary is a short human description used in the UI and in the
 // confirmation shown when auto mode is switched on.
 func magmaPolicySummary(policy MagmaPolicy) string {
-	return fmt.Sprintf(
-		"accepts %s-%s sat channels, at least %d ppm and %d ppm/day, "+
-			"on-chain cost up to %d%% of the sale, max %d orders and %s sat per day",
-		formatInt(policy.MinChannelSizeSat), formatInt(policy.MaxChannelSizeSat),
-		policy.MinPricePPM, policy.MinPricePPMPerDay, policy.MaxOnchainCostPct,
-		policy.MaxDailyOrders, formatInt(policy.MaxDailySizeSat))
+	// A zero means the limit is switched off, so printing the digit says the exact
+	// opposite of what it does: "0 sat per day" reads as "sell nothing". Disabled
+	// limits are left out of the sentence entirely, which also makes the ones that
+	// are still active easy to spot.
+	parts := make([]string, 0, 5)
+	parts = append(parts, fmt.Sprintf("accepts %s-%s sat channels",
+		formatInt(policy.MinChannelSizeSat), formatInt(policy.MaxChannelSizeSat)))
+
+	price := make([]string, 0, 2)
+	if policy.MinPricePPM > 0 {
+		price = append(price, fmt.Sprintf("%d ppm", policy.MinPricePPM))
+	}
+	if policy.MinPricePPMPerDay > 0 {
+		price = append(price, fmt.Sprintf("%d ppm/day", policy.MinPricePPMPerDay))
+	}
+	if len(price) > 0 {
+		parts = append(parts, "at least "+strings.Join(price, " and "))
+	}
+	if policy.MinRevenueSat > 0 {
+		parts = append(parts, fmt.Sprintf("at least %s sat of revenue", formatInt(policy.MinRevenueSat)))
+	}
+	if policy.MaxOnchainCostPct > 0 {
+		parts = append(parts, fmt.Sprintf("on-chain cost up to %d%% of the sale", policy.MaxOnchainCostPct))
+	}
+
+	daily := make([]string, 0, 2)
+	if policy.MaxDailyOrders > 0 {
+		daily = append(daily, fmt.Sprintf("%d orders", policy.MaxDailyOrders))
+	}
+	if policy.MaxDailySizeSat > 0 {
+		daily = append(daily, fmt.Sprintf("%s sat", formatInt(policy.MaxDailySizeSat)))
+	}
+	if len(daily) > 0 {
+		parts = append(parts, "max "+strings.Join(daily, " and ")+" per day")
+	} else {
+		parts = append(parts, "no daily limit")
+	}
+	return strings.Join(parts, ", ")
 }

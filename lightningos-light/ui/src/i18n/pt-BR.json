@@ -233,6 +233,7 @@
     "policyReserve": "Reserva on-chain a manter (sat)",
     "policyReserveHint": "Nunca gasta numa venda, para taxas e fechamentos continuarem cobertos.",
     "policyMaxConcurrent": "Máximo de ordens aguardando abertura",
+    "policyDailyOffHint": "0 desliga este limite - vender a oferta inteira num dia so e permitido.",
     "policyMaxDailyOrders": "Máximo de ordens por dia",
     "policyMaxDailySize": "Tamanho máximo por dia (sat)",
     "policyAutoReject": "Recusar explicitamente ordens inadequadas",

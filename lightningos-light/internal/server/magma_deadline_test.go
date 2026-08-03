@@ -1,6 +1,7 @@
 package server
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -120,5 +121,60 @@ func TestMagmaGraceLeavesRoomInsideTheWindow(t *testing.T) {
 	}
 	if margin := magmaApprovalWindow - magmaApprovalGrace; margin < 30*time.Minute {
 		t.Fatalf("only %s of margin: a 90s poll plus a slow accept needs more room", margin)
+	}
+}
+
+// A limit set to zero is off. The summary is the only place the operator reads
+// the policy back in prose, so "0 sat per day" there reads as "sell nothing" -
+// the opposite of what the setting does.
+func TestMagmaPolicySummaryOmitsDisabledLimits(t *testing.T) {
+	policy := MagmaPolicy{
+		MinChannelSizeSat: 1_000_000,
+		MaxChannelSizeSat: 2_500_000,
+		MaxOnchainCostPct: 60,
+		MaxDailyOrders:    5,
+		// The operator switched the daily size cap off on purpose: selling the whole
+		// offer in one day is a good outcome, not a limit to enforce.
+		MaxDailySizeSat: 0,
+	}
+	summary := magmaPolicySummary(policy)
+	for _, unwanted := range []string{"0 sat per day", "0 ppm", "0 ppm/day"} {
+		if strings.Contains(summary, unwanted) {
+			t.Fatalf("summary still advertises a disabled limit as zero: %q in %q", unwanted, summary)
+		}
+	}
+	if !strings.Contains(summary, "5 orders per day") {
+		t.Fatalf("the daily order cap is still active and must stay visible: %q", summary)
+	}
+
+	// With every daily cap off, say so rather than going silent on the subject.
+	policy.MaxDailyOrders = 0
+	if summary := magmaPolicySummary(policy); !strings.Contains(summary, "no daily limit") {
+		t.Fatalf("expected the summary to state there is no daily limit: %q", summary)
+	}
+}
+
+// With the daily size cap off, the order that expired on 2026-08-02 sails through.
+func TestMagmaDailyCapOffAcceptsTheOrderThatWasLost(t *testing.T) {
+	policy := defaultMagmaPolicy()
+	policy.MinRevenueSat, policy.MinPricePPM, policy.MinPricePPMPerDay, policy.MinFeeRateCapPPM = 0, 0, 0, 0
+	policy.MaxChannelSizeSat = 2_500_000
+	policy.MaxDailySizeSat = 0
+	policy.MaxCommitmentDays = 60
+
+	decision := evaluateMagmaOrder(policy, magmaPolicyInputs{
+		Order: MagmaOrder{
+			ID: "a8c8bea8-1e0e-4aff-b6c6-dc005bcc3c2a", SizeSat: 2_484_848,
+			RevenueSat: 6284, PricePPM: 2300, CommitmentBlocks: 4320,
+			FeeRateCapPPM: 900, BaseFeeCapSat: 1,
+		},
+		AvailableSat:     6_370_711,
+		OnchainReachable: true,
+		SatPerVbyte:      2,
+		EstimatedFeeSat:  300,
+		PendingFor:       time.Minute,
+	})
+	if !decision.Accept {
+		t.Fatalf("expected the sale to go through, got reject=%t reason=%q", decision.Reject, decision.Reason)
 	}
 }

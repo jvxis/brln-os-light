@@ -233,6 +233,7 @@
     "policyReserve": "On-chain reserve to keep (sat)",
     "policyReserveHint": "Never spent on a sale, so fees and closings stay covered.",
     "policyMaxConcurrent": "Maximum orders awaiting a channel open",
+    "policyDailyOffHint": "0 turns this limit off - selling the whole offer in one day is allowed.",
     "policyMaxDailyOrders": "Maximum orders per day",
     "policyMaxDailySize": "Maximum size per day (sat)",
     "policyAutoReject": "Reject unsuitable orders explicitly",

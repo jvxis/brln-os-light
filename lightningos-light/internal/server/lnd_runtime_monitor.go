@@ -72,3 +72,7 @@ func lndRuntimeHasNoChannels(info lndclient.RuntimeInfo) bool {
 	return info.Known && info.NumActiveChannels == 0 &&
 		info.NumInactiveChannels == 0 && info.NumPendingChannels == 0
 }
+
+func lndRuntimeShouldDeferNonessential(info lndclient.RuntimeInfo) bool {
+	return !info.Known || info.Stale || !info.SyncedToGraph
+}

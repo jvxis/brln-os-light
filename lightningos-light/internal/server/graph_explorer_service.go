@@ -733,11 +733,10 @@ func (s *GraphExplorerService) requireNativeGraphReady(ctx context.Context) erro
 	if s == nil || s.lnd == nil {
 		return errors.New("lnd unavailable")
 	}
-	synced, err := s.lnd.SyncedToGraph(ctx)
-	if err != nil {
-		return err
-	}
-	if !synced {
+	// The central runtime monitor is the sole readiness probe. Graph Explorer
+	// must not create another GetInfo polling loop while LND is overloaded.
+	info := s.lnd.CachedRuntimeInfo()
+	if lndRuntimeShouldDeferNonessential(info) {
 		return ErrGraphExplorerGraphNotSynced
 	}
 	return nil

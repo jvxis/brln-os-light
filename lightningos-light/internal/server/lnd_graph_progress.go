@@ -219,15 +219,7 @@ func lndServiceInvocation(ctx context.Context, service string) (string, error) {
 }
 
 func lndGraphProgressLines(ctx context.Context, service, invocation string) ([]string, error) {
-	grep := `GossipSyncer\([0-9a-fA-F]+\): (filtering through [0-9]+ chans|starting query for [0-9]+ new chans|no more chans to query)`
-	args := []string{
-		"-u", service, "--since", "-7 days",
-		"--no-pager", "--output=cat", "--grep", grep,
-		"-n", strconv.Itoa(lndGraphProgressLogLimit),
-	}
-	if invocation != "" {
-		args = append(args, "_SYSTEMD_INVOCATION_ID="+invocation)
-	}
+	args := lndGraphProgressJournalArgs(service, invocation)
 	out, err := system.RunCommand(ctx, "journalctl", args...)
 	if err != nil {
 		lines, fallbackErr := system.JournalTailSince(
@@ -240,6 +232,22 @@ func lndGraphProgressLines(ctx context.Context, service, invocation string) ([]s
 	}
 
 	return splitNonEmptyLines(out), nil
+}
+
+func lndGraphProgressJournalArgs(service, invocation string) []string {
+	grep := `GossipSyncer\([0-9a-fA-F]+\): (filtering through [0-9]+ chans|starting query for [0-9]+ new chans|no more chans to query)`
+	args := make([]string, 0, 13)
+	if invocation != "" {
+		// Field matches must precede options for compatibility with journalctl
+		// versions that stop recognizing positional matches after --grep.
+		args = append(args, "_SYSTEMD_INVOCATION_ID="+invocation)
+	}
+	args = append(args,
+		"-u", service, "--since", "-7 days",
+		"--no-pager", "--output=cat", "--grep", grep,
+		"-n", strconv.Itoa(lndGraphProgressLogLimit),
+	)
+	return args
 }
 
 func splitNonEmptyLines(raw string) []string {

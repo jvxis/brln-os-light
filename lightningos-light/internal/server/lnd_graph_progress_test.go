@@ -1,9 +1,21 @@
 package server
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestLNDGraphProgressJournalArgsPutInvocationMatchFirst(t *testing.T) {
+	const invocation = "9ae52c4830974e05b35c349e5e9e5814"
+	args := lndGraphProgressJournalArgs("lnd", invocation)
+	if len(args) == 0 || args[0] != "_SYSTEMD_INVOCATION_ID="+invocation {
+		t.Fatalf("invocation selector must be the first journalctl argument: %v", args)
+	}
+	if !strings.Contains(strings.Join(args, " "), "--grep") {
+		t.Fatalf("journalctl arguments lost graph log filter: %v", args)
+	}
+}
 
 func TestParseLNDGraphProgress(t *testing.T) {
 	lines := []string{

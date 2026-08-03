@@ -75,18 +75,31 @@ func (s *GraphExplorerService) classifyPendingCloseEvents(ctx context.Context) e
 	if s == nil || s.db == nil {
 		return ErrGraphExplorerDBUnavailable
 	}
+	if s.lnd != nil && lndRuntimeShouldDeferNonessential(s.lnd.CachedRuntimeInfo()) {
+		// Classification inputs are durable in PostgreSQL. Leave them pending and
+		// resume after graph sync instead of querying LND during bootstrap.
+		return nil
+	}
+
+	// Check durable work before touching LND. Empty installations normally have
+	// no close events, so their classifier remains a PostgreSQL-only no-op.
+	candidates, err := loadPendingGraphCloseClassificationCandidates(ctx, s.db, "", graphCloseClassifierBatchSize)
+	if err != nil || len(candidates) == 0 {
+		return err
+	}
 
 	localPubkey := s.loadLocalPubkey(ctx)
+	if localPubkey != "" {
+		candidates, err = loadPendingGraphCloseClassificationCandidates(ctx, s.db, localPubkey, graphCloseClassifierBatchSize)
+		if err != nil || len(candidates) == 0 {
+			return err
+		}
+	}
 	localLookup := s.loadLocalClosedChannelLookup(ctx)
 	bitcoinCfg, bitcoinAvailable := bitcoinRPCConfig{}, false
 	if cfg, err := resolveBitcoinRPCConfigForClosedChannels(ctx); err == nil {
 		bitcoinCfg = cfg
 		bitcoinAvailable = true
-	}
-
-	candidates, err := loadPendingGraphCloseClassificationCandidates(ctx, s.db, localPubkey, graphCloseClassifierBatchSize)
-	if err != nil || len(candidates) == 0 {
-		return err
 	}
 
 	resolved := make([]graphCloseClassificationResolved, 0, len(candidates))

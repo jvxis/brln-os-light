@@ -14,8 +14,8 @@ import (
 
 const (
 	lndGraphProgressCacheTTL = 30 * time.Second
-	lndGraphProgressTimeout  = 2 * time.Second
-	lndGraphProgressLogLimit = 1000
+	lndGraphProgressTimeout  = 3 * time.Second
+	lndGraphProgressLogLimit = 5000
 	lndGraphRateWindow       = 15 * time.Minute
 	lndGraphRateMinSample    = 2 * time.Minute
 )
@@ -142,12 +142,7 @@ func (s *Server) refreshLNDGraphProgress(service string) {
 		return
 	}
 
-	if ok && cache.Service == service && cache.Invocation == invocation &&
-		cache.Progress != nil &&
-		cache.Progress.KnownChannels > progress.KnownChannels {
-
-		progress = cloneLNDGraphProgress(cache.Progress)
-	}
+	progress, ok, preserved := mergeLNDGraphProgress(cache, service, invocation, progress, ok)
 	if cache.Service == service && cache.Invocation == invocation && cache.BlockHeight > blockHeight {
 		blockHeight = cache.BlockHeight
 	}
@@ -157,7 +152,9 @@ func (s *Server) refreshLNDGraphProgress(service string) {
 		if cache.Service == service && cache.Invocation == invocation {
 			samples = cache.Samples
 		}
-		samples = graphProgressSamples(samples, progress.KnownChannels, now)
+		if !preserved {
+			samples = graphProgressSamples(samples, progress.KnownChannels, now)
+		}
 		applyGraphProgressRate(progress, samples)
 	}
 
@@ -169,6 +166,22 @@ func (s *Server) refreshLNDGraphProgress(service string) {
 		BlockHeight: blockHeight,
 		Samples:     samples,
 	}
+}
+
+func mergeLNDGraphProgress(
+	cache lndGraphProgressCache,
+	service, invocation string,
+	progress *lndGraphSyncProgress,
+	ok bool,
+) (*lndGraphSyncProgress, bool, bool) {
+	sameInvocation := cache.Service == service && cache.Invocation == invocation
+	if !sameInvocation || cache.Progress == nil {
+		return progress, ok, false
+	}
+	if !ok || progress == nil || cache.Progress.KnownChannels > progress.KnownChannels {
+		return cloneLNDGraphProgress(cache.Progress), true, true
+	}
+	return progress, true, false
 }
 
 func (s *Server) lndJournalBlockHeight(service string) int64 {

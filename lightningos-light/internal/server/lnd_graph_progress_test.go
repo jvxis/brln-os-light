@@ -16,8 +16,34 @@ func TestLNDGraphProgressJournalArgsPutInvocationMatchFirst(t *testing.T) {
 	if strings.Contains(joined, "--since") || strings.Contains(joined, "--grep") {
 		t.Fatalf("journalctl arguments must use the bounded tail without a full scan: %v", args)
 	}
-	if !strings.Contains(joined, "-n 1000") {
+	if !strings.Contains(joined, "-n 5000") {
 		t.Fatalf("journalctl arguments lost bounded tail: %v", args)
+	}
+}
+
+func TestMergeLNDGraphProgressPreservesLastValidSample(t *testing.T) {
+	cached := &lndGraphSyncProgress{ProgressPercent: 72.9, KnownChannels: 27133, TotalChannels: 37200}
+	cache := lndGraphProgressCache{Service: "lnd", Invocation: "current", Progress: cached}
+
+	progress, ok, preserved := mergeLNDGraphProgress(cache, "lnd", "current", nil, false)
+	if !ok || !preserved || progress == nil || progress.KnownChannels != cached.KnownChannels {
+		t.Fatalf("missing journal marker must preserve cached progress: progress=%+v ok=%t preserved=%t", progress, ok, preserved)
+	}
+	if progress == cached {
+		t.Fatal("cached progress must be cloned before rate fields are recalculated")
+	}
+}
+
+func TestMergeLNDGraphProgressAcceptsNewerSample(t *testing.T) {
+	cache := lndGraphProgressCache{
+		Service: "lnd", Invocation: "current",
+		Progress: &lndGraphSyncProgress{KnownChannels: 27133},
+	}
+	newer := &lndGraphSyncProgress{KnownChannels: 27500}
+
+	progress, ok, preserved := mergeLNDGraphProgress(cache, "lnd", "current", newer, true)
+	if !ok || preserved || progress != newer {
+		t.Fatalf("newer sample must replace cache: progress=%+v ok=%t preserved=%t", progress, ok, preserved)
 	}
 }
 

@@ -142,6 +142,14 @@ export default function CoreHealthGrid({
   const graphSyncEtaSeconds = Math.max(0, Number(lnd?.graph_sync?.eta_seconds || 0))
   const graphSyncVisible = Boolean(lnd && !lnd.synced_to_graph && graphSyncTotal > 0)
   const graphSyncPercentLabel = graphSyncPercent.toLocaleString(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+  const lndBlockHeight = Math.max(0, Number(lnd?.block_height || 0))
+  const bitcoinBlockHeight = Math.max(0, Number(bitcoin?.blocks || 0))
+  const chainSyncedFromHeight = Boolean(
+    lnd && !lnd.info_known && lndBlockHeight > 0 && bitcoinBlockHeight > 0
+      && lndBlockHeight + 1 >= bitcoinBlockHeight,
+  )
+  const lndChainSynced = Boolean(lnd?.synced_to_chain || chainSyncedFromHeight)
+  const lndRPCBusySyncing = Boolean(lnd && !lnd.info_known && graphSyncVisible)
 
   const copyToClipboard = async (value: string) => {
     if (!value) return
@@ -161,10 +169,16 @@ export default function CoreHealthGrid({
               <h3 className="text-lg font-semibold">
                 <DashboardTitleLink href="#lnd">{t('dashboard.lnd')}</DashboardTitleLink>
               </h3>
-              <p className="mt-1 text-sm text-fog/60">{lnd?.version ? `v${lnd.version}` : t('dashboard.loadingLndStatus')}</p>
+              <p className="mt-1 text-sm text-fog/60">
+                {lnd?.version
+                  ? `v${lnd.version}`
+                  : lndRPCBusySyncing
+                    ? t('dashboard.lndRPCBusySyncing', { progress: graphSyncPercentLabel })
+                    : t('dashboard.loadingLndStatus')}
+              </p>
             </div>
             <StatusBadge
-              label={lnd?.wallet_state || t('common.na')}
+              label={lndRPCBusySyncing ? t('dashboard.syncing') : lnd?.wallet_state || t('common.na')}
               tone={lnd?.wallet_state === 'unlocked' ? 'ok' : 'warn'}
               size="md"
             />
@@ -175,7 +189,7 @@ export default function CoreHealthGrid({
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
                   <p className="text-xs uppercase tracking-wide text-fog/45">{t('dashboard.synced')}</p>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <StatusBadge label={t('dashboard.chain')} tone={lnd.synced_to_chain ? 'ok' : 'warn'} />
+                    <StatusBadge label={t('dashboard.chain')} tone={lndChainSynced ? 'ok' : 'warn'} />
                     <StatusBadge
                       label={graphSyncVisible ? `${t('dashboard.graph')} ${graphSyncPercentLabel}%` : t('dashboard.graph')}
                       tone={lnd.synced_to_graph ? 'ok' : 'warn'}

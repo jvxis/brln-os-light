@@ -110,6 +110,9 @@ func (s *Server) lndStatus(ctx context.Context, force bool) (lndStatusResponse, 
 	resp.Balances.OnchainSat = status.OnchainSat
 	resp.Balances.LightningSat = status.LightningSat
 	resp.GraphSync = s.graphSyncProgress(service, resp.SyncedToGraph)
+	if resp.BlockHeight == 0 {
+		resp.BlockHeight = s.lndJournalBlockHeight(service)
+	}
 
 	return resp, err
 }

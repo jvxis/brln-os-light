@@ -116,6 +116,7 @@ GET /api/lnd/status
 - LND state, sync, channels, balances.
 - `channels` includes `active`, `inactive`, and `pending`; `peers.connected` is derived from LND's lightweight runtime status.
 - During initial chain or graph synchronization, expensive balance and channel-detail RPCs are deferred and the last cached runtime status may be returned.
+- If `GetInfo` is temporarily unavailable, `block_height` and `graph_sync` can be populated from a bounded, read-only tail of the current LND systemd journal invocation.
 - While the graph is syncing, `graph_sync` may include a lightweight journal-derived estimate with `progress_percent`, `known_channels`, `total_channels`, `remaining_channels`, `channels_per_hour`, `eta_seconds`, and `approximate`.
 - The graph estimate is cached and does not call `DescribeGraph` or walk the LND database.
 - Rate and ETA appear after at least two minutes of progress samples and use a rolling 15-minute window.

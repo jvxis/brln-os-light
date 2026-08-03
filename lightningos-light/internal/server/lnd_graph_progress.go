@@ -30,6 +30,9 @@ var (
 	lndGraphCompletePattern = regexp.MustCompile(
 		`GossipSyncer\(([0-9a-fA-F]+)\): no more chans to query`,
 	)
+	lndChainBlockPattern = regexp.MustCompile(
+		`New block: height=([0-9]+)`,
+	)
 )
 
 type lndGraphSyncProgress struct {
@@ -48,11 +51,12 @@ type lndGraphProgressSample struct {
 }
 
 type lndGraphProgressCache struct {
-	Service    string
-	Invocation string
-	CheckedAt  time.Time
-	Progress   *lndGraphSyncProgress
-	Samples    []lndGraphProgressSample
+	Service     string
+	Invocation  string
+	CheckedAt   time.Time
+	Progress    *lndGraphSyncProgress
+	BlockHeight int64
+	Samples     []lndGraphProgressSample
 }
 
 func activeLNDService(ctx context.Context) string {
@@ -123,6 +127,7 @@ func (s *Server) refreshLNDGraphProgress(service string) {
 	invocation, _ := lndServiceInvocation(ctx, service)
 	lines, err := lndGraphProgressLines(ctx, service, invocation)
 	progress, ok := parseLNDGraphProgress(lines)
+	blockHeight := parseLNDJournalBlockHeight(lines)
 	now := time.Now()
 
 	s.lndGraphProgressMu.Lock()
@@ -143,6 +148,9 @@ func (s *Server) refreshLNDGraphProgress(service string) {
 
 		progress = cloneLNDGraphProgress(cache.Progress)
 	}
+	if cache.Service == service && cache.Invocation == invocation && cache.BlockHeight > blockHeight {
+		blockHeight = cache.BlockHeight
+	}
 
 	samples := []lndGraphProgressSample(nil)
 	if ok {
@@ -154,12 +162,25 @@ func (s *Server) refreshLNDGraphProgress(service string) {
 	}
 
 	s.lndGraphProgressCache = lndGraphProgressCache{
-		Service:    service,
-		Invocation: invocation,
-		CheckedAt:  now,
-		Progress:   progress,
-		Samples:    samples,
+		Service:     service,
+		Invocation:  invocation,
+		CheckedAt:   now,
+		Progress:    progress,
+		BlockHeight: blockHeight,
+		Samples:     samples,
 	}
+}
+
+func (s *Server) lndJournalBlockHeight(service string) int64 {
+	if s == nil || strings.TrimSpace(service) == "" {
+		return 0
+	}
+	s.lndGraphProgressMu.Lock()
+	defer s.lndGraphProgressMu.Unlock()
+	if s.lndGraphProgressCache.Service != service {
+		return 0
+	}
+	return s.lndGraphProgressCache.BlockHeight
 }
 
 func graphProgressSamples(samples []lndGraphProgressSample, known int64, now time.Time) []lndGraphProgressSample {
@@ -235,16 +256,15 @@ func lndGraphProgressLines(ctx context.Context, service, invocation string) ([]s
 }
 
 func lndGraphProgressJournalArgs(service, invocation string) []string {
-	grep := `GossipSyncer\([0-9a-fA-F]+\): (filtering through [0-9]+ chans|starting query for [0-9]+ new chans|no more chans to query)`
-	args := make([]string, 0, 13)
+	args := make([]string, 0, 9)
 	if invocation != "" {
-		// Field matches must precede options for compatibility with journalctl
-		// versions that stop recognizing positional matches after --grep.
+		// Field matches must precede options for compatibility across systemd
+		// versions. Reading from the tail avoids scanning days of busy LND logs.
 		args = append(args, "_SYSTEMD_INVOCATION_ID="+invocation)
 	}
 	args = append(args,
-		"-u", service, "--since", "-7 days",
-		"--no-pager", "--output=cat", "--grep", grep,
+		"-u", service,
+		"--no-pager", "--output=cat",
 		"-n", strconv.Itoa(lndGraphProgressLogLimit),
 	)
 	return args
@@ -337,6 +357,21 @@ func parseLNDGraphProgress(lines []string) (*lndGraphSyncProgress, bool) {
 		RemainingChannels: totalChannels - knownChannels,
 		Approximate:       true,
 	}, true
+}
+
+func parseLNDJournalBlockHeight(lines []string) int64 {
+	var height int64
+	for _, line := range lines {
+		match := lndChainBlockPattern.FindStringSubmatch(line)
+		if len(match) != 2 {
+			continue
+		}
+		value, err := strconv.ParseInt(match[1], 10, 64)
+		if err == nil && value > height {
+			height = value
+		}
+	}
+	return height
 }
 
 func cloneLNDGraphProgress(progress *lndGraphSyncProgress) *lndGraphSyncProgress {

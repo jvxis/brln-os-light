@@ -12,8 +12,24 @@ func TestLNDGraphProgressJournalArgsPutInvocationMatchFirst(t *testing.T) {
 	if len(args) == 0 || args[0] != "_SYSTEMD_INVOCATION_ID="+invocation {
 		t.Fatalf("invocation selector must be the first journalctl argument: %v", args)
 	}
-	if !strings.Contains(strings.Join(args, " "), "--grep") {
-		t.Fatalf("journalctl arguments lost graph log filter: %v", args)
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "--since") || strings.Contains(joined, "--grep") {
+		t.Fatalf("journalctl arguments must use the bounded tail without a full scan: %v", args)
+	}
+	if !strings.Contains(joined, "-n 1000") {
+		t.Fatalf("journalctl arguments lost bounded tail: %v", args)
+	}
+}
+
+func TestParseLNDJournalBlockHeight(t *testing.T) {
+	lines := []string{
+		"NTFN: New block: height=960914, sha=aaa",
+		"unrelated log line",
+		"NTFN: New block: height=960916, sha=bbb",
+		"NTFN: New block: height=invalid, sha=ccc",
+	}
+	if got := parseLNDJournalBlockHeight(lines); got != 960916 {
+		t.Fatalf("parseLNDJournalBlockHeight() = %d, want 960916", got)
 	}
 }
 

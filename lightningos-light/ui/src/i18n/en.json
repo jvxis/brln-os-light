@@ -209,6 +209,7 @@
     "modeAuto": "Automatic",
     "autoNotice": "Automatic mode: the policy accepts, rejects and funds orders on its own, one order per cycle. Review the limits below before leaving it running.",
     "enableAutoConfirm": "Automatic mode will accept orders and open channels with no further confirmation, spending on-chain funds on its own.",
+    "policyConflictTitle": "Policy conflict",
     "policyPrefix": "Current policy:",
     "policyPreviewPrefix": "Policy that automatic mode would use:",
     "confirmEnableAssisted": "Enable assisted mode",

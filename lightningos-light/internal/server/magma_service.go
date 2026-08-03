@@ -89,10 +89,13 @@ type MagmaOverview struct {
 	TokenWarning  string              `json:"token_warning,omitempty"`
 	Policy        *MagmaPolicy        `json:"policy,omitempty"`
 	PolicySummary string              `json:"policy_summary,omitempty"`
-	PnL           *MagmaPnL           `json:"pnl,omitempty"`
-	LastSyncAt    *time.Time          `json:"last_sync_at,omitempty"`
-	LastSyncError string              `json:"last_sync_error,omitempty"`
-	Poller        MagmaPollerHealth   `json:"poller"`
+	// PolicyWarnings are self-inflicted contradictions: settings that are each
+	// valid alone but together refuse orders the operator meant to take.
+	PolicyWarnings []string          `json:"policy_warnings,omitempty"`
+	PnL            *MagmaPnL         `json:"pnl,omitempty"`
+	LastSyncAt     *time.Time        `json:"last_sync_at,omitempty"`
+	LastSyncError  string            `json:"last_sync_error,omitempty"`
+	Poller         MagmaPollerHealth `json:"poller"`
 }
 
 // MagmaPollerHealth makes a dead worker visible. Without it the only symptom is
@@ -589,6 +592,10 @@ func (s *MagmaService) syncLocked(ctx context.Context) error {
 	// the policy never decides against a half-finished picture.
 	if settings.Mode == magmaModeAuto {
 		s.runAutoMode(ctx, token)
+	} else {
+		// The modes that cannot answer on their own still have a deadline; the
+		// operator is the one who has to meet it, so warn while it is still useful.
+		s.warnExpiringApprovals(ctx)
 	}
 	s.recordSyncResult(&summary, nil)
 	return nil
@@ -919,6 +926,7 @@ func (s *MagmaService) Overview(ctx context.Context) (MagmaOverview, error) {
 	if policy, err := s.loadPolicy(ctx); err == nil {
 		overview.Policy = &policy
 		overview.PolicySummary = magmaPolicySummary(policy)
+		overview.PolicyWarnings = magmaPolicyWarnings(policy)
 	}
 	if pnl, err := s.PnL(ctx, time.Time{}); err == nil {
 		overview.PnL = &pnl

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // The policy engine decides, without a human, whether an order is worth taking.
@@ -56,6 +57,18 @@ func defaultMagmaPolicy() MagmaPolicy {
 	}
 }
 
+// Amboss gives the seller a limited window to answer, then records
+// SELLER_FAILED_TO_REACT against the account. The one order that ever expired
+// here was marked 2h04m after creation, so the window is about two hours.
+//
+// magmaApprovalGrace is deliberately well short of that. An explicit refusal
+// costs one sale; silence costs the same sale AND leaves a permanent failure on
+// the seller record, which is what buyers look at when choosing an offer.
+const (
+	magmaApprovalWindow = 2 * time.Hour
+	magmaApprovalGrace  = 80 * time.Minute
+)
+
 // magmaDecision is the outcome of evaluating one order.
 type magmaDecision struct {
 	Accept bool
@@ -76,6 +89,10 @@ type magmaPolicyInputs struct {
 	SatPerVbyte      int64
 	EstimatedFeeSat  int64
 	OnchainReachable bool
+	// PendingFor is how long Amboss has had this order waiting on us. Zero when
+	// the creation time is unknown, which disables the deadline rather than
+	// guessing an age and refusing something that just arrived.
+	PendingFor time.Duration
 }
 
 // evaluateMagmaOrder splits refusals into permanent and temporary on purpose.
@@ -84,6 +101,21 @@ type magmaPolicyInputs struct {
 // earn a failure record. Neither mistake is recoverable, so the distinction is
 // the core of this function.
 func evaluateMagmaOrder(policy MagmaPolicy, in magmaPolicyInputs) magmaDecision {
+	decision := evaluateMagmaOrderTerms(policy, in)
+	// A deferral is a bet that the blocker clears before Amboss loses patience.
+	// Past the grace period that bet is lost, and the only thing left to choose is
+	// whether the order ends as our explicit "no" or as a failure record.
+	if !decision.Accept && !decision.Reject && in.PendingFor >= magmaApprovalGrace {
+		return magmaDecision{Reject: true, Reason: fmt.Sprintf(
+			"%s - refusing explicitly, the approval window closes in about %d minutes",
+			decision.Reason, int((magmaApprovalWindow-in.PendingFor)/time.Minute))}
+	}
+	return decision
+}
+
+// evaluateMagmaOrderTerms judges the order on its merits alone, with no notion of
+// how long it has been waiting.
+func evaluateMagmaOrderTerms(policy MagmaPolicy, in magmaPolicyInputs) magmaDecision {
 	order := in.Order
 
 	// --- Permanent: the terms themselves are unacceptable. Reject outright. ---
@@ -125,6 +157,17 @@ func evaluateMagmaOrder(policy MagmaPolicy, in magmaPolicyInputs) magmaDecision 
 		return magmaDecision{Reject: true, Reason: fmt.Sprintf(
 			"the order caps our routing fee at %d ppm, below the %d ppm minimum worth accepting",
 			order.FeeRateCapPPM, policy.MinFeeRateCapPPM)}
+	}
+	// An order bigger than the entire daily allowance can never be accepted: the
+	// cap resets at midnight, but the order still would not fit on an empty day.
+	// Waiting for a moment that never arrives is how an order reaches the Amboss
+	// timeout, so this is a permanent refusal, not a deferral. It also means the
+	// policy contradicts itself whenever max_channel_size_sat is the larger of
+	// the two, and the reason says so.
+	if policy.MaxDailySizeSat > 0 && order.SizeSat > policy.MaxDailySizeSat {
+		return magmaDecision{Reject: true, Reason: fmt.Sprintf(
+			"channel size %s sat never fits the %s sat daily cap, not even on an empty day",
+			formatInt(order.SizeSat), formatInt(policy.MaxDailySizeSat))}
 	}
 
 	// --- Temporary: the terms are fine, we are not ready. Defer, never reject. ---
@@ -350,6 +393,9 @@ order by coalesce(order_created_at, first_seen_at) asc
 			SizeToday:        sizeToday,
 			OnchainReachable: capErr == nil,
 		}
+		if order.CreatedAt != nil {
+			inputs.PendingFor = time.Since(*order.CreatedAt)
+		}
 		if previewErr == nil {
 			inputs.SatPerVbyte = preview.SatPerVbyte
 			inputs.EstimatedFeeSat = preview.EstimatedFeeSat
@@ -378,9 +424,57 @@ order by coalesce(order_created_at, first_seen_at) asc
 				"auto mode rejected: "+decision.Reason, nil)
 			s.notifyTelegram(ctx, order, fmt.Sprintf(
 				"Order %s rejected automatically: %s", orderID, decision.Reason))
+		case decision.Reject:
+			// Auto-rejection is switched off, so the order will be left to expire.
+			// That is the operator's choice, but it is not free: say plainly that a
+			// failure record is coming, instead of filing it as a routine wait.
+			s.recordDeferral(ctx, orderID, "will not be accepted ("+decision.Reason+
+				") and auto-reject is off, so Amboss will record a seller failure")
 		default:
 			s.recordDeferral(ctx, orderID, decision.Reason)
 		}
+	}
+}
+
+// warnExpiringApprovals is the monitor/assisted counterpart of the deadline in
+// evaluateMagmaOrder. Those modes cannot answer on their own, so the only thing
+// left is to tell the operator while there is still time to act. Auto mode does
+// not need this: it refuses explicitly instead.
+func (s *MagmaService) warnExpiringApprovals(ctx context.Context) {
+	rows, err := s.db.Query(ctx, `
+select o.order_id
+from magma_orders o
+where o.magma_status = 'WAITING_FOR_SELLER_APPROVAL'
+  and o.order_created_at is not null
+  and now() - o.order_created_at >= $1
+  and not exists (
+    select 1 from magma_order_events e
+    where e.order_id = o.order_id and e.kind = 'approval_expiring'
+  )
+`, magmaApprovalGrace)
+	if err != nil {
+		return
+	}
+	expiring := make([]string, 0, 2)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err == nil {
+			expiring = append(expiring, id)
+		}
+	}
+	rows.Close()
+
+	for _, orderID := range expiring {
+		order, err := s.orderByID(ctx, orderID)
+		if err != nil {
+			continue
+		}
+		message := fmt.Sprintf(
+			"Order %s is still unanswered and the Amboss approval window closes in roughly %d minutes. "+
+				"Accept or reject it now - letting it lapse records a seller failure on the account.",
+			orderID, int((magmaApprovalWindow-magmaApprovalGrace)/time.Minute))
+		s.appendEvent(ctx, orderID, "approval_expiring", "warning", message, nil)
+		s.notifyTelegram(ctx, order, message)
 	}
 }
 
@@ -400,6 +494,34 @@ func (s *MagmaService) recordDeferral(ctx context.Context, orderID, reason strin
 		return
 	}
 	s.appendEvent(ctx, orderID, "auto_deferred", "info", reason, nil)
+}
+
+// magmaPolicyWarnings reports settings that quietly cancel each other out. These
+// are not invalid - each limit is honoured exactly as written - but the
+// combination refuses orders the operator almost certainly meant to accept, and
+// that only becomes visible after a sale is already lost.
+func magmaPolicyWarnings(policy MagmaPolicy) []string {
+	warnings := make([]string, 0, 2)
+	// The band between the daily cap and the per-channel maximum is dead: an order
+	// in it passes the size gate and can never fit the day, so it is refused on
+	// sight no matter how good the price is.
+	if policy.MaxDailySizeSat > 0 && policy.MaxChannelSizeSat > policy.MaxDailySizeSat {
+		warnings = append(warnings, fmt.Sprintf(
+			"orders between %s and %s sat are refused on sight: they pass the channel size limit "+
+				"but cannot fit the %s sat daily cap. Raise the daily cap to at least %s sat, "+
+				"or lower the maximum channel size to match it.",
+			formatInt(policy.MaxDailySizeSat+1), formatInt(policy.MaxChannelSizeSat),
+			formatInt(policy.MaxDailySizeSat), formatInt(policy.MaxChannelSizeSat)))
+	}
+	if policy.MaxDailyOrders > 0 && policy.MaxConcurrentOpens > policy.MaxDailyOrders {
+		warnings = append(warnings, fmt.Sprintf(
+			"the concurrent open limit (%d) is above the daily order limit (%d), so it never applies",
+			policy.MaxConcurrentOpens, policy.MaxDailyOrders))
+	}
+	if len(warnings) == 0 {
+		return nil
+	}
+	return warnings
 }
 
 // magmaPolicySummary is a short human description used in the UI and in the

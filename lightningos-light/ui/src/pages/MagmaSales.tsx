@@ -1298,6 +1298,18 @@ function MagmaModeConfirm({
               <p className="mt-1">{overview.policy_summary}</p>
             </div>
           )}
+          {(overview?.policy_warnings || []).length > 0 && (
+            <div className="rounded-lg border border-amber-300/40 bg-amber-500/10 px-3 py-2 text-amber-100">
+              <span className="text-xs uppercase tracking-wide text-amber-200/70">
+                {t('magma.policyConflictTitle')}
+              </span>
+              <ul className="mt-1 list-disc space-y-1 pl-4">
+                {(overview?.policy_warnings || []).map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           {overview?.capacity && (
             <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-fog/70">
               <span className="text-xs uppercase tracking-wide text-fog/45">

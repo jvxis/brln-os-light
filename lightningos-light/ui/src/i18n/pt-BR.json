@@ -209,6 +209,7 @@
     "modeAuto": "Automático",
     "autoNotice": "Modo automático: a policy aceita, recusa e financia ordens sozinha, uma ordem por ciclo. Revise os limites abaixo antes de deixar rodando.",
     "enableAutoConfirm": "O modo automático vai aceitar ordens e abrir canais sem nova confirmação, gastando fundos on-chain por conta própria.",
+    "policyConflictTitle": "Conflito na policy",
     "policyPrefix": "Policy atual:",
     "policyPreviewPrefix": "Policy que o modo automático usaria:",
     "confirmEnableAssisted": "Ativar modo assistido",

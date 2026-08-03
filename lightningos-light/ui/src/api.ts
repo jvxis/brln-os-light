@@ -1516,6 +1516,7 @@ export type MagmaOverview = {
   token_warning?: string
   policy?: MagmaPolicy
   policy_summary?: string
+  policy_warnings?: string[]
   pnl?: MagmaPnL
   last_sync_at?: string
   last_sync_error?: string

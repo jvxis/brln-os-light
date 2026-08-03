@@ -166,11 +166,16 @@ func (s *Server) systemCheckLND(ctx context.Context) systemCheckGroup {
 	rpcTone := systemCheckOK
 	rpcDetail := "fresh"
 	if err != nil {
-		rpcTone = systemCheckDanger
-		rpcDetail = lndStatusMessage(err)
-		if isTimeoutError(err) && s.lndWarmupActive() {
+		endpointReachable := false
+		if status.ServiceActive && s.cfg != nil {
+			endpointReachable = testTCP(s.cfg.LND.GRPCHost)
+		}
+		issue := classifyLNDHealthError(err, s.lndWarmupActive(), status.ServiceActive, endpointReachable)
+		rpcDetail = issue.Message
+		if issue.Level == "WARN" {
 			rpcTone = systemCheckWarn
-			rpcDetail = "warming up after restart"
+		} else {
+			rpcTone = systemCheckDanger
 		}
 	} else if !status.InfoKnown {
 		rpcTone = systemCheckWarn

@@ -376,7 +376,11 @@ export default function App() {
         const status: any = await getLndStatus()
         if (!active) return
         if (typeof status?.wallet_state === 'string') {
-          setWalletUnlocked(status.wallet_state === 'unlocked')
+          if (status.wallet_state === 'unlocked') {
+            setWalletUnlocked(true)
+          } else if (status.wallet_state === 'locked') {
+            setWalletUnlocked(false)
+          }
         }
       } catch {
         if (!active) return
@@ -436,7 +440,9 @@ export default function App() {
     }
   }, [menuConfig])
 
-  const wizardHidden = walletUnlocked === true
+  // Wallet existence is durable setup state. A temporarily busy/unreachable
+  // GetInfo call must not make a configured node look like a fresh install.
+  const wizardHidden = walletExists === true || walletUnlocked === true
   const wizardRequired = walletExists === false && !wizardHidden
 
   const wizardRoute = useMemo(

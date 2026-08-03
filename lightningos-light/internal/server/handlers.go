@@ -91,25 +91,16 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	defer lndCancel()
 	lndStatus, err := s.lnd.GetStatus(lndCtx)
 	if err != nil {
-		if isTimeoutError(err) {
-			if s.lndWarmupActive() {
-				issues = append(issues, healthIssue{Component: "lnd", Level: "WARN", Message: "LND warming up after restart (GetInfo timeout)"})
-				status = elevate(status, "WARN")
-			} else {
-				probeCtx, probeCancel := context.WithTimeout(r.Context(), 3*time.Second)
-				defer probeCancel()
-				if _, peerErr := s.lnd.ListPeers(probeCtx); peerErr == nil {
-					issues = append(issues, healthIssue{Component: "lnd", Level: "WARN", Message: "LND GetInfo timeout (gRPC reachable)"})
-					status = elevate(status, "WARN")
-				} else {
-					issues = append(issues, healthIssue{Component: "lnd", Level: "ERR", Message: lndStatusMessage(err)})
-					status = elevate(status, "ERR")
-				}
-			}
-		} else {
-			issues = append(issues, healthIssue{Component: "lnd", Level: "ERR", Message: lndStatusMessage(err)})
-			status = elevate(status, "ERR")
+		serviceCtx, serviceCancel := context.WithTimeout(r.Context(), 3*time.Second)
+		serviceActive := activeLNDService(serviceCtx) != ""
+		serviceCancel()
+		endpointReachable := false
+		if serviceActive && s.cfg != nil {
+			endpointReachable = testTCP(s.cfg.LND.GRPCHost)
 		}
+		issue := classifyLNDHealthError(err, s.lndWarmupActive(), serviceActive, endpointReachable)
+		issues = append(issues, issue)
+		status = elevate(status, issue.Level)
 	} else if lndStatus.WalletState == "locked" {
 		issues = append(issues, healthIssue{Component: "lnd", Level: "ERR", Message: "LND wallet locked"})
 		status = elevate(status, "ERR")
@@ -155,6 +146,42 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func classifyLNDHealthError(err error, warmup, serviceActive, endpointReachable bool) healthIssue {
+	issue := healthIssue{Component: "lnd", Level: "ERR", Message: lndStatusMessage(err)}
+	if err == nil {
+		return issue
+	}
+	if isTimeoutError(err) && warmup {
+		issue.Level = "WARN"
+		issue.Message = "LND warming up after restart (GetInfo timeout)"
+		return issue
+	}
+	if serviceActive && endpointReachable && !lndHealthErrorRequiresAction(err) {
+		issue.Level = "WARN"
+		if isTimeoutError(err) {
+			issue.Message = "LND GetInfo timeout (gRPC endpoint reachable)"
+		} else {
+			issue.Message = "LND RPC temporarily busy (gRPC endpoint reachable)"
+		}
+	}
+	return issue
+}
+
+func lndHealthErrorRequiresAction(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "wallet locked") ||
+		strings.Contains(msg, "macaroon") ||
+		strings.Contains(msg, "tls") ||
+		strings.Contains(msg, "certificate") ||
+		strings.Contains(msg, "permission denied") ||
+		strings.Contains(msg, "no such file") ||
+		strings.Contains(msg, "unauthenticated") ||
+		strings.Contains(msg, "authentication")
 }
 
 func elevate(current string, next string) string {

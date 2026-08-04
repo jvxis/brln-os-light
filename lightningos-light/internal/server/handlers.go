@@ -3367,6 +3367,37 @@ func validateLNDNetworkCombination(raw string) error {
 	return nil
 }
 
+func buildLNDConfigUpdate(
+	raw string,
+	updateBasic bool,
+	alias string,
+	color string,
+	minChanSize int64,
+	maxChanSize int64,
+	networkMode *string,
+	graphSyncPeers *int,
+	disconnectUnresponsivePeers *bool,
+) (string, error) {
+	// Always update the complete existing config in place. In particular, an
+	// existing node may use a custom wallet-unlock-password-file path that must
+	// never be replaced merely because an unrelated setting was saved.
+	updated := raw
+	if updateBasic {
+		updated = updateLNDConfOptions(
+			updated, alias, color, minChanSize, maxChanSize,
+		)
+	}
+	updated = updateLNDNetworkOptions(
+		updated, networkMode, graphSyncPeers,
+		disconnectUnresponsivePeers,
+	)
+	if err := validateLNDNetworkCombination(updated); err != nil {
+		return "", err
+	}
+
+	return updated, nil
+}
+
 func (s *Server) handleLNDConfigPost(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Alias                       *string `json:"alias"`
@@ -3431,17 +3462,16 @@ func (s *Server) handleLNDConfigPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated := string(raw)
-	if req.Alias != nil || req.Color != nil || req.MinChannelSizeSat != nil || req.MaxChannelSizeSat != nil {
-		updated = updateLNDConfOptions(updated, alias, color, minChanSize, maxChanSize)
-	}
-	updated = updateLNDNetworkOptions(updated, req.NetworkMode, req.GraphSyncPeers, req.DisconnectUnresponsivePeers)
-	if err := validateLNDNetworkCombination(updated); err != nil {
+	updateBasic := req.Alias != nil || req.Color != nil ||
+		req.MinChannelSizeSat != nil || req.MaxChannelSizeSat != nil
+	updated, err := buildLNDConfigUpdate(
+		string(raw), updateBasic, alias, color, minChanSize, maxChanSize,
+		req.NetworkMode, req.GraphSyncPeers,
+		req.DisconnectUnresponsivePeers,
+	)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
-	}
-	if walletPasswordAvailable() {
-		updated = ensureUnlockLines(updated)
 	}
 	if err := os.WriteFile(lndConfPath, []byte(updated), 0660); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to write lnd.conf")
@@ -3473,10 +3503,9 @@ func (s *Server) handleLNDConfigRaw(w http.ResponseWriter, r *http.Request) {
 	}
 
 	prev, _ := os.ReadFile(lndConfPath)
+	// The advanced editor is authoritative. Auto-unlock directives are only
+	// created by the wallet setup/unlock flow after LND validates the password.
 	updated := req.RawUserConf
-	if walletPasswordAvailable() {
-		updated = ensureUnlockLines(updated)
-	}
 	if err := validateLNDNetworkCombination(updated); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

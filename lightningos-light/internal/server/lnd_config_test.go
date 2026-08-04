@@ -75,6 +75,58 @@ func TestUpdateLNDNetworkOptionsAddsMissingSections(t *testing.T) {
 	}
 }
 
+func TestBuildLNDConfigUpdatePreservesExistingWalletUnlockPath(t *testing.T) {
+	const customPasswordPath = "/srv/existing-lnd/secrets/wallet-password"
+	raw := strings.Replace(
+		testLNDConfig,
+		"alias=Test Node",
+		"alias=Test Node\nwallet-unlock-password-file="+customPasswordPath+"\nwallet-unlock-allow-create=true",
+		1,
+	)
+	mode := "hybrid"
+	peers := 1
+	disconnect := false
+
+	updated, err := buildLNDConfigUpdate(
+		raw, false, "", "", 0, 0, &mode, &peers, &disconnect,
+	)
+	if err != nil {
+		t.Fatalf("build config update: %v", err)
+	}
+
+	wantPasswordLine := "wallet-unlock-password-file=" + customPasswordPath
+	if strings.Count(updated, wantPasswordLine) != 1 {
+		t.Fatalf("custom wallet password path was not preserved\n%s", updated)
+	}
+	if strings.Contains(updated, "wallet-unlock-password-file="+lndPasswordPath) {
+		t.Fatalf("custom wallet password path was replaced\n%s", updated)
+	}
+	if strings.Count(updated, "wallet-unlock-allow-create=true") != 1 {
+		t.Fatalf("wallet unlock create setting was not preserved\n%s", updated)
+	}
+}
+
+func TestBuildLNDConfigUpdateDoesNotAddWalletUnlock(t *testing.T) {
+	mode := "hybrid"
+	peers := 1
+	disconnect := false
+
+	updated, err := buildLNDConfigUpdate(
+		testLNDConfig, false, "", "", 0, 0,
+		&mode, &peers, &disconnect,
+	)
+	if err != nil {
+		t.Fatalf("build config update: %v", err)
+	}
+
+	if strings.Contains(updated, "wallet-unlock-password-file=") {
+		t.Fatalf("network update added wallet password file\n%s", updated)
+	}
+	if strings.Contains(updated, "wallet-unlock-allow-create=") {
+		t.Fatalf("network update added wallet unlock create setting\n%s", updated)
+	}
+}
+
 func TestValidateLNDNetworkCombinationRejectsIsolationWithProxyBypass(t *testing.T) {
 	invalid := strings.Replace(testLNDConfig, "tor.skip-proxy-for-clearnet-targets=false", "tor.skip-proxy-for-clearnet-targets=true", 1)
 	if err := validateLNDNetworkCombination(invalid); err == nil {

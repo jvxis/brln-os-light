@@ -3841,6 +3841,7 @@ func (s *Server) handleWalletSummary(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	balances, err := s.lnd.GetBalances(ctx)
+	updatedAt := time.Now().UTC().Format(time.RFC3339Nano)
 	if err != nil {
 		if isTimeoutError(err) && s.lndWarmupActive() {
 			writeJSON(w, http.StatusOK, map[string]any{
@@ -3851,6 +3852,10 @@ func (s *Server) handleWalletSummary(w http.ResponseWriter, r *http.Request) {
 					"onchain_unconfirmed_sat":                         0,
 					"lightning_local_sat":                             0,
 					"lightning_unsettled_local_sat":                   0,
+					"lightning_remote_sat":                            0,
+					"lightning_unsettled_remote_sat":                  0,
+					"lightning_pending_open_local_sat":                0,
+					"lightning_pending_open_remote_sat":               0,
 					"lightning_closing_pending_sat":                   0,
 					"lightning_closing_pending_count":                 0,
 					"lightning_coop_closing_sat":                      0,
@@ -3862,8 +3867,9 @@ func (s *Server) handleWalletSummary(w http.ResponseWriter, r *http.Request) {
 					"lightning_waiting_close_sat":                     0,
 					"lightning_waiting_close_count":                   0,
 				},
-				"activity": []any{},
-				"warning":  "LND warming up after restart",
+				"activity":   []any{},
+				"warning":    "LND warming up after restart",
+				"updated_at": updatedAt,
 			})
 			return
 		}
@@ -3879,6 +3885,10 @@ func (s *Server) handleWalletSummary(w http.ResponseWriter, r *http.Request) {
 			"onchain_unconfirmed_sat":                         balances.OnchainUnconfirmedSat,
 			"lightning_local_sat":                             balances.LightningLocalSat,
 			"lightning_unsettled_local_sat":                   balances.LightningUnsettledLocalSat,
+			"lightning_remote_sat":                            balances.LightningRemoteSat,
+			"lightning_unsettled_remote_sat":                  balances.LightningUnsettledRemoteSat,
+			"lightning_pending_open_local_sat":                balances.LightningPendingOpenLocalSat,
+			"lightning_pending_open_remote_sat":               balances.LightningPendingOpenRemoteSat,
 			"lightning_closing_pending_sat":                   balances.LightningClosingPendingSat,
 			"lightning_closing_pending_count":                 balances.LightningClosingPendingCount,
 			"lightning_coop_closing_sat":                      balances.LightningCoopClosingSat,
@@ -3890,7 +3900,8 @@ func (s *Server) handleWalletSummary(w http.ResponseWriter, r *http.Request) {
 			"lightning_waiting_close_sat":                     balances.LightningWaitingCloseSat,
 			"lightning_waiting_close_count":                   balances.LightningWaitingCloseCount,
 		},
-		"activity": []any{},
+		"activity":   []any{},
+		"updated_at": updatedAt,
 	}
 	if len(balances.Warnings) > 0 {
 		resp["warning"] = strings.Join(balances.Warnings, " ")

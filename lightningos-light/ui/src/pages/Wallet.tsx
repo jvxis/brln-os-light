@@ -13,6 +13,10 @@ const emptySummary = {
     onchain_unconfirmed_sat: 0,
     lightning_local_sat: 0,
     lightning_unsettled_local_sat: 0,
+    lightning_remote_sat: 0,
+    lightning_unsettled_remote_sat: 0,
+    lightning_pending_open_local_sat: 0,
+    lightning_pending_open_remote_sat: 0,
     lightning_closing_pending_sat: 0,
     lightning_closing_pending_count: 0,
     lightning_coop_closing_sat: 0,
@@ -24,7 +28,8 @@ const emptySummary = {
     lightning_waiting_close_sat: 0,
     lightning_waiting_close_count: 0
   },
-  activity: []
+  activity: [],
+  updated_at: ''
 }
 
 type OnchainSendPreview = {
@@ -564,6 +569,10 @@ export default function Wallet() {
   const lightningBalance = summary?.balances?.lightning_sat ?? 0
   const lightningLocalBalance = Number(summary?.balances?.lightning_local_sat ?? lightningBalance)
   const lightningUnsettledLocalBalance = Number(summary?.balances?.lightning_unsettled_local_sat ?? 0)
+  const lightningRemoteBalance = Number(summary?.balances?.lightning_remote_sat ?? 0)
+  const lightningUnsettledRemoteBalance = Number(summary?.balances?.lightning_unsettled_remote_sat ?? 0)
+  const lightningPendingOpenLocalBalance = Number(summary?.balances?.lightning_pending_open_local_sat ?? 0)
+  const lightningPendingOpenRemoteBalance = Number(summary?.balances?.lightning_pending_open_remote_sat ?? 0)
   const lightningClosingPendingBalance = Number(summary?.balances?.lightning_closing_pending_sat ?? 0)
   const lightningForceClosingBalance = Number(summary?.balances?.lightning_force_closing_sat ?? 0)
   const lightningForceClosingCount = Number(summary?.balances?.lightning_force_closing_count ?? 0)
@@ -571,7 +580,18 @@ export default function Wallet() {
   const lightningForceClosingMaxBlocks = Number(summary?.balances?.lightning_force_closing_max_blocks_til_maturity ?? 0)
   const lightningOtherClosingBalance = Math.max(0, lightningClosingPendingBalance - lightningForceClosingBalance)
   const lightningTotalBalance = lightningLocalBalance + lightningUnsettledLocalBalance
-  const lightningAccountingTotalBalance = lightningTotalBalance + lightningClosingPendingBalance
+  const lightningAccountingTotalBalance = lightningTotalBalance + lightningPendingOpenLocalBalance + lightningClosingPendingBalance
+  const balanceUpdatedAt = summary?.updated_at ? new Date(summary.updated_at) : null
+  const balanceUpdatedLabel = balanceUpdatedAt && !Number.isNaN(balanceUpdatedAt.getTime())
+    ? balanceUpdatedAt.toLocaleString(locale, {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    })
+    : ''
   const activity = activityItems
   const summaryTone = summaryError && summaryError.toLowerCase().includes('timeout')
     ? 'text-brass'
@@ -1619,10 +1639,34 @@ export default function Wallet() {
           </div>
           <div className="rounded-2xl border border-white/10 bg-ink/60 p-4">
             <p className="text-fog/60">{t('wallet.lightning')}</p>
-            <p className="text-xl">{formatSats(lightningLocalBalance)} sats</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-xl border border-white/8 bg-white/[0.03] p-3">
+                <p className="text-[11px] uppercase tracking-wide text-fog/45">{t('wallet.lightningLocalSettled')}</p>
+                <p className="mt-1 text-xl">{formatSats(lightningLocalBalance)} sats</p>
+              </div>
+              <div className="rounded-xl border border-white/8 bg-white/[0.03] p-3">
+                <p className="text-[11px] uppercase tracking-wide text-fog/45">{t('wallet.lightningRemoteInbound')}</p>
+                <p className="mt-1 text-xl">{formatSats(lightningRemoteBalance)} sats</p>
+              </div>
+            </div>
             {lightningUnsettledLocalBalance > 0 && (
               <p className="mt-1 text-xs text-fog/50">
-                {t('wallet.lightningUnsettled', { amount: formatSats(lightningUnsettledLocalBalance) })}
+                {t('wallet.lightningUnsettledLocal', { amount: formatSats(lightningUnsettledLocalBalance) })}
+              </p>
+            )}
+            {lightningUnsettledRemoteBalance > 0 && (
+              <p className="mt-1 text-xs text-fog/50">
+                {t('wallet.lightningUnsettledRemote', { amount: formatSats(lightningUnsettledRemoteBalance) })}
+              </p>
+            )}
+            {lightningPendingOpenLocalBalance > 0 && (
+              <p className="mt-1 text-xs text-fog/50">
+                {t('wallet.lightningPendingOpenLocal', { amount: formatSats(lightningPendingOpenLocalBalance) })}
+              </p>
+            )}
+            {lightningPendingOpenRemoteBalance > 0 && (
+              <p className="mt-1 text-xs text-fog/50">
+                {t('wallet.lightningPendingOpenRemote', { amount: formatSats(lightningPendingOpenRemoteBalance) })}
               </p>
             )}
             {lightningForceClosingBalance > 0 && (
@@ -1649,11 +1693,16 @@ export default function Wallet() {
                 {t('wallet.lightningClosingPending', { amount: formatSats(lightningOtherClosingBalance) })}
               </p>
             )}
-            {(lightningUnsettledLocalBalance > 0 || lightningClosingPendingBalance > 0) && (
+            {(lightningUnsettledLocalBalance > 0 || lightningPendingOpenLocalBalance > 0 || lightningClosingPendingBalance > 0) && (
               <p className="mt-1 text-xs text-fog/50">
-                {lightningClosingPendingBalance > 0
+                {(lightningPendingOpenLocalBalance > 0 || lightningClosingPendingBalance > 0)
                   ? t('wallet.lightningAccountingTotal', { amount: formatSats(lightningAccountingTotalBalance) })
-                  : t('wallet.lightningTotal', { amount: formatSats(lightningTotalBalance) })}
+                  : t('wallet.lightningLocalTotal', { amount: formatSats(lightningTotalBalance) })}
+              </p>
+            )}
+            {balanceUpdatedLabel && (
+              <p className="mt-2 text-[11px] text-fog/40">
+                {t('wallet.balanceUpdatedAt', { time: balanceUpdatedLabel })}
               </p>
             )}
             <p className="mt-2 text-xs text-fog/50">{t('wallet.lightningHint')}</p>

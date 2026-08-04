@@ -76,3 +76,34 @@ func TestSummarizePendingClosingBalancesEmpty(t *testing.T) {
 		t.Fatalf("expected empty totals, got %+v", got)
 	}
 }
+
+func TestApplyChannelBalanceMapsModernFields(t *testing.T) {
+	summary := BalanceSummary{}
+	applyChannelBalance(&summary, &lnrpc.ChannelBalanceResponse{
+		Balance:                  100,
+		LocalBalance:             &lnrpc.Amount{Sat: 101},
+		RemoteBalance:            &lnrpc.Amount{Sat: 202},
+		UnsettledLocalBalance:    &lnrpc.Amount{Sat: 3},
+		UnsettledRemoteBalance:   &lnrpc.Amount{Sat: 4},
+		PendingOpenLocalBalance:  &lnrpc.Amount{Sat: 5},
+		PendingOpenRemoteBalance: &lnrpc.Amount{Sat: 6},
+	})
+
+	if summary.LightningSat != 100 || summary.LightningLocalSat != 101 {
+		t.Fatalf("unexpected local balances: legacy=%d local=%d", summary.LightningSat, summary.LightningLocalSat)
+	}
+	if summary.LightningRemoteSat != 202 || summary.LightningUnsettledLocalSat != 3 || summary.LightningUnsettledRemoteSat != 4 {
+		t.Fatalf("unexpected channel balances: %#v", summary)
+	}
+	if summary.LightningPendingOpenLocalSat != 5 || summary.LightningPendingOpenRemoteSat != 6 {
+		t.Fatalf("unexpected pending-open balances: %#v", summary)
+	}
+}
+
+func TestApplyChannelBalanceFallsBackToLegacyLocalBalance(t *testing.T) {
+	summary := BalanceSummary{}
+	applyChannelBalance(&summary, &lnrpc.ChannelBalanceResponse{Balance: 123})
+	if summary.LightningLocalSat != 123 {
+		t.Fatalf("local balance = %d, want legacy fallback 123", summary.LightningLocalSat)
+	}
+}

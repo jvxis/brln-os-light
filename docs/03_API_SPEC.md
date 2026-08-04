@@ -213,7 +213,8 @@ GET /api/logs?service=lnd&lines=200
 ## Wallet
 
 GET /api/wallet/summary
-- Balances and recent activity.
+- Returns live wallet balances, an `updated_at` RFC3339 timestamp, and recent activity.
+- Lightning fields distinguish local settled balance, local/remote unsettled HTLCs, remote-side balance, pending-open balances, and closing balances. Remote-side values are an inbound-liquidity reference and are not funds owned by the local wallet.
 
 POST /api/wallet/address
 - Returns a new on-chain address.

@@ -640,6 +640,10 @@ type BalanceSummary struct {
 	OnchainUnconfirmedSat                     int64
 	LightningLocalSat                         int64
 	LightningUnsettledLocalSat                int64
+	LightningRemoteSat                        int64
+	LightningUnsettledRemoteSat               int64
+	LightningPendingOpenLocalSat              int64
+	LightningPendingOpenRemoteSat             int64
 	LightningClosingPendingSat                int64
 	LightningClosingPendingCount              int64
 	LightningCoopClosingSat                   int64
@@ -1202,14 +1206,7 @@ func (c *Client) GetBalances(ctx context.Context) (BalanceSummary, error) {
 		}
 		summary.Warnings = append(summary.Warnings, "Lightning balance unavailable")
 	} else {
-		summary.LightningSat = channelBal.Balance
-		summary.LightningLocalSat = channelBal.Balance
-		if local := channelBal.GetLocalBalance(); local != nil {
-			summary.LightningLocalSat = int64(local.GetSat())
-		}
-		if unsettled := channelBal.GetUnsettledLocalBalance(); unsettled != nil {
-			summary.LightningUnsettledLocalSat = int64(unsettled.GetSat())
-		}
+		applyChannelBalance(&summary, channelBal)
 		channelOK = true
 	}
 
@@ -1241,6 +1238,32 @@ func (c *Client) GetBalances(ctx context.Context) (BalanceSummary, error) {
 		return summary, firstErr
 	}
 	return summary, nil
+}
+
+func applyChannelBalance(summary *BalanceSummary, channelBal *lnrpc.ChannelBalanceResponse) {
+	if summary == nil || channelBal == nil {
+		return
+	}
+	summary.LightningSat = channelBal.GetBalance()
+	summary.LightningLocalSat = channelBal.GetBalance()
+	if amount := channelBal.GetLocalBalance(); amount != nil {
+		summary.LightningLocalSat = int64(amount.GetSat())
+	}
+	if amount := channelBal.GetRemoteBalance(); amount != nil {
+		summary.LightningRemoteSat = int64(amount.GetSat())
+	}
+	if amount := channelBal.GetUnsettledLocalBalance(); amount != nil {
+		summary.LightningUnsettledLocalSat = int64(amount.GetSat())
+	}
+	if amount := channelBal.GetUnsettledRemoteBalance(); amount != nil {
+		summary.LightningUnsettledRemoteSat = int64(amount.GetSat())
+	}
+	if amount := channelBal.GetPendingOpenLocalBalance(); amount != nil {
+		summary.LightningPendingOpenLocalSat = int64(amount.GetSat())
+	}
+	if amount := channelBal.GetPendingOpenRemoteBalance(); amount != nil {
+		summary.LightningPendingOpenRemoteSat = int64(amount.GetSat())
+	}
 }
 
 func summarizePendingClosingBalances(resp *lnrpc.PendingChannelsResponse) pendingClosingBalanceTotals {

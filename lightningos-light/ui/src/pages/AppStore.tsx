@@ -306,17 +306,22 @@ export default function AppStore() {
   })
 
   const handlePeerswapRemoteTest = async () => {
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 12_000)
     setPeerswapRemoteTesting(true)
     setPeerswapRemoteMessage('')
     setPeerswapRemoteTested(false)
     try {
-      const res = await testPeerswapElementsSource(peerswapRemotePayload())
+      const res = await testPeerswapElementsSource(peerswapRemotePayload(), controller.signal)
       const chain = res?.chain ? ` (${res.chain})` : ''
       setPeerswapRemoteMessage(`${t('appStore.peerswapRemoteTestOk')}${chain}`)
       setPeerswapRemoteTested(true)
     } catch (err) {
-      setPeerswapRemoteMessage(err instanceof Error ? err.message : t('appStore.peerswapRemoteTestFailed'))
+      setPeerswapRemoteMessage(controller.signal.aborted
+        ? t('appStore.peerswapRemoteTestTimeout')
+        : err instanceof Error ? err.message : t('appStore.peerswapRemoteTestFailed'))
     } finally {
+      window.clearTimeout(timeout)
       setPeerswapRemoteTesting(false)
     }
   }

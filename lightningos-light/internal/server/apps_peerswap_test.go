@@ -176,6 +176,36 @@ func TestPeerswapRemoteWalletNameFromPubkey(t *testing.T) {
 	}
 }
 
+func TestNormalizePeerswapRemoteSourceDoesNotRequireLNDIdentity(t *testing.T) {
+	source, err := normalizePeerswapElementsSourceRequest(peerswapElementsSourceRequest{
+		Mode:     peerswapElementsModeRemote,
+		URL:      "http://elements.br-ln.com:8086",
+		User:     "elements",
+		Password: "secret",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if source.URL != "http://elements.br-ln.com:8086" {
+		t.Fatalf("unexpected URL: %s", source.URL)
+	}
+	if source.Wallet != "" {
+		t.Fatalf("remote connectivity validation must not derive an LND wallet, got %q", source.Wallet)
+	}
+}
+
+func TestIsPeerswapRemoteWalletName(t *testing.T) {
+	valid := "peerswap_02" + strings.Repeat("a", 64)
+	if !isPeerswapRemoteWalletName(valid) {
+		t.Fatalf("expected valid remote wallet name")
+	}
+	for _, invalid := range []string{"peerswap", "peerswap_not-a-pubkey", "other_02" + strings.Repeat("a", 64)} {
+		if isPeerswapRemoteWalletName(invalid) {
+			t.Fatalf("expected invalid remote wallet name: %q", invalid)
+		}
+	}
+}
+
 func TestTestPeerswapRemoteElementsRPC(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, pass, ok := r.BasicAuth()

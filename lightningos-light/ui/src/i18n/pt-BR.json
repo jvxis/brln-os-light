@@ -1202,6 +1202,7 @@
     "peerswapRemoteTest": "Testar conexão",
     "peerswapRemoteTestFailed": "Falha ao testar o RPC remoto.",
     "peerswapRemoteTestOk": "Conexão com Elements remoto OK",
+    "peerswapRemoteTestTimeout": "O teste do Elements remoto excedeu 12 segundos. Verifique o endpoint e tente novamente.",
     "peerswapRemoteTesting": "Testando...",
     "peerswapRemoteTitle": "Configurar Elements remoto",
     "peerswapRemoteUrl": "URL RPC",

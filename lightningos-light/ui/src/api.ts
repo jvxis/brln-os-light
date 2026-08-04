@@ -180,8 +180,12 @@ export type PeerswapElementsSourcePayload = {
   wallet?: string
 }
 export const getPeerswapElementsSource = () => request('/api/apps/peerswap/elements-source')
-export const testPeerswapElementsSource = (payload?: PeerswapElementsSourcePayload) =>
-  request('/api/apps/peerswap/elements-source/test', { method: 'POST', body: payload ? JSON.stringify(payload) : undefined })
+export const testPeerswapElementsSource = (payload?: PeerswapElementsSourcePayload, signal?: AbortSignal) =>
+  request('/api/apps/peerswap/elements-source/test', {
+    method: 'POST',
+    body: payload ? JSON.stringify(payload) : undefined,
+    signal
+  })
 export const setPeerswapElementsSource = (payload: PeerswapElementsSourcePayload) =>
   request('/api/apps/peerswap/elements-source', { method: 'POST', body: JSON.stringify(payload) })
 export const getLndStatus = (force?: boolean) => {

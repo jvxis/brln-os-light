@@ -1091,7 +1091,7 @@
         "description": "The bold 0.5 command grid: angular, technical, and electric."
       },
       "signal-deck": {
-        "name": "Signal Deck",
+        "name": "LOS Classic",
         "description": "The familiar LightningOS glass interface, preserved and refined."
       },
       "block-zero": {
@@ -1099,11 +1099,11 @@
         "description": "Bitcoin editorial design inspired by the genesis era."
       },
       "miner-watch": {
-        "name": "Miner Watch",
+        "name": "Old 80's",
         "description": "Vintage CRT scanlines, phosphor glow, and squared controls."
       },
       "kernel": {
-        "name": "Kernel",
+        "name": "Linux Console",
         "description": "A clean Linux console for operators who prefer pure signal."
       }
     }

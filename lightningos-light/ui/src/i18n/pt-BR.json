@@ -1091,7 +1091,7 @@
         "description": "A nova grade de comando 0.5: angular, técnica e elétrica."
       },
       "signal-deck": {
-        "name": "Signal Deck",
+        "name": "LOS Classic",
         "description": "A interface translúcida familiar do LightningOS, preservada e refinada."
       },
       "block-zero": {
@@ -1099,11 +1099,11 @@
         "description": "Design editorial Bitcoin inspirado na era do bloco gênese."
       },
       "miner-watch": {
-        "name": "Miner Watch",
+        "name": "Old 80's",
         "description": "CRT vintage com scanlines, brilho de fósforo e controles retos."
       },
       "kernel": {
-        "name": "Kernel",
+        "name": "Linux Console",
         "description": "Um console Linux limpo para operadores que preferem sinal puro."
       }
     }

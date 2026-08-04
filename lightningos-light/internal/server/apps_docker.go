@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -198,13 +199,14 @@ func getComposeStatus(ctx context.Context, appRoot string, composePath string, s
 
 func waitForComposeServiceStable(ctx context.Context, appRoot, composePath, service string) error {
 	const (
-		maxChecks     = 12
-		stableChecks  = 4
+		maxChecks     = 16
+		stableChecks  = 10
 		checkInterval = time.Second
 	)
 	consecutiveRunning := 0
 	lastStatus := "unknown"
 	var lastErr error
+	initialRestartCount, restartCountErr := composeContainerRestartCount(ctx, appRoot, composePath, service)
 	for check := 0; check < maxChecks; check++ {
 		status, err := getComposeStatus(ctx, appRoot, composePath, service)
 		if err != nil {
@@ -214,12 +216,22 @@ func waitForComposeServiceStable(ctx context.Context, appRoot, composePath, serv
 			lastStatus = status
 			if status == "running" {
 				consecutiveRunning++
-				if consecutiveRunning >= stableChecks {
-					return nil
-				}
 			} else {
 				consecutiveRunning = 0
+				break
 			}
+		}
+		if restartCountErr == nil {
+			restartCount, err := composeContainerRestartCount(ctx, appRoot, composePath, service)
+			if err != nil {
+				lastErr = err
+			} else if restartCount > initialRestartCount {
+				lastStatus = "restarting"
+				break
+			}
+		}
+		if consecutiveRunning >= stableChecks {
+			return nil
 		}
 		if check == maxChecks-1 {
 			break
@@ -243,6 +255,27 @@ func waitForComposeServiceStable(ctx context.Context, appRoot, composePath, serv
 		return fmt.Errorf("docker service %s status could not be confirmed: %w", service, lastErr)
 	}
 	return fmt.Errorf("docker service %s did not remain running (last status: %s)", service, lastStatus)
+}
+
+func composeContainerRestartCount(ctx context.Context, appRoot, composePath, service string) (int, error) {
+	containerID, err := composeContainerID(ctx, appRoot, composePath, service)
+	if err != nil {
+		return 0, err
+	}
+	if containerID == "" {
+		return 0, errors.New("docker compose did not return a container ID")
+	}
+	out, err := system.RunCommandWithSudo(ctx, "docker", "inspect", "--format", "{{.RestartCount}}", containerID)
+	if err != nil {
+		return 0, err
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		count, parseErr := strconv.Atoi(strings.TrimSpace(line))
+		if parseErr == nil && count >= 0 {
+			return count, nil
+		}
+	}
+	return 0, fmt.Errorf("docker returned an invalid restart count")
 }
 
 func composeServiceFailureDetail(ctx context.Context, appRoot, composePath, service string) string {

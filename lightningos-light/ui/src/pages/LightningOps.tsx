@@ -1125,7 +1125,7 @@ export default function LightningOps() {
   const [peerTemporary, setPeerTemporary] = useState(false)
   const [peerStatus, setPeerStatus] = useState('')
   const [boostStatus, setBoostStatus] = useState('')
-  const [boostRunning, setBoostRunning] = useState(false)
+  const [boostMode, setBoostMode] = useState<'temporary' | 'persistent' | ''>('')
   const [peers, setPeers] = useState<Peer[]>([])
   const [peerSearch, setPeerSearch] = useState('')
   const [closedChannels, setClosedChannels] = useState<ClosedChannel[]>([])
@@ -4713,20 +4713,20 @@ export default function LightningOps() {
     }
   }
 
-  const handleBoostPeers = async () => {
-    setBoostRunning(true)
-    setBoostStatus(t('lightningOps.boostingPeers'))
+  const handleBoostPeers = async (permanent: boolean) => {
+    setBoostMode(permanent ? 'persistent' : 'temporary')
+    setBoostStatus(t(permanent ? 'lightningOps.persistentAnchorConnecting' : 'lightningOps.boostingPeers'))
     try {
-      const res = await boostPeers({ limit: 3 })
+      const res = await boostPeers({ limit: permanent ? 1 : 3, permanent })
       const connected = res?.connected ?? 0
       const skipped = res?.skipped ?? 0
       const failed = res?.failed ?? 0
-      setBoostStatus(t('lightningOps.boostComplete', { connected, skipped, failed }))
+      setBoostStatus(t(permanent ? 'lightningOps.persistentAnchorComplete' : 'lightningOps.boostComplete', { connected, skipped, failed }))
       load()
     } catch (err: any) {
-      setBoostStatus(err?.message || t('lightningOps.boostFailed'))
+      setBoostStatus(err?.message || t(permanent ? 'lightningOps.persistentAnchorFailed' : 'lightningOps.boostFailed'))
     } finally {
-      setBoostRunning(false)
+      setBoostMode('')
     }
   }
 
@@ -8695,13 +8695,22 @@ export default function LightningOps() {
             <button className="btn-primary" onClick={handleConnectPeer}>{t('lightningOps.connectPeer')}</button>
             <button
               className="btn-secondary disabled:opacity-60 disabled:cursor-not-allowed"
-              onClick={handleBoostPeers}
-              disabled={boostRunning}
+              onClick={() => handleBoostPeers(false)}
+              disabled={Boolean(boostMode)}
               title={t('lightningOps.boostHint')}
             >
-              {boostRunning ? t('lightningOps.boosting') : t('lightningOps.boostPeers')}
+              {boostMode === 'temporary' ? t('lightningOps.boosting') : t('lightningOps.boostPeers')}
+            </button>
+            <button
+              className="btn-secondary disabled:opacity-60 disabled:cursor-not-allowed"
+              onClick={() => handleBoostPeers(true)}
+              disabled={Boolean(boostMode)}
+              title={t('lightningOps.persistentAnchorHint')}
+            >
+              {boostMode === 'persistent' ? t('lightningOps.persistentAnchorConnectingShort') : t('lightningOps.persistentAnchor')}
             </button>
           </div>
+          <p className="text-xs leading-5 text-fog/50">{t('lightningOps.peerBoostModesHint')}</p>
           {peerStatus && <p className="whitespace-pre-wrap text-sm text-brass [overflow-wrap:anywhere]">{peerStatus}</p>}
           {boostStatus && <p className="whitespace-pre-wrap text-sm text-brass [overflow-wrap:anywhere]">{boostStatus}</p>}
         </div>

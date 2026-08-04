@@ -541,7 +541,7 @@ export const connectPeer = (payload: { address?: string; pubkey?: string; host?:
   request('/api/lnops/peer', { method: 'POST', body: JSON.stringify(payload) })
 export const disconnectPeer = (payload: { pubkey: string }) =>
   request('/api/lnops/peer/disconnect', { method: 'POST', body: JSON.stringify(payload) })
-export const boostPeers = (payload?: { limit?: number }) =>
+export const boostPeers = (payload?: { limit?: number; permanent?: boolean }) =>
   request('/api/lnops/peers/boost', { method: 'POST', body: JSON.stringify(payload ?? {}) })
 export const previewOpenChannel = (payload: {
   local_funding_sat: number

@@ -35,7 +35,7 @@ const (
 	mempoolBaseURL                 = "https://mempool.space/api/v1/lightning"
 	boostPeersDefaultLimit         = 3
 	boostPeersMaxLimit             = 10
-	boostPeersPermanent            = false
+	boostPeersPersistentLimit      = 1
 	lndRPCTimeout                  = 15 * time.Second
 	lndConnectTimeout              = 30 * time.Second
 	lndOpenChannelTimeout          = 60 * time.Second
@@ -413,7 +413,8 @@ type mempoolFeeRecommendation struct {
 }
 
 type boostPeersRequest struct {
-	Limit int `json:"limit"`
+	Limit     int  `json:"limit"`
+	Permanent bool `json:"permanent"`
 }
 
 type boostPeerResult struct {
@@ -426,6 +427,7 @@ type boostPeerResult struct {
 
 type boostPeersResponse struct {
 	Requested int               `json:"requested"`
+	Permanent bool              `json:"permanent"`
 	Attempted int               `json:"attempted"`
 	Connected int               `json:"connected"`
 	Skipped   int               `json:"skipped"`
@@ -2280,7 +2282,7 @@ func (s *Server) handleLNBoostPeers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := normalizeBoostPeerLimit(req.Limit)
+	limit := normalizeBoostPeerModeLimit(req.Limit, req.Permanent)
 
 	peersCtx, peersCancel := context.WithTimeout(r.Context(), lndRPCTimeout)
 	peers, err := s.lnd.ListPeers(peersCtx)
@@ -2312,10 +2314,24 @@ func (s *Server) handleLNBoostPeers(w http.ResponseWriter, r *http.Request) {
 
 	resp := boostPeersResponse{
 		Requested: limit,
+		Permanent: req.Permanent,
 	}
 	results := make([]boostPeerResult, 0, limit)
 
-	for i := 0; i < limit; i++ {
+	// Search past peers that are already connected or have no usable socket so
+	// the requested number describes successful new connections, not merely the
+	// number of ranking rows inspected. Bound the scan to keep the request fast.
+	candidateLimit := limit * 3
+	if candidateLimit < 5 {
+		candidateLimit = 5
+	}
+	if candidateLimit > boostPeersMaxLimit {
+		candidateLimit = boostPeersMaxLimit
+	}
+	if candidateLimit > len(ranking) {
+		candidateLimit = len(ranking)
+	}
+	for i := 0; i < candidateLimit && resp.Connected < limit; i++ {
 		node := ranking[i]
 		pubkey := strings.TrimSpace(node.PublicKey)
 		alias := strings.TrimSpace(node.Alias)
@@ -2368,10 +2384,10 @@ func (s *Server) handleLNBoostPeers(w http.ResponseWriter, r *http.Request) {
 		}
 
 		connectCtx, connectCancel := context.WithTimeout(r.Context(), lndRPCTimeout)
-		// Bootstrap peers must remain temporary. Permanent peers are pinned
-		// gossip syncers in LND and bypass numgraphsyncpeers, so persisting a
-		// whole boost batch can make every restart ingest the graph many times.
-		err = s.lnd.ConnectPeer(connectCtx, pubkey, socket, boostPeersPermanent)
+		// Temporary boost remains the default. The explicit persistent-anchor
+		// mode is capped at one peer because permanent peers are pinned gossip
+		// syncers in LND and can bypass numgraphsyncpeers.
+		err = s.lnd.ConnectPeer(connectCtx, pubkey, socket, req.Permanent)
 		connectCancel()
 		resp.Attempted++
 		if err != nil {
@@ -2419,6 +2435,14 @@ func normalizeBoostPeerLimit(requested int) int {
 		return boostPeersMaxLimit
 	}
 	return requested
+}
+
+func normalizeBoostPeerModeLimit(requested int, permanent bool) int {
+	limit := normalizeBoostPeerLimit(requested)
+	if permanent && limit > boostPeersPersistentLimit {
+		return boostPeersPersistentLimit
+	}
+	return limit
 }
 
 func fetchMempoolConnectivity(ctx context.Context) ([]mempoolConnectivityNode, error) {

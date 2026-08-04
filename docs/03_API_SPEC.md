@@ -315,8 +315,10 @@ Body:
 POST /api/lnops/peers/boost
 Body:
 {
-  "limit": 25
+  "limit": 3,
+  "permanent": false
 }
+- Temporary peers are the default. With `permanent: true`, the server caps the request at one persistent anchor peer regardless of `limit`.
 
 GET /api/lnops/macaroon/options
 - Returns available LND macaroon permissions and LOS presets for the custom macaroon tool.

@@ -154,7 +154,22 @@ func TestNormalizeBoostPeerLimit(t *testing.T) {
 		})
 	}
 
-	if boostPeersPermanent {
-		t.Fatal("boost peers must remain temporary to avoid pinned gossip syncers")
+	modeTests := []struct {
+		name      string
+		requested int
+		permanent bool
+		want      int
+	}{
+		{name: "temporary default", requested: 0, permanent: false, want: boostPeersDefaultLimit},
+		{name: "temporary requested", requested: 5, permanent: false, want: 5},
+		{name: "persistent default is capped", requested: 0, permanent: true, want: boostPeersPersistentLimit},
+		{name: "persistent request is capped", requested: 10, permanent: true, want: boostPeersPersistentLimit},
+	}
+	for _, test := range modeTests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := normalizeBoostPeerModeLimit(test.requested, test.permanent); got != test.want {
+				t.Fatalf("normalizeBoostPeerModeLimit(%d, %t) = %d, want %d", test.requested, test.permanent, got, test.want)
+			}
+		})
 	}
 }

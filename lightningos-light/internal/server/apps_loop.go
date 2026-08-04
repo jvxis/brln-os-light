@@ -44,7 +44,6 @@ type loopPaths struct {
 	LoopTLSKey      string
 	ClientMacaroon  string
 	ClientTLSCert   string
-	ClientSyncPath  string
 	LoopDBPath      string
 	LegacyLoopDB    string
 	LoopLogPath     string
@@ -136,7 +135,6 @@ func loopAppPaths() loopPaths {
 		LoopTLSKey:      filepath.Join(data, "tls.key"),
 		ClientMacaroon:  filepath.Join(root, "client", "loop.macaroon"),
 		ClientTLSCert:   filepath.Join(root, "client", "tls.cert"),
-		ClientSyncPath:  filepath.Join(root, "bin", "sync-client-material"),
 		LoopDBPath:      filepath.Join(networkData, "loop_sqlite.db"),
 		LegacyLoopDB:    filepath.Join(networkData, "loop.db"),
 		LoopLogPath:     filepath.Join(data, "logs", "mainnet", "loopd.log"),
@@ -488,9 +486,6 @@ lnd.tlspath=%s
 }
 
 func ensureLoopService(ctx context.Context, paths loopPaths) error {
-	if err := ensureLoopClientSyncHelper(ctx, paths); err != nil {
-		return err
-	}
 	contents := loopServiceContents(paths)
 	if existing, err := os.ReadFile(paths.ServicePath); err == nil && string(existing) == contents {
 		return nil
@@ -592,6 +587,8 @@ WantedBy=multi-user.target
 func loopClientMaterialSyncScript(paths loopPaths) string {
 	return fmt.Sprintf(`#!/bin/sh
 set -eu
+PATH=/usr/bin:/bin
+umask 0027
 if [ ! -s %s ]; then
   echo "Lightning Loop did not create its API TLS certificate; inspect loopd.log" >&2
   exit 1
@@ -617,6 +614,20 @@ mv -f %s.tmp %s
 		shellQuote(paths.ClientTLSCert), shellQuote(paths.ClientMacaroon),
 		shellQuote(paths.ClientTLSCert), shellQuote(paths.ClientTLSCert),
 		shellQuote(paths.ClientMacaroon), shellQuote(paths.ClientMacaroon))
+}
+
+// loopClientMaterialSyncRunArgs runs the fixed, manager-controlled copy script
+// as the isolated Loop user with the manager group as its primary group. The
+// Loop user can read the daemon-owned source files, while the manager group on
+// the setgid client directory makes the resulting 0640 copies readable by the
+// API. Passing the script inline avoids executing a helper that the daemon user
+// could replace inside its app-owned bin directory.
+func loopClientMaterialSyncRunArgs(paths loopPaths, managerGroupID string) []string {
+	return []string{
+		"--uid=" + loopUser,
+		"--gid=" + managerGroupID,
+		"/bin/sh", "-c", loopClientMaterialSyncScript(paths),
+	}
 }
 
 func loopPersistentSwapStateExists(paths loopPaths) bool {
@@ -731,23 +742,6 @@ func compactLoopFailureLog(raw string, maxLines, maxChars int) string {
 	return result
 }
 
-func ensureLoopClientSyncHelper(ctx context.Context, paths loopPaths) error {
-	contents := loopClientMaterialSyncScript(paths)
-	if existing, err := os.ReadFile(paths.ClientSyncPath); err == nil && string(existing) == contents {
-		return nil
-	}
-	managerGroupID, err := loopManagerGroupID()
-	if err != nil {
-		return err
-	}
-	if err := installLoopOwnedFile(
-		ctx, paths.ClientSyncPath, []byte(contents), 0750, loopUser, managerGroupID,
-	); err != nil {
-		return fmt.Errorf("failed to install Lightning Loop client material helper: %w", err)
-	}
-	return nil
-}
-
 func ensureLoopClientMaterial(ctx context.Context, paths loopPaths) error {
 	cert, certErr := os.ReadFile(paths.ClientTLSCert)
 	macaroon, macaroonErr := os.ReadFile(paths.ClientMacaroon)
@@ -760,15 +754,11 @@ func ensureLoopClientMaterial(ctx context.Context, paths loopPaths) error {
 	if err := validateLoopDaemonMaterial(paths.LoopMacaroon, "API macaroon"); err != nil {
 		return err
 	}
-	if err := ensureLoopClientSyncHelper(ctx, paths); err != nil {
+	managerGroupID, err := loopManagerGroupID()
+	if err != nil {
 		return err
 	}
-	if _, err := runSystemd(
-		ctx,
-		"--uid="+loopUser,
-		"--gid="+loopUser,
-		paths.ClientSyncPath,
-	); err != nil {
+	if _, err := runSystemd(ctx, loopClientMaterialSyncRunArgs(paths, managerGroupID)...); err != nil {
 		return fmt.Errorf("failed to prepare manager access to the Lightning Loop API: %w", err)
 	}
 	cert, certErr = os.ReadFile(paths.ClientTLSCert)

@@ -116,10 +116,23 @@ func TestLoopAPIUsesManagerReadableClientMaterial(t *testing.T) {
 		t.Fatal("manager client material must stay inside the Loop app directory")
 	}
 	syncScript := loopClientMaterialSyncScript(paths)
-	for _, expected := range []string{"test ! -L", "mkdir -p", paths.ClientDir, paths.ClientTLSCert, paths.ClientMacaroon, "chmod 0640"} {
+	for _, expected := range []string{"PATH=/usr/bin:/bin", "umask 0027", "test ! -L", "mkdir -p", paths.ClientDir, paths.ClientTLSCert, paths.ClientMacaroon, "chmod 0640"} {
 		if !strings.Contains(syncScript, expected) {
 			t.Fatalf("client material sync missing %q", expected)
 		}
+	}
+	syncArgs := loopClientMaterialSyncRunArgs(paths, "1001")
+	joinedArgs := strings.Join(syncArgs, " ")
+	for _, expected := range []string{"--uid=" + loopUser, "--gid=1001", "/bin/sh", "-c"} {
+		if !strings.Contains(joinedArgs, expected) {
+			t.Fatalf("client material sync arguments missing %q: %q", expected, syncArgs)
+		}
+	}
+	if strings.Contains(joinedArgs, "--gid="+loopUser) {
+		t.Fatal("client material must inherit the manager group, not the isolated daemon group")
+	}
+	if syncArgs[len(syncArgs)-1] != syncScript {
+		t.Fatal("client material repair must execute the fixed inline script")
 	}
 	if strings.Contains(syncScript, "sleep 0.2") || strings.Contains(syncScript, `while [ "$i"`) {
 		t.Fatal("client material repair must not impose a startup deadline on the daemon")

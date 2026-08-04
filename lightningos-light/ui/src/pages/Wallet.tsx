@@ -1639,14 +1639,14 @@ export default function Wallet() {
           </div>
           <div className="rounded-2xl border border-white/10 bg-ink/60 p-4">
             <p className="text-fog/60">{t('wallet.lightning')}</p>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <div className="rounded-xl border border-white/8 bg-white/[0.03] p-3">
+            <div className="mt-3 flex flex-wrap items-end justify-between gap-x-6 gap-y-3 rounded-xl border border-white/8 bg-white/[0.03] p-3">
+              <div>
                 <p className="text-[11px] uppercase tracking-wide text-fog/45">{t('wallet.lightningLocalSettled')}</p>
                 <p className="mt-1 text-xl">{formatSats(lightningLocalBalance)} sats</p>
               </div>
-              <div className="rounded-xl border border-white/8 bg-white/[0.03] p-3">
-                <p className="text-[11px] uppercase tracking-wide text-fog/45">{t('wallet.lightningRemoteInbound')}</p>
-                <p className="mt-1 text-xl">{formatSats(lightningRemoteBalance)} sats</p>
+              <div className="sm:text-right">
+                <p className="text-[10px] uppercase tracking-wide text-fog/35">{t('wallet.lightningRemoteInbound')}</p>
+                <p className="mt-1 text-sm text-fog/65">{formatSats(lightningRemoteBalance)} sats</p>
               </div>
             </div>
             {lightningUnsettledLocalBalance > 0 && (

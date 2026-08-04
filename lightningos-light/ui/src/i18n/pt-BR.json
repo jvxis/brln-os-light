@@ -1098,6 +1098,10 @@
         "name": "Block Zero",
         "description": "Design editorial Bitcoin inspirado na era do bloco gênese."
       },
+      "airplane-mode": {
+        "name": "Airplane Mode",
+        "description": "Cockpit digital com horizonte pixelado, instrumentos e telemetria de voo."
+      },
       "miner-watch": {
         "name": "Old 80's",
         "description": "CRT vintage com scanlines, brilho de fósforo e controles retos."

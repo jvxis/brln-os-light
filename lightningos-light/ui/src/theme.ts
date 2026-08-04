@@ -4,6 +4,7 @@ export type VisualThemeKey =
   | 'sovereign-grid'
   | 'signal-deck'
   | 'block-zero'
+  | 'airplane-mode'
   | 'miner-watch'
   | 'kernel'
 
@@ -31,6 +32,7 @@ export const visualThemeOrder: VisualThemeKey[] = [
   'sovereign-grid',
   'signal-deck',
   'block-zero',
+  'airplane-mode',
   'miner-watch',
   'kernel'
 ]
@@ -50,7 +52,7 @@ export const paletteOrder: PaletteKey[] = [
   'phosphor-green'
 ]
 
-export const darkOnlyThemes: VisualThemeKey[] = ['miner-watch', 'kernel']
+export const darkOnlyThemes: VisualThemeKey[] = ['airplane-mode', 'miner-watch', 'kernel']
 export const legacyTerminalPalettes: PaletteKey[] = [
   'phosphor-white',
   'phosphor-amber',

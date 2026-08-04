@@ -1098,6 +1098,10 @@
         "name": "Block Zero",
         "description": "Bitcoin editorial design inspired by the genesis era."
       },
+      "airplane-mode": {
+        "name": "Airplane Mode",
+        "description": "A digital cockpit with a pixel horizon, instruments, and flight telemetry."
+      },
       "miner-watch": {
         "name": "Old 80's",
         "description": "Vintage CRT scanlines, phosphor glow, and squared controls."

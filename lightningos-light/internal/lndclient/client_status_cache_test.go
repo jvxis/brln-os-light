@@ -110,7 +110,7 @@ func TestCachedRuntimeInfoCarriesChannelFootprint(t *testing.T) {
 			NumActiveChannels:   2,
 			NumInactiveChannels: 1,
 			NumPendingChannels:  3,
-			NumPeers:             4,
+			NumPeers:            4,
 		},
 	}
 
@@ -144,5 +144,28 @@ func TestRuntimeInfoFailureUsesBoundedBackoffAndPreservesSnapshot(t *testing.T) 
 	client.statusMu.Unlock()
 	if delay < runtimeInfoBackoffMax-time.Second || delay > runtimeInfoBackoffMax+time.Second {
 		t.Fatalf("backoff = %s, want approximately %s", delay, runtimeInfoBackoffMax)
+	}
+}
+
+func TestIdentityPubkeyCacheDoesNotMarkRuntimeInfoKnown(t *testing.T) {
+	const pubkey = "0356939a5900213e563c3c259909f463108d1319c1b61659c2857ce21c7517447d"
+	client := &Client{}
+
+	client.cacheIdentityPubkey(pubkey)
+
+	if got := client.CachedPubkey(); got != pubkey {
+		t.Fatalf("CachedPubkey() = %q, want %q", got, pubkey)
+	}
+	if info := client.CachedRuntimeInfo(); info.Known {
+		t.Fatalf("identity-only cache must not imply a successful GetInfo snapshot: %+v", info)
+	}
+}
+
+func TestIdentityPubkeyCacheRejectsInvalidKeys(t *testing.T) {
+	client := &Client{}
+	client.cacheIdentityPubkey("not-a-pubkey")
+
+	if got := client.CachedPubkey(); got != "" {
+		t.Fatalf("CachedPubkey() = %q after invalid key", got)
 	}
 }

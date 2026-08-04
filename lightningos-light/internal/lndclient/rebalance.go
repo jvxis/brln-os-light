@@ -50,9 +50,27 @@ func (c *Client) SelfPubkey(ctx context.Context) (string, error) {
 	if cached := strings.TrimSpace(c.CachedPubkey()); cached != "" {
 		return cached, nil
 	}
+
+	// GetInfo also queries the chain backend and can block while bitcoind is
+	// under heavy initial-sync I/O. A recoverable node signature identifies
+	// the same identity key without touching the chain backend, keeping app
+	// configuration and other identity-only operations available.
+	const identityProbeMessage = "lightningos-self-pubkey-v1"
+	signature, signErr := c.SignMessage(ctx, identityProbeMessage)
+	if signErr == nil {
+		pubkey, valid, verifyErr := c.VerifyMessage(
+			ctx, identityProbeMessage, signature,
+		)
+		if verifyErr == nil && valid && validCompressedPubkeyHex(pubkey) {
+			c.cacheIdentityPubkey(pubkey)
+			return strings.TrimSpace(pubkey), nil
+		}
+	}
+
 	status, err := c.GetStatus(ctx)
 	if err == nil {
 		if status.Pubkey != "" {
+			c.cacheIdentityPubkey(status.Pubkey)
 			return status.Pubkey, nil
 		}
 	}
@@ -68,7 +86,28 @@ func (c *Client) SelfPubkey(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(info.IdentityPubkey), nil
+	pubkey := strings.TrimSpace(info.IdentityPubkey)
+	c.cacheIdentityPubkey(pubkey)
+	return pubkey, nil
+}
+
+func (c *Client) cacheIdentityPubkey(pubkey string) {
+	trimmed := strings.TrimSpace(pubkey)
+	if c == nil || !validCompressedPubkeyHex(trimmed) {
+		return
+	}
+	c.statusMu.Lock()
+	c.identityPubkey = trimmed
+	c.statusMu.Unlock()
+}
+
+func validCompressedPubkeyHex(pubkey string) bool {
+	trimmed := strings.TrimSpace(pubkey)
+	decoded, err := hex.DecodeString(trimmed)
+	if err != nil || len(decoded) != 33 {
+		return false
+	}
+	return decoded[0] == 0x02 || decoded[0] == 0x03
 }
 
 func (c *Client) GetChannelPolicies(ctx context.Context, channelID uint64) (ChannelPolicies, error) {

@@ -66,6 +66,7 @@ type Client struct {
 	infoProbeFailures  int
 	infoProbeErr       error
 	infoProbeGroup     singleflight.Group
+	identityPubkey     string
 	walletAddressesMu  sync.Mutex
 	walletAddresses    map[string]struct{}
 	walletAddressesAt  time.Time
@@ -989,12 +990,13 @@ func (c *Client) CachedPubkey() string {
 	c.statusMu.Lock()
 	cached := c.infoCache
 	valid := c.infoCacheValid
+	identityPubkey := c.identityPubkey
 	c.statusMu.Unlock()
 
-	if !valid {
-		return ""
+	if valid && strings.TrimSpace(cached.Pubkey) != "" {
+		return cached.Pubkey
 	}
-	return cached.Pubkey
+	return identityPubkey
 }
 
 // CachedRuntimeInfo returns the latest GetInfo snapshot without performing an
@@ -1126,6 +1128,9 @@ func (c *Client) storeRuntimeInfo(info *lnrpc.GetInfoResponse) RuntimeInfo {
 	c.infoProbeFailures = 0
 	c.infoProbeErr = nil
 	c.infoNextProbe = now.Add(ttl)
+	if strings.TrimSpace(snapshot.Pubkey) != "" {
+		c.identityPubkey = snapshot.Pubkey
+	}
 	result := c.runtimeInfoLocked(now)
 	c.statusMu.Unlock()
 	return result

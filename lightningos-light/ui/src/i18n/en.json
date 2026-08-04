@@ -1070,7 +1070,9 @@
     "button": "Style",
     "eyebrow": "Personal workspace",
     "title": "Appearance studio",
-    "description": "Combine a visual theme, color palette, and brightness mode. Each choice is saved on this device.",
+    "description": "Combine a visual theme, color palette, and brightness mode. Preview freely, then apply your choice.",
+    "apply": "Apply appearance",
+    "previewNotice": "Live preview · Changes are saved only after you apply.",
     "theme": "Theme",
     "themeHint": "Changes shapes, typography, texture, and interface atmosphere.",
     "palette": "Color palette",
@@ -1086,7 +1088,7 @@
     "themes": {
       "sovereign-grid": {
         "name": "Sovereign Grid",
-        "description": "The new 0.5 command center: precise, layered, and electric."
+        "description": "The bold 0.5 command grid: angular, technical, and electric."
       },
       "signal-deck": {
         "name": "Signal Deck",

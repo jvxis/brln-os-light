@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { getHealth, getLndConfig, getLndStatus, type AuthState } from '../api'
 import { setLanguage } from '../i18n'
-import { type PaletteKey, type ThemeMode, type VisualThemeKey } from '../theme'
+import { type Appearance, type PaletteKey, type ThemeMode, type VisualThemeKey } from '../theme'
 import AccountSecurityModal from './AccountSecurityModal'
 import AppearanceMenu from './AppearanceMenu'
 
@@ -201,9 +201,7 @@ type TopbarProps = {
   theme: ThemeMode
   visualTheme: VisualThemeKey
   palette: PaletteKey
-  onThemeChange: (value: ThemeMode) => void
-  onVisualThemeChange: (value: VisualThemeKey) => void
-  onPaletteChange: (value: PaletteKey) => void
+  onAppearanceApply: (value: Appearance) => void
   onLogout?: () => void
   authState?: AuthState | null
   onAuthUpdated?: (state: AuthState) => void
@@ -216,9 +214,7 @@ export default function Topbar({
   theme,
   visualTheme,
   palette,
-  onThemeChange,
-  onVisualThemeChange,
-  onPaletteChange,
+  onAppearanceApply,
   onLogout,
   authState,
   onAuthUpdated,
@@ -426,9 +422,7 @@ export default function Topbar({
         visualTheme={visualTheme}
         palette={palette}
         mode={theme}
-        onVisualThemeChange={onVisualThemeChange}
-        onPaletteChange={onPaletteChange}
-        onModeChange={onThemeChange}
+        onApply={onAppearanceApply}
         onClose={closeAppearanceMenu}
       />
       {authState?.enabled && onAuthUpdated && (

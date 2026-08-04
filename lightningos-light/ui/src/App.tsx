@@ -576,11 +576,11 @@ export default function App() {
             theme={theme}
             visualTheme={visualTheme}
             palette={palette}
-            onThemeChange={(next) => {
-              if (!isDarkOnlyTheme(visualTheme)) setTheme(next)
+            onAppearanceApply={(next) => {
+              setVisualTheme(next.visualTheme)
+              setPalette(next.palette)
+              setTheme(isDarkOnlyTheme(next.visualTheme) ? 'dark' : next.mode)
             }}
-            onVisualThemeChange={setVisualTheme}
-            onPaletteChange={setPalette}
             authState={authState}
             onAuthUpdated={setAuthState}
             onAuthRefresh={refreshAuthState}

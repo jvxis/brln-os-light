@@ -1070,7 +1070,9 @@
     "button": "Visual",
     "eyebrow": "Espaço pessoal",
     "title": "Estúdio de aparência",
-    "description": "Combine tema visual, paleta de cores e modo de luminosidade. Cada escolha fica salva neste dispositivo.",
+    "description": "Combine tema visual, paleta de cores e modo de luminosidade. Explore a prévia e depois aplique sua escolha.",
+    "apply": "Aplicar aparência",
+    "previewNotice": "Prévia ao vivo · As mudanças só serão salvas depois de aplicar.",
     "theme": "Tema",
     "themeHint": "Muda formas, tipografia, textura e atmosfera da interface.",
     "palette": "Paleta de cores",
@@ -1086,7 +1088,7 @@
     "themes": {
       "sovereign-grid": {
         "name": "Sovereign Grid",
-        "description": "O novo centro de comando 0.5: preciso, profundo e elétrico."
+        "description": "A nova grade de comando 0.5: angular, técnica e elétrica."
       },
       "signal-deck": {
         "name": "Signal Deck",

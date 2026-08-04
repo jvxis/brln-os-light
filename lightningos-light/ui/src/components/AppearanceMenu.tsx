@@ -1,9 +1,11 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  applyAppearance,
   isDarkOnlyTheme,
   paletteOrder,
   visualThemeOrder,
+  type Appearance,
   type PaletteKey,
   type ThemeMode,
   type VisualThemeKey
@@ -14,9 +16,7 @@ type AppearanceMenuProps = {
   visualTheme: VisualThemeKey
   palette: PaletteKey
   mode: ThemeMode
-  onVisualThemeChange: (value: VisualThemeKey) => void
-  onPaletteChange: (value: PaletteKey) => void
-  onModeChange: (value: ThemeMode) => void
+  onApply: (value: Appearance) => void
   onClose: () => void
 }
 
@@ -25,16 +25,30 @@ export default function AppearanceMenu({
   visualTheme,
   palette,
   mode,
-  onVisualThemeChange,
-  onPaletteChange,
-  onModeChange,
+  onApply,
   onClose
 }: AppearanceMenuProps) {
   const { t } = useTranslation()
   const panelRef = useRef<HTMLElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const previousFocusRef = useRef<HTMLElement | null>(null)
-  const darkOnly = isDarkOnlyTheme(visualTheme)
+  const [draft, setDraft] = useState<Appearance>({ visualTheme, palette, mode })
+  const darkOnly = isDarkOnlyTheme(draft.visualTheme)
+
+  const handleCancel = useCallback(() => {
+    applyAppearance({ visualTheme, palette, mode })
+    onClose()
+  }, [mode, onClose, palette, visualTheme])
+
+  useEffect(() => {
+    if (!open) return
+    setDraft({ visualTheme, palette, mode })
+    applyAppearance({ visualTheme, palette, mode })
+  }, [mode, open, palette, visualTheme])
+
+  useEffect(() => {
+    if (open) applyAppearance(draft)
+  }, [draft, open])
 
   useEffect(() => {
     if (!open) return
@@ -44,7 +58,7 @@ export default function AppearanceMenu({
     closeButtonRef.current?.focus()
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        onClose()
+        handleCancel()
         return
       }
       if (event.key !== 'Tab' || !panelRef.current) return
@@ -66,12 +80,12 @@ export default function AppearanceMenu({
       window.removeEventListener('keydown', handleKeyDown)
       previousFocusRef.current?.focus()
     }
-  }, [open, onClose])
+  }, [handleCancel, open])
 
   if (!open) return null
 
   return (
-    <div className="appearance-dialog" role="presentation" onMouseDown={onClose}>
+    <div className="appearance-dialog" role="presentation" onMouseDown={handleCancel}>
       <section
         ref={panelRef}
         className="appearance-dialog__panel"
@@ -90,7 +104,7 @@ export default function AppearanceMenu({
             ref={closeButtonRef}
             type="button"
             className="appearance-dialog__close"
-            onClick={onClose}
+            onClick={handleCancel}
             aria-label={t('common.close')}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
@@ -105,13 +119,17 @@ export default function AppearanceMenu({
             <p className="appearance-section__hint">{t('appearance.themeHint')}</p>
             <div className="appearance-theme-grid">
               {visualThemeOrder.map((item) => {
-                const selected = item === visualTheme
+                const selected = item === draft.visualTheme
                 return (
                   <button
                     key={item}
                     type="button"
                     className={`appearance-theme-card appearance-theme-card--${item}${selected ? ' is-selected' : ''}`}
-                    onClick={() => onVisualThemeChange(item)}
+                    onClick={() => setDraft((current) => ({
+                      ...current,
+                      visualTheme: item,
+                      mode: isDarkOnlyTheme(item) ? 'dark' : current.mode
+                    }))}
                     aria-pressed={selected}
                   >
                     <span className="appearance-theme-card__preview" aria-hidden="true">
@@ -137,14 +155,14 @@ export default function AppearanceMenu({
             <p className="appearance-section__hint">{t('appearance.paletteHint')}</p>
             <div className="appearance-palette-grid">
               {paletteOrder.map((item) => {
-                const selected = item === palette
+                const selected = item === draft.palette
                 return (
                   <button
                     key={item}
                     type="button"
                     data-palette={item}
                     className={`appearance-palette${selected ? ' is-selected' : ''}`}
-                    onClick={() => onPaletteChange(item)}
+                    onClick={() => setDraft((current) => ({ ...current, palette: item }))}
                     aria-pressed={selected}
                     title={t(`topbar.paletteNames.${item}`)}
                   >
@@ -166,10 +184,10 @@ export default function AppearanceMenu({
                 <button
                   key={item}
                   type="button"
-                  className={mode === item ? 'is-selected' : ''}
-                  onClick={() => onModeChange(item)}
+                  className={draft.mode === item ? 'is-selected' : ''}
+                  onClick={() => setDraft((current) => ({ ...current, mode: item }))}
                   disabled={darkOnly && item === 'light'}
-                  aria-pressed={mode === item}
+                  aria-pressed={draft.mode === item}
                 >
                   <span aria-hidden="true">{item === 'dark' ? '◐' : '☀'}</span>
                   {t(`appearance.modes.${item}`)}
@@ -178,6 +196,24 @@ export default function AppearanceMenu({
             </div>
           </fieldset>
         </div>
+        <footer className="appearance-dialog__footer">
+          <p>{t('appearance.previewNotice')}</p>
+          <div>
+            <button type="button" className="btn-secondary" onClick={handleCancel}>
+              {t('common.cancel')}
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => {
+                onApply(draft)
+                onClose()
+              }}
+            >
+              {t('appearance.apply')}
+            </button>
+          </div>
+        </footer>
       </section>
     </div>
   )

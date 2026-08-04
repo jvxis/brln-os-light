@@ -5,12 +5,7 @@ import { setLanguage } from '../i18n'
 import { type Appearance, type PaletteKey, type ThemeMode, type VisualThemeKey } from '../theme'
 import AccountSecurityModal from './AccountSecurityModal'
 import AppearanceMenu from './AppearanceMenu'
-
-const statusColors: Record<string, string> = {
-  OK: 'bg-glow/20 text-glow border-glow/40',
-  WARN: 'bg-brass/20 text-brass border-brass/40',
-  ERR: 'bg-ember/20 text-ember border-ember/40'
-}
+import StatusBadge from './dashboard/StatusBadge'
 
 const BITCOIN_HEADER_EVENTS = [
   {
@@ -353,9 +348,11 @@ export default function Topbar({
           )}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-4">
-          <div className={`px-4 py-2 rounded-full border text-sm ${statusColors[status] || 'bg-white/10 border-white/20'}`}>
-            {status}
-          </div>
+          <StatusBadge
+            label={status}
+            tone={status === 'OK' ? 'ok' : status === 'WARN' ? 'warn' : status === 'ERR' ? 'danger' : 'muted'}
+            size="md"
+          />
           <div className="text-xs text-fog/60 max-w-xs">
             {issues.length
               ? issues

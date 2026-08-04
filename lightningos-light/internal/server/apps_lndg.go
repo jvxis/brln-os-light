@@ -22,6 +22,7 @@ type lndgPaths struct {
 	ComposePath       string
 	EnvPath           string
 	DockerfilePath    string
+	DockerignorePath  string
 	EntrypointPath    string
 	AdminPasswordPath string
 	DbPasswordPath    string
@@ -96,6 +97,7 @@ func lndgAppPaths() lndgPaths {
 		ComposePath:       filepath.Join(root, "docker-compose.yaml"),
 		EnvPath:           filepath.Join(root, ".env"),
 		DockerfilePath:    filepath.Join(root, "Dockerfile"),
+		DockerignorePath:  filepath.Join(root, ".dockerignore"),
 		EntrypointPath:    filepath.Join(root, "entrypoint.sh"),
 		AdminPasswordPath: filepath.Join(dataDir, "lndg-admin.txt"),
 		DbPasswordPath:    filepath.Join(dataDir, "lndg-db-password.txt"),
@@ -123,6 +125,9 @@ func (s *Server) installLndg(ctx context.Context) error {
 
 	currentHash := lndgBuildHash()
 	if _, err := ensureFileWithChange(paths.DockerfilePath, lndgDockerfile); err != nil {
+		return err
+	}
+	if _, err := ensureFileWithChange(paths.DockerignorePath, lndgDockerignore); err != nil {
 		return err
 	}
 	if _, err := ensureFileWithChange(paths.EntrypointPath, lndgEntrypoint); err != nil {
@@ -187,6 +192,9 @@ func (s *Server) startLndg(ctx context.Context) error {
 		return err
 	} else if changed {
 		needsBuild = true
+	}
+	if _, err := ensureFileWithChange(paths.DockerignorePath, lndgDockerignore); err != nil {
+		return err
 	}
 	if changed, err := ensureFileWithChange(paths.EntrypointPath, lndgEntrypoint); err != nil {
 		return err
@@ -848,41 +856,26 @@ func detectHostIPs(ctx context.Context) []string {
 	return ips
 }
 
-func resolveLndgGit(ctx context.Context, existingRef string, existingSha string) (string, string) {
-	ref := existingRef
+const (
+	lndgDefaultGitRef = "master"
+	// Keep fresh installs reproducible. Upstream dependency changes must be
+	// validated here before this SHA is deliberately advanced.
+	lndgDefaultGitSHA = "0fe400029240fc59431b56b6ce47e24b764396b1"
+)
+
+func resolveLndgGit(_ context.Context, existingRef string, existingSha string) (string, string) {
+	ref := strings.TrimSpace(existingRef)
 	if ref == "" {
-		ref = "master"
+		ref = lndgDefaultGitRef
 	}
-	sha := lndgRemoteHead(ctx, ref)
+	sha := strings.TrimSpace(existingSha)
 	if sha == "" {
-		sha = existingSha
-	}
-	if sha == "" {
-		sha = "unknown"
+		sha = lndgDefaultGitSHA
 	}
 	return ref, sha
 }
 
-func lndgRemoteHead(ctx context.Context, ref string) string {
-	if ref == "" {
-		return ""
-	}
-	remoteRef := ref
-	if !strings.HasPrefix(ref, "refs/") {
-		remoteRef = "refs/heads/" + ref
-	}
-	out, err := system.RunCommand(ctx, "git", "ls-remote", "https://github.com/cryptosharks131/lndg", remoteRef)
-	if err != nil {
-		return ""
-	}
-	fields := strings.Fields(out)
-	if len(fields) == 0 {
-		return ""
-	}
-	return fields[0]
-}
-
-const lndgDockerfile = `FROM python:3.11-slim
+const lndgDockerfile = `FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1
 RUN apt-get update && apt-get install -y git gcc libpq-dev postgresql-client && rm -rf /var/lib/apt/lists/*
 ARG LNDG_GIT_REF=master
@@ -898,6 +891,11 @@ RUN pip install supervisor whitenoise psycopg2-binary
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
+`
+
+const lndgDockerignore = `*
+!Dockerfile
+!entrypoint.sh
 `
 
 const lndgEntrypoint = `#!/bin/sh

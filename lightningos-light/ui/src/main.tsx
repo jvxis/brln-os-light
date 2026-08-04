@@ -6,15 +6,9 @@ import './styles/main.css'
 import '@fontsource/space-grotesk/400.css'
 import '@fontsource/space-grotesk/500.css'
 import '@fontsource/space-grotesk/600.css'
-import { isTerminalPalette, resolvePalette, resolveTheme } from './theme'
+import { applyAppearance, resolveStoredAppearance } from './theme'
 
-const storedPalette = resolvePalette(window.localStorage.getItem('los-palette'))
-document.documentElement.setAttribute('data-palette', storedPalette)
-
-const storedTheme = isTerminalPalette(storedPalette)
-  ? 'dark'
-  : resolveTheme(window.localStorage.getItem('los-theme'))
-document.documentElement.setAttribute('data-theme', storedTheme)
+applyAppearance(resolveStoredAppearance(window.localStorage))
 
 const root = document.getElementById('root')
 if (root) {

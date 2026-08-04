@@ -48,13 +48,12 @@ import {
   type AuthState
 } from './api'
 import {
-  defaultPalette,
-  isTerminalPalette,
-  paletteOrder,
-  resolvePalette,
-  resolveTheme,
+  appearanceStorageKeys,
+  isDarkOnlyTheme,
+  resolveStoredAppearance,
   type PaletteKey,
-  type ThemeMode
+  type ThemeMode,
+  type VisualThemeKey
 } from './theme'
 
 const readHashRoute = () => {
@@ -166,11 +165,10 @@ const applyMenuConfig = (routes: RouteItem[], config: MenuConfig) => {
 export default function App() {
   const { t, i18n } = useTranslation()
   const route = useHashRoute()
-  const [initialPalette] = useState<PaletteKey>(() => resolvePalette(window.localStorage.getItem('los-palette')))
-  const [palette, setPalette] = useState<PaletteKey>(initialPalette)
-  const [theme, setTheme] = useState<ThemeMode>(() => (
-    isTerminalPalette(initialPalette) ? 'dark' : resolveTheme(window.localStorage.getItem('los-theme'))
-  ))
+  const [initialAppearance] = useState(() => resolveStoredAppearance(window.localStorage))
+  const [visualTheme, setVisualTheme] = useState<VisualThemeKey>(initialAppearance.visualTheme)
+  const [palette, setPalette] = useState<PaletteKey>(initialAppearance.palette)
+  const [theme, setTheme] = useState<ThemeMode>(initialAppearance.mode)
   const [authState, setAuthState] = useState<AuthState | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [authError, setAuthError] = useState('')
@@ -291,13 +289,21 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
-    window.localStorage.setItem('los-theme', theme)
+    window.localStorage.setItem(appearanceStorageKeys.mode, theme)
   }, [theme])
 
   useEffect(() => {
     document.documentElement.setAttribute('data-palette', palette)
-    window.localStorage.setItem('los-palette', palette)
+    window.localStorage.setItem(appearanceStorageKeys.palette, palette)
   }, [palette])
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-visual-theme', visualTheme)
+    window.localStorage.setItem(appearanceStorageKeys.visualTheme, visualTheme)
+    if (isDarkOnlyTheme(visualTheme)) {
+      setTheme('dark')
+    }
+  }, [visualTheme])
 
   useEffect(() => {
     void refreshAuthState()
@@ -491,20 +497,6 @@ export default function App() {
     return allRoutes.find((item) => item.key === 'dashboard') || allRoutes[0]
   }, [allRoutes, route, wizardRequired])
 
-  const handlePaletteToggle = () => {
-    setPalette((current) => {
-      const index = paletteOrder.indexOf(current)
-      if (index === -1) {
-        return defaultPalette
-      }
-      const next = paletteOrder[(index + 1) % paletteOrder.length]
-      if (isTerminalPalette(next)) {
-        setTheme('dark')
-      }
-      return next
-    })
-  }
-
   const handleLogout = useCallback(async () => {
     try {
       await logoutAuth()
@@ -566,7 +558,7 @@ export default function App() {
         onClick={() => setMenuOpen(false)}
         aria-hidden="true"
       />
-      <div className="min-h-screen flex flex-col lg:flex-row text-fog">
+      <div className="app-shell min-h-screen flex flex-col lg:flex-row text-fog">
         <Sidebar
           routes={sidebarRoutes}
           allRoutes={baseRoutes}
@@ -577,24 +569,24 @@ export default function App() {
           open={menuOpen}
           onClose={() => setMenuOpen(false)}
         />
-        <div className="flex-1 flex flex-col">
+        <div className="app-workspace flex-1 flex flex-col min-w-0">
           <Topbar
             onMenuToggle={() => setMenuOpen((prev) => !prev)}
             menuOpen={menuOpen}
             theme={theme}
+            visualTheme={visualTheme}
             palette={palette}
-            onThemeToggle={() => {
-              if (!isTerminalPalette(palette)) {
-                setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))
-              }
+            onThemeChange={(next) => {
+              if (!isDarkOnlyTheme(visualTheme)) setTheme(next)
             }}
-            onPaletteToggle={handlePaletteToggle}
+            onVisualThemeChange={setVisualTheme}
+            onPaletteChange={setPalette}
             authState={authState}
             onAuthUpdated={setAuthState}
             onAuthRefresh={refreshAuthState}
             onLogout={authState.enabled ? handleLogout : undefined}
           />
-          <main className="px-6 pb-16 pt-6 lg:px-12">
+          <main className="app-content px-6 pb-16 pt-6 lg:px-12">
             {current.element}
           </main>
         </div>

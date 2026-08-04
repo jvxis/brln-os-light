@@ -1050,6 +1050,7 @@
     "paletteLabel": "Paleta: {{palette}}",
     "paletteNames": {
       "teal": "Turquesa",
+      "bitcoin": "Bitcoin",
       "ocean": "Oceano",
       "sunset": "Pôr do sol",
       "orchid": "Orquídea",
@@ -1057,12 +1058,53 @@
       "aurora": "Aurora",
       "ember": "Brasa",
       "slate": "Ardosia",
-      "phosphor-white": "Miner Watch · P4 Branco",
-      "phosphor-amber": "Miner Watch · P3 Âmbar",
-      "phosphor-green": "Miner Watch · P1 Verde"
+      "phosphor-white": "P4 Branco",
+      "phosphor-amber": "P3 Âmbar",
+      "phosphor-green": "P1 Verde"
     },
     "systemLabel": "SISTEMA",
     "toggleLanguage": "Alternar idioma"
+  },
+  "appearance": {
+    "open": "Personalizar aparência",
+    "button": "Visual",
+    "eyebrow": "Espaço pessoal",
+    "title": "Estúdio de aparência",
+    "description": "Combine tema visual, paleta de cores e modo de luminosidade. Cada escolha fica salva neste dispositivo.",
+    "theme": "Tema",
+    "themeHint": "Muda formas, tipografia, textura e atmosfera da interface.",
+    "palette": "Paleta de cores",
+    "paletteHint": "Muda as cores de destaque sem alterar o tema selecionado.",
+    "mode": "Modo",
+    "modeHint": "Escolha a luminosidade mais confortável para este ambiente.",
+    "darkOnly": "Somente escuro",
+    "darkOnlyHint": "Este tema foi criado como uma experiência exclusivamente escura.",
+    "modes": {
+      "dark": "Escuro",
+      "light": "Claro"
+    },
+    "themes": {
+      "sovereign-grid": {
+        "name": "Sovereign Grid",
+        "description": "O novo centro de comando 0.5: preciso, profundo e elétrico."
+      },
+      "signal-deck": {
+        "name": "Signal Deck",
+        "description": "A interface translúcida familiar do LightningOS, preservada e refinada."
+      },
+      "block-zero": {
+        "name": "Block Zero",
+        "description": "Design editorial Bitcoin inspirado na era do bloco gênese."
+      },
+      "miner-watch": {
+        "name": "Miner Watch",
+        "description": "CRT vintage com scanlines, brilho de fósforo e controles retos."
+      },
+      "kernel": {
+        "name": "Kernel",
+        "description": "Um console Linux limpo para operadores que preferem sinal puro."
+      }
+    }
   },
   "sidebar": {
     "closeMenu": "Fechar menu",

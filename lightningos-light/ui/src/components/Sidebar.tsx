@@ -371,7 +371,7 @@ export default function Sidebar({
     <aside
       id="app-sidebar"
       className={clsx(
-        'fixed inset-y-0 left-0 z-40 w-72 max-w-[85vw] h-full bg-ink/80 border-b lg:border-b-0 lg:border-r border-white/10 px-6 py-8 flex flex-col overflow-y-auto transition-transform duration-300 ease-out',
+        'app-sidebar fixed inset-y-0 left-0 z-40 w-72 max-w-[85vw] h-full bg-ink/80 border-b lg:border-b-0 lg:border-r border-white/10 px-6 py-8 flex flex-col overflow-y-auto transition-transform duration-300 ease-out',
         open ? 'translate-x-0' : '-translate-x-full',
         'lg:translate-x-0 lg:sticky lg:top-0 lg:h-screen lg:w-72'
       )}

@@ -1050,6 +1050,7 @@
     "paletteLabel": "Palette: {{palette}}",
     "paletteNames": {
       "teal": "Teal",
+      "bitcoin": "Bitcoin",
       "ocean": "Ocean",
       "sunset": "Sunset",
       "orchid": "Orchid",
@@ -1057,12 +1058,53 @@
       "aurora": "Aurora",
       "ember": "Ember",
       "slate": "Slate",
-      "phosphor-white": "Miner Watch · P4 White",
-      "phosphor-amber": "Miner Watch · P3 Amber",
-      "phosphor-green": "Miner Watch · P1 Green"
+      "phosphor-white": "P4 White",
+      "phosphor-amber": "P3 Amber",
+      "phosphor-green": "P1 Green"
     },
     "systemLabel": "SYSTEM",
     "toggleLanguage": "Toggle language"
+  },
+  "appearance": {
+    "open": "Customize appearance",
+    "button": "Style",
+    "eyebrow": "Personal workspace",
+    "title": "Appearance studio",
+    "description": "Combine a visual theme, color palette, and brightness mode. Each choice is saved on this device.",
+    "theme": "Theme",
+    "themeHint": "Changes shapes, typography, texture, and interface atmosphere.",
+    "palette": "Color palette",
+    "paletteHint": "Changes accent colors without changing the selected theme.",
+    "mode": "Mode",
+    "modeHint": "Choose the brightness that is most comfortable for this environment.",
+    "darkOnly": "Dark only",
+    "darkOnlyHint": "This theme was designed as a dark experience.",
+    "modes": {
+      "dark": "Dark",
+      "light": "Light"
+    },
+    "themes": {
+      "sovereign-grid": {
+        "name": "Sovereign Grid",
+        "description": "The new 0.5 command center: precise, layered, and electric."
+      },
+      "signal-deck": {
+        "name": "Signal Deck",
+        "description": "The familiar LightningOS glass interface, preserved and refined."
+      },
+      "block-zero": {
+        "name": "Block Zero",
+        "description": "Bitcoin editorial design inspired by the genesis era."
+      },
+      "miner-watch": {
+        "name": "Miner Watch",
+        "description": "Vintage CRT scanlines, phosphor glow, and squared controls."
+      },
+      "kernel": {
+        "name": "Kernel",
+        "description": "A clean Linux console for operators who prefer pure signal."
+      }
+    }
   },
   "sidebar": {
     "closeMenu": "Close menu",

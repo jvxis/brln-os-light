@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { getHealth, getLndConfig, getLndStatus, type AuthState } from '../api'
 import { setLanguage } from '../i18n'
-import { isTerminalPalette, type PaletteKey, type ThemeMode } from '../theme'
+import { type PaletteKey, type ThemeMode, type VisualThemeKey } from '../theme'
 import AccountSecurityModal from './AccountSecurityModal'
+import AppearanceMenu from './AppearanceMenu'
 
 const statusColors: Record<string, string> = {
   OK: 'bg-glow/20 text-glow border-glow/40',
@@ -198,9 +199,11 @@ type TopbarProps = {
   onMenuToggle?: () => void
   menuOpen?: boolean
   theme: ThemeMode
+  visualTheme: VisualThemeKey
   palette: PaletteKey
-  onThemeToggle: () => void
-  onPaletteToggle: () => void
+  onThemeChange: (value: ThemeMode) => void
+  onVisualThemeChange: (value: VisualThemeKey) => void
+  onPaletteChange: (value: PaletteKey) => void
   onLogout?: () => void
   authState?: AuthState | null
   onAuthUpdated?: (state: AuthState) => void
@@ -211,9 +214,11 @@ export default function Topbar({
   onMenuToggle,
   menuOpen,
   theme,
+  visualTheme,
   palette,
-  onThemeToggle,
-  onPaletteToggle,
+  onThemeChange,
+  onVisualThemeChange,
+  onPaletteChange,
   onLogout,
   authState,
   onAuthUpdated,
@@ -225,10 +230,9 @@ export default function Topbar({
   const [nodeAlias, setNodeAlias] = useState('')
   const [nodePubkey, setNodePubkey] = useState('')
   const [securityModalOpen, setSecurityModalOpen] = useState(false)
+  const [appearanceMenuOpen, setAppearanceMenuOpen] = useState(false)
+  const closeAppearanceMenu = useCallback(() => setAppearanceMenuOpen(false), [])
   const isPortuguese = i18n.language === 'pt-BR'
-  const paletteName = t(`topbar.paletteNames.${palette}`)
-  const paletteLabel = t('topbar.paletteLabel', { palette: paletteName })
-  const terminalPalette = isTerminalPalette(palette)
   const today = new Date()
   const activeBitcoinHeaderEvent = getActiveBitcoinHeaderEvent(today)
   const isBitcoinEventDay = Boolean(activeBitcoinHeaderEvent && today.getDate() === activeBitcoinHeaderEvent.day)
@@ -290,7 +294,7 @@ export default function Topbar({
   const displayNodeLabel = nodeAlias || compactPubkey
 
   return (
-    <header className="px-6 lg:px-12 pt-8">
+    <header className="app-topbar px-6 lg:px-12 pt-8">
       {onMenuToggle && (
         <div className="mb-6 flex items-center justify-between lg:hidden">
           <button
@@ -384,38 +388,17 @@ export default function Topbar({
           </button>
           <button
             type="button"
-            className={`theme-toggle ${terminalPalette ? 'cursor-not-allowed opacity-50' : ''}`}
-            onClick={onThemeToggle}
-            aria-label={terminalPalette
-              ? t('topbar.terminalDarkOnly')
-              : theme === 'dark' ? t('topbar.switchToLight') : t('topbar.switchToDark')}
-            aria-pressed={theme === 'light'}
-            title={terminalPalette
-              ? t('topbar.terminalDarkOnly')
-              : theme === 'dark' ? t('topbar.switchToLight') : t('topbar.switchToDark')}
-            disabled={terminalPalette}
+            className="appearance-trigger"
+            onClick={() => setAppearanceMenuOpen(true)}
+            aria-label={t('appearance.open')}
+            title={t('appearance.open')}
           >
-            <span className="theme-toggle__icon theme-toggle__icon--moon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 14.5A8.5 8.5 0 1 1 9.5 3a7 7 0 0 0 11.5 11.5Z" />
-              </svg>
+            <span className="appearance-trigger__icon" aria-hidden="true">
+              <i />
+              <i />
+              <i />
             </span>
-            <span className="theme-toggle__icon theme-toggle__icon--sun">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="4" />
-                <path d="M12 2v3M12 19v3M4.5 4.5l2.1 2.1M17.4 17.4l2.1 2.1M2 12h3M19 12h3M4.5 19.5l2.1-2.1M17.4 6.6l2.1-2.1" />
-              </svg>
-            </span>
-            <span className="theme-toggle__thumb" />
-          </button>
-          <button
-            type="button"
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-ink/60 text-fog/70 hover:text-white hover:border-white/40 transition"
-            onClick={onPaletteToggle}
-            aria-label={t('topbar.switchPalette')}
-            title={paletteLabel}
-          >
-            <span className="h-4 w-4 rounded-full bg-glow shadow" />
+            <span className="appearance-trigger__label">{t('appearance.button')}</span>
           </button>
           {authState?.enabled && onAuthUpdated && (
             <button
@@ -438,6 +421,16 @@ export default function Topbar({
         </div>
       </div>
       <div className="glow-divider mt-6" />
+      <AppearanceMenu
+        open={appearanceMenuOpen}
+        visualTheme={visualTheme}
+        palette={palette}
+        mode={theme}
+        onVisualThemeChange={onVisualThemeChange}
+        onPaletteChange={onPaletteChange}
+        onModeChange={onThemeChange}
+        onClose={closeAppearanceMenu}
+      />
       {authState?.enabled && onAuthUpdated && (
         <AccountSecurityModal
           open={securityModalOpen}

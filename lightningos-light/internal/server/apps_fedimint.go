@@ -349,6 +349,10 @@ func (s *Server) startFedimintGateway(ctx context.Context) error {
 	if err := runCompose(ctx, paths.Root, paths.ComposePath, "up", "-d"); err != nil {
 		return err
 	}
+	if err := waitForComposeServiceStable(ctx, paths.Root, paths.ComposePath, "gatewayd"); err != nil {
+		_ = runCompose(ctx, paths.Root, paths.ComposePath, "stop", "gatewayd")
+		return fedimintGatewayStartupError(err)
+	}
 	if err := ensureFedimintGatewayUfwAccess(ctx); err != nil && s.logger != nil {
 		s.logger.Printf("fedimint gateway: post-start ufw rule failed: %v", err)
 	}
@@ -356,6 +360,17 @@ func (s *Server) startFedimintGateway(ctx context.Context) error {
 		s.logger.Printf("fedimint gateway: post-start bitcoin rpc ufw rule failed: %v", err)
 	}
 	return nil
+}
+
+func fedimintGatewayStartupError(err error) error {
+	if err == nil {
+		return nil
+	}
+	detail := strings.TrimSpace(err.Error())
+	if strings.Contains(strings.ToLower(detail), "method not found") {
+		return errors.New("Fedimint Lightning Gateway requires Bitcoin Core wallet RPC methods (including createwallet), but the configured Bitcoin RPC endpoint rejected that method")
+	}
+	return fmt.Errorf("Fedimint Lightning Gateway failed startup validation: %w", err)
 }
 
 func (s *Server) uninstallFedimintGateway(ctx context.Context) error {

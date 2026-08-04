@@ -196,6 +196,63 @@ func getComposeStatus(ctx context.Context, appRoot string, composePath string, s
 	return "stopped", nil
 }
 
+func waitForComposeServiceStable(ctx context.Context, appRoot, composePath, service string) error {
+	const (
+		maxChecks     = 12
+		stableChecks  = 4
+		checkInterval = time.Second
+	)
+	consecutiveRunning := 0
+	lastStatus := "unknown"
+	var lastErr error
+	for check := 0; check < maxChecks; check++ {
+		status, err := getComposeStatus(ctx, appRoot, composePath, service)
+		if err != nil {
+			lastErr = err
+			consecutiveRunning = 0
+		} else {
+			lastStatus = status
+			if status == "running" {
+				consecutiveRunning++
+				if consecutiveRunning >= stableChecks {
+					return nil
+				}
+			} else {
+				consecutiveRunning = 0
+			}
+		}
+		if check == maxChecks-1 {
+			break
+		}
+		timer := time.NewTimer(checkInterval)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+
+	detail := composeServiceFailureDetail(ctx, appRoot, composePath, service)
+	if detail != "" {
+		return fmt.Errorf("docker service %s did not remain running (last status: %s); recent log: %s", service, lastStatus, detail)
+	}
+	if lastErr != nil {
+		return fmt.Errorf("docker service %s status could not be confirmed: %w", service, lastErr)
+	}
+	return fmt.Errorf("docker service %s did not remain running (last status: %s)", service, lastStatus)
+}
+
+func composeServiceFailureDetail(ctx context.Context, appRoot, composePath, service string) string {
+	lines, err := readComposeServiceLogLines(ctx, appRoot, composePath, service, composeErrorMaxLines, "")
+	if err != nil || len(lines) == 0 {
+		return ""
+	}
+	return composeCommandErrorDetail(strings.Join(lines, "\n"), nil)
+}
+
 func composeContainerID(ctx context.Context, appRoot string, composePath string, service string) (string, error) {
 	cmd, baseArgs, err := resolveCompose(ctx)
 	if err != nil {

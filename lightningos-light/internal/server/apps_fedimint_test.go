@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -177,6 +178,18 @@ func TestFedimintGatewayComposeCanJoinBitcoinCoreNetwork(t *testing.T) {
 	var parsed map[string]any
 	if err := yaml.Unmarshal([]byte(compose), &parsed); err != nil {
 		t.Fatalf("gateway compose must be valid YAML: %v\n%s", err, compose)
+	}
+}
+
+func TestFedimintGatewayStartupErrorExplainsRestrictedBitcoinRPC(t *testing.T) {
+	err := fedimintGatewayStartupError(errors.New("container exited"))
+	if err == nil || !strings.Contains(err.Error(), "failed startup validation") {
+		t.Fatalf("expected generic startup validation error, got %v", err)
+	}
+
+	err = fedimintGatewayStartupError(errors.New("JSON-RPC error: Method not found"))
+	if err == nil || !strings.Contains(err.Error(), "createwallet") {
+		t.Fatalf("expected wallet RPC requirement, got %v", err)
 	}
 }
 

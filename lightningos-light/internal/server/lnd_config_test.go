@@ -81,3 +81,28 @@ func TestValidateLNDNetworkCombinationRejectsIsolationWithProxyBypass(t *testing
 		t.Fatal("expected invalid Tor combination to be rejected")
 	}
 }
+
+func TestNormalizeBoostPeerLimit(t *testing.T) {
+	tests := []struct {
+		name      string
+		requested int
+		want      int
+	}{
+		{name: "default", requested: 0, want: boostPeersDefaultLimit},
+		{name: "negative uses default", requested: -1, want: boostPeersDefaultLimit},
+		{name: "requested value", requested: 2, want: 2},
+		{name: "capped", requested: boostPeersMaxLimit + 1, want: boostPeersMaxLimit},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := normalizeBoostPeerLimit(test.requested); got != test.want {
+				t.Fatalf("normalizeBoostPeerLimit(%d) = %d, want %d", test.requested, got, test.want)
+			}
+		})
+	}
+
+	if boostPeersPermanent {
+		t.Fatal("boost peers must remain temporary to avoid pinned gossip syncers")
+	}
+}

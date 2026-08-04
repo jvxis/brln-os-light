@@ -4717,7 +4717,7 @@ export default function LightningOps() {
     setBoostRunning(true)
     setBoostStatus(t('lightningOps.boostingPeers'))
     try {
-      const res = await boostPeers({ limit: 25 })
+      const res = await boostPeers({ limit: 3 })
       const connected = res?.connected ?? 0
       const skipped = res?.skipped ?? 0
       const failed = res?.failed ?? 0

@@ -33,8 +33,9 @@ const (
 	lndAdminMacaroonPath           = "/data/lnd/data/chain/bitcoin/mainnet/admin.macaroon"
 	lndFixPermsScript              = "/usr/local/sbin/lightningos-fix-lnd-perms"
 	mempoolBaseURL                 = "https://mempool.space/api/v1/lightning"
-	boostPeersDefaultLimit         = 25
-	boostPeersMaxLimit             = 100
+	boostPeersDefaultLimit         = 3
+	boostPeersMaxLimit             = 10
+	boostPeersPermanent            = false
 	lndRPCTimeout                  = 15 * time.Second
 	lndConnectTimeout              = 30 * time.Second
 	lndOpenChannelTimeout          = 60 * time.Second
@@ -2279,13 +2280,7 @@ func (s *Server) handleLNBoostPeers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := req.Limit
-	if limit <= 0 {
-		limit = boostPeersDefaultLimit
-	}
-	if limit > boostPeersMaxLimit {
-		limit = boostPeersMaxLimit
-	}
+	limit := normalizeBoostPeerLimit(req.Limit)
 
 	peersCtx, peersCancel := context.WithTimeout(r.Context(), lndRPCTimeout)
 	peers, err := s.lnd.ListPeers(peersCtx)
@@ -2373,7 +2368,10 @@ func (s *Server) handleLNBoostPeers(w http.ResponseWriter, r *http.Request) {
 		}
 
 		connectCtx, connectCancel := context.WithTimeout(r.Context(), lndRPCTimeout)
-		err = s.lnd.ConnectPeer(connectCtx, pubkey, socket, true)
+		// Bootstrap peers must remain temporary. Permanent peers are pinned
+		// gossip syncers in LND and bypass numgraphsyncpeers, so persisting a
+		// whole boost batch can make every restart ingest the graph many times.
+		err = s.lnd.ConnectPeer(connectCtx, pubkey, socket, boostPeersPermanent)
 		connectCancel()
 		resp.Attempted++
 		if err != nil {
@@ -2411,6 +2409,16 @@ func (s *Server) handleLNBoostPeers(w http.ResponseWriter, r *http.Request) {
 
 	resp.Results = results
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func normalizeBoostPeerLimit(requested int) int {
+	if requested <= 0 {
+		return boostPeersDefaultLimit
+	}
+	if requested > boostPeersMaxLimit {
+		return boostPeersMaxLimit
+	}
+	return requested
 }
 
 func fetchMempoolConnectivity(ctx context.Context) ([]mempoolConnectivityNode, error) {

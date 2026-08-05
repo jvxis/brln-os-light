@@ -282,11 +282,11 @@ export const decodeInvoice = (payload: { payment_request: string }) =>
   request('/api/wallet/decode', { method: 'POST', body: JSON.stringify(payload) })
 export const previewWalletPayment = (payload: { payment_request: string; channel_point?: string; channel_points?: string[]; amount_sat?: number; max_fee_sat?: number }) =>
   request('/api/wallet/pay/preview', { method: 'POST', body: JSON.stringify(payload) })
-export const payInvoiceValidatedRoute = (payload: { payment_request: string; channel_point?: string; channel_points?: string[]; route_token?: string; amount_sat?: number; max_fee_sat?: number }) =>
+export const payInvoiceValidatedRoute = (payload: { payment_request: string; channel_point?: string; channel_points?: string[]; route_token?: string; amount_sat?: number; max_fee_sat?: number; confirm_password?: string }) =>
   request('/api/wallet/pay/validated-route', { method: 'POST', body: JSON.stringify(payload) })
-export const payInvoiceMPP = (payload: { payment_request: string; channel_point?: string; channel_points?: string[]; amount_sat?: number; max_fee_sat?: number; max_parts?: number; max_shard_sat?: number }) =>
+export const payInvoiceMPP = (payload: { payment_request: string; channel_point?: string; channel_points?: string[]; amount_sat?: number; max_fee_sat?: number; max_parts?: number; max_shard_sat?: number; confirm_password?: string }) =>
   request('/api/wallet/pay/mpp', { method: 'POST', body: JSON.stringify(payload) })
-export const payInvoice = (payload: { payment_request: string; channel_point?: string; channel_points?: string[]; amount_sat?: number; max_fee_sat?: number }) =>
+export const payInvoice = (payload: { payment_request: string; channel_point?: string; channel_points?: string[]; amount_sat?: number; max_fee_sat?: number; confirm_password?: string }) =>
   request('/api/wallet/pay', { method: 'POST', body: JSON.stringify(payload) })
 
 export const getLnChannels = () => request('/api/lnops/channels')
@@ -352,9 +352,9 @@ export const getCloseManagerSessionEvents = (id: number, limit = 100) =>
   request(`/api/lnops/close-manager/sessions/${encodeURIComponent(String(id))}/events?limit=${encodeURIComponent(String(limit))}`)
 export const recoverCloseManagerSession = (id: number) =>
   request(`/api/lnops/close-manager/sessions/${encodeURIComponent(String(id))}/recover`, { method: 'POST' })
-export const forceCloseManagerSession = (id: number) =>
-  request(`/api/lnops/close-manager/sessions/${encodeURIComponent(String(id))}/force-close`, { method: 'POST' })
-export const bumpFeeCloseManagerSession = (id: number, payload: { preset?: 'economic' | 'normal' | 'urgent'; sat_per_vbyte?: number }) =>
+export const forceCloseManagerSession = (id: number, confirmPassword?: string) =>
+	request(`/api/lnops/close-manager/sessions/${encodeURIComponent(String(id))}/force-close`, { method: 'POST', body: JSON.stringify({ confirm_password: confirmPassword || '' }) })
+export const bumpFeeCloseManagerSession = (id: number, payload: { preset?: 'economic' | 'normal' | 'urgent'; sat_per_vbyte?: number; confirm_password?: string }) =>
   request(`/api/lnops/close-manager/sessions/${encodeURIComponent(String(id))}/bump-fee`, { method: 'POST', body: JSON.stringify(payload) })
 export const getLnWatchtowers = () => request('/api/lnops/watchtower')
 export const addLnWatchtower = (payload: { address: string }) =>
@@ -562,6 +562,7 @@ export const openChannel = (payload: {
   sat_per_vbyte?: number
   private?: boolean
   outpoints?: string[]
+	confirm_password?: string
 }) => request('/api/lnops/channel/open', { method: 'POST', body: JSON.stringify(payload) })
 export const openBatchChannels = (payload: {
   channels: Array<{
@@ -573,10 +574,11 @@ export const openBatchChannels = (payload: {
     private?: boolean
   }>
   sat_per_vbyte?: number
+	confirm_password?: string
 }) => request('/api/lnops/channel/open-batch', { method: 'POST', body: JSON.stringify(payload) })
-export const bumpPendingOpenChannel = (payload: { channel_point: string; preset?: 'economic' | 'normal' | 'urgent'; sat_per_vbyte?: number }) =>
+export const bumpPendingOpenChannel = (payload: { channel_point: string; preset?: 'economic' | 'normal' | 'urgent'; sat_per_vbyte?: number; confirm_password?: string }) =>
   request('/api/lnops/channel/pending-open/bump-fee', { method: 'POST', body: JSON.stringify(payload) })
-export const closeChannel = (payload: { channel_point: string; force?: boolean; sat_per_vbyte?: number }) =>
+export const closeChannel = (payload: { channel_point: string; force?: boolean; sat_per_vbyte?: number; confirm_password?: string }) =>
   request('/api/lnops/channel/close', { method: 'POST', body: JSON.stringify(payload) })
 export const updateChannelFees = (payload: {
   channel_point?: string
@@ -618,10 +620,10 @@ export const acceptBalancedOpenSession = (sessionId: string) =>
     method: 'POST',
     body: JSON.stringify({}),
   })
-export const executeBalancedOpenSession = (sessionId: string) =>
+export const executeBalancedOpenSession = (sessionId: string, confirmPassword?: string) =>
   request(`/api/lnops/balanced-open/sessions/${encodeURIComponent(sessionId)}/execute`, {
     method: 'POST',
-    body: JSON.stringify({}),
+    body: JSON.stringify({ confirm_password: confirmPassword || '' }),
   })
 export const retryBalancedOpenSessionBroadcast = (sessionId: string) =>
   request(`/api/lnops/balanced-open/sessions/${encodeURIComponent(sessionId)}/retry-broadcast`, {
@@ -1582,10 +1584,10 @@ export const acceptMagmaOrder = (id: string): Promise<MagmaOrder> =>
   request(`/api/apps/magma-sales/orders/${encodeURIComponent(id)}/accept`, { method: 'POST', body: JSON.stringify({}) })
 export const rejectMagmaOrder = (id: string): Promise<MagmaOrder> =>
   request(`/api/apps/magma-sales/orders/${encodeURIComponent(id)}/reject`, { method: 'POST', body: JSON.stringify({}) })
-export const openMagmaChannel = (id: string, satPerVbyte: number): Promise<MagmaOrder> =>
+export const openMagmaChannel = (id: string, satPerVbyte: number, confirmPassword?: string): Promise<MagmaOrder> =>
   request(`/api/apps/magma-sales/orders/${encodeURIComponent(id)}/open`, {
     method: 'POST',
-    body: JSON.stringify({ sat_per_vbyte: satPerVbyte })
+    body: JSON.stringify({ sat_per_vbyte: satPerVbyte, confirm_password: confirmPassword || '' })
   })
 
 export const getMagmaOverview = (): Promise<MagmaOverview> => request('/api/apps/magma-sales/overview')

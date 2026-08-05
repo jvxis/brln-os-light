@@ -12,6 +12,7 @@ import (
 func (s *Server) routes() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
+	r.Use(securityHeadersMiddleware())
 	r.Use(s.requestLogger())
 	if s.auth != nil {
 		r.Use(s.auth.Middleware())

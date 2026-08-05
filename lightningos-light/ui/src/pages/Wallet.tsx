@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import QrScanner from 'qr-scanner'
 import QRCode from 'qrcode'
 import { APIError, createInvoice, decodeInvoice, getLnChannels, getMempoolFees, getWalletActivity, getWalletAddress, getWalletPaymentDetail, getWalletSummary, payInvoice, payInvoiceMPP, payInvoiceValidatedRoute, previewOnchainSend, previewWalletPayment, reauthAuth, sendOnchain } from '../api'
+import SensitiveActionModal from '../components/SensitiveActionModal'
 import { getLocale } from '../i18n'
 
 const emptySummary = {
@@ -226,6 +227,10 @@ export default function Wallet() {
   const [sendConfirmPassword, setSendConfirmPassword] = useState('')
   const [sendConfirmStatus, setSendConfirmStatus] = useState('')
   const [sendConfirmRunning, setSendConfirmRunning] = useState(false)
+  const [paymentReauthAction, setPaymentReauthAction] = useState<'pay' | 'validated' | 'mpp' | null>(null)
+  const [paymentReauthPassword, setPaymentReauthPassword] = useState('')
+  const [paymentReauthError, setPaymentReauthError] = useState('')
+  const [paymentReauthBusy, setPaymentReauthBusy] = useState(false)
   const [amount, setAmount] = useState('')
   const [memo, setMemo] = useState('')
   const [invoiceExpiry, setInvoiceExpiry] = useState('3600')
@@ -1277,6 +1282,11 @@ export default function Wallet() {
         silent: true
       })
     } catch (err: any) {
+      if (err instanceof APIError && err.code === 'lightning_funds_reauth_required') {
+        setPaymentReauthAction('pay')
+        setPaymentReauthError('')
+        return
+      }
       setStatus(paymentErrorMessage(err, t('wallet.paymentFailed')))
     }
   }
@@ -1344,6 +1354,11 @@ export default function Wallet() {
         silent: true
       })
     } catch (err: any) {
+      if (err instanceof APIError && err.code === 'lightning_funds_reauth_required') {
+        setPaymentReauthAction('validated')
+        setPaymentReauthError('')
+        return
+      }
       setStatus(paymentErrorMessage(err, t('wallet.paymentFailed')))
     }
   }
@@ -1408,7 +1423,35 @@ export default function Wallet() {
         silent: true
       })
     } catch (err: any) {
+      if (err instanceof APIError && err.code === 'lightning_funds_reauth_required') {
+        setPaymentReauthAction('mpp')
+        setPaymentReauthError('')
+        return
+      }
       setStatus(paymentErrorMessage(err, t('wallet.paymentFailed')))
+    }
+  }
+
+  const handlePaymentReauth = async () => {
+    if (!paymentReauthPassword.trim()) {
+      setPaymentReauthError(t('wallet.paymentPasswordRequired'))
+      return
+    }
+    const action = paymentReauthAction
+    if (!action) return
+    setPaymentReauthBusy(true)
+    setPaymentReauthError('')
+    try {
+      await reauthAuth({ password: paymentReauthPassword, scope: 'lightning_funds' })
+      setPaymentReauthAction(null)
+      setPaymentReauthPassword('')
+      if (action === 'validated') await handlePayValidatedRoute()
+      else if (action === 'mpp') await handlePayMPP()
+      else await handlePay()
+    } catch (err: any) {
+      setPaymentReauthError(err?.message || t('wallet.paymentPasswordFailed'))
+    } finally {
+      setPaymentReauthBusy(false)
     }
   }
 
@@ -2353,6 +2396,24 @@ export default function Wallet() {
           </div>
         </div>
       )}
+
+      <SensitiveActionModal
+        open={paymentReauthAction !== null}
+        title={t('wallet.paymentPasswordTitle')}
+        description={t('wallet.paymentPasswordBody')}
+        password={paymentReauthPassword}
+        busy={paymentReauthBusy}
+        error={paymentReauthError}
+        confirmLabel={t('wallet.paymentPasswordAction')}
+        onPasswordChange={setPaymentReauthPassword}
+        onConfirm={handlePaymentReauth}
+        onClose={() => {
+          if (paymentReauthBusy) return
+          setPaymentReauthAction(null)
+          setPaymentReauthPassword('')
+          setPaymentReauthError('')
+        }}
+      />
 
       {selectedActivity && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4">

@@ -214,6 +214,9 @@ func (s *Server) handleMagmaOpenChannel(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
+	if !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
+		return
+	}
 	order, err := svc.OpenChannelForOrder(r.Context(), orderID, req)
 	if err != nil {
 		writeError(w, magmaActionStatus(err), err.Error())

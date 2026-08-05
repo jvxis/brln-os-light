@@ -1,9 +1,10 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { acceptBalancedOpenSession, addLnWatchtower, bakeLnMacaroon, boostPeers, bumpFeeCloseManagerSession, bumpPendingOpenChannel, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getChannelRankings, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelDBImpact, getLnChannelFees, getLnChannelPeerRecommendations, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnMacaroonOptions, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMagmaCommitments, getMempoolFees, openBatchChannels, openChannel, previewBatchOpenChannels, previewOpenChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, recoverCloseManagerSession, refreshAutofeeReferences, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker, type MagmaChannelCommitment, type LnMacaroonBakeResult, type LnMacaroonOptions, type LnMacaroonPermission } from '../api'
+import { APIError, acceptBalancedOpenSession, addLnWatchtower, bakeLnMacaroon, boostPeers, bumpFeeCloseManagerSession, bumpPendingOpenChannel, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getChannelRankings, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelDBImpact, getLnChannelFees, getLnChannelPeerRecommendations, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnMacaroonOptions, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMagmaCommitments, getMempoolFees, openBatchChannels, openChannel, previewBatchOpenChannels, previewOpenChannel, proposeBalancedOpenSession, reauthAuth, recoverBalancedOpenSession, recoverCloseManagerSession, refreshAutofeeReferences, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker, type MagmaChannelCommitment, type LnMacaroonBakeResult, type LnMacaroonOptions, type LnMacaroonPermission } from '../api'
 import { getLocale } from '../i18n'
 import ChannelDetailModal from '../components/ChannelDetailModal'
+import SensitiveActionModal from '../components/SensitiveActionModal'
 
 type Channel = {
   channel_point: string
@@ -1203,6 +1204,11 @@ export default function LightningOps() {
   const [macaroonBusy, setMacaroonBusy] = useState(false)
   const [macaroonResult, setMacaroonResult] = useState<LnMacaroonBakeResult | null>(null)
   const [macaroonCopied, setMacaroonCopied] = useState<'base64' | 'hex' | ''>('')
+  const [fundsReauthOpen, setFundsReauthOpen] = useState(false)
+  const [fundsReauthPassword, setFundsReauthPassword] = useState('')
+  const [fundsReauthError, setFundsReauthError] = useState('')
+  const [fundsReauthBusy, setFundsReauthBusy] = useState(false)
+  const fundsReauthRetryRef = useRef<null | (() => Promise<void>)>(null)
   const [scbRestoreData, setScbRestoreData] = useState('')
   const [scbRestoreFileName, setScbRestoreFileName] = useState('')
   const [scbRestoreConfirm, setScbRestoreConfirm] = useState(false)
@@ -1211,6 +1217,37 @@ export default function LightningOps() {
   const [scbRestoreStatus, setScbRestoreStatus] = useState('')
   const [scbRestoreResult, setScbRestoreResult] = useState<number | null>(null)
   const [bitcoinLocal, setBitcoinLocal] = useState<BitcoinLocalStatus | null>(null)
+
+  const queueFundsReauth = (err: unknown, retry: () => Promise<void>) => {
+    if (!(err instanceof APIError) || err.code !== 'lightning_funds_reauth_required') return false
+    fundsReauthRetryRef.current = retry
+    setFundsReauthPassword('')
+    setFundsReauthError('')
+    setFundsReauthOpen(true)
+    return true
+  }
+
+  const handleFundsReauth = async () => {
+    if (!fundsReauthPassword.trim()) {
+      setFundsReauthError(t('lightningOps.fundsPasswordRequired'))
+      return
+    }
+    const retry = fundsReauthRetryRef.current
+    if (!retry) return
+    setFundsReauthBusy(true)
+    setFundsReauthError('')
+    try {
+      await reauthAuth({ password: fundsReauthPassword, scope: 'lightning_funds' })
+      setFundsReauthOpen(false)
+      setFundsReauthPassword('')
+      fundsReauthRetryRef.current = null
+      await retry()
+    } catch (err: any) {
+      setFundsReauthError(err?.message || t('lightningOps.fundsPasswordFailed'))
+    } finally {
+      setFundsReauthBusy(false)
+    }
+  }
 
   const [autofeeConfig, setAutofeeConfig] = useState<AutofeeConfig | null>(null)
   const [autofeeStatus, setAutofeeStatus] = useState<AutofeeStatus | null>(null)
@@ -5708,6 +5745,7 @@ export default function LightningOps() {
       setOpenCloseAddress('')
       load()
     } catch (err: any) {
+      if (queueFundsReauth(err, handleOpenChannel)) return
       setOpenStatus(err?.message || t('lightningOps.channelOpenFailed'))
     }
   }
@@ -5842,6 +5880,7 @@ export default function LightningOps() {
       setBatchItems([])
       load()
     } catch (err: any) {
+      if (queueFundsReauth(err, handleBatchOpenChannels)) return
       setBatchStatus(err?.message || t('lightningOps.channelOpenFailed'))
     } finally {
       setBatchBusy(false)
@@ -5964,6 +6003,7 @@ export default function LightningOps() {
       await refreshBalancedOpen()
       load()
     } catch (err: any) {
+      if (action === 'execute' && queueFundsReauth(err, () => handleBalancedOpenAction(session, action))) return
       setBalancedOpenStatus(err?.message || t('lightningOps.balancedOpenActionFailed'))
     } finally {
       setBalancedOpenActionBusyID('')
@@ -6048,14 +6088,15 @@ export default function LightningOps() {
       }
       load()
     } catch (err: any) {
+      if (queueFundsReauth(err, handleCloseChannel)) return
       setCloseStatus(err?.message || t('lightningOps.closeFailed'))
     }
   }
 
-  const handleForceClosePending = async (channelPoint: string) => {
+  const handleForceClosePending = async (channelPoint: string, alreadyConfirmed = false) => {
     const point = (channelPoint || '').trim()
     if (!point) return
-    const confirmed = window.confirm(t('lightningOps.forceCloseCardConfirm', { point }))
+    const confirmed = alreadyConfirmed || window.confirm(t('lightningOps.forceCloseCardConfirm', { point }))
     if (!confirmed) return
 
     setPendingForceBusyByPoint((prev) => ({ ...prev, [point]: true }))
@@ -6076,16 +6117,17 @@ export default function LightningOps() {
       setCloseForce(true)
       load()
     } catch (err: any) {
+      if (queueFundsReauth(err, () => handleForceClosePending(point, true))) return
       setPendingForceStatusByPoint((prev) => ({ ...prev, [point]: err?.message || t('lightningOps.forceCloseCardFailed') }))
     } finally {
       setPendingForceBusyByPoint((prev) => ({ ...prev, [point]: false }))
     }
   }
 
-  const handlePendingOpenBumpFee = async (channelPoint: string, preset: 'economic' | 'normal' | 'urgent', preview: { satPerVbyte: number; estimatedFeeSat: number }) => {
+  const handlePendingOpenBumpFee = async (channelPoint: string, preset: 'economic' | 'normal' | 'urgent', preview: { satPerVbyte: number; estimatedFeeSat: number }, alreadyConfirmed = false) => {
     const point = (channelPoint || '').trim()
     if (!point || pendingOpenBumpBusyByPoint[point]) return
-    const confirmed = window.confirm(t('lightningOps.pendingOpenBumpConfirm', {
+    const confirmed = alreadyConfirmed || window.confirm(t('lightningOps.pendingOpenBumpConfirm', {
       preset: pendingOpenBumpPresetLabel(preset),
       rate: preview.satPerVbyte,
       fee: Math.max(0, Math.trunc(preview.estimatedFeeSat)).toLocaleString(),
@@ -6108,6 +6150,7 @@ export default function LightningOps() {
       }))
       load()
     } catch (err: any) {
+      if (queueFundsReauth(err, () => handlePendingOpenBumpFee(point, preset, preview, true))) return
       setPendingOpenBumpStatusByPoint((prev) => ({ ...prev, [point]: err?.message || t('lightningOps.pendingOpenBumpFailed') }))
     } finally {
       setPendingOpenBumpBusyByPoint((prev) => ({ ...prev, [point]: false }))
@@ -6553,9 +6596,9 @@ export default function LightningOps() {
     }
   }
 
-  const handleCloseRecoveryForceClose = async (sessionID: number) => {
+  const handleCloseRecoveryForceClose = async (sessionID: number, alreadyConfirmed = false) => {
     if (closeRecoveryBusyByID[sessionID]) return
-    const confirmed = window.confirm(t('lightningOps.closeRecoveryForceConfirm'))
+	const confirmed = alreadyConfirmed || window.confirm(t('lightningOps.closeRecoveryForceConfirm'))
     if (!confirmed) return
     setCloseRecoveryBusyByID((prev) => ({ ...prev, [sessionID]: true }))
     setCloseRecoveryActionStatusByID((prev) => ({ ...prev, [sessionID]: t('lightningOps.closeRecoveryForceRunning') }))
@@ -6574,14 +6617,15 @@ export default function LightningOps() {
       await refreshCloseRecovery({ quiet: true })
       const channelsPayload = await getLnChannels()
       applyChannelsPayload(channelsPayload)
-    } catch (err: any) {
-      setCloseRecoveryActionStatusByID((prev) => ({ ...prev, [sessionID]: err?.message || t('lightningOps.closeRecoveryForceFailed') }))
+	} catch (err: any) {
+	  if (queueFundsReauth(err, () => handleCloseRecoveryForceClose(sessionID, true))) return
+	  setCloseRecoveryActionStatusByID((prev) => ({ ...prev, [sessionID]: err?.message || t('lightningOps.closeRecoveryForceFailed') }))
     } finally {
       setCloseRecoveryBusyByID((prev) => ({ ...prev, [sessionID]: false }))
     }
   }
 
-  const handleCloseRecoveryBumpFee = async (sessionID: number, preset: 'economic' | 'normal' | 'urgent') => {
+  const handleCloseRecoveryBumpFee = async (sessionID: number, preset: 'economic' | 'normal' | 'urgent', alreadyConfirmed = false) => {
     if (closeRecoveryBusyByID[sessionID]) return
     const presetLabelKey =
       preset === 'economic'
@@ -6589,7 +6633,7 @@ export default function LightningOps() {
         : preset === 'urgent'
           ? 'lightningOps.closeRecoveryBumpUrgent'
           : 'lightningOps.closeRecoveryBumpNormal'
-    const confirmed = window.confirm(t('lightningOps.closeRecoveryBumpConfirm', { preset: t(presetLabelKey) }))
+	const confirmed = alreadyConfirmed || window.confirm(t('lightningOps.closeRecoveryBumpConfirm', { preset: t(presetLabelKey) }))
     if (!confirmed) return
     setCloseRecoveryBusyByID((prev) => ({ ...prev, [sessionID]: true }))
     setCloseRecoveryActionStatusByID((prev) => ({ ...prev, [sessionID]: t('lightningOps.closeRecoveryBumpRunning') }))
@@ -6608,8 +6652,9 @@ export default function LightningOps() {
       await refreshCloseRecovery({ quiet: true })
       const channelsPayload = await getLnChannels()
       applyChannelsPayload(channelsPayload)
-    } catch (err: any) {
-      setCloseRecoveryActionStatusByID((prev) => ({ ...prev, [sessionID]: err?.message || t('lightningOps.closeRecoveryBumpFailed') }))
+	} catch (err: any) {
+	  if (queueFundsReauth(err, () => handleCloseRecoveryBumpFee(sessionID, preset, true))) return
+	  setCloseRecoveryActionStatusByID((prev) => ({ ...prev, [sessionID]: err?.message || t('lightningOps.closeRecoveryBumpFailed') }))
     } finally {
       setCloseRecoveryBusyByID((prev) => ({ ...prev, [sessionID]: false }))
     }
@@ -10749,6 +10794,24 @@ export default function LightningOps() {
         channelPoint={detailChannel?.channel_point || ''}
         initialChannel={detailChannel}
         onClose={() => setDetailChannel(null)}
+      />
+      <SensitiveActionModal
+        open={fundsReauthOpen}
+        title={t('lightningOps.fundsPasswordTitle')}
+        description={t('lightningOps.fundsPasswordBody')}
+        password={fundsReauthPassword}
+        busy={fundsReauthBusy}
+        error={fundsReauthError}
+        confirmLabel={t('lightningOps.fundsPasswordAction')}
+        onPasswordChange={setFundsReauthPassword}
+        onConfirm={handleFundsReauth}
+        onClose={() => {
+          if (fundsReauthBusy) return
+          setFundsReauthOpen(false)
+          setFundsReauthPassword('')
+          setFundsReauthError('')
+          fundsReauthRetryRef.current = null
+        }}
       />
     </section>
   )

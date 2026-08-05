@@ -52,6 +52,7 @@ const (
 	authScopeLoopSwap           = "loop_swap"
 	authScopeLoopOutBRLN        = "loopout_brln"
 	authScopeTerminalCredential = "terminal_credential"
+	authScopeLightningFunds     = "lightning_funds"
 )
 
 type authContextKey string
@@ -94,6 +95,7 @@ type AuthService struct {
 	enabled bool
 	logger  *log.Logger
 	now     func() time.Time
+	limiter *authRateLimiter
 
 	mu       sync.Mutex
 	sessions map[string]*authSession
@@ -108,6 +110,7 @@ func NewAuthService(cfg *config.Config, logger *log.Logger) *AuthService {
 		enabled:  enabled,
 		logger:   logger,
 		now:      time.Now,
+		limiter:  newAuthRateLimiter(),
 		sessions: make(map[string]*authSession),
 	}
 }
@@ -167,12 +170,17 @@ func (a *AuthService) Middleware() func(http.Handler) http.Handler {
 }
 
 func (a *AuthService) HandleState(w http.ResponseWriter, r *http.Request) {
+	setNoStore(w)
 	writeJSON(w, http.StatusOK, a.stateForRequest(w, r))
 }
 
 func (a *AuthService) HandleSetup(w http.ResponseWriter, r *http.Request) {
+	setNoStore(w)
 	if a == nil || !a.Enabled() {
 		writeErrorCode(w, http.StatusBadRequest, "auth_disabled", "login protection is disabled")
+		return
+	}
+	if !a.allowAuthRequest(w, r, "setup") {
 		return
 	}
 
@@ -181,8 +189,7 @@ func (a *AuthService) HandleSetup(w http.ResponseWriter, r *http.Request) {
 		Password        string `json:"password"`
 		ConfirmPassword string `json:"confirm_password"`
 	}
-	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
+	if !readAuthJSON(w, r, &req) {
 		return
 	}
 
@@ -197,16 +204,19 @@ func (a *AuthService) HandleSetup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *AuthService) HandleLogin(w http.ResponseWriter, r *http.Request) {
+	setNoStore(w)
 	if a == nil || !a.Enabled() {
 		writeErrorCode(w, http.StatusBadRequest, "auth_disabled", "login protection is disabled")
+		return
+	}
+	if !a.allowAuthRequest(w, r, "login") {
 		return
 	}
 
 	var req struct {
 		Password string `json:"password"`
 	}
-	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
+	if !readAuthJSON(w, r, &req) {
 		return
 	}
 
@@ -221,6 +231,7 @@ func (a *AuthService) HandleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *AuthService) HandleLogout(w http.ResponseWriter, r *http.Request) {
+	setNoStore(w)
 	if a != nil && a.Enabled() {
 		a.logout(sessionIDFromRequest(r))
 	}
@@ -229,8 +240,12 @@ func (a *AuthService) HandleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *AuthService) HandleRecovery(w http.ResponseWriter, r *http.Request) {
+	setNoStore(w)
 	if a == nil || !a.Enabled() {
 		writeErrorCode(w, http.StatusBadRequest, "auth_disabled", "login protection is disabled")
+		return
+	}
+	if !a.allowAuthRequest(w, r, "recovery") {
 		return
 	}
 
@@ -239,8 +254,7 @@ func (a *AuthService) HandleRecovery(w http.ResponseWriter, r *http.Request) {
 		Password        string `json:"password"`
 		ConfirmPassword string `json:"confirm_password"`
 	}
-	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
+	if !readAuthJSON(w, r, &req) {
 		return
 	}
 
@@ -255,8 +269,12 @@ func (a *AuthService) HandleRecovery(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *AuthService) HandleChangePassword(w http.ResponseWriter, r *http.Request) {
+	setNoStore(w)
 	if a == nil || !a.Enabled() {
 		writeErrorCode(w, http.StatusBadRequest, "auth_disabled", "login protection is disabled")
+		return
+	}
+	if !a.allowAuthRequest(w, r, "password") {
 		return
 	}
 
@@ -271,8 +289,7 @@ func (a *AuthService) HandleChangePassword(w http.ResponseWriter, r *http.Reques
 		Password        string `json:"password"`
 		ConfirmPassword string `json:"confirm_password"`
 	}
-	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
+	if !readAuthJSON(w, r, &req) {
 		return
 	}
 
@@ -287,8 +304,12 @@ func (a *AuthService) HandleChangePassword(w http.ResponseWriter, r *http.Reques
 }
 
 func (a *AuthService) HandleReauth(w http.ResponseWriter, r *http.Request) {
+	setNoStore(w)
 	if a == nil || !a.Enabled() {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+	if !a.allowAuthRequest(w, r, "reauth") {
 		return
 	}
 
@@ -302,8 +323,7 @@ func (a *AuthService) HandleReauth(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 		Scope    string `json:"scope"`
 	}
-	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
+	if !readAuthJSON(w, r, &req) {
 		return
 	}
 
@@ -406,7 +426,7 @@ func (a *AuthService) login(password string) (authSessionSnapshot, error) {
 	if err := authVerifyPassword(password); err != nil {
 		return authSessionSnapshot{}, err
 	}
-	return a.newSession(), nil
+	return a.newSession()
 }
 
 func (a *AuthService) recover(recoveryToken string, password string, confirmPassword string) (authSessionSnapshot, error) {
@@ -474,7 +494,7 @@ func (a *AuthService) reauth(sessionID string, password string, scope string) (t
 
 func authScopeValid(scope string) bool {
 	switch strings.TrimSpace(scope) {
-	case authScopeWalletSendExternal, authScopeMacaroonExport, authScopeNodeRetirement, authScopeSuccessionLive, authScopeLoopSwap, authScopeLoopOutBRLN, authScopeTerminalCredential:
+	case authScopeWalletSendExternal, authScopeMacaroonExport, authScopeNodeRetirement, authScopeSuccessionLive, authScopeLoopSwap, authScopeLoopOutBRLN, authScopeTerminalCredential, authScopeLightningFunds:
 		return true
 	default:
 		return false
@@ -539,11 +559,19 @@ func (a *AuthService) authenticateSession(sessionID string) (authSessionSnapshot
 	}, true
 }
 
-func (a *AuthService) newSession() authSessionSnapshot {
+func (a *AuthService) newSession() (authSessionSnapshot, error) {
 	now := a.currentTime()
+	sessionID, err := authRandomToken("session", authRawTokenBytes)
+	if err != nil {
+		return authSessionSnapshot{}, err
+	}
+	csrfToken, err := authRandomToken("csrf", authRawTokenBytes)
+	if err != nil {
+		return authSessionSnapshot{}, err
+	}
 	session := &authSession{
-		ID:           authRandomToken("session", authRawTokenBytes),
-		CSRFToken:    authRandomToken("csrf", authRawTokenBytes),
+		ID:           sessionID,
+		CSRFToken:    csrfToken,
 		CreatedAt:    now,
 		LastSeenAt:   now,
 		ExpiresAt:    now.Add(authSessionTTL),
@@ -558,14 +586,14 @@ func (a *AuthService) newSession() authSessionSnapshot {
 		ID:        session.ID,
 		CSRFToken: session.CSRFToken,
 		ExpiresAt: session.ExpiresAt,
-	}
+	}, nil
 }
 
 func (a *AuthService) resetSessionsAndCreateNew() (authSessionSnapshot, error) {
 	a.mu.Lock()
 	a.sessions = make(map[string]*authSession)
 	a.mu.Unlock()
-	return a.newSession(), nil
+	return a.newSession()
 }
 
 func (a *AuthService) logout(sessionID string) {
@@ -899,7 +927,10 @@ func authVerifyOneTimeToken(token string, hashKey string, expiryKey string, now 
 }
 
 func authIssueToken(prefix string, ttl time.Duration, hashKey string, expiryKey string) (string, time.Time, error) {
-	token := authRandomToken(prefix, authRawTokenBytes)
+	token, err := authRandomToken(prefix, authRawTokenBytes)
+	if err != nil {
+		return "", time.Time{}, err
+	}
 	expiresAt := time.Now().Add(ttl).UTC()
 	if err := authPersistSecrets(map[string]string{
 		hashKey:   authTokenHash(token),
@@ -910,20 +941,21 @@ func authIssueToken(prefix string, ttl time.Duration, hashKey string, expiryKey 
 	return token, expiresAt, nil
 }
 
-func authRandomToken(prefix string, rawBytes int) string {
+var authRandomRead = rand.Read
+
+func authRandomToken(prefix string, rawBytes int) (string, error) {
 	if rawBytes < 16 {
 		rawBytes = 16
 	}
 	buf := make([]byte, rawBytes)
-	if _, err := rand.Read(buf); err != nil {
-		fallback := sha256.Sum256([]byte(fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())))
-		copy(buf, fallback[:])
+	if _, err := authRandomRead(buf); err != nil {
+		return "", fmt.Errorf("secure random generation failed: %w", err)
 	}
 	encoded := base64.RawURLEncoding.EncodeToString(buf)
 	if strings.TrimSpace(prefix) == "" {
-		return encoded
+		return encoded, nil
 	}
-	return fmt.Sprintf("los-%s-%s", prefix, encoded)
+	return fmt.Sprintf("los-%s-%s", prefix, encoded), nil
 }
 
 func IssueSetupToken() (string, time.Time, error) {

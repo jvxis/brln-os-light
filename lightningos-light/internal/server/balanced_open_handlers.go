@@ -369,6 +369,17 @@ func (s *Server) handleBalancedOpenSessionAcceptPost(w http.ResponseWriter, r *h
 }
 
 func (s *Server) handleBalancedOpenSessionExecutePost(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ConfirmPassword string `json:"confirm_password"`
+	}
+	if err := readOptionalJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
+		return
+	}
+
 	svc, errMsg := s.balancedOpenService()
 	if svc == nil {
 		if errMsg == "" {

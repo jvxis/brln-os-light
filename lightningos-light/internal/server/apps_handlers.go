@@ -230,6 +230,7 @@ func (s *Server) handleElectrsStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAppAdminPassword(w http.ResponseWriter, r *http.Request) {
+	setNoStore(w)
 	appID := chi.URLParam(r, "id")
 	if appID == "" {
 		writeError(w, http.StatusBadRequest, "missing app id")

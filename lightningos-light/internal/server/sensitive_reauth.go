@@ -35,3 +35,14 @@ func (s *Server) requireSensitiveReauth(w http.ResponseWriter, r *http.Request, 
 	}
 	return true
 }
+
+func (s *Server) requireLightningFundsReauth(w http.ResponseWriter, r *http.Request, confirmPassword string) bool {
+	return s.requireSensitiveReauth(
+		w,
+		r,
+		authScopeLightningFunds,
+		confirmPassword,
+		"lightning_funds_reauth_required",
+		"password confirmation required for Lightning fund operations",
+	)
+}

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+	APIError,
   acceptMagmaOrder,
   applyMagmaBackfill,
   getMagmaOpenPreview,
@@ -28,6 +29,7 @@ import type {
   MagmaPolicy
 } from '../api'
 import { getLocale } from '../i18n'
+import SensitiveActionModal from '../components/SensitiveActionModal'
 
 const BLOCKS_PER_DAY = 144
 
@@ -1458,6 +1460,9 @@ function MagmaOrderActions({
   const [preview, setPreview] = useState<MagmaOpenPreview | null>(null)
   const [satPerVbyte, setSatPerVbyte] = useState<number | ''>('')
   const [confirmingOpen, setConfirmingOpen] = useState(false)
+	const [reauthOpen, setReauthOpen] = useState(false)
+	const [reauthPassword, setReauthPassword] = useState('')
+	const [reauthError, setReauthError] = useState('')
 
   const state = order.local_state || 'observed'
   const run = (action: () => Promise<unknown>) => {
@@ -1481,6 +1486,29 @@ function MagmaOrderActions({
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setBusy(false))
   }
+
+	const executeOpen = async (confirmPassword = '') => {
+		if (satPerVbyte === '') return
+		setBusy(true)
+		setError('')
+		setReauthError('')
+		try {
+			await openMagmaChannel(order.id, Number(satPerVbyte), confirmPassword)
+			setReauthOpen(false)
+			setReauthPassword('')
+			onDone()
+		} catch (err: any) {
+			if (err instanceof APIError && err.code === 'lightning_funds_reauth_required') {
+				setReauthOpen(true)
+				return
+			}
+			const message = err instanceof Error ? err.message : String(err)
+			if (confirmPassword) setReauthError(message)
+			else setError(message)
+		} finally {
+			setBusy(false)
+		}
+	}
 
   if (order.status === 'WAITING_FOR_SELLER_APPROVAL' && state === 'observed') {
     return (
@@ -1566,7 +1594,7 @@ function MagmaOrderActions({
               <button
                 className="btn-primary"
                 disabled={busy || !preview?.can_open || satPerVbyte === ''}
-                onClick={() => run(() => openMagmaChannel(order.id, Number(satPerVbyte)))}
+				onClick={() => void executeOpen()}
               >
                 {busy ? t('magma.working') : t('magma.confirmOpen')}
               </button>
@@ -1578,6 +1606,23 @@ function MagmaOrderActions({
           </div>
         )}
         {error && <p className="text-xs text-rose-200">{error}</p>}
+		<SensitiveActionModal
+			open={reauthOpen}
+			title={t('lightningOps.fundsPasswordTitle')}
+			description={t('lightningOps.fundsPasswordBody')}
+			password={reauthPassword}
+			busy={busy}
+			error={reauthError}
+			confirmLabel={t('lightningOps.fundsPasswordAction')}
+			onPasswordChange={setReauthPassword}
+			onConfirm={() => executeOpen(reauthPassword)}
+			onClose={() => {
+				if (busy) return
+				setReauthOpen(false)
+				setReauthPassword('')
+				setReauthError('')
+			}}
+		/>
       </div>
     )
   }

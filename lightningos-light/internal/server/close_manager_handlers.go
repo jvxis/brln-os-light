@@ -189,6 +189,17 @@ func (s *Server) handleCloseManagerSessionRecoverPost(w http.ResponseWriter, r *
 }
 
 func (s *Server) handleCloseManagerSessionForceClosePost(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ConfirmPassword string `json:"confirm_password"`
+	}
+	if err := readOptionalJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
+		return
+	}
+
 	svc, svcErr := s.closeManagerService()
 	if svc == nil {
 		writeError(w, http.StatusServiceUnavailable, svcErr)
@@ -283,11 +294,15 @@ func (s *Server) handleCloseManagerSessionBumpFeePost(w http.ResponseWriter, r *
 		return
 	}
 	var req struct {
-		Preset      string `json:"preset"`
-		SatPerVbyte int64  `json:"sat_per_vbyte"`
+		Preset          string `json:"preset"`
+		SatPerVbyte     int64  `json:"sat_per_vbyte"`
+		ConfirmPassword string `json:"confirm_password"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
 		return
 	}
 

@@ -235,8 +235,10 @@ Body:
 POST /api/wallet/pay
 Body:
 {
-  "payment_request": "lnbc..."
+  "payment_request": "lnbc...",
+  "confirm_password": "optional fresh admin confirmation"
 }
+- Final Lightning payment routes (`/pay`, `/pay/validated-route`, and `/pay/mpp`) require recent `lightning_funds` reauthentication when login protection is enabled. A missing confirmation returns HTTP 428; previews remain available without reauthentication.
 
 POST /api/wallet/send
 Body:
@@ -419,15 +421,19 @@ Body:
   "local_funding_sat": 200000,
   "private": false,
   "sat_per_vbyte": 5,
-  "close_address": "optional"
+  "close_address": "optional",
+  "confirm_password": "optional fresh admin confirmation"
 }
+- Manual single/batch channel opens, balanced-open execution, and assisted Magma channel funding require recent `lightning_funds` reauthentication when login protection is enabled.
 
 POST /api/lnops/channel/close
 Body:
 {
   "channel_point": "txid:index",
-  "force": false
+  "force": false,
+  "confirm_password": "optional fresh admin confirmation"
 }
+- Cooperative/force closes and manual pending-open or close-recovery fee bumps require recent `lightning_funds` reauthentication when login protection is enabled.
 
 POST /api/lnops/channel/fees
 Body:

@@ -2562,6 +2562,7 @@ func (s *Server) handleLNOpenChannel(w http.ResponseWriter, r *http.Request) {
 		Private         bool     `json:"private"`
 		SatPerVbyte     int64    `json:"sat_per_vbyte"`
 		Outpoints       []string `json:"outpoints"`
+		ConfirmPassword string   `json:"confirm_password"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -2599,6 +2600,9 @@ func (s *Server) handleLNOpenChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	if !strings.Contains(host, ":") {
 		writeError(w, http.StatusBadRequest, "peer host must include host:port")
+		return
+	}
+	if !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
 		return
 	}
 
@@ -2679,7 +2683,8 @@ func (s *Server) handleLNBatchOpenChannel(w http.ResponseWriter, r *http.Request
 			CloseAddress    string `json:"close_address"`
 			Private         bool   `json:"private"`
 		} `json:"channels"`
-		SatPerVbyte int64 `json:"sat_per_vbyte"`
+		SatPerVbyte     int64  `json:"sat_per_vbyte"`
+		ConfirmPassword string `json:"confirm_password"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -2695,6 +2700,9 @@ func (s *Server) handleLNBatchOpenChannel(w http.ResponseWriter, r *http.Request
 	}
 	if req.SatPerVbyte < 0 {
 		writeError(w, http.StatusBadRequest, "sat_per_vbyte must be zero or positive")
+		return
+	}
+	if !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
 		return
 	}
 
@@ -2846,9 +2854,10 @@ func (s *Server) handleLNBatchOpenChannelPreview(w http.ResponseWriter, r *http.
 
 func (s *Server) handleLNPendingOpenBumpFee(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ChannelPoint string `json:"channel_point"`
-		Preset       string `json:"preset"`
-		SatPerVbyte  int64  `json:"sat_per_vbyte"`
+		ChannelPoint    string `json:"channel_point"`
+		Preset          string `json:"preset"`
+		SatPerVbyte     int64  `json:"sat_per_vbyte"`
+		ConfirmPassword string `json:"confirm_password"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -2862,6 +2871,9 @@ func (s *Server) handleLNPendingOpenBumpFee(w http.ResponseWriter, r *http.Reque
 	}
 	if req.SatPerVbyte < 0 {
 		writeError(w, http.StatusBadRequest, "sat_per_vbyte must be zero or positive")
+		return
+	}
+	if !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
 		return
 	}
 
@@ -3029,9 +3041,10 @@ func (s *Server) handleMempoolFees(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLNCloseChannel(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ChannelPoint string `json:"channel_point"`
-		Force        bool   `json:"force"`
-		SatPerVbyte  int64  `json:"sat_per_vbyte"`
+		ChannelPoint    string `json:"channel_point"`
+		Force           bool   `json:"force"`
+		SatPerVbyte     int64  `json:"sat_per_vbyte"`
+		ConfirmPassword string `json:"confirm_password"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -3047,6 +3060,9 @@ func (s *Server) handleLNCloseChannel(w http.ResponseWriter, r *http.Request) {
 
 	if req.SatPerVbyte < 0 {
 		writeError(w, http.StatusBadRequest, "sat_per_vbyte must be zero or positive")
+		return
+	}
+	if !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
 		return
 	}
 
@@ -4285,12 +4301,13 @@ func (s *Server) resolveWalletPaymentInput(ctx context.Context, rawPaymentReques
 
 func (s *Server) handleWalletPayPreview(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PaymentRequest string   `json:"payment_request"`
-		ChannelPoint   string   `json:"channel_point"`
-		ChannelPoints  []string `json:"channel_points"`
-		AmountSat      int64    `json:"amount_sat"`
-		Comment        string   `json:"comment"`
-		MaxFeeSat      int64    `json:"max_fee_sat"`
+		PaymentRequest  string   `json:"payment_request"`
+		ChannelPoint    string   `json:"channel_point"`
+		ChannelPoints   []string `json:"channel_points"`
+		AmountSat       int64    `json:"amount_sat"`
+		Comment         string   `json:"comment"`
+		MaxFeeSat       int64    `json:"max_fee_sat"`
+		ConfirmPassword string   `json:"confirm_password"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -4298,6 +4315,9 @@ func (s *Server) handleWalletPayPreview(w http.ResponseWriter, r *http.Request) 
 	}
 	if req.MaxFeeSat < 0 {
 		writeError(w, http.StatusBadRequest, "max_fee_sat must be zero or positive")
+		return
+	}
+	if !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
 		return
 	}
 
@@ -4328,12 +4348,13 @@ func (s *Server) handleWalletPayPreview(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PaymentRequest string   `json:"payment_request"`
-		ChannelPoint   string   `json:"channel_point"`
-		ChannelPoints  []string `json:"channel_points"`
-		AmountSat      int64    `json:"amount_sat"`
-		Comment        string   `json:"comment"`
-		MaxFeeSat      int64    `json:"max_fee_sat"`
+		PaymentRequest  string   `json:"payment_request"`
+		ChannelPoint    string   `json:"channel_point"`
+		ChannelPoints   []string `json:"channel_points"`
+		AmountSat       int64    `json:"amount_sat"`
+		Comment         string   `json:"comment"`
+		MaxFeeSat       int64    `json:"max_fee_sat"`
+		ConfirmPassword string   `json:"confirm_password"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -4341,6 +4362,9 @@ func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.MaxFeeSat < 0 {
 		writeError(w, http.StatusBadRequest, "max_fee_sat must be zero or positive")
+		return
+	}
+	if !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
 		return
 	}
 
@@ -4450,14 +4474,15 @@ func (s *Server) handleWalletPayValidatedRoute(w http.ResponseWriter, r *http.Re
 
 func (s *Server) handleWalletPayMPP(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PaymentRequest string   `json:"payment_request"`
-		ChannelPoint   string   `json:"channel_point"`
-		ChannelPoints  []string `json:"channel_points"`
-		AmountSat      int64    `json:"amount_sat"`
-		Comment        string   `json:"comment"`
-		MaxFeeSat      int64    `json:"max_fee_sat"`
-		MaxParts       uint32   `json:"max_parts"`
-		MaxShardSat    int64    `json:"max_shard_sat"`
+		PaymentRequest  string   `json:"payment_request"`
+		ChannelPoint    string   `json:"channel_point"`
+		ChannelPoints   []string `json:"channel_points"`
+		AmountSat       int64    `json:"amount_sat"`
+		Comment         string   `json:"comment"`
+		MaxFeeSat       int64    `json:"max_fee_sat"`
+		MaxParts        uint32   `json:"max_parts"`
+		MaxShardSat     int64    `json:"max_shard_sat"`
+		ConfirmPassword string   `json:"confirm_password"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")
@@ -4469,6 +4494,9 @@ func (s *Server) handleWalletPayMPP(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.MaxShardSat < 0 {
 		writeError(w, http.StatusBadRequest, "max_shard_sat must be zero or positive")
+		return
+	}
+	if !s.requireLightningFundsReauth(w, r, req.ConfirmPassword) {
 		return
 	}
 

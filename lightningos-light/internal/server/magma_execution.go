@@ -465,8 +465,9 @@ func (s *MagmaService) OpenChannelPreview(ctx context.Context, orderID string, s
 
 // MagmaOpenRequest carries the operator's funding choices.
 type MagmaOpenRequest struct {
-	SatPerVbyte int64    `json:"sat_per_vbyte"`
-	Outpoints   []string `json:"outpoints,omitempty"`
+	SatPerVbyte     int64    `json:"sat_per_vbyte"`
+	Outpoints       []string `json:"outpoints,omitempty"`
+	ConfirmPassword string   `json:"confirm_password,omitempty"`
 }
 
 // OpenChannelForOrder funds the sale. This is the only path here that spends

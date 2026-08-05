@@ -13,11 +13,13 @@ import (
 )
 
 type bitcoinCorePaths struct {
-	Root           string
-	DataDir        string
-	ConfigPath     string
-	SeedConfigPath string
-	ComposePath    string
+	Root             string
+	DataDir          string
+	ConfigPath       string
+	SeedConfigPath   string
+	ComposePath      string
+	StorageIDPath    string
+	StorageGuardPath string
 }
 
 type bitcoinCoreApp struct {
@@ -29,6 +31,9 @@ const (
 	bitcoinCoreImage            = "bitcoin/bitcoin:latest"
 	bitcoinCoreDefaultDataDir   = "/data/bitcoin"
 	bitcoinCoreDataDirStateFile = "data_dir"
+	bitcoinCoreStorageIDFile    = "storage_id"
+	bitcoinCoreStorageMarker    = ".lightningos-storage-id"
+	bitcoinCoreStorageGuardFile = "storage-guard.sh"
 	bitcoinCoreMinFreeKiB       = 10 * 1024 * 1024
 )
 
@@ -91,11 +96,13 @@ func bitcoinCoreAppPaths() bitcoinCorePaths {
 	root := filepath.Join(appsRoot, bitcoinCoreAppID)
 	dataDir := readBitcoinCoreDataDir()
 	return bitcoinCorePaths{
-		Root:           root,
-		DataDir:        dataDir,
-		ConfigPath:     filepath.Join(dataDir, "bitcoin.conf"),
-		SeedConfigPath: filepath.Join(root, "bitcoin.conf"),
-		ComposePath:    filepath.Join(root, "docker-compose.yaml"),
+		Root:             root,
+		DataDir:          dataDir,
+		ConfigPath:       filepath.Join(dataDir, "bitcoin.conf"),
+		SeedConfigPath:   filepath.Join(root, "bitcoin.conf"),
+		ComposePath:      filepath.Join(root, "docker-compose.yaml"),
+		StorageIDPath:    filepath.Join(bitcoinCoreAppDataDir(), bitcoinCoreStorageIDFile),
+		StorageGuardPath: filepath.Join(root, bitcoinCoreStorageGuardFile),
 	}
 }
 
@@ -239,6 +246,9 @@ func (s *Server) installBitcoinCoreWithOptions(ctx context.Context, opts bitcoin
 	if err := syncBitcoinCoreConfig(ctx, paths); err != nil {
 		return err
 	}
+	if err := ensureBitcoinCoreStorageGuard(ctx, paths); err != nil {
+		return err
+	}
 	if _, err := ensureFileWithChange(paths.ComposePath, bitcoinCoreComposeContents(paths)); err != nil {
 		return err
 	}
@@ -360,6 +370,9 @@ func (s *Server) startBitcoinCore(ctx context.Context) error {
 	if err := syncBitcoinCoreConfig(ctx, paths); err != nil {
 		return err
 	}
+	if err := ensureBitcoinCoreStorageGuard(ctx, paths); err != nil {
+		return err
+	}
 	if _, err := ensureFileWithChange(paths.ComposePath, bitcoinCoreComposeContents(paths)); err != nil {
 		return err
 	}
@@ -390,6 +403,7 @@ func bitcoinCoreComposeContents(paths bitcoinCorePaths) string {
     image: %s
     user: "0:0"
     restart: unless-stopped
+    entrypoint: ["/bin/sh", "/lightningos-storage-guard.sh"]
     ports:
       - "8333:8333"
       - "127.0.0.1:8332:8332"
@@ -397,7 +411,107 @@ func bitcoinCoreComposeContents(paths bitcoinCorePaths) string {
       - "127.0.0.1:28333:28333"
     volumes:
       - %s:/home/bitcoin/.bitcoin
-`, bitcoinCoreImage, paths.DataDir)
+      - %s:/lightningos-storage-guard.sh:ro
+      - %s:/lightningos-expected-storage-id:ro
+`, bitcoinCoreImage, paths.DataDir, paths.StorageGuardPath, paths.StorageIDPath)
+}
+
+func ensureBitcoinCoreStorageGuard(ctx context.Context, paths bitcoinCorePaths) error {
+	if err := os.MkdirAll(bitcoinCoreAppDataDir(), 0750); err != nil {
+		return fmt.Errorf("failed to create Bitcoin Core app data directory: %w", err)
+	}
+	storageID := ""
+	if raw, err := os.ReadFile(paths.StorageIDPath); err == nil {
+		storageID = strings.TrimSpace(string(raw))
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read Bitcoin Core storage identity: %w", err)
+	}
+	if storageID == "" {
+		generated, err := randomToken(24)
+		if err != nil {
+			return fmt.Errorf("failed to generate Bitcoin Core storage identity: %w", err)
+		}
+		storageID = generated
+		if err := writeFile(paths.StorageIDPath, storageID+"\n", 0600); err != nil {
+			return fmt.Errorf("failed to persist Bitcoin Core storage identity: %w", err)
+		}
+	}
+
+	if _, err := ensureFileWithChange(paths.StorageGuardPath, bitcoinCoreStorageGuardContents()); err != nil {
+		return fmt.Errorf("failed to write Bitcoin Core storage guard: %w", err)
+	}
+
+	markerPath := filepath.Join(paths.DataDir, bitcoinCoreStorageMarker)
+	cmd := "cp /lightningos-expected-storage-id /home/bitcoin/.bitcoin/" + bitcoinCoreStorageMarker +
+		" && chmod 640 /home/bitcoin/.bitcoin/" + bitcoinCoreStorageMarker
+	out, err := system.RunCommandWithSudo(
+		ctx,
+		"docker",
+		"run",
+		"--rm",
+		"--entrypoint",
+		"sh",
+		"--user",
+		"0:0",
+		"-v",
+		fmt.Sprintf("%s:/home/bitcoin/.bitcoin", paths.DataDir),
+		"-v",
+		fmt.Sprintf("%s:/lightningos-expected-storage-id:ro", paths.StorageIDPath),
+		bitcoinCoreImage,
+		"-c",
+		cmd,
+	)
+	if err != nil {
+		msg := strings.TrimSpace(out)
+		if msg == "" {
+			return fmt.Errorf("failed to mark Bitcoin Core storage at %s: %w", markerPath, err)
+		}
+		return fmt.Errorf("failed to mark Bitcoin Core storage at %s: %s", markerPath, msg)
+	}
+	if paths.DataDir != bitcoinCoreDefaultDataDir {
+		if err := validateBitcoinCoreInstallDataDir(ctx, paths.DataDir); err != nil {
+			cleanupOut, cleanupErr := system.RunCommandWithSudo(
+				ctx,
+				"docker",
+				"run",
+				"--rm",
+				"--entrypoint",
+				"rm",
+				"--user",
+				"0:0",
+				"-v",
+				fmt.Sprintf("%s:/home/bitcoin/.bitcoin", paths.DataDir),
+				bitcoinCoreImage,
+				"-f",
+				"/home/bitcoin/.bitcoin/"+bitcoinCoreStorageMarker,
+			)
+			if cleanupErr != nil {
+				cleanupMsg := strings.TrimSpace(cleanupOut)
+				if cleanupMsg == "" {
+					cleanupMsg = cleanupErr.Error()
+				}
+				return fmt.Errorf("bitcoin storage became unavailable while enabling its startup guard: %w; failed to remove the fallback marker: %s", err, cleanupMsg)
+			}
+			return fmt.Errorf("bitcoin storage became unavailable while enabling its startup guard: %w", err)
+		}
+	}
+	return nil
+}
+
+func bitcoinCoreStorageGuardContents() string {
+	return `#!/bin/sh
+set -eu
+
+expected="$(tr -d '\r\n' < /lightningos-expected-storage-id)"
+actual="$(tr -d '\r\n' < /home/bitcoin/.bitcoin/.lightningos-storage-id 2>/dev/null || true)"
+
+if [ -z "$expected" ] || [ "$actual" != "$expected" ]; then
+  echo "LightningOS storage guard: the configured Bitcoin data volume is missing or has the wrong identity; refusing to start bitcoind" >&2
+  exit 78
+fi
+
+exec /entrypoint.sh "$@"
+`
 }
 
 func ensureBitcoinCoreSeedConfig(paths bitcoinCorePaths) error {

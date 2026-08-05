@@ -47,9 +47,36 @@ func TestNormalizeBitcoinCoreDataDir(t *testing.T) {
 }
 
 func TestBitcoinCoreComposeContentsUsesConfiguredDataDir(t *testing.T) {
-	paths := bitcoinCorePaths{DataDir: "/mnt/bitcoin-ssd/bitcoin"}
+	paths := bitcoinCorePaths{
+		DataDir:          "/mnt/bitcoin-ssd/bitcoin",
+		StorageGuardPath: "/var/lib/lightningos/apps/bitcoincore/storage-guard.sh",
+		StorageIDPath:    "/var/lib/lightningos/apps-data/bitcoincore/storage_id",
+	}
 	raw := bitcoinCoreComposeContents(paths)
 	if !strings.Contains(raw, "- /mnt/bitcoin-ssd/bitcoin:/home/bitcoin/.bitcoin") {
 		t.Fatalf("compose does not mount configured data dir:\n%s", raw)
+	}
+	for _, expected := range []string{
+		`entrypoint: ["/bin/sh", "/lightningos-storage-guard.sh"]`,
+		"- /var/lib/lightningos/apps/bitcoincore/storage-guard.sh:/lightningos-storage-guard.sh:ro",
+		"- /var/lib/lightningos/apps-data/bitcoincore/storage_id:/lightningos-expected-storage-id:ro",
+	} {
+		if !strings.Contains(raw, expected) {
+			t.Fatalf("compose is missing storage guard %q:\n%s", expected, raw)
+		}
+	}
+}
+
+func TestBitcoinCoreStorageGuardRefusesWrongVolume(t *testing.T) {
+	raw := bitcoinCoreStorageGuardContents()
+	for _, expected := range []string{
+		".lightningos-storage-id",
+		`[ "$actual" != "$expected" ]`,
+		"refusing to start bitcoind",
+		`exec /entrypoint.sh "$@"`,
+	} {
+		if !strings.Contains(raw, expected) {
+			t.Fatalf("storage guard is missing %q:\n%s", expected, raw)
+		}
 	}
 }

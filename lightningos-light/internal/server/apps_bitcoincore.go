@@ -404,6 +404,7 @@ func bitcoinCoreComposeContents(paths bitcoinCorePaths) string {
     user: "0:0"
     restart: unless-stopped
     entrypoint: ["/bin/sh", "/lightningos-storage-guard.sh"]
+    command: ["bitcoind"]
     ports:
       - "8333:8333"
       - "127.0.0.1:8332:8332"

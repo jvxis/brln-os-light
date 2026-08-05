@@ -58,6 +58,7 @@ func TestBitcoinCoreComposeContentsUsesConfiguredDataDir(t *testing.T) {
 	}
 	for _, expected := range []string{
 		`entrypoint: ["/bin/sh", "/lightningos-storage-guard.sh"]`,
+		`command: ["bitcoind"]`,
 		"- /var/lib/lightningos/apps/bitcoincore/storage-guard.sh:/lightningos-storage-guard.sh:ro",
 		"- /var/lib/lightningos/apps-data/bitcoincore/storage_id:/lightningos-expected-storage-id:ro",
 	} {

@@ -1,4 +1,5 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { acceptBalancedOpenSession, addLnWatchtower, bakeLnMacaroon, boostPeers, bumpFeeCloseManagerSession, bumpPendingOpenChannel, cancelBalancedOpenSession, closeChannel, connectPeer, createBalancedOpenSession, disconnectPeer, executeBalancedOpenSession, forceCloseManagerSession, getAmbossHealth, getAutofeeChannels, getAutofeeConfig, getAutofeeResults, getAutofeeStatus, getBalancedOpenSessionEvents, getBalancedOpenSessions, getBalancedOpenStatus, getBitcoinLocalStatus, getChannelRankings, getCloseManagerSessions, getCloseManagerStatus, getLnChanHeal, getLnChannelDBImpact, getLnChannelFees, getLnChannelPeerRecommendations, getLnChannels, getLnClosedChannels, getLnFailedPaymentsCleaner, getLnHtlcManager, getLnHtlcManagerFailed, getLnHtlcManagerLogs, getLnMacaroonOptions, getLnPeers, getLnTorPeerChecker, getLnTorPeerCheckerLogs, getLnWatchtowers, getMagmaCommitments, getMempoolFees, openBatchChannels, openChannel, previewBatchOpenChannels, previewOpenChannel, proposeBalancedOpenSession, recoverBalancedOpenSession, recoverCloseManagerSession, refreshAutofeeReferences, removeLnWatchtower, restoreLnScb, retryBalancedOpenSessionBroadcast, runAutofee, signLnMessage, updateAmbossHealth, updateAutofeeChannels, updateAutofeeConfig, updateChannelFees, updateLnChanHeal, updateLnChannelStatus, updateLnFailedPaymentsCleaner, updateLnHtlcManager, updateLnTorPeerChecker, type MagmaChannelCommitment, type LnMacaroonBakeResult, type LnMacaroonOptions, type LnMacaroonPermission } from '../api'
 import { getLocale } from '../i18n'
@@ -1138,6 +1139,8 @@ export default function LightningOps() {
   const [channelRankingMap, setChannelRankingMap] = useState<Record<string, ChannelRankingItem>>({})
   const [channelsSubview, setChannelsSubview] = useState<'channels' | 'close_recovery'>('channels')
   const [channelsViewMode, setChannelsViewMode] = useState<ChannelsViewMode>(() => readChannelsViewMode())
+  const [expandedCondensedChannelPoint, setExpandedCondensedChannelPoint] = useState('')
+  const [expandedCondensedChannelHost, setExpandedCondensedChannelHost] = useState<HTMLDivElement | null>(null)
   const [viewportSize, setViewportSize] = useState(() => ({
     width: typeof window === 'undefined' ? 0 : window.innerWidth,
     height: typeof window === 'undefined' ? 0 : window.innerHeight,
@@ -2776,6 +2779,22 @@ export default function LightningOps() {
   }, [channelsViewMode])
 
   useEffect(() => {
+    if (channelsViewMode === 'condensed') return
+    setExpandedCondensedChannelPoint('')
+    setExpandedCondensedChannelHost(null)
+  }, [channelsViewMode])
+
+  const captureExpandedCondensedChannelHost = useCallback((element: HTMLDivElement | null) => {
+    setExpandedCondensedChannelHost((current) => current === element ? current : element)
+  }, [])
+
+  const toggleExpandedCondensedChannel = (event: ReactMouseEvent<HTMLElement>, channelPoint: string) => {
+    const target = event.target as HTMLElement | null
+    if (target?.closest('button, a, input, select, textarea, label, [role="button"]')) return
+    setExpandedCondensedChannelPoint((current) => current === channelPoint ? '' : channelPoint)
+  }
+
+  useEffect(() => {
     if (typeof window === 'undefined') return
     return () => {
       Object.values(condensedFeeFlashTimersRef.current).forEach((timer) => {
@@ -3966,6 +3985,13 @@ export default function LightningOps() {
     })
     return sorted
   }, [baseFilteredChannels, channelRankingMap, fcRiskOnly, movementFilter, profitFilter, rankingFilter, sortBy, sortDir])
+
+  useEffect(() => {
+    if (!expandedCondensedChannelPoint) return
+    if (filteredChannels.some((channel) => channel.channel_point === expandedCondensedChannelPoint)) return
+    setExpandedCondensedChannelPoint('')
+    setExpandedCondensedChannelHost(null)
+  }, [expandedCondensedChannelPoint, filteredChannels])
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined
@@ -7406,7 +7432,8 @@ export default function LightningOps() {
             </div>
           </div>
         {filteredChannels.length ? (
-          channelsViewMode === 'condensed' ? (
+          <>
+          {channelsViewMode === 'condensed' && (
             <div
               key={`channels-condensed-${channelsListSizeKey}`}
               className={`resize-y overflow-auto rounded-xl border border-white/10 bg-ink/50 ${channelsListDefaultHeightClass}`}
@@ -7475,9 +7502,29 @@ export default function LightningOps() {
                         : 'border-white/5'
                     const rowFocusClass = isFocused ? 'ring-1 ring-inset ring-sky-300/70 bg-sky-500/10' : ''
 
+                    if (expandedCondensedChannelPoint === ch.channel_point) {
+                      return (
+                        <tr
+                          key={ch.channel_point}
+                          className={`border-t align-top ${rowTone} ${rowFocusClass}`}
+                          onDoubleClick={(event) => toggleExpandedCondensedChannel(event, ch.channel_point)}
+                          title={t('lightningOps.condensedChannelCollapse')}
+                        >
+                          <td colSpan={11} className="p-3">
+                            <div ref={captureExpandedCondensedChannelHost} />
+                          </td>
+                        </tr>
+                      )
+                    }
+
                     return (
                       <Fragment key={ch.channel_point}>
-                        <tr id={channelCardID(ch.channel_point)} className={`border-t align-top ${rowTone} ${rowFocusClass}`}>
+                        <tr
+                          id={channelCardID(ch.channel_point)}
+                          className={`cursor-zoom-in border-t align-top ${rowTone} ${rowFocusClass}`}
+                          onDoubleClick={(event) => toggleExpandedCondensedChannel(event, ch.channel_point)}
+                          title={t('lightningOps.condensedChannelExpand')}
+                        >
                           <td className="px-3 py-2 align-middle">
                             <div className="max-w-[220px]">
                               <div className="flex items-center gap-1.5">
@@ -7700,13 +7747,16 @@ export default function LightningOps() {
                 </table>
               </div>
             </div>
-          ) : (
+          )}
+          {(channelsViewMode === 'full' || expandedCondensedChannelPoint) && (
             <div
               key={`channels-full-${channelsListSizeKey}`}
-              className={`resize-y overflow-auto pr-2 ${channelsListDefaultHeightClass}`}
+              className={channelsViewMode === 'condensed' ? 'contents' : `resize-y overflow-auto pr-2 ${channelsListDefaultHeightClass}`}
             >
-              <div className="grid gap-3">
-                {filteredChannels.map((ch) => {
+              <div className={channelsViewMode === 'condensed' ? 'contents' : 'grid gap-3'}>
+                {filteredChannels
+                  .filter((ch) => channelsViewMode === 'full' || ch.channel_point === expandedCondensedChannelPoint)
+                  .map((ch) => {
                 const localDisabled = ch.local_disabled ?? isLocalChanDisabled(ch.chan_status_flags)
                 const statusBusy = chanStatusBusy === ch.channel_point
                 const showToggle = ch.active
@@ -7776,9 +7826,17 @@ export default function LightningOps() {
                   : localDisabled && ch.active
                     ? 'rounded-2xl border border-ember/40 bg-ember/10 p-5 min-h-[170px]'
                     : 'rounded-2xl border border-white/10 bg-ink/60 p-5 min-h-[170px]'
-                const cardClass = `${cardClassBase} ${isFocused ? 'ring-1 ring-sky-300/70 bg-sky-500/10' : ''}`
-                return (
-                  <div key={ch.channel_point} id={channelCardID(ch.channel_point)} className={cardClass}>
+                const cardClass = `${cardClassBase} ${isFocused ? 'ring-1 ring-sky-300/70 bg-sky-500/10' : ''} ${channelsViewMode === 'condensed' ? 'cursor-zoom-out' : ''}`
+                const card = (
+                  <div
+                    key={ch.channel_point}
+                    id={channelCardID(ch.channel_point)}
+                    className={cardClass}
+                    onDoubleClick={channelsViewMode === 'condensed'
+                      ? (event) => toggleExpandedCondensedChannel(event, ch.channel_point)
+                      : undefined}
+                    title={channelsViewMode === 'condensed' ? t('lightningOps.condensedChannelCollapse') : undefined}
+                  >
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <div className="flex flex-wrap items-center gap-1.5">
@@ -8418,10 +8476,14 @@ export default function LightningOps() {
                     )}
                   </div>
                 )
+                if (channelsViewMode !== 'condensed') return card
+                if (!expandedCondensedChannelHost) return null
+                return createPortal(card, expandedCondensedChannelHost, ch.channel_point)
               })}
             </div>
           </div>
-          )
+          )}
+          </>
         ) : (
           <p className="text-sm text-fog/60">{t('lightningOps.noChannelsFound')}</p>
         )}

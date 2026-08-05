@@ -3919,6 +3919,8 @@
     "openingChannel": "Opening channel...",
     "channelsViewCondensed": "Condensed channels",
     "channelsViewFull": "Full channel cards",
+    "condensedChannelExpand": "Double-click to expand this channel",
+    "condensedChannelCollapse": "Double-click to return to the condensed row",
     "condensedChannel": "Channel",
     "condensedLiquidity": "Liquidity",
     "capacity": "Capacity",

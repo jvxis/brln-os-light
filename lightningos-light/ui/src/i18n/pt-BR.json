@@ -3919,6 +3919,8 @@
     "openingChannel": "Abrindo canal...",
     "channelsViewCondensed": "Canais condensados",
     "channelsViewFull": "Cards completos dos canais",
+    "condensedChannelExpand": "Clique duas vezes para expandir este canal",
+    "condensedChannelCollapse": "Clique duas vezes para voltar à linha condensada",
     "condensedChannel": "Canal",
     "condensedLiquidity": "Liquidez",
     "capacity": "Capacidade",

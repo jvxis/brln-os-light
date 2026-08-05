@@ -18,8 +18,8 @@ import (
 const (
 	peerswapAppID         = "peerswap"
 	peerswapAssetsVersion = "version_5_0"
-	peerswapBundleVersion = "version_5_0_peerswapd_pscli_20260626_psweb_5_0_5"
-	peerswapdSHA256       = "0d1e0ee364dbcee371a26da622b8cd6029b321dc69852060b13ade07c73fe39e"
+	peerswapBundleVersion = "version_5_0_peerswapd_5ded0811_pscli_20260626_psweb_5_0_5"
+	peerswapdSHA256       = "6e3c45a65bd81b275b5b1136869079b3b5b40c6d5fd47529a57b0321811dd35b"
 	peerswapPSCliSHA256   = "713736fef28b39e3d4a440b7199d855be94f07f8fc5881b7a2bfe6289b9e70da"
 	peerswapPSWebSHA256   = "525d23859c9a873cdce5480266d86739aaee6841efc0ff279f08a7a54160b614"
 	peerswapUser          = "losop"

@@ -43,11 +43,17 @@ detect_lan_cidr() {
 choose_lan_cidr() {
   local configured detected selected
   configured="$(read_config_value LAN_CIDR)"
+  if [[ -n "$configured" && "${configured,,}" != "none" ]] && ! valid_ipv4_cidr "$configured"; then
+    print_warn "Ignoring invalid saved local network '${configured}' and detecting it again."
+    configured=""
+  fi
   detected="$(detect_lan_cidr)"
   selected="${LIGHTNINGOS_LAN_CIDR:-${configured:-$detected}}"
   if (( INTERACTIVE == 1 )) && [[ -t 0 ]]; then
-    echo "LightningOS needs port ${MANAGER_PORT} only for devices on your local network and Tailscale."
-    echo "Enter the allowed IPv4 network in CIDR format, or 'none' to allow only Tailscale."
+    # choose_lan_cidr is called through command substitution. Keep guidance on
+    # stderr so stdout contains only the selected CIDR.
+    echo "LightningOS needs port ${MANAGER_PORT} only for devices on your local network and Tailscale." >&2
+    echo "Enter the allowed IPv4 network in CIDR format, or 'none' to allow only Tailscale." >&2
     read -r -p "Allowed local network [${selected:-none}]: " reply
     selected="${reply:-${selected:-none}}"
   fi

@@ -34,6 +34,8 @@ func TestEmbeddedSystemIntegrationAssetsAreSafe(t *testing.T) {
 		"ufw --force delete allow \"${MANAGER_PORT}/tcp\"",
 		"ufw allow from \"$lan_cidr\"",
 		"ufw allow in on tailscale0",
+		"Ignoring invalid saved local network",
+		"so stdout contains only the selected CIDR",
 		"Restart=always",
 		"system-integrations-20260731-v2",
 	} {

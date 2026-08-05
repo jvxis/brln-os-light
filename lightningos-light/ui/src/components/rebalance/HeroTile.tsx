@@ -75,7 +75,7 @@ export default function HeroTile({
           tone={tone}
         />
       )}
-      {context ? <div className="mt-3 space-y-1 text-xs text-fog/65">{context}</div> : null}
+      {context ? <div className="hero-tile__context mt-3 space-y-1 text-xs text-fog/65">{context}</div> : null}
       {hasDetails && (
         <button
           type="button"

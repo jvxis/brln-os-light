@@ -1064,6 +1064,32 @@ html[data-visual-theme="airplane-mode"] .health-gauge .theme-gauge__dial-marker 
   height: 17px;
 }
 
+/* Rebalance Center cockpit instruments use dedicated visual rails. Keeping
+   dials out of the header and copy areas prevents overlap in narrow 4-column
+   cards while retaining the original card dimensions. */
+html[data-visual-theme="airplane-mode"] .rebalance-overview-hero .hero-tile.instrument-card--gauge > .theme-gauge .theme-gauge__dial {
+  top: -36px;
+}
+
+html[data-visual-theme="airplane-mode"] .rebalance-overview-hero .hero-tile.instrument-card--gauge .hero-tile__context {
+  padding-right: 68px;
+}
+
+html[data-visual-theme="airplane-mode"] .rebalance-overview-hero .health-gauge > .theme-gauge {
+  position: static;
+}
+
+html[data-visual-theme="airplane-mode"] .rebalance-overview-hero .health-gauge .theme-gauge__dial {
+  top: 0;
+  right: 0;
+}
+
+html[data-visual-theme="airplane-mode"] .rebalance-overview-hero .rebalance-health-panel {
+  background:
+    linear-gradient(135deg, rgb(var(--palette-primary) / 0.035), transparent 28%),
+    rgb(3 9 16 / 0.96);
+}
+
 @media (max-width: 767px) {
   html[data-visual-theme="airplane-mode"] body::before {
     top: 78px;
@@ -1098,6 +1124,10 @@ html[data-visual-theme="airplane-mode"] .health-gauge .theme-gauge__dial-marker 
 
   html[data-visual-theme="airplane-mode"] .instrument-card--gauge > .theme-gauge .theme-gauge__bar {
     margin-right: 58px;
+  }
+
+  html[data-visual-theme="airplane-mode"] .rebalance-overview-hero .hero-tile.instrument-card--gauge .hero-tile__context {
+    padding-right: 58px;
   }
 }
 

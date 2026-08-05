@@ -126,7 +126,7 @@ export default function OverviewHero({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="rebalance-overview-hero space-y-4">
       {/* HERO TILES */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {/* Autopilot */}
@@ -322,7 +322,7 @@ export default function OverviewHero({
       </div>
 
       {/* HEALTH GAUGES */}
-      <article className="rounded-3xl border border-white/10 bg-white/[0.02] p-4 shadow-panel">
+      <article className="rebalance-health-panel rounded-3xl border border-white/10 bg-white/[0.02] p-4 shadow-panel">
         <div className="mb-3 flex items-center justify-between gap-2">
           <p className="text-[11px] uppercase tracking-[0.24em] text-fog/45">
             {t('rebalanceCenter.heroes.healthSignals', { window: hsWindowLabel.toUpperCase() })}

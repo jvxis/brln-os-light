@@ -264,7 +264,7 @@ func (s *Server) installElementsWithOptions(ctx context.Context, opts elementsIn
 	if err := ensureElementsService(ctx, paths); err != nil {
 		return err
 	}
-	if _, err := runSystemd(ctx, "systemctl", "enable", "--now", elementsServiceName); err != nil {
+	if _, err := runSystemd(ctx, elementsStartSystemctlArgs()...); err != nil {
 		return err
 	}
 	return nil
@@ -396,7 +396,7 @@ func (s *Server) startElements(ctx context.Context) error {
 	if err := ensureElementsService(ctx, paths); err != nil {
 		return err
 	}
-	if _, err := runSystemd(ctx, "systemctl", "restart", elementsServiceName); err != nil {
+	if _, err := runSystemd(ctx, elementsStartSystemctlArgs()...); err != nil {
 		return err
 	}
 	return nil
@@ -407,10 +407,18 @@ func (s *Server) stopElements(ctx context.Context) error {
 	if !fileExists(paths.ElementsdPath) {
 		return errors.New("Elements is not installed")
 	}
-	if _, err := runSystemd(ctx, "systemctl", "stop", elementsServiceName); err != nil {
+	if _, err := runSystemd(ctx, elementsStopSystemctlArgs()...); err != nil {
 		return err
 	}
 	return nil
+}
+
+func elementsStartSystemctlArgs() []string {
+	return []string{"systemctl", "enable", "--now", elementsServiceName}
+}
+
+func elementsStopSystemctlArgs() []string {
+	return []string{"systemctl", "disable", "--now", elementsServiceName}
 }
 
 func (s *Server) uninstallElements(ctx context.Context) error {

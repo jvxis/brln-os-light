@@ -1,5 +1,8 @@
 # LightningOS
 
+> [!IMPORTANT]
+> O LightningOS é um painel local de controle do node e **não foi projetado para exposição direta à Internet pública**. Use-o somente em uma LAN confiável ou por uma VPN privada, como o Tailscale, sempre protegido por firewall no host ou na rede. Nunca encaminhe a porta `8443` nem as portas da App Store para a Internet. Os instaladores restringem a `8443` à LAN detectada e à interface `tailscale0` somente quando o UFW já está instalado e ativo; eles não ativam o UFW automaticamente. Confirme sempre com `sudo ufw status` ou configure um firewall externo equivalente antes de usar o node.
+
 <img width="1920" height="1080" alt="logo" src="https://github.com/user-attachments/assets/504ec23e-31f8-407a-a848-3fa4ce3ec1f9" />
 
 [Clique aqui](https://github.com/jvxis/brln-os-light/blob/main/README.md) para ver a versão em inglês (fonte da verdade).
@@ -76,7 +79,7 @@ sudo ./install.sh
 
 Para desenvolvimento ou instalacao offline do checkout local exato, use `sudo LIGHTNINGOS_INSTALL_SOURCE=checkout ./install.sh`.
 
-Quando o UFW esta ativo, o instalador pergunta qual rede IPv4 local pode acessar o manager (por exemplo, `192.168.1.0/24`). Ele remove a regra publica antiga de `8443/tcp` e tambem libera o acesso pela interface `tailscale0` quando o Tailscale esta disponivel.
+Quando o UFW já está instalado e ativo, o instalador detecta automaticamente qual rede IPv4 local pode acessar o manager (por exemplo, `192.168.1.0/24`). Ele remove a regra pública antiga de `8443/tcp` e também libera o acesso pela interface `tailscale0` quando o Tailscale está disponível. O instalador deliberadamente não ativa o UFW em um host existente, pois isso poderia bloquear o SSH ou outros serviços do node; portanto, UFW ausente ou inativo exige que o operador configure um firewall equivalente para LAN/VPN.
 
 ### Instalação via curl (bootstrap)
 Isso identifica a ultima release publicada do LightningOS, faz checkout da tag exata e depois roda `lightningos-light/install.sh`.

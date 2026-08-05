@@ -255,6 +255,106 @@ html[data-palette="phosphor-green"], .appearance-palette[data-palette="phosphor-
   --color-ember: 255 120 100;
 }
 
+/* Theme-aware instruments -----------------------------------------------
+   The digital value remains the source of truth. Themes only change the
+   presentation of real, normalized measurements supplied by each feature. */
+.instrument-card,
+.health-gauge {
+  position: relative;
+}
+
+.theme-gauge {
+  --instrument-rgb: 56 189 248;
+  position: relative;
+}
+
+.theme-gauge--ok { --instrument-rgb: 52 211 153; }
+.theme-gauge--warn { --instrument-rgb: 251 191 36; }
+.theme-gauge--danger { --instrument-rgb: 251 113 133; }
+.theme-gauge--muted { --instrument-rgb: 148 163 184; }
+.theme-gauge--info { --instrument-rgb: 56 189 248; }
+
+.theme-gauge__bar {
+  position: relative;
+  height: 0.5rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.08);
+}
+
+.theme-gauge__fill {
+  height: 100%;
+  border-radius: inherit;
+}
+
+.theme-gauge__marker {
+  position: absolute;
+  top: -2px;
+  width: 2px;
+  height: 12px;
+  border-radius: 2px;
+  background: rgb(var(--color-fog) / 0.62);
+}
+
+.theme-gauge__dial {
+  display: none;
+}
+
+/* Old 80's uses discrete phosphor segments instead of smooth progress. */
+html[data-visual-theme="miner-watch"] .metric-tile__value,
+html[data-visual-theme="miner-watch"] .hero-tile__value {
+  background: linear-gradient(90deg, rgb(var(--palette-primary) / 0.075), transparent 82%);
+  box-shadow: inset 2px 0 0 rgb(var(--palette-primary) / 0.72);
+  padding-left: 8px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  letter-spacing: 0.025em;
+}
+
+html[data-visual-theme="miner-watch"] .theme-gauge__bar {
+  height: 10px;
+  border: 1px solid rgb(var(--palette-primary) / 0.34);
+  border-radius: 1px;
+  background: rgb(0 0 0 / 0.5);
+  box-shadow: inset 0 0 8px rgb(0 0 0 / 0.72), 0 0 7px rgb(var(--palette-primary) / 0.08);
+}
+
+html[data-visual-theme="miner-watch"] .theme-gauge__fill {
+  border-radius: 0;
+  background-color: rgb(var(--instrument-rgb)) !important;
+  background-image: repeating-linear-gradient(
+    90deg,
+    transparent 0 7px,
+    rgb(0 0 0 / 0.6) 7px 9px
+  ) !important;
+  box-shadow: 0 0 8px rgb(var(--instrument-rgb) / 0.3);
+}
+
+html[data-visual-theme="miner-watch"] .theme-gauge__marker {
+  top: -1px;
+  height: 10px;
+  border-radius: 0;
+  background: rgb(var(--palette-secondary));
+}
+
+html[data-visual-theme="miner-watch"] .horizontal-gauge__track,
+html[data-visual-theme="miner-watch"] .stacked-ratio__track {
+  height: 10px;
+  border: 1px solid rgb(var(--palette-primary) / 0.32);
+  border-radius: 1px !important;
+  background: rgb(0 0 0 / 0.5);
+  box-shadow: inset 0 0 8px rgb(0 0 0 / 0.72);
+}
+
+html[data-visual-theme="miner-watch"] .horizontal-gauge__fill,
+html[data-visual-theme="miner-watch"] .stacked-ratio__segment {
+  border-radius: 0 !important;
+  background-image: repeating-linear-gradient(
+    90deg,
+    transparent 0 7px,
+    rgb(0 0 0 / 0.55) 7px 9px
+  ) !important;
+}
+
 /* Miner Watch is a structural theme. Its phosphor color is now selected
    independently through the palette control. */
 html[data-visual-theme="miner-watch"] {
@@ -801,6 +901,169 @@ html[data-visual-theme="airplane-mode"] textarea {
   background: rgb(2 8 14 / 0.8);
 }
 
+/* Cockpit cards retain their exact digital readout and add a passive analog
+   dial only when the underlying metric has a real 0-100 scale. */
+html[data-visual-theme="airplane-mode"] .metric-tile__value,
+html[data-visual-theme="airplane-mode"] .hero-tile__value {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  letter-spacing: 0.035em;
+  text-shadow: 0 0 9px rgb(var(--instrument-rgb, var(--palette-primary)) / 0.24);
+}
+
+html[data-visual-theme="airplane-mode"] .instrument-card--gauge .metric-tile__body,
+html[data-visual-theme="airplane-mode"] .instrument-card--gauge .hero-tile__value {
+  padding-right: 68px;
+}
+
+html[data-visual-theme="airplane-mode"] .instrument-card--gauge > .theme-gauge .theme-gauge__bar {
+  margin-right: 68px;
+}
+
+html[data-visual-theme="airplane-mode"] .theme-gauge__bar {
+  height: 7px;
+  border: 1px solid rgb(var(--palette-primary) / 0.22);
+  border-radius: 2px;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 11px, rgb(var(--palette-primary) / 0.1) 11px 12px),
+    rgb(0 0 0 / 0.36);
+  box-shadow: inset 0 0 5px rgb(0 0 0 / 0.7);
+}
+
+html[data-visual-theme="airplane-mode"] .theme-gauge__fill {
+  border-radius: 1px;
+  background: rgb(var(--instrument-rgb)) !important;
+  box-shadow: 0 0 8px rgb(var(--instrument-rgb) / 0.3);
+}
+
+html[data-visual-theme="airplane-mode"] .theme-gauge__marker {
+  background: rgb(var(--palette-secondary));
+}
+
+html[data-visual-theme="airplane-mode"] .horizontal-gauge__track,
+html[data-visual-theme="airplane-mode"] .stacked-ratio__track {
+  height: 7px;
+  border: 1px solid rgb(var(--palette-primary) / 0.22);
+  border-radius: 2px !important;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 11px, rgb(var(--palette-primary) / 0.1) 11px 12px),
+    rgb(0 0 0 / 0.36);
+  box-shadow: inset 0 0 5px rgb(0 0 0 / 0.7);
+}
+
+html[data-visual-theme="airplane-mode"] .horizontal-gauge__fill,
+html[data-visual-theme="airplane-mode"] .stacked-ratio__segment {
+  border-radius: 1px !important;
+  box-shadow: 0 0 7px currentColor;
+}
+
+html[data-visual-theme="airplane-mode"] .instrument-card--gauge > .theme-gauge .theme-gauge__dial {
+  display: block;
+  position: absolute;
+  z-index: 1;
+  right: 3px;
+  top: -58px;
+  width: 58px;
+  height: 58px;
+}
+
+html[data-visual-theme="airplane-mode"] .theme-gauge__dial-progress,
+html[data-visual-theme="airplane-mode"] .theme-gauge__dial-ticks,
+html[data-visual-theme="airplane-mode"] .theme-gauge__dial-marker,
+html[data-visual-theme="airplane-mode"] .theme-gauge__needle,
+html[data-visual-theme="airplane-mode"] .theme-gauge__hub {
+  position: absolute;
+  pointer-events: none;
+}
+
+html[data-visual-theme="airplane-mode"] .theme-gauge__dial::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgb(var(--palette-primary) / 0.4);
+  border-radius: 50% !important;
+  background:
+    radial-gradient(circle, rgb(1 5 10 / 0.96) 0 55%, transparent 56%),
+    rgb(var(--palette-primary) / 0.035);
+  box-shadow: inset 0 0 13px rgb(var(--palette-primary) / 0.1), 0 0 11px rgb(0 0 0 / 0.44);
+}
+
+html[data-visual-theme="airplane-mode"] .theme-gauge__dial-progress {
+  inset: 4px;
+  border-radius: 50% !important;
+  background: conic-gradient(
+    from -135deg,
+    rgb(var(--instrument-rgb)) 0 calc(var(--instrument-pct) * 3.6deg),
+    rgb(var(--instrument-rgb) / 0.1) calc(var(--instrument-pct) * 3.6deg) 360deg
+  );
+  mask: radial-gradient(circle, transparent 0 66%, #000 68% 100%);
+  opacity: 0.82;
+}
+
+html[data-visual-theme="airplane-mode"] .theme-gauge__dial-ticks {
+  inset: 7px;
+  border-radius: 50% !important;
+  background: repeating-conic-gradient(
+    from -135deg,
+    rgb(var(--color-fog) / 0.58) 0 1deg,
+    transparent 1deg 15deg
+  );
+  mask: radial-gradient(circle, transparent 0 78%, #000 80% 100%);
+}
+
+html[data-visual-theme="airplane-mode"] .theme-gauge__needle,
+html[data-visual-theme="airplane-mode"] .theme-gauge__dial-marker {
+  left: calc(50% - 1px);
+  bottom: 50%;
+  width: 2px;
+  transform-origin: 50% 100%;
+}
+
+html[data-visual-theme="airplane-mode"] .theme-gauge__needle {
+  height: 21px;
+  border-radius: 2px 2px 0 0;
+  background: rgb(var(--palette-secondary));
+  box-shadow: 0 0 5px rgb(var(--palette-secondary) / 0.5);
+  transform: rotate(var(--instrument-angle));
+}
+
+html[data-visual-theme="airplane-mode"] .theme-gauge__dial-marker {
+  height: 25px;
+  background: linear-gradient(to top, transparent 0 84%, rgb(var(--color-fog)) 84% 100%);
+  transform: rotate(var(--instrument-marker-angle));
+}
+
+html[data-visual-theme="airplane-mode"] .theme-gauge__hub {
+  left: calc(50% - 3px);
+  top: calc(50% - 3px);
+  width: 6px;
+  height: 6px;
+  border: 1px solid rgb(var(--palette-secondary));
+  border-radius: 50% !important;
+  background: rgb(2 8 14);
+  box-shadow: 0 0 5px rgb(var(--palette-secondary) / 0.45);
+}
+
+html[data-visual-theme="airplane-mode"] .health-gauge {
+  padding-right: 46px;
+}
+
+html[data-visual-theme="airplane-mode"] .health-gauge .theme-gauge__dial {
+  display: block;
+  position: absolute;
+  right: -44px;
+  top: -27px;
+  width: 38px;
+  height: 38px;
+}
+
+html[data-visual-theme="airplane-mode"] .health-gauge .theme-gauge__needle {
+  height: 14px;
+}
+
+html[data-visual-theme="airplane-mode"] .health-gauge .theme-gauge__dial-marker {
+  height: 17px;
+}
+
 @media (max-width: 767px) {
   html[data-visual-theme="airplane-mode"] body::before {
     top: 78px;
@@ -820,6 +1083,21 @@ html[data-visual-theme="airplane-mode"] textarea {
 
   html[data-visual-theme="airplane-mode"] .app-topbar h1 {
     letter-spacing: -0.015em;
+  }
+
+  html[data-visual-theme="airplane-mode"] .instrument-card--gauge > .theme-gauge .theme-gauge__dial {
+    right: 1px;
+    width: 50px;
+    height: 50px;
+  }
+
+  html[data-visual-theme="airplane-mode"] .instrument-card--gauge .metric-tile__body,
+  html[data-visual-theme="airplane-mode"] .instrument-card--gauge .hero-tile__value {
+    padding-right: 58px;
+  }
+
+  html[data-visual-theme="airplane-mode"] .instrument-card--gauge > .theme-gauge .theme-gauge__bar {
+    margin-right: 58px;
   }
 }
 

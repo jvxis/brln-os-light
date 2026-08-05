@@ -1156,6 +1156,7 @@ export default function FeeCenter() {
           sublabel={`${t('feeCenter.policy.median')}: ${formatPpm(medianPolicyPpm)}`}
           detail={`${t('feeCenter.policy.maxSeen')}: ${formatPpm(maxPolicySeen)} | ${t('lightningOps.autofeeMinPpm')}: ${formatPpm(Number(minPpm || 0))}`}
           tone="info"
+          gaugePct={(avgPolicyPpm / Math.max(1, Number(maxPpm || 2000))) * 100}
         >
           <HorizontalBarGauge
             label={t('feeCenter.policy.averageWithinMax')}
@@ -1171,6 +1172,7 @@ export default function FeeCenter() {
           sublabel={`${t('feeCenter.seed.known')}: ${formatInt(seedKnown)} / ${formatInt(seedTotal)}`}
           detail={`${t('lightningOps.autofeeResultsSeedMissing')}: ${formatInt(latestSeed?.missing)} | ${t('lightningOps.autofeeResultsSeedDefault')}: ${formatInt(latestSeed?.default)}`}
           tone={seedCoveragePct >= 75 ? 'ok' : seedCoveragePct >= 40 ? 'warn' : 'muted'}
+          gaugePct={seedCoveragePct}
         >
           <StackedRatioBar
             compact
@@ -1190,6 +1192,7 @@ export default function FeeCenter() {
           value={`${formatInt(activePolicyCount)} / ${formatInt(policyRows.length)}`}
           sublabel={`${t('common.enabled')}: ${formatInt(activePolicyCount)} | ${t('common.disabled')}: ${formatInt(inactivePolicyCount)}`}
           tone={inactivePolicyCount > 0 ? 'warn' : 'ok'}
+          gaugePct={policyRows.length > 0 ? (activePolicyCount / policyRows.length) * 100 : 0}
         >
           <StackedRatioBar
             compact

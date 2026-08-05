@@ -24,12 +24,12 @@ export default function StackedRatioBar({ segments, compact = false }: StackedRa
   const total = safeSegments.reduce((sum, segment) => sum + segment.value, 0)
 
   return (
-    <div className="space-y-2">
-      <div className="flex h-2 overflow-hidden rounded-full bg-white/8">
+    <div className="stacked-ratio space-y-2">
+      <div className="stacked-ratio__track flex h-2 overflow-hidden rounded-full bg-white/8">
         {safeSegments.length > 0 ? safeSegments.map((segment) => (
           <div
             key={segment.label}
-            className={`${segmentClasses[segment.tone ?? 'muted']} h-full`}
+            className={`stacked-ratio__segment ${segmentClasses[segment.tone ?? 'muted']} h-full`}
             style={{ width: `${total > 0 ? (segment.value / total) * 100 : 0}%` }}
             title={`${segment.label}: ${segment.value}`}
           />

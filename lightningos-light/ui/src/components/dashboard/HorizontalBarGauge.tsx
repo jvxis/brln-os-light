@@ -29,14 +29,14 @@ export default function HorizontalBarGauge({
   const percent = max > 0 ? clamp((value / max) * 100) : 0
 
   return (
-    <div className="min-w-0 space-y-2">
+    <div className="horizontal-gauge min-w-0 space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-sm">
         <span className="min-w-0 text-fog/70 [overflow-wrap:anywhere]">{label}</span>
         <span className="min-w-0 text-right font-medium text-fog [overflow-wrap:anywhere]">{valueLabel ?? `${Math.round(percent)}%`}</span>
       </div>
-      <div className="h-2 overflow-hidden rounded-full bg-white/8">
+      <div className="horizontal-gauge__track h-2 overflow-hidden rounded-full bg-white/8">
         <div
-          className={`h-full rounded-full bg-gradient-to-r ${fillClasses[tone]}`}
+          className={`horizontal-gauge__fill h-full rounded-full bg-gradient-to-r ${fillClasses[tone]}`}
           style={{ width: `${percent}%` }}
         />
       </div>

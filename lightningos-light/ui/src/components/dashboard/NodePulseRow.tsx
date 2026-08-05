@@ -99,20 +99,8 @@ export default function NodePulseRow({
         }
         detail={movement?.routed_volume_sats ? t('dashboard.movementRoutedHint', { routed: formatSats(locale, movement.routed_volume_sats) }) : undefined}
         tone={movementTone}
-      >
-        <div className="h-2 overflow-hidden rounded-full bg-white/8">
-          <div
-            className={`h-full rounded-full ${
-              movementTone === 'ok'
-                ? 'bg-gradient-to-r from-emerald-400 to-emerald-300'
-                : movementTone === 'warn'
-                  ? 'bg-gradient-to-r from-amber-400 to-yellow-300'
-                  : 'bg-gradient-to-r from-rose-400 to-rose-300'
-            }`}
-            style={{ width: `${movementProgress}%` }}
-          />
-        </div>
-      </MetricTile>
+        gaugePct={movementProgress}
+      />
 
       <MetricTile
         label={t('dashboard.liquiditySplit')}

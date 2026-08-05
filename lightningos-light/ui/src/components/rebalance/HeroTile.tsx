@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react'
+import ThemeGauge from '../ThemeGauge'
 
 export type HeroTone = 'ok' | 'warn' | 'danger' | 'muted' | 'info'
 
@@ -16,14 +17,6 @@ const dotClasses: Record<HeroTone, string> = {
   danger: 'bg-rose-400',
   muted: 'bg-fog/40',
   info: 'bg-sky-400',
-}
-
-const gaugeFill: Record<HeroTone, string> = {
-  ok: 'from-emerald-400 to-emerald-300',
-  warn: 'from-amber-400 to-yellow-300',
-  danger: 'from-rose-400 to-rose-300',
-  muted: 'from-slate-400 to-slate-300',
-  info: 'from-sky-400 to-cyan-300',
 }
 
 type HeroTileProps = {
@@ -62,7 +55,7 @@ export default function HeroTile({
   const hasDetails = Boolean(details)
 
   return (
-    <article className={`flex flex-col rounded-3xl border border-white/10 bg-gradient-to-br ${accentClasses[tone]} to-transparent p-4 shadow-panel`}>
+    <article className={`hero-tile instrument-card${showGauge ? ' instrument-card--gauge' : ''} flex flex-col rounded-3xl border border-white/10 bg-gradient-to-br ${accentClasses[tone]} to-transparent p-4 shadow-panel`}>
       <div className="flex items-start justify-between gap-3">
         <p className="text-[11px] uppercase tracking-[0.24em] text-fog/45">{label}</p>
         {badge ? (
@@ -72,23 +65,15 @@ export default function HeroTile({
           </span>
         ) : null}
       </div>
-      <div className="mt-3 text-2xl font-semibold leading-none text-fog">{value}</div>
+      <div className="hero-tile__value mt-3 text-2xl font-semibold leading-none text-fog">{value}</div>
       {showGauge && (
-        <div className="mt-3 space-y-1">
-          <div className="relative h-2 overflow-hidden rounded-full bg-white/8">
-            <div
-              className={`h-full rounded-full bg-gradient-to-r ${gaugeFill[tone]}`}
-              style={{ width: `${clampedPct}%` }}
-            />
-            {clampedMarker !== null && (
-              <div
-                className="absolute top-[-2px] h-3 w-[2px] rounded bg-fog/60"
-                style={{ left: `${clampedMarker}%` }}
-                title={markerLabel}
-              />
-            )}
-          </div>
-        </div>
+        <ThemeGauge
+          className="mt-3"
+          value={clampedPct}
+          marker={clampedMarker}
+          markerLabel={markerLabel}
+          tone={tone}
+        />
       )}
       {context ? <div className="mt-3 space-y-1 text-xs text-fog/65">{context}</div> : null}
       {hasDetails && (

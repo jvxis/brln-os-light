@@ -46,6 +46,22 @@ func TestSystemCheckOverallStatus(t *testing.T) {
 	}
 }
 
+func TestInactiveFirewallDoesNotDegradeOverallStatus(t *testing.T) {
+	security := newSystemCheckGroup("security", "Security", []systemCheckItem{
+		{ID: "ufw", Status: systemCheckMuted},
+		{ID: "manager_access", Status: systemCheckMuted},
+	})
+	if security.Status != systemCheckMuted {
+		t.Fatalf("security status = %q, want muted", security.Status)
+	}
+	if got := systemCheckOverallStatus([]systemCheckGroup{
+		{Status: systemCheckOK},
+		security,
+	}); got != "OK" {
+		t.Fatalf("overall status = %q, want OK", got)
+	}
+}
+
 func TestSystemCheckSummary(t *testing.T) {
 	tests := []struct {
 		name  string

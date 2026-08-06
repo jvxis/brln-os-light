@@ -98,23 +98,24 @@ func (s *Server) systemCheck(ctx context.Context) systemCheckResponse {
 
 func (s *Server) systemCheckSecurity(ctx context.Context) systemCheckGroup {
 	status := inspectManagerFirewall(ctx)
-	firewallTone := systemCheckWarn
-	firewallDetail := "UFW is not installed; LightningOS did not change firewall rules"
+	firewallTone := systemCheckMuted
+	firewallDetail := "UFW is not installed; external firewall protection cannot be detected"
 	if status.Installed && !status.StatusAvailable {
-		firewallDetail = "UFW status is unavailable; existing rules were not changed"
+		firewallDetail = "UFW status is unavailable; external firewall protection cannot be detected"
 	} else if status.StatusAvailable && !status.Active {
-		firewallDetail = "UFW is inactive; the saved LAN policy is not being enforced"
+		firewallDetail = "UFW is inactive; external firewall protection cannot be detected"
 	} else if status.Active {
 		firewallTone = systemCheckOK
 		firewallDetail = "active"
 	}
 
-	accessTone := systemCheckWarn
-	accessDetail := "Manager access policy is not configured"
+	accessTone := systemCheckMuted
+	accessDetail := "Manager access is not enforced by UFW; verify any upstream firewall"
 	if !status.ConfigValid {
+		accessTone = systemCheckWarn
 		accessDetail = "Saved LAN network is missing or invalid"
 	} else if !status.Active {
-		accessDetail = "Configured for " + status.ConfiguredCIDR + ", but UFW is inactive"
+		accessDetail = "Saved LAN network: " + status.ConfiguredCIDR + "; UFW is inactive and upstream firewalls cannot be detected"
 	} else if status.BroadRulePresent {
 		accessTone = systemCheckDanger
 		accessDetail = "Port 8443 has a broad allow rule"
@@ -133,7 +134,7 @@ func (s *Server) systemCheckSecurity(ctx context.Context) systemCheckGroup {
 	return newSystemCheckGroup("security", "Security", []systemCheckItem{
 		{
 			ID:     "ufw",
-			Label:  "Host firewall",
+			Label:  "Host firewall (UFW)",
 			Status: firewallTone,
 			Detail: firewallDetail,
 			Value:  status.Active,

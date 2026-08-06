@@ -910,6 +910,14 @@ html[data-visual-theme="airplane-mode"] .hero-tile__value {
   text-shadow: 0 0 9px rgb(var(--instrument-rgb, var(--palette-primary)) / 0.24);
 }
 
+html[data-visual-theme="airplane-mode"] .metric-tile__value,
+html[data-visual-theme="airplane-mode"] .metric-tile__context,
+html[data-visual-theme="airplane-mode"] .hero-tile__value,
+html[data-visual-theme="airplane-mode"] .hero-tile__context {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 html[data-visual-theme="airplane-mode"] .metric-tile.instrument-card--gauge {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 104px;
@@ -1050,20 +1058,36 @@ html[data-visual-theme="airplane-mode"] .theme-gauge__scale-label {
 html[data-visual-theme="airplane-mode"] .theme-gauge__readout {
   position: absolute;
   z-index: 2;
-  top: 65%;
-  left: 13%;
-  right: 13%;
+  top: 69%;
+  left: 9%;
+  right: 9%;
   overflow: hidden;
+  padding: 0.14rem 0.2rem 0.12rem;
+  border: 1px solid rgb(var(--palette-secondary) / 0.26);
+  border-radius: 3px;
+  background: linear-gradient(180deg, rgb(1 5 10 / 0.9), rgb(1 5 10 / 0.98));
+  box-shadow: inset 0 0 7px rgb(0 0 0 / 0.72), 0 0 5px rgb(var(--palette-secondary) / 0.08);
   color: rgb(var(--palette-secondary));
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
-  font-size: clamp(0.78rem, 1.25vw, 1.08rem);
+  font-size: 0.7rem;
   font-weight: 700;
-  line-height: 1;
+  line-height: 1.05;
+  letter-spacing: -0.015em;
   text-align: center;
   text-overflow: ellipsis;
   text-shadow: 0 0 7px rgb(var(--palette-secondary) / 0.38);
   white-space: nowrap;
   transform: translateY(-50%);
+}
+
+html[data-visual-theme="airplane-mode"] .theme-gauge__readout--condensed {
+  font-size: 0.62rem;
+  letter-spacing: -0.035em;
+}
+
+html[data-visual-theme="airplane-mode"] .theme-gauge__readout--compact {
+  font-size: 0.54rem;
+  letter-spacing: -0.055em;
 }
 
 /* Health Signals is a comparison panel, so compact linear instruments are
@@ -1210,7 +1234,15 @@ html[data-visual-theme="airplane-mode"] .rebalance-overview-hero .rebalance-heal
   }
 
   html[data-visual-theme="airplane-mode"] .theme-gauge__readout {
-    font-size: 0.84rem;
+    font-size: 0.64rem;
+  }
+
+  html[data-visual-theme="airplane-mode"] .theme-gauge__readout--condensed {
+    font-size: 0.57rem;
+  }
+
+  html[data-visual-theme="airplane-mode"] .theme-gauge__readout--compact {
+    font-size: 0.5rem;
   }
 }
 

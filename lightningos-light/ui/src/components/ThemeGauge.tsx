@@ -45,6 +45,15 @@ export default function ThemeGauge({
   readout,
 }: ThemeGaugeProps) {
   const pct = clampPct(value)
+  const displayReadout = readout ?? `${Math.round(pct)}%`
+  const readoutLength = typeof displayReadout === 'string' || typeof displayReadout === 'number'
+    ? String(displayReadout).trim().length
+    : 0
+  const readoutSizeClass = readoutLength > 9
+    ? ' theme-gauge__readout--compact'
+    : readoutLength > 6
+      ? ' theme-gauge__readout--condensed'
+      : ''
   const markerPct = typeof marker === 'number' ? clampPct(marker) : null
   const startAngle = -135
   const endAngle = 135
@@ -104,7 +113,7 @@ export default function ThemeGauge({
           <text className="theme-gauge__scale-label" x="34" y="151">0</text>
           <text className="theme-gauge__scale-label" x="166" y="151" textAnchor="end">100</text>
         </svg>
-        <div className="theme-gauge__readout">{readout ?? `${Math.round(pct)}%`}</div>
+        <div className={`theme-gauge__readout${readoutSizeClass}`}>{displayReadout}</div>
       </div>
     </div>
   )

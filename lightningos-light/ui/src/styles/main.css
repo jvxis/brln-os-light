@@ -948,7 +948,7 @@ html[data-visual-theme="airplane-mode"] .theme-gauge__bar {
 html[data-visual-theme="airplane-mode"] .theme-gauge__dial {
   display: block;
   position: relative;
-  width: min(100%, 180px);
+  width: min(100%, 150px);
   aspect-ratio: 200 / 178;
   margin: 0.65rem auto 0;
   color: rgb(var(--instrument-rgb));
@@ -1052,16 +1052,25 @@ html[data-visual-theme="airplane-mode"] .theme-gauge__readout {
   transform: translateY(-50%);
 }
 
+/* Health Signals is a comparison panel, so compact linear instruments are
+   more readable here than a bank of large round gauges. */
+html[data-visual-theme="airplane-mode"] .health-gauge .theme-gauge__bar {
+  display: block;
+  height: 7px;
+  border: 1px solid rgb(var(--palette-primary) / 0.22);
+  border-radius: 2px;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 11px, rgb(var(--palette-primary) / 0.1) 11px 12px),
+    rgb(0 0 0 / 0.36);
+  box-shadow: inset 0 0 5px rgb(0 0 0 / 0.7);
+}
+
+html[data-visual-theme="airplane-mode"] .health-gauge .theme-gauge__fill {
+  border-radius: 1px;
+  box-shadow: 0 0 7px rgb(var(--instrument-rgb) / 0.45);
+}
+
 html[data-visual-theme="airplane-mode"] .health-gauge .theme-gauge__dial {
-  width: min(100%, 138px);
-  margin-top: 0.25rem;
-}
-
-html[data-visual-theme="airplane-mode"] .health-gauge .theme-gauge__readout {
-  font-size: clamp(0.68rem, 1vw, 0.88rem);
-}
-
-html[data-visual-theme="airplane-mode"] .health-gauge > div:first-child > span:last-child {
   display: none;
 }
 
@@ -1083,11 +1092,41 @@ html[data-visual-theme="airplane-mode"] .stacked-ratio__segment {
 }
 
 html[data-visual-theme="airplane-mode"] .rebalance-overview-hero .hero-tile.instrument-card--gauge {
-  min-height: 255px;
+  min-height: 0;
 }
 
 html[data-visual-theme="airplane-mode"] .rebalance-overview-hero .hero-tile.instrument-card--gauge > .theme-gauge {
-  margin-top: 0.2rem;
+  margin-top: 0;
+}
+
+html[data-visual-theme="airplane-mode"] .rebalance-overview-hero .hero-tile.instrument-card--gauge .theme-gauge__dial {
+  width: min(100%, 142px);
+  margin-top: 0.35rem;
+}
+
+/* In Fee Center these tracks repeat the value already shown by the round
+   instrument. Keep labels and exact composition as compact digital data. */
+html[data-visual-theme="airplane-mode"] .fee-center-page .instrument-card--gauge .horizontal-gauge__track,
+html[data-visual-theme="airplane-mode"] .fee-center-page .instrument-card--gauge .stacked-ratio__track {
+  display: none;
+}
+
+.stacked-ratio__instrument-legend {
+  display: none;
+}
+
+html[data-visual-theme="airplane-mode"] .fee-center-page .stacked-ratio__instrument-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  color: rgb(var(--color-fog) / 0.55);
+  font-size: 0.6875rem;
+}
+
+html[data-visual-theme="airplane-mode"] .fee-center-page .stacked-ratio__instrument-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 
 html[data-visual-theme="airplane-mode"] .rebalance-overview-hero .rebalance-health-panel {
@@ -1118,11 +1157,7 @@ html[data-visual-theme="airplane-mode"] .rebalance-overview-hero .rebalance-heal
   }
 
   html[data-visual-theme="airplane-mode"] .instrument-card--gauge > .theme-gauge .theme-gauge__dial {
-    width: min(100%, 165px);
-  }
-
-  html[data-visual-theme="airplane-mode"] .health-gauge .theme-gauge__dial {
-    width: min(100%, 124px);
+    width: min(100%, 138px);
   }
 
   html[data-visual-theme="airplane-mode"] .rebalance-overview-hero .hero-tile.instrument-card--gauge {

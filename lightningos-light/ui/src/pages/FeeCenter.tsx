@@ -1063,7 +1063,7 @@ export default function FeeCenter() {
   )
 
   return (
-    <section className="space-y-6">
+    <section className="fee-center-page space-y-6">
       <div className="section-card">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
@@ -1176,6 +1176,7 @@ export default function FeeCenter() {
         >
           <StackedRatioBar
             compact
+            instrumentLegend
             segments={[
               { label: t('feeCenter.seed.native'), value: numberOrZero(latestSeed?.native), tone: 'ok' },
               { label: t('feeCenter.seed.amboss'), value: numberOrZero(latestSeed?.amboss), tone: 'info' },
@@ -1196,6 +1197,7 @@ export default function FeeCenter() {
         >
           <StackedRatioBar
             compact
+            instrumentLegend
             segments={[
               { label: t('common.enabled'), value: activePolicyCount, tone: 'ok' },
               { label: t('common.disabled'), value: inactivePolicyCount, tone: 'muted' },

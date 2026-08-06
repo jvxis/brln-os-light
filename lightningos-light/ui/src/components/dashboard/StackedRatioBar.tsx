@@ -9,6 +9,7 @@ type Segment = {
 type StackedRatioBarProps = {
   segments: Segment[]
   compact?: boolean
+  instrumentLegend?: boolean
 }
 
 const segmentClasses: Record<Tone, string> = {
@@ -19,7 +20,7 @@ const segmentClasses: Record<Tone, string> = {
   info: 'bg-sky-400',
 }
 
-export default function StackedRatioBar({ segments, compact = false }: StackedRatioBarProps) {
+export default function StackedRatioBar({ segments, compact = false, instrumentLegend = false }: StackedRatioBarProps) {
   const safeSegments = segments.filter((segment) => segment.value > 0)
   const total = safeSegments.reduce((sum, segment) => sum + segment.value, 0)
 
@@ -37,6 +38,16 @@ export default function StackedRatioBar({ segments, compact = false }: StackedRa
           <div className="h-full w-full bg-white/8" />
         )}
       </div>
+      {instrumentLegend && (
+        <div className="stacked-ratio__instrument-legend" aria-label={segments.map((segment) => `${segment.label}: ${segment.value}`).join(', ')}>
+          {segments.map((segment) => (
+            <span key={segment.label} className="stacked-ratio__instrument-item">
+              <span className={`h-1.5 w-1.5 rounded-full ${segmentClasses[segment.tone ?? 'muted']}`} />
+              <span>{segment.label}: {segment.value}</span>
+            </span>
+          ))}
+        </div>
+      )}
       {!compact && (
         <div className="flex flex-wrap gap-2 text-xs text-fog/55">
           {segments.map((segment) => (

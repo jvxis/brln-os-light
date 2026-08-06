@@ -56,10 +56,10 @@ export default function HeroTile({
 
   return (
     <article className={`hero-tile instrument-card${showGauge ? ' instrument-card--gauge' : ''} flex flex-col rounded-3xl border border-white/10 bg-gradient-to-br ${accentClasses[tone]} to-transparent p-4 shadow-panel`}>
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-[11px] uppercase tracking-[0.24em] text-fog/45">{label}</p>
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+        <p className="min-w-0 text-[11px] uppercase tracking-[0.24em] text-fog/45">{label}</p>
         {badge ? (
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-fog/80">
+          <span className="inline-flex max-w-full items-center gap-1.5 overflow-hidden rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-fog/80 text-ellipsis whitespace-nowrap">
             <span className={`h-1.5 w-1.5 rounded-full ${dotClasses[tone]}`} />
             {badge}
           </span>
@@ -73,6 +73,7 @@ export default function HeroTile({
           marker={clampedMarker}
           markerLabel={markerLabel}
           tone={tone}
+          readout={value}
         />
       )}
       {context ? <div className="hero-tile__context mt-3 space-y-1 text-xs text-fog/65">{context}</div> : null}

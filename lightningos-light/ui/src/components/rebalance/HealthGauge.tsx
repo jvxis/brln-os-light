@@ -33,7 +33,7 @@ export default function HealthGauge({
         <span className="uppercase tracking-wide text-fog/55">{label}</span>
         <span className="font-medium text-fog">{valueText}</span>
       </div>
-      <ThemeGauge value={pct} marker={markerPct} markerLabel={targetLabel} tone={tone} />
+      <ThemeGauge value={pct} marker={markerPct} markerLabel={targetLabel} tone={tone} readout={valueText} />
       {typeof target === 'number' && targetLabel && (
         <p className="text-[10px] text-fog/45">{targetLabel}</p>
       )}

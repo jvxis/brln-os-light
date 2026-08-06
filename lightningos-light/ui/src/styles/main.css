@@ -901,8 +901,8 @@ html[data-visual-theme="airplane-mode"] textarea {
   background: rgb(2 8 14 / 0.8);
 }
 
-/* Cockpit cards retain their exact digital readout and add a passive analog
-   dial only when the underlying metric has a real 0-100 scale. */
+/* Cockpit cards turn normalized measurements into primary 270-degree flight
+   instruments. The exact digital value remains visible inside every dial. */
 html[data-visual-theme="airplane-mode"] .metric-tile__value,
 html[data-visual-theme="airplane-mode"] .hero-tile__value {
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
@@ -910,33 +910,159 @@ html[data-visual-theme="airplane-mode"] .hero-tile__value {
   text-shadow: 0 0 9px rgb(var(--instrument-rgb, var(--palette-primary)) / 0.24);
 }
 
-html[data-visual-theme="airplane-mode"] .instrument-card--gauge .metric-tile__body,
-html[data-visual-theme="airplane-mode"] .instrument-card--gauge .hero-tile__value {
-  padding-right: 68px;
+html[data-visual-theme="airplane-mode"] .metric-tile.instrument-card--gauge {
+  display: flex;
+  flex-direction: column;
 }
 
-html[data-visual-theme="airplane-mode"] .instrument-card--gauge > .theme-gauge .theme-gauge__bar {
-  margin-right: 68px;
+html[data-visual-theme="airplane-mode"] .instrument-card--gauge .metric-tile__body,
+html[data-visual-theme="airplane-mode"] .instrument-card--gauge .hero-tile__value {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+  white-space: nowrap;
+}
+
+html[data-visual-theme="airplane-mode"] .metric-tile.instrument-card--gauge > .theme-gauge {
+  order: 1;
+}
+
+html[data-visual-theme="airplane-mode"] .metric-tile.instrument-card--gauge > .metric-tile__context {
+  order: 2;
+}
+
+html[data-visual-theme="airplane-mode"] .metric-tile.instrument-card--gauge > .metric-tile__trend,
+html[data-visual-theme="airplane-mode"] .metric-tile.instrument-card--gauge > .metric-tile__children {
+  order: 3;
 }
 
 html[data-visual-theme="airplane-mode"] .theme-gauge__bar {
-  height: 7px;
-  border: 1px solid rgb(var(--palette-primary) / 0.22);
-  border-radius: 2px;
+  display: none;
+}
+
+html[data-visual-theme="airplane-mode"] .theme-gauge__dial {
+  display: block;
+  position: relative;
+  width: min(100%, 180px);
+  aspect-ratio: 200 / 178;
+  margin: 0.65rem auto 0;
+  color: rgb(var(--instrument-rgb));
+  filter: drop-shadow(0 9px 15px rgb(0 0 0 / 0.3));
+}
+
+html[data-visual-theme="airplane-mode"] .theme-gauge__dial::before {
+  content: "";
+  display: block;
+  position: absolute;
+  inset: 7% 8% 4%;
+  border: 1px solid rgb(var(--palette-primary) / 0.34);
+  border-radius: 50% 50% 44% 44% !important;
   background:
-    repeating-linear-gradient(90deg, transparent 0 11px, rgb(var(--palette-primary) / 0.1) 11px 12px),
-    rgb(0 0 0 / 0.36);
-  box-shadow: inset 0 0 5px rgb(0 0 0 / 0.7);
+    radial-gradient(circle at 50% 48%, rgb(1 5 10 / 0.98) 0 55%, rgb(var(--palette-primary) / 0.035) 56% 72%, rgb(0 0 0 / 0.72) 73%),
+    rgb(1 5 10 / 0.96);
+  box-shadow:
+    inset 0 0 20px rgb(var(--palette-primary) / 0.09),
+    inset 0 -10px 18px rgb(0 0 0 / 0.54),
+    0 0 0 3px rgb(0 0 0 / 0.28),
+    0 0 13px rgb(var(--instrument-rgb) / 0.08);
 }
 
-html[data-visual-theme="airplane-mode"] .theme-gauge__fill {
-  border-radius: 1px;
-  background: rgb(var(--instrument-rgb)) !important;
-  box-shadow: 0 0 8px rgb(var(--instrument-rgb) / 0.3);
+html[data-visual-theme="airplane-mode"] .theme-gauge__dial-face {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
 }
 
-html[data-visual-theme="airplane-mode"] .theme-gauge__marker {
-  background: rgb(var(--palette-secondary));
+html[data-visual-theme="airplane-mode"] .theme-gauge__dial-scale,
+html[data-visual-theme="airplane-mode"] .theme-gauge__dial-value {
+  fill: none;
+  stroke-width: 9;
+}
+
+html[data-visual-theme="airplane-mode"] .theme-gauge__dial-scale {
+  stroke: rgb(var(--instrument-rgb) / 0.14);
+}
+
+html[data-visual-theme="airplane-mode"] .theme-gauge__dial-value {
+  stroke: currentColor;
+  filter: drop-shadow(0 0 5px rgb(var(--instrument-rgb) / 0.72));
+}
+
+html[data-visual-theme="airplane-mode"] .theme-gauge__tick {
+  stroke: rgb(var(--palette-primary) / 0.44);
+  stroke-width: 1;
+}
+
+html[data-visual-theme="airplane-mode"] .theme-gauge__tick--major {
+  stroke: rgb(var(--palette-primary) / 0.76);
+  stroke-width: 1.6;
+}
+
+html[data-visual-theme="airplane-mode"] .theme-gauge__dial-marker {
+  stroke: rgb(var(--palette-secondary));
+  stroke-width: 2.4;
+  filter: drop-shadow(0 0 4px rgb(var(--palette-secondary) / 0.64));
+}
+
+html[data-visual-theme="airplane-mode"] .theme-gauge__needle {
+  stroke: rgb(var(--palette-secondary));
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 4px rgb(var(--palette-secondary) / 0.82));
+}
+
+html[data-visual-theme="airplane-mode"] .theme-gauge__hub {
+  fill: rgb(2 8 14);
+  stroke: rgb(var(--palette-secondary));
+  stroke-width: 1.7;
+  filter: drop-shadow(0 0 4px rgb(var(--palette-secondary) / 0.54));
+}
+
+html[data-visual-theme="airplane-mode"] .theme-gauge__scale-label {
+  fill: rgb(var(--palette-primary) / 0.45);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+html[data-visual-theme="airplane-mode"] .theme-gauge__readout {
+  position: absolute;
+  z-index: 2;
+  top: 70%;
+  left: 13%;
+  right: 13%;
+  overflow: hidden;
+  color: rgb(var(--palette-secondary));
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: clamp(0.78rem, 1.25vw, 1.08rem);
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+  text-overflow: ellipsis;
+  text-shadow: 0 0 7px rgb(var(--palette-secondary) / 0.38);
+  white-space: nowrap;
+  transform: translateY(-50%);
+}
+
+html[data-visual-theme="airplane-mode"] .health-gauge .theme-gauge__dial {
+  width: min(100%, 138px);
+  margin-top: 0.25rem;
+}
+
+html[data-visual-theme="airplane-mode"] .health-gauge .theme-gauge__readout {
+  font-size: clamp(0.68rem, 1vw, 0.88rem);
+}
+
+html[data-visual-theme="airplane-mode"] .health-gauge > div:first-child > span:last-child {
+  display: none;
 }
 
 html[data-visual-theme="airplane-mode"] .horizontal-gauge__track,
@@ -956,132 +1082,12 @@ html[data-visual-theme="airplane-mode"] .stacked-ratio__segment {
   box-shadow: 0 0 7px currentColor;
 }
 
-html[data-visual-theme="airplane-mode"] .instrument-card--gauge > .theme-gauge .theme-gauge__dial {
-  display: block;
-  position: absolute;
-  z-index: 1;
-  right: 3px;
-  top: -58px;
-  width: 58px;
-  height: 58px;
+html[data-visual-theme="airplane-mode"] .rebalance-overview-hero .hero-tile.instrument-card--gauge {
+  min-height: 255px;
 }
 
-html[data-visual-theme="airplane-mode"] .theme-gauge__dial-progress,
-html[data-visual-theme="airplane-mode"] .theme-gauge__dial-ticks,
-html[data-visual-theme="airplane-mode"] .theme-gauge__dial-marker,
-html[data-visual-theme="airplane-mode"] .theme-gauge__needle,
-html[data-visual-theme="airplane-mode"] .theme-gauge__hub {
-  position: absolute;
-  pointer-events: none;
-}
-
-html[data-visual-theme="airplane-mode"] .theme-gauge__dial::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border: 1px solid rgb(var(--palette-primary) / 0.4);
-  border-radius: 50% !important;
-  background:
-    radial-gradient(circle, rgb(1 5 10 / 0.96) 0 55%, transparent 56%),
-    rgb(var(--palette-primary) / 0.035);
-  box-shadow: inset 0 0 13px rgb(var(--palette-primary) / 0.1), 0 0 11px rgb(0 0 0 / 0.44);
-}
-
-html[data-visual-theme="airplane-mode"] .theme-gauge__dial-progress {
-  inset: 4px;
-  border-radius: 50% !important;
-  background: conic-gradient(
-    from -135deg,
-    rgb(var(--instrument-rgb)) 0 calc(var(--instrument-pct) * 3.6deg),
-    rgb(var(--instrument-rgb) / 0.1) calc(var(--instrument-pct) * 3.6deg) 360deg
-  );
-  mask: radial-gradient(circle, transparent 0 66%, #000 68% 100%);
-  opacity: 0.82;
-}
-
-html[data-visual-theme="airplane-mode"] .theme-gauge__dial-ticks {
-  inset: 7px;
-  border-radius: 50% !important;
-  background: repeating-conic-gradient(
-    from -135deg,
-    rgb(var(--color-fog) / 0.58) 0 1deg,
-    transparent 1deg 15deg
-  );
-  mask: radial-gradient(circle, transparent 0 78%, #000 80% 100%);
-}
-
-html[data-visual-theme="airplane-mode"] .theme-gauge__needle,
-html[data-visual-theme="airplane-mode"] .theme-gauge__dial-marker {
-  left: calc(50% - 1px);
-  bottom: 50%;
-  width: 2px;
-  transform-origin: 50% 100%;
-}
-
-html[data-visual-theme="airplane-mode"] .theme-gauge__needle {
-  height: 21px;
-  border-radius: 2px 2px 0 0;
-  background: rgb(var(--palette-secondary));
-  box-shadow: 0 0 5px rgb(var(--palette-secondary) / 0.5);
-  transform: rotate(var(--instrument-angle));
-}
-
-html[data-visual-theme="airplane-mode"] .theme-gauge__dial-marker {
-  height: 25px;
-  background: linear-gradient(to top, transparent 0 84%, rgb(var(--color-fog)) 84% 100%);
-  transform: rotate(var(--instrument-marker-angle));
-}
-
-html[data-visual-theme="airplane-mode"] .theme-gauge__hub {
-  left: calc(50% - 3px);
-  top: calc(50% - 3px);
-  width: 6px;
-  height: 6px;
-  border: 1px solid rgb(var(--palette-secondary));
-  border-radius: 50% !important;
-  background: rgb(2 8 14);
-  box-shadow: 0 0 5px rgb(var(--palette-secondary) / 0.45);
-}
-
-html[data-visual-theme="airplane-mode"] .health-gauge {
-  padding-right: 46px;
-}
-
-html[data-visual-theme="airplane-mode"] .health-gauge .theme-gauge__dial {
-  display: block;
-  position: absolute;
-  right: -44px;
-  top: -27px;
-  width: 38px;
-  height: 38px;
-}
-
-html[data-visual-theme="airplane-mode"] .health-gauge .theme-gauge__needle {
-  height: 14px;
-}
-
-html[data-visual-theme="airplane-mode"] .health-gauge .theme-gauge__dial-marker {
-  height: 17px;
-}
-
-/* Rebalance Center cockpit instruments use dedicated visual rails. Keeping
-   dials out of the header and copy areas prevents overlap in narrow 4-column
-   cards while retaining the original card dimensions. */
-html[data-visual-theme="airplane-mode"] .rebalance-overview-hero .hero-tile.instrument-card--gauge > .theme-gauge .theme-gauge__dial {
-  top: -36px;
-}
-
-html[data-visual-theme="airplane-mode"] .rebalance-overview-hero .hero-tile.instrument-card--gauge .hero-tile__context {
-  padding-right: 68px;
-}
-
-html[data-visual-theme="airplane-mode"] .rebalance-overview-hero .health-gauge > .theme-gauge {
-  position: static;
-}
-
-html[data-visual-theme="airplane-mode"] .rebalance-overview-hero .health-gauge .theme-gauge__dial {
-  top: 0;
-  right: 0;
+html[data-visual-theme="airplane-mode"] .rebalance-overview-hero .hero-tile.instrument-card--gauge > .theme-gauge {
+  margin-top: 0.2rem;
 }
 
 html[data-visual-theme="airplane-mode"] .rebalance-overview-hero .rebalance-health-panel {
@@ -1112,22 +1118,19 @@ html[data-visual-theme="airplane-mode"] .rebalance-overview-hero .rebalance-heal
   }
 
   html[data-visual-theme="airplane-mode"] .instrument-card--gauge > .theme-gauge .theme-gauge__dial {
-    right: 1px;
-    width: 50px;
-    height: 50px;
+    width: min(100%, 165px);
   }
 
-  html[data-visual-theme="airplane-mode"] .instrument-card--gauge .metric-tile__body,
-  html[data-visual-theme="airplane-mode"] .instrument-card--gauge .hero-tile__value {
-    padding-right: 58px;
+  html[data-visual-theme="airplane-mode"] .health-gauge .theme-gauge__dial {
+    width: min(100%, 124px);
   }
 
-  html[data-visual-theme="airplane-mode"] .instrument-card--gauge > .theme-gauge .theme-gauge__bar {
-    margin-right: 58px;
+  html[data-visual-theme="airplane-mode"] .rebalance-overview-hero .hero-tile.instrument-card--gauge {
+    min-height: 0;
   }
 
-  html[data-visual-theme="airplane-mode"] .rebalance-overview-hero .hero-tile.instrument-card--gauge .hero-tile__context {
-    padding-right: 58px;
+  html[data-visual-theme="airplane-mode"] .theme-gauge__readout {
+    font-size: 0.84rem;
   }
 }
 

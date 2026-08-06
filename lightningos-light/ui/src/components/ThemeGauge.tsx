@@ -70,7 +70,7 @@ export default function ThemeGauge({
       </div>
 
       <div className="theme-gauge__dial" aria-hidden="true">
-        <svg className="theme-gauge__dial-face" viewBox="0 0 200 178" focusable="false">
+        <svg className="theme-gauge__dial-face" viewBox="0 0 200 200" focusable="false">
           <path className="theme-gauge__dial-scale" d={arcPath(100, 100, 78, startAngle, endAngle)} />
           <path className="theme-gauge__dial-value" d={arcPath(100, 100, 78, startAngle, valueAngle)} />
           {Array.from({ length: 11 }, (_, index) => {

@@ -195,10 +195,10 @@ func (s *Server) startPeerswap(ctx context.Context) error {
 	if err := ensurePeerswapServices(ctx, paths, source.Mode); err != nil {
 		return err
 	}
-	if _, err := runSystemd(ctx, "systemctl", "restart", peerswapServiceName); err != nil {
+	if _, err := runSystemd(ctx, peerswapStartSystemctlArgs(peerswapServiceName)...); err != nil {
 		return err
 	}
-	if _, err := runSystemd(ctx, "systemctl", "restart", pswebServiceName); err != nil {
+	if _, err := runSystemd(ctx, peerswapStartSystemctlArgs(pswebServiceName)...); err != nil {
 		return err
 	}
 	if err := ensurePswebUfwAccess(ctx); err != nil && s.logger != nil {
@@ -212,11 +212,20 @@ func (s *Server) stopPeerswap(ctx context.Context) error {
 	if !fileExists(paths.VersionPath) || !fileExists(filepath.Join(paths.BinDir, "peerswapd")) {
 		return errors.New("Peerswap is not installed")
 	}
-	_, _ = runSystemd(ctx, "systemctl", "stop", pswebServiceName)
-	if _, err := runSystemd(ctx, "systemctl", "stop", peerswapServiceName); err != nil {
-		return err
+	_, webErr := runSystemd(ctx, peerswapStopSystemctlArgs(pswebServiceName)...)
+	_, daemonErr := runSystemd(ctx, peerswapStopSystemctlArgs(peerswapServiceName)...)
+	if daemonErr != nil {
+		return daemonErr
 	}
-	return nil
+	return webErr
+}
+
+func peerswapStartSystemctlArgs(serviceName string) []string {
+	return []string{"systemctl", "enable", "--now", serviceName}
+}
+
+func peerswapStopSystemctlArgs(serviceName string) []string {
+	return []string{"systemctl", "disable", "--now", serviceName}
 }
 
 func ensurePswebUfwAccess(ctx context.Context) error {

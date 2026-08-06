@@ -4,11 +4,21 @@ import (
 	"encoding/base64"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"lightningos-light/internal/lndclient"
 )
+
+func TestLoopServiceLifecyclePersistsAcrossReboots(t *testing.T) {
+	if got, want := loopStartSystemctlArgs(), []string{"systemctl", "enable", "--now", loopServiceName}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected Loop start args: got %#v want %#v", got, want)
+	}
+	if got, want := loopStopSystemctlArgs(), []string{"systemctl", "disable", "--now", loopServiceName}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected Loop stop args: got %#v want %#v", got, want)
+	}
+}
 
 func TestLoopAssetForArch(t *testing.T) {
 	for _, arch := range []string{"amd64", "arm64", "arm"} {

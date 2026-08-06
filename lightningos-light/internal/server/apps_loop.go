@@ -183,7 +183,7 @@ func (s *Server) installLoop(ctx context.Context) error {
 	if err := ensureLoopService(ctx, paths); err != nil {
 		return err
 	}
-	if _, err := runSystemd(ctx, "systemctl", "enable", "--now", loopServiceName); err != nil {
+	if _, err := runSystemd(ctx, loopStartSystemctlArgs()...); err != nil {
 		return loopServiceStartError(ctx, paths, err)
 	}
 	if err := waitForLoopServiceStable(ctx); err != nil {
@@ -209,7 +209,7 @@ func (s *Server) startLoop(ctx context.Context) error {
 	if err := ensureLoopService(ctx, paths); err != nil {
 		return err
 	}
-	if _, err := runSystemd(ctx, "systemctl", "restart", loopServiceName); err != nil {
+	if _, err := runSystemd(ctx, loopStartSystemctlArgs()...); err != nil {
 		return loopServiceStartError(ctx, paths, err)
 	}
 	if err := waitForLoopServiceStable(ctx); err != nil {
@@ -226,14 +226,21 @@ func (s *Server) stopLoop(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to verify Lightning Loop status: %w", err)
 	}
-	if status == "stopped" {
-		return nil
+	if status != "stopped" {
+		if err := s.ensureNoPendingLoopSwaps(ctx, "stop"); err != nil {
+			return err
+		}
 	}
-	if err := s.ensureNoPendingLoopSwaps(ctx, "stop"); err != nil {
-		return err
-	}
-	_, err = runSystemd(ctx, "systemctl", "stop", loopServiceName)
+	_, err = runSystemd(ctx, loopStopSystemctlArgs()...)
 	return err
+}
+
+func loopStartSystemctlArgs() []string {
+	return []string{"systemctl", "enable", "--now", loopServiceName}
+}
+
+func loopStopSystemctlArgs() []string {
+	return []string{"systemctl", "disable", "--now", loopServiceName}
 }
 
 func (s *Server) uninstallLoop(ctx context.Context) error {

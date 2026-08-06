@@ -5,10 +5,22 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
 )
+
+func TestPeerswapServiceLifecyclePersistsAcrossReboots(t *testing.T) {
+	for _, serviceName := range []string{peerswapServiceName, pswebServiceName} {
+		if got, want := peerswapStartSystemctlArgs(serviceName), []string{"systemctl", "enable", "--now", serviceName}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("unexpected %s start args: got %#v want %#v", serviceName, got, want)
+		}
+		if got, want := peerswapStopSystemctlArgs(serviceName), []string{"systemctl", "disable", "--now", serviceName}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("unexpected %s stop args: got %#v want %#v", serviceName, got, want)
+		}
+	}
+}
 
 func TestPeerswapBundleChecksumsMatchPackagedAssets(t *testing.T) {
 	_, testFile, _, ok := runtime.Caller(0)

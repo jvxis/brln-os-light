@@ -20,6 +20,37 @@ func (s *Server) recordAuditEvent(r *http.Request, action string, target string,
 	if s == nil {
 		return
 	}
+	parent := context.Background()
+	if r != nil {
+		parent = r.Context()
+	}
+	s.insertAuditEvent(parent, AuditEventInsert{
+		SessionID: auditSessionID(r),
+		Action:    action,
+		Target:    target,
+		IP:        auditClientIP(r),
+		Metadata:  metadata,
+	})
+}
+
+func (s *Server) recordAuditEventAsync(r *http.Request, action string, target string, metadata any) {
+	if s == nil {
+		return
+	}
+	event := AuditEventInsert{
+		SessionID: auditSessionID(r),
+		Action:    action,
+		Target:    target,
+		IP:        auditClientIP(r),
+		Metadata:  metadata,
+	}
+	go s.insertAuditEvent(context.Background(), event)
+}
+
+func (s *Server) insertAuditEvent(parent context.Context, event AuditEventInsert) {
+	if s == nil {
+		return
+	}
 	svc, errMsg := s.auditLogService()
 	if svc == nil {
 		if s.logger != nil && strings.TrimSpace(errMsg) != "" {
@@ -28,21 +59,14 @@ func (s *Server) recordAuditEvent(r *http.Request, action string, target string,
 		return
 	}
 
-	ctx := context.Background()
-	if r != nil {
-		ctx = r.Context()
+	if parent == nil {
+		parent = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(ctx, auditInsertTimeout)
+	ctx, cancel := context.WithTimeout(parent, auditInsertTimeout)
 	defer cancel()
 
-	if err := svc.Insert(ctx, AuditEventInsert{
-		SessionID: auditSessionID(r),
-		Action:    action,
-		Target:    target,
-		IP:        auditClientIP(r),
-		Metadata:  metadata,
-	}); err != nil && s.logger != nil {
-		s.logger.Printf("audit log insert failed action=%s target=%s: %v", action, target, err)
+	if err := svc.Insert(ctx, event); err != nil && s.logger != nil {
+		s.logger.Printf("audit log insert failed action=%s target=%s: %v", event.Action, event.Target, err)
 	}
 }
 

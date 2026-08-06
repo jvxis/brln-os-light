@@ -96,6 +96,7 @@ type AuthService struct {
 	logger  *log.Logger
 	now     func() time.Time
 	limiter *authRateLimiter
+	audit   func(*http.Request, string, string, any)
 
 	mu       sync.Mutex
 	sessions map[string]*authSession
@@ -117,6 +118,18 @@ func NewAuthService(cfg *config.Config, logger *log.Logger) *AuthService {
 
 func (a *AuthService) Enabled() bool {
 	return a != nil && a.enabled
+}
+
+func (a *AuthService) SetAuditRecorder(recorder func(*http.Request, string, string, any)) {
+	if a != nil {
+		a.audit = recorder
+	}
+}
+
+func (a *AuthService) recordAudit(r *http.Request, action string, target string, metadata any) {
+	if a != nil && a.audit != nil {
+		a.audit(r, action, target, metadata)
+	}
 }
 
 func (a *AuthService) Middleware() func(http.Handler) http.Handler {
@@ -195,11 +208,13 @@ func (a *AuthService) HandleSetup(w http.ResponseWriter, r *http.Request) {
 
 	snapshot, err := a.setup(req.SetupToken, req.Password, req.ConfirmPassword)
 	if err != nil {
+		a.recordAudit(r, "auth.setup.failed", "", map[string]any{"reason": authAuditReason(err)})
 		a.writeSetupError(w, err)
 		return
 	}
 
 	a.writeSessionCookie(w, snapshot)
+	a.recordAudit(r, "auth.setup.succeeded", "", nil)
 	writeJSON(w, http.StatusOK, a.stateFromSnapshot(snapshot))
 }
 
@@ -222,16 +237,19 @@ func (a *AuthService) HandleLogin(w http.ResponseWriter, r *http.Request) {
 
 	snapshot, err := a.login(req.Password)
 	if err != nil {
+		a.recordAudit(r, "auth.login.failed", "", map[string]any{"reason": authAuditReason(err)})
 		a.writeLoginError(w, err)
 		return
 	}
 
 	a.writeSessionCookie(w, snapshot)
+	a.recordAudit(r, "auth.login.succeeded", "", nil)
 	writeJSON(w, http.StatusOK, a.stateFromSnapshot(snapshot))
 }
 
 func (a *AuthService) HandleLogout(w http.ResponseWriter, r *http.Request) {
 	setNoStore(w)
+	a.recordAudit(r, "auth.logout", "", nil)
 	if a != nil && a.Enabled() {
 		a.logout(sessionIDFromRequest(r))
 	}
@@ -260,11 +278,13 @@ func (a *AuthService) HandleRecovery(w http.ResponseWriter, r *http.Request) {
 
 	snapshot, err := a.recover(req.RecoveryToken, req.Password, req.ConfirmPassword)
 	if err != nil {
+		a.recordAudit(r, "auth.recovery.failed", "", map[string]any{"reason": authAuditReason(err)})
 		a.writeRecoveryError(w, err)
 		return
 	}
 
 	a.writeSessionCookie(w, snapshot)
+	a.recordAudit(r, "auth.recovery.succeeded", "", nil)
 	writeJSON(w, http.StatusOK, a.stateFromSnapshot(snapshot))
 }
 
@@ -295,11 +315,13 @@ func (a *AuthService) HandleChangePassword(w http.ResponseWriter, r *http.Reques
 
 	snapshot, err := a.changePassword(session.ID, req.CurrentPassword, req.Password, req.ConfirmPassword)
 	if err != nil {
+		a.recordAudit(r, "auth.password_change.failed", "", map[string]any{"reason": authAuditReason(err)})
 		a.writeChangePasswordError(w, err)
 		return
 	}
 
 	a.writeSessionCookie(w, snapshot)
+	a.recordAudit(r, "auth.password_change.succeeded", "", nil)
 	writeJSON(w, http.StatusOK, a.stateFromSnapshot(snapshot))
 }
 
@@ -329,6 +351,11 @@ func (a *AuthService) HandleReauth(w http.ResponseWriter, r *http.Request) {
 
 	expiresAt, err := a.reauth(session.ID, req.Password, req.Scope)
 	if err != nil {
+		target := "invalid_scope"
+		if authScopeValid(req.Scope) {
+			target = strings.TrimSpace(req.Scope)
+		}
+		a.recordAudit(r, "auth.reauth.failed", target, map[string]any{"reason": authAuditReason(err)})
 		if errors.Is(err, errInvalidScope) {
 			writeErrorCode(w, http.StatusBadRequest, "auth_scope_invalid", "invalid reauthentication scope")
 			return
@@ -340,6 +367,7 @@ func (a *AuthService) HandleReauth(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusInternalServerError, "auth_reauth_failed", "reauthentication failed")
 		return
 	}
+	a.recordAudit(r, "auth.reauth.succeeded", strings.TrimSpace(req.Scope), nil)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":         true,
@@ -751,6 +779,31 @@ var (
 	errTokenExpired              = errors.New("token expired")
 	errTokenInvalid              = errors.New("token invalid")
 )
+
+func authAuditReason(err error) string {
+	switch {
+	case errors.Is(err, errInvalidCredentials):
+		return "invalid_credentials"
+	case errors.Is(err, errInvalidSession):
+		return "invalid_session"
+	case errors.Is(err, errInvalidScope):
+		return "invalid_scope"
+	case errors.Is(err, errSetupRequired):
+		return "setup_required"
+	case errors.Is(err, errPasswordAlreadyConfigured):
+		return "already_configured"
+	case errors.Is(err, errTokenRequired):
+		return "token_required"
+	case errors.Is(err, errTokenMissing):
+		return "token_missing"
+	case errors.Is(err, errTokenExpired):
+		return "token_expired"
+	case errors.Is(err, errTokenInvalid):
+		return "token_invalid"
+	default:
+		return "request_failed"
+	}
+}
 
 func validateAdminPassword(password string, confirmPassword string) error {
 	if subtle.ConstantTimeCompare([]byte(password), []byte(confirmPassword)) != 1 {

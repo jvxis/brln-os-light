@@ -234,6 +234,7 @@ func (s *Server) handleCloseManagerSessionForceClosePost(w http.ResponseWriter, 
 			return
 		}
 		if err := nodeSvc.SetChannelDecision(ctx, session.SourceRef, session.ChannelPoint, nodeRetirementDecisionForceClose); err != nil {
+			s.recordAuditEventAsync(r, "channel.close_manager_force.failed", session.ChannelPoint, map[string]any{"delegated": true})
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -246,6 +247,10 @@ func (s *Server) handleCloseManagerSessionForceClosePost(w http.ResponseWriter, 
 			return
 		}
 		updated, _ := svc.GetSession(ctx, session.ID)
+		s.recordAuditEventAsync(r, "channel.close_manager_force.submitted", session.ChannelPoint, map[string]any{
+			"delegated":  true,
+			"session_id": session.ID,
+		})
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":         true,
 			"delegated":  true,
@@ -258,6 +263,10 @@ func (s *Server) handleCloseManagerSessionForceClosePost(w http.ResponseWriter, 
 
 	txid, closeErr := s.lnd.CloseChannel(ctx, session.ChannelPoint, true, 0)
 	if closeErr != nil {
+		s.recordAuditEventAsync(r, "channel.close_manager_force.failed", session.ChannelPoint, map[string]any{
+			"delegated":  false,
+			"session_id": session.ID,
+		})
 		_ = svc.insertEvent(ctx, session.ID, "force_close_failed", "warn", map[string]any{
 			"channel_point": session.ChannelPoint,
 			"error":         closeErr.Error(),
@@ -274,6 +283,11 @@ func (s *Server) handleCloseManagerSessionForceClosePost(w http.ResponseWriter, 
 		return
 	}
 	updated, _ := svc.GetSession(ctx, session.ID)
+	s.recordAuditEventAsync(r, "channel.close_manager_force.submitted", session.ChannelPoint, map[string]any{
+		"delegated":    false,
+		"session_id":   session.ID,
+		"closing_txid": strings.TrimSpace(txid),
+	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":           true,
 		"delegated":    false,
@@ -351,6 +365,11 @@ func (s *Server) handleCloseManagerSessionBumpFeePost(w http.ResponseWriter, r *
 			SatPerVbyte: plan.SatPerVbyte,
 			Immediate:   plan.Immediate,
 		}); err != nil {
+			s.recordAuditEventAsync(r, "channel.close_manager_bump.failed", session.ChannelPoint, map[string]any{
+				"session_id":    session.ID,
+				"preset":        plan.Preset,
+				"sat_per_vbyte": plan.SatPerVbyte,
+			})
 			_ = svc.insertEvent(ctx, session.ID, "bump_fee_failed", "warn", map[string]any{
 				"channel_point":   session.ChannelPoint,
 				"close_txid":      session.CloseTxid,
@@ -379,6 +398,12 @@ func (s *Server) handleCloseManagerSessionBumpFeePost(w http.ResponseWriter, r *
 		return
 	}
 	updated, _ := svc.GetSession(ctx, session.ID)
+	s.recordAuditEventAsync(r, "channel.close_manager_bump.submitted", session.ChannelPoint, map[string]any{
+		"session_id":       session.ID,
+		"preset":           plan.Preset,
+		"sat_per_vbyte":    plan.SatPerVbyte,
+		"outpoints_bumped": len(bumpedOutpoints),
+	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":               true,
 		"preset":           plan.Preset,

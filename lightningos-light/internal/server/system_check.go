@@ -70,6 +70,7 @@ func (s *Server) systemCheck(ctx context.Context) systemCheckResponse {
 		s.systemCheckBitcoin,
 		s.systemCheckPostgres,
 		s.systemCheckTor,
+		s.systemCheckSecurity,
 		s.systemCheckSystem,
 	}
 
@@ -93,6 +94,58 @@ func (s *Server) systemCheck(ctx context.Context) systemCheckResponse {
 		CheckedAt: time.Now().UTC().Format(time.RFC3339),
 		Groups:    groups,
 	}
+}
+
+func (s *Server) systemCheckSecurity(ctx context.Context) systemCheckGroup {
+	status := inspectManagerFirewall(ctx)
+	firewallTone := systemCheckWarn
+	firewallDetail := "UFW is not installed; LightningOS did not change firewall rules"
+	if status.Installed && !status.StatusAvailable {
+		firewallDetail = "UFW status is unavailable; existing rules were not changed"
+	} else if status.StatusAvailable && !status.Active {
+		firewallDetail = "UFW is inactive; the saved LAN policy is not being enforced"
+	} else if status.Active {
+		firewallTone = systemCheckOK
+		firewallDetail = "active"
+	}
+
+	accessTone := systemCheckWarn
+	accessDetail := "Manager access policy is not configured"
+	if !status.ConfigValid {
+		accessDetail = "Saved LAN network is missing or invalid"
+	} else if !status.Active {
+		accessDetail = "Configured for " + status.ConfiguredCIDR + ", but UFW is inactive"
+	} else if status.BroadRulePresent {
+		accessTone = systemCheckDanger
+		accessDetail = "Port 8443 has a broad allow rule"
+	} else if status.ManagerAccessBound {
+		accessTone = systemCheckOK
+		if strings.EqualFold(status.ConfiguredCIDR, "none") {
+			accessDetail = "Port 8443 has no broad LAN rule"
+		} else {
+			accessDetail = "Port 8443 is restricted to " + status.ConfiguredCIDR
+		}
+	} else {
+		accessTone = systemCheckDanger
+		accessDetail = "UFW is active, but the expected port 8443 restriction is missing"
+	}
+
+	return newSystemCheckGroup("security", "Security", []systemCheckItem{
+		{
+			ID:     "ufw",
+			Label:  "Host firewall",
+			Status: firewallTone,
+			Detail: firewallDetail,
+			Value:  status.Active,
+		},
+		{
+			ID:     "manager_access",
+			Label:  "Manager LAN access",
+			Status: accessTone,
+			Detail: accessDetail,
+			Value:  status.ConfiguredCIDR,
+		},
+	})
 }
 
 func (s *Server) systemCheckApp(ctx context.Context) systemCheckGroup {

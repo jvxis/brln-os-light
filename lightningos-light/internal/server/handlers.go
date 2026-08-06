@@ -2635,9 +2635,20 @@ func (s *Server) handleLNOpenChannel(w http.ResponseWriter, r *http.Request) {
 		channelPoint, openErr = s.lnd.OpenChannelWithPush(openCtx, pubkey, req.LocalFundingSat, req.PushSat, req.CloseAddress, req.Private, req.SatPerVbyte)
 	}
 	if openErr != nil {
+		s.recordAuditEventAsync(r, "channel.open.failed", pubkey, map[string]any{
+			"local_funding_sat": req.LocalFundingSat,
+			"private":           req.Private,
+			"sat_per_vbyte":     req.SatPerVbyte,
+		})
 		writeError(w, http.StatusInternalServerError, lndDetailedErrorMessage(openErr))
 		return
 	}
+	s.recordAuditEventAsync(r, "channel.open.submitted", channelPoint, map[string]any{
+		"peer_pubkey":       pubkey,
+		"local_funding_sat": req.LocalFundingSat,
+		"private":           req.Private,
+		"sat_per_vbyte":     req.SatPerVbyte,
+	})
 
 	writeJSON(w, http.StatusOK, map[string]string{"channel_point": channelPoint})
 }
@@ -2799,9 +2810,17 @@ func (s *Server) handleLNBatchOpenChannel(w http.ResponseWriter, r *http.Request
 
 	results, err := s.lnd.BatchOpenChannel(openCtx, batch, req.SatPerVbyte)
 	if err != nil {
+		s.recordAuditEventAsync(r, "channel.open_batch.failed", "batch", map[string]any{
+			"channel_count": len(batch),
+			"sat_per_vbyte": req.SatPerVbyte,
+		})
 		writeError(w, http.StatusInternalServerError, lndDetailedErrorMessage(err))
 		return
 	}
+	s.recordAuditEventAsync(r, "channel.open_batch.submitted", "batch", map[string]any{
+		"channel_count": len(results),
+		"sat_per_vbyte": req.SatPerVbyte,
+	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"pending_channels": results,
@@ -2915,9 +2934,18 @@ func (s *Server) handleLNPendingOpenBumpFee(w http.ResponseWriter, r *http.Reque
 		SatPerVbyte: plan.SatPerVbyte,
 		Immediate:   plan.Immediate,
 	}); err != nil {
+		s.recordAuditEventAsync(r, "channel.pending_open_bump.failed", channelPoint, map[string]any{
+			"preset":        plan.Preset,
+			"sat_per_vbyte": plan.SatPerVbyte,
+		})
 		writeError(w, http.StatusInternalServerError, lndDetailedErrorMessage(err))
 		return
 	}
+	s.recordAuditEventAsync(r, "channel.pending_open_bump.submitted", channelPoint, map[string]any{
+		"preset":            plan.Preset,
+		"sat_per_vbyte":     plan.SatPerVbyte,
+		"estimated_fee_sat": plan.EstimatedFeeSat,
+	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":                   true,
@@ -3073,12 +3101,21 @@ func (s *Server) handleLNCloseChannel(w http.ResponseWriter, r *http.Request) {
 
 	closingTxid, err := s.lnd.CloseChannel(ctx, req.ChannelPoint, req.Force, satPerVbyte)
 	if err != nil {
+		s.recordAuditEventAsync(r, "channel.close.failed", strings.TrimSpace(req.ChannelPoint), map[string]any{
+			"force":         req.Force,
+			"sat_per_vbyte": satPerVbyte,
+		})
 		writeError(w, http.StatusInternalServerError, lndCloseErrorMessage(err))
 		return
 	}
 
 	channelPoint := strings.TrimSpace(req.ChannelPoint)
 	closingTxid = strings.TrimSpace(closingTxid)
+	s.recordAuditEventAsync(r, "channel.close.submitted", channelPoint, map[string]any{
+		"force":         req.Force,
+		"sat_per_vbyte": satPerVbyte,
+		"closing_txid":  closingTxid,
+	})
 	if s.notifier != nil && channelPoint != "" && closingTxid != "" {
 		eventKey := "channel:closing:" + channelPoint
 		evt := Notification{
@@ -4383,6 +4420,12 @@ func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.lnd.PayInvoice(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat); err != nil {
+		s.recordAuditEventAsync(r, "wallet.payment.failed", paymentHash, map[string]any{
+			"mode":                   "standard",
+			"amount_sat":             req.AmountSat,
+			"max_fee_sat":            req.MaxFeeSat,
+			"outgoing_channel_count": len(outgoingChanIDs),
+		})
 		if paymentHash != "" {
 			s.recordWalletActivity(paymentHash)
 		}
@@ -4396,6 +4439,12 @@ func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, msg)
 		return
 	}
+	s.recordAuditEventAsync(r, "wallet.payment.sent", paymentHash, map[string]any{
+		"mode":                   "standard",
+		"amount_sat":             req.AmountSat,
+		"max_fee_sat":            req.MaxFeeSat,
+		"outgoing_channel_count": len(outgoingChanIDs),
+	})
 
 	if paymentHash != "" {
 		s.recordWalletActivity(paymentHash)
@@ -4438,6 +4487,12 @@ func (s *Server) handleWalletPayValidatedRoute(w http.ResponseWriter, r *http.Re
 	}
 
 	if err := s.lnd.PayInvoiceWithValidatedRoute(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat, 5, req.RouteToken); err != nil {
+		s.recordAuditEventAsync(r, "wallet.payment.failed", paymentHash, map[string]any{
+			"mode":                   "validated_route",
+			"amount_sat":             req.AmountSat,
+			"max_fee_sat":            req.MaxFeeSat,
+			"outgoing_channel_count": len(outgoingChanIDs),
+		})
 		if paymentHash != "" {
 			s.recordWalletActivity(paymentHash)
 		}
@@ -4464,6 +4519,12 @@ func (s *Server) handleWalletPayValidatedRoute(w http.ResponseWriter, r *http.Re
 		writeError(w, statusCode, msg)
 		return
 	}
+	s.recordAuditEventAsync(r, "wallet.payment.sent", paymentHash, map[string]any{
+		"mode":                   "validated_route",
+		"amount_sat":             req.AmountSat,
+		"max_fee_sat":            req.MaxFeeSat,
+		"outgoing_channel_count": len(outgoingChanIDs),
+	})
 
 	if paymentHash != "" {
 		s.recordWalletActivity(paymentHash)
@@ -4515,6 +4576,13 @@ func (s *Server) handleWalletPayMPP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.lnd.PayInvoiceWithMPP(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat, req.MaxParts, req.MaxShardSat); err != nil {
+		s.recordAuditEventAsync(r, "wallet.payment.failed", paymentHash, map[string]any{
+			"mode":                   "mpp",
+			"amount_sat":             req.AmountSat,
+			"max_fee_sat":            req.MaxFeeSat,
+			"outgoing_channel_count": len(outgoingChanIDs),
+			"max_parts":              req.MaxParts,
+		})
 		if paymentHash != "" {
 			s.recordWalletActivity(paymentHash)
 		}
@@ -4528,6 +4596,13 @@ func (s *Server) handleWalletPayMPP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, msg)
 		return
 	}
+	s.recordAuditEventAsync(r, "wallet.payment.sent", paymentHash, map[string]any{
+		"mode":                   "mpp",
+		"amount_sat":             req.AmountSat,
+		"max_fee_sat":            req.MaxFeeSat,
+		"outgoing_channel_count": len(outgoingChanIDs),
+		"max_parts":              req.MaxParts,
+	})
 
 	if paymentHash != "" {
 		s.recordWalletActivity(paymentHash)
@@ -4635,9 +4710,11 @@ func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
 			confirmPassword := strings.TrimSpace(req.ConfirmPassword)
 			if confirmPassword != "" {
 				if _, err := s.auth.reauth(session.ID, confirmPassword, authScopeWalletSendExternal); err != nil {
+					s.recordAuditEventAsync(r, "auth.reauth.failed", authScopeWalletSendExternal, map[string]any{"reason": authAuditReason(err)})
 					writeErrorCode(w, http.StatusUnauthorized, "auth_invalid_credentials", "invalid credentials")
 					return
 				}
+				s.recordAuditEventAsync(r, "auth.reauth.succeeded", authScopeWalletSendExternal, nil)
 			} else {
 				writeJSON(w, http.StatusPreconditionRequired, map[string]any{
 					"error":                          "password confirmation required for external on-chain sends",
@@ -4667,6 +4744,12 @@ func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
 		txid, sendErr = s.lnd.SendCoins(ctx, address, req.AmountSat, req.SatPerVbyte, req.SweepAll)
 	}
 	if sendErr != nil {
+		s.recordAuditEventAsync(r, "wallet.onchain_send.failed", destinationClassification, map[string]any{
+			"amount_sat":         req.AmountSat,
+			"sat_per_vbyte":      req.SatPerVbyte,
+			"sweep_all":          req.SweepAll,
+			"selected_outpoints": len(req.Outpoints),
+		})
 		msg := lndRPCErrorMessage(sendErr)
 		if isTimeoutError(sendErr) {
 			msg = lndStatusMessage(sendErr)
@@ -4677,6 +4760,13 @@ func (s *Server) handleWalletSend(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, msg)
 		return
 	}
+	s.recordAuditEventAsync(r, "wallet.onchain_send.broadcast", strings.TrimSpace(txid), map[string]any{
+		"destination_classification": destinationClassification,
+		"amount_sat":                 req.AmountSat,
+		"sat_per_vbyte":              req.SatPerVbyte,
+		"sweep_all":                  req.SweepAll,
+		"selected_outpoints":         len(req.Outpoints),
+	})
 
 	writeJSON(w, http.StatusOK, map[string]string{"txid": txid})
 }

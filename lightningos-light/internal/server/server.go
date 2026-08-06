@@ -167,6 +167,7 @@ func New(cfg *config.Config, logger *log.Logger) *Server {
 		provenanceMetrics:  NewProvenanceMetrics(),
 	}
 	srv.auth = NewAuthService(cfg, logger)
+	srv.auth.SetAuditRecorder(srv.recordAuditEventAsync)
 	srv.chat = NewChatService(srv.lnd, logger)
 	srv.amboss = NewAmbossHealthChecker(srv.lnd, logger)
 	srv.chanHealer = NewChanStatusHealer(srv.lnd, logger)

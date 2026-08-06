@@ -195,6 +195,10 @@ Body:
 
 ## Actions and logs
 
+GET /api/system-check
+- Returns grouped read-only diagnostics for the app, LND, Bitcoin, Postgres, Tor, host system, and security.
+- The `security` group reports whether UFW is installed/active and whether manager port `8443` is restricted to the saved LAN CIDR. This endpoint never enables or changes firewall rules.
+
 POST /api/actions/restart
 Body:
 {
@@ -205,6 +209,7 @@ GET /api/audit/events?limit=100&action=utxo.lock
 - Returns recent structured audit events.
 - Optional filters: `action`, `session_id`, `target`.
 - `limit` defaults to 100 and is capped at 500.
+- Authentication outcomes, rate-limit blocks, payments, on-chain sends, and manual channel fund operations are recorded without passwords, invoices, tokens, macaroons, or destination addresses.
 
 GET /api/logs?service=lnd&lines=200
 - Returns a list of log lines.

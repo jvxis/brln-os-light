@@ -219,9 +219,16 @@ func (s *Server) handleMagmaOpenChannel(w http.ResponseWriter, r *http.Request) 
 	}
 	order, err := svc.OpenChannelForOrder(r.Context(), orderID, req)
 	if err != nil {
+		s.recordAuditEventAsync(r, "channel.magma_open.failed", orderID, map[string]any{
+			"sat_per_vbyte": req.SatPerVbyte,
+		})
 		writeError(w, magmaActionStatus(err), err.Error())
 		return
 	}
+	s.recordAuditEventAsync(r, "channel.magma_open.submitted", orderID, map[string]any{
+		"sat_per_vbyte": req.SatPerVbyte,
+		"state":         order.LocalState,
+	})
 	writeJSON(w, http.StatusOK, order)
 }
 

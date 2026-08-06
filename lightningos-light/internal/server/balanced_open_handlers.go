@@ -400,6 +400,7 @@ func (s *Server) handleBalancedOpenSessionExecutePost(w http.ResponseWriter, r *
 
 	session, err := svc.ExecuteSession(ctx, sessionID)
 	if err != nil {
+		s.recordAuditEventAsync(r, "channel.balanced_open_execute.failed", sessionID, nil)
 		switch {
 		case errors.Is(err, ErrBalancedOpenSessionNotFound):
 			writeError(w, http.StatusNotFound, err.Error())
@@ -415,6 +416,10 @@ func (s *Server) handleBalancedOpenSessionExecutePost(w http.ResponseWriter, r *
 		}
 		return
 	}
+	s.recordAuditEventAsync(r, "channel.balanced_open_execute.submitted", sessionID, map[string]any{
+		"state": session.State,
+		"role":  session.Role,
+	})
 
 	writeJSON(w, http.StatusOK, session)
 }

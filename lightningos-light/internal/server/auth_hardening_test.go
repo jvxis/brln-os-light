@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -49,6 +50,54 @@ func TestAuthRateLimiterRejectsBurstByRemoteIP(t *testing.T) {
 	}
 	if recorder.Header().Get("Retry-After") == "" {
 		t.Fatal("expected Retry-After header")
+	}
+}
+
+func TestAuthRateLimiterCleansStaleBuckets(t *testing.T) {
+	limiter := newAuthRateLimiter()
+	start := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	if allowed, _ := limiter.allow("client:login:old", start, 5, 0.1); !allowed {
+		t.Fatal("initial request should be allowed")
+	}
+	if allowed, _ := limiter.allow("client:login:new", start.Add(authRateBucketRetention+authRateCleanupInterval+time.Second), 5, 0.1); !allowed {
+		t.Fatal("new request should be allowed")
+	}
+	limiter.mu.Lock()
+	_, stalePresent := limiter.buckets["client:login:old"]
+	limiter.mu.Unlock()
+	if stalePresent {
+		t.Fatal("stale rate-limit bucket should have been removed")
+	}
+}
+
+func TestAuthRateLimiterCapsBucketCount(t *testing.T) {
+	limiter := newAuthRateLimiter()
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	for index := 0; index < authRateMaxBuckets+100; index++ {
+		key := fmt.Sprintf("client:login:192.0.2.%d", index)
+		_, _ = limiter.allow(key, now.Add(time.Duration(index)*time.Millisecond), 5, 0.1)
+	}
+	limiter.mu.Lock()
+	bucketCount := len(limiter.buckets)
+	limiter.mu.Unlock()
+	if bucketCount > authRateMaxBuckets {
+		t.Fatalf("rate-limit bucket count = %d, want <= %d", bucketCount, authRateMaxBuckets)
+	}
+}
+
+func TestAuthRateLimitAuditIsThrottled(t *testing.T) {
+	limiter := newAuthRateLimiter()
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	key := "client:login:192.168.1.25"
+	_, _ = limiter.allow(key, now, 1, 0.1)
+	if !limiter.shouldAudit(key, now) {
+		t.Fatal("first rate-limit audit should be emitted")
+	}
+	if limiter.shouldAudit(key, now.Add(30*time.Second)) {
+		t.Fatal("repeated rate-limit audit inside the interval should be suppressed")
+	}
+	if !limiter.shouldAudit(key, now.Add(authRateLimitAuditInterval)) {
+		t.Fatal("rate-limit audit should resume after the interval")
 	}
 }
 
@@ -122,5 +171,11 @@ func TestLightningFundsReauthRequiredOnlyWhenLoginEnabled(t *testing.T) {
 func TestLightningFundsScopeIsValid(t *testing.T) {
 	if !authScopeValid(authScopeLightningFunds) {
 		t.Fatal("lightning funds scope should be accepted")
+	}
+}
+
+func TestAuthAuditReasonDoesNotExposeErrorText(t *testing.T) {
+	if got := authAuditReason(errors.New("password=should-never-appear")); got != "request_failed" {
+		t.Fatalf("unexpected audit reason: %q", got)
 	}
 }

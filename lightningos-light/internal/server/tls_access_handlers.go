@@ -244,9 +244,12 @@ try {
   if ($losActual -ne '%s') {
     throw "LightningOS CA fingerprint mismatch. Expected %s, got $losActual"
   }
-  & "$env:SystemRoot\System32\certutil.exe" -f -user -addstore Root $losCaPath
-  if ($LASTEXITCODE -ne 0) {
-    throw "certutil failed with exit code $LASTEXITCODE"
+  $losStore = New-Object System.Security.Cryptography.X509Certificates.X509Store('Root', 'CurrentUser')
+  try {
+    $losStore.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+    $losStore.Add($losCertificate)
+  } finally {
+    $losStore.Close()
   }
   Write-Host ''
   Write-Host 'LightningOS node CA trusted for the current Windows user.' -ForegroundColor Green

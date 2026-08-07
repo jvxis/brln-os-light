@@ -1477,6 +1477,10 @@ export type MagmaOffer = {
   status?: string
   side?: string
   total_size_sat: number
+  // Derived by Amboss from the order book: what the offer has already committed
+  // and what is left. Read-only - both are ignored when saving an offer.
+  sold_sat?: number
+  remaining_sat?: number
   min_size_sat: number
   max_size_sat: number
   fee_rate_ppm: number

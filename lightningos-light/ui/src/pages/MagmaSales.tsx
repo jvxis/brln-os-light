@@ -239,7 +239,26 @@ export default function MagmaSales() {
     return { total: orders.length, sold: sold.length, revenue, capViolations, closedEarly }
   }, [orders])
 
-  const offersActiveCount = (offers?.offers ?? []).filter((o) => o.status === 'ENABLED').length
+  const activeOffers = (offers?.offers ?? []).filter((o) => o.status === 'ENABLED')
+  const offersActiveCount = activeOffers.length
+
+  // What the collapsed card shows. Amboss leaves total_size untouched as orders
+  // land, so how much an offer can still sell is the one number that is not
+  // visible anywhere else - and it is what decides whether an order can arrive
+  // at all.
+  const offersSnapshot = useMemo(() => {
+    if (activeOffers.length === 0) return null
+    const total = activeOffers.reduce((sum, o) => sum + (o.total_size_sat || 0), 0)
+    const remaining = activeOffers.reduce((sum, o) => sum + (o.remaining_sat ?? o.total_size_sat ?? 0), 0)
+    const soldPct = total > 0 ? Math.min(100, Math.round(((total - remaining) / total) * 100)) : 0
+    // A single active offer is the common case, and it can say much more than a
+    // sum can: the range and price only mean something per offer.
+    const single = activeOffers.length === 1 ? activeOffers[0] : null
+    const singleMax = single
+      ? Math.min(single.max_size_sat || single.total_size_sat, remaining)
+      : 0
+    return { total, remaining, soldPct, single, singleMax }
+  }, [activeOffers])
   // Active first: they are the only ones that can produce an order.
   const sortedOffers = useMemo(
     () =>
@@ -499,6 +518,40 @@ export default function MagmaSales() {
           </p>
         )}
 
+        {!offersOpen && offersSnapshot && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-fog/70">
+            <span className={offersSnapshot.remaining > 0 ? 'font-semibold text-fog' : 'font-semibold text-amber-200'}>
+              {offersSnapshot.remaining > 0
+                ? `${formatSats(offersSnapshot.remaining, locale)} ${t('magma.offerLeftToSell')}`
+                : t('magma.offerSoldOut')}
+            </span>
+            <span className="h-1.5 w-24 overflow-hidden rounded-full bg-white/10">
+              <span
+                className="block h-full rounded-full bg-glow/70"
+                style={{ width: `${offersSnapshot.soldPct}%` }}
+              />
+            </span>
+            <span className="text-fog/45">
+              {t('magma.offerSoldPct', { pct: offersSnapshot.soldPct })} {t('magma.offerTotalSize').toLowerCase()}{' '}
+              {formatSats(offersSnapshot.total, locale)}
+            </span>
+            {offersSnapshot.single && (
+              <>
+                <span className="text-fog/30">·</span>
+                <span>
+                  {formatSats(offersSnapshot.single.min_size_sat, locale)} –{' '}
+                  {formatSats(offersSnapshot.singleMax, locale)}
+                </span>
+                <span className="text-fog/30">·</span>
+                <span>
+                  {offersSnapshot.single.fee_rate_ppm.toLocaleString(locale)} ppm ·{' '}
+                  {formatDays(offersSnapshot.single.min_block_length)}
+                </span>
+              </>
+            )}
+          </div>
+        )}
+
         {offersOpen && (
           <>
             {offers && offers.offers.length === 0 && (
@@ -559,6 +612,20 @@ export default function MagmaSales() {
                         {t('magma.offerFeeRateCap')}: {offer.fee_rate_cap_ppm.toLocaleString(locale)} ppm / base{' '}
                         {offer.base_fee_cap_sat}
                       </span>
+                      {(offer.sold_sat ?? 0) > 0 && (
+                        <span className="text-fog/60">
+                          {t('magma.offerRemaining')}: {formatSats(offer.remaining_sat ?? 0, locale)}
+                          <span className="text-fog/45">
+                            {' '}
+                            ·{' '}
+                            {t('magma.offerSoldPct', {
+                              pct: offer.total_size_sat > 0
+                                ? Math.min(100, Math.round(((offer.sold_sat ?? 0) / offer.total_size_sat) * 100))
+                                : 0
+                            })}
+                          </span>
+                        </span>
+                      )}
                       {(offer.conditions?.length ?? 0) > 0 && (
                         <span className="text-fog/60">
                           {offer.conditions?.map((c) => `${c.condition} ${c.operator} ${c.value}`).join(' · ')}

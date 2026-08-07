@@ -620,10 +620,15 @@ type MagmaOfferCondition struct {
 
 // MagmaOffer mirrors the Amboss sell-offer form.
 type MagmaOffer struct {
-	ID             string                `json:"id,omitempty"`
-	Status         string                `json:"status,omitempty"`
-	Side           string                `json:"side,omitempty"`
-	TotalSizeSat   int64                 `json:"total_size_sat"`
+	ID           string `json:"id,omitempty"`
+	Status       string `json:"status,omitempty"`
+	Side         string `json:"side,omitempty"`
+	TotalSizeSat int64  `json:"total_size_sat"`
+	// SoldSat is what the offer's orders have already locked, and RemainingSat is
+	// what is left to sell. Both are read-only: Amboss derives them from the order
+	// book, so they are ignored when an offer is created or updated.
+	SoldSat        int64                 `json:"sold_sat"`
+	RemainingSat   int64                 `json:"remaining_sat"`
 	MinSizeSat     int64                 `json:"min_size_sat"`
 	MaxSizeSat     int64                 `json:"max_size_sat"`
 	FeeRatePPM     int64                 `json:"fee_rate_ppm"`
@@ -762,6 +767,7 @@ const magmaOffersQuery = `query MagmaOffers {
           seller_score
           onchain_priority
           onchain_multiplier
+          orders { locked_size }
           conditions { condition operator value }
         }
       }
@@ -789,7 +795,10 @@ func (c *magmaAmbossClient) Offers(ctx context.Context, token string) ([]MagmaOf
 						SellerScore       string      `json:"seller_score"`
 						OnchainPriority   string      `json:"onchain_priority"`
 						OnchainMultiplier magmaNumber `json:"onchain_multiplier"`
-						Conditions        []struct {
+						Orders            struct {
+							LockedSize magmaNumber `json:"locked_size"`
+						} `json:"orders"`
+						Conditions []struct {
 							Condition string `json:"condition"`
 							Operator  string `json:"operator"`
 							Value     string `json:"value"`
@@ -820,6 +829,14 @@ func (c *magmaAmbossClient) Offers(ctx context.Context, token string) ([]MagmaOf
 			SellerScore:       strings.TrimSpace(item.SellerScore),
 			OnchainPriority:   strings.TrimSpace(item.OnchainPriority),
 			OnchainMultiplier: item.OnchainMultiplier.Value,
+			SoldSat:           item.Orders.LockedSize.Value,
+		}
+		// Amboss never decrements total_size; what an offer can still sell is the
+		// difference against what its orders have locked. Once that drops below
+		// min_size the offer is dead in practice while still reading ENABLED.
+		offer.RemainingSat = offer.TotalSizeSat - offer.SoldSat
+		if offer.RemainingSat < 0 {
+			offer.RemainingSat = 0
 		}
 		// A stored priority is what marks the offer as automatic; Amboss keeps a
 		// computed base_fee alongside it, so base_fee alone cannot tell them apart.

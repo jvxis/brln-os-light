@@ -122,6 +122,21 @@ func magmaOfferConflicts(offer MagmaOffer, policy MagmaPolicy) []MagmaOfferConfl
 			formatInt(policy.MaxChannelSizeSat))})
 	}
 
+	// What is left to sell is a ceiling the offer itself imposes, independent of
+	// the policy. Amboss keeps total_size unchanged as orders land, so an offer can
+	// read ENABLED with its advertised range long since unreachable.
+	if offer.TotalSizeSat > 0 && offer.SoldSat > 0 {
+		if offer.MinSizeSat > 0 && offer.RemainingSat < offer.MinSizeSat {
+			conflicts = append(conflicts, MagmaOfferConflict{Blocking: true, Message: fmt.Sprintf(
+				"only %s sat left to sell, below the %s sat smallest channel this offer advertises",
+				formatInt(offer.RemainingSat), formatInt(offer.MinSizeSat))})
+		} else if effectiveMax > 0 && offer.RemainingSat < effectiveMax {
+			conflicts = append(conflicts, MagmaOfferConflict{Message: fmt.Sprintf(
+				"only %s sat left to sell, so the largest order it can still take is %s sat, not %s sat",
+				formatInt(offer.RemainingSat), formatInt(offer.RemainingSat), formatInt(effectiveMax))})
+		}
+	}
+
 	// Duration, price and the routing ceiling: the offer fixes these, so a policy
 	// floor above them rejects everything this offer can produce.
 	if policy.MaxCommitmentDays > 0 && offer.MinBlockLength > policy.MaxCommitmentDays*144 {

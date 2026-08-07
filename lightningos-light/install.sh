@@ -1435,7 +1435,7 @@ install_ui() {
 
 generate_tls() {
   print_step "Configuring trusted local TLS and LAN discovery"
-  local helper="$REPO_ROOT/scripts/setup-manager-tls-mdns.sh"
+  local helper="$REPO_ROOT/internal/server/assets/setup-manager-tls-mdns.sh"
   if [[ ! -f "$helper" ]]; then
     print_warn "Missing TLS/mDNS helper: $helper"
     return 1

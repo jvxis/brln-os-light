@@ -147,6 +147,11 @@ neste dispositivo** na tela de login para baixar o instalador de confiança do
 Windows ou a CA pública para outro sistema operacional. A chave privada da CA
 nunca sai do node.
 
+O fluxo normal de upgrade do app migra automaticamente certificados
+autoassinados legados reconhecidos do LightningOS e mantém um backup com data
+e hora. Certificados personalizados nunca são substituídos; a descoberta
+`.local` só é anunciada quando o certificado ativo cobre esse nome.
+
 ## Primeiro acesso com segurança
 - A proteção por login vem habilitada por padrão em instalações novas.
 - Ao final de `install.sh`, `install_existing.sh` e `install_existing_pi.sh`, o instalador imprime no console a URL da UI e um setup token de admin quando ainda não existe senha configurada.

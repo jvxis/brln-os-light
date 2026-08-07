@@ -802,7 +802,7 @@ ensure_tls() {
       print_warn "Could not install Avahi; TLS will work but hostname.local may be unavailable"
     fi
   fi
-  local helper="$REPO_ROOT/scripts/setup-manager-tls-mdns.sh"
+  local helper="$REPO_ROOT/internal/server/assets/setup-manager-tls-mdns.sh"
   if [[ ! -f "$helper" ]]; then
     print_warn "Missing TLS/mDNS helper: $helper"
     return 1

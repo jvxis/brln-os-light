@@ -301,6 +301,48 @@ configure_lnd_restart_policy() {
   print_ok "LND will restart after PostgreSQL or other unexpected interruptions"
 }
 
+configure_manager_tls_mdns() {
+  local src="$project_dir/internal/server/assets/setup-manager-tls-mdns.sh"
+  local dest="/usr/local/sbin/lightningos-setup-manager-tls-mdns"
+  local manager_user=""
+  local manager_group=""
+
+  if [[ ! -f "$src" ]]; then
+    print_warn "Manager TLS/mDNS helper not found at $src; skipping"
+    return 0
+  fi
+
+  if ! command -v avahi-daemon >/dev/null 2>&1; then
+    if [[ -n "${APT_GET_BIN:-}" ]]; then
+      print_step "Installing local hostname discovery"
+      if DEBIAN_FRONTEND=noninteractive "$APT_GET_BIN" update \
+        && DEBIAN_FRONTEND=noninteractive "$APT_GET_BIN" install -y avahi-daemon libnss-mdns; then
+        print_ok "mDNS packages installed"
+      else
+        print_warn "Could not install Avahi; trusted IP access will remain available"
+      fi
+    else
+      print_warn "apt-get is unavailable; .local discovery cannot be installed automatically"
+    fi
+  fi
+
+  manager_user="$("$SYSTEMCTL_BIN" show -p User --value lightningos-manager 2>/dev/null | tr -d '[:space:]')"
+  [[ -n "$manager_user" ]] || manager_user="lightningos"
+  manager_group="$("$SYSTEMCTL_BIN" show -p Group --value lightningos-manager 2>/dev/null | tr -d '[:space:]')"
+  if [[ -z "$manager_group" ]] && id "$manager_user" >/dev/null 2>&1; then
+    manager_group="$(id -gn "$manager_user")"
+  fi
+  [[ -n "$manager_group" ]] || manager_group="lightningos"
+
+  print_step "Migrating manager TLS and local discovery"
+  "$INSTALL_BIN" -m 0755 "$src" "$dest"
+  if LIGHTNINGOS_MANAGER_GROUP="$manager_group" LIGHTNINGOS_MANAGER_PORT=8443 "$dest"; then
+    print_ok "Manager TLS and local discovery are current"
+  else
+    print_warn "Manager TLS migration was not applied; the existing certificate was preserved"
+  fi
+}
+
 configure_manager_firewall() {
   local src="$project_dir/internal/server/assets/lightningos-manager-firewall.sh"
   if [[ ! -f "$src" ]]; then
@@ -390,6 +432,7 @@ print_ok "UI installed"
 stage_peerswap_assets
 refresh_terminal_helper
 configure_lnd_restart_policy
+configure_manager_tls_mdns
 configure_manager_firewall
 
 print_step "Refreshing manager sudoers"

@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const systemIntegrationsMarkerPath = "/var/lib/lightningos/system-integrations-20260731-v2"
+const systemIntegrationsMarkerPath = "/var/lib/lightningos/system-integrations-20260807-v3"
 
 //go:embed assets/lightningos-terminal.sh
 var embeddedTerminalHelper string
@@ -20,6 +20,9 @@ var embeddedTerminalPasswordHelper string
 
 //go:embed assets/lightningos-manager-firewall.sh
 var embeddedManagerFirewallHelper string
+
+//go:embed assets/setup-manager-tls-mdns.sh
+var embeddedManagerTLSMDNSHelper string
 
 //go:embed assets/reconcile-system-integrations.sh
 var embeddedSystemIntegrationsReconciler string
@@ -38,7 +41,7 @@ func (s *Server) startSystemIntegrationReconciler() {
 			s.logger.Printf("system integrations marker check failed: %v", err)
 		}
 
-		ctx, cancel := context.WithTimeout(s.shutdownContext(), 60*time.Second)
+		ctx, cancel := context.WithTimeout(s.shutdownContext(), 5*time.Minute)
 		defer cancel()
 		if err := reconcileSystemIntegrations(ctx); err != nil {
 			if s.logger != nil {
@@ -60,6 +63,7 @@ func reconcileSystemIntegrations(ctx context.Context) error {
 		{pattern: "lightningos-terminal-*.sh", content: embeddedTerminalHelper},
 		{pattern: "lightningos-terminal-password-*.sh", content: embeddedTerminalPasswordHelper},
 		{pattern: "lightningos-manager-firewall-*.sh", content: embeddedManagerFirewallHelper},
+		{pattern: "lightningos-manager-tls-mdns-*.sh", content: embeddedManagerTLSMDNSHelper},
 		{pattern: "lightningos-reconcile-system-*.sh", content: embeddedSystemIntegrationsReconciler},
 	}
 
@@ -95,10 +99,10 @@ func reconcileSystemIntegrations(ctx context.Context) error {
 			return fmt.Errorf("chmod integration asset %s: %w", asset.pattern, err)
 		}
 	}
-	if len(paths) != 4 {
+	if len(paths) != 5 {
 		return errors.New("invalid staged system integration asset count")
 	}
-	out, err := runSystemd(ctx, "/bin/bash", paths[3], paths[0], paths[1], paths[2], systemIntegrationsMarkerPath)
+	out, err := runSystemd(ctx, "/bin/bash", paths[4], paths[0], paths[1], paths[2], paths[3], systemIntegrationsMarkerPath)
 	if err != nil {
 		if detail := strings.TrimSpace(out); detail != "" {
 			return fmt.Errorf("root reconciliation failed: %w: %s", err, detail)

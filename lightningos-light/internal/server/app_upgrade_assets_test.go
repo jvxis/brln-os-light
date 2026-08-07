@@ -13,6 +13,7 @@ func TestAppUpgradeRefreshesSecuritySensitiveSystemIntegrations(t *testing.T) {
 		"20-lightningos-restart.conf",
 		"\"$INSTALL_BIN\" -m 0755 \"$src\" /usr/local/sbin/lightningos-manager-firewall",
 		"/usr/local/sbin/lightningos-manager-firewall",
+		"/usr/local/sbin/lightningos-setup-manager-tls-mdns",
 	}
 	for _, fragment := range required {
 		if !strings.Contains(embeddedAppUpgradeScript, fragment) {
@@ -37,7 +38,8 @@ func TestEmbeddedSystemIntegrationAssetsAreSafe(t *testing.T) {
 		"Ignoring invalid saved local network",
 		"so stdout contains only the selected CIDR",
 		"Restart=always",
-		"system-integrations-20260731-v2",
+		"setup-manager-tls-mdns.sh",
+		"system-integrations-20260807-v3",
 	} {
 		combined := embeddedTerminalHelper + embeddedTerminalPasswordHelper + embeddedManagerFirewallHelper + embeddedSystemIntegrationsReconciler + embeddedAppUpgradeScript + systemIntegrationsMarkerPath
 		if !strings.Contains(combined, fragment) {

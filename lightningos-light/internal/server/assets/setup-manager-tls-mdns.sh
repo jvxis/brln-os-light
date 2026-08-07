@@ -66,6 +66,20 @@ cert_has_san() {
   openssl x509 -in "$1" -noout -ext subjectAltName 2>/dev/null | grep -q 'Subject Alternative Name'
 }
 
+cert_covers_host() {
+  local cert_path="$1"
+  local host_name="$2"
+  openssl x509 -in "$cert_path" -noout -checkhost "$host_name" 2>/dev/null \
+    | grep -Fq "Hostname ${host_name} does match certificate"
+}
+
+cert_covers_ip() {
+  local cert_path="$1"
+  local ip_address="$2"
+  openssl x509 -in "$cert_path" -noout -checkip "$ip_address" 2>/dev/null \
+    | grep -Fq "IP ${ip_address} does match certificate"
+}
+
 cert_matches_key() {
   local cert_hash key_hash
   cert_hash=$(openssl x509 -in "$1" -pubkey -noout 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | sha256sum | awk '{print $1}')
@@ -91,9 +105,9 @@ certificate_is_current() {
   [[ -s "$CERT_PATH" && -s "$KEY_PATH" && -s "$CA_CERT_PATH" ]] || return 1
   cert_matches_key "$CERT_PATH" "$KEY_PATH" || return 1
   openssl verify -CAfile "$CA_CERT_PATH" "$CERT_PATH" >/dev/null 2>&1 || return 1
-  openssl x509 -in "$CERT_PATH" -noout -checkhost "$mdns_name" >/dev/null 2>&1 || return 1
+  cert_covers_host "$CERT_PATH" "$mdns_name" || return 1
   if [[ -n "$lan_ip" ]]; then
-    openssl x509 -in "$CERT_PATH" -noout -checkip "$lan_ip" >/dev/null 2>&1 || return 1
+    cert_covers_ip "$CERT_PATH" "$lan_ip" || return 1
   fi
 }
 
@@ -189,9 +203,9 @@ EOF
     -out "$tmp_dir/server.crt" >/dev/null 2>&1
 
   openssl verify -CAfile "$CA_CERT_PATH" "$tmp_dir/server.crt" >/dev/null
-  openssl x509 -in "$tmp_dir/server.crt" -noout -checkhost "$mdns_name" >/dev/null
+  cert_covers_host "$tmp_dir/server.crt" "$mdns_name"
   if [[ -n "$lan_ip" ]]; then
-    openssl x509 -in "$tmp_dir/server.crt" -noout -checkip "$lan_ip" >/dev/null
+    cert_covers_ip "$tmp_dir/server.crt" "$lan_ip"
   fi
   cert_matches_key "$tmp_dir/server.crt" "$tmp_dir/server.key"
 
@@ -276,7 +290,9 @@ print_summary() {
   if [[ -s "$CA_CERT_PATH" ]]; then
     fingerprint=$(openssl x509 -in "$CA_CERT_PATH" -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2-)
   fi
-  printf 'LOCAL_URL=https://%s:%s\n' "$mdns_name" "$MANAGER_PORT"
+  if [[ -n "$mdns_name" ]]; then
+    printf 'LOCAL_URL=https://%s:%s\n' "$mdns_name" "$MANAGER_PORT"
+  fi
   if [[ -n "$lan_ip" ]]; then
     printf 'IP_URL=https://%s:%s\n' "$lan_ip" "$MANAGER_PORT"
   fi
@@ -301,11 +317,18 @@ main() {
   lan_ip=$(default_route_ip)
 
   ensure_manager_certificate "$host_label" "$mdns_name" "$lan_ip"
-  if [[ "${LIGHTNINGOS_CONFIGURE_AVAHI:-1}" != "0" ]]; then
+
+  local advertised_name=""
+  if [[ -s "$CERT_PATH" ]] && cert_covers_host "$CERT_PATH" "$mdns_name"; then
+    advertised_name="$mdns_name"
+  else
+    warn "The preserved custom certificate does not cover ${mdns_name}; skipping .local discovery"
+  fi
+  if [[ "${LIGHTNINGOS_CONFIGURE_AVAHI:-1}" != "0" && -n "$advertised_name" ]]; then
     configure_avahi_service "$host_label"
   fi
-  write_access_info "$mdns_name" "$lan_ip"
-  print_summary "$mdns_name" "$lan_ip"
+  write_access_info "$advertised_name" "$lan_ip"
+  print_summary "$advertised_name" "$lan_ip"
 }
 
 main "$@"

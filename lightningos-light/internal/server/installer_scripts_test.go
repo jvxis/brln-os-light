@@ -45,3 +45,27 @@ func TestExistingInstallersAuthorizeDetectedLNDService(t *testing.T) {
 		})
 	}
 }
+
+func TestAppUpgradeMigratesManagerTLSBeforeRestart(t *testing.T) {
+	path := filepath.Join("assets", "upgrade-app.sh")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read upgrade app script: %v", err)
+	}
+	content := string(raw)
+	for _, expected := range []string{
+		`project_dir/internal/server/assets/setup-manager-tls-mdns.sh`,
+		`configure_manager_tls_mdns`,
+		`LIGHTNINGOS_MANAGER_GROUP="$manager_group"`,
+	} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("app upgrade must migrate manager TLS; missing %q", expected)
+		}
+	}
+
+	migration := strings.LastIndex(content, "configure_manager_tls_mdns\n")
+	restart := strings.LastIndex(content, `"$SYSTEMCTL_BIN" restart lightningos-manager`)
+	if migration < 0 || restart < 0 || migration > restart {
+		t.Fatal("manager TLS migration must run before lightningos-manager restarts")
+	}
+}

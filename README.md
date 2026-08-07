@@ -151,6 +151,11 @@ both addresses. On the first device access, use **Trust this device** on the
 login screen to download the Windows trust installer or the public CA for
 another operating system. The CA private key never leaves the node.
 
+The normal app-upgrade flow migrates recognized legacy LightningOS
+self-signed certificates automatically and keeps a timestamped backup. A
+custom certificate is never replaced; `.local` discovery is only announced
+when the active certificate actually covers that hostname.
+
 ## First secure access
 - Login protection is enabled by default on new installs.
 - At the end of `install.sh`, `install_existing.sh`, and `install_existing_pi.sh`, the installer prints the UI URL and an admin setup token in the console when no admin password is configured yet.

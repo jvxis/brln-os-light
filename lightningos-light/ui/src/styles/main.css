@@ -1064,7 +1064,7 @@ html[data-visual-theme="airplane-mode"] .theme-gauge__readout {
   overflow: hidden;
   padding: 0.14rem 0.2rem 0.12rem;
   border: 1px solid rgb(var(--palette-secondary) / 0.26);
-  border-radius: 3px;
+  border-radius: 999px;
   background:
     linear-gradient(180deg, rgb(var(--instrument-rgb) / 0.055), rgb(var(--palette-secondary) / 0.025)),
     linear-gradient(180deg, rgb(1 5 10 / 0.42), rgb(1 5 10 / 0.58));

@@ -179,6 +179,12 @@ func TestBtcpayComposeContentsRemoteSource(t *testing.T) {
 	}
 }
 
+func TestBtcpayImageTracksLatestStableRelease(t *testing.T) {
+	if btcpayImage != "btcpayserver/btcpayserver:latest" {
+		t.Fatalf("BTCPay image must track the latest stable release, got %q", btcpayImage)
+	}
+}
+
 func TestBtcpayComposeContentsAppSource(t *testing.T) {
 	paths := btcpayAppPaths()
 	wiring := btcpayBitcoinWiring{Source: "app", JoinBitcoinNetwork: true}

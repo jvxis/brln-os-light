@@ -23,7 +23,7 @@ import (
 // Bitcoin source and the native LND over REST (see docs/19_BACKLOG.md §14).
 const (
 	btcpayAppID            = "btcpay"
-	btcpayImage            = "btcpayserver/btcpayserver:2.4.0"
+	btcpayImage            = "btcpayserver/btcpayserver:latest"
 	btcpayNbxplorerImage   = "nicolasdorier/nbxplorer:2.6.8"
 	btcpayPostgresImage    = "postgres:16"
 	btcpayTorImage         = robosatsTorImage
@@ -171,7 +171,7 @@ func (s *Server) applyBtcpay(ctx context.Context) error {
 		return err
 	}
 
-	if err := ensureDockerImage(ctx, btcpayImage); err != nil {
+	if err := ensureBtcpayImage(ctx); err != nil {
 		return err
 	}
 	if err := ensureDockerImage(ctx, btcpayNbxplorerImage); err != nil {
@@ -216,6 +216,16 @@ func (s *Server) applyBtcpay(ctx context.Context) error {
 		s.logger.Printf("btcpay: ufw rule failed: %v", err)
 	}
 	return nil
+}
+
+// The BTCPay image intentionally tracks upstream's latest stable release so
+// security updates are picked up on both install and a user-initiated start.
+// Pinned dependency images keep using the shared cache-aware helper.
+func ensureBtcpayImage(ctx context.Context) error {
+	if strings.HasSuffix(btcpayImage, ":latest") {
+		return pullDockerImage(ctx, btcpayImage)
+	}
+	return ensureDockerImage(ctx, btcpayImage)
 }
 
 func ensureBtcpayPaths(paths btcpayPaths) error {

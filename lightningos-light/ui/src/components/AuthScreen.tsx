@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { type AuthState, loginAuth, recoverAuth, setupAuth } from '../api'
-import brlnOsLogo from '../assets/brln-os.png'
+import brlnOsLogo from '../assets/brln-lightning-os.svg'
 
 type AuthScreenProps = {
   state: AuthState
@@ -21,6 +21,7 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [setupCommandCopied, setSetupCommandCopied] = useState(false)
+  const [appVersion, setAppVersion] = useState('')
 
   useEffect(() => {
     if (state.setup_required) {
@@ -38,6 +39,19 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
     setSetupCommandCopied(false)
   }, [mode])
 
+  useEffect(() => {
+    let mounted = true
+    fetch('/version.txt', { cache: 'no-store' })
+      .then((response) => response.ok ? response.text() : '')
+      .then((version) => {
+        if (mounted) setAppVersion(version.trim())
+      })
+      .catch(() => undefined)
+    return () => {
+      mounted = false
+    }
+  }, [])
+
   const copySetupCommand = async () => {
     try {
       await navigator.clipboard.writeText(t('auth.setupCommand'))
@@ -49,6 +63,7 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
   }
 
   const handleSetup = async () => {
+    if (busy) return
     setBusy(true)
     setError('')
     try {
@@ -66,6 +81,7 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
   }
 
   const handleLogin = async () => {
+    if (busy) return
     setBusy(true)
     setError('')
     try {
@@ -79,6 +95,7 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
   }
 
   const handleRecovery = async () => {
+    if (busy) return
     setBusy(true)
     setError('')
     try {
@@ -108,181 +125,197 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
       : t('auth.loginSubtitle')
 
   return (
-    <div className="min-h-screen px-6 py-10 lg:px-12">
-      <div className="mx-auto grid max-w-[86rem] gap-6 lg:grid-cols-[1.28fr_0.72fr]">
-        <section className="section-card flex flex-col justify-between gap-6">
-          <div className="space-y-10">
-            <div className="space-y-4">
-              <p className="text-sm uppercase tracking-[0.3em] text-fog/50">{t('auth.kicker')}</p>
-              <h1 className="max-w-[38rem] text-[1.9rem] font-semibold leading-[1.05] sm:text-[2.35rem] xl:text-[2.7rem]">{t('auth.heroTitle')}</h1>
-              <p className="max-w-[40rem] text-fog/70">{t('auth.heroBody')}</p>
-            </div>
-            <div className="mx-auto flex w-full max-w-[42rem] items-center justify-center rounded-[2rem] border border-white/10 bg-black/55 px-5 py-6 shadow-[0_28px_60px_rgba(0,0,0,0.2)] sm:px-8 sm:py-8">
-              <img
-                src={brlnOsLogo}
-                alt="BRLN Lightning OS"
-                className="h-auto w-full max-w-[36rem] object-contain"
-              />
-            </div>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div className="rounded-2xl border border-white/10 bg-ink/50 p-4">
-              <p className="text-xs uppercase tracking-[0.2em] text-fog/50">{t('auth.cardProtected')}</p>
-              <p className="mt-2 text-sm text-fog/80">{t('auth.cardProtectedBody')}</p>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-ink/50 p-4">
-              <p className="text-xs uppercase tracking-[0.2em] text-fog/50">{t('auth.cardRecovery')}</p>
-              <p className="mt-2 text-sm text-fog/80">{t('auth.cardRecoveryBody')}</p>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-ink/50 p-4">
-              <p className="text-xs uppercase tracking-[0.2em] text-fog/50">{t('auth.cardAutomation')}</p>
-              <p className="mt-2 text-sm text-fog/80">{t('auth.cardAutomationBody')}</p>
-            </div>
-          </div>
-        </section>
+    <div className="auth-screen">
+      <div className="auth-aurora auth-aurora--primary" aria-hidden="true" />
+      <div className="auth-aurora auth-aurora--secondary" aria-hidden="true" />
+      <div className="auth-grid" aria-hidden="true" />
 
-        <section className="section-card space-y-5">
-          {!state.setup_required && (
-            <div className="inline-flex rounded-2xl border border-white/10 bg-ink/40 p-1">
-              <button
-                type="button"
-                className={mode === 'login' ? 'btn-primary text-xs px-3 py-2' : 'btn-secondary text-xs px-3 py-2'}
-                onClick={() => setMode('login')}
-              >
-                {t('auth.loginTab')}
-              </button>
-              <button
-                type="button"
-                className={mode === 'recovery' ? 'btn-primary text-xs px-3 py-2' : 'btn-secondary text-xs px-3 py-2'}
-                onClick={() => setMode('recovery')}
-              >
-                {t('auth.recoveryTab')}
-              </button>
-            </div>
-          )}
+      <div className="auth-stage">
+        <main className="auth-shell">
+          <section className="auth-hero">
+            <div className="auth-hero__content">
+              <div className="auth-hero__header">
+                <p className="auth-kicker">
+                  <span className="auth-kicker__dot" aria-hidden="true" />
+                  {t('auth.kicker')}
+                </p>
+                <span className="auth-mainnet-pill">{t('auth.mainnet')}</span>
+              </div>
 
-          <div>
-            <h2 className="text-2xl font-semibold">{title}</h2>
-            <p className="mt-2 text-sm text-fog/65">{subtitle}</p>
-          </div>
+              <div className="auth-hero__copy">
+                <h1>{t('auth.heroTitle')}</h1>
+                <p>{t('auth.heroBody')}</p>
+              </div>
 
-          {error && (
-            <div className="rounded-2xl border border-rose-400/30 bg-rose-500/15 px-4 py-3 text-sm text-rose-200">
-              {error}
-            </div>
-          )}
-
-          {mode === 'setup' && (
-            <div className="space-y-4">
-              <div className="rounded-2xl border border-white/10 bg-ink/50 p-4 text-sm text-fog/75">
-                <p>{state.setup_token_issued ? t('auth.setupTokenIssued') : t('auth.setupTokenMissing')}</p>
-                <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="font-mono text-xs text-fog/65 break-all">{t('auth.setupCommand')}</p>
-                  <button className="btn-secondary text-xs px-3 py-2" type="button" onClick={copySetupCommand}>
-                    {setupCommandCopied ? t('common.copied') : t('common.copy')}
-                  </button>
+              <div className="auth-core">
+                <div className="auth-core__halo" aria-hidden="true" />
+                <div className="auth-core__orbit auth-core__orbit--outer" aria-hidden="true">
+                  <span />
+                </div>
+                <div className="auth-core__orbit auth-core__orbit--inner" aria-hidden="true">
+                  <span />
+                </div>
+                <div className="auth-core__logo">
+                  <img src={brlnOsLogo} alt="BRLN Lightning OS" />
+                </div>
+                <div className="auth-core__signal" aria-hidden="true">
+                  <i /><i /><i /><i /><i />
                 </div>
               </div>
-              <div className="space-y-2">
-                <label className="text-xs uppercase tracking-[0.2em] text-fog/55">{t('auth.setupTokenLabel')}</label>
-                <input
-                  className="input-field"
-                  value={setupToken}
-                  onChange={(event) => setSetupToken(event.target.value)}
-                  placeholder={t('auth.setupTokenPlaceholder')}
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs uppercase tracking-[0.2em] text-fog/55">{t('auth.passwordLabel')}</label>
-                <input
-                  className="input-field"
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder={t('auth.passwordPlaceholder')}
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs uppercase tracking-[0.2em] text-fog/55">{t('auth.confirmPasswordLabel')}</label>
-                <input
-                  className="input-field"
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(event) => setConfirmPassword(event.target.value)}
-                  placeholder={t('auth.confirmPasswordPlaceholder')}
-                />
-              </div>
-              <p className="text-xs text-fog/55">{t('auth.passwordHint')}</p>
-              <button className="btn-primary w-full justify-center" type="button" onClick={handleSetup} disabled={busy}>
-                {busy ? t('auth.settingUp') : t('auth.setupAction')}
-              </button>
             </div>
-          )}
 
-          {mode === 'login' && (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-xs uppercase tracking-[0.2em] text-fog/55">{t('auth.passwordLabel')}</label>
-                <input
-                  className="input-field"
-                  type="password"
-                  value={loginPassword}
-                  onChange={(event) => setLoginPassword(event.target.value)}
-                  placeholder={t('auth.passwordPlaceholder')}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      void handleLogin()
-                    }
-                  }}
-                />
+            <div className="auth-feature-grid">
+              <div className="auth-feature auth-feature--protected">
+                <span className="auth-feature__icon" aria-hidden="true">01</span>
+                <div>
+                  <p className="auth-feature__title">{t('auth.cardProtected')}</p>
+                  <p>{t('auth.cardProtectedBody')}</p>
+                </div>
               </div>
-              <button className="btn-primary w-full justify-center" type="button" onClick={handleLogin} disabled={busy}>
-                {busy ? t('auth.signingIn') : t('auth.loginAction')}
-              </button>
+              <div className="auth-feature auth-feature--recovery">
+                <span className="auth-feature__icon" aria-hidden="true">02</span>
+                <div>
+                  <p className="auth-feature__title">{t('auth.cardRecovery')}</p>
+                  <p>{t('auth.cardRecoveryBody')}</p>
+                </div>
+              </div>
+              <div className="auth-feature auth-feature--automation">
+                <span className="auth-feature__icon" aria-hidden="true">03</span>
+                <div>
+                  <p className="auth-feature__title">{t('auth.cardAutomation')}</p>
+                  <p>{t('auth.cardAutomationBody')}</p>
+                </div>
+              </div>
             </div>
-          )}
+          </section>
 
-          {mode === 'recovery' && (
-            <div className="space-y-4">
-              <div className="rounded-2xl border border-white/10 bg-ink/50 p-4 text-sm text-fog/75">
-                <p>{state.recovery_token_issued ? t('auth.recoveryTokenIssued') : t('auth.recoveryTokenMissing')}</p>
-                <p className="mt-3 font-mono text-xs text-fog/65">{t('auth.recoveryCommand')}</p>
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs uppercase tracking-[0.2em] text-fog/55">{t('auth.recoveryTokenLabel')}</label>
-                <input
-                  className="input-field"
-                  value={recoveryToken}
-                  onChange={(event) => setRecoveryToken(event.target.value)}
-                  placeholder={t('auth.recoveryTokenPlaceholder')}
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs uppercase tracking-[0.2em] text-fog/55">{t('auth.passwordLabel')}</label>
-                <input
-                  className="input-field"
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder={t('auth.passwordPlaceholder')}
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs uppercase tracking-[0.2em] text-fog/55">{t('auth.confirmPasswordLabel')}</label>
-                <input
-                  className="input-field"
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(event) => setConfirmPassword(event.target.value)}
-                  placeholder={t('auth.confirmPasswordPlaceholder')}
-                />
-              </div>
-              <button className="btn-primary w-full justify-center" type="button" onClick={handleRecovery} disabled={busy}>
-                {busy ? t('auth.resettingPassword') : t('auth.recoveryAction')}
-              </button>
+          <section className="auth-panel">
+            <div className="auth-panel__beam" aria-hidden="true" />
+            <div className="auth-panel__top">
+              {!state.setup_required && (
+                <div className="auth-tabs" role="tablist" aria-label={t('auth.accessMode')}>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={mode === 'login'}
+                    className={mode === 'login' ? 'auth-tab auth-tab--active' : 'auth-tab'}
+                    onClick={() => setMode('login')}
+                  >
+                    {t('auth.loginTab')}
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={mode === 'recovery'}
+                    className={mode === 'recovery' ? 'auth-tab auth-tab--active' : 'auth-tab'}
+                    onClick={() => setMode('recovery')}
+                  >
+                    {t('auth.recoveryTab')}
+                  </button>
+                </div>
+              )}
+              <span className="auth-secure-pill">
+                <span aria-hidden="true" />
+                {t('auth.secureSession')}
+              </span>
             </div>
-          )}
-        </section>
+
+            <div className="auth-panel__heading">
+              <p className="auth-panel__eyebrow">LightningOS Control Center</p>
+              <h2>{title}</h2>
+              <p>{subtitle}</p>
+            </div>
+
+            {error && (
+              <div className="auth-error" role="alert" aria-live="polite">
+                <span aria-hidden="true">!</span>
+                {error}
+              </div>
+            )}
+
+            {mode === 'setup' && (
+              <form className="auth-form" onSubmit={(event) => { event.preventDefault(); void handleSetup() }}>
+                <div className="auth-instruction">
+                  <p>{state.setup_token_issued ? t('auth.setupTokenIssued') : t('auth.setupTokenMissing')}</p>
+                  <div>
+                    <code>{t('auth.setupCommand')}</code>
+                    <button className="btn-secondary text-xs px-3 py-2" type="button" onClick={copySetupCommand}>
+                      {setupCommandCopied ? t('common.copied') : t('common.copy')}
+                    </button>
+                  </div>
+                </div>
+                <label className="auth-field">
+                  <span>{t('auth.setupTokenLabel')}</span>
+                  <input className="input-field" value={setupToken} onChange={(event) => setSetupToken(event.target.value)} placeholder={t('auth.setupTokenPlaceholder')} autoComplete="one-time-code" />
+                </label>
+                <label className="auth-field">
+                  <span>{t('auth.passwordLabel')}</span>
+                  <input className="input-field" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={t('auth.passwordPlaceholder')} autoComplete="new-password" />
+                </label>
+                <label className="auth-field">
+                  <span>{t('auth.confirmPasswordLabel')}</span>
+                  <input className="input-field" type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder={t('auth.confirmPasswordPlaceholder')} autoComplete="new-password" />
+                </label>
+                <p className="auth-form__hint">{t('auth.passwordHint')}</p>
+                <button className="auth-submit" type="submit" disabled={busy}>
+                  {busy && <span className="auth-spinner" aria-hidden="true" />}
+                  {busy ? t('auth.settingUp') : t('auth.setupAction')}
+                </button>
+              </form>
+            )}
+
+            {mode === 'login' && (
+              <form className="auth-form auth-form--login" onSubmit={(event) => { event.preventDefault(); void handleLogin() }}>
+                <label className="auth-field">
+                  <span>{t('auth.passwordLabel')}</span>
+                  <input className="input-field" type="password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} placeholder={t('auth.passwordPlaceholder')} autoComplete="current-password" autoFocus />
+                </label>
+                <button className="auth-submit" type="submit" disabled={busy}>
+                  {busy && <span className="auth-spinner" aria-hidden="true" />}
+                  {busy ? t('auth.signingIn') : t('auth.loginAction')}
+                  {!busy && <span className="auth-submit__arrow" aria-hidden="true">→</span>}
+                </button>
+              </form>
+            )}
+
+            {mode === 'recovery' && (
+              <form className="auth-form" onSubmit={(event) => { event.preventDefault(); void handleRecovery() }}>
+                <div className="auth-instruction">
+                  <p>{state.recovery_token_issued ? t('auth.recoveryTokenIssued') : t('auth.recoveryTokenMissing')}</p>
+                  <code>{t('auth.recoveryCommand')}</code>
+                </div>
+                <label className="auth-field">
+                  <span>{t('auth.recoveryTokenLabel')}</span>
+                  <input className="input-field" value={recoveryToken} onChange={(event) => setRecoveryToken(event.target.value)} placeholder={t('auth.recoveryTokenPlaceholder')} autoComplete="one-time-code" />
+                </label>
+                <label className="auth-field">
+                  <span>{t('auth.passwordLabel')}</span>
+                  <input className="input-field" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={t('auth.passwordPlaceholder')} autoComplete="new-password" />
+                </label>
+                <label className="auth-field">
+                  <span>{t('auth.confirmPasswordLabel')}</span>
+                  <input className="input-field" type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder={t('auth.confirmPasswordPlaceholder')} autoComplete="new-password" />
+                </label>
+                <button className="auth-submit" type="submit" disabled={busy}>
+                  {busy && <span className="auth-spinner" aria-hidden="true" />}
+                  {busy ? t('auth.resettingPassword') : t('auth.recoveryAction')}
+                </button>
+              </form>
+            )}
+
+            <div className="auth-trust-line" aria-hidden="true">
+              <span /><span /><span /><span /><span />
+            </div>
+          </section>
+        </main>
+
+        <footer className="auth-footer">
+          <span>{appVersion ? `LightningOS ${appVersion}` : 'LightningOS'}</span>
+          <a href="https://br-ln.com" target="_blank" rel="noreferrer">
+            {t('auth.poweredBy')} <strong>BR<span aria-hidden="true">⚡</span>LN</strong>
+            <span aria-hidden="true">↗</span>
+          </a>
+        </footer>
       </div>
     </div>
   )

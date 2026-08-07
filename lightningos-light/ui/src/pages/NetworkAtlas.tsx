@@ -76,6 +76,11 @@ const normalizeLongitude = (value: number) => {
   return next
 }
 const atlasCoordinateKey = (lat: number, lon: number) => `${lat.toFixed(3)}:${lon.toFixed(3)}`
+const atlasChannelStrokeWidth = (capacitySat: number, emphasized: boolean) => {
+  const capacity = Math.max(20_000, Number.isFinite(capacitySat) ? capacitySat : 0)
+  const scale = Math.min(1, Math.max(0, (Math.log10(capacity) - Math.log10(20_000)) / 4))
+  return 1.25 + (scale * 1.65) + (emphasized ? 0.65 : 0)
+}
 const spreadAtlasLinks = (links: AtlasLink[]) => {
   const groups = new Map<string, AtlasLink[]>()
   links.forEach((link) => {
@@ -126,7 +131,9 @@ const AtlasConnections = ({
   links,
   mapZoom,
   selectedKey,
-  onSelect,
+  hoveredKey,
+  onHover,
+  onHoverEnd,
   onActivate,
   onOpenChannel
 }: {
@@ -134,7 +141,9 @@ const AtlasConnections = ({
   links: AtlasLink[]
   mapZoom: number
   selectedKey: string
-  onSelect: (key: string) => void
+  hoveredKey: string
+  onHover: (key: string) => void
+  onHoverEnd: (key: string) => void
   onActivate: (link: AtlasLink) => void
   onOpenChannel: (link: AtlasLink) => void
 }) => {
@@ -163,15 +172,17 @@ const AtlasConnections = ({
         const arcHeight = Math.max(22, Math.abs(x2 - x1) * 0.14 + Math.abs(y2 - y1) * 0.08)
         const d = `M ${x1} ${y1} C ${mx} ${my - arcHeight}, ${mx} ${my - arcHeight}, ${x2} ${y2}`
         const selected = selectedKey === link.pubkey
+        const hovered = hoveredKey === link.pubkey
         const dimmed = Boolean(selectedKey) && !selected
+        const emphasized = selected || hovered
         const pathId = `atlas-arc-${link.pubkey}`
 
         return (
           <g
             key={link.pubkey}
-            className={`cursor-pointer ${selected ? 'atlas-link-state atlas-link-state--selected' : dimmed ? 'atlas-link-state atlas-link-state--dimmed' : 'atlas-link-state'}`}
-            onPointerEnter={() => onSelect(link.pubkey)}
-            onFocus={() => onSelect(link.pubkey)}
+            className={`cursor-pointer ${selected ? 'atlas-link-state atlas-link-state--selected' : hovered ? 'atlas-link-state atlas-link-state--hovered' : dimmed ? 'atlas-link-state atlas-link-state--dimmed' : 'atlas-link-state'}`}
+            onPointerEnter={() => onHover(link.pubkey)}
+            onPointerLeave={() => onHoverEnd(link.pubkey)}
           >
             <path
               d={d}
@@ -190,10 +201,10 @@ const AtlasConnections = ({
             <path
               id={pathId}
               d={d}
-              className={link.connection_kind === 'channel' ? 'atlas-arc atlas-arc--channel' : 'atlas-arc atlas-arc--peer'}
-              strokeWidth={selected ? 2.6 : link.connection_kind === 'channel' ? 1.8 : 1.2}
+              className={`${link.connection_kind === 'channel' ? 'atlas-arc atlas-arc--channel' : 'atlas-arc atlas-arc--peer'}${link.connection_kind === 'channel' && !link.active ? ' atlas-arc--inactive' : ''}`}
+              strokeWidth={link.connection_kind === 'channel' ? atlasChannelStrokeWidth(link.capacity_sat, emphasized) : emphasized ? 1.8 : 1.05}
             />
-            {link.connection_kind === 'channel' && (
+            {link.connection_kind === 'channel' && link.active && selected && (
               <>
                 <circle r={selected ? 3.4 : 2.6} className="atlas-pulse-dot">
                   <animateMotion dur={selected ? '1.4s' : '1.9s'} repeatCount="indefinite" rotate="auto">
@@ -227,6 +238,7 @@ export default function NetworkAtlas() {
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const [selectedKey, setSelectedKey] = useState('')
+  const [hoveredKey, setHoveredKey] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [labelInput, setLabelInput] = useState('')
   const [latInput, setLatInput] = useState('')
@@ -247,8 +259,9 @@ export default function NetworkAtlas() {
         setPayload(nextPayload)
         setSelectedKey((current) => {
           if (current && nextPayload.links.some((item) => item.pubkey === current)) return current
-          return nextPayload.links[0]?.pubkey || ''
+          return ''
         })
+        setHoveredKey('')
         setStatus('')
       } else {
         setStatus((mapResult.reason as Error)?.message || t('networkAtlas.loadFailed'))
@@ -282,8 +295,28 @@ export default function NetworkAtlas() {
   }, [filterMode, payload?.links])
 
   const selectedLink = useMemo(
-    () => filteredLinks.find((item) => item.pubkey === selectedKey) || filteredLinks[0] || null,
+    () => filteredLinks.find((item) => item.pubkey === selectedKey) || null,
     [filteredLinks, selectedKey]
+  )
+  const hoveredLink = useMemo(
+    () => filteredLinks.find((item) => item.pubkey === hoveredKey) || null,
+    [filteredLinks, hoveredKey]
+  )
+  const detailLink = selectedLink || hoveredLink
+
+  const totalPeerCount = Math.max(0, Number(payload?.summary.total_peers) || 0)
+  const unknownLocationCount = Math.max(0, Number(payload?.summary.unknown_location) || 0)
+  const mappedPeerCount = Math.max(0, totalPeerCount - unknownLocationCount)
+  const mappedCoveragePct = totalPeerCount
+    ? Math.round((mappedPeerCount / totalPeerCount) * 100)
+    : 0
+  const mappedChannelCount = useMemo(
+    () => (payload?.links ?? []).filter((item) => item.connection_kind === 'channel' && typeof item.lat === 'number' && typeof item.lon === 'number').length,
+    [payload?.links]
+  )
+  const mappedPeerOnlyCount = useMemo(
+    () => (payload?.links ?? []).filter((item) => item.connection_kind === 'peer' && typeof item.lat === 'number' && typeof item.lon === 'number').length,
+    [payload?.links]
   )
 
   const localNode = payload?.local_node ?? null
@@ -303,7 +336,8 @@ export default function NetworkAtlas() {
     try {
       const nextPayload = await getNetworkAtlasMap()
       setPayload(nextPayload as AtlasResponse)
-      setSelectedKey((nextPayload as AtlasResponse)?.links?.[0]?.pubkey || '')
+      setSelectedKey((current) => (nextPayload as AtlasResponse)?.links?.some((item) => item.pubkey === current) ? current : '')
+      setHoveredKey('')
       setStatus('')
     } catch (err) {
       setStatus((err as Error)?.message || t('networkAtlas.loadFailed'))
@@ -331,6 +365,16 @@ export default function NetworkAtlas() {
         setFocusPulseKey((current) => (current === link.pubkey ? '' : current))
       }, 1100)
     }
+  }
+
+  const handlePeerHoverEnd = (pubkey: string) => {
+    setHoveredKey((current) => current === pubkey ? '' : current)
+  }
+
+  const handleFocusLocalNode = () => {
+    if (!localNode?.location_set) return
+    setMapCenter([localNode.lon, localNode.lat])
+    setMapZoom(2.2)
   }
 
   const handleOpenChannel = (link: AtlasLink) => {
@@ -427,18 +471,19 @@ export default function NetworkAtlas() {
         </div>
 
         <div className="mt-6 flex flex-wrap items-center gap-3">
-          <button className={filterMode === 'all' ? 'btn-primary' : 'atlas-control-pill'} type="button" onClick={() => setFilterMode('all')}>
-            {t('common.all')}
+          <button className={`atlas-control-pill${filterMode === 'all' ? ' atlas-control-pill--active' : ''}`} type="button" aria-pressed={filterMode === 'all'} onClick={() => setFilterMode('all')}>
+            {t('common.all')} <span className="atlas-filter-count">{mappedPeerCount}</span>
           </button>
-          <button className={filterMode === 'channel' ? 'btn-primary' : 'atlas-control-pill'} type="button" onClick={() => setFilterMode('channel')}>
-            {t('networkAtlas.channelsOnly')}
+          <button className={`atlas-control-pill${filterMode === 'channel' ? ' atlas-control-pill--active' : ''}`} type="button" aria-pressed={filterMode === 'channel'} onClick={() => setFilterMode('channel')}>
+            {t('networkAtlas.channelsOnly')} <span className="atlas-filter-count">{mappedChannelCount}</span>
           </button>
-          <button className={filterMode === 'peer' ? 'btn-primary' : 'atlas-control-pill'} type="button" onClick={() => setFilterMode('peer')}>
-            {t('networkAtlas.peersOnly')}
+          <button className={`atlas-control-pill${filterMode === 'peer' ? ' atlas-control-pill--active' : ''}`} type="button" aria-pressed={filterMode === 'peer'} onClick={() => setFilterMode('peer')}>
+            {t('networkAtlas.peersOnly')} <span className="atlas-filter-count">{mappedPeerOnlyCount}</span>
           </button>
           <div className="ml-auto flex flex-wrap items-center gap-4 text-xs text-fog/65">
             <span className="atlas-legend-item"><i className="atlas-legend-dot atlas-legend-dot--channel" />{t('networkAtlas.legendChannel')}</span>
             <span className="atlas-legend-item"><i className="atlas-legend-dot atlas-legend-dot--peer" />{t('networkAtlas.legendPeer')}</span>
+            <span className="atlas-legend-item"><i className="atlas-legend-dot atlas-legend-dot--inactive" />{t('common.inactive')}</span>
             <span className="atlas-legend-item"><i className="atlas-legend-dot atlas-legend-dot--node" />{t('networkAtlas.legendNode')}</span>
           </div>
         </div>
@@ -454,8 +499,9 @@ export default function NetworkAtlas() {
               <p className="mt-1 text-sm text-fog/62">{localNodeSourceLabel}</p>
             </div>
             <div className="atlas-map-badge">
-              <span>{t('networkAtlas.renderedLinks')}</span>
-              <strong>{filteredLinks.length.toLocaleString()}</strong>
+              <span>{t('networkAtlas.mappedCoverage')}</span>
+              <strong>{mappedPeerCount.toLocaleString()} / {payload ? totalPeerCount.toLocaleString() : '--'}</strong>
+              <small>{t('networkAtlas.coverageDetail', { percent: mappedCoveragePct, count: unknownLocationCount })}</small>
             </div>
           </div>
 
@@ -463,6 +509,7 @@ export default function NetworkAtlas() {
             <div className="atlas-map-controls">
               <button type="button" className="atlas-map-control" onClick={() => handleZoom('in')} aria-label={t('networkAtlas.zoomIn')} title={t('networkAtlas.zoomIn')}>+</button>
               <button type="button" className="atlas-map-control" onClick={() => handleZoom('out')} aria-label={t('networkAtlas.zoomOut')} title={t('networkAtlas.zoomOut')}>-</button>
+              {localNode?.location_set && <button type="button" className="atlas-map-control atlas-map-control--wide" onClick={handleFocusLocalNode} aria-label={t('networkAtlas.focusLocalNode')} title={t('networkAtlas.focusLocalNode')}>{t('networkAtlas.focusLocalNodeShort')}</button>}
               <button type="button" className="atlas-map-control atlas-map-control--wide" onClick={() => handleZoom('reset')} aria-label={t('networkAtlas.resetView')} title={t('networkAtlas.resetView')}>{t('networkAtlas.resetViewShort')}</button>
             </div>
             <ComposableMap
@@ -471,6 +518,7 @@ export default function NetworkAtlas() {
               width={1200}
               height={560}
               className="atlas-world-map"
+              onClick={() => setSelectedKey('')}
             >
               <ZoomableGroup
                 center={mapCenter}
@@ -507,7 +555,9 @@ export default function NetworkAtlas() {
                   links={filteredLinks}
                   mapZoom={mapZoom}
                   selectedKey={selectedLink?.pubkey || ''}
-                  onSelect={setSelectedKey}
+                  hoveredKey={hoveredLink?.pubkey || ''}
+                  onHover={setHoveredKey}
+                  onHoverEnd={handlePeerHoverEnd}
                   onActivate={handlePeerActivate}
                   onOpenChannel={handleOpenChannel}
                 />
@@ -517,15 +567,28 @@ export default function NetworkAtlas() {
                   const linkLat = typeof link.render_lat === 'number' ? link.render_lat : link.lat
                   if (typeof linkLon !== 'number' || typeof linkLat !== 'number') return null
                   const selected = selectedLink?.pubkey === link.pubkey
-                  const dimmed = Boolean(selectedKey) && !selected
+                  const hovered = hoveredLink?.pubkey === link.pubkey
+                  const dimmed = Boolean(selectedLink) && !selected
                   return (
                     <Marker key={`marker-${link.pubkey}`} coordinates={[linkLon, linkLat]}>
                       <g
                         transform={`scale(${1 / mapZoom})`}
-                        className={`cursor-pointer ${selected ? 'atlas-link-state atlas-link-state--selected' : dimmed ? 'atlas-link-state atlas-link-state--dimmed' : 'atlas-link-state'}`}
-                        onPointerEnter={() => setSelectedKey(link.pubkey)}
-                        onFocus={() => setSelectedKey(link.pubkey)}
+                        className={`cursor-pointer ${selected ? 'atlas-link-state atlas-link-state--selected' : hovered ? 'atlas-link-state atlas-link-state--hovered' : dimmed ? 'atlas-link-state atlas-link-state--dimmed' : 'atlas-link-state'}`}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={link.alias || shortPubkey(link.pubkey)}
+                        aria-pressed={selected}
+                        onPointerEnter={() => setHoveredKey(link.pubkey)}
+                        onPointerLeave={() => handlePeerHoverEnd(link.pubkey)}
+                        onFocus={() => setHoveredKey(link.pubkey)}
+                        onBlur={() => handlePeerHoverEnd(link.pubkey)}
                         onClick={(event) => {
+                          event.stopPropagation()
+                          handlePeerActivate(link)
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key !== 'Enter' && event.key !== ' ') return
+                          event.preventDefault()
                           event.stopPropagation()
                           handlePeerActivate(link)
                         }}
@@ -539,7 +602,7 @@ export default function NetworkAtlas() {
                         {focusPulseKey === link.pubkey && <circle r="9" className="atlas-focus-ring" />}
                         <circle
                           r={selected ? 5.2 : link.connection_kind === 'channel' ? 3.9 : 3.1}
-                          className={link.connection_kind === 'channel' ? 'atlas-dot atlas-dot--channel' : 'atlas-dot atlas-dot--peer'}
+                          className={`${link.connection_kind === 'channel' ? 'atlas-dot atlas-dot--channel' : 'atlas-dot atlas-dot--peer'}${link.connection_kind === 'channel' && !link.active ? ' atlas-dot--inactive' : ''}`}
                         />
                       </g>
                     </Marker>
@@ -568,15 +631,15 @@ export default function NetworkAtlas() {
           ) : null}
         </div>
 
-        {selectedLink && (
+        {detailLink && (
           <div className="atlas-selected-bar mt-5">
             <div>
-              <p className="atlas-map-label">{t('networkAtlas.selectedPeer')}</p>
-              <h3 className="mt-2 text-lg font-semibold">{selectedLink.alias || shortPubkey(selectedLink.pubkey)}</h3>
-              <p className="mt-1 text-xs text-fog/55 break-all">{selectedLink.pubkey}</p>
+              <p className="atlas-map-label">{selectedLink ? t('networkAtlas.selectedPeer') : t('networkAtlas.previewPeer')}</p>
+              <h3 className="mt-2 text-lg font-semibold">{detailLink.alias || shortPubkey(detailLink.pubkey)}</h3>
+              <p className="mt-1 text-xs text-fog/55 break-all">{detailLink.pubkey}</p>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <a
-                  href={buildGraphExplorerPeerHash(selectedLink.pubkey)}
+                  href={buildGraphExplorerPeerHash(detailLink.pubkey)}
                   className="inline-flex items-center rounded-full border border-sky-300/25 bg-sky-500/10 px-3 py-1 text-xs text-sky-100 transition hover:border-sky-200/40 hover:text-white"
                 >
                   {t('nav.graphExplorer')}
@@ -584,7 +647,7 @@ export default function NetworkAtlas() {
                 <button
                   type="button"
                   className="atlas-control-pill"
-                  onClick={() => handleOpenChannel(selectedLink)}
+                  onClick={() => handleOpenChannel(detailLink)}
                 >
                   {t('nav.lightningOps')}
                 </button>
@@ -592,15 +655,15 @@ export default function NetworkAtlas() {
             </div>
             <div className="atlas-selected-chip">
               <span>{t('networkAtlas.connectionType')}</span>
-              <strong>{selectedLink.connection_kind === 'channel' ? t('networkAtlas.legendChannel') : t('networkAtlas.legendPeer')}</strong>
+              <strong>{detailLink.connection_kind === 'channel' ? `${t('networkAtlas.legendChannel')} · ${detailLink.active ? t('common.active') : t('common.inactive')}` : t('networkAtlas.legendPeer')}</strong>
             </div>
             <div className="atlas-selected-chip">
               <span>{t('networkAtlas.capacity')}</span>
-              <strong>{selectedLink.capacity_sat > 0 ? formatSats(selectedLink.capacity_sat) : t('common.na')}</strong>
+              <strong>{detailLink.capacity_sat > 0 ? formatSats(detailLink.capacity_sat) : t('common.na')}</strong>
             </div>
             <div className="atlas-selected-chip">
               <span>{t('networkAtlas.location')}</span>
-              <strong>{selectedLink.city && selectedLink.country ? `${selectedLink.city}, ${selectedLink.country}` : selectedLink.country || t('common.na')}</strong>
+              <strong>{detailLink.city && detailLink.country ? `${detailLink.city}, ${detailLink.country}` : detailLink.country || t('common.na')}</strong>
             </div>
           </div>
         )}

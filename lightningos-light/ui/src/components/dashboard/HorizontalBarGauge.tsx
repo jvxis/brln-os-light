@@ -36,7 +36,7 @@ export default function HorizontalBarGauge({
       </div>
       <div className="horizontal-gauge__track h-2 overflow-hidden rounded-full bg-white/8">
         <div
-          className={`horizontal-gauge__fill h-full rounded-full bg-gradient-to-r ${fillClasses[tone]}`}
+          className={`horizontal-gauge__fill horizontal-gauge__fill--${tone} h-full rounded-full bg-gradient-to-r ${fillClasses[tone]}`}
           style={{ width: `${percent}%` }}
         />
       </div>

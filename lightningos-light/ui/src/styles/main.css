@@ -355,6 +355,32 @@ html[data-visual-theme="miner-watch"] .stacked-ratio__segment {
   ) !important;
 }
 
+html[data-visual-theme="miner-watch"] .horizontal-gauge__fill {
+  background-color: rgb(var(--horizontal-gauge-fill-rgb, var(--palette-primary))) !important;
+  box-shadow: 0 0 8px rgb(var(--horizontal-gauge-fill-rgb, var(--palette-primary)) / 0.3);
+  transition: width 420ms ease;
+}
+
+html[data-visual-theme="miner-watch"] .horizontal-gauge__fill--ok {
+  --horizontal-gauge-fill-rgb: 52 211 153;
+}
+
+html[data-visual-theme="miner-watch"] .horizontal-gauge__fill--warn {
+  --horizontal-gauge-fill-rgb: 251 191 36;
+}
+
+html[data-visual-theme="miner-watch"] .horizontal-gauge__fill--danger {
+  --horizontal-gauge-fill-rgb: 251 113 133;
+}
+
+html[data-visual-theme="miner-watch"] .horizontal-gauge__fill--muted {
+  --horizontal-gauge-fill-rgb: 148 163 184;
+}
+
+html[data-visual-theme="miner-watch"] .horizontal-gauge__fill--info {
+  --horizontal-gauge-fill-rgb: 56 189 248;
+}
+
 /* Miner Watch is a structural theme. Its phosphor color is now selected
    independently through the palette control. */
 html[data-visual-theme="miner-watch"] {

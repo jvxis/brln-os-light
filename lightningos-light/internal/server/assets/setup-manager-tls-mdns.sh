@@ -269,6 +269,21 @@ EOF
   fi
 }
 
+remove_managed_avahi_service() {
+  if [[ ! -f "$AVAHI_SERVICE_PATH" ]]; then
+    return 0
+  fi
+  if ! grep -Fq '<txt-record>product=LightningOS</txt-record>' "$AVAHI_SERVICE_PATH"; then
+    warn "Preserving an unrecognized Avahi service file at ${AVAHI_SERVICE_PATH}"
+    return 0
+  fi
+  rm -f -- "$AVAHI_SERVICE_PATH"
+  if systemctl list-unit-files avahi-daemon.service >/dev/null 2>&1; then
+    systemctl restart avahi-daemon.service >/dev/null 2>&1 || warn "Could not restart avahi-daemon"
+  fi
+  log "Removed LightningOS .local announcement not covered by the active certificate"
+}
+
 write_access_info() {
   local mdns_name="$1"
   local lan_ip="$2"
@@ -326,6 +341,8 @@ main() {
   fi
   if [[ "${LIGHTNINGOS_CONFIGURE_AVAHI:-1}" != "0" && -n "$advertised_name" ]]; then
     configure_avahi_service "$host_label"
+  elif [[ "${LIGHTNINGOS_CONFIGURE_AVAHI:-1}" != "0" ]]; then
+    remove_managed_avahi_service
   fi
   write_access_info "$advertised_name" "$lan_ip"
   print_summary "$advertised_name" "$lan_ip"

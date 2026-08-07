@@ -1234,7 +1234,7 @@ setup_postgres_repo() {
     return
   fi
   apt-get install -y ca-certificates curl gnupg
-  curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /usr/share/keyrings/postgresql.gpg
+  curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --batch --yes --dearmor -o /usr/share/keyrings/postgresql.gpg
   echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt ${codename}-pgdg main" \
     > /etc/apt/sources.list.d/pgdg.list
   print_ok "PostgreSQL repo ready (${codename}-pgdg)"

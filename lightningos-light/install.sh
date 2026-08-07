@@ -553,7 +553,7 @@ setup_postgres_repo() {
     return
   fi
   apt_get install -y ca-certificates curl gnupg
-  curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /usr/share/keyrings/postgresql.gpg
+  curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --batch --yes --dearmor -o /usr/share/keyrings/postgresql.gpg
   echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt ${codename}-pgdg main" \
     > /etc/apt/sources.list.d/pgdg.list
   print_ok "PostgreSQL repo ready (${codename}-pgdg)"
@@ -573,7 +573,7 @@ setup_tor_repo() {
     codename="jammy"
   fi
   curl -fsSL https://deb.torproject.org/torproject.org/A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89.asc \
-    | gpg --dearmor \
+    | gpg --batch --yes --dearmor \
     | tee /usr/share/keyrings/deb.torproject.org-keyring.gpg >/dev/null
   cat > /etc/apt/sources.list.d/tor.list <<EOF
 deb     [arch=amd64 signed-by=/usr/share/keyrings/deb.torproject.org-keyring.gpg] https://deb.torproject.org/torproject.org ${codename} main

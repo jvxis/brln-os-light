@@ -3704,6 +3704,7 @@ html[data-theme="light"] .status-badge--info { color: rgb(3 105 161); }
   min-height: 100vh;
   min-height: 100dvh;
   overflow: hidden;
+  overflow-x: hidden;
   isolation: isolate;
   padding: clamp(14px, 3vw, 40px);
   color: rgb(var(--color-fog));
@@ -3787,6 +3788,7 @@ html[data-theme="light"] .status-badge--info { color: rgb(3 105 161); }
   position: relative;
   z-index: 1;
   width: min(100%, 1500px);
+  min-width: 0;
   margin: 0 auto;
 }
 
@@ -4153,6 +4155,7 @@ html[data-theme="light"] .status-badge--info { color: rgb(3 105 161); }
   background:
     linear-gradient(180deg, rgb(255 255 255 / 0.035), transparent 28%),
     rgb(var(--color-slate) / 0.62);
+  overflow: hidden;
 }
 
 .auth-panel__beam {
@@ -4284,6 +4287,7 @@ html[data-theme="light"] .status-badge--info { color: rgb(3 105 161); }
 
 .auth-form {
   display: grid;
+  min-width: 0;
   gap: 15px;
   margin-top: 28px;
 }
@@ -4294,6 +4298,7 @@ html[data-theme="light"] .status-badge--info { color: rgb(3 105 161); }
 
 .auth-field {
   display: grid;
+  min-width: 0;
   gap: 9px;
 }
 
@@ -4599,8 +4604,7 @@ html[data-theme="light"] .auth-submit {
   }
 
   .auth-secure-pill {
-    margin-top: 13px;
-    font-size: 8px;
+    display: none;
   }
 
   .auth-tab {

@@ -4619,6 +4619,14 @@ html[data-visual-theme="kernel"] .auth-feature {
   background: rgb(var(--palette-primary) / 0.025);
 }
 
+html[data-visual-theme="miner-watch"] .auth-hero__copy h1 {
+  padding-bottom: 0.1em;
+  line-height: 1.1;
+  color: rgb(var(--palette-primary));
+  background: none;
+  -webkit-text-fill-color: currentColor;
+}
+
 @keyframes auth-screen-sweep {
   0%, 72% { transform: translateX(-120%); opacity: 0; }
   78% { opacity: 1; }

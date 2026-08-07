@@ -1103,6 +1103,7 @@ export default function LightningOps() {
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all')
   const [profitFilter, setProfitFilter] = useState<'all' | 'profitable' | 'neutral' | 'deficit'>('all')
   const [fcRiskOnly, setFcRiskOnly] = useState(false)
+  const [magmaOnly, setMagmaOnly] = useState(false)
   const [search, setSearch] = useState('')
   const [minCapacity, setMinCapacity] = useState('')
   const [rankingFilter, setRankingFilter] = useState<'all' | 'expand' | 'maintain' | 'monitor' | 'close'>('all')
@@ -3977,6 +3978,14 @@ export default function LightningOps() {
   }, [baseFilteredChannels])
 
   const fcRiskCount = useMemo(() => channels.filter(isFCRiskChannel).length, [channels])
+  const isMagmaChannel = (channelPoint: string) =>
+    Boolean(magmaCommitments[(channelPoint || '').trim().toLowerCase()])
+  // Counted over every channel, not the filtered view, so the badge answers "how
+  // many are under commitment" rather than "how many survived the search box".
+  const magmaCount = useMemo(
+    () => channels.filter((ch) => isMagmaChannel(ch.channel_point)).length,
+    [channels, magmaCommitments]
+  )
 
   const filteredChannels = useMemo(() => {
     let list = baseFilteredChannels
@@ -4000,6 +4009,9 @@ export default function LightningOps() {
     if (fcRiskOnly) {
       list = list.filter((ch) => isFCRiskChannel(ch))
     }
+    if (magmaOnly) {
+      list = list.filter((ch) => isMagmaChannel(ch.channel_point))
+    }
     const sorted = [...list]
     const direction = sortDir === 'desc' ? -1 : 1
     sorted.sort((a, b) => {
@@ -4021,7 +4033,7 @@ export default function LightningOps() {
       return (aVal - bVal) * direction
     })
     return sorted
-  }, [baseFilteredChannels, channelRankingMap, fcRiskOnly, movementFilter, profitFilter, rankingFilter, sortBy, sortDir])
+  }, [baseFilteredChannels, channelRankingMap, fcRiskOnly, magmaCommitments, magmaOnly, movementFilter, profitFilter, rankingFilter, sortBy, sortDir])
 
   useEffect(() => {
     if (!expandedCondensedChannelPoint) return
@@ -6553,11 +6565,30 @@ export default function LightningOps() {
     setSearch('')
     setMinCapacity('')
     setShowPrivate(true)
+    setMagmaOnly(false)
     setFcRiskOnly(true)
     const firstRiskChannel = channels.find((ch) => isFCRiskChannel(ch))
     if (firstRiskChannel?.channel_point) {
       pendingScrollChannelRef.current = firstRiskChannel.channel_point
     }
+  }
+
+  // A sold channel can be active or idle, so unlike the force-close filter this
+  // one widens the status filter instead of narrowing it: hiding a channel under
+  // commitment behind "active only" defeats the point of asking for them.
+  const handleToggleMagmaFilter = () => {
+    if (magmaOnly) {
+      setMagmaOnly(false)
+      return
+    }
+    if (!magmaCount) return
+    setFilter('all')
+    setProfitFilter('all')
+    setSearch('')
+    setMinCapacity('')
+    setShowPrivate(true)
+    setFcRiskOnly(false)
+    setMagmaOnly(true)
   }
 
   const scrollToCloseRecovery = () => {
@@ -6803,16 +6834,16 @@ export default function LightningOps() {
           </div>
           {channelsSubview === 'channels' ? (
             <div className="flex flex-wrap items-center gap-2 text-xs">
-              <button className={filter === 'all' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setFilter('all'); setFcRiskOnly(false) }}>{t('common.all')}: {statusCounts.all}</button>
-              <button className={filter === 'active' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setFilter('active'); setFcRiskOnly(false) }}>{t('common.active')}: {statusCounts.active}</button>
-              <button className={filter === 'inactive' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setFilter('inactive'); setFcRiskOnly(false) }}>{t('common.inactive')}: {statusCounts.inactive}</button>
-              <button className={profitFilter === 'profitable' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setProfitFilter((prev) => (prev === 'profitable' ? 'all' : 'profitable')); setFcRiskOnly(false) }}>
+              <button className={filter === 'all' && !fcRiskOnly && !magmaOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setFilter('all'); setFcRiskOnly(false); setMagmaOnly(false) }}>{t('common.all')}: {statusCounts.all}</button>
+              <button className={filter === 'active' && !fcRiskOnly && !magmaOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setFilter('active'); setFcRiskOnly(false); setMagmaOnly(false) }}>{t('common.active')}: {statusCounts.active}</button>
+              <button className={filter === 'inactive' && !fcRiskOnly && !magmaOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setFilter('inactive'); setFcRiskOnly(false); setMagmaOnly(false) }}>{t('common.inactive')}: {statusCounts.inactive}</button>
+              <button className={profitFilter === 'profitable' && !fcRiskOnly && !magmaOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setProfitFilter((prev) => (prev === 'profitable' ? 'all' : 'profitable')); setFcRiskOnly(false); setMagmaOnly(false) }}>
                 {t('lightningOps.profitPositive')}: {profitCounts.profitable}
               </button>
-              <button className={profitFilter === 'neutral' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setProfitFilter((prev) => (prev === 'neutral' ? 'all' : 'neutral')); setFcRiskOnly(false) }}>
+              <button className={profitFilter === 'neutral' && !fcRiskOnly && !magmaOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setProfitFilter((prev) => (prev === 'neutral' ? 'all' : 'neutral')); setFcRiskOnly(false); setMagmaOnly(false) }}>
                 {t('lightningOps.profitNeutral')}: {profitCounts.neutral}
               </button>
-              <button className={profitFilter === 'deficit' && !fcRiskOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setProfitFilter((prev) => (prev === 'deficit' ? 'all' : 'deficit')); setFcRiskOnly(false) }}>
+              <button className={profitFilter === 'deficit' && !fcRiskOnly && !magmaOnly ? 'btn-primary' : 'btn-secondary'} onClick={() => { setProfitFilter((prev) => (prev === 'deficit' ? 'all' : 'deficit')); setFcRiskOnly(false); setMagmaOnly(false) }}>
                 {t('lightningOps.profitNegative')}: {profitCounts.deficit}
               </button>
               <button
@@ -6827,6 +6858,20 @@ export default function LightningOps() {
                 aria-label={t('lightningOps.fcRiskFilterHint')}
               >
                 {t('lightningOps.fcRiskBadge', { count: fcRiskCount })}
+              </button>
+              <button
+                className={`px-3 py-2 rounded-full border text-xs transition ${
+                  magmaOnly
+                    ? 'border-orange-300/70 bg-orange-500/25 text-orange-100'
+                    : 'border-orange-400/45 bg-orange-500/10 text-orange-200 hover:border-orange-300/70'
+                } ${!magmaCount && !magmaOnly ? 'opacity-60 cursor-not-allowed' : ''}`}
+                onClick={handleToggleMagmaFilter}
+                disabled={!magmaCount && !magmaOnly}
+                title={t('lightningOps.magmaFilterHint')}
+                aria-label={t('lightningOps.magmaFilterHint')}
+                aria-pressed={magmaOnly}
+              >
+                <span aria-hidden>&#128293;</span> {t('lightningOps.magmaSold')}: {magmaCount}
               </button>
             </div>
           ) : (

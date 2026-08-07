@@ -4047,6 +4047,7 @@
     "openInChannelRanking": "Open in Channel Ranking",
     "prepareCloseChannel": "Prepare close in Close channel card",
     "copyChannelId": "Copy channel id",
+    "magmaFilterHint": "Show only channels sold through Magma that are still under commitment",
     "magmaSold": "Magma",
     "magmaSoldTitle": "Sold through Magma - do not close until the commitment ends",
     "magmaCommitmentRemaining": "{{days}}d left of the commitment",

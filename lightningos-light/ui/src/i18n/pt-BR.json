@@ -4047,6 +4047,7 @@
     "openInChannelRanking": "Abrir no Ranking de Canais",
     "prepareCloseChannel": "Preparar close no card Fechar canal",
     "copyChannelId": "Copiar channel id",
+    "magmaFilterHint": "Mostrar so os canais vendidos pelo Magma ainda sob compromisso",
     "magmaSold": "Magma",
     "magmaSoldTitle": "Vendido pelo Magma - nao feche antes do fim do compromisso",
     "magmaCommitmentRemaining": "faltam {{days}}d de compromisso",

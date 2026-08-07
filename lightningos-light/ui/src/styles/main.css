@@ -4550,10 +4550,6 @@ html[data-theme="light"] .auth-submit {
   .auth-hero__content {
     grid-template-columns: 1fr minmax(190px, 0.58fr);
   }
-
-  .auth-feature {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 920px) {
@@ -4679,8 +4675,14 @@ html[data-theme="light"] .auth-submit {
   }
 
   .auth-feature {
-    min-height: 96px;
-    padding: 14px;
+    min-height: 92px;
+    padding: 12px;
+  }
+
+  .auth-feature__title + p {
+    margin-top: 6px;
+    font-size: 10px;
+    line-height: 1.45;
   }
 
   .auth-panel__heading {

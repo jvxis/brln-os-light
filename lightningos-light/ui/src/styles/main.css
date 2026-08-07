@@ -1067,7 +1067,7 @@ html[data-visual-theme="airplane-mode"] .theme-gauge__readout {
   border-radius: 3px;
   background:
     linear-gradient(180deg, rgb(var(--instrument-rgb) / 0.055), rgb(var(--palette-secondary) / 0.025)),
-    linear-gradient(180deg, rgb(1 5 10 / 0.32), rgb(1 5 10 / 0.46));
+    linear-gradient(180deg, rgb(1 5 10 / 0.42), rgb(1 5 10 / 0.58));
   box-shadow: inset 0 0 5px rgb(0 0 0 / 0.26), 0 0 6px rgb(var(--palette-secondary) / 0.1);
   color: rgb(var(--palette-secondary));
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;

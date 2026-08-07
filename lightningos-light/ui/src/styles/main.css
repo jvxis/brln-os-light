@@ -1065,8 +1065,10 @@ html[data-visual-theme="airplane-mode"] .theme-gauge__readout {
   padding: 0.14rem 0.2rem 0.12rem;
   border: 1px solid rgb(var(--palette-secondary) / 0.26);
   border-radius: 3px;
-  background: linear-gradient(180deg, rgb(1 5 10 / 0.9), rgb(1 5 10 / 0.98));
-  box-shadow: inset 0 0 7px rgb(0 0 0 / 0.72), 0 0 5px rgb(var(--palette-secondary) / 0.08);
+  background: linear-gradient(180deg, rgb(1 5 10 / 0.5), rgb(1 5 10 / 0.68));
+  -webkit-backdrop-filter: blur(1.5px);
+  backdrop-filter: blur(1.5px);
+  box-shadow: inset 0 0 6px rgb(0 0 0 / 0.38), 0 0 6px rgb(var(--palette-secondary) / 0.1);
   color: rgb(var(--palette-secondary));
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   font-size: 0.7rem;

@@ -3795,7 +3795,7 @@ html[data-theme="light"] .status-badge--info { color: rgb(3 105 161); }
 .auth-shell {
   display: grid;
   grid-template-columns: minmax(0, 1.28fr) minmax(340px, 0.72fr);
-  min-height: clamp(560px, 74vh, 680px);
+  min-height: clamp(520px, 74vh, 680px);
   overflow: hidden;
   border: 1px solid rgb(var(--color-glow) / 0.24);
   border-radius: clamp(24px, 3vw, 38px);

@@ -551,14 +551,14 @@ export default function App() {
 
   return (
     <>
-      <div
-        className={`fixed inset-0 z-30 bg-black/60 backdrop-blur-sm transition-opacity lg:hidden ${
-          menuOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
-        }`}
-        onClick={() => setMenuOpen(false)}
-        aria-hidden="true"
-      />
       <div className="app-shell min-h-screen flex flex-col lg:flex-row text-fog">
+        <div
+          className={`fixed inset-0 z-30 bg-black/60 backdrop-blur-sm transition-opacity lg:hidden ${
+            menuOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
+          }`}
+          onClick={() => setMenuOpen(false)}
+          aria-hidden="true"
+        />
         <Sidebar
           routes={sidebarRoutes}
           allRoutes={baseRoutes}

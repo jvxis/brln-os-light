@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { type AuthState, loginAuth, recoverAuth, setupAuth } from '../api'
-import brlnOsLogo from '../assets/brln-lightning-os.svg'
+import brlnOsLogo from '../assets/brln-os.png'
 
 type AuthScreenProps = {
   state: AuthState
@@ -22,6 +22,7 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
   const [error, setError] = useState('')
   const [setupCommandCopied, setSetupCommandCopied] = useState(false)
   const [appVersion, setAppVersion] = useState('')
+  const [featurePage, setFeaturePage] = useState(0)
 
   useEffect(() => {
     if (state.setup_required) {
@@ -50,6 +51,14 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
     return () => {
       mounted = false
     }
+  }, [])
+
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    const interval = window.setInterval(() => {
+      setFeaturePage((current) => (current + 1) % 3)
+    }, 6500)
+    return () => window.clearInterval(interval)
   }, [])
 
   const copySetupCommand = async () => {
@@ -124,6 +133,24 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
       ? t('auth.recoverySubtitle')
       : t('auth.loginSubtitle')
 
+  const featurePages = [
+    [
+      ['auth.featureLightningTitle', 'auth.featureLightningBody'],
+      ['auth.featureAutomationTitle', 'auth.featureAutomationBody'],
+      ['auth.featureWalletTitle', 'auth.featureWalletBody']
+    ],
+    [
+      ['auth.featureNetworkTitle', 'auth.featureNetworkBody'],
+      ['auth.featureReportsTitle', 'auth.featureReportsBody'],
+      ['auth.featureAppsTitle', 'auth.featureAppsBody']
+    ],
+    [
+      ['auth.featureRebalanceTitle', 'auth.featureRebalanceBody'],
+      ['auth.featureOnchainTitle', 'auth.featureOnchainBody'],
+      ['auth.featureOperationsTitle', 'auth.featureOperationsBody']
+    ]
+  ]
+
   return (
     <div className="auth-screen">
       <div className="auth-aurora auth-aurora--primary" aria-hidden="true" />
@@ -144,7 +171,6 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
 
               <div className="auth-hero__copy">
                 <h1>{t('auth.heroTitle')}</h1>
-                <p>{t('auth.heroBody')}</p>
               </div>
 
               <div className="auth-core">
@@ -164,27 +190,31 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
               </div>
             </div>
 
-            <div className="auth-feature-grid">
-              <div className="auth-feature auth-feature--protected">
-                <span className="auth-feature__icon" aria-hidden="true">01</span>
-                <div>
-                  <p className="auth-feature__title">{t('auth.cardProtected')}</p>
-                  <p>{t('auth.cardProtectedBody')}</p>
-                </div>
+            <div className="auth-feature-showcase">
+              <div className="auth-feature-grid">
+                {featurePages[featurePage].map(([titleKey, bodyKey], index) => (
+                  <div className="auth-feature" key={`${featurePage}-${titleKey}`}>
+                    <span className="auth-feature__icon" aria-hidden="true">
+                      {String((featurePage * 3) + index + 1).padStart(2, '0')}
+                    </span>
+                    <div>
+                      <p className="auth-feature__title">{t(titleKey)}</p>
+                      <p>{t(bodyKey)}</p>
+                    </div>
+                  </div>
+                ))}
               </div>
-              <div className="auth-feature auth-feature--recovery">
-                <span className="auth-feature__icon" aria-hidden="true">02</span>
-                <div>
-                  <p className="auth-feature__title">{t('auth.cardRecovery')}</p>
-                  <p>{t('auth.cardRecoveryBody')}</p>
-                </div>
-              </div>
-              <div className="auth-feature auth-feature--automation">
-                <span className="auth-feature__icon" aria-hidden="true">03</span>
-                <div>
-                  <p className="auth-feature__title">{t('auth.cardAutomation')}</p>
-                  <p>{t('auth.cardAutomationBody')}</p>
-                </div>
+              <div className="auth-feature-pages" role="group" aria-label={t('auth.featurePages')}>
+                {featurePages.map((_, index) => (
+                  <button
+                    type="button"
+                    key={index}
+                    className={index === featurePage ? 'auth-feature-page auth-feature-page--active' : 'auth-feature-page'}
+                    aria-label={t('auth.featurePage', { page: index + 1 })}
+                    aria-pressed={index === featurePage}
+                    onClick={() => setFeaturePage(index)}
+                  />
+                ))}
               </div>
             </div>
           </section>

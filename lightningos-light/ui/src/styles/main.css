@@ -4935,6 +4935,14 @@ html[data-visual-theme="miner-watch"] .auth-hero__copy h1 {
   -webkit-text-fill-color: currentColor;
 }
 
+/* Kernel's monospace face is wider than the default display font. Keep the
+   longest word inside the copy track instead of letting the logo cover it. */
+html[data-visual-theme="kernel"] .auth-hero__copy h1 {
+  padding-right: 0.08em;
+  font-size: clamp(1.9rem, 2.8vw, 3.25rem);
+  letter-spacing: -0.025em;
+}
+
 @keyframes auth-screen-sweep {
   0%, 72% { transform: translateX(-120%); opacity: 0; }
   78% { opacity: 1; }

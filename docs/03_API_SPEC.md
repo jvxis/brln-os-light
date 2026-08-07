@@ -678,3 +678,13 @@ POST /api/terminal/credential/rotate
 - Requires login protection and a recent reauthentication with scope `terminal_credential`.
 - Generates a new GoTTY/Linux operator credential, restarts `lightningos-terminal.service`, and returns the password once with `Cache-Control: no-store`.
 - Response: `{"operator_user":"losop","password":"...","restart_pending":false}`. The password cannot be retrieved after this response.
+### Chat
+
+```text
+GET    /api/chat/inbox
+GET    /api/chat/messages
+POST   /api/chat/read
+POST   /api/chat/send
+```
+
+`POST /api/chat/read` marks the latest inbound message for one `peer_pubkey` as read. The read timestamp is persisted on the node and returned as `last_read_at` by the inbox, so unread state is shared across browsers. Existing browser-local state is migrated by the UI when possible.

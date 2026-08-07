@@ -660,6 +660,9 @@ export const getChatMessages = (peerPubkey: string, limit = 200) =>
 export const getChatInbox = () =>
   request('/api/chat/inbox')
 
+export const markChatRead = (peerPubkey: string) =>
+  request('/api/chat/read', { method: 'POST', body: JSON.stringify({ peer_pubkey: peerPubkey }) })
+
 export const sendChatMessage = (payload: { peer_pubkey: string; message: string; amount_sat?: number }) =>
   request('/api/chat/send', { method: 'POST', body: JSON.stringify(payload) })
 

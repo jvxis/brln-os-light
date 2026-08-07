@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { connectPeer, getChatInbox, getChatMessages, getLnPeers, sendChatMessage } from '../api'
+import { connectPeer, getChatInbox, getChatMessages, getLnPeers, markChatRead, sendChatMessage } from '../api'
 import { getLocale } from '../i18n'
+import { announceChatRead, parseChatTimestamp, readLocalChatReadMap, saveLocalChatRead } from '../utils/chatRead'
 
 type Peer = {
   pub_key: string
@@ -15,6 +16,7 @@ type ChatPeer = Peer & {
   last_message_at?: number
   last_message?: string
   last_message_direction?: 'in' | 'out'
+  last_read_at?: string
   identity_source?: string
   sender_verified?: boolean
 }
@@ -39,6 +41,7 @@ type ChatInboxItem = {
   last_message_at?: string
   last_message?: string
   last_message_direction?: 'in' | 'out'
+  last_read_at?: string
   identity_source?: string
   sender_verified?: boolean
 }
@@ -50,13 +53,13 @@ type ParsedInboxItem = {
   last_message_at: number
   last_message: string
   last_message_direction?: 'in' | 'out'
+  last_read_at: number
   identity_source?: string
   sender_verified?: boolean
 }
 
 const messageLimit = 500
 const defaultAmountSat = 1
-const lastReadKey = 'chat:lastRead'
 
 const formatTimestamp = (value: string | number | undefined, locale: string) => {
   if (!value) return ''
@@ -121,36 +124,60 @@ export default function Chat() {
   const [connectStatus, setConnectStatus] = useState('')
   const [connectingPeer, setConnectingPeer] = useState(false)
   const [showConnectForm, setShowConnectForm] = useState(false)
-  const [lastReadMap, setLastReadMap] = useState<Record<string, number>>(() => {
-    try {
-      const raw = localStorage.getItem(lastReadKey)
-      if (!raw) return {}
-      const parsed = JSON.parse(raw)
-      if (parsed && typeof parsed === 'object') {
-        return parsed
-      }
-      return {}
-    } catch {
-      return {}
-    }
-  })
+  const [lastReadMap, setLastReadMap] = useState<Record<string, number>>(readLocalChatReadMap)
   const [messageStatus, setMessageStatus] = useState('')
   const [draft, setDraft] = useState('')
   const [amountSatInput, setAmountSatInput] = useState(String(defaultAmountSat))
   const [sending, setSending] = useState(false)
   const [loadingMessages, setLoadingMessages] = useState(false)
-  const bottomRef = useRef<HTMLDivElement | null>(null)
+  const readAtRef = useRef<Record<string, number>>(readLocalChatReadMap())
+  const markReadInFlightRef = useRef(new Set<string>())
+  const messagesScrollRef = useRef<HTMLDivElement | null>(null)
+  const stickToBottomRef = useRef(true)
 
-  const loadPeers = async () => {
-    setPeerStatus(t('chat.loadingPeers'))
+  const updateReadState = (peerPubkey: string, readAt: number, serverReadAt = 0) => {
+    if (!peerPubkey || !readAt) return
+    const nextReadAt = Math.max(readAtRef.current[peerPubkey] || 0, readAt)
+    if (nextReadAt === (readAtRef.current[peerPubkey] || 0)) return
+    readAtRef.current[peerPubkey] = nextReadAt
+    setLastReadMap((current) => {
+      if ((current[peerPubkey] || 0) >= readAt) return current
+      return { ...current, [peerPubkey]: readAt }
+    })
+    setInboxItems((current) => current.map((item) => item.peer_pubkey === peerPubkey
+      ? { ...item, last_read_at: new Date(Math.max(parseChatTimestamp(item.last_read_at), serverReadAt || readAt)).toISOString() }
+      : item))
+    saveLocalChatRead(peerPubkey, readAt)
+    announceChatRead()
+  }
+
+  const persistRead = async (peerPubkey: string, latestInboundAt: number, forceServer = false) => {
+    if (!peerPubkey || !latestInboundAt) return
+    if (!forceServer && (readAtRef.current[peerPubkey] || 0) >= latestInboundAt) return
+    if (markReadInFlightRef.current.has(peerPubkey)) return
+    markReadInFlightRef.current.add(peerPubkey)
+    updateReadState(peerPubkey, latestInboundAt)
+    try {
+      const response = await markChatRead(peerPubkey)
+      const serverReadAt = parseChatTimestamp(response?.last_read_at) || latestInboundAt
+      updateReadState(peerPubkey, Math.max(latestInboundAt, serverReadAt), serverReadAt)
+    } catch {
+      // Keep the current browser usable; the next inbox poll retries node persistence.
+    } finally {
+      markReadInFlightRef.current.delete(peerPubkey)
+    }
+  }
+
+  const loadPeers = async (showStatus = true) => {
+    if (showStatus) setPeerStatus(t('chat.loadingPeers'))
     try {
       const res = await getLnPeers()
       const items = Array.isArray(res?.peers) ? res.peers : []
-      setPeers(items)
-      setPeerStatus('')
+      setPeers((current) => JSON.stringify(current) === JSON.stringify(items) ? current : items)
+      if (showStatus) setPeerStatus('')
       return items as Peer[]
     } catch (err: any) {
-      setPeerStatus(err?.message || t('chat.loadPeersFailed'))
+      if (showStatus) setPeerStatus(err?.message || t('chat.loadPeersFailed'))
       return [] as Peer[]
     }
   }
@@ -162,7 +189,7 @@ export default function Chat() {
       await loadPeers()
     }
     load()
-    const timer = window.setInterval(loadPeers, 20000)
+    const timer = window.setInterval(() => { void loadPeers(false) }, 20000)
     return () => {
       mounted = false
       window.clearInterval(timer)
@@ -175,10 +202,26 @@ export default function Chat() {
       try {
         const res = await getChatInbox()
         if (!mounted) return
-        setInboxItems(Array.isArray(res?.items) ? res.items : [])
+        const items = (Array.isArray(res?.items) ? res.items : []) as ChatInboxItem[]
+        setInboxItems((current) => JSON.stringify(current) === JSON.stringify(items) ? current : items)
+
+        const localReadMap = readLocalChatReadMap()
+        const mergedReadMap = { ...readAtRef.current }
+        for (const item of items) {
+          const peerPubkey = item.peer_pubkey?.trim()
+          if (!peerPubkey) continue
+          const serverReadAt = parseChatTimestamp(item.last_read_at)
+          const localReadAt = localReadMap[peerPubkey] || 0
+          const lastInboundAt = parseChatTimestamp(item.last_inbound_at)
+          mergedReadMap[peerPubkey] = Math.max(mergedReadMap[peerPubkey] || 0, serverReadAt, localReadAt)
+          if (localReadAt >= lastInboundAt && serverReadAt < lastInboundAt) {
+            void persistRead(peerPubkey, lastInboundAt, true)
+          }
+        }
+        readAtRef.current = mergedReadMap
+        setLastReadMap((current) => JSON.stringify(current) === JSON.stringify(mergedReadMap) ? current : mergedReadMap)
       } catch {
-        if (!mounted) return
-        setInboxItems([])
+        // Preserve the current list during a transient polling failure.
       }
     }
     loadInbox()
@@ -195,25 +238,34 @@ export default function Chat() {
       setMessageStatus('')
       return
     }
+    setMessages([])
+    setMessageStatus('')
 
     let mounted = true
-    const load = async () => {
-      setLoadingMessages(true)
+    const load = async (showLoading: boolean) => {
+      if (showLoading) setLoadingMessages(true)
       try {
         const res = await getChatMessages(selectedPeer.pub_key)
         if (!mounted) return
-        setMessages(Array.isArray(res?.items) ? res.items : [])
+        const items = (Array.isArray(res?.items) ? res.items : []) as ChatMessage[]
+        setMessages((current) => JSON.stringify(current) === JSON.stringify(items) ? current : items)
         setMessageStatus('')
+        let latestInboundAt = 0
+        for (const item of items) {
+          if (item.direction === 'in') {
+            latestInboundAt = Math.max(latestInboundAt, parseChatTimestamp(item.timestamp))
+          }
+        }
+        if (latestInboundAt) void persistRead(selectedPeer.pub_key, latestInboundAt)
       } catch (err: any) {
         if (!mounted) return
-        setMessageStatus(err?.message || t('chat.loadMessagesFailed'))
+        if (showLoading) setMessageStatus(err?.message || t('chat.loadMessagesFailed'))
       } finally {
-        if (!mounted) return
-        setLoadingMessages(false)
+        if (mounted && showLoading) setLoadingMessages(false)
       }
     }
-    load()
-    const timer = window.setInterval(load, 12000)
+    void load(true)
+    const timer = window.setInterval(() => { void load(false) }, 12000)
     return () => {
       mounted = false
       window.clearInterval(timer)
@@ -221,30 +273,13 @@ export default function Chat() {
   }, [selectedPeer?.pub_key, t])
 
   useEffect(() => {
-    if (!selectedPeer) return
-    let latest = 0
-    for (const msg of messages) {
-      if (msg.direction !== 'in') continue
-      const time = new Date(msg.timestamp).getTime()
-      if (!Number.isNaN(time)) {
-        latest = Math.max(latest, time)
-      }
-    }
-    if (!latest) return
-    if ((lastReadMap[selectedPeer.pub_key] || 0) >= latest) return
-    const next = { ...lastReadMap, [selectedPeer.pub_key]: latest }
-    setLastReadMap(next)
-    try {
-      localStorage.setItem(lastReadKey, JSON.stringify(next))
-    } catch {
-      // ignore storage errors
-    }
-  }, [messages, selectedPeer?.pub_key, lastReadMap])
-
-  useEffect(() => {
-    if (!bottomRef.current) return
-    bottomRef.current.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    const container = messagesScrollRef.current
+    if (!container || !stickToBottomRef.current) return
+    const frame = window.requestAnimationFrame(() => {
+      container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [messages, selectedPeer?.pub_key])
 
   const onlinePeerSet = useMemo(() => new Set(peers.map((peer) => peer.pub_key)), [peers])
 
@@ -254,6 +289,7 @@ export default function Chat() {
         const peerPubkey = item.peer_pubkey.trim()
         const lastInboundAt = new Date(item.last_inbound_at).getTime()
         const rawLastMessageAt = item.last_message_at ? new Date(item.last_message_at).getTime() : lastInboundAt
+        const lastReadAt = parseChatTimestamp(item.last_read_at)
         if (!peerPubkey || Number.isNaN(lastInboundAt) || !lastInboundAt) {
           return null
         }
@@ -264,6 +300,7 @@ export default function Chat() {
           last_message_at: !Number.isNaN(rawLastMessageAt) && rawLastMessageAt ? rawLastMessageAt : lastInboundAt,
           last_message: (item.last_message || '').trim(),
           last_message_direction: item.last_message_direction,
+          last_read_at: lastReadAt,
           identity_source: item.identity_source,
           sender_verified: item.sender_verified,
         } as ParsedInboxItem
@@ -284,28 +321,37 @@ export default function Chat() {
     const onlineMatch = peers.find((peer) => peer.pub_key === selectedPeer.pub_key)
     const inboxMatch = inboxByPeer.get(selectedPeer.pub_key)
     if (onlineMatch) {
-      setSelectedPeer({
-        ...onlineMatch,
-        last_inbound_at: inboxMatch?.last_inbound_at,
-        last_message_at: inboxMatch?.last_message_at,
-        last_message: inboxMatch?.last_message,
-        last_message_direction: inboxMatch?.last_message_direction,
-        identity_source: inboxMatch?.identity_source,
-        sender_verified: inboxMatch?.sender_verified,
+      setSelectedPeer((current) => {
+        const next: ChatPeer = {
+          ...onlineMatch,
+          last_inbound_at: inboxMatch?.last_inbound_at,
+          last_message_at: inboxMatch?.last_message_at,
+          last_message: inboxMatch?.last_message,
+          last_message_direction: inboxMatch?.last_message_direction,
+          last_read_at: inboxMatch?.last_read_at ? new Date(inboxMatch.last_read_at).toISOString() : undefined,
+          identity_source: inboxMatch?.identity_source,
+          sender_verified: inboxMatch?.sender_verified,
+        }
+        return current && JSON.stringify(current) === JSON.stringify(next) ? current : next
       })
       return
     }
     if (inboxMatch) {
-      setSelectedPeer((current) => current ? {
-        ...current,
-        alias: current.alias || inboxMatch.peer_alias,
-        last_inbound_at: inboxMatch.last_inbound_at,
-        last_message_at: inboxMatch.last_message_at,
-        last_message: inboxMatch.last_message,
-        last_message_direction: inboxMatch.last_message_direction,
-        identity_source: inboxMatch.identity_source,
-        sender_verified: inboxMatch.sender_verified,
-      } : current)
+      setSelectedPeer((current) => {
+        if (!current) return current
+        const next: ChatPeer = {
+          ...current,
+          alias: current.alias || inboxMatch.peer_alias,
+          last_inbound_at: inboxMatch.last_inbound_at,
+          last_message_at: inboxMatch.last_message_at,
+          last_message: inboxMatch.last_message,
+          last_message_direction: inboxMatch.last_message_direction,
+          last_read_at: inboxMatch.last_read_at ? new Date(inboxMatch.last_read_at).toISOString() : undefined,
+          identity_source: inboxMatch.identity_source,
+          sender_verified: inboxMatch.sender_verified,
+        }
+        return JSON.stringify(current) === JSON.stringify(next) ? current : next
+      })
     }
   }, [inboxByPeer, peers, selectedPeer?.pub_key])
 
@@ -336,6 +382,7 @@ export default function Chat() {
         last_message_at: inbox?.last_message_at,
         last_message: inbox?.last_message,
         last_message_direction: inbox?.last_message_direction,
+        last_read_at: inbox?.last_read_at ? new Date(inbox.last_read_at).toISOString() : undefined,
         identity_source: inbox?.identity_source,
         sender_verified: inbox?.sender_verified,
       } as ChatPeer
@@ -368,6 +415,7 @@ export default function Chat() {
         last_message_at: item.last_message_at,
         last_message: item.last_message,
         last_message_direction: item.last_message_direction,
+        last_read_at: item.last_read_at ? new Date(item.last_read_at).toISOString() : undefined,
         identity_source: item.identity_source,
         sender_verified: item.sender_verified,
       } satisfies ChatPeer))
@@ -411,6 +459,19 @@ export default function Chat() {
   const overLimit = draft.trim().length > messageLimit
   const amountSat = parsePositiveSatAmount(amountSatInput)
   const canSend = Boolean(selectedPeer && selectedOnline && draft.trim() && amountSat && !overLimit && !sending)
+
+  const handleSelectPeer = (peer: ChatPeer) => {
+    stickToBottomRef.current = true
+    setSelectedPeer(peer)
+    if (peer.last_inbound_at) void persistRead(peer.pub_key, peer.last_inbound_at)
+  }
+
+  const handleMobileBack = () => {
+    setSelectedPeer(null)
+    setMessages([])
+    setMessageStatus('')
+    stickToBottomRef.current = true
+  }
 
   const handleSend = async () => {
     if (!selectedPeer || !canSend || !amountSat) return
@@ -458,12 +519,13 @@ export default function Chat() {
         const match = nextPeers.find((peer) => peer.pub_key.toLowerCase() === pubkey)
         const inbox = inboxByPeer.get(pubkey)
         if (match) {
-          setSelectedPeer({
+          handleSelectPeer({
             ...match,
             last_inbound_at: inbox?.last_inbound_at,
             last_message_at: inbox?.last_message_at,
             last_message: inbox?.last_message,
             last_message_direction: inbox?.last_message_direction,
+            last_read_at: inbox?.last_read_at ? new Date(inbox.last_read_at).toISOString() : undefined,
           })
         }
       }
@@ -480,14 +542,14 @@ export default function Chat() {
   }
 
   return (
-    <section className="space-y-6">
-      <div className="section-card">
+    <section className="space-y-3 sm:space-y-6">
+      <div className="section-card hidden sm:block">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-2xl font-semibold">{t('chat.title')}</h2>
             <p className="text-fog/60">{t('chat.subtitle')}</p>
           </div>
-          <button className="btn-secondary text-xs px-3 py-2" onClick={loadPeers}>
+          <button className="btn-secondary text-xs px-3 py-2" onClick={() => { void loadPeers(true) }}>
             {t('common.refresh')}
           </button>
         </div>
@@ -495,7 +557,7 @@ export default function Chat() {
       </div>
 
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(320px,350px)_minmax(0,1fr)] xl:grid-cols-[minmax(340px,370px)_minmax(0,1fr)]">
-        <div className="section-card flex min-h-0 flex-col gap-4 lg:h-[720px]">
+        <div className={`section-card min-h-0 flex-col gap-4 h-[calc(100dvh-8rem)] sm:h-[calc(100dvh-15rem)] sm:min-h-[520px] lg:flex lg:h-[720px] ${selectedPeer ? 'hidden' : 'flex'}`}>
           <div className="space-y-3">
             <button
               type="button"
@@ -560,7 +622,7 @@ export default function Chat() {
                     <button
                       key={peer.pub_key}
                       type="button"
-                      onClick={() => setSelectedPeer(peer)}
+                      onClick={() => handleSelectPeer(peer)}
                       className={`w-full text-left rounded-2xl border px-4 py-3 transition ${
                         selectedPeer?.pub_key === peer.pub_key
                           ? 'border-glow/40 bg-glow/10'
@@ -601,7 +663,7 @@ export default function Chat() {
                       <button
                         key={peer.pub_key}
                         type="button"
-                        onClick={() => setSelectedPeer(peer)}
+                        onClick={() => handleSelectPeer(peer)}
                         className={`w-full text-left rounded-2xl border px-4 py-3 transition ${
                           selectedPeer?.pub_key === peer.pub_key
                             ? 'border-glow/40 bg-glow/10'
@@ -638,29 +700,41 @@ export default function Chat() {
           )}
         </div>
 
-        <div className="section-card min-w-0 flex min-h-0 flex-col gap-4 lg:h-[720px]">
+        <div className={`section-card min-w-0 min-h-0 flex-col gap-3 h-[calc(100dvh-8rem)] sm:h-[calc(100dvh-15rem)] sm:min-h-[520px] lg:flex lg:h-[720px] lg:gap-4 ${selectedPeer ? 'flex' : 'hidden'}`}>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h3 className="text-lg font-semibold">
-                {selectedPeer
-                  ? t('chat.chatWith', { peer: selectedPeer.alias || selectedPeer.pub_key })
-                  : t('chat.selectPeer')}
-              </h3>
-              <p className="text-xs text-fog/60">
-                {selectedPeer
-                  ? (selectedOnline ? t('chat.peerOnline') : t('chat.peerOffline'))
-                  : t('chat.choosePeer')}
-              </p>
-              {selectedPeer?.last_message_direction === 'in' && selectedPeer.identity_source && selectedPeer.identity_source !== 'signed_sender' && (
-                <p className="mt-1 text-[11px] text-fog/50">
-                  {selectedPeer.identity_source === 'incoming_channel'
-                    ? t('chat.senderFromIncomingChannel')
-                    : t('chat.senderUnverified')}
-                </p>
+            <div className="flex min-w-0 items-start gap-3">
+              {selectedPeer && (
+                <button
+                  type="button"
+                  className="btn-secondary shrink-0 px-3 py-2 text-xs lg:hidden"
+                  onClick={handleMobileBack}
+                  aria-label={t('chat.backToChats')}
+                >
+                  &larr;
+                </button>
               )}
+              <div className="min-w-0">
+                <h3 className="break-all text-lg font-semibold sm:break-normal">
+                  {selectedPeer
+                    ? t('chat.chatWith', { peer: selectedPeer.alias || selectedPeer.pub_key })
+                    : t('chat.selectPeer')}
+                </h3>
+                <p className="text-xs text-fog/60">
+                  {selectedPeer
+                    ? (selectedOnline ? t('chat.peerOnline') : t('chat.peerOffline'))
+                    : t('chat.choosePeer')}
+                </p>
+                {selectedPeer?.last_message_direction === 'in' && selectedPeer.identity_source && selectedPeer.identity_source !== 'signed_sender' && (
+                  <p className="mt-1 text-[11px] text-fog/50">
+                    {selectedPeer.identity_source === 'incoming_channel'
+                      ? t('chat.senderFromIncomingChannel')
+                      : t('chat.senderUnverified')}
+                  </p>
+                )}
+              </div>
             </div>
             {selectedPeer && (
-              <span className="text-xs text-fog/60 break-all">{selectedPeer.pub_key}</span>
+              <span className="hidden max-w-[42%] text-xs text-fog/60 break-all sm:block">{selectedPeer.pub_key}</span>
             )}
           </div>
 
@@ -675,15 +749,22 @@ export default function Chat() {
 
           <p className="text-xs text-fog/60">{t('chat.keysendCost')}</p>
 
-          <div className="flex-1 min-h-0 overflow-y-auto space-y-3 pr-2">
-            {loadingMessages && <p className="text-sm text-fog/60">{t('chat.loadingMessages')}</p>}
+          <div
+            ref={messagesScrollRef}
+            className="flex-1 min-h-0 overflow-y-auto space-y-3 pr-1 sm:pr-2"
+            onScroll={(event) => {
+              const element = event.currentTarget
+              stickToBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 96
+            }}
+          >
+            {loadingMessages && !messages.length && <p className="text-sm text-fog/60">{t('chat.loadingMessages')}</p>}
             {!loadingMessages && !messages.length && (
               <p className="text-sm text-fog/60">{t('chat.noMessages')}</p>
             )}
             {messages.map((msg, idx) => (
               <div key={`${msg.payment_hash || idx}`} className={`flex ${msg.direction === 'out' ? 'justify-end' : 'justify-start'}`}>
                 <div
-                  className={`max-w-[75%] rounded-2xl border px-4 py-3 text-sm ${
+                  className={`max-w-[90%] rounded-2xl border px-4 py-3 text-sm sm:max-w-[75%] ${
                     msg.direction === 'out'
                       ? 'border-glow/30 bg-glow/20 text-fog'
                       : 'border-white/10 bg-white/10 text-fog'
@@ -703,14 +784,13 @@ export default function Chat() {
                 </div>
               </div>
             ))}
-            <div ref={bottomRef} />
           </div>
 
           {messageStatus && <p className="text-sm text-brass">{messageStatus}</p>}
 
           <div className="space-y-3">
             <textarea
-              className="input-field min-h-[96px]"
+              className="input-field min-h-[72px] sm:min-h-[96px]"
               placeholder={selectedPeer ? t('chat.writeMessage') : t('chat.selectPeerToChat')}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
@@ -718,11 +798,11 @@ export default function Chat() {
             />
             <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-fog/60">
               <span>{draft.trim().length}/{messageLimit}</span>
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <label className="flex items-center gap-2">
+              <div className="flex w-full items-center justify-end gap-2 sm:w-auto sm:flex-wrap">
+                <label className="flex min-w-0 flex-1 items-center gap-2 sm:flex-none">
                   <span>{t('chat.amountSat')}</span>
                   <input
-                    className="input-field !w-28 px-3 py-2 text-sm"
+                    className="input-field !w-full min-w-0 px-3 py-2 text-sm sm:!w-28"
                     type="number"
                     min="1"
                     step="1"
@@ -733,7 +813,7 @@ export default function Chat() {
                     aria-label={t('chat.amountSat')}
                   />
                 </label>
-                <button className="btn-primary" onClick={handleSend} disabled={!canSend}>
+                <button className="btn-primary shrink-0" onClick={handleSend} disabled={!canSend}>
                   {sending ? t('chat.sending') : t('chat.sendAmount', { amount: amountSat || defaultAmountSat })}
                 </button>
               </div>

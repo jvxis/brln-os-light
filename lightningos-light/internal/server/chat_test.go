@@ -1,6 +1,7 @@
 package server
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +9,51 @@ import (
 	"lightningos-light/internal/lndclient"
 	"lightningos-light/lnrpc"
 )
+
+func TestChatFileReadStatePersistsAcrossInstances(t *testing.T) {
+	dir := t.TempDir()
+	messagesPath := filepath.Join(dir, "messages.jsonl")
+	cursorPath := filepath.Join(dir, "cursor.txt")
+	readStatePath := filepath.Join(dir, "read-state.json")
+	peerPubkey := "020000000000000000000000000000000000000000000000000000000000000001"
+	receivedAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
+
+	store := newChatFileStore(messagesPath, cursorPath, readStatePath)
+	if err := store.append(ChatMessage{
+		Timestamp:  receivedAt,
+		PeerPubkey: peerPubkey,
+		Direction:  "in",
+		Message:    "hello",
+		Status:     "received",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := store.inbox()
+	if err != nil || len(items) != 1 {
+		t.Fatalf("initial inbox items=%d err=%v", len(items), err)
+	}
+	if !items[0].LastReadAt.IsZero() {
+		t.Fatalf("new conversation unexpectedly read at %s", items[0].LastReadAt)
+	}
+
+	readAt, err := store.markRead(peerPubkey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !readAt.Equal(receivedAt) {
+		t.Fatalf("read timestamp=%s want=%s", readAt, receivedAt)
+	}
+
+	reloaded := newChatFileStore(messagesPath, cursorPath, readStatePath)
+	items, err = reloaded.inbox()
+	if err != nil || len(items) != 1 {
+		t.Fatalf("reloaded inbox items=%d err=%v", len(items), err)
+	}
+	if !items[0].LastReadAt.Equal(receivedAt) {
+		t.Fatalf("persisted read timestamp=%s want=%s", items[0].LastReadAt, receivedAt)
+	}
+}
 
 func TestBuildSentKeysendNotificationIncludesMessage(t *testing.T) {
 	now := time.Unix(1710000000, 0).UTC()

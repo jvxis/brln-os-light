@@ -27,6 +27,7 @@ import (
 const (
 	chatMessagesPath        = "/var/lib/lightningos/chat/messages.jsonl"
 	chatCursorPath          = "/var/lib/lightningos/chat/cursor.txt"
+	chatReadStatePath       = "/var/lib/lightningos/chat/read-state.json"
 	chatRetentionDays       = 30
 	chatCleanupInterval     = 6 * time.Hour
 	chatMessageLimitDefault = 200
@@ -58,6 +59,7 @@ type ChatInboxItem struct {
 	LastMessageDirection string    `json:"last_message_direction,omitempty"`
 	IdentitySource       string    `json:"identity_source,omitempty"`
 	SenderVerified       bool      `json:"sender_verified,omitempty"`
+	LastReadAt           time.Time `json:"last_read_at,omitempty"`
 }
 
 type ChatService struct {
@@ -76,7 +78,7 @@ func NewChatService(lnd *lndclient.Client, logger *log.Logger) *ChatService {
 	return &ChatService{
 		lnd:    lnd,
 		logger: logger,
-		legacy: newChatFileStore(chatMessagesPath, chatCursorPath),
+		legacy: newChatFileStore(chatMessagesPath, chatCursorPath, chatReadStatePath),
 	}
 }
 
@@ -147,6 +149,49 @@ func (c *ChatService) Inbox() ([]ChatInboxItem, error) {
 	}
 
 	return c.legacy.inbox()
+}
+
+// MarkRead persists the latest inbound message timestamp for a conversation.
+// The state lives on the node (Postgres plus the legacy file fallback), so it
+// follows the administrator across browsers and survives manager restarts.
+func (c *ChatService) MarkRead(peerPubkey string) (time.Time, error) {
+	peerPubkey = strings.TrimSpace(peerPubkey)
+	if peerPubkey == "" {
+		return time.Time{}, errors.New("peer_pubkey required")
+	}
+
+	var (
+		latest      time.Time
+		errs        []string
+		dbWriteFail bool
+	)
+	if db := c.dbPool(); db != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		readAt, err := c.dbMarkRead(ctx, db, peerPubkey)
+		cancel()
+		if err != nil {
+			errs = append(errs, "db: "+err.Error())
+			dbWriteFail = true
+			c.logger.Printf("chat: db mark read fallback: %v", err)
+		} else if readAt.After(latest) {
+			latest = readAt
+		}
+	}
+
+	readAt, err := c.legacy.markRead(peerPubkey)
+	if err != nil {
+		errs = append(errs, "file: "+err.Error())
+	} else if readAt.After(latest) {
+		latest = readAt
+	}
+
+	// When Postgres is attached it is the source used by Inbox. Surface a DB
+	// write failure even if the file mirror succeeded so clients retry instead
+	// of treating a browser-only fallback as globally persisted state.
+	if dbWriteFail || (latest.IsZero() && len(errs) > 0) {
+		return time.Time{}, errors.New(strings.Join(errs, "; "))
+	}
+	return latest, nil
 }
 
 func (c *ChatService) SendMessage(ctx context.Context, peerPubkey string, amountSat int64, message string) (ChatMessage, error) {
@@ -451,6 +496,12 @@ create table if not exists chat_state (
   value text not null,
   updated_at timestamptz not null default now()
 );
+
+create table if not exists chat_read_state (
+  peer_pubkey text primary key,
+  last_read_at timestamptz not null,
+  updated_at timestamptz not null default now()
+);
 `)
 	return err
 }
@@ -626,10 +677,12 @@ select
   coalesce(msg.last_message, '') as last_message,
   coalesce(msg.last_message_direction, '') as last_message_direction,
   coalesce(msg.identity_source, '') as identity_source,
-  coalesce(msg.sender_verified, false) as sender_verified
+  coalesce(msg.sender_verified, false) as sender_verified,
+  coalesce(read_state.last_read_at, 'epoch'::timestamptz) as last_read_at
 from latest_inbound inbound
 left join latest_message msg on msg.peer_pubkey = inbound.peer_pubkey
 left join latest_alias alias on alias.peer_pubkey = inbound.peer_pubkey
+left join chat_read_state read_state on read_state.peer_pubkey = inbound.peer_pubkey
 order by coalesce(msg.last_message_at, inbound.last_inbound_at) desc, inbound.peer_pubkey asc
 `)
 	if err != nil {
@@ -649,6 +702,7 @@ order by coalesce(msg.last_message_at, inbound.last_inbound_at) desc, inbound.pe
 			&item.LastMessageDirection,
 			&item.IdentitySource,
 			&item.SenderVerified,
+			&item.LastReadAt,
 		); err != nil {
 			return nil, err
 		}
@@ -660,6 +714,31 @@ order by coalesce(msg.last_message_at, inbound.last_inbound_at) desc, inbound.pe
 		return nil, err
 	}
 	return items, nil
+}
+
+func (c *ChatService) dbMarkRead(ctx context.Context, db *pgxpool.Pool, peerPubkey string) (time.Time, error) {
+	var readAt time.Time
+	err := db.QueryRow(ctx, `
+with latest_inbound as (
+  select max(timestamp) as last_read_at
+  from chat_messages
+  where peer_pubkey = $1
+    and direction = 'in'
+    and timestamp >= now() - interval '30 day'
+)
+insert into chat_read_state (peer_pubkey, last_read_at, updated_at)
+select $1, last_read_at, now()
+from latest_inbound
+where last_read_at is not null
+on conflict (peer_pubkey) do update
+set last_read_at = greatest(chat_read_state.last_read_at, excluded.last_read_at),
+    updated_at = now()
+returning last_read_at
+`, peerPubkey).Scan(&readAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, nil
+	}
+	return readAt, err
 }
 
 func (c *ChatService) dbLoadCursor(ctx context.Context, db *pgxpool.Pool) (uint64, error) {
@@ -843,16 +922,18 @@ func chatPreview(message string) string {
 }
 
 type chatFileStore struct {
-	path        string
-	cursorPath  string
-	mu          sync.Mutex
-	lastCleanup time.Time
+	path          string
+	cursorPath    string
+	readStatePath string
+	mu            sync.Mutex
+	lastCleanup   time.Time
 }
 
-func newChatFileStore(path string, cursorPath string) *chatFileStore {
+func newChatFileStore(path string, cursorPath string, readStatePath string) *chatFileStore {
 	return &chatFileStore{
-		path:       path,
-		cursorPath: cursorPath,
+		path:          path,
+		cursorPath:    cursorPath,
+		readStatePath: readStatePath,
 	}
 }
 
@@ -919,6 +1000,7 @@ func (s *chatFileStore) inbox() ([]ChatInboxItem, error) {
 	if err != nil {
 		return nil, err
 	}
+	readState := s.readStateLocked()
 
 	latestInbound := map[string]time.Time{}
 	latestMessage := map[string]ChatInboxItem{}
@@ -956,6 +1038,7 @@ func (s *chatFileStore) inbox() ([]ChatInboxItem, error) {
 		item.PeerPubkey = peer
 		item.LastInboundAt = inboundAt
 		item.PeerAlias = chatFirstNonEmpty(latestAlias[peer], item.PeerAlias)
+		item.LastReadAt = readState[peer]
 		items = append(items, item)
 	}
 
@@ -966,6 +1049,81 @@ func (s *chatFileStore) inbox() ([]ChatInboxItem, error) {
 		return items[i].LastMessageAt.After(items[j].LastMessageAt)
 	})
 	return items, nil
+}
+
+func (s *chatFileStore) markRead(peerPubkey string) (time.Time, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	peerPubkey = strings.TrimSpace(peerPubkey)
+	if peerPubkey == "" {
+		return time.Time{}, errors.New("peer_pubkey required")
+	}
+
+	all, err := s.readRetainedLocked()
+	if err != nil {
+		return time.Time{}, err
+	}
+	var latest time.Time
+	for _, msg := range all {
+		if msg.Direction == "in" && msg.PeerPubkey == peerPubkey && msg.Timestamp.After(latest) {
+			latest = msg.Timestamp
+		}
+	}
+	if latest.IsZero() {
+		return time.Time{}, nil
+	}
+
+	state := s.readStateLocked()
+	if current := state[peerPubkey]; current.After(latest) {
+		latest = current
+	} else {
+		state[peerPubkey] = latest
+		if err := s.writeStateLocked(state); err != nil {
+			return time.Time{}, err
+		}
+	}
+	return latest, nil
+}
+
+func (s *chatFileStore) readStateLocked() map[string]time.Time {
+	state := map[string]time.Time{}
+	raw, err := os.ReadFile(s.readStatePath)
+	if err != nil {
+		return state
+	}
+	var encoded map[string]string
+	if json.Unmarshal(raw, &encoded) != nil {
+		return state
+	}
+	for peerPubkey, value := range encoded {
+		parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(value))
+		if err == nil && !parsed.IsZero() {
+			state[strings.TrimSpace(peerPubkey)] = parsed.UTC()
+		}
+	}
+	return state
+}
+
+func (s *chatFileStore) writeStateLocked(state map[string]time.Time) error {
+	if err := s.ensureDir(); err != nil {
+		return err
+	}
+	encoded := make(map[string]string, len(state))
+	for peerPubkey, readAt := range state {
+		if peerPubkey != "" && !readAt.IsZero() {
+			encoded[peerPubkey] = readAt.UTC().Format(time.RFC3339Nano)
+		}
+	}
+	raw, err := json.Marshal(encoded)
+	if err != nil {
+		return err
+	}
+	tmpPath := s.readStatePath + ".tmp"
+	if err := os.WriteFile(tmpPath, append(raw, '\n'), 0640); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, s.readStatePath)
 }
 
 func (s *chatFileStore) allRetained() ([]ChatMessage, error) {

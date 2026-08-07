@@ -3286,6 +3286,34 @@ func (s *Server) handleChatInbox(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
+func (s *Server) handleChatRead(w http.ResponseWriter, r *http.Request) {
+	if s.chat == nil {
+		writeError(w, http.StatusServiceUnavailable, "chat unavailable")
+		return
+	}
+	var req struct {
+		PeerPubkey string `json:"peer_pubkey"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	peerPubkey := strings.TrimSpace(req.PeerPubkey)
+	if !isValidPubkeyHex(peerPubkey) {
+		writeError(w, http.StatusBadRequest, "invalid peer_pubkey")
+		return
+	}
+	readAt, err := s.chat.MarkRead(peerPubkey)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to persist chat read state")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"peer_pubkey":  peerPubkey,
+		"last_read_at": readAt,
+	})
+}
+
 func (s *Server) handleChatSend(w http.ResponseWriter, r *http.Request) {
 	if s.chat == nil {
 		writeError(w, http.StatusServiceUnavailable, "chat unavailable")

@@ -2028,6 +2028,7 @@
     }
   },
   "chat": {
+    "backToChats": "Back to chats",
     "chatWith": "Chat with {{peer}}",
     "choosePeer": "Choose an online peer to start.",
     "keysendCost": "Keysend chat defaults to 1 sat, but you can send any positive amount + routing fees. Messages expire after 30 days.",

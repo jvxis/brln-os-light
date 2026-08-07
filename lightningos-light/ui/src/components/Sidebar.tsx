@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getChatInbox } from '../api'
+import { getChatInbox, markChatRead } from '../api'
 import clsx from '../utils/clsx'
+import { chatReadEvent, effectiveChatReadAt, parseChatTimestamp, readLocalChatReadMap } from '../utils/chatRead'
 
 type RouteItem = {
   key: string
@@ -28,7 +29,6 @@ type SidebarProps = {
   onClose: () => void
 }
 
-const lastReadKey = 'chat:lastRead'
 const openGroupsKey = 'los-menu-open-groups'
 const menuGroupKeys: MenuGroupKey[] = ['lightning', 'network', 'apps', 'node', 'system']
 
@@ -42,20 +42,6 @@ const readOpenGroups = () => {
   } catch {
     return new Set<MenuGroupKey>()
   }
-}
-
-const readLastReadMap = () => {
-  try {
-    const raw = localStorage.getItem(lastReadKey)
-    if (!raw) return {}
-    const parsed = JSON.parse(raw)
-    if (parsed && typeof parsed === 'object') {
-      return parsed as Record<string, number>
-    }
-  } catch {
-    // ignore storage errors
-  }
-  return {}
 }
 
 export default function Sidebar({
@@ -74,6 +60,7 @@ export default function Sidebar({
   const [editing, setEditing] = useState(false)
   const [draftConfig, setDraftConfig] = useState<MenuConfig>(menuConfig)
   const [openGroups, setOpenGroups] = useState<Set<MenuGroupKey>>(readOpenGroups)
+  const readMigrationInFlightRef = useRef(new Set<string>())
 
   useEffect(() => {
     let active = true
@@ -101,30 +88,43 @@ export default function Sidebar({
         const items = Array.isArray(inboxRes?.items)
           ? inboxRes.items
           : []
-        const lastReadMap = readLastReadMap()
+        const lastReadMap = readLocalChatReadMap()
         const unread = new Set<string>()
         for (const item of items) {
           const peerKey = typeof item?.peer_pubkey === 'string' ? item.peer_pubkey : ''
           if (!peerKey) continue
-          const ts = new Date(item.last_inbound_at).getTime()
-          if (!ts || Number.isNaN(ts)) continue
-          const lastRead = lastReadMap[peerKey] || 0
+          const ts = parseChatTimestamp(item.last_inbound_at)
+          if (!ts) continue
+          const lastRead = effectiveChatReadAt(item, lastReadMap)
+          const serverRead = parseChatTimestamp(item.last_read_at)
+          const localRead = lastReadMap[peerKey] || 0
+          if (localRead >= ts && serverRead < ts && !readMigrationInFlightRef.current.has(peerKey)) {
+            readMigrationInFlightRef.current.add(peerKey)
+            void markChatRead(peerKey)
+              .catch(() => undefined)
+              .finally(() => {
+                readMigrationInFlightRef.current.delete(peerKey)
+              })
+          }
           if (ts > lastRead) {
             unread.add(peerKey)
           }
         }
         setUnreadChats(unread.size)
       } catch {
-        if (!mounted) return
-        setUnreadChats(0)
+        // Keep the last known badge during a transient polling failure.
       }
     }
 
     loadUnread()
     const timer = window.setInterval(loadUnread, 12000)
+    window.addEventListener(chatReadEvent, loadUnread)
+    window.addEventListener('storage', loadUnread)
     return () => {
       mounted = false
       window.clearInterval(timer)
+      window.removeEventListener(chatReadEvent, loadUnread)
+      window.removeEventListener('storage', loadUnread)
     }
   }, [])
 

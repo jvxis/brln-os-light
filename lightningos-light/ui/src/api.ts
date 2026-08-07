@@ -29,6 +29,18 @@ export type AuthState = {
   recovery_token_issued?: boolean
 }
 
+export type TLSAccessInfo = {
+  available: boolean
+  local_name?: string
+  preferred_url?: string
+  ip_urls?: string[]
+  ca_name?: string
+  ca_fingerprint_sha256?: string
+  ca_download_url?: string
+  windows_installer_url?: string
+  server_expires_at?: string
+}
+
 export type MenuPreferences = {
   version: number
   favorites: string[]
@@ -99,6 +111,7 @@ const buildQuery = (params?: Record<string, string | number | boolean | undefine
 
 export const getHealth = () => request('/api/health')
 export const getSystemCheck = () => request('/api/system-check')
+export const getTLSAccessInfo = () => request('/api/tls/info') as Promise<TLSAccessInfo>
 export const getAuthState = async () => {
   const data = await request('/api/auth/state') as AuthState
   if (data?.authenticated && data?.csrf_token) {

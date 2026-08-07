@@ -67,7 +67,7 @@ The installer provisions everything needed on a clean Ubuntu box:
 - LightningOS Manager binary (compiled locally)
 - UI build (compiled locally)
 - systemd services and config templates
-- self-signed TLS cert
+- node-local CA, LAN TLS certificate, and automatic `.local` discovery
 
 The familiar installer entry point automatically switches to the latest published LightningOS release before installation:
 ```bash
@@ -84,7 +84,7 @@ sudo ./install.sh
 
 For development or an offline install of the exact local checkout, use `sudo LIGHTNINGOS_INSTALL_SOURCE=checkout ./install.sh`.
 
-When UFW is already installed and active, the installer automatically detects which local IPv4 network may access the manager (for example, `192.168.1.0/24`). It removes the old public `8443/tcp` rule and also allows access through `tailscale0` when Tailscale is available. The installer deliberately does not activate UFW on an existing host because doing so could block SSH or unrelated node services; an inactive or missing UFW therefore requires an equivalent LAN/VPN firewall configured by the operator.
+When UFW is already installed and active, the installer automatically detects which local IPv4 network may access the manager (for example, `192.168.1.0/24`). It removes the old public `8443/tcp` rule, allows LAN-only mDNS discovery on `5353/udp`, and also allows access through `tailscale0` when Tailscale is available. The installer deliberately does not activate UFW on an existing host because doing so could block SSH or unrelated node services; an inactive or missing UFW therefore requires an equivalent LAN/VPN firewall configured by the operator.
 
 ### Install via curl (bootstrap)
 This resolves the latest published LightningOS release, checks out its exact tag, then runs `lightningos-light/install.sh`.
@@ -141,8 +141,15 @@ sudo ./install_existing.sh
 sudo ./install_existing_pi.sh
 ```
 
-Access the UI from another machine on the same LAN:
-`https://<SERVER_LAN_IP>:8443`
+Access the UI from another machine on the same LAN. The installer prints both addresses:
+
+- Preferred: `https://<SERVER_HOSTNAME>.local:8443`
+- IP fallback: `https://<SERVER_LAN_IP>:8443`
+
+LightningOS creates a private CA unique to the node and a certificate valid for
+both addresses. On the first device access, use **Trust this device** on the
+login screen to download the Windows trust installer or the public CA for
+another operating system. The CA private key never leaves the node.
 
 ## First secure access
 - Login protection is enabled by default on new installs.

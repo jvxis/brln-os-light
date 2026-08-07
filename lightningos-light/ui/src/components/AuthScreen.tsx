@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { type AuthState, loginAuth, recoverAuth, setupAuth } from '../api'
+import { type AuthState, type TLSAccessInfo, getTLSAccessInfo, loginAuth, recoverAuth, setupAuth } from '../api'
 import brlnOsLogo from '../assets/brln-os.png'
 
 type AuthScreenProps = {
@@ -23,6 +23,8 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
   const [setupCommandCopied, setSetupCommandCopied] = useState(false)
   const [appVersion, setAppVersion] = useState('')
   const [featurePage, setFeaturePage] = useState(0)
+  const [tlsAccess, setTLSAccess] = useState<TLSAccessInfo | null>(null)
+  const [trustOpen, setTrustOpen] = useState(false)
 
   useEffect(() => {
     if (state.setup_required) {
@@ -52,6 +54,27 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
       mounted = false
     }
   }, [])
+
+  useEffect(() => {
+    let mounted = true
+    getTLSAccessInfo()
+      .then((info) => {
+        if (mounted && info?.available) setTLSAccess(info)
+      })
+      .catch(() => undefined)
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!trustOpen) return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setTrustOpen(false)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [trustOpen])
 
   useEffect(() => {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
@@ -244,10 +267,17 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
                   </button>
                 </div>
               )}
-              <span className="auth-secure-pill">
-                <span aria-hidden="true" />
-                {t('auth.secureSession')}
-              </span>
+              <div className="auth-panel__security-actions">
+                <span className="auth-secure-pill">
+                  <span aria-hidden="true" />
+                  {t('auth.secureSession')}
+                </span>
+                {tlsAccess && (
+                  <button type="button" className="auth-trust-button" onClick={() => setTrustOpen(true)}>
+                    {t('auth.trustDeviceAction')}
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="auth-panel__heading">
@@ -347,6 +377,51 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
           </a>
         </footer>
       </div>
+
+      {trustOpen && tlsAccess && (
+        <div className="auth-trust-modal" role="dialog" aria-modal="true" aria-labelledby="auth-trust-title" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setTrustOpen(false)
+        }}>
+          <div className="auth-trust-dialog">
+            <button type="button" className="auth-trust-dialog__close" aria-label={t('common.close')} onClick={() => setTrustOpen(false)}>×</button>
+            <p className="auth-panel__eyebrow">{t('auth.trustDeviceKicker')}</p>
+            <h2 id="auth-trust-title">{t('auth.trustDeviceTitle')}</h2>
+            <p className="auth-trust-dialog__body">{t('auth.trustDeviceBody')}</p>
+
+            {tlsAccess.preferred_url && (
+              <div className="auth-trust-address">
+                <span>{t('auth.preferredLocalAddress')}</span>
+                <a href={tlsAccess.preferred_url}>{tlsAccess.preferred_url}</a>
+              </div>
+            )}
+
+            <div className="auth-trust-fingerprint">
+              <span>{t('auth.caFingerprint')}</span>
+              <code>{tlsAccess.ca_fingerprint_sha256 || '--'}</code>
+            </div>
+
+            <div className="auth-trust-actions">
+              {tlsAccess.windows_installer_url && (
+                <a className="btn-primary" href={tlsAccess.windows_installer_url} download>
+                  {t('auth.windowsTrustInstaller')}
+                </a>
+              )}
+              {tlsAccess.ca_download_url && (
+                <a className="btn-secondary" href={tlsAccess.ca_download_url} download>
+                  {t('auth.downloadNodeCA')}
+                </a>
+              )}
+            </div>
+
+            <ol className="auth-trust-steps">
+              <li>{t('auth.trustWindowsStep1')}</li>
+              <li>{t('auth.trustWindowsStep2')}</li>
+              <li>{t('auth.trustWindowsStep3')}</li>
+            </ol>
+            <p className="auth-trust-dialog__note">{t('auth.trustDeviceNote')}</p>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

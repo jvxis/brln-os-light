@@ -19,6 +19,19 @@ Base URL: https://127.0.0.1:8443
   - `node_retirement_control`
   - `succession_live_control`
 
+## Local TLS trust
+
+The following read-only endpoints are public so a new device can establish
+trust before the administrator logs in:
+
+- `GET /api/tls/info`: preferred `.local` URL, private-IP fallback URLs,
+  public CA name/fingerprint and download endpoints.
+- `GET /api/tls/ca`: downloads only the node's public local CA certificate.
+- `GET /api/tls/windows`: downloads a fingerprint-verifying PowerShell
+  installer for the current Windows user's trust store.
+
+The local CA private key is never returned or read by these handlers.
+
 ## Error format
 - Non-2xx responses return JSON: `{"error":"message","code":"optional_code"}`
 

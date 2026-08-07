@@ -31,7 +31,7 @@ O proprio `install_existing.sh` identifica a ultima release publicada do Lightni
 
 ## Instalacao guiada
 O `install_existing.sh` pergunta sobre Go/npm (necessarios para build), Postgres, terminal e ajustes basicos.
-Quando o UFW esta ativo, ele tambem sugere a rede IPv4 local permitida (por exemplo, `192.168.1.0/24`), remove a regra publica antiga da porta 8443 e libera separadamente a interface `tailscale0` quando ela existe.
+Quando o UFW esta ativo, ele tambem sugere a rede IPv4 local permitida (por exemplo, `192.168.1.0/24`), remove a regra publica antiga da porta 8443, libera o mDNS da LAN na porta UDP 5353 e libera separadamente a interface `tailscale0` quando ela existe.
 Quando voce optar por Postgres, o script cria os usuarios e o banco do LightningOS e preenche o secrets.env automaticamente.
 Se o LND ja usa Postgres, o script nao instala um novo servidor Postgres por padrao: ele tenta usar o servico local existente e, se nao houver acesso administrativo local, pede um `NOTIFICATIONS_PG_ADMIN_DSN` para criar apenas o banco `lightningos` no servidor existente.
 Quando encontra `db.postgres.dsn` no `lnd.conf`, o script tambem preenche `LND_PG_DSN` se o valor em `secrets.env` ainda estiver no placeholder.
@@ -48,11 +48,14 @@ Checklist rapido (pos-instalacao):
 systemctl status lightningos-manager --no-pager
 journalctl -u lightningos-manager -n 50 --no-pager
 ```
-- Descubra o IP e acesse a UI:
+- Descubra o nome/IP e acesse a UI:
 ```bash
 hostname -I | awk '{print $1}'
 ```
-Acesse: `https://IP_DA_MAQUINA:8443`
+Acesse preferencialmente `https://NOME_DA_MAQUINA.local:8443`; use
+`https://IP_DA_MAQUINA:8443` como alternativa. Na tela de login, **Confiar
+neste dispositivo** instala a CA publica no cliente sem expor a chave privada
+do node.
 - Confirme grupos do usuario `lightningos`:
 ```bash
 id lightningos

@@ -62,7 +62,7 @@ O instalador provisiona tudo que é necessário em um Ubuntu limpo:
 - Binário do LightningOS Manager (compilado localmente)
 - Build da UI (compilada localmente)
 - Serviços systemd e templates de configuração
-- Certificado TLS autoassinado
+- CA local exclusiva do node, certificado TLS para a LAN e descoberta `.local` automática
 
 O instalador conhecido pelos usuarios muda automaticamente para a ultima release publicada do LightningOS antes da instalacao:
 ```bash
@@ -79,7 +79,7 @@ sudo ./install.sh
 
 Para desenvolvimento ou instalacao offline do checkout local exato, use `sudo LIGHTNINGOS_INSTALL_SOURCE=checkout ./install.sh`.
 
-Quando o UFW já está instalado e ativo, o instalador detecta automaticamente qual rede IPv4 local pode acessar o manager (por exemplo, `192.168.1.0/24`). Ele remove a regra pública antiga de `8443/tcp` e também libera o acesso pela interface `tailscale0` quando o Tailscale está disponível. O instalador deliberadamente não ativa o UFW em um host existente, pois isso poderia bloquear o SSH ou outros serviços do node; portanto, UFW ausente ou inativo exige que o operador configure um firewall equivalente para LAN/VPN.
+Quando o UFW já está instalado e ativo, o instalador detecta automaticamente qual rede IPv4 local pode acessar o manager (por exemplo, `192.168.1.0/24`). Ele remove a regra pública antiga de `8443/tcp`, libera a descoberta mDNS na LAN em `5353/udp` e também libera o acesso pela interface `tailscale0` quando o Tailscale está disponível. O instalador deliberadamente não ativa o UFW em um host existente, pois isso poderia bloquear o SSH ou outros serviços do node; portanto, UFW ausente ou inativo exige que o operador configure um firewall equivalente para LAN/VPN.
 
 ### Instalação via curl (bootstrap)
 Isso identifica a ultima release publicada do LightningOS, faz checkout da tag exata e depois roda `lightningos-light/install.sh`.
@@ -136,8 +136,16 @@ sudo ./install_existing.sh
 sudo ./install_existing_pi.sh
 ```
 
-Acesse a UI de outra máquina na mesma LAN:
-`https://<IP_LAN_DO_SERVIDOR>:8443`
+Acesse a UI de outra máquina na mesma LAN. O instalador mostra os dois endereços:
+
+- Preferencial: `https://<NOME_DA_MAQUINA>.local:8443`
+- Alternativo por IP: `https://<IP_LAN_DO_SERVIDOR>:8443`
+
+O LightningOS cria uma CA privada exclusiva do node e um certificado válido
+para os dois endereços. No primeiro acesso de cada dispositivo, use **Confiar
+neste dispositivo** na tela de login para baixar o instalador de confiança do
+Windows ou a CA pública para outro sistema operacional. A chave privada da CA
+nunca sai do node.
 
 ## Primeiro acesso com segurança
 - A proteção por login vem habilitada por padrão em instalações novas.

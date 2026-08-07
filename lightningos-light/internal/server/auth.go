@@ -706,7 +706,8 @@ func authOriginCheckPath(path string) bool {
 
 func authRequiresSession(path string) bool {
 	switch path {
-	case "/api/health", "/api/auth/state", "/api/auth/login", "/api/auth/setup", "/api/auth/recovery":
+	case "/api/health", "/api/auth/state", "/api/auth/login", "/api/auth/setup", "/api/auth/recovery",
+		"/api/tls/info", "/api/tls/ca", "/api/tls/windows":
 		return false
 	default:
 		return authProtectedPath(path)

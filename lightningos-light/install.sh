@@ -790,7 +790,8 @@ install_packages() {
     postgresql-client-common \
     postgresql-"${POSTGRES_VERSION}" \
     postgresql-client-"${POSTGRES_VERSION}" \
-    smartmontools acl curl jq ca-certificates openssl build-essential git sudo tor apt-transport-https tmux
+    smartmontools acl curl jq ca-certificates openssl build-essential git sudo tor apt-transport-https tmux \
+    avahi-daemon libnss-mdns
   install_tor_keyring_package_if_available
   print_ok "Base packages installed"
 }
@@ -1001,6 +1002,18 @@ fix_permissions() {
   if [[ -f /etc/lightningos/tls/server.key ]]; then
     chown root:lightningos /etc/lightningos/tls/server.key
     chmod 640 /etc/lightningos/tls/server.key
+  fi
+  if [[ -f /etc/lightningos/tls/local-ca.crt ]]; then
+    chown root:root /etc/lightningos/tls/local-ca.crt
+    chmod 644 /etc/lightningos/tls/local-ca.crt
+  fi
+  if [[ -f /etc/lightningos/tls/local-ca.key ]]; then
+    chown root:root /etc/lightningos/tls/local-ca.key
+    chmod 600 /etc/lightningos/tls/local-ca.key
+  fi
+  if [[ -f /etc/lightningos/tls/access.env ]]; then
+    chown root:root /etc/lightningos/tls/access.env
+    chmod 644 /etc/lightningos/tls/access.env
   fi
   if [[ -f /etc/lightningos/secrets.env ]]; then
     chown root:lightningos /etc/lightningos/secrets.env
@@ -1421,16 +1434,17 @@ install_ui() {
 }
 
 generate_tls() {
-  print_step "Generating TLS certificate"
-  if [[ -f /etc/lightningos/tls/server.crt && -f /etc/lightningos/tls/server.key ]]; then
-    print_ok "TLS already exists"
-    return
+  print_step "Configuring trusted local TLS and LAN discovery"
+  local helper="$REPO_ROOT/scripts/setup-manager-tls-mdns.sh"
+  if [[ ! -f "$helper" ]]; then
+    print_warn "Missing TLS/mDNS helper: $helper"
+    return 1
   fi
-  openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 -nodes \
-    -subj "/CN=localhost" \
-    -keyout /etc/lightningos/tls/server.key \
-    -out /etc/lightningos/tls/server.crt
-  print_ok "TLS generated"
+  chmod 0755 "$helper"
+  LIGHTNINGOS_MANAGER_GROUP=lightningos \
+    LIGHTNINGOS_MANAGER_PORT=8443 \
+    "$helper"
+  print_ok "Local TLS and mDNS configured"
 }
 
 lnd_has_bitcoin_rpc_config() {
@@ -1539,7 +1553,7 @@ wait_for_tor_control() {
 
 service_status_summary() {
   print_step "Service status summary"
-  for svc in postgresql lnd lightningos-manager; do
+  for svc in postgresql lnd lightningos-manager avahi-daemon; do
     if systemctl is-active --quiet "$svc"; then
       print_ok "$svc is active"
     elif [[ "$svc" == "lnd" ]] && ! lnd_has_bitcoin_rpc_config && systemctl is-enabled --quiet lnd; then
@@ -1625,14 +1639,22 @@ main() {
   service_status_summary
   verify_manager_listener
   local_ip=$(get_lan_ip)
+  local_name=""
+  if [[ -f /etc/lightningos/tls/access.env ]]; then
+    local_name=$(sed -n 's/^LOCAL_HOSTNAME=//p' /etc/lightningos/tls/access.env | head -n1)
+  fi
   echo ""
   echo "Installation complete."
   echo "Open the UI from another machine on the same LAN:"
+  if [[ -n "$local_name" ]]; then
+    echo "  https://$local_name:8443  (preferred)"
+  fi
   if [[ -n "$local_ip" ]]; then
-    echo "  https://$local_ip:8443"
+    echo "  https://$local_ip:8443  (IP fallback)"
   else
     echo "  https://<SERVER_LAN_IP>:8443"
   fi
+  echo "Trust the node CA once on each client from the access screen."
   print_auth_setup_token
   echo ""
   echo "Next steps:"

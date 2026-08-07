@@ -99,11 +99,14 @@ configure_firewall() {
   fi
   if [[ -n "$previous" && "$previous" != "none" ]]; then
     ufw --force delete allow from "$previous" to any port "$MANAGER_PORT" proto tcp >/dev/null 2>&1 || true
+    ufw --force delete allow from "$previous" to 224.0.0.251 port 5353 proto udp >/dev/null 2>&1 || true
   fi
   ufw --force delete allow "${MANAGER_PORT}/tcp" >/dev/null 2>&1 || true
   if [[ "$lan_cidr" != "none" ]]; then
     ufw allow from "$lan_cidr" to any port "$MANAGER_PORT" proto tcp comment 'LightningOS LAN'
+    ufw allow from "$lan_cidr" to 224.0.0.251 port 5353 proto udp comment 'LightningOS mDNS'
     print_ok "Port ${MANAGER_PORT} allowed only from ${lan_cidr}."
+    print_ok "mDNS discovery allowed only from ${lan_cidr}."
   fi
   if [[ "$tailscale_available" == "1" ]]; then
     ufw allow in on tailscale0 to any port "$MANAGER_PORT" proto tcp comment 'LightningOS Tailscale'

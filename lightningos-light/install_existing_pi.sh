@@ -304,6 +304,18 @@ fix_lightningos_permissions() {
     chown root:"$group" /etc/lightningos/tls/server.key
     chmod 640 /etc/lightningos/tls/server.key
   fi
+  if [[ -f /etc/lightningos/tls/local-ca.crt ]]; then
+    chown root:root /etc/lightningos/tls/local-ca.crt
+    chmod 644 /etc/lightningos/tls/local-ca.crt
+  fi
+  if [[ -f /etc/lightningos/tls/local-ca.key ]]; then
+    chown root:root /etc/lightningos/tls/local-ca.key
+    chmod 600 /etc/lightningos/tls/local-ca.key
+  fi
+  if [[ -f /etc/lightningos/tls/access.env ]]; then
+    chown root:root /etc/lightningos/tls/access.env
+    chmod 644 /etc/lightningos/tls/access.env
+  fi
   print_ok "Permissions updated for /etc/lightningos"
 }
 
@@ -782,20 +794,24 @@ build_ui() {
 }
 
 ensure_tls() {
-  local crt="/etc/lightningos/tls/server.crt"
-  local key="/etc/lightningos/tls/server.key"
-  if [[ -f "$crt" && -f "$key" ]]; then
-    return
+  print_step "Configuring trusted local TLS and LAN discovery"
+  if ! command -v avahi-daemon >/dev/null 2>&1; then
+    if apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y avahi-daemon libnss-mdns; then
+      print_ok "mDNS packages installed"
+    else
+      print_warn "Could not install Avahi; TLS will work but hostname.local may be unavailable"
+    fi
   fi
-  if ! prompt_yes_no "Generate self-signed TLS cert for the manager?" "y"; then
-    print_warn "TLS certs missing; manager may not start without them"
-    return
+  local helper="$REPO_ROOT/scripts/setup-manager-tls-mdns.sh"
+  if [[ ! -f "$helper" ]]; then
+    print_warn "Missing TLS/mDNS helper: $helper"
+    return 1
   fi
-  openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 -nodes \
-    -subj "/CN=$(hostname -f)" \
-    -keyout "$key" \
-    -out "$crt"
-  print_ok "TLS certificates created"
+  chmod 0755 "$helper"
+  LIGHTNINGOS_MANAGER_GROUP=lightningos \
+    LIGHTNINGOS_MANAGER_PORT=8443 \
+    "$helper"
+  print_ok "Local TLS and mDNS configured"
 }
 
 detect_lnd_backend() {
@@ -1696,13 +1712,21 @@ main() {
   print_step "Done"
   echo "Log: ${LOG_FILE}"
   echo "Check: systemctl status lightningos-manager --no-pager"
-  local lan_ip
+  local lan_ip local_name
   lan_ip=$(get_lan_ip)
+  local_name=""
+  if [[ -f /etc/lightningos/tls/access.env ]]; then
+    local_name=$(sed -n 's/^LOCAL_HOSTNAME=//p' /etc/lightningos/tls/access.env | head -n1)
+  fi
+  if [[ -n "$local_name" ]]; then
+    echo "Open: https://${local_name}:8443 (preferred)"
+  fi
   if [[ -n "$lan_ip" ]]; then
-    echo "Open: https://${lan_ip}:8443"
+    echo "Open: https://${lan_ip}:8443 (IP fallback)"
   else
     echo "Open: https://IP_DA_MAQUINA:8443"
   fi
+  echo "Trust the node CA once on each client from the access screen."
 }
 
 main "$@"

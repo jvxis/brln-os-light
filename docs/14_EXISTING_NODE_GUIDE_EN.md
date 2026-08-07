@@ -31,7 +31,7 @@ The `install_existing.sh` script resolves the latest published LightningOS relea
 
 ## Guided install
 The `install_existing.sh` installer asks about Go/npm (required for build), Postgres, terminal, and basic setup.
-When UFW is active, it also suggests the allowed local IPv4 network (for example, `192.168.1.0/24`), removes the old public port 8443 rule, and separately allows the `tailscale0` interface when present.
+When UFW is active, it also suggests the allowed local IPv4 network (for example, `192.168.1.0/24`), removes the old public port 8443 rule, allows LAN mDNS on UDP port 5353, and separately allows the `tailscale0` interface when present.
 If you opt into Postgres, the script creates the LightningOS roles/DB and fills secrets.env automatically.
 If LND already uses Postgres, the script does not install a new Postgres server by default: it tries the existing local service and, when local admin access is unavailable, asks for `NOTIFICATIONS_PG_ADMIN_DSN` so it can create only the `lightningos` database on the existing server.
 When it finds `db.postgres.dsn` in `lnd.conf`, the script also fills `LND_PG_DSN` if `secrets.env` still has the placeholder value.
@@ -48,11 +48,14 @@ Quick checklist (post-install):
 systemctl status lightningos-manager --no-pager
 journalctl -u lightningos-manager -n 50 --no-pager
 ```
-- Get your IP and open the UI:
+- Get your hostname/IP and open the UI:
 ```bash
 hostname -I | awk '{print $1}'
 ```
-Open: `https://YOUR_SERVER_IP:8443`
+Prefer `https://YOUR_SERVER_HOSTNAME.local:8443`; use
+`https://YOUR_SERVER_IP:8443` as a fallback. On the login screen, **Trust this
+device** installs the public CA on the client without exposing the node's CA
+private key.
 - Confirm `lightningos` group membership:
 ```bash
 id lightningos

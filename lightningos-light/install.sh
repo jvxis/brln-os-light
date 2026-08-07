@@ -1400,7 +1400,7 @@ install_manager() {
 }
 
 install_peerswap_assets() {
-  local src="$REPO_ROOT/lightningos-light/assets/binaries/peerswap/version_5_0/amd64"
+  local src="$REPO_ROOT/assets/binaries/peerswap/version_5_0/amd64"
   local dest="/opt/lightningos/manager/assets/binaries/peerswap/version_5_0/amd64"
   if [[ ! -d "$src" ]]; then
     print_warn "Peerswap assets not found at $src; skipping"

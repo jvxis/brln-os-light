@@ -27,8 +27,9 @@ trust before the administrator logs in:
 - `GET /api/tls/info`: preferred `.local` URL, private-IP fallback URLs,
   public CA name/fingerprint and download endpoints.
 - `GET /api/tls/ca`: downloads only the node's public local CA certificate.
-- `GET /api/tls/windows`: downloads a fingerprint-verifying PowerShell
-  installer for the current Windows user's trust store.
+- `GET /api/tls/windows`: downloads a self-contained Windows launcher that
+  runs its fingerprint-verifying PowerShell payload with execution-policy
+  bypass for that file and installs into the current user's trust store.
 
 The local CA private key is never returned or read by these handlers.
 

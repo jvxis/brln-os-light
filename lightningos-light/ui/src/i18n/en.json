@@ -692,7 +692,7 @@
     "windowsTrustInstaller": "Windows trust installer",
     "downloadNodeCA": "Download CA certificate",
     "trustWindowsStep1": "Download the Windows installer and verify that the fingerprint matches the one shown here and in the installation console.",
-    "trustWindowsStep2": "Run the PowerShell file for your Windows user. Administrator access is not required for the per-user trust store.",
+    "trustWindowsStep2": "Double-click the downloaded Windows launcher. It uses PowerShell Bypass for this file and keeps the result window open. Administrator access is not required.",
     "trustWindowsStep3": "Restart the browser and open the preferred .local address on port 8443.",
     "trustDeviceNote": "Linux, macOS, Android and iOS can use the CA certificate download. Their trust-store confirmation remains a device security requirement.",
     "poweredBy": "Powered by",

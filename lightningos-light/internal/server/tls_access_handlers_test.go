@@ -69,10 +69,19 @@ func TestTLSAccessInfoAndDownloads(t *testing.T) {
 		t.Fatalf("Windows installer status=%d body=%s", windowsRecorder.Code, windowsRecorder.Body.String())
 	}
 	script := windowsRecorder.Body.String()
-	for _, expected := range []string{"X509Store", "CurrentUser", "current Windows user", "test-node.local:8443", strings.ReplaceAll(info.CAFingerprintSHA256, ":", "")} {
+	for _, expected := range []string{"ExecutionPolicy Bypass", "###LIGHTNINGOS_POWERSHELL###", "X509Store", "CurrentUser", "current Windows user", "test-node.local:8443", strings.ReplaceAll(info.CAFingerprintSHA256, ":", "")} {
 		if !strings.Contains(script, expected) {
 			t.Fatalf("Windows installer missing %q", expected)
 		}
+	}
+	if disposition := windowsRecorder.Header().Get("Content-Disposition"); !strings.Contains(disposition, ".cmd") {
+		t.Fatalf("Windows installer must download as a cmd launcher: %q", disposition)
+	}
+	if strings.Contains(script, "PRIVATE KEY") {
+		t.Fatal("Windows installer exposed private key material")
+	}
+	if count := strings.Count(script, "###LIGHTNINGOS_POWERSHELL###"); count != 1 {
+		t.Fatalf("Windows launcher payload marker count=%d, want 1", count)
 	}
 }
 

@@ -65,12 +65,12 @@ func (s *Server) handleTLSWindowsInstallerDownload(w http.ResponseWriter, _ *htt
 		return
 	}
 
-	script := windowsTrustScript(material)
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="lightningos-trust-%s.ps1"`, material.fileStem))
+	launcher := windowsTrustLauncher(material)
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="lightningos-trust-%s.cmd"`, material.fileStem))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(script))
+	_, _ = w.Write([]byte(launcher))
 }
 
 func (s *Server) loadTLSAccessMaterial() (tlsAccessMaterial, error) {
@@ -259,4 +259,22 @@ try {
   Remove-Item -LiteralPath $losCaPath -Force -ErrorAction SilentlyContinue
 }
 `, material.info.CAFingerprintSHA256, encodedCA, expected, expected, material.info.CAFingerprintSHA256, preferredURL)
+}
+
+func windowsTrustLauncher(material tlsAccessMaterial) string {
+	const marker = "###LIGHTNINGOS_POWERSHELL###"
+	powerShell := windowsTrustScript(material)
+	return fmt.Sprintf(`@echo off
+setlocal
+title LightningOS device trust
+set "LOS_LAUNCHER=%%~f0"
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$losSource=[IO.File]::ReadAllText($env:LOS_LAUNCHER); $losMarker='###LIGHTNINGOS_'+'POWERSHELL###'; Invoke-Expression (($losSource -split [regex]::Escape($losMarker),2)[1])"
+set "LOS_EXIT=%%ERRORLEVEL%%"
+echo.
+if not "%%LOS_EXIT%%"=="0" echo LightningOS trust installation failed with exit code %%LOS_EXIT%%.
+echo Press any key to close this window.
+pause >nul
+exit /b %%LOS_EXIT%%
+%s
+%s`, marker, powerShell)
 }

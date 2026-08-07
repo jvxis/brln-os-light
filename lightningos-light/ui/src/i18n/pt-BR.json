@@ -692,7 +692,7 @@
     "windowsTrustInstaller": "Instalador de confiança para Windows",
     "downloadNodeCA": "Baixar certificado da CA",
     "trustWindowsStep1": "Baixe o instalador para Windows e confira se o fingerprint coincide com o exibido aqui e no console da instalação.",
-    "trustWindowsStep2": "Execute o arquivo PowerShell no seu usuário Windows. O repositório de confiança por usuário não exige acesso de administrador.",
+    "trustWindowsStep2": "Clique duas vezes no lançador baixado. Ele usa o PowerShell Bypass somente para esse arquivo e mantém a janela de resultado aberta. Não exige acesso de administrador.",
     "trustWindowsStep3": "Reinicie o navegador e abra o endereço .local preferencial na porta 8443.",
     "trustDeviceNote": "Linux, macOS, Android e iOS podem usar o download do certificado da CA. A confirmação no repositório de confiança continua sendo uma exigência de segurança do dispositivo.",
     "poweredBy": "Powered by",

@@ -79,7 +79,7 @@ const atlasCoordinateKey = (lat: number, lon: number) => `${lat.toFixed(3)}:${lo
 const atlasChannelStrokeWidth = (capacitySat: number, emphasized: boolean) => {
   const capacity = Math.max(20_000, Number.isFinite(capacitySat) ? capacitySat : 0)
   const scale = Math.min(1, Math.max(0, (Math.log10(capacity) - Math.log10(20_000)) / 4))
-  return 1.25 + (scale * 1.65) + (emphasized ? 0.65 : 0)
+  return 0.85 + (scale * 1.2) + (emphasized ? 0.85 : 0)
 }
 const spreadAtlasLinks = (links: AtlasLink[]) => {
   const groups = new Map<string, AtlasLink[]>()
@@ -155,10 +155,13 @@ const AtlasConnections = ({
 
   const nodeHaloRadius = Math.max(7.5, 14 / Math.sqrt(Math.max(1, mapZoom)))
   const nodeCoreRadius = Math.max(3.6, 4.8 / Math.pow(Math.max(1, mapZoom), 0.22))
+  const activeChannelCount = links.filter((link) => link.connection_kind === 'channel' && link.active).length
+  const flowStride = Math.max(1, Math.ceil(activeChannelCount / 28))
+  let activeChannelIndex = 0
 
   return (
     <g>
-      {links.map((link) => {
+      {links.map((link, index) => {
         const linkLon = typeof link.render_lon === 'number' ? link.render_lon : link.lon
         const linkLat = typeof link.render_lat === 'number' ? link.render_lat : link.lat
         if (typeof linkLon !== 'number' || typeof linkLat !== 'number') return null
@@ -176,11 +179,19 @@ const AtlasConnections = ({
         const dimmed = Boolean(selectedKey) && !selected
         const emphasized = selected || hovered
         const pathId = `atlas-arc-${link.pubkey}`
+        const isActiveChannel = link.connection_kind === 'channel' && link.active
+        const channelFlowIndex = isActiveChannel ? activeChannelIndex++ : -1
+        const showFlow = isActiveChannel && (selected || channelFlowIndex % flowStride === 0)
+        const kindClass = link.connection_kind === 'peer'
+          ? 'atlas-link-kind--peer'
+          : link.active
+            ? 'atlas-link-kind--channel'
+            : 'atlas-link-kind--inactive'
 
         return (
           <g
             key={link.pubkey}
-            className={`cursor-pointer ${selected ? 'atlas-link-state atlas-link-state--selected' : hovered ? 'atlas-link-state atlas-link-state--hovered' : dimmed ? 'atlas-link-state atlas-link-state--dimmed' : 'atlas-link-state'}`}
+            className={`cursor-pointer atlas-link-state ${kindClass}${selected ? ' atlas-link-state--selected' : hovered ? ' atlas-link-state--hovered' : dimmed ? ' atlas-link-state--dimmed' : ''}`}
             onPointerEnter={() => onHover(link.pubkey)}
             onPointerLeave={() => onHoverEnd(link.pubkey)}
           >
@@ -204,7 +215,17 @@ const AtlasConnections = ({
               className={`${link.connection_kind === 'channel' ? 'atlas-arc atlas-arc--channel' : 'atlas-arc atlas-arc--peer'}${link.connection_kind === 'channel' && !link.active ? ' atlas-arc--inactive' : ''}`}
               strokeWidth={link.connection_kind === 'channel' ? atlasChannelStrokeWidth(link.capacity_sat, emphasized) : emphasized ? 1.8 : 1.05}
             />
-            {link.connection_kind === 'channel' && link.active && selected && (
+            {showFlow && (
+              <path
+                d={d}
+                className="atlas-arc-flow"
+                style={{
+                  animationDelay: `${-((index % 11) * 0.31)}s`,
+                  animationDuration: `${2.3 + ((index % 7) * 0.18)}s`
+                }}
+              />
+            )}
+            {isActiveChannel && selected && (
               <>
                 <circle r={selected ? 3.4 : 2.6} className="atlas-pulse-dot">
                   <animateMotion dur={selected ? '1.4s' : '1.9s'} repeatCount="indefinite" rotate="auto">
@@ -239,6 +260,7 @@ export default function NetworkAtlas() {
   const [loading, setLoading] = useState(true)
   const [selectedKey, setSelectedKey] = useState('')
   const [hoveredKey, setHoveredKey] = useState('')
+  const [previewKey, setPreviewKey] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [labelInput, setLabelInput] = useState('')
   const [latInput, setLatInput] = useState('')
@@ -302,7 +324,11 @@ export default function NetworkAtlas() {
     () => filteredLinks.find((item) => item.pubkey === hoveredKey) || null,
     [filteredLinks, hoveredKey]
   )
-  const detailLink = selectedLink || hoveredLink
+  const previewLink = useMemo(
+    () => filteredLinks.find((item) => item.pubkey === previewKey) || null,
+    [filteredLinks, previewKey]
+  )
+  const detailLink = selectedLink || hoveredLink || previewLink || filteredLinks[0] || null
 
   const totalPeerCount = Math.max(0, Number(payload?.summary.total_peers) || 0)
   const unknownLocationCount = Math.max(0, Number(payload?.summary.unknown_location) || 0)
@@ -355,6 +381,7 @@ export default function NetworkAtlas() {
 
   const handlePeerActivate = (link: AtlasLink) => {
     setSelectedKey(link.pubkey)
+    setPreviewKey(link.pubkey)
     const linkLon = typeof link.render_lon === 'number' ? link.render_lon : link.lon
     const linkLat = typeof link.render_lat === 'number' ? link.render_lat : link.lat
     if (typeof linkLon === 'number' && typeof linkLat === 'number') {
@@ -369,6 +396,11 @@ export default function NetworkAtlas() {
 
   const handlePeerHoverEnd = (pubkey: string) => {
     setHoveredKey((current) => current === pubkey ? '' : current)
+  }
+
+  const handlePeerHover = (pubkey: string) => {
+    setHoveredKey(pubkey)
+    setPreviewKey(pubkey)
   }
 
   const handleFocusLocalNode = () => {
@@ -433,15 +465,15 @@ export default function NetworkAtlas() {
   }
 
   return (
-    <section className="space-y-6">
+    <section className="atlas-page">
       <div className="atlas-shell section-card">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-3xl">
+        <div className="atlas-page-header">
+          <div className="atlas-page-heading">
             <p className="atlas-eyebrow">{t('networkAtlas.eyebrow')}</p>
-            <h2 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">{t('networkAtlas.title')}</h2>
-            <p className="mt-3 text-sm text-fog/70 sm:text-base">{t('networkAtlas.subtitle')}</p>
+            <h2 className="atlas-title">{t('networkAtlas.title')}</h2>
+            <p className="atlas-subtitle">{t('networkAtlas.subtitle')}</p>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="atlas-page-actions">
             {localNode && (
               <button className="atlas-control-pill" type="button" onClick={() => setSettingsOpen((current) => !current)}>
                 {settingsOpen ? t('networkAtlas.hideSettings') : t('networkAtlas.showSettings')}
@@ -451,7 +483,7 @@ export default function NetworkAtlas() {
           </div>
         </div>
 
-        <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="atlas-kpi-grid">
           <div className="atlas-kpi">
             <span>{t('networkAtlas.kpiPeers')}</span>
             <strong>{payload?.summary.total_peers?.toLocaleString() ?? '--'}</strong>
@@ -470,7 +502,7 @@ export default function NetworkAtlas() {
           </div>
         </div>
 
-        <div className="mt-6 flex flex-wrap items-center gap-3">
+        <div className="atlas-toolbar">
           <button className={`atlas-control-pill${filterMode === 'all' ? ' atlas-control-pill--active' : ''}`} type="button" aria-pressed={filterMode === 'all'} onClick={() => setFilterMode('all')}>
             {t('common.all')} <span className="atlas-filter-count">{mappedPeerCount}</span>
           </button>
@@ -491,7 +523,7 @@ export default function NetworkAtlas() {
         {status && <p className="mt-4 text-sm text-brass">{status}</p>}
         {loading && !payload && <p className="mt-4 text-sm text-fog/60">{t('networkAtlas.loading')}</p>}
 
-        <div className="atlas-map-card mt-6">
+        <div className="atlas-map-card">
           <div className="atlas-map-header">
             <div>
               <p className="atlas-map-label">{t('networkAtlas.localNode')}</p>
@@ -514,9 +546,9 @@ export default function NetworkAtlas() {
             </div>
             <ComposableMap
               projection="geoEqualEarth"
-              projectionConfig={{ scale: 220 }}
+              projectionConfig={{ scale: 225 }}
               width={1200}
-              height={560}
+              height={620}
               className="atlas-world-map"
               onClick={() => setSelectedKey('')}
             >
@@ -556,7 +588,7 @@ export default function NetworkAtlas() {
                   mapZoom={mapZoom}
                   selectedKey={selectedLink?.pubkey || ''}
                   hoveredKey={hoveredLink?.pubkey || ''}
-                  onHover={setHoveredKey}
+                  onHover={handlePeerHover}
                   onHoverEnd={handlePeerHoverEnd}
                   onActivate={handlePeerActivate}
                   onOpenChannel={handleOpenChannel}
@@ -573,14 +605,14 @@ export default function NetworkAtlas() {
                     <Marker key={`marker-${link.pubkey}`} coordinates={[linkLon, linkLat]}>
                       <g
                         transform={`scale(${1 / mapZoom})`}
-                        className={`cursor-pointer ${selected ? 'atlas-link-state atlas-link-state--selected' : hovered ? 'atlas-link-state atlas-link-state--hovered' : dimmed ? 'atlas-link-state atlas-link-state--dimmed' : 'atlas-link-state'}`}
+                        className={`cursor-pointer atlas-link-state ${link.connection_kind === 'peer' ? 'atlas-link-kind--peer' : link.active ? 'atlas-link-kind--channel' : 'atlas-link-kind--inactive'}${selected ? ' atlas-link-state--selected' : hovered ? ' atlas-link-state--hovered' : dimmed ? ' atlas-link-state--dimmed' : ''}`}
                         role="button"
                         tabIndex={0}
                         aria-label={link.alias || shortPubkey(link.pubkey)}
                         aria-pressed={selected}
-                        onPointerEnter={() => setHoveredKey(link.pubkey)}
+                        onPointerEnter={() => handlePeerHover(link.pubkey)}
                         onPointerLeave={() => handlePeerHoverEnd(link.pubkey)}
-                        onFocus={() => setHoveredKey(link.pubkey)}
+                        onFocus={() => handlePeerHover(link.pubkey)}
                         onBlur={() => handlePeerHoverEnd(link.pubkey)}
                         onClick={(event) => {
                           event.stopPropagation()

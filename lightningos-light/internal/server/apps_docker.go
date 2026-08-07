@@ -147,7 +147,62 @@ func runCompose(ctx context.Context, appRoot string, composePath string, args ..
 	if err != nil {
 		return fmt.Errorf("docker compose command failed: %s", composeCommandErrorDetail(out, err))
 	}
+	if composeStartsDetached(args) {
+		if err := ensureComposeRunningContainersRestart(ctx, appRoot, composePath); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// composeStartsDetached identifies app install/start operations. Existing
+// containers can retain an old runtime restart policy even after their Compose
+// file is updated, so a successful detached start also reconciles that policy.
+func composeStartsDetached(args []string) bool {
+	if len(args) == 0 || args[0] != "up" {
+		return false
+	}
+	for _, arg := range args[1:] {
+		if arg == "-d" || arg == "--detach" {
+			return true
+		}
+	}
+	return false
+}
+
+func ensureComposeRunningContainersRestart(ctx context.Context, appRoot string, composePath string) error {
+	cmd, baseArgs, err := resolveCompose(ctx)
+	if err != nil {
+		return err
+	}
+	fullArgs := append(baseArgs, composeBaseArgs(appRoot, composePath)...)
+	fullArgs = append(fullArgs, "ps", "-q")
+	out, err := system.RunCommandWithSudo(ctx, cmd, fullArgs...)
+	if err != nil {
+		return fmt.Errorf("failed to list started app containers: %s", composeCommandErrorDetail(out, err))
+	}
+	for _, field := range strings.Fields(out) {
+		if !isDockerContainerID(field) {
+			continue
+		}
+		updateOut, updateErr := system.RunCommandWithSudo(ctx, "docker", "update", "--restart", "unless-stopped", field)
+		if updateErr != nil {
+			return fmt.Errorf("failed to persist app restart policy: %s", composeCommandErrorDetail(updateOut, updateErr))
+		}
+	}
+	return nil
+}
+
+func isDockerContainerID(value string) bool {
+	if len(value) < 12 || len(value) > 64 {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') && (char < 'A' || char > 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 const (

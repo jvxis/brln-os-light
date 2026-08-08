@@ -540,6 +540,7 @@ POST /api/lnops/succession/simulate
 
 GET /api/apps
 - Returns app list with status.
+- Apps that currently receive privileged direct LND access include `security_notices=["elevated_lnd_access"]`. `lndg` additionally reports `lnd_data_directory_read`. These values are informational disclosures and do not alter lifecycle behavior.
 - Public Pool may include optional `ufw_active` and `ufw_command` fields when UFW is active and the active Bitcoin source is an existing systemd/external local node.
 - `bark-wallet` reports `scheme=https`, port `4004`, and the path of its generated UI login password. Its Bark daemon and API are not published on the host.
 

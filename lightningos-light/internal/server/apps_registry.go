@@ -50,6 +50,10 @@ func (s *Server) appByID(id string) (appHandler, error) {
 func validateAppRegistry(apps []appHandler) error {
 	ids := map[string]bool{}
 	ports := map[int]bool{}
+	knownSecurityNotices := map[string]bool{
+		appSecurityNoticeElevatedLNDAccess:    true,
+		appSecurityNoticeLNDDataDirectoryRead: true,
+	}
 	for _, app := range apps {
 		def := app.Definition()
 		if def.ID == "" {
@@ -70,6 +74,20 @@ func validateAppRegistry(apps []appHandler) error {
 				return fmt.Errorf("duplicate app port: %d", def.Port)
 			}
 			ports[def.Port] = true
+		}
+		securityNotices := map[string]bool{}
+		for _, notice := range def.SecurityNotices {
+			if !knownSecurityNotices[notice] {
+				return fmt.Errorf("app %s has unknown security notice %q", def.ID, notice)
+			}
+			if securityNotices[notice] {
+				return fmt.Errorf("app %s has duplicate security notice %q", def.ID, notice)
+			}
+			securityNotices[notice] = true
+		}
+		if securityNotices[appSecurityNoticeLNDDataDirectoryRead] &&
+			!securityNotices[appSecurityNoticeElevatedLNDAccess] {
+			return fmt.Errorf("app %s declares LND data directory access without elevated LND access", def.ID)
 		}
 	}
 	return nil

@@ -43,6 +43,10 @@ func lndgDefinition() appDefinition {
 		Name:        "LNDg",
 		Description: "Advanced analytics, automation, and insights for your LND node.",
 		Port:        8889,
+		SecurityNotices: []string{
+			appSecurityNoticeElevatedLNDAccess,
+			appSecurityNoticeLNDDataDirectoryRead,
+		},
 	}
 }
 

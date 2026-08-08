@@ -80,6 +80,9 @@ func tapdDefinition() appDefinition {
 		Name:        "Taproot Assets (tapd)",
 		Description: "Mint, receive and send Taproot Assets on-chain with the official tapd daemon connected to your node. Experimental — alpha on mainnet, on-chain only (Lightning transfers require the community edge node).",
 		Port:        0,
+		SecurityNotices: []string{
+			appSecurityNoticeElevatedLNDAccess,
+		},
 	}
 }
 

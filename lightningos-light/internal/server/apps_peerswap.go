@@ -69,6 +69,9 @@ func peerswapDefinition() appDefinition {
 		Name:        "Peerswap",
 		Description: "Peerswap daemon with psweb UI (local or remote Elements RPC).",
 		Port:        pswebPort,
+		SecurityNotices: []string{
+			appSecurityNoticeElevatedLNDAccess,
+		},
 	}
 }
 

@@ -1076,7 +1076,25 @@ export type StorageTarget = {
   suggested_path: string
 }
 
-export const getApps = () => request('/api/apps')
+export type AppStoreInfo = {
+  id: string
+  name: string
+  description: string
+  installed: boolean
+  status: string
+  port?: number
+  scheme?: string
+  external_url?: string
+  admin_password_path?: string
+  available?: boolean
+  unavailable_reason?: string
+  unavailable_message?: string
+  ufw_active?: boolean
+  ufw_command?: string
+  security_notices?: string[]
+}
+
+export const getApps = (): Promise<AppStoreInfo[]> => request('/api/apps')
 export const getAppStorageTargets = (app: string) =>
   request(`/api/apps/storage-targets${buildQuery({ app })}`)
 export const getElectrsStatus = () => request('/api/apps/electrs/status')

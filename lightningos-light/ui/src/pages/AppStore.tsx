@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getAppAdminPassword, getAppStorageTargets, getApps, getBitcoinLocalStatus, getBitcoinSource, getElectrsStatus, getPeerswapElementsSource, installApp, resetAppAdmin, startApp, stopApp, testPeerswapElementsSource, uninstallApp, type StorageTarget } from '../api'
+import { getAppAdminPassword, getAppStorageTargets, getApps, getBitcoinLocalStatus, getBitcoinSource, getElectrsStatus, getPeerswapElementsSource, installApp, resetAppAdmin, startApp, stopApp, testPeerswapElementsSource, uninstallApp, type AppStoreInfo, type StorageTarget } from '../api'
 import lndgIcon from '../assets/apps/lndg.ico'
 import bitcoincoreIcon from '../assets/apps/bitcoincore.png'
 import elementsIcon from '../assets/apps/elements.png'
@@ -21,22 +21,7 @@ import loopOutBRLNIcon from '../assets/apps/loopout-brln.png'
 import magmaSalesIcon from '../assets/apps/magma-sales.svg'
 import CpuMinerStats from '../components/CpuMinerStats'
 
-type AppInfo = {
-  id: string
-  name: string
-  description: string
-  installed: boolean
-  status: string
-  port?: number
-  scheme?: string
-  external_url?: string
-  admin_password_path?: string
-  available?: boolean
-  unavailable_reason?: string
-  unavailable_message?: string
-  ufw_active?: boolean
-  ufw_command?: string
-}
+type AppInfo = AppStoreInfo
 
 type BitcoinLocalStatus = {
   source?: 'app' | 'external' | 'none'
@@ -67,6 +52,11 @@ type InstallPayload = {
   elements_rpc_url?: string
   elements_rpc_user?: string
   elements_rpc_password?: string
+}
+
+type PendingElevatedInstall = {
+  app: AppInfo
+  payload?: InstallPayload
 }
 
 const iconMap: Record<string, string> = {
@@ -119,6 +109,8 @@ const bitcoinCoreDefaultDataDir = '/data/bitcoin'
 const elementsDefaultDataDir = '/data/elements'
 const peerswapDefaultRemoteUrl = 'http://elements.br-ln.com:8086'
 const hiddenStoreAppIds = new Set(['depixbuy'])
+const elevatedLndAccessNotice = 'elevated_lnd_access'
+const lndDataDirectoryReadNotice = 'lnd_data_directory_read'
 
 export default function AppStore() {
   const { t } = useTranslation()
@@ -150,6 +142,8 @@ export default function AppStore() {
   const [peerswapRemoteMessage, setPeerswapRemoteMessage] = useState('')
   const [peerswapRemoteTested, setPeerswapRemoteTested] = useState(false)
   const [barkWalletInstallOpen, setBarkWalletInstallOpen] = useState(false)
+  const [pendingElevatedInstall, setPendingElevatedInstall] = useState<PendingElevatedInstall | null>(null)
+  const [elevatedInstallAcknowledged, setElevatedInstallAcknowledged] = useState(false)
   const [installFilter, setInstallFilter] = useState<InstallFilter>(() => {
     if (typeof window === 'undefined') return 'all'
     const stored = window.localStorage.getItem(APP_STORE_INSTALL_FILTER_KEY)
@@ -351,7 +345,12 @@ export default function AppStore() {
     }
   }, [electrsRunning])
 
-  const handleAction = async (id: string, action: AppAction, payload?: InstallPayload) => {
+  const handleAction = async (
+    id: string,
+    action: AppAction,
+    payload?: InstallPayload,
+    options?: { skipSecurityConfirmation?: boolean }
+  ) => {
     if (id === 'bark-wallet' && action === 'install' && !payload) {
       setBarkWalletInstallOpen(true)
       return
@@ -387,6 +386,14 @@ export default function AppStore() {
       }
       openPeerswapRemoteInstall()
       return
+    }
+    if (action === 'install' && !options?.skipSecurityConfirmation) {
+      const app = apps.find((candidate) => candidate.id === id)
+      if (app?.security_notices?.includes(elevatedLndAccessNotice)) {
+        setPendingElevatedInstall({ app, payload })
+        setElevatedInstallAcknowledged(false)
+        return
+      }
     }
     setMessage('')
     setBusy((prev) => ({ ...prev, [id]: action }))
@@ -435,6 +442,18 @@ export default function AppStore() {
   const handleBarkWalletInstallConfirm = async () => {
     setBarkWalletInstallOpen(false)
     await handleAction('bark-wallet', 'install', {})
+  }
+
+  const closeElevatedInstall = () => {
+    setPendingElevatedInstall(null)
+    setElevatedInstallAcknowledged(false)
+  }
+
+  const handleElevatedInstallConfirm = async () => {
+    if (!pendingElevatedInstall || !elevatedInstallAcknowledged) return
+    const { app, payload } = pendingElevatedInstall
+    closeElevatedInstall()
+    await handleAction(app.id, 'install', payload, { skipSecurityConfirmation: true })
   }
 
   const handleResetAdmin = async (id: string) => {
@@ -573,6 +592,8 @@ export default function AppStore() {
           const unavailable = app.available === false
           const unavailableMessage = unavailable ? resolveUnavailableMessage(app) : ''
           const canCopyAdminPassword = app.id === 'lndg' || app.id === 'fedimint-gateway' || app.id === 'bark-wallet'
+          const hasElevatedLndAccess = app.security_notices?.includes(elevatedLndAccessNotice) ?? false
+          const readsLndDataDirectory = app.security_notices?.includes(lndDataDirectoryReadNotice) ?? false
           return (
             <div key={app.id} className="section-card space-y-4">
               <div className="flex items-start justify-between gap-4">
@@ -598,6 +619,11 @@ export default function AppStore() {
                           <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-fog/70">{t('appStore.barkWalletSecond')}</span>
                         </>
                       )}
+                      {hasElevatedLndAccess && (
+                        <span className="rounded-full border border-amber-400/40 bg-amber-500/15 px-2 py-0.5 text-[10px] uppercase tracking-wide text-amber-200">
+                          {t('appStore.elevatedLndAccessBadge')}
+                        </span>
+                      )}
                     </div>
                     <p className="text-sm text-fog/60">{app.description}</p>
                   </div>
@@ -606,6 +632,24 @@ export default function AppStore() {
                   {resolveStatusLabel(app.status)}
                 </span>
               </div>
+
+              {hasElevatedLndAccess && (
+                <div className="rounded-lg border border-amber-400/25 bg-amber-500/10 px-4 py-3 text-sm">
+                  <div className="flex items-start gap-3">
+                    <svg viewBox="0 0 24 24" className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+                      <path d="M12 3 4.5 6v5.2c0 4.6 3 8.2 7.5 9.8 4.5-1.6 7.5-5.2 7.5-9.8V6L12 3Z" />
+                      <path d="M12 8v5M12 16.5v.1" />
+                    </svg>
+                    <div className="space-y-1">
+                      <p className="font-semibold text-amber-100">{t('appStore.elevatedLndAccessTitle')}</p>
+                      <p className="text-xs leading-relaxed text-amber-100/70">{t('appStore.elevatedLndAccessCardBody')}</p>
+                      {readsLndDataDirectory && (
+                        <p className="text-xs leading-relaxed text-amber-100/80">{t('appStore.lndDataDirectoryReadBody')}</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="text-xs text-fog/50 space-y-1">
                 {app.port ? (
@@ -774,6 +818,54 @@ export default function AppStore() {
       )}
       {!loading && apps.length > 0 && visibleApps.length === 0 && (
         <p className="text-fog/60">{t('appStore.noAppsForFilter')}</p>
+      )}
+
+      {pendingElevatedInstall && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center overflow-y-auto bg-black/70 px-4 py-4" role="dialog" aria-modal="true" aria-labelledby="elevated-lnd-install-title">
+          <div className="max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-lg border border-amber-400/30 bg-ink p-5 shadow-2xl">
+            <div className="flex items-start gap-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-amber-400/30 bg-amber-500/10 text-amber-300">
+                <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+                  <path d="M12 3 4.5 6v5.2c0 4.6 3 8.2 7.5 9.8 4.5-1.6 7.5-5.2 7.5-9.8V6L12 3Z" />
+                  <path d="M12 8v5M12 16.5v.1" />
+                </svg>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs uppercase tracking-[0.16em] text-amber-300">{t('appStore.elevatedLndAccessBadge')}</p>
+                <h3 id="elevated-lnd-install-title" className="text-lg font-semibold">
+                  {t('appStore.elevatedLndAccessInstallTitle', { app: pendingElevatedInstall.app.name })}
+                </h3>
+              </div>
+            </div>
+
+            <div className="mt-5 space-y-3 rounded-lg border border-amber-400/20 bg-amber-500/5 p-4 text-sm leading-relaxed text-fog/80">
+              <p>{t('appStore.elevatedLndAccessInstallBody')}</p>
+              {pendingElevatedInstall.app.security_notices?.includes(lndDataDirectoryReadNotice) && (
+                <p className="text-amber-100/85">{t('appStore.lndDataDirectoryReadInstallBody')}</p>
+              )}
+              <p>{t('appStore.elevatedLndAccessRecommendation')}</p>
+            </div>
+
+            <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-lg border border-white/10 bg-black/20 p-3 text-sm text-fog/80">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 accent-amber-400"
+                checked={elevatedInstallAcknowledged}
+                onChange={(event) => setElevatedInstallAcknowledged(event.target.checked)}
+              />
+              <span>{t('appStore.elevatedLndAccessAcknowledge')}</span>
+            </label>
+
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button className="btn-secondary" type="button" onClick={closeElevatedInstall}>
+                {t('common.cancel')}
+              </button>
+              <button className="btn-primary" type="button" disabled={!elevatedInstallAcknowledged} onClick={handleElevatedInstallConfirm}>
+                {t('appStore.installAnyway')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {barkWalletInstallOpen && (

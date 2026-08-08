@@ -47,6 +47,30 @@ func TestValidateAppRegistry(t *testing.T) {
 			t.Fatalf("expected error")
 		}
 	})
+
+	t.Run("unknown security notice", func(t *testing.T) {
+		apps := []appHandler{
+			stubApp{def: appDefinition{
+				ID: "a", Name: "App A", Port: 8889,
+				SecurityNotices: []string{"unknown_notice"},
+			}},
+		}
+		if err := validateAppRegistry(apps); err == nil {
+			t.Fatalf("expected error")
+		}
+	})
+
+	t.Run("LND data notice requires elevated access", func(t *testing.T) {
+		apps := []appHandler{
+			stubApp{def: appDefinition{
+				ID: "a", Name: "App A", Port: 8889,
+				SecurityNotices: []string{appSecurityNoticeLNDDataDirectoryRead},
+			}},
+		}
+		if err := validateAppRegistry(apps); err == nil {
+			t.Fatalf("expected error")
+		}
+	})
 }
 
 func TestValidateAppRegistryConfiguredApps(t *testing.T) {
@@ -56,6 +80,39 @@ func TestValidateAppRegistryConfiguredApps(t *testing.T) {
 	}
 	if len(apps) == 0 {
 		t.Fatalf("configured app registry is empty")
+	}
+}
+
+func TestConfiguredAppSecurityNotices(t *testing.T) {
+	apps, err := (&Server{}).appRegistry()
+	if err != nil {
+		t.Fatalf("configured app registry is invalid: %v", err)
+	}
+
+	wantElevated := map[string]bool{
+		"lndg":               true,
+		"lnbits":             true,
+		fedimintGatewayAppID: true,
+		peerswapAppID:        true,
+		tapdAppID:            true,
+	}
+	for _, app := range apps {
+		def := app.Definition()
+		notices := map[string]bool{}
+		for _, notice := range def.SecurityNotices {
+			notices[notice] = true
+		}
+		if notices[appSecurityNoticeElevatedLNDAccess] != wantElevated[def.ID] {
+			t.Fatalf("unexpected elevated LND notice for %s: %v", def.ID, def.SecurityNotices)
+		}
+		if notices[appSecurityNoticeLNDDataDirectoryRead] != (def.ID == "lndg") {
+			t.Fatalf("unexpected LND data directory notice for %s: %v", def.ID, def.SecurityNotices)
+		}
+
+		info := newAppInfo(def)
+		if len(info.SecurityNotices) != len(def.SecurityNotices) {
+			t.Fatalf("security notices were not copied to app info for %s", def.ID)
+		}
 	}
 }
 

@@ -38,6 +38,9 @@ func lnbitsDefinition() appDefinition {
 		Name:        "LNbits",
 		Description: "Lightning wallet/accounts system and extension platform powered by your local LND.",
 		Port:        lnbitsPort,
+		SecurityNotices: []string{
+			appSecurityNoticeElevatedLNDAccess,
+		},
 	}
 }
 

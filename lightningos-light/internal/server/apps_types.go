@@ -5,6 +5,9 @@ import "context"
 const (
 	appsRoot     = "/var/lib/lightningos/apps"
 	appsDataRoot = "/var/lib/lightningos/apps-data"
+
+	appSecurityNoticeElevatedLNDAccess    = "elevated_lnd_access"
+	appSecurityNoticeLNDDataDirectoryRead = "lnd_data_directory_read"
 )
 
 type appDefinition struct {
@@ -13,23 +16,28 @@ type appDefinition struct {
 	Description string
 	Port        int
 	ExternalURL string
+	// SecurityNotices describes elevated access granted to the app. These are
+	// informational disclosures only; they must never change app lifecycle or
+	// installation behavior on their own.
+	SecurityNotices []string
 }
 
 type appInfo struct {
-	ID                 string `json:"id"`
-	Name               string `json:"name"`
-	Description        string `json:"description"`
-	Installed          bool   `json:"installed"`
-	Status             string `json:"status"`
-	Port               int    `json:"port"`
-	Scheme             string `json:"scheme,omitempty"`
-	ExternalURL        string `json:"external_url,omitempty"`
-	AdminPasswordPath  string `json:"admin_password_path,omitempty"`
-	Available          bool   `json:"available"`
-	UnavailableReason  string `json:"unavailable_reason,omitempty"`
-	UnavailableMessage string `json:"unavailable_message,omitempty"`
-	UFWActive          bool   `json:"ufw_active,omitempty"`
-	UFWCommand         string `json:"ufw_command,omitempty"`
+	ID                 string   `json:"id"`
+	Name               string   `json:"name"`
+	Description        string   `json:"description"`
+	Installed          bool     `json:"installed"`
+	Status             string   `json:"status"`
+	Port               int      `json:"port"`
+	Scheme             string   `json:"scheme,omitempty"`
+	ExternalURL        string   `json:"external_url,omitempty"`
+	AdminPasswordPath  string   `json:"admin_password_path,omitempty"`
+	Available          bool     `json:"available"`
+	UnavailableReason  string   `json:"unavailable_reason,omitempty"`
+	UnavailableMessage string   `json:"unavailable_message,omitempty"`
+	UFWActive          bool     `json:"ufw_active,omitempty"`
+	UFWCommand         string   `json:"ufw_command,omitempty"`
+	SecurityNotices    []string `json:"security_notices,omitempty"`
 }
 
 type appHandler interface {
@@ -43,14 +51,15 @@ type appHandler interface {
 
 func newAppInfo(def appDefinition) appInfo {
 	return appInfo{
-		ID:          def.ID,
-		Name:        def.Name,
-		Description: def.Description,
-		Installed:   false,
-		Status:      "not_installed",
-		Port:        def.Port,
-		Scheme:      "http",
-		ExternalURL: def.ExternalURL,
-		Available:   true,
+		ID:              def.ID,
+		Name:            def.Name,
+		Description:     def.Description,
+		Installed:       false,
+		Status:          "not_installed",
+		Port:            def.Port,
+		Scheme:          "http",
+		ExternalURL:     def.ExternalURL,
+		Available:       true,
+		SecurityNotices: append([]string(nil), def.SecurityNotices...),
 	}
 }

@@ -111,6 +111,9 @@ func fedimintGatewayDefinition() appDefinition {
 		Name:        "Fedimint Lightning Gateway",
 		Description: "Connect your local LND to Fedimint federations as an independent Lightning gateway.",
 		Port:        fedimintGatewayUIPort,
+		SecurityNotices: []string{
+			appSecurityNoticeElevatedLNDAccess,
+		},
 	}
 }
 

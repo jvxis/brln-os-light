@@ -52,6 +52,10 @@ type Server struct {
 	auditLog                    *AuditService
 	auditLogErr                 string
 	auditRetentionOnce          sync.Once
+	spendingGuardInitAt         time.Time
+	spendingGuardMu             sync.Mutex
+	spendingGuard               *SpendingGuardService
+	spendingGuardErr            string
 	rebalanceInitAt             time.Time
 	rebalance                   *RebalanceService
 	rebalanceErr                string
@@ -192,6 +196,8 @@ func (s *Server) Run() error {
 	s.startPublicPoolRuntimeReconciler()
 	s.initNotifications()
 	s.initAuditLog()
+	s.initSpendingGuard()
+	s.startSpendingGuardReconciler()
 	s.initReports()
 	s.startTelegramNotifications()
 	s.initRebalance()

@@ -250,6 +250,23 @@ GET /api/wallet/summary
 - Returns live wallet balances, an `updated_at` RFC3339 timestamp, and recent activity.
 - Lightning fields distinguish local settled balance, local/remote unsettled HTLCs, remote-side balance, pending-open balances, and closing balances. Remote-side values are an inbound-liquidity reference and are not funds owned by the local wallet.
 
+GET /api/wallet/spending-guard
+- Returns the Lightning Spending Guard policy and rolling 24-hour usage (`used_sat`, `reserved_sat`, and `remaining_sat`).
+- The guard is disabled by default for compatibility with existing installations.
+
+PUT /api/wallet/spending-guard
+Body:
+{
+  "enabled": true,
+  "max_payment_sat": 100000,
+  "rolling_24h_limit_sat": 500000,
+  "confirm_password": "required when increasing a limit or disabling an active guard"
+}
+- At least one positive limit is required while enabled. `0` means no cap for that dimension.
+- The protected debit is the payment amount plus its maximum routing fee. Reservations are atomic, so concurrent protected requests cannot spend the same allowance.
+- Covers Wallet Lightning payments, Chat Keysend, and Loop Out BRLN tranches. It intentionally excludes routing forwards, LOS rebalances, channel operations, on-chain sends, and apps connected directly to LND.
+- A blocked payment returns HTTP 429 with code `spending_guard_limit_exceeded`.
+
 POST /api/wallet/address
 - Returns a new on-chain address.
 

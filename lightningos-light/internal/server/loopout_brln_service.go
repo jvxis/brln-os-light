@@ -182,16 +182,23 @@ type loopOutBRLNCandidate struct {
 }
 
 type LoopOutBRLNService struct {
-	db     *pgxpool.Pool
-	lnd    loopOutBRLNLND
-	logger *log.Logger
-	wake   chan struct{}
-	start  sync.Once
-	workMu sync.Mutex
+	db            *pgxpool.Pool
+	lnd           loopOutBRLNLND
+	logger        *log.Logger
+	spendingGuard lightningSpendingGuard
+	wake          chan struct{}
+	start         sync.Once
+	workMu        sync.Mutex
 }
 
 func NewLoopOutBRLNService(db *pgxpool.Pool, lnd loopOutBRLNLND, logger *log.Logger) *LoopOutBRLNService {
 	return &LoopOutBRLNService{db: db, lnd: lnd, logger: logger, wake: make(chan struct{}, 1)}
+}
+
+func (s *LoopOutBRLNService) AttachSpendingGuard(guard lightningSpendingGuard) {
+	s.workMu.Lock()
+	s.spendingGuard = guard
+	s.workMu.Unlock()
 }
 
 func (s *LoopOutBRLNService) EnsureSchema(ctx context.Context) error {
@@ -1013,32 +1020,50 @@ func (s *LoopOutBRLNService) executeNextAttempt(ctx context.Context, job LoopOut
 		return s.waitForLiquidity(ctx, job, reason, newRound)
 	}
 	candidate := available[0]
-	payment, err := s.beginAttempt(ctx, job, sequence, amount, candidate)
-	if err != nil {
-		return err
-	}
 	resolveCtx, resolveCancel := context.WithTimeout(ctx, 30*time.Second)
 	invoice, err := resolveLightningAddress(resolveCtx, job.LightningAddress, amount, job.Comment)
 	resolveCancel()
 	if err != nil {
-		return s.finalizeFailure(ctx, job, payment, "lightning address: "+err.Error())
+		return s.waitForLiquidity(ctx, job, "lightning address: "+err.Error(), false)
 	}
 	decodeCtx, decodeCancel := context.WithTimeout(ctx, 10*time.Second)
 	decoded, err := s.lnd.DecodeInvoice(decodeCtx, invoice)
 	decodeCancel()
 	if err != nil {
-		return s.finalizeFailure(ctx, job, payment, "invalid invoice returned by Lightning Address: "+err.Error())
+		return s.waitForLiquidity(ctx, job, "invalid invoice returned by Lightning Address: "+err.Error(), false)
 	}
 	if decoded.AmountMsat != amount*1000 {
-		return s.finalizeFailure(ctx, job, payment, fmt.Sprintf("Lightning Address returned invoice for %d msat, expected %d msat", decoded.AmountMsat, amount*1000))
+		return s.waitForLiquidity(ctx, job, fmt.Sprintf("Lightning Address returned invoice for %d msat, expected %d msat", decoded.AmountMsat, amount*1000), false)
 	}
 	if decoded.PaymentHash == "" {
-		return s.finalizeFailure(ctx, job, payment, "Lightning Address returned invoice without payment hash")
+		return s.waitForLiquidity(ctx, job, "Lightning Address returned invoice without payment hash", false)
 	}
 	if decoded.Timestamp > 0 && decoded.Expiry > 0 && time.Now().Unix() >= decoded.Timestamp+decoded.Expiry-5 {
-		return s.finalizeFailure(ctx, job, payment, "Lightning Address returned an expired invoice")
+		return s.waitForLiquidity(ctx, job, "Lightning Address returned an expired invoice", false)
+	}
+	reservation := SpendingReservation{}
+	if s.spendingGuard != nil {
+		reservation, err = s.spendingGuard.Reserve(ctx, SpendingIntent{
+			Source: "loop_out_brln", AmountSat: amount, MaxFeeSat: feeLimit, PaymentHash: decoded.PaymentHash,
+		})
+		if err != nil {
+			if errors.Is(err, ErrSpendingGuardLimit) {
+				return s.waitForLiquidity(ctx, job, "Spending Guard: "+err.Error(), false)
+			}
+			return err
+		}
+	}
+	payment, err := s.beginAttempt(ctx, job, sequence, amount, candidate)
+	if err != nil {
+		if s.spendingGuard != nil {
+			_ = s.spendingGuard.Release(ctx, reservation, "failed to persist Loop Out attempt")
+		}
+		return err
 	}
 	if _, err := s.db.Exec(ctx, `update loopout_brln_payments set payment_hash=$2,status='sending',updated_at=now() where id=$1`, payment.ID, decoded.PaymentHash); err != nil {
+		if s.spendingGuard != nil {
+			_ = s.spendingGuard.Release(ctx, reservation, "failed before payment submission")
+		}
 		return err
 	}
 	payment.PaymentHash = decoded.PaymentHash
@@ -1048,6 +1073,9 @@ func (s *LoopOutBRLNService) executeNextAttempt(ctx context.Context, job LoopOut
 		return err
 	}
 	if currentStatus == loopOutBRLNStatusPauseRequested || currentStatus == loopOutBRLNStatusCancelRequested || currentStatus == loopOutBRLNStatusPaused || currentStatus == loopOutBRLNStatusCancelled {
+		if s.spendingGuard != nil {
+			_ = s.spendingGuard.Release(ctx, reservation, "payment stopped before submission")
+		}
 		return s.finalizeFailure(ctx, job, payment, "payment stopped before submission")
 	}
 	payCtx, payCancel := context.WithTimeout(ctx, time.Duration(job.TimeoutSeconds)*time.Second)
@@ -1057,6 +1085,9 @@ func (s *LoopOutBRLNService) executeNextAttempt(ctx context.Context, job LoopOut
 	details, found, trackErr := s.lnd.TrackPaymentDetails(trackCtx, decoded.PaymentHash)
 	trackCancel()
 	if found && strings.EqualFold(details.Status, "SUCCEEDED") {
+		if s.spendingGuard != nil {
+			_ = s.spendingGuard.Settle(ctx, reservation, paymentDetailsFeeSat(details, feeLimit), decoded.PaymentHash)
+		}
 		return s.finalizeSuccess(ctx, job, payment, details)
 	}
 	if found && !strings.EqualFold(details.Status, "FAILED") {
@@ -1065,11 +1096,17 @@ func (s *LoopOutBRLNService) executeNextAttempt(ctx context.Context, job LoopOut
 		return nil
 	}
 	if err == nil {
+		if s.spendingGuard != nil {
+			_ = s.spendingGuard.Settle(ctx, reservation, feeLimit, decoded.PaymentHash)
+		}
 		// SendPaymentV2 returned success; a delayed tracking index must not turn a
 		// paid invoice into a retry. Keep it in reconciliation until LND confirms.
 		_, _ = s.db.Exec(ctx, `update loopout_brln_payments set status='reconciling',updated_at=now() where id=$1`, payment.ID)
 		_, _ = s.db.Exec(ctx, `update loopout_brln_jobs set next_attempt_at=now()+interval '5 seconds',updated_at=now() where id=$1`, job.ID)
 		return nil
+	}
+	if s.spendingGuard != nil {
+		_ = s.spendingGuard.Release(ctx, reservation, errorText(err, trackErr))
 	}
 	return s.finalizeFailure(ctx, job, payment, errorText(err, trackErr))
 }

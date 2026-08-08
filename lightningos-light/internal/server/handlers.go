@@ -3362,6 +3362,9 @@ func (s *Server) handleChatSend(w http.ResponseWriter, r *http.Request) {
 
 	msg, err := s.chat.SendMessage(ctx, peerPubkey, amountSat, message)
 	if err != nil {
+		if writeSpendingGuardError(w, err) {
+			return
+		}
 		detail := lndRPCErrorMessage(err)
 		if isTimeoutError(err) {
 			detail = lndStatusMessage(err)
@@ -4457,12 +4460,17 @@ func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), lndWalletPaymentTimeout)
 	defer cancel()
 
-	paymentHash := ""
-	if decoded, err := s.lnd.DecodeInvoice(ctx, paymentRequest); err == nil {
-		paymentHash = decoded.PaymentHash
+	reservation, paymentHash, err := s.reserveInvoiceSpending(ctx, paymentRequest, req.AmountSat, req.MaxFeeSat, "wallet")
+	if err != nil {
+		if writeSpendingGuardError(w, err) {
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "spending guard could not validate this payment")
+		return
 	}
-
-	if err := s.lnd.PayInvoice(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat); err != nil {
+	paymentErr := s.lnd.PayInvoice(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat)
+	s.finishSpendingReservation(reservation, paymentHash, paymentErr)
+	if paymentErr != nil {
 		s.recordAuditEventAsync(r, "wallet.payment.failed", paymentHash, map[string]any{
 			"mode":                   "standard",
 			"amount_sat":             req.AmountSat,
@@ -4472,8 +4480,8 @@ func (s *Server) handleWalletPay(w http.ResponseWriter, r *http.Request) {
 		if paymentHash != "" {
 			s.recordWalletActivity(paymentHash)
 		}
-		msg := lndRPCErrorMessage(err)
-		if isTimeoutError(err) {
+		msg := lndRPCErrorMessage(paymentErr)
+		if isTimeoutError(paymentErr) {
 			msg = "Payment timed out while LND was trying routes"
 		}
 		if msg == "" || msg == "LND error" {
@@ -4524,12 +4532,17 @@ func (s *Server) handleWalletPayValidatedRoute(w http.ResponseWriter, r *http.Re
 	ctx, cancel := context.WithTimeout(r.Context(), lndWalletPaymentTimeout)
 	defer cancel()
 
-	paymentHash := ""
-	if decoded, err := s.lnd.DecodeInvoice(ctx, paymentRequest); err == nil {
-		paymentHash = decoded.PaymentHash
+	reservation, paymentHash, err := s.reserveInvoiceSpending(ctx, paymentRequest, req.AmountSat, req.MaxFeeSat, "wallet")
+	if err != nil {
+		if writeSpendingGuardError(w, err) {
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "spending guard could not validate this payment")
+		return
 	}
-
-	if err := s.lnd.PayInvoiceWithValidatedRoute(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat, 5, req.RouteToken); err != nil {
+	paymentErr := s.lnd.PayInvoiceWithValidatedRoute(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat, 5, req.RouteToken)
+	s.finishSpendingReservation(reservation, paymentHash, paymentErr)
+	if paymentErr != nil {
 		s.recordAuditEventAsync(r, "wallet.payment.failed", paymentHash, map[string]any{
 			"mode":                   "validated_route",
 			"amount_sat":             req.AmountSat,
@@ -4539,8 +4552,8 @@ func (s *Server) handleWalletPayValidatedRoute(w http.ResponseWriter, r *http.Re
 		if paymentHash != "" {
 			s.recordWalletActivity(paymentHash)
 		}
-		msg := lndRPCErrorMessage(err)
-		if isTimeoutError(err) {
+		msg := lndRPCErrorMessage(paymentErr)
+		if isTimeoutError(paymentErr) {
 			msg = "Validated route payment timed out"
 		}
 		if msg == "" || msg == "LND error" {
@@ -4613,12 +4626,17 @@ func (s *Server) handleWalletPayMPP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), lndWalletPaymentTimeout)
 	defer cancel()
 
-	paymentHash := ""
-	if decoded, err := s.lnd.DecodeInvoice(ctx, paymentRequest); err == nil {
-		paymentHash = decoded.PaymentHash
+	reservation, paymentHash, err := s.reserveInvoiceSpending(ctx, paymentRequest, req.AmountSat, req.MaxFeeSat, "wallet")
+	if err != nil {
+		if writeSpendingGuardError(w, err) {
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "spending guard could not validate this payment")
+		return
 	}
-
-	if err := s.lnd.PayInvoiceWithMPP(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat, req.MaxParts, req.MaxShardSat); err != nil {
+	paymentErr := s.lnd.PayInvoiceWithMPP(ctx, paymentRequest, outgoingChanIDs, req.MaxFeeSat, req.MaxParts, req.MaxShardSat)
+	s.finishSpendingReservation(reservation, paymentHash, paymentErr)
+	if paymentErr != nil {
 		s.recordAuditEventAsync(r, "wallet.payment.failed", paymentHash, map[string]any{
 			"mode":                   "mpp",
 			"amount_sat":             req.AmountSat,
@@ -4629,8 +4647,8 @@ func (s *Server) handleWalletPayMPP(w http.ResponseWriter, r *http.Request) {
 		if paymentHash != "" {
 			s.recordWalletActivity(paymentHash)
 		}
-		msg := lndRPCErrorMessage(err)
-		if isTimeoutError(err) {
+		msg := lndRPCErrorMessage(paymentErr)
+		if isTimeoutError(paymentErr) {
 			msg = "MPP payment timed out while LND was trying shards"
 		}
 		if msg == "" || msg == "LND error" {

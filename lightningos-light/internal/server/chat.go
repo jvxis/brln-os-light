@@ -70,6 +70,7 @@ type ChatService struct {
 	started       bool
 	stop          chan struct{}
 	notifier      *Notifier
+	spendingGuard lightningSpendingGuard
 	db            *pgxpool.Pool
 	lastDBCleanup time.Time
 }
@@ -85,6 +86,12 @@ func NewChatService(lnd *lndclient.Client, logger *log.Logger) *ChatService {
 func (c *ChatService) AttachNotifier(notifier *Notifier) {
 	c.mu.Lock()
 	c.notifier = notifier
+	c.mu.Unlock()
+}
+
+func (c *ChatService) AttachSpendingGuard(guard lightningSpendingGuard) {
+	c.mu.Lock()
+	c.spendingGuard = guard
 	c.mu.Unlock()
 }
 
@@ -198,9 +205,45 @@ func (c *ChatService) SendMessage(ctx context.Context, peerPubkey string, amount
 	if amountSat <= 0 {
 		amountSat = chatDefaultAmountSat
 	}
+	c.mu.Lock()
+	guard := c.spendingGuard
+	c.mu.Unlock()
+	reservation := SpendingReservation{}
+	var err error
+	if guard != nil {
+		reservation, err = guard.Reserve(ctx, SpendingIntent{
+			Source: "chat_keysend", AmountSat: amountSat, MaxFeeSat: suggestedSpendingGuardFeeSat(amountSat, 0),
+		})
+		if err != nil {
+			return ChatMessage{}, err
+		}
+	}
 	paymentHash, err := c.lnd.SendKeysendMessage(ctx, peerPubkey, amountSat, message)
+	if guard != nil && reservation.Active && paymentHash != "" {
+		_ = guard.Bind(context.Background(), reservation, paymentHash)
+	}
 	if err != nil {
+		if guard != nil && reservation.Active {
+			trackCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			details, found, _ := c.lnd.TrackPaymentDetails(trackCtx, paymentHash)
+			if found && strings.EqualFold(details.Status, "SUCCEEDED") {
+				_ = guard.Settle(trackCtx, reservation, paymentDetailsFeeSat(details, reservation.MaxFeeSat), paymentHash)
+			} else if (found && strings.EqualFold(details.Status, "FAILED")) || !isAmbiguousPaymentError(err) {
+				_ = guard.Release(trackCtx, reservation, err.Error())
+			}
+			cancel()
+		}
 		return ChatMessage{}, err
+	}
+	if guard != nil && reservation.Active {
+		trackCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		details, found, _ := c.lnd.TrackPaymentDetails(trackCtx, paymentHash)
+		feeSat := reservation.MaxFeeSat
+		if found {
+			feeSat = paymentDetailsFeeSat(details, feeSat)
+		}
+		_ = guard.Settle(trackCtx, reservation, feeSat, paymentHash)
+		cancel()
 	}
 
 	msg := ChatMessage{

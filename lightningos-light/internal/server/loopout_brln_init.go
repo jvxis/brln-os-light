@@ -37,6 +37,9 @@ func (s *Server) initLoopOutBRLN() {
 		s.db = pool
 	}
 	svc := NewLoopOutBRLNService(pool, s.lnd, s.logger)
+	if guard, _ := s.spendingGuardService(); guard != nil {
+		svc.AttachSpendingGuard(guard)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := svc.EnsureSchema(ctx); err != nil {

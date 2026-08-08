@@ -90,6 +90,8 @@ const formatSats = (value: number | undefined) => {
 const chatSendErrorMessage = (err: any, t: (key: string, options?: any) => string) => {
   const code = typeof err?.code === 'string' ? err.code : ''
   switch (code) {
+	case 'spending_guard_limit_exceeded':
+	  return t('chat.errorSpendingGuard')
     case 'chat_keysend_incorrect_payment_details':
       return t('chat.errorIncorrectPaymentDetails')
     case 'chat_keysend_route_failed':

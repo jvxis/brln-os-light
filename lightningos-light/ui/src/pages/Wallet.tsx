@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import QrScanner from 'qr-scanner'
 import QRCode from 'qrcode'
-import { APIError, createInvoice, decodeInvoice, getLnChannels, getMempoolFees, getWalletActivity, getWalletAddress, getWalletPaymentDetail, getWalletSummary, payInvoice, payInvoiceMPP, payInvoiceValidatedRoute, previewOnchainSend, previewWalletPayment, reauthAuth, sendOnchain } from '../api'
+import { APIError, createInvoice, decodeInvoice, getLnChannels, getMempoolFees, getSpendingGuard, getWalletActivity, getWalletAddress, getWalletPaymentDetail, getWalletSummary, payInvoice, payInvoiceMPP, payInvoiceValidatedRoute, previewOnchainSend, previewWalletPayment, reauthAuth, sendOnchain, updateSpendingGuard, type SpendingGuardStatus } from '../api'
 import SensitiveActionModal from '../components/SensitiveActionModal'
+import StatusBadge from '../components/dashboard/StatusBadge'
 import { getLocale } from '../i18n'
 
 const emptySummary = {
@@ -204,6 +205,16 @@ export default function Wallet() {
   const [summaryError, setSummaryError] = useState('')
   const [summaryWarning, setSummaryWarning] = useState('')
   const [summaryLoading, setSummaryLoading] = useState(true)
+  const [spendingGuard, setSpendingGuard] = useState<SpendingGuardStatus | null>(null)
+  const [spendingGuardError, setSpendingGuardError] = useState('')
+  const [spendingGuardEnabled, setSpendingGuardEnabled] = useState(false)
+  const [spendingGuardMaxPayment, setSpendingGuardMaxPayment] = useState('')
+  const [spendingGuardRolling, setSpendingGuardRolling] = useState('')
+  const [spendingGuardDirty, setSpendingGuardDirty] = useState(false)
+  const [spendingGuardSaving, setSpendingGuardSaving] = useState(false)
+  const [spendingGuardNotice, setSpendingGuardNotice] = useState('')
+  const [spendingGuardReauthOpen, setSpendingGuardReauthOpen] = useState(false)
+  const [spendingGuardPassword, setSpendingGuardPassword] = useState('')
   const [address, setAddress] = useState('')
   const [addressQr, setAddressQr] = useState<string | null>(null)
   const [addressStatus, setAddressStatus] = useState('')
@@ -359,6 +370,32 @@ export default function Wallet() {
       clearInterval(timer)
     }
   }, [])
+
+  const applySpendingGuardStatus = (data: SpendingGuardStatus, preserveDraft = false) => {
+    setSpendingGuard(data)
+    if (!preserveDraft) {
+      setSpendingGuardEnabled(Boolean(data.enabled))
+      setSpendingGuardMaxPayment(data.max_payment_sat > 0 ? String(data.max_payment_sat) : '')
+      setSpendingGuardRolling(data.rolling_24h_limit_sat > 0 ? String(data.rolling_24h_limit_sat) : '')
+      setSpendingGuardDirty(false)
+    }
+  }
+
+  const loadSpendingGuard = async (preserveDraft = false) => {
+    try {
+      const data = await getSpendingGuard()
+      applySpendingGuardStatus(data, preserveDraft)
+      setSpendingGuardError('')
+    } catch (err: any) {
+      setSpendingGuardError(err?.message || t('wallet.spendingGuardUnavailable'))
+    }
+  }
+
+  useEffect(() => {
+    void loadSpendingGuard(false)
+    const timer = setInterval(() => void loadSpendingGuard(spendingGuardDirty), 30000)
+    return () => clearInterval(timer)
+  }, [spendingGuardDirty, t])
 
   const loadActivity = async (options?: { offset?: number; limit?: number; append?: boolean; silent?: boolean }) => {
     const offset = options?.offset ?? 0
@@ -850,6 +887,9 @@ export default function Wallet() {
   }
 
   const paymentErrorMessage = (err: any, fallback: string) => {
+	if (err instanceof APIError && err.code === 'spending_guard_limit_exceeded') {
+	  return t('wallet.spendingGuardBlocked')
+	}
     const raw = String(err?.message || fallback || '').trim()
     if (!raw) return fallback
     const lower = raw.toLowerCase()
@@ -1455,6 +1495,47 @@ export default function Wallet() {
     }
   }
 
+  const spendingGuardPayload = (confirmPassword?: string) => {
+    const maxPayment = spendingGuardMaxPayment.trim() ? Number(spendingGuardMaxPayment) : 0
+    const rolling = spendingGuardRolling.trim() ? Number(spendingGuardRolling) : 0
+    if (!Number.isSafeInteger(maxPayment) || maxPayment < 0 || !Number.isSafeInteger(rolling) || rolling < 0) {
+      throw new Error(t('wallet.spendingGuardInvalidLimits'))
+    }
+    if (spendingGuardEnabled && maxPayment === 0 && rolling === 0) {
+      throw new Error(t('wallet.spendingGuardLimitRequired'))
+    }
+    return {
+      enabled: spendingGuardEnabled,
+      max_payment_sat: maxPayment,
+      rolling_24h_limit_sat: rolling,
+      confirm_password: confirmPassword || undefined
+    }
+  }
+
+  const saveSpendingGuard = async (confirmPassword?: string) => {
+	if (spendingGuardReauthOpen && !String(confirmPassword || '').trim()) {
+	  setSpendingGuardNotice(t('wallet.paymentPasswordRequired'))
+	  return
+	}
+    setSpendingGuardSaving(true)
+    setSpendingGuardNotice('')
+    try {
+      const updated = await updateSpendingGuard(spendingGuardPayload(confirmPassword))
+      applySpendingGuardStatus(updated)
+      setSpendingGuardNotice(t('wallet.spendingGuardSaved'))
+      setSpendingGuardReauthOpen(false)
+      setSpendingGuardPassword('')
+    } catch (err: any) {
+      if (err instanceof APIError && err.code === 'lightning_funds_reauth_required') {
+        setSpendingGuardReauthOpen(true)
+        return
+      }
+      setSpendingGuardNotice(err?.message || t('wallet.spendingGuardSaveFailed'))
+    } finally {
+      setSpendingGuardSaving(false)
+    }
+  }
+
   const decodedAmount = () => {
     if (!decode) return ''
     const amountSat = Number(decode.amount_sat || 0)
@@ -1478,6 +1559,9 @@ export default function Wallet() {
   const selectedActivityTxUrl = selectedActivity && activityNetwork(selectedActivity) === 'onchain'
     ? mempoolTxUrl(selectedActivity.txid)
     : ''
+  const spendingGuardConsumed = Number(spendingGuard?.used_sat || 0) + Number(spendingGuard?.reserved_sat || 0)
+  const spendingGuardLimit = Number(spendingGuard?.rolling_24h_limit_sat || 0)
+  const spendingGuardProgress = spendingGuardLimit > 0 ? Math.min(100, (spendingGuardConsumed / spendingGuardLimit) * 100) : 0
 
   return (
     <section className="space-y-6">
@@ -1761,6 +1845,99 @@ export default function Wallet() {
           <p className={`mt-4 text-sm ${summaryTone}`}>{t('wallet.statusLabel', { status: summaryError })}</p>
         )}
         {status && <p className="mt-4 whitespace-pre-wrap break-words text-sm text-brass">{status}</p>}
+      </div>
+
+      <div className="section-card space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-lg font-semibold">{t('wallet.spendingGuardTitle')}</h3>
+              <StatusBadge
+                tone={spendingGuard?.enabled ? 'ok' : 'muted'}
+                label={spendingGuard?.enabled ? t('wallet.spendingGuardActive') : t('wallet.spendingGuardDisabled')}
+              />
+            </div>
+            <p className="mt-1 max-w-3xl text-sm text-fog/60">{t('wallet.spendingGuardDescription')}</p>
+          </div>
+          <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-ink/50 px-3 py-2 text-sm">
+            <input
+              type="checkbox"
+              checked={spendingGuardEnabled}
+              onChange={(event) => {
+                setSpendingGuardEnabled(event.target.checked)
+                setSpendingGuardDirty(true)
+                setSpendingGuardNotice('')
+              }}
+            />
+            {t('wallet.spendingGuardEnable')}
+          </label>
+        </div>
+
+        {spendingGuard?.enabled && spendingGuardLimit > 0 && (
+          <div className="rounded-2xl border border-white/10 bg-ink/50 p-4">
+            <div className="flex flex-wrap justify-between gap-2 text-sm">
+              <span>{t('wallet.spendingGuardRollingUsage')}</span>
+              <span className="font-mono">{formatSats(spendingGuardConsumed)} / {formatSats(spendingGuardLimit)} sats</span>
+            </div>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
+              <div className="h-full rounded-full bg-glow transition-all" style={{ width: `${spendingGuardProgress}%` }} />
+            </div>
+            <div className="mt-2 flex flex-wrap justify-between gap-2 text-xs text-fog/55">
+              <span>{t('wallet.spendingGuardUsed', { amount: formatSats(Number(spendingGuard.used_sat || 0)) })}</span>
+              <span>{t('wallet.spendingGuardReserved', { amount: formatSats(Number(spendingGuard.reserved_sat || 0)) })}</span>
+              <span>{t('wallet.spendingGuardRemaining', { amount: formatSats(Number(spendingGuard.remaining_sat || 0)) })}</span>
+            </div>
+          </div>
+        )}
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <label className="space-y-2 text-sm">
+            <span className="text-fog/70">{t('wallet.spendingGuardPerPayment')}</span>
+            <input
+              className="input-field"
+              type="number"
+              min={0}
+              step={1}
+              value={spendingGuardMaxPayment}
+              onChange={(event) => {
+                setSpendingGuardMaxPayment(event.target.value)
+                setSpendingGuardDirty(true)
+                setSpendingGuardNotice('')
+              }}
+              placeholder={t('wallet.spendingGuardUnlimited')}
+            />
+            <span className="block text-xs text-fog/50">{t('wallet.spendingGuardPerPaymentHint')}</span>
+          </label>
+          <label className="space-y-2 text-sm">
+            <span className="text-fog/70">{t('wallet.spendingGuardRollingLimit')}</span>
+            <input
+              className="input-field"
+              type="number"
+              min={0}
+              step={1}
+              value={spendingGuardRolling}
+              onChange={(event) => {
+                setSpendingGuardRolling(event.target.value)
+                setSpendingGuardDirty(true)
+                setSpendingGuardNotice('')
+              }}
+              placeholder={t('wallet.spendingGuardUnlimited')}
+            />
+            <span className="block text-xs text-fog/50">{t('wallet.spendingGuardRollingHint')}</span>
+          </label>
+        </div>
+
+        <div className="rounded-2xl border border-brass/25 bg-brass/5 p-4 text-xs leading-relaxed text-fog/65">
+          <p>{t('wallet.spendingGuardScope')}</p>
+          <p className="mt-2 text-brass">{t('wallet.spendingGuardExclusions')}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <button className="btn-primary" type="button" disabled={spendingGuardSaving || !spendingGuardDirty} onClick={() => void saveSpendingGuard()}>
+            {spendingGuardSaving ? t('common.saving') : t('wallet.spendingGuardSave')}
+          </button>
+          {spendingGuardNotice && <p className="text-sm text-brass">{spendingGuardNotice}</p>}
+          {spendingGuardError && <p className="text-sm text-ember">{spendingGuardError}</p>}
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -2412,6 +2589,24 @@ export default function Wallet() {
           setPaymentReauthAction(null)
           setPaymentReauthPassword('')
           setPaymentReauthError('')
+        }}
+      />
+
+      <SensitiveActionModal
+        open={spendingGuardReauthOpen}
+        title={t('wallet.spendingGuardReauthTitle')}
+        description={t('wallet.spendingGuardReauthBody')}
+        password={spendingGuardPassword}
+        busy={spendingGuardSaving}
+        error={spendingGuardNotice}
+        confirmLabel={t('wallet.spendingGuardReauthAction')}
+        onPasswordChange={setSpendingGuardPassword}
+        onConfirm={() => void saveSpendingGuard(spendingGuardPassword)}
+        onClose={() => {
+          if (spendingGuardSaving) return
+          setSpendingGuardReauthOpen(false)
+          setSpendingGuardPassword('')
+          setSpendingGuardNotice('')
         }}
       />
 

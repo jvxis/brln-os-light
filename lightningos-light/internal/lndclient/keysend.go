@@ -92,10 +92,10 @@ func (c *Client) SendKeysendMessage(ctx context.Context, pubkeyHex string, amoun
 		NoInflightUpdates: true,
 	})
 	if err != nil {
-		return "", err
+		return paymentHash, err
 	}
 	if _, err := waitForRouterPayment(stream); err != nil {
-		return "", err
+		return paymentHash, err
 	}
 
 	return paymentHash, nil

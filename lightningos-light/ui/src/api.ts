@@ -292,6 +292,26 @@ export const updateLndRawConfig = (payload: { raw_user_conf: string; apply_now: 
 export const getMempoolFees = () => request('/api/mempool/fees')
 
 export const getWalletSummary = () => request('/api/wallet/summary')
+export type SpendingGuardStatus = {
+  enabled: boolean
+  max_payment_sat: number
+  rolling_24h_limit_sat: number
+  used_sat: number
+  reserved_sat: number
+  remaining_sat: number
+  window_start: string
+  window_ends_hint?: string
+  scope: string[]
+  excluded_scope: string[]
+  updated_at?: string
+}
+export const getSpendingGuard = (): Promise<SpendingGuardStatus> => request('/api/wallet/spending-guard')
+export const updateSpendingGuard = (payload: {
+  enabled: boolean
+  max_payment_sat: number
+  rolling_24h_limit_sat: number
+  confirm_password?: string
+}): Promise<SpendingGuardStatus> => request('/api/wallet/spending-guard', { method: 'PUT', body: JSON.stringify(payload) })
 export const getWalletActivity = (range: '7d' | '1m' | '1a', limit = 100, offset = 0) =>
   request(`/api/wallet/activity?range=${encodeURIComponent(range)}&limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}`)
 export const getWalletPaymentDetail = (paymentHash: string) =>

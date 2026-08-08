@@ -163,6 +163,21 @@ Body:
   "apply_now": true
 }
 
+GET /api/lnd/maintenance
+- Returns the persisted maintenance state, effective LND protection flags, rebalance/Magma automation state, LND reachability, and the current pending HTLC count.
+- `phase` is `off`, `activating`, `active`, `draining`, `verifying`, `deactivating`, or `degraded`.
+
+POST /api/lnd/maintenance
+Body:
+{
+  "enabled": true,
+  "confirm_password": "current admin password"
+}
+- Requires fresh reauthentication and restarts only LND.
+- Activation persists the previous values, applies `rejecthtlc=true` and `maxpendingchannels=0`, disables and stops rebalances, pauses Magma automatic channel opens, and blocks LightningOS channel-opening APIs.
+- Deactivation restores the exact previous option presence/value, rebalance master switch, and Magma mode.
+- Direct external clients using LND credentials are outside LightningOS API gates; `maxpendingchannels=0` still rejects remote-initiated opens.
+
 ## Tor status and upgrade
 
 GET /api/tor/upgrade/status

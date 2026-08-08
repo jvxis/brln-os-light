@@ -107,6 +107,9 @@ func (s *Server) handleMagmaOrderEvents(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleMagmaSettingsPost(w http.ResponseWriter, r *http.Request) {
+	if s.rejectLNDMaintenanceAction(w, r, "Magma settings update") {
+		return
+	}
 	svc := s.requireMagmaService(w)
 	if svc == nil {
 		return
@@ -200,6 +203,9 @@ func (s *Server) handleMagmaOpenPreview(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleMagmaOpenChannel(w http.ResponseWriter, r *http.Request) {
+	if s.rejectLNDMaintenanceAction(w, r, "Magma channel open") {
+		return
+	}
 	svc := s.requireMagmaService(w)
 	if svc == nil {
 		return

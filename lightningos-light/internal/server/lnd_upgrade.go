@@ -113,6 +113,9 @@ func (s *Server) handleLNDUpgradeStatus(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleLNDUpgradeStart(w http.ResponseWriter, r *http.Request) {
+	if s.rejectLNDMaintenanceAction(w, r, "LND upgrade") {
+		return
+	}
 	var req lndUpgradeRequest
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json")

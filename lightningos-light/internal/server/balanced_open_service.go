@@ -93,6 +93,7 @@ var (
 	ErrBalancedOpenInvalidAction              = errors.New("invalid session action")
 	ErrBalancedOpenInsufficientOnchainSafety  = errors.New("insufficient on-chain spendable balance for anchor reserve")
 	ErrBalancedOpenTransitOutpointUnavailable = errors.New("transit outpoint unavailable in wallet")
+	ErrBalancedOpenMaintenanceActive          = errors.New("LND maintenance mode is active")
 )
 
 const (
@@ -106,6 +107,9 @@ type BalancedOpenService struct {
 	lnd      *lndclient.Client
 	logger   *log.Logger
 	notifier *Notifier
+	// maintenanceActive is injected by Server so both HTTP-triggered and
+	// background auto-execution honor the same maintenance gate.
+	maintenanceActive func(context.Context) bool
 
 	mu           sync.Mutex
 	started      bool
@@ -429,6 +433,9 @@ func (s *BalancedOpenService) ExecuteSession(ctx context.Context, sessionID stri
 	}
 	if session.State != balancedOpenStateAccepted && session.State != balancedOpenStateRecoveryRequired {
 		return BalancedOpenSession{}, ErrBalancedOpenInvalidAction
+	}
+	if session.State == balancedOpenStateAccepted && s.maintenanceActive != nil && s.maintenanceActive(ctx) {
+		return BalancedOpenSession{}, ErrBalancedOpenMaintenanceActive
 	}
 
 	meta, err := decodeBalancedOpenMetadata(session.Metadata)
@@ -788,7 +795,7 @@ func (s *BalancedOpenService) reconcileSessions(ctx context.Context) error {
 		}
 
 		if session.Role == balancedOpenRoleInitiator && session.State == balancedOpenStateAccepted {
-			if _, err := s.ExecuteSession(ctx, session.SessionID); err != nil && s.logger != nil {
+			if _, err := s.ExecuteSession(ctx, session.SessionID); err != nil && !errors.Is(err, ErrBalancedOpenMaintenanceActive) && s.logger != nil {
 				s.logger.Printf("balanced-open: auto execute failed session=%s err=%v", session.SessionID, err)
 			}
 			continue

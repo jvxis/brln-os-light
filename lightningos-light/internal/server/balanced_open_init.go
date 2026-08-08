@@ -49,6 +49,16 @@ func (s *Server) initBalancedOpen() {
 	}
 
 	svc := NewBalancedOpenService(pool, s.lnd, s.logger, s.notifier)
+	svc.maintenanceActive = func(ctx context.Context) bool {
+		active, checkErr := s.lndMaintenanceActive(ctx)
+		if checkErr != nil {
+			if s.logger != nil {
+				s.logger.Printf("balanced-open maintenance gate unavailable: %v", checkErr)
+			}
+			return false
+		}
+		return active
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := svc.EnsureSchema(ctx); err != nil {

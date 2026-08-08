@@ -472,6 +472,9 @@ func (s *Server) handleBitcoinSourceGet(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleBitcoinSourcePost(w http.ResponseWriter, r *http.Request) {
+	if s.rejectLNDMaintenanceAction(w, r, "Bitcoin source change") {
+		return
+	}
 	var req struct {
 		Source        string `json:"source"`
 		AllowUnsynced bool   `json:"allow_unsynced"`
@@ -2553,6 +2556,9 @@ func watchtowerRPCErrorMessage(err error) string {
 }
 
 func (s *Server) handleLNOpenChannel(w http.ResponseWriter, r *http.Request) {
+	if s.rejectLNDMaintenanceAction(w, r, "channel open") {
+		return
+	}
 	var req struct {
 		PeerAddress     string   `json:"peer_address"`
 		Pubkey          string   `json:"pubkey"`
@@ -2685,6 +2691,9 @@ func (s *Server) handleLNOpenChannelPreview(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) handleLNBatchOpenChannel(w http.ResponseWriter, r *http.Request) {
+	if s.rejectLNDMaintenanceAction(w, r, "batch channel open") {
+		return
+	}
 	var req struct {
 		Channels []struct {
 			PeerAddress     string `json:"peer_address"`
@@ -3504,6 +3513,9 @@ func buildLNDConfigUpdate(
 }
 
 func (s *Server) handleLNDConfigPost(w http.ResponseWriter, r *http.Request) {
+	if s.rejectLNDMaintenanceAction(w, r, "LND config update") {
+		return
+	}
 	var req struct {
 		Alias                       *string `json:"alias"`
 		Color                       *string `json:"color"`
@@ -3598,6 +3610,9 @@ func (s *Server) handleLNDConfigPost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLNDConfigRaw(w http.ResponseWriter, r *http.Request) {
+	if s.rejectLNDMaintenanceAction(w, r, "raw LND config update") {
+		return
+	}
 	var req struct {
 		RawUserConf string `json:"raw_user_conf"`
 		ApplyNow    bool   `json:"apply_now"`

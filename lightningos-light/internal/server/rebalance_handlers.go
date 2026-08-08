@@ -176,6 +176,9 @@ func (s *Server) handleRebalanceConfigGet(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleRebalanceConfigPost(w http.ResponseWriter, r *http.Request) {
+	if s.rejectLNDMaintenanceAction(w, r, "rebalance config update") {
+		return
+	}
 	if s.rebalance == nil {
 		writeError(w, http.StatusServiceUnavailable, "rebalance unavailable")
 		return
@@ -211,6 +214,9 @@ func (s *Server) handleRebalanceConfigPost(w http.ResponseWriter, r *http.Reques
 // posture composed with the node calibration; "custom" freezes the current
 // effective values. The UI confirms with the operator before calling this.
 func (s *Server) handleRebalanceProfilePost(w http.ResponseWriter, r *http.Request) {
+	if s.rejectLNDMaintenanceAction(w, r, "rebalance profile update") {
+		return
+	}
 	if s.rebalance == nil {
 		writeError(w, http.StatusServiceUnavailable, "rebalance unavailable")
 		return
@@ -266,6 +272,9 @@ func (s *Server) handleRebalanceConfigSnapshotSave(w http.ResponseWriter, r *htt
 }
 
 func (s *Server) handleRebalanceConfigSnapshotRestore(w http.ResponseWriter, r *http.Request) {
+	if s.rejectLNDMaintenanceAction(w, r, "rebalance config restore") {
+		return
+	}
 	if s.rebalance == nil {
 		writeError(w, http.StatusServiceUnavailable, "rebalance unavailable")
 		return
@@ -1023,6 +1032,9 @@ func (s *Server) handleRebalanceAutoTargetHistory(w http.ResponseWriter, r *http
 }
 
 func (s *Server) handleRebalanceRun(w http.ResponseWriter, r *http.Request) {
+	if s.rejectLNDMaintenanceAction(w, r, "rebalance run") {
+		return
+	}
 	if s.rebalance == nil {
 		writeError(w, http.StatusServiceUnavailable, "rebalance unavailable")
 		return
@@ -1297,6 +1309,9 @@ func (s *Server) handleRebalanceChannelGuaranteed(w http.ResponseWriter, r *http
 }
 
 func (s *Server) handleRebalanceChannelManualRestart(w http.ResponseWriter, r *http.Request) {
+	if s.rejectLNDMaintenanceAction(w, r, "rebalance manual restart") {
+		return
+	}
 	if s.rebalance == nil {
 		writeError(w, http.StatusServiceUnavailable, "rebalance unavailable")
 		return

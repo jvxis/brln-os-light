@@ -9833,6 +9833,37 @@ set status='cancelled', reason='cancelled', completed_at=now()
 where id=$1 and status in ('running','queued')`, jobID)
 }
 
+// StopAllActiveJobs cancels every queued or running rebalance. The master
+// switch must be disabled first so a scheduler cycle cannot replace the jobs
+// while maintenance mode is draining them.
+func (s *RebalanceService) StopAllActiveJobs() int {
+	s.mu.Lock()
+	cancels := make([]context.CancelFunc, 0, len(s.jobCancel))
+	for _, cancel := range s.jobCancel {
+		if cancel != nil {
+			cancels = append(cancels, cancel)
+		}
+	}
+	s.mu.Unlock()
+
+	for _, cancel := range cancels {
+		cancel()
+	}
+	ctx, cancelCtx := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelCtx()
+	result, err := s.db.Exec(ctx, `
+update rebalance_jobs
+set status='cancelled', reason='maintenance mode', completed_at=now()
+where status in ('running','queued')`)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Printf("rebalance maintenance cancellation failed: %v", err)
+		}
+		return len(cancels)
+	}
+	return int(result.RowsAffected())
+}
+
 func (s *RebalanceService) buildChannelSnapshot(ctx context.Context, cfg RebalanceConfig, criticalActive bool, ch lndclient.ChannelInfo, setting channelSetting, ledger *channelLedger, revenue7dSat int64, cost7d rebalanceCost7dStat, drainRateSatPerHour int64, excluded bool) RebalanceChannel {
 	setting = normalizeChannelSetting(setting)
 	parked := isChannelAutomationParked(setting.AutomationMode)

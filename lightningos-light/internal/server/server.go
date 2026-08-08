@@ -32,6 +32,9 @@ type Server struct {
 	networkMapGeoCache          map[string]networkMapGeoCacheEntry
 	db                          *pgxpool.Pool
 	dbMaintenanceMu             sync.Mutex
+	lndMaintenanceMu            sync.Mutex
+	lndMaintenanceSchemaMu      sync.Mutex
+	lndMaintenanceSchemaReady   bool
 	graphHistoryCompact         dbGraphHistoryCompactJob
 	notifier                    *Notifier
 	notifierErr                 string

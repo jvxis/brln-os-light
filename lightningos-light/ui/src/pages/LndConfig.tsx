@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getBitcoinLocalStatus, getBitcoinSource, getLndConfig, getLndStatus, getLndUpgradeStatus, getLogs, setBitcoinSource, startLndUpgrade, updateLndConfig, updateLndRawConfig } from '../api'
+import { getBitcoinLocalStatus, getBitcoinSource, getLndConfig, getLndMaintenance, getLndStatus, getLndUpgradeStatus, getLogs, setBitcoinSource, setLndMaintenance, startLndUpgrade, updateLndConfig, updateLndRawConfig, type LndMaintenanceStatus } from '../api'
+import SensitiveActionModal from '../components/SensitiveActionModal'
 
 type BitcoinLocalStatus = {
   installed?: boolean
@@ -33,6 +34,11 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
   const [syncedToGraph, setSyncedToGraph] = useState<boolean | null>(null)
   const [graphSyncProgress, setGraphSyncProgress] = useState<number | null>(null)
   const [networkBusy, setNetworkBusy] = useState(false)
+  const [maintenance, setMaintenance] = useState<LndMaintenanceStatus | null>(null)
+  const [maintenanceBusy, setMaintenanceBusy] = useState(false)
+  const [maintenanceTarget, setMaintenanceTarget] = useState<boolean | null>(null)
+  const [maintenancePassword, setMaintenancePassword] = useState('')
+  const [maintenanceError, setMaintenanceError] = useState('')
   const [raw, setRaw] = useState('')
   const [advanced, setAdvanced] = useState(false)
   const [status, setStatus] = useState('')
@@ -107,6 +113,21 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
       }
     }).catch(() => null)
     loadUpgradeStatus()
+  }, [])
+
+  useEffect(() => {
+    let mounted = true
+    const loadMaintenance = () => {
+      getLndMaintenance()
+        .then((data) => { if (mounted) setMaintenance(data) })
+        .catch(() => null)
+    }
+    loadMaintenance()
+    const timer = window.setInterval(loadMaintenance, 15000)
+    return () => {
+      mounted = false
+      window.clearInterval(timer)
+    }
   }, [])
 
   useEffect(() => {
@@ -277,7 +298,7 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
   }, [bitcoinLocalStatus])
 
   const localToggleBlocked = bitcoinSource === 'remote' && !localReady
-  const toggleDisabled = sourceBusy || localToggleBlocked || externalBitcoinDetected
+  const toggleDisabled = sourceBusy || localToggleBlocked || externalBitcoinDetected || maintenance?.enabled
 
   const loadUpgradeStatus = async (force = false, silent = false) => {
     if (!force && upgradeChecking) return
@@ -438,8 +459,44 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
     setStatus(t('lndConfig.safeBootstrapSelected'))
   }
 
+  const openMaintenanceConfirmation = (enabled: boolean) => {
+    setMaintenanceTarget(enabled)
+    setMaintenancePassword('')
+    setMaintenanceError('')
+  }
+
+  const closeMaintenanceConfirmation = () => {
+    if (maintenanceBusy) return
+    setMaintenanceTarget(null)
+    setMaintenancePassword('')
+    setMaintenanceError('')
+  }
+
+  const handleMaintenanceChange = async () => {
+    if (maintenanceTarget === null) return
+    setMaintenanceBusy(true)
+    setMaintenanceError('')
+    try {
+      await setLndMaintenance({ enabled: maintenanceTarget, confirm_password: maintenancePassword })
+      setStatus(maintenanceTarget ? t('lndConfig.maintenanceActivationStarted') : t('lndConfig.maintenanceDeactivationStarted'))
+      setMaintenanceTarget(null)
+      setMaintenancePassword('')
+      window.setTimeout(() => {
+        getLndMaintenance().then(setMaintenance).catch(() => null)
+        getLndConfig().then((data: any) => {
+          setConfig(data)
+          setRaw(data.raw_user_conf || '')
+        }).catch(() => null)
+      }, 1200)
+    } catch (err) {
+      setMaintenanceError(err instanceof Error ? err.message : t('lndConfig.maintenanceChangeFailed'))
+    } finally {
+      setMaintenanceBusy(false)
+    }
+  }
+
   const handleToggleSource = async () => {
-    if (externalBitcoinDetected || sourceBusy || localToggleBlocked) return
+    if (externalBitcoinDetected || sourceBusy || localToggleBlocked || maintenance?.enabled) return
     const next = bitcoinSource === 'remote' ? 'local' : 'remote'
     const targetLabel = next === 'local' ? t('common.local') : t('common.remote')
     setSourceBusy(true)
@@ -623,12 +680,78 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
             className="btn-primary"
             type="button"
             onClick={handleSaveNetwork}
-            disabled={networkBusy || networkMode === 'custom'}
+            disabled={networkBusy || networkMode === 'custom' || maintenance?.enabled}
           >
             {networkBusy ? t('common.saving') : t('lndConfig.saveNetworkRestart')}
           </button>
           <p className="text-xs text-fog/50">{t('lndConfig.networkRestartHint')}</p>
         </div>
+      </div>
+
+      <div className={`section-card order-4 space-y-5 ${maintenance?.enabled ? 'border-amber-400/35' : ''}`}>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-semibold">{t('lndConfig.maintenanceTitle')}</h3>
+            <p className="text-sm text-fog/60">{t('lndConfig.maintenanceDescription')}</p>
+          </div>
+          <span className={`rounded-full border px-3 py-1 text-xs uppercase tracking-wide ${
+            maintenance?.phase === 'active'
+              ? 'border-amber-400/40 bg-amber-400/10 text-amber-200'
+              : maintenance?.phase === 'draining' || maintenance?.phase === 'verifying' || maintenance?.phase === 'activating' || maintenance?.phase === 'deactivating'
+                ? 'border-cyan-400/40 bg-cyan-400/10 text-cyan-200'
+                : maintenance?.phase === 'degraded'
+                  ? 'border-rose-400/40 bg-rose-400/10 text-rose-200'
+                  : 'border-white/10 bg-white/5 text-fog/60'
+          }`}>
+            {t(`lndConfig.maintenancePhase.${maintenance?.phase || 'off'}`)}
+          </span>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="rounded-2xl border border-white/10 bg-ink/40 p-4">
+            <div className="flex items-center gap-2">
+              <span className={`h-2.5 w-2.5 rounded-full ${maintenance?.routing_disabled ? 'bg-amber-300 shadow-[0_0_10px_rgba(252,211,77,.7)]' : 'bg-fog/25'}`} />
+              <span className="text-sm font-medium">{t('lndConfig.maintenanceRouting')}</span>
+            </div>
+            <p className="mt-2 text-xs leading-5 text-fog/55">{t('lndConfig.maintenanceRoutingHint')}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-ink/40 p-4">
+            <div className="flex items-center gap-2">
+              <span className={`h-2.5 w-2.5 rounded-full ${maintenance?.incoming_channels_disabled && maintenance?.los_channel_opening_blocked ? 'bg-amber-300 shadow-[0_0_10px_rgba(252,211,77,.7)]' : 'bg-fog/25'}`} />
+              <span className="text-sm font-medium">{t('lndConfig.maintenanceChannels')}</span>
+            </div>
+            <p className="mt-2 text-xs leading-5 text-fog/55">{t('lndConfig.maintenanceChannelsHint')}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-ink/40 p-4">
+            <div className="flex items-center gap-2">
+              <span className={`h-2.5 w-2.5 rounded-full ${maintenance?.rebalance_disabled && maintenance?.magma_auto_open_disabled ? 'bg-amber-300 shadow-[0_0_10px_rgba(252,211,77,.7)]' : 'bg-fog/25'}`} />
+              <span className="text-sm font-medium">{t('lndConfig.maintenanceAutomations')}</span>
+            </div>
+            <p className="mt-2 text-xs leading-5 text-fog/55">{t('lndConfig.maintenanceAutomationsHint')}</p>
+          </div>
+        </div>
+
+        {maintenance?.enabled && (
+          <div className="rounded-2xl border border-amber-400/20 bg-amber-400/5 px-4 py-3 text-sm text-amber-100/80">
+            {maintenance.pending_htlcs_known
+              ? t('lndConfig.maintenancePendingHTLCs', { count: maintenance.pending_htlcs })
+              : t('lndConfig.maintenancePendingUnknown')}
+          </div>
+        )}
+        {maintenance?.last_error && <p className="text-sm text-rose-300">{maintenance.last_error}</p>}
+
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            className={maintenance?.enabled ? 'btn-secondary' : 'btn-primary'}
+            type="button"
+            disabled={!maintenance || maintenanceBusy || maintenance.phase === 'activating' || maintenance.phase === 'deactivating'}
+            onClick={() => openMaintenanceConfirmation(!maintenance?.enabled)}
+          >
+            {maintenance?.enabled ? t('lndConfig.deactivateMaintenance') : t('lndConfig.activateMaintenance')}
+          </button>
+          <p className="text-xs text-fog/50">{t('lndConfig.maintenanceRestartHint')}</p>
+        </div>
+        <p className="text-xs leading-5 text-fog/45">{t('lndConfig.maintenanceExternalClients')}</p>
       </div>
 
       <div className="section-card order-1 space-y-4">
@@ -710,7 +833,7 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
             <p className="text-xs text-fog/50">{t('lndConfig.maxChannelHint')}</p>
           </div>
         </div>
-        <button className="btn-primary" onClick={handleSave}>{t('lndConfig.saveRestart')}</button>
+        <button className="btn-primary" disabled={maintenance?.enabled} onClick={handleSave}>{t('lndConfig.saveRestart')}</button>
         <p className="text-xs text-fog/50">{t('lndConfig.restartHint')}</p>
       </div>
 
@@ -718,11 +841,11 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
         <div className="section-card order-2 space-y-4">
           <h3 className="text-lg font-semibold">{t('lndConfig.advancedEditor')}</h3>
           <textarea className="input-field min-h-[180px]" value={raw} onChange={(e) => setRaw(e.target.value)} />
-          <button className="btn-secondary" onClick={handleSaveRaw}>{t('lndConfig.applyAdvanced')}</button>
+          <button className="btn-secondary" disabled={maintenance?.enabled} onClick={handleSaveRaw}>{t('lndConfig.applyAdvanced')}</button>
         </div>
       )}
 
-      <div className="section-card order-4 space-y-4">
+      <div className="section-card order-5 space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h3 className="text-lg font-semibold">{t('lndUpgrade.title')}</h3>
@@ -780,7 +903,7 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
           <button
             className="btn-primary"
             onClick={openUpgradeModal}
-            disabled={externalBitcoinDetected || !upgrade?.update_available || upgrade?.running}
+            disabled={maintenance?.enabled || externalBitcoinDetected || !upgrade?.update_available || upgrade?.running}
           >
             {upgrade?.running ? t('lndUpgrade.upgrading') : t('lndUpgrade.upgrade')}
           </button>
@@ -797,7 +920,20 @@ export default function LndConfig({ externalBitcoinDetected = false }: LndConfig
         )}
       </div>
 
-      {!config && <p className="order-5 text-fog/60">{t('lndConfig.loadingConfig')}</p>}
+      {!config && <p className="order-6 text-fog/60">{t('lndConfig.loadingConfig')}</p>}
+
+      <SensitiveActionModal
+        open={maintenanceTarget !== null}
+        title={maintenanceTarget ? t('lndConfig.activateMaintenanceTitle') : t('lndConfig.deactivateMaintenanceTitle')}
+        description={maintenanceTarget ? t('lndConfig.activateMaintenanceConfirm') : t('lndConfig.deactivateMaintenanceConfirm')}
+        password={maintenancePassword}
+        busy={maintenanceBusy}
+        error={maintenanceError}
+        confirmLabel={maintenanceTarget ? t('lndConfig.activateMaintenance') : t('lndConfig.deactivateMaintenance')}
+        onPasswordChange={setMaintenancePassword}
+        onConfirm={handleMaintenanceChange}
+        onClose={closeMaintenanceConfirmation}
+      />
 
       {upgradeModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4">

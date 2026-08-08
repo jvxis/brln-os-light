@@ -369,6 +369,9 @@ func (s *Server) handleBalancedOpenSessionAcceptPost(w http.ResponseWriter, r *h
 }
 
 func (s *Server) handleBalancedOpenSessionExecutePost(w http.ResponseWriter, r *http.Request) {
+	if s.rejectLNDMaintenanceAction(w, r, "balanced channel open") {
+		return
+	}
 	var req struct {
 		ConfirmPassword string `json:"confirm_password"`
 	}

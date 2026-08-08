@@ -222,6 +222,24 @@ export const getLndStatus = (force?: boolean) => {
   return lndStatusInFlight
 }
 export const getLndConfig = () => request('/api/lnd/config')
+export type LndMaintenanceStatus = {
+  enabled: boolean
+  phase: 'off' | 'activating' | 'active' | 'draining' | 'verifying' | 'deactivating' | 'degraded'
+  routing_disabled: boolean
+  incoming_channels_disabled: boolean
+  los_channel_opening_blocked: boolean
+  rebalance_disabled: boolean
+  magma_auto_open_disabled: boolean
+  pending_htlcs: number
+  pending_htlcs_known: boolean
+  lnd_reachable: boolean
+  activated_at?: string
+  updated_at?: string
+  last_error?: string
+}
+export const getLndMaintenance = () => request('/api/lnd/maintenance') as Promise<LndMaintenanceStatus>
+export const setLndMaintenance = (payload: { enabled: boolean; confirm_password?: string }) =>
+  request('/api/lnd/maintenance', { method: 'POST', body: JSON.stringify(payload) })
 export const getLndUpgradeStatus = (force?: boolean) =>
   request(`/api/lnd/upgrade/status${buildQuery({ force: force ? 1 : undefined })}`)
 export const startLndUpgrade = (payload: { target_version: string; download_url?: string }) =>

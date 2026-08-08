@@ -4076,7 +4076,9 @@ html[data-theme="light"] .status-badge--info { color: rgb(3 105 161); }
 
 .auth-hero__copy {
   grid-area: copy;
+  min-width: 0;
   max-width: 690px;
+  container-type: inline-size;
 }
 
 .auth-hero__copy h1 {
@@ -4928,7 +4930,11 @@ html[data-visual-theme="kernel"] .auth-feature {
 }
 
 html[data-visual-theme="miner-watch"] .auth-hero__copy h1 {
-  padding-bottom: 0.1em;
+  box-sizing: border-box;
+  max-width: 100%;
+  padding: 0 0.16em 0.1em 0;
+  font-size: clamp(1.75rem, 13cqw, 3.25rem);
+  letter-spacing: 0.015em;
   line-height: 1.1;
   color: rgb(var(--palette-primary));
   background: none;
@@ -4938,8 +4944,10 @@ html[data-visual-theme="miner-watch"] .auth-hero__copy h1 {
 /* Kernel's monospace face is wider than the default display font. Keep the
    longest word inside the copy track instead of letting the logo cover it. */
 html[data-visual-theme="kernel"] .auth-hero__copy h1 {
-  padding-right: 0.08em;
-  font-size: clamp(1.9rem, 2.8vw, 3.25rem);
+  box-sizing: border-box;
+  max-width: 100%;
+  padding-right: 0.16em;
+  font-size: clamp(1.75rem, 13cqw, 3.25rem);
   letter-spacing: -0.025em;
 }
 

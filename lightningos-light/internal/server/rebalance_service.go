@@ -1915,6 +1915,31 @@ func (s *RebalanceService) UpdateConfig(ctx context.Context, updated RebalanceCo
 	return updated, nil
 }
 
+// RestoreConfigExact is used by reversible system operations. Unlike a user
+// edit it intentionally skips profile reconciliation, because the supplied
+// value is a trusted snapshot that must be restored byte-for-field.
+func (s *RebalanceService) RestoreConfigExact(ctx context.Context, previous RebalanceConfig) error {
+	current, _ := s.loadConfig(ctx)
+	if err := s.upsertConfig(ctx, previous); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.cfg = previous
+	s.cfgLoaded = true
+	s.mu.Unlock()
+	if s.lnd != nil {
+		mcCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		s.applyMissionControlHalfLife(mcCtx, previous)
+		cancel()
+	}
+	if current.ManualRestartWatch && !previous.ManualRestartWatch {
+		s.cancelAllManualRestarts()
+	}
+	s.resetSemaphore()
+	s.triggerScan()
+	return nil
+}
+
 func (s *RebalanceService) applyMissionControlHalfLife(ctx context.Context, cfg RebalanceConfig) {
 	if s.lnd == nil {
 		return

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -25,6 +26,7 @@ type lndMaintenanceState struct {
 	PreviousMaxPendingPresent    bool
 	PreviousMaxPendingValue      string
 	PreviousRebalanceAutoEnabled bool
+	PreviousRebalanceConfig      string
 	PreviousMagmaModePresent     bool
 	PreviousMagmaMode            string
 	ActivatedAt                  *time.Time
@@ -70,12 +72,14 @@ create table if not exists lnd_maintenance_state (
   previous_max_pending_present boolean not null default false,
   previous_max_pending_value text not null default '',
   previous_rebalance_auto_enabled boolean not null default false,
+  previous_rebalance_config text not null default '',
   previous_magma_mode_present boolean not null default false,
   previous_magma_mode text not null default '',
   activated_at timestamptz,
   updated_at timestamptz not null default now(),
   last_error text not null default ''
 );
+alter table lnd_maintenance_state add column if not exists previous_rebalance_config text not null default '';
 insert into lnd_maintenance_state (id) values (1) on conflict (id) do nothing`)
 	if err != nil {
 		return fmt.Errorf("initialize maintenance state: %w", err)
@@ -93,14 +97,14 @@ func (s *Server) loadLNDMaintenanceState(ctx context.Context) (lndMaintenanceSta
 select active, transition,
        previous_reject_htlc_present, previous_reject_htlc_value,
        previous_max_pending_present, previous_max_pending_value,
-       previous_rebalance_auto_enabled,
+       previous_rebalance_auto_enabled, previous_rebalance_config,
        previous_magma_mode_present, previous_magma_mode,
        activated_at, updated_at, last_error
 from lnd_maintenance_state where id=1`).Scan(
 		&state.Active, &state.Transition,
 		&state.PreviousRejectHTLCPresent, &state.PreviousRejectHTLCValue,
 		&state.PreviousMaxPendingPresent, &state.PreviousMaxPendingValue,
-		&state.PreviousRebalanceAutoEnabled,
+		&state.PreviousRebalanceAutoEnabled, &state.PreviousRebalanceConfig,
 		&state.PreviousMagmaModePresent, &state.PreviousMagmaMode,
 		&state.ActivatedAt, &state.UpdatedAt, &state.LastError,
 	)
@@ -113,13 +117,13 @@ update lnd_maintenance_state set
   active=true, transition=$1,
   previous_reject_htlc_present=$2, previous_reject_htlc_value=$3,
   previous_max_pending_present=$4, previous_max_pending_value=$5,
-  previous_rebalance_auto_enabled=$6,
-  previous_magma_mode_present=$7, previous_magma_mode=$8,
+  previous_rebalance_auto_enabled=$6, previous_rebalance_config=$7,
+  previous_magma_mode_present=$8, previous_magma_mode=$9,
   activated_at=now(), updated_at=now(), last_error=''
 where id=1`, lndMaintenanceTransitionActivating,
 		state.PreviousRejectHTLCPresent, state.PreviousRejectHTLCValue,
 		state.PreviousMaxPendingPresent, state.PreviousMaxPendingValue,
-		state.PreviousRebalanceAutoEnabled,
+		state.PreviousRebalanceAutoEnabled, state.PreviousRebalanceConfig,
 		state.PreviousMagmaModePresent, state.PreviousMagmaMode)
 	return err
 }
@@ -373,6 +377,11 @@ func (s *Server) activateLNDMaintenance(ctx context.Context) error {
 		return fmt.Errorf("read rebalance config: %w", err)
 	}
 	state := lndMaintenanceState{PreviousRebalanceAutoEnabled: rebalanceCfg.AutoEnabled}
+	if encoded, encodeErr := json.Marshal(rebalanceCfg); encodeErr == nil {
+		state.PreviousRebalanceConfig = string(encoded)
+	} else {
+		return fmt.Errorf("snapshot rebalance config: %w", encodeErr)
+	}
 	state.PreviousRejectHTLCValue, state.PreviousRejectHTLCPresent = readLNDOption(string(raw), "Application Options", "rejecthtlc")
 	state.PreviousMaxPendingValue, state.PreviousMaxPendingPresent = readLNDOption(string(raw), "Application Options", "maxpendingchannels")
 
@@ -389,8 +398,7 @@ func (s *Server) activateLNDMaintenance(ctx context.Context) error {
 
 	rollback := func(cause error) error {
 		_ = os.WriteFile(lndConfPath, raw, 0660)
-		rebalanceCfg.AutoEnabled = state.PreviousRebalanceAutoEnabled
-		_, _ = s.rebalance.UpdateConfig(context.Background(), rebalanceCfg)
+		_ = s.restoreLNDMaintenanceRebalanceConfig(context.Background(), state)
 		if state.PreviousMagmaModePresent && s.magma != nil {
 			mode := state.PreviousMagmaMode
 			_, _ = s.magma.UpdateSettings(context.Background(), MagmaSettingsUpdate{Mode: &mode})
@@ -454,12 +462,7 @@ func (s *Server) deactivateLNDMaintenance(ctx context.Context, state lndMaintena
 	}
 	s.markLNDRestart()
 
-	cfg, err := s.rebalance.GetConfig(ctx)
-	if err != nil {
-		return fmt.Errorf("read rebalance config for restore: %w", err)
-	}
-	cfg.AutoEnabled = state.PreviousRebalanceAutoEnabled
-	if _, err := s.rebalance.UpdateConfig(ctx, cfg); err != nil {
+	if err := s.restoreLNDMaintenanceRebalanceConfig(ctx, state); err != nil {
 		return fmt.Errorf("restore rebalance config: %w", err)
 	}
 	if state.PreviousMagmaModePresent && s.magma != nil {
@@ -469,4 +472,27 @@ func (s *Server) deactivateLNDMaintenance(ctx context.Context, state lndMaintena
 		}
 	}
 	return s.setLNDMaintenanceTransition(ctx, false, lndMaintenanceTransitionOff, "")
+}
+
+func (s *Server) restoreLNDMaintenanceRebalanceConfig(ctx context.Context, state lndMaintenanceState) error {
+	if strings.TrimSpace(state.PreviousRebalanceConfig) != "" {
+		var previous RebalanceConfig
+		if err := json.Unmarshal([]byte(state.PreviousRebalanceConfig), &previous); err != nil {
+			return fmt.Errorf("decode rebalance snapshot: %w", err)
+		}
+		return s.rebalance.RestoreConfigExact(ctx, previous)
+	}
+
+	// Compatibility for an activation created by the first maintenance schema:
+	// restore the master switch without rewriting an already matching config.
+	current, err := s.rebalance.GetConfig(ctx)
+	if err != nil {
+		return err
+	}
+	if current.AutoEnabled == state.PreviousRebalanceAutoEnabled {
+		return nil
+	}
+	current.AutoEnabled = state.PreviousRebalanceAutoEnabled
+	_, err = s.rebalance.UpdateConfig(ctx, current)
+	return err
 }

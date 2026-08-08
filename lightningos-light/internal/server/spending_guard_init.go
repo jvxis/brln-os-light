@@ -41,6 +41,7 @@ func (s *Server) initSpendingGuard() {
 	}
 
 	svc := NewSpendingGuardService(pool, s.logger)
+	svc.SetLimitHandler(s.handleSpendingGuardLimit)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := svc.EnsureSchema(ctx); err != nil {

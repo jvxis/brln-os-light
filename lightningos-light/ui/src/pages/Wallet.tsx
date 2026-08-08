@@ -216,6 +216,7 @@ export default function Wallet() {
   const [spendingGuardReauthOpen, setSpendingGuardReauthOpen] = useState(false)
   const [spendingGuardPassword, setSpendingGuardPassword] = useState('')
   const [spendingGuardExpanded, setSpendingGuardExpanded] = useState(false)
+  const spendingGuardDirtyRef = useRef(false)
   const [address, setAddress] = useState('')
   const [addressQr, setAddressQr] = useState<string | null>(null)
   const [addressStatus, setAddressStatus] = useState('')
@@ -379,6 +380,7 @@ export default function Wallet() {
       setSpendingGuardMaxPayment(data.max_payment_sat > 0 ? String(data.max_payment_sat) : '')
       setSpendingGuardRolling(data.rolling_24h_limit_sat > 0 ? String(data.rolling_24h_limit_sat) : '')
       setSpendingGuardDirty(false)
+      spendingGuardDirtyRef.current = false
     }
   }
 
@@ -394,9 +396,13 @@ export default function Wallet() {
 
   useEffect(() => {
     void loadSpendingGuard(false)
-    const timer = setInterval(() => void loadSpendingGuard(spendingGuardDirty), 30000)
+    const timer = setInterval(() => void loadSpendingGuard(spendingGuardDirtyRef.current), 30000)
     return () => clearInterval(timer)
-  }, [spendingGuardDirty, t])
+  }, [t])
+
+  useEffect(() => {
+    spendingGuardDirtyRef.current = spendingGuardDirty
+  }, [spendingGuardDirty])
 
   const loadActivity = async (options?: { offset?: number; limit?: number; append?: boolean; silent?: boolean }) => {
     const offset = options?.offset ?? 0

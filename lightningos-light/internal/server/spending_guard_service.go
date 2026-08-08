@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -90,13 +91,38 @@ type pendingSpendingReservation struct {
 	CreatedAt   time.Time
 }
 
+type spendingGuardLimitHandler func(context.Context, SpendingIntent, SpendingLimitError)
+
 type SpendingGuardService struct {
-	db     *pgxpool.Pool
-	logger *log.Logger
+	db             *pgxpool.Pool
+	logger         *log.Logger
+	limitHandlerMu sync.RWMutex
+	limitHandler   spendingGuardLimitHandler
 }
 
 func NewSpendingGuardService(db *pgxpool.Pool, logger *log.Logger) *SpendingGuardService {
 	return &SpendingGuardService{db: db, logger: logger}
+}
+
+func (s *SpendingGuardService) SetLimitHandler(handler spendingGuardLimitHandler) {
+	if s == nil {
+		return
+	}
+	s.limitHandlerMu.Lock()
+	s.limitHandler = handler
+	s.limitHandlerMu.Unlock()
+}
+
+func (s *SpendingGuardService) reportLimit(ctx context.Context, intent SpendingIntent, limitErr SpendingLimitError) {
+	if s == nil {
+		return
+	}
+	s.limitHandlerMu.RLock()
+	handler := s.limitHandler
+	s.limitHandlerMu.RUnlock()
+	if handler != nil {
+		handler(ctx, intent, limitErr)
+	}
 }
 
 func (s *SpendingGuardService) EnsureSchema(ctx context.Context) error {
@@ -238,7 +264,9 @@ func (s *SpendingGuardService) Reserve(ctx context.Context, intent SpendingInten
 		return SpendingReservation{AmountSat: intent.AmountSat, MaxFeeSat: intent.MaxFeeSat, ReservedSat: reservedSat}, nil
 	}
 	if settings.MaxPaymentSat > 0 && reservedSat > settings.MaxPaymentSat {
-		return SpendingReservation{}, &SpendingLimitError{Reason: "per_payment", RequestedSat: reservedSat, LimitSat: settings.MaxPaymentSat, RemainingSat: settings.MaxPaymentSat}
+		limitErr := SpendingLimitError{Reason: "per_payment", RequestedSat: reservedSat, LimitSat: settings.MaxPaymentSat, RemainingSat: settings.MaxPaymentSat}
+		s.reportLimit(ctx, intent, limitErr)
+		return SpendingReservation{}, &limitErr
 	}
 	windowStart := time.Now().UTC().Add(-spendingGuardWindow)
 	used, reserved, _, err := s.windowTotals(ctx, tx, windowStart)
@@ -251,7 +279,9 @@ func (s *SpendingGuardService) Reserve(ctx context.Context, intent SpendingInten
 			remaining = 0
 		}
 		if reservedSat > remaining {
-			return SpendingReservation{}, &SpendingLimitError{Reason: "rolling_24h", RequestedSat: reservedSat, UsedSat: used, ReservedSat: reserved, LimitSat: settings.Rolling24hLimitSat, RemainingSat: remaining}
+			limitErr := SpendingLimitError{Reason: "rolling_24h", RequestedSat: reservedSat, UsedSat: used, ReservedSat: reserved, LimitSat: settings.Rolling24hLimitSat, RemainingSat: remaining}
+			s.reportLimit(ctx, intent, limitErr)
+			return SpendingReservation{}, &limitErr
 		}
 	}
 	id, err := newSpendingReservationID()

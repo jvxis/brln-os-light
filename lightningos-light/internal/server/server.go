@@ -56,6 +56,8 @@ type Server struct {
 	spendingGuardMu             sync.Mutex
 	spendingGuard               *SpendingGuardService
 	spendingGuardErr            string
+	spendingGuardAlertMu        sync.Mutex
+	spendingGuardAlerts         map[string]spendingGuardAlertState
 	rebalanceInitAt             time.Time
 	rebalance                   *RebalanceService
 	rebalanceErr                string
@@ -164,14 +166,15 @@ type Server struct {
 func New(cfg *config.Config, logger *log.Logger) *Server {
 	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
 	srv := &Server{
-		cfg:                cfg,
-		logger:             logger,
-		shutdownCtx:        shutdownCtx,
-		shutdownCancel:     shutdownCancel,
-		lnd:                lndclient.New(cfg, logger),
-		networkMapGeoCache: make(map[string]networkMapGeoCacheEntry),
-		bitcoinActiveCache: make(map[string]cachedBitcoinStatus),
-		provenanceMetrics:  NewProvenanceMetrics(),
+		cfg:                 cfg,
+		logger:              logger,
+		shutdownCtx:         shutdownCtx,
+		shutdownCancel:      shutdownCancel,
+		lnd:                 lndclient.New(cfg, logger),
+		networkMapGeoCache:  make(map[string]networkMapGeoCacheEntry),
+		bitcoinActiveCache:  make(map[string]cachedBitcoinStatus),
+		spendingGuardAlerts: make(map[string]spendingGuardAlertState),
+		provenanceMetrics:   NewProvenanceMetrics(),
 	}
 	srv.auth = NewAuthService(cfg, logger)
 	srv.auth.SetAuditRecorder(srv.recordAuditEventAsync)

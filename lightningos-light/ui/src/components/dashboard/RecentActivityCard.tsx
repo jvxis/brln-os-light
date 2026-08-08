@@ -94,6 +94,8 @@ export default function RecentActivityCard({ notifications }: RecentActivityCard
         return t('notifications.type.rebalance')
       case 'keysend':
         return t('notifications.type.keysend')
+      case 'security':
+        return t('notifications.type.security')
       default:
         if (!value) return ''
         return value.charAt(0).toUpperCase() + value.slice(1)
@@ -118,6 +120,8 @@ export default function RecentActivityCard({ notifications }: RecentActivityCard
         return t('notifications.action.forwarded')
       case 'rebalanced':
         return t('notifications.action.rebalanced')
+      case 'spending_guard_blocked':
+        return t('notifications.action.spendingGuardBlocked')
       default:
         return value
     }
@@ -191,7 +195,7 @@ export default function RecentActivityCard({ notifications }: RecentActivityCard
                 }
               }
               const memo = typeof item.memo === 'string' ? item.memo.trim() : ''
-              const memoLabel = memo && (item.type === 'lightning' || item.type === 'keysend')
+              const memoLabel = memo && (item.type === 'lightning' || item.type === 'keysend' || item.type === 'security')
                 ? t('notifications.memoLabel', { memo: trimMemo(memo) })
                 : ''
               const detailParts: ReactNode[] = [

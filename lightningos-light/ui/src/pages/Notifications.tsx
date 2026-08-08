@@ -122,6 +122,8 @@ export default function Notifications() {
         return t('notifications.type.rebalance')
       case 'keysend':
         return t('notifications.type.keysend')
+      case 'security':
+        return t('notifications.type.security')
       default:
         if (!value) return ''
         return value.charAt(0).toUpperCase() + value.slice(1)
@@ -146,6 +148,8 @@ export default function Notifications() {
         return t('notifications.action.forwarded')
       case 'rebalanced':
         return t('notifications.action.rebalanced')
+      case 'spending_guard_blocked':
+        return t('notifications.action.spendingGuardBlocked')
       default:
         return value
     }
@@ -160,7 +164,7 @@ export default function Notifications() {
   const [status, setStatus] = useState(t('notifications.loading'))
   const [streamState, setStreamState] = useState<'idle' | 'waiting' | 'reconnecting' | 'error'>('idle')
   const streamErrors = useRef(0)
-  const [filter, setFilter] = useState<'all' | 'onchain' | 'lightning' | 'keysend' | 'channel' | 'forward' | 'rebalance'>('all')
+  const [filter, setFilter] = useState<'all' | 'onchain' | 'lightning' | 'keysend' | 'channel' | 'forward' | 'rebalance' | 'security'>('all')
   const [limit, setLimit] = useState(200)
   const limitRef = useRef(limit)
   const [telegramConfig, setTelegramConfig] = useState<TelegramNotificationConfig | null>(null)
@@ -450,6 +454,7 @@ export default function Notifications() {
             <button className={filter === 'channel' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('channel')}>{t('notifications.filter.channels')}</button>
             <button className={filter === 'forward' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('forward')}>{t('notifications.filter.forwards')}</button>
             <button className={filter === 'rebalance' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('rebalance')}>{t('notifications.filter.rebalance')}</button>
+            <button className={filter === 'security' ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter('security')}>{t('notifications.filter.security')}</button>
             <select className="btn-secondary text-xs" value={limit} onChange={(e) => setLimit(Number(e.target.value))}>
               {limitOptions.map((value) => (
                 <option key={value} value={value}>{t('notifications.linesOption', { count: value })}</option>
@@ -695,7 +700,7 @@ export default function Notifications() {
                   }
                 }
                 const memo = typeof item.memo === 'string' ? item.memo.trim() : ''
-                const memoLabel = memo && (item.type === 'lightning' || item.type === 'keysend')
+                const memoLabel = memo && (item.type === 'lightning' || item.type === 'keysend' || item.type === 'security')
                   ? t('notifications.memoLabel', { memo: trimMemo(memo) })
                   : ''
                 const detailParts: Array<string | JSX.Element> = [

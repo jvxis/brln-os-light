@@ -2089,7 +2089,8 @@
       "opening": "abrindo",
       "rebalanced": "rebalanced",
       "received": "recebido",
-      "sent": "enviado"
+      "sent": "enviado",
+      "spendingGuardBlocked": "bloqueou um pagamento"
     },
     "channelLabel": "Canal {{value}}...",
     "feeDetail": "Fee {{fee}} ({{rate}})",
@@ -2103,7 +2104,8 @@
       "keysend": "Keysend",
       "lightning": "Lightning",
       "onchain": "On-chain",
-      "rebalance": "Rebalance"
+      "rebalance": "Rebalance",
+      "security": "Segurança"
     },
     "liveUpdatesUnavailable": "Atualizações ao vivo indisponíveis.",
     "loading": "Carregando notificações...",
@@ -2168,7 +2170,8 @@
       "keysend": "Keysend",
       "lightning": "Lightning",
       "onchain": "On-chain",
-      "rebalance": "Rebalance"
+      "rebalance": "Rebalance",
+      "security": "Segurança"
     },
     "unavailable": "Notificações indisponíveis",
     "waitingForEvents": "Aguardando eventos..."

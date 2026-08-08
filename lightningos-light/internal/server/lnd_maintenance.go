@@ -157,6 +157,7 @@ func readLNDOption(raw, sectionName, optionName string) (string, bool) {
 }
 
 func setOrRemoveLNDOption(raw, sectionName, optionName, value string, present bool) string {
+	const removedOptionMarker = "\x00lightningos-removed-option\x00"
 	lines := strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n")
 	start, end := -1, len(lines)
 	for i, line := range lines {
@@ -196,7 +197,7 @@ func setOrRemoveLNDOption(raw, sectionName, optionName, value string, present bo
 			continue
 		}
 		if !present {
-			lines[i] = ""
+			lines[i] = removedOptionMarker
 		} else if !found {
 			lines[i] = strings.TrimSpace(parts[0]) + "=" + value
 		} else {
@@ -206,6 +207,15 @@ func setOrRemoveLNDOption(raw, sectionName, optionName, value string, present bo
 	}
 	if present && !found {
 		lines = append(lines[:end], append([]string{optionName + "=" + value}, lines[end:]...)...)
+	}
+	if !present && found {
+		filtered := make([]string, 0, len(lines))
+		for _, line := range lines {
+			if line != removedOptionMarker {
+				filtered = append(filtered, line)
+			}
+		}
+		lines = filtered
 	}
 	return strings.Join(lines, "\n")
 }

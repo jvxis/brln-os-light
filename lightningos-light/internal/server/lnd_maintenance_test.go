@@ -17,6 +17,9 @@ func TestLNDMaintenanceOptionsRoundTripWhenInitiallyAbsent(t *testing.T) {
 	}
 
 	restored := restoreLNDMaintenanceOptions(active, state)
+	if restored != original {
+		t.Fatalf("absent options did not round-trip exactly\noriginal: %q\nrestored: %q", original, restored)
+	}
 	if _, ok := readLNDOption(restored, "Application Options", "rejecthtlc"); ok {
 		t.Fatal("rejecthtlc should have been removed")
 	}

@@ -2901,6 +2901,7 @@ html[data-theme="light"] .status-badge--info { color: rgb(3 105 161); }
 .bip110-score__value {
   color: rgb(var(--bip110-non) / 0.95);
   font-size: clamp(1.55rem, 2.25vw, 2.15rem);
+  font-family: ui-monospace, "Cascadia Mono", "IBM Plex Mono", Consolas, monospace;
   font-variant-numeric: tabular-nums;
   font-weight: 650;
   letter-spacing: -0.055em;
@@ -2914,10 +2915,11 @@ html[data-theme="light"] .status-badge--info { color: rgb(3 105 161); }
 }
 
 .bip110-score__value small {
-  margin-left: 2px;
-  font-size: 0.48em;
-  letter-spacing: -0.02em;
-  opacity: 0.62;
+  margin-right: 3px;
+  font-size: 0.56em;
+  letter-spacing: 0;
+  opacity: 0.72;
+  vertical-align: 0.16em;
 }
 
 .bip110-score__blocks {

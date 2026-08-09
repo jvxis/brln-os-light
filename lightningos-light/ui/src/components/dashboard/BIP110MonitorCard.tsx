@@ -173,25 +173,25 @@ export default function BIP110MonitorCard({ status, bitcoin, loading }: BIP110Mo
 
             <div
               aria-label={t('bip110.scoreAria', {
-                nonSignaling: nonSignalPct === null ? '-' : formatPercent(locale, nonSignalPct, 1),
-                signaling: signalPct === null ? '-' : formatPercent(locale, signalPct, 1),
+                nonSignaling: formatSats(locale, nonSignalingCount),
+                signaling: formatSats(locale, signalingCount),
               })}
               className="bip110-scoreboard__race"
             >
               <div className="bip110-score bip110-score--non">
                 <span className="bip110-score__label">{t('bip110.nonSignaling')}</span>
                 <strong className="bip110-score__value">
-                  {nonSignalPct === null ? '—' : formatPercent(locale, nonSignalPct, 1)}<small>%</small>
+                  {nonSignalingCount === null ? '—' : <><small>+</small>{formatSats(locale, nonSignalingCount)}</>}
                 </strong>
-                <span className="bip110-score__blocks">{t('bip110.blockCount', { value: formatSats(locale, nonSignalingCount) })}</span>
+                <span className="bip110-score__blocks">{t('bip110.blocksUnit')}</span>
               </div>
               <span className="bip110-scoreboard__versus">×</span>
               <div className="bip110-score bip110-score--signal">
                 <span className="bip110-score__label">{t('bip110.signaling')}</span>
                 <strong className="bip110-score__value">
-                  {signalPct === null ? '—' : formatPercent(locale, signalPct, 1)}<small>%</small>
+                  {signalingCount === null ? '—' : <><small>+</small>{formatSats(locale, signalingCount)}</>}
                 </strong>
-                <span className="bip110-score__blocks">{t('bip110.blockCount', { value: formatSats(locale, signalingCount) })}</span>
+                <span className="bip110-score__blocks">{t('bip110.blocksUnit')}</span>
               </div>
               <div className="bip110-race-rail" title={t('bip110.thresholdDetail', { value: formatSats(locale, status.threshold_count) })}>
                 <span className="bip110-race-rail__signal" style={{ width: `${signalPct ?? 0}%` }} />
@@ -250,6 +250,8 @@ export default function BIP110MonitorCard({ status, bitcoin, loading }: BIP110Mo
               <h4 className="mt-1 text-lg font-semibold text-fog">{t('bip110.detailTitle')}</h4>
               <p className="mt-1 text-sm text-fog/60">
                 {t('bip110.scoreStory', {
+                  nonSignalingBlocks: formatSats(locale, nonSignalingCount),
+                  signalingBlocks: formatSats(locale, signalingCount),
                   signaling: signalPct === null ? '-' : formatPercent(locale, signalPct, 1),
                   threshold: formatPercent(locale, status.threshold_pct, 0),
                 })}

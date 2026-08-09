@@ -18,9 +18,9 @@ import (
 const (
 	peerswapAppID         = "peerswap"
 	peerswapAssetsVersion = "version_5_0"
-	peerswapBundleVersion = "version_5_0_peerswapd_5ded0811_pscli_20260626_psweb_5_0_6"
-	peerswapdSHA256       = "6e3c45a65bd81b275b5b1136869079b3b5b40c6d5fd47529a57b0321811dd35b"
-	peerswapPSCliSHA256   = "713736fef28b39e3d4a440b7199d855be94f07f8fc5881b7a2bfe6289b9e70da"
+	peerswapBundleVersion = "version_5_0_peerswapd_pscli_25a153e5_psweb_5_0_6"
+	peerswapdSHA256       = "bf75a8b7b2bc3f9f152539c0611bc32a890f76a099c6ee2882b11bbf028b472b"
+	peerswapPSCliSHA256   = "69ca0aeb89b87d8eedd2d549ab542598fee69197e3110b066eb30ad9193bbbd8"
 	peerswapPSWebSHA256   = "8a7def73d51b7f0369462ccb4a96633b8c7da08ee21acbb45e5864e5788f2920"
 	peerswapUser          = "losop"
 	peerswapServiceName   = "lightningos-peerswapd"

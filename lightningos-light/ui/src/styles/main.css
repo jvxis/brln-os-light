@@ -2793,8 +2793,8 @@ html[data-theme="light"] .status-badge--info { color: rgb(3 105 161); }
 /* BIP 110 scoreboard: compact in the dashboard, layered on demand. */
 .bip110-card {
   --bip110-accent: 251 191 36;
-  --bip110-non: 251 113 133;
-  --bip110-signal: 52 211 153;
+  --bip110-non: 52 211 153;
+  --bip110-signal: 251 113 133;
   position: relative;
   isolation: isolate;
   overflow: hidden;
@@ -3113,8 +3113,8 @@ html[data-theme="light"] .status-badge--info { color: rgb(3 105 161); }
   font-weight: 550;
 }
 
-html[data-theme="light"] .bip110-score__value { color: rgb(190 18 60); text-shadow: none; }
-html[data-theme="light"] .bip110-score--signal .bip110-score__value { color: rgb(4 120 87); text-shadow: none; }
+html[data-theme="light"] .bip110-score__value { color: rgb(4 120 87); text-shadow: none; }
+html[data-theme="light"] .bip110-score--signal .bip110-score__value { color: rgb(190 18 60); text-shadow: none; }
 html[data-theme="light"] .bip110-eta { color: rgb(146 64 14 / 0.82); }
 html[data-theme="light"] .bip110-source,
 html[data-theme="light"] .bip110-technical { border-color: rgb(15 23 42 / 0.1); background: rgb(255 255 255 / 0.42); }

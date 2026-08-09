@@ -129,6 +129,52 @@ function SourcePanel({ label, source, locale }: SourcePanelProps) {
   )
 }
 
+type EnforcingSourcePanelProps = {
+  score: BIP110MonitorStatus['fork_score']
+  locale: string
+}
+
+function EnforcingSourcePanel({ score, locale }: EnforcingSourcePanelProps) {
+  const { t } = useTranslation()
+  const available = Boolean(score?.available)
+  const gap = available
+    ? Math.max(0, (score?.non_enforcing_tip ?? 0) - (score?.enforcing_tip ?? 0))
+    : null
+
+  return (
+    <div className="bip110-source">
+      <div className="flex min-w-0 items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-fog/90">{t('bip110.enforcingPublicSource')}</p>
+          <p className="mt-0.5 truncate text-[10px] text-fog/40">{score?.enforcing_source || 'mempool.guide'}</p>
+        </div>
+        <StatusBadge
+          label={available ? t('bip110.available') : t('common.unavailable')}
+          tone={available ? 'ok' : 'warn'}
+        />
+      </div>
+      {available ? (
+        <div className="mt-4 grid grid-cols-3 gap-3">
+          <div>
+            <p className="bip110-detail-label">{t('bip110.tip')}</p>
+            <p className="bip110-detail-value">#{formatSats(locale, score?.enforcing_tip)}</p>
+          </div>
+          <div>
+            <p className="bip110-detail-label">{t('bip110.branchAdvance')}</p>
+            <p className="bip110-detail-value">+{formatSats(locale, score?.enforcing_blocks)}</p>
+          </div>
+          <div>
+            <p className="bip110-detail-label">{t('bip110.chainGap')}</p>
+            <p className="bip110-detail-value">{t('bip110.blockCount', { value: formatSats(locale, gap) })}</p>
+          </div>
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-amber-200/80 [overflow-wrap:anywhere]">{score?.error || t('bip110.sourceUnavailable')}</p>
+      )}
+    </div>
+  )
+}
+
 export default function BIP110MonitorCard({ status, bitcoin, loading }: BIP110MonitorCardProps) {
   const { t, i18n } = useTranslation()
   const locale = getLocale(i18n.language)
@@ -302,7 +348,7 @@ export default function BIP110MonitorCard({ status, bitcoin, loading }: BIP110Mo
 
           <div className="grid gap-3 lg:grid-cols-2">
             <SourcePanel label={t('bip110.internalSource')} source={status.internal} locale={locale} />
-            <SourcePanel label={t('bip110.publicSource')} source={status.public} locale={locale} />
+            <EnforcingSourcePanel score={status.fork_score} locale={locale} />
           </div>
 
           <div className="bip110-technical">

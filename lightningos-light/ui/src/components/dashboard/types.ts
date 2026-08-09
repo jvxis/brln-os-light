@@ -238,6 +238,17 @@ export type BIP110MonitorStatus = {
     signaling_count_delta?: number
     pct_delta?: number
   }
+  fork_score?: {
+    available: boolean
+    split_height: number
+    non_enforcing_tip?: number
+    enforcing_tip?: number
+    non_enforcing_blocks: number
+    enforcing_blocks: number
+    non_enforcing_source: string
+    enforcing_source: string
+    error?: string
+  }
 }
 
 export type BitcoinMarketPrice = {

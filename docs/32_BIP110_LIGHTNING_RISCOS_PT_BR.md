@@ -223,17 +223,20 @@ O monitor implementado no LightningOS é **somente informativo**. Ele:
 - calcula localmente a sinalização do bit 4;
 - consulta a API pública do monitor do BIP 110;
 - compara tip, período e contagem de blocos sinalizadores;
+- acompanha separadamente as pontas públicas dos ramos sem enforcement e com enforcement do BIP 110 para montar o placar desde o bloco comum;
 - informa a fase e a proximidade das alturas programadas;
 - não altera Bitcoin Core, LND, canais ou configurações.
 
 Quando aparece `Sources match`, isso significa que o cálculo local e a fonte pública concordam na amostra comparada. Não significa, sozinho, que foi provado matematicamente que não existe split.
 
-A API pública do BIP 110 não fornece o hash do bloco ou chainwork. Por isso:
+A API pública do BIP 110 e a fonte pública da ponta enforcing não fornecem ao LightningOS o hash do bloco ou chainwork. Por isso:
 
 - igualdade de altura e sinalização é um bom sinal operacional;
 - divergência de contagem é um alerta útil;
 - confirmação forte de que duas fontes estão na mesma chain exige comparar hashes de bloco;
 - detectar qual chain possui maior peso econômico exige informações além de hash e hashrate.
+
+O placar dos ramos usa alturas realmente observadas. Se a fonte do ramo enforcing estiver indisponível, o LightningOS mostra o placar como indisponível; ele não interpreta ausência de dados como zero blocos.
 
 O badge `Janela obrigatória próxima` também não significa que um fork foi detectado. É uma classificação preventiva do LightningOS, exibida quando a sinalização está abaixo do limiar e faltam no máximo dois períodos de dificuldade para a janela obrigatória.
 

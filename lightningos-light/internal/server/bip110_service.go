@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +20,8 @@ import (
 
 const (
 	bip110PublicMonitorURL       = "https://bip110monitor.com/api"
+	bip110NonEnforcingTipURL     = "https://mempool.space/api/blocks/tip/height"
+	bip110EnforcingTipURL        = "https://mempool.guide/api/blocks/tip/height"
 	bip110PeriodLength           = int64(2016)
 	bip110ThresholdCount         = 1109
 	bip110ThresholdPct           = 55.0
@@ -98,6 +101,18 @@ type bip110Comparison struct {
 	PctDelta            float64 `json:"pct_delta"`
 }
 
+type bip110ForkScore struct {
+	Available          bool   `json:"available"`
+	SplitHeight        int64  `json:"split_height"`
+	NonEnforcingTip    int64  `json:"non_enforcing_tip,omitempty"`
+	EnforcingTip       int64  `json:"enforcing_tip,omitempty"`
+	NonEnforcingBlocks int64  `json:"non_enforcing_blocks"`
+	EnforcingBlocks    int64  `json:"enforcing_blocks"`
+	NonEnforcingSource string `json:"non_enforcing_source"`
+	EnforcingSource    string `json:"enforcing_source"`
+	Error              string `json:"error,omitempty"`
+}
+
 type bip110MonitorStatus struct {
 	InformationalOnly      bool               `json:"informational_only"`
 	RiskLevel              string             `json:"risk_level"`
@@ -115,6 +130,7 @@ type bip110MonitorStatus struct {
 	Internal               bip110SourceStatus `json:"internal"`
 	Public                 bip110SourceStatus `json:"public"`
 	Comparison             bip110Comparison   `json:"comparison"`
+	ForkScore              bip110ForkScore    `json:"fork_score"`
 }
 
 type cachedBIP110MonitorStatus struct {
@@ -123,11 +139,13 @@ type cachedBIP110MonitorStatus struct {
 }
 
 type bip110MonitorService struct {
-	server        *Server
-	client        *http.Client
-	publicURL     string
-	now           func() time.Time
-	loadRPCConfig func(context.Context) (bitcoinRPCConfig, string, error)
+	server          *Server
+	client          *http.Client
+	publicURL       string
+	nonEnforcingURL string
+	enforcingURL    string
+	now             func() time.Time
+	loadRPCConfig   func(context.Context) (bitcoinRPCConfig, string, error)
 
 	mu    sync.Mutex
 	cache cachedBIP110MonitorStatus
@@ -145,10 +163,12 @@ type bip110BlockSample struct {
 
 func newBIP110MonitorService(server *Server) *bip110MonitorService {
 	service := &bip110MonitorService{
-		server:    server,
-		client:    &http.Client{Timeout: 12 * time.Second},
-		publicURL: bip110PublicMonitorURL,
-		now:       time.Now,
+		server:          server,
+		client:          &http.Client{Timeout: 12 * time.Second},
+		publicURL:       bip110PublicMonitorURL,
+		nonEnforcingURL: bip110NonEnforcingTipURL,
+		enforcingURL:    bip110EnforcingTipURL,
+		now:             time.Now,
 	}
 	service.loadRPCConfig = service.activeRPCConfig
 	return service
@@ -227,11 +247,39 @@ func unavailableBIP110Status(now time.Time, err error) bip110MonitorStatus {
 }
 
 func (s *bip110MonitorService) fetchStatus(ctx context.Context, now time.Time) bip110MonitorStatus {
-	publicCtx, publicCancel := context.WithTimeout(ctx, bip110PublicRequestTimeout)
-	public := s.fetchPublic(publicCtx)
-	publicCancel()
+	publicCh := make(chan bip110SourceStatus, 1)
+	type tipResult struct {
+		tip int64
+		err error
+	}
+	nonEnforcingCh := make(chan tipResult, 1)
+	enforcingCh := make(chan tipResult, 1)
+	go func() {
+		publicCtx, cancel := context.WithTimeout(ctx, bip110PublicRequestTimeout)
+		defer cancel()
+		publicCh <- s.fetchPublic(publicCtx)
+	}()
+	go func() {
+		nonEnforcingCtx, cancel := context.WithTimeout(ctx, bip110PublicRequestTimeout)
+		defer cancel()
+		tip, err := s.fetchChainTip(nonEnforcingCtx, s.nonEnforcingURL, "non-enforcing")
+		nonEnforcingCh <- tipResult{tip: tip, err: err}
+	}()
+	go func() {
+		enforcingCtx, cancel := context.WithTimeout(ctx, bip110PublicRequestTimeout)
+		defer cancel()
+		tip, err := s.fetchChainTip(enforcingCtx, s.enforcingURL, "enforcing")
+		enforcingCh <- tipResult{tip: tip, err: err}
+	}()
+	public := <-publicCh
+	nonEnforcing := <-nonEnforcingCh
+	enforcing := <-enforcingCh
 	internal := s.fetchInternal(ctx, public)
 	comparison := compareBIP110Sources(internal, public)
+	forkScore := buildBIP110ForkScore(
+		nonEnforcing.tip, nonEnforcing.err, s.nonEnforcingURL,
+		enforcing.tip, enforcing.err, s.enforcingURL,
+	)
 	tip := internal.Tip
 	if tip == 0 {
 		tip = public.Tip
@@ -264,7 +312,68 @@ func (s *bip110MonitorService) fetchStatus(ctx context.Context, now time.Time) b
 		Internal:               internal,
 		Public:                 public,
 		Comparison:             comparison,
+		ForkScore:              forkScore,
 	}
+}
+
+func (s *bip110MonitorService) fetchChainTip(ctx context.Context, sourceURL, chainLabel string) (int64, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Accept", "text/plain")
+	req.Header.Set("User-Agent", "lightningos-light")
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("%s chain source status %d", chainLabel, resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 128))
+	if err != nil {
+		return 0, err
+	}
+	tip, err := strconv.ParseInt(strings.TrimSpace(string(body)), 10, 64)
+	if err != nil || tip <= 0 {
+		return 0, fmt.Errorf("invalid %s chain tip", chainLabel)
+	}
+	return tip, nil
+}
+
+func buildBIP110ForkScore(
+	nonEnforcingTip int64,
+	nonEnforcingErr error,
+	nonEnforcingSource string,
+	enforcingTip int64,
+	enforcingErr error,
+	enforcingSource string,
+) bip110ForkScore {
+	splitHeight := bip110MandatoryStartHeight - 1
+	status := bip110ForkScore{
+		SplitHeight:        splitHeight,
+		NonEnforcingSource: nonEnforcingSource,
+		EnforcingSource:    enforcingSource,
+		NonEnforcingTip:    nonEnforcingTip,
+		EnforcingTip:       enforcingTip,
+	}
+	if nonEnforcingErr != nil {
+		status.Error = nonEnforcingErr.Error()
+		return status
+	}
+	if enforcingErr != nil {
+		status.Error = enforcingErr.Error()
+		return status
+	}
+	if nonEnforcingTip < splitHeight || enforcingTip < splitHeight {
+		status.Error = "fork score sources are behind the split height"
+		return status
+	}
+	status.Available = true
+	status.NonEnforcingBlocks = nonEnforcingTip - splitHeight
+	status.EnforcingBlocks = enforcingTip - splitHeight
+	return status
 }
 
 func (s *bip110MonitorService) fetchPublic(ctx context.Context) bip110SourceStatus {

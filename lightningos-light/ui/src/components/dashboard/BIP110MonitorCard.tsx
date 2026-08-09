@@ -144,6 +144,14 @@ export default function BIP110MonitorCard({ status, bitcoin, loading }: BIP110Mo
   const nonSignalingCount = signalingCount === null || totalBlocks === null
     ? null
     : Math.max(0, totalBlocks - signalingCount)
+  const forkScore = status?.fork_score
+  const forkScoreAvailable = Boolean(forkScore?.available)
+  const nonEnforcingAdvance = forkScoreAvailable ? Math.max(0, forkScore?.non_enforcing_blocks ?? 0) : null
+  const enforcingAdvance = forkScoreAvailable ? Math.max(0, forkScore?.enforcing_blocks ?? 0) : null
+  const nonEnforcingTip = forkScoreAvailable ? forkScore?.non_enforcing_tip : null
+  const enforcingTip = forkScoreAvailable ? forkScore?.enforcing_tip : null
+  const leadingAdvance = Math.max(nonEnforcingAdvance ?? 0, enforcingAdvance ?? 0, 1)
+  const enforcingRacePct = forkScoreAvailable ? clamp(((enforcingAdvance ?? 0) / leadingAdvance) * 100) : 0
   const tone = riskTone(status?.risk_level)
   const comparisonStatus = status?.comparison?.status || 'unavailable'
   const mandatorySignalingEta = status
@@ -173,31 +181,40 @@ export default function BIP110MonitorCard({ status, bitcoin, loading }: BIP110Mo
 
             <div
               aria-label={t('bip110.scoreAria', {
-                nonSignaling: formatSats(locale, nonSignalingCount),
-                signaling: formatSats(locale, signalingCount),
+                split: formatSats(locale, forkScore?.split_height),
+                nonEnforcing: formatSats(locale, nonEnforcingAdvance),
+                nonEnforcingTip: formatSats(locale, nonEnforcingTip),
+                enforcing: formatSats(locale, enforcingAdvance),
+                enforcingTip: formatSats(locale, enforcingTip),
               })}
               className="bip110-scoreboard__race"
             >
               <div className="bip110-score bip110-score--non">
-                <span className="bip110-score__label">{t('bip110.nonSignaling')}</span>
+                <span className="bip110-score__label">{t('bip110.nonEnforcing')}</span>
                 <strong className="bip110-score__value">
-                  {nonSignalingCount === null ? '—' : <><small>+</small>{formatSats(locale, nonSignalingCount)}</>}
+                  {nonEnforcingAdvance === null ? '—' : <><small>+</small>{formatSats(locale, nonEnforcingAdvance)}</>}
                 </strong>
-                <span className="bip110-score__blocks">{t('bip110.blocksUnit')}</span>
+                <span className="bip110-score__blocks">
+                  {nonEnforcingTip === null ? t('bip110.forkScoreUnavailable') : `#${formatSats(locale, nonEnforcingTip)}`}
+                </span>
               </div>
               <span className="bip110-scoreboard__versus">×</span>
               <div className="bip110-score bip110-score--signal">
-                <span className="bip110-score__label">{t('bip110.signaling')}</span>
+                <span className="bip110-score__label">{t('bip110.enforcing')}</span>
                 <strong className="bip110-score__value">
-                  {signalingCount === null ? '—' : <><small>+</small>{formatSats(locale, signalingCount)}</>}
+                  {enforcingAdvance === null ? '—' : <><small>+</small>{formatSats(locale, enforcingAdvance)}</>}
                 </strong>
-                <span className="bip110-score__blocks">{t('bip110.blocksUnit')}</span>
-              </div>
-              <div className="bip110-race-rail" title={t('bip110.thresholdDetail', { value: formatSats(locale, status.threshold_count) })}>
-                <span className="bip110-race-rail__signal" style={{ width: `${signalPct ?? 0}%` }} />
-                <span className="bip110-race-rail__threshold" style={{ right: `${clamp(status.threshold_pct)}%` }}>
-                  <span>{formatPercent(locale, status.threshold_pct, 0)}%</span>
+                <span className="bip110-score__blocks">
+                  {enforcingTip === null ? t('bip110.forkScoreUnavailable') : `#${formatSats(locale, enforcingTip)}`}
                 </span>
+              </div>
+              <div
+                className="bip110-race-rail"
+                title={forkScoreAvailable
+                  ? t('bip110.forkScoreDetail', { split: formatSats(locale, forkScore?.split_height) })
+                  : t('bip110.forkScoreUnavailable')}
+              >
+                <span className="bip110-race-rail__signal" style={{ width: `${enforcingRacePct}%` }} />
               </div>
             </div>
 

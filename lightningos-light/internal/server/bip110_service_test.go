@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -42,6 +43,12 @@ func TestBIP110MonitorComparesInternalWithPublic(t *testing.T) {
   "bip":"110","tip":2,"chainTip":2,"periodNum":0,"periodStart":0,"periodEnd":2015,
   "totalBlocks":3,"signalingCount":2,"pct":66.67,"synced":true,"updatedAt":"2026-07-22T12:00:00Z","periods":[]
 }`))
+	})
+	mux.HandleFunc("/enforcing-tip", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("1"))
+	})
+	mux.HandleFunc("/non-enforcing-tip", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("2"))
 	})
 	mux.HandleFunc("/rpc", func(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
@@ -108,6 +115,8 @@ func TestBIP110MonitorComparesInternalWithPublic(t *testing.T) {
 	service := newBIP110MonitorService(nil)
 	service.client = server.Client()
 	service.publicURL = server.URL + "/public"
+	service.nonEnforcingURL = server.URL + "/non-enforcing-tip"
+	service.enforcingURL = server.URL + "/enforcing-tip"
 	service.now = func() time.Time { return time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC) }
 	service.loadRPCConfig = func(context.Context) (bitcoinRPCConfig, string, error) {
 		return bitcoinRPCConfig{Host: server.URL + "/rpc"}, "test_bitcoind", nil
@@ -190,6 +199,26 @@ func TestBIP110SourceStatusKeepsZeroScoreInJSON(t *testing.T) {
 		if _, ok := decoded[field]; !ok {
 			t.Fatalf("zero-valued %s missing from %s", field, payload)
 		}
+	}
+}
+
+func TestBuildBIP110ForkScoreUsesRealBranchTips(t *testing.T) {
+	status := buildBIP110ForkScore(
+		961725, nil, "https://mempool.space/api/blocks/tip/height",
+		961633, nil, "https://mempool.guide/api/blocks/tip/height",
+	)
+	if !status.Available {
+		t.Fatalf("expected fork score available: %+v", status)
+	}
+	if status.SplitHeight != 961631 || status.NonEnforcingBlocks != 94 || status.EnforcingBlocks != 2 {
+		t.Fatalf("unexpected fork score: %+v", status)
+	}
+}
+
+func TestBuildBIP110ForkScoreDoesNotInventMissingBranch(t *testing.T) {
+	status := buildBIP110ForkScore(961725, nil, "non-enforcing", 0, errors.New("source unavailable"), "enforcing")
+	if status.Available || status.EnforcingBlocks != 0 || status.Error == "" {
+		t.Fatalf("missing enforcing branch should remain unavailable: %+v", status)
 	}
 }
 

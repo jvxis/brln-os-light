@@ -1,7 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { getLocale } from '../../i18n'
-import { formatPercent, formatSats, formatTimestamp } from './formatters'
-import HorizontalBarGauge from './HorizontalBarGauge'
+import { clamp, formatPercent, formatSats, formatTimestamp } from './formatters'
 import StatusBadge from './StatusBadge'
 import type { BIP110MonitorStatus, BIP110SourceStatus, BitcoinStatus, Tone } from './types'
 
@@ -54,6 +53,18 @@ const estimateMandatorySignalingAt = (
   }
 }
 
+const formatCompactTimestamp = (locale: string, value: string) => {
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) return '-'
+  return new Intl.DateTimeFormat(locale, {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date)
+}
+
 const riskTone = (risk?: string): Tone => {
   if (risk === 'high') return 'danger'
   if (risk === 'elevated' || risk === 'watch') return 'warn'
@@ -68,6 +79,14 @@ const comparisonTone = (value?: string): Tone => {
   return 'muted'
 }
 
+function Chevron() {
+  return (
+    <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24">
+      <path d="m6 9 6 6 6-6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+    </svg>
+  )
+}
+
 type SourcePanelProps = {
   label: string
   source: BIP110SourceStatus
@@ -77,31 +96,30 @@ type SourcePanelProps = {
 function SourcePanel({ label, source, locale }: SourcePanelProps) {
   const { t } = useTranslation()
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="font-medium text-fog/90">{label}</p>
+    <div className="bip110-source">
+      <div className="flex min-w-0 items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-fog/90">{label}</p>
+          <p className="mt-0.5 truncate text-[10px] text-fog/40">{source.subversion || source.source}</p>
+        </div>
         <StatusBadge
           label={source.available ? t('bip110.available') : t('common.unavailable')}
           tone={source.available ? 'ok' : 'warn'}
         />
       </div>
       {source.available ? (
-        <div className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-fog/55">{t('bip110.tip')}</span>
-            <span>{formatSats(locale, source.tip)}</span>
+        <div className="mt-4 grid grid-cols-3 gap-3">
+          <div>
+            <p className="bip110-detail-label">{t('bip110.tip')}</p>
+            <p className="bip110-detail-value">#{formatSats(locale, source.tip)}</p>
           </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-fog/55">{t('bip110.period')}</span>
-            <span>{formatSats(locale, source.period_num)}</span>
+          <div>
+            <p className="bip110-detail-label">{t('bip110.signaling')}</p>
+            <p className="bip110-detail-value">{formatPercent(locale, source.pct, 2)}%</p>
           </div>
-          <div className="flex items-center justify-between gap-3 sm:col-span-2">
-            <span className="text-fog/55">{t('bip110.signalingBlocks')}</span>
-            <span>{formatSats(locale, source.signaling_count)} / {formatSats(locale, source.total_blocks)}</span>
-          </div>
-          <div className="flex items-center justify-between gap-3 sm:col-span-2">
-            <span className="text-fog/55">{t('bip110.signalingRate')}</span>
-            <span>{formatPercent(locale, source.pct, 2)}%</span>
+          <div>
+            <p className="bip110-detail-label">{t('bip110.scoreBlocks')}</p>
+            <p className="bip110-detail-value">{formatSats(locale, source.signaling_count)} / {formatSats(locale, source.total_blocks)}</p>
           </div>
         </div>
       ) : (
@@ -115,7 +133,14 @@ export default function BIP110MonitorCard({ status, bitcoin, loading }: BIP110Mo
   const { t, i18n } = useTranslation()
   const locale = getLocale(i18n.language)
   const displaySource = status?.internal?.available ? status.internal : status?.public
-  const signalPct = displaySource?.pct ?? 0
+  const scoreAvailable = Boolean(displaySource?.available && typeof displaySource.pct === 'number')
+  const signalPct = scoreAvailable ? clamp(displaySource?.pct ?? 0) : null
+  const nonSignalPct = signalPct === null ? null : clamp(100 - signalPct)
+  const signalingCount = scoreAvailable ? Math.max(0, displaySource?.signaling_count ?? 0) : null
+  const totalBlocks = scoreAvailable ? Math.max(0, displaySource?.total_blocks ?? 0) : null
+  const nonSignalingCount = signalingCount === null || totalBlocks === null
+    ? null
+    : Math.max(0, totalBlocks - signalingCount)
   const tone = riskTone(status?.risk_level)
   const comparisonStatus = status?.comparison?.status || 'unavailable'
   const mandatorySignalingEta = status
@@ -127,102 +152,150 @@ export default function BIP110MonitorCard({ status, bitcoin, loading }: BIP110Mo
         hours: formatPercent(locale, mandatorySignalingEta.cadenceHours, 1),
       })
     : t('bip110.etaBasisFallback')
+  const currentTip = displaySource?.tip
 
   return (
-    <details className="section-card group">
-      <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <span className="text-xs uppercase tracking-[0.24em] text-sky-300/80">{t('bip110.kicker')}</span>
-            <h3 className="font-semibold">{t('bip110.title')}</h3>
-            <StatusBadge label={t('bip110.informational')} tone="info" />
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <StatusBadge
-              label={status ? t(`bip110.risk.${status.risk_level}`) : t('common.unavailable')}
-              tone={tone}
-            />
-            <StatusBadge
-              label={t(`bip110.comparison.${comparisonStatus}`)}
-              tone={comparisonTone(comparisonStatus)}
-            />
-            <span className="ml-1 text-sm text-fog/55 transition-transform group-open:rotate-180" aria-hidden="true">⌄</span>
-          </div>
-        </div>
+    <details className={`section-card bip110-card bip110-card--${tone} group`}>
+      <summary className="bip110-summary cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+        {status ? (
+          <div className="bip110-scoreboard">
+            <div className="bip110-scoreboard__identity">
+              <span className="bip110-eyebrow">{t('bip110.kicker')}</span>
+              <div className="mt-1 flex items-center gap-2">
+                <h3 className="text-base font-semibold tracking-tight text-fog">{t('bip110.shortTitle')}</h3>
+                <span className="bip110-info-dot" title={t('bip110.informational')}>i</span>
+              </div>
+              <p className="mt-1 truncate text-[10px] text-fog/40">{t(`bip110.phase.${status.phase}`)}</p>
+            </div>
 
-        <div className="mt-3 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-[1.15fr_.9fr_1.45fr_1.2fr_auto] lg:items-center">
-          {status ? (
-            <>
-              <div className="min-w-0 truncate">
-                <span className="text-fog/50">{t('bip110.phaseLabel')}:</span>{' '}
-                <span className="font-medium text-fog/90">{t(`bip110.phase.${status.phase}`)}</span>
+            <div
+              aria-label={t('bip110.scoreAria', {
+                nonSignaling: nonSignalPct === null ? '-' : formatPercent(locale, nonSignalPct, 1),
+                signaling: signalPct === null ? '-' : formatPercent(locale, signalPct, 1),
+              })}
+              className="bip110-scoreboard__race"
+            >
+              <div className="bip110-score bip110-score--non">
+                <span className="bip110-score__label">{t('bip110.nonSignaling')}</span>
+                <strong className="bip110-score__value">
+                  {nonSignalPct === null ? '—' : formatPercent(locale, nonSignalPct, 1)}<small>%</small>
+                </strong>
+                <span className="bip110-score__blocks">{t('bip110.blockCount', { value: formatSats(locale, nonSignalingCount) })}</span>
               </div>
-              <div className="min-w-0 truncate">
-                <span className="text-fog/50">{t('bip110.signalingRate')}:</span>{' '}
-                <span className="font-medium text-fog/90">{formatPercent(locale, signalPct, 2)}% / {formatPercent(locale, status.threshold_pct, 0)}%</span>
+              <span className="bip110-scoreboard__versus">×</span>
+              <div className="bip110-score bip110-score--signal">
+                <span className="bip110-score__label">{t('bip110.signaling')}</span>
+                <strong className="bip110-score__value">
+                  {signalPct === null ? '—' : formatPercent(locale, signalPct, 1)}<small>%</small>
+                </strong>
+                <span className="bip110-score__blocks">{t('bip110.blockCount', { value: formatSats(locale, signalingCount) })}</span>
               </div>
-              <div className="min-w-0">
-                <div className="truncate">
-                  <span className="text-fog/50">{t('bip110.mandatoryIn')}:</span>{' '}
-                  <span className="font-medium text-fog/90">
-                    {t('bip110.blockCount', { value: formatSats(locale, status.blocks_to_mandatory) })}
-                  </span>
-                </div>
-                {mandatorySignalingEta && (
-                  <div className="truncate text-xs text-amber-200/80" title={mandatorySignalingEtaBasis}>
-                    {mandatorySignalingEta.cadenceBlocksPerHour
-                      ? t('bip110.mandatoryEtaObserved', {
-                          date: formatTimestamp(locale, mandatorySignalingEta.estimatedAt),
-                          rate: formatPercent(locale, mandatorySignalingEta.cadenceBlocksPerHour, 1),
-                        })
-                      : t('bip110.mandatoryEta', {
-                          date: formatTimestamp(locale, mandatorySignalingEta.estimatedAt),
-                        })}
-                  </div>
-                )}
+              <div className="bip110-race-rail" title={t('bip110.thresholdDetail', { value: formatSats(locale, status.threshold_count) })}>
+                <span className="bip110-race-rail__signal" style={{ width: `${signalPct ?? 0}%` }} />
+                <span className="bip110-race-rail__threshold" style={{ right: `${clamp(status.threshold_pct)}%` }}>
+                  <span>{formatPercent(locale, status.threshold_pct, 0)}%</span>
+                </span>
               </div>
-              <div className="min-w-0 truncate">
-                <span className="text-fog/50">{t('bip110.lastComparison')}:</span>{' '}
-                <span className="font-medium text-fog/90">{formatTimestamp(locale, status.checked_at)}</span>
+            </div>
+
+            <div className="bip110-scoreboard__next">
+              <div className="flex items-center justify-end gap-2">
+                <StatusBadge label={t(`bip110.risk.${status.risk_level}`)} tone={tone} />
+                <span
+                  aria-label={t(`bip110.comparison.${comparisonStatus}`)}
+                  className={`bip110-source-check bip110-source-check--${comparisonTone(comparisonStatus)}`}
+                  title={t(`bip110.comparison.${comparisonStatus}`)}
+                />
               </div>
-              <span className="text-right text-xs font-medium text-sky-300">{t('bip110.moreDetails')}</span>
-            </>
-          ) : (
-            <p className="text-fog/60 sm:col-span-2 lg:col-span-5">{loading ? t('bip110.loading') : t('bip110.unavailable')}</p>
-          )}
-        </div>
+              {status.blocks_to_mandatory > 0 ? (
+                <>
+                  <p className="mt-1.5 text-right text-sm font-semibold tabular-nums text-fog/90">
+                    {t('bip110.blocksUntilWindow', { value: formatSats(locale, status.blocks_to_mandatory) })}
+                  </p>
+                  {mandatorySignalingEta && (
+                    <p className="bip110-eta mt-0.5 truncate text-right text-[10px]" title={mandatorySignalingEtaBasis}>
+                      {t('bip110.compactEta', { date: formatCompactTimestamp(locale, mandatorySignalingEta.estimatedAt) })}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="mt-1.5 text-right text-sm font-semibold text-fog/90">{t(`bip110.phase.${status.phase}`)}</p>
+              )}
+            </div>
+
+            <span className="bip110-scoreboard__chevron text-fog/45 transition-transform group-open:rotate-180">
+              <Chevron />
+            </span>
+          </div>
+        ) : (
+          <div className="bip110-scoreboard bip110-scoreboard--empty">
+            <div>
+              <span className="bip110-eyebrow">{t('bip110.kicker')}</span>
+              <h3 className="mt-1 font-semibold">{t('bip110.shortTitle')}</h3>
+            </div>
+            <p className="text-sm text-fog/55">{loading ? t('bip110.loading') : t('bip110.unavailable')}</p>
+            <span className="bip110-scoreboard__chevron text-fog/45"><Chevron /></span>
+          </div>
+        )}
       </summary>
 
       {status && (
-        <div className="mt-5 space-y-5 border-t border-white/10 pt-5">
-          <p className="text-sm text-fog/65">{t('bip110.subtitle')}</p>
-          <HorizontalBarGauge
-            label={t('bip110.thresholdProgress')}
-            value={signalPct}
-            max={status.threshold_pct || 55}
-            valueLabel={`${formatPercent(locale, signalPct, 2)}% / ${formatPercent(locale, status.threshold_pct, 0)}%`}
-            detail={t('bip110.thresholdDetail', { value: formatSats(locale, status.threshold_count) })}
-            tone={tone}
-          />
+        <div className="bip110-detail">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="max-w-3xl">
+              <p className="bip110-eyebrow">{t('bip110.detailKicker')}</p>
+              <h4 className="mt-1 text-lg font-semibold text-fog">{t('bip110.detailTitle')}</h4>
+              <p className="mt-1 text-sm text-fog/60">
+                {t('bip110.scoreStory', {
+                  signaling: signalPct === null ? '-' : formatPercent(locale, signalPct, 1),
+                  threshold: formatPercent(locale, status.threshold_pct, 0),
+                })}
+              </p>
+            </div>
+            <StatusBadge label={t(`bip110.comparison.${comparisonStatus}`)} tone={comparisonTone(comparisonStatus)} />
+          </div>
 
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="bip110-milestones">
+            <div className="bip110-milestone bip110-milestone--current">
+              <span className="bip110-milestone__dot" />
+              <p>{t('bip110.currentTip')}</p>
+              <strong>#{formatSats(locale, currentTip)}</strong>
+            </div>
+            <div className="bip110-milestone">
+              <span className="bip110-milestone__dot" />
+              <p>{t('bip110.mandatoryWindow')}</p>
+              <strong>#{formatSats(locale, status.mandatory_start_height)}</strong>
+            </div>
+            <div className="bip110-milestone">
+              <span className="bip110-milestone__dot" />
+              <p>{t('bip110.lockIn')}</p>
+              <strong>#{formatSats(locale, status.lock_in_height)}</strong>
+            </div>
+            <div className="bip110-milestone">
+              <span className="bip110-milestone__dot" />
+              <p>{t('bip110.activation')}</p>
+              <strong>#{formatSats(locale, status.activation_height)}</strong>
+            </div>
+          </div>
+
+          <div className="grid gap-3 lg:grid-cols-2">
             <SourcePanel label={t('bip110.internalSource')} source={status.internal} locale={locale} />
             <SourcePanel label={t('bip110.publicSource')} source={status.public} locale={locale} />
           </div>
 
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
-              <div><span className="text-fog/50">{t('bip110.backend')}:</span> <span className="[overflow-wrap:anywhere]">{status.internal.subversion || status.internal.source}</span></div>
-              <div><span className="text-fog/50">{t('bip110.lockIn')}:</span> #{formatSats(locale, status.lock_in_height)}</div>
-              <div><span className="text-fog/50">{t('bip110.activation')}:</span> #{formatSats(locale, status.activation_height)}</div>
-              <div><span className="text-fog/50">{t('bip110.tipDelta')}:</span> {formatSats(locale, status.comparison.tip_delta)}</div>
-              <div><span className="text-fog/50">{t('bip110.signalDelta')}:</span> {formatSats(locale, status.comparison.signaling_count_delta)}</div>
-              <div><span className="text-fog/50">{t('bip110.publicUpdated')}:</span> {formatTimestamp(locale, status.public.updated_at)}</div>
+          <div className="bip110-technical">
+            <div className="grid gap-x-5 gap-y-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
+              <div><span>{t('bip110.backend')}</span><strong className="[overflow-wrap:anywhere]">{status.internal.subversion || status.internal.source}</strong></div>
+              <div><span>{t('bip110.period')}</span><strong>{formatSats(locale, displaySource?.period_num)}</strong></div>
+              <div><span>{t('bip110.lastComparison')}</span><strong>{formatTimestamp(locale, status.checked_at)}</strong></div>
+              <div><span>{t('bip110.sourceDelta')}</span><strong>{formatSats(locale, status.comparison.tip_delta)} / {formatSats(locale, status.comparison.signaling_count_delta)}</strong></div>
             </div>
-            <p className="mt-4 text-xs text-fog/50">{t('bip110.disclaimer')}</p>
-            <a className="mt-3 inline-flex text-xs font-medium text-sky-300 hover:text-sky-200" href="https://bip110monitor.com/" target="_blank" rel="noreferrer">
-              {t('bip110.openPublicMonitor')}
-            </a>
+            <div className="mt-4 flex flex-col gap-2 border-t border-white/10 pt-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="max-w-4xl text-[10px] leading-relaxed text-fog/40">{t('bip110.disclaimer')}</p>
+              <a className="shrink-0 text-xs font-medium text-sky-300 hover:text-sky-200" href="https://bip110monitor.com/" target="_blank" rel="noreferrer">
+                {t('bip110.openPublicMonitor')} ↗
+              </a>
+            </div>
           </div>
         </div>
       )}

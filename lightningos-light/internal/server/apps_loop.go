@@ -59,6 +59,9 @@ func loopDefinition() appDefinition {
 		Name:        "Lightning Loop",
 		Description: "Optional non-custodial submarine swaps for moving liquidity between Lightning channels and the Bitcoin wallet. Manual quotes and swaps only; Autoloop is disabled.",
 		Port:        0,
+		SecurityNotices: []string{
+			appSecurityNoticeElevatedLNDAccess,
+		},
 	}
 }
 

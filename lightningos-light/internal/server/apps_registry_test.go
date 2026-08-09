@@ -93,6 +93,7 @@ func TestConfiguredAppSecurityNotices(t *testing.T) {
 		btcpayAppID:          true,
 		"lndg":               true,
 		"lnbits":             true,
+		loopAppID:            true,
 		fedimintGatewayAppID: true,
 		peerswapAppID:        true,
 		tapdAppID:            true,

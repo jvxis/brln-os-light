@@ -11,6 +11,13 @@ import (
 	"lightningos-light/internal/lndclient"
 )
 
+func TestLoopDefinitionDisclosesElevatedLNDAccess(t *testing.T) {
+	def := loopDefinition()
+	if len(def.SecurityNotices) != 1 || def.SecurityNotices[0] != appSecurityNoticeElevatedLNDAccess {
+		t.Fatalf("Lightning Loop must disclose elevated LND access: %v", def.SecurityNotices)
+	}
+}
+
 func TestLoopServiceLifecyclePersistsAcrossReboots(t *testing.T) {
 	if got, want := loopStartSystemctlArgs(), []string{"systemctl", "enable", "--now", loopServiceName}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected Loop start args: got %#v want %#v", got, want)

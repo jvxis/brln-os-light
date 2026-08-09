@@ -2007,6 +2007,7 @@
     "loading": "Carregando a comparação interna e pública do BIP 110...",
     "unavailable": "A comparação do BIP 110 está indisponível.",
     "risk": {
+      "low": "Baixo risco · Bitcoin Core",
       "normal": "Normal",
       "watch": "Observar",
       "elevated": "Janela obrigatória próxima",

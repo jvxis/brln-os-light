@@ -94,6 +94,8 @@ func TestBIP110MonitorComparesInternalWithPublic(t *testing.T) {
 			result = map[string]any{"chain": "main", "blocks": 2, "bestblockhash": "hash-2", "chainwork": "000003"}
 		case "getnetworkinfo":
 			result = map[string]any{"subversion": "/Satoshi:test/"}
+		case "getdeploymentinfo":
+			result = map[string]any{"deployments": map[string]any{}}
 		default:
 			http.Error(w, "unexpected method", http.StatusBadRequest)
 			return
@@ -159,6 +161,35 @@ func TestBIP110RiskLevelNearMandatoryWindow(t *testing.T) {
 	}
 	if got := bip110RiskLevel(bip110MandatoryStartHeight+100, source, source, comparison, "mandatory_signaling"); got != "high" {
 		t.Fatalf("risk during mandatory window = %q, want high", got)
+	}
+}
+
+func TestBIP110RiskLevelIsLowForBitcoinCore(t *testing.T) {
+	enforces := false
+	source := bip110SourceStatus{Available: true, Pct: 0, Synced: true, EnforcesBIP110: &enforces}
+	comparison := bip110Comparison{Status: "matched", Comparable: true, Matches: true}
+	if got := bip110RiskLevel(bip110MandatoryStartHeight+100, source, source, comparison, "mandatory_signaling"); got != "low" {
+		t.Fatalf("Bitcoin Core risk during mandatory window = %q, want low", got)
+	}
+	comparison.Status = "signal_mismatch"
+	if got := bip110RiskLevel(bip110MandatoryStartHeight+100, source, source, comparison, "mandatory_signaling"); got != "watch" {
+		t.Fatalf("Bitcoin Core risk with source mismatch = %q, want watch", got)
+	}
+}
+
+func TestBIP110SourceStatusKeepsZeroScoreInJSON(t *testing.T) {
+	payload, err := json.Marshal(bip110SourceStatus{Available: true, Source: "test", TotalBlocks: 93})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"pct", "signaling_count", "total_blocks"} {
+		if _, ok := decoded[field]; !ok {
+			t.Fatalf("zero-valued %s missing from %s", field, payload)
+		}
 	}
 }
 

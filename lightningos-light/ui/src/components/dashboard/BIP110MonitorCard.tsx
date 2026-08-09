@@ -68,7 +68,7 @@ const formatCompactTimestamp = (locale: string, value: string) => {
 const riskTone = (risk?: string): Tone => {
   if (risk === 'high') return 'danger'
   if (risk === 'elevated' || risk === 'watch') return 'warn'
-  if (risk === 'normal') return 'ok'
+  if (risk === 'low' || risk === 'normal') return 'ok'
   return 'muted'
 }
 
@@ -133,7 +133,10 @@ export default function BIP110MonitorCard({ status, bitcoin, loading }: BIP110Mo
   const { t, i18n } = useTranslation()
   const locale = getLocale(i18n.language)
   const displaySource = status?.internal?.available ? status.internal : status?.public
-  const scoreAvailable = Boolean(displaySource?.available && typeof displaySource.pct === 'number')
+  // Older manager builds omitted numeric zeroes from the response. An
+  // available source with no pct field therefore means a valid 0% score, not
+  // an unavailable monitor.
+  const scoreAvailable = Boolean(displaySource?.available)
   const signalPct = scoreAvailable ? clamp(displaySource?.pct ?? 0) : null
   const nonSignalPct = signalPct === null ? null : clamp(100 - signalPct)
   const signalingCount = scoreAvailable ? Math.max(0, displaySource?.signaling_count ?? 0) : null

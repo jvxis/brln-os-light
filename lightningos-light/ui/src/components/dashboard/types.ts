@@ -201,6 +201,7 @@ export type BIP110SourceStatus = {
   best_block_hash?: string
   chainwork?: string
   subversion?: string
+  enforces_bip110?: boolean
   period_num?: number
   period_start?: number
   period_end?: number
@@ -214,7 +215,7 @@ export type BIP110SourceStatus = {
 
 export type BIP110MonitorStatus = {
   informational_only: boolean
-  risk_level: 'normal' | 'watch' | 'elevated' | 'high' | 'unknown'
+  risk_level: 'low' | 'normal' | 'watch' | 'elevated' | 'high' | 'unknown'
   phase: string
   checked_at: string
   signal_bit: number

@@ -75,12 +75,13 @@ type bip110SourceStatus struct {
 	BestBlockHash  string         `json:"best_block_hash,omitempty"`
 	Chainwork      string         `json:"chainwork,omitempty"`
 	Subversion     string         `json:"subversion,omitempty"`
+	EnforcesBIP110 *bool          `json:"enforces_bip110,omitempty"`
 	PeriodNum      int64          `json:"period_num,omitempty"`
 	PeriodStart    int64          `json:"period_start,omitempty"`
 	PeriodEnd      int64          `json:"period_end,omitempty"`
-	TotalBlocks    int            `json:"total_blocks,omitempty"`
-	SignalingCount int            `json:"signaling_count,omitempty"`
-	Pct            float64        `json:"pct,omitempty"`
+	TotalBlocks    int            `json:"total_blocks"`
+	SignalingCount int            `json:"signaling_count"`
+	Pct            float64        `json:"pct"`
 	Synced         bool           `json:"synced,omitempty"`
 	UpdatedAt      string         `json:"updated_at,omitempty"`
 	Error          string         `json:"error,omitempty"`
@@ -330,6 +331,10 @@ type bip110NetworkInfo struct {
 	Subversion string `json:"subversion"`
 }
 
+type bip110DeploymentInfo struct {
+	Deployments map[string]json.RawMessage `json:"deployments"`
+}
+
 type bip110RPCRequest struct {
 	JSONRPC string `json:"jsonrpc"`
 	ID      int64  `json:"id"`
@@ -371,6 +376,16 @@ func (s *bip110MonitorService) fetchInternal(ctx context.Context, public bip110S
 	var networkInfo bip110NetworkInfo
 	if err := s.rpcCall(ctx, cfg, "getnetworkinfo", nil, &networkInfo); err == nil {
 		status.Subversion = networkInfo.Subversion
+	}
+	var deploymentInfo bip110DeploymentInfo
+	if err := s.rpcCall(ctx, cfg, "getdeploymentinfo", nil, &deploymentInfo); err == nil {
+		_, configured := deploymentInfo.Deployments["reduced_data"]
+		status.EnforcesBIP110 = &configured
+	} else if strings.HasPrefix(status.Subversion, "/Satoshi:") {
+		// Unmodified Bitcoin Core does not include the BIP 110 deployment. Keep
+		// this fallback for older Core releases that lack getdeploymentinfo.
+		configured := false
+		status.EnforcesBIP110 = &configured
 	}
 
 	periodStart := (chainInfo.Blocks / bip110PeriodLength) * bip110PeriodLength
@@ -695,11 +710,18 @@ func bip110Phase(tip, lockInHeight, activationHeight int64) string {
 }
 
 func bip110RiskLevel(tip int64, internal, public bip110SourceStatus, comparison bip110Comparison, phase string) string {
-	if comparison.Status == "signal_mismatch" {
-		return "high"
-	}
 	if !internal.Available || !public.Available {
 		return "unknown"
+	}
+	if comparison.Status == "signal_mismatch" || comparison.Status == "tip_mismatch" || !public.Synced {
+		return "watch"
+	}
+	// Signaling progress describes the proposal, not automatically the local
+	// operator's exposure. A standard Bitcoin Core backend does not enforce the
+	// reduced_data deployment, so low miner signaling is not a high-risk state
+	// for that backend while the two monitoring sources still agree.
+	if internal.EnforcesBIP110 != nil && !*internal.EnforcesBIP110 {
+		return "low"
 	}
 	pct := internal.Pct
 	if phase == "mandatory_signaling" && pct < bip110ThresholdPct {
@@ -707,9 +729,6 @@ func bip110RiskLevel(tip int64, internal, public bip110SourceStatus, comparison 
 	}
 	if phase == "voluntary_signaling" && tip < bip110MandatoryStartHeight && bip110MandatoryStartHeight-tip <= 2*bip110PeriodLength && pct < bip110ThresholdPct {
 		return "elevated"
-	}
-	if comparison.Status == "tip_mismatch" || !public.Synced {
-		return "watch"
 	}
 	return "normal"
 }

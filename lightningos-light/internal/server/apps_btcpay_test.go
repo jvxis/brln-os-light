@@ -18,6 +18,9 @@ func TestBtcpayDefinition(t *testing.T) {
 	if def.Port != btcpayPort {
 		t.Fatalf("unexpected port: %d", def.Port)
 	}
+	if len(def.SecurityNotices) != 1 || def.SecurityNotices[0] != appSecurityNoticeElevatedLNDAccess {
+		t.Fatalf("BTCPay must disclose elevated LND access: %v", def.SecurityNotices)
+	}
 }
 
 func TestBuildBtcpayRemoteWiring(t *testing.T) {

@@ -90,6 +90,7 @@ func TestConfiguredAppSecurityNotices(t *testing.T) {
 	}
 
 	wantElevated := map[string]bool{
+		btcpayAppID:          true,
 		"lndg":               true,
 		"lnbits":             true,
 		fedimintGatewayAppID: true,

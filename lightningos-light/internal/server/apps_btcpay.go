@@ -76,6 +76,9 @@ func btcpayDefinition() appDefinition {
 		Name:        "BTCPay Server",
 		Description: "Self-hosted payment processor (invoices, Point of Sale, payment buttons) using your existing Bitcoin source and LND.",
 		Port:        btcpayPort,
+		SecurityNotices: []string{
+			appSecurityNoticeElevatedLNDAccess,
+		},
 	}
 }
 

@@ -395,6 +395,11 @@ export default function AuthScreen({ state, onAuthenticated }: AuthScreenProps) 
               </div>
             )}
 
+            <div className="auth-trust-tailscale" role="note">
+              <strong>{t('auth.tailscaleWarningTitle')}</strong>
+              <p>{t('auth.tailscaleWarningBody')}</p>
+            </div>
+
             <div className="auth-trust-fingerprint">
               <span>{t('auth.caFingerprint')}</span>
               <code>{tlsAccess.ca_fingerprint_sha256 || '--'}</code>

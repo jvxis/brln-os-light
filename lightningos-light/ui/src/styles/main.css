@@ -5180,6 +5180,26 @@ html[data-theme="light"] .bip110-technical { border-color: rgb(15 23 42 / 0.1); 
   overflow-wrap: anywhere;
 }
 
+.auth-trust-tailscale {
+  display: grid;
+  gap: 5px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgb(251 191 36 / 0.28);
+  border-radius: 14px;
+  color: rgb(var(--color-fog) / 0.68);
+  background: rgb(251 191 36 / 0.07);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.auth-trust-tailscale strong {
+  color: rgb(253 230 138 / 0.92);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .auth-trust-actions {
   display: flex;
   flex-wrap: wrap;

@@ -204,6 +204,18 @@ fails closed. CPU Miner install, uninstall, status, configuration updates,
 image probes, and metrics remain on the reviewed legacy path until their own
 typed capabilities are implemented.
 
+The first disposable Ubuntu 24.04 gate exposed the timeout mismatch described
+above: the manager returned HTTP 500 after five seconds while the original
+ten-second Compose stop continued and produced a successful completion audit
+at 10.567 seconds. This fail-ambiguous result was rejected for acceptance.
+Commit `9e34e50` bounded the catalog stop, and commit `490d9c9` kept the Linux
+module graph stable during installation. The rerun returned HTTP 200 for stop
+and start, observed zero then one running container, produced paired audit
+events, accepted a non-mutating dry-run, rejected an unknown app and an
+argument array, uninstalled the test app, restored `disabled`, and left Docker
+inactive. Secret-free evidence is in
+`docs/baselines/privilege-hardening-phase2-cpuminer-enforce-2026-08-10.json`.
+
 ## Manager modes and rollback
 
 The `privileged` configuration block supports:

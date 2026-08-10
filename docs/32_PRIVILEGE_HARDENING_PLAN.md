@@ -168,6 +168,16 @@ paths, units, and arguments are rejected.
 
 ### Phase 2 — App Store and Docker cutover
 
+Phase 2 has started with the complete 20-app privilege inventory in
+`docs/35_PRIVILEGE_HARDENING_PHASE2_APP_INVENTORY.md` and the first typed
+manifest slice. CPU Miner `start` and `stop` passed the disposable Ubuntu 24.04
+`enforce` gate after the gate exposed and repaired a client/Compose timeout
+mismatch. The app was removed after the test, the broker mode returned to
+`disabled`, and the integration node was not changed. Evidence is stored in
+`docs/baselines/privilege-hardening-phase2-cpuminer-enforce-2026-08-10.json`.
+Install, uninstall, status/config/metrics, the remaining apps, Ubuntu 26, and
+Docker-group removal remain open; Phase 2 is not complete.
+
 1. Convert every catalog app to a validated broker manifest.
 2. Migrate Docker installation and all app lifecycle operations.
 3. Run install/start/stop/restart/uninstall tests for every app on disposable

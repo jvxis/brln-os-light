@@ -140,6 +140,15 @@ The phase remains open for soak observation and an explicit review before any
 `enforce` cutover. The protocol and rollback contract are recorded in
 `docs/34_PRIVILEGED_BROKER_PROTOCOL.md`.
 
+A clean Ubuntu 24.04 VirtualBox clone of `brln-os-basica` then passed the full
+new-install gate on 2026-08-10. The exact branch checkout installed
+successfully, the manager started in `enforce`, and the real
+`POST /api/auth/enable-login` path performed one audited fixed-file mutation.
+The config owner/group/mode and root-only mutation lock were verified, then the
+rollback restored the original config hash and `disabled` mode. The disposable
+VM was powered off after validation. Secret-free evidence is stored in
+`docs/baselines/privilege-hardening-phase1-fresh-install-enforce-2026-08-10.json`.
+
 1. Implement the broker protocol, authorization, validation, structured logs,
    locking, and timeouts.
 2. Add a client package used by the manager.

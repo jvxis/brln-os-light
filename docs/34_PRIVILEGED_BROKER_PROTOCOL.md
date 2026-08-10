@@ -197,3 +197,22 @@ the manager config hash remained unchanged, and the mutation lock was not
 created. Manager, LND, and Postgres remained active. Full secret-free evidence
 is in
 `docs/baselines/privilege-hardening-phase1-files-shadow-2026-08-10.json`.
+
+## Fresh-install mutation gate
+
+A clean Ubuntu 24.04 VirtualBox clone of `brln-os-basica` installed commit
+`ab63762` from the hardening branch on 2026-08-10. The installer completed with
+the exact broker sudo command, a passing root self-test, an active manager and
+Postgres, and LND correctly enabled but deferred until wizard configuration.
+
+The disposable node was preconditioned from the backed-up default config to
+`enable_login: false` and broker mode `enforce`. Manager startup transport
+self-test passed. A real `POST /api/auth/enable-login` returned HTTP 202 and
+produced exactly one new successful, non-dry-run `files.enable_login` audit
+completion. The manager config remained `root:lightningos:0640`, the mutation
+lock was `root:root:0600`, and the manager remained healthy after its scheduled
+restart. The root-only rollback restored the exact original config hash and
+`disabled` mode. The VM was powered off and retained for follow-up testing.
+
+Full secret-free evidence is in
+`docs/baselines/privilege-hardening-phase1-fresh-install-enforce-2026-08-10.json`.

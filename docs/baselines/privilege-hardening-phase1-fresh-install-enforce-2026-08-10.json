@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-08-10T11:36:00Z",
+  "secret_free": true,
+  "environment": {
+    "hypervisor": "VirtualBox 7.2.14",
+    "base_vm": "brln-os-basica",
+    "test_vm": "brln-os-hardening-053-tmp-20260810",
+    "os": "Ubuntu 24.04.3 LTS",
+    "architecture": "x86_64",
+    "final_power_state": "poweroff",
+    "retained_for_follow_up": true
+  },
+  "source": {
+    "branch": "agent/0.5.3-privilege-hardening",
+    "checkout_commit": "ab63762fcf4be2cf3fd14dc351d94a9f86b4eef4",
+    "install_source": "checkout",
+    "go_version": "go1.24.12",
+    "node_version": "v26.6.0"
+  },
+  "fresh_install": {
+    "installer": "lightningos-light/install.sh",
+    "exit_code": 0,
+    "manager_sha256": "7389793276169ad3924393b79eaebb7508ba90e02273a8401b58166deef18956",
+    "broker_sha256": "4813dd3ef7cdae9056db57afe2c06fe07d34a41b51cf692e57acfe7ad85950be",
+    "broker_file": "root:root:0755",
+    "sudoers_syntax": "valid",
+    "broker_sudo": "exact_command_present",
+    "manager_service": "active",
+    "postgresql_service": "active",
+    "lnd_service": "enabled_and_deferred_until_wizard",
+    "https_health": "ok"
+  },
+  "mutation_gate": {
+    "precondition": "enable_login_false_and_privileged_enforce",
+    "manager_startup_self_test": "passed",
+    "api_operation": "POST /api/auth/enable-login",
+    "api_status": 202,
+    "new_successful_file_mutation_events_in_acceptance_run": 1,
+    "config_hash_changed_from_precondition": true,
+    "config_file_after_mutation": "root:lightningos:0640",
+    "mutation_lock": "root:root:0600",
+    "manager_restart_health": "ok"
+  },
+  "rollback": {
+    "backup_directory": "/var/lib/lightningos/privilege-hardening-backups/ab63762-fresh-install-20260810T113125Z",
+    "script": "root:root:0700",
+    "restored_original_config_hash": true,
+    "restored_config_state": "enable_login_true_and_privileged_disabled",
+    "manager_service": "active",
+    "postgresql_service": "active"
+  },
+  "harness_recovery": {
+    "production_failures": 0,
+    "automatic_or_explicit_rollbacks_verified": 3,
+    "false_negative_causes": [
+      "journal assertion used a non-matching startup message",
+      "pipefail observed the expected journal grep short-circuit as SIGPIPE",
+      "audit filter did not initially coalesce the omitted dry_run false field"
+    ],
+    "successful_non_dry_run_file_mutations_observed_total": 2
+  },
+  "excluded": [
+    "ip_addresses",
+    "credentials",
+    "setup_tokens",
+    "configuration_contents",
+    "sudoers_contents",
+    "audit_request_parameters",
+    "private_node_identifiers"
+  ]
+}

@@ -24,7 +24,9 @@ compatibility have stabilized.
 - The helper must have effective UID 0.
 - Sudo callers must be the installed `lightningos` account, with matching
   `SUDO_USER` and `SUDO_UID`. Direct root invocation is permitted for installer
-  self-tests and recovery.
+  self-tests and recovery. Installer self-tests clear inherited `SUDO_*`
+  variables so a root shell originally opened by another operator is not
+  mistaken for a broker request from that operator.
 - The audit log is `/var/log/lightningos-privileged/audit.jsonl`, mode `0600`,
   below a root-owned non-writable parent.
 - The mutation lock is `/run/lock/lightningos/privileged.lock`, mode `0600`,

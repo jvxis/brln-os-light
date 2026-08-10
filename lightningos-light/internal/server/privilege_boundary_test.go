@@ -279,6 +279,7 @@ func TestPrivilegedBrokerSudoersEntryForbidsArguments(t *testing.T) {
 		"internal/server/assets/upgrade-app.sh",
 	}
 	want := `system_cmds+=", ${PRIVILEGED_BROKER} \"\""`
+	wantRootSelfTest := `env -u SUDO_UID -u SUDO_USER -u SUDO_COMMAND "$PRIVILEGED_BROKER"`
 	for _, rel := range paths {
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
@@ -290,6 +291,9 @@ func TestPrivilegedBrokerSudoersEntryForbidsArguments(t *testing.T) {
 		}
 		if strings.Contains(content, `${PRIVILEGED_BROKER} *`) {
 			t.Errorf("%s grants wildcard broker arguments", rel)
+		}
+		if !strings.Contains(content, wantRootSelfTest) {
+			t.Errorf("%s does not isolate the direct-root self-test from an outer sudo environment", rel)
 		}
 	}
 }
